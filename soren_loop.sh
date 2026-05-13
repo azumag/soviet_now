@@ -138,6 +138,27 @@ _abort_if_interrupted() {
 	return 0
 }
 
+_exit_if_lock_owner_changed() {
+	local stage="${1:-loop}"
+	local lock_pid=""
+	lock_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || true)
+	case "$lock_pid" in
+	''|*[!0-9]*)
+		log "[LOCK] ${stage}: lock owner is missing/invalid -> stop this loop (self=${SOREN_MAIN_PID:-?})"
+		STOP_REQUESTED=1
+		trap - EXIT
+		exit 130
+		;;
+	esac
+	if [ "$lock_pid" != "${SOREN_MAIN_PID:-$$}" ]; then
+		log "[LOCK] ${stage}: another soren_loop owns the lock (owner=${lock_pid}, self=${SOREN_MAIN_PID:-?}) -> stop duplicate loop"
+		STOP_REQUESTED=1
+		trap - EXIT
+		exit 130
+	fi
+	return 0
+}
+
 _run_scheduled_meriken_time_window() {
 	local reason="${1:-scheduled}"
 	local start_log="${2:-[MERIKEN_TIME] メリケンAIタイム開始}"
@@ -237,6 +258,7 @@ while true; do
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
+	_exit_if_lock_owner_changed "before_game"
 
 	# ゲーム番号を毎試合読み直す
 	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
@@ -293,6 +315,10 @@ while true; do
 			_run_scheduled_meriken_time_window \
 				"improve_complete" \
 				"[MERIKEN_TIME] 改善完了→20時台: メリケンAIタイム開始"
+		else
+			log "[MERIKEN_TIME] 定時メリケンAIタイム無効のため、soren91を通常停止"
+			soren91_stop 2>/dev/null || true
+			soren91_improve 2>/dev/null || true
 		fi
 	fi
 
@@ -313,6 +339,7 @@ while true; do
 		sleep 2
 		continue
 	fi
+	_exit_if_lock_owner_changed "before_post_game"
 
 	# 後処理 (スコア記録, バージョン保存, git commit 等)
 	# 粛清判定が走る前に prediction_worker がサイクル完了 resolve を先行発火させないよう、

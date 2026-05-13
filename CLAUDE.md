@@ -138,7 +138,6 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 | ファイル | 役割 |
 |---------|------|
-| `lib/regression_calc.py` | 回帰/ランキング計算の共有ライブラリ |
 | `lib/radio_parser.py` | ラジオトーク出力のパース (body/summary/selected-news) |
 | `lib/radio_text_utils.py` | ラジオテキスト処理 (dedup/sanitize/normalize_tone) |
 | `lib/news_filter.py` | ニュースフィルタリング (title_key/filter_unread/resolve_title) |

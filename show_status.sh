@@ -45,6 +45,7 @@ BRANCH_HARD_P25_GAP=${BRANCH_HARD_P25_GAP:-2600}
 BRANCH_HARD_MIN_BREACH_COUNT=${BRANCH_HARD_MIN_BREACH_COUNT:-2}
 REJECTED_REEVALUATE_TTL_SEC=${REJECTED_REEVALUATE_TTL_SEC:-21600}
 RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
+SHOW_STATUS_ROLLBACK_HISTORY_LIMIT=${SHOW_STATUS_ROLLBACK_HISTORY_LIMIT:-5}
 
 case "$WATCH_INTERVAL" in
 ''|*[!0-9]*) WATCH_INTERVAL=10 ;;
@@ -53,6 +54,10 @@ esac
 (( WATCH_INTERVAL < 1 )) && WATCH_INTERVAL=10
 (( DROP_REFRESH_INTERVAL <= 0 )) && DROP_REFRESH_INTERVAL=0.25
 (( DROP_REFRESH_INTERVAL > WATCH_INTERVAL )) && DROP_REFRESH_INTERVAL=$WATCH_INTERVAL
+case "$SHOW_STATUS_ROLLBACK_HISTORY_LIMIT" in
+''|*[!0-9]*) SHOW_STATUS_ROLLBACK_HISTORY_LIMIT=5 ;;
+esac
+(( SHOW_STATUS_ROLLBACK_HISTORY_LIMIT < 1 )) && SHOW_STATUS_ROLLBACK_HISTORY_LIMIT=1
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
 W=57
@@ -94,6 +99,17 @@ _pid_elapsed() {
 	else
 		echo "$(( elapsed / 60 ))m$(( elapsed % 60 ))s"
 	fi
+}
+
+_find_process_pid() {
+	local pattern="$1"
+	ps -Ao pid=,command= 2>/dev/null | awk -v pattern="$pattern" -v self="$$" '
+		$1 == self { next }
+		$0 ~ pattern && $0 !~ /awk -v pattern/ {
+			print $1
+			exit
+		}
+	'
 }
 
 # ファイルの経過時間を返す
@@ -216,6 +232,82 @@ _print_ai_output_lines() {
 			printf "    ${C_WHITE}│${C_RESET}             ${C_DIM}%s${C_RESET}\n" "$ai_line"
 		fi
 	done <<<"$ai_block"
+}
+
+_format_regression_detail_lines() {
+	local detail="$1"
+	python3 - "$detail" <<'PY' 2>/dev/null
+import shlex
+import sys
+
+detail = sys.argv[1]
+try:
+    parts = shlex.split(detail)
+except Exception:
+    parts = detail.split()
+
+if not parts:
+    print("N/A")
+    raise SystemExit(0)
+
+state = parts[0]
+tokens = parts[1:]
+head = [state]
+gap = []
+best_meta = []
+best_gap = []
+budget = []
+other = []
+n_token = ""
+
+for token in tokens:
+    if token.startswith("n="):
+        n_token = token
+    elif token == "hard":
+        head.append(token)
+    elif token.startswith(("anchor=", "a=")):
+        head.append(token)
+    elif token.startswith(("gap=", "br=")):
+        gap.append(token)
+    elif token.startswith(("best=", "bbr=")):
+        best_meta.append(token)
+    elif token.startswith(("bc", "bm", "bq")):
+        best_gap.append(token)
+    elif token.startswith(("depth=", "games=", "patience=")):
+        budget.append(token)
+    else:
+        other.append(token)
+
+if n_token:
+    head.append(n_token)
+
+lines = [" ".join(head)]
+for group in (gap, best_meta, best_gap, budget, other):
+    if group:
+        lines.append(" ".join(group))
+
+for line in lines:
+    print(line)
+PY
+}
+
+_print_regression_detail() {
+	local detail="$1" color="$2"
+	local first_line=true
+	local max_head=$(( W - 18 ))
+	local max_cont=$(( W - 18 ))
+	local reg_line=""
+	while IFS= read -r reg_line; do
+		[[ -n "$reg_line" ]] || continue
+		if $first_line; then
+			reg_line=$(_truncate_display_width "$reg_line" "$max_head")
+			printf "    ${C_WHITE}▸${C_RESET} Regression  ${color}%s${C_RESET}\n" "$reg_line"
+			first_line=false
+		else
+			reg_line=$(_truncate_display_width "$reg_line" "$max_cont")
+			printf "    ${C_WHITE}│${C_RESET}             ${color}%s${C_RESET}\n" "$reg_line"
+		fi
+	done <<<"$(_format_regression_detail_lines "${detail:-N/A}")"
 }
 
 _latest_drop_signature() {
@@ -454,242 +546,8 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 		acc_scores=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('scores','') if (h and h == '$current_hash_for_acc') else '')" 2>/dev/null)
 	fi
 
-	# --- ローリングスコア & リグレッション ---
-	local rolling_hash="" rolling_count=0 rolling_avg="" rolling_prev_avg=""
-	local rolling_comp="" rolling_p50="" rolling_p25="" rolling_total=""
-	local best_hash_short="" best_comp="" best_p50="" best_p25="" best_total="" best_source_short=""
-	local regression_state="" regression_detail=""
-		local rejected_count=0
-		if [[ -f $TMP_STATE_DIR/rolling_scores.json ]] && [[ -f strategy.py ]]; then
-			eval "$(
-				python3 - <<PY 2>/dev/null
-import json
-import math
-import os
-import shlex
-import subprocess
-
-rs = json.load(open("$TMP_STATE_DIR/rolling_scores.json"))
-h = subprocess.run(
-    ["python3", "extract_decide_hash.py", "strategy.py"],
-    capture_output=True,
-    text=True,
-).stdout.strip()
-current_run = {}
-try:
-    current_run = json.load(open("$CURRENT_STRATEGY_RUN_FILE"))
-except Exception:
-    current_run = {}
-min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
-min_games_current = int(${MIN_GAMES_BEFORE_REGRESSION})
-max_rank = int(${REGRESSION_MAX_RANK})
-min_comp_gap = float(${REGRESSION_MIN_COMP_GAP})
-min_p50_gap = float(${REGRESSION_MIN_P50_GAP})
-min_p25_gap = float(${REGRESSION_MIN_P25_GAP})
-min_breach_count = int(${REGRESSION_MIN_BREACH_COUNT})
-archive_dir = "strategy_versions/by_hash"
-keep_top = int(${HASH_ARCHIVE_KEEP_TOP:-100})
-score_history_file = "score_history.txt"
-
-def quantile(xs, q):
-    ys = sorted(float(v) for v in xs)
-    n = len(ys)
-    if n == 0:
-        return 0.0
-    if n == 1:
-        return ys[0]
-    pos = (n - 1) * q
-    lo = int(math.floor(pos))
-    hi = int(math.ceil(pos))
-    if lo == hi:
-        return ys[lo]
-    frac = pos - lo
-    return ys[lo] * (1.0 - frac) + ys[hi] * frac
-
-def metrics(scores):
-    xs = [float(v) for v in scores]
-    n = len(xs)
-    if n <= 0:
-        return None
-    avg = sum(xs) / n
-    p50 = quantile(xs, 0.50)
-    p25 = quantile(xs, 0.25)
-    if n > 1:
-        var = sum((s - avg) ** 2 for s in xs) / n
-        std = math.sqrt(max(var, 0.0))
-    else:
-        std = 0.0
-    lcb = avg - 1.28 * (std / math.sqrt(n))
-    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
-    return {"avg": avg, "comp": comp, "p50": p50, "p25": p25, "n": n}
-
-def load_json(path):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-if h:
-    current_data = {"hash": h, "scores": [], "games_total": 0}
-    if str(current_run.get("hash", "") or "") == h:
-        current_data = current_run
-    prev_h = str(current_data.get("prev_hash", "") or rs.get(h, {}).get("prev_hash", "") or "")
-    scores = current_data.get("scores", [])
-    m = metrics(scores)
-    games_total = current_data.get("games_total", len(scores))
-    try:
-        games_total = int(games_total)
-    except Exception:
-        games_total = len(scores)
-    avg = m["avg"] if m else 0
-    print(f"rolling_hash={h[:8]}")
-    print(f"rolling_count={games_total}")
-    print(f"rolling_avg={avg:.0f}")
-    if prev_h and prev_h in rs and rs[prev_h]["scores"]:
-        prev_scores = rs[prev_h]["scores"]
-        prev_avg = sum(prev_scores) / len(prev_scores)
-        print(f"rolling_prev_avg={prev_avg:.0f}")
-    print(f"rolling_total={games_total}")
-    if m:
-        comp = m["comp"]
-        p50 = m["p50"]
-        p25 = m["p25"]
-        n = m["n"]
-        print(f"rolling_comp={comp:.0f}")
-        print(f"rolling_p50={p50:.0f}")
-        print(f"rolling_p25={p25:.0f}")
-        anchor_payload = load_json("${TMP_STATE_DIR}/best_strategy_anchor.json")
-        active_branch = load_json("${ACTIVE_BRANCH_FILE}")
-        if anchor_payload and anchor_payload.get("hash"):
-            anchor_hash = str(anchor_payload.get("hash", "") or "")
-            anchor_comp = float(anchor_payload.get("comp", 0.0) or 0.0)
-            anchor_p50 = float(anchor_payload.get("p50", 0.0) or 0.0)
-            anchor_p25 = float(anchor_payload.get("p25", 0.0) or 0.0)
-            anchor_n = int(anchor_payload.get("n", 0) or 0)
-            branch_active = (
-                str(active_branch.get("head_hash", "") or "") == h
-                and str(active_branch.get("anchor_hash", "") or "")
-            )
-            if branch_active:
-                anchor_hash = str(active_branch.get("anchor_hash", "") or anchor_hash)
-                anchor_blob = active_branch.get("anchor", {}) if isinstance(active_branch.get("anchor"), dict) else {}
-                anchor_comp = float(anchor_blob.get("comp", anchor_comp) or 0.0)
-                anchor_p50 = float(anchor_blob.get("p50", anchor_p50) or 0.0)
-                anchor_p25 = float(anchor_blob.get("p25", anchor_p25) or 0.0)
-                anchor_n = int(anchor_blob.get("n", anchor_n) or 0)
-            print(f"best_hash_short={anchor_hash[:8]}")
-            print(f"best_comp={anchor_comp:.0f}")
-            print(f"best_p50={anchor_p50:.0f}")
-            print(f"best_p25={anchor_p25:.0f}")
-            print(f"best_total={anchor_n}")
-            print("best_source_short=" + shlex.quote("anchor"))
-
-            comp_gap = max(0.0, anchor_comp - comp)
-            p50_gap = max(0.0, anchor_p50 - p50)
-            p25_gap = max(0.0, anchor_p25 - p25)
-            breach_count = sum(
-                [
-                    1 if comp_gap >= min_comp_gap else 0,
-                    1 if p50_gap >= min_p50_gap else 0,
-                    1 if p25_gap >= min_p25_gap else 0,
-                ]
-            )
-            hard_breach_count = sum(
-                [
-                    1 if comp_gap >= float(${BRANCH_HARD_COMP_GAP}) else 0,
-                    1 if p50_gap >= float(${BRANCH_HARD_P50_GAP}) else 0,
-                    1 if p25_gap >= float(${BRANCH_HARD_P25_GAP}) else 0,
-                ]
-            )
-            gap_text = f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))} br={breach_count}/{min_breach_count}"
-
-            if h == anchor_hash and not branch_active:
-                print("regression_state=safe")
-                print("regression_detail=" + shlex.quote(f"NO anchor={anchor_hash[:8]} n={int(n)}"))
-            elif int(n) < min_games_current:
-                detail = f"WAIT anchor={anchor_hash[:8]} n={int(n)}/{min_games_current}"
-                state = "grace"
-                if breach_count >= min_breach_count:
-                    detail = f"WARN anchor={anchor_hash[:8]}{gap_text} n={int(n)}/{min_games_current}"
-                    state = "warning"
-                print("regression_state=" + state)
-                print("regression_detail=" + shlex.quote(detail))
-            elif (comp, p50, p25, n) > (anchor_comp, anchor_p50, anchor_p25, anchor_n):
-                print("regression_state=safe")
-                print("regression_detail=" + shlex.quote(f"PROMOTE anchor={anchor_hash[:8]} n={int(n)}"))
-            elif not branch_active:
-                detail = f"NO anchor={anchor_hash[:8]}{gap_text} n={int(n)}"
-                state = "safe"
-                if hard_breach_count >= int(${BRANCH_HARD_MIN_BREACH_COUNT}):
-                    detail = f"YES anchor={anchor_hash[:8]} hard{gap_text} n={int(n)}"
-                    state = "trigger"
-                print("regression_state=" + state)
-                print("regression_detail=" + shlex.quote(detail))
-            else:
-                best_hash = str(active_branch.get("best_hash", "") or "")
-                best_blob = active_branch.get("best", {}) if isinstance(active_branch.get("best"), dict) else {}
-                if best_hash:
-                    best_comp = float(best_blob.get("comp", 0.0) or 0.0)
-                    best_p50 = float(best_blob.get("p50", 0.0) or 0.0)
-                    best_p25 = float(best_blob.get("p25", 0.0) or 0.0)
-                    best_n = int(best_blob.get("n", 0) or 0)
-                else:
-                    best_hash = h
-                    best_comp = comp
-                    best_p50 = p50
-                    best_p25 = p25
-                    best_n = int(n)
-                if (comp, p50, p25, n) > (best_comp, best_p50, best_p25, best_n):
-                    best_hash = h
-                    best_comp = comp
-                    best_p50 = p50
-                    best_p25 = p25
-                    best_n = int(n)
-                best_comp_gap = max(0.0, anchor_comp - best_comp)
-                best_p50_gap = max(0.0, anchor_p50 - best_p50)
-                best_p25_gap = max(0.0, anchor_p25 - best_p25)
-                best_breach_count = sum(
-                    [
-                        1 if best_comp_gap >= min_comp_gap else 0,
-                        1 if best_p50_gap >= min_p50_gap else 0,
-                        1 if best_p25_gap >= min_p25_gap else 0,
-                    ]
-                )
-                depth = int(active_branch.get("depth", 0) or 0)
-                closed_games = int(active_branch.get("closed_games", 0) or 0)
-                patience = int(active_branch.get("patience", 0) or 0)
-                branch_games = closed_games + int(n)
-                budget_hit = []
-                if depth >= int(${BRANCH_MAX_DEPTH}):
-                    budget_hit.append("d")
-                if branch_games >= int(${BRANCH_MAX_GAMES}):
-                    budget_hit.append("g")
-                if patience >= int(${BRANCH_PATIENCE}):
-                    budget_hit.append("p")
-                budget_text = f" depth={depth}/{int(${BRANCH_MAX_DEPTH})} games={branch_games}/{int(${BRANCH_MAX_GAMES})} patience={patience}/{int(${BRANCH_PATIENCE})}"
-                if hard_breach_count >= int(${BRANCH_HARD_MIN_BREACH_COUNT}):
-                    print("regression_state=trigger")
-                    print("regression_detail=" + shlex.quote(f"YES anchor={anchor_hash[:8]} hard{gap_text}{budget_text} n={int(n)}"))
-                elif budget_hit and best_breach_count >= min_breach_count:
-                    best_gap_text = f" best={best_hash[:8]} bc{int(round(best_comp_gap))}/bm{int(round(best_p50_gap))}/bq{int(round(best_p25_gap))} bbr={best_breach_count}/{min_breach_count}"
-                    print("regression_state=trigger")
-                    print("regression_detail=" + shlex.quote(f"YES anchor={anchor_hash[:8]}{gap_text}{best_gap_text}{budget_text} n={int(n)}"))
-                elif budget_hit:
-                    print("regression_state=safe")
-                    print("regression_detail=" + shlex.quote(f"RESET anchor={anchor_hash[:8]} best={best_hash[:8]}{budget_text} n={int(n)}"))
-                else:
-                    print("regression_state=safe")
-                    print("regression_detail=" + shlex.quote(f"NO anchor={anchor_hash[:8]}{gap_text}{budget_text} n={int(n)}"))
-        else:
-            print("regression_state=safe")
-            print("regression_detail=" + shlex.quote("NO no anchor"))
-PY
-			)"
-		fi
+	# --- リジェクト履歴 ---
+	local rejected_count=0
 	[[ -f $TMP_HISTORY_DIR/rejected_hashes.txt ]] && rejected_count=$(python3 - <<PY 2>/dev/null
 import json
 import time
@@ -736,18 +594,6 @@ PY
 	# --- 最低試合ゲート ---
 	local min_games=12
 
-	# --- スコア情報 ---
-	local best_score=$(cat best_score.txt 2>/dev/null || echo "?")
-	local game_count=$(cat game_count.txt 2>/dev/null || echo "?")
-	local last_scores=""
-	[[ -f score_history.txt ]] && last_scores=$(tail -5 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' | tr '\n' ' ')
-
-	# --- 戦略情報 ---
-	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_score[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)
-	local strategy_lines=$(wc -l < strategy.py 2>/dev/null | tr -d ' ')
-	local strategy_decide_hash="?"
-	strategy_decide_hash=$(python3 extract_decide_hash.py strategy.py 2>/dev/null || echo "?")
-
 	# --- ロールバック履歴 ---
 	local rollback_total=0 rollback_last_at="" rollback_last_age=""
 	local -a rollback_events
@@ -758,12 +604,18 @@ PY
 			LAST_AGE) rollback_last_age="$rec_a" ;;
 			EVENT) rollback_events+=("${rec_a}|${rec_b}|${rec_c}|${rec_d}") ;;
 		esac
-	done < <(python3 - <<'PY'
+	done < <(python3 - "$SHOW_STATUS_ROLLBACK_HISTORY_LIMIT" <<'PY'
 import ast
 import datetime as dt
 import hashlib
 import re
 import subprocess
+import sys
+
+try:
+    event_limit = max(1, int(sys.argv[1]))
+except Exception:
+    event_limit = 5
 
 
 def run(cmd):
@@ -848,7 +700,7 @@ try:
 except Exception:
     pass
 
-for commit, ad, subj in rows[:2]:
+for commit, ad, subj in rows[:event_limit]:
     when_disp = ad
     try:
         when_disp = dt.datetime.fromisoformat(ad).strftime("%m-%d %H:%M")
@@ -1104,6 +956,12 @@ PY
 	local improve_daemon_running=false improve_daemon_pid=""
 	if [[ -f tmp/state/improve_daemon.pid ]]; then
 		improve_daemon_pid=$(cat tmp/state/improve_daemon.pid 2>/dev/null)
+		if [[ -n "$improve_daemon_pid" ]] && kill -0 "$improve_daemon_pid" 2>/dev/null; then
+			improve_daemon_running=true
+		fi
+	fi
+	if ! $improve_daemon_running; then
+		improve_daemon_pid=$(_find_process_pid '[/ ]improve_daemon[.]sh([[:space:]]|$)')
 		if [[ -n "$improve_daemon_pid" ]] && kill -0 "$improve_daemon_pid" 2>/dev/null; then
 			improve_daemon_running=true
 		fi
@@ -1379,49 +1237,8 @@ PY
 
 	echo ""
 
-	# === セクション: Strategy & Scores ===
-	printf "  ${C_BOLD}STRATEGY / SAFETY${C_RESET}\n"
-	# "    ▸ Version     " = 18, "  XXXL" = 6 → version name max = W-24
-	local ver_display="${strategy_ver:-strategy.py}"
-	local max_ver=$(( W - 24 ))
-	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2))]}.."
-	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
-	printf "    ${C_WHITE}▸${C_RESET} DecideHash  ${C_DIM}%s${C_RESET}\n" "${strategy_decide_hash}"
-
-	# Score metrics + trend bar for current strategy
-		if [[ -n "$rolling_comp" ]]; then
-			printf "    ${C_WHITE}▸${C_RESET} Score       ${C_DIM}comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
-				"$rolling_comp" "$rolling_p50" "$rolling_p25" "${rolling_total:-0}"
-			if [[ -n "$best_comp" ]]; then
-				printf "    ${C_WHITE}▸${C_RESET} BestRef     ${C_DIM}%s(%s)  comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
-					"${best_hash_short:-?}" "${best_source_short:-rolling}" "$best_comp" "$best_p50" "$best_p25" "${best_total:-0}"
-			fi
-			if [[ -n "$regression_state" ]]; then
-				local reg_color="$C_DIM"
-				case "$regression_state" in
-					trigger) reg_color="$C_RED" ;;
-					warning) reg_color="$C_RED" ;;
-					safe) reg_color="$C_GREEN" ;;
-				esac
-				printf "    ${C_WHITE}▸${C_RESET} Regression  ${reg_color}%s${C_RESET}\n" "${regression_detail:-N/A}"
-			fi
-			# Trend mini-bar: comp normalized to max 2000, width 20
-			local bar_max=2000 bar_width=20
-		local bar_filled=$(( rolling_comp * bar_width / bar_max ))
-		(( bar_filled > bar_width )) && bar_filled=$bar_width
-		(( bar_filled < 0 )) && bar_filled=0
-		local bar_empty=$(( bar_width - bar_filled ))
-		local trend_suffix="avg ${rolling_avg:-?}"
-		if [[ -n "$rolling_prev_avg" ]] && (( rolling_prev_avg > 0 )); then
-			local diff_pct=$(( (rolling_avg - rolling_prev_avg) * 100 / rolling_prev_avg ))
-			local sign=""; (( diff_pct >= 0 )) && sign="+"
-			trend_suffix="${trend_suffix} vs prev ${rolling_prev_avg} ${sign}${diff_pct}%"
-		fi
-		printf "    ${C_WHITE}▸${C_RESET} Trend       ${C_GREEN}%s${C_DIM}%s${C_RESET} ${C_DIM}(%s)${C_RESET}\n" \
-			"$(printf '%0.s█' $(seq 1 $((bar_filled > 0 ? bar_filled : 1))))" \
-			"$(printf '%0.s░' $(seq 1 $((bar_empty > 0 ? bar_empty : 1))))" \
-			"$trend_suffix"
-	fi
+	# === セクション: Rollback history ===
+	printf "  ${C_BOLD}ROLLBACKS${C_RESET}\n"
 
 	local rollback_head="total=${rollback_total}  rejected=${rejected_count}"
 	if [[ -n "$rollback_last_age" ]]; then
@@ -1486,11 +1303,57 @@ PY
 #=== 描画ヘルパー: 各行に行末クリアを付与 ===
 CLR=$'\033[K'
 
+_clip_status_width() {
+	python3 -c '
+import re
+import sys
+import unicodedata
+
+max_width = int(sys.argv[1])
+ansi_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+def ch_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+
+def clip_line(line):
+    out = []
+    width = 0
+    i = 0
+    truncated = False
+    while i < len(line):
+        m = ansi_re.match(line, i)
+        if m:
+            out.append(m.group(0))
+            i = m.end()
+            continue
+        ch = line[i]
+        w = ch_width(ch)
+        if width + w > max_width:
+            truncated = True
+            break
+        out.append(ch)
+        width += w
+        i += 1
+    if truncated and "\x1b[" in line:
+        out.append("\x1b[0m")
+    return "".join(out)
+
+for line in sys.stdin.read().splitlines():
+    print(clip_line(line))
+' "$W"
+}
+
 render() {
-	local buf=""
+	local raw="" clipped="" buf=""
+	while IFS= read -r line; do
+		raw+="${line}"$'\n'
+	done
+	clipped=$(printf '%s' "$raw" | _clip_status_width)
 	while IFS= read -r line; do
 		buf+="${line}${CLR}"$'\n'
-	done
+	done <<<"$clipped"
 	printf '\033[H%s\033[J' "$buf"
 }
 

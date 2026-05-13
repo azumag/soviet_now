@@ -81,6 +81,13 @@ while true; do
 		_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
 	fi
 
+	# === VOICEVOX failure check ===
+	_say_fail_count=0
+	_say_fail_count=$(grep -Ec 'VOICEVOX合成失敗|say起動失敗' tmp/.say_queue/debug.log 2>/dev/null | awk '{s+=$1}END{print s+0}')
+	if [ "${_say_fail_count:-0}" -gt 3 ]; then
+		_log "WARNING: say_enqueue ${_say_fail_count}件失敗中 — VOICEVOX(${VOICEVOX_HOST:-localhost:50021})への接続を確認してください"
+	fi
+
 	# 再生処理: コメント → external trigger → deferred radio
 	_play_comment_queue 2>/dev/null || true
 

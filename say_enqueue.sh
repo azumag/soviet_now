@@ -49,6 +49,18 @@ SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
+# timeout コマンド解決 (macOS coreutils vs GNU) — 原因調査中は無効化
+TIMEOUT_CMD=""
+# for _tc in timeout gtimeout; do
+# 	if command -v "$_tc" >/dev/null 2>&1; then
+# 		TIMEOUT_CMD="$_tc"
+# 		break
+# 	fi
+# done
+# デフォルト値（VOICEVOX合成の外側タイムアウト; 秒指定なしはSIGKILLまで待機は危険）
+VOICEVOX_SYNTH_TIMEOUT_SEC="${VOICEVOX_SYNTH_TIMEOUT_SEC:-90}"
+VOICEVOX_SYNTH_KILL_AFTER_SEC="${VOICEVOX_SYNTH_KILL_AFTER_SEC:-10}"
+
 # --- VOICEVOX ASMR (ささやき系) 話者選択 ---
 # _pick_asmr_voicevox_speaker: ささやき系から "ID|名前/スタイル" を stdout に返す（粛清フィルタ適用）
 _pick_asmr_voicevox_speaker() {
@@ -220,6 +232,13 @@ if [ "$WAV_MODE" = "false" ]; then
 		-e 's/地政学的/ちせいがくてき/g' \
 		-e 's/地政学/ちせいがく/g' \
 		-e 's/NISA/ニーサ/g' \
+		-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+		-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+		-e 's/MAGA/マガ/g' \
+		-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+		-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+		-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+		-e 's/Made in China/メイドインチャイナ/g' \
 		"$MY_CONTENT"
 fi
 
@@ -283,6 +302,19 @@ _append_played_log() {
 		fi
 		;;
 	esac
+}
+
+_text_is_strategy_meta_failure() {
+	local text
+	text=$(printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g')
+	[ -n "$text" ] || return 0
+	printf '%s' "$text" | grep -Eiq '申し訳(ありません|ございません|ない).*(エラーメッセージ|提供|ユーザーメッセージ|指示|タスク|情報|スクリーンショット)' && return 0
+	printf '%s' "$text" | grep -Eiq '(エラーメッセージ|ユーザーメッセージ|具体的な指示|明確な指示|具体的なタスク).*(提供されてい|見当たりません|ありません|ない|不足)' && return 0
+	printf '%s' "$text" | grep -Eiq '(入力|依頼|プロンプト|コンテキスト|戦略ヘッダー|本文).*(提供されてい|与えられてい|見当たりません|ありません|ない|不足)' && return 0
+	printf '%s' "$text" | grep -Eiq '(エラー|エラーメッセージ).*(詳細|内容|原因|情報).*(提供されてい|見当たりません|ありません|ない|不足|不明)' && return 0
+	printf '%s' "$text" | grep -Eiq '(ツール|権限|許可|WebFetch|検索|外部アクセス).*(確認|必要|できません|ありません|ない)' && return 0
+	printf '%s' "$text" | grep -Eiq '(何も言えません|語ることはできません|控えておくべき|確認させてください|どうすればよい|何を.*すれば)' && return 0
+	return 1
 }
 
 _is_lock_owner() {
@@ -503,6 +535,12 @@ _cleanup() {
 }
 trap '_cleanup' EXIT
 
+if [ "${SOURCE_LABEL:-}" = "soren91:strategy" ] && _text_is_strategy_meta_failure "$(cat "$MY_CONTENT" 2>/dev/null || true)"; then
+	_log "soren91 strategy meta failure detected; skip TTS"
+	_append_played_log "skipped_meta_failure"
+	exit 0
+fi
+
 _log "queued (token=${MY_TOKEN})"
 
 _sleep_with_heartbeat() {
@@ -605,8 +643,91 @@ BEGIN {
 BEGIN {
     sec = int((c / cps) + 0.999)
     if (sec < 8) sec = 8
-    print sec
+	print sec
 }'
+}
+
+_launch_bg_exec() {
+	local cleanup_file="$1"
+	shift
+	nohup bash -c '
+		trap "" INT TERM
+		cleanup_file="$1"
+		shift
+		if [ -n "$cleanup_file" ]; then
+			trap '"'"'[ -n "$cleanup_file" ] && rm -f "$cleanup_file"'"'"' EXIT
+		fi
+		exec "$@"
+	' _ "$cleanup_file" "$@" >/dev/null 2>&1 &
+}
+
+_launch_afplay_bg() {
+	local audio_file="$1" cleanup_file="${2:-}"
+	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+		_launch_bg_exec "$cleanup_file" afplay -d "$SAY_AUDIO_DEVICE" "$audio_file"
+	else
+		_launch_bg_exec "$cleanup_file" afplay "$audio_file"
+	fi
+}
+
+_launch_ffmpeg_bg() {
+	local audio_file="$1" device_index="$2" cleanup_file="${3:-}"
+	_launch_bg_exec "$cleanup_file" ffmpeg -y -loglevel error -i "$audio_file" -f audiotoolbox -audio_device_index "$device_index" ""
+}
+
+_launch_say_bg() {
+	local rate="$1" content_file="$2"
+	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+		_launch_bg_exec "" say -a "$SAY_AUDIO_DEVICE" -r "$rate" -f "$content_file"
+	else
+		_launch_bg_exec "" say -r "$rate" -f "$content_file"
+	fi
+}
+
+_kill_player_pid() {
+	local pid="$1"
+	[ -n "$pid" ] || return 0
+	kill "$pid" 2>/dev/null || true
+	sleep 1
+	kill -9 "$pid" 2>/dev/null || true
+}
+
+PLAYER_WAIT_RC=0
+PLAYER_WAIT_ELAPSED=0
+PLAYER_WAIT_TIMED_OUT=0
+_wait_for_player_pid() {
+	local player_pid="$1" expected_sec="${2:-0}" touch_synth_lock="${3:-0}"
+	local start_ts now_ts max_wait_sec=0
+	PLAYER_WAIT_RC=0
+	PLAYER_WAIT_ELAPSED=0
+	PLAYER_WAIT_TIMED_OUT=0
+	start_ts=$(date +%s)
+	if [ "${expected_sec:-0}" -gt 0 ]; then
+		max_wait_sec=$((expected_sec + SAY_TRUNCATE_GRACE_SEC + SAY_HANG_EXTRA_SEC))
+	fi
+	while kill -0 "$player_pid" 2>/dev/null; do
+		_touch_lock_heartbeat
+		[ "$touch_synth_lock" -eq 1 ] && _touch_voicevox_synth_lock_heartbeat
+		sleep 1
+		if [ "$max_wait_sec" -gt 0 ]; then
+			now_ts=$(date +%s)
+			PLAYER_WAIT_ELAPSED=$((now_ts - start_ts))
+			if [ "$PLAYER_WAIT_ELAPSED" -gt "$max_wait_sec" ]; then
+				PLAYER_WAIT_TIMED_OUT=1
+				_log "say再生ハング疑い (elapsed=${PLAYER_WAIT_ELAPSED}s, expected=${expected_sec}s, max=${max_wait_sec}s) → 強制終了"
+				_kill_player_pid "$player_pid"
+				break
+			fi
+		fi
+	done
+	wait "$player_pid" 2>/dev/null
+	PLAYER_WAIT_RC=$?
+	if [ "$PLAYER_WAIT_TIMED_OUT" -eq 1 ]; then
+		PLAYER_WAIT_RC=99
+	fi
+	now_ts=$(date +%s)
+	PLAYER_WAIT_ELAPSED=$((now_ts - start_ts))
+	[ "$PLAYER_WAIT_RC" -eq 0 ]
 }
 
 _is_truncated_playback() {
@@ -658,15 +779,22 @@ for c in chunks:
 }
 
 # 単一チャンクをVOICEVOXで合成（voicevox_tts.shの再分割を抑止）
+# timeout で外側からもkill保証（VOICEVOX起動濟みだがcurlが返らない場合に対応）
 _synthesize_chunk() {
 	local text="$1" output="$2"
-	VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
-		VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
-		VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
-		VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+	local _sc_cmd="VOICEVOX_SPEAKER=\"$VOICEVOX_SPEAKER\" \
+		VOICEVOX_PITCH=\"${PRE_SYNTH_PITCH:-}\" \
+		VOICEVOX_TEMPO=\"${PRE_SYNTH_TEMPO:-}\" \
+		VOICEVOX_INTONATION=\"${PRE_SYNTH_INTONATION:-}\" \
 		VOICEVOX_TIMEOUT=30 \
 		VOICEVOX_MAX_CHARS=99999 \
-		./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
+		./voicevox_tts.sh -o \"$output\" \"$text\""
+	if [ -n "$TIMEOUT_CMD" ]; then
+		$TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
+			bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+	else
+		bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+	fi
 }
 
 _launch_stream_wav() {
@@ -675,13 +803,12 @@ _launch_stream_wav() {
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$wav_file" >/dev/null 2>&1 &
+			_launch_afplay_bg "$wav_file"
 			return 0
 		}
-		nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""' \
-			_ "$wav_file" "$device_index" >/dev/null 2>&1 &
+		_launch_ffmpeg_bg "$wav_file" "$device_index"
 	else
-		nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$wav_file" >/dev/null 2>&1 &
+		_launch_afplay_bg "$wav_file"
 	fi
 	return 0
 }
@@ -703,9 +830,10 @@ _stream_voicevox_play() {
 	_log "ストリーミング再生開始 (1+${total}チャンク)"
 
 	# チャンク0（事前合成済み）を再生開始
-	local play_pid="" current_wav="$PRE_SYNTH_WAV"
+	local play_pid="" current_wav="$PRE_SYNTH_WAV" current_expected_sec=0 stream_failed=0
 	_launch_stream_wav "$current_wav"
 	play_pid=$!
+	current_expected_sec=$(_estimate_audio_duration_sec "$current_wav")
 	echo "$play_pid" >"$PID_FILE"
 	LAST_SAY_PID="$play_pid"
 
@@ -742,35 +870,34 @@ _stream_voicevox_play() {
 		fi
 
 		# 現チャンク再生完了を待機
-		while kill -0 "$play_pid" 2>/dev/null; do
-			_touch_lock_heartbeat
-			[ "$_stream_locked" -eq 1 ] && _touch_voicevox_synth_lock_heartbeat
-			sleep 0.5
-		done
-		wait "$play_pid" 2>/dev/null
+		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" "$_stream_locked"; then
+			stream_failed=1
+			rm -f "$next_wav" 2>/dev/null
+			rm -f "$current_wav" 2>/dev/null
+			break
+		fi
 		rm -f "$current_wav" 2>/dev/null
 
 		# 次チャンク再生（合成失敗なら中断）
 		if [ "$synth_ok" -eq 0 ] && [ -s "$next_wav" ]; then
 			_launch_stream_wav "$next_wav"
 			play_pid=$!
+			current_expected_sec=$(_estimate_audio_duration_sec "$next_wav")
 			echo "$play_pid" >"$PID_FILE"
 			LAST_SAY_PID="$play_pid"
 			current_wav="$next_wav"
 		else
 			_log "チャンク$((i + 1))/${total} 合成失敗 → ストリーミング中断"
+			stream_failed=1
 			break
 		fi
 	done
 
 	# 最終チャンク再生完了を待機
-	if [ -n "$play_pid" ] && kill -0 "$play_pid" 2>/dev/null; then
-		while kill -0 "$play_pid" 2>/dev/null; do
-			_touch_lock_heartbeat
-			[ "$_stream_locked" -eq 1 ] && _touch_voicevox_synth_lock_heartbeat
-			sleep 0.5
-		done
-		wait "$play_pid" 2>/dev/null
+	if [ "$stream_failed" -eq 0 ] && [ -n "$play_pid" ] && kill -0 "$play_pid" 2>/dev/null; then
+		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" "$_stream_locked"; then
+			stream_failed=1
+		fi
 	fi
 	rm -f "$current_wav" 2>/dev/null
 
@@ -783,6 +910,7 @@ _stream_voicevox_play() {
 	# ストリーミング一時ファイル削除
 	rm -rf "$stream_dir" 2>/dev/null
 
+	[ "$stream_failed" -eq 0 ] || return 1
 	_log "ストリーミング再生完了"
 	return 0
 }
@@ -794,7 +922,7 @@ _launch_say() {
 	# --- Pre-synthesized WAV (--wav mode) ---
 	if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
-		nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$MY_CONTENT\" >/dev/null 2>&1 &
+		_launch_afplay_bg "$MY_CONTENT"
 		LAUNCH_MODE="wav"
 		LAUNCHED_SAY_PID="$!"
 		return
@@ -806,16 +934,15 @@ _launch_say() {
 		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 			local device_index
 			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-				nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$PRE_SYNTH_WAV\" >/dev/null 2>&1 &
+				_launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
 				LAUNCH_MODE="voicevox_pre"
 				LAUNCHED_SAY_PID="$!"
 				_log "事前合成WAV再生 (device=default)"
 				return
 			}
-			nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit $rc' \
-				_ "$PRE_SYNTH_WAV" "$device_index" >/dev/null 2>&1 &
+			_launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"
 		else
-			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$PRE_SYNTH_WAV\" >/dev/null 2>&1 &
+			_launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
 		fi
 		LAUNCH_MODE="voicevox_pre"
 		LAUNCHED_SAY_PID="$!"
@@ -899,7 +1026,13 @@ _launch_say() {
 				sleep 2
 			done) &
 			_hb_pid=$!
-			if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+			if [ -n "$TIMEOUT_CMD" ]; then
+				# 一時的にtimeoutを無効化: 原因調査中
+				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+					./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
+					_vo_ok=1
+				fi
+			elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
 				./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
 				_vo_ok=1
 			fi
@@ -913,6 +1046,10 @@ _launch_say() {
 			_vo_synth_locked=0
 		fi
 		if [ "$_vo_ok" -eq 1 ]; then
+			# DEBUG: log exit details when synthesis fails
+			if [ "$_vo_ok" -ne 1 ]; then
+				_log "DEBUG: vo_synth FAILED — _vo_synth_locked=$_vo_synth_locked _vo_ok=$_vo_ok USE_VOICEVOX=$USE_VOICEVOX USE_COEIROINK=$USE_COEIROINK"
+			fi
 			# vo_random 時はチャットに話者名を投稿
 			if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
 				local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
@@ -925,15 +1062,14 @@ _launch_say() {
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 				local device_index
 				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-					nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$vo_wav\" >/dev/null 2>&1 &
+					_launch_afplay_bg "$vo_wav" "$vo_wav"
 					LAUNCH_MODE="voicevox"
 					LAUNCHED_SAY_PID="$!"
 					return
 				}
-				nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit $rc' \
-					_ "$vo_wav" "$device_index" >/dev/null 2>&1 &
+				_launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"
 			else
-				nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$vo_wav\" >/dev/null 2>&1 &
+				_launch_afplay_bg "$vo_wav" "$vo_wav"
 			fi
 			LAUNCH_MODE="voicevox"
 			LAUNCHED_SAY_PID="$!"
@@ -953,7 +1089,7 @@ _launch_say() {
 		if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
 			./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
-			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$coe_wav\" >/dev/null 2>&1 &
+			_launch_afplay_bg "$coe_wav" "$coe_wav"
 			LAUNCH_MODE="coeiroink"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -982,16 +1118,15 @@ _launch_say() {
 					local device_index
 					device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 						_log "audio device解決失敗 → afplayフォールバック"
-						nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rm -f "$1"' _ \"$gtts_mp3\" >/dev/null 2>&1 &
+						_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
 						LAUNCH_MODE="google_tts"
 						LAUNCHED_SAY_PID="$!"
 						return
 					}
-					nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit "$rc"' \
-						_ "$gtts_mp3" "$device_index" >/dev/null 2>&1 &
+					_launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"
 					LAUNCH_MODE="ffmpeg"
 				else
-					nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rm -f "$1"' _ \"$gtts_mp3\" >/dev/null 2>&1 &
+					_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
 					LAUNCH_MODE="google_tts"
 				fi
 				LAUNCHED_SAY_PID="$!"
@@ -1009,7 +1144,7 @@ _launch_say() {
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			nohup bash -c 'trap \"\" INT TERM; say -a \"${SAY_AUDIO_DEVICE:-}\" -r \"$1\" -f \"$2\"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+			_launch_say_bg "$RATE" "$MY_CONTENT"
 			LAUNCH_MODE="say"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1027,11 +1162,10 @@ _launch_say() {
 			LAUNCHED_SAY_PID=""
 			return
 		fi
-		nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; [ "$rc" -eq 0 ] && rm -f "$1"; exit "$rc"' \
-			_ "$aiff_file" "$device_index" >/dev/null 2>&1 &
+		_launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"
 		LAUNCH_MODE="ffmpeg"
 	else
-		nohup bash -c 'trap \"\" INT TERM; say -a \"${SAY_AUDIO_DEVICE:-}\" -r \"$1\" -f \"$2\"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+		_launch_say_bg "$RATE" "$MY_CONTENT"
 		LAUNCH_MODE="say"
 		LAUNCHED_EXPECTED_SEC=$(_estimate_text_duration_sec "$MY_CONTENT" "$RATE")
 	fi
@@ -1082,29 +1216,11 @@ _play_with_retry() {
 			now_ts=$(date +%s)
 			elapsed=$((now_ts - start_ts))
 		else
-			while kill -0 "$say_pid" 2>/dev/null; do
-				_touch_lock_heartbeat
-				sleep 1
-				if [ "$max_wait_sec" -gt 0 ]; then
-					now_ts=$(date +%s)
-					elapsed=$((now_ts - start_ts))
-					if [ "$elapsed" -gt "$max_wait_sec" ]; then
-						timed_out=1
-						_log "say再生ハング疑い (elapsed=${elapsed}s, expected=${expected_sec}s, max=${max_wait_sec}s) → 強制終了して再試行"
-						kill "$say_pid" 2>/dev/null || true
-						sleep 1
-						kill -9 "$say_pid" 2>/dev/null || true
-						break
-					fi
-				fi
-			done
-			wait "$say_pid" 2>/dev/null
-			say_rc=$?
-			if [ "$timed_out" -eq 1 ]; then
-				say_rc=99
+			if ! _wait_for_player_pid "$say_pid" "$expected_sec" 0; then
+				timed_out="$PLAYER_WAIT_TIMED_OUT"
 			fi
-			now_ts=$(date +%s)
-			elapsed=$((now_ts - start_ts))
+			say_rc="$PLAYER_WAIT_RC"
+			elapsed="$PLAYER_WAIT_ELAPSED"
 		fi
 		if [ "$say_rc" -eq 0 ] && _is_truncated_playback "$elapsed" "$expected_sec"; then
 			say_rc=98
@@ -1312,7 +1428,17 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 
 			if [ ${#_pre_chunks[@]} -le 1 ]; then
 				# 短いテキスト: 従来通り全文を1回で合成
-				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+				if [ -n "$TIMEOUT_CMD" ]; then
+					if $TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
+						VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+						./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
+						_log "事前合成完了: $PRE_SYNTH_WAV"
+					else
+						_log "事前合成失敗 → 再生時にフォールバック"
+						rm -f "$PRE_SYNTH_WAV" 2>/dev/null
+						PRE_SYNTH_WAV=""
+					fi
+				elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
 					./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
 					_log "事前合成完了: $PRE_SYNTH_WAV"
 				else
@@ -1323,11 +1449,23 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			else
 				# 複数チャンク: チャンク0のみ事前合成、残りはストリーミング再生用に保存
 				_log "テキスト分割: ${#_pre_chunks[@]}チャンク → ストリーミングモード"
-				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=30 \
+				if [ -n "$TIMEOUT_CMD" ]; then
+					if $TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
+						VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=30 \
+						VOICEVOX_MAX_CHARS=99999 \
+						./voicevox_tts.sh -o "$PRE_SYNTH_WAV" "${_pre_chunks[0]}" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
+						_log "事前合成完了 (チャンク1/${#_pre_chunks[@]}): $PRE_SYNTH_WAV"
+						PRE_SYNTH_CHUNKS_FILE="${MY_CONTENT%.txt}_chunks.txt"
+						printf '%s\n' "${_pre_chunks[@]:1}" >"$PRE_SYNTH_CHUNKS_FILE"
+					else
+						_log "事前合成失敗 → 再生時にフォールバック"
+						rm -f "$PRE_SYNTH_WAV" 2>/dev/null
+						PRE_SYNTH_WAV=""
+					fi
+				elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=30 \
 					VOICEVOX_MAX_CHARS=99999 \
 					./voicevox_tts.sh -o "$PRE_SYNTH_WAV" "${_pre_chunks[0]}" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
 					_log "事前合成完了 (チャンク1/${#_pre_chunks[@]}): $PRE_SYNTH_WAV"
-					# 残りチャンクをファイルに保存
 					PRE_SYNTH_CHUNKS_FILE="${MY_CONTENT%.txt}_chunks.txt"
 					printf '%s\n' "${_pre_chunks[@]:1}" >"$PRE_SYNTH_CHUNKS_FILE"
 				else

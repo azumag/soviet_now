@@ -17,6 +17,10 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
+# --- 端末/ログ両方に出力を残す（診断用） ---
+mkdir -p tmp 2>/dev/null || true
+exec > >(tee -a "tmp/radio_worker_runtime.log") 2>&1
+
 # --- 環境変数読み込み ---
 [ -f .env ] && set -a && . ./.env && set +a
 
@@ -29,26 +33,55 @@ POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 
 _STOPPED=0
 _LAST_GAME_NUM=""
+_LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
+_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
 }
 
+# 独立 worker: soren_loop の状態は一切参照しない。停止は tmp/stop か自プロセスへのシグナルのみ。
+_DIAG_LOG="tmp/radio_worker_shutdown.log"
+_LAST_SIGNAL=""
+
+_dump_diag() {
+	local cause="$1"
+	{
+		echo "===== $(date '+%F %T') shutdown ====="
+		echo "cause:       $cause"
+		echo "pid:         $$ (BASHPID=${BASHPID:-?})"
+		echo "ppid:        $PPID"
+		echo "last_cmd:    $BASH_COMMAND"
+		echo "FUNCNAME:    ${FUNCNAME[*]}"
+		echo "BASH_SOURCE: ${BASH_SOURCE[*]}"
+		echo "BASH_LINENO: ${BASH_LINENO[*]}"
+		echo "ps -p $$:"
+		ps -p $$ -o pid,ppid,stat,etime,command 2>/dev/null
+		echo
+	} >>"$_DIAG_LOG" 2>&1 || true
+}
+
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
-	_log "停止処理開始"
+	_dump_diag "${_LAST_SIGNAL:-EXIT}"
+	_log "shutdown: ${WORKER_NAME} 停止 (cause=${_LAST_SIGNAL:-EXIT})"
 	rm -f "$PID_FILE"
-	_log "停止完了"
 }
 
 _handle_signal() {
+	_LAST_SIGNAL="$1"
 	_cleanup
 	trap - EXIT
 	exit 130
 }
 trap '_cleanup' EXIT
-trap '_handle_signal' INT TERM
+trap '_handle_signal INT' INT
+trap '_handle_signal TERM' TERM
+trap '_handle_signal HUP' HUP
+trap '_handle_signal PIPE' PIPE
+trap '_handle_signal USR1' USR1
+trap '_handle_signal USR2' USR2
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
@@ -60,52 +93,66 @@ if [ -f "$PID_FILE" ]; then
 	rm -f "$PID_FILE"
 fi
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
-echo $$ > "$PID_FILE"
+echo $$ >"$PID_FILE"
 
 # 初期 game_num
 _LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
-# === メインループ ===
+# === ワーカーループ ===
+# soren_loop や他の worker の状態は一切参照しない。
+# 明示停止 (tmp/stop / SIGINT / SIGTERM) 以外では絶対に終わらない。
 _log "起動 (PID=$$, interval=${POLL_INTERVAL}s, initial_game=${_LAST_GAME_NUM})"
 
-while true; do
-	# 停止チェック
-	if [ -f tmp/stop ]; then
-		_log "stop ファイル検出 → 終了"
-		break
-	fi
-
-	# eloop_lib.sh を再読み込み
-	if ! source ./eloop_lib.sh 2>/dev/null; then
+_run_iteration() {
+	# 1 回分の処理。どこで失敗しても呼び出し元には影響させない (|| true で吸収)
+	if ! (source ./eloop_lib.sh) 2>/dev/null; then
 		_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
 	fi
 
-	# ゲーム番号の変化を検知
+	local current_game_num score
 	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
+	local _scheduler_ran_this_tick=0
 	if [ "$current_game_num" != "$_LAST_GAME_NUM" ]; then
 		_log "新試合検知: ${_LAST_GAME_NUM} → ${current_game_num}"
 		_LAST_GAME_NUM="$current_game_num"
+		score=$(_last_score 2>/dev/null || echo 0)
+		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
+		_scheduler_ran_this_tick=1
+	fi
 
-		# ラジオスケジュール実行 (サイクルベース + 時刻ベース)
-		# サイクルベースコーナー (news/theme/jiji) は marker なしのため、
-		# game_num 変化時のみ呼ぶ（重複発火防止）
+	# 時刻ベース定期実行 (5 分ごと) — 同一 tick で新試合から既に実行済みならスキップ
+	local _now_ts _last_run=0
+	_now_ts=$(date +%s)
+	[ -f "$_LAST_SCHEDULER_RUN_FILE" ] && _last_run=$(cat "$_LAST_SCHEDULER_RUN_FILE" 2>/dev/null || echo 0)
+	if [ "$_scheduler_ran_this_tick" -eq 0 ] && [ $((_now_ts - _last_run)) -ge $_SCHEDULER_INTERVAL_SEC ]; then
+		_log "時刻ベースラジオ実行 ($((_now_ts - _last_run))s経過)"
+		echo "$_now_ts" >"$_LAST_SCHEDULER_RUN_FILE"
+		current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 		score=$(_last_score 2>/dev/null || echo 0)
 		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
 	fi
 
-	# 手動トリガー消化 (毎ループ)
+	# 手動トリガー消化
 	score=$(_last_score 2>/dev/null || echo 0)
 	process_external_audio_triggers "$current_game_num" "$score" 2>/dev/null || true
 
-	# sleep を1秒単位で分割
-	_sleep_remaining="$POLL_INTERVAL"
+	# sleep を 1 秒単位で分割 (tmp/stop を素早く拾うため)
+	local _sleep_remaining="$POLL_INTERVAL"
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
-		[ -f tmp/stop ] && break 2
-		sleep 1
+		[ -f tmp/stop ] && return 0
+		sleep 1 || true
 		_sleep_remaining=$((_sleep_remaining - 1))
 	done
-done
+	return 0
+}
 
-_log "メインループ終了"
-exit 0
+while true; do
+	if [ -f tmp/stop ]; then
+		_log "tmp/stop 検出 → 終了"
+		break
+	fi
+
+	# 1イテレーションの失敗は握りつぶし、次回に継続
+	_run_iteration || _log "WARNING: iteration failed (rc=$?) — 継続"
+done

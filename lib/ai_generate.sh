@@ -153,26 +153,15 @@ _ai_call_opencode() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
 	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
-	local raw_file cleaned wrapper_script
+	local raw_file cleaned
 
 	[ -s "$prompt_file" ] || return 1
 	raw_file=$(mktemp /tmp/ai_opencode_raw_XXXXXXXX)
-	# ラッパースクリプト経由で実行:
-	# 旧方式 script -q ... bash -c "... $(cat) ..." では $(cat) が script の引数として
-	# 展開され、macOS の script コマンドが ~30KB 超で失敗する。
-	# ラッパースクリプトにすると $(cat) は子プロセス内で展開されるため制限を回避できる。
-	wrapper_script=$(mktemp /tmp/ai_opencode_wrapper_XXXXXXXX.sh)
-	{
-		echo '#!/bin/bash'
-		echo 'LC_ALL=en_US.UTF-8'
-		echo "export OPENCODE_PERMISSION='$permission'"
-		printf 'exec opencode run --agent %q "$(cat %q)" 2>&1\n' "$agent" "$prompt_file"
-	} > "$wrapper_script"
-	chmod +x "$wrapper_script"
-	timeout "$timeout_sec" \
-		script -q "$raw_file" "$wrapper_script" >/dev/null 2>&1
+	# opencode 1.3.x 以降は非 TTY でも動くため、旧 script(1) pty ラッパは廃止
+	OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
+		timeout "$timeout_sec" opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		>"$raw_file" 2>&1
 	local rc=$?
-	rm -f "$wrapper_script"
 	if [ $rc -eq 124 ]; then
 		log "[${label}] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
 		rm -f "$raw_file"
@@ -240,6 +229,14 @@ _ai_dispatch() {
 	gemma4e)
 		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
+	qwen35)
+		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:27b" "$timeout_override" | tee "$_dispatch_output_file"
+		;;
+	qwen35e)
+		local _qwen35e_model="${RADIO_OLLAMA_MODEL:-qwen3.5:9b}"
+		[ "$label" = "COMMENT" ] && _qwen35e_model="${COMMENT_OLLAMA_MODEL:-$_qwen35e_model}"
+		_ai_call_ollama "$label" "$prompt_file" "$_qwen35e_model" "$timeout_override" | tee "$_dispatch_output_file"
+		;;
 	qwencode)
 		_ai_call_qwencode "$label" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
@@ -247,7 +244,13 @@ _ai_dispatch() {
 		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	opencode:*)
-		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
+		local _opencode_timeout="$timeout_override"
+		local _opencode_permission="${RADIO_OPENCODE_PERMISSION:-}"
+		if [[ "$label" == COMMENT* ]]; then
+			_opencode_timeout="${_opencode_timeout:-${COMMENT_OPENCODE_TIMEOUT:-}}"
+			_opencode_permission="${COMMENT_OPENCODE_PERMISSION:-$_opencode_permission}"
+		fi
+		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$_opencode_timeout" "$_opencode_permission" | tee "$_dispatch_output_file"
 		;;
 	*)
 		_ai_call_opencode "$label" "$agent" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"

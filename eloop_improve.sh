@@ -37,7 +37,7 @@ export RUN_CMD_LOG_FILE
 _improve_cleanup_active_ai() {
 	local active_pid="${RUN_CMD_ACTIVE_PID:-0}"
 	case "$active_pid" in
-	''|0|*[!0-9]*) return 0 ;;
+	'' | 0 | *[!0-9]*) return 0 ;;
 	esac
 	_stop_loop_descendants "$active_pid"
 	_stop_pid_with_fallback "$active_pid" "improve_ai_child"
@@ -56,6 +56,13 @@ trap '_improve_handle_signal TERM' TERM
 
 _improve_progress() {
 	local phase="$1" progress="$2" detail="$3"
+	export RUN_CMD_IMPROVE_PID="$IMPROVE_SELF_PID"
+	export RUN_CMD_IMPROVE_HASH_BEFORE="$IMPROVE_BASE_HASH"
+	export RUN_CMD_IMPROVE_PHASE="$phase"
+	export RUN_CMD_IMPROVE_PROGRESS="$progress"
+	export RUN_CMD_IMPROVE_DETAIL="$detail"
+	export RUN_CMD_IMPROVE_STARTED_AT="$IMPROVE_STARTED_AT"
+	export RUN_CMD_IMPROVE_PID_BIRTH_EPOCH="$IMPROVE_BIRTH_EPOCH"
 	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH"
 }
 
@@ -63,8 +70,6 @@ _improve_note() {
 	local msg="$*"
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
 }
-
-
 
 _strategy_change_is_string_only() {
 	local before_file="$1" after_file="$2"
@@ -136,6 +141,75 @@ raise SystemExit(0 if (after_nodes - before_nodes) else 1)
 PY
 }
 
+_validate_review_verdict() {
+	local review_result_file="${1:-tmp/review_result.md}"
+	local user_review_file="${2:-data/user_review.md}"
+	[ -f "$review_result_file" ] && [ -s "$review_result_file" ] || {
+		VALIDATE_ERROR="review verdict missing: $review_result_file"
+		log "[VALIDATE] $VALIDATE_ERROR"
+		return 1
+	}
+
+	local verdict_out
+	verdict_out=$(python3 - "$review_result_file" "$user_review_file" <<'PY' 2>&1
+import json
+import os
+import re
+import sys
+
+review_result_path, user_review_path = sys.argv[1], sys.argv[2]
+with open(review_result_path, "r", encoding="utf-8", errors="ignore") as f:
+    text = f.read()
+
+user_review_present = os.path.exists(user_review_path) and os.path.getsize(user_review_path) > 0
+
+def truthy(value):
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "pass", "satisfied", "ok"}
+    return False
+
+def extract_json_verdict():
+    for match in re.finditer(r"```(?:review_verdict|json)\s*\n(.*?)\n```", text, re.S):
+        block = match.group(1).strip()
+        if not any(k in block for k in ("verdict", "status", "user_review_satisfied")):
+            continue
+        try:
+            data = json.loads(block)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+data = extract_json_verdict()
+if not data:
+    if not user_review_present and re.search(r"^##\s*VERDICT:\s*PASS\b", text, re.I | re.M):
+        raise SystemExit(0)
+    print("review verdict JSON block missing; write ```review_verdict with PASS/FAIL and user_review_satisfied")
+    raise SystemExit(1)
+
+status = str(data.get("verdict", data.get("status", ""))).strip().upper()
+if status != "PASS":
+    print(f"review verdict is not PASS: {status or 'missing'}")
+    raise SystemExit(1)
+
+if user_review_present and not truthy(data.get("user_review_satisfied")):
+    print("review verdict did not confirm user_review_satisfied=true")
+    raise SystemExit(1)
+
+raise SystemExit(0)
+PY
+	)
+	if [ $? -ne 0 ]; then
+		VALIDATE_ERROR="$verdict_out"
+		log "[VALIDATE] $VALIDATE_ERROR"
+		return 1
+	fi
+	return 0
+}
+
 _helpers_tree_changed() {
 	local before_dir="$1" after_dir="$2"
 	diff -qr "$before_dir" "$after_dir" >/dev/null 2>&1
@@ -147,10 +221,10 @@ _improve_reset_sandbox_targets() {
 	rm -rf "strategy_helpers" 2>/dev/null || true
 	mkdir -p "strategy_helpers" 2>/dev/null || true
 	if [ -d "$SANDBOX_HELPERS_BASELINE_DIR" ]; then
-		rsync -a --delete --no-links "$SANDBOX_HELPERS_BASELINE_DIR"/ "strategy_helpers"/ 2>/dev/null || \
+		rsync -a --delete --no-links "$SANDBOX_HELPERS_BASELINE_DIR"/ "strategy_helpers"/ 2>/dev/null ||
 			cp -RL "$SANDBOX_HELPERS_BASELINE_DIR"/. "strategy_helpers"/ 2>/dev/null || true
 	fi
-	[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
+	[ -f "strategy_helpers/__init__.py" ] || : >"strategy_helpers/__init__.py"
 }
 
 _improve_clear_retry_sessions() {
@@ -174,14 +248,14 @@ _improve_progress "summary" "5" "building_batch_summary"
 batch_summary_file="tmp/batch_summary.txt"
 if [ -n "$HISTORY_FILES" ]; then
 	log "[IMPROVE] サマリー生成中 (${NUM_GAMES}試合)..."
-	python3 batch_summary.py $HISTORY_FILES > "$batch_summary_file" 2>/dev/null
+	python3 batch_summary.py $HISTORY_FILES >"$batch_summary_file" 2>/dev/null
 
 	best_game_file=$(grep '^===BEST_FILE===' "$batch_summary_file" | sed 's/===BEST_FILE===//')
 	worst_game_file=$(grep '^===WORST_FILE===' "$batch_summary_file" | sed 's/===WORST_FILE===//')
 	best_game_path="$HISTORY_DIR/$best_game_file"
 	worst_game_path="$HISTORY_DIR/$worst_game_file"
 else
-	echo "(no game data)" > "$batch_summary_file"
+	echo "(no game data)" >"$batch_summary_file"
 	best_game_path=""
 	worst_game_path=""
 fi
@@ -192,16 +266,16 @@ _improve_progress "summary_done" "15" "batch_summary_ready"
 strategy_diff=""
 log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
 _improve_progress "ai_prepare" "20" "prepare_sandbox"
-# primary(glm) を最大10回まで試し、失敗時のみ fallback(glmflash) へ
-RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-10}"
+# primary(glm) を最大3回まで試し、失敗時のみ fallback(glmflash) へ
+RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-3}"
 IMPROVE_MAX_RETRIES="${IMPROVE_MAX_RETRIES:-3}"
 IMPROVE_CONTINUE_MAX="${IMPROVE_CONTINUE_MAX:-6}"
 case "$IMPROVE_MAX_RETRIES" in
-''|*[!0-9]*) IMPROVE_MAX_RETRIES=3 ;;
+'' | *[!0-9]*) IMPROVE_MAX_RETRIES=3 ;;
 esac
 [ "$IMPROVE_MAX_RETRIES" -lt 1 ] && IMPROVE_MAX_RETRIES=1
 case "$IMPROVE_CONTINUE_MAX" in
-''|*[!0-9]*) IMPROVE_CONTINUE_MAX=6 ;;
+'' | *[!0-9]*) IMPROVE_CONTINUE_MAX=6 ;;
 esac
 [ "$IMPROVE_CONTINUE_MAX" -lt 1 ] && IMPROVE_CONTINUE_MAX=1
 
@@ -212,7 +286,7 @@ cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 HOST_REJECTED_HASHES_FILE="$HOST_ROOT/$REJECTED_HASHES_FILE"
 HOST_REJECTED_HASH_META_FILE="$HOST_ROOT/$REJECTED_HASH_META_FILE"
-CHANGE_LOG_FILE="tmp/change_log.txt"
+CHANGE_LOG_FILE="logs/change_log.txt"
 CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 improve_ok=false
@@ -228,6 +302,7 @@ SANDBOX_TOPLEVEL_PY_BASELINE=""
 ANALYSIS_RESULT_FILE="tmp/analysis_result.md"
 REVIEW_RESULT_FILE="tmp/review_result.md"
 SANDBOX_HELPERS_BASELINE_DIR=""
+HOST_INTEGRITY_BEFORE_FILE=""
 
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
 python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "$STRATEGY_ADVICE_FILE" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" "$HISTORY_FILES" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
@@ -605,12 +680,15 @@ with open(out_file, "w", encoding="utf-8") as f:
     f.write("\n".join(summary_lines) + "\n")
 PY
 
+USER_REVIEW_FILE_HOST="data/user_review.md"
+rm -f "tmp/user_review_checks.json" 2>/dev/null || true
+
 improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
 [ -f "$STRATEGY_ADVICE_FILE" ] && [ -s "$STRATEGY_ADVICE_FILE" ] && improve_ref_files+=("$STRATEGY_ADVICE_FILE")
 [ -f "$ROLLBACK_POSTMORTEM_FILE" ] && [ -s "$ROLLBACK_POSTMORTEM_FILE" ] && improve_ref_files+=("$ROLLBACK_POSTMORTEM_FILE")
 [ -f "$ROLLBACK_ANALYSIS_FILE" ] && [ -s "$ROLLBACK_ANALYSIS_FILE" ] && improve_ref_files+=("$ROLLBACK_ANALYSIS_FILE")
 [ -f "data/mandatory_themes.txt" ] && [ -s "data/mandatory_themes.txt" ] && improve_ref_files+=("data/mandatory_themes.txt")
-[ -f "data/user_review.md" ] && [ -s "data/user_review.md" ] && improve_ref_files+=("data/user_review.md")
+[ -f "$USER_REVIEW_FILE_HOST" ] && [ -s "$USER_REVIEW_FILE_HOST" ] && improve_ref_files+=("$USER_REVIEW_FILE_HOST")
 
 # --- サンドボックスにコピーする全ファイル ---
 sandbox_ref_files=("prompts/improve_strategy.md" "prompts/analyze_strategy.md" "prompts/implement_strategy.md" "prompts/review_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
@@ -686,35 +764,36 @@ manifest_file="tmp/sandbox_files.md"
 	echo "この目録は全件読破のためではなく、最短で必要ファイルへ到達するための索引として使うこと。"
 	echo ""
 	echo "### 必須参照ファイル（固定）"
-	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
-		[ -f "$STRATEGY_ADVICE_FILE" ] && printf -- '- `%s` — 視聴者由来の優先改善仮説。存在する場合は improve_brief の次に読む\n' "$STRATEGY_ADVICE_FILE"
-	[ -f "$ROLLBACK_POSTMORTEM_FILE" ] && printf -- '- `%s` — 直近rollbackのAIポストモーテム。存在する場合は rollback_analysis より先に読む\n' "$ROLLBACK_POSTMORTEM_FILE"
-	[ -f "$ROLLBACK_ANALYSIS_FILE" ] && printf -- '- `%s` — 直近rollbackの原因分析。存在する場合は change_log の前に読む\n' "$ROLLBACK_ANALYSIS_FILE"
-	echo '- `strategy.py.staging` — 変更対象の現行戦略（必ず最初に読む）'
-	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
-	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
-	echo '- `tmp/sandbox_files.md` — この目録そのもの（必ず読む）'
-	echo '- `show_status_g.sh` / `status_dashboard.py` / `show_status.sh` / `strategy/regression.sh` — Strategy Comparison と rollback の guardrail を知りたい時に見る'
+	echo '- tmp/improve_brief.md — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
+	[ -f "$STRATEGY_ADVICE_FILE" ] && printf -- '- %s — 視聴者由来の優先改善仮説。存在する場合は improve_brief の次に読む\n' "$STRATEGY_ADVICE_FILE"
+	[ -f "$ROLLBACK_POSTMORTEM_FILE" ] && printf -- '- %s — 直近rollbackのAIポストモーテム。存在する場合は rollback_analysis より先に読む\n' "$ROLLBACK_POSTMORTEM_FILE"
+		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && printf -- '- %s — 直近rollbackの原因分析。存在する場合は change_log の前に読む\n' "$ROLLBACK_ANALYSIS_FILE"
+		[ -f "$USER_REVIEW_FILE_HOST" ] && [ -s "$USER_REVIEW_FILE_HOST" ] && printf -- '- %s — 人間レビュー。指摘事項は最優先。最終的な充足判定は Stage 3 の LLM review verdict で行う\n' "$USER_REVIEW_FILE_HOST"
+		echo '- strategy.py.staging — 変更対象の現行戦略（必ず最初に読む）'
+	echo '- tmp/batch_summary.txt — reason分布/高低比較（必ず読む）'
+	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- %s — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
+	echo '- tmp/sandbox_files.md — この目録そのもの（必ず読む）'
+	echo '- show_status_g.sh / status_dashboard.py / show_status.sh / strategy/regression.sh — Strategy Comparison と rollback の guardrail を知りたい時に見る'
 	echo ""
 	echo "### 盤面・ゲームログ（必須）"
-	echo '- 各ゲームログで、終盤8ターンと `max_y>=2.0` の高危険域を必ず確認すること'
-	printf -- '- \`%s\` — 現在の盤面状態\n' "$GAME_STATE"
+	echo '- 各ゲームログで、終盤8ターンと max_y>=2.0 の高危険域を必ず確認すること'
+	printf -- '- %s — 現在の盤面状態\n' "$GAME_STATE"
 	if [ -n "$worst_game_path" ] && [ -f "$worst_game_path" ]; then
-		printf -- '- \`%s\` — ワーストゲーム全ターンログ（**必須: 失敗モード分析。特に終盤8ターン**）\n' "$worst_game_path"
+		printf -- '- %s — ワーストゲーム全ターンログ（**必須: 失敗モード分析。特に終盤8ターン**）\n' "$worst_game_path"
 	fi
 	if [ -n "$best_game_path" ] && [ -f "$best_game_path" ]; then
-		printf -- '- \`%s\` — ベストゲーム全ターンログ（**必須: 成功パターン分析。特に終盤8ターン**）\n' "$best_game_path"
+		printf -- '- %s — ベストゲーム全ターンログ（**必須: 成功パターン分析。特に終盤8ターン**）\n' "$best_game_path"
 	fi
 	echo "- 直近履歴（今回の改善対象に投入済み）:"
 	for hf in "${all_history_files[@]}"; do
-		printf -- '  - \`%s\`\n' "$hf"
+		printf -- '  - %s\n' "$hf"
 	done
 	echo ""
 	echo "### 補助スクリーンショット（任意）"
 	echo "- gameover時の盤面補助画像（best/worstのみ）。終盤ログを主、画像を補助として使うこと。画像だけで敗因を断定しないこと"
 	if [ "${#history_screenshot_files[@]}" -gt 0 ]; then
 		for sf in "${history_screenshot_files[@]}"; do
-			printf -- '  - \`%s\`\n' "$sf"
+			printf -- '  - %s\n' "$sf"
 		done
 	else
 		echo "- まだなし"
@@ -723,23 +802,23 @@ manifest_file="tmp/sandbox_files.md"
 	echo "### 戦略バージョン（必須）"
 	echo "- 直近バージョン（最低2件。存在数が少なければ available 分だけ読む）:"
 	for vf in "${recent_strategy_files[@]}"; do
-		printf -- '  - \`%s\`\n' "$vf"
+		printf -- '  - %s\n' "$vf"
 	done
 	echo "- 殿堂入り戦略（最低1件は必ず読む）:"
 	for bf in "${hall_of_fame_files[@]}"; do
-		printf -- '  - \`%s\`\n' "$bf"
+		printf -- '  - %s\n' "$bf"
 	done
-	echo '- `strategy_versions/by_hash/*.py` — ハッシュ別アーカイブ（直近上位10件）'
+	echo '- strategy_versions/by_hash/*.py — ハッシュ別アーカイブ（直近上位10件）'
 	echo ""
 	echo "### ゲーム実装・理論（条件付きで必須）"
-	echo '- `prompts/game_theory.md` — ゲーム理論的背景'
-	echo '- `analyze_board.py` — 盤面解析実装（analysis dict の構造確認用）'
+	echo '- prompts/game_theory.md — ゲーム理論的背景'
+	echo '- analyze_board.py — 盤面解析実装（analysis dict の構造確認用）'
 	echo '- ここまでで仮説が立ったら追加読みに進まず実装すること'
 	echo "- Unity実装（merge/score/物理/着地挙動を変更する場合は必読）:"
 	for cs in "${unity_source_files[@]}"; do
-		printf -- '  - \`%s\`\n' "$cs"
+		printf -- '  - %s\n' "$cs"
 	done
-} > "$manifest_file"
+} >"$manifest_file"
 improve_ref_files+=("$manifest_file")
 [ -f "$manifest_file" ] && sandbox_ref_files+=("$manifest_file")
 
@@ -764,26 +843,34 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	mkdir -p "$PWD/$TMP_STATE_DIR" 2>/dev/null || true
 	SANDBOX_TOPLEVEL_PY_BASELINE=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_sandbox_py.XXXXXX" 2>/dev/null || echo "")
 	if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
-		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort > "$SANDBOX_TOPLEVEL_PY_BASELINE"
+		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort >"$SANDBOX_TOPLEVEL_PY_BASELINE"
 	fi
 	SANDBOX_HELPERS_BASELINE_DIR="$PWD/$TMP_STATE_DIR/.baseline_strategy_helpers"
 	rm -rf "$SANDBOX_HELPERS_BASELINE_DIR" 2>/dev/null || true
 	mkdir -p "$SANDBOX_HELPERS_BASELINE_DIR" 2>/dev/null || true
 	if [ -d "strategy_helpers" ]; then
-		rsync -a --delete --no-links "strategy_helpers"/ "$SANDBOX_HELPERS_BASELINE_DIR"/ 2>/dev/null || \
+		rsync -a --delete --no-links "strategy_helpers"/ "$SANDBOX_HELPERS_BASELINE_DIR"/ 2>/dev/null ||
 			cp -RL "strategy_helpers"/. "$SANDBOX_HELPERS_BASELINE_DIR"/ 2>/dev/null || true
 	fi
-	[ -f "$SANDBOX_HELPERS_BASELINE_DIR/__init__.py" ] || : > "$SANDBOX_HELPERS_BASELINE_DIR/__init__.py"
+	[ -f "$SANDBOX_HELPERS_BASELINE_DIR/__init__.py" ] || : >"$SANDBOX_HELPERS_BASELINE_DIR/__init__.py"
 	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
 	RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
 	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
 	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-3600}"
+	RUN_CMD_HEARTBEAT_INTERVAL_SEC="${IMPROVE_RUN_CMD_HEARTBEAT_INTERVAL_SEC:-30}"
+	RUN_CMD_TOUCH_IMPROVE_STATE=1
 	export RUN_CMD_SESSION_DIR
 	export RUN_CMD_TMP_DIR
 	export RUN_CMD_OPENCODE_PERMISSION
 	export RUN_CMD_TIMEOUT_SEC
+	export RUN_CMD_HEARTBEAT_INTERVAL_SEC
+	export RUN_CMD_TOUCH_IMPROVE_STATE
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
 	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
+	HOST_INTEGRITY_BEFORE_FILE=$(mktemp "$HOST_ROOT/$TMP_STATE_DIR/host_integrity_before.XXXXXX" 2>/dev/null || echo "")
+	if [ -n "$HOST_INTEGRITY_BEFORE_FILE" ]; then
+		(cd "$HOST_ROOT" && _write_host_integrity_snapshot "$HOST_INTEGRITY_BEFORE_FILE") || true
+	fi
 	fresh_retry=1
 	continue_retry=0
 	_consecutive_empty=0
@@ -791,40 +878,34 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	_improve_wall_start=$(date +%s)
 
 	# --- Stage 1: 分析フェーズ ---
-	# ユーザーレビューが存在する場合は分析をスキップし、レビューを analysis_result として使用する
-	: > "$ANALYSIS_RESULT_FILE"
+	# user_review.md は高優先の参照入力として扱うが、ログ/rollback分析を読む分析フェーズ自体は省略しない。
+	: >"$ANALYSIS_RESULT_FILE"
 	analysis_ok=false
 	USER_REVIEW_FILE="data/user_review.md"
-	if [ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ]; then
-		log "[IMPROVE] Stage 1 スキップ: ユーザーレビューを分析結果として使用"
-		_improve_note "Stage1: skipped — user_review.md used as analysis_result"
-		cp "$USER_REVIEW_FILE" "$ANALYSIS_RESULT_FILE"
-		analysis_ok=true
-	else
-		# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
-		ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
-		for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
-			_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
-			if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
-				log "[IMPROVE] wall timeout before analysis phase"
-				break
-			fi
-			_improve_progress "analyze_retry${_analysis_retry}" "$(( 5 + (_analysis_retry - 1) * 5 ))" "analysis_phase"
-			log "[IMPROVE] Stage 1 分析フェーズ (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES})..."
-			_improve_note "Stage1: analyze retry ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}"
-			run_ai "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
-				"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
-				"${improve_ref_files[@]}"
-			if [ -s "$ANALYSIS_RESULT_FILE" ]; then
-				log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
-				_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
-				analysis_ok=true
-				break
-			fi
-			log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
-			_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
-		done
-	fi
+	[ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ] && _improve_note "Stage1: user_review.md present; using as high-priority analysis input"
+	# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
+	ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
+	for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
+		_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
+		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
+			log "[IMPROVE] wall timeout before analysis phase"
+			break
+		fi
+		_improve_progress "analyze_retry${_analysis_retry}" "$((5 + (_analysis_retry - 1) * 5))" "analysis_phase"
+		log "[IMPROVE] Stage 1 分析フェーズ (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES})..."
+		_improve_note "Stage1: analyze retry ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}"
+		run_ai "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
+			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
+			"${improve_ref_files[@]}"
+		if [ -s "$ANALYSIS_RESULT_FILE" ]; then
+			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
+			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
+			analysis_ok=true
+			break
+		fi
+		log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
+		_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
+	done
 
 	if [ "$analysis_ok" != true ]; then
 		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"
@@ -838,7 +919,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	# Stage 1 失敗時はこのループをスキップする
 	while [ "$analysis_ok" = true ] && [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
 		# ウォールタイム制限（デフォルト40分）
-		_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
+		_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
 		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
 			log "[IMPROVE] wall timeout ${IMPROVE_WALL_TIMEOUT}s exceeded (${_improve_wall_elapsed}s elapsed) → abort"
 			_improve_note "wall timeout after ${_improve_wall_elapsed}s"
@@ -877,7 +958,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 					local _rl_count=0
 					[ -f "$_rl_file" ] && _rl_count=$(sed -n '1p' "$_rl_file" 2>/dev/null || echo 0)
 					_rl_count=$((_rl_count + 1))
-					printf '%s\n%s\n' "$_rl_count" "$(date +%s)" > "$_rl_file"
+					printf '%s\n%s\n' "$_rl_count" "$(date +%s)" >"$_rl_file"
 					_improve_note "rate-limit detected → backoff count=${_rl_count}"
 				fi
 			else
@@ -886,11 +967,14 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			if [ "$_consecutive_empty" -ge 2 ]; then
 				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → 全リトライ中止"
 				_improve_note "consecutive model failures ${_consecutive_empty} → abort"
-				break 2>/dev/null || { fresh_retry=$((IMPROVE_MAX_RETRIES + 1)); break; }
+				break 2>/dev/null || {
+					fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+					break
+				}
 			fi
 		else
 			# continue fix内でもウォールタイムチェック
-			_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
+			_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
 			if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
 				log "[IMPROVE] wall timeout ${IMPROVE_WALL_TIMEOUT}s in continue fix → abort"
 				_improve_note "wall timeout after ${_improve_wall_elapsed}s during continue fix"
@@ -902,7 +986,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			_improve_note "continue fix ${continue_retry}/${IMPROVE_CONTINUE_MAX} on same session for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; preserve current staging/helpers; fix only: ${VALIDATE_ERROR:0:160}"
 			fix_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_fix_prompt.XXXXXX")
 			export VALIDATE_ERROR
-			envsubst '${VALIDATE_ERROR}' < "$ELOOP_LIB_DIR/prompts/fix_validation.md" > "$fix_prompt_file"
+			envsubst '${VALIDATE_ERROR}' <"$ELOOP_LIB_DIR/prompts/fix_validation.md" >"$fix_prompt_file"
 			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
@@ -942,7 +1026,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		fi
 
 		# 差分チェック
-		_improve_note "entering validation (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}, wall_elapsed=$(( $(date +%s) - _improve_wall_start ))s)"
+		_improve_note "entering validation (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}, wall_elapsed=$(($(date +%s) - _improve_wall_start))s)"
 		_improve_progress "validate_retry${fresh_retry}" "$validate_progress" "diff_and_validation_checks"
 		staging_changed=false
 		helper_changed=false
@@ -1004,36 +1088,36 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				continue
 			fi
 
-			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
-				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-					continue_retry=$((continue_retry + 1))
+				if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+					VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
+					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+						continue_retry=$((continue_retry + 1))
+						continue
+					fi
+					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+					fresh_retry=$((fresh_retry + 1))
+					continue_retry=0
 					continue
 				fi
-				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-				fresh_retry=$((fresh_retry + 1))
-				continue_retry=0
-				continue
-			fi
 
-			if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
-				VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
-				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-					continue_retry=$((continue_retry + 1))
+				if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+					VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
+					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+						continue_retry=$((continue_retry + 1))
+						continue
+					fi
+					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+					fresh_retry=$((fresh_retry + 1))
+					continue_retry=0
 					continue
 				fi
-				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-				fresh_retry=$((fresh_retry + 1))
-				continue_retry=0
-				continue
-			fi
 
-			strategy_diff=""
-			if [ "$staging_changed" = true ]; then
-				strategy_diff=$(diff -u "strategy.py" "$STAGING_FILE" 2>/dev/null || true)
-			fi
+				strategy_diff=""
+				if [ "$staging_changed" = true ]; then
+					strategy_diff=$(diff -u "strategy.py" "$STAGING_FILE" 2>/dev/null || true)
+				fi
 			if [ "$helper_changed" = true ]; then
 				helpers_diff=$(diff -ruN "$SANDBOX_HELPERS_BASELINE_DIR" "strategy_helpers" 2>/dev/null || true)
 				if [ -n "$helpers_diff" ]; then
@@ -1055,9 +1139,9 @@ ${helpers_diff}"
 					echo "=== $(date '+%Y-%m-%d %H:%M') Game#${GAME_NUM_SNAPSHOT} scores=${SCORES} ==="
 					echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | head -20
 					echo ""
-				} >> "$CHANGE_LOG_FILE_HOST"
-				if [ -f "$CHANGE_LOG_FILE_HOST" ] && [ "$(wc -l < "$CHANGE_LOG_FILE_HOST")" -gt 200 ]; then
-					tail -200 "$CHANGE_LOG_FILE_HOST" > "$CHANGE_LOG_FILE_HOST.tmp"
+				} >>"$CHANGE_LOG_FILE_HOST"
+				if [ -f "$CHANGE_LOG_FILE_HOST" ] && [ "$(wc -l <"$CHANGE_LOG_FILE_HOST")" -gt 200 ]; then
+					tail -200 "$CHANGE_LOG_FILE_HOST" >"$CHANGE_LOG_FILE_HOST.tmp"
 					mv "$CHANGE_LOG_FILE_HOST.tmp" "$CHANGE_LOG_FILE_HOST"
 				fi
 			fi
@@ -1078,14 +1162,9 @@ ${helpers_diff}"
 	done
 
 	# --- Stage 3: レビューフェーズ ---
-	# Stage 2 成功時のみ実行。スナップショット保護付き
-	# ユーザーレビューが分析として使用された場合、レビューフェーズをスキップ
-	# （ユーザーが既にレビュー済みのため、AIレビューは不要）
-	if $improve_ok && [ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ]; then
-		log "[IMPROVE] Stage 3 スキップ: ユーザーレビューに基づく改善のためAIレビュー不要"
-		_improve_note "Stage3: skipped — user_review.md was used as analysis"
-	elif $improve_ok; then
-		: > "$REVIEW_RESULT_FILE"
+	# Stage 2 成功時のみ実行。スナップショット保護付き。
+	if $improve_ok; then
+		: >"$REVIEW_RESULT_FILE"
 		_pre_review_snapshot=$(mktemp "$PWD/$TMP_STATE_DIR/pre_review_staging.XXXXXX")
 		cp "$STAGING_FILE" "$_pre_review_snapshot"
 		_improve_progress "review" "75" "review_phase"
@@ -1115,19 +1194,19 @@ ${helpers_diff}"
 					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし → スナップショット復元"
 					_improve_note "Stage3: review mutation rejected (no logic change) → restore snapshot"
 					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				elif _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
-					_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
-					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				elif _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
-					log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 → スナップショット復元"
-					_improve_note "Stage3: review mutation rejected (fixed turn gate) → restore snapshot"
-					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				else
-					log "[IMPROVE] Stage 3 レビュー修正: バリデーション成功"
-					_improve_note "Stage3: review mutation accepted"
-					_review_validate_ok=true
-				fi
+					elif _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+						log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
+						_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
+						cp "$_pre_review_snapshot" "$STAGING_FILE"
+					elif _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+						log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 → スナップショット復元"
+						_improve_note "Stage3: review mutation rejected (fixed turn gate) → restore snapshot"
+						cp "$_pre_review_snapshot" "$STAGING_FILE"
+					else
+						log "[IMPROVE] Stage 3 レビュー修正: バリデーション成功"
+						_improve_note "Stage3: review mutation accepted"
+						_review_validate_ok=true
+					fi
 			else
 				log "[IMPROVE] Stage 3 レビュー修正: バリデーション失敗 → スナップショット復元"
 				_improve_note "Stage3: review mutation failed validation → restore snapshot"
@@ -1136,6 +1215,11 @@ ${helpers_diff}"
 		else
 			log "[IMPROVE] Stage 3 レビュー: staging 変更なし (PASS)"
 			_improve_note "Stage3: review did not mutate staging"
+		fi
+		if ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
+			log "[IMPROVE] Stage 3 レビュー判定: FAIL → 適用中止"
+			_improve_note "Stage3: review verdict rejected apply: ${VALIDATE_ERROR:0:160}"
+			improve_ok=false
 		fi
 		rm -f "$_pre_review_snapshot" 2>/dev/null || true
 	fi
@@ -1166,8 +1250,23 @@ fi
 
 if $improve_ok; then
 	_improve_progress "apply" "80" "apply_validated_strategy"
+	if [ -n "$HOST_INTEGRITY_BEFORE_FILE" ] && [ -f "$HOST_INTEGRITY_BEFORE_FILE" ]; then
+		if ! (cd "$HOST_ROOT" && check_host_integrity "$HOST_INTEGRITY_BEFORE_FILE"); then
+			VALIDATE_ERROR="AI改善中にホスト側の apply 対象が変更されたため適用を中止"
+			log "[IMPROVE] $VALIDATE_ERROR"
+			_improve_note "apply aborted: host integrity changed"
+			improve_ok=false
+		fi
+	fi
+fi
+
+if $improve_ok; then
 	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
 		cp "$HARVEST_DIR/strategy.py.staging" "$STRATEGY_FILE"
+		if [ -f "$HARVEST_DIR/logs/change_log.txt" ] && [ -s "$HARVEST_DIR/logs/change_log.txt" ]; then
+			cat "$HARVEST_DIR/logs/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+			log "[IMPROVE] change_log harvested and appended"
+		fi
 		rm -f "$STAGING_FILE" 2>/dev/null || true
 	else
 		VALIDATE_ERROR="harvestに strategy.py.staging がない"
@@ -1184,12 +1283,12 @@ if $improve_ok; then
 				cp -RL "$HARVEST_DIR/strategy_helpers"/. "strategy_helpers"/ 2>/dev/null || true
 			}
 		fi
-		[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
-		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+		[ -f "strategy_helpers/__init__.py" ] || : >"strategy_helpers/__init__.py"
 		# ユーザーレビューは改善適用後に消去（1回限りの指示）
-		: > "data/user_review.md" 2>/dev/null || true
+		: >"data/user_review.md" 2>/dev/null || true
 	fi
 fi
+[ -n "$HOST_INTEGRITY_BEFORE_FILE" ] && rm -f "$HOST_INTEGRITY_BEFORE_FILE" 2>/dev/null || true
 
 # 失敗してもstrategy.pyはsandbox外で触っていないので復元不要
 _improve_progress "post_validate" "85" "finalizing"
@@ -1210,7 +1309,14 @@ if $improve_ok; then
 		"$phylo_improve_summary" ""
 	refresh_phyrogenetic_tree --pending-edge improve "$HASH_BEFORE" "$HASH_AFTER" >/dev/null 2>&1 || true
 	_improve_progress "git_commit" "90" "commit_changes"
-	git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
+	# 改善区切りでまとめてコミット: 戦略本体 + 試合アーカイブ + スコア履歴 + 系統樹
+	git add \
+		strategy.py strategy_helpers/ \
+		"$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" \
+		game_count.txt score_history.txt eval_score_history.txt \
+		best_score.txt score_dashboard.html game_state.json \
+		game_history/ strategy_versions/ strategy_versions_archive/ \
+		2>/dev/null || true
 	if [ "$NUM_GAMES" -eq 1 ]; then
 		if git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null; then
 			if git push 2>/dev/null; then
@@ -1245,7 +1351,7 @@ data = {
 }
 with open('tmp/state/pending_strategy_radio.json', 'w') as f:
     json.dump(data, f, ensure_ascii=False)
-" <<< "$strategy_diff" || true
+" <<<"$strategy_diff" || true
 	fi
 	_improve_progress "done" "100" "awaiting_harvest"
 else

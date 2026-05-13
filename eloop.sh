@@ -203,8 +203,8 @@ play_one_game() {
 handle_russia_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
-	# クリップは祝賀有効/無効に関係なく作成
-	_create_twitch_clip "🇷🇺 ロシア建国! score=${score} (Game #${game_num})" "$game_num" "${RUSSIA_CELEBRATION_CLIP_DELAY_SEC:-5}"
+	# ロシア建国クリップは無効化中（ソ連建国クリップは有効）
+	# _create_twitch_clip "🇷🇺 ロシア建国! score=${score} (Game #${game_num})" "$game_num" "${RUSSIA_CELEBRATION_CLIP_DELAY_SEC:-5}"
 	_append_celebration_history "russia" "$score" "$turns" "$game_num"
 
 	if [ "${RUSSIA_CELEBRATION_ENABLED:-0}" = "0" ]; then
@@ -260,7 +260,7 @@ post_game_bookkeeping() {
 	fi
 
 	# LAST_TURNS をデーモン向けにファイル保存
-	echo "${LAST_TURNS:-0}" > "tmp/state/last_turns.txt" 2>/dev/null || true
+	echo "${LAST_TURNS:-0}" >"tmp/state/last_turns.txt" 2>/dev/null || true
 
 	local game_num_display=$((GAME_NUM + 1))
 
@@ -388,15 +388,8 @@ PY
 		enqueue_chat_message "${pred_progress}" "eloop"
 	fi
 
-	# git commit (v542: セキュリティ/不要ファイル除外のため明示的ファイル指定)
-	git add \
-		game_count.txt score_history.txt eval_score_history.txt \
-		game_history/ strategy_versions/ score_dashboard.html \
-		game_state.json best_score.txt phyrogenetic-tree.md \
-		phyrogenetic-events.jsonl strategy.py \
-		tmp/state/rollout_scores.json 2>/dev/null || true
-	git commit -m "eloop Game #${game_num_display}: score=${LAST_SCORE}" 2>/dev/null &&
-		git push 2>/dev/null || true
+	# 毎試合の git commit は廃止: 改善終了時 (eloop_improve.sh) と粛清時 (regression.sh) の
+	# 区切りでまとめてコミットする。ここでは pending 通知の処理のみ。
 	_post_pending_phyrogenetic_tree_link_to_chat_if_any
 }
 

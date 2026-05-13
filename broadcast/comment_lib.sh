@@ -112,7 +112,13 @@ _play_comment_queue() {
 			# 重複チェック: 同じ内容を再度再生しない
 			local file_hash
 			file_hash=$(md5 -q "$qf" 2>/dev/null)
-				if [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
+			local _comment_context_label_for_dedupe=""
+			_comment_context_label_for_dedupe=$(_comment_playback_context_label "$qf" 2>/dev/null || printf '%s' "comment")
+			local _skip_duplicate_check=0
+			case "$_comment_context_label_for_dedupe" in
+			soren91:ranking_comment|soren91:midgame_comment) _skip_duplicate_check=1 ;;
+			esac
+				if [ "$_skip_duplicate_check" -eq 0 ] && [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 					_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
 					_comment_clear_generation_meta "$qf" 2>/dev/null || true
@@ -138,10 +144,12 @@ _play_comment_queue() {
 					_comment_meta_summary=$(_comment_generation_debug_summary "$playing_file" 2>/dev/null || true)
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生開始: $qf (hash=$file_hash${_comment_meta_summary:+, ${_comment_meta_summary}})" >> tmp/.say_queue/debug.log
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
-				echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
-				# ハッシュファイルを最新50件に制限
-				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
-					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
+				if [ "$_skip_duplicate_check" -eq 0 ]; then
+					echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
+					# ハッシュファイルを最新50件に制限
+					tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
+						mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
+				fi
 					# speaker/context override: サイドカーファイル > soren91判定
 				local _cw_vo_speaker=""
 				_cw_vo_speaker=$(_comment_read_speaker_override "$playing_file" "$qf" 2>/dev/null || true)

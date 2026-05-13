@@ -77,6 +77,8 @@ let activeIsSharedMode = false;
 let activeOwnsContext = false;
 let shutdownTimer = null;
 let cleanupPromise = null;
+const rankingCommentQueuedGames = new Set();
+const rankingCommentInFlightGames = new Set();
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots'].forEach(dir => {
@@ -243,6 +245,35 @@ function loadImprovementSchedule() {
   }
 
   return { interval: DEFAULT_IMPROVEMENT_INTERVAL_GAMES, source: 'default' };
+}
+
+async function queueRankingCommentOnce(gameNumber, detectedRank, reason = 'post-game') {
+  if (rankingCommentQueuedGames.has(gameNumber) || rankingCommentInFlightGames.has(gameNumber)) {
+    console.log(`[game] Ranking comment already queued/in-flight for game #${gameNumber} (${reason})`);
+    return false;
+  }
+
+  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+  if (detectedRank == null && !existsSync(rankingImagePath)) {
+    console.log(`[game] Ranking comment deferred for game #${gameNumber}: no context yet (${reason})`);
+    return false;
+  }
+
+  rankingCommentInFlightGames.add(gameNumber);
+  try {
+    const { generateRankingComment } = await loadModule('./comment.mjs');
+    const imagePath = existsSync(rankingImagePath) ? rankingImagePath : null;
+    const comment = await generateRankingComment(imagePath, gameNumber, detectedRank);
+    if (comment) {
+      rankingCommentQueuedGames.add(gameNumber);
+      return true;
+    }
+  } catch (err) {
+    console.log(`[game] Ranking comment error for game #${gameNumber} (${reason}): ${err.message}`);
+  } finally {
+    rankingCommentInFlightGames.delete(gameNumber);
+  }
+  return false;
 }
 
 function loadAudioGainMultiplier() {
@@ -450,18 +481,66 @@ function chooseSharedBrowserAnchorPage(context) {
   return localPage || pages[0];
 }
 
-async function openSharedBrowserTab(context) {
-  const anchorPage = chooseSharedBrowserAnchorPage(context);
-  if (!anchorPage) {
-    return await context.newPage();
+async function openSharedBrowserTab(context, anchorPage = null) {
+  if (anchorPage && !anchorPage.isClosed()) {
+    try {
+      const popupPromise = context.waitForEvent('page', { timeout: 5000 });
+      await anchorPage.evaluate(() => {
+        window.open('about:blank', '_blank');
+      });
+      const page = await popupPromise;
+      await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+      return page;
+    } catch (err) {
+      console.log(`[main] Failed to open shared browser tab from anchor page: ${err.message}`);
+    }
   }
 
-  const popupPromise = context.waitForEvent('page');
-  await anchorPage.evaluate(() => {
-    window.open('about:blank', '_blank');
-  });
-  const popupPage = await popupPromise;
-  return popupPage;
+  return await context.newPage();
+}
+
+async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, ownsContext, audioGainMultiplier, anchorPage = null }) {
+  try {
+    await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    return page;
+  } catch (err) {
+    if (!isSharedMode || ownsContext || !String(err?.message || '').includes('net::ERR_ABORTED')) {
+      throw err;
+    }
+
+    console.log('[main] Shared tab navigation aborted; retrying with a fresh CDP tab');
+    try {
+      if (!page.isClosed()) await page.close({ runBeforeUnload: false });
+    } catch (closeErr) {
+      console.log(`[main] Failed to close aborted shared tab: ${closeErr.message}`);
+    }
+
+    const retryAnchorPage = anchorPage && !anchorPage.isClosed()
+      ? anchorPage
+      : chooseSharedBrowserAnchorPage(context);
+    const retryPage = await openSharedBrowserTab(context, retryAnchorPage);
+    activeGamePage = retryPage;
+    try {
+      await retryPage.setViewportSize({ width: 1280, height: 720 });
+    } catch {}
+    await installAudioGainLimiter(retryPage, audioGainMultiplier);
+    await retryPage.route('**/*play.unityroom.com/**', async route => {
+      if (route.request().resourceType() === 'document') {
+        const response = await route.fetch();
+        let body = await response.text();
+        body = body.replace(
+          '.then((unityInstance) => {',
+          '.then((unityInstance) => { window.__unityInstance = unityInstance;'
+        );
+        await route.fulfill({ response, body });
+        console.log('[main] HTML intercepted, unityInstance hook injected');
+      } else {
+        await route.continue();
+      }
+    });
+    await retryPage.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    return retryPage;
+  }
 }
 
 // --- メイン ---
@@ -532,8 +611,11 @@ async function main() {
   let gamePage = null;
   try {
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
+    const anchorPage = (isSharedMode && !ownsContext)
+      ? chooseSharedBrowserAnchorPage(context)
+      : null;
     gamePage = (isSharedMode && !ownsContext)
-      ? await openSharedBrowserTab(context)
+      ? await openSharedBrowserTab(context, anchorPage)
       : await context.newPage();
     if (isSharedMode) {
       try {
@@ -556,7 +638,15 @@ async function main() {
         await route.continue();
       }
     });
-    await gamePage.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    gamePage = await gotoGamePageWithRecovery({
+      page: gamePage,
+      context,
+      gameUrl,
+      isSharedMode,
+      ownsContext,
+      audioGainMultiplier,
+      anchorPage,
+    });
     if (isSharedMode) {
       await gamePage.bringToFront();
     }
@@ -674,6 +764,29 @@ async function handleTitleScreen(page) {
   console.log('[main] Title screen done, game should be starting...');
 }
 
+async function recoverFromConnectionError(page) {
+  const canvas = await page.$('canvas');
+  if (!canvas) throw new Error('Canvas not found on connection error screen');
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('Canvas bounding box not available');
+
+  const okX = box.x + Math.floor(box.width * 0.5);
+  const okY = box.y + Math.floor(box.height * 0.515);
+  console.log(`[main] Clicking connection error OK at (${okX.toFixed(0)}, ${okY.toFixed(0)})`);
+  await page.mouse.click(okX, okY);
+  await sleep(1500);
+
+  try {
+    await handleTitleScreen(page);
+  } catch (err) {
+    console.log(`[main] Title re-entry after connection error failed: ${err.message}; reloading`);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForSelector('canvas', { timeout: 60000 });
+    await sleep(3000);
+    await handleTitleScreen(page);
+  }
+}
+
 /**
  * headless ブラウザでトップページを開き、ゲームURLを取得して閉じる
  * トップページの広告を表示せずに済む
@@ -765,6 +878,35 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.state === 'WAITING') {
         waitingCount++;
 
+        try {
+          const { detectConnectionErrorScreen } = await loadModule('./screenshot_analyzer.mjs');
+          if (await detectConnectionErrorScreen(screenshotPath)) {
+            console.log(`[game] Connection error screen detected; abandoning game #${gameNumber} without ranking comment`);
+            await recoverFromConnectionError(page);
+            if (turn > 0 || existsSync(historyFile)) {
+              try { unlinkSync(historyFile); } catch {}
+              gameNumber++;
+              historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
+              currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+              console.log(`[game] Next round strategy fixed after reconnect: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
+            }
+            turn = 0;
+            calibrated = false;
+            moveCount = 0;
+            lastKnownRank = null;
+            rankingDetected = false;
+            roundEnded = false;
+            waitingCount = 0;
+            waitingLogged = false;
+            holdUsedThisTurn = false;
+            midgameCommentSent = false;
+            await sleep(1000);
+            continue;
+          }
+        } catch (e) {
+          console.log(`[game] Connection error detection failed: ${e.message}`);
+        }
+
         // WAITING中: 毎フレームでランキング画面を検出し、スクショを上書き保存
         // (最初のフレームは遷移中の場合があるため、最後に検出したフレームが最も正確)
         if (!roundEnded) {
@@ -772,17 +914,22 @@ async function gameLoop(page, calibration, gameNumber) {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const rankResult = await detectRankingScreen(screenshotPath);
             if (rankResult != null) {
-              // ランキング画面スクショを上書き保存（後のフレームほど完全なランキング表示）
               const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-              try { copyFileSync(screenshotPath, rkPath); } catch {}
               // rankResult > 0 なら正確な値で確定、-1 は星なし(late pathで再試行)
               if (rankResult > 0) {
+                // 確定順位つきのフレームは最も価値が高いので保存する
+                try { copyFileSync(screenshotPath, rkPath); } catch {}
                 lastKnownRank = rankResult;
                 if (!rankingDetected) {
                   console.log(`[game] RANKING screen detected! rank=${rankResult}`);
                 }
                 rankingDetected = true;
               } else if (!rankingDetected) {
+                // 不完全なランキング候補は最初の1枚だけ残す。
+                // 後続の白フェード/遷移フレームで有用な画像を上書きしない。
+                if (!existsSync(rkPath)) {
+                  try { copyFileSync(screenshotPath, rkPath); } catch {}
+                }
                 console.log(`[game] RANKING screen detected (star not yet visible)`);
               }
             }
@@ -843,9 +990,9 @@ async function gameLoop(page, calibration, gameNumber) {
           }
         }
 
-        // ラウンド終了後もランキング画面を検出し続ける (星は遅れて表示される)
-        // waitingCount 7-16 の間 (roundEnd後 ~1-10秒) だけ検出を継続
-        if (roundEnded && !rankingDetected && waitingCount >= 7 && waitingCount <= 16) {
+        // ラウンド終了後もランキング画面を検出し続ける。
+        // 結果表示がMATCHING画面の後にかなり遅れて出ることがあるため、次ゲーム開始まで広めに見る。
+        if (roundEnded && !rankingDetected && waitingCount >= 7 && waitingCount <= 180) {
           try {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const lateRankResult = await detectRankingScreen(screenshotPath);
@@ -866,6 +1013,7 @@ async function gameLoop(page, calibration, gameNumber) {
                   console.log(`[game] Late ranking detection: game #${prevGameNum} rank=${lateRankResult}${prevRank != null ? ` (was ${prevRank})` : ''}`);
                 } catch {}
               }
+              void queueRankingCommentOnce(prevGameNum, lateRankResult, 'late-ranking-detection');
             }
           } catch {}
         }
@@ -1141,12 +1289,21 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   console.log(`[game] Summary: turns=${turns}, rank=${summary.rank}, hash=${strategyHash}`);
 
   // ランキング画面コメント生成 (非同期、ゲームループをブロックしない)
-  // ranking 画像がなくても、ゲーム終了を示す情報があればコメント生成を試みる
+  // 順位またはランキング画面由来の情報がない場合は、接続エラー等の誤検出なので喋らない
+  const hasRankingCommentContext = detectedRank != null
+    || existsSync(rankingImagePath)
+    || Boolean(resultScreenOcr && (
+      resultScreenOcr.rank != null
+      || (resultScreenOcr.lines || []).length > 0
+      || (resultScreenOcr.playerNames || []).length > 0
+    ));
   (async () => {
     try {
-      const { generateRankingComment } = await loadModule('./comment.mjs');
-      const imagePath = existsSync(rankingImagePath) ? rankingImagePath : null;
-      await generateRankingComment(imagePath, gameNumber, detectedRank);
+      if (!hasRankingCommentContext) {
+        console.log(`[game] Skipping ranking comment for game #${gameNumber}: ranking context unavailable`);
+        return;
+      }
+      await queueRankingCommentOnce(gameNumber, detectedRank, 'post-game');
     } catch (err) {
       console.log(`[game] Ranking comment error: ${err.message}`);
     }
@@ -1193,7 +1350,7 @@ async function waitForRankingCommentContext(gameNumber, initialRank) {
   let resultScreenOcr = null;
 
   if (!detectedRank && !existsSync(rankingImagePath)) {
-    const timeoutMs = 10000;
+    const timeoutMs = 35000;
     const pollMs = 500;
     const deadline = Date.now() + timeoutMs;
     console.log(`[game] Waiting for ranking context for game #${gameNumber} (up to ${timeoutMs}ms)`);

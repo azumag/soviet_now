@@ -1143,13 +1143,21 @@ export async function detectRankingScreen(screenshotPath) {
     return starRank;
   }
 
-  // 2. フォールバック: 中央の明るさでランキング画面を推定
+  // 2. 1位演出: 中央に巨大な金星+白い「1」が出る画面は赤い小星がない
+  const largeOverlayRank = readRankFromLargeVictoryOverlay(data, width, height);
+  if (largeOverlayRank != null) {
+    return largeOverlayRank;
+  }
+
+  // 3. フォールバック: 中央の明るさでランキング画面を推定
   let centerBright = 0, centerTotal = 0;
+  const centerBrightnessValues = [];
   const step = 6;
   for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.85); y += step) {
     for (let x = Math.floor(width * 0.35); x < Math.floor(width * 0.65); x += step) {
       const idx = (y * width + x) * 4;
       const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+      centerBrightnessValues.push(br);
       centerTotal++;
       if (br > 100) centerBright++;
     }
@@ -1157,8 +1165,112 @@ export async function detectRankingScreen(screenshotPath) {
   const centerBrightRatio = centerTotal > 0 ? centerBright / centerTotal : 0;
 
   if (centerBrightRatio < 0.50) return null;
+  if (isLowDetailBrightFade(centerBrightnessValues)) return null;
 
   return -1; // ランキング画面だが星の数字読み取り失敗
+}
+
+export async function detectConnectionErrorScreen(screenshotPath) {
+  const image = sharp(screenshotPath);
+  const metadata = await image.metadata();
+  const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+  const { width, height } = metadata;
+
+  const panelX1 = Math.floor(width * 0.32);
+  const panelX2 = Math.ceil(width * 0.68);
+  const panelY1 = Math.floor(height * 0.30);
+  const panelY2 = Math.ceil(height * 0.60);
+  const buttonX1 = Math.floor(width * 0.34);
+  const buttonX2 = Math.ceil(width * 0.66);
+  const buttonY1 = Math.floor(height * 0.47);
+  const buttonY2 = Math.ceil(height * 0.56);
+
+  let darkSamples = 0;
+  let darkPixels = 0;
+  let panelSamples = 0;
+  let panelPixels = 0;
+  let buttonSamples = 0;
+  let buttonPixels = 0;
+
+  for (let y = 0; y < height; y += 8) {
+    for (let x = 0; x < width; x += 8) {
+      const idx = (y * width + x) * 4;
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const brightness = (r + g + b) / 3;
+
+      if (x < panelX1 || x >= panelX2 || y < panelY1 || y >= panelY2) {
+        darkSamples++;
+        if (brightness < 18) darkPixels++;
+      } else {
+        panelSamples++;
+        if (g >= 65 && g <= 120 && r <= 35 && b >= 60 && b <= 110) panelPixels++;
+      }
+
+      if (x >= buttonX1 && x < buttonX2 && y >= buttonY1 && y < buttonY2) {
+        buttonSamples++;
+        if (r >= 70 && r <= 110 && g >= 180 && g <= 235 && b >= 130 && b <= 190) buttonPixels++;
+      }
+    }
+  }
+
+  const darkRatio = darkSamples > 0 ? darkPixels / darkSamples : 0;
+  const panelRatio = panelSamples > 0 ? panelPixels / panelSamples : 0;
+  const buttonRatio = buttonSamples > 0 ? buttonPixels / buttonSamples : 0;
+
+  return darkRatio > 0.78 && panelRatio > 0.35 && buttonRatio > 0.45;
+}
+
+function quantile(sortedValues, ratio) {
+  if (!sortedValues.length) return 0;
+  const index = Math.min(sortedValues.length - 1, Math.max(0, Math.floor(sortedValues.length * ratio)));
+  return sortedValues[index];
+}
+
+function isLowDetailBrightFade(values) {
+  if (!values.length) return false;
+  const sorted = [...values].sort((a, b) => a - b);
+  const q05 = quantile(sorted, 0.05);
+  const q95 = quantile(sorted, 0.95);
+  return q05 > 235 && q95 - q05 < 12;
+}
+
+function readRankFromLargeVictoryOverlay(data, width, height) {
+  const x1 = Math.floor(width * 0.34);
+  const x2 = Math.floor(width * 0.66);
+  const y1 = Math.floor(height * 0.25);
+  const y2 = Math.floor(height * 0.82);
+
+  const values = [];
+  for (let y = y1; y < y2; y += 2) {
+    for (let x = x1; x < x2; x += 2) {
+      const idx = (y * width + x) * 4;
+      values.push((data[idx] + data[idx + 1] + data[idx + 2]) / 3);
+    }
+  }
+
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const q05 = quantile(sorted, 0.05);
+  const q25 = quantile(sorted, 0.25);
+  const q95 = quantile(sorted, 0.95);
+  const contrast = q95 - q05;
+  if (q05 < 90 || contrast < 18) return null;
+
+  const darkThreshold = q25 + 3;
+  let darkCount = 0;
+  for (let y = y1; y < y2; y += 2) {
+    for (let x = x1; x < x2; x += 2) {
+      const idx = (y * width + x) * 4;
+      const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+      if (br <= darkThreshold) darkCount++;
+    }
+  }
+
+  const darkRatio = darkCount / values.length;
+  if (darkRatio < 0.18 || darkRatio > 0.62) return null;
+
+  // 現在の1位演出は中央巨大星に大きな「1」だけを重ねる。
+  return 1;
 }
 
 /**

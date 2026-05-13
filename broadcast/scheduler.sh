@@ -1,6 +1,5 @@
 # broadcast/scheduler.sh - 非同期ジョブスケジュール, Twitchクリップ, audio trigger
 
-
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
 _news_fetch_status_snapshot() {
@@ -87,7 +86,12 @@ fetch_and_play_news() {
 		fi
 	fi
 	# 取得成功/失敗に関わらずコーナーを起動（失敗時はAI自主探索モード）
-	start_radio_corner_news "$game_num" "$score"
+	# 重複起動防止: 事前チェックして生成中の場合はスキップ
+	if _try_game_corner "$game_num" "news"; then
+		start_radio_corner_news "$game_num" "$score"
+	else
+		log "[RADIO:news] duplicate skip: scheduler pre-check for game=${game_num}"
+	fi
 }
 
 _build_manual_strategy_diff() {
@@ -125,11 +129,19 @@ _dispatch_manual_audio_trigger() {
 	case "$cmd_name" in
 	news)
 		log "[MANUAL] news トリガー受付: $(basename "$cmd_file")"
-		fetch_and_play_news "$game_num" "$score" &
+		if _try_game_corner "$game_num" "news"; then
+			fetch_and_play_news "$game_num" "$score" &
+		else
+			log "[MANUAL] news トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	soviet)
 		log "[MANUAL] soviet トリガー受付 (sovietカテゴリtheme): $(basename "$cmd_file")"
-		start_radio_corner_theme "$game_num" "$score" "soviet" &
+		if _try_game_corner "$game_num" "theme"; then
+			start_radio_corner_theme "$game_num" "$score" "soviet" &
+		else
+			log "[MANUAL] soviet トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	strategy)
 		log "[MANUAL] strategy トリガー受付: $(basename "$cmd_file")"
@@ -140,87 +152,243 @@ _dispatch_manual_audio_trigger() {
 		if [ -z "$strategy_diff" ]; then
 			strategy_diff="直近の strategy.py 差分は取得できなかった。直近スコア推移と最新改善の狙いを中心に解説すること。"
 		fi
-		start_radio_corner_strategy "$strategy_diff" "$recent_scores" "$game_num" "$best_score" &
+		if _try_game_corner "$game_num" "strategy"; then
+			start_radio_corner_strategy "$strategy_diff" "$recent_scores" "$game_num" "$best_score" &
+		else
+			log "[MANUAL] strategy トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	theme)
 		log "[MANUAL] theme トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_theme "$game_num" "$score" &
+		if _try_game_corner "$game_num" "theme"; then
+			start_radio_corner_theme "$game_num" "$score" &
+		else
+			log "[MANUAL] theme トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	weather)
 		log "[MANUAL] weather トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_weather "$game_num" "$score" &
+		if _try_game_corner "$game_num" "weather"; then
+			start_radio_corner_weather "$game_num" "$score" &
+		else
+			log "[MANUAL] weather トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	fortune)
 		log "[MANUAL] fortune トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_fortune "$game_num" "$score" &
+		if _try_game_corner "$game_num" "fortune"; then
+			start_radio_corner_fortune "$game_num" "$score" &
+		else
+			log "[MANUAL] fortune トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	market)
 		log "[MANUAL] market トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_market "$game_num" "$score" &
+		if _try_game_corner "$game_num" "market"; then
+			start_radio_corner_market "$game_num" "$score" &
+		else
+			log "[MANUAL] market トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	dinner)
 		log "[MANUAL] dinner トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_dinner "$game_num" "$score" &
+		if _try_game_corner "$game_num" "dinner"; then
+			start_radio_corner_dinner "$game_num" "$score" &
+		else
+			log "[MANUAL] dinner トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	deals)
 		log "[MANUAL] deals トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_deals "$game_num" "$score" &
+		if _try_game_corner "$game_num" "deals"; then
+			start_radio_corner_deals "$game_num" "$score" &
+		else
+			log "[MANUAL] deals トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	survival)
 		log "[MANUAL] survival トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_survival "$game_num" "$score" &
+		if _try_game_corner "$game_num" "survival"; then
+			start_radio_corner_survival "$game_num" "$score" &
+		else
+			log "[MANUAL] survival トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	rakugo)
 		log "[MANUAL] rakugo トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_rakugo "$game_num" "$score" &
+		if _try_game_corner "$game_num" "rakugo"; then
+			start_radio_corner_rakugo "$game_num" "$score" &
+		else
+			log "[MANUAL] rakugo トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	jiji)
 		log "[MANUAL] jiji トリガー受付: $(basename "$cmd_file")"
-		_run_jiji_corner_guarded "$game_num" "$score" &
+		if _try_game_corner "$game_num" "jiji"; then
+			_run_jiji_corner_guarded "$game_num" "$score" &
+		else
+			log "[MANUAL] jiji トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	health)
 		log "[MANUAL] health トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_health "$game_num" "$score" &
+		if _try_game_corner "$game_num" "health"; then
+			start_radio_corner_health "$game_num" "$score" &
+		else
+			log "[MANUAL] health トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	wiki)
 		log "[MANUAL] wiki トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_wiki "$game_num" "$score" &
+		if _try_game_corner "$game_num" "wiki"; then
+			start_radio_corner_wiki "$game_num" "$score" &
+		else
+			log "[MANUAL] wiki トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	sightseeing)
 		log "[MANUAL] sightseeing トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_sightseeing "$game_num" "$score" &
+		if _try_game_corner "$game_num" "sightseeing"; then
+			start_radio_corner_sightseeing "$game_num" "$score" &
+		else
+			log "[MANUAL] sightseeing トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	whatday)
 		log "[MANUAL] whatday トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_whatday "$game_num" "$score" &
+		if _try_game_corner "$game_num" "whatday"; then
+			start_radio_corner_whatday "$game_num" "$score" &
+		else
+			log "[MANUAL] whatday トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	zaitech)
 		log "[MANUAL] zaitech トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_zaitech "$game_num" "$score" &
+		if _try_game_corner "$game_num" "zaitech"; then
+			start_radio_corner_zaitech "$game_num" "$score" &
+		else
+			log "[MANUAL] zaitech トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	fudosan)
 		log "[MANUAL] fudosan トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_fudosan "$game_num" "$score" &
+		if _try_game_corner "$game_num" "fudosan"; then
+			start_radio_corner_fudosan "$game_num" "$score" &
+		else
+			log "[MANUAL] fudosan トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	local_japan)
 		log "[MANUAL] local_japan トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_local_japan "$game_num" "$score" &
+		if _try_game_corner "$game_num" "local_japan"; then
+			start_radio_corner_local_japan "$game_num" "$score" &
+		else
+			log "[MANUAL] local_japan トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	finance)
 		log "[MANUAL] finance トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_finance "$game_num" "$score" &
+		if _try_game_corner "$game_num" "finance"; then
+			start_radio_corner_finance "$game_num" "$score" &
+		else
+			log "[MANUAL] finance トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	danger_zone)
 		log "[MANUAL] danger_zone トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_danger_zone "$game_num" "$score" &
+		if _try_game_corner "$game_num" "danger_zone"; then
+			start_radio_corner_danger_zone "$game_num" "$score" &
+		else
+			log "[MANUAL] danger_zone トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	ai_knowledge)
 		log "[MANUAL] ai_knowledge トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_ai_knowledge "$game_num" "$score" &
+		if _try_game_corner "$game_num" "ai_knowledge"; then
+			start_radio_corner_ai_knowledge "$game_num" "$score" &
+		else
+			log "[MANUAL] ai_knowledge トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	music_knowledge)
 		log "[MANUAL] music_knowledge トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_music_knowledge "$game_num" "$score" &
+		if _try_game_corner "$game_num" "music_knowledge"; then
+			start_radio_corner_music_knowledge "$game_num" "$score" &
+		else
+			log "[MANUAL] music_knowledge トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	breakfast)
+		log "[MANUAL] breakfast トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "breakfast"; then
+			start_radio_corner_breakfast "$game_num" "$score" &
+		else
+			log "[MANUAL] breakfast トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	lunch)
+		log "[MANUAL] lunch トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "lunch"; then
+			start_radio_corner_lunch "$game_num" "$score" &
+		else
+			log "[MANUAL] lunch トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	devil_dict)
+		log "[MANUAL] devil_dict トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "devil_dict"; then
+			start_radio_corner_devil_dict "$game_num" "$score" &
+		else
+			log "[MANUAL] devil_dict トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	soviet_quiz)
+		log "[MANUAL] soviet_quiz トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "soviet_quiz"; then
+			start_radio_corner_soviet_quiz "$game_num" "$score" &
+		else
+			log "[MANUAL] soviet_quiz トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	bluegrass)
+		log "[MANUAL] bluegrass トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "bluegrass"; then
+			start_radio_corner_bluegrass "$game_num" "$score" &
+		else
+			log "[MANUAL] bluegrass トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	redefine)
+		log "[MANUAL] redefine トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "redefine"; then
+			start_radio_corner_redefine "$game_num" "$score" &
+		else
+			log "[MANUAL] redefine トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	soviet_lifehack)
+		log "[MANUAL] soviet_lifehack トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "soviet_lifehack"; then
+			start_radio_corner_soviet_lifehack "$game_num" "$score" &
+		else
+			log "[MANUAL] soviet_lifehack トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	world_dinner)
+		log "[MANUAL] world_dinner トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "world_dinner"; then
+			start_radio_corner_world_dinner "$game_num" "$score" &
+		else
+			log "[MANUAL] world_dinner トリガー重複スキップ: game=${game_num}"
+		fi
+		;;
+	night_snack)
+		log "[MANUAL] night_snack トリガー受付: $(basename "$cmd_file")"
+		if _try_game_corner "$game_num" "night_snack"; then
+			start_radio_corner_night_snack "$game_num" "$score" &
+		else
+			log "[MANUAL] night_snack トリガー重複スキップ: game=${game_num}"
+		fi
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
@@ -231,6 +399,35 @@ _dispatch_manual_audio_trigger() {
 	return 0
 }
 
+# ゲームベースのコーナーの重複起動防止ヘルパー (scheduler-level pre-check)
+# done_marker と inflight_marker の存在チェックのみ (corner関数のmkdirに委譲)
+# 戻り値0=起動可、1=スキップ (doneまたはin-flight)
+_try_game_corner() {
+	local game_num="$1" corner_name="$2"
+	[ -z "$game_num" ] && return 1
+	[ -z "$corner_name" ] && return 1
+
+	local done_marker="$TMP_MARKERS_DIR/.radio_done_${game_num}_${corner_name}"
+	local inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}"
+
+	# 既に生成済み (done marker は corner 関数が生成成功后作成する)
+	[ -f "$done_marker" ] && return 1
+
+	# 既に生成中 (inflight は corner 関数の mkdir が作成する)
+	# 'existence チェックのみ' — 実際のロックは corner 関数の mkdir に委譲
+	[ -d "$inflight_dir" ] && return 1
+
+	# 起動可能
+	return 0
+}
+
+# _try_game_corner の後処理用: inflight markerを削除 (生成失敗時)
+_cancel_game_corner_inflight() {
+	local game_num="$1" corner_name="$2"
+	[ -z "$game_num" ] || [ -z "$corner_name" ] && return 0
+	rmdir "$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}" 2>/dev/null || true
+}
+
 process_external_audio_triggers() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
@@ -239,7 +436,7 @@ process_external_audio_triggers() {
 
 	local max_per_tick="${MANUAL_AUDIO_TRIGGER_MAX_PER_TICK:-3}"
 	case "$max_per_tick" in
-	''|*[!0-9]*) max_per_tick=3 ;;
+	'' | *[!0-9]*) max_per_tick=3 ;;
 	esac
 	[ "$max_per_tick" -lt 1 ] && max_per_tick=1
 
@@ -269,10 +466,18 @@ start_random_radio_corner() {
 	# (全テーマからでも [soviet] タグ付きが選ばれればソ連モードになる)
 	if [ $((RANDOM % 3)) -eq 0 ]; then
 		log "[RADIO] コーナー選択: theme (soviet filter)"
-		start_radio_corner_theme "$game_num" "$score" "soviet"
+		if _try_game_corner "$game_num" "theme"; then
+			start_radio_corner_theme "$game_num" "$score" "soviet"
+		else
+			log "[RADIO:theme] duplicate skip: scheduler pre-check for game=${game_num}"
+		fi
 	else
 		log "[RADIO] コーナー選択: theme"
-		start_radio_corner_theme "$game_num" "$score"
+		if _try_game_corner "$game_num" "theme"; then
+			start_radio_corner_theme "$game_num" "$score"
+		else
+			log "[RADIO:theme] duplicate skip: scheduler pre-check for game=${game_num}"
+		fi
 	fi
 }
 
@@ -281,24 +486,11 @@ schedule_nonessential_audio_jobs() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
-	# 配信演出の頻度: 改善サイクル (accumulated_games) に合わせる
-	# cycle_pos=2 で雑談ラジオ、cycle_pos=5 でニュース、cycle_pos=8 で時事
+	# ラジオスケジュール: 時刻ベースのみ
+	# hh:00,30 = news / hh:05 = theme / hh:15,45 = jiji
 	# コメント優先の判定は維持しつつ、生成は止めない。
 	# 再生段で deferred キューへ回して、コメント消化後に再生する。
 	local comment_backlog_skip_threshold=1
-	local improve_cycle=${MIN_GAMES_BEFORE_IMPROVE:-12}
-	# 蓄積数ベースでサイクル位置を決定 (粛清/リセットでもズレない)
-	local acc_count=0
-	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-		acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-	fi
-	local cycle_pos=$(( acc_count % improve_cycle ))
-
-	# 改善直前判定: サイクル末の2ゲームは jiji と改善起動の競合を避ける
-	local near_improve=false
-	if [ "$acc_count" -ge $(( improve_cycle - 2 )) ]; then
-		near_improve=true
-	fi
 
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local comment_backlog_high=false
@@ -310,14 +502,7 @@ schedule_nonessential_audio_jobs() {
 		comment_backlog_high=true
 	fi
 
-	# ニュース: 12ゲームサイクルの5ゲーム目
-	if [ "$cycle_pos" -eq 5 ]; then
-		if [ "$comment_backlog_high" = true ]; then
-			log "[NEWS] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
-		fi
-		fetch_and_play_news "$game_num" "$score" &
-	fi
-
+	# ニュース: 時刻ベースで毎時00,30に取得（15分間隔）
 	# --- 戦略改善ラジオ: pending ファイルがある場合に生成 ---
 	_handle_pending_strategy_radio() {
 		local pending_file="tmp/state/pending_strategy_radio.json"
@@ -346,182 +531,162 @@ schedule_nonessential_audio_jobs() {
 
 		[ -z "$strategy_diff" ] && return 0
 
-		start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score" &
+		if _try_game_corner "$game_num" "strategy"; then
+			start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score" &
+		else
+			log "[RADIO:strategy] duplicate skip: scheduler pre-check for game=${game_num}"
+		fi
 		rm -f "$pending_file"
 	}
 	_handle_pending_strategy_radio
 
-	# --- 時間帯コーナー (1日1回、±15分ウィンドウ) ---
+	# --- 1時間に1回のランダムコーナー ---
 	local current_hour current_min today timed_corner_fired=false
 	current_hour=$(date +%H)
 	current_min=$(date +%M)
 	today=$(date +%Y%m%d)
 
 	_try_timed_corner() {
-		local name="$1" target_hh="$2" target_mm="$3"
-		local marker="$TMP_MARKERS_DIR/.timed_corner_done_${today}_${name}"
-		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${name}"
+		local marker_key="$1" target_hh="$2" target_mm="$3"
+		local marker="$TMP_MARKERS_DIR/.timed_corner_done_${today}_${marker_key}"
+		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${marker_key}"
 		[ -f "$marker" ] && return 1
 		if ! mkdir "$inflight" 2>/dev/null; then
-			return 1  # another scheduler beat us
+			return 1 # another scheduler beat us
 		fi
-		local target=$((target_hh * 60 + target_mm))
+		local target=$((10#$target_hh * 60 + 10#$target_mm))
 		local now=$((10#$current_hour * 60 + 10#$current_min))
 		local diff=$((now - target))
 		[ "$diff" -lt 0 ] && diff=$((-diff))
-		[ "$diff" -le 15 ] || { rmdir "$inflight" 2>/dev/null; return 1; }
+		[ "$diff" -le 15 ] || {
+			rmdir "$inflight" 2>/dev/null
+			return 1
+		}
 		return 0
 	}
 
 	# 成功マーカーを作成するラッパー (バックグラウンドジョブ内で使用)
 	_run_timed_corner() {
-		local name="$1" func="$2"
+		local marker_key="$1" func="$2"
 		shift 2
 		"$func" "$@" &
 		local _bg_pid=$!
 		wait "$_bg_pid"
 		local _exit_code=$?
 		if [ "$_exit_code" -eq 0 ]; then
-			touch "$TMP_MARKERS_DIR/.timed_corner_done_${today}_${name}"
+			touch "$TMP_MARKERS_DIR/.timed_corner_done_${today}_${marker_key}"
 		fi
-		rmdir "$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${name}" 2>/dev/null
+		rmdir "$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${marker_key}" 2>/dev/null
 	}
 
 	# stale inflight marker クリーンアップ (前日以前を一掃)
 	local _yesterday_marker_inf=$TMP_MARKERS_DIR/.timed_corner_inflight_$(date -v-1d +%Y%m%d)_*
 	rm -f $_yesterday_marker_inf 2>/dev/null
-	# 無日付の legacy marker も削除 (新方式への移行)
-	rm -f "$TMP_MARKERS_DIR"/.timed_corner_inflight_* 2>/dev/null
+	# 無日付の legacy marker のみ削除 (日付付き marker は保護)
+	for _f in "$TMP_MARKERS_DIR"/.timed_corner_inflight_*; do
+		[ -e "$_f" ] || continue
+		case "$(basename "$_f")" in
+		.timed_corner_inflight_[0-9]*) ;;
+		*) rm -f "$_f" ;;
+		esac
+	done
 
-	if _try_timed_corner "finance" 4 0; then
+	# ランダムコーナー: 1時間に1回、プールからランダムに1つ選ぶ
+	# 毎時05分のウィンドウで発火（themeのスロットと同じタイミング）
+	local _random_corner_marker="random_corner_${current_hour}"
+	if _try_timed_corner "$_random_corner_marker" "$current_hour" 5; then
+		local _random_pool=(
+			"finance"
+			"danger_zone"
+			"music_knowledge"
+			"health"
+			"rakugo"
+			"breakfast"
+			"weather"
+			"wiki"
+			"sightseeing"
+			"lunch"
+			"fortune"
+			"devil_dict"
+			"ai_knowledge"
+			"soviet_quiz"
+			"market"
+			"bluegrass"
+			"dinner"
+			"redefine"
+			"soviet_lifehack"
+			"world_dinner"
+			"whatday"
+			"zaitech"
+			"deals"
+			"fudosan"
+			"survival"
+			"night_snack"
+			"local_japan"
+		)
+		local _pick="${_random_pool[$((RANDOM % ${#_random_pool[@]}))]}"
+		log "[RADIO:random] 1時間に1回のランダムコーナー: ${_pick} (hour=${current_hour})"
+		case "$_pick" in
+		finance) _run_timed_corner "$_random_corner_marker" start_radio_corner_finance "$game_num" "$score" & ;;
+		danger_zone) _run_timed_corner "$_random_corner_marker" start_radio_corner_danger_zone "$game_num" "$score" & ;;
+		music_knowledge) _run_timed_corner "$_random_corner_marker" start_radio_corner_music_knowledge "$game_num" "$score" & ;;
+		health) _run_timed_corner "$_random_corner_marker" start_radio_corner_health "$game_num" "$score" & ;;
+		rakugo) _run_timed_corner "$_random_corner_marker" start_radio_corner_rakugo "$game_num" "$score" & ;;
+		breakfast) _run_timed_corner "$_random_corner_marker" start_radio_corner_breakfast "$game_num" "$score" & ;;
+		weather) _run_timed_corner "$_random_corner_marker" start_radio_corner_weather "$game_num" "$score" & ;;
+		wiki) _run_timed_corner "$_random_corner_marker" start_radio_corner_wiki "$game_num" "$score" & ;;
+		sightseeing) _run_timed_corner "$_random_corner_marker" start_radio_corner_sightseeing "$game_num" "$score" & ;;
+		lunch) _run_timed_corner "$_random_corner_marker" start_radio_corner_lunch "$game_num" "$score" & ;;
+		fortune) _run_timed_corner "$_random_corner_marker" start_radio_corner_fortune "$game_num" "$score" & ;;
+		devil_dict) _run_timed_corner "$_random_corner_marker" start_radio_corner_devil_dict "$game_num" "$score" & ;;
+		ai_knowledge) _run_timed_corner "$_random_corner_marker" start_radio_corner_ai_knowledge "$game_num" "$score" & ;;
+		soviet_quiz) _run_timed_corner "$_random_corner_marker" start_radio_corner_soviet_quiz "$game_num" "$score" & ;;
+		market) _run_timed_corner "$_random_corner_marker" start_radio_corner_market "$game_num" "$score" & ;;
+		bluegrass) _run_timed_corner "$_random_corner_marker" start_radio_corner_bluegrass "$game_num" "$score" & ;;
+		dinner) _run_timed_corner "$_random_corner_marker" start_radio_corner_dinner "$game_num" "$score" & ;;
+		redefine) _run_timed_corner "$_random_corner_marker" start_radio_corner_redefine "$game_num" "$score" & ;;
+		soviet_lifehack) _run_timed_corner "$_random_corner_marker" start_radio_corner_soviet_lifehack "$game_num" "$score" & ;;
+		world_dinner) _run_timed_corner "$_random_corner_marker" start_radio_corner_world_dinner "$game_num" "$score" & ;;
+		whatday) _run_timed_corner "$_random_corner_marker" start_radio_corner_whatday "$game_num" "$score" & ;;
+		zaitech) _run_timed_corner "$_random_corner_marker" start_radio_corner_zaitech "$game_num" "$score" & ;;
+		deals) _run_timed_corner "$_random_corner_marker" start_radio_corner_deals "$game_num" "$score" & ;;
+		fudosan) _run_timed_corner "$_random_corner_marker" start_radio_corner_fudosan "$game_num" "$score" & ;;
+		survival) _run_timed_corner "$_random_corner_marker" start_radio_corner_survival "$game_num" "$score" & ;;
+		night_snack) _run_timed_corner "$_random_corner_marker" start_radio_corner_night_snack "$game_num" "$score" & ;;
+		local_japan) _run_timed_corner "$_random_corner_marker" start_radio_corner_local_japan "$game_num" "$score" & ;;
+		esac
 		timed_corner_fired=true
-		_run_timed_corner "finance" start_radio_corner_finance "$game_num" "$score" &
-	fi
-	if _try_timed_corner "danger_zone" 5 0; then
-		timed_corner_fired=true
-		_run_timed_corner "danger_zone" start_radio_corner_danger_zone "$game_num" "$score" &
-	fi
-	if _try_timed_corner "music_knowledge" 5 30; then
-		timed_corner_fired=true
-		_run_timed_corner "music_knowledge" start_radio_corner_music_knowledge "$game_num" "$score" &
-	fi
-	if _try_timed_corner "health" 6 0; then
-		timed_corner_fired=true
-		_run_timed_corner "health" start_radio_corner_health "$game_num" "$score" &
-	fi
-	if _try_timed_corner "rakugo" 1 0; then
-		timed_corner_fired=true
-		_run_timed_corner "rakugo" start_radio_corner_rakugo "$game_num" "$score" &
-	fi
-	if _try_timed_corner "breakfast" 7 0; then
-		timed_corner_fired=true
-		_run_timed_corner "breakfast" start_radio_corner_breakfast "$game_num" "$score" &
-	fi
-	if _try_timed_corner "weather" 8 0; then
-		timed_corner_fired=true
-		_run_timed_corner "weather" start_radio_corner_weather "$game_num" "$score" &
-	fi
-	if _try_timed_corner "wiki" 9 0; then
-		timed_corner_fired=true
-		_run_timed_corner "wiki" start_radio_corner_wiki "$game_num" "$score" &
-	fi
-	if _try_timed_corner "sightseeing" 10 0; then
-		timed_corner_fired=true
-		_run_timed_corner "sightseeing" start_radio_corner_sightseeing "$game_num" "$score" &
-	fi
-	if _try_timed_corner "lunch" 11 30; then
-		timed_corner_fired=true
-		_run_timed_corner "lunch" start_radio_corner_lunch "$game_num" "$score" &
-	fi
-	if _try_timed_corner "fortune" 12 0; then
-		timed_corner_fired=true
-		_run_timed_corner "fortune" start_radio_corner_fortune "$game_num" "$score" &
-	fi
-	if _try_timed_corner "devil_dict" 13 0; then
-		timed_corner_fired=true
-		_run_timed_corner "devil_dict" start_radio_corner_devil_dict "$game_num" "$score" &
-	fi
-	if _try_timed_corner "ai_knowledge" 13 30; then
-		timed_corner_fired=true
-		_run_timed_corner "ai_knowledge" start_radio_corner_ai_knowledge "$game_num" "$score" &
-	fi
-	if _try_timed_corner "soviet_quiz" 14 0; then
-		timed_corner_fired=true
-		_run_timed_corner "soviet_quiz" start_radio_corner_soviet_quiz "$game_num" "$score" &
-	fi
-	if _try_timed_corner "market" 15 30; then
-		timed_corner_fired=true
-		_run_timed_corner "market" start_radio_corner_market "$game_num" "$score" &
-	fi
-	if _try_timed_corner "bluegrass" 16 0; then
-		timed_corner_fired=true
-		_run_timed_corner "bluegrass" start_radio_corner_bluegrass "$game_num" "$score" &
-	fi
-	if _try_timed_corner "dinner" 17 0; then
-		timed_corner_fired=true
-		_run_timed_corner "dinner" start_radio_corner_dinner "$game_num" "$score" &
-	fi
-	if _try_timed_corner "redefine" 17 30; then
-		timed_corner_fired=true
-		_run_timed_corner "redefine" start_radio_corner_redefine "$game_num" "$score" &
-	fi
-	if _try_timed_corner "soviet_lifehack" 18 0; then
-		timed_corner_fired=true
-		_run_timed_corner "soviet_lifehack" start_radio_corner_soviet_lifehack "$game_num" "$score" &
-	fi
-	if _try_timed_corner "world_dinner" 19 0; then
-		timed_corner_fired=true
-		_run_timed_corner "world_dinner" start_radio_corner_world_dinner "$game_num" "$score" &
-	fi
-	if _try_timed_corner "whatday" 20 0; then
-		timed_corner_fired=true
-		_run_timed_corner "whatday" start_radio_corner_whatday "$game_num" "$score" &
-	fi
-	if _try_timed_corner "zaitech" 20 30; then
-		timed_corner_fired=true
-		_run_timed_corner "zaitech" start_radio_corner_zaitech "$game_num" "$score" &
-	fi
-	if _try_timed_corner "deals" 21 0; then
-		timed_corner_fired=true
-		_run_timed_corner "deals" start_radio_corner_deals "$game_num" "$score" &
-	fi
-	if _try_timed_corner "fudosan" 21 30; then
-		timed_corner_fired=true
-		_run_timed_corner "fudosan" start_radio_corner_fudosan "$game_num" "$score" &
-	fi
-	if _try_timed_corner "survival" 22 0; then
-		timed_corner_fired=true
-		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
-	fi
-	if _try_timed_corner "night_snack" 22 30; then
-		timed_corner_fired=true
-		_run_timed_corner "night_snack" start_radio_corner_night_snack "$game_num" "$score" &
-	fi
-	if _try_timed_corner "local_japan" 23 30; then
-		timed_corner_fired=true
-		_run_timed_corner "local_japan" start_radio_corner_local_japan "$game_num" "$score" &
 	fi
 
-	# 雑談ラジオ: 12ゲームサイクルの2ゲーム目（時間帯コーナー発火時はスキップ）
-	if [ "$timed_corner_fired" = false ] && [ "$cycle_pos" -eq 2 ]; then
-		if [ "$comment_backlog_high" = true ]; then
-			log "[RADIO] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
-		fi
-		start_random_radio_corner "$game_num" "$score" &
+	# ニュース/jiji/theme は1日1回ではなく時刻スロットごとに実行する。
+	# 日付＋コーナー名だけの marker だと、その日の最初の1回で以後すべて止まる。
+	local recurring_hour
+	recurring_hour=$(date +%H)
+
+	# ニュース: 毎時00,30に取得・再生（news/jiji交互、15分間隔）
+	if _try_timed_corner "news_${recurring_hour}_00" "$recurring_hour" 0; then
+		timed_corner_fired=true
+		_run_timed_corner "news_${recurring_hour}_00" fetch_and_play_news "$game_num" "$score" &
+	elif _try_timed_corner "news_${recurring_hour}_30" "$recurring_hour" 30; then
+		timed_corner_fired=true
+		_run_timed_corner "news_${recurring_hour}_30" fetch_and_play_news "$game_num" "$score" &
 	fi
 
-	# 時事ニュースコーナー: サイクル4,8ゲーム目（2つで30分間隔相当）
-	# 改善タイミング付近はスキップ（メリケンAI起動との競合回避）
-	if [ "$near_improve" != true ] && { [ "$cycle_pos" -eq 4 ] || [ "$cycle_pos" -eq 8 ]; }; then
-		if [ "$comment_backlog_high" = true ]; then
-			log "[JIJI] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
-		fi
-		_run_jiji_corner_guarded "$game_num" "$score" &
+	# 雑談ラジオ: 毎時05（1時間に1回）
+	if _try_timed_corner "theme_${recurring_hour}_05" "$recurring_hour" 5; then
+		timed_corner_fired=true
+		_run_timed_corner "theme_${recurring_hour}_05" start_random_radio_corner "$game_num" "$score" &
+	fi
+
+	# 時事ニュース(jiji): 毎時15,45（ニュースと交互、15分間隔）
+	if _try_timed_corner "jiji_${recurring_hour}_15" "$recurring_hour" 15; then
+		_run_timed_corner "jiji_${recurring_hour}_15" _run_jiji_corner_guarded "$game_num" "$score" &
+	elif _try_timed_corner "jiji_${recurring_hour}_45" "$recurring_hour" 45; then
+		_run_timed_corner "jiji_${recurring_hour}_45" _run_jiji_corner_guarded "$game_num" "$score" &
 	fi
 }
 
 #=== lib/eloop_radio.sh から移行した関数 ===
-
 
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
@@ -543,7 +708,11 @@ _legacy_fetch_and_play_news() {
 		if [ "$news_fetch_status" = "stale_cache_restored" ] && [ -n "$news_fetch_message" ]; then
 			log "[NEWS] ${news_fetch_message}"
 		fi
-		start_radio_corner_news "$game_num" "$score"
+		if _try_game_corner "$game_num" "news"; then
+			start_radio_corner_news "$game_num" "$score"
+		else
+			log "[RADIO:news] duplicate skip: scheduler pre-check for game=${game_num}"
+		fi
 	else
 		if [ -n "$news_fetch_message" ]; then
 			log "[NEWS] ${news_fetch_message}"
@@ -567,8 +736,20 @@ _legacy_start_random_radio_corner() {
 	log "[RADIO] コーナー選択: ${pick}"
 
 	case "$pick" in
-	theme)   start_radio_corner_theme "$game_num" "$score" ;;
-	soviet)  start_radio_corner_soviet "$game_num" "$score" ;;
+	theme)
+		if _try_game_corner "$game_num" "theme"; then
+			start_radio_corner_theme "$game_num" "$score"
+		else
+			log "[RADIO:theme] duplicate skip: scheduler pre-check for game=${game_num}"
+		fi
+		;;
+	soviet)
+		if _try_game_corner "$game_num" "soviet"; then
+			start_radio_corner_soviet "$game_num" "$score"
+		else
+			log "[RADIO:soviet] duplicate skip: scheduler pre-check for game=${game_num}"
+		fi
+		;;
 	esac
 }
 
@@ -599,7 +780,7 @@ _legacy_schedule_nonessential_audio_jobs() {
 
 	local current_hour current_news_interval current_news_mode
 	current_hour=$(date +%H)
-	if (( 10#$current_hour >= news_night_start_hour && 10#$current_hour < news_night_end_hour )); then
+	if ((10#$current_hour >= news_night_start_hour && 10#$current_hour < news_night_end_hour)); then
 		current_news_interval="$news_interval_night"
 		current_news_mode="night"
 	else
@@ -612,7 +793,7 @@ _legacy_schedule_nonessential_audio_jobs() {
 		LAST_NEWS_MODE="$current_news_mode"
 	fi
 
-	if (( game_num % current_news_interval == news_phase )); then
+	if ((game_num % current_news_interval == news_phase)); then
 		if [ "$skip_nonessential_radio" = true ]; then
 			log "[NEWS] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else
@@ -620,7 +801,7 @@ _legacy_schedule_nonessential_audio_jobs() {
 		fi
 	fi
 
-	if (( game_num % radio_interval == radio_phase )); then
+	if ((game_num % radio_interval == radio_phase)); then
 		if [ "$skip_nonessential_radio" = true ]; then
 			log "[RADIO] skip random corner: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else
@@ -629,7 +810,7 @@ _legacy_schedule_nonessential_audio_jobs() {
 	fi
 
 	# 時事ニュースコーナー: サイクル4,8ゲーム目（2つで30分間隔相当）
-	if (( game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 4 || game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 8 )); then
+	if ((game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 4 || game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 8)); then
 		if [ "$skip_nonessential_radio" = true ]; then
 			log "[JIJI] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else

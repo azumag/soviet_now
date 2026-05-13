@@ -1,6 +1,5 @@
 # broadcast/comment.sh - コメント応答生成, コンテキスト構築, advice抽出
 
-
 #=== コメント関連 ===
 
 _kill_comment_gen() {
@@ -11,12 +10,12 @@ _kill_comment_gen() {
 		raw=$(cat "$pidfile" 2>/dev/null || true)
 		old_pid="${raw%%|*}"
 		case "$old_pid" in
-		''|*[!0-9]*) old_pid="" ;;
+		'' | *[!0-9]*) old_pid="" ;;
 		esac
 		if [ "$raw" != "$old_pid" ]; then
 			old_ppid=$(printf '%s' "$raw" | awk -F'|' '{print $2}')
 			case "$old_ppid" in
-			''|*[!0-9]*) old_ppid="" ;;
+			'' | *[!0-9]*) old_ppid="" ;;
 			esac
 		else
 			old_ppid=""
@@ -43,8 +42,8 @@ _comment_meta_sidecar_path() {
 	local target="$1"
 	case "$target" in
 	*.playing) printf '%s.meta.json' "${target%.playing}" ;;
-	*.txt)     printf '%s.meta.json' "${target%.txt}" ;;
-	*)         printf '%s.meta.json' "$target" ;;
+	*.txt) printf '%s.meta.json' "${target%.txt}" ;;
+	*) printf '%s.meta.json' "$target" ;;
 	esac
 }
 
@@ -176,7 +175,7 @@ is_comment_backlog_high() {
 	total=$((queued + playing))
 	case "$basis" in
 	queued) value="$queued" ;;
-	*)      value="$total" ;;
+	*) value="$total" ;;
 	esac
 	[ "$value" -ge "$threshold" ]
 }
@@ -279,7 +278,7 @@ print(status, pid)
 ' 2>/dev/null)"
 	[ "$status" = "running" ] || return 1
 	case "$pid" in
-	''|*[!0-9]*) return 1 ;;
+	'' | *[!0-9]*) return 1 ;;
 	esac
 	[ "$pid" -gt 0 ] || return 1
 	kill -0 "$pid" 2>/dev/null
@@ -305,7 +304,7 @@ _is_comment_batch_inflight() {
 	now=$(date +%s)
 	IFS='|' read -r ts hash pid <"$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || return 1
 	case "$ts" in
-	''|*[!0-9]*) return 1 ;;
+	'' | *[!0-9]*) return 1 ;;
 	esac
 	[ "$hash" = "$batch_hash" ] || return 1
 	if [ $((now - ts)) -gt "$COMMENT_BATCH_DEDUP_TTL" ]; then
@@ -313,7 +312,7 @@ _is_comment_batch_inflight() {
 		return 1
 	fi
 	case "$pid" in
-	''|*[!0-9]*) return 0 ;;
+	'' | *[!0-9]*) return 0 ;;
 	esac
 	if kill -0 "$pid" 2>/dev/null; then
 		return 0
@@ -364,7 +363,10 @@ _mark_comment_batch_processed() {
 _filter_already_processed_comment_lines() {
 	local comments="$1"
 	[ -n "$comments" ] || return 0
-	[ -f "$COMMENT_PROCESSED_LINES_FILE" ] || { printf '%s' "$comments"; return 0; }
+	[ -f "$COMMENT_PROCESSED_LINES_FILE" ] || {
+		printf '%s' "$comments"
+		return 0
+	}
 	local now filtered_count=0 total_count=0
 	now=$(date +%s)
 	local result=""
@@ -373,8 +375,12 @@ _filter_already_processed_comment_lines() {
 		total_count=$((total_count + 1))
 		local line_hash
 		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
-		[ -n "$line_hash" ] || { result="${result:+${result}
-}${line}"; filtered_count=$((filtered_count + 1)); continue; }
+		[ -n "$line_hash" ] || {
+			result="${result:+${result}
+}${line}"
+			filtered_count=$((filtered_count + 1))
+			continue
+		}
 		if awk -F'|' -v h="$line_hash" -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
 			'$2 == h && (now - $1) <= ttl { found=1 } END { exit(found ? 0 : 1) }' \
 			"$COMMENT_PROCESSED_LINES_FILE" 2>/dev/null; then
@@ -466,7 +472,7 @@ _current_playing_comment_file() {
 	src_file=$(printf '%s' "$cs_line" | awk -F'|' 'NR==1{print $3}')
 	[ "$phase" = "playing" ] || return 1
 	case "$src_file" in
-	*comment_*.playing|*comment_*.txt)
+	*comment_*.playing | *comment_*.txt)
 		[ -f "$src_file" ] || return 1
 		printf '%s' "$src_file"
 		return 0
@@ -794,6 +800,49 @@ _read_advice_context_tail() {
 	fi
 }
 
+_sanitize_comment_prompt_context() {
+	python3 -c "$(
+		cat <<'PY'
+import re
+import sys
+
+ERROR_PATTERNS = [
+    r"申し訳(?:ありません|ございません|ない).*(?:エラーメッセージ|提供|ユーザーメッセージ|指示|タスク|情報|スクリーンショット)",
+    r"(?:エラーメッセージ|ユーザーメッセージ|具体的な指示|明確な指示|具体的なタスク).*(?:提供されてい|見当たりません|ありません|ない|不足)",
+    r"(?:何も言えません|語ることはできません|控えておくべき|確認させてください|どうすればよい|何を.*すれば)",
+    r"(?:tool_call|tool_result|assistant_response|System Context|permission denied|no such file or directory|file not found|read failed|edit failed|write failed)",
+    r"(?:unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission)",
+    r"(?:invalid bearer token|authentication_error|api error|request_id|invalid token|not logged in|please run /login|rate limit|too many requests|429\b|quota|usage limit)",
+    r"(?:ユーザーからの.*指示がなく|システム設定.*だけが提供|具体的なタスク指示が見当たりません)",
+    r"(?:提供いただいた|提供していただいた).*(?:実際の記事本文|本文ではなく|テンプレート|管理情報|テキスト).*?(?:含まれていない|ありません|成立していません)",
+    r"(?:検索|WebFetch|インターネット|外部.*アクセス).*(?:できません|ありません|許可|確認できません)",
+]
+compiled = [re.compile(p, re.I) for p in ERROR_PATTERNS]
+
+def bad(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if re.match(r"^(error|warning)\s*:", stripped, re.I):
+        return True
+    if re.match(r"^[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b", stripped, re.I):
+        return True
+    if re.match(r"^[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b", stripped, re.I):
+        return True
+    return any(p.search(stripped) for p in compiled)
+
+kept = []
+for raw in sys.stdin.read().splitlines():
+    if bad(raw):
+        continue
+    kept.append(raw.rstrip())
+
+text = "\n".join(line for line in kept if line.strip()).strip()
+print(text if text else "（なし）", end="")
+PY
+	)"
+}
+
 _extract_structured_advice_from_comments() {
 	local batch_file="$1"
 	local fallback_mode="${2:-main}"
@@ -870,6 +919,18 @@ def clean_body(text: str) -> str:
     return body
 
 
+def looks_like_internal_error(raw: str) -> bool:
+    patterns = (
+        r"申し訳(?:ありません|ございません|ない).*(?:エラーメッセージ|提供|ユーザーメッセージ|指示|タスク|情報|スクリーンショット)",
+        r"(?:エラーメッセージ|ユーザーメッセージ|具体的な指示|明確な指示|具体的なタスク).*(?:提供されてい|見当たりません|ありません|ない|不足)",
+        r"(?:何も言えません|語ることはできません|控えておくべき|確認させてください|どうすればよい|何を.*すれば)",
+        r"(?:tool_call|tool_result|assistant_response|System Context|permission denied|no such file or directory|file not found|read failed|edit failed|write failed)",
+        r"(?:unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission)",
+        r"(?:invalid bearer token|authentication_error|api error|request_id|invalid token|not logged in|please run /login|rate limit|too many requests|429\b|quota|usage limit)",
+    )
+    return any(re.search(pattern, raw, re.I) for pattern in patterns)
+
+
 def has_any(norm: str, terms) -> bool:
     return any(term in norm for term in terms)
 
@@ -927,6 +988,8 @@ for line in lines:
     user, text = parse_line(line)
     body = clean_body(text)
     if not body:
+        continue
+    if looks_like_internal_error(body):
         continue
     kind = None
     mode = "-"
@@ -994,6 +1057,212 @@ for pattern in patterns:
 
 sys.stdout.write(updated)
 PY
+}
+
+#=== コメント分類器 ===
+
+_extract_comment_classification_json() {
+	python3 -c '
+import json
+import re
+import sys
+
+text = sys.stdin.read().strip()
+text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+text = re.sub(r"\s*```$", "", text)
+
+decoder = json.JSONDecoder()
+for match in re.finditer(r"\[", text):
+    try:
+        value, _ = decoder.raw_decode(text[match.start():])
+    except Exception:
+        continue
+    if isinstance(value, list):
+        print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+        raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
+_validate_comment_classification_json() {
+	python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(data, list) or not data:
+    raise SystemExit(1)
+for item in data:
+    if not isinstance(item, dict):
+        raise SystemExit(1)
+    if not item.get("category"):
+        raise SystemExit(1)
+'
+}
+
+_classify_comments_with_edit_contract() {
+	local classifier_prompt_file="$1" output_file="$2" primary="$3" fallback="$4" timeout_sec="$5"
+	local base_prompt agent prev_agent edit_prompt candidate_rc raw_json classification
+	[ -s "$classifier_prompt_file" ] || return 1
+	[ -n "$output_file" ] || return 1
+	base_prompt=$(cat "$classifier_prompt_file")
+	for agent in "$primary" "$fallback"; do
+		[ -n "$agent" ] || continue
+		[ "$agent" = "-" ] && continue
+		[ "$agent" = "$prev_agent" ] && continue
+		prev_agent="$agent"
+		: >"$output_file"
+		edit_prompt="${base_prompt}
+
+【出力契約】
+通常のチャット返答ではなく、次のファイルを編集して分類結果を書いてください。
+
+出力ファイル: ${output_file}
+
+必須:
+- ${output_file} のファイル全体を、有効な JSON 配列だけで上書きする
+- Markdown、コードフェンス、説明文、前置き、後書きは禁止
+- stdout に JSON を出す必要はない
+- 書き込み後、追加の説明は不要"
+		local prev_timeout="${RUN_CMD_TIMEOUT_SEC:-}"
+		local prev_tag="${RUN_CMD_LOG_TAG:-}"
+		local prev_perm="${RUN_CMD_OPENCODE_PERMISSION:-}"
+		RUN_CMD_TIMEOUT_SEC="$timeout_sec"
+		RUN_CMD_LOG_TAG="COMMENT_CLASSIFIER:${agent}"
+		RUN_CMD_OPENCODE_PERMISSION="${COMMENT_CLASSIFIER_OPENCODE_PERMISSION:-}"
+		run_cmd "$agent" "$edit_prompt" >/dev/null 2>&1
+		candidate_rc=$?
+		if [ -n "$prev_timeout" ]; then RUN_CMD_TIMEOUT_SEC="$prev_timeout"; else unset RUN_CMD_TIMEOUT_SEC; fi
+		if [ -n "$prev_tag" ]; then RUN_CMD_LOG_TAG="$prev_tag"; else unset RUN_CMD_LOG_TAG; fi
+		if [ -n "$prev_perm" ]; then RUN_CMD_OPENCODE_PERMISSION="$prev_perm"; else unset RUN_CMD_OPENCODE_PERMISSION; fi
+		raw_json=$(cat "$output_file" 2>/dev/null)
+		classification=$(printf '%s' "$raw_json" | _extract_comment_classification_json 2>/dev/null || true)
+		if [ -n "$classification" ] && printf '%s' "$classification" | _validate_comment_classification_json 2>/dev/null; then
+			printf '%s\n%s' "$agent" "$classification"
+			return 0
+		fi
+		log "[COMMENT] 分類器 edit契約失敗: agent=${agent} rc=${candidate_rc} output=${raw_json:0:120}" >&2
+	done
+	return 1
+}
+
+_classify_comments() {
+	local comments_file="$1"
+	[ -f "$comments_file" ] || return 1
+	local classifier_prompt_file
+	classifier_prompt_file=$(mktemp /tmp/eloop_comment_classifier_XXXXXXXX)
+	local comments_text
+	comments_text=$(cat "$comments_file")
+	if [ -z "$comments_text" ]; then
+		rm -f "$classifier_prompt_file"
+		return 1
+	fi
+	export comments_text
+	envsubst '${comments_text}' <"$ELOOP_LIB_DIR/prompts/comment_classifier.md" >"$classifier_prompt_file"
+	local model="${COMMENT_CLASSIFIER_AGENT:-minimax}"
+	local fallback="${COMMENT_CLASSIFIER_FALLBACK:-opencode:qwen35pgo}"
+	local timeout_sec="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
+	local edit_model="${COMMENT_CLASSIFIER_EDIT_AGENT:-minimax}"
+	local edit_fallback="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-opencode:qwen35pgo}"
+	local edit_timeout_sec="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
+	local classification raw_classification classifier_output_file classifier_edit_file classifier_model_used edit_result
+	mkdir -p "$ELOOP_LIB_DIR/tmp/debug/comment_classifier" 2>/dev/null || true
+	classifier_edit_file=$(mktemp "$ELOOP_LIB_DIR/tmp/debug/comment_classifier/classification_XXXXXXXX.json" 2>/dev/null || mktemp /tmp/eloop_comment_classifier_json_XXXXXXXX)
+	edit_result=$(_classify_comments_with_edit_contract "$classifier_prompt_file" "$classifier_edit_file" "$edit_model" "$edit_fallback" "$edit_timeout_sec" 2>/dev/null || true)
+	if [ -n "$edit_result" ]; then
+		classifier_model_used=$(printf '%s' "$edit_result" | sed -n '1p')
+		classification=$(printf '%s' "$edit_result" | sed '1d')
+		rm -f "$classifier_prompt_file" "$classifier_edit_file"
+		log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=edit" >&2
+		printf '%s' "$classification"
+		return 0
+	fi
+
+	classifier_output_file=$(mktemp /tmp/eloop_comment_classifier_output_XXXXXXXX)
+	if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" >"$classifier_output_file"; then
+		classifier_model_used="${AI_GENERATE_LAST_AGENT:-$model}"
+	else
+		classifier_model_used="${AI_GENERATE_LAST_AGENT:-}"
+	fi
+	raw_classification=$(cat "$classifier_output_file" 2>/dev/null)
+	rm -f "$classifier_output_file"
+	rm -f "$classifier_prompt_file" "$classifier_edit_file"
+	if [ -z "$raw_classification" ]; then
+		log "[COMMENT] 分類器: 空出力/タイムアウト" >&2
+		return 1
+	fi
+	classification=$(printf '%s' "$raw_classification" | _extract_comment_classification_json 2>/dev/null)
+	if [ -z "$classification" ]; then
+		log "[COMMENT] 分類器: JSON配列抽出失敗 -> ${raw_classification:0:200}" >&2
+		return 1
+	fi
+	if ! printf '%s' "$classification" | _validate_comment_classification_json 2>/dev/null; then
+		log "[COMMENT] 分類器: JSON不正 -> ${classification:0:200}" >&2
+		return 1
+	fi
+	log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=stdout_fallback" >&2
+	printf '%s' "$classification"
+	return 0
+}
+
+# 分類結果をパースしてカテゴリ別にコメントをグループ化
+_group_comments_by_category() {
+	local classification_json="$1"
+	[ -z "$classification_json" ] && return 1
+	python3 - "$classification_json" <<'PY'
+import json
+import sys
+
+json_str = sys.argv[1] if len(sys.argv) > 1 else sys.stdin.read()
+try:
+    data = json.loads(json_str)
+except Exception:
+    raise SystemExit(1)
+
+categories = {}
+for item in data:
+    idx = item.get("index", 0)
+    user = item.get("user", "")
+    comment = item.get("comment", "")
+    cat = item.get("category", "chitchat")
+    if cat not in categories:
+        categories[cat] = []
+    categories[cat].append((idx, user, comment))
+
+# Output in format: category|index|user: comment
+for cat, items in categories.items():
+    for idx, user, comment in sorted(items, key=lambda x: x[0]):
+        print(f"{cat}|{idx}|{user}: {comment}")
+PY
+}
+
+# カテゴリ別の追加指示を取得
+# 指定カテゴリのプロンプトを構築
+_build_category_prompt() {
+	local category="$1"
+	local comments_block="$2"
+	local classifications="${3:-}"
+	# Map sub-categories to their template names
+	local template_category="$category"
+	case "$category" in
+	game_question | game_status) template_category="game" ;;
+	strategy_advice | comment_advice | short_reaction | general_question) template_category="default" ;;
+	subscription | bits | other) template_category="default" ;;
+	esac
+	local template_file="$ELOOP_LIB_DIR/prompts/comment_response_${template_category}.md"
+	if [ ! -f "$template_file" ]; then
+		template_file="$ELOOP_LIB_DIR/prompts/comment_response_default.md"
+	fi
+	[ -f "$template_file" ] || return 1
+	local out_file="$4"
+	[ -z "$out_file" ] && return 1
+	export CATEGORY_COMMENTS="$comments_block"
+	export COMMENT_CLASSIFICATIONS="$classifications"
+	export twitch_comments_for_prompt="$comments_block"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -1079,10 +1348,10 @@ _detect_strategy_advice_target_mode() {
 	local normalized=""
 	normalized=$(printf '%s' "$advice_item" | tr '[:upper:]' '[:lower:]')
 	case "$normalized" in
-	*"[soren91]"*|*"メリケン"*|*"メリケンai"*|*"soren91"*|*"対戦版"*|*"おじゃま"*|*"hold"*|*"next"*|*"順位"*|*"相手"*|*"盤面タイプ"*)
+	*"[soren91]"* | *"メリケン"* | *"メリケンai"* | *"soren91"* | *"対戦版"* | *"おじゃま"* | *"hold"* | *"next"* | *"順位"* | *"相手"* | *"盤面タイプ"*)
 		printf '%s' "soren91"
 		;;
-	*"[main]"*|*"[soren]"*|*"中華ai"*|*"strategy.py"*)
+	*"[main]"* | *"[soren]"* | *"中華ai"* | *"strategy.py"*)
 		printf '%s' "main"
 		;;
 	*)
@@ -1107,7 +1376,7 @@ _append_advice_item_to_file() {
 		return 0
 	fi
 	printf '%s\n' "$advice_line" >>"$advice_file"
-	if [ -f "$advice_file" ] && [ "$(wc -l < "$advice_file")" -gt 150 ]; then
+	if [ -f "$advice_file" ] && [ "$(wc -l <"$advice_file")" -gt 150 ]; then
 		tail -150 "$advice_file" >"${advice_file}.tmp"
 		mv "${advice_file}.tmp" "$advice_file"
 	fi
@@ -1172,7 +1441,7 @@ generate_comment_response() {
 		# pending.log から残留行を消化する
 		local ack_tmp
 		ack_tmp=$(mktemp /tmp/eloop_comment_ack_XXXXXXXX 2>/dev/null || echo "tmp/.twitch_chat/comment_ack_$(date +%s)_${RANDOM}.txt")
-		printf '%s\n' "$twitch_comments_original" > "$ack_tmp"
+		printf '%s\n' "$twitch_comments_original" >"$ack_tmp"
 		./twitch_chat.sh ack-batch "$ack_tmp"
 		rm -f "$ack_tmp"
 		return
@@ -1202,7 +1471,7 @@ generate_comment_response() {
 	comment_batch_file=$(mktemp /tmp/eloop_comment_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_batch_file" ] && comment_batch_file="tmp/.twitch_chat/comment_batch_$(date +%s)_${RANDOM}.txt"
 	# ack-batch用にオリジナル全行を書き込む（フィルタ済み行も pending から確実に消化するため）
-	printf '%s\n' "$twitch_comments_original" > "$comment_batch_file"
+	printf '%s\n' "$twitch_comments_original" >"$comment_batch_file"
 
 	local comment_batch_hash=""
 	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
@@ -1242,7 +1511,7 @@ generate_comment_response() {
 	local comment_prompt_batch_file=""
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="tmp/.twitch_chat/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
-	printf '%s\n' "$twitch_comments_for_prompt" > "$comment_prompt_batch_file"
+	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
 
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
@@ -1253,7 +1522,7 @@ generate_comment_response() {
 
 	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
 	local previous_comments_context=""
-	[ -f "$comment_context_history_file" ] && previous_comments_context=$(tail -30 "$comment_context_history_file" 2>/dev/null)
+	[ -f "$comment_context_history_file" ] && previous_comments_context=$(tail -12 "$comment_context_history_file" 2>/dev/null | _sanitize_comment_prompt_context)
 	# 重複追記防止: 直前の内容と同一でなければ追記
 	local _last_context_lines=""
 	if [ -f "$comment_context_history_file" ]; then
@@ -1262,19 +1531,19 @@ generate_comment_response() {
 		_last_context_lines=$(tail -"${_new_line_count}" "$comment_context_history_file" 2>/dev/null)
 	fi
 	if [ "$_last_context_lines" != "$twitch_comments_for_prompt" ]; then
-		printf '%s\n' "$twitch_comments_for_prompt" >> "$comment_context_history_file"
+		printf '%s\n' "$twitch_comments_for_prompt" >>"$comment_context_history_file"
 	fi
-	if [ -f "$comment_context_history_file" ] && [ "$(wc -l < "$comment_context_history_file")" -gt 300 ]; then
-		tail -300 "$comment_context_history_file" > "${comment_context_history_file}.tmp"
+	if [ -f "$comment_context_history_file" ] && [ "$(wc -l <"$comment_context_history_file")" -gt 300 ]; then
+		tail -300 "$comment_context_history_file" >"${comment_context_history_file}.tmp"
 		mv "${comment_context_history_file}.tmp" "$comment_context_history_file"
 	fi
 
 	local comment_batch_context=""
-	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context)
+	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context | _sanitize_comment_prompt_context)
 	local recent_spoken_comment_context=""
 	# spoken history は外部ファイル参照に移行済み（プロンプト埋め込み不要）
 	local comment_followup_hints=""
-	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file")
+	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" | _sanitize_comment_prompt_context)
 	local comment_mode_for_advice=""
 	comment_mode_for_advice=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	local structured_advice_candidates=""
@@ -1321,7 +1590,43 @@ $advice_text"
 		strategy_advice_candidates="$strategy_advice_candidates_main"
 	fi
 	local comment_advice_context=""
-	comment_advice_context=$(_read_advice_context_tail "$COMMENT_ADVICE_FILE" 40)
+	comment_advice_context=$(_read_advice_context_tail "$COMMENT_ADVICE_FILE" 15 | _sanitize_comment_prompt_context)
+	strategy_advice_candidates=$(printf '%s' "${strategy_advice_candidates:-}" | _sanitize_comment_prompt_context)
+	strategy_advice_candidates_main=$(printf '%s' "${strategy_advice_candidates_main:-}" | _sanitize_comment_prompt_context)
+	strategy_advice_candidates_soren91=$(printf '%s' "${strategy_advice_candidates_soren91:-}" | _sanitize_comment_prompt_context)
+	comment_advice_candidates=$(printf '%s' "${comment_advice_candidates:-}" | _sanitize_comment_prompt_context)
+
+	# コメント分類器を実行
+	local classification_json=""
+	classification_json=$(_classify_comments "$comment_prompt_batch_file")
+	local dominant_category=""
+	if [ -n "$classification_json" ]; then
+		dominant_category=$(python3 -c "
+import json, sys
+json_str = sys.stdin.read()
+try:
+    data = json.loads(json_str)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(data, list) or len(data) == 0:
+    raise SystemExit(1)
+counts = {}
+for item in data:
+    cat = item.get('category', 'chitchat')
+    counts[cat] = counts.get(cat, 0) + 1
+total = len(data)
+dominant = max(counts, key=counts.get)
+ratio = counts[dominant] / total
+if ratio > 0.8:
+    print(dominant)
+else:
+    if len(counts) == 1:
+        print(list(counts.keys())[0])
+    else:
+        print('mixed')
+" <<<"$classification_json")
+		log "[COMMENT] 分類結果: ${dominant_category:-取得失敗} (classification: ${classification_json:0:200})"
+	fi
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -1343,8 +1648,9 @@ $advice_text"
 	local comment_parent_pid comment_started_at
 	comment_parent_pid=$(_my_pid)
 	comment_started_at=$(date +%s)
-	echo "generating:comment:${comment_started_at}" > $COMMENT_GEN_STATE_FILE
+	echo "generating:comment:${comment_started_at}" >$COMMENT_GEN_STATE_FILE
 	_mark_comment_batch_inflight "$comment_batch_hash"
+	export dominant_category
 
 	(
 		_cg_my_pid=$(_my_pid)
@@ -1381,7 +1687,7 @@ $advice_text"
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。今までより一段だけ長めに、感想・理由・補足・軽い返しのどれかを足して、話を少し深く広げること\n- ただし azumagbanjo の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは今まで通り短めでよく、反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
+			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。今までより一段だけ長めに、感想・理由・補足・軽い返しのどれかを足して、話を少し深く広げること\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは今まで通り短めでよく、反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
 			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。ただしカードガチャ結果コメントだけは例外で、今まで通り短めに保ってください。'
 		fi
 		if [ -z "$_comment_persona" ]; then
@@ -1394,11 +1700,12 @@ $advice_text"
 		strategy_advice_candidates="${strategy_advice_candidates:-（なし）}"
 		comment_advice_candidates="${comment_advice_candidates:-（なし）}"
 		comment_advice_context="${comment_advice_context:-（なし）}"
-		previous_comments_context="${previous_comments_context:-（なし）}"
-		recent_spoken_comment_context="${recent_spoken_comment_context:-（なし）}"
-		comment_followup_hints="${comment_followup_hints:-（なし）}"
+		previous_comments_context=$(printf '%s' "${previous_comments_context:-（なし）}" | _sanitize_comment_prompt_context)
+		recent_spoken_comment_context=$(printf '%s' "${recent_spoken_comment_context:-（なし）}" | _sanitize_comment_prompt_context)
+		comment_followup_hints=$(printf '%s' "${comment_followup_hints:-（なし）}" | _sanitize_comment_prompt_context)
 		celebration_history_context="${celebration_history_context:-（なし）}"
-		game_state_context="${game_state_context:-（取得失敗）}"
+		comment_thumbnail_ocr_context=$(printf '%s' "${comment_thumbnail_ocr_context:-（なし）}" | _sanitize_comment_prompt_context)
+		game_state_context=$(printf '%s' "${game_state_context:-（取得失敗）}" | _sanitize_comment_prompt_context)
 
 		# Export all template variables (safe: inside subshell)
 		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
@@ -1410,26 +1717,78 @@ $advice_text"
 			game_state_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
 			_prediction_cycle_games
 
-		local comment_prompt_file
+		# 分類結果に基づきプロンプトを選択
+		local comment_prompt_file=""
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
-		local _comment_template="$ELOOP_LIB_DIR/prompts/comment_template.md"
-		if [ ! -f "$_comment_template" ]; then
-			log "[COMMENT] ERROR: prompts/comment_template.md not found, skip"
-			rm -f "$comment_prompt_file"
-			return 1
+		if [ -n "$dominant_category" ] && [ "$dominant_category" != "mixed" ]; then
+			log "[COMMENT] カテゴリ別プロンプト使用: ${dominant_category}"
+			local formatted_classifications=""
+			if [ -n "$classification_json" ]; then
+				formatted_classifications=$(python3 - "$classification_json" "$comment_prompt_batch_file" <<'PY' 2>/dev/null
+import json, sys
+data = json.loads(sys.argv[1])
+batch_file = sys.argv[2]
+source = []
+try:
+    with open(batch_file, 'r', encoding='utf-8', errors='ignore') as f:
+        source = [line.rstrip('\n') for line in f if line.strip()]
+except Exception:
+    source = []
+for item in data:
+    idx = item.get('index', 0)
+    try:
+        idx_num = int(idx)
+    except Exception:
+        idx_num = 0
+    if 1 <= idx_num <= len(source):
+        raw = source[idx_num - 1]
+        if ': ' in raw:
+            user, comment = raw.split(': ', 1)
+        else:
+            user, comment = '', raw
+    else:
+        user, comment = '', ''
+    cat = item.get('category', 'chitchat')
+    if comment:
+        print(f'[{idx_num}] {user}: {comment} -> {cat}')
+PY
+)
+				formatted_classifications=$(printf '%s' "$formatted_classifications" | _sanitize_comment_prompt_context)
+			fi
+			_build_category_prompt "$dominant_category" "$twitch_comments_for_prompt" "$formatted_classifications" "$comment_prompt_file" 2>/dev/null
+			if [ ! -s "$comment_prompt_file" ]; then
+				log "[COMMENT] カテゴリ別プロンプト生成失敗 -> デフォルトにフォールバック"
+				rm -f "$comment_prompt_file"
+				comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
+				local _comment_template="$ELOOP_LIB_DIR/prompts/comment_template.md"
+				if [ ! -f "$_comment_template" ]; then
+					log "[COMMENT] ERROR: prompts/comment_template.md not found, skip"
+					rm -f "$comment_prompt_file"
+					return 1
+				fi
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+					<"$_comment_template" >"$comment_prompt_file"
+			fi
+		else
+			local _comment_template="$ELOOP_LIB_DIR/prompts/comment_template.md"
+			if [ ! -f "$_comment_template" ]; then
+				log "[COMMENT] ERROR: prompts/comment_template.md not found, skip"
+				rm -f "$comment_prompt_file"
+				return 1
+			fi
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+				<"$_comment_template" >"$comment_prompt_file"
 		fi
-		envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
-			< "$_comment_template" > "$comment_prompt_file"
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
 		case "$comment_retry_max" in
-		''|*[!0-9]*) comment_retry_max=3 ;;
+		'' | *[!0-9]*) comment_retry_max=3 ;;
 		esac
 		[ "$comment_retry_max" -lt 1 ] && comment_retry_max=1
 
 		local attempt=1 generation_ok=false
 		local comment_claude_only=false
-			local comment_ollama_improving_only=false
+		local comment_ollama_improving_only=false
 		local comment_skip_claude=false
 		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 		local comment_primary_agent="" comment_second_agent="" comment_third_agent=""
@@ -1440,9 +1799,13 @@ $advice_text"
 			comment_third_agent=""
 			comment_allow_claude_fallback=false
 		else
-			comment_primary_agent="${COMMENT_MAIN_AGENT:-opencode:nvglm47}"
-			comment_second_agent="${COMMENT_MAIN_FALLBACK:-gemma4e}"
+			comment_primary_agent="${COMMENT_MAIN_AGENT:-opencode:qwen35pgo}"
+			comment_second_agent="${COMMENT_MAIN_FALLBACK:-qwen35e}"
 			comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
+			case "${COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK:-0}" in
+			1 | true | TRUE | yes | YES) comment_allow_claude_fallback=true ;;
+			*) comment_allow_claude_fallback=false ;;
+			esac
 		fi
 		local comments_talk="" comment_model_used=""
 		if [ "$comment_force_claude_manual" = "true" ]; then
@@ -1452,15 +1815,15 @@ $advice_text"
 			comment_ollama_improving_only=true
 			log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
 		fi
-		echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
+		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 		log "[COMMENT] コメント返し生成中... (max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
-			echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
+			echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 			local prompt_for_attempt="$comment_prompt_file"
 			if [ "$attempt" -gt 1 ]; then
 				prompt_for_attempt=$(mktemp /tmp/eloop_comment_prompt_retry_XXXXXXXX)
-				cat "$comment_prompt_file" > "$prompt_for_attempt"
+				cat "$comment_prompt_file" >"$prompt_for_attempt"
 				cat >>"$prompt_for_attempt" <<'RETRYCOMMENT'
 
 	【再生成指示】
@@ -1476,88 +1839,96 @@ RETRYCOMMENT
 				if [ -n "$_comment_retry_length_policy" ]; then
 					printf '%s\n' "$_comment_retry_length_policy" >>"$prompt_for_attempt"
 				fi
-				fi
+			fi
 
-				local attempt_talk="" attempt_model=""
-				if [ "$comment_claude_only" = "true" ]; then
+			local attempt_talk="" attempt_model=""
+			if [ "$comment_claude_only" = "true" ]; then
+				attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
+				attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+				attempt_talk=$(_clean_comment_talk "$attempt_talk")
+				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+					log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+					attempt_talk=""
+					attempt_model=""
+				fi
+				if [ -z "$attempt_talk" ]; then
+					log "[COMMENT] claude専用モード失敗 -> opencode fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
+					comment_claude_only=false
+					comment_skip_claude=true
+				fi
+			elif [ "$comment_ollama_improving_only" = "true" ]; then
+				attempt_talk=$(_run_ollama_comment "$prompt_for_attempt" "$COMMENT_OLLAMA_MODEL_IMPROVING")
+				log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} improving call done (attempt ${attempt}/${comment_retry_max})"
+				attempt_model="ollama:${COMMENT_OLLAMA_MODEL_IMPROVING}"
+				attempt_talk=$(_clean_comment_talk "$attempt_talk")
+				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+					log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+					attempt_talk=""
+					attempt_model=""
+				fi
+				if [ -z "$attempt_talk" ]; then
+					log "[COMMENT] ollama improving専用モード失敗 -> fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
+					comment_ollama_improving_only=false
+				fi
+			fi
+			if [ -z "$attempt_talk" ]; then
+				attempt_talk=$(_run_comment_agent "$comment_primary_agent" "$prompt_for_attempt")
+				attempt_model="$comment_primary_agent"
+				attempt_talk=$(_clean_comment_talk "$attempt_talk")
+				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				if [ -z "$attempt_talk" ]; then
+					log "[COMMENT] ${comment_primary_agent} 空応答 → ${comment_second_agent} fallback (attempt ${attempt}/${comment_retry_max})"
+				fi
+				# minimax はcleanup済みなのでバリデーションスキップ（空応答チェックのみ）
+				if [ -z "$attempt_talk" ]; then
+					attempt_talk=$(_run_comment_agent "$comment_second_agent" "$prompt_for_attempt")
+					attempt_model="$comment_second_agent"
+					attempt_talk=$(_clean_comment_talk "$attempt_talk")
+					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+						if [ "$comment_allow_claude_fallback" = "true" ]; then
+							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+						elif [ -n "$comment_third_agent" ]; then
+							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
+						else
+							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → attempt失敗 (attempt ${attempt}/${comment_retry_max})"
+						fi
+						log "[COMMENT] 破棄された生成文 (${comment_second_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
+						attempt_talk=""
+						attempt_model=""
+					fi
+				fi
+				if [ -z "$attempt_talk" ] && [ "$comment_allow_claude_fallback" = "true" ]; then
 					attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
 					attempt_model="claude:${RADIO_CLAUDE_MODEL}"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+						if [ -n "$comment_third_agent" ]; then
+							log "[COMMENT] claude 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
+						else
+							log "[COMMENT] claude 出力が不正/短文のため破棄 → attempt失敗 (attempt ${attempt}/${comment_retry_max})"
+						fi
+						log "[COMMENT] 破棄された生成文 (claude): $(printf '%s' "$attempt_talk" | head -c 500)"
 						attempt_talk=""
 						attempt_model=""
 					fi
-					if [ -z "$attempt_talk" ]; then
-						log "[COMMENT] claude専用モード失敗 -> opencode fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
-						comment_claude_only=false
-						comment_skip_claude=true
-					fi
-				elif [ "$comment_ollama_improving_only" = "true" ]; then
-					attempt_talk=$(_run_ollama_comment "$prompt_for_attempt" "$COMMENT_OLLAMA_MODEL_IMPROVING")
-					log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} improving call done (attempt ${attempt}/${comment_retry_max})"
-					attempt_model="ollama:${COMMENT_OLLAMA_MODEL_IMPROVING}"
+				fi
+				if [ -z "$attempt_talk" ] && [ -n "$comment_third_agent" ]; then
+					attempt_talk=$(_run_comment_agent "$comment_third_agent" "$prompt_for_attempt")
+					attempt_model="$comment_third_agent"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+						log "[COMMENT] ${comment_third_agent} 出力が不正/短文のため破棄 → attempt失敗 (attempt ${attempt}/${comment_retry_max})"
+						log "[COMMENT] 破棄された生成文 (${comment_third_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
 						attempt_talk=""
 						attempt_model=""
 					fi
-					if [ -z "$attempt_talk" ]; then
-						log "[COMMENT] ollama improving専用モード失敗 -> fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
-						comment_ollama_improving_only=false
-					fi
 				fi
-				if [ -z "$attempt_talk" ]; then
-					attempt_talk=$(_run_comment_agent "$comment_primary_agent" "$prompt_for_attempt")
-					attempt_model="$comment_primary_agent"
-					attempt_talk=$(_clean_comment_talk "$attempt_talk")
-					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-					if [ -z "$attempt_talk" ]; then
-						log "[COMMENT] ${comment_primary_agent} 空応答 → ${comment_second_agent} fallback (attempt ${attempt}/${comment_retry_max})"
-					fi
-					# minimax はcleanup済みなのでバリデーションスキップ（空応答チェックのみ）
-					if [ -z "$attempt_talk" ]; then
-						attempt_talk=$(_run_comment_agent "$comment_second_agent" "$prompt_for_attempt")
-						attempt_model="$comment_second_agent"
-						attempt_talk=$(_clean_comment_talk "$attempt_talk")
-						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
-							log "[COMMENT] 破棄された生成文 (${comment_second_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
-							attempt_talk=""
-							attempt_model=""
-						fi
-						fi
-						if [ -z "$attempt_talk" ]; then
-							if [ -n "$comment_third_agent" ]; then
-								attempt_talk=$(_run_comment_agent "$comment_third_agent" "$prompt_for_attempt")
-								attempt_model="$comment_third_agent"
-								attempt_talk=$(_clean_comment_talk "$attempt_talk")
-								attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-								if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-									log "[COMMENT] ${comment_third_agent} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
-									log "[COMMENT] 破棄された生成文 (${comment_third_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
-									attempt_talk=""
-									attempt_model=""
-								fi
-							fi
-						fi
-						if [ -z "$attempt_talk" ] && [ "$comment_allow_claude_fallback" = "true" ]; then
-							attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
-							attempt_model="claude:${RADIO_CLAUDE_MODEL}"
-							attempt_talk=$(_clean_comment_talk "$attempt_talk")
-						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
-							log "[COMMENT] 破棄された生成文 (claude): $(printf '%s' "$attempt_talk" | head -c 500)"
-							attempt_talk=""
-							attempt_model=""
-						fi
-					fi
-				fi
+			fi
 			if [ "$prompt_for_attempt" != "$comment_prompt_file" ]; then
 				rm -f "$prompt_for_attempt"
 			fi
@@ -1620,7 +1991,7 @@ RETRYCOMMENT
 			if [ -n "$sing_score" ]; then
 				if echo "$sing_score" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'notes' in d" 2>/dev/null; then
 					local score_file="/tmp/sing_score_$(date +%s)_$$.json"
-					echo "$sing_score" > "$score_file"
+					echo "$sing_score" >"$score_file"
 					(
 						local sing_wav="/tmp/sing_wav_$(date +%s)_$$.wav"
 						local _sing_lock="tmp/.say_queue/.voicevox_synth_lock"
@@ -1628,16 +1999,18 @@ RETRYCOMMENT
 						while ! mkdir "$_sing_lock" 2>/dev/null; do
 							sleep 0.5
 							_sing_lock_wait=$((_sing_lock_wait + 1))
-							if [ "$_sing_lock_wait" -ge 120 ]; then break; fi  # 60s timeout
+							if [ "$_sing_lock_wait" -ge 120 ]; then break; fi # 60s timeout
 						done
 						[ "$_sing_lock_wait" -lt 120 ] && _sing_lock_held=1
 						if [ "$_sing_lock_held" -eq 1 ]; then
 							if VOICEVOX_SING_HOST_MODE="$_comment_mode_generated" "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
-								rmdir "$_sing_lock" 2>/dev/null; _sing_lock_held=0
+								rmdir "$_sing_lock" 2>/dev/null
+								_sing_lock_held=0
 								SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
 								rm -f "$sing_wav"
 							else
-								rmdir "$_sing_lock" 2>/dev/null; _sing_lock_held=0
+								rmdir "$_sing_lock" 2>/dev/null
+								_sing_lock_held=0
 								log "[COMMENT] 歌声合成失敗: $score_file"
 							fi
 						else

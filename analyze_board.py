@@ -21,7 +21,24 @@ DROP_X_MIN = -3.0
 DROP_X_MAX = 3.0
 FLOOR_Y = -5.0
 DROP_Y = 4.25
-DEADLINE_Y = 2.5
+DEADLINE_Y = 3.32
+TYPE_RADII = {
+    1: 0.207,
+    2: 0.259,
+    3: 0.316,
+    4: 0.380,
+    5: 0.414,
+    6: 0.470,
+    7: 0.559,
+    8: 0.660,
+    9: 0.746,
+    10: 0.846,
+    11: 0.982,
+    12: 1.068,
+    13: 1.207,
+    14: 1.385,
+    15: 1.600,
+}
 
 # ポリゴン形状補正係数
 # 円モデルの衝突半径 = r * COLLISION_POLY_FACTOR
@@ -44,7 +61,10 @@ BASE_XS = [round(-3.0 + i * 0.2, 1) for i in range(31)]  # -3.0 to 3.0
 
 # --- 物理予測関数 ---
 
-def estimate_polygon_drift(drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type):
+
+def estimate_polygon_drift(
+    drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type
+):
     """ポリゴン形状を考慮した着地後のドリフト推定。
     凸ポリゴンは着地後に回転・転がりを起こし、最終位置がdrop_xからずれる。
 
@@ -61,9 +81,9 @@ def estimate_polygon_drift(drop_x, landing_y, hit_id, next_r, pieces, shapes, ne
         return 0.0, 0.0
 
     # ポリゴンの非円形度を計算（円からの偏差）
-    dists = [math.sqrt(v[0]**2 + v[1]**2) for v in verts]
+    dists = [math.sqrt(v[0] ** 2 + v[1] ** 2) for v in verts]
     mean_r = sum(dists) / len(dists)
-    variance = sum((d - mean_r)**2 for d in dists) / len(dists)
+    variance = sum((d - mean_r) ** 2 for d in dists) / len(dists)
     eccentricity = math.sqrt(variance) / mean_r if mean_r > 0 else 0
 
     # 非円形度が高いほどドリフトが大きい
@@ -74,7 +94,9 @@ def estimate_polygon_drift(drop_x, landing_y, hit_id, next_r, pieces, shapes, ne
         if hit_piece:
             dx = drop_x - hit_piece["x"]
             # ピース表面の傾斜: 中心からずれるほど急斜面
-            norm_dx = dx / (next_r + hit_piece["r"]) if (next_r + hit_piece["r"]) > 0 else 0
+            norm_dx = (
+                dx / (next_r + hit_piece["r"]) if (next_r + hit_piece["r"]) > 0 else 0
+            )
             slope = norm_dx  # -1〜+1, 正=右下がり斜面
 
     # ドリフト推定: 斜面方向 × 非円形度 × 半径
@@ -133,14 +155,16 @@ def estimate_explosion_displacement(merge_x, merge_y, pieces, exclude_ids=None):
         actual_dy = new_y - p["y"]
 
         if abs(actual_dx) > 0.05 or abs(actual_dy) > 0.05:
-            displacements.append({
-                "id": p["id"],
-                "type": p["type"],
-                "dx": round(actual_dx, 2),
-                "dy": round(actual_dy, 2),
-                "new_x": round(new_x, 2),
-                "new_y": round(new_y, 2),
-            })
+            displacements.append(
+                {
+                    "id": p["id"],
+                    "type": p["type"],
+                    "dx": round(actual_dx, 2),
+                    "dy": round(actual_dy, 2),
+                    "new_x": round(new_x, 2),
+                    "new_y": round(new_y, 2),
+                }
+            )
 
     # 爆発後に新たな併合ペアが生まれるか検査
     new_merges = []
@@ -148,7 +172,7 @@ def estimate_explosion_displacement(merge_x, merge_y, pieces, exclude_ids=None):
     for i, p1 in enumerate(pieces):
         if p1["id"] in exclude_ids:
             continue
-        for p2 in pieces[i+1:]:
+        for p2 in pieces[i + 1 :]:
             if p2["id"] in exclude_ids:
                 continue
             if p1["type"] != p2["type"]:
@@ -159,9 +183,9 @@ def estimate_explosion_displacement(merge_x, merge_y, pieces, exclude_ids=None):
             x2 = moved[p2["id"]]["new_x"] if p2["id"] in moved else p2["x"]
             y2 = moved[p2["id"]]["new_y"] if p2["id"] in moved else p2["y"]
             # 移動前距離
-            old_dist = math.sqrt((p1["x"]-p2["x"])**2 + (p1["y"]-p2["y"])**2)
+            old_dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
             # 移動後距離
-            new_dist = math.sqrt((x1-x2)**2 + (y1-y2)**2)
+            new_dist = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
             contact_r = p1["r"] + p2["r"]
             if new_dist < contact_r * 1.2 and old_dist >= contact_r * 1.2:
                 new_merges.append((p1["id"], p2["id"], p1["type"]))
@@ -184,19 +208,25 @@ def calc_reactor_state(pieces):
     for p in pieces:
         type_count[p["type"]] = type_count.get(p["type"], 0) + 1
 
-    # 反応可能ペア数（同typeで接触圏内 ×1.5）
-    reactive_pairs = []
-    near_pairs = []
-    for i, p1 in enumerate(pieces):
-        for p2 in pieces[i+1:]:
-            if p1["type"] != p2["type"]:
-                continue
-            dist = math.sqrt((p1["x"]-p2["x"])**2 + (p1["y"]-p2["y"])**2)
-            contact_r = p1["r"] + p2["r"]
-            if dist < contact_r * 1.1:
-                reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
-            elif dist < contact_r * 2.0:
-                near_pairs.append((p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2)))
+        # 反応可能ペア数（同typeで接触圏内 ×1.5）
+        reactive_pairs = []
+        near_pairs = []
+        for i, p1 in enumerate(pieces):
+            for p2 in pieces[i + 1 :]:
+                if p1["type"] != p2["type"]:
+                    continue
+                dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
+                contact_r = p1["r"] + p2["r"]
+                if dist < contact_r * 1.1:
+                    reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
+                elif dist < contact_r * 2.0:
+                    # 間に別タイプのピースが挟まっている場合は除外
+                    if not has_horizontal_obstruction(
+                        p1["x"], p1["y"], p1["r"], p2, pieces
+                    ):
+                        near_pairs.append(
+                            (p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2))
+                        )
 
     # パイプライン健全性: 連続するtype間の距離
     types_present = sorted(type_count.keys())
@@ -211,7 +241,7 @@ def calc_reactor_state(pieces):
         min_dist = float("inf")
         for a in ps_t:
             for b in ps_tn:
-                d = math.sqrt((a["x"]-b["x"])**2 + (a["y"]-b["y"])**2)
+                d = math.sqrt((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2)
                 if d < min_dist:
                     min_dist = d
         pipeline.append((t, t_next, round(min_dist, 2)))
@@ -226,7 +256,8 @@ def calc_reactor_state(pieces):
     top_center_y = max((p["y"] for p in pieces), default=FLOOR_Y)
     top_edge_y = max((p["y"] + p["r"] for p in pieces), default=FLOOR_Y)
     danger_pieces = [
-        p for p in pieces
+        p
+        for p in pieces
         if float(p.get("redLineTime", 0) or 0) > 0 or (p["y"] + p["r"]) >= DEADLINE_Y
     ]
     positive_redline = [
@@ -248,13 +279,19 @@ def calc_reactor_state(pieces):
         "deadline_margin": round(DEADLINE_Y - top_edge_y, 3),
         "deadline_crossed": top_edge_y >= DEADLINE_Y,
         "danger_piece_count": len(danger_pieces),
-        "min_redline_time": round(min(positive_redline), 3) if positive_redline else 0.0,
+        "min_redline_time": round(min(positive_redline), 3)
+        if positive_redline
+        else 0.0,
     }
 
 
 def build_sample_xs(pieces, next_type):
     """基本サンプル + 併合ターゲット座標の精密サンプルを生成"""
     xs = set(BASE_XS)
+    top_edge_y = max((p["y"] + p["r"] for p in pieces), default=FLOOR_Y)
+    if top_edge_y >= DEADLINE_Y - 1.5:
+        for i in range(121):
+            xs.add(round(DROP_X_MIN + i * 0.05, 2))
     same_type = [p for p in pieces if p["type"] == next_type]
     for p in same_type:
         tx = p["x"]
@@ -275,7 +312,8 @@ def calc_effective_radii(shapes):
     """shapes (type→頂点リスト) から各typeのポリゴン実効半径を計算。
     r (bbox半幅) はスプライトバウンディングボックスの外接円相当だが、
     実際の PolygonCollider2D はこれより小さい。
-    着地判定用に水平半幅 (horiz) と上端高さ (top) を返す。"""
+    着地判定用に水平半幅 (horiz)、通常上端高さ (top)、壁際で
+    縦向きに起きた場合の上端高さ (wall_top) を返す。"""
     radii = {}
     for type_str, verts in shapes.items():
         t = int(type_str)
@@ -283,8 +321,15 @@ def calc_effective_radii(shapes):
             continue
         horiz = max(abs(v[0]) for v in verts)
         top = max(v[1] for v in verts)
-        radii[t] = {"horiz": horiz, "top": top}
+        wall_top = max(top, horiz)
+        radii[t] = {"horiz": horiz, "top": top, "wall_top": wall_top}
     return radii
+
+
+def get_type_top_radius(piece_type, shapes, eff_radii=None):
+    if eff_radii and piece_type in eff_radii:
+        return eff_radii[piece_type]["top"]
+    return TYPE_RADII.get(piece_type, 0.5)
 
 
 def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
@@ -312,7 +357,7 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
         dx = drop_x - px
         if abs(dx) < combined_r:
             # 円の衝突公式を実効半径で適用
-            collision_y = py + math.sqrt(max(0, combined_r ** 2 - dx ** 2))
+            collision_y = py + math.sqrt(max(0, combined_r**2 - dx**2))
             if collision_y > landing_y:
                 landing_y = collision_y
                 hit_id = p["id"]
@@ -333,8 +378,48 @@ def has_obstruction(drop_x, drop_r, target, pieces):
         if p["y"] + p["r"] < target["y"]:
             continue
         # ポリゴン補正後の実効半径で干渉チェック
-        margin_r = (drop_r * COLLISION_POLY_FACTOR + p["r"] * COLLISION_POLY_FACTOR) * MARGIN
+        margin_r = (
+            drop_r * COLLISION_POLY_FACTOR + p["r"] * COLLISION_POLY_FACTOR
+        ) * MARGIN
         if abs(drop_x - p["x"]) < margin_r:
+            return True
+    return False
+
+
+def has_horizontal_obstruction(from_x, from_y, from_r, target, pieces):
+    """NEAR判定時に、着地点からターゲットへの水平方向に障害ピースがないか確認。
+    着地点(drop_x, landing_y)からターゲット(target_x, target_y)へ向かう経路で、
+    Y範囲が重なり、X範囲が間に挟まる別タイプのピースがあれば物理的に接触不可。
+    同typeピースは併合対象なので除外。"""
+    MARGIN = 1.05
+    target_x = target["x"]
+    target_y = target["y"]
+    target_r = target["r"]
+    x_min = min(from_x, target_x)
+    x_max = max(from_x, target_x)
+    for p in pieces:
+        if p["id"] == target["id"]:
+            continue
+        # ドロップピース自身と同typeピースは併合候補なので障害ではない
+        if p["type"] == target["type"]:
+            continue
+        # Y範囲が重ならないピースは障害にならない
+        p_top = p["y"] + p["r"]
+        p_bot = p["y"] - p["r"]
+        from_top = from_y + from_r
+        from_bot = from_y - from_r
+        target_top = target_y + target_r
+        target_bot = target_y - target_r
+        combined_top = max(from_top, target_top)
+        combined_bot = min(from_bot, target_bot)
+        if p_top < combined_bot or p_bot > combined_top:
+            continue
+        # ポリゴン補正後の実効半径でX範囲チェック
+        p_eff_r = p["r"] * COLLISION_POLY_FACTOR * MARGIN
+        p_x_min = p["x"] - p_eff_r
+        p_x_max = p["x"] + p_eff_r
+        # ピースがfromとtargetの間に挟まっているか
+        if p_x_max > x_min and p_x_min < x_max:
             return True
     return False
 
@@ -357,8 +442,10 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
     # ドロップピースの上端高さ（ポリゴン実効値）
     if eff_radii and next_type in eff_radii:
         next_top_r = eff_radii[next_type]["top"]
+        next_wall_top_r = eff_radii[next_type].get("wall_top", next_top_r)
     else:
         next_top_r = next_r
+        next_wall_top_r = next_r
     results = []
 
     for x in sample_xs:
@@ -391,37 +478,55 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             if hit_id == t["id"]:
                 # 最初の衝突相手がターゲット → 妨害チェック
                 if has_obstruction(x, next_r, t, pieces):
-                    # 経路上に妨害ピースあり → 降格
-                    grade = "NEAR" if dist < contact_r * 1.3 else "NO"
+                    # 経路上に妨害ピースあり → 降格、さらに水平障害があればNO
+                    if dist < contact_r * 1.3:
+                        grade = (
+                            "NO"
+                            if has_horizontal_obstruction(x, ly, next_r, t, pieces)
+                            else "NEAR"
+                        )
+                    else:
+                        grade = "NO"
                 else:
                     grade = "DIRECT"
             elif dist < contact_r * 1.1:
-                # 着地後にターゲットとほぼ接触 → 高確率併合
-                grade = "NEAR"
+                # 着地後にターゲットとほぼ接触 → 水平障害チェック
+                if has_horizontal_obstruction(x, ly, next_r, t, pieces):
+                    grade = "NO"
+                else:
+                    grade = "NEAR"
             elif dist_drifted < contact_r * 1.3 and drift_unc > 0:
-                # ドリフトで接触する可能性あり → 低確率NEAR
-                grade = "NEAR"
+                # ドリフトで接触する可能性あり → 水平障害チェック
+                if has_horizontal_obstruction(settled_x, ly, next_r, t, pieces):
+                    grade = "NO"
+                else:
+                    grade = "NEAR"
             else:
                 grade = "NO"
 
-            merges.append({
-                "id": t["id"],
-                "x": t["x"],
-                "y": t["y"],
-                "r": t["r"],
-                "tx": t["x"],
-                "ty": t["y"],
-                "tr": t["r"],
-                "dist": round(dist, 3),
-                "contact_r": round(contact_r, 3),
-                "grade": grade,
-                "target_top_y": round(t["y"] + t["r"], 3),
-                "target_crosses_deadline": (t["y"] + t["r"]) >= DEADLINE_Y,
-                "target_redline_time": round(float(t.get("redLineTime", 0) or 0), 3),
-                "target_is_danger": (
-                    float(t.get("redLineTime", 0) or 0) > 0 or (t["y"] + t["r"]) >= DEADLINE_Y
-                ),
-            })
+            merges.append(
+                {
+                    "id": t["id"],
+                    "x": t["x"],
+                    "y": t["y"],
+                    "r": t["r"],
+                    "tx": t["x"],
+                    "ty": t["y"],
+                    "tr": t["r"],
+                    "dist": round(dist, 3),
+                    "contact_r": round(contact_r, 3),
+                    "grade": grade,
+                    "target_top_y": round(t["y"] + t["r"], 3),
+                    "target_crosses_deadline": (t["y"] + t["r"]) >= DEADLINE_Y,
+                    "target_redline_time": round(
+                        float(t.get("redLineTime", 0) or 0), 3
+                    ),
+                    "target_is_danger": (
+                        float(t.get("redLineTime", 0) or 0) > 0
+                        or (t["y"] + t["r"]) >= DEADLINE_Y
+                    ),
+                }
+            )
 
         best_grade = "NO"
         best_merge_dist = None
@@ -438,36 +543,111 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         has_merge = best_grade in ("DIRECT", "NEAR")
         # デッドライン判定にはポリゴン補正版の着地予測を使用
         top_after_drop = ly_poly + next_top_r
+        wall_clearance = min(
+            x - (WALL_LEFT + next_r),
+            (WALL_RIGHT - next_r) - x,
+        )
+        wall_rotation_risk = wall_clearance <= 0.35
+        edge_vertical_top_y = (
+            ly_poly + next_wall_top_r if wall_rotation_risk else None
+        )
+        merge_top_candidates = []
+        merge_result_top_r = get_type_top_radius(next_type + 1, shapes, eff_radii)
+        for m in merges:
+            if m["grade"] not in ("DIRECT", "NEAR"):
+                continue
+            # 併合後の大きいピースが縦に残るケースを保守的に見積もる。
+            # T87のtype10->type11のように、落下上端は許容に見えても
+            # 生成ピースの上端がデッドラインを超えることがある。
+            merge_center_y = max(ly_poly, float(m.get("y", ly_poly) or ly_poly))
+            merge_top_candidates.append(merge_center_y + merge_result_top_r)
+        merge_result_top_y = min(merge_top_candidates) if merge_top_candidates else None
+        risk_top_after_drop = max(
+            top_after_drop,
+            edge_vertical_top_y if edge_vertical_top_y is not None else top_after_drop,
+            merge_result_top_y if merge_result_top_y is not None else top_after_drop,
+        )
         danger_direct_merge_available = any(
-            m["grade"] == "DIRECT" and (
-                float(next((p.get("redLineTime", 0) for p in same_type if p["id"] == m["id"]), 0) or 0) > 0
-                or float(next((p["y"] + p["r"] for p in same_type if p["id"] == m["id"]), FLOOR_Y)) >= DEADLINE_Y
+            m["grade"] == "DIRECT"
+            and (
+                float(
+                    next(
+                        (
+                            p.get("redLineTime", 0)
+                            for p in same_type
+                            if p["id"] == m["id"]
+                        ),
+                        0,
+                    )
+                    or 0
+                )
+                > 0
+                or float(
+                    next(
+                        (p["y"] + p["r"] for p in same_type if p["id"] == m["id"]),
+                        FLOOR_Y,
+                    )
+                )
+                >= DEADLINE_Y
             )
             for m in merges
         )
         danger_merge_available = any(
-            m["grade"] in ("DIRECT", "NEAR") and (
-                float(next((p.get("redLineTime", 0) for p in same_type if p["id"] == m["id"]), 0) or 0) > 0
-                or float(next((p["y"] + p["r"] for p in same_type if p["id"] == m["id"]), FLOOR_Y)) >= DEADLINE_Y
+            m["grade"] in ("DIRECT", "NEAR")
+            and (
+                float(
+                    next(
+                        (
+                            p.get("redLineTime", 0)
+                            for p in same_type
+                            if p["id"] == m["id"]
+                        ),
+                        0,
+                    )
+                    or 0
+                )
+                > 0
+                or float(
+                    next(
+                        (p["y"] + p["r"] for p in same_type if p["id"] == m["id"]),
+                        FLOOR_Y,
+                    )
+                )
+                >= DEADLINE_Y
             )
             for m in merges
         )
 
-        results.append({
-            "x": round(x, 2),
-            "landing_y": round(ly, 3),
-            "top_y_after_drop": round(top_after_drop, 3),
-            "deadline_y": DEADLINE_Y,
-            "deadline_margin": round(DEADLINE_Y - top_after_drop, 3),
-            "crosses_deadline": top_after_drop >= DEADLINE_Y,
-            "drift_x": drift_x,
-            "drift_unc": drift_unc,
-            "merges": merges,
-            "has_merge": has_merge,
-            "merge_grade": best_grade,
-            "danger_merge_available": danger_merge_available,
-            "danger_direct_merge_available": danger_direct_merge_available,
-        })
+        results.append(
+            {
+                "x": round(x, 2),
+                "landing_y": round(ly, 3),
+                    "top_y_after_drop": round(top_after_drop, 3),
+                    "edge_vertical_top_y": round(edge_vertical_top_y, 3)
+                    if edge_vertical_top_y is not None
+                    else None,
+                    "wall_rotation_risk": wall_rotation_risk,
+                    "wall_clearance": round(wall_clearance, 3),
+                    "risk_top_y_after_drop": round(risk_top_after_drop, 3),
+                    "merge_result_top_y": round(merge_result_top_y, 3)
+                    if merge_result_top_y is not None
+                    else None,
+                    "merge_result_crosses_deadline": (
+                        merge_result_top_y is not None
+                        and merge_result_top_y >= DEADLINE_Y
+                    ),
+                    "deadline_y": DEADLINE_Y,
+                    "deadline_margin": round(DEADLINE_Y - risk_top_after_drop, 3),
+                    "crosses_deadline": risk_top_after_drop >= DEADLINE_Y,
+                "drift_x": drift_x,
+                "drift_unc": drift_unc,
+                "merges": merges,
+                "has_merge": has_merge,
+                "merge_grade": best_grade,
+                "danger_merge_available": danger_merge_available,
+                "danger_direct_merge_available": danger_direct_merge_available,
+            }
+        )
 
     return results, same_type
 
@@ -479,7 +659,9 @@ def ascii_board(pieces):
     grid = [[" "] * W for _ in range(H)]
 
     def col(x):
-        return max(0, min(W - 1, int((x - WALL_LEFT) / (WALL_RIGHT - WALL_LEFT) * (W - 1))))
+        return max(
+            0, min(W - 1, int((x - WALL_LEFT) / (WALL_RIGHT - WALL_LEFT) * (W - 1)))
+        )
 
     def row(y):
         return max(0, min(H - 1, int((Y_TOP - y) / (Y_TOP - Y_BOT) * (H - 1))))
@@ -542,7 +724,9 @@ def format_report(state, results, same_type, pieces, reactor=None):
     if danger:
         out.append("## !! 危険ピース !!")
         for p in danger:
-            out.append(f"- id{p['id']} type{p['type']} at ({p['x']:.2f},{p['y']:.2f}) redLine={p['redLineTime']:.1f}s")
+            out.append(
+                f"- id{p['id']} type{p['type']} at ({p['x']:.2f},{p['y']:.2f}) redLine={p['redLineTime']:.1f}s"
+            )
         out.append("")
 
     if top_y > 1.5:
@@ -570,7 +754,9 @@ def format_report(state, results, same_type, pieces, reactor=None):
             phys += f" av={av:+.0f}"
         if angle != 0:
             phys += f" {angle:.0f}deg"
-        out.append(f"  id{p['id']:>3d}  type{p['type']:>2d}  r={p['r']:.3f}  ({p['x']:+.2f}, {p['y']:+.2f}){phys}")
+        out.append(
+            f"  id{p['id']:>3d}  type{p['type']:>2d}  r={p['r']:.3f}  ({p['x']:+.2f}, {p['y']:+.2f}){phys}"
+        )
     out.append("")
 
     # 併合判定
@@ -587,7 +773,12 @@ def format_report(state, results, same_type, pieces, reactor=None):
                 for m in r["merges"]:
                     if m["id"] != target["id"]:
                         continue
-                    info = {"x": r["x"], "ly": r["landing_y"], "dist": m["dist"], "cr": m["contact_r"]}
+                    info = {
+                        "x": r["x"],
+                        "ly": r["landing_y"],
+                        "dist": m["dist"],
+                        "cr": m["contact_r"],
+                    }
                     if m["grade"] == "DIRECT":
                         if best_direct is None or m["dist"] < best_direct["dist"]:
                             best_direct = info
@@ -624,12 +815,18 @@ def format_report(state, results, same_type, pieces, reactor=None):
     if not nn_same:
         out.append(f"盤面にtype{nnt}なし → nextNext併合保護不要")
     else:
-        out.append(f"⚠ 盤面にtype{nnt}あり → nextNextで併合可能！今回のドロップで以下のピースの上・隣に積むな:")
+        out.append(
+            f"⚠ 盤面にtype{nnt}あり → nextNextで併合可能！今回のドロップで以下のピースの上・隣に積むな:"
+        )
         for t in nn_same:
-            out.append(f"  🛡 id{t['id']} at ({t['x']:+.2f},{t['y']:+.2f}) — この付近を塞ぐとnextNext併合機会を失う")
+            out.append(
+                f"  🛡 id{t['id']} at ({t['x']:+.2f},{t['y']:+.2f}) — この付近を塞ぐとnextNext併合機会を失う"
+            )
         # 今回のnextTypeと同じ場合は特に警告
         if nt == nnt:
-            out.append(f"  ⚠⚠ next=nextNext=type{nt} — 今回併合できても、併合後ピース(type{nt+1})付近も確認せよ")
+            out.append(
+                f"  ⚠⚠ next=nextNext=type{nt} — 今回併合できても、併合後ピース(type{nt + 1})付近も確認せよ"
+            )
     out.append("")
 
     # 併合可能ドロップ候補
@@ -665,7 +862,9 @@ def format_report(state, results, same_type, pieces, reactor=None):
             d = r["drift_x"]
             u = r.get("drift_unc", 0)
             direction = "右" if d > 0 else "左"
-            out.append(f"  x={r['x']:+.2f} → 着地後{direction}に{abs(d):.2f}ドリフト (不確実性:{u:.2f})")
+            out.append(
+                f"  x={r['x']:+.2f} → 着地後{direction}に{abs(d):.2f}ドリフト (不確実性:{u:.2f})"
+            )
         out.append("")
 
     # 反応器状態レポート（人工化学分析）
@@ -683,14 +882,16 @@ def format_report(state, results, same_type, pieces, reactor=None):
         if rp:
             out.append(f"即時反応可能: {len(rp)}ペア")
             for a, b, t in rp:
-                out.append(f"  id{a}+id{b} (type{t}) → type{t+1}に反応可能")
+                out.append(f"  id{a}+id{b} (type{t}) → type{t + 1}に反応可能")
 
         # 近接ペア（触媒で反応誘導可能）
         np_ = reactor.get("near_pairs", [])
         if np_:
             out.append(f"触媒誘導可能: {len(np_)}ペア")
             for a, b, t, gap in np_[:5]:
-                out.append(f"  id{a}+id{b} (type{t}) gap={gap:.2f} → シェイク/押し込みで併合可能")
+                out.append(
+                    f"  id{a}+id{b} (type{t}) gap={gap:.2f} → シェイク/押し込みで併合可能"
+                )
 
         # パイプライン健全性
         pl = reactor.get("pipeline", [])
@@ -716,9 +917,19 @@ def format_report(state, results, same_type, pieces, reactor=None):
         directs = [r for r in results if r["merge_grade"] == "DIRECT"]
         nears = [r for r in results if r["merge_grade"] == "NEAR"]
         if directs:
-            best = min(directs, key=lambda r: next((m["dist"] for m in r["merges"] if m["grade"] == "DIRECT"), 99))
+            best = min(
+                directs,
+                key=lambda r: next(
+                    (m["dist"] for m in r["merges"] if m["grade"] == "DIRECT"), 99
+                ),
+            )
         elif nears:
-            best = min(nears, key=lambda r: next((m["dist"] for m in r["merges"] if m["grade"] == "NEAR"), 99))
+            best = min(
+                nears,
+                key=lambda r: next(
+                    (m["dist"] for m in r["merges"] if m["grade"] == "NEAR"), 99
+                ),
+            )
         else:
             best = min(results, key=lambda r: r["landing_y"])
 
@@ -726,19 +937,25 @@ def format_report(state, results, same_type, pieces, reactor=None):
         drift_note = ""
         if abs(best.get("drift_x", 0)) > 0.1:
             d = best["drift_x"]
-            drift_note = f", ドリフト{'右' if d>0 else '左'}{abs(d):.2f}"
+            drift_note = f", ドリフト{'右' if d > 0 else '左'}{abs(d):.2f}"
         out.append(f"## 推奨ドロップ: DROP:{best['x']:.2f}")
         grade = best["merge_grade"]
         if grade == "DIRECT":
             merge_targets = [m for m in best["merges"] if m["grade"] == "DIRECT"]
             ids = ",".join(f"id{m['id']}" for m in merge_targets)
-            out.append(f"理由: type{nt}直撃併合({ids}), 着地y={best['landing_y']:.2f}{drift_note}")
+            out.append(
+                f"理由: type{nt}直撃併合({ids}), 着地y={best['landing_y']:.2f}{drift_note}"
+            )
         elif grade == "NEAR":
             merge_targets = [m for m in best["merges"] if m["grade"] == "NEAR"]
             ids = ",".join(f"id{m['id']}" for m in merge_targets)
-            out.append(f"理由: type{nt}近接併合({ids}), 着地y={best['landing_y']:.2f}{drift_note}")
+            out.append(
+                f"理由: type{nt}近接併合({ids}), 着地y={best['landing_y']:.2f}{drift_note}"
+            )
         else:
-            out.append(f"理由: 最も低い着地点(y={best['landing_y']:.2f}), 中央寄り{drift_note}")
+            out.append(
+                f"理由: 最も低い着地点(y={best['landing_y']:.2f}), 中央寄り{drift_note}"
+            )
 
     return "\n".join(out)
 

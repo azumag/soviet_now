@@ -1,0 +1,1200 @@
+
+=== 2026-05-08 02:25 ROLLBACK Game#22856 203a542d6347 -> 452653e77d19 ===
+- rollback from 203a542d6347 to 452653e77d19 at game 22856
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=8871.3/9515.5/7782.0 vs target 11695.5/12127.5/10830.2
+- bad recent scores: 8523 7389 11251 6571 10158 8893 11250 10209
+
+=== 2026-05-08 05:08 ROLLBACK Game#22892 0d0fc4a9fde7 -> 452653e77d19 ===
+- rollback from 0d0fc4a9fde7 to 452653e77d19 at game 22892
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11833.8/12611.0/10529.2 vs target 13427.2/14552.5/11479.2
+- bad recent scores: 13769 13721 15236 9546 14689 10824 11071 9645
+
+=== 2026-05-08 15:05 ROLLBACK Game#23024 e39fdf92f05b -> 0d0fc4a9fde7 ===
+- rollback from e39fdf92f05b to 0d0fc4a9fde7 at game 23024
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10274.6/10430.5/9991.0 vs target 11833.8/12611.0/10529.2
+- bad recent scores: 9547 10282 10525 12081 15307 13936 10566 10836
+
+=== 2026-05-08 21:04 ROLLBACK Game#23091 272694a5501d -> 02819de60a04 ===
+- rollback from 272694a5501d to 02819de60a04 at game 23091
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10262.1/10751.0/9325.0 vs target 11623.5/11884.5/11210.0
+- bad recent scores: 13035 9553 11732 8401 12011 7600 9097 8784
+
+=== 2026-05-09 01:23 ROLLBACK Game#23151 63f793b0623e -> 68ff9c0f9b1c ===
+- rollback from 63f793b0623e to 68ff9c0f9b1c at game 23151
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9644.8/10174.0/8527.8 vs target 11599.0/12258.5/10129.8
+- bad recent scores: 9971 8847 12220 7249 8983 15824 12423 10377
+
+=== 2026-05-09 08:57 ROLLBACK Game#23259 78870061e1a5 -> b22f8fcff328 ===
+- rollback from 78870061e1a5 to b22f8fcff328 at game 23259
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9841.1/10470.5/8588.8 vs target 11706.4/12405.0/10481.2
+- bad recent scores: 8555 10794 11497 26485 8600 9048 14953 8397
+
+=== 2026-05-09 13:27 ROLLBACK Game#23319 290af2204541 -> b22f8fcff328 ===
+- rollback from 290af2204541 to b22f8fcff328 at game 23319
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10600.1/11150.5/9498.2 vs target 12125.3/13267.5/10048.5
+- bad recent scores: 13340 10881 12358 9225 9589 19412 9226 8547
+
+=== 2026-05-09 20:06 ROLLBACK Game#23405 de61049454d1 -> df62901dbf5e ===
+- rollback from de61049454d1 to df62901dbf5e at game 23405
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10638.0/11343.0/9284.2 vs target 12147.3/12537.5/11395.0
+- bad recent scores: 13166 13094 9978 13753 12708 15777 9780 9119
+
+=== 2026-05-10 06:09 ROLLBACK Game#23537 349a707114bf -> 814c4143ae4c ===
+- rollback from 349a707114bf to 814c4143ae4c at game 23537
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9785.1/9946.5/9357.0 vs target 12272.1/13375.5/10003.5
+- bad recent scores: 9961 9705 7954 15655 11493 9932 8934 11890
+
+=== 2026-05-10 08:48 ROLLBACK Game#23575 4cb6bc1b8163 -> e0934b4a3e13 ===
+- rollback from 4cb6bc1b8163 to e0934b4a3e13 at game 23575
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10962.2/11768.0/9454.5 vs target 12096.4/12573.0/11256.8
+- bad recent scores: 10911 17245 11029 14633 13278 13893 8790 8025
+
+=== 2026-05-10 11:15 ROLLBACK Game#23612 795af029451e -> 7018e9053d55 ===
+- rollback from 795af029451e to 7018e9053d55 at game 23612
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10133.2/10400.0/9561.0 vs target 11988.6/12509.5/11024.2
+- bad recent scores: 10400 14704 12532 11965 11326 7181 9561 10096
+
+=== 2026-05-10 19:26 ROLLBACK Game#23720 1ecf941003a8 -> e0934b4a3e13 ===
+- rollback from 1ecf941003a8 to e0934b4a3e13 at game 23720
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10438.4/10774.0/9802.2 vs target 11837.3/12518.5/10496.2
+- bad recent scores: 6735 9548 13702 9887 15174 12163 19983 11004
+
+=== 2026-05-11 03:09 Game#23816 scores=11139 13296 14636 11264 12551 11914 9721 19449 11546 10664 8210 6749 11298 21811 8477 10867 7353 12825 6976 12323 7480 9413 14875 9823 ===
+-            # When Russia exists + deadline crossed + max_y >= 2.0:
+-            # Force DIRECT merge selection over Russia-phase board compression delay.
++            # When Russia exists + deadline crossed + max_y >= 2.0 + DIRECT merge:
++            # Add extra +1200*type_scale on top of base DIRECT bonus (1200*type_scale)
++            # for total +2400*type_scale. Forces DIRECT merge over Russia-phase board compression.
+-                russia_deadline_direct_bonus = 800.0 * type_scale
+-                score += russia_deadline_direct_bonus
+-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                if merge_grade == "DIRECT":
++                    # Extra +1200 on top of the existing +800, making total +2400*type_scale
++                    russia_deadline_direct_bonus = 2000.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                else:
++                    russia_deadline_direct_bonus = 800.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
+
+=== 2026-05-11 06:56 ROLLBACK Game#23864 d2989ffff81e -> 61fedc5dd74e ===
+- rollback from d2989ffff81e to 61fedc5dd74e at game 23864
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10863.6/11514.0/9641.2 vs target 12025.3/13118.5/10161.2
+- bad recent scores: 9474 12514 11373 10262 8014 17492 9187 9697
+
+=== 2026-05-11 10:22 ROLLBACK Game#23911 75e4eab65c4a -> d4b80c24ca65 ===
+- rollback from 75e4eab65c4a to d4b80c24ca65 at game 23911
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10625.2/10889.0/10076.5 vs target 11657.8/12354.5/10258.2
+- bad recent scores: 10194 8818 10540 10440 10267 9515 12534 8905
+
+=== 2026-05-11 23:06 Game#24031 scores=17406 16515 10762 19437 10565 11609 8053 10290 13770 16328 14768 17787 9201 12429 10136 17232 15271 10059 15129 16773 10765 12750 18751 13421 ===
++                    # v640: HIGH phase same-type merge urgency bonus
++                    # Adopted hypothesis: axis 9.5 stacking bonus is insufficient when
++                    # same_type_stack_top exists and merge_grade="NO" in HIGH phase (1.8 ≤ max_y < 3.0).
++                    # worst_game T55: x=-2.8 selected over x=-1.73 (same-type stack target),
++                    # axis 9.5 bonus too weak to overcome height penalty/AVOID_BLOCK bonuses.
++                    # During HIGH phase when board approaches critical, missing a same-type merge
++                    # is more costly — add +400*merge_mult to force merge priority.
++                    # Prohibitions (analysis_result.md): NOT in LOW/MEDIUM, NOT in CRITICAL (>=3.0).
++                    if max_y >= 1.8 and max_y < 3.0:
++                        score += 400.0 * merge_mult
++                        reasons.append("HIGH_PHASE_SAME_TYPE_MERGE_URGENCY")
+
+=== 2026-05-12 00:20 ROLLBACK Game#24050 888a0e6a651f -> 22337984f747 ===
+- rollback from 888a0e6a651f to 22337984f747 at game 24050
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10268.5/10656.0/9345.0 vs target 11598.7/11725.5/11030.5
+- bad recent scores: 8098 15384 9327 9351 11933 10826 9236 9546
+
+=== 2026-05-12 03:03 ROLLBACK Game#24087 7e184fae3207 -> 71f71bc828fa ===
+- rollback from 7e184fae3207 to 71f71bc828fa at game 24087
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9890.0/10665.0/8557.5 vs target 13169.2/13719.0/11964.0
+- bad recent scores: 11464 7358 9866 8343 16012 9016 7325 8629
+
+=== 2026-05-12 07:19 ROLLBACK Game#24147 7ef86ce5a2bd -> a2cf0ecbe2ba ===
+- rollback from 7ef86ce5a2bd to a2cf0ecbe2ba at game 24147
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11061.5/11571.5/10106.8 vs target 12822.1/13533.0/11501.0
+- bad recent scores: 12926 12732 14076 10115 9910 13498 15020 9235
+
+=== 2026-05-12 11:36 Game#24195 scores=10512 8767 15602 15513 11208 13248 18621 14334 9490 10292 17227 11285 15228 9103 10234 15991 13540 13256 12460 15353 20110 8034 14022 17926 ===
+-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+-            score -= 900.0 * merge_mult
++            if max_y >= 2.0:
++                # vYYY: increase from -900 to -1200 to overcome AVOID_BLOCK at critical height
++                # At max_y>=2.0, board is near-critical. AVOID_BLOCK (+400-600) competing with
++                # -900 still allowed x=2.0 intermediate placement in worst game T73, extra_high T128.
++                # -1200 provides ~600-800 margin above AVOID_BLOCK, forcing lowest possible placement
++                # when no merge is available at critical height.
++                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies at max_y>=2.0.
++                # mandatory_themes第一条対応: max_y>=2.0ではmerge_available=falseでも最低位置選択
++                score -= 1200.0 * merge_mult
++            else:
++                score -= 900.0 * merge_mult
+
+=== 2026-05-12 18:20 ROLLBACK Game#24255 7f746ab4e7eb -> 22337984f747 ===
+- rollback from 7f746ab4e7eb to 22337984f747 at game 24255
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10202.0/10999.5/8649.8 vs target 12070.0/13028.0/10155.0
+- bad recent scores: 11231 12412 15410 17937 8738 10768 8385 13526
+
+=== 2026-05-12 22:35 ROLLBACK Game#24315 e964b94bb7bc -> 1fa4f1bdb308 ===
+- rollback from e964b94bb7bc to 1fa4f1bdb308 at game 24315
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10347.2/10841.0/9521.8 vs target 11642.2/12087.5/10615.8
+- bad recent scores: 15911 14739 9755 11927 11933 8132 9626 9209
+
+=== 2026-05-13 05:11 ROLLBACK Game#24409 348bca3216f8 -> fc36b52375f9 ===
+- rollback from 348bca3216f8 to fc36b52375f9 at game 24409
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9962.3/10220.0/9112.2 vs target 12360.5/12836.0/11530.0
+- bad recent scores: 7662 17380 9141 9887 8850 7673 9836 8984
+
+=== 2026-05-13 11:56 ROLLBACK Game#24494 5e8e69043345 -> 1fa4f1bdb308 ===
+- rollback from 5e8e69043345 to 1fa4f1bdb308 at game 24494
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9720.0/9731.0/9427.0 vs target 11642.9/12175.5/10443.0
+- bad recent scores: 12052 12868 9643 8935 8892 10676 9731 9492
+
+=== 2026-05-13 21:54 Game#24626 scores=14789 13827 8866 9676 7988 14315 11165 12511 14812 12741 10196 11926 7424 8446 20511 12984 11256 10953 10952 11617 11637 13430 6917 12576 ===
+-     # Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
+-     # refs: tmp/analysis_result.md (Implementation Plan Change 4)
+-     # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
++# Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
++      # refs: tmp/analysis_result.md (Implementation Plan Change 4)
++      # vYYY: Change 4 fix — merge_possible条件の追加 (axis 9.17c & Change 3)
++      # mandatory_themes第一条「デッドライン超出時はmergeできる場合に限る」の制度的補償
++      # merge_possible=true時に限定することで、deadline超出&&併合不可の状況ではペナルティ为空振り防止
++      # Fixes: deadline超出&&merge不可でもaxis 9.17c/-800が発動していた問題
++      # refs: tmp/analysis_result.md (Implementation Plan Change 4 fix)
++      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
+-        # vYYY: axis 9.17c — edge NO-MERGE penalty at deadline_crossed
+-        # Worst game T54: edge placement (x=2.66) at deadline_crossed+merge_available=false caused max_y spike.
+-        # mandatory_themes Change 1 (-10000) only fires when merge_possible=true, not when merge_available=false.
+-        # Current edge penalty (9.17b: -1200*merge_mult) insufficient vs stacking(~400-600)+ceiling(~400-800).
+-        # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
+-        if deadline_crossed and merge_grade == "NO" and abs(x) >= 2.5:
++        # vYYY: axis 9.17c — edge NO-MERGE penalty at deadline_crossed (merge_possible条件修正)
++        # mandatory_themes第一条: 「デッドライン超出時はmergeできる場合に限る」
++        # merge_possibleがfalseの時は配置禁止ではなくペナルティ抑制（候補除外ではなくペナルティで抑制）
+
+
+=== 2026-05-08 02:25 ROLLBACK Game#22856 203a542d6347 -> 452653e77d19 ===
+- rollback from 203a542d6347 to 452653e77d19 at game 22856
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=8871.3/9515.5/7782.0 vs target 11695.5/12127.5/10830.2
+- bad recent scores: 8523 7389 11251 6571 10158 8893 11250 10209
+
+=== 2026-05-08 05:08 ROLLBACK Game#22892 0d0fc4a9fde7 -> 452653e77d19 ===
+- rollback from 0d0fc4a9fde7 to 452653e77d19 at game 22892
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11833.8/12611.0/10529.2 vs target 13427.2/14552.5/11479.2
+- bad recent scores: 13769 13721 15236 9546 14689 10824 11071 9645
+
+=== 2026-05-08 15:05 ROLLBACK Game#23024 e39fdf92f05b -> 0d0fc4a9fde7 ===
+- rollback from e39fdf92f05b to 0d0fc4a9fde7 at game 23024
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10274.6/10430.5/9991.0 vs target 11833.8/12611.0/10529.2
+- bad recent scores: 9547 10282 10525 12081 15307 13936 10566 10836
+
+=== 2026-05-08 21:04 ROLLBACK Game#23091 272694a5501d -> 02819de60a04 ===
+- rollback from 272694a5501d to 02819de60a04 at game 23091
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10262.1/10751.0/9325.0 vs target 11623.5/11884.5/11210.0
+- bad recent scores: 13035 9553 11732 8401 12011 7600 9097 8784
+
+=== 2026-05-09 01:23 ROLLBACK Game#23151 63f793b0623e -> 68ff9c0f9b1c ===
+- rollback from 63f793b0623e to 68ff9c0f9b1c at game 23151
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9644.8/10174.0/8527.8 vs target 11599.0/12258.5/10129.8
+- bad recent scores: 9971 8847 12220 7249 8983 15824 12423 10377
+
+=== 2026-05-09 08:57 ROLLBACK Game#23259 78870061e1a5 -> b22f8fcff328 ===
+- rollback from 78870061e1a5 to b22f8fcff328 at game 23259
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9841.1/10470.5/8588.8 vs target 11706.4/12405.0/10481.2
+- bad recent scores: 8555 10794 11497 26485 8600 9048 14953 8397
+
+=== 2026-05-09 13:27 ROLLBACK Game#23319 290af2204541 -> b22f8fcff328 ===
+- rollback from 290af2204541 to b22f8fcff328 at game 23319
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10600.1/11150.5/9498.2 vs target 12125.3/13267.5/10048.5
+- bad recent scores: 13340 10881 12358 9225 9589 19412 9226 8547
+
+=== 2026-05-09 20:06 ROLLBACK Game#23405 de61049454d1 -> df62901dbf5e ===
+- rollback from de61049454d1 to df62901dbf5e at game 23405
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10638.0/11343.0/9284.2 vs target 12147.3/12537.5/11395.0
+- bad recent scores: 13166 13094 9978 13753 12708 15777 9780 9119
+
+=== 2026-05-10 06:09 ROLLBACK Game#23537 349a707114bf -> 814c4143ae4c ===
+- rollback from 349a707114bf to 814c4143ae4c at game 23537
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9785.1/9946.5/9357.0 vs target 12272.1/13375.5/10003.5
+- bad recent scores: 9961 9705 7954 15655 11493 9932 8934 11890
+
+=== 2026-05-10 08:48 ROLLBACK Game#23575 4cb6bc1b8163 -> e0934b4a3e13 ===
+- rollback from 4cb6bc1b8163 to e0934b4a3e13 at game 23575
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10962.2/11768.0/9454.5 vs target 12096.4/12573.0/11256.8
+- bad recent scores: 10911 17245 11029 14633 13278 13893 8790 8025
+
+=== 2026-05-10 11:15 ROLLBACK Game#23612 795af029451e -> 7018e9053d55 ===
+- rollback from 795af029451e to 7018e9053d55 at game 23612
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10133.2/10400.0/9561.0 vs target 11988.6/12509.5/11024.2
+- bad recent scores: 10400 14704 12532 11965 11326 7181 9561 10096
+
+=== 2026-05-10 19:26 ROLLBACK Game#23720 1ecf941003a8 -> e0934b4a3e13 ===
+- rollback from 1ecf941003a8 to e0934b4a3e13 at game 23720
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10438.4/10774.0/9802.2 vs target 11837.3/12518.5/10496.2
+- bad recent scores: 6735 9548 13702 9887 15174 12163 19983 11004
+
+=== 2026-05-11 03:09 Game#23816 scores=11139 13296 14636 11264 12551 11914 9721 19449 11546 10664 8210 6749 11298 21811 8477 10867 7353 12825 6976 12323 7480 9413 14875 9823 ===
+-            # When Russia exists + deadline crossed + max_y >= 2.0:
+-            # Force DIRECT merge selection over Russia-phase board compression delay.
++            # When Russia exists + deadline crossed + max_y >= 2.0 + DIRECT merge:
++            # Add extra +1200*type_scale on top of base DIRECT bonus (1200*type_scale)
++            # for total +2400*type_scale. Forces DIRECT merge over Russia-phase board compression.
+-                russia_deadline_direct_bonus = 800.0 * type_scale
+-                score += russia_deadline_direct_bonus
+-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                if merge_grade == "DIRECT":
++                    # Extra +1200 on top of the existing +800, making total +2400*type_scale
++                    russia_deadline_direct_bonus = 2000.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                else:
++                    russia_deadline_direct_bonus = 800.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
+
+=== 2026-05-11 06:56 ROLLBACK Game#23864 d2989ffff81e -> 61fedc5dd74e ===
+- rollback from d2989ffff81e to 61fedc5dd74e at game 23864
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10863.6/11514.0/9641.2 vs target 12025.3/13118.5/10161.2
+- bad recent scores: 9474 12514 11373 10262 8014 17492 9187 9697
+
+=== 2026-05-11 10:22 ROLLBACK Game#23911 75e4eab65c4a -> d4b80c24ca65 ===
+- rollback from 75e4eab65c4a to d4b80c24ca65 at game 23911
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10625.2/10889.0/10076.5 vs target 11657.8/12354.5/10258.2
+- bad recent scores: 10194 8818 10540 10440 10267 9515 12534 8905
+
+=== 2026-05-11 23:06 Game#24031 scores=17406 16515 10762 19437 10565 11609 8053 10290 13770 16328 14768 17787 9201 12429 10136 17232 15271 10059 15129 16773 10765 12750 18751 13421 ===
++                    # v640: HIGH phase same-type merge urgency bonus
++                    # Adopted hypothesis: axis 9.5 stacking bonus is insufficient when
++                    # same_type_stack_top exists and merge_grade="NO" in HIGH phase (1.8 ≤ max_y < 3.0).
++                    # worst_game T55: x=-2.8 selected over x=-1.73 (same-type stack target),
++                    # axis 9.5 bonus too weak to overcome height penalty/AVOID_BLOCK bonuses.
++                    # During HIGH phase when board approaches critical, missing a same-type merge
++                    # is more costly — add +400*merge_mult to force merge priority.
++                    # Prohibitions (analysis_result.md): NOT in LOW/MEDIUM, NOT in CRITICAL (>=3.0).
++                    if max_y >= 1.8 and max_y < 3.0:
++                        score += 400.0 * merge_mult
++                        reasons.append("HIGH_PHASE_SAME_TYPE_MERGE_URGENCY")
+
+=== 2026-05-12 00:20 ROLLBACK Game#24050 888a0e6a651f -> 22337984f747 ===
+- rollback from 888a0e6a651f to 22337984f747 at game 24050
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10268.5/10656.0/9345.0 vs target 11598.7/11725.5/11030.5
+- bad recent scores: 8098 15384 9327 9351 11933 10826 9236 9546
+
+=== 2026-05-12 03:03 ROLLBACK Game#24087 7e184fae3207 -> 71f71bc828fa ===
+- rollback from 7e184fae3207 to 71f71bc828fa at game 24087
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9890.0/10665.0/8557.5 vs target 13169.2/13719.0/11964.0
+- bad recent scores: 11464 7358 9866 8343 16012 9016 7325 8629
+
+=== 2026-05-12 07:19 ROLLBACK Game#24147 7ef86ce5a2bd -> a2cf0ecbe2ba ===
+- rollback from 7ef86ce5a2bd to a2cf0ecbe2ba at game 24147
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11061.5/11571.5/10106.8 vs target 12822.1/13533.0/11501.0
+- bad recent scores: 12926 12732 14076 10115 9910 13498 15020 9235
+
+=== 2026-05-12 11:36 Game#24195 scores=10512 8767 15602 15513 11208 13248 18621 14334 9490 10292 17227 11285 15228 9103 10234 15991 13540 13256 12460 15353 20110 8034 14022 17926 ===
+-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+-            score -= 900.0 * merge_mult
++            if max_y >= 2.0:
++                # vYYY: increase from -900 to -1200 to overcome AVOID_BLOCK at critical height
++                # At max_y>=2.0, board is near-critical. AVOID_BLOCK (+400-600) competing with
++                # -900 still allowed x=2.0 intermediate placement in worst game T73, extra_high T128.
++                # -1200 provides ~600-800 margin above AVOID_BLOCK, forcing lowest possible placement
++                # when no merge is available at critical height.
++                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies at max_y>=2.0.
++                # mandatory_themes第一条対応: max_y>=2.0ではmerge_available=falseでも最低位置選択
++                score -= 1200.0 * merge_mult
++            else:
++                score -= 900.0 * merge_mult
+
+=== 2026-05-12 18:20 ROLLBACK Game#24255 7f746ab4e7eb -> 22337984f747 ===
+- rollback from 7f746ab4e7eb to 22337984f747 at game 24255
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10202.0/10999.5/8649.8 vs target 12070.0/13028.0/10155.0
+- bad recent scores: 11231 12412 15410 17937 8738 10768 8385 13526
+
+=== 2026-05-12 22:35 ROLLBACK Game#24315 e964b94bb7bc -> 1fa4f1bdb308 ===
+- rollback from e964b94bb7bc to 1fa4f1bdb308 at game 24315
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10347.2/10841.0/9521.8 vs target 11642.2/12087.5/10615.8
+- bad recent scores: 15911 14739 9755 11927 11933 8132 9626 9209
+
+=== 2026-05-13 05:11 ROLLBACK Game#24409 348bca3216f8 -> fc36b52375f9 ===
+- rollback from 348bca3216f8 to fc36b52375f9 at game 24409
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9962.3/10220.0/9112.2 vs target 12360.5/12836.0/11530.0
+- bad recent scores: 7662 17380 9141 9887 8850 7673 9836 8984
+
+=== 2026-05-13 11:56 ROLLBACK Game#24494 5e8e69043345 -> 1fa4f1bdb308 ===
+- rollback from 5e8e69043345 to 1fa4f1bdb308 at game 24494
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9720.0/9731.0/9427.0 vs target 11642.9/12175.5/10443.0
+- bad recent scores: 12052 12868 9643 8935 8892 10676 9731 9492
+
+=== 2026-05-13 20:06 Game#24601 scores=7626 14093 14093 9898 11780 8023 18927 14429 14429 13147 10492 12510 16947 8722 9044 12779 11611 9236 10666 9721 10726 7574 9911 10216 ===
++     # vYYY: Change 6 - AVOID_BLOCK suppression threshold extension (analysis_result.md Hypothesis 1)
++     # Changed: rp>=5+max_y>=2.5 → rp>=4+max_y>=1.5 per analysis_result.md
++     # Worst game T56-T59 (rp=5, max_y 1.7-2.0): AVOID_BLOCK active despite low height,
++     # causing edge placement and NO merge despite merge opportunities.
++     # Best game (score2735) succeeded at max_y 1.45 by suppressing AVOID_BLOCK earlier.
++     # Fixes failure mode: edge scatter at moderate max_y (1.5-2.5) with high rp (>=4)
++     # refs: tmp/analysis_result.md (Hypothesis 1: AVOID_BLOCK抑制条件の拡張)
++     #
++     # vYYY: Change 7 - NEXT-aware deadline merge guidance (analysis_result.md Hypothesis 2)
++     # mandatory_themes: "デッドライン超出時にmergeできる場合のみ配置、NEXT考慮"
++     # When deadline_crossed && merge_grade==NO && next_type piece exists on board as same-type pair,
++     # apply bonus to guide toward creating a merge with next piece. This provides NEXT-aware
++     # placement guidance during deadline when merge opportunities are otherwise missed.
++     # Worst game T60-T64: deadline_crossed with no merge for 5 turns, max_y runaway.
++     # Best game (score2735) T66: DIRECT_MERGE with next piece consideration (+294 score_gain).
++     # refs: tmp/analysis_result.md (Hypothesis 2: deadline超出時のNEXT考慮),
++     #       data/mandatory_themes.txt
++     #
+-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
++            # In congested regime (rp>=4, max_y>=1.5 or max_y>=3.0+deadline), AVOID_BLOCK
+
+
+=== 2026-05-08 02:25 ROLLBACK Game#22856 203a542d6347 -> 452653e77d19 ===
+- rollback from 203a542d6347 to 452653e77d19 at game 22856
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=8871.3/9515.5/7782.0 vs target 11695.5/12127.5/10830.2
+- bad recent scores: 8523 7389 11251 6571 10158 8893 11250 10209
+
+=== 2026-05-08 05:08 ROLLBACK Game#22892 0d0fc4a9fde7 -> 452653e77d19 ===
+- rollback from 0d0fc4a9fde7 to 452653e77d19 at game 22892
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11833.8/12611.0/10529.2 vs target 13427.2/14552.5/11479.2
+- bad recent scores: 13769 13721 15236 9546 14689 10824 11071 9645
+
+=== 2026-05-08 15:05 ROLLBACK Game#23024 e39fdf92f05b -> 0d0fc4a9fde7 ===
+- rollback from e39fdf92f05b to 0d0fc4a9fde7 at game 23024
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10274.6/10430.5/9991.0 vs target 11833.8/12611.0/10529.2
+- bad recent scores: 9547 10282 10525 12081 15307 13936 10566 10836
+
+=== 2026-05-08 21:04 ROLLBACK Game#23091 272694a5501d -> 02819de60a04 ===
+- rollback from 272694a5501d to 02819de60a04 at game 23091
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10262.1/10751.0/9325.0 vs target 11623.5/11884.5/11210.0
+- bad recent scores: 13035 9553 11732 8401 12011 7600 9097 8784
+
+=== 2026-05-09 01:23 ROLLBACK Game#23151 63f793b0623e -> 68ff9c0f9b1c ===
+- rollback from 63f793b0623e to 68ff9c0f9b1c at game 23151
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9644.8/10174.0/8527.8 vs target 11599.0/12258.5/10129.8
+- bad recent scores: 9971 8847 12220 7249 8983 15824 12423 10377
+
+=== 2026-05-09 08:57 ROLLBACK Game#23259 78870061e1a5 -> b22f8fcff328 ===
+- rollback from 78870061e1a5 to b22f8fcff328 at game 23259
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9841.1/10470.5/8588.8 vs target 11706.4/12405.0/10481.2
+- bad recent scores: 8555 10794 11497 26485 8600 9048 14953 8397
+
+=== 2026-05-09 13:27 ROLLBACK Game#23319 290af2204541 -> b22f8fcff328 ===
+- rollback from 290af2204541 to b22f8fcff328 at game 23319
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10600.1/11150.5/9498.2 vs target 12125.3/13267.5/10048.5
+- bad recent scores: 13340 10881 12358 9225 9589 19412 9226 8547
+
+=== 2026-05-09 20:06 ROLLBACK Game#23405 de61049454d1 -> df62901dbf5e ===
+- rollback from de61049454d1 to df62901dbf5e at game 23405
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10638.0/11343.0/9284.2 vs target 12147.3/12537.5/11395.0
+- bad recent scores: 13166 13094 9978 13753 12708 15777 9780 9119
+
+=== 2026-05-10 06:09 ROLLBACK Game#23537 349a707114bf -> 814c4143ae4c ===
+- rollback from 349a707114bf to 814c4143ae4c at game 23537
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9785.1/9946.5/9357.0 vs target 12272.1/13375.5/10003.5
+- bad recent scores: 9961 9705 7954 15655 11493 9932 8934 11890
+
+=== 2026-05-10 08:48 ROLLBACK Game#23575 4cb6bc1b8163 -> e0934b4a3e13 ===
+- rollback from 4cb6bc1b8163 to e0934b4a3e13 at game 23575
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10962.2/11768.0/9454.5 vs target 12096.4/12573.0/11256.8
+- bad recent scores: 10911 17245 11029 14633 13278 13893 8790 8025
+
+=== 2026-05-10 11:15 ROLLBACK Game#23612 795af029451e -> 7018e9053d55 ===
+- rollback from 795af029451e to 7018e9053d55 at game 23612
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10133.2/10400.0/9561.0 vs target 11988.6/12509.5/11024.2
+- bad recent scores: 10400 14704 12532 11965 11326 7181 9561 10096
+
+=== 2026-05-10 19:26 ROLLBACK Game#23720 1ecf941003a8 -> e0934b4a3e13 ===
+- rollback from 1ecf941003a8 to e0934b4a3e13 at game 23720
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10438.4/10774.0/9802.2 vs target 11837.3/12518.5/10496.2
+- bad recent scores: 6735 9548 13702 9887 15174 12163 19983 11004
+
+=== 2026-05-11 03:09 Game#23816 scores=11139 13296 14636 11264 12551 11914 9721 19449 11546 10664 8210 6749 11298 21811 8477 10867 7353 12825 6976 12323 7480 9413 14875 9823 ===
+-            # When Russia exists + deadline crossed + max_y >= 2.0:
+-            # Force DIRECT merge selection over Russia-phase board compression delay.
++            # When Russia exists + deadline crossed + max_y >= 2.0 + DIRECT merge:
++            # Add extra +1200*type_scale on top of base DIRECT bonus (1200*type_scale)
++            # for total +2400*type_scale. Forces DIRECT merge over Russia-phase board compression.
+-                russia_deadline_direct_bonus = 800.0 * type_scale
+-                score += russia_deadline_direct_bonus
+-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                if merge_grade == "DIRECT":
++                    # Extra +1200 on top of the existing +800, making total +2400*type_scale
++                    russia_deadline_direct_bonus = 2000.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                else:
++                    russia_deadline_direct_bonus = 800.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
+
+=== 2026-05-11 06:56 ROLLBACK Game#23864 d2989ffff81e -> 61fedc5dd74e ===
+- rollback from d2989ffff81e to 61fedc5dd74e at game 23864
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10863.6/11514.0/9641.2 vs target 12025.3/13118.5/10161.2
+- bad recent scores: 9474 12514 11373 10262 8014 17492 9187 9697
+
+=== 2026-05-11 10:22 ROLLBACK Game#23911 75e4eab65c4a -> d4b80c24ca65 ===
+- rollback from 75e4eab65c4a to d4b80c24ca65 at game 23911
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10625.2/10889.0/10076.5 vs target 11657.8/12354.5/10258.2
+- bad recent scores: 10194 8818 10540 10440 10267 9515 12534 8905
+
+=== 2026-05-11 23:06 Game#24031 scores=17406 16515 10762 19437 10565 11609 8053 10290 13770 16328 14768 17787 9201 12429 10136 17232 15271 10059 15129 16773 10765 12750 18751 13421 ===
++                    # v640: HIGH phase same-type merge urgency bonus
++                    # Adopted hypothesis: axis 9.5 stacking bonus is insufficient when
++                    # same_type_stack_top exists and merge_grade="NO" in HIGH phase (1.8 ≤ max_y < 3.0).
++                    # worst_game T55: x=-2.8 selected over x=-1.73 (same-type stack target),
++                    # axis 9.5 bonus too weak to overcome height penalty/AVOID_BLOCK bonuses.
++                    # During HIGH phase when board approaches critical, missing a same-type merge
++                    # is more costly — add +400*merge_mult to force merge priority.
++                    # Prohibitions (analysis_result.md): NOT in LOW/MEDIUM, NOT in CRITICAL (>=3.0).
++                    if max_y >= 1.8 and max_y < 3.0:
++                        score += 400.0 * merge_mult
++                        reasons.append("HIGH_PHASE_SAME_TYPE_MERGE_URGENCY")
+
+=== 2026-05-12 00:20 ROLLBACK Game#24050 888a0e6a651f -> 22337984f747 ===
+- rollback from 888a0e6a651f to 22337984f747 at game 24050
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10268.5/10656.0/9345.0 vs target 11598.7/11725.5/11030.5
+- bad recent scores: 8098 15384 9327 9351 11933 10826 9236 9546
+
+=== 2026-05-12 03:03 ROLLBACK Game#24087 7e184fae3207 -> 71f71bc828fa ===
+- rollback from 7e184fae3207 to 71f71bc828fa at game 24087
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9890.0/10665.0/8557.5 vs target 13169.2/13719.0/11964.0
+- bad recent scores: 11464 7358 9866 8343 16012 9016 7325 8629
+
+=== 2026-05-12 07:19 ROLLBACK Game#24147 7ef86ce5a2bd -> a2cf0ecbe2ba ===
+- rollback from 7ef86ce5a2bd to a2cf0ecbe2ba at game 24147
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11061.5/11571.5/10106.8 vs target 12822.1/13533.0/11501.0
+- bad recent scores: 12926 12732 14076 10115 9910 13498 15020 9235
+
+=== 2026-05-12 11:36 Game#24195 scores=10512 8767 15602 15513 11208 13248 18621 14334 9490 10292 17227 11285 15228 9103 10234 15991 13540 13256 12460 15353 20110 8034 14022 17926 ===
+-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+-            score -= 900.0 * merge_mult
++            if max_y >= 2.0:
++                # vYYY: increase from -900 to -1200 to overcome AVOID_BLOCK at critical height
++                # At max_y>=2.0, board is near-critical. AVOID_BLOCK (+400-600) competing with
++                # -900 still allowed x=2.0 intermediate placement in worst game T73, extra_high T128.
++                # -1200 provides ~600-800 margin above AVOID_BLOCK, forcing lowest possible placement
++                # when no merge is available at critical height.
++                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies at max_y>=2.0.
++                # mandatory_themes第一条対応: max_y>=2.0ではmerge_available=falseでも最低位置選択
++                score -= 1200.0 * merge_mult
++            else:
++                score -= 900.0 * merge_mult
+
+=== 2026-05-12 18:20 ROLLBACK Game#24255 7f746ab4e7eb -> 22337984f747 ===
+- rollback from 7f746ab4e7eb to 22337984f747 at game 24255
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10202.0/10999.5/8649.8 vs target 12070.0/13028.0/10155.0
+- bad recent scores: 11231 12412 15410 17937 8738 10768 8385 13526
+
+=== 2026-05-12 22:35 ROLLBACK Game#24315 e964b94bb7bc -> 1fa4f1bdb308 ===
+- rollback from e964b94bb7bc to 1fa4f1bdb308 at game 24315
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10347.2/10841.0/9521.8 vs target 11642.2/12087.5/10615.8
+- bad recent scores: 15911 14739 9755 11927 11933 8132 9626 9209
+
+=== 2026-05-13 05:11 ROLLBACK Game#24409 348bca3216f8 -> fc36b52375f9 ===
+- rollback from 348bca3216f8 to fc36b52375f9 at game 24409
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9962.3/10220.0/9112.2 vs target 12360.5/12836.0/11530.0
+- bad recent scores: 7662 17380 9141 9887 8850 7673 9836 8984
+
+=== 2026-05-13 11:56 ROLLBACK Game#24494 5e8e69043345 -> 1fa4f1bdb308 ===
+- rollback from 5e8e69043345 to 1fa4f1bdb308 at game 24494
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9720.0/9731.0/9427.0 vs target 11642.9/12175.5/10443.0
+- bad recent scores: 12052 12868 9643 8935 8892 10676 9731 9492
+
+=== 2026-05-13 18:22 Game#24578 scores=17742 17742 7088 7088 8703 11418 11418 13337 13337 10370 10370 9452 12035 14366 14366 21747 21747 12520 12520 9186 11345 11345 9252 9252 ===
++     # vYYY: Change 5 - axis 8.8 NO_MERGE penalty congestion scaling
++     # analysis_result.md adopted hypothesis: axis 8.8 penalty is flat -900 but axis 9.6 stacking
++     # with congestion scaling gives ~300-760 bonus at pc=35, overwhelming the penalty and causing
++     # edge scatter in worst games (T47-T51: 5 consecutive NO_MERGE despite rp=4-6, pc=32-39).
++     # Solution: add congestion scaling to axis 8.8 penalty. Formula: congestion_scale = 1.0 + 0.12 * (pc - 28), cap 3.0.
++     # At pc=28: scale=1.0. At pc=35: scale=1.84 (-1656). At pc=45: scale=3.0 (-2700).
++     # Rollback constraint "forbid below -4500" preserved: even at pc=45, penalty (-2700) > -4500.
++     # Fixes failure mode: edge scatter at high pc + rp>=3 + NO merge (worst game pattern)
++     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 congestion scaling)
++        # vYYY: Change 5 - axis 8.8 NO_MERGE penalty congestion scaling
++        # analysis_result.md adopted hypothesis: axis 8.8 penalty is flat -300*merge_mult(-900),
++        # but axis 9.6 stacking with v408 congestion scaling gives ~300-760 bonus at pc=35.
++        # The penalty is too weak to override stacking, causing edge scatter in worst games.
++        # Solution: add congestion scaling to make penalty compete with axis 9.6 stacking.
++        # congestion_scale = 1.0 + 0.12 * (piece_count - 28), cap 3.0
++        # At pc=28: scale=1.0 (no change). At pc=35: scale=1.84 (penalty -1656).
++        # Rollback constraint "forbid below -4500" preserved: -1656 > -4500.
++        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 congestion scaling)
+-                # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-                # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+
+
+=== 2026-05-08 02:25 ROLLBACK Game#22856 203a542d6347 -> 452653e77d19 ===
+- rollback from 203a542d6347 to 452653e77d19 at game 22856
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=8871.3/9515.5/7782.0 vs target 11695.5/12127.5/10830.2
+- bad recent scores: 8523 7389 11251 6571 10158 8893 11250 10209
+
+=== 2026-05-08 05:08 ROLLBACK Game#22892 0d0fc4a9fde7 -> 452653e77d19 ===
+- rollback from 0d0fc4a9fde7 to 452653e77d19 at game 22892
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11833.8/12611.0/10529.2 vs target 13427.2/14552.5/11479.2
+- bad recent scores: 13769 13721 15236 9546 14689 10824 11071 9645
+
+=== 2026-05-08 15:05 ROLLBACK Game#23024 e39fdf92f05b -> 0d0fc4a9fde7 ===
+- rollback from e39fdf92f05b to 0d0fc4a9fde7 at game 23024
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10274.6/10430.5/9991.0 vs target 11833.8/12611.0/10529.2
+- bad recent scores: 9547 10282 10525 12081 15307 13936 10566 10836
+
+=== 2026-05-08 21:04 ROLLBACK Game#23091 272694a5501d -> 02819de60a04 ===
+- rollback from 272694a5501d to 02819de60a04 at game 23091
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10262.1/10751.0/9325.0 vs target 11623.5/11884.5/11210.0
+- bad recent scores: 13035 9553 11732 8401 12011 7600 9097 8784
+
+=== 2026-05-09 01:23 ROLLBACK Game#23151 63f793b0623e -> 68ff9c0f9b1c ===
+- rollback from 63f793b0623e to 68ff9c0f9b1c at game 23151
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9644.8/10174.0/8527.8 vs target 11599.0/12258.5/10129.8
+- bad recent scores: 9971 8847 12220 7249 8983 15824 12423 10377
+
+=== 2026-05-09 08:57 ROLLBACK Game#23259 78870061e1a5 -> b22f8fcff328 ===
+- rollback from 78870061e1a5 to b22f8fcff328 at game 23259
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9841.1/10470.5/8588.8 vs target 11706.4/12405.0/10481.2
+- bad recent scores: 8555 10794 11497 26485 8600 9048 14953 8397
+
+=== 2026-05-09 13:27 ROLLBACK Game#23319 290af2204541 -> b22f8fcff328 ===
+- rollback from 290af2204541 to b22f8fcff328 at game 23319
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10600.1/11150.5/9498.2 vs target 12125.3/13267.5/10048.5
+- bad recent scores: 13340 10881 12358 9225 9589 19412 9226 8547
+
+=== 2026-05-09 20:06 ROLLBACK Game#23405 de61049454d1 -> df62901dbf5e ===
+- rollback from de61049454d1 to df62901dbf5e at game 23405
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10638.0/11343.0/9284.2 vs target 12147.3/12537.5/11395.0
+- bad recent scores: 13166 13094 9978 13753 12708 15777 9780 9119
+
+=== 2026-05-10 06:09 ROLLBACK Game#23537 349a707114bf -> 814c4143ae4c ===
+- rollback from 349a707114bf to 814c4143ae4c at game 23537
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9785.1/9946.5/9357.0 vs target 12272.1/13375.5/10003.5
+- bad recent scores: 9961 9705 7954 15655 11493 9932 8934 11890
+
+=== 2026-05-10 08:48 ROLLBACK Game#23575 4cb6bc1b8163 -> e0934b4a3e13 ===
+- rollback from 4cb6bc1b8163 to e0934b4a3e13 at game 23575
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10962.2/11768.0/9454.5 vs target 12096.4/12573.0/11256.8
+- bad recent scores: 10911 17245 11029 14633 13278 13893 8790 8025
+
+=== 2026-05-10 11:15 ROLLBACK Game#23612 795af029451e -> 7018e9053d55 ===
+- rollback from 795af029451e to 7018e9053d55 at game 23612
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10133.2/10400.0/9561.0 vs target 11988.6/12509.5/11024.2
+- bad recent scores: 10400 14704 12532 11965 11326 7181 9561 10096
+
+=== 2026-05-10 19:26 ROLLBACK Game#23720 1ecf941003a8 -> e0934b4a3e13 ===
+- rollback from 1ecf941003a8 to e0934b4a3e13 at game 23720
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10438.4/10774.0/9802.2 vs target 11837.3/12518.5/10496.2
+- bad recent scores: 6735 9548 13702 9887 15174 12163 19983 11004
+
+=== 2026-05-11 03:09 Game#23816 scores=11139 13296 14636 11264 12551 11914 9721 19449 11546 10664 8210 6749 11298 21811 8477 10867 7353 12825 6976 12323 7480 9413 14875 9823 ===
+-            # When Russia exists + deadline crossed + max_y >= 2.0:
+-            # Force DIRECT merge selection over Russia-phase board compression delay.
++            # When Russia exists + deadline crossed + max_y >= 2.0 + DIRECT merge:
++            # Add extra +1200*type_scale on top of base DIRECT bonus (1200*type_scale)
++            # for total +2400*type_scale. Forces DIRECT merge over Russia-phase board compression.
+-                russia_deadline_direct_bonus = 800.0 * type_scale
+-                score += russia_deadline_direct_bonus
+-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                if merge_grade == "DIRECT":
++                    # Extra +1200 on top of the existing +800, making total +2400*type_scale
++                    russia_deadline_direct_bonus = 2000.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                else:
++                    russia_deadline_direct_bonus = 800.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
+
+=== 2026-05-11 06:56 ROLLBACK Game#23864 d2989ffff81e -> 61fedc5dd74e ===
+- rollback from d2989ffff81e to 61fedc5dd74e at game 23864
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10863.6/11514.0/9641.2 vs target 12025.3/13118.5/10161.2
+- bad recent scores: 9474 12514 11373 10262 8014 17492 9187 9697
+
+=== 2026-05-11 10:22 ROLLBACK Game#23911 75e4eab65c4a -> d4b80c24ca65 ===
+- rollback from 75e4eab65c4a to d4b80c24ca65 at game 23911
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10625.2/10889.0/10076.5 vs target 11657.8/12354.5/10258.2
+- bad recent scores: 10194 8818 10540 10440 10267 9515 12534 8905
+
+=== 2026-05-11 23:06 Game#24031 scores=17406 16515 10762 19437 10565 11609 8053 10290 13770 16328 14768 17787 9201 12429 10136 17232 15271 10059 15129 16773 10765 12750 18751 13421 ===
++                    # v640: HIGH phase same-type merge urgency bonus
++                    # Adopted hypothesis: axis 9.5 stacking bonus is insufficient when
++                    # same_type_stack_top exists and merge_grade="NO" in HIGH phase (1.8 ≤ max_y < 3.0).
++                    # worst_game T55: x=-2.8 selected over x=-1.73 (same-type stack target),
++                    # axis 9.5 bonus too weak to overcome height penalty/AVOID_BLOCK bonuses.
++                    # During HIGH phase when board approaches critical, missing a same-type merge
++                    # is more costly — add +400*merge_mult to force merge priority.
++                    # Prohibitions (analysis_result.md): NOT in LOW/MEDIUM, NOT in CRITICAL (>=3.0).
++                    if max_y >= 1.8 and max_y < 3.0:
++                        score += 400.0 * merge_mult
++                        reasons.append("HIGH_PHASE_SAME_TYPE_MERGE_URGENCY")
+
+=== 2026-05-12 00:20 ROLLBACK Game#24050 888a0e6a651f -> 22337984f747 ===
+- rollback from 888a0e6a651f to 22337984f747 at game 24050
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10268.5/10656.0/9345.0 vs target 11598.7/11725.5/11030.5
+- bad recent scores: 8098 15384 9327 9351 11933 10826 9236 9546
+
+=== 2026-05-12 03:03 ROLLBACK Game#24087 7e184fae3207 -> 71f71bc828fa ===
+- rollback from 7e184fae3207 to 71f71bc828fa at game 24087
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9890.0/10665.0/8557.5 vs target 13169.2/13719.0/11964.0
+- bad recent scores: 11464 7358 9866 8343 16012 9016 7325 8629
+
+=== 2026-05-12 07:19 ROLLBACK Game#24147 7ef86ce5a2bd -> a2cf0ecbe2ba ===
+- rollback from 7ef86ce5a2bd to a2cf0ecbe2ba at game 24147
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11061.5/11571.5/10106.8 vs target 12822.1/13533.0/11501.0
+- bad recent scores: 12926 12732 14076 10115 9910 13498 15020 9235
+
+=== 2026-05-12 11:36 Game#24195 scores=10512 8767 15602 15513 11208 13248 18621 14334 9490 10292 17227 11285 15228 9103 10234 15991 13540 13256 12460 15353 20110 8034 14022 17926 ===
+-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+-            score -= 900.0 * merge_mult
++            if max_y >= 2.0:
++                # vYYY: increase from -900 to -1200 to overcome AVOID_BLOCK at critical height
++                # At max_y>=2.0, board is near-critical. AVOID_BLOCK (+400-600) competing with
++                # -900 still allowed x=2.0 intermediate placement in worst game T73, extra_high T128.
++                # -1200 provides ~600-800 margin above AVOID_BLOCK, forcing lowest possible placement
++                # when no merge is available at critical height.
++                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies at max_y>=2.0.
++                # mandatory_themes第一条対応: max_y>=2.0ではmerge_available=falseでも最低位置選択
++                score -= 1200.0 * merge_mult
++            else:
++                score -= 900.0 * merge_mult
+
+=== 2026-05-12 18:20 ROLLBACK Game#24255 7f746ab4e7eb -> 22337984f747 ===
+- rollback from 7f746ab4e7eb to 22337984f747 at game 24255
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10202.0/10999.5/8649.8 vs target 12070.0/13028.0/10155.0
+- bad recent scores: 11231 12412 15410 17937 8738 10768 8385 13526
+
+=== 2026-05-12 22:35 ROLLBACK Game#24315 e964b94bb7bc -> 1fa4f1bdb308 ===
+- rollback from e964b94bb7bc to 1fa4f1bdb308 at game 24315
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10347.2/10841.0/9521.8 vs target 11642.2/12087.5/10615.8
+- bad recent scores: 15911 14739 9755 11927 11933 8132 9626 9209
+
+=== 2026-05-13 05:11 ROLLBACK Game#24409 348bca3216f8 -> fc36b52375f9 ===
+- rollback from 348bca3216f8 to fc36b52375f9 at game 24409
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9962.3/10220.0/9112.2 vs target 12360.5/12836.0/11530.0
+- bad recent scores: 7662 17380 9141 9887 8850 7673 9836 8984
+
+=== 2026-05-13 11:56 ROLLBACK Game#24494 5e8e69043345 -> 1fa4f1bdb308 ===
+- rollback from 5e8e69043345 to 1fa4f1bdb308 at game 24494
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9720.0/9731.0/9427.0 vs target 11642.9/12175.5/10443.0
+- bad recent scores: 12052 12868 9643 8935 8892 10676 9731 9492
+
+=== 2026-05-13 16:57 Game#24563 scores=0 0 10882 0 0 14273 14273 12208 12208 7211 7211 7702 7702 10895 10895 13322 10773 10773 7228 7228 8510 11011 11011 11670 ===
++     # v631: axis 9.10 high-type growth pipeline guidance — centroid of type 8-12 pieces during NO merge
++     # Adopted from best_score6058_strategy.py (hall-of-fame, score 6058) and best_score5801_strategy.py
++     # analysis_result.md adopted hypothesis: type 8-12 centroid proximity during NO merge
++     # Worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
++     # Pieces type 8-12 existed but scattered — axis 9.10 guides toward centroid to prevent scatter.
++     # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !axis_88_horizontal_suppression && !death_spiral
++     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10),
++     #       strategy_versions/best_score6058_strategy.py (axis 9.10 implementation),
++     #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed)
++     # v630: axis 9.9 Russia-phase next-Russia growth pipeline guidance
++     # Adopted from best_score6058_strategy.py (hall-of-fame, score 6058)
++     # analysis_result.md adopted hypothesis: Russia建国後フェーズ専用の「次ロシア成長パイプライン誘導」軸
++     # Guards: russia_phase && !double_russia_phase && merge_grade==NO && max_y>=1.0 && !death_spiral
++     # (1) Russia piece below-position bonus: +150*merge_mult*russia_pipeline_mult for below placement
++     # (2) High-type (type>=10) centroid clustering: +80*merge_mult for proximity to high-type centroid
++     # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消费、
++     #   次ロシアへの併合パスが構築されない"
++     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
++     #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
++    # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
+
+
+=== 2026-05-08 02:25 ROLLBACK Game#22856 203a542d6347 -> 452653e77d19 ===
+- rollback from 203a542d6347 to 452653e77d19 at game 22856
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=8871.3/9515.5/7782.0 vs target 11695.5/12127.5/10830.2
+- bad recent scores: 8523 7389 11251 6571 10158 8893 11250 10209
+
+=== 2026-05-08 05:08 ROLLBACK Game#22892 0d0fc4a9fde7 -> 452653e77d19 ===
+- rollback from 0d0fc4a9fde7 to 452653e77d19 at game 22892
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11833.8/12611.0/10529.2 vs target 13427.2/14552.5/11479.2
+- bad recent scores: 13769 13721 15236 9546 14689 10824 11071 9645
+
+=== 2026-05-08 15:05 ROLLBACK Game#23024 e39fdf92f05b -> 0d0fc4a9fde7 ===
+- rollback from e39fdf92f05b to 0d0fc4a9fde7 at game 23024
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10274.6/10430.5/9991.0 vs target 11833.8/12611.0/10529.2
+- bad recent scores: 9547 10282 10525 12081 15307 13936 10566 10836
+
+=== 2026-05-08 21:04 ROLLBACK Game#23091 272694a5501d -> 02819de60a04 ===
+- rollback from 272694a5501d to 02819de60a04 at game 23091
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10262.1/10751.0/9325.0 vs target 11623.5/11884.5/11210.0
+- bad recent scores: 13035 9553 11732 8401 12011 7600 9097 8784
+
+=== 2026-05-09 01:23 ROLLBACK Game#23151 63f793b0623e -> 68ff9c0f9b1c ===
+- rollback from 63f793b0623e to 68ff9c0f9b1c at game 23151
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9644.8/10174.0/8527.8 vs target 11599.0/12258.5/10129.8
+- bad recent scores: 9971 8847 12220 7249 8983 15824 12423 10377
+
+=== 2026-05-09 08:57 ROLLBACK Game#23259 78870061e1a5 -> b22f8fcff328 ===
+- rollback from 78870061e1a5 to b22f8fcff328 at game 23259
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9841.1/10470.5/8588.8 vs target 11706.4/12405.0/10481.2
+- bad recent scores: 8555 10794 11497 26485 8600 9048 14953 8397
+
+=== 2026-05-09 13:27 ROLLBACK Game#23319 290af2204541 -> b22f8fcff328 ===
+- rollback from 290af2204541 to b22f8fcff328 at game 23319
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10600.1/11150.5/9498.2 vs target 12125.3/13267.5/10048.5
+- bad recent scores: 13340 10881 12358 9225 9589 19412 9226 8547
+
+=== 2026-05-09 20:06 ROLLBACK Game#23405 de61049454d1 -> df62901dbf5e ===
+- rollback from de61049454d1 to df62901dbf5e at game 23405
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10638.0/11343.0/9284.2 vs target 12147.3/12537.5/11395.0
+- bad recent scores: 13166 13094 9978 13753 12708 15777 9780 9119
+
+=== 2026-05-10 06:09 ROLLBACK Game#23537 349a707114bf -> 814c4143ae4c ===
+- rollback from 349a707114bf to 814c4143ae4c at game 23537
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9785.1/9946.5/9357.0 vs target 12272.1/13375.5/10003.5
+- bad recent scores: 9961 9705 7954 15655 11493 9932 8934 11890
+
+=== 2026-05-10 08:48 ROLLBACK Game#23575 4cb6bc1b8163 -> e0934b4a3e13 ===
+- rollback from 4cb6bc1b8163 to e0934b4a3e13 at game 23575
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10962.2/11768.0/9454.5 vs target 12096.4/12573.0/11256.8
+- bad recent scores: 10911 17245 11029 14633 13278 13893 8790 8025
+
+=== 2026-05-10 11:15 ROLLBACK Game#23612 795af029451e -> 7018e9053d55 ===
+- rollback from 795af029451e to 7018e9053d55 at game 23612
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10133.2/10400.0/9561.0 vs target 11988.6/12509.5/11024.2
+- bad recent scores: 10400 14704 12532 11965 11326 7181 9561 10096
+
+=== 2026-05-10 19:26 ROLLBACK Game#23720 1ecf941003a8 -> e0934b4a3e13 ===
+- rollback from 1ecf941003a8 to e0934b4a3e13 at game 23720
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10438.4/10774.0/9802.2 vs target 11837.3/12518.5/10496.2
+- bad recent scores: 6735 9548 13702 9887 15174 12163 19983 11004
+
+=== 2026-05-11 03:09 Game#23816 scores=11139 13296 14636 11264 12551 11914 9721 19449 11546 10664 8210 6749 11298 21811 8477 10867 7353 12825 6976 12323 7480 9413 14875 9823 ===
+-            # When Russia exists + deadline crossed + max_y >= 2.0:
+-            # Force DIRECT merge selection over Russia-phase board compression delay.
++            # When Russia exists + deadline crossed + max_y >= 2.0 + DIRECT merge:
++            # Add extra +1200*type_scale on top of base DIRECT bonus (1200*type_scale)
++            # for total +2400*type_scale. Forces DIRECT merge over Russia-phase board compression.
+-                russia_deadline_direct_bonus = 800.0 * type_scale
+-                score += russia_deadline_direct_bonus
+-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                if merge_grade == "DIRECT":
++                    # Extra +1200 on top of the existing +800, making total +2400*type_scale
++                    russia_deadline_direct_bonus = 2000.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                else:
++                    russia_deadline_direct_bonus = 800.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
+
+=== 2026-05-11 06:56 ROLLBACK Game#23864 d2989ffff81e -> 61fedc5dd74e ===
+- rollback from d2989ffff81e to 61fedc5dd74e at game 23864
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10863.6/11514.0/9641.2 vs target 12025.3/13118.5/10161.2
+- bad recent scores: 9474 12514 11373 10262 8014 17492 9187 9697
+
+=== 2026-05-11 10:22 ROLLBACK Game#23911 75e4eab65c4a -> d4b80c24ca65 ===
+- rollback from 75e4eab65c4a to d4b80c24ca65 at game 23911
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10625.2/10889.0/10076.5 vs target 11657.8/12354.5/10258.2
+- bad recent scores: 10194 8818 10540 10440 10267 9515 12534 8905
+
+=== 2026-05-11 23:06 Game#24031 scores=17406 16515 10762 19437 10565 11609 8053 10290 13770 16328 14768 17787 9201 12429 10136 17232 15271 10059 15129 16773 10765 12750 18751 13421 ===
++                    # v640: HIGH phase same-type merge urgency bonus
++                    # Adopted hypothesis: axis 9.5 stacking bonus is insufficient when
++                    # same_type_stack_top exists and merge_grade="NO" in HIGH phase (1.8 ≤ max_y < 3.0).
++                    # worst_game T55: x=-2.8 selected over x=-1.73 (same-type stack target),
++                    # axis 9.5 bonus too weak to overcome height penalty/AVOID_BLOCK bonuses.
++                    # During HIGH phase when board approaches critical, missing a same-type merge
++                    # is more costly — add +400*merge_mult to force merge priority.
++                    # Prohibitions (analysis_result.md): NOT in LOW/MEDIUM, NOT in CRITICAL (>=3.0).
++                    if max_y >= 1.8 and max_y < 3.0:
++                        score += 400.0 * merge_mult
++                        reasons.append("HIGH_PHASE_SAME_TYPE_MERGE_URGENCY")
+
+=== 2026-05-12 00:20 ROLLBACK Game#24050 888a0e6a651f -> 22337984f747 ===
+- rollback from 888a0e6a651f to 22337984f747 at game 24050
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10268.5/10656.0/9345.0 vs target 11598.7/11725.5/11030.5
+- bad recent scores: 8098 15384 9327 9351 11933 10826 9236 9546
+
+=== 2026-05-12 03:03 ROLLBACK Game#24087 7e184fae3207 -> 71f71bc828fa ===
+- rollback from 7e184fae3207 to 71f71bc828fa at game 24087
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9890.0/10665.0/8557.5 vs target 13169.2/13719.0/11964.0
+- bad recent scores: 11464 7358 9866 8343 16012 9016 7325 8629
+
+=== 2026-05-12 07:19 ROLLBACK Game#24147 7ef86ce5a2bd -> a2cf0ecbe2ba ===
+- rollback from 7ef86ce5a2bd to a2cf0ecbe2ba at game 24147
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11061.5/11571.5/10106.8 vs target 12822.1/13533.0/11501.0
+- bad recent scores: 12926 12732 14076 10115 9910 13498 15020 9235
+
+=== 2026-05-12 11:36 Game#24195 scores=10512 8767 15602 15513 11208 13248 18621 14334 9490 10292 17227 11285 15228 9103 10234 15991 13540 13256 12460 15353 20110 8034 14022 17926 ===
+-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+-            score -= 900.0 * merge_mult
++            if max_y >= 2.0:
++                # vYYY: increase from -900 to -1200 to overcome AVOID_BLOCK at critical height
++                # At max_y>=2.0, board is near-critical. AVOID_BLOCK (+400-600) competing with
++                # -900 still allowed x=2.0 intermediate placement in worst game T73, extra_high T128.
++                # -1200 provides ~600-800 margin above AVOID_BLOCK, forcing lowest possible placement
++                # when no merge is available at critical height.
++                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies at max_y>=2.0.
++                # mandatory_themes第一条対応: max_y>=2.0ではmerge_available=falseでも最低位置選択
++                score -= 1200.0 * merge_mult
++            else:
++                score -= 900.0 * merge_mult
+
+=== 2026-05-12 18:20 ROLLBACK Game#24255 7f746ab4e7eb -> 22337984f747 ===
+- rollback from 7f746ab4e7eb to 22337984f747 at game 24255
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10202.0/10999.5/8649.8 vs target 12070.0/13028.0/10155.0
+- bad recent scores: 11231 12412 15410 17937 8738 10768 8385 13526
+
+=== 2026-05-12 22:35 ROLLBACK Game#24315 e964b94bb7bc -> 1fa4f1bdb308 ===
+- rollback from e964b94bb7bc to 1fa4f1bdb308 at game 24315
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10347.2/10841.0/9521.8 vs target 11642.2/12087.5/10615.8
+- bad recent scores: 15911 14739 9755 11927 11933 8132 9626 9209
+
+=== 2026-05-13 05:11 ROLLBACK Game#24409 348bca3216f8 -> fc36b52375f9 ===
+- rollback from 348bca3216f8 to fc36b52375f9 at game 24409
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9962.3/10220.0/9112.2 vs target 12360.5/12836.0/11530.0
+- bad recent scores: 7662 17380 9141 9887 8850 7673 9836 8984
+
+=== 2026-05-13 11:56 ROLLBACK Game#24494 5e8e69043345 -> 1fa4f1bdb308 ===
+- rollback from 5e8e69043345 to 1fa4f1bdb308 at game 24494
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9720.0/9731.0/9427.0 vs target 11642.9/12175.5/10443.0
+- bad recent scores: 12052 12868 9643 8935 8892 10676 9731 9492
+
+=== 2026-05-13 13:42 Game#24518 scores=11343 11886 17343 11696 11986 9280 12726 10248 9252 13025 13027 12248 12880 15875 9367 11068 9071 15151 19616 8630 21613 10130 11745 9759 ===
+-        # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
++        # vYYY: axis 9.17c — edge NO-MERGE penalty at deadline_crossed
++        # Worst game T54: edge placement (x=2.66) at deadline_crossed+merge_available=false caused max_y spike.
++        # mandatory_themes Change 1 (-10000) only fires when merge_possible=true, not when merge_available=false.
++        # Current edge penalty (9.17b: -1200*merge_mult) insufficient vs stacking(~400-600)+ceiling(~400-800).
++        # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
++        if deadline_crossed and merge_grade == "NO" and abs(x) >= 2.5:
++            score -= 2500.0 * merge_mult
++            reasons.append("EDGE_NO_MERGE_DEADLINE_9_17C")
++
++# vYYY: Change 4 - axis 9.17c edge NO-MERGE penalty at deadline
++      # Add axis 9.17c: -2500*merge_mult for edge NO-MERGE at deadline_crossed=true
++      # Worst game T54: edge placement (x=2.66) at deadline_crossed && merge_available=false
++      # caused max_y to spike 2.47→4.13. mandatory_themes Change 1 (-10000) only fires when
++      # merge_possible=true; at T54 with merge_available=false, no deterrent existed.
++      # Current axis 9.17b (-1200*merge_mult) is insufficient vs stacking(~400-600)+ceiling(~400-800).
++      # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
++      # Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
++      # refs: tmp/analysis_result.md (Implementation Plan Change 4)
++      # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
+
+=== 2026-05-07 IMPROVE ===
+- PRE_DEADLINE_COMPRESSION: extend v605 compression to pre-deadline zone (deadline_margin<=0.5, pc>=30, not deadline_crossed) to prevent max_y spike before crossing deadline
+- Fixes rollback failure mode: max_y runaway at deadline_crossed when reactive_pairs>=3 and merge_available=false
+- refs: tmp/analysis_result.md (Adopted Hypothesis: Extend compression to pre-deadline zone), tmp/state/last_rollback_postmortem.md
+
+=== 2026-05-07 08:37 ROLLBACK Game#22616 76c17c8df9ee -> 3576acaea706 ===
+- rollback from 76c17c8df9ee to 3576acaea706 at game 22616
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10858.0/11003.0/10349.2 vs target 12380.6/13061.0/11037.0
+- bad recent scores: 10173 10408 9223 19897 10726 15278 12068 12248
+
+=== 2026-05-07 22:05 ROLLBACK Game#22796 004df995a743 -> 9079aee71c00 ===
+- rollback from 004df995a743 to 9079aee71c00 at game 22796
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10857.2/10871.0/10536.8 vs target 13578.2/14448.0/12158.0
+- bad recent scores: 20010 10540 10602 8494 9668 15401 12004 10895
+
+=== 2026-05-08 04:40 IMPROVE ===
+- DEADLINE_MERGE_FORCE: add +3000 bonus for DIRECT merge when deadline_crossed=true
+- Fixes worst_game turn 53 failure: chose HIGH_LAYER (height=1440) over DIRECT merge at deadline
+- mandatory_themes requires merge priority at deadline — existing +800 (axis 1.6) insufficient
+- refs: tmp/analysis_result.md, data/mandatory_themes.txt, game_history/20260508_032057_score0854.jsonl
+
+=== 2026-05-08 02:25 ROLLBACK Game#22856 203a542d6347 -> 452653e77d19 ===
+- rollback from 203a542d6347 to 452653e77d19 at game 22856
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=8871.3/9515.5/7782.0 vs target 11695.5/12127.5/10830.2
+- bad recent scores: 8523 7389 11251 6571 10158 8893 11250 10209
+
+=== 2026-05-08 05:08 ROLLBACK Game#22892 0d0fc4a9fde7 -> 452653e77d19 ===
+- rollback from 0d0fc4a9fde7 to 452653e77d19 at game 22892
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11833.8/12611.0/10529.2 vs target 13427.2/14552.5/11479.2
+- bad recent scores: 13769 13721 15236 9546 14689 10824 11071 9645
+
+=== 2026-05-08 15:05 ROLLBACK Game#23024 e39fdf92f05b -> 0d0fc4a9fde7 ===
+- rollback from e39fdf92f05b to 0d0fc4a9fde7 at game 23024
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10274.6/10430.5/9991.0 vs target 11833.8/12611.0/10529.2
+- bad recent scores: 9547 10282 10525 12081 15307 13936 10566 10836
+
+=== 2026-05-08 21:04 ROLLBACK Game#23091 272694a5501d -> 02819de60a04 ===
+- rollback from 272694a5501d to 02819de60a04 at game 23091
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10262.1/10751.0/9325.0 vs target 11623.5/11884.5/11210.0
+- bad recent scores: 13035 9553 11732 8401 12011 7600 9097 8784
+
+=== 2026-05-09 01:23 ROLLBACK Game#23151 63f793b0623e -> 68ff9c0f9b1c ===
+- rollback from 63f793b0623e to 68ff9c0f9b1c at game 23151
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9644.8/10174.0/8527.8 vs target 11599.0/12258.5/10129.8
+- bad recent scores: 9971 8847 12220 7249 8983 15824 12423 10377
+
+=== 2026-05-09 08:57 ROLLBACK Game#23259 78870061e1a5 -> b22f8fcff328 ===
+- rollback from 78870061e1a5 to b22f8fcff328 at game 23259
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9841.1/10470.5/8588.8 vs target 11706.4/12405.0/10481.2
+- bad recent scores: 8555 10794 11497 26485 8600 9048 14953 8397
+
+=== 2026-05-09 13:27 ROLLBACK Game#23319 290af2204541 -> b22f8fcff328 ===
+- rollback from 290af2204541 to b22f8fcff328 at game 23319
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10600.1/11150.5/9498.2 vs target 12125.3/13267.5/10048.5
+- bad recent scores: 13340 10881 12358 9225 9589 19412 9226 8547
+
+=== 2026-05-09 20:06 ROLLBACK Game#23405 de61049454d1 -> df62901dbf5e ===
+- rollback from de61049454d1 to df62901dbf5e at game 23405
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10638.0/11343.0/9284.2 vs target 12147.3/12537.5/11395.0
+- bad recent scores: 13166 13094 9978 13753 12708 15777 9780 9119
+
+=== 2026-05-10 06:09 ROLLBACK Game#23537 349a707114bf -> 814c4143ae4c ===
+- rollback from 349a707114bf to 814c4143ae4c at game 23537
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9785.1/9946.5/9357.0 vs target 12272.1/13375.5/10003.5
+- bad recent scores: 9961 9705 7954 15655 11493 9932 8934 11890
+
+=== 2026-05-10 08:48 ROLLBACK Game#23575 4cb6bc1b8163 -> e0934b4a3e13 ===
+- rollback from 4cb6bc1b8163 to e0934b4a3e13 at game 23575
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10962.2/11768.0/9454.5 vs target 12096.4/12573.0/11256.8
+- bad recent scores: 10911 17245 11029 14633 13278 13893 8790 8025
+
+=== 2026-05-10 11:15 ROLLBACK Game#23612 795af029451e -> 7018e9053d55 ===
+- rollback from 795af029451e to 7018e9053d55 at game 23612
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10133.2/10400.0/9561.0 vs target 11988.6/12509.5/11024.2
+- bad recent scores: 10400 14704 12532 11965 11326 7181 9561 10096
+
+=== 2026-05-10 19:26 ROLLBACK Game#23720 1ecf941003a8 -> e0934b4a3e13 ===
+- rollback from 1ecf941003a8 to e0934b4a3e13 at game 23720
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10438.4/10774.0/9802.2 vs target 11837.3/12518.5/10496.2
+- bad recent scores: 6735 9548 13702 9887 15174 12163 19983 11004
+
+=== 2026-05-11 03:09 Game#23816 scores=11139 13296 14636 11264 12551 11914 9721 19449 11546 10664 8210 6749 11298 21811 8477 10867 7353 12825 6976 12323 7480 9413 14875 9823 ===
+-            # When Russia exists + deadline crossed + max_y >= 2.0:
+-            # Force DIRECT merge selection over Russia-phase board compression delay.
++            # When Russia exists + deadline crossed + max_y >= 2.0 + DIRECT merge:
++            # Add extra +1200*type_scale on top of base DIRECT bonus (1200*type_scale)
++            # for total +2400*type_scale. Forces DIRECT merge over Russia-phase board compression.
+-                russia_deadline_direct_bonus = 800.0 * type_scale
+-                score += russia_deadline_direct_bonus
+-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                if merge_grade == "DIRECT":
++                    # Extra +1200 on top of the existing +800, making total +2400*type_scale
++                    russia_deadline_direct_bonus = 2000.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
++                else:
++                    russia_deadline_direct_bonus = 800.0 * type_scale
++                    score += russia_deadline_direct_bonus
++                    reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
+
+=== 2026-05-11 06:56 ROLLBACK Game#23864 d2989ffff81e -> 61fedc5dd74e ===
+- rollback from d2989ffff81e to 61fedc5dd74e at game 23864
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10863.6/11514.0/9641.2 vs target 12025.3/13118.5/10161.2
+- bad recent scores: 9474 12514 11373 10262 8014 17492 9187 9697
+
+=== 2026-05-11 10:22 ROLLBACK Game#23911 75e4eab65c4a -> d4b80c24ca65 ===
+- rollback from 75e4eab65c4a to d4b80c24ca65 at game 23911
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10625.2/10889.0/10076.5 vs target 11657.8/12354.5/10258.2
+- bad recent scores: 10194 8818 10540 10440 10267 9515 12534 8905
+
+=== 2026-05-11 23:06 Game#24031 scores=17406 16515 10762 19437 10565 11609 8053 10290 13770 16328 14768 17787 9201 12429 10136 17232 15271 10059 15129 16773 10765 12750 18751 13421 ===
++                    # v640: HIGH phase same-type merge urgency bonus
++                    # Adopted hypothesis: axis 9.5 stacking bonus is insufficient when
++                    # same_type_stack_top exists and merge_grade="NO" in HIGH phase (1.8 ≤ max_y < 3.0).
++                    # worst_game T55: x=-2.8 selected over x=-1.73 (same-type stack target),
++                    # axis 9.5 bonus too weak to overcome height penalty/AVOID_BLOCK bonuses.
++                    # During HIGH phase when board approaches critical, missing a same-type merge
++                    # is more costly — add +400*merge_mult to force merge priority.
++                    # Prohibitions (analysis_result.md): NOT in LOW/MEDIUM, NOT in CRITICAL (>=3.0).
++                    if max_y >= 1.8 and max_y < 3.0:
++                        score += 400.0 * merge_mult
++                        reasons.append("HIGH_PHASE_SAME_TYPE_MERGE_URGENCY")
+
+=== 2026-05-12 00:20 ROLLBACK Game#24050 888a0e6a651f -> 22337984f747 ===
+- rollback from 888a0e6a651f to 22337984f747 at game 24050
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10268.5/10656.0/9345.0 vs target 11598.7/11725.5/11030.5
+- bad recent scores: 8098 15384 9327 9351 11933 10826 9236 9546
+
+=== 2026-05-12 03:03 ROLLBACK Game#24087 7e184fae3207 -> 71f71bc828fa ===
+- rollback from 7e184fae3207 to 71f71bc828fa at game 24087
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9890.0/10665.0/8557.5 vs target 13169.2/13719.0/11964.0
+- bad recent scores: 11464 7358 9866 8343 16012 9016 7325 8629
+
+=== 2026-05-12 07:19 ROLLBACK Game#24147 7ef86ce5a2bd -> a2cf0ecbe2ba ===
+- rollback from 7ef86ce5a2bd to a2cf0ecbe2ba at game 24147
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=11061.5/11571.5/10106.8 vs target 12822.1/13533.0/11501.0
+- bad recent scores: 12926 12732 14076 10115 9910 13498 15020 9235
+
+=== 2026-05-12 11:36 Game#24195 scores=10512 8767 15602 15513 11208 13248 18621 14334 9490 10292 17227 11285 15228 9103 10234 15991 13540 13256 12460 15353 20110 8034 14022 17926 ===
+-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+-            score -= 900.0 * merge_mult
++            if max_y >= 2.0:
++                # vYYY: increase from -900 to -1200 to overcome AVOID_BLOCK at critical height
++                # At max_y>=2.0, board is near-critical. AVOID_BLOCK (+400-600) competing with
++                # -900 still allowed x=2.0 intermediate placement in worst game T73, extra_high T128.
++                # -1200 provides ~600-800 margin above AVOID_BLOCK, forcing lowest possible placement
++                # when no merge is available at critical height.
++                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies at max_y>=2.0.
++                # mandatory_themes第一条対応: max_y>=2.0ではmerge_available=falseでも最低位置選択
++                score -= 1200.0 * merge_mult
++            else:
++                score -= 900.0 * merge_mult
+
+=== 2026-05-12 18:20 ROLLBACK Game#24255 7f746ab4e7eb -> 22337984f747 ===
+- rollback from 7f746ab4e7eb to 22337984f747 at game 24255
+- reasons: early_branch_regression+curr_breach
+- current comp/p50/p25=10202.0/10999.5/8649.8 vs target 12070.0/13028.0/10155.0
+- bad recent scores: 11231 12412 15410 17937 8738 10768 8385 13526
+
+=== 2026-05-12 22:35 ROLLBACK Game#24315 e964b94bb7bc -> 1fa4f1bdb308 ===
+- rollback from e964b94bb7bc to 1fa4f1bdb308 at game 24315
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=10347.2/10841.0/9521.8 vs target 11642.2/12087.5/10615.8
+- bad recent scores: 15911 14739 9755 11927 11933 8132 9626 9209
+
+=== 2026-05-13 05:11 ROLLBACK Game#24409 348bca3216f8 -> fc36b52375f9 ===
+- rollback from 348bca3216f8 to fc36b52375f9 at game 24409
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9962.3/10220.0/9112.2 vs target 12360.5/12836.0/11530.0
+- bad recent scores: 7662 17380 9141 9887 8850 7673 9836 8984
+
+=== 2026-05-13 11:56 ROLLBACK Game#24494 5e8e69043345 -> 1fa4f1bdb308 ===
+- rollback from 5e8e69043345 to 1fa4f1bdb308 at game 24494
+- reasons: early_branch_regression+curr_breach+current_worse_than_best
+- current comp/p50/p25=9720.0/9731.0/9427.0 vs target 11642.9/12175.5/10443.0
+- bad recent scores: 12052 12868 9643 8935 8892 10676 9731 9492
+

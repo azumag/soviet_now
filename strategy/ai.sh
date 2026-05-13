@@ -55,6 +55,53 @@ _run_cmd_timeout_bin() {
 	return 1
 }
 
+_run_cmd_start_heartbeat() {
+	local cmd_pid="$1" cmd_log_file="$2" cmd_log_tag="$3"
+	local interval="${RUN_CMD_HEARTBEAT_INTERVAL_SEC:-30}"
+	case "$cmd_pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	case "$interval" in
+	''|*[!0-9]*) interval=30 ;;
+	esac
+	[ "$interval" -gt 0 ] || return 1
+	(
+		local hb_start
+		hb_start=$(date +%s)
+		while kill -0 "$cmd_pid" 2>/dev/null; do
+			sleep "$interval"
+			kill -0 "$cmd_pid" 2>/dev/null || break
+			local hb_elapsed
+			hb_elapsed=$(( $(date +%s) - hb_start ))
+			if [ -n "$cmd_log_file" ]; then
+				printf '[%s] [AI:%s] HEARTBEAT waiting pid=%s elapsed=%ss\n' \
+					"$(date '+%H:%M:%S')" "$cmd_log_tag" "$cmd_pid" "$hb_elapsed" \
+					>>"$cmd_log_file" 2>/dev/null || true
+			fi
+			if [ "${RUN_CMD_TOUCH_IMPROVE_STATE:-0}" = "1" ] && command -v _write_improve_state >/dev/null 2>&1; then
+				_write_improve_state "running" \
+					"${RUN_CMD_IMPROVE_PID:-0}" \
+					"${RUN_CMD_IMPROVE_HASH_BEFORE:-}" \
+					"${RUN_CMD_IMPROVE_PHASE:-}" \
+					"${RUN_CMD_IMPROVE_PROGRESS:-0}" \
+					"${RUN_CMD_IMPROVE_DETAIL:-run_cmd_wait}" \
+					"${RUN_CMD_IMPROVE_STARTED_AT:-0}" \
+					"${RUN_CMD_IMPROVE_PID_BIRTH_EPOCH:-0}"
+			fi
+		done
+	) &
+	RUN_CMD_HEARTBEAT_PID=$!
+	return 0
+}
+
+_run_cmd_stop_heartbeat() {
+	if [ "${RUN_CMD_HEARTBEAT_PID:-0}" -ne 0 ]; then
+		kill "$RUN_CMD_HEARTBEAT_PID" 2>/dev/null || true
+		wait "$RUN_CMD_HEARTBEAT_PID" 2>/dev/null || true
+		RUN_CMD_HEARTBEAT_PID=0
+	fi
+}
+
 _prepare_minimax_claude_command() {
 	local prompt_body="$1"
 	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
@@ -515,14 +562,16 @@ run_cmd() {
 	_cmd_start_epoch=$(date +%s)
 
 	start_spinner "$type thinking..."
+	_run_cmd_start_heartbeat "$cmd_pid" "$cmd_log_file" "$cmd_log_tag" >/dev/null 2>&1 || true
 
 	local prev_int_trap interrupted
 	prev_int_trap=$(trap -p INT || true)
 	interrupted=0
-	trap 'interrupted=1; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
+	trap 'interrupted=1; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
+	_run_cmd_stop_heartbeat
 	RUN_CMD_ACTIVE_PID=0
 	local _cmd_elapsed=$(( $(date +%s) - _cmd_start_epoch ))
 	# デバッグ: wait直後の状態をログに記録 (リトライ未到達問題の調査用)

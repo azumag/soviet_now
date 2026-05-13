@@ -224,7 +224,7 @@ export function runClaudeText(tag, promptText, options = {}) {
 export function runGeminiText(tag, promptText, options = {}) {
   const config = resolveTextAiConfig();
   const model = options.geminiModel || config.geminiModel;
-  const args = ['-p', '', '-s', '-o', 'text'];
+  const args = ['-p', '', '-o', 'text'];
   if (model) args.push('--model', model);
 
   return new Promise((resolve, reject) => {
@@ -302,49 +302,71 @@ export function runOpencodeText(tag, promptText, options = {}) {
 }
 
 export async function generateTextWithFallbacks(tag, promptText, options = {}) {
-  try {
-    return await runClaudeText(tag, promptText, options);
-  } catch (err) {
-    // claude fallbackとして haiku を試す
-    const claudeFallbackPreset = options.claudeFallbackPreset || 'haiku';
-    if (claudeFallbackPreset) {
-      console.error(`[${tag}] claude failed -> haiku fallback (${err.message})`);
+  const allowGemini = process.env.SOREN91_ALLOW_GEMINI === '1';
+  const requestedProviders = String(options.fallbackMode || 'claude,opencode')
+    .split(',')
+    .map(provider => provider.trim().toLowerCase())
+    .filter(Boolean);
+  let fallbackProviders = requestedProviders.filter(provider => provider !== 'gemini' || allowGemini);
+  if (!allowGemini && requestedProviders.includes('gemini')) {
+    console.error(`[${tag}] gemini fallback disabled; set SOREN91_ALLOW_GEMINI=1 to opt in`);
+  }
+  if (fallbackProviders.length === 0) {
+    fallbackProviders = ['claude'];
+  }
+  let lastErr = null;
+
+  for (const provider of fallbackProviders) {
+    if (provider === 'claude') {
       try {
-        return await runClaudeText(tag, promptText, { ...options, claudePreset: claudeFallbackPreset });
-      } catch (haikuErr) {
-        console.error(`[${tag}] haiku also failed (${haikuErr.message})`);
-        throw haikuErr;
+        return await runClaudeText(tag, promptText, options);
+      } catch (err) {
+        lastErr = err;
+        const claudeFallbackPreset = options.claudeFallbackPreset || 'haiku';
+        const currentPreset = resolveClaudePreset(options.claudePreset || resolveTextAiConfig().claudePreset).preset;
+        if (claudeFallbackPreset && claudeFallbackPreset !== currentPreset) {
+          console.error(`[${tag}] claude failed -> ${claudeFallbackPreset} fallback (${err.message})`);
+          try {
+            return await runClaudeText(tag, promptText, { ...options, claudePreset: claudeFallbackPreset });
+          } catch (fallbackErr) {
+            lastErr = fallbackErr;
+            console.error(`[${tag}] ${claudeFallbackPreset} also failed (${fallbackErr.message})`);
+          }
+        } else {
+          console.error(`[${tag}] claude failed (${err.message})`);
+        }
       }
+      continue;
     }
 
-    // "Usage limit reached for 5 hour" のようなrate-limitエラーの場合は、Gemini をスキップして直接 Opencode にフォールバック
-    const isHardRateLimit = /usage limit reached for [0-9]+ hours?|rate limit.*hour|quota.*hour/i.test(err.message || '');
-    if (isHardRateLimit) {
-      console.error(`[${tag}] claude hit hard rate limit -> opencode (skipping gemini)`);
-      if (options.includeOpencodeFallback === false) {
-        throw err;
+    if (provider === 'gemini') {
+      try {
+        return await runGeminiText(tag, promptText, options);
+      } catch (err) {
+        lastErr = err;
+        console.error(`[${tag}] gemini failed (${err.message})`);
       }
-      return runOpencodeText(tag, promptText, options);
+      continue;
     }
 
-    console.error(`[${tag}] claude failed -> gemini fallback (${err.message})`);
-    try {
-      return await runGeminiText(tag, promptText, options);
-    } catch (geminiErr) {
-      if (options.includeOpencodeFallback === false) {
-        throw geminiErr;
+    if (provider === 'opencode' && options.includeOpencodeFallback !== false) {
+      try {
+        return await runOpencodeText(tag, promptText, options);
+      } catch (err) {
+        lastErr = err;
+        console.error(`[${tag}] opencode failed (${err.message})`);
       }
-      console.error(`[${tag}] gemini failed -> opencode fallback (${geminiErr.message})`);
-      return runOpencodeText(tag, promptText, options);
     }
   }
+
+  throw lastErr || new Error(`no usable fallback providers: ${fallbackProviders.join(',') || '(empty)'}`);
 }
 
 function parseCliArgs(argv) {
   const parsed = {
     tag: 'text_ai',
     promptFile: '',
-    fallbackMode: 'gemini,opencode',
+    fallbackMode: 'claude,opencode',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -371,13 +393,14 @@ function parseCliArgs(argv) {
 async function main() {
   const args = parseCliArgs(process.argv.slice(2));
   if (!args.promptFile) {
-    console.error('Usage: node text_ai.mjs --tag <tag> --prompt-file <path> [--fallbacks gemini|gemini,opencode]');
+    console.error('Usage: node text_ai.mjs --tag <tag> --prompt-file <path> [--fallbacks claude|claude,opencode]');
     process.exit(2);
   }
   const promptText = readFileSync(args.promptFile, 'utf-8');
   const includeOpencodeFallback = String(args.fallbackMode || '').split(',').includes('opencode');
   try {
     const result = await generateTextWithFallbacks(args.tag, promptText, {
+      fallbackMode: args.fallbackMode,
       includeOpencodeFallback,
       parseOutput: extractPlainText,
     });

@@ -1,6 +1,5 @@
 # broadcast/radio_corners.sh - 各コーナー関数 + ディスパッチャー
 
-
 #=== ラジオトーク: コーナー ===
 
 start_radio_corner_theme() {
@@ -40,7 +39,7 @@ start_radio_corner_theme() {
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2400)
 	export _rc_time theme grounding_context category_guidance past_topics game_num score
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
+	envsubst <"$ELOOP_LIB_DIR/prompts/radio_theme.md" >"$prompt_file"
 	unset persona_block output_rules _rc_time theme grounding_context category_guidance past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "$corner_name" --topic "$theme"
@@ -247,42 +246,42 @@ PROMPT
 }
 
 start_radio_corner_rollback() {
-local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
-[ -f "$analysis_file" ] || return 1
-_radio_time_context
-local past_topics analysis_text
-past_topics=$(_radio_past_topics_block)
-analysis_text=$(cat "$analysis_file" 2>/dev/null)
+	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
+	[ -f "$analysis_file" ] || return 1
+	_radio_time_context
+	local past_topics analysis_text
+	past_topics=$(_radio_past_topics_block)
+	analysis_text=$(cat "$analysis_file" 2>/dev/null)
 
-local prompt_file
-prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-export persona_block
-persona_block=$(_radio_rollback_persona_block)
-export output_rules
-output_rules=$(_radio_output_rules 900 1600)
-export _rc_time_spoken past_topics analysis_text game_num from_hash to_hash
-envsubst < "$ELOOP_LIB_DIR/prompts/radio_rollback.md" > "$prompt_file"
-unset persona_block output_rules _rc_time_spoken past_topics analysis_text
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	export persona_block
+	persona_block=$(_radio_rollback_persona_block)
+	export output_rules
+	output_rules=$(_radio_output_rules 900 1600)
+	export _rc_time_spoken past_topics analysis_text game_num from_hash to_hash
+	envsubst <"$ELOOP_LIB_DIR/prompts/radio_rollback.md" >"$prompt_file"
+	unset persona_block output_rules _rc_time_spoken past_topics analysis_text
 
-# rollbackはopencode不安定のため、claude CLIで直接生成してからplay
-local talk=""
-talk=$(_run_claude_radio "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
-rm -f "$prompt_file"
-if [ -z "$talk" ]; then
-	log "[RADIO:rollback] claude生成失敗 → フォールバックテキスト使用"
-	talk="ただいま、粛清が執行されました。現行戦略に回帰が検出されたため、アンカー戦略へ巻き戻しました。革命は続きます。引き続き、ソ連ゲームをお楽しみください。"
-fi
-local talk_file
-talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
-printf '%s' "$talk" > "$talk_file"
-log "[RADIO:rollback] 生成完了 (${#talk}字)"
-# RADIO_FORCE_DEFERRED=1 なら deferred queue に積んで audio_worker に委譲
-if [ "${RADIO_FORCE_DEFERRED:-0}" = "1" ]; then
+	# rollbackはopencode不安定のため、claude CLIで直接生成してからplay
+	local talk=""
+	talk=$(_run_claude_radio "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
+	rm -f "$prompt_file"
+	if [ -z "$talk" ]; then
+		log "[RADIO:rollback] claude生成失敗 → フォールバックテキスト使用"
+		talk="ただいま、粛清が執行されました。試していた戦略が成績を落とす結果となったため、以前の安定した戦略に戻しました。革命は続きます。続きましょう。"
+	fi
+	local talk_file
+	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
+	printf '%s' "$talk" >"$talk_file"
+	log "[RADIO:rollback] 生成完了 (${#talk}字)"
+	# 常に deferred queue に積んで audio_worker に委譲する
+	#（radio_worker は文章生成のみを担当し、say_enqueue は audio_worker が実行する）
 	local deferred_file=""
 	deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "rollback" "" "" || true)
 	if [ -n "$deferred_file" ]; then
 		# rollback用のvoice指定を保存
-		echo "13" > "${deferred_file%.txt}.voice"
+		echo "13" >"${deferred_file%.txt}.voice"
 		log "[RADIO:rollback] deferred queue投入: $(basename "$deferred_file")"
 	else
 		log "[RADIO:rollback] deferred enqueue失敗"
@@ -290,14 +289,6 @@ if [ "${RADIO_FORCE_DEFERRED:-0}" = "1" ]; then
 		return 1
 	fi
 	rm -f "$talk_file"
-else
-	SAY_VOICEVOX_SPEAKER_OVERRIDE=13 SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
-		log "[RADIO:rollback] 再生失敗"
-		rm -f "$talk_file"
-		return 1
-	}
-	rm -f "$talk_file"
-fi
 }
 
 start_radio_corner_weather() {
@@ -590,14 +581,14 @@ PROMPT
 }
 
 start_radio_corner_rakugo() {
-    local game_num="$1" score="$2"
-    _radio_time_context
-    local past_topics
-    past_topics=$(_radio_past_topics_block)
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
 
-    local prompt_file
-    prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-    cat >"$prompt_file" <<PROMPT
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
 【現在時刻】${_rc_time_spoken}
@@ -624,7 +615,7 @@ ${past_topics}
 
 $(_radio_output_rules 1000 2000)
 PROMPT
-    _radio_generate_and_play "$prompt_file" "$game_num" "$score" "rakugo"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "rakugo"
 }
 
 start_radio_corner_breakfast() {
@@ -848,7 +839,6 @@ $(_radio_output_rules 800 1500)
 PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet_quiz"
 }
-
 
 start_radio_corner_bluegrass() {
 	local game_num="$1" score="$2"
@@ -1624,7 +1614,6 @@ PROMPT
 
 #=== lib/eloop_radio.sh から移行した関数 ===
 
-
 start_radio_corner_soviet() {
 	local game_num="$1" score="$2"
 	_radio_time_context
@@ -1641,12 +1630,11 @@ start_radio_corner_soviet() {
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2400)
 	export _rc_time soviet_theme past_topics game_num score
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_soviet.md" > "$prompt_file"
+	envsubst <"$ELOOP_LIB_DIR/prompts/radio_soviet.md" >"$prompt_file"
 	unset persona_block output_rules _rc_time soviet_theme past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet"
 }
-
 
 #=== 時事ニュースコーナー (jiji) ===
 
@@ -1665,22 +1653,16 @@ _filter_unread_jiji_blocks() {
 
 _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
-	local raw_file permission cleaned wrapper_script
+	local raw_file permission cleaned
 	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
 	# bash許可 + web-searchプラグインでAIにWeb検索させる
 	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","web-search":"allow"}'
-	wrapper_script=$(mktemp /tmp/eloop_jiji_wrapper_XXXXXXXX.sh)
-	{
-		echo '#!/bin/bash'
-		echo 'LC_ALL=en_US.UTF-8'
-		echo "export OPENCODE_PERMISSION='$permission'"
-		printf 'exec opencode run --agent %q "$(cat %q)" 2>&1\n' "$agent" "$prompt_file"
-	} > "$wrapper_script"
-	chmod +x "$wrapper_script"
-	timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		script -q "$raw_file" "$wrapper_script" >/dev/null 2>&1
+	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
+	OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
+		timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		>"$raw_file" 2>&1
 	local rc=$?
-	rm -f "$wrapper_script"
 	if [ $rc -eq 124 ]; then
 		log "[JIJI] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
 		rm -f "$raw_file"
@@ -1752,7 +1734,7 @@ start_radio_corner_jiji() {
 	local research_prompt_file grounding_context=""
 	research_prompt_file=$(mktemp /tmp/eloop_jiji_research_prompt_XXXXXXXX)
 	export headline
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" > "$research_prompt_file"
+	envsubst <"$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" >"$research_prompt_file"
 	# headline は後段の本番プロンプトと既読記録でも使うので保持する
 
 	grounding_context=$(_run_opencode_jiji_research "minimax" "$research_prompt_file")
@@ -1777,10 +1759,10 @@ start_radio_corner_jiji() {
 	if [ "$jiji_self_search" != true ] && [ -n "$headline_key" ]; then
 		echo "$headline" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
 		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
-		tail -100 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \
-			&& mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
-		tail -200 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
-			&& mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+		tail -100 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" &&
+			mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+		tail -200 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" &&
+			mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
 		# URL hash で重複排除（同じ記事が別タイトルで出現するケースに対応）
 		local jiji_url_hash=""
 		if [ -f "tmp/google_headlines_meta.json" ]; then
@@ -1788,7 +1770,7 @@ start_radio_corner_jiji() {
 		fi
 		if [ -n "$jiji_url_hash" ]; then
 			echo "$jiji_url_hash" >>"$PAST_JIJI_URL_HASHES"
-			tail -100 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" && \
+			tail -100 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" &&
 				mv "${PAST_JIJI_URL_HASHES}.tmp" "$PAST_JIJI_URL_HASHES"
 		fi
 	fi
@@ -1801,7 +1783,7 @@ start_radio_corner_jiji() {
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2000)
 	export _rc_time past_topics game_num score headline grounding_context
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji.md" > "$prompt_file"
+	envsubst <"$ELOOP_LIB_DIR/prompts/radio_jiji.md" >"$prompt_file"
 	unset persona_block output_rules _rc_time past_topics grounding_context
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji" --selected-news "$headline"

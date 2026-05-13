@@ -5,9 +5,67 @@
 
 OUTBOUND_CHAT_QUEUE_DIR="${OUTBOUND_CHAT_QUEUE_DIR:-tmp/.outbound_chat_queue}"
 OUTBOUND_CHAT_PENDING_DIR="$OUTBOUND_CHAT_QUEUE_DIR/pending"
+OUTBOUND_CHAT_PROCESSING_DIR="$OUTBOUND_CHAT_QUEUE_DIR/processing"
 OUTBOUND_CHAT_SENT_DIR="$OUTBOUND_CHAT_QUEUE_DIR/sent"
+OUTBOUND_CHAT_DEDUP_DIR="$OUTBOUND_CHAT_QUEUE_DIR/dedup"
 
-mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_SENT_DIR" 2>/dev/null || true
+mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_PROCESSING_DIR" "$OUTBOUND_CHAT_SENT_DIR" "$OUTBOUND_CHAT_DEDUP_DIR" 2>/dev/null || true
+
+_outbound_chat_hash() {
+	if command -v md5 >/dev/null 2>&1; then
+		printf '%s' "$1" | md5 -q 2>/dev/null
+	else
+		printf '%s' "$1" | md5sum 2>/dev/null | awk '{print $1}'
+	fi
+}
+
+_outbound_chat_cleanup_dedup_markers() {
+	local ttl="${1:-30}"
+	local now marker mt age
+	case "$ttl" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	now=$(date +%s)
+	for marker in "$OUTBOUND_CHAT_DEDUP_DIR"/*; do
+		[ -d "$marker" ] || continue
+		mt=$(stat -f %m "$marker" 2>/dev/null || echo "$now")
+		age=$((now - mt))
+		[ "$age" -gt "$ttl" ] && rm -rf "$marker" 2>/dev/null || true
+	done
+}
+
+_outbound_chat_claim_enqueue_key() {
+	local message="$1"
+	local source="$2"
+	local priority="$3"
+	local ttl="${OUTBOUND_CHAT_ENQUEUE_DEDUP_TTL_SEC:-30}"
+	case "$ttl" in
+	''|*[!0-9]*) ttl=30 ;;
+	esac
+	[ "$ttl" -gt 0 ] || return 0
+
+	mkdir -p "$OUTBOUND_CHAT_DEDUP_DIR" 2>/dev/null || true
+	local key marker now mt age
+	key=$(_outbound_chat_hash "${source}"$'\037'"${priority}"$'\037'"${message}")
+	[ -n "$key" ] || return 0
+	marker="$OUTBOUND_CHAT_DEDUP_DIR/$key"
+	now=$(date +%s)
+	if mkdir "$marker" 2>/dev/null; then
+		printf '%s\n' "$now" > "$marker/ts" 2>/dev/null || true
+		return 0
+	fi
+
+	mt=$(stat -f %m "$marker" 2>/dev/null || echo "$now")
+	age=$((now - mt))
+	if [ "$age" -le "$ttl" ]; then
+		return 1
+	fi
+	rm -rf "$marker" 2>/dev/null || true
+	mkdir "$marker" 2>/dev/null || return 1
+	printf '%s\n' "$now" > "$marker/ts" 2>/dev/null || true
+	_outbound_chat_cleanup_dedup_markers "$ttl" 2>/dev/null || true
+	return 0
+}
 
 # enqueue_chat_message MESSAGE [SOURCE] [PRIORITY]
 #   MESSAGE  : 投稿する本文 (1行)
@@ -23,6 +81,10 @@ enqueue_chat_message() {
 
 	if [ -z "$message" ]; then
 		return 1
+	fi
+
+	if ! _outbound_chat_claim_enqueue_key "$message" "$source" "$priority"; then
+		return 0
 	fi
 
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true
@@ -46,22 +108,29 @@ enqueue_chat_message() {
 #   送信には ./twitch_chat.sh send を使用。
 #   戻り値: 0=送信成功, 1=キューが空 or 送信失敗
 outbound_queue_consume_once() {
+	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_PROCESSING_DIR" "$OUTBOUND_CHAT_SENT_DIR" 2>/dev/null || true
+
 	local msg_file
 	msg_file=$(ls -1t "$OUTBOUND_CHAT_PENDING_DIR"/*.msg 2>/dev/null | tail -1)
 	[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1
 
-	local message
-	message=$(cat "$msg_file" 2>/dev/null)
-	[ -n "$message" ] || { rm -f "$msg_file"; return 1; }
-
-	local basename
+	local basename claim_file
 	basename=$(basename "$msg_file")
+	claim_file="$OUTBOUND_CHAT_PROCESSING_DIR/$basename"
+	if ! mv "$msg_file" "$claim_file" 2>/dev/null; then
+		return 1
+	fi
+
+	local message
+	message=$(cat "$claim_file" 2>/dev/null)
+	[ -n "$message" ] || { rm -f "$claim_file"; return 1; }
 
 	if ./twitch_chat.sh send "$message" >/dev/null 2>&1; then
-		mv "$msg_file" "$OUTBOUND_CHAT_SENT_DIR/$basename" 2>/dev/null || rm -f "$msg_file"
+		mv "$claim_file" "$OUTBOUND_CHAT_SENT_DIR/$basename" 2>/dev/null || rm -f "$claim_file"
 		return 0
 	else
-		# 送信失敗: ファイルは pending に残す (次回リトライ)
+		# 送信失敗: pending に戻す (次回リトライ)
+		mv "$claim_file" "$OUTBOUND_CHAT_PENDING_DIR/$basename" 2>/dev/null || true
 		return 1
 	fi
 }

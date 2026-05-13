@@ -12,9 +12,12 @@ else
 fi
 
 DASHBOARD_SHOW_WHILE_PLAYING="${DASHBOARD_SHOW_WHILE_PLAYING:-0}"
+SOREN91_MODE_FLAG_FILE="${SOREN91_MODE_FLAG_FILE:-tmp/.soren91_mode_active}"
+MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-tmp/state/manual_meriken_mode.json}"
+SOREN91_PID_FILE="${SOREN91_PID_FILE:-soren91/tmp/soren91.pid}"
+SOREN91_MAIN_PID_FILE="${SOREN91_MAIN_PID_FILE:-soren91/tmp/main.pid}"
 
-# 非GAMEOVER時は空HTML（OBSで非表示）
-if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" = "0" ]; then
+write_empty_dashboard() {
     cat > score_dashboard.html <<'EMPTYEOF'
 <!DOCTYPE html><html><head><meta charset="UTF-8">
 </head>
@@ -22,15 +25,56 @@ if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOA
 <script>setInterval(function(){location.reload();},3000);</script>
 </body></html>
 EMPTYEOF
+}
+
+manual_meriken_mode_file_enabled() {
+    [ -f "$MANUAL_MERIKEN_MODE_FILE" ] || return 1
+    python3 - "$MANUAL_MERIKEN_MODE_FILE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if data.get("enabled") else 1)
+PY
+}
+
+soren91_pid_file_alive() {
+    local f="" pid="" cmd=""
+    for f in "$SOREN91_MAIN_PID_FILE" "$SOREN91_PID_FILE"; do
+        [ -f "$f" ] || continue
+        pid=$(cat "$f" 2>/dev/null)
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        kill -0 "$pid" 2>/dev/null || continue
+        cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+        case "$cmd" in
+            *main.mjs*|*run_player_loop.sh*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# メリケンAI中はSoren91側の画面を優先し、ダッシュボードを必ず非表示にする。
+if [ -f "$SOREN91_MODE_FLAG_FILE" ] || manual_meriken_mode_file_enabled || soren91_pid_file_alive; then
+    write_empty_dashboard
     exit 0
 fi
 
-# スコアデータをJSON配列に変換 (1行1スコア形式)
-SCORES_JSON=$(awk -F'\t' 'NF {
-  n++
-  if ($2 != "") { print "{\"ts\":\"" $1 "\",\"game\":" n ",\"score\":" $2 "}" }
-  else if ($1 ~ /^[0-9]+$/) { print "{\"ts\":null,\"game\":" n ",\"score\":" $1 "}" }
-}' score_history.txt | paste -sd, -)
+# 非GAMEOVER時は空HTML（OBSで非表示）
+if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" = "0" ]; then
+    write_empty_dashboard
+    exit 0
+fi
+
+# 全履歴をHTMLへ丸ごと埋め込むとOBS側が重くなるため、統計は生成時に集計し、
+# グラフ描画用の点列だけ直近N件へ絞る。
+DASHBOARD_CHART_GAMES="${DASHBOARD_CHART_GAMES:-300}"
+case "$DASHBOARD_CHART_GAMES" in ''|*[!0-9]*) DASHBOARD_CHART_GAMES=300 ;; esac
+
+DASHBOARD_DATA_JSON=$(python3 dashboard_data.py "$DASHBOARD_CHART_GAMES")
 
 cat > score_dashboard.html <<HTMLEOF
 <!DOCTYPE html>
@@ -43,58 +87,193 @@ cat > score_dashboard.html <<HTMLEOF
 <title>Soren eloop Score Dashboard</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html {
+    width: 1940px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
   body {
+    width: 1940px;
+    height: 1080px;
+    overflow: hidden;
     background: transparent;
     color: #e0e0e0;
     font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
-    padding: 20px;
+    padding: 18px 22px;
+  }
+  #dashboard {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   .stats-bar {
     display: flex;
     justify-content: center;
-    gap: 16px;
+    gap: 14px;
     margin-bottom: 16px;
     flex-wrap: wrap;
-    max-width: 1400px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    flex: 0 0 auto;
   }
   .stat {
     text-align: center;
     background: rgba(17,17,39,0.95);
-    padding: 10px 24px;
+    padding: 18px 24px;
     border-radius: 10px;
     border: 1px solid #333;
     flex: 1;
-    min-width: 140px;
+    min-width: 168px;
+    min-height: 150px;
   }
   .stat-label {
-    font-size: 0.75em;
+    font-size: 1.05em;
     color: #888;
     text-transform: uppercase;
     letter-spacing: 1px;
   }
-  .stat-value { font-size: 1.8em; font-weight: bold; }
+  .stat-value { font-size: 4.35em; font-weight: bold; line-height: 1.02; }
   .stat-value.best { color: #ffd700; }
-  .stat-value.second { color: #c0c0c0; }
-  .stat-value.third { color: #cd7f32; }
   .stat-value.avg { color: #4ecdc4; }
   .stat-value.games { color: #a78bfa; }
-  .stat-value.recent { color: #f97316; }
-  .stat-value.trend { font-size: 1.15em; }
-  .stat-value.trend-up { color: #86efac; }
-  .stat-value.trend-flat { color: #94a3b8; }
-  .stat-value.trend-down { color: #fb923c; }
+  .stat-value.recent, .mini-value.recent { color: #f97316; }
+  .stat-value.trend, .mini-value.trend { font-size: 3.3em; line-height: 1.05; }
+  .stat-value.trend-up, .mini-value.trend-up { color: #86efac; }
+  .stat-value.trend-flat, .mini-value.trend-flat { color: #94a3b8; }
+  .stat-value.trend-down, .mini-value.trend-down { color: #fb923c; }
+  .stat-value.russia, .mini-value.russia { color: #facc15; }
+  .stat-value.hot, .mini-value.hot { color: #fb7185; }
+  .stat-value.cool, .mini-value.cool { color: #38bdf8; }
   .rank-label { font-size: 0.6em; vertical-align: super; margin-right: 2px; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(280px, 1fr));
+    gap: 12px;
+    width: 100%;
+    margin: 0 0 16px 0;
+    flex: 0 0 auto;
+  }
+  .mini-stat {
+    background: rgba(17,17,39,0.92);
+    border: 1px solid #2c2c45;
+    border-radius: 8px;
+    padding: 19px 22px;
+    min-height: 196px;
+  }
+  .mini-label {
+    color: #8b8fa3;
+    font-size: 1.12em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mini-value {
+    color: #e5e7eb;
+    font-size: 4.0em;
+    font-weight: 700;
+    line-height: 1.18;
+  }
+  .mini-sub {
+    color: #7c8197;
+    font-size: 1.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .metric-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+  }
+  .stat .metric-row { margin-top: 4px; }
+  .mini-stat .metric-row { margin-top: 2px; }
+  .donut {
+    --pct: 0%;
+    --ring: #94a3b8;
+    position: relative;
+    width: 70px;
+    height: 70px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at center, #111127 0 52%, transparent 53%),
+      conic-gradient(var(--ring) var(--pct), rgba(148,163,184,0.18) 0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    box-shadow: 0 0 18px rgba(148, 163, 184, 0.22);
+  }
+  .stat .donut {
+    width: 82px;
+    height: 82px;
+  }
+  .donut span {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #d7dde9;
+    font-size: 0.92em;
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .trend-badge {
+    width: 76px;
+    min-height: 64px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.10);
+    display: grid;
+    grid-template-rows: auto auto;
+    place-items: center;
+    padding: 7px 5px;
+  }
+  .trend-badge .arrow {
+    font-size: 2.35em;
+    line-height: 0.9;
+    font-weight: 900;
+  }
+  .trend-badge .delta {
+    margin-top: 4px;
+    font-size: 0.88em;
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #cbd5e1;
+  }
+  .trend-badge.up {
+    color: #86efac;
+    border-color: rgba(134, 239, 172, 0.34);
+    background: rgba(34, 197, 94, 0.14);
+    box-shadow: inset 0 0 18px rgba(34, 197, 94, 0.10);
+  }
+  .trend-badge.flat {
+    color: #cbd5e1;
+    background: rgba(148, 163, 184, 0.12);
+  }
+  .trend-badge.down {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.34);
+    background: rgba(249, 115, 22, 0.14);
+    box-shadow: inset 0 0 18px rgba(249, 115, 22, 0.10);
+  }
+  @media (max-width: 900px) {
+    .stats-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  }
   .chart-container {
     position: relative;
     width: 100%;
-    max-width: 1400px;
-    margin: 0 auto;
+    height: 250px;
+    min-height: 0;
+    margin: 0;
     background: rgba(17,17,39,0.95);
     border-radius: 12px;
-    padding: 20px 20px 10px 20px;
+    padding: 10px 18px;
     border: 1px solid #333;
+    flex: 0 0 250px;
+    overflow: hidden;
   }
   canvas { width: 100%; display: block; }
   .refresh-indicator {
@@ -104,47 +283,118 @@ cat > score_dashboard.html <<HTMLEOF
     font-size: 0.7em;
     color: #555;
   }
-  .legend {
-    display: flex;
-    justify-content: center;
-    gap: 24px;
-    margin-top: 10px;
-    font-size: 0.8em;
-    flex-wrap: wrap;
-  }
-  .legend-item { display: flex; align-items: center; gap: 6px; }
-  .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .legend { display: none; }
 </style>
 </head>
 <body>
 
 <div id="dashboard">
 <div class="stats-bar">
-  <div class="stat"><div class="stat-label">1st Best</div><div class="stat-value best" id="best">-</div></div>
-  <div class="stat"><div class="stat-label">2nd Best</div><div class="stat-value second" id="second">-</div></div>
-  <div class="stat"><div class="stat-label">3rd Best</div><div class="stat-value third" id="third">-</div></div>
-  <div class="stat"><div class="stat-label">Average</div><div class="stat-value avg" id="avg">-</div></div>
-  <div class="stat"><div class="stat-label">Games</div><div class="stat-value games" id="games">-</div></div>
-  <div class="stat"><div class="stat-label">Recent 10 Avg</div><div class="stat-value recent" id="recent">-</div></div>
-  <div class="stat"><div class="stat-label">Trend</div><div class="stat-value trend" id="trend">-</div></div>
+  <div class="stat"><div class="stat-label">All Best</div><div class="metric-row"><div class="stat-value best" id="best">-</div><div class="donut" id="bestDonut"><span>-</span></div></div></div>
+  <div class="stat"><div class="stat-label">All Games</div><div class="metric-row"><div class="stat-value games" id="games">-</div><div class="donut" id="gamesDonut"><span>-</span></div></div></div>
+  <div class="stat"><div class="stat-label">All Avg</div><div class="metric-row"><div class="stat-value avg" id="avg">-</div><div class="trend-badge" id="avgTrend"><div class="arrow">→</div><div class="delta">0</div></div></div></div>
+  <div class="stat"><div class="stat-label">All Russia</div><div class="metric-row"><div class="stat-value russia" id="russiaRate">-</div><div class="donut" id="russiaRateDonut"><span>-</span></div></div></div>
+</div>
+<div class="stats-grid">
+  <div class="mini-stat"><div class="mini-label">Recent 10 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent10Avg">-</div><div class="trend-badge" id="recent10Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 50</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 50 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent50Avg">-</div><div class="trend-badge" id="recent50Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 100</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 100 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent100Avg">-</div><div class="trend-badge" id="recent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs all avg</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Best</div><div class="metric-row"><div class="mini-value hot" id="recentBest">-</div><div class="donut" id="recentBestDonut"><span>-</span></div></div><div class="mini-sub">vs all best</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Median</div><div class="metric-row"><div class="mini-value" id="recentMedian">-</div><div class="trend-badge" id="recentMedianTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 100 avg</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent P90</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-sub">upper band</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 3000+</div><div class="metric-row"><div class="mini-value hot" id="recent3000">-</div><div class="donut" id="recent3000Donut"><span>-</span></div></div><div class="mini-sub" id="recent3000Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 2000+</div><div class="metric-row"><div class="mini-value cool" id="recent2000">-</div><div class="donut" id="recent2000Donut"><span>-</span></div></div><div class="mini-sub" id="recent2000Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-sub" id="russiaRecent100Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Today Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaToday">-</div><div class="donut" id="russiaTodayDonut"><span>-</span></div></div><div class="mini-sub" id="russiaTodaySub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Trend</div><div class="metric-row"><div class="mini-value trend" id="trend">-</div><div class="trend-badge" id="chartTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub" id="trendSub">chart window</div></div>
 </div>
 <div class="chart-container">
   <canvas id="chart"></canvas>
-  <div class="legend">
-    <div class="legend-item"><span class="legend-dot" style="background:#4ecdc4"></span> Score</div>
-    <div class="legend-item"><span class="legend-dot" style="background:#ffd700"></span> Best</div>
-    <div class="legend-item"><span class="legend-dot" style="background:rgba(255,107,107,0.8)"></span> 10-game Moving Avg</div>
-    <div class="legend-item"><span class="legend-dot" style="background:#f8fafc;border:2px solid #111827"></span> Overall Trend (green=up / white=stable / red=down)</div>
-    <div class="legend-item"><span class="legend-dot" style="background:rgba(78,205,196,0.15)"></span> Overall Avg</div>
-  </div>
 </div>
 </div>
 
 <div class="refresh-indicator" id="refreshInfo">Generated: $(date '+%H:%M:%S')</div>
 <script>
-const SCORES = [${SCORES_JSON}];
+const DASHBOARD_DATA = ${DASHBOARD_DATA_JSON};
+const SCORES = DASHBOARD_DATA.chartScores;
+const SCORE_STATS = DASHBOARD_DATA.scoreStats;
+const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
+const CURRENT_GAME = SCORE_STATS.currentGame;
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
+
+function clampPct(value, max) {
+  if (!isFinite(value) || !isFinite(max) || max <= 0) return 0;
+  return Math.max(0, Math.min(100, (value / max) * 100));
+}
+
+function setDonut(id, value, max, color, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const pct = clampPct(value, max);
+  el.style.setProperty('--pct', pct.toFixed(1) + '%');
+  el.style.setProperty('--ring', color || '#94a3b8');
+  const span = el.querySelector('span');
+  if (span) span.textContent = label || Math.round(pct) + '%';
+}
+
+function setTrendBadge(id, delta, unit) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const arrow = el.querySelector('.arrow');
+  const deltaEl = el.querySelector('.delta');
+  const absDelta = Math.abs(Number(delta) || 0);
+  const dir = absDelta < 5 ? 'flat' : (delta > 0 ? 'up' : 'down');
+  el.classList.remove('up', 'flat', 'down');
+  el.classList.add(dir);
+  if (arrow) arrow.textContent = dir === 'up' ? '▲' : (dir === 'down' ? '▼' : '→');
+  if (deltaEl) {
+    const signed = dir === 'flat' ? '±' : (delta > 0 ? '+' : '-');
+    deltaEl.textContent = signed + Math.round(absDelta) + (unit || '');
+  }
+}
+
+function updateExtraStats(scores) {
+  const totalGames = CURRENT_GAME || scores.length;
+  const now = new Date();
+  const lastRussia = RUSSIA_STATS.last || null;
+  const gamesSinceRussia = lastRussia ? Math.max(0, totalGames - lastRussia.game) : 100;
+
+  document.getElementById('russiaRate').textContent = RUSSIA_STATS.rate.toFixed(2) + '%';
+  document.getElementById('russiaRecent100').textContent = RUSSIA_STATS.recent100Rate.toFixed(2) + '%';
+  document.getElementById('russiaRecent100Sub').textContent = RUSSIA_STATS.recent100 + ' in last 100';
+  document.getElementById('russiaToday').textContent = String(RUSSIA_STATS.today);
+  document.getElementById('russiaTodaySub').textContent = RUSSIA_STATS.last24h + ' in last 24h';
+  document.getElementById('russiaLast').textContent = lastRussia ? ('G' + lastRussia.game) : '-';
+  document.getElementById('russiaLastSub').textContent = lastRussia ? ((totalGames - lastRussia.game) + ' games ago / ' + lastRussia.score + 'pt') : '-';
+  document.getElementById('recent10Avg').textContent = SCORE_STATS.recent10Average;
+  document.getElementById('recent50Avg').textContent = SCORE_STATS.recent50Average;
+  document.getElementById('recent100Avg').textContent = SCORE_STATS.recent100Average;
+  document.getElementById('recentBest').textContent = SCORE_STATS.recent100Best || '-';
+  document.getElementById('recentMedian').textContent = SCORE_STATS.recent100Median;
+  document.getElementById('recentP90').textContent = SCORE_STATS.recent100P90;
+  document.getElementById('recent3000').textContent = SCORE_STATS.recent100Score3000Rate.toFixed(2) + '%';
+  document.getElementById('recent3000Sub').textContent = SCORE_STATS.recent100Score3000 + ' in last 100';
+  document.getElementById('recent2000').textContent = SCORE_STATS.recent100Score2000Rate.toFixed(2) + '%';
+  document.getElementById('recent2000Sub').textContent = SCORE_STATS.recent100Score2000 + ' in last 100';
+
+  setDonut('bestDonut', SCORE_STATS.best, 6000, '#ffd700');
+  setDonut('gamesDonut', SCORE_STATS.count % 1000, 1000, '#a78bfa', (SCORE_STATS.count % 1000) + '/1k');
+  setDonut('russiaRateDonut', RUSSIA_STATS.rate, 2, '#facc15', RUSSIA_STATS.rate.toFixed(1) + '%');
+  setTrendBadge('avgTrend', SCORE_STATS.recent100Average - SCORE_STATS.average, '');
+  setTrendBadge('recent10Trend', SCORE_STATS.recent10Average - SCORE_STATS.recent50Average, '');
+  setTrendBadge('recent50Trend', SCORE_STATS.recent50Average - SCORE_STATS.recent100Average, '');
+  setTrendBadge('recent100Trend', SCORE_STATS.recent100Average - SCORE_STATS.average, '');
+  setDonut('recentBestDonut', SCORE_STATS.recent100Best, SCORE_STATS.best || 1, '#fb7185');
+  setTrendBadge('recentMedianTrend', SCORE_STATS.recent100Median - SCORE_STATS.recent100Average, '');
+  setDonut('recentP90Donut', SCORE_STATS.recent100P90, 3500, '#38bdf8');
+  setDonut('recent3000Donut', SCORE_STATS.recent100Score3000Rate, 100, '#fb7185', SCORE_STATS.recent100Score3000 + '/100');
+  setDonut('recent2000Donut', SCORE_STATS.recent100Score2000Rate, 100, '#38bdf8', SCORE_STATS.recent100Score2000 + '/100');
+  setDonut('russiaRecent100Donut', RUSSIA_STATS.recent100Rate, 20, '#facc15', RUSSIA_STATS.recent100 + '/100');
+  setDonut('russiaTodayDonut', RUSSIA_STATS.today, 20, '#facc15', String(RUSSIA_STATS.today));
+  setDonut('russiaLastDonut', Math.max(0, 100 - gamesSinceRussia), 100, '#facc15', gamesSinceRussia + 'g');
+}
 
 function movingAvg(scores, w) {
   return scores.map((_, i) => {
@@ -192,31 +442,28 @@ function linearTrend(scores) {
 
 function drawChart(scores) {
   if (!scores.length) return;
+  updateExtraStats(scores);
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.parentElement.getBoundingClientRect();
-  const W = rect.width - 40;
-  const H = Math.min(500, window.innerHeight - 260);
+  const W = rect.width - 36;
+  const H = Math.max(120, Math.floor(rect.height - 20));
   canvas.width = W * dpr; canvas.height = H * dpr;
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const sorted = scores.map(d => d.score).sort((a, b) => b - a);
   const unique = [...new Set(sorted)];
-  const maxScore = unique[0] || 0;
-  const secondScore = unique[1] || '-';
-  const thirdScore = unique[2] || '-';
-  const avgScore = scores.reduce((s, d) => s + d.score, 0) / scores.length;
-  const recent10 = scores.slice(-10);
-  const recent10Avg = recent10.reduce((s, d) => s + d.score, 0) / recent10.length;
+  const chartMaxScore = unique[0] || 0;
+  const chartSecondScore = unique[1] || '-';
+  const chartThirdScore = unique[2] || '-';
+  const avgScore = SCORE_STATS.average;
   const ma = movingAvg(scores, 10);
   const trend = linearTrend(scores);
 
-  document.getElementById('best').textContent = maxScore;
-  document.getElementById('second').textContent = secondScore;
-  document.getElementById('third').textContent = thirdScore;
-  document.getElementById('avg').textContent = Math.round(avgScore);
-  document.getElementById('games').textContent = scores.length;
-  document.getElementById('recent').textContent = Math.round(recent10Avg);
+  document.getElementById('best').textContent = SCORE_STATS.best;
+  document.getElementById('avg').textContent = avgScore;
+  document.getElementById('games').textContent = SCORE_STATS.count;
+  document.getElementById('games').title = 'chart shows latest ' + scores.length + ' games';
   const trendEl = document.getElementById('trend');
   const slopeRounded = (Math.round(trend.slope * 10) / 10).toFixed(1);
   const fitPct = Math.round(trend.r2 * 100);
@@ -228,73 +475,57 @@ function drawChart(scores) {
     trendEl.textContent = 'STABLE ' + slopeRounded + '/g';
   }
   trendEl.title = 'line fit=' + fitPct + '%';
+  document.getElementById('trendSub').textContent = 'last ' + scores.length + ' games / fit ' + fitPct + '%';
   trendEl.classList.remove('trend-up', 'trend-flat', 'trend-down');
   trendEl.classList.add(
     trend.dir === 'up' ? 'trend-up' : (trend.dir === 'down' ? 'trend-down' : 'trend-flat')
   );
+  setTrendBadge('chartTrend', trend.slope, '/g');
 
-  const padL = 55, padR = 20, padT = 20, padB = 40;
+  const padL = 58, padR = 20, padT = 12, padB = 28;
   const cW = W - padL - padR, cH = H - padT - padB;
-  const yMax = Math.ceil(maxScore / 500) * 500 + 200;
-  const tTimes = scores.map((d,i) => d.ts ? new Date(d.ts).getTime() : i);
-  const tMin = tTimes[0], tMax = tTimes[tTimes.length-1];
-  const tRange = tMax - tMin || 1;
-  const xScale = i => padL + ((tTimes[i] - tMin) / tRange) * cW;
+  const yMax = Math.ceil(Math.max(chartMaxScore, avgScore) / 500) * 500 + 200;
+  const xRange = Math.max(1, scores.length - 1);
+  const xScale = i => padL + (i / xRange) * cW;
   const yScale = v => padT + cH - (v / yMax) * cH;
 
   ctx.clearRect(0, 0, W, H);
 
-  ctx.strokeStyle = '#1e1e3a'; ctx.lineWidth = 1;
-  ctx.font = '11px monospace'; ctx.fillStyle = '#555';
-  for (let i = 0; i <= 5; i++) {
-    const v = (yMax / 5) * i, y = yScale(v);
+  ctx.strokeStyle = '#2a2b55'; ctx.lineWidth = 1;
+  ctx.font = '12px monospace'; ctx.fillStyle = '#8b93a7';
+  for (let i = 0; i <= 3; i++) {
+    const v = (yMax / 3) * i, y = yScale(v);
     ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
     ctx.fillText(Math.round(v), 4, y + 4);
   }
 
-  const xi = Math.max(1, Math.ceil(scores.length / 15));
-  ctx.fillStyle = '#555';
-  const spanMs = tMax - tMin;
-  const dateFmt = spanMs > 7*86400000
-    ? d => (d.getMonth()+1)+'/'+d.getDate()
-    : spanMs > 86400000
-      ? d => (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')
-      : d => String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  const xi = Math.max(1, Math.ceil(scores.length / 8));
+  ctx.fillStyle = '#8b93a7';
   for (let i = 0; i < scores.length; i += xi) {
-    const label = scores[i].ts ? dateFmt(new Date(scores[i].ts)) : String(scores[i].game);
-    ctx.fillText(label, xScale(i) - 16, H - 8);
+    const label = 'G' + scores[i].game;
+    ctx.fillText(label, xScale(i) - 20, H - 8);
   }
 
   ctx.fillStyle = 'rgba(78,205,196,0.08)';
-  ctx.fillRect(padL, yScale(avgScore) - 1, cW, 2);
-  ctx.fillStyle = 'rgba(78,205,196,0.3)'; ctx.font = '10px monospace';
-  ctx.fillText('avg ' + Math.round(avgScore), padL + 4, yScale(avgScore) - 5);
+  ctx.beginPath();
+  scores.forEach((d, i) => {
+    const x = xScale(i), y = yScale(d.score);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xScale(scores.length - 1), yScale(0));
+  ctx.lineTo(xScale(0), yScale(0));
+  ctx.closePath();
+  ctx.fill();
 
-  ctx.strokeStyle = 'rgba(255,215,0,0.3)'; ctx.setLineDash([6, 4]);
-  ctx.beginPath(); ctx.moveTo(padL, yScale(maxScore)); ctx.lineTo(W - padR, yScale(maxScore)); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = 'rgba(255,215,0,0.5)';
-  ctx.fillText('best ' + maxScore, padL + 4, yScale(maxScore) - 5);
+  ctx.strokeStyle = 'rgba(78,205,196,0.95)'; ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  scores.forEach((d, i) => {
+    const x = xScale(i), y = yScale(d.score);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
 
-  for (let i = 0; i < scores.length; i++) {
-    const x = xScale(i), y = yScale(scores[i].score);
-    const bW = Math.max(1.5, cW / scores.length * 0.5);
-    const ratio = scores[i].score / yMax;
-    ctx.fillStyle = \`rgba(\${Math.round(78+ratio*177)},\${Math.round(205-ratio*105)},\${Math.round(196-ratio*100)},0.6)\`;
-    ctx.fillRect(x - bW/2, y, bW, yScale(0) - y);
-  }
-
-  for (let i = 0; i < scores.length; i++) {
-    ctx.beginPath();
-    ctx.arc(xScale(i), yScale(scores[i].score), 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = scores[i].score === maxScore ? '#ffd700'
-                  : scores[i].score === secondScore ? '#c0c0c0'
-                  : scores[i].score === thirdScore ? '#cd7f32'
-                  : '#4ecdc4';
-    ctx.fill();
-  }
-
-  ctx.strokeStyle = 'rgba(255,107,107,0.8)'; ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,107,107,0.95)'; ctx.lineWidth = 2.6;
   ctx.beginPath();
   ma.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
   ctx.stroke();
@@ -311,14 +542,14 @@ function drawChart(scores) {
   ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
   ctx.stroke();
   ctx.strokeStyle = trendColor;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 3.2;
   ctx.beginPath();
   ctx.moveTo(xScale(0), yScale(trend.y0));
   ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = trendColor;
-  ctx.font = '10px monospace';
+  ctx.font = '12px monospace';
   const trendLabel = 'trend ' + trend.dir + ' ' +
     (trend.slope >= 0 ? '+' : '') + slopeRounded + '/game fit=' + fitPct + '%';
   const trendMidY = yScale((trend.y0 + trend.yN) / 2);
@@ -326,30 +557,12 @@ function drawChart(scores) {
   const trendLabelX = padL + 4;
   const trendLabelW = ctx.measureText(trendLabel).width + 8;
   ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(trendLabelX - 4, trendLabelY - 9, trendLabelW, 14);
+  ctx.fillRect(trendLabelX - 4, trendLabelY - 12, trendLabelW, 18);
   ctx.fillStyle = trendColor;
   ctx.fillText(trendLabel, trendLabelX, trendLabelY);
-  const trendStartX = xScale(0), trendStartY = yScale(trend.y0);
-  const trendEndX = xScale(scores.length - 1), trendEndY = yScale(trend.yN);
-  ctx.beginPath(); ctx.arc(trendStartX, trendStartY, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(trendEndX, trendEndY, 3, 0, Math.PI * 2); ctx.fill();
-
-  // Highlight top 3 scores on chart
-  const rankMarkers = [
-    { score: maxScore, color: '#ffd700', label: '1st' },
-    { score: secondScore, color: '#c0c0c0', label: '2nd' },
-    { score: thirdScore, color: '#cd7f32', label: '3rd' },
-  ];
-  rankMarkers.forEach(r => {
-    if (typeof r.score !== 'number') return;
-    const ri = scores.findIndex(d => d.score === r.score);
-    if (ri < 0) return;
-    const rx = xScale(ri), ry = yScale(r.score);
-    ctx.beginPath(); ctx.arc(rx, ry, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = r.color; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = r.color; ctx.font = 'bold 12px monospace';
-    ctx.fillText(r.score, rx + 10, ry - 4);
-  });
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('best ' + chartMaxScore, padL + 4, padT + 12);
 }
 
 drawChart(SCORES);
@@ -362,4 +575,4 @@ setInterval(function(){location.reload();},3000);
 </html>
 HTMLEOF
 
-echo "Generated score_dashboard.html ($(echo "[${SCORES_JSON}]" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') games)"
+echo "Generated score_dashboard.html ($(python3 -c 'import json,sys; print(json.load(sys.stdin)["scoreStats"]["count"])' <<<"${DASHBOARD_DATA_JSON}") games, chart=${DASHBOARD_CHART_GAMES})"

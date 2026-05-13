@@ -1,18 +1,17 @@
 # broadcast/radio_state.sh - ラジオ状態管理, 音声割り込み, キュー
 
-
 _radio_gc_stale_state() {
 	local current mode corner ts owner_pid now age
 	current=$(cat "$RADIO_STATE_FILE" 2>/dev/null) || return 0
 	IFS=':' read -r mode corner ts owner_pid _ <<<"$current"
 	case "$ts" in
-	''|*[!0-9]*) return 0 ;;
+	'' | *[!0-9]*) return 0 ;;
 	esac
 	now=$(date +%s)
 	age=$((now - ts))
 	[ "$age" -le "$RADIO_STATE_STALE_SEC" ] && return 0
 	case "$owner_pid" in
-	''|*[!0-9]*) owner_pid="" ;;
+	'' | *[!0-9]*) owner_pid="" ;;
 	esac
 	if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
 		return 0
@@ -52,10 +51,10 @@ _interrupt_current_audio_playback() {
 	say_pid=$(cat "tmp/.say_queue/pid" 2>/dev/null || true)
 
 	case "$say_pid" in
-	''|*[!0-9]*) say_pid="" ;;
+	'' | *[!0-9]*) say_pid="" ;;
 	esac
 	case "$owner_pid" in
-	''|*[!0-9]*) owner_pid="" ;;
+	'' | *[!0-9]*) owner_pid="" ;;
 	esac
 
 	if [ -n "$say_pid" ] && kill -0 "$say_pid" 2>/dev/null; then
@@ -92,7 +91,7 @@ _cancel_russia_celebration_worker() {
 	local worker_pid=""
 	worker_pid=$(cat "$RUSSIA_CELEBRATION_WORKER_PID_FILE" 2>/dev/null || true)
 	case "$worker_pid" in
-	''|*[!0-9]*) worker_pid="" ;;
+	'' | *[!0-9]*) worker_pid="" ;;
 	esac
 	if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
 		log "[RUSSIA] worker停止: pid=${worker_pid}"
@@ -119,8 +118,8 @@ _radio_history_sidecar_path() {
 	local target="$1"
 	case "$target" in
 	*.playing) printf '%s.history' "${target%.playing}" ;;
-	*.txt)     printf '%s.history' "${target%.txt}" ;;
-	*)         printf '%s.history' "$target" ;;
+	*.txt) printf '%s.history' "${target%.txt}" ;;
+	*) printf '%s.history' "$target" ;;
 	esac
 }
 
@@ -128,8 +127,8 @@ _radio_meta_sidecar_path() {
 	local target="$1"
 	case "$target" in
 	*.playing) printf '%s.meta.json' "${target%.playing}" ;;
-	*.txt)     printf '%s.meta.json' "${target%.txt}" ;;
-	*)         printf '%s.meta.json' "$target" ;;
+	*.txt) printf '%s.meta.json' "${target%.txt}" ;;
+	*) printf '%s.meta.json' "$target" ;;
 	esac
 }
 
@@ -308,26 +307,16 @@ _enqueue_deferred_radio_talk() {
 
 _run_jiji_corner_guarded() {
 	local game_num="$1" score="$2"
-	local jiji_lock_dir="$TMP_STATE_DIR/.jiji_inflight"
-	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
 
-	if ! mkdir "$jiji_lock_dir" 2>/dev/null; then
-		log "[JIJI] duplicate skip: already in-flight"
-		return 0
-	fi
-
-	# 異常終了時も確実にロック解放
-	trap 'rmdir "$jiji_lock_dir" 2>/dev/null || true' EXIT
-
-	if start_radio_corner_jiji "$game_num" "$score"; then
-		echo "$(date +%s)" >"$jiji_last_file"
-		log "[JIJI] completed: next interval starts now"
+	if _try_game_corner "$game_num" "jiji"; then
+		if start_radio_corner_jiji "$game_num" "$score"; then
+			log "[JIJI] completed"
+		else
+			log "[JIJI] failed before playback/queue completion -> will retry next loop"
+		fi
 	else
-		log "[JIJI] failed before playback/queue completion -> will retry next loop"
+		log "[JIJI] duplicate skip: already done/in-flight for game=${game_num}"
 	fi
-
-	rmdir "$jiji_lock_dir" 2>/dev/null || true
-	trap - EXIT
 }
 
 _play_deferred_radio_queue_once() {
@@ -353,9 +342,9 @@ _play_deferred_radio_queue_once() {
 		local stale_mtime="" stale_age=0 retry_file=""
 		stale_mtime=$(stat -f '%m' "$stale_playing" 2>/dev/null || true)
 		case "$stale_mtime" in
-		''|*[!0-9]*) continue ;;
+		'' | *[!0-9]*) continue ;;
 		esac
-		stale_age=$(( $(date +%s) - stale_mtime ))
+		stale_age=$(($(date +%s) - stale_mtime))
 		[ "$stale_age" -le "$RADIO_STATE_STALE_SEC" ] && continue
 		# say_enqueue がまだ動いている場合は stale 復帰しない（重複再生の原因になる）
 		if pgrep -f "say_enqueue.sh.*$(basename "$stale_playing")" >/dev/null 2>&1; then
@@ -380,66 +369,66 @@ _play_deferred_radio_queue_once() {
 	local deferred_expected_mode="" deferred_current_mode=""
 	deferred_expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
 	deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-			log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-			_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
-			_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
-			_radio_clear_generation_meta "$qf" 2>/dev/null || true
-			rm -f "$qf" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
-			return 0
-		fi
+	if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
+		log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
+		_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
+		_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
+		_radio_clear_generation_meta "$qf" 2>/dev/null || true
+		rm -f "$qf" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
+		return 0
+	fi
 
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
 		deferred_expected_mode=$(_broadcast_read_expected_mode "$playing_file" 2>/dev/null || true)
 		deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-			if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-				log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-				_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
-				_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-				return 0
-			fi
+		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
+			log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
+			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+			_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
+			_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
+			rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+			return 0
+		fi
 		local deferred_corner=""
-			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
-			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
-			local news_title_file="${playing_file%.playing}.news_title"
-			local news_cc_file="${playing_file%.playing}.cc_text"
-			local deferred_cc_text=""
-			if [ "$deferred_corner" = "news" ] && [ -f "$news_cc_file" ]; then
-				deferred_cc_text=$(cat "$news_cc_file" 2>/dev/null)
-			elif [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
-				local deferred_news_title
-				deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
-				[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
-			fi
-				local radio_vo_speaker=""
-				radio_vo_speaker=$(_radio_voicevox_speaker_override "$deferred_corner" 2>/dev/null || true)
-				# .voice サイドカーが存在すればそちらを優先 (rollback 等の個別指定)
-				if [ -z "$radio_vo_speaker" ]; then
-					local _voice_sidecar="${playing_file%.playing}.voice"
-					[ -f "$_voice_sidecar" ] && radio_vo_speaker=$(cat "$_voice_sidecar" 2>/dev/null || true)
-				fi
-				_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
-				local radio_meta_summary=""
-				radio_meta_summary=$(_radio_generation_debug_summary "$playing_file" 2>/dev/null || true)
-				log "[RADIO:deferred] 再生開始: $(basename "$playing_file")${radio_meta_summary:+ ($radio_meta_summary)}"
-			# deferred radio is executed by the comment player itself, so it must not
-				# yield to comments queued after this point or playback deadlocks.
-				if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-					_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
-					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-					_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-					rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-					log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
-			else
-				if [ -f "tmp/.say_queue/kill_flag" ]; then
-					_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
-					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-					_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-					rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
-					log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
+		deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/')
+		# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
+		local news_title_file="${playing_file%.playing}.news_title"
+		local news_cc_file="${playing_file%.playing}.cc_text"
+		local deferred_cc_text=""
+		if [ "$deferred_corner" = "news" ] && [ -f "$news_cc_file" ]; then
+			deferred_cc_text=$(cat "$news_cc_file" 2>/dev/null)
+		elif [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
+			local deferred_news_title
+			deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
+			[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
+		fi
+		local radio_vo_speaker=""
+		radio_vo_speaker=$(_radio_voicevox_speaker_override "$deferred_corner" 2>/dev/null || true)
+		# .voice サイドカーが存在すればそちらを優先 (rollback 等の個別指定)
+		if [ -z "$radio_vo_speaker" ]; then
+			local _voice_sidecar="${playing_file%.playing}.voice"
+			[ -f "$_voice_sidecar" ] && radio_vo_speaker=$(cat "$_voice_sidecar" 2>/dev/null || true)
+		fi
+		_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
+		local radio_meta_summary=""
+		radio_meta_summary=$(_radio_generation_debug_summary "$playing_file" 2>/dev/null || true)
+		log "[RADIO:deferred] 再生開始: $(basename "$playing_file")${radio_meta_summary:+ ($radio_meta_summary)}"
+		# deferred radio is executed by the comment player itself, so it must not
+		# yield to comments queued after this point or playback deadlocks.
+		if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+			_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
+			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+			_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
+			rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+			log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
+		else
+			if [ -f "tmp/.say_queue/kill_flag" ]; then
+				_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
+				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+				_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
+				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
+				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else
 				local retry_file="${playing_file%.playing}.txt"
 				mv "$playing_file" "$retry_file" 2>/dev/null || true

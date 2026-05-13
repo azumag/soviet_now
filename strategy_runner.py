@@ -327,6 +327,132 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     history_f.flush()
 
 
+def enforce_deadline_safety(decision, analysis, game_state=None):
+    """送信直前の最終安全弁: deadline越えと余白消費を差し替える。"""
+    results = analysis.get("results", []) if isinstance(analysis, dict) else []
+    if not results or not isinstance(decision, dict):
+        return decision
+
+    chosen_x = float(decision.get("x", 0.0) or 0.0)
+    chosen = min(results, key=lambda r: abs(float(r.get("x", 0.0) or 0.0) - chosen_x))
+    deadline_y = float(chosen.get("deadline_y", 3.32) or 3.32)
+    deadline_buffer_y = deadline_y - 0.75
+    deadline = analysis.get("deadline", {}) if isinstance(analysis, dict) else {}
+    current_top_edge_y = float(deadline.get("top_edge_y", -5.0) or -5.0)
+
+    grade_rank = {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}
+
+    def risk_top(r):
+        return float(
+            r.get(
+                "risk_top_y_after_drop",
+                r.get("top_y_after_drop", r.get("landing_y", 999.0)),
+            )
+            or 999.0
+        )
+
+    def rank_candidate(r):
+        grade = r.get("merge_grade", "NO")
+        return (
+            grade_rank.get(grade, 9),
+            risk_top(r),
+            abs(float(r.get("x", 0.0) or 0.0)),
+        )
+
+    safe = [r for r in results if not r.get("crosses_deadline", False)]
+    safe_direct = [r for r in safe if r.get("merge_grade", "NO") == "DIRECT"]
+    buffered = [r for r in safe if risk_top(r) <= deadline_buffer_y]
+    chosen_top = risk_top(chosen)
+    min_risk_candidate = min(
+        results,
+        key=lambda r: (
+            risk_top(r),
+            abs(float(r.get("x", 0.0) or 0.0)),
+        ),
+    )
+    min_risk_top = risk_top(min_risk_candidate)
+    next_type = 0
+    try:
+        next_type = int(((game_state or {}).get("next") or {}).get("type", 0) or 0)
+    except Exception:
+        next_type = 0
+    large_deadline_pressure = (
+        current_top_edge_y >= deadline_y - 1.15
+            and next_type >= 9
+    )
+    piece_count = len((game_state or {}).get("pieces") or [])
+    reactor = analysis.get("reactor", {}) if isinstance(analysis, dict) else {}
+    reactive_pairs = reactor.get("reactive_pairs", [])
+    reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+    urgent_direct_pressure = (
+        safe_direct
+        and (
+            piece_count >= 30
+            or current_top_edge_y >= deadline_y - 1.5
+            or reactive_pair_count >= 3
+        )
+    )
+
+    if buffered:
+        if chosen in buffered:
+            return decision
+        replacement = min(
+            buffered,
+            key=lambda r: (
+                risk_top(r),
+                grade_rank.get(r.get("merge_grade", "NO"), 9),
+                abs(float(r.get("x", 0.0) or 0.0)),
+            ),
+        )
+
+    elif urgent_direct_pressure:
+        if chosen in safe_direct:
+            return decision
+        replacement = min(safe_direct, key=rank_candidate)
+
+    elif safe:
+        if chosen in safe:
+            return decision
+        replacement = min(safe, key=rank_candidate)
+
+    elif large_deadline_pressure and chosen_top > min_risk_top + 0.05:
+        replacement = min_risk_candidate
+    elif not chosen.get("crosses_deadline", False):
+        return decision
+    else:
+        risk_band = [
+            r for r in results if risk_top(r) <= min_risk_top + 0.05
+        ] or [min_risk_candidate]
+        non_no_band = [
+            r for r in risk_band if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        replacement_pool = non_no_band or risk_band
+        replacement = min(
+            replacement_pool,
+            key=lambda r: (
+                risk_top(r),
+                grade_rank.get(r.get("merge_grade", "NO"), 9),
+                abs(float(r.get("x", 0.0) or 0.0)),
+            ),
+        )
+        if replacement.get("crosses_deadline", False) and replacement.get("merge_grade", "NO") == "NO":
+            replacement = min(risk_band, key=lambda r: (risk_top(r), abs(float(r.get("x", 0.0) or 0.0))))
+
+    new_decision = dict(decision)
+    old_grade = chosen.get("merge_grade", "NO")
+    new_grade = replacement.get("merge_grade", "NO")
+    new_x = float(replacement.get("x", chosen_x) or chosen_x)
+    new_decision["x"] = max(GAME_X_MIN, min(GAME_X_MAX, new_x))
+    reason = str(new_decision.get("reason", "") or "").strip()
+    suffix = f"RUNTIME_DEADLINE_SAFETY_OVERRIDE_{old_grade}_TO_{new_grade}"
+    new_decision["reason"] = f"{reason}_{suffix}" if reason else suffix
+    log(
+        "RUNTIME_DEADLINE_SAFETY_OVERRIDE: "
+        f"x={chosen_x:.2f}/{old_grade}/cross -> x={new_decision['x']:.2f}/{new_grade}"
+    )
+    return new_decision
+
+
 def wait_for_move_state():
     """MOVE状態になるまで待つ。GAMEOVER/STOPならFalseを返す。"""
     settle_count = 0
@@ -536,6 +662,9 @@ def run_game():
                 }
 
             # ドロップX をクランプ
+            drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
+            decision["x"] = drop_x
+            decision = enforce_deadline_safety(decision, analysis, gs)
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
 

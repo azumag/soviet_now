@@ -83,6 +83,16 @@ _with_chat_lock() {
     return $rc
 }
 
+_is_card_gacha_result_line() {
+    local line="$1"
+    local message="$line"
+    [ -n "$message" ] || return 1
+    case "$message" in
+        *": "*) message="${message#*: }" ;;
+    esac
+    printf '%s\n' "$message" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
+}
+
 _sanitize_comment_line() {
     local line="$1"
     [ -n "$line" ] || return 1
@@ -102,7 +112,10 @@ _sanitize_comment_line() {
 
     # 開発用アカウントからのコメントは読み上げ対象外
     if printf '%s\n' "$line" | grep -Eiq '^azumagdev:[[:space:]]'; then
-        return 1
+        if ! _is_card_gacha_result_line "$line"; then
+            return 1
+        fi
+        line="${line#*: }"
     fi
 
     printf '%s' "$line"

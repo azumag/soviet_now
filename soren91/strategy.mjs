@@ -1,17 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v192 - further increased height management and look-ahead impact)
+ * strategy.mjs - ドロップ位置決定戦略 (v193 - refined height management, garbage urgency, and piece aggregation)
  *
- * v191をベースに以下の点を改善：
- * - 高さ管理のさらなる厳格化と早期回避:
+ * v192をベースに以下の点を改善：
+ * - 高さ管理のさらなる厳格化:
  *   - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER をさらに増加させ、デッドライン際での絶対回避ラインをより早期に発動。
  *     ゲームオーバーにつながる高すぎる配置をより積極的に避ける。
- *   - SETTLING_BUFFER を微増させ、物理エンジンの「回転・転がり」による最終到達Y座標の不確実性に対する安全マージンをさらに確保。
- *   - CRITICAL_HEIGHT_MARGIN をわずかに増加させ、クリティカルな高さペナルティがより低いY座標から適用開始するように調整。
- *   - HEIGHT_PENALTY_WEIGHT を大幅に増加させ、高さペナルティの優先度を全体的に引き上げ、高積み状態を強く抑制する。
- * - 先読みの強化:
- *   - LOOK_AHEAD_WEIGHT を増加させ、次に来るピースの配置が現在の決定に与える影響を大きくする。
- *     これにより、将来のボード状況を見据えた戦略的なピース配置を促す。
- * - その他の設定はv191の調整を維持し、全体的な戦略バランスを保つ。
+ * - おじゃまブロック対応の強化:
+ *   - garbage.gauge が高い場合（おじゃま発動間近）の併合優先度を大幅に引き上げ、よりアグレッシブにおじゃま解消を試みる。
+ * - 混雑ペナルティの調整:
+ *   - CROWDING_PENALTY_START_THRESHOLD を減少させ、ボードの過密状態をより早期に検知し、分散配置を促す。
+ * - 大型ピースの片側集約ロジックの調整:
+ *   - 左右の大型ピース数差に対する dominantLargePieceSide の決定ロジックを微調整し、より早い段階で集約方向を確立できるようにする。
+ * - その他の設定はv192の調整を維持し、全体的な戦略バランスを保つ。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -29,7 +29,7 @@ const SETTLING_BUFFER = 0.40; // v192: Adjusted from 0.35 (v191)
 
 // Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.20; // v192: Adjusted from 0.15 (v191)
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.25; // v193: Adjusted from 0.20 (v192)
 
 // Merge and Pipeline Bonuses (v182: further increased)
 const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Maintained from 0.20
@@ -37,12 +37,14 @@ const MERGE_BONUS_SCALE_FACTOR = 85; // v182: Maintained
 const PIPELINE_BONUS_DIRECT_CHAIN = 1800; // v182: Maintained
 const PIPELINE_BONUS_INDIRECT_CHAIN = 750; // v182: Maintained
 const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 3000; // v182: Maintained
+const GARBAGE_URGENT_GAUGE_BONUS_HIGH_RATIO = 5000; // v193: New constant for urgent garbage clearing
+const GARBAGE_URGENT_GAUGE_THRESHOLD = 0.9; // v193: Gauge threshold for urgent bonus
 
 // Small Piece Catalyst (v182: increased)
 const SMALL_PIECE_CATALYST_BONUS = 1200; // v182: Maintained
 
 // Crowding Penalty (v191: decreased further)
-const CROWDING_PENALTY_START_THRESHOLD = 12; // v191: Maintained
+const CROWDING_PENALTY_START_THRESHOLD = 10; // v193: Adjusted from 12 (v191)
 const CROWDING_PENALTY_PER_PIECE = 40; // v182: Maintained
 
 // Large Piece Aggregation (v182: further increased)
@@ -271,6 +273,15 @@ function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
         bonus += piece.type * 75;
     }
 
+    // NEW: Extra aggressive bonus if gauge is critically high AND ratio is significant
+    if (boardState.garbage.gauge >= GARBAGE_URGENT_GAUGE_THRESHOLD && boardState.garbage.ratio > 0.1) {
+        const potentialMergeBonus = calculateMergeBonus(boardState.pieces, dropX, piece, predictedY);
+        if (potentialMergeBonus > 0) { // Only apply if there's a merge opportunity
+            bonus += GARBAGE_URGENT_GAUGE_BONUS_HIGH_RATIO;
+        }
+    }
+
+
     // Bonus for merging near the bottom when garbage is present (clears more effectively)
     if (boardState.garbage.ratio > 0 && predictedY < boardState.garbage.height * 0.5) { // Arbitrary low Y
          // Check if this drop creates a merge (very simplified check here, ideally integrate with merge bonus)
@@ -322,11 +333,11 @@ export function decide(boardState) {
             else if (existingPiece.x > 0) rightLargePiecesCount++;
         }
     }
-    // Apply a hysteresis to prevent frequent switching of the dominant side
-    if (leftLargePiecesCount > rightLargePiecesCount + 1) {
-        dominantLargePieceSide = -1; // Left side has significantly more
-    } else if (rightLargePiecesCount > leftLargePiecesCount + 1) {
-        dominantLargePieceSide = 1; // Right side has significantly more
+    // Adjust hysteresis for establishing dominant side
+    if (leftLargePiecesCount > rightLargePiecesCount) { // Removed +1
+        dominantLargePieceSide = -1; // Left side has more
+    } else if (rightLargePiecesCount > leftLargePiecesCount) { // Removed +1
+        dominantLargePieceSide = 1; // Right side has more
     }
 
     // --- HOLD Logic ---

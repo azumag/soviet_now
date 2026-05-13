@@ -1,6 +1,5 @@
 # strategy/regression.sh - rolling scores, check_regression, rollback候補選定, postmortem生成
 
-
 _write_rollback_analysis_file() {
 	local current_hash="$1" rollback_hash="$2" regression_result="$3" rollback_note="$4" game_num="${5:-}"
 	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" "eval_score_history.txt" <<'PY'
@@ -536,7 +535,7 @@ start_rollback_postmortem_worker() {
 	if [ -f "$ROLLBACK_POSTMORTEM_PID_FILE" ]; then
 		running_pid=$(cat "$ROLLBACK_POSTMORTEM_PID_FILE" 2>/dev/null || echo "")
 		case "$running_pid" in
-		''|*[!0-9]*) running_pid="" ;;
+		'' | *[!0-9]*) running_pid="" ;;
 		esac
 	fi
 	if [ -n "$running_pid" ] && kill -0 "$running_pid" 2>/dev/null; then
@@ -575,6 +574,14 @@ _archive_strategy_snapshot_by_hash() {
 	if [ ! -f "$dst" ]; then
 		cp "$source_file" "$dst" 2>/dev/null || true
 	fi
+	# 永続アーカイブにも保存（prune されない。backfill のフォールバック元）
+	if [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ]; then
+		mkdir -p "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"
+		local perm_dst="$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR/${hash_value}.py"
+		if [ ! -f "$perm_dst" ]; then
+			cp "$source_file" "$perm_dst" 2>/dev/null || true
+		fi
+	fi
 }
 
 _backfill_hash_archive_from_known_versions() {
@@ -586,6 +593,17 @@ _backfill_hash_archive_from_known_versions() {
 		[ -f "$f" ] || continue
 		_archive_strategy_snapshot_by_hash "$f"
 	done
+	# 永続アーカイブから hot archive に不足分を復元する
+	if [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ] && [ -d "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR" ]; then
+		local perm_file base
+		for perm_file in "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"/*.py; do
+			[ -f "$perm_file" ] || continue
+			base=$(basename "$perm_file")
+			if [ ! -f "$STRATEGY_HASH_ARCHIVE_DIR/$base" ]; then
+				cp "$perm_file" "$STRATEGY_HASH_ARCHIVE_DIR/$base" 2>/dev/null || true
+			fi
+		done
+	fi
 }
 
 _find_strategy_file_by_hash() {
@@ -971,7 +989,8 @@ PY
 _prune_expired_rejected_hashes() {
 	[ -f "$REJECTED_HASHES_FILE" ] || return 0
 	local prune_result=""
-	prune_result=$(python3 - "$REJECTED_HASHES_FILE" "$REJECTED_HASH_META_FILE" "$REJECTED_REEVALUATE_TTL_SEC" <<'PY' 2>/dev/null
+	prune_result=$(
+		python3 - "$REJECTED_HASHES_FILE" "$REJECTED_HASH_META_FILE" "$REJECTED_REEVALUATE_TTL_SEC" <<'PY' 2>/dev/null
 import json
 import os
 import sys
@@ -1046,7 +1065,7 @@ for hash_ in legacy:
 for row in expired:
     print(f"expired|{row}")
 PY
-)
+	)
 	[ -z "$prune_result" ] && return 0
 	local line
 	while IFS= read -r line; do
@@ -1076,7 +1095,8 @@ _is_recently_rejected_for_rollback() {
 		return 1
 	fi
 	local recovered=""
-	recovered=$(python3 - "$REJECTED_HASH_META_FILE" "$h" "$REJECTED_REEVALUATE_TTL_SEC" <<'PY' 2>/dev/null
+	recovered=$(
+		python3 - "$REJECTED_HASH_META_FILE" "$h" "$REJECTED_REEVALUATE_TTL_SEC" <<'PY' 2>/dev/null
 import json
 import os
 import sys
@@ -1104,7 +1124,7 @@ age = int(time.time()) - rejected_at
 if age >= ttl_sec:
     print(f"expired|{age}|{ttl_sec}")
 PY
-)
+	)
 	case "$recovered" in
 	expired*)
 		log "[REGRESSION] rollback候補を再許可: $h (${recovered#expired|})" >&2
@@ -1240,7 +1260,8 @@ _pick_best_rollback_candidate() {
 	current_comp="${current_metrics%%|*}"
 
 	local ranked
-	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+	ranked=$(
+		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
 import json
 import sys
 import math
@@ -1295,7 +1316,7 @@ rows.sort(key=lambda x: (x[0], x[1], x[2], x[4]), reverse=True)
 for comp, p50, p25, lcb, n, h in rows[:keep_top]:
     print(f"{h}|{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}")
 PY
-)
+	)
 	[ -z "$ranked" ] && return 1
 
 	local line h comp p50 p25 lcb n candidate_file
@@ -1343,10 +1364,10 @@ _pick_hall_of_fame_rollback_candidate() {
 		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($candidate_comp > $current_comp)}"; then
 			continue
 		fi
-			if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
-				log "[REGRESSION] hall-of-fame候補スキップ: $h は直前rollbackの逆向き" >&2
-				continue
-			fi
+		if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
+			log "[REGRESSION] hall-of-fame候補スキップ: $h は直前rollbackの逆向き" >&2
+			continue
+		fi
 		echo "${h}|hof|${score_num}|0|0|0|$f"
 		return 0
 	done < <(
@@ -1372,7 +1393,8 @@ _prune_hash_archive_by_ranking() {
 	archive_count=$(find "$STRATEGY_HASH_ARCHIVE_DIR" -maxdepth 1 -type f -name '*.py' 2>/dev/null | wc -l | tr -d ' ')
 	local current_hash=""
 	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	ranked_result=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY' 2>/dev/null || true
+	ranked_result=$(
+		python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY' 2>/dev/null || true
 import json
 import sys
 import math
@@ -1426,7 +1448,7 @@ print(f"META|{len(rows)}|{min(len(rows), keep_top)}")
 for _, _, _, _, h in rows[:keep_top]:
     print(h)
 PY
-)
+	)
 	meta_line=$(printf '%s\n' "$ranked_result" | sed -n '1p')
 	ranked_hashes=$(printf '%s\n' "$ranked_result" | sed '1d')
 	mature_count=0
@@ -1449,9 +1471,9 @@ PY
 	fi
 	if [ "${archive_count:-0}" -gt 1 ] && [ "${mature_count:-0}" -gt 0 ] && [ "${expected_keep_count:-0}" -gt 0 ]; then
 		if [ "$expected_keep_count" -le "$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP" ]; then
-			min_keep_guard=$(( (expected_keep_count + 1) / 2 ))
+			min_keep_guard=$(((expected_keep_count + 1) / 2))
 		else
-			ratio_guard=$(( (expected_keep_count * HASH_ARCHIVE_PRUNE_SAFETY_MIN_RATIO_PCT + 99) / 100 ))
+			ratio_guard=$(((expected_keep_count * HASH_ARCHIVE_PRUNE_SAFETY_MIN_RATIO_PCT + 99) / 100))
 			min_keep_guard=$ratio_guard
 			[ "$min_keep_guard" -lt "$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP" ] && min_keep_guard=$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP
 		fi
@@ -1488,7 +1510,8 @@ update_rolling_scores() {
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
 	_backfill_hash_archive_from_known_versions
 	local rolling_result=""
-	rolling_result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" <<'PY' 2>/dev/null
+	rolling_result=$(
+		python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" <<'PY' 2>/dev/null
 import json
 import os
 import sys
@@ -1525,7 +1548,7 @@ with open(rs_file, "w") as f:
 
 print(f"{h}|{len(rs[h]['scores'])}|{rs[h]['games_total']}|updated")
 PY
-)
+	)
 	if [ -n "$rolling_result" ]; then
 		local rolling_n="" rolling_total="" rolling_status=""
 		IFS='|' read -r strategy_hash rolling_n rolling_total rolling_status <<<"$rolling_result"
@@ -1557,7 +1580,8 @@ check_regression() {
 	_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$ACTIVE_BRANCH_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" "$BRANCH_MAX_DEPTH" "$BRANCH_MAX_GAMES" "$BRANCH_PATIENCE" "$BRANCH_HARD_COMP_GAP" "$BRANCH_HARD_P50_GAP" "$BRANCH_HARD_P25_GAP" "$BRANCH_HARD_MIN_BREACH_COUNT" <<'PY'
+	result=$(
+		python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$ACTIVE_BRANCH_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" "$BRANCH_MAX_DEPTH" "$BRANCH_MAX_GAMES" "$BRANCH_PATIENCE" "$BRANCH_HARD_COMP_GAP" "$BRANCH_HARD_P50_GAP" "$BRANCH_HARD_P25_GAP" "$BRANCH_HARD_MIN_BREACH_COUNT" <<'PY'
 import json
 import math
 import os
@@ -1670,6 +1694,11 @@ if not current:
     print("OK")
     raise SystemExit
 
+# 最小サンプルガード: n<12 では p50/p25 の変動が大きすぎて regression 判定できない
+if current["n"] < 12:
+    print("OK")
+    raise SystemExit
+
 anchor_payload = load_json(anchor_file)
 anchor_hash = str(anchor_payload.get("hash", "") or "")
 if not anchor_hash:
@@ -1716,6 +1745,46 @@ if current["n"] >= min_games_current and current_hash != anchor_hash and key(cur
     )
     raise SystemExit
 
+# best_hash / best_metrics / best_comp_gap 等は early_branch_regression でも使うため、先に計算する
+best_hash = str(active.get("best_hash", "") or "")
+best_blob = active.get("best", {}) if isinstance(active.get("best"), dict) else {}
+best_metrics = {
+    "comp": float(best_blob.get("comp", 0.0) or 0.0),
+    "p50": float(best_blob.get("p50", 0.0) or 0.0),
+    "p25": float(best_blob.get("p25", 0.0) or 0.0),
+    "lcb": float(best_blob.get("lcb", 0.0) or 0.0),
+    "n": int(best_blob.get("n", 0) or 0),
+} if best_hash else {}
+best_comp_gap, best_p50_gap, best_p25_gap = gap(anchor, best_metrics if best_metrics else current)
+best_breach = breach_count(best_comp_gap, best_p50_gap, best_p25_gap, min_comp_gap, min_p50_gap, min_p25_gap)
+depth = int(active.get("depth", 0) or 0)
+closed_games = int(active.get("closed_games", 0) or 0)
+patience = int(active.get("patience", 0) or 0)
+branch_games = closed_games + int(current.get("n", 0) or 0)
+
+# Branch中の早期regression: n>=12 で明らかに劣後している場合に早期撤退
+# 条件: branch_active AND curr_breach>=2 AND (best未更新 OR currentがbestを1500comp以上下回る)
+# 注: n<12 は関数冒頭のサンプルガードで弾かれているのでここには来ない
+if branch_active and curr_breach >= min_breach_count and current_hash != anchor_hash:
+    no_improvement_signal = not best_hash
+    current_worse_than_best = bool(best_hash and best_metrics and current["comp"] < best_metrics.get("comp", 0) - 1500)
+    if no_improvement_signal or current_worse_than_best:
+        print(
+            "REGRESSION:"
+            f"mode=early_branch,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+            f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+            f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+            f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+            f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+            f"best_hash={best_hash},best_comp={best_metrics.get('comp', 0.0):.1f},best_p50={best_metrics.get('p50', 0.0):.1f},best_p25={best_metrics.get('p25', 0.0):.1f},best_n={best_metrics.get('n', 0)},"
+            f"best_comp_gap={best_comp_gap:.1f},best_p50_gap={best_p50_gap:.1f},best_p25_gap={best_p25_gap:.1f},best_breach_count={best_breach},"
+            f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
+            f"reasons=early_branch_regression+curr_breach"
+            + ("" if no_improvement_signal else "+current_worse_than_best")
+        )
+        raise SystemExit
+
+# anchor_direct / budget_exhausted / hard_breach は成熟したサンプル (n>=min_games_current) のみ判定
 if current["n"] < min_games_current:
     print("OK")
     raise SystemExit
@@ -1808,7 +1877,8 @@ if budget_reasons:
 
 print("OK")
 PY
-	2>/dev/null)
+		2>/dev/null
+	)
 
 	if echo "$result" | grep -q '^PROMOTE:'; then
 		log "[BRANCH] anchor昇格: $result"
@@ -1843,9 +1913,9 @@ PY
 		fi
 		log "[REGRESSION] 自動ロールバック開始"
 
-		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
+		echo "$strategy_hash" >>"$REJECTED_HASHES_FILE"
 		if [ -f "$REJECTED_HASHES_FILE" ]; then
-			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+			tail -20 "$REJECTED_HASHES_FILE" >"$REJECTED_HASHES_FILE.tmp"
 			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
 		fi
 		python3 - "$ROLLING_SCORES_FILE" "$REJECTED_HASH_META_FILE" "$strategy_hash" <<'PY' 2>/dev/null
@@ -1976,10 +2046,10 @@ PY
 				echo "=== $(date '+%Y-%m-%d %H:%M') ROLLBACK Game#${rollback_game_num} ${strategy_hash} -> ${rolled_hash} ==="
 				printf '%s\n' "$rollback_analysis_summary"
 				echo ""
-			} >> "tmp/change_log.txt"
-			if [ -f "tmp/change_log.txt" ] && [ "$(wc -l < "tmp/change_log.txt")" -gt 200 ]; then
-				tail -200 "tmp/change_log.txt" > "tmp/change_log.txt.tmp"
-				mv "tmp/change_log.txt.tmp" "tmp/change_log.txt"
+			} >>"logs/change_log.txt"
+			if [ -f "logs/change_log.txt" ] && [ "$(wc -l <"logs/change_log.txt")" -gt 200 ]; then
+				tail -200 "logs/change_log.txt" >"logs/change_log.txt.tmp"
+				mv "logs/change_log.txt.tmp" "logs/change_log.txt"
 			fi
 		fi
 		start_rollback_postmortem_worker "$strategy_hash" "$rolled_hash" "$rollback_game_num" "$rollback_note"
@@ -1994,7 +2064,14 @@ PY
 			RADIO_FORCE_DEFERRED=1 start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" || true
 		fi
 
-		git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
+		# 粛清区切りでまとめてコミット: 戦略本体 + 試合アーカイブ + スコア履歴 + 系統樹
+		git add \
+			strategy.py strategy_helpers/ \
+			"$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" \
+			game_count.txt score_history.txt eval_score_history.txt \
+			best_score.txt score_dashboard.html game_state.json \
+			game_history/ strategy_versions/ strategy_versions_archive/ \
+			2>/dev/null || true
 		local phylo_push_ok=false
 		if git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null; then
 			if git push 2>/dev/null; then

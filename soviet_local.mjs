@@ -13,6 +13,7 @@ const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 const SERVE_PORT = 8080;
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
+const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
 
 // MIME types for Unity WebGL build
 const MIME_TYPES = {
@@ -219,11 +220,26 @@ async function runLocalController() {
   process.on('exit', removeCdpEndpoint);
 
   let browser;
+  let context;
+  async function closeBrowser() {
+    if (context) {
+      await context.close();
+      return;
+    }
+    if (browser) {
+      await browser.close();
+    }
+  }
+
   try {
-    browser = await chromium.launch({
+    fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
+    context = await chromium.launchPersistentContext(USER_DATA_DIR, {
       headless: false,
+      viewport: { width: 1280, height: 720 },
+      deviceScaleFactor: 1,
       args: ['--window-size=1300,800', `--remote-debugging-port=${CDP_PORT}`],
     });
+    browser = context.browser();
   } catch (e) {
     console.error(`Failed to launch browser: ${e.message}`);
     removeCdpEndpoint();
@@ -237,6 +253,7 @@ async function runLocalController() {
       url: `http://localhost:${CDP_PORT}`,
       port: CDP_PORT,
       pid: process.pid,
+      userDataDir: USER_DATA_DIR,
       startedAt: new Date().toISOString(),
     }));
     console.log(`CDP endpoint written: ${CDP_ENDPOINT_FILE} (port=${CDP_PORT})`);
@@ -244,12 +261,7 @@ async function runLocalController() {
     console.warn(`Failed to write CDP endpoint file: ${e.message}`);
   }
 
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 720 },
-    deviceScaleFactor: 1,
-  });
-
-  const page = await context.newPage();
+  const page = context.pages()[0] || await context.newPage();
 
   console.log('=== Soren Local Game Controller ===');
 
@@ -292,7 +304,7 @@ async function runLocalController() {
 
   if (!canvasReady) {
     console.error('Unity canvas failed to initialize!');
-    await browser.close();
+    await closeBrowser();
     server.close();
     return;
   }
@@ -359,7 +371,7 @@ async function runLocalController() {
 
   if (!bridgeReady) {
     console.error('JS Bridge not responding. Is SorenBridge component attached in the scene?');
-    await browser.close();
+    await closeBrowser();
     server.close();
     return;
   }

@@ -65,7 +65,7 @@ if [ -f "$PID_FILE" ]; then
 	rm -f "$PID_FILE"
 fi
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
-echo $$ > "$PID_FILE"
+echo $$ >"$PID_FILE"
 
 # --- ヘルパー ---
 _read_json_field() {
@@ -78,17 +78,26 @@ _has_prediction() {
 }
 
 _get_acc_count() {
-	[ -f "$ACCUMULATED_GAMES_FILE" ] || { echo 0; return; }
+	[ -f "$ACCUMULATED_GAMES_FILE" ] || {
+		echo 0
+		return
+	}
 	_read_json_field "$ACCUMULATED_GAMES_FILE" "count" "0"
 }
 
 _get_improve_status() {
-	[ -f "$IMPROVE_STATE_FILE" ] || { echo ""; return; }
+	[ -f "$IMPROVE_STATE_FILE" ] || {
+		echo ""
+		return
+	}
 	_read_json_field "$IMPROVE_STATE_FILE" "status" ""
 }
 
 _get_best_outcome() {
-	_has_prediction || { echo 0; return; }
+	_has_prediction || {
+		echo 0
+		return
+	}
 	_read_json_field "$TMP_STATE_DIR/current_prediction.json" "best_outcome" "0"
 }
 
@@ -111,32 +120,37 @@ while true; do
 
 	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	current_acc_count=$(_get_acc_count)
+	_resolved_this_tick=0
 
 	# --- 粛清 resolve: regression_pending フラグ (最優先) ---
 	if _has_prediction && [ -f "$TMP_STATE_DIR/regression_pending" ]; then
 		_log "粛清検知 → resolve outcome=3"
 		./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
-		# regression_pending は regression.sh 側で削除される
+		_resolved_this_tick=1
+	# regression_pending は regression.sh 側で削除される
 	fi
 
 	# --- ソ連建国 resolve: best_outcome=2 かつ予想が active ---
-	if _has_prediction; then
+	if [ "$_resolved_this_tick" -eq 0 ] && _has_prediction; then
 		best=$(_get_best_outcome)
 		if [ "${best:-0}" -eq 2 ]; then
 			_log "ソ連建国検知 → resolve outcome=2"
 			./twitch_predictions.sh resolve 2 >>tmp/prediction.log 2>&1 || true
+			_resolved_this_tick=1
 		fi
 	fi
 
 	# --- サイクル完了 resolve: acc_count >= threshold ---
 	# soren_loop の post_game_bookkeeping → check_regression 区間中は保留する。
 	# この区間で resolve すると、粛清判定前に best_outcome=0 (建国なし) で確定してしまう。
-	if _has_prediction \
-		&& [ "${current_acc_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ] \
-		&& [ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
+	if [ "$_resolved_this_tick" -eq 0 ] &&
+		_has_prediction &&
+		[ "${current_acc_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ] &&
+		[ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
 		best=$(_get_best_outcome)
 		_log "サイクル完了 (acc=${current_acc_count}) → resolve outcome=${best}"
 		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+		_resolved_this_tick=1
 	fi
 
 	# --- ゲーム番号変化時: cleanup (resolve 後に実行して stale 先行を防止) ---
@@ -147,10 +161,15 @@ while true; do
 
 	# --- サイクル先頭: 前サイクルの予想を resolve ---
 	# acc_count が非0→0 に変わった瞬間のみ resolve（毎ループ発火を防止）
-	if [ "${current_acc_count:-0}" -eq 0 ] && [ "${_LAST_ACC_COUNT:-0}" -ne 0 ] && _has_prediction; then
+	# ただし同 tick 内で既に resolve 済みならスキップ（二重投稿防止）
+	if [ "$_resolved_this_tick" -eq 0 ] &&
+		[ "${current_acc_count:-0}" -eq 0 ] &&
+		[ "${_LAST_ACC_COUNT:-0}" -ne 0 ] &&
+		_has_prediction; then
 		best=$(_get_best_outcome)
 		_log "サイクル先頭: 前サイクルの予想を resolve (outcome=${best})"
 		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+		_resolved_this_tick=1
 	fi
 
 	# --- 予想作成: サイクル開始 (acc_count=0, 改善完了後, 予想なし) ---

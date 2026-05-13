@@ -34,6 +34,26 @@ const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');
 const RANKING_COMMENT_LAST_INPUT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_input.json');
 
+function readEnvFileValue(envPath, key) {
+  try {
+    if (!existsSync(envPath)) return null;
+    const line = readFileSync(envPath, 'utf-8')
+      .split(/\r?\n/u)
+      .find(entry => entry.startsWith(`${key}=`));
+    if (!line) return null;
+    return line.slice(key.length + 1).trim().replace(/^["']|["']$/gu, '');
+  } catch {
+    return null;
+  }
+}
+
+function resolveSoren91VoicevoxSpeaker() {
+  return readEnvFileValue(join(PARENT_DIR, '.env'), 'SOREN91_VOICEVOX_SPEAKER')
+    || readEnvFileValue('.env', 'SOREN91_VOICEVOX_SPEAKER')
+    || process.env.SOREN91_VOICEVOX_SPEAKER
+    || '14';
+}
+
 const META_LINE_PATTERNS = [
   /^(assistant|analysis|final|tool_call|tool_result)$/i,
   /^(agent|model|provider)\s*[:=]/i,
@@ -85,6 +105,9 @@ const META_SENTENCE_PATTERNS = [
 ];
 
 const INVALID_ANYWHERE_PATTERNS = [
+  /申し訳(?:ありません|ございません|ない).*(?:エラーメッセージ|提供|ユーザーメッセージ|指示|タスク|情報|スクリーンショット)/u,
+  /(?:エラーメッセージ|ユーザーメッセージ|具体的な指示|明確な指示|具体的なタスク).*(?:提供されてい|見当たりません|ありません|ない|不足)/u,
+  /(?:何も言えません|語ることはできません|控えておくべき|確認させてください)/u,
   /私はGemini\b|Gemini 4/u,
   /Google DeepMind|大規模言語モデル|オープンウェイトモデル/u,
   /AIアシスタント|Meriken/u,
@@ -102,6 +125,8 @@ const INVALID_ANYWHERE_PATTERNS = [
   /どういうコメントを(生成|作成)すればいい/u,
   /コメントを生成すればいいでしょうか/u,
   /追加情報|情報提供|添付されていない/u,
+  /ユーザーからの.*指示がなく|システム設定.*だけが提供/u,
+  /提供いただいた.*(?:実際の記事本文|本文ではなく|テキスト).*含まれていない/u,
   /<ExecuteAction|<response>|<details>|思考プロセス|System Context/u,
   /現在のタスク|どのゲーム|対象がわからない|準備はできております|お任せください/u,
 ];
@@ -191,18 +216,19 @@ function isGroundedMidgameComment(text) {
   return true;
 }
 
-function fallbackRankingComment(effectiveRank) {
+function fallbackRankingComment(effectiveRank, gameNumber = null) {
+  const gameNote = gameNumber != null ? `ゲーム${gameNumber}の決算としては` : '今回の決算としては';
   if (effectiveRank != null) {
     const rank = Number(effectiveRank);
     if (rank <= 3) {
-      return `今回は${rank}位です。これはかなり上出来です。資本主義の効率が盤面でしっかり働きましたね。もちろん、まだ満足はしていません。次はもっと堂々と勝ち切って、ソ連ゲーム91のランキングを上から眺めてやります。`;
+      return `今回は${rank}位です。これはかなり上出来です。資本主義の効率が盤面でしっかり働きましたね。もちろん、まだ満足はしていません。次はもっと堂々と勝ち切って、ソ連ゲーム91のランキングを上から眺めてやります。${gameNote}黒字です。`;
     }
     if (rank <= 20) {
-      return `今回は${rank}位です。上位には届いていますが、まだ勝ち切ったとは言えませんね。悔しさはありますが、これは次の投資判断に使えるデータです。資本主義らしく失敗を利益に変えて、次はさらに上を狙います。`;
+      return `今回は${rank}位です。上位には届いていますが、まだ勝ち切ったとは言えませんね。悔しさはありますが、これは次の投資判断に使えるデータです。資本主義らしく失敗を利益に変えて、次はさらに上を狙います。${gameNote}利回りは悪くありません。`;
     }
-    return `今回は${rank}位です。正直、悔しい結果です。ただ、ここで自信まで売り払うほど安いAIではありません。今回の配置と粘り方を見直して、次の試合ではもっと効率よく盤面を育てます。次は巻き返しますよ。`;
+    return `今回は${rank}位です。正直、悔しい結果です。ただ、ここで自信まで売り払うほど安いAIではありません。今回の配置と粘り方を見直して、次の試合ではもっと効率よく盤面を育てます。${gameNote}損失ですが、次で回収します。`;
   }
-  return '今回はランキングの順位を確認できませんでした。だからといって、適当な順位を名乗るほど雑な資本主義ではありません。見えている事実だけで言えば、この試合は次に活かす材料です。次は順位まできっちり確認して、堂々と勝ち負けを語ります。';
+  return `今回はランキングの順位を確認できませんでした。だからといって、適当な順位を名乗るほど雑な資本主義ではありません。見えている事実だけで言えば、この試合は次に活かす材料です。次は順位まできっちり確認して、堂々と勝ち負けを語ります。${gameNote}改善材料として記録します。`;
 }
 
 /**
@@ -232,7 +258,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
       }
     }
     if (!comment) {
-      comment = fallbackRankingComment(effectiveRank);
+      comment = fallbackRankingComment(effectiveRank, gameNumber);
     }
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
@@ -355,7 +381,7 @@ async function buildMidgameScreenshotTextInfo(screenshotPath) {
 }
 
 async function buildRankingTextPrompt(rankingImagePath, myRank) {
-  let ocrInfo = '- OCR画像が利用できません（ランキング画面キャプチャ失敗）。';
+  let ocrInfo = '- ランキング画面の文字情報はありません。';
   let effectiveRank = myRank != null ? Number(myRank) : null;
   let hasOcrContext = false;
   
@@ -377,8 +403,8 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
         ocrInfo = lines.join('\n');
         hasOcrContext = true;
       }
-    } catch (err) {
-      ocrInfo = `- OCR補助情報の取得失敗: ${err.message}`;
+    } catch {
+      ocrInfo = '- ランキング画面の文字情報はありません。';
     }
   }
   
@@ -416,7 +442,7 @@ function speakComment(comment, contextLabel = 'soren91:comment') {
     const speakerFile = `${join(queueDir, filename)}.speaker`;
     const speakerTmpFile = join(queueDir, `.${filename}.speaker.tmp`);
     const destFile = join(queueDir, filename);
-    const voicevoxSpeaker = process.env.SOREN91_VOICEVOX_SPEAKER || '46';
+    const voicevoxSpeaker = resolveSoren91VoicevoxSpeaker();
     writeFileSync(tmpFile, comment + '\n');
     writeFileSync(metaTmpFile, JSON.stringify({
       generatedAt: new Date().toISOString(),

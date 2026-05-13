@@ -55,6 +55,12 @@ _mark_recent_key() {
     printf '%s|%s\n' "$(date +%s)" "$key" >> "$src"
 }
 
+_is_card_gacha_result_message() {
+    local text="$1"
+    [ -n "$text" ] || return 1
+    printf '%s\n' "$text" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
+}
+
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
     {
@@ -111,14 +117,17 @@ while true; do
             user="$display_name"
             [ -z "$user" ] && user="$login_user"
 
-            # 開発用アカウントは読み上げ対象から除外
-            if [ "$login_user" = "azumagdev" ] || [ "$user" = "azumagdev" ]; then
-                continue
-            fi
-
             msg=$(echo "$payload" | sed 's/^.*PRIVMSG [^ ]* ://')
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
+
+            # 開発用アカウントは読み上げ対象から除外
+            if [ "$login_user" = "azumagdev" ] || [ "$user" = "azumagdev" ]; then
+                if ! _is_card_gacha_result_message "$msg"; then
+                    continue
+                fi
+            fi
+
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
 
             # ビッツ(Cheer)検出: tagsに bits= があればタグ付与
@@ -140,6 +149,9 @@ while true; do
                 esac
             fi
             clean_line="${bits_tag}${user}: ${msg}"
+            if { [ "$login_user" = "azumagdev" ] || [ "$user" = "azumagdev" ]; } && _is_card_gacha_result_message "$msg"; then
+                clean_line="${bits_tag}${msg}"
+            fi
 
             # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）
             if [ "${TWITCH_CLIP_CMD_ENABLED:-0}" = "1" ] && [[ "$msg" =~ ^[[:space:]]*!clip([[:space:]]|$) ]]; then
@@ -284,31 +296,22 @@ while true; do
         fi
     done
     # --- Outbound chat queue consumer ---
-    # IRC 再接続の合間に outbound queue を消化する
-    _outbound_dir="${OUTBOUND_CHAT_PENDING_DIR:-tmp/.outbound_chat_queue/pending}"
-    _outbound_sent="${OUTBOUND_CHAT_SENT_DIR:-tmp/.outbound_chat_queue/sent}"
-    _outbound_rate_sec=2
-    if [ -d "$_outbound_dir" ]; then
-        for _oq_file in $(ls -1t "$_outbound_dir"/*.msg 2>/dev/null | sort); do
-            [ -f "$_oq_file" ] || continue
-            _oq_msg=$(cat "$_oq_file" 2>/dev/null)
-            if [ -n "$_oq_msg" ]; then
-                if ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$_oq_msg" >/dev/null 2>&1 ); then
-                    mkdir -p "$_outbound_sent" 2>/dev/null || true
-                    mv "$_oq_file" "$_outbound_sent/$(basename "$_oq_file")" 2>/dev/null || rm -f "$_oq_file"
-                fi
-            else
-                rm -f "$_oq_file"
-            fi
-            sleep "$_outbound_rate_sec"
-        done
-        # sent/ の古いファイルを削除 (1時間以上)
-        _oq_now=$(date +%s)
-        for _oq_sf in "$_outbound_sent"/*.msg; do
-            [ -f "$_oq_sf" ] || continue
-            _oq_mt=$(stat -f %m "$_oq_sf" 2>/dev/null || echo "$_oq_now")
-            [ $((  _oq_now - _oq_mt )) -gt 3600 ] && rm -f "$_oq_sf"
-        done
+    # chat_worker 配下では親 worker が送信を一元管理する。standalone daemon の時だけ消化する。
+    _chat_worker_pid=""
+    if [ -f "tmp/state/chat_worker.pid" ]; then
+        _chat_worker_pid=$(cat "tmp/state/chat_worker.pid" 2>/dev/null || true)
+    fi
+    case "$_chat_worker_pid" in
+        ''|*[!0-9]*) _chat_worker_pid="" ;;
+    esac
+    if [ -z "$_chat_worker_pid" ] || ! kill -0 "$_chat_worker_pid" 2>/dev/null; then
+        if source lib/outbound_queue.sh 2>/dev/null; then
+            _outbound_rate_sec=2
+            while outbound_queue_consume_once; do
+                sleep "$_outbound_rate_sec"
+            done
+            outbound_queue_cleanup_sent 3600 2>/dev/null || true
+        fi
     fi
     sleep 5
 done

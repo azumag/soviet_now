@@ -33,6 +33,15 @@
 - [ ] `CHAIN_MERGE` を直接強化する変更がないか
 - [ ] height penalty の強化を「スコアアップ手段」として扱う変更がないか
 
+### E. Hard Constraint — 絶対遵守テーマ（mandatory_themes.txt）
+- [ ] `data/mandatory_themes.txt` の全テーマを遵守する実装になっているか
+- [ ] mandatory_themes のテーマに反するロジックがないか（違反がある場合，`strategy.py.staging` を修正すること）
+
+### F. Hard Constraint — ユーザーレビュー（user_review.md）
+- [ ] `data/user_review.md` が存在して非空の場合、レビュー内の「必須修正」「合格条件」を全て満たしているか
+- [ ] `user_review.md` が求める実装箇所を、理由文言や周辺の小変更ではなく実ロジックで修正しているか
+- [ ] `user_review.md` に明記された失敗例が再発しないことを、該当コード条件で説明できるか
+
 ## 判定基準
 - **PASS**: 上記チェックを全て通過
 - **FAIL**: 1つ以上のチェックが失敗
@@ -44,10 +53,18 @@
 - `tmp/review_result.md` 以外の場所にレビュー結果を書いてはいけない
 - 以下の構造で書くこと:
 
-```markdown
 # Strategy Review Result
 
 ## VERDICT: [PASS / FAIL]
+
+```review_verdict
+{
+  "verdict": "PASS",
+  "user_review_satisfied": true,
+  "summary": "レビュー指摘を実ロジックで満たしている理由を1文で書く",
+  "unresolved_items": []
+}
+```
 
 ## Checklist Results
 ### A. 分析方針との整合性
@@ -79,7 +96,8 @@
 
 ## Fix Applied（修正を行った場合のみ）
 （修正した内容の概要）
-```
+
+`review_verdict` JSON は必須。`data/user_review.md` が存在して非空の場合、レビュー指摘を満たしていると確認できたときだけ `user_review_satisfied: true` にすること。未確認・部分対応・理由文言だけの対応・該当コード条件で再発防止を説明できない場合は `verdict: "FAIL"` とし、`unresolved_items` に具体的な未達項目を書くこと。
 
 ## 修正ルール（FAILの場合のみ）
 - FAILの場合のみ `strategy.py.staging` を修正してよい

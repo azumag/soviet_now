@@ -31,7 +31,7 @@ SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/nul
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-91}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
-SOREN91_GEMINI_FALLBACK_MODEL="$(_soren91_env_get SOREN91_GEMINI_FALLBACK_MODEL 2>/dev/null || printf '%s' "${SOREN91_GEMINI_FALLBACK_MODEL:-gemini-2.5-flash}")"
+SOREN91_TEXT_FALLBACKS="$(_soren91_env_get SOREN91_TEXT_FALLBACKS 2>/dev/null || printf '%s' "${SOREN91_TEXT_FALLBACKS:-claude}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
 SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
@@ -45,10 +45,10 @@ _soren91_switch_obs_layout() {
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
-		"$SOREN91_OBS_CONTROL" batch soren hide:console1,console2,console3 >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren show:"$SOREN91_OBS_INPUT_NAME" hide:console1,console2,console3,dashboard >/dev/null 2>&1 &
 		;;
 	china)
-		"$SOREN91_OBS_CONTROL" batch soren show:console1,console2,console3 >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren show:console1,console2,console3,dashboard hide:"$SOREN91_OBS_INPUT_NAME" >/dev/null 2>&1 &
 		;;
 	*)
 		return 1
@@ -58,6 +58,10 @@ _soren91_switch_obs_layout() {
 
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
+}
+
+_scheduled_meriken_time_enabled() {
+	[ "${MERIKEN_SCHEDULED_TIME_ENABLED:-1}" = "1" ]
 }
 
 _clear_soren91_mode_flag() {
@@ -236,6 +240,10 @@ PY
 }
 
 scheduled_meriken_time_is_active() {
+	if ! _scheduled_meriken_time_enabled; then
+		_clear_meriken_time_state
+		return 1
+	fi
 	local end_epoch=0
 	end_epoch=$(_meriken_time_state_end_epoch 2>/dev/null || echo 0)
 	case "$end_epoch" in
@@ -253,6 +261,7 @@ scheduled_meriken_time_is_active() {
 }
 
 scheduled_meriken_time_begin() {
+	_scheduled_meriken_time_enabled || return 1
 	local reason="${1:-scheduled}"
 	local end_epoch=0
 	end_epoch=$(_meriken_time_slot_end_epoch 2>/dev/null || echo 0)
@@ -327,13 +336,56 @@ _soren91_text_has_japanese() {
 	printf '%s' "$1" | grep -q '[ぁ-んァ-ヶ一-龠々ー]'
 }
 
+_soren91_text_is_meta_failure() {
+	local text
+	text=$(printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g')
+	[ -n "$text" ] || return 0
+	printf '%s' "$text" | grep -Eiq '申し訳(ありません|ございません|ない).*(エラーメッセージ|提供|ユーザーメッセージ|指示|タスク|情報|スクリーンショット)' && return 0
+	printf '%s' "$text" | grep -Eiq '(エラーメッセージ|ユーザーメッセージ|具体的な指示|明確な指示|具体的なタスク).*(提供されてい|見当たりません|ありません|ない|不足)' && return 0
+	printf '%s' "$text" | grep -Eiq '(入力|依頼|プロンプト|コンテキスト|戦略ヘッダー|本文).*(提供されてい|与えられてい|見当たりません|ありません|ない|不足)' && return 0
+	printf '%s' "$text" | grep -Eiq '(エラー|エラーメッセージ).*(詳細|内容|原因|情報).*(提供されてい|見当たりません|ありません|ない|不足|不明)' && return 0
+	printf '%s' "$text" | grep -Eiq '(ツール|権限|許可|WebFetch|検索|外部アクセス).*(確認|必要|できません|ありません|ない)' && return 0
+	printf '%s' "$text" | grep -Eiq '(何も言えません|語ることはできません|控えておくべき|確認させてください|どうすればよい|何を.*すれば)' && return 0
+	printf '%s' "$text" | grep -Eiq '(テキスト|文章|説明|解説).*(生成|作成).*(失敗|できません|できない|無理)' && return 0
+	printf '%s' "$text" | grep -Eiq '(戦略|strategy).*(説明|解説).*(できません|できない|無理)' && return 0
+	printf '%s' "$text" | grep -Eiq '(日本語|話し言葉).*(直す|言い換え|変換).*(できません|できない|無理|失敗)' && return 0
+	return 1
+}
+
+_soren91_fallback_strategy_explanation() {
+	local strategy_header="${1:-}"
+	local details=""
+	if printf '%s' "$strategy_header" | grep -Eiq '高さ|height|deadline|デッドライン|高積み'; then
+		details="${details}高く積み上がる前に置き場所を絞り、"
+	fi
+	if printf '%s' "$strategy_header" | grep -Eiq '先読み|look.?ahead|next|次'; then
+		details="${details}次のピースまで見て、"
+	fi
+	if printf '%s' "$strategy_header" | grep -Eiq 'merge|併合|chain|pipeline|パイプライン'; then
+		details="${details}併合の流れを残しながら、"
+	fi
+	if [ -z "$details" ]; then
+		details="置き場所を慎重に選び、"
+	fi
+	printf '%s\n' "今のメリケンAIは、${details}盤面を薄く保つ方針です。派手な勝負より生存率を買う、いかにも資本主義らしい臆病な投資判断ですね。まあ、その臆病さで最後まで残れば勝ちです。"
+}
+
 _soren91_provider_error_preview() {
 	printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g' | cut -c1-160
 }
 
+_soren91_text_generation_debug_file() {
+	local tag="$1"
+	local debug_dir="$ELOOP_LIB_DIR/tmp/debug/soren91_strategy_explanation"
+	local safe_tag
+	safe_tag=$(printf '%s' "$tag" | tr -c '[:alnum:]_-' '_')
+	mkdir -p "$debug_dir" 2>/dev/null || return 0
+	printf '%s/%s_%s_error.txt' "$debug_dir" "$(date +%Y%m%d_%H%M%S)" "$safe_tag"
+}
+
 _soren91_generate_text_with_shared_fallback() {
-	local tag="$1" prompt="$2" fallback_mode="${3:-gemini}"
-	local prompt_file="" err_file="" result="" err_preview=""
+	local tag="$1" prompt="$2" fallback_mode="${3:-${SOREN91_TEXT_FALLBACKS:-claude}}"
+	local prompt_file="" err_file="" debug_file="" result="" err_preview=""
 
 	command -v node >/dev/null 2>&1 || return 1
 	prompt_file=$(mktemp /tmp/soren91_ai_prompt.XXXXXX) || return 1
@@ -342,17 +394,40 @@ _soren91_generate_text_with_shared_fallback() {
 		return 1
 	}
 	printf '%s' "$prompt" >"$prompt_file"
+	debug_file=$(_soren91_text_generation_debug_file "$tag")
 
-	if result=$(node "$SOREN91_DIR/text_ai.mjs" --tag "$tag" --prompt-file "$prompt_file" --fallbacks "$fallback_mode" 2>"$err_file"); then
+	if result=$(SOREN91_TEXT_CLAUDE_TIMEOUT="${SOREN91_TEXT_CLAUDE_TIMEOUT:-60}" node "$SOREN91_DIR/text_ai.mjs" --tag "$tag" --prompt-file "$prompt_file" --fallbacks "$fallback_mode" 2>"$err_file"); then
 		rm -f "$prompt_file" "$err_file"
+		rm -f "$debug_file" 2>/dev/null || true
 		printf '%s' "$result"
 		return 0
 	fi
 
 	err_preview=$(_soren91_provider_error_preview "$(cat "$err_file" 2>/dev/null || true)")
+	if [ -n "$debug_file" ]; then
+		{
+			printf 'tag=%s\n' "$tag"
+			printf 'fallbacks=%s\n' "$fallback_mode"
+			printf 'time=%s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+			cat "$err_file" 2>/dev/null || true
+		} >"$debug_file" 2>/dev/null || true
+	fi
 	rm -f "$prompt_file" "$err_file"
-	[ -n "$err_preview" ] && log "[SOREN91] ${tag}: text generation failed (${err_preview})"
+	[ -n "$err_preview" ] && log "[SOREN91] ${tag}: text generation failed (${err_preview})" >&2
 	return 1
+}
+
+_soren91_dump_strategy_explanation_debug() {
+	local phase="$1" text="$2"
+	local debug_dir="$ELOOP_LIB_DIR/tmp/debug/soren91_strategy_explanation"
+	local debug_file
+	mkdir -p "$debug_dir" 2>/dev/null || return 0
+	debug_file="$debug_dir/$(date +%Y%m%d_%H%M%S)_${phase}.txt"
+	{
+		printf 'phase=%s\n' "$phase"
+		printf 'time=%s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		printf '%s\n' "$text"
+	} >"$debug_file" 2>/dev/null || true
 }
 
 _soren91_start_capitalism_corner() {
@@ -390,7 +465,7 @@ _soren91_generate_strategy_explanation() {
 	local prompt_text
 	prompt_text=$(cat "$prompt_file")
 	prompt_text="${prompt_text//\{\{STRATEGY_HEADER\}\}/$strategy_header}"
-	_soren91_generate_text_with_shared_fallback "strategy_explanation" "$prompt_text" "gemini,opencode"
+	_soren91_generate_text_with_shared_fallback "strategy_explanation" "$prompt_text" "${SOREN91_TEXT_FALLBACKS:-claude}"
 }
 
 _soren91_rewrite_strategy_explanation_to_japanese() {
@@ -404,7 +479,7 @@ _soren91_rewrite_strategy_explanation_to_japanese() {
 	local prompt_text
 	prompt_text=$(cat "$prompt_file")
 	prompt_text="${prompt_text//\{\{STRATEGY_EXPLANATION\}\}/$raw_text}"
-	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "$prompt_text" "gemini,opencode"
+	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "$prompt_text" "${SOREN91_TEXT_FALLBACKS:-claude}"
 }
 
 soren91_start() {
@@ -446,7 +521,7 @@ soren91_start() {
 		_meriken_mode=1
 	elif scheduled_meriken_time_is_active; then
 		_meriken_mode=1
-	elif [ "$(date +%H)" = "$MERIKEN_TIME_START_HOUR" ]; then
+	elif _scheduled_meriken_time_enabled && [ "$(date +%H)" = "$MERIKEN_TIME_START_HOUR" ]; then
 		# 定時メリケン枠の開始時刻に起動されたセッションはメリケンモード扱いにする。
 		# 継続判定は state file の end_epoch を優先する。
 		_meriken_mode=1
@@ -502,16 +577,41 @@ soren91_start() {
 				strategy_header=$(sed -n '1,/\*\//p' "$SOREN91_DIR/strategy.mjs" 2>/dev/null)
 				if [ -n "$strategy_header" ]; then
 					local strategy_explain=""
-					strategy_explain=$(_soren91_generate_strategy_explanation "$strategy_header")
+					if strategy_explain=$(_soren91_generate_strategy_explanation "$strategy_header"); then
+						_soren91_dump_strategy_explanation_debug "raw" "$strategy_explain"
+					else
+						_soren91_dump_strategy_explanation_debug "raw_failed" "$strategy_explain"
+						log "[SOREN91] 戦略解説の生成に失敗したため読み上げをスキップ"
+						strategy_explain=""
+					fi
+					if [ -n "$strategy_explain" ] && _soren91_text_is_meta_failure "$strategy_explain"; then
+						log "[SOREN91] 戦略解説がメタ失敗文のため読み上げをスキップ"
+						strategy_explain=""
+					fi
 					if [ -n "$strategy_explain" ] && ! _soren91_text_has_japanese "$strategy_explain"; then
+						local rewritten_strategy_explain=""
 						log "[SOREN91] 戦略解説が英語寄りのため日本語へ再生成"
-						strategy_explain=$(_soren91_rewrite_strategy_explanation_to_japanese "$strategy_explain")
+						if rewritten_strategy_explain=$(_soren91_rewrite_strategy_explanation_to_japanese "$strategy_explain"); then
+							strategy_explain="$rewritten_strategy_explain"
+						else
+							log "[SOREN91] 戦略解説の日本語化生成に失敗したため読み上げをスキップ"
+							strategy_explain=""
+						fi
+					fi
+					if [ -n "$strategy_explain" ] && _soren91_text_is_meta_failure "$strategy_explain"; then
+						log "[SOREN91] 戦略解説の日本語化結果がメタ失敗文のため読み上げをスキップ"
+						strategy_explain=""
 					fi
 					if [ -n "$strategy_explain" ] && ! _soren91_text_has_japanese "$strategy_explain"; then
 						log "[SOREN91] 戦略解説の日本語化に失敗したため読み上げをスキップ"
 						strategy_explain=""
 					fi
+					if _soren91_text_is_meta_failure "$strategy_explain"; then
+						log "[SOREN91] 戦略解説の最終ガードでメタ失敗文を検出したため読み上げをスキップ"
+						strategy_explain=""
+					fi
 					if [ -n "$strategy_explain" ]; then
+						_soren91_dump_strategy_explanation_debug "final" "$strategy_explain"
 						local explain_file
 						explain_file=$(mktemp /tmp/eloop_soren91_strategy.XXXXXX)
 						printf '%s\n' "$strategy_explain" > "$explain_file"
@@ -767,4 +867,5 @@ soren91_cleanup() {
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_clear_meriken_time_state
+	_soren91_switch_obs_layout china || true
 }

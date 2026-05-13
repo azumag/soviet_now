@@ -10,6 +10,11 @@ _is_improve_running() {
 	grep -q '"status"[[:space:]]*:[[:space:]]*"running"\|"status"[[:space:]]*:[[:space:]]*"manual"' "$IMPROVE_STATE_FILE" 2>/dev/null
 }
 
+_scheduled_meriken_time_should_run() {
+	[ "${MERIKEN_SCHEDULED_TIME_ENABLED:-1}" = "1" ] || return 1
+	[ "$(date +%H)" = "${MERIKEN_TIME_START_HOUR:-20}" ]
+}
+
 #=== 改善ステート管理 ===
 
 _read_improve_state() {
@@ -229,7 +234,7 @@ json.dump(rs, open(rs_file, 'w'))
 		./obs_control.sh hide soren console4 2>/dev/null &
 		if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 			log "[IMPROVE][MANUAL] manual_meriken_mode=on のため、メリケンAI継続"
-		elif [ "$(date +%H)" = "20" ]; then
+		elif _scheduled_meriken_time_should_run; then
 			log "[IMPROVE][MANUAL] 20時台: メリケンAIタイムに移行 → soren91継続"
 			soren91_improve
 			MERIKEN_TIME_PENDING=1
@@ -273,10 +278,10 @@ json.dump(rs, open(rs_file, 'w'))
 			fi
 		fi
 
-		local watchdog_sec="${IMPROVE_STALE_WATCHDOG_SEC:-1200}"
-		case "$watchdog_sec" in
-		''|*[!0-9]*) watchdog_sec=1200 ;;
-		esac
+			local watchdog_sec="${IMPROVE_STALE_WATCHDOG_SEC:-3600}"
+			case "$watchdog_sec" in
+			''|*[!0-9]*) watchdog_sec=3600 ;;
+			esac
 		if [ "$pid_alive" = true ] && [ "${watchdog_sec:-0}" -gt 0 ]; then
 			local updated_at updated_age now_epoch log_age log_mtime prev_phase prev_detail
 			updated_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('updated_at',0) or 0))" 2>/dev/null || echo 0)
@@ -292,12 +297,7 @@ json.dump(rs, open(rs_file, 'w'))
 				fi
 			fi
 			if [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
-				log "[IMPROVE] watchdog発火: ${updated_age}s 状態更新なし / ${log_age}s ログ更新なし → 停止 (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
-				if ! _stop_improve_pid_if_running "$pid" "improve_watchdog"; then
-					log "[IMPROVE] watchdog停止失敗: PID=$pid がまだ生存"
-				else
-					pid_alive=false
-				fi
+				log "[IMPROVE] watchdog警告: ${updated_age}s 状態更新なし / ${log_age}s ログ更新なし (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
 			fi
 		fi
 
@@ -371,7 +371,7 @@ with open(rs_file, 'w') as f:
 
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				:
-			elif [ "$(date +%H)" = "20" ]; then
+			elif _scheduled_meriken_time_should_run; then
 				:
 			else
 				if [ -n "${SOREN91_STOPPING_FILE:-}" ]; then
@@ -386,10 +386,14 @@ with open(rs_file, 'w') as f:
 				rm -f "$IMPROVE_LOCK_FILE"
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
-				# failed_no_apply: ロックファイルを残してtouchする
-				# → daemon再起動後にtrigger_adaptive_improvementが同じデータで再試行できる
-				# → _is_improve_running()はstatus=idleのためfalseを返しmain loopは止まらない
-				touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				# failed_no_apply: 有効なlockだけを残す。空lockはmain loopを止めるだけなので作らない。
+				if [ -s "$IMPROVE_LOCK_FILE" ]; then
+					touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				elif [ -s "$ACCUMULATED_GAMES_FILE" ]; then
+					cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				else
+					rm -f "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				fi
 				# バックオフを設定して即座にリトライしない (soren91 stop→start ループ防止)
 				local _backoff_count=1
 				if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
@@ -404,7 +408,7 @@ with open(rs_file, 'w') as f:
 			./obs_control.sh hide soren console4 2>/dev/null &
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				log "[IMPROVE] manual_meriken_mode=on のため、メリケンAI継続"
-			elif [ "$(date +%H)" = "20" ]; then
+			elif _scheduled_meriken_time_should_run; then
 				# 20時台: メリケンAIタイムに移行するため停止しない
 				log "[IMPROVE] 20時台: メリケンAIタイムに移行 → soren91継続"
 				soren91_improve
@@ -787,6 +791,11 @@ trigger_adaptive_improvement() {
 		rm -f "$IMPROVE_LOCK_FILE"
 		return 1
 	}
+	if ! printf '%s' "$lock_data" | python3 -m json.tool >/dev/null 2>&1; then
+		log "[IMPROVE] ロックファイルが空または壊れているため削除"
+		rm -f "$IMPROVE_LOCK_FILE"
+		return 1
+	fi
 	acc_count=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0)
 	all_history_files=$(echo "$lock_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
 	all_scores=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)

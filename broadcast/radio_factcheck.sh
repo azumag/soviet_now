@@ -1,6 +1,5 @@
 # broadcast/radio_factcheck.sh - ファクトチェック, Webグラウンディング
 
-
 _radio_extract_grounding_query() {
 	local corner_name="$1" prompt_context="$2" selected_news="${3:-}" query=""
 	case "$corner_name" in
@@ -32,11 +31,11 @@ _radio_fetch_web_grounding() {
 	log "[RADIO:${corner_name}] web grounding取得中... query=${query}" >&2
 	grounding=$(timeout "${grounding_timeout}s" \
 		python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
-			--corner "$corner_name" \
-			--query "$query" \
-			--ttl-sec "${RADIO_WEB_GROUNDING_TTL_SEC:-21600}" \
-			--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
-			--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null)
+		--corner "$corner_name" \
+		--query "$query" \
+		--ttl-sec "${RADIO_WEB_GROUNDING_TTL_SEC:-21600}" \
+		--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
+		--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null)
 	rc=$?
 	if [ "$rc" -eq 124 ]; then
 		log "[RADIO:${corner_name}] web grounding timeout (${grounding_timeout}s) -> continue without grounding" >&2
@@ -57,7 +56,7 @@ _radio_should_fact_check() {
 	[ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ] || return 1
 	# 戦略分析系コーナーはファクトチェック不要（自己生成データのみ）
 	case "$corner_name" in
-	rollback|strategy|celebration) return 1 ;;
+	rollback | strategy | celebration | news | jiji | theme) return 1 ;;
 	esac
 	local skip_list=" ${RADIO_FACT_CHECK_SKIP_CORNERS:-} "
 	case "$skip_list" in
@@ -86,7 +85,7 @@ _radio_fact_check_length_ok() {
 
 _radio_fact_check_style_reason() {
 	local original="$1" checked="$2" issues="$3"
-	printf '%s\0%s\0%s' "$original" "$checked" "$issues" | \
+	printf '%s\0%s\0%s' "$original" "$checked" "$issues" |
 		python3 -c '
 import difflib
 import re

@@ -168,3 +168,4 @@
 {"eventType":"improve","fromHash":"36770aba73c0","toHash":"ab7a71fc6634","note":"single-game improve #2700","gameStart":2700,"gameEnd":2700,"bestGame":2700,"recordedAt":"2026-04-15T11:14:00.768Z"}
 {"eventType":"improve","fromHash":"ab7a71fc6634","toHash":"204dabc43e7c","note":"single-game improve #2712","gameStart":2712,"gameEnd":2712,"bestGame":2712,"recordedAt":"2026-04-15T12:00:49.075Z"}
 {"eventType":"improve","fromHash":"204dabc43e7c","toHash":"a804587578b2","note":"single-game improve #2784","gameStart":2784,"gameEnd":2784,"bestGame":2784,"recordedAt":"2026-04-16T11:52:49.330Z"}
+{"eventType":"improve","fromHash":"a804587578b2","toHash":"887aa07afd97","note":"single-game improve #4344","gameStart":4344,"gameEnd":4344,"bestGame":4344,"recordedAt":"2026-05-11T10:14:14.414Z"}
