@@ -912,6 +912,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = 0.0
     best_score = -float("inf")
     best_reason = ""
+    best_result = None
 
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
@@ -1080,8 +1081,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     safe_indexed_results = [
         (idx, r) for idx, r in indexed_results if not r.get("crosses_deadline", False)
     ]
-    buffered_indexed_results = [
+    margin_safe_indexed_results = [
         (idx, r) for idx, r in safe_indexed_results
+        if risk_top_value(r) <= deadline_y - 0.15
+    ]
+    buffered_indexed_results = [
+        (idx, r) for idx, r in margin_safe_indexed_results
         if risk_top_value(r) <= deadline_buffer_y
     ]
     min_deadline_risk_top = min(
@@ -1090,6 +1095,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     )
     if buffered_indexed_results:
         active_indexed_results = buffered_indexed_results
+    elif margin_safe_indexed_results:
+        active_indexed_results = margin_safe_indexed_results
     elif safe_indexed_results:
         active_indexed_results = safe_indexed_results
     else:
@@ -2573,6 +2580,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            best_result = result
+
+    if (
+        best_result is not None
+        and best_result.get("crosses_deadline", False)
+        and best_result.get("merge_grade", "NO") == "NO"
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results
+        if fallback_pool:
+            min_fallback_risk = min(risk_top_value(r) for _, r in fallback_pool)
+            fallback_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if risk_top_value(r) <= min_fallback_risk + 0.05
+            ] or fallback_pool
+            fallback_merges = [
+                (idx, r)
+                for idx, r in fallback_band
+                if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+            ]
+            _, fallback = min(
+                fallback_merges or fallback_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}.get(
+                        item[1].get("merge_grade", "NO"),
+                        9,
+                    ),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_STRATEGY_CROSSING_NO_POSTCONDITION"
+                if best_reason
+                else "STRATEGY_CROSSING_NO_POSTCONDITION"
+            )
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))

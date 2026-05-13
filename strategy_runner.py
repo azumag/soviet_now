@@ -438,6 +438,56 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         if replacement.get("crosses_deadline", False) and replacement.get("merge_grade", "NO") == "NO":
             replacement = min(risk_band, key=lambda r: (risk_top(r), abs(float(r.get("x", 0.0) or 0.0))))
 
+    # Absolute postcondition: when a non-crossing candidate exists, the runtime
+    # safety layer must never finish on a deadline-crossing candidate. Previous
+    # logs showed *_TO_NO while decision_crosses_deadline stayed true, so make
+    # the invariant explicit after all branch-specific replacements.
+    if safe and replacement.get("crosses_deadline", False):
+        min_safe_top = min(risk_top(s) for s in safe)
+        safe_band = [
+            r for r in safe if risk_top(r) <= min_safe_top + 0.05
+        ] or safe
+        safe_merge_band = [
+            r for r in safe_band if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        replacement = min(
+            safe_merge_band or safe_band,
+            key=lambda r: (
+                risk_top(r),
+                grade_rank.get(r.get("merge_grade", "NO"), 9),
+                abs(float(r.get("x", 0.0) or 0.0)),
+            ),
+        )
+
+    if (
+        replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
+    ):
+        risk_band = [
+            r for r in results if risk_top(r) <= min_risk_top + 0.05
+        ] or [min_risk_candidate]
+        non_no_band = [
+            r for r in risk_band if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        if non_no_band:
+            replacement = min(non_no_band, key=rank_candidate)
+        elif safe:
+            replacement = min(
+                safe,
+                key=lambda r: (
+                    risk_top(r),
+                    abs(float(r.get("x", 0.0) or 0.0)),
+                ),
+            )
+        else:
+            replacement = min(
+                risk_band,
+                key=lambda r: (
+                    risk_top(r),
+                    abs(float(r.get("x", 0.0) or 0.0)),
+                ),
+            )
+
     new_decision = dict(decision)
     old_grade = chosen.get("merge_grade", "NO")
     new_grade = replacement.get("merge_grade", "NO")
