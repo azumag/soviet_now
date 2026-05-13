@@ -107,25 +107,6 @@ Phases (determined by board max Y):
      # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先" (配置管理でheight safety优先)
      # Fixes failure mode: NO merge at critical board causing max_y runaway (extra_high pattern)
      # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260503_003308_score3566.jsonl
-     # v631: axis 9.10 high-type growth pipeline guidance — centroid of type 8-12 pieces during NO merge
-     # Adopted from best_score6058_strategy.py (hall-of-fame, score 6058) and best_score5801_strategy.py
-     # analysis_result.md adopted hypothesis: type 8-12 centroid proximity during NO merge
-     # Worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
-     # Pieces type 8-12 existed but scattered — axis 9.10 guides toward centroid to prevent scatter.
-     # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !axis_88_horizontal_suppression && !death_spiral
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10),
-     #       strategy_versions/best_score6058_strategy.py (axis 9.10 implementation),
-     #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed)
-     # v630: axis 9.9 Russia-phase next-Russia growth pipeline guidance
-     # Adopted from best_score6058_strategy.py (hall-of-fame, score 6058)
-     # analysis_result.md adopted hypothesis: Russia建国後フェーズ専用の「次ロシア成長パイプライン誘導」軸
-     # Guards: russia_phase && !double_russia_phase && merge_grade==NO && max_y>=1.0 && !death_spiral
-     # (1) Russia piece below-position bonus: +150*merge_mult*russia_pipeline_mult for below placement
-     # (2) High-type (type>=10) centroid clustering: +80*merge_mult for proximity to high-type centroid
-     # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消费、
-     #   次ロシアへの併合パスが構築されない"
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
-     #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
      # v619: axis 9.6b NO-merge proximity +200 — fix worst_game T47 same-type scatter
      # analysis_result.md adopted hypothesis: axis 9.6b bonus (~32-60) too weak vs height diff.
      # Worst game T47 chose x=3.0 (scattered type 7) when x=0.0 (adjacent) was available.
@@ -907,8 +888,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
-    # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
-    double_russia_phase = russia_phase_count >= 2
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -1004,31 +983,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ),
         default=999.0,
     )
-    current_top_edge_y = float(reactor.get("top_edge_y", max_y) or max_y)
-    large_deadline_pressure = (
-        int(next_type or 0) >= 9 and current_top_edge_y >= deadline_y - 1.15
-    )
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-
-        # v548: death_spiral flag — danger pieces + high rp + NO merge + deadline
-        # Used to suppress horizontal guidance bonuses when board is in death spiral
-        death_spiral = (
-            danger_piece_count > 0
-            and reactive_pair_count >= 3
-            and merge_grade == "NO"
-            and deadline_crossed
-        )
-        # v602: axis 8.8 horizontal suppression flag — rp>=3 && NO merge
-        # Suppresses horizontal guidance bonuses during merge drought (height is sole differentiator)
-        axis_88_horizontal_suppression = (
-            reactive_pair_count >= 3 and merge_grade == "NO"
-        )
-
         top_y_after_drop = float(
             result.get(
                 "risk_top_y_after_drop",
@@ -1073,12 +1033,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ):
             score -= 750000.0
             reasons.append("DEADLINE_MIN_RISK_HARD_BLOCK")
-
-        # Large pieces near the deadline have enough rotation/settling error
-        # that a merely "non-crossing" prediction can still cross live.
-        if large_deadline_pressure and top_y_after_drop > min_deadline_risk_top + 0.05:
-            score -= 650000.0
-            reasons.append("LARGE_DEADLINE_MIN_RISK_HARD_BLOCK")
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
@@ -1366,114 +1320,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     congestion_scale = 1.0 + (piece_count - 28) * 0.12
                     pipeline_bonus *= min(congestion_scale, 3.0)
                 score += pipeline_bonus
-
-        # ----- v626: axis 9.9 Russia-phase next-Russia growth pipeline guidance -----
-        # analysis_result.md adopted hypothesis: ロシア建国後フェーズ専用の「次ロシア成長パイプライン誘導」軸。
-        # ゲームログ分析: ベストゲームもextra_highゲームも、ロシア建国後はBOARD_COMPRESSIONのみ消费。
-        # merge droughtに突入し、2つ目のロシアを育成するパイプラインが構築されていない。
-        # batch_summary: 高スコア群と低スコア群で終盤max_yに差がない(1.84) → 盤面の高さではなく、
-        # 盤面に残ったピースのtypeがスコアを分ける。
-        #
-        # ロジック:
-        # (1) 既存ロシアピース(type 15)の「真下または斜め下」に配置するボーナスポジション評価
-        #     各type 15ピースについて、その真下(y-1.0以内)または斜め下(y-0.5以内, |dx|<1.5)に
-        #     配置候補がある場合、+150 * merge_mult * russia_pipeline_mult
-        # (2) 高typeピース(type>=10)の近接クラスタリング
-        #     盤面上のtype>=10のピースの重心に近い配置候補に+80 * merge_mult * russia_pipeline_mult
-        #
-        # russia_pipeline_mult: 既存ロシアピースのy座標が深いほど大きい
-        #   (y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x)
-        #
-        # ガード条件:
-        # - russia_phase == true かつ double_russia_phase == false (ロシアが1つの場合のみ)
-        # - merge_grade == "NO" (合併机会がない場合のみ。合併優先は既存軸に任せる)
-        # - max_y >= 1.0 (盤面がある程度上がっている場合のみ。LOWフェーズでは不要)
-        # - death_spiralではない (death_spiralでは高さ管理のみが正解)
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
-        #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
-        # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消费、
-        #   次ロシアへの併合パスが構築されない"
-
-        if (russia_phase and not double_russia_phase
-                and merge_grade == "NO"
-                and max_y >= 1.0
-                and not death_spiral):
-            # (1) Russia piece below-position bonus
-            # Find the deepest (lowest y) type 15 piece for priority targeting
-            russia_pieces = [p for p in pieces if p.get("type") == 15]
-            if russia_pieces:
-                deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
-                russia_y = deepest_russia.get("y", -10)
-                russia_x = deepest_russia.get("x", 0)
-
-                # russia_pipeline_mult: deeper Russia = higher multiplier
-                # y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x, linear interpolation
-                russia_pipeline_mult = max(0.3, min(2.0, 1.0 - russia_y * 0.25))
-
-                # Check if candidate position is below or diagonally below the Russia piece
-                dx = abs(x - russia_x)
-                dy = landing_y - russia_y  # positive = candidate is below Russia
-
-                # "Below" means: within 1.0 y-units below Russia, and within 1.5 x-units horizontally
-                # This covers "directly below" and "diagonally below" positions
-                if dx < 1.5 and -0.5 <= dy <= 1.0:
-                    # Bonus stronger when closer to directly below (dx=0, dy=0.5)
-                    below_bonus = 150.0 * merge_mult * russia_pipeline_mult
-                    # Reduce for horizontal offset
-                    below_bonus *= max(0.0, 1.0 - dx / 1.5)
-                    # Reduce if too far below or above the ideal zone
-                    ideal_dy = 0.5
-                    dy_penalty = 1.0 - abs(dy - ideal_dy) * 0.5
-                    below_bonus *= max(0.0, dy_penalty)
-                    if below_bonus > 20:
-                        score += below_bonus
-                        if "RUSSIA_PIPELINE_BELOW" not in "_".join(reasons):
-                            reasons.append("RUSSIA_PIPELINE_BELOW")
-
-            # (2) High-type piece (type>=10) centroid clustering
-            # Cluster near high-type pieces to create merge pipeline for next Russia
-            high_type_pieces = [p for p in pieces if p.get("type") >= 10]
-            if len(high_type_pieces) >= 2:
-                hc_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
-                hc_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
-
-                # Use same russia_pipeline_mult (already computed above if russia_pieces exist)
-                # If no russia_pieces (shouldn't happen given guard), default to 1.0
-                _rpm = russia_pipeline_mult if russia_pieces else 1.0
-
-                dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.5
-                if dist_to_centroid < 3.0:
-                    cluster_bonus = 80.0 * merge_mult * _rpm
-                    cluster_bonus *= max(0.0, 1.0 - dist_to_centroid / 3.0)
-                    if cluster_bonus > 10:
-                        score += cluster_bonus
-                        if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
-                            reasons.append("HIGH_TYPE_CLUSTER")
-
-        # ----- v610: axis 9.10 high-type growth pipeline guidance -----
-        # Worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
-        # Pieces type 8-12 existed but scattered, no guidance to centralize them
-        # Hall-of-fame (best_score5801) has axis 9.10: centroid of type 8-12 pieces → proximity bonus
-        # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !axis_88_horizontal_suppression && !death_spiral
-        # Suppress when: axis_88_horizontal_suppression or death_spiral (avoid duplicate with 9.65/9.8)
-        # Fixes failure mode: "merge drought中のedge scatter → max_y runaway → game over"
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 high-type growth pipeline)
-        #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis)
-        #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed)
-        #       advice.md (zoumotu3: growth concentration)
-        if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25
-            and not axis_88_horizontal_suppression and not death_spiral):
-            high_type_pieces = [p for p in pieces if 8 <= p.get('type', 0) <= 12]
-            if len(high_type_pieces) >= 2:
-                # Calculate centroid of high-type pieces (type 8-12)
-                cx = sum(p.get('x', 0) for p in high_type_pieces) / len(high_type_pieces)
-                cy = sum(p.get('y', 0) for p in high_type_pieces) / len(high_type_pieces)
-                # Proximity bonus: closer to centroid = higher bonus
-                dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
-                if dist < 3.0:
-                    pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
-                    score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
