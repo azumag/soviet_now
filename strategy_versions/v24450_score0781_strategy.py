@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v653: mandatory_themes deadline filter — force skip deadline_crossed+NO_MERGE+crosses_deadline candidates
-# worst game T50-56: NO merge + crosses_deadline=true → max_y runaway 1.96→2.46→2.96→3.05 (score 451)
-# extra_low T57: crosses_deadline=true → 8-turn NO merge drought, deadline breach (score 781)
-# mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-# v627 force_lowest was insufficient — penalty can be outweighed by other bonuses (AVOID_BLOCK, MERGE_PATH).
-# Filter: skip candidates where deadline_crossed && merge_grade=="NO" && crosses_deadline==True.
-# Exception: when global_merge_available==False, keep crosses_deadline==False candidates only.
-# Fixes rollback failure mode: "deadline_crossed + NO merge + crosses_deadline selected → max_y runaway"
-# refs: tmp/analysis_result.md (Implementation Plan: mandatory filter),
-#       tmp/batch_summary.txt (HEIGHT_CONTROL 24.1%, avg_delta=3.2 low),
-#       game_history/20260513_075845_score0451.jsonl (worst),
-#       game_history/20260513_074540_score0781.jsonl (extra_low)
-
 # v621: DANGER_ZONE_FORCE_MERGE layered penalties + NEAR filter relaxation + suppress_height_control guard
 # Change 1 (v619): DANGER_ZONE_FORCE_MERGE layered penalties — deadline_crossed&&rp>=3:-5000, max_y>=3.0&&rp>=5:-6000
 # Change 2 (v620): NEAR filter relaxation — reactor_margin threshold <1.0 → <-1.5 (keeps NEAR viable at margin -1.5 to 1.0)
@@ -1207,23 +1194,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-
-        # ----- mandatory filter: deadline_crossed + NO merge + crosses_deadline → skip -----
-        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # worst game T50: crosses_deadline=true + NO merge → max_y runaway 1.96→2.46→2.96→3.05
-        # extra_low T57: crosses_deadline=true → next turn deadline breach, 8-turn NO merge drought
-        # v627 force_lowest was insufficient — penalty can be outweighed by other bonuses (AVOID_BLOCK, MERGE_PATH).
-        # Filter: skip candidates where deadline_crossed && merge_grade=="NO" && crosses_deadline==True.
-        # Exception: when global_merge_available==False, keep crosses_deadline==False candidates
-        #   to avoid all candidates being eliminated (best_x stays at default).
-        if (deadline_crossed
-                and merge_grade == "NO"
-                and result.get("crosses_deadline", False)):
-            if global_merge_available:
-                continue
-            else:
-                if result.get("crosses_deadline", False):
-                    continue
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
