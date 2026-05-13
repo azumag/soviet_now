@@ -29,6 +29,15 @@
 # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
 # Refs: tmp/analysis_result.md (Implementation Plan: deadline NO merge force lowest y)
 
+# v654: deadline_crossed + NO merge + max_y>=2.0 → height penalty to force lowest landing_y
+# worst game T60: deadline_crossed=true, merge_grade="NO", max_y=2.38, decision_crosses_deadline=false
+#   → v653 filter did NOT skip (crosses_deadline=false), but v627 force_lowest didn't fire
+#     (requires crosses_deadline=true), COLUMN_CEILING_BEST selected (x=0.52) → max_y runaway
+# v627 force_lowest requires crosses_deadline=true — v654 closes that gap.
+# mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+# Refs: tmp/analysis_result.md (Implementation Plan: v654 deadline NO merge height penalty),
+#       game_history/20260513_100401_score0401.jsonl (worst_game T60)
+
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -1224,6 +1233,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 if result.get("crosses_deadline", False):
                     continue
+
+        # ----- v654: deadline_crossed + NO merge + max_y>=2.0 → force lowest landing_y (NEW) -----
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # worst game T60: deadline_crossed=true, merge_grade="NO", max_y=2.38, crosses_deadline=false
+        #   → v653 filter did NOT skip (crosses_deadline=false), but force_lowest didn't fire
+        #     (requires crosses_deadline=true), and COLUMN_CEILING_BEST was selected (x=0.52)
+        # v627 force_lowest requires crosses_deadline=true — this new axis closes that gap.
+        # When deadline_crossed && merge_grade=="NO" && max_y>=2.0, apply height penalty
+        # proportional to landing_y (landing_y * -2000) to force lowest y regardless of
+        # crosses_deadline status. Does not fire in death_spiral (handled by axis 8.8).
+        # death_spiral is defined later in the loop (line 1524), so we inline its condition.
+        # Refs: tmp/analysis_result.md (Implementation Plan: v654 deadline NO merge height penalty)
+        if (deadline_crossed
+                and merge_grade == "NO"
+                and max_y >= 2.0
+                and not (danger_piece_count > 0 and reactive_pair_count >= 3)):
+            __dc_penalty = landing_y * 2000.0
+            score -= __dc_penalty
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
