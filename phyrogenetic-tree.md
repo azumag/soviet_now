@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-13 21:57:15 JST`
-- Nodes: `1432`
-- Edges: `1949`
-- Current: `70114388976d`
+- Updated: `2026-05-15 02:22:45 JST`
+- Nodes: `1522`
+- Edges: `1954`
+- Current: `4113c45a0e02`
 - Anchor: `f9442ef7bd5e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,188 +15,138 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_b0c54b9d8f38["b0c54b9d8f38<br/>g=24 n=20<br/>comp=11253.2"]
-    h_78870061e1a5["78870061e1a5<br/>g=12 n=12<br/>comp=9841.1"]
-    h_df62901dbf5e["df62901dbf5e<br/>g=48 n=20<br/>comp=10677.8"]
-    h_290af2204541["290af2204541<br/>g=12 n=12<br/>comp=10600.1"]
-    h_72e3b32b6029["72e3b32b6029<br/>g=24 n=20<br/>comp=11036.8"]
-    h_814c4143ae4c["814c4143ae4c<br/>g=48 n=20<br/>comp=10744.8"]
-    h_de61049454d1["de61049454d1<br/>g=14 n=14<br/>comp=10638.0"]
-    h_c67506278f95["c67506278f95<br/>g=24 n=20<br/>comp=10293.0"]
-    h_45a6393da5c2["45a6393da5c2<br/>g=24 n=20<br/>comp=11021.5"]
-    h_1dc1a2cfda77["1dc1a2cfda77<br/>g=24 n=20<br/>comp=11539.9"]
-    h_e0934b4a3e13["e0934b4a3e13<br/>g=72 n=20<br/>comp=10915.5"]
-    h_349a707114bf["349a707114bf<br/>g=12 n=12<br/>comp=9785.1"]
-    h_4cb6bc1b8163["4cb6bc1b8163<br/>g=14 n=14<br/>comp=10962.2"]
-    h_795af029451e["795af029451e<br/>g=13 n=13<br/>comp=10133.2"]
-    h_8f573d58de23["8f573d58de23<br/>g=24 n=20<br/>comp=10239.2"]
-    h_61fedc5dd74e["61fedc5dd74e<br/>g=48 n=20<br/>comp=10751.2"]
-    h_65921dd7b040["65921dd7b040<br/>g=24 n=20<br/>comp=11190.6"]
-    h_1ecf941003a8["1ecf941003a8<br/>g=12 n=12<br/>comp=10438.4"]
-    h_88dc7abdec46["88dc7abdec46<br/>g=24 n=20<br/>comp=10590.1"]
-    h_dd5278f232a8["dd5278f232a8<br/>g=24 n=20<br/>comp=11018.5"]
-    h_9ca29529d4a2["9ca29529d4a2<br/>g=26 n=20<br/>comp=9987.9"]
-    h_c3b834325c7b["c3b834325c7b<br/>g=24 n=20<br/>comp=11220.7"]
-    h_d2989ffff81e["d2989ffff81e<br/>g=22 n=20<br/>comp=10863.6"]
-    h_75e4eab65c4a["75e4eab65c4a<br/>g=23 n=20<br/>comp=10625.2"]
-    h_71f71bc828fa["71f71bc828fa<br/>g=48 n=20<br/>comp=11049.7"]
-    h_a2cf0ecbe2ba["a2cf0ecbe2ba<br/>g=48 n=20<br/>comp=9933.3"]
-    h_1fa4f1bdb308["1fa4f1bdb308<br/>g=72 n=20<br/>comp=11128.7"]
-    h_888a0e6a651f["888a0e6a651f<br/>g=43 n=20<br/>comp=10268.5"]
-    h_7e184fae3207["7e184fae3207<br/>g=12 n=12<br/>comp=9890.0"]
-    h_9476ed529771["9476ed529771<br/>g=24 n=20<br/>comp=11387.8"]
-    h_7ef86ce5a2bd["7ef86ce5a2bd<br/>g=12 n=12<br/>comp=11061.5"]
-    h_bcce193758b3["bcce193758b3<br/>g=72 n=20<br/>comp=10650.9"]
-    h_008be1334c29["008be1334c29<br/>g=0"]
-    h_7f746ab4e7eb["7f746ab4e7eb<br/>g=12 n=12<br/>comp=10202.0"]
-    h_fc36b52375f9["fc36b52375f9<br/>g=48 n=20<br/>comp=10602.5"]
-    h_e964b94bb7bc["e964b94bb7bc<br/>g=12 n=12<br/>comp=10347.2"]
-    h_e9242b4d9a93["e9242b4d9a93<br/>g=24 n=20<br/>comp=10632.0"]
-    h_3625f6994e3f["3625f6994e3f<br/>g=24 n=20<br/>comp=10836.1"]
-    h_348bca3216f8["348bca3216f8<br/>g=22 n=20<br/>comp=9962.3"]
-    h_6924159d3159["6924159d3159<br/>g=24 n=20<br/>comp=10507.0"]
-    h_6c5a2891cbd8["6c5a2891cbd8<br/>g=24 n=20<br/>comp=11385.1"]
-    h_5e8e69043345["5e8e69043345<br/>g=13 n=13<br/>comp=9720.0"]
-    h_5451741f330b["5451741f330b<br/>g=4 n=4<br/>comp=12136.6"]
-    h_9edb021fe9bc["9edb021fe9bc<br/>g=15 n=15<br/>comp=10741.6"]
-    h_1ee78f712e54["1ee78f712e54<br/>g=23 n=20<br/>comp=10380.1"]
-    h_c603d5236729["c603d5236729<br/>g=24 n=20<br/>comp=11256.0"]
-    h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
-    h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
-    h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
-    h_2ad5850b541e["2ad5850b541e"]
-    h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
     h_f9442ef7bd5e["f9442ef7bd5e<br/>ANCHOR<br/>g=16 n=16<br/>comp=11702.8"]
-    h_12dcaa0fba31["12dcaa0fba31<br/>g=2 n=2<br/>comp=10250.7"]
-    h_1387c0cd84b3["1387c0cd84b3<br/>g=3 n=3<br/>comp=11161.2"]
-    h_9bada9f1385f["9bada9f1385f<br/>g=2 n=2<br/>comp=13237.3"]
-    h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
-    h_967091db2b2d["967091db2b2d<br/>g=2 n=2<br/>comp=9227.2"]
-    h_26b781b24775["26b781b24775<br/>g=16 n=16<br/>comp=9211.5"]
-    h_70114388976d["70114388976d<br/>CURRENT"]
+    h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
+    h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
+    h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
+    h_45a778460147["45a778460147<br/>g=1 n=1<br/>comp=7759.0"]
+    h_4bec68bcc907["4bec68bcc907<br/>g=1 n=1<br/>comp=11107.0"]
+    h_3a905145d73b["3a905145d73b<br/>g=1 n=1<br/>comp=6671.0"]
+    h_487bb6a98fb1["487bb6a98fb1<br/>g=1 n=1<br/>comp=11399.0"]
+    h_c9d496f3a9db["c9d496f3a9db<br/>g=1 n=1<br/>comp=10169.0"]
+    h_416500ba76ab["416500ba76ab<br/>g=3 n=3<br/>comp=16870.5"]
+    h_dc66282041df["dc66282041df<br/>g=1 n=1<br/>comp=11197.0"]
+    h_f97d9059c4a0["f97d9059c4a0<br/>g=1 n=1<br/>comp=15638.0"]
+    h_0844c337fccf["0844c337fccf<br/>g=1 n=1<br/>comp=15694.0"]
+    h_37dc991befaf["37dc991befaf<br/>g=2 n=2<br/>comp=11299.4"]
+    h_b25f53b277de["b25f53b277de<br/>g=2 n=2<br/>comp=10534.8"]
+    h_70a3b1e28ca4["70a3b1e28ca4<br/>g=1 n=1<br/>comp=11574.0"]
+    h_74b31649bda3["74b31649bda3<br/>g=1 n=1<br/>comp=19757.0"]
+    h_fc7e846aaf48["fc7e846aaf48<br/>g=1 n=1<br/>comp=28856.0"]
+    h_19cdf56fa91b["19cdf56fa91b<br/>g=1 n=1<br/>comp=8874.0"]
+    h_f064e3ccebde["f064e3ccebde<br/>g=2 n=2<br/>comp=8970.9"]
+    h_8b462c0f7377["8b462c0f7377<br/>g=1 n=1<br/>comp=9001.0"]
+    h_4a034d815612["4a034d815612<br/>g=2 n=2<br/>comp=15783.7"]
+    h_7d1983b69866["7d1983b69866<br/>g=2 n=2<br/>comp=7546.2"]
+    h_1b51a4d746ea["1b51a4d746ea<br/>g=1 n=1<br/>comp=8674.0"]
+    h_374ab77ef0e4["374ab77ef0e4<br/>g=2 n=2<br/>comp=8983.5"]
+    h_e0ea5d34c1f3["e0ea5d34c1f3<br/>g=1 n=1<br/>comp=10075.0"]
+    h_ead61abf2573["ead61abf2573<br/>g=1 n=1<br/>comp=10833.0"]
+    h_84b59c0a4826["84b59c0a4826<br/>g=1 n=1<br/>comp=11482.0"]
+    h_c39d3397743f["c39d3397743f<br/>g=1 n=1<br/>comp=7525.0"]
+    h_92e9c7e03f9f["92e9c7e03f9f<br/>g=2 n=2<br/>comp=9223.1"]
+    h_671c9bea492c["671c9bea492c<br/>g=2 n=2<br/>comp=11190.7"]
+    h_98d213cf2e04["98d213cf2e04<br/>g=1 n=1<br/>comp=9639.0"]
+    h_5ec54d62d838["5ec54d62d838<br/>g=2 n=2<br/>comp=9204.1"]
+    h_ff99ce72b588["ff99ce72b588<br/>g=1 n=1<br/>comp=11425.0"]
+    h_fff42b1518a6["fff42b1518a6<br/>g=2 n=2<br/>comp=12648.3"]
+    h_1454b4a36e4b["1454b4a36e4b<br/>g=2 n=2<br/>comp=18164.3"]
+    h_c69876685abc["c69876685abc<br/>g=45 n=20<br/>comp=9995.7"]
+    h_50dc50125ab7["50dc50125ab7<br/>g=1 n=1<br/>comp=21106.0"]
+    h_48a937aea5b1["48a937aea5b1<br/>g=1 n=1<br/>comp=10149.0"]
+    h_bcb71e7c991c["bcb71e7c991c<br/>g=1 n=1<br/>comp=15078.0"]
+    h_8b09e9436cc8["8b09e9436cc8<br/>g=1 n=1<br/>comp=8206.0"]
+    h_3020221dd064["3020221dd064<br/>g=1 n=1<br/>comp=7921.0"]
+    h_22b1980d35a2["22b1980d35a2<br/>g=2 n=2<br/>comp=11247.6"]
+    h_85adb6c79dda["85adb6c79dda<br/>g=7 n=7<br/>comp=11306.3"]
+    h_c63b439234ab["c63b439234ab<br/>g=2 n=2<br/>comp=11040.6"]
+    h_3b9e42449d8e["3b9e42449d8e<br/>g=1 n=1<br/>comp=8491.0"]
+    h_7ddb227f455a["7ddb227f455a<br/>g=1 n=1<br/>comp=13975.0"]
+    h_92ba96416687["92ba96416687<br/>g=3 n=3<br/>comp=9643.6"]
+    h_655bcf5b4e5a["655bcf5b4e5a<br/>g=1 n=1<br/>comp=11223.0"]
+    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
+    h_dc38191b780f["dc38191b780f<br/>g=9 n=9<br/>comp=10624.1"]
+    h_cda8045c9344["cda8045c9344<br/>g=27 n=20<br/>comp=10114.1"]
+    h_545a5ebfc8e2["545a5ebfc8e2<br/>g=4 n=4<br/>comp=7822.2"]
+    h_0dcb1c55fcd3["0dcb1c55fcd3<br/>g=4 n=4<br/>comp=9287.8"]
+    h_06622b66b58b["06622b66b58b<br/>g=53 n=20<br/>comp=10786.3"]
+    h_f2aeefe9baf2["f2aeefe9baf2<br/>g=3 n=3<br/>comp=9103.8"]
+    h_3ba36fb4f221["3ba36fb4f221<br/>g=1 n=1<br/>comp=11734.0"]
+    h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
+    h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
+    h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_4113c45a0e02["4113c45a0e02<br/>CURRENT"]
 
-    h_b0c54b9d8f38 -->|improve| h_78870061e1a5
-    h_df62901dbf5e -->|improve| h_290af2204541
-    h_72e3b32b6029 -->|improve| h_814c4143ae4c
-    h_814c4143ae4c -->|improve| h_de61049454d1
-    h_de61049454d1 -. rollback .-> h_df62901dbf5e
-    h_df62901dbf5e -->|improve| h_c67506278f95
-    h_c67506278f95 -->|improve| h_45a6393da5c2
-    h_45a6393da5c2 -->|improve| h_1dc1a2cfda77
-    h_1dc1a2cfda77 -->|improve| h_e0934b4a3e13
-    h_e0934b4a3e13 -->|improve| h_349a707114bf
-    h_349a707114bf -. rollback .-> h_814c4143ae4c
-    h_814c4143ae4c -->|improve| h_4cb6bc1b8163
-    h_4cb6bc1b8163 -. rollback .-> h_e0934b4a3e13
-    h_e0934b4a3e13 -->|improve| h_795af029451e
-    h_8f573d58de23 -->|improve| h_61fedc5dd74e
-    h_61fedc5dd74e -->|improve| h_65921dd7b040
-    h_65921dd7b040 -->|improve| h_1ecf941003a8
-    h_1ecf941003a8 -. rollback .-> h_e0934b4a3e13
-    h_e0934b4a3e13 -->|improve| h_88dc7abdec46
-    h_88dc7abdec46 -->|improve| h_dd5278f232a8
-    h_dd5278f232a8 -->|improve| h_9ca29529d4a2
-    h_9ca29529d4a2 -->|improve| h_c3b834325c7b
-    h_c3b834325c7b -->|improve| h_d2989ffff81e
-    h_d2989ffff81e -. rollback .-> h_61fedc5dd74e
-    h_61fedc5dd74e -->|improve| h_75e4eab65c4a
-    h_71f71bc828fa -->|improve| h_a2cf0ecbe2ba
-    h_a2cf0ecbe2ba -->|improve| h_1fa4f1bdb308
-    h_1fa4f1bdb308 -->|improve| h_888a0e6a651f
-    h_7e184fae3207 -. rollback .-> h_71f71bc828fa
-    h_71f71bc828fa -->|improve| h_9476ed529771
-    h_9476ed529771 -->|improve| h_7ef86ce5a2bd
-    h_7ef86ce5a2bd -. rollback .-> h_a2cf0ecbe2ba
-    h_a2cf0ecbe2ba -->|improve| h_bcce193758b3
-    h_bcce193758b3 -->|improve| h_008be1334c29
-    h_008be1334c29 -. rollback .-> h_bcce193758b3
-    h_bcce193758b3 -->|improve| h_7f746ab4e7eb
-    h_fc36b52375f9 -->|improve| h_e964b94bb7bc
-    h_e964b94bb7bc -. rollback .-> h_1fa4f1bdb308
-    h_1fa4f1bdb308 -->|improve| h_e9242b4d9a93
-    h_e9242b4d9a93 -->|improve| h_3625f6994e3f
-    h_3625f6994e3f -->|improve| h_348bca3216f8
-    h_348bca3216f8 -. rollback .-> h_fc36b52375f9
-    h_fc36b52375f9 -->|improve| h_6924159d3159
-    h_6924159d3159 -->|improve| h_6c5a2891cbd8
-    h_6c5a2891cbd8 -->|improve| h_5e8e69043345
-    h_5e8e69043345 -. rollback .-> h_1fa4f1bdb308
-    h_1fa4f1bdb308 -->|improve| h_5451741f330b
-    h_5451741f330b -->|improve| h_9edb021fe9bc
-    h_9edb021fe9bc -->|improve| h_1ee78f712e54
-    h_1ee78f712e54 -->|improve| h_c603d5236729
-    h_26b781b24775 -->|improve| h_9edb021fe9bc
-    h_c603d5236729 -->|improve| h_70114388976d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_b0c54b9d8f38 plain;
-    class h_78870061e1a5 plain;
-    class h_df62901dbf5e plain;
-    class h_290af2204541 plain;
-    class h_72e3b32b6029 plain;
-    class h_814c4143ae4c plain;
-    class h_de61049454d1 plain;
-    class h_c67506278f95 plain;
-    class h_45a6393da5c2 plain;
-    class h_1dc1a2cfda77 plain;
-    class h_e0934b4a3e13 plain;
-    class h_349a707114bf plain;
-    class h_4cb6bc1b8163 plain;
-    class h_795af029451e plain;
-    class h_8f573d58de23 plain;
-    class h_61fedc5dd74e plain;
-    class h_65921dd7b040 plain;
-    class h_1ecf941003a8 plain;
-    class h_88dc7abdec46 plain;
-    class h_dd5278f232a8 plain;
-    class h_9ca29529d4a2 plain;
-    class h_c3b834325c7b plain;
-    class h_d2989ffff81e plain;
-    class h_75e4eab65c4a plain;
-    class h_71f71bc828fa plain;
-    class h_a2cf0ecbe2ba plain;
-    class h_1fa4f1bdb308 plain;
-    class h_888a0e6a651f plain;
-    class h_7e184fae3207 plain;
-    class h_9476ed529771 plain;
-    class h_7ef86ce5a2bd plain;
-    class h_bcce193758b3 plain;
-    class h_008be1334c29 plain;
-    class h_7f746ab4e7eb plain;
-    class h_fc36b52375f9 plain;
-    class h_e964b94bb7bc plain;
-    class h_e9242b4d9a93 plain;
-    class h_3625f6994e3f plain;
-    class h_348bca3216f8 plain;
-    class h_6924159d3159 plain;
-    class h_6c5a2891cbd8 plain;
-    class h_5e8e69043345 plain;
-    class h_5451741f330b plain;
-    class h_9edb021fe9bc plain;
-    class h_1ee78f712e54 plain;
-    class h_c603d5236729 plain;
-    class h_389b56537573 plain;
-    class h_a3aae72a4e37 plain;
-    class h_355868eaf8ab plain;
-    class h_4504b0237b49 plain;
-    class h_2ad5850b541e plain;
-    class h_1d9b85a22a22 plain;
     class h_f9442ef7bd5e anchor;
-    class h_12dcaa0fba31 plain;
-    class h_1387c0cd84b3 plain;
-    class h_9bada9f1385f plain;
-    class h_996646fb8173 plain;
-    class h_967091db2b2d plain;
-    class h_26b781b24775 plain;
-    class h_70114388976d current;
+    class h_273866b19f99 plain;
+    class h_e75542ef3a84 plain;
+    class h_78c5c9b64fef plain;
+    class h_45a778460147 plain;
+    class h_4bec68bcc907 plain;
+    class h_3a905145d73b plain;
+    class h_487bb6a98fb1 plain;
+    class h_c9d496f3a9db plain;
+    class h_416500ba76ab plain;
+    class h_dc66282041df plain;
+    class h_f97d9059c4a0 plain;
+    class h_0844c337fccf plain;
+    class h_37dc991befaf plain;
+    class h_b25f53b277de plain;
+    class h_70a3b1e28ca4 plain;
+    class h_74b31649bda3 plain;
+    class h_fc7e846aaf48 plain;
+    class h_19cdf56fa91b plain;
+    class h_f064e3ccebde plain;
+    class h_8b462c0f7377 plain;
+    class h_4a034d815612 plain;
+    class h_7d1983b69866 plain;
+    class h_1b51a4d746ea plain;
+    class h_374ab77ef0e4 plain;
+    class h_e0ea5d34c1f3 plain;
+    class h_ead61abf2573 plain;
+    class h_84b59c0a4826 plain;
+    class h_c39d3397743f plain;
+    class h_92e9c7e03f9f plain;
+    class h_671c9bea492c plain;
+    class h_98d213cf2e04 plain;
+    class h_5ec54d62d838 plain;
+    class h_ff99ce72b588 plain;
+    class h_fff42b1518a6 plain;
+    class h_1454b4a36e4b plain;
+    class h_c69876685abc plain;
+    class h_50dc50125ab7 plain;
+    class h_48a937aea5b1 plain;
+    class h_bcb71e7c991c plain;
+    class h_8b09e9436cc8 plain;
+    class h_3020221dd064 plain;
+    class h_22b1980d35a2 plain;
+    class h_85adb6c79dda plain;
+    class h_c63b439234ab plain;
+    class h_3b9e42449d8e plain;
+    class h_7ddb227f455a plain;
+    class h_92ba96416687 plain;
+    class h_655bcf5b4e5a plain;
+    class h_d0f554f02dcc plain;
+    class h_dc38191b780f plain;
+    class h_cda8045c9344 plain;
+    class h_545a5ebfc8e2 plain;
+    class h_0dcb1c55fcd3 plain;
+    class h_06622b66b58b plain;
+    class h_f2aeefe9baf2 plain;
+    class h_3ba36fb4f221 plain;
+    class h_287ff5db8ad1 plain;
+    class h_5b6551e43fd4 plain;
+    class h_a023de98b324 plain;
+    class h_4113c45a0e02 current;
 ```
 
-## Detail 1/18
+## Detail 1/20
 
 - Range: `b0936e9e200b` .. `d3f6c63419da`
 - Nodes in this diagram: `80`
@@ -469,7 +419,7 @@ flowchart TD
     class h_d3f6c63419da plain;
 ```
 
-## Detail 2/18
+## Detail 2/20
 
 - Range: `155d2f3c99f8` .. `b5cd8a7be86d`
 - Nodes in this diagram: `80`
@@ -742,7 +692,7 @@ flowchart TD
     class h_b5cd8a7be86d plain;
 ```
 
-## Detail 3/18
+## Detail 3/20
 
 - Range: `e3676607049d` .. `e24d1084d5ef`
 - Nodes in this diagram: `80`
@@ -1009,7 +959,7 @@ flowchart TD
     class h_e24d1084d5ef plain;
 ```
 
-## Detail 4/18
+## Detail 4/20
 
 - Range: `7daa4348391b` .. `57de365479a0`
 - Nodes in this diagram: `80`
@@ -1313,7 +1263,7 @@ flowchart TD
     class h_57de365479a0 plain;
 ```
 
-## Detail 5/18
+## Detail 5/20
 
 - Range: `1fa254eca81f` .. `d062adad419a`
 - Nodes in this diagram: `80`
@@ -1609,7 +1559,7 @@ flowchart TD
     class h_d062adad419a plain;
 ```
 
-## Detail 6/18
+## Detail 6/20
 
 - Range: `82d52dfb6031` .. `e2a889360de0`
 - Nodes in this diagram: `80`
@@ -1889,7 +1839,7 @@ flowchart TD
     class h_e2a889360de0 plain;
 ```
 
-## Detail 7/18
+## Detail 7/20
 
 - Range: `6d9586d182e0` .. `424c0fa79ba4`
 - Nodes in this diagram: `80`
@@ -2195,7 +2145,7 @@ flowchart TD
     class h_424c0fa79ba4 plain;
 ```
 
-## Detail 8/18
+## Detail 8/20
 
 - Range: `4e4943f7f65c` .. `9fe9a7007268`
 - Nodes in this diagram: `80`
@@ -2498,7 +2448,7 @@ flowchart TD
     class h_9fe9a7007268 plain;
 ```
 
-## Detail 9/18
+## Detail 9/20
 
 - Range: `0c0301a98e5f` .. `216f251b5089`
 - Nodes in this diagram: `80`
@@ -2777,7 +2727,7 @@ flowchart TD
     class h_216f251b5089 plain;
 ```
 
-## Detail 10/18
+## Detail 10/20
 
 - Range: `7bd6203f37b5` .. `58a2f66626b3`
 - Nodes in this diagram: `80`
@@ -3046,7 +2996,7 @@ flowchart TD
     class h_58a2f66626b3 plain;
 ```
 
-## Detail 11/18
+## Detail 11/20
 
 - Range: `422188c46bb8` .. `15f86b7062ff`
 - Nodes in this diagram: `80`
@@ -3330,7 +3280,7 @@ flowchart TD
     class h_15f86b7062ff plain;
 ```
 
-## Detail 12/18
+## Detail 12/20
 
 - Range: `8b764b56c6f3` .. `865e131b48a5`
 - Nodes in this diagram: `80`
@@ -3617,7 +3567,7 @@ flowchart TD
     class h_865e131b48a5 plain;
 ```
 
-## Detail 13/18
+## Detail 13/20
 
 - Range: `425e0268f431` .. `ea95bdde7a27`
 - Nodes in this diagram: `80`
@@ -3900,7 +3850,7 @@ flowchart TD
     class h_ea95bdde7a27 plain;
 ```
 
-## Detail 14/18
+## Detail 14/20
 
 - Range: `c016461aeb9c` .. `94786eb2e0fc`
 - Nodes in this diagram: `80`
@@ -4181,7 +4131,7 @@ flowchart TD
     class h_94786eb2e0fc plain;
 ```
 
-## Detail 15/18
+## Detail 15/20
 
 - Range: `646eea0bf18d` .. `387030d5fa23`
 - Nodes in this diagram: `80`
@@ -4451,7 +4401,7 @@ flowchart TD
     class h_387030d5fa23 plain;
 ```
 
-## Detail 16/18
+## Detail 16/20
 
 - Range: `0b044788c9f1` .. `643ca0f56e6f`
 - Nodes in this diagram: `80`
@@ -4713,7 +4663,7 @@ flowchart TD
     class h_643ca0f56e6f plain;
 ```
 
-## Detail 17/18
+## Detail 17/20
 
 - Range: `200a7fefef4f` .. `203a542d6347`
 - Nodes in this diagram: `80`
@@ -4993,11 +4943,11 @@ flowchart TD
     class h_203a542d6347 plain;
 ```
 
-## Detail 18/18
+## Detail 18/20
 
-- Range: `0d0fc4a9fde7` .. `70114388976d`
-- Nodes in this diagram: `72`
-- Internal edges in this diagram: `70`
+- Range: `0d0fc4a9fde7` .. `a047013e74cf`
+- Nodes in this diagram: `80`
+- Internal edges in this diagram: `74`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -5010,7 +4960,7 @@ flowchart TD
 - Cross-chunk link: `7f746ab4e7eb -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> fc36b52375f9`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
-- Cross-chunk link: `... and 6 more`
+- Cross-chunk link: `... and 7 more`
 
 ```mermaid
 flowchart TD
@@ -5072,6 +5022,11 @@ flowchart TD
     h_9edb021fe9bc["9edb021fe9bc<br/>g=15 n=15<br/>comp=10741.6"]
     h_1ee78f712e54["1ee78f712e54<br/>g=23 n=20<br/>comp=10380.1"]
     h_c603d5236729["c603d5236729<br/>g=24 n=20<br/>comp=11256.0"]
+    h_70114388976d["70114388976d<br/>g=32 n=20<br/>comp=10958.1"]
+    h_4ac200b7dcb9["4ac200b7dcb9<br/>g=2 n=2<br/>comp=10994.3"]
+    h_d887a11c1f4e["d887a11c1f4e<br/>g=1 n=1<br/>comp=22220.0"]
+    h_e162b8552dd0["e162b8552dd0<br/>g=4 n=4<br/>comp=8716.5"]
+    h_b224cd20c7ba["b224cd20c7ba<br/>g=24 n=20<br/>comp=11106.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -5085,7 +5040,10 @@ flowchart TD
     h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
     h_967091db2b2d["967091db2b2d<br/>g=2 n=2<br/>comp=9227.2"]
     h_26b781b24775["26b781b24775<br/>g=16 n=16<br/>comp=9211.5"]
-    h_70114388976d["70114388976d<br/>CURRENT"]
+    h_e197cf4099eb["e197cf4099eb<br/>g=2 n=2<br/>comp=9775.6"]
+    h_unknown["unknown<br/>g=3 n=3<br/>comp=0.0"]
+    h_b98d5d56c1a6["b98d5d56c1a6<br/>g=2 n=2<br/>comp=8123.0"]
+    h_a047013e74cf["a047013e74cf<br/>g=2 n=2<br/>comp=10253.7"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
@@ -5155,8 +5113,12 @@ flowchart TD
     h_5451741f330b -->|improve| h_9edb021fe9bc
     h_9edb021fe9bc -->|improve| h_1ee78f712e54
     h_1ee78f712e54 -->|improve| h_c603d5236729
-    h_26b781b24775 -->|improve| h_9edb021fe9bc
     h_c603d5236729 -->|improve| h_70114388976d
+    h_70114388976d -->|improve| h_4ac200b7dcb9
+    h_4ac200b7dcb9 -->|improve| h_d887a11c1f4e
+    h_d887a11c1f4e -->|improve| h_e162b8552dd0
+    h_e162b8552dd0 -->|improve| h_b224cd20c7ba
+    h_26b781b24775 -->|improve| h_9edb021fe9bc
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5221,6 +5183,11 @@ flowchart TD
     class h_9edb021fe9bc plain;
     class h_1ee78f712e54 plain;
     class h_c603d5236729 plain;
+    class h_70114388976d plain;
+    class h_4ac200b7dcb9 plain;
+    class h_d887a11c1f4e plain;
+    class h_e162b8552dd0 plain;
+    class h_b224cd20c7ba plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -5234,10 +5201,222 @@ flowchart TD
     class h_996646fb8173 plain;
     class h_967091db2b2d plain;
     class h_26b781b24775 plain;
-    class h_70114388976d current;
+    class h_e197cf4099eb plain;
+    class h_unknown plain;
+    class h_b98d5d56c1a6 plain;
+    class h_a047013e74cf plain;
+```
+
+## Detail 19/20
+
+- Range: `dba3b4a2ef60` .. `5b6551e43fd4`
+- Nodes in this diagram: `80`
+- Internal edges in this diagram: `0`
+
+```mermaid
+flowchart TD
+    h_dba3b4a2ef60["dba3b4a2ef60<br/>g=2 n=2<br/>comp=11197.1"]
+    h_6ac470fac0e9["6ac470fac0e9<br/>g=2 n=2<br/>comp=9839.2"]
+    h_baab22681199["baab22681199<br/>g=1 n=1<br/>comp=9175.0"]
+    h_d0748a4ba1d6["d0748a4ba1d6<br/>g=2 n=2<br/>comp=11300.8"]
+    h_bd23e83f1047["bd23e83f1047<br/>g=1 n=1<br/>comp=8593.0"]
+    h_730440ee9253["730440ee9253<br/>g=1 n=1<br/>comp=22006.0"]
+    h_14ec1447fad4["14ec1447fad4<br/>g=1 n=1<br/>comp=9419.0"]
+    h_f0d8c78810a1["f0d8c78810a1<br/>g=1 n=1<br/>comp=8641.0"]
+    h_58a40c5e22ed["58a40c5e22ed<br/>g=1 n=1<br/>comp=17056.0"]
+    h_8bb10974df6a["8bb10974df6a<br/>g=1 n=1<br/>comp=10481.0"]
+    h_a0bc6bb49344["a0bc6bb49344<br/>g=1 n=1<br/>comp=11180.0"]
+    h_21c3e673384d["21c3e673384d<br/>g=2 n=2<br/>comp=7462.2"]
+    h_0eae623d906c["0eae623d906c<br/>g=1 n=1<br/>comp=11467.0"]
+    h_64c3e35d851f["64c3e35d851f<br/>g=2 n=2<br/>comp=9726.1"]
+    h_7091de6a22c8["7091de6a22c8<br/>g=2 n=2<br/>comp=12417.0"]
+    h_3cc45ff20b0b["3cc45ff20b0b<br/>g=2 n=2<br/>comp=10953.7"]
+    h_d7d26d5ac6b8["d7d26d5ac6b8<br/>g=1 n=1<br/>comp=8824.0"]
+    h_7e2fac0876ec["7e2fac0876ec<br/>g=1 n=1<br/>comp=9348.0"]
+    h_8a1378b01385["8a1378b01385<br/>g=2 n=2<br/>comp=9689.6"]
+    h_c5d3bb599a64["c5d3bb599a64<br/>g=1 n=1<br/>comp=15388.0"]
+    h_36bfab8c6537["36bfab8c6537<br/>g=1 n=1<br/>comp=11025.0"]
+    h_d6ba060d24b2["d6ba060d24b2<br/>g=1 n=1<br/>comp=14596.0"]
+    h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
+    h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
+    h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
+    h_45a778460147["45a778460147<br/>g=1 n=1<br/>comp=7759.0"]
+    h_4bec68bcc907["4bec68bcc907<br/>g=1 n=1<br/>comp=11107.0"]
+    h_3a905145d73b["3a905145d73b<br/>g=1 n=1<br/>comp=6671.0"]
+    h_487bb6a98fb1["487bb6a98fb1<br/>g=1 n=1<br/>comp=11399.0"]
+    h_c9d496f3a9db["c9d496f3a9db<br/>g=1 n=1<br/>comp=10169.0"]
+    h_416500ba76ab["416500ba76ab<br/>g=3 n=3<br/>comp=16870.5"]
+    h_dc66282041df["dc66282041df<br/>g=1 n=1<br/>comp=11197.0"]
+    h_f97d9059c4a0["f97d9059c4a0<br/>g=1 n=1<br/>comp=15638.0"]
+    h_0844c337fccf["0844c337fccf<br/>g=1 n=1<br/>comp=15694.0"]
+    h_37dc991befaf["37dc991befaf<br/>g=2 n=2<br/>comp=11299.4"]
+    h_b25f53b277de["b25f53b277de<br/>g=2 n=2<br/>comp=10534.8"]
+    h_70a3b1e28ca4["70a3b1e28ca4<br/>g=1 n=1<br/>comp=11574.0"]
+    h_74b31649bda3["74b31649bda3<br/>g=1 n=1<br/>comp=19757.0"]
+    h_fc7e846aaf48["fc7e846aaf48<br/>g=1 n=1<br/>comp=28856.0"]
+    h_19cdf56fa91b["19cdf56fa91b<br/>g=1 n=1<br/>comp=8874.0"]
+    h_f064e3ccebde["f064e3ccebde<br/>g=2 n=2<br/>comp=8970.9"]
+    h_8b462c0f7377["8b462c0f7377<br/>g=1 n=1<br/>comp=9001.0"]
+    h_4a034d815612["4a034d815612<br/>g=2 n=2<br/>comp=15783.7"]
+    h_7d1983b69866["7d1983b69866<br/>g=2 n=2<br/>comp=7546.2"]
+    h_1b51a4d746ea["1b51a4d746ea<br/>g=1 n=1<br/>comp=8674.0"]
+    h_374ab77ef0e4["374ab77ef0e4<br/>g=2 n=2<br/>comp=8983.5"]
+    h_e0ea5d34c1f3["e0ea5d34c1f3<br/>g=1 n=1<br/>comp=10075.0"]
+    h_ead61abf2573["ead61abf2573<br/>g=1 n=1<br/>comp=10833.0"]
+    h_84b59c0a4826["84b59c0a4826<br/>g=1 n=1<br/>comp=11482.0"]
+    h_c39d3397743f["c39d3397743f<br/>g=1 n=1<br/>comp=7525.0"]
+    h_92e9c7e03f9f["92e9c7e03f9f<br/>g=2 n=2<br/>comp=9223.1"]
+    h_671c9bea492c["671c9bea492c<br/>g=2 n=2<br/>comp=11190.7"]
+    h_98d213cf2e04["98d213cf2e04<br/>g=1 n=1<br/>comp=9639.0"]
+    h_5ec54d62d838["5ec54d62d838<br/>g=2 n=2<br/>comp=9204.1"]
+    h_ff99ce72b588["ff99ce72b588<br/>g=1 n=1<br/>comp=11425.0"]
+    h_fff42b1518a6["fff42b1518a6<br/>g=2 n=2<br/>comp=12648.3"]
+    h_1454b4a36e4b["1454b4a36e4b<br/>g=2 n=2<br/>comp=18164.3"]
+    h_c69876685abc["c69876685abc<br/>g=45 n=20<br/>comp=9995.7"]
+    h_50dc50125ab7["50dc50125ab7<br/>g=1 n=1<br/>comp=21106.0"]
+    h_48a937aea5b1["48a937aea5b1<br/>g=1 n=1<br/>comp=10149.0"]
+    h_bcb71e7c991c["bcb71e7c991c<br/>g=1 n=1<br/>comp=15078.0"]
+    h_8b09e9436cc8["8b09e9436cc8<br/>g=1 n=1<br/>comp=8206.0"]
+    h_3020221dd064["3020221dd064<br/>g=1 n=1<br/>comp=7921.0"]
+    h_22b1980d35a2["22b1980d35a2<br/>g=2 n=2<br/>comp=11247.6"]
+    h_85adb6c79dda["85adb6c79dda<br/>g=7 n=7<br/>comp=11306.3"]
+    h_c63b439234ab["c63b439234ab<br/>g=2 n=2<br/>comp=11040.6"]
+    h_3b9e42449d8e["3b9e42449d8e<br/>g=1 n=1<br/>comp=8491.0"]
+    h_7ddb227f455a["7ddb227f455a<br/>g=1 n=1<br/>comp=13975.0"]
+    h_92ba96416687["92ba96416687<br/>g=3 n=3<br/>comp=9643.6"]
+    h_655bcf5b4e5a["655bcf5b4e5a<br/>g=1 n=1<br/>comp=11223.0"]
+    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
+    h_dc38191b780f["dc38191b780f<br/>g=9 n=9<br/>comp=10624.1"]
+    h_cda8045c9344["cda8045c9344<br/>g=27 n=20<br/>comp=10114.1"]
+    h_545a5ebfc8e2["545a5ebfc8e2<br/>g=4 n=4<br/>comp=7822.2"]
+    h_0dcb1c55fcd3["0dcb1c55fcd3<br/>g=4 n=4<br/>comp=9287.8"]
+    h_06622b66b58b["06622b66b58b<br/>g=53 n=20<br/>comp=10786.3"]
+    h_f2aeefe9baf2["f2aeefe9baf2<br/>g=3 n=3<br/>comp=9103.8"]
+    h_3ba36fb4f221["3ba36fb4f221<br/>g=1 n=1<br/>comp=11734.0"]
+    h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
+    h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
+
+
+    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
+    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
+    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
+    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
+
+    class h_dba3b4a2ef60 plain;
+    class h_6ac470fac0e9 plain;
+    class h_baab22681199 plain;
+    class h_d0748a4ba1d6 plain;
+    class h_bd23e83f1047 plain;
+    class h_730440ee9253 plain;
+    class h_14ec1447fad4 plain;
+    class h_f0d8c78810a1 plain;
+    class h_58a40c5e22ed plain;
+    class h_8bb10974df6a plain;
+    class h_a0bc6bb49344 plain;
+    class h_21c3e673384d plain;
+    class h_0eae623d906c plain;
+    class h_64c3e35d851f plain;
+    class h_7091de6a22c8 plain;
+    class h_3cc45ff20b0b plain;
+    class h_d7d26d5ac6b8 plain;
+    class h_7e2fac0876ec plain;
+    class h_8a1378b01385 plain;
+    class h_c5d3bb599a64 plain;
+    class h_36bfab8c6537 plain;
+    class h_d6ba060d24b2 plain;
+    class h_273866b19f99 plain;
+    class h_e75542ef3a84 plain;
+    class h_78c5c9b64fef plain;
+    class h_45a778460147 plain;
+    class h_4bec68bcc907 plain;
+    class h_3a905145d73b plain;
+    class h_487bb6a98fb1 plain;
+    class h_c9d496f3a9db plain;
+    class h_416500ba76ab plain;
+    class h_dc66282041df plain;
+    class h_f97d9059c4a0 plain;
+    class h_0844c337fccf plain;
+    class h_37dc991befaf plain;
+    class h_b25f53b277de plain;
+    class h_70a3b1e28ca4 plain;
+    class h_74b31649bda3 plain;
+    class h_fc7e846aaf48 plain;
+    class h_19cdf56fa91b plain;
+    class h_f064e3ccebde plain;
+    class h_8b462c0f7377 plain;
+    class h_4a034d815612 plain;
+    class h_7d1983b69866 plain;
+    class h_1b51a4d746ea plain;
+    class h_374ab77ef0e4 plain;
+    class h_e0ea5d34c1f3 plain;
+    class h_ead61abf2573 plain;
+    class h_84b59c0a4826 plain;
+    class h_c39d3397743f plain;
+    class h_92e9c7e03f9f plain;
+    class h_671c9bea492c plain;
+    class h_98d213cf2e04 plain;
+    class h_5ec54d62d838 plain;
+    class h_ff99ce72b588 plain;
+    class h_fff42b1518a6 plain;
+    class h_1454b4a36e4b plain;
+    class h_c69876685abc plain;
+    class h_50dc50125ab7 plain;
+    class h_48a937aea5b1 plain;
+    class h_bcb71e7c991c plain;
+    class h_8b09e9436cc8 plain;
+    class h_3020221dd064 plain;
+    class h_22b1980d35a2 plain;
+    class h_85adb6c79dda plain;
+    class h_c63b439234ab plain;
+    class h_3b9e42449d8e plain;
+    class h_7ddb227f455a plain;
+    class h_92ba96416687 plain;
+    class h_655bcf5b4e5a plain;
+    class h_d0f554f02dcc plain;
+    class h_dc38191b780f plain;
+    class h_cda8045c9344 plain;
+    class h_545a5ebfc8e2 plain;
+    class h_0dcb1c55fcd3 plain;
+    class h_06622b66b58b plain;
+    class h_f2aeefe9baf2 plain;
+    class h_3ba36fb4f221 plain;
+    class h_287ff5db8ad1 plain;
+    class h_5b6551e43fd4 plain;
+```
+
+## Detail 20/20
+
+- Range: `a023de98b324` .. `4113c45a0e02`
+- Nodes in this diagram: `2`
+- Internal edges in this diagram: `0`
+- Cross-chunk link: `b224cd20c7ba --improve--> 4113c45a0e02`
+
+```mermaid
+flowchart TD
+    h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_4113c45a0e02["4113c45a0e02<br/>CURRENT"]
+
+
+    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
+    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
+    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
+    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
+
+    class h_a023de98b324 plain;
+    class h_4113c45a0e02 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#24955 `b224cd20 -> 4113c45a`
+
+- scores: `8443 10993 8843 16405 7689 8790 12718 14794 10239 14827 14343 12515 8236 14952 16333 8354 10357 9109 12174 14261 11040 9142 12290 12259`
+- 9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+- 9.7. Pipeline-aware placement guidance - v483: congestion scaling added (match 9.6b formula)
+- 9.15. Low-type digest priority - vYYY: low-type (type<=5) pair centroid proximity during merge drought
+- vYYY: axis 9.15 low-type digest priority
+- Adopted from best_score5801_strategy.py (hall-of-fame, score 5801)
+- analysis_result.md adopted hypothesis: low-type (type<=5) reactive/near pair centroids
 
 ### Improve Game#24626 `c603d523 -> 70114388`
 

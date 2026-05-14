@@ -41,8 +41,9 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v465: v357ガード復元(rp>=3+NOで抑制) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-             9.7. Pipeline-aware placement guidance - v483: congestion scaling added (match 9.6b formula)
+              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+              9.7. Pipeline-aware placement guidance - v483: congestion scaling added (match 9.6b formula)
+              9.15. Low-type digest priority - vYYY: low-type (type<=5) pair centroid proximity during merge drought
                   v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -64,7 +65,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vYYY: Change 6 - AVOID_BLOCK suppression threshold extension (analysis_result.md Hypothesis 1)
+      # vYYY: axis 9.15 low-type digest priority
+      # Adopted from best_score5801_strategy.py (hall-of-fame, score 5801)
+      # analysis_result.md adopted hypothesis: low-type (type<=5) reactive/near pair centroids
+      # Worst game T56-T67: 7 consecutive NO merge, rp=2→5, piece_count 35→43, max_y 1.21→3.43
+      # Type 3/4/5 pieces existed but no guidance to cluster them for digestion.
+      # Fires: merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5 && !death_spiral
+      # Bonus: 600*merge_mult → 0 over dist 0→3, guides toward lowest board-cost pairs first.
+      # Break the drought→height runaway cascade by digesting small pairs first.
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+      #       strategy_versions/best_score5801_strategy.py (axis 9.15 at lines 1651-1699),
+      #       game_history/20260515_013508_score0626.jsonl (worst game T56-T67)
+      #
+      # vYYY: Change 6 - AVOID_BLOCK suppression threshold extension (analysis_result.md Hypothesis 1)
      # Changed: rp>=5+max_y>=2.5 → rp>=4+max_y>=1.5 per analysis_result.md
      # Worst game T56-T59 (rp=5, max_y 1.7-2.0): AVOID_BLOCK active despite low height,
      # causing edge placement and NO merge despite merge opportunities.
@@ -2688,6 +2701,49 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     pipeline_bonus = max(0, 150.0 - dist * 50.0) * merge_mult
                     score += pipeline_bonus
                     reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
+
+        # ----- vYYY: axis 9.15 low-type digest priority -----
+        # Adopted from best_score5801_strategy.py (hall-of-fame, score 5801)
+        # analysis_result.md adopted hypothesis: digest low-type (type<=5) pairs first during merge drought
+        # Worst game T56-T67: 7 consecutive NO merge, rp=2→5, piece_count 35→43, max_y 1.21→3.43
+        # Type 3/4/5 pieces existed but no guidance to cluster them → drought→height runaway
+        # Fires: merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5 && !death_spiral
+        # Bonus: 600*merge_mult → 0 over dist 0→3, toward lowest board-cost pair centroids
+        # Break the cascade: small pairs digested first → piece_count drops → height stabilizes
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+        #       strategy_versions/best_score5801_strategy.py (axis 9.15 at lines 1651-1699),
+        #       game_history/20260515_013508_score0626.jsonl (worst game T56-T67)
+        if (merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 1.5
+            and not death_spiral):
+            _low_type_pairs = []
+            for rp_entry in reactive_pairs:
+                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
+                    _rtype = rp_entry[2]
+                    if _rtype <= 5:
+                        _p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
+                        _p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
+                        if _p1 and _p2:
+                            _cx = (_p1["x"] + _p2["x"]) / 2.0
+                            _cy = (_p1["y"] + _p2["y"]) / 2.0
+                            _low_type_pairs.append((_rtype, _cx, _cy))
+            for np_entry in near_pairs:
+                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
+                    _rtype = np_entry[2]
+                    if _rtype <= 5:
+                        _p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
+                        _p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
+                        if _p1 and _p2:
+                            _cx = (_p1["x"] + _p2["x"]) / 2.0
+                            _cy = (_p1["y"] + _p2["y"]) / 2.0
+                            _low_type_pairs.append((_rtype, _cx, _cy))
+            if _low_type_pairs:
+                _low_type_pairs.sort(key=lambda t: t[0])
+                _best_type, _best_cx, _best_cy = _low_type_pairs[0]
+                _dist = abs(x - _best_cx) + abs(landing_y - _best_cy)
+                _digest_bonus = max(0.0, 600.0 - _dist * 200.0) * merge_mult
+                if _digest_bonus > 20:
+                    score += _digest_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # Russia/Soviet route: when two high countries of the same tier already exist,
         # keep new material close enough to make the next country instead of drifting
