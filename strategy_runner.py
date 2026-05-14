@@ -85,6 +85,20 @@ def get_state_field(gs):
 
 SETTLE_FORCE_TIMEOUT = 30.0  # この秒数経過後は速度に関わらず settled 扱い
 
+def has_deadline_contact(gs):
+    """赤線に触れている/赤線タイマー中のピースがあれば即ドロップへ進む。"""
+    if gs is None:
+        return False
+    for p in gs.get("pieces", []):
+        try:
+            if float(p.get("redLineTime", 0) or 0) > 0:
+                return True
+            if float(p.get("y", -99.0) or -99.0) + float(p.get("r", 0.0) or 0.0) >= 3.32:
+                return True
+        except Exception:
+            continue
+    return False
+
 def is_board_settled(gs, force_after: float = 0.0):
     """盤面が静止しているか (全ピースの速度が閾値以下)
     vy=-5000 等の極端な速度はドロップ待機中のnextピースなので除外する。
@@ -270,6 +284,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     max_y = max((p["y"] for p in pieces), default=-5.0)
     top_edge_y = max((p["y"] + p.get("r", 0.0) for p in pieces), default=-5.0)
     nxt = game_state.get("next", {})
+    nxt2 = game_state.get("nextNext", {})
 
     results = analysis.get("results", [])
     deadline = analysis.get("deadline", {})
@@ -281,6 +296,24 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         chosen_result = min(results, key=lambda r: abs(r["x"] - chosen_x))
     best_grade = chosen_result.get("merge_grade", "NO") if chosen_result else "NO"
     has_merge = chosen_result.get("has_merge", False) if chosen_result else False
+    next_type = int(nxt.get("type", 0) or 0)
+    same_type_pieces = [
+        p for p in pieces if int(p.get("type", 0) or 0) == next_type
+    ]
+    highest_same_type = None
+    closest_same_type_dx = None
+    if same_type_pieces:
+        highest_same_type = max(
+            same_type_pieces,
+            key=lambda p: (
+                float(p.get("y", -99.0) or -99.0),
+                -abs(float(p.get("x", 0.0) or 0.0) - float(chosen_x or 0.0)),
+            ),
+        )
+        closest_same_type_dx = min(
+            abs(float(p.get("x", 0.0) or 0.0) - float(chosen_x or 0.0))
+            for p in same_type_pieces
+        )
 
     reactor = analysis.get("reactor", {})
     reactive_pairs = len(reactor.get("reactive_pairs", []))
@@ -305,11 +338,16 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "deadline_crossed": bool(deadline.get("deadline_crossed", False)),
         "danger_piece_count": danger_piece_count,
         "min_redline_time": round(min_redline_time, 2),
-        "next_type": nxt.get("type", 0),
+        "next_type": next_type,
+        "next_next_type": int(nxt2.get("type", 0) or 0),
         "decision_x": round(decision.get("x", 0), 3),
         "decision_reason": decision.get("reason", ""),
         "merge_available": has_merge,
         "best_merge_grade": best_grade,
+        "visual_same_type_count": len(same_type_pieces),
+        "visual_same_type_highest_y": round(float(highest_same_type.get("y", -5.0)), 2) if highest_same_type else None,
+        "visual_same_type_highest_x": round(float(highest_same_type.get("x", 0.0)), 2) if highest_same_type else None,
+        "visual_same_type_closest_dx": round(float(closest_same_type_dx), 2) if closest_same_type_dx is not None else None,
         "reactor_reactive_pairs": reactive_pairs,
         "decision_crosses_deadline": bool(chosen_result.get("crosses_deadline", False)) if chosen_result else False,
         "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
@@ -339,6 +377,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     deadline_buffer_y = deadline_y - 0.75
     deadline = analysis.get("deadline", {}) if isinstance(analysis, dict) else {}
     current_top_edge_y = float(deadline.get("top_edge_y", -5.0) or -5.0)
+    deadline_crossed = bool(deadline.get("deadline_crossed", False))
+    danger_piece_count = int(deadline.get("danger_piece_count", 0) or 0)
 
     grade_rank = {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}
 
@@ -361,6 +401,9 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
 
     safe = [r for r in results if not r.get("crosses_deadline", False)]
     safe_direct = [r for r in safe if r.get("merge_grade", "NO") == "DIRECT"]
+    safe_merge = [
+        r for r in safe if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+    ]
     buffered = [r for r in safe if risk_top(r) <= deadline_buffer_y]
     chosen_top = risk_top(chosen)
     min_risk_candidate = min(
@@ -384,6 +427,21 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     reactor = analysis.get("reactor", {}) if isinstance(analysis, dict) else {}
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+    late_pressure = (
+        piece_count >= 35
+        or current_top_edge_y >= deadline_y - 1.0
+        or chosen.get("crosses_deadline", False)
+    )
+    deadline_contact_pressure = (
+        deadline_crossed
+        or current_top_edge_y >= deadline_y - 0.20
+        or danger_piece_count > 0
+    )
+    deadline_precontact_pressure = (
+        deadline_contact_pressure
+        or current_top_edge_y >= deadline_y - 0.75
+        or (piece_count >= 33 and reactive_pair_count >= 3)
+    )
     urgent_direct_pressure = (
         safe_direct
         and (
@@ -392,31 +450,225 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             or reactive_pair_count >= 3
         )
     )
+    urgent_merge_pressure = (
+        safe_merge
+        and (
+            piece_count >= 35
+            or current_top_edge_y >= deadline_y - 1.0
+            or reactive_pair_count >= 3
+            or chosen.get("crosses_deadline", False)
+        )
+    )
 
-    if buffered:
-        if chosen in buffered:
-            return decision
-        replacement = min(
-            buffered,
+    def visual_same_country_replacement():
+        """Fallback for visually obvious same-country merges missed by analysis.
+
+        The Unity screen often shows a drop-reachable same-country piece while
+        reactor labels every candidate as NO. Under endgame pressure, aim at the
+        highest matching country instead of preserving a generic low-risk slot.
+        """
+        if not late_pressure or not next_type:
+            return None
+        if chosen.get("merge_grade", "NO") in ("DIRECT", "NEAR"):
+            return None
+        pieces = (game_state or {}).get("pieces") or []
+        same_pieces = [
+            p for p in pieces if int(p.get("type", 0) or 0) == next_type
+        ]
+        if not same_pieces:
+            return None
+        target_piece = max(
+            same_pieces,
+            key=lambda p: (
+                float(p.get("y", -99.0) or -99.0),
+                -abs(float(p.get("x", 0.0) or 0.0)),
+            ),
+        )
+        target_x = float(target_piece.get("x", 0.0) or 0.0)
+        pool = safe or results
+        min_pool_risk = min((risk_top(r) for r in pool), default=min_risk_top)
+        # When a same-country target is only visually inferred, avoid trading a
+        # safer central slot for an edge-ish target unless it clearly improves
+        # contact with that country. These visual fallbacks are meant to catch
+        # skipped merges, not to manufacture a new tower at the wall.
+        chosen_target_dx = abs(chosen_x - target_x)
+        target_band = [
+            r
+            for r in pool
+            if abs(float(r.get("x", 0.0) or 0.0) - target_x) <= 0.85
+            and risk_top(r) <= min_pool_risk + 1.35
+            and abs(float(r.get("x", 0.0) or 0.0) - target_x)
+            <= chosen_target_dx + 0.05
+            and abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+        ]
+        if not target_band:
+            target_band = [
+                r
+                for r in pool
+                if abs(float(r.get("x", 0.0) or 0.0) - target_x) <= 1.2
+                and risk_top(r) <= min_pool_risk + 1.9
+                and abs(float(r.get("x", 0.0) or 0.0) - target_x)
+                <= chosen_target_dx + 0.15
+            ]
+        if not target_band:
+            return None
+        return min(
+            target_band,
             key=lambda r: (
+                abs(float(r.get("x", 0.0) or 0.0) - target_x),
+                bool(r.get("crosses_deadline", False)),
                 risk_top(r),
-                grade_rank.get(r.get("merge_grade", "NO"), 9),
-                abs(float(r.get("x", 0.0) or 0.0)),
             ),
         )
 
-    elif urgent_direct_pressure:
+    def visual_deadline_same_country_replacement():
+        """Hard invariant for deadline boards with visually reachable merges.
+
+        In the death spiral, the old visual fallback still rejected edge-side
+        same-country targets because they looked riskier than a generic safe
+        slot. The user-visible failure is worse: placing elsewhere while an
+        apparent merge target is sitting on screen. When the board is already
+        touching the deadline, aim at the highest same-country target even if
+        analysis labels the candidate as NO.
+        """
+        if not deadline_precontact_pressure or not next_type:
+            return None
+        if chosen.get("merge_grade", "NO") in ("DIRECT", "NEAR"):
+            return None
+        pieces = (game_state or {}).get("pieces") or []
+        same_pieces = [
+            p for p in pieces if int(p.get("type", 0) or 0) == next_type
+        ]
+        if not same_pieces:
+            return None
+        target_piece = max(
+            same_pieces,
+            key=lambda p: (
+                float(p.get("y", -99.0) or -99.0),
+                -abs(float(p.get("x", 0.0) or 0.0)),
+            ),
+        )
+        target_x = float(target_piece.get("x", 0.0) or 0.0)
+        target_y = float(target_piece.get("y", -99.0) or -99.0)
+        chosen_dx = abs(chosen_x - target_x)
+        # Only take over when the current choice is visibly elsewhere. This
+        # keeps normal low-risk moves intact, while forcing the broken endgame
+        # case that repeatedly dies on screen.
+        if chosen_dx <= 0.65:
+            return None
+        pool = results or safe
+        if not pool:
+            return None
+        target_band = [
+            r
+            for r in pool
+            if abs(float(r.get("x", 0.0) or 0.0) - target_x) <= 1.10
+            and abs(float(r.get("x", 0.0) or 0.0) - target_x) < chosen_dx
+        ]
+        if not target_band:
+            target_band = [
+                r
+                for r in pool
+                if abs(float(r.get("x", 0.0) or 0.0) - target_x) < chosen_dx
+            ]
+        if not target_band:
+            return None
+        return min(
+            target_band,
+            key=lambda r: (
+                abs(float(r.get("x", 0.0) or 0.0) - target_x),
+                grade_rank.get(r.get("merge_grade", "NO"), 9),
+                risk_top(r) if target_y < deadline_y - 2.0 else 0.0,
+            ),
+        )
+
+    reason_text = str(decision.get("reason", "") or "")
+    country_route_reason = (
+        10 <= next_type <= 12
+        and (
+            "SAME_COUNTRY" in reason_text
+            or "RUSSIA_RESOURCE" in reason_text
+            or "UKRAINE_PAIR" in reason_text
+        )
+    )
+    if (
+        country_route_reason
+        and not urgent_direct_pressure
+        and not urgent_merge_pressure
+        and not chosen.get("crosses_deadline", False)
+        and chosen_top <= min_risk_top + 2.0
+        and abs(chosen_x) <= 2.65
+    ):
+        # The strategy layer already chose a country-building placement. Do not
+        # flatten that into a generic min-risk edge drop unless the placement is
+        # actually crossing the deadline or wildly unsafe.
+        return decision
+
+    replacement_source = "generic"
+
+    if urgent_direct_pressure:
         if chosen in safe_direct:
             return decision
         replacement = min(safe_direct, key=rank_candidate)
+        replacement_source = "urgent_direct"
+
+    elif urgent_merge_pressure:
+        if chosen in safe_merge:
+            return decision
+        replacement = min(safe_merge, key=rank_candidate)
+        replacement_source = "urgent_merge"
+
+    elif (visual_deadline_replacement := visual_deadline_same_country_replacement()) is not None:
+        replacement = visual_deadline_replacement
+        replacement_source = "visual_deadline_same_country"
+
+    elif (visual_replacement := visual_same_country_replacement()) is not None:
+        replacement = visual_replacement
+        replacement_source = "visual_same_country"
+
+    elif buffered:
+        if chosen in buffered:
+            return decision
+        chosen_grade_val = grade_rank.get(chosen.get("merge_grade", "NO"), 9)
+        chosen_crosses = bool(chosen.get("crosses_deadline", False))
+        # Never downgrade merge grade for headroom: if chosen has a merge
+        # (DIRECT/NEAR) and no buffered alternative preserves that grade,
+        # keep the chosen merge — unless chosen crosses the deadline (then
+        # we MUST swap; any safe drop beats game over).
+        merge_preserving_buffered = [
+            r for r in buffered
+            if grade_rank.get(r.get("merge_grade", "NO"), 9) <= chosen_grade_val
+        ]
+        if not merge_preserving_buffered and chosen_grade_val <= 1 and not chosen_crosses:
+            return decision
+        pool = merge_preserving_buffered or buffered
+        replacement = min(
+            pool,
+            key=lambda r: (
+                grade_rank.get(r.get("merge_grade", "NO"), 9),
+                risk_top(r),
+                abs(float(r.get("x", 0.0) or 0.0)),
+            ),
+        )
+        replacement_source = "buffered"
 
     elif safe:
         if chosen in safe:
             return decision
-        replacement = min(safe, key=rank_candidate)
+        chosen_grade_val = grade_rank.get(chosen.get("merge_grade", "NO"), 9)
+        merge_preserving_safe = [
+            r for r in safe
+            if grade_rank.get(r.get("merge_grade", "NO"), 9) <= chosen_grade_val
+        ]
+        if not merge_preserving_safe and chosen_grade_val <= 1 and not chosen.get("crosses_deadline", False):
+            return decision
+        pool = merge_preserving_safe or safe
+        replacement = min(pool, key=rank_candidate)
+        replacement_source = "safe"
 
     elif large_deadline_pressure and chosen_top > min_risk_top + 0.05:
         replacement = min_risk_candidate
+        replacement_source = "large_deadline_minrisk"
     elif not chosen.get("crosses_deadline", False):
         return decision
     else:
@@ -437,31 +689,95 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         )
         if replacement.get("crosses_deadline", False) and replacement.get("merge_grade", "NO") == "NO":
             replacement = min(risk_band, key=lambda r: (risk_top(r), abs(float(r.get("x", 0.0) or 0.0))))
+        replacement_source = "risk_band"
+
+    # If the analysis still says NO but the live board has a high same-country
+    # target far from the chosen drop, prefer a candidate that actually moves
+    # toward that target. This is the visual invariant the logs alone have been
+    # missing: in a dying board, do not place elsewhere while an apparent
+    # same-country contact is reachable.
+    def _replacement_x():
+        v = replacement.get("x", chosen_x)
+        return float(v if v is not None else chosen_x)
+
+    if (
+        late_pressure
+        and replacement.get("merge_grade", "NO") == "NO"
+        and next_type
+        and abs(_replacement_x()) <= 3.05
+    ):
+        pieces = (game_state or {}).get("pieces") or []
+        same_pieces = [
+            p for p in pieces if int(p.get("type", 0) or 0) == next_type
+        ]
+        if same_pieces:
+            target_piece = max(
+                same_pieces,
+                key=lambda p: (
+                    float(p.get("y", -99.0) or -99.0),
+                    -abs(float(p.get("x", 0.0) or 0.0)),
+                ),
+            )
+            target_x = float(target_piece.get("x", 0.0) or 0.0)
+            target_y = float(target_piece.get("y", -99.0) or -99.0)
+            current_dx = abs(_replacement_x() - target_x)
+            if current_dx > 1.25 and (target_y >= deadline_y - 2.25 or piece_count >= 38):
+                pool = safe or results
+                visual_band = [
+                    r
+                    for r in pool
+                    if abs(float(r.get("x", 0.0) or 0.0) - target_x) <= 1.05
+                    and abs(float(r.get("x", 0.0) or 0.0) - target_x) < current_dx
+                    and risk_top(r) <= max(risk_top(replacement) + 0.8, min_risk_top + 1.7)
+                ]
+                if visual_band:
+                    replacement = min(
+                        visual_band,
+                        key=lambda r: (
+                            abs(float(r.get("x", 0.0) or 0.0) - target_x),
+                            bool(r.get("crosses_deadline", False)),
+                            risk_top(r),
+                        ),
+                    )
+                    replacement_source = "visual_same_country_hard"
 
     # Absolute postcondition: when a non-crossing candidate exists, the runtime
     # safety layer must never finish on a deadline-crossing candidate. Previous
     # logs showed *_TO_NO while decision_crosses_deadline stayed true, so make
     # the invariant explicit after all branch-specific replacements.
-    if safe and replacement.get("crosses_deadline", False):
-        min_safe_top = min(risk_top(s) for s in safe)
-        safe_band = [
-            r for r in safe if risk_top(r) <= min_safe_top + 0.05
-        ] or safe
-        safe_merge_band = [
-            r for r in safe_band if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+    if (
+        safe
+        and replacement.get("crosses_deadline", False)
+        and not replacement_source.startswith("visual_deadline_same_country")
+    ):
+        # Prefer any safe merge across the whole safe pool first — don't
+        # restrict to a narrow risk band, which can hide the only safe merges
+        # available and force a NEAR→NO downgrade.
+        safe_merges = [
+            r for r in safe
+            if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
         ]
-        replacement = min(
-            safe_merge_band or safe_band,
-            key=lambda r: (
-                risk_top(r),
-                grade_rank.get(r.get("merge_grade", "NO"), 9),
-                abs(float(r.get("x", 0.0) or 0.0)),
-            ),
-        )
+        if safe_merges:
+            replacement = min(safe_merges, key=rank_candidate)
+        else:
+            min_safe_top = min(risk_top(s) for s in safe)
+            safe_band = [
+                r for r in safe if risk_top(r) <= min_safe_top + 0.05
+            ] or safe
+            replacement = min(
+                safe_band,
+                key=lambda r: (
+                    risk_top(r),
+                    grade_rank.get(r.get("merge_grade", "NO"), 9),
+                    abs(float(r.get("x", 0.0) or 0.0)),
+                ),
+            )
+        replacement_source = f"{replacement_source}_safe_postcondition"
 
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
+        and not replacement_source.startswith("visual_deadline_same_country")
     ):
         risk_band = [
             r for r in results if risk_top(r) <= min_risk_top + 0.05
@@ -480,8 +796,14 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 ),
             )
         else:
+            non_edge_band = [
+                r
+                for r in results
+                if risk_top(r) <= min_risk_top + 0.35
+                and abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+            ]
             replacement = min(
-                risk_band,
+                non_edge_band or risk_band,
                 key=lambda r: (
                     risk_top(r),
                     abs(float(r.get("x", 0.0) or 0.0)),
@@ -491,10 +813,17 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     new_decision = dict(decision)
     old_grade = chosen.get("merge_grade", "NO")
     new_grade = replacement.get("merge_grade", "NO")
-    new_x = float(replacement.get("x", chosen_x) or chosen_x)
+    # Note: `r.get("x", default) or default` is wrong because x=0.0 is falsy.
+    _new_x_raw = replacement.get("x", chosen_x)
+    new_x = float(_new_x_raw if _new_x_raw is not None else chosen_x)
     new_decision["x"] = max(GAME_X_MIN, min(GAME_X_MAX, new_x))
     reason = str(new_decision.get("reason", "") or "").strip()
-    suffix = f"RUNTIME_DEADLINE_SAFETY_OVERRIDE_{old_grade}_TO_{new_grade}"
+    visual_suffix = (
+        "_VISUAL_SAME_COUNTRY"
+        if replacement_source.startswith("visual_same_country")
+        else ""
+    )
+    suffix = f"RUNTIME_DEADLINE_SAFETY_OVERRIDE_{old_grade}_TO_{new_grade}_{replacement_source}{visual_suffix}"
     new_decision["reason"] = f"{reason}_{suffix}" if reason else suffix
     log(
         "RUNTIME_DEADLINE_SAFETY_OVERRIDE: "
@@ -532,6 +861,10 @@ def wait_for_move_state():
         # MOVE状態に入った瞬間にタイムアウト時刻をセット
         if settle_force_at == 0.0:
             settle_force_at = time.time() + SETTLE_FORCE_TIMEOUT
+
+        if has_deadline_contact(gs):
+            log("FAST_DROP_DEADLINE_CONTACT: skipping settle wait")
+            return gs, True
 
         # 静止確認（force_after を渡してグリッチ時も突破できるようにする）
         if is_board_settled(gs, force_after=settle_force_at):
@@ -686,6 +1019,17 @@ def run_game():
 
             # 盤面解析
             analysis = build_analysis(gs)
+
+            # strategy.py は手番ごとに再ロードする。これにより、ライブ改善で
+            # strategy.py だけを書き換えた場合もプロセス再起動なしで次手から反映する。
+            try:
+                current_strategy_hash = get_strategy_hash()
+                if current_strategy_hash != strategy_hash:
+                    strategy = load_strategy_module()
+                    strategy_hash = current_strategy_hash
+                    log(f"Strategy reloaded: {strategy_hash}")
+            except Exception as err:
+                log(f"WARN: strategy.py reload failed, keeping previous module: {err}")
 
             # strategy.decide() でドロップ決定
             try:

@@ -215,6 +215,13 @@ Phases (determined by board max Y):
      # refs: protected_e6f534c37e28 (no gates), last_rollback_postmortem.md (v477 not failure mode),
      #       last_rollback_analysis.md, 20260403_001258_score0658 T59-66, 20260403_000458_score2187 T93-100,
      #       20260403_000719_score0711 T58-65, batch_summary.txt, change_log.txt
+     # vYYY: staged creation gate — Kazakhstan repair before Russia/Soviet-only tuning
+     # Current live fallback c69876685abc has Turkmenistan/Ukraine at 100% but Kazakhstan at 22/24
+     # over the current-hash recent window. The active improvement stage is therefore Ukraine→Kazakhstan:
+     # keep high-stage-only Russia/Soviet changes out, and make type10-12 drops after Ukraine stay low,
+     # central, and close to the deepest same-country/Uzbekistan bridge until Kazakhstan appears.
+     # refs: game_history/20260514_143508_score1051.jsonl T63-T78,
+     #       game_history/20260514_135716_score1329.jsonl T60-T84
      # v477: merge drought critical — lower threshold pc>=35→pc>=30 per protected strategy
      # Protected strategy (median 12789) has NO relaxation gates. Previous pc>=35 left a
      # 5-turn gap (pc=30-34) where relaxation weakened height penalty → scatter. Batch:
@@ -948,7 +955,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
+    russia_pieces = [p for p in pieces if p.get("type") == 15]
+    russia_phase_count = len(russia_pieces)
     russia_phase = russia_phase_count >= 1
     # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
     double_russia_phase = russia_phase_count >= 2
@@ -987,9 +995,87 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # refs: advice.md (Pitman_live), tmp/batch_summary.txt, last_rollback_postmortem.md
     same_type_pieces = [p for p in pieces if p.get("type") == next_type]
     same_type_stack_top = None
+    same_type_deepest = None
     if same_type_pieces:
         # 盤面上の現在タイプの最も高い位置のピースを見つける
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
+        same_type_deepest = min(same_type_pieces, key=lambda p: p.get("y", 10))
+    next_plus_pieces = [p for p in pieces if p.get("type") == merged_type]
+    russia_resource_pieces = [p for p in pieces if p.get("type", 0) >= 12]
+    soviet_seed_pieces = [p for p in pieces if 13 <= p.get("type", 0) <= 14]
+    highest_resource_type = max((p.get("type", 0) for p in pieces), default=0)
+    uzbekistan_pieces = [p for p in pieces if p.get("type") == 12]
+    ukraine_pieces = [p for p in pieces if p.get("type") == 13]
+    kazakhstan_pieces = [p for p in pieces if p.get("type") == 14]
+    kazakhstan_exists = bool(kazakhstan_pieces)
+    ukraine_exists = bool(ukraine_pieces)
+
+    def distance2d(ax, ay, bx, by):
+        return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+    def russia_goal_multiplier(piece_type):
+        if piece_type >= 15:
+            return 2.4
+        if piece_type >= 14:
+            return 1.7
+        if piece_type >= 13:
+            return 1.35
+        if piece_type >= 12:
+            return 1.15
+        return 1.0
+
+    def pair_bridge_target(piece_list):
+        if len(piece_list) < 2:
+            return None
+        best_pair = None
+        best_gap = 999.0
+        for i, left in enumerate(piece_list):
+            for right in piece_list[i + 1:]:
+                lx = float(left.get("x", 0.0) or 0.0)
+                ly = float(left.get("y", 0.0) or 0.0)
+                rx = float(right.get("x", 0.0) or 0.0)
+                ry = float(right.get("y", 0.0) or 0.0)
+                gap = abs(lx - rx) + 0.25 * abs(ly - ry)
+                if gap < best_gap:
+                    best_gap = gap
+                    best_pair = (lx, ly, rx, ry)
+        if best_pair:
+            lx, ly, rx, ry = best_pair
+            return (
+                (lx + rx) / 2.0,
+                min(ly, ry),
+                best_gap,
+            )
+        return None
+
+    uzbekistan_bridge_target = pair_bridge_target(uzbekistan_pieces)
+    ukraine_bridge_target = pair_bridge_target(ukraine_pieces)
+    kazakhstan_bridge_target = pair_bridge_target(kazakhstan_pieces)
+    ladder_bridge_type = None
+    ladder_bridge_target = None
+    for ladder_type in range(11, 8, -1):
+        ladder_pieces = [p for p in pieces if p.get("type") == ladder_type]
+        target = pair_bridge_target(ladder_pieces)
+        if target is not None:
+            ladder_bridge_type = ladder_type
+            ladder_bridge_target = target
+            break
+    russia_rebuild_bridge_type = None
+    russia_rebuild_bridge_target = None
+    for ladder_type in range(12, 9, -1):
+        ladder_pieces = [p for p in pieces if p.get("type") == ladder_type]
+        target = pair_bridge_target(ladder_pieces)
+        if target is not None:
+            russia_rebuild_bridge_type = ladder_type
+            russia_rebuild_bridge_target = target
+            break
+    ukraine_anchor_target = None
+    if ukraine_pieces and uzbekistan_pieces:
+        best_ukraine = min(ukraine_pieces, key=lambda p: p.get("y", 10))
+        ukraine_anchor_target = (
+            float(best_ukraine.get("x", 0.0) or 0.0),
+            float(best_ukraine.get("y", 0.0) or 0.0),
+        )
 
     # --- v360: per-type reactive/near pair extraction (unutilized reactor info) ---
     # reactive_pairs is list of (piece_id_1, piece_id_2, type) tuples
@@ -1077,6 +1163,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             or 999.0
         )
 
+    # --- Deadline guard helpers (used by final guard near end of decide()) ---
+    _TYPE_RADII = {
+        1: 0.207, 2: 0.259, 3: 0.316, 4: 0.380, 5: 0.414,
+        6: 0.470, 7: 0.559, 8: 0.660, 9: 0.746, 10: 0.846,
+        11: 0.982, 12: 1.068, 13: 1.207, 14: 1.385, 15: 1.600,
+    }
+    _GRADE_RANK = {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}
+
+    def _post_drop_top(r):
+        """Board top after merges resolve (fallback to risk_top_y_after_drop)."""
+        mt = r.get("merge_result_top_y")
+        try:
+            mt = float(mt) if mt is not None else None
+        except (TypeError, ValueError):
+            mt = None
+        return mt if mt is not None else risk_top_value(r)
+
+    def _grade(r):
+        return _GRADE_RANK.get(r.get("merge_grade", "NO"), 9)
+
     indexed_results = list(enumerate(results))
     safe_indexed_results = [
         (idx, r) for idx, r in indexed_results if not r.get("crosses_deadline", False)
@@ -1105,6 +1211,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             for idx, r in indexed_results
             if risk_top_value(r) <= min_deadline_risk_top + 0.05
         ] or indexed_results
+    mandatory_merge_grades = ("DIRECT", "NEAR", "FAR")
+    mandatory_merge_indexed_results = [
+        (idx, r)
+        for idx, r in indexed_results
+        if r.get("merge_grade", "NO") in mandatory_merge_grades
+    ]
+    if mandatory_merge_indexed_results:
+        active_indexed_results = mandatory_merge_indexed_results
     active_results = [r for _, r in active_indexed_results]
 
     # vYYY: pre-compute merge_possible for hard deadline-merge override (Change 1)
@@ -1114,6 +1228,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     direct_merge_possible = any(r.get("merge_grade") == "DIRECT" for r in active_results)
     safe_direct_merge_possible = any(
         r.get("merge_grade") == "DIRECT"
+        and not r.get("crosses_deadline", False)
+        for r in active_results
+    )
+    safe_near_merge_possible = any(
+        r.get("merge_grade") == "NEAR"
         and not r.get("crosses_deadline", False)
         for r in active_results
     )
@@ -1133,6 +1252,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         or max_y >= 1.8
         or current_top_edge_y >= deadline_y - 1.0
         or reactive_pair_count >= 3
+    )
+    no_merge_non_edge_min_risk_exists = any(
+        r.get("merge_grade", "NO") == "NO"
+        and abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+        and risk_top_value(r) <= min_deadline_risk_top + 0.35
+        for r in active_results
     )
     immediate_direct_required = (
         safe_direct_merge_possible
@@ -1178,6 +1303,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if deadline_crossed and direct_merge_possible and merge_grade != "DIRECT":
             score -= 10000.0
             reasons.append("DEADLINE_MERGE_FORCED_OVERRIDE")
+
+        # Baseline invariant: do not let resource planning, low-ceiling rails,
+        # or bridge shaping beat a safe merge. The game rewards reducing piece
+        # count, and recent live histories show these side axes repeatedly
+        # choosing "elsewhere" while safe merges exist.
+        if safe_direct_merge_possible:
+            if merge_grade != "DIRECT":
+                score -= 2400000.0
+                reasons.append("SAFE_DIRECT_MERGE_BASELINE_FORCED")
+            elif result.get("crosses_deadline", False):
+                score -= 1200000.0
+                reasons.append("SAFE_DIRECT_MERGE_CROSSING_SUPPRESSION")
+        elif safe_near_merge_possible and merge_grade not in ("DIRECT", "NEAR"):
+            score -= 1300000.0
+            reasons.append("SAFE_NEAR_MERGE_BASELINE_FORCED")
 
         # Final-board pressure must not skip a safe DIRECT merge for a lower
         # no-merge placement. Headroom and height rails are still useful, but
@@ -1248,6 +1388,887 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 620000.0
             reasons.append("NO_MERGE_ENDGAME_MIN_RISK_HARD_BLOCK")
 
+        if (
+            no_merge_min_risk_pressure
+            and not merge_possible
+            and merge_grade == "NO"
+            and abs(x) >= 2.5
+            and (
+                no_merge_non_edge_min_risk_exists
+                or piece_count >= 28
+                or current_top_edge_y >= deadline_y - 1.0
+            )
+        ):
+            score -= 1800000.0
+            reasons.append("NO_MERGE_ENDGAME_EDGE_HARD_BLOCK")
+
+        if (
+            merge_grade == "NO"
+            and next_type >= 10
+            and same_type_stack_top is not None
+        ):
+            target_piece = same_type_stack_top
+            if (
+                same_type_deepest is not None
+                and not ukraine_exists
+                and not kazakhstan_exists
+                and next_type <= 12
+            ):
+                # Before Ukraine exists, building a country line from the low
+                # base is more important than stacking onto a stranded high
+                # duplicate. The old top-targeting path kept creating high
+                # shelves of Belarus/Turkmenistan/Uzbekistan.
+                target_piece = same_type_deepest
+            target_x = float(target_piece.get("x", 0.0) or 0.0)
+            target_y = float(target_piece.get("y", -5.0) or -5.0)
+            dist = distance2d(x, landing_y, target_x, target_y)
+            if dist <= 2.8:
+                bonus = (2.8 - dist) * 360.0 * russia_goal_multiplier(next_type)
+                score += bonus
+                reasons.append("RUSSIA_RESOURCE_STACK_GUIDANCE")
+            if abs(x) >= 2.5 and piece_count >= 24:
+                score -= 900000.0
+                reasons.append("RUSSIA_RESOURCE_EDGE_SUPPRESSION")
+
+        if (
+            merge_grade == "NO"
+            and not ukraine_exists
+            and not kazakhstan_exists
+            and 10 <= next_type <= 12
+            and same_type_deepest is not None
+            and highest_resource_type >= 11
+            and piece_count >= 14
+        ):
+            sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+            sy = float(same_type_deepest.get("y", -5.0) or -5.0)
+            same_dist = distance2d(x, landing_y, sx, sy)
+            if same_dist <= 3.0:
+                score += (3.0 - same_dist) * 220000.0
+                reasons.append("PRE_UKRAINE_DEEPEST_SAME_COUNTRY_GUIDANCE")
+            if same_dist >= 2.45:
+                score -= 360000.0
+                reasons.append("PRE_UKRAINE_SAME_COUNTRY_SCATTER_SUPPRESSION")
+            if landing_y > sy + 2.05:
+                score -= 260000.0
+                reasons.append("PRE_UKRAINE_SAME_COUNTRY_HIGH_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 420000.0
+                reasons.append("PRE_UKRAINE_SAME_COUNTRY_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 860000.0
+                reasons.append("PRE_UKRAINE_SAME_COUNTRY_CROSSING_SUPPRESSION")
+            if deadline_crossed and top_y_after_drop > min_deadline_risk_top + 0.08:
+                score -= 520000.0
+                reasons.append("PRE_UKRAINE_SAME_COUNTRY_MIN_RISK_SUPPRESSION")
+
+        if (
+            merge_grade == "NO"
+            and not ukraine_exists
+            and not kazakhstan_exists
+            and highest_resource_type >= 12
+            and next_type <= 9
+            and piece_count >= 24
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 980000.0
+                reasons.append("PRE_UKRAINE_LOW_RESOURCE_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.08:
+                score -= 640000.0
+                reasons.append("PRE_UKRAINE_LOW_RESOURCE_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 520000.0
+                reasons.append("PRE_UKRAINE_LOW_RESOURCE_EDGE_SUPPRESSION")
+            if landing_y > current_top_edge_y + 0.55:
+                score -= 240000.0
+                reasons.append("PRE_UKRAINE_LOW_RESOURCE_HIGH_SHELF_SUPPRESSION")
+
+        if (
+            merge_grade == "NO"
+            and next_type >= 10
+            and highest_resource_type >= 13
+            and russia_resource_pieces
+        ):
+            cx = sum(float(p.get("x", 0.0) or 0.0) for p in russia_resource_pieces) / len(russia_resource_pieces)
+            cy = sum(float(p.get("y", 0.0) or 0.0) for p in russia_resource_pieces) / len(russia_resource_pieces)
+            dist = distance2d(x, landing_y, cx, cy)
+            if dist <= 3.2:
+                score += (3.2 - dist) * 180.0
+                reasons.append("RUSSIA_RESOURCE_CLUSTER_GUIDANCE")
+
+        if (
+            merge_grade == "NO"
+            and russia_resource_pieces
+            and piece_count >= 28
+        ):
+            resource_pressure = highest_resource_type >= 13 or len(russia_resource_pieces) >= 3
+            if resource_pressure:
+                if result.get("crosses_deadline", False):
+                    score -= 900000.0
+                    reasons.append("RUSSIA_RESOURCE_CROSSING_SUPPRESSION")
+                if top_y_after_drop > min_deadline_risk_top + 0.08:
+                    score -= 520000.0
+                    reasons.append("RUSSIA_RESOURCE_MIN_RISK_SUPPRESSION")
+                if abs(x) >= 2.1:
+                    score -= 420000.0
+                    reasons.append("RUSSIA_RESOURCE_WIDE_NO_MERGE_SUPPRESSION")
+
+        if (
+            kazakhstan_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and next_type <= 11
+            and piece_count >= 30
+        ):
+            score -= 260000.0
+            reasons.append("KAZAKHSTAN_PHASE_LOW_TIER_NO_MERGE_SUPPRESSION")
+        if (
+            kazakhstan_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and same_type_deepest is not None
+            and piece_count >= 24
+        ):
+            sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+            sy = float(same_type_deepest.get("y", -5.0) or -5.0)
+            same_dist = distance2d(x, landing_y, sx, sy)
+            if same_dist <= 3.2:
+                score += (3.2 - same_dist) * 260000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_GUIDANCE")
+            if same_dist >= 2.5:
+                score -= 460000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_SCATTER_SUPPRESSION")
+            if landing_y > sy + 2.15:
+                score -= 380000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_HIGH_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 560000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_EDGE_SUPPRESSION")
+        if (
+            kazakhstan_exists
+            and not ukraine_exists
+            and not russia_phase
+            and russia_rebuild_bridge_target is not None
+            and merge_grade == "NO"
+            and next_type == russia_rebuild_bridge_type
+            and piece_count >= 24
+        ):
+            bridge_x, lower_rebuild_y, bridge_gap = russia_rebuild_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.65:
+                score += (1.65 - bridge_distance) * 320000.0
+                reasons.append("RUSSIA_REBUILD_RESOURCE_PAIR_BRIDGE_GUIDANCE")
+            if abs(x) >= 2.35:
+                score -= 520000.0
+                reasons.append("RUSSIA_REBUILD_RESOURCE_PAIR_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 680000.0
+                reasons.append("RUSSIA_REBUILD_RESOURCE_PAIR_CROSSING_SUPPRESSION")
+            if landing_y > lower_rebuild_y + 3.0:
+                score -= 240000.0
+                reasons.append("RUSSIA_REBUILD_RESOURCE_PAIR_HIGH_SUPPRESSION")
+        if (
+            kazakhstan_exists
+            and not ukraine_exists
+            and not russia_phase
+            and len(uzbekistan_pieces) >= 2
+            and uzbekistan_bridge_target is not None
+            and merge_grade == "NO"
+            and next_type <= 9
+            and piece_count >= 22
+        ):
+            bridge_x, lower_uzbekistan_y, bridge_gap = uzbekistan_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.55:
+                score += (1.55 - bridge_distance) * 240000.0
+                reasons.append("RUSSIA_REBUILD_UZBEKISTAN_LOW_NUDGE_GUIDANCE")
+            if result.get("crosses_deadline", False):
+                score -= 760000.0
+                reasons.append("RUSSIA_REBUILD_UZBEKISTAN_LOW_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.08:
+                score -= 420000.0
+                reasons.append("RUSSIA_REBUILD_UZBEKISTAN_LOW_MIN_RISK_SUPPRESSION")
+            if landing_y > lower_uzbekistan_y + 3.2:
+                score -= 220000.0
+                reasons.append("RUSSIA_REBUILD_UZBEKISTAN_LOW_HIGH_SUPPRESSION")
+        if (
+            kazakhstan_exists
+            and ukraine_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and next_type <= 9
+            and piece_count >= 28
+        ):
+            score -= 360000.0
+            reasons.append("KAZAKHSTAN_PHASE_LOW_BLOCKER_SUPPRESSION")
+
+        if (
+            not kazakhstan_exists
+            and uzbekistan_bridge_target is not None
+            and merge_grade == "NO"
+            and next_type <= 11
+            and piece_count >= 18
+        ):
+            bridge_x, lower_uzbekistan_y, bridge_gap = uzbekistan_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.45 and next_type >= 10:
+                score += (1.45 - bridge_distance) * 520000.0
+                reasons.append("UKRAINE_PAIR_BRIDGE_GUIDANCE")
+            russia_rebuild_uzbekistan_pair = (
+                russia_phase
+                and not double_russia_phase
+                and not kazakhstan_exists
+                and not ukraine_exists
+                and len(uzbekistan_pieces) >= 2
+            )
+            pre_ukraine_uzbekistan_pair_pressure = (
+                not russia_phase
+                and not ukraine_exists
+                and not kazakhstan_exists
+                and len(uzbekistan_pieces) >= 2
+                and piece_count >= 24
+                and min_deadline_risk_top > 0.25
+            )
+            if (
+                next_type <= 9
+                and bridge_distance <= 1.45
+                and piece_count >= 24
+                and len(uzbekistan_pieces) < 3
+                and not russia_rebuild_uzbekistan_pair
+                and not pre_ukraine_uzbekistan_pair_pressure
+            ):
+                score -= (1.45 - bridge_distance) * 260000.0
+                reasons.append("UKRAINE_PAIR_LOW_FILL_SUPPRESSION")
+            if (
+                next_type <= 9
+                and bridge_distance <= 1.65
+                and (
+                    len(uzbekistan_pieces) >= 3
+                    or russia_rebuild_uzbekistan_pair
+                    or pre_ukraine_uzbekistan_pair_pressure
+                )
+            ):
+                if russia_rebuild_uzbekistan_pair:
+                    nudge_weight = 420000.0
+                elif pre_ukraine_uzbekistan_pair_pressure:
+                    nudge_weight = 320000.0
+                else:
+                    nudge_weight = 240000.0
+                score += (1.65 - bridge_distance) * nudge_weight
+                reasons.append(
+                    "SOVIET_REBUILD_UZBEKISTAN_LOW_NUDGE_GUIDANCE"
+                    if russia_rebuild_uzbekistan_pair
+                    else (
+                        "PRE_UKRAINE_UZBEKISTAN_LOW_NUDGE_GUIDANCE"
+                        if pre_ukraine_uzbekistan_pair_pressure
+                        else "UKRAINE_PAIR_LOW_NUDGE_GUIDANCE"
+                    )
+                )
+            if russia_rebuild_uzbekistan_pair and next_type <= 9:
+                if result.get("crosses_deadline", False):
+                    score -= 980000.0
+                    reasons.append("SOVIET_REBUILD_UZBEKISTAN_LOW_CROSSING_SUPPRESSION")
+                if top_y_after_drop > min_deadline_risk_top + 0.04:
+                    score -= 760000.0
+                    reasons.append("SOVIET_REBUILD_UZBEKISTAN_LOW_MIN_RISK_SUPPRESSION")
+                if abs(x) >= 2.25:
+                    score -= 690000.0
+                    reasons.append("SOVIET_REBUILD_UZBEKISTAN_LOW_EDGE_SUPPRESSION")
+            if abs(x) >= 2.35 and bridge_gap <= 2.8:
+                score -= 620000.0
+                reasons.append("UKRAINE_PAIR_EDGE_SUPPRESSION")
+            if next_type >= 10 and abs(x) >= 2.35:
+                score -= 760000.0
+                reasons.append("UKRAINE_PAIR_COUNTRY_EDGE_SUPPRESSION")
+            if ukraine_exists and abs(x) >= 2.35:
+                score -= 520000.0
+                reasons.append("UKRAINE_PAIR_POST_UKRAINE_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 1200000.0
+                reasons.append("UKRAINE_PAIR_CROSSING_SUPPRESSION")
+            if landing_y > deadline_y + 0.25:
+                score -= 40000.0
+                reasons.append("UKRAINE_PAIR_HIGH_BRIDGE_SUPPRESSION")
+
+        if (
+            not ukraine_exists
+            and not kazakhstan_exists
+            and uzbekistan_bridge_target is None
+            and len(uzbekistan_pieces) >= 2
+            and merge_grade == "NO"
+            and 10 <= next_type <= 11
+            and piece_count >= 18
+        ):
+            ux = sum(float(p.get("x", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            uy = sum(float(p.get("y", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            udist = distance2d(x, landing_y, ux, uy)
+            if udist <= 2.8:
+                score += (2.8 - udist) * 420000.0
+                reasons.append("UKRAINE_PAIR_CENTROID_FALLBACK_GUIDANCE")
+            if abs(x) >= 2.35:
+                score -= 840000.0
+                reasons.append("UKRAINE_PAIR_CENTROID_FALLBACK_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 900000.0
+                reasons.append("UKRAINE_PAIR_CENTROID_FALLBACK_CROSSING_SUPPRESSION")
+
+        if (
+            not kazakhstan_exists
+            and ukraine_anchor_target is not None
+            and merge_grade == "NO"
+            and next_type <= 11
+            and piece_count >= 24
+            and not deadline_crossed
+            and reactor_margin > 0.5
+        ):
+            anchor_x, anchor_y = ukraine_anchor_target
+            anchor_dist = distance2d(x, landing_y, anchor_x, anchor_y)
+            if anchor_dist <= 2.9:
+                score += (2.9 - anchor_dist) * 190000.0
+                reasons.append("UKRAINE_ANCHOR_BUILD_GUIDANCE")
+            anchor_scatter_penalty = 360000.0
+            if uzbekistan_bridge_target is not None:
+                # Once two Uzbekistans exist, the next priority is making the second Ukraine.
+                # A full anchor scatter penalty over-pulls low pieces toward the existing Ukraine.
+                anchor_scatter_penalty = 120000.0
+                if abs(x) >= 2.35:
+                    score -= 540000.0
+                    reasons.append("UKRAINE_ANCHOR_POST_PAIR_EDGE_SUPPRESSION")
+            if abs(x - anchor_x) >= 2.2:
+                score -= anchor_scatter_penalty
+                reasons.append("UKRAINE_ANCHOR_SCATTER_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 520000.0
+                reasons.append("UKRAINE_ANCHOR_CROSSING_SUPPRESSION")
+
+        if (
+            highest_resource_type >= 12
+            and highest_resource_type < 13
+            and ladder_bridge_target is not None
+            and merge_grade == "NO"
+            and next_type <= max(9, ladder_bridge_type)
+            and piece_count >= 34
+            and not deadline_crossed
+            and reactor_margin > 0.5
+        ):
+            bridge_x, lower_ladder_y, bridge_gap = ladder_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.55:
+                score += (1.55 - bridge_distance) * 180000.0
+                reasons.append("RESOURCE_LADDER_BRIDGE_GUIDANCE")
+            if abs(x) >= 2.35 and bridge_gap <= 3.0:
+                score -= 360000.0
+                reasons.append("RESOURCE_LADDER_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 480000.0
+                reasons.append("RESOURCE_LADDER_CROSSING_SUPPRESSION")
+            if landing_y > lower_ladder_y + 4.2:
+                score -= 50000.0
+                reasons.append("RESOURCE_LADDER_HIGH_BRIDGE_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and len(uzbekistan_pieces) >= 2
+            and merge_grade == "NO"
+            and next_type <= 12
+            and piece_count >= 20
+            and not deadline_crossed
+            and reactor_margin > 0.5
+        ):
+            ux = sum(float(p.get("x", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            uy = sum(float(p.get("y", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            udist = distance2d(x, landing_y, ux, uy)
+            if udist <= 2.6:
+                score += (2.6 - udist) * 420000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_CLUSTER_GUIDANCE")
+            if landing_y > uy + 1.8:
+                score -= 360000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_HIGH_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 680000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_EDGE_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and len(uzbekistan_pieces) >= 2
+            and uzbekistan_bridge_target is not None
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and piece_count >= 20
+        ):
+            bridge_x, lower_uzbekistan_y, bridge_gap = uzbekistan_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.75:
+                score += (1.75 - bridge_distance) * 520000.0
+                reasons.append("POST_UKRAINE_KAZAKHSTAN_BRIDGE_GUIDANCE")
+            if abs(x) >= 2.3:
+                score -= 720000.0
+                reasons.append("POST_UKRAINE_KAZAKHSTAN_BRIDGE_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 980000.0
+                reasons.append("POST_UKRAINE_KAZAKHSTAN_BRIDGE_CROSSING_SUPPRESSION")
+            if landing_y > lower_uzbekistan_y + 2.6:
+                score -= 420000.0
+                reasons.append("POST_UKRAINE_KAZAKHSTAN_BRIDGE_HIGH_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and len(uzbekistan_pieces) >= 2
+            and merge_grade == "NO"
+            and next_type <= 9
+            and piece_count >= 18
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 900000.0
+                reasons.append("POST_UKRAINE_LOW_RESOURCE_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.08:
+                score -= 560000.0
+                reasons.append("POST_UKRAINE_LOW_RESOURCE_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 440000.0
+                reasons.append("POST_UKRAINE_LOW_RESOURCE_EDGE_SUPPRESSION")
+            uy = sum(float(p.get("y", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            if landing_y > uy + 2.4:
+                score -= 260000.0
+                reasons.append("POST_UKRAINE_LOW_RESOURCE_HIGH_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and merge_grade == "NO"
+            and next_type <= 9
+            and piece_count >= 16
+        ):
+            # After the first Ukraine, the failure pattern is not lack of
+            # ambition; it is losing vertical room before the second Ukraine
+            # can touch it. Keep filler drops low and central until the
+            # Uzbekistan/Kazakhstan bridge is actually available.
+            if result.get("crosses_deadline", False):
+                score -= 1120000.0
+                reasons.append("POST_UKRAINE_FILLER_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.05:
+                score -= 820000.0
+                reasons.append("POST_UKRAINE_FILLER_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.2:
+                score -= 760000.0
+                reasons.append("POST_UKRAINE_FILLER_EDGE_SUPPRESSION")
+            if landing_y > 0.7:
+                score -= (landing_y - 0.7) * 420000.0
+                reasons.append("POST_UKRAINE_FILLER_HIGH_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and same_type_deepest is not None
+            and piece_count >= 16
+        ):
+            sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+            sy = float(same_type_deepest.get("y", 0.0) or 0.0)
+            same_dist = distance2d(x, landing_y, sx, sy)
+            if same_dist <= 3.0:
+                score += (3.0 - same_dist) * 520000.0
+                reasons.append("POST_UKRAINE_RESOURCE_DEEPEST_GUIDANCE")
+            if same_dist >= 2.35:
+                score -= 860000.0
+                reasons.append("POST_UKRAINE_RESOURCE_SCATTER_SUPPRESSION")
+            if landing_y > sy + 1.35:
+                score -= 680000.0
+                reasons.append("POST_UKRAINE_RESOURCE_HIGH_SUPPRESSION")
+            if abs(x) >= 2.25:
+                score -= 960000.0
+                reasons.append("POST_UKRAINE_RESOURCE_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 1220000.0
+                reasons.append("POST_UKRAINE_RESOURCE_CROSSING_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and not russia_phase
+            and len(uzbekistan_pieces) >= 3
+            and merge_grade == "NO"
+            and next_type <= 11
+            and piece_count >= 28
+        ):
+            ux = sum(float(p.get("x", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            uy = sum(float(p.get("y", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+            udist = distance2d(x, landing_y, ux, uy)
+            if udist <= 2.9:
+                score += (2.9 - udist) * 360000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_SWARM_GUIDANCE")
+            if abs(x) >= 2.25:
+                score -= 880000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_SWARM_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 1150000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_SWARM_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.08:
+                score -= 780000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_SWARM_MIN_RISK_SUPPRESSION")
+            if landing_y > uy + 2.6:
+                score -= 560000.0
+                reasons.append("POST_UKRAINE_UZBEKISTAN_SWARM_HIGH_SUPPRESSION")
+
+        if (
+            ukraine_exists
+            and not kazakhstan_exists
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and same_type_pieces
+            and piece_count >= 16
+            and not deadline_crossed
+            and reactor_margin > 0.5
+        ):
+            deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+            sx = float(deepest_same.get("x", 0.0) or 0.0)
+            sy = float(deepest_same.get("y", 0.0) or 0.0)
+            same_dist = distance2d(x, landing_y, sx, sy)
+            if same_dist <= 2.9:
+                score += (2.9 - same_dist) * 300000.0
+                reasons.append("POST_UKRAINE_DEEPEST_SAME_COUNTRY_GUIDANCE")
+            if same_dist >= 2.5:
+                score -= 480000.0
+                reasons.append("POST_UKRAINE_SAME_COUNTRY_SCATTER_SUPPRESSION")
+            if landing_y > sy + 2.2:
+                score -= 260000.0
+                reasons.append("POST_UKRAINE_SAME_COUNTRY_HIGH_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 920000.0
+                reasons.append("POST_UKRAINE_SAME_COUNTRY_EDGE_SUPPRESSION")
+
+        if (
+            ukraine_bridge_target is not None
+            and merge_grade == "NO"
+            and next_type <= 12
+            and piece_count >= 24
+        ):
+            bridge_x, lower_ukraine_y, bridge_gap = ukraine_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.35 and next_type <= 9:
+                score += (1.35 - bridge_distance) * 260000.0
+                reasons.append("KAZAKHSTAN_BUILD_LOW_PUSH_GUIDANCE")
+            if bridge_distance <= 1.55 and next_type >= 10:
+                score += (1.55 - bridge_distance) * 340000.0
+                reasons.append("KAZAKHSTAN_BUILD_COUNTRY_BRIDGE_GUIDANCE")
+            if bridge_distance <= 2.2 and next_type <= 8 and bridge_gap >= 3.2:
+                score -= (2.2 - bridge_distance) * 220000.0
+                reasons.append("KAZAKHSTAN_BUILD_LOW_BLOCKER_SUPPRESSION")
+            if bridge_gap >= 3.4 and next_type <= 10 and bridge_distance <= 1.8:
+                score -= (1.8 - bridge_distance) * 260000.0
+                reasons.append("KAZAKHSTAN_BUILD_WIDE_PAIR_GAP_SUPPRESSION")
+            if next_type <= 9 and abs(x) >= 2.25:
+                score -= 820000.0
+                reasons.append("KAZAKHSTAN_BUILD_LOW_EDGE_SUPPRESSION")
+            if next_type <= 9 and top_y_after_drop > min_deadline_risk_top + 0.06:
+                score -= 620000.0
+                reasons.append("KAZAKHSTAN_BUILD_LOW_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.25 and bridge_gap <= 2.7:
+                score -= 680000.0
+                reasons.append("KAZAKHSTAN_BUILD_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 1200000.0 if next_type <= 9 else 760000.0
+                reasons.append("KAZAKHSTAN_BUILD_CROSSING_SUPPRESSION")
+            if landing_y > deadline_y + 0.25:
+                score -= 50000.0
+                reasons.append("KAZAKHSTAN_BUILD_HIGH_BRIDGE_SUPPRESSION")
+
+        if (
+            ukraine_bridge_target is not None
+            and not kazakhstan_exists
+            and merge_grade == "NO"
+            and next_type <= 12
+            and piece_count >= 24
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 1550000.0
+                reasons.append("KAZAKHSTAN_READY_WAIT_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.04:
+                score -= 920000.0
+                reasons.append("KAZAKHSTAN_READY_WAIT_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.25:
+                score -= 820000.0
+                reasons.append("KAZAKHSTAN_READY_WAIT_EDGE_SUPPRESSION")
+            if landing_y > 0.35:
+                score -= (landing_y - 0.35) * 520000.0
+                reasons.append("KAZAKHSTAN_READY_WAIT_HEIGHT_SUPPRESSION")
+
+        if (
+            kazakhstan_exists
+            and ukraine_exists
+            and len(uzbekistan_pieces) >= 2
+            and uzbekistan_bridge_target is not None
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and piece_count >= 18
+        ):
+            bridge_x, lower_uzbekistan_y, bridge_gap = uzbekistan_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.7:
+                score += (1.7 - bridge_distance) * 360000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_BRIDGE_GUIDANCE")
+            if abs(x) >= 2.35:
+                score -= 620000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 720000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_CROSSING_SUPPRESSION")
+            if landing_y > lower_uzbekistan_y + 3.0:
+                score -= 260000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_HIGH_SUPPRESSION")
+        if (
+            kazakhstan_exists
+            and ukraine_exists
+            and len(uzbekistan_pieces) >= 2
+            and merge_grade == "NO"
+            and next_type <= 9
+            and piece_count >= 18
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 960000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_LOW_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.06:
+                score -= 620000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_LOW_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 520000.0
+                reasons.append("RUSSIA_SECOND_UKRAINE_LOW_EDGE_SUPPRESSION")
+
+        if (
+            kazakhstan_exists
+            and ukraine_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and next_type <= 9
+            and piece_count >= 24
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 980000.0
+                reasons.append("RUSSIA_BUILD_LOW_BLOCKER_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.05:
+                score -= 680000.0
+                reasons.append("RUSSIA_BUILD_LOW_BLOCKER_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.25:
+                score -= 620000.0
+                reasons.append("RUSSIA_BUILD_LOW_BLOCKER_EDGE_SUPPRESSION")
+            if landing_y > 0.25:
+                score -= (landing_y - 0.25) * 460000.0
+                reasons.append("RUSSIA_BUILD_LOW_BLOCKER_HEIGHT_SUPPRESSION")
+
+        if (
+            kazakhstan_bridge_target is not None
+            and merge_grade == "NO"
+            and next_type <= 12
+            and piece_count >= 32
+        ):
+            bridge_x, lower_kazakhstan_y, bridge_gap = kazakhstan_bridge_target
+            bridge_distance = abs(x - bridge_x)
+            if bridge_distance <= 1.85:
+                score += (1.85 - bridge_distance) * 720000.0
+                reasons.append("KAZAKHSTAN_PAIR_BRIDGE_GUIDANCE")
+            if abs(x) >= 2.25:
+                score -= 820000.0
+                reasons.append("KAZAKHSTAN_PAIR_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 960000.0
+                reasons.append("KAZAKHSTAN_PAIR_CROSSING_SUPPRESSION")
+            if landing_y > lower_kazakhstan_y + 2.2:
+                score -= 420000.0
+                reasons.append("KAZAKHSTAN_PAIR_HIGH_BRIDGE_SUPPRESSION")
+
+        if (
+            kazakhstan_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and same_type_pieces
+            and piece_count >= 24
+        ):
+            # Russia is one step beyond Kazakhstan, so do not let Belarus/
+            # Turkmenistan/Uzbekistan wander into generic high-layer choices.
+            # If the same country already exists, build from the deepest one.
+            # Centroid targeting is too easily pulled upward by a stranded duplicate.
+            deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+            sx = float(deepest_same.get("x", 0.0) or 0.0)
+            sy = float(deepest_same.get("y", 0.0) or 0.0)
+            same_dist = distance2d(x, landing_y, sx, sy)
+            if same_dist <= 2.8:
+                score += (2.8 - same_dist) * 360000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_GUIDANCE")
+            if same_dist >= 2.4:
+                score -= 520000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_SCATTER_SUPPRESSION")
+            if landing_y > sy + 2.0:
+                score -= 220000.0
+                reasons.append("KAZAKHSTAN_PHASE_SAME_COUNTRY_HIGH_SUPPRESSION")
+            if landing_y > 0.55:
+                score -= (landing_y - 0.55) * 360000.0
+                reasons.append("KAZAKHSTAN_PHASE_RESOURCE_TOP_SUPPRESSION")
+
+        if (
+            kazakhstan_exists
+            and ukraine_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and next_type <= 12
+            and piece_count >= 28
+        ):
+            # At Kazakhstan+Ukraine, the path to Russia is another Ukraine,
+            # not a tall waiting stack. Keep every non-merge resource move low.
+            if landing_y > 0.35:
+                score -= (landing_y - 0.35) * 420000.0
+                reasons.append("RUSSIA_BUILD_LOW_RESOURCE_HEIGHT_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.04:
+                score -= 420000.0
+                reasons.append("RUSSIA_BUILD_MIN_RISK_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 900000.0
+                reasons.append("RUSSIA_BUILD_CROSSING_SUPPRESSION")
+            ukraine_cx = sum(float(p.get("x", 0.0) or 0.0) for p in ukraine_pieces) / len(ukraine_pieces)
+            if next_type >= 10 and abs(x - ukraine_cx) <= 1.9:
+                score += (1.9 - abs(x - ukraine_cx)) * 180000.0
+                reasons.append("RUSSIA_BUILD_UKRAINE_RESOURCE_GUIDANCE")
+
+        if (
+            russia_phase
+            and not double_russia_phase
+            and merge_grade == "NO"
+            and next_type <= 12
+            and piece_count >= 28
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 950000.0
+                reasons.append("SOVIET_PIPELINE_CROSSING_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.05:
+                score -= 620000.0
+                reasons.append("SOVIET_PIPELINE_MIN_RISK_SUPPRESSION")
+            if abs(x) >= 2.2:
+                score -= 460000.0
+                reasons.append("SOVIET_PIPELINE_EDGE_SUPPRESSION")
+            if next_type <= 9 and abs(x) >= 2.2:
+                score -= 720000.0
+                reasons.append("SOVIET_PIPELINE_LOW_EDGE_SUPPRESSION")
+            if next_type <= 9 and top_y_after_drop > min_deadline_risk_top + 0.06:
+                score -= 680000.0
+                reasons.append("SOVIET_PIPELINE_LOW_MIN_RISK_SUPPRESSION")
+            if next_type <= 9 and landing_y > 0.3:
+                score -= (landing_y - 0.3) * 420000.0
+                reasons.append("SOVIET_PIPELINE_LOW_HEIGHT_SUPPRESSION")
+
+            if russia_pieces:
+                deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
+                rx = float(deepest_russia.get("x", 0.0) or 0.0)
+                ry = float(deepest_russia.get("y", 0.0) or 0.0)
+                if abs(x - rx) <= 0.9 and landing_y > ry + 1.7:
+                    score -= 520000.0
+                    reasons.append("SOVIET_PIPELINE_RUSSIA_COVER_SUPPRESSION")
+
+            if soviet_seed_pieces:
+                sx = sum(float(p.get("x", 0.0) or 0.0) for p in soviet_seed_pieces) / len(soviet_seed_pieces)
+                sy = sum(float(p.get("y", 0.0) or 0.0) for p in soviet_seed_pieces) / len(soviet_seed_pieces)
+                seed_dist = distance2d(x, landing_y, sx, sy)
+                if seed_dist <= 2.8:
+                    score += (2.8 - seed_dist) * 180000.0
+                    reasons.append("SOVIET_PIPELINE_SEED_GUIDANCE")
+
+            if kazakhstan_exists and ukraine_exists:
+                if next_type <= 9:
+                    if abs(x) >= 2.2:
+                        score -= 780000.0
+                        reasons.append("SOVIET_SECOND_RUSSIA_LOW_EDGE_SUPPRESSION")
+                    if top_y_after_drop > min_deadline_risk_top + 0.05:
+                        score -= 720000.0
+                        reasons.append("SOVIET_SECOND_RUSSIA_LOW_MIN_RISK_SUPPRESSION")
+                    if landing_y > 0.2:
+                        score -= (landing_y - 0.2) * 480000.0
+                        reasons.append("SOVIET_SECOND_RUSSIA_LOW_HEIGHT_SUPPRESSION")
+                elif next_type <= 12 and ukraine_pieces:
+                    ux = sum(float(p.get("x", 0.0) or 0.0) for p in ukraine_pieces) / len(ukraine_pieces)
+                    uy = sum(float(p.get("y", 0.0) or 0.0) for p in ukraine_pieces) / len(ukraine_pieces)
+                    udist = distance2d(x, landing_y, ux, uy)
+                    if udist <= 2.5:
+                        score += (2.5 - udist) * 420000.0
+                        reasons.append("SOVIET_SECOND_RUSSIA_UKRAINE_GUIDANCE")
+                    if result.get("crosses_deadline", False):
+                        score -= 920000.0
+                        reasons.append("SOVIET_SECOND_RUSSIA_COUNTRY_CROSSING_SUPPRESSION")
+
+        if (
+            russia_phase
+            and not double_russia_phase
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and same_type_deepest is not None
+            and piece_count >= 18
+        ):
+            sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+            sy = float(same_type_deepest.get("y", -5.0) or -5.0)
+            same_dist = distance2d(x, landing_y, sx, sy)
+            if same_dist <= 3.0:
+                score += (3.0 - same_dist) * 340000.0
+                reasons.append("SOVIET_REBUILD_SAME_COUNTRY_GUIDANCE")
+            if same_dist >= 2.45:
+                score -= 520000.0
+                reasons.append("SOVIET_REBUILD_SAME_COUNTRY_SCATTER_SUPPRESSION")
+            if landing_y > sy + 2.1:
+                score -= 360000.0
+                reasons.append("SOVIET_REBUILD_SAME_COUNTRY_HIGH_SUPPRESSION")
+            if abs(x) >= 2.35:
+                score -= 620000.0
+                reasons.append("SOVIET_REBUILD_SAME_COUNTRY_EDGE_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 780000.0
+                reasons.append("SOVIET_REBUILD_SAME_COUNTRY_CROSSING_SUPPRESSION")
+
+        if (
+            not kazakhstan_exists
+            and len(ukraine_pieces) >= 2
+            and not russia_phase
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and piece_count >= 24
+        ):
+            if result.get("crosses_deadline", False):
+                score -= 1350000.0
+                reasons.append("KAZAKHSTAN_READY_COUNTRY_CROSSING_SUPPRESSION")
+            if abs(x) >= 2.25:
+                score -= 720000.0
+                reasons.append("KAZAKHSTAN_READY_COUNTRY_EDGE_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.04:
+                score -= 820000.0
+                reasons.append("KAZAKHSTAN_READY_COUNTRY_MIN_RISK_SUPPRESSION")
+            if same_type_deepest is not None:
+                sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+                sy = float(same_type_deepest.get("y", -5.0) or -5.0)
+                same_dist = distance2d(x, landing_y, sx, sy)
+                if same_dist <= 2.6:
+                    score += (2.6 - same_dist) * 460000.0
+                    reasons.append("KAZAKHSTAN_READY_SAME_COUNTRY_GUIDANCE")
+                if landing_y > sy + 1.9:
+                    score -= 460000.0
+                    reasons.append("KAZAKHSTAN_READY_SAME_COUNTRY_HIGH_SUPPRESSION")
+
+        if (
+            not kazakhstan_exists
+            and not russia_phase
+            and merge_grade == "NO"
+            and 10 <= next_type <= 12
+            and piece_count >= 18
+        ):
+            if landing_y > 1.25:
+                score -= (landing_y - 1.25) * 620000.0
+                reasons.append("COUNTRY_LADDER_HIGH_STACK_SUPPRESSION")
+            if top_y_after_drop > min_deadline_risk_top + 0.16:
+                score -= 640000.0
+                reasons.append("COUNTRY_LADDER_MIN_RISK_STACK_SUPPRESSION")
+            if result.get("crosses_deadline", False):
+                score -= 920000.0
+                reasons.append("COUNTRY_LADDER_CROSSING_STACK_SUPPRESSION")
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -1270,6 +2291,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score += 900.0 * merge_mult * cascade_value
                 reasons.append("NEAR_CASCADE_MERGE")
+
+        # Russia/Soviet objective: once type12+ exists, high-type merges are
+        # more valuable than generic survival-scoring suggests. Push type12/13/14
+        # DIRECT/NEAR opportunities and especially A-1+A-1 -> A cascades that
+        # advance toward type15 Russia and type16 Soviet.
+        if merge_grade in ("DIRECT", "NEAR") and next_type >= 10:
+            high_merge_bonus = 1600.0 if merge_grade == "DIRECT" else 700.0
+            high_merge_bonus *= russia_goal_multiplier(next_type)
+            score += high_merge_bonus * merge_mult
+            reasons.append("RUSSIA_RESOURCE_MERGE_PRIORITY")
+        if cascade_value > 0.0 and merged_type >= 11:
+            cascade_goal_bonus = 450.0 * merge_mult * cascade_value
+            cascade_goal_bonus *= russia_goal_multiplier(merged_type)
+            score += cascade_goal_bonus
+            reasons.append("RUSSIA_RESOURCE_CASCADE_PRIORITY")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
@@ -1638,7 +2674,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis)
         #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed)
         #       advice.md (zoumotu3: growth concentration)
-        if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25
+        if (merge_grade == "NO" and max_y >= 1.0 and piece_count >= 20
+            and not russia_phase
             and not axis_88_horizontal_suppression and not death_spiral):
             high_type_pieces = [p for p in pieces if 8 <= p.get('type', 0) <= 12]
             if len(high_type_pieces) >= 2:
@@ -1648,8 +2685,59 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Proximity bonus: closer to centroid = higher bonus
                 dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
                 if dist < 3.0:
-                    pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
+                    pipeline_bonus = max(0, 150.0 - dist * 50.0) * merge_mult
                     score += pipeline_bonus
+                    reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
+
+        # Russia/Soviet route: when two high countries of the same tier already exist,
+        # keep new material close enough to make the next country instead of drifting
+        # toward unrelated anchors. This is deliberately generic for Belarus through
+        # Ukraine so it can rebuild a Kazakhstan path after one Ukraine is already made.
+        if (
+            merge_grade == "NO"
+            and max_y >= -2.6
+            and piece_count >= 10
+            and not russia_phase
+            and not death_spiral
+        ):
+            high_pair_groups = {}
+            for p in pieces:
+                t = int(p.get("type", 0) or 0)
+                if 10 <= t <= 12:
+                    high_pair_groups.setdefault(t, []).append(p)
+
+            best_pair_target = None
+            for t, group in high_pair_groups.items():
+                if len(group) < 2:
+                    continue
+                cx = sum(float(p.get("x", 0.0) or 0.0) for p in group) / len(group)
+                cy = sum(float(p.get("y", 0.0) or 0.0) for p in group) / len(group)
+                dist = distance2d(x, landing_y, cx, cy)
+                priority = (t, -dist)
+                if best_pair_target is None or priority > best_pair_target[0]:
+                    best_pair_target = (priority, t, cx, cy, dist)
+
+            if best_pair_target is not None:
+                _, pair_type, pair_x, pair_y, pair_dist = best_pair_target
+                if pair_dist <= 2.4 and next_type >= max(8, pair_type - 4):
+                    pair_bonus = (2.4 - pair_dist) * 420.0 * merge_mult
+                    if next_type >= pair_type - 4:
+                        pair_bonus *= 1.7
+                    score += pair_bonus
+                    reasons.append("HIGH_COUNTRY_PAIR_CLUSTER")
+                if (
+                    not ukraine_exists
+                    and pair_type >= 12
+                    and next_type <= 9
+                    and pair_dist <= 2.4
+                    and piece_count >= 24
+                    and len(uzbekistan_pieces) < 3
+                ):
+                    score -= (2.4 - pair_dist) * 210000.0
+                    reasons.append("PRE_UKRAINE_LOW_PAIR_CLUSTER_SUPPRESSION")
+                if next_type <= pair_type - 5 and abs(x - pair_x) <= 0.65 and landing_y > pair_y + 1.6:
+                    score -= 160000.0
+                    reasons.append("HIGH_COUNTRY_PAIR_LOW_BLOCKER_SUPPRESSION")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
@@ -2103,6 +3191,60 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
+
+        # ----- axis 5.55: next+1 stacking guidance -----
+        # If the current drop is type N and type N+1 already exists, place N
+        # above/near N+1 when no immediate merge candidate is available. This
+        # prepares the future N+N -> N+1 result to chain into the existing N+1
+        # instead of scattering the growth path.
+        if merge_grade == "NO" and next_plus_pieces:
+            best_next_plus = None
+            best_next_plus_score = 0.0
+            for p in next_plus_pieces:
+                px = float(p.get("x", 0.0) or 0.0)
+                py = float(p.get("y", 0.0) or 0.0)
+                horiz_dist = abs(x - px)
+                vertical_gap = landing_y - py
+                if horiz_dist <= 1.6 and -0.35 <= vertical_gap <= 2.2:
+                    horiz_score = max(0.0, 1.0 - horiz_dist / 1.6)
+                    vertical_score = max(0.0, 1.0 - abs(vertical_gap - 0.8) / 1.4)
+                    candidate_score = 180.0 * horiz_score + 120.0 * vertical_score
+                    if p.get("type", 0) >= 10:
+                        candidate_score *= russia_goal_multiplier(p.get("type", 0))
+                    if candidate_score > best_next_plus_score:
+                        best_next_plus_score = candidate_score
+                        best_next_plus = p
+            if best_next_plus_score > 0.0:
+                if piece_count >= 28:
+                    congestion_scale = min(2.0, 1.0 + (piece_count - 28) * 0.08)
+                    best_next_plus_score *= congestion_scale
+                score += best_next_plus_score
+                reasons.append("NEXT_PLUS_ONE_STACK_GUIDANCE")
+
+        # Avoid inserting unrelated pieces between the current type and the
+        # future type N+1 receiver. If the landing is directly on top of a
+        # piece that is neither N nor N+1, it often becomes junk that blocks a
+        # later merge path.
+        if merge_grade == "NO":
+            for p in pieces:
+                px = float(p.get("x", 0.0) or 0.0)
+                py = float(p.get("y", 0.0) or 0.0)
+                p_type = p.get("type", 0)
+                horiz_dist = abs(x - px)
+                vertical_gap = landing_y - py
+                if (
+                    horiz_dist <= 0.95
+                    and 0.0 <= vertical_gap <= 1.75
+                    and p_type not in (next_type, merged_type)
+                ):
+                    blocker_penalty = 360.0
+                    if piece_count >= 28:
+                        blocker_penalty *= min(2.0, 1.0 + (piece_count - 28) * 0.08)
+                    if p_type >= 10 or next_type >= 10:
+                        blocker_penalty *= 1.35
+                    score -= blocker_penalty
+                    reasons.append("AVOID_NON_NEXT_PLUS_STACK_BLOCKER")
+                    break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
@@ -2617,6 +3759,1552 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if best_reason
                 else "STRATEGY_CROSSING_NO_POSTCONDITION"
             )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and no_merge_min_risk_pressure
+        and best_result.get("merge_grade", "NO") == "NO"
+        and risk_top_value(best_result) > min_deadline_risk_top + 0.03
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        fallback_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if risk_top_value(r) <= min_fallback_risk + 0.03
+        ] or fallback_pool
+        fallback_merges = [
+            (idx, r)
+            for idx, r in fallback_band
+            if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        _, fallback = min(
+            fallback_merges or fallback_band,
+            key=lambda item: (
+                risk_top_value(item[1]),
+                {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}.get(
+                    item[1].get("merge_grade", "NO"),
+                    9,
+                ),
+                abs(float(item[1].get("x", 0.0) or 0.0)),
+            ),
+        )
+        best_x = fallback.get("x", best_x)
+        best_reason = (
+            f"{best_reason}_ENDGAME_NO_MERGE_MIN_RISK_POSTCONDITION"
+            if best_reason
+            else "ENDGAME_NO_MERGE_MIN_RISK_POSTCONDITION"
+        )
+
+    if (
+        best_result is not None
+        and ukraine_bridge_target is not None
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 9
+        and piece_count >= 24
+    ):
+        bridge_x, _, bridge_gap = ukraine_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        clear_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0) - bridge_x) <= 1.15
+            and abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 0.55
+        ]
+        if not clear_band and bridge_gap >= 2.8:
+            clear_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0) - bridge_x) <= 1.45
+                and abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 0.35
+            ]
+        if clear_band:
+            _, fallback = min(
+                clear_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_BUILD_LOW_PUSH_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_BUILD_LOW_PUSH_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 12
+        and piece_count >= 18
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.2
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.12
+            or float(best_result.get("landing_y", 0.0) or 0.0) > 0.9
+        )
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        hold_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.1
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 0.22
+        ]
+        if not hold_band:
+            hold_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+                and risk_top_value(r) <= min_deadline_risk_top + 0.4
+            ]
+        if hold_band:
+            _, fallback = min(
+                hold_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_LOW_CEILING_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_LOW_CEILING_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_bridge_target is not None
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and piece_count >= 18
+    ):
+        bridge_x, _, bridge_gap = ukraine_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        bridge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.4
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.75
+        ]
+        if not bridge_band:
+            bridge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.6
+                and risk_top_value(r) <= min_deadline_risk_top + 2.35
+            ]
+        if bridge_band:
+            _, fallback = min(
+                bridge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_BUILD_COUNTRY_BRIDGE_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_BUILD_COUNTRY_BRIDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_bridge_target is not None
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 12
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.25
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.32
+        )
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        wait_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.15
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 0.42
+        ]
+        if wait_band:
+            _, fallback = min(
+                wait_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_READY_WAIT_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_READY_WAIT_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and not ukraine_exists
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_deepest is not None
+        and highest_resource_type >= 11
+        and not deadline_crossed
+        and reactor_margin > 0.5
+    ):
+        sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+        sy = float(same_type_deepest.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        focused_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+            and risk_top_value(r) <= min_deadline_risk_top + 0.95
+        ]
+        if not focused_band:
+            focused_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 1.15
+            ]
+        if focused_band:
+            _, fallback = min(
+                focused_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_PRE_UKRAINE_RESOURCE_FOCUS_POSTCONDITION"
+                if best_reason
+                else "PRE_UKRAINE_RESOURCE_FOCUS_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and not ukraine_exists
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_deepest is not None
+        and highest_resource_type >= 11
+        and (
+            abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.45
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.75
+        )
+    ):
+        sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+        sy = float(same_type_deepest.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        same_country_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.45
+        ]
+        if not same_country_band:
+            same_country_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 1.85
+            ]
+        if same_country_band:
+            _, fallback = min(
+                same_country_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_PRE_UKRAINE_SAME_COUNTRY_EDGE_ESCAPE_POSTCONDITION"
+                if best_reason
+                else "PRE_UKRAINE_SAME_COUNTRY_EDGE_ESCAPE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and not ukraine_exists
+        and not kazakhstan_exists
+        and uzbekistan_bridge_target is not None
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 11
+        and piece_count >= 18
+    ):
+        bridge_x, _, bridge_gap = uzbekistan_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        bridge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.55
+        ]
+        if not bridge_band:
+            bridge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.15
+            ]
+        if bridge_band:
+            _, fallback = min(
+                bridge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_UKRAINE_PAIR_BRIDGE_POSTCONDITION"
+                if best_reason
+                else "UKRAINE_PAIR_BRIDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and not ukraine_exists
+        and not kazakhstan_exists
+        and uzbekistan_bridge_target is None
+        and len(uzbekistan_pieces) >= 2
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 11
+    ):
+        ux = sum(float(p.get("x", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+        uy = sum(float(p.get("y", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        centroid_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.4
+        ]
+        if not centroid_band:
+            centroid_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 2.0
+            ]
+        if centroid_band:
+            _, fallback = min(
+                centroid_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        ux,
+                        uy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_UKRAINE_PAIR_CENTROID_FALLBACK_POSTCONDITION"
+                if best_reason
+                else "UKRAINE_PAIR_CENTROID_FALLBACK_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_pieces
+        and not deadline_crossed
+        and reactor_margin > 0.5
+    ):
+        deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+        sx = float(deepest_same.get("x", 0.0) or 0.0)
+        sy = float(deepest_same.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        focused_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.15
+            and risk_top_value(r) <= min_deadline_risk_top + 1.25
+        ]
+        if not focused_band:
+            focused_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+                and risk_top_value(r) <= min_deadline_risk_top + 1.55
+            ]
+        if (
+            not focused_band
+            and abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.55
+        ):
+            focused_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and not bool(r.get("crosses_deadline", False))
+                and risk_top_value(r) <= min_deadline_risk_top + 2.35
+            ]
+        if focused_band:
+            _, fallback = min(
+                focused_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_RESOURCE_FOCUS_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_RESOURCE_FOCUS_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_pieces
+        and (
+            abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.45
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.85
+        )
+    ):
+        deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+        sx = float(deepest_same.get("x", 0.0) or 0.0)
+        sy = float(deepest_same.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        same_country_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.75
+        ]
+        if not same_country_band:
+            same_country_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.35
+            ]
+        if same_country_band:
+            _, fallback = min(
+                same_country_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_SAME_COUNTRY_EDGE_ESCAPE_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_SAME_COUNTRY_EDGE_ESCAPE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and len(uzbekistan_pieces) >= 2
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 9
+        and piece_count >= 18
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        low_hold_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_fallback_risk + 0.18
+        ]
+        if not low_hold_band:
+            low_hold_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_fallback_risk + 0.3
+            ]
+        if low_hold_band:
+            _, fallback = min(
+                low_hold_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_LOW_RESOURCE_HOLD_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_LOW_RESOURCE_HOLD_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and len(uzbekistan_pieces) >= 2
+        and uzbekistan_bridge_target is not None
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+    ):
+        bridge_x, _, bridge_gap = uzbekistan_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        bridge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.6
+        ]
+        if not bridge_band:
+            bridge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.25
+            ]
+        if bridge_band:
+            _, fallback = min(
+                bridge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_KAZAKHSTAN_BRIDGE_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_KAZAKHSTAN_BRIDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and len(uzbekistan_pieces) >= 2
+        and same_type_pieces
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 11
+    ):
+        deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+        sx = float(deepest_same.get("x", 0.0) or 0.0)
+        sy = float(deepest_same.get("y", 0.0) or 0.0)
+        best_same_dist = distance2d(
+            float(best_result.get("x", 0.0) or 0.0),
+            float(best_result.get("landing_y", 0.0) or 0.0),
+            sx,
+            sy,
+        )
+        if (
+            best_same_dist >= 1.6
+            or float(best_result.get("landing_y", 0.0) or 0.0) > sy + 1.0
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.12
+        ):
+            fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+            same_merge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and not bool(r.get("crosses_deadline", False))
+                and risk_top_value(r) <= min_deadline_risk_top + 0.55
+            ]
+            if not same_merge_band:
+                same_merge_band = [
+                    (idx, r)
+                    for idx, r in fallback_pool
+                    if abs(float(r.get("x", 0.0) or 0.0)) <= 2.6
+                    and risk_top_value(r) <= min_deadline_risk_top + 1.0
+                ]
+            if same_merge_band:
+                _, fallback = min(
+                    same_merge_band,
+                    key=lambda item: (
+                        distance2d(
+                            float(item[1].get("x", 0.0) or 0.0),
+                            float(item[1].get("landing_y", 0.0) or 0.0),
+                            sx,
+                            sy,
+                        ),
+                        risk_top_value(item[1]),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                    ),
+                )
+                best_x = fallback.get("x", best_x)
+                best_reason = (
+                    f"{best_reason}_POST_UKRAINE_SAME_COUNTRY_MERGE_FIRST_POSTCONDITION"
+                    if best_reason
+                    else "POST_UKRAINE_SAME_COUNTRY_MERGE_FIRST_POSTCONDITION"
+                )
+                best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and ukraine_exists
+        and len(uzbekistan_pieces) >= 2
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 9
+        and piece_count >= 18
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        low_hold_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_fallback_risk + 0.16
+        ]
+        if not low_hold_band:
+            low_hold_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_fallback_risk + 0.26
+            ]
+        if low_hold_band:
+            _, fallback = min(
+                low_hold_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_SECOND_UKRAINE_LOW_HOLD_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_SECOND_UKRAINE_LOW_HOLD_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and not ukraine_exists
+        and not kazakhstan_exists
+        and highest_resource_type >= 12
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 9
+        and piece_count >= 24
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        low_hold_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_fallback_risk + 0.16
+        ]
+        if not low_hold_band:
+            low_hold_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_fallback_risk + 0.26
+            ]
+        if low_hold_band:
+            _, fallback = min(
+                low_hold_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_PRE_UKRAINE_LOW_RESOURCE_HOLD_POSTCONDITION"
+                if best_reason
+                else "PRE_UKRAINE_LOW_RESOURCE_HOLD_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and ukraine_exists
+        and not russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 12
+        and piece_count >= 28
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.35
+            or float(best_result.get("landing_y", 0.0) or 0.0) > 1.15
+        )
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        low_rebuild_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.3
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 0.55
+        ]
+        if low_rebuild_band:
+            _, fallback = min(
+                low_rebuild_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_REBUILD_LOW_CEILING_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_REBUILD_LOW_CEILING_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and not russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_pieces
+        and not deadline_crossed
+        and reactor_margin > 0.5
+    ):
+        deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+        sx = float(deepest_same.get("x", 0.0) or 0.0)
+        sy = float(deepest_same.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        focused_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 1.95
+            and risk_top_value(r) <= min_deadline_risk_top + 0.75
+        ]
+        if not focused_band:
+            focused_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+                and not bool(r.get("crosses_deadline", False))
+                and risk_top_value(r) <= min_deadline_risk_top + 1.55
+            ]
+        if (
+            not focused_band
+            and abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.45
+        ):
+            focused_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 2.1
+            ]
+        if focused_band:
+            _, fallback = min(
+                focused_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_RESOURCE_FOCUS_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_RESOURCE_FOCUS_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and not ukraine_exists
+        and not russia_phase
+        and russia_rebuild_bridge_target is not None
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type == russia_rebuild_bridge_type
+    ):
+        bridge_x, _, bridge_gap = russia_rebuild_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        bridge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.6
+        ]
+        if not bridge_band:
+            bridge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.2
+            ]
+        if bridge_band:
+            _, fallback = min(
+                bridge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_REBUILD_RESOURCE_PAIR_BRIDGE_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_REBUILD_RESOURCE_PAIR_BRIDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and russia_phase
+        and not double_russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_deepest is not None
+    ):
+        sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+        sy = float(same_type_deepest.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        same_country_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.8
+        ]
+        if not same_country_band:
+            same_country_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.45
+            ]
+        if same_country_band:
+            _, fallback = min(
+                same_country_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_SOVIET_REBUILD_SAME_COUNTRY_POSTCONDITION"
+                if best_reason
+                else "SOVIET_REBUILD_SAME_COUNTRY_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and not kazakhstan_exists
+        and not russia_phase
+        and 10 <= next_type <= 12
+        and sum(1 for p in pieces if p.get("type") == next_type) >= 2
+        and (
+            best_result.get("merge_grade", "NO") == "NO"
+            or bool(best_result.get("crosses_deadline", False))
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.75
+        )
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        country_merge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+            and not bool(r.get("crosses_deadline", False))
+            and abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+            and risk_top_value(r) <= min_deadline_risk_top + 1.45
+        ]
+        if country_merge_band:
+            _, fallback = min(
+                country_merge_band,
+                key=lambda item: (
+                    0 if item[1].get("merge_grade") == "DIRECT" else 1,
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_COUNTRY_MERGE_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_COUNTRY_MERGE_POSTCONDITION"
+            )
+            best_result = fallback
+        else:
+            low_hold_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+                and not bool(r.get("crosses_deadline", False))
+                and risk_top_value(r) <= min_deadline_risk_top + 0.24
+            ]
+            if low_hold_band:
+                _, fallback = min(
+                    low_hold_band,
+                    key=lambda item: (
+                        risk_top_value(item[1]),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        abs(float(item[1].get("x", 0.0) or 0.0)),
+                    ),
+                )
+                best_x = fallback.get("x", best_x)
+                best_reason = (
+                    f"{best_reason}_POST_UKRAINE_COUNTRY_LOW_HOLD_POSTCONDITION"
+                    if best_reason
+                    else "POST_UKRAINE_COUNTRY_LOW_HOLD_POSTCONDITION"
+                )
+                best_result = fallback
+
+    if (
+        best_result is not None
+        and not kazakhstan_exists
+        and len(ukraine_pieces) >= 2
+        and not russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_deepest is not None
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.25
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.55
+        )
+    ):
+        sx = float(same_type_deepest.get("x", 0.0) or 0.0)
+        sy = float(same_type_deepest.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        same_country_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.15
+        ]
+        if not same_country_band:
+            same_country_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 1.75
+            ]
+        if same_country_band:
+            _, fallback = min(
+                same_country_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_READY_SAME_COUNTRY_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_READY_SAME_COUNTRY_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and not russia_phase
+        and len(uzbekistan_pieces) >= 3
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 11
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.25
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.38
+        )
+    ):
+        ux = sum(float(p.get("x", 0.0) or 0.0) for p in uzbekistan_pieces) / len(uzbekistan_pieces)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        swarm_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 0.85
+        ]
+        if swarm_band:
+            _, fallback = min(
+                swarm_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - ux),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_UZBEKISTAN_SWARM_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_UZBEKISTAN_SWARM_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_bridge_target is not None
+        and not double_russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 12
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.25
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.75
+        )
+    ):
+        bridge_x, _, bridge_gap = kazakhstan_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        bridge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.45
+        ]
+        if not bridge_band:
+            bridge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and risk_top_value(r) <= min_deadline_risk_top + 2.05
+            ]
+        if bridge_band:
+            _, fallback = min(
+                bridge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_PAIR_BRIDGE_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_PAIR_BRIDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and ukraine_exists
+        and not russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_pieces
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.35
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.75
+        )
+    ):
+        deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+        sx = float(deepest_same.get("x", 0.0) or 0.0)
+        sy = float(deepest_same.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        same_country_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.65
+        ]
+        if not same_country_band:
+            same_country_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.3
+            ]
+        if same_country_band:
+            _, fallback = min(
+                same_country_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_BUILD_SAME_COUNTRY_DEADLINE_ESCAPE_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_BUILD_SAME_COUNTRY_DEADLINE_ESCAPE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and not ukraine_exists
+        and not russia_phase
+        and len(uzbekistan_pieces) >= 2
+        and uzbekistan_bridge_target is not None
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 9
+        and piece_count >= 22
+    ):
+        bridge_x, _, bridge_gap = uzbekistan_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        nudge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_fallback_risk + 0.32
+        ]
+        if not nudge_band:
+            nudge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_fallback_risk + 0.5
+            ]
+        if nudge_band:
+            _, fallback = min(
+                nudge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_REBUILD_UZBEKISTAN_LOW_NUDGE_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_REBUILD_UZBEKISTAN_LOW_NUDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and ukraine_exists
+        and len(uzbekistan_pieces) >= 2
+        and uzbekistan_bridge_target is not None
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+    ):
+        bridge_x, _, bridge_gap = uzbekistan_bridge_target
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        bridge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_deadline_risk_top + 1.85
+        ]
+        if not bridge_band:
+            bridge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_deadline_risk_top + 2.45
+            ]
+        if bridge_band:
+            _, fallback = min(
+                bridge_band,
+                key=lambda item: (
+                    abs(float(item[1].get("x", 0.0) or 0.0) - bridge_x),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_SECOND_UKRAINE_BRIDGE_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_SECOND_UKRAINE_BRIDGE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and kazakhstan_exists
+        and not ukraine_exists
+        and not russia_phase
+        and best_result.get("merge_grade", "NO") == "NO"
+        and next_type <= 9
+        and piece_count >= 26
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        low_hold_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.35
+            and not bool(r.get("crosses_deadline", False))
+            and risk_top_value(r) <= min_fallback_risk + 0.18
+        ]
+        if not low_hold_band:
+            low_hold_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.55
+                and risk_top_value(r) <= min_fallback_risk + 0.28
+            ]
+        if low_hold_band:
+            _, fallback = min(
+                low_hold_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    float(item[1].get("landing_y", 0.0) or 0.0),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_KAZAKHSTAN_LOW_RESOURCE_HOLD_POSTCONDITION"
+                if best_reason
+                else "KAZAKHSTAN_LOW_RESOURCE_HOLD_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and ukraine_exists
+        and not kazakhstan_exists
+        and best_result.get("merge_grade", "NO") == "NO"
+        and 10 <= next_type <= 12
+        and same_type_pieces
+        and abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.55
+        and not deadline_crossed
+        and reactor_margin > 0.5
+    ):
+        deepest_same = min(same_type_pieces, key=lambda p: float(p.get("y", 0.0) or 0.0))
+        sx = float(deepest_same.get("x", 0.0) or 0.0)
+        sy = float(deepest_same.get("y", 0.0) or 0.0)
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        non_edge_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 2.25
+            and risk_top_value(r) <= min_deadline_risk_top + 1.75
+        ]
+        if not non_edge_band:
+            non_edge_band = [
+                (idx, r)
+                for idx, r in fallback_pool
+                if abs(float(r.get("x", 0.0) or 0.0)) <= 2.45
+                and not bool(r.get("crosses_deadline", False))
+                and risk_top_value(r) <= min_deadline_risk_top + 2.1
+        ]
+        if non_edge_band:
+            _, fallback = min(
+                non_edge_band,
+                key=lambda item: (
+                    distance2d(
+                        float(item[1].get("x", 0.0) or 0.0),
+                        float(item[1].get("landing_y", 0.0) or 0.0),
+                        sx,
+                        sy,
+                    ),
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_POST_UKRAINE_RESOURCE_EDGE_ESCAPE_POSTCONDITION"
+                if best_reason
+                else "POST_UKRAINE_RESOURCE_EDGE_ESCAPE_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and deadline_crossed
+        and best_result.get("merge_grade", "NO") == "NO"
+        and (
+            bool(best_result.get("crosses_deadline", False))
+            or risk_top_value(best_result) > min_deadline_risk_top + 0.03
+        )
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        fallback_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if risk_top_value(r) <= min_fallback_risk + 0.03
+        ] or fallback_pool
+        _, fallback = min(
+            fallback_band,
+            key=lambda item: (
+                bool(item[1].get("crosses_deadline", False)),
+                risk_top_value(item[1]),
+                {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}.get(
+                    item[1].get("merge_grade", "NO"),
+                    9,
+                ),
+                abs(float(item[1].get("x", 0.0) or 0.0)),
+            ),
+        )
+        best_x = fallback.get("x", best_x)
+        best_reason = (
+            f"{best_reason}_DEADLINE_NO_MERGE_MIN_RISK_FINAL_POSTCONDITION"
+            if best_reason
+            else "DEADLINE_NO_MERGE_MIN_RISK_FINAL_POSTCONDITION"
+        )
+        best_result = fallback
+
+    if (
+        best_result is not None
+        and russia_resource_pieces
+        and best_result.get("merge_grade", "NO") == "NO"
+        and abs(float(best_result.get("x", 0.0) or 0.0)) >= 2.1
+    ):
+        fallback_pool = margin_safe_indexed_results or safe_indexed_results or active_indexed_results
+        min_fallback_risk = min(
+            (risk_top_value(r) for _, r in fallback_pool),
+            default=min_deadline_risk_top,
+        )
+        central_band = [
+            (idx, r)
+            for idx, r in fallback_pool
+            if abs(float(r.get("x", 0.0) or 0.0)) <= 1.8
+            and risk_top_value(r) <= min_fallback_risk + 0.45
+        ]
+        if central_band:
+            _, fallback = min(
+                central_band,
+                key=lambda item: (
+                    risk_top_value(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_RUSSIA_RESOURCE_CENTRAL_POSTCONDITION"
+                if best_reason
+                else "RUSSIA_RESOURCE_CENTRAL_POSTCONDITION"
+            )
+            best_result = fallback
+
+    if (
+        best_result is not None
+        and mandatory_merge_indexed_results
+        and best_result.get("merge_grade", "NO") not in mandatory_merge_grades
+    ):
+        merge_grade_rank = {"DIRECT": 0, "NEAR": 1, "FAR": 2}
+        _, fallback = min(
+            mandatory_merge_indexed_results,
+            key=lambda item: (
+                merge_grade_rank.get(item[1].get("merge_grade", "NO"), 9),
+                bool(item[1].get("crosses_deadline", False)),
+                risk_top_value(item[1]),
+                abs(float(item[1].get("x", 0.0) or 0.0)),
+            ),
+        )
+        best_x = fallback.get("x", best_x)
+        best_reason = (
+            f"{best_reason}_MANDATORY_MERGE_FINAL_POSTCONDITION"
+            if best_reason
+            else "MANDATORY_MERGE_FINAL_POSTCONDITION"
+        )
+        best_result = fallback
+
+    # ---------------------------------------------------------------------
+    # Final deadline guard
+    # ---------------------------------------------------------------------
+    # Two-layer safety check applied AFTER all scoring & post-conditions:
+    #
+    #   Layer 1 (hard) — chosen.crosses_deadline=True:
+    #       Always swap to a non-crossing candidate. Among non-crossing,
+    #       prefer same-or-better merge grade than chosen (don't downgrade
+    #       a merge just to land safer). If no merge-preserving candidate
+    #       is safe, accept any safe candidate (deadline cross == game over).
+    #
+    #   Layer 2 (soft) — chosen is safe but post-drop state dooms NEXT piece
+    #       (post-merge top + next_diameter > deadline_y):
+    #       Only swap if an alternative exists with equal-or-better merge
+    #       grade AND is next-safe. Never trade away a merge for a no-merge.
+    #       Rationale: on a crowded board, missing an available merge is
+    #       usually worse than next-piece headroom risk.
+    #
+    # NOTE: layers are mutually exclusive (if/elif); layer 1's sort already
+    # prefers next-safe within equal grade, so a layer-1 swap implicitly
+    # also satisfies layer 2 where possible.
+    _next_r = _TYPE_RADII.get(int(next_type or 0), 0.5)
+
+    def _next_safe(r):
+        """True if next piece fits after this drop (and merges resolve)."""
+        if r.get("merge_result_crosses_deadline", False):
+            return False
+        return _post_drop_top(r) + 2.0 * _next_r <= deadline_y
+
+    def _pick_fallback(pool, sort_key):
+        return min(pool, key=sort_key)[1]
+
+    if best_result is not None and safe_indexed_results:
+        chosen_grade = _grade(best_result)
+        if best_result.get("crosses_deadline", False):
+            merge_preserving = [
+                item for item in safe_indexed_results
+                if _grade(item[1]) <= chosen_grade
+            ]
+            fallback = _pick_fallback(
+                merge_preserving or safe_indexed_results,
+                lambda item: (
+                    _grade(item[1]),
+                    0 if _next_safe(item[1]) else 1,
+                    _post_drop_top(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            best_x = fallback.get("x", best_x)
+            best_reason = (
+                f"{best_reason}_NO_CROSS_DEADLINE_HARD_GUARD"
+                if best_reason else "NO_CROSS_DEADLINE_HARD_GUARD"
+            )
+            best_result = fallback
+        elif not _next_safe(best_result):
+            equal_or_better = [
+                item for item in safe_indexed_results
+                if _grade(item[1]) <= chosen_grade and _next_safe(item[1])
+            ]
+            if equal_or_better:
+                fallback = _pick_fallback(
+                    equal_or_better,
+                    lambda item: (
+                        _grade(item[1]),
+                        _post_drop_top(item[1]),
+                        risk_top_value(item[1]),
+                        abs(float(item[1].get("x", 0.0) or 0.0)),
+                    ),
+                )
+                best_x = fallback.get("x", best_x)
+                best_reason = (
+                    f"{best_reason}_NEXT_PIECE_DEADLINE_GUARD"
+                    if best_reason else "NEXT_PIECE_DEADLINE_GUARD"
+                )
+                best_result = fallback
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
