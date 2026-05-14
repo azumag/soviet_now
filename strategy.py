@@ -64,13 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vYYY: Hard Deadline-Merge Override — mandatory_themes hard constraint enforcement
-     # Change 1: deadline_crossed=true && merge_possible=true && merge_grade=="NO" → -10000 penalty
-     # Worst game T64-69: 6 consecutive NO_MERGE selections despite merge_available=true, deadline_crossed=true
-     # mandatory_themes: "deadline_crossed=true の場合、merge_available=true では NO_MERGE を選択してはならない"
-     # This was a hard constraint that the existing composite scoring architecture did not enforce.
-     # Fixes failure mode: 6-turn NO_MERGE streak at deadline_crossed=true + merge_available=true
-     # refs: tmp/analysis_result.md (Implementation Plan Change 1), data/mandatory_themes.txt
+      # vYYY: Hard Deadline-Merge Override (revised) — mandatory_themes hard constraint enforcement
+      # Change 1 (revised): deadline_crossed=true && merge_grade=="NO" → -10000 penalty
+      # Original condition required merge_possible (any candidate has DIRECT/NEAR), but this meant
+      # the penalty never fired when merge_available=false for ALL candidates (worst game T58-62:
+      # 6 consecutive NO_MERGE despite deadline_crossed=true, max_y 2.28→3.25 runaway).
+      # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+      # This means: if THIS candidate cannot merge (merge_grade==NO), it should not cross deadline.
+      # Removed merge_possible condition so penalty fires for every NO_MERGE candidate at deadline.
+      # refs: tmp/analysis_result.md (Implementation Plan Change 1), data/mandatory_themes.txt
      # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
      # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
      # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
@@ -81,15 +83,15 @@ Phases (determined by board max Y):
      # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
      # Center-biased placement during deadline crossing reduces max_y growth.
      # refs: tmp/analysis_result.md (Implementation Plan Change 3)
-     # vYYY: Change 4 - axis 9.17c edge NO-MERGE penalty at deadline
-     # Add axis 9.17c: -2500*merge_mult for edge NO-MERGE at deadline_crossed=true
-     # Worst game T54: edge placement (x=2.66) at deadline_crossed && merge_available=false
-     # caused max_y to spike 2.47→4.13. mandatory_themes Change 1 (-10000) only fires when
-     # merge_possible=true; at T54 with merge_available=false, no deterrent existed.
-     # Current axis 9.17b (-1200*merge_mult) is insufficient vs stacking(~400-600)+ceiling(~400-800).
-     # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
-     # Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
-     # refs: tmp/analysis_result.md (Implementation Plan Change 4)
+      # vYYY: Change 4 - axis 9.17c edge NO-MERGE penalty at deadline
+      # Add axis 9.17c: -2500*merge_mult for edge NO-MERGE at deadline_crossed=true
+      # Worst game T54: edge placement (x=2.66) at deadline_crossed && merge_available=false
+      # caused max_y to spike 2.47→4.13. mandatory_themes Change 1 (revised) now fires when
+      # deadline_crossed && merge_grade==NO regardless of merge_possible.
+      # Current axis 9.17b (-1200*merge_mult) is insufficient vs stacking(~400-600)+ceiling(~400-800).
+      # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
+      # Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
+      # refs: tmp/analysis_result.md (Implementation Plan Change 4)
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
@@ -971,17 +973,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         reasons = []
 
         # ----- vYYY: Hard Deadline-Merge Override (mandatory_themes hard constraint) -----
-        # Change 1: deadline_crossed && merge_possible && merge_grade == "NO" → massive penalty
-        # This enforces: "deadline_crossed=true の場合、merge_available=true では NO_MERGE を選択してはならない"
-        # Worst game evidence: 6 consecutive NO_MERGE selections (T64-69) at deadline_crossed=true, merge_available=true
+        # Change 1 (revised): deadline_crossed && merge_grade == "NO" → massive penalty
+        # Original condition required merge_possible (any candidate has DIRECT/NEAR), but this meant
+        # the penalty never fired when merge_available=false for ALL candidates (worst game T58-62:
+        # 6 consecutive NO_MERGE selections despite deadline_crossed=true, max_y runaway).
+        # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # This means: if THIS candidate cannot merge (merge_grade==NO), it should not cross deadline.
+        # Removed merge_possible condition so penalty fires for every NO_MERGE candidate at deadline.
         # refs: data/mandatory_themes.txt, tmp/analysis_result.md (Implementation Plan Change 1)
-        if deadline_crossed and merge_possible and merge_grade == "NO":
+        if deadline_crossed and merge_grade == "NO":
             score -= 10000.0
             reasons.append("DEADLINE_MERGE_FORCED_OVERRIDE")
 
         # Hard safety rail: a no-merge placement that crosses the deadline is
         # only allowed when every candidate is equally trapped.
-        if merge_grade == "NO" and result.get("crosses_deadline", False) and deadline_escape_exists:
+        if result.get("crosses_deadline", False) and deadline_escape_exists:
             score -= 1000000.0
             reasons.append("DEADLINE_CROSS_NO_MERGE_HARD_BLOCK")
 
@@ -2109,7 +2115,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # vYYY: axis 9.17c — edge NO-MERGE penalty at deadline_crossed
         # Worst game T54: edge placement (x=2.66) at deadline_crossed+merge_available=false caused max_y spike.
-        # mandatory_themes Change 1 (-10000) only fires when merge_possible=true, not when merge_available=false.
+        # mandatory_themes Change 1 (revised) now fires when deadline_crossed && merge_grade==NO regardless of merge_possible.
         # Current edge penalty (9.17b: -1200*merge_mult) insufficient vs stacking(~400-600)+ceiling(~400-800).
         # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
         if deadline_crossed and merge_grade == "NO" and abs(x) >= 2.5:
