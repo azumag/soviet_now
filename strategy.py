@@ -96,11 +96,13 @@ Phases (determined by board max Y):
       # Rollback constraint "forbid at max_y<=0.5" preserved (applies to max_y>=0.8+).
       # Fixes rollback failure mode: REACTIVE_PAIRS_NO_MERGE gravitational pull at high rp
       # refs: tmp/analysis_result.md, game_history/20260509_022447_score0731.jsonl
-     # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
-     # When deadline_crossed=true && merge_grade=="NO" && |x|>2.0 → -800 penalty
-     # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
-     # Center-biased placement during deadline crossing reduces max_y growth.
-     # refs: tmp/analysis_result.md (Implementation Plan Change 3)
+# vYYY: Change 3 - Edge Placement Suppression During Deadline Cross (strengthened -800→-1200)
+      # When deadline_crossed=true && merge_grade=="NO" && |x|>2.0 → -1200 penalty (was -800)
+      # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
+      # Center-biased placement during deadline crossing reduces max_y growth.
+      # Strengthened: -800→-1200 to overcome stacking+height bonuses at edge positions.
+      # refs: tmp/analysis_result.md (Implementation Plan Change 3)
+      # Fixes rollback failure mode: NO_MERGE edge scatter during deadline_crossed
       # vYYY: Change 4 - axis 9.17c edge NO-MERGE penalty at deadline
       # Add axis 9.17c: -2500*merge_mult for edge NO-MERGE at deadline_crossed=true
       # Worst game T54: edge placement (x=2.66) at deadline_crossed && merge_available=false
@@ -1959,50 +1961,58 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
 
         if russia_phase:
-             # ロシアフェーズでの即時併合優先
-             # 即時併合候補がある場合、最優先（強力なボーナス）
-             if merge_grade in ["DIRECT", "NEAR"]:
-                 # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
-                 if reactive_pair_count >= 1:
-                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
-                     if merge_grade == "DIRECT":
-                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
-                     else:
-                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
-                 else:
-                     # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
-                     if merge_grade == "DIRECT":
-                         score += 1400.0
-                     else:
-                         score += 1200.0
-                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
-             elif merge_grade == "NO":
-                 # v625: russia_phase NO merge safety valve
-                 # When russia_phase + deadline + max_y >= 2.0, suppress compression bonus
-                 # to force height-penalty-only placement (lowest y)
-                 # Prevents edge placement (x=±3.0) that worsens max_y — extra_high failure mode
-                 # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
-                 if not (deadline_crossed and max_y >= 2.0):
-                     # Only apply BOARD_COMPRESSION when board is not critical
-                     if reactive_pair_count >= 3:
-                         # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                         # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                         score += 900.0
-                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                     elif reactive_pair_count >= 1:
-                         # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                         # 即時併合機会_prioritizeするため、盤面圧縮ボーナスを半減
-                         score += 400.0
-                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                     else:
+              # ロシアフェーズでの即時併合優先
+              # 即時併合候補がある場合、最優先（強力なボーナス）
+              if merge_grade in ["DIRECT", "NEAR"]:
+                  # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
+                  if reactive_pair_count >= 1:
+                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
+                      if merge_grade == "DIRECT":
+                          score += 1400.0 if reactive_pair_count >= 3 else 1200.0
+                      else:
+                          score += 1200.0 if reactive_pair_count >= 3 else 1000.0
+                  else:
+                      # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
+                      if merge_grade == "DIRECT":
+                          score += 1400.0
+                      else:
+                          score += 1200.0
+                  reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
+              elif merge_grade == "NO":
+                  # vYYY: Change 2 - Russia Phase NO_MERGE at Deadline Penalty
+                  # Analysis: best game T132-T133, russia_phase active, deadline_crossed, NO merge → game over.
+                  # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+                  # During russia_phase with deadline_crossed, NO merge should be heavily penalized
+                  # so that even with height bonuses, the NO candidate can't win.
+                  if russia_phase and deadline_crossed:
+                      score -= 3000.0
+                      reasons.append("RUSSIA_PHASE_NO_MERGE_AT_DEADLINE")
+                  # v625: russia_phase NO merge safety valve
+                  # When russia_phase + deadline + max_y >= 2.0, suppress compression bonus
+                  # to force height-penalty-only placement (lowest y)
+                  # Prevents edge placement (x=±3.0) that worsens max_y — extra_high failure mode
+                  # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
+                  if not (deadline_crossed and max_y >= 2.0):
+                      # Only apply BOARD_COMPRESSION when board is not critical
+                      if reactive_pair_count >= 3:
+                          # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
+                          # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                          score += 900.0
+                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                      elif reactive_pair_count >= 1:
+                          # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                          # 即時併合機会_prioritizeするため、盤面圧縮ボーナスを半減
+                          score += 400.0
+                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                      else:
                           # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
                           # 盤面圧縮_prioritizeしつつ、type 15保護を徹底
                           score += 800.0
                           reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 else:
-                     # Critical board: skip compression, height penalty is sole differentiator
-                     # This prevents edge placement (x=±3.0) that worsens max_y
-                     pass
+                  else:
+                      # Critical board: skip compression, height penalty is sole differentiator
+                      # This prevents edge placement (x=±3.0) that worsens max_y
+                      pass
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
@@ -2178,7 +2188,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Center-biased placement during deadline crossing reduces max_y growth.
         # Refs: tmp/analysis_result.md (Implementation Plan Change 3)
         if deadline_crossed and merge_grade == "NO" and abs(x) > 2.0:
-            score -= 800.0
+            score -= 1200.0
             reasons.append("EDGE_DEADLINE_SUPPRESSION")
 
         # ----- update best candidate -----
