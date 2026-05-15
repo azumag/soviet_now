@@ -64,6 +64,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v612: pre-critical height escalation — prevent NO_MERGE edge scatter during HIGH→CRITICAL transition
+      # worst game T56-T58: rp=3, NO merge, max_y 1.55→1.95, chose edge placement → NO merge continued
+      # +150*height_mult bonus at 1.5<=max_y<2.0 + deadline_crossed + rp>=3 + NO merge makes low competitive.
+      # refs: best_score6058_strategy.py (v612), tmp/analysis_result.md (Implementation Plan)
+      # Fixes rollback failure mode: NO_MERGE edge scatter during 1.5<=max_y<2.0 transition
+      # v609: elevated NO_MERGE stacking suppression — suppress when max_y>=2.0 + deadline_crossed
+      # worst game T59-T62: max_y 2.12→3.0, NO merge, deadline_crossed, edge scatter → max_y runaway
+      # Suppressing stacking lets height penalty be sole differentiator → lower placement.
+      # Rollback constraint: "forbid: Stacking bonus when merge_available=false and deadline_margin<2.0"
+      # refs: best_score6058_strategy.py (v609), tmp/analysis_result.md (Implementation Plan)
+      # Fixes rollback failure mode: NO_MERGE edge scatter at max_y>=2.0 (death spiral entry)
       # vYYY: Hard Deadline-Merge Override (revised) — mandatory_themes hard constraint enforcement
       # Change 1 (revised): deadline_crossed=true && merge_grade=="NO" → -10000 penalty
       # Original condition required merge_possible (any candidate has DIRECT/NEAR), but this meant
@@ -1167,6 +1178,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v465: restore v357 guard — suppress at rp>=3+NO per protected strategy.
         # At rp>=3+NO, stacking bonus creates position noise without enabling merges.
         # Protected strategy (median 12789) suppresses here, proven effective.
+        # v609: elevated NO_MERGE stacking suppression — suppress when max_y>=2.0 + deadline_crossed
+        # Worst game T59-T62: max_y 2.12→3.0, NO merge, deadline_crossed, edge scatter at x=2.0/2.93.
+        # At max_y>=2.0, board approaches critical. Stacking bonus (~200-400) insufficient to 
+        # overcome height penalty (~270 at HIGH phase) → HEIGHT_CONTROL default → edge scatter.
+        # Suppressing stacking lets height penalty be sole differentiator → lower placement.
+        # Does NOT affect rp>=3+NO guard (v465) — this adds max_y>=2.0 threshold on top.
+        # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+        # This matches that constraint — deadline_crossed implies deadline_margin<2.0.
+        stacking_suppressed = (merge_grade == "NO" and max_y >= 2.0 and deadline_crossed)
         if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
@@ -1233,8 +1253,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if piece_count >= 28:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
-                    score += stacking_bonus
-                    reasons.append("REACTIVE_PAIRS_STACKING")
+                    # v609: suppress stacking at max_y>=2.0 + deadline_crossed + NO merge
+                    # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+                    if not stacking_suppressed:
+                        score += stacking_bonus
+                        reasons.append("REACTIVE_PAIRS_STACKING")
+
+        # ----- v612: pre-critical height escalation — prevent scatter during HIGH→CRITICAL transition -----
+        # worst game T56-T58: rp=3, NO merge, max_y 1.55→1.95, chose x=1.32/-1.07/-1.15 (non-lowest)
+        # Height penalty (~270 at HIGH phase) insufficient to overcome AVOID_BLOCK/proximity guidance
+        # during transition zone (1.5<=max_y<2.0). Result: edge scatter → NO merge continued → death.
+        # v612: add +150*height_mult bonus at 1.5<=max_y<2.0 + deadline_crossed + rp>=3 + NO merge.
+        # Makes low placement competitive with edge scatter during pre-critical zone.
+        # At height_mult=1.8 (HIGH phase): +270 bonus, exceeding AVOID_BLOCK (~200-600 range).
+        # Different from v609 (max_y>=2.0 stacking suppression) — v612 targets the TRANSITION zone.
+        # Does NOT fire in death_spiral (axis 9.17/v616 escalation handles that).
+        # refs: best_score6058_strategy.py (v612), tmp/analysis_result.md (Implementation Plan)
+        # Fixes rollback failure mode: NO_MERGE edge scatter during 1.5<=max_y<2.0 transition
+        if (merge_grade == "NO" and max_y >= 1.5 and max_y < 2.0 
+                and deadline_crossed and reactive_pair_count >= 3):
+            score += 150.0 * height_mult
+            reasons.append("PRE_CRITICAL_HEIGHT_ESCALATION")
 
         # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
         # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
