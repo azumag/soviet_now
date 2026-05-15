@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-16 03:54:58 JST`
+- Updated: `2026-05-16 04:41:17 JST`
 - Nodes: `1531`
-- Edges: `1966`
-- Current: `2c9ff1ff7c36`
+- Edges: `1967`
+- Current: `1015e03235fa`
 - Anchor: `1015e03235fa`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,8 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_1015e03235fa["1015e03235fa<br/>ANCHOR<br/>g=12 n=12<br/>comp=12496.1"]
+    h_1015e03235fa["1015e03235fa<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12496.1"]
+    h_d6ba060d24b2["d6ba060d24b2<br/>g=1 n=1<br/>comp=14596.0"]
     h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
@@ -75,7 +76,6 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
-    h_2c9ff1ff7c36["2c9ff1ff7c36<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -83,7 +83,8 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_1015e03235fa anchor;
+    class h_1015e03235fa current_anchor;
+    class h_d6ba060d24b2 plain;
     class h_273866b19f99 plain;
     class h_e75542ef3a84 plain;
     class h_78c5c9b64fef plain;
@@ -143,7 +144,6 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
-    class h_2c9ff1ff7c36 current;
 ```
 
 ## Detail 1/20
@@ -4945,9 +4945,9 @@ flowchart TD
 
 ## Detail 18/20
 
-- Range: `0d0fc4a9fde7` .. `12dcaa0fba31`
+- Range: `0d0fc4a9fde7` .. `1d9b85a22a22`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `83`
+- Internal edges in this diagram: `85`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -4960,7 +4960,7 @@ flowchart TD
 - Cross-chunk link: `7f746ab4e7eb -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> fc36b52375f9`
 - Cross-chunk link: `764a1379cadb -.rollback.-> 59e33348da74`
-- Cross-chunk link: `... and 10 more`
+- Cross-chunk link: `... and 9 more`
 
 ```mermaid
 flowchart TD
@@ -5035,15 +5035,15 @@ flowchart TD
     h_09daf473ec34["09daf473ec34<br/>g=22 n=20<br/>comp=9494.3"]
     h_3c62c43bbac4["3c62c43bbac4<br/>g=12 n=12<br/>comp=11366.4"]
     h_ddf66354fe45["ddf66354fe45<br/>g=12 n=12<br/>comp=10679.7"]
-    h_1015e03235fa["1015e03235fa<br/>ANCHOR<br/>g=12 n=12<br/>comp=12496.1"]
+    h_1015e03235fa["1015e03235fa<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12496.1"]
     h_fd3056a050f1["fd3056a050f1<br/>g=12 n=12<br/>comp=12410.2"]
+    h_2c9ff1ff7c36["2c9ff1ff7c36<br/>g=12 n=12<br/>comp=10249.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_12dcaa0fba31["12dcaa0fba31<br/>g=2 n=2<br/>comp=10250.7"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
@@ -5128,6 +5128,8 @@ flowchart TD
     h_3c62c43bbac4 -->|improve| h_ddf66354fe45
     h_ddf66354fe45 -->|improve| h_1015e03235fa
     h_1015e03235fa -->|improve| h_fd3056a050f1
+    h_fd3056a050f1 -->|improve| h_2c9ff1ff7c36
+    h_2c9ff1ff7c36 -. rollback .-> h_1015e03235fa
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5205,26 +5207,27 @@ flowchart TD
     class h_09daf473ec34 plain;
     class h_3c62c43bbac4 plain;
     class h_ddf66354fe45 plain;
-    class h_1015e03235fa anchor;
+    class h_1015e03235fa current_anchor;
     class h_fd3056a050f1 plain;
+    class h_2c9ff1ff7c36 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_12dcaa0fba31 plain;
 ```
 
 ## Detail 19/20
 
-- Range: `1387c0cd84b3` .. `d0f554f02dcc`
+- Range: `12dcaa0fba31` .. `655bcf5b4e5a`
 - Nodes in this diagram: `80`
 - Internal edges in this diagram: `0`
 - Cross-chunk link: `26b781b24775 --improve--> 9edb021fe9bc`
 
 ```mermaid
 flowchart TD
+    h_12dcaa0fba31["12dcaa0fba31<br/>g=2 n=2<br/>comp=10250.7"]
     h_1387c0cd84b3["1387c0cd84b3<br/>g=3 n=3<br/>comp=11161.2"]
     h_9bada9f1385f["9bada9f1385f<br/>g=2 n=2<br/>comp=13237.3"]
     h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
@@ -5304,7 +5307,6 @@ flowchart TD
     h_7ddb227f455a["7ddb227f455a<br/>g=1 n=1<br/>comp=13975.0"]
     h_92ba96416687["92ba96416687<br/>g=3 n=3<br/>comp=9643.6"]
     h_655bcf5b4e5a["655bcf5b4e5a<br/>g=1 n=1<br/>comp=11223.0"]
-    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5312,6 +5314,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_12dcaa0fba31 plain;
     class h_1387c0cd84b3 plain;
     class h_9bada9f1385f plain;
     class h_996646fb8173 plain;
@@ -5391,18 +5394,17 @@ flowchart TD
     class h_7ddb227f455a plain;
     class h_92ba96416687 plain;
     class h_655bcf5b4e5a plain;
-    class h_d0f554f02dcc plain;
 ```
 
 ## Detail 20/20
 
-- Range: `dc38191b780f` .. `2c9ff1ff7c36`
+- Range: `d0f554f02dcc` .. `a023de98b324`
 - Nodes in this diagram: `11`
 - Internal edges in this diagram: `0`
-- Cross-chunk link: `fd3056a050f1 --improve--> 2c9ff1ff7c36`
 
 ```mermaid
 flowchart TD
+    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
     h_dc38191b780f["dc38191b780f<br/>g=9 n=9<br/>comp=10624.1"]
     h_cda8045c9344["cda8045c9344<br/>g=27 n=20<br/>comp=10114.1"]
     h_545a5ebfc8e2["545a5ebfc8e2<br/>g=4 n=4<br/>comp=7822.2"]
@@ -5413,7 +5415,6 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
-    h_2c9ff1ff7c36["2c9ff1ff7c36<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5421,6 +5422,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_d0f554f02dcc plain;
     class h_dc38191b780f plain;
     class h_cda8045c9344 plain;
     class h_545a5ebfc8e2 plain;
@@ -5431,10 +5433,24 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
-    class h_2c9ff1ff7c36 current;
 ```
 
 ## Transition Notes
+
+### Rollback Game#25213 `2c9ff1ff -> 1015e032`
+
+- - rollback from 2c9ff1ff7c36 to 1015e03235fa at game 25213
+- - reasons: early_branch_regression+curr_breach+current_worse_than_best
+- - current comp/p50/p25=10249.5/10810.0/9348.5 vs target 12496.1/13930.0/9708.5
+- - bad recent scores: 8485 8713 9527 11460 10640 10980 11570 11379
+- early_branch_regression が悪化要因だった。
+- curr_breach が悪化要因だった。
+- current_worse_than_best が悪化要因だった。
+- current: comp=10249.5 p50=10810.0 p25=9348.5 mean=10596.2 n=12
+- metric_gap_vs_target: comp=-2246.7 p50=-3120.0 p25=-360.0 mean=-4575.8
+- recent12_avg: bad=10596.2 target=15172.0
+- recent12_floor: bad=8485 target=7870
+- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。
 
 ### Improve Game#25201 `fd3056a0 -> 2c9ff1ff`
 
