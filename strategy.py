@@ -64,6 +64,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v629: phase-gated growth pipeline axis — build toward Russia via highest-type concentration
+      # analysis_result.md hypothesis: phase-gated merge priority with height-aware deadline enforcement
+      # Low-score games: higher merge rate (27.6%) but lower avg type merged — merges scatter low-type.
+      # Best game reached type 14 mid-game (T119) and survived to T134. Worst game had merge drought.
+      # Axis 5.6 (growth center) fires when max_type >= 6 but doesn't distinguish mid-game phases.
+      # New axis: fires at MEDIUM/HIGH (0.8<=max_y<3.0) + NO merge + max_type>=11 (Turkmenistan+) + not russia_phase.
+      # Creates "growth pipeline" incentive toward existing high-type pieces during merge droughts.
+      # Target nation: ウクライナ (type 13) / カザフスタン (type 14) growth pipeline
+      # Fixes rollback failure mode: merge drought during mid-game prevents Russia-phase transition
+      # refs: tmp/analysis_result.md (Implementation Plan hypothesis), tmp/batch_summary.txt
       # v612: pre-critical height escalation — prevent NO_MERGE edge scatter during HIGH→CRITICAL transition
       # worst game T56-T58: rp=3, NO merge, max_y 1.55→1.95, chose edge placement → NO merge continued
       # +150*height_mult bonus at 1.5<=max_y<2.0 + deadline_crossed + rp>=3 + NO merge makes low competitive.
@@ -1767,7 +1777,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+        # ----- v629: phase-gated growth pipeline axis — build toward Russia via highest-type concentration -----
+        # analysis_result.md hypothesis: phase-gated merge priority with height-aware deadline enforcement
+        # Problem: strategy merges early and often but doesn't build toward high-type pieces
+        # (Ukraine type 13 → Kazakhstan type 14 → Russia type 15). Low-score games show higher
+        # merge rate (27.6%) but lower average type merged — merges scatter low-type pieces.
+        # Best game reached type 14 mid-game (T119) and survived to T134. Worst game had
+        # 4+ turn merge drought before deadline crossing (T44-T47).
+        # Hypothesis: Add axis that rewards placement near highest-type piece (type 11+/Ukraine+)
+        # when: (1) MEDIUM/HIGH phase (0.8 <= max_y < 3.0), (2) NO merge available,
+        # (3) highest-type on board >= 11, (4) not CRITICAL phase.
+        # This creates a "growth pipeline" that guides placement toward existing high-type
+        # pieces during merge droughts, building toward Russia phase mid-game.
+        # Does NOT override immediate merge opportunities — purely additive guidance.
+        # Phase gate (max_y < 3.0) preserves height penalty as sole differentiator in CRITICAL.
+        # Phase gate (max_y >= 0.8) ensures we don't interfere with LOW phase merge priority.
+        # Target nation: ウクライナ (type 13) / カザフスタン (type 14) growth pipeline
+        # refs: tmp/analysis_result.md (Implementation Plan hypothesis),
+        #       tmp/batch_summary.txt (low-score merge_rate 27.6% but low-type merges),
+        #       game_history/20260516_045521_score2873.jsonl (best_game T119 type 14 mid-game),
+        #       game_history/20260516_052157_score0565.jsonl (worst_game T44-T47 merge drought)
+        if merge_grade == "NO" and 0.8 <= max_y < 3.0 and not russia_phase:
+            pipeline_type_threshold = 11  # Turkmenistan (11) or above triggers guidance
+            if max_type_on_board >= pipeline_type_threshold:
+                if growth_center:
+                    horiz_dist = abs(x - gc_x)
+                    if horiz_dist < 2.0:
+                        pipeline_bonus = max(0, 80.0 - horiz_dist * 50.0)
+                        if gc_y > 0:
+                            pipeline_bonus *= max(0.0, 1.0 - gc_y * 0.3)
+                        if piece_count >= 28:
+                            pipeline_bonus *= min(1.0 + (piece_count - 28) * 0.1, 1.5)
+                        if pipeline_bonus > 0:
+                            score += pipeline_bonus
+                            reasons.append("GROWTH_PIPELINE")
+
+        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。

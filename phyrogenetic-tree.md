@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-16 04:41:17 JST`
-- Nodes: `1531`
-- Edges: `1967`
-- Current: `1015e03235fa`
-- Anchor: `1015e03235fa`
+- Updated: `2026-05-16 06:07:05 JST`
+- Nodes: `1532`
+- Edges: `1968`
+- Current: `517fa3969d26`
+- Anchor: `fd3056a050f1`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_1015e03235fa["1015e03235fa<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12496.1"]
-    h_d6ba060d24b2["d6ba060d24b2<br/>g=1 n=1<br/>comp=14596.0"]
+    h_fd3056a050f1["fd3056a050f1<br/>ANCHOR<br/>g=12 n=12<br/>comp=12410.2"]
     h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
@@ -76,6 +75,7 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_517fa3969d26["517fa3969d26<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -83,8 +83,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_1015e03235fa current_anchor;
-    class h_d6ba060d24b2 plain;
+    class h_fd3056a050f1 anchor;
     class h_273866b19f99 plain;
     class h_e75542ef3a84 plain;
     class h_78c5c9b64fef plain;
@@ -144,6 +143,7 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
+    class h_517fa3969d26 current;
 ```
 
 ## Detail 1/20
@@ -4960,7 +4960,7 @@ flowchart TD
 - Cross-chunk link: `7f746ab4e7eb -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> fc36b52375f9`
 - Cross-chunk link: `764a1379cadb -.rollback.-> 59e33348da74`
-- Cross-chunk link: `... and 9 more`
+- Cross-chunk link: `... and 10 more`
 
 ```mermaid
 flowchart TD
@@ -5035,8 +5035,8 @@ flowchart TD
     h_09daf473ec34["09daf473ec34<br/>g=22 n=20<br/>comp=9494.3"]
     h_3c62c43bbac4["3c62c43bbac4<br/>g=12 n=12<br/>comp=11366.4"]
     h_ddf66354fe45["ddf66354fe45<br/>g=12 n=12<br/>comp=10679.7"]
-    h_1015e03235fa["1015e03235fa<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12496.1"]
-    h_fd3056a050f1["fd3056a050f1<br/>g=12 n=12<br/>comp=12410.2"]
+    h_1015e03235fa["1015e03235fa<br/>g=25 n=20<br/>comp=11904.2"]
+    h_fd3056a050f1["fd3056a050f1<br/>ANCHOR<br/>g=12 n=12<br/>comp=12410.2"]
     h_2c9ff1ff7c36["2c9ff1ff7c36<br/>g=12 n=12<br/>comp=10249.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
@@ -5207,8 +5207,8 @@ flowchart TD
     class h_09daf473ec34 plain;
     class h_3c62c43bbac4 plain;
     class h_ddf66354fe45 plain;
-    class h_1015e03235fa current_anchor;
-    class h_fd3056a050f1 plain;
+    class h_1015e03235fa plain;
+    class h_fd3056a050f1 anchor;
     class h_2c9ff1ff7c36 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
@@ -5398,9 +5398,10 @@ flowchart TD
 
 ## Detail 20/20
 
-- Range: `d0f554f02dcc` .. `a023de98b324`
-- Nodes in this diagram: `11`
+- Range: `d0f554f02dcc` .. `517fa3969d26`
+- Nodes in this diagram: `12`
 - Internal edges in this diagram: `0`
+- Cross-chunk link: `1015e03235fa --improve--> 517fa3969d26`
 
 ```mermaid
 flowchart TD
@@ -5415,6 +5416,7 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_517fa3969d26["517fa3969d26<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5433,9 +5435,20 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
+    class h_517fa3969d26 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#25226 `1015e032 -> 517fa396`
+
+- scores: `10616 15507 14278 15644 11408 12424 22357 9714 7387 7821 13656 13338`
+- v629: phase-gated growth pipeline axis — build toward Russia via highest-type concentration
+- analysis_result.md hypothesis: phase-gated merge priority with height-aware deadline enforcement
+- Low-score games: higher merge rate (27.6%) but lower avg type merged — merges scatter low-type.
+- Best game reached type 14 mid-game (T119) and survived to T134. Worst game had merge drought.
+- Axis 5.6 (growth center) fires when max_type >= 6 but doesn't distinguish mid-game phases.
+- New axis: fires at MEDIUM/HIGH (0.8<=max_y<3.0) + NO merge + max_type>=11 (Turkmenistan+) + not russia_phase.
 
 ### Rollback Game#25213 `2c9ff1ff -> 1015e032`
 
