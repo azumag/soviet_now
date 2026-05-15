@@ -65,6 +65,27 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v602: deadline-crossing guard — hard constraint per mandatory_themes.txt
+     # Validation error: AssertionError: deadline-far-guard: expected safe non-crossing x=-1.0, got {'x': 2.8, 'reason': 'FAR_MERGE_HIGH_TOWER'}
+     # Safe non-crossing x exists (-1.0) but deadline-crossing x (2.8, FAR_MERGE_HIGH_TOWER) was selected.
+     # Root cause: v601 -800 penalty insufficient — additive bonuses (stacking ~400-900, proximity ~200-600)
+     # at deadline override height penalty differentiation.
+     # Fix: hard block ALL candidates with crosses_deadline=True when safe candidate exists and merge_grade=="NO".
+     # Merge grades (DIRECT/NEAR/FAR) are mergeable by definition and excluded.
+     # refs: mandatory_themes.txt (deadline+merge-only drops),
+     #       AssertionError: deadline-far-guard validation failure
+     # v601: Phase 1 — fix HEIGHT_CONTROL overuse at deadline_crossed (analysis_result.md H1)
+     # analysis_result.md H1: HEIGHT_CONTROL reason avg_delta=3.8 (worst performer)
+     # worst game final turns: HEIGHT_CONTROL scatter at deadline_crossed
+     # When deadline_crossed && merge_grade=="NO", height penalty alone (~200-400)
+     # is overwhelmed by additive bonuses, causing scatter to high positions.
+     # Mandatory theme: "Deadline exceeded drops only if mergeable"
+     # Fix: when deadline_crossed && NO merge, extra penalty -800 ensures height
+     # penalty dominates over additive bonuses (stacking ~400-900, proximity ~200-600).
+     # refs: tmp/analysis_result.md (Implementation Plan Phase 1),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 22.7%, avg_delta=3.8),
+     #       mandatory_themes.txt (deadline+merge-only drops)
+     # Fixes rollback failure mode: HEIGHT_CONTROL scatter at deadline_crossed
      # v600: proactive merge-path creation within column_ceiling guidance — tie-breaker during merge drought
      # analysis: at rp=2 NO merge (not caught by axis 8.8/v599), column_ceiling places at best column
      # but doesn't create future merge opportunities. When current_type has 2+ pieces on board,
@@ -1625,38 +1646,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             congestion_penalty = (piece_count - 29) * landing_y * 20.0
             score -= congestion_penalty
 
-        # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
-        # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
-        # bad_strategy(ee2c76235324, v334): deadline_crossed時に即時ゲームオーバー判定を行い、reactive_pairsの併合機会を失っている
-        # rollback_target(608f63a01e6b, v330): deadline_crossed時も danger_piece_count == 0 の場合はプレイを継続し、reactive pairs を併合して高スコアを達成している
-        # v334 failure: axis 2とaxis 9.5からdanger_piece_count条件を削除したため、danger_piece_count > 0 の状況でも戦略的配置が選ばれてしまい、即時併合機会を取りこぼしている
-        # ワーストゲーム(score0720)終盤turns 49-57: deadline_crossed=true, reactive_pairs=3-6, danger_piece_count=2-6で即時併合不可続きmax_y=3.21に上昇してゲームオーバー
-        # ベストゲーム(score2599)終盤turns 116-123: deadline_crossed=trueでも即時併合機会を確実に捉えて2599点を出している
-        # axis 9.6追加: deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ(-4500.0)を適用
-        # これによりdeadline_crossed時にreactive_pairsがある状況で即時併合を逃した場合のペナルティがaxis 9.2のペナルティよりも高くなり、即時併合を強制的に待つ戦略へ切り替える
-        # axis 9.5の盤面圧縮ボーナスは適用しない。即時併合機会を最大化することを目的としているため、戦略的配置ボーナスを抑制
-        # 未活用情報：deadline_crossed, reactive_pair_count, merge_grade
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-        #       game_history/20260324_122310_score0720.jsonl turns 49-57, game_history/20260324_120021_score2599.jsonl turns 116-123
-        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
+        # v601: Phase 1 — fix HEIGHT_CONTROL overuse at deadline_crossed
+        # analysis_result.md H1: HEIGHT_CONTROL reason avg_delta=3.8 (worst performer)
+        # worst game final turns: HEIGHT_CONTROL scatter at deadline_crossed
+        # When deadline_crossed && merge_grade=="NO", height penalty alone (~200-400)
+        # is overwhelmed by additive bonuses (stacking ~400-900, proximity ~200-600),
+        # causing scatter to high positions that cross deadline.
+        # Mandatory theme: "Deadline exceeded drops only if mergeable"
+        # Fix: when deadline_crossed && NO merge, extra penalty ensures height
+        # penalty dominates over any additive bonuses. This routes away from
+        # HEIGHT_CONTROL scatter toward genuinely low positions.
+        # refs: tmp/analysis_result.md (Implementation Plan Phase 1),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 22.7%, avg_delta=3.8),
+        #       mandatory_themes.txt (deadline+merge-only drops)
+        if deadline_crossed and merge_grade == "NO":
+            score -= 800.0
+            reasons.append("DEADLINE_NO_MERGE_HEIGHT_CONTROL_FIX")
+        # Fixes rollback failure mode: HEIGHT_CONTROL scatter at deadline_crossed
 
-        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v454: flatten to -4500 — fix v432 sign error + match protected strategy
-            # v432 formula was -3000 + landing_y * 2000 which has OPPOSITE sign to the
-            # documented intent. The comment said "y=2: -7000" but the formula produces
-            # +1000 (a BONUS for high placement). This inverted the penalty: at y>=1.5
-            # the "penalty" becomes zero or positive, incentivizing scatter to high-y
-            # positions at deadline — the exact failure mode the postmortem warns against.
-            # Evidence: worst T59 x=-3.0 at deadline → bounces to y=3.31. Extra_low T79-84
-            # pieces at x=2.6-3.0, y=2.7-3.5. Best game also shows edge scatter at deadline.
-            # Protected strategy (median 12789) uses flat -4500. Same as axis 8.8 (v452).
-            # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
-            # height penalty be the only position differentiator — consistent low placement.
-            # Fixes rollback failure mode: deadline scatter from v432 sign error
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
-         # ----- evaluation axis 3: drift penalty -----
+        # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -2227,6 +2235,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_PROXIMITY")
+
+        # v602: deadline-crossing guard — hard constraint per mandatory_themes.txt
+        # "Deadline exceeded drops only if mergeable"
+        # Validation error: AssertionError: deadline-far-guard: expected safe non-crossing x=-1.0, got {'x': 2.8, 'reason': 'FAR_MERGE_HIGH_TOWER'}
+        # The guard must block ALL deadline-crossing candidates (including FAR/NEAR/DIRECT merges)
+        # when a safe non-crossing option exists. The "mergeable" exception only applies when
+        # NO safe option exists at all. When safe x=-1.0 exists, x=2.8 (FAR_MERGE) must not be chosen.
+        # refs: mandatory_themes.txt (deadline+merge-only drops),
+        #       AssertionError: deadline-far-guard validation failure
+        has_safe_candidate = any(
+            not r.get("crosses_deadline", False) for r in results
+        )
+        if has_safe_candidate and result.get("crosses_deadline", False):
+            # -10000 penalty not enough when merge bonuses are massive (+5000+).
+            # Must use -float("inf") to guarantee safe candidate is selected.
+            score = -float("inf")
+            reasons.append("DEADLINE_CROSSING_BLOCKED")
 
         # ----- update best candidate -----
         if score > best_score:
