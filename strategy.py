@@ -972,24 +972,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # ----- vYYY: Hard Deadline-Merge Override (mandatory_themes hard constraint) -----
-        # Change 1 (revised): deadline_crossed && merge_grade == "NO" → massive penalty
-        # Original condition required merge_possible (any candidate has DIRECT/NEAR), but this meant
-        # the penalty never fired when merge_available=false for ALL candidates (worst game T58-62:
-        # 6 consecutive NO_MERGE selections despite deadline_crossed=true, max_y runaway).
+        # ----- mandatory_themes Change 1: hard filter — reject NO-merge candidates that cross deadline -----
+        # Implementation Plan Change 1: pre-evaluation filter right after merge_grade extraction,
+        # before any scoring axes fire. If a candidate cannot merge (merge_grade==NO) and this drop
+        # crosses the deadline (top_after_drop >= DEADLINE_Y), skip it entirely.
+        # Root cause: worst_game T47 (x=0.8, crosses deadline, type-3 merge_available=true on board,
+        # but this candidate's merge_grade=NO) and best_game T105 (x=-2.05, crosses deadline,
+        # merge_grade=NO) both show positive scoring factors (reactive stacking, growth center,
+        # height diff) overcome the -10000 penalty at lines 984-986, resulting in wrong selections.
         # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # This means: if THIS candidate cannot merge (merge_grade==NO), it should not cross deadline.
-        # Removed merge_possible condition so penalty fires for every NO_MERGE candidate at deadline.
-        # refs: data/mandatory_themes.txt, tmp/analysis_result.md (Implementation Plan Change 1)
-        if deadline_crossed and merge_grade == "NO":
-            score -= 10000.0
-            reasons.append("DEADLINE_MERGE_FORCED_OVERRIDE")
+        # This is a candidate FILTER (not a penalty), implementing the hard constraint before scoring.
+        # refs: tmp/analysis_result.md (Implementation Plan Change 1),
+        #       game_history/20260515_225935_score0640.jsonl (worst T47),
+        #       game_history/20260515_230752_score2924.jsonl (best T105)
+        if result.get("crosses_deadline", False) and merge_grade == "NO":
+            continue
 
-        # Hard safety rail: a no-merge placement that crosses the deadline is
-        # only allowed when every candidate is equally trapped.
+        # ----- mandatory_themes Change 1b: deadline-far-guard — reject ANY crossing candidate when safe options exist -----
+        # deadline-far-guard failure: x=2.8 (crosses_deadline, FAR_MERGE) selected over x=-1.0 (safe).
+        # Rule: if a safe non-crossing candidate exists (deadline_escape_exists=true), NO candidate
+        # that crosses the deadline may be chosen, regardless of merge_grade (FAR/NEAR/DIRECT/NO).
+        # This guard is ABSOLUTE — it fires before merge grading, before scoring, before everything.
+        # refs: validation error "deadline-far-guard: expected safe non-crossing x=-1.0, got x=2.8"
         if result.get("crosses_deadline", False) and deadline_escape_exists:
-            score -= 1000000.0
-            reasons.append("DEADLINE_CROSS_NO_MERGE_HARD_BLOCK")
+            continue
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
@@ -2136,6 +2142,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+
+    # Fallback: if all candidates were filtered by deadline guards, select the safest
+    # crossing candidate (minimum |x|) as a last resort. This prevents returning x=0.0
+    # with empty reason when every candidate crosses the deadline.
+    # refs: validation error "テスト出力契約違反: {\"x\": 0.0, \"reason\": \"\"}"
+    if best_reason == "" and results:
+        fallback = min(
+            [r for r in results if r.get("crosses_deadline", False)],
+            key=lambda r: abs(r.get("x", 0))
+        )
+        best_x = fallback.get("x", 0.0)
+        best_reason = fallback.get("merge_grade", "NO") + "_DEADLINE_FALLBACK"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
