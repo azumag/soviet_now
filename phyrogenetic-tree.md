@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-16 08:18:48 JST`
+- Updated: `2026-05-16 08:42:21 JST`
 - Nodes: `1533`
-- Edges: `1971`
-- Current: `1015e03235fa`
-- Anchor: `1015e03235fa`
+- Edges: `1972`
+- Current: `84d04da1d615`
+- Anchor: `84d04da1d615`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_1015e03235fa["1015e03235fa<br/>CURRENT ANCHOR<br/>g=26 n=20<br/>comp=11798.7"]
+    h_84d04da1d615["84d04da1d615<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11590.8"]
     h_d6ba060d24b2["d6ba060d24b2<br/>g=1 n=1<br/>comp=14596.0"]
     h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
@@ -83,7 +83,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_1015e03235fa current_anchor;
+    class h_84d04da1d615 current_anchor;
     class h_d6ba060d24b2 plain;
     class h_273866b19f99 plain;
     class h_e75542ef3a84 plain;
@@ -2744,7 +2744,7 @@ flowchart TD
 - Cross-chunk link: `7f14656b19f8 -.rollback.-> 003e9883e188`
 - Cross-chunk link: `003e9883e188 --improve--> 6479a8c1a527`
 - Cross-chunk link: `9378430a0783 -.rollback.-> 19541065acc3`
-- Cross-chunk link: `... and 16 more`
+- Cross-chunk link: `... and 17 more`
 
 ```mermaid
 flowchart TD
@@ -2816,7 +2816,7 @@ flowchart TD
     h_9b9cc74fc310["9b9cc74fc310<br/>g=12 n=12<br/>comp=8441.3"]
     h_3bdbaee6d05d["3bdbaee6d05d<br/>g=12 n=12<br/>comp=11541.5"]
     h_01124af99ba1["01124af99ba1<br/>g=12 n=12<br/>comp=10146.6"]
-    h_84d04da1d615["84d04da1d615<br/>g=24 n=20<br/>comp=11590.8"]
+    h_84d04da1d615["84d04da1d615<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11590.8"]
     h_5eeb503d7635["5eeb503d7635<br/>g=12 n=12<br/>comp=11333.5"]
     h_8bad92ca8197["8bad92ca8197<br/>g=12 n=12<br/>comp=10347.7"]
     h_59b54cf8e47c["59b54cf8e47c<br/>g=12 n=12<br/>comp=9410.3"]
@@ -2982,7 +2982,7 @@ flowchart TD
     class h_9b9cc74fc310 plain;
     class h_3bdbaee6d05d plain;
     class h_01124af99ba1 plain;
-    class h_84d04da1d615 plain;
+    class h_84d04da1d615 current_anchor;
     class h_5eeb503d7635 plain;
     class h_8bad92ca8197 plain;
     class h_59b54cf8e47c plain;
@@ -4960,7 +4960,7 @@ flowchart TD
 - Cross-chunk link: `7f746ab4e7eb -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> fc36b52375f9`
 - Cross-chunk link: `764a1379cadb -.rollback.-> 59e33348da74`
-- Cross-chunk link: `... and 7 more`
+- Cross-chunk link: `... and 8 more`
 
 ```mermaid
 flowchart TD
@@ -5035,7 +5035,7 @@ flowchart TD
     h_09daf473ec34["09daf473ec34<br/>g=22 n=20<br/>comp=9494.3"]
     h_3c62c43bbac4["3c62c43bbac4<br/>g=12 n=12<br/>comp=11366.4"]
     h_ddf66354fe45["ddf66354fe45<br/>g=12 n=12<br/>comp=10679.7"]
-    h_1015e03235fa["1015e03235fa<br/>CURRENT ANCHOR<br/>g=26 n=20<br/>comp=11798.7"]
+    h_1015e03235fa["1015e03235fa<br/>g=31 n=20<br/>comp=10483.9"]
     h_fd3056a050f1["fd3056a050f1<br/>g=17 n=17<br/>comp=10613.2"]
     h_2c9ff1ff7c36["2c9ff1ff7c36<br/>g=12 n=12<br/>comp=10249.5"]
     h_517fa3969d26["517fa3969d26<br/>g=12 n=12<br/>comp=10876.9"]
@@ -5211,7 +5211,7 @@ flowchart TD
     class h_09daf473ec34 plain;
     class h_3c62c43bbac4 plain;
     class h_ddf66354fe45 plain;
-    class h_1015e03235fa current_anchor;
+    class h_1015e03235fa plain;
     class h_fd3056a050f1 plain;
     class h_2c9ff1ff7c36 plain;
     class h_517fa3969d26 plain;
@@ -5446,6 +5446,21 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#25261 `1015e032 -> 84d04da1`
+
+- - rollback from 1015e03235fa to 84d04da1d615 at game 25261
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=10483.9/11117.0/9284.0 vs target 11590.8/11925.0/10584.5
+- - bad recent scores: 13338 7994 0 9984 14549 10406 10826 7901
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=10483.9 p50=11117.0 p25=9284.0 mean=12123.2 n=20
+- rollback_target: comp=11590.8 p50=11925.0 p25=10584.5 mean=14049.1 n=20
+- metric_gap_vs_target: comp=-1106.9 p50=-808.0 p25=-1300.5 mean=-1925.9
+- recent12_avg: bad=9464.7 target=13482.4
+- recent12_floor: bad=0 target=7023
+- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。
 
 ### Rollback Game#25256 `fd3056a0 -> 1015e032`
 
