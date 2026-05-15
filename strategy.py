@@ -84,18 +84,11 @@ Phases (determined by board max Y):
       # This means: if THIS candidate cannot merge (merge_grade==NO), it should not cross deadline.
       # Removed merge_possible condition so penalty fires for every NO_MERGE candidate at deadline.
       # refs: tmp/analysis_result.md (Implementation Plan Change 1), data/mandatory_themes.txt
-      # v614: extend early game merge priority to DIRECT (95.7%) alongside NEAR (68.5%)
-      # piece_count<=12: early game critical window for building board foundation.
-      # Only NEAR was incentivized; DIRECT (higher success) was undervalued.
-      # Fixes: early game DIRECT merge opportunity missed (only NEAR bonus existed).
-      # refs: tmp/batch_summary.txt (NEAR_MERGE_EARLY_MERGE_PRIORITY avg_delta=24.1)
-      # Fixes rollback failure mode: early game merge opportunity undervaluation
-      # v613: axis 8.8 penalty -600→-900 to overcome AVOID_BLOCK at intermediate x
-      # Extra_high T128: x=-0.8 selected, max_y jumped 1.9 in one turn.
-      # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures lowest placement.
-      # Rollback constraint "forbid at max_y<=0.5" preserved (applies to max_y>=0.8+).
-      # Fixes rollback failure mode: REACTIVE_PAIRS_NO_MERGE gravitational pull at high rp
-      # refs: tmp/analysis_result.md, game_history/20260509_022447_score0731.jsonl
+     # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
+     # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
+     # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
+     # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
+     # refs: tmp/analysis_result.md (Implementation Plan Change 2)
      # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
      # When deadline_crossed=true && merge_grade=="NO" && |x|>2.0 → -800 penalty
      # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
@@ -1859,14 +1852,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
         # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
         # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-        # v614: extend early game merge priority to DIRECT (95.7% success) alongside NEAR (68.5%)
-        # Early game (piece_count<=12) is critical window for building board foundation.
-        # DIRECT merge has 95.7% success rate vs NEAR 68.5% — should get stronger bonus.
-        # batch_summary: NEAR_MERGE_EARLY_MERGE_PRIORITY avg_score_delta=24.1 (high value).
-        # Adding DIRECT captures high-confidence merge opportunities that current logic misses.
-        # Fixes: early game DIRECT merge undervalued (only NEAR was incentivized).
-        # refs: tmp/batch_summary.txt (NEAR_MERGE_EARLY_MERGE_PRIORITY), strategy.py.staging v614
-        if piece_count <= 12 and merge_grade in ["DIRECT", "NEAR"]:
+        if piece_count <= 12 and merge_grade == "NEAR":
+            # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
+            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
@@ -2035,12 +2023,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
         #       tmp/state/last_rollback_analysis.md
 
+        # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
+        # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
+        # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
+        # At max_y>=2.5 with deadline crossed, danger is too high for reactive-pair penalty to override merge.
+        # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
+        # Refs: tmp/analysis_result.md (Implementation Plan Change 2)
         if reactive_pair_count >= 3 and merge_grade == "NO":
             if not (deadline_crossed and max_y >= 2.5):
-                # v613: increase penalty from -600 to -900 to overcome AVOID_BLOCK at intermediate x
-                # Extra_high T128: x=-0.8 selected, max_y jumped 1.9 in one turn.
-                # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures lowest placement.
-                # Rollback constraint "forbid at max_y<=0.5" preserved (applies to max_y>=0.8+).
+                # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+                # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+                # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+                # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
                 score -= 900.0 * merge_mult
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
