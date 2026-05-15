@@ -985,7 +985,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan Change 1),
         #       game_history/20260515_225935_score0640.jsonl (worst T47),
         #       game_history/20260515_230752_score2924.jsonl (best T105)
-        if result.get("crosses_deadline", False) and merge_grade == "NO":
+        if result.get("crosses_deadline", False) and merge_grade != "DIRECT":
             continue
 
         # ----- mandatory_themes Change 1b: deadline-far-guard — reject ANY crossing candidate when safe options exist -----
