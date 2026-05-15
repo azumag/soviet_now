@@ -955,12 +955,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    # v603: pre-compute has_safe_candidate before loop (used by v603 pre-filter)
+    has_safe_candidate = any(
+        not r.get("crosses_deadline", False) for r in results
+    )
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+
+        # ----- v603: deadline_crossed NO-merge pre-filter (mandatory_themes.txt) -----
+        # mandatory_themes: "デットラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Problem: v602 guard at end of loop applies -float("inf") AFTER merge bonuses
+        # (lines 989-998: DIRECT=+1200*type_scale), which additive bonuses can overcome.
+        # Mechanism: Skip candidate entirely when deadline_crossed && NO merge && crosses_deadline
+        # && safe candidate exists. Fires BEFORE merge evaluation — deadline protection is absolute.
+        # Does NOT fire for merge candidates (merge_grade!="NO") — merges explicitly allowed.
+        # refs: tmp/analysis_result.md (Implementation Plan: v603 pre-filter), mandatory_themes.txt
+        #       strategy_versions/by_hash/1dc1a2cfda77.py (v607 absolute deadline veto pattern)
+        if deadline_crossed and merge_grade == "NO" and result.get("crosses_deadline", False):
+            if has_safe_candidate:
+                continue  # skip — deadline NO-merge is forbidden when safe option exists
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
