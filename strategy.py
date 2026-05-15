@@ -64,16 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v629: phase-gated growth pipeline axis — build toward Russia via highest-type concentration
-      # analysis_result.md hypothesis: phase-gated merge priority with height-aware deadline enforcement
-      # Low-score games: higher merge rate (27.6%) but lower avg type merged — merges scatter low-type.
-      # Best game reached type 14 mid-game (T119) and survived to T134. Worst game had merge drought.
-      # Axis 5.6 (growth center) fires when max_type >= 6 but doesn't distinguish mid-game phases.
-      # New axis: fires at MEDIUM/HIGH (0.8<=max_y<3.0) + NO merge + max_type>=11 (Turkmenistan+) + not russia_phase.
-      # Creates "growth pipeline" incentive toward existing high-type pieces during merge droughts.
-      # Target nation: ウクライナ (type 13) / カザフスタン (type 14) growth pipeline
-      # Fixes rollback failure mode: merge drought during mid-game prevents Russia-phase transition
-      # refs: tmp/analysis_result.md (Implementation Plan hypothesis), tmp/batch_summary.txt
       # v612: pre-critical height escalation — prevent NO_MERGE edge scatter during HIGH→CRITICAL transition
       # worst game T56-T58: rp=3, NO merge, max_y 1.55→1.95, chose edge placement → NO merge continued
       # +150*height_mult bonus at 1.5<=max_y<2.0 + deadline_crossed + rp>=3 + NO merge makes low competitive.
@@ -94,11 +84,18 @@ Phases (determined by board max Y):
       # This means: if THIS candidate cannot merge (merge_grade==NO), it should not cross deadline.
       # Removed merge_possible condition so penalty fires for every NO_MERGE candidate at deadline.
       # refs: tmp/analysis_result.md (Implementation Plan Change 1), data/mandatory_themes.txt
-     # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
-     # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
-     # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
-     # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
-     # refs: tmp/analysis_result.md (Implementation Plan Change 2)
+      # v614: extend early game merge priority to DIRECT (95.7%) alongside NEAR (68.5%)
+      # piece_count<=12: early game critical window for building board foundation.
+      # Only NEAR was incentivized; DIRECT (higher success) was undervalued.
+      # Fixes: early game DIRECT merge opportunity missed (only NEAR bonus existed).
+      # refs: tmp/batch_summary.txt (NEAR_MERGE_EARLY_MERGE_PRIORITY avg_delta=24.1)
+      # Fixes rollback failure mode: early game merge opportunity undervaluation
+      # v613: axis 8.8 penalty -600→-900 to overcome AVOID_BLOCK at intermediate x
+      # Extra_high T128: x=-0.8 selected, max_y jumped 1.9 in one turn.
+      # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures lowest placement.
+      # Rollback constraint "forbid at max_y<=0.5" preserved (applies to max_y>=0.8+).
+      # Fixes rollback failure mode: REACTIVE_PAIRS_NO_MERGE gravitational pull at high rp
+      # refs: tmp/analysis_result.md, game_history/20260509_022447_score0731.jsonl
      # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
      # When deadline_crossed=true && merge_grade=="NO" && |x|>2.0 → -800 penalty
      # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
@@ -1777,42 +1774,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-        # ----- v629: phase-gated growth pipeline axis — build toward Russia via highest-type concentration -----
-        # analysis_result.md hypothesis: phase-gated merge priority with height-aware deadline enforcement
-        # Problem: strategy merges early and often but doesn't build toward high-type pieces
-        # (Ukraine type 13 → Kazakhstan type 14 → Russia type 15). Low-score games show higher
-        # merge rate (27.6%) but lower average type merged — merges scatter low-type pieces.
-        # Best game reached type 14 mid-game (T119) and survived to T134. Worst game had
-        # 4+ turn merge drought before deadline crossing (T44-T47).
-        # Hypothesis: Add axis that rewards placement near highest-type piece (type 11+/Ukraine+)
-        # when: (1) MEDIUM/HIGH phase (0.8 <= max_y < 3.0), (2) NO merge available,
-        # (3) highest-type on board >= 11, (4) not CRITICAL phase.
-        # This creates a "growth pipeline" that guides placement toward existing high-type
-        # pieces during merge droughts, building toward Russia phase mid-game.
-        # Does NOT override immediate merge opportunities — purely additive guidance.
-        # Phase gate (max_y < 3.0) preserves height penalty as sole differentiator in CRITICAL.
-        # Phase gate (max_y >= 0.8) ensures we don't interfere with LOW phase merge priority.
-        # Target nation: ウクライナ (type 13) / カザフスタン (type 14) growth pipeline
-        # refs: tmp/analysis_result.md (Implementation Plan hypothesis),
-        #       tmp/batch_summary.txt (low-score merge_rate 27.6% but low-type merges),
-        #       game_history/20260516_045521_score2873.jsonl (best_game T119 type 14 mid-game),
-        #       game_history/20260516_052157_score0565.jsonl (worst_game T44-T47 merge drought)
-        if merge_grade == "NO" and 0.8 <= max_y < 3.0 and not russia_phase:
-            pipeline_type_threshold = 11  # Turkmenistan (11) or above triggers guidance
-            if max_type_on_board >= pipeline_type_threshold:
-                if growth_center:
-                    horiz_dist = abs(x - gc_x)
-                    if horiz_dist < 2.0:
-                        pipeline_bonus = max(0, 80.0 - horiz_dist * 50.0)
-                        if gc_y > 0:
-                            pipeline_bonus *= max(0.0, 1.0 - gc_y * 0.3)
-                        if piece_count >= 28:
-                            pipeline_bonus *= min(1.0 + (piece_count - 28) * 0.1, 1.5)
-                        if pipeline_bonus > 0:
-                            score += pipeline_bonus
-                            reasons.append("GROWTH_PIPELINE")
-
-        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
@@ -1897,9 +1859,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
         # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
         # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-        if piece_count <= 12 and merge_grade == "NEAR":
-            # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+        # v614: extend early game merge priority to DIRECT (95.7% success) alongside NEAR (68.5%)
+        # Early game (piece_count<=12) is critical window for building board foundation.
+        # DIRECT merge has 95.7% success rate vs NEAR 68.5% — should get stronger bonus.
+        # batch_summary: NEAR_MERGE_EARLY_MERGE_PRIORITY avg_score_delta=24.1 (high value).
+        # Adding DIRECT captures high-confidence merge opportunities that current logic misses.
+        # Fixes: early game DIRECT merge undervalued (only NEAR was incentivized).
+        # refs: tmp/batch_summary.txt (NEAR_MERGE_EARLY_MERGE_PRIORITY), strategy.py.staging v614
+        if piece_count <= 12 and merge_grade in ["DIRECT", "NEAR"]:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
@@ -1992,39 +1959,50 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
 
         if russia_phase:
-            # ロシアフェーズでの即時併合優先
-            # 即時併合候補がある場合、最優先（強力なボーナス）
-            if merge_grade in ["DIRECT", "NEAR"]:
-                if reactive_pair_count >= 1:
-                    if merge_grade == "DIRECT":
-                        score += 1400.0 if reactive_pair_count >= 3 else 1200.0
-                    else:
-                        score += 1200.0 if reactive_pair_count >= 3 else 1000.0
-                else:
-                    if merge_grade == "DIRECT":
-                        score += 1400.0
-                    else:
-                        score += 1200.0
-                reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
-            elif merge_grade == "NO":
-                if not (deadline_crossed and max_y >= 2.0):
-                    if reactive_pair_count >= 3:
-                        score += 900.0
-                        reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                    elif reactive_pair_count >= 1:
-                        score += 400.0
-                        reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                    else:
-                        score += 800.0
-                        reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                else:
-                    pass
-                # vYYY: Change 2 - Russia deadline height cap
-                # When deadline crossed && max_y >= 2.5, apply height penalty
-                if deadline_crossed and max_y >= 2.5:
-                    height_cap_penalty = (max_y - 2.5) * 400.0
-                    score -= height_cap_penalty
-                    reasons.append("RUSSIA_DEADLINE_HEIGHT_CAP")
+             # ロシアフェーズでの即時併合優先
+             # 即時併合候補がある場合、最優先（強力なボーナス）
+             if merge_grade in ["DIRECT", "NEAR"]:
+                 # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
+                 if reactive_pair_count >= 1:
+                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
+                     if merge_grade == "DIRECT":
+                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
+                     else:
+                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
+                 else:
+                     # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
+                     if merge_grade == "DIRECT":
+                         score += 1400.0
+                     else:
+                         score += 1200.0
+                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
+             elif merge_grade == "NO":
+                 # v625: russia_phase NO merge safety valve
+                 # When russia_phase + deadline + max_y >= 2.0, suppress compression bonus
+                 # to force height-penalty-only placement (lowest y)
+                 # Prevents edge placement (x=±3.0) that worsens max_y — extra_high failure mode
+                 # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
+                 if not (deadline_crossed and max_y >= 2.0):
+                     # Only apply BOARD_COMPRESSION when board is not critical
+                     if reactive_pair_count >= 3:
+                         # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
+                         # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                         score += 900.0
+                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                     elif reactive_pair_count >= 1:
+                         # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                         # 即時併合機会_prioritizeするため、盤面圧縮ボーナスを半減
+                         score += 400.0
+                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                     else:
+                          # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
+                          # 盤面圧縮_prioritizeしつつ、type 15保護を徹底
+                          score += 800.0
+                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                 else:
+                     # Critical board: skip compression, height penalty is sole differentiator
+                     # This prevents edge placement (x=±3.0) that worsens max_y
+                     pass
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
@@ -2057,32 +2035,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
         #       tmp/state/last_rollback_analysis.md
 
-        # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
-        # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
-        # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
-        # At max_y>=2.5 with deadline crossed, danger is too high for reactive-pair penalty to override merge.
-        # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
-        # Refs: tmp/analysis_result.md (Implementation Plan Change 2)
         if reactive_pair_count >= 3 and merge_grade == "NO":
             if not (deadline_crossed and max_y >= 2.5):
-                # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
-                # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
-                # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
-                # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
-                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+                # v613: increase penalty from -600 to -900 to overcome AVOID_BLOCK at intermediate x
+                # Extra_high T128: x=-0.8 selected, max_y jumped 1.9 in one turn.
+                # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures lowest placement.
+                # Rollback constraint "forbid at max_y<=0.5" preserved (applies to max_y>=0.8+).
                 score -= 900.0 * merge_mult
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
-
-        # vYYY: Change 1 - merge drought height protection (axis 8.8 append)
-        # Condition: merge_grade=="NO" && max_y>=2.0 && reactor_margin<1.5 && not russia_phase
-        # Worst game T71-T75: deadline_margin=1.0-1.3, AVOID_BLOCK_REACTIVE_PAIR(+400) and
-        # REACTIVE_PAIRS_STACKING pulled pieces to center, causing max_y surge
-        # Apply suppression_bonus to make height penalty the primary differentiator
-        # Rollback failure mode: compress board to prevent max_y >= 3.5 (crush condition)
-        if merge_grade == "NO" and max_y >= 2.0 and reactor_margin < 1.5 and not russia_phase:
-            suppression_bonus = -600.0 * min(1.0, (max_y - 2.0) / 1.5)
-            score += suppression_bonus
-            reasons.append("MERGE_DROUGHT_HEIGHT_PROTECTION")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
