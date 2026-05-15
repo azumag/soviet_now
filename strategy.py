@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # vYYY: NO_MERGE deadline streak penalty — analysis_result.md Implementation Plan
+      # Add axis: deadline_crossed && no_merge_streak >= 3 && merge_grade=="NO" → -2000*merge_mult
+      # Worst game T64-69: 6 consecutive NO_MERGE at deadline_crossed=true, max_y runaway 2.08→3.38
+      # mandatory_themes第一条: "デッドラインを超える場合は併合できる場合に限る"
+      # When deadline crossed AND NO_MERGE streak >= 3, extra penalty forces merge exit.
+      # This is additive to existing axis 8.8 (-4500) and DEADLINE_MERGE_FORCED_OVERRIDE (-10000).
+      # Fixes rollback failure mode: NO_MERGE drought at deadline causing max_y runaway
+      # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
       # vYYY: Hard Deadline-Merge Override (revised) — mandatory_themes hard constraint enforcement
       # Change 1 (revised): deadline_crossed=true && merge_grade=="NO" → -10000 penalty
       # Original condition required merge_possible (any candidate has DIRECT/NEAR), but this meant
@@ -1005,6 +1013,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- vYYY: NO_MERGE deadline streak penalty — analysis_result.md Implementation Plan -----
+        # analysis_result.md hypothesis: "Strengthen merge promotion axis when deadline_crossed=true 
+        # AND NO_MERGE has been active for 3+ consecutive turns"
+        # Worst game T64-69: 6 consecutive NO_MERGE at deadline_crossed=true, max_y runaway 2.08→3.38
+        # mandatory_themes第一条: "デッドラインを超える場合は併合できる場合に限る"
+        # When deadline crossed AND NO_MERGE streak >= 3, add extra penalty to force merge exit.
+        # This is additive to existing axis 8.8 (-4500) and DEADLINE_MERGE_FORCED_OVERRIDE (-10000).
+        # Conditions: deadline_crossed && no_merge_streak >= 3 && merge_grade == "NO"
+        # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
+        if deadline_crossed and no_merge_streak >= 3 and merge_grade == "NO":
+            score -= 2000.0 * merge_mult
+            reasons.append("NO_MERGE_DEADLINE_STREAK")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
