@@ -7,6 +7,32 @@ validate_strategy() {
 	log "[VALIDATE] checking $target_file..."
 	VALIDATE_ERROR=""
 
+	# deadline guard 冪等注入: validate_strategy の deadline-*-guard 合成テストは
+	# decide() が deadline 危険時に安全な非クロスを返すことを要求する。改善
+	# pipeline (eloop_improve の staging) も rollback 復元も guard を注入しない
+	# ため、guard 無し戦略が毎回検証失敗→継続修正で最大18 AIリトライ空費し
+	# 回帰カスケードのエンジンになっていた。検証対象に guard を冪等注入して
+	# from-source で必ず guard 付きにする (既に有れば inject_guard が no-op)。
+	# 緊急停止は DEADLINE_GUARD_AUTO_INJECT=0。
+	if [ "${DEADLINE_GUARD_AUTO_INJECT:-1}" = "1" ] && [ -f "$target_file" ] && case "$target_file" in *.py|*.py.staging) true ;; *) false ;; esac; then
+		if ! grep -q 'BEGIN DEADLINE GUARD' "$target_file" 2>/dev/null; then
+			if python3 - "$target_file" <<'PYINJ' 2>/dev/null
+import sys
+sys.path.insert(0, ".")
+import inject_deadline_guard as ig
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+new = ig.inject_guard(src)
+if new is not None:
+    open(p, "w", encoding="utf-8").write(new)
+    print("injected")
+PYINJ
+			then
+				log "[VALIDATE] deadline guard を $target_file に冪等注入"
+			fi
+		fi
+	fi
+
 	local sig_out
 	sig_out=$(
 		python3 - "$target_file" "$helpers_dir" <<'PYEOF' 2>&1
