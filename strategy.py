@@ -904,6 +904,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    # Pre-check: if any safe (non-crossing) candidate exists, deadline crossing is forbidden
+    # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+    # This guard is evaluated BEFORE any merge bonuses to ensure hard compliance.
+    # refs: tmp/analysis_result.md, mandatory_themes.txt
+    has_safe = any(not r.get("crosses_deadline", False) for r in results)
+
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -913,6 +919,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
+
+        # ----- v689: deadline crossing hard exclusion (mandatory theme compliance) -----
+        # deadline-near-guard fires when ANY merge grade crosses deadline with safe option available.
+        # Safe non-crossing candidate (x=-1.0) exists but NEAR merge at x=2.8 was chosen → fail.
+        # If ALL candidates are crossing (has_safe=True but all pruned), fall through and allow best crossing.
+        # v411の-1200ではrp>=3時にaxis 8.8に埋もれて無効化。-10000早期枝切りで完全遵守。
+        if has_safe and result.get("crosses_deadline", False):
+            score = -10000.0
+            reasons.append("DEADLINE_VIOLATION")
+            continue
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
