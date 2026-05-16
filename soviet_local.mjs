@@ -2,9 +2,41 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function loadDotEnv() {
+  const envPath = path.join(__dirname, '.env');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf-8').split(/\n/)) {
+    const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (!match || process.env[match[1]]) continue;
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[match[1]] = value;
+  }
+}
+
+loadDotEnv();
+
+function bridgeLogExit(reason) {
+  const line = `[${new Date().toISOString()}] [BRIDGE-EXIT] ${reason}`;
+  try { console.error(line); } catch {}
+  try { fs.appendFileSync('tmp/soviet_local.exit.log', `${line}\n`); } catch {}
+}
+
+process.on('beforeExit', (code) => bridgeLogExit(`beforeExit code=${code}`));
+process.on('exit', (code) => bridgeLogExit(`exit code=${code}`));
+for (const signal of ['SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    bridgeLogExit(`signal ${signal}`);
+    process.exit(signal === 'SIGTERM' ? 143 : 129);
+  });
+}
 
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
@@ -14,6 +46,136 @@ const SERVE_PORT = 8080;
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
+// Unity WebGL can crash Chrome when AudioContext.setSinkId() is applied to its
+// context on some macOS audio graphs. Keep per-context routing opt-in; OBS
+// application-audio capture is safer for the live game.
+const CHROME_AUDIO_OUTPUT_LABEL = process.env.SOREN_CHROME_AUDIO_OUTPUT_LABEL || '';
+// 起動時に効果音(SE)スライダーだけ下げる。BGMは触らない。
+// AudioManager: 実音量 = defaultVolume * 0.125 * value (slider int 0..10, 既定3)。
+// 1.5 = 既定3の半分。'off'/'' で無効化。
+const SE_VOLUME_RAW = process.env.SOREN_SE_VOLUME ?? '1.5';
+const SE_VOLUME = (SE_VOLUME_RAW === 'off' || SE_VOLUME_RAW === '') ? null : Number(SE_VOLUME_RAW);
+const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
+
+function sha256Base64(text) {
+  return crypto.createHash('sha256').update(text).digest('base64');
+}
+
+async function connectObs() {
+  const port = process.env.OBS_WEBSOCKET_PORT;
+  const password = process.env.OBS_WEBSOCKET_PASSWORD;
+  if (!port || !password || typeof WebSocket !== 'function') return null;
+
+  const host = process.env.OBS_WEBSOCKET_HOST || '127.0.0.1';
+  const url = `ws://${host}:${Number(port)}`;
+  const ws = new WebSocket(url);
+  let hello = null;
+  let ready = false;
+  let requestSeq = 0;
+  const pending = new Map();
+
+  ws.addEventListener('message', (event) => {
+    const payload = JSON.parse(String(event.data));
+    if (payload.op === 0) {
+      hello = payload.d || {};
+      return;
+    }
+    if (payload.op === 2) {
+      ready = true;
+      return;
+    }
+    if (payload.op === 7) {
+      const data = payload.d || {};
+      const pendingRequest = pending.get(data.requestId);
+      if (!pendingRequest) return;
+      pending.delete(data.requestId);
+      const status = data.requestStatus || {};
+      if (status.result) {
+        pendingRequest.resolve(data.responseData || {});
+      } else {
+        pendingRequest.reject(new Error(`${data.requestType} failed: ${status.comment || status.code || 'unknown'}`));
+      }
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out connecting to OBS at ${url}`)), 3000);
+    ws.addEventListener('open', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.addEventListener('error', (event) => {
+      clearTimeout(timer);
+      reject(new Error(event?.error?.message || `Failed to connect to OBS at ${url}`));
+    });
+  });
+
+  const helloDeadline = Date.now() + 3000;
+  while (!hello) {
+    if (Date.now() > helloDeadline) throw new Error('Timed out waiting for OBS hello');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+
+  const identify = { op: 1, d: { rpcVersion: 1, eventSubscriptions: 0 } };
+  const auth = hello.authentication;
+  if (auth && auth.challenge && auth.salt) {
+    const secret = sha256Base64(password + auth.salt);
+    identify.d.authentication = sha256Base64(secret + auth.challenge);
+  }
+  ws.send(JSON.stringify(identify));
+
+  const readyDeadline = Date.now() + 3000;
+  while (!ready) {
+    if (Date.now() > readyDeadline) throw new Error('Timed out waiting for OBS identify');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+
+  return {
+    request(requestType, requestData = {}) {
+      const requestId = `soren-${++requestSeq}`;
+      ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+      return new Promise((resolve, reject) => pending.set(requestId, { resolve, reject }));
+    },
+    close() {
+      try { ws.close(); } catch {}
+    },
+  };
+}
+
+async function updateObsGameSource() {
+  const obs = await connectObs();
+  if (!obs) return;
+
+  try {
+    const response = await obs.request('GetInputPropertiesListPropertyItems', {
+      inputName: OBS_GAME_SOURCE_NAME,
+      propertyName: 'window',
+    });
+    const windows = Array.isArray(response.propertyItems) ? response.propertyItems : [];
+    const target = windows.find(item =>
+      /\[Google Chrome for Testing\].*Unity WebGL Player \| soren-game/.test(item.itemName || '')
+    ) || windows.find(item => /\[Google Chrome for Testing\]/.test(item.itemName || ''));
+
+    if (!target) {
+      console.warn(`OBS game source target window not found for ${OBS_GAME_SOURCE_NAME}`);
+      return;
+    }
+
+    await obs.request('SetInputSettings', {
+      inputName: OBS_GAME_SOURCE_NAME,
+      inputSettings: {
+        type: 1,
+        application: 'com.google.chrome.for.testing',
+        window: target.itemValue,
+        show_cursor: false,
+      },
+      overlay: true,
+    });
+    console.log(`OBS game source ${OBS_GAME_SOURCE_NAME} -> ${target.itemName} (${target.itemValue})`);
+  } finally {
+    obs.close();
+  }
+}
 
 // MIME types for Unity WebGL build
 const MIME_TYPES = {
@@ -237,7 +399,25 @@ async function runLocalController() {
       headless: false,
       viewport: { width: 1280, height: 720 },
       deviceScaleFactor: 1,
-      args: ['--window-size=1300,800', `--remote-debugging-port=${CDP_PORT}`],
+      args: [
+        '--window-size=1300,800',
+        `--remote-debugging-port=${CDP_PORT}`,
+        // 復旧時の kill -9 でプロファイルが unclean になり「正しく終了しませんでした」
+        // 復元バブルが配信画面隅に出続けるのを抑止
+        '--hide-crash-restore-bubble',
+        '--disable-session-crashed-bubble',
+        '--no-first-run',
+        '--no-default-browser-check',
+        // Chrome の翻訳バー(英語→日本語 このページを翻訳しますか)を配信画面に出さない。
+        // Playwright 既定の --disable-features に既に Translate が含まれるため、
+        // ここで別の --disable-features を渡すと後勝ちで Playwright の hardening を
+        // 上書きしてしまう。別スイッチの --disable-translate のみ追加し、確実な
+        // 抑止は profile Preferences (_br_clean_profile_exit) 側で行う。
+        '--disable-translate',
+        // 自動操作ブラウザはユーザー操作が無く、autoplay ポリシーで AudioContext が
+        // suspended のまま resume できず無音化する。bridge 再起動毎の無音を防ぐ。
+        '--autoplay-policy=no-user-gesture-required',
+      ],
     });
     browser = context.browser();
   } catch (e) {
@@ -263,18 +443,137 @@ async function runLocalController() {
 
   const page = context.pages()[0] || await context.newPage();
 
+  // --- ブラウザ死亡時の確実・即時クリーンexit (ハング/ゾンビ根絶) ---
+  // 復旧は soren_loop の inline _ensure_bridge_alive に委ねる2層設計。
+  // ここはハングさせず port を解放して即終了することに専念する。
+  let _brExiting = false;
+  function fatalExit(reason, code = 1) {
+    if (_brExiting) return;
+    _brExiting = true;
+    // cleanup がハングしても必ず終了する強制タイマを最初に張る (port解放保証)
+    const _forced = setTimeout(() => process.exit(code), 3000);
+    if (_forced.unref) _forced.unref();
+    try { console.error('[BRIDGE-FATAL] ' + reason); } catch {}
+    (async () => {
+      const withTimeout = (p) =>
+        Promise.race([Promise.resolve(p).catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+      try { removeCdpEndpoint(); } catch {}
+      try { await withTimeout(context && context.close && context.close()); } catch {}
+      try { await withTimeout(browser && browser.close && browser.close()); } catch {}
+      try { server && server.close && server.close(); } catch {}
+      process.exit(code);
+    })();
+  }
+  try {
+    context.on('close', () => fatalExit('context closed'));
+    const _b = (context.browser && context.browser()) || browser;
+    if (_b && _b.on) _b.on('disconnected', () => fatalExit('browser disconnected'));
+    page.on('crash', () => fatalExit('page crashed'));
+  } catch (e) { console.warn(`Failed to attach death handlers: ${e && e.message}`); }
+  // 分類による分岐はしない (Protocol error 等の誤判定回避)。常に fatalExit。
+  process.on('unhandledRejection', (e) => {
+    try { console.error((e && e.stack) || e); } catch {}
+    fatalExit('unhandledRejection: ' + ((e && e.message) || e));
+  });
+  process.on('uncaughtException', (e) => {
+    try { console.error((e && e.stack) || e); } catch {}
+    fatalExit('uncaughtException: ' + ((e && e.message) || e));
+  });
+
   console.log('=== Soren Local Game Controller ===');
 
-  // Hook AudioContext to track all instances for mute/unmute control
-  await page.addInitScript(() => {
+  const gameOrigin = `http://localhost:${SERVE_PORT}`;
+  let speakerPermissionSession = null;
+  const grantAudioPermissions = async () => {
+    try {
+      if (!speakerPermissionSession) {
+        speakerPermissionSession = await context.newCDPSession(page);
+      }
+      await speakerPermissionSession.send('Browser.grantPermissions', {
+        origin: gameOrigin,
+        permissions: ['speakerSelection', 'audioCapture'],
+      });
+      return true;
+    } catch (e) {
+      console.warn(`Failed to grant speakerSelection: ${e.message}`);
+      speakerPermissionSession = null;
+      return false;
+    }
+  };
+  try {
+    if (await grantAudioPermissions()) console.log(`Granted speakerSelection for ${gameOrigin}`);
+  } catch {}
+
+  // Hook AudioContext to track all instances for mute/unmute control and route
+  // browser game audio to BlackHole without changing the macOS default output.
+  await page.addInitScript((audioOutputLabel) => {
     window.__sorenAudioContexts = [];
     window.__sorenMuted = false;
+    window.__sorenAudioOutputLabel = audioOutputLabel;
+    window.__sorenAudioOutputDeviceId = '';
+    window.__sorenAudioOutputError = '';
+    // #90 安定化: ライブ setSinkId(稼働中コンテキストの出力デバイス切替) は macOS
+    // CoreAudio + Unity WASM グラフでクラッシュ要因 → 廃止。代わりに deviceId を
+    // 事前解決し、AudioContext を生成時に {sinkId} で目的デバイスに固定する
+    // (生成時バインド=デバイス切替イベント無し=クラッシュしない)。
+    // システム既定出力デバイスは変更しない (ハウリング回避・恒久制約)。
+    window.__sorenSinkId = '';
+    // label から audiooutput deviceId を解決し __sorenSinkId に保存 (setSinkId は呼ばない)
+    window.__sorenResolveSink = async (label = window.__sorenAudioOutputLabel) => {
+      if (!label || !navigator.mediaDevices?.enumerateDevices) return false;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const target = devices.find(d =>
+          d.kind === 'audiooutput' && d.label &&
+          d.label.toLowerCase().includes(String(label).toLowerCase()));
+        if (target && target.deviceId) {
+          window.__sorenSinkId = target.deviceId;
+          window.__sorenAudioOutputDeviceId = target.deviceId;
+          window.__sorenAudioOutputError = '';
+          return true;
+        }
+        window.__sorenAudioOutputError = `audio output not found: ${label}`;
+        return false;
+      } catch (e) {
+        window.__sorenAudioOutputError = e && e.message ? e.message : String(e);
+        return false;
+      }
+    };
+    // 後方互換: 旧名 __sorenRouteAudioOutput は deviceId 再解決のみ (setSinkId しない)
+    window.__sorenRouteAudioOutput = (label) => window.__sorenResolveSink(label);
+    // 事前解決を即開始 (Unity WebGL は wasm/asset DL で数秒かかるため、通常
+    // この解決が Unity の AudioContext 生成より先に完了する)
+    (async () => {
+      for (let i = 0; i < 40 && !window.__sorenSinkId; i++) {
+        if (await window.__sorenResolveSink()) break;
+        await new Promise(r => setTimeout(r, 500));
+      }
+    })();
+
     const OrigAudioContext = window.AudioContext || window.webkitAudioContext;
     if (OrigAudioContext) {
       const Wrapped = function(...args) {
-        const ctx = new OrigAudioContext(...args);
+        // 呼び出し側が sinkId 未指定 かつ deviceId 解決済なら生成時に注入。
+        // ライブ setSinkId は一切しない (#90 crash 回避)。未解決(レース)なら
+        // 通常生成 (既定デバイス) し setSinkId しない=その1起動は OBS に乗らない
+        // が crash 回避優先・稀。次 bridge 起動で解決済になり復旧。
+        let ctx;
+        try {
+          const sid = window.__sorenSinkId;
+          const opt0 = (args[0] && typeof args[0] === 'object') ? args[0] : null;
+          if (sid && (!opt0 || !('sinkId' in opt0))) {
+            const merged = Object.assign({}, opt0 || {}, { sinkId: sid });
+            ctx = new OrigAudioContext(merged);
+          } else {
+            ctx = new OrigAudioContext(...args);
+          }
+        } catch (e) {
+          // {sinkId} オプション非対応/無効デバイス時は素の生成にフォールバック
+          try { ctx = new OrigAudioContext(...args); }
+          catch (e2) { ctx = new OrigAudioContext(); }
+          window.__sorenAudioOutputError = e && e.message ? e.message : String(e);
+        }
         window.__sorenAudioContexts.push(ctx);
-        // If currently muted, immediately suspend new contexts
         if (window.__sorenMuted) {
           try { ctx.suspend(); } catch {}
         }
@@ -284,11 +583,53 @@ async function runLocalController() {
       window.AudioContext = Wrapped;
       if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
     }
-  });
+
+    // Fix1 (#90): 稼働中 AudioContext 自己治癒ウォッチドッグ。
+    // BlackHole/WebAudio device error で稼働中に suspended 化し自動 resume
+    // されない慢性障害を、bridge 再起動なしでページ内で回復する。
+    // - 5s 毎。resume() は fire-and-forget (await すると無限ハングし得る)
+    // - 毎周期 Module.WebAudio.audioContext も対象に含める (構築時 wrap 分以外)
+    // - 再入防止フラグ。route 再適用は時間予算付き (watchdog 自体を wedge しない)
+    // - 意図的 mute (__sorenMuted) 中は resume しない (radio/TTS 優先仕様維持)
+    window.__sorenAudioHealBusy = false;
+    window.__sorenAudioLastRoute = 0;
+    setInterval(() => {
+      if (window.__sorenAudioHealBusy || window.__sorenMuted) return;
+      window.__sorenAudioHealBusy = true;
+      try {
+        const list = [...(window.__sorenAudioContexts || [])];
+        try {
+          const um = (typeof Module !== 'undefined' && Module.WebAudio
+            && Module.WebAudio.audioContext) ? Module.WebAudio.audioContext : null;
+          if (um && list.indexOf(um) === -1) list.push(um);
+        } catch {}
+        let anySuspended = false;
+        for (const ctx of list) {
+          try {
+            if (ctx && ctx.state === 'suspended') {
+              anySuspended = true;
+              ctx.resume().catch(() => {}); // fire-and-forget
+            }
+          } catch {}
+        }
+        // 持続 suspend or route error 時、最大 30s に1回だけ再ルート
+        const now = Date.now();
+        if ((anySuspended || window.__sorenAudioOutputError)
+            && now - (window.__sorenAudioLastRoute || 0) > 30000) {
+          window.__sorenAudioLastRoute = now;
+          try {
+            window.__sorenRouteAudioOutput?.().catch(() => {});
+          } catch {}
+        }
+      } finally {
+        window.__sorenAudioHealBusy = false;
+      }
+    }, 5000);
+  }, CHROME_AUDIO_OUTPUT_LABEL);
 
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
 
-  await page.goto(`http://localhost:${SERVE_PORT}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(gameOrigin, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
   // Wait for Unity canvas to initialize
   let canvasReady = false;
@@ -310,6 +651,50 @@ async function runLocalController() {
   }
 
   console.log('Unity canvas ready');
+
+  // 効果音(SE)だけ音量を下げる。BGMはそのまま。AudioManager.SetSEVolume は
+  // UI の SE スライダー onValueChanged と同一実体。SendMessage で同等操作。
+  // AudioManager は Awake で初期化されるため、反映されるまで数回リトライ。
+  if (SE_VOLUME != null && Number.isFinite(SE_VOLUME)) {
+    let seApplied = false;
+    for (let i = 0; i < 10; i++) {
+      try {
+        const ok = await page.evaluate((v) => {
+          if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return false;
+          window.unityInstance.SendMessage('Audio Manager', 'SetSEVolume', v);
+          return true;
+        }, SE_VOLUME);
+        if (ok) { seApplied = true; break; }
+      } catch {}
+      await page.waitForTimeout(1000);
+    }
+    console.log(seApplied
+      ? `SE volume set to ${SE_VOLUME} (BGM unchanged)`
+      : `WARNING: failed to set SE volume (unityInstance/AudioManager unavailable)`);
+  }
+
+  try {
+    await updateObsGameSource();
+  } catch (e) {
+    console.warn(`Failed to update OBS game source: ${e.message}`);
+  }
+
+  try {
+    const audioRoute = await page.evaluate(async (label) => {
+      if (!label) return { routed: false, label, deviceId: '', error: 'per-context audio routing disabled', contexts: 0 };
+      const routed = await window.__sorenRouteAudioOutput?.(label);
+      return {
+        routed: Boolean(routed),
+        label,
+        deviceId: window.__sorenAudioOutputDeviceId || '',
+        error: window.__sorenAudioOutputError || '',
+        contexts: Array.isArray(window.__sorenAudioContexts) ? window.__sorenAudioContexts.length : 0,
+      };
+    }, CHROME_AUDIO_OUTPUT_LABEL);
+    console.log('Chrome audio route:', JSON.stringify(audioRoute));
+  } catch (e) {
+    console.warn(`Failed to route Chrome audio: ${e.message}`);
+  }
 
   // Force canvas to fill viewport exactly — hide footer, reset margins, override container positioning
   const canvasInfo = await page.evaluate(() => {
@@ -408,11 +793,17 @@ async function runLocalController() {
   let checkCount = 0;
   let nullStateCount = 0;
   let isMuted = false;
+  let lastAudioRouteHealAt = 0;
   while (true) {
     // Check mute flag file (independent of commands.txt to avoid race condition)
     const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
+    const audioDiagLog = (msg) => {
+      const line = `[${new Date().toISOString()}] ${msg}`;
+      console.log(line);
+      try { fs.appendFileSync('tmp/audio_diag.log', line + '\n'); } catch (e) {}
+    };
     if (shouldMute && !isMuted) {
-      console.log('MUTE flag detected, muting audio');
+      audioDiagLog('MUTE flag detected, muting audio');
       await page.evaluate(() => {
         window.__sorenMuted = true;
         // Suspend all known AudioContexts
@@ -426,17 +817,96 @@ async function runLocalController() {
       });
       isMuted = true;
     } else if (!shouldMute && isMuted) {
-      console.log('MUTE flag removed, resuming audio');
-      await page.evaluate(() => {
-        window.__sorenMuted = false;
-        if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
-          try { Module.WebAudio.audioContext.resume(); } catch {}
-        }
-        (window.__sorenAudioContexts || []).forEach(ctx => {
-          try { ctx.resume(); } catch {}
+      audioDiagLog('MUTE flag removed, resuming audio');
+      // Diagnosis (from [AUDIO-UNMUTE] logs): the tracked AudioContext stays
+      // "suspended" after resume() even though the tab is visible. The local
+      // game is driven via the window.__sorenCommand JS bridge, so after the
+      // initial startup click NO trusted input event ever reaches the page —
+      // Unity WebGL resumes its AudioContext only from a real focus/input
+      // event, and Chrome gates resume() the same way. Deliver one real
+      // trusted gesture (Space keypress, ignored by this mouse-only game)
+      // before resuming so Unity's handler fires and resume() is honored.
+      try {
+        await page.bringToFront();
+      } catch (e) {
+        console.warn(`bringToFront failed on unmute: ${e.message}`);
+      }
+      try {
+        await page.keyboard.press('Space');
+      } catch (e) {
+        console.warn(`unmute activation keypress failed: ${e.message}`);
+      }
+      // resume() fired WITHOUT await (an awaited resume() can hang in Chrome
+      // and wedge this loop) and retried a few times after the gesture. The
+      // whole evaluate is bounded by a timeout and wrapped so we learn whether
+      // it throws, times out, or what context state results.
+      try {
+        const evalPromise = page.evaluate(async () => {
+          const snap = () => {
+            const unity = (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext)
+              ? Module.WebAudio.audioContext : null;
+            return {
+              unityPresent: Boolean(unity),
+              unityState: unity ? unity.state : null,
+              tracked: (window.__sorenAudioContexts || []).map(c => ({
+                state: c.state,
+                sinkId: (typeof c.sinkId !== 'undefined') ? String(c.sinkId) : 'n/a',
+              })),
+              routeError: window.__sorenAudioOutputError || '',
+              routedDeviceId: window.__sorenAudioOutputDeviceId || '',
+              visibility: document.visibilityState,
+              hidden: document.hidden,
+            };
+          };
+          const before = snap();
+          window.__sorenMuted = false;
+          const ctxs = () => {
+            const list = [...(window.__sorenAudioContexts || [])];
+            const unity = (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext)
+              ? Module.WebAudio.audioContext : null;
+            if (unity && !list.includes(unity)) list.push(unity);
+            return list;
+          };
+          // Retry resume() a few times: the trusted gesture grants activation
+          // but Unity/Chrome may need a beat before honoring it.
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const all = ctxs();
+            if (all.length && all.every(c => c.state === 'running')) break;
+            for (const c of all) { try { c.resume(); } catch (e) {} }
+            await new Promise(r => setTimeout(r, 500));
+          }
+          return { before, after: snap() };
         });
-      });
+        const timeoutMarker = Symbol('timeout');
+        const result = await Promise.race([
+          evalPromise.catch(e => ({ __err: (e && e.message) || String(e) })),
+          new Promise(r => setTimeout(() => r(timeoutMarker), 8000)),
+        ]);
+        if (result === timeoutMarker) {
+          audioDiagLog('[AUDIO-UNMUTE-TIMEOUT] page.evaluate did not return within 8s (resume likely hung / page detached)');
+        } else if (result && result.__err) {
+          audioDiagLog(`[AUDIO-UNMUTE-ERROR] ${result.__err}`);
+        } else {
+          audioDiagLog(`[AUDIO-UNMUTE] ${JSON.stringify(result)}`);
+        }
+      } catch (e) {
+        audioDiagLog(`[AUDIO-UNMUTE-ERROR] outer: ${(e && e.message) || String(e)}`);
+      }
+      // Always clear muted state so the loop never gets stuck re-entering this
+      // branch (a stuck branch would also block game resumption).
       isMuted = false;
+    }
+
+    if (!shouldMute && !isMuted && Date.now() - lastAudioRouteHealAt > 10000) {
+      lastAudioRouteHealAt = Date.now();
+      await grantAudioPermissions();
+      try {
+        await page.evaluate((label) => {
+          window.__sorenRouteAudioOutput?.(label).catch(() => {});
+        }, CHROME_AUDIO_OUTPUT_LABEL);
+      } catch (e) {
+        audioDiagLog(`[AUDIO-ROUTE-HEAL-ERROR] ${(e && e.message) || String(e)}`);
+      }
     }
 
     // Muted = meriken mode active, skip all page interactions to avoid stealing tab focus
@@ -521,4 +991,9 @@ async function runLocalController() {
   }
 }
 
-runLocalController().catch(console.error);
+runLocalController().catch((e) => {
+  try { console.error('[BRIDGE-FATAL] runLocalController rejected: ' + ((e && (e.stack || e.message)) || e)); } catch {}
+  const _f = setTimeout(() => process.exit(1), 3000);
+  if (_f.unref) _f.unref();
+  process.exit(1);
+});
