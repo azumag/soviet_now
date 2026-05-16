@@ -1377,6 +1377,47 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     return lines
 
 
+def render_wildcard_status(rolling, current_hash=""):
+    """WILDCARD origin 戦略を常時明示 (成熟n>=12フィルタ/現戦略か否かに関係なく表示)。"""
+    p = Path("tmp/state/wildcard_origin.json")
+    if not p.exists():
+        return []
+    try:
+        wo = json.loads(p.read_text())
+    except Exception:
+        return []
+    if not isinstance(wo, dict) or not wo:
+        return []
+    anchor = load_best_anchor() or {}
+    anchor_comp = anchor.get("comp")
+    anchor_h8 = str(anchor.get("hash", ""))[:8]
+    lines = [f"  {BOLD}WILDCARD origins{RST} {DIM}(脱出弾・予算 n/max・comp vs anchor {anchor_h8}={int(anchor_comp) if isinstance(anchor_comp,(int,float)) else 'NA'}){RST}"]
+    for h, meta in wo.items():
+        scores = (rolling.get(h, {}) or {}).get("scores", []) or []
+        m = calc_strategy_metrics(scores)
+        n = len(scores)
+        maxg = int((meta or {}).get("max_games_override", MIN_GAMES_FOR_BEST_ROLLBACK) or MIN_GAMES_FOR_BEST_ROLLBACK)
+        is_cur = bool(current_hash and h.startswith(current_hash[:12]) or current_hash and current_hash.startswith(h[:12]))
+        mark = "►" if is_cur else " "
+        if m is None:
+            lines.append(f"{mark} {C_BLUE}{h[:8]}{RST} {DIM}n={n}/{maxg} (scores未記録){RST}")
+            continue
+        comp = m.get("comp", 0.0)
+        delta = (comp - anchor_comp) if isinstance(anchor_comp, (int, float)) else None
+        if delta is None:
+            verdict = f"{DIM}anchor未取得{RST}"
+        elif delta >= 0:
+            verdict = f"{C_GREEN}anchor超 +{int(delta)}{RST}"
+        else:
+            verdict = f"{C_YELLOW}anchor未満 {int(delta)}{RST}"
+        budget = f"{C_GREEN}成熟·判定待ち{RST}" if n >= maxg else f"{DIM}評価中{RST}"
+        lines.append(
+            f"{mark} {C_BLUE}{h[:8]}{RST} n={n}/{maxg} {budget} "
+            f"comp={int(comp)} p50={int(m.get('p50',0))} p25={int(m.get('p25',0))} → {verdict}"
+        )
+    return lines
+
+
 def render_branch_overview(rolling, current_hash):
     info = inspect_branch_state(rolling, current_hash)
     lines = [f"  {BOLD}Branch Rollback View{RST} {DIM}(anchor / best / head){RST}"]
@@ -1564,6 +1605,10 @@ def main():
     output.append("")
     output += render_strategy_comparison(rolling, strat_hash)
     output.append("")
+    _wc = render_wildcard_status(rolling, strat_hash)
+    if _wc:
+        output += _wc
+        output.append("")
     print("\n".join(output))
 
 
