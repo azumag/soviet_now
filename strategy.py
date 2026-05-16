@@ -804,6 +804,55 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
+    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---
+    # Emergency deadline safety: when the reactor is past/near the deadline,
+    # force an immediate merge or the safest landing to avoid runaway stacking.
+    __dlg_game_state = game_state if isinstance(game_state, dict) else {}
+    __dlg_analysis = analysis if isinstance(analysis, dict) else {}
+    __dlg_reactor = __dlg_analysis.get("reactor", {}) if isinstance(__dlg_analysis.get("reactor", {}), dict) else {}
+    __dlg_margin = __dlg_reactor.get("deadline_margin", 99.0)
+    try:
+        __dlg_margin = float(__dlg_margin)
+    except (TypeError, ValueError):
+        __dlg_margin = 99.0
+    __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
+    __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
+    if isinstance(__dlg_rps, list):
+        __dlg_rp_count = len(__dlg_rps)
+    else:
+        try:
+            __dlg_rp_count = int(__dlg_rps)
+        except (TypeError, ValueError):
+            __dlg_rp_count = 0
+    __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
+    if not isinstance(__dlg_cands, list):
+        __dlg_cands = []
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
+    if __dlg_critical and __dlg_cands:
+        __dlg_direct = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
+        ]
+        if __dlg_direct:
+            def __dlg_score_direct(c):
+                return (
+                    0 if c.get("danger_direct_merge_available") else 1,
+                    float(c.get("landing_y", 99.0) or 99.0),
+                )
+            __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
+        __dlg_near_safe = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
+        ]
+        if __dlg_near_safe:
+            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        if __dlg_safe:
+            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+    # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
 
@@ -904,12 +953,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    # Pre-check: if any safe (non-crossing) candidate exists, deadline crossing is forbidden
-    # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-    # This guard is evaluated BEFORE any merge bonuses to ensure hard compliance.
-    # refs: tmp/analysis_result.md, mandatory_themes.txt
-    has_safe = any(not r.get("crosses_deadline", False) for r in results)
-
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -919,16 +962,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
-
-        # ----- v689: deadline crossing hard exclusion (mandatory theme compliance) -----
-        # deadline-near-guard fires when ANY merge grade crosses deadline with safe option available.
-        # Safe non-crossing candidate (x=-1.0) exists but NEAR merge at x=2.8 was chosen → fail.
-        # If ALL candidates are crossing (has_safe=True but all pruned), fall through and allow best crossing.
-        # v411の-1200ではrp>=3時にaxis 8.8に埋もれて無効化。-10000早期枝切りで完全遵守。
-        if has_safe and result.get("crosses_deadline", False):
-            score = -10000.0
-            reasons.append("DEADLINE_VIOLATION")
-            continue
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
