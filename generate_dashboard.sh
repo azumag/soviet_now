@@ -25,6 +25,7 @@ write_empty_dashboard() {
 <script>setInterval(function(){location.reload();},3000);</script>
 </body></html>
 EMPTYEOF
+    chmod 644 score_dashboard.html 2>/dev/null || true
 }
 
 manual_meriken_mode_file_enabled() {
@@ -57,16 +58,20 @@ soren91_pid_file_alive() {
     return 1
 }
 
-# メリケンAI中はSoren91側の画面を優先し、ダッシュボードを必ず非表示にする。
-if [ -f "$SOREN91_MODE_FLAG_FILE" ] || manual_meriken_mode_file_enabled || soren91_pid_file_alive; then
-    write_empty_dashboard
-    exit 0
-fi
-
 # 非GAMEOVER時は空HTML（OBSで非表示）
 if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" = "0" ]; then
     write_empty_dashboard
     exit 0
+fi
+
+# メリケンAI中はSoren91側の画面を優先し、プレイ中のダッシュボードだけ非表示にする。
+# GAMEOVER/STOP はメインゲーム終了時に OBS で show されるため、soren91 タブや
+# stale PID が残っていても空HTMLで上書きしない。
+if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
+    if [ -f "$SOREN91_MODE_FLAG_FILE" ] || manual_meriken_mode_file_enabled || soren91_pid_file_alive; then
+        write_empty_dashboard
+        exit 0
+    fi
 fi
 
 # 全履歴をHTMLへ丸ごと埋め込むとOBS側が重くなるため、統計は生成時に集計し、
@@ -76,7 +81,23 @@ case "$DASHBOARD_CHART_GAMES" in ''|*[!0-9]*) DASHBOARD_CHART_GAMES=300 ;; esac
 
 DASHBOARD_DATA_JSON=$(python3 dashboard_data.py "$DASHBOARD_CHART_GAMES")
 
-cat > score_dashboard.html <<HTMLEOF
+# データ取得が失敗 (空 JSON) なら、既存 HTML を温存して即終了。
+# OBS で表示中の dashboard を空ファイルで上書きしてしまう事故を防ぐ。
+if [ -z "$DASHBOARD_DATA_JSON" ] || [ "$DASHBOARD_DATA_JSON" = "{}" ]; then
+    echo "[generate_dashboard] WARN: dashboard_data.py returned empty; keeping existing HTML" >&2
+    exit 0
+fi
+
+# アトミック書き込み: temp に書き、成功時のみ rename する。
+# 途中で SIGPIPE / disk full 等で失敗すると、score_dashboard.html は 0 byte の
+# 中途半端な状態になりうるため、それを避ける。
+# 重要: temp は同じディレクトリに作る。/tmp や /var/folders に作って mv すると
+# クロスデバイスコピーになり、umask が適用されてパーミッション 600 に落ちる。
+# OBS から読めなくなる原因になりうる。
+__DASH_TMP=$(mktemp "./score_dashboard.XXXXXX.html" 2>/dev/null) || __DASH_TMP="./score_dashboard.html.tmp"
+trap '[ -n "$__DASH_TMP" ] && [ -f "$__DASH_TMP" ] && rm -f "$__DASH_TMP"' EXIT
+
+cat > "$__DASH_TMP" <<HTMLEOF
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -149,22 +170,23 @@ cat > score_dashboard.html <<HTMLEOF
   .rank-label { font-size: 0.6em; vertical-align: super; margin-right: 2px; }
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(280px, 1fr));
-    gap: 12px;
+    /* 16 mini-stats → 6 cols × 3 rows でチャート用の縦スペース確保 */
+    grid-template-columns: repeat(6, minmax(180px, 1fr));
+    gap: 10px;
     width: 100%;
-    margin: 0 0 16px 0;
+    margin: 0 0 12px 0;
     flex: 0 0 auto;
   }
   .mini-stat {
     background: rgba(17,17,39,0.92);
     border: 1px solid #2c2c45;
     border-radius: 8px;
-    padding: 19px 22px;
-    min-height: 196px;
+    padding: 10px 12px;
+    min-height: 130px;
   }
   .mini-label {
     color: #8b8fa3;
-    font-size: 1.12em;
+    font-size: 0.85em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     white-space: nowrap;
@@ -173,13 +195,18 @@ cat > score_dashboard.html <<HTMLEOF
   }
   .mini-value {
     color: #e5e7eb;
-    font-size: 4.0em;
+    font-size: 2.6em;
     font-weight: 700;
-    line-height: 1.18;
+    line-height: 1.12;
+  }
+  #gateFocus {
+    font-size: 1.7em;
+    line-height: 1.1;
+    word-break: keep-all;
   }
   .mini-sub {
     color: #7c8197;
-    font-size: 1.02em;
+    font-size: 0.78em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -196,15 +223,15 @@ cat > score_dashboard.html <<HTMLEOF
     --pct: 0%;
     --ring: #94a3b8;
     position: relative;
-    width: 70px;
-    height: 70px;
+    width: 50px;
+    height: 50px;
     flex: 0 0 auto;
     border-radius: 50%;
     background:
       radial-gradient(circle at center, #111127 0 52%, transparent 53%),
       conic-gradient(var(--ring) var(--pct), rgba(148,163,184,0.18) 0);
     border: 1px solid rgba(148, 163, 184, 0.14);
-    box-shadow: 0 0 18px rgba(148, 163, 184, 0.22);
+    box-shadow: 0 0 12px rgba(148, 163, 184, 0.22);
   }
   .stat .donut {
     width: 82px;
@@ -216,33 +243,37 @@ cat > score_dashboard.html <<HTMLEOF
     display: grid;
     place-items: center;
     color: #d7dde9;
-    font-size: 0.92em;
+    font-size: 0.78em;
     font-weight: 800;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  .stat .donut span { font-size: 0.92em; }
   .trend-badge {
-    width: 76px;
-    min-height: 64px;
-    border-radius: 10px;
+    width: 56px;
+    min-height: 48px;
+    border-radius: 8px;
     border: 1px solid rgba(148, 163, 184, 0.18);
     background: rgba(148, 163, 184, 0.10);
     display: grid;
     grid-template-rows: auto auto;
     place-items: center;
-    padding: 7px 5px;
+    padding: 5px 4px;
   }
+  .stat .trend-badge { width: 76px; min-height: 64px; padding: 7px 5px; }
   .trend-badge .arrow {
-    font-size: 2.35em;
+    font-size: 1.6em;
     line-height: 0.9;
     font-weight: 900;
   }
+  .stat .trend-badge .arrow { font-size: 2.35em; }
   .trend-badge .delta {
-    margin-top: 4px;
-    font-size: 0.88em;
+    margin-top: 3px;
+    font-size: 0.72em;
     font-weight: 800;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #cbd5e1;
   }
+  .stat .trend-badge .delta { font-size: 0.88em; margin-top: 4px; }
   .trend-badge.up {
     color: #86efac;
     border-color: rgba(134, 239, 172, 0.34);
@@ -259,20 +290,19 @@ cat > score_dashboard.html <<HTMLEOF
     background: rgba(249, 115, 22, 0.14);
     box-shadow: inset 0 0 18px rgba(249, 115, 22, 0.10);
   }
-  @media (max-width: 900px) {
-    .stats-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  @media (max-width: 1400px) {
+    .stats-grid { grid-template-columns: repeat(4, minmax(180px, 1fr)); }
   }
   .chart-container {
     position: relative;
     width: 100%;
-    height: 250px;
     min-height: 0;
     margin: 0;
     background: rgba(17,17,39,0.95);
     border-radius: 12px;
     padding: 10px 18px;
     border: 1px solid #333;
-    flex: 0 0 250px;
+    flex: 1 1 auto;
     overflow: hidden;
   }
   canvas { width: 100%; display: block; }
@@ -304,6 +334,10 @@ cat > score_dashboard.html <<HTMLEOF
   <div class="mini-stat"><div class="mini-label">Recent P90</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-sub">upper band</div></div>
   <div class="mini-stat"><div class="mini-label">Recent 3000+</div><div class="metric-row"><div class="mini-value hot" id="recent3000">-</div><div class="donut" id="recent3000Donut"><span>-</span></div></div><div class="mini-sub" id="recent3000Sub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Recent 2000+</div><div class="metric-row"><div class="mini-value cool" id="recent2000">-</div><div class="donut" id="recent2000Donut"><span>-</span></div></div><div class="mini-sub" id="recent2000Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Gate Focus</div><div class="metric-row"><div class="mini-value hot" id="gateFocus">-</div><div class="donut" id="gateFocusDonut"><span>-</span></div></div><div class="mini-sub" id="gateFocusSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Turkmenistan</div><div class="metric-row"><div class="mini-value cool" id="gateTurkmenistan">-</div><div class="donut" id="gateTurkmenistanDonut"><span>-</span></div></div><div class="mini-sub" id="gateTurkmenistanSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Ukraine</div><div class="metric-row"><div class="mini-value cool" id="gateUkraine">-</div><div class="donut" id="gateUkraineDonut"><span>-</span></div></div><div class="mini-sub" id="gateUkraineSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Kazakhstan</div><div class="metric-row"><div class="mini-value cool" id="gateKazakhstan">-</div><div class="donut" id="gateKazakhstanDonut"><span>-</span></div></div><div class="mini-sub" id="gateKazakhstanSub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Recent Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-sub" id="russiaRecent100Sub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Today Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaToday">-</div><div class="donut" id="russiaTodayDonut"><span>-</span></div></div><div class="mini-sub" id="russiaTodaySub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
@@ -320,6 +354,8 @@ const DASHBOARD_DATA = ${DASHBOARD_DATA_JSON};
 const SCORES = DASHBOARD_DATA.chartScores;
 const SCORE_STATS = DASHBOARD_DATA.scoreStats;
 const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
+const STAGE_GATE_STATS = DASHBOARD_DATA.stageGateStats || { window: 0, stages: [], focus: null };
+const CURRENT_STAGE_GATE_STATS = DASHBOARD_DATA.currentStageGateStats || STAGE_GATE_STATS;
 const CURRENT_GAME = SCORE_STATS.currentGame;
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
@@ -378,6 +414,21 @@ function updateExtraStats(scores) {
   document.getElementById('recent3000Sub').textContent = SCORE_STATS.recent100Score3000 + ' in last 100';
   document.getElementById('recent2000').textContent = SCORE_STATS.recent100Score2000Rate.toFixed(2) + '%';
   document.getElementById('recent2000Sub').textContent = SCORE_STATS.recent100Score2000 + ' in last 100';
+  const gateStats = (CURRENT_STAGE_GATE_STATS.window || 0) > 0 ? CURRENT_STAGE_GATE_STATS : STAGE_GATE_STATS;
+  const stages = gateStats.stages || [];
+  const focus = gateStats.focus || stages[stages.length - 1] || null;
+  const stageByType = Object.fromEntries(stages.map((s) => [String(s.type), s]));
+  const turkmenistan = stageByType['11'] || { rate: 0, reached: 0 };
+  const ukraine = stageByType['13'] || { rate: 0, reached: 0 };
+  const kazakhstan = stageByType['14'] || { rate: 0, reached: 0 };
+  document.getElementById('gateFocus').textContent = focus ? focus.name : '-';
+  document.getElementById('gateFocusSub').textContent = focus ? (focus.rate.toFixed(1) + '% / last ' + (gateStats.window || 0)) : '-';
+  document.getElementById('gateTurkmenistan').textContent = turkmenistan.rate.toFixed(1) + '%';
+  document.getElementById('gateTurkmenistanSub').textContent = turkmenistan.reached + ' / ' + (gateStats.window || 0);
+  document.getElementById('gateUkraine').textContent = ukraine.rate.toFixed(1) + '%';
+  document.getElementById('gateUkraineSub').textContent = ukraine.reached + ' / ' + (gateStats.window || 0);
+  document.getElementById('gateKazakhstan').textContent = kazakhstan.rate.toFixed(1) + '%';
+  document.getElementById('gateKazakhstanSub').textContent = kazakhstan.reached + ' / ' + (gateStats.window || 0);
 
   setDonut('bestDonut', SCORE_STATS.best, 6000, '#ffd700');
   setDonut('gamesDonut', SCORE_STATS.count % 1000, 1000, '#a78bfa', (SCORE_STATS.count % 1000) + '/1k');
@@ -391,6 +442,10 @@ function updateExtraStats(scores) {
   setDonut('recentP90Donut', SCORE_STATS.recent100P90, 3500, '#38bdf8');
   setDonut('recent3000Donut', SCORE_STATS.recent100Score3000Rate, 100, '#fb7185', SCORE_STATS.recent100Score3000 + '/100');
   setDonut('recent2000Donut', SCORE_STATS.recent100Score2000Rate, 100, '#38bdf8', SCORE_STATS.recent100Score2000 + '/100');
+  setDonut('gateFocusDonut', focus ? focus.rate : 0, 100, '#fb7185', focus ? focus.rate.toFixed(0) + '%' : '-');
+  setDonut('gateTurkmenistanDonut', turkmenistan.rate, 100, '#38bdf8', turkmenistan.reached + '/' + (gateStats.window || 0));
+  setDonut('gateUkraineDonut', ukraine.rate, 100, '#38bdf8', ukraine.reached + '/' + (gateStats.window || 0));
+  setDonut('gateKazakhstanDonut', kazakhstan.rate, 100, '#38bdf8', kazakhstan.reached + '/' + (gateStats.window || 0));
   setDonut('russiaRecent100Donut', RUSSIA_STATS.recent100Rate, 20, '#facc15', RUSSIA_STATS.recent100 + '/100');
   setDonut('russiaTodayDonut', RUSSIA_STATS.today, 20, '#facc15', String(RUSSIA_STATS.today));
   setDonut('russiaLastDonut', Math.max(0, 100 - gamesSinceRussia), 100, '#facc15', gamesSinceRussia + 'g');
@@ -575,4 +630,16 @@ setInterval(function(){location.reload();},3000);
 </html>
 HTMLEOF
 
-echo "Generated score_dashboard.html ($(python3 -c 'import json,sys; print(json.load(sys.stdin)["scoreStats"]["count"])' <<<"${DASHBOARD_DATA_JSON}") games, chart=${DASHBOARD_CHART_GAMES})"
+# サイズ妥当性チェック: テンプレート (178 byte) より大きいことを確認してから rename
+if [ -s "$__DASH_TMP" ] && [ "$(wc -c <"$__DASH_TMP")" -gt 500 ]; then
+    # OBS / Web から file:// で読まれるためパーミッションを明示的に 644 に
+    chmod 644 "$__DASH_TMP" 2>/dev/null || true
+    mv "$__DASH_TMP" score_dashboard.html
+    trap - EXIT
+    echo "Generated score_dashboard.html ($(python3 -c 'import json,sys; print(json.load(sys.stdin)["scoreStats"]["count"])' <<<"${DASHBOARD_DATA_JSON}") games, chart=${DASHBOARD_CHART_GAMES})"
+else
+    echo "[generate_dashboard] WARN: temp file too small ($(wc -c <"$__DASH_TMP" 2>/dev/null) bytes); keeping existing HTML" >&2
+    rm -f "$__DASH_TMP"
+    trap - EXIT
+    exit 0
+fi

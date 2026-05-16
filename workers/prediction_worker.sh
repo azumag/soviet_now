@@ -29,9 +29,11 @@ source ./eloop_lib.sh
 
 WORKER_NAME="prediction_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
+PAUSE_FILE="tmp/state/${WORKER_NAME}.paused"
 POLL_INTERVAL="${PREDICTION_WORKER_INTERVAL:-5}"
 
 _STOPPED=0
+_RELOAD_REQUESTED=0
 _LAST_GAME_NUM=""
 _LAST_ACC_COUNT=""
 
@@ -52,10 +54,36 @@ _handle_signal() {
 	trap - EXIT
 	exit 130
 }
+_request_reload() {
+	_RELOAD_REQUESTED=1
+	_log "reload requested (signal=$1)"
+}
+_reload_runtime() {
+	[ "$_RELOAD_REQUESTED" -eq 1 ] || return 0
+	_RELOAD_REQUESTED=0
+	if [ -f .env ]; then
+		set -a
+		. ./.env
+		set +a
+	fi
+	if source ./eloop_lib.sh 2>/dev/null; then
+		POLL_INTERVAL="${PREDICTION_WORKER_INTERVAL:-5}"
+		_log "reload complete (interval=${POLL_INTERVAL}s)"
+	else
+		_log "WARNING: reload failed; keeping previous runtime"
+	fi
+}
 trap '_cleanup' EXIT
 trap '_handle_signal' INT TERM
+trap '_request_reload HUP' HUP
+trap '_request_reload USR1' USR1
 
 # --- 多重起動防止 ---
+if [ -f "$PAUSE_FILE" ]; then
+	_log "paused by $PAUSE_FILE → exit"
+	exit 0
+fi
+
 if [ -f "$PID_FILE" ]; then
 	old_pid=$(cat "$PID_FILE" 2>/dev/null)
 	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
@@ -101,6 +129,8 @@ _get_best_outcome() {
 	_read_json_field "$TMP_STATE_DIR/current_prediction.json" "best_outcome" "0"
 }
 
+HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
+
 # --- 初期状態 ---
 _LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 _LAST_ACC_COUNT=$(_get_acc_count)
@@ -109,7 +139,12 @@ _LAST_ACC_COUNT=$(_get_acc_count)
 _log "起動 (PID=$$, interval=${POLL_INTERVAL}s, game=${_LAST_GAME_NUM})"
 
 while true; do
+	_reload_runtime
 	# 停止チェック
+	if [ -f "$PAUSE_FILE" ]; then
+		_log "pause file detected → exit"
+		break
+	fi
 	if [ -f tmp/stop ]; then
 		_log "stop ファイル検出 → 終了"
 		break
@@ -120,7 +155,13 @@ while true; do
 
 	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	current_acc_count=$(_get_acc_count)
+	improve_status=$(_get_improve_status)
 	_resolved_this_tick=0
+
+	if [ -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ] && [ "$improve_status" = "running" ]; then
+		_log "hot streak延長ペンディング解除: 改善開始を検知"
+		rm -f "$HOT_STREAK_PREDICTION_PENDING_FILE"
+	fi
 
 	# --- 粛清 resolve: regression_pending フラグ (最優先) ---
 	if _has_prediction && [ -f "$TMP_STATE_DIR/regression_pending" ]; then
@@ -147,9 +188,22 @@ while true; do
 		_has_prediction &&
 		[ "${current_acc_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ] &&
 		[ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
-		best=$(_get_best_outcome)
-		_log "サイクル完了 (acc=${current_acc_count}) → resolve outcome=${best}"
-		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+		if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
+			best=$(_get_best_outcome)
+			if [ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
+				_log "rank1 hot streak延長突入 (acc=${current_acc_count}) → prediction resolve outcome=${best}, 次改善まで新規予想停止"
+				enqueue_chat_message "現在の戦略が1位でスコア更新中のため、改善サイクルを延長して続行します。予想はいったん確定し、次の改善開始まで新しい予想は待機します。" "predictions"
+				[ -x ./overlay_notify.sh ] && ./overlay_notify.sh prediction "予想 延長線" "rank1 hot streak acc=${current_acc_count} outcome=${best:-0} / 次改善まで新規予想停止" "info" >/dev/null 2>&1 || true
+				printf '%s\n' "$(date +%s)" >"$HOT_STREAK_PREDICTION_PENDING_FILE"
+			else
+				_log "rank1 hot streak延長中 (acc=${current_acc_count}) → prediction pending"
+			fi
+			./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+		else
+			best=$(_get_best_outcome)
+			_log "サイクル完了 (acc=${current_acc_count}) → resolve outcome=${best}"
+			./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+		fi
 		_resolved_this_tick=1
 	fi
 
@@ -174,10 +228,11 @@ while true; do
 
 	# --- 予想作成: サイクル開始 (acc_count=0, 改善完了後, 予想なし) ---
 	if [ "${current_acc_count:-0}" -eq 0 ] && ! _has_prediction; then
-		improve_status=$(_get_improve_status)
-		if [ "$improve_status" != "running" ] && [ ! -f "$IMPROVE_LOCK_FILE" ]; then
+		if [ "$improve_status" != "running" ] && [ ! -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
 			_log "予想作成: game=${current_game_num}, acc=0, improve=${improve_status}"
 			./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
+		elif [ -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
+			_log "予想作成スキップ: rank1 hot streak延長ペンディング中"
 		fi
 	fi
 

@@ -25,6 +25,7 @@ source ./eloop_lib.sh
 CHANNEL="${1:-azumagbanjo}"
 WORKER_NAME="chat_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
+TWITCH_DAEMON_PID_FILE="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}/daemon.pid"
 POLL_INTERVAL="${COMMENT_WATCHER_INTERVAL:-10}"
 OUTBOUND_CONSUME_MAX_PER_TICK=5
 OUTBOUND_RATE_SEC=2
@@ -35,6 +36,7 @@ TMP_DEBUG_DIR="${TMP_DEBUG_DIR:-tmp/debug}"
 
 _DAEMON_PID=""
 _STOPPED=0
+_RELOAD_REQUESTED=0
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -51,6 +53,13 @@ _cleanup() {
 		kill "$_DAEMON_PID" 2>/dev/null
 		wait "$_DAEMON_PID" 2>/dev/null || true
 	fi
+	if [ -f "$TWITCH_DAEMON_PID_FILE" ]; then
+		local recorded_daemon_pid
+		recorded_daemon_pid=$(cat "$TWITCH_DAEMON_PID_FILE" 2>/dev/null || true)
+		if [ "$recorded_daemon_pid" = "$_DAEMON_PID" ]; then
+			rm -f "$TWITCH_DAEMON_PID_FILE"
+		fi
+	fi
 
 	# コメント生成プロセスが残っていたら停止
 	_kill_comment_gen 2>/dev/null || true
@@ -64,8 +73,32 @@ _handle_signal() {
 	trap - EXIT
 	exit 130
 }
+_request_reload() {
+	_RELOAD_REQUESTED=1
+	_log "reload requested (signal=$1)"
+}
+_reload_runtime() {
+	[ "$_RELOAD_REQUESTED" -eq 1 ] || return 0
+	_RELOAD_REQUESTED=0
+	if [ -f .env ]; then
+		set -a
+		. ./.env
+		set +a
+	fi
+	if source ./eloop_lib.sh 2>/dev/null; then
+		POLL_INTERVAL="${COMMENT_WATCHER_INTERVAL:-10}"
+		TMP_MARKERS_DIR="${TMP_MARKERS_DIR:-tmp/markers}"
+		TMP_DEBUG_DIR="${TMP_DEBUG_DIR:-tmp/debug}"
+		mkdir -p "$TMP_MARKERS_DIR" "$TMP_DEBUG_DIR" 2>/dev/null || true
+		_log "reload complete (interval=${POLL_INTERVAL}s)"
+	else
+		_log "WARNING: reload failed; keeping previous runtime"
+	fi
+}
 trap '_cleanup' EXIT
 trap '_handle_signal' INT TERM
+trap '_request_reload HUP' HUP
+trap '_request_reload USR1' USR1
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
@@ -92,6 +125,7 @@ _start_irc_daemon() {
 
 	bash ./twitch_chat_daemon.sh "$CHANNEL" &
 	_DAEMON_PID=$!
+	echo "$_DAEMON_PID" > "$TWITCH_DAEMON_PID_FILE"
 	_log "IRC daemon 起動 (PID=$_DAEMON_PID, channel=$CHANNEL)"
 }
 
@@ -191,6 +225,7 @@ _log "起動 (PID=$$, channel=$CHANNEL, interval=${POLL_INTERVAL}s)"
 _start_irc_daemon
 
 while true; do
+	_reload_runtime
 	# 停止チェック
 	if [ -f tmp/stop ]; then
 		_log "stop ファイル検出 → 終了"

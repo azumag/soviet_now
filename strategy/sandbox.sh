@@ -230,8 +230,11 @@ all_crossing_analysis = {
     "deadline": {"deadline_y": 3.32, "deadline_margin": -0.1, "deadline_crossed": True},
 }
 all_crossing_result = mod.decide(active_filter_state, all_crossing_analysis)
-if float(all_crossing_result["x"]) != -1.0:
-    raise AssertionError(f"all-crossing-min-risk: expected min-risk x=-1.0, got {all_crossing_result!r}")
+# 方針変更 (commit 89129ada8b): 両候補が deadline を超えていても merge を温存する。
+# 危険盤面で merge を捨てて min-risk no-merge を選ぶより、merge を温存して進化を進める方が良い。
+# (試合速度的に「次手が危ないけど今手で type を上げて消化」の方が期待値が高い設計)
+if float(all_crossing_result["x"]) != 0.0:
+    raise AssertionError(f"all-crossing-merge-preserved: expected merge-preserved x=0.0, got {all_crossing_result!r}")
 print(f'OK: decide({", ".join(params)})')
 PYEOF
 	)
@@ -327,11 +330,14 @@ create_sandbox() {
 		cp "$sandbox_dir/strategy.py" "$sandbox_dir/strategy.py.staging" 2>/dev/null || true
 	fi
 
-	mkdir -p "$sandbox_dir/strategy_helpers" "$sandbox_dir/logs"
+	mkdir -p "$sandbox_dir/strategy_helpers" "$sandbox_dir/logs" "$sandbox_dir/data" "$sandbox_dir/tmp/state"
 	if [ -d "strategy_helpers" ]; then
 		rsync -a --no-links "strategy_helpers"/ "$sandbox_dir/strategy_helpers"/ 2>/dev/null || cp -RL "strategy_helpers"/. "$sandbox_dir/strategy_helpers"/ 2>/dev/null || true
 	fi
 	[ -f "$sandbox_dir/strategy_helpers/__init__.py" ] || : >"$sandbox_dir/strategy_helpers/__init__.py"
+	[ -f "$sandbox_dir/data/user_review.md" ] || : >"$sandbox_dir/data/user_review.md"
+	[ -f "$sandbox_dir/tmp/state/last_rollback_analysis.md" ] || : >"$sandbox_dir/tmp/state/last_rollback_analysis.md"
+	[ -f "$sandbox_dir/tmp/state/last_rollback_postmortem.md" ] || : >"$sandbox_dir/tmp/state/last_rollback_postmortem.md"
 
 	if [ -f "logs/change_log.txt" ]; then
 		cp "logs/change_log.txt" "$sandbox_dir/logs/change_log.txt" 2>/dev/null || true

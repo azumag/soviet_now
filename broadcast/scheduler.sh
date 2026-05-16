@@ -462,22 +462,12 @@ start_random_radio_corner() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
-	# 1/3 の確率でソ連テーマ限定、それ以外は全テーマから選択
-	# (全テーマからでも [soviet] タグ付きが選ばれればソ連モードになる)
-	if [ $((RANDOM % 3)) -eq 0 ]; then
-		log "[RADIO] コーナー選択: theme (soviet filter)"
-		if _try_game_corner "$game_num" "theme"; then
-			start_radio_corner_theme "$game_num" "$score" "soviet"
-		else
-			log "[RADIO:theme] duplicate skip: scheduler pre-check for game=${game_num}"
-		fi
+	# 通常テーマ一覧から選ぶ。ソ連タグ付きテーマは一覧内に残すが、強制的には寄せない。
+	log "[RADIO] コーナー選択: theme"
+	if _try_game_corner "$game_num" "theme"; then
+		start_radio_corner_theme "$game_num" "$score"
 	else
-		log "[RADIO] コーナー選択: theme"
-		if _try_game_corner "$game_num" "theme"; then
-			start_radio_corner_theme "$game_num" "$score"
-		else
-			log "[RADIO:theme] duplicate skip: scheduler pre-check for game=${game_num}"
-		fi
+		log "[RADIO:theme] duplicate skip: scheduler pre-check for game=${game_num}"
 	fi
 }
 

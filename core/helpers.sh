@@ -76,7 +76,7 @@ _strip_ansi() {
 }
 
 _contains_provider_error_text() {
-	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|bad request|request_id|invalid error token|invalid token|not logged in|please run /login|unexpected error, check log file|failed to run the query|pragma wal_checkpoint|insufficient balance|no resource package|rate limit exceeded|freeusagelimiterror|degraded function cannot be invoked|function id .*degraded|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy'
+	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|bad request|request_id|invalid error token|invalid token|not logged in|please run /login|unexpected error, check log file|failed to run the query|pragma wal_checkpoint|insufficient balance|no resource package|rate limit exceeded|freeusagelimiterror|degraded function cannot be invoked|function id .*degraded|providermodelnotfounderror|model not found|no such model|modelid|providerid|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|(^|[^[:alnum:]])error:[[:space:]]*gone|status["[:space:]]*:[[:space:]]*410|reached its end of life|is no longer available'
 }
 
 _contains_claude_login_error_text() {

@@ -28,11 +28,12 @@ _compact_recent_file() {
     [ -f "$src" ] || return 0
     local tmpf now_ts
     now_ts=$(date +%s)
-    tmpf=$(mktemp /tmp/twitch_daemon_recent_XXXXXXXX 2>/dev/null) || return 0
+    tmpf=$(mktemp "$CHAT_DIR/.recent_compact.XXXXXXXX" 2>/dev/null) || return 0
     awk -F'|' -v now_ts="$now_ts" -v ttl="$ttl" '
         NF >= 2 && $1 ~ /^[0-9]+$/ && (now_ts - $1) <= ttl && !seen[$2]++ { print $1 "|" $2 }
     ' "$src" | tail -n "$max_keep" > "$tmpf"
-    mv "$tmpf" "$src"
+    cat "$tmpf" > "$src"
+    rm -f "$tmpf"
 }
 
 _recent_key_seen() {

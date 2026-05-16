@@ -2,12 +2,15 @@
 
 #=== opencode run を疑似TTY付きで実行 ===
 
-_run_opencode_radio() {
+_run_opencode_radio_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file cleaned
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
+	mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
+	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
+	_opencode_sync_auth_to_xdg
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
-	OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
+	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \
 		opencode run --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
@@ -42,7 +45,12 @@ _run_opencode_radio() {
 	printf '%s' "$cleaned"
 }
 
-_run_opencode_comment() {
+_run_opencode_radio() {
+	local agent="$1"
+	_ai_generation_queue_run "RADIO:opencode:${agent}" _run_opencode_radio_unqueued "$@"
+}
+
+_run_opencode_comment_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file sandbox_dir sandbox_prompt timeout_sec
 	timeout_sec="${COMMENT_OPENCODE_TIMEOUT:-$RADIO_OPENCODE_TIMEOUT}"
@@ -74,9 +82,12 @@ _run_opencode_comment() {
 		return 1
 	}
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
+	mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
+	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
+	_opencode_sync_auth_to_xdg
 	(
 		cd "$sandbox_dir" || exit 1
-		OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
+		XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 			timeout "$timeout_sec" \
 			opencode run --agent "$agent" "$(cat tmp/comment_prompt.txt)"
 	) >"$raw_file" 2>&1
@@ -105,7 +116,11 @@ _run_opencode_comment() {
 	rm -f "$raw_file"
 }
 
-_run_claude_comment_with_model() {
+_run_opencode_comment() {
+	_ai_generation_queue_run "COMMENT:opencode:${1:-unknown}" _run_opencode_comment_unqueued "$@"
+}
+
+_run_claude_comment_with_model_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
 	local sandbox_dir sandbox_prompt output timeout_sec
@@ -185,11 +200,15 @@ _run_claude_comment_with_model() {
 	printf '%s' "$output"
 }
 
+_run_claude_comment_with_model() {
+	_ai_generation_queue_run "COMMENT:claude:${2:-$RADIO_CLAUDE_MODEL}" _run_claude_comment_with_model_unqueued "$@"
+}
+
 _run_claude_comment() {
 	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
-_run_minimax_comment() {
+_run_minimax_comment_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
 	local timeout_sec="${3:-${COMMENT_CLAUDE_TIMEOUT:-180}}"
@@ -263,12 +282,24 @@ _run_minimax_comment() {
 	printf '%s' "$output"
 }
 
+_run_minimax_comment() {
+	_ai_generation_queue_run "COMMENT:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_comment_unqueued "$@"
+}
+
 _run_comment_agent() {
 	local agent="$1" prompt_file="$2"
+	if [[ "$agent" == opencode:* || "$agent" != *:* && "$agent" != ollama && "$agent" != qwen35e && "$agent" != gemma4e && "$agent" != haiku && "$agent" != claude && "$agent" != minimax && "$agent" != ccmm && "$agent" != qwencode ]]; then
+		local _comment_opencode_lock=""
+		_comment_opencode_lock=$(_opencode_run_lock_dir 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
+		if [ -d "$_comment_opencode_lock" ]; then
+			log "[COMMENT] opencode busy -> skip agent=${agent} for low-latency comment fallback" >&2
+			return 1
+		fi
+	fi
 	_ai_dispatch "COMMENT" "$agent" "$prompt_file"
 }
 
-_run_claude_radio_with_model() {
+_run_claude_radio_with_model_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
 	local prompt output timeout_sec
@@ -310,11 +341,15 @@ _run_claude_radio_with_model() {
 	printf '%s' "$output"
 }
 
+_run_claude_radio_with_model() {
+	_ai_generation_queue_run "RADIO:claude:${2:-$RADIO_CLAUDE_MODEL}" _run_claude_radio_with_model_unqueued "$@"
+}
+
 _run_claude_radio() {
 	_ai_call_claude "RADIO" "$1" "$RADIO_CLAUDE_MODEL"
 }
 
-_run_minimax_radio() {
+_run_minimax_radio_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
 	local timeout_sec="${3:-${RADIO_CLAUDE_TIMEOUT:-120}}"
@@ -351,6 +386,10 @@ _run_minimax_radio() {
 	output=$(cat "$output_file" 2>/dev/null)
 	rm -f "$output_file"
 	printf '%s' "$output"
+}
+
+_run_minimax_radio() {
+	_ai_generation_queue_run "RADIO:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_radio_unqueued "$@"
 }
 
 _run_radio_agent() {
@@ -414,7 +453,7 @@ BPROMPT
 	fi
 }
 
-_run_ollama_radio() {
+_run_ollama_radio_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_OLLAMA_MODEL}"
 	local timeout_sec="${3:-$RADIO_OLLAMA_TIMEOUT}"
@@ -454,7 +493,11 @@ _run_ollama_radio() {
 	printf '%s' "$output"
 }
 
-_run_ollama_comment() {
+_run_ollama_radio() {
+	_ai_generation_queue_run "RADIO:ollama:${2:-$RADIO_OLLAMA_MODEL}" _run_ollama_radio_unqueued "$@"
+}
+
+_run_ollama_comment_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-$COMMENT_OLLAMA_MODEL}"
 	local timeout_sec="${3:-$COMMENT_OLLAMA_TIMEOUT}"
@@ -490,6 +533,10 @@ _run_ollama_comment() {
 		return 1
 	fi
 	printf '%s' "$output"
+}
+
+_run_ollama_comment() {
+	_ai_generation_queue_run "COMMENT:ollama:${2:-$COMMENT_OLLAMA_MODEL}" _run_ollama_comment_unqueued "$@"
 }
 
 _write_radio_corner_status() {
@@ -1328,10 +1375,11 @@ _radio_generate_and_play() {
 
 	_radio_set_state "generating" "$corner_name"
 	_write_radio_corner_status "generating" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
-	log "[RADIO:${corner_name}] トーク生成中..."
+	log "[RADIO:${corner_name}] 生成キュー投入..."
 	local talk="" prompt_snapshot debug_dump="" provider_used=""
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
+	local radio_prepass_agent=""
 	local radio_allow_claude_fallback=true
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
@@ -1341,6 +1389,7 @@ _radio_generate_and_play() {
 		radio_allow_claude_fallback=false
 	else
 		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode:qwen35pgo}"
+		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-opencode:minimax}"
 		radio_second_agent="${RADIO_MAIN_FALLBACK:-gemma4e}"
 		radio_third_agent="${RADIO_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
 	fi
@@ -1357,6 +1406,44 @@ _radio_generate_and_play() {
 	_quality_ok=false
 	_quality_fail_reason=""
 	local talk_body="" talk_summary=""
+
+	if [ -n "$radio_prepass_agent" ] && [ "$radio_prepass_agent" != "$radio_primary_agent" ]; then
+		local _prepass_prompt_file _prepass_output _prepass_enhanced_prompt
+		_prepass_prompt_file=$(mktemp /tmp/eloop_radio_prepass_prompt_XXXXXXXX)
+		cat >"$_prepass_prompt_file" <<PREPASS
+以下はラジオ本文生成用の元プロンプトです。
+あなたの役割は、本文を書くことではなく、WebFetchを必要に応じて使って、次の本文生成者が使うための事前調査メモだけを作ることです。
+
+ルール:
+- 読み上げ本文は書かない
+- 事実、日付、固有名詞、数値、注意すべき未確認点だけを日本語で箇条書きにする
+- WebFetchが失敗した場合、その失敗文を出力しない。手元で確認できた範囲だけを書く
+- 1200字以内
+
+【元プロンプト】
+${prompt_snapshot}
+PREPASS
+		log "[RADIO:${corner_name}] prepass: ${radio_prepass_agent} -> ${radio_primary_agent}"
+		_prepass_output=$(_run_radio_agent "$radio_prepass_agent" "$_prepass_prompt_file" 2>/dev/null || true)
+		rm -f "$_prepass_prompt_file" 2>/dev/null || true
+		if [ -n "$_prepass_output" ] && ! _contains_provider_error_text "$_prepass_output"; then
+			_prepass_enhanced_prompt=$(mktemp /tmp/eloop_radio_prepass_enhanced_XXXXXXXX)
+			cat "$_saved_prompt" >"$_prepass_enhanced_prompt" 2>/dev/null || true
+			cat >>"$_prepass_enhanced_prompt" <<PREPASS_APPEND
+
+---
+【事前調査メモ】
+以下は前段の調査AIがWebFetchを含めて確認した材料です。本文生成ではこの材料を優先し、追加のWebFetchは本当に必要な場合だけ使ってください。WebFetchの失敗文やツールログは本文に絶対に含めないでください。
+
+${_prepass_output}
+PREPASS_APPEND
+			cp "$_prepass_enhanced_prompt" "$_saved_prompt" 2>/dev/null || true
+			_current_prompt_file="$_prepass_enhanced_prompt"
+			log "[RADIO:${corner_name}] prepass OK (${#_prepass_output}字)"
+		else
+			log "[RADIO:${corner_name}] prepass empty/failed -> direct ${radio_primary_agent}"
+		fi
+	fi
 
 	for _radio_attempt in $(seq 1 "$_radio_max_attempts"); do
 

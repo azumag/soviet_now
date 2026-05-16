@@ -29,3 +29,5 @@ __pycache__/
 /strategy_versions/v*_score*_strategy.py
 /strategy_versions_archive/by_hash/
 /strategy_versions_archive/v*_score*_strategy.py
+
+.env.bak.*

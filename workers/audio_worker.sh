@@ -28,6 +28,7 @@ PID_FILE="tmp/state/${WORKER_NAME}.pid"
 POLL_INTERVAL="${AUDIO_WORKER_INTERVAL:-5}"
 
 _STOPPED=0
+_RELOAD_REQUESTED=0
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -46,8 +47,29 @@ _handle_signal() {
 	trap - EXIT
 	exit 130
 }
+_request_reload() {
+	_RELOAD_REQUESTED=1
+	_log "reload requested (signal=$1)"
+}
+_reload_runtime() {
+	[ "$_RELOAD_REQUESTED" -eq 1 ] || return 0
+	_RELOAD_REQUESTED=0
+	if [ -f .env ]; then
+		set -a
+		. ./.env
+		set +a
+	fi
+	if source ./eloop_lib.sh 2>/dev/null; then
+		POLL_INTERVAL="${AUDIO_WORKER_INTERVAL:-5}"
+		_log "reload complete (interval=${POLL_INTERVAL}s)"
+	else
+		_log "WARNING: reload failed; keeping previous runtime"
+	fi
+}
 trap '_cleanup' EXIT
 trap '_handle_signal' INT TERM
+trap '_request_reload HUP' HUP
+trap '_request_reload USR1' USR1
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
@@ -70,6 +92,7 @@ _log "起動 (PID=$$, interval=${POLL_INTERVAL}s)"
 _recover_orphan_comment_playing_files 2>/dev/null || true
 
 while true; do
+	_reload_runtime
 	# 停止チェック
 	if [ -f tmp/stop ]; then
 		_log "stop ファイル検出 → 終了"

@@ -1,6 +1,56 @@
 # strategy/improve.sh - improve_state管理, accumulate, trigger_adaptive_improvement
 
 
+#=== spawn 排他 mutex (dual-spawner 二重起動レース防止) ===
+# mkdir は POSIX atomic。owner ファイルに PID を記録し、解放/stale 回収は
+# 所有者一致時のみ実行 (他 spawner の新規 lock を消さない)。
+
+# 取得試行。成功で 0、別 spawner が保持中で取得不可なら 1。
+_acquire_spawn_lock() {
+	local d="$IMPROVE_SPAWN_LOCK_DIR"
+	if mkdir "$d" 2>/dev/null; then
+		echo "$$" >"$d/owner" 2>/dev/null || true
+		return 0
+	fi
+	# 取得失敗 → stale 判定 (owner 死亡 or TTL 超過時のみ steal)
+	local owner_pid lk_m now age
+	owner_pid=$(cat "$d/owner" 2>/dev/null || echo "")
+	lk_m=$(stat -f %m "$d" 2>/dev/null || stat -c %Y "$d" 2>/dev/null || echo 0)
+	now=$(date +%s)
+	age=$((now - lk_m))
+	local stale=0
+	if [ -n "$owner_pid" ] && ! kill -0 "$owner_pid" 2>/dev/null; then
+		stale=1
+	elif [ "$lk_m" -gt 0 ] && [ "$age" -ge "${IMPROVE_SPAWN_LOCK_TTL:-90}" ]; then
+		stale=1
+	fi
+	if [ "$stale" -eq 1 ]; then
+		# steal 前に owner を再確認 (別 contender が既に再取得していたら触らない)
+		local owner_recheck
+		owner_recheck=$(cat "$d/owner" 2>/dev/null || echo "")
+		if [ "$owner_recheck" = "$owner_pid" ]; then
+			rm -rf "$d" 2>/dev/null || true
+			if mkdir "$d" 2>/dev/null; then
+				echo "$$" >"$d/owner" 2>/dev/null || true
+				log "[IMPROVE] stale spawn lock 回収し再取得 (旧owner=${owner_pid:-?})"
+				return 0
+			fi
+		fi
+	fi
+	return 1
+}
+
+# 解放: owner が自 PID のときのみ削除 (他 spawner の lock を消さない)
+_release_spawn_lock() {
+	local d="$IMPROVE_SPAWN_LOCK_DIR"
+	[ -d "$d" ] || return 0
+	local owner_pid
+	owner_pid=$(cat "$d/owner" 2>/dev/null || echo "")
+	if [ "$owner_pid" = "$$" ]; then
+		rm -rf "$d" 2>/dev/null || true
+	fi
+}
+
 #=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
 
 _is_improve_running() {
@@ -13,6 +63,30 @@ _is_improve_running() {
 _scheduled_meriken_time_should_run() {
 	[ "${MERIKEN_SCHEDULED_TIME_ENABLED:-1}" = "1" ] || return 1
 	[ "$(date +%H)" = "${MERIKEN_TIME_START_HOUR:-20}" ]
+}
+
+_improve_overlay_generate_once() {
+	[ -x "./generate_improve_overlay.sh" ] || return 0
+	./generate_improve_overlay.sh once >/dev/null 2>&1 || true
+}
+
+_improve_overlay_show() {
+	_improve_overlay_generate_once
+	./obs_control.sh show soren "$IMPROVE_OVERLAY_SOURCE" 2>/dev/null &
+	./obs_control.sh hide soren console4 2>/dev/null &
+}
+
+_improve_overlay_hide() {
+	_improve_overlay_generate_once
+	./obs_control.sh hide soren "$IMPROVE_OVERLAY_SOURCE" 2>/dev/null &
+	./obs_control.sh hide soren console4 2>/dev/null &
+}
+
+_improve_overlay_watch_start() {
+	local pid="${1:-}"
+	[ -x "./generate_improve_overlay.sh" ] || return 0
+	./generate_improve_overlay.sh watch "$pid" >/dev/null 2>&1 &
+	echo $!
 }
 
 #=== 改善ステート管理 ===
@@ -231,7 +305,7 @@ json.dump(rs, open(rs_file, 'w'))
 		rm -f "$IMPROVE_LOCK_FILE"
 		IMPROVE_PID=0
 		log "[IMPROVE][MANUAL] 手動改善完了 → idle"
-		./obs_control.sh hide soren console4 2>/dev/null &
+		_improve_overlay_hide
 		if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 			log "[IMPROVE][MANUAL] manual_meriken_mode=on のため、メリケンAI継続"
 		elif _scheduled_meriken_time_should_run; then
@@ -404,8 +478,8 @@ with open(rs_file, 'w') as f:
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
-			# OBS: 改善中コンソール非表示
-			./obs_control.sh hide soren console4 2>/dev/null &
+			# OBS: 改善中オーバーレイ非表示
+			_improve_overlay_hide
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				log "[IMPROVE] manual_meriken_mode=on のため、メリケンAI継続"
 			elif _scheduled_meriken_time_should_run; then
@@ -563,12 +637,23 @@ _update_current_strategy_run() {
 	local strategy_hash="$1" score="$2" archive_file="${3:-}"
 	[ -n "$strategy_hash" ] || return 1
 	local run_result=""
-	run_result=$(python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" <<'PY' 2>/dev/null
+	run_result=$(python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" "${CURRENT_RUN_SCORE_KEEP:-20}" "${HOT_STREAK_CURRENT_RUN_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" <<'PY' 2>/dev/null
 import json
 import os
 import sys
 
 run_file, strategy_hash, score, archive_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+try:
+    normal_keep = int(sys.argv[5])
+except Exception:
+    normal_keep = 20
+try:
+    hot_keep = int(sys.argv[6])
+except Exception:
+    hot_keep = 200
+hot_enabled = str(sys.argv[7]).strip() == "1"
+normal_keep = max(1, normal_keep)
+hot_keep = max(normal_keep, hot_keep)
 if os.path.exists(run_file):
     try:
         run = json.load(open(run_file))
@@ -594,13 +679,58 @@ if archive_file and archive_file in recent_archives:
     raise SystemExit
 
 scores = [int(x) for x in run.get("scores", [])]
+prev_best = max(scores) if scores else None
 scores.append(score)
-run["scores"] = scores[-20:]
+keep = hot_keep if hot_enabled and prev_best is not None and score > prev_best else normal_keep
+run["scores"] = scores[-keep:]
 run["games_total"] = int(run.get("games_total", 0) or 0) + 1
+
+def nation_progress(path):
+    max_type = 0
+    russia = False
+    soviet = False
+    if not path or not os.path.exists(path):
+        return max_type, russia, soviet
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if row.get("russia_created"):
+                    russia = True
+                if row.get("soviet_created"):
+                    soviet = True
+                pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+                for piece in pieces:
+                    try:
+                        t = int(piece.get("type", 0) or 0)
+                    except Exception:
+                        continue
+                    if t > max_type:
+                        max_type = t
+                    if t >= 15:
+                        russia = True
+                    if t >= 16:
+                        soviet = True
+    except Exception:
+        pass
+    return max_type, russia, soviet
+
 if archive_file:
     recent_archives.append(archive_file)
     recent_archives = recent_archives[-50:]
 run["_recent_archives"] = recent_archives
+progress_archives = recent_archives[-len(run["scores"]):] if run["scores"] else []
+progress = [nation_progress(path) for path in progress_archives]
+run["max_types"] = [item[0] for item in progress]
+run["russia_count"] = sum(1 for _, russia_created, _ in progress if russia_created)
+run["soviet_count"] = sum(1 for _, _, soviet_created in progress if soviet_created)
+run["best_max_type"] = max([int(run.get("best_max_type", 0) or 0)] + [item[0] for item in progress])
 
 with open(run_file, "w") as f:
     json.dump(run, f)
@@ -618,6 +748,121 @@ PY
 		fi
 	else
 		log "[CURRENT-RUN] update failed: hash=${strategy_hash} score=${score}"
+	fi
+}
+
+_is_rank1_hot_streak() {
+	local current_hash=""
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	[ -n "$current_hash" ] || return 1
+	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" <<'PY' >/dev/null 2>&1
+import json
+import math
+import os
+import sys
+
+rolling_file, current_run_file, anchor_file, current_hash, min_games_raw = sys.argv[1:6]
+try:
+    min_games = int(min_games_raw)
+except Exception:
+    min_games = 12
+
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    xs = [int(x) for x in scores]
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    std = math.sqrt(sum((x - mean) ** 2 for x in xs) / n) if n > 1 else 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {"comp": comp, "p50": p50, "p25": p25, "lcb": lcb, "n": n}
+
+def key(m):
+    if not m:
+        return (-10**18, -10**18, -10**18, -10**18)
+    return (float(m.get("comp", 0.0)), float(m.get("p50", 0.0)), float(m.get("p25", 0.0)), int(m.get("n", 0)))
+
+def scores_from(entry):
+    out = []
+    for raw in (entry or {}).get("scores", []) or []:
+        try:
+            out.append(int(raw))
+        except Exception:
+            pass
+    return out
+
+rolling = load_json(rolling_file)
+run = load_json(current_run_file)
+current_scores = scores_from(run if str(run.get("hash", "") or "") == current_hash else rolling.get(current_hash, {}))
+if len(current_scores) < min_games:
+    raise SystemExit(1)
+
+# "更新し続けている" は直近ゲームがこの current run の評価スコア自己ベストを
+# 厳密に更新したこと。同点では延長しない。
+if len(current_scores) < 2 or current_scores[-1] <= max(current_scores[:-1]):
+    raise SystemExit(1)
+
+current_metrics = metrics(current_scores)
+if not current_metrics:
+    raise SystemExit(1)
+
+ranked = []
+for h, data in rolling.items():
+    scores = scores_from(data)
+    if len(scores) < min_games:
+        continue
+    ranked.append((key(metrics(scores)), h))
+
+anchor = load_json(anchor_file)
+anchor_hash = str(anchor.get("hash", "") or "")
+anchor_metrics = {
+    "comp": float(anchor.get("comp", 0.0) or 0.0),
+    "p50": float(anchor.get("p50", 0.0) or 0.0),
+    "p25": float(anchor.get("p25", 0.0) or 0.0),
+    "lcb": float(anchor.get("lcb", 0.0) or 0.0),
+    "n": int(anchor.get("n", 0) or 0),
+} if anchor_hash else None
+if anchor_metrics:
+    ranked.append((key(anchor_metrics), anchor_hash))
+ranked.append((key(current_metrics), current_hash))
+ranked.sort(reverse=True)
+
+top_hash = ranked[0][1] if ranked else ""
+raise SystemExit(0 if top_hash == current_hash else 1)
+PY
+}
+
+_rolling_keep_limit_for_hash() {
+	local target_hash="$1"
+	if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && [ -n "$target_hash" ] && _is_rank1_hot_streak; then
+		echo "${HOT_STREAK_ROLLING_KEEP:-200}"
+	else
+		echo "${ROLLING_SCORE_KEEP:-20}"
 	fi
 }
 
@@ -664,9 +909,17 @@ _start_improvement_job() {
 		log "[IMPROVE] 手動改善モード: strategy.py を編集後 ./manual_improve_off.sh を実行してください"
 		# soren91は起動する（手動改善中の代打）
 		soren91_start
-		# OBS: 改善中コンソール表示
-		./obs_control.sh show soren console4 2>/dev/null &
+		# OBS: 改善中オーバーレイ表示
+		_improve_overlay_show
 		return 0
+	fi
+
+	# spawn 排他 mutex 取得 (dual-spawner 二重起動レース防止)
+	# 別 spawner が spawn 中なら return 1 でスキップ (success 扱いにせず
+	# caller の last_improve_failed_at クリアを誤発火させない)
+	if ! _acquire_spawn_lock; then
+		log "[IMPROVE] spawn lock を別 spawner が保持中 → 二重起動回避でスキップ"
+		return 1
 	fi
 
 	# 既存の eloop_improve プロセスが残っていないか確認
@@ -695,21 +948,30 @@ _start_improvement_job() {
 	: >"$improve_ai_log"
 	printf '[%s] [IMPROVE] job start reason=%s game=%s scores=%s\n' \
 		"$(date '+%H:%M:%S')" "$reason" "${GAME_NUM:-?}" "${all_scores:-}" >>"$improve_ai_log" 2>/dev/null || true
+	_improve_overlay_generate_once
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "改善開始" "reason=${reason} game=${GAME_NUM:-?} scores=${all_scores:-}" "info" >/dev/null 2>&1 || true
+	fi
 
 	# デーモンコンテキストではファイルからフォールバック読み取り
 	[ "${GAME_NUM:-0}" -eq 0 ] && GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ "${LAST_TURNS:-0}" -eq 0 ] && LAST_TURNS=$(cat "tmp/state/last_turns.txt" 2>/dev/null || echo 0)
 
-	# バックグラウンド改善開始
-	RUN_CMD_LOG_FILE="$improve_ai_log" ./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
+	# バックグラウンド改善開始 (reason は wildcard モード判定のため eloop_improve.sh に伝搬)
+	RUN_CMD_LOG_FILE="$improve_ai_log" ./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason" &
 	IMPROVE_PID=$!
 	local _pid_birth_epoch
 	_pid_birth_epoch=$(ps -p "$IMPROVE_PID" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
 
 	# 起動成功を確認してから状態更新
 	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
+		local _overlay_pid=""
 		rm -f "$TMP_STATE_DIR/handover_announced" 2>/dev/null || true
 		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch"
+		_overlay_pid=$(_improve_overlay_watch_start "$IMPROVE_PID")
+		# spawn 完了・state=running 書込済 → 既存ガードが他 spawner を弾くので
+		# spawn mutex の役目は終了。daemon-mode の長い inline wait の前に解放。
+		_release_spawn_lock
 		if [ "$reason" = "post_regression" ]; then
 			log "[IMPROVE] 回帰ロールバック後の改善開始 (PID=$IMPROVE_PID, base=${REGRESSION_ROLLBACK_HASH:-unknown})"
 		elif [ "${IMPROVE_DAEMON_MODE:-0}" = "1" ]; then
@@ -717,8 +979,8 @@ _start_improvement_job() {
 		else
 			log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 		fi
-		# OBS: 改善中コンソール表示
-		./obs_control.sh show soren console4 2>/dev/null &
+		# OBS: 改善中オーバーレイ表示
+		_improve_overlay_show
 		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 		soren91_start
 		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
@@ -736,6 +998,10 @@ _start_improvement_job() {
 			wait "$IMPROVE_PID"
 			local _wait_rc=$?
 			kill "$_tail_pid" 2>/dev/null; wait "$_tail_pid" 2>/dev/null || true
+			if [ -n "$_overlay_pid" ]; then
+				kill "$_overlay_pid" 2>/dev/null; wait "$_overlay_pid" 2>/dev/null || true
+			fi
+			_improve_overlay_generate_once
 			log "[IMPROVE] フォアグラウンド実行完了 (PID=$IMPROVE_PID, rc=${_wait_rc})"
 			# daemon mode: wait 完了後に即 harvest して状態を idle に遷移
 			# (次の poll で "running"+死PID を拾って繰り返し発火するのを防ぐ)
@@ -745,11 +1011,13 @@ _start_improvement_job() {
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"
 		IMPROVE_PID=0
+		_release_spawn_lock
 		return 1
 	fi
 }
 
 trigger_adaptive_improvement() {
+	type reload_runtime_toggles >/dev/null 2>&1 && reload_runtime_toggles
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] trigger_adaptive_improvementをスキップ（建国後停止中）"
 		return
@@ -801,7 +1069,57 @@ trigger_adaptive_improvement() {
 	all_scores=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
 	any_soviet=$(echo "$lock_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
 
-	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "normal"; then
+	# F: stagnation 連続発生時は wildcard モードに切替
+	local improve_reason="normal"
+	improve_reason=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('improve_reason','normal'))" 2>/dev/null || echo "normal")
+	case "$improve_reason" in
+	normal|post_regression|wildcard) ;;
+	*) improve_reason="normal" ;;
+	esac
+	if [ "$improve_reason" = "post_regression" ]; then
+		log "[IMPROVE] ロールバック直後の失敗バッチを改善入力として使用"
+	fi
+	if [ "$improve_reason" = "normal" ] && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
+		local stag rstreak
+		stag=$(python3 -c "
+import json,sys
+try:
+    print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('consecutive_no_improve', 0)))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+		rstreak=$(python3 -c "
+import json,sys
+try:
+    print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('regression_streak', 0)))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+		if [ "$stag" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ]; then
+			improve_reason="wildcard"
+			log "[WILDCARD] stagnation=$stag >= ${WILDCARD_TRIGGER_STAGNATION:-3} → wildcard モードで起動"
+		elif [ "$rstreak" -ge "${WILDCARD_REGRESSION_STREAK:-4}" ]; then
+			# counter 非依存 回帰ストリーク経路 (OK_BEAT マスク回避)。
+			# churn 緩和: cooldown マーカ経過時のみ発火し発火時に更新。
+			local _wccd="${WILDCARD_STREAK_COOLDOWN_FILE:-tmp/state/.wildcard_streak_cooldown}"
+			local _wccd_sec="${WILDCARD_STREAK_COOLDOWN_SEC:-1800}" _wccd_ok=1
+			if [ -f "$_wccd" ]; then
+				local _wm _wnow
+				_wm=$(stat -f %m "$_wccd" 2>/dev/null || stat -c %Y "$_wccd" 2>/dev/null || echo 0)
+				_wnow=$(date +%s)
+				[ "$(( _wnow - _wm ))" -lt "$_wccd_sec" ] && _wccd_ok=0
+			fi
+			if [ "$_wccd_ok" -eq 1 ]; then
+				improve_reason="wildcard"
+				: >"$_wccd" 2>/dev/null || true
+				log "[WILDCARD] regression_streak=$rstreak >= ${WILDCARD_REGRESSION_STREAK:-4} (counter非依存) → wildcard モード起動 (cooldown ${_wccd_sec}s)"
+			else
+				log "[WILDCARD] regression_streak=$rstreak だが cooldown 中 → 今回は通常改善 (churn緩和)"
+			fi
+		fi
+	fi
+
+	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "$improve_reason"; then
 		rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 	fi
 }

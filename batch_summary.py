@@ -60,12 +60,33 @@ def analyze_game(turns, filepath):
     final = turns[-1]
     score = final.get("score", 0)
     num_turns = len(turns)
+    final_types = []
+    if isinstance(final.get("final_types"), list):
+        for raw in final.get("final_types") or []:
+            try:
+                final_types.append(int(raw))
+            except Exception:
+                pass
+    if not final_types:
+        final_pieces = ((final.get("state_snapshot") or {}).get("pieces") or [])
+        for piece in final_pieces:
+            try:
+                final_types.append(int(piece.get("type", 0) or 0))
+            except Exception:
+                pass
+    final_type_counts = Counter(final_types)
+    high_type_counts = {
+        t: final_type_counts.get(t, 0)
+        for t in range(max(final_type_counts.keys(), default=0), 9, -1)
+        if final_type_counts.get(t, 0)
+    }
 
     # decision_reason 分布
     reason_counter = Counter()
     reason_score_delta = defaultdict(list)
     merge_count = 0
     max_y_values = []
+    max_piece_type = 0
 
     for t in turns:
         reason = t.get("decision_reason", "unknown")
@@ -75,6 +96,12 @@ def analyze_game(turns, filepath):
         if t.get("merge_available", False):
             merge_count += 1
         max_y_values.append(t.get("max_y", -5.0))
+        pieces = ((t.get("state_snapshot") or {}).get("pieces") or [])
+        for p in pieces:
+            try:
+                max_piece_type = max(max_piece_type, int(p.get("type", 0)))
+            except Exception:
+                pass
 
     # スコア推移の計算（score_deltaが0の場合が多いので、直接スコアから計算）
     score_deltas_by_reason = defaultdict(list)
@@ -101,7 +128,10 @@ def analyze_game(turns, filepath):
         "merge_rate": merge_rate,
         "early_avg_max_y": round(sum(early_max_y) / len(early_max_y), 2) if early_max_y else 0,
         "late_avg_max_y": round(sum(late_max_y) / len(late_max_y), 2) if late_max_y else 0,
-        "soviet_created": any(t.get("soviet_created", False) for t in turns),
+        "max_piece_type": max_piece_type,
+        "high_type_counts": high_type_counts,
+        "russia_created": any(t.get("russia_created", False) for t in turns) or max_piece_type >= 15,
+        "soviet_created": any(t.get("soviet_created", False) for t in turns) or max_piece_type >= 16,
     }
 
 
@@ -130,6 +160,9 @@ def main():
     stats = calc_stats(scores)
     turns_list = [g["turns"] for g in games]
     turns_stats = calc_stats(turns_list)
+    russia_count = sum(1 for g in games if g["russia_created"])
+    soviet_count = sum(1 for g in games if g["soviet_created"])
+    max_piece_type = max((g["max_piece_type"] for g in games), default=0)
 
     # ベスト/ワースト特定
     sorted_games = sorted(games, key=lambda g: g["score"])
@@ -175,10 +208,18 @@ def main():
     print(f"\n## ターン数統計")
     print(f"  min={turns_stats['min']}  max={turns_stats['max']}  avg={turns_stats['avg']}  median={turns_stats['median']}")
 
+    print(f"\n## 建国進捗")
+    print(f"  russia_created={russia_count}/{len(games)}  soviet_created={soviet_count}/{len(games)}  max_piece_type={max_piece_type}")
+    if russia_count == 0:
+        print("  WARNING: この改善バッチではロシア未到達。スコアだけでなく type15/16 到達経路を失敗シグナルとして扱うこと。")
+    print("  high_type_counts は最終盤面の type10+ 個数。type14 が2個以上あるのに type15 未到達なら、終盤併合逃しを最優先で疑うこと。")
+
     print(f"\n## 全試合スコア一覧")
     for g in sorted_games:
+        russia_mark = " [RUSSIA]" if g["russia_created"] else ""
         soviet_mark = " [SOVIET!]" if g["soviet_created"] else ""
-        print(f"  {g['file']}: score={g['score']}, turns={g['turns']}, merge_rate={g['merge_rate']}%{soviet_mark}")
+        high_counts = " ".join(f"T{t}x{c}" for t, c in g["high_type_counts"].items()) or "none"
+        print(f"  {g['file']}: score={g['score']}, turns={g['turns']}, merge_rate={g['merge_rate']}%, max_type={g['max_piece_type']}, high_type_counts={high_counts}{russia_mark}{soviet_mark}")
 
     print(f"\n## decision_reason 全体分布 (上位10)")
     total_decisions = sum(all_reason_counter.values())

@@ -130,8 +130,18 @@ play_one_game() {
 		return 0
 	fi
 
+	# ブリッジ(soviet_local.mjs)生存監視＋自動復旧。play_one_game は soren_loop の
+	# 全 pause continue (改善中/Meriken/soren91/stop) の後でのみ呼ばれるため
+	# pause 安全性は保たれる。eloop.sh は毎周回 re-source されるので
+	# 実行中 soren_loop に再起動なしで反映される (hot-reload)。
+	command -v _ensure_bridge_alive >/dev/null 2>&1 && _ensure_bridge_alive
+
 	# 前試合のダッシュボードを非表示
 	./generate_dashboard.sh MOVE || true
+	# OBS 側でも dashboard ソースを hide (meriken AI と同じ visibility 制御)
+	if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ]; then
+		./obs_control.sh hide "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1 &
+	fi
 
 	local game_num_display=$((GAME_NUM + 1))
 	log ""
@@ -145,6 +155,12 @@ play_one_game() {
 	# strategy_runner.py で1試合プレイ
 	# パイプラインを使わない: bash はパイプライン中 INT trap を遅延するため Ctrl-C が効かない。
 	# 代わりに python3 をバックグラウンド実行 + tail -f でリアルタイム表示。
+	# phantom ゲーム検知用: strategy_runner 実行前の game_state.json mtime を退避。
+	# ブリッジ凍結中は実プレイされず mtime が一切進まない。
+	local _pg_state_mtime0 _pg_start_epoch
+	_pg_state_mtime0=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+	_pg_start_epoch=$(date +%s)
+
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
 	python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
@@ -185,6 +201,55 @@ play_one_game() {
 	local runner_error runner_error_msg
 	runner_error=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
 	runner_error_msg=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error_message',''))" 2>/dev/null || echo "")
+
+	# --- Fix3: recovery-taint ガード (guardian/復旧アクターが当該ゲーム中に
+	# stuck/hang 復旧を実行した場合、その復旧起点ゲームを評価系に入れない) ---
+	# 連言 (codex#5): taint 一致が主トリガ。score==0 等"単独"では正当な早期GOを
+	# 捨てない。taint が現ゲーム開始 window に一致 かつ ゲームが復旧で中断された
+	# 形跡 (turns==0 / score==0 / state∈UNKNOWN,STOP / game_state未進展) の時のみ。
+	local _rr_taint="${RUNTIME_RECOVERY_TAINT_FILE:-tmp/state/runtime_recovery.taint}"
+	if [ -f "$_rr_taint" ]; then
+		local _rr_ts _rr_gs _rr_now _rr_win
+		_rr_now=$(date +%s)
+		_rr_win="${RUNTIME_RECOVERY_TAINT_WINDOW:-180}"
+		_rr_ts=$(python3 -c "import json,sys;print(int(json.load(open('$_rr_taint')).get('ts',0)))" 2>/dev/null || echo 0)
+		_rr_gs=$(python3 -c "import json,sys;print(int(json.load(open('$_rr_taint')).get('game_start_epoch',0)))" 2>/dev/null || echo 0)
+		# taint が現ゲーム期間に重なる: taint.ts が現ゲーム開始以降〜now+窓 か、
+		# taint.game_start_epoch が現ゲーム開始±窓
+		local _rr_match=0
+		[ "$_rr_ts" -ge "$(( _pg_start_epoch - _rr_win ))" ] && _rr_match=1
+		[ "$_rr_gs" -ne 0 ] && [ "$_rr_gs" -ge "$(( _pg_start_epoch - _rr_win ))" ] \
+			&& [ "$_rr_gs" -le "$(( _rr_now + _rr_win ))" ] && _rr_match=1
+		local _rr_state _rr_mt_now
+		_rr_state=$(echo "$RESULT_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
+		_rr_mt_now=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+		if [ "$_rr_match" -eq 1 ] && { [ "${LAST_TURNS:-0}" -eq 0 ] \
+			|| [ "${LAST_SCORE:-0}" -eq 0 ] \
+			|| [ "$_rr_state" = "UNKNOWN" ] || [ "$_rr_state" = "STOP" ] \
+			|| [ "$_rr_mt_now" = "$_pg_state_mtime0" ]; }; then
+			log "[RECOVERY-TAINT] 復旧起点ゲーム検知 (taint一致, turns=${LAST_TURNS:-?} score=${LAST_SCORE:-?} state=$_rr_state) → 後処理/regression を1回スキップ・taint消費"
+			rm -f "$_rr_taint" 2>/dev/null || true
+			rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+			return "${PLAY_RECOVERED_RETRY_RC:-75}"
+		fi
+	fi
+
+	# --- phantom ゲームガード (ブリッジ凍結時の幽霊試合で改善データを汚染しない) ---
+	# 条件 (AND, 保守的): turns==0 かつ strategy_runner 実行中に game_state.json が
+	# 一切更新されない かつ runner 正常終了(py_rc==0) かつ state∈{GAMEOVER,STOP}
+	# かつ runner エラー無し。= ブリッジ死亡で wait_for_move が即 STOP を見て
+	# 0ターン終了した幽霊試合。戦略ロード失敗/decide例外 (turns=0 だが
+	# py_rc!=0 or error 有 or state=UNKNOWN) は除外し通常エラー経路に流す (codex 指摘)。
+	local _pg_state_mtime1 _pg_result_state
+	_pg_state_mtime1=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+	_pg_result_state=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
+	if [ "${LAST_TURNS:-0}" -eq 0 ] && [ "$_pg_state_mtime1" = "$_pg_state_mtime0" ] \
+		&& [ "${py_rc:-1}" -eq 0 ] && [ -z "$runner_error" ] \
+		&& { [ "$_pg_result_state" = "GAMEOVER" ] || [ "$_pg_result_state" = "STOP" ]; }; then
+		log "[PHANTOM] ブリッジ不稼働で試合不成立 (turns=0, game_state 不更新, state=$_pg_result_state) → 後処理スキップ・次周回で復旧"
+		rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+		return "${PLAY_RECOVERED_RETRY_RC:-75}"
+	fi
 
 	if [ "$runner_error" = "decide_exception" ]; then
 		_handle_decide_exception_recovery "$runner_error_msg" "$LAST_TURNS" "$LAST_SCORE"
@@ -322,6 +387,22 @@ json.dump(d,open(f,'w'))
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
 	log "[DASHBOARD] Generating GAMEOVER dashboard..."
 	./generate_dashboard.sh GAMEOVER || log "[DASHBOARD] ERROR: generate_dashboard.sh GAMEOVER failed"
+		# OBS 側で dashboard ソースを show。
+		# ここは同期実行して、次ゲーム開始時の MOVE 生成で空HTMLへ戻る前に
+		# OBS 側の表示切り替えとブラウザソースの再読込時間を確保する。
+		local _dashboard_shown=0
+		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ]; then
+			if ./obs_control.sh show "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1; then
+				_dashboard_shown=1
+			else
+				log "[DASHBOARD] WARN: OBS dashboard show failed"
+			fi
+		fi
+		local _dashboard_hold_sec="${DASHBOARD_GAMEOVER_HOLD_SEC:-12}"
+		case "$_dashboard_hold_sec" in ''|*[!0-9]*) _dashboard_hold_sec=12 ;; esac
+		if [ "$_dashboard_shown" -eq 1 ] && [ "$_dashboard_hold_sec" -gt 0 ]; then
+			sleep "$_dashboard_hold_sec"
+		fi
 
 	# バージョン保存・ベスト判定・履歴アーカイブ
 	save_strategy_version "$LAST_SCORE"
@@ -358,6 +439,17 @@ print(d.get('score', 0) + bonus)
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	export LAST_RAW_SCORE="$LAST_SCORE"
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
+
+	if [ -x ./overlay_notify.sh ]; then
+		local _overlay_counts
+		_overlay_counts=$(echo "$RESULT_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+types = [int(x) for x in d.get('final_types', []) if str(x).lstrip('-').isdigit()]
+print('ウクライナ=%d カザフ=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
+" 2>/dev/null || echo "")
+		./overlay_notify.sh game "Game #${game_num_display} 終了" "score=${LAST_SCORE} eval=${EVAL_SCORE}${_overlay_counts:+ | ${_overlay_counts}}" "info" >/dev/null 2>&1 || true
+	fi
 
 	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する
 

@@ -246,7 +246,7 @@ _infer_source_label() {
 	local path="$1" base corner
 	base=$(basename "$path")
 	case "$path" in
-	*"tmp/.comment_queue/comment_"*.playing | *"tmp/.comment_queue/comment_"*.txt)
+	*"tmp/.comment_queue/"*.playing | *"tmp/.comment_queue/"*.txt)
 		echo "comment"
 		return 0
 		;;

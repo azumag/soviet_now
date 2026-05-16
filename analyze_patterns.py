@@ -4,6 +4,10 @@
 import json
 import re
 from collections import Counter
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent
 
 
 def analyze_game_history(filepath):
@@ -61,7 +65,7 @@ def analyze_game_history(filepath):
 
 def main():
     # 1. strategy.pyの変更履歴から振り子パターンを抽出
-    with open("/Users/azumag/work/sandbox/soren/strategy.py") as f:
+    with open(ROOT / "strategy.py") as f:
         strategy_content = f.read()
 
     # 変更履歴セクションを行単位で処理
@@ -128,7 +132,7 @@ def main():
     print("=" * 80)
 
     analysis = analyze_game_history(
-        "/Users/azumag/work/sandbox/soren/game_history/20260227_172800_score3689.jsonl"
+        ROOT / "game_history/20260227_172800_score3689.jsonl"
     )
 
     print(f"\n総ターン数: {analysis['total_turns']}")
@@ -177,7 +181,7 @@ def main():
     print("=" * 80)
 
     analysis_latest = analyze_game_history(
-        "/Users/azumag/work/sandbox/soren/game_history/20260227_234800_score0593.jsonl"
+        ROOT / "game_history/20260227_234800_score0593.jsonl"
     )
 
     print(f"\n総ターン数: {analysis_latest['total_turns']}")

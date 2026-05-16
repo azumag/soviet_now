@@ -748,7 +748,6 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (
         safe
         and replacement.get("crosses_deadline", False)
-        and not replacement_source.startswith("visual_deadline_same_country")
     ):
         # Prefer any safe merge across the whole safe pool first — don't
         # restrict to a narrow risk band, which can hide the only safe merges
@@ -777,7 +776,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
-        and not replacement_source.startswith("visual_deadline_same_country")
+        and safe
     ):
         risk_band = [
             r for r in results if risk_top(r) <= min_risk_top + 0.05

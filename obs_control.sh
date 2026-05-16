@@ -255,10 +255,13 @@ async function main() {
     const response = await obs.request('GetSceneItemList', { sceneName });
     const items = Array.isArray(response.sceneItems) ? response.sceneItems : [];
 
+    const applied = [];
+    const missing = [];
     for (const op of operations) {
       const matches = items.filter(item => item.sourceName === op.sourceName);
       if (matches.length === 0) {
-        throw new Error(`Source not found in scene "${sceneName}": ${op.sourceName}`);
+        missing.push(op.sourceName);
+        continue;
       }
 
       for (const item of matches) {
@@ -268,12 +271,16 @@ async function main() {
           sceneItemEnabled: op.enabled,
         });
       }
+      applied.push(op);
     }
 
-    const summary = operations
+    const summary = applied
       .map(op => `${op.enabled ? 'show' : 'hide'}:${op.sourceName}`)
       .join(' ');
-    console.log(summary);
+    console.log(summary || '(no-op)');
+    if (missing.length > 0) {
+      console.error(`[obs_control] Sources not found in scene "${sceneName}": ${missing.join(', ')}`);
+    }
   } finally {
     await obs.close();
   }
@@ -283,3 +290,35 @@ main().catch((err) => {
   fail(err && err.message ? err.message : String(err));
 });
 NODE
+
+notify_system_msg_overlay() {
+	[ -x ./overlay_notify.sh ] || return 0
+	local op="" src="" title="" body=""
+	case "$ACTION" in
+	show|hide)
+		op="$ACTION"
+		shift 2
+		for src in "$@"; do
+			[ "$src" = "systemMsg" ] || continue
+			title="systemMsg ${op}"
+			body="OBS source ${op}: ${TARGET}/systemMsg"
+			OVERLAY_NOTIFY_OBS_SHOW=0 ./overlay_notify.sh system "$title" "$body" "info" >/dev/null 2>&1 || true
+		done
+		;;
+	batch)
+		shift 2
+		for token in "$@"; do
+			case "$token" in
+			show:*systemMsg*) op="show" ;;
+			hide:*systemMsg*) op="hide" ;;
+			*) continue ;;
+			esac
+			title="systemMsg ${op}"
+			body="OBS source ${op}: ${TARGET}/systemMsg"
+			OVERLAY_NOTIFY_OBS_SHOW=0 ./overlay_notify.sh system "$title" "$body" "info" >/dev/null 2>&1 || true
+		done
+		;;
+	esac
+}
+
+notify_system_msg_overlay "$@"

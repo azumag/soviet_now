@@ -280,11 +280,16 @@ while true; do
 		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
 			soren91_start 2>/dev/null || true
 		fi
+		command -v _soren91_switch_obs_layout >/dev/null 2>&1 && _soren91_switch_obs_layout meriken 2>/dev/null || true
 		log "[PAUSE] manual_meriken_mode: ゲームプレイ一時停止 (メリケンAI手動モード)"
 		sleep 10
 		continue
 	fi
 	if _is_improve_running; then
+		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
+			soren91_start 2>/dev/null || true
+		fi
+		command -v _soren91_switch_obs_layout >/dev/null 2>&1 && _soren91_switch_obs_layout meriken 2>/dev/null || true
 		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
@@ -299,6 +304,7 @@ while true; do
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
+
 
 	# 改善完了が20時台だった場合: soren91を停止せずメリケンAIタイムに移行
 	# improve_daemon からのファイルベース通知を読み取る
@@ -375,6 +381,25 @@ f='$TMP_STATE_DIR/current_prediction.json'
 d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 		fi
+		if [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
+			[ -f "$ACCUMULATED_GAMES_FILE" ] &&
+			[ ! -f "$IMPROVE_LOCK_FILE" ] &&
+			! _is_improve_running; then
+			log "[CYCLE] 回帰ロールバック直後 → 失敗バッチで改善ロック作成"
+			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+			python3 -c "
+import json, time
+f='$IMPROVE_LOCK_FILE'
+d=json.load(open(f))
+d['started_at']=int(time.time())
+d['improve_reason']='post_regression'
+d['rollback_hash']='${REGRESSION_ROLLBACK_HASH:-}'
+json.dump(d,open(f,'w'))
+" 2>/dev/null || true
+			if [ -x ./overlay_notify.sh ]; then
+				./overlay_notify.sh worker "回帰後改善 queued" "failed batch queued reason=post_regression rollback=${REGRESSION_ROLLBACK_HASH:-unknown}" "warn" >/dev/null 2>&1 || true
+			fi
+		fi
 		_clear_accumulated_data
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
@@ -384,6 +409,14 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 	if [ -f "$ACCUMULATED_GAMES_FILE" ] && ! _is_improve_running; then
 		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
 		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
+			if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
+				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達だが rank1 hot streak 中 → 改善を延期してスコア更新継続"
+				prepare_next_game
+				next_rc=$?
+				_abort_if_interrupted "$next_rc" "prepare_next_game(hot_streak_extend)"
+				sleep 2
+				continue
+			fi
 			# デーモンの存在確認
 			_improve_daemon_alive=false
 			if [ -f "$IMPROVE_DAEMON_PID_FILE" ]; then

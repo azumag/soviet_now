@@ -32,6 +32,7 @@ PID_FILE="tmp/state/${WORKER_NAME}.pid"
 POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 
 _STOPPED=0
+_RELOAD_REQUESTED=0
 _LAST_GAME_NUM=""
 _LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
 _SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
@@ -75,13 +76,33 @@ _handle_signal() {
 	trap - EXIT
 	exit 130
 }
+_request_reload() {
+	_RELOAD_REQUESTED=1
+	_log "reload requested (signal=$1)"
+}
+_reload_runtime() {
+	[ "$_RELOAD_REQUESTED" -eq 1 ] || return 0
+	_RELOAD_REQUESTED=0
+	if [ -f .env ]; then
+		set -a
+		. ./.env
+		set +a
+	fi
+	if source ./eloop_lib.sh 2>/dev/null; then
+		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
+		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
+		_log "reload complete (interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
+	else
+		_log "WARNING: reload failed; keeping previous runtime"
+	fi
+}
 trap '_cleanup' EXIT
 trap '_handle_signal INT' INT
 trap '_handle_signal TERM' TERM
-trap '_handle_signal HUP' HUP
-trap '_handle_signal PIPE' PIPE
-trap '_handle_signal USR1' USR1
-trap '_handle_signal USR2' USR2
+trap '_request_reload HUP' HUP
+trap ':' PIPE
+trap '_request_reload USR1' USR1
+trap '_request_reload USR2' USR2
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
@@ -148,6 +169,7 @@ _run_iteration() {
 }
 
 while true; do
+	_reload_runtime
 	if [ -f tmp/stop ]; then
 		_log "tmp/stop 検出 → 終了"
 		break

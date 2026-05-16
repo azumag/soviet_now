@@ -154,7 +154,9 @@ if [ "$live_pid" -ne 0 ]; then
 	log_age=$(_file_age_sec "$IMPROVE_AI_LOG_FILE" "$now")
 	[ "$updated_age" -lt "$log_age" ] && stale_age="$updated_age" || stale_age="$log_age"
 
-	./obs_control.sh show soren console4 >/dev/null 2>&1 || true
+	./generate_improve_overlay.sh once >/dev/null 2>&1 || true
+	./obs_control.sh show soren "$IMPROVE_OVERLAY_SOURCE" >/dev/null 2>&1 || true
+	./obs_control.sh hide soren console4 >/dev/null 2>&1 || true
 	if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
 		if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
 			_monitor_log "improve running but soren91 stop is in progress; leaving process control to soren91_stop"
@@ -175,6 +177,8 @@ if [ "$live_pid" -ne 0 ]; then
 	exit 0
 fi
 
+./generate_improve_overlay.sh once >/dev/null 2>&1 || true
+./obs_control.sh hide soren "$IMPROVE_OVERLAY_SOURCE" >/dev/null 2>&1 || true
 ./obs_control.sh hide soren console4 >/dev/null 2>&1 || true
 if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 	_activate_shared_browser_tab meriken

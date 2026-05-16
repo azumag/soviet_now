@@ -17,6 +17,11 @@ SPAM か NEWS の1単語だけ答えてください。
 
 タイトル: ${title}
 本文冒頭: ${body_excerpt}"
+	local queue_token=""
+	if [ "${AI_GENERATION_QUEUE_ENABLED:-1}" = "1" ]; then
+		_ai_generation_queue_enter "NEWS:spam_check"
+		queue_token="$AI_GENERATION_QUEUE_LAST_TOKEN"
+	fi
 	verdict=$(
 		ANTHROPIC_AUTH_TOKEN="ollama" \
 		ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL:-http://192.168.11.3:11434}" \
@@ -25,6 +30,7 @@ SPAM か NEWS の1単語だけ答えてください。
 			| tr -d '[:space:]'
 	)
 	rc=$?
+	[ -n "$queue_token" ] && _ai_generation_queue_leave "$queue_token" "NEWS:spam_check"
 
 	if [ "$verdict" = "SPAM" ]; then
 		log "[NEWS:SPAM] AI判定: SPAM → ${title}"

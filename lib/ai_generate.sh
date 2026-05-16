@@ -9,8 +9,233 @@
 
 # === 統一バックエンド ===
 
+AI_GENERATION_QUEUE_LAST_TOKEN=""
+
+_ai_generation_queue_enter() {
+	local label="${1:-AI}"
+	local lock_dir="${AI_GENERATION_QUEUE_LOCK_DIR:-tmp/state/.ai_generation_lock}"
+	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
+	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
+	local waited=0 token now mt age owner_summary=""
+
+	case "$wait_sec" in
+	'' | *[!0-9]*) wait_sec=2 ;;
+	esac
+	[ "$wait_sec" -lt 1 ] && wait_sec=1
+	case "$stale_sec" in
+	'' | *[!0-9]*) stale_sec=900 ;;
+	esac
+	[ "$stale_sec" -lt 60 ] && stale_sec=60
+
+	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
+	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
+
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		now=$(date +%s)
+		mt=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
+		age=$((now - mt))
+		if [ "$age" -gt "$stale_sec" ]; then
+			log "[AIQ:${label}] stale generation lock cleared (age=${age}s)" >&2
+			rm -rf "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+		if [ "$waited" -eq 0 ] || [ $((waited % 30)) -eq 0 ]; then
+			owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')
+			log "[AIQ:${label}] queued: waiting for generation slot${owner_summary:+ (${owner_summary})}" >&2
+		fi
+		sleep "$wait_sec"
+		waited=$((waited + wait_sec))
+	done
+
+	{
+		printf 'token=%s\n' "$token"
+		printf 'pid=%s\n' "${BASHPID:-$$}"
+		printf 'label=%s\n' "$label"
+		printf 'started_at=%s\n' "$(date '+%F %T')"
+	} >"$lock_dir/owner" 2>/dev/null || true
+	AI_GENERATION_QUEUE_LAST_TOKEN="$token"
+	[ "$waited" -gt 0 ] && log "[AIQ:${label}] generation slot acquired after ${waited}s" >&2
+	return 0
+}
+
+_ai_generation_queue_leave() {
+	local token="${1:-}" label="${2:-AI}"
+	local lock_dir="${AI_GENERATION_QUEUE_LOCK_DIR:-tmp/state/.ai_generation_lock}"
+	local current_token=""
+	[ -n "$token" ] || return 0
+	[ -d "$lock_dir" ] || return 0
+	current_token=$(sed -n 's/^token=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+	if [ "$current_token" = "$token" ]; then
+		rm -rf "$lock_dir" 2>/dev/null || true
+	else
+		log "[AIQ:${label}] generation lock owner changed; skip release" >&2
+	fi
+}
+
+_ai_generation_queue_run() {
+	local label="${1:-AI}"
+	shift
+	local token rc
+	if [ "${AI_GENERATION_QUEUE_ENABLED:-1}" != "1" ]; then
+		"$@"
+		return $?
+	fi
+	case "$label" in
+	RADIO* | NEWS* | JIJI* | CELEBRATION*) ;;
+	*)
+		"$@"
+		return $?
+		;;
+	esac
+	_ai_generation_queue_enter "$label" || return 1
+	token="$AI_GENERATION_QUEUE_LAST_TOKEN"
+	"$@"
+	rc=$?
+	_ai_generation_queue_leave "$token" "$label"
+	return "$rc"
+}
+
+OPENCODE_RUN_LOCK_LAST_TOKEN=""
+
+_opencode_run_lock_dir() {
+	if [ -n "${OPENCODE_RUN_LOCK_DIR:-}" ]; then
+		printf '%s\n' "$OPENCODE_RUN_LOCK_DIR"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/.opencode_run_lock\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/.opencode_run_lock\n'
+	fi
+}
+
+_opencode_xdg_state_home() {
+	if [ -n "${OPENCODE_XDG_STATE_HOME:-}" ]; then
+		printf '%s\n' "$OPENCODE_XDG_STATE_HOME"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/xdg_state\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/xdg_state\n'
+	fi
+}
+
+_opencode_xdg_data_home() {
+	if [ -n "${OPENCODE_XDG_DATA_HOME:-}" ]; then
+		printf '%s\n' "$OPENCODE_XDG_DATA_HOME"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/xdg_data\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/xdg_data\n'
+	fi
+}
+
+_opencode_sync_auth_to_xdg() {
+	local src="${OPENCODE_AUTH_SOURCE:-$HOME/.local/share/opencode/auth.json}"
+	local dst_dir dst
+	[ -s "$src" ] || return 0
+	dst_dir="$(_opencode_xdg_data_home)/opencode"
+	dst="$dst_dir/auth.json"
+	mkdir -p "$dst_dir" 2>/dev/null || return 0
+	if [ ! -s "$dst" ] || ! cmp -s "$src" "$dst" 2>/dev/null; then
+		cp "$src" "$dst" 2>/dev/null || true
+	fi
+}
+
+_opencode_cleanup_internal_locks() {
+	local locks_dir stale_sec now lock mt age
+	locks_dir="$(_opencode_xdg_state_home)/opencode/locks"
+	stale_sec="${OPENCODE_INTERNAL_LOCK_STALE_SEC:-60}"
+	case "$stale_sec" in
+	'' | *[!0-9]*) stale_sec=60 ;;
+	esac
+	[ "$stale_sec" -lt 10 ] && stale_sec=10
+	[ -d "$locks_dir" ] || return 0
+	now=$(date +%s)
+	while IFS= read -r lock; do
+		[ -n "$lock" ] || continue
+		mt=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock" 2>/dev/null || echo "$now")
+		age=$((now - mt))
+		if [ "$age" -gt "$stale_sec" ]; then
+			rm -rf "$lock" 2>/dev/null || true
+		fi
+	done < <(find "$locks_dir" -mindepth 1 -maxdepth 1 -type d -name '*.lock' 2>/dev/null)
+}
+
+_opencode_run_lock_enter() {
+	local label="${1:-opencode}"
+	local lock_dir wait_sec stale_sec waited=0 token now mt age owner_summary="" owner_pid=""
+	if [ "${OPENCODE_RUN_LOCK_ENABLED:-1}" != "1" ]; then
+		OPENCODE_RUN_LOCK_LAST_TOKEN=""
+		return 0
+	fi
+	lock_dir=$(_opencode_run_lock_dir)
+	wait_sec="${OPENCODE_RUN_LOCK_WAIT_SEC:-2}"
+	stale_sec="${OPENCODE_RUN_LOCK_STALE_SEC:-1800}"
+	case "$wait_sec" in
+	'' | *[!0-9]*) wait_sec=2 ;;
+	esac
+	[ "$wait_sec" -lt 1 ] && wait_sec=1
+	case "$stale_sec" in
+	'' | *[!0-9]*) stale_sec=1800 ;;
+	esac
+	[ "$stale_sec" -lt 60 ] && stale_sec=60
+
+	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
+	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
+
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		now=$(date +%s)
+		mt=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
+		age=$((now - mt))
+		owner_pid=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+		owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')
+		if [[ "$owner_summary" == *ROLLBACK-POSTMORTEM* ]] && [ "$age" -gt "${ROLLBACK_POSTMORTEM_OPENCODE_LOCK_STALE_SEC:-240}" ]; then
+			log "[OPENCODE:${label}] stale rollback-postmortem run lock cleared (age=${age}s, ${owner_summary})" >&2
+			rm -rf "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+			log "[OPENCODE:${label}] stale run lock cleared (dead owner pid=${owner_pid}, age=${age}s)" >&2
+			rm -rf "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+		if [ "$age" -gt "$stale_sec" ]; then
+			log "[OPENCODE:${label}] stale run lock cleared (age=${age}s)" >&2
+			rm -rf "$lock_dir" 2>/dev/null || true
+			continue
+		fi
+		if [ "$waited" -eq 0 ] || [ $((waited % 30)) -eq 0 ]; then
+			log "[OPENCODE:${label}] queued: waiting for opencode slot${owner_summary:+ (${owner_summary})}" >&2
+		fi
+		sleep "$wait_sec"
+		waited=$((waited + wait_sec))
+	done
+
+	{
+		printf 'token=%s\n' "$token"
+		printf 'pid=%s\n' "${BASHPID:-$$}"
+		printf 'label=%s\n' "$label"
+		printf 'started_at=%s\n' "$(date '+%F %T')"
+	} >"$lock_dir/owner" 2>/dev/null || true
+	OPENCODE_RUN_LOCK_LAST_TOKEN="$token"
+	[ "$waited" -gt 0 ] && log "[OPENCODE:${label}] opencode slot acquired after ${waited}s" >&2
+	return 0
+}
+
+_opencode_run_lock_leave() {
+	local token="${1:-}" label="${2:-opencode}"
+	local lock_dir current_token=""
+	[ -n "$token" ] || return 0
+	lock_dir=$(_opencode_run_lock_dir)
+	[ -d "$lock_dir" ] || return 0
+	current_token=$(sed -n 's/^token=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+	if [ "$current_token" = "$token" ]; then
+		rm -rf "$lock_dir" 2>/dev/null || true
+	else
+		log "[OPENCODE:${label}] run lock owner changed; skip release" >&2
+	fi
+}
+
 # _ai_call_claude LABEL PROMPT_FILE [MODEL] [TIMEOUT]
-_ai_call_claude() {
+_ai_call_claude_unqueued() {
 	local label="$1" prompt_file="$2"
 	local model="${3:-$RADIO_CLAUDE_MODEL}"
 	local timeout_sec="${4:-${RADIO_CLAUDE_TIMEOUT:-120}}"
@@ -49,7 +274,7 @@ _ai_call_claude() {
 }
 
 # _ai_call_minimax LABEL PROMPT_FILE [MODEL] [TIMEOUT]
-_ai_call_minimax() {
+_ai_call_minimax_unqueued() {
 	local label="$1" prompt_file="$2"
 	local model="${3:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
 	local timeout_sec="${4:-${RADIO_CLAUDE_TIMEOUT:-120}}"
@@ -86,7 +311,7 @@ _ai_call_minimax() {
 }
 
 # _ai_call_ollama LABEL PROMPT_FILE [MODEL] [TIMEOUT]
-_ai_call_ollama() {
+_ai_call_ollama_unqueued() {
 	local label="$1" prompt_file="$2"
 	local model="${3:-${RADIO_OLLAMA_MODEL:-qwen3.5:9b}}"
 	local timeout_sec="${4:-${RADIO_OLLAMA_TIMEOUT:-180}}"
@@ -123,7 +348,7 @@ _ai_call_ollama() {
 }
 
 # _ai_call_qwencode LABEL PROMPT_FILE [TIMEOUT]
-_ai_call_qwencode() {
+_ai_call_qwencode_unqueued() {
 	local label="$1" prompt_file="$2"
 	local timeout_sec="${3:-${RADIO_QWENCODE_TIMEOUT:-120}}"
 	local output
@@ -149,19 +374,26 @@ _ai_call_qwencode() {
 
 
 # _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT] [PERMISSION]
-_ai_call_opencode() {
+_ai_call_opencode_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
 	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
-	local raw_file cleaned
+	local raw_file cleaned lock_token=""
 
 	[ -s "$prompt_file" ] || return 1
+	_opencode_run_lock_enter "${label}:opencode:${agent}" || return 1
+	lock_token="$OPENCODE_RUN_LOCK_LAST_TOKEN"
+	mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
+	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
+	_opencode_sync_auth_to_xdg
+	_opencode_cleanup_internal_locks
 	raw_file=$(mktemp /tmp/ai_opencode_raw_XXXXXXXX)
 	# opencode 1.3.x 以降は非 TTY でも動くため、旧 script(1) pty ラッパは廃止
-	OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
+	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
 		timeout "$timeout_sec" opencode run --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
+	_opencode_run_lock_leave "$lock_token" "${label}:opencode:${agent}"
 	if [ $rc -eq 124 ]; then
 		log "[${label}] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
 		rm -f "$raw_file"
@@ -192,6 +424,27 @@ _ai_call_opencode() {
 		return 1
 	fi
 	printf '%s' "$cleaned"
+}
+
+_ai_call_claude() {
+	_ai_generation_queue_run "${1:-AI}:claude" _ai_call_claude_unqueued "$@"
+}
+
+_ai_call_minimax() {
+	_ai_generation_queue_run "${1:-AI}:minimax" _ai_call_minimax_unqueued "$@"
+}
+
+_ai_call_ollama() {
+	_ai_generation_queue_run "${1:-AI}:ollama" _ai_call_ollama_unqueued "$@"
+}
+
+_ai_call_qwencode() {
+	_ai_generation_queue_run "${1:-AI}:qwencode" _ai_call_qwencode_unqueued "$@"
+}
+
+_ai_call_opencode() {
+	local label="${1:-AI}" agent="${2:-opencode}"
+	_ai_generation_queue_run "${label}:opencode:${agent}" _ai_call_opencode_unqueued "$@"
 }
 
 # === 統一ディスパッチャ ===

@@ -7,6 +7,7 @@
 #   ./coeiroink_tts.sh -o out.wav "テキスト"  # ファイル出力
 
 COEIROINK_URL="${COEIROINK_URL:-http://localhost:50033}"
+COEIROINK_DIR="${COEIROINK_DIR:-../coeiroink}"
 
 # デフォルト話者 (つくよみちゃん)
 SPEAKER_UUID="${SPEAKER_UUID:-3c37646f-3881-5374-2a83-149267990abc}"
@@ -15,7 +16,7 @@ STYLE_ID="${STYLE_ID:-0}"
 check_server() {
     if ! curl -s --max-time 2 "$COEIROINK_URL/v1/speakers" > /dev/null 2>&1; then
         echo "ERROR: COEIROINK engine is not running at $COEIROINK_URL" >&2
-        echo "Start it with: cd /Volumes/satelite/work_satelite/coeiroink && docker compose up -d" >&2
+        echo "Start it with: cd \"$COEIROINK_DIR\" && docker compose up -d" >&2
         return 1
     fi
 }

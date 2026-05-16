@@ -13,8 +13,15 @@ from typing import Any
 
 SCORE_HISTORY = Path("score_history.txt")
 RUSSIA_HISTORY = Path("tmp/history/russia_creation_history.tsv")
+GAME_HISTORY = Path("game_history")
 GAME_COUNT = Path("game_count.txt")
 DEFAULT_CHART_GAMES = 1200
+STAGE_TYPES = [
+    (11, "トルクメニスタン"),
+    (13, "ウクライナ"),
+    (14, "カザフスタン"),
+    (15, "ロシア"),
+]
 
 
 def parse_chart_limit(raw: str | None) -> int:
@@ -73,6 +80,51 @@ def parse_russia_history(path: Path) -> list[dict[str, Any]]:
         except ValueError:
             continue
     return rows
+
+
+def game_summary(path: Path) -> dict[str, Any] | None:
+    max_type = 0
+    hashes: set[str] = set()
+    try:
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                strategy_hash = row.get("strategy_hash")
+                if strategy_hash:
+                    hashes.add(str(strategy_hash))
+                pieces = row.get("state_snapshot", {}).get("pieces", [])
+                max_type = max(max_type, max((int(p.get("type", 0) or 0) for p in pieces), default=0))
+    except OSError:
+        return None
+    if max_type <= 0:
+        return None
+    return {"file": path.name, "maxType": max_type, "hashes": sorted(hashes)}
+
+
+def parse_stage_history(path: Path, limit: int = 100) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    files = sorted(path.glob("*score*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    rows: list[dict[str, Any]] = []
+    for p in files[:limit]:
+        row = game_summary(p)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def current_strategy_hash(path: Path = Path("tmp/state/current_strategy_run.json")) -> str | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    value = data.get("hash")
+    return str(value) if value else None
 
 
 def read_current_game(path: Path, fallback: int) -> int:
@@ -182,9 +234,50 @@ def russia_stats(rows: list[dict[str, Any]], current_game: int) -> dict[str, Any
     }
 
 
+def stage_gate_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(rows)
+    stages = []
+    focus = None
+    for piece_type, name in STAGE_TYPES:
+        reached = len([d for d in rows if int(d.get("maxType", 0)) >= piece_type])
+        rate = pct(reached, total)
+        item = {
+            "type": piece_type,
+            "name": name,
+            "reached": reached,
+            "total": total,
+            "rate": rate,
+        }
+        stages.append(item)
+        if focus is None and rate < 100:
+            focus = item
+    return {
+        "window": total,
+        "stages": stages,
+        "focus": focus or (stages[-1] if stages else None),
+    }
+
+
+def stage_gate_stats_for_hash(rows: list[dict[str, Any]], strategy_hash: str | None) -> dict[str, Any]:
+    if not strategy_hash:
+        stats = stage_gate_stats([])
+        stats["hash"] = None
+        return stats
+    current_rows = [
+        d
+        for d in rows
+        if d.get("hashes") == [strategy_hash]
+    ]
+    stats = stage_gate_stats(current_rows)
+    stats["hash"] = strategy_hash
+    return stats
+
+
 def build_dashboard_data(chart_games: int) -> dict[str, Any]:
     scores = parse_score_history(SCORE_HISTORY)
     russia = parse_russia_history(RUSSIA_HISTORY)
+    stage_history = parse_stage_history(GAME_HISTORY)
+    strategy_hash = current_strategy_hash()
     current_game = read_current_game(GAME_COUNT, len(scores))
     chart_scores = scores[-chart_games:] if chart_games > 0 else scores
 
@@ -193,6 +286,8 @@ def build_dashboard_data(chart_games: int) -> dict[str, Any]:
         "chartScores": chart_scores,
         "scoreStats": score_stats(scores, current_game),
         "russiaStats": russia_stats(russia, current_game),
+        "stageGateStats": stage_gate_stats(stage_history),
+        "currentStageGateStats": stage_gate_stats_for_hash(stage_history, strategy_hash),
     }
 
 

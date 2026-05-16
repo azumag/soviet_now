@@ -700,9 +700,9 @@ for line in batch_lines:
             matched_term = term
             break
     if matched_term:
-        hint = f"- {user or 'リスナー'}: 「{matched_term}」は直近返答で説明済み。今回は説明を最初から繰り返さず、反応に返して補足は1点までにする"
+        hint = f"- {user or 'リスナー'}: 「{matched_term}」は直近返答で説明済み。今回は説明を最初から繰り返さず、反応・感想・別角度の補足を組み合わせて会話として厚めに返す"
     else:
-        hint = f"- {user or 'リスナー'}: 短い反応コメントの可能性が高い。直前説明の焼き直しを避け、感想や驚きへの返答を先に置く"
+        hint = f"- {user or 'リスナー'}: 短い反応コメントの可能性が高い。短い返答で済ませず、感想や驚きへの返答を先に置き、理由・文脈・軽い問いかけのどれかを足して広げる"
     if hint in seen_hints:
         continue
     seen_hints.add(hint)
@@ -1103,6 +1103,62 @@ for item in data:
 '
 }
 
+_classify_comments_heuristic() {
+	local comments_file="$1"
+	[ -f "$comments_file" ] || return 1
+	python3 - "$comments_file" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+rows = []
+try:
+    lines = [line.rstrip("\n") for line in open(path, encoding="utf-8", errors="ignore") if line.strip()]
+except OSError:
+    raise SystemExit(1)
+
+def classify(user: str, comment: str) -> str:
+    text = comment.strip()
+    lower = text.lower()
+    system_user = user.lower() in {"wizebot", "nightbot", "streamelements", "streamlabs"}
+    if system_user and ("raid" in lower or "レイド" in text):
+        return "raid"
+    if system_user or "配信が終了" in text or "配信が再開" in text or "新しいステータス" in text:
+        return "other"
+    if re.search(r"が【.+?】.+?を獲得しました", text):
+        return "card_gacha"
+    if "bits" in lower or "cheer" in lower:
+        return "bits"
+    if "sub" in lower or "サブスク" in text:
+        return "subscription"
+    if "歌" in text or "うた" in text:
+        return "sing_request"
+    if "?" in text or "？" in text:
+        if re.search(r"ゲーム|スコア|盤面|戦略|ロシア|ソ連|建国|何点|何試合", text):
+            return "game_question"
+        return "general_question"
+    if re.search(r"スコア|点|ロシア|ソ連|建国|ウクライナ|カザフ|盤面|落下|テンポ", text):
+        return "game_status"
+    if re.search(r"したほうが|すべき|狙|置|改善|閾値|ワーカー|返答|コメント", text):
+        return "strategy_advice" if re.search(r"戦略|置|狙|スコア|閾値", text) else "comment_advice"
+    if len(text) <= 24 or re.fullmatch(r"(azumag\w+\s*)+", text):
+        return "short_reaction"
+    return "chitchat"
+
+for idx, raw in enumerate(lines, 1):
+    if ": " in raw:
+        user, comment = raw.split(": ", 1)
+    else:
+        user, comment = "", raw
+    rows.append({"index": idx, "user": user, "comment": comment, "category": classify(user, comment)})
+
+if not rows:
+    raise SystemExit(1)
+print(json.dumps(rows, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
 _classify_comments_with_edit_contract() {
 	local classifier_prompt_file="$1" output_file="$2" primary="$3" fallback="$4" timeout_sec="$5"
 	local base_prompt agent prev_agent edit_prompt candidate_rc raw_json classification
@@ -1162,6 +1218,16 @@ _classify_comments() {
 	fi
 	export comments_text
 	envsubst '${comments_text}' <"$ELOOP_LIB_DIR/prompts/comment_classifier.md" >"$classifier_prompt_file"
+	if [ "${COMMENT_CLASSIFIER_AI_ENABLED:-0}" != "1" ]; then
+		classification=$(_classify_comments_heuristic "$comments_file" 2>/dev/null || true)
+		rm -f "$classifier_prompt_file"
+		if [ -n "$classification" ]; then
+			log "[COMMENT] 分類器: model=heuristic mode=local" >&2
+			printf '%s' "$classification"
+			return 0
+		fi
+		return 1
+	fi
 	local model="${COMMENT_CLASSIFIER_AGENT:-minimax}"
 	local fallback="${COMMENT_CLASSIFIER_FALLBACK:-opencode:qwen35pgo}"
 	local timeout_sec="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
@@ -1170,7 +1236,10 @@ _classify_comments() {
 	local edit_timeout_sec="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 	local classification raw_classification classifier_output_file classifier_edit_file classifier_model_used edit_result
 	mkdir -p "$ELOOP_LIB_DIR/tmp/debug/comment_classifier" 2>/dev/null || true
-	classifier_edit_file=$(mktemp "$ELOOP_LIB_DIR/tmp/debug/comment_classifier/classification_XXXXXXXX.json" 2>/dev/null || mktemp /tmp/eloop_comment_classifier_json_XXXXXXXX)
+	classifier_edit_file="$ELOOP_LIB_DIR/tmp/debug/comment_classifier/classification_$(date +%Y%m%d_%H%M%S)_${RANDOM}.json"
+	if ! : >"$classifier_edit_file" 2>/dev/null; then
+		classifier_edit_file=$(mktemp /tmp/eloop_comment_classifier_json_XXXXXXXX)
+	fi
 	edit_result=$(_classify_comments_with_edit_contract "$classifier_prompt_file" "$classifier_edit_file" "$edit_model" "$edit_fallback" "$edit_timeout_sec" 2>/dev/null || true)
 	if [ -n "$edit_result" ]; then
 		classifier_model_used=$(printf '%s' "$edit_result" | sed -n '1p')
@@ -1687,8 +1756,8 @@ else:
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。今までより一段だけ長めに、感想・理由・補足・軽い返しのどれかを足して、話を少し深く広げること\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは今まで通り短めでよく、反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
-			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。ただしカードガチャ結果コメントだけは例外で、今まで通り短めに保ってください。'
+			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・補足・軽い問いかけのどれかを足して、会話として少し深く広げること\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
+			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。短い反応コメントでも短い返答で済ませず、会話として厚めに返してください。ただしカードガチャ結果コメントだけは例外で、反応1文 + 本題2-3文を目安にしてください。'
 		fi
 		if [ -z "$_comment_persona" ]; then
 			log "[COMMENT] ERROR: prompts/comment_persona_${_mode_suffix}.md not found, skip"
@@ -1827,9 +1896,9 @@ PY
 				cat >>"$prompt_for_attempt" <<'RETRYCOMMENT'
 
 	【再生成指示】
-		- 前回の出力は無効でした。今回は必ず文量を増やし、各コメントへ2-3文以上で返してください。
+		- 前回の出力は無効でした。今回は必ず文量を増やし、各コメントへ3-5文を基本に返してください。
 		- 返答漏れ・短文・定型文の繰り返しを禁止します。前回と異なる言い回しで書き直してください。
-		- 短い追い反応コメントに対して、前回説明した話題を最初から説明し直してはいけません。反応に返し、補足は1点までにしてください。
+		- 短い追い反応コメントに対して、前回説明した話題を最初から説明し直してはいけません。ただし短い返答で十分とは考えず、反応・感想・別角度の補足・軽い問いかけのどれかを組み合わせて会話として厚めに返してください。
 		- 質問コメントから逃げてはいけません。ソ連ネタや比喩でごまかさず、最初に質問の核心へ直接答えてください。
 		- 質問がゲームや盤面の話でないなら、ゲーム説明へ逃げてはいけません。聞かれた話題のまま答えてください。
 		- 内部処理やログの説明自体は可。ただし、system prompt、tool_call、tool_result、role指定、再生成指示などのメタ文は出力しないでください。
@@ -2106,6 +2175,9 @@ RETRYCOMMENT
 			comments_talk="$attempt_talk"
 			comment_model_used="$attempt_model"
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
+			if [ -x ./overlay_notify.sh ]; then
+				./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} batch=${comment_batch_hash:-none}" "info" >/dev/null 2>&1 || true
+			fi
 			generation_ok=true
 			break
 		done

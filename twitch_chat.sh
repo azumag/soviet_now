@@ -125,20 +125,22 @@ _sanitize_comment_line() {
 _compact_seen_ids() {
     [ -f "$SEEN_ID_FILE" ] || return 0
     local tmpf
-    tmpf=$(mktemp /tmp/twitch_seen_ids_XXXXXXXX)
+    tmpf=$(mktemp "$CHAT_DIR/.seen_ids.XXXXXXXX")
     awk 'NF && !seen[$0]++' "$SEEN_ID_FILE" | tail -n "$SEEN_ID_MAX" > "$tmpf"
-    mv "$tmpf" "$SEEN_ID_FILE"
+    cat "$tmpf" > "$SEEN_ID_FILE"
+    rm -f "$tmpf"
 }
 
 _compact_seen_line_hashes() {
     [ -f "$SEEN_LINE_HASH_FILE" ] || return 0
     local tmpf now_ts
     now_ts=$(date +%s)
-    tmpf=$(mktemp /tmp/twitch_seen_lines_XXXXXXXX)
+    tmpf=$(mktemp "$CHAT_DIR/.seen_lines.XXXXXXXX")
     awk -F'|' -v now_ts="$now_ts" -v ttl="$SEEN_LINE_TTL_SEC" '
         NF >= 2 && $1 ~ /^[0-9]+$/ && (now_ts - $1) <= ttl && !seen[$2]++ { print $1 "|" $2 }
     ' "$SEEN_LINE_HASH_FILE" | tail -n "$SEEN_LINE_MAX" > "$tmpf"
-    mv "$tmpf" "$SEEN_LINE_HASH_FILE"
+    cat "$tmpf" > "$SEEN_LINE_HASH_FILE"
+    rm -f "$tmpf"
 }
 
 _line_hash_recently_seen() {
@@ -239,10 +241,10 @@ _fetch_nolock() {
             # 最新10件に制限したうえで、msg-id重複と危険入力を除外
             local scan_tmp seen_batch_tmp seen_line_batch_tmp dedup_tmp
             local skipped_by_id=0 skipped_by_sanitize=0 skipped_by_line=0 skipped_by_recent_line=0 added_count=0
-            scan_tmp=$(mktemp /tmp/twitch_new_scan_XXXXXXXX)
-            seen_batch_tmp=$(mktemp /tmp/twitch_seen_batch_XXXXXXXX)
-            seen_line_batch_tmp=$(mktemp /tmp/twitch_seen_line_batch_XXXXXXXX)
-            dedup_tmp=$(mktemp /tmp/twitch_new_dedup_XXXXXXXX)
+            scan_tmp=$(mktemp "$CHAT_DIR/.new_scan.XXXXXXXX")
+            seen_batch_tmp=$(mktemp "$CHAT_DIR/.seen_batch.XXXXXXXX")
+            seen_line_batch_tmp=$(mktemp "$CHAT_DIR/.seen_line_batch.XXXXXXXX")
+            dedup_tmp=$(mktemp "$CHAT_DIR/.new_dedup.XXXXXXXX")
             : > "$scan_tmp"
             : > "$seen_batch_tmp"
             : > "$seen_line_batch_tmp"
@@ -336,9 +338,10 @@ _fetch_nolock() {
         # pending全体の同一行も正規化
         local before_count after_count pending_tmp
         before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
-        pending_tmp=$(mktemp /tmp/twitch_pending_dedup_XXXXXXXX)
+        pending_tmp=$(mktemp "$CHAT_DIR/.pending_dedup.XXXXXXXX")
         awk 'NF && !seen[$0]++' "$PENDING_LOG" > "$pending_tmp"
-        mv "$pending_tmp" "$PENDING_LOG"
+        cat "$pending_tmp" > "$PENDING_LOG"
+        rm -f "$pending_tmp"
         after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
         if [ "${after_count:-0}" -lt "${before_count:-0}" ]; then
             _log "fetch: pending重複を$((before_count - after_count))件除去"
@@ -388,8 +391,8 @@ _ack_batch_nolock() {
     fi
 
     local batch_tmp out_tmp before_count after_count removed_count
-    batch_tmp=$(mktemp /tmp/twitch_ack_batch_XXXXXXXX)
-    out_tmp=$(mktemp /tmp/twitch_ack_out_XXXXXXXX)
+    batch_tmp=$(mktemp "$CHAT_DIR/.ack_batch.XXXXXXXX")
+    out_tmp=$(mktemp "$CHAT_DIR/.ack_out.XXXXXXXX")
     awk 'NF && !seen[$0]++' "$batch_file" > "$batch_tmp"
     if [ ! -s "$batch_tmp" ]; then
         rm -f "$batch_tmp" "$out_tmp"
@@ -399,11 +402,11 @@ _ack_batch_nolock() {
 
     before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
     grep -vxF -f "$batch_tmp" "$PENDING_LOG" > "$out_tmp" || true
-    mv "$out_tmp" "$PENDING_LOG"
+    cat "$out_tmp" > "$PENDING_LOG"
     after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
     removed_count=$((before_count - after_count))
     _log "ack_batch: ${removed_count}件をpendingから削除"
-    rm -f "$batch_tmp"
+    rm -f "$batch_tmp" "$out_tmp"
 }
 
 _ack_batch() {

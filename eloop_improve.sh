@@ -19,6 +19,8 @@ SCORES="$2"
 SOVIET="$3"
 GAME_NUM_SNAPSHOT="$4"
 TURNS_SNAPSHOT="$5"
+IMPROVE_REASON="${6:-normal}"
+export IMPROVE_REASON
 
 # 進捗モニタリング用メタ情報
 # improve_state には、実際にバックグラウンドで管理されるトップレベル bash の PID を記録する。
@@ -64,11 +66,62 @@ _improve_progress() {
 	export RUN_CMD_IMPROVE_STARTED_AT="$IMPROVE_STARTED_AT"
 	export RUN_CMD_IMPROVE_PID_BIRTH_EPOCH="$IMPROVE_BIRTH_EPOCH"
 	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH"
+	_improve_audio_summary_maybe "$phase" "$progress" "$detail" >/dev/null 2>&1 || true
 }
 
 _improve_note() {
 	local msg="$*"
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
+}
+
+_improve_audio_summary_maybe() {
+	[ "${IMPROVE_AUDIO_SUMMARY_ENABLED:-1}" = "1" ] || return 0
+	command -v enqueue_audio_text >/dev/null 2>&1 || return 0
+	local phase="${1:-}" progress="${2:-0}" detail="${3:-}" now last_ts last_phase due state_file interval text
+	state_file="${IMPROVE_AUDIO_SUMMARY_STATE_FILE:-tmp/state/improve_audio_summary_last.json}"
+	interval="${IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC:-300}"
+	now=$(date +%s)
+	read -r last_ts last_phase <<EOF
+$(python3 - "$state_file" <<'PY' 2>/dev/null
+import json
+import sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    data = {}
+print(int(data.get("ts", 0) or 0), str(data.get("phase", "") or ""))
+PY
+)
+EOF
+	case "${last_ts:-}" in
+	'' | *[!0-9]*) last_ts=0 ;;
+	esac
+	due=0
+	if [ "$last_ts" -le 0 ] || [ $((now - last_ts)) -ge "$interval" ]; then
+		due=1
+	fi
+	case "$phase" in
+	summary_done|ai_prepare|review|apply|git_commit|radio|done)
+		[ "$phase" != "$last_phase" ] && due=1
+		;;
+	esac
+	[ "$due" -eq 1 ] || return 0
+	mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+	python3 - "$state_file" "$now" "$phase" "$progress" "$detail" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+path, now, phase, progress, detail = sys.argv[1:6]
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump({"ts": int(now), "phase": phase, "progress": progress, "detail": detail}, f, ensure_ascii=False)
+os.replace(tmp, path)
+PY
+	text="戦略改善の進捗です。フェーズは ${phase:-unknown}、進捗 ${progress:-0} パーセント。${detail:-処理中です}。中華AIはソ連建国に向けて、直近ゲームの失敗パターンを読み、改善案を検証しています。"
+	enqueue_audio_text "$text" "improve_progress" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "改善進捗" "phase=${phase:-unknown} progress=${progress:-0}% detail=${detail:-}" "info" >/dev/null 2>&1 || true
+	fi
 }
 
 _strategy_change_is_string_only() {
@@ -167,30 +220,69 @@ def truthy(value):
     if value is True:
         return True
     if isinstance(value, str):
-        return value.strip().lower() in {"true", "yes", "pass", "satisfied", "ok"}
+        return value.strip().lower() in {"true", "yes", "pass", "satisfied", "ok", "1"}
+    if value == 1:
+        return True
     return False
 
+def _lenient_json(block):
+    block = block.strip()
+    # strip JS-style comments and trailing commas that LLMs often emit
+    block = re.sub(r"//[^\n]*", "", block)
+    block = re.sub(r"/\*.*?\*/", "", block, flags=re.S)
+    block = re.sub(r",(\s*[}\]])", r"\1", block)
+    try:
+        return json.loads(block)
+    except Exception:
+        return None
+
 def extract_json_verdict():
-    for match in re.finditer(r"```(?:review_verdict|json)\s*\n(.*?)\n```", text, re.S):
-        block = match.group(1).strip()
+    # 1. fenced review_verdict / json blocks (lenient parse)
+    for match in re.finditer(r"```(?:review_verdict|json)?\s*\n(.*?)\n```", text, re.S):
+        block = match.group(1)
         if not any(k in block for k in ("verdict", "status", "user_review_satisfied")):
             continue
-        try:
-            data = json.loads(block)
-        except Exception:
-            continue
+        data = _lenient_json(block)
         if isinstance(data, dict):
+            return data
+    # 2. bare JSON object anywhere containing a verdict/status key
+    for match in re.finditer(r"\{[^{}]*(?:verdict|status)[^{}]*\}", text, re.S | re.I):
+        data = _lenient_json(match.group(0))
+        if isinstance(data, dict) and any(k in data for k in ("verdict", "status")):
             return data
     return None
 
+def plaintext_status():
+    # accept loosely-formatted verdict lines: VERDICT: PASS / **VERDICT** PASS /
+    # 判定: PASS / 結論: FAIL etc., with optional markdown/heading decoration
+    m = re.search(
+        r"(?:verdict|判定|結論|結果|review[_ ]?result)\W{0,4}(PASS|FAIL|REJECT|APPROVE[D]?)",
+        text, re.I)
+    if m:
+        tok = m.group(1).upper()
+        if tok in ("PASS", "APPROVE", "APPROVED"):
+            return "PASS"
+        return "FAIL"
+    return ""
+
 data = extract_json_verdict()
 if not data:
-    if not user_review_present and re.search(r"^##\s*VERDICT:\s*PASS\b", text, re.I | re.M):
+    pt = plaintext_status()
+    if pt == "PASS":
+        # plaintext PASS still must not contradict an explicit user_review failure
+        if user_review_present and re.search(r"user[_ ]?review[_ ]?satisfied\W{0,4}(false|no|0)\b", text, re.I):
+            print("plaintext verdict PASS but user_review_satisfied is false")
+            raise SystemExit(1)
         raise SystemExit(0)
-    print("review verdict JSON block missing; write ```review_verdict with PASS/FAIL and user_review_satisfied")
+    if pt == "FAIL":
+        print("review verdict is FAIL (plaintext)")
+        raise SystemExit(1)
+    print("review verdict missing; emit a review_verdict JSON block or a 'VERDICT: PASS/FAIL' line")
     raise SystemExit(1)
 
 status = str(data.get("verdict", data.get("status", ""))).strip().upper()
+if status in ("APPROVE", "APPROVED"):
+    status = "PASS"
 if status != "PASS":
     print(f"review verdict is not PASS: {status or 'missing'}")
     raise SystemExit(1)
@@ -243,6 +335,95 @@ NUM_GAMES=${#GAME_NUMS_LIST[@]}
 
 # --- Phase C: 分析 & 戦略改善 ---
 _improve_progress "summary" "5" "building_batch_summary"
+
+# F: wildcard モードの場合は AI を介さずパラメータ摂動で staging を作る
+if [ "${IMPROVE_REASON:-normal}" = "wildcard" ]; then
+	log "[WILDCARD] AI 改善をスキップして wildcard_perturb を実行"
+	_improve_progress "wildcard" "20" "perturbing_constants"
+	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
+	wildcard_count=$((WILDCARD_PARAM_COUNT_MIN + RANDOM % (WILDCARD_PARAM_COUNT_MAX - WILDCARD_PARAM_COUNT_MIN + 1)))
+	[ "$wildcard_count" -lt 1 ] && wildcard_count=1
+	wildcard_seed=$(date +%s)
+	wildcard_result=$(python3 wildcard_perturb.py \
+		--input "$STRATEGY_FILE" \
+		--output "strategy.py.staging" \
+		--count "$wildcard_count" \
+		--ratio-min "${WILDCARD_PERTURB_RATIO_MIN:-0.20}" \
+		--ratio-max "${WILDCARD_PERTURB_RATIO_MAX:-0.40}" \
+		--seed "$wildcard_seed" 2>&1)
+	wildcard_rc=$?
+	if [ "$wildcard_rc" -ne 0 ]; then
+		log "[WILDCARD] FAILED rc=$wildcard_rc: $wildcard_result"
+		_improve_progress "wildcard_fail" "100" "perturb_failed"
+		exit 1
+	fi
+	log "[WILDCARD] perturbation produced: $(echo "$wildcard_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(', '.join(f\"L{a['lineno']} {a['old']}→{a['new']}\" for a in d['applied']))" 2>/dev/null)"
+	# バリデーション (sandbox なしで実行)
+	if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
+		log "[WILDCARD] validation failed → revert"
+		rm -f "strategy.py.staging"
+		_improve_progress "wildcard_validate_fail" "100" "invalid_perturbation"
+		exit 1
+	fi
+	# 摂動結果を適用
+	cp "strategy.py.staging" "$STRATEGY_FILE"
+	rm -f "strategy.py.staging"
+	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	# wildcard 起源 hash を登録 (regression.sh の patience override 用)
+	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
+		python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, h, max_games, game_num = sys.argv[1:5]
+data = {}
+if os.path.exists(path):
+    try:
+        data = json.load(open(path, encoding="utf-8")) or {}
+    except Exception:
+        data = {}
+data[h] = {
+    "created_at_game": int(game_num),
+    "patience_override": 1,
+    "max_games_override": int(max_games),
+    "created_at_epoch": int(time.time()),
+}
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, path)
+PY
+		log "[WILDCARD] origin registered: $HASH_AFTER (max_games=${WILDCARD_PATIENCE_GAMES:-12})"
+	fi
+	# change_log に記録
+	{
+		echo
+		echo "## wildcard perturbation @ game #${GAME_NUM_SNAPSHOT}"
+		echo "$wildcard_result" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(f'- L{a[\"lineno\"]}: {a[\"context\"]} {a[\"old\"]} → {a[\"new\"]} (ratio={a[\"ratio\"]})') for a in d['applied']]" 2>/dev/null
+	} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+	# stagnation カウンタをリセット (wildcard を撃ったら次のサイクルは normal に戻る)
+	if [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
+		python3 -c "
+import json,os
+p = '${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}'
+try:
+    d = json.load(open(p, encoding='utf-8'))
+    d['consecutive_no_improve'] = 0
+    d['last_event'] = 'WILDCARD_FIRED'
+    json.dump(d, open(p, 'w', encoding='utf-8'), ensure_ascii=False)
+except Exception:
+    pass
+" 2>/dev/null || true
+	fi
+	# git commit
+	_improve_progress "git_commit" "90" "wildcard_commit"
+	git add strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
+	git commit -m "eloop Improve [wildcard] perturbation after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+	git push 2>/dev/null || true
+	_improve_progress "done" "100" "wildcard_complete"
+	log "[WILDCARD] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
+	exit 0
+fi
 
 # バッチサマリー生成
 batch_summary_file="tmp/batch_summary.txt"
@@ -406,6 +587,72 @@ def summarize_deadline(path: str):
         "avg_reactive": avg_reactive,
     }
 
+def summarize_nation_progress(paths):
+    games = []
+    for path in paths:
+        rows = read_jsonl(path)
+        if not rows:
+            continue
+        max_type = 0
+        first_russia_turn = None
+        first_soviet_turn = None
+        final_types = []
+        final_row = rows[-1] if rows else {}
+        if isinstance(final_row.get("final_types"), list):
+            for raw in final_row.get("final_types") or []:
+                try:
+                    final_types.append(int(raw))
+                except Exception:
+                    pass
+        for row in rows:
+            pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+            for piece in pieces:
+                try:
+                    t = int(piece.get("type", 0) or 0)
+                except Exception:
+                    continue
+                if t > max_type:
+                    max_type = t
+                if t >= 15 and first_russia_turn is None:
+                    first_russia_turn = row.get("turn", "?")
+                if t >= 16 and first_soviet_turn is None:
+                    first_soviet_turn = row.get("turn", "?")
+            if row.get("russia_created") and first_russia_turn is None:
+                first_russia_turn = row.get("turn", "?")
+            if row.get("soviet_created") and first_soviet_turn is None:
+                first_soviet_turn = row.get("turn", "?")
+        if not final_types:
+            for piece in ((final_row.get("state_snapshot") or {}).get("pieces") or []):
+                try:
+                    final_types.append(int(piece.get("type", 0) or 0))
+                except Exception:
+                    pass
+        type_counts = {}
+        for t in final_types:
+            if t >= 10:
+                type_counts[t] = type_counts.get(t, 0) + 1
+        high_type_counts = " ".join(f"T{t}x{type_counts[t]}" for t in sorted(type_counts, reverse=True)) or "none"
+        games.append({
+            "file": basename(path),
+            "score": rows[-1].get("score", "?"),
+            "turns": len(rows),
+            "max_type": max_type,
+            "high_type_counts": high_type_counts,
+            "russia": first_russia_turn is not None,
+            "soviet": first_soviet_turn is not None,
+            "russia_turn": first_russia_turn,
+            "soviet_turn": first_soviet_turn,
+        })
+    russia_count = sum(1 for g in games if g["russia"])
+    soviet_count = sum(1 for g in games if g["soviet"])
+    max_type = max((g["max_type"] for g in games), default=0)
+    return {
+        "games": games,
+        "russia_count": russia_count,
+        "soviet_count": soviet_count,
+        "max_type": max_type,
+    }
+
 def history_screenshot_paths(path: str):
     if not path:
         return []
@@ -444,6 +691,7 @@ change_log = read_text(change_log_file)
 rollback_analysis = read_text("tmp/state/last_rollback_analysis.md")
 rollback_postmortem = read_text("tmp/state/last_rollback_postmortem.md")
 history_paths = [p for p in history_files_raw.split() if p]
+nation_progress = summarize_nation_progress(history_paths)
 
 top_reasons = re.findall(r"^\s{2}([A-Z0-9_]+): .*avg_score_delta=([0-9.\-]+)", batch, re.M)
 high_low = re.search(r"高スコア群の reason 上位5:\n((?:\s+.+\n){1,8})\s+低スコア群の reason 上位5:\n((?:\s+.+\n){1,8})", batch)
@@ -502,7 +750,9 @@ summary_lines = []
 summary_lines.append("# Improve Brief")
 summary_lines.append("")
 summary_lines.append("## Goal")
+summary_lines.append("最終目標は type16 のソ連建国。スコア改善は副指標であり、type15 ロシア到達と type16 ソ連到達を減らす変更は失敗として扱う。")
 summary_lines.append("今回の改善では、単発最高点よりも直近12試合の中央値・下振れ耐性を優先する。")
+summary_lines.append("ただし高スコアでもロシア/ソ連に近づいていない場合は、評価スコアだけに合わせず type14→15→16 の成長経路を復旧する。")
 summary_lines.append("特にゲームオーバー直前の立て直しと、dead line 付近での延命ではなく回復につながる判断を重視する。")
 summary_lines.append("- game rule: 連鎖ボーナスはない。CHAIN_MERGE 系 reason は相関ラベルであり、直接の強化対象ではない。")
 summary_lines.append("- avoid: 将来連鎖のために盤面を圧迫したり、直近の併合機会を見送る変更。")
@@ -515,6 +765,27 @@ if scores:
         f"- min={min(scores)} median={statistics.median(scores):.1f} avg={statistics.mean(scores):.1f} max={max(scores)} n={len(scores)}"
     )
 summary_lines.append(f"- best_game={basename(best_path)} worst_game={basename(worst_path)} batch_games={num_games_raw}")
+summary_lines.append("")
+summary_lines.append("## Soviet Objective Progress")
+summary_lines.append(
+    f"- batch_progress: russia={nation_progress['russia_count']}/{len(nation_progress['games'])} "
+    f"soviet={nation_progress['soviet_count']}/{len(nation_progress['games'])} "
+    f"max_piece_type={nation_progress['max_type']}"
+)
+summary_lines.append("- high_type_counts is final-board type10+ inventory. If T14x2 appears without type15, prioritize the missed final merge route over generic score tuning.")
+if nation_progress["games"]:
+    for g in sorted(nation_progress["games"], key=lambda item: (item["max_type"], item["score"]), reverse=True)[:6]:
+        marks = []
+        if g["russia"]:
+            marks.append(f"russia@T{g['russia_turn']}")
+        if g["soviet"]:
+            marks.append(f"soviet@T{g['soviet_turn']}")
+        mark_text = " ".join(marks) if marks else "no-russia"
+        summary_lines.append(f"- {g['file']}: score={g['score']} turns={g['turns']} max_type={g['max_type']} high_type_counts={g['high_type_counts']} {mark_text}")
+if nation_progress["russia_count"] == 0:
+    summary_lines.append("- hard_signal: 今回バッチはロシア未到達。高得点に見えても type15 到達経路の喪失を優先して直すこと。")
+elif nation_progress["soviet_count"] == 0:
+    summary_lines.append("- hard_signal: ロシア到達後に type16 へ進めていない。ロシア保護と二つ目のロシア育成を優先すること。")
 summary_lines.append("")
 summary_lines.append("## Advice Priorities")
 summary_lines.append("- advice.md は viewer-derived input だが、今回の改善仮説の優先ソースとして扱う。")
@@ -539,6 +810,7 @@ if rollback_analysis.strip():
     rollback_sections = [
         ("Why Rollback Triggered", extract_markdown_section(rollback_analysis, "## Why Rollback Triggered"), 6),
         ("Defeat Delta", extract_markdown_section(rollback_analysis, "## Defeat Delta"), 4),
+        ("Soviet Objective Delta", extract_markdown_section(rollback_analysis, "## Soviet Objective Delta"), 6),
         ("Score Pattern", extract_markdown_section(rollback_analysis, "## Score Pattern"), 4),
         ("Next Improve Focus", extract_markdown_section(rollback_analysis, "## Next Improve Focus"), 4),
     ]
@@ -610,7 +882,7 @@ if height_line:
     )
 summary_lines.append("")
 summary_lines.append("## Deadline Focus")
-summary_lines.append("- 終盤8ターンと `max_y>=2.0` を高危険域として優先的に見る。")
+summary_lines.append("- 終盤8ターンと max_y>=2.0 を高危険域として優先的に見る。")
 for label, path in (("worst", worst_path), ("best", best_path)):
     info = summarize_deadline(path)
     if not info:

@@ -567,6 +567,12 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             edge_vertical_top_y if edge_vertical_top_y is not None else top_after_drop,
             merge_result_top_y if merge_result_top_y is not None else top_after_drop,
         )
+        # NOTE: 以前ここで max(ly, ly_poly)+next_top_r による「保守化」を試したが、
+        # 実盤面でほぼ全候補を crosses_deadline=True に過剰フラグ化し、
+        # decide() のガードが全候補を skip → L2189 フォールバックが約25%の
+        # ターンで強制発火 (DEADLINE_FALLBACK) → 早期ゲームオーバー (score 77〜827)
+        # を招いたため revert。crosses_deadline は元の risk_top_after_drop を使用。
+        deadline_risk_top = risk_top_after_drop
         danger_direct_merge_available = any(
             m["grade"] == "DIRECT"
             and (
@@ -637,8 +643,8 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                         and merge_result_top_y >= DEADLINE_Y
                     ),
                     "deadline_y": DEADLINE_Y,
-                    "deadline_margin": round(DEADLINE_Y - risk_top_after_drop, 3),
-                    "crosses_deadline": risk_top_after_drop >= DEADLINE_Y,
+                    "deadline_margin": round(DEADLINE_Y - deadline_risk_top, 3),
+                    "crosses_deadline": deadline_risk_top >= DEADLINE_Y,
                 "drift_x": drift_x,
                 "drift_unc": drift_unc,
                 "merges": merges,

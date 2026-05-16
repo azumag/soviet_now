@@ -9,6 +9,7 @@ cd "$ELOOP_LIB_DIR"
 
 # Layer 0: 定数・初期化
 source "$ELOOP_LIB_DIR/core/config.sh"
+source "$ELOOP_LIB_DIR/core/runtime_toggles.sh"
 source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
 # Layer 1: コアヘルパー
 source "$ELOOP_LIB_DIR/core/helpers.sh"
@@ -37,5 +38,6 @@ source "$ELOOP_LIB_DIR/broadcast/comment_lib.sh"
 source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
 # Layer 4: インフラ
 source "$ELOOP_LIB_DIR/infra/cleanup.sh"
+[ -f "$ELOOP_LIB_DIR/lib/bridge_recovery.sh" ] && source "$ELOOP_LIB_DIR/lib/bridge_recovery.sh"
 # Layer 5: soren91 integration (optional)
 [ -f "$ELOOP_LIB_DIR/soren91_control.sh" ] && source "$ELOOP_LIB_DIR/soren91_control.sh"

@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-16 22:27:07 JST`
+- Updated: `2026-05-16 23:09:49 JST`
 - Nodes: `1538`
-- Edges: `1986`
-- Current: `3a90bd2a643d`
-- Anchor: `3a90bd2a643d`
+- Edges: `1987`
+- Current: `1aa464cc23d4`
+- Anchor: `1aa464cc23d4`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_3a90bd2a643d["3a90bd2a643d<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11836.5"]
+    h_1aa464cc23d4["1aa464cc23d4<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11622.8"]
     h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
@@ -83,7 +83,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_3a90bd2a643d current_anchor;
+    class h_1aa464cc23d4 current_anchor;
     class h_273866b19f99 plain;
     class h_e75542ef3a84 plain;
     class h_78c5c9b64fef plain;
@@ -3584,7 +3584,7 @@ flowchart TD
 - Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
 - Cross-chunk link: `23f6298575f2 -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 23c0ac0a5fa6`
-- Cross-chunk link: `... and 36 more`
+- Cross-chunk link: `... and 37 more`
 
 ```mermaid
 flowchart TD
@@ -3637,7 +3637,7 @@ flowchart TD
     h_bcf2f7a414bd["bcf2f7a414bd"]
     h_8c14e0d519c9["8c14e0d519c9<br/>g=25 n=20<br/>comp=10668.0"]
     h_064563030cb5["064563030cb5<br/>g=12 n=12<br/>comp=10769.5"]
-    h_1aa464cc23d4["1aa464cc23d4<br/>g=24 n=20<br/>comp=11622.8"]
+    h_1aa464cc23d4["1aa464cc23d4<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11622.8"]
     h_e2f50a930b72["e2f50a930b72<br/>g=12 n=12<br/>comp=9866.7"]
     h_924a1f4024e2["924a1f4024e2<br/>g=12 n=12<br/>comp=10006.8"]
     h_56f7bdea4658["56f7bdea4658<br/>g=22 n=20<br/>comp=10772.6"]
@@ -3817,7 +3817,7 @@ flowchart TD
     class h_bcf2f7a414bd plain;
     class h_8c14e0d519c9 plain;
     class h_064563030cb5 plain;
-    class h_1aa464cc23d4 plain;
+    class h_1aa464cc23d4 current_anchor;
     class h_e2f50a930b72 plain;
     class h_924a1f4024e2 plain;
     class h_56f7bdea4658 plain;
@@ -4961,7 +4961,7 @@ flowchart TD
 - Cross-chunk link: `7f746ab4e7eb -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> fc36b52375f9`
 - Cross-chunk link: `764a1379cadb -.rollback.-> 59e33348da74`
-- Cross-chunk link: `... and 8 more`
+- Cross-chunk link: `... and 9 more`
 
 ```mermaid
 flowchart TD
@@ -5043,7 +5043,7 @@ flowchart TD
     h_40e67ef7fc96["40e67ef7fc96<br/>g=12 n=12<br/>comp=10685.0"]
     h_a6298d726b3d["a6298d726b3d<br/>g=12 n=12<br/>comp=10942.8"]
     h_33f9bc76c42f["33f9bc76c42f<br/>g=12 n=12<br/>comp=10432.6"]
-    h_3a90bd2a643d["3a90bd2a643d<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11836.5"]
+    h_3a90bd2a643d["3a90bd2a643d<br/>g=23 n=20<br/>comp=10274.4"]
     h_665a70d477e6["665a70d477e6<br/>g=12 n=12<br/>comp=10761.5"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
@@ -5221,7 +5221,7 @@ flowchart TD
     class h_40e67ef7fc96 plain;
     class h_a6298d726b3d plain;
     class h_33f9bc76c42f plain;
-    class h_3a90bd2a643d current_anchor;
+    class h_3a90bd2a643d plain;
     class h_665a70d477e6 plain;
 ```
 
@@ -5465,6 +5465,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#25439 `3a90bd2a -> 1aa464cc`
+
+- - rollback from 3a90bd2a643d to 1aa464cc23d4 at game 25439
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=10274.4/11168.5/8578.5 vs target 11622.8/12237.5/10273.5
+- - bad recent scores: 12915 7342 10467 7596 13851 11844 5669 9933
+- - soviet objective: current best_type=15 russia=0 soviet=0
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=10274.4 p50=11168.5 p25=8578.5 mean=11362.4 n=20
+- rollback_target: comp=11622.8 p50=12237.5 p25=10273.5 mean=13466.5 n=20
+- metric_gap_vs_target: comp=-1348.4 p50=-1069.0 p25=-1695.0 mean=-2104.1
+- recent12_avg: bad=10496.6 target=13881.9
+- recent12_floor: bad=5669 target=6830
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
 
 ### Rollback Game#25428 `665a70d4 -> 3a90bd2a`
 

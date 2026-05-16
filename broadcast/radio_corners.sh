@@ -1651,7 +1651,7 @@ _filter_unread_jiji_blocks() {
 	rm -f "$jiji_tmp"
 }
 
-_run_opencode_jiji_research() {
+_run_opencode_jiji_research_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file permission cleaned
 	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
@@ -1689,6 +1689,11 @@ _run_opencode_jiji_research() {
 		return 1
 	fi
 	printf '%s' "$cleaned"
+}
+
+_run_opencode_jiji_research() {
+	local agent="$1"
+	_ai_generation_queue_run "JIJI:research:${agent}" _run_opencode_jiji_research_unqueued "$@"
 }
 
 start_radio_corner_jiji() {

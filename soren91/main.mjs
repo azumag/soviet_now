@@ -66,6 +66,7 @@ const CALIBRATION_MIN_PIECES = 3;
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
+const DEFAULT_CHROME_AUDIO_OUTPUT_LABEL = 'BlackHole 2ch';
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_MODE_FLAG_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
@@ -187,8 +188,12 @@ async function cleanupRuntime(reason = 'normal') {
             }
           }
         } catch {}
-        await browser.close();
-        console.log(`[main] Shared browser CDP disconnected (${reason}).`);
+        // soren91 is a GUEST on soviet_local's shared Chrome (connected via
+        // connectOverCDP). browser.close() on a CDP-connected browser closes
+        // the whole Chrome — which kills soviet_local's page, leaving the local
+        // game muted (its resume page.evaluate throws) and the bridge wedged.
+        // Do NOT close the shared browser; just drop our CDP connection.
+        console.log(`[main] Shared browser left running for owner (${reason}); soren91 detached.`);
       } else {
         await browser.close();
         console.log(`[main] Browser closed (${reason}).`);
@@ -289,6 +294,129 @@ function loadAudioGainMultiplier() {
 
   console.log(`[config] Ignoring invalid SOREN91_AUDIO_GAIN_MULTIPLIER=${raw}`);
   return DEFAULT_AUDIO_GAIN_MULTIPLIER;
+}
+
+function loadChromeAudioOutputLabel() {
+  return process.env.SOREN_CHROME_AUDIO_OUTPUT_LABEL || DEFAULT_CHROME_AUDIO_OUTPUT_LABEL;
+}
+
+async function grantSpeakerSelection(page, gameUrl) {
+  try {
+    const origin = new URL(gameUrl).origin;
+    const cdpSession = await page.context().newCDPSession(page);
+    await cdpSession.send('Browser.grantPermissions', {
+      origin,
+      permissions: ['speakerSelection', 'audioCapture'],
+    });
+    console.log(`[main] Granted speakerSelection for ${origin}`);
+  } catch (err) {
+    console.log(`[main] Failed to grant speakerSelection: ${err.message}`);
+  }
+}
+
+async function installAudioOutputRouter(page, audioOutputLabel) {
+  if (!audioOutputLabel) return;
+
+  await page.addInitScript((label) => {
+    globalThis.__soren91AudioOutputLabel = label;
+    globalThis.__soren91AudioOutputDeviceId = '';
+    globalThis.__soren91AudioOutputError = '';
+    globalThis.__soren91AudioContexts = [];
+
+    globalThis.__soren91RouteAudioOutput = async (nextLabel = globalThis.__soren91AudioOutputLabel) => {
+      if (!nextLabel || !navigator.mediaDevices?.enumerateDevices) return false;
+      const AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
+      if (!AudioContextCtor?.prototype?.setSinkId) {
+        globalThis.__soren91AudioOutputError = 'AudioContext.setSinkId is unavailable';
+        return false;
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const target = devices.find(device =>
+        device.kind === 'audiooutput' &&
+        device.label &&
+        device.label.toLowerCase().includes(String(nextLabel).toLowerCase())
+      );
+      if (!target) {
+        globalThis.__soren91AudioOutputError = `audio output not found: ${nextLabel}`;
+        return false;
+      }
+
+      globalThis.__soren91AudioOutputDeviceId = target.deviceId;
+      const currentContexts = globalThis.__soren91AudioContexts || [];
+      const alreadyRouted = currentContexts.length > 0 && currentContexts.every(ctx =>
+        !ctx || typeof ctx.sinkId === 'undefined' || ctx.sinkId === target.deviceId
+      );
+      const allRunning = currentContexts.every(ctx => !ctx || ctx.state === 'running');
+      if (alreadyRouted && allRunning) return true;
+      for (const ctx of globalThis.__soren91AudioContexts || []) {
+        if (typeof ctx.setSinkId !== 'function') continue;
+        try {
+          if (ctx.state === 'suspended' && ctx.sinkId) {
+            await ctx.setSinkId('');
+            try { ctx.resume().catch(() => {}); } catch (_) {}
+            await new Promise(r => setTimeout(r, 250));
+          }
+          await ctx.setSinkId(target.deviceId);
+          if (ctx.state === 'suspended') {
+            try { ctx.resume().catch(() => {}); } catch (_) {}
+          }
+        } catch (err) {
+          globalThis.__soren91AudioOutputError = err && err.message ? err.message : String(err);
+          return false;
+        }
+      }
+      globalThis.__soren91AudioOutputError = '';
+      return true;
+    };
+
+    const OriginalAudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (OriginalAudioContext && !globalThis.__soren91AudioOutputPatched) {
+      const WrappedAudioContext = function(...args) {
+        const ctx = new OriginalAudioContext(...args);
+        globalThis.__soren91AudioContexts.push(ctx);
+        globalThis.__soren91RouteAudioOutput().catch(err => {
+          globalThis.__soren91AudioOutputError = err && err.message ? err.message : String(err);
+        });
+        return ctx;
+      };
+      WrappedAudioContext.prototype = OriginalAudioContext.prototype;
+      globalThis.AudioContext = WrappedAudioContext;
+      if (globalThis.webkitAudioContext) globalThis.webkitAudioContext = WrappedAudioContext;
+      Object.defineProperty(globalThis, '__soren91AudioOutputPatched', {
+        value: true,
+        configurable: true,
+      });
+    }
+
+    if (!globalThis.__soren91AudioOutputWatchdogInstalled) {
+      globalThis.__soren91AudioOutputWatchdogInstalled = true;
+      setInterval(() => {
+        globalThis.__soren91RouteAudioOutput?.().catch(err => {
+          globalThis.__soren91AudioOutputError = err && err.message ? err.message : String(err);
+        });
+      }, 5000);
+    }
+  }, audioOutputLabel);
+}
+
+async function reportAudioOutputRoute(page, audioOutputLabel) {
+  if (!audioOutputLabel) return;
+  try {
+    const audioRoute = await page.evaluate(async (label) => {
+      const routed = await globalThis.__soren91RouteAudioOutput?.(label);
+      return {
+        routed: Boolean(routed),
+        label,
+        deviceId: globalThis.__soren91AudioOutputDeviceId || '',
+        error: globalThis.__soren91AudioOutputError || '',
+        contexts: Array.isArray(globalThis.__soren91AudioContexts) ? globalThis.__soren91AudioContexts.length : 0,
+      };
+    }, audioOutputLabel);
+    console.log('[main] Chrome audio route:', JSON.stringify(audioRoute));
+  } catch (err) {
+    console.log(`[main] Failed to route Chrome audio: ${err.message}`);
+  }
 }
 
 async function installAudioGainLimiter(page, multiplier) {
@@ -499,7 +627,7 @@ async function openSharedBrowserTab(context, anchorPage = null) {
   return await context.newPage();
 }
 
-async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, ownsContext, audioGainMultiplier, anchorPage = null }) {
+async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, ownsContext, audioGainMultiplier, audioOutputLabel, anchorPage = null }) {
   try {
     await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     return page;
@@ -524,6 +652,8 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
       await retryPage.setViewportSize({ width: 1280, height: 720 });
     } catch {}
     await installAudioGainLimiter(retryPage, audioGainMultiplier);
+    await grantSpeakerSelection(retryPage, gameUrl);
+    await installAudioOutputRouter(retryPage, audioOutputLabel);
     await retryPage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
         const response = await route.fetch();
@@ -547,7 +677,9 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
 async function main() {
   console.log('[main] 同志AI 起動...');
   const audioGainMultiplier = loadAudioGainMultiplier();
+  const audioOutputLabel = loadChromeAudioOutputLabel();
   console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
+  console.log(`[main] soren91 Chrome audio output label=${audioOutputLabel}`);
   try {
     writeFileSync(SOREN91_MAIN_PID_FILE, String(process.pid));
   } catch (err) {
@@ -563,8 +695,8 @@ async function main() {
     console.log(`[main] Failed to set soren91 mode flag: ${err.message}`);
   }
 
-  // Step 1: headless でトップページを開き、ゲームURLを取得
-  console.log('[main] Fetching game URL (headless)...');
+  // Step 1: トップページHTMLからゲームURLを取得
+  console.log('[main] Fetching game URL...');
   const gameUrl = await fetchGameUrl();
   console.log('[main] Game URL:', gameUrl);
 
@@ -610,6 +742,11 @@ async function main() {
 
   let gamePage = null;
   try {
+    if (isSharedMode && !ownsContext) {
+      console.log('[main] Closing stale soren91 shared tabs before launch...');
+      await closeSharedSoren91Pages(browser);
+    }
+
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
     const anchorPage = (isSharedMode && !ownsContext)
       ? chooseSharedBrowserAnchorPage(context)
@@ -624,6 +761,8 @@ async function main() {
     }
     activeGamePage = gamePage;
     await installAudioGainLimiter(gamePage, audioGainMultiplier);
+    await grantSpeakerSelection(gamePage, gameUrl);
+    await installAudioOutputRouter(gamePage, audioOutputLabel);
     await gamePage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
         const response = await route.fetch();
@@ -645,6 +784,7 @@ async function main() {
       isSharedMode,
       ownsContext,
       audioGainMultiplier,
+      audioOutputLabel,
       anchorPage,
     });
     if (isSharedMode) {
@@ -655,9 +795,10 @@ async function main() {
     console.log('[main] Waiting for Unity canvas...');
     await gamePage.waitForSelector('canvas', { timeout: 60000 });
     console.log('[main] Canvas found, waiting for Unity to fully load...');
+    await reportAudioOutputRoute(gamePage, audioOutputLabel);
     // Unityロード完了をポーリングで待つ (ローディングバーが非表示になるまで)
     for (let i = 0; i < 60; i++) {
-      await gamePage.waitForTimeout(1000);
+      await sleep(1000);
       const loaded = await gamePage.evaluate(() => {
         const bar = document.getElementById('unity-loading-bar');
         return !bar || bar.style.display === 'none';
@@ -667,7 +808,7 @@ async function main() {
         break;
       }
     }
-    await gamePage.waitForTimeout(3000); // 追加バッファ
+    await sleep(3000); // 追加バッファ
 
     // タイトル画面: 名前入力 + PLAY
     await handleTitleScreen(gamePage);
@@ -721,7 +862,7 @@ async function handleTitleScreen(page) {
   const nameFieldY = box.y + 560;
 
   console.log(`[main] Clicking name field at (${nameFieldX.toFixed(0)}, ${nameFieldY.toFixed(0)})`);
-  await page.mouse.click(nameFieldX, nameFieldY);
+  await clickCanvasPoint(page, nameFieldX, nameFieldY, 'name field');
   await sleep(500);
 
   // 既存テキストを全選択して削除
@@ -758,10 +899,46 @@ async function handleTitleScreen(page) {
   const playButtonY = box.y + 645;
 
   console.log(`[main] Clicking PLAY button at (${playButtonX.toFixed(0)}, ${playButtonY.toFixed(0)})`);
-  await page.mouse.click(playButtonX, playButtonY);
+  await clickCanvasPoint(page, playButtonX, playButtonY, 'PLAY button');
   await sleep(2000);
 
   console.log('[main] Title screen done, game should be starting...');
+}
+
+async function clickCanvasPoint(page, x, y, label = 'canvas point') {
+  const timeoutMs = Number(process.env.SOREN91_CLICK_TIMEOUT_MS || 2500);
+  try {
+    await Promise.race([
+      page.mouse.click(x, y),
+      sleep(timeoutMs).then(() => {
+        throw new Error(`page.mouse.click timeout after ${timeoutMs}ms`);
+      }),
+    ]);
+    return;
+  } catch (err) {
+    console.log(`[main] Mouse click fallback for ${label}: ${err.message}`);
+  }
+
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await sleep(80);
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    });
+  } finally {
+    await session.detach().catch(() => {});
+  }
 }
 
 async function recoverFromConnectionError(page) {
@@ -788,33 +965,25 @@ async function recoverFromConnectionError(page) {
 }
 
 /**
- * headless ブラウザでトップページを開き、ゲームURLを取得して閉じる
- * トップページの広告を表示せずに済む
+ * トップページHTMLからゲームURLを取得する。
+ * URL抽出だけに headless Chromium を起動すると、macOS の Mach port 権限で落ちることがある。
  */
 async function fetchGameUrl() {
-  const headless = await chromium.launch({ headless: true });
-  try {
-    const ctx = await headless.newContext({ locale: 'ja-JP', timezoneId: 'Asia/Tokyo' });
-    const page = await ctx.newPage();
-    await page.goto(GAME_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
-
-    const iframeSrc = await page.$eval(
-      'iframe[src*="play.unityroom.com"]',
-      el => el.src
-    ).catch(() => null);
-
-    const tabHref = await page.$eval(
-      'a[href*="play.unityroom.com"]',
-      el => el.href
-    ).catch(() => null);
-
-    const gameUrl = iframeSrc || tabHref;
-    if (!gameUrl) throw new Error('Game URL not found on page');
-    return gameUrl;
-  } finally {
-    await headless.close();
+  const response = await fetch(GAME_URL, {
+    headers: {
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Game URL page fetch failed: HTTP ${response.status}`);
   }
+
+  const html = await response.text();
+  const match = html.match(/(?:src|href)=["']([^"']*play\.unityroom\.com[^"']*)["']/i);
+  if (!match?.[1]) throw new Error('Game URL not found on page');
+  return new URL(match[1].replace(/&amp;/g, '&'), GAME_URL).href;
 }
 
 /**

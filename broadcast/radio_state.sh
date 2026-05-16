@@ -26,6 +26,13 @@ _radio_set_state() {
 	[ -n "$corner" ] || return 1
 	_radio_gc_stale_state
 	printf '%s:%s:%s:%s\n' "$mode" "$corner" "$(date +%s)" "$$" >"$RADIO_STATE_FILE"
+	case "$mode" in
+	generating|verifying|queued|playing)
+		if [ -x ./overlay_notify.sh ]; then
+			./overlay_notify.sh radio "ラジオ ${mode}" "corner=${corner}" "info" >/dev/null 2>&1 || true
+		fi
+		;;
+	esac
 }
 
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)

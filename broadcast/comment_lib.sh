@@ -3,10 +3,10 @@
 
 _recover_orphan_comment_playing_files() {
 	# コメント用 say_enqueue が動作中なら .playing は現役の可能性が高いので触らない
-	if pgrep -f "say_enqueue.sh --no-preempt .*comment_.*\\.playing" >/dev/null 2>&1; then
+	if pgrep -f "say_enqueue.sh --no-preempt .*\\.comment_queue/.*\\.playing" >/dev/null 2>&1; then
 		return
 	fi
-	for orphan in "$COMMENT_QUEUE_DIR"/comment_*.playing; do
+	for orphan in "$COMMENT_QUEUE_DIR"/*.playing; do
 		[ -f "$orphan" ] || continue
 		local now mtime age
 		now=$(date +%s)
@@ -95,7 +95,7 @@ _play_comment_queue() {
 		tail -200 "$dbg" > "${dbg}.tmp" && mv "${dbg}.tmp" "$dbg"
 	fi
 	_recover_orphan_comment_playing_files
-	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
+	for qf in $(find "$COMMENT_QUEUE_DIR" -maxdepth 1 -type f -name '*.txt' ! -name 'played_hashes.txt' -print 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
 			local expected_mode="" current_mode=""
 			expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
@@ -143,6 +143,9 @@ _play_comment_queue() {
 					local _comment_meta_summary=""
 					_comment_meta_summary=$(_comment_generation_debug_summary "$playing_file" 2>/dev/null || true)
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生開始: $qf (hash=$file_hash${_comment_meta_summary:+, ${_comment_meta_summary}})" >> tmp/.say_queue/debug.log
+					if [ -x ./overlay_notify.sh ]; then
+						./overlay_notify.sh chat "コメント返信 playback" "$(basename "$playing_file")${_comment_meta_summary:+ | ${_comment_meta_summary}}" "info" >/dev/null 2>&1 || true
+					fi
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
 				if [ "$_skip_duplicate_check" -eq 0 ]; then
 					echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"

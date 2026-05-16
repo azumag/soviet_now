@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path("/Users/azumag/work/sandbox/soren")
+ROOT = Path(__file__).resolve().parent
 ROLLING = ROOT / "tmp/state/rolling_scores.json"
 HOT = ROOT / "strategy_versions/by_hash"
 PERM = ROOT / "strategy_versions_archive/by_hash"
@@ -50,12 +50,15 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
             __dlg_rp_count = int(__dlg_rps)
         except (TypeError, ValueError):
             __dlg_rp_count = 0
-    __dlg_cands = __dlg_analysis.get("candidates", []) or []
+    __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
     if __dlg_critical and __dlg_cands:
-        __dlg_direct = [c for c in __dlg_cands if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"]
+        __dlg_direct = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
+        ]
         if __dlg_direct:
             def __dlg_score_direct(c):
                 return (

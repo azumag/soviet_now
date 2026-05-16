@@ -68,6 +68,13 @@ _start_worker() {
 	local cmd="${WORKER_CMDS[$idx]}"
 	local log_file="logs/${name}.log"
 
+	if [ "$name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
+		_log "スキップ: ${name} paused"
+		WORKER_PIDS[$idx]=""
+		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
+
 	$cmd >>"$log_file" 2>&1 &
 	local pid=$!
 	WORKER_PIDS[$idx]=$pid
@@ -151,6 +158,9 @@ while true; do
 
 		# worker が死んだ → 再起動判定
 		_w_restarts="${WORKER_RESTARTS[$idx]:-0}"
+		if [ "$_w_name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
+			continue
+		fi
 		if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then
 			_w_last_start="${WORKER_LAST_START[$idx]:-0}"
 			_w_elapsed=$(( $(date +%s) - _w_last_start ))

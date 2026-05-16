@@ -40,9 +40,12 @@ fi
 TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
-# config.sh から MIN_GAMES_BEFORE_IMPROVE を取得してデフォルトに使う
-_cfg_min_games=$(sed -n 's/^MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1/p' core/config.sh 2>/dev/null)
-_cfg_min_games="${_cfg_min_games:-12}"
+# MIN_GAMES_BEFORE_IMPROVE 解決: 環境変数 (soren_loop の hot-reload export) を
+# 最優先、次に .env のリテラル、次に config.sh、最後に 12。
+# set_toggle.sh によるサイクル変更に予想チャットも追従させる。
+_cfg_min_games=$(sed -n 's/^[[:space:]]*MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1/p' .env 2>/dev/null | tail -1)
+[ -z "$_cfg_min_games" ] && _cfg_min_games=$(sed -n 's/^MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1/p' core/config.sh 2>/dev/null)
+_cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-$_cfg_min_games}"
 # 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$(( _cfg_min_games * 40 ))}"
