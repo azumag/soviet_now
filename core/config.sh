@@ -75,6 +75,10 @@ ROLLBACK_POSTMORTEM_CASCADE_SKIP_ENABLED="${ROLLBACK_POSTMORTEM_CASCADE_SKIP_ENA
 ROLLBACK_POSTMORTEM_CASCADE_SKIP_STREAK="${ROLLBACK_POSTMORTEM_CASCADE_SKIP_STREAK:-2}"
 # 改善完了後、次の (カスケード) 改善ロックに即 PAUSE する前にメインゲームを
 # 最低1ゲーム走らせる窓。soren91 代打がサイクル間で連続起動し続けるのを防ぐ
+# strategy_runner が commands未消化 N連続で bridge desync を検出した時、
+# eloop.sh が bridge を自動再起動して空転を自己回復する
+BRIDGE_DESYNC_AUTO_RECOVER_ENABLED="${BRIDGE_DESYNC_AUTO_RECOVER_ENABLED:-1}"
+SOREN_BRIDGE_DESYNC_LIMIT="${SOREN_BRIDGE_DESYNC_LIMIT:-6}"
 POST_IMPROVE_MAINPLAY_ENABLED="${POST_IMPROVE_MAINPLAY_ENABLED:-1}"
 # TMP_STATE_DIR は後方で定義されるためリテラル指定 (= tmp/state)
 POST_IMPROVE_MAINPLAY_MARKER="tmp/state/.post_improve_mainplay"

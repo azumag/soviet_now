@@ -987,13 +987,20 @@ _start_improvement_job() {
 		fi
 		# OBS: 改善中オーバーレイ表示
 		_improve_overlay_show
-		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
-		soren91_start
-		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
-			# Twitch チャットに戦略改善開始を通知
-			enqueue_chat_message "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "improve"
+		# WILDCARD は AI を介さない純パラメータ摂動で数秒で完了するため、
+		# soren91 代打/ミュート/OBS切替/完了時bridge再起動 を一切起こさない。
+		# (post-wildcard の bridge 再起動が commands 経路 desync=空転の発生源だった)
+		if [ "$reason" = "wildcard" ]; then
+			log "[WILDCARD] 高速摂動(AI不使用・数秒)のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
 		else
-			log "[IMPROVE] soren91 は停止処理中のため起動通知をスキップ"
+			# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
+			soren91_start
+			if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+				# Twitch チャットに戦略改善開始を通知
+				enqueue_chat_message "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "improve"
+			else
+				log "[IMPROVE] soren91 は停止処理中のため起動通知をスキップ"
+			fi
 		fi
 		# デーモンモードではフォアグラウンド実行（完了まで wait → 即 harvest 可能になる）
 		# run_cmd が stdout/stderr をログファイルにリダイレクトするため、

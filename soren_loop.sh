@@ -286,6 +286,15 @@ while true; do
 		continue
 	fi
 	if _is_improve_running; then
+		# WILDCARD 改善 (AI不使用・数秒) は soren91 代打を立てない:
+		# 代打起動→完了時bridge再起動が commands 経路 desync=空転の発生源。
+		_pause_reason=""
+		[ -f "$IMPROVE_LOCK_FILE" ] && _pause_reason=$(python3 -c "import json,sys;print(json.load(open('$IMPROVE_LOCK_FILE')).get('improve_reason',''))" 2>/dev/null || echo "")
+		if [ "$_pause_reason" = "wildcard" ]; then
+			log "[PAUSE] WILDCARD改善中(数秒): soren91代打を立てず短時間待機"
+			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+			continue
+		fi
 		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
 			soren91_start 2>/dev/null || true
 		fi

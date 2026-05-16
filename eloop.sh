@@ -261,6 +261,29 @@ play_one_game() {
 		return "$PLAY_RECOVERED_RETRY_RC"
 	fi
 
+	# bridge 非同期 (commands未消化 連続=空転) の自己回復:
+	# strategy_runner が中断 → bridge を再起動して次周回で復旧。
+	# 試合不成立扱いでスコアは記録しない (rolling_scores を汚さない)。
+	if [ "$runner_error" = "bridge_desync" ]; then
+		log "[BRIDGE-DESYNC] strategy_runner が bridge 非同期を検出 (turns=${LAST_TURNS}) → bridge 再起動して次周回で復旧"
+		if [ "${BRIDGE_DESYNC_AUTO_RECOVER_ENABLED:-1}" = "1" ] && command -v _br_relaunch >/dev/null 2>&1; then
+			if _br_relaunch; then
+				log "[BRIDGE-DESYNC] bridge 再起動 成功"
+			else
+				log "[BRIDGE-DESYNC] bridge 再起動 失敗 (次周回 _ensure_bridge_alive で再試行)"
+			fi
+		else
+			log "[BRIDGE-DESYNC] 自動回復無効 or _br_relaunch 未ロード → 次周回 _ensure_bridge_alive 任せ"
+		fi
+		LAST_SCORE=0
+		LAST_TURNS=0
+		LAST_RUSSIA="false"
+		LAST_RUSSIA_ANNOUNCED="false"
+		LAST_SOVIET="false"
+		rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+		return "${PLAY_RECOVERED_RETRY_RC:-75}"
+	fi
+
 	log "[RESULT] score=$LAST_SCORE turns=$LAST_TURNS"
 }
 
@@ -448,7 +471,15 @@ d = json.load(sys.stdin)
 types = [int(x) for x in d.get('final_types', []) if str(x).lstrip('-').isdigit()]
 print('ウクライナ=%d カザフ=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
 " 2>/dev/null || echo "")
-		./overlay_notify.sh game "Game #${game_num_display} 終了" "score=${LAST_SCORE} eval=${EVAL_SCORE}${_overlay_counts:+ | ${_overlay_counts}}" "info" >/dev/null 2>&1 || true
+		local _ov_best="" _ov_result="通常終了"
+		_ov_best=$(cat best_score.txt 2>/dev/null | tr -dc '0-9')
+		if [ "${LAST_SOVIET:-0}" = "1" ] || echo "${_overlay_counts}" | grep -q 'ソ連=1'; then
+			_ov_result="ソ連建国"
+		elif echo "${_overlay_counts}" | grep -qE 'ロシア=[1-9]'; then
+			_ov_result="ロシア建国"
+		fi
+		[ "${LAST_SCORE:-0}" -gt "${_ov_best:-0}" ] 2>/dev/null && _ov_result="${_ov_result}・自己ベスト更新"
+		./overlay_notify.sh game "Game #${game_num_display} 終了 (${_ov_result})" "score=${LAST_SCORE} eval=${EVAL_SCORE} (bonus=+${_bonus:-0}) turns=${LAST_TURNS:-?}${_overlay_counts:+ | ${_overlay_counts}}${_ov_best:+ | best=${_ov_best}}" "info" >/dev/null 2>&1 || true
 	fi
 
 	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する

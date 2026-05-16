@@ -46,6 +46,9 @@ SETTLE_REQUIRED = 1       # 静止確認回数
 COMMAND_TIMEOUT = 20      # commands.txt 消化待ちタイムアウト(秒)
 MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
 DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
+# commands未消化がこの回数連続したら bridge 非同期と判定しゲーム中断
+# (外側 eloop.sh が bridge 再起動して自己回復。0で無効)
+BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "6") or "6")
 
 
 _received_signal = None
@@ -902,6 +905,7 @@ def run_game():
     os.makedirs(HISTORY_DIR, exist_ok=True)
 
     turn = 0
+    cmd_desync_streak = 0
     prev_score = 0
     russia_created = False
     russia_announced = False
@@ -1084,6 +1088,7 @@ def run_game():
 
             if delta > 0:
                 print(f"  +{delta} → {score}", flush=True)
+                cmd_desync_streak = 0  # スコア進行=bridge疎通正常
             prev_score = score
             prev_russia_count = current_russia_count
 
@@ -1094,8 +1099,28 @@ def run_game():
 
             write_drop_command(drop_x)
 
-            # コマンド消化待ち
-            wait_commands_done()
+            # コマンド消化待ち + bridge非同期 自己回復ウォッチドッグ
+            if wait_commands_done():
+                cmd_desync_streak = 0
+            else:
+                cmd_desync_streak += 1
+                if BRIDGE_DESYNC_LIMIT > 0 and cmd_desync_streak >= BRIDGE_DESYNC_LIMIT:
+                    log(
+                        f"BRIDGE DESYNC: commands未消化 {cmd_desync_streak}連続 "
+                        f"→ bridge非同期と判定・ゲーム中断 (eloop側で自己回復)"
+                    )
+                    return {
+                        "error": "bridge_desync",
+                        "score": score,
+                        "turns": turn,
+                        "state": get_state_field(gs),
+                        "pieces": len(pieces),
+                        "russia_created": russia_created,
+                        "russia_announced": russia_announced,
+                        "soviet_created": soviet_created,
+                        "strategy_hash": strategy_hash,
+                        "final_types": [p.get("type", 0) for p in pieces],
+                    }
 
             # ドロップ後の待ち
             time.sleep(DROP_WAIT)
