@@ -804,55 +804,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
-    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---
-    # Emergency deadline safety: when the reactor is past/near the deadline,
-    # force an immediate merge or the safest landing to avoid runaway stacking.
-    __dlg_game_state = game_state if isinstance(game_state, dict) else {}
-    __dlg_analysis = analysis if isinstance(analysis, dict) else {}
-    __dlg_reactor = __dlg_analysis.get("reactor", {}) if isinstance(__dlg_analysis.get("reactor", {}), dict) else {}
-    __dlg_margin = __dlg_reactor.get("deadline_margin", 99.0)
-    try:
-        __dlg_margin = float(__dlg_margin)
-    except (TypeError, ValueError):
-        __dlg_margin = 99.0
-    __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
-    __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
-    if isinstance(__dlg_rps, list):
-        __dlg_rp_count = len(__dlg_rps)
-    else:
-        try:
-            __dlg_rp_count = int(__dlg_rps)
-        except (TypeError, ValueError):
-            __dlg_rp_count = 0
-    __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
-    if not isinstance(__dlg_cands, list):
-        __dlg_cands = []
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
-    if __dlg_critical and __dlg_cands:
-        __dlg_direct = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
-        ]
-        if __dlg_direct:
-            def __dlg_score_direct(c):
-                return (
-                    0 if c.get("danger_direct_merge_available") else 1,
-                    float(c.get("landing_y", 99.0) or 99.0),
-                )
-            __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
-        __dlg_near_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
-        ]
-        if __dlg_near_safe:
-            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-        if __dlg_safe:
-            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-    # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
 
@@ -1001,7 +952,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
         if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.278, max(0.0, 1.0 - reactor_margin))
+            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
@@ -1510,7 +1461,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if not board_congested and not guidance_suppressed:
                 blocking_penalty = 0.0
                 for rp in reactive_pairs:
-                    if isinstance(rp, (list, tuple)) and len(rp) >= 4:
+                    if isinstance(rp, (list, tuple)) and len(rp) >= 3:
                         rp_type = rp[2]
                         if rp_type != next_type:
                             pos1 = piece_pos_by_id.get(rp[0])
