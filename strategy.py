@@ -62,6 +62,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vYYY: axis 9.5 same-type stacking fix — reactive_pair_count >= 1 -> < 3 suppression
+     # worst_game T35: same_type_stack_top exists but axis 9.5 blocked by reactive_pair_count==0 condition.
+     # At reactive<3, stacking guidance (+300) provides tie-breaking without overriding axis 8.8.
+     # At reactive>=3, axis 8.8 penalty dominates anyway.
+     # Fixes rollback failure mode: piece_count accumulation from same-type scattering
+     # refs: tmp/analysis_result.md, game_history/20260516_104324_score0757.jsonl T35
+     #
      # v384: reactive pair blocking avoidance — preserve merge paths by penalizing placement between reactive pairs
      # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
      # Placing between reactive pairs of different types physically blocks their future merge,
@@ -588,6 +595,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    deadline_escape_exists = any(not r.get("crosses_deadline", False) for r in results)
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -597,6 +605,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
+
+        # ----- mandatory_themes Change 1b: deadline-far-guard — reject ANY crossing candidate when safe options exist -----
+        # deadline-far-guard failure: x=2.8 (crosses_deadline, FAR_MERGE) selected over x=-1.0 (safe).
+        # Rule: if a safe non-crossing candidate exists (deadline_escape_exists=true), NO candidate
+        # that crosses the deadline may be chosen, regardless of merge_grade (FAR/NEAR/DIRECT/NO).
+        # This guard is ABSOLUTE — it fires before merge grading, before scoring, before everything.
+        # refs: validation error "deadline-far-guard: expected safe non-crossing x=-1.0, got x=2.8"
+        if result.get("crosses_deadline", False) and deadline_escape_exists:
+            continue
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
@@ -1376,7 +1393,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
                 pass
             else:
-                if danger_piece_count == 0 and reactive_pair_count == 0:
+                # vYYY: Only suppress same-type stacking when reactive_pair_count >= 3
+                # At reactive >= 3, axis 8.8 (-3000~-7000) dominates, stacking bonus unnecessary.
+                # At reactive < 3, axis 8.8 penalty is moderate (-3000 to -5000),
+                # so stacking guidance (+300) provides useful tie-breaking without overriding.
+                if reactive_pair_count < 3 and danger_piece_count == 0:
                     # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
                     score += 300.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
@@ -1393,7 +1414,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ペナルティ軽減も削除 - axis 8.7即時併合優先
             landing_y = result.get("landing_y", 0)
             if not (russia_phase and reactive_pair_count < 3):
-                if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
+                # vYYY: Same fix: only suppress when reactive_pair_count >= 3
+                if reactive_pair_count < 3 and landing_y > stack_top_y and danger_piece_count == 0:
                     horiz_dist = abs(x - stack_top_x)
                     if horiz_dist < 1.0:
                         # v325: reactive_pairsがない場合のみペナルティ軽減を適用
