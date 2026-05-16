@@ -804,55 +804,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
-    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---
-    # Emergency deadline safety: when the reactor is past/near the deadline,
-    # force an immediate merge or the safest landing to avoid runaway stacking.
-    __dlg_game_state = game_state if isinstance(game_state, dict) else {}
-    __dlg_analysis = analysis if isinstance(analysis, dict) else {}
-    __dlg_reactor = __dlg_analysis.get("reactor", {}) if isinstance(__dlg_analysis.get("reactor", {}), dict) else {}
-    __dlg_margin = __dlg_reactor.get("deadline_margin", 99.0)
-    try:
-        __dlg_margin = float(__dlg_margin)
-    except (TypeError, ValueError):
-        __dlg_margin = 99.0
-    __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
-    __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
-    if isinstance(__dlg_rps, list):
-        __dlg_rp_count = len(__dlg_rps)
-    else:
-        try:
-            __dlg_rp_count = int(__dlg_rps)
-        except (TypeError, ValueError):
-            __dlg_rp_count = 0
-    __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
-    if not isinstance(__dlg_cands, list):
-        __dlg_cands = []
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
-    if __dlg_critical and __dlg_cands:
-        __dlg_direct = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
-        ]
-        if __dlg_direct:
-            def __dlg_score_direct(c):
-                return (
-                    0 if c.get("danger_direct_merge_available") else 1,
-                    float(c.get("landing_y", 99.0) or 99.0),
-                )
-            __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
-        __dlg_near_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
-        ]
-        if __dlg_near_safe:
-            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-        if __dlg_safe:
-            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-    # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
 
@@ -1356,7 +1307,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 p_type = p.get("type", 0)
                 if p_type == next_type - 1 or p_type == next_type + 1:
                     p_x = p.get("x", 0)
-                    p_y = p.get("y", 14)
+                    p_y = p.get("y", 10)
                     # Prefer deeper (lower y) pieces — more accessible for future merges
                     adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
                     if adj_dist < best_adjacent_dist:
@@ -1830,7 +1781,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.3280
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
@@ -2139,7 +2090,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-2.047, min(3.0, best_x))
+    best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
     return {"x": best_x, "reason": best_reason}

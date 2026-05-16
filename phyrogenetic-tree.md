@@ -1,6 +1,6 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-17 01:21:47 JST`
+- Updated: `2026-05-17 02:49:56 JST`
 - Nodes: `1539`
 - Edges: `1989`
 - Current: `1aa464cc23d4`
@@ -5243,7 +5243,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_89c436411f12["89c436411f12<br/>g=12 n=12<br/>comp=10674.6"]
+    h_89c436411f12["89c436411f12<br/>g=24 n=20<br/>comp=10136.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -5469,6 +5469,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#25475 `89c43641 -> 1aa464cc`
+
+- - rollback from 89c436411f12 to 1aa464cc23d4 at game 25475
+- - reasons: objective_regression+lost_russia_path
+- - current comp/p50/p25=9204.8/9818.0/7954.8 vs target 12185.6/12935.5/10729.8
+- - bad recent scores: 8258 8742 19538 7045 11003 13321 8772 10864
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=9204.8 p50=9818.0 p25=7954.8 mean=10963.3 n=12
+- rollback_target: comp=12185.6 p50=12935.5 p25=10729.8 mean=13580.2 n=20
+- metric_gap_vs_target: comp=-2980.8 p50=-3117.5 p25=-2775.0 mean=-2616.9
+- recent12_avg: bad=10963.3 target=12303.3
+- recent12_floor: bad=6626 target=10217
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#25463 `89c43641 -> 1aa464cc`
 
