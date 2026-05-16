@@ -62,6 +62,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v625.1: deadline-far-guard — absolute veto on crosses_deadline when safe option exists
+      # Validation failure: "deadline-far-guard: expected safe non-crossing x=-1.0, got FAR_MERGE_HIGH_TOWER (x=2.8)"
+      # Invariant: crosses_deadline=True MUST NOT be selected when ANY crosses_deadline=False candidate exists
+      # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+      # FAR_MERGE does not satisfy the merge condition — veto all crossings when safe non-crossings exist
+      # Applied at loop start (before any bonuses) — no other logic can override this constraint
+      # refs: tmp/state/last_rollback_postmortem.md (mandatory_themes constraint)
+      # Fixes deadline-far-guard validation failure
+      #
+      # v625: NEAR suppression at critical deadline states — prevent "NEAR fail → pc grow → death" spiral
+     # v604 layer: full suppression when max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28
+     # v606 layer: partial suppression (50%) when max_y>=1.5 && rp>=3 && pc>=28 && !deadline_crossed
+     # Worst game T62: NEAR at deadline_crossed=true, max_y=2.23, failed (delta=0), pc grew 36→37
+     # v366 penalty (-landing_y*300) insufficient at critical heights; v625 adds structural suppression
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+     # Fixes rollback failure mode: NEAR fail → pc grow → death spiral
+     #
      # v384: reactive pair blocking avoidance — preserve merge paths by penalizing placement between reactive pairs
      # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
      # Placing between reactive pairs of different types physically blocks their future merge,
@@ -598,6 +615,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
+        # ----- deadline-far-guard (v625.1): absolute veto on crosses_deadline when safe option exists -----
+        # Invariant: crosses_deadline=True candidates MUST NOT be selected if ANY crosses_deadline=False
+        # candidate exists. This is a hard constraint from mandatory_themes: "デッドラインを超える位置に
+        # ピースを置く場合は、併合できる場合に限る" — FAR_MERGE does not satisfy the merge condition.
+        # Prevents: FAR_MERGE_HIGH_TOWER being selected when safe non-crossing x=-1.0 exists.
+        # Mechanism: If any candidate in results has crosses_deadline=False, set score=-inf for ALL
+        # candidates with crosses_deadline=True (regardless of merge_grade).
+        # Applied at score initialization — before any evaluation axes — ensuring no other bonus can
+        # override this structural constraint.
+        if any(r.get("crosses_deadline", False) == False for r in results):
+            if result.get("crosses_deadline", False):
+                score = -float("inf")
+                reasons.append("DEADLINE_CROSSING_VETO")
+                continue
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -612,6 +644,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- v625: NEAR suppression at critical deadline states (v604/v606 layers) -----
+        # Postmortem failure mode: "NEAR fail → pc grow → NEAR fail → death" spiral
+        # Worst game T62: deadline_crossed=true, max_y=2.23, NEAR selected, failed (delta=0)
+        # Current v366 penalty (-landing_y*300) is insufficient at critical heights —
+        # at landing_y=2.23 with deadline_crossed, penalty=669 vs NEAR bonus=600, net=-69.
+        # Other bonuses (REACTIVE_IMMEDIATE_MERGE_PRIORITY +400, CHAIN_MERGE, etc.) override net.
+        # best_score5801 has layered NEAR suppression (v624/v603/v604/v606) that current lacks.
+        # This creates layered defense: death zone full suppression + pre-deadline partial.
+        # Does NOT affect DIRECT merges (always preferred if available).
+        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md,
+        #       game_history/20260516_091426_score0971.jsonl (worst game T62)
+        # Fixes rollback failure mode: NEAR fail → pc grow → death spiral (v625)
+
+        # Layer 1: death zone suppression (v604 style)
+        # When max_y>=2.0 && deadline_crossed && reactive_pair_count>=3 && piece_count>=28
+        # && merge_grade=="NEAR": suppress NEAR bonus entirely
+        if max_y >= 2.0 and deadline_crossed and reactive_pair_count >= 3 and piece_count >= 28 and merge_grade == "NEAR":
+            score -= 600.0 * merge_mult  # Cancel NEAR bonus; v366 penalty will still apply
+            reasons.append("NEAR_SUPPRESS_DEATH_ZONE")
+        # Layer 2: pre-deadline elevated suppression (v606 style)
+        # When max_y>=1.5 && reactive_pair_count>=3 && piece_count>=28
+        # && merge_grade=="NEAR" && !deadline_crossed: graduated suppression (50%)
+        elif max_y >= 1.5 and reactive_pair_count >= 3 and piece_count >= 28 and merge_grade == "NEAR" and not deadline_crossed:
+            score -= 300.0 * merge_mult  # Partial suppression
+            reasons.append("NEAR_SUPPRESS_PRE_DEADLINE")
 
         # ----- v366: NEAR merge risk penalty at deadline -----
         # postmortem: piece_count accumulation is the key failure predictor.

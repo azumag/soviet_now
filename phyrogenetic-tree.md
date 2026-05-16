@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-16 08:42:21 JST`
-- Nodes: `1533`
-- Edges: `1972`
-- Current: `84d04da1d615`
+- Updated: `2026-05-16 09:40:58 JST`
+- Nodes: `1534`
+- Edges: `1973`
+- Current: `a6298d726b3d`
 - Anchor: `84d04da1d615`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_84d04da1d615["84d04da1d615<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11590.8"]
-    h_d6ba060d24b2["d6ba060d24b2<br/>g=1 n=1<br/>comp=14596.0"]
+    h_84d04da1d615["84d04da1d615<br/>ANCHOR<br/>g=36 n=20<br/>comp=11971.9"]
     h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
@@ -76,15 +75,16 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_a6298d726b3d["a6298d726b3d<br/>CURRENT"]
 
+    h_84d04da1d615 -->|improve| h_a6298d726b3d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_84d04da1d615 current_anchor;
-    class h_d6ba060d24b2 plain;
+    class h_84d04da1d615 anchor;
     class h_273866b19f99 plain;
     class h_e75542ef3a84 plain;
     class h_78c5c9b64fef plain;
@@ -144,6 +144,7 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
+    class h_a6298d726b3d current;
 ```
 
 ## Detail 1/20
@@ -2744,7 +2745,7 @@ flowchart TD
 - Cross-chunk link: `7f14656b19f8 -.rollback.-> 003e9883e188`
 - Cross-chunk link: `003e9883e188 --improve--> 6479a8c1a527`
 - Cross-chunk link: `9378430a0783 -.rollback.-> 19541065acc3`
-- Cross-chunk link: `... and 17 more`
+- Cross-chunk link: `... and 18 more`
 
 ```mermaid
 flowchart TD
@@ -2816,7 +2817,7 @@ flowchart TD
     h_9b9cc74fc310["9b9cc74fc310<br/>g=12 n=12<br/>comp=8441.3"]
     h_3bdbaee6d05d["3bdbaee6d05d<br/>g=12 n=12<br/>comp=11541.5"]
     h_01124af99ba1["01124af99ba1<br/>g=12 n=12<br/>comp=10146.6"]
-    h_84d04da1d615["84d04da1d615<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11590.8"]
+    h_84d04da1d615["84d04da1d615<br/>ANCHOR<br/>g=36 n=20<br/>comp=11971.9"]
     h_5eeb503d7635["5eeb503d7635<br/>g=12 n=12<br/>comp=11333.5"]
     h_8bad92ca8197["8bad92ca8197<br/>g=12 n=12<br/>comp=10347.7"]
     h_59b54cf8e47c["59b54cf8e47c<br/>g=12 n=12<br/>comp=9410.3"]
@@ -2982,7 +2983,7 @@ flowchart TD
     class h_9b9cc74fc310 plain;
     class h_3bdbaee6d05d plain;
     class h_01124af99ba1 plain;
-    class h_84d04da1d615 current_anchor;
+    class h_84d04da1d615 anchor;
     class h_5eeb503d7635 plain;
     class h_8bad92ca8197 plain;
     class h_59b54cf8e47c plain;
@@ -5404,9 +5405,10 @@ flowchart TD
 
 ## Detail 20/20
 
-- Range: `92ba96416687` .. `a023de98b324`
-- Nodes in this diagram: `13`
+- Range: `92ba96416687` .. `a6298d726b3d`
+- Nodes in this diagram: `14`
 - Internal edges in this diagram: `0`
+- Cross-chunk link: `84d04da1d615 --improve--> a6298d726b3d`
 
 ```mermaid
 flowchart TD
@@ -5423,6 +5425,7 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_a6298d726b3d["a6298d726b3d<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5443,9 +5446,20 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
+    class h_a6298d726b3d current;
 ```
 
 ## Transition Notes
+
+### Improve Game#25273 `84d04da1 -> a6298d72`
+
+- scores: `10290 20359 12089 12453 9344 12648 10920 8351 14678 12809 15518 19123`
+- v625.1: deadline-far-guard — absolute veto on crosses_deadline when safe option exists
+- Validation failure: "deadline-far-guard: expected safe non-crossing x=-1.0, got FAR_MERGE_HIGH_TOWER (x=2.8)"
+- Invariant: crosses_deadline=True MUST NOT be selected when ANY crosses_deadline=False candidate exists
+- mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+- FAR_MERGE does not satisfy the merge condition — veto all crossings when safe non-crossings exist
+- Applied at loop start (before any bonuses) — no other logic can override this constraint
 
 ### Rollback Game#25261 `1015e032 -> 84d04da1`
 
