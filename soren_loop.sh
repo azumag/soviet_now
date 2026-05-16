@@ -294,7 +294,17 @@ while true; do
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
-	if [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+	# 改善完了直後の連続(カスケード)改善ロックに即 PAUSE せず、メインゲームを
+	# 最低1回走らせる窓。soren91 代打がサイクル間で無限に連続起動するのを防ぐ。
+	# soren91 が完全停止してから消費 (同時プレイ回避)。1改善完了につき1ゲーム。
+	_post_improve_marker="${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}"
+	if [ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && [ -f "$_post_improve_marker" ] &&
+		! _is_improve_running &&
+		! { command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; } &&
+		! { command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; }; then
+		rm -f "$_post_improve_marker" 2>/dev/null || true
+		log "[CYCLE] 改善完了→次改善前にメインゲームを1回実行 (代打無限化防止)"
+	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
 		log "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
@@ -397,7 +407,7 @@ d['rollback_hash']='${REGRESSION_ROLLBACK_HASH:-}'
 json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 			if [ -x ./overlay_notify.sh ]; then
-				./overlay_notify.sh worker "回帰後改善 queued" "failed batch queued reason=post_regression rollback=${REGRESSION_ROLLBACK_HASH:-unknown}" "warn" >/dev/null 2>&1 || true
+				./overlay_notify.sh worker "回帰後改善 queued (game ${GAME_NUM:-?})" "粛清後の失敗バッチを改善入力として投入 | reason=post_regression | 復帰先=${REGRESSION_ROLLBACK_HASH:-unknown} | game=${GAME_NUM:-?}" "warn" >/dev/null 2>&1 || true
 			fi
 		fi
 		_clear_accumulated_data

@@ -601,6 +601,24 @@ start_rollback_postmortem_worker() {
 	local current_hash="$1" rollback_hash="$2" game_num="$3" rollback_note="${4:-}"
 	[ -f "$ROLLBACK_ANALYSIS_FILE" ] || return 0
 
+	# 粛清カスケード中は AI postmortem (opencode スロットを長時間占有・診断専用) を
+	# スキップ。ルールベース ROLLBACK_ANALYSIS_FILE は既に書かれており下流は維持。
+	# スロット競合で改善サイクルが長期化→soren91 代打が無限化するのを防ぐ。
+	if [ "${ROLLBACK_POSTMORTEM_CASCADE_SKIP_ENABLED:-1}" = "1" ]; then
+		local _pm_rstreak=0
+		_pm_rstreak=$(python3 -c "
+import json
+try:
+    print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('regression_streak', 0)))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+		if [ "${_pm_rstreak:-0}" -ge "${ROLLBACK_POSTMORTEM_CASCADE_SKIP_STREAK:-2}" ]; then
+			log "[ROLLBACK-POSTMORTEM] カスケード中 (regression_streak=${_pm_rstreak} >= ${ROLLBACK_POSTMORTEM_CASCADE_SKIP_STREAK:-2}) → AI postmortem スキップ (ルールベース分析のみ)"
+			return 0
+		fi
+	fi
+
 	local running_pid=""
 	if [ -f "$ROLLBACK_POSTMORTEM_PID_FILE" ]; then
 		running_pid=$(cat "$ROLLBACK_POSTMORTEM_PID_FILE" 2>/dev/null || echo "")
@@ -2705,7 +2723,7 @@ PY
 		_clear_active_branch
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 		if [ -x ./overlay_notify.sh ]; then
-			./overlay_notify.sh rollback "粛清 rollback" "${strategy_hash:0:8} -> ${rolled_hash:0:8} game=${rollback_game_num} ${rollback_note}" "warn" >/dev/null 2>&1 || true
+			./overlay_notify.sh rollback "粛清 rollback (game ${rollback_game_num})" "粛清: ${strategy_hash:0:8} → 復帰 ${rolled_hash:0:8} | file=$(basename "${rollback_file:-?}") | ${rollback_note}" "warn" >/dev/null 2>&1 || true
 		fi
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)

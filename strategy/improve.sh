@@ -315,6 +315,7 @@ json.dump(rs, open(rs_file, 'w'))
 			touch "tmp/state/meriken_time_pending"
 		else
 			soren91_stop
+			[ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && touch "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
 			soren91_improve
 		fi
 		return 0
@@ -491,6 +492,9 @@ with open(rs_file, 'w') as f:
 			else
 				# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
 				soren91_stop
+				# 改善完了マーカ: 次の (カスケード) 改善ロックに即 PAUSE する前に
+				# soren_loop がメインゲームを最低1回走らせる窓を保証する
+				[ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && touch "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
 				soren91_improve
 				# 読み上げ + Twitch チャットに戦略改善終了を通知 (1サイクル1回のみ)
 				local _handover_guard="$TMP_STATE_DIR/handover_announced"
@@ -950,7 +954,9 @@ _start_improvement_job() {
 		"$(date '+%H:%M:%S')" "$reason" "${GAME_NUM:-?}" "${all_scores:-}" >>"$improve_ai_log" 2>/dev/null || true
 	_improve_overlay_generate_once
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh worker "改善開始" "reason=${reason} game=${GAME_NUM:-?} scores=${all_scores:-}" "info" >/dev/null 2>&1 || true
+		local _ov_anchor
+		_ov_anchor=$(python3 -c "import json;d=json.load(open('${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}'));print('%s comp=%.0f'%(d.get('hash','?')[:8],d.get('comp',0)))" 2>/dev/null || echo "")
+		./overlay_notify.sh worker "改善開始 (${reason})" "reason=${reason} game=${GAME_NUM:-?} hash=${strategy_hash} acc=${acc_count:-?}${_ov_anchor:+ | anchor=${_ov_anchor}} scores=${all_scores:-}" "info" >/dev/null 2>&1 || true
 	fi
 
 	# デーモンコンテキストではファイルからフォールバック読み取り
