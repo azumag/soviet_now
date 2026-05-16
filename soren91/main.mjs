@@ -1090,6 +1090,15 @@ async function gameLoop(page, calibration, gameNumber) {
           try {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const rankResult = await detectRankingScreen(screenshotPath);
+            // 診断: 実ラウンド後の WAITING フレームを検出成否に関わらず保存
+            // (detectRankingScreen 調整用の実ランキング画面サンプル採取)。
+            // ゲーム1につき最大6枚、リング上書き。SOREN91_RANKDIAG=0 で無効化。
+            if (process.env.SOREN91_RANKDIAG !== '0' && turn > 5 && waitingCount >= 1 && waitingCount <= 6) {
+              try {
+                copyFileSync(screenshotPath, join('tmp/summaries',
+                  `_rankdiag_g${String(gameNumber).padStart(4, '0')}_w${waitingCount}_r${rankResult ?? 'null'}.png`));
+              } catch {}
+            }
             if (rankResult != null) {
               const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
               // rankResult > 0 なら正確な値で確定、-1 は星なし(late pathで再試行)
