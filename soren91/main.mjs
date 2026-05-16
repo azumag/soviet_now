@@ -252,14 +252,17 @@ function loadImprovementSchedule() {
   return { interval: DEFAULT_IMPROVEMENT_INTERVAL_GAMES, source: 'default' };
 }
 
-async function queueRankingCommentOnce(gameNumber, detectedRank, reason = 'post-game') {
+async function queueRankingCommentOnce(gameNumber, detectedRank, reason = 'post-game', allowFallback = false) {
   if (rankingCommentQueuedGames.has(gameNumber) || rankingCommentInFlightGames.has(gameNumber)) {
     console.log(`[game] Ranking comment already queued/in-flight for game #${gameNumber} (${reason})`);
     return false;
   }
 
   const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-  if (detectedRank == null && !existsSync(rankingImagePath)) {
+  // allowFallback=true (実ラウンド終了の最終手段) のときは、順位/画像が無くても
+  // generateRankingComment の設計済みフォールバック文 (「順位を確認できませんでした…」)
+  // を生成・読み上げる。検出全滅でも決算コメントが無言にならないようにする。
+  if (detectedRank == null && !existsSync(rankingImagePath) && !allowFallback) {
     console.log(`[game] Ranking comment deferred for game #${gameNumber}: no context yet (${reason})`);
     return false;
   }
@@ -1474,7 +1477,15 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   (async () => {
     try {
       if (!hasRankingCommentContext) {
-        console.log(`[game] Skipping ranking comment for game #${gameNumber}: ranking context unavailable`);
+        // ランキング検出が全滅でも、実ラウンド(十分なターン数=接続エラー等の
+        // 誤検出でない)なら無言にせず、フォールバック決算コメントを読む。
+        // 短い/spurious(接続エラー疑い)は従来どおり沈黙して誤コメントを防ぐ。
+        if (typeof turns === 'number' && turns >= 10) {
+          console.log(`[game] Ranking context unavailable for game #${gameNumber} but real round (turns=${turns}) → fallback ranking comment`);
+          await queueRankingCommentOnce(gameNumber, null, 'post-game-fallback', true);
+        } else {
+          console.log(`[game] Skipping ranking comment for game #${gameNumber}: ranking context unavailable (turns=${turns ?? '?'} → spurious)`);
+        }
         return;
       }
       await queueRankingCommentOnce(gameNumber, detectedRank, 'post-game');
