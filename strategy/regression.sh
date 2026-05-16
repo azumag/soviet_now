@@ -70,6 +70,30 @@ def recent_archives(data):
     arcs = (data or {}).get("_recent_archives", []) or []
     return [os.path.basename(str(x)) for x in arcs[-5:]]
 
+def progress_summary(data, score_count=None):
+    data = data or {}
+    try:
+        max_types = [int(x) for x in data.get("max_types", [])]
+    except Exception:
+        max_types = []
+    if score_count is not None and score_count > 0:
+        max_types = max_types[-score_count:]
+    best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
+    return {
+        "max_types": max_types,
+        "best_max_type": best_max_type,
+        "russia_count": int(data.get("russia_count", 0) or 0),
+        "soviet_count": int(data.get("soviet_count", 0) or 0),
+    }
+
+def fmt_progress(p):
+    recent = " ".join(map(str, p.get("max_types", [])[-12:])) or "n/a"
+    return (
+        f"best_max_type={p.get('best_max_type', 0)} "
+        f"russia={p.get('russia_count', 0)} soviet={p.get('soviet_count', 0)} "
+        f"recent_max_types={recent}"
+    )
+
 def read_score_history(path):
     vals = []
     if not os.path.exists(path):
@@ -107,6 +131,9 @@ def explain_reasons(reason_text):
         "branch": "単一戦略ではなく branch 全体の失敗として判定した。",
         "anchor_direct": "branch 状態なしで anchor 比の即時悪化として判定した。",
         "anchor_promoted": "現戦略が anchor を上回ったため anchor を更新した。",
+        "objective_regression": "建国目標の進捗が anchor より後退した。",
+        "lost_russia_path": "anchor はロシア到達済みだが current はロシア未到達だった。",
+        "lost_soviet_path": "anchor はソ連到達済みだが current はソ連未到達だった。",
     }
     for reason in reasons:
         if reason.startswith("rank") and reason[4:].isdigit():
@@ -130,9 +157,12 @@ if os.path.exists(current_run_file):
         current_run = {}
     if str(current_run.get("hash", "") or "") == current_hash:
         current_scores = to_scores(current_run)
+        current_data = current_run
 rollback_scores = to_scores(rollback_data)
 current_metrics = metrics(current_scores)
 rollback_metrics = metrics(rollback_scores)
+current_progress = progress_summary(current_data, len(current_scores))
+rollback_progress = progress_summary(rollback_data, len(rollback_scores))
 reg = parse_regression(regression_result)
 history_scores = read_score_history(score_history_file)
 
@@ -221,6 +251,20 @@ if current_scores and rollback_scores:
         f"- recent12_floor: bad={min(current_recent)} target={min(rollback_recent)}"
     )
 lines.append("")
+lines.append("## Soviet Objective Delta")
+lines.append(f"- current_progress: {fmt_progress(current_progress)}")
+if rollback_scores:
+    lines.append(f"- rollback_target_progress: {fmt_progress(rollback_progress)}")
+lines.append(
+    f"- progress_gap_vs_target: best_max_type={current_progress['best_max_type'] - rollback_progress['best_max_type']} "
+    f"russia={current_progress['russia_count'] - rollback_progress['russia_count']} "
+    f"soviet={current_progress['soviet_count'] - rollback_progress['soviet_count']}"
+)
+if current_progress["best_max_type"] < 15:
+    lines.append("- hard_signal: current はロシア(type15)未到達。次改善ではスコア下振れだけでなく type14→15 の到達経路を復旧すること。")
+elif current_progress["soviet_count"] <= 0:
+    lines.append("- hard_signal: current はソ連(type16)未到達。ロシア保護と二つ目のロシア育成を優先すること。")
+lines.append("")
 lines.append("## Score Pattern")
 if current_scores:
     lines.append(f"- bad_strategy_recent_scores: {' '.join(map(str, current_scores[-12:]))}")
@@ -248,6 +292,10 @@ if "hard_fail" in reasons:
     focus.append("- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。")
 if "trend50" in reasons or "trend100" in reasons:
     focus.append("- 長期下降トレンドが出ているので、直近だけの上振れを追わず、過去の強戦略との差分を比較すること。")
+if current_progress["best_max_type"] < 15:
+    focus.append("- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。")
+elif current_progress["soviet_count"] <= 0:
+    focus.append("- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。")
 if not focus:
     focus.append("- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。")
 lines.extend(focus)
@@ -267,8 +315,30 @@ if current_metrics and rollback_metrics:
     )
 if current_scores:
     summary.append(f"- bad recent scores: {' '.join(map(str, current_scores[-8:]))}")
+summary.append(
+    f"- soviet objective: current best_type={current_progress['best_max_type']} "
+    f"russia={current_progress['russia_count']} soviet={current_progress['soviet_count']}"
+)
 print("\n".join(summary))
 PY
+}
+
+_wait_pid_with_timeout() {
+	local pid="$1" timeout_sec="${2:-30}" label="${3:-job}"
+	local waited=0
+	while kill -0 "$pid" 2>/dev/null; do
+		if [ "$waited" -ge "$timeout_sec" ]; then
+			log "[TIMEOUT] ${label} timed out after ${timeout_sec}s; terminating pid=${pid}"
+			kill "$pid" 2>/dev/null || true
+			sleep 1
+			kill -9 "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	wait "$pid" 2>/dev/null
 }
 
 _write_rollback_postmortem_context_file() {
@@ -616,15 +686,141 @@ _find_strategy_file_by_hash() {
 	return 1
 }
 
+# E: 失敗 current の挙動シグネチャを tabu_signatures.jsonl に追記する
+# 引数: $1=失敗した戦略 hash
+# rolling_scores.json[hash]._recent_archives から jsonl を取得して shape を生成
+# wildcard 起源の場合は decay 期間を半分にする
+_record_tabu_signature() {
+	type reload_runtime_toggles >/dev/null 2>&1 && reload_runtime_toggles
+	local failed_hash="$1"
+	[ -n "$failed_hash" ] || return 1
+	[ "${TABU_ENABLED:-0}" = "1" ] || return 0
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+	python3 - "$ROLLING_SCORES_FILE" "$TABU_SIGNATURES_FILE" "$BEHAVIOR_SIGNATURES_FILE" "$failed_hash" \
+		"$WILDCARD_ORIGIN_FILE" "${TABU_DECAY_GAMES:-192}" "${TABU_RETAIN:-20}" \
+		"${MIN_GAMES_BEFORE_IMPROVE:-12}" "$(pwd)" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+rs_file = sys.argv[1]
+tabu_file = sys.argv[2]
+sig_cache_file = sys.argv[3]
+failed_hash = sys.argv[4]
+wildcard_file = sys.argv[5]
+decay_games = int(sys.argv[6])
+retain = int(sys.argv[7])
+min_games_improve = int(sys.argv[8])
+repo_root = sys.argv[9]
+
+try:
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from lib.behavior_signature import compute_signature
+except Exception:
+    raise SystemExit(0)
+
+try:
+    rs = json.load(open(rs_file))
+except Exception:
+    raise SystemExit(0)
+entry = rs.get(failed_hash) or {}
+archives = entry.get("_recent_archives", []) or []
+# git: 参照はそのまま渡す。通常パスは存在チェック
+def _archive_usable(a):
+    if not a:
+        return False
+    if a.startswith("git:"):
+        return True
+    return os.path.exists(a)
+archives = [a for a in archives if _archive_usable(a)]
+if not archives:
+    raise SystemExit(0)
+
+sig = compute_signature(archives[-12:])
+
+# wildcard 起源 hash なら decay を半分に
+half_decay = False
+if wildcard_file and os.path.exists(wildcard_file):
+    try:
+        wo = json.load(open(wildcard_file))
+        if failed_hash in wo:
+            half_decay = True
+    except Exception:
+        pass
+
+# 現在の総ゲーム数で expire 時刻を計算
+now_games = sum(int((v or {}).get("games_total", 0)) for v in rs.values())
+decay_until = now_games + (decay_games // 2 if half_decay else decay_games)
+
+# 既存 tabu を読み、retain 件まで保持
+existing = []
+if os.path.exists(tabu_file):
+    try:
+        with open(tabu_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    existing.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        existing = []
+# 失効済みは間引く
+existing = [e for e in existing if int(e.get("decay_until_games", 0) or 0) > now_games]
+# 同一 hash の旧エントリは置換
+existing = [e for e in existing if e.get("hash") != failed_hash]
+existing.append({
+    "hash": failed_hash,
+    "signature": sig,
+    "decay_until_games": decay_until,
+    "recorded_at": int(time.time()),
+    "wildcard_origin": half_decay,
+})
+existing = existing[-retain:]
+
+os.makedirs(os.path.dirname(tabu_file) or ".", exist_ok=True)
+tmp_path = tabu_file + ".tmp"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    for e in existing:
+        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+os.replace(tmp_path, tabu_file)
+
+# シグネチャキャッシュにも追記しておく (anchor refresh 側で再利用)
+if sig_cache_file:
+    try:
+        cache = {}
+        if os.path.exists(sig_cache_file):
+            cache = json.load(open(sig_cache_file, encoding="utf-8"))
+        cache[failed_hash] = sig
+        os.makedirs(os.path.dirname(sig_cache_file) or ".", exist_ok=True)
+        tmp = sig_cache_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+        os.replace(tmp, sig_cache_file)
+    except Exception:
+        pass
+PY
+}
+
 _refresh_best_strategy_anchor() {
+	type reload_runtime_toggles >/dev/null 2>&1 && reload_runtime_toggles
 	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 	local current_hash="${1:-}"
-	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" "$STRATEGY_HASH_ARCHIVE_DIR" "$REJECTED_HASHES_FILE" <<'PY'
+	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" "$STRATEGY_HASH_ARCHIVE_DIR" "$REJECTED_HASHES_FILE" \
+		"${DIVERSITY_PREMIUM_ENABLED:-0}" "${DIVERSITY_PREMIUM_WEIGHT:-300}" "${EXPLORE_GAP_MAX_RATIO:-0.07}" \
+		"${TABU_ENABLED:-0}" "${TABU_SIGNATURES_FILE:-tmp/state/tabu_signatures.jsonl}" "${TABU_DISTANCE_THRESHOLD:-0.15}" \
+		"${BEHAVIOR_SIGNATURES_FILE:-tmp/state/behavior_signatures.json}" "${LAST_ANCHOR_CHANGE_FILE:-tmp/state/last_anchor_change.md}" \
+		"$(pwd)" <<'PY'
 import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 
 rs_file, anchor_file = sys.argv[1], sys.argv[2]
@@ -636,6 +832,31 @@ w_lcb = float(sys.argv[7])
 current_hash = sys.argv[8] if len(sys.argv) > 8 else ""
 archive_dir = sys.argv[9] if len(sys.argv) > 9 else ""
 rejected_file = sys.argv[10] if len(sys.argv) > 10 else ""
+# 帯域脱出機構 (D + E) 追加引数
+diversity_enabled = sys.argv[11] == "1" if len(sys.argv) > 11 else False
+diversity_weight = float(sys.argv[12]) if len(sys.argv) > 12 else 300.0
+explore_gap_max_ratio = float(sys.argv[13]) if len(sys.argv) > 13 else 0.07
+tabu_enabled = sys.argv[14] == "1" if len(sys.argv) > 14 else False
+tabu_file = sys.argv[15] if len(sys.argv) > 15 else ""
+tabu_distance_threshold = float(sys.argv[16]) if len(sys.argv) > 16 else 0.15
+behavior_sigs_file = sys.argv[17] if len(sys.argv) > 17 else ""
+last_anchor_change_file = sys.argv[18] if len(sys.argv) > 18 else ""
+repo_root = sys.argv[19] if len(sys.argv) > 19 else ""
+
+# lib.behavior_signature の import (帯域脱出機構 ON 時のみ必要)
+_compute_signature = None
+_signature_distance = None
+if (diversity_enabled or tabu_enabled) and repo_root:
+    try:
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from lib.behavior_signature import compute_signature as _cs, signature_distance as _sd
+        _compute_signature = _cs
+        _signature_distance = _sd
+    except Exception:
+        # ライブラリ読み込み失敗時は安全側で無効化
+        diversity_enabled = False
+        tabu_enabled = False
 
 try:
     rs = json.load(open(rs_file))
@@ -649,6 +870,68 @@ if rejected_file and os.path.exists(rejected_file):
             rejected = {line.strip() for line in f if line.strip()}
     except Exception:
         rejected = set()
+
+# シグネチャキャッシュ (hash -> signature)
+def _load_sig_cache():
+    if not behavior_sigs_file or not os.path.exists(behavior_sigs_file):
+        return {}
+    try:
+        return json.load(open(behavior_sigs_file, encoding="utf-8"))
+    except Exception:
+        return {}
+
+def _save_sig_cache(cache):
+    if not behavior_sigs_file:
+        return
+    try:
+        os.makedirs(os.path.dirname(behavior_sigs_file) or ".", exist_ok=True)
+        tmp = behavior_sigs_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+        os.replace(tmp, behavior_sigs_file)
+    except Exception:
+        pass
+
+sig_cache = _load_sig_cache() if (diversity_enabled or tabu_enabled) else {}
+
+def _signature_for(h, rs_entry):
+    if not _compute_signature:
+        return None
+    cached = sig_cache.get(h)
+    archives = rs_entry.get("_recent_archives", []) or []
+    # git: 参照はそのまま、それ以外は存在チェック
+    archives = [a for a in archives if a and (a.startswith("git:") or os.path.exists(a))]
+    if cached and cached.get("n_games", 0) >= min(len(archives), 6):
+        return cached
+    if not archives:
+        return None
+    sig = _compute_signature(archives[-12:])
+    sig_cache[h] = sig
+    return sig
+
+# Tabu リスト読み込み (活性なものだけ)
+tabu_entries = []
+if tabu_enabled and tabu_file and os.path.exists(tabu_file):
+    # rolling_scores の games_total 合計を現在のゲーム数の近似として使う
+    now_games = sum(int((v or {}).get("games_total", 0)) for v in rs.values())
+    try:
+        with open(tabu_file, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                decay_until = int(entry.get("decay_until_games", 0) or 0)
+                if decay_until and decay_until <= now_games:
+                    continue
+                if not entry.get("signature"):
+                    continue
+                tabu_entries.append(entry)
+    except Exception:
+        tabu_entries = []
 
 def quantile(vals, p):
     xs = sorted(vals)
@@ -685,7 +968,8 @@ def metrics(scores):
         "n": n,
     }
 
-best = None
+# 候補リストを作る (raw metrics で comp 上位順)
+candidates = []
 for h, data in rs.items():
     if current_hash and h == current_hash:
         continue
@@ -696,14 +980,88 @@ for h, data in rs.items():
     m = metrics(data.get("scores", []))
     if not m:
         continue
-    row = (m["comp"], m["p50"], m["p25"], m["n"], h, m)
-    if best is None or row > best:
-        best = row
+    candidates.append((h, m, data))
 
-if best is None:
+if not candidates:
     raise SystemExit(0)
 
-_, _, _, _, best_hash, best_metrics = best
+# E: Tabu フィルタ — rollback された挙動近傍を anchor 昇格不可にする
+def _is_tabu(h, m, data):
+    if not tabu_enabled or not tabu_entries:
+        return False
+    sig = _signature_for(h, data)
+    if not sig or not _signature_distance:
+        return False
+    for entry in tabu_entries:
+        d = _signature_distance(sig, entry.get("signature", {}))
+        if d < tabu_distance_threshold:
+            return True
+    return False
+
+candidates = [(h, m, data) for (h, m, data) in candidates if not _is_tabu(h, m, data)]
+if not candidates:
+    raise SystemExit(0)
+
+# 現アンカー候補を先に決める (raw comp 最大)
+candidates.sort(key=lambda t: (t[1]["comp"], t[1]["p50"], t[1]["p25"], t[1]["n"], t[0]))
+top_anchor = candidates[-1]
+top_anchor_comp = top_anchor[1]["comp"]
+
+# D: 多様性プレミアム — selection_score は順位比較専用 (永続化しない)
+explore_gap_max = top_anchor_comp * explore_gap_max_ratio if top_anchor_comp > 0 else 0.0
+top_anchor_sig = _signature_for(top_anchor[0], top_anchor[2]) if diversity_enabled else None
+
+# anchor sig が取れない場合のフォールバック: 候補全体のシグネチャ centroid を疑似 anchor とする
+# 既存戦略の game_history が pruning で消えて sig 計算不能でも D を動かせるようにする
+fallback_sigs = []
+if diversity_enabled and not top_anchor_sig:
+    for h, m, data in candidates:
+        s = _signature_for(h, data)
+        if s and s.get("n_turns", 0) > 0:
+            fallback_sigs.append(s)
+
+def _centroid_distance(target_sig, sigs_pool):
+    """target が pool 全体から平均的にどれだけ離れているか (0..1)。
+    シンプルに pool 内の各シグネチャとの平均 JSD を返す。
+    """
+    if not target_sig or not sigs_pool or not _signature_distance:
+        return 0.0
+    dists = [_signature_distance(target_sig, s) for s in sigs_pool]
+    return sum(dists) / len(dists) if dists else 0.0
+
+def _selection_score(h, m, data):
+    base = m["comp"]
+    if not diversity_enabled or explore_gap_max <= 0:
+        return base, 0.0
+    gap = top_anchor_comp - m["comp"]
+    if gap >= explore_gap_max or gap <= 0:
+        return base, 0.0
+    sig = _signature_for(h, data)
+    if not sig or not _signature_distance:
+        return base, 0.0
+    if top_anchor_sig:
+        # 通常: anchor との距離で premium
+        dist = _signature_distance(top_anchor_sig, sig)
+    elif fallback_sigs:
+        # フォールバック: 候補 pool centroid からの距離で premium
+        # 自分自身を pool から除外
+        peers = [s for s in fallback_sigs if s is not sig]
+        if not peers:
+            return base, 0.0
+        dist = _centroid_distance(sig, peers)
+    else:
+        return base, 0.0
+    premium = diversity_weight * dist
+    return base + premium, premium
+
+ranked = []
+for h, m, data in candidates:
+    sel, premium = _selection_score(h, m, data)
+    ranked.append((sel, m["comp"], m["p50"], m["p25"], m["n"], h, m, premium))
+
+ranked.sort()
+best = ranked[-1]
+_, _, _, _, _, best_hash, best_metrics, best_premium = best
 existing = {}
 anchor_path = Path(anchor_file)
 if anchor_path.exists():
@@ -740,7 +1098,9 @@ else:
             existing_live["n"],
             existing_hash,
         )
-    best_key = (best_metrics["comp"], best_metrics["p50"], best_metrics["p25"], best_metrics["n"], best_hash)
+    # 比較は selection_score (premium 込み) で行う。Existing がランキング外なら premium は 0
+    best_key_select = (best_metrics["comp"] + best_premium, best_metrics["p50"], best_metrics["p25"], best_metrics["n"], best_hash)
+    existing_key_select = existing_key  # existing は selection 対象外なので premium 0 として扱う
     existing_has_file = bool(existing_hash) and bool(archive_dir) and os.path.exists(os.path.join(archive_dir, f"{existing_hash}.py"))
     existing_rejected = bool(existing_hash) and existing_hash in rejected
     if current_hash and existing_hash == current_hash:
@@ -753,7 +1113,7 @@ else:
         replace = True
     elif existing_hash == best_hash:
         replace = True
-    elif best_key > existing_key:
+    elif best_key_select > existing_key_select:
         replace = True
 
 if not replace:
@@ -766,9 +1126,35 @@ payload = {
     "p25": round(best_metrics["p25"], 4),
     "lcb": round(best_metrics["lcb"], 4),
     "n": int(best_metrics["n"]),
-    "updated_at": int(__import__("time").time()),
+    "updated_at": int(time.time()),
 }
 anchor_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+# 観測ログ: なぜこの戦略が選ばれたか (diversity premium の内訳)
+if last_anchor_change_file:
+    try:
+        os.makedirs(os.path.dirname(last_anchor_change_file) or ".", exist_ok=True)
+        prev_hash = str(existing.get("hash", "")) if existing else ""
+        body = (
+            f"# anchor change @ {time.strftime('%Y-%m-%dT%H:%M:%S')}\n"
+            f"- prev: {prev_hash}\n"
+            f"- new: {best_hash}\n"
+            f"- comp_raw: {best_metrics['comp']:.2f}\n"
+            f"- diversity_premium: {best_premium:.2f}\n"
+            f"- selection_score: {best_metrics['comp'] + best_premium:.2f}\n"
+            f"- p50: {best_metrics['p50']:.2f}, p25: {best_metrics['p25']:.2f}, n: {best_metrics['n']}\n"
+            f"- diversity_enabled: {diversity_enabled}, tabu_enabled: {tabu_enabled}, "
+            f"tabu_active: {len(tabu_entries)}\n"
+        )
+        with open(last_anchor_change_file, "w", encoding="utf-8") as f:
+            f.write(body)
+    except Exception:
+        pass
+
+# シグネチャキャッシュ永続化 (computeしたものを残す)
+if diversity_enabled or tabu_enabled:
+    _save_sig_cache(sig_cache)
+
 print(best_hash)
 PY
 }
@@ -1490,7 +1876,7 @@ PY
 		[ -f "$f" ] || continue
 		base=$(basename "$f")
 		h="${base%.py}"
-		if ! printf '%s\n' "$keep_hashes" | grep -qxF "$h"; then
+		if ! grep -qxF "$h" <<<"$keep_hashes"; then
 			rm -f "$f"
 			removed=$((removed + 1))
 		fi
@@ -1511,12 +1897,23 @@ update_rolling_scores() {
 	_backfill_hash_archive_from_known_versions
 	local rolling_result=""
 	rolling_result=$(
-		python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" <<'PY' 2>/dev/null
+		python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" <<'PY' 2>/dev/null
 import json
 import os
 import sys
 
 rs_file, h, score, archive_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+try:
+    normal_keep = int(sys.argv[5])
+except Exception:
+    normal_keep = 20
+try:
+    hot_keep = int(sys.argv[6])
+except Exception:
+    hot_keep = 200
+hot_enabled = str(sys.argv[7]).strip() == "1"
+normal_keep = max(1, normal_keep)
+hot_keep = max(normal_keep, hot_keep)
 if os.path.exists(rs_file):
     with open(rs_file) as f:
         rs = json.load(f)
@@ -1535,13 +1932,58 @@ if archive_file and archive_file in recent_archives:
     print(f"{h}|{len(rs[h]['scores'])}|{rs[h]['games_total']}|dedup")
     raise SystemExit
 
+def nation_progress(path):
+    max_type = 0
+    russia = False
+    soviet = False
+    if not path or not os.path.exists(path):
+        return max_type, russia, soviet
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if row.get("russia_created"):
+                    russia = True
+                if row.get("soviet_created"):
+                    soviet = True
+                pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+                for piece in pieces:
+                    try:
+                        t = int(piece.get("type", 0) or 0)
+                    except Exception:
+                        continue
+                    if t > max_type:
+                        max_type = t
+                    if t >= 15:
+                        russia = True
+                    if t >= 16:
+                        soviet = True
+    except Exception:
+        pass
+    return max_type, russia, soviet
+
+prev_scores = [int(x) for x in rs[h].get("scores", [])]
+prev_best = max(prev_scores) if prev_scores else None
 rs[h]["scores"].append(score)
 rs[h]["games_total"] += 1
-rs[h]["scores"] = rs[h]["scores"][-20:]
+keep = hot_keep if hot_enabled and prev_best is not None and score > prev_best else normal_keep
+rs[h]["scores"] = rs[h]["scores"][-keep:]
 if archive_file:
     recent_archives.append(archive_file)
     recent_archives = recent_archives[-25:]
 rs[h]["_recent_archives"] = recent_archives
+progress_archives = recent_archives[-len(rs[h]["scores"]):] if rs[h]["scores"] else []
+progress = [nation_progress(path) for path in progress_archives]
+rs[h]["max_types"] = [item[0] for item in progress]
+rs[h]["russia_count"] = sum(1 for _, russia_created, _ in progress if russia_created)
+rs[h]["soviet_count"] = sum(1 for _, _, soviet_created in progress if soviet_created)
+rs[h]["best_max_type"] = max([int(rs[h].get("best_max_type", 0) or 0)] + [item[0] for item in progress])
 
 with open(rs_file, "w") as f:
     json.dump(rs, f)
@@ -1560,10 +2002,59 @@ PY
 	else
 		log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
 	fi
+	# 帯域脱出機構 D + E: 現戦略のシグネチャを永続キャッシュに保存
+	# (game_history が後で pruning されてもシグネチャが残るように)
+	if [ "${DIVERSITY_PREMIUM_ENABLED:-0}" = "1" ] || [ "${TABU_ENABLED:-0}" = "1" ]; then
+		_cache_strategy_signature "$strategy_hash" >/dev/null 2>&1 || true
+	fi
 	_prune_hash_archive_by_ranking
 }
 
+# 帯域脱出機構ヘルパー: 指定 hash の挙動シグネチャを behavior_signatures.json に保存。
+# rolling_scores._recent_archives + 直近 jsonl から compute_signature を呼ぶ。
+_cache_strategy_signature() {
+	local target_hash="$1"
+	[ -n "$target_hash" ] || return 1
+	python3 - "$ROLLING_SCORES_FILE" "$BEHAVIOR_SIGNATURES_FILE" "$target_hash" "$(pwd)" <<'PY' 2>/dev/null
+import json, os, sys
+rs_file, sig_file, h, repo = sys.argv[1:5]
+try:
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    from lib.behavior_signature import compute_signature
+except Exception:
+    raise SystemExit(0)
+
+try:
+    rs = json.load(open(rs_file))
+except Exception:
+    raise SystemExit(0)
+entry = rs.get(h) or {}
+arc = entry.get("_recent_archives", []) or []
+arc = [a for a in arc if a and (a.startswith("git:") or os.path.exists(a))]
+if not arc:
+    raise SystemExit(0)
+sig = compute_signature(arc[-12:])
+if not sig or sig.get("n_turns", 0) == 0:
+    raise SystemExit(0)
+
+cache = {}
+if os.path.exists(sig_file):
+    try:
+        cache = json.load(open(sig_file, encoding="utf-8")) or {}
+    except Exception:
+        cache = {}
+cache[h] = sig
+os.makedirs(os.path.dirname(sig_file) or ".", exist_ok=True)
+tmp = sig_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cache, f, ensure_ascii=False)
+os.replace(tmp, sig_file)
+PY
+}
+
 check_regression() {
+	type reload_runtime_toggles >/dev/null 2>&1 && reload_runtime_toggles
 	# top1 anchor を固定基準にして branch 単位で評価する。
 	# 単世代の揺らぎでは戻さず、branch の budget が尽きても anchor から明確に劣後する場合だけ rollback。
 	REGRESSION_ROLLBACK_DONE=0
@@ -1581,11 +2072,13 @@ check_regression() {
 
 	local result
 	result=$(
-		python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$ACTIVE_BRANCH_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" "$BRANCH_MAX_DEPTH" "$BRANCH_MAX_GAMES" "$BRANCH_PATIENCE" "$BRANCH_HARD_COMP_GAP" "$BRANCH_HARD_P50_GAP" "$BRANCH_HARD_P25_GAP" "$BRANCH_HARD_MIN_BREACH_COUNT" <<'PY'
+		python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$ACTIVE_BRANCH_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" "$BRANCH_MAX_DEPTH" "$BRANCH_MAX_GAMES" "$BRANCH_PATIENCE" "$BRANCH_HARD_COMP_GAP" "$BRANCH_HARD_P50_GAP" "$BRANCH_HARD_P25_GAP" "$BRANCH_HARD_MIN_BREACH_COUNT" \
+			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" <<'PY'
 import json
 import math
 import os
 import sys
+import time
 
 rs_file, current_run_file, active_branch_file, anchor_file, current_hash = sys.argv[1:6]
 min_games_current = int(sys.argv[6])
@@ -1601,6 +2094,66 @@ hard_comp_gap = float(sys.argv[15])
 hard_p50_gap = float(sys.argv[16])
 hard_p25_gap = float(sys.argv[17])
 hard_min_breach_count = int(sys.argv[18])
+stagnation_file = sys.argv[19] if len(sys.argv) > 19 else ""
+wildcard_origin_file = sys.argv[20] if len(sys.argv) > 20 else ""
+
+# 帯域脱出機構 F: stagnation_counter / wildcard origin override
+_BASE_BRANCH_MAX_GAMES = branch_max_games
+_BASE_BRANCH_PATIENCE = branch_patience
+_WILDCARD_ORIGIN = {}
+if wildcard_origin_file and os.path.exists(wildcard_origin_file):
+    try:
+        _WILDCARD_ORIGIN = json.load(open(wildcard_origin_file, encoding="utf-8")) or {}
+    except Exception:
+        _WILDCARD_ORIGIN = {}
+if current_hash in _WILDCARD_ORIGIN:
+    wo = _WILDCARD_ORIGIN[current_hash] or {}
+    branch_max_games = int(wo.get("max_games_override", branch_max_games) or branch_max_games)
+    branch_patience = int(wo.get("patience_override", branch_patience) or branch_patience)
+
+def _update_stagnation(event):
+    """Python ブロックを抜ける直前に呼ぶ。
+    event: PROMOTE | REGRESSION | RESET | OK_BEAT | OK_IDLE
+    PROMOTE / OK_BEAT → カウンタ 0、REGRESSION / RESET → +1、OK_IDLE → 変更なし
+    """
+    if not stagnation_file:
+        return
+    try:
+        data = {}
+        if os.path.exists(stagnation_file):
+            try:
+                data = json.load(open(stagnation_file, encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        c = int(data.get("consecutive_no_improve", 0) or 0)
+        if event in ("PROMOTE", "OK_BEAT"):
+            c = 0
+        elif event in ("REGRESSION", "RESET"):
+            c += 1
+        elif event == "OK_IDLE":
+            pass
+        data["consecutive_no_improve"] = c
+        # counter 非依存の回帰ストリーク (WILDCARD masking 対策)。
+        # PROMOTE は -1 減衰のみ (ハードリセットしない)。弱アンカーを僅差で
+        # 抜く marginal PROMOTE が蓄積した停滞証拠を全消去すると F=WILDCARD が
+        # 永久未発火になるため。真の脱出 (連続 PROMOTE) なら減衰し続けて 0 に
+        # 収束する。REGRESSION/RESET で +1。OK_BEAT/OK_IDLE は不変
+        # (降格 anchor 由来の OK_BEAT でリセットされない)。
+        rs = int(data.get("regression_streak", 0) or 0)
+        if event == "PROMOTE":
+            rs = max(0, rs - 1)
+        elif event in ("REGRESSION", "RESET"):
+            rs += 1
+        data["regression_streak"] = rs
+        data["last_event"] = event
+        data["updated_at"] = int(time.time())
+        os.makedirs(os.path.dirname(stagnation_file) or ".", exist_ok=True)
+        tmp = stagnation_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, stagnation_file)
+    except Exception:
+        pass
 
 def load_json(path):
     if not os.path.exists(path):
@@ -1657,6 +2210,72 @@ def key(metrics_dict):
         int(metrics_dict.get("n", 0)),
     )
 
+def nation_progress(path):
+    max_type = 0
+    russia = False
+    soviet = False
+    if not path or not os.path.exists(path):
+        return max_type, russia, soviet
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if row.get("russia_created"):
+                    russia = True
+                if row.get("soviet_created"):
+                    soviet = True
+                pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+                for piece in pieces:
+                    try:
+                        t = int(piece.get("type", 0) or 0)
+                    except Exception:
+                        continue
+                    if t > max_type:
+                        max_type = t
+                    if t >= 15:
+                        russia = True
+                    if t >= 16:
+                        soviet = True
+    except Exception:
+        pass
+    return max_type, russia, soviet
+
+def objective_progress(data, scores):
+    data = data or {}
+    n = len(scores or [])
+    max_types = []
+    for raw in data.get("max_types", []) or []:
+        try:
+            max_types.append(int(raw))
+        except Exception:
+            pass
+    if n > 0:
+        max_types = max_types[-n:]
+    if not max_types:
+        archives = data.get("_recent_archives", []) or []
+        if n > 0:
+            archives = archives[-n:]
+        progress = [nation_progress(path) for path in archives]
+        max_types = [item[0] for item in progress]
+        russia_count = sum(1 for _, russia, _ in progress if russia)
+        soviet_count = sum(1 for _, _, soviet in progress if soviet)
+    else:
+        russia_count = int(data.get("russia_count", 0) or 0)
+        soviet_count = int(data.get("soviet_count", 0) or 0)
+    best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
+    return {
+        "best_max_type": best_max_type,
+        "russia_count": russia_count,
+        "soviet_count": soviet_count,
+        "max_types": max_types,
+    }
+
 def gap(anchor_metrics, target_metrics):
     return (
         max(0.0, float(anchor_metrics.get("comp", 0.0)) - float(target_metrics.get("comp", 0.0))),
@@ -1676,14 +2295,17 @@ def breach_count(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
 rolling = load_json(rs_file)
 current_run = load_json(current_run_file)
 current_scores = []
+current_data = rolling.get(current_hash, {}) if isinstance(rolling.get(current_hash, {}), dict) else {}
 if str(current_run.get("hash", "") or "") == current_hash:
     for x in current_run.get("scores", []) or []:
         try:
             current_scores.append(int(x))
         except Exception:
             pass
+    current_data = current_run
 if not current_scores:
     entry = rolling.get(current_hash, {})
+    current_data = entry if isinstance(entry, dict) else {}
     for x in entry.get("scores", []) or []:
         try:
             current_scores.append(int(x))
@@ -1691,17 +2313,20 @@ if not current_scores:
             pass
 current = metrics(current_scores)
 if not current:
+    _update_stagnation("OK_IDLE")
     print("OK")
     raise SystemExit
 
 # 最小サンプルガード: n<12 では p50/p25 の変動が大きすぎて regression 判定できない
 if current["n"] < 12:
+    _update_stagnation("OK_IDLE")
     print("OK")
     raise SystemExit
 
 anchor_payload = load_json(anchor_file)
 anchor_hash = str(anchor_payload.get("hash", "") or "")
 if not anchor_hash:
+    _update_stagnation("OK_IDLE")
     print("OK")
     raise SystemExit
 anchor = {
@@ -1725,7 +2350,18 @@ if branch_active:
         "n": int(anchor_blob.get("n", anchor.get("n", 0)) or 0),
     }
 
+anchor_data = rolling.get(anchor_hash, {}) if isinstance(rolling.get(anchor_hash, {}), dict) else {}
+anchor_scores = []
+for x in (anchor_data.get("scores", []) or []):
+    try:
+        anchor_scores.append(int(x))
+    except Exception:
+        pass
+current_objective = objective_progress(current_data, current_scores)
+anchor_objective = objective_progress(anchor_data, anchor_scores)
+
 if current_hash == anchor_hash and not branch_active:
+    _update_stagnation("OK_BEAT")
     print("OK")
     raise SystemExit
 
@@ -1733,7 +2369,33 @@ curr_comp_gap, curr_p50_gap, curr_p25_gap = gap(anchor, current)
 curr_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, min_comp_gap, min_p50_gap, min_p25_gap)
 hard_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, hard_comp_gap, hard_p50_gap, hard_p25_gap)
 
+objective_reasons = []
+if current_hash != anchor_hash:
+    if anchor_objective.get("soviet_count", 0) > 0 and current_objective.get("soviet_count", 0) <= 0:
+        objective_reasons.append("lost_soviet_path")
+    if anchor_objective.get("best_max_type", 0) >= 15 and current_objective.get("best_max_type", 0) < 15:
+        objective_reasons.append("lost_russia_path")
+if objective_reasons:
+    print(
+        "REGRESSION:"
+        f"mode=objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+        f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+        f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
+        f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
+        f"branch_depth=0,branch_games=0,branch_patience=0,"
+        f"anchor_best_max_type={anchor_objective.get('best_max_type', 0)},curr_best_max_type={current_objective.get('best_max_type', 0)},"
+        f"anchor_russia={anchor_objective.get('russia_count', 0)},curr_russia={current_objective.get('russia_count', 0)},"
+        f"anchor_soviet={anchor_objective.get('soviet_count', 0)},curr_soviet={current_objective.get('soviet_count', 0)},"
+        f"reasons=objective_regression+{'+'.join(objective_reasons)}"
+    )
+    _update_stagnation("REGRESSION")
+    raise SystemExit
+
 if current["n"] >= min_games_current and current_hash != anchor_hash and key(current) > key(anchor):
+    _update_stagnation("PROMOTE")
     print(
         "PROMOTE:"
         f"anchor_hash={anchor_hash},current_hash={current_hash},"
@@ -1782,10 +2444,12 @@ if branch_active and curr_breach >= min_breach_count and current_hash != anchor_
             f"reasons=early_branch_regression+curr_breach"
             + ("" if no_improvement_signal else "+current_worse_than_best")
         )
+        _update_stagnation("REGRESSION")
         raise SystemExit
 
 # anchor_direct / budget_exhausted / hard_breach は成熟したサンプル (n>=min_games_current) のみ判定
 if current["n"] < min_games_current:
+    _update_stagnation("OK_IDLE")
     print("OK")
     raise SystemExit
 
@@ -1804,7 +2468,9 @@ if not branch_active:
             "branch_depth=0,branch_games=0,branch_patience=0,"
             f"reasons={direct_reason}"
         )
+        _update_stagnation("REGRESSION")
         raise SystemExit
+    _update_stagnation("OK_BEAT")
     print("OK")
     raise SystemExit
 
@@ -1848,6 +2514,7 @@ if hard_breach >= hard_min_breach_count:
         f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
         "reasons=hard_fail+branch"
     )
+    _update_stagnation("REGRESSION")
     raise SystemExit
 
 if budget_reasons:
@@ -1864,6 +2531,7 @@ if budget_reasons:
             f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
             f"reasons=budget_exhausted+{'+'.join(budget_reasons)}"
         )
+        _update_stagnation("REGRESSION")
         raise SystemExit
     print(
         "RESET:"
@@ -1873,8 +2541,10 @@ if budget_reasons:
         f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
         f"reasons=budget_reset+{'+'.join(budget_reasons)}"
     )
+    _update_stagnation("RESET")
     raise SystemExit
 
+_update_stagnation("OK_BEAT")
 print("OK")
 PY
 		2>/dev/null
@@ -1917,6 +2587,10 @@ PY
 		if [ -f "$REJECTED_HASHES_FILE" ]; then
 			tail -20 "$REJECTED_HASHES_FILE" >"$REJECTED_HASHES_FILE.tmp"
 			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+		fi
+		# E: 失敗 current の挙動シグネチャを tabu に追記 (帯域脱出機構)
+		if [ "${TABU_ENABLED:-0}" = "1" ]; then
+			_record_tabu_signature "$strategy_hash" >/dev/null 2>&1 || true
 		fi
 		python3 - "$ROLLING_SCORES_FILE" "$REJECTED_HASH_META_FILE" "$strategy_hash" <<'PY' 2>/dev/null
 import json
@@ -2030,6 +2704,9 @@ PY
 		REGRESSION_ROLLBACK_HASH="$rolled_hash"
 		_clear_active_branch
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
+		if [ -x ./overlay_notify.sh ]; then
+			./overlay_notify.sh rollback "粛清 rollback" "${strategy_hash:0:8} -> ${rolled_hash:0:8} game=${rollback_game_num} ${rollback_note}" "warn" >/dev/null 2>&1 || true
+		fi
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
 		if [ -n "$rolled_hash" ]; then
@@ -2040,7 +2717,8 @@ PY
 				log "[CURRENT-RUN] rollback seed missing -> reset: hash=${rolled_hash}"
 			fi
 		fi
-		_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
+		(_refresh_best_strategy_anchor "" >/dev/null 2>&1) &
+		_wait_pid_with_timeout "$!" "${ROLLBACK_ANCHOR_REFRESH_TIMEOUT_SEC:-30}" "rollback_anchor_refresh" || true
 		if [ -n "$rollback_analysis_summary" ]; then
 			{
 				echo "=== $(date '+%Y-%m-%d %H:%M') ROLLBACK Game#${rollback_game_num} ${strategy_hash} -> ${rolled_hash} ==="
@@ -2058,10 +2736,14 @@ PY
 		rollback_event_analysis=$(_extract_rollback_analysis_for_phylo "$ROLLBACK_ANALYSIS_FILE")
 		append_phyrogenetic_event "rollback" "$strategy_hash" "$rolled_hash" "$rollback_game_num" "" \
 			"$rollback_analysis_summary" "$rollback_event_analysis"
-		refresh_phyrogenetic_tree --pending-edge rollback "$strategy_hash" "$rolled_hash" >/dev/null 2>&1 || true
+		(refresh_phyrogenetic_tree --pending-edge rollback "$strategy_hash" "$rolled_hash" >/dev/null 2>&1) &
+		_wait_pid_with_timeout "$!" "${ROLLBACK_PHYLO_REFRESH_TIMEOUT_SEC:-20}" "rollback_phylo_refresh" || true
 		# 粛清ラジオ: AI生成して deferred queue に投入（audio_worker が再生）
 		if [ -f "$ROLLBACK_ANALYSIS_FILE" ]; then
-			RADIO_FORCE_DEFERRED=1 start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" || true
+			(
+				OPENCODE_RUN_LOCK_STALE_SEC="${ROLLBACK_POSTMORTEM_OPENCODE_LOCK_STALE_SEC:-240}" \
+					RADIO_FORCE_DEFERRED=1 start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" || true
+			) >>"$ROLLBACK_POSTMORTEM_AI_LOG_FILE" 2>&1 &
 		fi
 
 		# 粛清区切りでまとめてコミット: 戦略本体 + 試合アーカイブ + スコア履歴 + 系統樹
