@@ -167,7 +167,10 @@ _run_minimax_claude_prompt_file() {
 
 _opencode_latest_session_id_for_dir() {
 	local target_dir="$1"
-	local opencode_db="${OPENCODE_SESSION_DB:-$HOME/.local/share/opencode/opencode.db}"
+	local opencode_db="${OPENCODE_SESSION_DB:-}"
+	if [ -z "$opencode_db" ]; then
+		opencode_db="$(_opencode_xdg_data_home 2>/dev/null)/opencode/opencode.db"
+	fi
 	[ -n "$target_dir" ] || return 1
 	[ -f "$opencode_db" ] || return 1
 	python3 - "$opencode_db" "$target_dir" <<'PY' 2>/dev/null
@@ -268,6 +271,33 @@ run_cmd() {
 		else
 			printf '[%s] [AI:%s] START spec=%s target=%s timeout=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$timeout_label" >>"$cmd_log_file" 2>/dev/null || true
 		fi
+	fi
+
+	if [ "$type" = "opencode" ] && [ -z "$agent" ]; then
+		log "[CMD] opencode spec requires explicit agent (e.g. opencode:glmflash)"
+		rm -f "$prompt_file"
+		return 2
+	fi
+
+	local opencode_lock_token=""
+	local opencode_prev_xdg_state_home="${XDG_STATE_HOME-}"
+	local opencode_prev_xdg_data_home="${XDG_DATA_HOME-}"
+	local opencode_had_xdg_state_home=0
+	local opencode_had_xdg_data_home=0
+	[ "${XDG_STATE_HOME+x}" = "x" ] && opencode_had_xdg_state_home=1
+	[ "${XDG_DATA_HOME+x}" = "x" ] && opencode_had_xdg_data_home=1
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+		_opencode_run_lock_enter "$cmd_log_tag:$target" || {
+			rm -f "$prompt_file"
+			return 1
+		}
+		opencode_lock_token="$OPENCODE_RUN_LOCK_LAST_TOKEN"
+		mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
+		mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
+		_opencode_sync_auth_to_xdg
+		_opencode_cleanup_internal_locks
+		export XDG_STATE_HOME="$(_opencode_xdg_state_home)"
+		export XDG_DATA_HOME="$(_opencode_xdg_data_home)"
 	fi
 
 	case "$type" in
@@ -422,11 +452,6 @@ run_cmd() {
 		fi
 		;;
 	opencode)
-		if [ -z "$agent" ]; then
-			log "[CMD] opencode spec requires explicit agent (e.g. opencode:glmflash)"
-			rm -f "$prompt_file"
-			return 2
-		fi
 		local -a opencode_args
 		opencode_args=(run "$prompt_body" --agent="$agent")
 		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
@@ -557,6 +582,18 @@ run_cmd() {
 		;;
 	esac
 	local cmd_pid=$!
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+		if [ "$opencode_had_xdg_state_home" -eq 1 ]; then
+			export XDG_STATE_HOME="$opencode_prev_xdg_state_home"
+		else
+			unset XDG_STATE_HOME
+		fi
+		if [ "$opencode_had_xdg_data_home" -eq 1 ]; then
+			export XDG_DATA_HOME="$opencode_prev_xdg_data_home"
+		else
+			unset XDG_DATA_HOME
+		fi
+	fi
 	RUN_CMD_ACTIVE_PID=$cmd_pid
 	local _cmd_start_epoch
 	_cmd_start_epoch=$(date +%s)
@@ -567,11 +604,13 @@ run_cmd() {
 	local prev_int_trap interrupted
 	prev_int_trap=$(trap -p INT || true)
 	interrupted=0
-	trap 'interrupted=1; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
+	trap 'interrupted=1; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; _opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"; opencode_lock_token=""; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
 	_run_cmd_stop_heartbeat
+	_opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"
+	opencode_lock_token=""
 	RUN_CMD_ACTIVE_PID=0
 	local _cmd_elapsed=$(( $(date +%s) - _cmd_start_epoch ))
 	# デバッグ: wait直後の状態をログに記録 (リトライ未到達問題の調査用)
@@ -590,7 +629,7 @@ run_cmd() {
 		fi
 	fi
 	# コンテキスト上限/トークン超過エラー検出 → セッション継続しても無駄なので rc=77 で通知
-	if [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE "exceeds.*context length|exceeds.*maximum.*token|context window limit|maximum context length|prompt is too long|too many tokens" 2>/dev/null; then
+	if [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE "exceeds.*context length|exceeds.*maximum.*token|context window limit|context window exceeds|maximum context length|prompt is too long|too many tokens|invalid params, context window" 2>/dev/null; then
 		log "[CMD] コンテキスト上限検出 → セッションクリア"
 		ret=77
 	fi
