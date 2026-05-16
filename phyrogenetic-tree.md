@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-16 17:23:41 JST`
+- Updated: `2026-05-16 17:42:09 JST`
 - Nodes: `1536`
-- Edges: `1980`
-- Current: `c8482579bf2a`
-- Anchor: `c8482579bf2a`
+- Edges: `1981`
+- Current: `839930b44612`
+- Anchor: `839930b44612`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_c8482579bf2a["c8482579bf2a<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11571.1"]
+    h_839930b44612["839930b44612<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11569.7"]
     h_273866b19f99["273866b19f99<br/>g=1 n=1<br/>comp=9663.0"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
@@ -83,7 +83,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_c8482579bf2a current_anchor;
+    class h_839930b44612 current_anchor;
     class h_273866b19f99 plain;
     class h_e75542ef3a84 plain;
     class h_78c5c9b64fef plain;
@@ -4405,7 +4405,7 @@ flowchart TD
 
 - Range: `0b044788c9f1` .. `643ca0f56e6f`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `72`
+- Internal edges in this diagram: `73`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
@@ -4482,12 +4482,12 @@ flowchart TD
     h_5f62be3f7262["5f62be3f7262<br/>g=24 n=20<br/>comp=11218.5"]
     h_5d18fbadb2ae["5d18fbadb2ae<br/>g=24 n=20<br/>comp=11461.3"]
     h_c66580cb121c["c66580cb121c<br/>g=12 n=12<br/>comp=9565.3"]
-    h_c8482579bf2a["c8482579bf2a<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11571.1"]
+    h_c8482579bf2a["c8482579bf2a<br/>g=28 n=20<br/>comp=10508.9"]
     h_039e38921fb6["039e38921fb6<br/>g=48 n=20<br/>comp=11289.3"]
     h_fd6956ec7e5e["fd6956ec7e5e<br/>g=48 n=20<br/>comp=9917.7"]
     h_fe19954095cd["fe19954095cd<br/>g=24 n=20<br/>comp=11204.6"]
     h_9661c91af640["9661c91af640<br/>g=12 n=12<br/>comp=9744.6"]
-    h_839930b44612["839930b44612<br/>g=24 n=20<br/>comp=11569.7"]
+    h_839930b44612["839930b44612<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11569.7"]
     h_1e1d507e2bf2["1e1d507e2bf2<br/>g=24 n=20<br/>comp=10423.0"]
     h_007f02d1457f["007f02d1457f<br/>g=24 n=20<br/>comp=10701.2"]
     h_36f0c5af893a["36f0c5af893a<br/>g=12 n=12<br/>comp=9229.6"]
@@ -4575,6 +4575,7 @@ flowchart TD
     h_09d2c8063925 -->|improve| h_0d6f3ca799fe
     h_0d6f3ca799fe -->|improve| h_643ca0f56e6f
     h_643ca0f56e6f -. rollback .-> h_0dc7d69854cc
+    h_c8482579bf2a -. rollback .-> h_839930b44612
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4641,12 +4642,12 @@ flowchart TD
     class h_5f62be3f7262 plain;
     class h_5d18fbadb2ae plain;
     class h_c66580cb121c plain;
-    class h_c8482579bf2a current_anchor;
+    class h_c8482579bf2a plain;
     class h_039e38921fb6 plain;
     class h_fd6956ec7e5e plain;
     class h_fe19954095cd plain;
     class h_9661c91af640 plain;
-    class h_839930b44612 plain;
+    class h_839930b44612 current_anchor;
     class h_1e1d507e2bf2 plain;
     class h_007f02d1457f plain;
     class h_36f0c5af893a plain;
@@ -5455,6 +5456,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#25373 `c8482579 -> 839930b4`
+
+- - rollback from c8482579bf2a to 839930b44612 at game 25373
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=10508.9/10912.0/9586.0 vs target 11569.7/12032.5/10278.2
+- - bad recent scores: 10665 11238 16568 9644 17176 9412 5972 10509
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=10508.9 p50=10912.0 p25=9586.0 mean=12044.6 n=20
+- rollback_target: comp=11569.7 p50=12032.5 p25=10278.2 mean=13781.1 n=20
+- metric_gap_vs_target: comp=-1060.8 p50=-1120.5 p25=-692.2 mean=-1736.5
+- recent12_avg: bad=11746.4 target=13796.6
+- recent12_floor: bad=5972 target=8287
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#25369 `a3e39650 -> c8482579`
 
