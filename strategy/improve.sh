@@ -1079,7 +1079,11 @@ trigger_adaptive_improvement() {
 	if [ "$improve_reason" = "post_regression" ]; then
 		log "[IMPROVE] ロールバック直後の失敗バッチを改善入力として使用"
 	fi
-	if [ "$improve_reason" = "normal" ] && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
+	# 粛清カスケード中は毎サイクル post_regression で起動するため、ゲートを
+	# normal 限定にすると WILDCARD(脱出弾)に構造的に永遠に入れない。
+	# 回帰ストリーク/停滞が閾値超なら post_regression でも WILDCARD へ昇格を
+	# 許可する (まさに粛清連鎖からの脱出が WILDCARD の目的)。
+	if { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; } && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
 		local stag rstreak
 		stag=$(python3 -c "
 import json,sys
