@@ -65,7 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+      # v624: v607 CROSSES_DEADLINE_NO_MERGE_VETO逆移植 — deadline超出時にmerge選択を強制
+      # penalty -1200→-8000. worst game T70-77でdecision_crosses_deadline=true & best_merge_grade=NO頻発問題对策
+      # Fixes failure mode: deadline超出NO merge選択による城生き残→piece_count増加→ゲームオーバー
+      # refs: tmp/analysis_result.md (仮説1), tmp/batch_summary.txt
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -904,12 +908,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    # HARD INVARIANT: if safe (non-crossing) candidates exist, ONLY evaluate safe candidates.
+    # This guarantees we never select a crossing candidate when safe alternatives exist.
+    # Must be checked BEFORE any scoring to ensure safe candidates are never rejected.
+    safe_results = [r for r in results if not r.get("crosses_deadline", False)]
+    has_safe = len(safe_results) > 0
+
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+
+        # If safe candidates exist, skip any crossing candidate entirely
+        if has_safe and result.get("crosses_deadline", False):
+            continue
 
         score = 0.0
         reasons = []
@@ -2064,7 +2078,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-        # ----- v411: deadline-crossing NO-merge penalty (unutilized crosses_deadline) -----
+        # v411: deadline-crossing NO-merge penalty (unutilized crosses_deadline) -----
         # analyze_board.py computes crosses_deadline per-candidate: whether this drop position
         # pushes the piece's top edge past the deadline (top_after_drop >= DEADLINE_Y=3.32).
         # When no merge is available, this is the worst possible placement: it increases
@@ -2073,15 +2087,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
         # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
         # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
-        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
-        # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
-        # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
-        # refs: analyze_board.py L412 (crosses_deadline computation),
-        #       game_history/20260330_144015_score0665.jsonl T60-61,
-        #       game_history/20260330_143501_score0994.jsonl T74-75
+        # v624→v607逆移植: penaltyを-1200から-8000に変更 (analysis_result.md仮説1)
+        # deadline超出時にmergeを選択しないNO_MERGE_VETOを実装
+        # worst game (score0690, max_y 3.81) T70-77でdecision_crosses_deadline=true &
+        # best_merge_grade=NOが頻発し、城が生き残ってpiece_count増加→ゲームオーバー
+        # mandatory_themes: 「deadline超出時は併合できる場合に限る」
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 1200.0
-            reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            score -= 8000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE_VETO")
 
         # ----- update best candidate -----
         if score > best_score:
