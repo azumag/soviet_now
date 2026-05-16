@@ -65,12 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v625: axis 8.6 extension — deadline_crossed && merge_available 时に+500追加ボーナス
-      # worst(score0594) T60-65: decision_crosses_deadline=true & best_merge_grade=NO → pc増加→GO
-      # best(score2379) T105-112: deadline_crossedでもmerge維持→score_gain=76
-      # mandatory_themes遵守。death_spiral条件は除外。
-      # Fixes rollback failure mode: deadline超越でmerge機会逃走→game over
-      # refs: tmp/analysis_result.md (採用仮説), tmp/batch_summary.txt, data/mandatory_themes.txt
       # v624: v607 CROSSES_DEADLINE_NO_MERGE_VETO逆移植 — deadline超出時にmerge選択を強制
       # penalty -1200→-8000. worst game T70-77でdecision_crosses_deadline=true & best_merge_grade=NO頻発問題对策
       # Fixes failure mode: deadline超出NO merge選択による城生き残→piece_count増加→ゲームオーバー
@@ -1896,18 +1890,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
-
-        # ----- v625: deadline_crossed + merge_available bonus (axis 8.6 extension) -----
-        # worst(score0594) T60-65: decision_crosses_deadline=true & best_merge_grade=NO → pc増加→GO
-        # best(score2379) T105-112: deadline_crossedでもmerge維持→score_gain=76
-        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # deadline_crossed && merge_available 时に+500强化（merge=DIRECT/NEAR）。
-        # death_spiral条件は除外（既存の死亡構造是无視しない）。
-        # refs: tmp/analysis_result.md (採用仮説), tmp/improve_brief.md
-        # Fixes rollback failure mode: deadline超越でmerge機会逃走→game over
-        if deadline_crossed and merge_grade in ["DIRECT", "NEAR"] and not death_spiral:
-            score += 500.0
-            reasons.append("DEADLINE_CROSSED_MERGE_BONUS")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
