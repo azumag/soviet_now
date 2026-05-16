@@ -45,15 +45,86 @@ _soren91_switch_obs_layout() {
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
-		"$SOREN91_OBS_CONTROL" batch soren show:"$SOREN91_OBS_INPUT_NAME" hide:console1,console2,console3,dashboard >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren show:"$SOREN91_OBS_INPUT_NAME" hide:console1,console2,console3,dashboard >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
-		"$SOREN91_OBS_CONTROL" batch soren show:console1,console2,console3,dashboard hide:"$SOREN91_OBS_INPUT_NAME" >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren show:console1,console2,console3,dashboard hide:"$SOREN91_OBS_INPUT_NAME" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		_soren91_activate_shared_browser_tab china
 		;;
 	*)
 		return 1
 		;;
 	esac
+}
+
+_soren91_cdp_base_url() {
+	local cdp_port="${SOREN_CDP_PORT:-9222}"
+	local base="http://127.0.0.1:$cdp_port"
+	if [ -f "$ELOOP_LIB_DIR/tmp/cdp_endpoint.json" ]; then
+		local parsed_base=""
+		parsed_base=$(
+			python3 - "$ELOOP_LIB_DIR/tmp/cdp_endpoint.json" "$base" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, default = sys.argv[1:3]
+try:
+    url = json.load(open(path, encoding="utf-8")).get("url") or default
+except Exception:
+	    url = default
+print(url.replace("localhost", "127.0.0.1"))
+PY
+		)
+		[ -n "$parsed_base" ] && base="$parsed_base"
+	fi
+	printf '%s' "$base"
+}
+
+_soren91_activate_shared_browser_tab() {
+	local mode="${1:-meriken}"
+	local base
+	base=$(_soren91_cdp_base_url)
+	node - "$base" "$mode" <<'NODE' >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/soren91_cdp.err.log" &
+const base = process.argv[2];
+const mode = process.argv[3] || 'meriken';
+
+function matches(target) {
+  const text = `${target.title || ''} ${target.url || ''}`;
+  if (mode === 'meriken') {
+    return /91人対戦|ソ連ゲーム91|sorengame91|play\.unityroom\.com/.test(text);
+  }
+  return /^https?:\/\/(localhost|127\.0\.0\.1):8080\b/.test(target.url || '') ||
+    /Unity WebGL Player \| soren-game/.test(target.title || '');
+}
+
+(async () => {
+  const targets = await fetch(`${base}/json`).then(r => r.json());
+  const page = targets.find(t => t.type === 'page' && matches(t));
+  if (page?.id) {
+    await fetch(`${base}/json/activate/${encodeURIComponent(page.id)}`, { method: 'PUT' });
+  }
+})().catch(() => {});
+NODE
+}
+
+_soren91_close_shared_game_tabs() {
+	local base
+	base=$(_soren91_cdp_base_url)
+	node - "$base" <<'NODE' >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/soren91_cdp.err.log" || true
+const base = process.argv[2];
+(async () => {
+  const targets = await fetch(`${base}/json`).then(r => r.json());
+  for (const target of targets) {
+    const text = `${target.title || ''} ${target.url || ''}`;
+    if (target.type !== 'page') continue;
+    if (!/91人対戦|ソ連ゲーム91|sorengame91|play\.unityroom\.com/.test(text)) continue;
+    if (target.id) {
+      await fetch(`${base}/json/close/${encodeURIComponent(target.id)}`).catch(() => {});
+    }
+  }
+})().catch(() => {});
+NODE
 }
 
 _soren91_enabled() {
@@ -66,6 +137,11 @@ _scheduled_meriken_time_enabled() {
 
 _clear_soren91_mode_flag() {
 	rm -f "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || true
+}
+
+_set_soren91_mode_flag() {
+	mkdir -p "$(dirname "$SOREN91_MODE_FLAG_FILE")" 2>/dev/null || true
+	touch "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || true
 }
 
 _soren91_scan_alive_runner_pids() {
@@ -535,19 +611,27 @@ soren91_start() {
 		log "[SOREN91] メリケンAIモード: 内部改善有効 (${_improve_interval}ゲームごと)"
 	fi
 
-	# 再試行付きランナーを完全 detach 起動
-	# manual_meriken_mode を起動したターミナルを閉じても継続するよう、
-	# HUP を無視して stdin/stdout/stderr を端末から切り離す。
+	# 再試行付きランナーを完全 detach 起動。
+	# Playwright + 共有ChromeはTTYなしnohupで起動するとタイトル直後に消えることがあるため、
+	# tmux が使える環境では専用セッションでTTYを保持する。
 	local pid=""
-	pid=$(
-		cd "$SOREN91_DIR" || exit 1
-		SOREN91_SHARED_BROWSER=1 \
-		SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
-		SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
-		IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
-			/usr/bin/nohup /bin/bash "$SOREN91_RUNNER_SCRIPT" </dev/null >/dev/null 2>&1 &
-		echo $!
-	)
+	if command -v tmux >/dev/null 2>&1; then
+		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
+		tmux new-session -d -s soren91_runner \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER=1 SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			>/dev/null 2>&1 || true
+		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
+	else
+		pid=$(
+			cd "$SOREN91_DIR" || exit 1
+			SOREN91_SHARED_BROWSER=1 \
+			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
+			SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
+			IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
+				/usr/bin/nohup /bin/bash "$SOREN91_RUNNER_SCRIPT" </dev/null >/dev/null 2>&1 &
+			echo $!
+		)
+	fi
 	case "$pid" in
 	''|*[!0-9]*)
 		log "[SOREN91] Failed to launch detached runner"
@@ -622,6 +706,9 @@ soren91_start() {
 			fi
 		} &
 		_soren91_start_capitalism_corner >/dev/null 2>&1 &
+		_set_soren91_mode_flag
+		# ダッシュボードHTMLを即時クリア（前ゲームGAMEOVER状態の残骸を消す）
+		(cd "$ELOOP_LIB_DIR" && ./generate_dashboard.sh MOVE >/dev/null 2>&1) || true
 		_soren91_switch_obs_layout meriken || true
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
@@ -651,6 +738,29 @@ with open('$SOREN91_SESSION_FILE', 'w') as f:
 	echo "$end_game"
 }
 
+# 戦略改善から復帰した直後 (soren91_stop の unmute 後) に soviet_local を
+# 再起動する。改善 PAUSE 中に suspend した Unity AudioContext は、復帰時の
+# in-page resume() が Chrome の autoplay/visibility gating で安定して効かず
+# (実測: unmute 後も state=suspended のまま → ゲーム音が BlackHole に乗らない)。
+# sink-at-construction により bridge を作り直せば AudioContext は生成時点で
+# running かつ BlackHole バインドになる (実証済) ため、復帰のたびに確実に
+# 音声を回復させる。ユーザー指示 (#90 関連) による恒久対応。
+# 引数 $1=1 のとき (=直前まで改善mute中だった) のみ実行。
+_soren91_restart_bridge_after_improve() {
+	[ "${1:-0}" = "1" ] || return 0
+	if ! command -v _br_relaunch >/dev/null 2>&1; then
+		log "[SOREN91] bridge再起動スキップ (_br_relaunch 未ロード)"
+		return 0
+	fi
+	log "[SOREN91] 改善復帰: soviet_local を再起動し AudioContext を running+BlackHole で作り直す"
+	# _br_relaunch は Fix0 lease を取得し他復旧アクターと競合しない。
+	# lease 他者保持(=2) や一過性ロックは soviet_watchdog が後追い復旧するので
+	# ここでは soren91_stop を失敗させない。
+	_br_relaunch && log "[SOREN91] bridge再起動 成功 (改善復帰)" \
+		|| log "[SOREN91] bridge再起動 譲渡/失敗 (rc=$? → watchdog委譲)"
+	return 0
+}
+
 soren91_stop() {
 	_soren91_enabled || return 0
 	touch "$SOREN91_STOPPING_FILE"
@@ -666,9 +776,12 @@ soren91_stop() {
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+		local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		_soren91_close_shared_game_tabs
 		_soren91_switch_obs_layout china || true
 		log "[SOREN91] Unmuted local game BGM (flag file removed)"
+		_soren91_restart_bridge_after_improve "$_had_mute"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -735,9 +848,12 @@ soren91_stop() {
 	_clear_meriken_time_state
 	_clear_soren91_mode_flag
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
+	local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+	_soren91_close_shared_game_tabs
 	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM (flag file removed)"
+	_soren91_restart_bridge_after_improve "$_had_mute"
 
 	# メリケンAI終了あいさつ (TTS + Twitch) — 重複防止
 	local _bye_guard="$TMP_STATE_DIR/.soren91_bye_sent"
@@ -867,5 +983,6 @@ soren91_cleanup() {
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_clear_meriken_time_state
+	_soren91_close_shared_game_tabs
 	_soren91_switch_obs_layout china || true
 }
