@@ -27,19 +27,24 @@ POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
 DAEMON_TTY_FILE="$TMP_STATE_DIR/improve_daemon.tty"
 
 _require_visible_terminal() {
-	[ "${IMPROVE_DAEMON_ALLOW_NONINTERACTIVE:-0}" = "1" ] && return 0
-	if [ ! -t 0 ] || [ ! -t 1 ]; then
-		echo "[$(date '+%H:%M:%S')] [improve_daemon] ERROR: visible terminal required; run ./improve_daemon.sh in the streaming terminal"
-		exit 2
-	fi
-
+	# 配信用フォアグラウンド端末前提は廃止。進捗は HTML オーバーレイに
+	# 書き出す運用に移行したため、ヘッドレス (supervisor/nohup 配下・TTY無し)
+	# が通常運用。TTY 必須ガードは撤廃し、TTY があれば記録のみ行う。
+	# IMPROVE_DAEMON_REQUIRE_TTY=1 を明示した時だけ旧来の TTY 必須に戻す。
 	local current_tty
 	current_tty=$(tty 2>/dev/null || true)
-	if [ -z "$current_tty" ] || [ "$current_tty" = "not a tty" ]; then
-		echo "[$(date '+%H:%M:%S')] [improve_daemon] ERROR: visible terminal required; tty unavailable"
-		exit 2
+	if [ "${IMPROVE_DAEMON_REQUIRE_TTY:-0}" = "1" ]; then
+		if [ ! -t 0 ] || [ ! -t 1 ] || [ -z "$current_tty" ] || [ "$current_tty" = "not a tty" ]; then
+			echo "[$(date '+%H:%M:%S')] [improve_daemon] ERROR: IMPROVE_DAEMON_REQUIRE_TTY=1 だが TTY 無し"
+			exit 2
+		fi
 	fi
-	printf '%s\n' "$current_tty" > "$DAEMON_TTY_FILE"
+	if [ -n "$current_tty" ] && [ "$current_tty" != "not a tty" ]; then
+		printf '%s\n' "$current_tty" > "$DAEMON_TTY_FILE" 2>/dev/null || true
+	else
+		echo "[$(date '+%H:%M:%S')] [improve_daemon] ヘッドレス起動 (TTY無し・HTML overlay運用)"
+		rm -f "$DAEMON_TTY_FILE" 2>/dev/null || true
+	fi
 }
 
 _require_visible_terminal
