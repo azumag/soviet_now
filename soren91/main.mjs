@@ -787,8 +787,13 @@ async function main() {
       audioOutputLabel,
       anchorPage,
     });
-    if (isSharedMode) {
+    // bringToFront はOS窓を前面に raise しユーザーのフォーカスを奪う。
+    // 共有Chrome窓内でメリケンタブを可視化する目的は初回1回で足り、
+    // 毎ラウンド/復帰で呼ぶと数秒おきにフォーカス強奪しユーザーが
+    // 他作業できなくなる (ユーザー報告)。初回のみ実行する。
+    if (isSharedMode && !globalThis.__soren91BroughtToFront) {
       await gamePage.bringToFront();
+      globalThis.__soren91BroughtToFront = true;
     }
 
     // Unity canvas ロード待機
