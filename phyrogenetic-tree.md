@@ -1,6 +1,6 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-17 17:05:06 JST`
+- Updated: `2026-05-17 17:10:15 JST`
 - Nodes: `1550`
 - Edges: `2009`
 - Current: `89c436411f12`
@@ -16,7 +16,7 @@
 ```mermaid
 flowchart TD
     h_1aa464cc23d4["1aa464cc23d4<br/>ANCHOR<br/>g=36 n=20<br/>comp=12185.6"]
-    h_89c436411f12["89c436411f12<br/>CURRENT<br/>g=54 n=20<br/>comp=9749.3"]
+    h_89c436411f12["89c436411f12<br/>CURRENT<br/>g=55 n=20<br/>comp=9923.4"]
     h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
     h_45a778460147["45a778460147<br/>g=1 n=1<br/>comp=7759.0"]
@@ -5250,7 +5250,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_89c436411f12["89c436411f12<br/>CURRENT<br/>g=54 n=20<br/>comp=9749.3"]
+    h_89c436411f12["89c436411f12<br/>CURRENT<br/>g=55 n=20<br/>comp=9923.4"]
     h_05b0591ef25b["05b0591ef25b<br/>g=12 n=12<br/>comp=11055.2"]
     h_84a9fab96145["84a9fab96145<br/>g=12 n=12<br/>comp=11401.8"]
     h_b0a2a468a1c7["b0a2a468a1c7<br/>g=12 n=12<br/>comp=10641.0"]
@@ -5511,6 +5511,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#25603 `89c43641 -> 89c43641`
+
+- - rollback from 89c436411f12 to 89c436411f12 at game 25603
+- - reasons: objective_regression+lost_russia_path
+- - current comp/p50/p25=9923.4/10396.0/8982.5 vs target 9923.4/10396.0/8982.5
+- - bad recent scores: 15378 10097 9010 12931 11370 8020 13420 11271
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=9923.4 p50=10396.0 p25=8982.5 mean=10737.9 n=20
+- rollback_target: comp=9923.4 p50=10396.0 p25=8982.5 mean=10737.9 n=20
+- metric_gap_vs_target: comp=0.0 p50=0.0 p25=0.0 mean=0.0
+- recent12_avg: bad=10958.3 target=10958.3
+- recent12_floor: bad=8020 target=8020
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#25602 `89c43641 -> 89c43641`
 
