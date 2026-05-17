@@ -848,9 +848,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") != "NO"]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        if __dlg_any_safe:
+            __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
@@ -1293,7 +1297,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     best_chain_score = 0.0
                     for sp in same_type_pieces:
                         sp_x = sp.get("x", 0)
-                        sp_y = sp.get("y", -13)
+                        sp_y = sp.get("y", -10)
                         # merged_typeピースとの最短距離を計算
                         min_merged_dist = float("inf")
                         for p in pieces:
@@ -1356,7 +1360,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 p_type = p.get("type", 0)
                 if p_type == next_type - 1 or p_type == next_type + 1:
                     p_x = p.get("x", 0)
-                    p_y = p.get("y", 14)
+                    p_y = p.get("y", 10)
                     # Prefer deeper (lower y) pieces — more accessible for future merges
                     adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
                     if adj_dist < best_adjacent_dist:
@@ -1408,6 +1412,65 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
+
+        # ----- v601: axis 9.9 — Russia-phase next-Russia growth pipeline guidance (NEW) -----
+        # analysis_result.md adopted hypothesis: Russia-phase dedicated "next-Russia growth pipeline" axis.
+        # Game log analysis: both best and extra_high games consume turns with BOARD_COMPRESSION only
+        # after Russia founding, entering merge drought with no pipeline for 2nd Russia.
+        # batch_summary: high-score and low-score groups have same endgame max_y (1.84) → height not
+        # the differentiator; piece types left on board determine score.
+        #
+        # Logic:
+        # (1) Russia piece below-position bonus: candidates placed directly below or diagonally below
+        #     existing Russia piece (type 15) get +150 * merge_mult * russia_pipeline_mult
+        #     Conditions: dx<1.5, -0.5<=dy<=1.0 (below or diagonally below within range)
+        # (2) High-type piece (type>=10) centroid clustering: candidates near centroid of type>=10
+        #     pieces get +80 * merge_mult * russia_pipeline_mult
+        #
+        # russia_pipeline_mult: deeper Russia = higher multiplier (y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x)
+        #
+        # Guards:
+        # - russia_phase == True and double_russia_phase == False (only when 1 Russia on board)
+        # - merge_grade == "NO" (only when no merge opportunity; merges handled by existing axes)
+        # - max_y >= 1.0 (only when board is elevated enough; LOW phase doesn't need this)
+        # - death_spiral == False (death_spiral requires height management only)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
+        #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
+        # Fixes failure mode: "Russia-phase merge drought consumes turns with BOARD_COMPRESSION only,
+        #   no merge path to next Russia constructed"
+        if (russia_phase and not double_russia_phase
+                and merge_grade == "NO"
+                and max_y >= 1.0
+                and not death_spiral):
+            russia_pieces = [p for p in pieces if p.get("type") == 15]
+            if russia_pieces:
+                deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
+                russia_y = deepest_russia.get("y", -10)
+                russia_x = deepest_russia.get("x", 0)
+                russia_pipeline_mult = max(0.3, min(2.0, 1.0 - russia_y * 0.25))
+                dx = abs(x - russia_x)
+                dy = landing_y - russia_y
+                if dx < 1.5 and -0.5 <= dy <= 1.0:
+                    below_bonus = 150.0 * merge_mult * russia_pipeline_mult
+                    below_bonus *= max(0.0, 1.0 - dx / 1.5)
+                    ideal_dy = 0.5
+                    dy_penalty = 1.0 - abs(dy - ideal_dy) * 0.5
+                    below_bonus *= max(0.0, dy_penalty)
+                    if below_bonus > 20:
+                        score += below_bonus
+                        reasons.append("RUSSIA_PIPELINE_BELOW")
+            high_type_pieces = [p for p in pieces if p.get("type") >= 10]
+            if len(high_type_pieces) >= 2:
+                hc_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
+                hc_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
+                dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.5
+                if dist_to_centroid < 3.0:
+                    cluster_bonus = 80.0 * merge_mult * russia_pipeline_mult
+                    cluster_bonus *= max(0.0, 1.0 - dist_to_centroid / 3.0)
+                    if cluster_bonus > 10:
+                        score += cluster_bonus
+                        reasons.append("HIGH_TYPE_CLUSTER")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
@@ -1830,7 +1893,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.3280
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
@@ -2139,7 +2202,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-2.047, min(3.0, best_x))
+    best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
     return {"x": best_x, "reason": best_reason}
