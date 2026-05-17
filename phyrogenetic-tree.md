@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-17 09:08:42 JST`
-- Nodes: `1546`
-- Edges: `2000`
-- Current: `2301abdcd35b`
+- Updated: `2026-05-17 10:16:56 JST`
+- Nodes: `1547`
+- Edges: `2002`
+- Current: `8cde5038d8a6`
 - Anchor: `1aa464cc23d4`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -75,7 +75,7 @@ flowchart TD
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
     h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
     h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
-    h_2301abdcd35b["2301abdcd35b<br/>CURRENT"]
+    h_8cde5038d8a6["8cde5038d8a6<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -143,7 +143,7 @@ flowchart TD
     class h_a023de98b324 plain;
     class h_4095e6bf3d05 plain;
     class h_8c879f841357 plain;
-    class h_2301abdcd35b current;
+    class h_8cde5038d8a6 current;
 ```
 
 ## Detail 1/20
@@ -5227,9 +5227,9 @@ flowchart TD
 
 ## Detail 19/20
 
-- Range: `89c436411f12` .. `c69876685abc`
+- Range: `89c436411f12` .. `1454b4a36e4b`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `3`
+- Internal edges in this diagram: `5`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 89c436411f12`
 - Cross-chunk link: `89c436411f12 -.rollback.-> 1aa464cc23d4`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 05b0591ef25b`
@@ -5246,12 +5246,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_89c436411f12["89c436411f12<br/>g=26 n=20<br/>comp=9661.8"]
+    h_89c436411f12["89c436411f12<br/>g=38 n=20<br/>comp=10242.1"]
     h_05b0591ef25b["05b0591ef25b<br/>g=12 n=12<br/>comp=11055.2"]
     h_84a9fab96145["84a9fab96145<br/>g=12 n=12<br/>comp=11401.8"]
     h_b0a2a468a1c7["b0a2a468a1c7<br/>g=12 n=12<br/>comp=10641.0"]
     h_44f2324ac753["44f2324ac753<br/>g=0"]
     h_e5ed751fbce7["e5ed751fbce7<br/>g=12 n=12<br/>comp=10971.7"]
+    h_2301abdcd35b["2301abdcd35b<br/>g=0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -5325,11 +5326,12 @@ flowchart TD
     h_ff99ce72b588["ff99ce72b588<br/>g=1 n=1<br/>comp=11425.0"]
     h_fff42b1518a6["fff42b1518a6<br/>g=2 n=2<br/>comp=12648.3"]
     h_1454b4a36e4b["1454b4a36e4b<br/>g=2 n=2<br/>comp=18164.3"]
-    h_c69876685abc["c69876685abc<br/>g=45 n=20<br/>comp=9995.7"]
 
     h_44f2324ac753 -. rollback .-> h_89c436411f12
     h_89c436411f12 -->|improve| h_e5ed751fbce7
     h_e5ed751fbce7 -. rollback .-> h_89c436411f12
+    h_89c436411f12 -->|improve| h_2301abdcd35b
+    h_2301abdcd35b -. rollback .-> h_89c436411f12
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5342,6 +5344,7 @@ flowchart TD
     class h_b0a2a468a1c7 plain;
     class h_44f2324ac753 plain;
     class h_e5ed751fbce7 plain;
+    class h_2301abdcd35b plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -5415,19 +5418,19 @@ flowchart TD
     class h_ff99ce72b588 plain;
     class h_fff42b1518a6 plain;
     class h_1454b4a36e4b plain;
-    class h_c69876685abc plain;
 ```
 
 ## Detail 20/20
 
-- Range: `50dc50125ab7` .. `2301abdcd35b`
-- Nodes in this diagram: `26`
+- Range: `c69876685abc` .. `8cde5038d8a6`
+- Nodes in this diagram: `27`
 - Internal edges in this diagram: `0`
 - Cross-chunk link: `a3e3965087ab --improve--> 4095e6bf3d05`
-- Cross-chunk link: `89c436411f12 --improve--> 2301abdcd35b`
+- Cross-chunk link: `89c436411f12 --improve--> 8cde5038d8a6`
 
 ```mermaid
 flowchart TD
+    h_c69876685abc["c69876685abc<br/>g=45 n=20<br/>comp=9995.7"]
     h_50dc50125ab7["50dc50125ab7<br/>g=1 n=1<br/>comp=21106.0"]
     h_48a937aea5b1["48a937aea5b1<br/>g=1 n=1<br/>comp=10149.0"]
     h_bcb71e7c991c["bcb71e7c991c<br/>g=1 n=1<br/>comp=15078.0"]
@@ -5453,7 +5456,7 @@ flowchart TD
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
     h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
     h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
-    h_2301abdcd35b["2301abdcd35b<br/>CURRENT"]
+    h_8cde5038d8a6["8cde5038d8a6<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5461,6 +5464,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_c69876685abc plain;
     class h_50dc50125ab7 plain;
     class h_48a937aea5b1 plain;
     class h_bcb71e7c991c plain;
@@ -5486,10 +5490,36 @@ flowchart TD
     class h_a023de98b324 plain;
     class h_4095e6bf3d05 plain;
     class h_8c879f841357 plain;
-    class h_2301abdcd35b current;
+    class h_8cde5038d8a6 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#25549 `89c43641 -> 8cde5038`
+
+- scores: `9569 9571 10845 9434 11704 18056 11034 18018 8302 6352 10725 10453`
+- __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") != "NO"]
+- return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+- __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+- if __dlg_any_safe:
+- __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+- ----- v601: axis 9.9 — Russia-phase next-Russia growth pipeline guidance (NEW) -----
+
+### Rollback Game#25549 `89c43641 -> 89c43641`
+
+- - rollback from 89c436411f12 to 89c436411f12 at game 25549
+- - reasons: objective_regression+lost_russia_path
+- - current comp/p50/p25=10174.4/10589.0/9535.2 vs target 10242.1/10785.0/9268.5
+- - bad recent scores: 11704 18056 11034 18018 8302 6352 10725 10453
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=10174.4 p50=10589.0 p25=9535.2 mean=11171.9 n=12
+- rollback_target: comp=10242.1 p50=10785.0 p25=9268.5 mean=11203.5 n=20
+- metric_gap_vs_target: comp=-67.7 p50=-196.0 p25=266.8 mean=-31.6
+- recent12_avg: bad=11171.9 target=11171.9
+- recent12_floor: bad=6352 target=6352
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Improve Game#25537 `89c43641 -> 2301abdc`
 
