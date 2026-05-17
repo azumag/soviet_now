@@ -65,6 +65,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v600: DEADLINE_GUARD crossing merge fallback — when no safe (non-crossing) DIRECT/NEAR
+     # candidates exist, fall back to crossing DIRECT/NEAR before SAFE_LANDING.
+     # mandatory_themes: "deadline danger zone prioritizes merge" + "cross deadline only if merge possible"
+     # Fixes failure mode: DEADLINE_GUARD_DIRECT_MERGE 5x with merge_hits=0 — all candidates filtered
+     # out by crosses_deadline=true, leaving only SAFE_LANDING with no merge benefit.
+     # DEADLINE_GUARD block now checks crossing DIRECT/NEAR before SAFE_LANDING fallback.
+     # Target: type14→15 merge pathway, deadline_guard_rate=18.8% reduction.
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, data/mandatory_themes.txt,
+     #       game_history/20260517_215608_score1465.jsonl (turn 78-85)
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -852,6 +861,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # v600: no safe candidates — check crossing DIRECT/NEAR before SAFE_LANDING fallback
+        # mandatory_themes: "deadline danger zone prioritizes merge" + "cross deadline only if merge possible"
+        # When no non-crossing candidates exist, crossing merge (DIRECT/NEAR) is better than no-merge SAFE_LANDING
+        __dlg_cross_direct = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and c.get("crosses_deadline")
+        ]
+        if __dlg_cross_direct:
+            __dlg_best = min(__dlg_cross_direct, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_CROSS_DIRECT"}
+        __dlg_cross_near = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and c.get("crosses_deadline")
+        ]
+        if __dlg_cross_near:
+            __dlg_best = min(__dlg_cross_near, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_CROSS_NEAR"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
