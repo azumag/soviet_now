@@ -1311,7 +1311,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     min_merged_dist = dist
                         # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
                         if min_merged_dist < float("inf"):
-                            chain_score = max(0, 300.0 - min_merged_dist * 80.0)
+                            chain_score = max(0, 300.0 - min_merged_dist * 98.65)
                             if sp_y > 1.0:
                                 chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
                             if chain_score > best_chain_score:
@@ -1328,7 +1328,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 28:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                        congestion_scale = 0.715 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
