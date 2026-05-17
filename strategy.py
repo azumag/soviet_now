@@ -46,8 +46,6 @@ Game Overview:
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
-             9.10. High-type growth pipeline - v623: type 8-12 centroid proximity during NO merge
-             9.15. Low-type digest priority - v622: type<=5 pair centroid during merge drought
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -67,13 +65,8 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v623: axis 9.10 high-type growth pipeline — type 8-12 centroid proximity during NO merge drought.
-      # v622: axis 9.15 merge drought low-type digest priority — type<=5 pair centroid bonus.
-      # Fixes failure mode: "worst game T55-62 6-7 consecutive NO merge with low-type pairs scattered at x=±3.0"
-      # refs: tmp/analysis_result.md, strategy_versions/best_score6058_strategy.py (axis 9.10 hall-of-fame),
-      #       strategy_versions/v25537_score1204_strategy.py (axis 9.15 v622)
-      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
-      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
      # v585: merge drought detection — suppress all guidance when NO merge continues with elevated board.
@@ -1415,98 +1408,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
-
-        # ----- v623: axis 9.10 high-type growth pipeline guidance (hall-of-fame from best_score6058) -----
-        # Worst game T70-T78 (best_score5801 analysis): 9 consecutive NO_MERGE turns, max_y 2.04→3.03 runaway.
-        # Pieces type 8-12 existed but scattered at x=±3.0, no guidance to centralize them.
-        # Hall-of-fame strategy (best_score5801/best_score6058) implements this axis to maintain
-        # central clustering during merge droughts at elevated board.
-        #
-        # Trigger: merge_grade==NO && max_y>=1.5 && piece_count>=25
-        #   && !axis_88_horizontal_suppression && !death_spiral
-        #   && !guidance_suppressed
-        # Guides placement toward centroid of high-type pieces (type 8-12),
-        # building growth pipeline for next merge opportunity.
-        # Suppress when: axis_88_horizontal_suppression or death_spiral or guidance_suppressed
-        # (avoid duplicate firing with axis 9.65/9.8 which target lower types).
-        #
-        # Bonus: max 120 at dist<0.5, decreases by 40 per unit distance, 0 at dist>=3.0
-        # Competitive with height diffs (~100-200) for tie-breaking without overriding merges.
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10),
-        #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis),
-        #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed),
-        #       strategy_versions/best_score6058_strategy.py (axis 9.10 implemented),
-        #       advice.md (zoumotu3: growth concentration)
-        if (merge_grade == "NO"
-                and max_y >= 1.5
-                and piece_count >= 25
-                and not axis_88_horizontal_suppression
-                and not death_spiral
-                and not guidance_suppressed):
-            high_type_pieces = [p for p in pieces if 8 <= p.get("type", 0) <= 12]
-            if len(high_type_pieces) >= 2:
-                cx = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
-                cy = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
-                dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
-                if dist < 3.0:
-                    pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
-                    score += pipeline_bonus
-                    if "HIGH_TYPE_GROWTH_PIPELINE" not in reasons:
-                        reasons.append("HIGH_TYPE_GROWTH_PIPELINE")
-
-        # ----- v622: axis 9.15 merge drought low-type digest priority -----
-        # Worst game T55-62: 6-7 consecutive NO merge, low-type pairs (type<=5) scattered at x=±3.0
-        # without same-type proximity guidance → merge drought exit failure.
-        # This axis guides placement toward lowest-type pair centroid during merge drought.
-        #
-        # Trigger: merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5 && !death_spiral
-        # Scans reactive_pairs/near_pairs for type<=5 pairs, adds bonus toward their centroid.
-        # Fires EVEN IF axis_88_horizontal_suppression or column_ceiling_dominant active.
-        # death_spiral suppressed (v610/v616 escalation takes priority).
-        #
-        # Bonus: max 600*merge_mult at dist=0, decreases 200 per unit distance, 0 at dist>=3
-        # Design: 600 competitive with column_ceiling (800-1250) but doesn't override it;
-        # combined with height penalty, drives low-y placement near low-type cluster.
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
-        #       game_history/20260517_083153_score0705.jsonl (worst: T55-62 NO merge drought),
-        #       strategy_versions/v25537_score1204_strategy.py (v622 implementation)
-        # Fixes failure mode: "6-7 consecutive NO merge turns with 0 score_delta"
-        if (merge_grade == "NO"
-                and reactive_pair_count >= 3
-                and max_y >= 1.5
-                and not death_spiral):
-            low_type_pairs = []
-            for rp_entry in reactive_pairs:
-                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
-                    rtype = rp_entry[2]
-                    if rtype <= 5:
-                        p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
-                        p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
-                        if p1 and p2:
-                            cx = (p1["x"] + p2["x"]) / 2.0
-                            cy = (p1["y"] + p2["y"]) / 2.0
-                            low_type_pairs.append((rtype, cx, cy))
-            for np_entry in near_pairs:
-                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
-                    rtype = np_entry[2]
-                    if rtype <= 5:
-                        p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
-                        p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
-                        if p1 and p2:
-                            cx = (p1["x"] + p2["x"]) / 2.0
-                            cy = (p1["y"] + p2["y"]) / 2.0
-                            low_type_pairs.append((rtype, cx, cy))
-            if low_type_pairs:
-                low_type_pairs.sort(key=lambda t: t[0])
-                best_type, best_cx, best_cy = low_type_pairs[0]
-                dist = abs(x - best_cx) + abs(landing_y - best_cy)
-                if dist < 3.0:
-                    digest_bonus = max(0, 600.0 - dist * 200.0) * merge_mult
-                    score += digest_bonus
-                    if "LOW_TYPE_DIGEST_PRIORITY" not in reasons:
-                        reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
