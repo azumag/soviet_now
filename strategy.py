@@ -65,15 +65,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v587: merge_drought deadline_cross penalty — mandatory_theme enforcement during merge drought.
-      # turn 68 problem: deadline_crossed=false but decision_crosses_deadline=true during merge_drought.
-      # Apply -2000 penalty when merge_drought && crosses_deadline && NO && no merge available.
-      # Does NOT fire when merge_available=true (merge opportunity takes priority per mandatory_theme).
-      # Fixes failure mode: "merge drought中的deadline超出選択" (analysis_result.md hypothesis)
-      # Target stage: カザフスタン(type14)→ロシア(type15)到達経路改善
-      # refs: tmp/analysis_result.md (Implementation Plan: v587), mandatory_themes.txt,
-      #       strategy_versions/best_score6058_strategy.py (v617 reference)
-      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -1311,7 +1303,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     min_merged_dist = dist
                         # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
                         if min_merged_dist < float("inf"):
-                            chain_score = max(0, 300.0 - min_merged_dist * 98.65)
+                            chain_score = max(0, 300.0 - min_merged_dist * 80.0)
                             if sp_y > 1.0:
                                 chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
                             if chain_score > best_chain_score:
@@ -1328,7 +1320,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 28:
-                        congestion_scale = 0.715 + (piece_count - 28) * 0.12
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
@@ -2139,18 +2131,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
-
-        # ----- v587: merge_drought deadline_cross penalty -----
-        # mandatory_theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # turn 68 problem: deadline_crossed=false but decision_crosses_deadline=true during merge_drought.
-        # When merge_drought fires (rp>=1, NO merge, max_y>=1.0, pc>=30), board is already elevated.
-        # Placing past deadline during merge drought is fatal — piece accumulation pushes toward game-over.
-        # Apply stronger penalty (-2000) during merge_drought, but NOT when merge_available=true
-        # (merge opportunity takes priority over placement safety per mandatory_theme).
-        # refs: tmp/analysis_result.md (Implementation Plan: v587 hypothesis), mandatory_themes.txt
-        if merge_drought and result.get("crosses_deadline", False) and merge_grade == "NO":
-            score -= 2000.0
-            reasons.append("MERGE_DROUGHT_DEADLINE_CROSS_PENALTY")
 
         # ----- update best candidate -----
         if score > best_score:
