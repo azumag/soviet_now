@@ -55,6 +55,12 @@ Phases (determined by board max Y):
      MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
      HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
      CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+
+# v600: DEADLINE_GUARD crossing merge override - 失敗モード1148/84turn修正
+# mandatory_themes: "deadline超過時は併合できる場合に限る" → crossing merge fallbackを末尾移動
+# 分析: ワーストゲームturn84で、全候補crosses_deadline+merge!=NO→SAFE_LANDING fallback
+# 修正: crossing DIRECT/NEAR merge override blockをDEADLINE_GUARD末尾(get_all_safe後)に移動
+# 安全不変条件: crosses_deadline選択肢は非超過候補が存在すれば絶対選択禁止
 """
 
 # Fixed interface:
@@ -856,6 +862,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        __dlg_xmerge = [c for c in __dlg_cands if isinstance(c, dict) and c.get("crosses_deadline") and c.get("merge_grade") in ("DIRECT", "NEAR")]
+        if __dlg_xmerge:
+            def __dlg_score_xmerge(c):
+                return (0 if c.get("merge_grade") == "DIRECT" else 1, float(c.get("landing_y", 99.0) or 99.0))
+            __dlg_best = min(__dlg_xmerge, key=__dlg_score_xmerge)
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_CROSSING_MERGE"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
