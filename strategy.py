@@ -43,11 +43,9 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
-9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-              9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
-              9.9. Russia-phase next-Russia growth pipeline - v601: Russia below-position + high-type cluster bonus
-              9.10. High-type growth pipeline guidance - v610: type 8-12 centroid proximity during NO merge (NEW)
+             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+             9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -57,12 +55,6 @@ Phases (determined by board max Y):
      MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
      HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
      CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
-
-# v600: DEADLINE_GUARD crossing merge override - 失敗モード1148/84turn修正
-# mandatory_themes: "deadline超過時は併合できる場合に限る" → crossing merge fallbackを末尾移動
-# 分析: ワーストゲームturn84で、全候補crosses_deadline+merge!=NO→SAFE_LANDING fallback
-# 修正: crossing DIRECT/NEAR merge override blockをDEADLINE_GUARD末尾(get_all_safe後)に移動
-# 安全不変条件: crosses_deadline選択肢は非超過候補が存在すれば絶対選択禁止
 """
 
 # Fixed interface:
@@ -73,16 +65,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v611: axis 9.16 — near-mergeable high-type clustering.
-     # When merge_grade="NO" && pc>=20 && any type 8-12 on board, guide placement
-     # toward centroid of same-type groups (2+ pieces) for future type 13 pairs.
-     # HIGH_TYPE_CONCENTRATION avg_delta=0.0 because it builds pipeline proactively.
-     # Suppress: death_spiral, merge_drought (axis 8.8/8.8b already dominate).
-     # Bonus: ~200-400 competitive with height diffs but won't override merges.
-     # Fixes: type13→type14 merge pipeline failure (analysis_result.md adopted hypothesis).
-     # refs: tmp/analysis_result.md, advice.md, tmp/batch_summary.txt
-     #
-      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -873,12 +856,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        __dlg_xmerge = [c for c in __dlg_cands if isinstance(c, dict) and c.get("crosses_deadline") and c.get("merge_grade") in ("DIRECT", "NEAR")]
-        if __dlg_xmerge:
-            def __dlg_score_xmerge(c):
-                return (0 if c.get("merge_grade") == "DIRECT" else 1, float(c.get("landing_y", 99.0) or 99.0))
-            __dlg_best = min(__dlg_xmerge, key=__dlg_score_xmerge)
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_CROSSING_MERGE"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
@@ -1495,34 +1472,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         reasons.append("HIGH_TYPE_CLUSTER")
 
-        # ----- v610: axis 9.10 — high-type growth pipeline guidance (NEW) -----
-        # worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
-        # high-type pieces (type 8-12) existed on board but scattered. No guidance to centralize them.
-        # Hall-of-fame (best_score6058) has axis 9.10: centroid of type 8-12 pieces → proximity bonus
-        # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !(rp>=3 && NO) && !death_spiral
-        # Suppress when: rp>=3 && merge_grade=="NO" (axis_88_horizontal_suppression equivalent)
-        #                or death_spiral (avoid duplicate with 9.65/9.8)
-        # mandatory_themes: "NEXT考慮したドロップ" → centroid guidance is a form of next piece consideration
-        # Fixes failure mode: "merge drought中のedge scatter → max_y runaway → Russia arrival failure"
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10),
-        #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst analysis),
-        #       strategy_versions/best_score6058_strategy.py (Hall-of-fame, axis 9.10 confirmed),
-        #       advice.md (zoumotu3: growth concentration)
-        if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25
-                and not (reactive_pair_count >= 3 and merge_grade == "NO")
-                and not death_spiral):
-            high_type_pieces = [p for p in pieces if 8 <= p.get("type", 0) <= 12]
-            if len(high_type_pieces) >= 2:
-                centroid_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
-                centroid_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
-                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
-                if dist < 3.0:
-                    guidance = max(0, 400.0 - dist * 100.0)
-                    if guidance > 0:
-                        score += guidance
-                        if "HIGH_TYPE_CONCENTRATION" not in reasons:
-                            reasons.append("HIGH_TYPE_CONCENTRATION")
-
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
@@ -1899,47 +1848,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-        # ----- axis 9.16: near-mergeable high-type clustering (NEW) -----
-        # When type 8-12 pieces exist on board (potential type 13 ingredients) and
-        # merge_grade="NO", guide placement toward positions that cluster same-type
-        # pieces together to create future type 13 pairs.
-        # HIGH_TYPE_CONCENTRATION avg_delta=0.0 because it only reacts to existing
-        # high types but doesn't build the pipeline toward creating them.
-        # advice: "2手先の併合可能性を最大化" → proactive clustering of type 8-12
-        # Fires: merge_grade=="NO" && any type 8-12 on board && pc>=20
-        # Suppress: death_spiral, merge_drought (axis 8.8/8.8b already dominate)
-        # Bonus: ~200-400 competitive with height diffs but won't override actual merges
-        # Fixes: type13→type14 merge pipeline failure (analysis_result.md adopted hypothesis)
-        # refs: tmp/analysis_result.md, advice.md, tmp/batch_summary.txt
-        if (merge_grade == "NO" and not guidance_suppressed and piece_count >= 20):
-            # Check if any type 8-12 pieces exist (potential type 13 ingredients)
-            high_type_pieces = [p for p in pieces if 8 <= p.get("type", 0) <= 12]
-            if high_type_pieces:
-                # Group by type
-                type_groups = {}
-                for p in high_type_pieces:
-                    t = p.get("type", 0)
-                    if t not in type_groups:
-                        type_groups[t] = []
-                    type_groups[t].append(p)
-                # For each type group with 2+ pieces, compute centroid bonus
-                best_bonus = 0.0
-                for t, group in type_groups.items():
-                    if len(group) >= 2:
-                        # Compute centroid of this type
-                        cx = sum(p.get("x", 0) for p in group) / len(group)
-                        cy = sum(p.get("y", 0) for p in group) / len(group)
-                        horiz_dist = abs(x - cx)
-                        if horiz_dist < 2.0:
-                            # Bonus scales with group size (more pieces = stronger signal)
-                            group_bonus = max(0, 200.0 - horiz_dist * 80.0) * min(len(group), 4) / 2
-                            if group_bonus > best_bonus:
-                                best_bonus = group_bonus
-                if best_bonus > 0:
-                    score += best_bonus
-                    reasons.append("NEAR_MERGE_HIGH_TYPE_CLUSTER")
-
-        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
