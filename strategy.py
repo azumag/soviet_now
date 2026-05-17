@@ -65,6 +65,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v602: DEADLINE_GUARD merge-first enforcement — suppress safe-landing fallback when
+     # NO merge exists despite reactive pairs. Worst game T55-60: 6 consecutive DEADLINE_GUARD
+     # with merge_available=false despite rp=5-9 → max_y runaway 2.35→4.02.
+     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # When ALL safe candidates have merge_grade=NO and reactive pairs exist, DEADLINE_GUARD
+     # would raise max_y without merge benefit. Suppress and let normal decide() apply height penalty.
+     # Preserves DEADLINE_GUARD_DIRECT_MERGE (merge_available=true) which works correctly.
+     # Fixes rollback failure mode: DEADLINE_GUARD over-fires without merge at T55-60.
+     # refs: tmp/analysis_result.md, data/mandatory_themes.txt
      # v601: DEADLINE_GUARD fallback — if selected candidate crosses deadline without merge
      # capability, suppress guard and fall through to normal decide() (mandatory_themes enforcement).
      # Worst game T67: DEADLINE_GUARD returned x=2.98 with crosses_deadline=true, merge_grade="NO",
@@ -862,7 +871,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+            # v602: suppress DEADLINE_GUARD_SAFE_LANDING when NO merge possible despite reactive pairs
+            # Worst game T55-60: 6 consecutive DEADLINE_GUARD with merge_grade=NO despite rp=5-9.
+            # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+            # If all safe candidates have NO merge and reactive pairs exist, guard would raise
+            # max_y without merge benefit. Let normal decide() apply height penalty instead.
+            __dlg_all_no_merge = all(
+                isinstance(c, dict) and c.get("merge_grade") == "NO"
+                for c in __dlg_any_safe
+            )
+            if __dlg_all_no_merge and __dlg_rp_count >= 1:
+                pass  # suppress DEADLINE_GUARD, fall through to normal decide()
+            else:
+                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
         # v601: mandatory_themes enforcement — if selected candidate crosses deadline with no merge
         # capability, suppress DEADLINE_GUARD and fall through to normal decide() which has v411
         # CROSSES_DEADLINE penalty (-1200). Worst game T67: DEADLINE_GUARD returned x=2.98 with
