@@ -1363,7 +1363,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_dist = adj_dist
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
-                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 37.83)
                 score += pipeline_bonus
 
         # ----- v583: axis 9.8 — merge drought horizontal guidance (extended) -----
