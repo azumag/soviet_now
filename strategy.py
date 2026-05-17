@@ -1317,7 +1317,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_stack_target.get("x", 0)
                 horizontal_distance = abs(x - target_x)
                 if horizontal_distance < 2.0:
-                    stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
+                    stacking_bonus = best_chain_score + max(0, 78.3 - horizontal_distance * 40.0)
                     # v408: piece_count congestion scaling — match axis 9.6b formula
                     # At high pc, stacking must be stronger to compete with height penalty
                     # and prevent HEIGHT_CONTROL edge scatter during merge droughts.
@@ -1872,7 +1872,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 chain_distance_max = 5.0 + landing_y * 0.6
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
                 # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
-                chain_bonus_multiplier = 495.0 + max(0, landing_y + 1.5) * 150.0
+                chain_bonus_multiplier = 673.8 + max(0, landing_y + 1.5) * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
