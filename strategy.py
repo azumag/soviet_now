@@ -65,13 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v591: axis 9.8b — merge drought type 13-14 growth pipeline guidance
-     # When merge drought fires AND same_type_stack_top.type>=10 AND next_type is 11-14,
-     # guide placement toward same-type stack to build type 14→15→Russia pipeline.
-     # Prevents DEADLINE_GUARD_SAFE_LANDING edge scatter from killing growth path.
-     # Bonus +600, fires ONLY during merge drought (guidance_suppressed=true).
-     # Fixes failure mode: merge drought中のsafe landing降至り続け → type 13→14成長経路喪失
-     # refs: tmp/analysis_result.md
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -1415,31 +1408,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
-
-        # ----- v591: axis 9.8b — merge drought type 13-14 growth pipeline guidance -----
-        # When merge drought fires (rp>=1, NO merge, max_y>=1.0, pc>=30) AND
-        # same_type_stack_top exists with type>=10 AND next_type is 11-14,
-        # guide placement toward the same-type stack to build the type 14→15→Russia pipeline.
-        # This prevents the pattern where DEADLINE_GUARD_SAFE_LANDING forces x=-3.0 edge
-        # scatter during merge drought, killing the growth path before it can complete.
-        # Bonus: +600 (enhanced from v583's +400)
-        # Triggered ONLY during merge drought (guidance_suppressed=true) to avoid
-        # competing with normal reactive guidance.
-        # refs: tmp/analysis_result.md (adopted hypothesis: merge drought type 13-14 guidance)
-        if (merge_grade == "NO"
-                and guidance_suppressed
-                and same_type_stack_top is not None
-                and same_type_stack_top.get("type", 0) >= 10
-                and (next_type >= 11 and next_type <= 14)):
-            stack_top_y = same_type_stack_top.get("y", -10)
-            if stack_top_y < 1.5:
-                stack_x = same_type_stack_top.get("x", 0)
-                horiz_dist = abs(x - stack_x)
-                if horiz_dist < 2.5:
-                    drought_guidance = max(0, 600.0 - horiz_dist * 100.0)
-                    score += drought_guidance
-                    if "MERGE_DROUGHT_TYPE13_GUIDANCE" not in reasons:
-                        reasons.append("MERGE_DROUGHT_TYPE13_GUIDANCE")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
