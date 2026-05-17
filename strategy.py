@@ -65,12 +65,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v587: DEADLINE_GUARD — add merge_result_crosses_deadline filter to all guard tiers.
-      # mandatory_themes "deadlineを超える場合は併合できる場合に限る" を担保するため、
-      # ピースの直接落下とマージ結果の両方でdeadline超過をフィルタリング。
-      # 種別: カザフスタン(type14)成長保護 — guard選択候補がmerge後にdeadline超過する問題を修正
-      # refs: tmp/analysis_result.md (H1仮説), tmp/batch_summary.txt, data/mandatory_themes.txt
-      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -834,17 +829,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __dlg_cands = []
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
     if __dlg_critical and __dlg_cands:
-        # v587: use merge_result_crosses_deadline in addition to crosses_deadline.
-        # mandatory_themes "deadlineを超える場合は併合できる場合に限る" means even if the
-        # falling piece lands below deadline, placing it where it would trigger a merge
-        # whose result crosses deadline is effectively a deadline violation.
-        # Filter out both: piece itself crosses deadline OR merge result crosses deadline.
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict)
-            and c.get("merge_grade") == "DIRECT"
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -856,19 +843,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
-            if isinstance(c, dict)
-            and c.get("merge_grade") == "NEAR"
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and not c.get("merge_result_crosses_deadline") and c.get("merge_grade") != "NO"]
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") != "NO"]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and not c.get("merge_result_crosses_deadline")]
+        __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
