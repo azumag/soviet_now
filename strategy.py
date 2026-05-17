@@ -65,6 +65,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v601: DEADLINE_GUARD fallback — if selected candidate crosses deadline without merge
+     # capability, suppress guard and fall through to normal decide() (mandatory_themes enforcement).
+     # Worst game T67: DEADLINE_GUARD returned x=2.98 with crosses_deadline=true, merge_grade="NO",
+     # violating mandatory_themes. Suppression lets v411 CROSSES_DEADLINE penalty (-1200) apply.
+     # Best game T92: crosses_deadline=true, merge_grade="DIRECT" → DEADLINE_GUARD_DIRECT_MERGE returned (preserved).
+     # Fixes rollback failure mode: DEADLINE_GUARD crossing-no-merge position selection at worst game T67.
+     # refs: tmp/analysis_result.md, data/mandatory_themes.txt
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -855,6 +862,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # v601: mandatory_themes enforcement — if selected candidate crosses deadline with no merge
+        # capability, suppress DEADLINE_GUARD and fall through to normal decide() which has v411
+        # CROSSES_DEADLINE penalty (-1200). Worst game T67: DEADLINE_GUARD returned x=2.98 with
+        # crosses_deadline=true, merge_available=false, violating mandatory_themes.
+        # Best game T92: DEADLINE_GUARD_DIRECT_MERGE with merge_available=true worked correctly.
+        __dlg_best = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+        if __dlg_best.get("crosses_deadline") and __dlg_best.get("merge_grade") == "NO":
+            pass  # suppress DEADLINE_GUARD, fall through to normal decide()
+        else:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
         # v600: mandatory_themes enforcement — if ALL candidates cross deadline with no safe merge,
         # suppress DEADLINE_GUARD and fall through to normal decide() which has v411 CROSSES_DEADLINE penalty (-1200).
