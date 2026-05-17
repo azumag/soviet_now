@@ -65,10 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
-     # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
-     # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
+     # v587: deadline_guard ANY_SAFE fallback — select lowest landing_y when no merge available.
+     # When deadline_guard fires with merge_grade=NO and no DIRECT/NEAR/other merge candidates,
+     # the ANY_SAFE fallback now explicitly selects lowest landing_y to minimize max_y growth.
+     # Fixes failure mode: deadline_guard SAFE_LANDING avg_delta=3.2 vs DIRECT_MERGE avg_delta=33.1
+     # mandatory_themes: "デッドライン超出時は併合できる場合に限る" — when no merge exists,
+     # selecting lowest-y safe position is the correct fallback behavior.
+     # refs: tmp/analysis_result.md
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # v585: merge drought detection — suppress all guidance when NO merge continues with elevated board.
      # merge_grade=="NO" AND rp>=2 AND max_y>=1.0 AND pc>=30 → guidance_suppressed = death_spiral OR merge_drought.
      # Catches "slow death" earlier than death_spiral alone (max_y>=1.0 vs 1.5). Forces height penalty only mode.
@@ -848,7 +852,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") != "NO"]
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") in ("DIRECT", "NEAR", "FAR")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}

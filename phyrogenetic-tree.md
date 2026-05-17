@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-18 00:49:58 JST`
-- Nodes: `1577`
-- Edges: `2026`
-- Current: `0a4a4352cd60`
+- Updated: `2026-05-18 01:34:29 JST`
+- Nodes: `1578`
+- Edges: `2028`
+- Current: `7b994b0502ad`
 - Anchor: `8cde5038d8a6`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -75,9 +75,9 @@ flowchart TD
     h_d5df1c5193ba["d5df1c5193ba"]
     h_dc57894b381c["dc57894b381c"]
     h_e3f3ee85aa15["e3f3ee85aa15"]
-    h_0a4a4352cd60["0a4a4352cd60<br/>CURRENT"]
+    h_7b994b0502ad["7b994b0502ad<br/>CURRENT"]
 
-    h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
+    h_8cde5038d8a6 -->|improve| h_7b994b0502ad
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -144,7 +144,7 @@ flowchart TD
     class h_d5df1c5193ba plain;
     class h_dc57894b381c plain;
     class h_e3f3ee85aa15 plain;
-    class h_0a4a4352cd60 current;
+    class h_7b994b0502ad current;
 ```
 
 ## Detail 1/20
@@ -5228,9 +5228,9 @@ flowchart TD
 
 ## Detail 19/20
 
-- Range: `89c436411f12` .. `374ab77ef0e4`
+- Range: `89c436411f12` .. `1b51a4d746ea`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `29`
+- Internal edges in this diagram: `31`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 89c436411f12`
 - Cross-chunk link: `89c436411f12 -.rollback.-> 1aa464cc23d4`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 05b0591ef25b`
@@ -5265,6 +5265,7 @@ flowchart TD
     h_92a72501e911["92a72501e911<br/>g=4 n=4<br/>comp=9358.7"]
     h_4b3bd9843797["4b3bd9843797<br/>g=12 n=12<br/>comp=11895.5"]
     h_7017b28ae776["7017b28ae776<br/>g=4 n=4<br/>comp=9154.9"]
+    h_0a4a4352cd60["0a4a4352cd60<br/>g=4 n=4<br/>comp=8471.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -5326,7 +5327,6 @@ flowchart TD
     h_4a034d815612["4a034d815612<br/>g=2 n=2<br/>comp=15783.7"]
     h_7d1983b69866["7d1983b69866<br/>g=2 n=2<br/>comp=7546.2"]
     h_1b51a4d746ea["1b51a4d746ea<br/>g=1 n=1<br/>comp=8674.0"]
-    h_374ab77ef0e4["374ab77ef0e4<br/>g=2 n=2<br/>comp=8983.5"]
 
     h_44f2324ac753 -. rollback .-> h_89c436411f12
     h_89c436411f12 -->|improve| h_e5ed751fbce7
@@ -5356,6 +5356,8 @@ flowchart TD
     h_05b0591ef25b -. rollback .-> h_e5ed751fbce7
     h_e5ed751fbce7 -->|improve| h_7017b28ae776
     h_7017b28ae776 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
+    h_0a4a4352cd60 -. rollback .-> h_8cde5038d8a6
     h_05b0591ef25b -->|improve| h_7017b28ae776
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5381,6 +5383,7 @@ flowchart TD
     class h_92a72501e911 plain;
     class h_4b3bd9843797 plain;
     class h_7017b28ae776 plain;
+    class h_0a4a4352cd60 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -5442,19 +5445,19 @@ flowchart TD
     class h_4a034d815612 plain;
     class h_7d1983b69866 plain;
     class h_1b51a4d746ea plain;
-    class h_374ab77ef0e4 plain;
 ```
 
 ## Detail 20/20
 
-- Range: `e0ea5d34c1f3` .. `0a4a4352cd60`
-- Nodes in this diagram: `57`
+- Range: `374ab77ef0e4` .. `7b994b0502ad`
+- Nodes in this diagram: `58`
 - Internal edges in this diagram: `0`
 - Cross-chunk link: `a3e3965087ab --improve--> 4095e6bf3d05`
-- Cross-chunk link: `8cde5038d8a6 --improve--> 0a4a4352cd60`
+- Cross-chunk link: `8cde5038d8a6 --improve--> 7b994b0502ad`
 
 ```mermaid
 flowchart TD
+    h_374ab77ef0e4["374ab77ef0e4<br/>g=2 n=2<br/>comp=8983.5"]
     h_e0ea5d34c1f3["e0ea5d34c1f3<br/>g=1 n=1<br/>comp=10075.0"]
     h_ead61abf2573["ead61abf2573<br/>g=1 n=1<br/>comp=10833.0"]
     h_84b59c0a4826["84b59c0a4826<br/>g=1 n=1<br/>comp=11482.0"]
@@ -5511,7 +5514,7 @@ flowchart TD
     h_d5df1c5193ba["d5df1c5193ba"]
     h_dc57894b381c["dc57894b381c"]
     h_e3f3ee85aa15["e3f3ee85aa15"]
-    h_0a4a4352cd60["0a4a4352cd60<br/>CURRENT"]
+    h_7b994b0502ad["7b994b0502ad<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5519,6 +5522,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_374ab77ef0e4 plain;
     class h_e0ea5d34c1f3 plain;
     class h_ead61abf2573 plain;
     class h_84b59c0a4826 plain;
@@ -5575,10 +5579,36 @@ flowchart TD
     class h_d5df1c5193ba plain;
     class h_dc57894b381c plain;
     class h_e3f3ee85aa15 plain;
-    class h_0a4a4352cd60 current;
+    class h_7b994b0502ad current;
 ```
 
 ## Transition Notes
+
+### Improve Game#25687 `8cde5038 -> 7b994b05`
+
+- scores: `8297 8872 8274 9581`
+- v587: deadline_guard ANY_SAFE fallback — select lowest landing_y when no merge available.
+- When deadline_guard fires with merge_grade=NO and no DIRECT/NEAR/other merge candidates,
+- the ANY_SAFE fallback now explicitly selects lowest landing_y to minimize max_y growth.
+- Fixes failure mode: deadline_guard SAFE_LANDING avg_delta=3.2 vs DIRECT_MERGE avg_delta=33.1
+- mandatory_themes: "デッドライン超出時は併合できる場合に限る" — when no merge exists,
+- selecting lowest-y safe position is the correct fallback behavior.
+
+### Rollback Game#25687 `0a4a4352 -> 8cde5038`
+
+- - rollback from 0a4a4352cd60 to 8cde5038d8a6 at game 25687
+- - reasons: early_objective_regression+lost_russia_path
+- - current comp/p50/p25=8471.1/8584.5/8291.2 vs target 11039.8/11694.0/9707.5
+- - bad recent scores: 8297 8872 8274 9581
+- - soviet objective: current best_type=13 russia=0 soviet=0
+- early_objective_regression が悪化要因だった。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=8471.1 p50=8584.5 p25=8291.2 mean=8756.0 n=4
+- rollback_target: comp=11039.8 p50=11694.0 p25=9707.5 mean=12206.6 n=20
+- metric_gap_vs_target: comp=-2568.7 p50=-3109.5 p25=-1416.2 mean=-3450.6
+- recent12_avg: bad=8756.0 target=11113.7
+- recent12_floor: bad=8274 target=8088
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Improve Game#25683 `8cde5038 -> 0a4a4352`
 
