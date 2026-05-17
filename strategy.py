@@ -1073,7 +1073,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if (merge_grade == "NEAR"
             and reactive_pair_count >= 3
             and piece_count >= 32
-            and max_y >= 1.162
+            and max_y >= 1.5
             and landing_y >= 1.0):
             score -= 600.0 * merge_mult  # Cancel the base NEAR bonus
             reasons.append("DEATH_SPIRAL_NEAR_SUPPRESSION")
@@ -1297,7 +1297,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     best_chain_score = 0.0
                     for sp in same_type_pieces:
                         sp_x = sp.get("x", 0)
-                        sp_y = sp.get("y", -12)
+                        sp_y = sp.get("y", -10)
                         # merged_typeピースとの最短距離を計算
                         min_merged_dist = float("inf")
                         for p in pieces:
