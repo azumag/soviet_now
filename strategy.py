@@ -43,9 +43,11 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-             9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
+9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+              9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
+              9.9. Russia-phase next-Russia growth pipeline - v601: Russia below-position + high-type cluster bonus
+              9.10. High-type growth pipeline guidance - v610: type 8-12 centroid proximity during NO merge (NEW)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -1483,6 +1485,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if cluster_bonus > 10:
                         score += cluster_bonus
                         reasons.append("HIGH_TYPE_CLUSTER")
+
+        # ----- v610: axis 9.10 — high-type growth pipeline guidance (NEW) -----
+        # worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
+        # high-type pieces (type 8-12) existed on board but scattered. No guidance to centralize them.
+        # Hall-of-fame (best_score6058) has axis 9.10: centroid of type 8-12 pieces → proximity bonus
+        # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !(rp>=3 && NO) && !death_spiral
+        # Suppress when: rp>=3 && merge_grade=="NO" (axis_88_horizontal_suppression equivalent)
+        #                or death_spiral (avoid duplicate with 9.65/9.8)
+        # mandatory_themes: "NEXT考慮したドロップ" → centroid guidance is a form of next piece consideration
+        # Fixes failure mode: "merge drought中のedge scatter → max_y runaway → Russia arrival failure"
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10),
+        #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst analysis),
+        #       strategy_versions/best_score6058_strategy.py (Hall-of-fame, axis 9.10 confirmed),
+        #       advice.md (zoumotu3: growth concentration)
+        if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25
+                and not (reactive_pair_count >= 3 and merge_grade == "NO")
+                and not death_spiral):
+            high_type_pieces = [p for p in pieces if 8 <= p.get("type", 0) <= 12]
+            if len(high_type_pieces) >= 2:
+                centroid_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
+                centroid_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                if dist < 3.0:
+                    guidance = max(0, 400.0 - dist * 100.0)
+                    if guidance > 0:
+                        score += guidance
+                        if "HIGH_TYPE_CONCENTRATION" not in reasons:
+                            reasons.append("HIGH_TYPE_CONCENTRATION")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
