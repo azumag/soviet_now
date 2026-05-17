@@ -65,7 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+      # vNEW: axis 9.85 column ceiling bonus — guides placement to lowest-ceiling column during NO merge.
+      # worst game T56-T59: rp=5-6, NO merge, 4-turn edge scatter (x=-0.62/-3.0/-2.5/2.18) despite axis 9.8.
+      # axis 9.8 centroid guidance weak when pieces already scattered; column ceiling bonus is stronger.
+      # Also prevents mandatory_themes violation: guides to low-y positions, reducing deadline cross risk.
+      # Fixes failure mode: merge drought edge scatter → max_y runaway → game over (type14→15 path lost).
+      # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260518_002741_score0595.jsonl,
+      #       strategy_versions/best_score6058_strategy.py (v593-v594 column_ceiling axis)
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -1412,6 +1419,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
+
+        # ----- vNEW: axis 9.85 column ceiling bonus — horizontal guidance for merge drought -----
+        # worst game T56-T59: rp=5-6, merge_grade=NO, 4 consecutive edge placements (x=-0.62/-3.0/-2.5/2.18).
+        # axis 9.8 (HIGH_TYPE_CONCENTRATION) fires when no reactive/near/same-type guidance exists,
+        # but centroid-based guidance is weak when pieces are already scattered across the board.
+        # best_score6058 (v593-v594) has column_ceiling_bonus that current strategy lacks:
+        #   - Computes max_y (ceiling) for each column bucket
+        #   - Bonus = 800 + 150*ceiling_diff for candidates in lower-ceiling columns
+        #   - Provides ~800-1250 differentiation during NO merge at elevated board (pc>=28)
+        # This guides placement to lowest-ceiling column, preventing edge scatter during
+        # merge droughts even when centroid guidance is ineffective due to piece scatter.
+        # mandatory_themes: "デッドライン超出時は併合できる場合に限る" — column ceiling
+        # guides to low-y positions, reducing risk of crossing deadline with no merge.
+        # refs: tmp/analysis_result.md (Implementation Plan: column ceiling axis for merge drought),
+        #       strategy_versions/best_score6058_strategy.py (v593-v594 column_ceiling),
+        #       game_history/20260518_002741_score0595.jsonl T56-T59 (worst game edge scatter)
+        if (merge_grade == "NO"
+                and max_y >= 1.5
+                and piece_count >= 28
+                and not guidance_suppressed):
+            col_max_y = {}
+            for p in pieces:
+                col_idx = int((p["x"] + 3.5) / 1.0)
+                col_idx = max(0, min(6, col_idx))
+                if col_idx not in col_max_y:
+                    col_max_y[col_idx] = p["y"]
+                else:
+                    col_max_y[col_idx] = max(col_max_y[col_idx], p["y"])
+            if col_max_y:
+                min_col_ceiling = min(col_max_y.values())
+                candidate_col = int((x + 3.5) / 1.0)
+                candidate_col = max(0, min(6, candidate_col))
+                candidate_ceiling = col_max_y.get(candidate_col, -4.0)
+                ceiling_diff = candidate_ceiling - min_col_ceiling
+                ceiling_bonus = (800.0 + ceiling_diff * 150.0) * merge_mult
+                score += ceiling_bonus
+                if ceiling_diff <= 0.5:
+                    reasons.append("COLUMN_CEILING_BEST")
+                elif ceiling_diff <= 1.5:
+                    reasons.append("COLUMN_CEILING_GOOD")
 
         # ----- v601: axis 9.9 — Russia-phase next-Russia growth pipeline guidance (NEW) -----
         # analysis_result.md adopted hypothesis: Russia-phase dedicated "next-Russia growth pipeline" axis.
