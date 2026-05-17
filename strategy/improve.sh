@@ -333,8 +333,46 @@ _is_live_improve_pid() {
 	kill -0 "$pid" 2>/dev/null || return 1
 	local cmd
 	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-	[ -n "$cmd" ] || return 1
+	if [ -z "$cmd" ]; then
+		_is_recorded_running_improve_pid "$pid"
+		return $?
+	fi
 	echo "$cmd" | grep -q "eloop_improve\.sh"
+}
+
+_is_recorded_running_improve_pid() {
+	local pid="$1"
+	case "$pid" in
+	''|0|*[!0-9]*) return 1 ;;
+	esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	[ -f "$IMPROVE_STATE_FILE" ] || return 1
+	python3 - "$IMPROVE_STATE_FILE" "$pid" "${IMPROVE_STALE_WATCHDOG_SEC:-3600}" <<'PY' 2>/dev/null
+import json
+import sys
+import time
+
+path, pid, max_age = sys.argv[1:4]
+try:
+    max_age = int(max_age)
+except Exception:
+    max_age = 3600
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if str(data.get("pid", "")) != str(pid):
+    raise SystemExit(1)
+if data.get("status") != "running":
+    raise SystemExit(1)
+try:
+    updated_at = int(data.get("updated_at", 0) or 0)
+except Exception:
+    updated_at = 0
+if updated_at <= 0 or int(time.time()) - updated_at > max(max_age, 300):
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
 }
 
 _find_live_improve_pid() {
@@ -583,6 +621,9 @@ json.dump(rs, open(rs_file, 'w'))
 				else
 					pid_alive=true
 				fi
+			elif [ -z "$pid_cmd" ] && _is_recorded_running_improve_pid "$pid"; then
+				log "[IMPROVE] PID=$pid のcommand取得不可だが、記録済みrunning状態と一致 → live扱いを維持"
+				pid_alive=true
 			else
 				log "[IMPROVE] PID=$pid は別プロセス ($pid_cmd) → stale状態クリア"
 			fi
