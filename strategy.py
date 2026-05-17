@@ -73,7 +73,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # v611: axis 9.16 — near-mergeable high-type clustering.
+     # When merge_grade="NO" && pc>=20 && any type 8-12 on board, guide placement
+     # toward centroid of same-type groups (2+ pieces) for future type 13 pairs.
+     # HIGH_TYPE_CONCENTRATION avg_delta=0.0 because it builds pipeline proactively.
+     # Suppress: death_spiral, merge_drought (axis 8.8/8.8b already dominate).
+     # Bonus: ~200-400 competitive with height diffs but won't override merges.
+     # Fixes: type13→type14 merge pipeline failure (analysis_result.md adopted hypothesis).
+     # refs: tmp/analysis_result.md, advice.md, tmp/batch_summary.txt
+     #
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -1890,7 +1899,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+        # ----- axis 9.16: near-mergeable high-type clustering (NEW) -----
+        # When type 8-12 pieces exist on board (potential type 13 ingredients) and
+        # merge_grade="NO", guide placement toward positions that cluster same-type
+        # pieces together to create future type 13 pairs.
+        # HIGH_TYPE_CONCENTRATION avg_delta=0.0 because it only reacts to existing
+        # high types but doesn't build the pipeline toward creating them.
+        # advice: "2手先の併合可能性を最大化" → proactive clustering of type 8-12
+        # Fires: merge_grade=="NO" && any type 8-12 on board && pc>=20
+        # Suppress: death_spiral, merge_drought (axis 8.8/8.8b already dominate)
+        # Bonus: ~200-400 competitive with height diffs but won't override actual merges
+        # Fixes: type13→type14 merge pipeline failure (analysis_result.md adopted hypothesis)
+        # refs: tmp/analysis_result.md, advice.md, tmp/batch_summary.txt
+        if (merge_grade == "NO" and not guidance_suppressed and piece_count >= 20):
+            # Check if any type 8-12 pieces exist (potential type 13 ingredients)
+            high_type_pieces = [p for p in pieces if 8 <= p.get("type", 0) <= 12]
+            if high_type_pieces:
+                # Group by type
+                type_groups = {}
+                for p in high_type_pieces:
+                    t = p.get("type", 0)
+                    if t not in type_groups:
+                        type_groups[t] = []
+                    type_groups[t].append(p)
+                # For each type group with 2+ pieces, compute centroid bonus
+                best_bonus = 0.0
+                for t, group in type_groups.items():
+                    if len(group) >= 2:
+                        # Compute centroid of this type
+                        cx = sum(p.get("x", 0) for p in group) / len(group)
+                        cy = sum(p.get("y", 0) for p in group) / len(group)
+                        horiz_dist = abs(x - cx)
+                        if horiz_dist < 2.0:
+                            # Bonus scales with group size (more pieces = stronger signal)
+                            group_bonus = max(0, 200.0 - horiz_dist * 80.0) * min(len(group), 4) / 2
+                            if group_bonus > best_bonus:
+                                best_bonus = group_bonus
+                if best_bonus > 0:
+                    score += best_bonus
+                    reasons.append("NEAR_MERGE_HIGH_TYPE_CLUSTER")
+
+        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
