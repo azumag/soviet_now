@@ -65,9 +65,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
-     # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
-     # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
+      # v622: axis 9.15 merge drought low-type digest priority — guide placement to low-type pair centroid.
+      # When merge_grade==NO && rp>=3 && max_y>=1.5, scan reactive_pairs/near_pairs for type<=5 pairs.
+      # Add bonus = max(0, 600-dist*200)*merge_mult toward lowest-type pair's centroid.
+      # Fires EVEN IF column_ceiling_dominant / axis_88_horizontal_suppression active.
+      # Fixes failure mode: "6-7 consecutive NO merge turns with 0 score_delta" → low-type pair digestion.
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+      #       game_history/20260517_072320_score0576.jsonl (worst: 6-7 consecutive NO merge)
+      # v617: axis 9.12 merge drought exit trigger — no_merge_streak >= 3 creates merge path.
+      # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add +500*merge_mult
+      # for placing near type 10+ pieces (+200 extra if same-type reactive pair exists).
+      # Creates next-turn NEAR merge opportunities during merge drought escape.
+      # Fixes failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別しない".
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+      #       game_history/20260517_072320_score0576.jsonl (worst: merge drought exit failure)
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
+      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
      # v585: merge drought detection — suppress all guidance when NO merge continues with elevated board.
      # merge_grade=="NO" AND rp>=2 AND max_y>=1.0 AND pc>=30 → guidance_suppressed = death_spiral OR merge_drought.
@@ -1356,7 +1370,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 p_type = p.get("type", 0)
                 if p_type == next_type - 1 or p_type == next_type + 1:
                     p_x = p.get("x", 0)
-                    p_y = p.get("y", 14)
+                    p_y = p.get("y", 10)
                     # Prefer deeper (lower y) pieces — more accessible for future merges
                     adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
                     if adj_dist < best_adjacent_dist:
@@ -1408,6 +1422,123 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
+
+        # ----- v617: axis 9.12 merge drought exit trigger — no_merge_streak + merge path creation -----
+        # analysis_result.md adopted hypothesis: "Merge drought exit trigger"
+        # NO merge連続ターン数(no_merge_streak)가 3 이상이면 고type피스(type>=10)との
+        # 隣接配置を優先し、次ターン以降のNEAR merge機会を創出する。
+        #
+        # 根拠:
+        # - worst game T70-T74: 5連続NO merge, max_y=2.64→3.28, pc=40→43, score_delta=0
+        # - 高スコア群はNO merge中でも次ターン併合の布石を打っている
+        #
+        # ロジック:
+        # (1) no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 で発動
+        # (2) 盤面のtype 10+피스枚举
+        # (3) 各candidateについて、type 10+피스とのManhattan距離を計算
+        # (4) 距離<=1.5uなら +500*merge_mult ボーナス（merge path creation）
+        # (5) type 10+피스가same-type reactive pairを持っていれば +200*merge_mult追加
+        # (6) death_spiral時は抑制（v584/v585が既に処理中）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+        #       game_history/20260517_072320_score0576.jsonl (worst: 6-7 consecutive NO merge)
+        # Fixes rollback failure mode: "NO merge連続ターン数の区別がない"
+        no_merge_streak = game_state.get("no_merge_streak", 0)
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+            and not guidance_suppressed
+        ):
+            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if len(high_type_pieces) >= 1:
+                min_dist = float("inf")
+                best_piece_type = 0
+                for ht in high_type_pieces:
+                    hx = ht.get("x", 0)
+                    hy = ht.get("y", -10)
+                    manhattan = abs(x - hx) + abs(landing_y - hy)
+                    if manhattan < min_dist:
+                        min_dist = manhattan
+                        best_piece_type = ht.get("type", 0)
+
+                if min_dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+
+                    type_counts_on_board = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
+
+                    if type_counts_on_board.get(best_piece_type, 0) >= 2:
+                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
+                        if pair_bonus > 20:
+                            score += pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
+
+        # ----- v622: axis 9.15 merge drought low-type digest priority -----
+        # analysis_result.md adopted hypothesis: "Merge drought recovery via low-type piece digestion"
+        #
+        # 根拠:
+        # - worst game T56-T61: 6連続NO merge, rp=2→3, max_y=1.41→1.69, pc=31→36
+        # - 低スコア群はmerge_rateが高いが、rp=4-8のdeath spiral中で「遅すぎる」併合ばかり
+        #
+        # ロジック:
+        # (1) merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5 で発動
+        # (2) reactive_pairsとnear_pairsからtype<=5のペアを走査
+        # (3) 最も低typeのペアの重心(cx,cy)を計算
+        # (4) ボーナス = max(0, 600.0 - dist * 200.0) * merge_mult
+        # (5) death_spiral時は抑制
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+        #       game_history/20260517_072320_score0576.jsonl (worst: 6-7 consecutive NO merge)
+        # Fixes rollback failure mode: "6-7 consecutive NO merge turns with 0 score_delta"
+        if (
+            merge_grade == "NO"
+            and reactive_pair_count >= 3
+            and max_y >= 1.5
+            and not death_spiral
+            and not guidance_suppressed
+        ):
+            low_type_pairs = []
+
+            for rp_entry in reactive_pairs:
+                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
+                    rtype = rp_entry[2]
+                    if rtype <= 5:
+                        p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
+                        p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
+                        if p1 and p2:
+                            cx = (p1["x"] + p2["x"]) / 2.0
+                            cy = (p1["y"] + p2["y"]) / 2.0
+                            low_type_pairs.append((rtype, cx, cy))
+
+            for np_entry in near_pairs:
+                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
+                    rtype = np_entry[2]
+                    if rtype <= 5:
+                        p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
+                        p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
+                        if p1 and p2:
+                            cx = (p1["x"] + p2["x"]) / 2.0
+                            cy = (p1["y"] + p2["y"]) / 2.0
+                            low_type_pairs.append((rtype, cx, cy))
+
+            if low_type_pairs:
+                low_type_pairs.sort(key=lambda t: t[0])
+                best_type, best_cx, best_cy = low_type_pairs[0]
+
+                dist = abs(x - best_cx) + abs(landing_y - best_cy)
+                digest_bonus = max(0.0, 600.0 - dist * 200.0) * merge_mult
+
+                if digest_bonus > 20:
+                    score += digest_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
@@ -1830,7 +1961,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.3280
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
@@ -2139,7 +2270,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-2.047, min(3.0, best_x))
+    best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
     return {"x": best_x, "reason": best_reason}
