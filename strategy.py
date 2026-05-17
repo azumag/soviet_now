@@ -856,6 +856,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # v600: mandatory_themes enforcement — if ALL candidates cross deadline with no safe merge,
+        # suppress DEADLINE_GUARD and fall through to normal decide() which has v411 CROSSES_DEADLINE penalty (-1200).
+        # Worst game T46/T49/T50/T52/T54+: DEADLINE_GUARD returned crosses_deadline=true positions despite
+        # merge_available=false, violating "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る".
+        # Best game T66: DEADLINE_GUARD_DIRECT_MERGE with merge_available=true worked correctly.
+        # Fixes rollback failure mode: DEADLINE_GUARD emergency block non-merge fallback crosses deadline
+        # refs: tmp/analysis_result.md (adopted hypothesis), data/mandatory_themes.txt
+        __dlg_merge_safe = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") in ("DIRECT", "NEAR") and not c.get("crosses_deadline")
+        ]
+        __dlg_all_cross_deadline = all(
+            isinstance(c, dict) and c.get("crosses_deadline")
+            for c in __dlg_cands
+        )
+        if __dlg_all_cross_deadline and not __dlg_merge_safe:
+            pass  # suppress DEADLINE_GUARD, fall through to normal decide()
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
