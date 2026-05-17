@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
+## v598 changelog (2026-05-17)
+- DEADLINE_GUARD merge override: when merge_available=true and (visual_same_type_count>=2 || rp>=3),
+  prefer DIRECT/NEAR merge candidates over SAFE_LANDING fallback
+- Fixes worst game T45-63: 19 consecutive DEADLINE_GUARD selections despite merge opportunity existing
+- Refs: tmp/analysis_result.md, mandatory_themes.txt (deadline danger zone merge priority)
+
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -848,6 +854,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+        # v598: DEADLINE_GUARD merge override — allow merge when merge_available=true and (visual_same_type_count>=2 || rp>=3)
+        # worst game T45-63: 19 consecutive DEADLINE_GUARD selections despite merge_available=true
+        # mandatory_themes: deadline danger zones should prioritize merge
+        __dlg_ma = __dlg_game_state.get("merge_available", False)
+        __dlg_vstc = __dlg_game_state.get("visual_same_type_count", 0)
+        if __dlg_ma and (__dlg_vstc >= 2 or __dlg_rp_count >= 3):
+            __dlg_merge_cands = [
+                c for c in __dlg_cands
+                if isinstance(c, dict) and c.get("merge_grade") in ("DIRECT", "NEAR")
+            ]
+            if __dlg_merge_cands:
+                __dlg_best = min(__dlg_merge_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MERGE_OVERRIDE"}
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
