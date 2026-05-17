@@ -1,8 +1,8 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-17 14:39:55 JST`
+- Updated: `2026-05-17 15:28:10 JST`
 - Nodes: `1549`
-- Edges: `2006`
+- Edges: `2007`
 - Current: `89c436411f12`
 - Anchor: `1aa464cc23d4`
 - Solid edge: mutation/improvement
@@ -5233,7 +5233,7 @@ flowchart TD
 
 - Range: `89c436411f12` .. `5ec54d62d838`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `10`
+- Internal edges in this diagram: `11`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 89c436411f12`
 - Cross-chunk link: `89c436411f12 -.rollback.-> 1aa464cc23d4`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 05b0591ef25b`
@@ -5257,7 +5257,7 @@ flowchart TD
     h_44f2324ac753["44f2324ac753<br/>g=0"]
     h_e5ed751fbce7["e5ed751fbce7<br/>g=12 n=12<br/>comp=10971.7"]
     h_2301abdcd35b["2301abdcd35b<br/>g=0"]
-    h_8cde5038d8a6["8cde5038d8a6<br/>g=12 n=12<br/>comp=11710.5"]
+    h_8cde5038d8a6["8cde5038d8a6<br/>g=24 n=20<br/>comp=11039.8"]
     h_aed09e698575["aed09e698575<br/>g=12 n=12<br/>comp=10696.7"]
     h_490da448af77["490da448af77<br/>g=12 n=12<br/>comp=10636.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
@@ -5341,6 +5341,7 @@ flowchart TD
     h_aed09e698575 -. rollback .-> h_89c436411f12
     h_89c436411f12 -->|improve| h_490da448af77
     h_490da448af77 -. rollback .-> h_89c436411f12
+    h_8cde5038d8a6 -. rollback .-> h_89c436411f12
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5506,6 +5507,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#25597 `8cde5038 -> 89c43641`
+
+- - rollback from 8cde5038d8a6 to 89c436411f12 at game 25597
+- - reasons: objective_regression+lost_russia_path
+- - current comp/p50/p25=9851.2/10218.0/8998.2 vs target 10242.1/10785.0/9268.5
+- - bad recent scores: 10339 8963 8088 13113 9940 15378 10097 9010
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=9851.2 p50=10218.0 p25=8998.2 mean=11113.7 n=12
+- rollback_target: comp=10242.1 p50=10785.0 p25=9268.5 mean=11203.5 n=20
+- metric_gap_vs_target: comp=-390.8 p50=-567.0 p25=-270.2 mean=-89.8
+- recent12_avg: bad=11113.7 target=11171.9
+- recent12_floor: bad=8088 target=6352
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#25585 `490da448 -> 89c43641`
 
