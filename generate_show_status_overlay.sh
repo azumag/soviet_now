@@ -30,9 +30,11 @@ tmux_session="soren_show_status_overlay"
 
 render_once() {
 	mkdir -p "$(dirname "$out_file")"
+	local show_raw=""
 	local raw=""
-	raw=$(SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
-	SHOW_STATUS_OVERLAY_RAW="$raw" python3 - "$out_file" "$width" "$height" <<'PY'
+	show_raw=$(SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
+	raw="$show_raw"
+	SHOW_STATUS_OVERLAY_RAW="$raw" SHOW_STATUS_RAW="$show_raw" HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=1 python3 - "$out_file" "$width" "$height" <<'PY'
 import html
 import os
 import re
@@ -156,7 +158,7 @@ pre {{
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN SHOW-STATUS</span><span>{html.escape(generated)}</span></div>
+  <div class="meta"><span>SOREN OPS</span><span>{html.escape(generated)}</span></div>
   <pre>{body}</pre>
 </div>
 </body>
@@ -237,7 +239,7 @@ ensure-obs)
 	render_once >/dev/null
 	visibility="${2:-show}"
 	case "$visibility" in show|hide) ;; *) visibility=show ;; esac
-	./obs_browser_source.sh ensure "${OBS_DASHBOARD_SCENE:-soren}" "${SHOW_STATUS_OVERLAY_SOURCE:-showStatusOverlay}" "$out_file" "$width" "$height" "$visibility"
+	./obs_browser_source.sh ensure "${OBS_DASHBOARD_SCENE:-soren}" "${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}" "$out_file" "$width" "$height" "$visibility"
 	;;
 *)
 	echo "usage: $0 once|watch [interval_sec]|start [interval_sec]|stop|ensure-obs [show|hide]" >&2

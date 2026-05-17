@@ -234,6 +234,10 @@ cleanup_all() {
 	# コメント生成停止（workerは外部supervisor管理）
 	_kill_comment_gen
 
+	# ステータス overlay 監視の停止（soren_loop 再起動時に再作成）
+	./show_status_g.sh --html-stop >/dev/null 2>&1 || true
+	./show_status.sh --html-stop >/dev/null 2>&1 || true
+
 	# soren91 完全停止
 	soren91_cleanup 2>/dev/null || true
 

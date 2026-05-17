@@ -53,7 +53,17 @@ REJECTED_REEVALUATE_TTL_SEC = 21600
 LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
 CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
 ANNEALING_OBSERVE_FILE = "tmp/state/annealing_candidates.jsonl"
+WILDCARD_ATTEMPT_STATE_FILE = "tmp/state/wildcard_attempt_state.json"
 SOREN_MONITOR_REPORT_FILE = os.getenv("SOREN_MONITOR_REPORT_FILE", "/tmp/soren_report.md")
+VIEWER_CHAT_MONITOR_FILE = os.getenv("VIEWER_CHAT_MONITOR_FILE", "tmp/state/viewer_chat_monitor.json")
+SOREN91_IMPROVE_LOCK_FILE = os.getenv("SOREN91_IMPROVE_LOCK", "soren91/tmp/soren91_improve.lock")
+SOREN91_IMPROVE_PID_FILE = os.getenv("SOREN91_IMPROVE_PID_FILE", "soren91/tmp/soren91_improve.pid")
+SOREN91_IMPROVE_HUNG_QUARANTINE_FILE = os.getenv(
+    "SOREN91_IMPROVE_HUNG_QUARANTINE_FILE",
+    "tmp/state/soren91_improve_hung_quarantine.jsonl",
+)
+ARCHIVE_RESTART_COOLDOWN_FILE = "tmp/state/archive_restart_cooldown.json"
+ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE = "tmp/state/.archive_restart_no_candidate"
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
@@ -1063,6 +1073,114 @@ def load_monitor_report_status():
     return {"status": status, "age": fmt_age(age), "title": title}
 
 
+def load_viewer_chat_monitor():
+    p = Path(VIEWER_CHAT_MONITOR_FILE)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    latest = str(data.get("latest", "") or "").strip()
+    recent = data.get("recent", []) or []
+    if not latest and isinstance(recent, list) and recent:
+        latest = str(recent[-1] or "").strip()
+    if not latest:
+        return None
+    try:
+        age = fmt_age(int(time.time()) - int(data.get("epoch", 0) or 0))
+    except Exception:
+        age = ""
+    return {
+        "latest": latest[:96],
+        "count": int(data.get("count", 0) or 0),
+        "age": age,
+    }
+
+
+def load_improve_backoff_status():
+    p = Path(os.getenv("IMPROVE_RATE_LIMIT_BACKOFF_FILE", "tmp/state/rate_limit_backoff"))
+    if not p.exists():
+        return None
+    try:
+        lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+        count = int(lines[0]) if len(lines) > 0 else 1
+        ts = int(lines[1]) if len(lines) > 1 else 0
+    except Exception:
+        return None
+    exp = min(max(count - 1, 0), 5)
+    wait = 300 * (1 << exp)
+    remaining = max(0, wait - max(0, int(time.time()) - ts))
+    return {
+        "count": count,
+        "remaining": fmt_age(remaining),
+        "wait": fmt_age(wait),
+    }
+
+
+def load_soren91_improve_watchdog_status():
+    lock_path = Path(SOREN91_IMPROVE_LOCK_FILE)
+    pid_path = Path(SOREN91_IMPROVE_PID_FILE)
+    q_path = Path(SOREN91_IMPROVE_HUNG_QUARANTINE_FILE)
+    now = int(time.time())
+    status = None
+
+    if lock_path.exists():
+        try:
+            lock_age = max(0, now - int(lock_path.stat().st_mtime))
+        except Exception:
+            lock_age = 0
+        pid = ""
+        if pid_path.exists():
+            try:
+                pid = pid_path.read_text(encoding="utf-8", errors="ignore").strip()
+            except Exception:
+                pid = ""
+        status = {
+            "kind": "lock",
+            "label": f"lock {fmt_age(lock_age)} pid={pid or '?'}",
+            "age_sec": lock_age,
+        }
+
+    last = None
+    if q_path.exists():
+        try:
+            for raw in q_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    last = row
+        except Exception:
+            last = None
+
+    if last:
+        try:
+            age = max(0, now - int(last.get("epoch", 0) or 0))
+        except Exception:
+            age = 0
+        reason = str(last.get("reason", "") or last.get("event", "") or "unknown")
+        pid = last.get("pid")
+        pid_text = "?" if pid in (None, "") else str(pid)
+        q_label = f"last {reason} {fmt_age(age)} pid={pid_text}"
+        if status:
+            status["last_label"] = q_label
+            return status
+        return {
+            "kind": "last",
+            "label": q_label,
+            "age_sec": age,
+        }
+
+    return status
+
+
 def load_latest_annealing_candidate():
     p = Path(ANNEALING_OBSERVE_FILE)
     if not p.exists():
@@ -1093,6 +1211,183 @@ def load_latest_annealing_candidate():
         "gap": int(float(last.get("comp_gap", 0.0) or 0.0)),
         "temp": int(float(last.get("temperature", 0.0) or 0.0)),
         "age": age,
+    }
+
+
+def load_wildcard_attempt_status():
+    p = Path(WILDCARD_ATTEMPT_STATE_FILE)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        streak = int(data.get("consecutive_wildcards", 0) or 0)
+    except Exception:
+        streak = 0
+    try:
+        escalate_at = int(os.getenv("WILDCARD_AI_ESCALATE_STREAK", "3") or 3)
+    except Exception:
+        escalate_at = 3
+    try:
+        archive_restart_at = int(os.getenv("ARCHIVE_RESTART_STREAK", "3") or 3)
+    except Exception:
+        archive_restart_at = 3
+    archive_restart_enabled = os.getenv("ARCHIVE_RESTART_ENABLED", "1") == "1"
+    effective_streak = streak
+    failed_origins = []
+    try:
+        origin_path = Path("tmp/state/wildcard_origin.json")
+        origin = json.loads(origin_path.read_text(encoding="utf-8", errors="ignore")) if origin_path.exists() else {}
+        rejected_path = Path(REJECTED_HASH_META_FILE)
+        rejected = json.loads(rejected_path.read_text(encoding="utf-8", errors="ignore")) if rejected_path.exists() else {}
+        rolling = load_rolling()
+        anchor = load_best_anchor() or {}
+        anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
+        for h, meta in (origin or {}).items():
+            is_failed = h in rejected
+            metrics = calc_strategy_metrics((rolling.get(h) or {}).get("scores", []) or [])
+            try:
+                max_games = int((meta or {}).get("max_games_override", 12) or 12)
+            except Exception:
+                max_games = 12
+            if (
+                not is_failed
+                and metrics
+                and metrics.get("n", 0) >= max_games
+                and anchor_comp > 0
+                and metrics.get("comp", 0.0) < anchor_comp
+            ):
+                is_failed = True
+            if is_failed:
+                failed_origins.append(str(h)[:8])
+        effective_streak = max(streak, len(failed_origins))
+    except Exception:
+        effective_streak = streak
+    applied = data.get("recent_applied_lines", []) or []
+    applied_lines = []
+    for raw in applied[-4:]:
+        try:
+            applied_lines.append(str(int(raw)))
+        except Exception:
+            pass
+    return {
+        "streak": streak,
+        "effective_streak": effective_streak,
+        "failed_origin_count": len(failed_origins),
+        "escalate_at": escalate_at,
+        "archive_restart_at": archive_restart_at,
+        "archive_restart_enabled": archive_restart_enabled,
+        "to_archive_restart": max(0, archive_restart_at - effective_streak),
+        "to_escape_ai": max(0, escalate_at - effective_streak),
+        "last_event": str(data.get("last_wildcard_outcome", "") or data.get("last_regression_event", "") or "none"),
+        "last_hash": str(data.get("last_wildcard_outcome_hash", "") or data.get("last_regression_hash", "") or "")[:8],
+        "scale": data.get("scale", 1.0),
+        "lines": ",".join(applied_lines) or "none",
+    }
+
+
+def load_archive_restart_candidate():
+    if os.getenv("ARCHIVE_RESTART_ENABLED", "1") != "1":
+        return None
+    rolling = load_rolling()
+    anchor = load_best_anchor() or {}
+    if not rolling:
+        return None
+    no_candidate_marker = Path(os.getenv(
+        "ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE",
+        ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE,
+    ))
+    if no_candidate_marker.exists():
+        try:
+            ttl = int(os.getenv("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", "900") or 900)
+        except Exception:
+            ttl = 900
+        try:
+            age = max(0, int(time.time()) - int(no_candidate_marker.stat().st_mtime))
+        except Exception:
+            age = ttl + 1
+        if age < ttl:
+            return {"status": "no_candidate_cooldown", "age": fmt_age(age), "ttl": fmt_age(ttl)}
+    rejected = set()
+    p = Path(REJECTED_HASH_META_FILE)
+    if p.exists():
+        try:
+            rejected = set((json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}).keys())
+        except Exception:
+            rejected = set()
+    origin = set()
+    p = Path("tmp/state/wildcard_origin.json")
+    if p.exists():
+        try:
+            origin = set((json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}).keys())
+        except Exception:
+            origin = set()
+    cooldown = set()
+    p = Path(ARCHIVE_RESTART_COOLDOWN_FILE)
+    if p.exists():
+        try:
+            cooldown = set((json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}).keys())
+        except Exception:
+            cooldown = set()
+    anchor_hash = str(anchor.get("hash", "") or "")
+    try:
+        anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
+    except Exception:
+        anchor_comp = 0.0
+    try:
+        min_ratio = float(os.getenv("ARCHIVE_RESTART_MIN_COMP_RATIO", "0.92") or 0.92)
+    except Exception:
+        min_ratio = 0.92
+    try:
+        min_best_type = int(os.getenv("ARCHIVE_RESTART_MIN_BEST_TYPE", "14") or 14)
+    except Exception:
+        min_best_type = 14
+    threshold = anchor_comp * max(0.0, min(1.0, min_ratio)) if anchor_comp > 0 else 0.0
+    rows = []
+    for h, entry in rolling.items():
+        h = str(h)
+        if not h or h == anchor_hash or h in rejected or h in origin or h in cooldown:
+            continue
+        if not Path(STRATEGY_HASH_ARCHIVE_DIR, f"{h}.py").exists():
+            continue
+        metrics = calc_strategy_metrics((entry or {}).get("scores", []) or [])
+        if not metrics or metrics.get("n", 0) < MIN_GAMES_FOR_BEST_ROLLBACK:
+            continue
+        if metrics["comp"] < threshold:
+            continue
+        russia = int((entry or {}).get("russia_count", 0) or 0)
+        soviet = int((entry or {}).get("soviet_count", 0) or 0)
+        best_type = int((entry or {}).get("best_max_type", 0) or 0)
+        if best_type >= 15 and russia <= 0:
+            russia = 1
+        if best_type >= 16 and soviet <= 0:
+            soviet = 1
+        if russia <= 0 and soviet <= 0 and best_type < min_best_type:
+            continue
+        objective_score = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
+        objective_score += float(metrics.get("p25", 0.0) or 0.0) * 0.08 + float(metrics.get("comp", 0.0) or 0.0)
+        rows.append((objective_score, h, metrics, russia, soviet, best_type))
+    rows.sort(reverse=True)
+    if not rows:
+        return {
+            "status": "no_candidate",
+            "threshold": int(round(threshold)),
+            "min_best_type": min_best_type,
+        }
+    _, h, metrics, russia, soviet, best_type = rows[0]
+    return {
+        "hash": h[:8],
+        "comp": int(round(metrics.get("comp", 0.0))),
+        "p25": int(round(metrics.get("p25", 0.0))),
+        "n": int(metrics.get("n", 0) or 0),
+        "russia": russia,
+        "soviet": soviet,
+        "best_type": best_type,
+        "count": len(rows),
     }
 
 
@@ -1373,7 +1668,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         e["overall_rank"] = idx
 
     if not all_entries:
-        lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature strategies only: n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
+        lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
         if current_entry or provisional_current:
             metric_header = "comp p50  p25"
             lone_current = current_entry or provisional_current
@@ -1415,7 +1710,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     max_comp = max(e["comp"] for e in entries) if entries else 1
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
-    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb, mature only n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=yellow){RST}"]
+    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
@@ -1469,8 +1764,12 @@ def render_wildcard_status(rolling, current_hash=""):
     anchor = load_best_anchor() or {}
     anchor_comp = anchor.get("comp")
     anchor_h8 = str(anchor.get("hash", ""))[:8]
-    lines = [f"  {BOLD}WILDCARD origins{RST} {DIM}(脱出弾・予算 n/max・comp vs anchor {anchor_h8}={int(anchor_comp) if isinstance(anchor_comp,(int,float)) else 'NA'}){RST}"]
-    for h, meta in wo.items():
+    anchor_label = f"{anchor_h8}={int(anchor_comp)}" if isinstance(anchor_comp, (int, float)) else "NA"
+    lines = [
+        f"  {BOLD}WILDCARD origins{RST} {DIM}(n/max comp delta vs {anchor_label}){RST}",
+        f"{DIM}    hash     n/max     comp    p50    p25      dA{RST}",
+    ]
+    for h, meta in reversed(list(wo.items())):
         scores = (rolling.get(h, {}) or {}).get("scores", []) or []
         m = calc_strategy_metrics(scores)
         n = len(scores)
@@ -1478,25 +1777,28 @@ def render_wildcard_status(rolling, current_hash=""):
         is_cur = bool(current_hash and h.startswith(current_hash[:12]) or current_hash and current_hash.startswith(h[:12]))
         mark = "►" if is_cur else " "
         if m is None:
-            lines.append(f"{mark} {C_BLUE}{h[:8]}{RST} {DIM}n={n}/{maxg} (scores未記録){RST}")
+            lines.append(f"{mark} {C_BLUE}{h[:8]}{RST} {DIM}{n:>2}/{maxg:<2} scores none{RST}")
             continue
         comp = m.get("comp", 0.0)
         delta = (comp - anchor_comp) if isinstance(anchor_comp, (int, float)) else None
         if delta is None:
-            verdict = f"{DIM}anchor未取得{RST}"
+            delta_text = f"{DIM}   NA{RST}"
         elif delta >= 0:
-            verdict = f"{C_GREEN}anchor超 +{int(delta)}{RST}"
+            delta_text = f"{C_GREEN}{int(delta):+5d}{RST}"
         else:
-            verdict = f"{C_YELLOW}anchor未満 {int(delta)}{RST}"
-        budget = f"{C_GREEN}成熟·判定待ち{RST}" if n >= maxg else f"{DIM}評価中{RST}"
+            delta_text = f"{C_YELLOW}{int(delta):+5d}{RST}"
+        n_color = C_GREEN if n >= maxg else DIM
         lines.append(
-            f"{mark} {C_BLUE}{h[:8]}{RST} n={n}/{maxg} {budget} "
-            f"comp={int(comp)} p50={int(m.get('p50',0))} p25={int(m.get('p25',0))} → {verdict}"
+            f"{mark} {C_BLUE}{h[:8]}{RST} {n_color}{n:>2}/{maxg:<2}{RST} "
+            f"{int(comp):>8} {int(m.get('p50',0)):>6} {int(m.get('p25',0)):>6} {delta_text}"
         )
     return lines
 
 
 def render_observer_status():
+    if os.getenv("HIDE_STATUS_DASHBOARD_OBSERVER_SECTION", "0") == "1":
+        return []
+
     monitor = load_monitor_report_status()
     monitor_color = C_GREEN
     if monitor.get("status") == "stale":
@@ -1509,6 +1811,25 @@ def render_observer_status():
         f" {monitor_color}Monitor{RST} {monitor.get('status', '?')} "
         f"{monitor.get('age', '')} {DIM}{monitor.get('title', '')}{RST}"
     )
+    viewer_chat = load_viewer_chat_monitor()
+    if viewer_chat:
+        lines.append(
+            f" {C_CYAN}ChatObs{RST} {viewer_chat.get('latest', '')} "
+            f"{DIM}{viewer_chat.get('age', '')} n={viewer_chat.get('count', 0)}{RST}"
+        )
+    backoff = load_improve_backoff_status()
+    if backoff:
+        lines.append(
+            f" {C_YELLOW}ImproveBackoff{RST} count={backoff.get('count', 0)} "
+            f"rem={backoff.get('remaining', '')} wait={backoff.get('wait', '')}"
+        )
+    soren91_watchdog = load_soren91_improve_watchdog_status()
+    if soren91_watchdog:
+        color = C_RED if soren91_watchdog.get("kind") == "lock" else C_YELLOW
+        detail = soren91_watchdog.get("label", "")
+        if soren91_watchdog.get("last_label"):
+            detail = f"{detail}; {soren91_watchdog.get('last_label')}"
+        lines.append(f" {color}S91Improve{RST} {detail}")
 
     anneal = load_latest_annealing_candidate()
     if anneal:
@@ -1521,6 +1842,40 @@ def render_observer_status():
         )
     else:
         lines.append(f" {DIM}AnnealObs none yet{RST}")
+    wildcard = load_wildcard_attempt_status()
+    if wildcard:
+        color = C_YELLOW if wildcard.get("effective_streak", wildcard.get("streak", 0)) >= 2 else C_BLUE
+        if wildcard.get("archive_restart_enabled") and wildcard.get("to_archive_restart", 1) <= 1:
+            escape_note = "archive_restart next"
+        elif wildcard.get("archive_restart_enabled"):
+            escape_note = f"archive_restart in {wildcard.get('to_archive_restart')}"
+        else:
+            escape_note = "escape_ai next" if wildcard.get("to_escape_ai", 1) <= 1 else f"escape_ai in {wildcard.get('to_escape_ai')}"
+        lines.append(
+            f" {color}WildStreak{RST} n={wildcard.get('streak', 0)} "
+            f"eff={wildcard.get('effective_streak', wildcard.get('streak', 0))} "
+            f"last={wildcard.get('last_event', 'none')} {wildcard.get('last_hash', '')} "
+            f"sc={wildcard.get('scale', 1.0)} {DIM}{escape_note}{RST}"
+        )
+    archive_next = load_archive_restart_candidate()
+    if archive_next and archive_next.get("status") == "no_candidate_cooldown":
+        lines.append(
+            f" {C_YELLOW}ArchiveNext{RST} no candidate "
+            f"{DIM}cooldown {archive_next.get('age', '')}/{archive_next.get('ttl', '')}; escape_ai direct{RST}"
+        )
+    elif archive_next and archive_next.get("status") == "no_candidate":
+        lines.append(
+            f" {C_YELLOW}ArchiveNext{RST} no candidate "
+            f"{DIM}threshold c>={archive_next.get('threshold', 0)} "
+            f"t>={archive_next.get('min_best_type', 0)}; escape_ai direct{RST}"
+        )
+    elif archive_next:
+        lines.append(
+            f" {C_GREEN}ArchiveNext{RST} {archive_next.get('hash', '')} "
+            f"c={archive_next.get('comp', 0)} p25={archive_next.get('p25', 0)} n={archive_next.get('n', 0)} "
+            f"{DIM}ru={archive_next.get('russia', 0)} sv={archive_next.get('soviet', 0)} "
+            f"t={archive_next.get('best_type', 0)} pool={archive_next.get('count', 0)}{RST}"
+        )
     return lines
 
 

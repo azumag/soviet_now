@@ -5,6 +5,8 @@
 2. `strategy.py` を読む（変更前の元コード。diff比較に使う）
 3. `strategy.py.staging` を読む（レビュー対象の変更後コード）
 
+レビューAIは追加の batch 実行環境を探さないこと。`tmp/batch_summary.txt` とゲームログは入力証拠として読み、README/Makefile/*.sh や新しい実行コマンドを探索し続けず、検証は下記チェックリストと `tmp/review_result.md` の verdict で完結させる。
+
 ## レビューチェックリスト
 
 以下を全て確認すること:

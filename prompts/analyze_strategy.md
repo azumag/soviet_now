@@ -71,6 +71,7 @@
 - **サンドボックス内で優先参照**: `tmp/state/last_rollback_analysis.md`（存在する場合）
 - **サンドボックス内で任意参照**: `*.gameover_board.png`, `*.gameover_next.png`（存在する場合）
 - **サンドボックス内**: それ以外の全ファイル。`tmp/sandbox_files.md` に一覧がある
+- `tmp/batch_summary.txt` はホスト側で既に生成済みの評価入力である。sandbox 内で README/Makefile/*.sh や追加の batch 実行コマンドを探し続けないこと
 
 ## 読み込み最低要件（未達は失敗）
 - `tmp/improve_brief.md`（最重要の圧縮サマリ。最初に読む）
@@ -101,8 +102,9 @@
 
 ## 絶対遵守テーマ（mandatory_themes.txt）
 - `data/mandatory_themes.txt` が参照データに含まれている場合、そこに記載された全テーマを **絶対に遵守** すること
-- 仮説立案時、これらのテーマに反する方向性は禁止。テーマが未対応なら最優先で仮説に含めること
-- 分析結果の Implementation Plan にも mandatory_themes の遵守を明記すること
+- mandatory_themes は **改善テーマではなく hard constraint** である。仮説立案時、これらのテーマに反する方向性は禁止だが、「mandatory_themes を満たすこと」だけを改善仮説にしてはいけない
+- 既存コードが mandatory_themes に違反している場合でも、分析では必ず別途、ログ・rollback分析・batch_summary・advice に基づく主改善仮説を1つ選ぶこと。mandatory 対応はその仮説を壊さない制約または副次修正として扱う
+- 分析結果の Implementation Plan には、主改善仮説と mandatory_themes 遵守確認を別項目で書くこと。mandatory だけで完結する Plan は失敗
 
 ## 禁止パターン（この方向への仮説立案を禁止）
 - `height_mult`, `merge_mult`, `balance_strength`, フェーズ閾値などを、ログ根拠なしにいじる仮説
@@ -127,7 +129,8 @@
 10. `strategy.py` の現行コードを読み、仮説と照らし合わせて裏付けを取る
 11. 仮説がゲーム実装依存なら Unity ソース（`MainManager.cs` / `RepublicController.cs`）で事実確認する
 12. 仮説を1つに絞り、根拠を整理する
-13. 分析結果を `tmp/analysis_result.md` に書く（下記の出力指示に従う）
+13. Implementation Plan では `Primary improvement hypothesis` と `Mandatory constraint check` を分ける。前者は type14→15→16 到達経路、盤面圧縮、高type育成、merge/height の失敗パターン等から1つ選び、後者は mandatory_themes 違反がないことだけを確認する
+14. 分析結果を `tmp/analysis_result.md` に書く（下記の出力指示に従う）
 
 ## 出力指示（必須）
 - 分析結果を **`tmp/analysis_result.md`** に `Write` ツールで書くこと

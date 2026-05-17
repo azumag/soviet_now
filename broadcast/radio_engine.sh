@@ -2,9 +2,24 @@
 
 #=== opencode run を疑似TTY付きで実行 ===
 
+_radio_opencode_should_defer_for_improve() {
+	[ "${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}" = "1" ] || return 1
+	local _state_dir="${TMP_STATE_DIR:-tmp/state}"
+	if [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] ||
+		[ -f "$_state_dir/rate_limit_backoff" ] ||
+		grep -q '"status"[[:space:]]*:[[:space:]]*"running"' "$_state_dir/improve_state.json" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
 _run_opencode_radio_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file cleaned
+	if _radio_opencode_should_defer_for_improve; then
+		log "[RADIO] opencode deferred after slot acquire during improve/backoff (agent=$agent)" >&2
+		return 1
+	fi
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
 	mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
 	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
@@ -47,6 +62,10 @@ _run_opencode_radio_unqueued() {
 
 _run_opencode_radio() {
 	local agent="$1"
+	if _radio_opencode_should_defer_for_improve; then
+		log "[RADIO] opencode deferred during improve/backoff (agent=$agent)" >&2
+		return 1
+	fi
 	_ai_generation_queue_run "RADIO:opencode:${agent}" _run_opencode_radio_unqueued "$@"
 }
 

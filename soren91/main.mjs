@@ -64,6 +64,7 @@ const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
 const CALIBRATION_MIN_CONFIDENCE = 0.55;
 const CALIBRATION_MIN_PIECES = 3;
 const MIN_RANKING_DETECTION_TURNS = 10;
+const MIN_RANKING_FALLBACK_COMMENT_TURNS = 20;
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
@@ -1172,6 +1173,8 @@ async function gameLoop(page, calibration, gameNumber) {
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
+  let awaitingFreshRoundAfterResult = false;
+  let interRoundWaitingSeen = false;
 
 
   console.log('[game] Game loop started');
@@ -1233,6 +1236,9 @@ async function gameLoop(page, calibration, gameNumber) {
       // 待機画面 (ランキング/接続中/タイトル画面)
       if (boardState.state === 'WAITING') {
         waitingCount++;
+        if (awaitingFreshRoundAfterResult) {
+          interRoundWaitingSeen = true;
+        }
 
         try {
           const { detectConnectionErrorScreen } = await loadModule('./screenshot_analyzer.mjs');
@@ -1344,6 +1350,8 @@ async function gameLoop(page, calibration, gameNumber) {
           rankingDetected = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
+          awaitingFreshRoundAfterResult = true;
+          interRoundWaitingSeen = false;
 
 
           // 定時ラジオチェック (親プロジェクトの時刻ベースコーナーをメリケンAIペルソナで実行)
@@ -1419,6 +1427,30 @@ async function gameLoop(page, calibration, gameNumber) {
         }
         await sleep(1000); // WAITING中は1秒間隔でチェック
         continue;
+      }
+
+      if (awaitingFreshRoundAfterResult) {
+        try {
+          const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+          const staleRankResult = await detectRankingScreen(screenshotPath);
+          if (staleRankResult != null) {
+            console.log(`[game] Ignoring stale post-result ranking screen before game #${gameNumber} starts (rank=${staleRankResult})`);
+            await sleep(1000);
+            continue;
+          }
+        } catch (e) {
+          console.log(`[game] Stale ranking guard detection error: ${e.message}`);
+        }
+
+        if (!interRoundWaitingSeen) {
+          console.log(`[game] Waiting for inter-round screen before accepting game #${gameNumber} MOVE`);
+          await sleep(1000);
+          continue;
+        }
+
+        awaitingFreshRoundAfterResult = false;
+        interRoundWaitingSeen = false;
+        console.log(`[game] Fresh round confirmed for game #${gameNumber}`);
       }
       waitingLogged = false;
       waitingCount = 0;
@@ -1695,7 +1727,7 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
         // ランキング検出が全滅でも、実ラウンド(十分なターン数=接続エラー等の
         // 誤検出でない)なら無言にせず、フォールバック決算コメントを読む。
         // 短い/spurious(接続エラー疑い)は従来どおり沈黙して誤コメントを防ぐ。
-        if (typeof turns === 'number' && turns >= 10) {
+        if (typeof turns === 'number' && turns >= MIN_RANKING_FALLBACK_COMMENT_TURNS) {
           console.log(`[game] Ranking context unavailable for game #${gameNumber} but real round (turns=${turns}) → fallback ranking comment`);
           await queueRankingCommentOnce(gameNumber, null, 'post-game-fallback', true);
         } else {

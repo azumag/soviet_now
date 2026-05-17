@@ -572,14 +572,24 @@ END { printf "%s", block }
 ')
 		imp_ai_source=$(printf '%s' "$imp_ai_source" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x1f]//g')
 		imp_ai_output_block=$(printf '%s' "$imp_ai_output_block" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g')
-		imp_ai_output_block=$(printf '%s\n' "$imp_ai_output_block" | sed '/^[[:space:]]*$/d' | tail -n "$ai_max_lines")
+		imp_ai_output_block=$(printf '%s\n' "$imp_ai_output_block" \
+			| sed '/^[[:space:]]*$/d' \
+			| grep -v 'opencode thinking' \
+			| grep -v '^Continue if you have next steps' \
+			| grep -v '^[[:space:]]*[✱→←] ' \
+			| awk 'line != prev { print; prev=line }' \
+			| tail -n "$ai_max_lines")
 		if [[ -z "$imp_ai_output_block" ]]; then
 			# START/END が取れない場合でも、直近の改善ログを最低限見せる
 			imp_ai_output_block=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null \
 				| perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g' \
 				| grep -v '^\s*$' \
+				| grep -v 'opencode thinking' \
+				| grep -v '^Continue if you have next steps' \
+				| grep -v '^[[:space:]]*[✱→←] ' \
 				| grep -v '\[IMPROVE\] job start' \
 				| grep -v '\[IMPROVE\] attached pid=' \
+				| awk 'line != prev { print; prev=line }' \
 				| tail -n "$ai_max_lines")
 			if [[ -z "$imp_ai_source" ]] && [[ -n "$imp_ai_output_block" ]]; then
 				imp_ai_source="fallback:recent improve log"
@@ -681,7 +691,7 @@ PY
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-		local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" wildcard_origin_count=0 wildcard_eval_label="none" annealing_label="none"
+		local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
 	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
 		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
 import json
@@ -752,6 +762,13 @@ except Exception:
 h = str(current.get("hash", "") or "")
 label = "none"
 if h and isinstance(origins, dict) and h in origins:
+    origin = origins.get(h) if isinstance(origins.get(h), dict) else {}
+    origin_type = str(origin.get("origin_type", "") or "wildcard")
+    eval_name = {
+        "archive_restart": "ArcEval",
+        "escape_ai": "AIEval",
+        "wildcard": "WildEval",
+    }.get(origin_type, "VarEval")
     n = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
     scores = []
     for raw in current.get("scores", []) or []:
@@ -783,7 +800,7 @@ if h and isinstance(origins, dict) and h in origins:
     trend_label = ""
     if len(scores) >= 2:
         trend = comp - composite(scores[:-1])
-        trend_label = f" t={trend:+d}"
+        trend_label = f" t{trend:+d}"
     event = "pending"
     if outcome_file and os.path.exists(outcome_file):
         try:
@@ -803,11 +820,38 @@ if h and isinstance(origins, dict) and h in origins:
         anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
         if anchor_comp:
             delta = int(comp - anchor_comp)
-            delta_label = f" d={delta:+d}"
+            delta_label = f" d{delta:+d}"
     except Exception:
         pass
+    source_label = ""
+    if origin_type == "archive_restart":
+        source_bits = []
+        try:
+            source_n = int(origin.get("source_n", 0) or 0)
+            if source_n:
+                source_bits.append(f"N{source_n}")
+        except Exception:
+            pass
+        try:
+            source_russia = int(origin.get("source_russia_count", 0) or 0)
+            if source_russia:
+                source_bits.append(f"R{source_russia}")
+        except Exception:
+            pass
+        try:
+            source_best_type = int(origin.get("source_best_max_type", 0) or 0)
+            if source_best_type:
+                source_bits.append(f"T{source_best_type}")
+        except Exception:
+            pass
+        if source_bits:
+            source_label = " " + "".join(source_bits)
     event_short = {"OK_IDLE": "OKI", "OK_BEAT": "OKB", "REGRESSION": "REG", "PROMOTE": "PRO", "RESET": "RST"}.get(event, event[:3])
-    label = f"{h[:4]} {n}/{mature_n} {event_short} c={comp}{trend_label}{delta_label}"
+    if origin_type == "archive_restart":
+        label = f"{h[:4]} {n}/{mature_n} {event_short} c{comp}{delta_label}{source_label}{trend_label}"
+    else:
+        label = f"{h[:4]} {n}/{mature_n} {event_short} c{comp}{trend_label}{delta_label}"
+    print("wildcard_eval_name=" + shlex.quote(eval_name))
 
 print("wildcard_eval_label=" + shlex.quote(label))
 PY
@@ -857,6 +901,167 @@ print("annealing_label=" + shlex.quote(label))
 PY
 )
 		fi
+
+		# --- archive_restart 次候補 / 枯渇観測 ---
+		local archive_next_label="none"
+		eval $(python3 - \
+			"${TMP_STATE_DIR}/rolling_scores.json" \
+			"${TMP_STATE_DIR}/best_strategy_anchor.json" \
+			"${TMP_STATE_DIR}/rejected_hash_metrics.json" \
+			"${TMP_STATE_DIR}/wildcard_origin.json" \
+			"${TMP_STATE_DIR}/archive_restart_cooldown.json" \
+			"${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-${TMP_STATE_DIR}/.archive_restart_no_candidate}" \
+			"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" <<'PY' 2>/dev/null
+import json
+import math
+import os
+import shlex
+import sys
+import time
+
+rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir = sys.argv[1:8]
+
+def load(path, default):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if data is not None else default
+    except Exception:
+        pass
+    return default
+
+def fmt_age(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h"
+
+def quantile(vals, p):
+    xs = sorted(float(v) for v in vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return xs[0]
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    vals = []
+    for raw in scores or []:
+        try:
+            vals.append(float(raw))
+        except Exception:
+            pass
+    if not vals:
+        return None
+    mean = sum(vals) / len(vals)
+    if len(vals) > 1:
+        var = sum((x - mean) ** 2 for x in vals) / len(vals)
+        lcb = mean - 1.28 * (math.sqrt(var) / math.sqrt(len(vals)))
+    else:
+        lcb = mean
+    return {
+        "n": len(vals),
+        "comp": 0.55 * quantile(vals, 0.50) + 0.30 * quantile(vals, 0.25) + 0.15 * lcb,
+        "p25": quantile(vals, 0.25),
+    }
+
+def archive_is_runtime_stable(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return "BEGIN DEADLINE GUARD" in f.read(200000)
+    except Exception:
+        return False
+
+if os.getenv("ARCHIVE_RESTART_ENABLED", "1") != "1":
+    print("archive_next_label=" + shlex.quote("none"))
+    raise SystemExit
+
+try:
+    no_ttl = int(os.getenv("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", "900") or 900)
+except Exception:
+    no_ttl = 900
+if os.path.exists(no_candidate_file):
+    try:
+        age = max(0, int(time.time()) - int(os.path.getmtime(no_candidate_file)))
+    except Exception:
+        age = no_ttl + 1
+    if age < no_ttl:
+        label = f"no cand cd {fmt_age(age)}/{fmt_age(no_ttl)} -> escape_ai"
+        print("archive_next_label=" + shlex.quote(label))
+        raise SystemExit
+
+rolling = load(rolling_file, {})
+anchor = load(anchor_file, {})
+rejected = set(load(rejected_file, {}).keys())
+origin = set(load(origin_file, {}).keys())
+cooldown = set(load(cooldown_file, {}).keys())
+anchor_hash = str(anchor.get("hash", "") or "")
+try:
+    anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
+except Exception:
+    anchor_comp = 0.0
+try:
+    anchor_russia = int(anchor.get("russia_count", 0) or 0)
+    anchor_soviet = int(anchor.get("soviet_count", 0) or 0)
+except Exception:
+    anchor_russia = anchor_soviet = 0
+try:
+    min_ratio = float(os.getenv("ARCHIVE_RESTART_MIN_COMP_RATIO", "0.92") or 0.92)
+except Exception:
+    min_ratio = 0.92
+try:
+    min_best_type = int(os.getenv("ARCHIVE_RESTART_MIN_BEST_TYPE", "14") or 14)
+except Exception:
+    min_best_type = 14
+threshold = anchor_comp * max(0.0, min(1.0, min_ratio)) if anchor_comp > 0 else 0.0
+rows = []
+for h, entry in (rolling or {}).items():
+    h = str(h)
+    if not h or h == anchor_hash or h in rejected or h in origin or h in cooldown:
+        continue
+    path = os.path.join(archive_dir, f"{h}.py")
+    if not os.path.exists(path):
+        continue
+    if not archive_is_runtime_stable(path):
+        continue
+    m = metrics((entry or {}).get("scores", []) or [])
+    if not m or m["n"] < 12 or m["comp"] < threshold:
+        continue
+    try:
+        russia = int((entry or {}).get("russia_count", 0) or 0)
+        soviet = int((entry or {}).get("soviet_count", 0) or 0)
+        best_type = int((entry or {}).get("best_max_type", 0) or 0)
+    except Exception:
+        russia = soviet = best_type = 0
+    if best_type >= 15 and russia <= 0:
+        russia = 1
+    if best_type >= 16 and soviet <= 0:
+        soviet = 1
+    if anchor_soviet > 0 and soviet <= 0:
+        continue
+    if anchor_russia > 0 and russia <= 0:
+        continue
+    if russia <= 0 and soviet <= 0 and best_type < min_best_type:
+        continue
+    score = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500 + m["p25"] * 0.08 + m["comp"]
+    rows.append((score, h, m, russia, soviet, best_type))
+
+rows.sort(reverse=True)
+if not rows:
+    label = f"no cand c>={int(round(threshold))} t>={min_best_type} -> escape_ai"
+else:
+    _, h, m, russia, soviet, best_type = rows[0]
+    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} R{russia} S{soviet} T{best_type} pool{len(rows)}"
+print("archive_next_label=" + shlex.quote(label))
+PY
+)
+		archive_next_label=$(_truncate_display_width_keep_tail "$archive_next_label" 48)
 
 		# --- Claude 監視レポート鮮度 ---
 		local monitor_report_file="${SOREN_MONITOR_REPORT_FILE:-/tmp/soren_report.md}"
@@ -919,6 +1124,119 @@ PY
 				*) monitor_report_color="$C_YELLOW" ;;
 			esac
 		fi
+
+		# --- 視聴者チャット観測 ---
+		local viewer_chat_label="none"
+		if [[ -x ./viewer_chat_monitor.sh ]]; then
+			viewer_chat_label=$(./viewer_chat_monitor.sh line 2>/dev/null || echo "none")
+			viewer_chat_label=$(_truncate_display_width_keep_tail "$viewer_chat_label" 48)
+		fi
+
+		# --- 改善 backoff 観測 ---
+		local improve_backoff_label="none"
+		local rate_limit_backoff_file="${TMP_STATE_DIR:-tmp/state}/rate_limit_backoff"
+		if [[ -f "$rate_limit_backoff_file" ]]; then
+			eval $(python3 - "$rate_limit_backoff_file" <<'PY' 2>/dev/null
+import shlex
+import sys
+import time
+
+path = sys.argv[1]
+try:
+    lines = open(path, encoding="utf-8").read().splitlines()
+except Exception:
+    lines = []
+try:
+    count = int(lines[0]) if len(lines) > 0 else 1
+except Exception:
+    count = 1
+try:
+    ts = int(lines[1]) if len(lines) > 1 else 0
+except Exception:
+    ts = 0
+exp = min(max(count - 1, 0), 5)
+wait = 300 * (1 << exp)
+remaining = max(0, wait - max(0, int(time.time()) - ts))
+if remaining >= 3600:
+    rem = f"{remaining // 3600}h"
+elif remaining >= 60:
+    rem = f"{remaining // 60}m"
+else:
+    rem = f"{remaining}s"
+label = f"count={count} rem={rem} wait={wait // 60}m"
+print("improve_backoff_label=" + shlex.quote(label))
+PY
+)
+		fi
+
+		# --- soren91 改善 watchdog / quarantine 観測 ---
+		local soren91_improve_watchdog_label="none"
+		eval $(python3 - \
+			"${SOREN91_IMPROVE_LOCK:-soren91/tmp/soren91_improve.lock}" \
+			"${SOREN91_IMPROVE_PID_FILE:-soren91/tmp/soren91_improve.pid}" \
+			"${SOREN91_IMPROVE_HUNG_QUARANTINE_FILE:-tmp/state/soren91_improve_hung_quarantine.jsonl}" <<'PY' 2>/dev/null
+import json
+import os
+import shlex
+import sys
+import time
+
+lock_file, pid_file, quarantine_file = sys.argv[1:4]
+now = int(time.time())
+
+def fmt_age(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h"
+
+parts = []
+if os.path.exists(lock_file):
+    try:
+        age = now - int(os.path.getmtime(lock_file))
+    except Exception:
+        age = 0
+    pid = "?"
+    try:
+        if os.path.exists(pid_file):
+            pid = open(pid_file, encoding="utf-8", errors="ignore").read().strip() or "?"
+    except Exception:
+        pid = "?"
+    parts.append(f"lock {fmt_age(age)} pid={pid}")
+
+last = None
+if os.path.exists(quarantine_file):
+    try:
+        with open(quarantine_file, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    last = row
+    except Exception:
+        last = None
+if isinstance(last, dict):
+    try:
+        age = now - int(last.get("epoch", 0) or 0)
+    except Exception:
+        age = 0
+    reason = str(last.get("reason") or last.get("event") or "unknown")
+    pid = last.get("pid")
+    pid_text = "?" if pid in (None, "") else str(pid)
+    parts.append(f"last {reason} {fmt_age(age)} pid={pid_text}")
+
+label = "; ".join(parts) if parts else "none"
+print("soren91_improve_watchdog_label=" + shlex.quote(label))
+PY
+)
+		soren91_improve_watchdog_label=$(_truncate_display_width_keep_tail "$soren91_improve_watchdog_label" 48)
 
 		# --- 最低試合ゲート ---
 		local min_games="${MIN_GAMES_BEFORE_IMPROVE_ENV:-$(_config_int_default MIN_GAMES_BEFORE_IMPROVE 12)}"
@@ -1466,14 +1784,26 @@ PY
 	printf "    ${C_MAGENTA}◇${C_RESET} Escape      ${escape_color}D=%s T=%s W=%s${C_RESET}  ${C_DIM}stag=%s/%s %s %s ago wc=%s${C_RESET}\n" \
 		"$d_flag" "$t_flag" "$w_flag" "$stagnation_count" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_event" "$stagnation_age" "$wildcard_origin_count"
 		if [[ "$wildcard_eval_label" != "none" ]]; then
-			printf "    ${C_MAGENTA}▸${C_RESET} WildEval    ${C_DIM}%s${C_RESET}\n" "$wildcard_eval_label"
+			printf "    ${C_MAGENTA}▸${C_RESET} %-11s ${C_DIM}%s${C_RESET}\n" "$wildcard_eval_name" "$wildcard_eval_label"
 		fi
 		if [[ "$annealing_label" != "none" ]]; then
 			printf "    ${C_BLUE}▸${C_RESET} AnnealObs   ${C_DIM}%s${C_RESET}\n" "$annealing_label"
 		fi
+		if [[ "$archive_next_label" != "none" ]]; then
+			printf "    ${C_YELLOW}▸${C_RESET} ArchiveNext ${C_YELLOW}%s${C_RESET}\n" "$archive_next_label"
+		fi
 		printf "    ${monitor_report_color}▸${C_RESET} Monitor     ${monitor_report_color}%s${C_RESET}\n" "$monitor_report_label"
+			if [[ "$viewer_chat_label" != "none" ]]; then
+				printf "    ${C_CYAN}▸${C_RESET} ChatObs     ${C_DIM}%s${C_RESET}\n" "$viewer_chat_label"
+			fi
+			if [[ "$improve_backoff_label" != "none" ]]; then
+				printf "    ${C_YELLOW}▸${C_RESET} ImproveBack ${C_YELLOW}%s${C_RESET}\n" "$improve_backoff_label"
+			fi
+			if [[ "$soren91_improve_watchdog_label" != "none" ]]; then
+				printf "    ${C_YELLOW}▸${C_RESET} S91Improve  ${C_YELLOW}%s${C_RESET}\n" "$soren91_improve_watchdog_label"
+			fi
 
-		echo ""
+			echo ""
 
 	# === セクション: Audio ===
 	printf "  ${C_BOLD}AUDIO${C_RESET}\n"

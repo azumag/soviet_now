@@ -49,7 +49,10 @@ rr_lease_acquire() {
 	local owner="${1:-bridge_recovery}" now lk
 	mkdir -p "$(dirname "$_RR_LOCK")" 2>/dev/null || true
 	if mkdir "$_RR_LOCK" 2>/dev/null; then
-		echo "$owner $$ $(date +%s)" >"$_RR_LOCK/owner" 2>/dev/null || true
+		if ! echo "$owner $$ $(date +%s)" >"$_RR_LOCK/owner" 2>/dev/null; then
+			rm -rf "$_RR_LOCK" 2>/dev/null || true
+			return 1
+		fi
 		return 0
 	fi
 	# 既存ロック: stale (TTL超過) なら奪取
@@ -58,7 +61,10 @@ rr_lease_acquire() {
 	if [ $(( now - lk )) -ge "$_RR_TTL" ]; then
 		rm -rf "$_RR_LOCK" 2>/dev/null || true
 		if mkdir "$_RR_LOCK" 2>/dev/null; then
-			echo "$owner $$ $now (stolen-stale)" >"$_RR_LOCK/owner" 2>/dev/null || true
+			if ! echo "$owner $$ $now (stolen-stale)" >"$_RR_LOCK/owner" 2>/dev/null; then
+				rm -rf "$_RR_LOCK" 2>/dev/null || true
+				return 1
+			fi
 			return 0
 		fi
 	fi

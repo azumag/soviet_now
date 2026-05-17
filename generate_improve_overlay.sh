@@ -11,7 +11,7 @@ watch_pid="${2:-}"
 
 generate_once() {
 	mkdir -p "$(dirname "$IMPROVE_OVERLAY_HTML_FILE")" "$(dirname "$IMPROVE_OVERLAY_LOG_FILE")" 2>/dev/null || true
-	python3 - "$IMPROVE_STATE_FILE" "$IMPROVE_AI_LOG_FILE" "$IMPROVE_OVERLAY_HTML_FILE" "$IMPROVE_OVERLAY_REFRESH_SEC" <<'PY'
+	python3 - "$IMPROVE_STATE_FILE" "$IMPROVE_AI_LOG_FILE" "$IMPROVE_OVERLAY_HTML_FILE" "$IMPROVE_OVERLAY_REFRESH_SEC" "${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}" "${IMPROVE_FIX_CMD_TIMEOUT_SEC:-600}" "${IMPROVE_WALL_TIMEOUT:-3600}" <<'PY'
 import html
 import json
 import os
@@ -20,7 +20,7 @@ import sys
 import tempfile
 from datetime import datetime
 
-state_path, log_path, out_path, refresh = sys.argv[1:5]
+state_path, log_path, out_path, refresh, run_timeout, fix_timeout, wall_timeout = sys.argv[1:8]
 ansi_re = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 def read_state():
@@ -50,6 +50,20 @@ try:
     updated_text = datetime.fromtimestamp(int(updated_at)).strftime("%H:%M:%S") if int(updated_at) else "-"
 except Exception:
     updated_text = "-"
+try:
+    started_at = int(state.get("started_at") or 0)
+    elapsed_sec = max(0, int(datetime.now().timestamp()) - started_at) if started_at else 0
+except Exception:
+    elapsed_sec = 0
+
+def fmt_duration(value):
+    try:
+        sec = max(0, int(value))
+    except Exception:
+        return "-"
+    if sec < 60:
+        return f"{sec}s"
+    return f"{sec // 60}m{sec % 60:02d}s"
 
 body_lines = "\n".join(f"<div>{html.escape(line)}</div>" for line in lines[-24:])
 if not body_lines:
@@ -141,6 +155,10 @@ html, body {{
     <div>phase: {html.escape(phase)}</div>
     <div>progress: {html.escape(progress)}%</div>
     <div>pid: {html.escape(pid)}</div>
+    <div>elapsed: {html.escape(fmt_duration(elapsed_sec))}</div>
+    <div>AI cap: {html.escape(fmt_duration(run_timeout))}</div>
+    <div>FIX cap: {html.escape(fmt_duration(fix_timeout))}</div>
+    <div>job cap: {html.escape(fmt_duration(wall_timeout))}</div>
     <div>updated: {html.escape(updated_text)}</div>
     <div>refresh: {html.escape(str(refresh))}s</div>
     <div class="detail">{html.escape(detail)}</div>

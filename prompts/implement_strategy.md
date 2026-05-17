@@ -7,6 +7,8 @@
 2. `strategy.py.staging` を読む（実装対象）
 3. 分析の `## Implementation Plan` セクションに従って実装する
 
+`tmp/batch_summary.txt` は分析フェーズ向けにホスト側で既に生成済みである。実装AIは sandbox 内で README/Makefile/*.sh や追加の batch 実行コマンドを探索し続けないこと。実装後は `strategy.py.staging` と `strategy_helpers/` の変更を最小に保ち、後段の静的検証と Stage 3 review に渡す。
+
 **分析の方針から逸脱しない。分析AIが選択した仮説をそのまま実装すること。**
 独自の判断で別の仮説を採用したり、分析で棄却された仮説を実装してはいけない。
 

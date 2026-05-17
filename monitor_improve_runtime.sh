@@ -14,6 +14,8 @@ source ./eloop_lib.sh
 
 LOG_FILE="${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}"
 STATUS_FILE="${IMPROVE_MONITOR_STATUS_FILE:-tmp/state/improve_monitor_status.json}"
+IMPROVE_LAST_ACTIVATE_MODE=""
+IMPROVE_LAST_ACTIVATE_STATE_FILE="${IMPROVE_LAST_ACTIVATE_STATE_FILE:-tmp/.soren91_improve_last_activate_mode}"
 LONG_SEC="${IMPROVE_MONITOR_LONG_SEC:-3600}"
 STALE_SEC="${IMPROVE_MONITOR_STALE_SEC:-900}"
 LOCKDIR="tmp/.improve_monitor.lock"
@@ -71,7 +73,21 @@ _file_age_sec() {
 }
 
 _activate_shared_browser_tab() {
-	local mode="$1"
+	local mode="${1:-china}"
+	local last_mode
+	mode="$(printf '%s' "$mode" | tr -d '[:space:]')"
+	last_mode="$(cat "$IMPROVE_LAST_ACTIVATE_STATE_FILE" 2>/dev/null || printf '')"
+	if [ "$IMPROVE_LAST_ACTIVATE_MODE" = "$mode" ] || [ "$last_mode" = "$mode" ]; then
+		mkdir -p "$(dirname "${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}")" 2>/dev/null || true
+		printf '%s [IMPROVE_ACTIVATE] event=skip mode=%s prev_mode=%s\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mode" "$last_mode" \
+			>>"${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}"
+		return 0
+	fi
+	mkdir -p "$(dirname "$IMPROVE_LAST_ACTIVATE_STATE_FILE")" 2>/dev/null || true
+	printf '%s [IMPROVE_ACTIVATE] event=activate mode=%s prev_mode=%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mode" "$last_mode" \
+		>>"${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}"
 	node - "$mode" <<'NODE' >/dev/null 2>>logs/improve_monitor.log || true
 const fs = require('fs');
 const mode = process.argv[2] || 'china';
@@ -97,6 +113,9 @@ function matches(target) {
   await fetch(`${base}/json/activate/${encodeURIComponent(page.id)}`, { method: 'PUT' });
 })();
 NODE
+	IMPROVE_LAST_ACTIVATE_MODE="$mode"
+	mkdir -p "$(dirname "$IMPROVE_LAST_ACTIVATE_STATE_FILE")" 2>/dev/null || true
+	printf '%s\n' "$mode" > "$IMPROVE_LAST_ACTIVATE_STATE_FILE"
 }
 
 _write_status() {

@@ -62,7 +62,8 @@ origins = load(origin_file)
 run = load(run_file)
 anchor = load(anchor_file)
 current_hash = str(run.get("hash", "") or "")
-if not current_hash or current_hash not in origins:
+origin = origins.get(current_hash) if current_hash else None
+if not current_hash or not isinstance(origin, dict):
     raise SystemExit
 
 scores = run.get("scores", []) or []
@@ -116,14 +117,53 @@ with open(tmp, "w", encoding="utf-8") as f:
 os.replace(tmp, state_file)
 
 short = current_hash[:4]
+origin_type = str(origin.get("origin_type", "") or "wildcard")
+source_note = ""
+source_detail = ""
+if origin_type == "archive_restart":
+    label = "ARCHIVE-RESTART"
+    action = "過去版リスタート候補"
+    source_bits = []
+    detail_bits = []
+    try:
+        source_n = int(origin.get("source_n", 0) or 0)
+        if source_n:
+            detail_bits.append(f"source_n={source_n}")
+    except Exception:
+        source_n = 0
+    try:
+        source_russia = int(origin.get("source_russia_count", 0) or 0)
+        if source_russia:
+            source_bits.append(f"ロシア実績{source_russia}回")
+            detail_bits.append(f"source_russia={source_russia}")
+    except Exception:
+        pass
+    try:
+        source_best_type = int(origin.get("source_best_max_type", 0) or 0)
+        if source_best_type:
+            source_bits.append(f"最大T{source_best_type}")
+            detail_bits.append(f"source_best_type={source_best_type}")
+    except Exception:
+        pass
+    if source_bits:
+        source_note = " 元版は" + "、".join(source_bits) + "。"
+    if detail_bits:
+        source_detail = " " + " ".join(detail_bits)
+elif origin_type == "escape_ai":
+    label = "ESCAPE-AI"
+    action = "AI構造変異候補"
+else:
+    label = "WILDCARD"
+    action = "脱出候補"
 message = (
-    f"WILDCARD {short} は {n}/12 試合まで評価済み。"
+    f"{label} {short} は {n}/12 試合まで評価済み。"
     f" composite {int(round(comp))}、anchor 比 {delta:+d}。"
-    " 現在は脱出候補として追跡継続します。"
+    f"{source_note}"
+    f" 現在は{action}として追跡継続します。"
 )
 print("message=" + shlex.quote(message))
-print("title=" + shlex.quote(f"WILDCARD {short} {n}/12 {delta:+d}"))
-print("detail=" + shlex.quote(f"hash={current_hash} n={n} milestone={milestone} comp={int(round(comp))} delta={delta:+d} kind={kind}"))
+print("title=" + shlex.quote(f"{label} {short} {n}/12 {delta:+d}"))
+print("detail=" + shlex.quote(f"hash={current_hash} origin_type={origin_type} n={n} milestone={milestone} comp={int(round(comp))} delta={delta:+d} kind={kind}{source_detail}"))
 PY
 
 env_file="${TMP_STATE_DIR:-tmp/state}/wildcard_progress_report.env.tmp"

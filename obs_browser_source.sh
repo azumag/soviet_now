@@ -185,6 +185,22 @@ async function main() {
     let items = Array.isArray(response.sceneItems) ? response.sceneItems : [];
     let matches = items.filter(item => item.sourceName === sourceName);
     let created = false;
+    const preserveTransform = process.env.OBS_BROWSER_SOURCE_PRESERVE_TRANSFORM !== '0';
+    const preserved = new Map();
+
+    if (preserveTransform && matches.length > 0) {
+      for (const item of matches) {
+        try {
+          const data = await obs.request('GetSceneItemTransform', {
+            sceneName,
+            sceneItemId: item.sceneItemId,
+          });
+          if (data && data.sceneItemTransform) {
+            preserved.set(item.sceneItemId, data.sceneItemTransform);
+          }
+        } catch (_) {}
+      }
+    }
 
     if (matches.length === 0) {
       await obs.request('CreateInput', {
@@ -212,6 +228,42 @@ async function main() {
         sceneItemId: item.sceneItemId,
         sceneItemEnabled: enabled,
       });
+      const before = preserved.get(item.sceneItemId);
+      if (before && !created) {
+        let after = {};
+        try {
+          const data = await obs.request('GetSceneItemTransform', {
+            sceneName,
+            sceneItemId: item.sceneItemId,
+          });
+          after = data.sceneItemTransform || {};
+        } catch (_) {}
+        const nextSourceWidth = Number(after.sourceWidth || before.sourceWidth || 0);
+        const nextSourceHeight = Number(after.sourceHeight || before.sourceHeight || 0);
+        const wantedWidth = Number(before.width || 0);
+        const wantedHeight = Number(before.height || 0);
+        const restore = {
+          positionX: Number(before.positionX || 0),
+          positionY: Number(before.positionY || 0),
+          rotation: Number(before.rotation || 0),
+          scaleX: nextSourceWidth > 0 && wantedWidth > 0 ? wantedWidth / nextSourceWidth : Number(before.scaleX || 1),
+          scaleY: nextSourceHeight > 0 && wantedHeight > 0 ? wantedHeight / nextSourceHeight : Number(before.scaleY || 1),
+          cropLeft: Number(before.cropLeft || 0),
+          cropTop: Number(before.cropTop || 0),
+          cropRight: Number(before.cropRight || 0),
+          cropBottom: Number(before.cropBottom || 0),
+          alignment: Number(before.alignment || 5),
+          boundsType: before.boundsType || 'OBS_BOUNDS_NONE',
+        };
+        if (Number(before.boundsWidth || 0) > 0) restore.boundsWidth = Number(before.boundsWidth);
+        if (Number(before.boundsHeight || 0) > 0) restore.boundsHeight = Number(before.boundsHeight);
+        if (Number(before.boundsAlignment || 0) > 0) restore.boundsAlignment = Number(before.boundsAlignment);
+        await obs.request('SetSceneItemTransform', {
+          sceneName,
+          sceneItemId: item.sceneItemId,
+          sceneItemTransform: restore,
+        });
+      }
     }
 
     console.log(`${created ? 'created' : 'updated'}:${sourceName}:${visibility}:${sourceUrl}`);

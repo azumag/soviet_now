@@ -26,9 +26,12 @@ source ./eloop_lib.sh
 WORKER_NAME="audio_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
 POLL_INTERVAL="${AUDIO_WORKER_INTERVAL:-5}"
+WARNING_INTERVAL="${AUDIO_WORKER_WARNING_INTERVAL_SEC:-900}"
 
 _STOPPED=0
 _RELOAD_REQUESTED=0
+_LAST_SAY_WARNING_TS=0
+_LAST_SAY_WARNING_COUNT=0
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -61,7 +64,8 @@ _reload_runtime() {
 	fi
 	if source ./eloop_lib.sh 2>/dev/null; then
 		POLL_INTERVAL="${AUDIO_WORKER_INTERVAL:-5}"
-		_log "reload complete (interval=${POLL_INTERVAL}s)"
+		WARNING_INTERVAL="${AUDIO_WORKER_WARNING_INTERVAL_SEC:-900}"
+		_log "reload complete (interval=${POLL_INTERVAL}s, warning_interval=${WARNING_INTERVAL}s)"
 	else
 		_log "WARNING: reload failed; keeping previous runtime"
 	fi
@@ -108,7 +112,13 @@ while true; do
 	_say_fail_count=0
 	_say_fail_count=$(grep -Ec 'VOICEVOX合成失敗|say起動失敗' tmp/.say_queue/debug.log 2>/dev/null | awk '{s+=$1}END{print s+0}')
 	if [ "${_say_fail_count:-0}" -gt 3 ]; then
-		_log "WARNING: say_enqueue ${_say_fail_count}件失敗中 — VOICEVOX(${VOICEVOX_HOST:-localhost:50021})への接続を確認してください"
+		_now_ts=$(date +%s)
+		case "$WARNING_INTERVAL" in ''|*[!0-9]*) WARNING_INTERVAL=900 ;; esac
+		if [ "$_say_fail_count" != "$_LAST_SAY_WARNING_COUNT" ] || [ $((_now_ts - _LAST_SAY_WARNING_TS)) -ge "${WARNING_INTERVAL:-900}" ]; then
+			_LAST_SAY_WARNING_TS="$_now_ts"
+			_LAST_SAY_WARNING_COUNT="$_say_fail_count"
+			_log "WARNING: say_enqueue ${_say_fail_count}件失敗中 — VOICEVOX(${VOICEVOX_HOST:-localhost:50021})への接続を確認してください"
+		fi
 	fi
 
 	# 再生処理: コメント → external trigger → deferred radio

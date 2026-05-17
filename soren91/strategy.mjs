@@ -1,27 +1,30 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v204 - Enhanced Merge Priority, Aggressive Dispersion & Tuned Height Avoidance)
+ * strategy.mjs - ドロップ位置決定戦略 (v221 - Aggressive Garbage Clearing & Refined Height Management)
  *
- * v203をベースに以下の点を改善：
- * - 高さ管理のさらなる調整とデッドライン回避のバランス:
- *   - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER をわずかに減少させ (0.52 -> 0.50)、絶対回避ラインをデッドラインに少し近づけることで、「No valid move」による中央ドロップを減らし、より多様なリスクテイクを可能にする。この変更は、厳しく設定された他の高さペナルティによって相殺されることを期待。
- *   - HEIGHT_PENALTY_WEIGHT をさらに増加させ (7_000_000.0 -> 7_500_000.0)、デッドラインに近い高所へのドロップに対するペナルティをさらに厳しく適用。
- *   - CRITICAL_HEIGHT_MARGIN を増加させ (2.4 -> 2.5)、高さペナルティの指数関数的な増加が適用される範囲をさらに拡大。
- *   - 全体的な盤面を低く保つため、Y座標に応じた汎用ペナルティ Y_POSITION_PENALTY_WEIGHT を増加 (500 -> 700)。
- * - 盤面密度管理のさらなる強化と分散促進:
- *   - CROWDING_PENALTY_START_THRESHOLD を減少させ (3 -> 2)、過密状態をより早期に検知しペナルティを適用。
- *   - CROWDING_PENALTY_PER_PIECE を増加させ (150 -> 200)、過密状態に対するペナルティをさらに強化し、水平方向へのピース分散を強力に促進。
- *   - 比較的空いているエリアへのドロップにボーナス EMPTY_SPACE_BONUS を増加させ (1000 -> 1500)、意図的に分散を促す。
- * - 併合とパイプラインの優先度向上:
- *   - MERGE_BONUS_SCALE_FACTOR を増加させ (95 -> 100)、併合をより積極的に狙う。
- *   - PIPELINE_BONUS_DIRECT_CHAIN および PIPELINE_BONUS_INDIRECT_CHAIN を増加させ (2100/850 -> 2200/900)、連鎖的な併合機会をより重視する。
- * - おじゃまブロック処理の強化:
- *   - GARBAGE_URGENT_GAUGE_BONUS_HIGH_RATIO を増加させ (20000 -> 25000)、高ゲージかつ高比率時のおじゃまクリアへのインセンティブを強化。
- *   - GARBAGE_IMMINENT_MERGE_BONUS を増加させ (20000 -> 25000)、おじゃまが差し迫っている際の併合優先度をさらに高める。
- *   - GARBAGE_CLEAR_MERGE_BONUS_LOW_Y を増加させ (5000 -> 6000)、盤面下部での併合によるおじゃまクリアをさらに促進。
- * - 大型ピースの片側集約ロジックの強化:
- *   - LARGE_PIECE_AGGREGATION_BONUS を増加させ (2300 -> 2500)、集約のインセンティブを強化。
- *   - LARGE_PIECE_AGGREGATION_PENALTY を増加させ (1000 -> 1200)、分散配置のペナルティを強化。
- * - 先読みの重み付けは v202 の設定を維持。
+ * v220をベースに以下の点を改善：
+ * - おじゃまブロック対応のさらなる強化と優先度向上:
+ *   - GARBAGE_HIGH_Y_NO_MERGE_PENALTY を -800_000 から -1_000_000 に増加。
+ *     おじゃまブロックがすでに高位にあり、かつ併合機会がない場合のペナルティをさらに大幅に強化。
+ *     これにより、高所のおじゃまに対する無策なドロップを極力排除し、リスク回避を最優先します。
+ *   - GARBAGE_IMMINENT_MERGE_BONUS を 550_000 から 650_000 に増加。
+ *     おじゃまゲージが満タンに近く、おじゃま落下が差し迫っている場合の併合ボーナスを強化。
+ *     緊急時における併合によるボードクリアのインセンティブを一層高めます。
+ *   - GARBAGE_CRITICAL_RATIO_BONUS を 600_000 から 750_000 に増加。
+ *     ボード内のおじゃまの割合が極めて高い場合の併合ボーナスをさらに強化し、
+ *     ボードを窒息させるリスクがある場合のクリア行動を最優先させます。
+ *   - GARBAGE_CLEAR_MERGE_BONUS_LOW_Y を 50_000 から 60_000 に増加。
+ *     ボード下部での併合によるおじゃまクリアへのインセンティブを強化し、
+ *     効率的な盤面整理を促します。
+ * - 全体的な高さ管理の調整:
+ *   - Y_POSITION_PENALTY_WEIGHT を 3500 から 4000 に増加。
+ *     一般的なY座標に対するペナルティをさらに強化し、全体的に低い盤面を維持するインセンティブを継続して高めます。
+ *
+ * その他の定数（MERGE_PROXIMITY_THRESHOLD, PIPELINE_BONUS群, CROWDING_PENALTY群,
+ * LARGE_PIECE_AGGREGATION群, LOOK_AHEAD_WEIGHT群, SETTLING_BUFFER）はv220の設定を維持します。
+ * DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER も v220の0.90を維持し、デッドラインからの安全マージンを保ちます。
+ *
+ * 今回の調整は、おじゃまブロックによるゲームオーバーリスクに対する応答をさらに迅速かつ強力にし、
+ * 同時に全体的な盤面高さをより低く保つことで、安定した生存とスコア獲得を目指します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -31,44 +34,52 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
-const CRITICAL_HEIGHT_MARGIN = 2.5; // v204: Adjusted from 2.4 (v203) - Even broader critical zone
-const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.2; // v182: Maintained
+const CRITICAL_HEIGHT_MARGIN = 3.1; // v220: Adjusted from 3.0 (v219)
+const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.2;
 
-const HEIGHT_PENALTY_WEIGHT = 7_500_000.0; // v204: Adjusted from 7_000_000.0 (v203) - Even steeper penalty
-const Y_POSITION_PENALTY_WEIGHT = 700; // v204: Adjusted from 500 (v203) - Increased general penalty based on predictedY
-const SETTLING_BUFFER = 0.70; // v200: Maintained
+const HEIGHT_PENALTY_WEIGHT = 50_000_000.0; // v220: Adjusted from 40_000_000.0 (v219)
+const Y_POSITION_PENALTY_WEIGHT = 4000; // v221: Adjusted from 3500 (v220)
 // Changed from absolute avoidance (Infinity) to a very large penalty.
-const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.50; // v204: Adjusted from 0.52 (v203) - Slightly less strict for "No valid move"
+const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000;
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.90; // v220: Adjusted from 0.80 (v219)
+
+const SETTLING_BUFFER = 1.20; // v219: Adjusted from 1.10 (v218)
 
 // Merge and Pipeline Bonuses
-const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Maintained from 0.20
-const MERGE_BONUS_SCALE_FACTOR = 100; // v204: Adjusted from 95 (v198)
-const PIPELINE_BONUS_DIRECT_CHAIN = 2200; // v204: Adjusted from 2100 (v198)
-const PIPELINE_BONUS_INDIRECT_CHAIN = 900; // v204: Adjusted from 850 (v198)
-const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 6000; // v204: Adjusted from 5000 (v202)
-const GARBAGE_URGENT_GAUGE_BONUS_HIGH_RATIO = 25000; // v204: Adjusted from 20000 (v203) - More aggressive incentive
-const GARBAGE_URGENT_GAUGE_THRESHOLD = 0.60; // v197: Maintained from 0.60 (v196)
-const GARBAGE_IMMINENT_GAUGE_THRESHOLD = 0.80; // v199: Maintained
-const GARBAGE_IMMINENT_MERGE_BONUS = 25000; // v204: Adjusted from 20000 (v203) - More aggressive incentive
-const GARBAGE_ANY_MERGE_BONUS = 500; // v195: Maintained
+const MERGE_PROXIMITY_THRESHOLD = 0.20;
+const MERGE_BONUS_SCALE_FACTOR = 100;
+const PIPELINE_BONUS_DIRECT_CHAIN = 2200;
+const PIPELINE_BONUS_INDIRECT_CHAIN = 900;
+const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 60000; // v221: Adjusted from 50000 (v217)
+const GARBAGE_URGENT_GAUGE_BONUS_HIGH_RATIO = 500000; // v220: Adjusted from 400000 (v217)
+const GARBAGE_URGENT_GAUGE_THRESHOLD = 0.60;
+const GARBAGE_IMMINENT_GAUGE_THRESHOLD = 0.50; // v213: Adjusted from 0.60 (v212)
+const GARBAGE_IMMINENT_MERGE_BONUS = 650000; // v221: Adjusted from 550000 (v220)
+const GARBAGE_ANY_MERGE_BONUS = 500;
+const GARBAGE_CRITICAL_RATIO_THRESHOLD = 0.30; // v217: New threshold for extreme garbage
+const GARBAGE_CRITICAL_RATIO_BONUS = 750000; // v221: Adjusted from 600000 (v220)
 
-// Small Piece Catalyst (v196: increased)
-const SMALL_PIECE_CATALYST_BONUS = 2000; // v196: Maintained
+// NEW Garbage Height Management
+const GARBAGE_HIGH_PENALTY_THRESHOLD_Y = 1.8; // v219: If garbage height exceeds this, start applying special penalty/bonus
+const GARBAGE_HIGH_Y_MERGE_BONUS_AMPLIFIER = 2.5; // v220: Adjusted from 2.0 (v219)
+const GARBAGE_HIGH_Y_NO_MERGE_PENALTY = -1_000_000; // v221: Adjusted from -800_000 (v220)
+
+// Small Piece Catalyst
+const SMALL_PIECE_CATALYST_BONUS = 2200;
 
 // Crowding Penalty
-const CROWDING_PENALTY_START_THRESHOLD = 2; // v204: Adjusted from 3 (v203) - Detect crowding earlier
-const CROWDING_PENALTY_PER_PIECE = 200; // v204: Adjusted from 150 (v203)
-const EMPTY_SPACE_BONUS = 1500; // v204: Adjusted from 1000 (v203) - Bonus for dropping into relatively empty horizontal space
+const CROWDING_PENALTY_START_THRESHOLD = 2;
+const CROWDING_PENALTY_PER_PIECE = 200;
+const EMPTY_SPACE_BONUS = 3000;
 
-// Large Piece Aggregation (v182: further increased)
-const LARGE_PIECE_AGGREGATION_BONUS = 2500; // v204: Adjusted from 2300 (v182)
-const LARGE_PIECE_AGGREGATION_PENALTY = 1200; // v204: Adjusted from 1000
+// Large Piece Aggregation
+const LARGE_PIECE_AGGREGATION_BONUS = 2500;
+const LARGE_PIECE_AGGREGATION_PENALTY = 1200;
 const LARGE_PIECE_TYPE_THRESHOLD = 9;
 
-// Look-ahead constants (v192: Adjusted)
-const LOOK_AHEAD_WEIGHT = 0.40; // v202: Maintained
-const LOOK_AHEAD_WEIGHT_SECOND_PIECE = 0.15; // v202: Maintained
+// Look-ahead constants
+const LOOK_AHEAD_WEIGHT = 0.40;
+const LOOK_AHEAD_WEIGHT_SECOND_PIECE = 0.15;
 
 /**
  * Helper to get piece radius based on type. (Approximation)
@@ -205,7 +216,6 @@ function calculateHeightPenalty(predictedY, pieceR) {
 
     if (heightFromDeadline < CRITICAL_HEIGHT_MARGIN) {
         // Critical penalty: exponentially increasing as it gets closer
-        // v199: Changed exponent from 2 to 3 for more aggressive penalty growth
         penalty += HEIGHT_PENALTY_WEIGHT * Math.pow((CRITICAL_HEIGHT_MARGIN - heightFromDeadline) / CRITICAL_HEIGHT_MARGIN, 3);
     }
     if (topOfPiece >= TOP_Y_EXTREME_WARN_THRESHOLD) {
@@ -218,7 +228,6 @@ function calculateHeightPenalty(predictedY, pieceR) {
     if (predictedY > BOARD_FLOOR_Y) { // Only penalize if above the floor
         penalty += Y_POSITION_PENALTY_WEIGHT * (predictedY - BOARD_FLOOR_Y);
     }
-
 
     return penalty;
 }
@@ -243,7 +252,7 @@ function calculateCrowdingPenalty(boardStatePieces, dropX, piece, predictedY) {
 
     if (crowdedCount > CROWDING_PENALTY_START_THRESHOLD) {
         return (crowdedCount - CROWDING_PENALTY_START_THRESHOLD) * CROWDING_PENALTY_PER_PIECE;
-    } else if (crowdedCount <= 1 && predictedY < DEADLINE_Y - 1.0) { // v203: Bonus for empty space, especially lower down
+    } else if (crowdedCount === 0 && predictedY < DEADLINE_Y - 1.0) { // v219: Bonus for truly empty space, especially lower down
         emptySpaceBonus = EMPTY_SPACE_BONUS;
     }
 
@@ -288,9 +297,10 @@ function calculateSmallPieceCatalystBonus(boardStatePieces, dropX, piece, predic
 function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
     let bonus = 0;
     const potentialMergeBonus = calculateMergeBonus(boardState.pieces, dropX, piece, predictedY);
+    const hasMergeOpportunity = potentialMergeBonus > 0;
 
     // If garbage is present at all, give a base bonus for any merge.
-    if (boardState.garbage.ratio > 0 && potentialMergeBonus > 0) {
+    if (boardState.garbage.ratio > 0 && hasMergeOpportunity) {
         bonus += GARBAGE_ANY_MERGE_BONUS;
     }
 
@@ -311,24 +321,40 @@ function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
 
     // NEW: Extra aggressive bonus if gauge is critically high AND ratio is significant
     if (boardState.garbage.gauge >= GARBAGE_URGENT_GAUGE_THRESHOLD && boardState.garbage.ratio > 0.1) {
-        if (potentialMergeBonus > 0) { // Only apply if there's a merge opportunity
+        if (hasMergeOpportunity) {
             bonus += GARBAGE_URGENT_GAUGE_BONUS_HIGH_RATIO;
         }
     }
 
-    // v199: New - Bonus for merging when garbage gauge is very high, regardless of current ratio
+    // Bonus for merging when garbage gauge is very high, regardless of current ratio
     if (boardState.garbage.gauge >= GARBAGE_IMMINENT_GAUGE_THRESHOLD) {
-        if (potentialMergeBonus > 0) {
+        if (hasMergeOpportunity) {
             bonus += GARBAGE_IMMINENT_MERGE_BONUS;
         }
     }
 
+    // NEW: Critical bonus for extremely high garbage ratio (emergency clearance)
+    if (boardState.garbage.ratio >= GARBAGE_CRITICAL_RATIO_THRESHOLD) {
+        if (hasMergeOpportunity) {
+            bonus += GARBAGE_CRITICAL_RATIO_BONUS;
+        }
+    }
+
     // Bonus for merging near the bottom when significant garbage is present (clears more effectively)
-    // Adjusted condition: predictedY < 0 (center below mid-board) and garbage.ratio > 0.1
-    if (boardState.garbage.ratio > 0.1 && predictedY < 0) {
-         if (potentialMergeBonus > 0) {
+    if (boardState.garbage.ratio > 0.1 && hasMergeOpportunity &&
+        predictedY < boardState.garbage.height + piece.r && predictedY < 1.5) {
             bonus += GARBAGE_CLEAR_MERGE_BONUS_LOW_Y;
-         }
+    }
+
+    // V219: NEW GARBAGE HEIGHT AWARENESS:
+    if (boardState.garbage.height > GARBAGE_HIGH_PENALTY_THRESHOLD_Y) {
+        if (hasMergeOpportunity) {
+            // If garbage is high and a merge is possible, amplify the merge bonus
+            bonus += potentialMergeBonus * (GARBAGE_HIGH_Y_MERGE_BONUS_AMPLIFIER - 1); // Add the amplification amount
+        } else {
+            // If garbage is high and NO merge is possible, apply a significant penalty
+            bonus += GARBAGE_HIGH_Y_NO_MERGE_PENALTY;
+        }
     }
 
     return bonus;
@@ -350,7 +376,7 @@ function calculateMoveScore(piece, dropX, predictedY, currentBoardState, dominan
     score += calculateLargePieceAggregationBonus(dropX, piece, dominantLargePieceSide);
     score += calculateCrowdingPenalty(currentBoardState.pieces, dropX, piece, predictedY); // Note: this can return negative for bonus
     score += calculateSmallPieceCatalystBonus(currentBoardState.pieces, dropX, piece, predictedY);
-    score += calculateGarbageAwarenessBonus(currentBoardState, dropX, piece, predictedY); // Garbage awareness needs full boardState for 'garbage' field
+    score += calculateGarbageAwarenessBonus(currentBoardState, dropX, piece, predictedY);
     return score;
 }
 
@@ -373,7 +399,7 @@ export function decide(boardState) {
             else if (existingPiece.x > 0) rightLargePiecesCount++;
         }
     }
-    // v195: Re-introduced hysteresis for dominant side calculation
+    // Re-introduced hysteresis for dominant side calculation
     if (leftLargePiecesCount >= rightLargePiecesCount + 1) { // Left side has more with a buffer
         dominantLargePieceSide = -1;
     } else if (rightLargePiecesCount >= leftLargePiecesCount + 1) { // Right side has more with a buffer
@@ -403,11 +429,22 @@ export function decide(boardState) {
             let currentScore = 0;
 
             const heightPenalty = calculateHeightPenalty(predictedY, pieceR);
-            // If this move leads to an immediate game over, skip it.
-            if (heightPenalty === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
-                continue;
-            }
+            // v215: Instead of skipping, apply the (potentially very large negative) penalty directly.
             currentScore -= heightPenalty;
+
+            // If a move is absolutely avoided due to height, its score is extremely low,
+            // so we don't need to calculate further bonuses.
+            if (currentScore === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
+                if (currentScore > bestScore) { // Still update if this is the "least bad" impossible move
+                    bestScore = currentScore;
+                    bestX = x;
+                    useHold = isHeld;
+                    reason = `Calculated strategy: Type ${pieceToDrop.type} at X=${x.toFixed(2)}, Score=${currentScore.toFixed(0)} (Absolute Height Avoidance)`;
+                    if (isHeld) reason += " (Used HOLD)";
+                }
+                continue; // Skip further calculations for this move
+            }
+
 
             // Calculate base score for the current move
             currentScore += calculateMoveScore(pieceToDrop, x, predictedY, boardState, dominantLargePieceSide);
@@ -436,15 +473,21 @@ export function decide(boardState) {
                     const hypoNextPredictedY = predictLandingY(hypotheticalNextBoardState, hypoNextX, nextPiece);
 
                     const hypoNextHeightPenalty = calculateHeightPenalty(hypoNextPredictedY, nextPieceR);
-                    if (hypoNextHeightPenalty === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
+                    // v215: Apply penalty directly instead of skipping.
+                    let hypotheticalNextMoveScore = 0;
+                    hypotheticalNextMoveScore -= hypoNextHeightPenalty;
+
+                    if (hypotheticalNextMoveScore === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
+                         // This path leads to game over in the next step, so it's a very bad outcome.
+                        // We set it to a very low score, but allow it to be chosen if all other options are worse.
+                        maxHypotheticalNextScore = Math.max(maxHypotheticalNextScore, hypotheticalNextMoveScore);
                         continue;
                     }
 
                     // Calculate full score for the hypothetical next piece
-                    let hypotheticalNextMoveScore = calculateMoveScore(nextPiece, hypoNextX, hypoNextPredictedY, hypotheticalNextBoardState, dominantLargePieceSide);
-                    hypotheticalNextMoveScore -= hypoNextHeightPenalty;
+                    hypotheticalNextMoveScore += calculateMoveScore(nextPiece, hypoNextX, hypoNextPredictedY, hypotheticalNextBoardState, dominantLargePieceSide);
 
-                    // --- NEW: Look-ahead for nextPieces[2] (third piece) ---
+                    // --- Look-ahead for nextPieces[2] (third piece) ---
                     if ((boardState.nextPieces?.length ?? 0) > 2) {
                         const thirdPiece = boardState.nextPieces[2];
                         const thirdPieceR = thirdPiece.r ?? getPieceRadius(thirdPiece.type);
@@ -464,17 +507,21 @@ export function decide(boardState) {
                             const hypoThirdPredictedY = predictLandingY(hypotheticalThirdBoardState, hypoThirdX, thirdPiece);
 
                             const hypoThirdHeightPenalty = calculateHeightPenalty(hypoThirdPredictedY, thirdPieceR);
-                            if (hypoThirdHeightPenalty === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
-                                continue;
-                            }
-                            let hypotheticalThirdMoveScore = calculateMoveScore(thirdPiece, hypoThirdX, hypoThirdPredictedY, hypotheticalThirdBoardState, dominantLargePieceSide);
+                            // v215: Apply penalty directly instead of skipping.
+                            let hypotheticalThirdMoveScore = 0;
                             hypotheticalThirdMoveScore -= hypoThirdHeightPenalty;
 
+                            if (hypotheticalThirdMoveScore === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
+                                maxHypotheticalThirdScore = Math.max(maxHypotheticalThirdScore, hypotheticalThirdMoveScore);
+                                continue;
+                            }
+
+                            hypotheticalThirdMoveScore += calculateMoveScore(thirdPiece, hypoThirdX, hypoThirdPredictedY, hypotheticalThirdBoardState, dominantLargePieceSide);
                             maxHypotheticalThirdScore = Math.max(maxHypotheticalThirdScore, hypotheticalThirdMoveScore);
                         }
                         hypotheticalNextMoveScore += maxHypotheticalThirdScore * LOOK_AHEAD_WEIGHT_SECOND_PIECE;
                     }
-                    // --- End NEW Look-ahead for nextPieces[2] ---
+                    // --- End Look-ahead for nextPieces[2] ---
 
                     maxHypotheticalNextScore = Math.max(maxHypotheticalNextScore, hypotheticalNextMoveScore);
                 }
@@ -496,9 +543,11 @@ export function decide(boardState) {
         }
     }
 
-    // Fallback if no good move found (should only happen if ALL moves are predicted to be game over)
+    // Fallback if no good move found (should only happen if ALL moves are predicted to be game over OR extremely bad)
+    // The previous change (removing 'continue') makes this less likely to trigger due to rigid filtering,
+    // but rather due to genuinely extremely low scores across all options.
     if (bestScore === -Infinity) {
-        reason = "No valid move found (all moves lead to game over), defaulting to center.";
+        reason = "No valid move found (all moves lead to game over or extremely low score), defaulting to center.";
         bestX = 0.0;
         useHold = false;
     }

@@ -43,13 +43,13 @@ fi
 }
 
 repair_list="${TMP_STATE_DIR:-tmp/state}/current_run_repair_candidates.tsv"
-python3 - "$CURRENT_STRATEGY_RUN_FILE" "$HISTORY_DIR" "$limit" >"$repair_list" <<'PY'
+python3 - "$CURRENT_STRATEGY_RUN_FILE" "$HISTORY_DIR" "$limit" "$current_hash" >"$repair_list" <<'PY'
 import glob
 import json
 import os
 import sys
 
-current_file, history_dir, limit_raw = sys.argv[1:4]
+current_file, history_dir, limit_raw, current_hash = sys.argv[1:5]
 try:
     limit = max(1, min(50, int(limit_raw)))
 except Exception:
@@ -105,12 +105,32 @@ def eval_score(path):
         bonus += 800
     return raw_score + bonus
 
+def history_strategy_hash(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                h = str(row.get("strategy_hash", "") or "")
+                if h:
+                    return h
+    except Exception:
+        return ""
+    return ""
+
 paths = sorted(glob.glob(os.path.join(history_dir, "[0-9]*_score*.jsonl")))[-limit:]
 for path in paths:
     rel = os.path.relpath(path, ".")
     if first_known and rel < first_known:
         continue
     if rel in known or path in known:
+        continue
+    if current_hash and history_strategy_hash(path) != current_hash:
         continue
     score = eval_score(path)
     if score is None:

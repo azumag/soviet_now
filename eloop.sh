@@ -246,7 +246,14 @@ play_one_game() {
 	if [ "${LAST_TURNS:-0}" -eq 0 ] && [ "$_pg_state_mtime1" = "$_pg_state_mtime0" ] \
 		&& [ "${py_rc:-1}" -eq 0 ] && [ -z "$runner_error" ] \
 		&& { [ "$_pg_result_state" = "GAMEOVER" ] || [ "$_pg_result_state" = "STOP" ]; }; then
-		log "[PHANTOM] ブリッジ不稼働で試合不成立 (turns=0, game_state 不更新, state=$_pg_result_state) → 後処理スキップ・次周回で復旧"
+		log "[PHANTOM] ブリッジ不稼働で試合不成立 (turns=0, game_state 不更新, state=$_pg_result_state) → 後処理スキップ・即bridge復旧"
+		if [ "${PHANTOM_GAME_AUTO_RECOVER_ENABLED:-1}" = "1" ] && command -v _br_relaunch >/dev/null 2>&1; then
+			if _br_relaunch; then
+				log "[PHANTOM] bridge 再起動 成功"
+			else
+				log "[PHANTOM] bridge 再起動 失敗 (次周回 _ensure_bridge_alive で再試行)"
+			fi
+		fi
 		rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
 		return "${PLAY_RECOVERED_RETRY_RC:-75}"
 	fi
@@ -273,7 +280,8 @@ play_one_game() {
 			! _is_improve_running &&
 			! { command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; }; then
 			log "[BRIDGE-DESYNC] 中華AIプレイ中に soren91 残存を検出 → stale 代打を停止"
-			soren91_stop 2>/dev/null || log "[BRIDGE-DESYNC] soren91_stop 失敗 (次周回で再判定)"
+			SOREN91_STOP_TIMEOUT="${BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT:-0}" soren91_stop 2>/dev/null ||
+				log "[BRIDGE-DESYNC] soren91_stop 失敗 (次周回で再判定)"
 		fi
 		if [ "${BRIDGE_DESYNC_AUTO_RECOVER_ENABLED:-1}" = "1" ] && command -v _br_relaunch >/dev/null 2>&1; then
 			if _br_relaunch; then
@@ -471,6 +479,10 @@ print(d.get('score', 0) + bonus)
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	export LAST_RAW_SCORE="$LAST_SCORE"
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
+	if [ -x ./monitor_report_stale_report.sh ]; then
+		./monitor_report_stale_report.sh >/dev/null 2>&1 ||
+			log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
+	fi
 
 	if [ -x ./overlay_notify.sh ]; then
 		local _overlay_counts

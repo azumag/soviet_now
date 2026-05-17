@@ -86,6 +86,53 @@ HALT_STRATEGY_AFTER_SOVIET=0
 STOP_REQUESTED=0
 _SOREN_CLEANED_UP=0
 DEFER_NEXT_GAME_PREP=0
+SOREN_PAUSE_LOG_INTERVAL_SEC="${SOREN_PAUSE_LOG_INTERVAL_SEC:-900}"
+_SOREN_LAST_PAUSE_LOG_TS=0
+_SOREN_LAST_PAUSE_LOG_KEY=""
+SOREN_OVERLAY_AUTORECOVER_ENABLED="${SOREN_OVERLAY_AUTORECOVER_ENABLED:-1}"
+SOREN_OVERLAY_AUTORECOVER_INTERVAL_SEC="${SOREN_OVERLAY_AUTORECOVER_INTERVAL_SEC:-15}"
+SOREN_LOOP_OVERLAY_REFRESH_SEC="${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}"
+_SOREN_OVERLAY_RECOVER_TS=0
+_SOREN_OVERLAY_RECOVER_BOOTSTRAPPED=0
+
+log_pause_throttled() {
+	local key="${1:-pause}" message="${2:-[PAUSE]}"
+	local now interval safe_key state_file last_ts
+	interval="${SOREN_PAUSE_LOG_INTERVAL_SEC:-900}"
+	case "$interval" in ''|*[!0-9]*) interval=900 ;; esac
+	now=$(date +%s)
+	safe_key=$(printf '%s' "$key" | tr -cd 'A-Za-z0-9_.-')
+	[ -n "$safe_key" ] || safe_key="pause"
+	state_file="${TMP_STATE_DIR:-tmp/state}/pause_log_${safe_key}.ts"
+	mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+	last_ts=$(cat "$state_file" 2>/dev/null || echo 0)
+	case "$last_ts" in ''|*[!0-9]*) last_ts=0 ;; esac
+	if [ $((now - last_ts)) -ge "$interval" ]; then
+		_SOREN_LAST_PAUSE_LOG_KEY="$key"
+		_SOREN_LAST_PAUSE_LOG_TS="$now"
+		printf '%s\n' "$now" >"$state_file" 2>/dev/null || true
+		log "$message"
+	fi
+}
+
+_ensure_status_overlays_watchers() {
+	[ "${SOREN_OVERLAY_AUTORECOVER_ENABLED:-1}" = "1" ] || return 0
+	local now interval
+	now=$(date +%s)
+	interval="${SOREN_OVERLAY_AUTORECOVER_INTERVAL_SEC:-15}"
+	case "$interval" in
+	''|*[!0-9]*) interval=15 ;;
+	esac
+	if [ "${_SOREN_OVERLAY_RECOVER_BOOTSTRAPPED:-0}" -eq 1 ] && [ $((now - _SOREN_OVERLAY_RECOVER_TS)) -lt "$interval" ]; then
+		return 0
+	fi
+	_SOREN_OVERLAY_RECOVER_BOOTSTRAPPED=1
+	_SOREN_OVERLAY_RECOVER_TS=$now
+	./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+	./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+	./show_status_g.sh --html-obs show >/dev/null 2>&1 || true
+	./show_status.sh --html-obs show >/dev/null 2>&1 || true
+}
 
 _cleanup_once() {
 	local reason="${1:-unknown}"
@@ -246,6 +293,7 @@ if [ "$wait_rc" -ne 0 ]; then
 	log "ゲームが起動していません"
 	exit 1
 fi
+_ensure_status_overlays_watchers
 
 # --- メインループ: 1試合ずつ ---
 while true; do
@@ -255,6 +303,7 @@ while true; do
 		rm -f tmp/stop
 		exit 130
 	fi
+	_ensure_status_overlays_watchers
 
 	# .env を毎試合再読込（再起動なしで設定変更を反映）
 	[ -f .env ] && set -a && . ./.env && set +a
@@ -289,17 +338,36 @@ while true; do
 			soren91_start 2>/dev/null || true
 		fi
 		command -v _soren91_switch_obs_layout >/dev/null 2>&1 && _soren91_switch_obs_layout meriken 2>/dev/null || true
-		log "[PAUSE] manual_meriken_mode: ゲームプレイ一時停止 (メリケンAI手動モード)"
+		log_pause_throttled "manual_meriken_mode" "[PAUSE] manual_meriken_mode: ゲームプレイ一時停止 (メリケンAI手動モード)"
 		sleep 10
 		continue
 	fi
 	if _is_improve_running; then
 		# WILDCARD 改善 (AI不使用・数秒) は soren91 代打を立てない:
 		# 代打起動→完了時bridge再起動が commands 経路 desync=空転の発生源。
-		_pause_reason=""
-		[ -f "$IMPROVE_LOCK_FILE" ] && _pause_reason=$(python3 -c "import json,sys;print(json.load(open('$IMPROVE_LOCK_FILE')).get('improve_reason',''))" 2>/dev/null || echo "")
-		if [ "$_pause_reason" = "wildcard" ]; then
-			log "[PAUSE] WILDCARD改善中(数秒): soren91代打を立てず短時間待機"
+		_pause_reason=$(python3 -c "import json,sys
+for path in sys.argv[1:]:
+    try:
+        reason=json.load(open(path, encoding='utf-8')).get('improve_reason') or ''
+    except Exception:
+        reason=''
+    if reason:
+        print(reason)
+        raise SystemExit(0)
+" "$IMPROVE_STATE_FILE" "$IMPROVE_LOCK_FILE" 2>/dev/null || echo "")
+		_live_improve_pid=""
+		if command -v _find_live_improve_pid >/dev/null 2>&1; then
+			_live_improve_pid=$(_find_live_improve_pid 2>/dev/null || true)
+		fi
+		case "$_pause_reason" in
+		wildcard|archive_restart)
+			log_pause_throttled "${_pause_reason}_improve" "[PAUSE] ${_pause_reason}改善中(短時間): soren91代打を立てず待機"
+			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+			continue
+			;;
+		esac
+		if [ -z "$_live_improve_pid" ]; then
+			log_pause_throttled "improve_state_no_live_pid" "[PAUSE] 改善状態だが実改善PIDなし: soren91は起動せず回収待ち"
 			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 			continue
 		fi
@@ -307,7 +375,7 @@ while true; do
 			soren91_start 2>/dev/null || true
 		fi
 		command -v _soren91_switch_obs_layout >/dev/null 2>&1 && _soren91_switch_obs_layout meriken 2>/dev/null || true
-		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
+		log_pause_throttled "improve_running" "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
@@ -322,12 +390,12 @@ while true; do
 		rm -f "$_post_improve_marker" 2>/dev/null || true
 		log "[CYCLE] 改善完了→次改善前にメインゲームを1回実行 (代打無限化防止)"
 	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-		log "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
+		log_pause_throttled "improve_lock_wait" "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
 	if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
-		log "[PAUSE] soren91停止中: 完全停止までメインゲーム再開を待機"
+		log_pause_throttled "soren91_stop_in_progress" "[PAUSE] soren91停止中: 完全停止までメインゲーム再開を待機"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
@@ -389,7 +457,10 @@ while true; do
 		./wildcard_progress_report.sh >/dev/null 2>&1 ||
 			log "[WILDCARD] progress report skipped/failed after post_game_bookkeeping"
 	fi
-
+	if [ -x ./monitor_report_stale_report.sh ]; then
+		./monitor_report_stale_report.sh >/dev/null 2>&1 ||
+			log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
+	fi
 	# 定期 tmp/ クリーンアップ (50ゲームごと)
 	if (( GAME_NUM % 50 == 0 )); then
 		cleanup_tmp_files
@@ -440,6 +511,46 @@ json.dump(d,open(f,'w'))
 		_clear_accumulated_data
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+
+	# WILDCARD 即応ロック: 停滞が閾値を超えたら12試合サイクルを待たず、
+	# 最低限の失敗バッチを改善daemonへ渡す。実際に wildcard/archive/escape_ai
+	# へ上げるかは trigger_adaptive_improvement 側の既存判定に任せる。
+	if [ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] &&
+		[ "${WILDCARD_ENABLED:-0}" = "1" ] &&
+		[ -f "$ACCUMULATED_GAMES_FILE" ] &&
+		[ ! -f "$IMPROVE_LOCK_FILE" ] &&
+		[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] &&
+		! _is_improve_running; then
+		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		_stag_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('consecutive_no_improve',0)))" 2>/dev/null || echo 0)
+		_early_min="${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}"
+		case "$_early_min" in ''|*[!0-9]*) _early_min=4 ;; esac
+		if [ "${_cycle_acc_count:-0}" -ge "$_early_min" ] &&
+			[ "${_stag_count:-0}" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ]; then
+			if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
+				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rank1 hot streak 中 → 即応脱出ロックを延期"
+			else
+				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 早期脱出ロック作成"
+				enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+				cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+				enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				python3 -c "
+import json, time
+f='$IMPROVE_LOCK_FILE'
+d=json.load(open(f))
+d['started_at']=int(time.time())
+d['improve_reason']='normal'
+d['early_escape_lock']=True
+d['early_escape_stagnation']=${_stag_count:-0}
+json.dump(d,open(f,'w'))
+" 2>/dev/null || true
+				if [ -x ./overlay_notify.sh ]; then
+					./overlay_notify.sh worker "WILDCARD early escape queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮" "warn" >/dev/null 2>&1 || true
+				fi
+				_clear_accumulated_data
+			fi
+		fi
+	fi
 
 	# 改善サイクル管理: 12試合蓄積時にロックファイルを作成してdeamonに通知
 	# improve_daemon が動いていない場合は蓄積リセットのみ行い次サイクルへ
@@ -504,13 +615,13 @@ json.dump(d,open(f,'w'))
 
 	# 改善実行中 or ロック待ち(バックオフ中でない): 次ゲーム準備を保留
 	if _is_improve_running; then
-		log "[CYCLE] 改善実行中 → 次ゲーム準備を保留"
+		log_pause_throttled "cycle_improve_running" "[CYCLE] 改善実行中 → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
 		continue
 	fi
 	if [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-		log "[CYCLE] 改善ロック待ち → 次ゲーム準備を保留"
+		log_pause_throttled "cycle_improve_lock_wait" "[CYCLE] 改善ロック待ち → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
 		continue

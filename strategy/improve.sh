@@ -51,6 +51,154 @@ _release_spawn_lock() {
 	fi
 }
 
+_archive_restart_should_run() {
+	local wildcard_escape_streak="${1:-0}"
+	[ "${ARCHIVE_RESTART_ENABLED:-1}" = "1" ] || return 1
+	[ "$wildcard_escape_streak" -ge "${ARCHIVE_RESTART_STREAK:-3}" ] || return 1
+	local marker="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-tmp/state/.archive_restart_no_candidate}"
+	local cooldown="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC:-900}"
+	if [ -f "$marker" ]; then
+		local marker_m now age
+		marker_m=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
+		now=$(date +%s)
+		age=$((now - marker_m))
+		if [ "$marker_m" -gt 0 ] && [ "$age" -lt "$cooldown" ]; then
+			log "[ARCHIVE-RESTART] no_candidate cooldown active age=${age}s/${cooldown}s → archive_restart を飛ばして次の脱出手段へ"
+			return 1
+		fi
+	fi
+	if ! _archive_restart_has_candidate; then
+		mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+		printf '%s\n' "preflight_no_candidate $(date +%s)" >"$marker" 2>/dev/null || true
+		log "[ARCHIVE-RESTART] preflight no candidate → archive_restart を飛ばして escape_ai へ"
+		return 1
+	fi
+	return 0
+}
+
+_archive_restart_has_candidate() {
+	python3 - \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+		"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" \
+		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
+		"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+		"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" \
+		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
+		"${ARCHIVE_RESTART_MIN_COMP_RATIO:-0.92}" \
+		"${MIN_GAMES_FOR_BEST_ROLLBACK:-12}" \
+		"${ARCHIVE_RESTART_MIN_BEST_TYPE:-14}" <<'PY' >/dev/null 2>&1
+import json
+import math
+import os
+import sys
+
+rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, archive_dir, min_ratio_raw, min_games_raw, min_best_type_raw = sys.argv[1:10]
+
+def load(path, default):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if data is not None else default
+    except Exception:
+        pass
+    return default
+
+def as_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def as_float(value, default):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def quantile(vals, p):
+    xs = sorted(float(v) for v in vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return xs[0]
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    vals = []
+    for raw in scores or []:
+        try:
+            vals.append(float(raw))
+        except Exception:
+            pass
+    if not vals:
+        return None
+    mean = sum(vals) / len(vals)
+    if len(vals) > 1:
+        var = sum((x - mean) ** 2 for x in vals) / len(vals)
+        lcb = mean - 1.28 * (math.sqrt(var) / math.sqrt(len(vals)))
+    else:
+        lcb = mean
+    return {
+        "n": len(vals),
+        "comp": 0.55 * quantile(vals, 0.50) + 0.30 * quantile(vals, 0.25) + 0.15 * lcb,
+    }
+
+def archive_is_runtime_stable(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return "BEGIN DEADLINE GUARD" in f.read(200000)
+    except Exception:
+        return False
+
+rolling = load(rolling_file, {})
+anchor = load(anchor_file, {})
+rejected = set(load(rejected_file, {}).keys())
+origin = set(load(origin_file, {}).keys())
+cooldown = set(load(cooldown_file, {}).keys())
+anchor_hash = str(anchor.get("hash", "") or "")
+anchor_comp = as_float(anchor.get("comp", 0.0), 0.0)
+anchor_russia = as_int(anchor.get("russia_count", 0), 0)
+anchor_soviet = as_int(anchor.get("soviet_count", 0), 0)
+min_ratio = max(0.0, min(1.0, as_float(min_ratio_raw, 0.92)))
+min_games = max(1, as_int(min_games_raw, 12))
+min_best_type = max(0, as_int(min_best_type_raw, 14))
+threshold = anchor_comp * min_ratio if anchor_comp > 0 else 0.0
+
+for h, entry in (rolling or {}).items():
+    h = str(h)
+    if not h or h == anchor_hash or h in rejected or h in origin or h in cooldown:
+        continue
+    path = os.path.join(archive_dir, f"{h}.py")
+    if not os.path.exists(path):
+        continue
+    if not archive_is_runtime_stable(path):
+        continue
+    m = metrics((entry or {}).get("scores", []) or [])
+    if not m or m["n"] < min_games or m["comp"] < threshold:
+        continue
+    russia = as_int((entry or {}).get("russia_count", 0), 0)
+    soviet = as_int((entry or {}).get("soviet_count", 0), 0)
+    best_type = as_int((entry or {}).get("best_max_type", 0), 0)
+    if best_type >= 15 and russia <= 0:
+        russia = 1
+    if best_type >= 16 and soviet <= 0:
+        soviet = 1
+    if anchor_soviet > 0 and soviet <= 0:
+        continue
+    if anchor_russia > 0 and russia <= 0:
+        continue
+    if min_best_type > 0 and russia <= 0 and soviet <= 0 and best_type < min_best_type:
+        continue
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 #=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
 
 _is_improve_running() {
@@ -71,6 +219,7 @@ _improve_overlay_generate_once() {
 }
 
 _improve_overlay_show() {
+	printf 'visible.%s.%s\n' "$(date +%s)" "$$" >"$TMP_STATE_DIR/improve_overlay_hide_token" 2>/dev/null || true
 	_improve_overlay_generate_once
 	./obs_control.sh show soren "$IMPROVE_OVERLAY_SOURCE" 2>/dev/null &
 	./obs_control.sh hide soren console4 2>/dev/null &
@@ -82,11 +231,33 @@ _improve_overlay_hide() {
 	./obs_control.sh hide soren console4 2>/dev/null &
 }
 
+_improve_overlay_hide_after() {
+	local delay="${1:-0}" token_file="$TMP_STATE_DIR/improve_overlay_hide_token" token
+	case "$delay" in ''|*[!0-9]*) delay=0 ;; esac
+	token="$(date +%s).$$.$RANDOM"
+	mkdir -p "$TMP_STATE_DIR" 2>/dev/null || true
+	printf '%s\n' "$token" >"$token_file" 2>/dev/null || true
+	(
+		sleep "$delay"
+		[ "$(cat "$token_file" 2>/dev/null || true)" = "$token" ] || exit 0
+		_improve_overlay_hide
+	) >/dev/null 2>&1 &
+}
+
 _improve_overlay_watch_start() {
 	local pid="${1:-}"
 	[ -x "./generate_improve_overlay.sh" ] || return 0
 	./generate_improve_overlay.sh watch "$pid" >/dev/null 2>&1 &
 	echo $!
+}
+
+_post_improve_soren91_session_improve() {
+	local reason="${1:-normal}"
+	if [ "${POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED:-0}" != "1" ]; then
+		log "[SOREN91] post-improve session improve skipped (reason=${reason}, POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED=0)"
+		return 0
+	fi
+	soren91_improve
 }
 
 #=== 改善ステート管理 ===
@@ -102,13 +273,14 @@ _read_improve_state() {
 _write_improve_state() {
 	local status="$1" pid="$2" hash="$3"
 	local phase="${4:-}" progress="${5:-0}" detail="${6:-}" started_at="${7:-0}" pid_birth_epoch="${8:-0}"
+	local improve_reason="${9:-}"
 	local now
 	now=$(date +%s)
-	python3 - "$IMPROVE_STATE_FILE" "$status" "${pid:-0}" "${hash:-}" "$phase" "$progress" "$detail" "$started_at" "$now" "${pid_birth_epoch:-0}" <<'PY'
+	python3 - "$IMPROVE_STATE_FILE" "$status" "${pid:-0}" "${hash:-}" "$phase" "$progress" "$detail" "$started_at" "$now" "${pid_birth_epoch:-0}" "$improve_reason" <<'PY'
 import json
 import sys
 
-out_file, status, pid_raw, hash_before, phase, progress_raw, detail, started_raw, now_raw, pid_birth_raw = sys.argv[1:11]
+out_file, status, pid_raw, hash_before, phase, progress_raw, detail, started_raw, now_raw, pid_birth_raw, improve_reason = sys.argv[1:12]
 
 try:
     pid = int(pid_raw)
@@ -145,6 +317,7 @@ data = {
     "started_at": started_at,
     "updated_at": now,
     "pid_birth_epoch": pid_birth_epoch,
+    "improve_reason": improve_reason,
 }
 
 with open(out_file, "w", encoding="utf-8") as f:
@@ -180,6 +353,46 @@ _find_live_improve_pid() {
 	return 1
 }
 
+_monitor_report_context() {
+	local report_status_file="${MONITOR_REPORT_STATUS_FILE:-tmp/state/monitor_report_status.json}"
+	[ -f "$report_status_file" ] || return 1
+	python3 - "$report_status_file" <<'PY' 2>/dev/null
+import json
+import sys
+
+def as_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+path = sys.argv[1]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+if not isinstance(data, dict):
+    raise SystemExit(1)
+
+status = str(data.get("status", "") or "")
+age = as_int(data.get("age_sec", data.get("age", 0)), 0)
+rstreak = as_int(data.get("regression_streak", 0), 0)
+eval_last50 = data.get("eval_last50")
+if isinstance(eval_last50, (int, float)):
+    eval_last50 = int(eval_last50)
+else:
+    eval_last50 = ""
+anchor_comp = data.get("anchor_comp")
+if isinstance(anchor_comp, (int, float)):
+    anchor_comp = int(anchor_comp)
+else:
+    anchor_comp = ""
+last_event = str(data.get("last_event", "") or "")
+print(f"{status}|{age}|{rstreak}|{eval_last50}|{anchor_comp}|{last_event}")
+PY
+}
+
 _sync_improve_state_with_live_process() {
 	local live_pid=""
 	live_pid=$(_find_live_improve_pid 2>/dev/null || true)
@@ -187,13 +400,32 @@ _sync_improve_state_with_live_process() {
 	''|0|*[!0-9]*) return 1 ;;
 	esac
 
-	local state current_status current_pid hash_before started_at pid_birth_epoch
+	local state current_status current_pid hash_before started_at pid_birth_epoch improve_reason
 	state=$(_read_improve_state)
 	current_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 	current_pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
 	hash_before=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null)
 	started_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('started_at',0) or 0))" 2>/dev/null || echo 0)
 	pid_birth_epoch=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('pid_birth_epoch',0) or 0))" 2>/dev/null || echo 0)
+	improve_reason=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('improve_reason',''))" 2>/dev/null || echo "")
+	if [ -z "$improve_reason" ] || [ "$improve_reason" = "normal" ]; then
+		improve_reason=$(python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+path = sys.argv[1]
+if not path or not os.path.exists(path):
+    raise SystemExit(0)
+try:
+    reason = json.load(open(path, encoding="utf-8")).get("improve_reason", "")
+except Exception:
+    reason = ""
+if reason:
+    print(reason)
+PY
+)
+	fi
 	[ -n "$hash_before" ] || hash_before=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
 	# PIDが変わった場合はbirth_epochを再計算
 	if [ "${current_pid:-0}" != "$live_pid" ] || [ "${pid_birth_epoch:-0}" -eq 0 ]; then
@@ -201,8 +433,8 @@ _sync_improve_state_with_live_process() {
 	fi
 
 	if [ "$current_status" != "running" ] || [ "${current_pid:-0}" != "$live_pid" ]; then
-		log "[IMPROVE] state self-heal: live PID=$live_pid を running に再同期 (was status=${current_status:-unknown}, pid=${current_pid:-0})"
-		_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at" "$pid_birth_epoch"
+		log "[IMPROVE] state self-heal: live PID=$live_pid を running に再同期 (was status=${current_status:-unknown}, pid=${current_pid:-0}, reason=${improve_reason:-})"
+		_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at" "$pid_birth_epoch" "$improve_reason"
 	fi
 	IMPROVE_PID=$live_pid
 	return 0
@@ -234,6 +466,9 @@ _stop_improve_pid_if_running() {
 
 check_and_harvest_improvement() {
 	local state
+	if command -v soren91_harvest_hung_improve >/dev/null 2>&1; then
+		soren91_harvest_hung_improve || true
+	fi
 	_sync_improve_state_with_live_process >/dev/null 2>&1 || true
 	state=$(_read_improve_state)
 	local status
@@ -310,13 +545,13 @@ json.dump(rs, open(rs_file, 'w'))
 			log "[IMPROVE][MANUAL] manual_meriken_mode=on のため、メリケンAI継続"
 		elif _scheduled_meriken_time_should_run; then
 			log "[IMPROVE][MANUAL] 20時台: メリケンAIタイムに移行 → soren91継続"
-			soren91_improve
+			_post_improve_soren91_session_improve "manual_scheduled_meriken"
 			MERIKEN_TIME_PENDING=1
 			touch "tmp/state/meriken_time_pending"
 		else
 			soren91_stop
 			[ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && touch "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
-			soren91_improve
+			_post_improve_soren91_session_improve "manual"
 		fi
 		return 0
 	fi
@@ -358,12 +593,17 @@ json.dump(rs, open(rs_file, 'w'))
 			''|*[!0-9]*) watchdog_sec=3600 ;;
 			esac
 		if [ "$pid_alive" = true ] && [ "${watchdog_sec:-0}" -gt 0 ]; then
-			local updated_at updated_age now_epoch log_age log_mtime prev_phase prev_detail
+			local updated_at updated_age now_epoch log_age log_mtime eval_age eval_mtime prev_phase prev_detail started_at elapsed_age wall_timeout
 			updated_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('updated_at',0) or 0))" 2>/dev/null || echo 0)
+			started_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('started_at',0) or 0))" 2>/dev/null || echo 0)
 			prev_phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null)
 			prev_detail=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))" 2>/dev/null)
 			now_epoch=$(date +%s)
 			updated_age=$(( now_epoch - ${updated_at:-0} ))
+			elapsed_age=$updated_age
+			if [ "${started_at:-0}" -gt 0 ]; then
+				elapsed_age=$(( now_epoch - started_at ))
+			fi
 			log_age=$updated_age
 			if [ -f "$IMPROVE_AI_LOG_FILE" ]; then
 				log_mtime=$(stat -f '%m' "$IMPROVE_AI_LOG_FILE" 2>/dev/null || echo 0)
@@ -371,8 +611,86 @@ json.dump(rs, open(rs_file, 'w'))
 					log_age=$(( now_epoch - log_mtime ))
 				fi
 			fi
-			if [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
-				log "[IMPROVE] watchdog警告: ${updated_age}s 状態更新なし / ${log_age}s ログ更新なし (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
+			eval_age=$updated_age
+			if [ -f "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" ]; then
+				eval_mtime=$(stat -f '%m' "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null || echo 0)
+				if [ "${eval_mtime:-0}" -gt 0 ]; then
+					eval_age=$(( now_epoch - eval_mtime ))
+				fi
+			fi
+			wall_timeout="${IMPROVE_WALL_TIMEOUT:-3600}"
+			case "$wall_timeout" in
+			''|*[!0-9]*) wall_timeout=3600 ;;
+			esac
+			if [ "${wall_timeout:-0}" -gt 0 ] && [ "$elapsed_age" -ge "$wall_timeout" ]; then
+				log "[IMPROVE] wall timeout harvest: elapsed=${elapsed_age}s >= ${wall_timeout}s (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
+				mkdir -p "$(dirname "${IMPROVE_HUNG_QUARANTINE_FILE:-$TMP_STATE_DIR/improve_hung_quarantine.jsonl}")" 2>/dev/null || true
+				python3 - "$IMPROVE_HUNG_QUARANTINE_FILE" "$pid" "$elapsed_age" "$wall_timeout" "$updated_age" "$log_age" "$eval_age" "${prev_phase:-}" "${prev_detail:-}" "$(ps -p "$pid" -o command= 2>/dev/null || echo "")" <<'PY' 2>/dev/null || true
+import json
+import sys
+import time
+
+out, pid, elapsed_age, threshold, updated_age, log_age, eval_age, phase, detail, cmd = sys.argv[1:11]
+row = {
+    "epoch": int(time.time()),
+    "event": "improve_wall_timeout_harvest",
+    "pid": int(pid),
+    "elapsed_age": int(elapsed_age),
+    "updated_age": int(updated_age),
+    "log_age": int(log_age),
+    "eval_age": int(eval_age),
+    "threshold": int(threshold),
+    "phase": phase,
+    "detail": detail,
+    "command": cmd,
+}
+with open(out, "a", encoding="utf-8") as f:
+    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+				if _stop_improve_pid_if_running "$pid" "improve_wall_timeout"; then
+					pid_alive=false
+					enqueue_audio_text "通常改善が上限時間を超えたため、改善プロセスを回収して中華AIの進行を優先します。" "improve_wall_timeout" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+				else
+					log "[IMPROVE] wall timeout harvest: PID=$pid の停止に失敗したためrunning扱いを維持"
+				fi
+			fi
+			if [ "$pid_alive" = true ] && [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
+				if [ "${IMPROVE_HUNG_REQUIRE_EVAL_STALE:-1}" = "1" ] && [ "$eval_age" -lt "$watchdog_sec" ]; then
+					log "[IMPROVE] watchdog保留: state/log は古いが eval_score_history は進行中 (${eval_age}s < ${watchdog_sec}s, PID=$pid)"
+				else
+				log "[IMPROVE] watchdog警告: ${updated_age}s 状態更新なし / ${log_age}s ログ更新なし / eval ${eval_age}s 更新なし (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
+				if [ "${IMPROVE_HUNG_HARVEST_ENABLED:-1}" = "1" ]; then
+					log "[IMPROVE] hung harvest: 無音改善ジョブをquarantineして停止 (PID=$pid)"
+					mkdir -p "$(dirname "${IMPROVE_HUNG_QUARANTINE_FILE:-$TMP_STATE_DIR/improve_hung_quarantine.jsonl}")" 2>/dev/null || true
+					python3 - "$IMPROVE_HUNG_QUARANTINE_FILE" "$pid" "$updated_age" "$log_age" "$eval_age" "$watchdog_sec" "${prev_phase:-}" "${prev_detail:-}" "$(ps -p "$pid" -o command= 2>/dev/null || echo "")" <<'PY' 2>/dev/null || true
+import json
+import sys
+import time
+
+out, pid, updated_age, log_age, eval_age, threshold, phase, detail, cmd = sys.argv[1:10]
+row = {
+    "epoch": int(time.time()),
+    "event": "improve_hung_harvest",
+    "pid": int(pid),
+    "updated_age": int(updated_age),
+    "log_age": int(log_age),
+    "eval_age": int(eval_age),
+    "threshold": int(threshold),
+    "phase": phase,
+    "detail": detail,
+    "command": cmd,
+}
+with open(out, "a", encoding="utf-8") as f:
+    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+					if _stop_improve_pid_if_running "$pid" "improve_hung"; then
+						pid_alive=false
+						enqueue_audio_text "通常改善が無音で固まったため、改善プロセスを回収して中華AIの進行を優先します。" "improve_hung" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+					else
+						log "[IMPROVE] hung harvest: PID=$pid の停止に失敗したためrunning扱いを維持"
+					fi
+				fi
+				fi
 			fi
 		fi
 
@@ -384,6 +702,31 @@ json.dump(rs, open(rs_file, 'w'))
 			prev_phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null)
 			prev_detail=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))" 2>/dev/null)
 			prev_progress=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('progress',0) or 0))" 2>/dev/null)
+			local prev_improve_reason
+			prev_improve_reason=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('improve_reason','normal'))" 2>/dev/null || echo "normal")
+			if [ -z "$prev_improve_reason" ] || [ "$prev_improve_reason" = "normal" ]; then
+				local lock_improve_reason
+				lock_improve_reason=$(python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+path = sys.argv[1]
+if not path or not os.path.exists(path):
+    raise SystemExit(0)
+try:
+    reason = json.load(open(path, encoding="utf-8")).get("improve_reason", "")
+except Exception:
+    reason = ""
+if reason in {"wildcard", "archive_restart"}:
+    print(reason)
+PY
+)
+				if [ -n "$lock_improve_reason" ]; then
+					prev_improve_reason="$lock_improve_reason"
+					log "[IMPROVE] state理由欠落をlockから復元: improve_reason=${prev_improve_reason}"
+				fi
+			fi
 			local hash_now
 			hash_now=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
 
@@ -439,6 +782,7 @@ with open(rs_file, 'w') as f:
 				fi
 			else
 				log "[IMPROVE] failed_no_apply: 戦略変更なし (phase=${prev_phase:-?}, progress=${prev_progress:-0}, detail=${prev_detail:-})"
+				enqueue_audio_text "中華AI改善は適用可能な戦略変更を出せず終了しました。ロックを残してバックオフし、通常運転を続けます。" "improve_failed_no_apply" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
 				# 戦略が変わっていない → 蓄積データはそのまま有効
 				# failed_no_apply タイムスタンプを記録 (連続再試行防止用)
 				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
@@ -480,13 +824,22 @@ with open(rs_file, 'w') as f:
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 			# OBS: 改善中オーバーレイ非表示
-			_improve_overlay_hide
+			case "$prev_improve_reason" in
+			wildcard|archive_restart)
+				log "[WILDCARD] ${prev_improve_reason} 完了: 高速脱出のため soren91_stop/soren91_improve/handover/bridge再起動をスキップ"
+				_improve_overlay_hide_after "${IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC:-45}"
+				return 0
+				;;
+			*)
+				_improve_overlay_hide
+				;;
+			esac
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				log "[IMPROVE] manual_meriken_mode=on のため、メリケンAI継続"
 			elif _scheduled_meriken_time_should_run; then
 				# 20時台: メリケンAIタイムに移行するため停止しない
 				log "[IMPROVE] 20時台: メリケンAIタイムに移行 → soren91継続"
-				soren91_improve
+				_post_improve_soren91_session_improve "scheduled_meriken"
 				MERIKEN_TIME_PENDING=1
 				touch "tmp/state/meriken_time_pending"
 			else
@@ -495,7 +848,7 @@ with open(rs_file, 'w') as f:
 				# 改善完了マーカ: 次の (カスケード) 改善ロックに即 PAUSE する前に
 				# soren_loop がメインゲームを最低1回走らせる窓を保証する
 				[ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && touch "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
-				soren91_improve
+				_post_improve_soren91_session_improve "$prev_improve_reason"
 				# 読み上げ + Twitch チャットに戦略改善終了を通知 (1サイクル1回のみ)
 				local _handover_guard="$TMP_STATE_DIR/handover_announced"
 				if [ ! -f "$_handover_guard" ]; then
@@ -761,11 +1114,19 @@ payload = {
     "scores": scores[-20:],
     "games_total": int(entry.get("games_total", len(scores)) or len(scores)),
     "_recent_archives": recent_archives[-50:],
+    "max_types": (entry.get("max_types", []) or [])[-20:],
+    "russia_count": int(entry.get("russia_count", 0) or 0),
+    "soviet_count": int(entry.get("soviet_count", 0) or 0),
+    "best_max_type": int(entry.get("best_max_type", 0) or 0),
     "frontier_hints": (entry.get("frontier_hints", []) or [])[-20:],
     "peak_high_type_counts": (entry.get("peak_high_type_counts", []) or [])[-20:],
     "deadline_guard_counts": (entry.get("deadline_guard_counts", []) or [])[-20:],
     "deadline_guard_reason_tops": (entry.get("deadline_guard_reason_tops", []) or [])[-20:],
 }
+if payload["best_max_type"] >= 15 and payload["russia_count"] <= 0:
+    payload["russia_count"] = 1
+if payload["best_max_type"] >= 16 and payload["soviet_count"] <= 0:
+    payload["soviet_count"] = 1
 with open(out_file, "w") as f:
     json.dump(payload, f)
 PY
@@ -892,9 +1253,13 @@ run["_recent_archives"] = recent_archives
 progress_archives = recent_archives[-len(run["scores"]):] if run["scores"] else []
 progress = [nation_progress(path) for path in progress_archives]
 run["max_types"] = [item[0] for item in progress]
-run["russia_count"] = sum(1 for item in progress if item[1])
-run["soviet_count"] = sum(1 for item in progress if item[2])
 run["best_max_type"] = max([int(run.get("best_max_type", 0) or 0)] + [item[0] for item in progress])
+run["russia_count"] = max(int(run.get("russia_count", 0) or 0), sum(1 for item in progress if item[1]))
+run["soviet_count"] = max(int(run.get("soviet_count", 0) or 0), sum(1 for item in progress if item[2]))
+if run["best_max_type"] >= 15 and run["russia_count"] <= 0:
+    run["russia_count"] = 1
+if run["best_max_type"] >= 16 and run["soviet_count"] <= 0:
+    run["soviet_count"] = 1
 run["frontier_hints"] = [item[3] for item in progress]
 run["peak_high_type_counts"] = [item[4] for item in progress]
 run["deadline_guard_counts"] = [item[5] for item in progress]
@@ -1081,8 +1446,7 @@ _start_improvement_job() {
 		strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
 		_write_improve_state "manual" "0" "$strategy_hash" "manual_wait" "0" "手動改善待ち" "$(date +%s)"
 		log "[IMPROVE] 手動改善モード: strategy.py を編集後 ./manual_improve_off.sh を実行してください"
-		# soren91は起動する（手動改善中の代打）
-		soren91_start
+		log "[IMPROVE] 手動改善待ちは実改善PIDがないため soren91 代打は起動しない"
 		# OBS: 改善中オーバーレイ表示
 		_improve_overlay_show
 		return 0
@@ -1143,7 +1507,7 @@ _start_improvement_job() {
 	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
 		local _overlay_pid=""
 		rm -f "$TMP_STATE_DIR/handover_announced" 2>/dev/null || true
-		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch"
+		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch" "$reason"
 		_overlay_pid=$(_improve_overlay_watch_start "$IMPROVE_PID")
 		# spawn 完了・state=running 書込済 → 既存ガードが他 spawner を弾くので
 		# spawn mutex の役目は終了。daemon-mode の長い inline wait の前に解放。
@@ -1157,11 +1521,11 @@ _start_improvement_job() {
 		fi
 		# OBS: 改善中オーバーレイ表示
 		_improve_overlay_show
-		# WILDCARD は AI を介さない純パラメータ摂動で数秒で完了するため、
+		# WILDCARD / archive_restart は AI を介さない短時間の脱出処理のため、
 		# soren91 代打/ミュート/OBS切替/完了時bridge再起動 を一切起こさない。
-		# (post-wildcard の bridge 再起動が commands 経路 desync=空転の発生源だった)
-		if [ "$reason" = "wildcard" ]; then
-			log "[WILDCARD] 高速摂動(AI不使用・数秒)のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
+		# (post-escape の bridge 再起動が commands 経路 desync=空転の発生源だった)
+		if [ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]; then
+			log "[WILDCARD] ${reason} は高速脱出(AI不使用・短時間)のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
 		else
 			# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 			soren91_start
@@ -1220,18 +1584,26 @@ trigger_adaptive_improvement() {
 
 	# レートリミット指数バックオフ
 	if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-		local _rl_count _rl_ts _rl_now _rl_wait _rl_exp
+		local _rl_count _rl_ts _rl_now _rl_wait _rl_exp _rl_last_log_file _rl_last_log _rl_log_interval
 		_rl_count=$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 1)
 		_rl_ts=$(sed -n '2p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0)
 		_rl_now=$(date +%s)
 		_rl_exp=$((_rl_count - 1 > 5 ? 5 : _rl_count - 1))
 		_rl_wait=$((300 * (1 << _rl_exp)))
 		if [ $((_rl_now - _rl_ts)) -lt "$_rl_wait" ]; then
-			log "[IMPROVE] rate-limit backoff中 (残$((_rl_wait - (_rl_now - _rl_ts)))秒, count=${_rl_count})"
+			_rl_last_log_file="$TMP_STATE_DIR/rate_limit_backoff_last_log"
+			_rl_last_log=$(cat "$_rl_last_log_file" 2>/dev/null || echo 0)
+			case "$_rl_last_log" in ''|*[!0-9]*) _rl_last_log=0 ;; esac
+			_rl_log_interval="${IMPROVE_BACKOFF_LOG_INTERVAL_SEC:-900}"
+			case "$_rl_log_interval" in ''|*[!0-9]*) _rl_log_interval=900 ;; esac
+			if [ "$_rl_last_log" -le 0 ] || [ $((_rl_now - _rl_last_log)) -ge "$_rl_log_interval" ]; then
+				log "[IMPROVE] rate-limit backoff中 (残$((_rl_wait - (_rl_now - _rl_ts)))秒, count=${_rl_count})"
+				printf '%s\n' "$_rl_now" >"$_rl_last_log_file" 2>/dev/null || true
+			fi
 			return
 		else
 			log "[IMPROVE] rate-limit backoff終了 → リトライ許可"
-			rm -f "$TMP_STATE_DIR/rate_limit_backoff"
+			rm -f "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log"
 		fi
 	fi
 
@@ -1257,7 +1629,7 @@ trigger_adaptive_improvement() {
 	local improve_reason="normal"
 	improve_reason=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('improve_reason','normal'))" 2>/dev/null || echo "normal")
 	case "$improve_reason" in
-	normal|post_regression|wildcard|escape_ai) ;;
+	normal|post_regression|wildcard|escape_ai|archive_restart) ;;
 	*) improve_reason="normal" ;;
 	esac
 	if [ "$improve_reason" = "post_regression" ]; then
@@ -1269,6 +1641,8 @@ trigger_adaptive_improvement() {
 	# 許可する (まさに粛清連鎖からの脱出が WILDCARD の目的)。
 	if { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; } && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
 		local stag rstreak
+		local monitor_status="" monitor_age="" monitor_streak="" monitor_eval="" monitor_anchor="" monitor_event=""
+		local _monitor_ctx
 		stag=$(python3 -c "
 import json,sys
 try:
@@ -1282,17 +1656,50 @@ try:
     print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('regression_streak', 0)))
 except Exception:
     print(0)
-" 2>/dev/null || echo 0)
+	" 2>/dev/null || echo 0)
+	_monitor_ctx=$(_monitor_report_context 2>/dev/null || true)
+	if [ -n "$_monitor_ctx" ]; then
+		IFS='|' read -r monitor_status monitor_age monitor_streak monitor_eval monitor_anchor monitor_event <<EOF
+$_monitor_ctx
+EOF
+		monitor_status="${monitor_status:-unknown}"
+		monitor_age="${monitor_age:-0}"
+		monitor_streak="${monitor_streak:-0}"
+		monitor_eval="${monitor_eval:-}"
+		monitor_anchor="${monitor_anchor:-}"
+		monitor_event="${monitor_event:-}"
+		log "[IMPROVE] 監視レポート: status=${monitor_status} age=${monitor_age}s regression_streak=${monitor_streak} eval_last50=${monitor_eval:-?} anchor_comp=${monitor_anchor:-?} last_event=${monitor_event:-none}"
+		if [ "${MONITOR_REPORT_IMPROVE_GUARD_ENABLED:-0}" = "1" ] && [ "$monitor_status" = "old" ]; then
+			guard_age="${MONITOR_REPORT_IMPROVE_GUARD_MAX_AGE:-3600}"
+			case "$guard_age" in
+			''|*[!0-9]*) guard_age=3600 ;;
+			esac
+			case "$monitor_age" in
+			''|*[!0-9]*) monitor_age=0 ;;
+			esac
+			if [ "${monitor_age:-0}" -ge "${guard_age:-3600}" ]; then
+				log "[IMPROVE] 監視レポートが${monitor_status} (${monitor_age}s) のため改善起動を抑止"
+				return 0
+			fi
+		fi
+		if [ "${monitor_streak:-0}" -gt "${rstreak:-0}" ]; then
+			rstreak=$monitor_streak
+			log "[IMPROVE] regression_streak を監視レポート値で補正: ${rstreak}"
+		fi
+	fi
 		local wildcard_escape_streak
 		wildcard_escape_streak=$(python3 - \
 			"${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" \
 			"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
-			"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" <<'PY' 2>/dev/null || echo 0
+			"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
+			"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+			"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" <<'PY' 2>/dev/null || echo 0
 import json
+import math
 import os
 import sys
 
-attempt_file, origin_file, rejected_file = sys.argv[1:4]
+attempt_file, origin_file, rejected_file, rolling_file, anchor_file = sys.argv[1:6]
 
 def load(path, default):
     try:
@@ -1309,18 +1716,69 @@ def as_int(value, default=0):
     except Exception:
         return default
 
+def as_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    xs = []
+    for raw in scores or []:
+        try:
+            xs.append(int(raw))
+        except Exception:
+            pass
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    std = math.sqrt(sum((x - mean) ** 2 for x in xs) / n) if n > 1 else 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {"comp": comp, "n": n}
+
 attempt = load(attempt_file, {})
 origin = load(origin_file, {})
 rejected = load(rejected_file, {})
+rolling = load(rolling_file, {})
+anchor = load(anchor_file, {})
 streak = as_int(attempt.get("consecutive_wildcards", 0), 0)
 last_reset = as_int(attempt.get("last_reset_epoch", 0), 0)
+anchor_comp = as_float(anchor.get("comp", 0.0), 0.0)
 
 failed = []
 for h, meta in (origin or {}).items():
-    if h not in rejected:
-        continue
     created = as_int((meta or {}).get("created_at_epoch", 0), 0)
+    if last_reset and created and created <= last_reset:
+        continue
     updated = as_int((rejected.get(h) or {}).get("updated_at", 0), 0)
+    is_failed = h in rejected
+    if not is_failed:
+        entry = rolling.get(h) or {}
+        m = metrics(entry.get("scores", []))
+        max_games = as_int((meta or {}).get("max_games_override", 12), 12)
+        if m and m.get("n", 0) >= max_games and anchor_comp > 0 and m.get("comp", 0.0) < anchor_comp:
+            # Older WILDCARDs may have been non-promoted without a rejected
+            # metrics row. Mature origin + below-anchor metrics is enough to
+            # reconstruct the failed escape for escalation routing.
+            is_failed = True
+    if not is_failed:
+        continue
     if last_reset and max(created, updated) <= last_reset:
         continue
     failed.append((created, updated, h))
@@ -1337,7 +1795,10 @@ PY
 )
 		if [ "$stag" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ]; then
 			improve_reason="wildcard"
-			if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			if _archive_restart_should_run "$wildcard_escape_streak"; then
+				improve_reason="archive_restart"
+				log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${ARCHIVE_RESTART_STREAK:-3} → archive_restart で過去版から大域脱出"
+			elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
 				if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
 					improve_reason="escape_ai"
 					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → AI 構造変異モードで脱出"
@@ -1357,7 +1818,10 @@ PY
 			fi
 			if [ "$_wccd_ok" -eq 1 ]; then
 				improve_reason="wildcard"
-				if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+				if _archive_restart_should_run "$wildcard_escape_streak"; then
+					improve_reason="archive_restart"
+					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${ARCHIVE_RESTART_STREAK:-3} → archive_restart で過去版から大域脱出"
+				elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
 					if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
 						improve_reason="escape_ai"
 						log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → AI 構造変異モードで脱出"

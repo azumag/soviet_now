@@ -62,8 +62,9 @@ class TestDiversityPremiumNotPersisted(unittest.TestCase):
                     }
                 )
             )
-            (archive_dir / "hashA.py").write_text("")
-            (archive_dir / "hashB.py").write_text("")
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "hashA.py").write_text(stable_source)
+            (archive_dir / "hashB.py").write_text(stable_source)
 
             # behavior_signatures 事前注入で B にだけ大きな挙動差を持たせる
             beh_file.write_text(
@@ -114,6 +115,153 @@ _refresh_best_strategy_anchor "" 2>&1
             raw_comp_B = 0.50 * 950 + 0.30 * 950 + 0.20 * 950
             self.assertIn(round(anchor["comp"]), [round(raw_comp_A), round(raw_comp_B)],
                           msg=f"persisted comp={anchor['comp']} is not raw")
+
+    def test_anchor_selection_prefers_soviet_objective_progress_within_score_band(self):
+        """anchor は同程度スコア帯なら comp だけでなく建国進捗を守る。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            last_anchor_change_file = td / "last_anchor_change.md"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "scores": [1200] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 13,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                        "russiaPath": {
+                            "scores": [1120] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "max_types": [15] + [13] * 11,
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                    }
+                )
+            )
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "scoreOnly.py").write_text(stable_source)
+            (archive_dir / "russiaPath.py").write_text(stable_source)
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "0"
+            env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["OBJECTIVE_ANCHOR_MIN_COMP_RATIO"] = "0.90"
+            env["OBJECTIVE_ANCHOR_MAX_COMP_GAP"] = "1500"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+            env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "russiaPath")
+            self.assertEqual(anchor["best_max_type"], 15)
+            self.assertEqual(anchor["russia_count"], 1)
+
+    def test_anchor_selection_skips_archives_that_would_normalize_on_validate(self):
+        """guard 未注入 archive は rollback 時に別 hash へ変わるため anchor から外す。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            last_anchor_change_file = td / "last_anchor_change.md"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "staleRussia": {
+                            "scores": [1300] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                        "stableRussia": {
+                            "scores": [1200] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                    }
+                )
+            )
+            (archive_dir / "staleRussia.py").write_text("def decide(game_state, analysis):\n    return {'x': 0}\n")
+            (archive_dir / "stableRussia.py").write_text(
+                "def decide(game_state, analysis):\n"
+                "    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+                "    # --- END DEADLINE GUARD ---\n"
+                "    return {'x': 0}\n"
+            )
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "0"
+            env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+            env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "stableRussia")
 
 
 # --- E: tabu blocks anchor promotion only, scores preserved ------------------
@@ -169,6 +317,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('IMPROVE_REASON="${6:-normal}"', eloop)
         # wildcard 分岐の存在も確認
         self.assertIn('"${IMPROVE_REASON:-normal}" = "wildcard"', eloop)
+        self.assertIn('_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH" "${IMPROVE_REASON:-normal}"', eloop)
+        self.assertIn("_implementation_self_report_rejects_change()", eloop)
+        self.assertIn("AI実装が冗長または挙動が変わらない変更と自己申告した", eloop)
         # _start_improvement_job 側も 6 番目に reason を渡している
         improve_sh = (REPO_ROOT / "strategy/improve.sh").read_text()
         self.assertIn('./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason"', improve_sh)
@@ -223,7 +374,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"wildcard_success_reset"', regression)
         self.assertIn("wildcard_outcome_file", regression)
         self.assertIn('"last_wildcard_outcome"', regression)
+        self.assertIn('"last_wildcard_origin_type"', regression)
         self.assertIn('"metrics": current_payload', regression)
+        self.assertIn('"origin_type": str(origin.get("origin_type") or "wildcard")', regression)
         self.assertIn("def _record_annealing_candidate(event):", regression)
         self.assertIn('"event": "ANNEALING_CANDIDATE"', regression)
         self.assertIn('"observe_only": True', regression)
@@ -234,6 +387,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         config = (REPO_ROOT / "core/config.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
 
         self.assertIn("WILDCARD_AI_ESCALATE_ENABLED", config)
         self.assertIn("WILDCARD_AI_ESCALATE_STREAK", config)
@@ -241,11 +395,90 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('improve_reason="escape_ai"', improve)
         self.assertIn("AI 構造変異モードで脱出", improve)
         self.assertIn("rejected_hash_metrics.json", improve)
+        self.assertIn("rolling_scores.json", improve)
         self.assertIn("wildcard_origin.json", improve)
         self.assertIn("reconstructs failures from WILDCARDs", improve)
+        self.assertIn("Mature origin + below-anchor metrics", improve)
+        self.assertIn("m.get(\"comp\", 0.0) < anchor_comp", improve)
         self.assertIn("export IMPROVE_REASON", eloop)
         self.assertIn('os.environ.get("IMPROVE_REASON", "normal") == "escape_ai"', eloop)
         self.assertIn("今回だけAIによる小さな構造変異で大域脱出を狙う", eloop)
+
+    def test_wildcard_stagnation_can_queue_early_escape_lock(self):
+        """WILDCARD 停滞時は12試合サイクルを待たずに改善daemonへ渡せる。"""
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+
+        self.assertIn("WILDCARD_EARLY_ESCAPE_LOCK_ENABLED", config)
+        self.assertIn("WILDCARD_EARLY_ESCAPE_MIN_GAMES", config)
+        self.assertIn("WILDCARD 即応ロック", loop)
+        self.assertIn("早期脱出ロック作成", loop)
+        self.assertIn("early_escape_lock", loop)
+        self.assertIn("early_escape_stagnation", loop)
+        self.assertIn("rank1 hot streak 中 → 即応脱出ロックを延期", loop)
+        self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
+        self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
+        self.assertIn("normal|post_regression|wildcard|escape_ai|archive_restart", improve)
+        self.assertLess(
+            loop.index("WILDCARD 即応ロック"),
+            loop.index("改善サイクル管理: 12試合蓄積時"),
+        )
+
+    def test_repeated_wildcards_can_restart_from_archive_before_ai_escape(self):
+        """WILDCARD 連続失敗時は、AI構造変異の前に評価済み過去版へ basin jump できる。"""
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn("ARCHIVE_RESTART_ENABLED", config)
+        self.assertIn("ARCHIVE_RESTART_STREAK", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_COMP_RATIO", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", config)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", config)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", config)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", config)
+        self.assertIn("normal|post_regression|wildcard|escape_ai|archive_restart", improve)
+        self.assertIn('improve_reason="archive_restart"', improve)
+        self.assertIn("_archive_restart_should_run", improve)
+        self.assertIn("_archive_restart_has_candidate", improve)
+        self.assertIn("preflight no candidate", improve)
+        self.assertIn("preflight_no_candidate", improve)
+        self.assertIn("archive_is_runtime_stable", improve)
+        self.assertIn("anchor_russia", improve)
+        self.assertIn("anchor_soviet", improve)
+        self.assertIn("archive_restart を飛ばして escape_ai", improve)
+        self.assertIn("no_candidate cooldown active", improve)
+        self.assertIn("archive_restart で過去版から大域脱出", improve)
+        self.assertIn('[ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]', improve)
+        self.assertIn("高速脱出(AI不使用・短時間)", improve)
+        self.assertIn('IMPROVE_REASON:-normal}" = "archive_restart"', eloop)
+        self.assertIn("既存評価済み", eloop)
+        self.assertIn('"origin_type": "archive_restart"', eloop)
+        self.assertIn("hash_normalized_by_validation", eloop)
+        self.assertIn("selected_hash", eloop)
+        self.assertIn("ARCHIVE_RESTART_MIN_COMP_RATIO", eloop)
+        self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", eloop)
+        self.assertIn("best_type < min_best_type", eloop)
+        self.assertIn("archive_is_runtime_stable", eloop)
+        self.assertIn("anchor_russia", eloop)
+        self.assertIn("anchor_soviet", eloop)
+        self.assertIn("objective escape mechanism", eloop)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", eloop)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", eloop)
+        self.assertIn("archive_no_candidate_fallback", eloop)
+        self.assertIn("source_russia_count", eloop)
+        self.assertIn("source_hash = str(selected.get(\"selected_hash\")", eloop)
+        self.assertIn("archive_restart_source", eloop)
+        self.assertIn("source_russia_count", regression)
+        self.assertIn("source_best_max_type", regression)
+        self.assertIn("archive_restart_objective_floor", regression)
+        self.assertIn("mode=archive_objective_floor", regression)
+        self.assertIn("archive_restart_complete", eloop)
+        archive_block = eloop.split('IMPROVE_REASON:-normal}" = "archive_restart"', 1)[1].split("# バッチサマリー生成", 1)[0]
+        self.assertIn("git add strategy.py game_count.txt score_history.txt eval_score_history.txt", archive_block)
+        self.assertNotIn('git add strategy.py game_count.txt score_history.txt eval_score_history.txt "$WILDCARD_ORIGIN_FILE"', archive_block)
 
     def test_ai_output_files_are_not_precreated_before_opencode_write(self):
         """opencode write 制約に合わせ、analysis/review 出力は空ファイル作成しない。"""
@@ -259,6 +492,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("存在しない場合は `Write` で新規作成すること", review_prompt)
         self.assertIn("必ず `## VERDICT: PASS` または `## VERDICT: FAIL`", review_prompt)
         self.assertNotIn("`tmp/review_result.md` は既に存在", review_prompt)
+        self.assertIn("_repair_review_verdict_file", eloop)
+        self.assertIn("REVIEW-VERDICT-REPAIR", eloop)
+        self.assertIn("Stage3: review verdict missing → repair verdict file", eloop)
+        self.assertIn("strategy.py.staging` は編集禁止", eloop)
+        self.assertIn("必ず `tmp/review_result.md` を Write/Edit", eloop)
 
 
 # --- F2: wildcard origin override branch budget only for that hash -----------
@@ -443,8 +681,20 @@ class TestOpencodeRunLock(unittest.TestCase):
         self.assertIn("_opencode_run_lock_enter", text)
         self.assertIn("_opencode_run_lock_leave", text)
         self.assertIn('_opencode_run_lock_enter "${label}:opencode:${agent}"', text)
-        post_reject = text.split("REJECTED_HASHES_FILE")[1] if "REJECTED_HASHES_FILE" in text else ""
-        self.assertNotIn("STAGNATION_COUNTER_FILE.*echo", post_reject)
+
+    def test_radio_opencode_defers_while_improve_is_pending(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        radio = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
+
+        self.assertIn("RADIO_OPENCODE_DEFER_DURING_IMPROVE", config)
+        self.assertIn('RADIO_OPENCODE_DEFER_DURING_IMPROVE="${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}"', config)
+        self.assertIn("opencode deferred during improve/backoff", radio)
+        self.assertIn("_radio_opencode_should_defer_for_improve", radio)
+        self.assertIn("opencode deferred after slot acquire during improve/backoff", radio)
+        self.assertIn('${IMPROVE_LOCK_FILE:-tmp/improve.lock}', radio)
+        self.assertIn('rate_limit_backoff', radio)
+        self.assertIn('"status"[[:space:]]*:[[:space:]]*"running"', radio)
+        self.assertIn("return 1", radio)
 
 
 # --- 共通: hot-reload runtime toggles ----------------------------------------
@@ -587,8 +837,14 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("generate_improve_overlay.sh once", monitor)
         self.assertIn("meta http-equiv=\"refresh\"", overlay)
         self.assertIn("IMPROVE_AI_LOG_FILE", overlay)
+        self.assertIn("IMPROVE_RUN_CMD_TIMEOUT_SEC", overlay)
+        self.assertIn("IMPROVE_FIX_CMD_TIMEOUT_SEC", overlay)
+        self.assertIn("IMPROVE_WALL_TIMEOUT", overlay)
+        self.assertIn("AI cap:", overlay)
+        self.assertIn("FIX cap:", overlay)
+        self.assertIn("job cap:", overlay)
 
-    def test_status_g_has_520x980_html_overlay_generator(self):
+    def test_status_g_has_wide_short_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         overlay = (REPO_ROOT / "generate_status_overlay.sh").read_text()
         status_g = (REPO_ROOT / "show_status_g.sh").read_text()
@@ -596,14 +852,19 @@ class TestImproveOverlay(unittest.TestCase):
 
         self.assertIn("STATUS_OVERLAY_HTML_FILE", config)
         self.assertIn("STATUS_OVERLAY_SOURCE", config)
+        self.assertIn("statsOverlay", config)
+        self.assertIn("OBS_STATUS_OVERLAY_SOURCE", config)
+        self.assertIn("STATS_OVERLAY_SOURCE", config)
         self.assertIn("STATUS_OVERLAY_WIDTH", config)
         self.assertIn("STATUS_OVERLAY_HEIGHT", config)
         self.assertIn("STATUS_OVERLAY_OBS_X", config)
         self.assertIn("STATUS_OVERLAY_OBS_Y", config)
         self.assertIn("STATUS_OVERLAY_OBS_SCALE_X", config)
         self.assertIn("STATUS_OVERLAY_OBS_SCALE_Y", config)
-        self.assertIn("520", config)
-        self.assertIn("980", config)
+        self.assertIn("STATUS_OVERLAY_OBS_TRANSFORM_ENABLED", config)
+        self.assertIn('STATUS_OVERLAY_OBS_TRANSFORM_ENABLED:-1', config)
+        self.assertIn("640", config)
+        self.assertIn("1000", config)
         self.assertIn("python3 status_dashboard.py", overlay)
         self.assertIn("[ -f .env ] && set -a && . ./.env && set +a", overlay)
         self.assertIn("ansi_to_html", overlay)
@@ -613,6 +874,7 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("SetSceneItemTransform", overlay)
         self.assertIn("OBS_BOUNDS_NONE", overlay)
         self.assertIn("transformed:", overlay)
+        self.assertIn('${STATUS_OVERLAY_OBS_TRANSFORM_ENABLED:-0}" = "force"', overlay)
         self.assertIn("status_overlay_watch.pid", overlay)
         self.assertIn("status_overlay.log", overlay)
         self.assertIn("soren_status_overlay", overlay)
@@ -633,9 +895,40 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("Observer Status", dashboard)
         self.assertIn("load_monitor_report_status", dashboard)
         self.assertIn("load_latest_annealing_candidate", dashboard)
+        self.assertIn("load_wildcard_attempt_status", dashboard)
         self.assertIn("SOREN_MONITOR_REPORT_FILE", dashboard)
+        self.assertIn("VIEWER_CHAT_MONITOR_FILE", dashboard)
+        self.assertIn("load_viewer_chat_monitor", dashboard)
+        self.assertIn("ChatObs", dashboard)
         self.assertIn("ANNEALING_OBSERVE_FILE", dashboard)
+        self.assertIn("WILDCARD_ATTEMPT_STATE_FILE", dashboard)
+        self.assertIn("WildStreak", dashboard)
+        self.assertIn("archive_restart next", dashboard)
+        self.assertIn("load_archive_restart_candidate", dashboard)
+        self.assertIn("ArchiveNext", dashboard)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", dashboard)
+        self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", dashboard)
+        self.assertIn("best_type < min_best_type", dashboard)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", dashboard)
+        self.assertIn("no_candidate_cooldown", dashboard)
+        self.assertIn('"status": "no_candidate"', dashboard)
+        self.assertIn("threshold c>=", dashboard)
+        self.assertIn("escape_ai direct", dashboard)
+        self.assertIn("effective_streak", dashboard)
+        self.assertIn("failed_origin_count", dashboard)
+        self.assertIn("ARCHIVE_RESTART_STREAK", dashboard)
+        self.assertIn("WILDCARD_AI_ESCALATE_STREAK", dashboard)
         self.assertIn("observe-only", dashboard)
+
+    def test_browser_source_ensure_preserves_manual_obs_transform(self):
+        browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()
+
+        self.assertIn("OBS_BROWSER_SOURCE_PRESERVE_TRANSFORM", browser_source)
+        self.assertIn("GetSceneItemTransform", browser_source)
+        self.assertIn("preserved.set(item.sceneItemId", browser_source)
+        self.assertIn("wantedWidth / nextSourceWidth", browser_source)
+        self.assertIn("wantedHeight / nextSourceHeight", browser_source)
+        self.assertIn("SetSceneItemTransform", browser_source)
 
     def test_show_status_has_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -645,7 +938,11 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("SHOW_STATUS_OVERLAY_HTML_FILE", config)
         self.assertIn("SHOW_STATUS_OVERLAY_SOURCE", config)
         self.assertIn("show_status_overlay.html", config)
-        self.assertIn("showStatusOverlay", config)
+        self.assertIn("opsOverlay", config)
+        self.assertIn("OBS_SHOW_STATUS_OVERLAY_SOURCE", config)
+        self.assertIn("OPS_OVERLAY_SOURCE", config)
+        self.assertIn("SHOW_STATUS_OVERLAY_HEIGHT", config)
+        self.assertIn("680", config)
         self.assertIn("SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once", overlay)
         self.assertIn("SHOW_STATUS_OVERLAY_RAW", overlay)
         self.assertIn("ansi_to_html", overlay)
@@ -672,6 +969,19 @@ class TestImproveOverlay(unittest.TestCase):
 # --- soren91 process launch ---------------------------------------------------
 
 class TestSoren91RunnerLaunch(unittest.TestCase):
+    def test_soren91_layout_switch_uses_status_overlays_instead_of_old_console_sources(self):
+        control = (REPO_ROOT / "soren91_control.sh").read_text()
+
+        self.assertIn("${SOREN91_OBS_SOURCE:-}", control)
+        self.assertIn('if [ -n "$SOREN91_OBS_INPUT_NAME" ]; then', control)
+        self.assertIn("${STATUS_OVERLAY_SOURCE:-statsOverlay}", control)
+        self.assertIn("${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}", control)
+        self.assertIn("${OBS_DASHBOARD_SOURCE:-dashboard}", control)
+        self.assertIn('$s91_show_op hide:"$status_source","$show_status_source",console3,"$dashboard_source"', control)
+        self.assertIn('show:"$status_source","$show_status_source",console3,"$dashboard_source" $s91_hide_op', control)
+        self.assertNotIn("hide:console1,console2", control)
+        self.assertNotIn("show:console1,console2", control)
+
     def test_soren91_start_prefers_tmux_tty_runner(self):
         control = (REPO_ROOT / "soren91_control.sh").read_text()
         runner = (REPO_ROOT / "soren91/run_player_loop.sh").read_text()
@@ -737,16 +1047,17 @@ class TestMainAudioRecovery(unittest.TestCase):
         for token in forbidden:
             self.assertNotIn(token, combined)
 
-    def test_missing_blackhole_falls_back_to_default_sink(self):
+    def test_main_audio_resolves_sink_before_context_creation(self):
         local = (REPO_ROOT / "soviet_local.mjs").read_text()
 
-        self.assertIn("const sinkId = target ? target.deviceId : (window.__sorenAudioOutputDeviceId || '')", local)
-        self.assertIn("await ctx.setSinkId(sinkId)", local)
+        self.assertIn("window.__sorenResolveSink = async", local)
+        self.assertIn("window.__sorenSinkId = target.deviceId", local)
+        self.assertIn("const merged = Object.assign({}, opt0 || {}, { sinkId: sid })", local)
+        self.assertIn("ctx = new OrigAudioContext(merged)", local)
+        self.assertIn("ctx = new OrigAudioContext(...args)", local)
         self.assertIn("audio output not found", local)
-        self.assertIn("return Boolean(target)", local)
-        self.assertIn("await ctx.setSinkId('')", local)
-        self.assertIn("setTimeout(r, 250)", local)
-        self.assertIn("alreadyRouted && allRunning", local)
+        self.assertIn("return false", local)
+        self.assertNotIn("await ctx.setSinkId", local)
 
     def test_browser_audio_permissions_reveal_blackhole_output_labels(self):
         local = (REPO_ROOT / "soviet_local.mjs").read_text()
@@ -809,6 +1120,25 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
             self.assertIn("high_type_counts=T15x1", result.stdout)
             self.assertIn("[RUSSIA]", result.stdout)
 
+    def test_improve_prompts_do_not_send_ai_searching_for_batch_runner(self):
+        """sandbox内のAIに、生成済みbatch_summaryを実行コマンド探しと誤認させない。"""
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+        analyze_prompt = (REPO_ROOT / "prompts/analyze_strategy.md").read_text()
+        implement_prompt = (REPO_ROOT / "prompts/implement_strategy.md").read_text()
+        review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
+
+        for text in (improve, analyze_prompt, implement_prompt, review_prompt):
+            self.assertIn("tmp/batch_summary.txt", text)
+            self.assertIn("README/Makefile/*.sh", text)
+
+        self.assertIn("cat >README.md", improve)
+        self.assertIn("Soren Improve Sandbox", improve)
+        self.assertIn("Do not search for README/Makefile/*.sh", improve)
+        self.assertIn("追加のバッチ実行環境ではない", improve)
+        self.assertIn("追加の batch 実行コマンドを探し続けない", analyze_prompt)
+        self.assertIn("追加の batch 実行コマンドを探索し続けない", implement_prompt)
+        self.assertIn("追加の batch 実行環境を探さない", review_prompt)
+
     def test_improve_brief_contains_soviet_objective_section(self):
         text = (REPO_ROOT / "eloop_improve.sh").read_text()
         self.assertIn("## Soviet Objective Progress", text)
@@ -848,6 +1178,8 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("rolling_scores_update.err", regression)
         self.assertIn("[ROLLING] update stderr:", regression)
         self.assertIn("repair_current_run", repair)
+        self.assertIn("history_strategy_hash", repair)
+        self.assertIn("history_strategy_hash(path) != current_hash", repair)
         self.assertIn("update_rolling_scores", repair)
         self.assertIn("_update_current_strategy_run", repair)
         self.assertIn("final_types", repair)
@@ -883,11 +1215,20 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
     def test_regression_guard_blocks_objective_backslide(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
 
         self.assertIn("objective_reasons = []", regression)
         self.assertIn("lost_russia_path", regression)
         self.assertIn("lost_soviet_path", regression)
         self.assertIn("mode=objective_regression", regression)
+        self.assertIn("mode=early_objective_regression", regression)
+        self.assertIn("early_objective_min_games", regression)
+        self.assertIn("early_objective_min_best_type", regression)
+        self.assertIn("rollback target normalized", regression)
+        self.assertIn("normalized_to_hash", regression)
+        self.assertIn("rollback_target_normalized", regression)
+        self.assertIn("EARLY_OBJECTIVE_REGRESSION_ENABLED", config)
+        self.assertIn("EARLY_OBJECTIVE_REGRESSION_MIN_GAMES", config)
         self.assertIn("anchor_best_max_type", regression)
         self.assertIn("curr_best_max_type", regression)
 
@@ -904,14 +1245,64 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn('_start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "$improve_reason"', improve)
 
+    def test_fast_escape_harvest_does_not_start_soren91_handover(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+
+        self.assertIn("IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC", config)
+        self.assertIn("improve_reason", improve)
+        self.assertIn('_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch" "$reason"', improve)
+        self.assertIn('prev_improve_reason=$(echo "$state"', improve)
+        self.assertIn("state理由欠落をlockから復元", improve)
+        self.assertIn("improve_reason=$(echo \"$state\"", improve)
+        self.assertIn('_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at" "$pid_birth_epoch" "$improve_reason"', improve)
+        self.assertIn('reason in {"wildcard", "archive_restart"}', improve)
+        self.assertIn("wildcard|archive_restart)", improve)
+        self.assertIn("soren91_stop/soren91_improve/handover/bridge再起動をスキップ", improve)
+        self.assertIn('_improve_overlay_hide_after "${IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC:-45}"', improve)
+        self.assertIn("improve_overlay_hide_token", improve)
+        self.assertIn("_live_improve_pid=", loop)
+        self.assertIn("実改善PIDなし: soren91は起動せず回収待ち", loop)
+        self.assertIn("wildcard|archive_restart)", loop)
+        self.assertIn("手動改善待ちは実改善PIDがないため soren91 代打は起動しない", improve)
+
+    def test_post_improve_soren91_session_improve_is_opt_in(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+
+        self.assertIn('POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED="${POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED:-0}"', config)
+        self.assertIn("_post_improve_soren91_session_improve()", improve)
+        self.assertIn('POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED:-0', improve)
+        self.assertIn("post-improve session improve skipped", improve)
+        self.assertIn('_post_improve_soren91_session_improve "$prev_improve_reason"', improve)
+        self.assertIn('_post_improve_soren91_session_improve "manual"', improve)
+        self.assertIn('_post_improve_soren91_session_improve "scheduled_meriken"', improve)
+
     def test_improve_and_system_progress_are_queued_for_audio_worker(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop_improve = (REPO_ROOT / "eloop_improve.sh").read_text()
         comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()
+        ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
         system_report = (REPO_ROOT / "system_progress_report.sh").read_text()
 
         self.assertIn("IMPROVE_AUDIO_SUMMARY_ENABLED", config)
         self.assertIn("IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC", config)
+        self.assertIn('IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC="${IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC:-900}"', config)
+        self.assertIn('AUDIO_WORKER_WARNING_INTERVAL_SEC="${AUDIO_WORKER_WARNING_INTERVAL_SEC:-900}"', config)
+        self.assertIn('SOREN_PAUSE_LOG_INTERVAL_SEC="${SOREN_PAUSE_LOG_INTERVAL_SEC:-900}"', config)
+        self.assertIn('IMPROVE_RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"', config)
+        self.assertIn('IMPROVE_FIX_CMD_TIMEOUT_SEC="${IMPROVE_FIX_CMD_TIMEOUT_SEC:-600}"', config)
+        self.assertIn('IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC="${IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC:-180}"', config)
+        self.assertIn('IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-3600}"', config)
+        self.assertIn('RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"', eloop_improve)
+        self.assertIn('RUN_CMD_TIMEOUT_SEC="${IMPROVE_FIX_CMD_TIMEOUT_SEC:-600}"', eloop_improve)
+        self.assertIn('OPENCODE_RUN_LOCK_MAX_WAIT_SEC="${IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC:-180}"', eloop_improve)
+        self.assertIn("export OPENCODE_RUN_LOCK_MAX_WAIT_SEC", eloop_improve)
+        self.assertIn('max_wait_sec="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC:-0}"', ai_generate)
+        self.assertIn("opencode slot wait exceeded", ai_generate)
+        self.assertIn("return 124", ai_generate)
+        self.assertIn('IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-3600}"', eloop_improve)
         self.assertIn("_improve_audio_summary_maybe", eloop_improve)
         self.assertIn("IMPROVE_AUDIO_SUMMARY_SPOKEN=0", eloop_improve)
         self.assertIn('enqueue_audio_text "$text" "improve_progress"', eloop_improve)
@@ -920,8 +1311,66 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("_comment_mark_improve_progress_played", comment_lib)
         self.assertIn("改善進捗", eloop_improve)
         self.assertIn('enqueue_audio_text "$text" "system_progress"', system_report)
+        audio_worker = (REPO_ROOT / "workers/audio_worker.sh").read_text()
+        self.assertIn('WARNING_INTERVAL="${AUDIO_WORKER_WARNING_INTERVAL_SEC:-900}"', audio_worker)
+        self.assertIn("_LAST_SAY_WARNING_TS", audio_worker)
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+        self.assertIn('SOREN_PAUSE_LOG_INTERVAL_SEC="${SOREN_PAUSE_LOG_INTERVAL_SEC:-900}"', loop)
+        self.assertIn("log_pause_throttled", loop)
+        self.assertIn('pause_log_${safe_key}.ts', loop)
+        self.assertIn("last_ts=$(cat \"$state_file\"", loop)
+        self.assertIn('log_pause_throttled "improve_running"', loop)
         self.assertIn('${SYSTEM_PROGRESS_AUDIO_SPEAKER:-${SOREN91_VOICEVOX_SPEAKER:-46}}', system_report)
         self.assertIn("システム改善進捗", system_report)
+
+    def test_soren91_improve_hang_is_bounded_by_watchdog(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        control = (REPO_ROOT / "soren91_control.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+
+        self.assertIn("IMPROVE_HUNG_HARVEST_ENABLED", config)
+        self.assertIn("IMPROVE_HUNG_QUARANTINE_FILE", config)
+        self.assertIn("IMPROVE_HUNG_REQUIRE_EVAL_STALE", config)
+        self.assertIn("IMPROVE_WALL_TIMEOUT", config)
+        self.assertIn("EVAL_SCORE_HISTORY_FILE", config)
+        self.assertIn("improve_wall_timeout_harvest", improve)
+        self.assertIn("if _stop_improve_pid_if_running \"$pid\" \"improve_wall_timeout\"; then", improve)
+        self.assertIn("通常改善が上限時間を超えたため", improve)
+        self.assertIn("中華AI改善は適用可能な戦略変更を出せず終了しました", improve)
+        self.assertIn("improve_failed_no_apply", improve)
+        self.assertIn("[ \"$updated_age\" -ge \"$watchdog_sec\" ]", improve)
+        self.assertIn("[ \"$log_age\" -ge \"$watchdog_sec\" ]", improve)
+        self.assertIn("[ \"$eval_age\" -lt \"$watchdog_sec\" ]", improve)
+        self.assertIn("watchdog保留", improve)
+        self.assertIn('"eval_age": int(eval_age)', improve)
+        self.assertIn("improve_hung_harvest", improve)
+        self.assertIn("if _stop_improve_pid_if_running \"$pid\" \"improve_hung\"; then", improve)
+        self.assertIn("pid_alive=false", improve)
+        self.assertIn("停止に失敗したためrunning扱いを維持", improve)
+        self.assertIn("通常改善が無音で固まったため", improve)
+        self.assertIn("SOREN91_IMPROVE_HUNG_HARVEST_ENABLED", config)
+        self.assertIn("SOREN91_IMPROVE_HUNG_SEC", config)
+        self.assertIn("SOREN91_IMPROVE_HUNG_QUARANTINE_FILE", config)
+        self.assertIn("soren91_harvest_hung_improve()", control)
+        self.assertIn("soren91_harvest_hung_improve || true", control)
+        self.assertIn('if _soren91_is_improve_process "$imp_pid"; then', control)
+        self.assertIn("[ \"$lock_age\" -ge \"$threshold\" ]", control)
+        self.assertIn("[ \"$log_age\" -ge \"$threshold\" ]", control)
+        self.assertIn("[ \"$eval_age\" -lt \"$threshold\" ]", control)
+        self.assertIn("hung improve harvest defer", control)
+        self.assertIn('"eval_age": int(eval_age)', control)
+        self.assertIn("_soren91_is_improve_process \"$pid\"", control)
+        self.assertIn("_soren91_record_improve_stale_cleanup()", control)
+        self.assertIn("soren91_improve_stale_cleanup", control)
+        self.assertIn("invalid_pid", control)
+        self.assertIn("pid_not_alive_or_not_improve", control)
+        self.assertIn("log_tail", control)
+        self.assertIn("メリケンAI改善が途中終了したため", control)
+        self.assertIn("_stop_loop_descendants \"$pid\"", control)
+        self.assertIn("_stop_pid_with_fallback \"$pid\" \"soren91_improve_hung\"", control)
+        self.assertIn("soren91_improve_hung_quarantine", control)
+        self.assertIn("enqueue_audio_text \"メリケンAI改善が無音で固まったため", control)
+        self.assertIn("soren91_harvest_hung_improve || true", improve)
 
     def test_startup_validation_syncs_current_run_hash_after_guard_injection(self):
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
@@ -945,6 +1394,10 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
                     "peak_high_type_counts": ["T12x1"],
                     "deadline_guard_counts": [4],
                     "deadline_guard_reason_tops": ["DEADLINE_GUARDx4"],
+                    "max_types": [15, 12, 12],
+                    "russia_count": 1,
+                    "soviet_count": 0,
+                    "best_max_type": 15,
                 }
             }))
             script = textwrap.dedent(f"""\
@@ -971,6 +1424,9 @@ assert d['hash'] == 'seedhash'
 assert d['scores'] == [1, 2, 3]
 assert d['games_total'] == 3
 assert d['_recent_archives'] == ['game_history/a.jsonl']
+assert d['max_types'] == [15, 12, 12]
+assert d['russia_count'] == 1
+assert d['best_max_type'] == 15
 PY
             """)
             result = subprocess.run(
@@ -982,19 +1438,42 @@ PY
             )
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
+    def test_same_hash_objective_gap_does_not_reset_wildcard_stagnation(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+
+        self.assertIn("if current_hash == anchor_hash and not branch_active:", regression)
+        self.assertIn("current_games_total = int(current_data.get(\"games_total\"", regression)
+        self.assertIn("and current_games_total >= same_hash_backslide_mature_n", regression)
+        self.assertIn('_update_stagnation("OK_IDLE")', regression)
+        self.assertIn('_update_stagnation("RESET")', regression)
+        self.assertIn("same_hash_backslide_mature_n", regression)
+        self.assertIn("same_hash_backslide_enabled", regression)
+        self.assertIn("same_hash_backslide_min_extra_games", regression)
+        self.assertIn("current_hash != anchor_hash and key(current) <= key(anchor)", regression)
+        self.assertIn("current_objective.get(\"best_max_type\"", regression)
+        self.assertIn("anchor_objective.get(\"russia_count\"", regression)
+        self.assertIn("best_max_type >= 15 and russia_count <= 0", regression)
+        self.assertIn("SAME_HASH_BACKSLIDE_RESET_ENABLED", config)
+        self.assertIn("SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES", config)
+
     def test_show_status_surfaces_current_wildcard_evaluation(self):
         status = (REPO_ROOT / "show_status.sh").read_text()
 
+        self.assertIn("wildcard_eval_name", status)
         self.assertIn("wildcard_eval_label", status)
         self.assertIn("wildcard_outcomes.jsonl", status)
         self.assertIn("WildEval", status)
+        self.assertIn("ArcEval", status)
+        self.assertIn("source_russia_count", status)
         self.assertIn("{n}/{mature_n}", status)
         self.assertIn("quantile(xs, 0.50)", status)
         self.assertIn("0.55 * quantile", status)
         self.assertIn("best_strategy_anchor.json", status)
         self.assertIn("delta_label", status)
         self.assertIn("trend_label", status)
-        self.assertIn("t={trend:+d}", status)
+        self.assertIn("t{trend:+d}", status)
+        self.assertIn("d{delta:+d}", status)
         self.assertIn("event_short", status)
         self.assertIn("annealing_candidates.jsonl", status)
         self.assertIn("AnnealObs", status)
@@ -1005,6 +1484,21 @@ PY
         self.assertIn("monitor_report_label", status)
         self.assertIn("最終更新:", status)
         self.assertIn("datetime.strptime", status)
+        self.assertIn("viewer_chat_monitor.sh", status)
+        self.assertIn("viewer_chat_label", status)
+        self.assertIn("ChatObs", status)
+        self.assertIn("rate_limit_backoff", status)
+        self.assertIn("improve_backoff_label", status)
+        self.assertIn("ImproveBack", status)
+        self.assertIn("archive_next_label", status)
+        self.assertIn("ArchiveNext", status)
+        self.assertIn("no cand c>=", status)
+        self.assertIn("-> escape_ai", status)
+        self.assertIn("archive_is_runtime_stable", status)
+        self.assertIn("anchor_russia", status)
+        self.assertIn("anchor_soviet", status)
+        self.assertIn("opencode thinking", status)
+        self.assertIn("Continue if you have next steps", status)
 
     def test_wildcard_progress_milestones_are_reported_to_audio(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -1018,9 +1512,77 @@ PY
         self.assertIn("enqueue_audio_text \"$message\" \"wildcard_progress\"", reporter)
         self.assertIn("wildcard_progress_report.env.tmp", reporter)
         self.assertIn("anchor 比", reporter)
+        self.assertIn("origin_type", reporter)
+        self.assertIn("ARCHIVE-RESTART", reporter)
+        self.assertIn("過去版リスタート候補", reporter)
+        self.assertIn("source_russia_count", reporter)
+        self.assertIn("source_best_max_type", reporter)
+        self.assertIn("ロシア実績", reporter)
+        self.assertIn("ESCAPE-AI", reporter)
         self.assertIn("overlay_notify.sh", reporter)
         self.assertIn("./wildcard_progress_report.sh", loop)
         self.assertIn("progress report skipped/failed", loop)
+
+    def test_monitor_report_staleness_is_reported_to_audio(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        reporter = (REPO_ROOT / "monitor_report_stale_report.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+
+        self.assertIn("MONITOR_REPORT_AUDIO_ENABLED", config)
+        self.assertIn("MONITOR_REPORT_AUDIO_STATE_FILE", config)
+        self.assertIn("MONITOR_REPORT_STALE_SEC", config)
+        self.assertIn("MONITOR_REPORT_OLD_SEC", config)
+        self.assertIn("MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC", config)
+        self.assertIn('MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC="${MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC:-900}"', config)
+        self.assertIn('${MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC:-900}', reporter)
+        self.assertIn("SOREN_MONITOR_REPORT_FILE", reporter)
+        self.assertIn("CURRENT_STRATEGY_RUN_FILE", reporter)
+        self.assertIn("BEST_STRATEGY_ANCHOR_FILE", reporter)
+        self.assertIn("WILDCARD_ORIGIN_FILE", reporter)
+        self.assertIn("Claude監視レポート", reporter)
+        self.assertIn("ライブは", reporter)
+        self.assertIn("live_origin_type", reporter)
+        self.assertIn("enqueue_audio_text \"$message\" \"monitor_report\"", reporter)
+        self.assertIn("overlay_notify.sh", reporter)
+        self.assertIn("monitor_report_stale_report.env.tmp", reporter)
+        self.assertIn("./monitor_report_stale_report.sh", loop)
+        self.assertIn("stale report notice skipped/failed", loop)
+
+    def test_viewer_chat_monitor_filters_recent_observer_comments(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        script = (REPO_ROOT / "viewer_chat_monitor.sh").read_text()
+        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("VIEWER_CHAT_MONITOR_FILE", config)
+        self.assertIn("VIEWER_CHAT_MONITOR_SOURCE", config)
+        self.assertIn("VIEWER_CHAT_MONITOR_LOOKBACK", config)
+        self.assertIn("comment_context_history.log", config)
+        self.assertIn("viewer_chat_monitor.json", config)
+        self.assertIn("comment_context_history.log", script)
+        self.assertIn("is_observer_comment", script)
+        self.assertIn("looks_like_emote_only", script)
+        self.assertIn("獲得しました", script)
+        self.assertIn("連ガチャ", script)
+        self.assertIn("Twitchエモート:", script)
+        self.assertIn("unagee", script)
+        self.assertIn('"latest": latest', script)
+        self.assertIn('"recent": recent', script)
+        self.assertIn("VIEWER_CHAT_MONITOR_FILE", dashboard)
+        self.assertIn("load_viewer_chat_monitor", dashboard)
+        self.assertIn("ChatObs", dashboard)
+        self.assertIn("load_improve_backoff_status", dashboard)
+        self.assertIn("ImproveBackoff", dashboard)
+        self.assertIn("SOREN91_IMPROVE_HUNG_QUARANTINE_FILE", dashboard)
+        self.assertIn("load_soren91_improve_watchdog_status", dashboard)
+        self.assertIn("S91Improve", dashboard)
+        self.assertIn("soren91_improve_hung_quarantine.jsonl", dashboard)
+        self.assertIn("viewer_chat_monitor.sh", status)
+        self.assertIn("viewer_chat_label", status)
+        self.assertIn("ChatObs", status)
+        self.assertIn("soren91_improve_watchdog_label", status)
+        self.assertIn("S91Improve", status)
+        self.assertIn("soren91_improve_hung_quarantine.jsonl", status)
 
     def test_rollback_revalidates_strategy_after_restore(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -1062,13 +1624,28 @@ PY
         self.assertIn("Active ranking screen detected before move", main)
         self.assertNotIn("Post-drop ranking candidate found", main)
 
+    def test_soren91_does_not_treat_stale_result_screen_as_next_game(self):
+        main = (REPO_ROOT / "soren91/main.mjs").read_text()
+
+        self.assertIn("awaitingFreshRoundAfterResult = true", main)
+        self.assertIn("interRoundWaitingSeen", main)
+        self.assertIn("Ignoring stale post-result ranking screen before game", main)
+        self.assertIn("Waiting for inter-round screen before accepting game", main)
+        self.assertIn("MIN_RANKING_FALLBACK_COMMENT_TURNS = 20", main)
+        self.assertIn("turns >= MIN_RANKING_FALLBACK_COMMENT_TURNS", main)
+
     def test_bridge_desync_stops_stale_soren91_only_outside_improve(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         loop = (REPO_ROOT / "eloop.sh").read_text()
 
         self.assertIn("BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED", config)
+        self.assertIn("BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT", config)
+        self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", config)
+        self.assertIn("即bridge復旧", loop)
+        self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", loop)
+        self.assertIn("[PHANTOM] bridge 再起動 成功", loop)
         self.assertIn("中華AIプレイ中に soren91 残存を検出", loop)
-        self.assertIn("soren91_stop 2>/dev/null", loop)
+        self.assertIn('SOREN91_STOP_TIMEOUT="${BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT:-0}" soren91_stop', loop)
         self.assertIn("! _is_improve_running", loop)
         self.assertIn("manual_meriken_mode_is_enabled", loop)
 

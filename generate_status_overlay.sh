@@ -33,7 +33,7 @@ tmux_session="soren_status_overlay"
 render_once() {
 	mkdir -p "$(dirname "$out_file")"
 	local raw=""
-	raw=$(python3 status_dashboard.py 2>/dev/null || true)
+	raw=$(HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=1 python3 status_dashboard.py 2>/dev/null || true)
 	STATUS_OVERLAY_RAW="$raw" python3 - "$out_file" "$width" "$height" <<'PY'
 import html
 import os
@@ -44,11 +44,26 @@ import time
 
 out_file, width, height = sys.argv[1:4]
 raw = os.environ.get("STATUS_OVERLAY_RAW", "")
-ansi_re = re.compile(r"\x1b\[([0-9;]*)m")
+csi_re = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 palette = {
     "0": "",
     "1": "font-weight:700",
     "2": "opacity:.68",
+    "31": "color:#ef4444",
+    "32": "color:#22c55e",
+    "33": "color:#facc15",
+    "34": "color:#38bdf8",
+    "35": "color:#c084fc",
+    "36": "color:#22d3ee",
+    "37": "color:#f8fafc",
+    "90": "color:#94a3b8",
+    "91": "color:#f87171",
+    "92": "color:#4ade80",
+    "93": "color:#fde047",
+    "94": "color:#60a5fa",
+    "95": "color:#e879f9",
+    "96": "color:#67e8f9",
+    "97": "color:#ffffff",
     "38;5;33": "color:#38bdf8",
     "38;5;34": "color:#22c55e",
     "38;5;37": "color:#22d3ee",
@@ -70,9 +85,13 @@ def ansi_to_html(text):
     out = []
     stack = []
     pos = 0
-    for match in ansi_re.finditer(text):
+    for match in csi_re.finditer(text):
         out.append(html.escape(text[pos:match.start()]))
+        final = match.group(3)
         code = match.group(1) or "0"
+        if final != "m":
+            pos = match.end()
+            continue
         if code == "0":
             while stack:
                 out.append("</span>")
@@ -108,7 +127,7 @@ html, body {{
   box-sizing: border-box;
   width: {html.escape(width)}px;
   height: {html.escape(height)}px;
-  padding: 14px 14px 12px;
+  padding: 10px 10px 8px;
   color: #e5f7ff;
   background: linear-gradient(180deg, rgba(2, 8, 23, .92), rgba(3, 7, 18, .88));
   border: 1px solid rgba(56, 189, 248, .28);
@@ -119,8 +138,8 @@ html, body {{
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
-  font: 700 14px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin-bottom: 5px;
+  font: 700 13px/1.15 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #bae6fd;
   letter-spacing: 0;
 }}
@@ -131,7 +150,7 @@ html, body {{
 pre {{
   margin: 0;
   white-space: pre;
-  font: 12.8px/1.17 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font: 15.5px/1.13 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   letter-spacing: 0;
   color: #dbeafe;
 }}
@@ -139,7 +158,7 @@ pre {{
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN STATUS G</span><span>{html.escape(generated)}</span></div>
+  <div class="meta"><span>SOREN STATS</span><span>{html.escape(generated)}</span></div>
   <pre>{body}</pre>
 </div>
 </body>
@@ -157,7 +176,7 @@ PY
 
 apply_obs_transform() {
 	local scene="${OBS_DASHBOARD_SCENE:-soren}"
-	local source="${STATUS_OVERLAY_SOURCE:-statusOverlay}"
+	local source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 	local x="${STATUS_OVERLAY_OBS_X:-24}"
 	local y="${STATUS_OVERLAY_OBS_Y:-255}"
 	local scale_x="${STATUS_OVERLAY_OBS_SCALE_X:-0.90}"
@@ -375,8 +394,8 @@ ensure-obs)
 	render_once >/dev/null
 	visibility="${2:-show}"
 	case "$visibility" in show|hide) ;; *) visibility=show ;; esac
-	./obs_browser_source.sh ensure "${OBS_DASHBOARD_SCENE:-soren}" "${STATUS_OVERLAY_SOURCE:-statusOverlay}" "$out_file" "$width" "$height" "$visibility"
-	if [ "$visibility" = "show" ]; then
+	./obs_browser_source.sh ensure "${OBS_DASHBOARD_SCENE:-soren}" "${STATUS_OVERLAY_SOURCE:-statsOverlay}" "$out_file" "$width" "$height" "$visibility"
+	if [ "$visibility" = "show" ] && [ "${STATUS_OVERLAY_OBS_TRANSFORM_ENABLED:-0}" = "force" ]; then
 		apply_obs_transform || true
 	fi
 	;;

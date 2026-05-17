@@ -161,7 +161,7 @@ _opencode_cleanup_internal_locks() {
 
 _opencode_run_lock_enter() {
 	local label="${1:-opencode}"
-	local lock_dir wait_sec stale_sec waited=0 token now mt age owner_summary="" owner_pid=""
+	local lock_dir wait_sec stale_sec max_wait_sec waited=0 token now mt age owner_summary="" owner_pid=""
 	if [ "${OPENCODE_RUN_LOCK_ENABLED:-1}" != "1" ]; then
 		OPENCODE_RUN_LOCK_LAST_TOKEN=""
 		return 0
@@ -169,6 +169,7 @@ _opencode_run_lock_enter() {
 	lock_dir=$(_opencode_run_lock_dir)
 	wait_sec="${OPENCODE_RUN_LOCK_WAIT_SEC:-2}"
 	stale_sec="${OPENCODE_RUN_LOCK_STALE_SEC:-1800}"
+	max_wait_sec="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC:-0}"
 	case "$wait_sec" in
 	'' | *[!0-9]*) wait_sec=2 ;;
 	esac
@@ -177,6 +178,9 @@ _opencode_run_lock_enter() {
 	'' | *[!0-9]*) stale_sec=1800 ;;
 	esac
 	[ "$stale_sec" -lt 60 ] && stale_sec=60
+	case "$max_wait_sec" in
+	'' | *[!0-9]*) max_wait_sec=0 ;;
+	esac
 
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
@@ -204,6 +208,11 @@ _opencode_run_lock_enter() {
 		fi
 		if [ "$waited" -eq 0 ] || [ $((waited % 30)) -eq 0 ]; then
 			log "[OPENCODE:${label}] queued: waiting for opencode slot${owner_summary:+ (${owner_summary})}" >&2
+		fi
+		if [ "$max_wait_sec" -gt 0 ] && [ "$waited" -ge "$max_wait_sec" ]; then
+			log "[OPENCODE:${label}] opencode slot wait exceeded ${max_wait_sec}s${owner_summary:+ (${owner_summary})}" >&2
+			OPENCODE_RUN_LOCK_LAST_TOKEN=""
+			return 124
 		fi
 		sleep "$wait_sec"
 		waited=$((waited + wait_sec))

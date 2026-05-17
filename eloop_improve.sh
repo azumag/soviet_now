@@ -68,7 +68,7 @@ _improve_progress() {
 	export RUN_CMD_IMPROVE_DETAIL="$detail"
 	export RUN_CMD_IMPROVE_STARTED_AT="$IMPROVE_STARTED_AT"
 	export RUN_CMD_IMPROVE_PID_BIRTH_EPOCH="$IMPROVE_BIRTH_EPOCH"
-	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH"
+	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH" "${IMPROVE_REASON:-normal}"
 	_improve_audio_summary_maybe "$phase" "$progress" "$detail" >/dev/null 2>&1 || true
 }
 
@@ -82,7 +82,7 @@ _improve_audio_summary_maybe() {
 	command -v enqueue_audio_text >/dev/null 2>&1 || return 0
 	local phase="${1:-}" progress="${2:-0}" detail="${3:-}" now last_ts last_phase due state_file interval text
 	state_file="${IMPROVE_AUDIO_SUMMARY_STATE_FILE:-tmp/state/improve_audio_summary_last.json}"
-	interval="${IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC:-300}"
+	interval="${IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC:-900}"
 	now=$(date +%s)
 	read -r last_ts last_phase <<EOF
 $(python3 - "$state_file" <<'PY' 2>/dev/null
@@ -200,6 +200,13 @@ raise SystemExit(0 if (after_nodes - before_nodes) else 1)
 PY
 }
 
+_implementation_self_report_rejects_change() {
+	local log_file="${1:-$RUN_CMD_LOG_FILE}"
+	[ -s "$log_file" ] || return 1
+	tail -n 120 "$log_file" 2>/dev/null |
+		grep -Eqi 'redundant|does not change behavior|harmless but unnecessary|no[ -]?op|冗長|挙動が変わらない|挙動を変えない|無挙動|不要'
+}
+
 _validate_review_verdict() {
 	local review_result_file="${1:-tmp/review_result.md}"
 	local user_review_file="${2:-data/user_review.md}"
@@ -306,6 +313,65 @@ PY
 		return 1
 	fi
 	return 0
+}
+
+_repair_review_verdict_file() {
+	local review_result_file="${1:-tmp/review_result.md}"
+	local analysis_file="${2:-tmp/analysis_result.md}"
+	local staging_file="${3:-strategy.py.staging}"
+	local repair_prompt_file
+	repair_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/review_verdict_repair.XXXXXX.md") || return 1
+	cat >"$repair_prompt_file" <<'EOF'
+あなたはソ連ゲーム戦略のレビュー判定ファイル修復AIです。
+
+目的:
+- 既存レビューが `tmp/review_result.md` に必須の verdict を書き漏らした場合だけ、そのファイルを完成させる。
+- `strategy.py.staging` や `strategy_helpers/` は絶対に編集しない。
+
+必ず行うこと:
+1. `tmp/analysis_result.md`、`strategy.py`、`strategy.py.staging`、`data/mandatory_themes.txt`、存在する場合は `data/user_review.md` を読む。
+2. `tmp/review_result.md` があれば読む。なければ新規作成する。
+3. `tmp/review_result.md` に次の両方を必ず含める。
+   - `## VERDICT: PASS` または `## VERDICT: FAIL`
+   - fenced block の `review_verdict` JSON
+
+出力ファイル形式:
+
+# Strategy Review Result
+
+## VERDICT: PASS
+
+```review_verdict
+{
+  "verdict": "PASS",
+  "user_review_satisfied": true,
+  "summary": "PASS理由を1文で書く",
+  "unresolved_items": []
+}
+```
+
+FAILの場合は `## VERDICT: FAIL` とし、`verdict` を `"FAIL"`、`unresolved_items` に具体的な未解決項目を書く。
+
+重要:
+- `strategy.py.staging` は編集禁止。
+- レビュー本文を会話に出すだけでは失敗。必ず `tmp/review_result.md` を Write/Edit する。
+- `data/user_review.md` が存在して非空の場合、満たしているとコード条件で説明できるときだけ `user_review_satisfied: true`。
+EOF
+	local prev_timeout="${RUN_CMD_TIMEOUT_SEC-}"
+	RUN_CMD_TIMEOUT_SEC="${IMPROVE_REVIEW_VERDICT_REPAIR_TIMEOUT_SEC:-300}"
+	export RUN_CMD_TIMEOUT_SEC
+	run_ai "REVIEW-VERDICT-REPAIR" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
+		"$repair_prompt_file" "$review_result_file" \
+		"$analysis_file" "$staging_file" "strategy.py" "data/mandatory_themes.txt" "data/user_review.md"
+	local rc=$?
+	if [ -n "$prev_timeout" ]; then
+		RUN_CMD_TIMEOUT_SEC="$prev_timeout"
+		export RUN_CMD_TIMEOUT_SEC
+	else
+		unset RUN_CMD_TIMEOUT_SEC
+	fi
+	rm -f "$repair_prompt_file" 2>/dev/null || true
+	return "$rc"
 }
 
 _helpers_tree_changed() {
@@ -661,6 +727,312 @@ except Exception:
 	_improve_progress "done" "100" "wildcard_complete"
 	log "[WILDCARD] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
 	exit 0
+fi
+
+# archive_restart は Codex/AI が strategy.py 本文を編集せず、既存評価済み
+# アーカイブから near-anchor かつ目的進捗のある別 basin を再投入する。
+if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
+	log "[ARCHIVE-RESTART] 過去版アーカイブから大域脱出候補を選定"
+	_improve_progress "archive_restart" "20" "selecting_archive_candidate"
+	archive_restart_json=$(python3 - \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+		"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" \
+		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
+		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
+		"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+		"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" \
+		"${ARCHIVE_RESTART_MIN_COMP_RATIO:-0.92}" \
+		"${ARCHIVE_RESTART_MAX_CANDIDATES:-24}" \
+		"${MIN_GAMES_FOR_BEST_ROLLBACK:-12}" \
+		"${ARCHIVE_RESTART_MIN_BEST_TYPE:-14}" <<'PY' 2>/dev/null || true
+import json
+import math
+import os
+import sys
+import time
+
+rolling_file, anchor_file, archive_dir, rejected_file, origin_file, cooldown_file, min_ratio_raw, max_candidates_raw, min_games_raw, min_best_type_raw = sys.argv[1:11]
+
+def load(path, default):
+    try:
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+                return data if data is not None else default
+    except Exception:
+        pass
+    return default
+
+def as_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def as_float(value, default):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def quantile(vals, p):
+    xs = sorted(int(x) for x in vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    xs = []
+    for raw in scores or []:
+        try:
+            xs.append(int(raw))
+        except Exception:
+            pass
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    std = math.sqrt(sum((x - mean) ** 2 for x in xs) / n) if n > 1 else 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {"comp": comp, "p50": p50, "p25": p25, "lcb": lcb, "n": n}
+
+def archive_is_runtime_stable(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return "BEGIN DEADLINE GUARD" in f.read(200000)
+    except Exception:
+        return False
+
+rolling = load(rolling_file, {})
+anchor = load(anchor_file, {})
+rejected = load(rejected_file, {})
+origin = load(origin_file, {})
+cooldown = load(cooldown_file, {})
+min_games = max(1, as_int(min_games_raw, 12))
+max_candidates = max(1, as_int(max_candidates_raw, 24))
+min_ratio = max(0.0, min(1.0, as_float(min_ratio_raw, 0.92)))
+min_best_type = max(0, as_int(min_best_type_raw, 14))
+anchor_hash = str(anchor.get("hash", "") or "")
+anchor_comp = as_float(anchor.get("comp", 0.0), 0.0)
+anchor_russia = as_int(anchor.get("russia_count", 0), 0)
+anchor_soviet = as_int(anchor.get("soviet_count", 0), 0)
+if anchor_comp <= 0:
+    anchor_metrics = metrics((rolling.get(anchor_hash) or {}).get("scores", []))
+    anchor_comp = anchor_metrics["comp"] if anchor_metrics else 0.0
+threshold = anchor_comp * min_ratio if anchor_comp > 0 else 0.0
+now = int(time.time())
+rows = []
+for h, entry in (rolling or {}).items():
+    h = str(h)
+    if not h or h == anchor_hash:
+        continue
+    if h in rejected:
+        continue
+    if h in origin:
+        continue
+    if h in cooldown:
+        continue
+    path = os.path.join(archive_dir, f"{h}.py")
+    if not os.path.exists(path):
+        continue
+    if not archive_is_runtime_stable(path):
+        continue
+    m = metrics((entry or {}).get("scores", []))
+    if not m or m["n"] < min_games:
+        continue
+    if m["comp"] < threshold:
+        continue
+    russia = as_int((entry or {}).get("russia_count", 0), 0)
+    soviet = as_int((entry or {}).get("soviet_count", 0), 0)
+    best_type = as_int((entry or {}).get("best_max_type", 0), 0)
+    if anchor_soviet > 0 and soviet <= 0:
+        continue
+    if anchor_russia > 0 and russia <= 0:
+        continue
+    # archive_restart is an objective escape mechanism, not a plain score
+    # sampler. Avoid spending escape attempts on old hashes with no recorded
+    # high-type/Russia progress even when their composite is near-anchor.
+    if min_best_type > 0 and russia <= 0 and soviet <= 0 and best_type < min_best_type:
+        continue
+    objective_bonus = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
+    p25_bonus = float(m["p25"]) * 0.08
+    score = objective_bonus + p25_bonus + float(m["comp"])
+    rows.append((score, m["comp"], m["p50"], m["p25"], m["n"], russia, soviet, best_type, h, path))
+rows.sort(reverse=True)
+if not rows:
+    print(json.dumps({"ok": False, "reason": "no_candidate", "threshold": threshold, "anchor_hash": anchor_hash, "anchor_comp": anchor_comp, "min_best_type": min_best_type}, ensure_ascii=False))
+    raise SystemExit(0)
+score, comp, p50, p25, n, russia, soviet, best_type, h, path = rows[0]
+print(json.dumps({
+    "ok": True,
+    "hash": h,
+    "path": path,
+    "comp": comp,
+    "p50": p50,
+    "p25": p25,
+    "n": n,
+    "russia_count": russia,
+    "soviet_count": soviet,
+    "best_max_type": best_type,
+    "anchor_hash": anchor_hash,
+    "anchor_comp": anchor_comp,
+    "threshold": threshold,
+    "min_best_type": min_best_type,
+    "candidate_count": min(len(rows), max_candidates),
+    "selected_at_epoch": now,
+}, ensure_ascii=False))
+PY
+)
+	archive_restart_ok=$(echo "$archive_restart_json" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('ok') else '0')" 2>/dev/null || echo 0)
+	if [ "$archive_restart_ok" != "1" ]; then
+		log "[ARCHIVE-RESTART] candidate not found: ${archive_restart_json:-empty}"
+		no_candidate_marker="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-tmp/state/.archive_restart_no_candidate}"
+		mkdir -p "$(dirname "$no_candidate_marker")" 2>/dev/null || true
+		printf '%s\n' "${archive_restart_json:-empty}" >"$no_candidate_marker" 2>/dev/null || true
+		if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			log "[ARCHIVE-RESTART] 候補枯渇 → escape_ai へフォールバック"
+			IMPROVE_REASON="escape_ai"
+			export IMPROVE_REASON
+			_improve_progress "escape_ai" "25" "archive_no_candidate_fallback"
+		else
+			_improve_progress "archive_restart_fail" "100" "no_archive_candidate"
+			exit 1
+		fi
+	fi
+	if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
+	archive_restart_hash=$(echo "$archive_restart_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hash',''))" 2>/dev/null || echo "")
+	archive_restart_path=$(echo "$archive_restart_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('path',''))" 2>/dev/null || echo "")
+	[ -n "$archive_restart_hash" ] && [ -f "$archive_restart_path" ] || {
+		log "[ARCHIVE-RESTART] invalid selected candidate: ${archive_restart_json:-empty}"
+		_improve_progress "archive_restart_fail" "100" "invalid_archive_candidate"
+		exit 1
+	}
+	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
+	cp "$archive_restart_path" "strategy.py.staging"
+	if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
+		log "[ARCHIVE-RESTART] validation failed → abort"
+		rm -f "strategy.py.staging"
+		_improve_progress "archive_restart_validate_fail" "100" "invalid_archive_candidate"
+		exit 1
+	fi
+	cp "strategy.py.staging" "$STRATEGY_FILE"
+	rm -f "strategy.py.staging"
+	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	if [ -z "$HASH_AFTER" ] || [ "$HASH_AFTER" = "$HASH_BEFORE" ]; then
+		log "[ARCHIVE-RESTART] no effective hash change selected=${archive_restart_hash} actual=${HASH_AFTER:-empty}"
+		cp "tmp/revert_strategy.py" "$STRATEGY_FILE" 2>/dev/null || true
+		_improve_progress "archive_restart_fail" "100" "no_effective_hash_change"
+		exit 1
+	fi
+	if [ "$HASH_AFTER" != "$archive_restart_hash" ]; then
+		log "[ARCHIVE-RESTART] selected hash normalized by validation: selected=${archive_restart_hash} actual=${HASH_AFTER}"
+		archive_restart_json=$(ARCHIVE_RESTART_JSON="$archive_restart_json" python3 - "$HASH_AFTER" "$archive_restart_hash" <<'PY' 2>/dev/null || printf '%s' "$archive_restart_json"
+import json
+import os
+import sys
+
+actual_hash, selected_hash = sys.argv[1:3]
+data = json.loads(os.environ.get("ARCHIVE_RESTART_JSON", "{}") or "{}")
+data["selected_hash"] = selected_hash
+data["hash"] = actual_hash
+data["hash_normalized_by_validation"] = True
+print(json.dumps(data, ensure_ascii=False))
+PY
+)
+	fi
+	ARCHIVE_RESTART_JSON="$archive_restart_json" python3 - \
+		"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+		"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" \
+		"$HASH_AFTER" "${ARCHIVE_RESTART_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+origin_file, cooldown_file, h, max_games, game_num = sys.argv[1:6]
+selected = json.loads(os.environ.get("ARCHIVE_RESTART_JSON", "{}") or "{}")
+source_hash = str(selected.get("selected_hash") or selected.get("source_hash") or selected.get("hash") or h)
+now = int(time.time())
+try:
+    origin = json.load(open(origin_file, encoding="utf-8")) if os.path.exists(origin_file) else {}
+except Exception:
+    origin = {}
+origin[h] = {
+    "origin_type": "archive_restart",
+    "created_at_game": int(game_num or 0),
+    "created_at_epoch": now,
+    "patience_override": 1,
+    "max_games_override": int(max_games),
+    "source_hash": source_hash,
+    "source_comp": selected.get("comp"),
+    "source_p50": selected.get("p50"),
+    "source_p25": selected.get("p25"),
+    "source_n": selected.get("n"),
+    "source_russia_count": selected.get("russia_count"),
+    "source_soviet_count": selected.get("soviet_count"),
+    "source_best_max_type": selected.get("best_max_type"),
+}
+os.makedirs(os.path.dirname(origin_file) or ".", exist_ok=True)
+tmp = origin_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(origin, f, ensure_ascii=False)
+os.replace(tmp, origin_file)
+try:
+    cooldown = json.load(open(cooldown_file, encoding="utf-8")) if os.path.exists(cooldown_file) else {}
+except Exception:
+    cooldown = {}
+cooldown[h] = {"epoch": now, "game": int(game_num or 0), "reason": "archive_restart"}
+if source_hash:
+    cooldown[source_hash] = {"epoch": now, "game": int(game_num or 0), "reason": "archive_restart_source"}
+os.makedirs(os.path.dirname(cooldown_file) or ".", exist_ok=True)
+tmp = cooldown_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cooldown, f, ensure_ascii=False)
+os.replace(tmp, cooldown_file)
+PY
+	python3 - "${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" "$HASH_AFTER" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+
+out_file, h = sys.argv[1:3]
+payload = {
+    "hash": h,
+    "scores": [],
+    "games_total": 0,
+    "_recent_archives": [],
+    "frontier_hints": [],
+    "peak_high_type_counts": [],
+    "deadline_guard_counts": [],
+    "deadline_guard_reason_tops": [],
+}
+os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f)
+PY
+	{
+		echo
+		echo "## archive restart @ game #${GAME_NUM_SNAPSHOT}"
+		echo "$archive_restart_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'- selected {d[\"hash\"]}: comp={d[\"comp\"]:.1f} p50={d[\"p50\"]:.1f} p25={d[\"p25\"]:.1f} n={d[\"n\"]} russia={d.get(\"russia_count\",0)} soviet={d.get(\"soviet_count\",0)} best_type={d.get(\"best_max_type\",0)} anchor={d.get(\"anchor_hash\",\"\")[:8]} comp={d.get(\"anchor_comp\",0):.1f}')" 2>/dev/null
+	} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+	_improve_progress "git_commit" "90" "archive_restart_commit"
+	git add strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
+	git commit -m "eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+	git push 2>/dev/null || true
+	_improve_progress "done" "100" "archive_restart_complete"
+	log "[ARCHIVE-RESTART] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER} source=${archive_restart_hash}"
+	exit 0
+fi
 fi
 
 # バッチサマリー生成
@@ -1327,6 +1699,9 @@ manifest_file="tmp/sandbox_files.md"
 	echo "## サンドボックス内の利用可能ファイル"
 	echo "以下のファイルは全て読み取り可能。改善前に必ず目録として確認すること。"
 	echo "この目録は全件読破のためではなく、最短で必要ファイルへ到達するための索引として使うこと。"
+	echo "sandbox は編集・レビュー用の最小環境であり、追加のバッチ実行環境ではない。"
+	echo "tmp/batch_summary.txt はホスト側で生成済みの検証入力なので、README/Makefile/*.sh や新しい実行コマンドを探索し続けないこと。"
+	echo "実装後の通過条件は strategy.py.staging と strategy_helpers の静的検証、および後段の Stage 3 review verdict で確認される。"
 	echo ""
 	echo "### 必須参照ファイル（固定）"
 	echo '- tmp/improve_brief.md — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
@@ -1405,6 +1780,15 @@ if [ "$sandbox_ready" = true ]; then
 fi
 
 if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
+	cat >README.md <<'EOF' 2>/dev/null || true
+# Soren Improve Sandbox
+
+This sandbox is a minimal strategy edit/review workspace.
+
+- `tmp/batch_summary.txt` is already generated by the host and is the batch evidence for this run.
+- Do not search for README/Makefile/*.sh or additional batch runner commands.
+- Implement only `strategy.py.staging` and optional `strategy_helpers/` changes, then let the host static validation and Stage 3 review verdict decide pass/fail.
+EOF
 	mkdir -p "$PWD/$TMP_STATE_DIR" 2>/dev/null || true
 	SANDBOX_TOPLEVEL_PY_BASELINE=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_sandbox_py.XXXXXX" 2>/dev/null || echo "")
 	if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
@@ -1420,16 +1804,18 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	[ -f "$SANDBOX_HELPERS_BASELINE_DIR/__init__.py" ] || : >"$SANDBOX_HELPERS_BASELINE_DIR/__init__.py"
 	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
 	RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
-	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
-	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-3600}"
-	RUN_CMD_HEARTBEAT_INTERVAL_SEC="${IMPROVE_RUN_CMD_HEARTBEAT_INTERVAL_SEC:-30}"
-	RUN_CMD_TOUCH_IMPROVE_STATE=1
-	export RUN_CMD_SESSION_DIR
-	export RUN_CMD_TMP_DIR
-	export RUN_CMD_OPENCODE_PERMISSION
-	export RUN_CMD_TIMEOUT_SEC
-	export RUN_CMD_HEARTBEAT_INTERVAL_SEC
-	export RUN_CMD_TOUCH_IMPROVE_STATE
+		RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
+		RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"
+		RUN_CMD_HEARTBEAT_INTERVAL_SEC="${IMPROVE_RUN_CMD_HEARTBEAT_INTERVAL_SEC:-30}"
+		OPENCODE_RUN_LOCK_MAX_WAIT_SEC="${IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC:-180}"
+		RUN_CMD_TOUCH_IMPROVE_STATE=1
+		export RUN_CMD_SESSION_DIR
+		export RUN_CMD_TMP_DIR
+		export RUN_CMD_OPENCODE_PERMISSION
+		export RUN_CMD_TIMEOUT_SEC
+		export RUN_CMD_HEARTBEAT_INTERVAL_SEC
+		export OPENCODE_RUN_LOCK_MAX_WAIT_SEC
+		export RUN_CMD_TOUCH_IMPROVE_STATE
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
 	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 	HOST_INTEGRITY_BEFORE_FILE=$(mktemp "$HOST_ROOT/$TMP_STATE_DIR/host_integrity_before.XXXXXX" 2>/dev/null || echo "")
@@ -1439,7 +1825,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	fresh_retry=1
 	continue_retry=0
 	_consecutive_empty=0
-	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-7200}"
+	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-3600}"
 	_improve_wall_start=$(date +%s)
 
 	# --- Stage 1: 分析フェーズ ---
@@ -1537,6 +1923,18 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 					break
 				}
 			fi
+			if [ "$_run_ai_rc" -eq 0 ] && _implementation_self_report_rejects_change "$RUN_CMD_LOG_FILE"; then
+				VALIDATE_ERROR="AI実装が冗長または挙動が変わらない変更と自己申告した。レビューへ進めず、実効性のある別変更に修正せよ。"
+				_improve_note "implementation self-report rejected (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
+				continue
+			fi
 		else
 			# continue fix内でもウォールタイムチェック
 			_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
@@ -1552,10 +1950,15 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			fix_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_fix_prompt.XXXXXX")
 			export VALIDATE_ERROR
 			envsubst '${VALIDATE_ERROR}' <"$ELOOP_LIB_DIR/prompts/fix_validation.md" >"$fix_prompt_file"
+			_prev_run_cmd_timeout="$RUN_CMD_TIMEOUT_SEC"
+			RUN_CMD_TIMEOUT_SEC="${IMPROVE_FIX_CMD_TIMEOUT_SEC:-600}"
+			export RUN_CMD_TIMEOUT_SEC
 			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 			_fix_rc=$?
+			RUN_CMD_TIMEOUT_SEC="$_prev_run_cmd_timeout"
+			export RUN_CMD_TIMEOUT_SEC
 			rm -f "$fix_prompt_file"
 			if [ "$_fix_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
@@ -1782,6 +2185,23 @@ ${helpers_diff}"
 			_improve_note "Stage3: review did not mutate staging"
 		fi
 		if ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
+			if printf '%s' "${VALIDATE_ERROR:-}" | grep -qi "review verdict missing"; then
+				_improve_note "Stage3: review verdict missing → repair verdict file"
+				if _repair_review_verdict_file "$REVIEW_RESULT_FILE" "$ANALYSIS_RESULT_FILE" "$STAGING_FILE" &&
+					_validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
+					_improve_note "Stage3: review verdict repaired"
+				else
+					log "[IMPROVE] Stage 3 レビュー判定修復失敗: ${VALIDATE_ERROR:-unknown}"
+					_improve_note "Stage3: review verdict repair failed: ${VALIDATE_ERROR:0:160}"
+					improve_ok=false
+				fi
+			else
+				log "[IMPROVE] Stage 3 レビュー判定: FAIL → 適用中止"
+				_improve_note "Stage3: review verdict rejected apply: ${VALIDATE_ERROR:0:160}"
+				improve_ok=false
+			fi
+		fi
+		if $improve_ok && ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
 			log "[IMPROVE] Stage 3 レビュー判定: FAIL → 適用中止"
 			_improve_note "Stage3: review verdict rejected apply: ${VALIDATE_ERROR:0:160}"
 			improve_ok=false
