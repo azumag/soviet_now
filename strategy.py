@@ -65,7 +65,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+      # v587: NEXT_PREPARE_MERGE — when next_type matches current piece type and no merge available,
+      # score landing positions by proximity to existing same-type pieces.
+      # Hypothesis: by preparing for next-piece merges before they arrive, the board has more merge
+      # opportunities active, reducing merge drought frequency and DEADLINE_GUARD thrashing.
+      # Implements mandatory theme: "NEXTを考慮したドロップをせよ" (Consider NEXT piece for drops).
+      # Fixes failure mode: "merge drought spiral from not preparing for NEXT piece merges"
+      # (game2015 T78-89: 8 turns of visual_deadline_same_country despite same-type pieces on board).
+      # refs: tmp/analysis_result.md
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -1408,6 +1416,53 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
+
+        # ----- v587: axis 9.65 — NEXT_PREPARE_MERGE -----
+        # When next_type matches current piece type AND no immediate merge available,
+        # prepare for the upcoming merge by placing near existing same-type pieces.
+        #
+        # Hypothesis (from analysis_result.md):
+        # - Game 2015 T78-89: 8 consecutive turns of NO_MERGE despite same-type pieces on board
+        #   (type 13, 12, 11, 10). No pre-positioning for the next piece that would create merge.
+        # - Game 2015 T118: next_type=11, chose NO_MERGE, ignoring that type 11 pieces on board
+        #   could merge after the next type 11 arrives.
+        # - Game 1851 T52-T55: next_type=8, chose merge with type 10 pieces, not preparing
+        #   for the two type 8s coming.
+        #
+        # How it works:
+        # - Detects: merge_grade=="NO" AND next_type == current_piece_type
+        # - Finds nearest same-type piece on board
+        # - Adds bonus: nearest_same_type_distance * -500.0 (closer = higher score)
+        # - Reason: NEXT_PREPARE_MERGE
+        #
+        # Why this addresses RC-1/RC-2/RC-4:
+        # - RC-1 (guard thrashing): More pre-positioned merges = fewer drought = fewer guard fires
+        # - RC-2 (drought spiral): Clustering same-type proactively for NEXT creates merge opportunities
+        # - RC-4 (edge placement): Prefers positions near same-type pieces, counteracting edge bias
+        #
+        # Safety: Only fires when merge_grade=="NO" (doesn't compete with actual merge opportunities)
+        # Mandatory theme: "NEXTを考慮したドロップをせよ" — directly implements this requirement
+        #
+        # refs: tmp/analysis_result.md (NEXT_PREPARE_MERGE hypothesis),
+        #       mandatory_themes.txt (NEXTを考慮したドロップをせよ),
+        #       game_history/20260517_195743_score2015.jsonl (T78-89 drought pattern),
+        #       game_history/20260517_195248_score1851.jsonl (T52-T55 next-type pattern)
+        # v587: only fire when same_type_stack_top is None — 9.6b handles the case where
+        # same-type pieces exist (no need for additional clustering bonus there)
+        if merge_grade == "NO" and same_type_stack_top is None:
+            same_type_on_board = [p for p in pieces if p.get("type") == next_type]
+            if same_type_on_board:
+                nearest_dist = float("inf")
+                for sp in same_type_on_board:
+                    sp_x = sp.get("x", 0)
+                    sp_y = sp.get("y", -10)
+                    dist = ((x - sp_x) ** 2 + (landing_y - sp_y) ** 2) ** 0.5
+                    if dist < nearest_dist:
+                        nearest_dist = dist
+                if nearest_dist < float("inf"):
+                    prepare_bonus = nearest_dist * -500.0
+                    score += prepare_bonus
+                    reasons.append("NEXT_PREPARE_MERGE")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
