@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-17 17:10:15 JST`
-- Nodes: `1550`
-- Edges: `2009`
-- Current: `89c436411f12`
+- Updated: `2026-05-17 17:29:52 JST`
+- Nodes: `1551`
+- Edges: `2010`
+- Current: `f2628f6f164a`
 - Anchor: `1aa464cc23d4`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,8 +16,6 @@
 ```mermaid
 flowchart TD
     h_1aa464cc23d4["1aa464cc23d4<br/>ANCHOR<br/>g=36 n=20<br/>comp=12185.6"]
-    h_89c436411f12["89c436411f12<br/>CURRENT<br/>g=55 n=20<br/>comp=9923.4"]
-    h_e75542ef3a84["e75542ef3a84<br/>g=1 n=1<br/>comp=14015.0"]
     h_78c5c9b64fef["78c5c9b64fef<br/>g=1 n=1<br/>comp=10714.0"]
     h_45a778460147["45a778460147<br/>g=1 n=1<br/>comp=7759.0"]
     h_4bec68bcc907["4bec68bcc907<br/>g=1 n=1<br/>comp=11107.0"]
@@ -77,9 +75,8 @@ flowchart TD
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
     h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
     h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
+    h_f2628f6f164a["f2628f6f164a<br/>CURRENT"]
 
-    h_1aa464cc23d4 -->|improve| h_89c436411f12
-    h_89c436411f12 -. rollback .-> h_1aa464cc23d4
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -87,8 +84,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_1aa464cc23d4 anchor;
-    class h_89c436411f12 current;
-    class h_e75542ef3a84 plain;
     class h_78c5c9b64fef plain;
     class h_45a778460147 plain;
     class h_4bec68bcc907 plain;
@@ -148,6 +143,7 @@ flowchart TD
     class h_a023de98b324 plain;
     class h_4095e6bf3d05 plain;
     class h_8c879f841357 plain;
+    class h_f2628f6f164a current;
 ```
 
 ## Detail 1/20
@@ -5246,11 +5242,11 @@ flowchart TD
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `... and 5 more`
+- Cross-chunk link: `... and 6 more`
 
 ```mermaid
 flowchart TD
-    h_89c436411f12["89c436411f12<br/>CURRENT<br/>g=55 n=20<br/>comp=9923.4"]
+    h_89c436411f12["89c436411f12<br/>g=56 n=20<br/>comp=9926.5"]
     h_05b0591ef25b["05b0591ef25b<br/>g=12 n=12<br/>comp=11055.2"]
     h_84a9fab96145["84a9fab96145<br/>g=12 n=12<br/>comp=11401.8"]
     h_b0a2a468a1c7["b0a2a468a1c7<br/>g=12 n=12<br/>comp=10641.0"]
@@ -5350,7 +5346,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_89c436411f12 current;
+    class h_89c436411f12 plain;
     class h_05b0591ef25b plain;
     class h_84a9fab96145 plain;
     class h_b0a2a468a1c7 plain;
@@ -5434,10 +5430,11 @@ flowchart TD
 
 ## Detail 20/20
 
-- Range: `5ec54d62d838` .. `8c879f841357`
-- Nodes in this diagram: `30`
+- Range: `5ec54d62d838` .. `f2628f6f164a`
+- Nodes in this diagram: `31`
 - Internal edges in this diagram: `0`
 - Cross-chunk link: `a3e3965087ab --improve--> 4095e6bf3d05`
+- Cross-chunk link: `89c436411f12 --improve--> f2628f6f164a`
 
 ```mermaid
 flowchart TD
@@ -5471,6 +5468,7 @@ flowchart TD
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
     h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
     h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
+    h_f2628f6f164a["f2628f6f164a<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5508,9 +5506,36 @@ flowchart TD
     class h_a023de98b324 plain;
     class h_4095e6bf3d05 plain;
     class h_8c879f841357 plain;
+    class h_f2628f6f164a current;
 ```
 
 ## Transition Notes
+
+### Improve Game#25604 `89c43641 -> f2628f6f`
+
+- scores: `11271`
+- v591: axis 9.8b — merge drought type 13-14 growth pipeline guidance
+- When merge drought fires AND same_type_stack_top.type>=10 AND next_type is 11-14,
+- guide placement toward same-type stack to build type 14→15→Russia pipeline.
+- Prevents DEADLINE_GUARD_SAFE_LANDING edge scatter from killing growth path.
+- Bonus +600, fires ONLY during merge drought (guidance_suppressed=true).
+- Fixes failure mode: merge drought中のsafe landing降至り続け → type 13→14成長経路喪失
+
+### Rollback Game#25604 `89c43641 -> 89c43641`
+
+- - rollback from 89c436411f12 to 89c436411f12 at game 25604
+- - reasons: objective_regression+lost_russia_path
+- - current comp/p50/p25=9926.5/10396.0/8982.5 vs target 9926.5/10396.0/8982.5
+- - bad recent scores: 10097 9010 12931 11370 8020 13420 11271 6622
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=9926.5 p50=10396.0 p25=8982.5 mean=10751.4 n=20
+- rollback_target: comp=9926.5 p50=10396.0 p25=8982.5 mean=10751.4 n=20
+- metric_gap_vs_target: comp=0.0 p50=0.0 p25=0.0 mean=0.0
+- recent12_avg: bad=10768.5 target=10768.5
+- recent12_floor: bad=6622 target=6622
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#25603 `89c43641 -> 89c43641`
 
