@@ -516,6 +516,7 @@ accumulate_game_data() {
 	python3 -c "
 import json, os
 acc_file = '$ACCUMULATED_GAMES_FILE'
+archive_file = '$archive_file'
 if os.path.exists(acc_file):
     with open(acc_file) as f:
         acc = json.load(f)
@@ -529,7 +530,7 @@ elif curr_hash:
     acc['hash'] = curr_hash
 
 raw_score = os.environ.get('LAST_RAW_SCORE', '')
-acc['files'].append('$archive_file')
+acc['files'].append(archive_file)
 acc['scores'] = (acc['scores'] + ' $score').strip()
 if raw_score:
     acc['raw_scores'] = (acc.get('raw_scores', '') + ' ' + raw_score).strip()
@@ -539,10 +540,135 @@ if '$russia' == 'true':
     acc['russia_count'] = acc.get('russia_count', 0) + 1
 acc['count'] += 1
 
+def summarize_archive(path):
+    max_type = 0
+    peak_type_counts = {}
+    deadline_guard_count = 0
+    if not path or not os.path.exists(path):
+        return max_type, 'no-high-type', 'none', deadline_guard_count
+    try:
+        with open(path, encoding='utf-8', errors='ignore') as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if 'DEADLINE_GUARD' in str(row.get('decision_reason') or ''):
+                    deadline_guard_count += 1
+                pieces = ((row.get('state_snapshot') or {}).get('pieces') or [])
+                for piece in pieces:
+                    try:
+                        t = int(piece.get('type', 0) or 0)
+                    except Exception:
+                        continue
+                    max_type = max(max_type, t)
+                    if t >= 10:
+                        same_type_count = 0
+                        for p in pieces:
+                            try:
+                                if int((p or {}).get('type', 0) or 0) == t:
+                                    same_type_count += 1
+                            except Exception:
+                                pass
+                        peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
+    except Exception:
+        pass
+    peak_counts = ' '.join(f'T{t}x{peak_type_counts[t]}' for t in sorted(peak_type_counts, reverse=True)[:4]) or 'none'
+    frontier_hint = 'no-high-type'
+    if max_type >= 10:
+        frontier_hint = f'T{max_type}_peak={peak_type_counts.get(max_type, 0)} prev_T{max_type - 1}_peak={peak_type_counts.get(max_type - 1, 0)}'
+    return max_type, frontier_hint, peak_counts, deadline_guard_count
+
+max_type, frontier_hint, peak_counts, deadline_guard_count = summarize_archive(archive_file)
+acc.setdefault('max_types', []).append(max_type)
+acc.setdefault('frontier_hints', []).append(frontier_hint)
+acc.setdefault('peak_high_type_counts', []).append(peak_counts)
+acc.setdefault('deadline_guard_counts', []).append(deadline_guard_count)
+acc['best_max_type'] = max([int(acc.get('best_max_type', 0) or 0), max_type])
+acc['deadline_guard_total'] = int(acc.get('deadline_guard_total', 0) or 0) + deadline_guard_count
+
 with open(acc_file, 'w') as f:
     json.dump(acc, f)
 print(f'[ACCUMULATE] 蓄積: {acc[\"count\"]}試合')
 " 2>/dev/null
+}
+
+enrich_accumulated_game_metadata() {
+	local target_file="${1:-$ACCUMULATED_GAMES_FILE}"
+	[ -f "$target_file" ] || return 0
+	python3 - "$target_file" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+target = sys.argv[1]
+try:
+    data = json.load(open(target, encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+files = [str(x) for x in data.get("files", []) or []]
+if not files:
+    raise SystemExit(0)
+
+def summarize_archive(path):
+    max_type = 0
+    peak_type_counts = {}
+    deadline_guard_count = 0
+    if not path or not os.path.exists(path):
+        return max_type, "no-high-type", "none", deadline_guard_count
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                if "DEADLINE_GUARD" in str(row.get("decision_reason") or ""):
+                    deadline_guard_count += 1
+                pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+                for piece in pieces:
+                    try:
+                        t = int(piece.get("type", 0) or 0)
+                    except Exception:
+                        continue
+                    max_type = max(max_type, t)
+                    if t >= 10:
+                        same_type_count = 0
+                        for p in pieces:
+                            try:
+                                if int((p or {}).get("type", 0) or 0) == t:
+                                    same_type_count += 1
+                            except Exception:
+                                pass
+                        peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
+    except Exception:
+        pass
+    peak_counts = " ".join(f"T{t}x{peak_type_counts[t]}" for t in sorted(peak_type_counts, reverse=True)[:4]) or "none"
+    frontier_hint = "no-high-type"
+    if max_type >= 10:
+        frontier_hint = f"T{max_type}_peak={peak_type_counts.get(max_type, 0)} prev_T{max_type - 1}_peak={peak_type_counts.get(max_type - 1, 0)}"
+    return max_type, frontier_hint, peak_counts, deadline_guard_count
+
+progress = [summarize_archive(path) for path in files]
+data["max_types"] = [item[0] for item in progress]
+data["frontier_hints"] = [item[1] for item in progress]
+data["peak_high_type_counts"] = [item[2] for item in progress]
+data["deadline_guard_counts"] = [item[3] for item in progress]
+data["best_max_type"] = max(data["max_types"] or [0])
+data["deadline_guard_total"] = sum(data["deadline_guard_counts"])
+
+tmp = target + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+os.replace(tmp, target)
+PY
 }
 
 _read_accumulated_data() {
@@ -592,6 +718,10 @@ payload = {
     "scores": [],
     "games_total": 0,
     "_recent_archives": [],
+    "frontier_hints": [],
+    "peak_high_type_counts": [],
+    "deadline_guard_counts": [],
+    "deadline_guard_reason_tops": [],
 }
 with open(out_file, "w") as f:
     json.dump(payload, f)
@@ -631,6 +761,10 @@ payload = {
     "scores": scores[-20:],
     "games_total": int(entry.get("games_total", len(scores)) or len(scores)),
     "_recent_archives": recent_archives[-50:],
+    "frontier_hints": (entry.get("frontier_hints", []) or [])[-20:],
+    "peak_high_type_counts": (entry.get("peak_high_type_counts", []) or [])[-20:],
+    "deadline_guard_counts": (entry.get("deadline_guard_counts", []) or [])[-20:],
+    "deadline_guard_reason_tops": (entry.get("deadline_guard_reason_tops", []) or [])[-20:],
 }
 with open(out_file, "w") as f:
     json.dump(payload, f)
@@ -640,8 +774,9 @@ PY
 _update_current_strategy_run() {
 	local strategy_hash="$1" score="$2" archive_file="${3:-}"
 	[ -n "$strategy_hash" ] || return 1
-	local run_result=""
-	run_result=$(python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" "${CURRENT_RUN_SCORE_KEEP:-20}" "${HOT_STREAK_CURRENT_RUN_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" <<'PY' 2>/dev/null
+	local run_result="" run_err=""
+	run_err="${TMP_STATE_DIR:-tmp/state}/current_run_update.err"
+	run_result=$(python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" "${CURRENT_RUN_SCORE_KEEP:-20}" "${HOT_STREAK_CURRENT_RUN_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$run_err" <<'PY'
 import json
 import os
 import sys
@@ -672,6 +807,10 @@ if run.get("hash") != strategy_hash:
         "scores": [],
         "games_total": 0,
         "_recent_archives": [],
+        "frontier_hints": [],
+        "peak_high_type_counts": [],
+        "deadline_guard_counts": [],
+        "deadline_guard_reason_tops": [],
     }
 
 recent_archives = run.get("_recent_archives", [])
@@ -693,8 +832,11 @@ def nation_progress(path):
     max_type = 0
     russia = False
     soviet = False
+    peak_type_counts = {}
+    deadline_guard_count = 0
+    deadline_guard_reasons = {}
     if not path or not os.path.exists(path):
-        return max_type, russia, soviet
+        return max_type, russia, soviet, "no-archive", "none", deadline_guard_count, "none"
     try:
         with open(path, encoding="utf-8", errors="ignore") as f:
             for raw in f:
@@ -705,6 +847,10 @@ def nation_progress(path):
                     row = json.loads(raw)
                 except Exception:
                     continue
+                if "DEADLINE_GUARD" in str(row.get("decision_reason") or ""):
+                    deadline_guard_count += 1
+                    reason = str(row.get("decision_reason") or "")
+                    deadline_guard_reasons[reason] = deadline_guard_reasons.get(reason, 0) + 1
                 if row.get("russia_created"):
                     russia = True
                 if row.get("soviet_created"):
@@ -717,13 +863,27 @@ def nation_progress(path):
                         continue
                     if t > max_type:
                         max_type = t
+                    if t >= 10:
+                        same_type_count = 0
+                        for p in pieces:
+                            try:
+                                if int((p or {}).get("type", 0) or 0) == t:
+                                    same_type_count += 1
+                            except Exception:
+                                pass
+                        peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
                     if t >= 15:
                         russia = True
                     if t >= 16:
                         soviet = True
     except Exception:
         pass
-    return max_type, russia, soviet
+    peak_counts = " ".join(f"T{t}x{peak_type_counts[t]}" for t in sorted(peak_type_counts, reverse=True)[:4]) or "none"
+    frontier_hint = "no-high-type"
+    if max_type >= 10:
+        frontier_hint = f"T{max_type}_peak={peak_type_counts.get(max_type, 0)} prev_T{max_type - 1}_peak={peak_type_counts.get(max_type - 1, 0)}"
+    guard_top = ", ".join(f"{name}x{count}" for name, count in sorted(deadline_guard_reasons.items(), key=lambda item: item[1], reverse=True)[:3]) or "none"
+    return max_type, russia, soviet, frontier_hint, peak_counts, deadline_guard_count, guard_top
 
 if archive_file:
     recent_archives.append(archive_file)
@@ -732,16 +892,20 @@ run["_recent_archives"] = recent_archives
 progress_archives = recent_archives[-len(run["scores"]):] if run["scores"] else []
 progress = [nation_progress(path) for path in progress_archives]
 run["max_types"] = [item[0] for item in progress]
-run["russia_count"] = sum(1 for _, russia_created, _ in progress if russia_created)
-run["soviet_count"] = sum(1 for _, _, soviet_created in progress if soviet_created)
+run["russia_count"] = sum(1 for item in progress if item[1])
+run["soviet_count"] = sum(1 for item in progress if item[2])
 run["best_max_type"] = max([int(run.get("best_max_type", 0) or 0)] + [item[0] for item in progress])
+run["frontier_hints"] = [item[3] for item in progress]
+run["peak_high_type_counts"] = [item[4] for item in progress]
+run["deadline_guard_counts"] = [item[5] for item in progress]
+run["deadline_guard_reason_tops"] = [item[6] for item in progress]
 
 with open(run_file, "w") as f:
     json.dump(run, f)
 
 print(f"{strategy_hash}|{len(run['scores'])}|{run['games_total']}|updated")
 PY
-)
+	)
 	if [ -n "$run_result" ]; then
 		local run_n="" run_total="" run_status=""
 		IFS='|' read -r strategy_hash run_n run_total run_status <<<"$run_result"
@@ -750,10 +914,12 @@ PY
 		else
 			log "[CURRENT-RUN] updated: hash=${strategy_hash} n=${run_n} total=${run_total} score=${score} file=${archive_file}"
 		fi
-	else
-		log "[CURRENT-RUN] update failed: hash=${strategy_hash} score=${score}"
-	fi
-}
+		else
+			log "[CURRENT-RUN] update failed: hash=${strategy_hash} score=${score}"
+			[ -s "$run_err" ] && log "[CURRENT-RUN] update stderr: $(tr '\n' ' ' <"$run_err" | cut -c1-500)"
+		fi
+		rm -f "$run_err" 2>/dev/null || true
+	}
 
 _is_rank1_hot_streak() {
 	local current_hash=""
@@ -895,6 +1061,10 @@ record_completed_game_for_adaptive_improvement() {
 			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
 		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
+	fi
+	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
+		./repair_current_run_from_history.sh "${CURRENT_RUN_AUTO_REPAIR_LIMIT:-12}" >/dev/null 2>&1 ||
+			log "[CURRENT-RUN] auto repair skipped/failed in adaptive bookkeeping"
 	fi
 
 	if ! _has_active_branch; then
@@ -1067,6 +1237,7 @@ trigger_adaptive_improvement() {
 
 	# ロックファイルから蓄積データを読む
 	local lock_data acc_count all_history_files all_scores any_soviet
+	enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 	lock_data=$(cat "$IMPROVE_LOCK_FILE" 2>/dev/null) || {
 		log "[IMPROVE] ロックファイル読み込み失敗 → スキップ"
 		rm -f "$IMPROVE_LOCK_FILE"
@@ -1086,7 +1257,7 @@ trigger_adaptive_improvement() {
 	local improve_reason="normal"
 	improve_reason=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('improve_reason','normal'))" 2>/dev/null || echo "normal")
 	case "$improve_reason" in
-	normal|post_regression|wildcard) ;;
+	normal|post_regression|wildcard|escape_ai) ;;
 	*) improve_reason="normal" ;;
 	esac
 	if [ "$improve_reason" = "post_regression" ]; then
@@ -1112,9 +1283,67 @@ try:
 except Exception:
     print(0)
 " 2>/dev/null || echo 0)
+		local wildcard_escape_streak
+		wildcard_escape_streak=$(python3 - \
+			"${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" \
+			"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+			"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" <<'PY' 2>/dev/null || echo 0
+import json
+import os
+import sys
+
+attempt_file, origin_file, rejected_file = sys.argv[1:4]
+
+def load(path, default):
+    try:
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return json.load(f) or default
+    except Exception:
+        pass
+    return default
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+attempt = load(attempt_file, {})
+origin = load(origin_file, {})
+rejected = load(rejected_file, {})
+streak = as_int(attempt.get("consecutive_wildcards", 0), 0)
+last_reset = as_int(attempt.get("last_reset_epoch", 0), 0)
+
+failed = []
+for h, meta in (origin or {}).items():
+    if h not in rejected:
+        continue
+    created = as_int((meta or {}).get("created_at_epoch", 0), 0)
+    updated = as_int((rejected.get(h) or {}).get("updated_at", 0), 0)
+    if last_reset and max(created, updated) <= last_reset:
+        continue
+    failed.append((created, updated, h))
+failed.sort(key=lambda item: (item[0], item[1]))
+
+if failed:
+    # Count recent rejected WILDCARD origins since the last success reset. This
+    # also reconstructs failures from WILDCARDs fired before attempt-state
+    # tracking existed, so the next escape can escalate instead of forgetting.
+    streak = max(streak, len(failed))
+
+print(streak)
+PY
+)
 		if [ "$stag" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ]; then
 			improve_reason="wildcard"
-			log "[WILDCARD] stagnation=$stag >= ${WILDCARD_TRIGGER_STAGNATION:-3} → wildcard モードで起動"
+			if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+				if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
+					improve_reason="escape_ai"
+					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → AI 構造変異モードで脱出"
+				fi
+			fi
+			log "[WILDCARD] stagnation=$stag >= ${WILDCARD_TRIGGER_STAGNATION:-3} → ${improve_reason} モードで起動"
 		elif [ "$rstreak" -ge "${WILDCARD_REGRESSION_STREAK:-4}" ]; then
 			# counter 非依存 回帰ストリーク経路 (OK_BEAT マスク回避)。
 			# churn 緩和: cooldown マーカ経過時のみ発火し発火時に更新。
@@ -1128,8 +1357,14 @@ except Exception:
 			fi
 			if [ "$_wccd_ok" -eq 1 ]; then
 				improve_reason="wildcard"
+				if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+					if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
+						improve_reason="escape_ai"
+						log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → AI 構造変異モードで脱出"
+					fi
+				fi
 				: >"$_wccd" 2>/dev/null || true
-				log "[WILDCARD] regression_streak=$rstreak >= ${WILDCARD_REGRESSION_STREAK:-4} (counter非依存) → wildcard モード起動 (cooldown ${_wccd_sec}s)"
+				log "[WILDCARD] regression_streak=$rstreak >= ${WILDCARD_REGRESSION_STREAK:-4} (counter非依存) → ${improve_reason} モード起動 (cooldown ${_wccd_sec}s)"
 			else
 				log "[WILDCARD] regression_streak=$rstreak だが cooldown 中 → 今回は通常改善 (churn緩和)"
 			fi

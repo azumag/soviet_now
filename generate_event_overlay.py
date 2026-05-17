@@ -75,6 +75,8 @@ html, body {{
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
   border-radius: 8px;
   overflow: hidden;
+}}
+.toast.fresh {{
   animation: slideIn 220ms ease-out;
 }}
 .bar {{ background: #8ab4ff; }}
@@ -129,6 +131,7 @@ html, body {{
 <script>
 const EVENTS = {payload};
 const VISIBLE_SEC = {visible_sec};
+const ANIMATE_MAX_AGE = 3;
 const now = Math.floor(Date.now() / 1000);
 const container = document.getElementById('toasts');
 function pad(n) {{ return String(n).padStart(2, '0'); }}
@@ -140,7 +143,8 @@ for (const ev of EVENTS.slice().reverse()) {{
   const age = now - Number(ev.ts || 0);
   if (age > VISIBLE_SEC) continue;
   const item = document.createElement('section');
-  item.className = `toast ${{ev.category || 'worker'}}`;
+  const fresh = age <= ANIMATE_MAX_AGE ? ' fresh' : '';
+  item.className = `toast ${{ev.category || 'worker'}}${{fresh}}`;
   item.innerHTML = `<div class="bar"></div><div class="content"><div class="head"><div class="title"></div><div class="time"></div></div><div class="body"></div></div>`;
   item.querySelector('.title').textContent = ev.title || ev.category || 'event';
   item.querySelector('.time').textContent = timeLabel(Number(ev.ts || now));

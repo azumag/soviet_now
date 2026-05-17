@@ -2176,7 +2176,10 @@ RETRYCOMMENT
 			comment_model_used="$attempt_model"
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
 			if [ -x ./overlay_notify.sh ]; then
-				./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} batch=${comment_batch_hash:-none}" "info" >/dev/null 2>&1 || true
+				local _ov_reply
+				_ov_reply=$(printf '%s' "$comments_talk" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //')
+				[ "${#_ov_reply}" -gt 90 ] && _ov_reply="${_ov_reply:0:90}…"
+				./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} attempt=${attempt}/${comment_retry_max} batch=${comment_batch_hash:-none}${_ov_reply:+ | 返信:${_ov_reply}}" "info" >/dev/null 2>&1 || true
 			fi
 			generation_ok=true
 			break

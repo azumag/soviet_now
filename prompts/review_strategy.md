@@ -47,10 +47,13 @@
 - **FAIL**: 1つ以上のチェックが失敗
 
 ## 出力指示（必須）
-- 作業ディレクトリは sandbox ルートであり、**`tmp/review_result.md` は既に存在し、書き込み可能** です
-- レビュー結果を **`tmp/review_result.md`** に書くこと
-- `Write` / `Edit` / `MultiEdit` のうち使える手段でよい。`Write` が権限エラーを返した場合は、**既存ファイル `tmp/review_result.md` を再読込してから `Edit` で更新** すること
+- 作業ディレクトリは sandbox ルートです。**`tmp/review_result.md` は存在しない場合があります**。
+- レビュー結果を **`tmp/review_result.md`** に必ず書くこと。存在しない場合は `Write` で新規作成すること。
+- `tmp/review_result.md` が既に存在する場合は、`Read` してから `Edit` / `MultiEdit` で更新してもよい。
+- `Write` / `Edit` / `MultiEdit` のうち使える手段でよい。権限エラーや read-before-write エラーが出た場合は、エラー文を読んで同じ `tmp/review_result.md` への作成または更新をやり直すこと。
 - `tmp/review_result.md` 以外の場所にレビュー結果を書いてはいけない
+- ファイル本文には必ず `## VERDICT: PASS` または `## VERDICT: FAIL` の行を含めること
+- ファイル本文には必ず `review_verdict` JSON ブロックを含めること
 - 以下の構造で書くこと:
 
 # Strategy Review Result

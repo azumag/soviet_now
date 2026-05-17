@@ -21,7 +21,7 @@ _radio_gc_stale_state() {
 }
 
 _radio_set_state() {
-	local mode="$1" corner="$2"
+	local mode="$1" corner="$2" detail="${3:-}"
 	[ -n "$mode" ] || return 1
 	[ -n "$corner" ] || return 1
 	_radio_gc_stale_state
@@ -29,7 +29,9 @@ _radio_set_state() {
 	case "$mode" in
 	generating|verifying|queued|playing)
 		if [ -x ./overlay_notify.sh ]; then
-			./overlay_notify.sh radio "ラジオ ${mode}" "corner=${corner}" "info" >/dev/null 2>&1 || true
+			local _ov_body="corner=${corner}"
+			[ -n "$detail" ] && _ov_body="${_ov_body} | ${detail}"
+			./overlay_notify.sh radio "ラジオ ${corner} ${mode}" "$_ov_body" "info" >/dev/null 2>&1 || true
 		fi
 		;;
 	esac
@@ -89,7 +91,9 @@ _play_priority_audio_file() {
 	local radio_vo_speaker=""
 	radio_vo_speaker=$(_radio_voicevox_speaker_override "$corner_name" 2>/dev/null || true)
 	_interrupt_current_audio_playback "priority:${corner_name}"
-	_radio_set_state "playing" "$corner_name"
+	local _play_detail=""
+	_play_detail=$(_radio_generation_debug_summary "$audio_file" 2>/dev/null || true)
+	_radio_set_state "playing" "$corner_name" "$_play_detail"
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
 	SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }

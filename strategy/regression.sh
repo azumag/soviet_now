@@ -78,20 +78,45 @@ def progress_summary(data, score_count=None):
         max_types = []
     if score_count is not None and score_count > 0:
         max_types = max_types[-score_count:]
+    frontier_hints = [str(x) for x in (data.get("frontier_hints", []) or [])]
+    peak_high_type_counts = [str(x) for x in (data.get("peak_high_type_counts", []) or [])]
+    try:
+        deadline_guard_counts = [int(x) for x in (data.get("deadline_guard_counts", []) or [])]
+    except Exception:
+        deadline_guard_counts = []
+    deadline_guard_reason_tops = [str(x) for x in (data.get("deadline_guard_reason_tops", []) or [])]
+    if score_count is not None and score_count > 0:
+        frontier_hints = frontier_hints[-score_count:]
+        peak_high_type_counts = peak_high_type_counts[-score_count:]
+        deadline_guard_counts = deadline_guard_counts[-score_count:]
+        deadline_guard_reason_tops = deadline_guard_reason_tops[-score_count:]
     best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
     return {
         "max_types": max_types,
         "best_max_type": best_max_type,
         "russia_count": int(data.get("russia_count", 0) or 0),
         "soviet_count": int(data.get("soviet_count", 0) or 0),
+        "frontier_hints": frontier_hints,
+        "peak_high_type_counts": peak_high_type_counts,
+        "deadline_guard_counts": deadline_guard_counts,
+        "deadline_guard_reason_tops": deadline_guard_reason_tops,
     }
 
 def fmt_progress(p):
     recent = " ".join(map(str, p.get("max_types", [])[-12:])) or "n/a"
+    frontier = " | ".join(p.get("frontier_hints", [])[-4:]) or "n/a"
+    peaks = " | ".join(p.get("peak_high_type_counts", [])[-4:]) or "n/a"
+    guards = p.get("deadline_guard_counts", [])[-12:]
+    guard_text = " ".join(map(str, guards)) if guards else "n/a"
+    guard_reasons = " | ".join(p.get("deadline_guard_reason_tops", [])[-4:]) or "n/a"
     return (
         f"best_max_type={p.get('best_max_type', 0)} "
         f"russia={p.get('russia_count', 0)} soviet={p.get('soviet_count', 0)} "
-        f"recent_max_types={recent}"
+        f"recent_max_types={recent} "
+        f"frontier_hints={frontier} "
+        f"peak_high_type_counts={peaks} "
+        f"deadline_guard_counts={guard_text} "
+        f"deadline_guard_reason_tops={guard_reasons}"
     )
 
 def read_score_history(path):
@@ -1912,10 +1937,11 @@ update_rolling_scores() {
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
-	_backfill_hash_archive_from_known_versions
-	local rolling_result=""
-	rolling_result=$(
-		python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" <<'PY' 2>/dev/null
+		_backfill_hash_archive_from_known_versions
+		local rolling_result="" rolling_err=""
+		rolling_err="${TMP_STATE_DIR:-tmp/state}/rolling_scores_update.err"
+		rolling_result=$(
+			python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$rolling_err" <<'PY'
 import json
 import os
 import sys
@@ -1954,8 +1980,11 @@ def nation_progress(path):
     max_type = 0
     russia = False
     soviet = False
+    peak_type_counts = {}
+    deadline_guard_count = 0
+    deadline_guard_reasons = {}
     if not path or not os.path.exists(path):
-        return max_type, russia, soviet
+        return max_type, russia, soviet, "no-archive", "none", deadline_guard_count, "none"
     try:
         with open(path, encoding="utf-8", errors="ignore") as f:
             for raw in f:
@@ -1966,6 +1995,10 @@ def nation_progress(path):
                     row = json.loads(raw)
                 except Exception:
                     continue
+                if "DEADLINE_GUARD" in str(row.get("decision_reason") or ""):
+                    deadline_guard_count += 1
+                    reason = str(row.get("decision_reason") or "")
+                    deadline_guard_reasons[reason] = deadline_guard_reasons.get(reason, 0) + 1
                 if row.get("russia_created"):
                     russia = True
                 if row.get("soviet_created"):
@@ -1978,13 +2011,27 @@ def nation_progress(path):
                         continue
                     if t > max_type:
                         max_type = t
+                    if t >= 10:
+                        same_type_count = 0
+                        for p in pieces:
+                            try:
+                                if int((p or {}).get("type", 0) or 0) == t:
+                                    same_type_count += 1
+                            except Exception:
+                                pass
+                        peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
                     if t >= 15:
                         russia = True
                     if t >= 16:
                         soviet = True
     except Exception:
         pass
-    return max_type, russia, soviet
+    peak_counts = " ".join(f"T{t}x{peak_type_counts[t]}" for t in sorted(peak_type_counts, reverse=True)[:4]) or "none"
+    frontier_hint = "no-high-type"
+    if max_type >= 10:
+        frontier_hint = f"T{max_type}_peak={peak_type_counts.get(max_type, 0)} prev_T{max_type - 1}_peak={peak_type_counts.get(max_type - 1, 0)}"
+    guard_top = ", ".join(f"{name}x{count}" for name, count in sorted(deadline_guard_reasons.items(), key=lambda item: item[1], reverse=True)[:3]) or "none"
+    return max_type, russia, soviet, frontier_hint, peak_counts, deadline_guard_count, guard_top
 
 prev_scores = [int(x) for x in rs[h].get("scores", [])]
 prev_best = max(prev_scores) if prev_scores else None
@@ -1999,9 +2046,13 @@ rs[h]["_recent_archives"] = recent_archives
 progress_archives = recent_archives[-len(rs[h]["scores"]):] if rs[h]["scores"] else []
 progress = [nation_progress(path) for path in progress_archives]
 rs[h]["max_types"] = [item[0] for item in progress]
-rs[h]["russia_count"] = sum(1 for _, russia_created, _ in progress if russia_created)
-rs[h]["soviet_count"] = sum(1 for _, _, soviet_created in progress if soviet_created)
+rs[h]["russia_count"] = sum(1 for item in progress if item[1])
+rs[h]["soviet_count"] = sum(1 for item in progress if item[2])
 rs[h]["best_max_type"] = max([int(rs[h].get("best_max_type", 0) or 0)] + [item[0] for item in progress])
+rs[h]["frontier_hints"] = [item[3] for item in progress]
+rs[h]["peak_high_type_counts"] = [item[4] for item in progress]
+rs[h]["deadline_guard_counts"] = [item[5] for item in progress]
+rs[h]["deadline_guard_reason_tops"] = [item[6] for item in progress]
 
 with open(rs_file, "w") as f:
     json.dump(rs, f)
@@ -2017,9 +2068,11 @@ PY
 		else
 			log "[ROLLING] updated: hash=${strategy_hash} n=${rolling_n} total=${rolling_total} score=${score} file=${archive_file}"
 		fi
-	else
-		log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
-	fi
+		else
+			log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
+			[ -s "$rolling_err" ] && log "[ROLLING] update stderr: $(tr '\n' ' ' <"$rolling_err" | cut -c1-500)"
+		fi
+		rm -f "$rolling_err" 2>/dev/null || true
 	# 帯域脱出機構 D + E: 現戦略のシグネチャを永続キャッシュに保存
 	# (game_history が後で pruning されてもシグネチャが残るように)
 	if [ "${DIVERSITY_PREMIUM_ENABLED:-0}" = "1" ] || [ "${TABU_ENABLED:-0}" = "1" ]; then
@@ -2091,7 +2144,8 @@ check_regression() {
 	local result
 	result=$(
 		python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$ACTIVE_BRANCH_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" "$BRANCH_MAX_DEPTH" "$BRANCH_MAX_GAMES" "$BRANCH_PATIENCE" "$BRANCH_HARD_COMP_GAP" "$BRANCH_HARD_P50_GAP" "$BRANCH_HARD_P25_GAP" "$BRANCH_HARD_MIN_BREACH_COUNT" \
-			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" <<'PY'
+			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" "${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" "${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" \
+			"${ANNEALING_OBSERVE_FILE:-tmp/state/annealing_candidates.jsonl}" "${ANNEALING_OBSERVE_ENABLED:-1}" "${ANNEALING_BASE_TEMP:-1800}" "${ANNEALING_DECAY:-0.85}" <<'PY'
 import json
 import math
 import os
@@ -2114,6 +2168,12 @@ hard_p25_gap = float(sys.argv[17])
 hard_min_breach_count = int(sys.argv[18])
 stagnation_file = sys.argv[19] if len(sys.argv) > 19 else ""
 wildcard_origin_file = sys.argv[20] if len(sys.argv) > 20 else ""
+wildcard_attempt_state_file = sys.argv[21] if len(sys.argv) > 21 else ""
+wildcard_outcome_file = sys.argv[22] if len(sys.argv) > 22 else ""
+annealing_observe_file = sys.argv[23] if len(sys.argv) > 23 else ""
+annealing_observe_enabled = sys.argv[24] if len(sys.argv) > 24 else "1"
+annealing_base_temp = float(sys.argv[25]) if len(sys.argv) > 25 else 1800.0
+annealing_decay = float(sys.argv[26]) if len(sys.argv) > 26 else 0.85
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -2128,6 +2188,60 @@ if current_hash in _WILDCARD_ORIGIN:
     wo = _WILDCARD_ORIGIN[current_hash] or {}
     branch_max_games = int(wo.get("max_games_override", branch_max_games) or branch_max_games)
     branch_patience = int(wo.get("patience_override", branch_patience) or branch_patience)
+
+def _update_wildcard_attempt_state(event):
+    if not wildcard_attempt_state_file:
+        return
+    try:
+        data = {}
+        if os.path.exists(wildcard_attempt_state_file):
+            try:
+                data = json.load(open(wildcard_attempt_state_file, encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        is_wildcard_origin = current_hash in _WILDCARD_ORIGIN
+        origin = _WILDCARD_ORIGIN.get(current_hash, {}) if is_wildcard_origin else {}
+        if event in ("PROMOTE", "OK_BEAT"):
+            data["consecutive_wildcards"] = 0
+            data["scale"] = 1.0
+            data["last_reset_event"] = event
+            data["last_reset_hash"] = current_hash
+            data["last_reset_epoch"] = int(time.time())
+            data["last_reason"] = "wildcard_success_reset"
+        else:
+            data["last_regression_event"] = event
+            data["last_regression_hash"] = current_hash
+            data["last_regression_epoch"] = int(time.time())
+        if is_wildcard_origin:
+            data["last_wildcard_outcome"] = event
+            data["last_wildcard_outcome_hash"] = current_hash
+            data["last_wildcard_outcome_epoch"] = int(time.time())
+        os.makedirs(os.path.dirname(wildcard_attempt_state_file) or ".", exist_ok=True)
+        tmp = wildcard_attempt_state_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, wildcard_attempt_state_file)
+        if is_wildcard_origin and wildcard_outcome_file:
+            current_payload = {
+                "comp": current.get("comp"),
+                "p50": current.get("p50"),
+                "p25": current.get("p25"),
+                "n": current.get("n"),
+            } if isinstance(globals().get("current"), dict) else {}
+            row = {
+                "event": event,
+                "epoch": int(time.time()),
+                "hash": current_hash,
+                "created_at_game": origin.get("created_at_game"),
+                "wildcard_streak": origin.get("wildcard_streak"),
+                "wildcard_applied": origin.get("wildcard_applied", []),
+                "metrics": current_payload,
+            }
+            os.makedirs(os.path.dirname(wildcard_outcome_file) or ".", exist_ok=True)
+            with open(wildcard_outcome_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 def _update_stagnation(event):
     """Python ブロックを抜ける直前に呼ぶ。
@@ -2172,6 +2286,9 @@ def _update_stagnation(event):
         os.replace(tmp, stagnation_file)
     except Exception:
         pass
+    _record_annealing_candidate(event)
+    if current_hash in _WILDCARD_ORIGIN or event in ("PROMOTE", "OK_BEAT"):
+        _update_wildcard_attempt_state(event)
 
 def load_json(path):
     if not os.path.exists(path):
@@ -2309,6 +2426,45 @@ def breach_count(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
             1 if p25_gap >= p25_th else 0,
         ]
     )
+
+def _record_annealing_candidate(event):
+    if event != "REGRESSION" or annealing_observe_enabled != "1" or not annealing_observe_file:
+        return
+    try:
+        temp = max(1.0, annealing_base_temp)
+        try:
+            state = load_json(stagnation_file) if stagnation_file else {}
+            regression_streak = max(0, int(state.get("regression_streak", 0) or 0))
+        except Exception:
+            regression_streak = 0
+        decay = min(0.999, max(0.001, annealing_decay))
+        cooled_temp = max(1.0, temp * (decay ** regression_streak))
+        comp_gap_value = float(globals().get("curr_comp_gap", 0.0) or 0.0)
+        probability = math.exp(-max(0.0, comp_gap_value) / cooled_temp)
+        row = {
+            "event": "ANNEALING_CANDIDATE",
+            "epoch": int(time.time()),
+            "hash": current_hash,
+            "anchor_hash": globals().get("anchor_hash", ""),
+            "n": (globals().get("current") or {}).get("n"),
+            "comp": (globals().get("current") or {}).get("comp"),
+            "anchor_comp": (globals().get("anchor") or {}).get("comp"),
+            "comp_gap": comp_gap_value,
+            "p50_gap": float(globals().get("curr_p50_gap", 0.0) or 0.0),
+            "p25_gap": float(globals().get("curr_p25_gap", 0.0) or 0.0),
+            "breach_count": int(globals().get("curr_breach", 0) or 0),
+            "temperature": cooled_temp,
+            "base_temperature": temp,
+            "decay": decay,
+            "regression_streak": regression_streak,
+            "accept_probability": probability,
+            "observe_only": True,
+        }
+        os.makedirs(os.path.dirname(annealing_observe_file) or ".", exist_ok=True)
+        with open(annealing_observe_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 rolling = load_json(rs_file)
 current_run = load_json(current_run_file)
@@ -2697,6 +2853,11 @@ PY
 		}
 		if ! cp "$rollback_file" "$STRATEGY_FILE"; then
 			log "[REGRESSION] CRITICAL: ロールバックファイルコピー失敗、復元中"
+			cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
+			return 1
+		fi
+		if ! validate_strategy "$STRATEGY_FILE"; then
+			log "[REGRESSION] CRITICAL: ロールバック後バリデーション失敗、復元中"
 			cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
 			return 1
 		fi

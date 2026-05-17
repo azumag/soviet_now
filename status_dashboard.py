@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone, timedelta
 from collections import Counter
 from glob import glob
 from pathlib import Path
@@ -51,6 +52,8 @@ REJECTED_HASH_META_FILE = "tmp/state/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC = 21600
 LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
 CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
+ANNEALING_OBSERVE_FILE = "tmp/state/annealing_candidates.jsonl"
+SOREN_MONITOR_REPORT_FILE = os.getenv("SOREN_MONITOR_REPORT_FILE", "/tmp/soren_report.md")
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
@@ -1018,6 +1021,81 @@ def load_improve_state():
     return base
 
 
+def fmt_age(seconds):
+    seconds = max(0, int(seconds or 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h"
+
+
+def load_monitor_report_status():
+    p = Path(SOREN_MONITOR_REPORT_FILE)
+    if not p.exists():
+        return {"status": "missing", "age": "", "title": "soren monitor missing"}
+    try:
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        mtime = int(p.stat().st_mtime)
+    except Exception:
+        return {"status": "error", "age": "", "title": "soren monitor unreadable"}
+
+    title = "soren monitor"
+    for raw in text.splitlines():
+        cleaned = raw.strip().lstrip("# ").strip()
+        if cleaned:
+            title = cleaned[:32]
+            break
+
+    report_epoch = 0
+    m = re.search(r"最終更新:\s*(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+JST", text)
+    if m:
+        try:
+            stamp = datetime.strptime(
+                f"{m.group(1)} {m.group(2)}:{m.group(3)} +0900",
+                "%Y-%m-%d %H:%M %z",
+            )
+            report_epoch = int(stamp.timestamp())
+        except Exception:
+            report_epoch = 0
+    age = max(0, int(time.time()) - (report_epoch or mtime))
+    status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
+    return {"status": status, "age": fmt_age(age), "title": title}
+
+
+def load_latest_annealing_candidate():
+    p = Path(ANNEALING_OBSERVE_FILE)
+    if not p.exists():
+        return None
+    last = None
+    try:
+        for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(row, dict):
+                last = row
+    except Exception:
+        return None
+    if not last:
+        return None
+    try:
+        age = fmt_age(int(time.time()) - int(last.get("epoch", 0) or 0))
+    except Exception:
+        age = ""
+    return {
+        "hash": str(last.get("hash", "") or "")[:8],
+        "prob": float(last.get("accept_probability", 0.0) or 0.0),
+        "gap": int(float(last.get("comp_gap", 0.0) or 0.0)),
+        "temp": int(float(last.get("temperature", 0.0) or 0.0)),
+        "age": age,
+    }
+
+
 # ── Panel renderers ───────────────────────────────────────────
 
 def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
@@ -1418,6 +1496,34 @@ def render_wildcard_status(rolling, current_hash=""):
     return lines
 
 
+def render_observer_status():
+    monitor = load_monitor_report_status()
+    monitor_color = C_GREEN
+    if monitor.get("status") == "stale":
+        monitor_color = C_YELLOW
+    elif monitor.get("status") in ("old", "missing", "error"):
+        monitor_color = C_RED
+
+    lines = [f"  {BOLD}Observer Status{RST} {DIM}(monitor / annealing observe-only){RST}"]
+    lines.append(
+        f" {monitor_color}Monitor{RST} {monitor.get('status', '?')} "
+        f"{monitor.get('age', '')} {DIM}{monitor.get('title', '')}{RST}"
+    )
+
+    anneal = load_latest_annealing_candidate()
+    if anneal:
+        prob = anneal.get("prob", 0.0)
+        color = C_GREEN if prob >= 0.50 else (C_YELLOW if prob >= 0.10 else C_RED)
+        lines.append(
+            f" {color}AnnealObs{RST} {anneal.get('hash', '')} "
+            f"p={prob:.2f} gap={anneal.get('gap', 0)} temp={anneal.get('temp', 0)} "
+            f"{DIM}{anneal.get('age', '')} observe-only{RST}"
+        )
+    else:
+        lines.append(f" {DIM}AnnealObs none yet{RST}")
+    return lines
+
+
 def render_branch_overview(rolling, current_hash):
     info = inspect_branch_state(rolling, current_hash)
     lines = [f"  {BOLD}Branch Rollback View{RST} {DIM}(anchor / best / head){RST}"]
@@ -1604,6 +1710,8 @@ def main():
     output += render_score_distribution(scores)
     output.append("")
     output += render_strategy_comparison(rolling, strat_hash)
+    output.append("")
+    output += render_observer_status()
     output.append("")
     _wc = render_wildcard_status(rolling, strat_hash)
     if _wc:

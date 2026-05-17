@@ -1,11 +1,34 @@
 #!/bin/zsh
 # show_status_g.sh - CUI Graphical Statistics Dashboard
 #
-# Usage: ./show_status_g.sh       # 10秒間隔で常時表示
-#        ./show_status_g.sh 5     # 5秒間隔で常時表示
+# Usage: ./show_status_g.sh             # 10秒間隔で常時表示
+#        ./show_status_g.sh 5           # 5秒間隔で常時表示
+#        ./show_status_g.sh --html-once # 600x900 HTML overlay を1回生成
+#        ./show_status_g.sh --html-watch [sec]
+#        ./show_status_g.sh --html-start [sec]
+#        ./show_status_g.sh --html-stop
+#        ./show_status_g.sh --html-obs [show|hide]
 
 SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
+
+case "${1:-}" in
+--html-once)
+	exec ./generate_status_overlay.sh once
+	;;
+--html-watch)
+	exec ./generate_status_overlay.sh watch "${2:-2}"
+	;;
+--html-start)
+	exec ./generate_status_overlay.sh start "${2:-2}"
+	;;
+--html-stop)
+	exec ./generate_status_overlay.sh stop
+	;;
+--html-obs)
+	exec ./generate_status_overlay.sh ensure-obs "${2:-show}"
+	;;
+esac
 
 WATCH_INTERVAL=${1:-10}
 DROP_REFRESH_INTERVAL=${SHOW_STATUS_DROP_REFRESH_INTERVAL:-0.25}

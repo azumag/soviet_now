@@ -10,6 +10,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 HOST_ROOT="$SCRIPT_DIR"
+CHANGE_LOG_FILE="logs/change_log.txt"
+CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 source ./eloop_lib.sh
 
@@ -21,6 +23,7 @@ GAME_NUM_SNAPSHOT="$4"
 TURNS_SNAPSHOT="$5"
 IMPROVE_REASON="${6:-normal}"
 export IMPROVE_REASON
+IMPROVE_AUDIO_SUMMARY_SPOKEN=0
 
 # 進捗モニタリング用メタ情報
 # improve_state には、実際にバックグラウンドで管理されるトップレベル bash の PID を記録する。
@@ -117,10 +120,13 @@ with open(tmp, "w", encoding="utf-8") as f:
     json.dump({"ts": int(now), "phase": phase, "progress": progress, "detail": detail}, f, ensure_ascii=False)
 os.replace(tmp, path)
 PY
-	text="戦略改善の進捗です。フェーズは ${phase:-unknown}、進捗 ${progress:-0} パーセント。${detail:-処理中です}。中華AIはソ連建国に向けて、直近ゲームの失敗パターンを読み、改善案を検証しています。"
-	enqueue_audio_text "$text" "improve_progress" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+	if [ "${IMPROVE_AUDIO_SUMMARY_SPOKEN:-0}" != "1" ]; then
+		IMPROVE_AUDIO_SUMMARY_SPOKEN=1
+		text="戦略改善の進捗です。フェーズは ${phase:-unknown}、進捗 ${progress:-0} パーセント。${detail:-処理中です}。中華AIはソ連建国に向けて、直近ゲームの失敗パターンを読み、改善案を検証しています。"
+		enqueue_audio_text "$text" "improve_progress" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+	fi
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh worker "改善進捗" "phase=${phase:-unknown} progress=${progress:-0}% detail=${detail:-}" "info" >/dev/null 2>&1 || true
+		./overlay_notify.sh worker "改善進捗 ${phase:-unknown} (${IMPROVE_REASON:-normal})" "reason=${IMPROVE_REASON:-normal} phase=${phase:-unknown} progress=${progress:-0}% detail=${detail:-}" "info" >/dev/null 2>&1 || true
 	fi
 }
 
@@ -339,18 +345,186 @@ _improve_progress "summary" "5" "building_batch_summary"
 # F: wildcard モードの場合は AI を介さずパラメータ摂動で staging を作る
 if [ "${IMPROVE_REASON:-normal}" = "wildcard" ]; then
 	log "[WILDCARD] AI 改善をスキップして wildcard_perturb を実行"
-	_improve_progress "wildcard" "20" "perturbing_constants"
+	wildcard_adapt_json=$(python3 - \
+		"${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" \
+		"${WILDCARD_ADAPTIVE_SCALE_ENABLED:-1}" \
+		"${WILDCARD_ADAPTIVE_SCALE_STEP:-0.25}" \
+		"${WILDCARD_ADAPTIVE_SCALE_MAX:-2.00}" \
+		"${WILDCARD_ADAPTIVE_EXTRA_PARAM_EVERY:-2}" \
+		"${WILDCARD_PARAM_COUNT_MIN:-1}" \
+		"${WILDCARD_PARAM_COUNT_MAX:-3}" \
+		"${WILDCARD_PERTURB_RATIO_MIN:-0.20}" \
+		"${WILDCARD_PERTURB_RATIO_MAX:-0.40}" \
+		"${GAME_NUM_SNAPSHOT:-0}" \
+		"${WILDCARD_TABU_RECENT_LINES:-12}" \
+		"${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" \
+		"${WILDCARD_BANDIT_ENABLED:-1}" \
+		"${WILDCARD_BANDIT_LOOKBACK:-80}" \
+		"${WILDCARD_BANDIT_EXPLORE_RATE:-0.35}" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+from collections import defaultdict
+
+(
+    state_path,
+    enabled,
+    step,
+    scale_max,
+    extra_every,
+    count_min,
+    count_max,
+    ratio_min,
+    ratio_max,
+    game_num,
+    tabu_recent,
+    outcome_path,
+    bandit_enabled,
+    bandit_lookback,
+    bandit_explore_rate,
+) = sys.argv[1:16]
+
+def as_float(value, default):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def as_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+try:
+    state = json.load(open(state_path, encoding="utf-8"))
+except Exception:
+    state = {}
+
+prev_streak = as_int(state.get("consecutive_wildcards", 0), 0)
+streak = prev_streak + 1
+count_min_i = max(1, as_int(count_min, 1))
+count_max_i = max(count_min_i, as_int(count_max, 3))
+ratio_min_f = max(0.001, as_float(ratio_min, 0.20))
+ratio_max_f = max(ratio_min_f, as_float(ratio_max, 0.40))
+step_f = max(0.0, as_float(step, 0.25))
+scale_max_f = max(1.0, as_float(scale_max, 2.00))
+extra_every_i = max(1, as_int(extra_every, 2))
+tabu_recent_i = max(0, as_int(tabu_recent, 12))
+
+if enabled == "1":
+    scale = min(scale_max_f, 1.0 + max(0, streak - 1) * step_f)
+    extra = max(0, (streak - 1) // extra_every_i)
+else:
+    scale = 1.0
+    extra = 0
+
+adapted_count_max = min(count_max_i + extra, count_max_i + 3)
+adapted_count_min = min(count_min_i + extra, adapted_count_max)
+adapted_ratio_min = round(ratio_min_f * scale, 4)
+adapted_ratio_max = round(ratio_max_f * scale, 4)
+recent_lines = []
+for item in state.get("recent_applied_lines", []) or []:
+    try:
+        line = int(item)
+    except Exception:
+        continue
+    if line > 0 and line not in recent_lines:
+        recent_lines.append(line)
+exclude_lines = recent_lines[-tabu_recent_i:] if tabu_recent_i else []
+lookback_i = max(1, as_int(bandit_lookback, 80))
+line_scores = defaultdict(float)
+if bandit_enabled == "1" and outcome_path and os.path.exists(outcome_path):
+    try:
+        rows = []
+        with open(outcome_path, encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rows.append(json.loads(raw))
+                except Exception:
+                    continue
+        for row in rows[-lookback_i:]:
+            event = str(row.get("event") or "")
+            applied = row.get("wildcard_applied") or row.get("applied") or []
+            lines = []
+            for item in applied:
+                try:
+                    line = int((item or {}).get("lineno", 0) or 0)
+                except Exception:
+                    line = 0
+                if line > 0:
+                    lines.append(line)
+            if event in ("PROMOTE", "OK_BEAT"):
+                reward = 2.0
+            elif event == "CREATED":
+                reward = 0.15
+            elif event in ("REGRESSION", "RESET"):
+                reward = -1.0
+            else:
+                reward = 0.0
+            for line in lines:
+                line_scores[line] += reward
+    except Exception:
+        line_scores = defaultdict(float)
+prefer_lines = [
+    line for line, score in sorted(line_scores.items(), key=lambda item: (-item[1], item[0]))
+    if score > 0 and line not in exclude_lines
+][:12]
+
+os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
+next_state = {
+    "last_reason": "wildcard",
+    "consecutive_wildcards": streak,
+    "last_game": as_int(game_num, 0),
+    "last_epoch": int(time.time()),
+    "scale": scale,
+    "count_min": adapted_count_min,
+    "count_max": adapted_count_max,
+    "ratio_min": adapted_ratio_min,
+    "ratio_max": adapted_ratio_max,
+    "exclude_lines": exclude_lines,
+    "prefer_lines": prefer_lines,
+    "bandit_enabled": bandit_enabled == "1",
+    "bandit_explore_rate": max(0.0, min(1.0, as_float(bandit_explore_rate, 0.35))),
+    "recent_applied_lines": recent_lines[-50:],
+    "recent_attempts": (state.get("recent_attempts", []) or [])[-12:],
+}
+tmp = state_path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(next_state, f, ensure_ascii=False)
+os.replace(tmp, state_path)
+print(json.dumps(next_state, ensure_ascii=False))
+PY
+)
+	wildcard_streak=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('consecutive_wildcards',1))" 2>/dev/null || echo 1)
+	wildcard_scale=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('scale',1.0))" 2>/dev/null || echo 1.0)
+	wildcard_count_min=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('count_min',1))" 2>/dev/null || echo "${WILDCARD_PARAM_COUNT_MIN:-1}")
+	wildcard_count_max=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('count_max',3))" 2>/dev/null || echo "${WILDCARD_PARAM_COUNT_MAX:-3}")
+	wildcard_ratio_min=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ratio_min',0.20))" 2>/dev/null || echo "${WILDCARD_PERTURB_RATIO_MIN:-0.20}")
+	wildcard_ratio_max=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ratio_max',0.40))" 2>/dev/null || echo "${WILDCARD_PERTURB_RATIO_MAX:-0.40}")
+	wildcard_exclude_lines=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('exclude_lines',[]) if str(x).isdigit()))" 2>/dev/null || echo "")
+	wildcard_prefer_lines=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('prefer_lines',[]) if str(x).isdigit()))" 2>/dev/null || echo "")
+	wildcard_explore_rate=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('bandit_explore_rate',0.35))" 2>/dev/null || echo "${WILDCARD_BANDIT_EXPLORE_RATE:-0.35}")
+	log "[WILDCARD] adaptive scale streak=${wildcard_streak} scale=${wildcard_scale} count=${wildcard_count_min}-${wildcard_count_max} ratio=${wildcard_ratio_min}-${wildcard_ratio_max} exclude_lines=${wildcard_exclude_lines:-none} prefer_lines=${wildcard_prefer_lines:-none}"
+	_improve_progress "wildcard" "20" "perturbing_constants_streak_${wildcard_streak}_scale_${wildcard_scale}"
 	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
-	wildcard_count=$((WILDCARD_PARAM_COUNT_MIN + RANDOM % (WILDCARD_PARAM_COUNT_MAX - WILDCARD_PARAM_COUNT_MIN + 1)))
+	wildcard_count=$((wildcard_count_min + RANDOM % (wildcard_count_max - wildcard_count_min + 1)))
 	[ "$wildcard_count" -lt 1 ] && wildcard_count=1
 	wildcard_seed=$(date +%s)
 	wildcard_result=$(python3 wildcard_perturb.py \
 		--input "$STRATEGY_FILE" \
 		--output "strategy.py.staging" \
 		--count "$wildcard_count" \
-		--ratio-min "${WILDCARD_PERTURB_RATIO_MIN:-0.20}" \
-		--ratio-max "${WILDCARD_PERTURB_RATIO_MAX:-0.40}" \
+		--ratio-min "$wildcard_ratio_min" \
+		--ratio-max "$wildcard_ratio_max" \
+		--exclude-lines "$wildcard_exclude_lines" \
+		--prefer-lines "$wildcard_prefer_lines" \
+		--explore-rate "$wildcard_explore_rate" \
 		--seed "$wildcard_seed" 2>&1)
 	wildcard_rc=$?
 	if [ "$wildcard_rc" -ne 0 ]; then
@@ -372,7 +546,7 @@ if [ "${IMPROVE_REASON:-normal}" = "wildcard" ]; then
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	# wildcard 起源 hash を登録 (regression.sh の patience override 用)
 	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
-		python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
+		WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
 import json, os, sys, time
 path, h, max_games, game_num = sys.argv[1:5]
 data = {}
@@ -386,6 +560,8 @@ data[h] = {
     "patience_override": 1,
     "max_games_override": int(max_games),
     "created_at_epoch": int(time.time()),
+    "wildcard_streak": int(os.environ.get("WILDCARD_CURRENT_STREAK", "1") or 1),
+    "wildcard_applied": json.loads(os.environ.get("WILDCARD_APPLIED_JSON", "[]") or "[]"),
 }
 os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 tmp = path + ".tmp"
@@ -393,8 +569,70 @@ with open(tmp, "w", encoding="utf-8") as f:
     json.dump(data, f, ensure_ascii=False)
 os.replace(tmp, path)
 PY
-		log "[WILDCARD] origin registered: $HASH_AFTER (max_games=${WILDCARD_PATIENCE_GAMES:-12})"
-	fi
+			log "[WILDCARD] origin registered: $HASH_AFTER (max_games=${WILDCARD_PATIENCE_GAMES:-12}, streak=${wildcard_streak})"
+		fi
+		GAME_NUM_SNAPSHOT="${GAME_NUM_SNAPSHOT:-0}" WILDCARD_RESULT_JSON="$wildcard_result" WILDCARD_HASH_BEFORE="$HASH_BEFORE" WILDCARD_HASH_AFTER="$HASH_AFTER" python3 - "${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" "${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+outcome_path = sys.argv[2] if len(sys.argv) > 2 else ""
+try:
+    result = json.loads(os.environ.get("WILDCARD_RESULT_JSON", "") or "{}")
+except Exception:
+    result = {}
+applied = result.get("applied", []) if isinstance(result, dict) else []
+excluded_lines = result.get("excluded_lines", []) if isinstance(result, dict) else []
+exclude_applied = bool(result.get("exclude_applied", False)) if isinstance(result, dict) else False
+lines = []
+for item in applied:
+    try:
+        line = int(item.get("lineno", 0))
+    except Exception:
+        continue
+    if line > 0:
+        lines.append(line)
+try:
+    data = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+except Exception:
+    data = {}
+recent = [int(x) for x in (data.get("recent_applied_lines", []) or []) if str(x).isdigit()]
+recent.extend(lines)
+data["recent_applied_lines"] = recent[-50:]
+data["last_applied"] = applied
+attempts = data.get("recent_attempts", []) or []
+attempts.append({
+    "epoch": int(time.time()),
+    "game": int(os.environ.get("GAME_NUM_SNAPSHOT", "0") or 0),
+    "applied_lines": lines,
+    "excluded_lines": excluded_lines,
+    "exclude_applied": exclude_applied,
+})
+data["recent_attempts"] = attempts[-12:]
+data["last_result_epoch"] = int(time.time())
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, path)
+if outcome_path:
+    row = {
+        "event": "CREATED",
+        "epoch": int(time.time()),
+        "game": int(os.environ.get("GAME_NUM_SNAPSHOT", "0") or 0),
+        "hash_before": os.environ.get("WILDCARD_HASH_BEFORE", ""),
+        "hash": os.environ.get("WILDCARD_HASH_AFTER", ""),
+        "applied": applied,
+        "applied_lines": lines,
+        "excluded_lines": excluded_lines,
+        "exclude_applied": exclude_applied,
+    }
+    os.makedirs(os.path.dirname(outcome_path) or ".", exist_ok=True)
+    with open(outcome_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
 	# change_log に記録
 	{
 		echo
@@ -467,8 +705,6 @@ cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 HOST_REJECTED_HASHES_FILE="$HOST_ROOT/$REJECTED_HASHES_FILE"
 HOST_REJECTED_HASH_META_FILE="$HOST_ROOT/$REJECTED_HASH_META_FILE"
-CHANGE_LOG_FILE="logs/change_log.txt"
-CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 improve_ok=false
 sandbox_ready=false
@@ -597,7 +833,10 @@ def summarize_nation_progress(paths):
         first_russia_turn = None
         first_soviet_turn = None
         final_types = []
+        peak_type_counts = {}
         final_row = rows[-1] if rows else {}
+        deadline_guard_count = 0
+        deadline_guard_reasons = collections.Counter()
         if isinstance(final_row.get("final_types"), list):
             for raw in final_row.get("final_types") or []:
                 try:
@@ -605,6 +844,10 @@ def summarize_nation_progress(paths):
                 except Exception:
                     pass
         for row in rows:
+            reason = str(row.get("decision_reason") or "")
+            if "DEADLINE_GUARD" in reason:
+                deadline_guard_count += 1
+                deadline_guard_reasons[reason] += 1
             pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
             for piece in pieces:
                 try:
@@ -613,6 +856,15 @@ def summarize_nation_progress(paths):
                     continue
                 if t > max_type:
                     max_type = t
+                if t >= 10:
+                    same_type_count = 0
+                    for p in pieces:
+                        try:
+                            if int((p or {}).get("type", 0) or 0) == t:
+                                same_type_count += 1
+                        except Exception:
+                            pass
+                    peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
                 if t >= 15 and first_russia_turn is None:
                     first_russia_turn = row.get("turn", "?")
                 if t >= 16 and first_soviet_turn is None:
@@ -632,25 +884,54 @@ def summarize_nation_progress(paths):
             if t >= 10:
                 type_counts[t] = type_counts.get(t, 0) + 1
         high_type_counts = " ".join(f"T{t}x{type_counts[t]}" for t in sorted(type_counts, reverse=True)) or "none"
+        peak_counts = " ".join(f"T{t}x{peak_type_counts[t]}" for t in sorted(peak_type_counts, reverse=True)[:4]) or "none"
+        frontier_hint = "no-high-type"
+        if max_type >= 10:
+            max_peak = peak_type_counts.get(max_type, 0)
+            prev_peak = peak_type_counts.get(max_type - 1, 0)
+            frontier_hint = f"T{max_type}_peak={max_peak} prev_T{max_type - 1}_peak={prev_peak}"
+        guard_reason_top = ", ".join(f"{name}x{count}" for name, count in deadline_guard_reasons.most_common(3)) or "none"
         games.append({
             "file": basename(path),
             "score": rows[-1].get("score", "?"),
             "turns": len(rows),
             "max_type": max_type,
             "high_type_counts": high_type_counts,
+            "peak_high_type_counts": peak_counts,
+            "frontier_hint": frontier_hint,
             "russia": first_russia_turn is not None,
             "soviet": first_soviet_turn is not None,
             "russia_turn": first_russia_turn,
             "soviet_turn": first_soviet_turn,
+            "deadline_guard_count": deadline_guard_count,
+            "deadline_guard_rate": deadline_guard_count / max(1, len(rows)),
+            "deadline_guard_reason_top": guard_reason_top,
         })
     russia_count = sum(1 for g in games if g["russia"])
     soviet_count = sum(1 for g in games if g["soviet"])
     max_type = max((g["max_type"] for g in games), default=0)
+    total_turns = sum(g["turns"] for g in games)
+    deadline_guard_count = sum(g["deadline_guard_count"] for g in games)
+    deadline_guard_reasons = collections.Counter()
+    for g in games:
+        for raw in str(g.get("deadline_guard_reason_top", "") or "").split(","):
+            raw = raw.strip()
+            if not raw or raw == "none" or "x" not in raw:
+                continue
+            name, count = raw.rsplit("x", 1)
+            try:
+                deadline_guard_reasons[name] += int(count)
+            except Exception:
+                pass
+    deadline_guard_reason_top = ", ".join(f"{name}x{count}" for name, count in deadline_guard_reasons.most_common(5)) or "none"
     return {
         "games": games,
         "russia_count": russia_count,
         "soviet_count": soviet_count,
         "max_type": max_type,
+        "deadline_guard_count": deadline_guard_count,
+        "deadline_guard_rate": deadline_guard_count / max(1, total_turns),
+        "deadline_guard_reason_top": deadline_guard_reason_top,
     }
 
 def history_screenshot_paths(path: str):
@@ -757,6 +1038,10 @@ summary_lines.append("特にゲームオーバー直前の立て直しと、dead
 summary_lines.append("- game rule: 連鎖ボーナスはない。CHAIN_MERGE 系 reason は相関ラベルであり、直接の強化対象ではない。")
 summary_lines.append("- avoid: 将来連鎖のために盤面を圧迫したり、直近の併合機会を見送る変更。")
 summary_lines.append("- eval scoring: 評価スコアにはゲーム終了時の盤面ピースtype別ボーナスが加算される（高typeほど高ボーナス、ソ連建国で+4000）。高typeを育てて盤面に残す戦略が評価上有利。")
+if os.environ.get("IMPROVE_REASON", "normal") == "escape_ai":
+    summary_lines.append("- escape_ai: 直近WILDCARDが連続して成熟評価を越えられなかったため、今回だけAIによる小さな構造変異で大域脱出を狙う。")
+    summary_lines.append("- escape_ai: 単なる数値定数の微調整よりも、type14→15→16の到達経路を阻害している判断条件・優先順位・例外処理を一箇所に絞って変更する。")
+    summary_lines.append("- escape_ai avoid: 広範囲の書き換え、評価式の目的逸脱、ロシア/ソ連到達率を落とすスコア稼ぎ。")
 if scores:
     summary_lines.append(
         f"- scores: {' '.join(map(str, scores))}"
@@ -770,9 +1055,13 @@ summary_lines.append("## Soviet Objective Progress")
 summary_lines.append(
     f"- batch_progress: russia={nation_progress['russia_count']}/{len(nation_progress['games'])} "
     f"soviet={nation_progress['soviet_count']}/{len(nation_progress['games'])} "
-    f"max_piece_type={nation_progress['max_type']}"
+    f"max_piece_type={nation_progress['max_type']} "
+    f"deadline_guard={nation_progress['deadline_guard_count']} "
+    f"deadline_guard_rate={nation_progress['deadline_guard_rate']:.1%} "
+    f"deadline_guard_reason_top={nation_progress['deadline_guard_reason_top']}"
 )
 summary_lines.append("- high_type_counts is final-board type10+ inventory. If T14x2 appears without type15, prioritize the missed final merge route over generic score tuning.")
+summary_lines.append("- peak_high_type_counts/frontier_hint show whether the run created enough near-frontier pieces earlier, even if they were gone by gameover.")
 if nation_progress["games"]:
     for g in sorted(nation_progress["games"], key=lambda item: (item["max_type"], item["score"]), reverse=True)[:6]:
         marks = []
@@ -781,7 +1070,11 @@ if nation_progress["games"]:
         if g["soviet"]:
             marks.append(f"soviet@T{g['soviet_turn']}")
         mark_text = " ".join(marks) if marks else "no-russia"
-        summary_lines.append(f"- {g['file']}: score={g['score']} turns={g['turns']} max_type={g['max_type']} high_type_counts={g['high_type_counts']} {mark_text}")
+        summary_lines.append(f"- {g['file']}: score={g['score']} turns={g['turns']} max_type={g['max_type']} high_type_counts={g['high_type_counts']} peak_high_type_counts={g['peak_high_type_counts']} frontier_hint={g['frontier_hint']} deadline_guard={g['deadline_guard_count']} rate={g['deadline_guard_rate']:.1%} guard_reason_top={g['deadline_guard_reason_top']} {mark_text}")
+if nation_progress["max_type"] <= 13 and nation_progress["games"]:
+    summary_lines.append("- hard_signal: type13以下で止まっている。AIは高得点の一般配置より、type13を2個作ってtype14へ進める終盤導線を優先して復旧すること。")
+if nation_progress["deadline_guard_rate"] >= 0.12:
+    summary_lines.append("- hard_signal: deadline guard が多発。ガードは最後の安全帯であり、通常戦略が終盤で詰んでいる兆候。AIはガードを弱めず、ガード発火前に type14→15→16 へ進む配置経路を復旧すること。")
 if nation_progress["russia_count"] == 0:
     summary_lines.append("- hard_signal: 今回バッチはロシア未到達。高得点に見えても type15 到達経路の喪失を優先して直すこと。")
 elif nation_progress["soviet_count"] == 0:
@@ -1151,7 +1444,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 
 	# --- Stage 1: 分析フェーズ ---
 	# user_review.md は高優先の参照入力として扱うが、ログ/rollback分析を読む分析フェーズ自体は省略しない。
-	: >"$ANALYSIS_RESULT_FILE"
+	rm -f "$ANALYSIS_RESULT_FILE" 2>/dev/null || true
 	analysis_ok=false
 	USER_REVIEW_FILE="data/user_review.md"
 	[ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ] && _improve_note "Stage1: user_review.md present; using as high-priority analysis input"
@@ -1436,7 +1729,7 @@ ${helpers_diff}"
 	# --- Stage 3: レビューフェーズ ---
 	# Stage 2 成功時のみ実行。スナップショット保護付き。
 	if $improve_ok; then
-		: >"$REVIEW_RESULT_FILE"
+		rm -f "$REVIEW_RESULT_FILE" 2>/dev/null || true
 		_pre_review_snapshot=$(mktemp "$PWD/$TMP_STATE_DIR/pre_review_staging.XXXXXX")
 		cp "$STAGING_FILE" "$_pre_review_snapshot"
 		_improve_progress "review" "75" "review_phase"

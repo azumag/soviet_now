@@ -231,6 +231,7 @@ if [ "$WAV_MODE" = "false" ]; then
 		-e 's/静寂/せいじゃく/g' \
 		-e 's/地政学的/ちせいがくてき/g' \
 		-e 's/地政学/ちせいがく/g' \
+		-e 's/WILDCARD/ワイルドカード/g' \
 		-e 's/NISA/ニーサ/g' \
 		-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
 		-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \

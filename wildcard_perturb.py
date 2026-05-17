@@ -14,6 +14,7 @@
 Usage:
     python3 wildcard_perturb.py [--dry-run] [--input strategy.py] [--output strategy.py.staging]
                                 [--count 1..3] [--ratio 0.20..0.40] [--seed N]
+                                [--exclude-lines 12,34,56] [--prefer-lines 78,90]
 """
 
 from __future__ import annotations
@@ -183,6 +184,9 @@ def run(
     ratio_max: float,
     seed: int | None,
     dry_run: bool,
+    exclude_lines: set[int] | None = None,
+    prefer_lines: set[int] | None = None,
+    explore_rate: float = 0.35,
 ) -> dict:
     text = Path(input_path).read_text(encoding="utf-8")
     try:
@@ -198,8 +202,21 @@ def run(
         raise RuntimeError("no perturbable constants found in decide()")
 
     rng = random.Random(seed)
-    actual_count = min(count, len(candidates))
-    chosen = rng.sample(candidates, actual_count)
+    excluded = exclude_lines or set()
+    preferred = prefer_lines or set()
+    filtered_candidates = [c for c in candidates if c.lineno not in excluded]
+    candidates_for_sample = filtered_candidates if len(filtered_candidates) >= count else candidates
+    exclude_applied = candidates_for_sample is filtered_candidates
+    preferred_candidates = [c for c in candidates_for_sample if c.lineno in preferred]
+    use_preferred = (
+        bool(preferred_candidates)
+        and len(preferred_candidates) >= min(count, len(candidates_for_sample))
+        and rng.random() >= max(0.0, min(1.0, explore_rate))
+    )
+    if use_preferred:
+        candidates_for_sample = preferred_candidates
+    actual_count = min(count, len(candidates_for_sample))
+    chosen = rng.sample(candidates_for_sample, actual_count)
 
     patches: list[tuple[Candidate, str]] = []
     summary = []
@@ -234,6 +251,11 @@ def run(
         "input": input_path,
         "output": output_path if output_path else (input_path + ".staging"),
         "applied": summary,
+        "excluded_lines": sorted(excluded),
+        "preferred_lines": sorted(preferred),
+        "prefer_applied": use_preferred,
+        "explore_rate": max(0.0, min(1.0, explore_rate)),
+        "exclude_applied": exclude_applied,
         "dry_run": dry_run,
     }
 
@@ -247,9 +269,32 @@ def main() -> int:
     p.add_argument("--ratio-max", type=float, default=0.40)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--exclude-lines", default="")
+    p.add_argument("--prefer-lines", default="")
+    p.add_argument("--explore-rate", type=float, default=0.35)
     args = p.parse_args()
 
     count = max(1, min(args.count, 5))
+    exclude_lines = set()
+    for raw in str(args.exclude_lines or "").replace(" ", "").split(","):
+        if not raw:
+            continue
+        try:
+            line = int(raw)
+        except ValueError:
+            continue
+        if line > 0:
+            exclude_lines.add(line)
+    prefer_lines = set()
+    for raw in str(args.prefer_lines or "").replace(" ", "").split(","):
+        if not raw:
+            continue
+        try:
+            line = int(raw)
+        except ValueError:
+            continue
+        if line > 0:
+            prefer_lines.add(line)
     try:
         result = run(
             args.input,
@@ -259,6 +304,9 @@ def main() -> int:
             args.ratio_max,
             args.seed,
             args.dry_run,
+            exclude_lines,
+            prefer_lines,
+            args.explore_rate,
         )
     except RuntimeError as e:
         print(f"[wildcard_perturb] FAIL: {e}", file=sys.stderr)

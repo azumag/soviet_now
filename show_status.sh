@@ -4,9 +4,32 @@
 # Usage: ./show_status.sh        # 10秒間隔で常時表示
 #        ./show_status.sh 3      # 3秒間隔で常時表示
 #        ./show_status.sh --once # 1回だけ表示して終了（確認・自動監視用）
+#        ./show_status.sh --html-once
+#        ./show_status.sh --html-watch [sec]
+#        ./show_status.sh --html-start [sec]
+#        ./show_status.sh --html-stop
+#        ./show_status.sh --html-obs [show|hide]
 
 SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
+
+case "${1:-}" in
+--html-once)
+	exec ./generate_show_status_overlay.sh once
+	;;
+--html-watch)
+	exec ./generate_show_status_overlay.sh watch "${2:-2}"
+	;;
+--html-start)
+	exec ./generate_show_status_overlay.sh start "${2:-2}"
+	;;
+--html-stop)
+	exec ./generate_show_status_overlay.sh stop
+	;;
+--html-obs)
+	exec ./generate_show_status_overlay.sh ensure-obs "${2:-show}"
+	;;
+esac
 
 SHOW_STATUS_ONCE=0
 case "${1:-}" in
@@ -658,7 +681,7 @@ PY
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-	local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" wildcard_origin_count=0
+		local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" wildcard_origin_count=0 wildcard_eval_label="none" annealing_label="none"
 	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
 		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
 import json
@@ -704,9 +727,201 @@ PY
 	case "$wildcard_origin_count" in
 	''|*[!0-9]*) wildcard_origin_count=0 ;;
 	esac
+		if [[ -f "$TMP_STATE_DIR/wildcard_origin.json" ]]; then
+			eval $(python3 - "$TMP_STATE_DIR/wildcard_origin.json" "$TMP_STATE_DIR/current_strategy_run.json" "$TMP_STATE_DIR/wildcard_outcomes.jsonl" "$MIN_GAMES_BEFORE_REGRESSION" "$TMP_STATE_DIR/best_strategy_anchor.json" <<'PY' 2>/dev/null
+import json
+import os
+import shlex
+import sys
 
-	# --- 最低試合ゲート ---
-	local min_games="${MIN_GAMES_BEFORE_IMPROVE_ENV:-$(_config_int_default MIN_GAMES_BEFORE_IMPROVE 12)}"
+origin_file, current_file, outcome_file, mature_raw, anchor_file = sys.argv[1:6]
+try:
+    mature_n = max(1, int(mature_raw))
+except Exception:
+    mature_n = 12
+
+try:
+    origins = json.load(open(origin_file, encoding="utf-8")) or {}
+except Exception:
+    origins = {}
+try:
+    current = json.load(open(current_file, encoding="utf-8")) or {}
+except Exception:
+    current = {}
+
+h = str(current.get("hash", "") or "")
+label = "none"
+if h and isinstance(origins, dict) and h in origins:
+    n = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
+    scores = []
+    for raw in current.get("scores", []) or []:
+        try:
+            scores.append(float(raw))
+        except Exception:
+            pass
+    def composite(vals):
+        if not vals:
+            return 0
+        xs = sorted(vals)
+        def quantile(vals, p):
+            if len(vals) == 1:
+                return vals[0]
+            pos = (len(vals) - 1) * p
+            lo = int(pos)
+            hi = min(lo + 1, len(vals) - 1)
+            frac = pos - lo
+            return vals[lo] * (1.0 - frac) + vals[hi] * frac
+        mean = sum(vals) / len(vals)
+        if len(vals) > 1:
+            var = sum((x - mean) ** 2 for x in vals) / len(vals)
+            lcb = mean - 1.28 * ((var ** 0.5) / (len(vals) ** 0.5))
+        else:
+            lcb = mean
+        return int(0.55 * quantile(xs, 0.50) + 0.30 * quantile(xs, 0.25) + 0.15 * lcb)
+
+    comp = composite(scores)
+    trend_label = ""
+    if len(scores) >= 2:
+        trend = comp - composite(scores[:-1])
+        trend_label = f" t={trend:+d}"
+    event = "pending"
+    if outcome_file and os.path.exists(outcome_file):
+        try:
+            with open(outcome_file, encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    row = json.loads(raw)
+                    if str(row.get("hash", "") or "") == h:
+                        event = str(row.get("event", "") or event)
+        except Exception:
+            pass
+    delta_label = ""
+    try:
+        anchor = json.load(open(anchor_file, encoding="utf-8")) or {}
+        anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
+        if anchor_comp:
+            delta = int(comp - anchor_comp)
+            delta_label = f" d={delta:+d}"
+    except Exception:
+        pass
+    event_short = {"OK_IDLE": "OKI", "OK_BEAT": "OKB", "REGRESSION": "REG", "PROMOTE": "PRO", "RESET": "RST"}.get(event, event[:3])
+    label = f"{h[:4]} {n}/{mature_n} {event_short} c={comp}{trend_label}{delta_label}"
+
+print("wildcard_eval_label=" + shlex.quote(label))
+PY
+)
+		fi
+		if [[ -f "$TMP_STATE_DIR/annealing_candidates.jsonl" ]]; then
+			eval $(python3 - "$TMP_STATE_DIR/annealing_candidates.jsonl" <<'PY' 2>/dev/null
+import json
+import shlex
+import sys
+import time
+
+path = sys.argv[1]
+last = None
+try:
+    with open(path, encoding="utf-8") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                last = json.loads(raw)
+            except Exception:
+                continue
+except Exception:
+    last = None
+if not isinstance(last, dict):
+    print("annealing_label=none")
+    raise SystemExit
+age = max(0, int(time.time()) - int(last.get("epoch", 0) or 0))
+if age < 60:
+    age_label = f"{age}s"
+elif age < 3600:
+    age_label = f"{age // 60}m"
+else:
+    age_label = f"{age // 3600}h"
+try:
+    prob = float(last.get("accept_probability", 0.0) or 0.0)
+except Exception:
+    prob = 0.0
+try:
+    gap = int(float(last.get("comp_gap", 0.0) or 0.0))
+except Exception:
+    gap = 0
+label = f"{str(last.get('hash', '') or '')[:4]} p={prob:.2f} gap={gap} {age_label}"
+print("annealing_label=" + shlex.quote(label))
+PY
+)
+		fi
+
+		# --- Claude 監視レポート鮮度 ---
+		local monitor_report_file="${SOREN_MONITOR_REPORT_FILE:-/tmp/soren_report.md}"
+		local monitor_report_label="missing" monitor_report_color="$C_YELLOW"
+		if [[ -f "$monitor_report_file" ]]; then
+			eval $(python3 - "$monitor_report_file" <<'PY' 2>/dev/null
+import datetime as dt
+import os
+import re
+import shlex
+import sys
+import time
+
+path = sys.argv[1]
+now = int(time.time())
+first = ""
+text = ""
+try:
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    for raw in text.splitlines():
+        raw = raw.strip()
+        if raw:
+            first = raw.lstrip("# ").strip()
+            break
+except Exception:
+    text = ""
+try:
+    mtime = int(os.path.getmtime(path))
+except Exception:
+    mtime = 0
+report_epoch = 0
+m = re.search(r"最終更新:\s*(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+JST", text)
+if m:
+    try:
+        stamp = dt.datetime.strptime(f"{m.group(1)} {m.group(2)}:{m.group(3)} +0900", "%Y-%m-%d %H:%M %z")
+        report_epoch = int(stamp.timestamp())
+    except Exception:
+        report_epoch = 0
+age_base = report_epoch or mtime
+age = max(0, now - age_base) if age_base > 0 else 0
+if age < 60:
+    age_label = f"{age}s"
+elif age < 3600:
+    age_label = f"{age // 60}m"
+else:
+    age_label = f"{age // 3600}h"
+status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
+label = f"{status} {age_label}"
+if first:
+    label = f"{label} {first[:34]}"
+print("monitor_report_label=" + shlex.quote(label))
+print("monitor_report_status=" + shlex.quote(status))
+PY
+)
+			case "${monitor_report_status:-}" in
+				fresh) monitor_report_color="$C_GREEN" ;;
+				stale) monitor_report_color="$C_YELLOW" ;;
+				old) monitor_report_color="$C_RED" ;;
+				*) monitor_report_color="$C_YELLOW" ;;
+			esac
+		fi
+
+		# --- 最低試合ゲート ---
+		local min_games="${MIN_GAMES_BEFORE_IMPROVE_ENV:-$(_config_int_default MIN_GAMES_BEFORE_IMPROVE 12)}"
 	case "$min_games" in
 	''|*[!0-9]*) min_games=12 ;;
 	esac
@@ -1250,8 +1465,15 @@ PY
 	fi
 	printf "    ${C_MAGENTA}◇${C_RESET} Escape      ${escape_color}D=%s T=%s W=%s${C_RESET}  ${C_DIM}stag=%s/%s %s %s ago wc=%s${C_RESET}\n" \
 		"$d_flag" "$t_flag" "$w_flag" "$stagnation_count" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_event" "$stagnation_age" "$wildcard_origin_count"
+		if [[ "$wildcard_eval_label" != "none" ]]; then
+			printf "    ${C_MAGENTA}▸${C_RESET} WildEval    ${C_DIM}%s${C_RESET}\n" "$wildcard_eval_label"
+		fi
+		if [[ "$annealing_label" != "none" ]]; then
+			printf "    ${C_BLUE}▸${C_RESET} AnnealObs   ${C_DIM}%s${C_RESET}\n" "$annealing_label"
+		fi
+		printf "    ${monitor_report_color}▸${C_RESET} Monitor     ${monitor_report_color}%s${C_RESET}\n" "$monitor_report_label"
 
-	echo ""
+		echo ""
 
 	# === セクション: Audio ===
 	printf "  ${C_BOLD}AUDIO${C_RESET}\n"

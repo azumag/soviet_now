@@ -1319,6 +1319,21 @@ _ensure_radio_intro() {
 	printf '%s\n%s' "$intro_line" "$text"
 }
 
+_radio_build_overlay_detail() {
+	# topic / selected_news / provider を 1 行サマリに圧縮 (空欄は省略)
+	local _t="$1" _n="$2" _p="$3" parts=""
+	if [ -n "$_t" ]; then
+		[ "${#_t}" -gt 60 ] && _t="${_t:0:60}…"
+		parts="テーマ:${_t}"
+	fi
+	if [ -n "$_n" ]; then
+		[ "${#_n}" -gt 70 ] && _n="${_n:0:70}…"
+		parts="${parts:+${parts} / }見出し:${_n}"
+	fi
+	[ -n "$_p" ] && parts="${parts:+${parts} / }model:${_p}"
+	printf '%s' "$parts"
+}
+
 _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
@@ -1373,7 +1388,7 @@ _radio_generate_and_play() {
 		return 0
 	fi
 
-	_radio_set_state "generating" "$corner_name"
+	_radio_set_state "generating" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "")"
 	_write_radio_corner_status "generating" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 	log "[RADIO:${corner_name}] 生成キュー投入..."
 	local talk="" prompt_snapshot debug_dump="" provider_used=""
@@ -1639,7 +1654,7 @@ PREPASS_APPEND
 
 	if _radio_should_fact_check "$corner_name"; then
 		local fact_checked_body
-		_radio_set_state "verifying" "$corner_name"
+		_radio_set_state "verifying" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "$provider_used")"
 		_write_radio_corner_status "verifying" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 		fact_checked_body=$(_radio_fact_check_body "$corner_name" "$prompt_snapshot" "$talk_body" "$selected_news") || {
 			debug_dump="$TMP_DEBUG_DIR/radio_factcheck_input_${corner_name}_$(date +%s).txt"
@@ -1737,7 +1752,7 @@ PREPASS_APPEND
 		[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" >"${deferred_file%.txt}.cc_text"
 	fi
 	if [ -n "$deferred_file" ]; then
-		_radio_set_state "queued" "$corner_name"
+		_radio_set_state "queued" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "$provider_used")"
 		_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "deferred" "$selected_news" "{\"deferred_file\": \"$(basename "$deferred_file")\"}"
 		log "[RADIO:${corner_name}] deferred queue投入: $(basename "$deferred_file")"
 		rmdir "$inflight_dir" 2>/dev/null || true

@@ -169,3 +169,14 @@
 {"eventType":"improve","fromHash":"ab7a71fc6634","toHash":"204dabc43e7c","note":"single-game improve #2712","gameStart":2712,"gameEnd":2712,"bestGame":2712,"recordedAt":"2026-04-15T12:00:49.075Z"}
 {"eventType":"improve","fromHash":"204dabc43e7c","toHash":"a804587578b2","note":"single-game improve #2784","gameStart":2784,"gameEnd":2784,"bestGame":2784,"recordedAt":"2026-04-16T11:52:49.330Z"}
 {"eventType":"improve","fromHash":"a804587578b2","toHash":"887aa07afd97","note":"single-game improve #4344","gameStart":4344,"gameEnd":4344,"bestGame":4344,"recordedAt":"2026-05-11T10:14:14.414Z"}
+{"eventType":"improve","fromHash":"887aa07afd97","toHash":"a6209d2750ed","note":"standalone improve 1-11","gameStart":1,"gameEnd":11,"bestGame":10,"recordedAt":"2026-05-16T17:01:48.145Z"}
+{"eventType":"improve","fromHash":"a6209d2750ed","toHash":"2787f4ec485a","note":"standalone improve 1-11","gameStart":1,"gameEnd":11,"bestGame":10,"recordedAt":"2026-05-16T17:52:19.871Z"}
+{"eventType":"improve","fromHash":"2787f4ec485a","toHash":"1f8f86e63077","note":"standalone improve 12-16","gameStart":12,"gameEnd":16,"bestGame":12,"recordedAt":"2026-05-16T19:27:50.225Z"}
+{"eventType":"improve","fromHash":"1f8f86e63077","toHash":"64b5f6918cdd","note":"standalone improve 17-22","gameStart":17,"gameEnd":22,"bestGame":20,"recordedAt":"2026-05-16T20:40:19.689Z"}
+{"eventType":"improve","fromHash":"64b5f6918cdd","toHash":"a03c7418a4f1","note":"standalone improve 23-25","gameStart":23,"gameEnd":25,"bestGame":24,"recordedAt":"2026-05-16T21:46:03.942Z"}
+{"eventType":"improve","fromHash":"a03c7418a4f1","toHash":"adffedae1887","note":"standalone improve 36-38","gameStart":36,"gameEnd":38,"bestGame":36,"recordedAt":"2026-05-16T22:56:31.919Z"}
+{"eventType":"improve","fromHash":"adffedae1887","toHash":"17ac98cfd8d4","note":"standalone improve 39-43","gameStart":39,"gameEnd":43,"bestGame":43,"recordedAt":"2026-05-16T23:09:10.515Z"}
+{"eventType":"improve","fromHash":"17ac98cfd8d4","toHash":"6aab653e851f","note":"standalone improve 44-50","gameStart":44,"gameEnd":50,"bestGame":44,"recordedAt":"2026-05-17T00:12:14.397Z"}
+{"eventType":"improve","fromHash":"6aab653e851f","toHash":"15320abcb2a7","note":"standalone improve 51-53","gameStart":51,"gameEnd":53,"bestGame":51,"recordedAt":"2026-05-17T01:19:38.982Z"}
+{"eventType":"improve","fromHash":"15320abcb2a7","toHash":"419f89b5a68d","note":"standalone improve 51-53","gameStart":51,"gameEnd":53,"bestGame":51,"recordedAt":"2026-05-17T02:13:03.894Z"}
+{"eventType":"improve","fromHash":"419f89b5a68d","toHash":"4402674dc6f9","note":"standalone improve 54-94","gameStart":54,"gameEnd":94,"bestGame":56,"recordedAt":"2026-05-17T04:46:49.714Z"}

@@ -266,6 +266,15 @@ play_one_game() {
 	# 試合不成立扱いでスコアは記録しない (rolling_scores を汚さない)。
 	if [ "$runner_error" = "bridge_desync" ]; then
 		log "[BRIDGE-DESYNC] strategy_runner が bridge 非同期を検出 (turns=${LAST_TURNS}) → bridge 再起動して次周回で復旧"
+		if [ "${BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED:-1}" = "1" ] &&
+			command -v soren91_is_running >/dev/null 2>&1 &&
+			command -v soren91_stop >/dev/null 2>&1 &&
+			soren91_is_running 2>/dev/null &&
+			! _is_improve_running &&
+			! { command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; }; then
+			log "[BRIDGE-DESYNC] 中華AIプレイ中に soren91 残存を検出 → stale 代打を停止"
+			soren91_stop 2>/dev/null || log "[BRIDGE-DESYNC] soren91_stop 失敗 (次周回で再判定)"
+		fi
 		if [ "${BRIDGE_DESYNC_AUTO_RECOVER_ENABLED:-1}" = "1" ] && command -v _br_relaunch >/dev/null 2>&1; then
 			if _br_relaunch; then
 				log "[BRIDGE-DESYNC] bridge 再起動 成功"

@@ -213,6 +213,14 @@ if ! validate_strategy; then
 	log "ERROR: 初期バリデーション失敗"
 	exit 1
 fi
+# validate_strategy may inject the runtime deadline guard. If that changes
+# decide() hash, keep the live run bucket aligned before any new score lands.
+_validated_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+_current_run_hash=$(python3 -c "import json; print(json.load(open('$CURRENT_STRATEGY_RUN_FILE')).get('hash',''))" 2>/dev/null || echo "")
+if [ -n "$_validated_hash" ] && [ "$_validated_hash" != "$_current_run_hash" ]; then
+	log "[CURRENT-RUN] validation後hash同期: ${_current_run_hash:-none} -> $_validated_hash"
+	_reset_current_strategy_run "$_validated_hash"
+fi
 
 # 前回中断した改善プロセスの状態復元
 check_and_harvest_improvement
@@ -373,6 +381,14 @@ while true; do
 	post_game_bookkeeping
 	post_rc=$?
 	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
+	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
+		./repair_current_run_from_history.sh "${CURRENT_RUN_AUTO_REPAIR_LIMIT:-12}" >/dev/null 2>&1 ||
+			log "[CURRENT-RUN] auto repair skipped/failed after post_game_bookkeeping"
+	fi
+	if [ -x ./wildcard_progress_report.sh ]; then
+		./wildcard_progress_report.sh >/dev/null 2>&1 ||
+			log "[WILDCARD] progress report skipped/failed after post_game_bookkeeping"
+	fi
 
 	# 定期 tmp/ クリーンアップ (50ゲームごと)
 	if (( GAME_NUM % 50 == 0 )); then
@@ -405,7 +421,9 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 			[ ! -f "$IMPROVE_LOCK_FILE" ] &&
 			! _is_improve_running; then
 			log "[CYCLE] 回帰ロールバック直後 → 失敗バッチで改善ロック作成"
+			enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+			enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 			python3 -c "
 import json, time
 f='$IMPROVE_LOCK_FILE'
@@ -452,7 +470,9 @@ json.dump(d,open(f,'w'))
 			else
 				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → ロックファイル作成、daemon再起動後に改善予定"
 			fi
+			enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+			enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 			python3 -c "
 import json, time
 f='$IMPROVE_LOCK_FILE'

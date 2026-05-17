@@ -63,6 +63,7 @@ const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
 const CALIBRATION_MIN_CONFIDENCE = 0.55;
 const CALIBRATION_MIN_PIECES = 3;
+const MIN_RANKING_DETECTION_TURNS = 10;
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
@@ -71,6 +72,8 @@ const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_MODE_FLAG_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
 const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
+const COMMENT_QUEUE_DIR = join('..', 'tmp', '.comment_queue');
+const SOREN91_LAST_COMMENTED_GAME_FILE = join(COMMENT_QUEUE_DIR, 'soren91_last_commented_game');
 let activeBrowser = null;
 let activeContext = null;
 let activeGamePage = null;
@@ -82,7 +85,7 @@ const rankingCommentQueuedGames = new Set();
 const rankingCommentInFlightGames = new Set();
 
 // ディレクトリ確保
-[SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots'].forEach(dir => {
+[SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots', COMMENT_QUEUE_DIR].forEach(dir => {
   mkdirSync(dir, { recursive: true });
 });
 
@@ -220,6 +223,76 @@ function parsePositiveInt(value) {
   return Number.isInteger(num) && num > 0 ? num : null;
 }
 
+function rankingCommentClaimPath(gameNumber) {
+  return join(COMMENT_QUEUE_DIR, `soren91_ranking_comment_game_${String(gameNumber).padStart(4, '0')}.claim`);
+}
+
+function readLastCommentedGameNumber() {
+  if (!existsSync(SOREN91_LAST_COMMENTED_GAME_FILE)) return null;
+  try {
+    return parsePositiveInt(readFileSync(SOREN91_LAST_COMMENTED_GAME_FILE, 'utf-8').trim());
+  } catch {
+    return null;
+  }
+}
+
+function claimRankingCommentGame(gameNumber, reason) {
+  const n = parsePositiveInt(gameNumber);
+  if (!n) {
+    console.log(`[game] Ranking comment skipped: invalid game number (${gameNumber})`);
+    return false;
+  }
+
+  if (rankingCommentQueuedGames.has(n) || rankingCommentInFlightGames.has(n)) {
+    console.log(`[game] Ranking comment already queued/in-flight for game #${n} (${reason})`);
+    return false;
+  }
+
+  const lastCommentedGame = readLastCommentedGameNumber();
+  if (lastCommentedGame != null && lastCommentedGame >= n) {
+    console.log(`[game] Ranking comment already completed for game #${n} (last=${lastCommentedGame}, ${reason})`);
+    rankingCommentQueuedGames.add(n);
+    return false;
+  }
+
+  const claimPath = rankingCommentClaimPath(n);
+  try {
+    writeFileSync(claimPath, JSON.stringify({
+      gameNumber: n,
+      reason,
+      claimedAt: new Date().toISOString(),
+      pid: process.pid,
+    }, null, 2) + '\n', { flag: 'wx' });
+    return true;
+  } catch (err) {
+    if (err?.code === 'EEXIST') {
+      console.log(`[game] Ranking comment already claimed for game #${n} (${reason})`);
+      rankingCommentQueuedGames.add(n);
+      return false;
+    }
+    console.log(`[game] Ranking comment claim failed for game #${n} (${reason}): ${err.message}`);
+    return false;
+  }
+}
+
+function markRankingCommentGameCompleted(gameNumber) {
+  const n = parsePositiveInt(gameNumber);
+  if (!n) return;
+  try {
+    writeFileSync(SOREN91_LAST_COMMENTED_GAME_FILE, `${n}\n`);
+  } catch (err) {
+    console.log(`[game] Ranking comment completion marker failed for game #${n}: ${err.message}`);
+  }
+}
+
+function releaseRankingCommentGameClaim(gameNumber) {
+  const n = parsePositiveInt(gameNumber);
+  if (!n) return;
+  try {
+    unlinkSync(rankingCommentClaimPath(n));
+  } catch {}
+}
+
 function loadImprovementSchedule() {
   // 環境変数オーバーライド (最優先 — soren91_control.sh メリケンモード等で使用)
   const envInterval = parsePositiveInt(process.env.IMPROVEMENT_INTERVAL_GAMES);
@@ -253,35 +326,120 @@ function loadImprovementSchedule() {
 }
 
 async function queueRankingCommentOnce(gameNumber, detectedRank, reason = 'post-game', allowFallback = false) {
-  if (rankingCommentQueuedGames.has(gameNumber) || rankingCommentInFlightGames.has(gameNumber)) {
-    console.log(`[game] Ranking comment already queued/in-flight for game #${gameNumber} (${reason})`);
+  const n = parsePositiveInt(gameNumber);
+  if (!n) {
+    console.log(`[game] Ranking comment skipped: invalid game number (${gameNumber})`);
     return false;
   }
 
-  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+  const rankingImagePath = join('tmp/summaries', `ranking_${String(n).padStart(4, '0')}.png`);
   // allowFallback=true (実ラウンド終了の最終手段) のときは、順位/画像が無くても
   // generateRankingComment の設計済みフォールバック文 (「順位を確認できませんでした…」)
   // を生成・読み上げる。検出全滅でも決算コメントが無言にならないようにする。
   if (detectedRank == null && !existsSync(rankingImagePath) && !allowFallback) {
-    console.log(`[game] Ranking comment deferred for game #${gameNumber}: no context yet (${reason})`);
+    console.log(`[game] Ranking comment deferred for game #${n}: no context yet (${reason})`);
     return false;
   }
 
-  rankingCommentInFlightGames.add(gameNumber);
+  if (!claimRankingCommentGame(n, reason)) {
+    return false;
+  }
+
+  rankingCommentInFlightGames.add(n);
   try {
     const { generateRankingComment } = await loadModule('./comment.mjs');
     const imagePath = existsSync(rankingImagePath) ? rankingImagePath : null;
-    const comment = await generateRankingComment(imagePath, gameNumber, detectedRank);
+    const comment = await generateRankingComment(imagePath, n, detectedRank);
     if (comment) {
-      rankingCommentQueuedGames.add(gameNumber);
+      rankingCommentQueuedGames.add(n);
+      markRankingCommentGameCompleted(n);
       return true;
     }
+    releaseRankingCommentGameClaim(n);
   } catch (err) {
-    console.log(`[game] Ranking comment error for game #${gameNumber} (${reason}): ${err.message}`);
+    releaseRankingCommentGameClaim(n);
+    console.log(`[game] Ranking comment error for game #${n} (${reason}): ${err.message}`);
   } finally {
-    rankingCommentInFlightGames.delete(gameNumber);
+    rankingCommentInFlightGames.delete(n);
   }
   return false;
+}
+
+async function captureRankingTransitionBurst(page, gameNumber) {
+  if (process.env.SOREN91_RANK_BURST === '0') return { detectedRank: null, rankingImagePath: null };
+
+  const intervalMs = Math.max(50, Number(process.env.SOREN91_RANK_BURST_INTERVAL_MS || 150));
+  const durationMs = Math.max(intervalMs, Number(process.env.SOREN91_RANK_BURST_DURATION_MS || 4500));
+  const frames = Math.max(1, Math.ceil(durationMs / intervalMs));
+  const prefix = `_rankburst_g${String(gameNumber).padStart(4, '0')}`;
+  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+  const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+
+  let bestIncompletePath = null;
+  console.log(`[game] Ranking transition burst start: game #${gameNumber}, frames=${frames}, interval=${intervalMs}ms`);
+  for (let i = 0; i < frames; i++) {
+    const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
+    try {
+      await page.screenshot({ path: framePath });
+      const rankResult = await detectRankingScreen(framePath);
+      const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult ?? 'null'}.png`);
+      try { renameSync(framePath, taggedPath); } catch {}
+      if (rankResult != null) {
+        if (rankResult > 0) {
+          try { copyFileSync(taggedPath, rankingImagePath); } catch {}
+          console.log(`[game] Ranking transition burst detected: game #${gameNumber} rank=${rankResult} frame=${i + 1}`);
+          return { detectedRank: rankResult, rankingImagePath };
+        }
+        bestIncompletePath = bestIncompletePath || taggedPath;
+      }
+    } catch (err) {
+      console.log(`[game] Ranking transition burst frame error: ${err.message}`);
+    }
+    if (i + 1 < frames) await sleep(intervalMs);
+  }
+
+  if (bestIncompletePath && !existsSync(rankingImagePath)) {
+    try { copyFileSync(bestIncompletePath, rankingImagePath); } catch {}
+    console.log(`[game] Ranking transition burst found incomplete ranking candidate: game #${gameNumber}`);
+    return { detectedRank: null, rankingImagePath };
+  }
+
+  console.log(`[game] Ranking transition burst ended without ranking screen: game #${gameNumber}`);
+  return { detectedRank: null, rankingImagePath: null };
+}
+
+async function probeRankingImmediatelyAfterDrop(page, gameNumber, turn) {
+  if (process.env.SOREN91_RANK_POSTDROP_PROBE === '0') return { detectedRank: null, rankingImagePath: null };
+
+  const intervalMs = Math.max(40, Number(process.env.SOREN91_RANK_POSTDROP_INTERVAL_MS || 75));
+  const durationMs = Math.max(intervalMs, Number(process.env.SOREN91_RANK_POSTDROP_DURATION_MS || 1200));
+  const frames = Math.max(1, Math.ceil(durationMs / intervalMs));
+  const prefix = `_rankpostdrop_g${String(gameNumber).padStart(4, '0')}_t${String(turn).padStart(4, '0')}`;
+  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+  const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+
+  for (let i = 0; i < frames; i++) {
+    const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
+    try {
+      await page.screenshot({ path: framePath });
+      const rankResult = await detectRankingScreen(framePath);
+      if (rankResult != null && rankResult > 0) {
+        const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult}.png`);
+        try { renameSync(framePath, taggedPath); } catch {}
+        try { copyFileSync(taggedPath, rankingImagePath); } catch {}
+        console.log(`[game] Post-drop ranking detected: game #${gameNumber} turn=${turn} rank=${rankResult} frame=${i + 1}`);
+        return { detectedRank: rankResult, rankingImagePath };
+      } else {
+        try { unlinkSync(framePath); } catch {}
+      }
+    } catch (err) {
+      try { unlinkSync(framePath); } catch {}
+      console.log(`[game] Post-drop ranking probe frame error: ${err.message}`);
+    }
+    if (i + 1 < frames) await sleep(intervalMs);
+  }
+
+  return { detectedRank: null, rankingImagePath: null };
 }
 
 function loadAudioGainMultiplier() {
@@ -1011,6 +1169,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let holdUsedThisTurn = false;
   let lastKnownRank = null;
   let rankingDetected = false;
+  let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
 
@@ -1049,6 +1208,26 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.state === 'GAMEOVER') {
         console.log(`[game] GAMEOVER detected at turn ${turn}, treating as WAITING transition`);
         boardState.state = 'WAITING';
+      }
+
+      if (turn >= MIN_RANKING_DETECTION_TURNS && boardState.state === 'MOVE') {
+        try {
+          const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+          const activeRankResult = await detectRankingScreen(screenshotPath);
+          if (activeRankResult != null && activeRankResult > 0) {
+            const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+            try { copyFileSync(screenshotPath, rkPath); } catch {}
+            lastKnownRank = activeRankResult;
+            boardState.rank = activeRankResult;
+            boardState.state = 'WAITING';
+            if (!rankingDetected) {
+              console.log(`[game] Active ranking screen detected before move: rank=${activeRankResult}`);
+            }
+            rankingDetected = true;
+          }
+        } catch (e) {
+          console.log(`[game] Active ranking detection error: ${e.message}`);
+        }
       }
 
       // 待機画面 (ランキング/接続中/タイトル画面)
@@ -1124,11 +1303,24 @@ async function gameLoop(page, calibration, gameNumber) {
               console.log(`[game] Ranking detection error: ${e.message}`);
             }
           }
+
+          if (!rankingDetected && !rankingBurstCaptured && turn >= MIN_RANKING_DETECTION_TURNS && waitingCount === 1) {
+            rankingBurstCaptured = true;
+            try {
+              const burstResult = await captureRankingTransitionBurst(page, gameNumber);
+              if (burstResult.detectedRank != null) {
+                lastKnownRank = burstResult.detectedRank;
+                rankingDetected = true;
+              }
+            } catch (e) {
+              console.log(`[game] Ranking transition burst error: ${e.message}`);
+            }
+          }
         }
 
-        // ラウンド終了判定: ゲーム中 (turn>5) に連続6回以上WAITINGが続いたらラウンド終了
+        // ラウンド終了判定: 十分に進んだゲームで連続6回以上WAITINGが続いたらラウンド終了
         // (ランキング画面が完全に表示されるまで待つため、3→6に増加)
-        if (turn > 5 && waitingCount >= 6 && !roundEnded) {
+        if (turn >= MIN_RANKING_DETECTION_TURNS && waitingCount >= 6 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
           // 最終順位をboardStateに付与
@@ -1150,6 +1342,7 @@ async function gameLoop(page, calibration, gameNumber) {
           moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
+          rankingBurstCaptured = false;
           midgameCommentSent = false;
 
 
@@ -1278,6 +1471,19 @@ async function gameLoop(page, calibration, gameNumber) {
       await executeDrop(page, decision.x, calibration);
       holdUsedThisTurn = false; // ドロップ後にhold権をリセット
       lastDropTime = Date.now();
+
+      if (!rankingDetected && turn >= MIN_RANKING_DETECTION_TURNS) {
+        try {
+          const postDropRank = await probeRankingImmediatelyAfterDrop(page, gameNumber, turn);
+          if (postDropRank.detectedRank != null) {
+            lastKnownRank = postDropRank.detectedRank;
+            boardState.rank = postDropRank.detectedRank;
+            rankingDetected = true;
+          }
+        } catch (e) {
+          console.log(`[game] Post-drop ranking probe error: ${e.message}`);
+        }
+      }
 
       // ターン記録
       const record = {

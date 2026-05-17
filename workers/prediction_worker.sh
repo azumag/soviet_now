@@ -193,7 +193,7 @@ while true; do
 			if [ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
 				_log "rank1 hot streak延長突入 (acc=${current_acc_count}) → prediction resolve outcome=${best}, 次改善まで新規予想停止"
 				enqueue_chat_message "現在の戦略が1位でスコア更新中のため、改善サイクルを延長して続行します。予想はいったん確定し、次の改善開始まで新しい予想は待機します。" "predictions"
-				[ -x ./overlay_notify.sh ] && ./overlay_notify.sh prediction "予想 延長線" "rank1 hot streak acc=${current_acc_count} outcome=${best:-0} / 次改善まで新規予想停止" "info" >/dev/null 2>&1 || true
+				[ -x ./overlay_notify.sh ] && ./overlay_notify.sh prediction "予想 延長戦 (1位スコア更新中)" "rank1 hot streak | 蓄積ゲーム=${current_acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} | best outcome=${best:-0} | 改善サイクル延長・次改善開始まで新規予想停止" "info" >/dev/null 2>&1 || true
 				printf '%s\n' "$(date +%s)" >"$HOT_STREAK_PREDICTION_PENDING_FILE"
 			else
 				_log "rank1 hot streak延長中 (acc=${current_acc_count}) → prediction pending"

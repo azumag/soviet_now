@@ -173,6 +173,93 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         improve_sh = (REPO_ROOT / "strategy/improve.sh").read_text()
         self.assertIn('./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason"', improve_sh)
 
+    def test_wildcard_adapts_perturbation_after_consecutive_attempts(self):
+        """WILDCARD 連続発火時は state を記録し、摂動幅と対象数を段階的に拡張する。"""
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn("WILDCARD_ADAPTIVE_SCALE_ENABLED", config)
+        self.assertIn("WILDCARD_ADAPTIVE_SCALE_STEP", config)
+        self.assertIn("WILDCARD_ADAPTIVE_SCALE_MAX", config)
+        self.assertIn("WILDCARD_ADAPTIVE_EXTRA_PARAM_EVERY", config)
+        self.assertIn("WILDCARD_TABU_RECENT_LINES", config)
+        self.assertIn("WILDCARD_AI_ESCALATE_ENABLED", config)
+        self.assertIn("WILDCARD_AI_ESCALATE_STREAK", config)
+        self.assertIn("WILDCARD_BANDIT_ENABLED", config)
+        self.assertIn("WILDCARD_BANDIT_LOOKBACK", config)
+        self.assertIn("WILDCARD_BANDIT_EXPLORE_RATE", config)
+        self.assertIn("ANNEALING_OBSERVE_ENABLED", config)
+        self.assertIn("ANNEALING_BASE_TEMP", config)
+        self.assertIn("ANNEALING_DECAY", config)
+        self.assertIn("WILDCARD_ATTEMPT_STATE_FILE", config)
+        self.assertIn("WILDCARD_OUTCOME_FILE", config)
+        self.assertIn("ANNEALING_OBSERVE_FILE", config)
+
+        self.assertIn("consecutive_wildcards", eloop)
+        self.assertIn("adapted_ratio_min", eloop)
+        self.assertIn("adapted_ratio_max", eloop)
+        self.assertIn("adapted_count_min", eloop)
+        self.assertIn("recent_applied_lines", eloop)
+        self.assertIn("recent_attempts", eloop)
+        self.assertIn("wildcard_outcomes.jsonl", eloop)
+        self.assertIn('"event": "CREATED"', eloop)
+        self.assertIn("prefer_lines", eloop)
+        self.assertIn("--prefer-lines", eloop)
+        self.assertIn("--explore-rate", eloop)
+        self.assertIn("--exclude-lines", eloop)
+        self.assertIn("wildcard_applied", eloop)
+        self.assertIn('"exclude_applied": exclude_applied', eloop)
+        self.assertIn("adaptive scale streak=", eloop)
+        self.assertIn('WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON=', eloop)
+        self.assertIn('"wildcard_streak": int(os.environ.get("WILDCARD_CURRENT_STREAK"', eloop)
+        self.assertLess(
+            eloop.index('CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"'),
+            eloop.index('"${IMPROVE_REASON:-normal}" = "wildcard"'),
+        )
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        self.assertIn('${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}', regression)
+        self.assertIn("def _update_wildcard_attempt_state(event):", regression)
+        self.assertIn('event in ("PROMOTE", "OK_BEAT")', regression)
+        self.assertIn('"wildcard_success_reset"', regression)
+        self.assertIn("wildcard_outcome_file", regression)
+        self.assertIn('"last_wildcard_outcome"', regression)
+        self.assertIn('"metrics": current_payload', regression)
+        self.assertIn("def _record_annealing_candidate(event):", regression)
+        self.assertIn('"event": "ANNEALING_CANDIDATE"', regression)
+        self.assertIn('"observe_only": True', regression)
+        self.assertIn("_record_annealing_candidate(event)", regression)
+
+    def test_repeated_wildcards_can_escalate_to_ai_structural_escape(self):
+        """WILDCARD 連続失敗時は、次の脱出をAI構造変異モードへ上げられる。"""
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn("WILDCARD_AI_ESCALATE_ENABLED", config)
+        self.assertIn("WILDCARD_AI_ESCALATE_STREAK", config)
+        self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
+        self.assertIn('improve_reason="escape_ai"', improve)
+        self.assertIn("AI 構造変異モードで脱出", improve)
+        self.assertIn("rejected_hash_metrics.json", improve)
+        self.assertIn("wildcard_origin.json", improve)
+        self.assertIn("reconstructs failures from WILDCARDs", improve)
+        self.assertIn("export IMPROVE_REASON", eloop)
+        self.assertIn('os.environ.get("IMPROVE_REASON", "normal") == "escape_ai"', eloop)
+        self.assertIn("今回だけAIによる小さな構造変異で大域脱出を狙う", eloop)
+
+    def test_ai_output_files_are_not_precreated_before_opencode_write(self):
+        """opencode write 制約に合わせ、analysis/review 出力は空ファイル作成しない。"""
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
+        self.assertIn('rm -f "$ANALYSIS_RESULT_FILE"', eloop)
+        self.assertIn('rm -f "$REVIEW_RESULT_FILE"', eloop)
+        self.assertNotIn(': >"$ANALYSIS_RESULT_FILE"', eloop)
+        self.assertNotIn(': >"$REVIEW_RESULT_FILE"', eloop)
+        self.assertIn("`tmp/review_result.md` は存在しない場合があります", review_prompt)
+        self.assertIn("存在しない場合は `Write` で新規作成すること", review_prompt)
+        self.assertIn("必ず `## VERDICT: PASS` または `## VERDICT: FAIL`", review_prompt)
+        self.assertNotIn("`tmp/review_result.md` は既に存在", review_prompt)
+
 
 # --- F2: wildcard origin override branch budget only for that hash -----------
 
@@ -243,6 +330,74 @@ class TestWildcardPerturbPreservesComments(unittest.TestCase):
             self.assertIn("# leading comment line", out.read_text())
             self.assertIn("# inline comment", out.read_text())
             self.assertIn('"""module docstring should be preserved"""', out.read_text())
+
+    def test_exclude_lines_avoids_recent_wildcard_targets(self):
+        """直近WILDCARDで触った行は、候補が足りる限り次回の選定から外せる。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    threshold = 12.5
+                    weight = 3
+                    return {"x": threshold + weight, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "1",
+                    "--seed", "0",
+                    "--exclude-lines", "2",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["exclude_applied"])
+            self.assertNotIn(2, [item["lineno"] for item in payload["applied"]])
+
+    def test_prefer_lines_can_bias_wildcard_targets(self):
+        """outcome 由来の優先行がある場合は、探索率0でその行から選ぶ。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    low = 2
+                    preferred = 7
+                    other = 11
+                    return {"x": low + preferred + other, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "1",
+                    "--seed", "1",
+                    "--prefer-lines", "3",
+                    "--explore-rate", "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["prefer_applied"])
+            self.assertEqual([3], [item["lineno"] for item in payload["applied"]])
 
 
 # --- 共通: stagnation counter transitions ------------------------------------
@@ -433,6 +588,86 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("meta http-equiv=\"refresh\"", overlay)
         self.assertIn("IMPROVE_AI_LOG_FILE", overlay)
 
+    def test_status_g_has_520x980_html_overlay_generator(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        overlay = (REPO_ROOT / "generate_status_overlay.sh").read_text()
+        status_g = (REPO_ROOT / "show_status_g.sh").read_text()
+        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+
+        self.assertIn("STATUS_OVERLAY_HTML_FILE", config)
+        self.assertIn("STATUS_OVERLAY_SOURCE", config)
+        self.assertIn("STATUS_OVERLAY_WIDTH", config)
+        self.assertIn("STATUS_OVERLAY_HEIGHT", config)
+        self.assertIn("STATUS_OVERLAY_OBS_X", config)
+        self.assertIn("STATUS_OVERLAY_OBS_Y", config)
+        self.assertIn("STATUS_OVERLAY_OBS_SCALE_X", config)
+        self.assertIn("STATUS_OVERLAY_OBS_SCALE_Y", config)
+        self.assertIn("520", config)
+        self.assertIn("980", config)
+        self.assertIn("python3 status_dashboard.py", overlay)
+        self.assertIn("[ -f .env ] && set -a && . ./.env && set +a", overlay)
+        self.assertIn("ansi_to_html", overlay)
+        self.assertIn("STATUS_OVERLAY_RAW", overlay)
+        self.assertIn("obs_browser_source.sh ensure", overlay)
+        self.assertIn("apply_obs_transform", overlay)
+        self.assertIn("SetSceneItemTransform", overlay)
+        self.assertIn("OBS_BOUNDS_NONE", overlay)
+        self.assertIn("transformed:", overlay)
+        self.assertIn("status_overlay_watch.pid", overlay)
+        self.assertIn("status_overlay.log", overlay)
+        self.assertIn("soren_status_overlay", overlay)
+        self.assertIn("tmux new-session", overlay)
+        self.assertIn("tmux-start-failed:fallback-nohup", overlay)
+        self.assertIn("tmux kill-session", overlay)
+        self.assertIn("nohup", overlay)
+        self.assertIn("start [interval_sec]", overlay)
+        self.assertIn("stop|ensure-obs", overlay)
+        self.assertIn("width: {html.escape(width)}px", overlay)
+        self.assertIn("height: {html.escape(height)}px", overlay)
+        self.assertIn("--html-once", status_g)
+        self.assertIn("--html-watch", status_g)
+        self.assertIn("--html-start", status_g)
+        self.assertIn("--html-stop", status_g)
+        self.assertIn("--html-obs", status_g)
+        self.assertIn("generate_status_overlay.sh", status_g)
+        self.assertIn("Observer Status", dashboard)
+        self.assertIn("load_monitor_report_status", dashboard)
+        self.assertIn("load_latest_annealing_candidate", dashboard)
+        self.assertIn("SOREN_MONITOR_REPORT_FILE", dashboard)
+        self.assertIn("ANNEALING_OBSERVE_FILE", dashboard)
+        self.assertIn("observe-only", dashboard)
+
+    def test_show_status_has_html_overlay_generator(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        overlay = (REPO_ROOT / "generate_show_status_overlay.sh").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("SHOW_STATUS_OVERLAY_HTML_FILE", config)
+        self.assertIn("SHOW_STATUS_OVERLAY_SOURCE", config)
+        self.assertIn("show_status_overlay.html", config)
+        self.assertIn("showStatusOverlay", config)
+        self.assertIn("SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once", overlay)
+        self.assertIn("SHOW_STATUS_OVERLAY_RAW", overlay)
+        self.assertIn("ansi_to_html", overlay)
+        self.assertIn("obs_browser_source.sh ensure", overlay)
+        self.assertIn("show_status_overlay_watch.pid", overlay)
+        self.assertIn("show_status_overlay.log", overlay)
+        self.assertIn("soren_show_status_overlay", overlay)
+        self.assertIn("tmux new-session", overlay)
+        self.assertIn("tmux-start-failed:fallback-nohup", overlay)
+        self.assertIn("tmux kill-session", overlay)
+        self.assertIn("nohup", overlay)
+        self.assertIn("start [interval_sec]", overlay)
+        self.assertIn("stop|ensure-obs", overlay)
+        self.assertIn("width: {html.escape(width)}px", overlay)
+        self.assertIn("height: {html.escape(height)}px", overlay)
+        self.assertIn("--html-once", status)
+        self.assertIn("--html-watch", status)
+        self.assertIn("--html-start", status)
+        self.assertIn("--html-stop", status)
+        self.assertIn("--html-obs", status)
+        self.assertIn("generate_show_status_overlay.sh", status)
+
 
 # --- soren91 process launch ---------------------------------------------------
 
@@ -580,10 +815,19 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("最終目標は type16 のソ連建国", text)
         self.assertIn("hard_signal: 今回バッチはロシア未到達", text)
         self.assertIn("high_type_counts is final-board type10+ inventory", text)
+        self.assertIn("deadline_guard_rate", text)
+        self.assertIn("deadline_guard_reason_top", text)
+        self.assertIn("guard_reason_top=", text)
+        self.assertIn("deadline guard が多発", text)
+        self.assertIn("ガードを弱めず", text)
+        self.assertIn("peak_high_type_counts", text)
+        self.assertIn("frontier_hint", text)
+        self.assertIn("type13以下で止まっている", text)
 
     def test_score_state_persists_nation_progress_metadata(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        repair = (REPO_ROOT / "repair_current_run_from_history.sh").read_text()
         for text in (regression, improve):
             self.assertIn("def nation_progress(path):", text)
             self.assertIn('row.get("russia_created")', text)
@@ -592,6 +836,37 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
             self.assertIn('["max_types"]', text)
             self.assertIn('["russia_count"]', text)
             self.assertIn('["soviet_count"]', text)
+            self.assertIn('["frontier_hints"]', text)
+            self.assertIn('["peak_high_type_counts"]', text)
+            self.assertIn('["deadline_guard_counts"]', text)
+            self.assertIn('["deadline_guard_reason_tops"]', text)
+            self.assertIn('"DEADLINE_GUARD" in str(row.get("decision_reason") or "")', text)
+            self.assertNotIn("\tdef nation_progress(path):", text)
+            self.assertNotIn("\tprogress_archives = ", text)
+        self.assertIn("current_run_update.err", improve)
+        self.assertIn("[CURRENT-RUN] update stderr:", improve)
+        self.assertIn("rolling_scores_update.err", regression)
+        self.assertIn("[ROLLING] update stderr:", regression)
+        self.assertIn("repair_current_run", repair)
+        self.assertIn("update_rolling_scores", repair)
+        self.assertIn("_update_current_strategy_run", repair)
+        self.assertIn("final_types", repair)
+        self.assertEqual(repair.count('last.get("state_snapshot")'), 1)
+
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+        self.assertIn("CURRENT_RUN_AUTO_REPAIR_ENABLED", config)
+        self.assertIn("CURRENT_RUN_AUTO_REPAIR_LIMIT", config)
+        self.assertIn("./repair_current_run_from_history.sh", loop)
+        self.assertIn("auto repair skipped/failed", loop)
+        self.assertIn("./repair_current_run_from_history.sh", improve)
+        self.assertIn("adaptive bookkeeping", improve)
+        self.assertIn("def summarize_archive(path):", improve)
+        self.assertIn("enrich_accumulated_game_metadata()", improve)
+        self.assertIn("deadline_guard_total", improve)
+        self.assertIn("acc.setdefault('max_types'", improve)
+        self.assertIn('enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE"', improve)
+        self.assertIn('enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE"', loop)
 
     def test_rollback_analysis_surfaces_soviet_objective_delta(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -600,6 +875,10 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("## Soviet Objective Delta", regression)
         self.assertIn("progress_gap_vs_target", regression)
         self.assertIn("current はロシア(type15)未到達", regression)
+        self.assertIn("frontier_hints=", regression)
+        self.assertIn("peak_high_type_counts=", regression)
+        self.assertIn("deadline_guard_counts=", regression)
+        self.assertIn("deadline_guard_reason_tops=", regression)
         self.assertIn("Soviet Objective Delta", improve)
 
     def test_regression_guard_blocks_objective_backslide(self):
@@ -622,21 +901,176 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("d['improve_reason']='post_regression'", loop)
         self.assertIn("REGRESSION_ROLLBACK_HASH", loop)
         self.assertIn("ロールバック直後の失敗バッチを改善入力として使用", improve)
-        self.assertIn("normal|post_regression|wildcard", improve)
+        self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn('_start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "$improve_reason"', improve)
 
     def test_improve_and_system_progress_are_queued_for_audio_worker(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop_improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+        comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()
         system_report = (REPO_ROOT / "system_progress_report.sh").read_text()
 
         self.assertIn("IMPROVE_AUDIO_SUMMARY_ENABLED", config)
         self.assertIn("IMPROVE_AUDIO_SUMMARY_INTERVAL_SEC", config)
         self.assertIn("_improve_audio_summary_maybe", eloop_improve)
+        self.assertIn("IMPROVE_AUDIO_SUMMARY_SPOKEN=0", eloop_improve)
         self.assertIn('enqueue_audio_text "$text" "improve_progress"', eloop_improve)
+        self.assertIn("*improve_progress*)", comment_lib)
+        self.assertIn("_comment_improve_progress_already_played", comment_lib)
+        self.assertIn("_comment_mark_improve_progress_played", comment_lib)
         self.assertIn("改善進捗", eloop_improve)
         self.assertIn('enqueue_audio_text "$text" "system_progress"', system_report)
+        self.assertIn('${SYSTEM_PROGRESS_AUDIO_SPEAKER:-${SOREN91_VOICEVOX_SPEAKER:-46}}', system_report)
         self.assertIn("システム改善進捗", system_report)
+
+    def test_startup_validation_syncs_current_run_hash_after_guard_injection(self):
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+
+        self.assertIn("validation後hash同期", loop)
+        self.assertIn("extract_decide_hash.py \"$STRATEGY_FILE\"", loop)
+        self.assertIn("_reset_current_strategy_run \"$_validated_hash\"", loop)
+
+    def test_current_strategy_run_reset_and_seed_write_valid_json(self):
+        """hash切替時の current_run reset/seed は静かに失敗せず JSON を書く。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            run_file = td / "current_strategy_run.json"
+            rolling_file = td / "rolling_scores.json"
+            rolling_file.write_text(json.dumps({
+                "seedhash": {
+                    "scores": [1, 2, 3],
+                    "games_total": 3,
+                    "_recent_archives": ["game_history/a.jsonl"],
+                    "frontier_hints": ["T12_peak=1 prev_T11_peak=2"],
+                    "peak_high_type_counts": ["T12x1"],
+                    "deadline_guard_counts": [4],
+                    "deadline_guard_reason_tops": ["DEADLINE_GUARDx4"],
+                }
+            }))
+            script = textwrap.dedent(f"""\
+                source ./core/config.sh
+                CURRENT_STRATEGY_RUN_FILE='{run_file}'
+                ROLLING_SCORES_FILE='{rolling_file}'
+                source ./strategy/improve.sh
+                _reset_current_strategy_run reset_hash
+                python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('{run_file}')
+d = json.load(open(p))
+assert d['hash'] == 'reset_hash'
+assert d['scores'] == []
+PY
+                _seed_current_strategy_run_from_rolling seedhash
+                python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('{run_file}')
+d = json.load(open(p))
+assert d['hash'] == 'seedhash'
+assert d['scores'] == [1, 2, 3]
+assert d['games_total'] == 3
+assert d['_recent_archives'] == ['game_history/a.jsonl']
+PY
+            """)
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+
+    def test_show_status_surfaces_current_wildcard_evaluation(self):
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("wildcard_eval_label", status)
+        self.assertIn("wildcard_outcomes.jsonl", status)
+        self.assertIn("WildEval", status)
+        self.assertIn("{n}/{mature_n}", status)
+        self.assertIn("quantile(xs, 0.50)", status)
+        self.assertIn("0.55 * quantile", status)
+        self.assertIn("best_strategy_anchor.json", status)
+        self.assertIn("delta_label", status)
+        self.assertIn("trend_label", status)
+        self.assertIn("t={trend:+d}", status)
+        self.assertIn("event_short", status)
+        self.assertIn("annealing_candidates.jsonl", status)
+        self.assertIn("AnnealObs", status)
+        self.assertIn("accept_probability", status)
+        self.assertIn("SOREN_MONITOR_REPORT_FILE", status)
+        self.assertIn("/tmp/soren_report.md", status)
+        self.assertIn("Monitor", status)
+        self.assertIn("monitor_report_label", status)
+        self.assertIn("最終更新:", status)
+        self.assertIn("datetime.strptime", status)
+
+    def test_wildcard_progress_milestones_are_reported_to_audio(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        reporter = (REPO_ROOT / "wildcard_progress_report.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+
+        self.assertIn("WILDCARD_PROGRESS_AUDIO_ENABLED", config)
+        self.assertIn("WILDCARD_PROGRESS_AUDIO_STATE_FILE", config)
+        self.assertIn("WILDCARD_PROGRESS_AUDIO_MILESTONES", config)
+        self.assertIn("WILDCARD_PROGRESS_AUDIO_MIN_DELTA", config)
+        self.assertIn("enqueue_audio_text \"$message\" \"wildcard_progress\"", reporter)
+        self.assertIn("wildcard_progress_report.env.tmp", reporter)
+        self.assertIn("anchor 比", reporter)
+        self.assertIn("overlay_notify.sh", reporter)
+        self.assertIn("./wildcard_progress_report.sh", loop)
+        self.assertIn("progress report skipped/failed", loop)
+
+    def test_rollback_revalidates_strategy_after_restore(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn('validate_strategy "$STRATEGY_FILE"', regression)
+        self.assertIn("ロールバック後バリデーション失敗", regression)
+        self.assertIn('cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"', regression)
+
+    def test_soren91_ranking_comments_are_prioritized_in_comment_queue(self):
+        comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()
+
+        self.assertIn("_comment_queue_priority()", comment_lib)
+        self.assertIn("soren91:ranking_comment) printf '%s' \"00\"", comment_lib)
+        self.assertIn("_comment_queue_ordered_files()", comment_lib)
+        self.assertIn("for qf in $(_comment_queue_ordered_files); do", comment_lib)
+
+    def test_soren91_no_rank_fallback_describes_matching_without_fake_rank(self):
+        comment = (REPO_ROOT / "soren91/comment.mjs").read_text()
+
+        self.assertIn("MATCHING画面", comment)
+        self.assertIn("順位は断定しません", comment)
+        self.assertNotIn("今回はランキングの順位を確認できませんでした", comment)
+
+    def test_soren91_captures_ranking_transition_burst(self):
+        main = (REPO_ROOT / "soren91/main.mjs").read_text()
+
+        self.assertIn("captureRankingTransitionBurst(page, gameNumber)", main)
+        self.assertIn("SOREN91_RANK_BURST_INTERVAL_MS", main)
+        self.assertIn("_rankburst_g", main)
+        self.assertIn("Ranking transition burst detected", main)
+
+    def test_soren91_probes_ranking_immediately_after_drop(self):
+        main = (REPO_ROOT / "soren91/main.mjs").read_text()
+
+        self.assertIn("probeRankingImmediatelyAfterDrop(page, gameNumber, turn)", main)
+        self.assertIn("SOREN91_RANK_POSTDROP_INTERVAL_MS", main)
+        self.assertIn("_rankpostdrop_g", main)
+        self.assertIn("Post-drop ranking detected", main)
+        self.assertIn("Active ranking screen detected before move", main)
+        self.assertNotIn("Post-drop ranking candidate found", main)
+
+    def test_bridge_desync_stops_stale_soren91_only_outside_improve(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        loop = (REPO_ROOT / "eloop.sh").read_text()
+
+        self.assertIn("BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED", config)
+        self.assertIn("中華AIプレイ中に soren91 残存を検出", loop)
+        self.assertIn("soren91_stop 2>/dev/null", loop)
+        self.assertIn("! _is_improve_running", loop)
+        self.assertIn("manual_meriken_mode_is_enabled", loop)
 
     def test_rollback_postmortem_opencode_lock_cannot_block_live_radio_forever(self):
         ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
