@@ -43,6 +43,18 @@ SOREN91_LAST_ACTIVATE_MODE=""
 SOREN91_LAST_ACTIVATE_STATE_FILE="${SOREN91_LAST_ACTIVATE_STATE_FILE:-$ELOOP_LIB_DIR/tmp/.soren91_last_activate_mode}"
 SOREN91_ACTIVATE_LOG_FILE="${SOREN91_ACTIVATE_LOG_FILE:-$ELOOP_LIB_DIR/tmp/soren91_activate.log}"
 
+# 改善モード中か判定 (soren91_control.sh 単独起動でも壊れないようガード付き)
+_soren91_improve_active() {
+	if command -v _is_improve_running >/dev/null 2>&1; then
+		_is_improve_running
+		return $?
+	fi
+	local lock="${IMPROVE_LOCK_FILE:-$ELOOP_LIB_DIR/tmp/improve.lock}"
+	local state="${IMPROVE_STATE_FILE:-$ELOOP_LIB_DIR/tmp/state/improve_state.json}"
+	[ -f "$lock" ] || return 1
+	grep -q '"status"[[:space:]]*:[[:space:]]*"running"\|"status"[[:space:]]*:[[:space:]]*"manual"' "$state" 2>/dev/null
+}
+
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
 	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
@@ -61,7 +73,14 @@ _soren91_switch_obs_layout() {
 		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
-		"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source",console3,"$dashboard_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		# 改善モード中は statsOverlay/opsOverlay を出さず hide のまま固定
+		# (china↔meriken 切替のたびに show/hide が点滅するのを防ぐ。
+		#  改善オーバーレイは別途 _improve_overlay_show が管理)
+		if _soren91_improve_active; then
+			"$SOREN91_OBS_CONTROL" batch soren show:console3,"$dashboard_source" hide:"$status_source","$show_status_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		else
+			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source",console3,"$dashboard_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		fi
 		_soren91_activate_shared_browser_tab china
 		;;
 	*)
