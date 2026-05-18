@@ -352,6 +352,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("adapted_count_min", eloop)
         self.assertIn("recent_applied_lines", eloop)
         self.assertIn("recent_attempts", eloop)
+        self.assertIn("next_state = dict(state)", eloop)
+        self.assertIn("losing last_reset_epoch makes", eloop)
         self.assertIn("wildcard_outcomes.jsonl", eloop)
         self.assertIn('"event": "CREATED"', eloop)
         self.assertIn("prefer_lines", eloop)

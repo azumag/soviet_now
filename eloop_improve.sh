@@ -542,7 +542,11 @@ prefer_lines = [
 ][:12]
 
 os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
-next_state = {
+# Preserve outcome/reset fields written by regression.sh.  The adaptive
+# selector owns attempt-shaping fields only; losing last_reset_epoch makes
+# failure reconstruction count stale origins and can re-latch escape_ai.
+next_state = dict(state)
+next_state.update({
     "last_reason": "wildcard",
     "consecutive_wildcards": streak,
     "last_game": as_int(game_num, 0),
@@ -558,7 +562,7 @@ next_state = {
     "bandit_explore_rate": max(0.0, min(1.0, as_float(bandit_explore_rate, 0.35))),
     "recent_applied_lines": recent_lines[-50:],
     "recent_attempts": (state.get("recent_attempts", []) or [])[-12:],
-}
+})
 tmp = state_path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(next_state, f, ensure_ascii=False)
