@@ -1344,7 +1344,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # "extends death spiral detection to max_y>=1.5 instead of requiring deadline_crossed"
         death_spiral = (
             danger_piece_count > 0
-            and reactive_pair_count >= 3
+            and reactive_pair_count >= 2
             and merge_grade == "NO"
             and (deadline_crossed or max_y >= 1.5)
         )
@@ -1661,7 +1661,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 type_10plus_counts = {}
                 for p in high_type_pieces_10plus:
                     t = p.get("type", 0)
-                    type_10plus_counts[t] = type_10plus_counts.get(t, 0) + 1
+                    type_10plus_counts[t] = type_10plus_counts.get(t, 0) + 2
                 has_type_10plus_reactive_pair = any(count >= 2 for count in type_10plus_counts.values())
                 if has_type_10plus_reactive_pair:
                     reactive_type_pieces = []
