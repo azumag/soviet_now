@@ -65,6 +65,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v605: axis 9.6b high-type no-merge proximity boost — when next_type>=13 and merge_grade==NO,
+     # apply additional 1.5x proximity bonus to type 13/14 clustering before deadline.
+     # Worst game: type13 (y=-1.63) scattered from type14 (y=-0.55), no merge formed.
+     # Best game: type14 created but final merge not formed due to insufficient proximity.
+     # mandatory_themes: "NEXTを考慮したドロップ" — boost based on next_type.
+     # Fixes rollback failure mode: type14→15→16 reachability blocked by scatter.
+     # refs: tmp/analysis_result.md
      # v604: type_scale to axis 9.6b same-type proximity guidance — type 13+ adjacency boost
      # axis 9.6b proximity bonus now multiplied by type_scale (1.0+0.1*max(0,next_type-5), cap 2.0).
      # Best game: type14x2 at x=1.30/x=2.01 (distance 0.71) never merged — guidance too weak.
@@ -1602,11 +1609,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                        # v596 type_scale applied here to strengthen same-type proximity guidance
-                        # for high-type pieces (type 13+), promoting N+1 adjacency before merge.
-                        # Same-type adjacency in mid-game → merge opportunity in late game.
-                        # Without type_scale, type 14 proximity bonus (~300) is too weak vs height diff (~400).
-                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0) * type_scale
+                        # v605: add proximity boost for high-type + no-merge situations
+                        # type 13/14 pieces need stronger clustering incentive before deadline
+                        # base bonus 120 * type_scale 1.8 = 216 at dist=0, still below height diff (~400)
+                        # add 1.5x boost when next_type >= 13 and merge_grade == "NO" to reach ~324
+                        # mandatory_themes: "NEXTを考慮したドロップ" — proximity boost based on next_type
+                        _proximity_base = max(0, 120.0 - horiz_dist * 50.0)
+                        _proximity_boost = 1.5 if (next_type >= 13 and merge_grade == "NO") else 1.0
+                        proximity_bonus = _proximity_base * type_scale * _proximity_boost
                         if piece_count >= 28:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
