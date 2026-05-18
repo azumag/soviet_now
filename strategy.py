@@ -65,13 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v641: DEADLINE_GUARD mandatory_themes強化 — crosses_deadline時はmerge種別に問わず常に抑制
-      # Line 934: 旧条件「crosses_deadline AND merge_grade==NO」だと、crosses_deadlineでもNEAR/DIRECTなら返していた
-      # → mandatory_themes「デッドライン超出時はmergeがある時だけ許可」に違反
-      # 修正: crosses_deadline時のみ抑制。normal decide()のv411 penalty(-1200)またはmerge bonusで適切に評価
-      # Phase gate: カザフスタン(type14)→ロシア(type15)—max_y runaway防止でtype14→15到達経路復旧
-      # refs: tmp/analysis_result.md, tmp/improve_brief.md, data/mandatory_themes.txt
-      # Fixes rollback failure mode: DEADLINE_GUARD crosses_deadline+NO_merge位置返しによるmax_y runaway
+      # v642: DEADLINE_GUARD mandatory_themes strict enforcement — return non-crossing candidate
+      # When lowest landing_y candidate crosses deadline, return best non-crossing candidate
+      # instead of the crossing one. Enforces mandatory_themes by construction.
+      # Phase gate: Turkmenistan(type11)→Ukraine(type13)—max_y runaway防止でtype13→14到達経路復旧
+      # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
+      # Fixes rollback failure mode: DEADLINE_GUARD returning crossing position with NON-NO merge
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -932,16 +931,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass  # suppress DEADLINE_GUARD, fall through to normal decide()
             else:
                 return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        # v601: mandatory_themes enforcement — if selected candidate crosses deadline with no merge
-        # capability, suppress DEADLINE_GUARD and fall through to normal decide() which has v411
-        # CROSSES_DEADLINE penalty (-1200). Worst game T67: DEADLINE_GUARD returned x=2.98 with
-        # crosses_deadline=true, merge_available=false, violating mandatory_themes.
-        # Best game T92: DEADLINE_GUARD_DIRECT_MERGE with merge_available=true worked correctly.
-        __dlg_best = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-        if __dlg_best.get("crosses_deadline"):
-            pass  # suppress DEADLINE_GUARD, fall through to normal decide()
-        else:
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # v642: DEADLINE_GUARD mandatory_themes strict enforcement — return non-crossing candidate
+        # When suppression is triggered (lowest landing_y candidate crosses deadline),
+        # find the best non-crossing candidate and return it. Only fall through to normal
+        # decide() when no non-crossing candidate exists. This enforces mandatory_themes
+        # "crosses_deadline only when merge-capable" by construction, not by suppression.
+        # Phase gate: Turkmenistan(type11)→Ukraine(type13)—max_y runaway防止でtype13→14到達経路復旧
+        # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
+        # Fixes rollback failure mode: DEADLINE_GUARD returning crossing position with NON-NO merge
+        # caused max_y runaway in worst games (type13 stuck, no type14 reachability)
+        __dlg_noncrossing = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        if __dlg_noncrossing:
+            # Return lowest landing_y among non-crossing candidates (mandatory_themes)
+            __dlg_best_noncross = min(__dlg_noncrossing, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best_noncross.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # No non-crossing candidate exists — mandatory_themes violation would occur, fall through
+        pass  # fall through to normal decide()
         # v600: mandatory_themes enforcement — if ALL candidates cross deadline with no safe merge,
         # suppress DEADLINE_GUARD and fall through to normal decide() which has v411 CROSSES_DEADLINE penalty (-1200).
         # Worst game T46/T49/T50/T52/T54+: DEADLINE_GUARD returned crosses_deadline=true positions despite
