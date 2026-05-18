@@ -1472,6 +1472,54 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         reasons.append("HIGH_TYPE_CLUSTER")
 
+        # ----- v618: axis 9.11 — Pre-Russia growth pipeline guidance (type 14 Kazakhstan clustering) -----
+        # analysis_result.md: russia=0/12 is primary failure. axis 9.9 (v601) fires ONLY after Russia exists.
+        # No mechanism guides type 14 pieces to cluster/merge BEFORE Russia (type 15) is created.
+        # When max_type >= 14 on board and no Russia exists yet, guide type 14 pieces to cluster.
+        #
+        # Logic:
+        # (1) russia_phase == False (no Russia on board yet) AND type 14 pieces present AND piece_count >= 25
+        # (2) Find all type 14 pieces on board, calculate centroid
+        # (3) Bonus for placing near type 14 centroid: +200 * merge_mult (dist<=2.0, decay 100/u)
+        # (4) If type 14 exists as a reactive pair (2+ of same type 14), extra +150 * merge_mult
+        #
+        # Guards:
+        # - merge_grade == "NO" (only when no merge available; existing axes handle merge opportunities)
+        # - not death_spiral (height management only)
+        # - piece_count >= 25 (only after mid-game; early game has abundant merges)
+        #
+        # Bonus design: 200*merge_mult is below column_ceiling (~800-1250) and height penalty (~350-700),
+        # functions as tie-breaker when height and column_ceiling are similar.
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.11 Pre-Russia pipeline),
+        #       tmp/batch_summary.txt (russia=0/12, max_type=14 in 2 games),
+        #       game_history/20260519_055829_score1769.jsonl (type14 present but no Russia path),
+        #       game_history/20260519_052127_score2024.jsonl (type14 present, score=2024)
+        # Fixes rollback failure mode: "Russia-phase next-Russia pipeline (9.9) only fires AFTER Russia
+        #   exists — no guidance for building the FIRST Russia (type 15) from type 14 pieces"
+        if (
+            not russia_phase
+            and merge_grade == "NO"
+            and not death_spiral
+            and piece_count >= 25
+        ):
+            type_14_pieces = [p for p in pieces if p.get("type") == 14]
+            if len(type_14_pieces) >= 2:
+                cx_14 = sum(p.get("x", 0) for p in type_14_pieces) / len(type_14_pieces)
+                cy_14 = sum(p.get("y", -10) for p in type_14_pieces) / len(type_14_pieces)
+                dist = ((x - cx_14) ** 2 + (landing_y - cy_14) ** 2) ** 0.5
+                if dist <= 2.0:
+                    pipeline_bonus = max(0.0, 200.0 - dist * 100.0) * merge_mult
+                    if pipeline_bonus > 15:
+                        score += pipeline_bonus
+                        reasons.append("PRE_RUSSIA_PIPELINE")
+                type_14_reactive_pair = len(type_14_pieces) >= 2
+                if type_14_reactive_pair:
+                    rp_bonus = 150.0 * merge_mult
+                    if rp_bonus > 10:
+                        score += rp_bonus
+                        reasons.append("TYPE14_REACTIVE_PAIR_GUIDANCE")
+
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
