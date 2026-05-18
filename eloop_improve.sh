@@ -2470,6 +2470,105 @@ if $improve_ok; then
 	first_score=$(echo "$SCORES" | awk '{print $1}')
 	last_score=$(echo "$SCORES" | awk '{print $NF}')
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	if [ "${IMPROVE_REASON:-normal}" = "escape_ai" ] && [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
+		ESCAPE_AI_HASH_BEFORE="$HASH_BEFORE" \
+		ESCAPE_AI_HASH_AFTER="$HASH_AFTER" \
+		ESCAPE_AI_SEED_HASH="${ESCAPE_AI_SEED_HASH:-}" \
+		ESCAPE_AI_SCORES="$SCORES" \
+		ESCAPE_AI_GAME_NUM="${GAME_NUM_SNAPSHOT:-0}" \
+		ESCAPE_AI_MAX_GAMES="${WILDCARD_PATIENCE_GAMES:-12}" \
+		python3 - \
+			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
+			"${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" \
+			"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+			"${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+stagnation_file, attempt_file, origin_file, outcome_file = sys.argv[1:5]
+now = int(time.time())
+hash_before = os.environ.get("ESCAPE_AI_HASH_BEFORE", "")
+hash_after = os.environ.get("ESCAPE_AI_HASH_AFTER", "")
+seed_hash = os.environ.get("ESCAPE_AI_SEED_HASH", "")
+scores = [s for s in os.environ.get("ESCAPE_AI_SCORES", "").split() if s]
+try:
+    game_num = int(os.environ.get("ESCAPE_AI_GAME_NUM", "0") or 0)
+except Exception:
+    game_num = 0
+try:
+    max_games = int(os.environ.get("ESCAPE_AI_MAX_GAMES", "12") or 12)
+except Exception:
+    max_games = 12
+
+def load_json(path):
+    try:
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return json.load(f) or {}
+    except Exception:
+        pass
+    return {}
+
+def write_json(path, data):
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+stagnation = load_json(stagnation_file)
+stagnation["consecutive_no_improve"] = 0
+stagnation["regression_streak"] = 0
+stagnation["last_event"] = "ESCAPE_AI_APPLIED"
+stagnation["updated_at"] = now
+write_json(stagnation_file, stagnation)
+
+attempt = load_json(attempt_file)
+attempt["consecutive_wildcards"] = 0
+attempt["scale"] = 1.0
+attempt["last_reason"] = "escape_ai_success_reset"
+attempt["last_reset_event"] = "ESCAPE_AI_APPLIED"
+attempt["last_reset_hash"] = hash_after
+attempt["last_reset_epoch"] = now
+attempt["last_escape_ai_hash"] = hash_after
+attempt["last_escape_ai_seed_hash"] = seed_hash
+attempt["last_escape_ai_epoch"] = now
+write_json(attempt_file, attempt)
+
+origin = load_json(origin_file)
+origin[hash_after] = {
+    "origin_type": "escape_ai",
+    "created_at_game": game_num,
+    "created_at_epoch": now,
+    "patience_override": 1,
+    "max_games_override": max_games,
+    "source_hash": hash_before,
+    "seed_hash": seed_hash,
+    "scores": scores,
+}
+write_json(origin_file, origin)
+
+if outcome_file:
+    os.makedirs(os.path.dirname(outcome_file) or ".", exist_ok=True)
+    row = {
+        "event": "ESCAPE_AI_APPLIED",
+        "epoch": now,
+        "game": game_num,
+        "hash": hash_after,
+        "source_hash": hash_before,
+        "seed_hash": seed_hash,
+        "origin_type": "escape_ai",
+        "scores": scores,
+    }
+    with open(outcome_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+		log "[ESCAPE-AI] applied escape reset: ${HASH_BEFORE} → ${HASH_AFTER} (stagnation/wildcard latch cleared)"
+	fi
 	phylo_push_ok=false
 	phylo_improve_summary=""
 	if [ -n "$strategy_diff" ]; then

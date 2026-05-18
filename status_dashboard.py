@@ -1101,8 +1101,17 @@ def load_monitor_report_status():
         status = str(cached.get("status") or status)
         age_label = str(cached.get("age_label") or fmt_age(age))
         live = str(cached.get("live") or "").strip()
+        deadline_no_merge = int(cached.get("deadline_no_merge_count") or 0)
+        deadline_no_merge_with_safe = int(cached.get("deadline_no_merge_with_safe_count") or 0)
+        deadline_prefix = (
+            f"DLsafe={deadline_no_merge_with_safe} "
+            if deadline_no_merge_with_safe > 0
+            else (f"DLno={deadline_no_merge} " if deadline_no_merge > 0 else "")
+        )
         if live:
-            title = f"live {live[:32]}"
+            title = f"{deadline_prefix}live {live[:28]}"
+        elif deadline_prefix:
+            title = f"{deadline_prefix}{title[:28]}"
         return {"status": status, "age": age_label, "title": title}
     return {"status": status, "age": fmt_age(age), "title": title}
 
@@ -1806,7 +1815,7 @@ def render_wildcard_status(rolling, current_hash=""):
         f"  {BOLD}WILDCARD origins{RST} {DIM}(n/max comp delta vs {anchor_label}){RST}",
         f"{DIM}    hash     n/max     comp    p50    p25      dA{RST}",
     ]
-    for h, meta in reversed(list(wo.items())):
+    for h, meta in list(reversed(list(wo.items())))[:5]:
         scores = (rolling.get(h, {}) or {}).get("scores", []) or []
         m = calc_strategy_metrics(scores)
         n = len(scores)

@@ -2,16 +2,16 @@
 
 ## OBS Working Indicator
 
-When Codex itself is actively inspecting, editing, testing, or otherwise changing this project, turn on the OBS source named `systemMsg` in the `soren` scene:
+When Codex itself is actively inspecting, editing, testing, or otherwise changing this project, turn on the persistent Codex work indicator in `eventOverlay`:
 
 ```bash
-./obs_control.sh show soren systemMsg
+./codex_work_indicator.sh start
 ```
 
-Keep it visible until the Codex work is fully finished, including verification and any live restart/check steps. Before sending the final response, pausing the work, or handing control back to the user, turn it off:
+Keep it visible until the Codex work is fully finished, including verification and any live restart/check steps. Before sending the final response, pausing the work, or handing control back to the user, clear it:
 
 ```bash
-./obs_control.sh hide soren systemMsg
+./codex_work_indicator.sh stop
 ```
 
-This indicator is for human/Codex project work, not for the automatic in-game strategy improvement loop. If OBS is unavailable or the command fails, continue the requested work and mention the OBS failure in the response.
+This indicator is for human/Codex project work, not for the automatic in-game strategy improvement loop. It should update the `eventOverlay` HTML only; do not show/hide the OBS `systemMsg` source for Codex work.

@@ -31,16 +31,29 @@ def read_events(path: Path, keep: int) -> list[dict[str, Any]]:
     return events[-keep:]
 
 
+def read_work_indicator(path: Path) -> dict[str, Any] | None:
+    try:
+        item = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(item, dict) or not item.get("active"):
+        return None
+    return item
+
+
 def main() -> None:
     events_path = Path(sys.argv[1])
     out_path = Path(sys.argv[2])
     keep = int(sys.argv[3]) if len(sys.argv) > 3 else 180
     visible_sec = int(sys.argv[4]) if len(sys.argv) > 4 else 18
+    work_state_path = Path(sys.argv[5]) if len(sys.argv) > 5 else None
     events = read_events(events_path, keep)
+    work = read_work_indicator(work_state_path) if work_state_path else None
     now = int(time.time())
     recent = [e for e in events if now - int(e.get("ts", 0) or 0) <= max(visible_sec * 4, 60)]
 
     payload = json.dumps(recent[-18:], ensure_ascii=False, separators=(",", ":"))
+    work_payload = json.dumps(work or {}, ensure_ascii=False, separators=(",", ":"))
     doc = f"""<!doctype html>
 <html lang="ja">
 <head>
@@ -64,6 +77,60 @@ html, body {{
   display: flex;
   flex-direction: column-reverse;
   gap: 10px;
+}}
+#work-indicator {{
+  position: fixed;
+  left: 50%;
+  top: 18px;
+  transform: translateX(-50%);
+  min-width: 460px;
+  max-width: min(860px, calc(100vw - 48px));
+  display: none;
+  grid-template-columns: 10px minmax(0, 1fr);
+  color: #fff7ed;
+  background: rgba(25, 14, 4, 0.92);
+  border: 2px solid rgba(251, 146, 60, 0.82);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.44);
+  border-radius: 8px;
+  overflow: hidden;
+}}
+#work-indicator.active {{ display: grid; }}
+.work-bar {{
+  background: linear-gradient(180deg, #f97316, #facc15);
+}}
+.work-content {{
+  padding: 13px 18px 14px;
+  min-width: 0;
+}}
+.work-head {{
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
+}}
+.work-title {{
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1.08;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.work-elapsed {{
+  margin-left: auto;
+  font-size: 18px;
+  font-weight: 800;
+  color: #fed7aa;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}}
+.work-body {{
+  margin-top: 5px;
+  color: #ffedd5;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.26;
+  word-break: break-word;
 }}
 .toast {{
   display: grid;
@@ -127,17 +194,41 @@ html, body {{
 </style>
 </head>
 <body>
+<section id="work-indicator" aria-live="polite">
+  <div class="work-bar"></div>
+  <div class="work-content">
+    <div class="work-head">
+      <div class="work-title"></div>
+      <div class="work-elapsed"></div>
+    </div>
+    <div class="work-body"></div>
+  </div>
+</section>
 <div id="toasts"></div>
 <script>
 const EVENTS = {payload};
+const WORK = {work_payload};
 const VISIBLE_SEC = {visible_sec};
 const ANIMATE_MAX_AGE = 3;
 const now = Math.floor(Date.now() / 1000);
 const container = document.getElementById('toasts');
+const workIndicator = document.getElementById('work-indicator');
 function pad(n) {{ return String(n).padStart(2, '0'); }}
 function timeLabel(ts) {{
   const d = new Date(ts * 1000);
   return `${{pad(d.getHours())}}:${{pad(d.getMinutes())}}:${{pad(d.getSeconds())}}`;
+}}
+function elapsedLabel(startedAt) {{
+  const elapsed = Math.max(0, now - Number(startedAt || now));
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return `${{mins}}:${{pad(secs)}}`;
+}}
+if (WORK && WORK.active) {{
+  workIndicator.classList.add('active');
+  workIndicator.querySelector('.work-title').textContent = WORK.title || 'システム自動分析・修正作業中';
+  workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(WORK.ts);
+  workIndicator.querySelector('.work-body').textContent = WORK.body || 'メリケンAI が確認・修正・検証を進めています';
 }}
 for (const ev of EVENTS.slice().reverse()) {{
   const age = now - Number(ev.ts || 0);

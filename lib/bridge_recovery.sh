@@ -159,9 +159,18 @@ _br_relaunch() {
 	if [ -n "$hp" ]; then
 		local hc; hc=$(_br_cmd_of "$hp")
 		case "$hc" in
-		*soviet_local.mjs*) _br_log "port $_BR_PORT 旧 bridge 保持(PID=$hp) → 強制kill"; kill -9 "$hp" 2>/dev/null || true; sleep 2 ;;
-		*) _br_log "ERROR: port $_BR_PORT を対象外プロセス保持(PID=$hp CMD=[$hc]) → 復旧中止・次ループ再判定"; return 1 ;;
-		esac
+			*soviet_local.mjs*) _br_log "port $_BR_PORT 旧 bridge 保持(PID=$hp) → 強制kill"; kill -9 "$hp" 2>/dev/null || true; sleep 2 ;;
+			*)
+				local live_m live_n
+				live_m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+				live_n=$(date +%s)
+				if [ "$live_m" -gt 0 ] && [ "$((live_n - live_m))" -lt 30 ] && ! _br_fatal_in_log; then
+					_br_log "port $_BR_PORT 保持PIDの詳細不明だが game_state fresh=$((live_n-live_m))s → 稼働中として復旧成功扱い"
+					return 0
+				fi
+				_br_log "ERROR: port $_BR_PORT を対象外プロセス保持(PID=$hp CMD=[$hc]) → 復旧中止・次ループ再判定"; return 1
+				;;
+			esac
 		[ -n "$(_br_port_pid)" ] && { _br_log "ERROR: port $_BR_PORT 解放不可 → 復旧中止"; return 1; }
 	fi
 	# kill -9 で unclean になったプロファイルの「正常終了せず」復元バブルを抑止
@@ -196,13 +205,19 @@ _ensure_bridge_alive() {
 	[ -f tmp/state/manual_improve_mode ] && return 0
 
 	local crash="" m n
-	if [ -z "$(_br_target_pids)" ]; then
-		crash="プロセス消失"
-	elif _br_fatal_in_log; then
+	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+	n=$(date +%s)
+	if _br_fatal_in_log; then
 		crash="致命ログ署名"
+	elif [ "$m" -gt 0 ] && [ "$((n - m))" -lt "$_BR_STALE_SEC" ]; then
+		# macOS privacy/sandbox boundaries can hide cwd/command details from
+		# pgrep+lsof even while the bridge is actively writing game_state.json.
+		# Fresh state is the stronger liveness signal; do not relaunch a moving
+		# game just because PID attribution is unavailable.
+		crash=""
+	elif [ -z "$(_br_target_pids)" ]; then
+		crash="プロセス消失"
 	else
-		m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
-		n=$(date +%s)
 		[ "$m" -gt 0 ] && [ "$((n - m))" -ge "$_BR_STALE_SEC" ] && crash="game_state停滞($((n-m))s)"
 	fi
 	[ -z "$crash" ] && { [ "$_BR_CONSEC_FAIL" -ne 0 ] && { _br_log "ブリッジ正常化 → fail reset"; _BR_CONSEC_FAIL=0; }; return 0; }

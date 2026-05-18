@@ -13,7 +13,7 @@ function loadDotEnv() {
   if (!fs.existsSync(envPath)) return;
   for (const line of fs.readFileSync(envPath, 'utf-8').split(/\n/)) {
     const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (!match || process.env[match[1]]) continue;
+    if (!match) continue;
     let value = match[2].trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);

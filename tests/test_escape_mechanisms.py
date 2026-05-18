@@ -22,6 +22,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -413,6 +414,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("origin_type != \"wildcard\"", eloop)
         self.assertIn("AI改善失敗のためWILDCARD seed適用を元へ戻した", eloop)
         self.assertIn("escape_ai seed: 粛清済みWILDCARD群", eloop)
+        self.assertIn('"ESCAPE_AI_APPLIED"', eloop)
+        self.assertIn('"escape_ai_success_reset"', eloop)
+        self.assertIn('"last_escape_ai_hash"', eloop)
+        self.assertIn('"origin_type": "escape_ai"', eloop)
+        self.assertIn("stagnation/wildcard latch cleared", eloop)
 
     def test_wildcard_stagnation_can_queue_early_escape_lock(self):
         """WILDCARD 停滞時は12試合サイクルを待たずに改善daemonへ渡せる。"""
@@ -844,11 +850,32 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
 # --- Improve OBS overlay ------------------------------------------------------
 
 class TestImproveOverlay(unittest.TestCase):
+    def test_codex_work_indicator_uses_event_overlay_not_systemmsg(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        generator = (REPO_ROOT / "generate_event_overlay.py").read_text()
+        notify = (REPO_ROOT / "overlay_notify.sh").read_text()
+        indicator = (REPO_ROOT / "codex_work_indicator.sh").read_text()
+        agents = (REPO_ROOT / "AGENTS.md").read_text()
+
+        self.assertIn("CODEX_WORK_OVERLAY_STATE_FILE", config)
+        self.assertIn("read_work_indicator", generator)
+        self.assertIn("work-indicator", generator)
+        self.assertIn("システム自動分析・修正作業中", generator)
+        self.assertIn("メリケンAI が確認・修正・検証を進めています", generator)
+        self.assertIn("$CODEX_WORK_OVERLAY_STATE_FILE", notify)
+        self.assertIn("generate_event_overlay.py", indicator)
+        self.assertIn("eventOverlay", agents)
+        self.assertIn("./codex_work_indicator.sh start", agents)
+        self.assertIn("./codex_work_indicator.sh stop", agents)
+        self.assertNotIn("./obs_control.sh show soren systemMsg", agents)
+        self.assertNotIn("./obs_control.sh hide soren systemMsg", agents)
+
     def test_improve_overlay_is_file_based_and_replaces_console_capture(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
         monitor = (REPO_ROOT / "monitor_improve_runtime.sh").read_text()
         overlay = (REPO_ROOT / "generate_improve_overlay.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
         self.assertIn("IMPROVE_OVERLAY_HTML_FILE", config)
         self.assertIn("IMPROVE_OVERLAY_SOURCE", config)
@@ -867,6 +894,16 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("AI cap:", overlay)
         self.assertIn("FIX cap:", overlay)
         self.assertIn("job cap:", overlay)
+        self.assertIn("Keep them visible even while the", loop)
+        self.assertIn("./show_status_g.sh --html-obs show", loop)
+        self.assertIn("./show_status.sh --html-obs show", loop)
+        self.assertNotIn('_overlay_vis="hide"', loop)
+        status_g = (REPO_ROOT / "show_status_g.sh").read_text()
+        show_status = (REPO_ROOT / "show_status.sh").read_text()
+        self.assertIn("persistent monitoring surface", status_g)
+        self.assertIn("exec ./generate_status_overlay.sh ensure-obs show", status_g)
+        self.assertIn("persistent monitoring surface", show_status)
+        self.assertIn("exec ./generate_show_status_overlay.sh ensure-obs show", show_status)
 
     def test_obs_control_can_report_overlay_source_status(self):
         obs = (REPO_ROOT / "obs_control.sh").read_text()
@@ -1013,8 +1050,9 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("${STATUS_OVERLAY_SOURCE:-statsOverlay}", control)
         self.assertIn("${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}", control)
         self.assertIn("${OBS_DASHBOARD_SOURCE:-dashboard}", control)
-        self.assertIn('$s91_show_op hide:"$status_source","$show_status_source","$meriken_hide_sources"', control)
+        self.assertIn('show:"$status_source","$show_status_source" $s91_show_op hide:"$meriken_hide_sources"', control)
         self.assertIn('show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op', control)
+        self.assertIn("改善中も stats/ops は監視用に維持", control)
         self.assertNotIn("hide:console1,console2", control)
         self.assertNotIn("show:console1,console2", control)
 
@@ -1027,6 +1065,19 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("trap '' HUP", runner)
         self.assertIn("trap '_on_signal TERM' TERM", runner)
         self.assertIn("trap '_on_exit' EXIT", runner)
+
+    def test_soren91_pid_file_survives_hidden_command_lookup(self):
+        control = (REPO_ROOT / "soren91_control.sh").read_text()
+
+        self.assertIn('cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")', control)
+        self.assertIn('if [ -z "$cmd" ]; then', control)
+        self.assertIn('printf \'%s\' "$pid"\n\t\t\treturn 0', control)
+        self.assertIn('s/^pid=//p', control)
+        self.assertIn('$SOREN91_DIR/tmp/.runner.lock/owner', control)
+        self.assertIn("_soren91_observable_fresh()", control)
+        self.assertIn('SOREN91_OBSERVABLE_FRESH_SEC:-120', control)
+        self.assertIn('$SOREN91_DIR/tmp/in_game', control)
+        self.assertIn('_soren91_observable_fresh || return 1', control)
 
     def test_soren91_browser_launch_does_not_raise_focus_on_macos(self):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
@@ -1102,6 +1153,14 @@ class TestMainAudioRecovery(unittest.TestCase):
         for token in forbidden:
             self.assertNotIn(token, combined)
 
+    def test_bridge_recovery_trusts_fresh_game_state_when_pid_attribution_is_hidden(self):
+        bridge = (REPO_ROOT / "lib" / "bridge_recovery.sh").read_text()
+
+        self.assertIn("Fresh state is the stronger liveness signal", bridge)
+        self.assertIn('[ "$((n - m))" -lt "$_BR_STALE_SEC" ]', bridge)
+        self.assertIn("稼働中として復旧成功扱い", bridge)
+        self.assertIn('[ "$((live_n - live_m))" -lt 30 ]', bridge)
+
     def test_main_audio_resolves_sink_before_context_creation(self):
         local = (REPO_ROOT / "soviet_local.mjs").read_text()
 
@@ -1137,6 +1196,68 @@ class TestMainAudioRecovery(unittest.TestCase):
 # --- Soviet objective is visible to improvement AI ---------------------------
 
 class TestSovietObjectiveImproveInputs(unittest.TestCase):
+    def test_deadline_crossing_overlay_payload_distinguishes_safe_slot_available(self):
+        import strategy_runner
+
+        payload = strategy_runner._deadline_crossing_overlay_payload(
+            12,
+            345,
+            {"x": 1.0, "reason": "TEST_REASON"},
+            {
+                "results": [
+                    {"x": -1.0, "crosses_deadline": False, "merge_grade": "NO"},
+                    {"x": 1.0, "crosses_deadline": True, "merge_grade": "NO"},
+                ]
+            },
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["title"], "デッドライン超過: 安全候補あり")
+        self.assertEqual(payload["level"], "warn")
+        self.assertIn("safe=1/2", payload["body"])
+
+    def test_deadline_crossing_overlay_payload_distinguishes_no_safe_slot(self):
+        import strategy_runner
+
+        payload = strategy_runner._deadline_crossing_overlay_payload(
+            13,
+            456,
+            {"x": 0.0, "reason": "FORCED"},
+            {
+                "results": [
+                    {"x": -1.0, "crosses_deadline": True, "merge_grade": "NO"},
+                    {"x": 0.0, "crosses_deadline": True, "merge_grade": "DIRECT"},
+                ]
+            },
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["title"], "デッドライン超過: 置き場なし")
+        self.assertEqual(payload["level"], "info")
+        self.assertIn("safe=0/2", payload["body"])
+
+    def test_deadline_crossing_overlay_notify_uses_event_overlay(self):
+        import strategy_runner
+
+        with mock.patch.object(strategy_runner.os.path, "exists", return_value=True), mock.patch.object(strategy_runner.subprocess, "run") as run:
+            strategy_runner.notify_deadline_crossing_overlay(
+                14,
+                567,
+                {"x": 1.0, "reason": "TEST_REASON"},
+                {
+                    "results": [
+                        {"x": -1.0, "crosses_deadline": False, "merge_grade": "NO"},
+                        {"x": 1.0, "crosses_deadline": True, "merge_grade": "NO"},
+                    ]
+                },
+            )
+
+        args = run.call_args.args[0]
+        kwargs = run.call_args.kwargs
+        self.assertEqual(args[:3], ["./overlay_notify.sh", "deadline", "デッドライン超過: 安全候補あり"])
+        self.assertEqual(args[-1], "warn")
+        self.assertEqual(kwargs["env"]["OVERLAY_NOTIFY_OBS_SHOW"], "1")
+
     def test_batch_summary_reports_russia_progress_and_max_type(self):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
@@ -1254,6 +1375,27 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("acc.setdefault('max_types'", improve)
         self.assertIn('enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE"', improve)
         self.assertIn('enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE"', loop)
+
+    def test_monitor_status_surfaces_deadline_no_merge_audit(self):
+        monitor = (REPO_ROOT / "monitor_report_stale_report.sh").read_text()
+        show_status = (REPO_ROOT / "show_status.sh").read_text()
+        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+
+        self.assertIn("def deadline_crossing_audit", monitor)
+        self.assertIn('row.get("decision_crosses_deadline")', monitor)
+        self.assertIn('row.get("best_merge_grade")', monitor)
+        self.assertIn('"deadline_no_merge_count"', monitor)
+        self.assertIn('"deadline_no_merge_with_safe_count"', monitor)
+        self.assertIn("safe_candidate_count > 0", monitor)
+        self.assertIn("deadline_no_merge=", monitor)
+        self.assertIn("safe_available=", monitor)
+        self.assertIn('cached.get("deadline_no_merge_count")', show_status)
+        self.assertIn('cached.get("deadline_no_merge_with_safe_count")', show_status)
+        self.assertIn("DLsafe=", show_status)
+        self.assertIn("DLno=", show_status)
+        self.assertIn('cached.get("deadline_no_merge_count")', dashboard)
+        self.assertIn('cached.get("deadline_no_merge_with_safe_count")', dashboard)
+        self.assertIn("deadline_prefix", dashboard)
 
     def test_rollback_analysis_surfaces_soviet_objective_delta(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -1601,7 +1743,7 @@ PY
         self.assertIn("BEST_STRATEGY_ANCHOR_FILE", reporter)
         self.assertIn("WILDCARD_ORIGIN_FILE", reporter)
         self.assertIn("MONITOR_REPORT_STATUS_FILE", reporter)
-        self.assertIn("Claude監視レポート", reporter)
+        self.assertIn("メリケンAI監視レポート", reporter)
         self.assertIn("ライブは", reporter)
         self.assertIn("live_origin_type", reporter)
         self.assertIn("enqueue_audio_text \"$message\" \"monitor_report\"", reporter)

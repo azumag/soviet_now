@@ -76,15 +76,14 @@ _soren91_switch_obs_layout() {
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
-		"$SOREN91_OBS_CONTROL" batch soren $s91_show_op hide:"$status_source","$show_status_source","$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source" $s91_show_op hide:"$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
-		# 改善モード中は statsOverlay/opsOverlay を出さず hide のまま固定
-		# (china↔meriken 切替のたびに show/hide が点滅するのを防ぐ。
-		#  改善オーバーレイは別途 _improve_overlay_show が管理)
+		# 改善中も stats/ops は監視用に維持し、dashboard/game だけを
+		# china レイアウトへ戻す。改善オーバーレイは別途管理される。
 		if _soren91_improve_active; then
-			"$SOREN91_OBS_CONTROL" batch soren show:"$china_show_sources" hide:"$status_source","$show_status_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		else
 			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		fi
@@ -232,6 +231,10 @@ _soren91_read_alive_player_pid() {
 		[ -n "$pid" ] || continue
 		kill -0 "$pid" 2>/dev/null || continue
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+		if [ -z "$cmd" ]; then
+			printf '%s' "$pid"
+			return 0
+		fi
 		if [ "$f" = "$SOREN91_MAIN_PID_FILE" ]; then
 			echo "$cmd" | grep -q "main\.mjs" || continue
 		else
@@ -241,6 +244,13 @@ _soren91_read_alive_player_pid() {
 		return 0
 	done
 
+	pid=$(sed -n 's/^pid=//p' "$SOREN91_DIR/tmp/.runner.lock/owner" 2>/dev/null | head -n 1)
+	case "$pid" in ''|*[!0-9]*) pid="" ;; esac
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		printf '%s' "$pid"
+		return 0
+	fi
+
 	# PIDファイルは停止処理の途中で消えることがある。実プロセスが残っていると
 	# "Not running" と誤判定して stop file を出せないため、runnerをプロセス表から復旧する。
 	pid=$(_soren91_scan_alive_runner_pids | head -n 1)
@@ -248,6 +258,26 @@ _soren91_read_alive_player_pid() {
 		printf '%s' "$pid"
 		return 0
 	fi
+	return 1
+}
+
+_soren91_observable_fresh() {
+	local now="" log_mtime="" log_age="" mode_mtime="" mode_age=""
+	now=$(date +%s)
+	log_mtime=$(stat -f '%m' "$SOREN91_DIR/tmp/soren91.log" 2>/dev/null || echo 0)
+	case "$log_mtime" in ''|*[!0-9]*) log_mtime=0 ;; esac
+	log_age=$((now - log_mtime))
+	if [ "$log_mtime" -gt 0 ] && [ "$log_age" -le "${SOREN91_OBSERVABLE_FRESH_SEC:-120}" ] && [ -f "$SOREN91_DIR/tmp/in_game" ]; then
+		return 0
+	fi
+
+	mode_mtime=$(stat -f '%m' "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || echo 0)
+	case "$mode_mtime" in ''|*[!0-9]*) mode_mtime=0 ;; esac
+	mode_age=$((now - mode_mtime))
+	if [ "$log_mtime" -gt 0 ] && [ "$log_age" -le "${SOREN91_OBSERVABLE_FRESH_SEC:-120}" ] && [ "$mode_mtime" -gt 0 ] && [ "$mode_age" -le "${SOREN91_OBSERVABLE_FRESH_SEC:-120}" ]; then
+		return 0
+	fi
+
 	return 1
 }
 
@@ -432,7 +462,10 @@ soren91_is_running() {
 	_soren91_enabled || return 1
 	local pid=""
 	pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
-	[ -n "$pid" ] || return 1
+	if [ -z "$pid" ]; then
+		_soren91_observable_fresh || return 1
+		return 0
+	fi
 	# pid file は soren91 起動用の bash subshell を指すことがあり、
 	# 実行環境によっては ps でそのコマンドラインを安定取得できない。
 	# start/stop で専用 PID ファイルを管理しているため、生存中なら稼働中とみなす。

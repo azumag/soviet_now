@@ -26,9 +26,11 @@ case "${1:-}" in
 --html-stop)
 	exec ./generate_show_status_overlay.sh stop
 	;;
---html-obs)
-	exec ./generate_show_status_overlay.sh ensure-obs "${2:-show}"
-	;;
+	--html-obs)
+		# opsOverlay is a persistent monitoring surface. Older running
+		# supervisors may still ask for "hide"; keep this hot path visible.
+		exec ./generate_show_status_overlay.sh ensure-obs show
+		;;
 esac
 
 SHOW_STATUS_ONCE=0
@@ -1147,10 +1149,17 @@ if cache_matches_report:
     status = str(cached.get("status") or status)
     age_label = str(cached.get("age_label") or age_label)
     live = str(cached.get("live") or "").strip()
+    deadline_no_merge = int(cached.get("deadline_no_merge_count") or 0)
+    deadline_no_merge_with_safe = int(cached.get("deadline_no_merge_with_safe_count") or 0)
+    deadline_prefix = (
+        f"DLsafe={deadline_no_merge_with_safe} "
+        if deadline_no_merge_with_safe > 0
+        else (f"DLno={deadline_no_merge} " if deadline_no_merge > 0 else "")
+    )
     if live:
-        label = f"{status} {age_label} live {live[:34]}"
+        label = f"{status} {age_label} {deadline_prefix}live {live[:26]}"
     elif first:
-        label = f"{status} {age_label} {first[:34]}"
+        label = f"{status} {age_label} {deadline_prefix}{first[:26]}"
 elif first:
     label = f"{label} {first[:34]}"
 print("monitor_report_label=" + shlex.quote(label))

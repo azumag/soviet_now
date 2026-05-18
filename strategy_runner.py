@@ -70,6 +70,68 @@ def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
+    results = analysis.get("results", []) if isinstance(analysis, dict) else []
+    if not results or not isinstance(decision, dict):
+        return None
+
+    try:
+        decision_x = float(decision.get("x", 0.0) or 0.0)
+    except Exception:
+        decision_x = 0.0
+    chosen = min(results, key=lambda r: abs(float(r.get("x", 0.0) or 0.0) - decision_x))
+    if not chosen.get("crosses_deadline", False):
+        return None
+
+    safe = [r for r in results if not r.get("crosses_deadline", False)]
+    merge_grade = str(chosen.get("merge_grade") or "NO")
+    reason = str(decision.get("reason") or "")
+    body = (
+        f"turn={turn} score={score} x={decision_x:+.2f} "
+        f"merge={merge_grade} safe={len(safe)}/{len(results)} "
+        f"reason={reason[:180]}"
+    )
+    if safe:
+        return {
+            "title": "デッドライン超過: 安全候補あり",
+            "body": body,
+            "level": "warn",
+        }
+    return {
+        "title": "デッドライン超過: 置き場なし",
+        "body": body,
+        "level": "info",
+    }
+
+
+def notify_deadline_crossing_overlay(turn, score, decision, analysis):
+    payload = _deadline_crossing_overlay_payload(turn, score, decision, analysis)
+    if not payload:
+        return
+    if not os.path.exists("./overlay_notify.sh"):
+        return
+    env = dict(os.environ)
+    env["OVERLAY_NOTIFY_OBS_SHOW"] = "1"
+    try:
+        subprocess.run(
+            [
+                "./overlay_notify.sh",
+                "deadline",
+                payload["title"],
+                payload["body"],
+                payload["level"],
+            ],
+            cwd=".",
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+    except Exception as err:
+        log(f"WARN: deadline overlay notify failed: {err}")
+
+
 def load_game_state():
     """game_state.json を読み込む"""
     try:
@@ -353,6 +415,8 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "visual_same_type_closest_dx": round(float(closest_same_type_dx), 2) if closest_same_type_dx is not None else None,
         "reactor_reactive_pairs": reactive_pairs,
         "decision_crosses_deadline": bool(chosen_result.get("crosses_deadline", False)) if chosen_result else False,
+        "deadline_safe_candidate_count": len([r for r in results if not r.get("crosses_deadline", False)]),
+        "deadline_candidate_count": len(results),
         "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
         "danger_direct_merge_available": bool(chosen_result.get("danger_direct_merge_available", False)) if chosen_result else False,
         "strategy_hash": strategy_hash,
@@ -366,6 +430,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
 
     history_f.write(json.dumps(record, ensure_ascii=False) + "\n")
     history_f.flush()
+    notify_deadline_crossing_overlay(turn, score, decision, analysis)
 
 
 def enforce_deadline_safety(decision, analysis, game_state=None):

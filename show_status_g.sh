@@ -25,9 +25,11 @@ case "${1:-}" in
 --html-stop)
 	exec ./generate_status_overlay.sh stop
 	;;
---html-obs)
-	exec ./generate_status_overlay.sh ensure-obs "${2:-show}"
-	;;
+	--html-obs)
+		# statsOverlay is a persistent monitoring surface. Older running
+		# supervisors may still ask for "hide"; keep this hot path visible.
+		exec ./generate_status_overlay.sh ensure-obs show
+		;;
 esac
 
 WATCH_INTERVAL=${1:-10}

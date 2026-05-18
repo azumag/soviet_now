@@ -132,16 +132,12 @@ _ensure_status_overlays_watchers() {
 	_SOREN_OVERLAY_RECOVER_TS=$now
 	./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
 	./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
-	# 改善モード中は statsOverlay/opsOverlay を hide のまま固定。
-	# (soren91_control.sh が改善開始時に hide にするが、ここで毎15s show を
-	#  強制すると show/hide が点滅するため、改善中は show を出さない)
-	local _overlay_vis="show"
-	if command -v _is_improve_running >/dev/null 2>&1 && _is_improve_running; then
-		_overlay_vis="hide"
-	fi
-	./show_status_g.sh --html-obs "$_overlay_vis" >/dev/null 2>&1 || true
-	./show_status.sh --html-obs "$_overlay_vis" >/dev/null 2>&1 || true
-}
+		# stats/ops are monitoring overlays. Keep them visible even while the
+		# improve overlay is shown; hiding them here races with soren91 layout
+		# switching and causes visible flicker.
+		./show_status_g.sh --html-obs show >/dev/null 2>&1 || true
+		./show_status.sh --html-obs show >/dev/null 2>&1 || true
+	}
 
 _run_improve_runtime_monitor() {
 	[ -x ./monitor_improve_runtime.sh ] || return 0

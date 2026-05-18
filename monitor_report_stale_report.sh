@@ -161,6 +161,61 @@ def live_summary():
     detail = f"live_hash={h} live_origin_type={origin_type or 'normal'} live_n={n} live_comp={comp} live_delta={delta:+d}"
     return live, detail
 
+def deadline_crossing_audit(path="game_history/latest.jsonl"):
+    total = 0
+    no_merge = 0
+    no_merge_with_safe = 0
+    last_no_merge = {}
+    last_no_merge_with_safe = {}
+    paths = []
+    run = load_json(current_run_file)
+    for raw in run.get("_recent_archives", []) or []:
+        if isinstance(raw, str) and raw:
+            paths.append(raw)
+    paths.append(path)
+    seen_paths = set()
+    for audit_path in paths:
+        if audit_path in seen_paths or not os.path.exists(audit_path):
+            continue
+        seen_paths.add(audit_path)
+        try:
+            f = open(audit_path, encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        with f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if not row.get("decision_crosses_deadline"):
+                    continue
+                total += 1
+                if str(row.get("best_merge_grade") or "NO") == "NO":
+                    safe_candidate_count = int(row.get("deadline_safe_candidate_count") or 0)
+                    no_merge += 1
+                    last_no_merge = {
+                        "file": audit_path,
+                        "turn": row.get("turn"),
+                        "score": row.get("score"),
+                        "safe_candidate_count": safe_candidate_count,
+                        "candidate_count": int(row.get("deadline_candidate_count") or 0),
+                        "reason": str(row.get("decision_reason") or "")[:160],
+                    }
+                    if safe_candidate_count > 0:
+                        no_merge_with_safe += 1
+                        last_no_merge_with_safe = dict(last_no_merge)
+    return {
+        "deadline_crossing_count": total,
+        "deadline_no_merge_count": no_merge,
+        "deadline_no_merge_with_safe_count": no_merge_with_safe,
+        "deadline_no_merge_last": last_no_merge,
+        "deadline_no_merge_with_safe_last": last_no_merge_with_safe,
+    }
+
 stale_sec = max(1, as_int(stale_raw, 900))
 old_sec = max(stale_sec, as_int(old_raw, 3600))
 min_interval = max(0, as_int(interval_raw, 1800))
@@ -185,7 +240,7 @@ else:
     status = "missing"
     age = 0
     key = "missing"
-    message = "Claude監視レポートが見つかりません。外部監視が落ちている可能性があります。"
+    message = "メリケンAI監視レポートが見つかりません。外部監視が落ちている可能性があります。"
     print("message=" + shlex.quote(message))
     print("title=" + shlex.quote("Monitor missing"))
     print("detail=" + shlex.quote(f"file={report_file}"))
@@ -235,9 +290,18 @@ os.replace(tmp, state_file)
 
 age_label = fmt_age(age)
 live, live_detail = live_summary()
+deadline_audit = deadline_crossing_audit()
+deadline_no_merge_count = int(deadline_audit.get("deadline_no_merge_count") or 0)
+deadline_no_merge_with_safe_count = int(deadline_audit.get("deadline_no_merge_with_safe_count") or 0)
+if deadline_no_merge_count:
+    suffix = f" deadline_no_merge={deadline_no_merge_count}"
+    if deadline_no_merge_with_safe_count:
+        suffix += f" safe_available={deadline_no_merge_with_safe_count}"
+    live = f"{live} {suffix}".strip() if live else suffix.strip()
+    live_detail = f"{live_detail} {suffix}".strip() if live_detail else suffix.strip()
 live_text = f" ライブは {live}。" if live else ""
 if should_notify:
-    message = f"Claude監視レポートが{age_label}更新されていません。{live_text}現在の評価はライブ状態を正として継続監視します。"
+    message = f"メリケンAI監視レポートが{age_label}更新されていません。{live_text}現在の評価はライブ状態を正として継続監視します。"
     print("message=" + shlex.quote(message))
     print("title=" + shlex.quote(f"Monitor {status} {age_label}"))
     detail = f"{title} file={report_file} age={age_label}"
@@ -263,6 +327,11 @@ summary_payload = {
 	"anchor_hash": summary.get("anchor_hash"),
 	"anchor_comp": summary.get("anchor_comp"),
 	"current_comp": summary.get("current_comp"),
+    "deadline_crossing_count": deadline_audit.get("deadline_crossing_count"),
+    "deadline_no_merge_count": deadline_audit.get("deadline_no_merge_count"),
+    "deadline_no_merge_with_safe_count": deadline_audit.get("deadline_no_merge_with_safe_count"),
+    "deadline_no_merge_last": deadline_audit.get("deadline_no_merge_last"),
+    "deadline_no_merge_with_safe_last": deadline_audit.get("deadline_no_merge_with_safe_last"),
 }
 os.makedirs(os.path.dirname(status_file) or ".", exist_ok=True)
 tmp_status_path = status_file + ".tmp"
