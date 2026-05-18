@@ -1451,7 +1451,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 russia_pipeline_mult = max(0.3, min(2.0, 1.0 - russia_y * 0.25))
                 dx = abs(x - russia_x)
                 dy = landing_y - russia_y
-                if dx < 1.994 and -0.5 <= dy <= 1.0:
+                if dx < 1.5 and -0.5 <= dy <= 1.0:
                     below_bonus = 150.0 * merge_mult * russia_pipeline_mult
                     below_bonus *= max(0.0, 1.0 - dx / 1.5)
                     ideal_dy = 0.5
