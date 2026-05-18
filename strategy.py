@@ -1112,7 +1112,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
         if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
+            risk_factor = min(1.0, max(0.0, 0.795 - reactor_margin))
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
@@ -1466,7 +1466,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 28:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.0828
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
