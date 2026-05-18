@@ -65,14 +65,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v630: merge_path_scattered detection + axis 9.6b congestion boost in merge drought
-      # deadline_guard選択後のmerge_path散逸対策。worst game T62以降6ターンNO merge続きの主因。
-      # 1) merge_path_scattered state検出追加: deadline_guardでmergeなし→次のmerge droughtでaxis 9.6b強化
-      # 2) axis 9.6b rp_guidance_suppressed条件緩和: pc>=30 && rp>=3 && merge_grade==NOでrp_guidance抑制を解除
-      #    → 同type peçaとの距離を縮める配置を優先しmerge path再構築
-      # Fixes rollback failure mode: deadline_guard後のmerge_path散逸によるNO merge連続 (analysis_result.md)
+      # v641: DEADLINE_GUARD mandatory_themes強化 — crosses_deadline時はmerge種別に問わず常に抑制
+      # Line 934: 旧条件「crosses_deadline AND merge_grade==NO」だと、crosses_deadlineでもNEAR/DIRECTなら返していた
+      # → mandatory_themes「デッドライン超出時はmergeがある時だけ許可」に違反
+      # 修正: crosses_deadline時のみ抑制。normal decide()のv411 penalty(-1200)またはmerge bonusで適切に評価
+      # Phase gate: カザフスタン(type14)→ロシア(type15)—max_y runaway防止でtype14→15到達経路復旧
       # refs: tmp/analysis_result.md, tmp/improve_brief.md, data/mandatory_themes.txt
-      # Phase gate: ロシア(type15)→ソ連建国 — max_y runaway防止でtype14→15の到達経路を復旧
+      # Fixes rollback failure mode: DEADLINE_GUARD crosses_deadline+NO_merge位置返しによるmax_y runaway
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -939,7 +938,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # crosses_deadline=true, merge_available=false, violating mandatory_themes.
         # Best game T92: DEADLINE_GUARD_DIRECT_MERGE with merge_available=true worked correctly.
         __dlg_best = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-        if __dlg_best.get("crosses_deadline") and __dlg_best.get("merge_grade") == "NO":
+        if __dlg_best.get("crosses_deadline"):
             pass  # suppress DEADLINE_GUARD, fall through to normal decide()
         else:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
@@ -1760,21 +1759,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
                         # differentiation" that occurred when rp_density_scale went up to 2.5x.
-                        # v630: merge_path_scattered relaxed condition — allow proximity guidance during
-                        # merge drought (rp>=3, NO merge, pc>=30) even when congested, to rebuild
-                        # scattered merge paths. Only suppressed in true death spiral (max_y>=3.0 && deadline).
-                        merge_drought_path_scattered = (
-                            merge_grade == "NO"
-                            and reactive_pair_count >= 3
-                            and piece_count >= 30
-                            and not (max_y >= 3.0 and deadline_crossed)
-                        )
+                        # rp_guidance_suppressed still used for congestion state detection:
                         rp_guidance_suppressed = (
                             (max_y >= 3.0 and deadline_crossed)
-                            or (reactive_pair_count >= 5 and max_y >= 2.5 and not merge_drought_path_scattered)
+                            or (reactive_pair_count >= 5 and max_y >= 2.5)
                         )
-                        if merge_drought_path_scattered:
-                            rp_guidance_suppressed = False
                         if rp_guidance_suppressed:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
