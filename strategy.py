@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v631: DEADLINE_GUARD merge_crossing fallback — when all candidates cross deadline but crossing
+     # DIRECT/NEAR merge exists, take lowest y merge instead of SAFE_LANDING with no merge.
+     # Fixes rollback failure mode: "deadline_guard fallbackでmerge candidateがありながらmerge以外を選択"
+     # mandatory_themes: "deadline crossing only when merge possible" — fallback case obeys this.
+     # refs: tmp/analysis_result.md
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -856,6 +861,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # v631: ONLY when ALL candidates cross deadline — take lowest crossing DIRECT/NEAR merge
+        # Invariant: never choose crosses_deadline=True when any non-crossing candidate exists
+        __dlg_merge_crossing = [
+            c for c in __dlg_cands
+            if isinstance(c, dict)
+            and c.get("merge_grade") in ("DIRECT", "NEAR")
+            and c.get("crosses_deadline")
+        ]
+        if __dlg_merge_crossing:
+            __dlg_best = min(__dlg_merge_crossing, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MERGE_CROSSING"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
@@ -1776,7 +1792,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # place near center to allow merge in either direction next turn
         # v462: suppress in death spiral/merge_drought — height must be sole differentiator
         if next_next_type == next_type and not guidance_suppressed:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.307 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
@@ -2167,7 +2183,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ペナルティ軽減も削除 - axis 8.7即時併合優先
             landing_y = result.get("landing_y", 0)
-            if not (russia_phase and reactive_pair_count < 3):
+            if not (russia_phase and reactive_pair_count < 4):
                 if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
                     horiz_dist = abs(x - stack_top_x)
                     if horiz_dist < 1.0:
