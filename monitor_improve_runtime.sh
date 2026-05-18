@@ -146,22 +146,30 @@ PY
 }
 
 now=$(date +%s)
-check_and_harvest_improvement >/dev/null 2>&1 || true
-
 state_status=$(_json_get status idle)
 state_pid=$(_json_get pid 0)
 phase=$(_json_get phase "")
 detail=$(_json_get detail "")
 started_at=$(_json_get started_at 0)
 updated_at=$(_json_get updated_at 0)
+updated_age=$(( now - ${updated_at:-0} ))
+log_age=$(_file_age_sec "$IMPROVE_AI_LOG_FILE" "$now")
 live_pid=$(_find_live_improve_pid 2>/dev/null || true)
 case "$live_pid" in ''|*[!0-9]*) live_pid=0 ;; esac
+state_only_running=0
 
 if [ "$state_status" = "running" ] && [ "$live_pid" -eq 0 ]; then
-	_monitor_log "running state has no live eloop_improve pid; existing harvest will reconcile"
-	check_and_harvest_improvement >/dev/null 2>&1 || true
-	state_status=$(_json_get status idle)
-	state_pid=$(_json_get pid 0)
+	[ "$updated_age" -lt "$log_age" ] && stale_age="$updated_age" || stale_age="$log_age"
+	if [ "$stale_age" -lt "$STALE_SEC" ]; then
+		_monitor_log "running state has no live eloop_improve pid but activity is fresh; preserving active state stale=${stale_age}s"
+		live_pid="$state_pid"
+		state_only_running=1
+	else
+		_monitor_log "running state has no live eloop_improve pid and is stale; existing harvest will reconcile"
+		check_and_harvest_improvement >/dev/null 2>&1 || true
+		state_status=$(_json_get status idle)
+		state_pid=$(_json_get pid 0)
+	fi
 fi
 
 if [ "$live_pid" -ne 0 ]; then
@@ -169,8 +177,6 @@ if [ "$live_pid" -ne 0 ]; then
 		started_at=$(_pid_lstart_epoch "$live_pid")
 	fi
 	elapsed=$(( now - ${started_at:-now} ))
-	updated_age=$(( now - ${updated_at:-0} ))
-	log_age=$(_file_age_sec "$IMPROVE_AI_LOG_FILE" "$now")
 	[ "$updated_age" -lt "$log_age" ] && stale_age="$updated_age" || stale_age="$log_age"
 
 	./generate_improve_overlay.sh once >/dev/null 2>&1 || true
@@ -193,10 +199,16 @@ if [ "$live_pid" -ne 0 ]; then
 		_monitor_log "attention: improve pid=$live_pid elapsed=${elapsed}s stale=${stale_age}s ${note}"
 		_write_status attention "$live_pid" "$elapsed" "$stale_age" "observe_only" "$note"
 	else
-		_write_status running "$live_pid" "$elapsed" "$stale_age" "layout_reconciled" "improve active"
+		if [ "$state_only_running" -eq 1 ]; then
+			_write_status running "$live_pid" "$elapsed" "$stale_age" "state_activity_fresh" "improve state/log active; parent pid not visible"
+		else
+			_write_status running "$live_pid" "$elapsed" "$stale_age" "layout_reconciled" "improve active"
+		fi
 	fi
 	exit 0
 fi
+
+check_and_harvest_improvement >/dev/null 2>&1 || true
 
 ./generate_improve_overlay.sh once >/dev/null 2>&1 || true
 ./obs_control.sh hide soren "$IMPROVE_OVERLAY_SOURCE" >/dev/null 2>&1 || true
