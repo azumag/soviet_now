@@ -2231,7 +2231,7 @@ check_regression() {
 			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" "${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" "${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" \
 			"${ANNEALING_OBSERVE_FILE:-tmp/state/annealing_candidates.jsonl}" "${ANNEALING_OBSERVE_ENABLED:-1}" "${ANNEALING_BASE_TEMP:-1800}" "${ANNEALING_DECAY:-0.85}" \
 			"${EARLY_OBJECTIVE_REGRESSION_ENABLED:-1}" "${EARLY_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" \
-			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" <<'PY'
+			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" <<'PY'
 import json
 import math
 import os
@@ -2265,6 +2265,7 @@ early_objective_min_games = int(sys.argv[28]) if len(sys.argv) > 28 else 4
 early_objective_min_best_type = int(sys.argv[29]) if len(sys.argv) > 29 else 15
 same_hash_backslide_enabled = sys.argv[30] if len(sys.argv) > 30 else "1"
 same_hash_backslide_min_extra_games = int(sys.argv[31]) if len(sys.argv) > 31 else 4
+russia_objective_regression_enabled = sys.argv[32] if len(sys.argv) > 32 else "0"
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -2372,13 +2373,13 @@ def _update_stagnation(event):
             pass
         data["consecutive_no_improve"] = c
         # counter 非依存の回帰ストリーク (WILDCARD masking 対策)。
-        # PROMOTE は -1 減衰のみ (ハードリセットしない)。弱アンカーを僅差で
-        # 抜く marginal PROMOTE が蓄積した停滞証拠を全消去すると F=WILDCARD が
-        # 永久未発火になるため。真の脱出 (連続 PROMOTE) なら減衰し続けて 0 に
-        # 収束する。REGRESSION/RESET で +1。OK_BEAT/OK_IDLE は不変
-        # (降格 anchor 由来の OK_BEAT でリセットされない)。
+        # 通常 PROMOTE は -1 減衰のみ。ただし WILDCARD 起源の PROMOTE は
+        # 脱出成功なので 0 に戻す。成功直後に regression_streak 経路で
+        # もう一度 WILDCARD を撃つ churn を防ぐ。
         rs = int(data.get("regression_streak", 0) or 0)
-        if event == "PROMOTE":
+        if event == "PROMOTE" and current_hash in _WILDCARD_ORIGIN:
+            rs = 0
+        elif event == "PROMOTE":
             rs = max(0, rs - 1)
         elif event in ("REGRESSION", "RESET"):
             rs += 1
@@ -2617,13 +2618,21 @@ if (
     and str(origin_payload.get("origin_type") or "") == "archive_restart"
     and (
         (int(anchor_payload.get("soviet_count", 0) or 0) > 0 and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0)
-        or (int(anchor_payload.get("russia_count", 0) or 0) > 0 and int(origin_payload.get("source_russia_count", 0) or 0) <= 0)
+        or (
+            russia_objective_regression_enabled == "1"
+            and int(anchor_payload.get("russia_count", 0) or 0) > 0
+            and int(origin_payload.get("source_russia_count", 0) or 0) <= 0
+        )
     )
 ):
     reasons = ["archive_restart_objective_floor"]
     if int(anchor_payload.get("soviet_count", 0) or 0) > 0 and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0:
         reasons.append("lost_soviet_path")
-    if int(anchor_payload.get("russia_count", 0) or 0) > 0 and int(origin_payload.get("source_russia_count", 0) or 0) <= 0:
+    if (
+        russia_objective_regression_enabled == "1"
+        and int(anchor_payload.get("russia_count", 0) or 0) > 0
+        and int(origin_payload.get("source_russia_count", 0) or 0) <= 0
+    ):
         reasons.append("lost_russia_path")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
     print(
@@ -2769,9 +2778,8 @@ if (
 ):
     if anchor_objective.get("soviet_count", 0) > 0 and current_objective.get("soviet_count", 0) <= 0:
         objective_reasons.append("lost_soviet_path")
-    # NOTE(2026-05-18 ユーザー指示): lost_russia_path(type15経路喪失) は早期ゲート(n>=4)から除外。
-    # 4ゲームでは type15 経路のばらつきが大きく即粛清は厳しすぎるため、
-    # type15 喪失は下の通常 objective_regression ゲート(n>=12)で引き続き判定する。
+    # NOTE(2026-05-18 ユーザー指示): lost_russia_path(type15経路喪失) は早期ゲートから除外。
+    # RUSSIA_OBJECTIVE_REGRESSION_ENABLED=0 の間は通常ゲートでも粛清しない。
     # lost_soviet_path は従来どおり早期ゲートに残す。
     if objective_reasons:
         print(
@@ -2793,7 +2801,7 @@ if (
         raise SystemExit
 
 # 最小サンプルガード: n<12 では p50/p25 の変動が大きすぎて通常 regression 判定できない。
-# ただし上の早期目的退行ゲートだけは、type15 経路喪失を短いサンプルで止める。
+# ただし上の早期目的退行ゲートだけは、ソ連経路喪失を短いサンプルで止める。
 if current["n"] < min_games_current:
     _update_stagnation("OK_IDLE")
     print("OK")
@@ -2803,7 +2811,11 @@ objective_reasons = []
 if current_hash != anchor_hash:
     if anchor_objective.get("soviet_count", 0) > 0 and current_objective.get("soviet_count", 0) <= 0:
         objective_reasons.append("lost_soviet_path")
-    if anchor_objective.get("best_max_type", 0) >= 15 and current_objective.get("best_max_type", 0) < 15:
+    if (
+        russia_objective_regression_enabled == "1"
+        and anchor_objective.get("best_max_type", 0) >= 15
+        and current_objective.get("best_max_type", 0) < 15
+    ):
         objective_reasons.append("lost_russia_path")
 if objective_reasons:
     print(

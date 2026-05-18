@@ -1448,7 +1448,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
                 russia_y = deepest_russia.get("y", -10)
                 russia_x = deepest_russia.get("x", 0)
-                russia_pipeline_mult = max(0.3, min(1.240, 1.0 - russia_y * 0.25))
+                russia_pipeline_mult = max(0.3, min(2.0, 1.0 - russia_y * 0.25))
                 dx = abs(x - russia_x)
                 dy = landing_y - russia_y
                 if dx < 1.5 and -0.5 <= dy <= 1.0:
