@@ -1897,7 +1897,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
-                    dist, _ = nearby_pieces[2]
+                    dist, _ = nearby_pieces[3]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
                     score += chain_bonus
 
@@ -2030,9 +2030,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  if reactive_pair_count >= 1:
                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                      if merge_grade == "DIRECT":
-                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
+                         score += 1400.0 if reactive_pair_count >= 4 else 1200.0
                      else:
-                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
+                         score += 1200.0 if reactive_pair_count >= 4 else 1000.0
                  else:
                      # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
                      if merge_grade == "DIRECT":
