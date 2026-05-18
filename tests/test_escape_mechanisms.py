@@ -986,11 +986,13 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
 
         self.assertIn("${SOREN91_OBS_SOURCE:-}", control)
         self.assertIn('if [ -n "$SOREN91_OBS_INPUT_NAME" ]; then', control)
+        self.assertIn('SOREN_GAME_OBS_SOURCE', control)
+        self.assertIn('china_show_sources="$game_source,$china_show_sources"', control)
         self.assertIn("${STATUS_OVERLAY_SOURCE:-statsOverlay}", control)
         self.assertIn("${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}", control)
         self.assertIn("${OBS_DASHBOARD_SOURCE:-dashboard}", control)
-        self.assertIn('$s91_show_op hide:"$status_source","$show_status_source",console3,"$dashboard_source"', control)
-        self.assertIn('show:"$status_source","$show_status_source",console3,"$dashboard_source" $s91_hide_op', control)
+        self.assertIn('$s91_show_op hide:"$status_source","$show_status_source","$meriken_hide_sources"', control)
+        self.assertIn('show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op', control)
         self.assertNotIn("hide:console1,console2", control)
         self.assertNotIn("show:console1,console2", control)
 

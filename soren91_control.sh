@@ -60,8 +60,15 @@ _soren91_switch_obs_layout() {
 	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 	local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
+	local china_show_sources="$dashboard_source"
+	local meriken_hide_sources="$dashboard_source"
 	local s91_show_op=""
 	local s91_hide_op=""
+	if [ -n "$game_source" ]; then
+		china_show_sources="$game_source,$china_show_sources"
+		meriken_hide_sources="$game_source,$meriken_hide_sources"
+	fi
 	if [ -n "$SOREN91_OBS_INPUT_NAME" ]; then
 		s91_show_op="show:$SOREN91_OBS_INPUT_NAME"
 		s91_hide_op="hide:$SOREN91_OBS_INPUT_NAME"
@@ -69,7 +76,7 @@ _soren91_switch_obs_layout() {
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
-		"$SOREN91_OBS_CONTROL" batch soren $s91_show_op hide:"$status_source","$show_status_source",console3,"$dashboard_source" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		"$SOREN91_OBS_CONTROL" batch soren $s91_show_op hide:"$status_source","$show_status_source","$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
@@ -77,9 +84,9 @@ _soren91_switch_obs_layout() {
 		# (china↔meriken 切替のたびに show/hide が点滅するのを防ぐ。
 		#  改善オーバーレイは別途 _improve_overlay_show が管理)
 		if _soren91_improve_active; then
-			"$SOREN91_OBS_CONTROL" batch soren show:console3,"$dashboard_source" hide:"$status_source","$show_status_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+			"$SOREN91_OBS_CONTROL" batch soren show:"$china_show_sources" hide:"$status_source","$show_status_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		else
-			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source",console3,"$dashboard_source" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		fi
 		_soren91_activate_shared_browser_tab china
 		;;
