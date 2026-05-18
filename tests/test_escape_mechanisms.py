@@ -799,6 +799,12 @@ class TestShowStatusOnce(unittest.TestCase):
         self.assertIn("SOREN STATUS", result.stdout)
         self.assertIn("Escape", result.stdout)
 
+    def test_show_status_does_not_treat_permission_denied_pid_as_alive(self):
+        status = (REPO_ROOT / "show_status.sh").read_text()
+        self.assertIn("operation not permitted", status)
+        self.assertIn("stale or reused PIDs", status)
+        self.assertNotIn('*"operation not permitted"*) return 0', status)
+
 
 # --- Hot streak extension ----------------------------------------------------
 
@@ -1216,7 +1222,7 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(payload["level"], "warn")
         self.assertIn("safe=1/2", payload["body"])
 
-    def test_deadline_crossing_overlay_payload_distinguishes_no_safe_slot(self):
+    def test_deadline_crossing_overlay_payload_distinguishes_no_non_crossing_candidate(self):
         import strategy_runner
 
         payload = strategy_runner._deadline_crossing_overlay_payload(
@@ -1232,9 +1238,78 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         )
 
         self.assertIsNotNone(payload)
-        self.assertEqual(payload["title"], "デッドライン超過: 置き場なし")
+        self.assertEqual(payload["title"], "デッドライン超過: 非超過なし・併合候補あり")
+        self.assertEqual(payload["level"], "warn")
+        self.assertIn("safe=0/2", payload["body"])
+        self.assertIn("legal=1/2", payload["body"])
+
+    def test_deadline_crossing_overlay_payload_reports_no_legal_candidate(self):
+        import strategy_runner
+
+        payload = strategy_runner._deadline_crossing_overlay_payload(
+            13,
+            456,
+            {"x": 0.0, "reason": "FORCED"},
+            {
+                "results": [
+                    {"x": -1.0, "crosses_deadline": True, "merge_grade": "NO"},
+                    {"x": 0.0, "crosses_deadline": True, "merge_grade": "NO"},
+                ]
+            },
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["title"], "デッドライン超過: 合法候補なし")
         self.assertEqual(payload["level"], "info")
         self.assertIn("safe=0/2", payload["body"])
+        self.assertIn("legal=0/2", payload["body"])
+
+    def test_deadline_safety_uses_crossing_merge_when_no_non_crossing_candidate_exists(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -1.0, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {"top_edge_y": 3.2, "deadline_crossed": True},
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -1.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.33,
+                    },
+                    {
+                        "x": 1.5,
+                        "crosses_deadline": True,
+                        "merge_grade": "DIRECT",
+                        "risk_top_y_after_drop": 4.2,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 3, "x": 1.5, "y": 2.8}], "next": {"type": 3}},
+        )
+
+        self.assertEqual(decision["x"], 1.5)
+        self.assertIn("NO_TO_DIRECT", decision["reason"])
+
+    def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
+        import analyze_board
+
+        pieces = [
+            {"id": 1, "type": 10, "x": 0.0, "y": 2.1, "r": 1.45},
+            {"id": 2, "type": 4, "x": 1.8, "y": 1.6, "r": 0.78},
+        ]
+
+        results, _ = analyze_board.analyze_drops(pieces, next_type=9, next_r=1.2, shapes={})
+        safe_no_merge = [
+            r
+            for r in results
+            if not r.get("crosses_deadline", False)
+            and r.get("merge_grade") == "NO"
+        ]
+
+        self.assertTrue(safe_no_merge)
 
     def test_deadline_crossing_overlay_notify_uses_event_overlay(self):
         import strategy_runner

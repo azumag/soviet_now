@@ -84,11 +84,18 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
         return None
 
     safe = [r for r in results if not r.get("crosses_deadline", False)]
+    legal = [
+        r
+        for r in results
+        if not r.get("crosses_deadline", False)
+        or r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+    ]
     merge_grade = str(chosen.get("merge_grade") or "NO")
     reason = str(decision.get("reason") or "")
     body = (
         f"turn={turn} score={score} x={decision_x:+.2f} "
         f"merge={merge_grade} safe={len(safe)}/{len(results)} "
+        f"legal={len(legal)}/{len(results)} "
         f"reason={reason[:180]}"
     )
     if safe:
@@ -97,8 +104,14 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
             "body": body,
             "level": "warn",
         }
+    if legal:
+        return {
+            "title": "デッドライン超過: 非超過なし・併合候補あり",
+            "body": body,
+            "level": "warn",
+        }
     return {
-        "title": "デッドライン超過: 置き場なし",
+        "title": "デッドライン超過: 合法候補なし",
         "body": body,
         "level": "info",
     }
@@ -735,8 +748,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         replacement_source = "safe"
 
     elif large_deadline_pressure and chosen_top > min_risk_top + 0.05:
-        replacement = min_risk_candidate
-        replacement_source = "large_deadline_minrisk"
+        all_merges = [
+            r for r in results if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        if chosen.get("crosses_deadline", False) and chosen.get("merge_grade", "NO") == "NO" and all_merges:
+            replacement = min(all_merges, key=rank_candidate)
+            replacement_source = "large_deadline_merge_candidate"
+        else:
+            replacement = min_risk_candidate
+            replacement_source = "large_deadline_minrisk"
     elif not chosen.get("crosses_deadline", False):
         return decision
     else:
@@ -746,7 +766,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         non_no_band = [
             r for r in risk_band if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
         ]
-        replacement_pool = non_no_band or risk_band
+        all_merges = [
+            r for r in results if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        replacement_pool = non_no_band or all_merges or risk_band
         replacement = min(
             replacement_pool,
             key=lambda r: (
@@ -757,7 +780,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         )
         if replacement.get("crosses_deadline", False) and replacement.get("merge_grade", "NO") == "NO":
             replacement = min(risk_band, key=lambda r: (risk_top(r), abs(float(r.get("x", 0.0) or 0.0))))
-        replacement_source = "risk_band"
+        replacement_source = (
+            "risk_band_merge_candidate"
+            if not non_no_band and all_merges
+            else "risk_band"
+        )
 
     # If the analysis still says NO but the live board has a high same-country
     # target far from the chosen drop, prefer a candidate that actually moves
@@ -844,6 +871,17 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
+    ):
+        all_merges = [
+            r for r in results if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]
+        if all_merges:
+            replacement = min(all_merges, key=rank_candidate)
+            replacement_source = f"{replacement_source}_merge_candidate_postcondition"
+
+    if (
+        replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
         and safe
     ):
         risk_band = [
@@ -854,6 +892,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         ]
         if non_no_band:
             replacement = min(non_no_band, key=rank_candidate)
+        elif (all_merges := [
+            r for r in results if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        ]):
+            replacement = min(all_merges, key=rank_candidate)
         elif safe:
             replacement = min(
                 safe,

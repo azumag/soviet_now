@@ -144,9 +144,9 @@ _pid_exists() {
 	''|0|*[!0-9]*) return 1 ;;
 	esac
 	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
-	case "$err" in
-	*"Operation not permitted"*|*"operation not permitted"*) return 0 ;;
-	esac
+	# In the Codex/macOS sandbox, stale or reused PIDs can surface as
+	# "operation not permitted". Treat that as unknown/dead for project worker
+	# status so pidfiles cannot make stopped workers look healthy.
 	return 1
 }
 

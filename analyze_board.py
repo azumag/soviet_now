@@ -326,6 +326,24 @@ def calc_effective_radii(shapes):
     return radii
 
 
+def calc_nominal_deadline_radii():
+    """Deadline判定用の名目半径。
+
+    Unity bridge の `r` は見た目/接触の上端より大きめに出ることがあり、
+    shapes が空の実ランタイムでは全候補を deadline 超過に誤分類する。
+    併合判定は生の `r` を維持し、deadline専用の着地/上端だけ既知の
+    タイプ別半径へ戻す。
+    """
+    return {
+        t: {
+            "horiz": r * COLLISION_POLY_FACTOR,
+            "top": r,
+            "wall_top": r,
+        }
+        for t, r in TYPE_RADII.items()
+    }
+
+
 def get_type_top_radius(piece_type, shapes, eff_radii=None):
     if eff_radii and piece_type in eff_radii:
         return eff_radii[piece_type]["top"]
@@ -436,13 +454,14 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
     if shapes is None:
         shapes = {}
     eff_radii = calc_effective_radii(shapes) if shapes else {}
+    deadline_eff_radii = eff_radii or calc_nominal_deadline_radii()
     same_type = [p for p in pieces if p["type"] == next_type]
     target_ids = {p["id"] for p in same_type}
     sample_xs = build_sample_xs(pieces, next_type)
     # ドロップピースの上端高さ（ポリゴン実効値）
-    if eff_radii and next_type in eff_radii:
-        next_top_r = eff_radii[next_type]["top"]
-        next_wall_top_r = eff_radii[next_type].get("wall_top", next_top_r)
+    if deadline_eff_radii and next_type in deadline_eff_radii:
+        next_top_r = deadline_eff_radii[next_type]["top"]
+        next_wall_top_r = deadline_eff_radii[next_type].get("wall_top", next_top_r)
     else:
         next_top_r = next_r
         next_wall_top_r = next_r
@@ -455,7 +474,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         # 併合判定用: 元の円モデルで着地予測（併合距離の精度を維持）
         ly, hit_id = get_landing_info(x, next_r, pieces)
         # デッドライン判定用: ポリゴン補正で着地予測（crosses_deadline の偽陽性を抑制）
-        ly_poly, _ = get_landing_info(x, next_r, pieces, eff_radii, next_type)
+        ly_poly, _ = get_landing_info(x, next_r, pieces, deadline_eff_radii, next_type)
 
         # ポリゴン形状によるドリフト推定
         drift_x, drift_unc = estimate_polygon_drift(
