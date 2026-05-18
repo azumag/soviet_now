@@ -1113,13 +1113,19 @@ else:
     age_label = f"{age // 3600}h"
 status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
 label = f"{status} {age_label}"
+status_key = f"{status}:{age_base}" if age_base > 0 else status
 try:
     cached = json.load(open(status_path, encoding="utf-8")) if status_path and os.path.exists(status_path) else {}
     if not isinstance(cached, dict):
         cached = {}
 except Exception:
     cached = {}
-if cached:
+cached_key = str(cached.get("status_key") or cached.get("key") or "")
+cached_epoch = int(cached.get("report_epoch") or cached.get("mtime") or 0) if cached else 0
+cache_matches_report = bool(cached) and (
+    cached_key == status_key or (cached_epoch > 0 and cached_epoch == age_base)
+)
+if cache_matches_report:
     status = str(cached.get("status") or status)
     age_label = str(cached.get("age_label") or age_label)
     live = str(cached.get("live") or "").strip()
