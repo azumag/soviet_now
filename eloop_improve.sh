@@ -1039,6 +1039,164 @@ PY
 fi
 fi
 
+ESCAPE_AI_SEED_APPLIED=0
+ESCAPE_AI_SEED_HASH=""
+ESCAPE_AI_SEED_ORIGINAL_FILE=""
+ESCAPE_AI_SEED_JSON=""
+
+# escape_ai は粛清済み WILDCARD 群から相対的に強い個体を起点にする。
+# archive_restart が使えない場合でも、最後の現行 hash からではなく
+# 評価済みの良い WILDCARD basin から AI 構造変異を試す。
+if [ "${IMPROVE_REASON:-normal}" = "escape_ai" ] && [ "${WILDCARD_ESCAPE_AI_SEED_ENABLED:-1}" = "1" ]; then
+	log "[ESCAPE-AI] WILDCARD起源からAI改善の起点候補を選定"
+	ESCAPE_AI_SEED_JSON=$(python3 - \
+		"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
+		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_GAMES:-4}" <<'PY' 2>/dev/null || true
+import json
+import math
+import os
+import sys
+
+origin_file, rolling_file, rejected_file, archive_dir, min_games_raw = sys.argv[1:6]
+
+def load(path, default):
+    try:
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return json.load(f) or default
+    except Exception:
+        pass
+    return default
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def as_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics_from_scores(scores):
+    xs = []
+    for raw in scores or []:
+        try:
+            xs.append(int(raw))
+        except Exception:
+            pass
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    std = math.sqrt(sum((x - mean) ** 2 for x in xs) / n) if n > 1 else 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {"comp": comp, "p50": p50, "p25": p25, "lcb": lcb, "n": n}
+
+def archive_is_runtime_stable(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return "BEGIN DEADLINE GUARD" in f.read(200000)
+    except Exception:
+        return False
+
+origin = load(origin_file, {})
+rolling = load(rolling_file, {})
+rejected = load(rejected_file, {})
+min_games = max(1, as_int(min_games_raw, 4))
+rows = []
+for h, meta in (origin or {}).items():
+    h = str(h)
+    if not h:
+        continue
+    origin_type = str((meta or {}).get("origin_type") or "wildcard")
+    if origin_type != "wildcard":
+        continue
+    path = os.path.join(archive_dir, f"{h}.py")
+    if not os.path.exists(path) or not archive_is_runtime_stable(path):
+        continue
+    entry = rolling.get(h) or {}
+    m = metrics_from_scores(entry.get("scores", []))
+    rejected_meta = rejected.get(h) or {}
+    if rejected_meta:
+        rejected_n = as_int(rejected_meta.get("n", rejected_meta.get("games_total", 0)), 0)
+        rejected_comp = as_float(rejected_meta.get("comp", 0.0), 0.0)
+        if rejected_n > 0 and (not m or rejected_n >= as_int(m.get("n", 0), 0)):
+            m = {
+                "comp": rejected_comp,
+                "p50": as_float(rejected_meta.get("p50", rejected_comp), rejected_comp),
+                "p25": as_float(rejected_meta.get("p25", rejected_comp), rejected_comp),
+                "lcb": as_float(rejected_meta.get("lcb", rejected_comp), rejected_comp),
+                "n": rejected_n,
+            }
+    if not m or as_int(m.get("n", 0), 0) < min_games:
+        continue
+    russia = as_int(entry.get("russia_count", 0), 0)
+    soviet = as_int(entry.get("soviet_count", 0), 0)
+    best_type = as_int(entry.get("best_max_type", 0), 0)
+    objective_bonus = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
+    score = objective_bonus + float(m["comp"]) + float(m.get("p25", 0.0)) * 0.05
+    rows.append((score, float(m["comp"]), float(m.get("p50", 0.0)), float(m.get("p25", 0.0)), as_int(m["n"], 0), russia, soviet, best_type, h, path))
+
+rows.sort(reverse=True)
+if not rows:
+    print(json.dumps({"ok": False, "reason": "no_wildcard_seed", "min_games": min_games}, ensure_ascii=False))
+    raise SystemExit(0)
+score, comp, p50, p25, n, russia, soviet, best_type, h, path = rows[0]
+print(json.dumps({
+    "ok": True,
+    "hash": h,
+    "path": path,
+    "comp": comp,
+    "p50": p50,
+    "p25": p25,
+    "n": n,
+    "russia_count": russia,
+    "soviet_count": soviet,
+    "best_max_type": best_type,
+    "candidate_count": len(rows),
+}, ensure_ascii=False))
+PY
+)
+	escape_ai_seed_ok=$(echo "$ESCAPE_AI_SEED_JSON" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('ok') else '0')" 2>/dev/null || echo 0)
+	if [ "$escape_ai_seed_ok" = "1" ]; then
+		escape_ai_seed_path=$(echo "$ESCAPE_AI_SEED_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('path',''))" 2>/dev/null || echo "")
+		escape_ai_seed_hash=$(echo "$ESCAPE_AI_SEED_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hash',''))" 2>/dev/null || echo "")
+		if [ -n "$escape_ai_seed_hash" ] && [ -f "$escape_ai_seed_path" ]; then
+			ESCAPE_AI_SEED_ORIGINAL_FILE="tmp/escape_ai_seed_original.py"
+			cp "$STRATEGY_FILE" "$ESCAPE_AI_SEED_ORIGINAL_FILE"
+			cp "$escape_ai_seed_path" "$STRATEGY_FILE"
+			ESCAPE_AI_SEED_HASH=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+			ESCAPE_AI_SEED_APPLIED=1
+			export ESCAPE_AI_SEED_JSON ESCAPE_AI_SEED_HASH
+			log "[ESCAPE-AI] WILDCARD seed applied: selected=${escape_ai_seed_hash} actual=${ESCAPE_AI_SEED_HASH:-unknown}"
+			_improve_progress "escape_ai" "28" "seed_from_wildcard_${ESCAPE_AI_SEED_HASH:-unknown}"
+		fi
+	else
+		log "[ESCAPE-AI] WILDCARD seed candidate not found: ${ESCAPE_AI_SEED_JSON:-empty}"
+	fi
+fi
+
 # バッチサマリー生成
 batch_summary_file="tmp/batch_summary.txt"
 if [ -n "$HISTORY_FILES" ]; then
@@ -1418,6 +1576,18 @@ if os.environ.get("IMPROVE_REASON", "normal") == "escape_ai":
     summary_lines.append("- escape_ai: 直近WILDCARDが連続して成熟評価を越えられなかったため、今回だけAIによる小さな構造変異で大域脱出を狙う。")
     summary_lines.append("- escape_ai: 単なる数値定数の微調整よりも、type14→15→16の到達経路を阻害している判断条件・優先順位・例外処理を一箇所に絞って変更する。")
     summary_lines.append("- escape_ai avoid: 広範囲の書き換え、評価式の目的逸脱、ロシア/ソ連到達率を落とすスコア稼ぎ。")
+    try:
+        seed = json.loads(os.environ.get("ESCAPE_AI_SEED_JSON", "") or "{}")
+    except Exception:
+        seed = {}
+    if seed.get("ok"):
+        summary_lines.append(
+            "- escape_ai seed: 粛清済みWILDCARD群の中で相対評価が高い個体を起点にしている。"
+            f" hash={str(seed.get('hash', ''))[:12]} comp={float(seed.get('comp', 0.0)):.1f}"
+            f" p50={float(seed.get('p50', 0.0)):.1f} p25={float(seed.get('p25', 0.0)):.1f}"
+            f" n={int(seed.get('n', 0) or 0)} russia={int(seed.get('russia_count', 0) or 0)}"
+            f" soviet={int(seed.get('soviet_count', 0) or 0)} best_type={int(seed.get('best_max_type', 0) or 0)}"
+        )
 if scores:
     summary_lines.append(
         f"- scores: {' '.join(map(str, scores))}"
@@ -2279,7 +2449,18 @@ if $improve_ok; then
 fi
 [ -n "$HOST_INTEGRITY_BEFORE_FILE" ] && rm -f "$HOST_INTEGRITY_BEFORE_FILE" 2>/dev/null || true
 
-# 失敗してもstrategy.pyはsandbox外で触っていないので復元不要
+if [ "${ESCAPE_AI_SEED_APPLIED:-0}" = "1" ] && ! $improve_ok; then
+	current_after_fail=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	if [ -n "${ESCAPE_AI_SEED_ORIGINAL_FILE:-}" ] && [ -f "$ESCAPE_AI_SEED_ORIGINAL_FILE" ] && [ "$current_after_fail" = "${ESCAPE_AI_SEED_HASH:-}" ]; then
+		cp "$ESCAPE_AI_SEED_ORIGINAL_FILE" "$STRATEGY_FILE" 2>/dev/null || true
+		log "[ESCAPE-AI] AI改善失敗のためWILDCARD seed適用を元へ戻した: ${ESCAPE_AI_SEED_HASH}"
+	else
+		log "[ESCAPE-AI] AI改善失敗後のstrategy.pyがseed hashと異なるため自動復元をスキップ"
+	fi
+fi
+[ -n "${ESCAPE_AI_SEED_ORIGINAL_FILE:-}" ] && rm -f "$ESCAPE_AI_SEED_ORIGINAL_FILE" 2>/dev/null || true
+
+# 失敗しても通常はstrategy.pyはsandbox外で触っていないので復元不要
 _improve_progress "post_validate" "85" "finalizing"
 [ -n "$HARVEST_DIR" ] && rm -rf "$HARVEST_DIR" 2>/dev/null || true
 

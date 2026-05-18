@@ -92,8 +92,10 @@ _SOREN_LAST_PAUSE_LOG_KEY=""
 SOREN_OVERLAY_AUTORECOVER_ENABLED="${SOREN_OVERLAY_AUTORECOVER_ENABLED:-1}"
 SOREN_OVERLAY_AUTORECOVER_INTERVAL_SEC="${SOREN_OVERLAY_AUTORECOVER_INTERVAL_SEC:-15}"
 SOREN_LOOP_OVERLAY_REFRESH_SEC="${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}"
+SOREN_IMPROVE_MONITOR_INTERVAL_SEC="${SOREN_IMPROVE_MONITOR_INTERVAL_SEC:-15}"
 _SOREN_OVERLAY_RECOVER_TS=0
 _SOREN_OVERLAY_RECOVER_BOOTSTRAPPED=0
+_SOREN_IMPROVE_MONITOR_TS=0
 
 log_pause_throttled() {
 	local key="${1:-pause}" message="${2:-[PAUSE]}"
@@ -139,6 +141,22 @@ _ensure_status_overlays_watchers() {
 	fi
 	./show_status_g.sh --html-obs "$_overlay_vis" >/dev/null 2>&1 || true
 	./show_status.sh --html-obs "$_overlay_vis" >/dev/null 2>&1 || true
+}
+
+_run_improve_runtime_monitor() {
+	[ -x ./monitor_improve_runtime.sh ] || return 0
+	local now interval
+	now=$(date +%s)
+	interval="${SOREN_IMPROVE_MONITOR_INTERVAL_SEC:-15}"
+	case "$interval" in
+	''|*[!0-9]*) interval=15 ;;
+	esac
+	if [ "${_SOREN_IMPROVE_MONITOR_TS:-0}" -gt 0 ] && [ $((now - _SOREN_IMPROVE_MONITOR_TS)) -lt "$interval" ]; then
+		return 0
+	fi
+	_SOREN_IMPROVE_MONITOR_TS=$now
+	./monitor_improve_runtime.sh >/dev/null 2>&1 ||
+		log "[MONITOR] improve runtime monitor skipped/failed"
 }
 
 _cleanup_once() {
@@ -301,6 +319,7 @@ if [ "$wait_rc" -ne 0 ]; then
 	exit 1
 fi
 _ensure_status_overlays_watchers
+_run_improve_runtime_monitor
 
 # --- メインループ: 1試合ずつ ---
 while true; do
@@ -311,6 +330,7 @@ while true; do
 		exit 130
 	fi
 	_ensure_status_overlays_watchers
+	_run_improve_runtime_monitor
 
 	# .env を毎試合再読込（再起動なしで設定変更を反映）
 	[ -f .env ] && set -a && . ./.env && set +a
@@ -369,12 +389,14 @@ for path in sys.argv[1:]:
 		case "$_pause_reason" in
 		wildcard|archive_restart)
 			log_pause_throttled "${_pause_reason}_improve" "[PAUSE] ${_pause_reason}改善中(短時間): soren91代打を立てず待機"
+			_run_improve_runtime_monitor
 			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 			continue
 			;;
 		esac
 		if [ -z "$_live_improve_pid" ]; then
 			log_pause_throttled "improve_state_no_live_pid" "[PAUSE] 改善状態だが実改善PIDなし: soren91は起動せず回収待ち"
+			_run_improve_runtime_monitor
 			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 			continue
 		fi
@@ -383,6 +405,7 @@ for path in sys.argv[1:]:
 		fi
 		command -v _soren91_switch_obs_layout >/dev/null 2>&1 && _soren91_switch_obs_layout meriken 2>/dev/null || true
 		log_pause_throttled "improve_running" "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
+		_run_improve_runtime_monitor
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
@@ -398,11 +421,13 @@ for path in sys.argv[1:]:
 		log "[CYCLE] 改善完了→次改善前にメインゲームを1回実行 (代打無限化防止)"
 	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
 		log_pause_throttled "improve_lock_wait" "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
+		_run_improve_runtime_monitor
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
 	if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
 		log_pause_throttled "soren91_stop_in_progress" "[PAUSE] soren91停止中: 完全停止までメインゲーム再開を待機"
+		_run_improve_runtime_monitor
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi

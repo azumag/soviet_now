@@ -483,6 +483,10 @@ print(d.get('score', 0) + bonus)
 		./monitor_report_stale_report.sh >/dev/null 2>&1 ||
 			log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
 	fi
+	if [ -x ./monitor_improve_runtime.sh ]; then
+		./monitor_improve_runtime.sh >/dev/null 2>&1 ||
+			log "[MONITOR] improve runtime monitor skipped/failed after post_game_bookkeeping"
+	fi
 
 	if [ -x ./overlay_notify.sh ]; then
 		local _overlay_counts

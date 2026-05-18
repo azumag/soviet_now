@@ -393,6 +393,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
         self.assertIn("WILDCARD_AI_ESCALATE_ENABLED", config)
         self.assertIn("WILDCARD_AI_ESCALATE_STREAK", config)
+        self.assertIn("WILDCARD_ESCAPE_AI_SEED_ENABLED", config)
+        self.assertIn("WILDCARD_ESCAPE_AI_SEED_MIN_GAMES", config)
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn('improve_reason="escape_ai"', improve)
         self.assertIn("AI 構造変異モードで脱出", improve)
@@ -405,6 +407,12 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("export IMPROVE_REASON", eloop)
         self.assertIn('os.environ.get("IMPROVE_REASON", "normal") == "escape_ai"', eloop)
         self.assertIn("今回だけAIによる小さな構造変異で大域脱出を狙う", eloop)
+        self.assertIn("WILDCARD起源からAI改善の起点候補を選定", eloop)
+        self.assertIn("ESCAPE_AI_SEED_JSON", eloop)
+        self.assertIn("seed_from_wildcard_", eloop)
+        self.assertIn("origin_type != \"wildcard\"", eloop)
+        self.assertIn("AI改善失敗のためWILDCARD seed適用を元へ戻した", eloop)
+        self.assertIn("escape_ai seed: 粛清済みWILDCARD群", eloop)
 
     def test_wildcard_stagnation_can_queue_early_escape_lock(self):
         """WILDCARD 停滞時は12試合サイクルを待たずに改善daemonへ渡せる。"""
@@ -1622,6 +1630,8 @@ PY
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
         status = (REPO_ROOT / "show_status.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+        eloop = (REPO_ROOT / "eloop.sh").read_text()
 
         self.assertIn("improve_monitor_status.json", dashboard)
         self.assertIn("state_activity_fresh", dashboard)
@@ -1629,6 +1639,12 @@ PY
         self.assertIn("improve_monitor_status.json", status)
         self.assertIn("imp_state_activity_fresh", status)
         self.assertIn("PID=%s not visible, log fresh", status)
+        self.assertIn("SOREN_IMPROVE_MONITOR_INTERVAL_SEC", loop)
+        self.assertIn("_run_improve_runtime_monitor", loop)
+        self.assertIn("./monitor_improve_runtime.sh >/dev/null 2>&1", loop)
+        self.assertIn("improve runtime monitor skipped/failed", loop)
+        self.assertIn("./monitor_improve_runtime.sh", eloop)
+        self.assertIn("post_game_bookkeeping", eloop)
 
     def test_rollback_revalidates_strategy_after_restore(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
