@@ -898,7 +898,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 0.2547  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
+        height_mult = 0.4  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
@@ -920,7 +920,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_type = next_next_piece.get("type", 0)
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
-    merged_type = min(next_type + 2, 16)
+    merged_type = min(next_type + 1, 16)
     
     # ----- evaluation axis 9.5: current type stack merge priority (NEW: same type stacking) -----
     # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
@@ -1441,7 +1441,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #   no merge path to next Russia constructed"
         if (russia_phase and not double_russia_phase
                 and merge_grade == "NO"
-                and max_y >= 1.311
+                and max_y >= 1.0
                 and not death_spiral):
             russia_pieces = [p for p in pieces if p.get("type") == 15]
             if russia_pieces:
@@ -1543,7 +1543,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # rp_guidance_suppressed still used for congestion state detection:
                         rp_guidance_suppressed = (
                             (max_y >= 3.0 and deadline_crossed)
-                            or (reactive_pair_count >= 7 and max_y >= 2.5)
+                            or (reactive_pair_count >= 5 and max_y >= 2.5)
                         )
                         if rp_guidance_suppressed:
                             proximity_bonus = 0.0
