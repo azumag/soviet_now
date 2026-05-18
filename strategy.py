@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v631: DEADLINE_GUARD merge_crossing fallback — when all candidates cross deadline but crossing
+     # DIRECT/NEAR merge exists, take lowest y merge instead of SAFE_LANDING with no merge.
+     # Fixes rollback failure mode: "deadline_guard fallbackでmerge candidateがありながらmerge以外を選択"
+     # mandatory_themes: "deadline crossing only when merge possible" — fallback case obeys this.
+     # refs: tmp/analysis_result.md
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -856,6 +861,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_any_safe:
             __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # v631: ONLY when ALL candidates cross deadline — take lowest crossing DIRECT/NEAR merge
+        # Invariant: never choose crosses_deadline=True when any non-crossing candidate exists
+        __dlg_merge_crossing = [
+            c for c in __dlg_cands
+            if isinstance(c, dict)
+            and c.get("merge_grade") in ("DIRECT", "NEAR")
+            and c.get("crosses_deadline")
+        ]
+        if __dlg_merge_crossing:
+            __dlg_best = min(__dlg_merge_crossing, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MERGE_CROSSING"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
