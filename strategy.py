@@ -65,12 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v642: DEADLINE_GUARD mandatory_themes strict enforcement — return non-crossing candidate
-      # When lowest landing_y candidate crosses deadline, return best non-crossing candidate
-      # instead of the crossing one. Enforces mandatory_themes by construction.
-      # Phase gate: Turkmenistan(type11)→Ukraine(type13)—max_y runaway防止でtype13→14到達経路復旧
-      # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
-      # Fixes rollback failure mode: DEADLINE_GUARD returning crossing position with NON-NO merge
+      # v631: axis 9.65 reactive near-miss type clustering + v630 merge_path_scattered restoration
+      # Worst game (score643): type3/10/8 all scattered (non-reactive) with no merge path to type14+.
+      # Axis 9.65 guides placement toward same-type centroids when merge_grade==NO && rp>=2 && pc>=25.
+      # v630 restores merge_drought_path_scattered state: rp>=3 && NO merge && pc>=30 relaxes rp_guidance_suppressed
+      # to allow proximity guidance during scattered merge path rebuild.
+      # Phase gate: targets Ukraine(type13)->Kazakhstan(type14)->Russia(type15) pipeline.
+      # refs: tmp/analysis_result.md, game_history/20260519_024759_score0679.jsonl (worst game T55)
+      # Fixes rollback failure mode: "type 13+ scattered, no merge path to type 14"
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -931,22 +933,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass  # suppress DEADLINE_GUARD, fall through to normal decide()
             else:
                 return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        # v642: DEADLINE_GUARD mandatory_themes strict enforcement — return non-crossing candidate
-        # When suppression is triggered (lowest landing_y candidate crosses deadline),
-        # find the best non-crossing candidate and return it. Only fall through to normal
-        # decide() when no non-crossing candidate exists. This enforces mandatory_themes
-        # "crosses_deadline only when merge-capable" by construction, not by suppression.
-        # Phase gate: Turkmenistan(type11)→Ukraine(type13)—max_y runaway防止でtype13→14到達経路復旧
-        # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
-        # Fixes rollback failure mode: DEADLINE_GUARD returning crossing position with NON-NO merge
-        # caused max_y runaway in worst games (type13 stuck, no type14 reachability)
-        __dlg_noncrossing = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-        if __dlg_noncrossing:
-            # Return lowest landing_y among non-crossing candidates (mandatory_themes)
-            __dlg_best_noncross = min(__dlg_noncrossing, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best_noncross.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        # No non-crossing candidate exists — mandatory_themes violation would occur, fall through
-        pass  # fall through to normal decide()
+        # v601: mandatory_themes enforcement — if selected candidate crosses deadline with no merge
+        # capability, suppress DEADLINE_GUARD and fall through to normal decide() which has v411
+        # CROSSES_DEADLINE penalty (-1200). Worst game T67: DEADLINE_GUARD returned x=2.98 with
+        # crosses_deadline=true, merge_available=false, violating mandatory_themes.
+        # Best game T92: DEADLINE_GUARD_DIRECT_MERGE with merge_available=true worked correctly.
+        __dlg_best = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+        if __dlg_best.get("crosses_deadline") and __dlg_best.get("merge_grade") == "NO":
+            pass  # suppress DEADLINE_GUARD, fall through to normal decide()
+        else:
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
         # v600: mandatory_themes enforcement — if ALL candidates cross deadline with no safe merge,
         # suppress DEADLINE_GUARD and fall through to normal decide() which has v411 CROSSES_DEADLINE penalty (-1200).
         # Worst game T46/T49/T50/T52/T54+: DEADLINE_GUARD returned crosses_deadline=true positions despite
@@ -1764,15 +1760,76 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
                         # differentiation" that occurred when rp_density_scale went up to 2.5x.
+                        # v630: merge_path_scattered relaxed condition — allow proximity guidance during
+                        # merge drought (rp>=3, NO merge, pc>=30) even when congested, to rebuild
+                        # scattered merge paths. Only suppressed in true death spiral (max_y>=3.0 && deadline).
+                        merge_drought_path_scattered = (
+                            merge_grade == "NO"
+                            and reactive_pair_count >= 3
+                            and piece_count >= 30
+                            and not (max_y >= 3.0 and deadline_crossed)
+                        )
                         # rp_guidance_suppressed still used for congestion state detection:
                         rp_guidance_suppressed = (
                             (max_y >= 3.0 and deadline_crossed)
-                            or (reactive_pair_count >= 5 and max_y >= 2.5)
+                            or (reactive_pair_count >= 5 and max_y >= 2.5 and not merge_drought_path_scattered)
                         )
+                        if merge_drought_path_scattered:
+                            rp_guidance_suppressed = False
                         if rp_guidance_suppressed:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- evaluation axis 9.65: reactive near-miss type clustering (NEW) -----
+        # analysis_result.md adopted hypothesis: "reactive near-miss guidance" axis.
+        # Primary failure mode: worst game (pc=36, rp=5, NO merge) has type 3x3, type 10x3,
+        # type 8x4 all non-reactive — same types exist but spread too far to merge. No axis guides
+        # clustering them. Within 13 turns, only 3 low-type merges occur, pc grows 36->42.
+        # When merge_grade==NO && rp>=2 && pc>=25: find types with 2+ pieces (excluding next_type,
+        # handled by 9.6b). Calculate centroid and guide placement toward it. Creates mergeable
+        # configurations within 1-2 turns, addressing the "scattered board, no merges" failure mode.
+        # Bonus capped at ~500 — must not override height penalty differentiation (~350-700).
+        # NOT fire when merge_grade != "NO" — merge bonuses always take priority.
+        # NOT include next_type — axis 9.6b already handles it.
+        # NOT fire at pc < 25 — early game has abundant merge opportunities.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.65 reactive near-miss clustering),
+        #       tmp/batch_summary.txt (HIGH_TYPE_CONCENTRATION avg_delta=0.1 = nearly wasted),
+        #       game_history/20260519_024759_score0679.jsonl (worst game T55: scattered types)
+        # Fixes rollback failure mode: "type 13+ pieces scattered, no merge path to type 14"
+
+        if merge_grade == "NO" and reactive_pair_count >= 2 and piece_count >= 25:
+            if not death_spiral:
+                _type_positions = {}
+                for p in pieces:
+                    t = p.get("type", 0)
+                    if t == next_type or t >= 16:
+                        continue
+                    _type_positions.setdefault(t, []).append((p["x"], p["y"]))
+
+                _clustering_targets = []
+                for t, positions in _type_positions.items():
+                    if len(positions) >= 2:
+                        _cx = sum(p[0] for p in positions) / len(positions)
+                        _cy = sum(p[1] for p in positions) / len(positions)
+                        _avg_spread = sum(
+                            ((p[0] - _cx) ** 2 + (p[1] - _cy) ** 2) ** 0.5
+                            for p in positions
+                        ) / len(positions)
+                        _clustering_targets.append((t, _cx, _cy, _avg_spread, len(positions)))
+
+                if _clustering_targets:
+                    _total_cluster_bonus = 0.0
+                    for _t, _cx, _cy, _spread, _count in _clustering_targets:
+                        _dist = ((x - _cx) ** 2 + (landing_y - _cy) ** 2) ** 0.5
+                        _cb = 100.0 * _count * min(2.0, _spread) / (1.0 + _dist)
+                        _cb *= min(1.5, 1.0 + 0.1 * reactive_pair_count)
+                        _total_cluster_bonus += _cb
+
+                    _total_cluster_bonus = min(_total_cluster_bonus, 500.0)
+                    if _total_cluster_bonus > 50:
+                        score += _total_cluster_bonus
+                        reasons.append("NEAR_MISS_CLUSTERING")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
