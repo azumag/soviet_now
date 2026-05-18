@@ -653,6 +653,42 @@ class TestWildcardPerturbPreservesComments(unittest.TestCase):
             self.assertTrue(payload["prefer_applied"])
             self.assertEqual([3], [item["lineno"] for item in payload["applied"]])
 
+    def test_power_exponents_are_not_wildcard_targets(self):
+        """累乗指数を揺らすと距離計算が複素数化しうるため候補から外す。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    dx = game_state.get("x", 0) - 1.0
+                    dy = game_state.get("y", 0) - 2.0
+                    dist = (dx ** 2 + dy ** 2) ** 0.5
+                    scale = 7.0
+                    return {"x": dist + scale, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "5",
+                    "--seed", "0",
+                    "--ratio-min", "0.2",
+                    "--ratio-max", "0.2",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertNotIn(4, [item["lineno"] for item in payload["applied"]])
+            self.assertIn(5, [item["lineno"] for item in payload["applied"]])
+
 
 # --- 共通: stagnation counter transitions ------------------------------------
 

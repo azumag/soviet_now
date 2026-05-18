@@ -53,6 +53,10 @@ def _find_decide_func(tree: ast.AST) -> ast.FunctionDef | None:
 
 def _collect_candidates(decide_node: ast.FunctionDef) -> list[Candidate]:
     candidates: list[Candidate] = []
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(decide_node):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
 
     def _record(node: ast.Constant, parent_kind: str) -> None:
         v = node.value
@@ -66,6 +70,9 @@ def _collect_candidates(decide_node: ast.FunctionDef) -> list[Candidate]:
         if absv < MAGIC_MIN or absv > MAGIC_MAX:
             return
         if node.end_lineno is None or node.end_col_offset is None:
+            return
+        parent = parents.get(node)
+        if isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Pow) and parent.right is node:
             return
         candidates.append(
             Candidate(
