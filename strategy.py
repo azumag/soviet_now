@@ -1671,7 +1671,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if reactive_type_pieces:
                         rp_centroid_x = sum(p.get("x", 0) for p in reactive_type_pieces) / len(reactive_type_pieces)
                         rp_centroid_y = sum(p.get("y", -10) for p in reactive_type_pieces) / len(reactive_type_pieces)
-                        rp_dist = ((x - rp_centroid_x) ** 1 + (landing_y - rp_centroid_y) ** 2) ** 0.5
+                        rp_dist = ((x - rp_centroid_x) ** 2 + (landing_y - rp_centroid_y) ** 2) ** 0.5
                         rp_bonus = max(0.0, 150.0 * (1.0 - rp_dist / 1.5)) * merge_mult
                         if rp_bonus > 20:
                             score += rp_bonus
@@ -2147,7 +2147,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 4 and merge_grade in ["DIRECT", "NEAR"]:
+        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
             # reactive_pairsが3以上ある場合、即時併合機会を最優先
             score += 1000.0
