@@ -911,6 +911,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
     double_russia_phase = russia_phase_count >= 2
 
+    # --- v649: kazakhstan_phase — type 14 pairs that can merge into Russia (type 15) -----
+    # batch_summary: "If T14x2 appears without type15, prioritize the missed final merge route"
+    type14_count = sum(1 for p in pieces if p.get("type") == 14)
+    kazakhstan_phase = (type14_count >= 2 and not russia_phase)
+
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -2019,7 +2024,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
 
-        if russia_phase:
+        # v649: kazakhstan_phase — extend Russia-phase merge bonuses to type 14 pairs.
+        # When T14x2 exists without type15, we need same merge prioritization to reach Russia.
+        # axis 8.7 fires for both russia_phase and kazakhstan_phase.
+        if russia_phase or kazakhstan_phase:
              # v548: double_russia_phase — 2つ目のロシアが盤面にある場合、
              # ソ連建国(type 16=136点)まであと1併合。この局面は特別扱い。
              # ロシア1つのままゲームオーバーは最も惜しい負けパターン。
