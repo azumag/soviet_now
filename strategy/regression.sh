@@ -2350,6 +2350,29 @@ def _update_wildcard_attempt_state(event):
     except Exception:
         pass
 
+def _close_successful_wildcard_origin(event):
+    if event not in ("PROMOTE", "OK_BEAT"):
+        return
+    if not wildcard_origin_file or current_hash not in _WILDCARD_ORIGIN:
+        return
+    try:
+        data = {}
+        if os.path.exists(wildcard_origin_file):
+            try:
+                data = json.load(open(wildcard_origin_file, encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        if current_hash in data:
+            data.pop(current_hash, None)
+            os.makedirs(os.path.dirname(wildcard_origin_file) or ".", exist_ok=True)
+            tmp = wildcard_origin_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, wildcard_origin_file)
+        _WILDCARD_ORIGIN.pop(current_hash, None)
+    except Exception:
+        pass
+
 def _update_stagnation(event):
     """Python ブロックを抜ける直前に呼ぶ。
     event: PROMOTE | REGRESSION | RESET | OK_BEAT | OK_IDLE
@@ -2396,6 +2419,7 @@ def _update_stagnation(event):
     _record_annealing_candidate(event)
     if current_hash in _WILDCARD_ORIGIN or event in ("PROMOTE", "OK_BEAT"):
         _update_wildcard_attempt_state(event)
+        _close_successful_wildcard_origin(event)
 
 def load_json(path):
     if not os.path.exists(path):
