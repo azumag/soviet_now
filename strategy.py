@@ -846,7 +846,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
         ]
         if __dlg_near_safe:
-            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 135.81))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") != "NO"]
         if __dlg_safe:
@@ -1443,7 +1443,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and merge_grade == "NO"
                 and max_y >= 1.0
                 and not death_spiral):
-            russia_pieces = [p for p in pieces if p.get("type") == 15]
+            russia_pieces = [p for p in pieces if p.get("type") == 21]
             if russia_pieces:
                 deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
                 russia_y = deepest_russia.get("y", -10)
