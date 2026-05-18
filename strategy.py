@@ -65,6 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v604: type_scale to axis 9.6b same-type proximity guidance — type 13+ adjacency boost
+     # axis 9.6b proximity bonus now multiplied by type_scale (1.0+0.1*max(0,next_type-5), cap 2.0).
+     # Best game: type14x2 at x=1.30/x=2.01 (distance 0.71) never merged — guidance too weak.
+     # Worst game: type13 pieces scattered, 16 DEADLINE_GUARD turns with no merge available.
+     # type_scale boosts type14 proximity from ~300 to ~570, competitive with height diffs (~400).
+     # Phase gate: targets Kazakhstan(type14)→Russia(type15)→Soviet(type16) pipeline.
+     # Fixes rollback failure mode: type14→15→16 reachability blocked by scattered same-type placement.
+     # refs: tmp/analysis_result.md
      # v603: type_scale merge bonus weighting — ported from best_score5801_strategy.py
      # lines 1142-1166. All 4 batch games (scores 1072-1936) failed at type 13 with russia=0/4.
      # Root cause: strategy is reactive (rp=4-6) but doesn't prioritize high-type merges.
@@ -1594,7 +1602,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                        # v596 type_scale applied here to strengthen same-type proximity guidance
+                        # for high-type pieces (type 13+), promoting N+1 adjacency before merge.
+                        # Same-type adjacency in mid-game → merge opportunity in late game.
+                        # Without type_scale, type 14 proximity bonus (~300) is too weak vs height diff (~400).
+                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0) * type_scale
                         if piece_count >= 28:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking

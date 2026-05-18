@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-18 09:25:48 JST`
-- Nodes: `1588`
-- Edges: `2043`
-- Current: `89139809fdbb`
+- Updated: `2026-05-18 09:56:11 JST`
+- Nodes: `1589`
+- Edges: `2044`
+- Current: `6049fd90b549`
 - Anchor: `8cde5038d8a6`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -75,7 +75,7 @@ flowchart TD
     h_d5df1c5193ba["d5df1c5193ba"]
     h_dc57894b381c["dc57894b381c"]
     h_e3f3ee85aa15["e3f3ee85aa15"]
-    h_89139809fdbb["89139809fdbb<br/>CURRENT"]
+    h_6049fd90b549["6049fd90b549<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -143,7 +143,7 @@ flowchart TD
     class h_d5df1c5193ba plain;
     class h_dc57894b381c plain;
     class h_e3f3ee85aa15 plain;
-    class h_89139809fdbb current;
+    class h_6049fd90b549 current;
 ```
 
 ## Detail 1/20
@@ -5227,9 +5227,9 @@ flowchart TD
 
 ## Detail 19/20
 
-- Range: `89c436411f12` .. `37dc991befaf`
+- Range: `89c436411f12` .. `0844c337fccf`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `46`
+- Internal edges in this diagram: `47`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 89c436411f12`
 - Cross-chunk link: `89c436411f12 -.rollback.-> 1aa464cc23d4`
 - Cross-chunk link: `1aa464cc23d4 --improve--> 05b0591ef25b`
@@ -5275,6 +5275,7 @@ flowchart TD
     h_f427f6a14236["f427f6a14236<br/>g=4 n=4<br/>comp=10063.9"]
     h_b453868211b3["b453868211b3<br/>g=4 n=4<br/>comp=10715.0"]
     h_e326d295873e["e326d295873e<br/>g=4 n=4<br/>comp=10819.9"]
+    h_89139809fdbb["89139809fdbb<br/>g=4 n=4<br/>comp=13305.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -5325,7 +5326,6 @@ flowchart TD
     h_dc66282041df["dc66282041df<br/>g=1 n=1<br/>comp=11197.0"]
     h_f97d9059c4a0["f97d9059c4a0<br/>g=1 n=1<br/>comp=15638.0"]
     h_0844c337fccf["0844c337fccf<br/>g=1 n=1<br/>comp=15694.0"]
-    h_37dc991befaf["37dc991befaf<br/>g=2 n=2<br/>comp=11299.4"]
 
     h_44f2324ac753 -. rollback .-> h_89c436411f12
     h_89c436411f12 -->|improve| h_e5ed751fbce7
@@ -5372,6 +5372,7 @@ flowchart TD
     h_8cde5038d8a6 -->|improve| h_f427f6a14236
     h_f427f6a14236 -->|improve| h_b453868211b3
     h_b453868211b3 -->|improve| h_e326d295873e
+    h_e326d295873e -->|improve| h_89139809fdbb
     h_05b0591ef25b -->|improve| h_7017b28ae776
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5408,6 +5409,7 @@ flowchart TD
     class h_f427f6a14236 plain;
     class h_b453868211b3 plain;
     class h_e326d295873e plain;
+    class h_89139809fdbb plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -5458,19 +5460,19 @@ flowchart TD
     class h_dc66282041df plain;
     class h_f97d9059c4a0 plain;
     class h_0844c337fccf plain;
-    class h_37dc991befaf plain;
 ```
 
 ## Detail 20/20
 
-- Range: `b25f53b277de` .. `89139809fdbb`
-- Nodes in this diagram: `68`
+- Range: `37dc991befaf` .. `6049fd90b549`
+- Nodes in this diagram: `69`
 - Internal edges in this diagram: `0`
 - Cross-chunk link: `a3e3965087ab --improve--> 4095e6bf3d05`
-- Cross-chunk link: `e326d295873e --improve--> 89139809fdbb`
+- Cross-chunk link: `89139809fdbb --improve--> 6049fd90b549`
 
 ```mermaid
 flowchart TD
+    h_37dc991befaf["37dc991befaf<br/>g=2 n=2<br/>comp=11299.4"]
     h_b25f53b277de["b25f53b277de<br/>g=2 n=2<br/>comp=10534.8"]
     h_70a3b1e28ca4["70a3b1e28ca4<br/>g=1 n=1<br/>comp=11574.0"]
     h_74b31649bda3["74b31649bda3<br/>g=1 n=1<br/>comp=19757.0"]
@@ -5538,7 +5540,7 @@ flowchart TD
     h_d5df1c5193ba["d5df1c5193ba"]
     h_dc57894b381c["dc57894b381c"]
     h_e3f3ee85aa15["e3f3ee85aa15"]
-    h_89139809fdbb["89139809fdbb<br/>CURRENT"]
+    h_6049fd90b549["6049fd90b549<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -5546,6 +5548,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_37dc991befaf plain;
     class h_b25f53b277de plain;
     class h_70a3b1e28ca4 plain;
     class h_74b31649bda3 plain;
@@ -5613,10 +5616,20 @@ flowchart TD
     class h_d5df1c5193ba plain;
     class h_dc57894b381c plain;
     class h_e3f3ee85aa15 plain;
-    class h_89139809fdbb current;
+    class h_6049fd90b549 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#25772 `89139809 -> 6049fd90`
+
+- scores: `11283 18369 21778 10206`
+- v604: type_scale to axis 9.6b same-type proximity guidance — type 13+ adjacency boost
+- axis 9.6b proximity bonus now multiplied by type_scale (1.0+0.1*max(0,next_type-5), cap 2.0).
+- Best game: type14x2 at x=1.30/x=2.01 (distance 0.71) never merged — guidance too weak.
+- Worst game: type13 pieces scattered, 16 DEADLINE_GUARD turns with no merge available.
+- type_scale boosts type14 proximity from ~300 to ~570, competitive with height diffs (~400).
+- Phase gate: targets Kazakhstan(type14)→Russia(type15)→Soviet(type16) pipeline.
 
 ### Improve Game#25768 `e326d295 -> 89139809`
 
