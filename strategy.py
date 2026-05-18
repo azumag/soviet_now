@@ -65,6 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v603: type_scale merge bonus weighting — ported from best_score5801_strategy.py
+     # lines 1142-1166. All 4 batch games (scores 1072-1936) failed at type 13 with russia=0/4.
+     # Root cause: strategy is reactive (rp=4-6) but doesn't prioritize high-type merges.
+     # type_scale = 1.0 + 0.1 * max(0, next_type - 5), capped 0.8-2.0.
+     # Makes type 13+ merges (Ukraine→Kazakhstan→Russia) disproportionately attractive.
+     # Rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366).
+     # Rollback constraint: axis 9.6b must not be removed.
+     # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py:1142-1166
      # v602: DEADLINE_GUARD merge-first enforcement — suppress safe-landing fallback when
      # NO merge exists despite reactive pairs. Worst game T55-60: 6 consecutive DEADLINE_GUARD
      # with merge_available=false despite rp=5-9 → max_y runaway 2.35→4.02.
@@ -1022,19 +1030,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
+        # --- v603: type-aware merge bonus scaling ---
+        # All 4 batch games (scores 1072-1936) failed at type 13 with russia=0/4.
+        # Root cause: strategy is reactive (rp=4-6) but doesn't prioritize high-type merges.
+        # Ported from best_score5801_strategy.py lines 1142-1166.
+        # Makes type 13+ merges disproportionately attractive to reach Russia.
+        # Formula: type_scale = 1.0 + 0.1 * max(0, next_type - 5), capped 0.8-2.0
+        # Rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
+        # Rollback constraint: axis 9.6b must not be removed
+        type_scale = 1.0 + 0.1 * max(0, next_type - 5)
+        type_scale = max(0.8, min(type_scale, 2.0))
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1200.0 * merge_mult * type_scale
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 600.0 * merge_mult * type_scale
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
