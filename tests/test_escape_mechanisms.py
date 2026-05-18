@@ -1028,6 +1028,25 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("trap '_on_signal TERM' TERM", runner)
         self.assertIn("trap '_on_exit' EXIT", runner)
 
+    def test_soren91_browser_launch_does_not_raise_focus_on_macos(self):
+        main = (REPO_ROOT / "soren91/main.mjs").read_text()
+
+        self.assertIn("launchStandaloneBrowserWithoutFocus", main)
+        self.assertIn("'/usr/bin/open'", main)
+        self.assertIn("'-g'", main)
+        self.assertIn("SOREN91_CHROME_NO_FOCUS_LAUNCH", main)
+        self.assertNotIn(".bringToFront()", main)
+
+    def test_soviet_local_browser_launch_does_not_raise_focus_on_macos(self):
+        local = (REPO_ROOT / "soviet_local.mjs").read_text()
+
+        self.assertIn("launchPersistentContextWithoutFocus", local)
+        self.assertIn("'/usr/bin/open'", local)
+        self.assertIn("'-g'", local)
+        self.assertIn("SOREN_CHROME_NO_FOCUS_LAUNCH", local)
+        self.assertIn("chromium.launchPersistentContext", local)
+        self.assertIn("Google Chrome(?: for Testing)?", local)
+
 
 # --- Prediction worker pause --------------------------------------------------
 
@@ -1626,6 +1645,13 @@ PY
         self.assertIn("soren91_improve_watchdog_label", status)
         self.assertIn("S91Improve", status)
         self.assertIn("soren91_improve_hung_quarantine.jsonl", status)
+
+    def test_onair_sanitizer_strips_tool_markers_from_comment_replies(self):
+        radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
+        comment = (REPO_ROOT / "broadcast/comment.sh").read_text()
+
+        self.assertIn(r"^\s*%?\s*(?:WebFetch|WebSearch)\b\s*", radio_engine)
+        self.assertIn("attempt_talk=$(printf '%s' \"$attempt_talk\" | _sanitize_onair_text)", comment)
 
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()

@@ -68,10 +68,12 @@ const MIN_RANKING_FALLBACK_COMMENT_TURNS = 20;
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
+const DEFAULT_STANDALONE_CDP_PORT = 9223;
 const DEFAULT_CHROME_AUDIO_OUTPUT_LABEL = 'BlackHole 2ch';
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
-const SOREN91_MODE_FLAG_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
+const SOREN91_DIR = dirname(fileURLToPath(import.meta.url));
+const SOREN91_MODE_FLAG_FILE = join(SOREN91_DIR, '..', 'tmp', '.soren91_mode_active');
 const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
 const COMMENT_QUEUE_DIR = join('..', 'tmp', '.comment_queue');
 const SOREN91_LAST_COMMENTED_GAME_FILE = join(COMMENT_QUEUE_DIR, 'soren91_last_commented_game');
@@ -89,6 +91,59 @@ const rankingCommentInFlightGames = new Set();
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots', COMMENT_QUEUE_DIR].forEach(dir => {
   mkdirSync(dir, { recursive: true });
 });
+
+function chromeAppPathFromExecutable(executablePath) {
+  const marker = '.app/Contents/MacOS/';
+  const idx = executablePath.indexOf(marker);
+  if (idx === -1) return '';
+  return executablePath.slice(0, idx + '.app'.length);
+}
+
+async function waitForCdpBrowser(port, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      return await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    } catch (err) {
+      lastError = err;
+      await sleep(250);
+    }
+  }
+  throw lastError || new Error(`CDP did not become ready on port ${port}`);
+}
+
+async function launchStandaloneBrowserWithoutFocus(args) {
+  if (process.platform !== 'darwin' || process.env.SOREN91_CHROME_NO_FOCUS_LAUNCH === '0') {
+    return null;
+  }
+
+  const appPath = chromeAppPathFromExecutable(chromium.executablePath());
+  if (!appPath) return null;
+
+  const port = Number.parseInt(process.env.SOREN91_STANDALONE_CDP_PORT || '', 10) || DEFAULT_STANDALONE_CDP_PORT;
+  const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
+  mkdirSync(userDataDir, { recursive: true });
+
+  await new Promise((resolve, reject) => {
+    execFile('/usr/bin/open', [
+      '-g',
+      '-n',
+      appPath,
+      '--args',
+      `--user-data-dir=${userDataDir}`,
+      `--remote-debugging-port=${port}`,
+      ...args,
+    ], (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
+  const browser = await waitForCdpBrowser(port);
+  console.log('[main] Chromium launched in background via macOS open -g');
+  return browser;
+}
 
 function clearSoren91ModeFlag() {
   try {
@@ -182,16 +237,6 @@ async function cleanupRuntime(reason = 'normal') {
             console.log(`[main] Shared context close failed during ${reason}: ${err.message}`);
           }
         }
-        try {
-          const contexts = browser.contexts();
-          for (const ctx of contexts) {
-            const pages = ctx.pages();
-            if (pages.length > 0) {
-              await pages[0].bringToFront();
-              break;
-            }
-          }
-        } catch {}
         // soren91 is a GUEST on soviet_local's shared Chrome (connected via
         // connectOverCDP). browser.close() on a CDP-connected browser closes
         // the whole Chrome — which kills soviet_local's page, leaving the local
@@ -866,9 +911,14 @@ async function main() {
   // 共有ブラウザ接続を試行、失敗なら従来の単独起動
   const sharedBrowser = await connectToSharedBrowser();
   const isSharedMode = sharedBrowser != null;
-  const browser = sharedBrowser || await chromium.launch({
+  const launchArgs = ['--window-size=1280,720'];
+  const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs).catch(err => {
+    console.log(`[main] Background launch failed, falling back to Playwright launch: ${err.message}`);
+    return null;
+  });
+  const browser = sharedBrowser || noFocusStandaloneBrowser || await chromium.launch({
     headless: false,
-    args: ['--window-size=1280,720'],
+    args: launchArgs,
   });
   let context = null;
   let ownsContext = false;
@@ -950,13 +1000,7 @@ async function main() {
       anchorPage,
     });
     // bringToFront はOS窓を前面に raise しユーザーのフォーカスを奪う。
-    // 共有Chrome窓内でメリケンタブを可視化する目的は初回1回で足り、
-    // 毎ラウンド/復帰で呼ぶと数秒おきにフォーカス強奪しユーザーが
-    // 他作業できなくなる (ユーザー報告)。初回のみ実行する。
-    if (isSharedMode && !globalThis.__soren91BroughtToFront) {
-      await gamePage.bringToFront();
-      globalThis.__soren91BroughtToFront = true;
-    }
+    // タブ作成後は page.goto だけで十分なので、起動直後も含めて前面化しない。
 
     // Unity canvas ロード待機
     console.log('[main] Waiting for Unity canvas...');

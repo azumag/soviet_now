@@ -4,6 +4,7 @@ import http from 'http';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { execFile } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,6 +57,62 @@ const CHROME_AUDIO_OUTPUT_LABEL = process.env.SOREN_CHROME_AUDIO_OUTPUT_LABEL ||
 const SE_VOLUME_RAW = process.env.SOREN_SE_VOLUME ?? '1.5';
 const SE_VOLUME = (SE_VOLUME_RAW === 'off' || SE_VOLUME_RAW === '') ? null : Number(SE_VOLUME_RAW);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
+
+function chromeAppPathFromExecutable(executablePath) {
+  const marker = '.app/Contents/MacOS/';
+  const idx = executablePath.indexOf(marker);
+  if (idx === -1) return '';
+  return executablePath.slice(0, idx + '.app'.length);
+}
+
+async function waitForCdpBrowser(port, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      return await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    } catch (err) {
+      lastError = err;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  throw lastError || new Error(`CDP did not become ready on port ${port}`);
+}
+
+async function launchPersistentContextWithoutFocus(userDataDir, args) {
+  if (process.platform !== 'darwin' || process.env.SOREN_CHROME_NO_FOCUS_LAUNCH === '0') {
+    return null;
+  }
+
+  const appPath = chromeAppPathFromExecutable(chromium.executablePath());
+  if (!appPath) return null;
+
+  fs.mkdirSync(userDataDir, { recursive: true });
+  const openArgs = [
+    '-g',
+    '-n',
+    appPath,
+    '--args',
+    `--user-data-dir=${userDataDir}`,
+    ...args,
+  ];
+
+  await new Promise((resolve, reject) => {
+    execFile('/usr/bin/open', openArgs, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
+  const browser = await waitForCdpBrowser(CDP_PORT);
+  const context = browser.contexts()[0];
+  if (!context) {
+    await browser.close().catch(() => {});
+    throw new Error('background-launched Chromium has no default context');
+  }
+  console.log('[NO-FOCUS] Chromium launched in background via macOS open -g');
+  return { browser, context };
+}
 
 function sha256Base64(text) {
   return crypto.createHash('sha256').update(text).digest('base64');
@@ -152,9 +209,10 @@ async function updateObsGameSource() {
       propertyName: 'window',
     });
     const windows = Array.isArray(response.propertyItems) ? response.propertyItems : [];
+    const chromeWindowPattern = /\[Google Chrome(?: for Testing)?\]/;
     const target = windows.find(item =>
-      /\[Google Chrome for Testing\].*Unity WebGL Player \| soren-game/.test(item.itemName || '')
-    ) || windows.find(item => /\[Google Chrome for Testing\]/.test(item.itemName || ''));
+      chromeWindowPattern.test(item.itemName || '') && /Unity WebGL Player \| soren-game/.test(item.itemName || '')
+    ) || windows.find(item => chromeWindowPattern.test(item.itemName || ''));
 
     if (!target) {
       console.warn(`OBS game source target window not found for ${OBS_GAME_SOURCE_NAME}`);
@@ -383,10 +441,15 @@ async function runLocalController() {
 
   let browser;
   let context;
+  let closeBrowserAfterContext = false;
   async function closeBrowser() {
     if (context) {
-      await context.close();
-      return;
+      try {
+        await context.close();
+      } catch (err) {
+        if (!closeBrowserAfterContext) throw err;
+      }
+      if (!closeBrowserAfterContext) return;
     }
     if (browser) {
       await browser.close();
@@ -395,31 +458,42 @@ async function runLocalController() {
 
   try {
     fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
-    context = await chromium.launchPersistentContext(USER_DATA_DIR, {
-      headless: false,
-      viewport: { width: 1280, height: 720 },
-      deviceScaleFactor: 1,
-      args: [
-        '--window-size=1300,800',
-        `--remote-debugging-port=${CDP_PORT}`,
-        // 復旧時の kill -9 でプロファイルが unclean になり「正しく終了しませんでした」
-        // 復元バブルが配信画面隅に出続けるのを抑止
-        '--hide-crash-restore-bubble',
-        '--disable-session-crashed-bubble',
-        '--no-first-run',
-        '--no-default-browser-check',
-        // Chrome の翻訳バー(英語→日本語 このページを翻訳しますか)を配信画面に出さない。
-        // Playwright 既定の --disable-features に既に Translate が含まれるため、
-        // ここで別の --disable-features を渡すと後勝ちで Playwright の hardening を
-        // 上書きしてしまう。別スイッチの --disable-translate のみ追加し、確実な
-        // 抑止は profile Preferences (_br_clean_profile_exit) 側で行う。
-        '--disable-translate',
-        // 自動操作ブラウザはユーザー操作が無く、autoplay ポリシーで AudioContext が
-        // suspended のまま resume できず無音化する。bridge 再起動毎の無音を防ぐ。
-        '--autoplay-policy=no-user-gesture-required',
-      ],
+    const launchArgs = [
+      '--window-size=1300,800',
+      `--remote-debugging-port=${CDP_PORT}`,
+      // 復旧時の kill -9 でプロファイルが unclean になり「正しく終了しませんでした」
+      // 復元バブルが配信画面隅に出続けるのを抑止
+      '--hide-crash-restore-bubble',
+      '--disable-session-crashed-bubble',
+      '--no-first-run',
+      '--no-default-browser-check',
+      // Chrome の翻訳バー(英語→日本語 このページを翻訳しますか)を配信画面に出さない。
+      // Playwright 既定の --disable-features に既に Translate が含まれるため、
+      // ここで別の --disable-features を渡すと後勝ちで Playwright の hardening を
+      // 上書きしてしまう。別スイッチの --disable-translate のみ追加し、確実な
+      // 抑止は profile Preferences (_br_clean_profile_exit) 側で行う。
+      '--disable-translate',
+      // 自動操作ブラウザはユーザー操作が無く、autoplay ポリシーで AudioContext が
+      // suspended のまま resume できず無音化する。bridge 再起動毎の無音を防ぐ。
+      '--autoplay-policy=no-user-gesture-required',
+    ];
+    const backgroundLaunch = await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs).catch(err => {
+      console.error(`[NO-FOCUS] background launch failed, falling back to Playwright launch: ${err.message}`);
+      return null;
     });
-    browser = context.browser();
+    if (backgroundLaunch) {
+      browser = backgroundLaunch.browser;
+      context = backgroundLaunch.context;
+      closeBrowserAfterContext = true;
+    } else {
+      context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+        headless: false,
+        viewport: { width: 1280, height: 720 },
+        deviceScaleFactor: 1,
+        args: launchArgs,
+      });
+      browser = context.browser();
+    }
   } catch (e) {
     console.error(`Failed to launch browser: ${e.message}`);
     removeCdpEndpoint();
