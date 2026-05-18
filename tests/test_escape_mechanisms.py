@@ -755,6 +755,20 @@ destroy_sandbox "$sandbox"
         self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
 
+class TestRollbackRadioPrompt(unittest.TestCase):
+    def test_rollback_radio_distinguishes_wildcard_from_plain_replacement(self):
+        prompt = (REPO_ROOT / "prompts/radio_rollback.md").read_text()
+        self.assertIn("escape_context: origin_type=wildcard", prompt)
+        self.assertIn("停滞脱出のワイルドカード調整", prompt)
+        self.assertNotIn("成績が良かった戦略 ${to_hash} にすげ替えられた", prompt)
+
+    def test_rollback_analysis_exports_wildcard_origin_context_for_radio(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        self.assertIn("load_wildcard_origin_for_current", regression)
+        self.assertIn("escape_context: origin_type=", regression)
+        self.assertIn("WILDCARD起源", regression)
+
+
 # --- Status display one-shot mode -------------------------------------------
 
 class TestShowStatusOnce(unittest.TestCase):
@@ -1604,6 +1618,17 @@ PY
         self.assertIn("soren91_improve_watchdog_label", status)
         self.assertIn("S91Improve", status)
         self.assertIn("soren91_improve_hung_quarantine.jsonl", status)
+
+    def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
+        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("improve_monitor_status.json", dashboard)
+        self.assertIn("state_activity_fresh", dashboard)
+        self.assertIn("Imp:{improve.get('progress', 0):>3}% {phase} log", dashboard)
+        self.assertIn("improve_monitor_status.json", status)
+        self.assertIn("imp_state_activity_fresh", status)
+        self.assertIn("PID=%s not visible, log fresh", status)
 
     def test_rollback_revalidates_strategy_after_restore(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

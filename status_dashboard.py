@@ -992,12 +992,15 @@ def get_rejected_count():
 
 def load_improve_state():
     p = Path("tmp/state/improve_state.json")
+    monitor_p = Path("tmp/state/improve_monitor_status.json")
     base = {
         "status": "idle",
         "pid": 0,
         "phase": "",
         "progress": 0,
         "alive": False,
+        "state_activity_fresh": False,
+        "monitor_stale_sec": 0,
     }
     if not p.exists():
         return base
@@ -1028,6 +1031,21 @@ def load_improve_state():
             base["alive"] = "eloop_improve" in cmd
         except Exception:
             base["alive"] = False
+
+    try:
+        monitor = json.loads(monitor_p.read_text())
+        if (
+            base["status"] == "running"
+            and monitor.get("status") == "running"
+            and monitor.get("action") == "state_activity_fresh"
+        ):
+            base["state_activity_fresh"] = True
+            try:
+                base["monitor_stale_sec"] = int(monitor.get("stale_sec", 0) or 0)
+            except Exception:
+                base["monitor_stale_sec"] = 0
+    except Exception:
+        pass
 
     return base
 
@@ -1477,6 +1495,9 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
         if improve.get("alive"):
             imp_raw = f"  Imp:{improve.get('progress', 0):>3}% {phase}"
             imp_disp = f"  {C_YELLOW}Imp:{improve.get('progress', 0):>3}% {phase}{RST}"
+        elif improve.get("state_activity_fresh"):
+            imp_raw = f"  Imp:{improve.get('progress', 0):>3}% {phase} log"
+            imp_disp = f"  {C_YELLOW}Imp:{improve.get('progress', 0):>3}% {phase} log{RST}"
         else:
             imp_raw = f"  Imp:stale {phase}"
             imp_disp = f"  {C_RED}Imp:stale {phase}{RST}"

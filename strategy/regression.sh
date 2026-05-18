@@ -141,6 +141,17 @@ def read_score_history(path):
         return []
     return vals
 
+def load_wildcard_origin_for_current(current_hash):
+    path = os.environ.get("WILDCARD_ORIGIN_FILE", "tmp/state/wildcard_origin.json")
+    if not path or not current_hash or not os.path.exists(path):
+        return {}
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return {}
+    origin = data.get(current_hash, {}) if isinstance(data, dict) else {}
+    return origin if isinstance(origin, dict) else {}
+
 def explain_reasons(reason_text):
     reasons = [r for r in (reason_text or "").split("+") if r]
     lines = []
@@ -193,6 +204,7 @@ rollback_metrics = metrics(rollback_scores)
 current_progress = progress_summary(current_data, len(current_scores))
 rollback_progress = progress_summary(rollback_data, len(rollback_scores))
 reg = parse_regression(regression_result)
+wildcard_origin = load_wildcard_origin_for_current(current_hash)
 history_scores = read_score_history(score_history_file)
 
 trend_lines = []
@@ -215,11 +227,28 @@ lines.append(f"- reverted_from: {current_hash}")
 lines.append(f"- reverted_to: {rollback_hash}")
 if rollback_note:
     lines.append(f"- target_note: {rollback_note}")
+if wildcard_origin:
+    origin_type = str(wildcard_origin.get("origin_type") or "wildcard")
+    applied = wildcard_origin.get("wildcard_applied") or []
+    applied_label = ", ".join(map(str, applied[:8])) if isinstance(applied, list) else str(applied)
+    lines.append(f"- escape_context: origin_type={origin_type}")
+    if applied_label:
+        lines.append(f"- escape_applied: {applied_label}")
+    if wildcard_origin.get("wildcard_streak") is not None:
+        lines.append(f"- escape_streak: {wildcard_origin.get('wildcard_streak')}")
 lines.append(f"- trigger: {(reg.get('reasons') or 'unknown')}")
 lines.append("")
 lines.append("## Why Rollback Triggered")
 for line in explain_reasons(reg.get("reasons", "")):
     lines.append(f"- {line}")
+if wildcard_origin:
+    origin_type = str(wildcard_origin.get("origin_type") or "wildcard")
+    if origin_type == "wildcard":
+        lines.append("- WILDCARD起源: 停滞・回帰連鎖から抜けるため、成績の良い過去戦略へ丸ごと戻したのではなく、現戦略の一部パラメータを短時間で揺さぶった試行だった。")
+    elif origin_type == "escape_ai":
+        lines.append("- escape_ai起源: 連続WILDCARD不発から、AIで小さな構造変異を入れた脱出試行だった。")
+    elif origin_type == "archive_restart":
+        lines.append("- archive_restart起源: 連続WILDCARD不発から、評価済みの過去版を起点にした大域脱出試行だった。")
 if current_metrics:
     lines.append(
         f"- current: comp={fmt_num(current_metrics['comp'])} p50={fmt_num(current_metrics['p50'])} "
@@ -2231,7 +2260,8 @@ check_regression() {
 			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" "${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" "${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" \
 			"${ANNEALING_OBSERVE_FILE:-tmp/state/annealing_candidates.jsonl}" "${ANNEALING_OBSERVE_ENABLED:-1}" "${ANNEALING_BASE_TEMP:-1800}" "${ANNEALING_DECAY:-0.85}" \
 			"${EARLY_OBJECTIVE_REGRESSION_ENABLED:-1}" "${EARLY_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" \
-			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" <<'PY'
+			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" \
+			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" <<'PY'
 import json
 import math
 import os
@@ -2266,6 +2296,10 @@ early_objective_min_best_type = int(sys.argv[29]) if len(sys.argv) > 29 else 15
 same_hash_backslide_enabled = sys.argv[30] if len(sys.argv) > 30 else "1"
 same_hash_backslide_min_extra_games = int(sys.argv[31]) if len(sys.argv) > 31 else 4
 russia_objective_regression_enabled = sys.argv[32] if len(sys.argv) > 32 else "0"
+try:
+    rolling_score_russia_grace_rank = max(0, int(sys.argv[33])) if len(sys.argv) > 33 else 7
+except Exception:
+    rolling_score_russia_grace_rank = 7
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -2476,6 +2510,36 @@ def key(metrics_dict):
         int(metrics_dict.get("n", 0)),
     )
 
+def current_rolling_rank(metrics_dict):
+    if not metrics_dict or int(metrics_dict.get("n", 0) or 0) < min_games_current:
+        return None
+    ranked = []
+    seen_current = False
+    for h, data in rolling.items():
+        if h == current_hash:
+            m = metrics_dict
+            seen_current = True
+        else:
+            m = metrics((data or {}).get("scores", []) or [])
+        if not m or int(m.get("n", 0) or 0) < min_games_current:
+            continue
+        ranked.append((key(m), h))
+    if not seen_current:
+        ranked.append((key(metrics_dict), current_hash))
+    ranked.sort(reverse=True)
+    for idx, (_, h) in enumerate(ranked, start=1):
+        if h == current_hash:
+            return idx
+    return None
+
+def russia_objective_graced(metrics_dict, objective):
+    if rolling_score_russia_grace_rank <= 0:
+        return False
+    if int((objective or {}).get("russia_count", 0) or 0) > 0:
+        return False
+    rank = current_rolling_rank(metrics_dict)
+    return rank is not None and rank <= rolling_score_russia_grace_rank
+
 def nation_progress(path):
     max_type = 0
     russia = False
@@ -2637,25 +2701,38 @@ anchor = {
 }
 
 origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
+origin_objective_for_grace = {
+    "russia_count": int(origin_payload.get("source_russia_count", 0) or 0),
+}
 if (
     current_hash != anchor_hash
     and str(origin_payload.get("origin_type") or "") == "archive_restart"
     and (
-        (int(anchor_payload.get("soviet_count", 0) or 0) > 0 and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0)
+        (
+            int(anchor_payload.get("soviet_count", 0) or 0) > 0
+            and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
+            and not russia_objective_graced(current, origin_objective_for_grace)
+        )
         or (
             russia_objective_regression_enabled == "1"
             and int(anchor_payload.get("russia_count", 0) or 0) > 0
             and int(origin_payload.get("source_russia_count", 0) or 0) <= 0
+            and not russia_objective_graced(current, origin_objective_for_grace)
         )
     )
 ):
     reasons = ["archive_restart_objective_floor"]
-    if int(anchor_payload.get("soviet_count", 0) or 0) > 0 and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0:
+    if (
+        int(anchor_payload.get("soviet_count", 0) or 0) > 0
+        and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
+        and not russia_objective_graced(current, origin_objective_for_grace)
+    ):
         reasons.append("lost_soviet_path")
     if (
         russia_objective_regression_enabled == "1"
         and int(anchor_payload.get("russia_count", 0) or 0) > 0
         and int(origin_payload.get("source_russia_count", 0) or 0) <= 0
+        and not russia_objective_graced(current, origin_objective_for_grace)
     ):
         reasons.append("lost_russia_path")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
@@ -2795,12 +2872,17 @@ curr_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, min_comp_g
 hard_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, hard_comp_gap, hard_p50_gap, hard_p25_gap)
 
 objective_reasons = []
+russia_grace_active = russia_objective_graced(current, current_objective)
 if (
     early_objective_enabled == "1"
     and current_hash != anchor_hash
     and current["n"] >= max(1, early_objective_min_games)
 ):
-    if anchor_objective.get("soviet_count", 0) > 0 and current_objective.get("soviet_count", 0) <= 0:
+    if (
+        anchor_objective.get("soviet_count", 0) > 0
+        and current_objective.get("soviet_count", 0) <= 0
+        and not russia_grace_active
+    ):
         objective_reasons.append("lost_soviet_path")
     # NOTE(2026-05-18 ユーザー指示): lost_russia_path(type15経路喪失) は早期ゲートから除外。
     # RUSSIA_OBJECTIVE_REGRESSION_ENABLED=0 の間は通常ゲートでも粛清しない。
@@ -2833,12 +2915,17 @@ if current["n"] < min_games_current:
 
 objective_reasons = []
 if current_hash != anchor_hash:
-    if anchor_objective.get("soviet_count", 0) > 0 and current_objective.get("soviet_count", 0) <= 0:
+    if (
+        anchor_objective.get("soviet_count", 0) > 0
+        and current_objective.get("soviet_count", 0) <= 0
+        and not russia_grace_active
+    ):
         objective_reasons.append("lost_soviet_path")
     if (
         russia_objective_regression_enabled == "1"
         and anchor_objective.get("best_max_type", 0) >= 15
         and current_objective.get("best_max_type", 0) < 15
+        and not russia_grace_active
     ):
         objective_reasons.append("lost_russia_path")
 if objective_reasons:

@@ -532,6 +532,7 @@ _maybe_run_fullscreen_random() {
 show_status() {
 	# --- 改善プロセス状態 ---
 	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0
+	local imp_monitor_status="" imp_monitor_action="" imp_monitor_stale_sec=0
 	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
 		eval $(python3 -c "
 import json, shlex
@@ -543,11 +544,28 @@ print('imp_phase=' + shlex.quote(str(d.get('phase', ''))))
 print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
 " 2>/dev/null)
 	fi
+	if [[ -f "$TMP_STATE_DIR/improve_monitor_status.json" ]]; then
+		eval $(python3 -c "
+import json, shlex
+d=json.load(open('$TMP_STATE_DIR/improve_monitor_status.json'))
+print('imp_monitor_status=' + shlex.quote(str(d.get('status', ''))))
+print('imp_monitor_action=' + shlex.quote(str(d.get('action', ''))))
+try:
+    stale = int(d.get('stale_sec', 0) or 0)
+except Exception:
+    stale = 0
+print(f'imp_monitor_stale_sec={stale}')
+" 2>/dev/null)
+	fi
 
 	local imp_alive=false imp_elapsed=""
 	if _pid_alive_as "$imp_pid" "eloop_improve"; then
 		imp_alive=true
 		imp_elapsed=$(_pid_elapsed "$imp_pid")
+	fi
+	local imp_state_activity_fresh=false
+	if [[ "$imp_status" == "running" && "$imp_monitor_status" == "running" && "$imp_monitor_action" == "state_activity_fresh" ]]; then
+		imp_state_activity_fresh=true
 	fi
 	local improve_ai_log="$TMP_DEBUG_DIR/improve_ai.log"
 	local imp_ai_source="" imp_ai_output_block="" imp_ai_age=""
@@ -2027,15 +2045,26 @@ PY
 				src_display=$(_truncate_display_width "$src_display" "$max_src")
 				printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
 			fi
-		elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
-			printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
-			if [[ -n "$imp_ai_source" ]]; then
-				local src_display="$imp_ai_source"
-				local max_src=$(( W - 20 ))
-				src_display=$(_truncate_display_width "$src_display" "$max_src")
-				printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
-			fi
-			fi
+			elif [[ "$imp_status" == "running" ]] && ! $imp_alive && $imp_state_activity_fresh; then
+				printf "    ${C_YELLOW}⟳${C_RESET} Improve     ${C_YELLOW}RUNNING${C_RESET}  ${C_DIM}PID=%s not visible, log fresh %ss [%d%% %s]${C_RESET}\n" "$imp_pid" "${imp_monitor_stale_sec:-0}" "${imp_progress:-0}" "${imp_phase_label}"
+				local imp_bar
+				imp_bar=$(_bar_meter "${imp_progress:-0}" 100 12)
+				printf "    ${C_WHITE}▸${C_RESET} ImproveProg ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d%%${C_RESET}\n" "$imp_bar" "${imp_progress:-0}"
+					if [[ -n "$imp_ai_source" ]]; then
+						local src_display="$imp_ai_source"
+						local max_src=$(( W - 20 ))
+						src_display=$(_truncate_display_width "$src_display" "$max_src")
+						printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+					fi
+				elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
+					printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
+					if [[ -n "$imp_ai_source" ]]; then
+						local src_display="$imp_ai_source"
+						local max_src=$(( W - 20 ))
+						src_display=$(_truncate_display_width "$src_display" "$max_src")
+						printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+					fi
+				fi
 			if [[ -n "$imp_ai_output_block" ]]; then
 				_print_ai_output_lines "$imp_ai_output_block" "$imp_ai_age"
 			fi
