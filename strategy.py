@@ -65,13 +65,31 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v605: axis 9.6b high-type no-merge proximity boost — when next_type>=13 and merge_grade==NO,
-     # apply additional 1.5x proximity bonus to type 13/14 clustering before deadline.
-     # Worst game: type13 (y=-1.63) scattered from type14 (y=-0.55), no merge formed.
-     # Best game: type14 created but final merge not formed due to insufficient proximity.
-     # mandatory_themes: "NEXTを考慮したドロップ" — boost based on next_type.
-     # Fixes rollback failure mode: type14→15→16 reachability blocked by scatter.
-     # refs: tmp/analysis_result.md
+      # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
+      # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
+      # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
+      # refs: tmp/analysis_result.md (Implementation Plan: NEAR抑制safety valve)
+      # Fixes rollback failure mode: worst_game T64 NEAR抑制下でfallback x=-3.0が選択されmax_y跳ね上がり
+      # v624: russia phase deadline NEAR suppression — cancel NEAR base bonus at russia+deadline+max_y>=2.0
+      # NEAR merge (68.5%) at deadline with Russia on board is net negative: 8 of 13 turns in best game
+      # were NEAR attempts, 6 failed (delta=0). DIRECT merge (95.7%) is the only safe merge in this regime.
+      # refs: tmp/analysis_result.md (adopted hypothesis: russia phase deadline NEAR suppression)
+      # Fixes rollback failure mode: russia_phase_deadline_near_merge_chain_failure
+      # v613: axis 9.10 Tier 2 — rp==2 high-type merge path creation
+      # Extend type 10+ proximity guidance to rp==2 NO merge stage, catching drought 1-2 turns earlier.
+      # Tier 2: rp==2 && NO merge && max_y>=1.0 && pc>=20 -> +250*merge_mult near type 10+ centroid (1.5u)
+      #   + reactive pair bonus: +150*merge_mult if type 10+ has same-type reactive pair
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 Tier 2),
+      #       game_history/20260413_050025_score2311.jsonl T107 (rp=2, type 14 -> T108 large merge)
+      # Fixes rollback failure mode: "rp=2 NO merge is the blind spot where merge droughts begin
+      #   and high-type pieces scatter, missing the window to build merge paths before rp escalates to 3"
+      # v605: axis 9.6b high-type no-merge proximity boost — when next_type>=13 and merge_grade==NO,
+      # apply additional 1.5x proximity bonus to type 13/14 clustering before deadline.
+      # Worst game: type13 (y=-1.63) scattered from type14 (y=-0.55), no merge formed.
+      # Best game: type14 created but final merge not formed due to insufficient proximity.
+      # mandatory_themes: "NEXTを考慮したドロップ" — boost based on next_type.
+      # Fixes rollback failure mode: type14→15→16 reachability blocked by scatter.
+      # refs: tmp/analysis_result.md
      # v604: type_scale to axis 9.6b same-type proximity guidance — type 13+ adjacency boost
      # axis 9.6b proximity bonus now multiplied by type_scale (1.0+0.1*max(0,next_type-5), cap 2.0).
      # Best game: type14x2 at x=1.30/x=2.01 (distance 0.71) never merged — guidance too weak.
@@ -1221,6 +1239,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
+        # ----- v624: russia phase deadline NEAR suppression -----
+        # analysis_result.md adopted hypothesis: ロシア建国後フェーズ(russia_phase && deadline_crossed && max_y>=2.0)
+        # においてDIRECT mergeのみを許可しNEAR mergeを実質抑制する安全弁。
+        # NEAR merge success rate is 68.5%. At deadline with Russia on board (high-value pieces at risk),
+        # failed NEAR adds a piece with no benefit, accelerating the "NEAR fail → pc grow → NEAR fail → death" spiral.
+        # Best game T140-T154: 13 turns in russia phase, 8 NEAR attempts, 6 failures (delta=0).
+        # Worst game T58: rp=7, deadline, danger=3, NEAR still selected with crosses_deadline=true.
+        # Existing v604/v606 reduce type_scale but RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY(+1200) and
+        # REACTIVE_IMMEDIATE_MERGE_PRIORITY(+400) can still make NEAR net positive.
+        # Canceling the base NEAR bonus ensures DIRECT merge or low-y NO merge placement dominates.
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # DIRECT merge (95.7%) is "able to merge". NEAR merge (68.5%) is too risky.
+        # Does NOT affect: non-russia phases, max_y<2.0, deadline_crossed=false, DIRECT merge, FAR merge.
+        # refs: tmp/analysis_result.md (Implementation Plan: russia deadline NEAR suppression)
+        # Fixes rollback failure mode: russia_phase_deadline_near_merge_chain_failure
+        if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
+            score -= 600.0 * merge_mult * type_scale
+            reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSED")
+
+        # vXXX: NEAR suppression with landing-height safety valve
+        # mandatory_themes第一条の精神: デッドライン超越位置でのマージなき配置を避ける
+        # しかし抑制されたNEAR optionsの中にlanding_yがcurrent max_yより低いものがある場合、
+        # そのNEARはboard compressionに貢献するため抑制を緩和
+        # Safety valve: NEAR candidates with landing_y well below current max_y are allowed
+        # even in the suppression zone (max_y >= 2.5 && deadline_crossed).
+        # Threshold 0.3u: provides meaningful distinction while avoiding edge cases.
+        # refs: tmp/analysis_result.md (Implementation Plan: NEAR抑制safety valve)
+        # Fixes rollback failure mode: worst_game T64 NEAR抑制下でfallback x=-3.0が選択されmax_y跳ね上がり
+        landing_height_below_board = landing_y < (max_y - 0.3)
+
+        if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
+            if not landing_height_below_board:
+                score -= 600.0
+                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
         # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剛、即時併合機会を取りこぼしていることを確認
@@ -1560,6 +1613,69 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if cluster_bonus > 10:
                         score += cluster_bonus
                         reasons.append("HIGH_TYPE_CLUSTER")
+
+        # ----- v613: axis 9.10 Tier 2 — rp==2 high-type merge path creation (NEW) -----
+        # analysis_result.md adopted hypothesis: "axis 9.10 tier-2追加"
+        # Extend type 10+ proximity guidance to rp==2 NO merge stage, catching drought 1-2 turns earlier.
+        #
+        # Conditions (v613):
+        # - reactive_pair_count == 2 (rp==2)
+        # - merge_grade == "NO"
+        # - max_y >= 1.0
+        # - piece_count >= 20
+        # - not death_spiral
+        # - not guidance_suppressed
+        #
+        # Logic:
+        # (1) Collect type 10+ pieces on board
+        # (2) Calculate centroid of type 10+ pieces
+        # (3) Add +250*merge_mult proximity bonus (dist<=1.5u, linear decay)
+        # (4) If type 10+ has same-type reactive pair (count>=2), add +150*merge_mult extra
+        #
+        # Bonus design: 250*merge_mult is smaller than column_ceiling (~800-1250), pure tie-breaker.
+        # height penalty is NOT overridden — only improves placement quality when same conditions exist.
+        #
+        # Forbidden: merge_grade!=NO (existing merge axes have priority), death_spiral (v610 handles)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 Tier 2),
+        #       game_history/20260413_050025_score2311.jsonl T107 (rp=2, type 14 -> T108 large merge)
+        # Fixes rollback failure mode: "rp=2 NO merge is the blind spot where merge droughts begin
+        #   and high-type pieces scatter, missing the window to build merge paths before rp escalates to 3"
+        if (
+            reactive_pair_count == 2
+            and merge_grade == "NO"
+            and max_y >= 1.0
+            and piece_count >= 20
+            and not death_spiral
+            and not guidance_suppressed
+        ):
+            high_type_pieces_10plus = [p for p in pieces if p.get("type", 0) >= 10]
+            if len(high_type_pieces_10plus) >= 2:
+                centroid_x = sum(p.get("x", 0) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
+                centroid_y = sum(p.get("y", -10) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                tier2_bonus = max(0.0, 250.0 * (1.0 - dist / 1.5)) * merge_mult
+                if tier2_bonus > 20:
+                    score += tier2_bonus
+                    reasons.append("HIGH_TYPE_MERGE_PATH_SETUP")
+                type_10plus_counts = {}
+                for p in high_type_pieces_10plus:
+                    t = p.get("type", 0)
+                    type_10plus_counts[t] = type_10plus_counts.get(t, 0) + 1
+                has_type_10plus_reactive_pair = any(count >= 2 for count in type_10plus_counts.values())
+                if has_type_10plus_reactive_pair:
+                    reactive_type_pieces = []
+                    for p in high_type_pieces_10plus:
+                        if type_10plus_counts.get(p.get("type", 0), 0) >= 2:
+                            reactive_type_pieces.append(p)
+                    if reactive_type_pieces:
+                        rp_centroid_x = sum(p.get("x", 0) for p in reactive_type_pieces) / len(reactive_type_pieces)
+                        rp_centroid_y = sum(p.get("y", -10) for p in reactive_type_pieces) / len(reactive_type_pieces)
+                        rp_dist = ((x - rp_centroid_x) ** 2 + (landing_y - rp_centroid_y) ** 2) ** 0.5
+                        rp_bonus = max(0.0, 150.0 * (1.0 - rp_dist / 1.5)) * merge_mult
+                        if rp_bonus > 20:
+                            score += rp_bonus
+                            reasons.append("HIGH_TYPE_REACTIVE_PAIR_GUIDANCE")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
