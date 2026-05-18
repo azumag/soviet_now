@@ -55,6 +55,7 @@ CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
 ANNEALING_OBSERVE_FILE = "tmp/state/annealing_candidates.jsonl"
 WILDCARD_ATTEMPT_STATE_FILE = "tmp/state/wildcard_attempt_state.json"
 SOREN_MONITOR_REPORT_FILE = os.getenv("SOREN_MONITOR_REPORT_FILE", "/tmp/soren_report.md")
+MONITOR_REPORT_STATUS_FILE = os.getenv("MONITOR_REPORT_STATUS_FILE", "tmp/state/monitor_report_status.json")
 VIEWER_CHAT_MONITOR_FILE = os.getenv("VIEWER_CHAT_MONITOR_FILE", "tmp/state/viewer_chat_monitor.json")
 SOREN91_IMPROVE_LOCK_FILE = os.getenv("SOREN91_IMPROVE_LOCK", "soren91/tmp/soren91_improve.lock")
 SOREN91_IMPROVE_PID_FILE = os.getenv("SOREN91_IMPROVE_PID_FILE", "soren91/tmp/soren91_improve.pid")
@@ -1070,6 +1071,21 @@ def load_monitor_report_status():
             report_epoch = 0
     age = max(0, int(time.time()) - (report_epoch or mtime))
     status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
+    cached = {}
+    try:
+        raw = Path(MONITOR_REPORT_STATUS_FILE).read_text(encoding="utf-8", errors="ignore")
+        loaded = json.loads(raw)
+        if isinstance(loaded, dict):
+            cached = loaded
+    except Exception:
+        cached = {}
+    if cached:
+        status = str(cached.get("status") or status)
+        age_label = str(cached.get("age_label") or fmt_age(age))
+        live = str(cached.get("live") or "").strip()
+        if live:
+            title = f"live {live[:32]}"
+        return {"status": status, "age": age_label, "title": title}
     return {"status": status, "age": fmt_age(age), "title": title}
 
 

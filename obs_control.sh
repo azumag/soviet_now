@@ -3,6 +3,7 @@
 # Usage:
 #   ./obs_control.sh show <scene> <source> [<source>...]
 #   ./obs_control.sh hide <scene> <source> [<source>...]
+#   ./obs_control.sh status <scene> <source> [<source>...]
 #   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
 
 set -euo pipefail
@@ -16,6 +17,7 @@ usage() {
 Usage:
   ./obs_control.sh show <scene> <source> [<source>...]
   ./obs_control.sh hide <scene> <source> [<source>...]
+  ./obs_control.sh status <scene> <source> [<source>...]
   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
 EOF
 	exit 2
@@ -25,7 +27,7 @@ ACTION="${1:-}"
 TARGET="${2:-}"
 
 case "$ACTION" in
-show|hide)
+show|hide|status)
 	[ -n "$TARGET" ] || usage
 	[ "$#" -ge 3 ] || usage
 	;;
@@ -74,7 +76,7 @@ if (typeof WebSocket !== 'function') {
 function parseOperations() {
   const ops = [];
 
-  if (action === 'show' || action === 'hide') {
+  if (action === 'show' || action === 'hide' || action === 'status') {
     for (const sourceName of rawArgs) {
       if (!sourceName) continue;
       ops.push({ sourceName, enabled: action === 'show' });
@@ -257,6 +259,24 @@ async function main() {
 
     const applied = [];
     const missing = [];
+    if (action === 'status') {
+      const lines = [];
+      for (const op of operations) {
+        const matches = items.filter(item => item.sourceName === op.sourceName);
+        if (matches.length === 0) {
+          missing.push(op.sourceName);
+          lines.push(`${op.sourceName}=missing`);
+          continue;
+        }
+        const enabled = matches.some(item => item.sceneItemEnabled === true);
+        lines.push(`${op.sourceName}=${enabled ? 'on' : 'off'}`);
+      }
+      console.log(lines.join('\n') || '(no-op)');
+      if (missing.length > 0) {
+        console.error(`[obs_control] Sources not found in scene "${sceneName}": ${missing.join(', ')}`);
+      }
+      return;
+    }
     for (const op of operations) {
       const matches = items.filter(item => item.sourceName === op.sourceName);
       if (matches.length === 0) {

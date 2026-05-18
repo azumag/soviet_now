@@ -844,6 +844,14 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("FIX cap:", overlay)
         self.assertIn("job cap:", overlay)
 
+    def test_obs_control_can_report_overlay_source_status(self):
+        obs = (REPO_ROOT / "obs_control.sh").read_text()
+
+        self.assertIn("./obs_control.sh status <scene> <source>", obs)
+        self.assertIn("action === 'status'", obs)
+        self.assertIn("sceneItemEnabled === true", obs)
+        self.assertIn("=missing", obs)
+
     def test_status_g_has_wide_short_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         overlay = (REPO_ROOT / "generate_status_overlay.sh").read_text()
@@ -894,6 +902,8 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("generate_status_overlay.sh", status_g)
         self.assertIn("Observer Status", dashboard)
         self.assertIn("load_monitor_report_status", dashboard)
+        self.assertIn("MONITOR_REPORT_STATUS_FILE", dashboard)
+        self.assertIn("live {live", dashboard)
         self.assertIn("load_latest_annealing_candidate", dashboard)
         self.assertIn("load_wildcard_attempt_status", dashboard)
         self.assertIn("SOREN_MONITOR_REPORT_FILE", dashboard)
@@ -1486,6 +1496,8 @@ PY
         self.assertIn("/tmp/soren_report.md", status)
         self.assertIn("Monitor", status)
         self.assertIn("monitor_report_label", status)
+        self.assertIn("MONITOR_REPORT_STATUS_FILE", status)
+        self.assertIn("live {live", status)
         self.assertIn("最終更新:", status)
         self.assertIn("datetime.strptime", status)
         self.assertIn("viewer_chat_monitor.sh", status)
@@ -1543,6 +1555,7 @@ PY
         self.assertIn("CURRENT_STRATEGY_RUN_FILE", reporter)
         self.assertIn("BEST_STRATEGY_ANCHOR_FILE", reporter)
         self.assertIn("WILDCARD_ORIGIN_FILE", reporter)
+        self.assertIn("MONITOR_REPORT_STATUS_FILE", reporter)
         self.assertIn("Claude監視レポート", reporter)
         self.assertIn("ライブは", reporter)
         self.assertIn("live_origin_type", reporter)

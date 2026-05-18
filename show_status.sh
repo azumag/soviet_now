@@ -1067,8 +1067,9 @@ PY
 		local monitor_report_file="${SOREN_MONITOR_REPORT_FILE:-/tmp/soren_report.md}"
 		local monitor_report_label="missing" monitor_report_color="$C_YELLOW"
 		if [[ -f "$monitor_report_file" ]]; then
-			eval $(python3 - "$monitor_report_file" <<'PY' 2>/dev/null
+			eval $(python3 - "$monitor_report_file" "${MONITOR_REPORT_STATUS_FILE:-${TMP_STATE_DIR}/monitor_report_status.json}" <<'PY' 2>/dev/null
 import datetime as dt
+import json
 import os
 import re
 import shlex
@@ -1076,6 +1077,7 @@ import sys
 import time
 
 path = sys.argv[1]
+status_path = sys.argv[2] if len(sys.argv) > 2 else ""
 now = int(time.time())
 first = ""
 text = ""
@@ -1111,7 +1113,21 @@ else:
     age_label = f"{age // 3600}h"
 status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
 label = f"{status} {age_label}"
-if first:
+try:
+    cached = json.load(open(status_path, encoding="utf-8")) if status_path and os.path.exists(status_path) else {}
+    if not isinstance(cached, dict):
+        cached = {}
+except Exception:
+    cached = {}
+if cached:
+    status = str(cached.get("status") or status)
+    age_label = str(cached.get("age_label") or age_label)
+    live = str(cached.get("live") or "").strip()
+    if live:
+        label = f"{status} {age_label} live {live[:34]}"
+    elif first:
+        label = f"{status} {age_label} {first[:34]}"
+elif first:
     label = f"{label} {first[:34]}"
 print("monitor_report_label=" + shlex.quote(label))
 print("monitor_report_status=" + shlex.quote(status))
