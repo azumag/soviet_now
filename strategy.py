@@ -1072,7 +1072,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/analysis_result.md
         if (merge_grade == "NEAR"
             and reactive_pair_count >= 3
-            and piece_count >= 18
+            and piece_count >= 32
             and max_y >= 1.5
             and landing_y >= 1.0):
             score -= 600.0 * merge_mult  # Cancel the base NEAR bonus
@@ -1464,7 +1464,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if len(high_type_pieces) >= 2:
                 hc_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
                 hc_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
-                dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.6281
+                dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.5
                 if dist_to_centroid < 3.0:
                     cluster_bonus = 80.0 * merge_mult * russia_pipeline_mult
                     cluster_bonus *= max(0.0, 1.0 - dist_to_centroid / 3.0)
@@ -1794,7 +1794,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if landing_y > piece_y:
                         # 着地位置がnextNext typeのピースの上になる場合
                         horiz_dist = abs(x - p["x"])
-                        if horiz_dist < 1.452:  # 着地位置がピースの真上に近い
+                        if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
                             score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                             reasons.append("AVOID_BLOCK_NEXTNEXT")
                             break
