@@ -71,11 +71,11 @@ Phases (determined by board max Y):
       # merge_available=true || score_delta>0 时にno_merge_streak=0を设定。
       # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (no_merge_streak reset absence)
       # refs: tmp/analysis_result.md, logs/change_log.txt:191-200
-      # vXXX: axis 9.12 merge drought exit — no_merge_streak>=3 && NO && max_y>=1.5 && pc>=30
-      # activates MERGE_PATH_CREATION bonus for placing near type 10+ pieces during NO merge drought.
-      # Worst game T52-59: 8 consecutive NO merges with no path-creation guidance → max_y runaway.
-      # refs: tmp/analysis_result.md, best_score5801_strategy.py:2006-2088, 3ff751c0d9be.py:1781-1850
-      # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 → type14→15到達障害
+      # v632: axis 9.12 no_merge_streak threshold 3→2 — proactive merge path creation
+      # worst game (0886) shows NO merge drought starts at T52 but axis 9.12 didn't fire until T54 (streak>=3).
+      # v632 lowers threshold to 2 so MERGE_PATH_CREATION activates earlier, before scatter hardens.
+      # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (worst T52-59: 8 consecutive NO merges)
+      # refs: tmp/analysis_result.md, strategy_versions/by_hash/7cbf437a2f29.py (v632)
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -1789,8 +1789,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if proximity_bonus > 0:
                             score += proximity_bonus
 
-        # ----- evaluation axis 9.12: merge drought exit — merge path creation (NEW vXXX) -----
-        # Activates when: no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
+        # ----- evaluation axis 9.12: merge drought exit — merge path creation (v632) -----
+        # Activates when: no_merge_streak>=2 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
         # Bonus: +500*merge_mult for placing within 1.5u of type 10+ piece
         # Extra: +200*merge_mult if that type 10+ piece has same-type pair on board (pipeline advance)
         # Suppress: death_spiral (height penalty only mode), merge_grade!=NO (existing axes fire first)
@@ -1799,7 +1799,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/analysis_result.md, data/mandatory_themes.txt
         # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (worst T52-59: 8 consecutive NO merges, max_y runaway)
         if (
-            no_merge_streak >= 3
+            no_merge_streak >= 2
             and merge_grade == "NO"
             and max_y >= 1.5
             and piece_count >= 30
