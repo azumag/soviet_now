@@ -1916,7 +1916,7 @@ PY
 		if [[ "$archive_next_label" != "none" ]]; then
 			printf "    ${C_YELLOW}▸${C_RESET} ArchiveNext ${C_YELLOW}%s${C_RESET}\n" "$archive_next_label"
 		fi
-		printf "    ${monitor_report_color}▸${C_RESET} Monitor     ${monitor_report_color}%s${C_RESET}\n" "$monitor_report_label"
+		printf "    ${monitor_report_color}▸${C_RESET} Report      ${monitor_report_color}%s${C_RESET}\n" "$monitor_report_label"
 			if [[ "$viewer_chat_label" != "none" ]]; then
 				printf "    ${C_CYAN}▸${C_RESET} ChatObs     ${C_DIM}%s${C_RESET}\n" "$viewer_chat_label"
 			fi
