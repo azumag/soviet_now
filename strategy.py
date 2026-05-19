@@ -65,12 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v626: axis 9.12 merge drought exit trigger — no_merge_streak>=1 proactive merge path creation
-      # Missing axis 9.12 caused merge path creation to fail even when no_merge_streak was available.
-      # Worst game T54-61: rp=7-10 but merge_grade=NO for 6 consecutive turns with no merge path created.
-      # vXYZ: lower threshold from >=2 to >=1 for earlier activation before scatter is entrenched.
-      # refs: tmp/analysis_result.md
-      # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -985,10 +979,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
-    # --- vXYZ: no_merge_streak — consecutive turns with merge_grade==NO ---
-    # game_stateに存在すれば使用、存在しなければ0（安全側動作維持）
-    no_merge_streak = game_state.get("no_merge_streak", 0)
-
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
@@ -1686,41 +1676,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if rp_bonus > 20:
                             score += rp_bonus
                             reasons.append("HIGH_TYPE_REACTIVE_PAIR_GUIDANCE")
-
-        # ----- evaluation axis 9.12: merge drought exit trigger (vXYZ) -----
-        # analysis_result.md adopted hypothesis: NO merge連続ターン数(no_merge_streak)>=1で発動し、
-        # 高typeピース(type 10+)との近了配置に+500*merge_multボーナスを与えて次ターン併合機会を創出。
-        # hall-of-fame戦略には実装済みだがcurrent strategyには欠落していた。
-        # 発動条件: no_merge_streak>=1 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
-        # vXYZ: lower threshold from 2 to 1 — proactive merge path creation before scatter is entrenched
-        # refs: tmp/analysis_result.md
-        # Fixes rollback failure mode: "NO merge連続ターンでのmerge path創作不足"
-        if no_merge_streak >= 1 and merge_grade == "NO" and max_y >= 1.5 and piece_count >= 30 and not death_spiral:
-            _high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
-            if _high_type_pieces:
-                _min_dist = float("inf")
-                _best_piece_type = 0
-                for _ht in _high_type_pieces:
-                    _hx = _ht.get("x", 0)
-                    _hy = _ht.get("y", -10)
-                    _manhattan = abs(x - _hx) + abs(landing_y - _hy)
-                    if _manhattan < _min_dist:
-                        _min_dist = _manhattan
-                        _best_piece_type = _ht.get("type", 0)
-                if _min_dist <= 1.5:
-                    _path_bonus = 500.0 * (1.0 - _min_dist / 1.5) * merge_mult
-                    if _path_bonus > 30:
-                        score += _path_bonus
-                        reasons.append("MERGE_PATH_CREATION")
-                    _type_counts = {}
-                    for _p in pieces:
-                        _pt = _p.get("type", 0)
-                        _type_counts[_pt] = _type_counts.get(_pt, 0) + 1
-                    if _type_counts.get(_best_piece_type, 0) >= 2:
-                        _pair_bonus = 200.0 * (1.0 - _min_dist / 1.5) * merge_mult
-                        if _pair_bonus > 20:
-                            score += _pair_bonus
-                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
