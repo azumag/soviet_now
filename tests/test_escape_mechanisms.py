@@ -2093,7 +2093,7 @@ PY
         self.assertIn("accept_probability", status)
         self.assertIn("SOREN_MONITOR_REPORT_FILE", status)
         self.assertIn("/tmp/soren_report.md", status)
-        self.assertIn("Monitor", status)
+        self.assertIn("Report", status)
         self.assertIn("monitor_report_label", status)
         self.assertIn("MONITOR_REPORT_STATUS_FILE", status)
         self.assertIn("live {live", status)
