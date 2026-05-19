@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v631: axis 9.12 merge drought exit trigger — no_merge_streak>=3でtype10+近了配置+500*merge_mult
+     # hall-of-fame (best_score5801) 実装を移植。currentにはaxis 9.15low-type digestはあってもaxis 9.12はない
+     # deadline_guard選択後のmerge_path散逸によるNO merge連続問題を解決
+     # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別せず"
+     # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py (lines 2039-2087),
+     #       game_history/20260413_094619_score0720.jsonl T70-T74, advice.md
      # vXXX: axis 9.15 merge drought low-type digest priority — hall-of-fame移植
      # Worst game (score0425) T60-69: 9 consecutive DEADLINE_GUARD, merge_available=false持続。
      # Hall-of-fame (best_score5801) にはaxis 9.15があり、reactive_pairs/near_pairsからtype<=5の
@@ -893,6 +899,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
+    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO ---
+    # game_stateに存在すれば使用、存在しなければ0（安全側動作維持）
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
@@ -1653,6 +1663,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if _digest_bonus > 20:
                     score += _digest_bonus
                     reasons.append("LOW_TYPE_DIGEST_PRIORITY")
+
+        # ----- evaluation axis 9.12: merge drought exit trigger (v617移植) -----
+        # analysis_result.md adopted hypothesis: NO merge連続ターン数(no_merge_streak)>=3で発動し、
+        # 高typeピース(type 10+)との近了配置に+500*merge_multボーナスを与えて次ターン併合機会を創出。
+        # hall-of-fame戦略(best_score5801)には実装済みだがcurrent strategyには欠落している。
+        # worst game T70-T74: 5連続NO merge, max_y=2.64→3.28, score_delta=0, column_ceiling無力化→drift/balance支配。
+        # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"。
+        # 発動条件: no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
+        # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py (lines 2039-2087),
+        #       game_history/20260413_094619_score0720.jsonl T70-T74, advice.md
+        # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別せず"
+        if no_merge_streak >= 3 and merge_grade == "NO" and max_y >= 1.5 and piece_count >= 30 and not death_spiral:
+            _high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if _high_type_pieces:
+                _min_dist = float("inf")
+                _best_piece_type = 0
+                for _ht in _high_type_pieces:
+                    _hx = _ht.get("x", 0)
+                    _hy = _ht.get("y", -10)
+                    _manhattan = abs(x - _hx) + abs(landing_y - _hy)
+                    if _manhattan < _min_dist:
+                        _min_dist = _manhattan
+                        _best_piece_type = _ht.get("type", 0)
+                if _min_dist <= 1.5:
+                    _path_bonus = 500.0 * (1.0 - _min_dist / 1.5) * merge_mult
+                    if _path_bonus > 30:
+                        score += _path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+                    _type_counts = {}
+                    for _p in pieces:
+                        _pt = _p.get("type", 0)
+                        _type_counts[_pt] = _type_counts.get(_pt, 0) + 1
+                    if _type_counts.get(_best_piece_type, 0) >= 2:
+                        _pair_bonus = 200.0 * (1.0 - _min_dist / 1.5) * merge_mult
+                        if _pair_bonus > 20:
+                            score += _pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
