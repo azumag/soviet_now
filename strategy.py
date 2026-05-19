@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v632: axis 9.12 no_merge_streak threshold 3→2 — proactive merge path creation
+     # Analysis: worst game shows 13 consecutive NO merges. Axis 9.12 was reactive (fires at streak=3)
+     # when it should be proactive (fire at streak=2) to create merge paths before scatter hardens.
+     # refs: tmp/analysis_result.md
+     # Fixes: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別せず" (same failure mode as v631)
      # v631: axis 9.12 merge drought exit trigger — no_merge_streak>=3でtype10+近了配置+500*merge_mult
      # hall-of-fame (best_score5801) 実装を移植。currentにはaxis 9.15low-type digestはあってもaxis 9.12はない
      # deadline_guard選択後のmerge_path散逸によるNO merge連続問題を解決
@@ -1670,11 +1675,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # hall-of-fame戦略(best_score5801)には実装済みだがcurrent strategyには欠落している。
         # worst game T70-T74: 5連続NO merge, max_y=2.64→3.28, score_delta=0, column_ceiling無力化→drift/balance支配。
         # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"。
-        # 発動条件: no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
-        # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py (lines 2039-2087),
-        #       game_history/20260413_094619_score0720.jsonl T70-T74, advice.md
+        # 発動条件: no_merge_streak>=2 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
+        # v632: lower threshold from 3 to 2 — proactive merge path creation before scatter is entrenched
+        # refs: tmp/analysis_result.md
         # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別せず"
-        if no_merge_streak >= 3 and merge_grade == "NO" and max_y >= 1.5 and piece_count >= 30 and not death_spiral:
+        if no_merge_streak >= 2 and merge_grade == "NO" and max_y >= 1.5 and piece_count >= 30 and not death_spiral:
             _high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
             if _high_type_pieces:
                 _min_dist = float("inf")
