@@ -1676,11 +1676,73 @@ trigger_adaptive_improvement() {
 	if [ "$improve_reason" = "post_regression" ]; then
 		log "[IMPROVE] ロールバック直後の失敗バッチを改善入力として使用"
 	fi
+	local russia_recovery_mode russia_recovery_reason
+	russia_recovery_reason=""
+	russia_recovery_mode=$(LOCK_DATA="$lock_data" python3 - \
+		"${RUSSIA_CREATION_HISTORY_FILE:-tmp/history/russia_creation_history.tsv}" \
+		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" <<'PY' 2>/dev/null || echo 0
+import json
+import os
+import sys
+import time
+from datetime import datetime
+
+russia_history, current_run_file, stagnation_file = sys.argv[1:4]
+now = time.time()
+last_russia = 0.0
+try:
+    with open(russia_history, encoding="utf-8", errors="ignore") as f:
+        for raw in f:
+            cols = raw.rstrip("\n").split("\t")
+            if not cols or not cols[0]:
+                continue
+            try:
+                dt = datetime.fromisoformat(cols[0])
+                last_russia = max(last_russia, dt.timestamp())
+            except Exception:
+                pass
+except Exception:
+    pass
+no_russia_24h = not last_russia or (now - last_russia) >= 24 * 3600
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+current = load(current_run_file)
+try:
+    lock = json.loads(os.environ.get("LOCK_DATA", "") or "{}")
+except Exception:
+    lock = {}
+stagnation = load(stagnation_file)
+current_russia = int(current.get("russia_count", 0) or 0)
+lock_russia = int(lock.get("russia_count", 0) or 0)
+rstreak = int(stagnation.get("regression_streak", 0) or 0)
+if no_russia_24h:
+    print("1:no_russia_24h")
+elif rstreak >= 3 and current_russia <= 0 and lock_russia <= 0:
+    print("1:regression_streak_no_russia")
+else:
+    print("0:")
+PY
+)
+	russia_recovery_reason="${russia_recovery_mode#*:}"
+	russia_recovery_mode="${russia_recovery_mode%%:*}"
+	case "$russia_recovery_mode" in 1) ;; *) russia_recovery_mode=0 ;; esac
+	if [ "$russia_recovery_mode" = "1" ]; then
+		log "[IMPROVE] Russia recovery mode active (${russia_recovery_reason:-unknown}) → mechanical wildcard suppressed"
+	fi
 	# 粛清カスケード中は毎サイクル post_regression で起動するため、ゲートを
 	# normal 限定にすると WILDCARD(脱出弾)に構造的に永遠に入れない。
 	# 回帰ストリーク/停滞が閾値超なら post_regression でも WILDCARD へ昇格を
 	# 許可する (まさに粛清連鎖からの脱出が WILDCARD の目的)。
-	if { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; } && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
+	if { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; } && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ "$russia_recovery_mode" != "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
 		local stag rstreak
 		local monitor_status="" monitor_age="" monitor_streak="" monitor_eval="" monitor_anchor="" monitor_event=""
 		local _monitor_ctx
@@ -1873,6 +1935,15 @@ PY
 			else
 				log "[WILDCARD] regression_streak=$rstreak だが cooldown 中 → 今回は通常改善 (churn緩和)"
 			fi
+		fi
+	fi
+	if [ "$russia_recovery_mode" = "1" ] && { [ "$improve_reason" = "wildcard" ] || [ "$improve_reason" = "escape_ai" ]; }; then
+		if _archive_restart_should_run 999; then
+			improve_reason="archive_restart"
+			log "[IMPROVE] Russia recovery mode: ${russia_recovery_reason:-unknown} → archive_restart を優先"
+		else
+			improve_reason="normal"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → 通常AI改善でtype14→15復旧"
 		fi
 	fi
 

@@ -1064,6 +1064,18 @@ def objective_progress(data):
         "soviet_count": int(data.get("soviet_count", 0) or 0),
     }
 
+def russia_near_miss(data):
+    """True when a non-Russia strategy has concrete type14->15 frontier evidence.
+
+    This is the only score-based escape hatch for a no-Russia candidate while
+    Russia-capable candidates exist. A single type14 is not enough; require a
+    batch record showing two type14 pieces alive together.
+    """
+    for raw in (data.get("peak_high_type_counts", []) or [])[-12:]:
+        if "T14x2" in str(raw) or "T14x3" in str(raw) or "T14x4" in str(raw):
+            return True
+    return False
+
 def archive_is_runtime_stable(path):
     if not path:
         return True
@@ -1112,6 +1124,12 @@ def _is_tabu(h, m, data):
 candidates = [(h, m, data) for (h, m, data) in candidates if not _is_tabu(h, m, data)]
 if not candidates:
     raise SystemExit(0)
+
+russia_capable_pool_exists = any(
+    int(objective_progress(data).get("russia_count", 0) or 0) > 0
+    or int(objective_progress(data).get("soviet_count", 0) or 0) > 0
+    for _, _, data in candidates
+)
 
 # 現アンカー候補を先に決める (raw comp 最大)
 candidates.sort(key=lambda t: (t[1]["comp"], t[1]["p50"], t[1]["p25"], t[1]["n"], t[0]))
@@ -1178,6 +1196,25 @@ def _objective_tuple(data):
 def _anchor_rank_key(h, m, data, selection_score):
     objective_key = (0, 0, 0, 0, 0)
     objective_eligible = 0
+    progress = objective_progress(data)
+    has_russia_path = (
+        int(progress.get("russia_count", 0) or 0) > 0
+        or int(progress.get("soviet_count", 0) or 0) > 0
+    )
+    near_miss = russia_near_miss(data)
+    if objective_anchor_enabled and russia_capable_pool_exists and not has_russia_path and not near_miss:
+        # In recovery mode, a high score alone cannot replace a proven
+        # Russia-capable anchor. This is the core guard against 24h no-Russia
+        # drift: no-Russia strategies must first show a real T14x2 frontier.
+        return (
+            -1,
+            0, 0, 0, 0, 0,
+            selection_score,
+            m["p50"],
+            m["p25"],
+            m["n"],
+            h,
+        )
     if objective_anchor_enabled and top_anchor_comp > 0:
         gap = max(0.0, top_anchor_comp - m["comp"])
         ratio_ok = m["comp"] >= (top_anchor_comp * objective_anchor_min_comp_ratio)
@@ -1185,6 +1222,8 @@ def _anchor_rank_key(h, m, data, selection_score):
         objective_key = _objective_tuple(data)
         if (ratio_ok or gap_ok) and objective_key > (0, 0, 0, 0, 0):
             objective_eligible = 1
+        elif russia_capable_pool_exists and near_miss:
+            objective_eligible = 0
     return (
         objective_eligible,
         *objective_key,

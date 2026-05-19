@@ -2070,6 +2070,28 @@ PY
         self.assertIn("SAME_HASH_BACKSLIDE_RESET_ENABLED", config)
         self.assertIn("SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES", config)
 
+    def test_russia_capable_anchor_is_not_replaced_by_score_only_no_russia_candidate(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn("def russia_near_miss(data):", regression)
+        self.assertIn("russia_capable_pool_exists = any", regression)
+        self.assertIn("not has_russia_path and not near_miss", regression)
+        self.assertIn("a high score alone cannot replace a proven", regression)
+        self.assertIn('"T14x2"', regression)
+
+    def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        strategy = (REPO_ROOT / "strategy.py").read_text()
+
+        self.assertIn("Russia recovery mode active", improve)
+        self.assertIn("mechanical wildcard suppressed", improve)
+        self.assertIn("no_russia_24h", improve)
+        self.assertIn("archive_restart を優先", improve)
+        self.assertIn("russia_recovery_mode: type14 near-miss", eloop)
+        self.assertIn("RUSSIA_FRONTIER_T14_MERGE", strategy)
+        self.assertIn("RUSSIA_FRONTIER_SCATTER_BLOCK", strategy)
+
     def test_show_status_surfaces_current_wildcard_evaluation(self):
         status = (REPO_ROOT / "show_status.sh").read_text()
 

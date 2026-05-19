@@ -914,6 +914,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
+    type14_pieces = [p for p in pieces if p.get("type") == 14]
+    type13_pieces = [p for p in pieces if p.get("type") == 13]
+    russia_frontier_mode = (not russia_phase) and (len(type14_pieces) >= 1)
     # v548: double_russia_phase — 2つ目のロシア(type 15)が盤面にある場合、
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
@@ -1437,6 +1440,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
+
+        # ----- v633: Russia frontier recovery (type14 -> type15) -----
+        # 24h no-Russia failure mode: games repeatedly reached type14 but never
+        # built the final type14+type14 merge. In this mode, score/height-only
+        # tie breakers are not enough; actively keep type14 pieces together and
+        # grow type13 next to the existing type14. This can temporarily sacrifice
+        # generic score because restoring Russia creation is the primary goal.
+        if russia_frontier_mode and not death_spiral:
+            t14_target = min(type14_pieces, key=lambda p: p.get("y", 10))
+            t14_x = t14_target.get("x", 0)
+            t14_y = t14_target.get("y", -10)
+            frontier_dist = abs(x - t14_x) + abs(landing_y - t14_y)
+            if next_type == 14:
+                if merge_grade in ["DIRECT", "NEAR"]:
+                    score += 2600.0 if merge_grade == "DIRECT" else 1800.0
+                    reasons.append("RUSSIA_FRONTIER_T14_MERGE")
+                else:
+                    cluster_bonus = max(0.0, 2200.0 - frontier_dist * 650.0) * merge_mult
+                    if cluster_bonus > 80:
+                        score += cluster_bonus
+                        reasons.append("RUSSIA_FRONTIER_T14_CLUSTER")
+            elif next_type == 13:
+                grow_bonus = max(0.0, 1400.0 - frontier_dist * 420.0) * merge_mult
+                if grow_bonus > 60:
+                    score += grow_bonus
+                    reasons.append("RUSSIA_FRONTIER_T13_GROWTH")
+            elif merge_grade == "NO" and next_type >= 10 and type13_pieces:
+                # Keep other high pieces feeding the same frontier instead of
+                # scattering them to low safe columns during deadline-guard churn.
+                support_bonus = max(0.0, 650.0 - frontier_dist * 180.0)
+                if support_bonus > 40:
+                    score += support_bonus
+                    reasons.append("RUSSIA_FRONTIER_SUPPORT")
+            if merge_grade == "NO" and result.get("crosses_deadline", False):
+                nearest_high = min(
+                    (abs(x - p.get("x", 0)) + abs(landing_y - p.get("y", -10)) for p in (type14_pieces + type13_pieces)),
+                    default=99.0,
+                )
+                if nearest_high > 2.2:
+                    score -= 2200.0
+                    reasons.append("RUSSIA_FRONTIER_SCATTER_BLOCK")
 
         # ----- v601: axis 9.9 — Russia-phase next-Russia growth pipeline guidance (NEW) -----
         # analysis_result.md adopted hypothesis: Russia-phase dedicated "next-Russia growth pipeline" axis.

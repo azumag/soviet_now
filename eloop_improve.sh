@@ -1627,6 +1627,21 @@ if nation_progress["deadline_guard_rate"] >= 0.12:
     summary_lines.append("- hard_signal: deadline guard が多発。ガードは最後の安全帯であり、通常戦略が終盤で詰んでいる兆候。AIはガードを弱めず、ガード発火前に type14→15→16 へ進む配置経路を復旧すること。")
 if nation_progress["russia_count"] == 0:
     summary_lines.append("- hard_signal: 今回バッチはロシア未到達。高得点に見えても type15 到達経路の喪失を優先して直すこと。")
+    near_misses = [
+        g for g in nation_progress["games"]
+        if g.get("max_type", 0) >= 14
+        or "T14x2" in str(g.get("peak_high_type_counts", ""))
+    ]
+    if near_misses:
+        summary_lines.append("- russia_recovery_mode: type14 near-miss を固定サンプルとして扱い、score ではなく type14→15 の最終併合経路を復旧すること。")
+        for g in sorted(near_misses, key=lambda item: (item["max_type"], item["score"]), reverse=True)[:9]:
+            summary_lines.append(
+                f"- near_miss_sample: {g['file']} score={g['score']} turns={g['turns']} "
+                f"max_type={g['max_type']} peak={g['peak_high_type_counts']} "
+                f"frontier={g['frontier_hint']} deadline_guard={g['deadline_guard_count']} "
+                f"rate={g['deadline_guard_rate']:.1%}"
+            )
+    summary_lines.append("- russia_recovery_priority: worst/best比較では max_type, T14 peak, T13 peak, no_merge_streak, deadline_guard_count, decision_crosses_deadline を score より優先すること。")
 elif nation_progress["soviet_count"] == 0:
     summary_lines.append("- hard_signal: ロシア到達後に type16 へ進めていない。ロシア保護と二つ目のロシア育成を優先すること。")
 summary_lines.append("")
