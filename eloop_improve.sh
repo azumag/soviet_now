@@ -626,6 +626,7 @@ if os.path.exists(path):
     except Exception:
         data = {}
 data[h] = {
+    "origin_type": "wildcard",
     "created_at_game": int(game_num),
     "patience_override": 1,
     "max_games_override": int(max_games),

@@ -134,7 +134,7 @@ def live_summary():
     delta = int(round(comp - anchor_comp)) if anchor_comp and comp else 0
     origins = load_json(origin_file)
     origin = origins.get(h) if h and isinstance(origins.get(h), dict) else {}
-    origin_type = str(origin.get("origin_type", "") or "")
+    origin_type = str(origin.get("origin_type", "") or ("wildcard" if origin else ""))
     label = {
         "archive_restart": "Arc",
         "escape_ai": "AI",
