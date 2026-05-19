@@ -163,7 +163,7 @@ def _candidate_has_non_crossing_landing(candidate):
         return False
     deadline_y = _float_or_none(candidate.get("deadline_y"))
     if deadline_y is None:
-        deadline_y = 3.32
+        deadline_y = 3.38
     top_y = _float_or_none(candidate.get("top_y_after_drop"))
     if top_y is None:
         landing_y = _float_or_none(candidate.get("landing_y"))
@@ -447,7 +447,28 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
 
     # ピースのスナップショット（軽量化: 位置とtypeのみ）
     piece_snapshot = [
-        {"id": p["id"], "type": p["type"], "x": round(p["x"], 2), "y": round(p["y"], 2)}
+        {
+            "id": p["id"],
+            "type": p["type"],
+            "x": round(p["x"], 2),
+            "y": round(p["y"], 2),
+            "r": round(float(p.get("r", 0.0) or 0.0), 3),
+            **(
+                {"rx": round(float(p.get("rx")), 3)}
+                if p.get("rx") is not None
+                else {}
+            ),
+            **(
+                {"ry": round(float(p.get("ry")), 3)}
+                if p.get("ry") is not None
+                else {}
+            ),
+            **(
+                {"angle": round(float(p.get("angle")), 1)}
+                if p.get("angle") is not None
+                else {}
+            ),
+        }
         for p in pieces
     ]
 
@@ -501,7 +522,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
 
     chosen_x = float(decision.get("x", 0.0) or 0.0)
     chosen = min(results, key=lambda r: abs(float(r.get("x", 0.0) or 0.0) - chosen_x))
-    deadline_y = float(chosen.get("deadline_y", 3.32) or 3.32)
+    deadline_y = float(chosen.get("deadline_y", 3.38) or 3.38)
     deadline_buffer_y = deadline_y - 0.75
     deadline = analysis.get("deadline", {}) if isinstance(analysis, dict) else {}
     current_top_edge_y = float(deadline.get("top_edge_y", -5.0) or -5.0)

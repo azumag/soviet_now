@@ -21,7 +21,11 @@ DROP_X_MIN = -3.0
 DROP_X_MAX = 3.0
 FLOOR_Y = -5.0
 DROP_Y = 4.25
-DEADLINE_Y = 3.32
+# Unity source: Red Line visual is centered at y=3.32, but the game-over
+# warning trigger is a BoxCollider2D at y=3.32 with offset +0.08 and height
+# 0.04, so overlap begins at y=3.38.
+RED_LINE_VISUAL_Y = 3.32
+DEADLINE_Y = 3.38
 TYPE_RADII = {
     1: 0.207,
     2: 0.259,
@@ -38,6 +42,23 @@ TYPE_RADII = {
     13: 1.207,
     14: 1.385,
     15: 1.600,
+}
+UNITY_PREFAB_DEADLINE_RADII = {
+    1: {"horiz": 0.208, "top": 0.368, "bottom": 0.368},
+    2: {"horiz": 0.280, "top": 0.362, "bottom": 0.338},
+    3: {"horiz": 0.358, "top": 0.315, "bottom": 0.310},
+    4: {"horiz": 0.554, "top": 0.371, "bottom": 0.370},
+    5: {"horiz": 0.477, "top": 0.364, "bottom": 0.371},
+    6: {"horiz": 0.556, "top": 0.442, "bottom": 0.438},
+    7: {"horiz": 0.530, "top": 0.560, "bottom": 0.564},
+    8: {"horiz": 0.767, "top": 0.578, "bottom": 0.604},
+    9: {"horiz": 1.045, "top": 0.532, "bottom": 0.533},
+    10: {"horiz": 0.888, "top": 0.545, "bottom": 0.572},
+    11: {"horiz": 1.390, "top": 0.981, "bottom": 0.866},
+    12: {"horiz": 1.075, "top": 0.873, "bottom": 0.831},
+    13: {"horiz": 1.342, "top": 0.946, "bottom": 0.932},
+    14: {"horiz": 1.637, "top": 0.807, "bottom": 0.765},
+    15: {"horiz": 2.243, "top": 1.068, "bottom": 1.062},
 }
 
 # ポリゴン形状補正係数
@@ -316,6 +337,12 @@ def load_game_state(path):
         return json.load(f)
 
 
+def _vertex_xy(vertex):
+    if isinstance(vertex, dict):
+        return float(vertex.get("x", 0.0) or 0.0), float(vertex.get("y", 0.0) or 0.0)
+    return float(vertex[0]), float(vertex[1])
+
+
 def calc_effective_radii(shapes):
     """shapes (type→頂点リスト) から各typeのポリゴン実効半径を計算。
     r (bbox半幅) はスプライトバウンディングボックスの外接円相当だが、
@@ -327,31 +354,42 @@ def calc_effective_radii(shapes):
         t = int(type_str)
         if not verts:
             continue
-        horiz = max(abs(v[0]) for v in verts)
-        top = max(v[1] for v in verts)
-        bottom = abs(min(v[1] for v in verts))
+        local_verts = [_vertex_xy(v) for v in verts]
+        horiz = max(abs(v[0]) for v in local_verts)
+        top = max(v[1] for v in local_verts)
+        bottom = abs(min(v[1] for v in local_verts))
         wall_top = max(top, horiz)
-        radii[t] = {"horiz": horiz, "top": top, "bottom": bottom, "wall_top": wall_top}
+        radii[t] = {
+            "horiz": horiz,
+            "top": top,
+            "bottom": bottom,
+            "wall_top": wall_top,
+            "verts": local_verts,
+        }
     return radii
 
 
 def calc_nominal_deadline_radii():
-    """Deadline判定用の名目半径。
+    """Deadline判定用の名目外接。
 
-    Unity bridge の `r` は見た目/接触の上端より大きめに出ることがあり、
-    shapes が空の実ランタイムでは全候補を deadline 超過に誤分類する。
-    併合判定は生の `r` を維持し、deadline専用の着地/上端だけ既知の
-    タイプ別半径へ戻す。
+    `soren-game-fixed` の Republic prefab から PolygonCollider2D 頂点と
+    Transform scale を読んだ値を使う。併合判定は生の `r` を維持し、
+    deadline 専用の着地/上端だけ Unity 実コライダー相当へ戻す。
     """
-    return {
-        t: {
-            "horiz": r * COLLISION_POLY_FACTOR,
-            "top": r,
-            "bottom": r,
-            "wall_top": r,
-        }
-        for t, r in TYPE_RADII.items()
-    }
+    radii = {}
+    for t, source in UNITY_PREFAB_DEADLINE_RADII.items():
+        info = dict(source)
+        info["wall_top"] = max(info["top"], info["horiz"])
+        radii[t] = info
+    for t, r in TYPE_RADII.items():
+        if t not in radii:
+            radii[t] = {
+                "horiz": r * COLLISION_POLY_FACTOR,
+                "top": r,
+                "bottom": r,
+                "wall_top": r,
+            }
+    return radii
 
 
 def build_deadline_radii(shapes=None):
@@ -362,12 +400,69 @@ def build_deadline_radii(shapes=None):
 
 
 def piece_deadline_top_y(piece, deadline_radii=None):
+    return float(piece.get("y", FLOOR_Y) or FLOOR_Y) + piece_deadline_top_radius(piece, deadline_radii)
+
+
+def piece_deadline_extents(piece, deadline_radii=None):
+    ry = piece.get("ry")
+    rx = piece.get("rx")
+    if rx is not None and ry is not None:
+        try:
+            return {
+                "horiz": max(0.0, float(rx)),
+                "top": max(0.0, float(ry)),
+                "bottom": max(0.0, float(ry)),
+            }
+        except (TypeError, ValueError):
+            pass
     p_type = piece.get("type", 0)
     fallback = min(float(piece.get("r", 0.5) or 0.5), TYPE_RADII.get(p_type, 0.5))
-    top_r = fallback
+    horiz_fallback = float(piece.get("r", 0.5) or 0.5) * COLLISION_POLY_FACTOR
+    extents = {"horiz": horiz_fallback, "top": fallback, "bottom": fallback}
     if deadline_radii and p_type in deadline_radii:
-        top_r = deadline_radii[p_type].get("top", top_r)
-    return float(piece.get("y", FLOOR_Y) or FLOOR_Y) + top_r
+        info = deadline_radii[p_type]
+        extents = {
+            "horiz": info.get("horiz", horiz_fallback),
+            "top": info.get("top", fallback),
+            "bottom": info.get("bottom", fallback),
+        }
+        verts = info.get("verts")
+        angle = piece.get("angle")
+        if verts and angle is not None:
+            try:
+                theta = math.radians(float(angle))
+            except (TypeError, ValueError):
+                theta = 0.0
+            if abs(math.sin(theta)) > 1e-6 or abs(math.cos(theta) - 1.0) > 1e-6:
+                cos_a = math.cos(theta)
+                sin_a = math.sin(theta)
+                rotated = [(x * cos_a - y * sin_a, x * sin_a + y * cos_a) for x, y in verts]
+                extents = {
+                    "horiz": max(abs(x) for x, _ in rotated),
+                    "top": max(y for _, y in rotated),
+                    "bottom": abs(min(y for _, y in rotated)),
+                }
+    return extents
+
+
+def piece_deadline_top_radius(piece, deadline_radii=None):
+    ry = piece.get("ry")
+    if ry is not None and piece.get("rx") is None:
+        try:
+            return max(0.0, float(ry))
+        except (TypeError, ValueError):
+            pass
+    return piece_deadline_extents(piece, deadline_radii)["top"]
+
+
+def piece_deadline_horiz_radius(piece, deadline_radii=None):
+    rx = piece.get("rx")
+    if rx is not None and piece.get("ry") is None:
+        try:
+            return max(0.0, float(rx))
+        except (TypeError, ValueError):
+            pass
+    return piece_deadline_extents(piece, deadline_radii)["horiz"]
 
 
 def get_type_top_radius(piece_type, shapes, eff_radii=None):
@@ -376,40 +471,57 @@ def get_type_top_radius(piece_type, shapes, eff_radii=None):
     return TYPE_RADII.get(piece_type, 0.5)
 
 
+def _type_deadline_extents(piece_type, fallback_r, deadline_radii=None):
+    info = (deadline_radii or {}).get(piece_type, {})
+    return {
+        "horiz": info.get("horiz", fallback_r * COLLISION_POLY_FACTOR),
+        "top": info.get("top", fallback_r),
+        "bottom": info.get("bottom", fallback_r),
+    }
+
+
 def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
-    """drop_x に半径 drop_r のピースを落とした時の着地Y と最初に衝突するピースIDを返す。
-    r はスプライトバウンディングボックス半幅（外接円相当）だが、
-    実際のコライダーは PolygonCollider2D で外接円より小さい。
-    shapes から計算した実効半径で衝突範囲を補正する。"""
-    drop_bottom_r = drop_r
-    if eff_radii and drop_type in eff_radii:
-        drop_bottom_r = eff_radii[drop_type].get("bottom", drop_r)
-    landing_y = FLOOR_Y + drop_bottom_r  # 床
+    """drop_x にピースを落とした時の着地Y と最初に衝突するピースIDを返す。
+
+    Unity 側は PolygonCollider2D の OnCollisionEnter2D でマージする。
+    ここでは deadline と同じ prefab/shapes 由来の外接を使い、横方向の
+    overlap と縦方向の top/bottom で、最初に支えるピースを近似する。
+    """
+    drop_ext = _type_deadline_extents(drop_type, drop_r, eff_radii)
+    drop_horiz = drop_ext["horiz"]
+    drop_bottom = drop_ext["bottom"]
+    landing_y = FLOOR_Y + drop_bottom  # 床
     hit_id = None  # None = 床に着地
 
-    # ドロップピースの実効半径
-    if eff_radii and drop_type in eff_radii:
-        drop_eff_r = eff_radii[drop_type]["horiz"]
-    else:
-        drop_eff_r = drop_r * COLLISION_POLY_FACTOR
-
     for p in pieces:
-        px, py, pr = p["x"], p["y"], p["r"]
-        p_type = p.get("type", 0)
-        if eff_radii and p_type in eff_radii:
-            p_eff_r = eff_radii[p_type]["horiz"]
-        else:
-            p_eff_r = pr * COLLISION_POLY_FACTOR
-        combined_r = drop_eff_r + p_eff_r
-        dx = drop_x - px
-        if abs(dx) < combined_r:
-            # 円の衝突公式を実効半径で適用
-            collision_y = py + math.sqrt(max(0, combined_r**2 - dx**2))
-            if collision_y > landing_y:
-                landing_y = collision_y
-                hit_id = p["id"]
+        p_horiz = piece_deadline_horiz_radius(p, eff_radii)
+        if abs(drop_x - p["x"]) >= drop_horiz + p_horiz:
+            continue
+        collision_y = float(p.get("y", FLOOR_Y) or FLOOR_Y) + piece_deadline_top_radius(p, eff_radii) + drop_bottom
+        if collision_y > landing_y:
+            landing_y = collision_y
+            hit_id = p["id"]
 
     return landing_y, hit_id
+
+
+def polygon_contact_gap(x, y, drop_ext, target, deadline_radii):
+    """AABB近似で2つの PolygonCollider2D がどれだけ離れているかを返す。"""
+    target_ext = piece_deadline_extents(target, deadline_radii)
+    dx_gap = abs(x - float(target.get("x", 0.0) or 0.0)) - (
+        drop_ext["horiz"] + target_ext["horiz"]
+    )
+    drop_top = y + drop_ext["top"]
+    drop_bottom = y - drop_ext["bottom"]
+    target_top = float(target.get("y", FLOOR_Y) or FLOOR_Y) + target_ext["top"]
+    target_bottom = float(target.get("y", FLOOR_Y) or FLOOR_Y) - target_ext["bottom"]
+    if drop_bottom > target_top:
+        dy_gap = drop_bottom - target_top
+    elif target_bottom > drop_top:
+        dy_gap = target_bottom - drop_top
+    else:
+        dy_gap = 0.0
+    return max(dx_gap, 0.0), max(dy_gap, 0.0)
 
 
 def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
@@ -426,37 +538,37 @@ def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
     landing_y = FLOOR_Y + drop_bottom
     for p in pieces:
         p_type = p.get("type", 0)
-        p_info = (deadline_radii or {}).get(p_type, {})
-        p_horiz = p_info.get("horiz", float(p.get("r", 0.5) or 0.5) * COLLISION_POLY_FACTOR)
+        p_horiz = piece_deadline_horiz_radius(p, deadline_radii)
         if abs(drop_x - p["x"]) >= drop_horiz + p_horiz:
             continue
-        p_top = p_info.get("top", min(float(p.get("r", 0.5) or 0.5), TYPE_RADII.get(p_type, 0.5)))
+        p_top = piece_deadline_top_radius(p, deadline_radii)
         landing_y = max(landing_y, float(p.get("y", FLOOR_Y) or FLOOR_Y) + p_top + drop_bottom)
     return landing_y
 
 
-def has_obstruction(drop_x, drop_r, target, pieces):
+def has_obstruction(drop_x, drop_r, target, pieces, deadline_radii=None, drop_type=0):
     """DIRECT判定時に、ターゲットの上方にドロップ経路を妨害するピースがないか確認。
     ポリゴン形状を考慮した実効半径で判定し、5%の安全マージンを加算。
     旧実装: 生r値 × 1.2 → 大型ピースで巨大な排除ゾーンが発生しDIRECT誤否定多発。
     新実装: COLLISION_POLY_FACTOR適用後 × 1.05 → ポリゴン実効サイズに近い判定。"""
     MARGIN = 1.05
+    drop_horiz = _type_deadline_extents(drop_type, drop_r, deadline_radii)["horiz"]
     for p in pieces:
         if p["id"] == target["id"]:
             continue
+        if p["type"] == target["type"]:
+            continue
         # ターゲットより上にあるピースのみチェック
-        if p["y"] + p["r"] < target["y"]:
+        if piece_deadline_top_y(p, deadline_radii) < target["y"]:
             continue
         # ポリゴン補正後の実効半径で干渉チェック
-        margin_r = (
-            drop_r * COLLISION_POLY_FACTOR + p["r"] * COLLISION_POLY_FACTOR
-        ) * MARGIN
+        margin_r = (drop_horiz + piece_deadline_horiz_radius(p, deadline_radii)) * MARGIN
         if abs(drop_x - p["x"]) < margin_r:
             return True
     return False
 
 
-def has_horizontal_obstruction(from_x, from_y, from_r, target, pieces):
+def has_horizontal_obstruction(from_x, from_y, from_r, target, pieces, deadline_radii=None, drop_type=0):
     """NEAR判定時に、着地点からターゲットへの水平方向に障害ピースがないか確認。
     着地点(drop_x, landing_y)からターゲット(target_x, target_y)へ向かう経路で、
     Y範囲が重なり、X範囲が間に挟まる別タイプのピースがあれば物理的に接触不可。
@@ -464,7 +576,8 @@ def has_horizontal_obstruction(from_x, from_y, from_r, target, pieces):
     MARGIN = 1.05
     target_x = target["x"]
     target_y = target["y"]
-    target_r = target["r"]
+    target_ext = piece_deadline_extents(target, deadline_radii)
+    drop_ext = _type_deadline_extents(drop_type, from_r, deadline_radii)
     x_min = min(from_x, target_x)
     x_max = max(from_x, target_x)
     for p in pieces:
@@ -474,18 +587,19 @@ def has_horizontal_obstruction(from_x, from_y, from_r, target, pieces):
         if p["type"] == target["type"]:
             continue
         # Y範囲が重ならないピースは障害にならない
-        p_top = p["y"] + p["r"]
-        p_bot = p["y"] - p["r"]
-        from_top = from_y + from_r
-        from_bot = from_y - from_r
-        target_top = target_y + target_r
-        target_bot = target_y - target_r
+        p_ext = piece_deadline_extents(p, deadline_radii)
+        p_top = p["y"] + p_ext["top"]
+        p_bot = p["y"] - p_ext["bottom"]
+        from_top = from_y + drop_ext["top"]
+        from_bot = from_y - drop_ext["bottom"]
+        target_top = target_y + target_ext["top"]
+        target_bot = target_y - target_ext["bottom"]
         combined_top = max(from_top, target_top)
         combined_bot = min(from_bot, target_bot)
         if p_top < combined_bot or p_bot > combined_top:
             continue
         # ポリゴン補正後の実効半径でX範囲チェック
-        p_eff_r = p["r"] * COLLISION_POLY_FACTOR * MARGIN
+        p_eff_r = p_ext["horiz"] * MARGIN
         p_x_min = p["x"] - p_eff_r
         p_x_max = p["x"] + p_eff_r
         # ピースがfromとtargetの間に挟まっているか
@@ -505,7 +619,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
     """
     if shapes is None:
         shapes = {}
-    eff_radii = calc_effective_radii(shapes) if shapes else {}
+    eff_radii = build_deadline_radii(shapes)
     deadline_eff_radii = build_deadline_radii(shapes)
     same_type = [p for p in pieces if p["type"] == next_type]
     target_ids = {p["id"] for p in same_type}
@@ -523,8 +637,8 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
             continue
 
-        # 併合判定用: 元の円モデルで着地予測（併合距離の精度を維持）
-        ly, hit_id = get_landing_info(x, next_r, pieces)
+        # 併合判定用: Unity の PolygonCollider2D に合わせた外接で着地予測
+        ly, hit_id = get_landing_info(x, next_r, pieces, eff_radii, next_type)
         # デッドライン判定用: ポリゴン補正で着地予測（crosses_deadline の偽陽性を抑制）
         ly_poly = get_deadline_landing_y(x, next_r, pieces, deadline_eff_radii, next_type)
 
@@ -537,38 +651,47 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
         # 各同typeピースへの併合判定（ドリフト考慮、元の円モデルの ly を使用）
         merges = []
+        drop_ext = _type_deadline_extents(next_type, next_r, eff_radii)
         for t in same_type:
-            contact_r = next_r + t["r"]  # 厳密接触距離
+            target_ext = piece_deadline_extents(t, deadline_eff_radii)
+            contact_r = max(
+                drop_ext["horiz"] + target_ext["horiz"],
+                drop_ext["top"] + target_ext["bottom"],
+                drop_ext["bottom"] + target_ext["top"],
+            )
             # 静的着地位置での距離
             dist_static = math.sqrt((x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
             # ドリフト後の距離
             dist_drifted = math.sqrt((settled_x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
             # 併合判定は両方の距離を考慮（どちらかで接触すれば併合可能）
             dist = min(dist_static, dist_drifted)
+            gap_x, gap_y = polygon_contact_gap(x, ly, drop_ext, t, deadline_eff_radii)
+            drift_gap_x, drift_gap_y = polygon_contact_gap(settled_x, ly, drop_ext, t, deadline_eff_radii)
+            contact_gap = min(math.hypot(gap_x, gap_y), math.hypot(drift_gap_x, drift_gap_y))
 
             if hit_id == t["id"]:
                 # 最初の衝突相手がターゲット → 妨害チェック
-                if has_obstruction(x, next_r, t, pieces):
+                if has_obstruction(x, next_r, t, pieces, deadline_eff_radii, next_type):
                     # 経路上に妨害ピースあり → 降格、さらに水平障害があればNO
-                    if dist < contact_r * 1.3:
+                    if contact_gap <= 0.20:
                         grade = (
                             "NO"
-                            if has_horizontal_obstruction(x, ly, next_r, t, pieces)
+                            if has_horizontal_obstruction(x, ly, next_r, t, pieces, deadline_eff_radii, next_type)
                             else "NEAR"
                         )
                     else:
                         grade = "NO"
                 else:
                     grade = "DIRECT"
-            elif dist < contact_r * 1.1:
+            elif contact_gap <= 0.04:
                 # 着地後にターゲットとほぼ接触 → 水平障害チェック
-                if has_horizontal_obstruction(x, ly, next_r, t, pieces):
+                if has_horizontal_obstruction(x, ly, next_r, t, pieces, deadline_eff_radii, next_type):
                     grade = "NO"
                 else:
                     grade = "NEAR"
-            elif dist_drifted < contact_r * 1.3 and drift_unc > 0:
+            elif contact_gap <= 0.20 and drift_unc > 0:
                 # ドリフトで接触する可能性あり → 水平障害チェック
-                if has_horizontal_obstruction(settled_x, ly, next_r, t, pieces):
+                if has_horizontal_obstruction(settled_x, ly, next_r, t, pieces, deadline_eff_radii, next_type):
                     grade = "NO"
                 else:
                     grade = "NEAR"
@@ -586,8 +709,9 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                     "tr": t["r"],
                     "dist": round(dist, 3),
                     "contact_r": round(contact_r, 3),
+                    "contact_gap": round(contact_gap, 3),
                     "grade": grade,
-                    "target_top_y": round(t["y"] + t["r"], 3),
+                    "target_top_y": round(piece_deadline_top_y(t, deadline_eff_radii), 3),
                     "target_crosses_deadline": piece_deadline_top_y(t, deadline_eff_radii) >= DEADLINE_Y,
                     "target_redline_time": round(
                         float(t.get("redLineTime", 0) or 0), 3

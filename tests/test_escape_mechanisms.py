@@ -702,6 +702,7 @@ class TestStagnationCounterTransitions(unittest.TestCase):
         self.assertIn('_update_stagnation("RESET")', text)
         self.assertIn('_update_stagnation("OK_BEAT")', text)
         self.assertIn('_update_stagnation("OK_IDLE")', text)
+        self.assertIn('_update_stagnation("SAME_HASH_BACKSLIDE")', text)
         # シェル側で counter を更新していない (Python 単一 owner)
         # rollback 経路 (REJECTED_HASHES_FILE 追記の隣) にはシェル側からの stagnation 書き換えはない
 
@@ -1484,6 +1485,123 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertFalse(reactor["deadline_crossed"])
         self.assertEqual(reactor["danger_piece_count"], 0)
 
+    def test_deadline_threshold_uses_unity_red_line_trigger_bottom(self):
+        import analyze_board
+
+        self.assertEqual(analyze_board.RED_LINE_VISUAL_Y, 3.32)
+        self.assertEqual(analyze_board.DEADLINE_Y, 3.38)
+
+        near_visual_line = analyze_board.calc_reactor_state(
+            [{"id": 1, "type": 9, "x": 0.0, "y": 2.84, "r": 1.2}],
+            shapes={},
+        )
+        in_trigger = analyze_board.calc_reactor_state(
+            [{"id": 1, "type": 9, "x": 0.0, "y": 2.85, "r": 1.2}],
+            shapes={},
+        )
+
+        self.assertLess(near_visual_line["top_edge_y"], analyze_board.DEADLINE_Y)
+        self.assertFalse(near_visual_line["deadline_crossed"])
+        self.assertGreaterEqual(in_trigger["top_edge_y"], analyze_board.DEADLINE_Y)
+        self.assertTrue(in_trigger["deadline_crossed"])
+
+    def test_deadline_fallback_uses_unity_prefab_extents_without_shapes(self):
+        import analyze_board
+
+        type9 = analyze_board.calc_reactor_state(
+            [{"id": 1, "type": 9, "x": 0.0, "y": 2.84, "r": 1.2}],
+            shapes={},
+        )
+        type11 = analyze_board.calc_reactor_state(
+            [{"id": 1, "type": 11, "x": 0.0, "y": 2.39, "r": 1.7}],
+            shapes={},
+        )
+
+        self.assertAlmostEqual(type9["top_edge_y"], 3.372, places=3)
+        self.assertAlmostEqual(type11["top_edge_y"], 3.371, places=3)
+        self.assertFalse(type9["deadline_crossed"])
+        self.assertFalse(type11["deadline_crossed"])
+
+    def test_reactor_deadline_uses_rotated_polygon_extents(self):
+        import analyze_board
+
+        shapes = {
+            "11": [[-1.35, -0.35], [1.35, -0.35], [1.35, 0.35], [-1.35, 0.35]],
+        }
+
+        horizontal = analyze_board.calc_reactor_state(
+            [{"id": 1, "type": 11, "x": 0.0, "y": 2.5, "r": 1.7, "angle": 0}],
+            shapes,
+        )
+        vertical = analyze_board.calc_reactor_state(
+            [{"id": 1, "type": 11, "x": 0.0, "y": 2.5, "r": 1.7, "angle": 90}],
+            shapes,
+        )
+
+        self.assertLess(horizontal["top_edge_y"], analyze_board.DEADLINE_Y)
+        self.assertFalse(horizontal["deadline_crossed"])
+        self.assertGreaterEqual(vertical["top_edge_y"], analyze_board.DEADLINE_Y)
+        self.assertTrue(vertical["deadline_crossed"])
+
+    def test_deadline_analysis_prefers_detected_vertical_radius(self):
+        import analyze_board
+
+        pieces = [
+            {"id": 1, "type": 11, "x": 0.0, "y": 1.95, "r": 1.7, "rx": 1.35, "ry": 0.35},
+        ]
+
+        reactor = analyze_board.calc_reactor_state(pieces, shapes={})
+        results, _ = analyze_board.analyze_drops(
+            pieces,
+            next_type=8,
+            next_r=analyze_board.TYPE_RADII[8],
+            shapes={},
+        )
+        safe = [r for r in results if not r.get("crosses_deadline", False)]
+
+        self.assertLess(reactor["top_edge_y"], analyze_board.DEADLINE_Y)
+        self.assertFalse(reactor["deadline_crossed"])
+        self.assertTrue(safe)
+
+    def test_merge_candidate_uses_unity_polygon_extents_not_circle_radius(self):
+        import analyze_board
+
+        floor_y = analyze_board.FLOOR_Y + analyze_board.UNITY_PREFAB_DEADLINE_RADII[9]["bottom"]
+        pieces = [
+            {"id": 1, "type": 9, "x": 0.0, "y": floor_y, "r": 1.2},
+        ]
+
+        results, _ = analyze_board.analyze_drops(
+            pieces,
+            next_type=9,
+            next_r=1.2,
+            shapes={},
+        )
+        by_x = {r["x"]: r for r in results}
+
+        self.assertEqual(by_x[2.0]["merge_grade"], "NEAR")
+        self.assertEqual(by_x[2.2]["merge_grade"], "NO")
+        self.assertGreater(by_x[2.2]["merges"][0]["contact_gap"], 0.0)
+
+    def test_direct_merge_uses_first_polygon_support_piece(self):
+        import analyze_board
+
+        pieces = [
+            {"id": 1, "type": 9, "x": 0.0, "y": 0.0, "r": 1.2},
+            {"id": 2, "type": 8, "x": 2.5, "y": 0.0, "r": analyze_board.TYPE_RADII[8]},
+        ]
+
+        results, _ = analyze_board.analyze_drops(
+            pieces,
+            next_type=9,
+            next_r=1.2,
+            shapes={},
+        )
+        center = min(results, key=lambda r: abs(r["x"]))
+
+        self.assertEqual(center["merge_grade"], "DIRECT")
+        self.assertEqual(center["merges"][0]["grade"], "DIRECT")
+
     def test_deadline_crossing_overlay_notify_uses_event_overlay(self):
         import strategy_runner
 
@@ -1887,13 +2005,15 @@ PY
             )
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
-    def test_same_hash_objective_gap_does_not_reset_wildcard_stagnation(self):
+    def test_same_hash_objective_gap_does_not_escalate_wildcard_stagnation(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
 
         self.assertIn("if current_hash == anchor_hash and not branch_active:", regression)
         self.assertIn("current_games_total = int(current_data.get(\"games_total\"", regression)
         self.assertIn("and current_games_total >= same_hash_backslide_mature_n", regression)
+        self.assertIn('_update_stagnation("SAME_HASH_BACKSLIDE")', regression)
+        self.assertIn('elif event in ("OK_IDLE", "SAME_HASH_BACKSLIDE"):', regression)
         self.assertIn('_update_stagnation("OK_IDLE")', regression)
         self.assertIn('_update_stagnation("RESET")', regression)
         self.assertIn("same_hash_backslide_mature_n", regression)

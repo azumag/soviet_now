@@ -2409,8 +2409,9 @@ def _close_successful_wildcard_origin(event):
 
 def _update_stagnation(event):
     """Python ブロックを抜ける直前に呼ぶ。
-    event: PROMOTE | REGRESSION | RESET | OK_BEAT | OK_IDLE
-    PROMOTE / OK_BEAT → カウンタ 0、REGRESSION / RESET → +1、OK_IDLE → 変更なし
+    event: PROMOTE | REGRESSION | RESET | OK_BEAT | OK_IDLE | SAME_HASH_BACKSLIDE
+    PROMOTE / OK_BEAT → カウンタ 0、REGRESSION / RESET → +1、
+    OK_IDLE / SAME_HASH_BACKSLIDE → 変更なし
     """
     if not stagnation_file:
         return
@@ -2426,7 +2427,7 @@ def _update_stagnation(event):
             c = 0
         elif event in ("REGRESSION", "RESET"):
             c += 1
-        elif event == "OK_IDLE":
+        elif event in ("OK_IDLE", "SAME_HASH_BACKSLIDE"):
             pass
         data["consecutive_no_improve"] = c
         # counter 非依存の回帰ストリーク (WILDCARD masking 対策)。
@@ -2843,7 +2844,7 @@ if current_hash == anchor_hash and not branch_active:
             or float(current.get("p25", 0.0) or 0.0) < float(anchor.get("p25", 0.0) or 0.0)
         )
     ):
-        _update_stagnation("RESET")
+        _update_stagnation("SAME_HASH_BACKSLIDE")
         print("OK")
         raise SystemExit
     if (
