@@ -1956,7 +1956,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # At high piece_count, guidance needs to be stronger to compete with
                     # height differences and provide meaningful redirect toward growth center.
                     if piece_count >= 28:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.14
+                        congestion_scale = 1.0 + (piece_count - 19) * 0.14
                         proximity *= min(congestion_scale, 3.5)
                     if proximity > 0:
                         score += proximity
