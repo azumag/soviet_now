@@ -84,10 +84,12 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
         return None
 
     safe = [r for r in results if not r.get("crosses_deadline", False)]
+    landing_safe = [r for r in results if _candidate_has_non_crossing_landing(r)]
     legal = [
         r
         for r in results
         if not r.get("crosses_deadline", False)
+        or _candidate_has_non_crossing_landing(r)
         or r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
     ]
     merge_grade = str(chosen.get("merge_grade") or "NO")
@@ -95,10 +97,11 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
     body = (
         f"turn={turn} score={score} x={decision_x:+.2f} "
         f"merge={merge_grade} safe={len(safe)}/{len(results)} "
+        f"landing_safe={len(landing_safe)}/{len(results)} "
         f"legal={len(legal)}/{len(results)} "
         f"reason={reason[:180]}"
     )
-    if safe:
+    if safe or landing_safe:
         return {
             "title": "デッドライン超過: 安全候補あり",
             "body": body,
@@ -145,6 +148,39 @@ def notify_deadline_crossing_overlay(turn, score, decision, analysis):
         log(f"WARN: deadline overlay notify failed: {err}")
 
 
+def _float_or_none(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _candidate_has_non_crossing_landing(candidate):
+    """True when the visible landing pose itself remains below the deadline."""
+    if not isinstance(candidate, dict):
+        return False
+    deadline_y = _float_or_none(candidate.get("deadline_y"))
+    if deadline_y is None:
+        deadline_y = 3.32
+    top_y = _float_or_none(candidate.get("top_y_after_drop"))
+    if top_y is None:
+        landing_y = _float_or_none(candidate.get("landing_y"))
+        if landing_y is None:
+            return False
+        top_y = landing_y
+    if top_y >= deadline_y:
+        return False
+    edge_top_y = _float_or_none(candidate.get("edge_vertical_top_y"))
+    if candidate.get("wall_rotation_risk") and edge_top_y is not None and edge_top_y >= deadline_y:
+        return False
+    merge_top_y = _float_or_none(candidate.get("merge_result_top_y"))
+    if candidate.get("merge_grade") in ("DIRECT", "NEAR") and merge_top_y is not None and merge_top_y >= deadline_y:
+        return False
+    return True
+
+
 def load_game_state():
     """game_state.json を読み込む"""
     try:
@@ -171,10 +207,15 @@ def has_deadline_contact(gs):
         try:
             if float(p.get("redLineTime", 0) or 0) > 0:
                 return True
-            if float(p.get("y", -99.0) or -99.0) + float(p.get("r", 0.0) or 0.0) >= 3.32:
-                return True
         except Exception:
             continue
+    try:
+        from analyze_board import calc_reactor_state
+
+        reactor = calc_reactor_state(gs.get("pieces", []), gs.get("shapes", {}))
+        return bool(reactor.get("deadline_crossed", False))
+    except Exception:
+        return False
     return False
 
 def is_board_settled(gs, force_after: float = 0.0):
@@ -330,7 +371,7 @@ def build_analysis(game_state):
         nr = nxt.get("r", 0.5)
 
         results, same_type = analyze_drops(pieces, nt, nr, shapes)
-        reactor = calc_reactor_state(pieces)
+        reactor = calc_reactor_state(pieces, shapes)
         deadline = {
             "deadline_y": reactor.get("deadline_y", 0.0),
             "top_center_y": reactor.get("top_center_y", -5.0),
@@ -360,12 +401,18 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     pieces = game_state.get("pieces", [])
     score = game_state.get("score", 0)
     max_y = max((p["y"] for p in pieces), default=-5.0)
-    top_edge_y = max((p["y"] + p.get("r", 0.0) for p in pieces), default=-5.0)
     nxt = game_state.get("next", {})
     nxt2 = game_state.get("nextNext", {})
 
     results = analysis.get("results", [])
     deadline = analysis.get("deadline", {})
+    top_edge_y = float(
+        deadline.get(
+            "top_edge_y",
+            max((p["y"] + p.get("r", 0.0) for p in pieces), default=-5.0),
+        )
+        or -5.0
+    )
 
     # chosen_x に最も近い result を参照（results[0]は最左端なので不正確）
     chosen_x = decision.get("x", 0.0)
@@ -480,7 +527,13 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             abs(float(r.get("x", 0.0) or 0.0)),
         )
 
-    safe = [r for r in results if not r.get("crosses_deadline", False)]
+    non_crossing_safe = [r for r in results if not r.get("crosses_deadline", False)]
+    landing_safe = (
+        []
+        if non_crossing_safe
+        else [r for r in results if _candidate_has_non_crossing_landing(r)]
+    )
+    safe = non_crossing_safe or landing_safe
     safe_direct = [r for r in safe if r.get("merge_grade", "NO") == "DIRECT"]
     safe_merge = [
         r for r in safe if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
@@ -878,6 +931,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         if all_merges:
             replacement = min(all_merges, key=rank_candidate)
             replacement_source = f"{replacement_source}_merge_candidate_postcondition"
+
+    if (
+        replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
+        and not safe
+        and min_risk_top + 0.05 < risk_top(replacement)
+    ):
+        replacement = min_risk_candidate
+        replacement_source = f"{replacement_source}_minrisk_postcondition"
 
     if (
         replacement.get("crosses_deadline", False)

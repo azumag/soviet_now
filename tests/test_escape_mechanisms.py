@@ -1301,6 +1301,40 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("safe=0/2", payload["body"])
         self.assertIn("legal=0/2", payload["body"])
 
+    def test_deadline_crossing_overlay_treats_visible_safe_landing_as_legal(self):
+        import strategy_runner
+
+        payload = strategy_runner._deadline_crossing_overlay_payload(
+            13,
+            456,
+            {"x": 0.0, "reason": "FORCED"},
+            {
+                "results": [
+                    {
+                        "x": -1.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.32,
+                        "top_y_after_drop": 2.8,
+                    },
+                    {
+                        "x": 0.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.32,
+                        "top_y_after_drop": 3.6,
+                    },
+                ]
+            },
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["title"], "デッドライン超過: 安全候補あり")
+        self.assertEqual(payload["level"], "warn")
+        self.assertIn("safe=0/2", payload["body"])
+        self.assertIn("landing_safe=1/2", payload["body"])
+        self.assertIn("legal=1/2", payload["body"])
+
     def test_deadline_safety_uses_crossing_merge_when_no_non_crossing_candidate_exists(self):
         import strategy_runner
 
@@ -1330,6 +1364,71 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], 1.5)
         self.assertIn("NO_TO_DIRECT", decision["reason"])
 
+    def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 0.0, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {"top_edge_y": 3.4, "deadline_crossed": True},
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 0.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.32,
+                        "top_y_after_drop": 3.6,
+                        "risk_top_y_after_drop": 3.6,
+                    },
+                    {
+                        "x": -1.2,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.32,
+                        "top_y_after_drop": 2.7,
+                        "risk_top_y_after_drop": 3.7,
+                    },
+                ],
+            },
+            {"pieces": [], "next": {"type": 9}},
+        )
+
+        self.assertEqual(decision["x"], -1.2)
+        self.assertIn("NO_TO_NO", decision["reason"])
+
+    def test_deadline_safety_uses_minrisk_when_all_candidates_cross_without_merge(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 0.0, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {"top_edge_y": 3.4, "deadline_crossed": True},
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 0.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.4,
+                    },
+                    {
+                        "x": 2.4,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.6,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 9, "x": 0.0, "y": 2.0}],
+                "next": {"type": 9},
+            },
+        )
+
+        self.assertEqual(decision["x"], 2.4)
+        self.assertIn("minrisk_postcondition", decision["reason"])
+
     def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
         import analyze_board
 
@@ -1347,6 +1446,43 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         ]
 
         self.assertTrue(safe_no_merge)
+
+    def test_deadline_analysis_uses_nominal_radii_when_shapes_are_partial(self):
+        import analyze_board
+
+        pieces = [
+            {"id": 1, "type": 1, "x": 0.0, "y": 1.8, "r": 0.45},
+        ]
+        shapes = {
+            "1": [[-0.18, -0.18], [0.18, -0.18], [0.18, 0.18], [-0.18, 0.18]],
+        }
+
+        results, _ = analyze_board.analyze_drops(
+            pieces,
+            next_type=9,
+            next_r=1.2,
+            shapes=shapes,
+        )
+        safe = [r for r in results if not r.get("crosses_deadline", False)]
+
+        self.assertTrue(safe)
+        self.assertLess(min(r["top_y_after_drop"] for r in safe), analyze_board.DEADLINE_Y)
+
+    def test_reactor_deadline_uses_polygon_top_instead_of_bridge_radius(self):
+        import analyze_board
+
+        pieces = [
+            {"id": 1, "type": 9, "x": 0.0, "y": 2.7, "r": 1.2},
+        ]
+        shapes = {
+            "9": [[-1.05, -0.42], [1.05, -0.42], [1.05, 0.53], [-1.05, 0.53]],
+        }
+
+        reactor = analyze_board.calc_reactor_state(pieces, shapes)
+
+        self.assertLess(reactor["top_edge_y"], analyze_board.DEADLINE_Y)
+        self.assertFalse(reactor["deadline_crossed"])
+        self.assertEqual(reactor["danger_piece_count"], 0)
 
     def test_deadline_crossing_overlay_notify_uses_event_overlay(self):
         import strategy_runner
@@ -1907,6 +2043,13 @@ PY
 
         self.assertIn(r"^\s*%?\s*(?:WebFetch|WebSearch)\b\s*", radio_engine)
         self.assertIn("attempt_talk=$(printf '%s' \"$attempt_talk\" | _sanitize_onair_text)", comment)
+
+    def test_radio_prepass_sanitizes_webfetch_failures_before_final_prompt(self):
+        radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
+
+        self.assertIn("_sanitize_radio_research_memo()", radio_engine)
+        self.assertIn("webfetch|websearch", radio_engine)
+        self.assertIn("_run_radio_agent \"$radio_prepass_agent\" \"$_prepass_prompt_file\" 2>/dev/null | _sanitize_radio_research_memo", radio_engine)
 
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()

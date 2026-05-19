@@ -186,6 +186,23 @@ _find_process_pid() {
 	'
 }
 
+_recent_file_active() {
+	local f="$1" max_age="$2" mod="" age=""
+	[[ -f "$f" ]] || return 1
+	case "$max_age" in ''|*[!0-9]*) return 1 ;; esac
+	mod=$(stat -f '%m' "$f" 2>/dev/null) || return 1
+	[[ -n "$mod" ]] || return 1
+	age=$(( $(date +%s) - mod ))
+	(( age >= 0 && age <= max_age ))
+}
+
+_activity_label() {
+	local f="$1" label="$2" age=""
+	age=$(_file_age "$f")
+	[[ -n "$age" ]] || age="recent"
+	printf 'activity:%s %s' "$label" "$age"
+}
+
 # ファイルの経過時間を返す
 _file_age() {
 	local f="$1"
@@ -631,6 +648,10 @@ END { printf "%s", block }
 		if [[ -n "$loop_pid" ]] && _pid_exists "$loop_pid"; then
 			loop_running=true
 		fi
+	fi
+	if ! $loop_running && _recent_file_active "logs/soren_loop.log" 600; then
+		loop_running=true
+		loop_pid=$(_activity_label "logs/soren_loop.log" "log")
 	fi
 
 	# --- ゲーム状態 ---
@@ -1638,6 +1659,14 @@ PY
 			chat_worker_running=true
 		fi
 	fi
+	if ! $chat_worker_running && { _recent_file_active "logs/chat_worker.log" 3600 || _recent_file_active "tmp/.twitch_chat/comment_context_history.log" 3600; }; then
+		chat_worker_running=true
+		if _recent_file_active "logs/chat_worker.log" 3600; then
+			chat_worker_pid=$(_activity_label "logs/chat_worker.log" "log")
+		else
+			chat_worker_pid=$(_activity_label "tmp/.twitch_chat/comment_context_history.log" "chat")
+		fi
+	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
 		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
@@ -1651,6 +1680,14 @@ PY
 			audio_worker_running=true
 		fi
 	fi
+	if ! $audio_worker_running && { _recent_file_active "logs/audio_worker.log" 1200 || _recent_file_active "tmp/.say_queue/debug.log" 1200; }; then
+		audio_worker_running=true
+		if _recent_file_active "logs/audio_worker.log" 1200; then
+			audio_worker_pid=$(_activity_label "logs/audio_worker.log" "log")
+		else
+			audio_worker_pid=$(_activity_label "tmp/.say_queue/debug.log" "say")
+		fi
+	fi
 	local radio_worker_running=false radio_worker_pid=""
 	if [[ -f tmp/state/radio_worker.pid ]]; then
 		radio_worker_pid=$(cat tmp/state/radio_worker.pid 2>/dev/null)
@@ -1662,6 +1699,14 @@ PY
 		radio_worker_pid=$(_find_process_pid '[/ ]workers/radio_worker[.]sh([[:space:]]|$)')
 		if [[ -n "$radio_worker_pid" ]] && _pid_exists "$radio_worker_pid"; then
 			radio_worker_running=true
+		fi
+	fi
+	if ! $radio_worker_running && { _recent_file_active "logs/radio_worker.log" 1200 || _recent_file_active "tmp/radio_worker_runtime.log" 1200; }; then
+		radio_worker_running=true
+		if _recent_file_active "logs/radio_worker.log" 1200; then
+			radio_worker_pid=$(_activity_label "logs/radio_worker.log" "log")
+		else
+			radio_worker_pid=$(_activity_label "tmp/radio_worker_runtime.log" "runtime")
 		fi
 	fi
 	local prediction_worker_running=false prediction_worker_pid="" prediction_worker_paused=false
@@ -1691,6 +1736,14 @@ PY
 		improve_daemon_pid=$(_find_process_pid '[/ ]improve_daemon[.]sh([[:space:]]|$)')
 		if [[ -n "$improve_daemon_pid" ]] && _pid_exists "$improve_daemon_pid"; then
 			improve_daemon_running=true
+		fi
+	fi
+	if ! $improve_daemon_running && { _recent_file_active "tmp/state/improve_daemon.pid" 120 || _recent_file_active "logs/improve_daemon.log" 7200; }; then
+		improve_daemon_running=true
+		if _recent_file_active "tmp/state/improve_daemon.pid" 120; then
+			improve_daemon_pid=$(_activity_label "tmp/state/improve_daemon.pid" "heartbeat")
+		else
+			improve_daemon_pid=$(_activity_label "logs/improve_daemon.log" "log")
 		fi
 	fi
 
@@ -1743,7 +1796,11 @@ PY
 
 	# メインループ
 	if $loop_running; then
-		printf "    ${C_GREEN}●${C_RESET} Loop        ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=${loop_pid}${C_RESET}\n"
+		if [[ "$loop_pid" == activity:* ]]; then
+			printf "    ${C_GREEN}●${C_RESET} Loop        ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${loop_pid#activity:}"
+		else
+			printf "    ${C_GREEN}●${C_RESET} Loop        ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=${loop_pid}${C_RESET}\n"
+		fi
 	else
 		printf "    ${C_RED}○${C_RESET} Loop        ${C_DIM}STOPPED${C_RESET}\n"
 	fi
@@ -1762,7 +1819,11 @@ PY
 		_w_running="${_worker_rows[$((_w_i + 1))]}"
 		_w_pid="${_worker_rows[$((_w_i + 2))]}"
 		if [[ "$_w_running" == "true" ]]; then
-			printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
+			if [[ "$_w_pid" == activity:* ]]; then
+				printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$_w_name" "${_w_pid#activity:}"
+			else
+				printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
+			fi
 		elif [[ "$_w_name" == "PredW" && "$prediction_worker_paused" == "true" ]]; then
 			printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}tmp/state/prediction_worker.paused${C_RESET}\n" "$_w_name"
 		else

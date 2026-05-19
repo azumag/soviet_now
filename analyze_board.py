@@ -193,7 +193,7 @@ def estimate_explosion_displacement(merge_x, merge_y, pieces, exclude_ids=None):
     return displacements, new_merges
 
 
-def calc_reactor_state(pieces):
+def calc_reactor_state(pieces, shapes=None):
     """人工化学としての反応器状態を解析。
     - 分子種ごとの濃度（個数）
     - 反応可能ペア数（接触圏内の同type）
@@ -202,6 +202,7 @@ def calc_reactor_state(pieces):
     """
     if not pieces:
         return {}
+    deadline_radii = build_deadline_radii(shapes)
 
     # 分子種カウント
     type_count = {}
@@ -254,11 +255,15 @@ def calc_reactor_state(pieces):
         bucket[p["type"]] = bucket.get(p["type"], 0) + 1
 
     top_center_y = max((p["y"] for p in pieces), default=FLOOR_Y)
-    top_edge_y = max((p["y"] + p["r"] for p in pieces), default=FLOOR_Y)
+    top_edge_y = max(
+        (piece_deadline_top_y(p, deadline_radii) for p in pieces),
+        default=FLOOR_Y,
+    )
     danger_pieces = [
         p
         for p in pieces
-        if float(p.get("redLineTime", 0) or 0) > 0 or (p["y"] + p["r"]) >= DEADLINE_Y
+        if float(p.get("redLineTime", 0) or 0) > 0
+        or piece_deadline_top_y(p, deadline_radii) >= DEADLINE_Y
     ]
     positive_redline = [
         float(p.get("redLineTime", 0) or 0)
@@ -285,10 +290,13 @@ def calc_reactor_state(pieces):
     }
 
 
-def build_sample_xs(pieces, next_type):
+def build_sample_xs(pieces, next_type, deadline_radii=None):
     """基本サンプル + 併合ターゲット座標の精密サンプルを生成"""
     xs = set(BASE_XS)
-    top_edge_y = max((p["y"] + p["r"] for p in pieces), default=FLOOR_Y)
+    top_edge_y = max(
+        (piece_deadline_top_y(p, deadline_radii) for p in pieces),
+        default=FLOOR_Y,
+    )
     if top_edge_y >= DEADLINE_Y - 1.5:
         for i in range(121):
             xs.add(round(DROP_X_MIN + i * 0.05, 2))
@@ -321,8 +329,9 @@ def calc_effective_radii(shapes):
             continue
         horiz = max(abs(v[0]) for v in verts)
         top = max(v[1] for v in verts)
+        bottom = abs(min(v[1] for v in verts))
         wall_top = max(top, horiz)
-        radii[t] = {"horiz": horiz, "top": top, "wall_top": wall_top}
+        radii[t] = {"horiz": horiz, "top": top, "bottom": bottom, "wall_top": wall_top}
     return radii
 
 
@@ -338,10 +347,27 @@ def calc_nominal_deadline_radii():
         t: {
             "horiz": r * COLLISION_POLY_FACTOR,
             "top": r,
+            "bottom": r,
             "wall_top": r,
         }
         for t, r in TYPE_RADII.items()
     }
+
+
+def build_deadline_radii(shapes=None):
+    radii = calc_nominal_deadline_radii()
+    if shapes:
+        radii.update(calc_effective_radii(shapes))
+    return radii
+
+
+def piece_deadline_top_y(piece, deadline_radii=None):
+    p_type = piece.get("type", 0)
+    fallback = min(float(piece.get("r", 0.5) or 0.5), TYPE_RADII.get(p_type, 0.5))
+    top_r = fallback
+    if deadline_radii and p_type in deadline_radii:
+        top_r = deadline_radii[p_type].get("top", top_r)
+    return float(piece.get("y", FLOOR_Y) or FLOOR_Y) + top_r
 
 
 def get_type_top_radius(piece_type, shapes, eff_radii=None):
@@ -355,7 +381,10 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
     r はスプライトバウンディングボックス半幅（外接円相当）だが、
     実際のコライダーは PolygonCollider2D で外接円より小さい。
     shapes から計算した実効半径で衝突範囲を補正する。"""
-    landing_y = FLOOR_Y + drop_r  # 床
+    drop_bottom_r = drop_r
+    if eff_radii and drop_type in eff_radii:
+        drop_bottom_r = eff_radii[drop_type].get("bottom", drop_r)
+    landing_y = FLOOR_Y + drop_bottom_r  # 床
     hit_id = None  # None = 床に着地
 
     # ドロップピースの実効半径
@@ -381,6 +410,29 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
                 hit_id = p["id"]
 
     return landing_y, hit_id
+
+
+def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
+    """Deadline判定用の着地Y。
+
+    横長ピースを円として扱うと、横半径が縦方向の分離にも使われて
+    「実際は横向きに置けるのに deadline 超過」と誤判定しやすい。
+    deadline 判定では横幅の重なりだけを接触条件にし、縦方向は
+    既知の上端/下端半径で積む。
+    """
+    drop_info = (deadline_radii or {}).get(drop_type, {})
+    drop_horiz = drop_info.get("horiz", drop_r * COLLISION_POLY_FACTOR)
+    drop_bottom = drop_info.get("bottom", drop_r)
+    landing_y = FLOOR_Y + drop_bottom
+    for p in pieces:
+        p_type = p.get("type", 0)
+        p_info = (deadline_radii or {}).get(p_type, {})
+        p_horiz = p_info.get("horiz", float(p.get("r", 0.5) or 0.5) * COLLISION_POLY_FACTOR)
+        if abs(drop_x - p["x"]) >= drop_horiz + p_horiz:
+            continue
+        p_top = p_info.get("top", min(float(p.get("r", 0.5) or 0.5), TYPE_RADII.get(p_type, 0.5)))
+        landing_y = max(landing_y, float(p.get("y", FLOOR_Y) or FLOOR_Y) + p_top + drop_bottom)
+    return landing_y
 
 
 def has_obstruction(drop_x, drop_r, target, pieces):
@@ -454,10 +506,10 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
     if shapes is None:
         shapes = {}
     eff_radii = calc_effective_radii(shapes) if shapes else {}
-    deadline_eff_radii = eff_radii or calc_nominal_deadline_radii()
+    deadline_eff_radii = build_deadline_radii(shapes)
     same_type = [p for p in pieces if p["type"] == next_type]
     target_ids = {p["id"] for p in same_type}
-    sample_xs = build_sample_xs(pieces, next_type)
+    sample_xs = build_sample_xs(pieces, next_type, deadline_eff_radii)
     # ドロップピースの上端高さ（ポリゴン実効値）
     if deadline_eff_radii and next_type in deadline_eff_radii:
         next_top_r = deadline_eff_radii[next_type]["top"]
@@ -474,7 +526,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         # 併合判定用: 元の円モデルで着地予測（併合距離の精度を維持）
         ly, hit_id = get_landing_info(x, next_r, pieces)
         # デッドライン判定用: ポリゴン補正で着地予測（crosses_deadline の偽陽性を抑制）
-        ly_poly, _ = get_landing_info(x, next_r, pieces, deadline_eff_radii, next_type)
+        ly_poly = get_deadline_landing_y(x, next_r, pieces, deadline_eff_radii, next_type)
 
         # ポリゴン形状によるドリフト推定
         drift_x, drift_unc = estimate_polygon_drift(
@@ -536,13 +588,13 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                     "contact_r": round(contact_r, 3),
                     "grade": grade,
                     "target_top_y": round(t["y"] + t["r"], 3),
-                    "target_crosses_deadline": (t["y"] + t["r"]) >= DEADLINE_Y,
+                    "target_crosses_deadline": piece_deadline_top_y(t, deadline_eff_radii) >= DEADLINE_Y,
                     "target_redline_time": round(
                         float(t.get("redLineTime", 0) or 0), 3
                     ),
                     "target_is_danger": (
                         float(t.get("redLineTime", 0) or 0) > 0
-                        or (t["y"] + t["r"]) >= DEADLINE_Y
+                        or piece_deadline_top_y(t, deadline_eff_radii) >= DEADLINE_Y
                     ),
                 }
             )
@@ -609,7 +661,11 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                 > 0
                 or float(
                     next(
-                        (p["y"] + p["r"] for p in same_type if p["id"] == m["id"]),
+                        (
+                            piece_deadline_top_y(p, deadline_eff_radii)
+                            for p in same_type
+                            if p["id"] == m["id"]
+                        ),
                         FLOOR_Y,
                     )
                 )
@@ -634,7 +690,11 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                 > 0
                 or float(
                     next(
-                        (p["y"] + p["r"] for p in same_type if p["id"] == m["id"]),
+                        (
+                            piece_deadline_top_y(p, deadline_eff_radii)
+                            for p in same_type
+                            if p["id"] == m["id"]
+                        ),
                         FLOOR_Y,
                     )
                 )
@@ -1005,7 +1065,7 @@ def main():
     nr = nxt.get("r", 0.5)
 
     results, same_type = analyze_drops(pieces, nt, nr, shapes)
-    reactor = calc_reactor_state(pieces)
+    reactor = calc_reactor_state(pieces, shapes)
     report = format_report(state, results, same_type, pieces, reactor)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)

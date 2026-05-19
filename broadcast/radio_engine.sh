@@ -472,6 +472,37 @@ BPROMPT
 	fi
 }
 
+_sanitize_radio_research_memo() {
+	python3 -c "$(
+		cat <<'PY'
+import re
+import sys
+
+drop_line_patterns = [
+    r'^\s*%?\s*(?:WebFetch|WebSearch)\b.*$',
+    r'^\s*[✗✕×]\s*(?:webfetch|websearch)\s+failed\b.*$',
+    r'^\s*[✱→►▸]\s*(?:Grep|Read|Glob|List|WebFetch|WebSearch)\b.*$',
+    r'^\s*(?:Error|Warning)\s*:\s*(?:Request failed with status code|Unable to connect|The operation was aborted|permission to use this specific tool call|file not found|no such file or directory|permission denied)\b.*$',
+    r'^\s*\{\s*"query"\s*:.*$',
+]
+
+clean = []
+for raw in sys.stdin.read().splitlines():
+    line = raw.strip()
+    if not line:
+        clean.append(raw.rstrip())
+        continue
+    if any(re.search(pat, line, flags=re.IGNORECASE) for pat in drop_line_patterns):
+        continue
+    clean.append(raw.rstrip())
+
+out = "\n".join(clean)
+out = re.sub(r'\n{3,}', '\n\n', out).strip()
+sys.stdout.write(out)
+PY
+	)"
+}
+
 _run_ollama_radio_unqueued() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_OLLAMA_MODEL}"
@@ -1459,7 +1490,7 @@ _radio_generate_and_play() {
 ${prompt_snapshot}
 PREPASS
 		log "[RADIO:${corner_name}] prepass: ${radio_prepass_agent} -> ${radio_primary_agent}"
-		_prepass_output=$(_run_radio_agent "$radio_prepass_agent" "$_prepass_prompt_file" 2>/dev/null || true)
+		_prepass_output=$(_run_radio_agent "$radio_prepass_agent" "$_prepass_prompt_file" 2>/dev/null | _sanitize_radio_research_memo || true)
 		rm -f "$_prepass_prompt_file" 2>/dev/null || true
 		if [ -n "$_prepass_output" ] && ! _contains_provider_error_text "$_prepass_output"; then
 			_prepass_enhanced_prompt=$(mktemp /tmp/eloop_radio_prepass_enhanced_XXXXXXXX)
