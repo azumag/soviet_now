@@ -65,6 +65,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 9.15 merge drought low-type digest priority — hall-of-fame移植
+     # Worst game (score0425) T60-69: 9 consecutive DEADLINE_GUARD, merge_available=false持続。
+     # Hall-of-fame (best_score5801) にはaxis 9.15があり、reactive_pairs/near_pairsからtype<=5の
+     # ペアを走査して重心への配置誘導を行う。current strategyには存在せず、merge drought脱出を
+     # 見逃していた。axis 9.15移植によりlow-type piece間のmerge機会を創出、piece_count削減と
+     # deadline_guard依存脱却を図る。column_ceiling_dominant / axis_88_horizontal_suppression
+     # をバイパスして発動し、death_spiral時は抑制（v610/v616 escalationが優先）。
+     # Fixes rollback failure mode: "deadline_guard選択後のmerge_path散逸によるNO merge連続"
+     # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py,
+     #       game_history/20260519_113012_score0425.jsonl, tmp/state/last_rollback_analysis.md
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -1592,6 +1602,57 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if blocking_penalty > 0:
                     score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+
+        # ----- evaluation axis 9.15: merge drought low-type digest priority (vXXX) -----
+        # Worst game (score0425) T60-69: 9 consecutive DEADLINE_GUARD selections, merge_available=false
+        # throughout. Despite rp=3-4 and max_y rising 2.02->3.73, no merge guidance existed for low-type pairs.
+        # Hall-of-fame strategy (best_score5801) has axis 9.15: scan reactive_pairs and near_pairs
+        # for type<=5 pairs, guide placement toward their centroid to create merge opportunities.
+        # This addresses the "deadline_guard選択後のmerge_path散逸" failure mode (change_log v630).
+        #
+        # Logic:
+        # (1) merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5 && not death_spiral
+        # (2) Scan reactive_pairs and near_pairs for type<=5 pairs
+        # (3) Find lowest-type pair's centroid (cx, cy)
+        # (4) Bonus = max(0, 600 - dist*200) * merge_mult, where dist = |x-cx| + |landing_y-cy|
+        # (5) Fires even when axis_88_horizontal_suppression or column_ceiling_dominant is active
+        # (6) Suppressed in death_spiral (v610/v616 escalation handles that regime)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+        #       strategy_versions/best_score5801_strategy.py (hall-of-fame, axis 9.15 confirmed),
+        #       game_history/20260519_113012_score0425.jsonl (worst game merge drought T60-69),
+        #       tmp/state/last_rollback_analysis.md (merge_path散逸 constraint)
+        # Fixes rollback failure mode: "deadline_guard選択後のmerge_path散逸によるNO merge連続"
+        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 1.5 and not death_spiral:
+            _low_type_pairs = []
+            for rp_entry in reactive_pairs:
+                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
+                    _rtype = rp_entry[2]
+                    if _rtype <= 5:
+                        _p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
+                        _p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
+                        if _p1 and _p2:
+                            _cx = (_p1["x"] + _p2["x"]) / 2.0
+                            _cy = (_p1["y"] + _p2["y"]) / 2.0
+                            _low_type_pairs.append((_rtype, _cx, _cy))
+            for np_entry in near_pairs:
+                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
+                    _rtype = np_entry[2]
+                    if _rtype <= 5:
+                        _p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
+                        _p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
+                        if _p1 and _p2:
+                            _cx = (_p1["x"] + _p2["x"]) / 2.0
+                            _cy = (_p1["y"] + _p2["y"]) / 2.0
+                            _low_type_pairs.append((_rtype, _cx, _cy))
+            if _low_type_pairs:
+                _low_type_pairs.sort(key=lambda t: t[0])
+                _best_type, _best_cx, _best_cy = _low_type_pairs[0]
+                _dist = abs(x - _best_cx) + abs(landing_y - _best_cy)
+                _digest_bonus = max(0.0, 600.0 - _dist * 200.0) * merge_mult
+                if _digest_bonus > 20:
+                    score += _digest_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
