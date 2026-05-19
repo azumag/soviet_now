@@ -907,7 +907,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     elif max_y < 3.0:
         phase = "HIGH"
         height_mult = 1.8  # HIGH phase height_mult from v42
-        merge_mult = 0.558
+        merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
@@ -1590,7 +1590,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     if landing_y >= pair_min_y:
                                         blocking_penalty += 200.0
                 if blocking_penalty > 0:
-                    score -= min(blocking_penalty, 653.3)
+                    score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- evaluation axis 2: height penalty -----
@@ -1664,7 +1664,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if deadline_crossed and reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade == "NO":
+        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
