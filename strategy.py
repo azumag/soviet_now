@@ -65,6 +65,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v627: axis 9.12 — merge drought exit trigger (no_merge_streak>=3) for type 10+ clustering
+      # Adopted from best_score5801_strategy.py v617 axis 9.12.
+      # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add +500*merge_mult
+      # bonus for placing within 1.5u of type 10+ piece centroid +200*merge_mult extra if same-type pair.
+      # Fills the pre-type-13 gap: worst game T46-T54 had 8 consecutive NO merge turns with type 10-12
+      # pieces only, no axis provided clustering guidance, type13+ never formed, Russia phase never reached.
+      # Axis 9.65 (type>=13 NO-merge clustering) requires next_type>=13 — never fires if board never
+      # reaches type13+. Axis 9.12 triggers on board state (type 10+ existing) regardless of next_type.
+      # Fixes rollback failure mode: "NO merge drought with only type 10-12 pieces → no clustering guidance
+      #   → type13+ never formed → Russia phase unreachable"
+      # Rollback constraint: "forbid: type>=13 で merge_available=false の状態で HEIGHT_CONTROL を選ぶこと"
+      #   — axis 9.12 addresses pre-type-13 gap, preventing type>=13 situations from arising.
+      # Phase gate: targets Russia(type 15) pipeline formation (prevents pipeline blockage at type 10-12)
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+      #       strategy_versions/best_score5801_strategy.py (v617 axis 9.12 reference),
+      #       advice.md ("2手先の併合可能性を最大化するため")
       # v626: axis 9.65 — type>=13 NO-merge clustering bonus (near-miss type clustering)
       # Adopted from best_score5801_strategy.py axis 9.65 reference.
       # When next_type>=13, merge_grade==NO, no same-type piece on board (same_type_stack_top is None),
@@ -982,6 +998,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
+    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO ---
+    # Used by axis 9.12 to detect merge drought and trigger high-type clustering guidance.
+    # analysis_result.md adopted hypothesis: no_merge_streak>=3 trigger for type 10+ clustering
+    # Ref: best_score5801_strategy.py v617 axis 9.12
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -1826,6 +1848,89 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += clustering_bonus
                     if "HIGH_TYPE_CLUSTERING" not in reasons:
                         reasons.append("HIGH_TYPE_CLUSTERING")
+
+        # ----- v627: axis 9.12 — merge drought exit trigger (no_merge_streak>=3) -----
+        # analysis_result.md adopted hypothesis: NO merge consecutive turn count (no_merge_streak)>=3
+        # triggers high-type (type>=10) clustering guidance to create next-turn NEAR merge opportunities.
+        #
+        # Problem: The worst game (score=543) had 8 consecutive NO merge turns (T46-T54) with rp=5-7
+        # and only type 10-12 pieces on board. No axis provided guidance to cluster these pieces
+        # toward type 13 formation. The board never reached type 13+, so axis 9.65 never fired.
+        #
+        # Axis 9.65 (type>=13 NO-merge clustering) requires next_type>=13 — it never fires if the
+        # board never reaches type 13+. This leaves a gap where type 10-12 pieces scatter without
+        # building the type13→14→15 pipeline.
+        #
+        # Axis 9.12 fills this gap: when no_merge_streak>=3 && merge_grade==NO, guide placement
+        # toward type 10+ pieces on the board REGARDLESS of whether next_type>=13.
+        # This creates "near-miss" opportunities — placing type N near type N so the NEXT type N
+        # piece can immediately merge (advice.md: "2手先の併合可能性を最大化").
+        #
+        # Trigger conditions:
+        #   no_merge_streak >= 3  (drought detected via game_state counter)
+        #   merge_grade == "NO"  (no immediate merge available)
+        #   max_y >= 1.5  (board elevated enough that height penalty dominates)
+        #   piece_count >= 30  (congested board — drought is dangerous)
+        #   not death_spiral  (height penalty must dominate in death spiral)
+        #
+        # Bonus: +500*merge_mult for placing within 1.5u of type 10+ piece centroid
+        #   +200*merge_mult extra if nearest type 10+ piece has same-type pair on board
+        #
+        # This is competitive with height diffs (~100-200 per y-unit) and axis 8.8 (-4500 to -5500),
+        # providing meaningful clustering incentive without overriding safety.
+        #
+        # NOT a height penalty override — purely placement optimization near existing high-type pieces.
+        #
+        # Rollback constraint (last_rollback_postmortem.md): "forbid: type>=13 で merge_available=false
+        #   の状態で HEIGHT_CONTROL を選ぶこと" — axis 9.12 addresses the PRE-type-13 gap that causes
+        #   this failure mode by guiding type 10-12 clustering before type 13+ exists on board.
+        #
+        # mandatory_themes check:
+        #   "デッドラインを超える位置上にあるピースを置く場合は、併合できる場合に限る" → this axis
+        #   only provides placement guidance, does not affect crosses_deadline evaluation
+        #   "NEXTを考慮したドロップ" → bonus based on existing board state (type 10+ pieces)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+        #       strategy_versions/best_score5801_strategy.py (v617 axis 9.12 reference),
+        #       advice.md ("2手先の併合可能性を最大化するため")
+        # Fixes rollback failure mode: 8-turn NO merge drought (T46-T54) with type 10-12 pieces only,
+        #   no axis providing clustering guidance → type13+ never formed → Russia phase never reached
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+            and not guidance_suppressed
+        ):
+            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if len(high_type_pieces) >= 1:
+                centroid_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
+                centroid_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                if dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+                    type_counts_on_board = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
+                    nearest_type = None
+                    min_dist = float("inf")
+                    for ht in high_type_pieces:
+                        hx = ht.get("x", 0)
+                        hy = ht.get("y", -10)
+                        manhattan = abs(x - hx) + abs(landing_y - hy)
+                        if manhattan < min_dist:
+                            min_dist = manhattan
+                            nearest_type = ht.get("type", 0)
+                    if nearest_type is not None and type_counts_on_board.get(nearest_type, 0) >= 2:
+                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
+                        if pair_bonus > 20:
+                            score += pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
