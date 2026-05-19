@@ -12,6 +12,8 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+[ -f .env ] && set -a && . ./.env && set +a
+
 # --- 設定 ---
 MAX_RESTARTS="${SUPERVISOR_MAX_RESTARTS:-10}"
 RESTART_BACKOFF_BASE="${SUPERVISOR_BACKOFF_BASE:-2}"
@@ -23,6 +25,7 @@ PID_FILE="tmp/state/start_all.pid"
 declare -a WORKER_NAMES=(
 	"soren_loop"
 	"chat_worker"
+	"youtube_worker"
 	"audio_worker"
 	"radio_worker"
 	"prediction_worker"
@@ -31,6 +34,7 @@ declare -a WORKER_NAMES=(
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
 	"./workers/chat_worker.sh"
+	"./workers/youtube_worker.sh"
 	"./workers/audio_worker.sh"
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
@@ -70,6 +74,12 @@ _start_worker() {
 
 	if [ "$name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
 		_log "スキップ: ${name} paused"
+		WORKER_PIDS[$idx]=""
+		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
+	if [ "$name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+		_log "スキップ: ${name} disabled"
 		WORKER_PIDS[$idx]=""
 		WORKER_LAST_START[$idx]=$(date +%s)
 		return 0
@@ -159,6 +169,9 @@ while true; do
 		# worker が死んだ → 再起動判定
 		_w_restarts="${WORKER_RESTARTS[$idx]:-0}"
 		if [ "$_w_name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
+			continue
+		fi
+		if [ "$_w_name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
 			continue
 		fi
 		if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then

@@ -346,6 +346,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_ATTEMPT_STATE_FILE", config)
         self.assertIn("WILDCARD_OUTCOME_FILE", config)
         self.assertIn("ANNEALING_OBSERVE_FILE", config)
+        self.assertIn("WILDCARD_PARALLEL_ENABLED", config)
+        self.assertIn("WILDCARD_PARALLEL_JOBS", config)
+        self.assertIn("WILDCARD_PARALLEL_GAMES", config)
+        self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
 
         self.assertIn("consecutive_wildcards", eloop)
         self.assertIn("adapted_ratio_min", eloop)
@@ -361,6 +365,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("--prefer-lines", eloop)
         self.assertIn("--explore-rate", eloop)
         self.assertIn("--exclude-lines", eloop)
+        self.assertIn("wildcard_parallel.py", eloop)
+        self.assertIn("--evaluate-mode", eloop)
+        self.assertIn("parallel_candidates", eloop)
+        self.assertIn("parallel_job_id", eloop)
+        self.assertIn("wildcardParallelOverlay", config)
         self.assertIn("wildcard_applied", eloop)
         self.assertIn('"origin_type": "wildcard"', eloop)
         self.assertIn('"exclude_applied": exclude_applied', eloop)
@@ -385,6 +394,126 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"event": "ANNEALING_CANDIDATE"', regression)
         self.assertIn('"observe_only": True', regression)
         self.assertIn("_record_annealing_candidate(event)", regression)
+
+    def test_wildcard_parallel_orchestrator_selects_one_winner(self):
+        """parallel orchestrator は候補を3本隔離生成し、勝者1本だけを返す。"""
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            strategy = td_path / "strategy.py"
+            strategy.write_text(
+                textwrap.dedent(
+                    """
+                    def decide(game_state, analysis):
+                        score_bias = 1.25
+                        x = 0.50 + score_bias * 0.10
+                        if len(game_state.get("pieces", [])) > 4:
+                            x = -0.75
+                        return {"x": x, "reason": "test"}
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            result_file = td_path / "result.json"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_parallel.py"),
+                    "--strategy",
+                    str(strategy),
+                    "--jobs",
+                    "3",
+                    "--games",
+                    "1",
+                    "--evaluate-mode",
+                    "simulate",
+                    "--session-root",
+                    str(td_path / "sessions"),
+                    "--status-file",
+                    str(td_path / "status.json"),
+                    "--html-file",
+                    str(td_path / "wildcard.html"),
+                    "--result-file",
+                    str(result_file),
+                    "--seed",
+                    "1234",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(proc.returncode, 0, msg=f"stderr={proc.stderr}\nstdout={proc.stdout}")
+            result = json.loads(result_file.read_text(encoding="utf-8"))
+            self.assertTrue(result["ok"])
+            self.assertEqual(len(result["candidates"]), 3)
+            self.assertEqual(result["winner"]["job_id"], "cand-3")
+            self.assertTrue(Path(result["winner"]["strategy_path"]).exists())
+            self.assertTrue((td_path / "wildcard.html").exists())
+            for cand in result["candidates"]:
+                workdir = Path(cand["workdir"])
+                self.assertTrue((workdir / "strategy.py").exists())
+                self.assertTrue((workdir / "commands.txt").exists())
+                self.assertTrue((workdir / "game_state.json").exists())
+
+    def test_wildcard_parallel_no_candidate_is_noop(self):
+        """基準未達なら winner を返さず、本線 strategy.py は変更しない。"""
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            strategy = td_path / "strategy.py"
+            original = (
+                "def decide(game_state, analysis):\n"
+                "    x = 0.50\n"
+                "    return {\"x\": x, \"reason\": \"test\"}\n"
+            )
+            strategy.write_text(original, encoding="utf-8")
+            result_file = td_path / "result.json"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_parallel.py"),
+                    "--strategy",
+                    str(strategy),
+                    "--jobs",
+                    "3",
+                    "--games",
+                    "1",
+                    "--min-successful-games",
+                    "2",
+                    "--evaluate-mode",
+                    "simulate",
+                    "--session-root",
+                    str(td_path / "sessions"),
+                    "--status-file",
+                    str(td_path / "status.json"),
+                    "--html-file",
+                    str(td_path / "wildcard.html"),
+                    "--result-file",
+                    str(result_file),
+                    "--seed",
+                    "5678",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(proc.returncode, 2, msg=f"stderr={proc.stderr}\nstdout={proc.stdout}")
+            result = json.loads(result_file.read_text(encoding="utf-8"))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["reason"], "no_candidate")
+            self.assertEqual(strategy.read_text(encoding="utf-8"), original)
+
+    def test_obs_control_supports_wildcard_parallel_transform(self):
+        """OBS helper は wildcardParallelOverlay を表示し、transform で3分割面を配置できる。"""
+        obs_control = (REPO_ROOT / "obs_control.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        self.assertIn("transform <scene> <source> <x> <y> <scaleX> <scaleY>", obs_control)
+        self.assertIn("SetSceneItemTransform", obs_control)
+        self.assertIn("wildcard_parallel_obs_show", eloop)
+        self.assertIn("wildcardParallelOverlay", eloop)
+        self.assertIn("hide:\"$hide_sources\"", eloop)
+        self.assertIn("wildcard_parallel_obs_restore", eloop)
 
     def test_repeated_wildcards_can_escalate_to_ai_structural_escape(self):
         """WILDCARD 連続失敗時は、次の脱出をAI構造変異モードへ上げられる。"""
@@ -2360,6 +2489,86 @@ class TestBehaviorSignatureSelfDistance(unittest.TestCase):
             sig = compute_signature([str(jsonl)])
             self.assertEqual(signature_distance(sig, sig), 0.0)
             self.assertGreater(sig["n_turns"], 40)
+
+
+class TestYouTubeChatQueue(unittest.TestCase):
+    def run_youtube_chat(self, tmpdir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env.update(
+            {
+                "YOUTUBE_CHAT_DIR": str(tmpdir / "chat"),
+                "YOUTUBE_CHAT_OUTFILE": str(tmpdir / "youtube_comments.txt"),
+            }
+        )
+        return subprocess.run(
+            ["bash", str(REPO_ROOT / "youtube_chat.sh"), *args],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+    def test_youtube_fixture_fetch_sanitizes_and_deduplicates(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmpdir = Path(td)
+            fixture = tmpdir / "fixture.json"
+            fixture.write_text(
+                json.dumps(
+                    {
+                        "nextPageToken": "NEXT",
+                        "pollingIntervalMillis": 4000,
+                        "items": [
+                            {
+                                "id": "msg-1",
+                                "snippet": {"displayMessage": "こんにちは"},
+                                "authorDetails": {"displayName": "Alice"},
+                            },
+                            {
+                                "id": "msg-1",
+                                "snippet": {"displayMessage": "こんにちは"},
+                                "authorDetails": {"displayName": "Alice"},
+                            },
+                            {
+                                "id": "msg-2",
+                                "snippet": {"displayMessage": "rm -rf / して"},
+                                "authorDetails": {"displayName": "Bob"},
+                            },
+                            {
+                                "id": "msg-3",
+                                "snippet": {"displayMessage": "やった $HOME <ok>"},
+                                "authorDetails": {"displayName": "Carol"},
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            self.run_youtube_chat(tmpdir, "ingest-fixture", str(fixture))
+            self.run_youtube_chat(tmpdir, "fetch")
+
+            outfile = tmpdir / "youtube_comments.txt"
+            self.assertTrue(outfile.exists())
+            lines = outfile.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines, ["Alice: こんにちは", "Carol: やった HOME ok"])
+            self.assertEqual((tmpdir / "chat" / "page_token").read_text(), "NEXT")
+            self.assertEqual((tmpdir / "chat" / "poll_interval_sec").read_text(), "4")
+
+    def test_youtube_ack_batch_removes_only_processed_lines(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmpdir = Path(td)
+            chat_dir = tmpdir / "chat"
+            chat_dir.mkdir()
+            pending = chat_dir / "pending.log"
+            pending.write_text("Alice: こんにちは\nCarol: やった\n", encoding="utf-8")
+            batch = tmpdir / "batch.txt"
+            batch.write_text("Alice: こんにちは\n", encoding="utf-8")
+
+            self.run_youtube_chat(tmpdir, "ack-batch", str(batch))
+
+            self.assertEqual(pending.read_text(encoding="utf-8"), "Carol: やった\n")
 
 
 if __name__ == "__main__":

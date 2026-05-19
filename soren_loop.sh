@@ -366,7 +366,7 @@ while true; do
 		continue
 	fi
 	if _is_improve_running; then
-		# WILDCARD 改善 (AI不使用・数秒) は soren91 代打を立てない:
+		# WILDCARD 改善 (AI不使用・隔離評価) は soren91 代打を立てない:
 		# 代打起動→完了時bridge再起動が commands 経路 desync=空転の発生源。
 		_pause_reason=$(python3 -c "import json,sys
 for path in sys.argv[1:]:
@@ -384,7 +384,7 @@ for path in sys.argv[1:]:
 		fi
 		case "$_pause_reason" in
 		wildcard|archive_restart)
-			log_pause_throttled "${_pause_reason}_improve" "[PAUSE] ${_pause_reason}改善中(短時間): soren91代打を立てず待機"
+			log_pause_throttled "${_pause_reason}_improve" "[PAUSE] ${_pause_reason}改善中(隔離評価): soren91代打を立てず待機"
 			_run_improve_runtime_monitor
 			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 			continue

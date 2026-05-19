@@ -1681,6 +1681,30 @@ PY
 			chat_worker_pid=$(_activity_label "tmp/.twitch_chat/comment_context_history.log" "chat")
 		fi
 	fi
+	local youtube_worker_running=false youtube_worker_pid="" youtube_worker_enabled=false
+	case "${YOUTUBE_CHAT_ENABLED:-0}" in
+	1 | true | TRUE | yes | YES) youtube_worker_enabled=true ;;
+	esac
+	if [[ -f tmp/state/youtube_worker.pid ]]; then
+		youtube_worker_pid=$(cat tmp/state/youtube_worker.pid 2>/dev/null)
+		if [[ -n "$youtube_worker_pid" ]] && _pid_exists "$youtube_worker_pid"; then
+			youtube_worker_running=true
+		fi
+	fi
+	if ! $youtube_worker_running; then
+		youtube_worker_pid=$(_find_process_pid '[/ ]workers/youtube_worker[.]sh([[:space:]]|$)')
+		if [[ -n "$youtube_worker_pid" ]] && _pid_exists "$youtube_worker_pid"; then
+			youtube_worker_running=true
+		fi
+	fi
+	if ! $youtube_worker_running && { _recent_file_active "logs/youtube_worker.log" 3600 || _recent_file_active "tmp/.youtube_chat/pending.log" 3600; }; then
+		youtube_worker_running=true
+		if _recent_file_active "logs/youtube_worker.log" 3600; then
+			youtube_worker_pid=$(_activity_label "logs/youtube_worker.log" "log")
+		else
+			youtube_worker_pid=$(_activity_label "tmp/.youtube_chat/pending.log" "chat")
+		fi
+	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
 		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
@@ -1785,6 +1809,10 @@ PY
 	if [[ -f tmp/.twitch_chat/pending.log ]] && [[ -s tmp/.twitch_chat/pending.log ]]; then
 		twitch_pending=$(wc -l < tmp/.twitch_chat/pending.log | tr -d ' ')
 	fi
+	local youtube_pending=0
+	if [[ -f tmp/.youtube_chat/pending.log ]] && [[ -s tmp/.youtube_chat/pending.log ]]; then
+		youtube_pending=$(wc -l < tmp/.youtube_chat/pending.log | tr -d ' ')
+	fi
 
 	# 最新コメント
 	local twitch_latest=""
@@ -1793,6 +1821,12 @@ PY
 		# "    ▸ Latest     " = 18 → text max = W-18
 		local max_tw=$(( W - 18 ))
 		(( ${#twitch_latest} > max_tw )) && twitch_latest="${twitch_latest[1,$((max_tw-3))]}..."
+	fi
+	local youtube_latest=""
+	if [[ -f tmp/youtube_comments.txt ]] && [[ -s tmp/youtube_comments.txt ]]; then
+		youtube_latest=$(tail -1 tmp/youtube_comments.txt)
+		local max_yt=$(( W - 18 ))
+		(( ${#youtube_latest} > max_yt )) && youtube_latest="${youtube_latest[1,$((max_yt-3))]}..."
 	fi
 
 	# 最新ドロップ
@@ -1822,6 +1856,7 @@ PY
 	# Worker 個別状態
 	local _worker_rows=(
 		"ChatW" "$chat_worker_running" "$chat_worker_pid"
+		"YouTubeW" "$youtube_worker_running" "$youtube_worker_pid"
 		"AudioW" "$audio_worker_running" "$audio_worker_pid"
 		"RadioW" "$radio_worker_running" "$radio_worker_pid"
 		"PredW" "$prediction_worker_running" "$prediction_worker_pid"
@@ -1840,6 +1875,8 @@ PY
 			fi
 		elif [[ "$_w_name" == "PredW" && "$prediction_worker_paused" == "true" ]]; then
 			printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}tmp/state/prediction_worker.paused${C_RESET}\n" "$_w_name"
+		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
+			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
 		else
 			printf "    ${C_RED}○${C_RESET} %-11s ${C_DIM}STOPPED${C_RESET}\n" "$_w_name"
 		fi
@@ -1848,8 +1885,10 @@ PY
 	# ワーカー稼働メーター
 	local workers_online=0 workers_total=6 workers_expected=6
 	$prediction_worker_paused && workers_expected=5
+	$youtube_worker_enabled && workers_expected=$((workers_expected + 1))
 	$loop_running && workers_online=$((workers_online + 1))
 	$chat_worker_running && workers_online=$((workers_online + 1))
+	$youtube_worker_running && workers_online=$((workers_online + 1))
 	$audio_worker_running && workers_online=$((workers_online + 1))
 	$radio_worker_running && workers_online=$((workers_online + 1))
 	$prediction_worker_running && workers_online=$((workers_online + 1))
@@ -2081,6 +2120,29 @@ PY
 
 	if [[ -n "$twitch_latest" ]]; then
 		printf "    ${C_DIM}▸ Latest     ${twitch_latest}${C_RESET}\n"
+	fi
+
+	echo ""
+
+	# === セクション: YouTube ===
+	printf "  ${C_BOLD}YOUTUBE${C_RESET}\n"
+
+	if $youtube_worker_enabled; then
+		if $youtube_worker_running; then
+			printf "    ${C_GREEN}●${C_RESET} Chat        ${C_GREEN}CONNECTED${C_RESET}  ${C_DIM}PID=${youtube_worker_pid}${C_RESET}\n"
+		else
+			printf "    ${C_RED}○${C_RESET} Chat        ${C_DIM}DISCONNECTED${C_RESET}\n"
+		fi
+	else
+		printf "    ${C_DIM}○${C_RESET} Chat        ${C_DIM}DISABLED${C_RESET}\n"
+	fi
+
+	if (( youtube_pending > 0 )); then
+		printf "    ${C_MAGENTA}▸${C_RESET} Pending     ${C_MAGENTA}${youtube_pending} comments${C_RESET}\n"
+	fi
+
+	if [[ -n "$youtube_latest" ]]; then
+		printf "    ${C_DIM}▸ Latest     ${youtube_latest}${C_RESET}\n"
 	fi
 
 	echo ""

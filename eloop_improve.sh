@@ -584,6 +584,214 @@ PY
 	wildcard_explore_rate=$(echo "$wildcard_adapt_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('bandit_explore_rate',0.35))" 2>/dev/null || echo "${WILDCARD_BANDIT_EXPLORE_RATE:-0.35}")
 	log "[WILDCARD] adaptive scale streak=${wildcard_streak} scale=${wildcard_scale} count=${wildcard_count_min}-${wildcard_count_max} ratio=${wildcard_ratio_min}-${wildcard_ratio_max} exclude_lines=${wildcard_exclude_lines:-none} prefer_lines=${wildcard_prefer_lines:-none}"
 	_improve_progress "wildcard" "20" "perturbing_constants_streak_${wildcard_streak}_scale_${wildcard_scale}"
+	if [ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ]; then
+		log "[WILDCARD] parallel real-game trial start jobs=${WILDCARD_PARALLEL_JOBS:-3} games=${WILDCARD_PARALLEL_GAMES:-3}"
+		_improve_progress "wildcard_parallel" "25" "parallel_candidate_generation"
+		wildcard_parallel_obs_show() {
+			[ -x ./obs_control.sh ] || return 0
+			local scene="${OBS_DASHBOARD_SCENE:-soren}"
+			local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
+			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
+			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
+			local hide_sources="$dashboard_source"
+			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
+			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" 1920 760 show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh batch "$scene" show:"$overlay","$status_source","$show_status_source" hide:"$hide_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 1920 760 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh transform "$scene" "$status_source" 24 790 0.55 0.55 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh transform "$scene" "$show_status_source" 760 790 0.55 0.55 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+		}
+		wildcard_parallel_obs_restore() {
+			[ -x ./obs_control.sh ] || return 0
+			local scene="${OBS_DASHBOARD_SCENE:-soren}"
+			local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
+			local show_sources="$dashboard_source"
+			[ -n "$game_source" ] && show_sources="$show_sources,$game_source"
+			./obs_control.sh batch "$scene" hide:"$overlay" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+		}
+		wildcard_parallel_obs_show || true
+		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
+		wildcard_count=$((wildcard_count_min + RANDOM % (wildcard_count_max - wildcard_count_min + 1)))
+		[ "$wildcard_count" -lt 1 ] && wildcard_count=1
+		wildcard_seed=$(date +%s)
+		wildcard_parallel_result_file="${WILDCARD_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/wildcard_parallel_result.json}"
+		wildcard_parallel_result=$(python3 wildcard_parallel.py \
+			--strategy "$STRATEGY_FILE" \
+			--jobs "${WILDCARD_PARALLEL_JOBS:-3}" \
+			--games "${WILDCARD_PARALLEL_GAMES:-3}" \
+			--count "$wildcard_count" \
+			--ratio-min "$wildcard_ratio_min" \
+			--ratio-max "$wildcard_ratio_max" \
+			--exclude-lines "$wildcard_exclude_lines" \
+			--prefer-lines "$wildcard_prefer_lines" \
+			--explore-rate "$wildcard_explore_rate" \
+			--seed "$wildcard_seed" \
+			--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
+			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
+			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
+			--result-file "$wildcard_parallel_result_file" 2>&1)
+		wildcard_parallel_rc=$?
+		if [ "$wildcard_parallel_rc" -ne 0 ]; then
+			log "[WILDCARD] parallel trial produced no candidate rc=$wildcard_parallel_rc: ${wildcard_parallel_result:0:500}"
+			_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
+			wildcard_parallel_obs_restore || true
+			exit 1
+		fi
+		wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || true
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(w.get("strategy_path") or "")
+PY
+)
+		[ -n "$wildcard_winner_path" ] && [ -f "$wildcard_winner_path" ] || {
+			log "[WILDCARD] parallel winner strategy missing: ${wildcard_winner_path:-empty}"
+			_improve_progress "wildcard_no_candidate" "100" "parallel_winner_missing"
+			wildcard_parallel_obs_restore || true
+			exit 1
+		}
+		if ! validate_strategy_with_helpers "$wildcard_winner_path" "strategy_helpers"; then
+			log "[WILDCARD] parallel winner validation failed → no apply"
+			_improve_progress "wildcard_validate_fail" "100" "parallel_winner_invalid"
+			wildcard_parallel_obs_restore || true
+			exit 1
+		fi
+		cp "$wildcard_winner_path" "$STRATEGY_FILE"
+		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		wildcard_result=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || echo '{}'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(json.dumps({
+    "applied": w.get("applied") or [],
+    "parallel_job_id": w.get("job_id") or "",
+    "parallel_winner": w,
+    "parallel_candidates": d.get("candidates") or [],
+    "parallel_session_dir": d.get("session_dir") or "",
+}, ensure_ascii=False))
+PY
+)
+		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
+			WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" WILDCARD_PARALLEL_JSON="$wildcard_result" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path, h, max_games, game_num = sys.argv[1:5]
+data = {}
+if os.path.exists(path):
+    try:
+        data = json.load(open(path, encoding="utf-8")) or {}
+    except Exception:
+        data = {}
+parallel = json.loads(os.environ.get("WILDCARD_PARALLEL_JSON", "{}") or "{}")
+winner = parallel.get("parallel_winner") or {}
+data[h] = {
+    "origin_type": "wildcard",
+    "created_at_game": int(game_num),
+    "patience_override": 1,
+    "max_games_override": int(max_games),
+    "created_at_epoch": int(time.time()),
+    "wildcard_streak": int(os.environ.get("WILDCARD_CURRENT_STREAK", "1") or 1),
+    "wildcard_applied": json.loads(os.environ.get("WILDCARD_APPLIED_JSON", "[]") or "[]"),
+    "parallel_job_id": winner.get("job_id") or "",
+    "parallel_result": winner,
+}
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, path)
+PY
+			log "[WILDCARD] parallel origin registered: $HASH_AFTER (max_games=${WILDCARD_PATIENCE_GAMES:-12}, streak=${wildcard_streak})"
+		fi
+		GAME_NUM_SNAPSHOT="${GAME_NUM_SNAPSHOT:-0}" WILDCARD_RESULT_JSON="$wildcard_result" WILDCARD_HASH_BEFORE="$HASH_BEFORE" WILDCARD_HASH_AFTER="$HASH_AFTER" python3 - "${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" "${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path = sys.argv[1]
+outcome_path = sys.argv[2] if len(sys.argv) > 2 else ""
+try:
+    result = json.loads(os.environ.get("WILDCARD_RESULT_JSON", "") or "{}")
+except Exception:
+    result = {}
+applied = result.get("applied", []) if isinstance(result, dict) else []
+lines = []
+for item in applied:
+    try:
+        line = int(item.get("lineno", 0))
+    except Exception:
+        continue
+    if line > 0:
+        lines.append(line)
+try:
+    data = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+except Exception:
+    data = {}
+recent = [int(x) for x in (data.get("recent_applied_lines", []) or []) if str(x).isdigit()]
+recent.extend(lines)
+data["recent_applied_lines"] = recent[-50:]
+data["last_applied"] = applied
+data["last_parallel_job_id"] = result.get("parallel_job_id") or ""
+attempts = data.get("recent_attempts", []) or []
+attempts.append({
+    "epoch": int(time.time()),
+    "game": int(os.environ.get("GAME_NUM_SNAPSHOT", "0") or 0),
+    "applied_lines": lines,
+    "parallel_job_id": result.get("parallel_job_id") or "",
+})
+data["recent_attempts"] = attempts[-12:]
+data["last_result_epoch"] = int(time.time())
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, path)
+if outcome_path:
+    row = {
+        "event": "CREATED",
+        "epoch": int(time.time()),
+        "game": int(os.environ.get("GAME_NUM_SNAPSHOT", "0") or 0),
+        "hash_before": os.environ.get("WILDCARD_HASH_BEFORE", ""),
+        "hash": os.environ.get("WILDCARD_HASH_AFTER", ""),
+        "applied": applied,
+        "applied_lines": lines,
+        "parallel_job_id": result.get("parallel_job_id") or "",
+        "parallel_winner": result.get("parallel_winner") or {},
+        "parallel_candidates": result.get("parallel_candidates") or [],
+    }
+    os.makedirs(os.path.dirname(outcome_path) or ".", exist_ok=True)
+    with open(outcome_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+		{
+			echo
+			echo "## wildcard parallel trial @ game #${GAME_NUM_SNAPSHOT}"
+			echo "$wildcard_result" | python3 -c "import json,sys; d=json.load(sys.stdin); w=d.get('parallel_winner') or {}; print(f'- winner {w.get(\"job_id\",\"\")}: comp={w.get(\"comp\",0)} p25={w.get(\"p25\",0)} p50={w.get(\"p50\",0)} hash={w.get(\"hash\",\"\")[:12]}'); [print(f'- L{a[\"lineno\"]}: {a[\"context\"]} {a[\"old\"]} → {a[\"new\"]} (ratio={a[\"ratio\"]})') for a in d.get('applied', [])]" 2>/dev/null
+		} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+		if [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
+			python3 -c "
+import json,os
+p = '${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}'
+try:
+    d = json.load(open(p, encoding='utf-8'))
+    d['consecutive_no_improve'] = 0
+    d['last_event'] = 'WILDCARD_PARALLEL_FIRED'
+    json.dump(d, open(p, 'w', encoding='utf-8'), ensure_ascii=False)
+except Exception:
+    pass
+" 2>/dev/null || true
+		fi
+		_improve_progress "git_commit" "90" "wildcard_parallel_commit"
+		git add strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
+		git commit -m "eloop Improve [wildcard] parallel trial after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+		git push 2>/dev/null || true
+		_improve_progress "done" "100" "wildcard_parallel_complete"
+		log "[WILDCARD] parallel cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
+		wildcard_parallel_obs_restore || true
+		exit 0
+	fi
 	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 	wildcard_count=$((wildcard_count_min + RANDOM % (wildcard_count_max - wildcard_count_min + 1)))

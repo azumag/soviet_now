@@ -1562,11 +1562,11 @@ _start_improvement_job() {
 		fi
 		# OBS: 改善中オーバーレイ表示
 		_improve_overlay_show
-		# WILDCARD / archive_restart は AI を介さない短時間の脱出処理のため、
+		# WILDCARD / archive_restart は AI を介さない脱出処理のため、
 		# soren91 代打/ミュート/OBS切替/完了時bridge再起動 を一切起こさない。
 		# (post-escape の bridge 再起動が commands 経路 desync=空転の発生源だった)
 		if [ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]; then
-			log "[WILDCARD] ${reason} は高速脱出(AI不使用・短時間)のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
+			log "[WILDCARD] ${reason} は高速脱出(AI不使用・短時間)互換の隔離脱出処理のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
 		else
 			# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 			soren91_start

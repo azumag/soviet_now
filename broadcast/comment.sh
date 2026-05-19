@@ -1490,15 +1490,36 @@ _append_soviet_theme_item() {
 }
 
 generate_comment_response() {
+	local viewer_chat_source="${1:-twitch}"
+	local viewer_chat_script="./twitch_chat.sh"
+	local viewer_chat_outfile="tmp/twitch_comments.txt"
+	local viewer_chat_dir="tmp/.twitch_chat"
+	local viewer_chat_label="Twitch"
+	case "$viewer_chat_source" in
+	youtube|YouTube|yt)
+		viewer_chat_source="youtube"
+		viewer_chat_script="./youtube_chat.sh"
+		viewer_chat_outfile="${YOUTUBE_CHAT_OUTFILE:-tmp/youtube_comments.txt}"
+		viewer_chat_dir="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}"
+		viewer_chat_label="YouTube"
+		;;
+	twitch|Twitch|"")
+		viewer_chat_source="twitch"
+		;;
+	*)
+		log "[COMMENT] unknown viewer chat source: $viewer_chat_source"
+		return 1
+		;;
+	esac
 	_kill_comment_gen
-	mkdir -p "tmp/.twitch_chat"
+	mkdir -p "tmp/.twitch_chat" "$viewer_chat_dir" "tmp/.viewer_chat"
 
 	# 先に未読を取得。生成失敗時はpendingを維持し、成功時のみ処理済み行を削除する。
-	./twitch_chat.sh fetch
+	"$viewer_chat_script" fetch
 
 	local twitch_comments=""
-	if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
-		twitch_comments=$(cat "tmp/twitch_comments.txt")
+	if [ -f "$viewer_chat_outfile" ] && [ -s "$viewer_chat_outfile" ]; then
+		twitch_comments=$(cat "$viewer_chat_outfile")
 	fi
 	[ -z "$twitch_comments" ] && return
 
@@ -1509,17 +1530,17 @@ generate_comment_response() {
 		log "[COMMENT] 全コメント行が個別重複チェックにより処理済み → スキップ"
 		# pending.log から残留行を消化する
 		local ack_tmp
-		ack_tmp=$(mktemp /tmp/eloop_comment_ack_XXXXXXXX 2>/dev/null || echo "tmp/.twitch_chat/comment_ack_$(date +%s)_${RANDOM}.txt")
+		ack_tmp=$(mktemp /tmp/eloop_comment_ack_XXXXXXXX 2>/dev/null || echo "${viewer_chat_dir}/comment_ack_$(date +%s)_${RANDOM}.txt")
 		printf '%s\n' "$twitch_comments_original" >"$ack_tmp"
-		./twitch_chat.sh ack-batch "$ack_tmp"
+		"$viewer_chat_script" ack-batch "$ack_tmp"
 		rm -f "$ack_tmp"
 		return
 	fi
 
-	# コメント処理時点のTwitch配信サムネイルを取得し、文字情報だけOCR化して使う
+	# コメント処理時点の配信サムネイルを取得し、文字情報だけOCR化して使う
 	local comment_screenshot="tmp/.comment_queue/comment_screenshot.jpg"
 	local comment_thumbnail_ocr_context="（配信サムネイルOCRなし）"
-	if curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
+	if [ "$viewer_chat_source" = "twitch" ] && curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
 		log "[COMMENT] 配信サムネイル取得: $comment_screenshot"
 		local comment_thumbnail_ocr_json=""
 		local comment_ocr_script="$ELOOP_LIB_DIR/soren91/result_screen_ocr.mjs"
@@ -1538,7 +1559,7 @@ generate_comment_response() {
 
 	local comment_batch_file=""
 	comment_batch_file=$(mktemp /tmp/eloop_comment_batch_XXXXXXXX 2>/dev/null || true)
-	[ -z "$comment_batch_file" ] && comment_batch_file="tmp/.twitch_chat/comment_batch_$(date +%s)_${RANDOM}.txt"
+	[ -z "$comment_batch_file" ] && comment_batch_file="${viewer_chat_dir}/comment_batch_$(date +%s)_${RANDOM}.txt"
 	# ack-batch用にオリジナル全行を書き込む（フィルタ済み行も pending から確実に消化するため）
 	printf '%s\n' "$twitch_comments_original" >"$comment_batch_file"
 
@@ -1546,7 +1567,7 @@ generate_comment_response() {
 	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
 	if _is_recent_comment_batch_processed "$comment_batch_hash"; then
 		log "[COMMENT] 同一コメントバッチを直近で処理済みのためスキップ (batch=$comment_batch_hash)"
-		./twitch_chat.sh ack-batch "$comment_batch_file"
+		"$viewer_chat_script" ack-batch "$comment_batch_file"
 		rm -f "$comment_batch_file"
 		return
 	fi
@@ -1566,7 +1587,7 @@ generate_comment_response() {
 	fi
 	if [ -z "$twitch_comments_for_prompt" ]; then
 		log "[COMMENT] !claude 制御コメントのみのため返信生成をスキップ"
-		if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
+		if "$viewer_chat_script" ack-batch "$comment_batch_file"; then
 			_record_processed_comment_lines "$twitch_comments"
 		else
 			log "[COMMENT] ack-batch 失敗 → 個別行ハッシュ記録で次回重複除外"
@@ -1579,7 +1600,7 @@ generate_comment_response() {
 
 	local comment_prompt_batch_file=""
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
-	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="tmp/.twitch_chat/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
+	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="${viewer_chat_dir}/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
 	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
 
 	local past_topics=""
@@ -1589,7 +1610,8 @@ generate_comment_response() {
 	local celebration_history_context=""
 	celebration_history_context=$(_build_comment_celebration_history_context)
 
-	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
+	local comment_context_history_file="${COMMENT_CONTEXT_HISTORY_FILE:-tmp/.viewer_chat/comment_context_history.log}"
+	mkdir -p "$(dirname "$comment_context_history_file")" 2>/dev/null || true
 	local previous_comments_context=""
 	[ -f "$comment_context_history_file" ] && previous_comments_context=$(tail -12 "$comment_context_history_file" 2>/dev/null | _sanitize_comment_prompt_context)
 	# 重複追記防止: 直前の内容と同一でなければ追記
@@ -1885,7 +1907,7 @@ PY
 			log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
 		fi
 		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
-		log "[COMMENT] コメント返し生成中... (max_retry=${comment_retry_max})"
+		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
 			echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
@@ -2128,7 +2150,7 @@ RETRYCOMMENT
 			fi
 
 			# kill耐性: キュー追加直後にack→処理済みマークし、再生成を防ぐ
-			if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
+			if "$viewer_chat_script" ack-batch "$comment_batch_file"; then
 				_mark_comment_batch_processed "$comment_batch_hash"
 				_record_processed_comment_lines "$twitch_comments"
 			else

@@ -5,6 +5,7 @@
 #   ./obs_control.sh hide <scene> <source> [<source>...]
 #   ./obs_control.sh status <scene> <source> [<source>...]
 #   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
+#   ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -19,6 +20,7 @@ Usage:
   ./obs_control.sh hide <scene> <source> [<source>...]
   ./obs_control.sh status <scene> <source> [<source>...]
   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
+  ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
 EOF
 	exit 2
 }
@@ -34,6 +36,10 @@ show|hide|status)
 batch)
 	[ -n "$TARGET" ] || usage
 	[ "$#" -ge 3 ] || usage
+	;;
+transform)
+	[ -n "$TARGET" ] || usage
+	[ "$#" -ge 7 ] || usage
 	;;
 *)
 	usage
@@ -253,10 +259,47 @@ async function main() {
 
   try {
     const sceneName = targetName;
-    const operations = parseOperations();
     const response = await obs.request('GetSceneItemList', { sceneName });
     const items = Array.isArray(response.sceneItems) ? response.sceneItems : [];
 
+    if (action === 'transform') {
+      const [sourceName, xRaw, yRaw, scaleXRaw, scaleYRaw, boundsWRaw, boundsHRaw] = rawArgs;
+      const matches = items.filter(item => item.sourceName === sourceName);
+      if (matches.length === 0) {
+        console.error(`[obs_control] Sources not found in scene "${sceneName}": ${sourceName}`);
+        return;
+      }
+      for (const item of matches) {
+        const sceneItemTransform = {
+          positionX: Number(xRaw),
+          positionY: Number(yRaw),
+          rotation: 0,
+          scaleX: Number(scaleXRaw),
+          scaleY: Number(scaleYRaw),
+          cropLeft: 0,
+          cropTop: 0,
+          cropRight: 0,
+          cropBottom: 0,
+          alignment: 5,
+          boundsType: 'OBS_BOUNDS_NONE',
+        };
+        if (boundsWRaw !== undefined && boundsHRaw !== undefined) {
+          sceneItemTransform.boundsType = 'OBS_BOUNDS_SCALE_INNER';
+          sceneItemTransform.boundsWidth = Number(boundsWRaw);
+          sceneItemTransform.boundsHeight = Number(boundsHRaw);
+          sceneItemTransform.boundsAlignment = 5;
+        }
+        await obs.request('SetSceneItemTransform', {
+          sceneName,
+          sceneItemId: item.sceneItemId,
+          sceneItemTransform,
+        });
+      }
+      console.log(`transform:${sourceName}:x=${xRaw}:y=${yRaw}:sx=${scaleXRaw}:sy=${scaleYRaw}`);
+      return;
+    }
+
+    const operations = parseOperations();
     const applied = [];
     const missing = [];
     if (action === 'status') {
