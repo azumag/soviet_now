@@ -438,8 +438,8 @@ json.dump(d,open(f,'w'))
 				log "[DASHBOARD] WARN: OBS dashboard show failed"
 			fi
 		fi
-		local _dashboard_hold_sec="${DASHBOARD_GAMEOVER_HOLD_SEC:-12}"
-		case "$_dashboard_hold_sec" in ''|*[!0-9]*) _dashboard_hold_sec=12 ;; esac
+		local _dashboard_hold_sec="${DASHBOARD_GAMEOVER_HOLD_SEC:-3}"
+		case "$_dashboard_hold_sec" in ''|*[!0-9]*) _dashboard_hold_sec=3 ;; esac
 		if [ "$_dashboard_shown" -eq 1 ] && [ "$_dashboard_hold_sec" -gt 0 ]; then
 			sleep "$_dashboard_hold_sec"
 		fi
@@ -478,15 +478,19 @@ print(d.get('score', 0) + bonus)
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	export LAST_RAW_SCORE="$LAST_SCORE"
-	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
-	if [ -x ./monitor_report_stale_report.sh ]; then
-		./monitor_report_stale_report.sh >/dev/null 2>&1 ||
-			log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
-	fi
-	if [ -x ./monitor_improve_runtime.sh ]; then
-		./monitor_improve_runtime.sh >/dev/null 2>&1 ||
-			log "[MONITOR] improve runtime monitor skipped/failed after post_game_bookkeeping"
-	fi
+		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
+		if [ -x ./monitor_report_stale_report.sh ]; then
+			(
+				./monitor_report_stale_report.sh >/dev/null 2>&1 ||
+					log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
+			) &
+		fi
+		if [ -x ./monitor_improve_runtime.sh ]; then
+			(
+				./monitor_improve_runtime.sh >/dev/null 2>&1 ||
+					log "[MONITOR] improve runtime monitor skipped/failed after post_game_bookkeeping"
+			) &
+		fi
 
 	if [ -x ./overlay_notify.sh ]; then
 		local _overlay_counts

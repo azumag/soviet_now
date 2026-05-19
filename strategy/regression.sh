@@ -731,6 +731,7 @@ _archive_strategy_snapshot_by_hash() {
 }
 
 _backfill_hash_archive_from_known_versions() {
+	local include_permanent="${1:-${HASH_ARCHIVE_RESTORE_PERMANENT:-0}}"
 	mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR"
 	local f
 	[ -f "$STRATEGY_FILE" ] && _archive_strategy_snapshot_by_hash "$STRATEGY_FILE"
@@ -739,8 +740,9 @@ _backfill_hash_archive_from_known_versions() {
 		[ -f "$f" ] || continue
 		_archive_strategy_snapshot_by_hash "$f"
 	done
-	# 永続アーカイブから hot archive に不足分を復元する
-	if [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ] && [ -d "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR" ]; then
+	# 永続アーカイブは大量になりやすい。毎試合復元すると直後の prune と
+	# 復元削除ループになり、次ゲーム開始を遅らせるため明示時だけ戻す。
+	if [ "$include_permanent" = "1" ] && [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ] && [ -d "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR" ]; then
 		local perm_file base
 		for perm_file in "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"/*.py; do
 			[ -f "$perm_file" ] || continue
@@ -2039,6 +2041,35 @@ PY
 	fi
 }
 
+_start_hash_archive_prune_worker() {
+	if [ "${HASH_ARCHIVE_PRUNE_BACKGROUND:-1}" != "1" ]; then
+		_prune_hash_archive_by_ranking
+		return $?
+	fi
+
+	local pid_file="${TMP_STATE_DIR:-tmp/state}/hash_archive_prune.pid"
+	local running_pid=""
+	if [ -f "$pid_file" ]; then
+		running_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+		case "$running_pid" in
+		'' | *[!0-9]*) running_pid="" ;;
+		esac
+	fi
+	if [ -n "$running_pid" ] && kill -0 "$running_pid" 2>/dev/null; then
+		log "[HASH-ARCHIVE] prune already running: PID=${running_pid}"
+		return 0
+	fi
+
+	mkdir -p "$(dirname "$pid_file")" 2>/dev/null || true
+	(
+		trap 'rm -f "$pid_file"' EXIT
+		_prune_hash_archive_by_ranking
+	) &
+	local worker_pid="$!"
+	printf '%s\n' "$worker_pid" >"$pid_file"
+	log "[HASH-ARCHIVE] prune worker started: PID=${worker_pid}"
+}
+
 update_rolling_scores() {
 	local score="$1" archive_file="${2:-}"
 	local strategy_source="${STRATEGY_FILE}.game_snapshot"
@@ -2046,11 +2077,10 @@ update_rolling_scores() {
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
-		_backfill_hash_archive_from_known_versions
-		local rolling_result="" rolling_err=""
-		rolling_err="${TMP_STATE_DIR:-tmp/state}/rolling_scores_update.err"
-		rolling_result=$(
-			python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$rolling_err" <<'PY'
+	local rolling_result="" rolling_err=""
+	rolling_err="${TMP_STATE_DIR:-tmp/state}/rolling_scores_update.err"
+	rolling_result=$(
+		python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$rolling_err" <<'PY'
 import json
 import os
 import sys
@@ -2181,17 +2211,17 @@ PY
 		else
 			log "[ROLLING] updated: hash=${strategy_hash} n=${rolling_n} total=${rolling_total} score=${score} file=${archive_file}"
 		fi
-		else
-			log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
-			[ -s "$rolling_err" ] && log "[ROLLING] update stderr: $(tr '\n' ' ' <"$rolling_err" | cut -c1-500)"
-		fi
-		rm -f "$rolling_err" 2>/dev/null || true
+	else
+		log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
+		[ -s "$rolling_err" ] && log "[ROLLING] update stderr: $(tr '\n' ' ' <"$rolling_err" | cut -c1-500)"
+	fi
+	rm -f "$rolling_err" 2>/dev/null || true
 	# 帯域脱出機構 D + E: 現戦略のシグネチャを永続キャッシュに保存
 	# (game_history が後で pruning されてもシグネチャが残るように)
 	if [ "${DIVERSITY_PREMIUM_ENABLED:-0}" = "1" ] || [ "${TABU_ENABLED:-0}" = "1" ]; then
 		_cache_strategy_signature "$strategy_hash" >/dev/null 2>&1 || true
 	fi
-	_prune_hash_archive_by_ranking
+	_start_hash_archive_prune_worker
 }
 
 # 帯域脱出機構ヘルパー: 指定 hash の挙動シグネチャを behavior_signatures.json に保存。

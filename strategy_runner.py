@@ -52,6 +52,7 @@ BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "6") or "6
 
 
 _received_signal = None
+_fire_and_forget_processes = []
 
 STOP_FILE = "tmp/stop"
 
@@ -126,10 +127,11 @@ def notify_deadline_crossing_overlay(turn, score, decision, analysis):
         return
     if not os.path.exists("./overlay_notify.sh"):
         return
+    _reap_fire_and_forget_processes()
     env = dict(os.environ)
     env["OVERLAY_NOTIFY_OBS_SHOW"] = "1"
     try:
-        subprocess.run(
+        proc = subprocess.Popen(
             [
                 "./overlay_notify.sh",
                 "deadline",
@@ -141,11 +143,25 @@ def notify_deadline_crossing_overlay(turn, score, decision, analysis):
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=2,
-            check=False,
+            start_new_session=True,
         )
+        _fire_and_forget_processes.append(proc)
     except Exception as err:
         log(f"WARN: deadline overlay notify failed: {err}")
+
+
+def _reap_fire_and_forget_processes():
+    """Non-blocking cleanup for best-effort side-effect subprocesses."""
+    if not _fire_and_forget_processes:
+        return
+    alive = []
+    for proc in _fire_and_forget_processes:
+        try:
+            if proc.poll() is None:
+                alive.append(proc)
+        except Exception:
+            continue
+    _fire_and_forget_processes[:] = alive[-16:]
 
 
 def _float_or_none(value):
@@ -953,10 +969,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             replacement = min(all_merges, key=rank_candidate)
             replacement_source = f"{replacement_source}_merge_candidate_postcondition"
 
+    # When every candidate crosses the deadline, a visually inferred same-country
+    # contact is often the only escape route. Do not flatten that attempt back to
+    # generic min-risk just because the analyzer still grades it as NO.
+    preserve_visual_same_country = replacement_source.startswith("visual_deadline_same_country")
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
         and not safe
+        and not preserve_visual_same_country
         and min_risk_top + 0.05 < risk_top(replacement)
     ):
         replacement = min_risk_candidate

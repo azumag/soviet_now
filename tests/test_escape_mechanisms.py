@@ -1431,6 +1431,39 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], 2.4)
         self.assertIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_safety_preserves_visible_same_country_when_all_candidates_cross(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.9, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {"top_edge_y": 3.3, "deadline_crossed": False},
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 2.9,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.5,
+                    },
+                    {
+                        "x": -1.1,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.2,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 144, "type": 8, "x": -1.14, "y": 2.17}],
+                "next": {"type": 8},
+            },
+        )
+
+        self.assertEqual(decision["x"], -1.1)
+        self.assertIn("visual_deadline_same_country", decision["reason"])
+        self.assertNotIn("minrisk_postcondition", decision["reason"])
+
     def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
         import analyze_board
 
@@ -1606,7 +1639,10 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
     def test_deadline_crossing_overlay_notify_uses_event_overlay(self):
         import strategy_runner
 
-        with mock.patch.object(strategy_runner.os.path, "exists", return_value=True), mock.patch.object(strategy_runner.subprocess, "run") as run:
+        strategy_runner._fire_and_forget_processes.clear()
+        fake_proc = mock.Mock()
+        fake_proc.poll.return_value = None
+        with mock.patch.object(strategy_runner.os.path, "exists", return_value=True), mock.patch.object(strategy_runner.subprocess, "Popen", return_value=fake_proc) as popen:
             strategy_runner.notify_deadline_crossing_overlay(
                 14,
                 567,
@@ -1619,11 +1655,14 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
                 },
             )
 
-        args = run.call_args.args[0]
-        kwargs = run.call_args.kwargs
+        args = popen.call_args.args[0]
+        kwargs = popen.call_args.kwargs
         self.assertEqual(args[:3], ["./overlay_notify.sh", "deadline", "デッドライン超過: 安全候補あり"])
         self.assertEqual(args[-1], "warn")
         self.assertEqual(kwargs["env"]["OVERLAY_NOTIFY_OBS_SHOW"], "1")
+        self.assertTrue(kwargs["start_new_session"])
+        self.assertIn(fake_proc, strategy_runner._fire_and_forget_processes)
+        strategy_runner._fire_and_forget_processes.clear()
 
     def test_batch_summary_reports_russia_progress_and_max_type(self):
         with tempfile.TemporaryDirectory() as td:
