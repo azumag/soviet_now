@@ -81,10 +81,16 @@ Phases (determined by board max Y):
       # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
       #       strategy_versions/best_score5801_strategy.py (v617 axis 9.12 reference),
       #       advice.md ("2手先の併合可能性を最大化するため")
+      # v628: axis 9.65 secondary condition — fires when next_type < 13 but type>=13 pieces
+      # exist on board (no same-type guidance from axis 9.6b). Same clustering bonus as primary.
+      # Fills guidance gap: worst game T56-62 had type>=13 on board, next_type<13, no same-type pair,
+      # strategy fell through to HEIGHT_CONTROL with no clustering → type scattering, Russia unreachable.
+      # Refs: tmp/analysis_result.md (Primary Improvement Hypothesis: axis 9.65 enhancement)
       # v626: axis 9.65 — type>=13 NO-merge clustering bonus (near-miss type clustering)
       # Adopted from best_score5801_strategy.py axis 9.65 reference.
       # When next_type>=13, merge_grade==NO, no same-type piece on board (same_type_stack_top is None),
       # and existing type>=13 pieces exist, bonus +400*merge_mult for placing within 1.5u of centroid.
+      # Primary condition (next_type>=13) + secondary condition (next_type<13 && type>=13 on board).
       # Fills the guidance gap between axis 9.6b (same-type exists) and HEIGHT_CONTROL (no guidance).
       # Rollback constraint: "forbid: type>=13 で merge_available=false の状態で HEIGHT_CONTROL を選ぶこと"
       # Fixes rollback failure mode: type>=13 & merge_available=false → HEIGHT_CONTROL scatter
@@ -1834,7 +1840,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       advice.md ("2手先の併合可能性を最大化するため")
         # Fixes rollback failure mode: type>=13 & merge_available=false → HEIGHT_CONTROL scatter
         #   preventing type14→15→16 pipeline formation
+        #
+        # Primary condition: next_type >= 13
         if (next_type >= 13
+                and merge_grade == "NO"
+                and same_type_stack_top is None
+                and not guidance_suppressed):
+            existing_high_type_pieces = [p for p in pieces if p.get("type", 0) >= 13]
+            if len(existing_high_type_pieces) >= 1:
+                centroid_x = sum(p.get("x", 0) for p in existing_high_type_pieces) / len(existing_high_type_pieces)
+                centroid_y = sum(p.get("y", -10) for p in existing_high_type_pieces) / len(existing_high_type_pieces)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                if dist < 1.5:
+                    clustering_bonus = 400.0 * merge_mult * (1.0 - dist / 1.5)
+                    score += clustering_bonus
+                    if "HIGH_TYPE_CLUSTERING" not in reasons:
+                        reasons.append("HIGH_TYPE_CLUSTERING")
+
+        # Secondary condition: next_type < 13 but type>=13 pieces exist on board
+        # v626: fills the guidance gap when next_type<13 but type>=13 already on board —
+        # no same-type guidance exists, so cluster near existing type>=13 pieces.
+        if (next_type < 13
                 and merge_grade == "NO"
                 and same_type_stack_top is None
                 and not guidance_suppressed):
