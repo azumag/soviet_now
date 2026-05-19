@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # vXYZ: axis 9.12 no_merge_streak reset — merge発生時にカウンターをリセット
+      # merge发生时重置计数器，防止axis 9.12在merge后的盘面上不正确激活し続ける问题。
+      # game_stateからのno_merge_streakがmerge後にも不变し、axis 9.12がwrongタイミングで激活する问题を修正。
+      # merge_available=true || score_delta>0 时にno_merge_streak=0を设定。
+      # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (no_merge_streak reset absence)
+      # refs: tmp/analysis_result.md, logs/change_log.txt:191-200
       # vXXX: axis 9.12 merge drought exit — no_merge_streak>=3 && NO && max_y>=1.5 && pc>=30
       # activates MERGE_PATH_CREATION bonus for placing near type 10+ pieces during NO merge drought.
       # Worst game T52-59: 8 consecutive NO merges with no path-creation guidance → max_y runaway.
@@ -1025,6 +1031,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 通常とは異なる配置優先順位に切り替えるべき。game_stateに存在すれば使用、
     # 存在しない場合は0（既存動作維持、安全側）。
     no_merge_streak = game_state.get("no_merge_streak", 0)
+
+    # --- vXYZ: no_merge_streak reset on merge ---
+    # If a merge occurred in the previous turn (merge_available=true OR score_delta>0),
+    # reset no_merge_streak to 0 so axis 9.12 doesn't stay active incorrectly after merge.
+    # This ensures MERGE_PATH_CREATION bonus only fires during true NO-MERGE drought,
+    # not after a successful merge when the streak should be cleared.
+    score_delta = game_state.get("score_delta", 0)
+    merge_available_flag = game_state.get("merge_available", False)
+    if merge_available_flag or score_delta > 0:
+        no_merge_streak = 0
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
