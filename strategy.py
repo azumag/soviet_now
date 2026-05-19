@@ -65,6 +65,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 9.65 reactive near-miss type clustering — hall-of-fame移植
+     # Worst game (score0525) T55: pc=36, rp=7, NO merge, types 3×3/10×3/8×4 scattered, no merge path.
+     # Hall-of-fame (best_score5801) にはaxis 9.65があり、merge_grade==NO && rp>=2 && pc>=25で
+     # 2+ piecesを持つtypeのcentroidへの配置誘導を行う。current strategyには存在せず、
+     # 「scattered board, no merges → death spiral」失敗モードに対応。bonus cap ~500,
+     # height penalty differentiation (~350-700)より小さくoverride防止。rp==2時は50% reduction。
+     # NOT fire: merge_grade!=NO, death_spiral, guidance_suppressed, next_type excluded (9.6b handled)
+     # Fixes rollback failure mode: "scattered board, no merges → death spiral" (analysis_result.md)
+     # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py,
+     #       game_history/20260519_142942_score0525.jsonl, tmp/state/last_rollback_analysis.md
      # vXXX: axis 9.15 merge drought low-type digest priority — hall-of-fame移植
      # Worst game (score0425) T60-69: 9 consecutive DEADLINE_GUARD, merge_available=false持続。
      # Hall-of-fame (best_score5801) にはaxis 9.15があり、reactive_pairs/near_pairsからtype<=5の
@@ -1559,6 +1569,59 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- evaluation axis 9.65: reactive near-miss type clustering (NEW vXXX) -----
+        # Ported from hall-of-fame best_score5801_strategy.py (lines 1790-1852)
+        # Primary failure mode: worst game T55 (pc=36, rp=5, NO merge) has type 3×3, type 10×3,
+        # type 8×4 all non-reactive — same types exist but spread too far to merge.
+        # Best game T96-124: during Russia phase, board gradually builds mergeable configurations
+        # → recovery merge at T125 (+392, pc 43→32, max_y drops 1.89).
+        # When merge_grade==NO && rp>=2 && pc>=25: find types with 2+ pieces (excluding next_type,
+        # handled by 9.6b). Calculate centroid and guide placement toward it. Creates mergeable
+        # configurations within 1-2 turns, addressing the "scattered board, no merges" failure mode.
+        # Bonus capped at ~500 — must not override height penalty differentiation (~350-700).
+        # NOT fire when merge_grade != "NO" — merge bonuses always take priority.
+        # NOT include next_type — axis 9.6b already handles it.
+        # NOT fire at pc < 25 — early game has abundant merge opportunities.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.65 reactive near-miss clustering),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 17.1% high, avg_delta=1.7),
+        #       game_history/20260519_142942_score0525.jsonl T55 (scattered types, no merges),
+        #       strategy_versions/best_score5801_strategy.py (hall-of-fame axis 9.65)
+        # Fixes rollback failure mode: "scattered board, no merges → death spiral" (analysis_result.md)
+        if merge_grade == "NO" and reactive_pair_count >= 2 and piece_count >= 25:
+            if not death_spiral and not guidance_suppressed:
+                _type_positions = {}
+                for p in pieces:
+                    t = p.get("type", 0)
+                    if t == next_type or t >= 16:
+                        continue
+                    _type_positions.setdefault(t, []).append((p["x"], p["y"]))
+
+                _clustering_targets = []
+                for t, positions in _type_positions.items():
+                    if len(positions) >= 2:
+                        _cx = sum(p[0] for p in positions) / len(positions)
+                        _cy = sum(p[1] for p in positions) / len(positions)
+                        _avg_spread = sum(
+                            ((p[0] - _cx) ** 2 + (p[1] - _cy) ** 2) ** 0.5
+                            for p in positions
+                        ) / len(positions)
+                        _clustering_targets.append((t, _cx, _cy, _avg_spread, len(positions)))
+
+                if _clustering_targets:
+                    _total_cluster_bonus = 0.0
+                    for _t, _cx, _cy, _spread, _count in _clustering_targets:
+                        _dist = ((x - _cx) ** 2 + (landing_y - _cy) ** 2) ** 0.5
+                        _cb = 100.0 * _count * min(2.0, _avg_spread) / (1.0 + _dist)
+                        _cb *= min(1.5, 1.0 + 0.1 * reactive_pair_count)
+                        _total_cluster_bonus += _cb
+
+                    _total_cluster_bonus = min(_total_cluster_bonus, 500.0)
+                    if reactive_pair_count == 2:
+                        _total_cluster_bonus *= 0.5
+                    if _total_cluster_bonus > 50:
+                        score += _total_cluster_bonus
+                        reasons.append("NEAR_MISS_CLUSTERING")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
