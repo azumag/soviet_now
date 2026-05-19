@@ -1719,11 +1719,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # hall-of-fame戦略(best_score5801)には実装済みだがcurrent strategyには欠落している。
         # worst game T70-T74: 5連続NO merge, max_y=2.64→3.28, score_delta=0, column_ceiling無力化→drift/balance支配。
         # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"。
-        # 発動条件: no_merge_streak>=2 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
+        # 発動条件: no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
         # v632: lower threshold from 3 to 2 — proactive merge path creation before scatter is entrenched
-        # refs: tmp/analysis_result.md
-        # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別せず"
-        if no_merge_streak >= 2 and merge_grade == "NO" and max_y >= 1.5 and piece_count >= 30 and not death_spiral:
+        # v633: raise threshold back to 3 — matches hall-of-fame reference (best_score5801 lines 2039-2040)
+        # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py
+        if no_merge_streak >= 3 and merge_grade == "NO" and max_y >= 1.5 and piece_count >= 30 and not death_spiral:
             _high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
             if _high_type_pieces:
                 _min_dist = float("inf")
