@@ -81,6 +81,15 @@ Phases (determined by board max Y):
       # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
       #       strategy_versions/best_score5801_strategy.py (v617 axis 9.12 reference),
       #       advice.md ("2手先の併合可能性を最大化するため")
+      # v629: axis 9.12 trigger threshold lowered — max_y >= 1.5 → max_y >= 1.0
+      # analysis_result.md hypothesis: axis 9.12 fires too late at max_y>=1.5. Worst game never
+      # reaches type 13 because by max_y=1.5, DEADLINE_GUARD dominates and scatter has occurred.
+      # Lowering threshold to 1.0 catches merge drought earlier, when clustering guidance can still
+      # prevent scatter and enable type 13+ formation. Keeps no_merge_streak>=3 gate (requires
+      # sustained drought, not just momentary elevation) and pc>=30 (ensures genuine danger).
+      # Fixes rollback failure mode: pre-type-13 gap causing Russia phase unreachable
+      # Phase gate: Russia (type 15) pipeline — catches merge drought at lower max_y
+      # refs: tmp/analysis_result.md (Improvement Hypothesis: axis 9.12 threshold change)
       # v628: axis 9.65 secondary condition — fires when next_type < 13 but type>=13 pieces
       # exist on board (no same-type guidance from axis 9.6b). Same clustering bonus as primary.
       # Fills guidance gap: worst game T56-62 had type>=13 on board, next_type<13, no same-type pair,
@@ -1895,7 +1904,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Trigger conditions:
         #   no_merge_streak >= 3  (drought detected via game_state counter)
         #   merge_grade == "NO"  (no immediate merge available)
-        #   max_y >= 1.5  (board elevated enough that height penalty dominates)
+        #   max_y >= 1.0  (v628: lowered from 1.5 to catch merge drought earlier)
         #   piece_count >= 30  (congested board — drought is dangerous)
         #   not death_spiral  (height penalty must dominate in death spiral)
         #
@@ -1924,7 +1933,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if (
             no_merge_streak >= 3
             and merge_grade == "NO"
-            and max_y >= 1.5
+            and max_y >= 1.0
             and piece_count >= 30
             and not death_spiral
             and not guidance_suppressed
