@@ -65,6 +65,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v626: axis 9.65 — type>=13 NO-merge clustering bonus (near-miss type clustering)
+      # Adopted from best_score5801_strategy.py axis 9.65 reference.
+      # When next_type>=13, merge_grade==NO, no same-type piece on board (same_type_stack_top is None),
+      # and existing type>=13 pieces exist, bonus +400*merge_mult for placing within 1.5u of centroid.
+      # Fills the guidance gap between axis 9.6b (same-type exists) and HEIGHT_CONTROL (no guidance).
+      # Rollback constraint: "forbid: type>=13 で merge_available=false の状態で HEIGHT_CONTROL を選ぶこと"
+      # Fixes rollback failure mode: type>=13 & merge_available=false → HEIGHT_CONTROL scatter
+      #   preventing type14→15→16 pipeline formation
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.65),
+      #       tmp/state/last_rollback_postmortem.md (forbid constraint),
+      #       strategy_versions/best_score5801_strategy.py (axis 9.65 reference)
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -1761,6 +1772,60 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- v626: axis 9.65 — type>=13 NO-merge clustering bonus (near-miss type clustering) -----
+        # Adopted from analysis_result.md hypothesis: axis 9.65 equivalent
+        #
+        # Problem: When type>=13 pieces have NO merge opportunity and no same-type on board
+        # (same_type_stack_top is None), the strategy falls through to HEIGHT_CONTROL, causing
+        # type>=13 pieces to scatter without building the type14→15 pipeline.
+        #
+        # Rollback constraint (last_rollback_postmortem.md):
+        #   "forbid: type>=13 で merge_available=false の状態で HEIGHT_CONTROL を選ぶこと"
+        # Currently no axis explicitly suppresses HEIGHT_CONTROL in this condition.
+        # axis 9.6b only fires when same_type_stack_top is not None (same-type piece exists).
+        #
+        # Axis 9.65 fills this gap: when current piece is type>=13, merge is NO, and no same-type
+        # piece exists, cluster near OTHER type>=13 pieces to build proximity for next merge.
+        # This creates "near-miss" opportunities — placing type N near type N so the NEXT type N
+        # piece can immediately merge (advice.md: "2手先の併合可能性を最大化するため").
+        #
+        # Trigger conditions:
+        #   next_type >= 13  (current piece is high type)
+        #   merge_grade == "NO"  (no immediate merge)
+        #   same_type_stack_top is None  (no same-type piece to stack on — 9.6b doesn't fire)
+        #   existing type>=13 pieces on board  (clustering target exists)
+        #   not death_spiral  (height penalty must dominate in death spiral)
+        #
+        # Bonus: +400*merge_mult for placing within 1.5u of type>=13 piece centroid
+        # This is competitive with height diffs (~100-200 per y-unit) and axis 8.8 (-4500),
+        # providing meaningful clustering incentive without overriding safety.
+        #
+        # mandatory_themes check:
+        #   "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" → bonus is
+        #   placement optimization only, doesn't affect crosses_deadline evaluation
+        #   "NEXTを考慮したドロップ" → bonus based on existing board state (type>=13 pieces)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.65),
+        #       tmp/state/last_rollback_postmortem.md (forbid constraint),
+        #       strategy_versions/best_score5801_strategy.py (axis 9.65 reference),
+        #       advice.md ("2手先の併合可能性を最大化するため")
+        # Fixes rollback failure mode: type>=13 & merge_available=false → HEIGHT_CONTROL scatter
+        #   preventing type14→15→16 pipeline formation
+        if (next_type >= 13
+                and merge_grade == "NO"
+                and same_type_stack_top is None
+                and not guidance_suppressed):
+            existing_high_type_pieces = [p for p in pieces if p.get("type", 0) >= 13]
+            if len(existing_high_type_pieces) >= 1:
+                centroid_x = sum(p.get("x", 0) for p in existing_high_type_pieces) / len(existing_high_type_pieces)
+                centroid_y = sum(p.get("y", -10) for p in existing_high_type_pieces) / len(existing_high_type_pieces)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                if dist < 1.5:
+                    clustering_bonus = 400.0 * merge_mult * (1.0 - dist / 1.5)
+                    score += clustering_bonus
+                    if "HIGH_TYPE_CLUSTERING" not in reasons:
+                        reasons.append("HIGH_TYPE_CLUSTERING")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
