@@ -65,6 +65,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # vXXX: axis 9.12 merge drought exit trigger — no_merge_streak>=3 && NO && max_y>=1.5 && pc>=30
+      # でtype10+ピースとのManhattan距離<=1.5u配置に+500*merge_multボーナス。
+      # Hall-of-fame戦略(best_score5801/6058)には実装済みだがcurrent strategyには未実装。
+      # worst game T60-67: 8連続NO mergeでDEADLINE_GUARD依存、axis 9.12でmerge path創作が不足していた。
+      # best game T102-104: NO merge区間で高type了近配置の明示的ガイダンスなくDEADLINE_GUARDに流れる。
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+      #       game_history/20260520_002324_score0698.jsonl (worst game),
+      #       game_history/20260520_002020_score2491.jsonl (best game),
+      #       strategy_versions/best_score5801_strategy.py:2006-2088
+      # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 → type14→15到達の障害
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -1015,6 +1025,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
+    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO ---
+    # analysis_result.md adopted hypothesis: NO merge連続ターン数が3-4ターン継続時点で
+    # 通常とは異なる配置優先順位に切り替えるべき。game_stateに存在すれば使用、
+    # 存在しない場合は0（既存動作維持、安全側）。
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
     
@@ -1761,6 +1777,80 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- evaluation axis 9.12: Merge drought exit — merge path creation (NEW vXXX) -----
+        # analysis_result.md adopted hypothesis: NO merge連続ターン数(no_merge_streak)>=3で発動し、
+        # 高typeピース(type>=10)との隣接配置を優先し、次ターン以降のNEAR merge機会を創出する。
+        #
+        # 根拠:
+        # - worst game T60-67: 8連続NO merge, DEADLINE_GUARD選択率100%, score_delta=0-55
+        #   axis 9.12が発動すればtype14 Scatter問題を回避、merge path創作で最終併合機会を確保できた可能性
+        # - best game T102-104: no_merge_streak>=1続くが高type近了配置の明示的ガイダンスなくDEADLINE_GUARDに流れる
+        #   axis 9.12は距離<=1.5uで+500*merge_multを提供
+        # - Hall-of-fame戦略(best_score5801/6058)にはaxis 9.12が実装済み、current strategyには未実装
+        #
+        # ロジック:
+        # (1) no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 で発動
+        # (2) 盤面のtype 10+ピースを列挙
+        # (3) 各candidateについて、type 10+ピースとのManhattan距離を計算
+        # (4) 距離<=1.5uなら +500*merge_mult ボーナス（merge path creation）
+        # (5) type 10+ピースがsame-type reactive pairを持っていれば +200*merge_mult追加
+        #     (併合でtype 11+が生まれ、パイプラインが前進)
+        # (6) death_spiral時は抑制（height penalty only modeのため）
+        #
+        # ボーナス設計: +500*merge_multはcolumn_ceiling_bonus(~800-1250)より小さく、
+        # height penalty(base=75-150)*height_mult(1.8)*y=1.5差=202-405pt と競合しないレベル。
+        # type 10+限定: 低type(type<=9)に適用すると数が多すぎ、軸が常に発動してheight penaltyを侵食。
+        #
+        # 禁止: merge_grade!=NO時は発動しない（既存のmerge axisが最優先）
+        #       death_spiral時は発動しない（height penalty only modeが既に処理中）
+        #       no_merge_streakの自前カウントは行わない（game_state存在チェックのみ）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+        #       game_history/20260520_002324_score0698.jsonl (worst game T60-67 NO merge連続),
+        #       game_history/20260520_002020_score2491.jsonl (best game T102-104 NO merge区間),
+        #       strategy_versions/best_score5801_strategy.py:2006-2088 (axis 9.12 reference)
+        # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 → type14→15到達障害
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+        ):
+            high_type_pieces = []
+            for p in pieces:
+                t = p.get("type", 0)
+                if t >= 10:
+                    high_type_pieces.append(p)
+
+            if len(high_type_pieces) >= 1:
+                min_dist = float("inf")
+                best_piece_type = 0
+                for ht in high_type_pieces:
+                    hx = ht.get("x", 0)
+                    hy = ht.get("y", -10)
+                    manhattan = abs(x - hx) + abs(landing_y - hy)
+                    if manhattan < min_dist:
+                        min_dist = manhattan
+                        best_piece_type = ht.get("type", 0)
+
+                if min_dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+
+                    type_counts_on_board = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
+
+                    if type_counts_on_board.get(best_piece_type, 0) >= 2:
+                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
+                        if pair_bonus > 20:
+                            score += pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
