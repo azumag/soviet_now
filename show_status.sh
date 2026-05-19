@@ -550,7 +550,7 @@ _maybe_run_fullscreen_random() {
 #=== メイン表示 ===
 show_status() {
 	# --- 改善プロセス状態 ---
-	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0
+	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0 imp_updated_at=0
 	local imp_monitor_status="" imp_monitor_action="" imp_monitor_stale_sec=0
 	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
 		eval $(python3 -c "
@@ -561,6 +561,7 @@ print(f'imp_pid={d.get(\"pid\",0)}')
 print('imp_hash=' + shlex.quote(str(d.get('strategy_hash_before', ''))))
 print('imp_phase=' + shlex.quote(str(d.get('phase', ''))))
 print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
+print(f'imp_updated_at={int(d.get(\"updated_at\",0) or 0)}')
 " 2>/dev/null)
 	fi
 	if [[ -f "$TMP_STATE_DIR/improve_monitor_status.json" ]]; then
@@ -587,6 +588,19 @@ print(f'imp_monitor_stale_sec={stale}')
 		imp_state_activity_fresh=true
 	fi
 	local improve_ai_log="$TMP_DEBUG_DIR/improve_ai.log"
+	local improve_hidden_pid_fresh_sec="${SHOW_STATUS_IMPROVE_HIDDEN_PID_FRESH_SEC:-300}"
+	case "$improve_hidden_pid_fresh_sec" in ''|*[!0-9]*) improve_hidden_pid_fresh_sec=300 ;; esac
+	if [[ "$imp_status" == "running" && "$imp_state_activity_fresh" == false ]]; then
+		local now_epoch updated_age=999999
+		now_epoch=$(date +%s)
+		if [[ "${imp_updated_at:-0}" =~ ^[0-9]+$ ]] && (( imp_updated_at > 0 )); then
+			updated_age=$(( now_epoch - imp_updated_at ))
+		fi
+		if (( updated_age >= 0 && updated_age <= improve_hidden_pid_fresh_sec )) || _file_recent "$improve_ai_log" "$improve_hidden_pid_fresh_sec"; then
+			imp_state_activity_fresh=true
+			imp_monitor_stale_sec=$(( updated_age >= 0 && updated_age < 999999 ? updated_age : 0 ))
+		fi
+	fi
 	local imp_ai_source="" imp_ai_output_block="" imp_ai_age=""
 	if [[ -f "$improve_ai_log" ]] && [[ -s "$improve_ai_log" ]]; then
 		local ai_tail_lines="${SHOW_STATUS_AI_TAIL_LINES:-400}"

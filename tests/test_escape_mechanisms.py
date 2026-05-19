@@ -514,6 +514,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("Stage3: review verdict missing → repair verdict file", eloop)
         self.assertIn("strategy.py.staging` は編集禁止", eloop)
         self.assertIn("必ず `tmp/review_result.md` を Write/Edit", eloop)
+        self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
 
 
 # --- F2: wildcard origin override branch budget only for that hash -----------
@@ -1910,6 +1911,10 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("[ \"$eval_age\" -lt \"$watchdog_sec\" ]", improve)
         self.assertIn("watchdog保留", improve)
         self.assertIn('"eval_age": int(eval_age)', improve)
+        show_status = (REPO_ROOT / "show_status.sh").read_text()
+        self.assertIn("SHOW_STATUS_IMPROVE_HIDDEN_PID_FRESH_SEC", show_status)
+        self.assertIn("imp_state_activity_fresh=true", show_status)
+        self.assertIn("PID=%s not visible, log fresh", show_status)
         self.assertIn("improve_hung_harvest", improve)
         self.assertIn("if _stop_improve_pid_if_running \"$pid\" \"improve_hung\"; then", improve)
         self.assertIn("pid_alive=false", improve)

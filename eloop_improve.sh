@@ -297,6 +297,9 @@ status = str(data.get("verdict", data.get("status", ""))).strip().upper()
 if status in ("APPROVE", "APPROVED"):
     status = "PASS"
 if status != "PASS":
+    if not status:
+        print("review verdict missing; emit a non-empty verdict/status in the review_verdict JSON block")
+        raise SystemExit(1)
     print(f"review verdict is not PASS: {status or 'missing'}")
     raise SystemExit(1)
 
