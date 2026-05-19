@@ -1535,7 +1535,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     target_x = best_proximity_target.get("x", 0)
                     target_y = best_proximity_target.get("y", -10)
                     horiz_dist = abs(x - target_x)
-                    if horiz_dist < 2.0:
+                    if horiz_dist < 2.723:
                         # v369 congestion-aware proximity — no reactive level split
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
