@@ -1579,7 +1579,7 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         )
         by_x = {r["x"]: r for r in results}
 
-        self.assertEqual(by_x[2.0]["merge_grade"], "NEAR")
+        self.assertEqual(by_x[2.0]["merge_grade"], "DIRECT")
         self.assertEqual(by_x[2.2]["merge_grade"], "NO")
         self.assertGreater(by_x[2.2]["merges"][0]["contact_gap"], 0.0)
 
@@ -2174,6 +2174,7 @@ PY
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
         status = (REPO_ROOT / "show_status.sh").read_text()
+        monitor = (REPO_ROOT / "monitor_improve_runtime.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
         eloop = (REPO_ROOT / "eloop.sh").read_text()
 
@@ -2183,6 +2184,8 @@ PY
         self.assertIn("improve_monitor_status.json", status)
         self.assertIn("imp_state_activity_fresh", status)
         self.assertIn("PID=%s not visible, log fresh", status)
+        self.assertIn("running state references dead improve pid", monitor)
+        self.assertIn("harvesting immediately", monitor)
         self.assertIn("SOREN_IMPROVE_MONITOR_INTERVAL_SEC", loop)
         self.assertIn("_run_improve_runtime_monitor", loop)
         self.assertIn("./monitor_improve_runtime.sh >/dev/null 2>&1", loop)

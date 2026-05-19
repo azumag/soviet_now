@@ -159,6 +159,27 @@ case "$live_pid" in ''|*[!0-9]*) live_pid=0 ;; esac
 state_only_running=0
 
 if [ "$state_status" = "running" ] && [ "$live_pid" -eq 0 ]; then
+	state_pid_alive=0
+	case "$state_pid" in
+	''|0|*[!0-9]*) state_pid_alive=0 ;;
+	*)
+		if kill -0 "$state_pid" 2>/dev/null; then
+			state_pid_alive=1
+		fi
+		;;
+	esac
+	if [ "$state_pid_alive" -eq 0 ]; then
+		_monitor_log "running state references dead improve pid=${state_pid:-0}; harvesting immediately"
+		check_and_harvest_improvement >/dev/null 2>&1 || true
+		state_status=$(_json_get status idle)
+		state_pid=$(_json_get pid 0)
+		phase=$(_json_get phase "")
+		detail=$(_json_get detail "")
+		started_at=$(_json_get started_at 0)
+		updated_at=$(_json_get updated_at 0)
+		updated_age=$(( now - ${updated_at:-0} ))
+		log_age=$(_file_age_sec "$IMPROVE_AI_LOG_FILE" "$now")
+	else
 	[ "$updated_age" -lt "$log_age" ] && stale_age="$updated_age" || stale_age="$log_age"
 	if [ "$stale_age" -lt "$STALE_SEC" ]; then
 		_monitor_log "running state has no live eloop_improve pid but activity is fresh; preserving active state stale=${stale_age}s"
@@ -169,6 +190,7 @@ if [ "$state_status" = "running" ] && [ "$live_pid" -eq 0 ]; then
 		check_and_harvest_improvement >/dev/null 2>&1 || true
 		state_status=$(_json_get status idle)
 		state_pid=$(_json_get pid 0)
+	fi
 	fi
 fi
 
