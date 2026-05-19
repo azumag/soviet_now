@@ -257,7 +257,20 @@ _post_phyrogenetic_tree_link_to_chat() {
 	target_hash="${after_hash:-$before_hash}"
 	tree_url="$PHYROGENETIC_TREE_URL"
 	if [ -n "$target_hash" ]; then
-		detail_info=$(python3 generate_phyrogenetic_tree.py --print-detail-anchor-for "$target_hash" 2>/dev/null || true)
+		local timeout_bin="" timeout_sec="${PHYROGENETIC_DETAIL_ANCHOR_TIMEOUT_SEC:-5}"
+		if command -v timeout >/dev/null 2>&1; then
+			timeout_bin="timeout"
+		elif command -v gtimeout >/dev/null 2>&1; then
+			timeout_bin="gtimeout"
+		fi
+		case "$timeout_sec" in
+		''|*[!0-9]*) timeout_sec=5 ;;
+		esac
+		if [ -n "$timeout_bin" ]; then
+			detail_info=$("$timeout_bin" "$timeout_sec" python3 generate_phyrogenetic_tree.py --print-detail-anchor-for "$target_hash" 2>/dev/null || true)
+		else
+			detail_info=$(python3 generate_phyrogenetic_tree.py --print-detail-anchor-for "$target_hash" 2>/dev/null || true)
+		fi
 		if [ -n "$detail_info" ]; then
 			IFS=$'\t' read -r detail_label detail_anchor <<EOF
 $detail_info
