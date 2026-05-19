@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # vXXX: axis 9.12 merge drought exit — no_merge_streak>=3 && NO && max_y>=1.5 && pc>=30
+      # activates MERGE_PATH_CREATION bonus for placing near type 10+ pieces during NO merge drought.
+      # Worst game T52-59: 8 consecutive NO merges with no path-creation guidance → max_y runaway.
+      # refs: tmp/analysis_result.md, best_score5801_strategy.py:2006-2088, 3ff751c0d9be.py:1781-1850
+      # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 → type14→15到達障害
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -1015,6 +1020,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
+    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO ---
+    # analysis_result.md adopted hypothesis: NO merge連続ターン数が3-4ターン継続時点で
+    # 通常とは異なる配置優先順位に切り替えるべき。game_stateに存在すれば使用、
+    # 存在しない場合は0（既存動作維持、安全側）。
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
     
@@ -1761,6 +1772,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- evaluation axis 9.12: merge drought exit — merge path creation (NEW vXXX) -----
+        # Activates when: no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && not death_spiral
+        # Bonus: +500*merge_mult for placing within 1.5u of type 10+ piece
+        # Extra: +200*merge_mult if that type 10+ piece has same-type pair on board (pipeline advance)
+        # Suppress: death_spiral (height penalty only mode), merge_grade!=NO (existing axes fire first)
+        #
+        # refs: best_score5801_strategy.py:2006-2088, 3ff751c0d9be.py:1781-1850,
+        #       tmp/analysis_result.md, data/mandatory_themes.txt
+        # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (worst T52-59: 8 consecutive NO merges, max_y runaway)
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+        ):
+            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if high_type_pieces:
+                min_dist = float("inf")
+                nearest_type = 0
+                for ht in high_type_pieces:
+                    dist = abs(x - ht.get("x", 0)) + abs(landing_y - ht.get("y", -10))
+                    if dist < min_dist:
+                        min_dist = dist
+                        nearest_type = ht.get("type", 0)
+                if min_dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+                    # Pair bonus — if nearest type 10+ piece has same-type pair on board
+                    type_counts = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts[pt] = type_counts.get(pt, 0) + 1
+                    if type_counts.get(nearest_type, 0) >= 2:
+                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
+                        if pair_bonus > 20:
+                            score += pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
