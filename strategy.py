@@ -65,13 +65,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v587: axis 9.12 — merge drought exit trigger: no_merge_streak>=3, merge_grade=="NO",
-      # max_y>=1.5, pc>=30, not death_spiral → guide placement adjacent to type 10+ pieces.
-      # Bonus 500*(1-dist/1.5)*merge_mult for proximity <1.5 units; extra 200 when reactive pair.
-      # Fixes failure mode: "即時併合機会取りこぼし" — consecutive NO-merge turns with no merge path.
-      # Respects mandatory themes: deadline handling, merge priority, NEXT-aware drops.
-      # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py:2006-2087
-      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -2108,49 +2102,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
             score -= 1000.0  # 追加ペナルティ（axis 8.8と合計-5500）
             reasons.append("HIGH_MERGE_DROUGHT_PENALTY")
-
-        # ----- evaluation axis 9.12: merge drought exit — merge path creation (v617) -----
-        # analysis_result.md adopted hypothesis: NO merge連続(no_merge_streak>=3)で高type(type>=10)ピースとの
-        # 近了配置優先し、次ターン以降のNEAR merge機会を創出する。
-        # worst game T70-T74: 5連続NO merge, pc=40→43, score_delta=0 — merge path作成不足が敗因
-        # best_score5801_strategy.py (lines 2006-2087) に実装済み、current strategyには未搭載。
-        # mandatory_themes: "NEXTを考慮したドロップ" — axis 9.12は次ターンmerge機会を создаёт。
-        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py,
-        #       game_history/20260413_094619_score0720.jsonl T70-T74
-        # Fixes rollback failure mode: "NO merge連続ターンでのmerge path創作不足"
-        no_merge_streak = game_state.get("no_merge_streak", 0)
-        if (
-            no_merge_streak >= 3
-            and merge_grade == "NO"
-            and max_y >= 1.5
-            and piece_count >= 30
-            and not death_spiral
-        ):
-            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
-            if len(high_type_pieces) >= 1:
-                min_dist = float("inf")
-                best_piece_type = 0
-                for ht in high_type_pieces:
-                    hx = ht.get("x", 0)
-                    hy = ht.get("y", -10)
-                    manhattan = abs(x - hx) + abs(landing_y - hy)
-                    if manhattan < min_dist:
-                        min_dist = manhattan
-                        best_piece_type = ht.get("type", 0)
-                if min_dist <= 1.5:
-                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
-                    if path_bonus > 30:
-                        score += path_bonus
-                        reasons.append("MERGE_PATH_CREATION")
-                    type_counts_on_board = {}
-                    for p in pieces:
-                        pt = p.get("type", 0)
-                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
-                    if type_counts_on_board.get(best_piece_type, 0) >= 2:
-                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
-                        if pair_bonus > 20:
-                            score += pair_bonus
-                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
