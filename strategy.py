@@ -1202,7 +1202,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # "extends death spiral detection to max_y>=1.5 instead of requiring deadline_crossed"
         death_spiral = (
             danger_piece_count > 0
-            and reactive_pair_count >= 3
+            and reactive_pair_count >= 4
             and merge_grade == "NO"
             and (deadline_crossed or max_y >= 1.5)
         )
@@ -1460,7 +1460,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if below_bonus > 20:
                         score += below_bonus
                         reasons.append("RUSSIA_PIPELINE_BELOW")
-            high_type_pieces = [p for p in pieces if p.get("type") >= 10]
+            high_type_pieces = [p for p in pieces if p.get("type") >= 14]
             if len(high_type_pieces) >= 2:
                 hc_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
                 hc_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
@@ -1776,7 +1776,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # place near center to allow merge in either direction next turn
         # v462: suppress in death spiral/merge_drought — height must be sole differentiator
         if next_next_type == next_type and not guidance_suppressed:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.436 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
