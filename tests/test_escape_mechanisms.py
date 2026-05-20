@@ -2402,6 +2402,108 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], 1.2)
         self.assertEqual(decision["reason"], "DIRECT_MERGE")
 
+    def test_deadline_safety_prefers_lower_safe_slot_over_high_visual_stack(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.5, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.85,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": -0.15,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 1.13,
+                    },
+                    {
+                        "x": 2.5,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 1.93,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 8, "x": 2.5, "y": 2.2}], "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], -0.15)
+        self.assertIn("deadline_headroom", decision["reason"])
+
+    def test_deadline_safety_uses_minrisk_when_all_candidates_cross_near_deadline(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -2.6, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.94,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": -0.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.71,
+                    },
+                    {
+                        "x": -2.6,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.99,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 8, "x": -2.6, "y": 2.1}], "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], -0.8)
+        self.assertIn("RUNTIME_DEADLINE_SAFETY_OVERRIDE", decision["reason"])
+
+    def test_deadline_safety_does_not_preserve_high_visual_route_when_all_cross(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 0.4, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.94,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": -0.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.71,
+                    },
+                    {
+                        "x": 0.4,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.10,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 8, "x": 0.4, "y": 2.1}], "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], -0.8)
+        self.assertIn("minrisk_postcondition", decision["reason"])
+
     def test_deadline_guard_injector_filters_merge_result_crossing(self):
         injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
 
@@ -3524,13 +3626,17 @@ PY
         self.assertIn("_run_radio_agent \"$radio_prepass_agent\" \"$_prepass_prompt_file\" 2>/dev/null | _sanitize_radio_research_memo", radio_engine)
 
     def test_radio_tool_failure_lines_are_filtered_before_tts(self):
+        helpers = (REPO_ROOT / "core/helpers.sh").read_text()
         radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
         ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
         radio_corners = (REPO_ROOT / "broadcast/radio_corners.sh").read_text()
 
+        self.assertIn("_notify_webfetch_failure()", helpers)
+        self.assertIn('./overlay_notify.sh radio "WebFetch failed"', helpers)
         self.assertIn(r"[✗✕×]\s*(webfetch|websearch)\s+failed", radio_engine)
         self.assertIn(r"%?[[:space:]]*(WebFetch|WebSearch)\b", radio_engine)
         self.assertIn("talk_body=$(printf '%s' \"$talk_body\" | _sanitize_onair_text)", radio_engine)
+        self.assertIn('_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio"', radio_engine)
         self.assertIn("webfetch|websearch", ai_generate)
         self.assertIn("webfetch|websearch", radio_corners)
 

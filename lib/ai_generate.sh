@@ -458,7 +458,7 @@ _ai_call_opencode_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
 	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
-	local raw_file cleaned lock_token="" lock_rc
+	local raw_file raw_text cleaned lock_token="" lock_rc
 	local old_lock_wait="${OPENCODE_RUN_LOCK_WAIT_SEC-}"
 	local old_lock_max_wait="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC-}"
 	local had_lock_wait=0
@@ -511,7 +511,9 @@ _ai_call_opencode_unqueued() {
 		rm -f "$raw_file"
 		return 1
 	fi
-	cleaned=$(cat "$raw_file" |
+	raw_text=$(cat "$raw_file")
+	_notify_webfetch_failure "$label" "$agent" "$raw_text" "dispatch" || true
+	cleaned=$(printf '%s' "$raw_text" |
 		_strip_ansi |
 		grep -v '^>' |
 		grep -v '^\^D' |

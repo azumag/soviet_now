@@ -801,9 +801,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             and current_top_edge_y >= deadline_y - 1.5
         )
     )
+    all_crossing_measurement_noise = (
+        not deadline_contact_pressure
+        and results
+        and all(r.get("crosses_deadline", False) for r in results)
+        and all("deadline_y" in r for r in results)
+    )
     all_crossing_deadline_pressure = (
-        deadline_contact_pressure
-        or current_top_edge_y >= deadline_y - 0.10
+        deadline_precontact_pressure
+        and not all_crossing_measurement_noise
     )
     urgent_direct_pressure = (
         safe_direct
@@ -825,6 +831,28 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             )
         )
     )
+
+    def deadline_headroom_replacement_for(candidate):
+        """Prefer the lowest-risk safe landing near the deadline.
+
+        Visual same-country fallbacks are useful, but when the board is already
+        near the red line they must not keep stacking onto a much taller safe
+        column while a clearly lower safe slot exists.
+        """
+        if not deadline_precontact_pressure or not safe or not isinstance(candidate, dict):
+            return None
+        if candidate.get("merge_grade", "NO") in ("DIRECT", "NEAR"):
+            return None
+        best_safe = min(
+            safe,
+            key=lambda r: (
+                risk_top(r),
+                abs(float(r.get("x", 0.0) or 0.0)),
+            ),
+        )
+        if risk_top(candidate) <= risk_top(best_safe) + 0.35:
+            return None
+        return best_safe
 
     def visual_same_country_replacement():
         """Fallback for visually obvious same-country merges missed by analysis.
@@ -966,6 +994,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         and not urgent_direct_pressure
         and not urgent_merge_pressure
         and not risky_merge_result_deadline(chosen)
+        and deadline_headroom_replacement_for(chosen) is None
         and not chosen.get("crosses_deadline", False)
         and chosen_top <= min_risk_top + 2.0
         and abs(chosen_x) <= 2.65
@@ -976,8 +1005,13 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         return decision
 
     replacement_source = "generic"
+    chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
 
-    if risky_merge_result_deadline(chosen):
+    if chosen_headroom_replacement is not None:
+        replacement = chosen_headroom_replacement
+        replacement_source = "deadline_headroom"
+
+    elif risky_merge_result_deadline(chosen):
         replacement = min(deadline_clean_candidates, key=rank_candidate)
         replacement_source = "avoid_merge_result_deadline"
 
@@ -1183,7 +1217,9 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     # When every candidate crosses the deadline, a visually inferred same-country
     # contact is often the only escape route. Do not flatten that attempt back to
     # generic min-risk just because the analyzer still grades it as NO.
-    preserve_visual_same_country = replacement_source.startswith("visual_deadline_same_country")
+    preserve_visual_same_country = (
+        replacement_source.startswith("visual_deadline_same_country")
+    )
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
@@ -1233,6 +1269,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                     abs(float(r.get("x", 0.0) or 0.0)),
                 ),
             )
+
+    if (headroom_replacement := deadline_headroom_replacement_for(replacement)) is not None:
+        replacement = headroom_replacement
+        replacement_source = f"{replacement_source}_deadline_headroom"
 
     if risky_merge_result_deadline(replacement):
         safer_merges = [

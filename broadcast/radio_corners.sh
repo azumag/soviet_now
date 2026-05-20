@@ -1653,7 +1653,7 @@ _filter_unread_jiji_blocks() {
 
 _run_opencode_jiji_research_unqueued() {
 	local agent="$1" prompt_file="$2"
-	local raw_file permission cleaned
+	local raw_file raw_text permission cleaned
 	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
 	# bash許可 + web-searchプラグインでAIにWeb検索させる
 	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","web-search":"allow"}'
@@ -1673,7 +1673,9 @@ _run_opencode_jiji_research_unqueued() {
 		rm -f "$raw_file"
 		return 1
 	fi
-	cleaned=$(cat "$raw_file" |
+	raw_text=$(cat "$raw_file")
+	_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "jiji_research" || true
+	cleaned=$(printf '%s' "$raw_text" |
 		_strip_ansi |
 		grep -v '^>' |
 		grep -v '^\^D' |
