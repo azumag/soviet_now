@@ -80,7 +80,7 @@ _contains_provider_error_text() {
 }
 
 _contains_webfetch_failure_text() {
-	printf '%s' "$1" | grep -Eiq '(^|[[:space:]])([✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b|%?[[:space:]]*(WebFetch|WebSearch)\b)'
+	printf '%s' "$1" | grep -Eiq '([✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b|WebFetch|WebSearch)'
 }
 
 _notify_webfetch_failure() {

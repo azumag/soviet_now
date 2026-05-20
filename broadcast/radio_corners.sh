@@ -1683,7 +1683,7 @@ _run_opencode_jiji_research_unqueued() {
 		grep -v '^Script done on ' |
 		grep -v '^/[^ ]*$' |
 		grep -v '^[[:space:]]*/Users/' |
-		grep -Eiv '^[[:space:]]*%?[[:space:]]*(WebFetch|WebSearch)\b' |
+		grep -Eiv '(WebFetch|WebSearch)' |
 		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
 		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
