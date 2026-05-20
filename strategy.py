@@ -66,6 +66,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v610: axis 9.10 enhancement — strengthen type 8-12 centroid attraction bonus.
+      # batch_summary: HIGH_TYPE_CONCENTRATION avg_score_delta=0.9 (essentially no value).
+      # Analysis: worst game 369 had 7 consecutive NO-merge turns (T48-55) with reactive_pairs
+      # growing 4→8 but no merge occurred, causing max_y runaway (1.83→3.54).
+      # Axis 9.10 exists (v609) but bonus max(0, 150-dist*50) is too small (max=150).
+      # Increase to max(0, 300-dist*80) for stronger pull toward mid-type clusters,
+      # promoting type 8-12 merges that build the T13 pipeline.
+      # Bonus: max(0, 300-dist*80)*merge_mult — still tie-breaker only (below column_ceiling).
+      # Target stage: Ukraine (T13) creation rate improvement (8/12→9/12+).
+      # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt, advice.md,
+      #       game_history/20260521_042715_score0369.jsonl (worst game T48-55 failure)
+      # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral" during T12→T13 transition
+      #
       # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
       # When merge_grade==NO && max_y>=1.0 && pc>=20, guide placement toward centroid of type 8-12 pieces.
       # Addresses "merge drought→low-type clustering→pc growth→death spiral" by attracting pieces to
@@ -1483,7 +1496,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
 
         # ----- v587: merge drought deadline_cross penalty (mandatory_theme enforcement) -----
-        # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
+      # v610: axis 9.10 enhancement — strengthen type 8-12 centroid attraction bonus.
+      # batch_summary: HIGH_TYPE_CONCENTRATION avg_score_delta=0.9 (essentially no value).
+      # Analysis: worst game 369 had 7 consecutive NO-merge turns (T48-55) with reactive_pairs
+      # growing 4→8 but no merge occurred, causing max_y runaway (1.83→3.54).
+      # Axis 9.10 exists (v609) but bonus max(0, 150-dist*50) is too small (max=150).
+      # Increase to max(0, 300-dist*80) for stronger pull toward mid-type clusters,
+      # promoting type 8-12 merges that build the T13 pipeline.
+      # Bonus: max(0, 300-dist*80)*merge_mult — still tie-breaker only (below column_ceiling).
+      # Target stage: Ukraine (T13) creation rate improvement (8/12→9/12+).
+      # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt, advice.md,
+      #       game_history/20260521_042715_score0369.jsonl (worst game T48-55 failure)
+      # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral" during T12→T13 transition
+      #
+      # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
         # When merge_grade==NO && max_y>=1.0 && pc>=20, guide placement toward centroid of type 8-12 pieces.
         # Addresses "merge drought→low-type clustering→pc growth→death spiral" by attracting pieces to
         # mid-type clusters, promoting type 8-12 merges (8+8=9, 9+9=10...) that build high-type pipeline.
@@ -1508,7 +1534,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 centroid_x = sum(p[0] for p in high_type_pieces) / len(high_type_pieces)
                 centroid_y = sum(p[1] for p in high_type_pieces) / len(high_type_pieces)
                 dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
-                pipeline_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
+                pipeline_bonus = max(0.0, 300.0 - dist * 80.0) * merge_mult
                 if pipeline_bonus > 20:
                     score += pipeline_bonus
                     reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
