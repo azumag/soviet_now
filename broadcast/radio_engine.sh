@@ -52,7 +52,7 @@ _run_opencode_radio_unqueued() {
 		grep -v '^[[:space:]]*/Users/' |
 		grep -v '^[[:space:]]*⚙' |
 		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
-		grep -Eiv '^[[:space:]]*%?[[:space:]]*(WebFetch|WebSearch)\b' |
+		grep -Eiv '(WebFetch|WebSearch)' |
 		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
 		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
@@ -137,7 +137,7 @@ _run_opencode_comment_unqueued() {
 		grep -v '^Script done on ' |
 		grep -v '^/[^ ]*$' |
 		grep -v '^[[:space:]]*/Users/' |
-		grep -Eiv '^[[:space:]]*%?[[:space:]]*(WebFetch|WebSearch)\b' |
+		grep -Eiv '(WebFetch|WebSearch)' |
 		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
 		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
@@ -494,6 +494,7 @@ import sys
 
 drop_line_patterns = [
     r'^\s*%?\s*(?:WebFetch|WebSearch)\b.*$',
+    r'.*(?:WebFetch|WebSearch).*$',
     r'^\s*[✗✕×]\s*(?:webfetch|websearch)\s+failed\b.*$',
     r'^\s*[✱→►▸]\s*(?:Grep|Read|Glob|List|WebFetch|WebSearch)\b.*$',
     r'^\s*(?:Error|Warning)\s*:\s*(?:Request failed with status code|Unable to connect|The operation was aborted|permission to use this specific tool call|file not found|no such file or directory|permission denied)\b.*$',
@@ -716,7 +717,7 @@ _is_valid_comment_talk() {
 	if printf '%s' "$talk" | grep -Eiq '^[[:space:]]*[✗✕×✱→►▸]'; then
 		return 1
 	fi
-	if printf '%s' "$talk" | grep -Eiq '(^|[[:space:]])(%?[[:space:]]*(WebFetch|WebSearch)\b|[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b)'; then
+	if printf '%s' "$talk" | grep -Eiq '(WebFetch|WebSearch)|(^|[[:space:]])[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b'; then
 		return 1
 	fi
 	# 「検索できない」「データがない」系の拒否応答を検出 → 無効にしてfallbackさせる
@@ -743,7 +744,7 @@ _is_valid_radio_talk() {
 	if printf '%s' "$talk" | grep -Eq '===SAFE_SCRIPT===|===ISSUES===|===SUMMARY==='; then
 		return 1
 	fi
-	if printf '%s' "$talk" | grep -Eiq '(^|[[:space:]])(%?[[:space:]]*(WebFetch|WebSearch)\b|[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b)'; then
+	if printf '%s' "$talk" | grep -Eiq '(WebFetch|WebSearch)|(^|[[:space:]])[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b'; then
 		return 1
 	fi
 	if printf '%s' "$talk" | grep -Eq '放送前のファクトチェック担当|安全化した最終原稿|削った・弱めた点|【最優先ルール】|【材料】|【元原稿】|【出力形式】'; then
@@ -1227,6 +1228,7 @@ drop_line_patterns = [
     r'^\s*[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b.*$',
     r'^\s*[✱→►▸]\s*(WebFetch|WebSearch)\b.*$',
     r'^\s*%?\s*(WebFetch|WebSearch)\b.*$',
+    r'.*(WebFetch|WebSearch).*$',
     r'^\s*(read|glob|grep|ls|edit|write|multiedit)\b.*$',
     r'^\s*(error|warning)\s*:.*$',
     r'file not found:',

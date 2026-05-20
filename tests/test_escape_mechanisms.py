@@ -2671,7 +2671,7 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], -1.7)
         self.assertEqual(decision["reason"], "MEDIUM_TOWER")
 
-    def test_deadline_safety_ignores_precontact_all_crossing_noise(self):
+    def test_deadline_safety_ignores_far_below_all_crossing_noise(self):
         import strategy_runner
 
         decision = strategy_runner.enforce_deadline_safety(
@@ -2679,7 +2679,7 @@ def decide(game_state, analysis):
             {
                 "deadline": {
                     "deadline_y": 3.38,
-                    "top_edge_y": 3.16,
+                    "top_edge_y": 2.40,
                     "deadline_crossed": False,
                     "danger_piece_count": 0,
                 },
@@ -3634,7 +3634,8 @@ PY
         self.assertIn("_notify_webfetch_failure()", helpers)
         self.assertIn('./overlay_notify.sh radio "WebFetch failed"', helpers)
         self.assertIn(r"[✗✕×]\s*(webfetch|websearch)\s+failed", radio_engine)
-        self.assertIn(r"%?[[:space:]]*(WebFetch|WebSearch)\b", radio_engine)
+        self.assertIn(r"(WebFetch|WebSearch)", radio_engine)
+        self.assertIn("grep -Eiv '(WebFetch|WebSearch)'", radio_engine)
         self.assertIn("talk_body=$(printf '%s' \"$talk_body\" | _sanitize_onair_text)", radio_engine)
         self.assertIn('_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio"', radio_engine)
         self.assertIn("webfetch|websearch", ai_generate)

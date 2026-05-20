@@ -803,6 +803,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     )
     all_crossing_measurement_noise = (
         not deadline_contact_pressure
+        and current_top_edge_y < deadline_y - 0.75
         and results
         and all(r.get("crosses_deadline", False) for r in results)
         and all("deadline_y" in r for r in results)
