@@ -2292,6 +2292,49 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], 1.5)
         self.assertEqual(decision["reason"], "DIRECT_MERGE")
 
+    def test_deadline_safety_avoids_single_danger_merge_result_crossing(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.2, "reason": "DANGER_DIRECT_MERGE"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.16,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 1,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 1.2,
+                        "crosses_deadline": True,
+                        "merge_grade": "DIRECT",
+                        "danger_merge_available": True,
+                        "merge_result_crosses_deadline": True,
+                        "risk_top_y_after_drop": 4.2,
+                    },
+                    {
+                        "x": -0.8,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.8,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 9, "x": 1.2, "y": 3.0}], "next": {"type": 9}},
+        )
+
+        self.assertEqual(decision["x"], -0.8)
+        self.assertIn("RUNTIME_DEADLINE_SAFETY_OVERRIDE_DIRECT_TO_NO_safe", decision["reason"])
+
+    def test_deadline_guard_injector_filters_merge_result_crossing(self):
+        injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
+
+        self.assertIn("__dlg_merge_result_safe", injector)
+        self.assertIn("merge_result_crosses_deadline", injector)
+        self.assertIn("danger_merge_available", injector)
+
     def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
         import strategy_runner
 

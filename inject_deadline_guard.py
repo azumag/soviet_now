@@ -41,6 +41,10 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
         __dlg_margin = float(__dlg_margin)
     except (TypeError, ValueError):
         __dlg_margin = 99.0
+    try:
+        __dlg_danger_count = int(__dlg_reactor.get("danger_piece_count", 0) or 0)
+    except (TypeError, ValueError):
+        __dlg_danger_count = 0
     __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
     __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
     if isinstance(__dlg_rps, list):
@@ -58,9 +62,15 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
+        def __dlg_merge_result_safe(c):
+            return not (
+                __dlg_danger_count <= 1
+                and c.get("danger_merge_available")
+                and c.get("merge_result_crosses_deadline")
+            )
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -72,7 +82,7 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and __dlg_merge_result_safe(c)
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
