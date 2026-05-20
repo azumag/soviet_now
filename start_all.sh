@@ -70,7 +70,7 @@ _pid_alive() {
 
 _pidfile_for_worker() {
 	case "$1" in
-	soren_loop) echo "tmp/state/soren_loop.pid" ;;
+	soren_loop) echo "tmp/.soren_loop.lock/pid" ;;
 	chat_worker) echo "tmp/state/chat_worker.pid" ;;
 	youtube_worker) echo "tmp/state/youtube_worker.pid" ;;
 	audio_worker) echo "tmp/state/audio_worker.pid" ;;
@@ -261,6 +261,14 @@ while true; do
 
 		# worker が生きていればスキップ
 		if _pid_matches_worker "$_w_pid" "$_w_pattern"; then
+			_w_pid_file="$(_pidfile_for_worker "$_w_name")"
+			if [ -n "$_w_pid_file" ] && [ -n "$_w_pid" ]; then
+				_w_recorded_pid=$(cat "$_w_pid_file" 2>/dev/null || true)
+				if [ "$_w_recorded_pid" != "$_w_pid" ]; then
+					mkdir -p "$(dirname "$_w_pid_file")" 2>/dev/null || true
+					echo "$_w_pid" >"$_w_pid_file" 2>/dev/null || true
+				fi
+			fi
 			continue
 		fi
 

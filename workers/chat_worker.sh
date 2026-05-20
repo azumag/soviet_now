@@ -57,6 +57,12 @@ _pid_alive() {
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ "$active_pid" != "$$" ]; then
+		_log "cleanup skipped: pidfile owner is ${active_pid:-none} (self=$$)"
+		return 0
+	fi
 	_log "停止処理開始"
 
 	# IRC daemon 子プロセスを停止

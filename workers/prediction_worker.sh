@@ -41,9 +41,27 @@ _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
 }
 
+_pid_alive() {
+	local pid="${1:-}" err=""
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+	case "$err" in
+	*"operation not permitted"*|*"Operation not permitted"*) return 0 ;;
+	esac
+	return 1
+}
+
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ "$active_pid" != "$$" ]; then
+		_log "cleanup skipped: pidfile owner is ${active_pid:-none} (self=$$)"
+		return 0
+	fi
 	_log "停止処理開始"
 	rm -f "$PID_FILE"
 	_log "停止完了"
@@ -86,7 +104,7 @@ fi
 
 if [ -f "$PID_FILE" ]; then
 	old_pid=$(cat "$PID_FILE" 2>/dev/null)
-	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+	if _pid_alive "$old_pid"; then
 		_log "ERROR: 既に起動中 (PID=$old_pid)"
 		exit 1
 	fi

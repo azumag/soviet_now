@@ -1593,6 +1593,11 @@ PY
 	local say_effective_status="silent"
 	if $say_running; then
 		say_effective_status="playing"
+	elif $say_lock_present && (( say_lock_age_sec <= 20 )) && [[ "$say_phase" == "playing" ]]; then
+		# macOS/Codex sandbox may deny kill -0 for the actual player PID while
+		# the say owner is still refreshing the lock heartbeat. Prefer the live
+		# owner heartbeat over a false SILENT display.
+		say_effective_status="playing"
 	elif $say_lock_present && $say_lock_owner_alive; then
 		case "${say_phase:-}" in
 		retry_wait) say_effective_status="retry" ;;
@@ -1655,7 +1660,7 @@ PY
 	# radio_state の "playing" は予約済み/待機中も含むため、実再生状況で補正
 	local radio_effective_status="$radio_status"
 	if [[ "$radio_effective_status" == "playing" ]]; then
-		if ! $say_running; then
+		if ! $say_running && [[ "$say_effective_status" != "playing" ]]; then
 			radio_effective_status="queued"
 		elif [[ -n "$say_phase" ]] && [[ "$say_phase" != "playing" ]]; then
 			radio_effective_status="queued"

@@ -41,6 +41,18 @@ _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
 }
 
+_pid_alive() {
+	local pid="${1:-}" err=""
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+	case "$err" in
+	*"operation not permitted"*|*"Operation not permitted"*) return 0 ;;
+	esac
+	return 1
+}
+
 # 独立 worker: soren_loop の状態は一切参照しない。停止は tmp/stop か自プロセスへのシグナルのみ。
 _DIAG_LOG="tmp/radio_worker_shutdown.log"
 _LAST_SIGNAL=""
@@ -104,7 +116,7 @@ _reload_runtime() {
 _ensure_single_owner() {
 	local active_pid=""
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
-	if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ] && kill -0 "$active_pid" 2>/dev/null; then
+	if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ] && _pid_alive "$active_pid"; then
 		_log "another ${WORKER_NAME} owns pidfile (owner=${active_pid}, self=$$) -> exit"
 		_LAST_SIGNAL="PIDFILE_OWNER_CHANGED"
 		_cleanup
@@ -124,7 +136,7 @@ trap '_request_reload USR2' USR2
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
 	old_pid=$(cat "$PID_FILE" 2>/dev/null)
-	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+	if _pid_alive "$old_pid"; then
 		_log "ERROR: 既に起動中 (PID=$old_pid)"
 		exit 1
 	fi
