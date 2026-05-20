@@ -42,8 +42,9 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
+              9.61. Next-type同居 merge path creation - v604: type>=13 && next_type==current_typeでnext-turn merge機会創出
+              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
@@ -65,7 +66,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+      # v604: axis 9.61 — next-type同居merge path creation (type>=13)
+      # type>=13 && next_type==current_type && merge_grade="NO" && death_spiral=False && !russia_phase
+      # → next piece will be same type as current, placing near same-type cluster creates next-turn merge opportunity
+      # worst game (score0632)終盤: type>=13散在でmerge機会なし、HEIGHT_CONTROLで詰み
+      # advice.md "NEXTを考慮したドロップをせよ" + mandatory_themes "NEXTを考慮したドロップをせよ" 対応
+      # Fixes rollback failure mode: type>=13領域でのnext-type同居によるmerge path creation促進
+      # refs: tmp/analysis_result.md, tmp/improve_brief.md, advice.md, data/mandatory_themes.txt
+      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -1549,6 +1557,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- v604: axis 9.61 — next-type同居merge path creation (type>=13) -----
+        # analysis_result.md adopted hypothesis: type>=13 && next_type==current_type merge path creation
+        # worst game (score0632)終盤: type>=13 pieces散在、merge_available=false持続、HEIGHT_CONTROLで詰み
+        # best game (score2261) 終盤: type14 clustered配置、T14_peak=1/prev_T13_peak=2で高スコア
+        # advice.md: "NEXTを考慮したドロップをせよ" + "同タイプが来たらその上に置く"
+        # mandatory_themes: "NEXTを考慮したドロップをせよ"
+        # batch_summary: DEADLINE_GUARD=119回 avg_delta=9.0と低調 → deadline防御而非、能動的merge path形成が必要
+        #
+        # Logic: current_type>=13 && next_type==current_type && merge_grade=="NO" && death_spiral==False
+        #   → next piece will be same type as current piece arriving in 1 turn
+        #   → placing current piece near existing same-type cluster creates immediate merge opportunity for next turn
+        #   → bonus for placement near same-type stack centroid (within 2.5u), scaled by proximity
+        #
+        # Russia-phase (type 15 >= 1): this axis suppressed — axis 9.9 handles Russia pipeline separately
+        # death_spiral: suppressed — height penalty must be sole differentiator
+        #
+        # refs: tmp/analysis_result.md, tmp/improve_brief.md, advice.md, data/mandatory_themes.txt
+        # Fixes rollback failure mode: type>=13領域でのnext-type同居によるmerge path creation促進
+        if (next_type >= 13
+                and next_next_type == next_type
+                and merge_grade == "NO"
+                and not death_spiral
+                and not russia_phase):
+            if same_type_stack_top is not None and len(same_type_pieces) >= 1:
+                centroid_x = sum(p.get("x", 0) for p in same_type_pieces) / len(same_type_pieces)
+                centroid_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
+                horiz_dist = abs(x - centroid_x)
+                vert_dist = abs(landing_y - centroid_y)
+                if horiz_dist < 2.5 and vert_dist < 2.5:
+                    path_bonus = max(0, 200.0 - horiz_dist * 60.0 - vert_dist * 40.0)
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("NEXT_SAME_TYPE_STACK")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
