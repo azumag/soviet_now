@@ -2056,6 +2056,10 @@ PY
 			log "[REGRESSION] rollback候補スキップ: $h はguard未注入archive" >&2
 			continue
 		fi
+		if ! _rollback_candidate_file_is_valid "$h" "$candidate_file"; then
+			log "[REGRESSION] rollback候補スキップ: $h はvalidation失敗archive" >&2
+			continue
+		fi
 		if [ -n "$candidate_file" ]; then
 			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
 			return 0
@@ -2064,6 +2068,25 @@ PY
 $ranked
 EOF
 	return 1
+}
+
+_rollback_candidate_file_is_valid() {
+	local expected_hash="$1" candidate_file="$2"
+	[ -f "$candidate_file" ] || return 1
+	if ! command -v validate_strategy >/dev/null 2>&1; then
+		return 0
+	fi
+	local tmp_file="${TMP_STATE_DIR:-tmp/state}/rollback_candidate_validate_${expected_hash}_$$.py"
+	mkdir -p "$(dirname "$tmp_file")" 2>/dev/null || true
+	cp "$candidate_file" "$tmp_file" 2>/dev/null || return 1
+	if ! validate_strategy "$tmp_file" >/dev/null 2>&1; then
+		rm -f "$tmp_file"
+		return 1
+	fi
+	local validated_hash=""
+	validated_hash=$(python3 extract_decide_hash.py "$tmp_file" 2>/dev/null || echo "")
+	rm -f "$tmp_file"
+	[ -z "$expected_hash" ] || [ -z "$validated_hash" ] || [ "$expected_hash" = "$validated_hash" ]
 }
 
 _pick_hall_of_fame_rollback_candidate() {
@@ -2090,6 +2113,10 @@ _pick_hall_of_fame_rollback_candidate() {
 		fi
 		if _is_rollback_target_on_cooldown "$current_hash" "$h"; then
 			log "[REGRESSION] hall-of-fame候補スキップ: $h はrollback先cooldown中" >&2
+			continue
+		fi
+		if ! _rollback_candidate_file_is_valid "$h" "$f"; then
+			log "[REGRESSION] hall-of-fame候補スキップ: $h はvalidation失敗archive" >&2
 			continue
 		fi
 		echo "${h}|hof|${score_num}|0|0|0|$f"
@@ -3550,11 +3577,21 @@ PY
 						log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はrollback先cooldown中"
 						rollback_hash=""
 					elif [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py" ]; then
-						rollback_file="$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"
-						rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+						if _rollback_candidate_file_is_valid "$rollback_hash" "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"; then
+							rollback_file="$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"
+							rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+						else
+							log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はvalidation失敗archive"
+							rollback_hash=""
+						fi
 					elif [ -f "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py" ]; then
-						rollback_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py"
-						rollback_note="anchor_top1_permanent hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+						if _rollback_candidate_file_is_valid "$rollback_hash" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py"; then
+							rollback_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py"
+							rollback_note="anchor_top1_permanent hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+						else
+							log "[REGRESSION] anchor_top1_permanent候補スキップ: $rollback_hash はvalidation失敗archive"
+							rollback_hash=""
+						fi
 					else
 						rollback_hash=""
 					fi

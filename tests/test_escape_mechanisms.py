@@ -3158,6 +3158,8 @@ def decide(game_state, analysis):
         self.assertIn("rollback_target_normalized", regression)
         self.assertIn("normalized fallback target rejected; retry anchor rollback", regression)
         self.assertIn("normalized_fallback_anchor", regression)
+        self.assertIn("_rollback_candidate_file_is_valid", regression)
+        self.assertIn("validation失敗archive", regression)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_ENABLED", config)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_MIN_GAMES", config)
         self.assertIn("anchor_best_max_type", regression)
