@@ -65,12 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v587: axis 9.12 — merge drought exit trigger (no_merge_streak>=2, type13+ proximity +400*merge_mult).
-     # NO merge drought終盤(max_y>=2.0, pc>=30, no_merge_streak>=2)でtype13+piecesとの近了配置にボーナス赋予。
-     # worst T104-110: type14ありながら7ターンmerge机会0。best_score5801にはaxis 9.12実装済み。
-     # Fixes rollback failure mode: type14→15へのmerge path作成不足（merge drought exit trigger添加）
-     # refs: tmp/analysis_result.md, game_history/20260520_151536_score1887.jsonl,
-     #       strategy_versions/best_score5801_strategy.py (axis 9.12 reference)
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -854,9 +848,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and c.get("merge_grade") != "NO"]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        __dlg_any_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        if __dlg_any_safe:
+            __dlg_best = min(__dlg_any_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
@@ -897,12 +895,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
     double_russia_phase = russia_phase_count >= 2
 
-    # --- no_merge_streak tracking (for axis 9.12 merge drought exit trigger) ---
-    # Tracks consecutive NO-merge turns to detect merge drought for exit guidance.
-    # Reset when merge occurs (score_delta > 0 or merge_available for this turn).
-    # Used by axis 9.12 to create merge path opportunities during extended NO-merge droughts.
-    prev_no_merge_streak = game_state.get("no_merge_streak", 0)
-
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -910,7 +902,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.4  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
+        height_mult = 1.813  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -1013,7 +1005,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
         if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
+            risk_factor = min(1.0, max(0.0, 1.279 - reactor_margin))
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
@@ -1420,6 +1412,65 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
+
+        # ----- v601: axis 9.9 — Russia-phase next-Russia growth pipeline guidance (NEW) -----
+        # analysis_result.md adopted hypothesis: Russia-phase dedicated "next-Russia growth pipeline" axis.
+        # Game log analysis: both best and extra_high games consume turns with BOARD_COMPRESSION only
+        # after Russia founding, entering merge drought with no pipeline for 2nd Russia.
+        # batch_summary: high-score and low-score groups have same endgame max_y (1.84) → height not
+        # the differentiator; piece types left on board determine score.
+        #
+        # Logic:
+        # (1) Russia piece below-position bonus: candidates placed directly below or diagonally below
+        #     existing Russia piece (type 15) get +150 * merge_mult * russia_pipeline_mult
+        #     Conditions: dx<1.5, -0.5<=dy<=1.0 (below or diagonally below within range)
+        # (2) High-type piece (type>=10) centroid clustering: candidates near centroid of type>=10
+        #     pieces get +80 * merge_mult * russia_pipeline_mult
+        #
+        # russia_pipeline_mult: deeper Russia = higher multiplier (y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x)
+        #
+        # Guards:
+        # - russia_phase == True and double_russia_phase == False (only when 1 Russia on board)
+        # - merge_grade == "NO" (only when no merge opportunity; merges handled by existing axes)
+        # - max_y >= 1.0 (only when board is elevated enough; LOW phase doesn't need this)
+        # - death_spiral == False (death_spiral requires height management only)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
+        #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
+        # Fixes failure mode: "Russia-phase merge drought consumes turns with BOARD_COMPRESSION only,
+        #   no merge path to next Russia constructed"
+        if (russia_phase and not double_russia_phase
+                and merge_grade == "NO"
+                and max_y >= 1.0
+                and not death_spiral):
+            russia_pieces = [p for p in pieces if p.get("type") == 15]
+            if russia_pieces:
+                deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
+                russia_y = deepest_russia.get("y", -10)
+                russia_x = deepest_russia.get("x", 0)
+                russia_pipeline_mult = max(0.3, min(2.0, 1.0 - russia_y * 0.25))
+                dx = abs(x - russia_x)
+                dy = landing_y - russia_y
+                if dx < 1.5 and -0.5 <= dy <= 1.0:
+                    below_bonus = 150.0 * merge_mult * russia_pipeline_mult
+                    below_bonus *= max(0.0, 1.0 - dx / 1.5)
+                    ideal_dy = 0.5
+                    dy_penalty = 1.0 - abs(dy - ideal_dy) * 0.5
+                    below_bonus *= max(0.0, dy_penalty)
+                    if below_bonus > 20:
+                        score += below_bonus
+                        reasons.append("RUSSIA_PIPELINE_BELOW")
+            high_type_pieces = [p for p in pieces if p.get("type") >= 10]
+            if len(high_type_pieces) >= 2:
+                hc_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
+                hc_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
+                dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.5
+                if dist_to_centroid < 3.0:
+                    cluster_bonus = 80.0 * merge_mult * russia_pipeline_mult
+                    cluster_bonus *= max(0.0, 1.0 - dist_to_centroid / 3.0)
+                    if cluster_bonus > 10:
+                        score += cluster_bonus
+                        reasons.append("HIGH_TYPE_CLUSTER")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
@@ -1976,7 +2027,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
                  # 即時併合候補がある場合、最優先（強力なボーナス）
-                 if reactive_pair_count >= 1:
+                 if reactive_pair_count >= 2:
                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                      if merge_grade == "DIRECT":
                          score += 1400.0 if reactive_pair_count >= 3 else 1200.0
@@ -2051,39 +2102,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
             score -= 1000.0  # 追加ペナルティ（axis 8.8と合計-5500）
             reasons.append("HIGH_MERGE_DROUGHT_PENALTY")
-
-        # ----- evaluation axis 9.12: merge drought exit trigger (v587) -----
-        # analysis_result.md adopted hypothesis: merge drought exit trigger.
-        # NO merge連続ターン数(no_merge_streak>=2)で、高type pieces(type13+)との近了配置に
-        # ボーナスをつけ、NO merge時のdrought脱出口を作成する。
-        # worst game T104-110: type14存在确认りながら7ターンmerge机会0。
-        # best_score5801_strategy.pyにはaxis 9.12が実装済み、currentには未実装。
-        # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"
-        # mandatory_themes: "NEXTを考慮したドロップ" — next pieceのtypeも考虑した近了配置促进。
-        # refs: tmp/analysis_result.md (Implementation Plan),
-        #       game_history/20260520_151536_score1887.jsonl (best T104-110 merge drought),
-        #       game_history/20260520_152334_score0597.jsonl (worst T61-64 merge drought),
-        #       strategy_versions/best_score5801_strategy.py (axis 9.12 reference)
-        # Fixes rollback failure mode: type14→15へのmerge path作成不足（merge drought exit trigger）
-        # axis 9.12 sits between merge_drought suppression and type13+ proximity guidance.
-        # death_spiral requires danger_piece_count>0, but merge drought can be active without danger pieces.
-        # Use merge-drought-equivalent suppression: rp>=1 && max_y>=1.0 (matches v586/v585 activation).
-        if merge_grade == "NO" and max_y >= 2.0 and piece_count >= 30:
-            if prev_no_merge_streak >= 2:
-                # suppress only when already in full death spiral (danger+rp+NO+deadline_or_maxy1.5)
-                in_death_spiral = danger_piece_count > 0 and reactive_pair_count >= 3 and max_y >= 1.5
-                if not in_death_spiral:
-                    high_type_pieces = [p for p in pieces if p.get("type", 0) >= 13]
-                    if high_type_pieces:
-                        min_dist = float("inf")
-                        for ht in high_type_pieces:
-                            dist = abs(x - ht.get("x", 0))
-                            if dist < min_dist:
-                                min_dist = dist
-                        if min_dist < 1.5:
-                            merge_exit_bonus = 400.0 * merge_mult
-                            score += merge_exit_bonus
-                            reasons.append("MERGE_DROUGHT_EXIT")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
