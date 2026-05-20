@@ -66,6 +66,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v611: axis 8.9 — reactive pairs NEAR merge incentive (NEW)
+      # rp>=1 && merge_grade==NEAR && pc>=25 && max_y>=1.5 → +400*merge_mult bonus.
+      # Worst game T55: rp=4, NEAR available but NO-merge placement chosen → max_y runaway.
+      # Best game T85: rp=4, merge_available → DIRECT_MERGE, score_delta=36 (converted).
+      # This converts reactive pairs to merge before max_y runaway, targeting Ukraine(T13) stage.
+      # Suppressed in death_spiral (axis 8.8/8.8b handle height escalation).
+      # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md, advice.md,
+      #       tmp/batch_summary.txt, game_history/20260521_065959_score0506.jsonl,
+      #       game_history/20260521_062231_score1954.jsonl
+      #
       # v610: axis 9.10 enhancement — strengthen type 8-12 centroid attraction bonus.
       # batch_summary: HIGH_TYPE_CONCENTRATION avg_score_delta=0.9 (essentially no value).
       # Analysis: worst game 369 had 7 consecutive NO-merge turns (T48-55) with reactive_pairs
@@ -2202,6 +2212,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+
+        # ----- evaluation axis 8.9: reactive pairs NEAR merge incentive (NEW v611) -----
+        # analysis_result.md adopted hypothesis: rp>=1 && merge_grade==NEAR && pc>=25 && max_y>=1.5
+        # When reactive pairs exist and a NEAR merge is available at elevated board height,
+        # add bonus to strongly prefer the NEAR merge over NO-merge placement.
+        # This converts reactive pairs to score before max_y runaway.
+        #
+        # Evidence:
+        # - Worst game T55: rp=4, merge_grade=NEAR, max_y=2.04, but HIGH_TOWER selected
+        #   (rp existed but NO-merge placement chosen, missing NEAR merge opportunity)
+        # - Best game T85: rp=4, merge_available=true → DIRECT_MERGE, score_delta=36
+        #   (rp properly converted to merge before danger zone)
+        # - Batch: HIGH_TYPE_CONCENTRATION 14.4% low vs 10.7% high (rp not converted)
+        # - advice.md: "盤面状態に関わらず即時併合を最優先する"
+        #
+        # Bonus: 400*merge_mult — competitive with axis 1.7c suppression (-600*merge_mult)
+        # but only fires when rp>=1 && NEAR merge available.
+        # Suppressed in death_spiral (axis 8.8/8.8b already handle height escalation).
+        #
+        # Target stage: Ukraine (T13) 8/12(67%) → improving rp->merge conversion rate
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
+        #       tmp/batch_summary.txt, advice.md, game_history/20260521_065959_score0506.jsonl,
+        #       game_history/20260521_062231_score1954.jsonl
+        if (
+            reactive_pair_count >= 1
+            and merge_grade == "NEAR"
+            and piece_count >= 25
+            and max_y >= 1.5
+            and not death_spiral
+        ):
+            score += 400.0 * merge_mult
+            reasons.append("REACTIVE_PAIRS_NEAR_INCENTIVE")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
