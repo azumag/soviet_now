@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
+Version: 588 (2026-05-20)
+Change: +200/+150 bonus for DIRECT/NEAR merge when next_type>=13 and safe landing
+Refs: tmp/analysis_result.md tmp/last_rollback_postmortem.md
+
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -974,9 +978,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
+            if next_type >= 13:
+                score += 200.0
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
             score += 600.0 * merge_mult
+            if next_type >= 13 and landing_y < reactor_margin:
+                score += 150.0
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
