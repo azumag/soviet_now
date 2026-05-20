@@ -603,6 +603,11 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     reactive_pairs = len(reactor.get("reactive_pairs", []))
     danger_piece_count = int(deadline.get("danger_piece_count", 0) or 0)
     min_redline_time = float(deadline.get("min_redline_time", 0.0) or 0.0)
+    deadline_clean_candidate_count = len([
+        r for r in results
+        if not r.get("crosses_deadline", False)
+        and not r.get("merge_result_crosses_deadline", False)
+    ])
 
     # ピースのスナップショット（軽量化: 位置とtypeのみ）
     piece_snapshot = [
@@ -658,7 +663,10 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "decision_strategy_deadline_risk": _candidate_has_strategy_deadline_risk(chosen_result, analysis) if chosen_result else False,
         "decision_top_y_after_drop": round(float(chosen_result.get("top_y_after_drop", 0.0) or 0.0), 2) if chosen_result else None,
         "decision_risk_top_y_after_drop": round(float(chosen_result.get("risk_top_y_after_drop", 0.0) or 0.0), 2) if chosen_result else None,
+        "decision_merge_result_crosses_deadline": bool(chosen_result.get("merge_result_crosses_deadline", False)) if chosen_result else False,
+        "decision_merge_result_top_y": round(float(chosen_result.get("merge_result_top_y", 0.0) or 0.0), 2) if chosen_result else None,
         "deadline_safe_candidate_count": len([r for r in results if not r.get("crosses_deadline", False)]),
+        "deadline_clean_candidate_count": deadline_clean_candidate_count,
         "deadline_candidate_count": len(results),
         "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
         "danger_direct_merge_available": bool(chosen_result.get("danger_direct_merge_available", False)) if chosen_result else False,
@@ -717,6 +725,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             isinstance(r, dict)
             and r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
             and bool(r.get("merge_result_crosses_deadline", False))
+            and has_deadline_clean_candidate
         )
 
     non_crossing_safe = [r for r in results if not r.get("crosses_deadline", False)]
@@ -726,6 +735,13 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else [r for r in results if _candidate_has_non_crossing_landing(r)]
     )
     safe = non_crossing_safe or landing_safe
+    deadline_clean_candidates = [
+        r for r in results
+        if isinstance(r, dict)
+        and not r.get("crosses_deadline", False)
+        and not r.get("merge_result_crosses_deadline", False)
+    ]
+    has_deadline_clean_candidate = bool(deadline_clean_candidates)
     merge_allowed = [
         r for r in results
         if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
@@ -949,6 +965,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         country_route_reason
         and not urgent_direct_pressure
         and not urgent_merge_pressure
+        and not risky_merge_result_deadline(chosen)
         and not chosen.get("crosses_deadline", False)
         and chosen_top <= min_risk_top + 2.0
         and abs(chosen_x) <= 2.65
@@ -960,7 +977,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
 
     replacement_source = "generic"
 
-    if urgent_direct_pressure:
+    if risky_merge_result_deadline(chosen):
+        replacement = min(deadline_clean_candidates, key=rank_candidate)
+        replacement_source = "avoid_merge_result_deadline"
+
+    elif urgent_direct_pressure:
         if chosen in safe_direct:
             return decision
         replacement = min(safe_direct, key=rank_candidate)
@@ -1222,8 +1243,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         if safer_merges:
             replacement = min(safer_merges, key=rank_candidate)
             replacement_source = f"{replacement_source}_avoid_merge_result_deadline"
-        elif safe:
-            replacement = min(safe, key=rank_candidate)
+        elif deadline_clean_candidates:
+            replacement = min(deadline_clean_candidates, key=rank_candidate)
             replacement_source = f"{replacement_source}_avoid_merge_result_deadline_safe"
         else:
             return decision

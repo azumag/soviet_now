@@ -228,6 +228,20 @@ def clean(text: str) -> str:
 	text = re.sub(r"\s+", " ", text).strip()
 	return text
 
+def ignored_authors() -> set[str]:
+	names = os.environ.get("YOUTUBE_IGNORE_AUTHORS", "")
+	out = set()
+	for name in re.split(r"[, \n\t]+", names):
+		name = clean(name)
+		if not name:
+			continue
+		out.add(name)
+		out.add(name.lstrip("@"))
+		out.add("@" + name.lstrip("@"))
+	return out
+
+ignored_author_names = ignored_authors()
+
 lines = []
 for item in data.get("items") or []:
 	msg_id = clean(str(item.get("id") or ""))
@@ -236,6 +250,8 @@ for item in data.get("items") or []:
 	if author.get("isChatOwner") and os.environ.get("YOUTUBE_IGNORE_OWNER_MESSAGES", "0") in {"1", "true", "TRUE", "yes", "YES"}:
 		continue
 	display = clean(str(author.get("displayName") or "YouTube"))
+	if display in ignored_author_names:
+		continue
 	text = clean(str(snippet.get("displayMessage") or snippet.get("textMessageDetails", {}).get("messageText") or ""))
 	if not text:
 		continue
@@ -539,12 +555,16 @@ PY
 }
 
 _status() {
-	local pending=0 raw=0 poll_interval="-" last_poll="-"
+	local pending=0 raw=0 poll_interval="-" effective_poll_interval="-" last_poll="-"
 	[ -f "$PENDING_LOG" ] && pending=$(wc -l <"$PENDING_LOG" 2>/dev/null | tr -d ' ')
 	[ -f "$RAW_LOG" ] && raw=$(wc -l <"$RAW_LOG" 2>/dev/null | tr -d ' ')
 	[ -f "$POLL_INTERVAL_FILE" ] && poll_interval=$(cat "$POLL_INTERVAL_FILE" 2>/dev/null || echo "-")
+	effective_poll_interval="$poll_interval"
+	if [ "${effective_poll_interval:-0}" -lt "${YOUTUBE_CHAT_POLL_INTERVAL_SEC:-10}" ] 2>/dev/null; then
+		effective_poll_interval="${YOUTUBE_CHAT_POLL_INTERVAL_SEC:-10}"
+	fi
 	[ -f "$LAST_POLL_FILE" ] && last_poll=$(cat "$LAST_POLL_FILE" 2>/dev/null || echo "-")
-	echo "enabled=${YOUTUBE_CHAT_ENABLED:-0} raw=${raw:-0} pending=${pending:-0} poll_interval=${poll_interval}s last_poll=${last_poll}"
+	echo "enabled=${YOUTUBE_CHAT_ENABLED:-0} raw=${raw:-0} pending=${pending:-0} api_poll_interval=${poll_interval}s effective_poll_interval=${effective_poll_interval}s last_poll=${last_poll}"
 }
 
 case "$CMD" in

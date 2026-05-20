@@ -15,8 +15,8 @@ validate_strategy() {
 	# from-source で必ず guard 付きにする (既に有れば inject_guard が no-op)。
 	# 緊急停止は DEADLINE_GUARD_AUTO_INJECT=0。
 	if [ "${DEADLINE_GUARD_AUTO_INJECT:-1}" = "1" ] && [ -f "$target_file" ] && case "$target_file" in *.py|*.py.staging) true ;; *) false ;; esac; then
-		if ! grep -q 'BEGIN DEADLINE GUARD' "$target_file" 2>/dev/null; then
-			if python3 - "$target_file" <<'PYINJ' 2>/dev/null
+		local _deadline_guard_inject_out
+		_deadline_guard_inject_out=$(python3 - "$target_file" <<'PYINJ' 2>/dev/null
 import sys
 sys.path.insert(0, ".")
 import inject_deadline_guard as ig
@@ -27,9 +27,9 @@ if new is not None:
     open(p, "w", encoding="utf-8").write(new)
     print("injected")
 PYINJ
-			then
-				log "[VALIDATE] deadline guard を $target_file に冪等注入"
-			fi
+		)
+		if [ "$_deadline_guard_inject_out" = "injected" ]; then
+			log "[VALIDATE] deadline guard を $target_file に冪等注入/更新"
 		fi
 	fi
 
@@ -292,6 +292,32 @@ risky_single_danger_merge_analysis = {
 risky_single_danger_merge_result = mod.decide(active_filter_state, risky_single_danger_merge_analysis)
 if float(risky_single_danger_merge_result["x"]) != -1.0:
     raise AssertionError(f"risky-single-danger-merge: expected safe x=-1.0, got {risky_single_danger_merge_result!r}")
+
+non_danger_risky_merge_analysis = {
+    "results": [
+        {"x": -1.0, "landing_y": 2.0, "top_y_after_drop": 2.6, "risk_top_y_after_drop": 2.6, "merge_result_crosses_deadline": False, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": 0.0, "landing_y": 3.05, "top_y_after_drop": 3.2, "risk_top_y_after_drop": 3.2, "merge_result_top_y": 4.0, "merge_result_crosses_deadline": True, "crosses_deadline": False, "merge_grade": "DIRECT", "has_merge": True, "merges": [{"id": 1, "grade": "DIRECT", "dist": 0.1, "contact_r": 1.4, "target_is_danger": False}], "danger_merge_available": False, "danger_direct_merge_available": False},
+    ],
+    "same_type": [{"id": 1, "type": 5, "x": 0.0, "y": 2.4, "r": 0.7}],
+    "reactor": {"reactive_pairs": [(1, 2, 5)], "deadline_margin": -0.1, "top_edge_y": 3.4, "danger_piece_count": 0},
+    "deadline": {"deadline_y": 3.32, "deadline_margin": -0.1, "deadline_crossed": True},
+}
+non_danger_risky_merge_result = mod.decide(active_filter_state, non_danger_risky_merge_analysis)
+if float(non_danger_risky_merge_result["x"]) != -1.0:
+    raise AssertionError(f"non-danger-risky-merge: expected clean x=-1.0, got {non_danger_risky_merge_result!r}")
+
+no_clean_risky_merge_analysis = {
+    "results": [
+        {"x": -1.0, "landing_y": 2.8, "top_y_after_drop": 3.34, "risk_top_y_after_drop": 3.34, "merge_result_crosses_deadline": False, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": 0.0, "landing_y": 3.05, "top_y_after_drop": 3.2, "risk_top_y_after_drop": 3.2, "merge_result_top_y": 4.0, "merge_result_crosses_deadline": True, "crosses_deadline": False, "merge_grade": "DIRECT", "has_merge": True, "merges": [{"id": 1, "grade": "DIRECT", "dist": 0.1, "contact_r": 1.4, "target_is_danger": False}], "danger_merge_available": False, "danger_direct_merge_available": False},
+    ],
+    "same_type": [{"id": 1, "type": 5, "x": 0.0, "y": 2.4, "r": 0.7}],
+    "reactor": {"reactive_pairs": [(1, 2, 5)], "deadline_margin": -0.1, "top_edge_y": 3.4, "danger_piece_count": 0},
+    "deadline": {"deadline_y": 3.32, "deadline_margin": -0.1, "deadline_crossed": True},
+}
+no_clean_risky_merge_result = mod.decide(active_filter_state, no_clean_risky_merge_analysis)
+if float(no_clean_risky_merge_result["x"]) != 0.0:
+    raise AssertionError(f"no-clean-risky-merge: expected merge x=0.0, got {no_clean_risky_merge_result!r}")
 
 all_crossing_analysis = {
     "results": [

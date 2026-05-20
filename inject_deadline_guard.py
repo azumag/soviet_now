@@ -62,8 +62,14 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
+        __dlg_has_clean = any(
+            isinstance(c, dict)
+            and not c.get("crosses_deadline")
+            and not c.get("merge_result_crosses_deadline")
+            for c in __dlg_cands
+        )
         def __dlg_merge_result_safe(c):
-            return not c.get("merge_result_crosses_deadline")
+            return not (__dlg_has_clean and c.get("merge_result_crosses_deadline"))
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
@@ -129,9 +135,14 @@ def compute_hash(path: Path) -> str:
 
 
 def inject_guard(src: str) -> str | None:
-    """Return modified source with guard injected, or None if already present."""
-    if "BEGIN DEADLINE GUARD" in src:
-        return None
+    """Return modified source with the current guard injected.
+
+    Older strategies may already contain a previous DEADLINE GUARD block. In
+    that case, replace the whole block so rollbacks and archive restarts inherit
+    the current safety policy instead of keeping stale deadline behavior.
+    """
+    begin = "    # --- BEGIN DEADLINE GUARD"
+    end = "    # --- END DEADLINE GUARD ---"
     tree = ast.parse(src)
     decide_node = None
     for node in tree.body:
@@ -140,6 +151,21 @@ def inject_guard(src: str) -> str | None:
             break
     if decide_node is None:
         return None
+    lines = src.split("\n")
+    guard_lines = GUARD_BLOCK.split("\n")
+    # GUARD_BLOCK already ends with \n so split yields a trailing ""
+    if guard_lines and guard_lines[-1] == "":
+        guard_lines = guard_lines[:-1]
+    for i, line in enumerate(lines):
+        if line.startswith(begin):
+            for j in range(i, len(lines)):
+                if lines[j].strip() == end.strip():
+                    current = "\n".join(lines[i:j + 1])
+                    desired = "\n".join(guard_lines)
+                    if current == desired:
+                        return None
+                    return "\n".join(lines[:i] + guard_lines + lines[j + 1:])
+            return None
     # Find insertion line number: after docstring if present, else at body start
     first_stmt = decide_node.body[0]
     is_doc = (
@@ -151,11 +177,6 @@ def inject_guard(src: str) -> str | None:
         insert_line = first_stmt.end_lineno  # 1-based; insert AFTER this line
     else:
         insert_line = first_stmt.lineno - 1  # insert BEFORE first statement
-    lines = src.split("\n")
-    guard_lines = GUARD_BLOCK.split("\n")
-    # GUARD_BLOCK already ends with \n so split yields a trailing ""
-    if guard_lines and guard_lines[-1] == "":
-        guard_lines = guard_lines[:-1]
     new_lines = lines[:insert_line] + guard_lines + lines[insert_line:]
     return "\n".join(new_lines)
 

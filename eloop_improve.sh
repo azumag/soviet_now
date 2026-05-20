@@ -1624,6 +1624,12 @@ def summarize_deadline(path: str):
     }
 
 def summarize_nation_progress(paths):
+    stage_gates = [
+        (11, "Turkmenistan"),
+        (13, "Ukraine"),
+        (14, "Kazakhstan"),
+        (15, "Russia"),
+    ]
     games = []
     for path in paths:
         rows = read_jsonl(path)
@@ -1710,6 +1716,22 @@ def summarize_nation_progress(paths):
     russia_count = sum(1 for g in games if g["russia"])
     soviet_count = sum(1 for g in games if g["soviet"])
     max_type = max((g["max_type"] for g in games), default=0)
+    gate_rows = []
+    main_gate_target = None
+    for piece_type, name in stage_gates:
+        reached = sum(1 for g in games if int(g.get("max_type", 0) or 0) >= piece_type)
+        total = len(games)
+        rate = reached / total if total else 0.0
+        row = {
+            "type": piece_type,
+            "name": name,
+            "reached": reached,
+            "total": total,
+            "rate": rate,
+        }
+        gate_rows.append(row)
+        if total > 0 and main_gate_target is None and reached < total:
+            main_gate_target = row
     total_turns = sum(g["turns"] for g in games)
     deadline_guard_count = sum(g["deadline_guard_count"] for g in games)
     deadline_guard_reasons = collections.Counter()
@@ -1729,6 +1751,8 @@ def summarize_nation_progress(paths):
         "russia_count": russia_count,
         "soviet_count": soviet_count,
         "max_type": max_type,
+        "stage_gates": gate_rows,
+        "main_gate_target": main_gate_target,
         "deadline_guard_count": deadline_guard_count,
         "deadline_guard_rate": deadline_guard_count / max(1, total_turns),
         "deadline_guard_reason_top": deadline_guard_reason_top,
@@ -1872,6 +1896,24 @@ summary_lines.append(
     f"deadline_guard_rate={nation_progress['deadline_guard_rate']:.1%} "
     f"deadline_guard_reason_top={nation_progress['deadline_guard_reason_top']}"
 )
+if nation_progress["stage_gates"]:
+    gate_text = " ".join(
+        f"{g['name']}(T{g['type']})={g['reached']}/{g['total']}({g['rate']:.0%})"
+        for g in nation_progress["stage_gates"]
+    )
+    main_gate = nation_progress.get("main_gate_target")
+    if main_gate:
+        summary_lines.append(
+            f"- stage_gate_rates: {gate_text}"
+        )
+        summary_lines.append(
+            f"- main_gate_target: {main_gate['name']}(T{main_gate['type']}) "
+            f"{main_gate['reached']}/{main_gate['total']}({main_gate['rate']:.0%}). "
+            "今回の分析/実装はこの未達段階へ効く変更を優先すること。"
+        )
+    else:
+        summary_lines.append(f"- stage_gate_rates: {gate_text}")
+        summary_lines.append("- main_gate_target: all configured gates are 100%; prioritize Russia→Soviet transition quality.")
 summary_lines.append("- high_type_counts is final-board type10+ inventory. If T14x2 appears without type15, prioritize the missed final merge route over generic score tuning.")
 summary_lines.append("- peak_high_type_counts/frontier_hint show whether the run created enough near-frontier pieces earlier, even if they were gone by gameover.")
 if nation_progress["games"]:

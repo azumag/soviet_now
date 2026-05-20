@@ -159,6 +159,7 @@ cat > "$__DASH_TMP" <<HTMLEOF
   .stat-value.best { color: #ffd700; }
   .stat-value.avg { color: #4ecdc4; }
   .stat-value.games { color: #a78bfa; }
+  .stat-value.eval, .mini-value.eval { color: #22d3ee; }
   .stat-value.recent, .mini-value.recent { color: #f97316; }
   .stat-value.trend, .mini-value.trend { font-size: 3.3em; line-height: 1.05; }
   .stat-value.trend-up, .mini-value.trend-up { color: #86efac; }
@@ -170,8 +171,7 @@ cat > "$__DASH_TMP" <<HTMLEOF
   .rank-label { font-size: 0.6em; vertical-align: super; margin-right: 2px; }
   .stats-grid {
     display: grid;
-    /* 16 mini-stats → 6 cols × 3 rows でチャート用の縦スペース確保 */
-    grid-template-columns: repeat(6, minmax(180px, 1fr));
+    grid-template-columns: repeat(4, minmax(220px, 1fr));
     gap: 10px;
     width: 100%;
     margin: 0 0 12px 0;
@@ -182,7 +182,7 @@ cat > "$__DASH_TMP" <<HTMLEOF
     border: 1px solid #2c2c45;
     border-radius: 8px;
     padding: 10px 12px;
-    min-height: 130px;
+    min-height: 112px;
   }
   .mini-label {
     color: #8b8fa3;
@@ -195,7 +195,7 @@ cat > "$__DASH_TMP" <<HTMLEOF
   }
   .mini-value {
     color: #e5e7eb;
-    font-size: 2.6em;
+    font-size: 2.45em;
     font-weight: 700;
     line-height: 1.12;
   }
@@ -210,6 +210,19 @@ cat > "$__DASH_TMP" <<HTMLEOF
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .mini-lines {
+    margin-top: 4px;
+    display: grid;
+    gap: 2px;
+    color: #8b91aa;
+    font-size: 0.82em;
+    line-height: 1.18;
+  }
+  .mini-lines b {
+    color: #d7dde9;
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .metric-row {
     display: grid;
@@ -326,20 +339,12 @@ cat > "$__DASH_TMP" <<HTMLEOF
   <div class="stat"><div class="stat-label">All Russia</div><div class="metric-row"><div class="stat-value russia" id="russiaRate">-</div><div class="donut" id="russiaRateDonut"><span>-</span></div></div></div>
 </div>
 <div class="stats-grid">
-  <div class="mini-stat"><div class="mini-label">Recent 10 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent10Avg">-</div><div class="trend-badge" id="recent10Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 50</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent 50 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent50Avg">-</div><div class="trend-badge" id="recent50Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 100</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent 100 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent100Avg">-</div><div class="trend-badge" id="recent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs all avg</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent Best</div><div class="metric-row"><div class="mini-value hot" id="recentBest">-</div><div class="donut" id="recentBestDonut"><span>-</span></div></div><div class="mini-sub">vs all best</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent Median</div><div class="metric-row"><div class="mini-value" id="recentMedian">-</div><div class="trend-badge" id="recentMedianTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 100 avg</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent P90</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-sub">upper band</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent 3000+</div><div class="metric-row"><div class="mini-value hot" id="recent3000">-</div><div class="donut" id="recent3000Donut"><span>-</span></div></div><div class="mini-sub" id="recent3000Sub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent 2000+</div><div class="metric-row"><div class="mini-value cool" id="recent2000">-</div><div class="donut" id="recent2000Donut"><span>-</span></div></div><div class="mini-sub" id="recent2000Sub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Gate Focus</div><div class="metric-row"><div class="mini-value hot" id="gateFocus">-</div><div class="donut" id="gateFocusDonut"><span>-</span></div></div><div class="mini-sub" id="gateFocusSub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Turkmenistan</div><div class="metric-row"><div class="mini-value cool" id="gateTurkmenistan">-</div><div class="donut" id="gateTurkmenistanDonut"><span>-</span></div></div><div class="mini-sub" id="gateTurkmenistanSub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Ukraine</div><div class="metric-row"><div class="mini-value cool" id="gateUkraine">-</div><div class="donut" id="gateUkraineDonut"><span>-</span></div></div><div class="mini-sub" id="gateUkraineSub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Kazakhstan</div><div class="metric-row"><div class="mini-value cool" id="gateKazakhstan">-</div><div class="donut" id="gateKazakhstanDonut"><span>-</span></div></div><div class="mini-sub" id="gateKazakhstanSub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Recent Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-sub" id="russiaRecent100Sub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Today Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaToday">-</div><div class="donut" id="russiaTodayDonut"><span>-</span></div></div><div class="mini-sub" id="russiaTodaySub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Eval Score</div><div class="metric-row"><div class="mini-value eval" id="evalAvg">-</div><div class="trend-badge" id="evalRecent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-lines"><div>best <b id="evalBest">-</b> / r100 <b id="evalRecent100Avg">-</b></div><div>p90 <b id="evalRecentP90">-</b> / <span id="evalAvgSub">-</span></div></div></div>
+  <div class="mini-stat"><div class="mini-label">Raw Recent</div><div class="metric-row"><div class="mini-value recent" id="recent100Avg">-</div><div class="trend-badge" id="recent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-lines"><div>r10 <b id="recent10Avg">-</b> / r50 <b id="recent50Avg">-</b></div><div>best <b id="recentBest">-</b> / med <b id="recentMedian">-</b></div></div></div>
+  <div class="mini-stat"><div class="mini-label">Raw Band</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-lines"><div>3000+ <b id="recent3000">-</b> <span id="recent3000Sub"></span></div><div>2000+ <b id="recent2000">-</b> <span id="recent2000Sub"></span></div></div></div>
+  <div class="mini-stat"><div class="mini-label">Improve Gate</div><div class="metric-row"><div class="mini-value hot" id="gateFocus">-</div><div class="donut" id="gateFocusDonut"><span>-</span></div></div><div class="mini-sub" id="gateFocusSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Gate Stages</div><div class="metric-row"><div class="mini-value cool" id="gateUkraine">-</div><div class="donut" id="gateUkraineDonut"><span>-</span></div></div><div class="mini-lines"><div>T11 <b id="gateTurkmenistan">-</b> / T13 <b id="gateUkraineInline">-</b></div><div>T14 <b id="gateKazakhstan">-</b> / <span id="gateTurkmenistanSub">-</span></div></div><div style="display:none"><span id="gateUkraineSub"></span><span id="gateKazakhstanSub"></span></div></div>
+  <div class="mini-stat"><div class="mini-label">Russia Now</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-lines"><div>today <b id="russiaToday">-</b> / 24h <b id="russiaLast24h">-</b></div><div id="russiaRecent100Sub">-</div></div><div style="display:none"><span id="russiaTodaySub"></span></div></div>
   <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Recent Trend</div><div class="metric-row"><div class="mini-value trend" id="trend">-</div><div class="trend-badge" id="chartTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub" id="trendSub">chart window</div></div>
 </div>
@@ -353,9 +358,11 @@ cat > "$__DASH_TMP" <<HTMLEOF
 const DASHBOARD_DATA = ${DASHBOARD_DATA_JSON};
 const SCORES = DASHBOARD_DATA.chartScores;
 const SCORE_STATS = DASHBOARD_DATA.scoreStats;
+const EVAL_SCORE_STATS = DASHBOARD_DATA.evalScoreStats || null;
 const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
 const STAGE_GATE_STATS = DASHBOARD_DATA.stageGateStats || { window: 0, stages: [], focus: null };
 const CURRENT_STAGE_GATE_STATS = DASHBOARD_DATA.currentStageGateStats || STAGE_GATE_STATS;
+const GATE_MIN_CURRENT_SAMPLES = 10;
 const CURRENT_GAME = SCORE_STATS.currentGame;
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
@@ -399,11 +406,19 @@ function updateExtraStats(scores) {
 
   document.getElementById('russiaRate').textContent = RUSSIA_STATS.rate.toFixed(2) + '%';
   document.getElementById('russiaRecent100').textContent = RUSSIA_STATS.recent100Rate.toFixed(2) + '%';
-  document.getElementById('russiaRecent100Sub').textContent = RUSSIA_STATS.recent100 + ' in last 100';
+  document.getElementById('russiaRecent100Sub').textContent = RUSSIA_STATS.recent100 + '/100 recent';
   document.getElementById('russiaToday').textContent = String(RUSSIA_STATS.today);
-  document.getElementById('russiaTodaySub').textContent = RUSSIA_STATS.last24h + ' in last 24h';
+  document.getElementById('russiaLast24h').textContent = String(RUSSIA_STATS.last24h);
+  document.getElementById('russiaTodaySub').textContent = RUSSIA_STATS.last24h + '/24h';
   document.getElementById('russiaLast').textContent = lastRussia ? ('G' + lastRussia.game) : '-';
   document.getElementById('russiaLastSub').textContent = lastRussia ? ((totalGames - lastRussia.game) + ' games ago / ' + lastRussia.score + 'pt') : '-';
+  const evalStats = EVAL_SCORE_STATS || {};
+  const hasEvalStats = (evalStats.count || 0) > 0;
+  document.getElementById('evalBest').textContent = hasEvalStats ? evalStats.best : '-';
+  document.getElementById('evalAvg').textContent = hasEvalStats ? evalStats.average : '-';
+  document.getElementById('evalAvgSub').textContent = hasEvalStats ? ('n=' + evalStats.count + ' / raw avg ' + SCORE_STATS.average) : 'eval_score_historyなし';
+  document.getElementById('evalRecent100Avg').textContent = hasEvalStats ? evalStats.recent100Average : '-';
+  document.getElementById('evalRecentP90').textContent = hasEvalStats ? evalStats.recent100P90 : '-';
   document.getElementById('recent10Avg').textContent = SCORE_STATS.recent10Average;
   document.getElementById('recent50Avg').textContent = SCORE_STATS.recent50Average;
   document.getElementById('recent100Avg').textContent = SCORE_STATS.recent100Average;
@@ -411,29 +426,33 @@ function updateExtraStats(scores) {
   document.getElementById('recentMedian').textContent = SCORE_STATS.recent100Median;
   document.getElementById('recentP90').textContent = SCORE_STATS.recent100P90;
   document.getElementById('recent3000').textContent = SCORE_STATS.recent100Score3000Rate.toFixed(2) + '%';
-  document.getElementById('recent3000Sub').textContent = SCORE_STATS.recent100Score3000 + ' in last 100';
+  document.getElementById('recent3000Sub').textContent = '(' + SCORE_STATS.recent100Score3000 + '/100)';
   document.getElementById('recent2000').textContent = SCORE_STATS.recent100Score2000Rate.toFixed(2) + '%';
-  document.getElementById('recent2000Sub').textContent = SCORE_STATS.recent100Score2000 + ' in last 100';
-  const gateStats = (CURRENT_STAGE_GATE_STATS.window || 0) > 0 ? CURRENT_STAGE_GATE_STATS : STAGE_GATE_STATS;
+  document.getElementById('recent2000Sub').textContent = '(' + SCORE_STATS.recent100Score2000 + '/100)';
+  const gateStats = CURRENT_STAGE_GATE_STATS;
+  const gateWindow = gateStats.window || 0;
+  const gateActive = gateWindow >= GATE_MIN_CURRENT_SAMPLES;
   const stages = gateStats.stages || [];
   const focus = gateStats.focus || stages[stages.length - 1] || null;
   const stageByType = Object.fromEntries(stages.map((s) => [String(s.type), s]));
-  const turkmenistan = stageByType['11'] || { rate: 0, reached: 0 };
-  const ukraine = stageByType['13'] || { rate: 0, reached: 0 };
-  const kazakhstan = stageByType['14'] || { rate: 0, reached: 0 };
-  document.getElementById('gateFocus').textContent = focus ? focus.name : '-';
-  document.getElementById('gateFocusSub').textContent = focus ? (focus.rate.toFixed(1) + '% / last ' + (gateStats.window || 0)) : '-';
-  document.getElementById('gateTurkmenistan').textContent = turkmenistan.rate.toFixed(1) + '%';
-  document.getElementById('gateTurkmenistanSub').textContent = turkmenistan.reached + ' / ' + (gateStats.window || 0);
-  document.getElementById('gateUkraine').textContent = ukraine.rate.toFixed(1) + '%';
-  document.getElementById('gateUkraineSub').textContent = ukraine.reached + ' / ' + (gateStats.window || 0);
-  document.getElementById('gateKazakhstan').textContent = kazakhstan.rate.toFixed(1) + '%';
-  document.getElementById('gateKazakhstanSub').textContent = kazakhstan.reached + ' / ' + (gateStats.window || 0);
+  const turkmenistan = stageByType['11'] || null;
+  const ukraine = stageByType['13'] || null;
+  const kazakhstan = stageByType['14'] || null;
+  document.getElementById('gateFocus').textContent = gateActive && focus ? focus.name : 'Inactive';
+  document.getElementById('gateFocusSub').textContent = gateActive && focus ? (focus.rate.toFixed(1) + '% / current hash last ' + gateWindow) : ('sample不足 ' + gateWindow + '/' + GATE_MIN_CURRENT_SAMPLES);
+  document.getElementById('gateTurkmenistan').textContent = gateActive && turkmenistan ? turkmenistan.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateTurkmenistanSub').textContent = gateActive && turkmenistan ? (turkmenistan.reached + ' / ' + gateWindow) : 'inactive';
+  document.getElementById('gateUkraine').textContent = gateActive && ukraine ? ukraine.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateUkraineInline').textContent = gateActive && ukraine ? ukraine.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateUkraineSub').textContent = gateActive && ukraine ? (ukraine.reached + ' / ' + gateWindow) : 'inactive';
+  document.getElementById('gateKazakhstan').textContent = gateActive && kazakhstan ? kazakhstan.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateKazakhstanSub').textContent = gateActive && kazakhstan ? (kazakhstan.reached + ' / ' + gateWindow) : 'inactive';
 
   setDonut('bestDonut', SCORE_STATS.best, 6000, '#ffd700');
   setDonut('gamesDonut', SCORE_STATS.count % 1000, 1000, '#a78bfa', (SCORE_STATS.count % 1000) + '/1k');
   setDonut('russiaRateDonut', RUSSIA_STATS.rate, 2, '#facc15', RUSSIA_STATS.rate.toFixed(1) + '%');
   setTrendBadge('avgTrend', SCORE_STATS.recent100Average - SCORE_STATS.average, '');
+  setTrendBadge('evalRecent100Trend', hasEvalStats ? evalStats.recent100Average - evalStats.average : 0, '');
   setTrendBadge('recent10Trend', SCORE_STATS.recent10Average - SCORE_STATS.recent50Average, '');
   setTrendBadge('recent50Trend', SCORE_STATS.recent50Average - SCORE_STATS.recent100Average, '');
   setTrendBadge('recent100Trend', SCORE_STATS.recent100Average - SCORE_STATS.average, '');
@@ -442,10 +461,10 @@ function updateExtraStats(scores) {
   setDonut('recentP90Donut', SCORE_STATS.recent100P90, 3500, '#38bdf8');
   setDonut('recent3000Donut', SCORE_STATS.recent100Score3000Rate, 100, '#fb7185', SCORE_STATS.recent100Score3000 + '/100');
   setDonut('recent2000Donut', SCORE_STATS.recent100Score2000Rate, 100, '#38bdf8', SCORE_STATS.recent100Score2000 + '/100');
-  setDonut('gateFocusDonut', focus ? focus.rate : 0, 100, '#fb7185', focus ? focus.rate.toFixed(0) + '%' : '-');
-  setDonut('gateTurkmenistanDonut', turkmenistan.rate, 100, '#38bdf8', turkmenistan.reached + '/' + (gateStats.window || 0));
-  setDonut('gateUkraineDonut', ukraine.rate, 100, '#38bdf8', ukraine.reached + '/' + (gateStats.window || 0));
-  setDonut('gateKazakhstanDonut', kazakhstan.rate, 100, '#38bdf8', kazakhstan.reached + '/' + (gateStats.window || 0));
+  setDonut('gateFocusDonut', gateActive && focus ? focus.rate : 0, 100, '#fb7185', gateActive && focus ? focus.rate.toFixed(0) + '%' : 'off');
+  setDonut('gateTurkmenistanDonut', gateActive && turkmenistan ? turkmenistan.rate : 0, 100, '#38bdf8', gateActive && turkmenistan ? (turkmenistan.reached + '/' + gateWindow) : '-');
+  setDonut('gateUkraineDonut', gateActive && ukraine ? ukraine.rate : 0, 100, '#38bdf8', gateActive && ukraine ? (ukraine.reached + '/' + gateWindow) : '-');
+  setDonut('gateKazakhstanDonut', gateActive && kazakhstan ? kazakhstan.rate : 0, 100, '#38bdf8', gateActive && kazakhstan ? (kazakhstan.reached + '/' + gateWindow) : '-');
   setDonut('russiaRecent100Donut', RUSSIA_STATS.recent100Rate, 20, '#facc15', RUSSIA_STATS.recent100 + '/100');
   setDonut('russiaTodayDonut', RUSSIA_STATS.today, 20, '#facc15', String(RUSSIA_STATS.today));
   setDonut('russiaLastDonut', Math.max(0, 100 - gamesSinceRussia), 100, '#facc15', gamesSinceRussia + 'g');

@@ -12,6 +12,7 @@ from typing import Any
 
 
 SCORE_HISTORY = Path("score_history.txt")
+EVAL_SCORE_HISTORY = Path("eval_score_history.txt")
 RUSSIA_HISTORY = Path("tmp/history/russia_creation_history.tsv")
 GAME_HISTORY = Path("game_history")
 GAME_COUNT = Path("game_count.txt")
@@ -204,6 +205,10 @@ def score_stats(scores: list[dict[str, Any]], current_game: int) -> dict[str, An
     }
 
 
+def empty_score_stats(current_game: int) -> dict[str, Any]:
+    return score_stats([], current_game)
+
+
 def russia_stats(rows: list[dict[str, Any]], current_game: int) -> dict[str, Any]:
     now = datetime.now().astimezone()
     today = now.date()
@@ -249,12 +254,12 @@ def stage_gate_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "rate": rate,
         }
         stages.append(item)
-        if focus is None and rate < 100:
+        if total > 0 and focus is None and rate < 100:
             focus = item
     return {
         "window": total,
         "stages": stages,
-        "focus": focus or (stages[-1] if stages else None),
+        "focus": focus if total > 0 else None,
     }
 
 
@@ -275,6 +280,7 @@ def stage_gate_stats_for_hash(rows: list[dict[str, Any]], strategy_hash: str | N
 
 def build_dashboard_data(chart_games: int) -> dict[str, Any]:
     scores = parse_score_history(SCORE_HISTORY)
+    eval_scores = parse_score_history(EVAL_SCORE_HISTORY)
     russia = parse_russia_history(RUSSIA_HISTORY)
     stage_history = parse_stage_history(GAME_HISTORY)
     strategy_hash = current_strategy_hash()
@@ -285,6 +291,7 @@ def build_dashboard_data(chart_games: int) -> dict[str, Any]:
         "chartLimit": chart_games,
         "chartScores": chart_scores,
         "scoreStats": score_stats(scores, current_game),
+        "evalScoreStats": score_stats(eval_scores, current_game) if eval_scores else empty_score_stats(current_game),
         "russiaStats": russia_stats(russia, current_game),
         "stageGateStats": stage_gate_stats(stage_history),
         "currentStageGateStats": stage_gate_stats_for_hash(stage_history, strategy_hash),

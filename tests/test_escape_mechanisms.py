@@ -2326,14 +2326,110 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -0.8)
-        self.assertIn("RUNTIME_DEADLINE_SAFETY_OVERRIDE_DIRECT_TO_NO_safe", decision["reason"])
+        self.assertIn("avoid_merge_result_deadline", decision["reason"])
+
+    def test_deadline_safety_avoids_non_danger_merge_result_crossing_when_clean_exists(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.2, "reason": "DIRECT_MERGE"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.16,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 1.2,
+                        "crosses_deadline": False,
+                        "merge_grade": "DIRECT",
+                        "danger_merge_available": False,
+                        "merge_result_crosses_deadline": True,
+                        "risk_top_y_after_drop": 3.1,
+                    },
+                    {
+                        "x": -0.8,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "merge_result_crosses_deadline": False,
+                        "risk_top_y_after_drop": 2.8,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 9, "x": 1.2, "y": 2.7}], "next": {"type": 9}},
+        )
+
+        self.assertEqual(decision["x"], -0.8)
+        self.assertIn("avoid_merge_result_deadline_safe", decision["reason"])
+
+    def test_deadline_safety_preserves_merge_result_crossing_when_no_clean_candidate(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.2, "reason": "DIRECT_MERGE"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.16,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 1.2,
+                        "crosses_deadline": False,
+                        "merge_grade": "DIRECT",
+                        "danger_merge_available": False,
+                        "merge_result_crosses_deadline": True,
+                        "risk_top_y_after_drop": 3.1,
+                    },
+                    {
+                        "x": -0.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "merge_result_crosses_deadline": False,
+                        "risk_top_y_after_drop": 2.8,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 9, "x": 1.2, "y": 2.7}], "next": {"type": 9}},
+        )
+
+        self.assertEqual(decision["x"], 1.2)
+        self.assertEqual(decision["reason"], "DIRECT_MERGE")
 
     def test_deadline_guard_injector_filters_merge_result_crossing(self):
         injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
 
         self.assertIn("__dlg_merge_result_safe", injector)
+        self.assertIn("__dlg_has_clean", injector)
         self.assertIn("merge_result_crosses_deadline", injector)
-        self.assertIn("return not c.get(\"merge_result_crosses_deadline\")", injector)
+        self.assertIn("return not (__dlg_has_clean and c.get(\"merge_result_crosses_deadline\"))", injector)
+
+    def test_deadline_guard_injector_replaces_stale_guard(self):
+        import inject_deadline_guard
+
+        stale_src = '''
+def decide(game_state, analysis):
+    """strategy"""
+    # --- BEGIN DEADLINE GUARD (old) ---
+    if True:
+        return {"x": 0.0, "reason": "OLD_DEADLINE_GUARD"}
+    # --- END DEADLINE GUARD ---
+    return {"x": 1.0, "reason": "NORMAL"}
+'''
+
+        updated = inject_deadline_guard.inject_guard(stale_src)
+
+        self.assertIsNotNone(updated)
+        self.assertNotIn("OLD_DEADLINE_GUARD", updated)
+        self.assertIn("__dlg_has_clean", updated)
+        self.assertIn("merge_result_crosses_deadline", updated)
+        self.assertEqual(inject_deadline_guard.inject_guard(updated), None)
 
     def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
         import strategy_runner
@@ -3427,6 +3523,17 @@ PY
         self.assertIn("webfetch|websearch", radio_engine)
         self.assertIn("_run_radio_agent \"$radio_prepass_agent\" \"$_prepass_prompt_file\" 2>/dev/null | _sanitize_radio_research_memo", radio_engine)
 
+    def test_radio_tool_failure_lines_are_filtered_before_tts(self):
+        radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
+        ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
+        radio_corners = (REPO_ROOT / "broadcast/radio_corners.sh").read_text()
+
+        self.assertIn(r"[✗✕×]\s*(webfetch|websearch)\s+failed", radio_engine)
+        self.assertIn(r"%?[[:space:]]*(WebFetch|WebSearch)\b", radio_engine)
+        self.assertIn("talk_body=$(printf '%s' \"$talk_body\" | _sanitize_onair_text)", radio_engine)
+        self.assertIn("webfetch|websearch", ai_generate)
+        self.assertIn("webfetch|websearch", radio_corners)
+
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
         status = (REPO_ROOT / "show_status.sh").read_text()
@@ -3625,6 +3732,8 @@ class TestYouTubeChatQueue(unittest.TestCase):
             {
                 "YOUTUBE_CHAT_DIR": str(tmpdir / "chat"),
                 "YOUTUBE_CHAT_OUTFILE": str(tmpdir / "youtube_comments.txt"),
+                "YOUTUBE_IGNORE_AUTHORS": "DoCiAIch",
+                "YOUTUBE_IGNORE_OWNER_MESSAGES": "1",
             }
         )
         return subprocess.run(
@@ -3665,6 +3774,19 @@ class TestYouTubeChatQueue(unittest.TestCase):
                                 "id": "msg-3",
                                 "snippet": {"displayMessage": "やった $HOME <ok>"},
                                 "authorDetails": {"displayName": "Carol"},
+                            },
+                            {
+                                "id": "msg-4",
+                                "snippet": {"displayMessage": "[1/12] system mirror"},
+                                "authorDetails": {"displayName": "@DoCiAIch"},
+                            },
+                            {
+                                "id": "msg-5",
+                                "snippet": {"displayMessage": "owner system"},
+                                "authorDetails": {
+                                    "displayName": "Channel Owner",
+                                    "isChatOwner": True,
+                                },
                             },
                         ],
                     },

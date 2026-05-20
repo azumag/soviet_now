@@ -64,11 +64,31 @@ _outbound_chat_log_youtube_mirror_failure() {
 	} >>"$log_file" 2>/dev/null || true
 }
 
+_outbound_chat_source_from_basename() {
+	local basename="$1"
+	basename="${basename%.msg}"
+	basename="${basename#*_}"
+	printf '%s' "${basename%_*}"
+}
+
+_outbound_chat_source_is_youtube_mirror_excluded() {
+	local source="$1"
+	local excludes="${OUTBOUND_CHAT_YOUTUBE_MIRROR_EXCLUDE_SOURCES:-}"
+	local item
+	for item in $excludes; do
+		[ "$source" = "$item" ] && return 0
+	done
+	return 1
+}
+
 _outbound_chat_send_youtube_mirror() {
 	local message="$1"
 	local basename="$2"
 	_outbound_chat_youtube_mirror_configured || return 0
 	[ -x ./youtube_chat.sh ] || return 0
+	local source
+	source=$(_outbound_chat_source_from_basename "$basename")
+	_outbound_chat_source_is_youtube_mirror_excluded "$source" && return 0
 
 	local err_file
 	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_${RANDOM}")
