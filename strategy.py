@@ -65,18 +65,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v587: axis 9.16 — type>=13 NO-merge explicit pipeline keeper
-      # analysis_result.md adopted hypothesis: type>=13 pieces on board + merge_available=false + max_y>=2.0
-      # → add +400*merge_mult for positions within 1.5u of highest-y type>=13 piece.
-      # Fixes failure mode: NO-merge → height runaway → game_over sequence when type13+ exists but
-      # merge path not activated. Distinct from axis 9.8 (merge drought) which targets type>=6 and
-      # requires no reactive/near guidance; axis 9.16 specifically targets type>=13 high-value pieces
-      # and fires at the moment NO merge is first detected with type>=13 on board.
-      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
-      #       tmp/state/last_rollback_postmortem.md (forbid: type>=13 merge_available=false HEIGHT_CONTROL),
-      #       game_history/20260520_164222_score0796.jsonl (worst: T61 merge_available=true score_delta=0),
-      #       game_history/20260520_171312_score1980.jsonl (best: T94 only 1 merge in final 5 turns)
-      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
@@ -913,7 +902,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.813  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
+        height_mult = 1.4  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -1016,7 +1005,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
         if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.0, max(0.0, 1.279 - reactor_margin))
+            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
@@ -1423,38 +1412,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += drought_guidance
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
-
-        # ----- v587: axis 9.16 — type>=13 NO-merge explicit pipeline keeper -----
-        # Adopted from analysis_result.md: type>=13 pieces exist on board AND merge_grade==NO AND
-        # max_y>=2.0 AND not death_spiral → add +400*merge_mult for positions within 1.5u of the
-        # highest-y type>=13 piece. Purpose: at the moment NO merge is detected with type>=13 on
-        # board, proactively create the next merge path rather than defaulting to generic height
-        # control. This breaks the NO merge→height runaway→game_over sequence by creating type13+
-        # merge opportunities before the drought extends. Distinct from axis 9.8 which targets
-        # type>=6 and requires no reactive/near guidance; axis 9.16 specifically targets type>=13
-        # high-value pieces and fires at the moment NO merge is first detected.
-        # Guards: death_spiral suppression (height must be sole differentiator in death spiral).
-        # Fixes failure mode: worst T61 merge_available=true but score_delta=0; best T94 only
-        # 1 merge in final 5 critical turns; worst T62-65 merge_available=false NO merge runaway.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
-        #       tmp/state/last_rollback_postmortem.md (forbid: type>=13 merge_available=false HEIGHT_CONTROL),
-        #       game_history/20260520_164222_score0796.jsonl (worst T61 score_delta=0 pattern),
-        #       game_history/20260520_171312_score1980.jsonl (best T94 single merge pattern)
-        if (merge_grade == "NO"
-                and max_y >= 2.0
-                and not death_spiral
-                and not guidance_suppressed):
-            high_type13_pieces = [p for p in pieces if p.get("type", 0) >= 13]
-            if high_type13_pieces:
-                highest_type13 = max(high_type13_pieces, key=lambda p: p.get("y", -10))
-                hx = highest_type13.get("x", 0)
-                hy = highest_type13.get("y", -10)
-                dist_to_high13 = ((x - hx) ** 2 + (landing_y - hy) ** 2) ** 0.5
-                if dist_to_high13 < 1.5:
-                    pipeline_bonus = 400.0 * merge_mult * max(0.0, 1.0 - dist_to_high13 / 1.5)
-                    score += pipeline_bonus
-                    if "TYPE13_PIPELINE_KEEPER" not in reasons:
-                        reasons.append("TYPE13_PIPELINE_KEEPER")
 
         # ----- v601: axis 9.9 — Russia-phase next-Russia growth pipeline guidance (NEW) -----
         # analysis_result.md adopted hypothesis: Russia-phase dedicated "next-Russia growth pipeline" axis.
@@ -2070,7 +2027,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
                  # 即時併合候補がある場合、最優先（強力なボーナス）
-                 if reactive_pair_count >= 2:
+                 if reactive_pair_count >= 1:
                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                      if merge_grade == "DIRECT":
                          score += 1400.0 if reactive_pair_count >= 3 else 1200.0
