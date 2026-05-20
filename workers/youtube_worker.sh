@@ -143,6 +143,9 @@ while true; do
 	if [ -f tmp/.youtube_chat/poll_interval_sec ]; then
 		interval=$(cat tmp/.youtube_chat/poll_interval_sec 2>/dev/null || echo "$POLL_INTERVAL")
 	fi
+	if [ "${interval:-0}" -lt "${POLL_INTERVAL:-10}" ] 2>/dev/null; then
+		interval="$POLL_INTERVAL"
+	fi
 	_sleep_for_poll_interval "$interval"
 done
 

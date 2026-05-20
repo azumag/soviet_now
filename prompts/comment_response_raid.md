@@ -14,6 +14,7 @@ ${previous_comments_context}
 
 【Recently Spoken Comment Replies (excerpt)】
 ${recent_spoken_comment_context}
+Use this section as short-term memory of what you already said. If the current comment follows up on a recent reply, connect to that reply instead of treating the comment as a brand-new topic.
 Do NOT use the same expressions, structure, punchline, or metaphor in this round's replies.
 
 【Follow-up Hints】

@@ -448,20 +448,37 @@ for i, (user, msg, raw) in enumerate(items, start=1):
 '
 }
 
-_remember_spoken_comment() {
-	local spoken_file="$1"
-	[ -s "$spoken_file" ] || return 0
-	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
-	local history_file prune_from old_files remembered_text
-	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}.txt"
-	remembered_text=$(cat "$spoken_file" 2>/dev/null | _clean_comment_talk | _sanitize_onair_text)
+_remember_comment_reply_text() {
+	local remembered_text="$1"
 	[ -n "$remembered_text" ] || return 0
+	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
+	local history_file prune_from old_files text_hash hash_file
+	text_hash=$(printf '%s' "$remembered_text" | md5 -q 2>/dev/null || true)
+	hash_file="$COMMENT_SPOKEN_HISTORY_DIR/.reply_hashes"
+	if [ -n "$text_hash" ] && grep -qF "$text_hash" "$hash_file" 2>/dev/null; then
+		return 0
+	fi
+	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}.txt"
 	printf '%s\n' "$remembered_text" >"$history_file" 2>/dev/null || return 0
+	if [ -n "$text_hash" ]; then
+		printf '%s\n' "$text_hash" >>"$hash_file" 2>/dev/null || true
+		tail -"$COMMENT_SPOKEN_HISTORY_MAX_FILES" "$hash_file" >"${hash_file}.tmp" 2>/dev/null &&
+			mv "${hash_file}.tmp" "$hash_file" 2>/dev/null || true
+	fi
 	prune_from=$((COMMENT_SPOKEN_HISTORY_MAX_FILES + 1))
 	old_files=$(ls -1t "$COMMENT_SPOKEN_HISTORY_DIR"/*.txt 2>/dev/null | tail -n +"$prune_from" || true)
 	if [ -n "$old_files" ]; then
 		printf '%s\n' "$old_files" | xargs rm -f 2>/dev/null || true
 	fi
+}
+
+_remember_spoken_comment() {
+	local spoken_file="$1"
+	[ -s "$spoken_file" ] || return 0
+	local remembered_text
+	remembered_text=$(cat "$spoken_file" 2>/dev/null | _clean_comment_talk | _sanitize_onair_text)
+	[ -n "$remembered_text" ] || return 0
+	_remember_comment_reply_text "$remembered_text"
 }
 
 _current_playing_comment_file() {
@@ -716,11 +733,147 @@ PY
 
 _build_comment_game_context() {
 	local gs_file="${1:-$GAME_STATE}"
-	python3 - "$gs_file" <<'PY'
+	python3 - "$gs_file" "score_history.txt" "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY'
 import json
+import statistics
 import sys
+from pathlib import Path
 
 path = sys.argv[1]
+score_history_file = Path(sys.argv[2])
+russia_history_file = Path(sys.argv[3])
+soviet_history_file = Path(sys.argv[4])
+try:
+    prediction_cycle_games = max(1, int(sys.argv[5]))
+except Exception:
+    prediction_cycle_games = 12
+
+STATE_LABELS = {
+    "MOVE": "プレイ中",
+    "WAITING": "待機中",
+    "RESULT": "結果画面",
+    "GAMEOVER": "ゲームオーバー",
+    "START": "開始前",
+}
+
+def read_scores(path: Path):
+    rows = []
+    if not path.exists():
+        return rows
+    try:
+        for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            cols = raw.strip().split("\t")
+            if not cols:
+                continue
+            try:
+                score = int(cols[-1])
+            except Exception:
+                continue
+            rows.append(score)
+    except Exception:
+        return []
+    return rows
+
+def read_creation_entries(path: Path):
+    rows = []
+    if not path.exists():
+        return rows
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return rows
+    for raw in lines:
+        cols = raw.strip().split("\t")
+        if len(cols) < 5:
+            continue
+        _iso_ts, local_ts, game_num, score, turns = cols[:5]
+        try:
+            game_num_i = int(game_num)
+        except Exception:
+            game_num_i = None
+        try:
+            score_i = int(score)
+        except Exception:
+            score_i = None
+        try:
+            turns_i = int(turns)
+        except Exception:
+            turns_i = None
+        rows.append({
+            "local_ts": local_ts.strip(),
+            "game_num": game_num_i,
+            "score": score_i,
+            "turns": turns_i,
+        })
+    return rows
+
+def fmt_int(value):
+    if value is None:
+        return "不明"
+    try:
+        return f"{int(value)}"
+    except Exception:
+        return "不明"
+
+def summarize_scores(scores):
+    if not scores:
+        return "score_history.txt は未取得"
+    total = len(scores)
+    ordered = sorted(scores)
+    latest = scores[-1]
+    recent12 = scores[-12:]
+    recent50 = scores[-50:]
+    recent200 = scores[-200:]
+    recent1000 = scores[-1000:]
+    parts = [
+        f"終了スコア履歴件数={total}",
+        f"全体平均={sum(scores) / total:.0f}",
+        f"全体中央値={statistics.median(scores):.0f}",
+        f"全体最高={max(scores)}",
+        f"全体p90={ordered[max(0, min(total - 1, int(total * 0.90) - 1))]}",
+        f"直近終了スコア={latest}",
+        f"直近12平均={sum(recent12) / len(recent12):.0f}",
+        f"直近12最高={max(recent12)}",
+    ]
+    if len(recent50) >= 2:
+        parts.append(f"直近50平均={sum(recent50) / len(recent50):.0f}")
+        parts.append(f"直近50中央値={statistics.median(recent50):.0f}")
+    if len(recent200) >= 2:
+        parts.append(f"直近200平均={sum(recent200) / len(recent200):.0f}")
+    if len(recent1000) >= 2:
+        parts.append(f"直近1000平均={sum(recent1000) / len(recent1000):.0f}")
+    return ", ".join(parts)
+
+def summarize_creation(label, entries, score_history_count):
+    if not entries:
+        return f"{label}: total=0, 直近なし"
+    total = len(entries)
+    last = entries[-1]
+    known_game_numbers = [row["game_num"] for row in entries if row["game_num"] is not None]
+    latest_known_game = max(known_game_numbers) if known_game_numbers else None
+    bits = [
+        f"{label}: total={total}",
+        f"直近={last['local_ts'] or '不明'}",
+    ]
+    if last["game_num"] is not None:
+        bits.append(f"Game#{last['game_num']}")
+        if score_history_count and score_history_count >= last["game_num"]:
+            bits.append(f"そこから約{score_history_count - last['game_num']}ゲーム経過")
+    if last["score"] is not None:
+        bits.append(f"score={last['score']}")
+    if last["turns"] is not None:
+        bits.append(f"turns={last['turns']}")
+    if score_history_count:
+        bits.append(f"score_history件数基準の通算率目安={total / score_history_count * 100:.2f}%")
+    if latest_known_game:
+        for recent_window in (100, 500, 1000):
+            recent_entries = [
+                row for row in entries
+                if row["game_num"] is not None and row["game_num"] > latest_known_game - recent_window
+            ]
+            bits.append(f"履歴Game#基準の直近{recent_window}ゲーム内={len(recent_entries)}回")
+    return ", ".join(bits)
+
 try:
     with open(path, "r", encoding="utf-8") as f:
         gs = json.load(f)
@@ -729,10 +882,45 @@ except Exception:
     raise SystemExit(0)
 
 state = gs.get("state", "?")
+score = gs.get("score")
 record = gs.get("record", 0)
-print("この値はコメント生成時点の参考メモ。盤面の厳密照合には使わないこと。")
-print("現在スコアは生成時からラグがあるため参照しないこと。")
-print(f"state={state}, record={record}")
+make_soren_count = gs.get("makeSorenCount")
+piece_count = gs.get("pieceCount")
+pieces = gs.get("pieces") if isinstance(gs.get("pieces"), list) else []
+type_counts = {}
+max_type = None
+for piece in pieces:
+    try:
+        t = int(piece.get("type"))
+    except Exception:
+        continue
+    type_counts[t] = type_counts.get(t, 0) + 1
+    max_type = t if max_type is None else max(max_type, t)
+top_types = sorted(type_counts.items(), key=lambda item: (-item[0], item[1]))[:6]
+top_type_text = ", ".join(
+    f"type{t}x{count}" for t, count in top_types
+) if top_types else "盤面ピース情報なし"
+next_piece = gs.get("next") if isinstance(gs.get("next"), dict) else {}
+next_next_piece = gs.get("nextNext") if isinstance(gs.get("nextNext"), dict) else {}
+next_type = next_piece.get("type", "?")
+next_next_type = next_next_piece.get("type", "?")
+
+scores = read_scores(score_history_file)
+russia_entries = read_creation_entries(russia_history_file)
+soviet_entries = read_creation_entries(soviet_history_file)
+total_games = len(scores)
+cycle_completed = total_games % prediction_cycle_games if total_games else None
+cycle_position = (cycle_completed + 1) if cycle_completed is not None else None
+
+print("ライブ局面は生成から読み上げまでにズレやすい。返答の中心は終了ゲーム履歴・建国履歴の全体統計に置くこと。")
+print(f"ライブ状態補助: state={state}({STATE_LABELS.get(str(state), '不明')}), snapshot_score={fmt_int(score)}, record={fmt_int(record)}, makeSorenCount={fmt_int(make_soren_count)}, pieceCount={fmt_int(piece_count)}")
+print(f"ライブ盤面補助: next=type{next_type}, nextNext=type{next_next_type}, 最大type={fmt_int(max_type)}, 上位type={top_type_text}")
+print(f"全体スコア統計: {summarize_scores(scores)}")
+if cycle_position is not None:
+    print(f"予想サイクル目安: score_history基準で{prediction_cycle_games}ゲーム中{cycle_position}ゲーム目相当（完了済み {cycle_completed}/{prediction_cycle_games}）")
+print("全体建国統計: " + summarize_creation("ロシア建国", russia_entries, total_games))
+print("全体建国統計: " + summarize_creation("ソ連建国", soviet_entries, total_games))
+print("返答ルール: スコア進捗・建国回数・状態を聞かれたら、まず全体統計と直近ウィンドウ統計を使う。ライブ局面の snapshot_score や盤面補助は、今この瞬間の断定ではなく補足としてだけ扱う。数字が無い時だけ不明と言い、推測で回数やスコアを作らない。")
 PY
 }
 
@@ -1632,7 +1820,7 @@ generate_comment_response() {
 	local comment_batch_context=""
 	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context | _sanitize_comment_prompt_context)
 	local recent_spoken_comment_context=""
-	# spoken history は外部ファイル参照に移行済み（プロンプト埋め込み不要）
+	recent_spoken_comment_context=$(_build_recent_spoken_comment_context | _sanitize_comment_prompt_context)
 	local comment_followup_hints=""
 	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" | _sanitize_comment_prompt_context)
 	local comment_mode_for_advice=""
@@ -1778,8 +1966,8 @@ else:
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・補足・軽い問いかけのどれかを足して、会話として少し深く広げること\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
-			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。短い反応コメントでも短い返答で済ませず、会話として厚めに返してください。ただしカードガチャ結果コメントだけは例外で、反応1文 + 本題2-3文を目安にしてください。'
+			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・補足・軽い問いかけのどれかを足して、会話として少し深く広げること\n- メリケンAIらしく、各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れること。ただし質問の答えや真面目な話題を冗談で置き換えないこと\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
+			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。短い反応コメントでも短い返答で済ませず、会話として厚めに返してください。各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れてください。ただしカードガチャ結果コメントだけは例外で、反応1文 + 本題2-3文を目安にしてください。'
 		fi
 		if [ -z "$_comment_persona" ]; then
 			log "[COMMENT] ERROR: prompts/comment_persona_${_mode_suffix}.md not found, skip"
@@ -2127,6 +2315,7 @@ RETRYCOMMENT
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$attempt_talk" >"$queue_file"
+			_remember_comment_reply_text "$attempt_talk"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
 			_comment_store_generation_meta \
 				"$queue_file" \

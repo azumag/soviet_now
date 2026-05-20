@@ -89,6 +89,23 @@ PY
 	esac
 }
 
+_comment_playback_overlay_title() {
+	local label="${1:-comment}"
+	case "$label" in
+	improve_progress)          printf '%s' "改善進捗 playback" ;;
+	system_progress)           printf '%s' "システム進捗 playback" ;;
+	wildcard_progress)         printf '%s' "wildcard進捗 playback" ;;
+	monitor_report)            printf '%s' "監視レポート playback" ;;
+	meriken_time)              printf '%s' "メリケンAI告知 playback" ;;
+	soren91_improve_*)         printf '%s' "メリケンAI改善 playback" ;;
+	soren91:ranking_comment)   printf '%s' "ランキングコメント playback" ;;
+	soren91:midgame_comment)   printf '%s' "試合中実況 playback" ;;
+	soren91:*)                 printf '%s' "メリケンAIコメント playback" ;;
+	comment)                   printf '%s' "コメント返信 playback" ;;
+	*)                         printf '%s' "${label} playback" ;;
+	esac
+}
+
 _comment_improve_progress_key() {
 	python3 - "${IMPROVE_STATE_FILE:-tmp/state/improve_state.json}" <<'PY' 2>/dev/null
 import json
@@ -209,10 +226,12 @@ _play_comment_queue() {
 					_comment_meta_summary=$(_comment_generation_debug_summary "$playing_file" 2>/dev/null || true)
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生開始: $qf (hash=$file_hash${_comment_meta_summary:+, ${_comment_meta_summary}})" >> tmp/.say_queue/debug.log
 					if [ -x ./overlay_notify.sh ]; then
-						local _ov_spoken
+						local _ov_spoken _ov_context_label _ov_title
+						_ov_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
+						_ov_title=$(_comment_playback_overlay_title "$_ov_context_label" 2>/dev/null || printf '%s' "playback")
 						_ov_spoken=$(grep -m1 -E '\S' "$playing_file" 2>/dev/null | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //')
 						[ "${#_ov_spoken}" -gt 90 ] && _ov_spoken="${_ov_spoken:0:90}…"
-						./overlay_notify.sh chat "コメント返信 playback" "$(basename "$playing_file")${_comment_meta_summary:+ | ${_comment_meta_summary}}${_ov_spoken:+ | 内容:${_ov_spoken}}" "info" >/dev/null 2>&1 || true
+						./overlay_notify.sh chat "$_ov_title" "$(basename "$playing_file")${_comment_meta_summary:+ | ${_comment_meta_summary}}${_ov_spoken:+ | 内容:${_ov_spoken}}" "info" >/dev/null 2>&1 || true
 					fi
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
 				if [ "$_skip_duplicate_check" -eq 0 ]; then

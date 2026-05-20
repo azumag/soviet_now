@@ -1,6 +1,6 @@
-# lib/outbound_queue.sh - Twitch outbound chat queue helpers
+# lib/outbound_queue.sh - outbound chat queue helpers
 #
-# 全 worker は Twitch に直接投稿せず、この queue にメッセージを積む。
+# 全 worker は配信チャットに直接投稿せず、この queue にメッセージを積む。
 # 送信は chat_worker (暫定: twitch_chat_daemon.sh) が一元的に行う。
 
 OUTBOUND_CHAT_QUEUE_DIR="${OUTBOUND_CHAT_QUEUE_DIR:-tmp/.outbound_chat_queue}"
@@ -17,6 +17,68 @@ _outbound_chat_hash() {
 	else
 		printf '%s' "$1" | md5sum 2>/dev/null | awk '{print $1}'
 	fi
+}
+
+_outbound_chat_truthy() {
+	case "${1:-}" in
+	1|true|TRUE|yes|YES|on|ON) return 0 ;;
+	esac
+	return 1
+}
+
+_outbound_chat_load_env_for_youtube_mirror() {
+	[ -f .env ] || return 0
+	set -a
+	. ./.env
+	set +a
+}
+
+_outbound_chat_youtube_mirror_enabled() {
+	if [ -n "${OUTBOUND_CHAT_YOUTUBE_MIRROR_ENABLED:-}" ]; then
+		_outbound_chat_truthy "$OUTBOUND_CHAT_YOUTUBE_MIRROR_ENABLED"
+		return $?
+	fi
+	_outbound_chat_truthy "${YOUTUBE_CHAT_SEND_ENABLED:-0}"
+}
+
+_outbound_chat_youtube_mirror_configured() {
+	_outbound_chat_load_env_for_youtube_mirror
+	_outbound_chat_youtube_mirror_enabled || return 1
+	[ -n "${YOUTUBE_OAUTH_CLIENT_ID:-}" ] || return 1
+	[ -n "${YOUTUBE_OAUTH_CLIENT_SECRET:-}" ] || return 1
+	[ -n "${YOUTUBE_OAUTH_REFRESH_TOKEN:-}" ] || return 1
+	return 0
+}
+
+_outbound_chat_log_youtube_mirror_failure() {
+	local basename="$1"
+	local err_file="$2"
+	local log_dir="${TMP_DEBUG_DIR:-tmp/debug}"
+	local log_file="$log_dir/outbound_chat_youtube.log"
+	mkdir -p "$log_dir" 2>/dev/null || true
+	{
+		printf '[%s] youtube mirror failed: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$basename"
+		if [ -f "$err_file" ]; then
+			head -5 "$err_file" 2>/dev/null
+		fi
+	} >>"$log_file" 2>/dev/null || true
+}
+
+_outbound_chat_send_youtube_mirror() {
+	local message="$1"
+	local basename="$2"
+	_outbound_chat_youtube_mirror_configured || return 0
+	[ -x ./youtube_chat.sh ] || return 0
+
+	local err_file
+	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_${RANDOM}")
+	if ./youtube_chat.sh send "$message" >/dev/null 2>"$err_file"; then
+		rm -f "$err_file"
+		return 0
+	fi
+	_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
+	rm -f "$err_file"
+	return 0
 }
 
 _outbound_chat_cleanup_dedup_markers() {
@@ -105,7 +167,9 @@ enqueue_chat_message() {
 
 # outbound_queue_consume_once
 #   pending/ から最も古い1件を取得して送信し、sent/ に移動する。
-#   送信には ./twitch_chat.sh send を使用。
+#   Twitch 送信には ./twitch_chat.sh send を使用。
+#   YOUTUBE_CHAT_SEND_ENABLED=1 か OUTBOUND_CHAT_YOUTUBE_MIRROR_ENABLED=1 の場合、
+#   Twitch 送信成功後に ./youtube_chat.sh send にも同じ本文を送る。
 #   戻り値: 0=送信成功, 1=キューが空 or 送信失敗
 outbound_queue_consume_once() {
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_PROCESSING_DIR" "$OUTBOUND_CHAT_SENT_DIR" 2>/dev/null || true
@@ -126,6 +190,7 @@ outbound_queue_consume_once() {
 	[ -n "$message" ] || { rm -f "$claim_file"; return 1; }
 
 	if ./twitch_chat.sh send "$message" >/dev/null 2>&1; then
+		_outbound_chat_send_youtube_mirror "$message" "$basename"
 		mv "$claim_file" "$OUTBOUND_CHAT_SENT_DIR/$basename" 2>/dev/null || rm -f "$claim_file"
 		return 0
 	else

@@ -501,11 +501,9 @@ _play_deferred_radio_queue_once() {
 				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else
-				_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
-				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-				_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-				rm -f "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-				log "[RADIO:deferred] 再生失敗だが再キューせず破棄: $(basename "$playing_file")"
+				local retry_file="${playing_file%.playing}.txt"
+				mv "$playing_file" "$retry_file" 2>/dev/null || true
+				log "[RADIO:deferred] 再生失敗 → キューへ戻す: $(basename "$retry_file")"
 			fi
 		fi
 	fi

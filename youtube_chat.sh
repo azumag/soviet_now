@@ -143,6 +143,15 @@ _sanitize_comment_line() {
 	return 0
 }
 
+_notify_chat_overlay() {
+	local source="$1"
+	local line="$2"
+	[ "${CHAT_INGEST_OVERLAY_NOTIFY:-1}" = "1" ] || return 0
+	[ -n "$line" ] || return 0
+	[ -x ./overlay_notify.sh ] || return 0
+	./overlay_notify.sh chat "${source} コメント受信" "$line" "info" >/dev/null 2>&1 || true
+}
+
 _urlencode() {
 	python3 - "$1" <<'PY'
 import sys
@@ -254,6 +263,8 @@ with open(poll_interval_file, "w", encoding="utf-8") as f:
 	f.write(str(interval_sec))
 
 print(len(lines))
+for line in lines:
+	print(line)
 PY
 }
 
@@ -278,8 +289,17 @@ _poll_nolock() {
 		rm -f "$resp_file"
 		return 1
 	fi
-	count=$(_append_api_messages "$resp_file" 2>>"$LAST_ERROR_FILE" || echo 0)
+	local append_out notify_line
+	append_out=$(_append_api_messages "$resp_file" 2>>"$LAST_ERROR_FILE" || echo 0)
 	rm -f "$resp_file"
+	count=$(printf '%s\n' "$append_out" | head -n1)
+	printf '%s\n' "$append_out" | tail -n +2 | while IFS= read -r notify_line; do
+		[ -n "$notify_line" ] || continue
+		case "$notify_line" in
+			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+		esac
+		_notify_chat_overlay "YouTube" "$notify_line"
+	done
 	echo "$(date +%s)" >"$LAST_POLL_FILE"
 	_log "poll: ${count:-0}件取得"
 }
@@ -295,7 +315,16 @@ _ingest_fixture_nolock() {
 		return 1
 	}
 	local count
-	count=$(_append_api_messages "$fixture" || echo 0)
+	local append_out notify_line
+	append_out=$(_append_api_messages "$fixture" || echo 0)
+	count=$(printf '%s\n' "$append_out" | head -n1)
+	printf '%s\n' "$append_out" | tail -n +2 | while IFS= read -r notify_line; do
+		[ -n "$notify_line" ] || continue
+		case "$notify_line" in
+			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+		esac
+		_notify_chat_overlay "YouTube" "$notify_line"
+	done
 	_log "ingest-fixture: ${count:-0}件取り込み"
 }
 
@@ -462,7 +491,7 @@ _send() {
 		echo "YouTube send disabled (set YOUTUBE_CHAT_SEND_ENABLED=1)" >&2
 		return 1
 	fi
-	local chat_id access_token payload_file resp_file
+	local chat_id access_token payload_file resp_file insert_url
 	chat_id=$(_resolve_live_chat_id) || return 1
 	access_token=$(_oauth_access_token) || {
 		echo "YouTube OAuth refresh settings are missing or invalid" >&2
@@ -492,8 +521,12 @@ print(json.dumps({
 	}
 }, ensure_ascii=False))
 PY
+	insert_url="https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet"
+	if [ -n "${YOUTUBE_API_KEY:-}" ]; then
+		insert_url="${insert_url}&key=$(_urlencode "$YOUTUBE_API_KEY")"
+	fi
 	if curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
-		-X POST "https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet" \
+		-X POST "$insert_url" \
 		-H "Authorization: Bearer ${access_token}" \
 		-H "Content-Type: application/json; charset=UTF-8" \
 		--data-binary "@${payload_file}" >"$resp_file"; then

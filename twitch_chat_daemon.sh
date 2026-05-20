@@ -62,6 +62,14 @@ _is_card_gacha_result_message() {
     printf '%s\n' "$text" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
 }
 
+_notify_chat_overlay() {
+    local line="$1"
+    [ "${CHAT_INGEST_OVERLAY_NOTIFY:-1}" = "1" ] || return 0
+    [ -n "$line" ] || return 0
+    [ -x ./overlay_notify.sh ] || return 0
+    ./overlay_notify.sh chat "Twitch コメント受信" "$line" "info" >/dev/null 2>&1 || true
+}
+
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
     {
@@ -292,6 +300,7 @@ while true; do
             else
                 echo "${clean_line}" >> "$RAW_LOG"
             fi
+            _notify_chat_overlay "$clean_line"
             if [ -n "$line_hash" ]; then
                 _mark_recent_key "$RECENT_LINE_HASHES_FILE" "$line_hash"
             fi

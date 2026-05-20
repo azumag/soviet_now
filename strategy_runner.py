@@ -81,7 +81,7 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
     except Exception:
         decision_x = 0.0
     chosen = min(results, key=lambda r: abs(float(r.get("x", 0.0) or 0.0) - decision_x))
-    if not chosen.get("crosses_deadline", False):
+    if not _candidate_has_confident_deadline_contact(chosen, analysis):
         return None
 
     safe = [r for r in results if not r.get("crosses_deadline", False)]
@@ -150,6 +150,74 @@ def notify_deadline_crossing_overlay(turn, score, decision, analysis):
         log(f"WARN: deadline overlay notify failed: {err}")
 
 
+def _actual_deadline_contact_overlay_payload(turn, score, decision, before_analysis, after_game_state):
+    if not isinstance(after_game_state, dict) or not has_deadline_contact(after_game_state):
+        return None
+    try:
+        from analyze_board import calc_reactor_state
+
+        after_reactor = calc_reactor_state(
+            after_game_state.get("pieces", []),
+            after_game_state.get("shapes", {}),
+        )
+    except Exception:
+        after_reactor = {}
+
+    before_deadline = (
+        before_analysis.get("deadline", {}) if isinstance(before_analysis, dict) else {}
+    )
+    try:
+        decision_x = float(decision.get("x", 0.0) or 0.0)
+    except Exception:
+        decision_x = 0.0
+    reason = str(decision.get("reason") or "")
+    before_top = _float_or_none(before_deadline.get("top_edge_y"))
+    before_text = f"before_top={before_top:.2f} " if before_top is not None else ""
+    body = (
+        f"turn={turn} score={score} x={decision_x:+.2f} "
+        f"{before_text}"
+        f"actual_top={float(after_reactor.get('top_edge_y', 0.0) or 0.0):.2f} "
+        f"danger={int(after_reactor.get('danger_piece_count', 0) or 0)} "
+        f"reason={reason[:180]}"
+    )
+    return {
+        "title": "デッドライン超過: 実画面接触",
+        "body": body,
+        "level": "warn" if int(after_reactor.get("danger_piece_count", 0) or 0) else "info",
+    }
+
+
+def notify_actual_deadline_contact_overlay(turn, score, decision, before_analysis, after_game_state):
+    payload = _actual_deadline_contact_overlay_payload(
+        turn, score, decision, before_analysis, after_game_state
+    )
+    if not payload:
+        return
+    if not os.path.exists("./overlay_notify.sh"):
+        return
+    _reap_fire_and_forget_processes()
+    env = dict(os.environ)
+    env["OVERLAY_NOTIFY_OBS_SHOW"] = "1"
+    try:
+        proc = subprocess.Popen(
+            [
+                "./overlay_notify.sh",
+                "deadline",
+                payload["title"],
+                payload["body"],
+                payload["level"],
+            ],
+            cwd=".",
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _fire_and_forget_processes.append(proc)
+    except Exception as err:
+        log(f"WARN: actual deadline overlay notify failed: {err}")
+
+
 def _reap_fire_and_forget_processes():
     """Non-blocking cleanup for best-effort side-effect subprocesses."""
     if not _fire_and_forget_processes:
@@ -195,6 +263,81 @@ def _candidate_has_non_crossing_landing(candidate):
     if candidate.get("merge_grade") in ("DIRECT", "NEAR") and merge_top_y is not None and merge_top_y >= deadline_y:
         return False
     return True
+
+
+def _candidate_has_confident_deadline_contact(candidate, analysis):
+    """True when a crossing flag is likely to be visible on the real board.
+
+    `crosses_deadline` is intentionally conservative and is also used as a
+    strategy penalty. The OBS alert should be stricter: far-below boards have
+    many polygon/AABB landing false positives after pieces settle or merge.
+    """
+    if not isinstance(candidate, dict) or not candidate.get("crosses_deadline", False):
+        return False
+    if _candidate_has_non_crossing_landing(candidate):
+        return False
+
+    deadline = analysis.get("deadline", {}) if isinstance(analysis, dict) else {}
+    deadline_y = _float_or_none(candidate.get("deadline_y"))
+    if deadline_y is None:
+        deadline_y = _float_or_none(deadline.get("deadline_y"))
+    if deadline_y is None:
+        return True
+
+    top_edge_y = _float_or_none(deadline.get("top_edge_y"))
+    if top_edge_y is None and "deadline_crossed" not in deadline and "danger_piece_count" not in deadline:
+        return True
+    danger_count = int(deadline.get("danger_piece_count", 0) or 0)
+    if (
+        bool(deadline.get("deadline_crossed", False))
+        or danger_count > 0
+        or (top_edge_y is not None and top_edge_y >= deadline_y - 0.75)
+    ):
+        return True
+
+    risk_top = _float_or_none(candidate.get("risk_top_y_after_drop"))
+    if risk_top is None:
+        risk_top = _float_or_none(candidate.get("top_y_after_drop"))
+    if candidate.get("wall_rotation_risk") and risk_top is not None and risk_top >= deadline_y:
+        return True
+
+    return (
+        candidate.get("merge_grade", "NO") == "NO"
+        and risk_top is not None
+        and risk_top >= deadline_y + 1.25
+    )
+
+
+def _candidate_has_strategy_deadline_risk(candidate, analysis):
+    """True when deadline prediction should affect strategy choice.
+
+    Keep this stricter than raw `crosses_deadline`: live boards can mark every
+    candidate crossing even though the settled screen remains below the line.
+    DIRECT/NEAR merges are allowed because they can remove the risky contact.
+    """
+    if not isinstance(candidate, dict) or not candidate.get("crosses_deadline", False):
+        return False
+    if candidate.get("merge_grade", "NO") in ("DIRECT", "NEAR"):
+        return False
+
+    deadline = analysis.get("deadline", {}) if isinstance(analysis, dict) else {}
+    deadline_y = _float_or_none(candidate.get("deadline_y"))
+    if deadline_y is None:
+        deadline_y = _float_or_none(deadline.get("deadline_y"))
+    if deadline_y is None:
+        deadline_y = 3.38
+    top_edge_y = _float_or_none(deadline.get("top_edge_y"))
+    danger_count = int(deadline.get("danger_piece_count", 0) or 0)
+    if bool(deadline.get("deadline_crossed", False)) or danger_count > 0:
+        return True
+    results = analysis.get("results", []) if isinstance(analysis, dict) else []
+    has_non_crossing = any(
+        isinstance(r, dict) and not r.get("crosses_deadline", False)
+        for r in results
+    )
+    if has_non_crossing:
+        return True
+    return top_edge_y is not None and top_edge_y >= deadline_y - 0.10
 
 
 def load_game_state():
@@ -512,6 +655,9 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "visual_same_type_closest_dx": round(float(closest_same_type_dx), 2) if closest_same_type_dx is not None else None,
         "reactor_reactive_pairs": reactive_pairs,
         "decision_crosses_deadline": bool(chosen_result.get("crosses_deadline", False)) if chosen_result else False,
+        "decision_strategy_deadline_risk": _candidate_has_strategy_deadline_risk(chosen_result, analysis) if chosen_result else False,
+        "decision_top_y_after_drop": round(float(chosen_result.get("top_y_after_drop", 0.0) or 0.0), 2) if chosen_result else None,
+        "decision_risk_top_y_after_drop": round(float(chosen_result.get("risk_top_y_after_drop", 0.0) or 0.0), 2) if chosen_result else None,
         "deadline_safe_candidate_count": len([r for r in results if not r.get("crosses_deadline", False)]),
         "deadline_candidate_count": len(results),
         "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
@@ -527,7 +673,9 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
 
     history_f.write(json.dumps(record, ensure_ascii=False) + "\n")
     history_f.flush()
-    notify_deadline_crossing_overlay(turn, score, decision, analysis)
+    # Overlay deadline notifications are emitted only after the real post-drop
+    # screen confirms contact. The conservative per-candidate crossing flag is
+    # still recorded for strategy/audit use, but is too noisy for OBS alerts.
 
 
 def enforce_deadline_safety(decision, analysis, game_state=None):
@@ -571,9 +719,16 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else [r for r in results if _candidate_has_non_crossing_landing(r)]
     )
     safe = non_crossing_safe or landing_safe
-    safe_direct = [r for r in safe if r.get("merge_grade", "NO") == "DIRECT"]
+    merge_allowed = [
+        r for r in results if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+    ]
+    deadline_legal = list(safe)
+    for r in merge_allowed:
+        if r not in deadline_legal:
+            deadline_legal.append(r)
+    safe_direct = [r for r in deadline_legal if r.get("merge_grade", "NO") == "DIRECT"]
     safe_merge = [
-        r for r in safe if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        r for r in deadline_legal if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
     ]
     buffered = [r for r in safe if risk_top(r) <= deadline_buffer_y]
     chosen_top = risk_top(chosen)
@@ -591,7 +746,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     except Exception:
         next_type = 0
     large_deadline_pressure = (
-        current_top_edge_y >= deadline_y - 1.15
+        current_top_edge_y >= deadline_y - 0.75
             and next_type >= 9
     )
     piece_count = len((game_state or {}).get("pieces") or [])
@@ -601,7 +756,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     late_pressure = (
         piece_count >= 35
         or current_top_edge_y >= deadline_y - 1.0
-        or chosen.get("crosses_deadline", False)
+        or (
+            chosen.get("crosses_deadline", False)
+            and current_top_edge_y >= deadline_y - 0.75
+        )
     )
     deadline_contact_pressure = (
         deadline_crossed
@@ -611,7 +769,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     deadline_precontact_pressure = (
         deadline_contact_pressure
         or current_top_edge_y >= deadline_y - 0.75
-        or (piece_count >= 33 and reactive_pair_count >= 3)
+        or (
+            piece_count >= 33
+            and reactive_pair_count >= 3
+            and current_top_edge_y >= deadline_y - 1.5
+        )
+    )
+    all_crossing_deadline_pressure = (
+        deadline_contact_pressure
+        or current_top_edge_y >= deadline_y - 0.10
     )
     urgent_direct_pressure = (
         safe_direct
@@ -627,7 +793,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             piece_count >= 35
             or current_top_edge_y >= deadline_y - 1.0
             or reactive_pair_count >= 3
-            or chosen.get("crosses_deadline", False)
+            or (
+                chosen.get("crosses_deadline", False)
+                and current_top_edge_y >= deadline_y - 0.75
+            )
         )
     )
 
@@ -703,6 +872,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         analysis labels the candidate as NO.
         """
         if not deadline_precontact_pressure or not next_type:
+            return None
+        if not safe and not all_crossing_deadline_pressure:
             return None
         if chosen.get("merge_grade", "NO") in ("DIRECT", "NEAR"):
             return None
@@ -797,7 +968,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         replacement = visual_replacement
         replacement_source = "visual_same_country"
 
-    elif buffered:
+    elif deadline_precontact_pressure and buffered:
         if chosen in buffered:
             return decision
         chosen_grade_val = grade_rank.get(chosen.get("merge_grade", "NO"), 9)
@@ -823,7 +994,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         )
         replacement_source = "buffered"
 
-    elif safe:
+    elif deadline_precontact_pressure and safe:
         if chosen in safe:
             return decision
         chosen_grade_val = grade_rank.get(chosen.get("merge_grade", "NO"), 9)
@@ -847,9 +1018,14 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else:
             replacement = min_risk_candidate
             replacement_source = "large_deadline_minrisk"
-    elif not chosen.get("crosses_deadline", False):
+    elif (
+        not chosen.get("crosses_deadline", False)
+        or not deadline_precontact_pressure
+    ):
         return decision
     else:
+        if not safe and not all_crossing_deadline_pressure:
+            return decision
         risk_band = [
             r for r in results if risk_top(r) <= min_risk_top + 0.05
         ] or [min_risk_candidate]
@@ -927,12 +1103,14 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                     replacement_source = "visual_same_country_hard"
 
     # Absolute postcondition: when a non-crossing candidate exists, the runtime
-    # safety layer must never finish on a deadline-crossing candidate. Previous
-    # logs showed *_TO_NO while decision_crosses_deadline stayed true, so make
-    # the invariant explicit after all branch-specific replacements.
+    # safety layer must never finish on a deadline-crossing NO-merge candidate.
+    # Crossing DIRECT/NEAR candidates are allowed by the mandatory rule because
+    # the contact can immediately collapse the risky piece instead of adding a
+    # dead placement.
     if (
         safe
         and replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
     ):
         # Prefer any safe merge across the whole safe pool first — don't
         # restrict to a narrow risk band, which can hide the only safe merges
@@ -1122,6 +1300,8 @@ def run_game():
     russia_announced = False
     soviet_created = False
     prev_russia_count = 0
+    prev_actual_deadline_contact = False
+    last_decision = {}
 
     # 前回の建国フラグをクリア（ゲーム開始時に毎回リセット）
     try:
@@ -1157,6 +1337,17 @@ def run_game():
                     "soviet_created": soviet_created,
                     "final_types": [p.get("type", 0) for p in gs.get("pieces", [])] if gs else [],
                 }
+
+            current_deadline_contact = has_deadline_contact(gs)
+            if current_deadline_contact and not prev_actual_deadline_contact:
+                notify_actual_deadline_contact_overlay(
+                    turn + 1,
+                    gs.get("score", 0),
+                    last_decision,
+                    {"deadline": {"top_edge_y": None}},
+                    gs,
+                )
+            prev_actual_deadline_contact = current_deadline_contact
 
             turn += 1
             score = gs.get("score", 0)
@@ -1309,6 +1500,7 @@ def run_game():
                 wait_commands_done()
 
             write_drop_command(drop_x)
+            last_decision = dict(decision)
 
             # コマンド消化待ち + bridge非同期 自己回復ウォッチドッグ
             if wait_commands_done():

@@ -1555,6 +1555,14 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             self.assertIn("3-5 sentences", text, msg=rel)
             self.assertIn("one concrete", text, msg=rel)
 
+    def test_comment_generation_embeds_recent_ai_reply_memory(self):
+        script = (REPO_ROOT / "broadcast/comment.sh").read_text()
+
+        self.assertIn("recent_spoken_comment_context=$(_build_recent_spoken_comment_context", script)
+        self.assertIn("_remember_comment_reply_text \"$attempt_talk\"", script)
+        self.assertIn("_remember_spoken_comment()", script)
+        self.assertNotIn("spoken history は外部ファイル参照に移行済み", script)
+
 
 # --- Improve OBS overlay ------------------------------------------------------
 
@@ -2011,6 +2019,211 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("landing_safe=1/2", payload["body"])
         self.assertIn("legal=1/2", payload["body"])
 
+    def test_deadline_crossing_overlay_suppresses_far_below_prediction_noise(self):
+        import strategy_runner
+
+        payload = strategy_runner._deadline_crossing_overlay_payload(
+            82,
+            1712,
+            {"x": 1.25, "reason": "MEDIUM_TOWER_CROSSES_DEADLINE_NO_MERGE"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.14,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "results": [
+                    {
+                        "x": 1.25,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "top_y_after_drop": 3.85,
+                        "risk_top_y_after_drop": 3.85,
+                    }
+                ],
+            },
+        )
+
+        self.assertIsNone(payload)
+
+    def test_deadline_crossing_overlay_keeps_warning_near_current_deadline(self):
+        import strategy_runner
+
+        payload = strategy_runner._deadline_crossing_overlay_payload(
+            67,
+            1025,
+            {"x": 0.72, "reason": "HIGH_TOWER_CROSSES_DEADLINE_NO_MERGE"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.03,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "results": [
+                    {
+                        "x": 0.72,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "top_y_after_drop": 4.21,
+                        "risk_top_y_after_drop": 4.21,
+                    }
+                ],
+            },
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["title"], "デッドライン超過: 合法候補なし")
+
+    def test_strategy_deadline_risk_ignores_all_crossing_mid_board_noise(self):
+        import strategy_runner
+
+        risk = strategy_runner._candidate_has_strategy_deadline_risk(
+            {
+                "x": -1.7,
+                "crosses_deadline": True,
+                "merge_grade": "NO",
+                "deadline_y": 3.38,
+                "risk_top_y_after_drop": 3.7,
+            },
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.3,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "results": [
+                    {"x": -1.7, "crosses_deadline": True, "merge_grade": "NO"},
+                    {"x": 1.0, "crosses_deadline": True, "merge_grade": "NO"},
+                ],
+            },
+        )
+
+        self.assertFalse(risk)
+
+    def test_strategy_deadline_risk_keeps_near_line_no_merge_risk(self):
+        import strategy_runner
+
+        risk = strategy_runner._candidate_has_strategy_deadline_risk(
+            {
+                "x": -0.7,
+                "crosses_deadline": True,
+                "merge_grade": "NO",
+                "deadline_y": 3.38,
+                "risk_top_y_after_drop": 3.7,
+            },
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.29,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "results": [
+                    {"x": -0.7, "crosses_deadline": True, "merge_grade": "NO"},
+                    {"x": 1.0, "crosses_deadline": True, "merge_grade": "NO"},
+                ],
+            },
+        )
+
+        self.assertTrue(risk)
+
+    def test_strategy_deadline_risk_ignores_all_crossing_precontact_noise(self):
+        import strategy_runner
+
+        risk = strategy_runner._candidate_has_strategy_deadline_risk(
+            {
+                "x": -1.3,
+                "crosses_deadline": True,
+                "merge_grade": "NO",
+                "deadline_y": 3.38,
+                "risk_top_y_after_drop": 5.0,
+            },
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.16,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "results": [
+                    {"x": -1.3, "crosses_deadline": True, "merge_grade": "NO"},
+                    {"x": 0.9, "crosses_deadline": True, "merge_grade": "NO"},
+                ],
+            },
+        )
+
+        self.assertFalse(risk)
+
+    def test_strategy_deadline_risk_allows_crossing_direct_merge(self):
+        import strategy_runner
+
+        risk = strategy_runner._candidate_has_strategy_deadline_risk(
+            {
+                "x": 1.4,
+                "crosses_deadline": True,
+                "merge_grade": "DIRECT",
+                "deadline_y": 3.38,
+                "risk_top_y_after_drop": 4.1,
+            },
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.2,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "results": [
+                    {"x": 1.4, "crosses_deadline": True, "merge_grade": "DIRECT"},
+                ],
+            },
+        )
+
+        self.assertFalse(risk)
+
+    def test_actual_deadline_contact_overlay_uses_post_drop_screen(self):
+        import strategy_runner
+
+        payload = strategy_runner._actual_deadline_contact_overlay_payload(
+            25,
+            1516,
+            {"x": 0.74, "reason": "HIGH_TOWER"},
+            {"deadline": {"top_edge_y": 3.25}},
+            {
+                "pieces": [
+                    {"id": 1, "type": 11, "x": 0.0, "y": 2.5, "r": 1.7},
+                ],
+                "shapes": {},
+            },
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["title"], "デッドライン超過: 実画面接触")
+        self.assertIn("before_top=3.25", payload["body"])
+        self.assertIn("actual_top=3.48", payload["body"])
+
+    def test_actual_deadline_contact_overlay_ignores_post_drop_safe_screen(self):
+        import strategy_runner
+
+        payload = strategy_runner._actual_deadline_contact_overlay_payload(
+            24,
+            1435,
+            {"x": 0.0, "reason": "HIGH_TOWER"},
+            {"deadline": {"top_edge_y": 3.03}},
+            {
+                "pieces": [
+                    {"id": 1, "type": 11, "x": 0.0, "y": 2.35, "r": 1.7},
+                ],
+                "shapes": {},
+            },
+        )
+
+        self.assertIsNone(payload)
+
     def test_deadline_safety_uses_crossing_merge_when_no_non_crossing_candidate_exists(self):
         import strategy_runner
 
@@ -2039,6 +2252,35 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertEqual(decision["x"], 1.5)
         self.assertIn("NO_TO_DIRECT", decision["reason"])
+
+    def test_deadline_safety_allows_crossing_direct_over_nonmerge_safe_slot(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.5, "reason": "DIRECT_MERGE"},
+            {
+                "deadline": {"top_edge_y": 3.15, "deadline_crossed": False},
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": -1.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.8,
+                    },
+                    {
+                        "x": 1.5,
+                        "crosses_deadline": True,
+                        "merge_grade": "DIRECT",
+                        "risk_top_y_after_drop": 4.2,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 3, "x": 1.5, "y": 2.8}], "next": {"type": 3}},
+        )
+
+        self.assertEqual(decision["x"], 1.5)
+        self.assertEqual(decision["reason"], "DIRECT_MERGE")
 
     def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
         import strategy_runner
@@ -2104,6 +2346,157 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertEqual(decision["x"], 2.4)
         self.assertIn("minrisk_postcondition", decision["reason"])
+
+    def test_deadline_safety_ignores_far_below_all_crossing_noise(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 0.0, "reason": "HEIGHT_CONTROL"},
+            {
+                "deadline": {"top_edge_y": 1.4, "deadline_crossed": False},
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 0.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 3.9,
+                    },
+                    {
+                        "x": -1.2,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 3.6,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 9, "x": 0.0, "y": 1.0}],
+                "next": {"type": 9},
+            },
+        )
+
+        self.assertEqual(decision["x"], 0.0)
+        self.assertEqual(decision["reason"], "HEIGHT_CONTROL")
+
+    def test_deadline_safety_ignores_mid_board_all_crossing_noise(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -1.7, "reason": "MEDIUM_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.3,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}]},
+                "results": [
+                    {
+                        "x": -1.7,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 3.7,
+                    },
+                    {
+                        "x": 1.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 3.4,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 9, "x": -1.5, "y": 2.0}],
+                "next": {"type": 9},
+            },
+        )
+
+        self.assertEqual(decision["x"], -1.7)
+        self.assertEqual(decision["reason"], "MEDIUM_TOWER")
+
+    def test_deadline_safety_ignores_precontact_all_crossing_noise(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -1.3, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.16,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": -1.3,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 5.0,
+                    },
+                    {
+                        "x": 0.9,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 3.7,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 9, "x": -1.5, "y": 2.7}],
+                "next": {"type": 9},
+            },
+        )
+
+        self.assertEqual(decision["x"], -1.3)
+        self.assertEqual(decision["reason"], "HIGH_TOWER")
+
+    def test_deadline_safety_ignores_far_below_buffered_headroom(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.2, "reason": "REACTIVE_PAIRS_STACKING"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 1.3,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 1.2,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 3.0,
+                    },
+                    {
+                        "x": -0.6,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "deadline_y": 3.38,
+                        "risk_top_y_after_drop": 2.0,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 5, "x": 0.0, "y": 1.0}],
+                "next": {"type": 5},
+            },
+        )
+
+        self.assertEqual(decision["x"], 1.2)
+        self.assertEqual(decision["reason"], "REACTIVE_PAIRS_STACKING")
 
     def test_deadline_safety_preserves_visible_same_country_when_all_candidates_cross(self):
         import strategy_runner
@@ -2937,6 +3330,20 @@ PY
         self.assertIn("operation not permitted", worker)
         self.assertIn('_pid_alive "$_DAEMON_PID"', worker)
 
+    def test_chat_ingest_notifies_event_overlay(self):
+        twitch = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
+        youtube = (REPO_ROOT / "youtube_chat.sh").read_text()
+
+        self.assertIn("_notify_chat_overlay()", twitch)
+        self.assertIn('CHAT_INGEST_OVERLAY_NOTIFY:-1', twitch)
+        self.assertIn('./overlay_notify.sh chat "Twitch コメント受信" "$line"', twitch)
+        self.assertIn('_notify_chat_overlay "$clean_line"', twitch)
+
+        self.assertIn("_notify_chat_overlay()", youtube)
+        self.assertIn('CHAT_INGEST_OVERLAY_NOTIFY:-1', youtube)
+        self.assertIn('./overlay_notify.sh chat "${source} コメント受信" "$line"', youtube)
+        self.assertIn('_notify_chat_overlay "YouTube" "$notify_line"', youtube)
+
     def test_soren91_comment_queue_releases_completed_claims_and_keeps_tts_full_by_default(self):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
         comment = (REPO_ROOT / "soren91/comment.mjs").read_text()
@@ -3059,6 +3466,16 @@ PY
         self.assertIn("soren91:ranking_comment) printf '%s' \"00\"", comment_lib)
         self.assertIn("_comment_queue_ordered_files()", comment_lib)
         self.assertIn("for qf in $(_comment_queue_ordered_files); do", comment_lib)
+
+    def test_comment_playback_overlay_title_reflects_context_label(self):
+        comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()
+
+        self.assertIn("_comment_playback_overlay_title()", comment_lib)
+        self.assertIn("improve_progress)          printf '%s' \"改善進捗 playback\"", comment_lib)
+        self.assertIn("soren91:ranking_comment)   printf '%s' \"ランキングコメント playback\"", comment_lib)
+        self.assertIn("soren91:midgame_comment)   printf '%s' \"試合中実況 playback\"", comment_lib)
+        self.assertIn('comment)                   printf \'%s\' "コメント返信 playback"', comment_lib)
+        self.assertIn('./overlay_notify.sh chat "$_ov_title"', comment_lib)
 
     def test_soren91_no_rank_fallback_describes_matching_without_fake_rank(self):
         comment = (REPO_ROOT / "soren91/comment.mjs").read_text()

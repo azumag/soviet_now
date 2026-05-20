@@ -55,6 +55,7 @@ SAY_TRUNCATE_RATIO="${SAY_TRUNCATE_RATIO:-0.8}"
 SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
+SAY_CHUNK_GAP_SEC="${SAY_CHUNK_GAP_SEC:-0.5}"
 
 # timeout コマンド解決 (macOS coreutils vs GNU) — 原因調査中は無効化
 TIMEOUT_CMD=""
@@ -865,6 +866,11 @@ _play_prerendered_voicevox_chunks() {
 			break
 		fi
 		rm -f "$chunk_wav" 2>/dev/null
+		if [ "$i" -lt $((total - 1)) ] && [ -n "$SAY_CHUNK_GAP_SEC" ] && [ "$SAY_CHUNK_GAP_SEC" != "0" ]; then
+			_touch_lock_heartbeat
+			sleep "$SAY_CHUNK_GAP_SEC"
+			_touch_lock_heartbeat
+		fi
 	done
 
 	[ "$play_failed" -eq 0 ] || return 1
@@ -902,7 +908,7 @@ _launch_say() {
 	# --- Pre-synthesized WAV (--wav mode) ---
 	if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
-		_launch_afplay_bg "$MY_CONTENT"
+		_launch_stream_wav "$MY_CONTENT"
 		LAUNCH_MODE="wav"
 		LAUNCHED_SAY_PID="$!"
 		return

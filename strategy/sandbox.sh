@@ -147,8 +147,8 @@ deadline_near_guard_analysis = {
     "reactor": {"reactive_pairs": [], "deadline_margin": 0.2, "danger_piece_count": 0},
 }
 deadline_near_guard_result = mod.decide(deadline_guard_state, deadline_near_guard_analysis)
-if float(deadline_near_guard_result["x"]) != -1.0:
-    raise AssertionError(f"deadline-near-guard: expected safe non-crossing x=-1.0, got {deadline_near_guard_result!r}")
+if float(deadline_near_guard_result["x"]) != 2.8:
+    raise AssertionError(f"deadline-near-guard: expected crossing NEAR merge x=2.8, got {deadline_near_guard_result!r}")
 
 deadline_direct_guard_analysis = {
     "results": [
@@ -159,8 +159,42 @@ deadline_direct_guard_analysis = {
     "reactor": {"reactive_pairs": [], "deadline_margin": 0.2, "danger_piece_count": 0},
 }
 deadline_direct_guard_result = mod.decide(deadline_guard_state, deadline_direct_guard_analysis)
-if float(deadline_direct_guard_result["x"]) != -1.0:
-    raise AssertionError(f"deadline-direct-guard: expected safe non-crossing x=-1.0, got {deadline_direct_guard_result!r}")
+if float(deadline_direct_guard_result["x"]) != 2.8:
+    raise AssertionError(f"deadline-direct-guard: expected crossing DIRECT merge x=2.8, got {deadline_direct_guard_result!r}")
+
+reactive_far_below_analysis = {
+    "results": [
+        {"x": -1.0, "landing_y": -1.2, "top_y_after_drop": -0.8, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": 2.8, "landing_y": -1.4, "top_y_after_drop": -0.9, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+    ],
+    "same_type": [],
+    "reactor": {"reactive_pairs": [(1, 2, 2), (3, 4, 4), (5, 6, 6)], "deadline_margin": 4.2, "danger_piece_count": 0},
+}
+reactive_far_below_result = mod.decide(deadline_guard_state, reactive_far_below_analysis)
+if "DEADLINE_GUARD" in str(reactive_far_below_result.get("reason", "")):
+    raise AssertionError(f"reactive-far-below: deadline guard must not fire far below red line, got {reactive_far_below_result!r}")
+
+all_crossing_far_below_penalty_state = {
+    "pieces": [{"id": i, "type": (i % 7) + 1, "x": -2.8 + (i % 8) * 0.8, "y": -3.8 + (i // 8) * 0.45, "r": 0.35} for i in range(32)],
+    "next": {"type": 9, "r": 1.0},
+    "nextNext": {"type": 5, "r": 0.5},
+    "score": 1000,
+    "deadline_crossed": False,
+}
+all_crossing_far_below_penalty_analysis = {
+    "results": [
+        {"x": -1.0, "landing_y": 2.5, "top_y_after_drop": 3.5, "risk_top_y_after_drop": 3.5, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": 1.0, "landing_y": 2.6, "top_y_after_drop": 3.6, "risk_top_y_after_drop": 3.6, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+    ],
+    "same_type": [],
+    "reactor": {"reactive_pairs": [(1, 2, 2)], "deadline_margin": 1.2, "top_edge_y": 2.18, "danger_piece_count": 0},
+    "deadline": {"deadline_y": 3.38, "deadline_margin": 1.2, "deadline_crossed": False},
+}
+all_crossing_far_below_penalty_result = mod.decide(all_crossing_far_below_penalty_state, all_crossing_far_below_penalty_analysis)
+if "CROSSES_DEADLINE_NO_MERGE" in str(all_crossing_far_below_penalty_result.get("reason", "")):
+    raise AssertionError(f"all-crossing-far-below: raw crossing should not add deadline penalty, got {all_crossing_far_below_penalty_result!r}")
+if "MERGE_DROUGHT_DEADLINE_CROSS_PENALTY" in str(all_crossing_far_below_penalty_result.get("reason", "")):
+    raise AssertionError(f"all-crossing-far-below: raw crossing should not add merge-drought deadline penalty, got {all_crossing_far_below_penalty_result!r}")
 
 urgent_direct_state = {
     "pieces": [{"id": i, "type": (i % 8) + 1, "x": -2.8 + (i % 8) * 0.7, "y": -3.8 + (i // 8) * 0.55, "r": 0.35} for i in range(32)],
@@ -243,8 +277,8 @@ active_filter_analysis = {
     "deadline": {"deadline_y": 3.32, "deadline_margin": -0.1, "deadline_crossed": True},
 }
 active_filter_result = mod.decide(active_filter_state, active_filter_analysis)
-if float(active_filter_result["x"]) != -1.0:
-    raise AssertionError(f"active-filter: expected safe non-crossing x=-1.0, got {active_filter_result!r}")
+if float(active_filter_result["x"]) != 0.0:
+    raise AssertionError(f"active-filter: expected danger DIRECT merge x=0.0, got {active_filter_result!r}")
 
 all_crossing_analysis = {
     "results": [

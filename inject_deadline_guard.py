@@ -53,11 +53,14 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
+    # This guard is specifically a deadline guard. Reactive pairs alone can
+    # justify merge pressure elsewhere in the strategy, but must not force a
+    # "safe landing" while the visible board is still far below the red line.
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -69,7 +72,7 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
