@@ -3664,6 +3664,11 @@ PY
         self.assertIn("improve_monitor_status.json", status)
         self.assertIn("imp_state_activity_fresh", status)
         self.assertIn("PID=%s not visible, log fresh", status)
+        self.assertIn("activity is fresh; preserving active state", monitor)
+        self.assertLess(
+            monitor.index("activity is fresh; preserving active state"),
+            monitor.index("running state references dead improve pid"),
+        )
         self.assertIn("running state references dead improve pid", monitor)
         self.assertIn("harvesting immediately", monitor)
         self.assertIn("SOREN_IMPROVE_MONITOR_INTERVAL_SEC", loop)
