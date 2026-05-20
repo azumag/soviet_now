@@ -748,6 +748,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     large_deadline_pressure = (
         current_top_edge_y >= deadline_y - 0.75
             and next_type >= 9
+            and (safe or current_top_edge_y >= deadline_y - 0.10)
     )
     piece_count = len((game_state or {}).get("pieces") or [])
     reactor = analysis.get("reactor", {}) if isinstance(analysis, dict) else {}
@@ -808,6 +809,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         highest matching country instead of preserving a generic low-risk slot.
         """
         if not late_pressure or not next_type:
+            return None
+        if not safe and chosen.get("crosses_deadline", False) and not all_crossing_deadline_pressure:
             return None
         if chosen.get("merge_grade", "NO") in ("DIRECT", "NEAR"):
             return None
