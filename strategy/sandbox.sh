@@ -280,6 +280,19 @@ active_filter_result = mod.decide(active_filter_state, active_filter_analysis)
 if float(active_filter_result["x"]) != 0.0:
     raise AssertionError(f"active-filter: expected danger DIRECT merge x=0.0, got {active_filter_result!r}")
 
+risky_single_danger_merge_analysis = {
+    "results": [
+        {"x": -1.0, "landing_y": 2.0, "top_y_after_drop": 2.6, "risk_top_y_after_drop": 2.6, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": 0.0, "landing_y": 3.35, "top_y_after_drop": 3.95, "risk_top_y_after_drop": 4.3, "merge_result_top_y": 4.3, "merge_result_crosses_deadline": True, "crosses_deadline": True, "merge_grade": "DIRECT", "has_merge": True, "merges": [{"id": 1, "grade": "DIRECT", "dist": 0.1, "contact_r": 1.2, "target_is_danger": True}], "danger_merge_available": True, "danger_direct_merge_available": True},
+    ],
+    "same_type": [{"id": 1, "type": 5, "x": 0.0, "y": 2.8, "r": 0.6}],
+    "reactor": {"reactive_pairs": [(1, 2, 5)], "deadline_margin": -0.1, "top_edge_y": 3.4, "danger_piece_count": 1},
+    "deadline": {"deadline_y": 3.32, "deadline_margin": -0.1, "deadline_crossed": True},
+}
+risky_single_danger_merge_result = mod.decide(active_filter_state, risky_single_danger_merge_analysis)
+if float(risky_single_danger_merge_result["x"]) != -1.0:
+    raise AssertionError(f"risky-single-danger-merge: expected safe x=-1.0, got {risky_single_danger_merge_result!r}")
+
 all_crossing_analysis = {
     "results": [
         {"x": -1.0, "landing_y": 2.8, "top_y_after_drop": 3.34, "risk_top_y_after_drop": 3.34, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},

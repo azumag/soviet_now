@@ -712,12 +712,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             abs(float(r.get("x", 0.0) or 0.0)),
         )
 
-    def risky_single_danger_merge_result(r):
+    def risky_merge_result_deadline(r):
         return (
             isinstance(r, dict)
-            and danger_piece_count <= 1
             and r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
-            and bool(r.get("danger_merge_available", False))
             and bool(r.get("merge_result_crosses_deadline", False))
         )
 
@@ -731,7 +729,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     merge_allowed = [
         r for r in results
         if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
-        and not risky_single_danger_merge_result(r)
+        and not risky_merge_result_deadline(r)
     ]
     deadline_legal = list(safe)
     for r in merge_allowed:
@@ -1215,11 +1213,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 ),
             )
 
-    if risky_single_danger_merge_result(replacement):
+    if risky_merge_result_deadline(replacement):
         safer_merges = [
             r for r in results
             if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
-            and not risky_single_danger_merge_result(r)
+            and not risky_merge_result_deadline(r)
         ]
         if safer_merges:
             replacement = min(safer_merges, key=rank_candidate)

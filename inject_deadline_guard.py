@@ -63,11 +63,7 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
         def __dlg_merge_result_safe(c):
-            return not (
-                __dlg_danger_count <= 1
-                and c.get("danger_merge_available")
-                and c.get("merge_result_crosses_deadline")
-            )
+            return not c.get("merge_result_crosses_deadline")
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)

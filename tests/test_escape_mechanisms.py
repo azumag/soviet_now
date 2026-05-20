@@ -2333,7 +2333,7 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertIn("__dlg_merge_result_safe", injector)
         self.assertIn("merge_result_crosses_deadline", injector)
-        self.assertIn("danger_merge_available", injector)
+        self.assertIn("return not c.get(\"merge_result_crosses_deadline\")", injector)
 
     def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
         import strategy_runner
