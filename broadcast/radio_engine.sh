@@ -15,7 +15,7 @@ _radio_opencode_should_defer_for_improve() {
 
 _run_opencode_radio_unqueued() {
 	local agent="$1" prompt_file="$2"
-	local raw_file cleaned
+	local raw_file raw_text cleaned
 	if _radio_opencode_should_defer_for_improve; then
 		log "[RADIO] opencode deferred after slot acquire during improve/backoff (agent=$agent)" >&2
 		return 1
@@ -40,7 +40,9 @@ _run_opencode_radio_unqueued() {
 		rm -f "$raw_file"
 		return 1
 	fi
-	cleaned=$(cat "$raw_file" |
+	raw_text=$(cat "$raw_file")
+	_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio" || true
+	cleaned=$(printf '%s' "$raw_text" |
 		_strip_ansi |
 		grep -v '^>' |
 		grep -v '^\^D' |
@@ -74,7 +76,7 @@ _run_opencode_radio() {
 
 _run_opencode_comment_unqueued() {
 	local agent="$1" prompt_file="$2"
-	local raw_file sandbox_dir sandbox_prompt timeout_sec
+	local raw_file raw_text sandbox_dir sandbox_prompt timeout_sec
 	timeout_sec="${COMMENT_OPENCODE_TIMEOUT:-$RADIO_OPENCODE_TIMEOUT}"
 	raw_file=$(mktemp /tmp/eloop_comment_raw_XXXXXXXX)
 	sandbox_dir=$(create_sandbox \
@@ -125,7 +127,9 @@ _run_opencode_comment_unqueued() {
 		rm -f "$raw_file"
 		return 1
 	fi
-	cat "$raw_file" |
+	raw_text=$(cat "$raw_file")
+	_notify_webfetch_failure "COMMENT" "$agent" "$raw_text" "comment" || true
+	printf '%s' "$raw_text" |
 		_strip_ansi |
 		grep -v '^>' |
 		grep -v '^\^D' |

@@ -79,6 +79,39 @@ _contains_provider_error_text() {
 	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|bad request|request_id|invalid error token|invalid token|not logged in|please run /login|unexpected error, check log file|failed to run the query|pragma wal_checkpoint|insufficient balance|no resource package|rate limit exceeded|freeusagelimiterror|degraded function cannot be invoked|function id .*degraded|providermodelnotfounderror|model not found|no such model|modelid|providerid|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|(^|[^[:alnum:]])error:[[:space:]]*gone|status["[:space:]]*:[[:space:]]*410|reached its end of life|is no longer available'
 }
 
+_contains_webfetch_failure_text() {
+	printf '%s' "$1" | grep -Eiq '(^|[[:space:]])([✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b|%?[[:space:]]*(WebFetch|WebSearch)\b)'
+}
+
+_notify_webfetch_failure() {
+	local label="${1:-AI}" agent="${2:-unknown}" text="${3:-}" context="${4:-}"
+	_contains_webfetch_failure_text "$text" || return 1
+
+	local state_dir="${TMP_STATE_DIR:-tmp/state}"
+	local throttle="${WEBFETCH_FAILURE_NOTIFY_THROTTLE_SEC:-180}"
+	local key marker now mt age
+	key=$(printf '%s_%s_%s' "$label" "$agent" "$context" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/_/g; s/^_+//; s/_+$//')
+	[ -n "$key" ] || key="webfetch"
+	marker="${state_dir}/webfetch_failure_notify_${key}"
+	now=$(date +%s)
+	case "$throttle" in
+	'' | *[!0-9]*) throttle=180 ;;
+	esac
+	if [ -f "$marker" ]; then
+		mt=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
+		age=$((now - mt))
+		[ "$age" -lt "$throttle" ] && return 0
+	fi
+
+	mkdir -p "$state_dir" 2>/dev/null || true
+	: >"$marker" 2>/dev/null || true
+	log "[${label}] WebFetch failed detected; removed from on-air text (agent=${agent}${context:+ context=${context}})" >&2
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh radio "WebFetch failed" "label=${label} agent=${agent}${context:+ context=${context}} | 音声本文からは除去" "warn" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
 _contains_claude_login_error_text() {
 	printf '%s' "$1" | grep -Eiq 'not logged in|please run /login'
 }
