@@ -46,7 +46,8 @@ Game Overview:
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
-             9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+             9.10. High-type growth pipeline guidance - v609: type 8-12 centroid attraction during NO merge
+              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
 
@@ -65,6 +66,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
+      # When merge_grade==NO && max_y>=1.0 && pc>=20, guide placement toward centroid of type 8-12 pieces.
+      # Addresses "merge drought→low-type clustering→pc growth→death spiral" by attracting pieces to
+      # mid-type clusters, promoting type 8-12 merges (8+8=9, 9+9=10...) that build high-type pipeline.
+      # Bonus: max(0, 150-dist*50)*merge_mult — smaller than column_ceiling(800-1250), tie-breaker only.
+      # NOT in russia_phase: axis 9.9 handles Russia drought; current strategy has no axis 9.9.
+      # Target stage: Ukraine (T13) 9/12(75%) — new axis should improve pre-Russia survival.
+      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10), tmp/batch_summary.txt, advice.md
+      # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral"
       # v587: merge_drought deadline_cross penalty — mandatory_theme enforcement during merge drought.
       # turn 68 problem: deadline_crossed=false but decision_crosses_deadline=true during merge_drought.
       # Apply -2000 penalty when merge_drought && crosses_deadline && NO && no merge available.
@@ -823,6 +833,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __dlg_margin = float(__dlg_margin)
     except (TypeError, ValueError):
         __dlg_margin = 99.0
+    try:
+        __dlg_danger_count = int(__dlg_reactor.get("danger_piece_count", 0) or 0)
+    except (TypeError, ValueError):
+        __dlg_danger_count = 0
     __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
     __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
     if isinstance(__dlg_rps, list):
@@ -835,11 +849,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
+    # This guard is specifically a deadline guard. Reactive pairs alone can
+    # justify merge pressure elsewhere in the strategy, but must not force a
+    # "safe landing" while the visible board is still far below the red line.
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
+        __dlg_has_clean = any(
+            isinstance(c, dict)
+            and not c.get("crosses_deadline")
+            and not c.get("merge_result_crosses_deadline")
+            for c in __dlg_cands
+        )
+        def __dlg_merge_result_safe(c):
+            return not (__dlg_has_clean and c.get("merge_result_crosses_deadline"))
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and not c.get("crosses_deadline")
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -851,7 +876,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and __dlg_merge_result_safe(c)
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
@@ -957,6 +982,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = any(
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
+    has_non_crossing_candidate = any(
+        isinstance(r, dict) and not r.get("crosses_deadline", False)
+        for r in results
+    )
+    has_deadline_clean_candidate = any(
+        isinstance(r, dict)
+        and not r.get("crosses_deadline", False)
+        and not r.get("merge_result_crosses_deadline", False)
+        for r in results
+    )
+
+    def deadline_penalty_applies(result: dict, merge_grade: str) -> bool:
+        """Return True when raw crosses_deadline is reliable enough to score.
+
+        The analyzer deliberately over-warns in some high/irregular stacks, and
+        live history shows false positives where every candidate is marked as
+        crossing but the settled screen stays below the red line. In that
+        all-crossing case, raw crosses_deadline should remain an audit signal,
+        but not distort normal candidate scoring unless the visible board is
+        already close enough to the actual deadline.
+        """
+        if merge_grade != "NO" or not result.get("crosses_deadline", False):
+            return False
+        if deadline_crossed or danger_piece_count > 0:
+            return True
+        if has_non_crossing_candidate:
+            return True
+        return reactor_margin <= 0.10
+
+    def risky_merge_result_deadline(result: dict, merge_grade: str) -> bool:
+        """Avoid creating a larger merged piece that touches the deadline."""
+        return (
+            merge_grade in ("DIRECT", "NEAR")
+            and bool(result.get("merge_result_crosses_deadline", False))
+            and has_deadline_clean_candidate
+        )
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -1081,6 +1142,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and landing_y >= 1.0):
             score -= 600.0 * merge_mult  # Cancel the base NEAR bonus
             reasons.append("DEATH_SPIRAL_NEAR_SUPPRESSION")
+
+        if risky_merge_result_deadline(result, merge_grade):
+            score -= 2600.0
+            reasons.append("RISKY_MERGE_RESULT_DEADLINE")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
@@ -1417,9 +1482,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if "HIGH_TYPE_CONCENTRATION" not in reasons:
                         reasons.append("HIGH_TYPE_CONCENTRATION")
 
-        # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
-        # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
-        # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
+        # ----- v587: merge drought deadline_cross penalty (mandatory_theme enforcement) -----
+        # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
+        # When merge_grade==NO && max_y>=1.0 && pc>=20, guide placement toward centroid of type 8-12 pieces.
+        # Addresses "merge drought→low-type clustering→pc growth→death spiral" by attracting pieces to
+        # mid-type clusters, promoting type 8-12 merges (8+8=9, 9+9=10...) that build high-type pipeline.
+        # Bonus: max(0, 150-dist*50)*merge_mult — smaller than column_ceiling(800-1250), tie-breaker only.
+        # NOT in russia_phase: axis 9.9 (low-type under-placement) handles Russia drought.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10), tmp/batch_summary.txt, advice.md
+        # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral"
+        if (
+            merge_grade == "NO"
+            and max_y >= 1.0
+            and piece_count >= 20
+            and not russia_phase
+            and not guidance_suppressed
+        ):
+            high_type_pieces = []
+            for p in pieces:
+                t = p.get("type", 0)
+                if 8 <= t <= 12:
+                    high_type_pieces.append((p["x"], p["y"]))
+
+            if len(high_type_pieces) >= 2:
+                centroid_x = sum(p[0] for p in high_type_pieces) / len(high_type_pieces)
+                centroid_y = sum(p[1] for p in high_type_pieces) / len(high_type_pieces)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                pipeline_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
+                if pipeline_bonus > 20:
+                    score += pipeline_bonus
+                    reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
+
+        # ----- evaluation axis 9.6: reactive pairs type-aware stacking -----
+        # v363: reactive stacking extension to all reactive levels — v340 guard removed
+        # advice: "同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する"
         # After N+N→N+1 merge, the resulting piece is near existing N+1 → immediate N+1+N+1 opportunity.
         # v369 targeted lowest same-type (accessibility) but ignored chain potential.
         # Worst game: 40 pieces, max type 12 scattered. Best game: 31 pieces, type 15 concentrated.
@@ -2136,7 +2232,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
-        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
+        if not russia_phase and deadline_penalty_applies(result, merge_grade):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
@@ -2148,7 +2244,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Apply stronger penalty (-2000) during merge_drought, but NOT when merge_available=true
         # (merge opportunity takes priority over placement safety per mandatory_theme).
         # refs: tmp/analysis_result.md (Implementation Plan: v587 hypothesis), mandatory_themes.txt
-        if merge_drought and result.get("crosses_deadline", False) and merge_grade == "NO":
+        if merge_drought and deadline_penalty_applies(result, merge_grade):
             score -= 2000.0
             reasons.append("MERGE_DROUGHT_DEADLINE_CROSS_PENALTY")
 
