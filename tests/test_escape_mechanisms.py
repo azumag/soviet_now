@@ -1590,6 +1590,13 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertNotIn("./obs_control.sh show soren systemMsg", agents)
         self.assertNotIn("./obs_control.sh hide soren systemMsg", agents)
 
+    def test_game_result_overlay_title_includes_cycle_progress(self):
+        eloop = (REPO_ROOT / "eloop.sh").read_text()
+
+        self.assertIn("_cycle_progress=$(python3 - \"$ACCUMULATED_GAMES_FILE\" \"$MIN_GAMES_BEFORE_IMPROVE\"", eloop)
+        self.assertIn('print(f"[{count}/{cycle}]")', eloop)
+        self.assertIn('Game #${game_num_display} 終了${_cycle_progress:+ ${_cycle_progress}}', eloop)
+
     def test_improve_overlay_is_file_based_and_replaces_console_capture(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()

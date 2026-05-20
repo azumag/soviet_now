@@ -487,13 +487,28 @@ print(d.get('score', 0) + bonus)
 		fi
 
 	if [ -x ./overlay_notify.sh ]; then
-		local _overlay_counts
+		local _overlay_counts _cycle_progress
 		_overlay_counts=$(echo "$RESULT_JSON" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 types = [int(x) for x in d.get('final_types', []) if str(x).lstrip('-').isdigit()]
 print('ウクライナ=%d カザフ=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
 " 2>/dev/null || echo "")
+		_cycle_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$MIN_GAMES_BEFORE_IMPROVE" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+cycle = int(sys.argv[2]) if len(sys.argv) > 2 else 12
+try:
+    with open(path, encoding="utf-8") as f:
+        count = int((json.load(f) or {}).get("count", 0))
+except Exception:
+    count = 0
+if count > 0 and cycle > 0:
+    print(f"[{count}/{cycle}]")
+PY
+)
 		local _ov_best="" _ov_result="通常終了"
 		_ov_best=$(cat best_score.txt 2>/dev/null | tr -dc '0-9')
 		if [ "${LAST_SOVIET:-0}" = "1" ] || echo "${_overlay_counts}" | grep -q 'ソ連=1'; then
@@ -502,7 +517,7 @@ print('ウクライナ=%d カザフ=%d ロシア=%d ソ連=%d' % (types.count(13
 			_ov_result="ロシア建国"
 		fi
 		[ "${LAST_SCORE:-0}" -gt "${_ov_best:-0}" ] 2>/dev/null && _ov_result="${_ov_result}・自己ベスト更新"
-		./overlay_notify.sh game "Game #${game_num_display} 終了 (${_ov_result})" "score=${LAST_SCORE} eval=${EVAL_SCORE} (bonus=+${_bonus:-0}) turns=${LAST_TURNS:-?}${_overlay_counts:+ | ${_overlay_counts}}${_ov_best:+ | best=${_ov_best}}" "info" >/dev/null 2>&1 || true
+		./overlay_notify.sh game "Game #${game_num_display} 終了${_cycle_progress:+ ${_cycle_progress}} (${_ov_result})" "score=${LAST_SCORE} eval=${EVAL_SCORE} (bonus=+${_bonus:-0}) turns=${LAST_TURNS:-?}${_overlay_counts:+ | ${_overlay_counts}}${_ov_best:+ | best=${_ov_best}}" "info" >/dev/null 2>&1 || true
 	fi
 
 	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する
