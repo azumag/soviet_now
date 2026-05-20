@@ -65,11 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # v629: type>=13 NO-merge early exit — type14→15 pipeline protection
-      # Rollback postmortem: "type>=13 merge_available=false で HEIGHT_CONTROL 選択"が type14 クラスター形成を阻害
-      # next_type>=13 && merge_available=false の場合、stacking/proximity評価をskipして最低y候选を返す
-      # HEIGHT_CONTROL選択を禁止し、type14→15 reachabilityを確保
-      # refs: tmp/analysis_result.md (adopted hypothesis: type>=13 NO-merge early exit)
       # v625: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
       # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
       # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -958,25 +953,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_all_cross_deadline and not __dlg_merge_safe:
             pass  # suppress DEADLINE_GUARD, fall through to normal decide()
     # --- END DEADLINE GUARD ---
-
-    # v629: type>=13 NO-merge early exit — type14→15 pipeline protection
-    # Rollback postmortem: "type>=13 merge_available=false で HEIGHT_CONTROL 選択"が type14 クラスター形成を阻害
-    # When next_type>=13 and no merge available, skip stacking/proximity evaluation and
-    # directly return the lowest-y candidate. This prevents HEIGHT_CONTROL from being
-    # selected at type>=13 in the pipeline, ensuring type14→15 reachability.
-    # Constraint: only fires when merge_available==False (no merge possible anyway).
-    # Does NOT affect: merge_available=True (normal merge selection), type<13 (unchanged).
-    # refs: tmp/analysis_result.md (adopted hypothesis: type>=13 NO-merge early exit)
-    # Note: next_type extracted from game_state directly since this runs before line 1031
-    next_piece_check = game_state.get("next", {})
-    next_type_check = next_piece_check.get("type", 0)
-    if next_type_check >= 13 and not game_state.get("merge_available", False):
-        # Use analysis["results"] directly since results variable not yet assigned
-        all_results = analysis.get("results", [])
-        if all_results:
-            lowest_y = min(all_results, key=lambda r: r.get("landing_y", 99.0))
-            return {"x": float(lowest_y.get("x", 0.0)), "reason": "HIGH_TYPE_NO_MERGE_FALLBACK"}
-        return {"x": 0.0, "reason": "HIGH_TYPE_NO_MERGE_FALLBACK_NO_CANDIDATES"}
 
     results = analysis.get("results", [])
 
