@@ -186,6 +186,19 @@ html, body {{
   overflow: hidden;
   word-break: break-word;
 }}
+.toast.chat .title {{
+  color: rgba(238, 245, 255, 0.68);
+  font-size: 14px;
+  font-weight: 700;
+}}
+.toast.chat .body {{
+  margin-top: 6px;
+  color: #f8fbff;
+  font-size: 22px;
+  font-weight: 850;
+  line-height: 1.22;
+  -webkit-line-clamp: 2;
+}}
 .empty {{ display: none; }}
 @keyframes slideIn {{
   from {{ transform: translateX(18px); opacity: 0; }}
