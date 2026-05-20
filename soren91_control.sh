@@ -203,22 +203,17 @@ _set_soren91_mode_flag() {
 }
 
 _soren91_scan_alive_runner_pids() {
-	local line="" pid="" cmd=""
-	while IFS= read -r line; do
-		pid=$(printf '%s\n' "$line" | awk '{print $1}')
-		cmd=$(printf '%s\n' "$line" | cut -d' ' -f2-)
+	local pattern="" pid=""
+	pattern="$SOREN91_RUNNER_SCRIPT|$SOREN91_DIR/run_player_loop.sh|soren91/run_player_loop.sh"
+	while IFS= read -r pid; do
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
 		[ "$pid" = "$$" ] && continue
-		case "$cmd" in
-		*"$SOREN91_RUNNER_SCRIPT"*|*"$SOREN91_DIR/run_player_loop.sh"*|*"soren91/run_player_loop.sh"*)
-			kill -0 "$pid" 2>/dev/null || continue
-			printf '%s\n' "$pid"
-			;;
-		esac
+		kill -0 "$pid" 2>/dev/null || continue
+		printf '%s\n' "$pid"
 	done <<EOF
-$(ps -Ao pid=,command= 2>/dev/null || true)
+$(pgrep -f "$pattern" 2>/dev/null || true)
 EOF
 }
 

@@ -43,7 +43,7 @@ const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
-const SERVE_PORT = 8080;
+const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
@@ -51,11 +51,13 @@ const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirna
 // context on some macOS audio graphs. Keep per-context routing opt-in; OBS
 // application-audio capture is safer for the live game.
 const CHROME_AUDIO_OUTPUT_LABEL = process.env.SOREN_CHROME_AUDIO_OUTPUT_LABEL || '';
-// 起動時に効果音(SE)スライダーだけ下げる。BGMは触らない。
+// 起動時に音量スライダーを必要な範囲だけ下げる。
 // AudioManager: 実音量 = defaultVolume * 0.125 * value (slider int 0..10, 既定3)。
-// 1.5 = 既定3の半分。'off'/'' で無効化。
+// SE は既定 1.5 (=既定3の半分)。BGM は通常本線では触らず、並列評価などが env で指定する。
 const SE_VOLUME_RAW = process.env.SOREN_SE_VOLUME ?? '1.5';
 const SE_VOLUME = (SE_VOLUME_RAW === 'off' || SE_VOLUME_RAW === '') ? null : Number(SE_VOLUME_RAW);
+const BGM_VOLUME_RAW = process.env.SOREN_BGM_VOLUME ?? 'off';
+const BGM_VOLUME = (BGM_VOLUME_RAW === 'off' || BGM_VOLUME_RAW === '') ? null : Number(BGM_VOLUME_RAW);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
 
 function chromeAppPathFromExecutable(executablePath) {
@@ -726,9 +728,25 @@ async function runLocalController() {
 
   console.log('Unity canvas ready');
 
-  // 効果音(SE)だけ音量を下げる。BGMはそのまま。AudioManager.SetSEVolume は
-  // UI の SE スライダー onValueChanged と同一実体。SendMessage で同等操作。
+  // AudioManager の音量スライダー onValueChanged と同一実体を SendMessage で操作する。
   // AudioManager は Awake で初期化されるため、反映されるまで数回リトライ。
+  if (BGM_VOLUME != null && Number.isFinite(BGM_VOLUME)) {
+    let bgmApplied = false;
+    for (let i = 0; i < 10; i++) {
+      try {
+        const ok = await page.evaluate((v) => {
+          if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return false;
+          window.unityInstance.SendMessage('Audio Manager', 'SetBGMVolume', v);
+          return true;
+        }, BGM_VOLUME);
+        if (ok) { bgmApplied = true; break; }
+      } catch {}
+      await page.waitForTimeout(1000);
+    }
+    console.log(bgmApplied
+      ? `BGM volume set to ${BGM_VOLUME}`
+      : `WARNING: failed to set BGM volume (unityInstance/AudioManager unavailable)`);
+  }
   if (SE_VOLUME != null && Number.isFinite(SE_VOLUME)) {
     let seApplied = false;
     for (let i = 0; i < 10; i++) {
@@ -743,7 +761,7 @@ async function runLocalController() {
       await page.waitForTimeout(1000);
     }
     console.log(seApplied
-      ? `SE volume set to ${SE_VOLUME} (BGM unchanged)`
+      ? `SE volume set to ${SE_VOLUME}`
       : `WARNING: failed to set SE volume (unityInstance/AudioManager unavailable)`);
   }
 

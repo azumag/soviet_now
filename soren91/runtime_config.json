@@ -2,7 +2,9 @@
   "improvementIntervalGames": 12,
   "merikenTextGeneration": {
     "claudePreset": "haiku",
+    "claudeFallbackPreset": "ccogent",
+    "ccogentTimeoutSec": 120,
     "opencodeFallbackAgent": "glmflash",
-    "ollamaBaseUrl": "http://192.168.11.3:11434"
+    "ollamaBaseUrl": "http://192.168.11.13:11434"
   }
 }

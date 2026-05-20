@@ -273,6 +273,28 @@ function rankingCommentClaimPath(gameNumber) {
   return join(COMMENT_QUEUE_DIR, `soren91_ranking_comment_game_${String(gameNumber).padStart(4, '0')}.claim`);
 }
 
+function cleanupCompletedRankingCommentClaims() {
+  const lastCommentedGame = readLastCommentedGameNumber();
+  if (lastCommentedGame == null || !existsSync(COMMENT_QUEUE_DIR)) return;
+
+  const keepRecent = Math.max(0, parsePositiveInt(process.env.SOREN91_RANKING_CLAIM_KEEP_RECENT) ?? 4);
+  const cutoffGame = Math.max(0, lastCommentedGame - keepRecent);
+  let removed = 0;
+  for (const filename of readdirSync(COMMENT_QUEUE_DIR)) {
+    const match = filename.match(/^soren91_ranking_comment_game_(\d+)\.claim$/u);
+    if (!match) continue;
+    const claimedGame = parsePositiveInt(match[1]);
+    if (!claimedGame || claimedGame > cutoffGame) continue;
+    try {
+      unlinkSync(join(COMMENT_QUEUE_DIR, filename));
+      removed += 1;
+    } catch {}
+  }
+  if (removed > 0) {
+    console.log(`[game] Cleaned ${removed} completed ranking comment claims (last=${lastCommentedGame}, keepRecent=${keepRecent})`);
+  }
+}
+
 function readLastCommentedGameNumber() {
   if (!existsSync(SOREN91_LAST_COMMENTED_GAME_FILE)) return null;
   try {
@@ -329,6 +351,8 @@ function markRankingCommentGameCompleted(gameNumber) {
   } catch (err) {
     console.log(`[game] Ranking comment completion marker failed for game #${n}: ${err.message}`);
   }
+  releaseRankingCommentGameClaim(n);
+  cleanupCompletedRankingCommentClaims();
 }
 
 function releaseRankingCommentGameClaim(gameNumber) {
@@ -901,6 +925,7 @@ async function main() {
   } catch (err) {
     console.log(`[main] Failed to set soren91 mode flag: ${err.message}`);
   }
+  cleanupCompletedRankingCommentClaims();
 
   // Step 1: トップページHTMLからゲームURLを取得
   console.log('[main] Fetching game URL...');

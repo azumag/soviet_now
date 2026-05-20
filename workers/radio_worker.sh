@@ -67,7 +67,11 @@ _cleanup() {
 	_STOPPED=1
 	_dump_diag "${_LAST_SIGNAL:-EXIT}"
 	_log "shutdown: ${WORKER_NAME} 停止 (cause=${_LAST_SIGNAL:-EXIT})"
-	rm -f "$PID_FILE"
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ "$active_pid" = "$$" ]; then
+		rm -f "$PID_FILE"
+	fi
 }
 
 _handle_signal() {
@@ -95,6 +99,19 @@ _reload_runtime() {
 	else
 		_log "WARNING: reload failed; keeping previous runtime"
 	fi
+}
+
+_ensure_single_owner() {
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ] && kill -0 "$active_pid" 2>/dev/null; then
+		_log "another ${WORKER_NAME} owns pidfile (owner=${active_pid}, self=$$) -> exit"
+		_LAST_SIGNAL="PIDFILE_OWNER_CHANGED"
+		_cleanup
+		trap - EXIT
+		exit 0
+	fi
+	echo $$ >"$PID_FILE"
 }
 trap '_cleanup' EXIT
 trap '_handle_signal INT' INT
@@ -169,6 +186,7 @@ _run_iteration() {
 }
 
 while true; do
+	_ensure_single_owner
 	_reload_runtime
 	if [ -f tmp/stop ]; then
 		_log "tmp/stop 検出 → 終了"

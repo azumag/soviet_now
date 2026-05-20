@@ -86,13 +86,18 @@ _archive_restart_has_candidate() {
 		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
 		"${ARCHIVE_RESTART_MIN_COMP_RATIO:-0.92}" \
 		"${MIN_GAMES_FOR_BEST_ROLLBACK:-12}" \
-		"${ARCHIVE_RESTART_MIN_BEST_TYPE:-14}" <<'PY' >/dev/null 2>&1
+		"${ARCHIVE_RESTART_MIN_BEST_TYPE:-14}" \
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
+		"${ARCHIVE_RESTART_INCLUDE_PERMANENT:-1}" \
+		"${ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY:-1}" \
+		"${ARCHIVE_RESTART_COOLDOWN_SEC:-21600}" <<'PY' >/dev/null 2>&1
 import json
 import math
 import os
 import sys
+import time
 
-rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, archive_dir, min_ratio_raw, min_games_raw, min_best_type_raw = sys.argv[1:10]
+rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, archive_dir, min_ratio_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw = sys.argv[1:14]
 
 def load(path, default):
     try:
@@ -154,10 +159,38 @@ def archive_is_runtime_stable(path):
     except Exception:
         return False
 
+def boolish(value, default=True):
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+include_permanent = boolish(include_permanent_raw, True)
+allow_origin_retry = boolish(allow_origin_retry_raw, True)
+
+def find_archive_path(h):
+    paths = [os.path.join(archive_dir, f"{h}.py")]
+    if include_permanent and permanent_archive_dir:
+        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    for path in paths:
+        if os.path.exists(path) and archive_is_runtime_stable(path):
+            return path
+    return ""
+
+def is_cooled_down(h):
+    if h not in cooldown:
+        return False
+    ttl = as_int(cooldown_ttl_raw, 21600)
+    if ttl <= 0:
+        return True
+    meta = cooldown.get(h) if isinstance(cooldown.get(h), dict) else {}
+    epoch = as_int(meta.get("epoch", 0), 0)
+    return epoch <= 0 or (int(time.time()) - epoch) < ttl
+
 rolling = load(rolling_file, {})
 anchor = load(anchor_file, {})
 rejected = set(load(rejected_file, {}).keys())
-origin = set(load(origin_file, {}).keys())
+origin_map = load(origin_file, {})
+origin = set(origin_map.keys())
 cooldown = set(load(cooldown_file, {}).keys())
 anchor_hash = str(anchor.get("hash", "") or "")
 anchor_comp = as_float(anchor.get("comp", 0.0), 0.0)
@@ -170,12 +203,10 @@ threshold = anchor_comp * min_ratio if anchor_comp > 0 else 0.0
 
 for h, entry in (rolling or {}).items():
     h = str(h)
-    if not h or h == anchor_hash or h in rejected or h in origin or h in cooldown:
+    if not h or h == anchor_hash or h in rejected or is_cooled_down(h):
         continue
-    path = os.path.join(archive_dir, f"{h}.py")
-    if not os.path.exists(path):
-        continue
-    if not archive_is_runtime_stable(path):
+    path = find_archive_path(h)
+    if not path:
         continue
     m = metrics((entry or {}).get("scores", []) or [])
     if not m or m["n"] < min_games or m["comp"] < threshold:
@@ -192,6 +223,9 @@ for h, entry in (rolling or {}).items():
     if anchor_russia > 0 and russia <= 0:
         continue
     if min_best_type > 0 and russia <= 0 and soviet <= 0 and best_type < min_best_type:
+        continue
+    origin_type = str((origin_map.get(h) or {}).get("origin_type") or "") if isinstance(origin_map.get(h), dict) else ("legacy_origin" if h in origin else "")
+    if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
         continue
     raise SystemExit(0)
 
@@ -389,46 +423,6 @@ _find_live_improve_pid() {
 		return 0
 	fi
 	return 1
-}
-
-_monitor_report_context() {
-	local report_status_file="${MONITOR_REPORT_STATUS_FILE:-tmp/state/monitor_report_status.json}"
-	[ -f "$report_status_file" ] || return 1
-	python3 - "$report_status_file" <<'PY' 2>/dev/null
-import json
-import sys
-
-def as_int(value, default):
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-path = sys.argv[1]
-try:
-    data = json.load(open(path, encoding="utf-8"))
-except Exception:
-    raise SystemExit(1)
-
-if not isinstance(data, dict):
-    raise SystemExit(1)
-
-status = str(data.get("status", "") or "")
-age = as_int(data.get("age_sec", data.get("age", 0)), 0)
-rstreak = as_int(data.get("regression_streak", 0), 0)
-eval_last50 = data.get("eval_last50")
-if isinstance(eval_last50, (int, float)):
-    eval_last50 = int(eval_last50)
-else:
-    eval_last50 = ""
-anchor_comp = data.get("anchor_comp")
-if isinstance(anchor_comp, (int, float)):
-    anchor_comp = int(anchor_comp)
-else:
-    anchor_comp = ""
-last_event = str(data.get("last_event", "") or "")
-print(f"{status}|{age}|{rstreak}|{eval_last50}|{anchor_comp}|{last_event}")
-PY
 }
 
 _sync_improve_state_with_live_process() {
@@ -1737,12 +1731,65 @@ PY
 	case "$russia_recovery_mode" in 1) ;; *) russia_recovery_mode=0 ;; esac
 	if [ "$russia_recovery_mode" = "1" ]; then
 		log "[IMPROVE] Russia recovery mode active (${russia_recovery_reason:-unknown}) → mechanical wildcard suppressed"
+		if _archive_restart_should_run 999; then
+			improve_reason="archive_restart"
+			log "[IMPROVE] Russia recovery mode: ${russia_recovery_reason:-unknown} → archive_restart を即時優先"
+		else
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → 通常AI改善でtype14→15復旧"
+		fi
+	fi
+	local current_russia_progress current_russia_progress_reason
+	current_russia_progress=$(LOCK_DATA="$lock_data" python3 - \
+		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" <<'PY' 2>/dev/null || echo "0:"
+import json
+import os
+import sys
+
+current_run_file = sys.argv[1]
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def as_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+try:
+    lock = json.loads(os.environ.get("LOCK_DATA", "") or "{}")
+except Exception:
+    lock = {}
+current = load(current_run_file)
+current_russia = as_int(current.get("russia_count", 0))
+lock_russia = as_int(lock.get("russia_count", 0))
+current_best = as_int(current.get("best_max_type", 0))
+lock_best = as_int(lock.get("best_max_type", 0))
+best_type = max(current_best, lock_best)
+russia = max(current_russia, lock_russia)
+if russia > 0 or best_type >= 15:
+    print(f"1:russia={russia},best_type={best_type}")
+else:
+    print("0:")
+PY
+)
+	current_russia_progress_reason="${current_russia_progress#*:}"
+	current_russia_progress="${current_russia_progress%%:*}"
+	case "$current_russia_progress" in 1) ;; *) current_russia_progress=0 ;; esac
+	if [ "$current_russia_progress" = "1" ] && { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; }; then
+		log "[WILDCARD] current strategy has Russia progress (${current_russia_progress_reason:-unknown}) → mechanical wildcard suppressed"
 	fi
 	# 粛清カスケード中は毎サイクル post_regression で起動するため、ゲートを
 	# normal 限定にすると WILDCARD(脱出弾)に構造的に永遠に入れない。
 	# 回帰ストリーク/停滞が閾値超なら post_regression でも WILDCARD へ昇格を
 	# 許可する (まさに粛清連鎖からの脱出が WILDCARD の目的)。
-	if { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; } && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ "$russia_recovery_mode" != "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
+	if { [ "$improve_reason" = "normal" ] || [ "$improve_reason" = "post_regression" ]; } && [ "${WILDCARD_ENABLED:-0}" = "1" ] && [ "$russia_recovery_mode" != "1" ] && [ "$current_russia_progress" != "1" ] && [ -f "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" ]; then
 		local stag rstreak
 		local monitor_status="" monitor_age="" monitor_streak="" monitor_eval="" monitor_anchor="" monitor_event=""
 		local _monitor_ctx
@@ -1760,36 +1807,6 @@ try:
 except Exception:
     print(0)
 	" 2>/dev/null || echo 0)
-	_monitor_ctx=$(_monitor_report_context 2>/dev/null || true)
-	if [ -n "$_monitor_ctx" ]; then
-		IFS='|' read -r monitor_status monitor_age monitor_streak monitor_eval monitor_anchor monitor_event <<EOF
-$_monitor_ctx
-EOF
-		monitor_status="${monitor_status:-unknown}"
-		monitor_age="${monitor_age:-0}"
-		monitor_streak="${monitor_streak:-0}"
-		monitor_eval="${monitor_eval:-}"
-		monitor_anchor="${monitor_anchor:-}"
-		monitor_event="${monitor_event:-}"
-		log "[IMPROVE] 監視レポート: status=${monitor_status} age=${monitor_age}s regression_streak=${monitor_streak} eval_last50=${monitor_eval:-?} anchor_comp=${monitor_anchor:-?} last_event=${monitor_event:-none}"
-		if [ "${MONITOR_REPORT_IMPROVE_GUARD_ENABLED:-0}" = "1" ] && [ "$monitor_status" = "old" ]; then
-			guard_age="${MONITOR_REPORT_IMPROVE_GUARD_MAX_AGE:-3600}"
-			case "$guard_age" in
-			''|*[!0-9]*) guard_age=3600 ;;
-			esac
-			case "$monitor_age" in
-			''|*[!0-9]*) monitor_age=0 ;;
-			esac
-			if [ "${monitor_age:-0}" -ge "${guard_age:-3600}" ]; then
-				log "[IMPROVE] 監視レポートが${monitor_status} (${monitor_age}s) のため改善起動を抑止"
-				return 0
-			fi
-		fi
-		if [ "${monitor_streak:-0}" -gt "${rstreak:-0}" ]; then
-			rstreak=$monitor_streak
-			log "[IMPROVE] regression_streak を監視レポート値で補正: ${rstreak}"
-		fi
-	fi
 		local wildcard_escape_streak
 		wildcard_escape_streak=$(python3 - \
 			"${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" \

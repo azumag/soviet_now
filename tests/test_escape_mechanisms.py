@@ -117,8 +117,8 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertIn(round(anchor["comp"]), [round(raw_comp_A), round(raw_comp_B)],
                           msg=f"persisted comp={anchor['comp']} is not raw")
 
-    def test_anchor_selection_prefers_soviet_objective_progress_within_score_band(self):
-        """anchor は同程度スコア帯なら comp だけでなく建国進捗を守る。"""
+    def test_anchor_selection_prefers_rolling_score_over_objective_progress(self):
+        """anchor は建国進捗だけでなく mature rolling score 上位を優先する。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -187,9 +187,357 @@ _refresh_best_strategy_anchor "" 2>&1
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
             anchor = json.loads(anchor_file.read_text())
-            self.assertEqual(anchor["hash"], "russiaPath")
+            self.assertEqual(anchor["hash"], "scoreOnly")
+            self.assertEqual(anchor["best_max_type"], 13)
+            self.assertEqual(anchor["russia_count"], 0)
+
+    def test_anchor_refresh_preserves_valid_current_anchor(self):
+        """current が既存 anchor の場合、2番手へ強制差し替えせず同一hash判定へ残す。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            last_anchor_change_file = td / "last_anchor_change.md"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "currentRussia": {
+                            "scores": [1100] * 20,
+                            "games_total": 40,
+                            "_recent_archives": [],
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                        "scoreOnly": {
+                            "scores": [1200] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 14,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                    }
+                )
+            )
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "currentRussia.py").write_text(stable_source)
+            (archive_dir / "scoreOnly.py").write_text(stable_source)
+            anchor_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "currentRussia",
+                        "comp": 1100,
+                        "p50": 1100,
+                        "p25": 1100,
+                        "lcb": 1100,
+                        "n": 20,
+                        "best_max_type": 15,
+                        "russia_count": 1,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "0"
+            env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+            env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "currentRussia" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "currentRussia")
             self.assertEqual(anchor["best_max_type"], 15)
             self.assertEqual(anchor["russia_count"], 1)
+
+    def test_direct_anchor_promotion_does_not_overwrite_russia_anchor_with_score_only(self):
+        """PROMOTE 経路の直接書き込みでも Russia anchor を score-only で潰さない。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            run_file = td / "current_strategy_run.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "scores": [1300] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 14,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        }
+                    }
+                )
+            )
+            run_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "scoreOnly",
+                        "scores": [1300] * 12,
+                        "games_total": 12,
+                        "best_max_type": 14,
+                        "russia_count": 0,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+            anchor_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "russiaPath",
+                        "comp": 1100,
+                        "p50": 1100,
+                        "p25": 1100,
+                        "lcb": 1100,
+                        "n": 12,
+                        "best_max_type": 15,
+                        "russia_count": 1,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+            (archive_dir / "scoreOnly.py").write_text("# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n")
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+CURRENT_STRATEGY_RUN_FILE='{run_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_promote_current_strategy_to_anchor scoreOnly
+echo promote_rc=$?
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            self.assertIn("promote_rc=1", result.stdout)
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "russiaPath")
+            self.assertEqual(anchor["russia_count"], 1)
+
+    def test_direct_anchor_promotion_keeps_objective_fields_when_allowed(self):
+        """目的進捗を落とさない PROMOTE は成功し、anchor payload に進捗も残す。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            run_file = td / "current_strategy_run.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "betterRussia": {
+                            "scores": [1400] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        }
+                    }
+                )
+            )
+            run_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "betterRussia",
+                        "scores": [1400] * 12,
+                        "games_total": 12,
+                        "best_max_type": 15,
+                        "russia_count": 1,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+            anchor_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "russiaPath",
+                        "comp": 1200,
+                        "p50": 1200,
+                        "p25": 1200,
+                        "lcb": 1200,
+                        "n": 12,
+                        "best_max_type": 15,
+                        "russia_count": 1,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+            (archive_dir / "betterRussia.py").write_text("# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n")
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+CURRENT_STRATEGY_RUN_FILE='{run_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_promote_current_strategy_to_anchor betterRussia
+echo promote_rc=$?
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            self.assertIn("promote_rc=0", result.stdout)
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "betterRussia")
+            self.assertEqual(anchor["best_max_type"], 15)
+            self.assertEqual(anchor["russia_count"], 1)
+
+    def test_existing_russia_anchor_can_be_replaced_by_higher_score_candidate(self):
+        """既存 Russia anchor でも rolling score 上位の安定候補には置換される。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            last_anchor_change_file = td / "last_anchor_change.md"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "scores": [1300] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 14,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                        "russiaPath": {
+                            "scores": [1200] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                    }
+                )
+            )
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "scoreOnly.py").write_text(stable_source)
+            (archive_dir / "russiaPath.py").write_text(stable_source)
+            anchor_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "russiaPath",
+                        "comp": 1200,
+                        "p50": 1200,
+                        "p25": 1200,
+                        "lcb": 1200,
+                        "n": 12,
+                        "best_max_type": 15,
+                        "russia_count": 1,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+            russia_sig = {"reason": {"R": 1.0}, "x_bins": [1.0, 0, 0, 0, 0, 0], "n_games": 12, "merge_take_rate": 0.5}
+            beh_file.write_text(
+                json.dumps(
+                    {
+                        "russiaPath": russia_sig,
+                        "scoreOnly": {"reason": {"S": 1.0}, "x_bins": [0, 0, 0, 0, 0, 1.0], "n_games": 12, "merge_take_rate": 0.1},
+                    }
+                )
+            )
+            tabu_file.write_text(json.dumps({"signature": russia_sig, "decay_until_games": 999999}) + "\n")
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "1"
+            env["TABU_DISTANCE_THRESHOLD"] = "0.15"
+            env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+            env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "scoreOnly")
+            self.assertEqual(anchor["best_max_type"], 14)
+            self.assertEqual(anchor["russia_count"], 0)
+
+    def test_regression_rollback_can_restore_anchor_from_permanent_archive(self):
+        """anchor rollback は通常 archive だけでなく permanent archive も見に行く。"""
+        regression = (REPO_ROOT / "strategy" / "regression.sh").read_text()
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
+        self.assertIn("anchor_top1_permanent", regression)
 
     def test_anchor_selection_skips_archives_that_would_normalize_on_validate(self):
         """guard 未注入 archive は rollback 時に別 hash へ変わるため anchor から外す。"""
@@ -329,6 +677,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         """WILDCARD 連続発火時は state を記録し、摂動幅と対象数を段階的に拡張する。"""
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
 
         self.assertIn("WILDCARD_ADAPTIVE_SCALE_ENABLED", config)
         self.assertIn("WILDCARD_ADAPTIVE_SCALE_STEP", config)
@@ -350,6 +699,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_PARALLEL_JOBS", config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
+        self.assertIn("WILDCARD_PARALLEL_BGM_VOLUME", config)
+        self.assertIn("WILDCARD_PARALLEL_SE_VOLUME", config)
 
         self.assertIn("consecutive_wildcards", eloop)
         self.assertIn("adapted_ratio_min", eloop)
@@ -370,6 +721,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("parallel_candidates", eloop)
         self.assertIn("parallel_job_id", eloop)
         self.assertIn("wildcardParallelOverlay", config)
+        self.assertIn("soviet_local.stderr.log", parallel)
+        self.assertIn("bridge exited rc=", parallel)
         self.assertIn("wildcard_applied", eloop)
         self.assertIn('"origin_type": "wildcard"', eloop)
         self.assertIn('"exclude_applied": exclude_applied', eloop)
@@ -455,6 +808,139 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
                 self.assertTrue((workdir / "strategy.py").exists())
                 self.assertTrue((workdir / "commands.txt").exists())
                 self.assertTrue((workdir / "game_state.json").exists())
+                self.assertIn("raw_scores", cand)
+                self.assertIn("eval_scores", cand)
+
+    def test_wildcard_parallel_uses_live_eval_score_for_winner(self):
+        """WILDCARD 候補比較は raw score ではなく live と同じ eval score を使う。"""
+        import wildcard_parallel
+
+        low_raw_high_type = {"score": 900, "final_types": [14]}
+        high_raw_low_type = {"score": 1200, "final_types": [10]}
+        self.assertGreater(
+            wildcard_parallel.eval_score(low_raw_high_type),
+            wildcard_parallel.eval_score(high_raw_low_type),
+        )
+
+        cand_a = wildcard_parallel.CandidateResult(
+            job_id="cand-a",
+            index=0,
+            workdir=Path("/tmp/cand-a"),
+            strategy_path=Path("/tmp/cand-a/strategy.py"),
+            status="accepted",
+            scores=[wildcard_parallel.eval_score(low_raw_high_type)],
+            raw_scores=[900],
+            eval_scores=[wildcard_parallel.eval_score(low_raw_high_type)],
+            max_type=14,
+        )
+        cand_b = wildcard_parallel.CandidateResult(
+            job_id="cand-b",
+            index=1,
+            workdir=Path("/tmp/cand-b"),
+            strategy_path=Path("/tmp/cand-b/strategy.py"),
+            status="accepted",
+            scores=[wildcard_parallel.eval_score(high_raw_low_type)],
+            raw_scores=[1200],
+            eval_scores=[wildcard_parallel.eval_score(high_raw_low_type)],
+            max_type=10,
+        )
+        self.assertIs(wildcard_parallel.choose_winner([cand_b, cand_a], 1), cand_a)
+
+    def test_wildcard_parallel_keeps_partial_candidate_after_timeout(self):
+        """min_successful_games 到達後の timeout は候補全体を捨てない。"""
+        import argparse
+        import wildcard_parallel
+
+        class SuccessfulProc:
+            returncode = 0
+            args = ["strategy_runner.py"]
+
+            def poll(self):
+                return 0
+
+            def communicate(self, timeout=None):
+                return (
+                    'log\n---RESULT---\n{"score": 1000, "final_types": [14], "russia_created": false}\n',
+                    "",
+                )
+
+            def kill(self):
+                pass
+
+        class TimeoutProc:
+            returncode = None
+            args = ["strategy_runner.py"]
+
+            def poll(self):
+                return None
+
+            def communicate(self, timeout=None):
+                return "", ""
+
+            def kill(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            strategy = td_path / "strategy.py"
+            strategy.write_text(
+                "def decide(game_state, analysis):\n"
+                "    return {\"x\": 0, \"reason\": \"test\"}\n",
+                encoding="utf-8",
+            )
+            candidate = wildcard_parallel.CandidateResult(
+                job_id="cand-1",
+                index=0,
+                workdir=td_path / "cand-1",
+                strategy_path=strategy,
+            )
+            args = argparse.Namespace(
+                games=2,
+                min_successful_games=1,
+                cdp_base_port=9320,
+                serve_base_port=18080,
+                bridge_timeout=1,
+                game_timeout=0,
+            )
+            with mock.patch.object(wildcard_parallel, "launch_bridge", return_value=object()), \
+                mock.patch.object(wildcard_parallel, "stop_process"), \
+                mock.patch.object(wildcard_parallel, "cleanup_chrome_profile_processes"), \
+                mock.patch.object(wildcard_parallel, "capture_candidate_preview"), \
+                mock.patch.object(wildcard_parallel, "maybe_show_obs_candidate_source"), \
+                mock.patch.object(wildcard_parallel.subprocess, "Popen", side_effect=[SuccessfulProc(), TimeoutProc()]):
+                result = wildcard_parallel.evaluate_real(candidate, args, td_path / "sessions")
+
+            self.assertEqual(result.status, "accepted")
+            self.assertEqual(result.scores, [wildcard_parallel.eval_score({"score": 1000, "final_types": [14]})])
+            self.assertIn("after enough successful games", result.error)
+
+    def test_wildcard_parallel_restarts_bridge_for_each_real_game(self):
+        """real 評価は GAMEOVER 状態を複数試合として重複カウントしない。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn('for game_index in range(args.games):', parallel)
+        self.assertIn('(workdir / "game_state.json").write_text("{}", encoding="utf-8")', parallel)
+        self.assertIn("bridge = launch_bridge(workdir, env, args.bridge_timeout)", parallel)
+        self.assertIn("finally:\n                stop_process(bridge)", parallel)
+
+    def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
+        """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": "0"', parallel)
+        self.assertIn("def cleanup_chrome_profile_processes", parallel)
+        self.assertIn('"wildcard_parallel" not in profile_dir', parallel)
+        self.assertIn('"ps", "-Ao", "pid=,command="', parallel)
+        self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
+
+    def test_wildcard_parallel_overlay_embeds_three_live_previews(self):
+        """OBS には候補別 CDP screenshot を3枚並べて出す。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn('"preview_path": str(self.workdir / "tmp" / "preview.png")', parallel)
+        self.assertIn("def capture_candidate_preview", parallel)
+        self.assertIn("chromium.connectOverCDP", parallel)
+        self.assertIn("page.screenshot", parallel)
+        self.assertIn("capture_candidate_preview(candidate.cdp_port, workdir / \"tmp\" / \"preview.png\", workdir)", parallel)
+        self.assertIn('<img class="preview live-preview"', parallel)
+        self.assertIn("aspect-ratio: 16 / 9", parallel)
 
     def test_wildcard_parallel_no_candidate_is_noop(self):
         """基準未達なら winner を返さず、本線 strategy.py は変更しない。"""
@@ -508,12 +994,42 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         """OBS helper は wildcardParallelOverlay を表示し、transform で3分割面を配置できる。"""
         obs_control = (REPO_ROOT / "obs_control.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn("transform <scene> <source> <x> <y> <scaleX> <scaleY>", obs_control)
         self.assertIn("SetSceneItemTransform", obs_control)
+        self.assertIn("<html-file-or-url>", browser_source)
+        self.assertIn("http://*|https://*", browser_source)
         self.assertIn("wildcard_parallel_obs_show", eloop)
         self.assertIn("wildcardParallelOverlay", eloop)
-        self.assertIn("hide:\"$hide_sources\"", eloop)
+        self.assertIn("wildcardParallelCand", eloop)
+        self.assertIn("wildcardParallelCand", parallel)
+        self.assertIn("本線ゲームを止め", loop := (REPO_ROOT / "soren_loop.sh").read_text())
+        self.assertIn("本線は見えない裏で進ませない", loop)
+        self.assertIn('case "$_pause_reason" in\n\t\twildcard|archive_restart)', loop)
+        self.assertIn("maybe_show_obs_candidate_source", parallel)
+        self.assertIn('"./obs_browser_source.sh", "ensure", scene, source, url, "1280", "720", "show"', parallel)
+        self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
+        self.assertIn("hide:\"$hide_sources,", eloop)
+        self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
+        self.assertIn('show:"$overlay" hide:"$hide_sources,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3"', eloop)
+        self.assertNotIn('show:"$overlay","$status_source","$show_status_source"', eloop)
         self.assertIn("wildcard_parallel_obs_restore", eloop)
+        self.assertIn('hide:"$overlay,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3"', eloop)
+        self.assertIn('show_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
+        self.assertIn('"${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}"', eloop)
+        self.assertIn('"${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}"', eloop)
+
+    def test_wildcard_parallel_runtime_mutes_bgm_and_halves_se(self):
+        """並列評価ブラウザだけ BGM=0 / SE=1.5 を渡す。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        local = (REPO_ROOT / "soviet_local.mjs").read_text()
+        self.assertIn('"SOREN_BGM_VOLUME": os.environ.get("WILDCARD_PARALLEL_BGM_VOLUME", "0")', parallel)
+        self.assertIn('"SOREN_SE_VOLUME": os.environ.get("WILDCARD_PARALLEL_SE_VOLUME", "1.5")', parallel)
+        self.assertIn("SOREN_BGM_VOLUME", local)
+        self.assertIn("SetBGMVolume", local)
+        self.assertIn("SetSEVolume", local)
+        self.assertIn("process.env.SOREN_BGM_VOLUME ?? 'off'", local)
 
     def test_repeated_wildcards_can_escalate_to_ai_structural_escape(self):
         """WILDCARD 連続失敗時は、次の脱出をAI構造変異モードへ上げられる。"""
@@ -582,6 +1098,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("ARCHIVE_RESTART_STREAK", config)
         self.assertIn("ARCHIVE_RESTART_MIN_COMP_RATIO", config)
         self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", config)
+        self.assertIn("ARCHIVE_RESTART_INCLUDE_PERMANENT", config)
+        self.assertIn("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", config)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_SEC", config)
         self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", config)
         self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", config)
         self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", config)
@@ -592,6 +1111,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("preflight no candidate", improve)
         self.assertIn("preflight_no_candidate", improve)
         self.assertIn("archive_is_runtime_stable", improve)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", improve)
+        self.assertIn("allow_origin_retry", improve)
+        self.assertIn("is_cooled_down", improve)
+        self.assertIn("find_archive_path", improve)
         self.assertIn("anchor_russia", improve)
         self.assertIn("anchor_soviet", improve)
         self.assertIn("archive_restart を飛ばして escape_ai", improve)
@@ -608,6 +1131,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", eloop)
         self.assertIn("best_type < min_best_type", eloop)
         self.assertIn("archive_is_runtime_stable", eloop)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", eloop)
+        self.assertIn("allow_origin_retry", eloop)
+        self.assertIn("is_cooled_down", eloop)
+        self.assertIn("origin_retry", eloop)
+        self.assertIn("find_archive_path", eloop)
         self.assertIn("anchor_russia", eloop)
         self.assertIn("anchor_soviet", eloop)
         self.assertIn("objective escape mechanism", eloop)
@@ -642,7 +1170,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("REVIEW-VERDICT-REPAIR", eloop)
         self.assertIn("Stage3: review verdict missing → repair verdict file", eloop)
         self.assertIn("strategy.py.staging` は編集禁止", eloop)
-        self.assertIn("必ず `tmp/review_result.md` を Write/Edit", eloop)
+        self.assertIn("読まずに上書きしようとするとツール制約で失敗する", eloop)
+        self.assertIn("Read 後に既存ファイルを直す場合は Edit", eloop)
+        self.assertIn("存在しない場合のみ Write", eloop)
         self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
 
 
@@ -973,6 +1503,11 @@ class TestShowStatusOnce(unittest.TestCase):
         self.assertIn("stale or reused PIDs", status)
         self.assertNotIn('*"operation not permitted"*) return 0', status)
 
+    def test_show_status_process_scan_is_byte_locale_safe(self):
+        status = (REPO_ROOT / "show_status.sh").read_text()
+        self.assertIn("LC_ALL=C ps -Ao pid=,command=", status)
+        self.assertIn("| LC_ALL=C awk -v pattern=", status)
+
 
 # --- Hot streak extension ----------------------------------------------------
 
@@ -1136,12 +1671,8 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("--html-obs", status_g)
         self.assertIn("generate_status_overlay.sh", status_g)
         self.assertIn("Observer Status", dashboard)
-        self.assertIn("load_monitor_report_status", dashboard)
-        self.assertIn("MONITOR_REPORT_STATUS_FILE", dashboard)
-        self.assertIn("live {live", dashboard)
         self.assertIn("load_latest_annealing_candidate", dashboard)
         self.assertIn("load_wildcard_attempt_status", dashboard)
-        self.assertIn("SOREN_MONITOR_REPORT_FILE", dashboard)
         self.assertIn("VIEWER_CHAT_MONITOR_FILE", dashboard)
         self.assertIn("load_viewer_chat_monitor", dashboard)
         self.assertIn("ChatObs", dashboard)
@@ -1153,6 +1684,15 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("ArchiveNext", dashboard)
         self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", dashboard)
         self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", dashboard)
+        self.assertIn("ARCHIVE_RESTART_INCLUDE_PERMANENT", dashboard)
+        self.assertIn("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", dashboard)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_SEC", dashboard)
+        self.assertIn("is_cooled_down", dashboard)
+        self.assertIn("find_archive_path", dashboard)
+        self.assertIn("archive_path_blocker", dashboard)
+        self.assertIn('"blockers": blockers', dashboard)
+        self.assertIn("anchor_russia", dashboard)
+        self.assertIn("anchor_soviet", dashboard)
         self.assertIn("best_type < min_best_type", dashboard)
         self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", dashboard)
         self.assertIn("no_candidate_cooldown", dashboard)
@@ -1161,6 +1701,7 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("escape_ai direct", dashboard)
         self.assertIn("effective_streak", dashboard)
         self.assertIn("failed_origin_count", dashboard)
+        self.assertIn("failed-origin pool", dashboard)
         self.assertIn("ARCHIVE_RESTART_STREAK", dashboard)
         self.assertIn("WILDCARD_AI_ESCALATE_STREAK", dashboard)
         self.assertIn("observe-only", dashboard)
@@ -1187,6 +1728,10 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("OBS_SHOW_STATUS_OVERLAY_SOURCE", config)
         self.assertIn("OPS_OVERLAY_SOURCE", config)
         self.assertIn("SHOW_STATUS_OVERLAY_HEIGHT", config)
+        self.assertIn("SHOW_STATUS_OVERLAY_OBS_X", config)
+        self.assertIn("SHOW_STATUS_OVERLAY_OBS_Y", config)
+        self.assertIn("SHOW_STATUS_OVERLAY_OBS_SCALE_X", config)
+        self.assertIn("SHOW_STATUS_OVERLAY_OBS_SCALE_Y", config)
         self.assertIn("680", config)
         self.assertIn("SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once", overlay)
         self.assertIn("SHOW_STATUS_OVERLAY_RAW", overlay)
@@ -1911,26 +2456,24 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn('enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE"', improve)
         self.assertIn('enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE"', loop)
 
-    def test_monitor_status_surfaces_deadline_no_merge_audit(self):
-        monitor = (REPO_ROOT / "monitor_report_stale_report.sh").read_text()
-        show_status = (REPO_ROOT / "show_status.sh").read_text()
-        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+    def test_supervisor_re_adopts_existing_worker_before_restart_cap(self):
+        supervisor = (REPO_ROOT / "start_all.sh").read_text()
 
-        self.assertIn("def deadline_crossing_audit", monitor)
-        self.assertIn('row.get("decision_crosses_deadline")', monitor)
-        self.assertIn('row.get("best_merge_grade")', monitor)
-        self.assertIn('"deadline_no_merge_count"', monitor)
-        self.assertIn('"deadline_no_merge_with_safe_count"', monitor)
-        self.assertIn("safe_candidate_count > 0", monitor)
-        self.assertIn("deadline_no_merge=", monitor)
-        self.assertIn("safe_available=", monitor)
-        self.assertIn('cached.get("deadline_no_merge_count")', show_status)
-        self.assertIn('cached.get("deadline_no_merge_with_safe_count")', show_status)
-        self.assertIn("DLsafe=", show_status)
-        self.assertIn("DLno=", show_status)
-        self.assertIn('cached.get("deadline_no_merge_count")', dashboard)
-        self.assertIn('cached.get("deadline_no_merge_with_safe_count")', dashboard)
-        self.assertIn("deadline_prefix", dashboard)
+        self.assertIn("after stale supervisor pid", supervisor)
+        self.assertIn("_pid_matches_worker()", supervisor)
+        self.assertIn("process-list access", supervisor)
+        self.assertIn("operation not permitted", supervisor)
+        self.assertIn("does not overwrite pidfiles or start duplicate workers", supervisor)
+        self.assertIn('return 0', supervisor)
+        self.assertIn("cleanup skipped: another supervisor owns pidfile", supervisor)
+        self.assertIn('if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ]; then', supervisor)
+        self.assertIn('if [ "$_w_name" = "soren_loop" ] && [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then', supervisor)
+        self.assertIn('if existing_pid="$(_find_existing_worker_pid "$_w_name")"; then', supervisor)
+        self.assertIn('WORKER_RESTARTS[$idx]=0', supervisor)
+        self.assertLess(
+            supervisor.index('if existing_pid="$(_find_existing_worker_pid "$_w_name")"; then'),
+            supervisor.index('if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then'),
+        )
 
     def test_rollback_analysis_surfaces_soviet_objective_delta(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -1956,9 +2499,13 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("mode=early_objective_regression", regression)
         self.assertIn("early_objective_min_games", regression)
         self.assertIn("early_objective_min_best_type", regression)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
+        self.assertIn("permanent_archive_dir", regression)
         self.assertIn("rollback target normalized", regression)
         self.assertIn("normalized_to_hash", regression)
         self.assertIn("rollback_target_normalized", regression)
+        self.assertIn("normalized fallback target rejected; retry anchor rollback", regression)
+        self.assertIn("normalized_fallback_anchor", regression)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_ENABLED", config)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_MIN_GAMES", config)
         self.assertIn("anchor_best_max_type", regression)
@@ -2199,27 +2746,57 @@ PY
         self.assertIn("SAME_HASH_BACKSLIDE_RESET_ENABLED", config)
         self.assertIn("SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES", config)
 
-    def test_russia_capable_anchor_is_not_replaced_by_score_only_no_russia_candidate(self):
+    def test_anchor_rank_key_keeps_objective_progress_as_tiebreaker_only(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
 
-        self.assertIn("def russia_near_miss(data):", regression)
-        self.assertIn("russia_capable_pool_exists = any", regression)
-        self.assertIn("not has_russia_path and not near_miss", regression)
-        self.assertIn("a high score alone cannot replace a proven", regression)
-        self.assertIn('"T14x2"', regression)
+        self.assertIn("Rollback anchors should primarily come from mature rolling-score leaders.", regression)
+        self.assertIn("objective_key = _objective_tuple(data) if objective_anchor_enabled else", regression)
+        self.assertIn("selection_score,\n        m[\"p50\"],\n        m[\"p25\"],\n        m[\"n\"],\n        *objective_key", regression)
+        self.assertNotIn("a high score alone cannot replace a proven", regression)
 
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
-        strategy = (REPO_ROOT / "strategy.py").read_text()
 
         self.assertIn("Russia recovery mode active", improve)
         self.assertIn("mechanical wildcard suppressed", improve)
         self.assertIn("no_russia_24h", improve)
+        self.assertIn("archive_restart を即時優先", improve)
+        self.assertLess(
+            improve.index("archive_restart を即時優先"),
+            improve.index("[ -f \"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}\""),
+        )
         self.assertIn("archive_restart を優先", improve)
         self.assertIn("russia_recovery_mode: type14 near-miss", eloop)
-        self.assertIn("RUSSIA_FRONTIER_T14_MERGE", strategy)
-        self.assertIn("RUSSIA_FRONTIER_SCATTER_BLOCK", strategy)
+
+    def test_russia_progress_suppresses_mechanical_wildcard(self):
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+
+        self.assertIn("current strategy has Russia progress", improve)
+        self.assertIn("current_russia_progress", improve)
+        self.assertIn('russia > 0 or best_type >= 15', improve)
+        self.assertIn('[ "$current_russia_progress" != "1" ]', improve)
+        self.assertLess(
+            improve.index("current strategy has Russia progress"),
+            improve.index('[ "$current_russia_progress" != "1" ]'),
+        )
+
+    def test_ok_beat_clears_regression_streak(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn('if event == "OK_BEAT":\n            rs = 0', regression)
+        self.assertIn("古い回帰ストリークを残さない", regression)
+
+    def test_structural_validation_errors_restart_fresh_sandbox_early(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn("IMPROVE_STRUCTURAL_ERROR_MAX_CONTINUES", config)
+        self.assertIn("_validation_error_is_structural_staging_breakage", eloop)
+        self.assertIn("_structural_error_should_restart_fresh", eloop)
+        self.assertIn("IndentationError|SyntaxError|NameError|UnboundLocalError", eloop)
+        self.assertIn("structural validation breakage persisted", eloop)
+        self.assertIn("restart with clean sandbox", eloop)
 
     def test_show_status_surfaces_current_wildcard_evaluation(self):
         status = (REPO_ROOT / "show_status.sh").read_text()
@@ -2229,6 +2806,7 @@ PY
         self.assertIn("wildcard_outcomes.jsonl", status)
         self.assertIn("WildEval", status)
         self.assertIn("ArcEval", status)
+        self.assertIn("n = len(scores)", status)
         self.assertIn("source_russia_count", status)
         self.assertIn("{n}/{mature_n}", status)
         self.assertIn("quantile(xs, 0.50)", status)
@@ -2242,14 +2820,6 @@ PY
         self.assertIn("annealing_candidates.jsonl", status)
         self.assertIn("AnnealObs", status)
         self.assertIn("accept_probability", status)
-        self.assertIn("SOREN_MONITOR_REPORT_FILE", status)
-        self.assertIn("/tmp/soren_report.md", status)
-        self.assertIn("Report", status)
-        self.assertIn("monitor_report_label", status)
-        self.assertIn("MONITOR_REPORT_STATUS_FILE", status)
-        self.assertIn("live {live", status)
-        self.assertIn("最終更新:", status)
-        self.assertIn("datetime.strptime", status)
         self.assertIn("viewer_chat_monitor.sh", status)
         self.assertIn("viewer_chat_label", status)
         self.assertIn("ChatObs", status)
@@ -2259,8 +2829,15 @@ PY
         self.assertIn("archive_next_label", status)
         self.assertIn("ArchiveNext", status)
         self.assertIn("no cand c>=", status)
+        self.assertIn("archive_path_blocker", status)
+        self.assertIn("unstable", status)
+        self.assertIn("R0", status)
         self.assertIn("-> escape_ai", status)
         self.assertIn("archive_is_runtime_stable", status)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", status)
+        self.assertIn("allow_origin_retry", status)
+        self.assertIn("is_cooled_down", status)
+        self.assertIn("find_archive_path", status)
         self.assertIn("anchor_russia", status)
         self.assertIn("anchor_soviet", status)
         self.assertIn("opencode thinking", status)
@@ -2277,6 +2854,10 @@ PY
         self.assertIn("WILDCARD_PROGRESS_AUDIO_MIN_DELTA", config)
         self.assertIn("enqueue_audio_text \"$message\" \"wildcard_progress\"", reporter)
         self.assertIn("wildcard_progress_report.env.tmp", reporter)
+        self.assertIn("WILDCARD_PARALLEL_STATUS_FILE", reporter)
+        self.assertIn("parallel_failure", reporter)
+        self.assertIn("WILDCARD 並列評価が発動失敗です", reporter)
+        self.assertIn("WildParFail", (REPO_ROOT / "show_status.sh").read_text())
         self.assertIn("anchor 比", reporter)
         self.assertIn("origin_type", reporter)
         self.assertIn("ARCHIVE-RESTART", reporter)
@@ -2289,32 +2870,24 @@ PY
         self.assertIn("./wildcard_progress_report.sh", loop)
         self.assertIn("progress report skipped/failed", loop)
 
-    def test_monitor_report_staleness_is_reported_to_audio(self):
-        config = (REPO_ROOT / "core/config.sh").read_text()
-        reporter = (REPO_ROOT / "monitor_report_stale_report.sh").read_text()
-        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+    def test_wildcard_parallel_preserves_bridge_exit_diagnostics(self):
+        runner = (REPO_ROOT / "wildcard_parallel.py").read_text()
 
-        self.assertIn("MONITOR_REPORT_AUDIO_ENABLED", config)
-        self.assertIn("MONITOR_REPORT_AUDIO_STATE_FILE", config)
-        self.assertIn("MONITOR_REPORT_STALE_SEC", config)
-        self.assertIn("MONITOR_REPORT_OLD_SEC", config)
-        self.assertIn("MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC", config)
-        self.assertIn('MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC="${MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC:-900}"', config)
-        self.assertIn('${MONITOR_REPORT_AUDIO_MIN_INTERVAL_SEC:-900}', reporter)
-        self.assertIn("SOREN_MONITOR_REPORT_FILE", reporter)
-        self.assertIn("CURRENT_STRATEGY_RUN_FILE", reporter)
-        self.assertIn("BEST_STRATEGY_ANCHOR_FILE", reporter)
-        self.assertIn("WILDCARD_ORIGIN_FILE", reporter)
-        self.assertIn("MONITOR_REPORT_STATUS_FILE", reporter)
-        self.assertIn("メリケンAI監視レポート", reporter)
-        self.assertIn("ライブは", reporter)
-        self.assertIn("live_origin_type", reporter)
-        self.assertIn('"wildcard" if origin else ""', reporter)
-        self.assertIn("enqueue_audio_text \"$message\" \"monitor_report\"", reporter)
-        self.assertIn("overlay_notify.sh", reporter)
-        self.assertIn("monitor_report_stale_report.env.tmp", reporter)
-        self.assertIn("./monitor_report_stale_report.sh", loop)
-        self.assertIn("stale report notice skipped/failed", loop)
+        self.assertIn("def bridge_failure_detail", runner)
+        self.assertIn("soviet_local.stderr.log", runner)
+        self.assertIn("soviet_local.stdout.log", runner)
+        self.assertIn("soviet_local.exit.log", runner)
+        self.assertIn("bridge exited rc=", runner)
+        self.assertIn("bridge did not produce game_state", runner)
+
+    def test_wildcard_parallel_uses_isolated_game_server_ports(self):
+        runner = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        bridge = (REPO_ROOT / "soviet_local.mjs").read_text()
+
+        self.assertIn("SOREN_SERVE_PORT", bridge)
+        self.assertIn("serve_base_port", runner)
+        self.assertIn("candidate.serve_port = args.serve_base_port + candidate.index", runner)
+        self.assertIn('"SOREN_SERVE_PORT": str(candidate.serve_port)', runner)
 
     def test_viewer_chat_monitor_filters_recent_observer_comments(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -2330,6 +2903,9 @@ PY
         self.assertIn("comment_context_history.log", script)
         self.assertIn("is_observer_comment", script)
         self.assertIn("looks_like_emote_only", script)
+        self.assertIn("looks_like_binary_noise", script)
+        self.assertIn("CONTROL_RE", script)
+        self.assertIn("sanitize_text", script)
         self.assertIn("獲得しました", script)
         self.assertIn("連ガチャ", script)
         self.assertIn("Twitchエモート:", script)
@@ -2351,6 +2927,31 @@ PY
         self.assertIn("soren91_improve_watchdog_label", status)
         self.assertIn("S91Improve", status)
         self.assertIn("soren91_improve_hung_quarantine.jsonl", status)
+
+    def test_twitch_daemon_uses_complete_anonymous_handshake_and_logs_reconnects(self):
+        daemon = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
+        worker = (REPO_ROOT / "workers/chat_worker.sh").read_text()
+
+        self.assertIn('echo "PASS SCHMOOPIIE"', daemon)
+        self.assertIn("IRC session ended; reconnecting in 5s", daemon)
+        self.assertIn("operation not permitted", worker)
+        self.assertIn('_pid_alive "$_DAEMON_PID"', worker)
+
+    def test_soren91_comment_queue_releases_completed_claims_and_keeps_tts_full_by_default(self):
+        main = (REPO_ROOT / "soren91/main.mjs").read_text()
+        comment = (REPO_ROOT / "soren91/comment.mjs").read_text()
+
+        self.assertIn("cleanupCompletedRankingCommentClaims", main)
+        self.assertIn("releaseRankingCommentGameClaim(n);", main)
+        self.assertIn("SOREN91_RANKING_CLAIM_KEEP_RECENT", main)
+        self.assertIn("soren91_ranking_comment_game_(\\d+)\\.claim", main)
+        self.assertIn("cleanupCompletedRankingCommentClaims();", main)
+        self.assertIn("SOREN91_COMMENT_MAX_SPEAK_CHARS", comment)
+        self.assertIn("process.env.SOREN91_COMMENT_MAX_SPEAK_CHARS, 0", comment)
+        self.assertIn("compactForSpeech", comment)
+        self.assertIn("spokenComment", comment)
+        self.assertIn("originalChars", comment)
+        self.assertIn("truncated", comment)
 
     def test_onair_sanitizer_strips_tool_markers_from_comment_replies(self):
         radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
@@ -2390,10 +2991,66 @@ PY
 
     def test_rollback_revalidates_strategy_after_restore(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
         self.assertIn('validate_strategy "$STRATEGY_FILE"', regression)
         self.assertIn("ロールバック後バリデーション失敗", regression)
         self.assertIn('cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"', regression)
+        self.assertIn("ROLLBACK_REVALIDATE_TARGET_ENABLED", config)
+        self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', regression)
+        self.assertIn('_reset_current_strategy_run "$rolled_hash"', regression)
+        self.assertIn("rollback revalidate fresh cycle", regression)
+        self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', loop)
+        self.assertIn("復帰先の再評価を優先し改善ロック作成をスキップ", loop)
+
+    def test_recent_50_score_trend_graces_rollback_gates(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+
+        self.assertIn("ROLLBACK_TREND_GRACE_ENABLED", config)
+        self.assertIn("ROLLBACK_TREND_GRACE_WINDOW", config)
+        self.assertIn("ROLLBACK_TREND_GRACE_MIN_PRIOR", config)
+        self.assertIn("def rollback_trend_grace():", regression)
+        self.assertIn("eval_score_history_file", regression)
+        self.assertIn("recent_avg = sum(recent) / len(recent)", regression)
+        self.assertIn("prior_avg = sum(prior) / len(prior)", regression)
+        self.assertIn("delta > rollback_trend_grace_min_delta", regression)
+        self.assertIn("OK:{trend_grace_reason()}", regression)
+        self.assertIn("reasons=objective_regression+", regression)
+        self.assertIn("reasons=early_objective_regression+", regression)
+        self.assertIn("mode=archive_objective_floor", regression)
+        self.assertIn("if trend_grace:\n        _update_stagnation(\"OK_BEAT\")", regression)
+        self.assertLess(
+            regression.index("if trend_grace:\n        _update_stagnation(\"OK_BEAT\")"),
+            regression.index("mode=archive_objective_floor"),
+        )
+        self.assertLess(
+            regression.index("if trend_grace:\n            _update_stagnation(\"OK_BEAT\")"),
+            regression.index("mode=early_objective_regression"),
+        )
+
+    def test_rollback_target_cooldown_blocks_immediate_reuse(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+
+        self.assertIn("ROLLBACK_TARGET_COOLDOWN_FILE", config)
+        self.assertIn("ROLLBACK_TARGET_COOLDOWN_SEC", config)
+        self.assertIn("_is_rollback_target_on_cooldown()", regression)
+        self.assertIn("_record_rollback_target_cooldown()", regression)
+        self.assertIn("anchor_top1候補スキップ", regression)
+        self.assertIn("rollback先cooldown中", regression)
+        self.assertIn('_record_rollback_target_cooldown "$strategy_hash" "$rolled_hash"', regression)
+
+    def test_regression_rollback_prefers_current_rolling_top_candidate(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertLess(
+            regression.index('best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")'),
+            regression.index('rollback_hash=$(printf'),
+        )
+        self.assertIn('rollback_note="rolling_top hash=${rollback_hash}', regression)
+        self.assertIn("rollback候補スキップ: $h はguard未注入archive", regression)
 
     def test_soren91_ranking_comments_are_prioritized_in_comment_queue(self):
         comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()

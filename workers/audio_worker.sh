@@ -41,7 +41,11 @@ _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
 	_log "停止処理開始"
-	rm -f "$PID_FILE"
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ "$active_pid" = "$$" ]; then
+		rm -f "$PID_FILE"
+	fi
 	_log "停止完了"
 }
 
@@ -70,6 +74,18 @@ _reload_runtime() {
 		_log "WARNING: reload failed; keeping previous runtime"
 	fi
 }
+
+_ensure_single_owner() {
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ] && kill -0 "$active_pid" 2>/dev/null; then
+		_log "another ${WORKER_NAME} owns pidfile (owner=${active_pid}, self=$$) -> exit"
+		_cleanup
+		trap - EXIT
+		exit 0
+	fi
+	echo $$ > "$PID_FILE"
+}
 trap '_cleanup' EXIT
 trap '_handle_signal' INT TERM
 trap '_request_reload HUP' HUP
@@ -96,6 +112,7 @@ _log "起動 (PID=$$, interval=${POLL_INTERVAL}s)"
 _recover_orphan_comment_playing_files 2>/dev/null || true
 
 while true; do
+	_ensure_single_owner
 	_reload_runtime
 	# 停止チェック
 	if [ -f tmp/stop ]; then

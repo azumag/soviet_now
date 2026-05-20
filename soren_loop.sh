@@ -366,7 +366,9 @@ while true; do
 		continue
 	fi
 	if _is_improve_running; then
-		# WILDCARD 改善 (AI不使用・隔離評価) は soren91 代打を立てない:
+		# WILDCARD 改善 (AI不使用・隔離評価) は本線ゲームを止め、
+		# soren91 代打も立てない。WILDCARD PARALLEL 中は OBS に候補3面
+		# (wildcardParallelCand1/2/3) を出し、本線は見えない裏で進ませない。
 		# 代打起動→完了時bridge再起動が commands 経路 desync=空転の発生源。
 		_pause_reason=$(python3 -c "import json,sys
 for path in sys.argv[1:]:
@@ -485,10 +487,6 @@ for path in sys.argv[1:]:
 		./wildcard_progress_report.sh >/dev/null 2>&1 ||
 			log "[WILDCARD] progress report skipped/failed after post_game_bookkeeping"
 	fi
-	if [ -x ./monitor_report_stale_report.sh ]; then
-		./monitor_report_stale_report.sh >/dev/null 2>&1 ||
-			log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
-	fi
 	# 定期 tmp/ クリーンアップ (50ゲームごと)
 	if (( GAME_NUM % 50 == 0 )); then
 		cleanup_tmp_files
@@ -515,7 +513,9 @@ f='$TMP_STATE_DIR/current_prediction.json'
 d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 		fi
-		if [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
+		if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then
+			log "[CYCLE] 回帰ロールバック直後 → 復帰先の再評価を優先し改善ロック作成をスキップ"
+		elif [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
 			[ -f "$ACCUMULATED_GAMES_FILE" ] &&
 			[ ! -f "$IMPROVE_LOCK_FILE" ] &&
 			! _is_improve_running; then

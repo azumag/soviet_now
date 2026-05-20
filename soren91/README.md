@@ -106,9 +106,11 @@ IMPROVEMENT_INTERVAL_GAMES=12
   "improvementIntervalGames": 12,
   "merikenTextGeneration": {
     "claudePreset": "haiku",
+    "claudeFallbackPreset": "ccogent",
+    "ccogentTimeoutSec": 120,
     "geminiFallbackModel": "gemini-2.5-flash",
     "opencodeFallbackAgent": "glmflash",
-    "ollamaBaseUrl": "http://192.168.11.3:11434"
+    "ollamaBaseUrl": "http://192.168.11.13:11434"
   }
 }
 ```
@@ -117,14 +119,15 @@ IMPROVEMENT_INTERVAL_GAMES=12
 
 - `haiku` - Claude CLI の `--model haiku`
 - `sonnet` - Claude CLI の `--model sonnet`
+- `ccogent` - Claude CLI 互換の `ccogent -p`
 - `gemma4e` - LAN 上の Ollama に対して `--model gemma4:latest`
 - `qwen35e` - LAN 上の Ollama に対して `--model qwen3.5:9b`
 
-`gemma4e` / `qwen35e` は内部的に次の env を付けて Claude CLI を呼ぶ:
+`ccogent` は `claude` コマンドと同じ `-p` 呼び出しで使う。`gemma4e` / `qwen35e` は内部的に次の env を付けて Claude CLI を呼ぶ:
 
 ```env
 ANTHROPIC_AUTH_TOKEN=ollama
-ANTHROPIC_BASE_URL=http://192.168.11.3:11434
+ANTHROPIC_BASE_URL=http://192.168.11.13:11434
 ANTHROPIC_API_KEY=
 ```
 

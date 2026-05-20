@@ -7,8 +7,9 @@ import { tmpdir } from 'os';
 const RUNTIME_CONFIG_PATH = join(import.meta.dirname || '.', 'runtime_config.json');
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_OPENCODE_AGENT = 'glmflash';
-const DEFAULT_OLLAMA_BASE_URL = 'http://192.168.11.3:11434';
+const DEFAULT_OLLAMA_BASE_URL = 'http://192.168.11.13:11434';
 const DEFAULT_CLAUDE_TIMEOUT_MS = 30000;
+const DEFAULT_CCOGENT_TIMEOUT_MS = 120000;
 const DEFAULT_GEMINI_TIMEOUT_MS = 30000;
 const DEFAULT_OPENCODE_TIMEOUT_MS = 30000;
 const DEFAULT_OPENCODE_PERMISSION = '{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}';
@@ -90,6 +91,10 @@ export function resolveTextAiConfig() {
       || process.env.SOREN91_COMMENT_CLAUDE_MODEL
       || textConfig.claudePreset
       || 'haiku',
+    claudeFallbackPreset: process.env.SOREN91_TEXT_CLAUDE_FALLBACK_PRESET
+      || process.env.SOREN91_COMMENT_CLAUDE_FALLBACK_MODEL
+      || textConfig.claudeFallbackPreset
+      || 'ccogent',
     geminiModel: process.env.SOREN91_TEXT_GEMINI_MODEL
       || process.env.SOREN91_COMMENT_GEMINI_MODEL
       || process.env.SOREN91_GEMINI_FALLBACK_MODEL
@@ -108,6 +113,12 @@ export function resolveTextAiConfig() {
         || process.env.SOREN91_COMMENT_CLAUDE_TIMEOUT
         || textConfig.claudeTimeoutSec,
       DEFAULT_CLAUDE_TIMEOUT_MS,
+    ),
+    ccogentTimeoutMs: parseTimeoutMs(
+      process.env.SOREN91_TEXT_CCOGENT_TIMEOUT
+        || process.env.SOREN91_COMMENT_CCOGENT_TIMEOUT
+        || textConfig.ccogentTimeoutSec,
+      DEFAULT_CCOGENT_TIMEOUT_MS,
     ),
     geminiTimeoutMs: parseTimeoutMs(
       process.env.SOREN91_TEXT_GEMINI_TIMEOUT
@@ -141,15 +152,17 @@ export function resolveClaudePreset(selection = resolveTextAiConfig().claudePres
   };
   switch (preset) {
     case 'haiku':
-      return { preset, model: 'haiku', env: {} };
+      return { preset, command: 'claude', model: 'haiku', env: {} };
     case 'sonnet':
-      return { preset, model: 'sonnet', env: {} };
+      return { preset, command: 'claude', model: 'sonnet', env: {} };
+    case 'ccogent':
+      return { preset, command: 'ccogent', model: '', env: {}, verbose: false, shell: true, promptAsArg: true, timeoutMs: config.ccogentTimeoutMs };
     case 'gemma4e':
-      return { preset, model: 'gemma4:latest', env: ollamaEnv };
+      return { preset, command: 'claude', model: 'gemma4:latest', env: ollamaEnv };
     case 'qwen35e':
-      return { preset, model: 'qwen3.5:9b', env: ollamaEnv };
+      return { preset, command: 'claude', model: 'qwen3.5:9b', env: ollamaEnv };
     default:
-      return { preset, model: preset, env: {} };
+      return { preset, command: 'claude', model: preset, env: {} };
   }
 }
 
@@ -182,14 +195,16 @@ export function runClaudeText(tag, promptText, options = {}) {
     delete env.ANTHROPIC_BASE_URL;
     delete env.ANTHROPIC_AUTH_TOKEN;
   }
-  const timeoutMs = options.timeoutMs || config.claudeTimeoutMs;
+  const timeoutMs = options.timeoutMs || target.timeoutMs || config.claudeTimeoutMs;
   return new Promise((resolve, reject) => {
-    const child = execFile('claude', [
-      '-p',
-      '--model',
-      target.model,
-      '--verbose',
-    ], {
+    const args = ['-p'];
+    if (target.promptAsArg) args.push(promptText);
+    if (target.model) args.push('--model', target.model);
+    if (target.verbose !== false) args.push('--verbose');
+    const command = target.command || 'claude';
+    const execCommand = target.shell ? 'zsh' : command;
+    const execArgs = target.shell ? ['-ic', `${command} -- ${args.map(shellSingleQuote).join(' ')}`] : args;
+    const child = execFile(execCommand, execArgs, {
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
       timeout: timeoutMs,
@@ -199,14 +214,14 @@ export function runClaudeText(tag, promptText, options = {}) {
       const stderrPreview = String(stderr || '').slice(0, 500);
       const combined = `${stdout || ''}\n${stderr || ''}`;
       if (containsClaudeLoginErrorText(combined)) {
-        console.error(`[${tag}] claude unavailable: not logged in`);
+        console.error(`[${tag}] ${command} unavailable: not logged in`);
       }
       if (containsProviderErrorText(combined)) {
-        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
-        return reject(makeProviderError(`claude provider/rate-limit failure (${target.preset})`, stderrPreview || String(stdout || '').slice(0, 300)));
+        if (stderrPreview) console.error(`[${tag}] ${command} stderr:`, stderrPreview);
+        return reject(makeProviderError(`${command} provider/rate-limit failure (${target.preset})`, stderrPreview || String(stdout || '').slice(0, 300)));
       }
       if (err) {
-        console.error(`[${tag}] claude error: code=${err.code} signal=${err.signal} killed=${err.killed} preset=${target.preset} stderr=${stderrPreview || '(empty)'} stdout_preview=${String(stdout || '').slice(0, 200)}`);
+        console.error(`[${tag}] ${command} error: code=${err.code} signal=${err.signal} killed=${err.killed} preset=${target.preset} stderr=${stderrPreview || '(empty)'} stdout_preview=${String(stdout || '').slice(0, 200)}`);
         return reject(err);
       }
       try {
@@ -216,8 +231,12 @@ export function runClaudeText(tag, promptText, options = {}) {
       }
     });
     child.stdin.on('error', () => {});
-    child.stdin.write(promptText);
-    child.stdin.end();
+    if (target.promptAsArg) {
+      child.stdin.end();
+    } else {
+      child.stdin.write(promptText);
+      child.stdin.end();
+    }
   });
 }
 
@@ -322,7 +341,7 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
         return await runClaudeText(tag, promptText, options);
       } catch (err) {
         lastErr = err;
-        const claudeFallbackPreset = options.claudeFallbackPreset || 'haiku';
+        const claudeFallbackPreset = options.claudeFallbackPreset || resolveTextAiConfig().claudeFallbackPreset;
         const currentPreset = resolveClaudePreset(options.claudePreset || resolveTextAiConfig().claudePreset).preset;
         if (claudeFallbackPreset && claudeFallbackPreset !== currentPreset) {
           console.error(`[${tag}] claude failed -> ${claudeFallbackPreset} fallback (${err.message})`);

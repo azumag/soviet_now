@@ -77,6 +77,20 @@ _improve_note() {
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
 }
 
+_validation_error_is_structural_staging_breakage() {
+	local error_text="${1:-}"
+	printf '%s' "$error_text" | grep -Eq 'decide\(\)シグネチャチェック失敗|IndentationError|SyntaxError|NameError|UnboundLocalError|cannot access local variable'
+}
+
+_structural_error_should_restart_fresh() {
+	local error_text="${1:-}" continue_retry="${2:-0}" max_continues="${IMPROVE_STRUCTURAL_ERROR_MAX_CONTINUES:-2}"
+	case "$continue_retry" in '' | *[!0-9]*) continue_retry=0 ;; esac
+	case "$max_continues" in '' | *[!0-9]*) max_continues=2 ;; esac
+	[ "$max_continues" -gt 0 ] || return 1
+	_validation_error_is_structural_staging_breakage "$error_text" || return 1
+	[ "$continue_retry" -ge "$max_continues" ]
+}
+
 _improve_audio_summary_maybe() {
 	[ "${IMPROVE_AUDIO_SUMMARY_ENABLED:-1}" = "1" ] || return 0
 	command -v enqueue_audio_text >/dev/null 2>&1 || return 0
@@ -333,8 +347,9 @@ _repair_review_verdict_file() {
 
 必ず行うこと:
 1. `tmp/analysis_result.md`、`strategy.py`、`strategy.py.staging`、`data/mandatory_themes.txt`、存在する場合は `data/user_review.md` を読む。
-2. `tmp/review_result.md` があれば読む。なければ新規作成する。
-3. `tmp/review_result.md` に次の両方を必ず含める。
+2. `tmp/review_result.md` があれば必ず先に Read する。読まずに上書きしようとするとツール制約で失敗する。
+3. Read 後に既存ファイルを直す場合は Edit、存在しない場合だけ Write で新規作成する。
+4. `tmp/review_result.md` に次の両方を必ず含める。
    - `## VERDICT: PASS` または `## VERDICT: FAIL`
    - fenced block の `review_verdict` JSON
 
@@ -357,7 +372,7 @@ FAILの場合は `## VERDICT: FAIL` とし、`verdict` を `"FAIL"`、`unresolve
 
 重要:
 - `strategy.py.staging` は編集禁止。
-- レビュー本文を会話に出すだけでは失敗。必ず `tmp/review_result.md` を Write/Edit する。
+- レビュー本文を会話に出すだけでは失敗。必ず `tmp/review_result.md` を Read してから Edit、または存在しない場合のみ Write する。
 - `data/user_review.md` が存在して非空の場合、満たしているとコード条件で説明できるときだけ `user_review_satisfied: true`。
 EOF
 	local prev_timeout="${RUN_CMD_TIMEOUT_SEC-}"
@@ -591,27 +606,31 @@ PY
 			[ -x ./obs_control.sh ] || return 0
 			local scene="${OBS_DASHBOARD_SCENE:-soren}"
 			local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+			local cand_prefix="${WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX:-wildcardParallelCand}"
 			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
 			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
-			local hide_sources="$dashboard_source"
+			local hide_sources="$dashboard_source,$status_source,$show_status_source"
 			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
-			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" 1920 760 show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
-			./obs_control.sh batch "$scene" show:"$overlay","$status_source","$show_status_source" hide:"$hide_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
-			./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 1920 760 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
-			./obs_control.sh transform "$scene" "$status_source" 24 790 0.55 0.55 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
-			./obs_control.sh transform "$scene" "$show_status_source" 760 790 0.55 0.55 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" 1920 170 show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh batch "$scene" show:"$overlay" hide:"$hide_sources,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 1920 170 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 		}
 		wildcard_parallel_obs_restore() {
 			[ -x ./obs_control.sh ] || return 0
 			local scene="${OBS_DASHBOARD_SCENE:-soren}"
 			local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+			local cand_prefix="${WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX:-wildcardParallelCand}"
+			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
+			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
 			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
-			local show_sources="$dashboard_source"
+			local show_sources="$dashboard_source,$status_source,$show_status_source"
 			[ -n "$game_source" ] && show_sources="$show_sources,$game_source"
-			./obs_control.sh batch "$scene" hide:"$overlay" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh batch "$scene" hide:"$overlay,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh transform "$scene" "$status_source" "${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}" "${STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh transform "$scene" "$show_status_source" "${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 		}
 		wildcard_parallel_obs_show || true
 		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
@@ -960,14 +979,18 @@ if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
 		"${ARCHIVE_RESTART_MIN_COMP_RATIO:-0.92}" \
 		"${ARCHIVE_RESTART_MAX_CANDIDATES:-24}" \
 		"${MIN_GAMES_FOR_BEST_ROLLBACK:-12}" \
-		"${ARCHIVE_RESTART_MIN_BEST_TYPE:-14}" <<'PY' 2>/dev/null || true
+		"${ARCHIVE_RESTART_MIN_BEST_TYPE:-14}" \
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
+		"${ARCHIVE_RESTART_INCLUDE_PERMANENT:-1}" \
+		"${ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY:-1}" \
+		"${ARCHIVE_RESTART_COOLDOWN_SEC:-21600}" <<'PY' 2>/dev/null || true
 import json
 import math
 import os
 import sys
 import time
 
-rolling_file, anchor_file, archive_dir, rejected_file, origin_file, cooldown_file, min_ratio_raw, max_candidates_raw, min_games_raw, min_best_type_raw = sys.argv[1:11]
+rolling_file, anchor_file, archive_dir, rejected_file, origin_file, cooldown_file, min_ratio_raw, max_candidates_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw = sys.argv[1:15]
 
 def load(path, default):
     try:
@@ -1028,6 +1051,30 @@ def archive_is_runtime_stable(path):
     except Exception:
         return False
 
+def boolish(value, default=True):
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+def find_archive_path(h):
+    paths = [os.path.join(archive_dir, f"{h}.py")]
+    if include_permanent and permanent_archive_dir:
+        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    for path in paths:
+        if os.path.exists(path) and archive_is_runtime_stable(path):
+            return path
+    return ""
+
+def is_cooled_down(h):
+    if h not in cooldown:
+        return False
+    ttl = as_int(cooldown_ttl_raw, 21600)
+    if ttl <= 0:
+        return True
+    meta = cooldown.get(h) if isinstance(cooldown.get(h), dict) else {}
+    epoch = as_int(meta.get("epoch", 0), 0)
+    return epoch <= 0 or (now - epoch) < ttl
+
 rolling = load(rolling_file, {})
 anchor = load(anchor_file, {})
 rejected = load(rejected_file, {})
@@ -1037,6 +1084,8 @@ min_games = max(1, as_int(min_games_raw, 12))
 max_candidates = max(1, as_int(max_candidates_raw, 24))
 min_ratio = max(0.0, min(1.0, as_float(min_ratio_raw, 0.92)))
 min_best_type = max(0, as_int(min_best_type_raw, 14))
+include_permanent = boolish(include_permanent_raw, True)
+allow_origin_retry = boolish(allow_origin_retry_raw, True)
 anchor_hash = str(anchor.get("hash", "") or "")
 anchor_comp = as_float(anchor.get("comp", 0.0), 0.0)
 anchor_russia = as_int(anchor.get("russia_count", 0), 0)
@@ -1053,14 +1102,10 @@ for h, entry in (rolling or {}).items():
         continue
     if h in rejected:
         continue
-    if h in origin:
+    if is_cooled_down(h):
         continue
-    if h in cooldown:
-        continue
-    path = os.path.join(archive_dir, f"{h}.py")
-    if not os.path.exists(path):
-        continue
-    if not archive_is_runtime_stable(path):
+    path = find_archive_path(h)
+    if not path:
         continue
     m = metrics((entry or {}).get("scores", []))
     if not m or m["n"] < min_games:
@@ -1070,6 +1115,10 @@ for h, entry in (rolling or {}).items():
     russia = as_int((entry or {}).get("russia_count", 0), 0)
     soviet = as_int((entry or {}).get("soviet_count", 0), 0)
     best_type = as_int((entry or {}).get("best_max_type", 0), 0)
+    if best_type >= 15 and russia <= 0:
+        russia = 1
+    if best_type >= 16 and soviet <= 0:
+        soviet = 1
     if anchor_soviet > 0 and soviet <= 0:
         continue
     if anchor_russia > 0 and russia <= 0:
@@ -1079,15 +1128,18 @@ for h, entry in (rolling or {}).items():
     # high-type/Russia progress even when their composite is near-anchor.
     if min_best_type > 0 and russia <= 0 and soviet <= 0 and best_type < min_best_type:
         continue
+    origin_type = str((origin.get(h) or {}).get("origin_type") or "") if isinstance(origin.get(h), dict) else ("legacy_origin" if h in origin else "")
+    if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
+        continue
     objective_bonus = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
     p25_bonus = float(m["p25"]) * 0.08
     score = objective_bonus + p25_bonus + float(m["comp"])
-    rows.append((score, m["comp"], m["p50"], m["p25"], m["n"], russia, soviet, best_type, h, path))
+    rows.append((score, m["comp"], m["p50"], m["p25"], m["n"], russia, soviet, best_type, h, path, origin_type))
 rows.sort(reverse=True)
 if not rows:
     print(json.dumps({"ok": False, "reason": "no_candidate", "threshold": threshold, "anchor_hash": anchor_hash, "anchor_comp": anchor_comp, "min_best_type": min_best_type}, ensure_ascii=False))
     raise SystemExit(0)
-score, comp, p50, p25, n, russia, soviet, best_type, h, path = rows[0]
+score, comp, p50, p25, n, russia, soviet, best_type, h, path, origin_type = rows[0]
 print(json.dumps({
     "ok": True,
     "hash": h,
@@ -1104,6 +1156,8 @@ print(json.dumps({
     "threshold": threshold,
     "min_best_type": min_best_type,
     "candidate_count": min(len(rows), max_candidates),
+    "origin_retry": bool(origin_type),
+    "selected_origin_type": origin_type,
     "selected_at_epoch": now,
 }, ensure_ascii=False))
 PY
@@ -2519,6 +2573,12 @@ ${helpers_diff}"
 			break
 		else
 			_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR:-unknown validation error}"
+			if _structural_error_should_restart_fresh "${VALIDATE_ERROR:-}" "$continue_retry"; then
+				_improve_note "structural validation breakage persisted through ${continue_retry} continue fixes; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
+				continue
+			fi
 			if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
 				continue_retry=$((continue_retry + 1))
 				continue

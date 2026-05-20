@@ -488,7 +488,7 @@ run_cmd() {
 	gemma4e)
 		local -a ollama_env=(
 			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.3:11434"
+			ANTHROPIC_BASE_URL="http://192.168.11.13:11434"
 			ANTHROPIC_API_KEY=""
 		)
 		if [ -n "$cmd_log_file" ]; then
@@ -508,7 +508,7 @@ run_cmd() {
 	gemma4)
 		local -a ollama_env=(
 			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.3:11434"
+			ANTHROPIC_BASE_URL="http://192.168.11.13:11434"
 			ANTHROPIC_API_KEY=""
 		)
 		if [ -n "$cmd_log_file" ]; then
@@ -528,7 +528,7 @@ run_cmd() {
 	qwen35)
 		local -a ollama_env=(
 			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.3:11434"
+			ANTHROPIC_BASE_URL="http://192.168.11.13:11434"
 			ANTHROPIC_API_KEY=""
 		)
 		if [ -n "$cmd_log_file" ]; then

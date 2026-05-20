@@ -24,7 +24,7 @@ SPAM か NEWS の1単語だけ答えてください。
 	fi
 	verdict=$(
 		ANTHROPIC_AUTH_TOKEN="ollama" \
-		ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL:-http://192.168.11.3:11434}" \
+		ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL:-http://192.168.11.13:11434}" \
 		ANTHROPIC_API_KEY="" \
 		timeout "${spam_timeout}s" claude -p "$prompt_text" --model=qwen3.5:9b 2>/dev/null \
 			| tr -d '[:space:]'

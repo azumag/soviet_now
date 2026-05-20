@@ -11,12 +11,68 @@
 
 AI_GENERATION_QUEUE_LAST_TOKEN=""
 
+_ai_lock_sanitize_key() {
+	local raw="${1:-default}"
+	printf '%s' "$raw" |
+		tr '[:upper:]' '[:lower:]' |
+		sed -E 's/[^a-z0-9._-]+/_/g; s/^_+//; s/_+$//'
+}
+
+_ai_model_is_local() {
+	local model="$1" item norm_model norm_item
+	norm_model=$(_ai_lock_sanitize_key "$model")
+	for item in ${LOCAL_LLM_AGENTS:-qwen35e qwen3.5:9b gemma4nt ccogent gemma4nt_ccogent}; do
+		norm_item=$(_ai_lock_sanitize_key "$item")
+		[ -n "$norm_item" ] || continue
+		[ "$norm_model" = "$norm_item" ] && return 0
+	done
+	return 1
+}
+
+_ai_queue_lock_scope() {
+	local label="${1:-AI}" rest scope
+	case "$label" in
+	*:local:*) printf '%s' "local"; return 0 ;;
+	*:remote:*)
+		rest="${label#*:remote:}"
+		scope="remote:$rest"
+		printf '%s' "$(_ai_lock_sanitize_key "$scope")"
+		return 0
+		;;
+	esac
+	printf '%s' "$(_ai_lock_sanitize_key "$label")"
+}
+
+_ai_generation_queue_lock_dir() {
+	local label="${1:-AI}" base scope
+	if [ -n "${AI_GENERATION_QUEUE_LOCK_DIR:-}" ]; then
+		printf '%s\n' "$AI_GENERATION_QUEUE_LOCK_DIR"
+		return 0
+	fi
+	if [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		base="$ELOOP_LIB_DIR/tmp/state/.ai_generation_locks"
+	else
+		base="tmp/state/.ai_generation_locks"
+	fi
+	scope=$(_ai_queue_lock_scope "$label")
+	printf '%s/%s\n' "$base" "${scope:-default}"
+}
+
+_ai_queue_label() {
+	local label="$1" provider="$2" model="$3" locality="remote"
+	if _ai_model_is_local "$model"; then
+		locality="local"
+	fi
+	printf '%s:%s:%s:%s' "$label" "$locality" "$provider" "$model"
+}
+
 _ai_generation_queue_enter() {
 	local label="${1:-AI}"
-	local lock_dir="${AI_GENERATION_QUEUE_LOCK_DIR:-tmp/state/.ai_generation_lock}"
+	local lock_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
 	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
 	local waited=0 token now mt age owner_summary=""
+	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 
 	case "$wait_sec" in
 	'' | *[!0-9]*) wait_sec=2 ;;
@@ -60,9 +116,10 @@ _ai_generation_queue_enter() {
 
 _ai_generation_queue_leave() {
 	local token="${1:-}" label="${2:-AI}"
-	local lock_dir="${AI_GENERATION_QUEUE_LOCK_DIR:-tmp/state/.ai_generation_lock}"
+	local lock_dir
 	local current_token=""
 	[ -n "$token" ] || return 0
+	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 	[ -d "$lock_dir" ] || return 0
 	current_token=$(sed -n 's/^token=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
 	if [ "$current_token" = "$token" ]; then
@@ -98,8 +155,21 @@ _ai_generation_queue_run() {
 OPENCODE_RUN_LOCK_LAST_TOKEN=""
 
 _opencode_run_lock_dir() {
+	local agent="${1:-}" base scope
 	if [ -n "${OPENCODE_RUN_LOCK_DIR:-}" ]; then
 		printf '%s\n' "$OPENCODE_RUN_LOCK_DIR"
+	elif [ -n "$agent" ]; then
+		if [ -n "${ELOOP_LIB_DIR:-}" ]; then
+			base="$ELOOP_LIB_DIR/tmp/state/.opencode_run_locks"
+		else
+			base="tmp/state/.opencode_run_locks"
+		fi
+		if _ai_model_is_local "$agent"; then
+			scope="local"
+		else
+			scope="remote:opencode:$agent"
+		fi
+		printf '%s/%s\n' "$base" "$(_ai_lock_sanitize_key "$scope")"
 	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
 		printf '%s/tmp/state/.opencode_run_lock\n' "$ELOOP_LIB_DIR"
 	else
@@ -161,12 +231,13 @@ _opencode_cleanup_internal_locks() {
 
 _opencode_run_lock_enter() {
 	local label="${1:-opencode}"
+	local agent="${2:-}"
 	local lock_dir wait_sec stale_sec max_wait_sec waited=0 token now mt age owner_summary="" owner_pid=""
 	if [ "${OPENCODE_RUN_LOCK_ENABLED:-1}" != "1" ]; then
 		OPENCODE_RUN_LOCK_LAST_TOKEN=""
 		return 0
 	fi
-	lock_dir=$(_opencode_run_lock_dir)
+	lock_dir=$(_opencode_run_lock_dir "$agent")
 	wait_sec="${OPENCODE_RUN_LOCK_WAIT_SEC:-2}"
 	stale_sec="${OPENCODE_RUN_LOCK_STALE_SEC:-1800}"
 	max_wait_sec="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC:-0}"
@@ -230,10 +301,10 @@ _opencode_run_lock_enter() {
 }
 
 _opencode_run_lock_leave() {
-	local token="${1:-}" label="${2:-opencode}"
+	local token="${1:-}" label="${2:-opencode}" agent="${3:-}"
 	local lock_dir current_token=""
 	[ -n "$token" ] || return 0
-	lock_dir=$(_opencode_run_lock_dir)
+	lock_dir=$(_opencode_run_lock_dir "$agent")
 	[ -d "$lock_dir" ] || return 0
 	current_token=$(sed -n 's/^token=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
 	if [ "$current_token" = "$token" ]; then
@@ -387,10 +458,35 @@ _ai_call_opencode_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
 	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
-	local raw_file cleaned lock_token=""
+	local raw_file cleaned lock_token="" lock_rc
+	local old_lock_wait="${OPENCODE_RUN_LOCK_WAIT_SEC-}"
+	local old_lock_max_wait="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC-}"
+	local had_lock_wait=0
+	local had_lock_max_wait=0
+	[ "${OPENCODE_RUN_LOCK_WAIT_SEC+x}" = "x" ] && had_lock_wait=1
+	[ "${OPENCODE_RUN_LOCK_MAX_WAIT_SEC+x}" = "x" ] && had_lock_max_wait=1
 
 	[ -s "$prompt_file" ] || return 1
-	_opencode_run_lock_enter "${label}:opencode:${agent}" || return 1
+	if [[ "$label" == COMMENT* ]] && [ -z "${OPENCODE_RUN_LOCK_MAX_WAIT_SEC:-}" ]; then
+		OPENCODE_RUN_LOCK_WAIT_SEC="${COMMENT_OPENCODE_LOCK_POLL_SEC:-1}"
+		OPENCODE_RUN_LOCK_MAX_WAIT_SEC="${COMMENT_OPENCODE_LOCK_MAX_WAIT_SEC:-4}"
+	fi
+	_opencode_run_lock_enter "${label}:opencode:${agent}" "$agent"
+	lock_rc=$?
+	if [ "$had_lock_wait" -eq 1 ]; then
+		OPENCODE_RUN_LOCK_WAIT_SEC="$old_lock_wait"
+	else
+		unset OPENCODE_RUN_LOCK_WAIT_SEC
+	fi
+	if [ "$had_lock_max_wait" -eq 1 ]; then
+		OPENCODE_RUN_LOCK_MAX_WAIT_SEC="$old_lock_max_wait"
+	else
+		unset OPENCODE_RUN_LOCK_MAX_WAIT_SEC
+	fi
+	if [ "$lock_rc" -ne 0 ]; then
+		log "[${label}] opencode slot unavailable quickly; fallback preferred for live comment (agent=$agent)" >&2
+		return 1
+	fi
 	lock_token="$OPENCODE_RUN_LOCK_LAST_TOKEN"
 	mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
 	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
@@ -402,7 +498,7 @@ _ai_call_opencode_unqueued() {
 		timeout "$timeout_sec" opencode run --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
-	_opencode_run_lock_leave "$lock_token" "${label}:opencode:${agent}"
+	_opencode_run_lock_leave "$lock_token" "${label}:opencode:${agent}" "$agent"
 	if [ $rc -eq 124 ]; then
 		log "[${label}] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
 		rm -f "$raw_file"
@@ -436,24 +532,28 @@ _ai_call_opencode_unqueued() {
 }
 
 _ai_call_claude() {
-	_ai_generation_queue_run "${1:-AI}:claude" _ai_call_claude_unqueued "$@"
+	local label="${1:-AI}" model="${3:-$RADIO_CLAUDE_MODEL}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "claude" "$model")" _ai_call_claude_unqueued "$@"
 }
 
 _ai_call_minimax() {
-	_ai_generation_queue_run "${1:-AI}:minimax" _ai_call_minimax_unqueued "$@"
+	local label="${1:-AI}" model="${3:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "minimax" "$model")" _ai_call_minimax_unqueued "$@"
 }
 
 _ai_call_ollama() {
-	_ai_generation_queue_run "${1:-AI}:ollama" _ai_call_ollama_unqueued "$@"
+	local label="${1:-AI}" model="${3:-${RADIO_OLLAMA_MODEL:-qwen3.5:9b}}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "ollama" "$model")" _ai_call_ollama_unqueued "$@"
 }
 
 _ai_call_qwencode() {
-	_ai_generation_queue_run "${1:-AI}:qwencode" _ai_call_qwencode_unqueued "$@"
+	local label="${1:-AI}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "qwencode" "qwencode")" _ai_call_qwencode_unqueued "$@"
 }
 
 _ai_call_opencode() {
 	local label="${1:-AI}" agent="${2:-opencode}"
-	_ai_generation_queue_run "${label}:opencode:${agent}" _ai_call_opencode_unqueued "$@"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "opencode" "$agent")" _ai_call_opencode_unqueued "$@"
 }
 
 # === 統一ディスパッチャ ===

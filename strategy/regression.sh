@@ -894,7 +894,8 @@ _refresh_best_strategy_anchor() {
 		"${DIVERSITY_PREMIUM_ENABLED:-0}" "${DIVERSITY_PREMIUM_WEIGHT:-300}" "${EXPLORE_GAP_MAX_RATIO:-0.07}" \
 		"${TABU_ENABLED:-0}" "${TABU_SIGNATURES_FILE:-tmp/state/tabu_signatures.jsonl}" "${TABU_DISTANCE_THRESHOLD:-0.15}" \
 		"${BEHAVIOR_SIGNATURES_FILE:-tmp/state/behavior_signatures.json}" "${LAST_ANCHOR_CHANGE_FILE:-tmp/state/last_anchor_change.md}" \
-		"$(pwd)" "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" <<'PY'
+		"$(pwd)" "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY'
 import json
 import math
 import os
@@ -924,6 +925,7 @@ repo_root = sys.argv[19] if len(sys.argv) > 19 else ""
 objective_anchor_enabled = (sys.argv[20] if len(sys.argv) > 20 else "1") == "1"
 objective_anchor_min_comp_ratio = float(sys.argv[21]) if len(sys.argv) > 21 else 0.90
 objective_anchor_max_comp_gap = float(sys.argv[22]) if len(sys.argv) > 22 else 1500.0
+permanent_archive_dir = sys.argv[23] if len(sys.argv) > 23 else ""
 
 # lib.behavior_signature の import (帯域脱出機構 ON 時のみ必要)
 _compute_signature = None
@@ -1064,18 +1066,6 @@ def objective_progress(data):
         "soviet_count": int(data.get("soviet_count", 0) or 0),
     }
 
-def russia_near_miss(data):
-    """True when a non-Russia strategy has concrete type14->15 frontier evidence.
-
-    This is the only score-based escape hatch for a no-Russia candidate while
-    Russia-capable candidates exist. A single type14 is not enough; require a
-    batch record showing two type14 pieces alive together.
-    """
-    for raw in (data.get("peak_high_type_counts", []) or [])[-12:]:
-        if "T14x2" in str(raw) or "T14x3" in str(raw) or "T14x4" in str(raw):
-            return True
-    return False
-
 def archive_is_runtime_stable(path):
     if not path:
         return True
@@ -1095,10 +1085,13 @@ for h, data in rs.items():
         continue
     if h in rejected:
         continue
-    archive_path = os.path.join(archive_dir, f"{h}.py") if archive_dir else ""
-    if archive_dir and not os.path.exists(archive_path):
-        continue
-    if archive_dir and not archive_is_runtime_stable(archive_path):
+    archive_paths = []
+    if archive_dir:
+        archive_paths.append(os.path.join(archive_dir, f"{h}.py"))
+    if permanent_archive_dir:
+        archive_paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    archive_path = next((p for p in archive_paths if os.path.exists(p) and archive_is_runtime_stable(p)), "")
+    if (archive_dir or permanent_archive_dir) and not archive_path:
         continue
     m = metrics(data.get("scores", []))
     if not m:
@@ -1124,12 +1117,6 @@ def _is_tabu(h, m, data):
 candidates = [(h, m, data) for (h, m, data) in candidates if not _is_tabu(h, m, data)]
 if not candidates:
     raise SystemExit(0)
-
-russia_capable_pool_exists = any(
-    int(objective_progress(data).get("russia_count", 0) or 0) > 0
-    or int(objective_progress(data).get("soviet_count", 0) or 0) > 0
-    for _, _, data in candidates
-)
 
 # 現アンカー候補を先に決める (raw comp 最大)
 candidates.sort(key=lambda t: (t[1]["comp"], t[1]["p50"], t[1]["p25"], t[1]["n"], t[0]))
@@ -1194,43 +1181,16 @@ def _objective_tuple(data):
     )
 
 def _anchor_rank_key(h, m, data, selection_score):
-    objective_key = (0, 0, 0, 0, 0)
-    objective_eligible = 0
-    progress = objective_progress(data)
-    has_russia_path = (
-        int(progress.get("russia_count", 0) or 0) > 0
-        or int(progress.get("soviet_count", 0) or 0) > 0
-    )
-    near_miss = russia_near_miss(data)
-    if objective_anchor_enabled and russia_capable_pool_exists and not has_russia_path and not near_miss:
-        # In recovery mode, a high score alone cannot replace a proven
-        # Russia-capable anchor. This is the core guard against 24h no-Russia
-        # drift: no-Russia strategies must first show a real T14x2 frontier.
-        return (
-            -1,
-            0, 0, 0, 0, 0,
-            selection_score,
-            m["p50"],
-            m["p25"],
-            m["n"],
-            h,
-        )
-    if objective_anchor_enabled and top_anchor_comp > 0:
-        gap = max(0.0, top_anchor_comp - m["comp"])
-        ratio_ok = m["comp"] >= (top_anchor_comp * objective_anchor_min_comp_ratio)
-        gap_ok = gap <= objective_anchor_max_comp_gap
-        objective_key = _objective_tuple(data)
-        if (ratio_ok or gap_ok) and objective_key > (0, 0, 0, 0, 0):
-            objective_eligible = 1
-        elif russia_capable_pool_exists and near_miss:
-            objective_eligible = 0
+    # Rollback anchors should primarily come from mature rolling-score leaders.
+    # Objective progress is useful as a tie-breaker, but it must not exclude
+    # higher-performing no-Russia candidates from rollback eligibility.
+    objective_key = _objective_tuple(data) if objective_anchor_enabled else (0, 0, 0, 0, 0)
     return (
-        objective_eligible,
-        *objective_key,
         selection_score,
         m["p50"],
         m["p25"],
         m["n"],
+        *objective_key,
         h,
     )
 
@@ -1287,16 +1247,24 @@ else:
         "lcb": float(existing.get("lcb", 0.0)),
         "n": existing_key[3],
     }, existing_data, existing_key[0])
-    existing_has_file = bool(existing_hash) and bool(archive_dir) and os.path.exists(os.path.join(archive_dir, f"{existing_hash}.py"))
+    existing_archive_paths = []
+    if existing_hash and archive_dir:
+        existing_archive_paths.append(os.path.join(archive_dir, f"{existing_hash}.py"))
+    if existing_hash and permanent_archive_dir:
+        existing_archive_paths.append(os.path.join(permanent_archive_dir, f"{existing_hash}.py"))
+    existing_has_file = bool(existing_hash) and any(
+        os.path.exists(path) and archive_is_runtime_stable(path)
+        for path in existing_archive_paths
+    )
     existing_rejected = bool(existing_hash) and existing_hash in rejected
-    if current_hash and existing_hash == current_hash:
-        replace = True
-    elif not existing_has_file:
+    if not existing_has_file:
         replace = True
     elif existing_live is None:
         replace = True
     elif existing_rejected:
         replace = True
+    elif current_hash and existing_hash == current_hash:
+        replace = False
     elif existing_hash == best_hash:
         replace = True
     elif best_rank_key > existing_key_select:
@@ -1383,15 +1351,63 @@ _promote_current_strategy_to_anchor() {
 	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
 	[ -z "$current_metrics" ] && current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
 	[ -n "$current_metrics" ] || return 1
-	python3 - "$BEST_STRATEGY_ANCHOR_FILE" "$current_hash" "$current_metrics" <<'PY' >/dev/null 2>&1
+	python3 - "$BEST_STRATEGY_ANCHOR_FILE" "$current_hash" "$current_metrics" "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" <<'PY' >/dev/null 2>&1
 import json
+import os
 import sys
 import time
 
-out_file, current_hash, metrics_line = sys.argv[1:4]
+out_file, current_hash, metrics_line, rolling_file, current_run_file, min_best_type_raw = sys.argv[1:7]
 parts = (metrics_line or "").split("|")
 if len(parts) < 5:
     raise SystemExit(1)
+try:
+    min_best_type = int(min_best_type_raw)
+except Exception:
+    min_best_type = 15
+
+def load_json(path):
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def objective_progress(data):
+    data = data or {}
+    max_types = []
+    for x in data.get("max_types", []) or []:
+        try:
+            max_types.append(int(x))
+        except Exception:
+            pass
+    best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
+    russia_count = int(data.get("russia_count", 0) or 0)
+    soviet_count = int(data.get("soviet_count", 0) or 0)
+    if best_max_type >= 15 and russia_count <= 0:
+        russia_count = 1
+    if best_max_type >= 16 and soviet_count <= 0:
+        soviet_count = 1
+    return {"best_max_type": best_max_type, "russia_count": russia_count, "soviet_count": soviet_count}
+
+existing = load_json(out_file)
+rolling = load_json(rolling_file)
+current_data = rolling.get(current_hash, {}) if isinstance(rolling.get(current_hash, {}), dict) else {}
+current_run = load_json(current_run_file)
+if str(current_run.get("hash", "") or "") == current_hash:
+    current_data = current_run
+existing_progress = objective_progress(existing)
+current_progress = objective_progress(current_data)
+if int(existing_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
+    raise SystemExit(1)
+if int(existing_progress.get("russia_count", 0) or 0) > 0 and int(current_progress.get("russia_count", 0) or 0) <= 0:
+    raise SystemExit(1)
+if int(existing_progress.get("best_max_type", 0) or 0) >= min_best_type and int(current_progress.get("best_max_type", 0) or 0) < min_best_type:
+    raise SystemExit(1)
+
 payload = {
     "hash": current_hash,
     "comp": round(float(parts[0]), 4),
@@ -1399,6 +1415,9 @@ payload = {
     "p25": round(float(parts[2]), 4),
     "lcb": round(float(parts[3]), 4),
     "n": int(float(parts[4])),
+    "best_max_type": int(current_progress.get("best_max_type", 0) or 0),
+    "russia_count": int(current_progress.get("russia_count", 0) or 0),
+    "soviet_count": int(current_progress.get("soviet_count", 0) or 0),
     "updated_at": int(time.time()),
 }
 with open(out_file, "w", encoding="utf-8") as f:
@@ -1735,6 +1754,120 @@ if to_hash == current_hash and from_hash == candidate_hash:
     raise SystemExit(0)
 raise SystemExit(1)
 PY
+	}
+
+_prune_rollback_target_cooldown() {
+	local cooldown_file="${ROLLBACK_TARGET_COOLDOWN_FILE:-tmp/state/rollback_target_cooldown.json}"
+	local ttl_sec="${ROLLBACK_TARGET_COOLDOWN_SEC:-3600}"
+	[ -f "$cooldown_file" ] || return 0
+	python3 - "$cooldown_file" "$ttl_sec" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+cooldown_file, ttl_raw = sys.argv[1:3]
+try:
+    ttl_sec = int(ttl_raw or 0)
+except Exception:
+    ttl_sec = 0
+try:
+    data = json.load(open(cooldown_file, encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+now = int(time.time())
+kept = {}
+for hash_, entry in data.items():
+    if not isinstance(entry, dict):
+        continue
+    updated_at = int(entry.get("updated_at", 0) or 0)
+    if updated_at <= 0:
+        continue
+    if ttl_sec > 0 and now - updated_at >= ttl_sec:
+        continue
+    kept[hash_] = entry
+if kept == data:
+    raise SystemExit(0)
+os.makedirs(os.path.dirname(cooldown_file) or ".", exist_ok=True)
+tmp = cooldown_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(kept, f, ensure_ascii=False)
+os.replace(tmp, cooldown_file)
+PY
+}
+
+_is_rollback_target_on_cooldown() {
+	local current_hash="$1"
+	local candidate_hash="$2"
+	local cooldown_file="${ROLLBACK_TARGET_COOLDOWN_FILE:-tmp/state/rollback_target_cooldown.json}"
+	local ttl_sec="${ROLLBACK_TARGET_COOLDOWN_SEC:-3600}"
+	[ -n "$candidate_hash" ] || return 1
+	[ "$candidate_hash" = "$current_hash" ] && return 1
+	_prune_rollback_target_cooldown >/dev/null 2>&1 || true
+	[ -f "$cooldown_file" ] || return 1
+	python3 - "$cooldown_file" "$candidate_hash" "$ttl_sec" <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+import time
+
+cooldown_file, target_hash, ttl_raw = sys.argv[1:4]
+try:
+    ttl_sec = int(ttl_raw or 0)
+except Exception:
+    ttl_sec = 0
+if not os.path.exists(cooldown_file):
+    raise SystemExit(1)
+try:
+    data = json.load(open(cooldown_file, encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+entry = data.get(target_hash) if isinstance(data, dict) else None
+if not isinstance(entry, dict):
+    raise SystemExit(1)
+updated_at = int(entry.get("updated_at", 0) or 0)
+if updated_at <= 0:
+    raise SystemExit(1)
+if ttl_sec > 0 and int(time.time()) - updated_at >= ttl_sec:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+_record_rollback_target_cooldown() {
+	local from_hash="$1"
+	local target_hash="$2"
+	local game_num="${3:-0}"
+	local note="${4:-}"
+	local cooldown_file="${ROLLBACK_TARGET_COOLDOWN_FILE:-tmp/state/rollback_target_cooldown.json}"
+	[ -n "$target_hash" ] || return 0
+	python3 - "$cooldown_file" "$from_hash" "$target_hash" "$game_num" "$note" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+cooldown_file, from_hash, target_hash, game_num, note = sys.argv[1:6]
+try:
+    data = json.load(open(cooldown_file, encoding="utf-8"))
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+data[target_hash] = {
+    "updated_at": int(time.time()),
+    "from_hash": from_hash,
+    "game": int(game_num or 0),
+    "note": note,
+}
+os.makedirs(os.path.dirname(cooldown_file) or ".", exist_ok=True)
+tmp = cooldown_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, cooldown_file)
+PY
 }
 
 _get_rolling_metrics_for_hash() {
@@ -1913,8 +2046,16 @@ PY
 			log "[REGRESSION] rollback候補スキップ: $h は直前rollbackの逆向き" >&2
 			continue
 		fi
+		if _is_rollback_target_on_cooldown "$current_hash" "$h"; then
+			log "[REGRESSION] rollback候補スキップ: $h はrollback先cooldown中" >&2
+			continue
+		fi
 		candidate_file="$STRATEGY_HASH_ARCHIVE_DIR/${h}.py"
 		[ -f "$candidate_file" ] || continue
+		if ! grep -q "BEGIN DEADLINE GUARD" "$candidate_file" 2>/dev/null; then
+			log "[REGRESSION] rollback候補スキップ: $h はguard未注入archive" >&2
+			continue
+		fi
 		if [ -n "$candidate_file" ]; then
 			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
 			return 0
@@ -1945,6 +2086,10 @@ _pick_hall_of_fame_rollback_candidate() {
 		fi
 		if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
 			log "[REGRESSION] hall-of-fame候補スキップ: $h は直前rollbackの逆向き" >&2
+			continue
+		fi
+		if _is_rollback_target_on_cooldown "$current_hash" "$h"; then
+			log "[REGRESSION] hall-of-fame候補スキップ: $h はrollback先cooldown中" >&2
 			continue
 		fi
 		echo "${h}|hof|${score_num}|0|0|0|$f"
@@ -2330,7 +2475,8 @@ check_regression() {
 			"${ANNEALING_OBSERVE_FILE:-tmp/state/annealing_candidates.jsonl}" "${ANNEALING_OBSERVE_ENABLED:-1}" "${ANNEALING_BASE_TEMP:-1800}" "${ANNEALING_DECAY:-0.85}" \
 			"${EARLY_OBJECTIVE_REGRESSION_ENABLED:-1}" "${EARLY_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" \
 			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" \
-			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" <<'PY'
+			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" \
+			"${ROLLBACK_TREND_GRACE_ENABLED:-1}" "${ROLLBACK_TREND_GRACE_WINDOW:-50}" "${ROLLBACK_TREND_GRACE_MIN_PRIOR:-50}" "${ROLLBACK_TREND_GRACE_MIN_DELTA:-0}" <<'PY'
 import json
 import math
 import os
@@ -2369,6 +2515,20 @@ try:
     rolling_score_russia_grace_rank = max(0, int(sys.argv[33])) if len(sys.argv) > 33 else 7
 except Exception:
     rolling_score_russia_grace_rank = 7
+eval_score_history_file = sys.argv[34] if len(sys.argv) > 34 else "eval_score_history.txt"
+rollback_trend_grace_enabled = (sys.argv[35] if len(sys.argv) > 35 else "1") == "1"
+try:
+    rollback_trend_grace_window = max(1, int(sys.argv[36])) if len(sys.argv) > 36 else 50
+except Exception:
+    rollback_trend_grace_window = 50
+try:
+    rollback_trend_grace_min_prior = max(1, int(sys.argv[37])) if len(sys.argv) > 37 else 50
+except Exception:
+    rollback_trend_grace_min_prior = 50
+try:
+    rollback_trend_grace_min_delta = float(sys.argv[38]) if len(sys.argv) > 38 else 0.0
+except Exception:
+    rollback_trend_grace_min_delta = 0.0
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -2500,11 +2660,15 @@ def _update_stagnation(event):
             pass
         data["consecutive_no_improve"] = c
         # counter 非依存の回帰ストリーク (WILDCARD masking 対策)。
+        # OK_BEAT は現行戦略が許容範囲、または目的・トレンド面で守るべき
+        # 成果を出した状態なので、古い回帰ストリークを残さない。
         # 通常 PROMOTE は -1 減衰のみ。ただし WILDCARD 起源の PROMOTE は
         # 脱出成功なので 0 に戻す。成功直後に regression_streak 経路で
         # もう一度 WILDCARD を撃つ churn を防ぐ。
         rs = int(data.get("regression_streak", 0) or 0)
-        if event == "PROMOTE" and current_hash in _WILDCARD_ORIGIN:
+        if event == "OK_BEAT":
+            rs = 0
+        elif event == "PROMOTE" and current_hash in _WILDCARD_ORIGIN:
             rs = 0
         elif event == "PROMOTE":
             rs = max(0, rs - 1)
@@ -2696,6 +2860,47 @@ def breach_count(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
         ]
     )
 
+def load_score_history(path):
+    scores = []
+    if not path or not os.path.exists(path):
+        return scores
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                parts = raw.strip().split()
+                if not parts:
+                    continue
+                try:
+                    scores.append(int(float(parts[-1])))
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return scores
+
+def rollback_trend_grace():
+    if not rollback_trend_grace_enabled:
+        return None
+    scores = load_score_history(eval_score_history_file)
+    if len(scores) < rollback_trend_grace_window + rollback_trend_grace_min_prior:
+        return None
+    recent = scores[-rollback_trend_grace_window:]
+    prior = scores[:-rollback_trend_grace_window]
+    if len(prior) < rollback_trend_grace_min_prior:
+        return None
+    recent_avg = sum(recent) / len(recent)
+    prior_avg = sum(prior) / len(prior)
+    delta = recent_avg - prior_avg
+    if delta > rollback_trend_grace_min_delta:
+        return {
+            "recent_avg": recent_avg,
+            "prior_avg": prior_avg,
+            "delta": delta,
+            "window": rollback_trend_grace_window,
+            "prior_n": len(prior),
+        }
+    return None
+
 def _record_annealing_candidate(event):
     if event != "REGRESSION" or annealing_observe_enabled != "1" or not annealing_observe_file:
         return
@@ -2770,6 +2975,17 @@ anchor = {
     "n": int(anchor_payload.get("n", 0) or 0),
 }
 
+trend_grace = rollback_trend_grace()
+
+def trend_grace_reason():
+    if not trend_grace:
+        return ""
+    return (
+        f"trend_grace_recent{int(trend_grace.get('window', 0))}_avg="
+        f"{trend_grace.get('recent_avg', 0.0):.1f},prior_avg={trend_grace.get('prior_avg', 0.0):.1f},"
+        f"delta={trend_grace.get('delta', 0.0):.1f},prior_n={int(trend_grace.get('prior_n', 0) or 0)}"
+    )
+
 origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
 origin_objective_for_grace = {
     "russia_count": int(origin_payload.get("source_russia_count", 0) or 0),
@@ -2806,6 +3022,10 @@ if (
     ):
         reasons.append("lost_russia_path")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
+    if trend_grace:
+        _update_stagnation("OK_BEAT")
+        print(f"OK:{trend_grace_reason()}")
+        raise SystemExit
     print(
         "REGRESSION:"
         f"mode=archive_objective_floor,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -2830,6 +3050,16 @@ if not current:
 
 active = load_json(active_branch_file)
 branch_active = str(active.get("head_hash", "") or "") == current_hash and str(active.get("anchor_hash", "") or "")
+
+def objective_tuple(progress):
+    return (
+        int(progress.get("soviet_count", 0) > 0),
+        int(progress.get("russia_count", 0) > 0),
+        int(progress.get("best_max_type", 0) or 0),
+        int(progress.get("soviet_count", 0) or 0),
+        int(progress.get("russia_count", 0) or 0),
+    )
+
 if branch_active:
     global_anchor_hash = anchor_hash
     global_anchor = dict(anchor)
@@ -2858,15 +3088,6 @@ if branch_active:
         except Exception:
             pass
 
-    def objective_tuple(progress):
-        return (
-            int(progress.get("soviet_count", 0) > 0),
-            int(progress.get("russia_count", 0) > 0),
-            int(progress.get("best_max_type", 0) or 0),
-            int(progress.get("soviet_count", 0) or 0),
-            int(progress.get("russia_count", 0) or 0),
-        )
-
     global_objective = objective_progress(global_anchor_data, global_anchor_scores)
     active_objective = objective_progress(active_anchor_data, active_anchor_scores)
     if objective_tuple(global_objective) > objective_tuple(active_objective):
@@ -2894,6 +3115,16 @@ for x in (anchor_data.get("scores", []) or []):
         pass
 current_objective = objective_progress(current_data, current_scores)
 anchor_objective = objective_progress(anchor_data, anchor_scores)
+
+def objective_allows_anchor_promotion(anchor_progress, current_progress):
+    if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
+        return False
+    if int(anchor_progress.get("russia_count", 0) or 0) > 0 and int(current_progress.get("russia_count", 0) or 0) <= 0:
+        return False
+    if int(anchor_progress.get("best_max_type", 0) or 0) >= early_objective_min_best_type and int(current_progress.get("best_max_type", 0) or 0) < early_objective_min_best_type:
+        return False
+    return objective_tuple(current_progress) >= objective_tuple(anchor_progress)
+
 try:
     current_games_total = int(current_data.get("games_total", current.get("n", 0)) or current.get("n", 0) or 0)
 except Exception:
@@ -2958,6 +3189,10 @@ if (
     # RUSSIA_OBJECTIVE_REGRESSION_ENABLED=0 の間は通常ゲートでも粛清しない。
     # lost_soviet_path は従来どおり早期ゲートに残す。
     if objective_reasons:
+        if trend_grace:
+            _update_stagnation("OK_BEAT")
+            print(f"OK:{trend_grace_reason()}")
+            raise SystemExit
         print(
             "REGRESSION:"
             f"mode=early_objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -2999,6 +3234,10 @@ if current_hash != anchor_hash:
     ):
         objective_reasons.append("lost_russia_path")
 if objective_reasons:
+    if trend_grace:
+        _update_stagnation("OK_BEAT")
+        print(f"OK:{trend_grace_reason()}")
+        raise SystemExit
     print(
         "REGRESSION:"
         f"mode=objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -3017,7 +3256,12 @@ if objective_reasons:
     _update_stagnation("REGRESSION")
     raise SystemExit
 
-if current["n"] >= min_games_current and current_hash != anchor_hash and key(current) > key(anchor):
+if (
+    current["n"] >= min_games_current
+    and current_hash != anchor_hash
+    and key(current) > key(anchor)
+    and objective_allows_anchor_promotion(anchor_objective, current_objective)
+):
     _update_stagnation("PROMOTE")
     print(
         "PROMOTE:"
@@ -3054,6 +3298,10 @@ if branch_active and curr_breach >= min_breach_count and current_hash != anchor_
     no_improvement_signal = not best_hash
     current_worse_than_best = bool(best_hash and best_metrics and current["comp"] < best_metrics.get("comp", 0) - 1500)
     if no_improvement_signal or current_worse_than_best:
+        if trend_grace:
+            _update_stagnation("OK_BEAT")
+            print(f"OK:{trend_grace_reason()}")
+            raise SystemExit
         print(
             "REGRESSION:"
             f"mode=early_branch,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -3078,6 +3326,10 @@ if current["n"] < min_games_current:
 
 if not branch_active:
     if curr_breach >= min_breach_count and current_hash != anchor_hash:
+        if trend_grace:
+            _update_stagnation("OK_BEAT")
+            print(f"OK:{trend_grace_reason()}")
+            raise SystemExit
         direct_reason = "hard_fail+soft_fail+anchor_direct" if hard_breach >= hard_min_breach_count else "soft_fail+anchor_direct"
         print(
             "REGRESSION:"
@@ -3129,6 +3381,10 @@ if patience >= branch_patience:
     budget_reasons.append("patience")
 
 if hard_breach >= hard_min_breach_count:
+    if trend_grace:
+        _update_stagnation("OK_BEAT")
+        print(f"OK:{trend_grace_reason()}")
+        raise SystemExit
     print(
         "REGRESSION:"
         f"mode=anchor_branch,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -3146,6 +3402,10 @@ if hard_breach >= hard_min_breach_count:
 
 if budget_reasons:
     if best_breach >= min_breach_count:
+        if trend_grace:
+            _update_stagnation("OK_BEAT")
+            print(f"OK:{trend_grace_reason()}")
+            raise SystemExit
         print(
             "REGRESSION:"
             f"mode=anchor_branch,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -3271,24 +3531,34 @@ with open(meta_file, "w") as f:
 PY
 
 		local rollback_file="" rollback_note="" rollback_hash=""
-		rollback_hash=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*rollback_hash=([^,]+).*/\1/p')
-		if [ -n "$rollback_hash" ] && [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py" ]; then
-			local anchor_comp anchor_p50 anchor_p25 anchor_n
-			anchor_comp=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_comp=([^,]+).*/\1/p')
-			anchor_p50=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_p50=([^,]+).*/\1/p')
-			anchor_p25=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_p25=([^,]+).*/\1/p')
-			anchor_n=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_n=([^,]+).*/\1/p')
-			rollback_file="$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"
-			rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+		local best_candidate
+		best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
+		if [ -n "$best_candidate" ]; then
+			local best_comp best_p50 best_p25 best_lcb best_n
+			IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
+			rollback_note="rolling_top hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
 		fi
 		if [ -z "$rollback_file" ]; then
-			local best_candidate
-			best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
-			if [ -n "$best_candidate" ]; then
-				local best_comp best_p50 best_p25 best_lcb best_n
-				IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
-				rollback_note="fallback_best hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
-			fi
+			rollback_hash=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*rollback_hash=([^,]+).*/\1/p')
+				if [ -n "$rollback_hash" ]; then
+					local anchor_comp anchor_p50 anchor_p25 anchor_n
+					anchor_comp=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_comp=([^,]+).*/\1/p')
+					anchor_p50=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_p50=([^,]+).*/\1/p')
+					anchor_p25=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_p25=([^,]+).*/\1/p')
+					anchor_n=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_n=([^,]+).*/\1/p')
+					if _is_rollback_target_on_cooldown "$strategy_hash" "$rollback_hash"; then
+						log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はrollback先cooldown中"
+						rollback_hash=""
+					elif [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py" ]; then
+						rollback_file="$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"
+						rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+					elif [ -f "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py" ]; then
+						rollback_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py"
+						rollback_note="anchor_top1_permanent hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+					else
+						rollback_hash=""
+					fi
+				fi
 		fi
 
 		if [ -z "$rollback_file" ]; then
@@ -3342,11 +3612,28 @@ meta[stale_hash] = {
     "reason": "rollback_target_normalized",
 }
 os.makedirs(os.path.dirname(meta_file) or ".", exist_ok=True)
-with open(meta_file, "w") as f:
-    json.dump(meta, f)
+	with open(meta_file, "w") as f:
+	    json.dump(meta, f)
 PY
-		fi
-		python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
+				local normalized_anchor_hash=""
+				normalized_anchor_hash=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_hash=([^,]+).*/\1/p')
+				if [ -n "$normalized_anchor_hash" ] && [ "$rollback_hash" != "$normalized_anchor_hash" ] && [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${normalized_anchor_hash}.py" ]; then
+					log "[REGRESSION] normalized fallback target rejected; retry anchor rollback: ${normalized_anchor_hash}"
+					local normalized_anchor_file="$STRATEGY_HASH_ARCHIVE_DIR/${normalized_anchor_hash}.py"
+					if cp "$normalized_anchor_file" "$STRATEGY_FILE" && validate_strategy "$STRATEGY_FILE"; then
+						rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+						_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+						rollback_hash="$normalized_anchor_hash"
+						rollback_file="$normalized_anchor_file"
+						rollback_note="normalized_fallback_anchor hash=${rollback_hash}"
+					else
+						log "[REGRESSION] normalized fallback anchor retry failed; restoring pre-rollback strategy"
+						cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
+						return 1
+					fi
+				fi
+			fi
+			python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
 import json
 import sys
 import time
@@ -3361,7 +3648,8 @@ payload = {
 with open(out_file, "w") as f:
     json.dump(payload, f)
 PY
-		REGRESSION_ROLLBACK_DONE=1
+			_record_rollback_target_cooldown "$strategy_hash" "$rolled_hash" "$rollback_game_num" "$rollback_note"
+			REGRESSION_ROLLBACK_DONE=1
 		REGRESSION_ROLLBACK_HASH="$rolled_hash"
 		_clear_active_branch
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
@@ -3371,7 +3659,10 @@ PY
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
 		if [ -n "$rolled_hash" ]; then
-			if _seed_current_strategy_run_from_rolling "$rolled_hash"; then
+			if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then
+				_reset_current_strategy_run "$rolled_hash"
+				log "[CURRENT-RUN] rollback revalidate fresh cycle: hash=${rolled_hash}"
+			elif _seed_current_strategy_run_from_rolling "$rolled_hash"; then
 				log "[CURRENT-RUN] rollback seed from rolling: hash=${rolled_hash}"
 			else
 				_reset_current_strategy_run "$rolled_hash"

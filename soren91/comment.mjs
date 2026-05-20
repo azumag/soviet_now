@@ -33,6 +33,30 @@ const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');
 const RANKING_COMMENT_LAST_INPUT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_input.json');
+const SOREN91_COMMENT_MAX_SPEAK_CHARS = parsePositiveInt(process.env.SOREN91_COMMENT_MAX_SPEAK_CHARS, 0);
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function compactForSpeech(text, maxChars = SOREN91_COMMENT_MAX_SPEAK_CHARS) {
+  const normalized = String(text || '').replace(/\s+/gu, ' ').trim();
+  if (!maxChars || normalized.length <= maxChars) return normalized;
+
+  const hardLimit = Math.max(30, maxChars);
+  const head = normalized.slice(0, hardLimit + 1);
+  const boundary = Math.max(
+    head.lastIndexOf('。'),
+    head.lastIndexOf('！'),
+    head.lastIndexOf('？'),
+    head.lastIndexOf('. '),
+    head.lastIndexOf('! '),
+    head.lastIndexOf('? ')
+  );
+  const cutAt = boundary >= 40 ? boundary + 1 : hardLimit;
+  return `${normalized.slice(0, cutAt).trim()}…`;
+}
 
 function readEnvFileValue(envPath, key) {
   try {
@@ -304,6 +328,7 @@ function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank
       rankingImageExists: Boolean(rankingImagePath && existsSync(rankingImagePath)),
       textGeneration: {
         claudePreset: textConfig.claudePreset,
+        claudeFallbackPreset: textConfig.claudeFallbackPreset,
         geminiModel: textConfig.geminiModel,
         opencodeAgent: textConfig.opencodeAgent,
         ollamaBaseUrl: textConfig.ollamaBaseUrl,
@@ -427,7 +452,7 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
 function callClaudeForComment(promptText) {
   return generateTextWithFallbacks('ranking_comment', promptText, {
     claudePreset: 'haiku',
-    claudeFallbackPreset: 'qwen35e',
+    claudeFallbackPreset: 'ccogent',
     parseOutput: raw => extractCommentOnly(raw, 'ranking_comment'),
     includeOpencodeFallback: true,
   });
@@ -441,6 +466,7 @@ function speakComment(comment, contextLabel = 'soren91:comment') {
   try {
     mkdirSync(queueDir, { recursive: true });
     const ts = Date.now();
+    const spokenComment = compactForSpeech(comment);
     const filename = `comment_soren91_${ts}_${contextLabel.replace(/[^a-zA-Z0-9_]/g, '_')}.txt`;
     const tmpFile = join(queueDir, `.${filename}.tmp`);
     const metaFile = join(queueDir, filename.replace(/\.txt$/u, '.meta.json'));
@@ -449,14 +475,16 @@ function speakComment(comment, contextLabel = 'soren91:comment') {
     const speakerTmpFile = join(queueDir, `.${filename}.speaker.tmp`);
     const destFile = join(queueDir, filename);
     const voicevoxSpeaker = resolveSoren91VoicevoxSpeaker();
-    writeFileSync(tmpFile, comment + '\n');
+    writeFileSync(tmpFile, spokenComment + '\n');
     writeFileSync(metaTmpFile, JSON.stringify({
       generatedAt: new Date().toISOString(),
       source: 'soren91',
       mode: 'soren91',
       contextLabel,
       speaker: voicevoxSpeaker,
-      chars: comment.length,
+      chars: spokenComment.length,
+      originalChars: String(comment || '').length,
+      truncated: spokenComment !== String(comment || '').replace(/\s+/gu, ' ').trim(),
     }, null, 2) + '\n');
     writeFileSync(speakerTmpFile, voicevoxSpeaker);
     renameSync(metaTmpFile, metaFile);
@@ -647,7 +675,7 @@ async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath
 
   return generateTextWithFallbacks('midgame_comment', promptText, {
     claudePreset: 'haiku',
-    claudeFallbackPreset: 'qwen35e',
+    claudeFallbackPreset: 'ccogent',
     parseOutput: raw => extractCommentOnly(raw, 'midgame_comment'),
     includeOpencodeFallback: true,
   });

@@ -1,8 +1,8 @@
 #!/bin/bash
-# obs_browser_source.sh - ensure an OBS browser source points at a local HTML file.
+# obs_browser_source.sh - ensure an OBS browser source points at a local HTML file or URL.
 #
 # Usage:
-#   ./obs_browser_source.sh ensure <scene> <source> <html-file> [width] [height] [show|hide]
+#   ./obs_browser_source.sh ensure <scene> <source> <html-file-or-url> [width] [height] [show|hide]
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 usage() {
 	cat <<'EOF' >&2
 Usage:
-  ./obs_browser_source.sh ensure <scene> <source> <html-file> [width] [height] [show|hide]
+  ./obs_browser_source.sh ensure <scene> <source> <html-file-or-url> [width] [height] [show|hide]
 EOF
 	exit 2
 }
@@ -22,7 +22,7 @@ cmd="${1:-}"
 
 scene="$2"
 source_name="$3"
-html_file="$4"
+target="$4"
 width="${5:-1920}"
 height="${6:-1080}"
 visibility="${7:-show}"
@@ -37,18 +37,24 @@ if [ -z "${OBS_WEBSOCKET_PORT:-}" ] || [ -z "${OBS_WEBSOCKET_PASSWORD:-}" ]; the
 	exit 1
 fi
 
-if [ ! -f "$html_file" ]; then
-	mkdir -p "$(dirname "$html_file")"
-	printf '<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent"></body>\n' >"$html_file"
-fi
+case "$target" in
+http://*|https://*)
+	source_url="$target"
+	;;
+*)
+	if [ ! -f "$target" ]; then
+		mkdir -p "$(dirname "$target")"
+		printf '<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent"></body>\n' >"$target"
+	fi
+	abs_file="$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+	source_url="$(node -e "console.log(require('url').pathToFileURL(process.argv[1]).href)" "$abs_file")"
+	;;
+esac
 
-abs_file="$(cd "$(dirname "$html_file")" && pwd)/$(basename "$html_file")"
-
-node - "$scene" "$source_name" "$abs_file" "$width" "$height" "$visibility" <<'NODE'
+node - "$scene" "$source_name" "$source_url" "$width" "$height" "$visibility" <<'NODE'
 const crypto = require('crypto');
-const { pathToFileURL } = require('url');
 
-const [sceneName, sourceName, filePath, widthRaw, heightRaw, visibility] = process.argv.slice(2);
+const [sceneName, sourceName, sourceUrl, widthRaw, heightRaw, visibility] = process.argv.slice(2);
 const host = process.env.OBS_WEBSOCKET_HOST || '127.0.0.1';
 const port = Number(process.env.OBS_WEBSOCKET_PORT || 4455);
 const password = process.env.OBS_WEBSOCKET_PASSWORD || '';
@@ -57,7 +63,6 @@ const url = `ws://${host}:${port}`;
 const width = Number(widthRaw || 1920);
 const height = Number(heightRaw || 1080);
 const enabled = visibility === 'show';
-const sourceUrl = pathToFileURL(filePath).href;
 
 function fail(message, code = 1) {
   console.error(`[obs_browser_source] ${message}`);

@@ -12,6 +12,7 @@ import argparse
 import ast
 import json
 import math
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ EDGE_PRIORITY = {
 }
 OVERVIEW_NODE_LIMIT = 60
 DETAIL_CHUNK_NODE_LIMIT = 80
+GIT_HISTORY_LIMIT = int(os.getenv("PHYLO_GIT_HISTORY_LIMIT", "80") or "80")
 
 
 def load_json(path: Path) -> dict:
@@ -269,7 +271,12 @@ def collect_graph(pending_edges: list[tuple[str, str, str]]) -> tuple[GraphBuild
     for order, file_path in enumerate(sorted(STRATEGY_HASH_ARCHIVE_DIR.glob("*.py")), start=2_000_000):
         builder.ensure_node(file_path.stem, source="state", order=order)
 
-    git_log = run_git(["log", "--reverse", "--format=%H%x1f%ct%x1f%s", "--", "strategy.py"])
+    git_args = ["log", "--format=%H%x1f%ct%x1f%s"]
+    if GIT_HISTORY_LIMIT > 0:
+        git_args.extend([f"-n{GIT_HISTORY_LIMIT}"])
+    git_args.extend(["--", "strategy.py"])
+    git_lines = run_git(git_args).splitlines()
+    git_log = "\n".join(reversed(git_lines))
     prev_hash = ""
     seen_hashes: set[str] = set()
     for order, line in enumerate(git_log.splitlines(), start=1):
@@ -514,7 +521,12 @@ def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) 
     lines.append(f"- Anchor: `{anchor_hash or 'unknown'}`")
     lines.append("- Solid edge: mutation/improvement")
     lines.append("- Dashed edge: rollback")
-    lines.append("- Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.")
+    if GIT_HISTORY_LIMIT > 0:
+        lines.append(
+            f"- Git history backfill is bounded to the latest `{GIT_HISTORY_LIMIT}` `strategy.py` commits; rolling/archive state still supplies older known nodes."
+        )
+    else:
+        lines.append("- Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.")
     lines.append("- GitHub Mermaid size limit is avoided by splitting the full history into multiple smaller diagrams.")
     lines.append("")
 

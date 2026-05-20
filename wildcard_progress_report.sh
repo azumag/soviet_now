@@ -16,7 +16,8 @@ python3 - \
 	"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" \
 	"${WILDCARD_PROGRESS_AUDIO_STATE_FILE:-tmp/state/wildcard_progress_audio_last.json}" \
 	"${WILDCARD_PROGRESS_AUDIO_MILESTONES:-1,3,6,9,12}" \
-	"${WILDCARD_PROGRESS_AUDIO_MIN_DELTA:-0}" <<'PY' >"${TMP_STATE_DIR:-tmp/state}/wildcard_progress_report.env.tmp"
+	"${WILDCARD_PROGRESS_AUDIO_MIN_DELTA:-0}" \
+	"${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" <<'PY' >"${TMP_STATE_DIR:-tmp/state}/wildcard_progress_report.env.tmp"
 import json
 import math
 import os
@@ -24,7 +25,7 @@ import shlex
 import sys
 import time
 
-origin_file, run_file, anchor_file, state_file, milestones_raw, min_delta_raw = sys.argv[1:7]
+origin_file, run_file, anchor_file, state_file, milestones_raw, min_delta_raw, parallel_status_file = sys.argv[1:8]
 
 def load(path):
     try:
@@ -61,6 +62,43 @@ def composite(scores):
 origins = load(origin_file)
 run = load(run_file)
 anchor = load(anchor_file)
+parallel_status = load(parallel_status_file)
+
+phase = str(parallel_status.get("phase", "") or "")
+if phase in {"no_candidate", "failed"}:
+    session_dir = str(parallel_status.get("session_dir", "") or "")
+    candidates = parallel_status.get("candidates", []) or []
+    failed = [c for c in candidates if str(c.get("status", "") or "") in {"failed", "timeout"}]
+    zero_game = [c for c in candidates if int(c.get("games", 0) or 0) <= 0]
+    errors = [str(c.get("error", "") or "") for c in failed if str(c.get("error", "") or "")]
+    key = f"parallel:{session_dir}:{phase}:{len(failed)}:{len(zero_game)}"
+    state = load(state_file)
+    if state.get("key") != key:
+        os.makedirs(os.path.dirname(state_file) or ".", exist_ok=True)
+        tmp = state_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({
+                "key": key,
+                "kind": "parallel_failure",
+                "phase": phase,
+                "session_dir": session_dir,
+                "failed": len(failed),
+                "zero_game": len(zero_game),
+                "ts": int(time.time()),
+            }, f, ensure_ascii=False)
+        os.replace(tmp, state_file)
+        err = errors[0][:90] if errors else "no successful candidates"
+        message = (
+            f"WILDCARD 並列評価が発動失敗です。"
+            f" phase={phase}、失敗候補 {len(failed)}/{len(candidates)}、0試合候補 {len(zero_game)}/{len(candidates)}。"
+            f" 原因候補: {err}。"
+            f" 次回も同じなら bridge 起動経路を修正してください。"
+        )
+        print("message=" + shlex.quote(message))
+        print("title=" + shlex.quote(f"WILDCARD parallel {phase}"))
+        print("detail=" + shlex.quote(f"session={session_dir} failed={len(failed)}/{len(candidates)} zero_game={len(zero_game)}/{len(candidates)} error={err}"))
+        raise SystemExit
+
 current_hash = str(run.get("hash", "") or "")
 origin = origins.get(current_hash) if current_hash else None
 if not current_hash or not isinstance(origin, dict):

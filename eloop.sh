@@ -479,12 +479,6 @@ print(d.get('score', 0) + bonus)
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	export LAST_RAW_SCORE="$LAST_SCORE"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
-		if [ -x ./monitor_report_stale_report.sh ]; then
-			(
-				./monitor_report_stale_report.sh >/dev/null 2>&1 ||
-					log "[MONITOR] stale report notice skipped/failed after post_game_bookkeeping"
-			) &
-		fi
 		if [ -x ./monitor_improve_runtime.sh ]; then
 			(
 				./monitor_improve_runtime.sh >/dev/null 2>&1 ||

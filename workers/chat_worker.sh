@@ -42,13 +42,25 @@ _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
 }
 
+_pid_alive() {
+	local pid="${1:-}" err=""
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+	case "$err" in
+	*"operation not permitted"*|*"Operation not permitted"*) return 0 ;;
+	esac
+	return 1
+}
+
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
 	_log "停止処理開始"
 
 	# IRC daemon 子プロセスを停止
-	if [ -n "$_DAEMON_PID" ] && kill -0 "$_DAEMON_PID" 2>/dev/null; then
+	if [ -n "$_DAEMON_PID" ] && _pid_alive "$_DAEMON_PID"; then
 		_log "IRC daemon 停止 (PID=$_DAEMON_PID)"
 		kill "$_DAEMON_PID" 2>/dev/null
 		wait "$_DAEMON_PID" 2>/dev/null || true
@@ -140,7 +152,7 @@ _is_comment_gen_running() {
 	case "$gen_pid" in
 	''|*[!0-9]*) return 1 ;;
 	esac
-	kill -0 "$gen_pid" 2>/dev/null
+	_pid_alive "$gen_pid"
 }
 
 # --- Outbound queue 消化 (1 tick あたり最大 N 件) ---
@@ -212,7 +224,7 @@ print(f'delay={shlex.quote(str(d.get(\"delay\",0)))}')
 
 # --- IRC daemon の死活監視 ---
 _ensure_irc_daemon() {
-	if [ -n "$_DAEMON_PID" ] && kill -0 "$_DAEMON_PID" 2>/dev/null; then
+	if [ -n "$_DAEMON_PID" ] && _pid_alive "$_DAEMON_PID"; then
 		return 0
 	fi
 	_log "WARN: IRC daemon が停止 → 再起動"

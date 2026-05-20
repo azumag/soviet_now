@@ -84,6 +84,7 @@ _env_config_value_default() {
 
 MIN_GAMES_BEFORE_IMPROVE_ENV="${MIN_GAMES_BEFORE_IMPROVE:-}"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-$(_config_int_default MIN_GAMES_BEFORE_IMPROVE 12)}
+YOUTUBE_CHAT_ENABLED=${YOUTUBE_CHAT_ENABLED:-$(_env_config_value_default YOUTUBE_CHAT_ENABLED 0)}
 MIN_GAMES_BEFORE_REGRESSION=${MIN_GAMES_BEFORE_REGRESSION:-12}
 MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
 REGRESSION_MAX_RANK=${REGRESSION_MAX_RANK:-20}
@@ -177,7 +178,7 @@ _pid_elapsed() {
 
 _find_process_pid() {
 	local pattern="$1"
-	ps -Ao pid=,command= 2>/dev/null | awk -v pattern="$pattern" -v self="$$" '
+	LC_ALL=C ps -Ao pid=,command= 2>/dev/null | LC_ALL=C awk -v pattern="$pattern" -v self="$$" '
 		$1 == self { next }
 		$0 ~ pattern && $0 !~ /awk -v pattern/ {
 			print $1
@@ -615,7 +616,7 @@ print(f'imp_monitor_stale_sec={stale}')
 		[ "$ai_max_lines" -lt 1 ] && ai_max_lines=1
 
 		imp_ai_source=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null | grep '\[AI:.*\] START' | tail -1 | sed -E 's/^\[[0-9:]+\] \[AI:[^]]+\] START //')
-		imp_ai_output_block=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null | awk '
+		imp_ai_output_block=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null | LC_ALL=C awk '
 /\[AI:[^]]+\] START/ { capture=1; block=""; next }
 capture && /\[AI:[^]]+\] END/ { capture=0; next }
 capture { block = block $0 ORS }
@@ -628,7 +629,7 @@ END { printf "%s", block }
 			| grep -v 'opencode thinking' \
 			| grep -v '^Continue if you have next steps' \
 			| grep -v '^[[:space:]]*[✱→←] ' \
-			| awk 'line != prev { print; prev=line }' \
+			| LC_ALL=C awk 'line != prev { print; prev=line }' \
 			| tail -n "$ai_max_lines")
 		if [[ -z "$imp_ai_output_block" ]]; then
 			# START/END が取れない場合でも、直近の改善ログを最低限見せる
@@ -640,7 +641,7 @@ END { printf "%s", block }
 				| grep -v '^[[:space:]]*[✱→←] ' \
 				| grep -v '\[IMPROVE\] job start' \
 				| grep -v '\[IMPROVE\] attached pid=' \
-				| awk 'line != prev { print; prev=line }' \
+				| LC_ALL=C awk 'line != prev { print; prev=line }' \
 				| tail -n "$ai_max_lines")
 			if [[ -z "$imp_ai_source" ]] && [[ -n "$imp_ai_output_block" ]]; then
 				imp_ai_source="fallback:recent improve log"
@@ -824,13 +825,13 @@ if h and isinstance(origins, dict) and h in origins:
         "escape_ai": "AIEval",
         "wildcard": "WildEval",
     }.get(origin_type, "VarEval")
-    n = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
     scores = []
     for raw in current.get("scores", []) or []:
         try:
             scores.append(float(raw))
         except Exception:
             pass
+    n = len(scores)
     def composite(vals):
         if not vals:
             return 0
@@ -966,7 +967,8 @@ PY
 			"${TMP_STATE_DIR}/wildcard_origin.json" \
 			"${TMP_STATE_DIR}/archive_restart_cooldown.json" \
 			"${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-${TMP_STATE_DIR}/.archive_restart_no_candidate}" \
-			"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" <<'PY' 2>/dev/null
+			"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
+			"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY' 2>/dev/null
 import json
 import math
 import os
@@ -974,7 +976,7 @@ import shlex
 import sys
 import time
 
-rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir = sys.argv[1:8]
+rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir, permanent_archive_dir = sys.argv[1:9]
 
 def load(path, default):
     try:
@@ -1033,6 +1035,52 @@ def archive_is_runtime_stable(path):
     except Exception:
         return False
 
+def boolish(value, default=True):
+    if value is None:
+        return default
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+include_permanent = boolish(os.getenv("ARCHIVE_RESTART_INCLUDE_PERMANENT", "1"), True)
+allow_origin_retry = boolish(os.getenv("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", "1"), True)
+
+def find_archive_path(h):
+    paths = [os.path.join(archive_dir, f"{h}.py")]
+    if include_permanent and permanent_archive_dir:
+        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    for path in paths:
+        if os.path.exists(path) and archive_is_runtime_stable(path):
+            return path
+    return ""
+
+def archive_path_blocker(h):
+    paths = [os.path.join(archive_dir, f"{h}.py")]
+    if include_permanent and permanent_archive_dir:
+        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    saw_file = False
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        saw_file = True
+        if archive_is_runtime_stable(path):
+            return ""
+    return "unstable" if saw_file else "miss"
+
+def is_cooled_down(h):
+    if h not in cooldown_map:
+        return False
+    try:
+        ttl = int(os.getenv("ARCHIVE_RESTART_COOLDOWN_SEC", "21600") or 21600)
+    except Exception:
+        ttl = 21600
+    if ttl <= 0:
+        return True
+    meta = cooldown_map.get(h) if isinstance(cooldown_map.get(h), dict) else {}
+    try:
+        epoch = int(meta.get("epoch", 0) or 0)
+    except Exception:
+        epoch = 0
+    return epoch <= 0 or (int(time.time()) - epoch) < ttl
+
 if os.getenv("ARCHIVE_RESTART_ENABLED", "1") != "1":
     print("archive_next_label=" + shlex.quote("none"))
     raise SystemExit
@@ -1054,8 +1102,10 @@ if os.path.exists(no_candidate_file):
 rolling = load(rolling_file, {})
 anchor = load(anchor_file, {})
 rejected = set(load(rejected_file, {}).keys())
-origin = set(load(origin_file, {}).keys())
-cooldown = set(load(cooldown_file, {}).keys())
+origin_map = load(origin_file, {})
+origin = set(origin_map.keys())
+cooldown_map = load(cooldown_file, {})
+cooldown = set(cooldown_map.keys())
 anchor_hash = str(anchor.get("hash", "") or "")
 try:
     anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
@@ -1078,12 +1128,10 @@ threshold = anchor_comp * max(0.0, min(1.0, min_ratio)) if anchor_comp > 0 else 
 rows = []
 for h, entry in (rolling or {}).items():
     h = str(h)
-    if not h or h == anchor_hash or h in rejected or h in origin or h in cooldown:
+    if not h or h == anchor_hash or h in rejected or is_cooled_down(h):
         continue
-    path = os.path.join(archive_dir, f"{h}.py")
-    if not os.path.exists(path):
-        continue
-    if not archive_is_runtime_stable(path):
+    path = find_archive_path(h)
+    if not path:
         continue
     m = metrics((entry or {}).get("scores", []) or [])
     if not m or m["n"] < 12 or m["comp"] < threshold:
@@ -1104,109 +1152,109 @@ for h, entry in (rolling or {}).items():
         continue
     if russia <= 0 and soviet <= 0 and best_type < min_best_type:
         continue
+    origin_type = str((origin_map.get(h) or {}).get("origin_type") or "") if isinstance(origin_map.get(h), dict) else ("legacy_origin" if h in origin else "")
+    if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
+        continue
     score = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500 + m["p25"] * 0.08 + m["comp"]
-    rows.append((score, h, m, russia, soviet, best_type))
+    rows.append((score, h, m, russia, soviet, best_type, origin_type))
 
 rows.sort(reverse=True)
 if not rows:
-    label = f"no cand c>={int(round(threshold))} t>={min_best_type} -> escape_ai"
+    blockers = {}
+    def bump(name):
+        blockers[name] = blockers.get(name, 0) + 1
+    for h, entry in (rolling or {}).items():
+        h = str(h)
+        if not h or h == anchor_hash:
+            continue
+        m = metrics((entry or {}).get("scores", []) or [])
+        if not m or m["n"] < 12 or m["comp"] < threshold:
+            continue
+        try:
+            russia = int((entry or {}).get("russia_count", 0) or 0)
+            soviet = int((entry or {}).get("soviet_count", 0) or 0)
+            best_type = int((entry or {}).get("best_max_type", 0) or 0)
+        except Exception:
+            russia = soviet = best_type = 0
+        if best_type >= 15 and russia <= 0:
+            russia = 1
+        if best_type >= 16 and soviet <= 0:
+            soviet = 1
+        if russia <= 0 and soviet <= 0 and best_type < min_best_type:
+            continue
+        if h in rejected:
+            bump("reject")
+            continue
+        if is_cooled_down(h):
+            bump("cool")
+            continue
+        path_blocker = archive_path_blocker(h)
+        if path_blocker:
+            bump(path_blocker)
+            continue
+        if anchor_soviet > 0 and soviet <= 0:
+            bump("S0")
+            continue
+        if anchor_russia > 0 and russia <= 0:
+            bump("R0")
+            continue
+        origin_type = str((origin_map.get(h) or {}).get("origin_type") or "") if isinstance(origin_map.get(h), dict) else ("legacy_origin" if h in origin else "")
+        if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
+            bump("origin")
+    parts = [f"{k}={blockers[k]}" for k in ("R0", "unstable", "miss", "cool", "reject", "S0", "origin") if blockers.get(k)]
+    suffix = f" {' '.join(parts)}" if parts else ""
+    label = f"no cand c>={int(round(threshold))}{suffix} -> AI"
 else:
-    _, h, m, russia, soviet, best_type = rows[0]
-    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} R{russia} S{soviet} T{best_type} pool{len(rows)}"
+    _, h, m, russia, soviet, best_type, origin_type = rows[0]
+    retry = " retry" if origin_type else ""
+    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} R{russia} S{soviet} T{best_type} pool{len(rows)}{retry}"
 print("archive_next_label=" + shlex.quote(label))
 PY
 )
 		archive_next_label=$(_truncate_display_width_keep_tail "$archive_next_label" 48)
 
-		# --- Claude 監視レポート鮮度 ---
-		local monitor_report_file="${SOREN_MONITOR_REPORT_FILE:-/tmp/soren_report.md}"
-		local monitor_report_label="missing" monitor_report_color="$C_YELLOW"
-		if [[ -f "$monitor_report_file" ]]; then
-			eval $(python3 - "$monitor_report_file" "${MONITOR_REPORT_STATUS_FILE:-${TMP_STATE_DIR}/monitor_report_status.json}" <<'PY' 2>/dev/null
-import datetime as dt
+		# --- WILDCARD 並列評価の発動失敗監視 ---
+		local wildcard_parallel_label=""
+		if [[ -f "${WILDCARD_PARALLEL_STATUS_FILE:-${TMP_STATE_DIR}/wildcard_parallel_status.json}" ]]; then
+			eval $(python3 - "${WILDCARD_PARALLEL_STATUS_FILE:-${TMP_STATE_DIR}/wildcard_parallel_status.json}" <<'PY' 2>/dev/null
 import json
 import os
-import re
 import shlex
 import sys
 import time
 
 path = sys.argv[1]
-status_path = sys.argv[2] if len(sys.argv) > 2 else ""
-now = int(time.time())
-first = ""
-text = ""
 try:
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    for raw in text.splitlines():
-        raw = raw.strip()
-        if raw:
-            first = raw.lstrip("# ").strip()
-            break
+    data = json.load(open(path, encoding="utf-8"))
+    if not isinstance(data, dict):
+        data = {}
 except Exception:
-    text = ""
+    data = {}
+phase = str(data.get("phase", "") or "")
 try:
-    mtime = int(os.path.getmtime(path))
+    age = max(0, int(time.time()) - int(os.path.getmtime(path)))
 except Exception:
-    mtime = 0
-report_epoch = 0
-m = re.search(r"最終更新:\s*(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+JST", text)
-if m:
-    try:
-        stamp = dt.datetime.strptime(f"{m.group(1)} {m.group(2)}:{m.group(3)} +0900", "%Y-%m-%d %H:%M %z")
-        report_epoch = int(stamp.timestamp())
-    except Exception:
-        report_epoch = 0
-age_base = report_epoch or mtime
-age = max(0, now - age_base) if age_base > 0 else 0
-if age < 60:
-    age_label = f"{age}s"
-elif age < 3600:
-    age_label = f"{age // 60}m"
-else:
-    age_label = f"{age // 3600}h"
-status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
-label = f"{status} {age_label}"
-status_key = f"{status}:{age_base}" if age_base > 0 else status
-try:
-    cached = json.load(open(status_path, encoding="utf-8")) if status_path and os.path.exists(status_path) else {}
-    if not isinstance(cached, dict):
-        cached = {}
-except Exception:
-    cached = {}
-cached_key = str(cached.get("status_key") or cached.get("key") or "")
-cached_epoch = int(cached.get("report_epoch") or cached.get("mtime") or 0) if cached else 0
-cache_matches_report = bool(cached) and (
-    cached_key == status_key or (cached_epoch > 0 and cached_epoch == age_base)
-)
-if cache_matches_report:
-    status = str(cached.get("status") or status)
-    age_label = str(cached.get("age_label") or age_label)
-    live = str(cached.get("live") or "").strip()
-    deadline_no_merge = int(cached.get("deadline_no_merge_count") or 0)
-    deadline_no_merge_with_safe = int(cached.get("deadline_no_merge_with_safe_count") or 0)
-    deadline_prefix = (
-        f"DLsafe={deadline_no_merge_with_safe} "
-        if deadline_no_merge_with_safe > 0
-        else (f"DLno={deadline_no_merge} " if deadline_no_merge > 0 else "")
-    )
-    if live:
-        label = f"{status} {age_label} {deadline_prefix}live {live[:26]}"
-    elif first:
-        label = f"{status} {age_label} {deadline_prefix}{first[:26]}"
-elif first:
-    label = f"{label} {first[:34]}"
-print("monitor_report_label=" + shlex.quote(label))
-print("monitor_report_status=" + shlex.quote(status))
+    age = 999999
+
+def fmt_age(seconds):
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h"
+
+label = ""
+if phase in ("no_candidate", "failed") and age <= 3600:
+    candidates = data.get("candidates", []) or []
+    failed = [c for c in candidates if str(c.get("status", "") or "") in ("failed", "timeout")]
+    zero_game = [c for c in candidates if int(c.get("games", 0) or 0) <= 0]
+    errors = [str(c.get("error", "") or "") for c in failed if str(c.get("error", "") or "")]
+    err = errors[0][:28] if errors else "no successful candidates"
+    label = f"{phase} f{len(failed)}/{len(candidates)} z{len(zero_game)}/{len(candidates)} {fmt_age(age)} {err}"
+print("wildcard_parallel_label=" + shlex.quote(label))
 PY
 )
-			case "${monitor_report_status:-}" in
-				fresh) monitor_report_color="$C_GREEN" ;;
-				stale) monitor_report_color="$C_YELLOW" ;;
-				old) monitor_report_color="$C_RED" ;;
-				*) monitor_report_color="$C_YELLOW" ;;
-			esac
+			wildcard_parallel_label=$(_truncate_display_width "$wildcard_parallel_label" 48)
 		fi
 
 		# --- 視聴者チャット観測 ---
@@ -1955,7 +2003,9 @@ PY
 		if [[ "$archive_next_label" != "none" ]]; then
 			printf "    ${C_YELLOW}▸${C_RESET} ArchiveNext ${C_YELLOW}%s${C_RESET}\n" "$archive_next_label"
 		fi
-		printf "    ${monitor_report_color}▸${C_RESET} Report      ${monitor_report_color}%s${C_RESET}\n" "$monitor_report_label"
+		if [[ -n "$wildcard_parallel_label" ]]; then
+			printf "    ${C_YELLOW}▸${C_RESET} WildParFail ${C_YELLOW}%s${C_RESET}\n" "$wildcard_parallel_label"
+		fi
 			if [[ "$viewer_chat_label" != "none" ]]; then
 				printf "    ${C_CYAN}▸${C_RESET} ChatObs     ${C_DIM}%s${C_RESET}\n" "$viewer_chat_label"
 			fi

@@ -50,6 +50,87 @@ _log() {
 	echo "[supervisor $(date '+%H:%M:%S')] $*"
 }
 
+_pid_alive() {
+	local pid="${1:-}"
+	local err=""
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+	case "$err" in
+	*"operation not permitted"*|*"Operation not permitted"*)
+		# Codex/macOS sandboxed checks can see a live user-session worker PID
+		# but be denied signal permission. Treat that as alive so the
+		# supervisor does not overwrite pidfiles or start duplicate workers.
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_pidfile_for_worker() {
+	case "$1" in
+	soren_loop) echo "tmp/state/soren_loop.pid" ;;
+	chat_worker) echo "tmp/state/chat_worker.pid" ;;
+	youtube_worker) echo "tmp/state/youtube_worker.pid" ;;
+	audio_worker) echo "tmp/state/audio_worker.pid" ;;
+	radio_worker) echo "tmp/state/radio_worker.pid" ;;
+	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
+	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
+	*) echo "" ;;
+	esac
+}
+
+_pattern_for_worker() {
+	case "$1" in
+	soren_loop) echo '[/ ]soren_loop[.]sh([[:space:]]|$)' ;;
+	chat_worker) echo '[/ ]workers/chat_worker[.]sh([[:space:]]|$)' ;;
+	youtube_worker) echo '[/ ]workers/youtube_worker[.]sh([[:space:]]|$)' ;;
+	audio_worker) echo '[/ ]workers/audio_worker[.]sh([[:space:]]|$)' ;;
+	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
+	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
+	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
+	*) echo "" ;;
+	esac
+}
+
+_pid_matches_worker() {
+	local pid="${1:-}"
+	local pattern="${2:-}"
+	_pid_alive "$pid" || return 1
+	[ -n "$pattern" ] || return 0
+	if matches=$(pgrep -f "$pattern" 2>/dev/null); then
+		printf '%s\n' "$matches" | grep -qx "$pid"
+		return $?
+	fi
+	# macOS privacy/sandboxing can deny process-list access even when kill -0 works.
+	# In that case, trust the alive pidfile pid instead of triggering a restart storm.
+	return 0
+}
+
+_find_existing_worker_pid() {
+	local name="$1"
+	local pid_file pid pattern pid
+	pid_file="$(_pidfile_for_worker "$name")"
+	pattern="$(_pattern_for_worker "$name")"
+	if [ -n "$pid_file" ] && [ -f "$pid_file" ]; then
+		pid=$(cat "$pid_file" 2>/dev/null || true)
+		if _pid_matches_worker "$pid" "$pattern"; then
+			echo "$pid"
+			return 0
+		fi
+		rm -f "$pid_file" 2>/dev/null || true
+	fi
+	if [ -n "$pattern" ]; then
+		pid=$(pgrep -f "$pattern" 2>/dev/null | head -n 1 || true)
+		if _pid_alive "$pid"; then
+			echo "$pid"
+			return 0
+		fi
+	fi
+	return 1
+}
+
 # --- 起動時クリーンアップ ---
 rm -f tmp/stop
 mkdir -p tmp/state logs 2>/dev/null || true
@@ -71,6 +152,7 @@ _start_worker() {
 	local name="${WORKER_NAMES[$idx]}"
 	local cmd="${WORKER_CMDS[$idx]}"
 	local log_file="logs/${name}.log"
+	local existing_pid=""
 
 	if [ "$name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
 		_log "スキップ: ${name} paused"
@@ -82,6 +164,12 @@ _start_worker() {
 		_log "スキップ: ${name} disabled"
 		WORKER_PIDS[$idx]=""
 		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
+	if existing_pid="$(_find_existing_worker_pid "$name")"; then
+		WORKER_PIDS[$idx]="$existing_pid"
+		WORKER_LAST_START[$idx]=$(date +%s)
+		_log "採用: ${name} (PID=${existing_pid})"
 		return 0
 	fi
 
@@ -132,9 +220,18 @@ _stop_all_workers() {
 }
 
 _cleanup() {
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ]; then
+		_log "cleanup skipped: another supervisor owns pidfile (owner=${active_pid}, self=$$)"
+		return 0
+	fi
 	touch tmp/stop 2>/dev/null || true
 	_stop_all_workers
-	rm -f "$PID_FILE"
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ -z "$active_pid" ] || [ "$active_pid" = "$$" ]; then
+		rm -f "$PID_FILE"
+	fi
 	_log "supervisor 終了"
 }
 
@@ -160,9 +257,20 @@ while true; do
 	for idx in "${!WORKER_NAMES[@]}"; do
 		_w_pid="${WORKER_PIDS[$idx]:-}"
 		_w_name="${WORKER_NAMES[$idx]}"
+		_w_pattern="$(_pattern_for_worker "$_w_name")"
 
 		# worker が生きていればスキップ
-		if [ -n "$_w_pid" ] && kill -0 "$_w_pid" 2>/dev/null; then
+		if _pid_matches_worker "$_w_pid" "$_w_pattern"; then
+			continue
+		fi
+
+		# supervisor の内部 PID が古くなっても、実 worker が生きていれば採用して監視を継続する。
+		# これを最大再起動判定より前に置き、post-restart などで外側 PID が入れ替わった状態から復旧する。
+		if existing_pid="$(_find_existing_worker_pid "$_w_name")"; then
+			WORKER_PIDS[$idx]="$existing_pid"
+			WORKER_RESTARTS[$idx]=0
+			WORKER_LAST_START[$idx]=$(date +%s)
+			_log "採用: ${_w_name} (PID=${existing_pid}) after stale supervisor pid"
 			continue
 		fi
 
@@ -172,6 +280,10 @@ while true; do
 			continue
 		fi
 		if [ "$_w_name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+			continue
+		fi
+		if [ "$_w_name" = "soren_loop" ] && [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then
+			WORKER_LAST_START[$idx]=$(date +%s)
 			continue
 		fi
 		if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then

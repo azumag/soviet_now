@@ -1737,19 +1737,19 @@ else:
 	fi
 
 	local comment_parent_pid comment_started_at
-	comment_parent_pid=$(_my_pid)
+	comment_parent_pid="${BASHPID:-$(_my_pid)}"
 	comment_started_at=$(date +%s)
 	echo "generating:comment:${comment_started_at}" >$COMMENT_GEN_STATE_FILE
 	_mark_comment_batch_inflight "$comment_batch_hash"
 	export dominant_category
 
 	(
-		_cg_my_pid=$(_my_pid)
+		_cg_my_pid="${BASHPID:-$(_my_pid)}"
 		_cleanup_comment_gen_worker() {
-			local raw file_pid
+			local raw file_pid file_started_at
 			raw=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null || true)
-			file_pid="${raw%%|*}"
-			if [ "$file_pid" = "$_cg_my_pid" ]; then
+			IFS='|' read -r file_pid _ file_started_at <<<"$raw"
+			if [ "$file_pid" = "$_cg_my_pid" ] || [ "$file_started_at" = "$comment_started_at" ]; then
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
 			rm -f $COMMENT_GEN_STATE_FILE

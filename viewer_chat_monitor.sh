@@ -22,6 +22,7 @@ import sys
 import time
 
 source_file, out_file, lookback_raw, mode = sys.argv[1:5]
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 def as_int(value, default):
     try:
@@ -30,7 +31,9 @@ def as_int(value, default):
         return default
 
 def is_observer_comment(line):
-    text = line.strip()
+    if looks_like_binary_noise(line):
+        return False
+    text = sanitize_text(line).strip()
     if not text:
         return False
     low = text.lower()
@@ -62,8 +65,17 @@ def looks_like_emote_only(message):
         return False
     return bool(re.search(r"[a-z][A-Z]", token) or token.lower().startswith(("azumag", "unagee")))
 
+def looks_like_binary_noise(line):
+    if not line:
+        return False
+    control_count = len(CONTROL_RE.findall(line))
+    return control_count >= 3 or control_count > max(1, len(line) // 8)
+
+def sanitize_text(line):
+    return CONTROL_RE.sub(" ", line)
+
 def compact(line):
-    return re.sub(r"\s+", " ", line.strip())[:96]
+    return re.sub(r"\s+", " ", sanitize_text(line).strip())[:96]
 
 lookback = max(20, as_int(lookback_raw, 200))
 try:

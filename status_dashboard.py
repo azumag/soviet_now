@@ -54,8 +54,6 @@ LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
 CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
 ANNEALING_OBSERVE_FILE = "tmp/state/annealing_candidates.jsonl"
 WILDCARD_ATTEMPT_STATE_FILE = "tmp/state/wildcard_attempt_state.json"
-SOREN_MONITOR_REPORT_FILE = os.getenv("SOREN_MONITOR_REPORT_FILE", "/tmp/soren_report.md")
-MONITOR_REPORT_STATUS_FILE = os.getenv("MONITOR_REPORT_STATUS_FILE", "tmp/state/monitor_report_status.json")
 VIEWER_CHAT_MONITOR_FILE = os.getenv("VIEWER_CHAT_MONITOR_FILE", "tmp/state/viewer_chat_monitor.json")
 SOREN91_IMPROVE_LOCK_FILE = os.getenv("SOREN91_IMPROVE_LOCK", "soren91/tmp/soren91_improve.lock")
 SOREN91_IMPROVE_PID_FILE = os.getenv("SOREN91_IMPROVE_PID_FILE", "soren91/tmp/soren91_improve.pid")
@@ -64,8 +62,10 @@ SOREN91_IMPROVE_HUNG_QUARANTINE_FILE = os.getenv(
     "tmp/state/soren91_improve_hung_quarantine.jsonl",
 )
 ARCHIVE_RESTART_COOLDOWN_FILE = "tmp/state/archive_restart_cooldown.json"
+ARCHIVE_RESTART_COOLDOWN_SEC = 21600
 ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE = "tmp/state/.archive_restart_no_candidate"
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
+STRATEGY_HASH_PERMANENT_ARCHIVE_DIR = "strategy_versions_archive/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
 
@@ -1059,63 +1059,6 @@ def fmt_age(seconds):
     return f"{seconds // 3600}h"
 
 
-def load_monitor_report_status():
-    p = Path(SOREN_MONITOR_REPORT_FILE)
-    if not p.exists():
-        return {"status": "missing", "age": "", "title": "soren monitor missing"}
-    try:
-        text = p.read_text(encoding="utf-8", errors="ignore")
-        mtime = int(p.stat().st_mtime)
-    except Exception:
-        return {"status": "error", "age": "", "title": "soren monitor unreadable"}
-
-    title = "soren monitor"
-    for raw in text.splitlines():
-        cleaned = raw.strip().lstrip("# ").strip()
-        if cleaned:
-            title = cleaned[:32]
-            break
-
-    report_epoch = 0
-    m = re.search(r"最終更新:\s*(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s+JST", text)
-    if m:
-        try:
-            stamp = datetime.strptime(
-                f"{m.group(1)} {m.group(2)}:{m.group(3)} +0900",
-                "%Y-%m-%d %H:%M %z",
-            )
-            report_epoch = int(stamp.timestamp())
-        except Exception:
-            report_epoch = 0
-    age = max(0, int(time.time()) - (report_epoch or mtime))
-    status = "fresh" if age <= 900 else ("stale" if age <= 3600 else "old")
-    cached = {}
-    try:
-        raw = Path(MONITOR_REPORT_STATUS_FILE).read_text(encoding="utf-8", errors="ignore")
-        loaded = json.loads(raw)
-        if isinstance(loaded, dict):
-            cached = loaded
-    except Exception:
-        cached = {}
-    if cached:
-        status = str(cached.get("status") or status)
-        age_label = str(cached.get("age_label") or fmt_age(age))
-        live = str(cached.get("live") or "").strip()
-        deadline_no_merge = int(cached.get("deadline_no_merge_count") or 0)
-        deadline_no_merge_with_safe = int(cached.get("deadline_no_merge_with_safe_count") or 0)
-        deadline_prefix = (
-            f"DLsafe={deadline_no_merge_with_safe} "
-            if deadline_no_merge_with_safe > 0
-            else (f"DLno={deadline_no_merge} " if deadline_no_merge > 0 else "")
-        )
-        if live:
-            title = f"{deadline_prefix}live {live[:28]}"
-        elif deadline_prefix:
-            title = f"{deadline_prefix}{title[:28]}"
-        return {"status": status, "age": age_label, "title": title}
-    return {"status": status, "age": fmt_age(age), "title": title}
-
-
 def load_viewer_chat_monitor():
     p = Path(VIEWER_CHAT_MONITOR_FILE)
     if not p.exists():
@@ -1324,8 +1267,8 @@ def load_wildcard_attempt_status():
         "escalate_at": escalate_at,
         "archive_restart_at": archive_restart_at,
         "archive_restart_enabled": archive_restart_enabled,
-        "to_archive_restart": max(0, archive_restart_at - effective_streak),
-        "to_escape_ai": max(0, escalate_at - effective_streak),
+        "to_archive_restart": max(0, archive_restart_at - streak),
+        "to_escape_ai": max(0, escalate_at - streak),
         "last_event": str(data.get("last_wildcard_outcome", "") or data.get("last_regression_event", "") or "none"),
         "last_hash": str(data.get("last_wildcard_outcome_hash", "") or data.get("last_regression_hash", "") or "")[:8],
         "scale": data.get("scale", 1.0),
@@ -1362,25 +1305,36 @@ def load_archive_restart_candidate():
             rejected = set((json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}).keys())
         except Exception:
             rejected = set()
+    origin_map = {}
     origin = set()
     p = Path("tmp/state/wildcard_origin.json")
     if p.exists():
         try:
-            origin = set((json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}).keys())
+            origin_map = json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}
+            origin = set(origin_map.keys())
         except Exception:
+            origin_map = {}
             origin = set()
+    cooldown_map = {}
     cooldown = set()
     p = Path(ARCHIVE_RESTART_COOLDOWN_FILE)
     if p.exists():
         try:
-            cooldown = set((json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}).keys())
+            cooldown_map = json.loads(p.read_text(encoding="utf-8", errors="ignore")) or {}
+            cooldown = set(cooldown_map.keys())
         except Exception:
+            cooldown_map = {}
             cooldown = set()
     anchor_hash = str(anchor.get("hash", "") or "")
     try:
         anchor_comp = float(anchor.get("comp", 0.0) or 0.0)
     except Exception:
         anchor_comp = 0.0
+    try:
+        anchor_russia = int(anchor.get("russia_count", 0) or 0)
+        anchor_soviet = int(anchor.get("soviet_count", 0) or 0)
+    except Exception:
+        anchor_russia = anchor_soviet = 0
     try:
         min_ratio = float(os.getenv("ARCHIVE_RESTART_MIN_COMP_RATIO", "0.92") or 0.92)
     except Exception:
@@ -1389,13 +1343,62 @@ def load_archive_restart_candidate():
         min_best_type = int(os.getenv("ARCHIVE_RESTART_MIN_BEST_TYPE", "14") or 14)
     except Exception:
         min_best_type = 14
+    include_permanent = os.getenv("ARCHIVE_RESTART_INCLUDE_PERMANENT", "1").strip().lower() not in {"0", "false", "no", "off"}
+    allow_origin_retry = os.getenv("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+    def find_archive_path(hash_value):
+        candidates = [Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_value}.py")]
+        if include_permanent:
+            candidates.append(Path(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR, f"{hash_value}.py"))
+        for path in candidates:
+            if path.exists():
+                try:
+                    if "BEGIN DEADLINE GUARD" not in path.read_text(encoding="utf-8", errors="ignore")[:200000]:
+                        continue
+                except Exception:
+                    continue
+                return path
+        return None
+
+    def archive_path_blocker(hash_value):
+        candidates = [Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_value}.py")]
+        if include_permanent:
+            candidates.append(Path(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR, f"{hash_value}.py"))
+        saw_file = False
+        for path in candidates:
+            if not path.exists():
+                continue
+            saw_file = True
+            try:
+                if "BEGIN DEADLINE GUARD" in path.read_text(encoding="utf-8", errors="ignore")[:200000]:
+                    return ""
+            except Exception:
+                continue
+        return "unstable" if saw_file else "miss"
+
+    def is_cooled_down(hash_value):
+        if hash_value not in cooldown:
+            return False
+        try:
+            ttl = int(os.getenv("ARCHIVE_RESTART_COOLDOWN_SEC", str(ARCHIVE_RESTART_COOLDOWN_SEC)) or ARCHIVE_RESTART_COOLDOWN_SEC)
+        except Exception:
+            ttl = ARCHIVE_RESTART_COOLDOWN_SEC
+        if ttl <= 0:
+            return True
+        meta = cooldown_map.get(hash_value) if isinstance(cooldown_map.get(hash_value), dict) else {}
+        try:
+            epoch = int(meta.get("epoch", 0) or 0)
+        except Exception:
+            epoch = 0
+        return epoch <= 0 or (int(time.time()) - epoch) < ttl
+
     threshold = anchor_comp * max(0.0, min(1.0, min_ratio)) if anchor_comp > 0 else 0.0
     rows = []
     for h, entry in rolling.items():
         h = str(h)
-        if not h or h == anchor_hash or h in rejected or h in origin or h in cooldown:
+        if not h or h == anchor_hash or h in rejected or is_cooled_down(h):
             continue
-        if not Path(STRATEGY_HASH_ARCHIVE_DIR, f"{h}.py").exists():
+        if find_archive_path(h) is None:
             continue
         metrics = calc_strategy_metrics((entry or {}).get("scores", []) or [])
         if not metrics or metrics.get("n", 0) < MIN_GAMES_FOR_BEST_ROLLBACK:
@@ -1409,19 +1412,72 @@ def load_archive_restart_candidate():
             russia = 1
         if best_type >= 16 and soviet <= 0:
             soviet = 1
+        if anchor_soviet > 0 and soviet <= 0:
+            continue
+        if anchor_russia > 0 and russia <= 0:
+            continue
         if russia <= 0 and soviet <= 0 and best_type < min_best_type:
+            continue
+        origin_type = str((origin_map.get(h) or {}).get("origin_type") or "") if isinstance(origin_map.get(h), dict) else ("legacy_origin" if h in origin else "")
+        if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
             continue
         objective_score = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
         objective_score += float(metrics.get("p25", 0.0) or 0.0) * 0.08 + float(metrics.get("comp", 0.0) or 0.0)
-        rows.append((objective_score, h, metrics, russia, soviet, best_type))
+        rows.append((objective_score, h, metrics, russia, soviet, best_type, origin_type))
     rows.sort(reverse=True)
     if not rows:
+        blockers = {}
+
+        def bump(name):
+            blockers[name] = blockers.get(name, 0) + 1
+
+        for h, entry in rolling.items():
+            h = str(h)
+            if not h or h == anchor_hash:
+                continue
+            metrics = calc_strategy_metrics((entry or {}).get("scores", []) or [])
+            if not metrics or metrics.get("n", 0) < MIN_GAMES_FOR_BEST_ROLLBACK:
+                continue
+            if metrics["comp"] < threshold:
+                continue
+            try:
+                russia = int((entry or {}).get("russia_count", 0) or 0)
+                soviet = int((entry or {}).get("soviet_count", 0) or 0)
+                best_type = int((entry or {}).get("best_max_type", 0) or 0)
+            except Exception:
+                russia = soviet = best_type = 0
+            if best_type >= 15 and russia <= 0:
+                russia = 1
+            if best_type >= 16 and soviet <= 0:
+                soviet = 1
+            if russia <= 0 and soviet <= 0 and best_type < min_best_type:
+                continue
+            if h in rejected:
+                bump("reject")
+                continue
+            if is_cooled_down(h):
+                bump("cool")
+                continue
+            path_blocker = archive_path_blocker(h)
+            if path_blocker:
+                bump(path_blocker)
+                continue
+            if anchor_soviet > 0 and soviet <= 0:
+                bump("S0")
+                continue
+            if anchor_russia > 0 and russia <= 0:
+                bump("R0")
+                continue
+            origin_type = str((origin_map.get(h) or {}).get("origin_type") or "") if isinstance(origin_map.get(h), dict) else ("legacy_origin" if h in origin else "")
+            if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
+                bump("origin")
         return {
             "status": "no_candidate",
             "threshold": int(round(threshold)),
             "min_best_type": min_best_type,
+            "blockers": blockers,
         }
-    _, h, metrics, russia, soviet, best_type = rows[0]
+    _, h, metrics, russia, soviet, best_type, origin_type = rows[0]
     return {
         "hash": h[:8],
         "comp": int(round(metrics.get("comp", 0.0))),
@@ -1431,6 +1487,7 @@ def load_archive_restart_candidate():
         "soviet": soviet,
         "best_type": best_type,
         "count": len(rows),
+        "origin_retry": bool(origin_type),
     }
 
 
@@ -1845,18 +1902,7 @@ def render_observer_status():
     if os.getenv("HIDE_STATUS_DASHBOARD_OBSERVER_SECTION", "0") == "1":
         return []
 
-    monitor = load_monitor_report_status()
-    monitor_color = C_GREEN
-    if monitor.get("status") == "stale":
-        monitor_color = C_YELLOW
-    elif monitor.get("status") in ("old", "missing", "error"):
-        monitor_color = C_RED
-
-    lines = [f"  {BOLD}Observer Status{RST} {DIM}(monitor / annealing observe-only){RST}"]
-    lines.append(
-        f" {monitor_color}Monitor{RST} {monitor.get('status', '?')} "
-        f"{monitor.get('age', '')} {DIM}{monitor.get('title', '')}{RST}"
-    )
+    lines = [f"  {BOLD}Observer Status{RST} {DIM}(annealing observe-only){RST}"]
     viewer_chat = load_viewer_chat_monitor()
     if viewer_chat:
         lines.append(
@@ -1890,15 +1936,19 @@ def render_observer_status():
         lines.append(f" {DIM}AnnealObs none yet{RST}")
     wildcard = load_wildcard_attempt_status()
     if wildcard:
-        color = C_YELLOW if wildcard.get("effective_streak", wildcard.get("streak", 0)) >= 2 else C_BLUE
-        if wildcard.get("archive_restart_enabled") and wildcard.get("to_archive_restart", 1) <= 1:
+        streak = int(wildcard.get("streak", 0) or 0)
+        failed_origin_count = int(wildcard.get("failed_origin_count", 0) or 0)
+        color = C_YELLOW if streak >= 2 else C_BLUE
+        if streak <= 0 and failed_origin_count:
+            escape_note = f"failed-origin pool {failed_origin_count}"
+        elif wildcard.get("archive_restart_enabled") and wildcard.get("to_archive_restart", 1) <= 1:
             escape_note = "archive_restart next"
         elif wildcard.get("archive_restart_enabled"):
             escape_note = f"archive_restart in {wildcard.get('to_archive_restart')}"
         else:
             escape_note = "escape_ai next" if wildcard.get("to_escape_ai", 1) <= 1 else f"escape_ai in {wildcard.get('to_escape_ai')}"
         lines.append(
-            f" {color}WildStreak{RST} n={wildcard.get('streak', 0)} "
+            f" {color}WildStreak{RST} n={streak} "
             f"eff={wildcard.get('effective_streak', wildcard.get('streak', 0))} "
             f"last={wildcard.get('last_event', 'none')} {wildcard.get('last_hash', '')} "
             f"sc={wildcard.get('scale', 1.0)} {DIM}{escape_note}{RST}"
@@ -1910,10 +1960,17 @@ def render_observer_status():
             f"{DIM}cooldown {archive_next.get('age', '')}/{archive_next.get('ttl', '')}; escape_ai direct{RST}"
         )
     elif archive_next and archive_next.get("status") == "no_candidate":
+        blockers = archive_next.get("blockers", {}) or {}
+        blocker_text = " ".join(
+            f"{name}={blockers.get(name)}"
+            for name in ("R0", "unstable", "miss", "cool", "reject", "S0", "origin")
+            if blockers.get(name)
+        )
+        blocker_text = f" {blocker_text}" if blocker_text else ""
         lines.append(
             f" {C_YELLOW}ArchiveNext{RST} no candidate "
             f"{DIM}threshold c>={archive_next.get('threshold', 0)} "
-            f"t>={archive_next.get('min_best_type', 0)}; escape_ai direct{RST}"
+            f"{blocker_text}; escape_ai direct{RST}"
         )
     elif archive_next:
         lines.append(

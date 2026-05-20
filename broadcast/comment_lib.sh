@@ -224,7 +224,7 @@ _play_comment_queue() {
 					# speaker/context override: サイドカーファイル > soren91判定
 				local _cw_vo_speaker=""
 				_cw_vo_speaker=$(_comment_read_speaker_override "$playing_file" "$qf" 2>/dev/null || true)
-				if [ -z "$_cw_vo_speaker" ] && soren91_is_running 2>/dev/null; then
+				if [ -z "$_cw_vo_speaker" ] && [ "$expected_mode" != "main" ] && soren91_is_running 2>/dev/null; then
 					_cw_vo_speaker="${SOREN91_VOICEVOX_SPEAKER:-46}"
 				fi
 				local _cw_context_label=""

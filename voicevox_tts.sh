@@ -8,21 +8,40 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 [ -z "${VOICEVOX_URL:-}" ] && [ -f "$SCRIPT_DIR/.env" ] && . "$SCRIPT_DIR/.env"
-VOICEVOX_URL="${VOICEVOX_URL:-http://127.0.0.1:50021}"
+VOICEVOX_URL_LOCAL="${VOICEVOX_URL_LOCAL:-http://127.0.0.1:50021}"
+VOICEVOX_URL_PRIMARY="${VOICEVOX_URL_PRIMARY:-${VOICEVOX_URL_REMOTE:-}}"
+VOICEVOX_URL_FALLBACK="${VOICEVOX_URL_FALLBACK:-$VOICEVOX_URL_LOCAL}"
+VOICEVOX_URL="${VOICEVOX_URL:-${VOICEVOX_URL_PRIMARY:-$VOICEVOX_URL_LOCAL}}"
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-3}"  # デフォルト: ずんだもん ノーマル
 VOICEVOX_TIMEOUT="${VOICEVOX_TIMEOUT:-30}"
+VOICEVOX_HEALTH_TIMEOUT="${VOICEVOX_HEALTH_TIMEOUT:-0.7}"
 VOICEVOX_MAX_CHARS="${VOICEVOX_MAX_CHARS:-200}"
 
+_voicevox_candidate_urls() {
+    printf '%s\n' "$VOICEVOX_URL_PRIMARY" "$VOICEVOX_URL" "$VOICEVOX_URL_FALLBACK" "$VOICEVOX_URL_LOCAL" \
+        | awk 'NF && !seen[$0]++'
+}
+
+_voicevox_synthesis_urls() {
+    printf '%s\n' "${VOICEVOX_ACTIVE_URL:-}"
+    _voicevox_candidate_urls
+}
+
 check_server() {
-    if ! curl -s --max-time 2 "$VOICEVOX_URL/speakers" > /dev/null 2>&1; then
-        echo "ERROR: VOICEVOX engine is not running at $VOICEVOX_URL" >&2
-        return 1
-    fi
+    local url
+    while IFS= read -r url; do
+        if curl -s --max-time "$VOICEVOX_HEALTH_TIMEOUT" "$url/speakers" > /dev/null 2>&1; then
+            VOICEVOX_ACTIVE_URL="$url"
+            return 0
+        fi
+    done < <(_voicevox_candidate_urls)
+    echo "ERROR: VOICEVOX engine is not running at any configured URL" >&2
+    return 1
 }
 
 show_speakers() {
     check_server || return 1
-    curl -s "$VOICEVOX_URL/speakers" | python3 -c "
+    curl -s "$VOICEVOX_ACTIVE_URL/speakers" | python3 -c "
 import json, sys
 speakers = json.load(sys.stdin)
 for s in speakers:
@@ -32,8 +51,10 @@ for s in speakers:
 "
 }
 
-# 単一チャンクを合成
-_synthesize_one() {
+# 単一チャンクを指定URLで合成
+_synthesize_one_at_url() {
+    local url="$1"
+    shift
     local text="$1"
     local output="$2"
 
@@ -50,7 +71,7 @@ _synthesize_one() {
     # Step 1: audio_query
     local query_json http_code
     query_json=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \
-        -X POST "$VOICEVOX_URL/audio_query" \
+        -X POST "$url/audio_query" \
         --get --data-urlencode "text=$text" \
         --data-urlencode "speaker=$VOICEVOX_SPEAKER" \
         -H "Content-Type: application/json")
@@ -77,7 +98,7 @@ json.dump(d,sys.stdout)
 
     # Step 2: synthesis
     http_code=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \
-        -X POST "$VOICEVOX_URL/synthesis?speaker=$VOICEVOX_SPEAKER" \
+        -X POST "$url/synthesis?speaker=$VOICEVOX_SPEAKER" \
         -H "Content-Type: application/json" \
         -d "$query_json" \
         --output "$output" \
@@ -88,6 +109,23 @@ json.dump(d,sys.stdout)
         rm -f "$output" 2>/dev/null
         return 1
     fi
+}
+
+# 単一チャンクを合成。primary が落ちていたら local fallback へ切り替える。
+_synthesize_one() {
+    local text="$1"
+    local output="$2"
+    local url
+    while IFS= read -r url; do
+        [ -n "$url" ] || continue
+        if _synthesize_one_at_url "$url" "$text" "$output"; then
+            VOICEVOX_ACTIVE_URL="$url"
+            return 0
+        fi
+        rm -f "$output" 2>/dev/null
+        echo "WARN: VOICEVOX synthesis failed at $url, trying fallback" >&2
+    done < <(_voicevox_synthesis_urls | awk 'NF && !seen[$0]++')
+    return 1
 }
 
 # テキストを句点・改行で分割（Python に委譲）

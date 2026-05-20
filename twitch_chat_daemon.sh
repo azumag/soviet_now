@@ -66,6 +66,7 @@ while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
     {
         # display-name などのメタ情報タグを受け取る
+        echo "PASS SCHMOOPIIE"
         echo "CAP REQ :twitch.tv/tags twitch.tv/commands"
         echo "NICK $nick"
         echo "JOIN #${CHANNEL}"
@@ -296,6 +297,7 @@ while true; do
             fi
         fi
     done
+    echo "[$(date '+%H:%M:%S')] IRC session ended; reconnecting in 5s" >> "$CHAT_DIR/daemon_reconnect.log"
     # --- Outbound chat queue consumer ---
     # chat_worker 配下では親 worker が送信を一元管理する。standalone daemon の時だけ消化する。
     _chat_worker_pid=""
