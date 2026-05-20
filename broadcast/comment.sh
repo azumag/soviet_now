@@ -1660,6 +1660,14 @@ _append_soviet_theme_item() {
 	local theme_item="$1"
 	theme_item=$(printf '%s' "$theme_item" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	[ -n "$theme_item" ] || return 0
+	if printf '%s\n' "$theme_item" | grep -Eq '獲得しました|連ガチャ|カードガチャ|【[A-Za-zァ-ヶー一-龠0-9 ]+】|[0-9]+[[:space:]]*種中'; then
+		log "[COMMENT] ソ連テーマ追加スキップ（ガチャ/獲得文）: $theme_item"
+		return 0
+	fi
+	if ! printf '%s\n' "$theme_item" | grep -Eq 'ソ連|ソビエト|ロシア|共産|冷戦|東側|東欧|KGB|スターリン|レーニン|フルシチョフ|ゴルバチョフ|ブレジネフ|ワルシャワ条約|コミンテルン|ボリシェヴィキ|チェルノブイリ|ガガーリン|スプートニク|宇宙開発|赤軍|クレムリン|バルト三国|ウクライナ|カザフ'; then
+		log "[COMMENT] ソ連テーマ追加スキップ（非ソ連テーマ）: $theme_item"
+		return 0
+	fi
 	# 「を深掘りして」で終わっていなければ付与
 	if ! echo "$theme_item" | grep -q 'を深掘りして$'; then
 		theme_item="${theme_item}を深掘りして"

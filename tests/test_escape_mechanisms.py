@@ -1563,6 +1563,14 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("_remember_spoken_comment()", script)
         self.assertNotIn("spoken history は外部ファイル参照に移行済み", script)
 
+    def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
+        script = (REPO_ROOT / "broadcast/comment.sh").read_text()
+
+        self.assertIn("ソ連テーマ追加スキップ（ガチャ/獲得文）", script)
+        self.assertIn("獲得しました|連ガチャ|カードガチャ", script)
+        self.assertIn("ソ連テーマ追加スキップ（非ソ連テーマ）", script)
+        self.assertIn("ソ連|ソビエト|ロシア|共産|冷戦", script)
+
 
 # --- Improve OBS overlay ------------------------------------------------------
 
