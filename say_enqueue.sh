@@ -891,7 +891,7 @@ _concat_prerendered_voicevox_chunks() {
 	if [ "$wav_count" -eq 1 ]; then
 		cp "$abs_wav" "$output_file" 2>/dev/null && [ -s "$output_file" ]
 	else
-		ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_list" -c:a pcm_s16le "$output_file" >>"$DEBUG_LOG_FILE" 2>&1 && [ -s "$output_file" ]
+		ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_list" -c:a pcm_s16le -f wav "$output_file" >>"$DEBUG_LOG_FILE" 2>&1 && [ -s "$output_file" ]
 	fi
 }
 
