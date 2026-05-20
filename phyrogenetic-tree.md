@@ -1,13 +1,13 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-20 23:20:44 JST`
-- Nodes: `1622`
-- Edges: `2131`
-- Current: `f77223bdf9b9`
-- Anchor: `8cde5038d8a6`
+- Updated: `2026-05-21 00:58:13 JST`
+- Nodes: `1404`
+- Edges: `1303`
+- Current: `23a95e22f7f6`
+- Anchor: `23a95e22f7f6`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
-- Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
+- Git history backfill is bounded to the latest `80` `strategy.py` commits; rolling/archive state still supplies older known nodes.
 - GitHub Mermaid size limit is avoided by splitting the full history into multiple smaller diagrams.
 
 ## Overview
@@ -15,53 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_8cde5038d8a6["8cde5038d8a6<br/>ANCHOR<br/>g=89 n=20<br/>comp=10816.2"]
-    h_45a778460147["45a778460147<br/>g=1 n=1<br/>comp=7759.0"]
-    h_4bec68bcc907["4bec68bcc907<br/>g=1 n=1<br/>comp=11107.0"]
-    h_3a905145d73b["3a905145d73b<br/>g=1 n=1<br/>comp=6671.0"]
-    h_487bb6a98fb1["487bb6a98fb1<br/>g=1 n=1<br/>comp=11399.0"]
-    h_c9d496f3a9db["c9d496f3a9db<br/>g=1 n=1<br/>comp=10169.0"]
-    h_416500ba76ab["416500ba76ab<br/>g=3 n=3<br/>comp=16870.5"]
-    h_dc66282041df["dc66282041df<br/>g=1 n=1<br/>comp=11197.0"]
-    h_f97d9059c4a0["f97d9059c4a0<br/>g=1 n=1<br/>comp=15638.0"]
-    h_0844c337fccf["0844c337fccf<br/>g=1 n=1<br/>comp=15694.0"]
-    h_37dc991befaf["37dc991befaf<br/>g=2 n=2<br/>comp=11299.4"]
-    h_b25f53b277de["b25f53b277de<br/>g=2 n=2<br/>comp=10534.8"]
-    h_70a3b1e28ca4["70a3b1e28ca4<br/>g=1 n=1<br/>comp=11574.0"]
-    h_74b31649bda3["74b31649bda3<br/>g=1 n=1<br/>comp=19757.0"]
-    h_fc7e846aaf48["fc7e846aaf48<br/>g=1 n=1<br/>comp=28856.0"]
-    h_19cdf56fa91b["19cdf56fa91b<br/>g=1 n=1<br/>comp=8874.0"]
-    h_f064e3ccebde["f064e3ccebde<br/>g=2 n=2<br/>comp=8970.9"]
-    h_8b462c0f7377["8b462c0f7377<br/>g=1 n=1<br/>comp=9001.0"]
-    h_4a034d815612["4a034d815612<br/>g=2 n=2<br/>comp=15783.7"]
-    h_7d1983b69866["7d1983b69866<br/>g=2 n=2<br/>comp=7546.2"]
-    h_1b51a4d746ea["1b51a4d746ea<br/>g=1 n=1<br/>comp=8674.0"]
-    h_374ab77ef0e4["374ab77ef0e4<br/>g=2 n=2<br/>comp=8983.5"]
-    h_e0ea5d34c1f3["e0ea5d34c1f3<br/>g=1 n=1<br/>comp=10075.0"]
-    h_ead61abf2573["ead61abf2573<br/>g=1 n=1<br/>comp=10833.0"]
-    h_84b59c0a4826["84b59c0a4826<br/>g=1 n=1<br/>comp=11482.0"]
-    h_c39d3397743f["c39d3397743f<br/>g=1 n=1<br/>comp=7525.0"]
-    h_92e9c7e03f9f["92e9c7e03f9f<br/>g=2 n=2<br/>comp=9223.1"]
-    h_671c9bea492c["671c9bea492c<br/>g=2 n=2<br/>comp=11190.7"]
-    h_98d213cf2e04["98d213cf2e04<br/>g=1 n=1<br/>comp=9639.0"]
-    h_5ec54d62d838["5ec54d62d838<br/>g=2 n=2<br/>comp=9204.1"]
-    h_ff99ce72b588["ff99ce72b588<br/>g=1 n=1<br/>comp=11425.0"]
-    h_fff42b1518a6["fff42b1518a6<br/>g=2 n=2<br/>comp=12648.3"]
-    h_1454b4a36e4b["1454b4a36e4b<br/>g=2 n=2<br/>comp=18164.3"]
-    h_c69876685abc["c69876685abc<br/>g=45 n=20<br/>comp=9995.7"]
-    h_50dc50125ab7["50dc50125ab7<br/>g=1 n=1<br/>comp=21106.0"]
-    h_48a937aea5b1["48a937aea5b1<br/>g=1 n=1<br/>comp=10149.0"]
-    h_bcb71e7c991c["bcb71e7c991c<br/>g=1 n=1<br/>comp=15078.0"]
-    h_8b09e9436cc8["8b09e9436cc8<br/>g=1 n=1<br/>comp=8206.0"]
-    h_3020221dd064["3020221dd064<br/>g=1 n=1<br/>comp=7921.0"]
-    h_22b1980d35a2["22b1980d35a2<br/>g=2 n=2<br/>comp=11247.6"]
-    h_85adb6c79dda["85adb6c79dda<br/>g=7 n=7<br/>comp=11306.3"]
-    h_c63b439234ab["c63b439234ab<br/>g=2 n=2<br/>comp=11040.6"]
-    h_3b9e42449d8e["3b9e42449d8e<br/>g=1 n=1<br/>comp=8491.0"]
-    h_7ddb227f455a["7ddb227f455a<br/>g=1 n=1<br/>comp=13975.0"]
-    h_92ba96416687["92ba96416687<br/>g=3 n=3<br/>comp=9643.6"]
-    h_655bcf5b4e5a["655bcf5b4e5a<br/>g=1 n=1<br/>comp=11223.0"]
-    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
+    h_23a95e22f7f6["23a95e22f7f6<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11933.6"]
     h_dc38191b780f["dc38191b780f<br/>g=9 n=9<br/>comp=10624.1"]
     h_cda8045c9344["cda8045c9344<br/>g=27 n=20<br/>comp=10114.1"]
     h_545a5ebfc8e2["545a5ebfc8e2<br/>g=4 n=4<br/>comp=7822.2"]
@@ -72,65 +26,84 @@ flowchart TD
     h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
     h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
     h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_b224cd20c7ba["b224cd20c7ba<br/>g=24 n=20<br/>comp=11106.7"]
+    h_4113c45a0e02["4113c45a0e02<br/>g=13 n=13<br/>comp=10685.4"]
+    h_4e149782a105["4e149782a105<br/>g=40 n=20<br/>comp=10844.0"]
+    h_764a1379cadb["764a1379cadb<br/>g=15 n=15<br/>comp=10457.5"]
+    h_8be52e039054["8be52e039054<br/>g=24 n=20<br/>comp=11005.6"]
+    h_09daf473ec34["09daf473ec34<br/>g=22 n=20<br/>comp=9494.3"]
+    h_3c62c43bbac4["3c62c43bbac4<br/>g=20 n=20<br/>comp=10555.2"]
+    h_ddf66354fe45["ddf66354fe45<br/>g=12 n=12<br/>comp=10679.7"]
+    h_1015e03235fa["1015e03235fa<br/>g=31 n=20<br/>comp=10483.9"]
+    h_fd3056a050f1["fd3056a050f1<br/>g=17 n=17<br/>comp=10613.2"]
+    h_2c9ff1ff7c36["2c9ff1ff7c36<br/>g=12 n=12<br/>comp=10249.5"]
+    h_517fa3969d26["517fa3969d26<br/>g=12 n=12<br/>comp=10876.9"]
+    h_40e67ef7fc96["40e67ef7fc96<br/>g=12 n=12<br/>comp=10685.0"]
+    h_a6298d726b3d["a6298d726b3d<br/>g=12 n=12<br/>comp=10942.8"]
+    h_33f9bc76c42f["33f9bc76c42f<br/>g=12 n=12<br/>comp=10432.6"]
     h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
+    h_3a90bd2a643d["3a90bd2a643d<br/>g=23 n=20<br/>comp=10274.4"]
+    h_665a70d477e6["665a70d477e6<br/>g=12 n=12<br/>comp=10761.5"]
+    h_05b0591ef25b["05b0591ef25b<br/>g=24 n=20<br/>comp=10991.1"]
+    h_84a9fab96145["84a9fab96145<br/>g=12 n=12<br/>comp=11401.8"]
+    h_b0a2a468a1c7["b0a2a468a1c7<br/>g=12 n=12<br/>comp=10641.0"]
+    h_44f2324ac753["44f2324ac753<br/>g=0"]
     h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
+    h_e5ed751fbce7["e5ed751fbce7<br/>g=12 n=12<br/>comp=10971.7"]
+    h_2301abdcd35b["2301abdcd35b<br/>g=0"]
+    h_aed09e698575["aed09e698575<br/>g=12 n=12<br/>comp=10696.7"]
+    h_490da448af77["490da448af77<br/>g=12 n=12<br/>comp=10636.6"]
+    h_6ebc1466efdf["6ebc1466efdf<br/>g=0"]
+    h_f2628f6f164a["f2628f6f164a<br/>g=0"]
+    h_830cb1e0c1f0["830cb1e0c1f0<br/>g=24 n=20<br/>comp=10662.6"]
+    h_57b073aea0fd["57b073aea0fd<br/>g=12 n=12<br/>comp=11351.1"]
+    h_4f07fa623345["4f07fa623345<br/>g=4 n=4<br/>comp=7494.9"]
+    h_92a72501e911["92a72501e911<br/>g=4 n=4<br/>comp=9358.7"]
+    h_4b3bd9843797["4b3bd9843797<br/>g=12 n=12<br/>comp=11895.5"]
     h_b3189d8121e6["b3189d8121e6<br/>g=3 n=3<br/>comp=8528.9"]
-    h_f77223bdf9b9["f77223bdf9b9<br/>CURRENT<br/>g=0"]
+    h_7017b28ae776["7017b28ae776<br/>g=4 n=4<br/>comp=9154.9"]
+    h_0a4a4352cd60["0a4a4352cd60<br/>g=4 n=4<br/>comp=8471.1"]
+    h_7b994b0502ad["7b994b0502ad<br/>g=4 n=4<br/>comp=10501.2"]
+    h_e25add30a506["e25add30a506<br/>g=4 n=4<br/>comp=11310.8"]
+    h_20d2d0cf31f3["20d2d0cf31f3<br/>g=4 n=4<br/>comp=10764.1"]
+    h_9db7c99981e9["9db7c99981e9<br/>g=4 n=4<br/>comp=11483.9"]
+    h_91822bbfb2e9["91822bbfb2e9<br/>g=4 n=4<br/>comp=11404.5"]
+    h_1267bad389a3["1267bad389a3<br/>g=12 n=12<br/>comp=10355.0"]
+    h_930bf98f7856["930bf98f7856<br/>g=12 n=12<br/>comp=10082.0"]
+    h_f427f6a14236["f427f6a14236<br/>g=4 n=4<br/>comp=10063.9"]
+    h_b453868211b3["b453868211b3<br/>g=4 n=4<br/>comp=10715.0"]
+    h_e326d295873e["e326d295873e<br/>g=4 n=4<br/>comp=10819.9"]
+    h_89139809fdbb["89139809fdbb<br/>g=4 n=4<br/>comp=13305.8"]
+    h_6049fd90b549["6049fd90b549<br/>g=4 n=4<br/>comp=11176.7"]
+    h_7c2e89b60c86["7c2e89b60c86<br/>g=4 n=4<br/>comp=13067.1"]
 
-    h_8cde5038d8a6 -->|improve| h_f77223bdf9b9
+    h_b224cd20c7ba -->|improve| h_4113c45a0e02
+    h_4e149782a105 -->|improve| h_764a1379cadb
+    h_8be52e039054 -->|improve| h_09daf473ec34
+    h_4e149782a105 -->|improve| h_3c62c43bbac4
+    h_3c62c43bbac4 -->|improve| h_ddf66354fe45
+    h_ddf66354fe45 -->|improve| h_1015e03235fa
+    h_1015e03235fa -->|improve| h_fd3056a050f1
+    h_fd3056a050f1 -->|improve| h_2c9ff1ff7c36
+    h_1015e03235fa -->|improve| h_517fa3969d26
+    h_517fa3969d26 -->|improve| h_40e67ef7fc96
+    h_3a90bd2a643d -->|improve| h_665a70d477e6
+    h_830cb1e0c1f0 -->|improve| h_57b073aea0fd
+    h_05b0591ef25b -->|improve| h_7017b28ae776
+    h_9db7c99981e9 -->|improve| h_91822bbfb2e9
+    h_91822bbfb2e9 -->|improve| h_1267bad389a3
+    h_f427f6a14236 -->|improve| h_b453868211b3
+    h_b453868211b3 -->|improve| h_e326d295873e
+    h_e326d295873e -->|improve| h_89139809fdbb
+    h_89139809fdbb -->|improve| h_6049fd90b549
+    h_6049fd90b549 -->|improve| h_7c2e89b60c86
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_8cde5038d8a6 anchor;
-    class h_45a778460147 plain;
-    class h_4bec68bcc907 plain;
-    class h_3a905145d73b plain;
-    class h_487bb6a98fb1 plain;
-    class h_c9d496f3a9db plain;
-    class h_416500ba76ab plain;
-    class h_dc66282041df plain;
-    class h_f97d9059c4a0 plain;
-    class h_0844c337fccf plain;
-    class h_37dc991befaf plain;
-    class h_b25f53b277de plain;
-    class h_70a3b1e28ca4 plain;
-    class h_74b31649bda3 plain;
-    class h_fc7e846aaf48 plain;
-    class h_19cdf56fa91b plain;
-    class h_f064e3ccebde plain;
-    class h_8b462c0f7377 plain;
-    class h_4a034d815612 plain;
-    class h_7d1983b69866 plain;
-    class h_1b51a4d746ea plain;
-    class h_374ab77ef0e4 plain;
-    class h_e0ea5d34c1f3 plain;
-    class h_ead61abf2573 plain;
-    class h_84b59c0a4826 plain;
-    class h_c39d3397743f plain;
-    class h_92e9c7e03f9f plain;
-    class h_671c9bea492c plain;
-    class h_98d213cf2e04 plain;
-    class h_5ec54d62d838 plain;
-    class h_ff99ce72b588 plain;
-    class h_fff42b1518a6 plain;
-    class h_1454b4a36e4b plain;
-    class h_c69876685abc plain;
-    class h_50dc50125ab7 plain;
-    class h_48a937aea5b1 plain;
-    class h_bcb71e7c991c plain;
-    class h_8b09e9436cc8 plain;
-    class h_3020221dd064 plain;
-    class h_22b1980d35a2 plain;
-    class h_85adb6c79dda plain;
-    class h_c63b439234ab plain;
-    class h_3b9e42449d8e plain;
-    class h_7ddb227f455a plain;
-    class h_92ba96416687 plain;
-    class h_655bcf5b4e5a plain;
-    class h_d0f554f02dcc plain;
+    class h_23a95e22f7f6 current_anchor;
     class h_dc38191b780f plain;
     class h_cda8045c9344 plain;
     class h_545a5ebfc8e2 plain;
@@ -141,640 +114,142 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
+    class h_b224cd20c7ba plain;
+    class h_4113c45a0e02 plain;
+    class h_4e149782a105 plain;
+    class h_764a1379cadb plain;
+    class h_8be52e039054 plain;
+    class h_09daf473ec34 plain;
+    class h_3c62c43bbac4 plain;
+    class h_ddf66354fe45 plain;
+    class h_1015e03235fa plain;
+    class h_fd3056a050f1 plain;
+    class h_2c9ff1ff7c36 plain;
+    class h_517fa3969d26 plain;
+    class h_40e67ef7fc96 plain;
+    class h_a6298d726b3d plain;
+    class h_33f9bc76c42f plain;
     class h_4095e6bf3d05 plain;
+    class h_3a90bd2a643d plain;
+    class h_665a70d477e6 plain;
+    class h_05b0591ef25b plain;
+    class h_84a9fab96145 plain;
+    class h_b0a2a468a1c7 plain;
+    class h_44f2324ac753 plain;
     class h_8c879f841357 plain;
+    class h_e5ed751fbce7 plain;
+    class h_2301abdcd35b plain;
+    class h_aed09e698575 plain;
+    class h_490da448af77 plain;
+    class h_6ebc1466efdf plain;
+    class h_f2628f6f164a plain;
+    class h_830cb1e0c1f0 plain;
+    class h_57b073aea0fd plain;
+    class h_4f07fa623345 plain;
+    class h_92a72501e911 plain;
+    class h_4b3bd9843797 plain;
     class h_b3189d8121e6 plain;
-    class h_f77223bdf9b9 current;
+    class h_7017b28ae776 plain;
+    class h_0a4a4352cd60 plain;
+    class h_7b994b0502ad plain;
+    class h_e25add30a506 plain;
+    class h_20d2d0cf31f3 plain;
+    class h_9db7c99981e9 plain;
+    class h_91822bbfb2e9 plain;
+    class h_1267bad389a3 plain;
+    class h_930bf98f7856 plain;
+    class h_f427f6a14236 plain;
+    class h_b453868211b3 plain;
+    class h_e326d295873e plain;
+    class h_89139809fdbb plain;
+    class h_6049fd90b549 plain;
+    class h_7c2e89b60c86 plain;
 ```
 
-## Detail 1/21
+## Detail 1/18
 
-- Range: `b0936e9e200b` .. `d3f6c63419da`
+- Range: `5f4ca17969cd` .. `780869025e24`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `83`
-- Cross-chunk link: `d3f6c63419da --improve--> 155d2f3c99f8`
-- Cross-chunk link: `f95349dcd93f -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 0b19b373ba4d`
-- Cross-chunk link: `b2b45b43facd -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 96365599213f`
-- Cross-chunk link: `03f7524cf920 -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `21ae73918a7d -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 740922d923ba`
-- Cross-chunk link: `b6063324187b -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 596e96ba354b`
-- Cross-chunk link: `596e96ba354b -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `... and 5 more`
+- Internal edges in this diagram: `114`
+- Cross-chunk link: `d23b57ac1e1f --improve--> c97cee797739`
+- Cross-chunk link: `03f7524cf920 --improve--> 0961bfe98bc8`
+- Cross-chunk link: `1aa464cc23d4 --improve--> 89c436411f12`
+- Cross-chunk link: `89c436411f12 --improve--> e5ed751fbce7`
+- Cross-chunk link: `89c436411f12 --improve--> 2301abdcd35b`
+- Cross-chunk link: `8cde5038d8a6 --improve--> aed09e698575`
+- Cross-chunk link: `89c436411f12 --improve--> 490da448af77`
+- Cross-chunk link: `89c436411f12 --improve--> 6ebc1466efdf`
+- Cross-chunk link: `89c436411f12 --improve--> f2628f6f164a`
+- Cross-chunk link: `89c436411f12 --improve--> 830cb1e0c1f0`
+- Cross-chunk link: `89c436411f12 --improve--> 4f07fa623345`
+- Cross-chunk link: `89c436411f12 --improve--> 92a72501e911`
+- Cross-chunk link: `... and 9 more`
 
 ```mermaid
 flowchart TD
-    h_b0936e9e200b["b0936e9e200b"]
-    h_e4bc59608c67["e4bc59608c67"]
-    h_2d1f9a38d00e["2d1f9a38d00e"]
-    h_e039059b8d8d["e039059b8d8d"]
-    h_fdceff1f6bf5["fdceff1f6bf5"]
-    h_c9b196cd1b06["c9b196cd1b06"]
-    h_6531f513b51c["6531f513b51c"]
-    h_dd76e5e22525["dd76e5e22525"]
-    h_3c486868eba8["3c486868eba8"]
-    h_f9472aa40675["f9472aa40675"]
-    h_57e912814720["57e912814720"]
-    h_0f400e55dcef["0f400e55dcef"]
-    h_09433570a203["09433570a203"]
-    h_de37f45f9fb8["de37f45f9fb8"]
-    h_94c92247fae3["94c92247fae3"]
-    h_95f998a02a93["95f998a02a93"]
-    h_dbc40f74967b["dbc40f74967b"]
-    h_0b3a6ab12dbe["0b3a6ab12dbe"]
-    h_39546d1ae02a["39546d1ae02a"]
-    h_c1848320ea63["c1848320ea63"]
-    h_a7c3e3f29132["a7c3e3f29132"]
-    h_f0b02b8d5913["f0b02b8d5913"]
-    h_7976770d022a["7976770d022a"]
-    h_aaa2fbd9c4f0["aaa2fbd9c4f0"]
-    h_e2f2ddedd462["e2f2ddedd462"]
-    h_799f09359e5e["799f09359e5e"]
-    h_44b5d8fdecaa["44b5d8fdecaa"]
-    h_31b6dddd1967["31b6dddd1967"]
-    h_57ebcaf98924["57ebcaf98924"]
-    h_ad1cef65257e["ad1cef65257e"]
-    h_20d803959cf9["20d803959cf9"]
-    h_873e46ebaa6c["873e46ebaa6c"]
-    h_70d2e37e16af["70d2e37e16af"]
-    h_f1ce25c980ed["f1ce25c980ed"]
-    h_97fed1385efb["97fed1385efb"]
-    h_dda27d8bf077["dda27d8bf077"]
-    h_84d8f61180c4["84d8f61180c4"]
-    h_7b8e05157fe0["7b8e05157fe0"]
-    h_102c5c2a0dde["102c5c2a0dde"]
-    h_898f42a7166a["898f42a7166a"]
-    h_f9c83a79bf99["f9c83a79bf99"]
-    h_13749b02e9be["13749b02e9be"]
-    h_ab769ecc78fa["ab769ecc78fa"]
-    h_dfc6a1058b5d["dfc6a1058b5d"]
-    h_3cce155c16ca["3cce155c16ca"]
-    h_dcbff9abb0a5["dcbff9abb0a5"]
-    h_45e6c92f7948["45e6c92f7948"]
-    h_0b9c35838965["0b9c35838965"]
-    h_3da291dbd1d1["3da291dbd1d1"]
-    h_90eac5f01c92["90eac5f01c92"]
-    h_f1210d388d1b["f1210d388d1b<br/>g=13 n=13<br/>comp=931.0"]
-    h_bf4a9f45d1d4["bf4a9f45d1d4"]
-    h_f040df248b1a["f040df248b1a"]
-    h_e3aff4b458c5["e3aff4b458c5"]
-    h_db325ac46be1["db325ac46be1"]
-    h_096caa6e60e5["096caa6e60e5"]
-    h_b9ced5d01685["b9ced5d01685"]
-    h_05288cd67986["05288cd67986"]
-    h_712ab51231b6["712ab51231b6"]
-    h_314f8f06e79a["314f8f06e79a"]
-    h_d8e15a466aac["d8e15a466aac"]
-    h_5ad20b7a3c69["5ad20b7a3c69"]
-    h_ec17cfa3fd50["ec17cfa3fd50"]
-    h_7c8bf7070075["7c8bf7070075"]
-    h_3eb7c63147ce["3eb7c63147ce"]
-    h_e4ae11cd8ad1["e4ae11cd8ad1"]
-    h_b1f788954e68["b1f788954e68"]
-    h_540082274e98["540082274e98"]
-    h_4de801d63903["4de801d63903"]
-    h_6b61b12b54a0["6b61b12b54a0"]
-    h_8f31d1847d3f["8f31d1847d3f"]
-    h_517ecf455d49["517ecf455d49"]
-    h_4f9ac51a30d1["4f9ac51a30d1"]
-    h_de12063f125e["de12063f125e"]
-    h_f7e26af5507d["f7e26af5507d"]
-    h_c9d42d442d7e["c9d42d442d7e"]
-    h_7d7672c4e6fa["7d7672c4e6fa"]
-    h_6dfb2ead5f94["6dfb2ead5f94"]
-    h_66d961be6f61["66d961be6f61"]
-    h_d3f6c63419da["d3f6c63419da"]
-
-    h_b0936e9e200b -->|improve| h_e4bc59608c67
-    h_e4bc59608c67 -->|improve| h_2d1f9a38d00e
-    h_2d1f9a38d00e -->|improve| h_e039059b8d8d
-    h_e039059b8d8d -->|improve| h_fdceff1f6bf5
-    h_fdceff1f6bf5 -->|improve| h_c9b196cd1b06
-    h_c9b196cd1b06 -->|improve| h_6531f513b51c
-    h_6531f513b51c -->|improve| h_dd76e5e22525
-    h_dd76e5e22525 -->|improve| h_3c486868eba8
-    h_3c486868eba8 -->|improve| h_f9472aa40675
-    h_f9472aa40675 -->|improve| h_57e912814720
-    h_57e912814720 -->|improve| h_0f400e55dcef
-    h_0f400e55dcef -->|improve| h_09433570a203
-    h_09433570a203 -->|improve| h_de37f45f9fb8
-    h_de37f45f9fb8 -->|improve| h_94c92247fae3
-    h_94c92247fae3 -->|improve| h_95f998a02a93
-    h_95f998a02a93 -->|improve| h_dbc40f74967b
-    h_dbc40f74967b -->|improve| h_0b3a6ab12dbe
-    h_0b3a6ab12dbe -->|improve| h_39546d1ae02a
-    h_39546d1ae02a -->|improve| h_c1848320ea63
-    h_c1848320ea63 -->|improve| h_a7c3e3f29132
-    h_a7c3e3f29132 -->|improve| h_f0b02b8d5913
-    h_f0b02b8d5913 -->|improve| h_7976770d022a
-    h_7976770d022a -. rollback .-> h_f0b02b8d5913
-    h_f0b02b8d5913 -->|improve| h_aaa2fbd9c4f0
-    h_aaa2fbd9c4f0 -->|improve| h_e2f2ddedd462
-    h_e2f2ddedd462 -->|improve| h_799f09359e5e
-    h_799f09359e5e -->|improve| h_44b5d8fdecaa
-    h_44b5d8fdecaa -->|improve| h_31b6dddd1967
-    h_31b6dddd1967 -->|improve| h_57ebcaf98924
-    h_57ebcaf98924 -->|improve| h_ad1cef65257e
-    h_ad1cef65257e -->|improve| h_20d803959cf9
-    h_20d803959cf9 -->|improve| h_873e46ebaa6c
-    h_873e46ebaa6c -->|improve| h_70d2e37e16af
-    h_70d2e37e16af -->|improve| h_f1ce25c980ed
-    h_f1ce25c980ed -->|improve| h_97fed1385efb
-    h_97fed1385efb -->|improve| h_dda27d8bf077
-    h_dda27d8bf077 -->|improve| h_84d8f61180c4
-    h_84d8f61180c4 -->|improve| h_7b8e05157fe0
-    h_7b8e05157fe0 -->|improve| h_102c5c2a0dde
-    h_102c5c2a0dde -->|improve| h_898f42a7166a
-    h_898f42a7166a -->|improve| h_f9c83a79bf99
-    h_f9c83a79bf99 -->|improve| h_13749b02e9be
-    h_13749b02e9be -->|improve| h_ab769ecc78fa
-    h_ab769ecc78fa -->|improve| h_dfc6a1058b5d
-    h_dfc6a1058b5d -->|improve| h_3cce155c16ca
-    h_3cce155c16ca -->|improve| h_dcbff9abb0a5
-    h_dcbff9abb0a5 -->|improve| h_45e6c92f7948
-    h_45e6c92f7948 -->|improve| h_0b9c35838965
-    h_0b9c35838965 -->|improve| h_3da291dbd1d1
-    h_3da291dbd1d1 -->|improve| h_90eac5f01c92
-    h_90eac5f01c92 -->|improve| h_f1210d388d1b
-    h_f1210d388d1b -->|improve| h_bf4a9f45d1d4
-    h_bf4a9f45d1d4 -->|improve| h_f040df248b1a
-    h_f040df248b1a -->|improve| h_e3aff4b458c5
-    h_e3aff4b458c5 -->|improve| h_db325ac46be1
-    h_db325ac46be1 -->|improve| h_096caa6e60e5
-    h_096caa6e60e5 -->|improve| h_b9ced5d01685
-    h_b9ced5d01685 -->|improve| h_05288cd67986
-    h_05288cd67986 -->|improve| h_712ab51231b6
-    h_712ab51231b6 -->|improve| h_314f8f06e79a
-    h_314f8f06e79a -->|improve| h_d8e15a466aac
-    h_d8e15a466aac -->|improve| h_5ad20b7a3c69
-    h_5ad20b7a3c69 -->|improve| h_ec17cfa3fd50
-    h_ec17cfa3fd50 -->|improve| h_7c8bf7070075
-    h_7c8bf7070075 -->|improve| h_3eb7c63147ce
-    h_3eb7c63147ce -->|improve| h_e4ae11cd8ad1
-    h_e4ae11cd8ad1 -. rollback .-> h_f1210d388d1b
-    h_f1210d388d1b -->|improve| h_b1f788954e68
-    h_b1f788954e68 -->|improve| h_540082274e98
-    h_540082274e98 -->|improve| h_4de801d63903
-    h_4de801d63903 -->|improve| h_6b61b12b54a0
-    h_6b61b12b54a0 -. rollback .-> h_f1210d388d1b
-    h_f1210d388d1b -->|improve| h_8f31d1847d3f
-    h_8f31d1847d3f -. rollback .-> h_3cce155c16ca
-    h_3cce155c16ca -->|improve| h_517ecf455d49
-    h_517ecf455d49 -->|improve| h_4f9ac51a30d1
-    h_4f9ac51a30d1 -->|improve| h_de12063f125e
-    h_de12063f125e -->|improve| h_f7e26af5507d
-    h_f7e26af5507d -->|improve| h_c9d42d442d7e
-    h_c9d42d442d7e -->|improve| h_7d7672c4e6fa
-    h_7d7672c4e6fa -->|improve| h_6dfb2ead5f94
-    h_6dfb2ead5f94 -->|improve| h_66d961be6f61
-    h_66d961be6f61 -->|improve| h_d3f6c63419da
-
-    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
-    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
-    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
-    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
-
-    class h_b0936e9e200b plain;
-    class h_e4bc59608c67 plain;
-    class h_2d1f9a38d00e plain;
-    class h_e039059b8d8d plain;
-    class h_fdceff1f6bf5 plain;
-    class h_c9b196cd1b06 plain;
-    class h_6531f513b51c plain;
-    class h_dd76e5e22525 plain;
-    class h_3c486868eba8 plain;
-    class h_f9472aa40675 plain;
-    class h_57e912814720 plain;
-    class h_0f400e55dcef plain;
-    class h_09433570a203 plain;
-    class h_de37f45f9fb8 plain;
-    class h_94c92247fae3 plain;
-    class h_95f998a02a93 plain;
-    class h_dbc40f74967b plain;
-    class h_0b3a6ab12dbe plain;
-    class h_39546d1ae02a plain;
-    class h_c1848320ea63 plain;
-    class h_a7c3e3f29132 plain;
-    class h_f0b02b8d5913 plain;
-    class h_7976770d022a plain;
-    class h_aaa2fbd9c4f0 plain;
-    class h_e2f2ddedd462 plain;
-    class h_799f09359e5e plain;
-    class h_44b5d8fdecaa plain;
-    class h_31b6dddd1967 plain;
-    class h_57ebcaf98924 plain;
-    class h_ad1cef65257e plain;
-    class h_20d803959cf9 plain;
-    class h_873e46ebaa6c plain;
-    class h_70d2e37e16af plain;
-    class h_f1ce25c980ed plain;
-    class h_97fed1385efb plain;
-    class h_dda27d8bf077 plain;
-    class h_84d8f61180c4 plain;
-    class h_7b8e05157fe0 plain;
-    class h_102c5c2a0dde plain;
-    class h_898f42a7166a plain;
-    class h_f9c83a79bf99 plain;
-    class h_13749b02e9be plain;
-    class h_ab769ecc78fa plain;
-    class h_dfc6a1058b5d plain;
-    class h_3cce155c16ca plain;
-    class h_dcbff9abb0a5 plain;
-    class h_45e6c92f7948 plain;
-    class h_0b9c35838965 plain;
-    class h_3da291dbd1d1 plain;
-    class h_90eac5f01c92 plain;
-    class h_f1210d388d1b plain;
-    class h_bf4a9f45d1d4 plain;
-    class h_f040df248b1a plain;
-    class h_e3aff4b458c5 plain;
-    class h_db325ac46be1 plain;
-    class h_096caa6e60e5 plain;
-    class h_b9ced5d01685 plain;
-    class h_05288cd67986 plain;
-    class h_712ab51231b6 plain;
-    class h_314f8f06e79a plain;
-    class h_d8e15a466aac plain;
-    class h_5ad20b7a3c69 plain;
-    class h_ec17cfa3fd50 plain;
-    class h_7c8bf7070075 plain;
-    class h_3eb7c63147ce plain;
-    class h_e4ae11cd8ad1 plain;
-    class h_b1f788954e68 plain;
-    class h_540082274e98 plain;
-    class h_4de801d63903 plain;
-    class h_6b61b12b54a0 plain;
-    class h_8f31d1847d3f plain;
-    class h_517ecf455d49 plain;
-    class h_4f9ac51a30d1 plain;
-    class h_de12063f125e plain;
-    class h_f7e26af5507d plain;
-    class h_c9d42d442d7e plain;
-    class h_7d7672c4e6fa plain;
-    class h_6dfb2ead5f94 plain;
-    class h_66d961be6f61 plain;
-    class h_d3f6c63419da plain;
-```
-
-## Detail 2/21
-
-- Range: `155d2f3c99f8` .. `b5cd8a7be86d`
-- Nodes in this diagram: `80`
-- Internal edges in this diagram: `83`
-- Cross-chunk link: `d3f6c63419da --improve--> 155d2f3c99f8`
-- Cross-chunk link: `f95349dcd93f -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 0b19b373ba4d`
-- Cross-chunk link: `b2b45b43facd -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 96365599213f`
-- Cross-chunk link: `03f7524cf920 -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `21ae73918a7d -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 740922d923ba`
-- Cross-chunk link: `b6063324187b -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 596e96ba354b`
-- Cross-chunk link: `596e96ba354b -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `... and 26 more`
-
-```mermaid
-flowchart TD
-    h_155d2f3c99f8["155d2f3c99f8"]
-    h_76750ce3bc91["76750ce3bc91"]
-    h_af049000deba["af049000deba"]
-    h_6e43379039b7["6e43379039b7"]
-    h_137b80b86ae0["137b80b86ae0"]
-    h_d2a4001a5cb5["d2a4001a5cb5"]
-    h_b4b1fad0af72["b4b1fad0af72"]
-    h_96b9174334c3["96b9174334c3"]
-    h_1a4875df7f84["1a4875df7f84"]
-    h_ac14e5420133["ac14e5420133"]
-    h_f95349dcd93f["f95349dcd93f"]
-    h_0b19b373ba4d["0b19b373ba4d"]
-    h_4206dffdc6a9["4206dffdc6a9"]
-    h_ff6414af1d82["ff6414af1d82"]
-    h_cd4c8a75ed6f["cd4c8a75ed6f"]
-    h_d3f31ef77a32["d3f31ef77a32"]
-    h_88fbdca1db21["88fbdca1db21"]
-    h_dd74c894ff2c["dd74c894ff2c"]
-    h_1d21660f933d["1d21660f933d"]
-    h_db97bede877a["db97bede877a"]
-    h_91aa7df9c822["91aa7df9c822"]
-    h_a6a7ca2b3767["a6a7ca2b3767"]
-    h_8ec1c75f54b0["8ec1c75f54b0"]
-    h_2758f552da0c["2758f552da0c"]
-    h_69b91a20c5a5["69b91a20c5a5"]
-    h_b09cfc52736b["b09cfc52736b"]
-    h_3d0912ffe7e8["3d0912ffe7e8"]
-    h_29699f85e206["29699f85e206"]
-    h_d20f0d105236["d20f0d105236"]
-    h_b2b45b43facd["b2b45b43facd"]
-    h_96365599213f["96365599213f"]
-    h_9719f1fe4df0["9719f1fe4df0"]
-    h_1355172e74bc["1355172e74bc"]
-    h_b76cafcff26a["b76cafcff26a"]
-    h_63497d665228["63497d665228"]
-    h_1c981acaa1bb["1c981acaa1bb"]
-    h_e95c5e5ca60b["e95c5e5ca60b"]
-    h_3b4cfec753d6["3b4cfec753d6"]
-    h_b525d59f10a3["b525d59f10a3"]
-    h_7dfba30e72dc["7dfba30e72dc"]
-    h_03f7524cf920["03f7524cf920<br/>g=18 n=18<br/>comp=897.5"]
-    h_1a960aadeb8b["1a960aadeb8b"]
-    h_1d2ab254c766["1d2ab254c766"]
-    h_9f78d1ae4860["9f78d1ae4860"]
-    h_efd6456c1390["efd6456c1390"]
-    h_548cbf464126["548cbf464126"]
-    h_1e8c3113cb4a["1e8c3113cb4a"]
-    h_21ae73918a7d["21ae73918a7d"]
-    h_740922d923ba["740922d923ba"]
-    h_be0e735d8f11["be0e735d8f11"]
-    h_6d44a3d2a50f["6d44a3d2a50f"]
-    h_d6f554d054d7["d6f554d054d7"]
-    h_bfe2f811651c["bfe2f811651c"]
-    h_62be6dfb62c1["62be6dfb62c1"]
-    h_0254d566dd46["0254d566dd46"]
-    h_720e4a7cf279["720e4a7cf279"]
-    h_b9da441828e4["b9da441828e4"]
-    h_658826b27199["658826b27199"]
-    h_d0b41afada2f["d0b41afada2f"]
-    h_2e23c3d9329f["2e23c3d9329f"]
-    h_a92ea3595895["a92ea3595895"]
-    h_d906d8ce74ec["d906d8ce74ec"]
-    h_cc738c7952e1["cc738c7952e1"]
-    h_ef0217fb36b5["ef0217fb36b5"]
-    h_b6063324187b["b6063324187b"]
-    h_596e96ba354b["596e96ba354b"]
-    h_2d98ed37337d["2d98ed37337d"]
-    h_f3da681bc8ed["f3da681bc8ed"]
-    h_a88f4a3fd7aa["a88f4a3fd7aa"]
-    h_a131b78a5192["a131b78a5192"]
-    h_71b35a2913a4["71b35a2913a4"]
-    h_229ab640574a["229ab640574a"]
-    h_9f137e10711f["9f137e10711f"]
-    h_811226ca0556["811226ca0556"]
-    h_e24195f7a194["e24195f7a194"]
-    h_4eba9dba67d0["4eba9dba67d0"]
-    h_2da4858b2c01["2da4858b2c01"]
-    h_2512ecc005e1["2512ecc005e1"]
-    h_a755765d5b7b["a755765d5b7b"]
-    h_b5cd8a7be86d["b5cd8a7be86d"]
-
-    h_155d2f3c99f8 -->|improve| h_76750ce3bc91
-    h_76750ce3bc91 -->|improve| h_af049000deba
-    h_af049000deba -->|improve| h_6e43379039b7
-    h_6e43379039b7 -->|improve| h_137b80b86ae0
-    h_137b80b86ae0 -->|improve| h_d2a4001a5cb5
-    h_d2a4001a5cb5 -->|improve| h_b4b1fad0af72
-    h_b4b1fad0af72 -->|improve| h_96b9174334c3
-    h_96b9174334c3 -->|improve| h_1a4875df7f84
-    h_1a4875df7f84 -->|improve| h_ac14e5420133
-    h_ac14e5420133 -->|improve| h_f95349dcd93f
-    h_0b19b373ba4d -->|improve| h_4206dffdc6a9
-    h_4206dffdc6a9 -->|improve| h_ff6414af1d82
-    h_ff6414af1d82 -->|improve| h_cd4c8a75ed6f
-    h_cd4c8a75ed6f -->|improve| h_d3f31ef77a32
-    h_d3f31ef77a32 -->|improve| h_88fbdca1db21
-    h_88fbdca1db21 -->|improve| h_dd74c894ff2c
-    h_dd74c894ff2c -->|improve| h_1d21660f933d
-    h_1d21660f933d -->|improve| h_db97bede877a
-    h_db97bede877a -->|improve| h_91aa7df9c822
-    h_91aa7df9c822 -->|improve| h_a6a7ca2b3767
-    h_a6a7ca2b3767 -->|improve| h_8ec1c75f54b0
-    h_8ec1c75f54b0 -. rollback .-> h_a6a7ca2b3767
-    h_a6a7ca2b3767 -->|improve| h_2758f552da0c
-    h_2758f552da0c -->|improve| h_69b91a20c5a5
-    h_69b91a20c5a5 -->|improve| h_b09cfc52736b
-    h_b09cfc52736b -->|improve| h_3d0912ffe7e8
-    h_3d0912ffe7e8 -->|improve| h_29699f85e206
-    h_29699f85e206 -->|improve| h_d20f0d105236
-    h_d20f0d105236 -->|improve| h_b2b45b43facd
-    h_96365599213f -->|improve| h_9719f1fe4df0
-    h_9719f1fe4df0 -->|improve| h_1355172e74bc
-    h_1355172e74bc -->|improve| h_b76cafcff26a
-    h_b76cafcff26a -->|improve| h_63497d665228
-    h_63497d665228 -->|improve| h_1c981acaa1bb
-    h_1c981acaa1bb -->|improve| h_e95c5e5ca60b
-    h_e95c5e5ca60b -->|improve| h_3b4cfec753d6
-    h_3b4cfec753d6 -->|improve| h_b525d59f10a3
-    h_b525d59f10a3 -->|improve| h_7dfba30e72dc
-    h_7dfba30e72dc -->|improve| h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_1a960aadeb8b
-    h_1a960aadeb8b -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_1d2ab254c766
-    h_1d2ab254c766 -->|improve| h_9f78d1ae4860
-    h_9f78d1ae4860 -->|improve| h_efd6456c1390
-    h_efd6456c1390 -->|improve| h_548cbf464126
-    h_548cbf464126 -->|improve| h_1e8c3113cb4a
-    h_1e8c3113cb4a -->|improve| h_21ae73918a7d
-    h_740922d923ba -->|improve| h_be0e735d8f11
-    h_be0e735d8f11 -->|improve| h_6d44a3d2a50f
-    h_6d44a3d2a50f -->|improve| h_d6f554d054d7
-    h_d6f554d054d7 -->|improve| h_bfe2f811651c
-    h_bfe2f811651c -->|improve| h_62be6dfb62c1
-    h_62be6dfb62c1 -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_0254d566dd46
-    h_0254d566dd46 -->|improve| h_720e4a7cf279
-    h_720e4a7cf279 -->|improve| h_b9da441828e4
-    h_b9da441828e4 -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_658826b27199
-    h_658826b27199 -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_d0b41afada2f
-    h_d0b41afada2f -->|improve| h_2e23c3d9329f
-    h_2e23c3d9329f -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_a92ea3595895
-    h_a92ea3595895 -->|improve| h_d906d8ce74ec
-    h_d906d8ce74ec -->|improve| h_cc738c7952e1
-    h_cc738c7952e1 -->|improve| h_ef0217fb36b5
-    h_ef0217fb36b5 -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_b6063324187b
-    h_2d98ed37337d -->|improve| h_f3da681bc8ed
-    h_f3da681bc8ed -->|improve| h_a88f4a3fd7aa
-    h_a88f4a3fd7aa -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_a131b78a5192
-    h_a131b78a5192 -->|improve| h_71b35a2913a4
-    h_71b35a2913a4 -->|improve| h_229ab640574a
-    h_229ab640574a -->|improve| h_9f137e10711f
-    h_9f137e10711f -->|improve| h_811226ca0556
-    h_811226ca0556 -->|improve| h_e24195f7a194
-    h_e24195f7a194 -. rollback .-> h_03f7524cf920
-    h_03f7524cf920 -->|improve| h_4eba9dba67d0
-    h_4eba9dba67d0 -->|improve| h_2da4858b2c01
-    h_2da4858b2c01 -->|improve| h_2512ecc005e1
-    h_2512ecc005e1 -. rollback .-> h_03f7524cf920
-    h_a755765d5b7b -->|improve| h_b5cd8a7be86d
-
-    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
-    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
-    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
-    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
-
-    class h_155d2f3c99f8 plain;
-    class h_76750ce3bc91 plain;
-    class h_af049000deba plain;
-    class h_6e43379039b7 plain;
-    class h_137b80b86ae0 plain;
-    class h_d2a4001a5cb5 plain;
-    class h_b4b1fad0af72 plain;
-    class h_96b9174334c3 plain;
-    class h_1a4875df7f84 plain;
-    class h_ac14e5420133 plain;
-    class h_f95349dcd93f plain;
-    class h_0b19b373ba4d plain;
-    class h_4206dffdc6a9 plain;
-    class h_ff6414af1d82 plain;
-    class h_cd4c8a75ed6f plain;
-    class h_d3f31ef77a32 plain;
-    class h_88fbdca1db21 plain;
-    class h_dd74c894ff2c plain;
-    class h_1d21660f933d plain;
-    class h_db97bede877a plain;
-    class h_91aa7df9c822 plain;
-    class h_a6a7ca2b3767 plain;
-    class h_8ec1c75f54b0 plain;
-    class h_2758f552da0c plain;
-    class h_69b91a20c5a5 plain;
-    class h_b09cfc52736b plain;
-    class h_3d0912ffe7e8 plain;
-    class h_29699f85e206 plain;
-    class h_d20f0d105236 plain;
-    class h_b2b45b43facd plain;
-    class h_96365599213f plain;
-    class h_9719f1fe4df0 plain;
-    class h_1355172e74bc plain;
-    class h_b76cafcff26a plain;
-    class h_63497d665228 plain;
-    class h_1c981acaa1bb plain;
-    class h_e95c5e5ca60b plain;
-    class h_3b4cfec753d6 plain;
-    class h_b525d59f10a3 plain;
-    class h_7dfba30e72dc plain;
-    class h_03f7524cf920 plain;
-    class h_1a960aadeb8b plain;
-    class h_1d2ab254c766 plain;
-    class h_9f78d1ae4860 plain;
-    class h_efd6456c1390 plain;
-    class h_548cbf464126 plain;
-    class h_1e8c3113cb4a plain;
-    class h_21ae73918a7d plain;
-    class h_740922d923ba plain;
-    class h_be0e735d8f11 plain;
-    class h_6d44a3d2a50f plain;
-    class h_d6f554d054d7 plain;
-    class h_bfe2f811651c plain;
-    class h_62be6dfb62c1 plain;
-    class h_0254d566dd46 plain;
-    class h_720e4a7cf279 plain;
-    class h_b9da441828e4 plain;
-    class h_658826b27199 plain;
-    class h_d0b41afada2f plain;
-    class h_2e23c3d9329f plain;
-    class h_a92ea3595895 plain;
-    class h_d906d8ce74ec plain;
-    class h_cc738c7952e1 plain;
-    class h_ef0217fb36b5 plain;
-    class h_b6063324187b plain;
-    class h_596e96ba354b plain;
-    class h_2d98ed37337d plain;
-    class h_f3da681bc8ed plain;
-    class h_a88f4a3fd7aa plain;
-    class h_a131b78a5192 plain;
-    class h_71b35a2913a4 plain;
-    class h_229ab640574a plain;
-    class h_9f137e10711f plain;
-    class h_811226ca0556 plain;
-    class h_e24195f7a194 plain;
-    class h_4eba9dba67d0 plain;
-    class h_2da4858b2c01 plain;
-    class h_2512ecc005e1 plain;
-    class h_a755765d5b7b plain;
-    class h_b5cd8a7be86d plain;
-```
-
-## Detail 3/21
-
-- Range: `e3676607049d` .. `e24d1084d5ef`
-- Nodes in this diagram: `80`
-- Internal edges in this diagram: `77`
-- Cross-chunk link: `b5cd8a7be86d --improve--> e3676607049d`
-- Cross-chunk link: `e3676607049d -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `03f7524cf920 --improve--> c924c81022f5`
-- Cross-chunk link: `c6c5812169bf -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `03f7524cf920 --improve--> 5ff6de32e6a5`
-- Cross-chunk link: `5ff6de32e6a5 -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `03f7524cf920 --improve--> f020b7b4c6ec`
-- Cross-chunk link: `f020b7b4c6ec -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `03f7524cf920 --improve--> 52dec2d240b4`
-- Cross-chunk link: `ae6fa6d87a06 -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `03f7524cf920 --improve--> f30307f557e2`
-- Cross-chunk link: `31709ff6533d -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `... and 17 more`
-
-```mermaid
-flowchart TD
-    h_e3676607049d["e3676607049d"]
-    h_c924c81022f5["c924c81022f5"]
-    h_0058714043a7["0058714043a7"]
-    h_d6cae27ed802["d6cae27ed802"]
-    h_8294dea52a70["8294dea52a70"]
-    h_c6c5812169bf["c6c5812169bf"]
-    h_5ff6de32e6a5["5ff6de32e6a5"]
-    h_f020b7b4c6ec["f020b7b4c6ec"]
-    h_52dec2d240b4["52dec2d240b4"]
-    h_78921e4f842e["78921e4f842e"]
-    h_ae6fa6d87a06["ae6fa6d87a06"]
-    h_f30307f557e2["f30307f557e2"]
-    h_0961bfe98bc8["0961bfe98bc8<br/>g=8 n=8<br/>comp=1032.6"]
-    h_59dbe2e99e83["59dbe2e99e83"]
-    h_292b8d838624["292b8d838624"]
-    h_aab5cfdabaa9["aab5cfdabaa9"]
-    h_178c797a7762["178c797a7762"]
-    h_ae0e500b9534["ae0e500b9534"]
-    h_4ecccd5b3ce0["4ecccd5b3ce0"]
-    h_80963a2974aa["80963a2974aa"]
-    h_3793ec65f0a8["3793ec65f0a8"]
-    h_9555c5d7b8ed["9555c5d7b8ed"]
-    h_491005bdda14["491005bdda14"]
-    h_dc79266c4642["dc79266c4642"]
-    h_83458ea60e45["83458ea60e45"]
-    h_6db63b792b4e["6db63b792b4e"]
-    h_1d2f0657ca4f["1d2f0657ca4f"]
-    h_1d73791b0408["1d73791b0408"]
-    h_43bb9dd7218f["43bb9dd7218f"]
-    h_30b1059145b2["30b1059145b2"]
-    h_736eaa7a621e["736eaa7a621e"]
-    h_0d84c249c34a["0d84c249c34a"]
-    h_c94941f9c53c["c94941f9c53c"]
-    h_e57c64a0b32f["e57c64a0b32f"]
-    h_c0c9d9b71bea["c0c9d9b71bea"]
-    h_446f8d51b619["446f8d51b619"]
-    h_3d43b5c4b339["3d43b5c4b339"]
-    h_31709ff6533d["31709ff6533d"]
-    h_f0ce05373605["f0ce05373605"]
-    h_e199cc8496ef["e199cc8496ef"]
-    h_7e7feffb4acf["7e7feffb4acf"]
-    h_2146c1000ebe["2146c1000ebe"]
-    h_4266bc4d5404["4266bc4d5404"]
-    h_521e2a6f7514["521e2a6f7514"]
-    h_a530a40a918f["a530a40a918f"]
-    h_17a089b8bb9a["17a089b8bb9a"]
-    h_9d672f0df0c7["9d672f0df0c7"]
-    h_419ab6257d92["419ab6257d92"]
-    h_7297204b0bd5["7297204b0bd5"]
-    h_59be602676c6["59be602676c6"]
-    h_1bd7aa5a5785["1bd7aa5a5785"]
+    h_5f4ca17969cd["5f4ca17969cd<br/>g=4 n=4<br/>comp=8959.0"]
+    h_0e899ca31b42["0e899ca31b42<br/>g=61 n=20<br/>comp=9783.1"]
+    h_5f1036c9e3cf["5f1036c9e3cf<br/>g=24 n=20<br/>comp=11035.1"]
+    h_0e24bff87c81["0e24bff87c81<br/>g=3 n=3<br/>comp=12001.0"]
+    h_8cde5038d8a6["8cde5038d8a6<br/>g=101 n=20<br/>comp=10008.4"]
+    h_35729075cdbb["35729075cdbb<br/>g=35 n=20<br/>comp=10480.6"]
+    h_d4064b9a3c33["d4064b9a3c33<br/>g=12 n=12<br/>comp=10944.4"]
+    h_82789c2a1f26["82789c2a1f26<br/>g=0"]
+    h_16bc5b207f52["16bc5b207f52<br/>g=16 n=16<br/>comp=11087.7"]
+    h_7e7e42a95b0c["7e7e42a95b0c<br/>g=12 n=12<br/>comp=11174.0"]
+    h_44b16e23d9b6["44b16e23d9b6<br/>g=12 n=12<br/>comp=10648.3"]
+    h_c6797d71b3e6["c6797d71b3e6<br/>g=12 n=12<br/>comp=9820.3"]
+    h_5fc309765dc9["5fc309765dc9<br/>g=12 n=12<br/>comp=9801.6"]
+    h_026dad83a186["026dad83a186<br/>g=4 n=4<br/>comp=9735.5"]
+    h_d875a4e21e0d["d875a4e21e0d<br/>g=8 n=8<br/>comp=11196.0"]
+    h_19b772b1ac66["19b772b1ac66<br/>g=4 n=4<br/>comp=11438.1"]
+    h_1a499eef5d15["1a499eef5d15<br/>g=4 n=4<br/>comp=10878.1"]
+    h_151b3f6a0061["151b3f6a0061<br/>g=4 n=4<br/>comp=12370.9"]
+    h_96eb76e57ffc["96eb76e57ffc<br/>g=12 n=12<br/>comp=9539.4"]
+    h_23a95e22f7f6["23a95e22f7f6<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11933.6"]
+    h_380945cd25a7["380945cd25a7<br/>g=12 n=12<br/>comp=10137.5"]
+    h_915f38ba6f43["915f38ba6f43<br/>g=12 n=12<br/>comp=9842.1"]
+    h_ba3d38cf2d76["ba3d38cf2d76<br/>g=12 n=12<br/>comp=10143.9"]
+    h_4fc480bd9d3a["4fc480bd9d3a<br/>g=9 n=9<br/>comp=9424.8"]
+    h_866d86d2740e["866d86d2740e<br/>g=30 n=21<br/>comp=9662.5"]
+    h_a17c392dc016["a17c392dc016<br/>g=0"]
+    h_afc9c59242af["afc9c59242af<br/>g=12 n=12<br/>comp=10430.6"]
+    h_e34cbbaccd0c["e34cbbaccd0c<br/>g=9 n=9<br/>comp=11855.8"]
+    h_2eff9af43327["2eff9af43327<br/>g=12 n=12<br/>comp=9754.3"]
+    h_298414c4ba49["298414c4ba49<br/>g=12 n=12<br/>comp=9142.3"]
+    h_6631d2da812d["6631d2da812d<br/>g=12 n=12<br/>comp=9806.5"]
+    h_0e5bda808d88["0e5bda808d88<br/>g=7 n=7<br/>comp=10767.7"]
+    h_7cbf437a2f29["7cbf437a2f29<br/>g=12 n=12<br/>comp=11754.3"]
+    h_0dc1d40950b3["0dc1d40950b3<br/>g=12 n=12<br/>comp=9468.5"]
+    h_3ff751c0d9be["3ff751c0d9be<br/>g=12 n=12<br/>comp=9425.2"]
+    h_54aa249e59cc["54aa249e59cc<br/>g=4 n=4<br/>comp=11343.8"]
+    h_c5a1e0ae2887["c5a1e0ae2887<br/>g=4 n=4<br/>comp=12198.2"]
+    h_d075b509efc9["d075b509efc9<br/>g=6 n=6<br/>comp=9683.3"]
+    h_48327614a550["48327614a550<br/>g=12 n=12<br/>comp=10278.4"]
+    h_6c65b2748f69["6c65b2748f69<br/>g=12 n=12<br/>comp=11304.2"]
+    h_556d3a5d3acb["556d3a5d3acb<br/>g=12 n=12<br/>comp=9851.5"]
+    h_d15c29b758ad["d15c29b758ad<br/>g=12 n=12<br/>comp=10374.6"]
+    h_017d22a209e0["017d22a209e0<br/>g=12 n=12<br/>comp=9061.1"]
+    h_c9caf194e70a["c9caf194e70a<br/>g=12 n=12<br/>comp=11296.6"]
+    h_615f7b8ef986["615f7b8ef986<br/>g=12 n=12<br/>comp=10245.7"]
+    h_89c436411f12["89c436411f12<br/>g=72 n=20<br/>comp=9627.1"]
+    h_d71e5865c87a["d71e5865c87a<br/>g=12 n=12<br/>comp=9779.4"]
+    h_78aea482f8b9["78aea482f8b9<br/>g=12 n=12<br/>comp=10407.9"]
+    h_3124530cc493["3124530cc493<br/>g=12 n=12<br/>comp=9649.3"]
+    h_fef0632567c6["fef0632567c6<br/>g=12 n=12<br/>comp=10593.4"]
+    h_466bd5aac223["466bd5aac223<br/>g=12 n=12<br/>comp=10561.1"]
+    h_f77223bdf9b9["f77223bdf9b9<br/>g=12 n=12<br/>comp=8935.7"]
     h_ede5bfcf82d4["ede5bfcf82d4<br/>g=1 n=1<br/>comp=1681.0"]
     h_5a5c38cc0be2["5a5c38cc0be2<br/>g=3 n=3<br/>comp=531.5"]
     h_fd5fa021e976["fd5fa021e976<br/>g=5 n=5<br/>comp=651.2"]
     h_33f610967019["33f610967019<br/>g=5 n=5<br/>comp=928.6"]
     h_7bf31489e393["7bf31489e393<br/>g=6 n=6<br/>comp=1012.4"]
+    h_03f7524cf920["03f7524cf920<br/>g=18 n=18<br/>comp=897.5"]
     h_0606e0423a11["0606e0423a11<br/>g=3 n=3<br/>comp=1038.2"]
     h_68ddbe9c93d1["68ddbe9c93d1<br/>g=4 n=4<br/>comp=1418.8"]
     h_ca8bbfc1d73b["ca8bbfc1d73b<br/>g=3 n=3<br/>comp=1623.3"]
     h_80cc6a42986e["80cc6a42986e<br/>g=3 n=3<br/>comp=1124.2"]
-    h_575df14d63ab["575df14d63ab"]
+    h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_3d3038a910f5["3d3038a910f5<br/>g=3 n=3<br/>comp=536.4"]
     h_f7288a3a5270["f7288a3a5270<br/>g=1 n=1<br/>comp=959.0"]
     h_4694cefc0245["4694cefc0245<br/>g=1 n=1<br/>comp=1045.0"]
@@ -784,6 +259,7 @@ flowchart TD
     h_fcd7bf3cb003["fcd7bf3cb003<br/>g=18 n=18<br/>comp=1163.4"]
     h_2431bfe1b371["2431bfe1b371<br/>g=1 n=1<br/>comp=1188.0"]
     h_1b7384c61008["1b7384c61008<br/>g=18 n=18<br/>comp=916.9"]
+    h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_07e1f0e9538b["07e1f0e9538b<br/>g=15 n=15<br/>comp=957.7"]
     h_893ac47e50d0["893ac47e50d0<br/>g=17 n=17<br/>comp=918.2"]
     h_332dcb70e676["332dcb70e676<br/>g=1 n=1<br/>comp=1446.0"]
@@ -791,63 +267,96 @@ flowchart TD
     h_d23b57ac1e1f["d23b57ac1e1f<br/>g=17 n=17<br/>comp=1128.3"]
     h_7bd194238b84["7bd194238b84<br/>g=1 n=1<br/>comp=970.0"]
     h_780869025e24["780869025e24<br/>g=2 n=2<br/>comp=609.9"]
-    h_c97cee797739["c97cee797739<br/>g=6 n=6<br/>comp=892.2"]
-    h_34edcc78882b["34edcc78882b<br/>g=1 n=1<br/>comp=790.0"]
-    h_e24d1084d5ef["e24d1084d5ef<br/>g=1 n=1<br/>comp=674.0"]
 
-    h_c924c81022f5 -->|improve| h_0058714043a7
-    h_0058714043a7 -->|improve| h_d6cae27ed802
-    h_d6cae27ed802 -->|improve| h_8294dea52a70
-    h_8294dea52a70 -->|improve| h_c6c5812169bf
-    h_52dec2d240b4 -->|improve| h_78921e4f842e
-    h_78921e4f842e -->|improve| h_ae6fa6d87a06
-    h_f30307f557e2 -->|improve| h_0961bfe98bc8
-    h_0961bfe98bc8 -->|improve| h_59dbe2e99e83
-    h_59dbe2e99e83 -->|improve| h_292b8d838624
-    h_292b8d838624 -->|improve| h_aab5cfdabaa9
-    h_aab5cfdabaa9 -->|improve| h_178c797a7762
-    h_178c797a7762 -->|improve| h_ae0e500b9534
-    h_ae0e500b9534 -->|improve| h_4ecccd5b3ce0
-    h_4ecccd5b3ce0 -->|improve| h_80963a2974aa
-    h_80963a2974aa -->|improve| h_3793ec65f0a8
-    h_3793ec65f0a8 -->|improve| h_9555c5d7b8ed
-    h_9555c5d7b8ed -. rollback .-> h_3793ec65f0a8
-    h_3793ec65f0a8 -->|improve| h_491005bdda14
-    h_491005bdda14 -->|improve| h_dc79266c4642
-    h_dc79266c4642 -->|improve| h_83458ea60e45
-    h_83458ea60e45 -->|improve| h_6db63b792b4e
-    h_6db63b792b4e -. rollback .-> h_dc79266c4642
-    h_dc79266c4642 -->|improve| h_1d2f0657ca4f
-    h_1d2f0657ca4f -->|improve| h_1d73791b0408
-    h_1d73791b0408 -->|improve| h_43bb9dd7218f
-    h_43bb9dd7218f -->|improve| h_30b1059145b2
-    h_30b1059145b2 -->|improve| h_736eaa7a621e
-    h_736eaa7a621e -->|improve| h_0d84c249c34a
-    h_0d84c249c34a -->|improve| h_c94941f9c53c
-    h_c94941f9c53c -->|improve| h_e57c64a0b32f
-    h_e57c64a0b32f -->|improve| h_c0c9d9b71bea
-    h_c0c9d9b71bea -->|improve| h_446f8d51b619
-    h_446f8d51b619 -->|improve| h_3d43b5c4b339
-    h_3d43b5c4b339 -->|improve| h_31709ff6533d
-    h_7e7feffb4acf -->|improve| h_2146c1000ebe
-    h_2146c1000ebe -->|improve| h_4266bc4d5404
-    h_4266bc4d5404 -->|improve| h_521e2a6f7514
-    h_521e2a6f7514 -->|improve| h_a530a40a918f
-    h_a530a40a918f -->|improve| h_17a089b8bb9a
-    h_17a089b8bb9a -->|improve| h_9d672f0df0c7
-    h_9d672f0df0c7 -->|improve| h_419ab6257d92
-    h_419ab6257d92 -->|improve| h_7297204b0bd5
-    h_7297204b0bd5 -->|improve| h_59be602676c6
-    h_1bd7aa5a5785 -->|improve| h_ede5bfcf82d4
+    h_5f4ca17969cd -->|improve| h_0e899ca31b42
+    h_0e899ca31b42 -->|improve| h_5f1036c9e3cf
+    h_5f1036c9e3cf -->|improve| h_0e24bff87c81
+    h_0e24bff87c81 -. rollback .-> h_5f1036c9e3cf
+    h_5f1036c9e3cf -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_35729075cdbb
+    h_35729075cdbb -->|improve| h_d4064b9a3c33
+    h_d4064b9a3c33 -. rollback .-> h_35729075cdbb
+    h_35729075cdbb -->|improve| h_82789c2a1f26
+    h_82789c2a1f26 -. rollback .-> h_35729075cdbb
+    h_35729075cdbb -->|improve| h_16bc5b207f52
+    h_16bc5b207f52 -->|improve| h_7e7e42a95b0c
+    h_7e7e42a95b0c -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_44b16e23d9b6
+    h_44b16e23d9b6 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_c6797d71b3e6
+    h_c6797d71b3e6 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_5fc309765dc9
+    h_5fc309765dc9 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -. rollback .-> h_16bc5b207f52
+    h_16bc5b207f52 -. rollback .-> h_35729075cdbb
+    h_35729075cdbb -->|improve| h_026dad83a186
+    h_026dad83a186 -->|improve| h_d875a4e21e0d
+    h_d875a4e21e0d -->|improve| h_19b772b1ac66
+    h_19b772b1ac66 -. rollback .-> h_d875a4e21e0d
+    h_d875a4e21e0d -->|improve| h_1a499eef5d15
+    h_1a499eef5d15 -->|improve| h_151b3f6a0061
+    h_151b3f6a0061 -->|improve| h_96eb76e57ffc
+    h_96eb76e57ffc -. rollback .-> h_8cde5038d8a6
+    h_23a95e22f7f6 -->|improve| h_380945cd25a7
+    h_380945cd25a7 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_915f38ba6f43
+    h_915f38ba6f43 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_ba3d38cf2d76
+    h_ba3d38cf2d76 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_4fc480bd9d3a
+    h_4fc480bd9d3a -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_866d86d2740e
+    h_866d86d2740e -->|improve| h_a17c392dc016
+    h_a17c392dc016 -. rollback .-> h_866d86d2740e
+    h_866d86d2740e -->|improve| h_afc9c59242af
+    h_afc9c59242af -. rollback .-> h_866d86d2740e
+    h_866d86d2740e -->|improve| h_e34cbbaccd0c
+    h_e34cbbaccd0c -->|improve| h_2eff9af43327
+    h_2eff9af43327 -->|improve| h_298414c4ba49
+    h_298414c4ba49 -->|improve| h_6631d2da812d
+    h_6631d2da812d -->|improve| h_0e5bda808d88
+    h_0e5bda808d88 -->|improve| h_7cbf437a2f29
+    h_7cbf437a2f29 -->|improve| h_0dc1d40950b3
+    h_0dc1d40950b3 -. rollback .-> h_0e899ca31b42
+    h_0e899ca31b42 -->|improve| h_3ff751c0d9be
+    h_3ff751c0d9be -. rollback .-> h_0e899ca31b42
+    h_0e899ca31b42 -->|improve| h_54aa249e59cc
+    h_54aa249e59cc -->|improve| h_c5a1e0ae2887
+    h_c5a1e0ae2887 -->|improve| h_d075b509efc9
+    h_d075b509efc9 -->|improve| h_48327614a550
+    h_48327614a550 -. rollback .-> h_0e899ca31b42
+    h_0e899ca31b42 -->|improve| h_6c65b2748f69
+    h_6c65b2748f69 -->|improve| h_556d3a5d3acb
+    h_556d3a5d3acb -->|improve| h_d15c29b758ad
+    h_d15c29b758ad -->|improve| h_017d22a209e0
+    h_017d22a209e0 -. rollback .-> h_0e899ca31b42
+    h_0e899ca31b42 -->|improve| h_c9caf194e70a
+    h_c9caf194e70a -. rollback .-> h_0e899ca31b42
+    h_0e899ca31b42 -->|improve| h_615f7b8ef986
+    h_615f7b8ef986 -. rollback .-> h_89c436411f12
+    h_89c436411f12 -->|improve| h_d71e5865c87a
+    h_d71e5865c87a -. rollback .-> h_23a95e22f7f6
+    h_23a95e22f7f6 -->|improve| h_78aea482f8b9
+    h_78aea482f8b9 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_3124530cc493
+    h_3124530cc493 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_fef0632567c6
+    h_fef0632567c6 -. rollback .-> h_23a95e22f7f6
+    h_23a95e22f7f6 -->|improve| h_466bd5aac223
+    h_466bd5aac223 -. rollback .-> h_8cde5038d8a6
+    h_8cde5038d8a6 -->|improve| h_f77223bdf9b9
+    h_f77223bdf9b9 -. rollback .-> h_8cde5038d8a6
     h_ede5bfcf82d4 -->|improve| h_5a5c38cc0be2
     h_5a5c38cc0be2 -->|improve| h_fd5fa021e976
     h_fd5fa021e976 -->|improve| h_33f610967019
     h_33f610967019 -->|improve| h_7bf31489e393
+    h_7bf31489e393 -->|improve| h_03f7524cf920
+    h_03f7524cf920 -->|improve| h_0606e0423a11
     h_0606e0423a11 -->|improve| h_68ddbe9c93d1
     h_68ddbe9c93d1 -->|improve| h_ca8bbfc1d73b
     h_ca8bbfc1d73b -->|improve| h_80cc6a42986e
-    h_80cc6a42986e -->|improve| h_575df14d63ab
-    h_575df14d63ab -->|improve| h_3d3038a910f5
+    h_80cc6a42986e -->|improve| h_389b56537573
+    h_389b56537573 -->|improve| h_3d3038a910f5
     h_3d3038a910f5 -->|improve| h_f7288a3a5270
     h_f7288a3a5270 -->|improve| h_4694cefc0245
     h_4694cefc0245 -->|improve| h_39e98cdf0a0a
@@ -855,90 +364,93 @@ flowchart TD
     h_e4ed6ecc175e -->|improve| h_11809cd47dd4
     h_11809cd47dd4 -->|improve| h_fcd7bf3cb003
     h_fcd7bf3cb003 -->|improve| h_2431bfe1b371
-    h_2431bfe1b371 -. rollback .-> h_fcd7bf3cb003
     h_fcd7bf3cb003 -->|improve| h_1b7384c61008
+    h_1b7384c61008 -->|improve| h_a3aae72a4e37
     h_1b7384c61008 -->|improve| h_07e1f0e9538b
-    h_07e1f0e9538b -. rollback .-> h_1b7384c61008
     h_07e1f0e9538b -->|improve| h_893ac47e50d0
     h_893ac47e50d0 -->|improve| h_332dcb70e676
-    h_332dcb70e676 -. rollback .-> h_893ac47e50d0
     h_893ac47e50d0 -->|improve| h_97ffedbeb342
-    h_97ffedbeb342 -. rollback .-> h_893ac47e50d0
     h_893ac47e50d0 -->|improve| h_d23b57ac1e1f
     h_d23b57ac1e1f -->|improve| h_7bd194238b84
-    h_7bd194238b84 -. rollback .-> h_d23b57ac1e1f
     h_d23b57ac1e1f -->|improve| h_780869025e24
-    h_780869025e24 -. rollback .-> h_d23b57ac1e1f
-    h_d23b57ac1e1f -->|improve| h_c97cee797739
-    h_c97cee797739 -->|improve| h_34edcc78882b
-    h_34edcc78882b -->|improve| h_e24d1084d5ef
+    h_89c436411f12 -->|improve| h_8cde5038d8a6
+    h_0e899ca31b42 -->|improve| h_026dad83a186
+    h_0e899ca31b42 -->|improve| h_d875a4e21e0d
+    h_0e899ca31b42 -->|improve| h_19b772b1ac66
+    h_0e899ca31b42 -->|improve| h_1a499eef5d15
+    h_0e899ca31b42 -->|improve| h_151b3f6a0061
+    h_0e899ca31b42 -->|improve| h_96eb76e57ffc
+    h_0e899ca31b42 -->|improve| h_48327614a550
+    h_8cde5038d8a6 -. rollback .-> h_23a95e22f7f6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_e3676607049d plain;
-    class h_c924c81022f5 plain;
-    class h_0058714043a7 plain;
-    class h_d6cae27ed802 plain;
-    class h_8294dea52a70 plain;
-    class h_c6c5812169bf plain;
-    class h_5ff6de32e6a5 plain;
-    class h_f020b7b4c6ec plain;
-    class h_52dec2d240b4 plain;
-    class h_78921e4f842e plain;
-    class h_ae6fa6d87a06 plain;
-    class h_f30307f557e2 plain;
-    class h_0961bfe98bc8 plain;
-    class h_59dbe2e99e83 plain;
-    class h_292b8d838624 plain;
-    class h_aab5cfdabaa9 plain;
-    class h_178c797a7762 plain;
-    class h_ae0e500b9534 plain;
-    class h_4ecccd5b3ce0 plain;
-    class h_80963a2974aa plain;
-    class h_3793ec65f0a8 plain;
-    class h_9555c5d7b8ed plain;
-    class h_491005bdda14 plain;
-    class h_dc79266c4642 plain;
-    class h_83458ea60e45 plain;
-    class h_6db63b792b4e plain;
-    class h_1d2f0657ca4f plain;
-    class h_1d73791b0408 plain;
-    class h_43bb9dd7218f plain;
-    class h_30b1059145b2 plain;
-    class h_736eaa7a621e plain;
-    class h_0d84c249c34a plain;
-    class h_c94941f9c53c plain;
-    class h_e57c64a0b32f plain;
-    class h_c0c9d9b71bea plain;
-    class h_446f8d51b619 plain;
-    class h_3d43b5c4b339 plain;
-    class h_31709ff6533d plain;
-    class h_f0ce05373605 plain;
-    class h_e199cc8496ef plain;
-    class h_7e7feffb4acf plain;
-    class h_2146c1000ebe plain;
-    class h_4266bc4d5404 plain;
-    class h_521e2a6f7514 plain;
-    class h_a530a40a918f plain;
-    class h_17a089b8bb9a plain;
-    class h_9d672f0df0c7 plain;
-    class h_419ab6257d92 plain;
-    class h_7297204b0bd5 plain;
-    class h_59be602676c6 plain;
-    class h_1bd7aa5a5785 plain;
+    class h_5f4ca17969cd plain;
+    class h_0e899ca31b42 plain;
+    class h_5f1036c9e3cf plain;
+    class h_0e24bff87c81 plain;
+    class h_8cde5038d8a6 plain;
+    class h_35729075cdbb plain;
+    class h_d4064b9a3c33 plain;
+    class h_82789c2a1f26 plain;
+    class h_16bc5b207f52 plain;
+    class h_7e7e42a95b0c plain;
+    class h_44b16e23d9b6 plain;
+    class h_c6797d71b3e6 plain;
+    class h_5fc309765dc9 plain;
+    class h_026dad83a186 plain;
+    class h_d875a4e21e0d plain;
+    class h_19b772b1ac66 plain;
+    class h_1a499eef5d15 plain;
+    class h_151b3f6a0061 plain;
+    class h_96eb76e57ffc plain;
+    class h_23a95e22f7f6 current_anchor;
+    class h_380945cd25a7 plain;
+    class h_915f38ba6f43 plain;
+    class h_ba3d38cf2d76 plain;
+    class h_4fc480bd9d3a plain;
+    class h_866d86d2740e plain;
+    class h_a17c392dc016 plain;
+    class h_afc9c59242af plain;
+    class h_e34cbbaccd0c plain;
+    class h_2eff9af43327 plain;
+    class h_298414c4ba49 plain;
+    class h_6631d2da812d plain;
+    class h_0e5bda808d88 plain;
+    class h_7cbf437a2f29 plain;
+    class h_0dc1d40950b3 plain;
+    class h_3ff751c0d9be plain;
+    class h_54aa249e59cc plain;
+    class h_c5a1e0ae2887 plain;
+    class h_d075b509efc9 plain;
+    class h_48327614a550 plain;
+    class h_6c65b2748f69 plain;
+    class h_556d3a5d3acb plain;
+    class h_d15c29b758ad plain;
+    class h_017d22a209e0 plain;
+    class h_c9caf194e70a plain;
+    class h_615f7b8ef986 plain;
+    class h_89c436411f12 plain;
+    class h_d71e5865c87a plain;
+    class h_78aea482f8b9 plain;
+    class h_3124530cc493 plain;
+    class h_fef0632567c6 plain;
+    class h_466bd5aac223 plain;
+    class h_f77223bdf9b9 plain;
     class h_ede5bfcf82d4 plain;
     class h_5a5c38cc0be2 plain;
     class h_fd5fa021e976 plain;
     class h_33f610967019 plain;
     class h_7bf31489e393 plain;
+    class h_03f7524cf920 plain;
     class h_0606e0423a11 plain;
     class h_68ddbe9c93d1 plain;
     class h_ca8bbfc1d73b plain;
     class h_80cc6a42986e plain;
-    class h_575df14d63ab plain;
+    class h_389b56537573 plain;
     class h_3d3038a910f5 plain;
     class h_f7288a3a5270 plain;
     class h_4694cefc0245 plain;
@@ -948,6 +460,7 @@ flowchart TD
     class h_fcd7bf3cb003 plain;
     class h_2431bfe1b371 plain;
     class h_1b7384c61008 plain;
+    class h_a3aae72a4e37 plain;
     class h_07e1f0e9538b plain;
     class h_893ac47e50d0 plain;
     class h_332dcb70e676 plain;
@@ -955,32 +468,29 @@ flowchart TD
     class h_d23b57ac1e1f plain;
     class h_7bd194238b84 plain;
     class h_780869025e24 plain;
-    class h_c97cee797739 plain;
-    class h_34edcc78882b plain;
-    class h_e24d1084d5ef plain;
 ```
 
-## Detail 4/21
+## Detail 2/18
 
-- Range: `7daa4348391b` .. `57de365479a0`
+- Range: `c97cee797739` .. `e179674c686d`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `114`
-- Cross-chunk link: `e24d1084d5ef --improve--> 7daa4348391b`
-- Cross-chunk link: `f83ca82c4967 -.rollback.-> f1210d388d1b`
-- Cross-chunk link: `f1210d388d1b --improve--> 57b1cc3a6290`
-- Cross-chunk link: `f83ca82c4967 -.rollback.-> 03f7524cf920`
-- Cross-chunk link: `0961bfe98bc8 --improve--> f06cac30a7a8`
-- Cross-chunk link: `f06cac30a7a8 -.rollback.-> 0961bfe98bc8`
-- Cross-chunk link: `0961bfe98bc8 --improve--> 4faa93ab3781`
-- Cross-chunk link: `57de365479a0 --improve--> 1fa254eca81f`
-- Cross-chunk link: `1fa254eca81f -.rollback.-> 2c8a1cdc292f`
+- Internal edges in this diagram: `78`
+- Cross-chunk link: `d23b57ac1e1f --improve--> c97cee797739`
+- Cross-chunk link: `03f7524cf920 --improve--> 0961bfe98bc8`
+- Cross-chunk link: `2c8a1cdc292f --improve--> 2ad526c6f94f`
+- Cross-chunk link: `d28a029231d5 --improve--> 57b53c4d7cfc`
+- Cross-chunk link: `570c0acc1f48 --improve--> 57de365479a0`
 - Cross-chunk link: `2c8a1cdc292f --improve--> 4f7f77e9c388`
-- Cross-chunk link: `4b307f9145f4 -.rollback.-> 570c0acc1f48`
 - Cross-chunk link: `2c8a1cdc292f --improve--> 3434e8b1f997`
-- Cross-chunk link: `... and 16 more`
+- Cross-chunk link: `9181a8ddd58e --improve--> 633b07c78b7c`
+- Cross-chunk link: `9181a8ddd58e --improve--> ca5c86778711`
+- Cross-chunk link: `7e68deb48ecc --improve--> 7c5ddf2ab986`
 
 ```mermaid
 flowchart TD
+    h_c97cee797739["c97cee797739<br/>g=6 n=6<br/>comp=892.2"]
+    h_34edcc78882b["34edcc78882b<br/>g=1 n=1<br/>comp=790.0"]
+    h_e24d1084d5ef["e24d1084d5ef<br/>g=1 n=1<br/>comp=674.0"]
     h_7daa4348391b["7daa4348391b<br/>g=11 n=11<br/>comp=945.6"]
     h_94011b7212f0["94011b7212f0<br/>g=1 n=1<br/>comp=1336.0"]
     h_71a4babcea76["71a4babcea76<br/>g=1 n=1<br/>comp=1688.0"]
@@ -993,7 +503,8 @@ flowchart TD
     h_e1a90f467348["e1a90f467348<br/>g=4 n=4<br/>comp=853.6"]
     h_215d20b343f4["215d20b343f4<br/>g=12 n=12<br/>comp=806.5"]
     h_f83ca82c4967["f83ca82c4967<br/>g=12 n=12<br/>comp=839.2"]
-    h_57b1cc3a6290["57b1cc3a6290"]
+    h_f1210d388d1b["f1210d388d1b<br/>g=13 n=13<br/>comp=931.0"]
+    h_0961bfe98bc8["0961bfe98bc8<br/>g=8 n=8<br/>comp=1032.6"]
     h_f06cac30a7a8["f06cac30a7a8<br/>g=4 n=4<br/>comp=872.7"]
     h_4faa93ab3781["4faa93ab3781<br/>g=1 n=1<br/>comp=1354.0"]
     h_01853899494d["01853899494d<br/>g=14 n=14<br/>comp=1116.9"]
@@ -1005,7 +516,6 @@ flowchart TD
     h_98b6f5b1e1a5["98b6f5b1e1a5<br/>g=9 n=9<br/>comp=942.5"]
     h_6ebffca5cd79["6ebffca5cd79<br/>g=9 n=9<br/>comp=636.1"]
     h_624cb6ba6eef["624cb6ba6eef<br/>g=7 n=7<br/>comp=629.3"]
-    h_7184250eac7f["7184250eac7f"]
     h_c85d9d1989c1["c85d9d1989c1<br/>g=2 n=2<br/>comp=1924.8"]
     h_5d17725cfbc9["5d17725cfbc9<br/>g=10 n=10<br/>comp=914.7"]
     h_0ff5d88e1767["0ff5d88e1767<br/>g=11 n=11<br/>comp=843.3"]
@@ -1058,15 +568,14 @@ flowchart TD
     h_1041e616066b["1041e616066b<br/>g=15 n=15<br/>comp=1180.4"]
     h_aa3c82eaaf04["aa3c82eaaf04<br/>g=11 n=11<br/>comp=1115.1"]
     h_e179674c686d["e179674c686d<br/>g=11 n=11<br/>comp=991.5"]
-    h_2ad526c6f94f["2ad526c6f94f<br/>g=12 n=12<br/>comp=1016.7"]
-    h_57b53c4d7cfc["57b53c4d7cfc<br/>g=11 n=11<br/>comp=947.1"]
-    h_57de365479a0["57de365479a0<br/>g=16 n=16<br/>comp=1079.1"]
 
+    h_c97cee797739 -->|improve| h_34edcc78882b
+    h_34edcc78882b -->|improve| h_e24d1084d5ef
+    h_e24d1084d5ef -->|improve| h_7daa4348391b
     h_7daa4348391b -->|improve| h_94011b7212f0
     h_94011b7212f0 -->|improve| h_71a4babcea76
     h_71a4babcea76 -->|improve| h_edc49a0733b7
     h_edc49a0733b7 -->|improve| h_fefe71d1927b
-    h_fefe71d1927b -. rollback .-> h_edc49a0733b7
     h_edc49a0733b7 -->|improve| h_b0872a2ce8a2
     h_b0872a2ce8a2 -->|improve| h_611bf1316847
     h_611bf1316847 -->|improve| h_7d3218bdb0b4
@@ -1074,7 +583,9 @@ flowchart TD
     h_c37fbbfe2d61 -->|improve| h_e1a90f467348
     h_e1a90f467348 -->|improve| h_215d20b343f4
     h_215d20b343f4 -->|improve| h_f83ca82c4967
-    h_57b1cc3a6290 -. rollback .-> h_f83ca82c4967
+    h_f83ca82c4967 -->|improve| h_f1210d388d1b
+    h_0961bfe98bc8 -->|improve| h_f06cac30a7a8
+    h_0961bfe98bc8 -->|improve| h_4faa93ab3781
     h_4faa93ab3781 -->|improve| h_01853899494d
     h_01853899494d -->|improve| h_ddb0e9cd7c87
     h_ddb0e9cd7c87 -->|improve| h_f77a5d0ca40e
@@ -1082,12 +593,8 @@ flowchart TD
     h_c3f00169bde1 -->|improve| h_ab5803e4d3f9
     h_ab5803e4d3f9 -->|improve| h_ae39c3c17bba
     h_ae39c3c17bba -->|improve| h_98b6f5b1e1a5
-    h_98b6f5b1e1a5 -. rollback .-> h_ae39c3c17bba
     h_ae39c3c17bba -->|improve| h_6ebffca5cd79
-    h_6ebffca5cd79 -. rollback .-> h_ae39c3c17bba
     h_ae39c3c17bba -->|improve| h_624cb6ba6eef
-    h_624cb6ba6eef -. rollback .-> h_7184250eac7f
-    h_7184250eac7f -. rollback .-> h_624cb6ba6eef
     h_624cb6ba6eef -->|improve| h_c85d9d1989c1
     h_c85d9d1989c1 -->|improve| h_5d17725cfbc9
     h_5d17725cfbc9 -->|improve| h_0ff5d88e1767
@@ -1098,90 +605,57 @@ flowchart TD
     h_16dc4eca5732 -->|improve| h_df01ab33e232
     h_df01ab33e232 -->|improve| h_489e140c12f6
     h_489e140c12f6 -->|improve| h_0290083baf6e
-    h_0290083baf6e -. rollback .-> h_df01ab33e232
     h_df01ab33e232 -->|improve| h_1f879565e86a
     h_1f879565e86a -->|improve| h_3f8bfb887f91
-    h_3f8bfb887f91 -. rollback .-> h_1f879565e86a
     h_1f879565e86a -->|improve| h_ec1c724d375a
     h_ec1c724d375a -->|improve| h_bdd661475d6f
     h_bdd661475d6f -->|improve| h_fa7f167772ca
-    h_fa7f167772ca -. rollback .-> h_bdd661475d6f
     h_bdd661475d6f -->|improve| h_275c44370cc1
     h_275c44370cc1 -->|improve| h_2444d816d61d
     h_2444d816d61d -->|improve| h_94ffb332c4bd
     h_94ffb332c4bd -->|improve| h_efa83280c5ee
     h_efa83280c5ee -->|improve| h_3707c23e28de
-    h_3707c23e28de -. rollback .-> h_efa83280c5ee
-    h_efa83280c5ee -. rollback .-> h_94ffb332c4bd
     h_94ffb332c4bd -->|improve| h_c4ac35277b92
     h_c4ac35277b92 -->|improve| h_6c53cb703cb0
-    h_6c53cb703cb0 -. rollback .-> h_c4ac35277b92
     h_c4ac35277b92 -->|improve| h_49d1d464b70e
     h_49d1d464b70e -->|improve| h_77f44dd4c76f
     h_77f44dd4c76f -->|improve| h_547c25f1085a
-    h_547c25f1085a -. rollback .-> h_94ffb332c4bd
-    h_94ffb332c4bd -. rollback .-> h_77f44dd4c76f
-    h_77f44dd4c76f -. rollback .-> h_94ffb332c4bd
     h_94ffb332c4bd -->|improve| h_066eac67e8d1
-    h_066eac67e8d1 -. rollback .-> h_94ffb332c4bd
     h_94ffb332c4bd -->|improve| h_930be7852ee6
-    h_930be7852ee6 -. rollback .-> h_94ffb332c4bd
     h_94ffb332c4bd -->|improve| h_6f01e1ab6f07
     h_6f01e1ab6f07 -->|improve| h_d28a029231d5
     h_d28a029231d5 -->|improve| h_4f5dc3ecdfa1
-    h_4f5dc3ecdfa1 -. rollback .-> h_d28a029231d5
     h_d28a029231d5 -->|improve| h_f1a7fe514e71
-    h_f1a7fe514e71 -. rollback .-> h_d28a029231d5
     h_d28a029231d5 -->|improve| h_570c0acc1f48
     h_570c0acc1f48 -->|improve| h_dc762c50fd79
-    h_dc762c50fd79 -. rollback .-> h_570c0acc1f48
     h_570c0acc1f48 -->|improve| h_0d44982cc8b8
-    h_0d44982cc8b8 -. rollback .-> h_570c0acc1f48
     h_570c0acc1f48 -->|improve| h_9181a8ddd58e
     h_9181a8ddd58e -->|improve| h_c83b25d1536c
     h_c83b25d1536c -->|improve| h_07626300e5bc
-    h_07626300e5bc -. rollback .-> h_570c0acc1f48
-    h_570c0acc1f48 -. rollback .-> h_d28a029231d5
     h_d28a029231d5 -->|improve| h_7e68deb48ecc
     h_7e68deb48ecc -->|improve| h_57db7dea8ffa
-    h_57db7dea8ffa -. rollback .-> h_d28a029231d5
-    h_d28a029231d5 -. rollback .-> h_6f01e1ab6f07
     h_d28a029231d5 -->|improve| h_3860da1bac3d
-    h_3860da1bac3d -. rollback .-> h_d28a029231d5
     h_d28a029231d5 -->|improve| h_2c8a1cdc292f
     h_2c8a1cdc292f -->|improve| h_e7d5892fef90
     h_e7d5892fef90 -->|improve| h_ce138f0e5794
-    h_ce138f0e5794 -. rollback .-> h_2c8a1cdc292f
     h_2c8a1cdc292f -->|improve| h_50bf73635a3b
-    h_50bf73635a3b -. rollback .-> h_2c8a1cdc292f
     h_2c8a1cdc292f -->|improve| h_b36cae25fcce
     h_b36cae25fcce -->|improve| h_304f6aaeb9f8
-    h_304f6aaeb9f8 -. rollback .-> h_2c8a1cdc292f
     h_2c8a1cdc292f -->|improve| h_4a9819ed51bf
     h_4a9819ed51bf -->|improve| h_103eeeb8ca08
-    h_103eeeb8ca08 -. rollback .-> h_2c8a1cdc292f
-    h_4a9819ed51bf -. rollback .-> h_2c8a1cdc292f
     h_2c8a1cdc292f -->|improve| h_3ce33e882fff
-    h_3ce33e882fff -. rollback .-> h_2c8a1cdc292f
     h_2c8a1cdc292f -->|improve| h_1041e616066b
     h_1041e616066b -->|improve| h_aa3c82eaaf04
     h_aa3c82eaaf04 -->|improve| h_e179674c686d
-    h_e179674c686d -. rollback .-> h_2c8a1cdc292f
-    h_2c8a1cdc292f -->|improve| h_2ad526c6f94f
-    h_2ad526c6f94f -. rollback .-> h_d28a029231d5
-    h_d28a029231d5 -->|improve| h_57b53c4d7cfc
-    h_57b53c4d7cfc -. rollback .-> h_d28a029231d5
-    h_d28a029231d5 -. rollback .-> h_b36cae25fcce
-    h_b36cae25fcce -. rollback .-> h_d28a029231d5
-    h_570c0acc1f48 -->|improve| h_57de365479a0
-    h_570c0acc1f48 -. rollback .-> h_2c8a1cdc292f
-    h_1041e616066b -. rollback .-> h_2444d816d61d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_c97cee797739 plain;
+    class h_34edcc78882b plain;
+    class h_e24d1084d5ef plain;
     class h_7daa4348391b plain;
     class h_94011b7212f0 plain;
     class h_71a4babcea76 plain;
@@ -1194,7 +668,8 @@ flowchart TD
     class h_e1a90f467348 plain;
     class h_215d20b343f4 plain;
     class h_f83ca82c4967 plain;
-    class h_57b1cc3a6290 plain;
+    class h_f1210d388d1b plain;
+    class h_0961bfe98bc8 plain;
     class h_f06cac30a7a8 plain;
     class h_4faa93ab3781 plain;
     class h_01853899494d plain;
@@ -1206,7 +681,6 @@ flowchart TD
     class h_98b6f5b1e1a5 plain;
     class h_6ebffca5cd79 plain;
     class h_624cb6ba6eef plain;
-    class h_7184250eac7f plain;
     class h_c85d9d1989c1 plain;
     class h_5d17725cfbc9 plain;
     class h_0ff5d88e1767 plain;
@@ -1259,32 +733,32 @@ flowchart TD
     class h_1041e616066b plain;
     class h_aa3c82eaaf04 plain;
     class h_e179674c686d plain;
-    class h_2ad526c6f94f plain;
-    class h_57b53c4d7cfc plain;
-    class h_57de365479a0 plain;
 ```
 
-## Detail 5/21
+## Detail 3/18
 
-- Range: `1fa254eca81f` .. `d062adad419a`
+- Range: `2ad526c6f94f` .. `b5e98ff77ba4`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `106`
-- Cross-chunk link: `57de365479a0 --improve--> 1fa254eca81f`
-- Cross-chunk link: `1fa254eca81f -.rollback.-> 2c8a1cdc292f`
+- Internal edges in this diagram: `72`
+- Cross-chunk link: `2c8a1cdc292f --improve--> 2ad526c6f94f`
+- Cross-chunk link: `d28a029231d5 --improve--> 57b53c4d7cfc`
+- Cross-chunk link: `570c0acc1f48 --improve--> 57de365479a0`
 - Cross-chunk link: `2c8a1cdc292f --improve--> 4f7f77e9c388`
-- Cross-chunk link: `4b307f9145f4 -.rollback.-> 570c0acc1f48`
 - Cross-chunk link: `2c8a1cdc292f --improve--> 3434e8b1f997`
-- Cross-chunk link: `3434e8b1f997 -.rollback.-> 9181a8ddd58e`
 - Cross-chunk link: `9181a8ddd58e --improve--> 633b07c78b7c`
-- Cross-chunk link: `e94cff719028 -.rollback.-> 9181a8ddd58e`
 - Cross-chunk link: `9181a8ddd58e --improve--> ca5c86778711`
-- Cross-chunk link: `47d22fb8e1c8 -.rollback.-> 7e68deb48ecc`
 - Cross-chunk link: `7e68deb48ecc --improve--> 7c5ddf2ab986`
-- Cross-chunk link: `d062adad419a --improve--> 82d52dfb6031`
-- Cross-chunk link: `... and 51 more`
+- Cross-chunk link: `b5e98ff77ba4 --improve--> 672ea2ecc04c`
+- Cross-chunk link: `3187cbf2ebf2 --improve--> d062adad419a`
+- Cross-chunk link: `807f556f3b2a --improve--> 1d5e98d73854`
+- Cross-chunk link: `807f556f3b2a --improve--> af010e4e7088`
+- Cross-chunk link: `... and 9 more`
 
 ```mermaid
 flowchart TD
+    h_2ad526c6f94f["2ad526c6f94f<br/>g=12 n=12<br/>comp=1016.7"]
+    h_57b53c4d7cfc["57b53c4d7cfc<br/>g=11 n=11<br/>comp=947.1"]
+    h_57de365479a0["57de365479a0<br/>g=16 n=16<br/>comp=1079.1"]
     h_1fa254eca81f["1fa254eca81f<br/>g=11 n=11<br/>comp=924.9"]
     h_4f7f77e9c388["4f7f77e9c388<br/>g=15 n=15<br/>comp=1149.4"]
     h_4b307f9145f4["4b307f9145f4<br/>g=18 n=18<br/>comp=1068.0"]
@@ -1362,10 +836,8 @@ flowchart TD
     h_ad479cb00afd["ad479cb00afd<br/>g=14 n=14<br/>comp=1042.5"]
     h_78267e7f2835["78267e7f2835<br/>g=41 n=20<br/>comp=1029.5"]
     h_b5e98ff77ba4["b5e98ff77ba4<br/>g=18 n=18<br/>comp=1191.2"]
-    h_672ea2ecc04c["672ea2ecc04c<br/>g=13 n=13<br/>comp=1099.2"]
-    h_20c7ebbabe2a["20c7ebbabe2a<br/>g=11 n=11<br/>comp=883.6"]
-    h_d062adad419a["d062adad419a<br/>g=19 n=19<br/>comp=1042.7"]
 
+    h_57de365479a0 -->|improve| h_1fa254eca81f
     h_4f7f77e9c388 -->|improve| h_4b307f9145f4
     h_633b07c78b7c -->|improve| h_a2ef3e1663d0
     h_a2ef3e1663d0 -->|improve| h_cf161a6bf453
@@ -1373,25 +845,19 @@ flowchart TD
     h_ff348585731f -->|improve| h_93e147d90306
     h_93e147d90306 -->|improve| h_35ef58c471da
     h_35ef58c471da -->|improve| h_22643c90ebe2
-    h_22643c90ebe2 -. rollback .-> h_35ef58c471da
     h_35ef58c471da -->|improve| h_2f70abf898f2
     h_2f70abf898f2 -->|improve| h_5170cbc2db08
     h_5170cbc2db08 -->|improve| h_c7a8cf98b118
-    h_c7a8cf98b118 -. rollback .-> h_2f70abf898f2
     h_2f70abf898f2 -->|improve| h_0fac9e29c7ee
     h_0fac9e29c7ee -->|improve| h_c3f6b73379b9
     h_c3f6b73379b9 -->|improve| h_a95c2ebe63d7
     h_a95c2ebe63d7 -->|improve| h_0c52c9debe03
     h_0c52c9debe03 -->|improve| h_7fa3a96724fb
-    h_7fa3a96724fb -. rollback .-> h_c3f6b73379b9
     h_c3f6b73379b9 -->|improve| h_0bca424209e2
     h_0bca424209e2 -->|improve| h_6b4954ce2d96
     h_6b4954ce2d96 -->|improve| h_7cc3ff27b86f
     h_7cc3ff27b86f -->|improve| h_f29cdeb981e4
-    h_f29cdeb981e4 -. rollback .-> h_0fac9e29c7ee
     h_0fac9e29c7ee -->|improve| h_257d93883650
-    h_257d93883650 -. rollback .-> h_0fac9e29c7ee
-    h_0fac9e29c7ee -. rollback .-> h_35ef58c471da
     h_35ef58c471da -->|improve| h_6b3e65432022
     h_6b3e65432022 -->|improve| h_bb38531ed624
     h_bb38531ed624 -->|improve| h_74fdeb0c05a8
@@ -1404,35 +870,27 @@ flowchart TD
     h_569583580ed0 -->|improve| h_1a590c69380a
     h_1a590c69380a -->|improve| h_c828ff8ed1f4
     h_c828ff8ed1f4 -->|improve| h_4b478262246c
-    h_4b478262246c -. rollback .-> h_c828ff8ed1f4
     h_c828ff8ed1f4 -->|improve| h_17c59d580ae6
     h_17c59d580ae6 -->|improve| h_fef15a82602a
-    h_fef15a82602a -. rollback .-> h_e2d6bfc5caa0
     h_e2d6bfc5caa0 -->|improve| h_410eb12ba19a
     h_410eb12ba19a -->|improve| h_ce89a06098d1
     h_ce89a06098d1 -->|improve| h_e473e6d8c471
     h_e473e6d8c471 -->|improve| h_807f556f3b2a
     h_807f556f3b2a -->|improve| h_2732e18d6274
-    h_2732e18d6274 -. rollback .-> h_410eb12ba19a
-    h_410eb12ba19a -. rollback .-> h_2f70abf898f2
     h_2f70abf898f2 -->|improve| h_2c88f2b85387
     h_2c88f2b85387 -->|improve| h_05fe5ad12cfb
-    h_05fe5ad12cfb -. rollback .-> h_5af024c7a632
     h_5af024c7a632 -->|improve| h_935d6c33aacf
-    h_935d6c33aacf -. rollback .-> h_5af024c7a632
     h_5af024c7a632 -->|improve| h_e2c491c41a93
     h_e2c491c41a93 -->|improve| h_e94cff719028
     h_ca5c86778711 -->|improve| h_e86eec882211
     h_e86eec882211 -->|improve| h_aa23327b6c8b
     h_aa23327b6c8b -->|improve| h_2827c558dddb
-    h_2827c558dddb -. rollback .-> h_e86eec882211
     h_e86eec882211 -->|improve| h_7974f11184da
     h_7974f11184da -->|improve| h_47d22fb8e1c8
     h_7c5ddf2ab986 -->|improve| h_d319a9731adc
     h_d319a9731adc -->|improve| h_8ce084a6af43
     h_8ce084a6af43 -->|improve| h_7fa35914fb44
     h_7fa35914fb44 -->|improve| h_83ce9c5bf20d
-    h_83ce9c5bf20d -. rollback .-> h_807f556f3b2a
     h_807f556f3b2a -->|improve| h_4616c26993ec
     h_4616c26993ec -->|improve| h_50142e222e6b
     h_50142e222e6b -->|improve| h_774bcbabc16f
@@ -1442,42 +900,24 @@ flowchart TD
     h_d3ece5beec98 -->|improve| h_114aba9a051c
     h_114aba9a051c -->|improve| h_3187cbf2ebf2
     h_3187cbf2ebf2 -->|improve| h_3f4439e3956a
-    h_3f4439e3956a -. rollback .-> h_3187cbf2ebf2
     h_3187cbf2ebf2 -->|improve| h_a5c9ec05d604
     h_a5c9ec05d604 -->|improve| h_90c8b1116783
     h_90c8b1116783 -->|improve| h_136ff0008493
-    h_136ff0008493 -. rollback .-> h_90c8b1116783
     h_90c8b1116783 -->|improve| h_198e34690dc0
     h_198e34690dc0 -->|improve| h_9ef713c648df
     h_9ef713c648df -->|improve| h_cd20b7ba973d
     h_cd20b7ba973d -->|improve| h_ad479cb00afd
-    h_ad479cb00afd -. rollback .-> h_90c8b1116783
     h_90c8b1116783 -->|improve| h_78267e7f2835
     h_78267e7f2835 -->|improve| h_b5e98ff77ba4
-    h_b5e98ff77ba4 -->|improve| h_672ea2ecc04c
-    h_672ea2ecc04c -->|improve| h_20c7ebbabe2a
-    h_20c7ebbabe2a -. rollback .-> h_3187cbf2ebf2
-    h_3187cbf2ebf2 -->|improve| h_d062adad419a
-    h_7c5ddf2ab986 -. rollback .-> h_a2ef3e1663d0
-    h_bb38531ed624 -. rollback .-> h_2f70abf898f2
-    h_2f70abf898f2 -. rollback .-> h_a95c2ebe63d7
-    h_a95c2ebe63d7 -. rollback .-> h_2f70abf898f2
-    h_a95c2ebe63d7 -. rollback .-> h_0fac9e29c7ee
-    h_0fac9e29c7ee -. rollback .-> h_2f70abf898f2
-    h_2f70abf898f2 -. rollback .-> h_e473e6d8c471
-    h_e473e6d8c471 -. rollback .-> h_2f70abf898f2
-    h_e473e6d8c471 -. rollback .-> h_0fac9e29c7ee
-    h_0fac9e29c7ee -. rollback .-> h_e473e6d8c471
-    h_e473e6d8c471 -. rollback .-> h_a95c2ebe63d7
-    h_a95c2ebe63d7 -. rollback .-> h_e473e6d8c471
-    h_807f556f3b2a -. rollback .-> h_35ef58c471da
-    h_633b07c78b7c -. rollback .-> h_78267e7f2835
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_2ad526c6f94f plain;
+    class h_57b53c4d7cfc plain;
+    class h_57de365479a0 plain;
     class h_1fa254eca81f plain;
     class h_4f7f77e9c388 plain;
     class h_4b307f9145f4 plain;
@@ -1555,32 +995,32 @@ flowchart TD
     class h_ad479cb00afd plain;
     class h_78267e7f2835 plain;
     class h_b5e98ff77ba4 plain;
-    class h_672ea2ecc04c plain;
-    class h_20c7ebbabe2a plain;
-    class h_d062adad419a plain;
 ```
 
-## Detail 6/21
+## Detail 4/18
 
-- Range: `82d52dfb6031` .. `e2a889360de0`
+- Range: `672ea2ecc04c` .. `3ef39a374acf`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `90`
-- Cross-chunk link: `d062adad419a --improve--> 82d52dfb6031`
-- Cross-chunk link: `6c7115f48299 -.rollback.-> 807f556f3b2a`
+- Internal edges in this diagram: `67`
+- Cross-chunk link: `b5e98ff77ba4 --improve--> 672ea2ecc04c`
+- Cross-chunk link: `3187cbf2ebf2 --improve--> d062adad419a`
 - Cross-chunk link: `807f556f3b2a --improve--> 1d5e98d73854`
-- Cross-chunk link: `3bc61278c800 -.rollback.-> d062adad419a`
-- Cross-chunk link: `cffc0644c1fb -.rollback.-> 807f556f3b2a`
 - Cross-chunk link: `807f556f3b2a --improve--> af010e4e7088`
-- Cross-chunk link: `af010e4e7088 -.rollback.-> 7c5ddf2ab986`
 - Cross-chunk link: `a2ef3e1663d0 --improve--> 8dd849e1c259`
-- Cross-chunk link: `8dd849e1c259 -.rollback.-> a2ef3e1663d0`
 - Cross-chunk link: `a2ef3e1663d0 --improve--> 7c37a8c3a71d`
-- Cross-chunk link: `7c37a8c3a71d -.rollback.-> e2d6bfc5caa0`
 - Cross-chunk link: `e2d6bfc5caa0 --improve--> 261c231383b9`
-- Cross-chunk link: `... and 41 more`
+- Cross-chunk link: `2f70abf898f2 --improve--> a775cf40147a`
+- Cross-chunk link: `a95c2ebe63d7 --improve--> c12a1b2f0397`
+- Cross-chunk link: `633b07c78b7c --improve--> 2a1f6e9cb13f`
+- Cross-chunk link: `633b07c78b7c --improve--> 173e15416a89`
+- Cross-chunk link: `78267e7f2835 --improve--> 7f1093d29bdf`
+- Cross-chunk link: `... and 3 more`
 
 ```mermaid
 flowchart TD
+    h_672ea2ecc04c["672ea2ecc04c<br/>g=13 n=13<br/>comp=1099.2"]
+    h_20c7ebbabe2a["20c7ebbabe2a<br/>g=11 n=11<br/>comp=883.6"]
+    h_d062adad419a["d062adad419a<br/>g=19 n=19<br/>comp=1042.7"]
     h_82d52dfb6031["82d52dfb6031<br/>g=30 n=20<br/>comp=1106.3"]
     h_f55c14077c2a["f55c14077c2a<br/>g=26 n=20<br/>comp=1173.2"]
     h_4dddf9d3a5a3["4dddf9d3a5a3<br/>g=1 n=1<br/>comp=0.0"]
@@ -1624,7 +1064,6 @@ flowchart TD
     h_061b6937c72a["061b6937c72a<br/>g=54 n=20<br/>comp=1122.6"]
     h_9b507a95939d["9b507a95939d<br/>g=11 n=11<br/>comp=977.3"]
     h_bc20d4e5febe["bc20d4e5febe<br/>g=29 n=20<br/>comp=1081.3"]
-    h_b2747866354a["b2747866354a"]
     h_84c8b21cacf1["84c8b21cacf1<br/>g=13 n=13<br/>comp=1087.5"]
     h_7f1093d29bdf["7f1093d29bdf<br/>g=12 n=12<br/>comp=1012.8"]
     h_3b884249b5a4["3b884249b5a4<br/>g=12 n=12<br/>comp=1064.8"]
@@ -1638,7 +1077,6 @@ flowchart TD
     h_59bb28507f23["59bb28507f23<br/>g=56 n=20<br/>comp=1098.1"]
     h_cd9a3414b2ae["cd9a3414b2ae<br/>g=25 n=20<br/>comp=1064.2"]
     h_ec51087092d1["ec51087092d1<br/>g=11 n=11<br/>comp=1100.2"]
-    h_e94cc9f2bcc6["e94cc9f2bcc6"]
     h_78db7a926515["78db7a926515<br/>g=11 n=11<br/>comp=779.8"]
     h_8479963ec45c["8479963ec45c<br/>g=14 n=14<br/>comp=1123.3"]
     h_924cfcf7e0d2["924cfcf7e0d2<br/>g=11 n=11<br/>comp=900.4"]
@@ -1660,11 +1098,11 @@ flowchart TD
     h_636722a45a6e["636722a45a6e<br/>g=13 n=13<br/>comp=10059.3"]
     h_56747e968f87["56747e968f87<br/>g=14 n=14<br/>comp=10984.9"]
     h_3ef39a374acf["3ef39a374acf<br/>g=13 n=13<br/>comp=9230.2"]
-    h_e2a889360de0["e2a889360de0<br/>g=26 n=20<br/>comp=9845.6"]
 
+    h_672ea2ecc04c -->|improve| h_20c7ebbabe2a
+    h_d062adad419a -->|improve| h_82d52dfb6031
     h_82d52dfb6031 -->|improve| h_f55c14077c2a
     h_f55c14077c2a -->|improve| h_4dddf9d3a5a3
-    h_4dddf9d3a5a3 -. rollback .-> h_f55c14077c2a
     h_f55c14077c2a -->|improve| h_8b049c317ab2
     h_8b049c317ab2 -->|improve| h_81930d7e6afd
     h_81930d7e6afd -->|improve| h_d2e7f520aece
@@ -1672,19 +1110,15 @@ flowchart TD
     h_1d5e98d73854 -->|improve| h_dbc8d7316ace
     h_dbc8d7316ace -->|improve| h_e3453deddf74
     h_e3453deddf74 -->|improve| h_116594bc1eee
-    h_116594bc1eee -. rollback .-> h_dbc8d7316ace
     h_dbc8d7316ace -->|improve| h_13d41b72db24
     h_13d41b72db24 -->|improve| h_1e936a9bba3e
     h_1e936a9bba3e -->|improve| h_f87736092bfd
     h_f87736092bfd -->|improve| h_d7e505ff9490
-    h_d7e505ff9490 -. rollback .-> h_1e936a9bba3e
-    h_1e936a9bba3e -. rollback .-> h_e3453deddf74
     h_e3453deddf74 -->|improve| h_74d2be53d875
     h_74d2be53d875 -->|improve| h_3bc61278c800
     h_82d52dfb6031 -->|improve| h_9d6fe31baf81
     h_9d6fe31baf81 -->|improve| h_cffc0644c1fb
     h_8dd849e1c259 -->|improve| h_8012bbb93f35
-    h_8012bbb93f35 -. rollback .-> h_8dd849e1c259
     h_c12a1b2f0397 -->|improve| h_7963d7bcee94
     h_7963d7bcee94 -->|improve| h_901c41c4e1ed
     h_901c41c4e1ed -->|improve| h_b2850c039a20
@@ -1699,17 +1133,9 @@ flowchart TD
     h_64ab1a2a94a2 -->|improve| h_bc73e823fcfb
     h_bc73e823fcfb -->|improve| h_061b6937c72a
     h_061b6937c72a -->|improve| h_9b507a95939d
-    h_cf5abc62bca8 -. rollback .-> h_061b6937c72a
-    h_4e860afd3310 -. rollback .-> h_64ab1a2a94a2
-    h_64ab1a2a94a2 -. rollback .-> h_dbc8d7316ace
-    h_061b6937c72a -. rollback .-> h_4e860afd3310
     h_4e860afd3310 -->|improve| h_bc20d4e5febe
-    h_bc20d4e5febe -->|improve| h_b2747866354a
-    h_b2747866354a -. rollback .-> h_bc20d4e5febe
-    h_bc20d4e5febe -. rollback .-> h_4e860afd3310
     h_4e860afd3310 -->|improve| h_84c8b21cacf1
     h_061b6937c72a -->|improve| h_3b884249b5a4
-    h_061b6937c72a -. rollback .-> h_cf5abc62bca8
     h_cf5abc62bca8 -->|improve| h_0908aefcf5b5
     h_0908aefcf5b5 -->|improve| h_73e857c3b788
     h_cf5abc62bca8 -->|improve| h_034f19f91b78
@@ -1720,28 +1146,17 @@ flowchart TD
     h_00463a31abcd -->|improve| h_59bb28507f23
     h_59bb28507f23 -->|improve| h_cd9a3414b2ae
     h_cd9a3414b2ae -->|improve| h_ec51087092d1
-    h_cd9a3414b2ae -. rollback .-> h_bc73e823fcfb
-    h_59bb28507f23 -->|improve| h_e94cc9f2bcc6
-    h_e94cc9f2bcc6 -. rollback .-> h_59bb28507f23
     h_59bb28507f23 -->|improve| h_78db7a926515
     h_59bb28507f23 -->|improve| h_8479963ec45c
     h_8479963ec45c -->|improve| h_924cfcf7e0d2
     h_64ab1a2a94a2 -->|improve| h_3c4475f0b59d
     h_3c4475f0b59d -->|improve| h_900c44e033ca
     h_900c44e033ca -->|improve| h_26287fbc6945
-    h_26287fbc6945 -. rollback .-> h_3c4475f0b59d
-    h_3c4475f0b59d -. rollback .-> h_26287fbc6945
     h_a6f551f457fc -->|improve| h_8d2792a50aba
     h_8d2792a50aba -->|improve| h_4237be147960
-    h_4237be147960 -. rollback .-> h_8d2792a50aba
-    h_8d2792a50aba -. rollback .-> h_900c44e033ca
     h_900c44e033ca -->|improve| h_8219f97aba7a
-    h_8219f97aba7a -. rollback .-> h_900c44e033ca
-    h_900c44e033ca -. rollback .-> h_8d2792a50aba
     h_8d2792a50aba -->|improve| h_a2cb3537b678
-    h_a2cb3537b678 -. rollback .-> h_900c44e033ca
     h_8d2792a50aba -->|improve| h_23345b5829ed
-    h_23345b5829ed -. rollback .-> h_8d2792a50aba
     h_8d2792a50aba -->|improve| h_13fdd446d98f
     h_13fdd446d98f -->|improve| h_17b90a6091ab
     h_17b90a6091ab -->|improve| h_edbe5d85ae1a
@@ -1751,13 +1166,15 @@ flowchart TD
     h_e60ffd95cb26 -->|improve| h_636722a45a6e
     h_636722a45a6e -->|improve| h_56747e968f87
     h_56747e968f87 -->|improve| h_3ef39a374acf
-    h_3ef39a374acf -->|improve| h_e2a889360de0
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_672ea2ecc04c plain;
+    class h_20c7ebbabe2a plain;
+    class h_d062adad419a plain;
     class h_82d52dfb6031 plain;
     class h_f55c14077c2a plain;
     class h_4dddf9d3a5a3 plain;
@@ -1801,7 +1218,6 @@ flowchart TD
     class h_061b6937c72a plain;
     class h_9b507a95939d plain;
     class h_bc20d4e5febe plain;
-    class h_b2747866354a plain;
     class h_84c8b21cacf1 plain;
     class h_7f1093d29bdf plain;
     class h_3b884249b5a4 plain;
@@ -1815,7 +1231,6 @@ flowchart TD
     class h_59bb28507f23 plain;
     class h_cd9a3414b2ae plain;
     class h_ec51087092d1 plain;
-    class h_e94cc9f2bcc6 plain;
     class h_78db7a926515 plain;
     class h_8479963ec45c plain;
     class h_924cfcf7e0d2 plain;
@@ -1837,30 +1252,23 @@ flowchart TD
     class h_636722a45a6e plain;
     class h_56747e968f87 plain;
     class h_3ef39a374acf plain;
-    class h_e2a889360de0 plain;
 ```
 
-## Detail 7/21
+## Detail 5/18
 
-- Range: `6d9586d182e0` .. `424c0fa79ba4`
+- Range: `e2a889360de0` .. `7df607868da2`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `116`
-- Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
-- Cross-chunk link: `cf42a97de4d5 -.rollback.-> 9d6fe31baf81`
+- Internal edges in this diagram: `74`
+- Cross-chunk link: `3ef39a374acf --improve--> e2a889360de0`
 - Cross-chunk link: `9d6fe31baf81 --improve--> f2e07b06f8f1`
-- Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
-- Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
-- Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
-- Cross-chunk link: `7ef8916aba20 -.rollback.-> 7f3bfa93dbef`
+- Cross-chunk link: `7f3bfa93dbef --improve--> 424c0fa79ba4`
 - Cross-chunk link: `7f3bfa93dbef --improve--> 62c7a96cd8dd`
-- Cross-chunk link: `922d37760c2b -.rollback.-> 923af923a304`
-- Cross-chunk link: `923af923a304 --improve--> fc1b183def64`
-- Cross-chunk link: `fc1b183def64 -.rollback.-> 923af923a304`
 - Cross-chunk link: `923af923a304 --improve--> 4f39face490d`
-- Cross-chunk link: `... and 4 more`
+- Cross-chunk link: `e8c175933cd7 --improve--> aa241c208ce0`
 
 ```mermaid
 flowchart TD
+    h_e2a889360de0["e2a889360de0<br/>g=26 n=20<br/>comp=9845.6"]
     h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=8753.6"]
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=10844.9"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=9797.0"]
@@ -1940,8 +1348,8 @@ flowchart TD
     h_7f3bfa93dbef["7f3bfa93dbef<br/>g=43 n=20<br/>comp=10745.3"]
     h_a9b396182ae6["a9b396182ae6<br/>g=22 n=20<br/>comp=11063.9"]
     h_7df607868da2["7df607868da2<br/>g=12 n=12<br/>comp=9145.5"]
-    h_424c0fa79ba4["424c0fa79ba4<br/>g=12 n=12<br/>comp=9247.9"]
 
+    h_e2a889360de0 -->|improve| h_6d9586d182e0
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_51d6d7502cab -->|improve| h_8783d96fea8f
@@ -1971,99 +1379,57 @@ flowchart TD
     h_92d45dc0ae05 -->|improve| h_f121c3a5c869
     h_f121c3a5c869 -->|improve| h_69fb91cb8907
     h_69fb91cb8907 -->|improve| h_a3e1051a0c6d
-    h_a3e1051a0c6d -->|improve| h_e8fe85e17249
     h_e8fe85e17249 -->|improve| h_c32336e8228a
     h_c32336e8228a -->|improve| h_b645f6da7910
     h_b645f6da7910 -->|improve| h_9ea35a35fc54
-    h_9ea35a35fc54 -. rollback .-> h_b645f6da7910
     h_b645f6da7910 -->|improve| h_340d4a08b62a
     h_340d4a08b62a -->|improve| h_6fc76d37f76a
-    h_6fc76d37f76a -. rollback .-> h_b645f6da7910
     h_b645f6da7910 -->|improve| h_b6bfeb3b27ac
-    h_b6bfeb3b27ac -. rollback .-> h_b645f6da7910
     h_b6bfeb3b27ac -->|improve| h_8013dc80e4f3
     h_8013dc80e4f3 -->|improve| h_d6fe29751fc9
-    h_d6fe29751fc9 -. rollback .-> h_b6bfeb3b27ac
     h_b6bfeb3b27ac -->|improve| h_6e0f0a2c7486
-    h_6e0f0a2c7486 -->|improve| h_857a8f93be44
     h_857a8f93be44 -->|improve| h_5e9735de41ac
     h_5e9735de41ac -->|improve| h_9eb59f4bcdd8
-    h_9eb59f4bcdd8 -. rollback .-> h_b6bfeb3b27ac
     h_b6bfeb3b27ac -->|improve| h_5559d0b91da6
-    h_5559d0b91da6 -. rollback .-> h_b6bfeb3b27ac
-    h_b6bfeb3b27ac -. rollback .-> h_857a8f93be44
-    h_857a8f93be44 -. rollback .-> h_aadc74dd62a7
     h_aadc74dd62a7 -->|improve| h_cc74585d1fa6
     h_cc74585d1fa6 -->|improve| h_b3c32d709d62
     h_b3c32d709d62 -->|improve| h_eb2461c06609
-    h_eb2461c06609 -. rollback .-> h_c3d205b91761
-    h_c3d205b91761 -. rollback .-> h_fccc64cd2326
     h_fccc64cd2326 -->|improve| h_870fabf058b5
     h_870fabf058b5 -->|improve| h_3835dc75df3f
-    h_3835dc75df3f -. rollback .-> h_870fabf058b5
-    h_870fabf058b5 -. rollback .-> h_6e0f0a2c7486
     h_6e0f0a2c7486 -->|improve| h_55357f97ee00
-    h_55357f97ee00 -. rollback .-> h_6e0f0a2c7486
     h_6e0f0a2c7486 -->|improve| h_25e0ff7f9225
-    h_25e0ff7f9225 -. rollback .-> h_b3c32d709d62
     h_b3c32d709d62 -->|improve| h_c76be42c2045
-    h_c76be42c2045 -. rollback .-> h_8013dc80e4f3
-    h_8013dc80e4f3 -. rollback .-> h_b3c32d709d62
-    h_b3c32d709d62 -. rollback .-> h_5e9735de41ac
-    h_5e9735de41ac -. rollback .-> h_fccc64cd2326
     h_fccc64cd2326 -->|improve| h_a35784f5c9d6
     h_a35784f5c9d6 -->|improve| h_a1c73824d54e
     h_a1c73824d54e -->|improve| h_923af923a304
     h_923af923a304 -->|improve| h_27e29e219aba
-    h_27e29e219aba -. rollback .-> h_a1c73824d54e
     h_a1c73824d54e -->|improve| h_d0a0985c1de6
-    h_d0a0985c1de6 -. rollback .-> h_a1c73824d54e
     h_a1c73824d54e -->|improve| h_938fb6a1a482
     h_938fb6a1a482 -->|improve| h_23864d38e12b
-    h_23864d38e12b -. rollback .-> h_fccc64cd2326
     h_fccc64cd2326 -->|improve| h_c54079cc16e3
-    h_c54079cc16e3 -. rollback .-> h_fccc64cd2326
     h_fccc64cd2326 -->|improve| h_087de14c986d
     h_087de14c986d -->|improve| h_f6e3395deb71
-    h_f6e3395deb71 -. rollback .-> h_087de14c986d
     h_087de14c986d -->|improve| h_467e45d0adc3
     h_467e45d0adc3 -->|improve| h_53d0278dac36
     h_53d0278dac36 -->|improve| h_4da6ecce5bb9
     h_4da6ecce5bb9 -->|improve| h_8f22f3e3c974
-    h_8f22f3e3c974 -. rollback .-> h_53d0278dac36
-    h_53d0278dac36 -->|improve| h_5052b939f23f
-    h_5052b939f23f -. rollback .-> h_53d0278dac36
     h_53d0278dac36 -->|improve| h_5c442079edc8
-    h_5c442079edc8 -. rollback .-> h_4da6ecce5bb9
-    h_4da6ecce5bb9 -->|improve| h_b1f764752264
-    h_b1f764752264 -. rollback .-> h_53d0278dac36
-    h_53d0278dac36 -. rollback .-> h_467e45d0adc3
     h_467e45d0adc3 -->|improve| h_f4a86d6cf2f4
     h_f4a86d6cf2f4 -->|improve| h_f45c1115e925
-    h_f45c1115e925 -. rollback .-> h_f4a86d6cf2f4
     h_f4a86d6cf2f4 -->|improve| h_0d1cb89482eb
-    h_0d1cb89482eb -. rollback .-> h_f4a86d6cf2f4
     h_f4a86d6cf2f4 -->|improve| h_67ca531a9e2c
-    h_67ca531a9e2c -. rollback .-> h_467e45d0adc3
     h_467e45d0adc3 -->|improve| h_597dde8a9032
-    h_597dde8a9032 -. rollback .-> h_467e45d0adc3
     h_467e45d0adc3 -->|improve| h_1fab86e56ddc
-    h_1fab86e56ddc -. rollback .-> h_467e45d0adc3
     h_467e45d0adc3 -->|improve| h_7f3bfa93dbef
     h_7f3bfa93dbef -->|improve| h_a9b396182ae6
     h_a9b396182ae6 -->|improve| h_7df607868da2
-    h_7df607868da2 -. rollback .-> h_7f3bfa93dbef
-    h_7f3bfa93dbef -->|improve| h_424c0fa79ba4
-    h_424c0fa79ba4 -. rollback .-> h_467e45d0adc3
-    h_4da6ecce5bb9 -. rollback .-> h_467e45d0adc3
-    h_1fab86e56ddc -. rollback .-> h_c54079cc16e3
-    h_c54079cc16e3 -. rollback .-> h_1fab86e56ddc
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_e2a889360de0 plain;
     class h_6d9586d182e0 plain;
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
@@ -2143,30 +1509,27 @@ flowchart TD
     class h_7f3bfa93dbef plain;
     class h_a9b396182ae6 plain;
     class h_7df607868da2 plain;
-    class h_424c0fa79ba4 plain;
 ```
 
-## Detail 8/21
+## Detail 6/18
 
-- Range: `4e4943f7f65c` .. `9fe9a7007268`
+- Range: `424c0fa79ba4` .. `9fe9a7007268`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `113`
-- Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
-- Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
-- Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
-- Cross-chunk link: `7ef8916aba20 -.rollback.-> 7f3bfa93dbef`
+- Internal edges in this diagram: `61`
+- Cross-chunk link: `7f3bfa93dbef --improve--> 424c0fa79ba4`
 - Cross-chunk link: `7f3bfa93dbef --improve--> 62c7a96cd8dd`
-- Cross-chunk link: `922d37760c2b -.rollback.-> 923af923a304`
-- Cross-chunk link: `923af923a304 --improve--> fc1b183def64`
-- Cross-chunk link: `fc1b183def64 -.rollback.-> 923af923a304`
 - Cross-chunk link: `923af923a304 --improve--> 4f39face490d`
-- Cross-chunk link: `346c7685b489 -.rollback.-> e8c175933cd7`
 - Cross-chunk link: `e8c175933cd7 --improve--> aa241c208ce0`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
-- Cross-chunk link: `... and 10 more`
+- Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
+- Cross-chunk link: `3f5d04fbf3e5 --improve--> 8c8c6a7eca5d`
+- Cross-chunk link: `3f5d04fbf3e5 --improve--> d66fe5b0e266`
+- Cross-chunk link: `0e06d456a6c9 --improve--> 177e228d6908`
+- Cross-chunk link: `999fa1987f46 --improve--> 86a9a57f17d7`
 
 ```mermaid
 flowchart TD
+    h_424c0fa79ba4["424c0fa79ba4<br/>g=12 n=12<br/>comp=9247.9"]
     h_4e4943f7f65c["4e4943f7f65c<br/>g=13 n=13<br/>comp=10824.1"]
     h_ddd4637d2985["ddd4637d2985<br/>g=46 n=20<br/>comp=10382.4"]
     h_1d954126e373["1d954126e373<br/>g=14 n=14<br/>comp=10735.0"]
@@ -2193,7 +1556,6 @@ flowchart TD
     h_b6e0c3b6e909["b6e0c3b6e909<br/>g=33 n=20<br/>comp=9575.1"]
     h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=10114.5"]
     h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=10713.4"]
-    h_23858122e5c6["23858122e5c6"]
     h_922d37760c2b["922d37760c2b<br/>g=26 n=20<br/>comp=10030.2"]
     h_7cde6f5b4387["7cde6f5b4387<br/>g=12 n=12<br/>comp=10286.0"]
     h_fc1b183def64["fc1b183def64<br/>g=14 n=14<br/>comp=10281.6"]
@@ -2249,116 +1611,64 @@ flowchart TD
     h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=9942.9"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
-    h_1d954126e373 -->|improve| h_cdfe94687752
-    h_cdfe94687752 -. rollback .-> h_ddd4637d2985
     h_ddd4637d2985 -->|improve| h_2f1f5b99b8c2
     h_2f1f5b99b8c2 -->|improve| h_7ef8916aba20
-    h_7ef8916aba20 -->|improve| h_fdf81ffa7ff2
     h_fdf81ffa7ff2 -->|improve| h_9ac152ac3839
     h_9ac152ac3839 -->|improve| h_2a950d0b89c0
-    h_2a950d0b89c0 -. rollback .-> h_7ef8916aba20
     h_62c7a96cd8dd -->|improve| h_7bceafea8432
     h_7bceafea8432 -->|improve| h_a971843b52a8
     h_a971843b52a8 -->|improve| h_471181cba78c
-    h_471181cba78c -. rollback .-> h_a971843b52a8
     h_a971843b52a8 -->|improve| h_c20213c71bd2
     h_c20213c71bd2 -->|improve| h_1597df9bcac2
     h_1597df9bcac2 -->|improve| h_9a3b1ec437d3
-    h_9a3b1ec437d3 -->|improve| h_537f3be41b86
-    h_537f3be41b86 -. rollback .-> h_1597df9bcac2
-    h_1597df9bcac2 -. rollback .-> h_ddd4637d2985
     h_ddd4637d2985 -->|improve| h_e7220ae7a691
     h_e7220ae7a691 -->|improve| h_35002f03dde3
-    h_35002f03dde3 -. rollback .-> h_e7220ae7a691
     h_e7220ae7a691 -->|improve| h_bace268d0534
-    h_bace268d0534 -->|improve| h_853d8220d56e
     h_853d8220d56e -->|improve| h_3de1a7e6ddf4
-    h_3de1a7e6ddf4 -. rollback .-> h_853d8220d56e
-    h_853d8220d56e -. rollback .-> h_bace268d0534
-    h_bace268d0534 -->|improve| h_371db8fee677
-    h_371db8fee677 -->|improve| h_b6e0c3b6e909
     h_b6e0c3b6e909 -->|improve| h_4d7f786718b8
     h_4d7f786718b8 -->|improve| h_2b031b4f385b
-    h_2b031b4f385b -->|improve| h_23858122e5c6
-    h_23858122e5c6 -. rollback .-> h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_922d37760c2b
     h_922d37760c2b -->|improve| h_7cde6f5b4387
-    h_7cde6f5b4387 -. rollback .-> h_922d37760c2b
-    h_4f39face490d -. rollback .-> h_b6e0c3b6e909
-    h_b6e0c3b6e909 -. rollback .-> h_e7220ae7a691
     h_e7220ae7a691 -->|improve| h_346c7685b489
     h_aa241c208ce0 -->|improve| h_999fa1987f46
-    h_999fa1987f46 -. rollback .-> h_aa241c208ce0
     h_aa241c208ce0 -->|improve| h_994de46c98dd
     h_994de46c98dd -->|improve| h_fc1f9b57c228
-    h_fc1f9b57c228 -. rollback .-> h_aa241c208ce0
     h_994de46c98dd -->|improve| h_59b034e69dc5
-    h_59b034e69dc5 -. rollback .-> h_994de46c98dd
     h_994de46c98dd -->|improve| h_e07035eae709
     h_e07035eae709 -->|improve| h_04ccf12d38e1
-    h_04ccf12d38e1 -. rollback .-> h_994de46c98dd
     h_e07035eae709 -->|improve| h_ed7175aba8a7
-    h_ed7175aba8a7 -. rollback .-> h_e07035eae709
     h_e07035eae709 -->|improve| h_28f565693d84
     h_28f565693d84 -->|improve| h_4eadb4f5eb3c
     h_4eadb4f5eb3c -->|improve| h_d88a7d1bba56
-    h_d88a7d1bba56 -->|improve| h_88e10e16f2c3
-    h_88e10e16f2c3 -->|improve| h_63b6794f9167
-    h_63b6794f9167 -. rollback .-> h_88e10e16f2c3
     h_88e10e16f2c3 -->|improve| h_3b6ca2f80b46
-    h_3b6ca2f80b46 -. rollback .-> h_88e10e16f2c3
     h_88e10e16f2c3 -->|improve| h_c8d603f06e3d
     h_c8d603f06e3d -->|improve| h_3b3c2479f429
-    h_3b3c2479f429 -. rollback .-> h_c8d603f06e3d
     h_c8d603f06e3d -->|improve| h_c35afe41a4f4
-    h_c35afe41a4f4 -. rollback .-> h_c8d603f06e3d
-    h_c8d603f06e3d -. rollback .-> h_d88a7d1bba56
     h_d88a7d1bba56 -->|improve| h_22fc9a6d3ec2
-    h_22fc9a6d3ec2 -. rollback .-> h_d88a7d1bba56
-    h_d88a7d1bba56 -->|improve| h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_dd33e5c3775b
     h_dd33e5c3775b -->|improve| h_17daee8db72a
-    h_17daee8db72a -. rollback .-> h_dd33e5c3775b
-    h_dd33e5c3775b -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_1497aa8c82aa
-    h_1497aa8c82aa -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_aa34486df2a1
-    h_aa34486df2a1 -. rollback .-> h_d88a7d1bba56
-    h_d88a7d1bba56 -. rollback .-> h_c35afe41a4f4
-    h_c35afe41a4f4 -->|improve| h_3176e7d0e4e6
-    h_3176e7d0e4e6 -. rollback .-> h_3b3c2479f429
     h_3b3c2479f429 -->|improve| h_d3f101466026
-    h_d3f101466026 -->|improve| h_d5c1cf0a8981
     h_d5c1cf0a8981 -->|improve| h_7d2e7fc0a919
-    h_7d2e7fc0a919 -. rollback .-> h_d5c1cf0a8981
     h_d5c1cf0a8981 -->|improve| h_a968ee59bc60
-    h_a968ee59bc60 -. rollback .-> h_d5c1cf0a8981
-    h_d5c1cf0a8981 -->|improve| h_cd08271f19b0
-    h_cd08271f19b0 -. rollback .-> h_d5c1cf0a8981
     h_d5c1cf0a8981 -->|improve| h_f02b10f65ec4
     h_f02b10f65ec4 -->|improve| h_44ea003f3e78
-    h_44ea003f3e78 -. rollback .-> h_3b3c2479f429
     h_3b3c2479f429 -->|improve| h_fde77e8443bd
-    h_fde77e8443bd -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_76aa40108046
     h_76aa40108046 -->|improve| h_53f72171e961
-    h_53f72171e961 -. rollback .-> h_76aa40108046
     h_76aa40108046 -->|improve| h_8105d20e4330
     h_8105d20e4330 -->|improve| h_52ec90a8aeb0
     h_52ec90a8aeb0 -->|improve| h_b1220235126f
     h_b1220235126f -->|improve| h_51c175adcd5d
     h_51c175adcd5d -->|improve| h_2a8e4a612c27
-    h_2a8e4a612c27 -. rollback .-> h_51c175adcd5d
     h_51c175adcd5d -->|improve| h_63f836102d11
     h_63f836102d11 -->|improve| h_2e9fe5d1f791
     h_2e9fe5d1f791 -->|improve| h_3f5d04fbf3e5
     h_3f5d04fbf3e5 -->|improve| h_6c61d1962cec
-    h_6c61d1962cec -. rollback .-> h_3f5d04fbf3e5
     h_3f5d04fbf3e5 -->|improve| h_94f76057d4b6
-    h_94f76057d4b6 -. rollback .-> h_2e9fe5d1f791
     h_2e9fe5d1f791 -->|improve| h_c06979d29d37
     h_c06979d29d37 -->|improve| h_e5cecbe37d12
-    h_e5cecbe37d12 -. rollback .-> h_2e9fe5d1f791
     h_2e9fe5d1f791 -->|improve| h_0e06d456a6c9
     h_0e06d456a6c9 -->|improve| h_9fe9a7007268
 
@@ -2367,6 +1677,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_424c0fa79ba4 plain;
     class h_4e4943f7f65c plain;
     class h_ddd4637d2985 plain;
     class h_1d954126e373 plain;
@@ -2393,7 +1704,6 @@ flowchart TD
     class h_b6e0c3b6e909 plain;
     class h_4d7f786718b8 plain;
     class h_2b031b4f385b plain;
-    class h_23858122e5c6 plain;
     class h_922d37760c2b plain;
     class h_7cde6f5b4387 plain;
     class h_fc1b183def64 plain;
@@ -2449,24 +1759,24 @@ flowchart TD
     class h_9fe9a7007268 plain;
 ```
 
-## Detail 9/21
+## Detail 7/18
 
 - Range: `0c0301a98e5f` .. `216f251b5089`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `89`
+- Internal edges in this diagram: `71`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
-- Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
-- Cross-chunk link: `dff2a8ce1158 -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> 8c8c6a7eca5d`
-- Cross-chunk link: `52401ce37fac -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> d66fe5b0e266`
-- Cross-chunk link: `ede288659cc0 -.rollback.-> 0e06d456a6c9`
 - Cross-chunk link: `0e06d456a6c9 --improve--> 177e228d6908`
-- Cross-chunk link: `cbd3e0e2f570 -.rollback.-> 1fab86e56ddc`
-- Cross-chunk link: `1fab86e56ddc -.rollback.-> 4bd5583eebf5`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
-- Cross-chunk link: `... and 22 more`
+- Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
+- Cross-chunk link: `b8d37aebbd1a --improve--> c333071675cc`
+- Cross-chunk link: `216f251b5089 --improve--> 413548ba9827`
+- Cross-chunk link: `003e9883e188 --improve--> 6479a8c1a527`
+- Cross-chunk link: `19541065acc3 --improve--> dba57ae02a3e`
+- Cross-chunk link: `acd5803d8ef7 --improve--> d063eeb0f357`
+- Cross-chunk link: `... and 3 more`
 
 ```mermaid
 flowchart TD
@@ -2553,21 +1863,16 @@ flowchart TD
 
     h_a9d3868684e2 -->|improve| h_502d6ae93732
     h_502d6ae93732 -->|improve| h_46d67246f7a7
-    h_46d67246f7a7 -. rollback .-> h_502d6ae93732
     h_502d6ae93732 -->|improve| h_b4eb6483e41e
     h_b4eb6483e41e -->|improve| h_86541343fec6
     h_86541343fec6 -->|improve| h_bee7ce1f9bbd
     h_bee7ce1f9bbd -->|improve| h_b59ea0c231e3
     h_b59ea0c231e3 -->|improve| h_c3ae4e32c788
     h_c3ae4e32c788 -->|improve| h_2537fc9be12e
-    h_2537fc9be12e -->|improve| h_1f0d87a2411f
-    h_1f0d87a2411f -. rollback .-> h_c3ae4e32c788
     h_c3ae4e32c788 -->|improve| h_550d15119e1e
     h_550d15119e1e -->|improve| h_7cf265bae6ef
     h_7cf265bae6ef -->|improve| h_085a14fbeb1f
-    h_085a14fbeb1f -. rollback .-> h_7cf265bae6ef
     h_7cf265bae6ef -->|improve| h_713eae62a2e4
-    h_713eae62a2e4 -. rollback .-> h_7cf265bae6ef
     h_7cf265bae6ef -->|improve| h_dff2a8ce1158
     h_8c8c6a7eca5d -->|improve| h_0b09e6f9213f
     h_0b09e6f9213f -->|improve| h_39b6da4c414b
@@ -2578,33 +1883,26 @@ flowchart TD
     h_d2edb10705a4 -->|improve| h_82f7b2693691
     h_82f7b2693691 -->|improve| h_d4c94e87c479
     h_d4c94e87c479 -->|improve| h_4e795c3ae3bb
-    h_4e795c3ae3bb -. rollback .-> h_0b09e6f9213f
     h_0b09e6f9213f -->|improve| h_b82e78f29aca
     h_b82e78f29aca -->|improve| h_cf520bbb7509
     h_cf520bbb7509 -->|improve| h_27ce39e51504
     h_27ce39e51504 -->|improve| h_455f76305eb1
-    h_455f76305eb1 -. rollback .-> h_27ce39e51504
     h_27ce39e51504 -->|improve| h_573b22daa1ae
-    h_573b22daa1ae -. rollback .-> h_cf520bbb7509
     h_27ce39e51504 -->|improve| h_7f3565633498
     h_7f3565633498 -->|improve| h_8f9dab5b9198
     h_8f9dab5b9198 -->|improve| h_980abcc574c3
-    h_980abcc574c3 -. rollback .-> h_0b09e6f9213f
     h_0b09e6f9213f -->|improve| h_00276c327ece
     h_00276c327ece -->|improve| h_f6f30d9bbafe
     h_f6f30d9bbafe -->|improve| h_1534cccd7585
     h_1534cccd7585 -->|improve| h_ede288659cc0
-    h_177e228d6908 -->|improve| h_a3c68675933a
     h_a3c68675933a -->|improve| h_b0ae904c0e57
     h_b0ae904c0e57 -->|improve| h_65b1f5370d60
     h_65b1f5370d60 -->|improve| h_8de4cab8c8f0
     h_8de4cab8c8f0 -->|improve| h_ec17666b9ae7
-    h_ec17666b9ae7 -. rollback .-> h_a3c68675933a
     h_a3c68675933a -->|improve| h_0fe801339bf1
     h_0fe801339bf1 -->|improve| h_4bd5583eebf5
     h_4bd5583eebf5 -->|improve| h_cbd3e0e2f570
     h_cbd3e0e2f570 -->|improve| h_b4f65529d44a
-    h_b4f65529d44a -. rollback .-> h_cbd3e0e2f570
     h_4bd5583eebf5 -->|improve| h_888e7f7b3e23
     h_888e7f7b3e23 -->|improve| h_e0794c23cf9f
     h_e0794c23cf9f -->|improve| h_566f8f1f8c82
@@ -2619,27 +1917,21 @@ flowchart TD
     h_66e5df314bc7 -->|improve| h_608f63a01e6b
     h_608f63a01e6b -->|improve| h_b8d37aebbd1a
     h_b8d37aebbd1a -->|improve| h_ee2c76235324
-    h_ee2c76235324 -. rollback .-> h_608f63a01e6b
     h_608f63a01e6b -->|improve| h_4052d8dd8449
     h_4052d8dd8449 -->|improve| h_ec2ae6392eb2
     h_ec2ae6392eb2 -->|improve| h_11e54fb5a8f0
     h_11e54fb5a8f0 -->|improve| h_29199c40687a
     h_29199c40687a -->|improve| h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_ab10263e8ab7
-    h_ab10263e8ab7 -. rollback .-> h_608f63a01e6b
     h_608f63a01e6b -->|improve| h_060b82e85a13
-    h_060b82e85a13 -. rollback .-> h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_e3cc375bcd69
     h_e3cc375bcd69 -->|improve| h_1e3a09db9b72
     h_1e3a09db9b72 -->|improve| h_af7789a91d5a
-    h_af7789a91d5a -->|improve| h_bcf6915c6c58
     h_bcf6915c6c58 -->|improve| h_419d1e554c03
     h_419d1e554c03 -->|improve| h_939e5ac4ed1f
     h_939e5ac4ed1f -->|improve| h_f8aa9dc2e031
     h_f8aa9dc2e031 -->|improve| h_2ffec13b0141
     h_2ffec13b0141 -->|improve| h_3c7551fe053c
-    h_3c7551fe053c -->|improve| h_216f251b5089
-    h_11e54fb5a8f0 -. rollback .-> h_af7789a91d5a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2728,24 +2020,24 @@ flowchart TD
     class h_216f251b5089 plain;
 ```
 
-## Detail 10/21
+## Detail 8/18
 
 - Range: `7bd6203f37b5` .. `58a2f66626b3`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `79`
+- Internal edges in this diagram: `70`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
-- Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
-- Cross-chunk link: `31da7cda98a8 -.rollback.-> 2ffec13b0141`
-- Cross-chunk link: `2ffec13b0141 -.rollback.-> 7bd6203f37b5`
-- Cross-chunk link: `7bd6203f37b5 -.rollback.-> b8d37aebbd1a`
 - Cross-chunk link: `b8d37aebbd1a --improve--> c333071675cc`
-- Cross-chunk link: `c333071675cc -.rollback.-> 216f251b5089`
 - Cross-chunk link: `216f251b5089 --improve--> 413548ba9827`
-- Cross-chunk link: `7f14656b19f8 -.rollback.-> 003e9883e188`
 - Cross-chunk link: `003e9883e188 --improve--> 6479a8c1a527`
-- Cross-chunk link: `9378430a0783 -.rollback.-> 19541065acc3`
-- Cross-chunk link: `... and 20 more`
+- Cross-chunk link: `19541065acc3 --improve--> dba57ae02a3e`
+- Cross-chunk link: `acd5803d8ef7 --improve--> d063eeb0f357`
+- Cross-chunk link: `acd5803d8ef7 --improve--> 2557979ccf35`
+- Cross-chunk link: `af7789a91d5a --improve--> 3391cd05995a`
+- Cross-chunk link: `af7789a91d5a --improve--> 1ccd69078373`
+- Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
+- Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
+- Cross-chunk link: `... and 3 more`
 
 ```mermaid
 flowchart TD
@@ -2832,7 +2124,6 @@ flowchart TD
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
-    h_6479a8c1a527 -. rollback .-> h_7bd6203f37b5
     h_7bd6203f37b5 -->|improve| h_9378430a0783
     h_dba57ae02a3e -->|improve| h_420504e4ebd4
     h_420504e4ebd4 -->|improve| h_6c6b780b2a88
@@ -2842,14 +2133,12 @@ flowchart TD
     h_93f661d1a6ef -->|improve| h_5b32330554c6
     h_5b32330554c6 -->|improve| h_e23179d462b1
     h_e23179d462b1 -->|improve| h_5e26fba7ae10
-    h_5e26fba7ae10 -. rollback .-> h_5f892fb472b0
     h_5f892fb472b0 -->|improve| h_889399ef2cd1
     h_889399ef2cd1 -->|improve| h_7915348f1fe9
     h_7915348f1fe9 -->|improve| h_6eed532ab516
     h_6eed532ab516 -->|improve| h_ae16169e2913
     h_ae16169e2913 -->|improve| h_2e8948ea5fce
     h_2e8948ea5fce -->|improve| h_e023e3f9ff45
-    h_e023e3f9ff45 -. rollback .-> h_2e8948ea5fce
     h_2e8948ea5fce -->|improve| h_880278a14edf
     h_880278a14edf -->|improve| h_b9b4224aa237
     h_d063eeb0f357 -->|improve| h_d1611efd730f
@@ -2865,14 +2154,11 @@ flowchart TD
     h_036bd1b24fea -->|improve| h_a64837b1edc1
     h_a64837b1edc1 -->|improve| h_fcd6d3725de6
     h_fcd6d3725de6 -->|improve| h_c3a4d0caf321
-    h_c3a4d0caf321 -. rollback .-> h_9029bd07d8b9
     h_9029bd07d8b9 -->|improve| h_bc85edb25d78
     h_bc85edb25d78 -->|improve| h_78d702e43155
     h_78d702e43155 -->|improve| h_d37c7572b29b
     h_d37c7572b29b -->|improve| h_e6f534c37e28
     h_e6f534c37e28 -->|improve| h_301fa13ab0ab
-    h_301fa13ab0ab -. rollback .-> h_78d702e43155
-    h_78d702e43155 -. rollback .-> h_e6f534c37e28
     h_1ccd69078373 -->|improve| h_b6f6b5fc153a
     h_b6f6b5fc153a -->|improve| h_e24de3a4fc60
     h_e24de3a4fc60 -->|improve| h_53e584297370
@@ -2884,7 +2170,6 @@ flowchart TD
     h_bb768f9ca0bf -->|improve| h_d7c863da186d
     h_d7c863da186d -->|improve| h_1813ba4eef44
     h_1813ba4eef44 -->|improve| h_965838f53ae6
-    h_965838f53ae6 -. rollback .-> h_1813ba4eef44
     h_1813ba4eef44 -->|improve| h_4c9ff4fc8427
     h_4c9ff4fc8427 -->|improve| h_f26a4019f5fe
     h_f26a4019f5fe -->|improve| h_ee1b93ba7260
@@ -2893,14 +2178,12 @@ flowchart TD
     h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
     h_9a7d71d20cfb -->|improve| h_9ef3157c7ea7
     h_9ef3157c7ea7 -->|improve| h_9b9cc74fc310
-    h_9b9cc74fc310 -. rollback .-> h_1813ba4eef44
     h_1813ba4eef44 -->|improve| h_3bdbaee6d05d
     h_3bdbaee6d05d -->|improve| h_01124af99ba1
     h_01124af99ba1 -->|improve| h_84d04da1d615
     h_84d04da1d615 -->|improve| h_5eeb503d7635
     h_5eeb503d7635 -->|improve| h_8bad92ca8197
     h_8bad92ca8197 -->|improve| h_59b54cf8e47c
-    h_59b54cf8e47c -. rollback .-> h_9a7d71d20cfb
     h_9a7d71d20cfb -->|improve| h_a4fe1ab8ef54
     h_a4fe1ab8ef54 -->|improve| h_610ceddcbaf9
     h_610ceddcbaf9 -->|improve| h_017f868809b0
@@ -2997,24 +2280,24 @@ flowchart TD
     class h_58a2f66626b3 plain;
 ```
 
-## Detail 11/21
+## Detail 9/18
 
 - Range: `422188c46bb8` .. `15f86b7062ff`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `94`
+- Internal edges in this diagram: `76`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
-- Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
-- Cross-chunk link: `a4c1fa9f26bd -.rollback.-> 84d04da1d615`
 - Cross-chunk link: `84d04da1d615 --improve--> bf9bc74f22e1`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
-- Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
-- Cross-chunk link: `0c78453df396 -.rollback.-> f4545d36f678`
 - Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
-- Cross-chunk link: `6131abcbc65e -.rollback.-> ade59a9a5025`
 - Cross-chunk link: `abd5c3448298 --improve--> d5015d25c1de`
-- Cross-chunk link: `... and 44 more`
+- Cross-chunk link: `d7744a17c3fe --improve--> 301434b90c7a`
+- Cross-chunk link: `424708357a70 --improve--> 0e279ee4fb7c`
+- Cross-chunk link: `98b57969e9e1 --improve--> d417276684b4`
+- Cross-chunk link: `97a63b4bac79 --improve--> 415b0d640378`
+- Cross-chunk link: `294aa2554fbf --improve--> 344d7c0281f1`
+- Cross-chunk link: `... and 8 more`
 
 ```mermaid
 flowchart TD
@@ -3109,18 +2392,15 @@ flowchart TD
     h_bf9bc74f22e1 -->|improve| h_f830ed5e32bd
     h_f830ed5e32bd -->|improve| h_9efec03deebb
     h_9efec03deebb -->|improve| h_b0e0e0739f44
-    h_b0e0e0739f44 -. rollback .-> h_9efec03deebb
     h_9efec03deebb -->|improve| h_1e00ebfbb96a
     h_1e00ebfbb96a -->|improve| h_8a2c0083198b
     h_8a2c0083198b -->|improve| h_75a5f2792f1c
-    h_75a5f2792f1c -. rollback .-> h_8a2c0083198b
     h_8a2c0083198b -->|improve| h_28747cec42cd
     h_28747cec42cd -->|improve| h_9c0f47044ed1
     h_9c0f47044ed1 -->|improve| h_72c100d9f15f
     h_72c100d9f15f -->|improve| h_83703f8c4c67
     h_83703f8c4c67 -->|improve| h_854dd86604da
     h_854dd86604da -->|improve| h_5a79c70f09fb
-    h_5a79c70f09fb -. rollback .-> h_83703f8c4c67
     h_83703f8c4c67 -->|improve| h_5a5041d085a2
     h_5a5041d085a2 -->|improve| h_97a63b4bac79
     h_97a63b4bac79 -->|improve| h_23cb1f623799
@@ -3128,10 +2408,7 @@ flowchart TD
     h_5b1ed9feee39 -->|improve| h_35a31ad32371
     h_35a31ad32371 -->|improve| h_ec180f35c7e5
     h_ec180f35c7e5 -->|improve| h_4f5e73275eeb
-    h_4f5e73275eeb -. rollback .-> h_35a31ad32371
     h_35a31ad32371 -->|improve| h_10a880b3f1ee
-    h_10a880b3f1ee -. rollback .-> h_97a63b4bac79
-    h_97a63b4bac79 -->|improve| h_0923a69d1f67
     h_0923a69d1f67 -->|improve| h_fe57fa24fbe2
     h_fe57fa24fbe2 -->|improve| h_4d15e051ad7a
     h_4d15e051ad7a -->|improve| h_152efdf4068b
@@ -3140,8 +2417,6 @@ flowchart TD
     h_128f831aab73 -->|improve| h_699d5b88b7f9
     h_699d5b88b7f9 -->|improve| h_da65bde97b9d
     h_da65bde97b9d -->|improve| h_dd9b01603bc8
-    h_dd9b01603bc8 -. rollback .-> h_699d5b88b7f9
-    h_699d5b88b7f9 -. rollback .-> h_5a5041d085a2
     h_5a5041d085a2 -->|improve| h_2336cf8cd405
     h_2336cf8cd405 -->|improve| h_2075f303f717
     h_2075f303f717 -->|improve| h_640016fbad33
@@ -3151,12 +2426,10 @@ flowchart TD
     h_59a951e3137f -->|improve| h_b32600722447
     h_b32600722447 -->|improve| h_5369a1d516af
     h_5369a1d516af -->|improve| h_4d221bd60535
-    h_4d221bd60535 -. rollback .-> h_fe57fa24fbe2
     h_fe57fa24fbe2 -->|improve| h_d7744a17c3fe
     h_d7744a17c3fe -->|improve| h_626021cccd13
     h_626021cccd13 -->|improve| h_df38ae81ba4a
     h_df38ae81ba4a -->|improve| h_aea48ffce72f
-    h_aea48ffce72f -. rollback .-> h_df38ae81ba4a
     h_df38ae81ba4a -->|improve| h_734c56523254
     h_734c56523254 -->|improve| h_98b57969e9e1
     h_98b57969e9e1 -->|improve| h_294aa2554fbf
@@ -3171,28 +2444,20 @@ flowchart TD
     h_10e2128c3467 -->|improve| h_abd5c3448298
     h_abd5c3448298 -->|improve| h_f53cbd71d4ac
     h_f53cbd71d4ac -->|improve| h_7fb34a9574aa
-    h_7fb34a9574aa -. rollback .-> h_e7cf27aac00e
     h_e7cf27aac00e -->|improve| h_f9c3495541b4
-    h_f9c3495541b4 -. rollback .-> h_358c1f400dc9
     h_358c1f400dc9 -->|improve| h_f452a0a4c9f9
     h_f452a0a4c9f9 -->|improve| h_e9f46253f367
     h_e9f46253f367 -->|improve| h_750e181c1242
-    h_750e181c1242 -. rollback .-> h_f4545d36f678
     h_f4545d36f678 -->|improve| h_cf84496e4523
     h_cf84496e4523 -->|improve| h_63f2c2c1d31e
     h_63f2c2c1d31e -->|improve| h_2df66e5a3e28
     h_2df66e5a3e28 -->|improve| h_0ff7f425d879
     h_0ff7f425d879 -->|improve| h_ccf68dc4eeeb
     h_ccf68dc4eeeb -->|improve| h_bb2eb7e82db6
-    h_bb2eb7e82db6 -. rollback .-> h_63f2c2c1d31e
     h_63f2c2c1d31e -->|improve| h_2fdb9d0f5370
     h_2fdb9d0f5370 -->|improve| h_e5cde6468c8f
     h_e5cde6468c8f -->|improve| h_424708357a70
     h_424708357a70 -->|improve| h_15f86b7062ff
-    h_15f86b7062ff -. rollback .-> h_2fdb9d0f5370
-    h_f4545d36f678 -. rollback .-> h_294aa2554fbf
-    h_ade59a9a5025 -. rollback .-> h_2fdb9d0f5370
-    h_2fdb9d0f5370 -. rollback .-> h_abd5c3448298
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3281,24 +2546,23 @@ flowchart TD
     class h_15f86b7062ff plain;
 ```
 
-## Detail 12/21
+## Detail 10/18
 
 - Range: `8b764b56c6f3` .. `865e131b48a5`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `97`
+- Internal edges in this diagram: `70`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
-- Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
-- Cross-chunk link: `0c78453df396 -.rollback.-> f4545d36f678`
 - Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
-- Cross-chunk link: `6131abcbc65e -.rollback.-> ade59a9a5025`
 - Cross-chunk link: `abd5c3448298 --improve--> d5015d25c1de`
-- Cross-chunk link: `da9419588c26 -.rollback.-> d7744a17c3fe`
 - Cross-chunk link: `d7744a17c3fe --improve--> 301434b90c7a`
-- Cross-chunk link: `db5969337a19 -.rollback.-> 424708357a70`
-- Cross-chunk link: `424708357a70 -.rollback.-> db5969337a19`
 - Cross-chunk link: `424708357a70 --improve--> 0e279ee4fb7c`
-- Cross-chunk link: `... and 26 more`
+- Cross-chunk link: `98b57969e9e1 --improve--> d417276684b4`
+- Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
+- Cross-chunk link: `9c479d3d7963 --improve--> eb4bb8e05f86`
+- Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
+- Cross-chunk link: `a95d8b3c3cb1 --improve--> 01a417be820d`
+- Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
 
 ```mermaid
 flowchart TD
@@ -3388,11 +2652,9 @@ flowchart TD
     h_3a3987c92448 -->|improve| h_44324046b2a1
     h_44324046b2a1 -->|improve| h_1a8122f8cd5b
     h_1a8122f8cd5b -->|improve| h_947be76729ab
-    h_947be76729ab -. rollback .-> h_3a3987c92448
     h_3a3987c92448 -->|improve| h_55110db77bfc
     h_55110db77bfc -->|improve| h_6131abcbc65e
     h_d5015d25c1de -->|improve| h_b928b5a47b2d
-    h_b928b5a47b2d -. rollback .-> h_d5015d25c1de
     h_d5015d25c1de -->|improve| h_05d29166cb4e
     h_05d29166cb4e -->|improve| h_4a37b8359fba
     h_4a37b8359fba -->|improve| h_0d997f667104
@@ -3404,12 +2666,9 @@ flowchart TD
     h_87a00400960f -->|improve| h_11c426792c0e
     h_11c426792c0e -->|improve| h_5399f0247342
     h_5399f0247342 -->|improve| h_4b0efa3ca7af
-    h_4b0efa3ca7af -. rollback .-> h_11c426792c0e
-    h_11c426792c0e -. rollback .-> h_7c64f33a9c1f
     h_7c64f33a9c1f -->|improve| h_8f7275ab4e81
     h_8f7275ab4e81 -->|improve| h_620dd5e35efd
     h_620dd5e35efd -->|improve| h_d147c7d6dedf
-    h_d147c7d6dedf -. rollback .-> h_87a00400960f
     h_87a00400960f -->|improve| h_cf849ee79b14
     h_cf849ee79b14 -->|improve| h_e9fbde8802e7
     h_e9fbde8802e7 -->|improve| h_7448a3adf70e
@@ -3418,27 +2677,19 @@ flowchart TD
     h_bc1b4cd5b7e7 -->|improve| h_b869b3ed4596
     h_b869b3ed4596 -->|improve| h_0fd45d7afdde
     h_0fd45d7afdde -->|improve| h_2561883f52a6
-    h_2561883f52a6 -. rollback .-> h_cf849ee79b14
-    h_cf849ee79b14 -. rollback .-> h_3a3987c92448
     h_3a3987c92448 -->|improve| h_4bd4231adba9
-    h_4bd4231adba9 -. rollback .-> h_d5015d25c1de
     h_d5015d25c1de -->|improve| h_42c1e741e688
     h_42c1e741e688 -->|improve| h_da9419588c26
     h_da9419588c26 -->|improve| h_e39e346e6a36
     h_e39e346e6a36 -->|improve| h_defe4ad4eeaf
     h_defe4ad4eeaf -->|improve| h_f3726bcc9fc1
     h_f3726bcc9fc1 -->|improve| h_e4ac98cdecdb
-    h_e4ac98cdecdb -. rollback .-> h_da9419588c26
     h_301434b90c7a -->|improve| h_b1c15fe57b34
     h_b1c15fe57b34 -->|improve| h_89af10322292
     h_89af10322292 -->|improve| h_5209b0724d36
     h_5209b0724d36 -->|improve| h_c1cc8b0c07be
-    h_c1cc8b0c07be -. rollback .-> h_301434b90c7a
     h_301434b90c7a -->|improve| h_751f8b70ddb5
     h_751f8b70ddb5 -->|improve| h_937278c32a00
-    h_937278c32a00 -->|improve| h_1638b77d8e1e
-    h_1638b77d8e1e -->|improve| h_c95f44d8c448
-    h_c95f44d8c448 -->|improve| h_3be2ff0f8381
     h_3be2ff0f8381 -->|improve| h_10d72f1047f4
     h_10d72f1047f4 -->|improve| h_ecfc830b59bd
     h_ecfc830b59bd -->|improve| h_48c0bcd760fa
@@ -3448,38 +2699,24 @@ flowchart TD
     h_bf07db529883 -->|improve| h_1e1496aefa66
     h_1e1496aefa66 -->|improve| h_f619d000fa07
     h_f619d000fa07 -->|improve| h_3d2fa276d6a4
-    h_3d2fa276d6a4 -. rollback .-> h_f619d000fa07
-    h_f619d000fa07 -. rollback .-> h_bf07db529883
     h_bf07db529883 -->|improve| h_3e3bcec53bef
     h_3e3bcec53bef -->|improve| h_f749c5ca152c
-    h_f749c5ca152c -. rollback .-> h_bf07db529883
-    h_bf07db529883 -. rollback .-> h_89af10322292
-    h_89af10322292 -. rollback .-> h_3e3bcec53bef
-    h_3e3bcec53bef -. rollback .-> h_14798af73897
-    h_14798af73897 -. rollback .-> h_bf07db529883
     h_bf07db529883 -->|improve| h_7ae3b6b8df55
     h_7ae3b6b8df55 -->|improve| h_6e70aac9583a
-    h_6e70aac9583a -. rollback .-> h_89af10322292
     h_89af10322292 -->|improve| h_00796808697b
-    h_00796808697b -. rollback .-> h_3e3bcec53bef
     h_14798af73897 -->|improve| h_a95d8b3c3cb1
     h_a95d8b3c3cb1 -->|improve| h_db5969337a19
-    h_db5969337a19 -. rollback .-> h_a95d8b3c3cb1
     h_0e279ee4fb7c -->|improve| h_22f99631bc6a
-    h_22f99631bc6a -. rollback .-> h_0e279ee4fb7c
     h_d417276684b4 -->|improve| h_4adf1297f64a
-    h_8bb16b7dbe3b -. rollback .-> h_87a00400960f
+    h_4adf1297f64a -->|improve| h_49fedb9cb8f8
+    h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
     h_8bb16b7dbe3b -->|improve| h_9c479d3d7963
     h_9c479d3d7963 -->|improve| h_870a50c13e53
     h_870a50c13e53 -->|improve| h_4f48cdc948a2
     h_4f48cdc948a2 -->|improve| h_b1dd545d0cc2
     h_b1dd545d0cc2 -->|improve| h_bc636fab5dd9
-    h_bc636fab5dd9 -. rollback .-> h_4f48cdc948a2
     h_4f48cdc948a2 -->|improve| h_8757f12321cb
-    h_8757f12321cb -. rollback .-> h_4f48cdc948a2
     h_4f48cdc948a2 -->|improve| h_865e131b48a5
-    h_4adf1297f64a -->|improve| h_49fedb9cb8f8
-    h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3568,24 +2805,24 @@ flowchart TD
     class h_865e131b48a5 plain;
 ```
 
-## Detail 13/21
+## Detail 11/18
 
-- Range: `425e0268f431` .. `ea95bdde7a27`
+- Range: `425e0268f431` .. `e3215795865e`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `93`
+- Internal edges in this diagram: `73`
 - Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
-- Cross-chunk link: `c0081fb921c8 -.rollback.-> 9c479d3d7963`
 - Cross-chunk link: `9c479d3d7963 --improve--> eb4bb8e05f86`
-- Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
-- Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
-- Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
-- Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
+- Cross-chunk link: `e3215795865e --improve--> 3f85249e1f78`
+- Cross-chunk link: `e3215795865e --improve--> 43cf836f04d5`
+- Cross-chunk link: `e3215795865e --improve--> 355868eaf8ab`
+- Cross-chunk link: `e3215795865e --improve--> 634d0b4d44d1`
+- Cross-chunk link: `cfb684533fdb --improve--> fa7b4aa7235f`
 - Cross-chunk link: `ea95bdde7a27 --improve--> b6b219118e3c`
-- Cross-chunk link: `b6b219118e3c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
-- Cross-chunk link: `23f6298575f2 -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 23c0ac0a5fa6`
-- Cross-chunk link: `... and 46 more`
+- Cross-chunk link: `666764fa0f05 --improve--> 653e161694b4`
+- Cross-chunk link: `425e0268f431 --improve--> 03a3722d0f51`
+- Cross-chunk link: `... and 21 more`
 
 ```mermaid
 flowchart TD
@@ -3596,18 +2833,14 @@ flowchart TD
     h_f776a41fae76["f776a41fae76<br/>g=37 n=20<br/>comp=11297.2"]
     h_6484212d577c["6484212d577c<br/>g=13 n=13<br/>comp=10779.2"]
     h_6bd94c2f7f67["6bd94c2f7f67<br/>g=12 n=12<br/>comp=9823.1"]
-    h_ef0102c6e07d["ef0102c6e07d"]
     h_f945d31af9d5["f945d31af9d5<br/>g=26 n=20<br/>comp=10872.2"]
-    h_25b6aaf2644c["25b6aaf2644c"]
-    h_e52a03affe31["e52a03affe31"]
-    h_dac34bf46ed2["dac34bf46ed2"]
     h_efc4b6fe5f51["efc4b6fe5f51<br/>g=37 n=20<br/>comp=9441.9"]
-    h_1b80b364988d["1b80b364988d"]
     h_1ad338ca58c4["1ad338ca58c4<br/>g=25 n=20<br/>comp=11378.5"]
+    h_1b80b364988d["1b80b364988d"]
     h_a64aa1f482ba["a64aa1f482ba<br/>g=13 n=13<br/>comp=11473.5"]
     h_636b223fc3c1["636b223fc3c1<br/>g=37 n=20<br/>comp=9664.6"]
-    h_7a060bdfa8c2["7a060bdfa8c2"]
     h_2eb67f3364df["2eb67f3364df<br/>g=12 n=12<br/>comp=10336.8"]
+    h_7a060bdfa8c2["7a060bdfa8c2"]
     h_6fc1f979a6a3["6fc1f979a6a3<br/>g=21 n=20<br/>comp=10864.0"]
     h_63236aea7cdc["63236aea7cdc"]
     h_661ab4be090c["661ab4be090c<br/>g=47 n=20<br/>comp=11025.2"]
@@ -3635,8 +2868,8 @@ flowchart TD
     h_426bdf83097f["426bdf83097f<br/>g=12 n=12<br/>comp=10537.2"]
     h_b970b9abce0b["b970b9abce0b<br/>g=12 n=12<br/>comp=11146.0"]
     h_10b331a30057["10b331a30057<br/>g=12 n=12<br/>comp=11249.4"]
-    h_bcf2f7a414bd["bcf2f7a414bd"]
     h_8c14e0d519c9["8c14e0d519c9<br/>g=25 n=20<br/>comp=10668.0"]
+    h_bcf2f7a414bd["bcf2f7a414bd"]
     h_064563030cb5["064563030cb5<br/>g=12 n=12<br/>comp=10769.5"]
     h_1aa464cc23d4["1aa464cc23d4<br/>g=36 n=20<br/>comp=12185.6"]
     h_e2f50a930b72["e2f50a930b72<br/>g=12 n=12<br/>comp=9866.7"]
@@ -3669,6 +2902,10 @@ flowchart TD
     h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_c10a4ca71357["c10a4ca71357<br/>g=12 n=12<br/>comp=10432.0"]
     h_ea95bdde7a27["ea95bdde7a27<br/>g=98 n=20<br/>comp=10948.8"]
+    h_c016461aeb9c["c016461aeb9c<br/>g=12 n=12<br/>comp=9311.2"]
+    h_4fe3a8221f0d["4fe3a8221f0d<br/>g=29 n=20<br/>comp=10860.5"]
+    h_cfb684533fdb["cfb684533fdb<br/>g=49 n=20<br/>comp=10872.6"]
+    h_e3215795865e["e3215795865e<br/>g=37 n=20<br/>comp=11335.3"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3676,56 +2913,36 @@ flowchart TD
     h_27dda80f2559 -->|improve| h_f776a41fae76
     h_f776a41fae76 -->|improve| h_6484212d577c
     h_6484212d577c -->|improve| h_6bd94c2f7f67
-    h_6bd94c2f7f67 -. rollback .-> h_f776a41fae76
-    h_f776a41fae76 -->|improve| h_ef0102c6e07d
-    h_ef0102c6e07d -->|improve| h_f945d31af9d5
-    h_f945d31af9d5 -->|improve| h_25b6aaf2644c
-    h_25b6aaf2644c -->|improve| h_e52a03affe31
-    h_e52a03affe31 -->|improve| h_dac34bf46ed2
-    h_dac34bf46ed2 -. rollback .-> h_f945d31af9d5
+    h_f776a41fae76 -->|improve| h_f945d31af9d5
     h_f945d31af9d5 -->|improve| h_efc4b6fe5f51
-    h_efc4b6fe5f51 -->|improve| h_1b80b364988d
     h_1b80b364988d -->|improve| h_1ad338ca58c4
     h_1ad338ca58c4 -->|improve| h_a64aa1f482ba
     h_a64aa1f482ba -->|improve| h_636b223fc3c1
-    h_636b223fc3c1 -->|improve| h_7a060bdfa8c2
     h_7a060bdfa8c2 -->|improve| h_2eb67f3364df
-    h_2eb67f3364df -. rollback .-> h_1ad338ca58c4
     h_1ad338ca58c4 -->|improve| h_6fc1f979a6a3
-    h_6fc1f979a6a3 -->|improve| h_63236aea7cdc
     h_63236aea7cdc -->|improve| h_661ab4be090c
     h_661ab4be090c -->|improve| h_cdbcd72e838c
-    h_cdbcd72e838c -. rollback .-> h_63236aea7cdc
     h_63236aea7cdc -->|improve| h_6c41672498b2
     h_6c41672498b2 -->|improve| h_ec872b894ada
     h_ec872b894ada -->|improve| h_b9ead874b341
     h_b9ead874b341 -->|improve| h_14ec196ff64b
-    h_14ec196ff64b -. rollback .-> h_661ab4be090c
-    h_661ab4be090c -. rollback .-> h_6fc1f979a6a3
-    h_6fc1f979a6a3 -. rollback .-> h_ec872b894ada
-    h_ec872b894ada -. rollback .-> h_63236aea7cdc
     h_63236aea7cdc -->|improve| h_c09432476df6
     h_c09432476df6 -->|improve| h_c0081fb921c8
     h_eb4bb8e05f86 -->|improve| h_2e9780eb6d5b
     h_2e9780eb6d5b -->|improve| h_bec7c224776e
-    h_bec7c224776e -. rollback .-> h_eb4bb8e05f86
     h_eb4bb8e05f86 -->|improve| h_4f5cd2e8b7da
     h_4f5cd2e8b7da -->|improve| h_5b4b74f31384
     h_5b4b74f31384 -->|improve| h_8922930171fc
     h_8922930171fc -->|improve| h_666764fa0f05
     h_666764fa0f05 -->|improve| h_5d2c56483b91
     h_5d2c56483b91 -->|improve| h_fde270efc768
-    h_fde270efc768 -. rollback .-> h_eb4bb8e05f86
     h_eb4bb8e05f86 -->|improve| h_3e054a962eda
-    h_3e054a962eda -->|improve| h_66b8976a784c
     h_66b8976a784c -->|improve| h_78ad861401ee
-    h_78ad861401ee -. rollback .-> h_eb4bb8e05f86
     h_eb4bb8e05f86 -->|improve| h_f599d83e5e62
     h_f599d83e5e62 -->|improve| h_919c76d38172
     h_919c76d38172 -->|improve| h_426bdf83097f
     h_426bdf83097f -->|improve| h_b970b9abce0b
     h_b970b9abce0b -->|improve| h_10b331a30057
-    h_10b331a30057 -->|improve| h_bcf2f7a414bd
     h_bcf2f7a414bd -->|improve| h_8c14e0d519c9
     h_8c14e0d519c9 -->|improve| h_064563030cb5
     h_064563030cb5 -->|improve| h_1aa464cc23d4
@@ -3736,8 +2953,6 @@ flowchart TD
     h_0aa88b190240 -->|improve| h_5d085fe17824
     h_5d085fe17824 -->|improve| h_b8871bc15e8e
     h_b8871bc15e8e -->|improve| h_0eef7efabe9a
-    h_0eef7efabe9a -. rollback .-> h_56f7bdea4658
-    h_56f7bdea4658 -. rollback .-> h_66b8976a784c
     h_66b8976a784c -->|improve| h_52b8716f748b
     h_52b8716f748b -->|improve| h_85a9826dd728
     h_85a9826dd728 -->|improve| h_cfdeecd74b57
@@ -3761,8 +2976,10 @@ flowchart TD
     h_0e22dd519bbf -->|improve| h_a1b28607d015
     h_a1b28607d015 -->|improve| h_c10a4ca71357
     h_c10a4ca71357 -->|improve| h_ea95bdde7a27
-    h_0e22dd519bbf -. rollback .-> h_425e0268f431
-    h_f776a41fae76 -->|improve| h_f945d31af9d5
+    h_ea95bdde7a27 -->|improve| h_c016461aeb9c
+    h_ea95bdde7a27 -->|improve| h_4fe3a8221f0d
+    h_4fe3a8221f0d -->|improve| h_cfb684533fdb
+    h_cfb684533fdb -->|improve| h_e3215795865e
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3776,18 +2993,14 @@ flowchart TD
     class h_f776a41fae76 plain;
     class h_6484212d577c plain;
     class h_6bd94c2f7f67 plain;
-    class h_ef0102c6e07d plain;
     class h_f945d31af9d5 plain;
-    class h_25b6aaf2644c plain;
-    class h_e52a03affe31 plain;
-    class h_dac34bf46ed2 plain;
     class h_efc4b6fe5f51 plain;
-    class h_1b80b364988d plain;
     class h_1ad338ca58c4 plain;
+    class h_1b80b364988d plain;
     class h_a64aa1f482ba plain;
     class h_636b223fc3c1 plain;
-    class h_7a060bdfa8c2 plain;
     class h_2eb67f3364df plain;
+    class h_7a060bdfa8c2 plain;
     class h_6fc1f979a6a3 plain;
     class h_63236aea7cdc plain;
     class h_661ab4be090c plain;
@@ -3815,8 +3028,8 @@ flowchart TD
     class h_426bdf83097f plain;
     class h_b970b9abce0b plain;
     class h_10b331a30057 plain;
-    class h_bcf2f7a414bd plain;
     class h_8c14e0d519c9 plain;
+    class h_bcf2f7a414bd plain;
     class h_064563030cb5 plain;
     class h_1aa464cc23d4 plain;
     class h_e2f50a930b72 plain;
@@ -3849,36 +3062,37 @@ flowchart TD
     class h_a1b28607d015 plain;
     class h_c10a4ca71357 plain;
     class h_ea95bdde7a27 plain;
+    class h_c016461aeb9c plain;
+    class h_4fe3a8221f0d plain;
+    class h_cfb684533fdb plain;
+    class h_e3215795865e plain;
 ```
 
-## Detail 14/21
+## Detail 12/18
 
-- Range: `c016461aeb9c` .. `94786eb2e0fc`
+- Range: `3f85249e1f78` .. `cd37242dea40`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `91`
-- Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
-- Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
-- Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
-- Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
+- Internal edges in this diagram: `57`
+- Cross-chunk link: `e3215795865e --improve--> 3f85249e1f78`
+- Cross-chunk link: `e3215795865e --improve--> 43cf836f04d5`
+- Cross-chunk link: `e3215795865e --improve--> 355868eaf8ab`
+- Cross-chunk link: `e3215795865e --improve--> 634d0b4d44d1`
+- Cross-chunk link: `cfb684533fdb --improve--> fa7b4aa7235f`
 - Cross-chunk link: `ea95bdde7a27 --improve--> b6b219118e3c`
-- Cross-chunk link: `b6b219118e3c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
-- Cross-chunk link: `23f6298575f2 -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 23c0ac0a5fa6`
-- Cross-chunk link: `07233caa484c -.rollback.-> 870a50c13e53`
 - Cross-chunk link: `666764fa0f05 --improve--> 653e161694b4`
-- Cross-chunk link: `41bb0d5baa24 -.rollback.-> 666764fa0f05`
-- Cross-chunk link: `... and 29 more`
+- Cross-chunk link: `425e0268f431 --improve--> 03a3722d0f51`
+- Cross-chunk link: `636b223fc3c1 --improve--> 9d131d171cbf`
+- Cross-chunk link: `efc4b6fe5f51 --improve--> a7b41f8f20ad`
+- Cross-chunk link: `... and 18 more`
 
 ```mermaid
 flowchart TD
-    h_c016461aeb9c["c016461aeb9c<br/>g=12 n=12<br/>comp=9311.2"]
-    h_4fe3a8221f0d["4fe3a8221f0d<br/>g=29 n=20<br/>comp=10860.5"]
-    h_cfb684533fdb["cfb684533fdb<br/>g=49 n=20<br/>comp=10872.6"]
-    h_e3215795865e["e3215795865e<br/>g=37 n=20<br/>comp=11335.3"]
     h_3f85249e1f78["3f85249e1f78<br/>g=13 n=13<br/>comp=11178.2"]
     h_6f3aa922b64a["6f3aa922b64a<br/>g=12 n=12<br/>comp=9590.8"]
     h_43cf836f04d5["43cf836f04d5<br/>g=12 n=12<br/>comp=10245.5"]
+    h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_71413461e56e["71413461e56e<br/>g=12 n=12<br/>comp=9939.6"]
     h_7a9bba424462["7a9bba424462<br/>g=36 n=20<br/>comp=11172.8"]
     h_0ffb1e00fba1["0ffb1e00fba1<br/>g=12 n=12<br/>comp=8755.9"]
@@ -3928,6 +3142,8 @@ flowchart TD
     h_b83b36234046["b83b36234046<br/>g=12 n=12<br/>comp=9451.9"]
     h_03a3722d0f51["03a3722d0f51<br/>g=12 n=12<br/>comp=11123.3"]
     h_1889b86f95bf["1889b86f95bf<br/>g=12 n=12<br/>comp=11082.4"]
+    h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
+    h_2ad5850b541e["2ad5850b541e"]
     h_891e238759b8["891e238759b8<br/>g=36 n=20<br/>comp=9441.9"]
     h_4ea277fa2d4f["4ea277fa2d4f<br/>g=12 n=12<br/>comp=11247.4"]
     h_e7f9c9cfc8dd["e7f9c9cfc8dd<br/>g=24 n=20<br/>comp=10554.7"]
@@ -3940,59 +3156,44 @@ flowchart TD
     h_7b0ba5f60459["7b0ba5f60459<br/>g=48 n=20<br/>comp=10255.9"]
     h_a338f16586a2["a338f16586a2<br/>g=12 n=12<br/>comp=9630.2"]
     h_18d93ed49c40["18d93ed49c40<br/>g=12 n=12<br/>comp=9870.6"]
+    h_95b67dc5a2b2["95b67dc5a2b2<br/>g=24 n=20<br/>comp=11046.4"]
+    h_9d131d171cbf["9d131d171cbf<br/>g=33 n=20<br/>comp=10252.0"]
+    h_a7b41f8f20ad["a7b41f8f20ad<br/>g=25 n=20<br/>comp=10441.9"]
+    h_104a3a858261["104a3a858261<br/>g=35 n=20<br/>comp=10143.1"]
+    h_b4362aa4d1ef["b4362aa4d1ef<br/>g=51 n=20<br/>comp=10717.7"]
+    h_78b17c11d3c7["78b17c11d3c7<br/>g=30 n=20<br/>comp=10522.7"]
+    h_d41cd826ff74["d41cd826ff74<br/>g=58 n=20<br/>comp=10582.5"]
+    h_b26c2565971c["b26c2565971c<br/>g=24 n=20<br/>comp=11262.9"]
+    h_415b0d640378["415b0d640378<br/>g=38 n=20<br/>comp=9907.3"]
+    h_22ad2bcc59f1["22ad2bcc59f1<br/>g=24 n=20<br/>comp=11199.4"]
     h_3a4fcc10c7d9["3a4fcc10c7d9<br/>g=12 n=12<br/>comp=10531.7"]
     h_12fa07c585f2["12fa07c585f2<br/>g=12 n=12<br/>comp=9751.6"]
-    h_95b67dc5a2b2["95b67dc5a2b2<br/>g=24 n=20<br/>comp=11046.4"]
     h_cd37242dea40["cd37242dea40<br/>g=17 n=17<br/>comp=10696.5"]
-    h_2e48e6c9f82b["2e48e6c9f82b<br/>g=13 n=13<br/>comp=10278.9"]
-    h_2d049f416cc2["2d049f416cc2<br/>g=14 n=14<br/>comp=10560.4"]
-    h_52ef4a8a1a2a["52ef4a8a1a2a<br/>g=27 n=20<br/>comp=11446.9"]
-    h_85d665c5583d["85d665c5583d<br/>g=38 n=20<br/>comp=10951.6"]
-    h_eac31f3493af["eac31f3493af<br/>g=49 n=20<br/>comp=11233.4"]
-    h_01553e4b17e8["01553e4b17e8<br/>g=12 n=12<br/>comp=9701.0"]
-    h_6520b5ba03a5["6520b5ba03a5<br/>g=0"]
-    h_94786eb2e0fc["94786eb2e0fc<br/>g=26 n=20<br/>comp=11217.1"]
 
-    h_4fe3a8221f0d -->|improve| h_cfb684533fdb
-    h_cfb684533fdb -->|improve| h_e3215795865e
-    h_e3215795865e -->|improve| h_3f85249e1f78
     h_3f85249e1f78 -->|improve| h_6f3aa922b64a
-    h_6f3aa922b64a -->|improve| h_43cf836f04d5
-    h_43cf836f04d5 -. rollback .-> h_cfb684533fdb
-    h_cfb684533fdb -->|improve| h_71413461e56e
+    h_355868eaf8ab -->|improve| h_71413461e56e
     h_71413461e56e -->|improve| h_7a9bba424462
     h_7a9bba424462 -->|improve| h_0ffb1e00fba1
-    h_0ffb1e00fba1 -. rollback .-> h_e3215795865e
-    h_e3215795865e -->|improve| h_634d0b4d44d1
     h_634d0b4d44d1 -->|improve| h_4a56ffd588bd
     h_4a56ffd588bd -->|improve| h_05851eb12718
-    h_05851eb12718 -. rollback .-> h_634d0b4d44d1
     h_634d0b4d44d1 -->|improve| h_c5151fa8423c
-    h_c5151fa8423c -. rollback .-> h_634d0b4d44d1
     h_634d0b4d44d1 -->|improve| h_775063d943a2
-    h_775063d943a2 -. rollback .-> h_4fe3a8221f0d
-    h_cfb684533fdb -->|improve| h_fa7b4aa7235f
     h_fa7b4aa7235f -->|improve| h_b525689d8af7
     h_b525689d8af7 -->|improve| h_f99b8965474d
     h_f99b8965474d -->|improve| h_e069f1a6e3a6
-    h_e069f1a6e3a6 -. rollback .-> h_cfb684533fdb
     h_48ad45cab2c2 -->|improve| h_8f421e52174d
     h_8f421e52174d -->|improve| h_6982b2947cb3
     h_6982b2947cb3 -->|improve| h_23f6298575f2
     h_23c0ac0a5fa6 -->|improve| h_d091e4b88286
     h_d091e4b88286 -->|improve| h_1f44ac770607
     h_1f44ac770607 -->|improve| h_f25448df0e79
-    h_f25448df0e79 -. rollback .-> h_d091e4b88286
     h_d091e4b88286 -->|improve| h_72c70725ff95
-    h_72c70725ff95 -. rollback .-> h_d091e4b88286
     h_d091e4b88286 -->|improve| h_85f72a2b31b4
     h_85f72a2b31b4 -->|improve| h_ab775c0c3399
     h_ab775c0c3399 -->|improve| h_fcc3fd0c8d7e
     h_fcc3fd0c8d7e -->|improve| h_07233caa484c
-    h_653e161694b4 -->|improve| h_9c7adfd81c15
     h_9c7adfd81c15 -->|improve| h_f74dc9206fb8
     h_f74dc9206fb8 -->|improve| h_41bb0d5baa24
-    h_4a56ffd588bd -->|improve| h_2d288142517e
     h_2d288142517e -->|improve| h_9b747bcfb2f7
     h_9b747bcfb2f7 -->|improve| h_afecd55b44e7
     h_afecd55b44e7 -->|improve| h_42a1425cf92d
@@ -4009,54 +3210,33 @@ flowchart TD
     h_2bd87d0c19d1 -->|improve| h_c762d4700a04
     h_c762d4700a04 -->|improve| h_b83b36234046
     h_03a3722d0f51 -->|improve| h_1889b86f95bf
-    h_1889b86f95bf -->|improve| h_891e238759b8
+    h_2ad5850b541e -->|improve| h_891e238759b8
     h_891e238759b8 -->|improve| h_4ea277fa2d4f
     h_4ea277fa2d4f -->|improve| h_e7f9c9cfc8dd
     h_e7f9c9cfc8dd -->|improve| h_be0bb29a80cd
-    h_be0bb29a80cd -. rollback .-> h_891e238759b8
     h_891e238759b8 -->|improve| h_004626cd4739
-    h_004626cd4739 -. rollback .-> h_891e238759b8
     h_891e238759b8 -->|improve| h_44b8e69bf801
-    h_44b8e69bf801 -. rollback .-> h_891e238759b8
     h_891e238759b8 -->|improve| h_32ef1ca432b8
     h_32ef1ca432b8 -->|improve| h_94e246b27b62
     h_94e246b27b62 -->|improve| h_5561ada7261c
     h_5561ada7261c -->|improve| h_7b0ba5f60459
     h_7b0ba5f60459 -->|improve| h_a338f16586a2
-    h_a338f16586a2 -. rollback .-> h_7b0ba5f60459
     h_7b0ba5f60459 -->|improve| h_18d93ed49c40
-    h_18d93ed49c40 -. rollback .-> h_7b0ba5f60459
-    h_7b0ba5f60459 -. rollback .-> h_be0bb29a80cd
+    h_653e161694b4 -->|improve| h_104a3a858261
+    h_4a56ffd588bd -->|improve| h_b4362aa4d1ef
     h_be0bb29a80cd -->|improve| h_3a4fcc10c7d9
     h_3a4fcc10c7d9 -->|improve| h_12fa07c585f2
-    h_12fa07c585f2 -. rollback .-> h_95b67dc5a2b2
     h_95b67dc5a2b2 -->|improve| h_cd37242dea40
-    h_cd37242dea40 -->|improve| h_2e48e6c9f82b
-    h_2e48e6c9f82b -. rollback .-> h_cd37242dea40
-    h_cd37242dea40 -->|improve| h_2d049f416cc2
-    h_2d049f416cc2 -->|improve| h_52ef4a8a1a2a
-    h_52ef4a8a1a2a -->|improve| h_85d665c5583d
-    h_85d665c5583d -->|improve| h_eac31f3493af
-    h_eac31f3493af -->|improve| h_01553e4b17e8
-    h_01553e4b17e8 -. rollback .-> h_cd37242dea40
-    h_cd37242dea40 -. rollback .-> h_85d665c5583d
-    h_85d665c5583d -->|improve| h_6520b5ba03a5
-    h_6520b5ba03a5 -. rollback .-> h_85d665c5583d
-    h_85d665c5583d -->|improve| h_94786eb2e0fc
-    h_e3215795865e -->|improve| h_43cf836f04d5
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_c016461aeb9c plain;
-    class h_4fe3a8221f0d plain;
-    class h_cfb684533fdb plain;
-    class h_e3215795865e plain;
     class h_3f85249e1f78 plain;
     class h_6f3aa922b64a plain;
     class h_43cf836f04d5 plain;
+    class h_355868eaf8ab plain;
     class h_71413461e56e plain;
     class h_7a9bba424462 plain;
     class h_0ffb1e00fba1 plain;
@@ -4106,6 +3286,8 @@ flowchart TD
     class h_b83b36234046 plain;
     class h_03a3722d0f51 plain;
     class h_1889b86f95bf plain;
+    class h_4504b0237b49 plain;
+    class h_2ad5850b541e plain;
     class h_891e238759b8 plain;
     class h_4ea277fa2d4f plain;
     class h_e7f9c9cfc8dd plain;
@@ -4118,58 +3300,60 @@ flowchart TD
     class h_7b0ba5f60459 plain;
     class h_a338f16586a2 plain;
     class h_18d93ed49c40 plain;
+    class h_95b67dc5a2b2 plain;
+    class h_9d131d171cbf plain;
+    class h_a7b41f8f20ad plain;
+    class h_104a3a858261 plain;
+    class h_b4362aa4d1ef plain;
+    class h_78b17c11d3c7 plain;
+    class h_d41cd826ff74 plain;
+    class h_b26c2565971c plain;
+    class h_415b0d640378 plain;
+    class h_22ad2bcc59f1 plain;
     class h_3a4fcc10c7d9 plain;
     class h_12fa07c585f2 plain;
-    class h_95b67dc5a2b2 plain;
     class h_cd37242dea40 plain;
-    class h_2e48e6c9f82b plain;
-    class h_2d049f416cc2 plain;
-    class h_52ef4a8a1a2a plain;
-    class h_85d665c5583d plain;
-    class h_eac31f3493af plain;
-    class h_01553e4b17e8 plain;
-    class h_6520b5ba03a5 plain;
-    class h_94786eb2e0fc plain;
 ```
 
-## Detail 15/21
+## Detail 13/18
 
-- Range: `646eea0bf18d` .. `387030d5fa23`
+- Range: `2e48e6c9f82b` .. `0b044788c9f1`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `80`
-- Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
-- Cross-chunk link: `cd90234d4d73 -.rollback.-> 98b57969e9e1`
-- Cross-chunk link: `98b57969e9e1 -.rollback.-> 22ad2bcc59f1`
-- Cross-chunk link: `80ee7acf1100 -.rollback.-> 653e161694b4`
-- Cross-chunk link: `52ef4a8a1a2a --improve--> df8956f9eeb8`
-- Cross-chunk link: `a223ce2790aa -.rollback.-> fcc3fd0c8d7e`
+- Internal edges in this diagram: `71`
+- Cross-chunk link: `cd37242dea40 --improve--> 2e48e6c9f82b`
+- Cross-chunk link: `cd37242dea40 --improve--> 2d049f416cc2`
+- Cross-chunk link: `9d131d171cbf --improve--> ac7deb27998d`
+- Cross-chunk link: `b4362aa4d1ef --improve--> a99ea2146f34`
+- Cross-chunk link: `b26c2565971c --improve--> d705085d949f`
+- Cross-chunk link: `22ad2bcc59f1 --improve--> 4f82c1d82d32`
+- Cross-chunk link: `415b0d640378 --improve--> b53e7a81e0f8`
 - Cross-chunk link: `294aa2554fbf --improve--> 344d7c0281f1`
-- Cross-chunk link: `2361c163acd9 -.rollback.-> 2df66e5a3e28`
 - Cross-chunk link: `9b747bcfb2f7 --improve--> 84c1432d0191`
-- Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
-- Cross-chunk link: `6dff28327c57 -.rollback.-> 646eea0bf18d`
+- Cross-chunk link: `0b044788c9f1 --improve--> 313672506cb6`
 - Cross-chunk link: `646eea0bf18d --improve--> ae06b037a7c5`
-- Cross-chunk link: `... and 21 more`
+- Cross-chunk link: `eac31f3493af --improve--> 0f5a89c3e696`
+- Cross-chunk link: `... and 4 more`
 
 ```mermaid
 flowchart TD
+    h_2e48e6c9f82b["2e48e6c9f82b<br/>g=13 n=13<br/>comp=10278.9"]
+    h_2d049f416cc2["2d049f416cc2<br/>g=14 n=14<br/>comp=10560.4"]
+    h_52ef4a8a1a2a["52ef4a8a1a2a<br/>g=27 n=20<br/>comp=11446.9"]
+    h_85d665c5583d["85d665c5583d<br/>g=38 n=20<br/>comp=10951.6"]
+    h_eac31f3493af["eac31f3493af<br/>g=49 n=20<br/>comp=11233.4"]
+    h_01553e4b17e8["01553e4b17e8<br/>g=12 n=12<br/>comp=9701.0"]
+    h_6520b5ba03a5["6520b5ba03a5<br/>g=0"]
+    h_94786eb2e0fc["94786eb2e0fc<br/>g=26 n=20<br/>comp=11217.1"]
     h_646eea0bf18d["646eea0bf18d<br/>g=36 n=20<br/>comp=11436.3"]
     h_bced4c938139["bced4c938139<br/>g=12 n=12<br/>comp=9328.0"]
-    h_a7b41f8f20ad["a7b41f8f20ad<br/>g=25 n=20<br/>comp=10441.9"]
-    h_9d131d171cbf["9d131d171cbf<br/>g=33 n=20<br/>comp=10252.0"]
     h_ac7deb27998d["ac7deb27998d<br/>g=12 n=12<br/>comp=9718.1"]
     h_255c307f96c7["255c307f96c7<br/>g=12 n=12<br/>comp=9616.2"]
-    h_104a3a858261["104a3a858261<br/>g=35 n=20<br/>comp=10143.1"]
-    h_b4362aa4d1ef["b4362aa4d1ef<br/>g=51 n=20<br/>comp=10717.7"]
     h_a99ea2146f34["a99ea2146f34<br/>g=37 n=20<br/>comp=10872.9"]
     h_fa8cf0e84f36["fa8cf0e84f36<br/>g=12 n=12<br/>comp=9968.6"]
     h_77c1ea80f549["77c1ea80f549<br/>g=12 n=12<br/>comp=11304.1"]
     h_f0d35819792b["f0d35819792b<br/>g=12 n=12<br/>comp=11251.2"]
     h_31ed85d3565b["31ed85d3565b<br/>g=12 n=12<br/>comp=10242.2"]
     h_d2dd18edd184["d2dd18edd184<br/>g=12 n=12<br/>comp=9399.4"]
-    h_78b17c11d3c7["78b17c11d3c7<br/>g=30 n=20<br/>comp=10522.7"]
-    h_d41cd826ff74["d41cd826ff74<br/>g=58 n=20<br/>comp=10582.5"]
-    h_b26c2565971c["b26c2565971c<br/>g=24 n=20<br/>comp=11262.9"]
     h_d705085d949f["d705085d949f<br/>g=12 n=12<br/>comp=11069.2"]
     h_9b3aefa52b47["9b3aefa52b47<br/>g=12 n=12<br/>comp=9663.8"]
     h_fd3d35ac8361["fd3d35ac8361<br/>g=49 n=20<br/>comp=11203.1"]
@@ -4184,7 +3368,6 @@ flowchart TD
     h_8407c9e63dae["8407c9e63dae<br/>g=12 n=12<br/>comp=10472.7"]
     h_2e07e65e84d8["2e07e65e84d8<br/>g=12 n=12<br/>comp=9766.6"]
     h_cd90234d4d73["cd90234d4d73<br/>g=12 n=12<br/>comp=9382.7"]
-    h_22ad2bcc59f1["22ad2bcc59f1<br/>g=24 n=20<br/>comp=11199.4"]
     h_4f82c1d82d32["4f82c1d82d32<br/>g=24 n=20<br/>comp=10609.1"]
     h_4afd9c0f4c34["4afd9c0f4c34<br/>g=12 n=12<br/>comp=10404.9"]
     h_bd3e3fcee54c["bd3e3fcee54c<br/>g=12 n=12<br/>comp=10477.8"]
@@ -4193,7 +3376,6 @@ flowchart TD
     h_51229404551e["51229404551e<br/>g=12 n=12<br/>comp=10179.2"]
     h_a008801e97bf["a008801e97bf<br/>g=12 n=12<br/>comp=9563.7"]
     h_e412c8e16ea4["e412c8e16ea4<br/>g=13 n=13<br/>comp=10416.0"]
-    h_415b0d640378["415b0d640378<br/>g=38 n=20<br/>comp=9907.3"]
     h_b53e7a81e0f8["b53e7a81e0f8<br/>g=12 n=12<br/>comp=10894.8"]
     h_262985c74a33["262985c74a33<br/>g=12 n=12<br/>comp=10777.9"]
     h_4069eb84b458["4069eb84b458<br/>g=12 n=12<br/>comp=10739.2"]
@@ -4233,25 +3415,22 @@ flowchart TD
     h_5a18083c5c50["5a18083c5c50<br/>g=24 n=20<br/>comp=10543.0"]
     h_426ebdc53aa8["426ebdc53aa8<br/>g=24 n=20<br/>comp=9773.9"]
     h_387030d5fa23["387030d5fa23<br/>g=24 n=20<br/>comp=9441.2"]
+    h_0b044788c9f1["0b044788c9f1<br/>g=24 n=20<br/>comp=9995.3"]
 
+    h_2d049f416cc2 -->|improve| h_52ef4a8a1a2a
+    h_52ef4a8a1a2a -->|improve| h_85d665c5583d
+    h_85d665c5583d -->|improve| h_eac31f3493af
+    h_eac31f3493af -->|improve| h_01553e4b17e8
+    h_85d665c5583d -->|improve| h_6520b5ba03a5
+    h_85d665c5583d -->|improve| h_94786eb2e0fc
+    h_94786eb2e0fc -->|improve| h_646eea0bf18d
     h_646eea0bf18d -->|improve| h_bced4c938139
-    h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
-    h_a7b41f8f20ad -. rollback .-> h_9d131d171cbf
-    h_9d131d171cbf -->|improve| h_ac7deb27998d
     h_ac7deb27998d -->|improve| h_255c307f96c7
-    h_255c307f96c7 -. rollback .-> h_104a3a858261
-    h_104a3a858261 -. rollback .-> h_b4362aa4d1ef
-    h_b4362aa4d1ef -->|improve| h_a99ea2146f34
     h_a99ea2146f34 -->|improve| h_fa8cf0e84f36
-    h_fa8cf0e84f36 -. rollback .-> h_b4362aa4d1ef
     h_a99ea2146f34 -->|improve| h_77c1ea80f549
     h_77c1ea80f549 -->|improve| h_f0d35819792b
     h_f0d35819792b -->|improve| h_31ed85d3565b
     h_31ed85d3565b -->|improve| h_d2dd18edd184
-    h_d2dd18edd184 -. rollback .-> h_78b17c11d3c7
-    h_78b17c11d3c7 -. rollback .-> h_d41cd826ff74
-    h_d41cd826ff74 -. rollback .-> h_b26c2565971c
-    h_b26c2565971c -->|improve| h_d705085d949f
     h_d705085d949f -->|improve| h_9b3aefa52b47
     h_9b3aefa52b47 -->|improve| h_fd3d35ac8361
     h_fd3d35ac8361 -->|improve| h_f58a169617af
@@ -4262,22 +3441,16 @@ flowchart TD
     h_d7d8144f0091 -->|improve| h_bafc54d108f9
     h_bafc54d108f9 -->|improve| h_19c035bdd84a
     h_19c035bdd84a -->|improve| h_6a20b35c5600
-    h_6a20b35c5600 -. rollback .-> h_fd3d35ac8361
     h_fd3d35ac8361 -->|improve| h_8407c9e63dae
     h_8407c9e63dae -->|improve| h_2e07e65e84d8
-    h_2e07e65e84d8 -. rollback .-> h_fd3d35ac8361
     h_fd3d35ac8361 -->|improve| h_cd90234d4d73
-    h_22ad2bcc59f1 -->|improve| h_4f82c1d82d32
     h_4f82c1d82d32 -->|improve| h_4afd9c0f4c34
     h_4afd9c0f4c34 -->|improve| h_bd3e3fcee54c
     h_bd3e3fcee54c -->|improve| h_7248681301a1
     h_7248681301a1 -->|improve| h_a9408aac14bd
-    h_a9408aac14bd -. rollback .-> h_4f82c1d82d32
     h_4f82c1d82d32 -->|improve| h_51229404551e
     h_51229404551e -->|improve| h_a008801e97bf
     h_a008801e97bf -->|improve| h_e412c8e16ea4
-    h_e412c8e16ea4 -. rollback .-> h_415b0d640378
-    h_415b0d640378 -->|improve| h_b53e7a81e0f8
     h_b53e7a81e0f8 -->|improve| h_262985c74a33
     h_262985c74a33 -->|improve| h_4069eb84b458
     h_4069eb84b458 -->|improve| h_7bf1f4fe3685
@@ -4285,9 +3458,9 @@ flowchart TD
     h_8f56bda50ac2 -->|improve| h_4714f82f5cda
     h_4714f82f5cda -->|improve| h_e257a8f5c3d4
     h_e257a8f5c3d4 -->|improve| h_80ee7acf1100
+    h_52ef4a8a1a2a -->|improve| h_df8956f9eeb8
     h_df8956f9eeb8 -->|improve| h_c96b2cd8558f
     h_c96b2cd8558f -->|improve| h_1b4b37103122
-    h_1b4b37103122 -. rollback .-> h_df8956f9eeb8
     h_df8956f9eeb8 -->|improve| h_819067c64ecd
     h_819067c64ecd -->|improve| h_7765ed3c0b99
     h_7765ed3c0b99 -->|improve| h_a223ce2790aa
@@ -4314,29 +3487,31 @@ flowchart TD
     h_0cfa3526635b -->|improve| h_5a18083c5c50
     h_5a18083c5c50 -->|improve| h_426ebdc53aa8
     h_426ebdc53aa8 -->|improve| h_387030d5fa23
+    h_387030d5fa23 -->|improve| h_0b044788c9f1
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_2e48e6c9f82b plain;
+    class h_2d049f416cc2 plain;
+    class h_52ef4a8a1a2a plain;
+    class h_85d665c5583d plain;
+    class h_eac31f3493af plain;
+    class h_01553e4b17e8 plain;
+    class h_6520b5ba03a5 plain;
+    class h_94786eb2e0fc plain;
     class h_646eea0bf18d plain;
     class h_bced4c938139 plain;
-    class h_a7b41f8f20ad plain;
-    class h_9d131d171cbf plain;
     class h_ac7deb27998d plain;
     class h_255c307f96c7 plain;
-    class h_104a3a858261 plain;
-    class h_b4362aa4d1ef plain;
     class h_a99ea2146f34 plain;
     class h_fa8cf0e84f36 plain;
     class h_77c1ea80f549 plain;
     class h_f0d35819792b plain;
     class h_31ed85d3565b plain;
     class h_d2dd18edd184 plain;
-    class h_78b17c11d3c7 plain;
-    class h_d41cd826ff74 plain;
-    class h_b26c2565971c plain;
     class h_d705085d949f plain;
     class h_9b3aefa52b47 plain;
     class h_fd3d35ac8361 plain;
@@ -4351,7 +3526,6 @@ flowchart TD
     class h_8407c9e63dae plain;
     class h_2e07e65e84d8 plain;
     class h_cd90234d4d73 plain;
-    class h_22ad2bcc59f1 plain;
     class h_4f82c1d82d32 plain;
     class h_4afd9c0f4c34 plain;
     class h_bd3e3fcee54c plain;
@@ -4360,7 +3534,6 @@ flowchart TD
     class h_51229404551e plain;
     class h_a008801e97bf plain;
     class h_e412c8e16ea4 plain;
-    class h_415b0d640378 plain;
     class h_b53e7a81e0f8 plain;
     class h_262985c74a33 plain;
     class h_4069eb84b458 plain;
@@ -4400,30 +3573,30 @@ flowchart TD
     class h_5a18083c5c50 plain;
     class h_426ebdc53aa8 plain;
     class h_387030d5fa23 plain;
+    class h_0b044788c9f1 plain;
 ```
 
-## Detail 16/21
+## Detail 14/18
 
-- Range: `0b044788c9f1` .. `643ca0f56e6f`
+- Range: `313672506cb6` .. `643ca0f56e6f`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `73`
-- Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
-- Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
+- Internal edges in this diagram: `59`
+- Cross-chunk link: `0b044788c9f1 --improve--> 313672506cb6`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
-- Cross-chunk link: `d22b52f8b629 -.rollback.-> efc4b6fe5f51`
 - Cross-chunk link: `efc4b6fe5f51 --improve--> 6dff28327c57`
-- Cross-chunk link: `6dff28327c57 -.rollback.-> 646eea0bf18d`
 - Cross-chunk link: `646eea0bf18d --improve--> ae06b037a7c5`
-- Cross-chunk link: `25b49c2bfa9c -.rollback.-> 919c76d38172`
 - Cross-chunk link: `919c76d38172 --improve--> c3b78a7ddd11`
-- Cross-chunk link: `b83fd223a409 -.rollback.-> 999fa1987f46`
 - Cross-chunk link: `999fa1987f46 --improve--> 86a9a57f17d7`
-- Cross-chunk link: `86a9a57f17d7 -.rollback.-> e39e346e6a36`
-- Cross-chunk link: `... and 35 more`
+- Cross-chunk link: `eac31f3493af --improve--> 0f5a89c3e696`
+- Cross-chunk link: `ea95bdde7a27 --improve--> d27f1516469e`
+- Cross-chunk link: `ea95bdde7a27 --improve--> 19255e00c73d`
+- Cross-chunk link: `48ad45cab2c2 --improve--> 7055905d744c`
+- Cross-chunk link: `48ad45cab2c2 --improve--> 8083af5f1425`
+- Cross-chunk link: `636b223fc3c1 --improve--> 127c12556064`
+- Cross-chunk link: `... and 10 more`
 
 ```mermaid
 flowchart TD
-    h_0b044788c9f1["0b044788c9f1<br/>g=24 n=20<br/>comp=9995.3"]
     h_313672506cb6["313672506cb6<br/>g=24 n=20<br/>comp=10020.3"]
     h_802caee8ec9a["802caee8ec9a<br/>g=24 n=20<br/>comp=10685.1"]
     h_eca5c4a98a8a["eca5c4a98a8a<br/>g=24 n=20<br/>comp=11497.7"]
@@ -4455,6 +3628,7 @@ flowchart TD
     h_e1cb3a6bff9c["e1cb3a6bff9c<br/>g=6 n=6<br/>comp=10247.8"]
     h_16e0ca9a82d5["16e0ca9a82d5<br/>g=48 n=20<br/>comp=10343.1"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
+    h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
     h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
     h_2ec1eec32a77["2ec1eec32a77<br/>g=27 n=20<br/>comp=9627.1"]
     h_c73a56263561["c73a56263561<br/>g=24 n=20<br/>comp=10452.9"]
@@ -4504,7 +3678,6 @@ flowchart TD
     h_0d6f3ca799fe["0d6f3ca799fe<br/>g=24 n=20<br/>comp=11251.4"]
     h_643ca0f56e6f["643ca0f56e6f<br/>g=22 n=20<br/>comp=9746.7"]
 
-    h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
     h_802caee8ec9a -->|improve| h_eca5c4a98a8a
     h_eca5c4a98a8a -->|improve| h_d86543088bb5
@@ -4519,25 +3692,21 @@ flowchart TD
     h_ba82d13208dc -->|improve| h_f3542fcd01bf
     h_f3542fcd01bf -->|improve| h_53e5170795f4
     h_53e5170795f4 -->|improve| h_b273e6f834aa
-    h_b273e6f834aa -. rollback .-> h_53e5170795f4
     h_53e5170795f4 -->|improve| h_24096e9d3c2e
     h_16e0ca9a82d5 -->|improve| h_4c27915877ca
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
     h_2ec1eec32a77 -->|improve| h_c73a56263561
     h_c73a56263561 -->|improve| h_1e4afdff9a16
-    h_1e4afdff9a16 -. rollback .-> h_16e0ca9a82d5
     h_16e0ca9a82d5 -->|improve| h_e9e4bffa01ae
     h_e9e4bffa01ae -->|improve| h_d3b2583db893
     h_d3b2583db893 -->|improve| h_3d807a7e1031
-    h_01a417be820d -. rollback .-> h_d3b2583db893
     h_d3b2583db893 -->|improve| h_2bd22650c034
     h_2bd22650c034 -->|improve| h_38d1141ffad8
     h_d6174faa6c45 -->|improve| h_80e9dc41a735
     h_80e9dc41a735 -->|improve| h_b6119d61a9c2
     h_b6119d61a9c2 -->|improve| h_614257a963c2
-    h_614257a963c2 -. rollback .-> h_b6119d61a9c2
     h_b6119d61a9c2 -->|improve| h_0c557aacb269
-    h_0c557aacb269 -. rollback .-> h_b6119d61a9c2
     h_b6119d61a9c2 -->|improve| h_579d93a17724
     h_579d93a17724 -->|improve| h_7fe16d532675
     h_45ca4a5fa0e7 -->|improve| h_f5db11c74ac2
@@ -4548,42 +3717,32 @@ flowchart TD
     h_0dc7d69854cc -->|improve| h_5f62be3f7262
     h_5f62be3f7262 -->|improve| h_5d18fbadb2ae
     h_5d18fbadb2ae -->|improve| h_c66580cb121c
-    h_c66580cb121c -. rollback .-> h_45ca4a5fa0e7
     h_45ca4a5fa0e7 -->|improve| h_c8482579bf2a
     h_c8482579bf2a -->|improve| h_039e38921fb6
     h_039e38921fb6 -->|improve| h_fd6956ec7e5e
     h_fd6956ec7e5e -->|improve| h_fe19954095cd
     h_fe19954095cd -->|improve| h_9661c91af640
-    h_9661c91af640 -. rollback .-> h_039e38921fb6
     h_039e38921fb6 -->|improve| h_839930b44612
     h_839930b44612 -->|improve| h_1e1d507e2bf2
     h_1e1d507e2bf2 -->|improve| h_007f02d1457f
     h_007f02d1457f -->|improve| h_36f0c5af893a
-    h_36f0c5af893a -. rollback .-> h_fd6956ec7e5e
     h_fd6956ec7e5e -->|improve| h_1ed49b30fbf8
     h_1ed49b30fbf8 -->|improve| h_743cb35ea7ed
     h_743cb35ea7ed -->|improve| h_4564a12567cf
     h_4564a12567cf -->|improve| h_05b26ea8f969
-    h_05b26ea8f969 -. rollback .-> h_1ed49b30fbf8
     h_1ed49b30fbf8 -->|improve| h_a898938e03fe
-    h_a898938e03fe -. rollback .-> h_1ed49b30fbf8
     h_1ed49b30fbf8 -->|improve| h_5c5e818b581d
     h_5c5e818b581d -->|improve| h_24569d8b2f96
-    h_24569d8b2f96 -. rollback .-> h_1ed49b30fbf8
     h_1ed49b30fbf8 -->|improve| h_09d2c8063925
     h_09d2c8063925 -->|improve| h_7f8a8c7550fc
-    h_7f8a8c7550fc -. rollback .-> h_09d2c8063925
     h_09d2c8063925 -->|improve| h_0d6f3ca799fe
     h_0d6f3ca799fe -->|improve| h_643ca0f56e6f
-    h_643ca0f56e6f -. rollback .-> h_0dc7d69854cc
-    h_c8482579bf2a -. rollback .-> h_839930b44612
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_0b044788c9f1 plain;
     class h_313672506cb6 plain;
     class h_802caee8ec9a plain;
     class h_eca5c4a98a8a plain;
@@ -4615,6 +3774,7 @@ flowchart TD
     class h_e1cb3a6bff9c plain;
     class h_16e0ca9a82d5 plain;
     class h_4c27915877ca plain;
+    class h_1d9b85a22a22 plain;
     class h_0ac322bb0b01 plain;
     class h_2ec1eec32a77 plain;
     class h_c73a56263561 plain;
@@ -4665,24 +3825,24 @@ flowchart TD
     class h_643ca0f56e6f plain;
 ```
 
-## Detail 17/21
+## Detail 15/18
 
 - Range: `200a7fefef4f` .. `203a542d6347`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `90`
+- Internal edges in this diagram: `69`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
-- Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
-- Cross-chunk link: `dfb8254392ce -.rollback.-> 424708357a70`
 - Cross-chunk link: `424708357a70 --improve--> 492e39a6273a`
-- Cross-chunk link: `082208dcd71b -.rollback.-> 9efec03deebb`
 - Cross-chunk link: `9efec03deebb --improve--> 542abf21d4d1`
-- Cross-chunk link: `542abf21d4d1 -.rollback.-> 9efec03deebb`
 - Cross-chunk link: `9efec03deebb --improve--> cc66c2aefbca`
-- Cross-chunk link: `3070cf77c494 -.rollback.-> 9efec03deebb`
 - Cross-chunk link: `9efec03deebb --improve--> 41fbc35e9189`
-- Cross-chunk link: `f4600e910800 -.rollback.-> 1ed49b30fbf8`
-- Cross-chunk link: `... and 18 more`
+- Cross-chunk link: `1ed49b30fbf8 --improve--> abc3d92b50b8`
+- Cross-chunk link: `19c035bdd84a --improve--> d9a3d4750350`
+- Cross-chunk link: `8876398ca6dc --improve--> ce951d0b4ef5`
+- Cross-chunk link: `8876398ca6dc --improve--> 21a90c8429a9`
+- Cross-chunk link: `8876398ca6dc --improve--> 81abdfb2bc51`
+- Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
+- Cross-chunk link: `... and 3 more`
 
 ```mermaid
 flowchart TD
@@ -4773,18 +3933,14 @@ flowchart TD
     h_508e4eb7d51a -->|improve| h_4998c4e1de61
     h_4998c4e1de61 -->|improve| h_c5f91e3b3729
     h_a2f57996c7a0 -->|improve| h_537b6a1681ba
-    h_537b6a1681ba -. rollback .-> h_508e4eb7d51a
     h_508e4eb7d51a -->|improve| h_6591493e0141
     h_6591493e0141 -->|improve| h_4d5ecaccf72b
-    h_4d5ecaccf72b -. rollback .-> h_6591493e0141
     h_6591493e0141 -->|improve| h_b2e5e89d8082
     h_b2e5e89d8082 -->|improve| h_9c653055e1f4
     h_9c653055e1f4 -->|improve| h_3b3a70314f72
-    h_3b3a70314f72 -. rollback .-> h_c7f8dc3c1b8b
     h_c7f8dc3c1b8b -->|improve| h_45d22a2c24d0
     h_45d22a2c24d0 -->|improve| h_83fffe6ad2d1
     h_83fffe6ad2d1 -->|improve| h_e50c09b400c6
-    h_e50c09b400c6 -. rollback .-> h_9c653055e1f4
     h_9c653055e1f4 -->|improve| h_29da0ac9811f
     h_29da0ac9811f -->|improve| h_f9ec86a47478
     h_f9ec86a47478 -->|improve| h_38aed3eb1f4e
@@ -4797,66 +3953,49 @@ flowchart TD
     h_68ff9c0f9b1c -->|improve| h_fa213104657c
     h_fa213104657c -->|improve| h_02114ebfe43e
     h_02114ebfe43e -->|improve| h_082208dcd71b
-    h_cc66c2aefbca -. rollback .-> h_02114ebfe43e
     h_02114ebfe43e -->|improve| h_d191fa48a7db
     h_d191fa48a7db -->|improve| h_3070cf77c494
     h_41fbc35e9189 -->|improve| h_cb07469bc4e1
     h_cb07469bc4e1 -->|improve| h_e005862e2c1b
-    h_e005862e2c1b -. rollback .-> h_d191fa48a7db
     h_d191fa48a7db -->|improve| h_f4600e910800
     h_abc3d92b50b8 -->|improve| h_cb2d5442e4dd
     h_cb2d5442e4dd -->|improve| h_fedb8705c35e
     h_fedb8705c35e -->|improve| h_1640d9113c4d
     h_d9a3d4750350 -->|improve| h_4c4760714b46
     h_4c4760714b46 -->|improve| h_2f92abcd02ba
-    h_2f92abcd02ba -. rollback .-> h_fedb8705c35e
     h_fedb8705c35e -->|improve| h_9b916a630880
-    h_9b916a630880 -. rollback .-> h_4c4760714b46
     h_4c4760714b46 -->|improve| h_91fecb9595ce
-    h_91fecb9595ce -. rollback .-> h_abc3d92b50b8
     h_abc3d92b50b8 -->|improve| h_7a530202926f
-    h_7a530202926f -. rollback .-> h_abc3d92b50b8
     h_abc3d92b50b8 -->|improve| h_bc32bbc8712d
     h_bc32bbc8712d -->|improve| h_9eb06546d67c
     h_9eb06546d67c -->|improve| h_5dee220312d8
-    h_5dee220312d8 -. rollback .-> h_d9a3d4750350
     h_d9a3d4750350 -->|improve| h_ff04cff2b678
     h_ff04cff2b678 -->|improve| h_8e6f1a8d013d
-    h_8e6f1a8d013d -. rollback .-> h_ff04cff2b678
     h_ff04cff2b678 -->|improve| h_5c3e0337f245
     h_5c3e0337f245 -->|improve| h_cfa17201289d
-    h_cfa17201289d -. rollback .-> h_bc32bbc8712d
     h_bc32bbc8712d -->|improve| h_f8f0d9a9d766
     h_f8f0d9a9d766 -->|improve| h_d08f4ff0f62f
     h_d08f4ff0f62f -->|improve| h_41a50e0a2db2
-    h_41a50e0a2db2 -. rollback .-> h_9eb06546d67c
     h_9eb06546d67c -->|improve| h_603d1ee2d81d
-    h_603d1ee2d81d -. rollback .-> h_9eb06546d67c
     h_9eb06546d67c -->|improve| h_54f1a95c978c
     h_ce951d0b4ef5 -->|improve| h_95c1994bf3bc
     h_21a90c8429a9 -->|improve| h_81897ed41734
     h_81897ed41734 -->|improve| h_c92f94729520
     h_c92f94729520 -->|improve| h_4b45d149366f
-    h_4b45d149366f -. rollback .-> h_81897ed41734
     h_81897ed41734 -->|improve| h_37f0624fb300
     h_81abdfb2bc51 -->|improve| h_02819de60a04
     h_02819de60a04 -->|improve| h_3576acaea706
     h_3576acaea706 -->|improve| h_dbe5b2686ef5
-    h_dbe5b2686ef5 -. rollback .-> h_ce951d0b4ef5
     h_ce951d0b4ef5 -->|improve| h_76c17c8df9ee
-    h_76c17c8df9ee -. rollback .-> h_3576acaea706
     h_3576acaea706 -->|improve| h_7ecdd3121b27
     h_7ecdd3121b27 -->|improve| h_c0bff560399e
-    h_c0bff560399e -. rollback .-> h_7ecdd3121b27
     h_7ecdd3121b27 -->|improve| h_c03fef7d5685
     h_c03fef7d5685 -->|improve| h_452653e77d19
     h_452653e77d19 -->|improve| h_3f33e29a4133
     h_3f33e29a4133 -->|improve| h_9079aee71c00
     h_9079aee71c00 -->|improve| h_004df995a743
-    h_004df995a743 -. rollback .-> h_9079aee71c00
     h_9079aee71c00 -->|improve| h_bb1dfb648490
     h_bb1dfb648490 -->|improve| h_203a542d6347
-    h_203a542d6347 -. rollback .-> h_452653e77d19
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4945,24 +4084,18 @@ flowchart TD
     class h_203a542d6347 plain;
 ```
 
-## Detail 18/21
+## Detail 16/18
 
-- Range: `0d0fc4a9fde7` .. `665a70d477e6`
+- Range: `0d0fc4a9fde7` .. `14ec1447fad4`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `91`
+- Internal edges in this diagram: `53`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
-- Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
-- Cross-chunk link: `272694a5501d -.rollback.-> 02819de60a04`
 - Cross-chunk link: `02819de60a04 --improve--> b22f8fcff328`
-- Cross-chunk link: `63f793b0623e -.rollback.-> 68ff9c0f9b1c`
 - Cross-chunk link: `68ff9c0f9b1c --improve--> 7018e9053d55`
-- Cross-chunk link: `888a0e6a651f -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> 7e184fae3207`
-- Cross-chunk link: `7f746ab4e7eb -.rollback.-> 22337984f747`
 - Cross-chunk link: `22337984f747 --improve--> fc36b52375f9`
-- Cross-chunk link: `764a1379cadb -.rollback.-> 59e33348da74`
-- Cross-chunk link: `... and 9 more`
+- Cross-chunk link: `f9442ef7bd5e --improve--> 4e149782a105`
 
 ```mermaid
 flowchart TD
@@ -5021,123 +4154,85 @@ flowchart TD
     h_6c5a2891cbd8["6c5a2891cbd8<br/>g=24 n=20<br/>comp=11385.1"]
     h_5e8e69043345["5e8e69043345<br/>g=13 n=13<br/>comp=9720.0"]
     h_5451741f330b["5451741f330b<br/>g=4 n=4<br/>comp=12136.6"]
+    h_f9442ef7bd5e["f9442ef7bd5e<br/>g=67 n=20<br/>comp=10316.1"]
+    h_12dcaa0fba31["12dcaa0fba31<br/>g=2 n=2<br/>comp=10250.7"]
+    h_1387c0cd84b3["1387c0cd84b3<br/>g=3 n=3<br/>comp=11161.2"]
+    h_9bada9f1385f["9bada9f1385f<br/>g=2 n=2<br/>comp=13237.3"]
+    h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
+    h_967091db2b2d["967091db2b2d<br/>g=2 n=2<br/>comp=9227.2"]
+    h_26b781b24775["26b781b24775<br/>g=16 n=16<br/>comp=9211.5"]
     h_9edb021fe9bc["9edb021fe9bc<br/>g=15 n=15<br/>comp=10741.6"]
     h_1ee78f712e54["1ee78f712e54<br/>g=23 n=20<br/>comp=10380.1"]
     h_c603d5236729["c603d5236729<br/>g=24 n=20<br/>comp=11256.0"]
     h_70114388976d["70114388976d<br/>g=32 n=20<br/>comp=10958.1"]
+    h_e197cf4099eb["e197cf4099eb<br/>g=2 n=2<br/>comp=9775.6"]
+    h_unknown["unknown<br/>g=3 n=3<br/>comp=0.0"]
     h_4ac200b7dcb9["4ac200b7dcb9<br/>g=2 n=2<br/>comp=10994.3"]
     h_d887a11c1f4e["d887a11c1f4e<br/>g=1 n=1<br/>comp=22220.0"]
+    h_b98d5d56c1a6["b98d5d56c1a6<br/>g=2 n=2<br/>comp=8123.0"]
     h_e162b8552dd0["e162b8552dd0<br/>g=4 n=4<br/>comp=8716.5"]
-    h_b224cd20c7ba["b224cd20c7ba<br/>g=24 n=20<br/>comp=11106.7"]
-    h_4113c45a0e02["4113c45a0e02<br/>g=13 n=13<br/>comp=10685.4"]
-    h_f9442ef7bd5e["f9442ef7bd5e<br/>g=67 n=20<br/>comp=10316.1"]
-    h_4e149782a105["4e149782a105<br/>g=40 n=20<br/>comp=10844.0"]
-    h_764a1379cadb["764a1379cadb<br/>g=15 n=15<br/>comp=10457.5"]
-    h_8be52e039054["8be52e039054<br/>g=24 n=20<br/>comp=11005.6"]
-    h_09daf473ec34["09daf473ec34<br/>g=22 n=20<br/>comp=9494.3"]
-    h_3c62c43bbac4["3c62c43bbac4<br/>g=20 n=20<br/>comp=10555.2"]
-    h_ddf66354fe45["ddf66354fe45<br/>g=12 n=12<br/>comp=10679.7"]
-    h_1015e03235fa["1015e03235fa<br/>g=31 n=20<br/>comp=10483.9"]
-    h_fd3056a050f1["fd3056a050f1<br/>g=17 n=17<br/>comp=10613.2"]
-    h_2c9ff1ff7c36["2c9ff1ff7c36<br/>g=12 n=12<br/>comp=10249.5"]
-    h_517fa3969d26["517fa3969d26<br/>g=12 n=12<br/>comp=10876.9"]
-    h_40e67ef7fc96["40e67ef7fc96<br/>g=12 n=12<br/>comp=10685.0"]
-    h_a6298d726b3d["a6298d726b3d<br/>g=12 n=12<br/>comp=10942.8"]
-    h_33f9bc76c42f["33f9bc76c42f<br/>g=12 n=12<br/>comp=10432.6"]
-    h_3a90bd2a643d["3a90bd2a643d<br/>g=23 n=20<br/>comp=10274.4"]
-    h_665a70d477e6["665a70d477e6<br/>g=12 n=12<br/>comp=10761.5"]
+    h_a047013e74cf["a047013e74cf<br/>g=2 n=2<br/>comp=10253.7"]
+    h_dba3b4a2ef60["dba3b4a2ef60<br/>g=2 n=2<br/>comp=11197.1"]
+    h_6ac470fac0e9["6ac470fac0e9<br/>g=2 n=2<br/>comp=9839.2"]
+    h_baab22681199["baab22681199<br/>g=1 n=1<br/>comp=9175.0"]
+    h_d0748a4ba1d6["d0748a4ba1d6<br/>g=2 n=2<br/>comp=11300.8"]
+    h_bd23e83f1047["bd23e83f1047<br/>g=1 n=1<br/>comp=8593.0"]
+    h_730440ee9253["730440ee9253<br/>g=1 n=1<br/>comp=22006.0"]
+    h_14ec1447fad4["14ec1447fad4<br/>g=1 n=1<br/>comp=9419.0"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
     h_330472aff644 -->|improve| h_365cc261af05
     h_365cc261af05 -->|improve| h_e39fdf92f05b
-    h_e39fdf92f05b -. rollback .-> h_0d0fc4a9fde7
     h_0d0fc4a9fde7 -->|improve| h_b08a446626c7
     h_b08a446626c7 -->|improve| h_272694a5501d
     h_b22f8fcff328 -->|improve| h_63f793b0623e
     h_7018e9053d55 -->|improve| h_d4b80c24ca65
     h_d4b80c24ca65 -->|improve| h_b0c54b9d8f38
     h_b0c54b9d8f38 -->|improve| h_78870061e1a5
-    h_78870061e1a5 -. rollback .-> h_b22f8fcff328
     h_b22f8fcff328 -->|improve| h_df62901dbf5e
     h_df62901dbf5e -->|improve| h_290af2204541
-    h_290af2204541 -. rollback .-> h_b22f8fcff328
     h_b22f8fcff328 -->|improve| h_72e3b32b6029
     h_72e3b32b6029 -->|improve| h_814c4143ae4c
     h_814c4143ae4c -->|improve| h_de61049454d1
-    h_de61049454d1 -. rollback .-> h_df62901dbf5e
     h_df62901dbf5e -->|improve| h_c67506278f95
     h_c67506278f95 -->|improve| h_45a6393da5c2
     h_45a6393da5c2 -->|improve| h_1dc1a2cfda77
     h_1dc1a2cfda77 -->|improve| h_e0934b4a3e13
     h_e0934b4a3e13 -->|improve| h_349a707114bf
-    h_349a707114bf -. rollback .-> h_814c4143ae4c
     h_814c4143ae4c -->|improve| h_4cb6bc1b8163
-    h_4cb6bc1b8163 -. rollback .-> h_e0934b4a3e13
     h_e0934b4a3e13 -->|improve| h_795af029451e
-    h_795af029451e -. rollback .-> h_7018e9053d55
     h_7018e9053d55 -->|improve| h_8f573d58de23
     h_8f573d58de23 -->|improve| h_61fedc5dd74e
     h_61fedc5dd74e -->|improve| h_65921dd7b040
     h_65921dd7b040 -->|improve| h_1ecf941003a8
-    h_1ecf941003a8 -. rollback .-> h_e0934b4a3e13
     h_e0934b4a3e13 -->|improve| h_88dc7abdec46
     h_88dc7abdec46 -->|improve| h_dd5278f232a8
     h_dd5278f232a8 -->|improve| h_9ca29529d4a2
     h_9ca29529d4a2 -->|improve| h_c3b834325c7b
     h_c3b834325c7b -->|improve| h_d2989ffff81e
-    h_d2989ffff81e -. rollback .-> h_61fedc5dd74e
     h_61fedc5dd74e -->|improve| h_75e4eab65c4a
-    h_75e4eab65c4a -. rollback .-> h_d4b80c24ca65
     h_d4b80c24ca65 -->|improve| h_71f71bc828fa
     h_71f71bc828fa -->|improve| h_a2cf0ecbe2ba
     h_a2cf0ecbe2ba -->|improve| h_1fa4f1bdb308
     h_1fa4f1bdb308 -->|improve| h_888a0e6a651f
-    h_7e184fae3207 -. rollback .-> h_71f71bc828fa
     h_71f71bc828fa -->|improve| h_9476ed529771
     h_9476ed529771 -->|improve| h_7ef86ce5a2bd
-    h_7ef86ce5a2bd -. rollback .-> h_a2cf0ecbe2ba
     h_a2cf0ecbe2ba -->|improve| h_bcce193758b3
     h_bcce193758b3 -->|improve| h_008be1334c29
-    h_008be1334c29 -. rollback .-> h_bcce193758b3
     h_bcce193758b3 -->|improve| h_7f746ab4e7eb
     h_fc36b52375f9 -->|improve| h_e964b94bb7bc
-    h_e964b94bb7bc -. rollback .-> h_1fa4f1bdb308
     h_1fa4f1bdb308 -->|improve| h_e9242b4d9a93
     h_e9242b4d9a93 -->|improve| h_3625f6994e3f
     h_3625f6994e3f -->|improve| h_348bca3216f8
-    h_348bca3216f8 -. rollback .-> h_fc36b52375f9
     h_fc36b52375f9 -->|improve| h_6924159d3159
     h_6924159d3159 -->|improve| h_6c5a2891cbd8
     h_6c5a2891cbd8 -->|improve| h_5e8e69043345
-    h_5e8e69043345 -. rollback .-> h_1fa4f1bdb308
     h_1fa4f1bdb308 -->|improve| h_5451741f330b
-    h_5451741f330b -->|improve| h_9edb021fe9bc
+    h_26b781b24775 -->|improve| h_9edb021fe9bc
     h_9edb021fe9bc -->|improve| h_1ee78f712e54
     h_1ee78f712e54 -->|improve| h_c603d5236729
     h_c603d5236729 -->|improve| h_70114388976d
-    h_70114388976d -->|improve| h_4ac200b7dcb9
-    h_4ac200b7dcb9 -->|improve| h_d887a11c1f4e
-    h_d887a11c1f4e -->|improve| h_e162b8552dd0
-    h_e162b8552dd0 -->|improve| h_b224cd20c7ba
-    h_b224cd20c7ba -->|improve| h_4113c45a0e02
-    h_4113c45a0e02 -. rollback .-> h_f9442ef7bd5e
-    h_f9442ef7bd5e -->|improve| h_4e149782a105
-    h_4e149782a105 -->|improve| h_764a1379cadb
-    h_8be52e039054 -->|improve| h_09daf473ec34
-    h_09daf473ec34 -. rollback .-> h_4e149782a105
-    h_4e149782a105 -->|improve| h_3c62c43bbac4
-    h_3c62c43bbac4 -->|improve| h_ddf66354fe45
-    h_ddf66354fe45 -->|improve| h_1015e03235fa
-    h_1015e03235fa -->|improve| h_fd3056a050f1
-    h_fd3056a050f1 -->|improve| h_2c9ff1ff7c36
-    h_2c9ff1ff7c36 -. rollback .-> h_1015e03235fa
-    h_1015e03235fa -->|improve| h_517fa3969d26
-    h_517fa3969d26 -->|improve| h_40e67ef7fc96
-    h_40e67ef7fc96 -. rollback .-> h_fd3056a050f1
-    h_fd3056a050f1 -. rollback .-> h_1015e03235fa
-    h_3a90bd2a643d -->|improve| h_665a70d477e6
-    h_665a70d477e6 -. rollback .-> h_3a90bd2a643d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5199,396 +4294,44 @@ flowchart TD
     class h_6c5a2891cbd8 plain;
     class h_5e8e69043345 plain;
     class h_5451741f330b plain;
+    class h_f9442ef7bd5e plain;
+    class h_12dcaa0fba31 plain;
+    class h_1387c0cd84b3 plain;
+    class h_9bada9f1385f plain;
+    class h_996646fb8173 plain;
+    class h_967091db2b2d plain;
+    class h_26b781b24775 plain;
     class h_9edb021fe9bc plain;
     class h_1ee78f712e54 plain;
     class h_c603d5236729 plain;
     class h_70114388976d plain;
+    class h_e197cf4099eb plain;
+    class h_unknown plain;
     class h_4ac200b7dcb9 plain;
     class h_d887a11c1f4e plain;
+    class h_b98d5d56c1a6 plain;
     class h_e162b8552dd0 plain;
-    class h_b224cd20c7ba plain;
-    class h_4113c45a0e02 plain;
-    class h_f9442ef7bd5e plain;
-    class h_4e149782a105 plain;
-    class h_764a1379cadb plain;
-    class h_8be52e039054 plain;
-    class h_09daf473ec34 plain;
-    class h_3c62c43bbac4 plain;
-    class h_ddf66354fe45 plain;
-    class h_1015e03235fa plain;
-    class h_fd3056a050f1 plain;
-    class h_2c9ff1ff7c36 plain;
-    class h_517fa3969d26 plain;
-    class h_40e67ef7fc96 plain;
-    class h_a6298d726b3d plain;
-    class h_33f9bc76c42f plain;
-    class h_3a90bd2a643d plain;
-    class h_665a70d477e6 plain;
+    class h_a047013e74cf plain;
+    class h_dba3b4a2ef60 plain;
+    class h_6ac470fac0e9 plain;
+    class h_baab22681199 plain;
+    class h_d0748a4ba1d6 plain;
+    class h_bd23e83f1047 plain;
+    class h_730440ee9253 plain;
+    class h_14ec1447fad4 plain;
 ```
 
-## Detail 19/21
+## Detail 17/18
 
-- Range: `89c436411f12` .. `fef0632567c6`
+- Range: `f0d8c78810a1` .. `09daf473ec34`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `132`
-- Cross-chunk link: `1aa464cc23d4 --improve--> 89c436411f12`
-- Cross-chunk link: `89c436411f12 -.rollback.-> 1aa464cc23d4`
-- Cross-chunk link: `1aa464cc23d4 --improve--> 05b0591ef25b`
-- Cross-chunk link: `05b0591ef25b -.rollback.-> 1aa464cc23d4`
-- Cross-chunk link: `1aa464cc23d4 --improve--> 84a9fab96145`
-- Cross-chunk link: `84a9fab96145 -.rollback.-> 1aa464cc23d4`
-- Cross-chunk link: `1aa464cc23d4 --improve--> b0a2a468a1c7`
-- Cross-chunk link: `b0a2a468a1c7 -.rollback.-> 1aa464cc23d4`
-- Cross-chunk link: `1aa464cc23d4 --improve--> 44f2324ac753`
-- Cross-chunk link: `23a95e22f7f6 --improve--> 466bd5aac223`
-- Cross-chunk link: `466bd5aac223 -.rollback.-> 8cde5038d8a6`
-- Cross-chunk link: `8cde5038d8a6 --improve--> f77223bdf9b9`
+- Internal edges in this diagram: `3`
+- Cross-chunk link: `f9442ef7bd5e --improve--> 4e149782a105`
+- Cross-chunk link: `59e33348da74 --improve--> 8be52e039054`
+- Cross-chunk link: `4e149782a105 --improve--> 3c62c43bbac4`
 
 ```mermaid
 flowchart TD
-    h_89c436411f12["89c436411f12<br/>g=72 n=20<br/>comp=9627.1"]
-    h_05b0591ef25b["05b0591ef25b<br/>g=24 n=20<br/>comp=10991.1"]
-    h_84a9fab96145["84a9fab96145<br/>g=12 n=12<br/>comp=11401.8"]
-    h_b0a2a468a1c7["b0a2a468a1c7<br/>g=12 n=12<br/>comp=10641.0"]
-    h_44f2324ac753["44f2324ac753<br/>g=0"]
-    h_e5ed751fbce7["e5ed751fbce7<br/>g=12 n=12<br/>comp=10971.7"]
-    h_2301abdcd35b["2301abdcd35b<br/>g=0"]
-    h_8cde5038d8a6["8cde5038d8a6<br/>ANCHOR<br/>g=89 n=20<br/>comp=10816.2"]
-    h_aed09e698575["aed09e698575<br/>g=12 n=12<br/>comp=10696.7"]
-    h_490da448af77["490da448af77<br/>g=12 n=12<br/>comp=10636.6"]
-    h_6ebc1466efdf["6ebc1466efdf<br/>g=0"]
-    h_f2628f6f164a["f2628f6f164a<br/>g=0"]
-    h_830cb1e0c1f0["830cb1e0c1f0<br/>g=24 n=20<br/>comp=10662.6"]
-    h_57b073aea0fd["57b073aea0fd<br/>g=12 n=12<br/>comp=11351.1"]
-    h_4f07fa623345["4f07fa623345<br/>g=4 n=4<br/>comp=7494.9"]
-    h_92a72501e911["92a72501e911<br/>g=4 n=4<br/>comp=9358.7"]
-    h_4b3bd9843797["4b3bd9843797<br/>g=12 n=12<br/>comp=11895.5"]
-    h_7017b28ae776["7017b28ae776<br/>g=4 n=4<br/>comp=9154.9"]
-    h_0a4a4352cd60["0a4a4352cd60<br/>g=4 n=4<br/>comp=8471.1"]
-    h_7b994b0502ad["7b994b0502ad<br/>g=4 n=4<br/>comp=10501.2"]
-    h_e25add30a506["e25add30a506<br/>g=4 n=4<br/>comp=11310.8"]
-    h_20d2d0cf31f3["20d2d0cf31f3<br/>g=4 n=4<br/>comp=10764.1"]
-    h_9db7c99981e9["9db7c99981e9<br/>g=4 n=4<br/>comp=11483.9"]
-    h_91822bbfb2e9["91822bbfb2e9<br/>g=4 n=4<br/>comp=11404.5"]
-    h_1267bad389a3["1267bad389a3<br/>g=12 n=12<br/>comp=10355.0"]
-    h_930bf98f7856["930bf98f7856<br/>g=12 n=12<br/>comp=10082.0"]
-    h_f427f6a14236["f427f6a14236<br/>g=4 n=4<br/>comp=10063.9"]
-    h_b453868211b3["b453868211b3<br/>g=4 n=4<br/>comp=10715.0"]
-    h_e326d295873e["e326d295873e<br/>g=4 n=4<br/>comp=10819.9"]
-    h_89139809fdbb["89139809fdbb<br/>g=4 n=4<br/>comp=13305.8"]
-    h_6049fd90b549["6049fd90b549<br/>g=4 n=4<br/>comp=11176.7"]
-    h_7c2e89b60c86["7c2e89b60c86<br/>g=4 n=4<br/>comp=13067.1"]
-    h_5f4ca17969cd["5f4ca17969cd<br/>g=4 n=4<br/>comp=8959.0"]
-    h_0e899ca31b42["0e899ca31b42<br/>g=61 n=20<br/>comp=9783.1"]
-    h_5f1036c9e3cf["5f1036c9e3cf<br/>g=24 n=20<br/>comp=11035.1"]
-    h_0e24bff87c81["0e24bff87c81<br/>g=3 n=3<br/>comp=12001.0"]
-    h_35729075cdbb["35729075cdbb<br/>g=35 n=20<br/>comp=10480.6"]
-    h_d4064b9a3c33["d4064b9a3c33<br/>g=12 n=12<br/>comp=10944.4"]
-    h_82789c2a1f26["82789c2a1f26<br/>g=0"]
-    h_16bc5b207f52["16bc5b207f52<br/>g=16 n=16<br/>comp=11087.7"]
-    h_7e7e42a95b0c["7e7e42a95b0c<br/>g=12 n=12<br/>comp=11174.0"]
-    h_44b16e23d9b6["44b16e23d9b6<br/>g=12 n=12<br/>comp=10648.3"]
-    h_c6797d71b3e6["c6797d71b3e6<br/>g=12 n=12<br/>comp=9820.3"]
-    h_5fc309765dc9["5fc309765dc9<br/>g=12 n=12<br/>comp=9801.6"]
-    h_026dad83a186["026dad83a186<br/>g=4 n=4<br/>comp=9735.5"]
-    h_d875a4e21e0d["d875a4e21e0d<br/>g=8 n=8<br/>comp=11196.0"]
-    h_19b772b1ac66["19b772b1ac66<br/>g=4 n=4<br/>comp=11438.1"]
-    h_1a499eef5d15["1a499eef5d15<br/>g=4 n=4<br/>comp=10878.1"]
-    h_151b3f6a0061["151b3f6a0061<br/>g=4 n=4<br/>comp=12370.9"]
-    h_96eb76e57ffc["96eb76e57ffc<br/>g=12 n=12<br/>comp=9539.4"]
-    h_23a95e22f7f6["23a95e22f7f6<br/>g=12 n=12<br/>comp=11933.6"]
-    h_380945cd25a7["380945cd25a7<br/>g=12 n=12<br/>comp=10137.5"]
-    h_915f38ba6f43["915f38ba6f43<br/>g=12 n=12<br/>comp=9842.1"]
-    h_ba3d38cf2d76["ba3d38cf2d76<br/>g=12 n=12<br/>comp=10143.9"]
-    h_4fc480bd9d3a["4fc480bd9d3a<br/>g=9 n=9<br/>comp=9424.8"]
-    h_866d86d2740e["866d86d2740e<br/>g=30 n=21<br/>comp=9662.5"]
-    h_a17c392dc016["a17c392dc016<br/>g=0"]
-    h_afc9c59242af["afc9c59242af<br/>g=12 n=12<br/>comp=10430.6"]
-    h_e34cbbaccd0c["e34cbbaccd0c<br/>g=9 n=9<br/>comp=11855.8"]
-    h_2eff9af43327["2eff9af43327<br/>g=12 n=12<br/>comp=9754.3"]
-    h_298414c4ba49["298414c4ba49<br/>g=12 n=12<br/>comp=9142.3"]
-    h_6631d2da812d["6631d2da812d<br/>g=12 n=12<br/>comp=9806.5"]
-    h_0e5bda808d88["0e5bda808d88<br/>g=7 n=7<br/>comp=10767.7"]
-    h_7cbf437a2f29["7cbf437a2f29<br/>g=12 n=12<br/>comp=11754.3"]
-    h_0dc1d40950b3["0dc1d40950b3<br/>g=12 n=12<br/>comp=9468.5"]
-    h_3ff751c0d9be["3ff751c0d9be<br/>g=12 n=12<br/>comp=9425.2"]
-    h_54aa249e59cc["54aa249e59cc<br/>g=4 n=4<br/>comp=11343.8"]
-    h_c5a1e0ae2887["c5a1e0ae2887<br/>g=4 n=4<br/>comp=12198.2"]
-    h_d075b509efc9["d075b509efc9<br/>g=6 n=6<br/>comp=9683.3"]
-    h_48327614a550["48327614a550<br/>g=12 n=12<br/>comp=10278.4"]
-    h_6c65b2748f69["6c65b2748f69<br/>g=12 n=12<br/>comp=11304.2"]
-    h_556d3a5d3acb["556d3a5d3acb<br/>g=12 n=12<br/>comp=9851.5"]
-    h_d15c29b758ad["d15c29b758ad<br/>g=12 n=12<br/>comp=10374.6"]
-    h_017d22a209e0["017d22a209e0<br/>g=12 n=12<br/>comp=9061.1"]
-    h_c9caf194e70a["c9caf194e70a<br/>g=12 n=12<br/>comp=11296.6"]
-    h_615f7b8ef986["615f7b8ef986<br/>g=12 n=12<br/>comp=10245.7"]
-    h_d71e5865c87a["d71e5865c87a<br/>g=12 n=12<br/>comp=9779.4"]
-    h_78aea482f8b9["78aea482f8b9<br/>g=12 n=12<br/>comp=10407.9"]
-    h_3124530cc493["3124530cc493<br/>g=12 n=12<br/>comp=9649.3"]
-    h_fef0632567c6["fef0632567c6<br/>g=12 n=12<br/>comp=10593.4"]
-
-    h_44f2324ac753 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_e5ed751fbce7
-    h_e5ed751fbce7 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_2301abdcd35b
-    h_2301abdcd35b -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_aed09e698575
-    h_aed09e698575 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_490da448af77
-    h_490da448af77 -. rollback .-> h_89c436411f12
-    h_8cde5038d8a6 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_6ebc1466efdf
-    h_6ebc1466efdf -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_f2628f6f164a
-    h_f2628f6f164a -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_830cb1e0c1f0
-    h_830cb1e0c1f0 -->|improve| h_57b073aea0fd
-    h_57b073aea0fd -. rollback .-> h_89c436411f12
-    h_830cb1e0c1f0 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_4f07fa623345
-    h_4f07fa623345 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_92a72501e911
-    h_92a72501e911 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_4b3bd9843797
-    h_4b3bd9843797 -. rollback .-> h_05b0591ef25b
-    h_05b0591ef25b -. rollback .-> h_e5ed751fbce7
-    h_e5ed751fbce7 -->|improve| h_7017b28ae776
-    h_7017b28ae776 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
-    h_0a4a4352cd60 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_7b994b0502ad
-    h_7b994b0502ad -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_e25add30a506
-    h_e25add30a506 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_20d2d0cf31f3
-    h_20d2d0cf31f3 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_9db7c99981e9
-    h_9db7c99981e9 -->|improve| h_91822bbfb2e9
-    h_91822bbfb2e9 -->|improve| h_1267bad389a3
-    h_1267bad389a3 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_930bf98f7856
-    h_930bf98f7856 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_f427f6a14236
-    h_f427f6a14236 -->|improve| h_b453868211b3
-    h_b453868211b3 -->|improve| h_e326d295873e
-    h_e326d295873e -->|improve| h_89139809fdbb
-    h_89139809fdbb -->|improve| h_6049fd90b549
-    h_6049fd90b549 -->|improve| h_7c2e89b60c86
-    h_7c2e89b60c86 -->|improve| h_5f4ca17969cd
-    h_5f4ca17969cd -->|improve| h_0e899ca31b42
-    h_0e899ca31b42 -->|improve| h_5f1036c9e3cf
-    h_5f1036c9e3cf -->|improve| h_0e24bff87c81
-    h_0e24bff87c81 -. rollback .-> h_5f1036c9e3cf
-    h_5f1036c9e3cf -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_35729075cdbb
-    h_35729075cdbb -->|improve| h_d4064b9a3c33
-    h_d4064b9a3c33 -. rollback .-> h_35729075cdbb
-    h_35729075cdbb -->|improve| h_82789c2a1f26
-    h_82789c2a1f26 -. rollback .-> h_35729075cdbb
-    h_35729075cdbb -->|improve| h_16bc5b207f52
-    h_16bc5b207f52 -->|improve| h_7e7e42a95b0c
-    h_7e7e42a95b0c -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_44b16e23d9b6
-    h_44b16e23d9b6 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_c6797d71b3e6
-    h_c6797d71b3e6 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_5fc309765dc9
-    h_5fc309765dc9 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -. rollback .-> h_16bc5b207f52
-    h_16bc5b207f52 -. rollback .-> h_35729075cdbb
-    h_35729075cdbb -->|improve| h_026dad83a186
-    h_026dad83a186 -->|improve| h_d875a4e21e0d
-    h_d875a4e21e0d -->|improve| h_19b772b1ac66
-    h_19b772b1ac66 -. rollback .-> h_d875a4e21e0d
-    h_d875a4e21e0d -->|improve| h_1a499eef5d15
-    h_1a499eef5d15 -->|improve| h_151b3f6a0061
-    h_151b3f6a0061 -->|improve| h_96eb76e57ffc
-    h_96eb76e57ffc -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_23a95e22f7f6
-    h_23a95e22f7f6 -->|improve| h_380945cd25a7
-    h_380945cd25a7 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_915f38ba6f43
-    h_915f38ba6f43 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_ba3d38cf2d76
-    h_ba3d38cf2d76 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_4fc480bd9d3a
-    h_4fc480bd9d3a -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_866d86d2740e
-    h_866d86d2740e -->|improve| h_a17c392dc016
-    h_a17c392dc016 -. rollback .-> h_866d86d2740e
-    h_866d86d2740e -->|improve| h_afc9c59242af
-    h_afc9c59242af -. rollback .-> h_866d86d2740e
-    h_866d86d2740e -->|improve| h_e34cbbaccd0c
-    h_e34cbbaccd0c -->|improve| h_2eff9af43327
-    h_2eff9af43327 -->|improve| h_298414c4ba49
-    h_298414c4ba49 -->|improve| h_6631d2da812d
-    h_6631d2da812d -->|improve| h_0e5bda808d88
-    h_0e5bda808d88 -->|improve| h_7cbf437a2f29
-    h_7cbf437a2f29 -->|improve| h_0dc1d40950b3
-    h_0dc1d40950b3 -. rollback .-> h_0e899ca31b42
-    h_0e899ca31b42 -->|improve| h_3ff751c0d9be
-    h_3ff751c0d9be -. rollback .-> h_0e899ca31b42
-    h_0e899ca31b42 -->|improve| h_54aa249e59cc
-    h_54aa249e59cc -->|improve| h_c5a1e0ae2887
-    h_c5a1e0ae2887 -->|improve| h_d075b509efc9
-    h_d075b509efc9 -->|improve| h_48327614a550
-    h_48327614a550 -. rollback .-> h_0e899ca31b42
-    h_0e899ca31b42 -->|improve| h_6c65b2748f69
-    h_6c65b2748f69 -->|improve| h_556d3a5d3acb
-    h_556d3a5d3acb -->|improve| h_d15c29b758ad
-    h_d15c29b758ad -->|improve| h_017d22a209e0
-    h_017d22a209e0 -. rollback .-> h_0e899ca31b42
-    h_0e899ca31b42 -->|improve| h_c9caf194e70a
-    h_c9caf194e70a -. rollback .-> h_0e899ca31b42
-    h_0e899ca31b42 -->|improve| h_615f7b8ef986
-    h_615f7b8ef986 -. rollback .-> h_89c436411f12
-    h_89c436411f12 -->|improve| h_d71e5865c87a
-    h_d71e5865c87a -. rollback .-> h_23a95e22f7f6
-    h_23a95e22f7f6 -->|improve| h_78aea482f8b9
-    h_78aea482f8b9 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_3124530cc493
-    h_3124530cc493 -. rollback .-> h_8cde5038d8a6
-    h_8cde5038d8a6 -->|improve| h_fef0632567c6
-    h_fef0632567c6 -. rollback .-> h_23a95e22f7f6
-    h_05b0591ef25b -->|improve| h_7017b28ae776
-    h_0e899ca31b42 -->|improve| h_026dad83a186
-    h_0e899ca31b42 -->|improve| h_d875a4e21e0d
-    h_0e899ca31b42 -->|improve| h_19b772b1ac66
-    h_0e899ca31b42 -->|improve| h_1a499eef5d15
-    h_0e899ca31b42 -->|improve| h_151b3f6a0061
-    h_0e899ca31b42 -->|improve| h_96eb76e57ffc
-    h_0e899ca31b42 -->|improve| h_48327614a550
-
-    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
-    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
-    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
-    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
-
-    class h_89c436411f12 plain;
-    class h_05b0591ef25b plain;
-    class h_84a9fab96145 plain;
-    class h_b0a2a468a1c7 plain;
-    class h_44f2324ac753 plain;
-    class h_e5ed751fbce7 plain;
-    class h_2301abdcd35b plain;
-    class h_8cde5038d8a6 anchor;
-    class h_aed09e698575 plain;
-    class h_490da448af77 plain;
-    class h_6ebc1466efdf plain;
-    class h_f2628f6f164a plain;
-    class h_830cb1e0c1f0 plain;
-    class h_57b073aea0fd plain;
-    class h_4f07fa623345 plain;
-    class h_92a72501e911 plain;
-    class h_4b3bd9843797 plain;
-    class h_7017b28ae776 plain;
-    class h_0a4a4352cd60 plain;
-    class h_7b994b0502ad plain;
-    class h_e25add30a506 plain;
-    class h_20d2d0cf31f3 plain;
-    class h_9db7c99981e9 plain;
-    class h_91822bbfb2e9 plain;
-    class h_1267bad389a3 plain;
-    class h_930bf98f7856 plain;
-    class h_f427f6a14236 plain;
-    class h_b453868211b3 plain;
-    class h_e326d295873e plain;
-    class h_89139809fdbb plain;
-    class h_6049fd90b549 plain;
-    class h_7c2e89b60c86 plain;
-    class h_5f4ca17969cd plain;
-    class h_0e899ca31b42 plain;
-    class h_5f1036c9e3cf plain;
-    class h_0e24bff87c81 plain;
-    class h_35729075cdbb plain;
-    class h_d4064b9a3c33 plain;
-    class h_82789c2a1f26 plain;
-    class h_16bc5b207f52 plain;
-    class h_7e7e42a95b0c plain;
-    class h_44b16e23d9b6 plain;
-    class h_c6797d71b3e6 plain;
-    class h_5fc309765dc9 plain;
-    class h_026dad83a186 plain;
-    class h_d875a4e21e0d plain;
-    class h_19b772b1ac66 plain;
-    class h_1a499eef5d15 plain;
-    class h_151b3f6a0061 plain;
-    class h_96eb76e57ffc plain;
-    class h_23a95e22f7f6 plain;
-    class h_380945cd25a7 plain;
-    class h_915f38ba6f43 plain;
-    class h_ba3d38cf2d76 plain;
-    class h_4fc480bd9d3a plain;
-    class h_866d86d2740e plain;
-    class h_a17c392dc016 plain;
-    class h_afc9c59242af plain;
-    class h_e34cbbaccd0c plain;
-    class h_2eff9af43327 plain;
-    class h_298414c4ba49 plain;
-    class h_6631d2da812d plain;
-    class h_0e5bda808d88 plain;
-    class h_7cbf437a2f29 plain;
-    class h_0dc1d40950b3 plain;
-    class h_3ff751c0d9be plain;
-    class h_54aa249e59cc plain;
-    class h_c5a1e0ae2887 plain;
-    class h_d075b509efc9 plain;
-    class h_48327614a550 plain;
-    class h_6c65b2748f69 plain;
-    class h_556d3a5d3acb plain;
-    class h_d15c29b758ad plain;
-    class h_017d22a209e0 plain;
-    class h_c9caf194e70a plain;
-    class h_615f7b8ef986 plain;
-    class h_d71e5865c87a plain;
-    class h_78aea482f8b9 plain;
-    class h_3124530cc493 plain;
-    class h_fef0632567c6 plain;
-```
-
-## Detail 20/21
-
-- Range: `466bd5aac223` .. `3020221dd064`
-- Nodes in this diagram: `80`
-- Internal edges in this diagram: `0`
-- Cross-chunk link: `23a95e22f7f6 --improve--> 466bd5aac223`
-- Cross-chunk link: `466bd5aac223 -.rollback.-> 8cde5038d8a6`
-- Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
-- Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
-- Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `e3215795865e --improve--> 355868eaf8ab`
-- Cross-chunk link: `355868eaf8ab --improve--> 71413461e56e`
-- Cross-chunk link: `2ad5850b541e --improve--> 891e238759b8`
-- Cross-chunk link: `1d9b85a22a22 --improve--> 0ac322bb0b01`
-- Cross-chunk link: `26b781b24775 --improve--> 9edb021fe9bc`
-
-```mermaid
-flowchart TD
-    h_466bd5aac223["466bd5aac223<br/>g=12 n=12<br/>comp=10561.1"]
-    h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
-    h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
-    h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
-    h_2ad5850b541e["2ad5850b541e"]
-    h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_12dcaa0fba31["12dcaa0fba31<br/>g=2 n=2<br/>comp=10250.7"]
-    h_1387c0cd84b3["1387c0cd84b3<br/>g=3 n=3<br/>comp=11161.2"]
-    h_9bada9f1385f["9bada9f1385f<br/>g=2 n=2<br/>comp=13237.3"]
-    h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
-    h_967091db2b2d["967091db2b2d<br/>g=2 n=2<br/>comp=9227.2"]
-    h_26b781b24775["26b781b24775<br/>g=16 n=16<br/>comp=9211.5"]
-    h_e197cf4099eb["e197cf4099eb<br/>g=2 n=2<br/>comp=9775.6"]
-    h_unknown["unknown<br/>g=3 n=3<br/>comp=0.0"]
-    h_b98d5d56c1a6["b98d5d56c1a6<br/>g=2 n=2<br/>comp=8123.0"]
-    h_a047013e74cf["a047013e74cf<br/>g=2 n=2<br/>comp=10253.7"]
-    h_dba3b4a2ef60["dba3b4a2ef60<br/>g=2 n=2<br/>comp=11197.1"]
-    h_6ac470fac0e9["6ac470fac0e9<br/>g=2 n=2<br/>comp=9839.2"]
-    h_baab22681199["baab22681199<br/>g=1 n=1<br/>comp=9175.0"]
-    h_d0748a4ba1d6["d0748a4ba1d6<br/>g=2 n=2<br/>comp=11300.8"]
-    h_bd23e83f1047["bd23e83f1047<br/>g=1 n=1<br/>comp=8593.0"]
-    h_730440ee9253["730440ee9253<br/>g=1 n=1<br/>comp=22006.0"]
-    h_14ec1447fad4["14ec1447fad4<br/>g=1 n=1<br/>comp=9419.0"]
     h_f0d8c78810a1["f0d8c78810a1<br/>g=1 n=1<br/>comp=8641.0"]
     h_58a40c5e22ed["58a40c5e22ed<br/>g=1 n=1<br/>comp=17056.0"]
     h_8bb10974df6a["8bb10974df6a<br/>g=1 n=1<br/>comp=10481.0"]
@@ -5645,37 +4388,40 @@ flowchart TD
     h_bcb71e7c991c["bcb71e7c991c<br/>g=1 n=1<br/>comp=15078.0"]
     h_8b09e9436cc8["8b09e9436cc8<br/>g=1 n=1<br/>comp=8206.0"]
     h_3020221dd064["3020221dd064<br/>g=1 n=1<br/>comp=7921.0"]
+    h_22b1980d35a2["22b1980d35a2<br/>g=2 n=2<br/>comp=11247.6"]
+    h_85adb6c79dda["85adb6c79dda<br/>g=7 n=7<br/>comp=11306.3"]
+    h_c63b439234ab["c63b439234ab<br/>g=2 n=2<br/>comp=11040.6"]
+    h_3b9e42449d8e["3b9e42449d8e<br/>g=1 n=1<br/>comp=8491.0"]
+    h_7ddb227f455a["7ddb227f455a<br/>g=1 n=1<br/>comp=13975.0"]
+    h_92ba96416687["92ba96416687<br/>g=3 n=3<br/>comp=9643.6"]
+    h_655bcf5b4e5a["655bcf5b4e5a<br/>g=1 n=1<br/>comp=11223.0"]
+    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
+    h_dc38191b780f["dc38191b780f<br/>g=9 n=9<br/>comp=10624.1"]
+    h_cda8045c9344["cda8045c9344<br/>g=27 n=20<br/>comp=10114.1"]
+    h_545a5ebfc8e2["545a5ebfc8e2<br/>g=4 n=4<br/>comp=7822.2"]
+    h_0dcb1c55fcd3["0dcb1c55fcd3<br/>g=4 n=4<br/>comp=9287.8"]
+    h_06622b66b58b["06622b66b58b<br/>g=53 n=20<br/>comp=10786.3"]
+    h_f2aeefe9baf2["f2aeefe9baf2<br/>g=3 n=3<br/>comp=9103.8"]
+    h_3ba36fb4f221["3ba36fb4f221<br/>g=1 n=1<br/>comp=11734.0"]
+    h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
+    h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
+    h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
+    h_b224cd20c7ba["b224cd20c7ba<br/>g=24 n=20<br/>comp=11106.7"]
+    h_4113c45a0e02["4113c45a0e02<br/>g=13 n=13<br/>comp=10685.4"]
+    h_4e149782a105["4e149782a105<br/>g=40 n=20<br/>comp=10844.0"]
+    h_764a1379cadb["764a1379cadb<br/>g=15 n=15<br/>comp=10457.5"]
+    h_8be52e039054["8be52e039054<br/>g=24 n=20<br/>comp=11005.6"]
+    h_09daf473ec34["09daf473ec34<br/>g=22 n=20<br/>comp=9494.3"]
 
+    h_b224cd20c7ba -->|improve| h_4113c45a0e02
+    h_4e149782a105 -->|improve| h_764a1379cadb
+    h_8be52e039054 -->|improve| h_09daf473ec34
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_466bd5aac223 plain;
-    class h_389b56537573 plain;
-    class h_a3aae72a4e37 plain;
-    class h_355868eaf8ab plain;
-    class h_4504b0237b49 plain;
-    class h_2ad5850b541e plain;
-    class h_1d9b85a22a22 plain;
-    class h_12dcaa0fba31 plain;
-    class h_1387c0cd84b3 plain;
-    class h_9bada9f1385f plain;
-    class h_996646fb8173 plain;
-    class h_967091db2b2d plain;
-    class h_26b781b24775 plain;
-    class h_e197cf4099eb plain;
-    class h_unknown plain;
-    class h_b98d5d56c1a6 plain;
-    class h_a047013e74cf plain;
-    class h_dba3b4a2ef60 plain;
-    class h_6ac470fac0e9 plain;
-    class h_baab22681199 plain;
-    class h_d0748a4ba1d6 plain;
-    class h_bd23e83f1047 plain;
-    class h_730440ee9253 plain;
-    class h_14ec1447fad4 plain;
     class h_f0d8c78810a1 plain;
     class h_58a40c5e22ed plain;
     class h_8bb10974df6a plain;
@@ -5732,47 +4478,6 @@ flowchart TD
     class h_bcb71e7c991c plain;
     class h_8b09e9436cc8 plain;
     class h_3020221dd064 plain;
-```
-
-## Detail 21/21
-
-- Range: `22b1980d35a2` .. `f77223bdf9b9`
-- Nodes in this diagram: `22`
-- Internal edges in this diagram: `0`
-- Cross-chunk link: `a3e3965087ab --improve--> 4095e6bf3d05`
-- Cross-chunk link: `8cde5038d8a6 --improve--> f77223bdf9b9`
-
-```mermaid
-flowchart TD
-    h_22b1980d35a2["22b1980d35a2<br/>g=2 n=2<br/>comp=11247.6"]
-    h_85adb6c79dda["85adb6c79dda<br/>g=7 n=7<br/>comp=11306.3"]
-    h_c63b439234ab["c63b439234ab<br/>g=2 n=2<br/>comp=11040.6"]
-    h_3b9e42449d8e["3b9e42449d8e<br/>g=1 n=1<br/>comp=8491.0"]
-    h_7ddb227f455a["7ddb227f455a<br/>g=1 n=1<br/>comp=13975.0"]
-    h_92ba96416687["92ba96416687<br/>g=3 n=3<br/>comp=9643.6"]
-    h_655bcf5b4e5a["655bcf5b4e5a<br/>g=1 n=1<br/>comp=11223.0"]
-    h_d0f554f02dcc["d0f554f02dcc<br/>g=2 n=2<br/>comp=10809.1"]
-    h_dc38191b780f["dc38191b780f<br/>g=9 n=9<br/>comp=10624.1"]
-    h_cda8045c9344["cda8045c9344<br/>g=27 n=20<br/>comp=10114.1"]
-    h_545a5ebfc8e2["545a5ebfc8e2<br/>g=4 n=4<br/>comp=7822.2"]
-    h_0dcb1c55fcd3["0dcb1c55fcd3<br/>g=4 n=4<br/>comp=9287.8"]
-    h_06622b66b58b["06622b66b58b<br/>g=53 n=20<br/>comp=10786.3"]
-    h_f2aeefe9baf2["f2aeefe9baf2<br/>g=3 n=3<br/>comp=9103.8"]
-    h_3ba36fb4f221["3ba36fb4f221<br/>g=1 n=1<br/>comp=11734.0"]
-    h_287ff5db8ad1["287ff5db8ad1<br/>g=5 n=5<br/>comp=10427.5"]
-    h_5b6551e43fd4["5b6551e43fd4<br/>g=2 n=2<br/>comp=10874.0"]
-    h_a023de98b324["a023de98b324<br/>g=1 n=1<br/>comp=10742.0"]
-    h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
-    h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
-    h_b3189d8121e6["b3189d8121e6<br/>g=3 n=3<br/>comp=8528.9"]
-    h_f77223bdf9b9["f77223bdf9b9<br/>CURRENT<br/>g=0"]
-
-
-    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
-    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
-    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
-    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
-
     class h_22b1980d35a2 plain;
     class h_85adb6c79dda plain;
     class h_c63b439234ab plain;
@@ -5791,13 +4496,181 @@ flowchart TD
     class h_287ff5db8ad1 plain;
     class h_5b6551e43fd4 plain;
     class h_a023de98b324 plain;
+    class h_b224cd20c7ba plain;
+    class h_4113c45a0e02 plain;
+    class h_4e149782a105 plain;
+    class h_764a1379cadb plain;
+    class h_8be52e039054 plain;
+    class h_09daf473ec34 plain;
+```
+
+## Detail 18/18
+
+- Range: `3c62c43bbac4` .. `7c2e89b60c86`
+- Nodes in this diagram: `44`
+- Internal edges in this diagram: `16`
+- Cross-chunk link: `4e149782a105 --improve--> 3c62c43bbac4`
+- Cross-chunk link: `84d04da1d615 --improve--> a6298d726b3d`
+- Cross-chunk link: `84d04da1d615 --improve--> 33f9bc76c42f`
+- Cross-chunk link: `a3e3965087ab --improve--> 4095e6bf3d05`
+- Cross-chunk link: `1aa464cc23d4 --improve--> 3a90bd2a643d`
+- Cross-chunk link: `1aa464cc23d4 --improve--> 05b0591ef25b`
+- Cross-chunk link: `1aa464cc23d4 --improve--> 84a9fab96145`
+- Cross-chunk link: `1aa464cc23d4 --improve--> b0a2a468a1c7`
+- Cross-chunk link: `1aa464cc23d4 --improve--> 44f2324ac753`
+- Cross-chunk link: `89c436411f12 --improve--> e5ed751fbce7`
+- Cross-chunk link: `89c436411f12 --improve--> 2301abdcd35b`
+- Cross-chunk link: `8cde5038d8a6 --improve--> aed09e698575`
+- Cross-chunk link: `... and 15 more`
+
+```mermaid
+flowchart TD
+    h_3c62c43bbac4["3c62c43bbac4<br/>g=20 n=20<br/>comp=10555.2"]
+    h_ddf66354fe45["ddf66354fe45<br/>g=12 n=12<br/>comp=10679.7"]
+    h_1015e03235fa["1015e03235fa<br/>g=31 n=20<br/>comp=10483.9"]
+    h_fd3056a050f1["fd3056a050f1<br/>g=17 n=17<br/>comp=10613.2"]
+    h_2c9ff1ff7c36["2c9ff1ff7c36<br/>g=12 n=12<br/>comp=10249.5"]
+    h_517fa3969d26["517fa3969d26<br/>g=12 n=12<br/>comp=10876.9"]
+    h_40e67ef7fc96["40e67ef7fc96<br/>g=12 n=12<br/>comp=10685.0"]
+    h_a6298d726b3d["a6298d726b3d<br/>g=12 n=12<br/>comp=10942.8"]
+    h_33f9bc76c42f["33f9bc76c42f<br/>g=12 n=12<br/>comp=10432.6"]
+    h_4095e6bf3d05["4095e6bf3d05<br/>g=7 n=7<br/>comp=10686.8"]
+    h_3a90bd2a643d["3a90bd2a643d<br/>g=23 n=20<br/>comp=10274.4"]
+    h_665a70d477e6["665a70d477e6<br/>g=12 n=12<br/>comp=10761.5"]
+    h_05b0591ef25b["05b0591ef25b<br/>g=24 n=20<br/>comp=10991.1"]
+    h_84a9fab96145["84a9fab96145<br/>g=12 n=12<br/>comp=11401.8"]
+    h_b0a2a468a1c7["b0a2a468a1c7<br/>g=12 n=12<br/>comp=10641.0"]
+    h_44f2324ac753["44f2324ac753<br/>g=0"]
+    h_8c879f841357["8c879f841357<br/>g=12 n=12<br/>comp=10385.5"]
+    h_e5ed751fbce7["e5ed751fbce7<br/>g=12 n=12<br/>comp=10971.7"]
+    h_2301abdcd35b["2301abdcd35b<br/>g=0"]
+    h_aed09e698575["aed09e698575<br/>g=12 n=12<br/>comp=10696.7"]
+    h_490da448af77["490da448af77<br/>g=12 n=12<br/>comp=10636.6"]
+    h_6ebc1466efdf["6ebc1466efdf<br/>g=0"]
+    h_f2628f6f164a["f2628f6f164a<br/>g=0"]
+    h_830cb1e0c1f0["830cb1e0c1f0<br/>g=24 n=20<br/>comp=10662.6"]
+    h_57b073aea0fd["57b073aea0fd<br/>g=12 n=12<br/>comp=11351.1"]
+    h_4f07fa623345["4f07fa623345<br/>g=4 n=4<br/>comp=7494.9"]
+    h_92a72501e911["92a72501e911<br/>g=4 n=4<br/>comp=9358.7"]
+    h_4b3bd9843797["4b3bd9843797<br/>g=12 n=12<br/>comp=11895.5"]
+    h_b3189d8121e6["b3189d8121e6<br/>g=3 n=3<br/>comp=8528.9"]
+    h_7017b28ae776["7017b28ae776<br/>g=4 n=4<br/>comp=9154.9"]
+    h_0a4a4352cd60["0a4a4352cd60<br/>g=4 n=4<br/>comp=8471.1"]
+    h_7b994b0502ad["7b994b0502ad<br/>g=4 n=4<br/>comp=10501.2"]
+    h_e25add30a506["e25add30a506<br/>g=4 n=4<br/>comp=11310.8"]
+    h_20d2d0cf31f3["20d2d0cf31f3<br/>g=4 n=4<br/>comp=10764.1"]
+    h_9db7c99981e9["9db7c99981e9<br/>g=4 n=4<br/>comp=11483.9"]
+    h_91822bbfb2e9["91822bbfb2e9<br/>g=4 n=4<br/>comp=11404.5"]
+    h_1267bad389a3["1267bad389a3<br/>g=12 n=12<br/>comp=10355.0"]
+    h_930bf98f7856["930bf98f7856<br/>g=12 n=12<br/>comp=10082.0"]
+    h_f427f6a14236["f427f6a14236<br/>g=4 n=4<br/>comp=10063.9"]
+    h_b453868211b3["b453868211b3<br/>g=4 n=4<br/>comp=10715.0"]
+    h_e326d295873e["e326d295873e<br/>g=4 n=4<br/>comp=10819.9"]
+    h_89139809fdbb["89139809fdbb<br/>g=4 n=4<br/>comp=13305.8"]
+    h_6049fd90b549["6049fd90b549<br/>g=4 n=4<br/>comp=11176.7"]
+    h_7c2e89b60c86["7c2e89b60c86<br/>g=4 n=4<br/>comp=13067.1"]
+
+    h_3c62c43bbac4 -->|improve| h_ddf66354fe45
+    h_ddf66354fe45 -->|improve| h_1015e03235fa
+    h_1015e03235fa -->|improve| h_fd3056a050f1
+    h_fd3056a050f1 -->|improve| h_2c9ff1ff7c36
+    h_1015e03235fa -->|improve| h_517fa3969d26
+    h_517fa3969d26 -->|improve| h_40e67ef7fc96
+    h_3a90bd2a643d -->|improve| h_665a70d477e6
+    h_830cb1e0c1f0 -->|improve| h_57b073aea0fd
+    h_05b0591ef25b -->|improve| h_7017b28ae776
+    h_9db7c99981e9 -->|improve| h_91822bbfb2e9
+    h_91822bbfb2e9 -->|improve| h_1267bad389a3
+    h_f427f6a14236 -->|improve| h_b453868211b3
+    h_b453868211b3 -->|improve| h_e326d295873e
+    h_e326d295873e -->|improve| h_89139809fdbb
+    h_89139809fdbb -->|improve| h_6049fd90b549
+    h_6049fd90b549 -->|improve| h_7c2e89b60c86
+
+    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
+    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
+    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
+    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
+
+    class h_3c62c43bbac4 plain;
+    class h_ddf66354fe45 plain;
+    class h_1015e03235fa plain;
+    class h_fd3056a050f1 plain;
+    class h_2c9ff1ff7c36 plain;
+    class h_517fa3969d26 plain;
+    class h_40e67ef7fc96 plain;
+    class h_a6298d726b3d plain;
+    class h_33f9bc76c42f plain;
     class h_4095e6bf3d05 plain;
+    class h_3a90bd2a643d plain;
+    class h_665a70d477e6 plain;
+    class h_05b0591ef25b plain;
+    class h_84a9fab96145 plain;
+    class h_b0a2a468a1c7 plain;
+    class h_44f2324ac753 plain;
     class h_8c879f841357 plain;
+    class h_e5ed751fbce7 plain;
+    class h_2301abdcd35b plain;
+    class h_aed09e698575 plain;
+    class h_490da448af77 plain;
+    class h_6ebc1466efdf plain;
+    class h_f2628f6f164a plain;
+    class h_830cb1e0c1f0 plain;
+    class h_57b073aea0fd plain;
+    class h_4f07fa623345 plain;
+    class h_92a72501e911 plain;
+    class h_4b3bd9843797 plain;
     class h_b3189d8121e6 plain;
-    class h_f77223bdf9b9 current;
+    class h_7017b28ae776 plain;
+    class h_0a4a4352cd60 plain;
+    class h_7b994b0502ad plain;
+    class h_e25add30a506 plain;
+    class h_20d2d0cf31f3 plain;
+    class h_9db7c99981e9 plain;
+    class h_91822bbfb2e9 plain;
+    class h_1267bad389a3 plain;
+    class h_930bf98f7856 plain;
+    class h_f427f6a14236 plain;
+    class h_b453868211b3 plain;
+    class h_e326d295873e plain;
+    class h_89139809fdbb plain;
+    class h_6049fd90b549 plain;
+    class h_7c2e89b60c86 plain;
 ```
 
 ## Transition Notes
+
+### Rollback Game#26419 `8cde5038 -> 23a95e22`
+
+- - rollback from 8cde5038d8a6 to 23a95e22f7f6 at game 26419
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=9675.3/10226.5/8686.5 vs target 11933.6/12114.0/11646.5
+- - bad recent scores: 10066 7783 13632 17006 12287 10347 8145 10106
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=9675.3 p50=10226.5 p25=8686.5 mean=10640.3 n=12
+- rollback_target: comp=11933.6 p50=12114.0 p25=11646.5 mean=12528.4 n=12
+- metric_gap_vs_target: comp=-2258.4 p50=-1887.5 p25=-2960.0 mean=-1888.1
+- recent12_avg: bad=10640.3 target=12528.4
+- recent12_floor: bad=6496 target=9244
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#26407 `f77223bd -> 8cde5038`
+
+- - rollback from f77223bdf9b9 to 8cde5038d8a6 at game 26407
+- - reasons: objective_regression+lost_russia_path
+- - current comp/p50/p25=8935.7/9443.5/8004.5 vs target 10816.2/11131.5/10156.8
+- - bad recent scores: 9036 6479 10480 9851 8806 12626 8212 18201
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はロシア到達済みだが current はロシア未到達だった。
+- current: comp=8935.7 p50=9443.5 p25=8004.5 mean=10183.9 n=12
+- rollback_target: comp=10816.2 p50=11131.5 p25=10156.8 mean=12001.8 n=20
+- metric_gap_vs_target: comp=-1880.5 p50=-1688.0 p25=-2152.2 mean=-1817.8
+- recent12_avg: bad=10183.9 target=12441.8
+- recent12_floor: bad=6312 target=8738
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Improve Game#26395 `8cde5038 -> f77223bd`
 
