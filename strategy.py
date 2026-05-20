@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v587: axis 9.12 — merge drought exit trigger (no_merge_streak>=2, type13+ proximity +400*merge_mult).
+     # NO merge drought終盤(max_y>=2.0, pc>=30, no_merge_streak>=2)でtype13+piecesとの近了配置にボーナス赋予。
+     # worst T104-110: type14ありながら7ターンmerge机会0。best_score5801にはaxis 9.12実装済み。
+     # Fixes rollback failure mode: type14→15へのmerge path作成不足（merge drought exit trigger添加）
+     # refs: tmp/analysis_result.md, game_history/20260520_151536_score1887.jsonl,
+     #       strategy_versions/best_score5801_strategy.py (axis 9.12 reference)
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -890,6 +896,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
     double_russia_phase = russia_phase_count >= 2
+
+    # --- no_merge_streak tracking (for axis 9.12 merge drought exit trigger) ---
+    # Tracks consecutive NO-merge turns to detect merge drought for exit guidance.
+    # Reset when merge occurs (score_delta > 0 or merge_available for this turn).
+    # Used by axis 9.12 to create merge path opportunities during extended NO-merge droughts.
+    prev_no_merge_streak = game_state.get("no_merge_streak", 0)
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -2039,6 +2051,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
             score -= 1000.0  # 追加ペナルティ（axis 8.8と合計-5500）
             reasons.append("HIGH_MERGE_DROUGHT_PENALTY")
+
+        # ----- evaluation axis 9.12: merge drought exit trigger (v587) -----
+        # analysis_result.md adopted hypothesis: merge drought exit trigger.
+        # NO merge連続ターン数(no_merge_streak>=2)で、高type pieces(type13+)との近了配置に
+        # ボーナスをつけ、NO merge時のdrought脱出口を作成する。
+        # worst game T104-110: type14存在确认りながら7ターンmerge机会0。
+        # best_score5801_strategy.pyにはaxis 9.12が実装済み、currentには未実装。
+        # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"
+        # mandatory_themes: "NEXTを考慮したドロップ" — next pieceのtypeも考虑した近了配置促进。
+        # refs: tmp/analysis_result.md (Implementation Plan),
+        #       game_history/20260520_151536_score1887.jsonl (best T104-110 merge drought),
+        #       game_history/20260520_152334_score0597.jsonl (worst T61-64 merge drought),
+        #       strategy_versions/best_score5801_strategy.py (axis 9.12 reference)
+        # Fixes rollback failure mode: type14→15へのmerge path作成不足（merge drought exit trigger）
+        # axis 9.12 sits between merge_drought suppression and type13+ proximity guidance.
+        # death_spiral requires danger_piece_count>0, but merge drought can be active without danger pieces.
+        # Use merge-drought-equivalent suppression: rp>=1 && max_y>=1.0 (matches v586/v585 activation).
+        if merge_grade == "NO" and max_y >= 2.0 and piece_count >= 30:
+            if prev_no_merge_streak >= 2:
+                # suppress only when already in full death spiral (danger+rp+NO+deadline_or_maxy1.5)
+                in_death_spiral = danger_piece_count > 0 and reactive_pair_count >= 3 and max_y >= 1.5
+                if not in_death_spiral:
+                    high_type_pieces = [p for p in pieces if p.get("type", 0) >= 13]
+                    if high_type_pieces:
+                        min_dist = float("inf")
+                        for ht in high_type_pieces:
+                            dist = abs(x - ht.get("x", 0))
+                            if dist < min_dist:
+                                min_dist = dist
+                        if min_dist < 1.5:
+                            merge_exit_bonus = 400.0 * merge_mult
+                            score += merge_exit_bonus
+                            reasons.append("MERGE_DROUGHT_EXIT")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
