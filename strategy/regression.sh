@@ -1181,16 +1181,24 @@ def _objective_tuple(data):
     )
 
 def _anchor_rank_key(h, m, data, selection_score):
-    # Rollback anchors should primarily come from mature rolling-score leaders.
-    # Objective progress is useful as a tie-breaker, but it must not exclude
-    # higher-performing no-Russia candidates from rollback eligibility.
-    objective_key = _objective_tuple(data) if objective_anchor_enabled else (0, 0, 0, 0, 0)
+    # Rollback anchors must stay score-mature, but the Soviet objective is the
+    # real target. If an objective-progress candidate is still near the score
+    # leader, prefer it over a score-only local optimum.
+    objective_key = (0, 0, 0, 0, 0)
+    if objective_anchor_enabled:
+        score_gap = max(0.0, top_anchor_comp - float(m.get("comp", 0.0) or 0.0))
+        near_score_leader = (
+            float(m.get("comp", 0.0) or 0.0) >= top_anchor_comp * objective_anchor_min_comp_ratio
+            or score_gap <= objective_anchor_max_comp_gap
+        )
+        if near_score_leader:
+            objective_key = _objective_tuple(data)
     return (
+        *objective_key,
         selection_score,
         m["p50"],
         m["p25"],
         m["n"],
-        *objective_key,
         h,
     )
 

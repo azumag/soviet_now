@@ -117,8 +117,8 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertIn(round(anchor["comp"]), [round(raw_comp_A), round(raw_comp_B)],
                           msg=f"persisted comp={anchor['comp']} is not raw")
 
-    def test_anchor_selection_prefers_rolling_score_over_objective_progress(self):
-        """anchor は建国進捗だけでなく mature rolling score 上位を優先する。"""
+    def test_anchor_selection_prefers_near_score_objective_progress(self):
+        """anchor はトップスコア近傍なら建国進捗を優先して局所解化を避ける。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -187,9 +187,9 @@ _refresh_best_strategy_anchor "" 2>&1
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
             anchor = json.loads(anchor_file.read_text())
-            self.assertEqual(anchor["hash"], "scoreOnly")
-            self.assertEqual(anchor["best_max_type"], 13)
-            self.assertEqual(anchor["russia_count"], 0)
+            self.assertEqual(anchor["hash"], "russiaPath")
+            self.assertEqual(anchor["best_max_type"], 15)
+            self.assertEqual(anchor["russia_count"], 1)
 
     def test_anchor_refresh_preserves_valid_current_anchor(self):
         """current が既存 anchor の場合、2番手へ強制差し替えせず同一hash判定へ残す。"""
@@ -445,8 +445,8 @@ echo promote_rc=$?
             self.assertIn("- source: promote_current_strategy", anchor_change)
             self.assertIn("russia=1", anchor_change)
 
-    def test_existing_russia_anchor_can_be_replaced_by_higher_score_candidate(self):
-        """既存 Russia anchor でも rolling score 上位の安定候補には置換される。"""
+    def test_existing_russia_anchor_is_kept_against_near_score_only_candidate(self):
+        """既存 Russia anchor は近傍スコアの score-only 候補では潰さない。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -514,6 +514,94 @@ echo promote_rc=$?
             env["TABU_ENABLED"] = "1"
             env["TABU_DISTANCE_THRESHOLD"] = "0.15"
             env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+            env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "russiaPath")
+            self.assertEqual(anchor["best_max_type"], 15)
+            self.assertEqual(anchor["russia_count"], 1)
+
+    def test_existing_russia_anchor_can_be_replaced_by_far_higher_score_candidate(self):
+        """score 差が十分大きい mature 候補は rollback anchor として採用できる。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            last_anchor_change_file = td / "last_anchor_change.md"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "scores": [3000] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 14,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                        "russiaPath": {
+                            "scores": [1200] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                    }
+                )
+            )
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "scoreOnly.py").write_text(stable_source)
+            (archive_dir / "russiaPath.py").write_text(stable_source)
+            anchor_file.write_text(
+                json.dumps(
+                    {
+                        "hash": "russiaPath",
+                        "comp": 1200,
+                        "p50": 1200,
+                        "p25": 1200,
+                        "lcb": 1200,
+                        "n": 12,
+                        "best_max_type": 15,
+                        "russia_count": 1,
+                        "soviet_count": 0,
+                    }
+                )
+            )
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "0"
+            env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["OBJECTIVE_ANCHOR_MIN_COMP_RATIO"] = "0.90"
+            env["OBJECTIVE_ANCHOR_MAX_COMP_GAP"] = "1500"
             env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
             env["TABU_SIGNATURES_FILE"] = str(tabu_file)
             env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
@@ -3411,13 +3499,13 @@ PY
         self.assertIn("SAME_HASH_BACKSLIDE_RESET_ENABLED", config)
         self.assertIn("SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES", config)
 
-    def test_anchor_rank_key_keeps_objective_progress_as_tiebreaker_only(self):
+    def test_anchor_rank_key_prioritizes_near_score_objective_progress(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
 
-        self.assertIn("Rollback anchors should primarily come from mature rolling-score leaders.", regression)
-        self.assertIn("objective_key = _objective_tuple(data) if objective_anchor_enabled else", regression)
-        self.assertIn("selection_score,\n        m[\"p50\"],\n        m[\"p25\"],\n        m[\"n\"],\n        *objective_key", regression)
-        self.assertNotIn("a high score alone cannot replace a proven", regression)
+        self.assertIn("Rollback anchors must stay score-mature, but the Soviet objective is the", regression)
+        self.assertIn("near_score_leader = (", regression)
+        self.assertIn("objective_key = _objective_tuple(data)", regression)
+        self.assertIn("*objective_key,\n        selection_score", regression)
 
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
