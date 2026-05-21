@@ -4,7 +4,8 @@
 # 各 worker を background で起動し、死亡時は自動再起動する。
 # tmp/stop が作成されたら全 worker を停止して終了する。
 #
-# 起動: ./start_all.sh
+# 起動: ./start_all.sh --daemon  (推奨: shell 終了後も supervisor を残す)
+#       ./start_all.sh           (foreground で監視)
 # 停止: touch tmp/stop  or  ./stop_soren.sh  or  Ctrl+C
 
 set -o pipefail
@@ -12,6 +13,7 @@ set -o pipefail
 # alive when that parent shell exits; explicit stop still goes through tmp/stop
 # or INT/TERM.
 trap '' HUP
+trap ':' PIPE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -24,6 +26,7 @@ RESTART_BACKOFF_BASE="${SUPERVISOR_BACKOFF_BASE:-2}"
 RESTART_BACKOFF_MAX="${SUPERVISOR_BACKOFF_MAX:-60}"
 SUPERVISOR_POLL_SEC="${SUPERVISOR_POLL_SEC:-3}"
 PID_FILE="tmp/state/start_all.pid"
+TMUX_SESSION="${SUPERVISOR_TMUX_SESSION:-soren_supervisor}"
 
 # Worker 定義: name と command
 declare -a WORKER_NAMES=(
@@ -49,6 +52,7 @@ declare -a WORKER_CMDS=(
 declare -a WORKER_PIDS=()
 declare -a WORKER_RESTARTS=()
 declare -a WORKER_LAST_START=()
+SUPERVISOR_STOP_REQUESTED=0
 
 _log() {
 	echo "[supervisor $(date '+%H:%M:%S')] $*"
@@ -71,6 +75,57 @@ _pid_alive() {
 	esac
 	return 1
 }
+
+case "${1:-}" in
+--daemon|daemon|start)
+	mkdir -p tmp/state logs 2>/dev/null || true
+	if [ -f "$PID_FILE" ]; then
+		old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+		if _pid_alive "$old_pid"; then
+			echo "supervisor already running (PID=$old_pid)"
+			exit 0
+		fi
+		rm -f "$PID_FILE"
+	fi
+	rm -f tmp/stop
+	if command -v tmux >/dev/null 2>&1; then
+		if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+			old_pid=$(tmux display-message -p -t "$TMUX_SESSION" "#{pane_pid}" 2>/dev/null || true)
+			if _pid_alive "$old_pid"; then
+				echo "$old_pid" >"$PID_FILE"
+				echo "supervisor already running in tmux (PID=$old_pid)"
+				exit 0
+			fi
+			tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+		fi
+		tmux new-session -d -s "$TMUX_SESSION" "cd '$PWD' && exec /bin/bash ./start_all.sh --supervisor >> logs/start_all.log 2>&1"
+		sleep 1
+		if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+			new_pid=$(tmux display-message -p -t "$TMUX_SESSION" "#{pane_pid}" 2>/dev/null || true)
+			echo "$new_pid" >"$PID_FILE"
+			echo "supervisor tmux daemon started (PID=$new_pid)"
+			exit 0
+		fi
+		echo "tmux-start-failed:fallback-nohup" >>"logs/start_all.log"
+	fi
+	nohup /bin/bash "$0" --supervisor >>"logs/start_all.log" 2>&1 </dev/null &
+	new_pid=$!
+	echo "$new_pid" >"$PID_FILE"
+	disown "$new_pid" 2>/dev/null || true
+	echo "supervisor daemon started (PID=$new_pid)"
+	exit 0
+	;;
+--supervisor|"")
+	;;
+--help|-h)
+	echo "Usage: $0 [--daemon|--supervisor]"
+	exit 0
+	;;
+*)
+	echo "Usage: $0 [--daemon|--supervisor]" >&2
+	exit 2
+	;;
+esac
 
 _pidfile_for_worker() {
 	case "$1" in
@@ -142,7 +197,7 @@ mkdir -p tmp/state logs 2>/dev/null || true
 # 多重起動防止
 if [ -f "$PID_FILE" ]; then
 	old_pid=$(cat "$PID_FILE" 2>/dev/null)
-	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+	if [ -n "$old_pid" ] && [ "$old_pid" != "$$" ] && _pid_alive "$old_pid"; then
 		_log "ERROR: supervisor 既に起動中 (PID=$old_pid)"
 		exit 1
 	fi
@@ -230,8 +285,12 @@ _cleanup() {
 		_log "cleanup skipped: another supervisor owns pidfile (owner=${active_pid}, self=$$)"
 		return 0
 	fi
-	touch tmp/stop 2>/dev/null || true
-	_stop_all_workers
+	if [ "${SUPERVISOR_STOP_REQUESTED:-0}" = "1" ]; then
+		touch tmp/stop 2>/dev/null || true
+		_stop_all_workers
+	else
+		_log "unexpected supervisor exit; leaving workers alive"
+	fi
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
 	if [ -z "$active_pid" ] || [ "$active_pid" = "$$" ]; then
 		rm -f "$PID_FILE"
@@ -239,7 +298,15 @@ _cleanup() {
 	_log "supervisor 終了"
 }
 
-trap '_cleanup' EXIT INT TERM
+_handle_supervisor_signal() {
+	SUPERVISOR_STOP_REQUESTED=1
+	_cleanup
+	trap - EXIT
+	exit 130
+}
+
+trap '_cleanup' EXIT
+trap '_handle_supervisor_signal' INT TERM
 
 # --- 全 worker 起動 ---
 _log "=== Soren Supervisor 起動 (PID=$$) ==="
@@ -254,6 +321,7 @@ done
 # --- 監視ループ ---
 while true; do
 	if [ -f tmp/stop ]; then
+		SUPERVISOR_STOP_REQUESTED=1
 		_log "stop ファイル検出 → 全 worker 停止"
 		break
 	fi

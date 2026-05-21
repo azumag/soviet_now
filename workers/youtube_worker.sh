@@ -21,6 +21,7 @@ TMP_DEBUG_DIR="${TMP_DEBUG_DIR:-tmp/debug}"
 
 _STOPPED=0
 _RELOAD_REQUESTED=0
+_HEARTBEAT_PID=""
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -46,6 +47,9 @@ _cleanup() {
 	if [ "$active_pid" != "$$" ]; then
 		_log "cleanup skipped: pidfile owner is ${active_pid:-none} (self=$$)"
 		return 0
+	fi
+	if [ -n "$_HEARTBEAT_PID" ]; then
+		kill "$_HEARTBEAT_PID" 2>/dev/null || true
 	fi
 	_kill_comment_gen 2>/dev/null || true
 	rm -f "$PID_FILE"
@@ -102,6 +106,13 @@ if [ -f "$PID_FILE" ]; then
 fi
 mkdir -p "$(dirname "$PID_FILE")" "$TMP_MARKERS_DIR" "$TMP_DEBUG_DIR" tmp/.youtube_chat 2>/dev/null || true
 echo $$ >"$PID_FILE"
+(
+	while true; do
+		echo $$ >"$PID_FILE" 2>/dev/null || true
+		sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+	done
+) &
+_HEARTBEAT_PID=$!
 
 _is_comment_gen_running() {
 	local gen_pidfile="tmp/.twitch_chat/comment_gen.pid"

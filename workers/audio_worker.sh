@@ -32,6 +32,7 @@ _STOPPED=0
 _RELOAD_REQUESTED=0
 _LAST_SAY_WARNING_TS=0
 _LAST_SAY_WARNING_COUNT=0
+_HEARTBEAT_PID=""
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -53,6 +54,9 @@ _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
 	_log "停止処理開始"
+	if [ -n "$_HEARTBEAT_PID" ]; then
+		kill "$_HEARTBEAT_PID" 2>/dev/null || true
+	fi
 	local active_pid=""
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
 	if [ "$active_pid" = "$$" ]; then
@@ -98,6 +102,15 @@ _ensure_single_owner() {
 	fi
 	echo $$ > "$PID_FILE"
 }
+_start_pid_heartbeat() {
+	(
+		while true; do
+			echo $$ >"$PID_FILE" 2>/dev/null || true
+			sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+		done
+	) &
+	_HEARTBEAT_PID=$!
+}
 trap '_cleanup' EXIT
 trap '_handle_signal' INT TERM
 trap '_request_reload HUP' HUP
@@ -114,6 +127,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
 echo $$ > "$PID_FILE"
+_start_pid_heartbeat
 
 # _play_comment_queue 内で使われる PID 変数を設定
 _cp_my_pid=$$

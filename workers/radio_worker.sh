@@ -33,6 +33,7 @@ POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 
 _STOPPED=0
 _RELOAD_REQUESTED=0
+_HEARTBEAT_PID=""
 _LAST_GAME_NUM=""
 _LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
 _SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
@@ -79,6 +80,9 @@ _cleanup() {
 	_STOPPED=1
 	_dump_diag "${_LAST_SIGNAL:-EXIT}"
 	_log "shutdown: ${WORKER_NAME} 停止 (cause=${_LAST_SIGNAL:-EXIT})"
+	if [ -n "$_HEARTBEAT_PID" ]; then
+		kill "$_HEARTBEAT_PID" 2>/dev/null || true
+	fi
 	local active_pid=""
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
 	if [ "$active_pid" = "$$" ]; then
@@ -125,6 +129,15 @@ _ensure_single_owner() {
 	fi
 	echo $$ >"$PID_FILE"
 }
+_start_pid_heartbeat() {
+	(
+		while true; do
+			echo $$ >"$PID_FILE" 2>/dev/null || true
+			sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+		done
+	) &
+	_HEARTBEAT_PID=$!
+}
 trap '_cleanup' EXIT
 trap '_handle_signal INT' INT
 trap '_handle_signal TERM' TERM
@@ -144,6 +157,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
 echo $$ >"$PID_FILE"
+_start_pid_heartbeat
 
 # 初期 game_num
 _LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)

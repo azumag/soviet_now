@@ -37,6 +37,7 @@ TMP_DEBUG_DIR="${TMP_DEBUG_DIR:-tmp/debug}"
 _DAEMON_PID=""
 _STOPPED=0
 _RELOAD_REQUESTED=0
+_HEARTBEAT_PID=""
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -64,6 +65,9 @@ _cleanup() {
 		return 0
 	fi
 	_log "停止処理開始"
+	if [ -n "$_HEARTBEAT_PID" ]; then
+		kill "$_HEARTBEAT_PID" 2>/dev/null || true
+	fi
 
 	# IRC daemon 子プロセスを停止
 	if [ -n "$_DAEMON_PID" ] && _pid_alive "$_DAEMON_PID"; then
@@ -129,6 +133,13 @@ if [ -f "$PID_FILE" ]; then
 fi
 mkdir -p "$(dirname "$PID_FILE")" "$CLIP_QUEUE_DIR" "$CLIP_QUEUE_DONE_DIR" "$TMP_MARKERS_DIR" "$TMP_DEBUG_DIR" 2>/dev/null || true
 echo $$ > "$PID_FILE"
+(
+	while true; do
+		echo $$ >"$PID_FILE" 2>/dev/null || true
+		sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+	done
+) &
+_HEARTBEAT_PID=$!
 
 # --- IRC daemon 起動 (子プロセスとして直接起動、nohup なし) ---
 _start_irc_daemon() {
