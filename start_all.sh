@@ -8,6 +8,10 @@
 # 停止: touch tmp/stop  or  ./stop_soren.sh  or  Ctrl+C
 
 set -o pipefail
+# Supervisor is often launched from automation or a short-lived shell.  Keep it
+# alive when that parent shell exits; explicit stop still goes through tmp/stop
+# or INT/TERM.
+trap '' HUP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

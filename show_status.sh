@@ -1726,13 +1726,9 @@ PY
 			chat_worker_running=true
 		fi
 	fi
-	if ! $chat_worker_running && { _recent_file_active "logs/chat_worker.log" 3600 || _recent_file_active "tmp/.twitch_chat/comment_context_history.log" 3600; }; then
+	if ! $chat_worker_running && [[ -f tmp/state/chat_worker.pid ]] && _recent_file_active "tmp/state/chat_worker.pid" 30; then
 		chat_worker_running=true
-		if _recent_file_active "logs/chat_worker.log" 3600; then
-			chat_worker_pid=$(_activity_label "logs/chat_worker.log" "log")
-		else
-			chat_worker_pid=$(_activity_label "tmp/.twitch_chat/comment_context_history.log" "chat")
-		fi
+		chat_worker_pid=$(_activity_label "tmp/state/chat_worker.pid" "heartbeat")
 	fi
 	local youtube_worker_running=false youtube_worker_pid="" youtube_worker_enabled=false
 	case "${YOUTUBE_CHAT_ENABLED:-0}" in
@@ -1750,13 +1746,9 @@ PY
 			youtube_worker_running=true
 		fi
 	fi
-	if ! $youtube_worker_running && { _recent_file_active "logs/youtube_worker.log" 3600 || _recent_file_active "tmp/.youtube_chat/pending.log" 3600; }; then
+	if ! $youtube_worker_running && [[ -f tmp/state/youtube_worker.pid ]] && _recent_file_active "tmp/state/youtube_worker.pid" 90; then
 		youtube_worker_running=true
-		if _recent_file_active "logs/youtube_worker.log" 3600; then
-			youtube_worker_pid=$(_activity_label "logs/youtube_worker.log" "log")
-		else
-			youtube_worker_pid=$(_activity_label "tmp/.youtube_chat/pending.log" "chat")
-		fi
+		youtube_worker_pid=$(_activity_label "tmp/state/youtube_worker.pid" "heartbeat")
 	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
@@ -1771,13 +1763,9 @@ PY
 			audio_worker_running=true
 		fi
 	fi
-	if ! $audio_worker_running && { _recent_file_active "logs/audio_worker.log" 1200 || _recent_file_active "tmp/.say_queue/debug.log" 1200; }; then
+	if ! $audio_worker_running && [[ -f tmp/state/audio_worker.pid ]] && _recent_file_active "tmp/state/audio_worker.pid" 30; then
 		audio_worker_running=true
-		if _recent_file_active "logs/audio_worker.log" 1200; then
-			audio_worker_pid=$(_activity_label "logs/audio_worker.log" "log")
-		else
-			audio_worker_pid=$(_activity_label "tmp/.say_queue/debug.log" "say")
-		fi
+		audio_worker_pid=$(_activity_label "tmp/state/audio_worker.pid" "heartbeat")
 	fi
 	local radio_worker_running=false radio_worker_pid=""
 	if [[ -f tmp/state/radio_worker.pid ]]; then
@@ -1792,13 +1780,9 @@ PY
 			radio_worker_running=true
 		fi
 	fi
-	if ! $radio_worker_running && { _recent_file_active "logs/radio_worker.log" 1200 || _recent_file_active "tmp/radio_worker_runtime.log" 1200; }; then
+	if ! $radio_worker_running && [[ -f tmp/state/radio_worker.pid ]] && _recent_file_active "tmp/state/radio_worker.pid" 30; then
 		radio_worker_running=true
-		if _recent_file_active "logs/radio_worker.log" 1200; then
-			radio_worker_pid=$(_activity_label "logs/radio_worker.log" "log")
-		else
-			radio_worker_pid=$(_activity_label "tmp/radio_worker_runtime.log" "runtime")
-		fi
+		radio_worker_pid=$(_activity_label "tmp/state/radio_worker.pid" "heartbeat")
 	fi
 	local prediction_worker_running=false prediction_worker_pid="" prediction_worker_paused=false
 	if [[ -f tmp/state/prediction_worker.paused ]]; then
@@ -1829,15 +1813,10 @@ PY
 			improve_daemon_running=true
 		fi
 	fi
-	if ! $improve_daemon_running && { _recent_file_active "tmp/state/improve_daemon.pid" 120 || _recent_file_active "logs/improve_daemon.log" 7200; }; then
+	if ! $improve_daemon_running && [[ -f tmp/state/improve_daemon.pid ]] && _recent_file_active "tmp/state/improve_daemon.pid" 60; then
 		improve_daemon_running=true
-		if _recent_file_active "tmp/state/improve_daemon.pid" 120; then
-			improve_daemon_pid=$(_activity_label "tmp/state/improve_daemon.pid" "heartbeat")
-		else
-			improve_daemon_pid=$(_activity_label "logs/improve_daemon.log" "log")
-		fi
+		improve_daemon_pid=$(_activity_label "tmp/state/improve_daemon.pid" "heartbeat")
 	fi
-
 	# --- Outbound chat queue ---
 	local outbound_pending=0
 	if [[ -d tmp/.outbound_chat_queue/pending ]]; then

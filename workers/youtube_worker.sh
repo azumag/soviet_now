@@ -132,6 +132,7 @@ _sleep_for_poll_interval() {
 _log "起動 (PID=$$, interval=${POLL_INTERVAL}s)"
 
 while true; do
+	echo $$ >"$PID_FILE" 2>/dev/null || true
 	_reload_runtime
 	if [ -f tmp/stop ]; then
 		_log "stop ファイル検出 → 終了"

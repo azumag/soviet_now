@@ -243,6 +243,7 @@ _log "起動 (PID=$$, channel=$CHANNEL, interval=${POLL_INTERVAL}s)"
 _start_irc_daemon
 
 while true; do
+	echo $$ >"$PID_FILE" 2>/dev/null || true
 	_reload_runtime
 	# 停止チェック
 	if [ -f tmp/stop ]; then
