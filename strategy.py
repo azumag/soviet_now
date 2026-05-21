@@ -64,6 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: Kazakhstan (type14) merge path activation — new axis after russia_phase block:
+     #       merge_grade==NO && type14>=1 && !russia_phase && pc>=25 && !deadline_crossed →
+     #       +400*merge_mult bonus for landing within 2.0 horizontal distance of type14 piece.
+     #       Hypothesis: all 4 batch games ended with type14 peak=1, never reaching type15.
+     #       worst T61-66: merge_available=false continuous caused type14 merge drought.
+     #       mandatory_themes: "NEXTを考慮したドロップ" + "デッドライン超えはmergeある場合のみ".
+     #       Fixes: type14x1 → type15 merge path creation during NO_MERGE periods.
+     #       refs: tmp/analysis_result.md (adopted hypothesis: Kazakhstan merge path activation),
+     #             game_history/20260521_232958_score0983.jsonl, mandatory_themes.txt
      # v677: REACTIVE bonus gated by merge_available — when merge_available=false (no merge on board),
      #       REACTIVE_MERGE_PRIORITY and REACTIVE_IMMEDIATE_MERGE_PRIORITY bonuses no longer apply to
      #       NEAR candidates. Worst T62: merge_available=false, rp=7, NEAR bonus +2000 inflated NEAR
@@ -1804,6 +1813,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+
+        # ----- vXXX: Kazakhstan (type14) merge path activation -----
+        # Hypothesis: "Kazakhstan(T14) merge path activation"
+        # All 4 batch games ended with type14 peak=1 — type14 appeared but never reached type15.
+        # Failure mode: T61-66 worst game had merge_available=false continuous, causing
+        # type14 merge drought. best_score6058 has axis 9.9 (Russia-phase next-Russia pipeline)
+        # that is missing in current strategy. mandatory_themes: "NEXTを考慮したドロップ"
+        #
+        # When type14 exists on board and merge_grade==NO, place current piece near type14
+        # to create a second merge path. This explicitly guides the "next piece of same type
+        # to be adjacent" condition that current strategy lacks.
+        #
+        # Conditions (all must be true):
+        #   merge_grade == "NO" (cannot merge now, but next type14 could merge if placed nearby)
+        #   type14_count >= 1 (type14 exists, needs a merge partner)
+        #   russia_phase == False (type15 not yet reached, this is the target)
+        #   piece_count >= 25 (mid-game, not early scatter)
+        #   deadline_crossed == False (mandatory_themes: deadlineではmergeがある場合のみ)
+        #
+        # Bonus: +400*merge_mult for candidates landing within 2.0 horizontal distance of type14
+        # This creates a merge path: after current piece lands near type14, if next piece is
+        # type14 (or any type14 appears), they are close enough for immediate merge.
+        #
+        # refs: tmp/analysis_result.md (adopted hypothesis: Kazakhstan merge path activation),
+        #       game_history/20260521_232958_score0983.jsonl T61-66 (merge drought after type14),
+        #       strategy_versions/best_score6058_strategy.py (axis 9.9 reference),
+        #       advice.md (配置順序/近接配置), mandatory_themes.txt
+        # Fixes rollback failure mode: type14x1 → type15未到達のmerge drought
+        if merge_grade == "NO" and not russia_phase and piece_count >= 25 and not deadline_crossed:
+            type14_pieces = [p for p in pieces if p.get("type") == 14]
+            if type14_pieces:
+                type14_count = len(type14_pieces)
+                # Bonus: landing within 2.0 horizontal distance of a type14 piece
+                horiz_dist = min(abs(x - p.get("x", 0)) for p in type14_pieces)
+                if horiz_dist < 2.0:
+                    score += 400.0 * merge_mult
+                    reasons.append("KAZAKHSTAN_MERGE_PATH")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
