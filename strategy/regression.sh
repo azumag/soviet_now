@@ -2731,6 +2731,7 @@ check_regression() {
 	# 単世代の揺らぎでは戻さず、branch の budget が尽きても anchor から明確に劣後する場合だけ rollback。
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
+	REGRESSION_ROLLBACK_RESULT=""
 	# --- 粛清一時無効化 ---
 	if [ "${REGRESSION_DISABLED:-0}" = "1" ]; then
 		log "[REGRESSION] disabled (REGRESSION_DISABLED=1)"
@@ -2750,7 +2751,8 @@ check_regression() {
 			"${EARLY_OBJECTIVE_REGRESSION_ENABLED:-1}" "${EARLY_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" \
 			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" \
 			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" \
-			"${ROLLBACK_TREND_GRACE_ENABLED:-1}" "${ROLLBACK_TREND_GRACE_WINDOW:-50}" "${ROLLBACK_TREND_GRACE_MIN_PRIOR:-50}" "${ROLLBACK_TREND_GRACE_MIN_DELTA:-0}" <<'PY'
+			"${ROLLBACK_TREND_GRACE_ENABLED:-1}" "${ROLLBACK_TREND_GRACE_WINDOW:-50}" "${ROLLBACK_TREND_GRACE_MIN_PRIOR:-50}" "${ROLLBACK_TREND_GRACE_MIN_DELTA:-0}" \
+			"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" "${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" <<'PY'
 import json
 import math
 import os
@@ -2803,6 +2805,8 @@ try:
     rollback_trend_grace_min_delta = float(sys.argv[38]) if len(sys.argv) > 38 else 0.0
 except Exception:
     rollback_trend_grace_min_delta = 0.0
+archive_restart_cooldown_file = sys.argv[39] if len(sys.argv) > 39 else ""
+archive_restart_objective_fail_permanent = (sys.argv[40] if len(sys.argv) > 40 else "1") == "1"
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -2972,6 +2976,40 @@ def load_json(path):
             return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+def quarantine_archive_restart_source(reason):
+    if not archive_restart_cooldown_file:
+        return
+    origin = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
+    if str(origin.get("origin_type") or "") != "archive_restart":
+        return
+    selected_hash = str(origin.get("source_hash") or current_hash or "")
+    if not selected_hash:
+        return
+    try:
+        data = {}
+        if os.path.exists(archive_restart_cooldown_file):
+            try:
+                data = json.load(open(archive_restart_cooldown_file, encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        now = int(time.time())
+        payload = {
+            "epoch": now,
+            "reason": reason,
+            "from_hash": current_hash,
+            "source_hash": selected_hash,
+            "permanent": bool(archive_restart_objective_fail_permanent),
+        }
+        data[current_hash] = dict(payload, reason=reason + "_current")
+        data[selected_hash] = payload
+        os.makedirs(os.path.dirname(archive_restart_cooldown_file) or ".", exist_ok=True)
+        tmp = archive_restart_cooldown_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, archive_restart_cooldown_file)
+    except Exception:
+        pass
 
 def quantile(vals, p):
     xs = sorted(vals)
@@ -3261,8 +3299,10 @@ def trend_grace_reason():
     )
 
 origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
+source_russia_count = int(origin_payload.get("source_russia_count", 0) or 0)
+source_reliable_russia = bool(origin_payload.get("source_reliable_russia", False)) or source_russia_count >= 2
 origin_objective_for_grace = {
-    "russia_count": int(origin_payload.get("source_russia_count", 0) or 0),
+    "russia_count": source_russia_count,
 }
 if (
     current_hash != anchor_hash
@@ -3276,7 +3316,7 @@ if (
         or (
             russia_objective_regression_enabled == "1"
             and int(anchor_payload.get("russia_count", 0) or 0) > 0
-            and int(origin_payload.get("source_russia_count", 0) or 0) <= 0
+            and not source_reliable_russia
             and not russia_objective_graced(current, origin_objective_for_grace)
         )
     )
@@ -3291,10 +3331,12 @@ if (
     if (
         russia_objective_regression_enabled == "1"
         and int(anchor_payload.get("russia_count", 0) or 0) > 0
-        and int(origin_payload.get("source_russia_count", 0) or 0) <= 0
+        and not source_reliable_russia
         and not russia_objective_graced(current, origin_objective_for_grace)
     ):
         reasons.append("lost_russia_path")
+    if "lost_russia_path" in reasons:
+        quarantine_archive_restart_source("archive_restart_russia_not_reproduced")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
     # trend_grace は score-only rollback dampener。目的退行は免除しない。
     print(
@@ -3938,6 +3980,7 @@ PY
 			_record_rollback_target_cooldown "$strategy_hash" "$rolled_hash" "$rollback_game_num" "$rollback_note"
 			REGRESSION_ROLLBACK_DONE=1
 		REGRESSION_ROLLBACK_HASH="$rolled_hash"
+		REGRESSION_ROLLBACK_RESULT="$result"
 		_clear_active_branch
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 		if [ -x ./overlay_notify.sh ]; then

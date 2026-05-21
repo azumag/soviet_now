@@ -92,6 +92,36 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `broadcast/` | `radio_engine.sh`, `radio_persona.sh`, `radio_themes.sh`, `radio_news.sh`, `radio_factcheck.sh`, `radio_corners.sh`, `radio_state.sh`, `radio_celebration.sh`, `comment.sh`, `comment_worker.sh`, `scheduler.sh` | ラジオ・コメント・スケジューリング |
 | `infra/` | `cleanup.sh` | PID停止・クリーンアップ |
 
+**粛清後の改善フロー:**
+
+粛清後の目的は、単に低スコア戦略を戻すことではなく、ロシア建国ルートを失ったまま粛清連鎖に入るのを止めること。`check_regression` が粛清を検出したら、`soren_loop.sh` は次ゲームへ進む前に粛清理由と復帰先の目的進捗を分類する。
+
+判定順:
+
+1. 粛清が起きたら、`REGRESSION_ROLLBACK_RESULT` の理由を読む。
+2. `objective_regression` / `lost_russia_path` / `curr_russia=0` / `best_max_type` 後退は、スコア問題ではなくロシア建国ルート喪失として扱う。
+3. 復帰先に `russia_count > 0` または `best_max_type >= 15` がある場合は、脱出ではなく rollback target の再検証を優先する。
+4. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
+5. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
+
+直接脱出ロックのルーティング順:
+
+1. `archive_restart`: 評価済みアーカイブから、near-anchor かつロシア再現性または type14/15 frontier を持つ候補へ戻す。`best_max_type >= 15` だけを `russia_count=1` とみなさない。候補は `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` / `ARCHIVE_RESTART_MIN_RUSSIA_RATE` / `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` で絞る。
+2. `wildcard`: archive 候補がない、または cooldown 中なら使う。目的はランダムなスコア改善ではなく、type14→15 frontier やロシア建国経路の再獲得。
+3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので中止する。
+
+関連設定:
+
+| 変数 | 既定 | 役割 |
+|---|---:|---|
+| `POST_REGRESSION_DIRECT_ESCAPE_ENABLED` | `1` | 粛清連鎖でロシア建国ルートを失った場合、次ゲームを待たず直接脱出ロックを作る |
+| `WILDCARD_REGRESSION_STREAK` | `2` | 直接脱出や WILDCARD 発火の回帰ストリーク閾値 |
+| `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
+| `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
+| `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` | `15` | ロシア未再現でも frontier候補として扱う最小到達type |
+| `ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT` | `1` | archive_restart後にロシアを再現できず粛清された source を候補から外す |
+| `WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` | `14` | `escape_ai` seed として許す最小 frontier 到達type |
+
 **ラジオDJ機能:**
 
 soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOS `say` で読み上げる。

@@ -139,6 +139,103 @@ notify_rank1_hot_streak_extension() {
 	printf '%s\n' "$marker_key" >"$marker_file" 2>/dev/null || true
 }
 
+_evolution_flow_notify() {
+	local step="${1:-flow}" title="${2:-改善フロー}" body="${3:-}" chat="${4:-}" level="${5:-info}"
+	local full_title="改善フロー: ${title}"
+	[ -n "$body" ] || body="$step"
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "$full_title" "$body" "$level" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$chat" ]; then
+		enqueue_chat_message "$chat" "improve_flow" 4 || true
+	fi
+}
+
+_post_regression_route() {
+	python3 - \
+		"${REGRESSION_ROLLBACK_RESULT:-}" \
+		"${REGRESSION_ROLLBACK_HASH:-}" \
+		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
+		"${WILDCARD_REGRESSION_STREAK:-3}" <<'PY' 2>/dev/null || echo "post_regression|fallback|0|0|0"
+import json
+import os
+import re
+import sys
+
+result, rollback_hash, current_file, rolling_file, stagnation_file, threshold_raw = sys.argv[1:7]
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def metric(name):
+    m = re.search(rf"{re.escape(name)}=(-?\d+)", result or "")
+    return as_int(m.group(1), 0) if m else 0
+
+try:
+    threshold = max(1, int(threshold_raw))
+except Exception:
+    threshold = 3
+
+stagnation = load(stagnation_file)
+rstreak = as_int(stagnation.get("regression_streak", 0), 0)
+rolling = load(rolling_file)
+current = load(current_file)
+target = rolling.get(rollback_hash) if rollback_hash else {}
+if not isinstance(target, dict):
+    target = {}
+if rollback_hash and str(current.get("hash", "") or "") == rollback_hash:
+    merged = dict(target)
+    for key in ("russia_count", "soviet_count", "best_max_type"):
+        merged[key] = max(as_int(merged.get(key, 0), 0), as_int(current.get(key, 0), 0))
+    target = merged
+
+target_russia = as_int(target.get("russia_count", 0), 0)
+target_best = as_int(target.get("best_max_type", 0), 0)
+target_has_progress = target_russia > 0 or target_best >= 15
+
+anchor_russia = metric("anchor_russia")
+curr_russia = metric("curr_russia")
+anchor_best = metric("anchor_best_max_type")
+curr_best = metric("curr_best_max_type")
+curr_russia_seen = "curr_russia=" in (result or "")
+curr_best_seen = "curr_best_max_type=" in (result or "")
+objective_loss = (
+    "objective_regression" in result
+    or "lost_russia_path" in result
+    or (curr_russia_seen and curr_russia <= 0)
+    or (anchor_russia > 0 and curr_russia <= 0)
+    or (anchor_best > 0 and curr_best > 0 and curr_best < anchor_best)
+    or (curr_best_seen and anchor_best >= 15 and curr_best < 15)
+)
+
+if target_has_progress:
+    mode = "revalidate"
+    detail = f"target_progress_russia={target_russia}_best={target_best}"
+elif objective_loss and rstreak >= threshold:
+    mode = "direct_escape"
+    detail = f"objective_loss_rstreak={rstreak}_target_russia={target_russia}_best={target_best}"
+else:
+    mode = "post_regression"
+    detail = f"rstreak={rstreak}_objective_loss={int(objective_loss)}"
+
+print(f"{mode}|{detail}|{rstreak}|{int(objective_loss)}|{int(target_has_progress)}")
+PY
+}
+
 _expire_rate_limit_backoff_if_elapsed() {
 	local file="${TMP_STATE_DIR:-tmp/state}/rate_limit_backoff"
 	[ -f "$file" ] || return 0
@@ -521,6 +618,12 @@ for path in sys.argv[1:]:
 	post_game_bookkeeping
 	post_rc=$?
 	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
+	_evolution_flow_notify \
+		"game_finished" \
+		"game finished" \
+		"game=${GAME_NUM:-?} post_game_bookkeeping complete" \
+		"改善フロー: game finished。game=${GAME_NUM:-?} の結果を記録し、粛清チェックへ進みます。" \
+		"info"
 	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
 		./repair_current_run_from_history.sh "${CURRENT_RUN_AUTO_REPAIR_LIMIT:-12}" >/dev/null 2>&1 ||
 			log "[CURRENT-RUN] auto repair skipped/failed after post_game_bookkeeping"
@@ -544,7 +647,19 @@ for path in sys.argv[1:]:
 
 	# 粛清チェック: improve_daemon とは独立して毎試合実行
 	# (daemon は改善中にブロックされるため、soren_loop 側で必ず走らせる)
+	_evolution_flow_notify \
+		"regression_check" \
+		"regression check" \
+		"game=${GAME_NUM:-?} check_regression start" \
+		"改善フロー: regression check。game=${GAME_NUM:-?} の粛清判定を実行します。" \
+		"info"
 	if check_regression; then
+		_evolution_flow_notify \
+			"rollback_happened" \
+			"rollback happened" \
+			"rollback_hash=${REGRESSION_ROLLBACK_HASH:-unknown} result=${REGRESSION_ROLLBACK_RESULT:-unknown}" \
+			"改善フロー: rollback happened。粛清が発生したため理由分類へ進みます。復帰先=${REGRESSION_ROLLBACK_HASH:-unknown}" \
+			"warn"
 		# フラグを最初に書く: _clear_accumulated_data がレース時でも best_outcome=3 を保証
 		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
@@ -555,30 +670,107 @@ f='$TMP_STATE_DIR/current_prediction.json'
 d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 		fi
-		if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]; then
-			log "[CYCLE] 回帰ロールバック直後 → 復帰先の再評価を優先し改善ロック作成をスキップ"
+		_post_regression_route_info=$(_post_regression_route)
+		IFS='|' read -r _post_regression_mode _post_regression_detail _post_regression_rstreak _post_regression_objective_loss _post_regression_target_progress <<EOF
+$_post_regression_route_info
+EOF
+		_evolution_flow_notify \
+			"classify_rollback_reason" \
+			"classify rollback reason" \
+			"mode=${_post_regression_mode:-unknown} detail=${_post_regression_detail:-unknown} rstreak=${_post_regression_rstreak:-0} objective_loss=${_post_regression_objective_loss:-0}" \
+			"改善フロー: classify rollback reason。mode=${_post_regression_mode:-unknown} / ${_post_regression_detail:-unknown}" \
+			"info"
+		if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] &&
+			[ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ] &&
+			[ "${_post_regression_mode:-}" = "revalidate" ]; then
+			log "[CYCLE] 回帰ロールバック直後 → 復帰先にロシア進捗あり (${_post_regression_detail}) のため再評価を優先"
+			_evolution_flow_notify \
+				"russia_path_alive" \
+				"russia path still alive" \
+				"${_post_regression_detail} → rollback target revalidation / light improve" \
+				"改善フロー: russia path still alive。復帰先にロシア進捗があるため、脱出せず再検証を優先します。" \
+				"info"
 		elif [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
 			[ -f "$ACCUMULATED_GAMES_FILE" ] &&
 			[ ! -f "$IMPROVE_LOCK_FILE" ] &&
 			! _is_improve_running; then
-			log "[CYCLE] 回帰ロールバック直後 → 失敗バッチで改善ロック作成"
+			if [ "${POST_REGRESSION_DIRECT_ESCAPE_ENABLED:-1}" = "1" ] && [ "${_post_regression_mode:-}" = "direct_escape" ]; then
+				log "[CYCLE] 回帰ロールバック直後 → ロシア建国ルート喪失の粛清連鎖 (${_post_regression_detail}) のため直接脱出ロック作成"
+				_evolution_flow_notify \
+					"direct_escape" \
+					"direct escape, no next game" \
+					"russia_path_dead rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-3} ${_post_regression_detail:-unknown}" \
+					"改善フロー: direct escape, no next game。ロシア進捗なし・粛清連鎖のため次ゲームを待たず脱出します。" \
+					"warn"
+			else
+				log "[CYCLE] 回帰ロールバック直後 → 失敗バッチで改善ロック作成"
+				if [ "${_post_regression_target_progress:-0}" != "1" ]; then
+					_evolution_flow_notify \
+						"post_regression_improve" \
+						"post_regression improve" \
+						"russia_path_dead but rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-3}; direct escape threshold not reached" \
+						"改善フロー: post_regression improve。ロシア進捗は弱いが粛清連鎖閾値未満のため、失敗バッチで通常の回帰後改善に入ります。" \
+						"info"
+				fi
+			fi
 			enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 			enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
-			python3 -c "
-import json, time
-f='$IMPROVE_LOCK_FILE'
-d=json.load(open(f))
-d['started_at']=int(time.time())
-d['improve_reason']='post_regression'
-d['rollback_hash']='${REGRESSION_ROLLBACK_HASH:-}'
-json.dump(d,open(f,'w'))
-" 2>/dev/null || true
+			_direct_escape_flag=0
+			if [ "${POST_REGRESSION_DIRECT_ESCAPE_ENABLED:-1}" = "1" ] && [ "${_post_regression_mode:-}" = "direct_escape" ]; then
+				_direct_escape_flag=1
+			fi
+			POST_REGRESSION_MODE="${_post_regression_mode:-post_regression}" \
+			POST_REGRESSION_DETAIL="${_post_regression_detail:-}" \
+			POST_REGRESSION_DIRECT="${_direct_escape_flag:-0}" \
+			POST_REGRESSION_RSTREAK="${_post_regression_rstreak:-0}" \
+			POST_REGRESSION_OBJECTIVE_LOSS="${_post_regression_objective_loss:-0}" \
+			REGRESSION_ROLLBACK_HASH_VALUE="${REGRESSION_ROLLBACK_HASH:-}" \
+			REGRESSION_ROLLBACK_RESULT_VALUE="${REGRESSION_ROLLBACK_RESULT:-}" \
+			python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+data["started_at"] = int(time.time())
+data["improve_reason"] = "post_regression"
+data["rollback_hash"] = os.environ.get("REGRESSION_ROLLBACK_HASH_VALUE", "")
+data["regression_result"] = os.environ.get("REGRESSION_ROLLBACK_RESULT_VALUE", "")
+data["post_regression_route"] = os.environ.get("POST_REGRESSION_MODE", "post_regression")
+data["post_regression_route_detail"] = os.environ.get("POST_REGRESSION_DETAIL", "")
+data["post_regression_direct_escape"] = bool(as_int(os.environ.get("POST_REGRESSION_DIRECT", "0")))
+data["post_regression_regression_streak"] = as_int(os.environ.get("POST_REGRESSION_RSTREAK", "0"))
+data["post_regression_objective_loss"] = bool(as_int(os.environ.get("POST_REGRESSION_OBJECTIVE_LOSS", "0")))
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
 			if [ -x ./overlay_notify.sh ]; then
-				./overlay_notify.sh worker "回帰後改善 queued (game ${GAME_NUM:-?})" "粛清後の失敗バッチを改善入力として投入 | reason=post_regression | 復帰先=${REGRESSION_ROLLBACK_HASH:-unknown} | game=${GAME_NUM:-?}" "warn" >/dev/null 2>&1 || true
+				if [ "${_direct_escape_flag:-0}" = "1" ]; then
+					./overlay_notify.sh worker "粛清連鎖脱出 queued (game ${GAME_NUM:-?})" "ロシア建国ルート喪失 | route=direct_escape | ${_post_regression_detail:-unknown} | 復帰先=${REGRESSION_ROLLBACK_HASH:-unknown}" "warn" >/dev/null 2>&1 || true
+				else
+					./overlay_notify.sh worker "回帰後改善 queued (game ${GAME_NUM:-?})" "粛清後の失敗バッチを改善入力として投入 | reason=post_regression | 復帰先=${REGRESSION_ROLLBACK_HASH:-unknown} | game=${GAME_NUM:-?}" "warn" >/dev/null 2>&1 || true
+				fi
 			fi
 		fi
 		_clear_accumulated_data
+	else
+		_evolution_flow_notify \
+			"no_rollback" \
+			"rollback happened? no" \
+			"normal cycle / 12-game improve / hot streak extension" \
+			"改善フロー: rollback happened? no。通常サイクル、12ゲーム改善、またはhot streak延長へ進みます。" \
+			"info"
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 
@@ -672,6 +864,12 @@ json.dump(d,open(f,'w'))
 		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
 			if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
 				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達だが rank1 hot streak 中 → 改善を延期してスコア更新継続"
+				_evolution_flow_notify \
+					"hot_streak_extension" \
+					"hot streak extension" \
+					"acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} rank1 hot streak; improve delayed" \
+					"改善フロー: hot streak extension。${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE}試合到達ですが、1位更新中なので改善を延期します。" \
+					"info"
 				notify_rank1_hot_streak_extension "$_cycle_acc_count" "cycle_threshold"
 				prepare_next_game
 				next_rc=$?
@@ -695,6 +893,12 @@ json.dump(d,open(f,'w'))
 			else
 				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → ロックファイル作成、daemon再起動後に改善予定"
 			fi
+			_evolution_flow_notify \
+				"twelve_game_improve" \
+				"12-game improve" \
+				"acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} daemon_alive=${_improve_daemon_alive}" \
+				"改善フロー: 12-game improve。${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE}試合が貯まったため改善ロックを作成します。" \
+				"info"
 			enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 			enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true

@@ -1139,9 +1139,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_AI_ESCALATE_STREAK", config)
         self.assertIn("WILDCARD_ESCAPE_AI_SEED_ENABLED", config)
         self.assertIn("WILDCARD_ESCAPE_AI_SEED_MIN_GAMES", config)
+        self.assertIn("WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE", config)
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn('improve_reason="escape_ai"', improve)
-        self.assertIn("AI 構造変異モードで脱出", improve)
+        self.assertIn("seeded escape_ai 構造変異モードで脱出", improve)
+        self.assertIn("_escape_ai_seed_available", improve)
         self.assertIn("rejected_hash_metrics.json", improve)
         self.assertIn("rolling_scores.json", improve)
         self.assertIn("wildcard_origin.json", improve)
@@ -1150,6 +1152,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("m.get(\"comp\", 0.0) < anchor_comp", improve)
         self.assertIn("export IMPROVE_REASON", eloop)
         self.assertIn('os.environ.get("IMPROVE_REASON", "normal") == "escape_ai"', eloop)
+        self.assertIn("seedなしのescape_aiは通常改善と同じため中止", eloop)
+        self.assertIn("no_valid_seed", eloop)
         self.assertIn("今回だけAIによる小さな構造変異で大域脱出を狙う", eloop)
         self.assertIn("WILDCARD起源からAI改善の起点候補を選定", eloop)
         self.assertIn("ESCAPE_AI_SEED_JSON", eloop)
@@ -1207,6 +1211,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("ARCHIVE_RESTART_STREAK", config)
         self.assertIn("ARCHIVE_RESTART_MIN_COMP_RATIO", config)
         self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_RUSSIA_COUNT", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_RUSSIA_RATE", config)
+        self.assertIn("ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE", config)
+        self.assertIn("ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT", config)
         self.assertIn("ARCHIVE_RESTART_INCLUDE_PERMANENT", config)
         self.assertIn("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", config)
         self.assertIn("ARCHIVE_RESTART_COOLDOWN_SEC", config)
@@ -1226,7 +1234,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("find_archive_path", improve)
         self.assertIn("anchor_russia", improve)
         self.assertIn("anchor_soviet", improve)
-        self.assertIn("archive_restart を飛ばして escape_ai", improve)
+        self.assertIn("reliable_russia", improve)
+        self.assertIn("frontier_candidate", improve)
+        self.assertNotIn("if best_type >= 15 and russia <= 0:\n        russia = 1", improve)
+        self.assertIn("archive_restart を飛ばして次の脱出手段", improve)
         self.assertIn("no_candidate cooldown active", improve)
         self.assertIn("archive_restart で過去版から大域脱出", improve)
         self.assertIn('[ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]', improve)
@@ -1247,6 +1258,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("find_archive_path", eloop)
         self.assertIn("anchor_russia", eloop)
         self.assertIn("anchor_soviet", eloop)
+        self.assertIn("reliable_russia", eloop)
+        self.assertIn("frontier_candidate", eloop)
+        self.assertIn("russia_rate", eloop)
+        self.assertIn("archive_restart_russia_not_reproduced", eloop)
+        self.assertNotIn("if best_type >= 15 and russia <= 0:\n        russia = 1", eloop)
         self.assertIn("_archive_restart_quarantine_candidate", eloop)
         self.assertIn("archive_invalid_candidate_fallback", eloop)
         self.assertIn("archive_no_effective_change_fallback", eloop)
@@ -1260,6 +1276,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("source_hash = str(selected.get(\"selected_hash\")", eloop)
         self.assertIn("archive_restart_source", eloop)
         self.assertIn("source_russia_count", regression)
+        self.assertIn("source_reliable_russia", regression)
+        self.assertIn("quarantine_archive_restart_source", regression)
+        self.assertIn("archive_restart_russia_not_reproduced", regression)
         self.assertIn("source_best_max_type", regression)
         self.assertIn("archive_restart_objective_floor", regression)
         self.assertIn("mode=archive_objective_floor", regression)
@@ -2696,6 +2715,41 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertFalse(event["has_merge_alternative"])
         self.assertFalse(event["has_lower_alternative"])
 
+    def test_deadline_monitor_does_not_flag_merge_only_when_it_raises_top(self):
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 40,
+            "score": 300,
+            "piece_count": 20,
+            "decision_x": 1.0,
+            "decision_reason": "HIGH_TOWER",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {"id": i + 1, "type": 5 if round(-3.0 + i * 0.4, 1) == -1.0 else 6, "x": round(-3.0 + i * 0.4, 1), "y": 2.8, "r": 0.4}
+                    for i in range(16)
+                ]
+            },
+        }
+        curr = {
+            "turn": 41,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 99, "type": 5, "x": 1.0, "y": 3.05, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "appropriate")
+        self.assertTrue(event["has_merge_alternative"])
+        self.assertFalse(event["merge_alternative_improves_top"])
+        self.assertFalse(event["has_lower_alternative"])
+        self.assertGreater(event["best_merge_alternative"]["top_y"], event["actual_new_piece"]["top_y"])
+
     def test_deadline_guard_injector_filters_merge_result_crossing(self):
         injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
 
@@ -2973,6 +3027,38 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], -1.1)
         self.assertIn("visual_deadline_same_country", decision["reason"])
         self.assertNotIn("minrisk_postcondition", decision["reason"])
+
+    def test_deadline_safety_visual_same_country_falls_back_when_too_high(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.9, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {"top_edge_y": 3.3, "deadline_crossed": False},
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 2.9,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.5,
+                    },
+                    {
+                        "x": -1.1,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.25,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 144, "type": 8, "x": -1.14, "y": 2.17}],
+                "next": {"type": 8},
+            },
+        )
+
+        self.assertEqual(decision["x"], 2.9)
+        self.assertIn("minrisk_postcondition", decision["reason"])
 
     def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
         import analyze_board
@@ -3355,12 +3441,21 @@ def decide(game_state, analysis):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
 
         self.assertIn("POST_REGRESSION_IMPROVE_ENABLED", config)
+        self.assertIn("POST_REGRESSION_DIRECT_ESCAPE_ENABLED", config)
         self.assertIn("回帰ロールバック直後 → 失敗バッチで改善ロック作成", loop)
-        self.assertIn("d['improve_reason']='post_regression'", loop)
+        self.assertIn("_post_regression_route", loop)
+        self.assertIn("curr_russia_seen", loop)
+        self.assertIn("post_regression_direct_escape", loop)
+        self.assertIn("ロシア建国ルート喪失の粛清連鎖", loop)
+        self.assertIn("復帰先にロシア進捗あり", loop)
+        self.assertIn('data["improve_reason"] = "post_regression"', loop)
+        self.assertIn('data["regression_result"]', loop)
         self.assertIn("REGRESSION_ROLLBACK_HASH", loop)
         self.assertIn('[ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]', loop)
         self.assertIn("ロールバック直後の失敗バッチを改善入力として使用", improve)
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
+        self.assertIn("post_regression_direct_escape", improve)
+        self.assertIn("archive candidate unavailable → wildcard", improve)
         self.assertIn('_start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "$improve_reason"', improve)
 
     def test_fast_escape_harvest_does_not_start_soren91_handover(self):
@@ -3601,7 +3696,8 @@ PY
         self.assertIn("mechanical wildcard suppressed", improve)
         self.assertIn("no_russia_24h", improve)
         self.assertIn("archive_restart を即時優先", improve)
-        self.assertIn("archive candidate unavailable → escape_ai でtype14→15復旧", improve)
+        self.assertIn("archive candidate unavailable → wildcard でtype14→15 frontier 復旧", improve)
+        self.assertIn("archive/wildcard unavailable → seeded escape_ai", improve)
         self.assertLess(
             improve.index("archive_restart を即時優先"),
             improve.index("[ -f \"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}\""),
@@ -3898,6 +3994,8 @@ PY
         self.assertIn("webfetch_monitor_last_checked_epoch", monitor)
         self.assertIn("WEBFETCH_MONITOR_LOOKBACK_SEC", monitor)
         self.assertIn('printf \'%s\\n\' "$now" >"$CURSOR_FILE"', monitor)
+        self.assertIn('category") or "") == "system"', monitor)
+        self.assertIn('失敗(?:した|しました|です|でした|のため', monitor)
         self.assertIn("*_prompt.txt", monitor)
         self.assertIn("overlay_events.jsonl", monitor)
 
@@ -3940,8 +4038,10 @@ PY
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', regression)
         self.assertIn('_reset_current_strategy_run "$rolled_hash"', regression)
         self.assertIn("rollback revalidate fresh cycle", regression)
-        self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]; then', loop)
-        self.assertIn("復帰先の再評価を優先し改善ロック作成をスキップ", loop)
+        self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] &&', loop)
+        self.assertIn('[ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ] &&', loop)
+        self.assertIn("復帰先にロシア進捗あり", loop)
+        self.assertIn("再評価を優先", loop)
         self.assertIn("rollback revalidate fresh cycle 中", loop)
         self.assertIn("[EARLY_ESCAPE]", loop)
 

@@ -51,6 +51,18 @@ _release_spawn_lock() {
 	fi
 }
 
+_improve_flow_notify() {
+	local step="${1:-flow}" title="${2:-改善フロー}" body="${3:-}" chat="${4:-}" level="${5:-info}"
+	local full_title="改善フロー: ${title}"
+	[ -n "$body" ] || body="$step"
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "$full_title" "$body" "$level" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$chat" ]; then
+		enqueue_chat_message "$chat" "improve_flow" 4 || true
+	fi
+}
+
 _archive_restart_should_run() {
 	local wildcard_escape_streak="${1:-0}"
 	[ "${ARCHIVE_RESTART_ENABLED:-1}" = "1" ] || return 1
@@ -70,7 +82,7 @@ _archive_restart_should_run() {
 	if ! _archive_restart_has_candidate; then
 		mkdir -p "$(dirname "$marker")" 2>/dev/null || true
 		printf '%s\n' "preflight_no_candidate $(date +%s)" >"$marker" 2>/dev/null || true
-		log "[ARCHIVE-RESTART] preflight no candidate → archive_restart を飛ばして escape_ai へ"
+		log "[ARCHIVE-RESTART] preflight no candidate → archive_restart を飛ばして次の脱出手段へ"
 		return 1
 	fi
 	return 0
@@ -90,14 +102,18 @@ _archive_restart_has_candidate() {
 		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
 		"${ARCHIVE_RESTART_INCLUDE_PERMANENT:-1}" \
 		"${ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY:-1}" \
-		"${ARCHIVE_RESTART_COOLDOWN_SEC:-21600}" <<'PY' >/dev/null 2>&1
+		"${ARCHIVE_RESTART_COOLDOWN_SEC:-21600}" \
+		"${ARCHIVE_RESTART_MIN_RUSSIA_COUNT:-2}" \
+		"${ARCHIVE_RESTART_MIN_RUSSIA_RATE:-0.15}" \
+		"${ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE:-15}" \
+		"${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" <<'PY' >/dev/null 2>&1
 import json
 import math
 import os
 import sys
 import time
 
-rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, archive_dir, min_ratio_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw = sys.argv[1:14]
+rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, archive_dir, min_ratio_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw, min_russia_count_raw, min_russia_rate_raw, frontier_min_best_type_raw, objective_fail_permanent_raw = sys.argv[1:18]
 
 def load(path, default):
     try:
@@ -179,10 +195,12 @@ def find_archive_path(h):
 def is_cooled_down(h):
     if h not in cooldown:
         return False
+    meta = cooldown.get(h) if isinstance(cooldown.get(h), dict) else {}
+    if boolish(objective_fail_permanent_raw, True) and str(meta.get("reason") or "").startswith("archive_restart_russia_not_reproduced"):
+        return True
     ttl = as_int(cooldown_ttl_raw, 21600)
     if ttl <= 0:
         return True
-    meta = cooldown.get(h) if isinstance(cooldown.get(h), dict) else {}
     epoch = as_int(meta.get("epoch", 0), 0)
     return epoch <= 0 or (int(time.time()) - epoch) < ttl
 
@@ -191,7 +209,7 @@ anchor = load(anchor_file, {})
 rejected = set(load(rejected_file, {}).keys())
 origin_map = load(origin_file, {})
 origin = set(origin_map.keys())
-cooldown = set(load(cooldown_file, {}).keys())
+cooldown = load(cooldown_file, {})
 anchor_hash = str(anchor.get("hash", "") or "")
 anchor_comp = as_float(anchor.get("comp", 0.0), 0.0)
 anchor_russia = as_int(anchor.get("russia_count", 0), 0)
@@ -199,6 +217,9 @@ anchor_soviet = as_int(anchor.get("soviet_count", 0), 0)
 min_ratio = max(0.0, min(1.0, as_float(min_ratio_raw, 0.92)))
 min_games = max(1, as_int(min_games_raw, 12))
 min_best_type = max(0, as_int(min_best_type_raw, 14))
+min_russia_count = max(1, as_int(min_russia_count_raw, 2))
+min_russia_rate = max(0.0, as_float(min_russia_rate_raw, 0.15))
+frontier_min_best_type = max(min_best_type, as_int(frontier_min_best_type_raw, 15))
 threshold = anchor_comp * min_ratio if anchor_comp > 0 else 0.0
 
 for h, entry in (rolling or {}).items():
@@ -214,21 +235,87 @@ for h, entry in (rolling or {}).items():
     russia = as_int((entry or {}).get("russia_count", 0), 0)
     soviet = as_int((entry or {}).get("soviet_count", 0), 0)
     best_type = as_int((entry or {}).get("best_max_type", 0), 0)
-    if best_type >= 15 and russia <= 0:
-        russia = 1
+    russia_rate = (float(russia) / float(m["n"])) if m["n"] > 0 else 0.0
+    reliable_russia = russia >= min_russia_count or russia_rate >= min_russia_rate
+    frontier_candidate = best_type >= frontier_min_best_type
     if best_type >= 16 and soviet <= 0:
         soviet = 1
     if anchor_soviet > 0 and soviet <= 0:
         continue
-    if anchor_russia > 0 and russia <= 0:
+    if anchor_russia > 0 and not reliable_russia:
         continue
-    if min_best_type > 0 and russia <= 0 and soviet <= 0 and best_type < min_best_type:
+    if min_best_type > 0 and not reliable_russia and soviet <= 0 and not frontier_candidate and best_type < min_best_type:
         continue
     origin_type = str((origin_map.get(h) or {}).get("origin_type") or "") if isinstance(origin_map.get(h), dict) else ("legacy_origin" if h in origin else "")
-    if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
+    if origin_type and not (allow_origin_retry and (reliable_russia or soviet > 0 or frontier_candidate or best_type >= min_best_type)):
         continue
     raise SystemExit(0)
 
+raise SystemExit(1)
+PY
+}
+
+_escape_ai_seed_available() {
+	[ "${WILDCARD_ESCAPE_AI_SEED_ENABLED:-1}" = "1" ] || return 1
+	python3 - \
+		"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
+		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_GAMES:-4}" \
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE:-14}" <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+
+origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw = sys.argv[1:7]
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def archive_is_runtime_stable(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return "BEGIN DEADLINE GUARD" in f.read(200000)
+    except Exception:
+        return False
+
+origin = load(origin_file)
+rolling = load(rolling_file)
+rejected = load(rejected_file)
+min_games = max(1, as_int(min_games_raw, 4))
+min_best_type = max(0, as_int(min_best_type_raw, 14))
+for h, meta in (origin or {}).items():
+    h = str(h)
+    if not h:
+        continue
+    if str((meta or {}).get("origin_type") or "wildcard") != "wildcard":
+        continue
+    path = os.path.join(archive_dir, f"{h}.py")
+    if not os.path.exists(path) or not archive_is_runtime_stable(path):
+        continue
+    entry = rolling.get(h) or {}
+    n = len(entry.get("scores", []) or [])
+    rejected_meta = rejected.get(h) or {}
+    n = max(n, as_int(rejected_meta.get("n", rejected_meta.get("games_total", 0)), 0))
+    if n < min_games:
+        continue
+    russia = as_int(entry.get("russia_count", 0), 0)
+    best_type = as_int(entry.get("best_max_type", 0), 0)
+    if russia > 0 or best_type >= min_best_type:
+        raise SystemExit(0)
 raise SystemExit(1)
 PY
 }
@@ -1715,10 +1802,13 @@ try:
 except Exception:
     lock = {}
 stagnation = load(stagnation_file)
+direct_escape = bool(lock.get("post_regression_direct_escape", False))
 current_russia = int(current.get("russia_count", 0) or 0)
 lock_russia = int(lock.get("russia_count", 0) or 0)
 rstreak = int(stagnation.get("regression_streak", 0) or 0)
-if no_russia_24h:
+if direct_escape:
+    print("1:post_regression_direct_escape")
+elif no_russia_24h:
     print("1:no_russia_24h")
 elif rstreak >= 3 and current_russia <= 0 and lock_russia <= 0:
     print("1:regression_streak_no_russia")
@@ -1731,14 +1821,47 @@ PY
 	case "$russia_recovery_mode" in 1) ;; *) russia_recovery_mode=0 ;; esac
 	if [ "$russia_recovery_mode" = "1" ]; then
 		log "[IMPROVE] Russia recovery mode active (${russia_recovery_reason:-unknown}) → mechanical wildcard suppressed"
+		_improve_flow_notify \
+			"russia_path_dead" \
+			"russia path still alive? no" \
+			"reason=${russia_recovery_reason:-unknown}; route escape sequence starts" \
+			"改善フロー: russia path still alive? no。ロシア進捗なしのため脱出ルーティングに入ります。" \
+			"warn"
 		if _archive_restart_should_run 999; then
 			improve_reason="archive_restart"
 			log "[IMPROVE] Russia recovery mode: ${russia_recovery_reason:-unknown} → archive_restart を即時優先"
-		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			_improve_flow_notify \
+				"archive_restart_candidate_yes" \
+				"archive_restart candidate? yes" \
+				"Russia-capable archive candidate available; improve_reason=archive_restart" \
+				"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+				"warn"
+		elif [ "${WILDCARD_ENABLED:-0}" = "1" ]; then
+			improve_reason="wildcard"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → wildcard でtype14→15 frontier 復旧"
+			_improve_flow_notify \
+				"wildcard_frontier" \
+				"wildcard frontier recovery" \
+				"archive candidate unavailable; WILDCARD_ENABLED=1; improve_reason=wildcard" \
+				"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+				"warn"
+		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ] && _escape_ai_seed_available; then
 			improve_reason="escape_ai"
-			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → escape_ai でtype14→15復旧"
+			log "[IMPROVE] Russia recovery mode: archive/wildcard unavailable → seeded escape_ai で復旧"
+			_improve_flow_notify \
+				"seeded_escape_ai_yes" \
+				"seeded escape_ai candidate? yes" \
+				"archive/wildcard unavailable; valid WILDCARD seed found; improve_reason=escape_ai" \
+				"改善フロー: seeded escape_ai candidate exists? yes。評価済みseedからescape_aiを実行します。" \
+				"warn"
 		else
-			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → 通常AI改善でtype14→15復旧"
+			log "[IMPROVE] Russia recovery mode: 有効なarchive/wildcard/seeded escape_aiなし → 通常AI改善で復旧"
+			_improve_flow_notify \
+				"no_valid_escape_route" \
+				"fallback: no valid escape route" \
+				"no archive candidate, wildcard disabled, no valid seeded escape_ai" \
+				"改善フロー: seeded escape_ai candidate exists? no。有効な脱出先なしとしてfallback改善に入ります。" \
+				"warn"
 		fi
 	fi
 	local current_russia_progress current_russia_progress_reason
@@ -1921,11 +2044,31 @@ PY
 			if _archive_restart_should_run "$wildcard_escape_streak"; then
 				improve_reason="archive_restart"
 				log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${ARCHIVE_RESTART_STREAK:-3} → archive_restart で過去版から大域脱出"
+				_improve_flow_notify \
+					"archive_restart_candidate_yes" \
+					"archive_restart candidate? yes" \
+					"stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=archive_restart" \
+					"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+					"warn"
 			elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
-				if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
+				if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ] && _escape_ai_seed_available; then
 					improve_reason="escape_ai"
-					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → AI 構造変異モードで脱出"
+					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → seeded escape_ai 構造変異モードで脱出"
+					_improve_flow_notify \
+						"seeded_escape_ai_yes" \
+						"seeded escape_ai candidate? yes" \
+						"archive unavailable; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=escape_ai" \
+						"改善フロー: seeded escape_ai candidate exists? yes。評価済みseedからescape_aiを実行します。" \
+						"warn"
 				fi
+			fi
+			if [ "$improve_reason" = "wildcard" ]; then
+				_improve_flow_notify \
+					"wildcard_frontier" \
+					"wildcard frontier recovery" \
+					"archive candidate unavailable; stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}; improve_reason=wildcard" \
+					"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+					"warn"
 			fi
 			log "[WILDCARD] stagnation=$stag >= ${WILDCARD_TRIGGER_STAGNATION:-3} → ${improve_reason} モードで起動"
 		elif [ "$rstreak" -ge "${WILDCARD_REGRESSION_STREAK:-4}" ]; then
@@ -1944,11 +2087,31 @@ PY
 				if _archive_restart_should_run "$wildcard_escape_streak"; then
 					improve_reason="archive_restart"
 					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${ARCHIVE_RESTART_STREAK:-3} → archive_restart で過去版から大域脱出"
+					_improve_flow_notify \
+						"archive_restart_candidate_yes" \
+						"archive_restart candidate? yes" \
+						"regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-4}; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=archive_restart" \
+						"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+						"warn"
 				elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
-					if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
+					if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ] && _escape_ai_seed_available; then
 						improve_reason="escape_ai"
-						log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → AI 構造変異モードで脱出"
+						log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} → seeded escape_ai 構造変異モードで脱出"
+						_improve_flow_notify \
+							"seeded_escape_ai_yes" \
+							"seeded escape_ai candidate? yes" \
+							"archive unavailable; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=escape_ai" \
+							"改善フロー: seeded escape_ai candidate exists? yes。評価済みseedからescape_aiを実行します。" \
+							"warn"
 					fi
+				fi
+				if [ "$improve_reason" = "wildcard" ]; then
+					_improve_flow_notify \
+						"wildcard_frontier" \
+						"wildcard frontier recovery" \
+						"archive candidate unavailable; regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-4}; improve_reason=wildcard" \
+						"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+						"warn"
 				fi
 				: >"$_wccd" 2>/dev/null || true
 				log "[WILDCARD] regression_streak=$rstreak >= ${WILDCARD_REGRESSION_STREAK:-4} (counter非依存) → ${improve_reason} モード起動 (cooldown ${_wccd_sec}s)"
@@ -1961,12 +2124,39 @@ PY
 		if _archive_restart_should_run 999; then
 			improve_reason="archive_restart"
 			log "[IMPROVE] Russia recovery mode: ${russia_recovery_reason:-unknown} → archive_restart を優先"
-		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			_improve_flow_notify \
+				"archive_restart_candidate_yes" \
+				"archive_restart candidate? yes" \
+				"Russia recovery reroute selected archive_restart" \
+				"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+				"warn"
+		elif [ "${WILDCARD_ENABLED:-0}" = "1" ]; then
+			improve_reason="wildcard"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → wildcard でtype14→15 frontier 復旧"
+			_improve_flow_notify \
+				"wildcard_frontier" \
+				"wildcard frontier recovery" \
+				"archive candidate unavailable; WILDCARD_ENABLED=1; improve_reason=wildcard" \
+				"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+				"warn"
+		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ] && _escape_ai_seed_available; then
 			improve_reason="escape_ai"
-			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → escape_ai でtype14→15復旧"
+			log "[IMPROVE] Russia recovery mode: archive/wildcard unavailable → seeded escape_ai で復旧"
+			_improve_flow_notify \
+				"seeded_escape_ai_yes" \
+				"seeded escape_ai candidate? yes" \
+				"archive/wildcard unavailable; valid WILDCARD seed found; improve_reason=escape_ai" \
+				"改善フロー: seeded escape_ai candidate exists? yes。評価済みseedからescape_aiを実行します。" \
+				"warn"
 		else
 			improve_reason="normal"
-			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → 通常AI改善でtype14→15復旧"
+			log "[IMPROVE] Russia recovery mode: 有効なarchive/wildcard/seeded escape_aiなし → 通常AI改善で復旧"
+			_improve_flow_notify \
+				"no_valid_escape_route" \
+				"fallback: no valid escape route" \
+				"no archive candidate, wildcard disabled, no valid seeded escape_ai" \
+				"改善フロー: seeded escape_ai candidate exists? no。有効な脱出先なしとしてfallback改善に入ります。" \
+				"warn"
 		fi
 	fi
 

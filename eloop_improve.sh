@@ -186,6 +186,18 @@ PY
 	fi
 }
 
+_improve_flow_notify() {
+	local step="${1:-flow}" title="${2:-改善フロー}" body="${3:-}" chat="${4:-}" level="${5:-info}"
+	local full_title="改善フロー: ${title}"
+	[ -n "$body" ] || body="$step"
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "$full_title" "$body" "$level" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$chat" ]; then
+		enqueue_chat_message "$chat" "improve_flow" 4 || true
+	fi
+}
+
 _strategy_change_is_string_only() {
 	local before_file="$1" after_file="$2"
 	python3 - "$before_file" "$after_file" <<'PY' 2>/dev/null
@@ -1025,14 +1037,18 @@ if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
 		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
 		"${ARCHIVE_RESTART_INCLUDE_PERMANENT:-1}" \
 		"${ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY:-1}" \
-		"${ARCHIVE_RESTART_COOLDOWN_SEC:-21600}" <<'PY' 2>/dev/null || true
+		"${ARCHIVE_RESTART_COOLDOWN_SEC:-21600}" \
+		"${ARCHIVE_RESTART_MIN_RUSSIA_COUNT:-2}" \
+		"${ARCHIVE_RESTART_MIN_RUSSIA_RATE:-0.15}" \
+		"${ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE:-15}" \
+		"${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" <<'PY' 2>/dev/null || true
 import json
 import math
 import os
 import sys
 import time
 
-rolling_file, anchor_file, archive_dir, rejected_file, origin_file, cooldown_file, min_ratio_raw, max_candidates_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw = sys.argv[1:15]
+rolling_file, anchor_file, archive_dir, rejected_file, origin_file, cooldown_file, min_ratio_raw, max_candidates_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw, min_russia_count_raw, min_russia_rate_raw, frontier_min_best_type_raw, objective_fail_permanent_raw = sys.argv[1:19]
 
 def load(path, default):
     try:
@@ -1110,10 +1126,12 @@ def find_archive_path(h):
 def is_cooled_down(h):
     if h not in cooldown:
         return False
+    meta = cooldown.get(h) if isinstance(cooldown.get(h), dict) else {}
+    if boolish(objective_fail_permanent_raw, True) and str(meta.get("reason") or "").startswith("archive_restart_russia_not_reproduced"):
+        return True
     ttl = as_int(cooldown_ttl_raw, 21600)
     if ttl <= 0:
         return True
-    meta = cooldown.get(h) if isinstance(cooldown.get(h), dict) else {}
     epoch = as_int(meta.get("epoch", 0), 0)
     return epoch <= 0 or (now - epoch) < ttl
 
@@ -1126,6 +1144,9 @@ min_games = max(1, as_int(min_games_raw, 12))
 max_candidates = max(1, as_int(max_candidates_raw, 24))
 min_ratio = max(0.0, min(1.0, as_float(min_ratio_raw, 0.92)))
 min_best_type = max(0, as_int(min_best_type_raw, 14))
+min_russia_count = max(1, as_int(min_russia_count_raw, 2))
+min_russia_rate = max(0.0, as_float(min_russia_rate_raw, 0.15))
+frontier_min_best_type = max(min_best_type, as_int(frontier_min_best_type_raw, 15))
 include_permanent = boolish(include_permanent_raw, True)
 allow_origin_retry = boolish(allow_origin_retry_raw, True)
 anchor_hash = str(anchor.get("hash", "") or "")
@@ -1157,31 +1178,32 @@ for h, entry in (rolling or {}).items():
     russia = as_int((entry or {}).get("russia_count", 0), 0)
     soviet = as_int((entry or {}).get("soviet_count", 0), 0)
     best_type = as_int((entry or {}).get("best_max_type", 0), 0)
-    if best_type >= 15 and russia <= 0:
-        russia = 1
+    russia_rate = (float(russia) / float(m["n"])) if m["n"] > 0 else 0.0
+    reliable_russia = russia >= min_russia_count or russia_rate >= min_russia_rate
+    frontier_candidate = best_type >= frontier_min_best_type
     if best_type >= 16 and soviet <= 0:
         soviet = 1
     if anchor_soviet > 0 and soviet <= 0:
         continue
-    if anchor_russia > 0 and russia <= 0:
+    if anchor_russia > 0 and not reliable_russia:
         continue
     # archive_restart is an objective escape mechanism, not a plain score
     # sampler. Avoid spending escape attempts on old hashes with no recorded
     # high-type/Russia progress even when their composite is near-anchor.
-    if min_best_type > 0 and russia <= 0 and soviet <= 0 and best_type < min_best_type:
+    if min_best_type > 0 and not reliable_russia and soviet <= 0 and not frontier_candidate and best_type < min_best_type:
         continue
     origin_type = str((origin.get(h) or {}).get("origin_type") or "") if isinstance(origin.get(h), dict) else ("legacy_origin" if h in origin else "")
-    if origin_type and not (allow_origin_retry and (russia > 0 or soviet > 0 or best_type >= min_best_type)):
+    if origin_type and not (allow_origin_retry and (reliable_russia or soviet > 0 or frontier_candidate or best_type >= min_best_type)):
         continue
-    objective_bonus = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
+    objective_bonus = soviet * 100000 + (12000 if reliable_russia else 0) + max(0, best_type - 13) * 2500
     p25_bonus = float(m["p25"]) * 0.08
     score = objective_bonus + p25_bonus + float(m["comp"])
-    rows.append((score, m["comp"], m["p50"], m["p25"], m["n"], russia, soviet, best_type, h, path, origin_type))
+    rows.append((score, m["comp"], m["p50"], m["p25"], m["n"], russia, soviet, best_type, russia_rate, reliable_russia, frontier_candidate, h, path, origin_type))
 rows.sort(reverse=True)
 if not rows:
     print(json.dumps({"ok": False, "reason": "no_candidate", "threshold": threshold, "anchor_hash": anchor_hash, "anchor_comp": anchor_comp, "min_best_type": min_best_type}, ensure_ascii=False))
     raise SystemExit(0)
-score, comp, p50, p25, n, russia, soviet, best_type, h, path, origin_type = rows[0]
+score, comp, p50, p25, n, russia, soviet, best_type, russia_rate, reliable_russia, frontier_candidate, h, path, origin_type = rows[0]
 print(json.dumps({
     "ok": True,
     "hash": h,
@@ -1191,6 +1213,9 @@ print(json.dumps({
     "p25": p25,
     "n": n,
     "russia_count": russia,
+    "russia_rate": russia_rate,
+    "reliable_russia": reliable_russia,
+    "frontier_candidate": frontier_candidate,
     "soviet_count": soviet,
     "best_max_type": best_type,
     "anchor_hash": anchor_hash,
@@ -1207,6 +1232,12 @@ PY
 	archive_restart_ok=$(echo "$archive_restart_json" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('ok') else '0')" 2>/dev/null || echo 0)
 	if [ "$archive_restart_ok" != "1" ]; then
 		log "[ARCHIVE-RESTART] candidate not found: ${archive_restart_json:-empty}"
+		_improve_flow_notify \
+			"archive_restart_candidate_no" \
+			"archive_restart candidate? no" \
+			"archive_restart_json=${archive_restart_json:-empty}" \
+			"改善フロー: archive_restart with Russia-capable candidate? no。次の脱出手段へ進みます。" \
+			"warn"
 		no_candidate_marker="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-tmp/state/.archive_restart_no_candidate}"
 		mkdir -p "$(dirname "$no_candidate_marker")" 2>/dev/null || true
 		printf '%s\n' "${archive_restart_json:-empty}" >"$no_candidate_marker" 2>/dev/null || true
@@ -1225,6 +1256,12 @@ PY
 	archive_restart_path=$(echo "$archive_restart_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('path',''))" 2>/dev/null || echo "")
 	[ -n "$archive_restart_hash" ] && [ -f "$archive_restart_path" ] || {
 		log "[ARCHIVE-RESTART] invalid selected candidate: ${archive_restart_json:-empty}"
+		_improve_flow_notify \
+			"archive_restart_candidate_invalid" \
+			"archive_restart candidate invalid" \
+			"selected candidate missing hash/path" \
+			"改善フロー: archive_restart candidate invalid。次の脱出手段へ進みます。" \
+			"warn"
 		_improve_progress "archive_restart_fail" "100" "invalid_archive_candidate"
 		exit 1
 	}
@@ -1233,6 +1270,12 @@ PY
 	cp "$archive_restart_path" "strategy.py.staging"
 	if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
 		log "[ARCHIVE-RESTART] validation failed → abort"
+		_improve_flow_notify \
+			"archive_restart_candidate_invalid" \
+			"archive_restart candidate invalid" \
+			"strategy validation failed" \
+			"改善フロー: archive_restart candidate invalid。検証失敗のため次の脱出手段へ進みます。" \
+			"warn"
 		_archive_restart_quarantine_candidate "$archive_restart_json" "archive_restart_validate_fail"
 		rm -f "strategy.py.staging"
 		if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
@@ -1251,6 +1294,12 @@ PY
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	if [ -z "$HASH_AFTER" ] || [ "$HASH_AFTER" = "$HASH_BEFORE" ]; then
 		log "[ARCHIVE-RESTART] no effective hash change selected=${archive_restart_hash} actual=${HASH_AFTER:-empty}"
+		_improve_flow_notify \
+			"archive_restart_no_effective_change" \
+			"archive_restart no effective change" \
+			"selected=${archive_restart_hash} actual=${HASH_AFTER:-empty}" \
+			"改善フロー: archive_restart no effective change。次の脱出手段へ進みます。" \
+			"warn"
 		_archive_restart_quarantine_candidate "$archive_restart_json" "archive_restart_no_effective_hash_change"
 		cp "tmp/revert_strategy.py" "$STRATEGY_FILE" 2>/dev/null || true
 		if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
@@ -1309,6 +1358,9 @@ origin[h] = {
     "source_p25": selected.get("p25"),
     "source_n": selected.get("n"),
     "source_russia_count": selected.get("russia_count"),
+    "source_russia_rate": selected.get("russia_rate"),
+    "source_reliable_russia": selected.get("reliable_russia"),
+    "source_frontier_candidate": selected.get("frontier_candidate"),
     "source_soviet_count": selected.get("soviet_count"),
     "source_best_max_type": selected.get("best_max_type"),
 }
@@ -1361,6 +1413,12 @@ PY
 	git push 2>/dev/null || true
 	_improve_progress "done" "100" "archive_restart_complete"
 	log "[ARCHIVE-RESTART] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER} source=${archive_restart_hash}"
+	_improve_flow_notify \
+		"archive_restart_complete" \
+		"archive_restart complete" \
+		"${HASH_BEFORE} -> ${HASH_AFTER} source=${archive_restart_hash}" \
+		"改善フロー: archive_restart complete。評価済みアーカイブから復帰しました。source=${archive_restart_hash:0:8}" \
+		"info"
 	exit 0
 fi
 fi
@@ -1382,13 +1440,14 @@ if [ "${IMPROVE_REASON:-normal}" = "escape_ai" ] && [ "${WILDCARD_ESCAPE_AI_SEED
 		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
 		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
 		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
-		"${WILDCARD_ESCAPE_AI_SEED_MIN_GAMES:-4}" <<'PY' 2>/dev/null || true
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_GAMES:-4}" \
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE:-14}" <<'PY' 2>/dev/null || true
 import json
 import math
 import os
 import sys
 
-origin_file, rolling_file, rejected_file, archive_dir, min_games_raw = sys.argv[1:6]
+origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw = sys.argv[1:7]
 
 def load(path, default):
     try:
@@ -1452,6 +1511,7 @@ origin = load(origin_file, {})
 rolling = load(rolling_file, {})
 rejected = load(rejected_file, {})
 min_games = max(1, as_int(min_games_raw, 4))
+min_best_type = max(0, as_int(min_best_type_raw, 14))
 rows = []
 for h, meta in (origin or {}).items():
     h = str(h)
@@ -1482,13 +1542,15 @@ for h, meta in (origin or {}).items():
     russia = as_int(entry.get("russia_count", 0), 0)
     soviet = as_int(entry.get("soviet_count", 0), 0)
     best_type = as_int(entry.get("best_max_type", 0), 0)
+    if russia <= 0 and best_type < min_best_type:
+        continue
     objective_bonus = soviet * 100000 + russia * 12000 + max(0, best_type - 13) * 2500
     score = objective_bonus + float(m["comp"]) + float(m.get("p25", 0.0)) * 0.05
     rows.append((score, float(m["comp"]), float(m.get("p50", 0.0)), float(m.get("p25", 0.0)), as_int(m["n"], 0), russia, soviet, best_type, h, path))
 
 rows.sort(reverse=True)
 if not rows:
-    print(json.dumps({"ok": False, "reason": "no_wildcard_seed", "min_games": min_games}, ensure_ascii=False))
+    print(json.dumps({"ok": False, "reason": "no_wildcard_seed", "min_games": min_games, "min_best_type": min_best_type}, ensure_ascii=False))
     raise SystemExit(0)
 score, comp, p50, p25, n, russia, soviet, best_type, h, path = rows[0]
 print(json.dumps({
@@ -1522,6 +1584,9 @@ PY
 		fi
 	else
 		log "[ESCAPE-AI] WILDCARD seed candidate not found: ${ESCAPE_AI_SEED_JSON:-empty}"
+		log "[ESCAPE-AI] seedなしのescape_aiは通常改善と同じため中止"
+		_improve_progress "escape_ai_fail" "100" "no_valid_seed"
+		exit 1
 	fi
 fi
 

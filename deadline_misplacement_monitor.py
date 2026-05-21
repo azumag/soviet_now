@@ -188,7 +188,10 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
     lower = [c for c in candidates if _num(c.get("top_y")) + LOWER_EPS < actual_top]
     best_lower = min(lower, key=lambda c: (_num(c.get("top_y")), abs(_num(c.get("x")))), default=None)
     best_merge = _merge_alternative(before, next_type, r, candidates)
-    inappropriate = bool(best_lower or best_merge)
+    merge_improves_top = bool(
+        best_merge and _num(best_merge.get("top_y")) + LOWER_EPS < actual_top
+    )
+    inappropriate = bool(best_lower or merge_improves_top)
     return {
         "kind": "deadline_misplacement_check",
         "status": "inappropriate" if inappropriate else "appropriate",
@@ -203,6 +206,7 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
         "actual_new_piece": _summary_piece(placed),
         "independent_chosen_estimate": chosen_estimate,
         "has_merge_alternative": bool(best_merge),
+        "merge_alternative_improves_top": merge_improves_top,
         "has_lower_alternative": bool(best_lower),
         "best_merge_alternative": best_merge,
         "best_lower_alternative": best_lower,

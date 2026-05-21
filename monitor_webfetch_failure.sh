@@ -33,7 +33,8 @@ if [ "$SINCE" -le 0 ]; then
 	[ "$SINCE" -ge 0 ] || SINCE=0
 fi
 
-pattern='webfetch failed|WebFetchの権限確認|WebFetch.*(失敗|取得できなかった|取得できません|許可|permission|denied|rejected)|WebSearch.*(失敗|取得できなかった|取得できません|許可|permission|denied|rejected)|✗[[:space:]]*(webfetch|websearch)[[:space:]]+failed'
+failure_terms='(失敗(した|しました|です|でした|のため|により|で|、|。|$)|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)'
+pattern="webfetch failed|WebFetchの権限確認|WebFetch.*${failure_terms}|WebSearch.*${failure_terms}|✗[[:space:]]*(webfetch|websearch)[[:space:]]+failed"
 
 tmp_hits=$(mktemp /tmp/soren_webfetch_monitor_hits_XXXXXXXX) || exit 1
 trap 'rm -f "$tmp_hits"' EXIT
@@ -51,7 +52,8 @@ import sys
 
 path, since_raw = sys.argv[1], sys.argv[2]
 since = int(since_raw or 0)
-rx = re.compile(r'webfetch failed|WebFetchの権限確認|WebFetch.*(?:失敗|取得できなかった|取得できません|許可|permission|denied|rejected)|WebSearch.*(?:失敗|取得できなかった|取得できません|許可|permission|denied|rejected)|[✗✕×]\s*(?:webfetch|websearch)\s+failed', re.I)
+failure_terms = r'(?:失敗(?:した|しました|です|でした|のため|により|で|、|。|$)|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)'
+rx = re.compile(rf'webfetch failed|WebFetchの権限確認|WebFetch.*{failure_terms}|WebSearch.*{failure_terms}|[✗✕×]\s*(?:webfetch|websearch)\s+failed', re.I)
 try:
     with open(path, encoding="utf-8", errors="replace") as fh:
         for lineno, line in enumerate(fh, 1):
@@ -60,6 +62,8 @@ try:
             except Exception:
                 continue
             if int(event.get("ts") or 0) < since:
+                continue
+            if str(event.get("category") or "") == "system":
                 continue
             text = " ".join(str(event.get(k) or "") for k in ("title", "body"))
             if rx.search(text):
