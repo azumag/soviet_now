@@ -3895,6 +3895,9 @@ PY
         self.assertIn("===SANITIZED_CHECK_OUTPUT===", factcheck)
         self.assertIn('printf \'%s\\n\' "$raw_output" | _sanitize_onair_text', factcheck)
         self.assertIn("webfetch_monitor_start_epoch", monitor)
+        self.assertIn("webfetch_monitor_last_checked_epoch", monitor)
+        self.assertIn("WEBFETCH_MONITOR_LOOKBACK_SEC", monitor)
+        self.assertIn('printf \'%s\\n\' "$now" >"$CURSOR_FILE"', monitor)
         self.assertIn("*_prompt.txt", monitor)
         self.assertIn("overlay_events.jsonl", monitor)
 

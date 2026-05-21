@@ -10,14 +10,28 @@ STATE_DIR="${TMP_STATE_DIR:-tmp/state}"
 START_FILE="${WEBFETCH_MONITOR_START_FILE:-$STATE_DIR/webfetch_monitor_start_epoch}"
 STATUS_FILE="${WEBFETCH_MONITOR_STATUS_FILE:-$STATE_DIR/webfetch_monitor_status.json}"
 LOG_FILE="${WEBFETCH_MONITOR_LOG_FILE:-$STATE_DIR/webfetch_failure_monitor_log.jsonl}"
+CURSOR_FILE="${WEBFETCH_MONITOR_CURSOR_FILE:-$STATE_DIR/webfetch_monitor_last_checked_epoch}"
+LOOKBACK_SEC="${WEBFETCH_MONITOR_LOOKBACK_SEC:-21600}"
 SINCE="${WEBFETCH_MONITOR_START_EPOCH:-}"
 
+case "$LOOKBACK_SEC" in
+	''|*[!0-9]*) LOOKBACK_SEC=21600 ;;
+esac
+now=$(date +%s)
+
+if [ -z "$SINCE" ] && [ -f "$CURSOR_FILE" ]; then
+	SINCE=$(cat "$CURSOR_FILE" 2>/dev/null || true)
+fi
 if [ -z "$SINCE" ] && [ -f "$START_FILE" ]; then
 	SINCE=$(cat "$START_FILE" 2>/dev/null || true)
 fi
 case "$SINCE" in
 	''|*[!0-9]*) SINCE=0 ;;
 esac
+if [ "$SINCE" -le 0 ]; then
+	SINCE=$((now - LOOKBACK_SEC))
+	[ "$SINCE" -ge 0 ] || SINCE=0
+fi
 
 pattern='webfetch failed|WebFetchの権限確認|WebFetch.*(失敗|取得できなかった|取得できません|許可|permission|denied|rejected)|WebSearch.*(失敗|取得できなかった|取得できません|許可|permission|denied|rejected)|✗[[:space:]]*(webfetch|websearch)[[:space:]]+failed'
 
@@ -71,7 +85,6 @@ done < <(
 )
 
 mkdir -p "$STATE_DIR" 2>/dev/null || true
-now=$(date +%s)
 if [ -s "$tmp_hits" ]; then
 	{
 		printf '{"ok":false,"checked_at":%s,"since":%s,"hits":' "$now" "$SINCE"
@@ -95,4 +108,5 @@ PY
 fi
 
 printf '{"ok":true,"checked_at":%s,"since":%s,"hits":[]}\n' "$now" "$SINCE" >"$STATUS_FILE"
+printf '%s\n' "$now" >"$CURSOR_FILE"
 printf 'OK no WebFetch failure leakage since %s\n' "$SINCE"
