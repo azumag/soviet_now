@@ -64,12 +64,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
-     #       Changed russia_phase_count from type==15 only to type in [14, 15]
-     #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
-     #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
-     #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" — Russia phase NOT exempt
-     #       refs: tmp/analysis_result.md (Russia phase hypothesis)
+      # v677: merge-at-dangerous-height suppression — when merge_grade in [DIRECT,NEAR] && top_y_after_drop>=3.5 && deadline_margin<0.5,
+      #       apply (3.5 - top_y) * 3000/2500 penalty. Prevents "merge at catastrophic height then die next turn" (worst T62, extra_high T67).
+      #       Fixes: "merge selection at wrong heights" — merge bonus overwhelms height penalty at critical threshold
+      #       mandatory_themes compliant: SELECTS AGAINST merge at dangerous heights, not for it.
+      #       refs: tmp/analysis_result.md (Hypothesis: merge-at-dangerous-height suppression)
+# vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
+      #       Changed russia_phase_count from type==15 only to type in [14, 15]
+      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
+      #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
+      #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" — Russia phase NOT exempt
+      #       refs: tmp/analysis_result.md (Russia phase hypothesis)
      # v676: axis 1.7b BOARD_MAX_Y_NEAR_SUPPRESSION — max_y>=2.5 && pc>=33 && NEAR && NOT russia_phase で -1000～-3000 ペナルティ
      #       v422(landing_y条件)では補足できない「盤面全体の高さが危険レベルに達した状態」でのNEAR選択を押さえる
      #       Fixes rollback failure mode: max_y>=2.5, pc>=33 でのNEAR選択が score_delta=0 を返しmax_y暴走→ゲームオーバー
@@ -895,6 +900,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- v677: merge-at-dangerous-height suppression -----
+        # analysis_result.md adopted hypothesis: "merge selection at wrong heights"
+        # worst T62: NEAR at top_y=4.67 (margin=-0.12), DEADLINE_GUARD override selected it (+score_delta=21)
+        # extra_high T67: DIRECT at top_y=4.54, merge succeeded but board became life-threatening
+        # key failure: merge bonus + DEADLINE_GUARD bonus overwhelms height penalty + v661 penalty
+        #   at catastrophic heights (top_y >= 3.5, already past or extremely close to deadline 3.38)
+        # Fix: when merge_grade in [DIRECT, NEAR] && top_y_after_drop >= 3.5 && deadline_margin < 0.5,
+        #   apply additional penalty (3.5 - top_y) * SCALE that stacks on top of v661/v662 penalties.
+        #   Even DEADLINE_GUARD's +3000 bonus cannot overcome this when top_y=4.67:
+        #   net = 1200 (merge) + 3000 (guard) - 3100 (v661) - 3510 (new) = -2410 vs safe NO_MERGE
+        # This prevents "merge but die next turn" by ensuring safe NO_MERGE beats merge at catastrophic height.
+        # mandatory_themes compliant: this SELECTS AGAINST merge at dangerous heights, not for it.
+        # refs: tmp/analysis_result.md (Hypothesis: merge-at-dangerous-height suppression)
+        #       game_history/20260522_033539_score0983.jsonl T62,
+        #       game_history/20260522_032216_score1242.jsonl T67
+        # Fixes rollback failure mode: "merge selection at catastrophic heights causing death spiral"
+        top_y_after_drop = result.get("top_y_after_drop", 99)
+        if merge_grade in ["DIRECT", "NEAR"] and top_y_after_drop >= 3.5 and deadline_margin < 0.5:
+            if merge_grade == "DIRECT":
+                danger_penalty = (3.5 - top_y_after_drop) * 3000.0
+            else:  # NEAR
+                danger_penalty = (3.5 - top_y_after_drop) * 2500.0
+            score += danger_penalty
+            reasons.append("MERGE_AT_DANGEROUS_HEIGHT")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
