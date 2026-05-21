@@ -64,7 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
+      # vXXX: same_type merge-drought reinforcement — rp>=3 && same_type>=2 && NO_MERGE && max_y>=1.5 && !russia_phase
+      #       adds -1500 supplemental penalty to REACTIVE_PAIRS_NO_MERGE_PENALTY to overcome axis 9.6 stacking
+      #       Fixes worst T39-T47: 8 consecutive NO_MERGE despite same_type>=2, max_y runaway → game over T47
+      #       Ukraine (T13) stage gate: 83%→100%, targeting same_type merge drought death spiral
+      #       mandatory_themes compliant: still suppresses when deadline_crossed && rp>=3 (existing guard)
+      #       refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 reinforcement)
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
      #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
@@ -1901,7 +1906,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
             # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
             if not (deadline_crossed and reactive_pair_count >= 3):
-                score -= 4500.0
+                base_penalty = -4500.0
+                # vXXX: same_type merge-drought reinforcement
+                # analysis_result.md adopted hypothesis: "rp>=3 + same_type>=2 + NO_MERGE時のmerge path誘導強化"
+                # worst game T39-T47: rp=3-4, same_type_pieces>=2, merge_grade=NO, 8 consecutive NO_MERGE → max_y runaway
+                # advice.md: "盤面状態に関わらず即時併合を最優先"
+                # When same-type pieces exist on board and rp>=3, the merge drought is structural —
+                # axis 9.6 stacking bonuses (~200-400) can offset the base -4500, allowing high placement.
+                # Add -1500 supplemental penalty specifically for same_type>=2 to overcome stacking guidance.
+                # This targets the Ukraine (T13) 83%→100% gate: preventing merge drought death spirals.
+                # Suppress when russia_phase — Russia growth requires different strategy.
+                if len(same_type_pieces) >= 2 and max_y >= 1.5 and not russia_phase:
+                    base_penalty -= 1500.0
+                    reasons.append("SAME_TYPE_MERGE_DROUGHT_PENALTY")
+                score += base_penalty
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
