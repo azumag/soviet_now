@@ -9,6 +9,9 @@ ${CATEGORY_COMMENTS}
 【Comment Classifications】
 ${COMMENT_CLASSIFICATIONS}
 
+【Extracted Codex/System Improvement Candidates】
+${codex_advice_candidates}
+
 【Previous Comment History (prior rounds)】
 ${previous_comments_context}
 
@@ -66,11 +69,17 @@ If a comment is a bits donation or subscription notification:
 ===ADVICE===
 (Summarize the game strategy advice in 1-3 lines. Include the commenter's name.)
 ===ADVICE===
+- For strategy advice, accept it sincerely, do not rebut, do not justify the current strategy, and do not ask a follow-up question. Say you will save it for strategy improvement, then save it with ===ADVICE===.
 
 - If there is comment reply improvement advice, output after the reply body:
 ===COMMENT_ADVICE===
 (Summarize the comment reply improvement note in 1-3 lines. Include the commenter's name.)
 ===COMMENT_ADVICE===
+
+- If there is Codex/system improvement advice about Codex operation, the improvement loop, monitoring, workers, dashboard/status displays, OBS overlays, classification, or feedback collection, output after the reply body:
+===CODEX_ADVICE===
+(Summarize the Codex/system improvement note in 1-3 lines. Include the commenter's name.)
+===CODEX_ADVICE===
 
 【Singing Synthesis Function】
 When there is a singing request: "歌って", "〜歌って", "sing", "sing ~", "please sing ~":

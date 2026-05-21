@@ -15,3 +15,7 @@ Keep it visible until the Codex work is fully finished, including verification a
 ```
 
 This indicator is for human/Codex project work, not for the automatic in-game strategy improvement loop. It should update the `eventOverlay` HTML only; do not show/hide the OBS `systemMsg` source for Codex work.
+
+## Viewer Feedback
+
+Before changing this project, check `data/codex_advice.md` if it exists and contains anything other than blank lines or `（なし）`. It contains viewer comments about Codex operation, improvement-loop behavior, monitoring, workers, dashboards/status displays, OBS overlays, classification, and other system mechanisms. Treat it as high-priority input for the next Codex work loop, but verify against runtime evidence before making risky changes.

@@ -35,6 +35,18 @@ CHANNEL="${2:-azumagbanjo}"
 
 _log() { echo "[twitch_chat $(date '+%H:%M:%S')] $*" >&2; }
 
+_pid_alive() {
+    local pid="${1:-}" err=""
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+    case "$err" in
+        *"operation not permitted"*|*"Operation not permitted"*) return 0 ;;
+    esac
+    return 1
+}
+
 _release_lock() {
     [ -d "$LOCK_DIR" ] || return 0
     local lock_pid
@@ -52,7 +64,7 @@ _acquire_lock() {
         # 孤立ロック回収: PID死亡 or ロックが古すぎる
         if [ -f "$LOCK_DIR/pid" ]; then
             lock_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
-            if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            if [ -n "$lock_pid" ] && ! _pid_alive "$lock_pid"; then
                 rm -rf "$LOCK_DIR" 2>/dev/null || true
                 continue
             fi
@@ -193,7 +205,7 @@ _start() {
     if [ -f "$PID_FILE" ]; then
         local old_pid
         old_pid=$(cat "$PID_FILE")
-        if kill -0 "$old_pid" 2>/dev/null; then
+        if _pid_alive "$old_pid"; then
             _log "既に起動中 (PID=$old_pid)"
             return 0
         fi
@@ -536,7 +548,7 @@ _stop() {
     if [ -f "$PID_FILE" ]; then
         local dpid
         dpid=$(cat "$PID_FILE")
-        if kill -0 "$dpid" 2>/dev/null; then
+        if _pid_alive "$dpid"; then
             # 子プロセス(nc等)ごと終了
             pkill -P "$dpid" 2>/dev/null
             kill "$dpid" 2>/dev/null
@@ -564,7 +576,7 @@ _stop() {
 
 #--- status ---
 _status() {
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    if [ -f "$PID_FILE" ] && _pid_alive "$(cat "$PID_FILE")"; then
         local lines
         lines=$(wc -l < "$RAW_LOG" 2>/dev/null | tr -d ' ')
         local offset

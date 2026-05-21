@@ -1060,6 +1060,14 @@ comment_terms = (
     "試合中コメント", "順位コメント", "戦略説明", "説明文", "カードガチャ",
     "カード説明", "発音", "読み", "ラジオ", "ニュース", "ニーサ", "nisa"
 )
+system_terms = (
+    "仕組み", "システム", "改善ループ", "自動改善", "戦略改善", "次のループ",
+    "codex", "コーデックス", "拾える", "拾って", "取り入れ", "反映", "修正依頼",
+    "意見", "要望", "監視", "watchdog", "ワーカー", "worker", "daemon",
+    "runtime", "ランタイム", "show-status", "show_status", "dashboard",
+    "ダッシュボード", "overlay", "オーバーレイ", "obs", "分類器", "classifier",
+    "コメント分類", "ログ", "レポート", "恒久対応", "運用"
+)
 directive_terms = (
     "して", "しろ", "すべき", "したほうがいい", "した方がいい", "やめて",
     "避けて", "見るべき", "見て", "考えて", "意識して", "優先", "禁止",
@@ -1069,6 +1077,7 @@ directive_terms = (
     "ほうがいい", "方がいい", "べき",
     "いかん", "だめ", "ダメ", "するな", "しないで", "するといかん", "するとだめ",
     "よくない", "まずい", "やばい", "危ない", "注意", "気をつけ",
+    "取り入れ", "反映", "拾える", "拾って", "残して", "メモして",
 )
 noise_terms = (
     "レイド", "nightbot", "show-status", "show_status", "dashboard", "blackhole",
@@ -1084,6 +1093,7 @@ soren91_terms = (
 
 strategy_terms_norm = tuple(term.lower().replace(" ", "") for term in strategy_terms)
 comment_terms_norm = tuple(term.lower().replace(" ", "") for term in comment_terms)
+system_terms_norm = tuple(term.lower().replace(" ", "") for term in system_terms)
 noise_terms_norm = tuple(term.lower().replace(" ", "") for term in noise_terms)
 main_terms_norm = tuple(term.lower().replace(" ", "") for term in main_terms)
 soren91_terms_norm = tuple(term.lower().replace(" ", "") for term in soren91_terms)
@@ -1141,12 +1151,25 @@ def looks_like_comment_advice(raw: str) -> bool:
     return False
 
 
+def looks_like_system_advice(raw: str) -> bool:
+    if len(raw) < 6:
+        return False
+    norm = raw.lower().replace(" ", "")
+    if not has_any(norm, system_terms_norm):
+        return False
+    if has_directive(raw) or any(term in raw for term in ("改善", "修正", "意見", "要望", "依頼", "問題", "不具合")):
+        return True
+    return False
+
+
 def looks_like_strategy_advice(raw: str) -> bool:
     if len(raw) < 6:
         return False
+    norm = raw.lower().replace(" ", "")
+    if looks_like_system_advice(raw) and not has_any(norm, strategy_terms_norm):
+        return False
     if looks_like_comment_advice(raw):
         return False
-    norm = raw.lower().replace(" ", "")
     has_game = has_any(norm, strategy_terms_norm) or bool(re.search(r"type\s*[a-z0-9]+", raw, re.I))
     noisy = has_any(norm, noise_terms_norm)
     if noisy and not has_game:
@@ -1181,7 +1204,9 @@ for line in lines:
         continue
     kind = None
     mode = "-"
-    if looks_like_comment_advice(body):
+    if looks_like_system_advice(body):
+        kind = "codex"
+    elif looks_like_comment_advice(body):
         kind = "comment"
     elif looks_like_strategy_advice(body):
         kind = "strategy"
@@ -1310,6 +1335,8 @@ def classify(user: str, comment: str) -> str:
     text = comment.strip()
     lower = text.lower()
     system_user = user.lower() in {"wizebot", "nightbot", "streamelements", "streamlabs"}
+    strategy_hint = re.search(r"戦略|盤面|併合|連鎖|next|nextnext|hold|type\s*[a-z0-9]+|高さ|左|右|置|積|デッドライン|ゲームオーバー|merge|drop|ピース|ロシア|ソ連|建国|おじゃま|相手|順位|盤面タイプ", text, re.I)
+    advice_hint = re.search(r"したほうが|した方が|ほうが|方が|ほうがいい|方がいい|よくない|良くない|すべき|べき|狙|優先|避け|やめ|見るべき|考え|意識|改善|閾値|なら|よりも|だめ|ダメ|危ない|注意", text)
     if system_user and ("raid" in lower or "レイド" in text):
         return "raid"
     if system_user or "配信が終了" in text or "配信が再開" in text or "新しいステータス" in text:
@@ -1322,6 +1349,8 @@ def classify(user: str, comment: str) -> str:
         return "subscription"
     if "歌" in text or "うた" in text:
         return "sing_request"
+    if strategy_hint and advice_hint:
+        return "strategy_advice"
     if "?" in text or "？" in text:
         if re.search(r"ゲーム|スコア|盤面|戦略|ロシア|ソ連|建国|何点|何試合", text):
             return "game_question"
@@ -1519,7 +1548,7 @@ _build_category_prompt() {
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -1654,6 +1683,11 @@ _append_strategy_advice_item() {
 _append_comment_advice_item() {
 	local advice_item="$1"
 	_append_advice_item_to_file "$COMMENT_ADVICE_FILE" "$advice_item" "コメント改善アドバイス"
+}
+
+_append_codex_advice_item() {
+	local advice_item="$1"
+	_append_advice_item_to_file "$CODEX_ADVICE_FILE" "$advice_item" "Codex改善アドバイス"
 }
 
 _append_soviet_theme_item() {
@@ -1839,6 +1873,7 @@ generate_comment_response() {
 	local strategy_advice_candidates_main=""
 	local strategy_advice_candidates_soren91=""
 	local comment_advice_candidates=""
+	local codex_advice_candidates=""
 	if [ -n "$structured_advice_candidates" ]; then
 		while IFS=$'\t' read -r advice_kind advice_mode advice_text; do
 			[ -n "$advice_text" ] || continue
@@ -1868,6 +1903,14 @@ $advice_text"
 					comment_advice_candidates="$advice_text"
 				fi
 				;;
+			codex)
+				if [ -n "$codex_advice_candidates" ]; then
+					codex_advice_candidates="${codex_advice_candidates}
+$advice_text"
+				else
+					codex_advice_candidates="$advice_text"
+				fi
+				;;
 			esac
 		done <<<"$structured_advice_candidates"
 	fi
@@ -1882,6 +1925,7 @@ $advice_text"
 	strategy_advice_candidates_main=$(printf '%s' "${strategy_advice_candidates_main:-}" | _sanitize_comment_prompt_context)
 	strategy_advice_candidates_soren91=$(printf '%s' "${strategy_advice_candidates_soren91:-}" | _sanitize_comment_prompt_context)
 	comment_advice_candidates=$(printf '%s' "${comment_advice_candidates:-}" | _sanitize_comment_prompt_context)
+	codex_advice_candidates=$(printf '%s' "${codex_advice_candidates:-}" | _sanitize_comment_prompt_context)
 
 	# コメント分類器を実行
 	local classification_json=""
@@ -1986,6 +2030,7 @@ else:
 		comment_batch_context="${comment_batch_context:-（なし）}"
 		strategy_advice_candidates="${strategy_advice_candidates:-（なし）}"
 		comment_advice_candidates="${comment_advice_candidates:-（なし）}"
+		codex_advice_candidates="${codex_advice_candidates:-（なし）}"
 		comment_advice_context="${comment_advice_context:-（なし）}"
 		previous_comments_context=$(printf '%s' "${previous_comments_context:-（なし）}" | _sanitize_comment_prompt_context)
 		recent_spoken_comment_context=$(printf '%s' "${recent_spoken_comment_context:-（なし）}" | _sanitize_comment_prompt_context)
@@ -1997,7 +2042,7 @@ else:
 		# Export all template variables (safe: inside subshell)
 		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
 		export _comment_persona current_time time_period twitch_comments_for_prompt \
-			comment_batch_context strategy_advice_candidates comment_advice_candidates comment_advice_context previous_comments_context \
+			comment_batch_context strategy_advice_candidates comment_advice_candidates codex_advice_candidates comment_advice_context previous_comments_context \
 			recent_spoken_comment_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
@@ -2053,7 +2098,7 @@ PY
 					rm -f "$comment_prompt_file"
 					return 1
 				fi
-				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 					<"$_comment_template" >"$comment_prompt_file"
 			fi
 		else
@@ -2063,7 +2108,7 @@ PY
 				rm -f "$comment_prompt_file"
 				return 1
 			fi
-			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
@@ -2265,6 +2310,13 @@ RETRYCOMMENT
 				attempt_talk=$(printf '%s' "$attempt_talk" | _remove_named_block "ADVICE")
 			fi
 
+			local codex_advice_part codex_advice_item=""
+			codex_advice_part=$(printf '%s' "$attempt_talk" | _extract_named_block "CODEX_ADVICE")
+			if [ -n "$codex_advice_part" ]; then
+				codex_advice_item=$(printf '%s' "$codex_advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+				attempt_talk=$(printf '%s' "$attempt_talk" | _remove_named_block "CODEX_ADVICE")
+			fi
+
 			attempt_talk=$(_clean_comment_talk "$attempt_talk")
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
@@ -2363,6 +2415,9 @@ RETRYCOMMENT
 			if [ -n "$comment_advice_item" ] && [ "$comment_advice_item" != "（アドバイスなし）" ] && [ "$comment_advice_item" != "なし" ] && [[ "$comment_advice_item" != なし* ]] && [[ "$comment_advice_item" != （アドバイスなし）* ]]; then
 				_append_comment_advice_item "$comment_advice_item"
 			fi
+			if [ -n "$codex_advice_item" ] && [ "$codex_advice_item" != "（アドバイスなし）" ] && [ "$codex_advice_item" != "なし" ] && [[ "$codex_advice_item" != なし* ]] && [[ "$codex_advice_item" != （アドバイスなし）* ]]; then
+				_append_codex_advice_item "$codex_advice_item"
+			fi
 			if [ -n "$strategy_advice_candidates_main" ]; then
 				while IFS= read -r advice_line; do
 					[ -n "$advice_line" ] || continue
@@ -2380,6 +2435,12 @@ RETRYCOMMENT
 					[ -n "$advice_line" ] || continue
 					_append_comment_advice_item "$advice_line"
 				done <<<"$comment_advice_candidates"
+			fi
+			if [ -n "$codex_advice_candidates" ]; then
+				while IFS= read -r advice_line; do
+					[ -n "$advice_line" ] || continue
+					_append_codex_advice_item "$advice_line"
+				done <<<"$codex_advice_candidates"
 			fi
 
 			# ソ連テーマを追記

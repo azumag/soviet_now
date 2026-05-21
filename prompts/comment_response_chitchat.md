@@ -9,6 +9,9 @@ ${CATEGORY_COMMENTS}
 【Comment Classifications】
 ${COMMENT_CLASSIFICATIONS}
 
+【Extracted Codex/System Improvement Candidates】
+${codex_advice_candidates}
+
 【Previous Comment History (prior rounds)】
 ${previous_comments_context}
 
@@ -52,6 +55,12 @@ Also add a small playful turn when natural, so the reply does not sound like cus
 If the viewer shares a daily-life detail, preference, mood, memory, or personal impression, explore that topic for 3-5 sentences. Ask about the trigger, situation, reason, or feeling instead of turning it into your own story.
 For vague comments like "tired," "busy," "cold," "nice," or "that happens," respond to the emotion first, then deepen the conversation with one concrete angle. Avoid generic filler like "そうなんですね" as the whole reply.
 For serious or intellectual topics, provide substantive analysis rather than superficial reactions.
+
+【Codex/System Advice Output】
+If a comment contains Codex/system improvement advice about Codex operation, the improvement loop, monitoring, workers, dashboard/status displays, OBS overlays, classification, or feedback collection, output after the reply body:
+===CODEX_ADVICE===
+(Summarize the Codex/system improvement note in 1-3 lines. Include the commenter's name.)
+===CODEX_ADVICE===
 
 【Singing Synthesis Function】
 When there is a singing request: "歌って", "〜歌って", "sing", "sing ~", "please sing ~":

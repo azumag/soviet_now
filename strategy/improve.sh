@@ -1734,6 +1734,9 @@ PY
 		if _archive_restart_should_run 999; then
 			improve_reason="archive_restart"
 			log "[IMPROVE] Russia recovery mode: ${russia_recovery_reason:-unknown} → archive_restart を即時優先"
+		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			improve_reason="escape_ai"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → escape_ai でtype14→15復旧"
 		else
 			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → 通常AI改善でtype14→15復旧"
 		fi
@@ -1958,6 +1961,9 @@ PY
 		if _archive_restart_should_run 999; then
 			improve_reason="archive_restart"
 			log "[IMPROVE] Russia recovery mode: ${russia_recovery_reason:-unknown} → archive_restart を優先"
+		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			improve_reason="escape_ai"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → escape_ai でtype14→15復旧"
 		else
 			improve_reason="normal"
 			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → 通常AI改善でtype14→15復旧"

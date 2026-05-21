@@ -9,7 +9,7 @@ Classify each comment into ONE of these categories:
 - game_question: questions about game rules, strategy, or state
 - game_status: comments about current game performance or score
 - general_question: questions about non-game topics (people, facts, etc.)
-- strategy_advice: comments offering game strategy advice
+- strategy_advice: comments offering game strategy advice. This includes question-shaped suggestions such as "右に置いた方がよくない？", "nextを見て置くべきでは？", or any advice about board, placement, merging, chain, score, deadline, pieces, hold/next, Russia/Soviet creation strategy.
 - comment_advice: comments offering advice on reply style
 - short_reaction: short reactions like "へえ", "なるほど", "それな"
 - chitchat: casual conversation not fitting other categories

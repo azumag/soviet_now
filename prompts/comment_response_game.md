@@ -9,6 +9,9 @@ ${CATEGORY_COMMENTS}
 【Comment Classifications】
 ${COMMENT_CLASSIFICATIONS}
 
+【Extracted Codex/System Improvement Candidates】
+${codex_advice_candidates}
+
 【Previous Comment History (prior rounds)】
 ${previous_comments_context}
 
@@ -63,6 +66,13 @@ If a comment contains game strategy advice, accept it sincerely. Output after th
 ===ADVICE===
 (Summarize the game strategy advice in 1-3 lines. Include the commenter's name.)
 ===ADVICE===
+- For strategy advice, do not rebut, do not defend the current strategy, and do not ask a follow-up question. Treat it as something to save for strategy improvement.
+
+【Codex/System Advice Output】
+If a comment contains Codex/system improvement advice about Codex operation, the improvement loop, monitoring, workers, dashboard/status displays, OBS overlays, classification, or feedback collection, output after the reply body:
+===CODEX_ADVICE===
+(Summarize the Codex/system improvement note in 1-3 lines. Include the commenter's name.)
+===CODEX_ADVICE===
 
 【Singing Synthesis Function】
 When there is a singing request: "歌って", "〜歌って", "sing":

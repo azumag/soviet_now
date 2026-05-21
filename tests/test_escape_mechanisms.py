@@ -1175,9 +1175,17 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("早期脱出ロック作成", loop)
         self.assertIn("early_escape_lock", loop)
         self.assertIn("early_escape_stagnation", loop)
+        self.assertIn("_expire_rate_limit_backoff_if_elapsed", loop)
+        self.assertIn("rate-limit backoff期限切れ", loop)
         self.assertIn("rank1 hot streak 中 → 即応脱出ロックを延期", loop)
+        self.assertIn("rollback revalidate fresh cycle 中", loop)
+        self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
+        self.assertLess(
+            loop.index("rollback revalidate fresh cycle 中"),
+            loop.index("rank1 hot streak 中 → 即応脱出ロックを延期"),
+        )
         self.assertIn("normal|post_regression|wildcard|escape_ai|archive_restart", improve)
         self.assertLess(
             loop.index("WILDCARD 即応ロック"),
@@ -3520,6 +3528,7 @@ PY
         self.assertIn("mechanical wildcard suppressed", improve)
         self.assertIn("no_russia_24h", improve)
         self.assertIn("archive_restart を即時優先", improve)
+        self.assertIn("archive candidate unavailable → escape_ai でtype14→15復旧", improve)
         self.assertLess(
             improve.index("archive_restart を即時優先"),
             improve.index("[ -f \"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}\""),
@@ -3805,6 +3814,7 @@ PY
         self.assertIn("rollback revalidate fresh cycle", regression)
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', loop)
         self.assertIn("復帰先の再評価を優先し改善ロック作成をスキップ", loop)
+        self.assertIn("rollback revalidate fresh cycle 中", loop)
 
     def test_recent_50_score_trend_graces_rollback_gates(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

@@ -117,6 +117,25 @@ log_pause_throttled() {
 	fi
 }
 
+_expire_rate_limit_backoff_if_elapsed() {
+	local file="${TMP_STATE_DIR:-tmp/state}/rate_limit_backoff"
+	[ -f "$file" ] || return 0
+	local count ts now exp wait
+	count=$(sed -n '1p' "$file" 2>/dev/null || echo 1)
+	ts=$(sed -n '2p' "$file" 2>/dev/null || echo 0)
+	case "$count" in ''|*[!0-9]*) count=1 ;; esac
+	case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+	now=$(date +%s)
+	exp=$((count - 1))
+	[ "$exp" -lt 0 ] && exp=0
+	[ "$exp" -gt 5 ] && exp=5
+	wait=$((300 * (1 << exp)))
+	if [ "$ts" -le 0 ] || [ $((now - ts)) -ge "$wait" ]; then
+		log "[IMPROVE] rate-limit backoff期限切れ → 早期脱出判定のため解除 (count=${count}, wait=${wait}s)"
+		rm -f "$file" "${TMP_STATE_DIR:-tmp/state}/rate_limit_backoff_last_log" 2>/dev/null || true
+	fi
+}
+
 _ensure_status_overlays_watchers() {
 	[ "${SOREN_OVERLAY_AUTORECOVER_ENABLED:-1}" = "1" ] || return 0
 	local now interval
@@ -338,6 +357,7 @@ while true; do
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
+	_expire_rate_limit_backoff_if_elapsed
 	_exit_if_lock_owner_changed "before_game"
 
 	# ゲーム番号を毎試合読み直す
@@ -553,9 +573,51 @@ json.dump(d,open(f,'w'))
 		_stag_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('consecutive_no_improve',0)))" 2>/dev/null || echo 0)
 		_early_min="${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}"
 		case "$_early_min" in ''|*[!0-9]*) _early_min=4 ;; esac
+		_rollback_revalidate_probe=$(
+			python3 - "$CURRENT_STRATEGY_RUN_FILE" "$TMP_STATE_DIR/last_rollback_pair.json" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY' 2>/dev/null || echo "0:0:"
+import json
+import os
+import sys
+
+current_file, pair_file, mature_raw = sys.argv[1:4]
+try:
+    mature = max(1, int(mature_raw))
+except Exception:
+    mature = 12
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+current = load(current_file)
+pair = load(pair_file)
+current_hash = str(current.get("hash", "") or "")
+rollback_hash = str(pair.get("to_hash", "") or "")
+try:
+    n = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
+except Exception:
+    n = 0
+
+if current_hash and rollback_hash and current_hash == rollback_hash and n < mature:
+    print(f"1:{n}:{current_hash}")
+else:
+    print(f"0:{n}:{current_hash}")
+PY
+		)
+		_rollback_revalidate_active="${_rollback_revalidate_probe%%:*}"
+		_rollback_revalidate_rest="${_rollback_revalidate_probe#*:}"
+		_rollback_revalidate_n="${_rollback_revalidate_rest%%:*}"
+		_rollback_revalidate_hash="${_rollback_revalidate_rest#*:}"
 		if [ "${_cycle_acc_count:-0}" -ge "$_early_min" ] &&
 			[ "${_stag_count:-0}" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ]; then
-			if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
+			if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "$_rollback_revalidate_active" = "1" ]; then
+				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 即応脱出ロックを延期"
+			elif [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
 				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rank1 hot streak 中 → 即応脱出ロックを延期"
 			else
 				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 早期脱出ロック作成"

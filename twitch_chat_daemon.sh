@@ -1,6 +1,6 @@
 #!/bin/bash
 # twitch_chat_daemon.sh - Twitch IRC 常駐プロセス（twitch_chat.sh から起動される）
-# 4分ごとに再接続し、PRIVMSGをraw.logに追記する
+# 常時接続し、PRIVMSGをraw.logに追記する
 
 CHAT_DIR="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
 RAW_LOG="$CHAT_DIR/raw.log"
@@ -70,16 +70,35 @@ _notify_chat_overlay() {
     ./overlay_notify.sh chat "Twitch コメント受信" "$line" "info" >/dev/null 2>&1 || true
 }
 
+_pid_alive() {
+    local pid="${1:-}" err=""
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+    case "$err" in
+        *"operation not permitted"*|*"Operation not permitted"*) return 0 ;;
+    esac
+    return 1
+}
+
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
+    coproc TWITCH_IRC { nc irc.chat.twitch.tv 6667 2>/dev/null; }
     {
         # display-name などのメタ情報タグを受け取る
-        echo "PASS SCHMOOPIIE"
-        echo "CAP REQ :twitch.tv/tags twitch.tv/commands"
-        echo "NICK $nick"
-        echo "JOIN #${CHANNEL}"
-        sleep 240
-    } | nc -w 250 irc.chat.twitch.tv 6667 2>/dev/null | while IFS= read -r line; do
+        printf 'PASS SCHMOOPIIE\r\n'
+        printf 'CAP REQ :twitch.tv/tags twitch.tv/commands\r\n'
+        printf 'NICK %s\r\n' "$nick"
+        printf 'JOIN #%s\r\n' "$CHANNEL"
+    } >&"${TWITCH_IRC[1]}" || {
+        exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
+        exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
+        wait "$TWITCH_IRC_PID" 2>/dev/null || true
+        sleep 5
+        continue
+    }
+    while IFS= read -r line <&"${TWITCH_IRC[0]}"; do
         # IRCv3 タグ付き行: @tag1=v1;tag2=v2 :user!user@... PRIVMSG #ch :message
         tags=""
         payload="$line"
@@ -87,6 +106,10 @@ while true; do
             tags="${payload%% *}"
             tags="${tags#@}"
             payload="${payload#* }"
+        fi
+        if [[ "$payload" == PING* ]]; then
+            printf 'PONG %s\r\n' "${payload#PING }" >&"${TWITCH_IRC[1]}" 2>/dev/null || break
+            continue
         fi
 
         # サブスク/ギフトサブ検出 (USERNOTICE)
@@ -306,6 +329,9 @@ while true; do
             fi
         fi
     done
+    exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
+    exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
+    wait "$TWITCH_IRC_PID" 2>/dev/null || true
     echo "[$(date '+%H:%M:%S')] IRC session ended; reconnecting in 5s" >> "$CHAT_DIR/daemon_reconnect.log"
     # --- Outbound chat queue consumer ---
     # chat_worker 配下では親 worker が送信を一元管理する。standalone daemon の時だけ消化する。
@@ -316,7 +342,7 @@ while true; do
     case "$_chat_worker_pid" in
         ''|*[!0-9]*) _chat_worker_pid="" ;;
     esac
-    if [ -z "$_chat_worker_pid" ] || ! kill -0 "$_chat_worker_pid" 2>/dev/null; then
+    if [ -z "$_chat_worker_pid" ] || ! _pid_alive "$_chat_worker_pid"; then
         if source lib/outbound_queue.sh 2>/dev/null; then
             _outbound_rate_sec=2
             while outbound_queue_consume_once; do
