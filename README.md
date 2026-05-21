@@ -105,6 +105,12 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 5. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
 6. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
 
+通常サイクル中の早期脱出:
+
+- rollback 直後の再検証ではない通常改善 hash で `consecutive_no_improve >= WILDCARD_TRIGGER_STAGNATION` になり、蓄積ゲーム数が `WILDCARD_EARLY_ESCAPE_MIN_GAMES` 以上なら、`MIN_GAMES_BEFORE_IMPROVE` を待たず `early_escape_lock` を作る。
+- 早期脱出ロックは `improve_reason=normal` として作られ、改善 daemon 側で `archive_restart` / `wildcard` / `escape_ai` の最終ルーティングを判定する。
+- rollback target の fresh cycle 中、または rank1 hot streak 中は早期脱出を延期する。これは過去 rolling 実績の再検証や上振れ保護を優先するため。
+
 直接脱出ロックのルーティング順:
 
 1. `archive_restart`: 評価済みアーカイブから、near-anchor かつロシア再現性または type14/15 frontier を持つ候補へ戻す。`best_max_type >= 15` だけを `russia_count=1` とみなさない。候補は `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` / `ARCHIVE_RESTART_MIN_RUSSIA_RATE` / `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` で絞る。
@@ -125,6 +131,8 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | 変数 | 既定 | 役割 |
 |---|---:|---|
 | `POST_REGRESSION_DIRECT_ESCAPE_ENABLED` | `1` | 粛清連鎖でロシア建国ルートを失った場合、次ゲームを待たず直接脱出ロックを作る |
+| `WILDCARD_TRIGGER_STAGNATION` | `3` | 通常サイクル中の停滞で WILDCARD / archive_restart / escape_ai ルーティングへ進む閾値 |
+| `WILDCARD_EARLY_ESCAPE_MIN_GAMES` | `4` | 停滞閾値到達時に 12試合を待たず早期脱出ロックを作れる最小蓄積ゲーム数 |
 | `WILDCARD_REGRESSION_STREAK` | `2` | 直接脱出や WILDCARD 発火の回帰ストリーク閾値 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
