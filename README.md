@@ -101,14 +101,21 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 1. 粛清が起きたら、`REGRESSION_ROLLBACK_RESULT` の理由を読む。
 2. `objective_regression` / `lost_russia_path` / `curr_russia=0` / `best_max_type` 後退は、スコア問題ではなくロシア建国ルート喪失として扱う。
 3. 復帰先に `russia_count > 0` または `best_max_type >= 15` がある場合は、脱出ではなく rollback target の再検証を優先する。`current_strategy_run.json` が rollback 直後の fresh cycle で空でも、同じハッシュの `rolling_scores.json` 上のロシア実績を参照して誤脱出を防ぐ。
-4. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
-5. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
+4. ただし rollback target の fresh cycle が `MIN_GAMES_BEFORE_IMPROVE` に達した後は、過去の rolling 実績だけではロシア進捗ありとみなさない。current run / improve lock にロシア再現がなく、`regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は脱出ルーティングへ戻す。
+5. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
+6. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
 
 直接脱出ロックのルーティング順:
 
 1. `archive_restart`: 評価済みアーカイブから、near-anchor かつロシア再現性または type14/15 frontier を持つ候補へ戻す。`best_max_type >= 15` だけを `russia_count=1` とみなさない。候補は `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` / `ARCHIVE_RESTART_MIN_RUSSIA_RATE` / `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` で絞る。
 2. `wildcard`: archive 候補がない、または cooldown 中なら使う。目的はランダムなスコア改善ではなく、type14→15 frontier やロシア建国経路の再獲得。
 3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので中止する。
+
+ステータス監視:
+
+- `show_status.sh --once` の `ArchiveNext` は最有力候補だけを短く表示する。
+- `status_dashboard.py` / `generate_status_overlay.sh` のステータス overlay は、WILDCARD status の直後に `ArchiveRestart candidates` として上位10候補の `hash` / `comp` / `p25` / `n` / `ru` / `sv` / `t` / origin retry を表示する。
+- 候補がない場合は `threshold` や `R0` / `cool` / `reject` などの blocker を表示し、`escape_ai direct` へ落ちる条件を確認できるようにする。
 
 関連設定:
 

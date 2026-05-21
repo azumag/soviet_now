@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from glob import glob
@@ -71,6 +72,8 @@ HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
 def fg256(n):
     return f"\033[38;5;{n}m"
 
@@ -86,6 +89,50 @@ C_GREY = fg256(245)
 C_BLUE = fg256(33)
 
 SCORE_GRADIENT = [196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46]
+
+
+def char_display_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def ansi_display_width(text):
+    plain = ANSI_RE.sub("", str(text or ""))
+    return sum(char_display_width(ch) for ch in plain)
+
+
+def truncate_ansi_display(text, max_width):
+    text = str(text or "")
+    if max_width <= 0 or ansi_display_width(text) <= max_width:
+        return text
+    limit = max(0, max_width - 1)
+    out = []
+    width = 0
+    pos = 0
+    saw_ansi = False
+    for match in ANSI_RE.finditer(text):
+        segment = text[pos:match.start()]
+        for ch in segment:
+            ch_width = char_display_width(ch)
+            if width + ch_width > limit:
+                return "".join(out) + "…" + (RST if saw_ansi else "")
+            out.append(ch)
+            width += ch_width
+        out.append(match.group(0))
+        saw_ansi = True
+        pos = match.end()
+    for ch in text[pos:]:
+        ch_width = char_display_width(ch)
+        if width + ch_width > limit:
+            return "".join(out) + "…" + (RST if saw_ansi else "")
+        out.append(ch)
+        width += ch_width
+    return "".join(out)
+
+
+def fit_dashboard_lines(lines, width=W):
+    return [truncate_ansi_display(line, width) for line in lines]
 
 
 def gradient_color(val, lo, hi):
@@ -1477,6 +1524,18 @@ def load_archive_restart_candidate():
             "min_best_type": min_best_type,
             "blockers": blockers,
         }
+    candidates = []
+    for _, row_h, row_metrics, row_russia, row_soviet, row_best_type, row_origin_type in rows[:10]:
+        candidates.append({
+            "hash": row_h[:8],
+            "comp": int(round(row_metrics.get("comp", 0.0))),
+            "p25": int(round(row_metrics.get("p25", 0.0))),
+            "n": int(row_metrics.get("n", 0) or 0),
+            "russia": row_russia,
+            "soviet": row_soviet,
+            "best_type": row_best_type,
+            "origin_retry": bool(row_origin_type),
+        })
     _, h, metrics, russia, soviet, best_type, origin_type = rows[0]
     return {
         "hash": h[:8],
@@ -1488,6 +1547,7 @@ def load_archive_restart_candidate():
         "best_type": best_type,
         "count": len(rows),
         "origin_retry": bool(origin_type),
+        "candidates": candidates,
     }
 
 
@@ -1671,10 +1731,11 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     return lines
 
 
-def render_score_timeline(scores, chart_w=50, chart_h=7):
+def render_score_timeline(scores, chart_w=42, chart_h=7):
     label_w = 5  # "XXXXX"
     sep = "│"
-    # total = label_w + 1(sep) + chart_w + 1(space) = 57
+    # Braille glyphs render a little wider in OBS/browser than in terminals.
+    # Keep this below the old 50-wide graph so it fills the frame without spilling.
 
     if len(scores) < 3:
         lines = [f"{'':>{label_w}}{sep} {'(not enough data)':^{chart_w}}"]
@@ -1898,6 +1959,47 @@ def render_wildcard_status(rolling, current_hash=""):
     return lines
 
 
+def render_archive_restart_candidates():
+    archive_next = load_archive_restart_candidate()
+    lines = []
+    if archive_next and archive_next.get("status") == "no_candidate_cooldown":
+        lines.append(
+            f"  {C_YELLOW}ArchiveRestart candidates{RST} "
+            f"{DIM}total=0 cooldown {archive_next.get('age', '')}/{archive_next.get('ttl', '')}; escape_ai direct{RST}"
+        )
+    elif archive_next and archive_next.get("status") == "no_candidate":
+        blockers = archive_next.get("blockers", {}) or {}
+        blocker_text = " ".join(
+            f"{name}={blockers.get(name)}"
+            for name in ("R0", "unstable", "miss", "cool", "reject", "S0", "origin")
+            if blockers.get(name)
+        )
+        blocker_text = f" {blocker_text}" if blocker_text else ""
+        lines.append(
+            f"  {C_YELLOW}ArchiveRestart candidates{RST} "
+            f"{DIM}total=0 threshold c>={archive_next.get('threshold', 0)}"
+            f"{blocker_text}; escape_ai direct{RST}"
+        )
+    elif archive_next:
+        candidates = archive_next.get("candidates") or []
+        total = int(archive_next.get("count", len(candidates)) or 0)
+        lines.append(
+            f"  {C_GREEN}ArchiveRestart candidates{RST} "
+            f"{DIM}top={min(10, total)} total={total}{RST}"
+        )
+        lines.append(f"{DIM}    hash       comp     p25   n    ru sv  t origin{RST}")
+        for idx, cand in enumerate(candidates, start=1):
+            origin = "Y" if cand.get("origin_retry") else "-"
+            lines.append(
+                f"  {idx:>1}. {C_BLUE}{cand.get('hash', '')}{RST} "
+                f"{int(cand.get('comp', 0)):>8} {int(cand.get('p25', 0)):>7} "
+                f"{int(cand.get('n', 0)):>3} "
+                f"{int(cand.get('russia', 0)):>3} {int(cand.get('soviet', 0)):>2} "
+                f"{int(cand.get('best_type', 0)):>2}   {origin}"
+            )
+    return lines
+
+
 def render_observer_status():
     if os.getenv("HIDE_STATUS_DASHBOARD_OBSERVER_SECTION", "0") == "1":
         return []
@@ -1952,32 +2054,6 @@ def render_observer_status():
             f"eff={wildcard.get('effective_streak', wildcard.get('streak', 0))} "
             f"last={wildcard.get('last_event', 'none')} {wildcard.get('last_hash', '')} "
             f"sc={wildcard.get('scale', 1.0)} {DIM}{escape_note}{RST}"
-        )
-    archive_next = load_archive_restart_candidate()
-    if archive_next and archive_next.get("status") == "no_candidate_cooldown":
-        lines.append(
-            f" {C_YELLOW}ArchiveNext{RST} no candidate "
-            f"{DIM}cooldown {archive_next.get('age', '')}/{archive_next.get('ttl', '')}; escape_ai direct{RST}"
-        )
-    elif archive_next and archive_next.get("status") == "no_candidate":
-        blockers = archive_next.get("blockers", {}) or {}
-        blocker_text = " ".join(
-            f"{name}={blockers.get(name)}"
-            for name in ("R0", "unstable", "miss", "cool", "reject", "S0", "origin")
-            if blockers.get(name)
-        )
-        blocker_text = f" {blocker_text}" if blocker_text else ""
-        lines.append(
-            f" {C_YELLOW}ArchiveNext{RST} no candidate "
-            f"{DIM}threshold c>={archive_next.get('threshold', 0)} "
-            f"{blocker_text}; escape_ai direct{RST}"
-        )
-    elif archive_next:
-        lines.append(
-            f" {C_GREEN}ArchiveNext{RST} {archive_next.get('hash', '')} "
-            f"c={archive_next.get('comp', 0)} p25={archive_next.get('p25', 0)} n={archive_next.get('n', 0)} "
-            f"{DIM}ru={archive_next.get('russia', 0)} sv={archive_next.get('soviet', 0)} "
-            f"t={archive_next.get('best_type', 0)} pool={archive_next.get('count', 0)}{RST}"
         )
     return lines
 
@@ -2174,8 +2250,11 @@ def main():
     _wc = render_wildcard_status(rolling, strat_hash)
     if _wc:
         output += _wc
+        _archive = render_archive_restart_candidates()
+        if _archive:
+            output += _archive
         output.append("")
-    print("\n".join(output))
+    print("\n".join(fit_dashboard_lines(output)))
 
 
 if __name__ == "__main__":

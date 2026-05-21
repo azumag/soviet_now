@@ -24,8 +24,8 @@ esac
 (( interval < 1 )) && interval=1
 
 out_file="${STATUS_OVERLAY_HTML_FILE:-tmp/state/status_overlay.html}"
-width="${STATUS_OVERLAY_WIDTH:-600}"
-height="${STATUS_OVERLAY_HEIGHT:-920}"
+width="${STATUS_OVERLAY_WIDTH:-560}"
+height="${STATUS_OVERLAY_HEIGHT:-1020}"
 pid_file="tmp/state/status_overlay_watch.pid"
 log_file="tmp/debug/status_overlay.log"
 tmux_session="soren_status_overlay"
