@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: axis 1.7c NEAR_DEADLINE_SUPPRESSION — max_y>=1.8 && deadline_margin<1.0 && NEAR で -6000 ペナルティ
+     #       mandatory_themes第二条「デッドライン付近の危険盤面領域では、併合を優先するべき」対応
+     #       NEAR(68.5%成功)はdeadline danger zoneでは実質NO_MERGEと同じ — 失敗するとpiece追加でgame over加速
+     #       worst T56, best T107-T112, extra_low T76-T83 のNO_MERGE@deadlineパターン修復
+     #       Does NOT affect DIRECT(95.7%成功はdeadline zoneでも信頼足够)
+     #       Fixes rollback failure mode: NO_MERGE at deadline danger zone with small margin
+     #       refs: tmp/analysis_result.md (Implementation Plan: axis 1.7c NEAR deadline suppression)
      # vXXX: DEADLINE_MERGE_URGENCY — +30*(max_y-1.5) bonus for DIRECT/NEAR when Russia(T15) incomplete && max_y>=1.8
      #       Targets T14→T15 pipeline reliability. Russia incomplete = no type 15 on board.
      #       Kazakhstan(T14) is the main gate target at 33% completion (0/12 Russia reached).
@@ -1018,6 +1025,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             penalty = -1000.0 * (1.0 + (max_y - 2.5) * 2.0)
             score += penalty
             reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
+
+        # ----- axis 1.7c: NEAR suppression at deadline danger zone (vXXX) -----
+        # mandatory_themes第二条: 「デッドライン付近の危険盤面領域では、併合を優先するべき」
+        # When board is approaching deadline danger zone (max_y >= 1.8, deadline_margin < 1.0),
+        # NEAR merge (68.5% success) is effectively "NO_MERGE" for practical purposes.
+        # A failed NEAR at deadline zone adds a piece without merge benefit, accelerating game over.
+        # Treat NEAR as NO_MERGE by suppressing NEAR bonus and applying NO_MERGE penalty.
+        # Fires when: max_y >= 1.8 AND reactor_margin < 1.0 AND merge_grade == "NEAR"
+        # NOT suppressed by russia_phase (russia_phase already has v624 NEAR handling)
+        # Does NOT affect DIRECT merges (95.7% success — reliable enough for deadline)
+        # Fixes rollback failure mode: NO_MERGE at deadline danger zone with small margin
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 1.7c NEAR deadline suppression)
+        if max_y >= 1.8 and reactor_margin < 1.0 and merge_grade == "NEAR":
+            score -= 1500.0
+            score -= 4500.0
+            reasons.append("NEAR_DEADLINE_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
