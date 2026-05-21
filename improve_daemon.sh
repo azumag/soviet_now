@@ -25,6 +25,7 @@ source ./eloop_lib.sh
 
 POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
 DAEMON_TTY_FILE="$TMP_STATE_DIR/improve_daemon.tty"
+_HEARTBEAT_PID=""
 
 _require_visible_terminal() {
 	# 配信用フォアグラウンド端末前提は廃止。進捗は HTML オーバーレイに
@@ -51,7 +52,20 @@ _require_visible_terminal
 echo "[$(date '+%H:%M:%S')] [improve_daemon] 起動 (poll=${POLL_INTERVAL}s)"
 echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 
+_start_pid_heartbeat() {
+	(
+		while true; do
+			echo $$ > "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true
+			sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+		done
+	) &
+	_HEARTBEAT_PID=$!
+}
+
 _daemon_cleanup() {
+	if [ -n "$_HEARTBEAT_PID" ]; then
+		kill "$_HEARTBEAT_PID" 2>/dev/null || true
+	fi
 	local recorded_pid
 	recorded_pid=$(cat "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true)
 	if [ "$recorded_pid" = "$$" ]; then
@@ -61,6 +75,7 @@ _daemon_cleanup() {
 	exit 0
 }
 trap '_daemon_cleanup' INT TERM
+_start_pid_heartbeat
 
 while true; do
 	if [ -f tmp/stop ]; then
