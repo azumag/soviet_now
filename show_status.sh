@@ -786,7 +786,14 @@ try:
     data = json.load(open(sys.argv[1], encoding="utf-8")) or {}
 except Exception:
     data = {}
-print(len(data) if isinstance(data, dict) else 0)
+if not isinstance(data, dict):
+    print(0)
+    raise SystemExit
+print(sum(
+    1
+    for meta in data.values()
+    if str((meta or {}).get("origin_type") or "wildcard") == "wildcard"
+))
 PY
 )
 	fi

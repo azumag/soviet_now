@@ -58,6 +58,23 @@ print("" if value is None else value)
 PY
 }
 
+_improve_reason_get() {
+	python3 - "${IMPROVE_STATE_FILE:-tmp/state/improve_state.json}" "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" <<'PY'
+import json
+import sys
+
+for path in sys.argv[1:]:
+    try:
+        reason = json.load(open(path, encoding="utf-8")).get("improve_reason") or ""
+    except Exception:
+        reason = ""
+    if reason:
+        print(reason)
+        raise SystemExit(0)
+print("")
+PY
+}
+
 _pid_lstart_epoch() {
 	local pid="$1"
 	case "$pid" in ''|0|*[!0-9]*) echo 0; return 0 ;; esac
@@ -152,6 +169,7 @@ phase=$(_json_get phase "")
 detail=$(_json_get detail "")
 started_at=$(_json_get started_at 0)
 updated_at=$(_json_get updated_at 0)
+improve_reason=$(_improve_reason_get 2>/dev/null || echo "")
 updated_age=$(( now - ${updated_at:-0} ))
 log_age=$(_file_age_sec "$IMPROVE_AI_LOG_FILE" "$now")
 live_pid=$(_find_live_improve_pid 2>/dev/null || true)
@@ -211,15 +229,22 @@ if [ "$live_pid" -ne 0 ]; then
 	if [ -n "${IMPROVE_LEGACY_CONSOLE_SOURCE:-}" ]; then
 		./obs_control.sh hide soren "$IMPROVE_LEGACY_CONSOLE_SOURCE" >/dev/null 2>&1 || true
 	fi
-	if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
-		if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
-			_monitor_log "improve running but soren91 stop is in progress; leaving process control to soren91_stop"
-		else
-			_monitor_log "improve running but soren91 is not active; calling existing soren91_start"
-			soren91_start >/dev/null 2>&1 || true
+	case "$improve_reason" in
+	wildcard|archive_restart)
+		_monitor_log "improve reason=${improve_reason}; leaving soren91 stopped and preserving non-Meriken presentation"
+		;;
+	*)
+		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
+			if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
+				_monitor_log "improve running but soren91 stop is in progress; leaving process control to soren91_stop"
+			else
+				_monitor_log "improve running but soren91 is not active; calling existing soren91_start"
+				soren91_start >/dev/null 2>&1 || true
+			fi
 		fi
-	fi
-	_activate_shared_browser_tab meriken
+		_activate_shared_browser_tab meriken
+		;;
+	esac
 
 	if [ "$elapsed" -ge "$LONG_SEC" ] || [ "$stale_age" -ge "$STALE_SEC" ]; then
 		note="long_or_stale phase=${phase:-?} detail=${detail:-?}"

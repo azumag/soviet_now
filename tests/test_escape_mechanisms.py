@@ -1800,6 +1800,7 @@ class TestImproveOverlay(unittest.TestCase):
     def test_status_g_has_wide_short_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         overlay = (REPO_ROOT / "generate_status_overlay.sh").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
         status_g = (REPO_ROOT / "show_status_g.sh").read_text()
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
 
@@ -1817,7 +1818,7 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("STATUS_OVERLAY_OBS_TRANSFORM_ENABLED", config)
         self.assertIn('STATUS_OVERLAY_OBS_TRANSFORM_ENABLED:-1', config)
         self.assertIn('STATUS_OVERLAY_WIDTH="${STATUS_OVERLAY_WIDTH:-560}"', config)
-        self.assertIn("1020", config)
+        self.assertIn('STATUS_OVERLAY_HEIGHT="${STATUS_OVERLAY_HEIGHT:-820}"', config)
         self.assertIn("python3 status_dashboard.py", overlay)
         self.assertIn("[ -f .env ] && set -a && . ./.env && set +a", overlay)
         self.assertIn("ansi_to_html", overlay)
@@ -1859,6 +1860,11 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("ArchiveRestart candidates", dashboard)
         self.assertIn('"candidates": candidates', dashboard)
         self.assertIn("top={min(10, total)} total={total}", dashboard)
+        self.assertIn("wildcard_origins = {", dashboard)
+        self.assertIn('origin_type") or "wildcard") == "wildcard"', dashboard)
+        self.assertIn("current_origin_hash", dashboard)
+        self.assertIn("Show WILDCARD origins only", dashboard)
+        self.assertIn('origin_type") or "wildcard") == "wildcard"', status)
         self.assertIn("fit_dashboard_lines(output)", dashboard)
         self.assertIn("truncate_ansi_display", dashboard)
         self.assertIn("render_score_timeline(scores, chart_w=42", dashboard)
@@ -3433,6 +3439,10 @@ def decide(game_state, analysis):
         self.assertIn("objective_reasons = []", regression)
         self.assertIn("lost_russia_path", regression)
         self.assertIn("lost_soviet_path", regression)
+        self.assertIn("def stage_gate_regression_reason", regression)
+        self.assertIn("rank <= rolling_score_russia_grace_rank", regression)
+        self.assertIn("lost_ukraine_gate", regression)
+        self.assertIn("lost_kazakhstan_gate", regression)
         self.assertIn("mode=objective_regression", regression)
         self.assertIn("mode=early_objective_regression", regression)
         self.assertIn("early_objective_min_games", regression)
@@ -4064,6 +4074,19 @@ PY
         self.assertIn("improve runtime monitor skipped/failed", loop)
         self.assertIn("./monitor_improve_runtime.sh", eloop)
         self.assertIn("post_game_bookkeeping", eloop)
+
+    def test_archive_restart_monitor_does_not_start_soren91(self):
+        monitor = (REPO_ROOT / "monitor_improve_runtime.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+
+        self.assertIn("_improve_reason_get", monitor)
+        self.assertIn("wildcard|archive_restart)", monitor)
+        self.assertIn("leaving soren91 stopped", monitor)
+        self.assertLess(
+            monitor.index("wildcard|archive_restart)"),
+            monitor.index("calling existing soren91_start"),
+        )
+        self.assertIn("${_pause_reason}改善中(隔離評価): soren91代打を立てず待機", loop)
 
     def test_rollback_revalidates_strategy_after_restore(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

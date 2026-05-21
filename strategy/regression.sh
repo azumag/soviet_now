@@ -172,6 +172,9 @@ def explain_reasons(reason_text):
         "anchor_direct": "branch 状態なしで anchor 比の即時悪化として判定した。",
         "anchor_promoted": "現戦略が anchor を上回ったため anchor を更新した。",
         "objective_regression": "建国目標の進捗が anchor より後退した。",
+        "lost_turkmenistan_gate": "anchor よりトルクメニスタン段階の到達率が後退した。",
+        "lost_ukraine_gate": "anchor よりウクライナ段階の到達率が後退した。",
+        "lost_kazakhstan_gate": "anchor よりカザフスタン段階の到達率が後退した。",
         "lost_russia_path": "anchor はロシア到達済みだが current はロシア未到達だった。",
         "lost_soviet_path": "anchor はソ連到達済みだが current はソ連未到達だった。",
     }
@@ -3480,6 +3483,42 @@ def objective_allows_anchor_promotion(anchor_progress, current_progress):
         return False
     return objective_tuple(current_progress) >= objective_tuple(anchor_progress)
 
+STAGE_GATE_SEQUENCE = [
+    (11, "lost_turkmenistan_gate"),
+    (13, "lost_ukraine_gate"),
+    (14, "lost_kazakhstan_gate"),
+    (15, "lost_russia_path"),
+    (16, "lost_soviet_path"),
+]
+
+def stage_gate_rate(progress, threshold):
+    max_types = []
+    for raw in (progress or {}).get("max_types", []) or []:
+        try:
+            max_types.append(int(raw))
+        except Exception:
+            pass
+    if not max_types:
+        best = int((progress or {}).get("best_max_type", 0) or 0)
+        return 1.0 if best >= threshold else 0.0
+    hits = sum(1 for value in max_types if value >= threshold)
+    return hits / len(max_types)
+
+def stage_gate_regression_reason(anchor_progress, current_progress, current_metrics):
+    rank = current_rolling_rank(current_metrics)
+    if rank is None or rank <= rolling_score_russia_grace_rank:
+        return ""
+    for threshold, reason in STAGE_GATE_SEQUENCE:
+        current_rate = stage_gate_rate(current_progress, threshold)
+        anchor_rate = stage_gate_rate(anchor_progress, threshold)
+        current_best = int((current_progress or {}).get("best_max_type", 0) or 0)
+        anchor_best = int((anchor_progress or {}).get("best_max_type", 0) or 0)
+        current_unmet = current_rate < 1.0
+        regressed = anchor_rate > current_rate or (anchor_best >= threshold and current_best < threshold)
+        if current_unmet and regressed:
+            return reason
+    return ""
+
 try:
     current_games_total = int(current_data.get("games_total", current.get("n", 0)) or current.get("n", 0) or 0)
 except Exception:
@@ -3600,10 +3639,14 @@ if current["n"] < min_games_current:
 
 objective_reasons = []
 if current_hash != anchor_hash:
+    stage_gate_reason = stage_gate_regression_reason(anchor_objective, current_objective, current)
+    if stage_gate_reason:
+        objective_reasons.append(stage_gate_reason)
     if (
         anchor_objective.get("soviet_count", 0) > 0
         and current_objective.get("soviet_count", 0) <= 0
         and not russia_grace_active
+        and "lost_soviet_path" not in objective_reasons
     ):
         objective_reasons.append("lost_soviet_path")
     if (
@@ -3611,6 +3654,7 @@ if current_hash != anchor_hash:
         and anchor_objective.get("best_max_type", 0) >= 15
         and current_objective.get("best_max_type", 0) < 15
         and not russia_grace_active
+        and "lost_russia_path" not in objective_reasons
     ):
         objective_reasons.append("lost_russia_path")
 if objective_reasons:

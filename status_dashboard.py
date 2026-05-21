@@ -1915,7 +1915,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
 
 
 def render_wildcard_status(rolling, current_hash=""):
-    """WILDCARD origin 戦略を常時明示 (成熟n>=12フィルタ/現戦略か否かに関係なく表示)。"""
+    """Show WILDCARD origins only while the current strategy is origin-tracked."""
     p = Path("tmp/state/wildcard_origin.json")
     if not p.exists():
         return []
@@ -1925,6 +1925,24 @@ def render_wildcard_status(rolling, current_hash=""):
         return []
     if not isinstance(wo, dict) or not wo:
         return []
+    wildcard_origins = {
+        str(h): meta
+        for h, meta in wo.items()
+        if str((meta or {}).get("origin_type") or "wildcard") == "wildcard"
+    }
+    if not wildcard_origins:
+        return []
+    if not current_hash:
+        return []
+    current_origin_hash = next(
+        (
+            h for h in wildcard_origins
+            if str(h).startswith(current_hash[:12]) or current_hash.startswith(str(h)[:12])
+        ),
+        None,
+    )
+    if not current_origin_hash:
+        return []
     anchor = load_best_anchor() or {}
     anchor_comp = anchor.get("comp")
     anchor_h8 = str(anchor.get("hash", ""))[:8]
@@ -1933,7 +1951,9 @@ def render_wildcard_status(rolling, current_hash=""):
         f"  {BOLD}WILDCARD origins{RST} {DIM}(n/max comp delta vs {anchor_label}){RST}",
         f"{DIM}    hash     n/max     comp    p50    p25      dA{RST}",
     ]
-    for h, meta in list(reversed(list(wo.items())))[:5]:
+    origin_items = list(reversed(list(wildcard_origins.items())))
+    origin_items.sort(key=lambda item: 0 if item[0] == current_origin_hash else 1)
+    for h, meta in origin_items[:5]:
         scores = (rolling.get(h, {}) or {}).get("scores", []) or []
         m = calc_strategy_metrics(scores)
         n = len(scores)
@@ -2250,9 +2270,10 @@ def main():
     _wc = render_wildcard_status(rolling, strat_hash)
     if _wc:
         output += _wc
-        _archive = render_archive_restart_candidates()
-        if _archive:
-            output += _archive
+    _archive = render_archive_restart_candidates()
+    if _archive:
+        output += _archive
+    if _wc or _archive:
         output.append("")
     print("\n".join(fit_dashboard_lines(output)))
 
