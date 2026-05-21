@@ -740,6 +740,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
+        # v679: DEADLINE_GUARD mandatory_themes compliance fix — suppress NO_MERGE placements
+        #        that cross the deadline when no safe non-crossing candidate exists.
+        #        Fixes worst T54-55: DEADLINE_GUARD selected merge candidate that crossed
+        #        deadline (mandatory violation), then chose HIGH_TOWER with NO_MERGE at deadline.
+        #        Fixes 2308 game T90-97: russia_phase ON but 7 turns of SAFE_LANDING despite
+        #        merge opportunities, leading to last-minute urgent merge at T98.
+        #        mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        #        — placement crosses deadline && merge_grade==NO is always prohibited.
+        #        Ukraine (T13) stage gate: 83%→100%, targeting merge-drought death spiral.
+        #        refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_GUARD fix)
         __dlg_has_clean = any(
             isinstance(c, dict)
             and not c.get("crosses_deadline")
@@ -748,9 +758,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         )
         def __dlg_merge_result_safe(c):
             return not (__dlg_has_clean and c.get("merge_result_crosses_deadline"))
+        def __dlg_no_merge_violates_mandatory(c):
+            return c.get("crosses_deadline") and c.get("merge_grade") == "NO"
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
+            and __dlg_merge_result_safe(c)
+            and not __dlg_no_merge_violates_mandatory(c)
+        ]
+        __dlg_near_safe = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
+            and __dlg_merge_result_safe(c)
+            and not __dlg_no_merge_violates_mandatory(c)
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -760,10 +780,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 )
             __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
-        __dlg_near_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and __dlg_merge_result_safe(c)
-        ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
