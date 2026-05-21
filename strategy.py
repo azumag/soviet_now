@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v677: DEADLINE_GUARD merge promotion — conditional threshold raise in approaching zone
+     #       margin < 1.0 && merge_available (DIRECT/NEAR exists) → raise SAFE_LANDING threshold from
+     #       < 0.75 to < 0.5 so DIRECT/NEAR fire before safe landing when merge is available.
+     #       Fixes rollback failure mode: worst T82-86 margin=0.46-0.49 SAFE_LANDING return with
+     #       merge_available=false → max_y runaway 3.17→3.31; deadline_guard efficiency improvement.
+     #       mandatory_themes: "デッドライン付近では併合を優先" — reinforced, SAFE_LANDING still exists
+     #       Constraint: deadline_crossed with merge_result_crosses_deadline still allowed (exception clause)
+     #       refs: tmp/analysis_result.md
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -726,7 +734,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
+    # Merge promotion in approaching zone (margin < 1.0): when merge available,
+    # raise SAFE_LANDING threshold so DIRECT/NEAR can fire before critical level.
+    # Fixes rollback failure mode: worst T82-86 margin=0.46-0.49 SAFE_LANDING
+    # return with merge_available=false; deadline_guard efficiency improvement.
+    # refs: tmp/analysis_result.md
+    __dlg_approaching = __dlg_margin < 1.0
+    __dlg_has_merge = any(
+        isinstance(c, dict) and c.get("merge_grade") in ["DIRECT", "NEAR"]
+        for c in __dlg_cands
+    )
+    if __dlg_approaching and __dlg_has_merge:
+        __dlg_critical = __dlg_dcross or __dlg_margin < 0.5
+    else:
+        __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
     if __dlg_critical and __dlg_cands:
         __dlg_has_clean = any(
             isinstance(c, dict)
