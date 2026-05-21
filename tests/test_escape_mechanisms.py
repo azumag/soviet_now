@@ -1161,34 +1161,38 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"escape_ai_success_reset"', eloop)
         self.assertIn('"last_escape_ai_hash"', eloop)
         self.assertIn('"origin_type": "escape_ai"', eloop)
-        self.assertIn("stagnation/wildcard latch cleared", eloop)
+        self.assertIn("not registered as wildcard origin", eloop)
+        self.assertIn("stagnation/escape_ai latch cleared", eloop)
+        self.assertNotIn('origin[hash_after] = {', eloop)
+        self.assertNotIn('ESCAPE_AI_MAX_GAMES', eloop)
 
     def test_wildcard_stagnation_can_queue_early_escape_lock(self):
-        """WILDCARD 停滞時は12試合サイクルを待たずに改善daemonへ渡せる。"""
+        """停滞時は12試合サイクルを待たずに早期脱出ロックとして改善daemonへ渡せる。"""
         config = (REPO_ROOT / "core/config.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
 
         self.assertIn("WILDCARD_EARLY_ESCAPE_LOCK_ENABLED", config)
         self.assertIn("WILDCARD_EARLY_ESCAPE_MIN_GAMES", config)
-        self.assertIn("WILDCARD 即応ロック", loop)
-        self.assertIn("早期脱出ロック作成", loop)
+        self.assertIn("早期脱出ロック", loop)
+        self.assertIn("[EARLY_ESCAPE]", loop)
+        self.assertIn("改善ロック作成 (最終モードはimprove側で判定)", loop)
         self.assertIn("early_escape_lock", loop)
         self.assertIn("early_escape_stagnation", loop)
         self.assertIn("_expire_rate_limit_backoff_if_elapsed", loop)
         self.assertIn("rate-limit backoff期限切れ", loop)
-        self.assertIn("rank1 hot streak 中 → 即応脱出ロックを延期", loop)
+        self.assertIn("rank1 hot streak 中 → 早期脱出ロックを延期", loop)
         self.assertIn("rollback revalidate fresh cycle 中", loop)
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
         self.assertLess(
             loop.index("rollback revalidate fresh cycle 中"),
-            loop.index("rank1 hot streak 中 → 即応脱出ロックを延期"),
+            loop.index("rank1 hot streak 中 → 早期脱出ロックを延期"),
         )
         self.assertIn("normal|post_regression|wildcard|escape_ai|archive_restart", improve)
         self.assertLess(
-            loop.index("WILDCARD 即応ロック"),
+            loop.index("早期脱出ロック"),
             loop.index("改善サイクル管理: 12試合蓄積時"),
         )
 
@@ -1474,7 +1478,7 @@ class TestStagnationCounterTransitions(unittest.TestCase):
         self.assertIn("_update_stagnation(ok_event_for_objective(anchor_objective, current_objective))", text)
         self.assertIn('_update_stagnation("OK_IDLE")', text)
         self.assertIn('_update_stagnation("SAME_HASH_BACKSLIDE")', text)
-        self.assertIn('_update_stagnation("OBJECTIVE_MISS")', text)
+        self.assertIn('"OBJECTIVE_MISS" if objective_miss_against_anchor', text)
         # シェル側で counter を更新していない (Python 単一 owner)
         # rollback 経路 (REJECTED_HASHES_FILE 追記の隣) にはシェル側からの stagnation 書き換えはない
 
@@ -1638,6 +1642,9 @@ class TestRankOneHotStreakExtension(unittest.TestCase):
         self.assertIn("score > prev_best", regression)
         self.assertIn("rank1 hot streak 中", loop)
         self.assertIn("_is_rank1_hot_streak", loop)
+        self.assertIn("notify_rank1_hot_streak_extension", loop)
+        self.assertIn("rank1 hot streak 延長", loop)
+        self.assertIn('enqueue_chat_message "$chat_msg" "hot_streak"', loop)
         self.assertIn("hot_streak_prediction_pending", prediction)
         self.assertIn("延長突入", prediction)
         self.assertIn("次改善まで新規予想停止", prediction)
@@ -2624,6 +2631,71 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], -0.8)
         self.assertIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_monitor_flags_actual_crossing_with_lower_alternative(self):
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 12,
+            "score": 100,
+            "piece_count": 30,
+            "decision_x": 1.0,
+            "decision_reason": "HIGH_TOWER",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {"id": 1, "type": 3, "x": -1.0, "y": -4.0, "r": 0.3},
+                    {"id": 2, "type": 4, "x": 1.0, "y": 2.8, "r": 0.4},
+                ]
+            },
+        }
+        curr = {
+            "turn": 13,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 3, "type": 5, "x": 1.0, "y": 3.1, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertEqual(event["status"], "inappropriate")
+        self.assertTrue(event["has_lower_alternative"])
+        self.assertEqual(event["trigger"], "actual_new_piece_top_over_deadline")
+        self.assertLess(event["best_lower_alternative"]["top_y"], event["actual_new_piece"]["top_y"])
+
+    def test_deadline_monitor_accepts_actual_lowest_crossing(self):
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 13,
+            "score": 100,
+            "piece_count": 31,
+            "decision_x": 0.0,
+            "decision_reason": "HIGH_TOWER",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {"id": i + 1, "type": 4, "x": round(-3.0 + i * 0.4, 1), "y": 2.8, "r": 0.4}
+                    for i in range(16)
+                ]
+            },
+        }
+        curr = {
+            "turn": 14,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 99, "type": 5, "x": 0.0, "y": 3.1, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertEqual(event["status"], "appropriate")
+        self.assertFalse(event["has_merge_alternative"])
+        self.assertFalse(event["has_lower_alternative"])
+
     def test_deadline_guard_injector_filters_merge_result_crossing(self):
         injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
 
@@ -3286,6 +3358,7 @@ def decide(game_state, analysis):
         self.assertIn("回帰ロールバック直後 → 失敗バッチで改善ロック作成", loop)
         self.assertIn("d['improve_reason']='post_regression'", loop)
         self.assertIn("REGRESSION_ROLLBACK_HASH", loop)
+        self.assertIn('[ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]', loop)
         self.assertIn("ロールバック直後の失敗バッチを改善入力として使用", improve)
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn('_start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "$improve_reason"', improve)
@@ -3769,7 +3842,7 @@ PY
         self.assertIn('--tools "$RADIO_CLAUDE_TOOLS" --permission-mode dontAsk', radio_engine)
         self.assertIn('"webfetch":"allow"', radio_corners)
         self.assertIn("_notify_webfetch_failure()", helpers)
-        self.assertIn('./overlay_notify.sh radio "WebFetch failed"', helpers)
+        self.assertIn('./overlay_notify.sh radio "Web取得失敗"', helpers)
         self.assertIn("取得できなかった", helpers)
         self.assertIn(r"[✗✕×]\s*(webfetch|websearch)\s+failed", radio_engine)
         self.assertIn(r"(WebFetch|WebSearch)", radio_engine)
@@ -3790,6 +3863,16 @@ PY
             text=True,
             capture_output=True,
         )
+        raw_http_failure = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                "source ./eloop_lib.sh; _contains_webfetch_failure_text $'✗ webfetch failed\\nError: Request failed with status code: 404'",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
         failure = subprocess.run(
             [
                 "bash",
@@ -3802,7 +3885,18 @@ PY
         )
 
         self.assertNotEqual(success.returncode, 0)
+        self.assertNotEqual(raw_http_failure.returncode, 0)
         self.assertEqual(failure.returncode, 0)
+
+    def test_factcheck_debug_dump_sanitizes_raw_webfetch_failures(self):
+        factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text()
+        monitor = (REPO_ROOT / "monitor_webfetch_failure.sh").read_text()
+
+        self.assertIn("===SANITIZED_CHECK_OUTPUT===", factcheck)
+        self.assertIn('printf \'%s\\n\' "$raw_output" | _sanitize_onair_text', factcheck)
+        self.assertIn("webfetch_monitor_start_epoch", monitor)
+        self.assertIn("*_prompt.txt", monitor)
+        self.assertIn("overlay_events.jsonl", monitor)
 
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
@@ -3843,9 +3937,10 @@ PY
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', regression)
         self.assertIn('_reset_current_strategy_run "$rolled_hash"', regression)
         self.assertIn("rollback revalidate fresh cycle", regression)
-        self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', loop)
+        self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]; then', loop)
         self.assertIn("復帰先の再評価を優先し改善ロック作成をスキップ", loop)
         self.assertIn("rollback revalidate fresh cycle 中", loop)
+        self.assertIn("[EARLY_ESCAPE]", loop)
 
     def test_recent_50_score_trend_graces_rollback_gates(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -3863,16 +3958,8 @@ PY
         self.assertIn("reasons=objective_regression+", regression)
         self.assertIn("reasons=early_objective_regression+", regression)
         self.assertIn("mode=archive_objective_floor", regression)
-        self.assertIn("if trend_grace:\n        _update_stagnation(\"OBJECTIVE_MISS\")", regression)
-        self.assertIn("if trend_grace:\n        _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))", regression)
-        self.assertLess(
-            regression.index("if trend_grace:\n        _update_stagnation(\"OBJECTIVE_MISS\")"),
-            regression.index("mode=archive_objective_floor"),
-        )
-        self.assertLess(
-            regression.index("if trend_grace:\n            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))"),
-            regression.index("mode=early_objective_regression"),
-        )
+        self.assertIn("trend_grace は score-only rollback dampener。目的退行は免除しない。", regression)
+        self.assertNotIn('print(f"OK:{trend_grace_reason()}")\n        raise SystemExit\n    print(\n        "REGRESSION:"\n        f"mode=objective_regression', regression)
 
     def test_rollback_target_cooldown_blocks_immediate_reuse(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

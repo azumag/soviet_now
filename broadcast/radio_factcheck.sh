@@ -280,8 +280,8 @@ PROMPT
 		echo "===ORIGINAL==="
 		printf '%s\n' "$talk_body"
 		echo
-		echo "===RAW_CHECK_OUTPUT==="
-		printf '%s\n' "$raw_output"
+		echo "===SANITIZED_CHECK_OUTPUT==="
+		printf '%s\n' "$raw_output" | _sanitize_onair_text
 	} >"$debug_dump"
 	if _is_valid_radio_talk "$last_candidate"; then
 		log "[RADIO:${corner_name}] fact-check不調だが抽出本文を採用 (dump: $debug_dump)" >&2

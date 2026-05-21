@@ -80,7 +80,7 @@ _contains_provider_error_text() {
 }
 
 _contains_webfetch_failure_text() {
-	printf '%s' "$1" | grep -Eiq '([✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b|(WebFetch|WebSearch).*(failed|失敗|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)|((failed|失敗|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected).*(WebFetch|WebSearch)))'
+	printf '%s' "$1" | grep -Eiq '((WebFetch|WebSearch).*(取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)|((取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected).*(WebFetch|WebSearch)))'
 }
 
 _notify_webfetch_failure() {
@@ -105,9 +105,9 @@ _notify_webfetch_failure() {
 
 	mkdir -p "$state_dir" 2>/dev/null || true
 	: >"$marker" 2>/dev/null || true
-	log "[${label}] WebFetch failed detected; removed from on-air text (agent=${agent}${context:+ context=${context}})" >&2
+	log "[${label}] Web取得失敗を検出; on-air本文から除去済み (agent=${agent}${context:+ context=${context}})" >&2
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh radio "WebFetch failed" "label=${label} agent=${agent}${context:+ context=${context}} | 音声本文からは除去" "warn" >/dev/null 2>&1 || true
+		./overlay_notify.sh radio "Web取得失敗" "label=${label} agent=${agent}${context:+ context=${context}} | 音声本文からは除去" "warn" >/dev/null 2>&1 || true
 	fi
 	return 0
 }

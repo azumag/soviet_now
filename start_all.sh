@@ -34,6 +34,7 @@ declare -a WORKER_NAMES=(
 	"chat_worker"
 	"youtube_worker"
 	"audio_worker"
+	"deadline_monitor"
 	"radio_worker"
 	"prediction_worker"
 	"improve_daemon"
@@ -43,6 +44,7 @@ declare -a WORKER_CMDS=(
 	"./workers/chat_worker.sh"
 	"./workers/youtube_worker.sh"
 	"./workers/audio_worker.sh"
+	"./workers/deadline_monitor.sh"
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
 	"./improve_daemon.sh"
@@ -133,6 +135,7 @@ _pidfile_for_worker() {
 	chat_worker) echo "tmp/state/chat_worker.pid" ;;
 	youtube_worker) echo "tmp/state/youtube_worker.pid" ;;
 	audio_worker) echo "tmp/state/audio_worker.pid" ;;
+	deadline_monitor) echo "tmp/state/deadline_monitor.pid" ;;
 	radio_worker) echo "tmp/state/radio_worker.pid" ;;
 	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
 	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
@@ -146,6 +149,7 @@ _pattern_for_worker() {
 	chat_worker) echo '[/ ]workers/chat_worker[.]sh([[:space:]]|$)' ;;
 	youtube_worker) echo '[/ ]workers/youtube_worker[.]sh([[:space:]]|$)' ;;
 	audio_worker) echo '[/ ]workers/audio_worker[.]sh([[:space:]]|$)' ;;
+	deadline_monitor) echo '[/ ]workers/deadline_monitor[.]sh([[:space:]]|$)|[/ ]deadline_misplacement_monitor[.]py([[:space:]]|$)' ;;
 	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
 	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
 	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;

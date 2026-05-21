@@ -117,6 +117,28 @@ log_pause_throttled() {
 	fi
 }
 
+notify_rank1_hot_streak_extension() {
+	local acc_count="${1:-0}" reason="${2:-cycle}"
+	local current_hash marker_file marker_key previous_key title body chat_msg
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
+	[ -n "$current_hash" ] || current_hash="unknown"
+	marker_file="${TMP_STATE_DIR:-tmp/state}/rank1_hot_streak_notified"
+	marker_key="$current_hash"
+	previous_key=$(cat "$marker_file" 2>/dev/null || true)
+	[ "$previous_key" = "$marker_key" ] && return 0
+
+	title="rank1 hot streak 延長 (game ${GAME_NUM:-?})"
+	body="current=${current_hash:0:12} | 蓄積=${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} | reason=${reason} | 1位で自己ベスト更新中のため改善サイクルを延長"
+	chat_msg="現在の戦略が1位で自己ベスト更新中のため、改善サイクルを延長してこのまま続行します。蓄積 ${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} games / hash ${current_hash:0:8}"
+
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "$title" "$body" "info" >/dev/null 2>&1 || true
+	fi
+	enqueue_chat_message "$chat_msg" "hot_streak" 4 || true
+	mkdir -p "$(dirname "$marker_file")" 2>/dev/null || true
+	printf '%s\n' "$marker_key" >"$marker_file" 2>/dev/null || true
+}
+
 _expire_rate_limit_backoff_if_elapsed() {
 	local file="${TMP_STATE_DIR:-tmp/state}/rate_limit_backoff"
 	[ -f "$file" ] || return 0
@@ -533,7 +555,7 @@ f='$TMP_STATE_DIR/current_prediction.json'
 d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 		fi
-		if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then
+		if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]; then
 			log "[CYCLE] 回帰ロールバック直後 → 復帰先の再評価を優先し改善ロック作成をスキップ"
 		elif [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
 			[ -f "$ACCUMULATED_GAMES_FILE" ] &&
@@ -560,9 +582,9 @@ json.dump(d,open(f,'w'))
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 
-	# WILDCARD 即応ロック: 停滞が閾値を超えたら12試合サイクルを待たず、
+	# 早期脱出ロック: 停滞が閾値を超えたら12試合サイクルを待たず、
 	# 最低限の失敗バッチを改善daemonへ渡す。実際に wildcard/archive/escape_ai
-	# へ上げるかは trigger_adaptive_improvement 側の既存判定に任せる。
+	# へ上げるかは trigger_adaptive_improvement 側の最終モード判定に任せる。
 	if [ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] &&
 		[ "${WILDCARD_ENABLED:-0}" = "1" ] &&
 		[ -f "$ACCUMULATED_GAMES_FILE" ] &&
@@ -616,11 +638,12 @@ PY
 		if [ "${_cycle_acc_count:-0}" -ge "$_early_min" ] &&
 			[ "${_stag_count:-0}" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ]; then
 			if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "$_rollback_revalidate_active" = "1" ]; then
-				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 即応脱出ロックを延期"
+				log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 早期脱出ロックを延期"
 			elif [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
-				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rank1 hot streak 中 → 即応脱出ロックを延期"
+				log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} だが rank1 hot streak 中 → 早期脱出ロックを延期"
+				notify_rank1_hot_streak_extension "$_cycle_acc_count" "wildcard_early_escape"
 			else
-				log "[WILDCARD] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 早期脱出ロック作成"
+				log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 改善ロック作成 (最終モードはimprove側で判定)"
 				enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 				cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 				enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
@@ -635,7 +658,7 @@ d['early_escape_stagnation']=${_stag_count:-0}
 json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 				if [ -x ./overlay_notify.sh ]; then
-					./overlay_notify.sh worker "WILDCARD early escape queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮" "warn" >/dev/null 2>&1 || true
+					./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
 				fi
 				_clear_accumulated_data
 			fi
@@ -649,6 +672,7 @@ json.dump(d,open(f,'w'))
 		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
 			if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
 				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達だが rank1 hot streak 中 → 改善を延期してスコア更新継続"
+				notify_rank1_hot_streak_extension "$_cycle_acc_count" "cycle_threshold"
 				prepare_next_game
 				next_rc=$?
 				_abort_if_interrupted "$next_rc" "prepare_next_game(hot_streak_extend)"

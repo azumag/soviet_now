@@ -3296,10 +3296,7 @@ if (
     ):
         reasons.append("lost_russia_path")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
-    if trend_grace:
-        _update_stagnation("OBJECTIVE_MISS")
-        print(f"OK:{trend_grace_reason()}")
-        raise SystemExit
+    # trend_grace は score-only rollback dampener。目的退行は免除しない。
     print(
         "REGRESSION:"
         f"mode=archive_objective_floor,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -3475,10 +3472,7 @@ if (
     # RUSSIA_OBJECTIVE_REGRESSION_ENABLED=0 の間は通常ゲートでも粛清しない。
     # lost_soviet_path は従来どおり早期ゲートに残す。
     if objective_reasons:
-        if trend_grace:
-            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
-            print(f"OK:{trend_grace_reason()}")
-            raise SystemExit
+        # trend_grace は score-only rollback dampener。目的退行は免除しない。
         print(
             "REGRESSION:"
             f"mode=early_objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -3520,10 +3514,7 @@ if current_hash != anchor_hash:
     ):
         objective_reasons.append("lost_russia_path")
 if objective_reasons:
-    if trend_grace:
-        _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
-        print(f"OK:{trend_grace_reason()}")
-        raise SystemExit
+    # trend_grace は score-only rollback dampener。目的退行は免除しない。
     print(
         "REGRESSION:"
         f"mode=objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
