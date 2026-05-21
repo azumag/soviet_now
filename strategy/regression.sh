@@ -1351,13 +1351,14 @@ _promote_current_strategy_to_anchor() {
 	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
 	[ -z "$current_metrics" ] && current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
 	[ -n "$current_metrics" ] || return 1
-	python3 - "$BEST_STRATEGY_ANCHOR_FILE" "$current_hash" "$current_metrics" "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" <<'PY' >/dev/null 2>&1
+	python3 - "$BEST_STRATEGY_ANCHOR_FILE" "$current_hash" "$current_metrics" "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" "${LAST_ANCHOR_CHANGE_FILE:-tmp/state/last_anchor_change.md}" <<'PY' >/dev/null 2>&1
 import json
 import os
 import sys
 import time
 
 out_file, current_hash, metrics_line, rolling_file, current_run_file, min_best_type_raw = sys.argv[1:7]
+last_anchor_change_file = sys.argv[7] if len(sys.argv) > 7 else ""
 parts = (metrics_line or "").split("|")
 if len(parts) < 5:
     raise SystemExit(1)
@@ -1422,6 +1423,25 @@ payload = {
 }
 with open(out_file, "w", encoding="utf-8") as f:
     json.dump(payload, f, ensure_ascii=False)
+
+if last_anchor_change_file:
+    try:
+        os.makedirs(os.path.dirname(last_anchor_change_file) or ".", exist_ok=True)
+        prev_hash = str(existing.get("hash", "") or "")
+        body = (
+            f"# anchor change @ {time.strftime('%Y-%m-%dT%H:%M:%S')}\n"
+            f"- prev: {prev_hash}\n"
+            f"- new: {current_hash}\n"
+            f"- source: promote_current_strategy\n"
+            f"- comp_raw: {float(parts[0]):.2f}\n"
+            f"- p50: {float(parts[1]):.2f}, p25: {float(parts[2]):.2f}, n: {int(float(parts[4]))}\n"
+            f"- objective: best_type={current_progress.get('best_max_type', 0)} "
+            f"russia={current_progress.get('russia_count', 0)} soviet={current_progress.get('soviet_count', 0)}\n"
+        )
+        with open(last_anchor_change_file, "w", encoding="utf-8") as f:
+            f.write(body)
+    except Exception:
+        pass
 PY
 }
 

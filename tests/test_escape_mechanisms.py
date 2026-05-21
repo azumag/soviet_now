@@ -284,6 +284,7 @@ _refresh_best_strategy_anchor "currentRussia" 2>&1
             rs_file = td / "rolling_scores.json"
             run_file = td / "current_strategy_run.json"
             anchor_file = td / "best_strategy_anchor.json"
+            last_anchor_change_file = td / "last_anchor_change.md"
             archive_dir = td / "by_hash"
             archive_dir.mkdir()
             rejected_file = td / "rejected.txt"
@@ -336,6 +337,7 @@ source core/config.sh 2>/dev/null
 ROLLING_SCORES_FILE='{rs_file}'
 CURRENT_STRATEGY_RUN_FILE='{run_file}'
 BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+LAST_ANCHOR_CHANGE_FILE='{last_anchor_change_file}'
 STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
 REJECTED_HASHES_FILE='{rejected_file}'
 MIN_GAMES_FOR_BEST_ROLLBACK=12
@@ -363,6 +365,7 @@ echo promote_rc=$?
             rs_file = td / "rolling_scores.json"
             run_file = td / "current_strategy_run.json"
             anchor_file = td / "best_strategy_anchor.json"
+            last_anchor_change_file = td / "last_anchor_change.md"
             archive_dir = td / "by_hash"
             archive_dir.mkdir()
             rejected_file = td / "rejected.txt"
@@ -415,6 +418,7 @@ source core/config.sh 2>/dev/null
 ROLLING_SCORES_FILE='{rs_file}'
 CURRENT_STRATEGY_RUN_FILE='{run_file}'
 BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+LAST_ANCHOR_CHANGE_FILE='{last_anchor_change_file}'
 STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
 REJECTED_HASHES_FILE='{rejected_file}'
 MIN_GAMES_FOR_BEST_ROLLBACK=12
@@ -435,6 +439,11 @@ echo promote_rc=$?
             self.assertEqual(anchor["hash"], "betterRussia")
             self.assertEqual(anchor["best_max_type"], 15)
             self.assertEqual(anchor["russia_count"], 1)
+            anchor_change = last_anchor_change_file.read_text()
+            self.assertIn("- prev: russiaPath", anchor_change)
+            self.assertIn("- new: betterRussia", anchor_change)
+            self.assertIn("- source: promote_current_strategy", anchor_change)
+            self.assertIn("russia=1", anchor_change)
 
     def test_existing_russia_anchor_can_be_replaced_by_higher_score_candidate(self):
         """既存 Russia anchor でも rolling score 上位の安定候補には置換される。"""
