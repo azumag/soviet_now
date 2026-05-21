@@ -100,7 +100,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 
 1. 粛清が起きたら、`REGRESSION_ROLLBACK_RESULT` の理由を読む。
 2. `objective_regression` / `lost_russia_path` / `curr_russia=0` / `best_max_type` 後退は、スコア問題ではなくロシア建国ルート喪失として扱う。
-3. 復帰先に `russia_count > 0` または `best_max_type >= 15` がある場合は、脱出ではなく rollback target の再検証を優先する。
+3. 復帰先に `russia_count > 0` または `best_max_type >= 15` がある場合は、脱出ではなく rollback target の再検証を優先する。`current_strategy_run.json` が rollback 直後の fresh cycle で空でも、同じハッシュの `rolling_scores.json` 上のロシア実績を参照して誤脱出を防ぐ。
 4. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
 5. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
 

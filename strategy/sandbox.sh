@@ -240,6 +240,30 @@ cascade_result = mod.decide(cascade_state, cascade_analysis)
 if float(cascade_result["x"]) != 0.0:
     raise AssertionError(f"cascade-direct: expected x=0.0 for A-1->A->A chain, got {cascade_result!r}")
 
+next_next_reactive_lane_state = {
+    "pieces": [
+        {"id": 21, "type": 5, "x": -0.25, "y": -1.55, "r": 0.5},
+        {"id": 22, "type": 5, "x": 0.55, "y": -1.45, "r": 0.5},
+        {"id": 23, "type": 8, "x": 0.0, "y": -2.7, "r": 0.66},
+    ],
+    "next": {"type": 2, "r": 0.25},
+    "nextNext": {"type": 5, "r": 0.5},
+    "score": 1000,
+    "deadline_crossed": False,
+}
+next_next_reactive_lane_analysis = {
+    "results": [
+        {"x": 0.15, "landing_y": -1.25, "top_y_after_drop": -1.0, "risk_top_y_after_drop": -1.0, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": -2.6, "landing_y": -0.85, "top_y_after_drop": -0.6, "risk_top_y_after_drop": -0.6, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+    ],
+    "same_type": [],
+    "reactor": {"reactive_pairs": [(21, 22, 5)], "deadline_margin": 4.0, "top_edge_y": -0.6, "danger_piece_count": 0},
+    "deadline": {"deadline_y": 3.32, "deadline_margin": 4.0, "deadline_crossed": False},
+}
+next_next_reactive_lane_result = mod.decide(next_next_reactive_lane_state, next_next_reactive_lane_analysis)
+if float(next_next_reactive_lane_result["x"]) != -2.6:
+    raise AssertionError(f"next-next-reactive-lane: expected preserving next merge lane x=-2.6, got {next_next_reactive_lane_result!r}")
+
 endgame_min_risk_state = {
     "pieces": [{"id": i, "type": (i % 7) + 1, "x": -2.8 + (i % 8) * 0.8, "y": -3.8 + (i // 8) * 0.55, "r": 0.35} for i in range(40)],
     "next": {"type": 1, "r": 0.207},

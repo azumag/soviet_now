@@ -146,6 +146,11 @@ _evolution_flow_notify() {
 	if [ -x ./overlay_notify.sh ]; then
 		./overlay_notify.sh worker "$full_title" "$body" "$level" >/dev/null 2>&1 || true
 	fi
+	case "$step" in
+		game_finished | regression_check | no_rollback | twelve_game_improve)
+			chat=""
+			;;
+	esac
 	if [ -n "$chat" ]; then
 		enqueue_chat_message "$chat" "improve_flow" 4 || true
 	fi

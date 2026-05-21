@@ -3461,6 +3461,11 @@ def decide(game_state, analysis):
         self.assertIn("復帰先にロシア進捗あり", loop)
         self.assertIn("_evolution_flow_notify", loop)
         self.assertIn("enqueue_chat_message \"$chat\" \"improve_flow\" 4", loop)
+        self.assertIn("game_finished | regression_check | no_rollback | twelve_game_improve", loop)
+        self.assertIn("${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}", improve)
+        self.assertIn("rolling_current = rolling.get(current_hash) if current_hash else {}", improve)
+        self.assertIn("known_russia = max(current_russia, rolling_russia, lock_russia)", improve)
+        self.assertIn("best_type = max(current_best, rolling_best, lock_best)", improve)
         self.assertIn("game finished", loop)
         self.assertIn("regression check", loop)
         self.assertIn("rollback happened? yes", loop)
@@ -3917,8 +3922,10 @@ PY
 
         self.assertIn("_notify_chat_overlay()", youtube)
         self.assertIn('CHAT_INGEST_OVERLAY_NOTIFY:-1', youtube)
-        self.assertIn('./overlay_notify.sh chat "${source} コメント受信" "$line"', youtube)
+        self.assertIn('local title="${3:-${source} コメント受信}"', youtube)
+        self.assertIn('./overlay_notify.sh chat "$title" "$line"', youtube)
         self.assertIn('_notify_chat_overlay "YouTube" "$notify_line"', youtube)
+        self.assertIn('_notify_chat_overlay "YouTube" "[TEST/DUMMY] $notify_line" "YouTube TEST/DUMMY コメント受信"', youtube)
 
     def test_soren91_comment_queue_releases_completed_claims_and_keeps_tts_full_by_default(self):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
@@ -4087,6 +4094,22 @@ PY
         self.assertIn("mode=archive_objective_floor", regression)
         self.assertIn("trend_grace は score-only rollback dampener。目的退行は免除しない。", regression)
         self.assertNotIn('print(f"OK:{trend_grace_reason()}")\n        raise SystemExit\n    print(\n        "REGRESSION:"\n        f"mode=objective_regression', regression)
+
+    def test_early_comp_top_gap_can_purge_bad_current_branch(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        toggles = (REPO_ROOT / "core/runtime_toggles.sh").read_text()
+
+        self.assertIn("EARLY_COMP_TOP_GAP_ENABLED", config)
+        self.assertIn("EARLY_COMP_TOP_GAP_MIN_GAMES", config)
+        self.assertIn("EARLY_COMP_TOP_GAP_MIN_RATIO", config)
+        self.assertIn("EARLY_COMP_TOP_GAP_ENABLED", toggles)
+        self.assertIn("EARLY_COMP_TOP_GAP_MIN_GAMES", toggles)
+        self.assertIn("EARLY_COMP_TOP_GAP_MIN_RATIO", toggles)
+        self.assertIn("def rolling_comp_leader(current_metrics):", regression)
+        self.assertIn("mode=early_comp_top_gap", regression)
+        self.assertIn("curr_comp < top_comp * early_comp_top_gap_min_ratio", regression)
+        self.assertIn("reasons=early_comp_top_gap+curr_comp_below_top_ratio", regression)
 
     def test_rollback_target_cooldown_blocks_immediate_reuse(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

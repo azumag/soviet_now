@@ -1762,14 +1762,15 @@ trigger_adaptive_improvement() {
 	russia_recovery_mode=$(LOCK_DATA="$lock_data" python3 - \
 		"${RUSSIA_CREATION_HISTORY_FILE:-tmp/history/russia_creation_history.tsv}" \
 		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
-		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" <<'PY' 2>/dev/null || echo 0
+		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" <<'PY' 2>/dev/null || echo 0
 import json
 import os
 import sys
 import time
 from datetime import datetime
 
-russia_history, current_run_file, stagnation_file = sys.argv[1:4]
+russia_history, current_run_file, stagnation_file, rolling_file = sys.argv[1:5]
 now = time.time()
 last_russia = 0.0
 try:
@@ -1797,20 +1798,27 @@ def load(path):
     return {}
 
 current = load(current_run_file)
+rolling = load(rolling_file)
 try:
     lock = json.loads(os.environ.get("LOCK_DATA", "") or "{}")
 except Exception:
     lock = {}
 stagnation = load(stagnation_file)
 direct_escape = bool(lock.get("post_regression_direct_escape", False))
+current_hash = str(current.get("hash") or "")
+rolling_current = rolling.get(current_hash) if current_hash else {}
+if not isinstance(rolling_current, dict):
+    rolling_current = {}
 current_russia = int(current.get("russia_count", 0) or 0)
+rolling_russia = int(rolling_current.get("russia_count", 0) or 0)
 lock_russia = int(lock.get("russia_count", 0) or 0)
 rstreak = int(stagnation.get("regression_streak", 0) or 0)
+known_russia = max(current_russia, rolling_russia, lock_russia)
 if direct_escape:
     print("1:post_regression_direct_escape")
 elif no_russia_24h:
     print("1:no_russia_24h")
-elif rstreak >= 3 and current_russia <= 0 and lock_russia <= 0:
+elif rstreak >= 3 and known_russia <= 0:
     print("1:regression_streak_no_russia")
 else:
     print("0:")
@@ -1866,12 +1874,13 @@ PY
 	fi
 	local current_russia_progress current_russia_progress_reason
 	current_russia_progress=$(LOCK_DATA="$lock_data" python3 - \
-		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" <<'PY' 2>/dev/null || echo "0:"
+		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" <<'PY' 2>/dev/null || echo "0:"
 import json
 import os
 import sys
 
-current_run_file = sys.argv[1]
+current_run_file, rolling_file = sys.argv[1:3]
 
 def load(path):
     try:
@@ -1893,12 +1902,19 @@ try:
 except Exception:
     lock = {}
 current = load(current_run_file)
+rolling = load(rolling_file)
+current_hash = str(current.get("hash") or "")
+rolling_current = rolling.get(current_hash) if current_hash else {}
+if not isinstance(rolling_current, dict):
+    rolling_current = {}
 current_russia = as_int(current.get("russia_count", 0))
+rolling_russia = as_int(rolling_current.get("russia_count", 0))
 lock_russia = as_int(lock.get("russia_count", 0))
 current_best = as_int(current.get("best_max_type", 0))
+rolling_best = as_int(rolling_current.get("best_max_type", 0))
 lock_best = as_int(lock.get("best_max_type", 0))
-best_type = max(current_best, lock_best)
-russia = max(current_russia, lock_russia)
+best_type = max(current_best, rolling_best, lock_best)
+russia = max(current_russia, rolling_russia, lock_russia)
 if russia > 0 or best_type >= 15:
     print(f"1:russia={russia},best_type={best_type}")
 else:

@@ -146,10 +146,11 @@ _sanitize_comment_line() {
 _notify_chat_overlay() {
 	local source="$1"
 	local line="$2"
+	local title="${3:-${source} コメント受信}"
 	[ "${CHAT_INGEST_OVERLAY_NOTIFY:-1}" = "1" ] || return 0
 	[ -n "$line" ] || return 0
 	[ -x ./overlay_notify.sh ] || return 0
-	./overlay_notify.sh chat "${source} コメント受信" "$line" "info" >/dev/null 2>&1 || true
+	./overlay_notify.sh chat "$title" "$line" "info" >/dev/null 2>&1 || true
 }
 
 _urlencode() {
@@ -339,7 +340,7 @@ _ingest_fixture_nolock() {
 		case "$notify_line" in
 			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
 		esac
-		_notify_chat_overlay "YouTube" "$notify_line"
+		_notify_chat_overlay "YouTube" "[TEST/DUMMY] $notify_line" "YouTube TEST/DUMMY コメント受信"
 	done
 	_log "ingest-fixture: ${count:-0}件取り込み"
 }

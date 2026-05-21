@@ -2752,7 +2752,8 @@ check_regression() {
 			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" \
 			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" \
 			"${ROLLBACK_TREND_GRACE_ENABLED:-1}" "${ROLLBACK_TREND_GRACE_WINDOW:-50}" "${ROLLBACK_TREND_GRACE_MIN_PRIOR:-50}" "${ROLLBACK_TREND_GRACE_MIN_DELTA:-0}" \
-			"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" "${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" <<'PY'
+			"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" "${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" \
+			"${EARLY_COMP_TOP_GAP_ENABLED:-1}" "${EARLY_COMP_TOP_GAP_MIN_GAMES:-4}" "${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" <<'PY'
 import json
 import math
 import os
@@ -2807,6 +2808,15 @@ except Exception:
     rollback_trend_grace_min_delta = 0.0
 archive_restart_cooldown_file = sys.argv[39] if len(sys.argv) > 39 else ""
 archive_restart_objective_fail_permanent = (sys.argv[40] if len(sys.argv) > 40 else "1") == "1"
+early_comp_top_gap_enabled = (sys.argv[41] if len(sys.argv) > 41 else "1") == "1"
+try:
+    early_comp_top_gap_min_games = max(1, int(sys.argv[42])) if len(sys.argv) > 42 else 4
+except Exception:
+    early_comp_top_gap_min_games = 4
+try:
+    early_comp_top_gap_min_ratio = float(sys.argv[43]) if len(sys.argv) > 43 else 0.85
+except Exception:
+    early_comp_top_gap_min_ratio = 0.85
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -3077,6 +3087,26 @@ def current_rolling_rank(metrics_dict):
         if h == current_hash:
             return idx
     return None
+
+def rolling_comp_leader(current_metrics):
+    ranked = []
+    seen_current = False
+    for h, data in rolling.items():
+        if h == current_hash:
+            m = current_metrics
+            seen_current = True
+        else:
+            m = metrics((data or {}).get("scores", []) or [])
+        if not m or int(m.get("n", 0) or 0) < min_games_current:
+            continue
+        ranked.append((key(m), h, m))
+    if current_metrics and not seen_current and int(current_metrics.get("n", 0) or 0) >= min_games_current:
+        ranked.append((key(current_metrics), current_hash, current_metrics))
+    if not ranked:
+        return "", None
+    ranked.sort(reverse=True)
+    _, h, m = ranked[0]
+    return h, m
 
 def russia_objective_graced(metrics_dict, objective):
     if rolling_score_russia_grace_rank <= 0:
@@ -3496,6 +3526,9 @@ if current_hash == anchor_hash and not branch_active:
 curr_comp_gap, curr_p50_gap, curr_p25_gap = gap(anchor, current)
 curr_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, min_comp_gap, min_p50_gap, min_p25_gap)
 hard_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, hard_comp_gap, hard_p50_gap, hard_p25_gap)
+top_hash, top_metrics = rolling_comp_leader(current)
+top_comp = float((top_metrics or {}).get("comp", 0.0) or 0.0)
+curr_comp = float(current.get("comp", 0.0) or 0.0)
 
 objective_reasons = []
 russia_grace_active = russia_objective_graced(current, current_objective)
@@ -3532,6 +3565,31 @@ if (
         )
         _update_stagnation("REGRESSION")
         raise SystemExit
+
+if (
+    early_comp_top_gap_enabled
+    and current_hash != top_hash
+    and top_hash
+    and top_comp > 0
+    and current["n"] >= early_comp_top_gap_min_games
+    and curr_comp < top_comp * early_comp_top_gap_min_ratio
+):
+    top_comp_gap, top_p50_gap, top_p25_gap = gap(top_metrics, current)
+    top_breach = breach_count(top_comp_gap, top_p50_gap, top_p25_gap, min_comp_gap, min_p50_gap, min_p25_gap)
+    print(
+        "REGRESSION:"
+        f"mode=early_comp_top_gap,rollback_hash={top_hash},anchor_hash={anchor_hash},"
+        f"anchor_comp={top_metrics['comp']:.1f},anchor_p50={top_metrics['p50']:.1f},anchor_p25={top_metrics['p25']:.1f},anchor_n={top_metrics['n']},"
+        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+        f"comp_gap={top_comp_gap:.1f},p50_gap={top_p50_gap:.1f},p25_gap={top_p25_gap:.1f},"
+        f"breach_count={top_breach},min_breach_count={min_breach_count},"
+        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
+        f"best_comp_gap={top_comp_gap:.1f},best_p50_gap={top_p50_gap:.1f},best_p25_gap={top_p25_gap:.1f},best_breach_count={top_breach},"
+        "branch_depth=0,branch_games=0,branch_patience=0,"
+        f"reasons=early_comp_top_gap+curr_comp_below_top_ratio+ratio={curr_comp / top_comp:.3f}+min_ratio={early_comp_top_gap_min_ratio:.3f}"
+    )
+    _update_stagnation("REGRESSION")
+    raise SystemExit
 
 # 最小サンプルガード: n<12 では p50/p25 の変動が大きすぎて通常 regression 判定できない。
 # ただし上の早期目的退行ゲートだけは、ソ連経路喪失を短いサンプルで止める。
