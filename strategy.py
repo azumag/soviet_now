@@ -64,7 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
+      # vXXX: axis 9.12 merge drought exit trigger — no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30
+      #       でtype10+ピースとの近了配置にボーナス(+500*merge_mult)、reactive pairがあれば+200*merge_mult追加
+      #       worst T60-T71 (9連続NO merge, pc=40→44, max_y=2.91)に対してtype10+との近了配置で次ターンmerge機会を創出
+      #       Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (axis 9.12 missing)
+      #       refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py (lines 2006-2087),
+      #       game_history/20260521_101955_score0849.jsonl T60-72, advice.md (2手先併合最大化)
+      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
      #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
@@ -778,6 +784,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
+    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO ---
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -1221,6 +1230,61 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
+
+        # ----- v617: axis 9.12 merge drought exit trigger -----
+        # analysis_result.md adopted hypothesis: "Merge drought exit trigger"
+        # NO merge連続ターン数(no_merge_streak>=3)の局面で、高typeピース(type>=10)
+        # との近了配置を優先し、次ターン以降のNEAR merge機会を創出する。
+        #
+        # 根拠:
+        # - worst game T60-T71: 9連続NO merge, max_y=2.64→2.91, pc=40→44, score_delta=0
+        #   type10+ピースとの近了配置を取れば次ターンmerge机会が创设された
+        # - best_score5801_strategy.py lines 2006-2087 に同axisが存在しcurrentには欠落
+        # - advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"
+        #
+        # ロジック:
+        # (1) no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && NOT death_spiral で発動
+        # (2) 盤面のtype 10+ピースを列挙、Manhattan距離計算
+        # (3) 距離<=1.5uなら +500*(1-dist/1.5)*merge_mult ボーナス
+        # (4) 当該type10+ pieceがreactive pairを持てば +200*merge_mult追加（type11+作成でパイプライン前進）
+        #
+        # ボーナス設計: +500*merge_multはheight penalty diff (~202-405pt at y=1.5)より小さく、
+        # 既存のmerge axisには及各axisが最優先。death_spiral時は高さを最優先するため抑制。
+        # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py (lines 2006-2087),
+        #       game_history/20260521_101955_score0849.jsonl T60-72, advice.md
+        # Fixes rollback failure mode: NO merge連続ターンでのmerge path創作不足 (axis 9.12 missing)
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+        ):
+            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if len(high_type_pieces) >= 1:
+                min_dist = float("inf")
+                best_piece_type = 0
+                for ht in high_type_pieces:
+                    hx = ht.get("x", 0)
+                    hy = ht.get("y", -10)
+                    manhattan = abs(x - hx) + abs(landing_y - hy)
+                    if manhattan < min_dist:
+                        min_dist = manhattan
+                        best_piece_type = ht.get("type", 0)
+                if min_dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+                    type_counts_on_board = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
+                    if type_counts_on_board.get(best_piece_type, 0) >= 2:
+                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
+                        if pair_bonus > 20:
+                            score += pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
