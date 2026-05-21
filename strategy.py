@@ -64,24 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: axis 1.7c NEAR_DEADLINE_SUPPRESSION — max_y>=1.8 && deadline_margin<1.0 && NEAR で -6000 ペナルティ
-     #       mandatory_themes第二条「デッドライン付近の危険盤面領域では、併合を優先するべき」対応
-     #       NEAR(68.5%成功)はdeadline danger zoneでは実質NO_MERGEと同じ — 失敗するとpiece追加でgame over加速
-     #       worst T56, best T107-T112, extra_low T76-T83 のNO_MERGE@deadlineパターン修復
-     #       Does NOT affect DIRECT(95.7%成功はdeadline zoneでも信頼足够)
-     #       Fixes rollback failure mode: NO_MERGE at deadline danger zone with small margin
-     #       refs: tmp/analysis_result.md (Implementation Plan: axis 1.7c NEAR deadline suppression)
-     # vXXX: DEADLINE_MERGE_URGENCY — +30*(max_y-1.5) bonus for DIRECT/NEAR when Russia(T15) incomplete && max_y>=1.8
-     #       Targets T14→T15 pipeline reliability. Russia incomplete = no type 15 on board.
-     #       Kazakhstan(T14) is the main gate target at 33% completion (0/12 Russia reached).
-     #       Fixes rollback failure mode: T14→T15 merge urgency insufficient at high max_y
-     #       mandatory_themes: urgency bonus only applies to merge-capable positions (DIRECT/NEAR)
-     #       refs: tmp/analysis_result.md (Implementation Plan: deadline_merge_urgency)
-     # v618: axis 8.8抑制条件削除 — deadline_crossed && rp>=3 && NO_MERGE でも -4500 適用必需
-     #       抑制条件 `not (deadline_crossed and reactive_pair_count >= 3)` を削除し常に-4500を適用
-     #       worst game T56: deadline越え放置→max_y暴走→game overのfailure mode修復
-     #       mandatory_themes遵守: 「デッドライン超出時は併合できる場合に限る」
-     #       refs: tmp/analysis_result.md (Implementation Plan: axis 8.8抑制条件削除)
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -899,23 +881,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
             no_merge_streak = 3
 
-        # ----- vXXX: deadline-aware merge urgency for Russia pipeline (T14→T15) -----
-        # analysis_result.md: "When max_y >= 1.8 and Russia(T15) is not yet completed,
-        # increase merge candidate scores by (max_y - 1.5) * urgency_weight to prioritize
-        # completing Russia before deadline crossing."
-        # Russia incomplete = no type 15 pieces on board yet. Type 14 is Kazakhstan,
-        # the pre-Russian building block that needs to merge toward Russia.
-        # At max_y=1.8, urgency=9; at max_y=2.5, urgency=30; at max_y=3.0, urgency=45.
-        # Applied to both DIRECT and REACTIVE (NEAR) merge candidates.
-        # refs: tmp/analysis_result.md (Implementation Plan)
-        # Fixes rollback failure mode: T14→T15 pipeline blocked by insufficient merge urgency
-        russia_created = any(p.get("type") == 15 for p in pieces)
-        if not russia_created and max_y >= 1.8:
-            if merge_grade in ("DIRECT", "NEAR"):
-                deadline_merge_urgency = max(0.0, max_y - 1.5) * 30.0
-                score += deadline_merge_urgency
-                reasons.append("DEADLINE_MERGE_URGENCY")
-
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -1025,22 +990,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             penalty = -1000.0 * (1.0 + (max_y - 2.5) * 2.0)
             score += penalty
             reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
-
-        # ----- axis 1.7c: NEAR suppression at deadline danger zone (vXXX) -----
-        # mandatory_themes第二条: 「デッドライン付近の危険盤面領域では、併合を優先するべき」
-        # When board is approaching deadline danger zone (max_y >= 1.8, deadline_margin < 1.0),
-        # NEAR merge (68.5% success) is effectively "NO_MERGE" for practical purposes.
-        # A failed NEAR at deadline zone adds a piece without merge benefit, accelerating game over.
-        # Treat NEAR as NO_MERGE by suppressing NEAR bonus and applying NO_MERGE penalty.
-        # Fires when: max_y >= 1.8 AND reactor_margin < 1.0 AND merge_grade == "NEAR"
-        # NOT suppressed by russia_phase (russia_phase already has v624 NEAR handling)
-        # Does NOT affect DIRECT merges (95.7% success — reliable enough for deadline)
-        # Fixes rollback failure mode: NO_MERGE at deadline danger zone with small margin
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 1.7c NEAR deadline suppression)
-        if max_y >= 1.8 and reactor_margin < 1.0 and merge_grade == "NEAR":
-            score -= 1500.0
-            score -= 4500.0
-            reasons.append("NEAR_DEADLINE_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
@@ -1941,32 +1890,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("DEADLINE_MERGE_URGENCY")
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v618: axis 8.8抑制条件削除 — deadline_crossed && rp>=3 でもNO_MERGEなら-4500適用必需
-            # worst game T56: decision_crosses_deadline=true, merge_grade=NO, x=-0.39 → top_y=3.94
-            # 抑制条件 `not (deadline_crossed and reactive_pair_count >= 3)` が発動し-4500不適用→
-            # deadline越え放置→max_y暴走→game overのfailure mode発生
-            # mandatory_themes: 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-            # deadline越えでもmerge可用時(direct/near)は選択可能。NO_MERGE時は常に最低高度が選択される
-            # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8抑制条件削除)
-            score -= 4500.0
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- vXXX: axis 8.8c — deadline-crossing NO-merge at rp>=3 (CRITICAL) -----
-        # worst T57: 13 consecutive merge_available=false, decision_crosses_deadline=true x4,
-        # max_y=2.96→3.09 → game over. extra_low T78-80: rp=8-9, crosses_deadline=true x3.
-        # axis 8.8 (-4500 flat) insufficient: stacking/proximity bonuses (~1500 total) override it,
-        # selecting deadline-crossing NO_MERGE candidates. mandatory_themes第一条:
-        # 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-        # Penalty -8000: exceeds height penalty differential (2000-4000) + bonuses (1500)
-        # so safe low-position candidates are always chosen over deadline-crossing ones.
-        # Fires ONLY when: rp>=3 && merge_grade==NO && crosses_deadline==true
-        # Does NOT affect merge candidates (they exit earlier in evaluation).
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c追加),
-        #       game_history/20260521_145037_score0613.jsonl T57,
-        #       game_history/20260521_152533_score0821.jsonl T78-80
-        if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
-            score -= 8000.0
-            reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
+            # v452: flatten to -4500, matching protected strategy (median 12789)
+            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
+            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
+            # axis 2 height penalty be the only differentiator — consistent low placement.
+            # v662: removed `and not global_merge_available` from suppression condition.
+            # Worst game T56: deadline_crossed=true, rp=3, merge_available=false → NO_MERGE selected,
+            # causing "deadline without merge" violation of mandatory theme.
+            # With `global_merge_available` in condition, penalty was suppressed exactly when needed most.
+            # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
+            # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
+            if not (deadline_crossed and reactive_pair_count >= 3):
+                score -= 4500.0
+                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
