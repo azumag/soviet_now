@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: DEADLINE_MERGE_URGENCY — +30*(max_y-1.5) bonus for DIRECT/NEAR when Russia(T15) incomplete && max_y>=1.8
+     #       Targets T14→T15 pipeline reliability. Russia incomplete = no type 15 on board.
+     #       Kazakhstan(T14) is the main gate target at 33% completion (0/12 Russia reached).
+     #       Fixes rollback failure mode: T14→T15 merge urgency insufficient at high max_y
+     #       mandatory_themes: urgency bonus only applies to merge-capable positions (DIRECT/NEAR)
+     #       refs: tmp/analysis_result.md (Implementation Plan: deadline_merge_urgency)
      # v618: axis 8.8抑制条件削除 — deadline_crossed && rp>=3 && NO_MERGE でも -4500 適用必需
      #       抑制条件 `not (deadline_crossed and reactive_pair_count >= 3)` を削除し常に-4500を適用
      #       worst game T56: deadline越え放置→max_y暴走→game overのfailure mode修復
@@ -885,6 +891,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         no_merge_streak = 0
         if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
             no_merge_streak = 3
+
+        # ----- vXXX: deadline-aware merge urgency for Russia pipeline (T14→T15) -----
+        # analysis_result.md: "When max_y >= 1.8 and Russia(T15) is not yet completed,
+        # increase merge candidate scores by (max_y - 1.5) * urgency_weight to prioritize
+        # completing Russia before deadline crossing."
+        # Russia incomplete = no type 15 pieces on board yet. Type 14 is Kazakhstan,
+        # the pre-Russian building block that needs to merge toward Russia.
+        # At max_y=1.8, urgency=9; at max_y=2.5, urgency=30; at max_y=3.0, urgency=45.
+        # Applied to both DIRECT and REACTIVE (NEAR) merge candidates.
+        # refs: tmp/analysis_result.md (Implementation Plan)
+        # Fixes rollback failure mode: T14→T15 pipeline blocked by insufficient merge urgency
+        russia_created = any(p.get("type") == 15 for p in pieces)
+        if not russia_created and max_y >= 1.8:
+            if merge_grade in ("DIRECT", "NEAR"):
+                deadline_merge_urgency = max(0.0, max_y - 1.5) * 30.0
+                score += deadline_merge_urgency
+                reasons.append("DEADLINE_MERGE_URGENCY")
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
