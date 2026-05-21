@@ -1841,7 +1841,7 @@ PY
 			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → wildcard でtype14→15 frontier 復旧"
 			_improve_flow_notify \
 				"wildcard_frontier" \
-				"wildcard frontier recovery" \
+				"wildcard frontier recovery possible? yes" \
 				"archive candidate unavailable; WILDCARD_ENABLED=1; improve_reason=wildcard" \
 				"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
 				"warn"
@@ -2065,7 +2065,7 @@ PY
 			if [ "$improve_reason" = "wildcard" ]; then
 				_improve_flow_notify \
 					"wildcard_frontier" \
-					"wildcard frontier recovery" \
+					"wildcard frontier recovery possible? yes" \
 					"archive candidate unavailable; stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}; improve_reason=wildcard" \
 					"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
 					"warn"
@@ -2108,7 +2108,7 @@ PY
 				if [ "$improve_reason" = "wildcard" ]; then
 					_improve_flow_notify \
 						"wildcard_frontier" \
-						"wildcard frontier recovery" \
+						"wildcard frontier recovery possible? yes" \
 						"archive candidate unavailable; regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-4}; improve_reason=wildcard" \
 						"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
 						"warn"
@@ -2135,7 +2135,7 @@ PY
 			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → wildcard でtype14→15 frontier 復旧"
 			_improve_flow_notify \
 				"wildcard_frontier" \
-				"wildcard frontier recovery" \
+				"wildcard frontier recovery possible? yes" \
 				"archive candidate unavailable; WILDCARD_ENABLED=1; improve_reason=wildcard" \
 				"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
 				"warn"

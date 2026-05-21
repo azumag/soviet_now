@@ -1580,10 +1580,32 @@ PY
 			ESCAPE_AI_SEED_APPLIED=1
 			export ESCAPE_AI_SEED_JSON ESCAPE_AI_SEED_HASH
 			log "[ESCAPE-AI] WILDCARD seed applied: selected=${escape_ai_seed_hash} actual=${ESCAPE_AI_SEED_HASH:-unknown}"
+			_improve_flow_notify \
+				"seeded_escape_ai_yes" \
+				"seeded escape_ai candidate? yes" \
+				"selected=${escape_ai_seed_hash} actual=${ESCAPE_AI_SEED_HASH:-unknown}" \
+				"改善フロー: seeded escape_ai candidate exists? yes。WILDCARD seed=${escape_ai_seed_hash:0:8} から構造変異します。" \
+				"warn"
 			_improve_progress "escape_ai" "28" "seed_from_wildcard_${ESCAPE_AI_SEED_HASH:-unknown}"
+		else
+			log "[ESCAPE-AI] WILDCARD seed candidate invalid: ${ESCAPE_AI_SEED_JSON:-empty}"
+			_improve_flow_notify \
+				"seeded_escape_ai_no" \
+				"seeded escape_ai candidate? no" \
+				"invalid selected seed: ${ESCAPE_AI_SEED_JSON:-empty}" \
+				"改善フロー: seeded escape_ai candidate exists? no。選定seedが使えないためescape_aiを中止します。" \
+				"warn"
+			_improve_progress "escape_ai_fail" "100" "invalid_seed"
+			exit 1
 		fi
 	else
 		log "[ESCAPE-AI] WILDCARD seed candidate not found: ${ESCAPE_AI_SEED_JSON:-empty}"
+		_improve_flow_notify \
+			"seeded_escape_ai_no" \
+			"seeded escape_ai candidate? no" \
+			"${ESCAPE_AI_SEED_JSON:-empty}" \
+			"改善フロー: seeded escape_ai candidate exists? no。seedなしのescape_aiは通常改善と同じなので中止します。" \
+			"warn"
 		log "[ESCAPE-AI] seedなしのescape_aiは通常改善と同じため中止"
 		_improve_progress "escape_ai_fail" "100" "no_valid_seed"
 		exit 1

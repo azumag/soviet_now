@@ -656,9 +656,9 @@ for path in sys.argv[1:]:
 	if check_regression; then
 		_evolution_flow_notify \
 			"rollback_happened" \
-			"rollback happened" \
+			"rollback happened? yes" \
 			"rollback_hash=${REGRESSION_ROLLBACK_HASH:-unknown} result=${REGRESSION_ROLLBACK_RESULT:-unknown}" \
-			"改善フロー: rollback happened。粛清が発生したため理由分類へ進みます。復帰先=${REGRESSION_ROLLBACK_HASH:-unknown}" \
+			"改善フロー: rollback happened? yes。粛清が発生したため理由分類へ進みます。復帰先=${REGRESSION_ROLLBACK_HASH:-unknown}" \
 			"warn"
 		# フラグを最初に書く: _clear_accumulated_data がレース時でも best_outcome=3 を保証
 		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
@@ -686,9 +686,9 @@ EOF
 			log "[CYCLE] 回帰ロールバック直後 → 復帰先にロシア進捗あり (${_post_regression_detail}) のため再評価を優先"
 			_evolution_flow_notify \
 				"russia_path_alive" \
-				"russia path still alive" \
+				"russia path still alive? yes" \
 				"${_post_regression_detail} → rollback target revalidation / light improve" \
-				"改善フロー: russia path still alive。復帰先にロシア進捗があるため、脱出せず再検証を優先します。" \
+				"改善フロー: russia path still alive? yes。復帰先にロシア進捗があるため、脱出せず再検証を優先します。" \
 				"info"
 		elif [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
 			[ -f "$ACCUMULATED_GAMES_FILE" ] &&
