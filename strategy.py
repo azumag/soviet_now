@@ -64,6 +64,25 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v677: REACTIVE bonus gated by merge_available — when merge_available=false (no merge on board),
+     #       REACTIVE_MERGE_PRIORITY and REACTIVE_IMMEDIATE_MERGE_PRIORITY bonuses no longer apply to
+     #       NEAR candidates. Worst T62: merge_available=false, rp=7, NEAR bonus +2000 inflated NEAR
+     #       score (-800) over NO_MERGE (-6600), causing dangerous NEAR at max_y=2.68. With gating,
+     #       NEAR bonus becomes 0 → NEAR score -2800, NO_MERGE wins correctly. Best T131: unchanged
+     #       (merge_available=true, bonus still applies). Fixes false-positive NEAR at dangerous heights
+     #       when no merge exists. Forbidden: axis 9.7, Russia phase bonuses, unrelated penalty changes.
+     #       refs: tmp/analysis_result.md (adopted hypothesis: REACTIVE bonus merge_available gate)
+     # v676: NEAR_MERGE filtering at high max_y — when max_y>=2.0 and landing_y>=1.5, skip NEAR
+     #       bonus (no merge bonus applied). Filters false-positive NEAR signals where vertical gap
+     #       makes merge physically impossible. Worst T65: NEAR at y=1.87 vs target y=-2.43 (gap=4+).
+     #       Best T117: NEAR at y=1.67 succeeded. Forbidden: axis 9.7, v422 penalty removal, blanket NEAR bonus.
+     #       refs: tmp/analysis_result.md (adopted hypothesis: NEAR_MERGE filtering at high max_y)
+     # v675: CROSSES_DEADLINE_EDGE_NO_MERGE — decision_crosses_deadline=true && NO_MERGE && |x|>=2.5 && NOT russia_phase で -1500 ペナルティ
+     #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
+     #       Fixes: extra_low(1112)T64-T70で7ターン連続の decision_crosses_deadline && NO_MERGE && |x|>=2.5 を抑制
+     #       Worst(641)T62: x=-3.0 に -1500 → 中央付近選択へ誘導、PC_EDGE_PENALTY未発動(pc=40)の隙間を補完
+     #       Russia_phase除外: best(4816)T159 x=-3.0 は russia_phase=True なので影響なし
+     #       refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
      # v674: PIECE_COUNT_EDGE_BIAS 対策 — pc>=40 && deadline_crossed && NO_MERGE && |x|>=1.5 で
      #       エッジ配置追加ペナルティ: -(pc-35)*400*(|x|/3.0)。pc=40,|x|=2でー1333、pc=45,|x|=3でー4000。
      #       Fixes: worst T64-T66 pc=43,deadline_crossed,NO_MERGE時にx=-2.0が選択される問題を解消。
@@ -862,8 +881,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
-            reasons.append("NEAR_MERGE")
+            # v676: filter false-positive NEAR signals at dangerous heights
+            # Worst game T65: NEAR selected at x=-0.99, landing_y=1.87 vs target y=-2.43
+            # (4+ unit vertical gap) — merge physically impossible despite proximity signal.
+            # Best game T117: same type, landing_y=1.67 (merge succeeded).
+            # Filter: reject NEAR when max_y>=2.0 AND landing_y>=1.5 (vertical gap too large).
+            if max_y >= 2.0 and landing_y >= 1.5:
+                # vertical separation makes merge impossible — skip NEAR bonus
+                pass
+            else:
+                score += 600.0 * merge_mult
+                reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
@@ -1633,15 +1661,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactor情報のreactive_pairs（反応性のあるペア）を活用し、即時併合を優先する評価軸を強化。
         # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
         # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
-        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
+        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
             # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
             score += 400.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
+        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
             #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
+        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
             # reactive_pairsが3以上ある場合、即時併合機会を最優先
             score += 1000.0
@@ -1695,7 +1723,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 未活用情報：reactive_pairsの段階的ボーナス
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
 
-        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
             candidate_margin_86 = result.get("deadline_margin", 99)
@@ -1929,6 +1957,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 3.0)
             score += edge_penalty
             reasons.append("PC_EDGE_PENALTY")
+
+        # ----- v675: decision_crosses_deadline edge NO_MERGE penalty -----
+        # mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
+        # worst T62: decision_crosses_deadline=true, NO, x=-3.0 (PC_EDGE_PENALTY未発動, pc=40)
+        # extra_low T64-T70: decision_crosses_deadline=true, NO, x=±3.0 (pc=33-38)
+        # REACTIVE_PAIRS_NO_MERGE_PENALTY が rp>=3&&deadline_crossed で抑制されているため
+        # decision_crosses_deadline=True の検知で極端エッジ配置を補完抑制する
+        # |x|>=2.5 限定: 中央寄りNO_MERGE(T59-61のx=-2.0~-2.2)は許容
+        # russia_phase除外: T159のx=-3.0(RUSSIA_PHASE_BOARD_COMPRESSION)は正当配置
+        # refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
+        decision_crosses = result.get("crosses_deadline", False)
+        if (decision_crosses and merge_grade == "NO"
+                and abs(x) >= 2.5 and not russia_phase):
+            score -= 1500.0
+            reasons.append("CROSSES_DEADLINE_EDGE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
