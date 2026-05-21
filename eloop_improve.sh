@@ -2867,18 +2867,16 @@ if $improve_ok; then
 		ESCAPE_AI_SEED_HASH="${ESCAPE_AI_SEED_HASH:-}" \
 		ESCAPE_AI_SCORES="$SCORES" \
 		ESCAPE_AI_GAME_NUM="${GAME_NUM_SNAPSHOT:-0}" \
-		ESCAPE_AI_MAX_GAMES="${WILDCARD_PATIENCE_GAMES:-12}" \
 		python3 - \
 			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
 			"${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" \
-			"${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
 			"${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" <<'PY' 2>/dev/null || true
 import json
 import os
 import sys
 import time
 
-stagnation_file, attempt_file, origin_file, outcome_file = sys.argv[1:5]
+stagnation_file, attempt_file, outcome_file = sys.argv[1:4]
 now = int(time.time())
 hash_before = os.environ.get("ESCAPE_AI_HASH_BEFORE", "")
 hash_after = os.environ.get("ESCAPE_AI_HASH_AFTER", "")
@@ -2888,10 +2886,6 @@ try:
     game_num = int(os.environ.get("ESCAPE_AI_GAME_NUM", "0") or 0)
 except Exception:
     game_num = 0
-try:
-    max_games = int(os.environ.get("ESCAPE_AI_MAX_GAMES", "12") or 12)
-except Exception:
-    max_games = 12
 
 def load_json(path):
     try:
@@ -2930,19 +2924,6 @@ attempt["last_escape_ai_seed_hash"] = seed_hash
 attempt["last_escape_ai_epoch"] = now
 write_json(attempt_file, attempt)
 
-origin = load_json(origin_file)
-origin[hash_after] = {
-    "origin_type": "escape_ai",
-    "created_at_game": game_num,
-    "created_at_epoch": now,
-    "patience_override": 1,
-    "max_games_override": max_games,
-    "source_hash": hash_before,
-    "seed_hash": seed_hash,
-    "scores": scores,
-}
-write_json(origin_file, origin)
-
 if outcome_file:
     os.makedirs(os.path.dirname(outcome_file) or ".", exist_ok=True)
     row = {
@@ -2958,7 +2939,7 @@ if outcome_file:
     with open(outcome_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 PY
-		log "[ESCAPE-AI] applied escape reset: ${HASH_BEFORE} → ${HASH_AFTER} (stagnation/wildcard latch cleared)"
+		log "[ESCAPE-AI] applied escape reset: ${HASH_BEFORE} → ${HASH_AFTER} (stagnation/escape_ai latch cleared; not registered as wildcard origin)"
 	fi
 	phylo_push_ok=false
 	phylo_improve_summary=""
