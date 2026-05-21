@@ -4045,6 +4045,8 @@ PY
         self.assertIn('printf \'%s\\n\' "$now" >"$CURSOR_FILE"', monitor)
         self.assertIn('category") or "") == "system"', monitor)
         self.assertIn('失敗(?:した|しました|です|でした|のため', monitor)
+        self.assertIn('許可(?:が必要|を得|待ち', monitor)
+        self.assertIn("grep -EHin", monitor)
         self.assertIn("*_prompt.txt", monitor)
         self.assertIn("overlay_events.jsonl", monitor)
 

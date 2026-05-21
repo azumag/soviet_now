@@ -33,7 +33,7 @@ if [ "$SINCE" -le 0 ]; then
 	[ "$SINCE" -ge 0 ] || SINCE=0
 fi
 
-failure_terms='(失敗(した|しました|です|でした|のため|により|で|、|。|$)|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)'
+failure_terms='(失敗(した|しました|です|でした|のため|により|で|、|。|$)|取得できなかった|取得できません|権限確認|許可(が必要|を得|待ち|されていません|されません)|permission|denied|rejected)'
 pattern="webfetch failed|WebFetchの権限確認|WebFetch.*${failure_terms}|WebSearch.*${failure_terms}|✗[[:space:]]*(webfetch|websearch)[[:space:]]+failed"
 
 tmp_hits=$(mktemp /tmp/soren_webfetch_monitor_hits_XXXXXXXX) || exit 1
@@ -52,7 +52,7 @@ import sys
 
 path, since_raw = sys.argv[1], sys.argv[2]
 since = int(since_raw or 0)
-failure_terms = r'(?:失敗(?:した|しました|です|でした|のため|により|で|、|。|$)|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)'
+failure_terms = r'(?:失敗(?:した|しました|です|でした|のため|により|で|、|。|$)|取得できなかった|取得できません|権限確認|許可(?:が必要|を得|待ち|されていません|されません)|permission|denied|rejected)'
 rx = re.compile(rf'webfetch failed|WebFetchの権限確認|WebFetch.*{failure_terms}|WebSearch.*{failure_terms}|[✗✕×]\s*(?:webfetch|websearch)\s+failed', re.I)
 try:
     with open(path, encoding="utf-8", errors="replace") as fh:
@@ -76,7 +76,7 @@ PY
 	mt=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
 	[ "${mt:-0}" -ge "$SINCE" ] || return 0
 	if grep -Eiq "$pattern" "$f" 2>/dev/null; then
-		grep -Ein "$pattern" "$f" 2>/dev/null | head -5 >>"$tmp_hits"
+		grep -EHin "$pattern" "$f" 2>/dev/null | head -5 >>"$tmp_hits"
 	fi
 }
 
