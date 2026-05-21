@@ -91,6 +91,48 @@ _structural_error_should_restart_fresh() {
 	[ "$continue_retry" -ge "$max_continues" ]
 }
 
+_archive_restart_quarantine_candidate() {
+	local selected_json="${1:-}" reason="${2:-archive_restart_invalid_candidate}"
+	[ -n "$selected_json" ] || return 0
+	ARCHIVE_RESTART_JSON="$selected_json" ARCHIVE_RESTART_REASON="$reason" python3 - \
+		"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" \
+		"$GAME_NUM_SNAPSHOT" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+import time
+
+cooldown_file, game_num = sys.argv[1:3]
+try:
+    selected = json.loads(os.environ.get("ARCHIVE_RESTART_JSON", "{}") or "{}")
+except Exception:
+    selected = {}
+h = str(selected.get("selected_hash") or selected.get("hash") or "")
+source_hash = str(selected.get("source_hash") or selected.get("selected_hash") or selected.get("hash") or "")
+if not h and not source_hash:
+    raise SystemExit(0)
+try:
+    cooldown = json.load(open(cooldown_file, encoding="utf-8")) if os.path.exists(cooldown_file) else {}
+except Exception:
+    cooldown = {}
+now = int(time.time())
+reason = os.environ.get("ARCHIVE_RESTART_REASON", "archive_restart_invalid_candidate")
+try:
+    game = int(game_num or 0)
+except Exception:
+    game = 0
+if h:
+    cooldown[h] = {"epoch": now, "game": game, "reason": reason}
+if source_hash and source_hash != h:
+    cooldown[source_hash] = {"epoch": now, "game": game, "reason": reason + "_source"}
+os.makedirs(os.path.dirname(cooldown_file) or ".", exist_ok=True)
+tmp = cooldown_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cooldown, f, ensure_ascii=False)
+os.replace(tmp, cooldown_file)
+PY
+}
+
 _improve_audio_summary_maybe() {
 	[ "${IMPROVE_AUDIO_SUMMARY_ENABLED:-1}" = "1" ] || return 0
 	command -v enqueue_audio_text >/dev/null 2>&1 || return 0
@@ -1191,19 +1233,37 @@ PY
 	cp "$archive_restart_path" "strategy.py.staging"
 	if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
 		log "[ARCHIVE-RESTART] validation failed → abort"
+		_archive_restart_quarantine_candidate "$archive_restart_json" "archive_restart_validate_fail"
 		rm -f "strategy.py.staging"
-		_improve_progress "archive_restart_validate_fail" "100" "invalid_archive_candidate"
-		exit 1
+		if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			log "[ARCHIVE-RESTART] invalid candidate quarantined → escape_ai へフォールバック"
+			IMPROVE_REASON="escape_ai"
+			export IMPROVE_REASON
+			_improve_progress "escape_ai" "35" "archive_invalid_candidate_fallback"
+		else
+			_improve_progress "archive_restart_validate_fail" "100" "invalid_archive_candidate"
+			exit 1
+		fi
 	fi
+	if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
 	cp "strategy.py.staging" "$STRATEGY_FILE"
 	rm -f "strategy.py.staging"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	if [ -z "$HASH_AFTER" ] || [ "$HASH_AFTER" = "$HASH_BEFORE" ]; then
 		log "[ARCHIVE-RESTART] no effective hash change selected=${archive_restart_hash} actual=${HASH_AFTER:-empty}"
+		_archive_restart_quarantine_candidate "$archive_restart_json" "archive_restart_no_effective_hash_change"
 		cp "tmp/revert_strategy.py" "$STRATEGY_FILE" 2>/dev/null || true
-		_improve_progress "archive_restart_fail" "100" "no_effective_hash_change"
-		exit 1
+		if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
+			log "[ARCHIVE-RESTART] no effective hash change → escape_ai へフォールバック"
+			IMPROVE_REASON="escape_ai"
+			export IMPROVE_REASON
+			_improve_progress "escape_ai" "35" "archive_no_effective_change_fallback"
+		else
+			_improve_progress "archive_restart_fail" "100" "no_effective_hash_change"
+			exit 1
+		fi
 	fi
+	if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
 	if [ "$HASH_AFTER" != "$archive_restart_hash" ]; then
 		log "[ARCHIVE-RESTART] selected hash normalized by validation: selected=${archive_restart_hash} actual=${HASH_AFTER}"
 		archive_restart_json=$(ARCHIVE_RESTART_JSON="$archive_restart_json" python3 - "$HASH_AFTER" "$archive_restart_hash" <<'PY' 2>/dev/null || printf '%s' "$archive_restart_json"
@@ -1302,6 +1362,8 @@ PY
 	_improve_progress "done" "100" "archive_restart_complete"
 	log "[ARCHIVE-RESTART] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER} source=${archive_restart_hash}"
 	exit 0
+fi
+fi
 fi
 fi
 
