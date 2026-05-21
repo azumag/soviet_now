@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v618: axis 8.8抑制条件削除 — deadline_crossed && rp>=3 && NO_MERGE でも -4500 適用必需
+     #       抑制条件 `not (deadline_crossed and reactive_pair_count >= 3)` を削除し常に-4500を適用
+     #       worst game T56: deadline越え放置→max_y暴走→game overのfailure mode修復
+     #       mandatory_themes遵守: 「デッドライン超出時は併合できる場合に限る」
+     #       refs: tmp/analysis_result.md (Implementation Plan: axis 8.8抑制条件削除)
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -1890,19 +1895,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("DEADLINE_MERGE_URGENCY")
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            # v662: removed `and not global_merge_available` from suppression condition.
-            # Worst game T56: deadline_crossed=true, rp=3, merge_available=false → NO_MERGE selected,
-            # causing "deadline without merge" violation of mandatory theme.
-            # With `global_merge_available` in condition, penalty was suppressed exactly when needed most.
-            # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
-            # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
-            if not (deadline_crossed and reactive_pair_count >= 3):
-                score -= 4500.0
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # v618: axis 8.8抑制条件削除 — deadline_crossed && rp>=3 でもNO_MERGEなら-4500適用必需
+            # worst game T56: decision_crosses_deadline=true, merge_grade=NO, x=-0.39 → top_y=3.94
+            # 抑制条件 `not (deadline_crossed and reactive_pair_count >= 3)` が発動し-4500不適用→
+            # deadline越え放置→max_y暴走→game overのfailure mode発生
+            # mandatory_themes: 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+            # deadline越えでもmerge可用時(direct/near)は選択可能。NO_MERGE時は常に最低高度が選択される
+            # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8抑制条件削除)
+            score -= 4500.0
+            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
