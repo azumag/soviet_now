@@ -3708,7 +3708,7 @@ PY
         daemon = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
         worker = (REPO_ROOT / "workers/chat_worker.sh").read_text()
 
-        self.assertIn('echo "PASS SCHMOOPIIE"', daemon)
+        self.assertIn("printf 'PASS SCHMOOPIIE\\r\\n'", daemon)
         self.assertIn("IRC session ended; reconnecting in 5s", daemon)
         self.assertIn("operation not permitted", worker)
         self.assertIn('_pid_alive "$_DAEMON_PID"', worker)
@@ -3759,12 +3759,18 @@ PY
 
     def test_radio_tool_failure_lines_are_filtered_before_tts(self):
         helpers = (REPO_ROOT / "core/helpers.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
         radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
         ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
         radio_corners = (REPO_ROOT / "broadcast/radio_corners.sh").read_text()
 
+        self.assertIn('"webfetch":"allow"', config)
+        self.assertIn('RADIO_CLAUDE_TOOLS="${RADIO_CLAUDE_TOOLS:-default,WebSearch,WebFetch}"', config)
+        self.assertIn('--tools "$RADIO_CLAUDE_TOOLS" --permission-mode dontAsk', radio_engine)
+        self.assertIn('"webfetch":"allow"', radio_corners)
         self.assertIn("_notify_webfetch_failure()", helpers)
         self.assertIn('./overlay_notify.sh radio "WebFetch failed"', helpers)
+        self.assertIn("取得できなかった", helpers)
         self.assertIn(r"[✗✕×]\s*(webfetch|websearch)\s+failed", radio_engine)
         self.assertIn(r"(WebFetch|WebSearch)", radio_engine)
         self.assertIn("grep -Eiv '(WebFetch|WebSearch)'", radio_engine)
@@ -3772,6 +3778,31 @@ PY
         self.assertIn('_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio"', radio_engine)
         self.assertIn("webfetch|websearch", ai_generate)
         self.assertIn("webfetch|websearch", radio_corners)
+
+    def test_webfetch_notification_does_not_fire_on_success_tool_marker(self):
+        success = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                "source ./eloop_lib.sh; _contains_webfetch_failure_text $'% WebFetch https://example.com\\nFETCH_OK'",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        failure = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                "source ./eloop_lib.sh; _contains_webfetch_failure_text $'WebFetchの権限確認が入りました'",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertNotEqual(success.returncode, 0)
+        self.assertEqual(failure.returncode, 0)
 
     def test_status_surfaces_fresh_improve_state_when_pid_is_hidden(self):
         dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
@@ -3864,6 +3895,133 @@ PY
         )
         self.assertIn('rollback_note="rolling_top hash=${rollback_hash}', regression)
         self.assertIn("rollback候補スキップ: $h はguard未注入archive", regression)
+        self.assertIn("_remove_unusable_rolling_score_hash", regression)
+        self.assertIn("_prune_non_objective_rollback_scores", regression)
+        self.assertIn("objective_miss_no_russia", regression)
+        self.assertIn("OBJECTIVE_ANCHOR_PRIORITY_ENABLED", regression)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
+
+    def test_rollback_candidate_prefers_objective_progress_over_plain_score_top(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            archive_dir = td / "by_hash"
+            permanent_dir = td / "permanent_by_hash"
+            archive_dir.mkdir()
+            permanent_dir.mkdir()
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnlyTop": {
+                            "scores": [12000] * 12,
+                            "games_total": 12,
+                            "best_max_type": 0,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                        "russiaNearTop": {
+                            "scores": [11100] * 12,
+                            "games_total": 12,
+                            "best_max_type": 15,
+                            "russia_count": 1,
+                            "soviet_count": 0,
+                        },
+                    }
+                )
+            )
+            stable_source = (
+                "def decide(game_state, analysis):\n"
+                "    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+                "    return {'x': 0, 'reason': 'ok'}\n"
+            )
+            (archive_dir / "scoreOnlyTop.py").write_text(stable_source)
+            (permanent_dir / "russiaNearTop.py").write_text(stable_source)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+STRATEGY_HASH_PERMANENT_ARCHIVE_DIR='{permanent_dir}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+HASH_ARCHIVE_KEEP_TOP=10
+OBJECTIVE_ANCHOR_PRIORITY_ENABLED=1
+OBJECTIVE_ANCHOR_MIN_COMP_RATIO=0.90
+OBJECTIVE_ANCHOR_MAX_COMP_GAP=1500
+source strategy/regression.sh 2>/dev/null
+_rollback_candidate_file_is_valid() {{
+    return 0
+}}
+_pick_best_rollback_candidate currentHash
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            self.assertTrue(result.stdout.startswith("russiaNearTop|"), msg=result.stdout)
+            rolling = json.loads(rs_file.read_text())
+            self.assertNotIn("scoreOnlyTop", rolling)
+            self.assertIn("russiaNearTop", rolling)
+            audit = (td / "rolling_score_pruned_hashes.jsonl").read_text()
+            self.assertIn("objective_miss_no_russia", audit)
+
+    def test_invalid_rollback_archive_is_pruned_from_rolling_scores(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "badTop": {"scores": [2000] * 12, "games_total": 12, "_recent_archives": []},
+                        "goodNext": {"scores": [1500] * 12, "games_total": 12, "_recent_archives": []},
+                    }
+                )
+            )
+            stable_source = (
+                "def decide(game_state, analysis):\n"
+                "    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+                "    return {'x': 0, 'reason': 'ok'}\n"
+            )
+            (archive_dir / "badTop.py").write_text(stable_source)
+            (archive_dir / "goodNext.py").write_text(stable_source)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+HASH_ARCHIVE_KEEP_TOP=10
+OBJECTIVE_ANCHOR_PRIORITY_ENABLED=0
+source strategy/regression.sh 2>/dev/null
+_rollback_candidate_file_is_valid() {{
+    case "$1" in
+        badTop) return 1 ;;
+        *) return 0 ;;
+    esac
+}}
+_pick_best_rollback_candidate currentHash
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            self.assertIn("goodNext|", result.stdout)
+            rolling = json.loads(rs_file.read_text())
+            self.assertNotIn("badTop", rolling)
+            self.assertIn("goodNext", rolling)
+            audit = (td / "rolling_score_pruned_hashes.jsonl").read_text()
+            self.assertIn("rollback_archive_validation_failed", audit)
 
     def test_soren91_ranking_comments_are_prioritized_in_comment_queue(self):
         comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()

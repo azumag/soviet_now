@@ -80,7 +80,7 @@ _contains_provider_error_text() {
 }
 
 _contains_webfetch_failure_text() {
-	printf '%s' "$1" | grep -Eiq '([✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b|WebFetch|WebSearch)'
+	printf '%s' "$1" | grep -Eiq '([✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b|(WebFetch|WebSearch).*(failed|失敗|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected)|((failed|失敗|取得できなかった|取得できません|確認が入りました|許可|permission|denied|rejected).*(WebFetch|WebSearch)))'
 }
 
 _notify_webfetch_failure() {

@@ -357,6 +357,7 @@ cat > "$__DASH_TMP" <<HTMLEOF
 <script>
 const DASHBOARD_DATA = ${DASHBOARD_DATA_JSON};
 const SCORES = DASHBOARD_DATA.chartScores;
+const EVAL_SCORES = DASHBOARD_DATA.chartEvalScores || [];
 const SCORE_STATS = DASHBOARD_DATA.scoreStats;
 const EVAL_SCORE_STATS = DASHBOARD_DATA.evalScoreStats || null;
 const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
@@ -514,7 +515,7 @@ function linearTrend(scores) {
   return { slope, intercept, r2, y0, yN, dir };
 }
 
-function drawChart(scores) {
+function drawChart(scores, evalScores) {
   if (!scores.length) return;
   updateExtraStats(scores);
   const dpr = window.devicePixelRatio || 1;
@@ -526,6 +527,10 @@ function drawChart(scores) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const sorted = scores.map(d => d.score).sort((a, b) => b - a);
+  const visibleEvalScores = (evalScores || []).slice(-scores.length);
+  const evalOffset = Math.max(0, scores.length - visibleEvalScores.length);
+  const hasEvalSeries = visibleEvalScores.some(d => Number.isFinite(d.score));
+  const evalSorted = visibleEvalScores.map(d => d.score).filter(Number.isFinite).sort((a, b) => b - a);
   const unique = [...new Set(sorted)];
   const chartMaxScore = unique[0] || 0;
   const chartSecondScore = unique[1] || '-';
@@ -556,12 +561,16 @@ function drawChart(scores) {
   );
   setTrendBadge('chartTrend', trend.slope, '/g');
 
-  const padL = 58, padR = 20, padT = 12, padB = 28;
+  const padL = 58, padR = 58, padT = 12, padB = 28;
   const cW = W - padL - padR, cH = H - padT - padB;
   const yMax = Math.ceil(Math.max(chartMaxScore, avgScore) / 500) * 500 + 200;
+  const evalMaxScore = evalSorted[0] || 0;
+  const evalAvgScore = EVAL_SCORE_STATS ? EVAL_SCORE_STATS.average : 0;
+  const y2Max = Math.ceil(Math.max(evalMaxScore, evalAvgScore, 1) / 500) * 500 + 200;
   const xRange = Math.max(1, scores.length - 1);
   const xScale = i => padL + (i / xRange) * cW;
   const yScale = v => padT + cH - (v / yMax) * cH;
+  const y2Scale = v => padT + cH - (v / y2Max) * cH;
 
   ctx.clearRect(0, 0, W, H);
 
@@ -571,6 +580,19 @@ function drawChart(scores) {
     const v = (yMax / 3) * i, y = yScale(v);
     ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
     ctx.fillText(Math.round(v), 4, y + 4);
+  }
+  if (hasEvalSeries) {
+    ctx.fillStyle = '#facc15';
+    for (let i = 0; i <= 3; i++) {
+      const v = (y2Max / 3) * i, y = y2Scale(v);
+      ctx.fillText(Math.round(v), W - padR + 4, y + 4);
+    }
+  }
+  ctx.fillStyle = '#4ecdc4';
+  ctx.fillText('raw', 4, padT + 12);
+  if (hasEvalSeries) {
+    ctx.fillStyle = '#facc15';
+    ctx.fillText('eval', W - padR + 4, padT + 12);
   }
 
   const xi = Math.max(1, Math.ceil(scores.length / 8));
@@ -598,6 +620,27 @@ function drawChart(scores) {
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
   ctx.stroke();
+
+  if (hasEvalSeries) {
+    ctx.strokeStyle = 'rgba(250,204,21,0.92)';
+    ctx.lineWidth = 2.2;
+    ctx.setLineDash([10, 5]);
+    ctx.beginPath();
+    let startedEvalLine = false;
+    visibleEvalScores.forEach((d, j) => {
+      const evalScore = d.score;
+      if (!Number.isFinite(evalScore)) return;
+      const x = xScale(evalOffset + j), y = y2Scale(evalScore);
+      if (!startedEvalLine) {
+        ctx.moveTo(x, y);
+        startedEvalLine = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   ctx.strokeStyle = 'rgba(255,107,107,0.95)'; ctx.lineWidth = 2.6;
   ctx.beginPath();
@@ -637,10 +680,14 @@ function drawChart(scores) {
   ctx.fillStyle = '#ffd700';
   ctx.font = 'bold 12px monospace';
   ctx.fillText('best ' + chartMaxScore, padL + 4, padT + 12);
+  if (hasEvalSeries) {
+    ctx.fillStyle = '#facc15';
+    ctx.fillText('eval best ' + evalMaxScore, Math.max(padL + 110, W - padR - 130), padT + 12);
+  }
 }
 
-drawChart(SCORES);
-window.addEventListener('resize', () => drawChart(SCORES));
+drawChart(SCORES, EVAL_SCORES);
+window.addEventListener('resize', () => drawChart(SCORES, EVAL_SCORES));
 
 // Auto-reload every 3 seconds (OBS CEF doesn't support meta refresh on file://)
 setInterval(function(){location.reload();},3000);

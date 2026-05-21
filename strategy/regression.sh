@@ -1990,10 +1990,169 @@ print(f"{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}|{games_total}")
 PY
 }
 
+_remove_unusable_rolling_score_hash() {
+	local target_hash="$1" reason="${2:-unusable_rollback_candidate}" current_hash="${3:-}"
+	[ -n "$target_hash" ] || return 0
+	[ "$target_hash" = "$current_hash" ] && return 0
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+	local removed_line
+	removed_line=$(
+		python3 - "$ROLLING_SCORES_FILE" "$target_hash" "$reason" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+rs_file, target_hash, reason = sys.argv[1:4]
+try:
+    with open(rs_file, encoding="utf-8") as f:
+        rs = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+if not isinstance(rs, dict) or target_hash not in rs:
+    raise SystemExit(0)
+
+removed = rs.pop(target_hash)
+tmp = rs_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(rs, f, ensure_ascii=False)
+os.replace(tmp, rs_file)
+
+audit_file = os.path.join(os.path.dirname(rs_file), "rolling_score_pruned_hashes.jsonl")
+try:
+    row = {
+        "hash": target_hash,
+        "reason": reason,
+        "games_total": int((removed or {}).get("games_total", 0) or 0) if isinstance(removed, dict) else 0,
+        "n": len((removed or {}).get("scores", []) or []) if isinstance(removed, dict) else 0,
+        "updated_at": int(time.time()),
+    }
+    with open(audit_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+except Exception:
+    pass
+
+print(f"{target_hash}|{reason}")
+PY
+	)
+	if [ -n "$removed_line" ]; then
+		log "[ROLLING] pruned unusable rollback candidate: hash=${target_hash} reason=${reason}" || true
+	fi
+}
+
+_prune_non_objective_rollback_scores() {
+	local current_hash="$1"
+	[ "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" = "1" ] || return 0
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+	local pruned_hashes
+	pruned_hashes=$(
+		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+rs_file, current_hash, min_games_raw = sys.argv[1:4]
+try:
+    min_games = int(min_games_raw)
+except Exception:
+    min_games = 12
+
+try:
+    with open(rs_file, encoding="utf-8") as f:
+        rs = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+if not isinstance(rs, dict):
+    raise SystemExit(0)
+
+def objective_progress(data):
+    max_types = []
+    for x in (data or {}).get("max_types", []) or []:
+        try:
+            max_types.append(int(x))
+        except Exception:
+            pass
+    try:
+        best_max_type = int((data or {}).get("best_max_type", 0) or 0)
+    except Exception:
+        best_max_type = 0
+    if max_types:
+        best_max_type = max([best_max_type] + max_types)
+    try:
+        russia_count = int((data or {}).get("russia_count", 0) or 0)
+    except Exception:
+        russia_count = 0
+    try:
+        soviet_count = int((data or {}).get("soviet_count", 0) or 0)
+    except Exception:
+        soviet_count = 0
+    if best_max_type >= 15 and russia_count <= 0:
+        russia_count = 1
+    if best_max_type >= 16 and soviet_count <= 0:
+        soviet_count = 1
+    return best_max_type, russia_count, soviet_count
+
+removed = []
+for h, data in list(rs.items()):
+    if not h or h == current_hash or not isinstance(data, dict):
+        continue
+    scores = data.get("scores", []) or []
+    if len(scores) < min_games:
+        continue
+    best_max_type, russia_count, soviet_count = objective_progress(data)
+    if soviet_count > 0 or russia_count > 0 or best_max_type >= 15:
+        continue
+    removed.append((h, data))
+    rs.pop(h, None)
+
+if not removed:
+    raise SystemExit(0)
+
+tmp = rs_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(rs, f, ensure_ascii=False)
+os.replace(tmp, rs_file)
+
+audit_file = os.path.join(os.path.dirname(rs_file), "rolling_score_pruned_hashes.jsonl")
+now = int(time.time())
+try:
+    with open(audit_file, "a", encoding="utf-8") as f:
+        for h, data in removed:
+            row = {
+                "hash": h,
+                "reason": "objective_miss_no_russia",
+                "games_total": int((data or {}).get("games_total", 0) or 0),
+                "n": len((data or {}).get("scores", []) or []),
+                "updated_at": now,
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+except Exception:
+    pass
+
+for h, _data in removed:
+    print(h)
+PY
+	)
+	if [ -n "$pruned_hashes" ]; then
+		local h
+		while IFS= read -r h; do
+			[ -n "$h" ] || continue
+			log "[ROLLING] pruned rollback objective-miss candidate: hash=${h} reason=objective_miss_no_russia" || true
+		done <<EOF
+$pruned_hashes
+EOF
+	fi
+	return 0
+}
+
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
 	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+	_prune_non_objective_rollback_scores "$current_hash"
 	local current_metrics current_comp
 	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
 	[ -z "$current_metrics" ] && current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
@@ -2001,7 +2160,8 @@ _pick_best_rollback_candidate() {
 
 	local ranked
 	ranked=$(
-		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" \
+			"${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" <<'PY'
 import json
 import sys
 import math
@@ -2014,6 +2174,9 @@ lcb_z = float(sys.argv[5])
 w_p50 = float(sys.argv[6])
 w_p25 = float(sys.argv[7])
 w_lcb = float(sys.argv[8])
+objective_enabled = (sys.argv[9] if len(sys.argv) > 9 else "1") == "1"
+objective_min_comp_ratio = float(sys.argv[10]) if len(sys.argv) > 10 else 0.90
+objective_max_comp_gap = float(sys.argv[11]) if len(sys.argv) > 11 else 1500.0
 rs = json.load(open(rs_file))
 
 def quantile(vals, p):
@@ -2042,6 +2205,39 @@ def metrics(scores):
     composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
     return composite, p50, p25, lcb, n
 
+def objective_tuple(data):
+    max_types = []
+    for x in data.get("max_types", []) or []:
+        try:
+            max_types.append(int(x))
+        except Exception:
+            pass
+    try:
+        best_max_type = int(data.get("best_max_type", 0) or 0)
+    except Exception:
+        best_max_type = 0
+    if max_types:
+        best_max_type = max([best_max_type] + max_types)
+    try:
+        russia_count = int(data.get("russia_count", 0) or 0)
+    except Exception:
+        russia_count = 0
+    try:
+        soviet_count = int(data.get("soviet_count", 0) or 0)
+    except Exception:
+        soviet_count = 0
+    if best_max_type >= 15 and russia_count <= 0:
+        russia_count = 1
+    if best_max_type >= 16 and soviet_count <= 0:
+        soviet_count = 1
+    return (
+        int(soviet_count > 0),
+        int(russia_count > 0),
+        best_max_type,
+        soviet_count,
+        russia_count,
+    )
+
 rows = []
 for h, data in rs.items():
     if h == current_hash:
@@ -2050,10 +2246,25 @@ for h, data in rs.items():
     if len(scores) < min_games:
         continue
     comp, p50, p25, lcb, n = metrics(scores)
-    rows.append((comp, p50, p25, lcb, n, h))
+    rows.append((comp, p50, p25, lcb, n, h, data))
 
-rows.sort(key=lambda x: (x[0], x[1], x[2], x[4]), reverse=True)
-for comp, p50, p25, lcb, n, h in rows[:keep_top]:
+if not rows:
+    raise SystemExit(0)
+
+top_comp = max(r[0] for r in rows)
+
+def rank_key(row):
+    comp, p50, p25, lcb, n, h, data = row
+    objective_key = (0, 0, 0, 0, 0)
+    if objective_enabled:
+        score_gap = max(0.0, top_comp - comp)
+        near_score_leader = comp >= top_comp * objective_min_comp_ratio or score_gap <= objective_max_comp_gap
+        if near_score_leader:
+            objective_key = objective_tuple(data)
+    return (*objective_key, comp, p50, p25, n, h)
+
+rows.sort(key=rank_key, reverse=True)
+for comp, p50, p25, lcb, n, h, _data in rows[:keep_top]:
     print(f"{h}|{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}")
 PY
 	)
@@ -2079,13 +2290,21 @@ PY
 			continue
 		fi
 		candidate_file="$STRATEGY_HASH_ARCHIVE_DIR/${h}.py"
-		[ -f "$candidate_file" ] || continue
+		if [ ! -f "$candidate_file" ] && [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ]; then
+			candidate_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR}/${h}.py"
+		fi
+		if [ ! -f "$candidate_file" ]; then
+			_remove_unusable_rolling_score_hash "$h" "missing_rollback_archive" "$current_hash"
+			continue
+		fi
 		if ! grep -q "BEGIN DEADLINE GUARD" "$candidate_file" 2>/dev/null; then
 			log "[REGRESSION] rollback候補スキップ: $h はguard未注入archive" >&2
+			_remove_unusable_rolling_score_hash "$h" "missing_deadline_guard" "$current_hash"
 			continue
 		fi
 		if ! _rollback_candidate_file_is_valid "$h" "$candidate_file"; then
 			log "[REGRESSION] rollback候補スキップ: $h はvalidation失敗archive" >&2
+			_remove_unusable_rolling_score_hash "$h" "rollback_archive_validation_failed" "$current_hash"
 			continue
 		fi
 		if [ -n "$candidate_file" ]; then

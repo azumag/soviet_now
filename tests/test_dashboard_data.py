@@ -35,6 +35,8 @@ class DashboardDataTest(unittest.TestCase):
 
         self.assertEqual(data["scoreStats"]["best"], 300)
         self.assertEqual(data["scoreStats"]["average"], 200)
+        self.assertEqual([d["score"] for d in data["chartScores"]], [100, 300])
+        self.assertEqual([d["score"] for d in data["chartEvalScores"]], [1100, 3300])
         self.assertEqual(data["evalScoreStats"]["best"], 3300)
         self.assertEqual(data["evalScoreStats"]["average"], 2200)
         self.assertEqual(data["evalScoreStats"]["count"], 2)

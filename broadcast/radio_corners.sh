@@ -1656,7 +1656,7 @@ _run_opencode_jiji_research_unqueued() {
 	local raw_file raw_text permission cleaned
 	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
 	# bash許可 + web-searchプラグインでAIにWeb検索させる
-	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","web-search":"allow"}'
+	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","webfetch":"allow","web":"allow","web-search":"allow"}'
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \

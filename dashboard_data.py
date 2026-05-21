@@ -286,10 +286,12 @@ def build_dashboard_data(chart_games: int) -> dict[str, Any]:
     strategy_hash = current_strategy_hash()
     current_game = read_current_game(GAME_COUNT, len(scores))
     chart_scores = scores[-chart_games:] if chart_games > 0 else scores
+    chart_eval_scores = eval_scores[-chart_games:] if chart_games > 0 else eval_scores
 
     return {
         "chartLimit": chart_games,
         "chartScores": chart_scores,
+        "chartEvalScores": chart_eval_scores,
         "scoreStats": score_stats(scores, current_game),
         "evalScoreStats": score_stats(eval_scores, current_game) if eval_scores else empty_score_stats(current_game),
         "russiaStats": russia_stats(russia, current_game),

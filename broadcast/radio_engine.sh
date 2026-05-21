@@ -345,7 +345,7 @@ _run_claude_radio_with_model_unqueued() {
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
 	local stderr_preview="" provider_error=false login_error=false
-	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" 2>"$stderr_file")
+	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" --tools "$RADIO_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file")
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
 		stderr_preview=$(head -c 500 "$stderr_file")
