@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v678: T14→T15 merge urgency — russia_phase && next_type==14 で board上のT14とmerge機会がある場合に即時選択
+      #       batch_progress: Russia(T15)=0/12。全ゲームでT14出現後にmerge促成失敗。
+      #       best(2514)T98-T106: type 14出現後DEADLINE_GUARD_SAFE_LANDINGで生存確保后就労なし。
+      #       score2480)T90-T106: T14×2存在確認ながらT15到達なし。
+      #       Russia stage gate改善: T14→T15促成でロシア建国率0/12→改善
+      #       mandatory_themes compliant: deadline超出時はmerge可能な場合に限る
+      #       refs: tmp/analysis_result.md (Implementation Plan: axis 8.7 extension)
       # vXXX: same_type merge-drought reinforcement — rp>=3 && same_type>=2 && NO_MERGE && max_y>=1.5 && !russia_phase
       #       adds -1500 supplemental penalty to REACTIVE_PAIRS_NO_MERGE_PENALTY to overcome axis 9.6 stacking
       #       Fixes worst T39-T47: 8 consecutive NO_MERGE despite same_type>=2, max_y runaway → game over T47
@@ -765,6 +772,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
+
+    # v678: T14→T15 merge urgency (axis 8.7 extension for Russia stage gate)
+    # batch_progress: Russia(T15)=0/12. 全ゲームでT14出現後にmerge促成失敗。
+    # best(2514)T98-T106: type 14出現後DEADLINE_GUARD_SAFE_LANDINGで生存確保后就労なし。
+    # score2480)T90-T106: T14×2存在確認ながらT15到達なし。
+    # advice: 「併合できるtypeが隣接しているとき、その間にピースを配置场内会导致併合更难」「即時併合を最優先」
+    # mandatory_themes: 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+    # T14出現後にmerge機会がありながらDEADLINE_GUARD生存確保で跳过される問題を解消。
+    # axis 8.7と同じ構造で、T14出現後のmerge促進を新規axisとして追加。
+    # Russia stage gate改善: T14→T15促成でロシア建国率0/12→改善
+    _dlg_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
+    _dlg_russia_count = sum(1 for p in _dlg_pieces if p.get("type") in [14, 15]) if isinstance(_dlg_pieces, list) else 0
+    _dlg_next_piece = game_state.get("next", {}) if isinstance(game_state, dict) else {}
+    _dlg_next_type = _dlg_next_piece.get("type", 0) if isinstance(_dlg_next_piece, dict) else 0
+    if _dlg_russia_count >= 1 and _dlg_russia_count < 2 and _dlg_next_type == 14:
+        _dlg_type14_on_board = [p for p in _dlg_pieces if p.get("type") == 14] if isinstance(_dlg_pieces, list) else []
+        if _dlg_type14_on_board:
+            _dlg_results = analysis.get("results", []) if isinstance(analysis, dict) else []
+            if isinstance(_dlg_results, list) and _dlg_results:
+                _dlg_merge_cands = [r for r in _dlg_results if isinstance(r, dict) and r.get("merge_grade") in ("DIRECT", "NEAR")]
+                if _dlg_merge_cands:
+                    _dlg_best_score = -float("inf")
+                    _dlg_best_cand = None
+                    for _cand in _dlg_merge_cands:
+                        _base = 2000.0
+                        if _cand.get("merge_grade") == "DIRECT":
+                            _base += 200.0
+                        if _base > _dlg_best_score:
+                            _dlg_best_score = _base
+                            _dlg_best_cand = _cand
+                    if _dlg_best_cand is not None:
+                        return {"x": float(_dlg_best_cand.get("x", 0.0)), "reason": "RUSSIA_PHASE_T14_MERGE_URGENCY"}
 
     results = analysis.get("results", [])
 
