@@ -2685,9 +2685,9 @@ def _close_successful_wildcard_origin(event):
 
 def _update_stagnation(event):
     """Python ブロックを抜ける直前に呼ぶ。
-    event: PROMOTE | REGRESSION | RESET | OK_BEAT | OK_IDLE | SAME_HASH_BACKSLIDE
+    event: PROMOTE | REGRESSION | RESET | OK_BEAT | OK_IDLE | SAME_HASH_BACKSLIDE | OBJECTIVE_MISS
     PROMOTE / OK_BEAT → カウンタ 0、REGRESSION / RESET → +1、
-    OK_IDLE / SAME_HASH_BACKSLIDE → 変更なし
+    OBJECTIVE_MISS → +1 without rollback、OK_IDLE / SAME_HASH_BACKSLIDE → 変更なし
     """
     if not stagnation_file:
         return
@@ -2701,7 +2701,7 @@ def _update_stagnation(event):
         c = int(data.get("consecutive_no_improve", 0) or 0)
         if event in ("PROMOTE", "OK_BEAT"):
             c = 0
-        elif event in ("REGRESSION", "RESET"):
+        elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):
             c += 1
         elif event in ("OK_IDLE", "SAME_HASH_BACKSLIDE"):
             pass
@@ -2719,7 +2719,7 @@ def _update_stagnation(event):
             rs = 0
         elif event == "PROMOTE":
             rs = max(0, rs - 1)
-        elif event in ("REGRESSION", "RESET"):
+        elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):
             rs += 1
         data["regression_streak"] = rs
         data["last_event"] = event
@@ -3070,7 +3070,7 @@ if (
         reasons.append("lost_russia_path")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
     if trend_grace:
-        _update_stagnation("OK_BEAT")
+        _update_stagnation("OBJECTIVE_MISS")
         print(f"OK:{trend_grace_reason()}")
         raise SystemExit
     print(
@@ -3163,6 +3163,18 @@ for x in (anchor_data.get("scores", []) or []):
 current_objective = objective_progress(current_data, current_scores)
 anchor_objective = objective_progress(anchor_data, anchor_scores)
 
+def objective_miss_against_anchor(anchor_progress, current_progress):
+    if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
+        return True
+    if int(anchor_progress.get("russia_count", 0) or 0) > 0 and int(current_progress.get("russia_count", 0) or 0) <= 0:
+        return True
+    if int(anchor_progress.get("best_max_type", 0) or 0) >= early_objective_min_best_type and int(current_progress.get("best_max_type", 0) or 0) < early_objective_min_best_type:
+        return True
+    return False
+
+def ok_event_for_objective(anchor_progress, current_progress):
+    return "OBJECTIVE_MISS" if objective_miss_against_anchor(anchor_progress, current_progress) else "OK_BEAT"
+
 def objective_allows_anchor_promotion(anchor_progress, current_progress):
     if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
         return False
@@ -3211,7 +3223,7 @@ if current_hash == anchor_hash and not branch_active:
         _update_stagnation("OK_IDLE")
         print("OK")
         raise SystemExit
-    _update_stagnation("OK_BEAT")
+    _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
     print("OK")
     raise SystemExit
 
@@ -3237,7 +3249,7 @@ if (
     # lost_soviet_path は従来どおり早期ゲートに残す。
     if objective_reasons:
         if trend_grace:
-            _update_stagnation("OK_BEAT")
+            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
             print(f"OK:{trend_grace_reason()}")
             raise SystemExit
         print(
@@ -3282,7 +3294,7 @@ if current_hash != anchor_hash:
         objective_reasons.append("lost_russia_path")
 if objective_reasons:
     if trend_grace:
-        _update_stagnation("OK_BEAT")
+        _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
         print(f"OK:{trend_grace_reason()}")
         raise SystemExit
     print(
@@ -3346,7 +3358,7 @@ if branch_active and curr_breach >= min_breach_count and current_hash != anchor_
     current_worse_than_best = bool(best_hash and best_metrics and current["comp"] < best_metrics.get("comp", 0) - 1500)
     if no_improvement_signal or current_worse_than_best:
         if trend_grace:
-            _update_stagnation("OK_BEAT")
+            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
             print(f"OK:{trend_grace_reason()}")
             raise SystemExit
         print(
@@ -3374,7 +3386,7 @@ if current["n"] < min_games_current:
 if not branch_active:
     if curr_breach >= min_breach_count and current_hash != anchor_hash:
         if trend_grace:
-            _update_stagnation("OK_BEAT")
+            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
             print(f"OK:{trend_grace_reason()}")
             raise SystemExit
         direct_reason = "hard_fail+soft_fail+anchor_direct" if hard_breach >= hard_min_breach_count else "soft_fail+anchor_direct"
@@ -3396,7 +3408,7 @@ if not branch_active:
         _update_stagnation("RESET")
         print("OK")
         raise SystemExit
-    _update_stagnation("OK_BEAT")
+    _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
     print("OK")
     raise SystemExit
 
@@ -3429,7 +3441,7 @@ if patience >= branch_patience:
 
 if hard_breach >= hard_min_breach_count:
     if trend_grace:
-        _update_stagnation("OK_BEAT")
+        _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
         print(f"OK:{trend_grace_reason()}")
         raise SystemExit
     print(
@@ -3450,7 +3462,7 @@ if hard_breach >= hard_min_breach_count:
 if budget_reasons:
     if best_breach >= min_breach_count:
         if trend_grace:
-            _update_stagnation("OK_BEAT")
+            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
             print(f"OK:{trend_grace_reason()}")
             raise SystemExit
         print(
@@ -3478,7 +3490,7 @@ if budget_reasons:
     _update_stagnation("RESET")
     raise SystemExit
 
-_update_stagnation("OK_BEAT")
+_update_stagnation(ok_event_for_objective(anchor_objective, current_objective))
 print("OK")
 PY
 		2>/dev/null

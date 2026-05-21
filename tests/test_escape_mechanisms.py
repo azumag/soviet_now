@@ -1369,9 +1369,11 @@ class TestStagnationCounterTransitions(unittest.TestCase):
         self.assertIn('_update_stagnation("PROMOTE")', text)
         self.assertIn('_update_stagnation("REGRESSION")', text)
         self.assertIn('_update_stagnation("RESET")', text)
-        self.assertIn('_update_stagnation("OK_BEAT")', text)
+        self.assertIn('return "OBJECTIVE_MISS" if objective_miss_against_anchor(anchor_progress, current_progress) else "OK_BEAT"', text)
+        self.assertIn("_update_stagnation(ok_event_for_objective(anchor_objective, current_objective))", text)
         self.assertIn('_update_stagnation("OK_IDLE")', text)
         self.assertIn('_update_stagnation("SAME_HASH_BACKSLIDE")', text)
+        self.assertIn('_update_stagnation("OBJECTIVE_MISS")', text)
         # シェル側で counter を更新していない (Python 単一 owner)
         # rollback 経路 (REJECTED_HASHES_FILE 追記の隣) にはシェル側からの stagnation 書き換えはない
 
@@ -3450,6 +3452,15 @@ PY
         self.assertIn('if event == "OK_BEAT":\n            rs = 0', regression)
         self.assertIn("古い回帰ストリークを残さない", regression)
 
+    def test_objective_miss_does_not_reset_escape_streaks(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn("def objective_miss_against_anchor(anchor_progress, current_progress):", regression)
+        self.assertIn('return "OBJECTIVE_MISS" if objective_miss_against_anchor(anchor_progress, current_progress) else "OK_BEAT"', regression)
+        self.assertIn('elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):\n            c += 1', regression)
+        self.assertIn('elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):\n            rs += 1', regression)
+        self.assertIn('if event in ("PROMOTE", "OK_BEAT"):', regression)
+
     def test_structural_validation_errors_restart_fresh_sandbox_early(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
@@ -3718,13 +3729,14 @@ PY
         self.assertIn("reasons=objective_regression+", regression)
         self.assertIn("reasons=early_objective_regression+", regression)
         self.assertIn("mode=archive_objective_floor", regression)
-        self.assertIn("if trend_grace:\n        _update_stagnation(\"OK_BEAT\")", regression)
+        self.assertIn("if trend_grace:\n        _update_stagnation(\"OBJECTIVE_MISS\")", regression)
+        self.assertIn("if trend_grace:\n        _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))", regression)
         self.assertLess(
-            regression.index("if trend_grace:\n        _update_stagnation(\"OK_BEAT\")"),
+            regression.index("if trend_grace:\n        _update_stagnation(\"OBJECTIVE_MISS\")"),
             regression.index("mode=archive_objective_floor"),
         )
         self.assertLess(
-            regression.index("if trend_grace:\n            _update_stagnation(\"OK_BEAT\")"),
+            regression.index("if trend_grace:\n            _update_stagnation(ok_event_for_objective(anchor_objective, current_objective))"),
             regression.index("mode=early_objective_regression"),
         )
 
