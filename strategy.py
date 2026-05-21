@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v617: axis 9.12 merge drought exit — no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 && !death_spiral
+     # adds MERGE_PATH_CREATION bonus for proximity to type 10+ pieces (within 1.5u), +500*merge_mult
+     # extra +200*merge_mult if nearest type 10+ piece has same-type pair on board (advances pipeline)
+     # worst T50-55: 6 NO_MERGE turns rp=7-8 but no type 10+ guidance → scattered to edges
+     # best T50-59: T13 piece existed, enabling turn 60 recovery via type 10+ proximity
+     # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"
+     # Fixes rollback failure mode: NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを区別せず、
+     #   3-4ターン継続時点で通常とは異なる配置優先順位に切り替えない
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12), advice.md,
+     #       strategy_versions/best_score5801_strategy.py lines 2006-2087 (hall-of-fame implementation)
      # v626: all-phase NEAR complete suppression @ deadline_crossed && max_y>=2.5 && pc>=35 → -50000
      # worst T57: max_y=3.36, pc=39, merge_available=false → 3連続HIGH_LAYER, max_y暴走
      # worst T52-59: pc=36→41, merge_available=true(DIRECT)でもNO_MERGE選択続き max_y 2.04→3.35暴走
@@ -1275,6 +1285,58 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if blocking_penalty > 0:
                     score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+
+        # ----- v616: death_spiral detection (used by axis 9.12) -----
+        # death_spiral = danger>0 && rp>=3 && NO merge && deadline_crossed
+        # In death spiral, height escalation handles it — axis 9.12 should not fire
+        death_spiral = (
+            danger_piece_count > 0
+            and reactive_pair_count >= 3
+            and merge_grade == "NO"
+            and deadline_crossed
+        )
+
+        # ----- evaluation axis 9.12: Merge drought exit — merge path creation (NEW) -----
+        # worst game T50-55: 6 NO_MERGE turns with rp=7-8 but no type 10+ proximity guidance — scattered to edges
+        # best game T50-59: similar drought but T13 piece at y=-2.54 enabled recovery at T60
+        # advice.md: "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る"
+        # no_merge_streak from game_state (defults to 0 if not present)
+        no_merge_streak = game_state.get("no_merge_streak", 0)
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+        ):
+            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if len(high_type_pieces) >= 1:
+                min_dist = float("inf")
+                best_piece_type = 0
+                for ht in high_type_pieces:
+                    hx = ht.get("x", 0)
+                    hy = ht.get("y", -10)
+                    manhattan = abs(x - hx) + abs(landing_y - hy)
+                    if manhattan < min_dist:
+                        min_dist = manhattan
+                        best_piece_type = ht.get("type", 0)
+
+                if min_dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+
+                    type_counts_on_board = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
+
+                    if type_counts_on_board.get(best_piece_type, 0) >= 2:
+                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
+                        if pair_bonus > 20:
+                            score += pair_bonus
+                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
