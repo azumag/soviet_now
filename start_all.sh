@@ -171,6 +171,30 @@ _pid_matches_worker() {
 	return 0
 }
 
+_soren_loop_adoptable() {
+	local pid="${1:-}" state="" log_m=0 now=0 age=0
+	_pid_matches_worker "$pid" "$(_pattern_for_worker soren_loop)" || return 1
+	state=$(python3 -c 'import json
+try:
+    print(json.load(open("game_state.json", encoding="utf-8")).get("state", ""))
+except Exception:
+    print("")' 2>/dev/null || echo "")
+	case "$state" in
+	STOP|GAMEOVER)
+		log_m=$(stat -f %m logs/soren_loop.log 2>/dev/null || stat -c %Y logs/soren_loop.log 2>/dev/null || echo 0)
+		now=$(date +%s)
+		case "$log_m" in ''|*[!0-9]*) log_m=0 ;; esac
+		age=$((now - log_m))
+		if [ "$log_m" -gt 0 ] && [ "$age" -gt "${SOREN_LOOP_STOP_ADOPT_MAX_LOG_AGE:-30}" ]; then
+			_log "WARN: soren_loop PID=${pid} は state=${state} かつ log stale ${age}s → 採用せず再起動"
+			kill -TERM "$pid" 2>/dev/null || true
+			return 1
+		fi
+		;;
+	esac
+	return 0
+}
+
 _find_existing_worker_pid() {
 	local name="$1"
 	local pid_file pid pattern pid
@@ -179,6 +203,10 @@ _find_existing_worker_pid() {
 	if [ -n "$pid_file" ] && [ -f "$pid_file" ]; then
 		pid=$(cat "$pid_file" 2>/dev/null || true)
 		if _pid_matches_worker "$pid" "$pattern"; then
+			if [ "$name" = "soren_loop" ] && ! _soren_loop_adoptable "$pid"; then
+				rm -f "$pid_file" 2>/dev/null || true
+				return 1
+			fi
 			echo "$pid"
 			return 0
 		fi
@@ -187,6 +215,9 @@ _find_existing_worker_pid() {
 	if [ -n "$pattern" ]; then
 		pid=$(pgrep -f "$pattern" 2>/dev/null | head -n 1 || true)
 		if _pid_alive "$pid"; then
+			if [ "$name" = "soren_loop" ] && ! _soren_loop_adoptable "$pid"; then
+				return 1
+			fi
 			echo "$pid"
 			return 0
 		fi
