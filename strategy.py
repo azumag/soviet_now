@@ -870,6 +870,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
+        # ----- v616: merge drought detection — internal no_merge_streak counter -----
+        # analysis_result.md: worst game T43-T56 had 13 consecutive NO_MERGE, extra_low T68-T75 had 7.
+        # We don't have per-turn history, so detect drought from board state:
+        # same_type_pieces on board (2+) + rp>=3 + current candidate is merge_grade=NO
+        # = we want to merge but can't — classic merge drought pattern.
+        # v616: compute no_merge_streak inside candidate loop for per-candidate accuracy.
+        # Detected here (after merge_grade read) for use in axis 9.12.
+        no_merge_streak = 0
+        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
+            no_merge_streak = 3
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -1180,6 +1191,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
+
+        # ----- evaluation axis 9.12: merge drought exit trigger (NEW v617) -----
+        # analysis_result.md adopted hypothesis: "Merge drought exit trigger — merge path creation"
+        # Worst game T43-T56: 13 consecutive NO_MERGE turns, max_y 1.48→3.10, pc 35→46, game over.
+        # extra_low T68-T75: 7 consecutive NO_MERGE, max_y 2.64→3.28, pc 40→43, game over.
+        # Both failure modes: board had type 10+ pieces but no mechanism to create merge paths.
+        # DEADLINE_GUARD only handles deadline survival, not merge promotion.
+        # Axis 9.12: when no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30
+        # && !death_spiral, add bonus for placement near type 10+ pieces (within 1.5u horizontal).
+        # Bonus magnitude: base 150 * merge_mult, scaled by proximity (closer = higher bonus).
+        # This creates future merge opportunities by clustering type 10+ pieces.
+        # Suppress when death_spiral — height must be sole differentiator in danger zone.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+        #       strategy_versions/best_score6058_strategy.py (axis 9.12 implementation),
+        #       game_history/20260521_123535_score0181.jsonl (worst game T43-T56),
+        #       game_history/20260521_124014_score2083.jsonl (extra_low T68-T75)
+        # Fixes rollback failure mode: "NO_MERGE continuous → no merge path creation → death spiral"
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+        ):
+            type_10_plus_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if type_10_plus_pieces:
+                best_dist = float("inf")
+                for tp in type_10_plus_pieces:
+                    tp_x = tp.get("x", 0)
+                    tp_y = tp.get("y", -10)
+                    dist = ((x - tp_x) ** 2 + (landing_y - tp_y) ** 2) ** 0.5
+                    if dist < best_dist:
+                        best_dist = dist
+                if best_dist < 1.5:
+                    proximity_bonus = 150.0 * (1.0 - best_dist / 1.5) * merge_mult
+                    score += proximity_bonus
+                    reasons.append("MERGE_DROUGHT_EXIT")
 
         # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
         # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
