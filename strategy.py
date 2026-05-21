@@ -1905,6 +1905,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
+        # ----- vXXX: axis 8.8c — deadline-crossing NO-merge at rp>=3 (CRITICAL) -----
+        # worst T57: 13 consecutive merge_available=false, decision_crosses_deadline=true x4,
+        # max_y=2.96→3.09 → game over. extra_low T78-80: rp=8-9, crosses_deadline=true x3.
+        # axis 8.8 (-4500 flat) insufficient: stacking/proximity bonuses (~1500 total) override it,
+        # selecting deadline-crossing NO_MERGE candidates. mandatory_themes第一条:
+        # 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+        # Penalty -8000: exceeds height penalty differential (2000-4000) + bonuses (1500)
+        # so safe low-position candidates are always chosen over deadline-crossing ones.
+        # Fires ONLY when: rp>=3 && merge_grade==NO && crosses_deadline==true
+        # Does NOT affect merge candidates (they exit earlier in evaluation).
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c追加),
+        #       game_history/20260521_145037_score0613.jsonl T57,
+        #       game_history/20260521_152533_score0821.jsonl T78-80
+        if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
+            score -= 8000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
+
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
