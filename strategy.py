@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-v663: add axis 9.65 (reactive near-miss clustering) and axis 9.8 (same-type proximity)
-      for merge drought recovery. Adopts analysis_result.md hypothesis:
-      "reactive near-miss guidance" axis to address scattered board -> no merges -> death spiral.
-      Refs: tmp/analysis_result.md (Implementation Plan: axis 9.65, axis 9.8),
-            game_history/20260522_115213_score0570.jsonl (worst game),
-            game_history/20260522_120235_score3012.jsonl (best game)
-
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -71,15 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v677: MERGE_DROUGHT_LOW_LAYER_FORCE — deadline guard merge-drought extension
-     #       deadline_margin < 0.5 && NO merge && rp>=3 && pc>=30 && max_y>=2.0
-     #       forces lowest-layer placement to prevent max_y runaway.
-     #       Fixes rollback failure mode: worst game T55-68 merge_available=false
-     #       despite rp=5-6, max_y=1.8→3.55暴走, T61 deadline_margin=0.19→deadline exceeded.
-     #       Addresses T56 reason="DIRECT_MERGE" but best_merge_grade="NO" contradiction
-     #       (merge candidate sought but none actually gradeable).
-     #       Constraint: deadline_crossed with NO_MERGE can't select crossing positions.
-     #       refs: tmp/analysis_result.md (Implementation Plan: deadline guard logic ~line 706-769)
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -894,7 +878,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v616: compute no_merge_streak inside candidate loop for per-candidate accuracy.
         # Detected here (after merge_grade read) for use in axis 9.12.
         no_merge_streak = 0
-        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 1:
+        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
             no_merge_streak = 3
 
         # ----- evaluation axis 1: merge bonus -----
@@ -1002,7 +986,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Worst game turn 59 (max_y=2.83): triggers, combined with v422 = -2380.
         # Extra_low turn 72 (max_y=2.13 < 2.5): not triggered, NEAR allowed to proceed.
         # refs: tmp/analysis_result.md
-        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 43 and not russia_phase:
+        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 33 and not russia_phase:
             penalty = -1000.0 * (1.0 + (max_y - 2.5) * 2.0)
             score += penalty
             reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
@@ -1203,7 +1187,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 28:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.0835
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
@@ -1334,7 +1318,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                        proximity_bonus = max(0, 120.0 - horiz_dist * 22.44)
+                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
                         if piece_count >= 28:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
@@ -1363,99 +1347,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
-
-        # ----- evaluation axis 9.65: reactive near-miss type clustering (NEW v663) -----
-        # analysis_result.md adopted hypothesis: "reactive near-miss guidance" axis.
-        # Primary failure mode: worst game T55 (pc=36, rp=5, NO merge) has type 3x3, type 10x3,
-        # type 8x4 all non-reactive — same types exist but spread too far to merge. No axis guides
-        # clustering them. Within 13 turns, only 3 low-type merges occur, pc grows 36->42.
-        # Best game T96-124: during Russia phase, board gradually builds mergeable configurations
-        # -> recovery merge at T125 (+392, pc 43->32, max_y drops 1.89).
-        # When merge_grade==NO && rp>=2 && pc>=25: find types with 2+ pieces (excluding next_type,
-        # handled by 9.6b). Calculate centroid and guide placement toward it. Creates mergeable
-        # configurations within 1-2 turns, addressing the "scattered board, no merges" failure mode.
-        # Bonus capped at ~500 — must not override height penalty differentiation (~350-700).
-        # NOT fire when merge_grade != "NO" — merge bonuses always take priority.
-        # NOT include next_type — axis 9.6b already handles it.
-        # NOT fire at pc < 25 — early game has abundant merge opportunities.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.65 reactive near-miss clustering),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 17.1% high, avg_delta=1.7),
-        #       game_history/20260522_120235_score3012.jsonl (best game T96-125),
-        #       game_history/20260522_115213_score0570.jsonl (worst game T55 scatter)
-        # Fixes rollback failure mode: "scattered board, no merges -> death spiral" (analysis_result.md)
-
-        if merge_grade == "NO" and reactive_pair_count >= 2 and piece_count >= 25:
-            if not death_spiral:
-                _type_positions = {}
-                for p in pieces:
-                    t = p.get("type", 0)
-                    if t == next_type or t >= 16:
-                        continue
-                    _type_positions.setdefault(t, []).append((p["x"], p["y"]))
-
-                _clustering_targets = []
-                for t, positions in _type_positions.items():
-                    if len(positions) >= 2:
-                        _cx = sum(p[0] for p in positions) / len(positions)
-                        _cy = sum(p[1] for p in positions) / len(positions)
-                        _avg_spread = sum(
-                            ((p[0] - _cx) ** 2 + (p[1] - _cy) ** 2) ** 0.5
-                            for p in positions
-                        ) / len(positions)
-                        _clustering_targets.append((t, _cx, _cy, _avg_spread, len(positions)))
-
-                if _clustering_targets:
-                    _total_cluster_bonus = 0.0
-                    for _t, _cx, _cy, _spread, _count in _clustering_targets:
-                        _dist = ((x - _cx) ** 2 + (landing_y - _cy) ** 2) ** 0.5
-                        _cb = 100.0 * _count * min(2.0, _spread) / (1.0 + _dist)
-                        _cb *= min(1.5, 1.0 + 0.1 * reactive_pair_count)
-                        _total_cluster_bonus += _cb
-
-                    _total_cluster_bonus = min(_total_cluster_bonus, 500.0)
-                    if _total_cluster_bonus > 50:
-                        score += _total_cluster_bonus
-                        reasons.append("NEAR_MISS_CLUSTERING")
-
-        # ----- axis 9.8: same-type proximity for merge drought recovery (NEW v663) -----
-        # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
-        # Worst game T71-79: 9 turns, 7 with merge_grade=NO, pc 37->43. Extra_low T25-52: 27-turn drought.
-        # When merge_grade=NO and piece_count is high (>=25) and there are 2+ pieces of next_type on board,
-        # guide placement to bring same-type pieces closer together — creating future merge opportunities.
-        # This creates a "3-piece cluster" state: when next same-type arrives, immediate merge is likely.
-        # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
-        # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
-        # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
-        # v663: suppress when max_y>=1.5 && reactive_pair_count>=3 — at high rp and elevated board,
-        # clustering blocks merge paths (worst game T45-T51 pattern).
-        # v663: also suppress when column_ceiling_dominant — let column_ceiling guide placement.
-        # v663: also suppress when axis_88_horizontal_suppression — height must be sole differentiator.
-        # refs: tmp/analysis_result.md (Implementation Plan: merge drought same-type clustering),
-        #       game_history/20260522_115213_score0570.jsonl T55 (NO merge, type scatter),
-        #       game_history/20260522_120235_score3012.jsonl (best game T96-125 cluster build)
-        if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
-                and not death_spiral
-                and not (max_y >= 1.5 and reactive_pair_count >= 3)):
-            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
-            min_gap = float("inf")
-            target_x = 0.0
-            for i in range(len(same_type_sorted) - 1):
-                gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
-                if gap < min_gap:
-                    min_gap = gap
-                    target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
-
-            if min_gap < 3.0:
-                dist_to_target = abs(x - target_x)
-                if dist_to_target < 1.5:
-                    proximity_bonus_98 = max(0, 150.0 - dist_to_target * 80.0)
-                    avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
-                    if avg_target_y > 1.0:
-                        proximity_bonus_98 *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                    if proximity_bonus_98 > 0:
-                        score += proximity_bonus_98
-                        if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_PROXIMITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
@@ -1489,7 +1380,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                 x1, y1 = pos1
                                 x2, y2 = pos2
                                 # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.8953
+                                span_min = min(x1, x2) - 0.5
                                 span_max = max(x1, x2) + 0.5
                                 if span_min <= x <= span_max:
                                     # Penalize if landing at or above the reactive pair level
@@ -2053,7 +1944,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v338: ロシアフェーズ && reactive_pair_count < 3 の場合、axis 9.5盤面圧縮ボーナスを完全削除
             # v337 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
             # 即時併合機会を最大化し、盤面圧縮で2つ目のロシア育成スペースを確保する戦略へ切り替え
-            if russia_phase and reactive_pair_count < 5:
+            if russia_phase and reactive_pair_count < 3:
                 # ロシアフェーズでreactive_pairs<3の場合、axis 9.5のボーナスを完全に削除
                 # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
                 pass
@@ -2130,7 +2021,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md, game_history/20260417_193200_score0490.jsonl T64-66
         if (piece_count >= 40 and deadline_crossed
                 and merge_grade == "NO" and abs(x) >= 1.5):
-            edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 0.781)
+            edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 3.0)
             score += edge_penalty
             reasons.append("PC_EDGE_PENALTY")
 
