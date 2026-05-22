@@ -64,31 +64,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-      # v681: T13→T14 merge urgency — Ukraine stage gate (T13) merge promotion
-      #       batch_progress: Ukraine(T13)=9/12(75%). 主ターゲットはUkraine段階。
-      #       worst(686)T65-T77: rp=6-8, same_type>=4, merge_grade=NO続きで51 pieces蓄積。
-      #       advice: 「盘面状態に関わらず即時併合を最優先」— T13出現後merge可使なのにmerge未被選択情况あり。
-      #       v678と同じ構造をUkraine段階に適用。T13→T14促成でウクライナ建国率75%→100%。
-      #       mandatory_themes遵守: Russia phase除外、DEADLINE_GUARDバイパスなし。
-      #       refs: tmp/analysis_result.md (Implementation Plan: T13→T14 merge urgency)
-      # v680: DEADLINE_GUARD Russia phase bypass — skip guard when russia_phase && next_type==14 && T14 on board && merge available
-      #       fixes best(3236) T102-T119: DEADLINE_GUARD overrode Russia phase logic, causing T14→T15 pipeline drought despite type 15 on board
-      #       mandatory_themes compliant: bypass only passes through to Russia phase logic which respects deadline+merge constraints
-      #       Russia stage gate: fixes Russia count staying at 0 despite type 15 pieces visible
-      #       refs: tmp/analysis_result.md (Hypothesis 2: DEADLINE_GUARD over-triggering)
-      # v678: T14→T15 merge urgency — russia_phase && next_type==14 で board上のT14とmerge機会がある場合に即時選択
-      #       batch_progress: Russia(T15)=0/12。全ゲームでT14出現後にmerge促成失敗。
-      #       best(2514)T98-T106: type 14出現後DEADLINE_GUARD_SAFE_LANDINGで生存確保后就労なし。
-      #       score2480)T90-T106: T14×2存在確認ながらT15到達なし。
-      #       Russia stage gate改善: T14→T15促成でロシア建国率0/12→改善
-      #       mandatory_themes compliant: deadline超出時はmerge可能な場合に限る
-      #       refs: tmp/analysis_result.md (Implementation Plan: axis 8.7 extension)
-      # vXXX: same_type merge-drought reinforcement — rp>=3 && same_type>=2 && NO_MERGE && max_y>=1.5 && !russia_phase
-      #       adds -1500 supplemental penalty to REACTIVE_PAIRS_NO_MERGE_PENALTY to overcome axis 9.6 stacking
-      #       Fixes worst T39-T47: 8 consecutive NO_MERGE despite same_type>=2, max_y runaway → game over T47
-      #       Ukraine (T13) stage gate: 83%→100%, targeting same_type merge drought death spiral
-      #       mandatory_themes compliant: still suppresses when deadline_crossed && rp>=3 (existing guard)
-      #       refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 reinforcement)
+     # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
      #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
@@ -751,37 +727,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
-    # v680: Russia phase bypass — when Russia phase is active with type 14 merge opportunity,
-    #       DEADLINE_GUARD must not override the Russia merge urgency (lines 792-822).
-    #       Best game (3236) T102-T119: type 15 on board, russia_phase active, but
-    #       DEADLINE_GUARD chose SAFE_LANDING repeatedly with merge_available=false,
-    #       blocking T14→T15 pipeline. Russia count stayed at 0 despite type 15 pieces.
-    #       Hypothesis: DEADLINE_GUARD intercepts before Russia phase logic runs,
-    #       causing merge drought in Russia phase.
-    #       Fix: Skip DEADLINE_GUARD when Russia phase conditions would trigger merge urgency.
-    #       mandatory_themes compliant: bypass only grants passage to Russia phase logic,
-    #       which itself respects deadline+merge constraints.
-    __dlg_pieces_dlg = __dlg_game_state.get("pieces", []) if isinstance(__dlg_game_state, dict) else []
-    __dlg_russia_count_dlg = sum(1 for p in __dlg_pieces_dlg if p.get("type") in [14, 15]) if isinstance(__dlg_pieces_dlg, list) else 0
-    __dlg_next_piece_dlg = __dlg_game_state.get("next", {}) if isinstance(__dlg_game_state, dict) else {}
-    __dlg_next_type_dlg = __dlg_next_piece_dlg.get("type", 0) if isinstance(__dlg_next_piece_dlg, dict) else 0
-    __dlg_russia_phase_bypass = (
-        __dlg_russia_count_dlg >= 1
-        and __dlg_next_type_dlg == 14
-        and any(p.get("type") == 14 for p in __dlg_pieces_dlg if isinstance(__dlg_pieces_dlg, list))
-        and any(isinstance(c, dict) and c.get("merge_grade") in ("DIRECT", "NEAR") for c in __dlg_cands)
-    )
-    if __dlg_critical and __dlg_cands and not __dlg_russia_phase_bypass:
-        # v679: DEADLINE_GUARD mandatory_themes compliance fix — suppress NO_MERGE placements
-        #        that cross the deadline when no safe non-crossing candidate exists.
-        #        Fixes worst T54-55: DEADLINE_GUARD selected merge candidate that crossed
-        #        deadline (mandatory violation), then chose HIGH_TOWER with NO_MERGE at deadline.
-        #        Fixes 2308 game T90-97: russia_phase ON but 7 turns of SAFE_LANDING despite
-        #        merge opportunities, leading to last-minute urgent merge at T98.
-        #        mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        #        — placement crosses deadline && merge_grade==NO is always prohibited.
-        #        Ukraine (T13) stage gate: 83%→100%, targeting merge-drought death spiral.
-        #        refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_GUARD fix)
+    if __dlg_critical and __dlg_cands:
         __dlg_has_clean = any(
             isinstance(c, dict)
             and not c.get("crosses_deadline")
@@ -790,19 +736,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         )
         def __dlg_merge_result_safe(c):
             return not (__dlg_has_clean and c.get("merge_result_crosses_deadline"))
-        def __dlg_no_merge_violates_mandatory(c):
-            return c.get("crosses_deadline") and c.get("merge_grade") == "NO"
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
-            and __dlg_merge_result_safe(c)
-            and not __dlg_no_merge_violates_mandatory(c)
-        ]
-        __dlg_near_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
-            and __dlg_merge_result_safe(c)
-            and not __dlg_no_merge_violates_mandatory(c)
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -812,6 +748,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 )
             __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
+        __dlg_near_safe = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and __dlg_merge_result_safe(c)
+        ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
@@ -820,68 +760,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
-
-    # v678: T14→T15 merge urgency (axis 8.7 extension for Russia stage gate)
-    # batch_progress: Russia(T15)=0/12. 全ゲームでT14出現後にmerge促成失敗。
-    # best(2514)T98-T106: type 14出現後DEADLINE_GUARD_SAFE_LANDINGで生存確保后就労なし。
-    # score2480)T90-T106: T14×2存在確認ながらT15到達なし。
-    # advice: 「併合できるtypeが隣接しているとき、その間にピースを配置场内会导致併合更难」「即時併合を最優先」
-    # mandatory_themes: 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-    # T14出現後にmerge機会がありながらDEADLINE_GUARD生存確保で跳过される問題を解消。
-    # axis 8.7と同じ構造で、T14出現後のmerge促進を新規axisとして追加。
-    # Russia stage gate改善: T14→T15促成でロシア建国率0/12→改善
-    _dlg_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
-    _dlg_russia_count = sum(1 for p in _dlg_pieces if p.get("type") in [14, 15]) if isinstance(_dlg_pieces, list) else 0
-    _dlg_next_piece = game_state.get("next", {}) if isinstance(game_state, dict) else {}
-    _dlg_next_type = _dlg_next_piece.get("type", 0) if isinstance(_dlg_next_piece, dict) else 0
-    if _dlg_russia_count >= 1 and _dlg_russia_count < 2 and _dlg_next_type == 14:
-        _dlg_type14_on_board = [p for p in _dlg_pieces if p.get("type") == 14] if isinstance(_dlg_pieces, list) else []
-        if _dlg_type14_on_board:
-            _dlg_results = analysis.get("results", []) if isinstance(analysis, dict) else []
-            if isinstance(_dlg_results, list) and _dlg_results:
-                _dlg_merge_cands = [r for r in _dlg_results if isinstance(r, dict) and r.get("merge_grade") in ("DIRECT", "NEAR")]
-                if _dlg_merge_cands:
-                    _dlg_best_score = -float("inf")
-                    _dlg_best_cand = None
-                    for _cand in _dlg_merge_cands:
-                        _base = 2000.0
-                        if _cand.get("merge_grade") == "DIRECT":
-                            _base += 200.0
-                        if _base > _dlg_best_score:
-                            _dlg_best_score = _base
-                            _dlg_best_cand = _cand
-                    if _dlg_best_cand is not None:
-                        return {"x": float(_dlg_best_cand.get("x", 0.0)), "reason": "RUSSIA_PHASE_T14_MERGE_URGENCY"}
-
-    # v681: T13→T14 merge urgency — Ukraine stage gate (T13) merge promotion
-    # batch_progress: Ukraine(T13)=9/12(75%). 主ターゲットはUkraine段階。
-    # worst(686)T65-T77: rp=6-8, same_type>=4, merge_grade=NO続きで51 piecesまで蓄積。
-    # advice: 「盘面状態に関わらず即時併合を最優先」— T13出現後merge可使なのにmerge未被選択情况あり。
-    # v678はRussia phaseでT14→T15 urgencyを追加したが、Ukraine段階には同等のロジックがない。
-    # Ukraine stage gate改善: T13→T14促成でウクライナ建国率75%→100%に近づける。
-    # mandatory_themes遵守: crosses_deadline && merge_grade==NO は選択禁止（既存guard参照）。
-    _ukr_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
-    _ukr_russia_count = sum(1 for p in _ukr_pieces if p.get("type") in [14, 15]) if isinstance(_ukr_pieces, list) else 0
-    _ukr_next_piece = game_state.get("next", {}) if isinstance(game_state, dict) else {}
-    _ukr_next_type = _ukr_next_piece.get("type", 0) if isinstance(_ukr_next_piece, dict) else 0
-    if _ukr_russia_count == 0 and _ukr_next_type == 13:
-        _ukr_type13_on_board = [p for p in _ukr_pieces if p.get("type") == 13] if isinstance(_ukr_pieces, list) else []
-        if _ukr_type13_on_board:
-            _ukr_results = analysis.get("results", []) if isinstance(analysis, dict) else []
-            if isinstance(_ukr_results, list) and _ukr_results:
-                _ukr_merge_cands = [r for r in _ukr_results if isinstance(r, dict) and r.get("merge_grade") in ("DIRECT", "NEAR")]
-                if _ukr_merge_cands:
-                    _ukr_best_score = -float("inf")
-                    _ukr_best_cand = None
-                    for _cand in _ukr_merge_cands:
-                        _base = 2000.0
-                        if _cand.get("merge_grade") == "DIRECT":
-                            _base += 200.0
-                        if _base > _ukr_best_score:
-                            _ukr_best_score = _base
-                            _ukr_best_cand = _cand
-                    if _ukr_best_cand is not None:
-                        return {"x": float(_ukr_best_cand.get("x", 0.0)), "reason": "UKRAINE_PHASE_T13_MERGE_URGENCY"}
 
     results = analysis.get("results", [])
 
@@ -2023,20 +1901,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
             # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
             if not (deadline_crossed and reactive_pair_count >= 3):
-                base_penalty = -4500.0
-                # vXXX: same_type merge-drought reinforcement
-                # analysis_result.md adopted hypothesis: "rp>=3 + same_type>=2 + NO_MERGE時のmerge path誘導強化"
-                # worst game T39-T47: rp=3-4, same_type_pieces>=2, merge_grade=NO, 8 consecutive NO_MERGE → max_y runaway
-                # advice.md: "盤面状態に関わらず即時併合を最優先"
-                # When same-type pieces exist on board and rp>=3, the merge drought is structural —
-                # axis 9.6 stacking bonuses (~200-400) can offset the base -4500, allowing high placement.
-                # Add -1500 supplemental penalty specifically for same_type>=2 to overcome stacking guidance.
-                # This targets the Ukraine (T13) 83%→100% gate: preventing merge drought death spirals.
-                # Suppress when russia_phase — Russia growth requires different strategy.
-                if len(same_type_pieces) >= 2 and max_y >= 1.5 and not russia_phase:
-                    base_penalty -= 1500.0
-                    reasons.append("SAME_TYPE_MERGE_DROUGHT_PENALTY")
-                score += base_penalty
+                score -= 4500.0
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
