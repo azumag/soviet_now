@@ -775,37 +775,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        # vXXX: MERGE_DROUGHT_LOW_LAYER_FORCE — merge drought detection for high-danger boards
-        # analysis_result.md: worst game T55-68 merge_available=false持续中にmax_y=1.8→3.55暴走。
-        # worst T61: deadline_margin=0.19, x=-0.25, landing_y=3.69でデッドライン超え。
-        # Current deadline guard only triggers on DIRECT/NEAR merge candidates; when none exist,
-        # it falls through to SAFE_LANDING but doesn't address merge-drought boards with
-        # high piece_count and reactive pairs but no merge opportunities.
-        # Fix: when deadline_margin < 0.5 && NO merge && rp>=3 && pc>=30 && max_y>=2.0,
-        # force placement to lowest layer. This is an extension of axis 9.12 MERGE_DROUGHT_EXIT
-        # conditions, addressing "merge opportunities exist but merge grade=NO" contradiction
-        # observed in worst game T56 (reason=DIRECT_MERGE but best_merge_grade="NO").
-        # mandatory_themes: "デッドライン超出時は併合できる場合に限る" = enforced (crosses_deadline
-        # candidates excluded above), "デッドライン付近の危険盤面では併合を優先" = addressed
-        # by forcing low placement to preserve merge path options.
-        # Constraint check: deadline_crossed with NO_MERGE can't select crossing positions
-        # (filtered above in __dlg_safe). Safe non-crossing positions always exist.
-        if __dlg_margin < 0.5 and __dlg_cands:
-            __dlg_merge_cands = [
-                c for c in __dlg_cands
-                if isinstance(c, dict) and c.get("merge_grade") in ("DIRECT", "NEAR", "FAR")
-            ]
-            if not __dlg_merge_cands and __dlg_rp_count >= 3 and __dlg_danger_count >= 30:
-                __dlg_board_max_y = max(
-                    (c.get("landing_y", -99.0) or -99.0) for c in __dlg_cands
-                    if isinstance(c, dict)
-                )
-                if __dlg_board_max_y >= 2.0:
-                    __dlg_lowest = min(
-                        __dlg_cands,
-                        key=lambda c: float(c.get("landing_y", 99.0) or 99.0)
-                    )
-                    return {"x": float(__dlg_lowest.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MERGE_DROUGHT_LOW_LAYER"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
@@ -1033,7 +1002,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Worst game turn 59 (max_y=2.83): triggers, combined with v422 = -2380.
         # Extra_low turn 72 (max_y=2.13 < 2.5): not triggered, NEAR allowed to proceed.
         # refs: tmp/analysis_result.md
-        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 33 and not russia_phase:
+        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 43 and not russia_phase:
             penalty = -1000.0 * (1.0 + (max_y - 2.5) * 2.0)
             score += penalty
             reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
@@ -1234,7 +1203,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 28:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.0835
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
@@ -1365,7 +1334,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                        proximity_bonus = max(0, 120.0 - horiz_dist * 22.44)
                         if piece_count >= 28:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
