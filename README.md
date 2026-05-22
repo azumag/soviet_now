@@ -114,6 +114,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 
 - rollback 直後の再検証ではない通常改善 hash で `consecutive_no_improve >= WILDCARD_TRIGGER_STAGNATION` または `regression_streak >= WILDCARD_REGRESSION_STREAK` になり、蓄積ゲーム数が `WILDCARD_EARLY_ESCAPE_MIN_GAMES` 以上なら、`MIN_GAMES_BEFORE_IMPROVE` を待たず `early_escape_lock` を作る。
 - 早期脱出ロックは `improve_reason=normal` として作られ、改善 daemon 側で `archive_restart` / `wildcard` / `escape_ai` の最終ルーティングを判定する。
+- 同じ判定は post-game 直後だけでなく next-game preflight でも再実行する。これにより、閾値到達済みの `accumulated_games.json` が残ったまま通常プレイへ流れ続ける取りこぼしを止める。
 - rollback target の fresh cycle 中、または rank1 hot streak 中は早期脱出を延期する。これは過去 rolling 実績の再検証や上振れ保護を優先するため。
 - `current_strategy_run.hash` が `best_strategy_anchor.hash` と同一の rollback 再検証中は、`show_status.sh` の `Escape stag=x/y` だけで停滞発火と判定しない。`current_strategy_run.games_total` が成熟閾値に届くまでは rolling 上の `russia_count` / `best_max_type` を保護情報として扱い、成熟後も current run にロシア再現がない時だけ regression streak から脱出へ戻す。
 

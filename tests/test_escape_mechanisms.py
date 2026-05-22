@@ -1196,6 +1196,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
+        self.assertIn("queue_early_escape_lock_if_needed", loop)
+        self.assertIn("next-game-preflight", loop)
         self.assertLess(
             loop.index("rollback revalidate fresh cycle 中"),
             loop.index("rank1 hot streak 中 → 早期脱出ロックを延期"),

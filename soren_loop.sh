@@ -139,6 +139,104 @@ notify_rank1_hot_streak_extension() {
 	printf '%s\n' "$marker_key" >"$marker_file" 2>/dev/null || true
 }
 
+queue_early_escape_lock_if_needed() {
+	# 停滞/回帰閾値到達済みのバッチは、12試合満了を待たず改善daemonへ渡す。
+	# post-game 経路と next-game-preflight の両方から呼び、取りこぼしを防ぐ。
+	[ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] || return 1
+	[ "${WILDCARD_ENABLED:-0}" = "1" ] || return 1
+	[ -f "$ACCUMULATED_GAMES_FILE" ] || return 1
+	[ ! -f "$IMPROVE_LOCK_FILE" ] || return 1
+	[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] || return 1
+	! _is_improve_running || return 1
+
+	local _cycle_acc_count _stag_count _rstreak_count _early_min
+	local _rollback_revalidate_probe _rollback_revalidate_active _rollback_revalidate_rest
+	local _rollback_revalidate_n _rollback_revalidate_hash
+	_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+	_stag_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('consecutive_no_improve',0)))" 2>/dev/null || echo 0)
+	_rstreak_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('regression_streak',0)))" 2>/dev/null || echo 0)
+	_early_min="${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}"
+	case "$_early_min" in ''|*[!0-9]*) _early_min=4 ;; esac
+	if [ "${_cycle_acc_count:-0}" -lt "$_early_min" ] || {
+		[ "${_stag_count:-0}" -lt "${WILDCARD_TRIGGER_STAGNATION:-3}" ] &&
+			[ "${_rstreak_count:-0}" -lt "${WILDCARD_REGRESSION_STREAK:-3}" ];
+	}; then
+		return 1
+	fi
+
+	_rollback_revalidate_probe=$(
+		python3 - "$CURRENT_STRATEGY_RUN_FILE" "$TMP_STATE_DIR/last_rollback_pair.json" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY' 2>/dev/null || echo "0:0:"
+import json
+import os
+import sys
+
+current_file, pair_file, mature_raw = sys.argv[1:4]
+try:
+    mature = max(1, int(mature_raw))
+except Exception:
+    mature = 12
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+current = load(current_file)
+pair = load(pair_file)
+current_hash = str(current.get("hash", "") or "")
+rollback_hash = str(pair.get("to_hash", "") or "")
+try:
+    n = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
+except Exception:
+    n = 0
+
+if current_hash and rollback_hash and current_hash == rollback_hash and n < mature:
+    print(f"1:{n}:{current_hash}")
+else:
+    print(f"0:{n}:{current_hash}")
+PY
+	)
+	_rollback_revalidate_active="${_rollback_revalidate_probe%%:*}"
+	_rollback_revalidate_rest="${_rollback_revalidate_probe#*:}"
+	_rollback_revalidate_n="${_rollback_revalidate_rest%%:*}"
+	_rollback_revalidate_hash="${_rollback_revalidate_rest#*:}"
+
+	if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "$_rollback_revalidate_active" = "1" ]; then
+		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 早期脱出ロックを延期"
+		return 1
+	fi
+	if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
+		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3} だが rank1 hot streak 中 → 早期脱出ロックを延期"
+		notify_rank1_hot_streak_extension "$_cycle_acc_count" "wildcard_early_escape"
+		return 1
+	fi
+
+	log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 改善ロック作成 (最終モードはimprove側で判定)"
+	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+	cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+	enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+	python3 -c "
+import json, time
+f='$IMPROVE_LOCK_FILE'
+d=json.load(open(f))
+d['started_at']=int(time.time())
+d['improve_reason']='normal'
+d['early_escape_lock']=True
+d['early_escape_stagnation']=${_stag_count:-0}
+d['early_escape_regression_streak']=${_rstreak_count:-0}
+json.dump(d,open(f,'w'))
+" 2>/dev/null || true
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
+	fi
+	_clear_accumulated_data
+	return 0
+}
+
 _evolution_flow_notify() {
 	local step="${1:-flow}" title="${2:-改善フロー}" body="${3:-}" chat="${4:-}" level="${5:-info}"
 	local full_title="改善フロー: ${title}"
@@ -491,6 +589,7 @@ while true; do
 	# improve_daemon は改善開始後に wait でブロックするため、
 	# ここで watchdog/harvest を回さないと running 状態が残留しうる。
 	check_and_harvest_improvement
+	queue_early_escape_lock_if_needed || true
 
 	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
@@ -779,92 +878,7 @@ PY
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 
-	# 早期脱出ロック: 停滞が閾値を超えたら12試合サイクルを待たず、
-	# 最低限の失敗バッチを改善daemonへ渡す。実際に wildcard/archive/escape_ai
-	# へ上げるかは trigger_adaptive_improvement 側の最終モード判定に任せる。
-	if [ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] &&
-		[ "${WILDCARD_ENABLED:-0}" = "1" ] &&
-		[ -f "$ACCUMULATED_GAMES_FILE" ] &&
-		[ ! -f "$IMPROVE_LOCK_FILE" ] &&
-		[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] &&
-		! _is_improve_running; then
-		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-		_stag_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('consecutive_no_improve',0)))" 2>/dev/null || echo 0)
-		_rstreak_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('regression_streak',0)))" 2>/dev/null || echo 0)
-		_early_min="${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}"
-		case "$_early_min" in ''|*[!0-9]*) _early_min=4 ;; esac
-		_rollback_revalidate_probe=$(
-			python3 - "$CURRENT_STRATEGY_RUN_FILE" "$TMP_STATE_DIR/last_rollback_pair.json" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY' 2>/dev/null || echo "0:0:"
-import json
-import os
-import sys
-
-current_file, pair_file, mature_raw = sys.argv[1:4]
-try:
-    mature = max(1, int(mature_raw))
-except Exception:
-    mature = 12
-
-def load(path):
-    try:
-        if path and os.path.exists(path):
-            data = json.load(open(path, encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-    except Exception:
-        pass
-    return {}
-
-current = load(current_file)
-pair = load(pair_file)
-current_hash = str(current.get("hash", "") or "")
-rollback_hash = str(pair.get("to_hash", "") or "")
-try:
-    n = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
-except Exception:
-    n = 0
-
-if current_hash and rollback_hash and current_hash == rollback_hash and n < mature:
-    print(f"1:{n}:{current_hash}")
-else:
-    print(f"0:{n}:{current_hash}")
-PY
-		)
-		_rollback_revalidate_active="${_rollback_revalidate_probe%%:*}"
-		_rollback_revalidate_rest="${_rollback_revalidate_probe#*:}"
-		_rollback_revalidate_n="${_rollback_revalidate_rest%%:*}"
-		_rollback_revalidate_hash="${_rollback_revalidate_rest#*:}"
-		if [ "${_cycle_acc_count:-0}" -ge "$_early_min" ] && {
-			[ "${_stag_count:-0}" -ge "${WILDCARD_TRIGGER_STAGNATION:-3}" ] ||
-				[ "${_rstreak_count:-0}" -ge "${WILDCARD_REGRESSION_STREAK:-3}" ];
-		}; then
-			if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "$_rollback_revalidate_active" = "1" ]; then
-				log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 早期脱出ロックを延期"
-			elif [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
-				log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3} だが rank1 hot streak 中 → 早期脱出ロックを延期"
-				notify_rank1_hot_streak_extension "$_cycle_acc_count" "wildcard_early_escape"
-			else
-				log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 改善ロック作成 (最終モードはimprove側で判定)"
-				enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
-				cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
-				enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
-				python3 -c "
-import json, time
-f='$IMPROVE_LOCK_FILE'
-d=json.load(open(f))
-d['started_at']=int(time.time())
-d['improve_reason']='normal'
-d['early_escape_lock']=True
-d['early_escape_stagnation']=${_stag_count:-0}
-d['early_escape_regression_streak']=${_rstreak_count:-0}
-json.dump(d,open(f,'w'))
-" 2>/dev/null || true
-				if [ -x ./overlay_notify.sh ]; then
-					./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
-				fi
-				_clear_accumulated_data
-			fi
-		fi
-	fi
+		queue_early_escape_lock_if_needed || true
 
 	# 改善サイクル管理: 12試合蓄積時にロックファイルを作成してdeamonに通知
 	# improve_daemon が動いていない場合は蓄積リセットのみ行い次サイクルへ
