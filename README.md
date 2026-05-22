@@ -96,6 +96,11 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 
 粛清後の目的は、単に低スコア戦略を戻すことではなく、ロシア建国ルートを失ったまま粛清連鎖に入るのを止めること。`check_regression` が粛清を検出したら、`soren_loop.sh` は次ゲームへ進む前に粛清理由と復帰先の目的進捗を分類する。
 
+**strategy_runner 安全ガード:**
+
+- `enforce_deadline_safety` は、盤面全体の precontact pressure が低い場合でも、選択候補が `crosses_deadline=true` かつ `merge_grade=NO` で、同じ analysis set に非 crossing の safe 候補があるなら `safe_far_below_crossing` として差し替える。これは「大きい国の合体を塞ぐ」戦略評価を直接変えず、明らかなデッドライン超え NO merge 配置だけを実行直前に退避するための境界ガード。
+- 対応テストは `tests.test_escape_mechanisms.TestStrategyRunnerDeadlineSafety.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することを確認する。
+
 判定順:
 
 1. 粛清が起きたら、`REGRESSION_ROLLBACK_RESULT` の理由を読む。

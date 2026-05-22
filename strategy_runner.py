@@ -1086,11 +1086,24 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else:
             replacement = min_risk_candidate
             replacement_source = "large_deadline_minrisk"
-    elif (
-        not chosen.get("crosses_deadline", False)
-        or not deadline_precontact_pressure
-    ):
+    elif not chosen.get("crosses_deadline", False):
         return decision
+    elif not deadline_precontact_pressure:
+        # Even if the board-wide deadline pressure looks low, do not keep a
+        # NO-merge crossing choice when a non-crossing alternative already
+        # exists in the same analysis set.
+        if safe and chosen.get("merge_grade", "NO") == "NO":
+            replacement = min(
+                safe,
+                key=lambda r: (
+                    grade_rank.get(r.get("merge_grade", "NO"), 9),
+                    risk_top(r),
+                    abs(float(r.get("x", 0.0) or 0.0)),
+                ),
+            )
+            replacement_source = "safe_far_below_crossing"
+        else:
+            return decision
     else:
         if not safe and not all_crossing_deadline_pressure:
             return decision

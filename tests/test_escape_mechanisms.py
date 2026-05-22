@@ -2943,6 +2943,49 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], -1.7)
         self.assertEqual(decision["reason"], "MEDIUM_TOWER")
 
+    def test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.7, "reason": "HIGH_TOWER_RUSSIA_PHASE_BOARD_COMPRESSION"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.46,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 2.7,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.714,
+                    },
+                    {
+                        "x": -3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.804,
+                    },
+                    {
+                        "x": 0.8,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.102,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": i, "type": 1, "x": 0.0, "y": -3.0} for i in range(31)],
+                "next": {"type": 11},
+            },
+        )
+
+        self.assertEqual(decision["x"], -3.0)
+        self.assertIn("safe_far_below_crossing", decision["reason"])
+
     def test_deadline_safety_ignores_far_below_all_crossing_noise(self):
         import strategy_runner
 
