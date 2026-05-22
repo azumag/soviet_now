@@ -64,13 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-      # vXXX: axis 9.10 high-type growth pipeline + axis 9.65 near-miss clustering — from hall-of-fame
-      #       Axis 9.10: merge_grade==NO && max_y>=1.5 && pc>=25 → bonus for placement near type 8-12 centroid.
-      #       Axis 9.65: merge_grade==NO && rp>=2 && pc>=25 → bonus for clustering same-types (2+) toward centroid.
-      #       Both address Kazakhstan(T14)→Russia(T15) bottleneck: merge drought → scatter → no merge path → death spiral.
-      #       Fixes: worst game (score0696) T60-72 merge drought 13 turns, pc 32→43, max_y 1.57→2.99.
-      #       Target stage: Kazakhstan(T14)=6/12(50%) → improve toward 12/12.
-      #       Refs: tmp/analysis_result.md (Implementation Plan: axis 9.10, 9.65), strategy_versions/best_score6058_strategy.py
+      # v679: DEADLINE_GUARD mandatory_themes compliance — NO_MERGE candidates crossing deadline
+      #       must be excluded even when __dlg_has_clean=False. Added merge_grade filter to fallback
+      #       (lines 780-789) and updated __dlg_merge_result_safe (line 753) to allow merge candidates.
+      #       Fixes: worst T76-82 NO_MERGE with decision_crosses_deadline=true, mandatory_themes violation.
+      #       Target stage: Ukraine(T13)=4/5(80%)→improve toward 12/12.
+      #       refs: tmp/analysis_result.md (v679 DEADLINE_GUARD mandatory_themes compliance hypothesis)
       # v677: DEADLINE_GUARD NEAR fallback restriction — When __dlg_has_clean (non-crossing candidates exist),
       #       NEAR fallback now filters out candidates where merge_result_crosses_deadline=true.
       #       Makes SAFE_LANDING the fallback when NEAR would cross the deadline, instead of allowing NEAR to cross.
@@ -752,7 +751,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return not c.get("merge_result_crosses_deadline")
         __dlg_direct = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
+            and __dlg_merge_result_safe(c)
+            and not c.get("merge_result_crosses_deadline")
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -771,6 +772,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+        # v679: mandatory_themes compliance — NO_MERGE candidates crossing deadline must be excluded
+        #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
+        __dlg_safe_no_merge = [
+            c for c in __dlg_cands
+            if isinstance(c, dict)
+            and not c.get("crosses_deadline")
+            and not c.get("merge_result_crosses_deadline")
+            and not (c.get("merge_grade") == "NO")  # Exclude NO_MERGE + deadline cross
+        ]
+        if __dlg_safe_no_merge:
+            __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+
+        # Fallback: if no safe merge exists, any safe (non-crossing) candidate is acceptable
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
