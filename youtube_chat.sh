@@ -180,6 +180,7 @@ _resolve_live_chat_id() {
 	fi
 	if [ -z "${YOUTUBE_VIDEO_ID:-}" ] || [ -z "${YOUTUBE_API_KEY:-}" ]; then
 		_log "poll: YOUTUBE_VIDEO_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required"
+		printf '%s\n' "YOUTUBE_VIDEO_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		return 1
 	fi
 	local video_id key url resp chat_id
@@ -188,6 +189,7 @@ _resolve_live_chat_id() {
 	url="https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${video_id}&key=${key}"
 	resp=$(_api_get "$url") || {
 		_log "poll: videos.list failed"
+		printf '%s\n' "videos.list failed while resolving activeLiveChatId" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		return 1
 	}
 	chat_id=$(python3 -c '
@@ -206,6 +208,7 @@ raise SystemExit(1)
 ' <<<"$resp")
 	if [ -z "$chat_id" ]; then
 		_log "poll: activeLiveChatId not found"
+		printf '%s\n' "activeLiveChatId not found for YOUTUBE_VIDEO_ID" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
 		return 1
 	fi
