@@ -4076,6 +4076,8 @@ PY
 
     def test_chat_ingest_notifies_event_overlay(self):
         twitch = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
+        twitch_send = (REPO_ROOT / "twitch_chat.sh").read_text()
+        outbound = (REPO_ROOT / "lib/outbound_queue.sh").read_text()
         youtube = (REPO_ROOT / "youtube_chat.sh").read_text()
         status = (REPO_ROOT / "show_status.sh").read_text()
 
@@ -4093,6 +4095,14 @@ PY
         self.assertIn("last_send_error.txt", youtube)
         self.assertIn("_resolve_live_chat_id 1", youtube)
         self.assertIn('rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE"', youtube)
+        self.assertIn("_send_api()", twitch_send)
+        self.assertIn("https://api.twitch.tv/helix/chat/messages", twitch_send)
+        self.assertIn("is_sent", twitch_send)
+        self.assertIn("falling back to IRC after Twitch API send failure", twitch_send)
+        self.assertIn("_outbound_chat_log_twitch_failure", outbound)
+        self.assertIn("last_twitch_send_error.txt", outbound)
+        self.assertIn("outbound_chat_twitch.log", outbound)
+        self.assertIn("OutboundErr", status)
         self.assertIn("DEGRADED", status)
         self.assertIn("last_send_error.txt", status)
 
@@ -4651,6 +4661,65 @@ class TestYouTubeChatQueue(unittest.TestCase):
             self.run_youtube_chat(tmpdir, "ack-batch", str(batch))
 
             self.assertEqual(pending.read_text(encoding="utf-8"), "Carol: やった\n")
+
+
+class TestTwitchChatSend(unittest.TestCase):
+    def run_twitch_chat(self, tmpdir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        fakebin = tmpdir / "fakebin"
+        fakebin.mkdir()
+        curl_log = tmpdir / "curl.log"
+        nc_log = tmpdir / "nc.log"
+        (fakebin / "curl").write_text(
+            """#!/bin/bash
+printf '%s\n' "$*" >> "$CURL_LOG"
+case "$*" in
+  *helix/users*) printf '{"data":[{"id":"sender-1"}]}' ;;
+  *helix/chat/messages*) printf '{"data":[{"message_id":"msg-1","is_sent":true}]}\n200' ;;
+  *) printf '{}\n404' ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        (fakebin / "nc").write_text(
+            """#!/bin/bash
+printf 'nc called\n' >> "$NC_LOG"
+exit 9
+""",
+            encoding="utf-8",
+        )
+        (fakebin / "curl").chmod(0o755)
+        (fakebin / "nc").chmod(0o755)
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fakebin}:{env.get('PATH', '')}",
+                "CURL_LOG": str(curl_log),
+                "NC_LOG": str(nc_log),
+                "TWITCH_BOT_TOKEN": "token",
+                "TWITCH_CLIENT_ID": "client-1",
+                "TWITCH_BROADCASTER_ID": "broadcaster-1",
+                "TWITCH_CHANNEL": "azumagbanjo",
+            }
+        )
+        return subprocess.run(
+            ["bash", str(REPO_ROOT / "twitch_chat.sh"), *args],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_twitch_send_prefers_chat_messages_api(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmpdir = Path(td)
+            result = self.run_twitch_chat(tmpdir, "send", "[1/12] score=123 | eval_avg=456")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            curl_log = (tmpdir / "curl.log").read_text(encoding="utf-8")
+            self.assertIn("helix/users", curl_log)
+            self.assertIn("helix/chat/messages", curl_log)
+            self.assertFalse((tmpdir / "nc.log").exists())
 
 
 if __name__ == "__main__":

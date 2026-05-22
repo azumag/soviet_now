@@ -95,6 +95,66 @@ _with_chat_lock() {
     return $rc
 }
 
+_json_string() {
+    python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+_resolve_twitch_sender_id() {
+    local token="$1"
+    local client_id="$2"
+    if [ -n "${TWITCH_BOT_USER_ID:-}" ]; then
+        printf '%s' "$TWITCH_BOT_USER_ID"
+        return 0
+    fi
+    curl -s -H "Authorization: Bearer ${token}" -H "Client-Id: ${client_id}" \
+        https://api.twitch.tv/helix/users 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null
+}
+
+_send_api() {
+    local msg="$1"
+    local token="${TWITCH_BOT_TOKEN:-}"
+    local client_id="${TWITCH_CLIENT_ID:-}"
+    local broadcaster_id="${TWITCH_BROADCASTER_ID:-}"
+    [ -n "$token" ] && [ -n "$client_id" ] && [ -n "$broadcaster_id" ] || return 2
+    token="${token#oauth:}"
+
+    local sender_id
+    sender_id=$(_resolve_twitch_sender_id "$token" "$client_id")
+    if [ -z "$sender_id" ]; then
+        echo "WARNING: could not resolve Twitch sender_id from token" >&2
+        return 1
+    fi
+
+    local payload resp http_code body sent_status drop_reason
+    payload=$(printf '{"broadcaster_id":%s,"sender_id":%s,"message":%s}' \
+        "$(_json_string "$broadcaster_id")" \
+        "$(_json_string "$sender_id")" \
+        "$(_json_string "$msg")")
+    resp=$(curl -s -w "\n%{http_code}" -X POST \
+        "https://api.twitch.tv/helix/chat/messages" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Client-Id: ${client_id}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        2>/dev/null)
+    http_code=$(printf '%s' "$resp" | tail -1)
+    body=$(printf '%s' "$resp" | sed '$d')
+
+    if [ "$http_code" != "200" ]; then
+        echo "WARNING: Twitch chat/messages failed (HTTP=$http_code): $(printf '%s' "$body" | head -1)" >&2
+        return 1
+    fi
+
+    sent_status=$(python3 -c 'import json,sys; data=json.load(sys.stdin).get("data") or []; print("1" if data and data[0].get("is_sent") else "0")' <<<"$body" 2>/dev/null || echo "0")
+    if [ "$sent_status" = "1" ]; then
+        _log "send: chat/messages accepted"
+        return 0
+    fi
+    drop_reason=$(python3 -c 'import json,sys; data=json.load(sys.stdin).get("data") or [{}]; print(data[0].get("drop_reason",{}).get("message") or data[0].get("drop_reason",{}).get("code") or "not sent")' <<<"$body" 2>/dev/null || echo "not sent")
+    echo "WARNING: Twitch chat/messages returned is_sent=false: ${drop_reason}" >&2
+    return 1
+}
+
 _is_card_gacha_result_line() {
     local line="$1"
     local message="$line"
@@ -476,6 +536,14 @@ print(out.rstrip() + "...", end="")
 PY
 )
 
+    if _send_api "$msg"; then
+        return 0
+    fi
+    local api_rc=$?
+    if [ "$api_rc" -ne 2 ]; then
+        echo "WARNING: falling back to IRC after Twitch API send failure" >&2
+    fi
+
     tmp_irc=$(mktemp /tmp/twitch_send_XXXXXXXX)
     {
         printf 'PASS oauth:%s\r\n' "$token"
@@ -488,7 +556,7 @@ PY
     } | nc -w 5 irc.chat.twitch.tv 6667 >"$tmp_irc" 2>&1
     rc=$?
 
-    if [ "$rc" -ne 0 ] || grep -Eiq "Login authentication failed|NOTICE.*Error" "$tmp_irc" 2>/dev/null; then
+    if [ "$rc" -ne 0 ] || ! grep -Eiq " 001 |Welcome, GLHF|JOIN #${channel}" "$tmp_irc" 2>/dev/null || grep -Eiq "Login authentication failed|NOTICE.*Error|Improperly formatted auth|Error logging in" "$tmp_irc" 2>/dev/null; then
         echo "WARNING: Twitch send may have failed (rc=$rc)" >&2
         if [ -s "$tmp_irc" ]; then
             head -5 "$tmp_irc" >&2

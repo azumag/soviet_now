@@ -1844,6 +1844,10 @@ PY
 	if [[ -d tmp/.outbound_chat_queue/pending ]]; then
 		outbound_pending=$(find tmp/.outbound_chat_queue/pending -name '*.msg' 2>/dev/null | wc -l | tr -d ' ')
 	fi
+	local twitch_send_error=""
+	if [[ -f tmp/debug/last_twitch_send_error.txt ]] && _recent_file_active "tmp/debug/last_twitch_send_error.txt" 900; then
+		twitch_send_error=$(head -1 tmp/debug/last_twitch_send_error.txt 2>/dev/null | tr -d '\r' | cut -c1-100)
+	fi
 
 	# --- Twitch チャット状態 ---
 	local twitch_running=false twitch_pid=""
@@ -2178,6 +2182,10 @@ PY
 
 	if (( outbound_pending > 0 )); then
 		printf "    ${C_CYAN}▸${C_RESET} OutboundQ   ${C_CYAN}${outbound_pending} messages${C_RESET}\n"
+	fi
+
+	if [[ -n "$twitch_send_error" ]]; then
+		printf "    ${C_YELLOW}⚠${C_RESET} OutboundErr ${C_YELLOW}%s${C_RESET}\n" "$twitch_send_error"
 	fi
 
 	if [[ -n "$twitch_latest" ]]; then
