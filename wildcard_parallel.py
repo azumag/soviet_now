@@ -334,7 +334,7 @@ ul {{
     <div class="title">WILDCARD PARALLEL TRIAL</div>
     <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / {generated}</div>
   </div>
-  <div class="grid">{''.join(cards[:3])}</div>
+  <div class="grid">{''.join(cards[:6])}</div>
 </main>
 <script>
 (() => {{
@@ -666,12 +666,11 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     prefix = os.environ.get("WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX", "wildcardParallelCand")
     source = f"{prefix}{candidate.index + 1}"
     url = f"http://127.0.0.1:{candidate.serve_port}/"
-    x = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X", "0")) + candidate.index * int(
-        os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "640")
-    )
-    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "170"))
+    cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
     w = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "640"))
     h = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H", "360"))
+    x = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X", "0")) + (candidate.index % cols) * w
+    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "170")) + (candidate.index // cols) * h
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -867,7 +866,7 @@ def choose_winner(candidates: list[CandidateResult], min_successful_games: int) 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--strategy", type=Path, default=REPO_ROOT / "strategy.py")
-    parser.add_argument("--jobs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 3))
+    parser.add_argument("--jobs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6))
     parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 3))
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--ratio-min", type=float, default=0.20)

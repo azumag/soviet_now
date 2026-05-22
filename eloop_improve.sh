@@ -654,13 +654,14 @@ PY
 	log "[WILDCARD] adaptive scale streak=${wildcard_streak} scale=${wildcard_scale} count=${wildcard_count_min}-${wildcard_count_max} ratio=${wildcard_ratio_min}-${wildcard_ratio_max} exclude_lines=${wildcard_exclude_lines:-none} prefer_lines=${wildcard_prefer_lines:-none}"
 	_improve_progress "wildcard" "20" "perturbing_constants_streak_${wildcard_streak}_scale_${wildcard_scale}"
 	if [ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ]; then
-		log "[WILDCARD] parallel real-game trial start jobs=${WILDCARD_PARALLEL_JOBS:-3} games=${WILDCARD_PARALLEL_GAMES:-3}"
+		log "[WILDCARD] parallel real-game trial start jobs=${WILDCARD_PARALLEL_JOBS:-6} games=${WILDCARD_PARALLEL_GAMES:-3}"
 		_improve_progress "wildcard_parallel" "25" "parallel_candidate_generation"
 		wildcard_parallel_obs_show() {
 			[ -x ./obs_control.sh ] || return 0
 			local scene="${OBS_DASHBOARD_SCENE:-soren}"
 			local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
 			local cand_prefix="${WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX:-wildcardParallelCand}"
+			local cand_sources="${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6"
 			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
@@ -668,7 +669,7 @@ PY
 			local hide_sources="$dashboard_source,$status_source,$show_status_source"
 			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" 1920 170 show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
-			./obs_control.sh batch "$scene" show:"$overlay" hide:"$hide_sources,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh batch "$scene" show:"$overlay" hide:"$hide_sources,$cand_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 			./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 1920 170 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 		}
 		wildcard_parallel_obs_restore() {
@@ -676,13 +677,14 @@ PY
 			local scene="${OBS_DASHBOARD_SCENE:-soren}"
 			local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
 			local cand_prefix="${WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX:-wildcardParallelCand}"
+			local cand_sources="${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6"
 			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
 			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
 			local show_sources="$dashboard_source,$status_source,$show_status_source"
 			[ -n "$game_source" ] && show_sources="$show_sources,$game_source"
-			./obs_control.sh batch "$scene" hide:"$overlay,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			./obs_control.sh batch "$scene" hide:"$overlay,$cand_sources" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 			./obs_control.sh transform "$scene" "$status_source" "${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}" "${STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 			./obs_control.sh transform "$scene" "$show_status_source" "${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 		}
@@ -704,10 +706,12 @@ PY
 		[ "$wildcard_count" -lt 1 ] && wildcard_count=1
 		wildcard_seed=$(date +%s)
 		wildcard_parallel_result_file="${WILDCARD_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/wildcard_parallel_result.json}"
+		wildcard_parallel_started_at=$(date +%s)
+		rm -f "$wildcard_parallel_result_file" 2>/dev/null || true
 		set +e
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
-			--jobs "${WILDCARD_PARALLEL_JOBS:-3}" \
+			--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
 			--games "${WILDCARD_PARALLEL_GAMES:-3}" \
 			--count "$wildcard_count" \
 			--ratio-min "$wildcard_ratio_min" \
@@ -724,13 +728,24 @@ PY
 		wildcard_parallel_rc=$?
 		set -e
 		if [ "$wildcard_parallel_rc" -ne 0 ]; then
-			wildcard_parallel_has_winner=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || echo 0
+			wildcard_parallel_has_winner=$(python3 - "$wildcard_parallel_result_file" "$wildcard_parallel_started_at" <<'PY' 2>/dev/null || echo 0
 import json
 import os
 import sys
 
 path = sys.argv[1]
+try:
+    started_at = int(float(sys.argv[2]))
+except Exception:
+    started_at = 0
 if not path or not os.path.exists(path):
+    print(0)
+    raise SystemExit(0)
+try:
+    if started_at and os.path.getmtime(path) < started_at:
+        print(0)
+        raise SystemExit(0)
+except Exception:
     print(0)
     raise SystemExit(0)
 try:

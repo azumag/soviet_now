@@ -794,6 +794,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("ANNEALING_OBSERVE_FILE", config)
         self.assertIn("WILDCARD_PARALLEL_ENABLED", config)
         self.assertIn("WILDCARD_PARALLEL_JOBS", config)
+        self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
         self.assertIn("WILDCARD_PARALLEL_BGM_VOLUME", config)
@@ -846,7 +847,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("_record_annealing_candidate(event)", regression)
 
     def test_wildcard_parallel_orchestrator_selects_one_winner(self):
-        """parallel orchestrator は候補を3本隔離生成し、勝者1本だけを返す。"""
+        """parallel orchestrator は指定した候補数を隔離生成し、勝者1本だけを返す。"""
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
             strategy = td_path / "strategy.py"
@@ -1088,7 +1089,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertEqual(strategy.read_text(encoding="utf-8"), original)
 
     def test_obs_control_supports_wildcard_parallel_transform(self):
-        """OBS helper は wildcardParallelOverlay を表示し、transform で3分割面を配置できる。"""
+        """OBS helper は wildcardParallelOverlay を表示し、候補6面を3列x2行に配置できる。"""
         obs_control = (REPO_ROOT / "obs_control.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()
@@ -1100,8 +1101,15 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("wildcard_parallel_obs_show", eloop)
         self.assertIn("wildcardParallelOverlay", eloop)
         self.assertIn("wildcardParallelCand", eloop)
+        self.assertIn("${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6", eloop)
         self.assertIn("wildcardParallelCand", parallel)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6)', parallel)
+        self.assertIn('cards[:6]', parallel)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_COLS', parallel)
+        self.assertIn('candidate.index % cols', parallel)
+        self.assertIn('candidate.index // cols', parallel)
         self.assertIn("本線ゲームを止め", loop := (REPO_ROOT / "soren_loop.sh").read_text())
+        self.assertIn("候補6面", loop)
         self.assertIn("本線は見えない裏で進ませない", loop)
         self.assertIn('case "$_pause_reason" in\n\t\twildcard|archive_restart)', loop)
         self.assertIn("maybe_show_obs_candidate_source", parallel)
@@ -1109,10 +1117,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
         self.assertIn("hide:\"$hide_sources,", eloop)
         self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
-        self.assertIn('show:"$overlay" hide:"$hide_sources,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3"', eloop)
+        self.assertIn('show:"$overlay" hide:"$hide_sources,$cand_sources"', eloop)
         self.assertNotIn('show:"$overlay","$status_source","$show_status_source"', eloop)
         self.assertIn("wildcard_parallel_obs_restore", eloop)
-        self.assertIn('hide:"$overlay,${cand_prefix}1,${cand_prefix}2,${cand_prefix}3"', eloop)
+        self.assertIn('hide:"$overlay,$cand_sources"', eloop)
         self.assertIn('show_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
         self.assertIn('"${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}"', eloop)
         self.assertIn('"${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}"', eloop)
@@ -3948,9 +3956,17 @@ PY
     def test_wildcard_parallel_nonzero_exit_can_use_written_winner(self):
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
 
+        self.assertIn("wildcard_parallel_started_at=$(date +%s)", improve)
+        self.assertIn('rm -f "$wildcard_parallel_result_file"', improve)
         self.assertIn("wildcard_parallel_has_winner=$(python3 - \"$wildcard_parallel_result_file\"", improve)
+        self.assertIn("started_at = int(float(sys.argv[2]))", improve)
+        self.assertIn("os.path.getmtime(path) < started_at", improve)
         self.assertIn('data.get("ok") and winner.get("strategy_path")', improve)
         self.assertIn("parallel trial exited rc=$wildcard_parallel_rc but result file has winner", improve)
+        self.assertLess(
+            improve.index('rm -f "$wildcard_parallel_result_file"'),
+            improve.index("set +e\n\t\twildcard_parallel_result=$(python3 wildcard_parallel.py"),
+        )
         self.assertLess(
             improve.index('if [ "$wildcard_parallel_rc" -ne 0 ]; then'),
             improve.index('wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file"'),

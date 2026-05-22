@@ -610,8 +610,8 @@ while true; do
 	fi
 	if _is_improve_running; then
 		# WILDCARD 改善 (AI不使用・隔離評価) は本線ゲームを止め、
-		# soren91 代打も立てない。WILDCARD PARALLEL 中は OBS に候補3面
-		# (wildcardParallelCand1/2/3) を出し、本線は見えない裏で進ませない。
+		# soren91 代打も立てない。WILDCARD PARALLEL 中は OBS に候補6面
+		# (wildcardParallelCand1..6) を出し、本線は見えない裏で進ませない。
 		# 代打起動→完了時bridge再起動が commands 経路 desync=空転の発生源。
 		_pause_reason=$(python3 -c "import json,sys
 for path in sys.argv[1:]:
