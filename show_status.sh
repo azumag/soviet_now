@@ -1867,6 +1867,12 @@ PY
 	if [[ -f tmp/.youtube_chat/pending.log ]] && [[ -s tmp/.youtube_chat/pending.log ]]; then
 		youtube_pending=$(wc -l < tmp/.youtube_chat/pending.log | tr -d ' ')
 	fi
+	local youtube_error=""
+	if [[ -s tmp/.youtube_chat/last_error.txt ]] && _recent_file_active "tmp/.youtube_chat/last_error.txt" 300; then
+		youtube_error=$(head -1 tmp/.youtube_chat/last_error.txt 2>/dev/null)
+	elif [[ -s tmp/.youtube_chat/last_send_error.txt ]] && _recent_file_active "tmp/.youtube_chat/last_send_error.txt" 300; then
+		youtube_error=$(head -1 tmp/.youtube_chat/last_send_error.txt 2>/dev/null)
+	fi
 
 	# 最新コメント
 	local twitch_latest=""
@@ -2185,7 +2191,12 @@ PY
 
 	if $youtube_worker_enabled; then
 		if $youtube_worker_running; then
-			printf "    ${C_GREEN}●${C_RESET} Chat        ${C_GREEN}CONNECTED${C_RESET}  ${C_DIM}PID=${youtube_worker_pid}${C_RESET}\n"
+			if [[ -n "$youtube_error" ]]; then
+				(( ${#youtube_error} > 48 )) && youtube_error="${youtube_error:0:45}..."
+				printf "    ${C_YELLOW}●${C_RESET} Chat        ${C_YELLOW}DEGRADED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$youtube_error"
+			else
+				printf "    ${C_GREEN}●${C_RESET} Chat        ${C_GREEN}CONNECTED${C_RESET}  ${C_DIM}PID=${youtube_worker_pid}${C_RESET}\n"
+			fi
 		else
 			printf "    ${C_RED}○${C_RESET} Chat        ${C_DIM}DISCONNECTED${C_RESET}\n"
 		fi

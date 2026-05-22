@@ -26,6 +26,7 @@ LIVE_CHAT_ID_FILE="$CHAT_DIR/live_chat_id"
 POLL_INTERVAL_FILE="$CHAT_DIR/poll_interval_sec"
 LAST_POLL_FILE="$CHAT_DIR/last_poll_epoch"
 LAST_ERROR_FILE="$CHAT_DIR/last_error.txt"
+LAST_SEND_ERROR_FILE="$CHAT_DIR/last_send_error.txt"
 LOCK_DIR="$CHAT_DIR/.op_lock"
 TAB=$'\t'
 SEEN_ID_MAX="${YOUTUBE_SEEN_ID_MAX:-4000}"
@@ -167,12 +168,13 @@ _api_get() {
 }
 
 _resolve_live_chat_id() {
+	local force_refresh="${1:-0}"
 	if [ -n "${YOUTUBE_LIVE_CHAT_ID:-}" ]; then
 		printf '%s' "$YOUTUBE_LIVE_CHAT_ID" >"$LIVE_CHAT_ID_FILE"
 		printf '%s' "$YOUTUBE_LIVE_CHAT_ID"
 		return 0
 	fi
-	if [ -s "$LIVE_CHAT_ID_FILE" ]; then
+	if [ "$force_refresh" != "1" ] && [ -s "$LIVE_CHAT_ID_FILE" ]; then
 		cat "$LIVE_CHAT_ID_FILE"
 		return 0
 	fi
@@ -204,6 +206,7 @@ raise SystemExit(1)
 ' <<<"$resp")
 	if [ -z "$chat_id" ]; then
 		_log "poll: activeLiveChatId not found"
+		rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
 		return 1
 	fi
 	printf '%s' "$chat_id" >"$LIVE_CHAT_ID_FILE"
@@ -302,9 +305,29 @@ _poll_nolock() {
 	fi
 	resp_file=$(mktemp "$CHAT_DIR/.poll_response.XXXXXXXX")
 	if ! _api_get "$url" >"$resp_file" 2>"$LAST_ERROR_FILE"; then
+		if grep -q '403' "$LAST_ERROR_FILE" 2>/dev/null && [ -s "$LIVE_CHAT_ID_FILE" ]; then
+			rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
+			if chat_id=$(_resolve_live_chat_id 1 2>>"$LAST_ERROR_FILE"); then
+				key=$(_urlencode "$YOUTUBE_API_KEY")
+				chat_id=$(_urlencode "$chat_id")
+				url="https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${chat_id}&part=id,snippet,authorDetails&maxResults=${YOUTUBE_CHAT_MAX_RESULTS:-200}&key=${key}"
+				if _api_get "$url" >"$resp_file" 2>"$LAST_ERROR_FILE"; then
+					:
+				else
+					_log "poll: liveChatMessages.list failed after chat id refresh ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
+					rm -f "$resp_file"
+					return 1
+				fi
+			else
+				_log "poll: cached liveChatId invalid and no active replacement found"
+				rm -f "$resp_file"
+				return 1
+			fi
+		else
 		_log "poll: liveChatMessages.list failed ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
 		rm -f "$resp_file"
 		return 1
+		fi
 	fi
 	local append_out notify_line
 	append_out=$(_append_api_messages "$resp_file" 2>>"$LAST_ERROR_FILE" || echo 0)
@@ -550,13 +573,19 @@ PY
 		rm -f "$payload_file" "$resp_file"
 		return 0
 	fi
-	head -5 "$resp_file" >&2 2>/dev/null || true
+	{
+		head -5 "$resp_file" 2>/dev/null || true
+	} >"$LAST_SEND_ERROR_FILE"
+	if grep -q '403' "$LAST_SEND_ERROR_FILE" 2>/dev/null && [ -s "$LIVE_CHAT_ID_FILE" ]; then
+		rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
+	fi
+	cat "$LAST_SEND_ERROR_FILE" >&2 2>/dev/null || true
 	rm -f "$payload_file" "$resp_file"
 	return 1
 }
 
 _status() {
-	local pending=0 raw=0 poll_interval="-" effective_poll_interval="-" last_poll="-"
+	local pending=0 raw=0 poll_interval="-" effective_poll_interval="-" last_poll="-" last_error="" last_send_error=""
 	[ -f "$PENDING_LOG" ] && pending=$(wc -l <"$PENDING_LOG" 2>/dev/null | tr -d ' ')
 	[ -f "$RAW_LOG" ] && raw=$(wc -l <"$RAW_LOG" 2>/dev/null | tr -d ' ')
 	[ -f "$POLL_INTERVAL_FILE" ] && poll_interval=$(cat "$POLL_INTERVAL_FILE" 2>/dev/null || echo "-")
@@ -565,7 +594,9 @@ _status() {
 		effective_poll_interval="${YOUTUBE_CHAT_POLL_INTERVAL_SEC:-10}"
 	fi
 	[ -f "$LAST_POLL_FILE" ] && last_poll=$(cat "$LAST_POLL_FILE" 2>/dev/null || echo "-")
-	echo "enabled=${YOUTUBE_CHAT_ENABLED:-0} raw=${raw:-0} pending=${pending:-0} api_poll_interval=${poll_interval}s effective_poll_interval=${effective_poll_interval}s last_poll=${last_poll}"
+	[ -s "$LAST_ERROR_FILE" ] && last_error=$(head -1 "$LAST_ERROR_FILE" 2>/dev/null || true)
+	[ -s "$LAST_SEND_ERROR_FILE" ] && last_send_error=$(head -1 "$LAST_SEND_ERROR_FILE" 2>/dev/null || true)
+	echo "enabled=${YOUTUBE_CHAT_ENABLED:-0} raw=${raw:-0} pending=${pending:-0} api_poll_interval=${poll_interval}s effective_poll_interval=${effective_poll_interval}s last_poll=${last_poll}${last_error:+ last_error=${last_error}}${last_send_error:+ last_send_error=${last_send_error}}"
 }
 
 case "$CMD" in

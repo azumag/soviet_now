@@ -59,9 +59,21 @@ fi
 # --- 多重起動防止 (mkdir-based アトミックロック) ---
 LOCKDIR="tmp/.soren_loop.lock"
 mkdir -p tmp
+_soren_lock_pid_alive() {
+	local pid="${1:-}" cmd=""
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	kill -0 "$pid" 2>/dev/null && return 0
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+	case "$cmd" in
+	*"soren_loop.sh"*|*"/bin/bash"*"soren_loop.sh"*) return 0 ;;
+	esac
+	return 1
+}
 if ! mkdir "$LOCKDIR" 2>/dev/null; then
 	old_pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
-	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+	if _soren_lock_pid_alive "$old_pid"; then
 		echo "ERROR: soren_loop.sh is already running (PID=$old_pid). Aborting."
 		exit 1
 	fi
@@ -461,7 +473,7 @@ _exit_if_lock_owner_changed() {
 		;;
 	esac
 	if [ "$lock_pid" != "${SOREN_MAIN_PID:-$$}" ]; then
-		if ! kill -0 "$lock_pid" 2>/dev/null; then
+		if ! _soren_lock_pid_alive "$lock_pid"; then
 			echo "${SOREN_MAIN_PID:-$$}" >"$LOCKDIR/pid" 2>/dev/null || true
 			log "[LOCK] ${stage}: stale lock owner ${lock_pid} replaced by self=${SOREN_MAIN_PID:-?}"
 			return 0

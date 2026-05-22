@@ -1214,6 +1214,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
         self.assertIn("SOREN_MAIN_PID=\"$(sh -c 'echo $PPID'", loop)
         self.assertIn('echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"', loop)
+        self.assertIn("_soren_lock_pid_alive", loop)
+        self.assertIn('*"soren_loop.sh"*', loop)
         self.assertIn("stale lock owner", loop)
         self.assertIn("replaced by self", loop)
         self.assertIn("queue_early_escape_lock_if_needed", loop)
@@ -4075,6 +4077,7 @@ PY
     def test_chat_ingest_notifies_event_overlay(self):
         twitch = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
         youtube = (REPO_ROOT / "youtube_chat.sh").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
 
         self.assertIn("_notify_chat_overlay()", twitch)
         self.assertIn('CHAT_INGEST_OVERLAY_NOTIFY:-1', twitch)
@@ -4087,6 +4090,11 @@ PY
         self.assertIn('./overlay_notify.sh chat "$title" "$line"', youtube)
         self.assertIn('_notify_chat_overlay "YouTube" "$notify_line"', youtube)
         self.assertIn('_notify_chat_overlay "YouTube" "[TEST/DUMMY] $notify_line" "YouTube TEST/DUMMY コメント受信"', youtube)
+        self.assertIn("last_send_error.txt", youtube)
+        self.assertIn("_resolve_live_chat_id 1", youtube)
+        self.assertIn('rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE"', youtube)
+        self.assertIn("DEGRADED", status)
+        self.assertIn("last_send_error.txt", status)
 
     def test_soren91_comment_queue_releases_completed_claims_and_keeps_tts_full_by_default(self):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
