@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
+      #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
+      #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
+      #       Fixes: best game turn 91 (score1910) merge_result_crosses_deadline=true, landing_y=4.87
+      #       でも DIRECT merge が選択されていた問題。Kazakhstan(T14)=2/4(50%)→4/4 へ向けた改善。
+      #       refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
       # v679: DEADLINE_GUARD mandatory_themes compliance — NO_MERGE candidates crossing deadline
       #       must be excluded even when __dlg_has_clean=False. Added merge_grade filter to fallback
       #       (lines 780-789) and updated __dlg_merge_result_safe (line 753) to allow merge candidates.
@@ -747,8 +753,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not c.get("merge_result_crosses_deadline")
             for c in __dlg_cands
         )
+        # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
+        # mandatory_themes: "デッドライン超出時は併合できる場合に限る"
+        # turn 91 問題: merge_result_crosses_deadline=true, landing_y=4.87 でも DIRECT merge が選択されていた
+        # reactive_pairs>=1 && landing_y>=-1.0 の場合は deadline超出 DIRECT merge を除外し、Safe landing へ誘導
+        # Kazakhstan(T14)=2/4(50%)→4/4 へ向けた merge drought 克服
+        # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
         def __dlg_merge_result_safe(c):
-            return not c.get("merge_result_crosses_deadline")
+            if c.get("merge_result_crosses_deadline"):
+                if __dlg_rp_count >= 1:
+                    landing_y = c.get("landing_y", 99.0)
+                    if landing_y is None:
+                        landing_y = 99.0
+                    if landing_y >= -1.0:
+                        return False
+            return True
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
