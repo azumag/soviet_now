@@ -71,6 +71,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v677: MERGE_DROUGHT_LOW_LAYER_FORCE — deadline guard merge-drought extension
+     #       deadline_margin < 0.5 && NO merge && rp>=3 && pc>=30 && max_y>=2.0
+     #       forces lowest-layer placement to prevent max_y runaway.
+     #       Fixes rollback failure mode: worst game T55-68 merge_available=false
+     #       despite rp=5-6, max_y=1.8→3.55暴走, T61 deadline_margin=0.19→deadline exceeded.
+     #       Addresses T56 reason="DIRECT_MERGE" but best_merge_grade="NO" contradiction
+     #       (merge candidate sought but none actually gradeable).
+     #       Constraint: deadline_crossed with NO_MERGE can't select crossing positions.
+     #       refs: tmp/analysis_result.md (Implementation Plan: deadline guard logic ~line 706-769)
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -766,6 +775,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # vXXX: MERGE_DROUGHT_LOW_LAYER_FORCE — merge drought detection for high-danger boards
+        # analysis_result.md: worst game T55-68 merge_available=false持续中にmax_y=1.8→3.55暴走。
+        # worst T61: deadline_margin=0.19, x=-0.25, landing_y=3.69でデッドライン超え。
+        # Current deadline guard only triggers on DIRECT/NEAR merge candidates; when none exist,
+        # it falls through to SAFE_LANDING but doesn't address merge-drought boards with
+        # high piece_count and reactive pairs but no merge opportunities.
+        # Fix: when deadline_margin < 0.5 && NO merge && rp>=3 && pc>=30 && max_y>=2.0,
+        # force placement to lowest layer. This is an extension of axis 9.12 MERGE_DROUGHT_EXIT
+        # conditions, addressing "merge opportunities exist but merge grade=NO" contradiction
+        # observed in worst game T56 (reason=DIRECT_MERGE but best_merge_grade="NO").
+        # mandatory_themes: "デッドライン超出時は併合できる場合に限る" = enforced (crosses_deadline
+        # candidates excluded above), "デッドライン付近の危険盤面では併合を優先" = addressed
+        # by forcing low placement to preserve merge path options.
+        # Constraint check: deadline_crossed with NO_MERGE can't select crossing positions
+        # (filtered above in __dlg_safe). Safe non-crossing positions always exist.
+        if __dlg_margin < 0.5 and __dlg_cands:
+            __dlg_merge_cands = [
+                c for c in __dlg_cands
+                if isinstance(c, dict) and c.get("merge_grade") in ("DIRECT", "NEAR", "FAR")
+            ]
+            if not __dlg_merge_cands and __dlg_rp_count >= 3 and __dlg_danger_count >= 30:
+                __dlg_board_max_y = max(
+                    (c.get("landing_y", -99.0) or -99.0) for c in __dlg_cands
+                    if isinstance(c, dict)
+                )
+                if __dlg_board_max_y >= 2.0:
+                    __dlg_lowest = min(
+                        __dlg_cands,
+                        key=lambda c: float(c.get("landing_y", 99.0) or 99.0)
+                    )
+                    return {"x": float(__dlg_lowest.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MERGE_DROUGHT_LOW_LAYER"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
