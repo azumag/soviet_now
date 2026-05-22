@@ -225,6 +225,16 @@ _find_existing_worker_pid() {
 	return 1
 }
 
+_soren_loop_lock_pid() {
+	local pid=""
+	pid=$(cat "tmp/.soren_loop.lock/pid" 2>/dev/null || true)
+	if _pid_matches_worker "$pid" "$(_pattern_for_worker soren_loop)"; then
+		echo "$pid"
+		return 0
+	fi
+	return 1
+}
+
 # --- 起動時クリーンアップ ---
 rm -f tmp/stop
 mkdir -p tmp/state logs 2>/dev/null || true
@@ -269,6 +279,12 @@ _start_worker() {
 
 	$cmd >>"$log_file" 2>&1 &
 	local pid=$!
+	if [ "$name" = "soren_loop" ]; then
+		sleep 1
+		if lock_pid="$(_soren_loop_lock_pid)"; then
+			pid="$lock_pid"
+		fi
+	fi
 	WORKER_PIDS[$idx]=$pid
 	WORKER_LAST_START[$idx]=$(date +%s)
 	_log "起動: ${name} (PID=${pid})"
@@ -369,7 +385,7 @@ while true; do
 		# worker が生きていればスキップ
 		if _pid_matches_worker "$_w_pid" "$_w_pattern"; then
 			_w_pid_file="$(_pidfile_for_worker "$_w_name")"
-			if [ -n "$_w_pid_file" ] && [ -n "$_w_pid" ]; then
+			if [ "$_w_name" != "soren_loop" ] && [ -n "$_w_pid_file" ] && [ -n "$_w_pid" ]; then
 				_w_recorded_pid=$(cat "$_w_pid_file" 2>/dev/null || true)
 				if [ "$_w_recorded_pid" != "$_w_pid" ]; then
 					mkdir -p "$(dirname "$_w_pid_file")" 2>/dev/null || true

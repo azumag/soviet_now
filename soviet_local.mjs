@@ -43,6 +43,7 @@ const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
+const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
 const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
@@ -59,6 +60,8 @@ const SE_VOLUME = (SE_VOLUME_RAW === 'off' || SE_VOLUME_RAW === '') ? null : Num
 const BGM_VOLUME_RAW = process.env.SOREN_BGM_VOLUME ?? 'off';
 const BGM_VOLUME = (BGM_VOLUME_RAW === 'off' || BGM_VOLUME_RAW === '') ? null : Number(BGM_VOLUME_RAW);
 const UNITY_VOLUME_REAPPLY_MS = parseInt(process.env.SOREN_UNITY_VOLUME_REAPPLY_MS || '5000', 10);
+const UNITY_AUDIO_WATCHDOG_MS = parseInt(process.env.SOREN_UNITY_AUDIO_WATCHDOG_MS || '10000', 10);
+const UNITY_AUDIO_RECOVER_COOLDOWN_MS = parseInt(process.env.SOREN_UNITY_AUDIO_RECOVER_COOLDOWN_MS || '30000', 10);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
 
 function chromeAppPathFromExecutable(executablePath) {
@@ -403,6 +406,87 @@ async function getGameState(page) {
 function writeGameState(state) {
   if (!state) return;
   fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(state, null, 2));
+}
+
+function writeAudioHealth(health) {
+  try {
+    fs.mkdirSync(path.dirname(AUDIO_HEALTH_FILE), { recursive: true });
+    fs.writeFileSync(AUDIO_HEALTH_FILE, JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      ...health,
+    }, null, 2));
+  } catch {}
+}
+
+async function inspectUnityAudio(page) {
+  try {
+    return await page.evaluate(() => {
+      const unity = (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext)
+        ? Module.WebAudio.audioContext : null;
+      const tracked = (window.__sorenAudioContexts || []).map((ctx) => ({
+        state: ctx ? ctx.state : null,
+        sinkId: (ctx && typeof ctx.sinkId !== 'undefined') ? String(ctx.sinkId) : 'n/a',
+      }));
+      return {
+        unityPresent: Boolean(unity),
+        unityState: unity ? unity.state : null,
+        tracked,
+        muted: Boolean(window.__sorenMuted),
+        routeError: window.__sorenAudioOutputError || '',
+        visibility: document.visibilityState,
+        hidden: document.hidden,
+      };
+    });
+  } catch (e) {
+    return { error: (e && e.message) || String(e) };
+  }
+}
+
+function unityAudioNeedsRecovery(health) {
+  if (!health || health.error || health.muted) return false;
+  const states = [];
+  if (health.unityState) states.push(health.unityState);
+  for (const item of health.tracked || []) {
+    if (item && item.state) states.push(item.state);
+  }
+  return states.some((state) => state === 'suspended' || state === 'interrupted');
+}
+
+async function recoverUnityAudio(page, audioDiagLog, reason) {
+  try {
+    await page.bringToFront();
+  } catch (e) {
+    audioDiagLog(`[AUDIO-WATCHDOG-BRINGTOFRONT-ERROR] ${(e && e.message) || String(e)}`);
+  }
+  try {
+    await page.mouse.click(640, 360);
+  } catch (e) {
+    audioDiagLog(`[AUDIO-WATCHDOG-CLICK-ERROR] ${(e && e.message) || String(e)}`);
+  }
+  try {
+    const result = await page.evaluate(async () => {
+      window.__sorenMuted = false;
+      const list = [...(window.__sorenAudioContexts || [])];
+      const unity = (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext)
+        ? Module.WebAudio.audioContext : null;
+      if (unity && !list.includes(unity)) list.push(unity);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        for (const ctx of list) {
+          try { ctx.resume(); } catch {}
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+      return {
+        unityState: unity ? unity.state : null,
+        tracked: list.map((ctx) => ({ state: ctx ? ctx.state : null })),
+      };
+    });
+    audioDiagLog(`[AUDIO-WATCHDOG-RECOVER] reason=${reason} ${JSON.stringify(result)}`);
+    return result;
+  } catch (e) {
+    audioDiagLog(`[AUDIO-WATCHDOG-RECOVER-ERROR] reason=${reason} ${(e && e.message) || String(e)}`);
+    return null;
+  }
 }
 
 // Check if state has changed (compare relevant fields)
@@ -904,6 +988,8 @@ async function runLocalController() {
   let nullStateCount = 0;
   let isMuted = false;
   let lastAudioRouteHealAt = 0;
+  let lastAudioWatchdogAt = 0;
+  let lastUnityAudioRecoverAt = 0;
   while (true) {
     // Check mute flag file (independent of commands.txt to avoid race condition)
     const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
@@ -1016,6 +1102,24 @@ async function runLocalController() {
         }, CHROME_AUDIO_OUTPUT_LABEL);
       } catch (e) {
         audioDiagLog(`[AUDIO-ROUTE-HEAL-ERROR] ${(e && e.message) || String(e)}`);
+      }
+    }
+
+    if (!shouldMute && !isMuted && Date.now() - lastAudioWatchdogAt > UNITY_AUDIO_WATCHDOG_MS) {
+      lastAudioWatchdogAt = Date.now();
+      const health = await inspectUnityAudio(page);
+      writeAudioHealth({
+        ...health,
+        lastRecoverAt: lastUnityAudioRecoverAt ? new Date(lastUnityAudioRecoverAt).toISOString() : null,
+      });
+      if (unityAudioNeedsRecovery(health) && Date.now() - lastUnityAudioRecoverAt > UNITY_AUDIO_RECOVER_COOLDOWN_MS) {
+        lastUnityAudioRecoverAt = Date.now();
+        const recovered = await recoverUnityAudio(page, audioDiagLog, health.unityState || 'tracked_suspended');
+        writeAudioHealth({
+          before: health,
+          after: recovered,
+          lastRecoverAt: new Date(lastUnityAudioRecoverAt).toISOString(),
+        });
       }
     }
 

@@ -1141,6 +1141,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("process.env.SOREN_BGM_VOLUME ?? 'off'", local)
         self.assertIn("SOREN_UNITY_VOLUME_REAPPLY_MS", local)
         self.assertIn("window.__sorenUnityVolumeReapplyTimer", local)
+        self.assertIn("SOREN_UNITY_AUDIO_WATCHDOG_MS", local)
+        self.assertIn("local_audio_health.json", local)
+        self.assertIn("recoverUnityAudio", local)
+        self.assertIn("[AUDIO-WATCHDOG-RECOVER]", local)
 
     def test_repeated_wildcards_can_escalate_to_ai_structural_escape(self):
         """WILDCARD 連続失敗時は、次の脱出をAI構造変異モードへ上げられる。"""
@@ -1215,6 +1219,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("SOREN_MAIN_PID=\"$(sh -c 'echo $PPID'", loop)
         self.assertIn('echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"', loop)
         self.assertIn("_soren_lock_pid_alive", loop)
+        self.assertIn("operation not permitted", loop)
+        self.assertIn('err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0', loop)
         self.assertIn('*"soren_loop.sh"*', loop)
         self.assertIn("stale lock owner", loop)
         self.assertIn("replaced by self", loop)
@@ -3522,6 +3528,9 @@ def decide(game_state, analysis):
         self.assertIn("cleanup skipped: another supervisor owns pidfile", supervisor)
         self.assertIn('if [ -n "$active_pid" ] && [ "$active_pid" != "$$" ]; then', supervisor)
         self.assertIn('if [ "$_w_name" = "soren_loop" ] && [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then', supervisor)
+        self.assertIn('_soren_loop_lock_pid()', supervisor)
+        self.assertIn('if [ "$name" = "soren_loop" ]; then', supervisor)
+        self.assertIn('if [ "$_w_name" != "soren_loop" ]', supervisor)
         self.assertIn('if existing_pid="$(_find_existing_worker_pid "$_w_name")"; then', supervisor)
         self.assertIn('WORKER_RESTARTS[$idx]=0', supervisor)
         self.assertLess(

@@ -60,11 +60,16 @@ fi
 LOCKDIR="tmp/.soren_loop.lock"
 mkdir -p tmp
 _soren_lock_pid_alive() {
-	local pid="${1:-}" cmd=""
+	local pid="${1:-}" cmd="" err=""
 	case "$pid" in
 	''|*[!0-9]*) return 1 ;;
 	esac
-	kill -0 "$pid" 2>/dev/null && return 0
+	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+	case "$err" in
+	*"operation not permitted"*|*"Operation not permitted"*)
+		return 0
+		;;
+	esac
 	cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
 	case "$cmd" in
 	*"soren_loop.sh"*|*"/bin/bash"*"soren_loop.sh"*) return 0 ;;
