@@ -27,6 +27,7 @@ RESTART_BACKOFF_MAX="${SUPERVISOR_BACKOFF_MAX:-60}"
 SUPERVISOR_POLL_SEC="${SUPERVISOR_POLL_SEC:-3}"
 PID_FILE="tmp/state/start_all.pid"
 TMUX_SESSION="${SUPERVISOR_TMUX_SESSION:-soren_supervisor}"
+DUPLICATE_STATE_FILE="${SUPERVISOR_DUPLICATE_STATE_FILE:-tmp/state/worker_duplicates.json}"
 
 # Worker 定義: name と command
 declare -a WORKER_NAMES=(
@@ -235,6 +236,115 @@ _soren_loop_lock_pid() {
 	return 1
 }
 
+_detect_worker_duplicates() {
+	local managed="" sep="" idx name pid signature=""
+	for idx in "${!WORKER_NAMES[@]}"; do
+		name="${WORKER_NAMES[$idx]}"
+		pid="${WORKER_PIDS[$idx]:-}"
+		managed="${managed}${sep}${name}:${pid}"
+		sep=","
+	done
+	signature=$(python3 - "$managed" "$DUPLICATE_STATE_FILE" <<'PY' 2>/dev/null || true
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+managed_arg = sys.argv[1] if len(sys.argv) > 1 else ""
+out_file = sys.argv[2] if len(sys.argv) > 2 else "tmp/state/worker_duplicates.json"
+managed = {}
+for item in managed_arg.split(","):
+    if ":" not in item:
+        continue
+    name, pid = item.split(":", 1)
+    managed[name] = pid
+
+patterns = {
+    "soren_loop": r"[/ ]soren_loop[.]sh([ \t]|$)",
+    "chat_worker": r"[/ ]workers/chat_worker[.]sh([ \t]|$)",
+    "youtube_worker": r"[/ ]workers/youtube_worker[.]sh([ \t]|$)",
+    "audio_worker": r"[/ ]workers/audio_worker[.]sh([ \t]|$)",
+    "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
+    "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
+    "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
+    "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
+}
+
+try:
+    raw = subprocess.check_output(["ps", "-Ao", "pid=,ppid=,command="], text=True, errors="replace")
+except Exception as exc:
+    state = {
+        "status": "unknown",
+        "updated_at": int(time.time()),
+        "error": f"ps_failed:{type(exc).__name__}",
+        "duplicates": [],
+    }
+else:
+    duplicates = []
+    all_counts = {}
+    rows = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 2)
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        rows.append((parts[0], parts[1], parts[2]))
+
+    for name, pattern in patterns.items():
+        rx = re.compile(pattern)
+        matched = []
+        for pid, ppid, cmd in rows:
+            if pid == str(os.getpid()):
+                continue
+            if rx.search(cmd):
+                matched.append((pid, ppid))
+        matched_pids = {pid for pid, _ppid in matched}
+        # Worker shell loops often spawn a same-command child shell. Count only
+        # root instances so normal child shells do not look like duplicates.
+        pids = [pid for pid, ppid in matched if ppid not in matched_pids]
+        unique_pids = sorted(set(pids), key=lambda p: int(p))
+        all_counts[name] = len(unique_pids)
+        if len(unique_pids) > 1:
+            owner = managed.get(name, "")
+            extras = [p for p in unique_pids if p != owner]
+            duplicates.append({
+                "name": name,
+                "count": len(unique_pids),
+                "managed_pid": owner,
+                "pids": unique_pids,
+                "extra_pids": extras,
+            })
+    state = {
+        "status": "duplicate" if duplicates else "ok",
+        "updated_at": int(time.time()),
+        "managed": managed,
+        "counts": all_counts,
+        "duplicates": duplicates,
+    }
+
+os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
+tmp = out_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(state, f, ensure_ascii=False, sort_keys=True)
+os.replace(tmp, out_file)
+
+if state["status"] == "duplicate":
+    print(";".join(
+        f"{item['name']}={','.join(item['pids'])}"
+        for item in state["duplicates"]
+    ))
+PY
+)
+	if [ -n "$signature" ] && [ "$signature" != "${_SUPERVISOR_DUP_LAST_SIGNATURE:-}" ]; then
+		_SUPERVISOR_DUP_LAST_SIGNATURE="$signature"
+		_log "WARN: worker duplicate detected: ${signature}"
+	fi
+}
+
 # --- 起動時クリーンアップ ---
 rm -f tmp/stop
 mkdir -p tmp/state logs 2>/dev/null || true
@@ -368,6 +478,7 @@ for idx in "${!WORKER_NAMES[@]}"; do
 	WORKER_LAST_START[$idx]=0
 	_start_worker "$idx"
 done
+_detect_worker_duplicates
 
 # --- 監視ループ ---
 while true; do
@@ -442,6 +553,7 @@ while true; do
 		WORKER_RESTARTS[$idx]=$((_w_restarts + 1))
 		_start_worker "$idx"
 	done
+	_detect_worker_duplicates
 
 	sleep "$SUPERVISOR_POLL_SEC"
 done

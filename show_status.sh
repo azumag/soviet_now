@@ -1848,6 +1848,25 @@ PY
 	if [[ -f tmp/debug/last_twitch_send_error.txt ]] && _recent_file_active "tmp/debug/last_twitch_send_error.txt" 900; then
 		twitch_send_error=$(head -1 tmp/debug/last_twitch_send_error.txt 2>/dev/null | tr -d '\r' | cut -c1-100)
 	fi
+	local duplicate_status="" duplicate_detail=""
+	if [[ -f tmp/state/worker_duplicates.json ]] && _recent_file_active "tmp/state/worker_duplicates.json" 120; then
+		duplicate_detail=$(python3 - <<'PY' 2>/dev/null || true
+import json
+try:
+    d = json.load(open("tmp/state/worker_duplicates.json", encoding="utf-8"))
+    items = d.get("duplicates") or []
+    if items:
+        print("; ".join(f"{i.get('name')} x{i.get('count')} pids={','.join(map(str, i.get('pids') or []))}" for i in items)[:120])
+except Exception:
+    pass
+PY
+)
+		if [[ -n "$duplicate_detail" ]]; then
+			duplicate_status="duplicate"
+		else
+			duplicate_status="ok"
+		fi
+	fi
 
 	# --- Twitch チャット状態 ---
 	local twitch_running=false twitch_pid=""
@@ -1960,6 +1979,11 @@ PY
 	local workers_bar
 	workers_bar=$(_bar_meter "$workers_online" "$workers_expected" 12)
 	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/%d expected online${C_RESET}\n" "$workers_bar" "$workers_online" "$workers_expected"
+	if [[ "$duplicate_status" == "duplicate" ]]; then
+		printf "    ${C_RED}!${C_RESET} Duplicates  ${C_RED}DETECTED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$duplicate_detail"
+	elif [[ "$duplicate_status" == "ok" ]]; then
+		printf "    ${C_GREEN}✓${C_RESET} Duplicates  ${C_DIM}none${C_RESET}\n"
+	fi
 	if ! $improve_daemon_running && (( acc_count >= min_games )); then
 		printf "    ${C_RED}!${C_RESET} ImproveD    ${C_RED}RESTART REQUIRED${C_RESET}  ${C_DIM}lock/improve gate reached${C_RESET}\n"
 	elif ! $improve_daemon_running && (( min_games - acc_count <= 2 )); then

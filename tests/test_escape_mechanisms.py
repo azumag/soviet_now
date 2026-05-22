@@ -3538,6 +3538,22 @@ def decide(game_state, analysis):
             supervisor.index('if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then'),
         )
 
+    def test_supervisor_surfaces_worker_duplicates(self):
+        supervisor = (REPO_ROOT / "start_all.sh").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("SUPERVISOR_DUPLICATE_STATE_FILE", supervisor)
+        self.assertIn("_detect_worker_duplicates()", supervisor)
+        self.assertIn("worker duplicate detected", supervisor)
+        self.assertIn('"duplicates": duplicates', supervisor)
+        self.assertIn("normal child shells do not look like duplicates", supervisor)
+        self.assertIn("ppid not in matched_pids", supervisor)
+        self.assertIn('"pid=,ppid=,command="', supervisor)
+        self.assertIn("_detect_worker_duplicates", supervisor[supervisor.index("# --- 全 worker 起動 ---"):])
+        self.assertIn("tmp/state/worker_duplicates.json", status)
+        self.assertIn("Duplicates", status)
+        self.assertIn("DETECTED", status)
+
     def test_rollback_analysis_surfaces_soviet_objective_delta(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
