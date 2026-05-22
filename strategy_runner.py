@@ -1235,14 +1235,18 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         replacement_source.startswith("visual_deadline_same_country")
     )
     # Keep visual same-country routing only while it stays near the min-risk band.
-    # If it drifts too high, prefer the lower all-crossing fallback instead of
-    # preserving a visibly worse stack path.
+    # If it drifts too high, or the board is already over the deadline, prefer
+    # the lower all-crossing fallback instead of preserving a visibly worse stack
+    # path.
     if (
         preserve_visual_same_country
         and replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
         and not safe
-        and risk_top(replacement) > min_risk_top + 0.70
+        and (
+            risk_top(replacement) > min_risk_top + 0.70
+            or current_top_edge_y >= deadline_y + 0.20
+        )
     ):
         preserve_visual_same_country = False
     if (

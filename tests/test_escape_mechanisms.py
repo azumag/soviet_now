@@ -3147,6 +3147,41 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], 2.9)
         self.assertIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_safety_visual_same_country_falls_back_when_board_is_already_over_deadline(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.9, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "top_edge_y": 3.62,
+                    "deadline_crossed": True,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 2.9,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.55,
+                    },
+                    {
+                        "x": -1.1,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.95,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 144, "type": 8, "x": -1.14, "y": 2.17}],
+                "next": {"type": 8},
+            },
+        )
+
+        self.assertEqual(decision["x"], 2.9)
+        self.assertIn("minrisk_postcondition", decision["reason"])
+
     def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
         import analyze_board
 

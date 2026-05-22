@@ -99,7 +99,8 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 **strategy_runner 安全ガード:**
 
 - `enforce_deadline_safety` は、盤面全体の precontact pressure が低い場合でも、選択候補が `crosses_deadline=true` かつ `merge_grade=NO` で、同じ analysis set に非 crossing の safe 候補があるなら `safe_far_below_crossing` として差し替える。これは「大きい国の合体を塞ぐ」戦略評価を直接変えず、明らかなデッドライン超え NO merge 配置だけを実行直前に退避するための境界ガード。
-- 対応テストは `tests.test_escape_mechanisms.TestStrategyRunnerDeadlineSafety.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することを確認する。
+- all-crossing 局面で `visual_deadline_same_country` が同国接触候補を拾っても、盤面 top が deadline を十分に超えている場合は視覚推定を保存せず、最小 risk_top の候補へ戻す。これにより、直近の deadline fallback 改善が NO_MERGE の高積みを選んだ場合でも、実行時により低い崩壊リスクへ寄せる。
+- 対応テストは `tests.test_escape_mechanisms.TestSovietObjectiveImproveInputs.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することを確認する。
 
 判定順:
 
