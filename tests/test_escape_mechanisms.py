@@ -1212,6 +1212,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
+        self.assertIn('SOREN_MAIN_PID="${BASHPID:-$$}"', loop)
+        self.assertIn('echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"', loop)
         self.assertIn("queue_early_escape_lock_if_needed", loop)
         self.assertIn("next-game-preflight", loop)
         self.assertLess(
@@ -2800,7 +2802,9 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("__dlg_merge_result_safe", injector)
         self.assertIn("__dlg_has_clean", injector)
         self.assertIn("merge_result_crosses_deadline", injector)
-        self.assertIn("return not (__dlg_has_clean and c.get(\"merge_result_crosses_deadline\"))", injector)
+        self.assertIn("return not c.get(\"merge_result_crosses_deadline\")", injector)
+        self.assertIn("__dlg_safe_no_merge", injector)
+        self.assertIn("__dlg_merge_preferred", injector)
 
     def test_deadline_guard_injector_replaces_stale_guard(self):
         import inject_deadline_guard
@@ -2821,6 +2825,8 @@ def decide(game_state, analysis):
         self.assertNotIn("OLD_DEADLINE_GUARD", updated)
         self.assertIn("__dlg_has_clean", updated)
         self.assertIn("merge_result_crosses_deadline", updated)
+        self.assertIn("__dlg_safe_no_merge", updated)
+        self.assertIn("__dlg_merge_preferred", updated)
         self.assertEqual(inject_deadline_guard.inject_guard(updated), None)
 
     def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
