@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v680: DEADLINE_GUARD Russia phase bypass — skip guard when russia_phase && next_type==14 && T14 on board && merge available
+      #       fixes best(3236) T102-T119: DEADLINE_GUARD overrode Russia phase logic, causing T14→T15 pipeline drought despite type 15 on board
+      #       mandatory_themes compliant: bypass only passes through to Russia phase logic which respects deadline+merge constraints
+      #       Russia stage gate: fixes Russia count staying at 0 despite type 15 pieces visible
+      #       refs: tmp/analysis_result.md (Hypothesis 2: DEADLINE_GUARD over-triggering)
       # v678: T14→T15 merge urgency — russia_phase && next_type==14 で board上のT14とmerge機会がある場合に即時選択
       #       batch_progress: Russia(T15)=0/12。全ゲームでT14出現後にmerge促成失敗。
       #       best(2514)T98-T106: type 14出現後DEADLINE_GUARD_SAFE_LANDINGで生存確保后就労なし。
@@ -739,7 +744,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
-    if __dlg_critical and __dlg_cands:
+    # v680: Russia phase bypass — when Russia phase is active with type 14 merge opportunity,
+    #       DEADLINE_GUARD must not override the Russia merge urgency (lines 792-822).
+    #       Best game (3236) T102-T119: type 15 on board, russia_phase active, but
+    #       DEADLINE_GUARD chose SAFE_LANDING repeatedly with merge_available=false,
+    #       blocking T14→T15 pipeline. Russia count stayed at 0 despite type 15 pieces.
+    #       Hypothesis: DEADLINE_GUARD intercepts before Russia phase logic runs,
+    #       causing merge drought in Russia phase.
+    #       Fix: Skip DEADLINE_GUARD when Russia phase conditions would trigger merge urgency.
+    #       mandatory_themes compliant: bypass only grants passage to Russia phase logic,
+    #       which itself respects deadline+merge constraints.
+    __dlg_pieces_dlg = __dlg_game_state.get("pieces", []) if isinstance(__dlg_game_state, dict) else []
+    __dlg_russia_count_dlg = sum(1 for p in __dlg_pieces_dlg if p.get("type") in [14, 15]) if isinstance(__dlg_pieces_dlg, list) else 0
+    __dlg_next_piece_dlg = __dlg_game_state.get("next", {}) if isinstance(__dlg_game_state, dict) else {}
+    __dlg_next_type_dlg = __dlg_next_piece_dlg.get("type", 0) if isinstance(__dlg_next_piece_dlg, dict) else 0
+    __dlg_russia_phase_bypass = (
+        __dlg_russia_count_dlg >= 1
+        and __dlg_next_type_dlg == 14
+        and any(p.get("type") == 14 for p in __dlg_pieces_dlg if isinstance(__dlg_pieces_dlg, list))
+        and any(isinstance(c, dict) and c.get("merge_grade") in ("DIRECT", "NEAR") for c in __dlg_cands)
+    )
+    if __dlg_critical and __dlg_cands and not __dlg_russia_phase_bypass:
         # v679: DEADLINE_GUARD mandatory_themes compliance fix — suppress NO_MERGE placements
         #        that cross the deadline when no safe non-crossing candidate exists.
         #        Fixes worst T54-55: DEADLINE_GUARD selected merge candidate that crossed
