@@ -64,7 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
+      # v677: DEADLINE_GUARD NEAR fallback restriction — When __dlg_has_clean (non-crossing candidates exist),
+      #       NEAR fallback now filters out candidates where merge_result_crosses_deadline=true.
+      #       Makes SAFE_LANDING the fallback when NEAR would cross the deadline, instead of allowing NEAR to cross.
+      #       Fixes: worst T61-T64 had deadline_safe_candidate_count=132-134 but chose NO_MERGE with HIGH_TOWER
+      #       decisions; best T85-T89 had deadline_safe_candidate_count=6-12 but chose NO_MERGE.
+      #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+      #       refs: tmp/analysis_result.md (DEADLINE_GUARD Fallback Restriction hypothesis)
+      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
      #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
@@ -735,7 +742,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             for c in __dlg_cands
         )
         def __dlg_merge_result_safe(c):
-            return not (__dlg_has_clean and c.get("merge_result_crosses_deadline"))
+            return not c.get("merge_result_crosses_deadline")
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_result_safe(c)
@@ -750,7 +757,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and __dlg_merge_result_safe(c)
+            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
+            and __dlg_merge_result_safe(c)
+            and not c.get("merge_result_crosses_deadline")
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
