@@ -1220,7 +1220,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 best_dist = float("inf")
                 for tp in type_10_plus_pieces:
                     tp_x = tp.get("x", 0)
-                    tp_y = tp.get("y", -16)
+                    tp_y = tp.get("y", -10)
                     dist = ((x - tp_x) ** 2 + (landing_y - tp_y) ** 2) ** 0.5
                     if dist < best_dist:
                         best_dist = dist
@@ -1319,7 +1319,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                         proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
-                        if piece_count >= 48:
+                        if piece_count >= 28:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
                             congestion_scale = 1.0 + (piece_count - 28) * 0.12
@@ -1466,7 +1466,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
-            height_mult *= 0.1463
+            height_mult *= 0.3
 
         # v362: height_mult floor — prevent compounding nullification
         # 3 gates (0.2x/0.8x/0.3x) compound to 0.048x, nullifying height penalty.
@@ -1623,7 +1623,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 2.5:
                     # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                    proximity = max(0, 91.75 - horiz_dist * 40.0)
+                    proximity = max(0, 60.0 - horiz_dist * 40.0)
                     # Decay if growth center is high — don't override height control
                     if gc_y > 0:
                         proximity *= max(0.0, 1.0 - gc_y * 0.4)
@@ -2036,7 +2036,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
         decision_crosses = result.get("crosses_deadline", False)
         if (decision_crosses and merge_grade == "NO"
-                and abs(x) >= 1.375 and not russia_phase):
+                and abs(x) >= 2.5 and not russia_phase):
             score -= 1500.0
             reasons.append("CROSSES_DEADLINE_EDGE_NO_MERGE")
 
