@@ -1216,7 +1216,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
-        self.assertIn("SOREN_MAIN_PID=\"$(sh -c 'echo $PPID'", loop)
+        self.assertIn('SOREN_MAIN_PID="$$"', loop)
         self.assertIn('echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"', loop)
         self.assertIn("_soren_lock_pid_alive", loop)
         self.assertIn("operation not permitted", loop)
