@@ -1212,7 +1212,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
-        self.assertIn('SOREN_MAIN_PID="${BASHPID:-$$}"', loop)
+        self.assertIn("SOREN_MAIN_PID=\"$(sh -c 'echo $PPID'", loop)
         self.assertIn('echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"', loop)
         self.assertIn("queue_early_escape_lock_if_needed", loop)
         self.assertIn("next-game-preflight", loop)

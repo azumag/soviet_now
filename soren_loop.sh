@@ -69,7 +69,7 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 	rm -rf "$LOCKDIR"
 	mkdir "$LOCKDIR" || { echo "ERROR: failed to acquire lock."; exit 1; }
 fi
-SOREN_MAIN_PID="${BASHPID:-$$}"
+SOREN_MAIN_PID="$(sh -c 'echo $PPID' 2>/dev/null || echo "${BASHPID:-$$}")"
 echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"
 export SOREN_MAIN_PID
 rm -f tmp/stop
