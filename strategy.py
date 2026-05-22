@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v681: T13→T14 merge urgency — Ukraine stage gate (T13) merge promotion
+      #       batch_progress: Ukraine(T13)=9/12(75%). 主ターゲットはUkraine段階。
+      #       worst(686)T65-T77: rp=6-8, same_type>=4, merge_grade=NO続きで51 pieces蓄積。
+      #       advice: 「盘面状態に関わらず即時併合を最優先」— T13出現後merge可使なのにmerge未被選択情况あり。
+      #       v678と同じ構造をUkraine段階に適用。T13→T14促成でウクライナ建国率75%→100%。
+      #       mandatory_themes遵守: Russia phase除外、DEADLINE_GUARDバイパスなし。
+      #       refs: tmp/analysis_result.md (Implementation Plan: T13→T14 merge urgency)
       # v680: DEADLINE_GUARD Russia phase bypass — skip guard when russia_phase && next_type==14 && T14 on board && merge available
       #       fixes best(3236) T102-T119: DEADLINE_GUARD overrode Russia phase logic, causing T14→T15 pipeline drought despite type 15 on board
       #       mandatory_themes compliant: bypass only passes through to Russia phase logic which respects deadline+merge constraints
@@ -845,6 +852,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             _dlg_best_cand = _cand
                     if _dlg_best_cand is not None:
                         return {"x": float(_dlg_best_cand.get("x", 0.0)), "reason": "RUSSIA_PHASE_T14_MERGE_URGENCY"}
+
+    # v681: T13→T14 merge urgency — Ukraine stage gate (T13) merge promotion
+    # batch_progress: Ukraine(T13)=9/12(75%). 主ターゲットはUkraine段階。
+    # worst(686)T65-T77: rp=6-8, same_type>=4, merge_grade=NO続きで51 piecesまで蓄積。
+    # advice: 「盘面状態に関わらず即時併合を最優先」— T13出現後merge可使なのにmerge未被選択情况あり。
+    # v678はRussia phaseでT14→T15 urgencyを追加したが、Ukraine段階には同等のロジックがない。
+    # Ukraine stage gate改善: T13→T14促成でウクライナ建国率75%→100%に近づける。
+    # mandatory_themes遵守: crosses_deadline && merge_grade==NO は選択禁止（既存guard参照）。
+    _ukr_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
+    _ukr_russia_count = sum(1 for p in _ukr_pieces if p.get("type") in [14, 15]) if isinstance(_ukr_pieces, list) else 0
+    _ukr_next_piece = game_state.get("next", {}) if isinstance(game_state, dict) else {}
+    _ukr_next_type = _ukr_next_piece.get("type", 0) if isinstance(_ukr_next_piece, dict) else 0
+    if _ukr_russia_count == 0 and _ukr_next_type == 13:
+        _ukr_type13_on_board = [p for p in _ukr_pieces if p.get("type") == 13] if isinstance(_ukr_pieces, list) else []
+        if _ukr_type13_on_board:
+            _ukr_results = analysis.get("results", []) if isinstance(analysis, dict) else []
+            if isinstance(_ukr_results, list) and _ukr_results:
+                _ukr_merge_cands = [r for r in _ukr_results if isinstance(r, dict) and r.get("merge_grade") in ("DIRECT", "NEAR")]
+                if _ukr_merge_cands:
+                    _ukr_best_score = -float("inf")
+                    _ukr_best_cand = None
+                    for _cand in _ukr_merge_cands:
+                        _base = 2000.0
+                        if _cand.get("merge_grade") == "DIRECT":
+                            _base += 200.0
+                        if _base > _ukr_best_score:
+                            _ukr_best_score = _base
+                            _ukr_best_cand = _cand
+                    if _ukr_best_cand is not None:
+                        return {"x": float(_ukr_best_cand.get("x", 0.0)), "reason": "UKRAINE_PHASE_T13_MERGE_URGENCY"}
 
     results = analysis.get("results", [])
 
