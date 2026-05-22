@@ -687,12 +687,24 @@ PY
 			./obs_control.sh transform "$scene" "$show_status_source" "${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 		}
 		wildcard_parallel_obs_show || true
+		wildcard_parallel_restore_trap_active=1
+		wildcard_parallel_restore_on_exit() {
+			[ "${wildcard_parallel_restore_trap_active:-0}" = "1" ] || return 0
+			wildcard_parallel_obs_restore || true
+		}
+		wildcard_parallel_restore_once() {
+			wildcard_parallel_obs_restore || true
+			wildcard_parallel_restore_trap_active=0
+			trap - EXIT INT TERM
+		}
+		trap wildcard_parallel_restore_on_exit EXIT INT TERM
 		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 		wildcard_count=$((wildcard_count_min + RANDOM % (wildcard_count_max - wildcard_count_min + 1)))
 		[ "$wildcard_count" -lt 1 ] && wildcard_count=1
 		wildcard_seed=$(date +%s)
 		wildcard_parallel_result_file="${WILDCARD_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/wildcard_parallel_result.json}"
+		set +e
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
 			--jobs "${WILDCARD_PARALLEL_JOBS:-3}" \
@@ -710,10 +722,11 @@ PY
 			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
 			--result-file "$wildcard_parallel_result_file" 2>&1)
 		wildcard_parallel_rc=$?
+		set -e
 		if [ "$wildcard_parallel_rc" -ne 0 ]; then
 			log "[WILDCARD] parallel trial produced no candidate rc=$wildcard_parallel_rc: ${wildcard_parallel_result:0:500}"
 			_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
-			wildcard_parallel_obs_restore || true
+			wildcard_parallel_restore_once
 			exit 1
 		fi
 		wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || true
@@ -726,13 +739,13 @@ PY
 		[ -n "$wildcard_winner_path" ] && [ -f "$wildcard_winner_path" ] || {
 			log "[WILDCARD] parallel winner strategy missing: ${wildcard_winner_path:-empty}"
 			_improve_progress "wildcard_no_candidate" "100" "parallel_winner_missing"
-			wildcard_parallel_obs_restore || true
+			wildcard_parallel_restore_once
 			exit 1
 		}
 		if ! validate_strategy_with_helpers "$wildcard_winner_path" "strategy_helpers"; then
 			log "[WILDCARD] parallel winner validation failed → no apply"
 			_improve_progress "wildcard_validate_fail" "100" "parallel_winner_invalid"
-			wildcard_parallel_obs_restore || true
+			wildcard_parallel_restore_once
 			exit 1
 		fi
 		cp "$wildcard_winner_path" "$STRATEGY_FILE"
@@ -862,7 +875,7 @@ except Exception:
 		git push 2>/dev/null || true
 		_improve_progress "done" "100" "wildcard_parallel_complete"
 		log "[WILDCARD] parallel cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
-		wildcard_parallel_obs_restore || true
+		wildcard_parallel_restore_once
 		exit 0
 	fi
 	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")

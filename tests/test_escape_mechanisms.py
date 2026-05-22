@@ -3883,6 +3883,18 @@ PY
         self.assertIn("candidate.serve_port = args.serve_base_port + candidate.index", runner)
         self.assertIn('"SOREN_SERVE_PORT": str(candidate.serve_port)', runner)
 
+    def test_wildcard_parallel_obs_restores_after_nonzero_exit(self):
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn("wildcard_parallel_restore_on_exit()", improve)
+        self.assertIn("wildcard_parallel_restore_once()", improve)
+        self.assertIn("trap wildcard_parallel_restore_on_exit EXIT INT TERM", improve)
+        self.assertIn("set +e\n\t\twildcard_parallel_result=$(python3 wildcard_parallel.py", improve)
+        self.assertIn("wildcard_parallel_rc=$?\n\t\tset -e", improve)
+        self.assertIn("wildcard_parallel_restore_once\n\t\t\texit 1", improve)
+        self.assertIn("wildcard_parallel_restore_trap_active=0", improve)
+        self.assertIn("trap - EXIT INT TERM", improve)
+
     def test_viewer_chat_monitor_filters_recent_observer_comments(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         script = (REPO_ROOT / "viewer_chat_monitor.sh").read_text()
