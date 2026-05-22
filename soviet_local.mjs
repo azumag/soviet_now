@@ -58,6 +58,7 @@ const SE_VOLUME_RAW = process.env.SOREN_SE_VOLUME ?? '1.5';
 const SE_VOLUME = (SE_VOLUME_RAW === 'off' || SE_VOLUME_RAW === '') ? null : Number(SE_VOLUME_RAW);
 const BGM_VOLUME_RAW = process.env.SOREN_BGM_VOLUME ?? 'off';
 const BGM_VOLUME = (BGM_VOLUME_RAW === 'off' || BGM_VOLUME_RAW === '') ? null : Number(BGM_VOLUME_RAW);
+const UNITY_VOLUME_REAPPLY_MS = parseInt(process.env.SOREN_UNITY_VOLUME_REAPPLY_MS || '5000', 10);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
 
 function chromeAppPathFromExecutable(executablePath) {
@@ -248,6 +249,53 @@ const MIME_TYPES = {
   '.wasm': 'application/wasm',
   '.gz': null, // handled specially
 };
+
+async function applyUnityVolume(page, label, objectName, methodName, volume, attempts = 10) {
+  if (volume == null || !Number.isFinite(volume)) return { configured: false, applied: false };
+
+  let applied = false;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const ok = await page.evaluate(({ objectName: targetObject, methodName: targetMethod, value }) => {
+        if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return false;
+        window.unityInstance.SendMessage(targetObject, targetMethod, value);
+        return true;
+      }, { objectName, methodName, value: volume });
+      if (ok) { applied = true; break; }
+    } catch {}
+    await page.waitForTimeout(1000);
+  }
+  console.log(applied
+    ? `${label} volume set to ${volume}`
+    : `WARNING: failed to set ${label} volume (unityInstance/AudioManager unavailable)`);
+  return { configured: true, applied };
+}
+
+async function installUnityVolumeReapply(page) {
+  const bgmVolume = (BGM_VOLUME != null && Number.isFinite(BGM_VOLUME)) ? BGM_VOLUME : null;
+  const seVolume = (SE_VOLUME != null && Number.isFinite(SE_VOLUME)) ? SE_VOLUME : null;
+  if (bgmVolume == null && seVolume == null) return;
+
+  await page.evaluate(({ bgmVolume: nextBgm, seVolume: nextSe, intervalMs }) => {
+    const apply = () => {
+      try {
+        if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return;
+        if (nextBgm != null) {
+          window.unityInstance.SendMessage('Audio Manager', 'SetBGMVolume', nextBgm);
+        }
+        if (nextSe != null) {
+          window.unityInstance.SendMessage('Audio Manager', 'SetSEVolume', nextSe);
+        }
+      } catch (_) {
+        // Unity may not be ready during scene loads; the next tick will retry.
+      }
+    };
+    apply();
+    if (Number.isFinite(intervalMs) && intervalMs > 0 && !window.__sorenUnityVolumeReapplyTimer) {
+      window.__sorenUnityVolumeReapplyTimer = setInterval(apply, intervalMs);
+    }
+  }, { bgmVolume, seVolume, intervalMs: UNITY_VOLUME_REAPPLY_MS });
+}
 
 // Custom static file server that handles .gz files with correct Content-Encoding
 function startServer() {
@@ -729,41 +777,11 @@ async function runLocalController() {
   console.log('Unity canvas ready');
 
   // AudioManager の音量スライダー onValueChanged と同一実体を SendMessage で操作する。
-  // AudioManager は Awake で初期化されるため、反映されるまで数回リトライ。
-  if (BGM_VOLUME != null && Number.isFinite(BGM_VOLUME)) {
-    let bgmApplied = false;
-    for (let i = 0; i < 10; i++) {
-      try {
-        const ok = await page.evaluate((v) => {
-          if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return false;
-          window.unityInstance.SendMessage('Audio Manager', 'SetBGMVolume', v);
-          return true;
-        }, BGM_VOLUME);
-        if (ok) { bgmApplied = true; break; }
-      } catch {}
-      await page.waitForTimeout(1000);
-    }
-    console.log(bgmApplied
-      ? `BGM volume set to ${BGM_VOLUME}`
-      : `WARNING: failed to set BGM volume (unityInstance/AudioManager unavailable)`);
-  }
-  if (SE_VOLUME != null && Number.isFinite(SE_VOLUME)) {
-    let seApplied = false;
-    for (let i = 0; i < 10; i++) {
-      try {
-        const ok = await page.evaluate((v) => {
-          if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return false;
-          window.unityInstance.SendMessage('Audio Manager', 'SetSEVolume', v);
-          return true;
-        }, SE_VOLUME);
-        if (ok) { seApplied = true; break; }
-      } catch {}
-      await page.waitForTimeout(1000);
-    }
-    console.log(seApplied
-      ? `SE volume set to ${SE_VOLUME}`
-      : `WARNING: failed to set SE volume (unityInstance/AudioManager unavailable)`);
-  }
+  // AudioManager は Awake で初期化されるため初回はリトライし、その後も
+  // 並列評価窓の BGM が画面遷移などで戻らないよう短い間隔で再適用する。
+  await applyUnityVolume(page, 'BGM', 'Audio Manager', 'SetBGMVolume', BGM_VOLUME);
+  await applyUnityVolume(page, 'SE', 'Audio Manager', 'SetSEVolume', SE_VOLUME);
+  await installUnityVolumeReapply(page);
 
   try {
     await updateObsGameSource();

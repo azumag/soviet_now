@@ -12,6 +12,7 @@ import html
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -294,26 +295,29 @@ ul {{
 }}
 @media (max-height: 220px) {{
   .wrap {{
-    padding: 12px 18px;
+    padding: 9px 14px;
   }}
   .head {{
-    margin-bottom: 8px;
+    margin-bottom: 7px;
+    gap: 12px;
   }}
   .title {{
-    font-size: 26px;
+    font-size: 23px;
   }}
   .sub {{
-    font-size: 18px;
+    font-size: 16px;
   }}
   .grid {{
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
     height: auto;
   }}
   .card {{
-    padding: 8px 10px;
+    padding: 7px 8px;
   }}
   .top {{
-    font-size: 18px;
-    margin-bottom: 6px;
+    font-size: 15px;
+    margin-bottom: 5px;
   }}
   .preview,
   .hash,
@@ -322,8 +326,8 @@ ul {{
     display: none;
   }}
   .metric {{
-    font-size: 15px;
-    line-height: 1.25;
+    font-size: 13px;
+    line-height: 1.22;
   }}
 }}
 </style>
@@ -655,28 +659,76 @@ const outPath = process.argv[2];
         pass
 
 
+def set_candidate_window_title(cdp_port: int, title: str, cwd: Path) -> None:
+    script = r"""
+const { chromium } = require('playwright');
+const port = Number(process.argv[1]);
+const title = process.argv[2];
+(async () => {
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  try {
+    const pages = browser.contexts().flatMap(ctx => ctx.pages());
+    const page = pages.find(p => !p.url().startsWith('about:blank')) || pages[0];
+    if (!page) throw new Error('no page');
+    await page.evaluate((nextTitle) => {
+      document.title = nextTitle;
+      const titleEl = document.querySelector('title') || document.head?.appendChild(document.createElement('title'));
+      if (titleEl) titleEl.textContent = nextTitle;
+    }, title);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+})().catch(err => {
+  console.error(err && err.message ? err.message : String(err));
+  process.exit(1);
+});
+"""
+    try:
+        subprocess.run(
+            ["node", "-e", script, str(cdp_port), title],
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+def _regex_escape(value: str) -> str:
+    return re.escape(value)
+
+
 def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
-    if os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "1") != "1":
+    window_sources = os.environ.get(
+        "WILDCARD_PARALLEL_OBS_WINDOW_SOURCES",
+        os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "1"),
+    )
+    if window_sources != "1":
         return
-    if not candidate.serve_port:
+    if not candidate.cdp_port:
         return
-    if not (REPO_ROOT / "obs_browser_source.sh").exists() or not (REPO_ROOT / "obs_control.sh").exists():
+    if not (REPO_ROOT / "obs_window_capture_source.sh").exists() or not (REPO_ROOT / "obs_control.sh").exists():
         return
     scene = os.environ.get("OBS_DASHBOARD_SCENE", "soren")
     prefix = os.environ.get("WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX", "wildcardParallelCand")
     source = f"{prefix}{candidate.index + 1}"
-    url = f"http://127.0.0.1:{candidate.serve_port}/"
+    title = f"Wildcard Parallel Cand {candidate.index + 1} | soren-game"
+    window_pattern = _regex_escape(title)
     cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
     w = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "640"))
-    h = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H", "360"))
+    h = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H", "405"))
     x = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X", "0")) + (candidate.index % cols) * w
-    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "170")) + (candidate.index // cols) * h
+    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "140")) + (candidate.index // cols) * h
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(log_path, "ab") as err:
+            if candidate.cdp_port and candidate.workdir:
+                set_candidate_window_title(candidate.cdp_port, title, candidate.workdir)
             subprocess.run(
-                ["./obs_browser_source.sh", "ensure", scene, source, url, "1280", "720", "show"],
+                ["./obs_window_capture_source.sh", "ensure", scene, source, window_pattern, "com.google.chrome.for.testing", "show"],
                 cwd=REPO_ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=err,
@@ -686,6 +738,7 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
             subprocess.run(
                 ["./obs_control.sh", "transform", scene, source, str(x), str(y), "1", "1", str(w), str(h)],
                 cwd=REPO_ROOT,
+                env={**os.environ, "OBS_CONTROL_TRANSFORM_MODE": "force"},
                 stdout=subprocess.DEVNULL,
                 stderr=err,
                 timeout=8,

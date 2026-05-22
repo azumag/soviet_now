@@ -133,7 +133,11 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 - `wildcard` / `archive_restart` の隔離改善中は soren91 を自動起動せず、非メリケン表示を保つ。通常改善だけが従来どおり meriken tab / soren91 presentation を復帰させる。
 - `wildcard` 並列評価の OBS overlay は、候補なし・winner欠落・validation失敗・SIGTERM でも trap で status/dashboard 表示へ復元する。`show_status.sh` の `WildParFail` は直近1時間の失敗診断であり、`improve_state.json` が idle なら脱出ロックが詰まっている状態ではない。
 - `wildcard` 並列評価は既定で 6 候補を隔離実行し、OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
+- `wildcardParallelOverlay` は 1920x140 のヘッダ専用表示とし、候補本線は `wildcardParallelCand1..6` の macOS window capture source で映す。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
+- `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
+- `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。
 - `wildcard_parallel.py` が result file に winner を書いた後で外側の timeout / TERM により非ゼロ終了した場合は、result file の winner を優先して採用処理へ進める。winner があるのに `rc=143` だけで `parallel_no_candidate` に落とすと、停滞脱出が空振りで終わるため。
+- `wildcard` 並列評価ブラウザは `SOREN_BGM_VOLUME=0` / `SOREN_SE_VOLUME=1.5` を既定で渡す。Unity の scene load 後に音量が戻ることがあるため、`soviet_local.mjs` は `SOREN_UNITY_VOLUME_REAPPLY_MS` 間隔で指定音量を再適用する。
 - `wildcard` / `archive_restart` の fast escape では親 `eloop_improve.sh` が候補採用と状態遷移を担う。親 PID が見えない running state は、通常改善のように長時間 fresh log 扱いで保護せず、短い猶予後に `monitor_improve_runtime.sh` が harvest して stale lock を解放する。early escape の lock は作成時 `normal` でも、改善起動時に最終 reason を書き戻すため、失敗後の再試行・表示・代打制御も fast escape として扱われる。
 - 回帰理由は `lost_russia_path` / `lost_soviet_path` だけでなく、ロシア前段階の `lost_turkmenistan_gate` / `lost_ukraine_gate` / `lost_kazakhstan_gate` も段階到達率で判定する。rolling score が上位 grace 内の時は段階ゲートでの粛清を抑制し、上位外で frontier を失った時だけ目的後退として扱う。
 - Stage 3 のレビューは会話上の PASS ではなく `tmp/review_result.md` の実ファイル作成を完了条件にする。レビューAIが PASS 本文だけを返してファイルを書かない場合は no-edit retry / verdict repair の対象で、同じレビューを無駄に増やさないためプロンプト側でも最終応答前のファイル確認を必須化している。

@@ -1096,6 +1096,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn("transform <scene> <source> <x> <y> <scaleX> <scaleY>", obs_control)
         self.assertIn("SetSceneItemTransform", obs_control)
+        self.assertIn("OBS_CONTROL_TRANSFORM_MODE=force", obs_control)
+        self.assertIn("transform-preserved", obs_control)
+        self.assertIn("isDefaultTransform", obs_control)
+        self.assertIn("GetSceneItemTransform", obs_control)
         self.assertIn("<html-file-or-url>", browser_source)
         self.assertIn("http://*|https://*", browser_source)
         self.assertIn("wildcard_parallel_obs_show", eloop)
@@ -1113,7 +1117,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("本線は見えない裏で進ませない", loop)
         self.assertIn('case "$_pause_reason" in\n\t\twildcard|archive_restart)', loop)
         self.assertIn("maybe_show_obs_candidate_source", parallel)
-        self.assertIn('"./obs_browser_source.sh", "ensure", scene, source, url, "1280", "720", "show"', parallel)
+        self.assertIn('"./obs_window_capture_source.sh", "ensure", scene, source, window_pattern', parallel)
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
         self.assertIn("hide:\"$hide_sources,", eloop)
         self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
@@ -1135,6 +1139,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("SetBGMVolume", local)
         self.assertIn("SetSEVolume", local)
         self.assertIn("process.env.SOREN_BGM_VOLUME ?? 'off'", local)
+        self.assertIn("SOREN_UNITY_VOLUME_REAPPLY_MS", local)
+        self.assertIn("window.__sorenUnityVolumeReapplyTimer", local)
 
     def test_repeated_wildcards_can_escalate_to_ai_structural_escape(self):
         """WILDCARD 連続失敗時は、次の脱出をAI構造変異モードへ上げられる。"""
@@ -3948,7 +3954,8 @@ PY
         self.assertIn("wildcard_parallel_restore_once()", improve)
         self.assertIn("trap wildcard_parallel_restore_on_exit EXIT INT TERM", improve)
         self.assertIn("set +e\n\t\twildcard_parallel_result=$(python3 wildcard_parallel.py", improve)
-        self.assertIn("wildcard_parallel_rc=$?\n\t\tset -e", improve)
+        self.assertIn("wildcard_parallel_rc=$?", improve)
+        self.assertIn("wildcard_parallel_heartbeat_stop\n\t\tset -e", improve)
         self.assertIn("wildcard_parallel_restore_once\n\t\t\texit 1", improve)
         self.assertIn("wildcard_parallel_restore_trap_active=0", improve)
         self.assertIn("trap - EXIT INT TERM", improve)

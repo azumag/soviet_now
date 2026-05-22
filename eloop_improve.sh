@@ -665,12 +665,12 @@ PY
 			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
-			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
+			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 			local hide_sources="$dashboard_source,$status_source,$show_status_source"
 			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
-			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" 1920 170 show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" 1920 140 show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 			./obs_control.sh batch "$scene" show:"$overlay" hide:"$hide_sources,$cand_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
-			./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 1920 170 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			OBS_CONTROL_TRANSFORM_MODE=force ./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 1920 140 >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 		}
 		wildcard_parallel_obs_restore() {
 			[ -x ./obs_control.sh ] || return 0
@@ -681,20 +681,48 @@ PY
 			local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 			local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 			local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
-			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
+			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 			local show_sources="$dashboard_source,$status_source,$show_status_source"
 			[ -n "$game_source" ] && show_sources="$show_sources,$game_source"
 			./obs_control.sh batch "$scene" hide:"$overlay,$cand_sources" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 			./obs_control.sh transform "$scene" "$status_source" "${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}" "${STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
 			./obs_control.sh transform "$scene" "$show_status_source" "${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+			python3 - "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+if not path or not os.path.exists(path):
+    raise SystemExit(0)
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    data = {}
+if data.get("phase") == "running":
+    data["phase"] = "restored"
+    data["ended_at"] = int(time.time())
+    data["detail"] = "obs_restore"
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+PY
 		}
 		wildcard_parallel_obs_show || true
 		wildcard_parallel_restore_trap_active=1
 		wildcard_parallel_restore_on_exit() {
 			[ "${wildcard_parallel_restore_trap_active:-0}" = "1" ] || return 0
+			if type wildcard_parallel_heartbeat_stop >/dev/null 2>&1; then
+				wildcard_parallel_heartbeat_stop || true
+			fi
 			wildcard_parallel_obs_restore || true
 		}
 		wildcard_parallel_restore_once() {
+			if type wildcard_parallel_heartbeat_stop >/dev/null 2>&1; then
+				wildcard_parallel_heartbeat_stop || true
+			fi
 			wildcard_parallel_obs_restore || true
 			wildcard_parallel_restore_trap_active=0
 			trap - EXIT INT TERM
@@ -708,6 +736,24 @@ PY
 		wildcard_parallel_result_file="${WILDCARD_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/wildcard_parallel_result.json}"
 		wildcard_parallel_started_at=$(date +%s)
 		rm -f "$wildcard_parallel_result_file" 2>/dev/null || true
+		wildcard_parallel_heartbeat_pid=""
+		wildcard_parallel_heartbeat_interval="${WILDCARD_PARALLEL_HEARTBEAT_SEC:-30}"
+		case "$wildcard_parallel_heartbeat_interval" in ''|*[!0-9]*) wildcard_parallel_heartbeat_interval=30 ;; esac
+		wildcard_parallel_heartbeat() {
+			while true; do
+				_improve_progress "wildcard_parallel" "25" "parallel_candidate_generation"
+				_improve_note "wildcard_parallel heartbeat: isolated candidate evaluation still running"
+				sleep "$wildcard_parallel_heartbeat_interval"
+			done
+		}
+		wildcard_parallel_heartbeat_stop() {
+			[ -n "${wildcard_parallel_heartbeat_pid:-}" ] || return 0
+			kill "$wildcard_parallel_heartbeat_pid" 2>/dev/null || true
+			wait "$wildcard_parallel_heartbeat_pid" 2>/dev/null || true
+			wildcard_parallel_heartbeat_pid=""
+		}
+		wildcard_parallel_heartbeat &
+		wildcard_parallel_heartbeat_pid=$!
 		set +e
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
@@ -726,6 +772,7 @@ PY
 			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
 			--result-file "$wildcard_parallel_result_file" 2>&1)
 		wildcard_parallel_rc=$?
+		wildcard_parallel_heartbeat_stop
 		set -e
 		if [ "$wildcard_parallel_rc" -ne 0 ]; then
 			wildcard_parallel_has_winner=$(python3 - "$wildcard_parallel_result_file" "$wildcard_parallel_started_at" <<'PY' 2>/dev/null || echo 0

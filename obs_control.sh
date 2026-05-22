@@ -6,6 +6,9 @@
 #   ./obs_control.sh status <scene> <source> [<source>...]
 #   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
 #   ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
+#     By default this only initializes a source that still has OBS' default
+#     transform. Set OBS_CONTROL_TRANSFORM_MODE=force to overwrite manually
+#     adjusted OBS transforms.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,6 +24,7 @@ Usage:
   ./obs_control.sh status <scene> <source> [<source>...]
   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
   ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
+    Set OBS_CONTROL_TRANSFORM_MODE=force to overwrite an existing manual transform.
 EOF
 	exit 2
 }
@@ -69,6 +73,7 @@ const port = Number(process.env.OBS_WEBSOCKET_PORT || 4455);
 const password = process.env.OBS_WEBSOCKET_PASSWORD || '';
 const url = `ws://${host}:${port}`;
 const requestTimeoutMs = Number(process.env.OBS_WEBSOCKET_TIMEOUT_MS || 8000);
+const transformMode = process.env.OBS_CONTROL_TRANSFORM_MODE || 'init';
 
 function fail(message, code = 1) {
   console.error(`[obs_control] ${message}`);
@@ -119,6 +124,31 @@ function parseOperations() {
 
 function sha256Base64(text) {
   return crypto.createHash('sha256').update(text).digest('base64');
+}
+
+function numericValue(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function approxEqual(a, b) {
+  return Math.abs(numericValue(a) - numericValue(b)) < 0.0001;
+}
+
+function isDefaultTransform(transform = {}) {
+  return approxEqual(transform.positionX, 0)
+    && approxEqual(transform.positionY, 0)
+    && approxEqual(transform.rotation, 0)
+    && approxEqual(transform.scaleX, 1)
+    && approxEqual(transform.scaleY, 1)
+    && approxEqual(transform.cropLeft, 0)
+    && approxEqual(transform.cropTop, 0)
+    && approxEqual(transform.cropRight, 0)
+    && approxEqual(transform.cropBottom, 0)
+    && numericValue(transform.alignment, 5) === 5
+    && (!transform.boundsType || transform.boundsType === 'OBS_BOUNDS_NONE')
+    && approxEqual(transform.boundsWidth, 0)
+    && approxEqual(transform.boundsHeight, 0);
 }
 
 async function connectAndIdentify() {
@@ -269,7 +299,18 @@ async function main() {
         console.error(`[obs_control] Sources not found in scene "${sceneName}": ${sourceName}`);
         return;
       }
+      const applied = [];
+      const preserved = [];
       for (const item of matches) {
+        const current = await obs.request('GetSceneItemTransform', {
+          sceneName,
+          sceneItemId: item.sceneItemId,
+        });
+        const currentTransform = current.sceneItemTransform || {};
+        if (transformMode !== 'force' && !isDefaultTransform(currentTransform)) {
+          preserved.push(item.sceneItemId);
+          continue;
+        }
         const sceneItemTransform = {
           positionX: Number(xRaw),
           positionY: Number(yRaw),
@@ -294,8 +335,14 @@ async function main() {
           sceneItemId: item.sceneItemId,
           sceneItemTransform,
         });
+        applied.push(item.sceneItemId);
       }
-      console.log(`transform:${sourceName}:x=${xRaw}:y=${yRaw}:sx=${scaleXRaw}:sy=${scaleYRaw}`);
+      if (applied.length > 0) {
+        console.log(`transform:${sourceName}:x=${xRaw}:y=${yRaw}:sx=${scaleXRaw}:sy=${scaleYRaw}:applied=${applied.length}`);
+      }
+      if (preserved.length > 0) {
+        console.log(`transform-preserved:${sourceName}:items=${preserved.length}:mode=${transformMode}`);
+      }
       return;
     }
 

@@ -1,0 +1,258 @@
+#!/bin/bash
+# obs_window_capture_source.sh - ensure an OBS macOS window capture source targets a real window.
+#
+# Usage:
+#   ./obs_window_capture_source.sh ensure <scene> <source> <window-title-regex> [app-id] [show|hide]
+
+set -euo pipefail
+cd "$(dirname "$0")"
+[ -f .env ] && set -a && . ./.env && set +a
+
+usage() {
+	cat <<'EOF' >&2
+Usage:
+  ./obs_window_capture_source.sh ensure <scene> <source> <window-title-regex> [app-id] [show|hide]
+EOF
+	exit 2
+}
+
+cmd="${1:-}"
+[ "$cmd" = "ensure" ] || usage
+[ "$#" -ge 4 ] || usage
+
+scene="$2"
+source_name="$3"
+window_title_regex="$4"
+app_id="${5:-com.google.chrome.for.testing}"
+visibility="${6:-show}"
+
+case "$visibility" in
+show|hide) ;;
+*) usage ;;
+esac
+
+if [ -z "${OBS_WEBSOCKET_PORT:-}" ] || [ -z "${OBS_WEBSOCKET_PASSWORD:-}" ]; then
+	echo "[obs_window_capture_source] OBS_WEBSOCKET_PORT/PASSWORD not set" >&2
+	exit 1
+fi
+
+node --input-type=commonjs - "$scene" "$source_name" "$window_title_regex" "$app_id" "$visibility" <<'NODE'
+const crypto = require('crypto');
+
+const [sceneName, sourceName, titlePatternRaw, appId, visibility] = process.argv.slice(2);
+const host = process.env.OBS_WEBSOCKET_HOST || '127.0.0.1';
+const port = Number(process.env.OBS_WEBSOCKET_PORT || 4455);
+const password = process.env.OBS_WEBSOCKET_PASSWORD || '';
+const requestTimeoutMs = Number(process.env.OBS_WEBSOCKET_TIMEOUT_MS || 8000);
+const url = `ws://${host}:${port}`;
+const enabled = visibility === 'show';
+const inputKind = process.env.OBS_WINDOW_CAPTURE_INPUT_KIND || 'screen_capture';
+const allowReplaceWrongKind = process.env.OBS_WINDOW_CAPTURE_REPLACE_WRONG_KIND !== '0';
+const titlePattern = new RegExp(titlePatternRaw);
+const chromeWindowPattern = /\[Google Chrome(?: for Testing)?\]/;
+
+function fail(message, code = 1) {
+  console.error(`[obs_window_capture_source] ${message}`);
+  process.exit(code);
+}
+
+if (typeof WebSocket !== 'function') {
+  fail('Global WebSocket is not available in this Node.js runtime');
+}
+
+function sha256Base64(text) {
+  return crypto.createHash('sha256').update(text).digest('base64');
+}
+
+async function connectAndIdentify() {
+  const ws = new WebSocket(url);
+  const state = { ws, requestSeq: 0, hello: null, ready: false, pending: new Map() };
+
+  const cleanupPending = (error) => {
+    for (const { reject, timer } of state.pending.values()) {
+      clearTimeout(timer);
+      reject(error);
+    }
+    state.pending.clear();
+  };
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timed out connecting to ${url}`));
+      try { ws.close(); } catch (_) {}
+    }, requestTimeoutMs);
+    ws.addEventListener('open', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.addEventListener('error', (event) => {
+      clearTimeout(timer);
+      reject(new Error(event && event.error && event.error.message ? event.error.message : `Failed to connect to ${url}`));
+    });
+  });
+
+  ws.addEventListener('message', (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(String(event.data));
+    } catch (err) {
+      cleanupPending(err);
+      return;
+    }
+    if (payload.op === 0) {
+      state.hello = payload.d || {};
+      return;
+    }
+    if (payload.op === 2) {
+      state.ready = true;
+      return;
+    }
+    if (payload.op === 7) {
+      const data = payload.d || {};
+      const requestId = data.requestId;
+      if (!requestId || !state.pending.has(requestId)) return;
+      const pending = state.pending.get(requestId);
+      state.pending.delete(requestId);
+      clearTimeout(pending.timer);
+      const status = data.requestStatus || {};
+      if (status.result) {
+        pending.resolve(data.responseData || {});
+      } else {
+        pending.reject(new Error(`${data.requestType} failed (${status.code}): ${status.comment || 'unknown error'}`));
+      }
+    }
+  });
+
+  const deadline = Date.now() + requestTimeoutMs;
+  while (!state.hello) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for OBS Hello');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+
+  const identify = { op: 1, d: { rpcVersion: 1, eventSubscriptions: 0 } };
+  const auth = state.hello.authentication;
+  if (auth && auth.challenge && auth.salt) {
+    const secret = sha256Base64(password + auth.salt);
+    identify.d.authentication = sha256Base64(secret + auth.challenge);
+  }
+  ws.send(JSON.stringify(identify));
+
+  const readyDeadline = Date.now() + requestTimeoutMs;
+  while (!state.ready) {
+    if (Date.now() > readyDeadline) throw new Error('Timed out waiting for OBS Identify');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+
+  state.request = (requestType, requestData = {}) => {
+    const requestId = `req-${++state.requestSeq}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        state.pending.delete(requestId);
+        reject(new Error(`${requestType} timed out`));
+      }, requestTimeoutMs);
+      state.pending.set(requestId, { resolve, reject, timer });
+      ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+    });
+  };
+
+  state.close = async () => {
+    cleanupPending(new Error('OBS connection closed'));
+    try { ws.close(); } catch (_) {}
+  };
+
+  return state;
+}
+
+async function getInput(obs, inputName) {
+  const response = await obs.request('GetInputList');
+  return (response.inputs || []).find(input => input.inputName === inputName) || null;
+}
+
+async function ensureInput(obs) {
+  let input = await getInput(obs, sourceName);
+  if (input && input.unversionedInputKind !== inputKind && input.inputKind !== inputKind) {
+    if (!allowReplaceWrongKind || !/^wildcardParallelCand\d+$/.test(sourceName)) {
+      throw new Error(`${sourceName} is ${input.inputKind}, not ${inputKind}`);
+    }
+    await obs.request('RemoveInput', { inputName: sourceName });
+    input = null;
+  }
+
+  const initialSettings = {
+    type: 1,
+    application: appId,
+    window: 0,
+    show_cursor: false,
+    show_empty_names: false,
+  };
+
+  if (!input) {
+    await obs.request('CreateInput', {
+      sceneName,
+      inputName: sourceName,
+      inputKind,
+      inputSettings: initialSettings,
+      sceneItemEnabled: false,
+    });
+    return;
+  }
+
+  const list = await obs.request('GetSceneItemList', { sceneName });
+  const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
+  if (!items.some(item => item.sourceName === sourceName)) {
+    await obs.request('CreateSceneItem', { sceneName, sourceName, sceneItemEnabled: false });
+  }
+}
+
+async function setSceneItemEnabled(obs, sceneItemEnabled) {
+  const list = await obs.request('GetSceneItemList', { sceneName });
+  const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
+  for (const item of items.filter(item => item.sourceName === sourceName)) {
+    await obs.request('SetSceneItemEnabled', {
+      sceneName,
+      sceneItemId: item.sceneItemId,
+      sceneItemEnabled,
+    });
+  }
+}
+
+async function main() {
+  const obs = await connectAndIdentify();
+  try {
+    await ensureInput(obs);
+
+    const response = await obs.request('GetInputPropertiesListPropertyItems', {
+      inputName: sourceName,
+      propertyName: 'window',
+    });
+    const windows = Array.isArray(response.propertyItems) ? response.propertyItems : [];
+    const target = windows.find(item =>
+      chromeWindowPattern.test(item.itemName || '') && titlePattern.test(item.itemName || '')
+    );
+    if (!target) {
+      await setSceneItemEnabled(obs, false).catch(() => {});
+      throw new Error(`target window not found for ${sourceName}: /${titlePatternRaw}/`);
+    }
+
+    await obs.request('SetInputSettings', {
+      inputName: sourceName,
+      inputSettings: {
+        type: 1,
+        application: appId,
+        window: target.itemValue,
+        show_cursor: false,
+        show_empty_names: false,
+      },
+      overlay: true,
+    });
+
+    await setSceneItemEnabled(obs, enabled);
+
+    console.log(`window-capture:${sourceName}:${visibility}:${target.itemName} (${target.itemValue})`);
+  } finally {
+    await obs.close();
+  }
+}
+
+main().catch(err => fail(err && err.message ? err.message : String(err)));
+NODE
