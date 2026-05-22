@@ -454,13 +454,18 @@ _exit_if_lock_owner_changed() {
 	lock_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || true)
 	case "$lock_pid" in
 	''|*[!0-9]*)
-		log "[LOCK] ${stage}: lock owner is missing/invalid -> stop this loop (self=${SOREN_MAIN_PID:-?})"
-		STOP_REQUESTED=1
-		trap - EXIT
-		exit 130
+		mkdir -p "$LOCKDIR" 2>/dev/null || true
+		echo "${SOREN_MAIN_PID:-$$}" >"$LOCKDIR/pid" 2>/dev/null || true
+		log "[LOCK] ${stage}: lock owner missing/invalid -> adopted by self=${SOREN_MAIN_PID:-?}"
+		return 0
 		;;
 	esac
 	if [ "$lock_pid" != "${SOREN_MAIN_PID:-$$}" ]; then
+		if ! kill -0 "$lock_pid" 2>/dev/null; then
+			echo "${SOREN_MAIN_PID:-$$}" >"$LOCKDIR/pid" 2>/dev/null || true
+			log "[LOCK] ${stage}: stale lock owner ${lock_pid} replaced by self=${SOREN_MAIN_PID:-?}"
+			return 0
+		fi
 		log "[LOCK] ${stage}: another soren_loop owns the lock (owner=${lock_pid}, self=${SOREN_MAIN_PID:-?}) -> stop duplicate loop"
 		STOP_REQUESTED=1
 		trap - EXIT
