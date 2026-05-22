@@ -785,7 +785,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
-        # Fallback: if no safe merge exists, any safe (non-crossing) candidate is acceptable
+        # v680: When merge available globally, prefer merge candidates over NO_MERGE in fallback
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        __dlg_merge_preferred = [
+            c for c in __dlg_cands
+            if isinstance(c, dict)
+            and not c.get("crosses_deadline")
+            and not c.get("merge_result_crosses_deadline")
+            and c.get("merge_grade") in ["DIRECT", "NEAR"]
+        ]
+        if __dlg_merge_preferred:
+            __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+
+        # Fallback: only when no merge candidate is available
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
