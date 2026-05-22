@@ -182,6 +182,44 @@ queue_early_escape_lock_if_needed() {
 		return 1
 	fi
 
+	# A stale regression/stagnation counter can carry over to the next hash.
+	# If the current accumulated batch already reproduced Russia/Soviet progress,
+	# keep evaluating it instead of converting the old counter into a fresh escape.
+	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+	local _batch_progress_probe _batch_russia _batch_soviet _batch_best_type _batch_hash
+	_batch_progress_probe=$(
+		python3 - "$ACCUMULATED_GAMES_FILE" <<'PY' 2>/dev/null || echo "0:0:0:"
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    data = {}
+
+def as_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+russia = as_int(data.get("russia_count", 0))
+soviet = 1 if bool(data.get("soviet", False)) or as_int(data.get("soviet_count", 0)) > 0 else 0
+best_type = as_int(data.get("best_max_type", 0))
+print(f"{russia}:{soviet}:{best_type}:{data.get('hash', '') or ''}")
+PY
+	)
+	_batch_russia="${_batch_progress_probe%%:*}"
+	_batch_progress_probe="${_batch_progress_probe#*:}"
+	_batch_soviet="${_batch_progress_probe%%:*}"
+	_batch_progress_probe="${_batch_progress_probe#*:}"
+	_batch_best_type="${_batch_progress_probe%%:*}"
+	_batch_hash="${_batch_progress_probe#*:}"
+	if [ "${_batch_soviet:-0}" -gt 0 ] || [ "${_batch_russia:-0}" -gt 0 ] || [ "${_batch_best_type:-0}" -ge 15 ]; then
+		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2} だが current batch にロシア進捗あり (${_batch_hash:0:8} ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} R${_batch_russia:-0} S${_batch_soviet:-0} T${_batch_best_type:-0}) → 早期脱出ロックを延期"
+		return 1
+	fi
+
 	_rollback_revalidate_probe=$(
 		python3 - "$CURRENT_STRATEGY_RUN_FILE" "$TMP_STATE_DIR/last_rollback_pair.json" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY' 2>/dev/null || echo "0:0:"
 import json
@@ -234,7 +272,6 @@ PY
 	fi
 
 	log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 改善ロック作成 (最終モードはimprove側で判定)"
-	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 	cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 	enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 	python3 -c "

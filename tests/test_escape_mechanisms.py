@@ -3515,6 +3515,13 @@ def decide(game_state, analysis):
         self.assertIn("acc.setdefault('max_types'", improve)
         self.assertIn('enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE"', improve)
         self.assertIn('enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE"', loop)
+        self.assertIn("current batch にロシア進捗あり", loop)
+        self.assertIn("_batch_russia", loop)
+        self.assertIn("_batch_best_type", loop)
+        self.assertLess(
+            loop.index("current batch にロシア進捗あり"),
+            loop.index("改善ロック作成 (最終モードはimprove側で判定)"),
+        )
 
     def test_supervisor_re_adopts_existing_worker_before_restart_cap(self):
         supervisor = (REPO_ROOT / "start_all.sh").read_text()
