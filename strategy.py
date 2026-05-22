@@ -894,7 +894,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v616: compute no_merge_streak inside candidate loop for per-candidate accuracy.
         # Detected here (after merge_grade read) for use in axis 9.12.
         no_merge_streak = 0
-        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
+        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 1:
             no_merge_streak = 3
 
         # ----- evaluation axis 1: merge bonus -----
@@ -1489,7 +1489,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                 x1, y1 = pos1
                                 x2, y2 = pos2
                                 # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.5
+                                span_min = min(x1, x2) - 0.8953
                                 span_max = max(x1, x2) + 0.5
                                 if span_min <= x <= span_max:
                                     # Penalize if landing at or above the reactive pair level
@@ -2053,7 +2053,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v338: ロシアフェーズ && reactive_pair_count < 3 の場合、axis 9.5盤面圧縮ボーナスを完全削除
             # v337 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
             # 即時併合機会を最大化し、盤面圧縮で2つ目のロシア育成スペースを確保する戦略へ切り替え
-            if russia_phase and reactive_pair_count < 3:
+            if russia_phase and reactive_pair_count < 5:
                 # ロシアフェーズでreactive_pairs<3の場合、axis 9.5のボーナスを完全に削除
                 # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
                 pass
@@ -2130,7 +2130,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md, game_history/20260417_193200_score0490.jsonl T64-66
         if (piece_count >= 40 and deadline_crossed
                 and merge_grade == "NO" and abs(x) >= 1.5):
-            edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 3.0)
+            edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 0.781)
             score += edge_penalty
             reasons.append("PC_EDGE_PENALTY")
 
