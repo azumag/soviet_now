@@ -64,6 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: axis 9.65 — same-type stacking bonus for merge path creation
+     #       When merge_grade==NO && 2+ same-type pieces on board && current_type differs,
+     #       prefer placement that STACKS on a same-type piece (stacking_dist < horiz_dist)
+     #       over placing BETWEEN them. Creates 3-piece stack for next-turn merge opportunity.
+     #       Fixes: worst T59 (visual_same_type_closest_dx=0.19 but no merge captured),
+     #       game 2498 T89 (type 14 pieces adjacent but not merged to type 15).
+     #       Ukraine→Kazakhstan gate bottleneck: 75%→T13 but only 25%→T14 (analysis_result.md).
+     #       mandatory_themes: "非併合ドロップでは、次手の併合レーンを保存せよ"
+     #       refs: tmp/analysis_result.md (Implementation Plan: axis 9.65)
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -1345,6 +1354,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         )
                         if rp_guidance_suppressed:
                             proximity_bonus = 0.0
+                        # vXXX: axis 9.65 — same-type stacking bonus vs horizontal-between placement
+                        # analysis_result.md adopted hypothesis: "Ukraine Gate (T13→T14) Failure — Same-Type Adjacent Clustering Missing"
+                        # worst T59: visual_same_type_closest_dx=0.19 — pieces close but no merge captured.
+                        # game 2498 T89: visual_same_type_highest_x=1.09, visual_same_type_closest_dx=0.09.
+                        # Core problem: axis 9.6b gives bonus for horiz_dist but doesn't distinguish
+                        # "between pieces" (BLOCKS future merge) vs "on top of a piece" (ENABLES future merge).
+                        # mandatory_themes: "非併合ドロップでは、次手の併合レーンを保存せよ"
+                        # When stacking_dist < horiz_dist, landing is vertically aligned with a same-type piece,
+                        # creating a 3-piece stack (T+N + T + T = next turn T+N merge possible).
+                        # This is the correct behavior for merge path creation.
+                        if (
+                            len(same_type_pieces) >= 2
+                            and horiz_dist < 1.5
+                        ):
+                            stacking_dist = abs(landing_y - best_proximity_target.get("y", -10))
+                            if stacking_dist < horiz_dist:
+                                # Prefer stacking ON same-type piece over placing BETWEEN pieces
+                                # Extra bonus for vertical alignment (smaller stacking_dist = better)
+                                stacking_bonus = max(0, 150.0 - stacking_dist * 100.0)
+                                if stacking_bonus > 0:
+                                    score += stacking_bonus
+                                    reasons.append("SAME_TYPE_STACKING_BONUS")
                         if proximity_bonus > 0:
                             score += proximity_bonus
 
