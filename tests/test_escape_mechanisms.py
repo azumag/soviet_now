@@ -1311,6 +1311,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("`tmp/review_result.md` は存在しない場合があります", review_prompt)
         self.assertIn("存在しない場合は `Write` で新規作成すること", review_prompt)
         self.assertIn("必ず `## VERDICT: PASS` または `## VERDICT: FAIL`", review_prompt)
+        self.assertIn("会話に表示しただけでは失敗", review_prompt)
+        self.assertIn("最終応答の前に `tmp/review_result.md` が作成・更新済み", review_prompt)
         self.assertNotIn("`tmp/review_result.md` は既に存在", review_prompt)
         self.assertIn("_repair_review_verdict_file", eloop)
         self.assertIn("REVIEW-VERDICT-REPAIR", eloop)

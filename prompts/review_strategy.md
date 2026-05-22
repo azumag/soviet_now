@@ -4,6 +4,7 @@
 1. `tmp/analysis_result.md` を読む（分析AIの方針。この方針との整合性を検証する）
 2. `strategy.py` を読む（変更前の元コード。diff比較に使う）
 3. `strategy.py.staging` を読む（レビュー対象の変更後コード）
+4. レビュー判定を会話に出す前に、必ず `tmp/review_result.md` を実ファイルとして作成または更新する
 
 レビューAIは追加の batch 実行環境を探さないこと。`tmp/batch_summary.txt` とゲームログは入力証拠として読み、README/Makefile/*.sh や新しい実行コマンドを探索し続けず、検証は下記チェックリストと `tmp/review_result.md` の verdict で完結させる。
 
@@ -51,6 +52,7 @@
 ## 出力指示（必須）
 - 作業ディレクトリは sandbox ルートです。**`tmp/review_result.md` は存在しない場合があります**。
 - レビュー結果を **`tmp/review_result.md`** に必ず書くこと。存在しない場合は `Write` で新規作成すること。
+- レビュー本文や JSON を会話に表示しただけでは失敗です。最終応答の前に `tmp/review_result.md` が作成・更新済みであることを確認すること。
 - `tmp/review_result.md` が既に存在する場合は、`Read` してから `Edit` / `MultiEdit` で更新してもよい。
 - `Write` / `Edit` / `MultiEdit` のうち使える手段でよい。権限エラーや read-before-write エラーが出た場合は、エラー文を読んで同じ `tmp/review_result.md` への作成または更新をやり直すこと。
 - `tmp/review_result.md` 以外の場所にレビュー結果を書いてはいけない
