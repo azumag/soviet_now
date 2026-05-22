@@ -3942,6 +3942,17 @@ PY
         self.assertIn("wildcard_parallel_restore_trap_active=0", improve)
         self.assertIn("trap - EXIT INT TERM", improve)
 
+    def test_wildcard_parallel_nonzero_exit_can_use_written_winner(self):
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn("wildcard_parallel_has_winner=$(python3 - \"$wildcard_parallel_result_file\"", improve)
+        self.assertIn('data.get("ok") and winner.get("strategy_path")', improve)
+        self.assertIn("parallel trial exited rc=$wildcard_parallel_rc but result file has winner", improve)
+        self.assertLess(
+            improve.index('if [ "$wildcard_parallel_rc" -ne 0 ]; then'),
+            improve.index('wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file"'),
+        )
+
     def test_viewer_chat_monitor_filters_recent_observer_comments(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         script = (REPO_ROOT / "viewer_chat_monitor.sh").read_text()

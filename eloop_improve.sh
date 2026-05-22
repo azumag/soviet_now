@@ -724,10 +724,32 @@ PY
 		wildcard_parallel_rc=$?
 		set -e
 		if [ "$wildcard_parallel_rc" -ne 0 ]; then
-			log "[WILDCARD] parallel trial produced no candidate rc=$wildcard_parallel_rc: ${wildcard_parallel_result:0:500}"
-			_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
-			wildcard_parallel_restore_once
-			exit 1
+			wildcard_parallel_has_winner=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || echo 0
+import json
+import os
+import sys
+
+path = sys.argv[1]
+if not path or not os.path.exists(path):
+    print(0)
+    raise SystemExit(0)
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    print(0)
+    raise SystemExit(0)
+winner = data.get("winner") or {}
+print(1 if data.get("ok") and winner.get("strategy_path") else 0)
+PY
+)
+			if [ "$wildcard_parallel_has_winner" = "1" ]; then
+				log "[WILDCARD] parallel trial exited rc=$wildcard_parallel_rc but result file has winner → continue with selected candidate"
+			else
+				log "[WILDCARD] parallel trial produced no candidate rc=$wildcard_parallel_rc: ${wildcard_parallel_result:0:500}"
+				_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
+				wildcard_parallel_restore_once
+				exit 1
+			fi
 		fi
 		wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || true
 import json, sys
