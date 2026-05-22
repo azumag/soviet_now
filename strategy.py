@@ -64,11 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v677: axis 9.8 SAME_TYPE_PROXIMITY — merge drought時の同type集約配置誘導 (v574参照)
-     #       merge_grade==NO && pc>=25 && same_type_pieces>=2 && !death_spiral && !(max_y>=1.5 && rp>=3)
-     #       同typeペアの重心配置にmax~150ボーナス。best_game T82→T89のように次のmerge機会を創出。
-     #       Fixes: Ukraine(T13) 83%停滞の主因であるmerge drought時の同type散的配置→merge機会喪失
-     #       refs: tmp/analysis_result.md (Implementation Plan: axis 9.8), game_history/20260522_204458_score1791.jsonl
      # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
      #       Changed russia_phase_count from type==15 only to type in [14, 15]
      #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
@@ -1274,45 +1269,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
-
-        # ----- axis 9.8: same-type proximity for merge drought recovery (NEW v677) -----
-        # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
-        # Worst game 965 T73-80: reactive_pairs=4-6, merge_available=false 続きで同typeが散らばり次ターンもmerge機会なし。
-        # Best game 1791 T82: SAME_TYPE_STACKで盤面圧縮 → T89でmerge機会創出 (score_delta=66)。
-        # When merge_grade=NO and piece_count>=25 and same_type_pieces>=2 on board,
-        # guide placement to bring same-type pieces closer together — creating future merge opportunities.
-        # This creates a "3-piece cluster" state: when next same-type arrives, immediate merge is likely.
-        # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
-        # Suppress when: death_spiral, or max_y>=1.5 && rp>=3 (high board with many reactive pairs — clustering blocks merge paths).
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.8 same-type clustering),
-        #       game_history/20260522_204458_score1791.jsonl T82 (SAME_TYPE_STACK→merge opportunity),
-        #       game_history/20260522_201059_score0965.jsonl T73-80 (散らばり→merge機会逃がし),
-        #       strategy_versions/best_score5801_strategy.py v574
-        # Fixes rollback failure mode: merge drought時の同type散的配置 → merge機会喪失 (Ukraine T13 83%停滞の主因)
-        if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
-                and not death_spiral
-                and not (max_y >= 1.5 and reactive_pair_count >= 3)):
-            # Find the pair of same_type pieces with smallest x-gap — target placement between them
-            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
-            min_gap = float("inf")
-            target_x = 0.0
-            for i in range(len(same_type_sorted) - 1):
-                gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
-                if gap < min_gap:
-                    min_gap = gap
-                    target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
-            # Only fire if pieces are reasonably close (merge potential exists)
-            if min_gap < 3.0:
-                dist_to_target = abs(x - target_x)
-                if dist_to_target < 1.5:
-                    proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
-                    # Reduce bonus if target area is high (don't override height penalty)
-                    avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
-                    if avg_target_y > 1.0:
-                        proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                    if proximity_bonus > 0:
-                        score += proximity_bonus
-                        reasons.append("SAME_TYPE_PROXIMITY")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
