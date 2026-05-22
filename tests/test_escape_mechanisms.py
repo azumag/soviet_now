@@ -1203,6 +1203,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("early_escape_stagnation", loop)
         self.assertIn("early_escape_regression_streak", loop)
         self.assertIn("WILDCARD_REGRESSION_STREAK", loop)
+        self.assertNotIn("WILDCARD_REGRESSION_STREAK:-3", loop)
+        self.assertIn("WILDCARD_REGRESSION_STREAK:-2", loop)
         self.assertIn("_expire_rate_limit_backoff_if_elapsed", loop)
         self.assertIn("rate-limit backoff期限切れ", loop)
         self.assertIn("rank1 hot streak 中 → 早期脱出ロックを延期", loop)

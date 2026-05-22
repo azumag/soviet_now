@@ -113,6 +113,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 通常サイクル中の早期脱出:
 
 - rollback 直後の再検証ではない通常改善 hash で `consecutive_no_improve >= WILDCARD_TRIGGER_STAGNATION` または `regression_streak >= WILDCARD_REGRESSION_STREAK` になり、蓄積ゲーム数が `WILDCARD_EARLY_ESCAPE_MIN_GAMES` 以上なら、`MIN_GAMES_BEFORE_IMPROVE` を待たず `early_escape_lock` を作る。
+- 逆に `regression_streak` だけが閾値に達していても、通常改善 hash の蓄積が `WILDCARD_EARLY_ESCAPE_MIN_GAMES` 未満なら発火は延期する。停滞監視では `current_strategy_run.hash` と `accumulated_games.json count` を確認し、次の発火条件を明記する。
 - 早期脱出ロックは `improve_reason=normal` として作られ、改善 daemon 側で `archive_restart` / `wildcard` / `escape_ai` の最終ルーティングを判定する。
 - 同じ判定は post-game 直後だけでなく next-game preflight でも再実行する。これにより、閾値到達済みの `accumulated_games.json` が残ったまま通常プレイへ流れ続ける取りこぼしを止める。
 - rollback target の fresh cycle 中、または rank1 hot streak 中は早期脱出を延期する。これは過去 rolling 実績の再検証や上振れ保護を優先するため。

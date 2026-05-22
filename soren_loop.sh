@@ -159,7 +159,7 @@ queue_early_escape_lock_if_needed() {
 	case "$_early_min" in ''|*[!0-9]*) _early_min=4 ;; esac
 	if [ "${_cycle_acc_count:-0}" -lt "$_early_min" ] || {
 		[ "${_stag_count:-0}" -lt "${WILDCARD_TRIGGER_STAGNATION:-3}" ] &&
-			[ "${_rstreak_count:-0}" -lt "${WILDCARD_REGRESSION_STREAK:-3}" ];
+			[ "${_rstreak_count:-0}" -lt "${WILDCARD_REGRESSION_STREAK:-2}" ];
 	}; then
 		return 1
 	fi
@@ -206,16 +206,16 @@ PY
 	_rollback_revalidate_hash="${_rollback_revalidate_rest#*:}"
 
 	if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] && [ "$_rollback_revalidate_active" = "1" ]; then
-		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 早期脱出ロックを延期"
+		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2} だが rollback revalidate fresh cycle 中 (${_rollback_revalidate_hash:0:8} ${_rollback_revalidate_n}/${MIN_GAMES_BEFORE_IMPROVE}) → 早期脱出ロックを延期"
 		return 1
 	fi
 	if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
-		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3} だが rank1 hot streak 中 → 早期脱出ロックを延期"
+		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2} だが rank1 hot streak 中 → 早期脱出ロックを延期"
 		notify_rank1_hot_streak_extension "$_cycle_acc_count" "wildcard_early_escape"
 		return 1
 	fi
 
-	log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 改善ロック作成 (最終モードはimprove側で判定)"
+	log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}, acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} → 改善ロック作成 (最終モードはimprove側で判定)"
 	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 	cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 	enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
@@ -231,7 +231,7 @@ d['early_escape_regression_streak']=${_rstreak_count:-0}
 json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-3}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
+		./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
 	fi
 	_clear_accumulated_data
 	return 0
@@ -261,7 +261,7 @@ _post_regression_route() {
 		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
 		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
 		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
-		"${WILDCARD_REGRESSION_STREAK:-3}" <<'PY' 2>/dev/null || echo "post_regression|fallback|0|0|0"
+		"${WILDCARD_REGRESSION_STREAK:-2}" <<'PY' 2>/dev/null || echo "post_regression|fallback|0|0|0"
 import json
 import os
 import re
@@ -291,7 +291,7 @@ def metric(name):
 try:
     threshold = max(1, int(threshold_raw))
 except Exception:
-    threshold = 3
+    threshold = 2
 
 stagnation = load(stagnation_file)
 rstreak = as_int(stagnation.get("regression_streak", 0), 0)
@@ -803,7 +803,7 @@ EOF
 				_evolution_flow_notify \
 					"direct_escape" \
 					"direct escape, no next game" \
-					"russia_path_dead rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-3} ${_post_regression_detail:-unknown}" \
+					"russia_path_dead rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-2} ${_post_regression_detail:-unknown}" \
 					"改善フロー: direct escape, no next game。ロシア進捗なし・粛清連鎖のため次ゲームを待たず脱出します。" \
 					"warn"
 			else
@@ -812,7 +812,7 @@ EOF
 					_evolution_flow_notify \
 						"post_regression_improve" \
 						"post_regression improve" \
-						"russia_path_dead but rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-3}; direct escape threshold not reached" \
+						"russia_path_dead but rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-2}; direct escape threshold not reached" \
 						"改善フロー: post_regression improve。ロシア進捗は弱いが粛清連鎖閾値未満のため、失敗バッチで通常の回帰後改善に入ります。" \
 						"info"
 				fi
