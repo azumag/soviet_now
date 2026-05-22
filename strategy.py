@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v682: MERGE_RAISE_PENALTY — penalize merges that raise max_y instead of compress
+      #       When merge_grade==DIRECT/NEAR && candidate landing_y > max_y+0.5, apply
+      #       penalty proportional to raise_amount * 400 * scale(max_y).
+      #       Worst game T55: max_y=1.23, landing_y=2.92 -> penalty applies, prevents raising.
+      #       Target stage: Ukraine(T13)=11/12(92%) -> improve toward 12/12.
+      #       Fixes rollback failure mode: "merge at T55 raised max_y 1.23->1.52 runaway".
+      #       refs: tmp/analysis_result.md (Implementation Plan)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -958,6 +965,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- MERGE_RAISE_PENALTY: prevent merges that raise max_y (v682) -----
+        # Worst game T55: max_y=1.23, chosen DIRECT candidate landing_y=2.92 -> max_y increased to 1.52.
+        # This triggered max_y runaway: 1.52->1.68->2.01->2.3->2.95->3.07 over 14 turns.
+        # Best game T157: merge resulted in max_y dropping from 2.35 to 1.64 (healthy compression).
+        # Target stage: Ukraine(T13)=11/12 -> improve toward 12/12.
+        # When merge will raise max_y instead of compress, penalize it proportionally.
+        # At max_y>=1.5, even small raises (+0.3 to +0.5) are problematic for chain T12->T13->T14->T15.
+        # At max_y>=2.5, any merge that doesn't lower max_y should be heavily penalized.
+        # refs: tmp/analysis_result.md (Implementation Plan: MERGE_RAISE_PENALTY)
+        if merge_grade in ("DIRECT", "NEAR") and landing_y > max_y + 0.5:
+            raise_amount = landing_y - max_y
+            # Scale penalty with board danger: more aggressive at higher max_y
+            if max_y >= 2.5:
+                penalty_scale = 2.0  # heavy penalty at critical board height
+            elif max_y >= 1.8:
+                penalty_scale = 1.5  # elevated penalty in high phase
+            elif max_y >= 1.5:
+                penalty_scale = 1.2  # light penalty at transition zone
+            else:
+                penalty_scale = 1.0  # standard penalty for early board
+            penalty = raise_amount * 400.0 * penalty_scale
+            score -= penalty
+            reasons.append("MERGE_RAISE_PENALTY")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
