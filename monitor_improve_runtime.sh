@@ -18,10 +18,12 @@ IMPROVE_LAST_ACTIVATE_MODE=""
 IMPROVE_LAST_ACTIVATE_STATE_FILE="${IMPROVE_LAST_ACTIVATE_STATE_FILE:-tmp/.soren91_improve_last_activate_mode}"
 LONG_SEC="${IMPROVE_MONITOR_LONG_SEC:-3600}"
 STALE_SEC="${IMPROVE_MONITOR_STALE_SEC:-900}"
+FAST_ESCAPE_STATE_ONLY_GRACE_SEC="${IMPROVE_MONITOR_FAST_ESCAPE_STATE_ONLY_GRACE_SEC:-180}"
 LOCKDIR="tmp/.improve_monitor.lock"
 
 case "$LONG_SEC" in ''|*[!0-9]*) LONG_SEC=3600 ;; esac
 case "$STALE_SEC" in ''|*[!0-9]*) STALE_SEC=900 ;; esac
+case "$FAST_ESCAPE_STATE_ONLY_GRACE_SEC" in ''|*[!0-9]*) FAST_ESCAPE_STATE_ONLY_GRACE_SEC=180 ;; esac
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$STATUS_FILE")" tmp 2>/dev/null || true
 
@@ -178,7 +180,10 @@ state_only_running=0
 
 if [ "$state_status" = "running" ] && [ "$live_pid" -eq 0 ]; then
 	[ "$updated_age" -lt "$log_age" ] && stale_age="$updated_age" || stale_age="$log_age"
-	if [ "$stale_age" -lt "$STALE_SEC" ]; then
+	if { [ "$improve_reason" = "wildcard" ] || [ "$improve_reason" = "archive_restart" ]; } &&
+		[ "$stale_age" -ge "$FAST_ESCAPE_STATE_ONLY_GRACE_SEC" ]; then
+		_monitor_log "fast escape running state references no visible parent pid=${state_pid:-0} stale=${stale_age}s; harvesting immediately"
+	elif [ "$stale_age" -lt "$STALE_SEC" ]; then
 		_monitor_log "running state has no visible eloop_improve pid but activity is fresh; preserving active state stale=${stale_age}s"
 		live_pid="$state_pid"
 		case "$live_pid" in ''|*[!0-9]*) live_pid=0 ;; esac

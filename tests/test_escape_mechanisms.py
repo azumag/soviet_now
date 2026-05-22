@@ -3549,6 +3549,9 @@ def decide(game_state, analysis):
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn("post_regression_direct_escape", improve)
         self.assertIn("archive candidate unavailable → wildcard", improve)
+        self.assertIn("_persist_improve_lock_reason()", improve)
+        self.assertIn('data["improve_reason"] = reason', improve)
+        self.assertIn('_persist_improve_lock_reason "$reason"', improve)
         self.assertIn('_start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "$improve_reason"', improve)
 
     def test_fast_escape_harvest_does_not_start_soren91_handover(self):
@@ -4142,6 +4145,14 @@ PY
         )
         self.assertIn("running state references dead improve pid", monitor)
         self.assertIn("harvesting immediately", monitor)
+        self.assertIn("IMPROVE_MONITOR_FAST_ESCAPE_STATE_ONLY_GRACE_SEC", monitor)
+        self.assertIn("fast escape running state references no visible parent pid", monitor)
+        self.assertLess(
+            monitor.index("fast escape running state references no visible parent pid"),
+            monitor.index("running state has no visible eloop_improve pid but activity is fresh"),
+        )
+        self.assertIn("_file_recent()", status)
+        self.assertIn("stat -f '%m'", status)
         self.assertIn("SOREN_IMPROVE_MONITOR_INTERVAL_SEC", loop)
         self.assertIn("_run_improve_runtime_monitor", loop)
         self.assertIn("./monitor_improve_runtime.sh >/dev/null 2>&1", loop)

@@ -446,6 +446,34 @@ with open(out_file, "w", encoding="utf-8") as f:
 PY
 }
 
+_persist_improve_lock_reason() {
+	local reason="${1:-normal}"
+	case "$reason" in
+	normal|post_regression|wildcard|escape_ai|archive_restart) ;;
+	*) reason="normal" ;;
+	esac
+	[ -f "$IMPROVE_LOCK_FILE" ] || return 0
+	python3 - "$IMPROVE_LOCK_FILE" "$reason" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+path, reason = sys.argv[1:3]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+data["improve_reason"] = reason
+tmp = f"{path}.tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, path)
+PY
+}
+
 _is_live_improve_pid() {
 	local pid="$1"
 	case "$pid" in
@@ -1606,6 +1634,7 @@ _start_improvement_job() {
 	local improve_ai_log="$IMPROVE_AI_LOG_FILE"
 	mkdir -p "$(dirname "$improve_ai_log")" 2>/dev/null || true
 	: >"$improve_ai_log"
+	_persist_improve_lock_reason "$reason"
 	printf '[%s] [IMPROVE] job start reason=%s game=%s scores=%s\n' \
 		"$(date '+%H:%M:%S')" "$reason" "${GAME_NUM:-?}" "${all_scores:-}" >>"$improve_ai_log" 2>/dev/null || true
 	_improve_overlay_generate_once

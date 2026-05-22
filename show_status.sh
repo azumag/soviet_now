@@ -151,6 +151,21 @@ _pid_exists() {
 	return 1
 }
 
+_file_recent() {
+	local path="$1" max_age="${2:-0}" mtime=0 now=0 age=999999
+	case "$max_age" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ -f "$path" ] || return 1
+	mtime=$(stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path" 2>/dev/null || echo 0)
+	case "$mtime" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	now=$(date +%s)
+	age=$(( now - mtime ))
+	(( age >= 0 && age <= max_age ))
+}
+
 # PIDが生きていて指定パターンのプロセスかチェック
 _pid_alive_as() {
 	local pid="$1" pattern="$2"
