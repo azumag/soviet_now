@@ -1363,6 +1363,42 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
+        and not safe
+        and not preserve_visual_same_country
+    ):
+        # When every analyzer candidate crosses the deadline, the final guard
+        # can still choose a NO-merge wall drop just because its measured risk
+        # is slightly lower. Keep the min-risk policy, but prefer a center-ish
+        # NO candidate when it is in the same risk band.
+        non_edge_band = [
+            r
+            for r in results
+            if r.get("merge_grade", "NO") == "NO"
+            and r.get("crosses_deadline", False)
+            and abs(float(r.get("x", 0.0) or 0.0)) <= 2.2
+            and risk_top(r) <= min_risk_top + 0.35
+        ]
+        if non_edge_band and abs(float(replacement.get("x", 0.0) or 0.0)) > 2.2:
+            non_edge_replacement = min(
+                non_edge_band,
+                key=lambda r: (
+                    risk_top(r),
+                    abs(float(r.get("x", 0.0) or 0.0)),
+                ),
+            )
+            replacement_geom_top = geometry_top_at_x(replacement.get("x"))
+            non_edge_geom_top = geometry_top_at_x(non_edge_replacement.get("x"))
+            if (
+                replacement_geom_top is None
+                or non_edge_geom_top is None
+                or non_edge_geom_top <= replacement_geom_top + 0.20
+            ):
+                replacement = non_edge_replacement
+                replacement_source = f"{replacement_source}_non_edge_postcondition"
+
+    if (
+        replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
         and safe
     ):
         risk_band = [

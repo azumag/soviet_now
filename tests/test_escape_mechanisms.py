@@ -2852,6 +2852,40 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], -0.8)
         self.assertIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_safety_avoids_edge_no_merge_when_all_crossing_risk_is_close(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -2.95, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.25,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": -2.95,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.50,
+                    },
+                    {
+                        "x": 1.35,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.68,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 8, "x": -2.8, "y": 2.0}], "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], 1.35)
+        self.assertIn("non_edge_postcondition", decision["reason"])
+
     def test_deadline_monitor_flags_actual_crossing_with_lower_alternative(self):
         import deadline_misplacement_monitor as monitor
 
