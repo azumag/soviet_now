@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
+from threading import Lock
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -96,6 +97,7 @@ class CandidateResult:
     status: str = "pending"
     hash: str = ""
     seed: int = 0
+    generation: int = 0
     applied: list[dict] = field(default_factory=list)
     scores: list[int] = field(default_factory=list)
     raw_scores: list[int] = field(default_factory=list)
@@ -121,6 +123,7 @@ class CandidateResult:
             "status": self.status,
             "hash": self.hash,
             "seed": self.seed,
+            "generation": self.generation,
             "applied": self.applied,
             "scores": self.scores,
             "raw_scores": self.raw_scores,
@@ -155,7 +158,7 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         if not changes:
             changes = ["no perturbation yet"]
         status = str(cand.get("status") or "pending")
-        klass = "bad" if status in {"failed", "timeout"} else "good" if status in {"won", "accepted"} else "run"
+        klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status in {"won", "accepted"} else "run"
         preview_uri = ""
         preview_path = str(cand.get("preview_path") or "")
         if preview_path:
@@ -411,12 +414,23 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path) ->
     return workdir
 
 
-def run_perturb(args: argparse.Namespace, index: int, session_dir: Path) -> CandidateResult:
-    job_id = f"cand-{index + 1}"
+def update_candidate_metrics(candidate: CandidateResult) -> None:
+    if not candidate.scores:
+        candidate.comp = 0.0
+        candidate.p25 = 0.0
+        candidate.p50 = 0.0
+        return
+    candidate.comp = composite(candidate.scores)
+    candidate.p25 = quantile(candidate.scores, 0.25)
+    candidate.p50 = median(candidate.scores)
+
+
+def run_perturb(args: argparse.Namespace, index: int, session_dir: Path, generation: int = 0) -> CandidateResult:
+    job_id = f"cand-{index + 1}" if generation <= 0 else f"cand-{index + 1}-r{generation + 1}"
     candidate_dir = session_dir / job_id
     candidate_dir.mkdir(parents=True, exist_ok=True)
     out_path = candidate_dir / "strategy.py"
-    seed = args.seed + index
+    seed = args.seed + index + (generation * args.jobs)
     cmd = [
         sys.executable,
         str(REPO_ROOT / "wildcard_perturb.py"),
@@ -439,7 +453,7 @@ def run_perturb(args: argparse.Namespace, index: int, session_dir: Path) -> Cand
         "--seed",
         str(seed),
     ]
-    result = CandidateResult(job_id=job_id, index=index, workdir=candidate_dir, strategy_path=out_path, seed=seed)
+    result = CandidateResult(job_id=job_id, index=index, workdir=candidate_dir, strategy_path=out_path, seed=seed, generation=generation)
     proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=args.perturb_timeout)
     if proc.returncode != 0:
         result.status = "failed"
@@ -717,10 +731,10 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     title = f"Wildcard Parallel Cand {candidate.index + 1} | soren-game"
     window_pattern = _regex_escape(title)
     cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
-    w = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "640"))
-    h = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H", "405"))
-    x = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X", "0")) + (candidate.index % cols) * w
-    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "140")) + (candidate.index // cols) * h
+    w = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "660"))
+    h = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H", "425"))
+    x = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X", "-30")) + (candidate.index % cols) * w
+    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "180")) + (candidate.index // cols) * h
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -780,7 +794,7 @@ def stop_process(proc: subprocess.Popen | None) -> None:
             pass
 
 
-def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_dir: Path) -> CandidateResult:
+def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, progress_callback=None) -> CandidateResult:
     candidate.status = "running"
     workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path)
     candidate.workdir = workdir
@@ -830,13 +844,9 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                 )
                 stdout = ""
                 stderr = ""
-                deadline = time.time() + args.game_timeout
                 next_preview_at = 0.0
                 while proc.poll() is None:
                     now = time.time()
-                    if now >= deadline:
-                        proc.kill()
-                        raise subprocess.TimeoutExpired(proc.args, args.game_timeout)
                     if now >= next_preview_at:
                         capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                         next_preview_at = now + 2.0
@@ -862,27 +872,27 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                     candidate.russia_count += 1
                 if game.get("soviet_created") or candidate.max_type >= 16:
                     candidate.soviet_count += 1
+                update_candidate_metrics(candidate)
+                if progress_callback and progress_callback(candidate):
+                    candidate.status = "culled"
+                    candidate.error = (
+                        f"culled after {len(candidate.scores)} games: "
+                        f"comp {candidate.comp:.1f} below current leader"
+                    )
+                    break
             finally:
                 stop_process(bridge)
                 cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
+            if candidate.status == "culled":
+                break
+        if candidate.status == "culled":
+            return candidate
         if candidate.scores:
-            candidate.comp = composite(candidate.scores)
-            candidate.p25 = quantile(candidate.scores, 0.25)
-            candidate.p50 = median(candidate.scores)
+            update_candidate_metrics(candidate)
             candidate.status = "accepted"
         else:
             candidate.status = "failed"
             candidate.error = "no successful games"
-    except subprocess.TimeoutExpired:
-        if len(candidate.scores) >= args.min_successful_games:
-            candidate.comp = composite(candidate.scores)
-            candidate.p25 = quantile(candidate.scores, 0.25)
-            candidate.p50 = median(candidate.scores)
-            candidate.status = "accepted"
-            candidate.error = "candidate evaluation timed out after enough successful games"
-        else:
-            candidate.status = "timeout"
-            candidate.error = "candidate evaluation timed out"
     except Exception as err:
         candidate.status = "failed"
         candidate.error = str(err)
@@ -902,9 +912,7 @@ def evaluate_simulated(candidate: CandidateResult, args: argparse.Namespace, ses
     candidate.raw_scores = list(candidate.scores)
     candidate.eval_scores = list(candidate.scores)
     candidate.game_results = [{"score": score, "final_types": [12 + candidate.index]} for score in candidate.scores]
-    candidate.comp = composite(candidate.scores)
-    candidate.p25 = quantile(candidate.scores, 0.25)
-    candidate.p50 = median(candidate.scores)
+    update_candidate_metrics(candidate)
     candidate.max_type = 12 + candidate.index
     return candidate
 
@@ -916,11 +924,82 @@ def choose_winner(candidates: list[CandidateResult], min_successful_games: int) 
     return max(eligible, key=lambda c: (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type))
 
 
+class CullCoordinator:
+    def __init__(self, args: argparse.Namespace, status_file: Path, html_file: Path, session_dir: Path, candidates: list[CandidateResult]):
+        self.args = args
+        self.status_file = status_file
+        self.html_file = html_file
+        self.session_dir = session_dir
+        self.candidates = list(candidates)
+        self.lock = Lock()
+
+    def _append_if_new(self, candidate: CandidateResult) -> None:
+        if not any(c.job_id == candidate.job_id for c in self.candidates):
+            self.candidates.append(candidate)
+
+    def _snapshot_unlocked(self, phase: str = "running") -> None:
+        render_overlay(
+            self.status_file,
+            self.html_file,
+            {"phase": phase, "session_dir": str(self.session_dir), "candidates": [c.public() for c in self.candidates]},
+        )
+
+    def snapshot(self, phase: str = "running") -> None:
+        with self.lock:
+            self._snapshot_unlocked(phase)
+
+    def record(self, candidate: CandidateResult, phase: str = "running") -> None:
+        with self.lock:
+            self._append_if_new(candidate)
+            self._snapshot_unlocked(phase)
+
+    def should_cull(self, candidate: CandidateResult) -> bool:
+        with self.lock:
+            self._append_if_new(candidate)
+            if self.args.cull_after_games <= 0 or len(candidate.scores) != self.args.cull_after_games:
+                self._snapshot_unlocked()
+                return False
+            leaders = [
+                c
+                for c in self.candidates
+                if c.job_id != candidate.job_id
+                and len(c.scores) >= self.args.cull_after_games
+                and c.status in {"running", "accepted", "won"}
+                and c.comp > 0
+            ]
+            if not leaders:
+                self._snapshot_unlocked()
+                return False
+            leader = max(leaders, key=lambda c: (c.comp, c.p25, c.max_type))
+            threshold = leader.comp * self.args.cull_comp_ratio
+            should = candidate.comp < threshold
+            if should:
+                candidate.error = f"culled after {len(candidate.scores)} games: comp {candidate.comp:.1f} < {self.args.cull_comp_ratio:.2f}x leader {leader.job_id} {leader.comp:.1f}"
+            self._snapshot_unlocked()
+            return should
+
+
+def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, coordinator: CullCoordinator) -> CandidateResult:
+    candidate = first_candidate
+    generation = candidate.generation
+    while True:
+        coordinator.record(candidate)
+        if candidate.status == "failed":
+            return candidate
+        result = evaluate_real(candidate, args, session_dir, coordinator.should_cull)
+        coordinator.record(result)
+        if result.status != "culled":
+            return result
+        generation += 1
+        candidate = run_perturb(args, index, session_dir, generation)
+        coordinator.record(candidate)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--strategy", type=Path, default=REPO_ROOT / "strategy.py")
     parser.add_argument("--jobs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6))
-    parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 3))
+    parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 12))
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--ratio-min", type=float, default=0.20)
     parser.add_argument("--ratio-max", type=float, default=0.40)
@@ -933,16 +1012,19 @@ def main() -> int:
     parser.add_argument("--status-file", type=Path, default=REPO_ROOT / os.getenv("WILDCARD_PARALLEL_STATUS_FILE", "tmp/state/wildcard_parallel_status.json"))
     parser.add_argument("--html-file", type=Path, default=REPO_ROOT / os.getenv("WILDCARD_PARALLEL_HTML_FILE", "tmp/state/wildcard_parallel_overlay.html"))
     parser.add_argument("--result-file", type=Path, default=None)
-    parser.add_argument("--cdp-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CDP_BASE_PORT"), 9320))
+    parser.add_argument("--cdp-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CDP_BASE_PORT"), 19320))
     parser.add_argument("--serve-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_SERVE_BASE_PORT"), 18080))
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
-    parser.add_argument("--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 240))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 1))
+    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 4))
+    parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.70))
     args = parser.parse_args()
 
     args.jobs = max(3, args.jobs)
     args.games = max(1, args.games)
+    args.cull_after_games = max(0, min(args.cull_after_games, args.games))
+    args.cull_comp_ratio = max(0.0, args.cull_comp_ratio)
     session_dir = args.session_root / time.strftime("run-%Y%m%d-%H%M%S")
     session_dir.mkdir(parents=True, exist_ok=True)
     result_file = args.result_file or (session_dir / "result.json")
@@ -960,22 +1042,34 @@ def main() -> int:
         print(json.dumps(json.loads(result_file.read_text(encoding="utf-8")), ensure_ascii=False))
         return 2
 
-    evaluator = evaluate_simulated if args.evaluate_mode == "simulate" else evaluate_real
     evaluated: list[CandidateResult] = []
     payload["phase"] = "running"
-    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {
-            pool.submit(evaluator, c, args, session_dir): c
-            for c in candidates
-            if c.status == "pending"
-        }
-        for future in as_completed(futures):
-            evaluated.append(future.result())
-            merged = evaluated + [c for c in candidates if c not in evaluated and c.status != "failed"]
-            payload["candidates"] = [c.public() for c in merged]
-            render_overlay(args.status_file, args.html_file, payload)
-    failed = [c for c in candidates if c.status == "failed" and c not in evaluated]
-    all_candidates = evaluated + failed
+    if args.evaluate_mode == "simulate":
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            futures = {
+                pool.submit(evaluate_simulated, c, args, session_dir): c
+                for c in candidates
+                if c.status == "pending"
+            }
+            for future in as_completed(futures):
+                evaluated.append(future.result())
+                merged = evaluated + [c for c in candidates if c not in evaluated and c.status != "failed"]
+                payload["candidates"] = [c.public() for c in merged]
+                render_overlay(args.status_file, args.html_file, payload)
+        failed = [c for c in candidates if c.status == "failed" and c not in evaluated]
+        all_candidates = evaluated + failed
+    else:
+        coordinator = CullCoordinator(args, args.status_file, args.html_file, session_dir, candidates)
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            futures = {
+                pool.submit(evaluate_slot, c.index, c, args, session_dir, coordinator): c
+                for c in candidates
+                if c.status == "pending"
+            }
+            for future in as_completed(futures):
+                evaluated.append(future.result())
+                coordinator.snapshot()
+        all_candidates = list(coordinator.candidates)
     winner = choose_winner(all_candidates, args.min_successful_games)
     if winner:
         winner.status = "won"

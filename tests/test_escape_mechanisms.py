@@ -944,73 +944,40 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         )
         self.assertIs(wildcard_parallel.choose_winner([cand_b, cand_a], 1), cand_a)
 
-    def test_wildcard_parallel_keeps_partial_candidate_after_timeout(self):
-        """min_successful_games 到達後の timeout は候補全体を捨てない。"""
-        import argparse
-        import wildcard_parallel
+    def test_wildcard_parallel_does_not_kill_long_surviving_game_by_timeout(self):
+        """長く生きている候補ゲームを timeout で落とさない。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-        class SuccessfulProc:
-            returncode = 0
-            args = ["strategy_runner.py"]
+        self.assertIn('WILDCARD_PARALLEL_GAMES="${WILDCARD_PARALLEL_GAMES:-12}"', config)
+        self.assertIn('--games "${WILDCARD_PARALLEL_GAMES:-12}"', eloop)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 12)', parallel)
+        self.assertNotIn("WILDCARD_PARALLEL_GAME_TIMEOUT", config)
+        self.assertNotIn("--game-timeout", parallel)
+        self.assertNotIn("deadline = time.time() + args.game_timeout", parallel)
+        self.assertNotIn("candidate evaluation timed out", parallel)
+        self.assertNotIn('candidate.status = "timeout"', parallel)
 
-            def poll(self):
-                return 0
+    def test_wildcard_parallel_culls_bad_slots_and_refills(self):
+        """4ゲーム時点で現トップより悪すぎる候補は補充して、最終候補まで待つ。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-            def communicate(self, timeout=None):
-                return (
-                    'log\n---RESULT---\n{"score": 1000, "final_types": [14], "russia_created": false}\n',
-                    "",
-                )
-
-            def kill(self):
-                pass
-
-        class TimeoutProc:
-            returncode = None
-            args = ["strategy_runner.py"]
-
-            def poll(self):
-                return None
-
-            def communicate(self, timeout=None):
-                return "", ""
-
-            def kill(self):
-                pass
-
-        with tempfile.TemporaryDirectory() as td:
-            td_path = Path(td)
-            strategy = td_path / "strategy.py"
-            strategy.write_text(
-                "def decide(game_state, analysis):\n"
-                "    return {\"x\": 0, \"reason\": \"test\"}\n",
-                encoding="utf-8",
-            )
-            candidate = wildcard_parallel.CandidateResult(
-                job_id="cand-1",
-                index=0,
-                workdir=td_path / "cand-1",
-                strategy_path=strategy,
-            )
-            args = argparse.Namespace(
-                games=2,
-                min_successful_games=1,
-                cdp_base_port=9320,
-                serve_base_port=18080,
-                bridge_timeout=1,
-                game_timeout=0,
-            )
-            with mock.patch.object(wildcard_parallel, "launch_bridge", return_value=object()), \
-                mock.patch.object(wildcard_parallel, "stop_process"), \
-                mock.patch.object(wildcard_parallel, "cleanup_chrome_profile_processes"), \
-                mock.patch.object(wildcard_parallel, "capture_candidate_preview"), \
-                mock.patch.object(wildcard_parallel, "maybe_show_obs_candidate_source"), \
-                mock.patch.object(wildcard_parallel.subprocess, "Popen", side_effect=[SuccessfulProc(), TimeoutProc()]):
-                result = wildcard_parallel.evaluate_real(candidate, args, td_path / "sessions")
-
-            self.assertEqual(result.status, "accepted")
-            self.assertEqual(result.scores, [wildcard_parallel.eval_score({"score": 1000, "final_types": [14]})])
-            self.assertIn("after enough successful games", result.error)
+        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-4}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.70}"', config)
+        self.assertNotIn("WILDCARD_PARALLEL_MAX_REFILLS", config)
+        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-4}"', eloop)
+        self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.70}"', eloop)
+        self.assertNotIn("--max-refills", eloop)
+        self.assertIn("class CullCoordinator", parallel)
+        self.assertIn('candidate.status = "culled"', parallel)
+        self.assertNotIn("max_refills", parallel)
+        self.assertNotIn("--max-refills", parallel)
+        self.assertIn('job_id = f"cand-{index + 1}" if generation <= 0 else f"cand-{index + 1}-r{generation + 1}"', parallel)
+        self.assertIn("candidate = run_perturb(args, index, session_dir, generation)", parallel)
+        self.assertIn("with ThreadPoolExecutor(max_workers=args.jobs) as pool", parallel)
 
     def test_wildcard_parallel_restarts_bridge_for_each_real_game(self):
         """real 評価は GAMEOVER 状態を複数試合として重複カウントしない。"""
@@ -1110,6 +1077,12 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6)', parallel)
         self.assertIn('cards[:6]', parallel)
         self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_COLS', parallel)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_W="${WILDCARD_PARALLEL_OBS_CANDIDATE_W:-660}"', (REPO_ROOT / "core/config.sh").read_text())
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_H="${WILDCARD_PARALLEL_OBS_CANDIDATE_H:-425}"', (REPO_ROOT / "core/config.sh").read_text())
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_X="${WILDCARD_PARALLEL_OBS_CANDIDATE_X:--30}"', (REPO_ROOT / "core/config.sh").read_text())
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_Y="${WILDCARD_PARALLEL_OBS_CANDIDATE_Y:-180}"', (REPO_ROOT / "core/config.sh").read_text())
+        self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_W", eloop)
+        self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_Y", eloop)
         self.assertIn('candidate.index % cols', parallel)
         self.assertIn('candidate.index // cols', parallel)
         self.assertIn("本線ゲームを止め", loop := (REPO_ROOT / "soren_loop.sh").read_text())
@@ -1120,12 +1093,12 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"./obs_window_capture_source.sh", "ensure", scene, source, window_pattern', parallel)
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
         self.assertIn("hide:\"$hide_sources,", eloop)
-        self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
+        self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"', eloop)
         self.assertIn('show:"$overlay" hide:"$hide_sources,$cand_sources"', eloop)
         self.assertNotIn('show:"$overlay","$status_source","$show_status_source"', eloop)
         self.assertIn("wildcard_parallel_obs_restore", eloop)
         self.assertIn('hide:"$overlay,$cand_sources"', eloop)
-        self.assertIn('show_sources="$dashboard_source,$status_source,$show_status_source"', eloop)
+        self.assertIn('show_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"', eloop)
         self.assertIn('"${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}"', eloop)
         self.assertIn('"${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}"', eloop)
 
@@ -1213,6 +1186,13 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("rate-limit backoff期限切れ", loop)
         self.assertIn("rank1 hot streak 中 → 早期脱出ロックを延期", loop)
         self.assertIn("rollback revalidate fresh cycle 中", loop)
+        self.assertIn("current batch は成績許容範囲", loop)
+        self.assertIn("EARLY_ESCAPE_BATCH_OK", loop)
+        self.assertIn("regression_streak をクリア", loop)
+        self.assertIn("batch_comp >= leader_comp * min_ratio", loop)
+        self.assertIn("early_escape lock ignored: current batch is not bad enough", improve)
+        self.assertIn("continue normal accumulation", improve)
+        self.assertIn("rm -f \"$IMPROVE_LOCK_FILE\"", improve)
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
@@ -1774,7 +1754,9 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn(".toast.chat .body", generator)
         self.assertIn("font-size: 22px", generator)
         self.assertIn("$CODEX_WORK_OVERLAY_STATE_FILE", notify)
+        self.assertIn("./obs_control.sh stack", notify)
         self.assertIn("generate_event_overlay.py", indicator)
+        self.assertIn("./obs_control.sh stack", indicator)
         self.assertIn("eventOverlay", agents)
         self.assertIn("./codex_work_indicator.sh start", agents)
         self.assertIn("./codex_work_indicator.sh stop", agents)
@@ -1823,6 +1805,19 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("persistent monitoring surface", show_status)
         self.assertIn("exec ./generate_show_status_overlay.sh ensure-obs show", show_status)
 
+    def test_chrome_translate_banner_is_disabled_before_launch(self):
+        soviet = (REPO_ROOT / "soviet_local.mjs").read_text()
+        bridge = (REPO_ROOT / "lib/bridge_recovery.sh").read_text()
+
+        self.assertIn("seedChromeTranslatePreferences(USER_DATA_DIR)", soviet)
+        self.assertIn("prefs.translate = { ...(prefs.translate || {}), enabled: false }", soviet)
+        self.assertIn("prefs.translate_blocked_languages = ['en', 'ja']", soviet)
+        self.assertIn("'localhost'", soviet)
+        self.assertIn("'127.0.0.1'", soviet)
+        self.assertIn("accept_languages: 'ja-JP,ja,en-US,en'", soviet)
+        self.assertIn("'--disable-translate'", soviet)
+        self.assertIn('tr["enabled"] = False', bridge)
+
     def test_obs_control_can_report_overlay_source_status(self):
         obs = (REPO_ROOT / "obs_control.sh").read_text()
 
@@ -1830,6 +1825,12 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("action === 'status'", obs)
         self.assertIn("sceneItemEnabled === true", obs)
         self.assertIn("=missing", obs)
+        self.assertIn("./obs_control.sh stack <scene>", obs)
+        self.assertIn("SetSceneItemIndex", obs)
+        self.assertIn("OBS_TOP_OVERLAY_SOURCE", obs)
+        self.assertIn("OBS_BELOW_TOP_OVERLAY_SOURCE", obs)
+        self.assertIn("'twica'", obs)
+        self.assertIn("'eventOverlay'", obs)
 
     def test_status_g_has_wide_short_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -3913,6 +3914,7 @@ PY
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
 
         self.assertIn('if event == "OK_BEAT":\n            rs = 0', regression)
+        self.assertIn('elif event == "OK_IDLE":\n            rs = max(0, rs - 1)', regression)
         self.assertIn("古い回帰ストリークを残さない", regression)
 
     def test_objective_miss_does_not_reset_escape_streaks(self):
@@ -4332,12 +4334,17 @@ PY
         self.assertIn("reasons=early_objective_regression+", regression)
         self.assertIn("mode=archive_objective_floor", regression)
         self.assertIn("trend_grace は score-only rollback dampener。目的退行は免除しない。", regression)
+        self.assertIn("def objective_triggered(reason_text):", regression)
+        self.assertIn("objective_was_trigger = objective_triggered(reg.get(\"reasons\", \"\"))", regression)
+        self.assertIn("今回は粛清理由ではない", regression)
+        self.assertIn("context_signal: current はロシア(type15)未到達だが、今回は粛清理由ではない。", regression)
         self.assertNotIn('print(f"OK:{trend_grace_reason()}")\n        raise SystemExit\n    print(\n        "REGRESSION:"\n        f"mode=objective_regression', regression)
 
     def test_early_comp_top_gap_can_purge_bad_current_branch(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         toggles = (REPO_ROOT / "core/runtime_toggles.sh").read_text()
+        set_toggle = (REPO_ROOT / "set_toggle.sh").read_text()
 
         self.assertIn("EARLY_COMP_TOP_GAP_ENABLED", config)
         self.assertIn("EARLY_COMP_TOP_GAP_MIN_GAMES", config)
@@ -4345,8 +4352,12 @@ PY
         self.assertIn("EARLY_COMP_TOP_GAP_ENABLED", toggles)
         self.assertIn("EARLY_COMP_TOP_GAP_MIN_GAMES", toggles)
         self.assertIn("EARLY_COMP_TOP_GAP_MIN_RATIO", toggles)
+        self.assertIn("EARLY_COMP_TOP_GAP_MIN_GAMES", set_toggle)
         self.assertIn("def rolling_comp_leader(current_metrics):", regression)
         self.assertIn("mode=early_comp_top_gap", regression)
+        self.assertIn("frontier_grace_active", regression)
+        self.assertIn("current[\"n\"] < min_games_current", regression)
+        self.assertIn("int(current_objective.get(\"best_max_type\", 0) or 0) >= frontier_grace_min_type", regression)
         self.assertIn("curr_comp < top_comp * early_comp_top_gap_min_ratio", regression)
         self.assertIn("reasons=early_comp_top_gap+curr_comp_below_top_ratio", regression)
 

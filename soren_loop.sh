@@ -220,6 +220,111 @@ PY
 		return 1
 	fi
 
+	local _batch_quality_probe _batch_quality_ok _batch_comp _leader_comp _quality_ratio
+	_batch_quality_probe=$(
+		python3 - "$ACCUMULATED_GAMES_FILE" "${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" "${MIN_GAMES_BEFORE_REGRESSION:-12}" "${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" "${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" <<'PY' 2>/dev/null || echo "0:0:0:0"
+import json
+import math
+import os
+import sys
+
+acc_file, rolling_file, min_games_raw, min_ratio_raw, stagnation_file = sys.argv[1:6]
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def as_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def comp(scores):
+    xs = [as_int(x) for x in scores]
+    if not xs:
+        return 0.0
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in xs) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    return 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+
+def load(path):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return {}
+
+acc = load(acc_file)
+scores = [as_int(x) for x in str(acc.get("scores", "") or "").split() if str(x).strip()]
+batch_comp = comp(scores)
+min_games = max(1, as_int(min_games_raw, 12))
+min_ratio = as_float(min_ratio_raw, 0.85)
+rolling = load(rolling_file)
+leader_comp = 0.0
+if isinstance(rolling, dict):
+    for h, row in rolling.items():
+        if not isinstance(row, dict):
+            continue
+        n = as_int(row.get("n", row.get("games_total", 0)), 0)
+        if n < min_games:
+            continue
+        leader_comp = max(leader_comp, as_float(row.get("comp", 0.0), 0.0))
+
+ok = bool(batch_comp > 0 and (leader_comp <= 0 or batch_comp >= leader_comp * min_ratio))
+if ok and stagnation_file:
+    data = load(stagnation_file)
+    if not isinstance(data, dict):
+        data = {}
+    data["regression_streak"] = 0
+    data["last_event"] = "EARLY_ESCAPE_BATCH_OK"
+    try:
+        import time
+        data["updated_at"] = int(time.time())
+        os.makedirs(os.path.dirname(stagnation_file) or ".", exist_ok=True)
+        tmp = stagnation_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, stagnation_file)
+    except Exception:
+        pass
+
+ratio = (batch_comp / leader_comp) if leader_comp > 0 else 0.0
+print(f"{1 if ok else 0}:{batch_comp:.1f}:{leader_comp:.1f}:{ratio:.3f}")
+PY
+	)
+	_batch_quality_ok="${_batch_quality_probe%%:*}"
+	_batch_quality_probe="${_batch_quality_probe#*:}"
+	_batch_comp="${_batch_quality_probe%%:*}"
+	_batch_quality_probe="${_batch_quality_probe#*:}"
+	_leader_comp="${_batch_quality_probe%%:*}"
+	_quality_ratio="${_batch_quality_probe##*:}"
+	if [ "$_batch_quality_ok" = "1" ]; then
+		log "[EARLY_ESCAPE] stagnation=${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2} だが current batch は成績許容範囲 (${_batch_hash:0:8} comp=${_batch_comp} leader=${_leader_comp} ratio=${_quality_ratio}) → 早期脱出を延期し regression_streak をクリア"
+		return 1
+	fi
+
 	_rollback_revalidate_probe=$(
 		python3 - "$CURRENT_STRATEGY_RUN_FILE" "$TMP_STATE_DIR/last_rollback_pair.json" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY' 2>/dev/null || echo "0:0:"
 import json

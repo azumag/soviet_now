@@ -167,6 +167,8 @@ soren_loop の多重起動ロック:
 | `ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT` | `1` | archive_restart後にロシアを再現できず粛清された source を候補から外す |
 | `WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` | `14` | `escape_ai` seed として許す最小 frontier 到達type |
 
+`EARLY_COMP_TOP_GAP_MIN_GAMES=4` は低スコア崩壊の短絡用であり、4試合でロシア(type15)未達というだけでは粛清しない。current が type14 以上の frontier に届いている間は、通常の `MIN_GAMES_BEFORE_REGRESSION` まで見てから回帰判定する。
+
 **ラジオDJ機能:**
 
 soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOS `say` で読み上げる。

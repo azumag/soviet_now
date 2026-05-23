@@ -185,6 +185,20 @@ def explain_reasons(reason_text):
             lines.append(mapping.get(reason, f"{reason} が悪化要因だった。"))
     return lines or ["詳細理由を特定できなかった。"]
 
+def objective_triggered(reason_text):
+    reasons = set(r for r in (reason_text or "").split("+") if r)
+    objective_markers = {
+        "objective_regression",
+        "early_objective_regression",
+        "archive_restart_objective_floor",
+        "lost_turkmenistan_gate",
+        "lost_ukraine_gate",
+        "lost_kazakhstan_gate",
+        "lost_russia_path",
+        "lost_soviet_path",
+    }
+    return bool(reasons & objective_markers)
+
 try:
     rolling = json.load(open(rolling_file))
 except Exception:
@@ -192,6 +206,7 @@ except Exception:
 
 current_data = rolling.get(current_hash, {})
 rollback_data = rolling.get(rollback_hash, {})
+reg = parse_regression(regression_result)
 current_scores = to_scores(current_data)
 if os.path.exists(current_run_file):
     try:
@@ -201,12 +216,15 @@ if os.path.exists(current_run_file):
     if str(current_run.get("hash", "") or "") == current_hash:
         current_scores = to_scores(current_run)
         current_data = current_run
+comparison_hash = reg.get("anchor_hash") or reg.get("cutoff_hash") or reg.get("best_hash") or rollback_hash
+if comparison_hash and comparison_hash in rolling:
+    rollback_data = rolling.get(comparison_hash, {})
 rollback_scores = to_scores(rollback_data)
 current_metrics = metrics(current_scores)
 rollback_metrics = metrics(rollback_scores)
 current_progress = progress_summary(current_data, len(current_scores))
 rollback_progress = progress_summary(rollback_data, len(rollback_scores))
-reg = parse_regression(regression_result)
+objective_was_trigger = objective_triggered(reg.get("reasons", ""))
 wildcard_origin = load_wildcard_origin_for_current(current_hash)
 history_scores = read_score_history(score_history_file)
 
@@ -313,6 +331,8 @@ if current_scores and rollback_scores:
     )
 lines.append("")
 lines.append("## Soviet Objective Delta")
+if not objective_was_trigger:
+    lines.append("- note: 今回の粛清トリガは建国未達ではなくスコア/comp系。以下は改善の参考情報で、粛清理由ではない。")
 lines.append(f"- current_progress: {fmt_progress(current_progress)}")
 if rollback_scores:
     lines.append(f"- rollback_target_progress: {fmt_progress(rollback_progress)}")
@@ -321,10 +341,14 @@ lines.append(
     f"russia={current_progress['russia_count'] - rollback_progress['russia_count']} "
     f"soviet={current_progress['soviet_count'] - rollback_progress['soviet_count']}"
 )
-if current_progress["best_max_type"] < 15:
+if objective_was_trigger and current_progress["best_max_type"] < 15:
     lines.append("- hard_signal: current はロシア(type15)未到達。次改善ではスコア下振れだけでなく type14→15 の到達経路を復旧すること。")
-elif current_progress["soviet_count"] <= 0:
+elif objective_was_trigger and current_progress["soviet_count"] <= 0:
     lines.append("- hard_signal: current はソ連(type16)未到達。ロシア保護と二つ目のロシア育成を優先すること。")
+elif not objective_was_trigger and current_progress["best_max_type"] < 15:
+    lines.append("- context_signal: current はロシア(type15)未到達だが、今回は粛清理由ではない。スコア/comp悪化の原因分析を優先すること。")
+elif not objective_was_trigger and current_progress["soviet_count"] <= 0:
+    lines.append("- context_signal: current はソ連(type16)未到達だが、今回は粛清理由ではない。スコア/comp悪化の原因分析を優先すること。")
 lines.append("")
 lines.append("## Score Pattern")
 if current_scores:
@@ -353,10 +377,14 @@ if "hard_fail" in reasons:
     focus.append("- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。")
 if "trend50" in reasons or "trend100" in reasons:
     focus.append("- 長期下降トレンドが出ているので、直近だけの上振れを追わず、過去の強戦略との差分を比較すること。")
-if current_progress["best_max_type"] < 15:
+if objective_was_trigger and current_progress["best_max_type"] < 15:
     focus.append("- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。")
-elif current_progress["soviet_count"] <= 0:
+elif objective_was_trigger and current_progress["soviet_count"] <= 0:
     focus.append("- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。")
+elif not objective_was_trigger and current_progress["best_max_type"] < 15:
+    focus.append("- 参考: ロシア未達は観測されているが今回の粛清理由ではない。まず comp/p25/p50 悪化の直接原因を特定し、その範囲で type14→15 の導線も壊していないか確認すること。")
+elif not objective_was_trigger and current_progress["soviet_count"] <= 0:
+    focus.append("- 参考: ソ連未達は観測されているが今回の粛清理由ではない。まず comp/p25/p50 悪化の直接原因を特定し、その範囲でロシア後の導線も壊していないか確認すること。")
 if not focus:
     focus.append("- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。")
 lines.extend(focus)
@@ -733,6 +761,38 @@ _archive_strategy_snapshot_by_hash() {
 	fi
 }
 
+_strategy_file_hash_matches() {
+	local expected_hash="$1" candidate_file="$2"
+	[ -n "$expected_hash" ] || return 1
+	[ -f "$candidate_file" ] || return 1
+	local actual_hash
+	actual_hash=$(python3 extract_decide_hash.py "$candidate_file" 2>/dev/null || echo "")
+	[ "$actual_hash" = "$expected_hash" ]
+}
+
+_find_rollback_candidate_file_for_hash() {
+	local target_hash="$1"
+	[ -n "$target_hash" ] || return 1
+	local primary_file="$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py"
+	local permanent_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${target_hash}.py"
+	if _strategy_file_hash_matches "$target_hash" "$primary_file"; then
+		echo "$primary_file"
+		return 0
+	fi
+	if _strategy_file_hash_matches "$target_hash" "$permanent_file"; then
+		if [ -f "$primary_file" ]; then
+			log "[HASH-ARCHIVE] repairing stale by_hash archive: ${target_hash}" >&2
+		fi
+		mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR" 2>/dev/null || true
+		cp "$permanent_file" "$primary_file" 2>/dev/null || true
+		echo "$permanent_file"
+		return 0
+	fi
+	[ -f "$primary_file" ] && echo "$primary_file" && return 0
+	[ -f "$permanent_file" ] && echo "$permanent_file" && return 0
+	return 1
+}
+
 _backfill_hash_archive_from_known_versions() {
 	local include_permanent="${1:-${HASH_ARCHIVE_RESTORE_PERMANENT:-0}}"
 	mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR"
@@ -750,7 +810,7 @@ _backfill_hash_archive_from_known_versions() {
 		for perm_file in "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"/*.py; do
 			[ -f "$perm_file" ] || continue
 			base=$(basename "$perm_file")
-			if [ ! -f "$STRATEGY_HASH_ARCHIVE_DIR/$base" ]; then
+			if [ ! -f "$STRATEGY_HASH_ARCHIVE_DIR/$base" ] || ! _strategy_file_hash_matches "${base%.py}" "$STRATEGY_HASH_ARCHIVE_DIR/$base"; then
 				cp "$perm_file" "$STRATEGY_HASH_ARCHIVE_DIR/$base" 2>/dev/null || true
 			fi
 		done
@@ -760,11 +820,7 @@ _backfill_hash_archive_from_known_versions() {
 _find_strategy_file_by_hash() {
 	local target_hash="$1"
 	[ -z "$target_hash" ] && return 1
-	if [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py" ]; then
-		echo "$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py"
-		return 0
-	fi
-	return 1
+	_find_rollback_candidate_file_for_hash "$target_hash"
 }
 
 # E: 失敗 current の挙動シグネチャを tabu_signatures.jsonl に追記する
@@ -2293,10 +2349,7 @@ PY
 			log "[REGRESSION] rollback候補スキップ: $h はrollback先cooldown中" >&2
 			continue
 		fi
-		candidate_file="$STRATEGY_HASH_ARCHIVE_DIR/${h}.py"
-		if [ ! -f "$candidate_file" ] && [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ]; then
-			candidate_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR}/${h}.py"
-		fi
+		candidate_file=$(_find_rollback_candidate_file_for_hash "$h" 2>/dev/null || echo "")
 		if [ ! -f "$candidate_file" ]; then
 			_remove_unusable_rolling_score_hash "$h" "missing_rollback_archive" "$current_hash"
 			continue
@@ -2968,6 +3021,8 @@ def _update_stagnation(event):
             rs = max(0, rs - 1)
         elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):
             rs += 1
+        elif event == "OK_IDLE":
+            rs = max(0, rs - 1)
         data["regression_streak"] = rs
         data["last_event"] = event
         data["updated_at"] = int(time.time())
@@ -3571,6 +3626,12 @@ hard_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, hard_comp_
 top_hash, top_metrics = rolling_comp_leader(current)
 top_comp = float((top_metrics or {}).get("comp", 0.0) or 0.0)
 curr_comp = float(current.get("comp", 0.0) or 0.0)
+frontier_grace_min_type = max(14, early_objective_min_best_type - 1)
+frontier_grace_active = (
+    current["n"] < min_games_current
+    and int(current_objective.get("best_max_type", 0) or 0) >= frontier_grace_min_type
+    and int(current_objective.get("russia_count", 0) or 0) <= 0
+)
 
 objective_reasons = []
 russia_grace_active = russia_objective_graced(current, current_objective)
@@ -3614,6 +3675,7 @@ if (
     and top_hash
     and top_comp > 0
     and current["n"] >= early_comp_top_gap_min_games
+    and not frontier_grace_active
     and curr_comp < top_comp * early_comp_top_gap_min_ratio
 ):
     top_comp_gap, top_p50_gap, top_p25_gap = gap(top_metrics, current)
@@ -3973,24 +4035,20 @@ PY
 					if _is_rollback_target_on_cooldown "$strategy_hash" "$rollback_hash"; then
 						log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はrollback先cooldown中"
 						rollback_hash=""
-					elif [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py" ]; then
-						if _rollback_candidate_file_is_valid "$rollback_hash" "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"; then
-							rollback_file="$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"
-							rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+					else
+						local anchor_candidate_file
+						anchor_candidate_file=$(_find_rollback_candidate_file_for_hash "$rollback_hash" 2>/dev/null || echo "")
+						if [ -n "$anchor_candidate_file" ] && _rollback_candidate_file_is_valid "$rollback_hash" "$anchor_candidate_file"; then
+							rollback_file="$anchor_candidate_file"
+							if [ "${anchor_candidate_file#${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/}" != "$anchor_candidate_file" ]; then
+								rollback_note="anchor_top1_permanent hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+							else
+								rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+							fi
 						else
 							log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はvalidation失敗archive"
 							rollback_hash=""
 						fi
-					elif [ -f "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py" ]; then
-						if _rollback_candidate_file_is_valid "$rollback_hash" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py"; then
-							rollback_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${rollback_hash}.py"
-							rollback_note="anchor_top1_permanent hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
-						else
-							log "[REGRESSION] anchor_top1_permanent候補スキップ: $rollback_hash はvalidation失敗archive"
-							rollback_hash=""
-						fi
-					else
-						rollback_hash=""
 					fi
 				fi
 		fi

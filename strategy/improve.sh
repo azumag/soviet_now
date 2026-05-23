@@ -1776,6 +1776,124 @@ trigger_adaptive_improvement() {
 	all_scores=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
 	any_soviet=$(echo "$lock_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
 
+	local early_escape_batch_ok
+	early_escape_batch_ok=$(LOCK_DATA="$lock_data" python3 - \
+		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
+		"${MIN_GAMES_BEFORE_IMPROVE:-12}" \
+		"${MIN_GAMES_BEFORE_REGRESSION:-12}" \
+		"${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" <<'PY' 2>/dev/null || echo "0:0:0:0:0"
+import json
+import math
+import os
+import sys
+import time
+
+rolling_file, stagnation_file, improve_min_raw, regression_min_raw, min_ratio_raw = sys.argv[1:6]
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def as_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def comp(scores):
+    xs = [as_int(x) for x in scores]
+    if not xs:
+        return 0.0
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    std = math.sqrt(sum((x - mean) ** 2 for x in xs) / n) if n > 1 else 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    return 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+
+try:
+    lock = json.loads(os.environ.get("LOCK_DATA", "") or "{}")
+except Exception:
+    lock = {}
+
+count = as_int(lock.get("count", 0), 0)
+improve_min = max(1, as_int(improve_min_raw, 12))
+if not bool(lock.get("early_escape_lock", False)) or count >= improve_min:
+    print("0:0:0:0:0")
+    raise SystemExit
+
+scores = [as_int(x) for x in str(lock.get("scores", "") or "").split() if str(x).strip()]
+batch_comp = comp(scores)
+regression_min = max(1, as_int(regression_min_raw, 12))
+min_ratio = as_float(min_ratio_raw, 0.85)
+rolling = load(rolling_file)
+leader_comp = 0.0
+for h, row in (rolling or {}).items():
+    if not isinstance(row, dict):
+        continue
+    n = as_int(row.get("n", row.get("games_total", 0)), 0)
+    if n < regression_min:
+        continue
+    leader_comp = max(leader_comp, as_float(row.get("comp", 0.0), 0.0))
+
+ok = bool(batch_comp > 0 and (leader_comp <= 0 or batch_comp >= leader_comp * min_ratio))
+if ok and stagnation_file:
+    data = load(stagnation_file)
+    data["regression_streak"] = 0
+    data["last_event"] = "EARLY_ESCAPE_BATCH_OK"
+    data["updated_at"] = int(time.time())
+    try:
+        os.makedirs(os.path.dirname(stagnation_file) or ".", exist_ok=True)
+        tmp = stagnation_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, stagnation_file)
+    except Exception:
+        pass
+
+ratio = (batch_comp / leader_comp) if leader_comp > 0 else 0.0
+print(f"{1 if ok else 0}:{batch_comp:.1f}:{leader_comp:.1f}:{ratio:.3f}:{count}")
+PY
+	)
+	if [ "${early_escape_batch_ok%%:*}" = "1" ]; then
+		local _batch_quality_rest _batch_comp _leader_comp _quality_ratio _quality_count
+		_batch_quality_rest="${early_escape_batch_ok#*:}"
+		_batch_comp="${_batch_quality_rest%%:*}"
+		_batch_quality_rest="${_batch_quality_rest#*:}"
+		_leader_comp="${_batch_quality_rest%%:*}"
+		_batch_quality_rest="${_batch_quality_rest#*:}"
+		_quality_ratio="${_batch_quality_rest%%:*}"
+		_quality_count="${_batch_quality_rest##*:}"
+		log "[IMPROVE] early_escape lock ignored: current batch is not bad enough (count=${_quality_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} comp=${_batch_comp} leader=${_leader_comp} ratio=${_quality_ratio}); continue normal accumulation"
+		rm -f "$IMPROVE_LOCK_FILE"
+		return 1
+	fi
+
 	# F: stagnation 連続発生時は wildcard モードに切替
 	local improve_reason="normal"
 	improve_reason=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('improve_reason','normal'))" 2>/dev/null || echo "normal")

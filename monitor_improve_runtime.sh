@@ -230,7 +230,11 @@ if [ "$live_pid" -ne 0 ]; then
 	[ "$updated_age" -lt "$log_age" ] && stale_age="$updated_age" || stale_age="$log_age"
 
 	./generate_improve_overlay.sh once >/dev/null 2>&1 || true
-	./obs_control.sh show soren "$IMPROVE_OVERLAY_SOURCE" >/dev/null 2>&1 || true
+	if [ "${phase:-}" = "wildcard_parallel" ]; then
+		./obs_control.sh hide soren "$IMPROVE_OVERLAY_SOURCE" >/dev/null 2>&1 || true
+	else
+		./obs_control.sh show soren "$IMPROVE_OVERLAY_SOURCE" >/dev/null 2>&1 || true
+	fi
 	if [ -n "${IMPROVE_LEGACY_CONSOLE_SOURCE:-}" ]; then
 		./obs_control.sh hide soren "$IMPROVE_LEGACY_CONSOLE_SOURCE" >/dev/null 2>&1 || true
 	fi

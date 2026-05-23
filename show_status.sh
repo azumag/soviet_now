@@ -13,6 +13,21 @@
 SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
+_is_wildcard_parallel_active() {
+	[ -f tmp/state/improve_state.json ] || return 1
+	python3 - tmp/state/improve_state.json <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+active = data.get("status") == "running" and data.get("phase") == "wildcard_parallel"
+raise SystemExit(0 if active else 1)
+PY
+}
+
 case "${1:-}" in
 --html-once)
 	exec ./generate_show_status_overlay.sh once
@@ -29,6 +44,9 @@ case "${1:-}" in
 	--html-obs)
 		# opsOverlay is a persistent monitoring surface. Older running
 		# supervisors may still ask for "hide"; keep this hot path visible.
+		if _is_wildcard_parallel_active; then
+			exec ./generate_show_status_overlay.sh ensure-obs hide
+		fi
 		exec ./generate_show_status_overlay.sh ensure-obs show
 		;;
 esac

@@ -64,6 +64,42 @@ const UNITY_AUDIO_WATCHDOG_MS = parseInt(process.env.SOREN_UNITY_AUDIO_WATCHDOG_
 const UNITY_AUDIO_RECOVER_COOLDOWN_MS = parseInt(process.env.SOREN_UNITY_AUDIO_RECOVER_COOLDOWN_MS || '30000', 10);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
 
+function writeJsonAtomic(filePath, data) {
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data));
+  fs.renameSync(tmpPath, filePath);
+}
+
+function seedChromeTranslatePreferences(userDataDir) {
+  const defaultDir = path.join(userDataDir, 'Default');
+  const prefPath = path.join(defaultDir, 'Preferences');
+  let prefs = {};
+  try {
+    if (fs.existsSync(prefPath)) {
+      prefs = JSON.parse(fs.readFileSync(prefPath, 'utf-8'));
+    }
+  } catch {
+    prefs = {};
+  }
+
+  prefs.profile = { ...(prefs.profile || {}), exit_type: 'Normal', exited_clean: true };
+  prefs.translate = { ...(prefs.translate || {}), enabled: false };
+  prefs.translate_blocked_languages = ['en', 'ja'];
+  prefs.translate_site_blacklist = Array.from(new Set([
+    ...(
+      Array.isArray(prefs.translate_site_blacklist)
+        ? prefs.translate_site_blacklist
+        : []
+    ),
+    'localhost',
+    '127.0.0.1',
+  ]));
+  prefs.intl = { ...(prefs.intl || {}), accept_languages: 'ja-JP,ja,en-US,en' };
+
+  fs.mkdirSync(defaultDir, { recursive: true });
+  writeJsonAtomic(prefPath, prefs);
+}
+
 function chromeAppPathFromExecutable(executablePath) {
   const marker = '.app/Contents/MacOS/';
   const idx = executablePath.indexOf(marker);
@@ -592,6 +628,7 @@ async function runLocalController() {
 
   try {
     fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
+    seedChromeTranslatePreferences(USER_DATA_DIR);
     const launchArgs = [
       '--window-size=1300,800',
       `--remote-debugging-port=${CDP_PORT}`,
