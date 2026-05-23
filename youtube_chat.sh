@@ -166,7 +166,14 @@ PY
 
 _api_get() {
 	local url="$1"
-	curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "$url"
+	local access_token="${2:-}"
+	if [ -n "$access_token" ]; then
+		curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+			-H "Authorization: Bearer ${access_token}" \
+			"$url"
+	else
+		curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "$url"
+	fi
 }
 
 _youtube_json_value() {
@@ -187,17 +194,21 @@ raise SystemExit(1)
 }
 
 _discover_live_video_id() {
-	[ -n "${YOUTUBE_API_KEY:-}" ] || return 1
+	local access_token="${1:-}"
+	[ -n "${YOUTUBE_API_KEY:-}" ] || [ -n "$access_token" ] || return 1
 	local channel_id="${YOUTUBE_CHANNEL_ID:-}"
 	if [ -z "$channel_id" ] && [ -s "$CHANNEL_ID_FILE" ]; then
 		channel_id=$(cat "$CHANNEL_ID_FILE" 2>/dev/null || true)
 	fi
 	[ -n "$channel_id" ] || return 1
 	local key url resp video_id
-	key=$(_urlencode "$YOUTUBE_API_KEY")
 	channel_id=$(_urlencode "$channel_id")
-	url="https://www.googleapis.com/youtube/v3/search?part=id&channelId=${channel_id}&eventType=live&type=video&maxResults=1&key=${key}"
-	resp=$(_api_get "$url") || return 1
+	url="https://www.googleapis.com/youtube/v3/search?part=id&channelId=${channel_id}&eventType=live&type=video&maxResults=1"
+	if [ -z "$access_token" ]; then
+		key=$(_urlencode "$YOUTUBE_API_KEY")
+		url="${url}&key=${key}"
+	fi
+	resp=$(_api_get "$url" "$access_token") || return 1
 	video_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("id", {}).get("videoId", "")' 2>/dev/null || true)
 	[ -n "$video_id" ] || return 1
 	printf '%s' "$video_id" >"$LIVE_VIDEO_ID_FILE"
@@ -206,6 +217,7 @@ _discover_live_video_id() {
 
 _resolve_live_chat_id() {
 	local force_refresh="${1:-0}"
+	local access_token="${2:-}"
 	if [ -n "${YOUTUBE_LIVE_CHAT_ID:-}" ]; then
 		printf '%s' "$YOUTUBE_LIVE_CHAT_ID" >"$LIVE_CHAT_ID_FILE"
 		printf '%s' "$YOUTUBE_LIVE_CHAT_ID"
@@ -215,17 +227,17 @@ _resolve_live_chat_id() {
 		cat "$LIVE_CHAT_ID_FILE"
 		return 0
 	fi
-	if [ -z "${YOUTUBE_VIDEO_ID:-}" ] || [ -z "${YOUTUBE_API_KEY:-}" ]; then
-		if [ -z "${YOUTUBE_CHANNEL_ID:-}" ] || [ -z "${YOUTUBE_API_KEY:-}" ]; then
-			_log "poll: YOUTUBE_VIDEO_ID/YOUTUBE_CHANNEL_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required"
-			printf '%s\n' "YOUTUBE_VIDEO_ID/YOUTUBE_CHANNEL_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required" >"$LAST_ERROR_FILE" 2>/dev/null || true
+	if [ -z "${YOUTUBE_VIDEO_ID:-}" ] || { [ -z "${YOUTUBE_API_KEY:-}" ] && [ -z "$access_token" ]; }; then
+		if [ -z "${YOUTUBE_CHANNEL_ID:-}" ] || { [ -z "${YOUTUBE_API_KEY:-}" ] && [ -z "$access_token" ]; }; then
+			_log "poll: YOUTUBE_VIDEO_ID/YOUTUBE_CHANNEL_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY or OAuth are required"
+			printf '%s\n' "YOUTUBE_VIDEO_ID/YOUTUBE_CHANNEL_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY or OAuth are required" >"$LAST_ERROR_FILE" 2>/dev/null || true
 			return 1
 		fi
 	fi
 	local video_id key url resp chat_id channel_id discovered_id
 	video_id=""
 	if [ "$force_refresh" = "1" ]; then
-		video_id=$(_discover_live_video_id 2>/dev/null || true)
+		video_id=$(_discover_live_video_id "$access_token" 2>/dev/null || true)
 	fi
 	if [ -z "$video_id" ] && [ -s "$LIVE_VIDEO_ID_FILE" ]; then
 		video_id=$(cat "$LIVE_VIDEO_ID_FILE" 2>/dev/null || true)
@@ -234,13 +246,19 @@ _resolve_live_chat_id() {
 		video_id="${YOUTUBE_VIDEO_ID:-}"
 	fi
 	if [ -z "$video_id" ]; then
+		video_id=$(_discover_live_video_id "$access_token" 2>/dev/null || true)
+	fi
+	if [ -z "$video_id" ]; then
 		_log "poll: active live video not found"
 		printf '%s\n' "active live video not found for YouTube channel" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		return 1
 	fi
-	key=$(_urlencode "$YOUTUBE_API_KEY")
-	url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")&key=${key}"
-	resp=$(_api_get "$url") || {
+	url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")"
+	if [ -z "$access_token" ]; then
+		key=$(_urlencode "$YOUTUBE_API_KEY")
+		url="${url}&key=${key}"
+	fi
+	resp=$(_api_get "$url" "$access_token") || {
 		_log "poll: videos.list failed"
 		printf '%s\n' "videos.list failed while resolving activeLiveChatId" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		return 1
@@ -249,11 +267,14 @@ _resolve_live_chat_id() {
 	[ -n "$channel_id" ] && printf '%s' "$channel_id" >"$CHANNEL_ID_FILE"
 	chat_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("liveStreamingDetails", {}).get("activeLiveChatId", "")' 2>/dev/null || true)
 	if [ -z "$chat_id" ]; then
-		discovered_id=$(_discover_live_video_id 2>/dev/null || true)
+		discovered_id=$(_discover_live_video_id "$access_token" 2>/dev/null || true)
 		if [ -n "$discovered_id" ] && [ "$discovered_id" != "$video_id" ]; then
 			video_id="$discovered_id"
-			url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")&key=${key}"
-			resp=$(_api_get "$url") || {
+			url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")"
+			if [ -z "$access_token" ]; then
+				url="${url}&key=${key}"
+			fi
+			resp=$(_api_get "$url" "$access_token") || {
 				_log "poll: videos.list failed after live video refresh"
 				printf '%s\n' "videos.list failed after live video refresh" >"$LAST_ERROR_FILE" 2>/dev/null || true
 				return 1
@@ -644,11 +665,11 @@ _send() {
 		return 1
 	fi
 	local chat_id access_token payload_file resp_file err_file insert_url
-	chat_id=$(_resolve_live_chat_id) || return 1
 	access_token=$(_oauth_access_token) || {
 		echo "YouTube OAuth refresh settings are missing or invalid" >&2
 		return 1
 	}
+	chat_id=$(_resolve_live_chat_id 0 "$access_token") || return 1
 	payload_file=$(mktemp "$CHAT_DIR/.send_payload.XXXXXXXX")
 	resp_file=$(mktemp "$CHAT_DIR/.send_response.XXXXXXXX")
 	err_file=$(mktemp "$CHAT_DIR/.send_error.XXXXXXXX")
@@ -664,7 +685,7 @@ _send() {
 	_record_send_error "$err_file" "$resp_file"
 	if grep -q '403' "$LAST_SEND_ERROR_FILE" 2>/dev/null && [ -s "$LIVE_CHAT_ID_FILE" ]; then
 		rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
-		if chat_id=$(_resolve_live_chat_id 1 2>>"$LAST_SEND_ERROR_FILE"); then
+		if chat_id=$(_resolve_live_chat_id 1 "$access_token" 2>>"$LAST_SEND_ERROR_FILE"); then
 			_write_send_payload "$chat_id" "$msg" "$payload_file"
 			: >"$resp_file"
 			: >"$err_file"
