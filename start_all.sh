@@ -196,6 +196,39 @@ except Exception:
 	return 0
 }
 
+_improve_daemon_responsive() {
+	local pid="${1:-}" lock_file="${IMPROVE_LOCK_FILE:-tmp/improve.lock}" state_file="${IMPROVE_STATE_FILE:-tmp/state/improve_state.json}"
+	local log_file="${IMPROVE_DAEMON_LOG_FILE:-logs/improve_daemon.log}" threshold now lock_m log_m state_m lock_age log_age state_age status detail
+	_pid_matches_worker "$pid" "$(_pattern_for_worker improve_daemon)" || return 1
+	[ -f "$lock_file" ] || return 0
+	threshold="${IMPROVE_DAEMON_LOCK_STALL_SEC:-180}"
+	case "$threshold" in ''|*[!0-9]*) threshold=180 ;; esac
+	now=$(date +%s)
+	lock_m=$(stat -f %m "$lock_file" 2>/dev/null || stat -c %Y "$lock_file" 2>/dev/null || echo 0)
+	log_m=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo 0)
+	state_m=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null || echo 0)
+	case "$lock_m" in ''|*[!0-9]*) lock_m=0 ;; esac
+	case "$log_m" in ''|*[!0-9]*) log_m=0 ;; esac
+	case "$state_m" in ''|*[!0-9]*) state_m=0 ;; esac
+	lock_age=$((now - lock_m))
+	log_age=$((now - log_m))
+	state_age=$((now - state_m))
+	status=$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", ""))
+except Exception:
+    print("")' "$state_file" 2>/dev/null || echo "")
+	if [ "$lock_age" -ge "$threshold" ] && [ "$log_age" -ge "$threshold" ] && [ "$state_age" -ge "$threshold" ] && { [ -z "$status" ] || [ "$status" = "idle" ]; }; then
+		detail="lock_age=${lock_age}s log_age=${log_age}s state_age=${state_age}s status=${status:-unknown}"
+		_log "WARN: improve_daemon PID=${pid} は改善ロックを消費していない (${detail}) → 再起動"
+		mkdir -p tmp/state 2>/dev/null || true
+		printf '{"status":"stalled","updated_at":%s,"pid":%s,"detail":"%s"}\n' "$now" "$pid" "$detail" >"tmp/state/improve_daemon_stall.json" 2>/dev/null || true
+		kill -TERM "$pid" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
 _find_existing_worker_pid() {
 	local name="$1"
 	local pid_file pid pattern pid
@@ -208,6 +241,10 @@ _find_existing_worker_pid() {
 				rm -f "$pid_file" 2>/dev/null || true
 				return 1
 			fi
+			if [ "$name" = "improve_daemon" ] && ! _improve_daemon_responsive "$pid"; then
+				rm -f "$pid_file" 2>/dev/null || true
+				return 1
+			fi
 			echo "$pid"
 			return 0
 		fi
@@ -217,6 +254,9 @@ _find_existing_worker_pid() {
 		pid=$(pgrep -f "$pattern" 2>/dev/null | head -n 1 || true)
 		if _pid_alive "$pid"; then
 			if [ "$name" = "soren_loop" ] && ! _soren_loop_adoptable "$pid"; then
+				return 1
+			fi
+			if [ "$name" = "improve_daemon" ] && ! _improve_daemon_responsive "$pid"; then
 				return 1
 			fi
 			echo "$pid"
@@ -495,6 +535,10 @@ while true; do
 
 		# worker が生きていればスキップ
 		if _pid_matches_worker "$_w_pid" "$_w_pattern"; then
+			if [ "$_w_name" = "improve_daemon" ] && ! _improve_daemon_responsive "$_w_pid"; then
+				WORKER_PIDS[$idx]=""
+				_w_pid=""
+			else
 			_w_pid_file="$(_pidfile_for_worker "$_w_name")"
 			if [ "$_w_name" != "soren_loop" ] && [ -n "$_w_pid_file" ] && [ -n "$_w_pid" ]; then
 				_w_recorded_pid=$(cat "$_w_pid_file" 2>/dev/null || true)
@@ -504,6 +548,7 @@ while true; do
 				fi
 			fi
 			continue
+			fi
 		fi
 
 		# supervisor の内部 PID が古くなっても、実 worker が生きていれば採用して監視を継続する。

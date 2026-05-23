@@ -3821,6 +3821,10 @@ def decide(game_state, analysis):
         supervisor = (REPO_ROOT / "start_all.sh").read_text()
 
         self.assertIn("after stale supervisor pid", supervisor)
+        self.assertIn("_improve_daemon_responsive()", supervisor)
+        self.assertIn("IMPROVE_DAEMON_LOCK_STALL_SEC", supervisor)
+        self.assertIn("改善ロックを消費していない", supervisor)
+        self.assertIn("tmp/state/improve_daemon_stall.json", supervisor)
         self.assertIn("_pid_matches_worker()", supervisor)
         self.assertIn("process-list access", supervisor)
         self.assertIn("operation not permitted", supervisor)
@@ -3837,6 +3841,21 @@ def decide(game_state, analysis):
         self.assertLess(
             supervisor.index('if existing_pid="$(_find_existing_worker_pid "$_w_name")"; then'),
             supervisor.index('if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then'),
+        )
+
+    def test_prediction_result_includes_regression_reason_for_purge(self):
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+        predictions = (REPO_ROOT / "twitch_predictions.sh").read_text()
+
+        self.assertIn("regression_reason_raw", loop)
+        self.assertIn("regression_reason_label", loop)
+        self.assertIn("REGRESSION_ROLLBACK_RESULT", loop)
+        self.assertIn('"early_comp_top_gap": "comp比率低下"', loop)
+        self.assertIn('${_regression_detail}', predictions)
+        self.assertIn('${_stale_regression_detail}', predictions)
+        self.assertLess(
+            predictions.index('if [ "${OUTCOME_INDEX}" = "3" ]'),
+            predictions.rindex('rm -f "$PREDICTION_STATE_FILE"'),
         )
 
     def test_supervisor_surfaces_worker_duplicates(self):

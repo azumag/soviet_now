@@ -48,7 +48,7 @@ _cfg_min_games=$(sed -n 's/^[[:space:]]*MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1
 _cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-$_cfg_min_games}"
 # 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
-PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$(( _cfg_min_games * 40 ))}"
+PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$((_cfg_min_games * 40))}"
 # 投票受付時間を過ぎても、サイクル完了までは resolve 用 state を保持する。
 # 必要なら明示的に max age を設定して最終的な掃除だけ行う。
 PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
@@ -160,7 +160,30 @@ except Exception: print(0)
 " 2>/dev/null || echo 0)
 		local _stale_label="${_stale_labels[$_stale_best]:-index=$_stale_best}"
 		_log "STALE: prediction resolved on Twitch: $_stale_label"
-		enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
+		if [ "${_stale_best}" = "3" ]; then
+			local _stale_regression_detail=""
+			_stale_regression_detail=$(python3 - "$TMP_STATE_DIR/current_prediction.json" <<'PY' 2>/dev/null || echo "")
+import json, sys
+f = sys.argv[1]
+try:
+    d = json.load(open(f))
+    label = d.get("regression_reason_label", "")
+    raw = d.get("regression_reason_raw", "")
+    if label:
+        print(f"理由: {label}")
+    elif raw:
+        print(f"理由: {raw}")
+except Exception:
+    pass
+PY
+			if [ -n "${_stale_regression_detail}" ]; then
+				enqueue_chat_message "予想結果：「${_stale_label}」でした！${_stale_regression_detail}" "predictions"
+			else
+				enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
+			fi
+		else
+			enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
+		fi
 	else
 		_log "STALE: resolve failed, prediction may need manual cleanup"
 	fi
@@ -484,7 +507,30 @@ PY
 	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清")
 	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
 	_log "prediction resolved: $OUTCOME_LABEL"
-	enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
+	if [ "${OUTCOME_INDEX}" = "3" ] && [ -f "$PREDICTION_STATE_FILE" ]; then
+		# 粛清理由は detail を追加で投稿
+		_regression_detail=$(python3 - "$PREDICTION_STATE_FILE" <<'PY' 2>/dev/null || echo "")
+import json, sys
+f = sys.argv[1]
+try:
+    d = json.load(open(f))
+    label = d.get("regression_reason_label", "")
+    raw = d.get("regression_reason_raw", "")
+    if label:
+        print(f"理由: {label}")
+    elif raw:
+        print(f"理由: {raw}")
+except Exception:
+    pass
+PY
+		if [ -n "${_regression_detail}" ]; then
+			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！${_regression_detail}" "predictions"
+		else
+			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
+		fi
+	else
+		enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
+	fi
 	rm -f "$PREDICTION_STATE_FILE"
 	;;
 

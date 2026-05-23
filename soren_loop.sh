@@ -62,17 +62,17 @@ mkdir -p tmp
 _soren_lock_pid_alive() {
 	local pid="${1:-}" cmd="" err=""
 	case "$pid" in
-	''|*[!0-9]*) return 1 ;;
+	'' | *[!0-9]*) return 1 ;;
 	esac
-	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
+	err=$({ kill -0 "$pid" >/dev/null; } 2>&1) && return 0
 	case "$err" in
-	*"operation not permitted"*|*"Operation not permitted"*)
+	*"operation not permitted"* | *"Operation not permitted"*)
 		return 0
 		;;
 	esac
 	cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
 	case "$cmd" in
-	*"soren_loop.sh"*|*"/bin/bash"*"soren_loop.sh"*) return 0 ;;
+	*"soren_loop.sh"* | *"/bin/bash"*"soren_loop.sh"*) return 0 ;;
 	esac
 	return 1
 }
@@ -84,10 +84,13 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 	fi
 	# stale lock — force acquire
 	rm -rf "$LOCKDIR"
-	mkdir "$LOCKDIR" || { echo "ERROR: failed to acquire lock."; exit 1; }
+	mkdir "$LOCKDIR" || {
+		echo "ERROR: failed to acquire lock."
+		exit 1
+	}
 fi
 SOREN_MAIN_PID="$$"
-echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"
+echo "$SOREN_MAIN_PID" >"$LOCKDIR/pid"
 export SOREN_MAIN_PID
 rm -f tmp/stop
 
@@ -119,14 +122,14 @@ log_pause_throttled() {
 	local key="${1:-pause}" message="${2:-[PAUSE]}"
 	local now interval safe_key state_file last_ts
 	interval="${SOREN_PAUSE_LOG_INTERVAL_SEC:-900}"
-	case "$interval" in ''|*[!0-9]*) interval=900 ;; esac
+	case "$interval" in '' | *[!0-9]*) interval=900 ;; esac
 	now=$(date +%s)
 	safe_key=$(printf '%s' "$key" | tr -cd 'A-Za-z0-9_.-')
 	[ -n "$safe_key" ] || safe_key="pause"
 	state_file="${TMP_STATE_DIR:-tmp/state}/pause_log_${safe_key}.ts"
 	mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
 	last_ts=$(cat "$state_file" 2>/dev/null || echo 0)
-	case "$last_ts" in ''|*[!0-9]*) last_ts=0 ;; esac
+	case "$last_ts" in '' | *[!0-9]*) last_ts=0 ;; esac
 	if [ $((now - last_ts)) -ge "$interval" ]; then
 		_SOREN_LAST_PAUSE_LOG_KEY="$key"
 		_SOREN_LAST_PAUSE_LOG_TS="$now"
@@ -174,10 +177,10 @@ queue_early_escape_lock_if_needed() {
 	_stag_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('consecutive_no_improve',0)))" 2>/dev/null || echo 0)
 	_rstreak_count=$(python3 -c "import json; print(int(json.load(open('${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}', encoding='utf-8')).get('regression_streak',0)))" 2>/dev/null || echo 0)
 	_early_min="${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}"
-	case "$_early_min" in ''|*[!0-9]*) _early_min=4 ;; esac
+	case "$_early_min" in '' | *[!0-9]*) _early_min=4 ;; esac
 	if [ "${_cycle_acc_count:-0}" -lt "$_early_min" ] || {
 		[ "${_stag_count:-0}" -lt "${WILDCARD_TRIGGER_STAGNATION:-3}" ] &&
-			[ "${_rstreak_count:-0}" -lt "${WILDCARD_REGRESSION_STREAK:-2}" ];
+			[ "${_rstreak_count:-0}" -lt "${WILDCARD_REGRESSION_STREAK:-2}" ]
 	}; then
 		return 1
 	fi
@@ -397,6 +400,37 @@ json.dump(d,open(f,'w'))
 	return 0
 }
 
+_format_regression_reason() {
+	python3 - "${REGRESSION_ROLLBACK_RESULT:-}" <<'PY'
+import sys
+reason_map = {
+    "early_comp_top_gap": "comp比率低下",
+    "curr_comp_below_top_ratio": "top対比comp不足",
+    "objective_regression": "目的到達后退行",
+    "lost_ukraine_gate": "ウクライナ段階未達",
+    "lost_russia_path": "ロシア経路喪失",
+    "lost_soviet_path": "ソ連経路喪失",
+    "archive_restart_objective_floor": "archive再起動目的未達",
+    "lost_turkmenistan_gate": "トゥルクメニスタン段階未達",
+    "lost_kazakhstan_gate": "カザフスタン段階未達",
+}
+result = sys.argv[1] if len(sys.argv) > 1 else ""
+reason_raw = ""
+for part in result.split(","):
+    if part.startswith("reasons="):
+        reason_raw = part[8:]
+        break
+if not reason_raw:
+    print("")
+    raise SystemExit(0)
+labels = []
+for r in reason_raw.split("+"):
+    key = r.split("=")[0] if "=" in r else r
+    labels.append(reason_map.get(key, key))
+print("理由: " + " / ".join(labels))
+PY
+}
+
 _evolution_flow_notify() {
 	local step="${1:-flow}" title="${2:-改善フロー}" body="${3:-}" chat="${4:-}" level="${5:-info}"
 	local full_title="改善フロー: ${title}"
@@ -405,9 +439,9 @@ _evolution_flow_notify() {
 		./overlay_notify.sh worker "$full_title" "$body" "$level" >/dev/null 2>&1 || true
 	fi
 	case "$step" in
-		game_finished | regression_check | no_rollback | twelve_game_improve)
-			chat=""
-			;;
+	game_finished | regression_check | no_rollback | twelve_game_improve)
+		chat=""
+		;;
 	esac
 	if [ -n "$chat" ]; then
 		enqueue_chat_message "$chat" "improve_flow" 4 || true
@@ -505,8 +539,8 @@ _expire_rate_limit_backoff_if_elapsed() {
 	local count ts now exp wait
 	count=$(sed -n '1p' "$file" 2>/dev/null || echo 1)
 	ts=$(sed -n '2p' "$file" 2>/dev/null || echo 0)
-	case "$count" in ''|*[!0-9]*) count=1 ;; esac
-	case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+	case "$count" in '' | *[!0-9]*) count=1 ;; esac
+	case "$ts" in '' | *[!0-9]*) ts=0 ;; esac
 	now=$(date +%s)
 	exp=$((count - 1))
 	[ "$exp" -lt 0 ] && exp=0
@@ -524,7 +558,7 @@ _ensure_status_overlays_watchers() {
 	now=$(date +%s)
 	interval="${SOREN_OVERLAY_AUTORECOVER_INTERVAL_SEC:-15}"
 	case "$interval" in
-	''|*[!0-9]*) interval=15 ;;
+	'' | *[!0-9]*) interval=15 ;;
 	esac
 	if [ "${_SOREN_OVERLAY_RECOVER_BOOTSTRAPPED:-0}" -eq 1 ] && [ $((now - _SOREN_OVERLAY_RECOVER_TS)) -lt "$interval" ]; then
 		return 0
@@ -533,12 +567,12 @@ _ensure_status_overlays_watchers() {
 	_SOREN_OVERLAY_RECOVER_TS=$now
 	./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
 	./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
-		# stats/ops are monitoring overlays. Keep them visible even while the
-		# improve overlay is shown; hiding them here races with soren91 layout
-		# switching and causes visible flicker.
-		./show_status_g.sh --html-obs show >/dev/null 2>&1 || true
-		./show_status.sh --html-obs show >/dev/null 2>&1 || true
-	}
+	# stats/ops are monitoring overlays. Keep them visible even while the
+	# improve overlay is shown; hiding them here races with soren91 layout
+	# switching and causes visible flicker.
+	./show_status_g.sh --html-obs show >/dev/null 2>&1 || true
+	./show_status.sh --html-obs show >/dev/null 2>&1 || true
+}
 
 _run_improve_runtime_monitor() {
 	[ -x ./monitor_improve_runtime.sh ] || return 0
@@ -546,7 +580,7 @@ _run_improve_runtime_monitor() {
 	now=$(date +%s)
 	interval="${SOREN_IMPROVE_MONITOR_INTERVAL_SEC:-15}"
 	case "$interval" in
-	''|*[!0-9]*) interval=15 ;;
+	'' | *[!0-9]*) interval=15 ;;
 	esac
 	if [ "${_SOREN_IMPROVE_MONITOR_TS:-0}" -gt 0 ] && [ $((now - _SOREN_IMPROVE_MONITOR_TS)) -lt "$interval" ]; then
 		return 0
@@ -565,7 +599,7 @@ _cleanup_once() {
 	fi
 	lock_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || true)
 	case "$lock_pid" in
-	''|*[!0-9]*) lock_pid="" ;;
+	'' | *[!0-9]*) lock_pid="" ;;
 	esac
 	if [ -n "$lock_pid" ] && [ "$lock_pid" != "${SOREN_MAIN_PID:-}" ]; then
 		log "[CLEANUP] lock owner changed (owner=${lock_pid}, self=${SOREN_MAIN_PID:-?}) -> skip global cleanup"
@@ -612,7 +646,7 @@ _exit_if_lock_owner_changed() {
 	local lock_pid=""
 	lock_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || true)
 	case "$lock_pid" in
-	''|*[!0-9]*)
+	'' | *[!0-9]*)
 		mkdir -p "$LOCKDIR" 2>/dev/null || true
 		echo "${SOREN_MAIN_PID:-$$}" >"$LOCKDIR/pid" 2>/dev/null || true
 		log "[LOCK] ${stage}: lock owner missing/invalid -> adopted by self=${SOREN_MAIN_PID:-?}"
@@ -641,7 +675,7 @@ _run_scheduled_meriken_time_window() {
 		end_epoch=$(scheduled_meriken_time_begin "$reason" 2>/dev/null || true)
 	fi
 	case "$end_epoch" in
-	''|*[!0-9]*) end_epoch=0 ;;
+	'' | *[!0-9]*) end_epoch=0 ;;
 	esac
 	if [ "${end_epoch:-0}" -le "$(date +%s)" ]; then
 		log "[MERIKEN_TIME] 定時枠の終了時刻を過ぎているため開始しない"
@@ -664,7 +698,6 @@ _run_scheduled_meriken_time_window() {
 	soren91_stop 2>/dev/null || true
 	return 0
 }
-
 
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
@@ -838,7 +871,6 @@ for path in sys.argv[1:]:
 		continue
 	fi
 
-
 	# 改善完了が20時台だった場合: soren91を停止せずメリケンAIタイムに移行
 	# improve_daemon からのファイルベース通知を読み取る
 	if [ -f "tmp/state/meriken_time_pending" ]; then
@@ -902,7 +934,7 @@ for path in sys.argv[1:]:
 			log "[WILDCARD] progress report skipped/failed after post_game_bookkeeping"
 	fi
 	# 定期 tmp/ クリーンアップ (50ゲームごと)
-	if (( GAME_NUM % 50 == 0 )); then
+	if ((GAME_NUM % 50 == 0)); then
 		cleanup_tmp_files
 	fi
 
@@ -933,11 +965,39 @@ for path in sys.argv[1:]:
 		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 			# best_outcome を粛清(3)に更新: prediction_worker が検知して resolve する
-			python3 -c "
-import json
-f='$TMP_STATE_DIR/current_prediction.json'
-d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
-" 2>/dev/null || true
+			# 粛清理由も保存 (twitch投稿用に、後で人が読みやすい形式に変換)
+			python3 - "$TMP_STATE_DIR/current_prediction.json" "${REGRESSION_ROLLBACK_RESULT:-}" <<'PY' 2>/dev/null || true
+import json, sys
+state_file = sys.argv[1]
+regression_result = sys.argv[2] if len(sys.argv) > 2 else ""
+d = json.load(open(state_file))
+d["best_outcome"] = 3
+# reasons=... の部分を抽出して保持
+reason_raw = ""
+for part in regression_result.split(","):
+    if part.startswith("reasons="):
+        reason_raw = part[8:]  # "reasons=" の長さ
+        break
+d["regression_reason_raw"] = reason_raw
+# 人が読みやすい理由テーブル
+reason_map = {
+    "early_comp_top_gap": "comp比率低下",
+    "curr_comp_below_top_ratio": "top対比comp不足",
+    "objective_regression": "目的到達后退行",
+    "lost_ukraine_gate": "ウクライナ段階未達",
+    "lost_russia_path": "ロシア経路喪失",
+    "lost_soviet_path": "ソ連経路喪失",
+    "archive_restart_objective_floor": "archive再起動目的未達",
+    "lost_turkmenistan_gate": "トゥルクメニスタン段階未達",
+    "lost_kazakhstan_gate": "カザフスタン段階未達",
+}
+labels = []
+for r in reason_raw.split("+"):
+    key = r.split("=")[0] if "=" in r else r
+    labels.append(reason_map.get(key, key))
+d["regression_reason_label"] = " / ".join(labels) if labels else reason_raw
+json.dump(d, open(state_file, "w"))
+PY
 		fi
 		_post_regression_route_info=$(_post_regression_route)
 		IFS='|' read -r _post_regression_mode _post_regression_detail _post_regression_rstreak _post_regression_objective_loss _post_regression_target_progress <<EOF
@@ -990,13 +1050,13 @@ EOF
 				_direct_escape_flag=1
 			fi
 			POST_REGRESSION_MODE="${_post_regression_mode:-post_regression}" \
-			POST_REGRESSION_DETAIL="${_post_regression_detail:-}" \
-			POST_REGRESSION_DIRECT="${_direct_escape_flag:-0}" \
-			POST_REGRESSION_RSTREAK="${_post_regression_rstreak:-0}" \
-			POST_REGRESSION_OBJECTIVE_LOSS="${_post_regression_objective_loss:-0}" \
-			REGRESSION_ROLLBACK_HASH_VALUE="${REGRESSION_ROLLBACK_HASH:-}" \
-			REGRESSION_ROLLBACK_RESULT_VALUE="${REGRESSION_ROLLBACK_RESULT:-}" \
-			python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+				POST_REGRESSION_DETAIL="${_post_regression_detail:-}" \
+				POST_REGRESSION_DIRECT="${_direct_escape_flag:-0}" \
+				POST_REGRESSION_RSTREAK="${_post_regression_rstreak:-0}" \
+				POST_REGRESSION_OBJECTIVE_LOSS="${_post_regression_objective_loss:-0}" \
+				REGRESSION_ROLLBACK_HASH_VALUE="${REGRESSION_ROLLBACK_HASH:-}" \
+				REGRESSION_ROLLBACK_RESULT_VALUE="${REGRESSION_ROLLBACK_RESULT:-}" \
+				python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
 import json
 import os
 import sys
@@ -1043,7 +1103,7 @@ PY
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 
-		queue_early_escape_lock_if_needed || true
+	queue_early_escape_lock_if_needed || true
 
 	# 改善サイクル管理: 12試合蓄積時にロックファイルを作成してdeamonに通知
 	# improve_daemon が動いていない場合は蓄積リセットのみ行い次サイクルへ
