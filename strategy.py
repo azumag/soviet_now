@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v683: axis 9.68 T13/T14 proximity guidance — T14 creation requires two T14 pieces within
-     #       merge distance. In critical phase (max_y>=2.0, pc>=35), height penalty dominates
-     #       and T14 pieces scatter. Bonus +150-300 when merge_grade==NO && rp<3 && next_type
-     #       in [13,14] && same-type piece within 1.5u. Fixes T14 scatter → T14→T15 route loss.
-     #       Target: Kazakhstan(T14) rate 50%→75%+. Does NOT modify russia_phase/DEADLINE_GUARD.
-     #       mandatory_themes: does NOT encourage deadline crossing (only fires on NO_MERGE).
-     #       refs: tmp/analysis_result.md (Primary hypothesis: T13/T14 proximity axis 9.68)
      # v682: critical phase pc>=35 low placement誘導 — merge_grade=="NO" && max_y>=2.0 && pc>=35
      #       で低landing_y配置に+400、中間配置に-200。worst T64-T66 (pc=35-37) max_y runaway防止。
      #       対象: Kazakhstan(T14)到连率58%改善。russia_phase不改変、mandatory_themes適合。
@@ -1357,35 +1350,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
-
-        # ----- axis 9.68: T13/T14 proximity guidance (Kazakhstan T14 gateway fix) -----
-        # T14 creation requires two T14 pieces within merge distance. In critical phase
-        # (max_y>=2.0, piece_count>=35), height penalty dominates placement and T14 pieces
-        # scatter. This axis provides proximity bonus for T13/T14 pieces to ensure
-        # T14→T15 route is preserved.
-        #
-        # Condition: merge_grade=="NO" && reactive_pair_count<3 && next_type in [13,14]
-        # Bonus: +150-300 scaled by proximity (closer=higher) and piece_count congestion
-        # Mandatory themes compliant: does not encourage deadline crossing
-        #
-        # Why this addresses Kazakhstan gate (50% current):
-        # T14 creation requires two T14 pieces adjacent. Current strategy has no T14-
-        # specific guidance — only generic same-type proximity (axis 9.6b) which has
-        # lower bonus magnitude. Adding dedicated T13/T14 proximity axis keeps T14 pieces
-        # within merge distance during critical phase.
-        #
-        # Fixes rollback failure mode: T14 pieces scatter instead of clustering for T14→T15 route
-        # refs: tmp/analysis_result.md (Primary hypothesis), tmp/improve_brief.md (stage gate rates)
-        if merge_grade == "NO" and reactive_pair_count < 3 and next_type in [13, 14] and not death_spiral:
-            same_type_list = [p for p in pieces if p.get("type") == next_type]
-            if same_type_list and len(same_type_list) >= 1:
-                closest = min(same_type_list, key=lambda p: abs(p.get("x", 99) - x))
-                dist = abs(closest.get("x", 99) - x)
-                if dist < 1.5:
-                    piece_count_congestion = max(0.0, (piece_count - 28) * 0.12) if piece_count >= 28 else 0.0
-                    proximity_bonus = 300.0 * (1.0 + piece_count_congestion)
-                    score += proximity_bonus
-                    reasons.append("T13T14_PROXIMITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
