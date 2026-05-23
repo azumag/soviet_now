@@ -1243,7 +1243,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if min_merged_dist < float("inf"):
                             chain_score = max(0, 300.0 - min_merged_dist * 80.0)
                             if sp_y > 1.0:
-                                chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
+                                chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.3502)
                             if chain_score > best_chain_score:
                                 best_chain_score = chain_score
                                 best_stack_target = sp
@@ -1865,7 +1865,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
             candidate_margin_86 = result.get("deadline_margin", 99)
-            near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
+            near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3700)
             if not near_deadline_suppressed:
                 if reactive_pair_count >= 2:
                     score += 1000.0
