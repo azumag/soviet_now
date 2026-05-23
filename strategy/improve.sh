@@ -1912,7 +1912,7 @@ PY
 		"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
 		"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
 		"${MIN_GAMES_BEFORE_IMPROVE:-12}" \
-		"${WILDCARD_REGRESSION_STREAK:-3}" <<'PY' 2>/dev/null || echo 0
+		"${WILDCARD_REGRESSION_STREAK:-2}" <<'PY' 2>/dev/null || echo 0
 import json
 import os
 import sys
@@ -2260,7 +2260,7 @@ PY
 					"warn"
 			fi
 			log "[WILDCARD] stagnation=$stag >= ${WILDCARD_TRIGGER_STAGNATION:-3} → ${improve_reason} モードで起動"
-		elif [ "$rstreak" -ge "${WILDCARD_REGRESSION_STREAK:-4}" ]; then
+		elif [ "$rstreak" -ge "${WILDCARD_REGRESSION_STREAK:-2}" ]; then
 			# counter 非依存 回帰ストリーク経路 (OK_BEAT マスク回避)。
 			# churn 緩和: cooldown マーカ経過時のみ発火し発火時に更新。
 			local _wccd="${WILDCARD_STREAK_COOLDOWN_FILE:-tmp/state/.wildcard_streak_cooldown}"
@@ -2279,7 +2279,7 @@ PY
 					_improve_flow_notify \
 						"archive_restart_candidate_yes" \
 						"archive_restart candidate? yes" \
-						"regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-4}; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=archive_restart" \
+						"regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=archive_restart" \
 						"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
 						"warn"
 				elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
@@ -2298,12 +2298,12 @@ PY
 					_improve_flow_notify \
 						"wildcard_frontier" \
 						"wildcard frontier recovery possible? yes" \
-						"archive candidate unavailable; regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-4}; improve_reason=wildcard" \
+						"archive candidate unavailable; regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}; improve_reason=wildcard" \
 						"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
 						"warn"
 				fi
 				: >"$_wccd" 2>/dev/null || true
-				log "[WILDCARD] regression_streak=$rstreak >= ${WILDCARD_REGRESSION_STREAK:-4} (counter非依存) → ${improve_reason} モード起動 (cooldown ${_wccd_sec}s)"
+				log "[WILDCARD] regression_streak=$rstreak >= ${WILDCARD_REGRESSION_STREAK:-2} (counter非依存) → ${improve_reason} モード起動 (cooldown ${_wccd_sec}s)"
 			else
 				log "[WILDCARD] regression_streak=$rstreak だが cooldown 中 → 今回は通常改善 (churn緩和)"
 			fi
