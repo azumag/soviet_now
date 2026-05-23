@@ -1843,10 +1843,28 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("card_gacha | chitchat | short_reaction", script)
         self.assertIn("非助言カテゴリのためアドバイス保存を抑制", script)
         self.assertIn("非助言カテゴリの生成アドバイスを破棄", script)
+        self.assertIn('"" | "（なし）" | "なし" | "（アドバイスなし）" | なし* | （アドバイスなし）*)', script)
+        allow_idx = script.index('if [ "$_allow_advice_append" = "1" ]; then')
+        candidate_idx = script.rindex('if [ -n "$strategy_advice_candidates_main" ]; then')
+        discard_idx = script.index('elif [ -n "$advice_item$comment_advice_item$codex_advice_item" ]; then')
         self.assertLess(
-            script.index("非助言カテゴリの生成アドバイスを破棄"),
-            script.rindex('if [ -n "$strategy_advice_candidates_main" ]; then'),
+            allow_idx,
+            candidate_idx,
         )
+        self.assertLess(
+            candidate_idx,
+            discard_idx,
+        )
+
+    def test_t13_t14_proximity_bonus_keeps_reactive_danger_guard(self):
+        strategy = (REPO_ROOT / "strategy.py").read_text()
+        block = strategy.rsplit("axis 9.68 T13/T14 proximity bonus", 1)[1].split(
+            "axis 9.7 pipeline-aware placement guidance", 1
+        )[0]
+
+        self.assertIn("reactive_pair_count < 3", block)
+        self.assertIn('reasons.append("T13_PROXIMITY_BONUS")', block)
+        self.assertIn('reasons.append("T14_PROXIMITY_BONUS")', block)
 
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()

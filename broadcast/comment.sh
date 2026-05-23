@@ -1706,7 +1706,11 @@ _append_advice_item_to_file() {
 	local advice_item="$2"
 	local log_label="$3"
 	advice_item=$(printf '%s' "$advice_item" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
-	[ -n "$advice_item" ] || return 0
+	case "$advice_item" in
+	"" | "（なし）" | "なし" | "（アドバイスなし）" | なし* | （アドバイスなし）*)
+		return 0
+		;;
+	esac
 	local advice_line="- $advice_item"
 	[ -f "$advice_file" ] || : >"$advice_file"
 	if grep -qE '^[[:space:]]*-?[[:space:]]*（なし）[[:space:]]*$' "$advice_file" 2>/dev/null; then
@@ -2492,32 +2496,32 @@ RETRYCOMMENT
 				if [ -n "$codex_advice_item" ] && [ "$codex_advice_item" != "（アドバイスなし）" ] && [ "$codex_advice_item" != "なし" ] && [[ "$codex_advice_item" != なし* ]] && [[ "$codex_advice_item" != （アドバイスなし）* ]]; then
 					_append_codex_advice_item "$codex_advice_item"
 				fi
+				if [ -n "$strategy_advice_candidates_main" ]; then
+					while IFS= read -r advice_line; do
+						[ -n "$advice_line" ] || continue
+						_append_strategy_advice_item "$advice_line" "main"
+					done <<<"$strategy_advice_candidates_main"
+				fi
+				if [ -n "$strategy_advice_candidates_soren91" ]; then
+					while IFS= read -r advice_line; do
+						[ -n "$advice_line" ] || continue
+						_append_strategy_advice_item "$advice_line" "soren91"
+					done <<<"$strategy_advice_candidates_soren91"
+				fi
+				if [ -n "$comment_advice_candidates" ]; then
+					while IFS= read -r advice_line; do
+						[ -n "$advice_line" ] || continue
+						_append_comment_advice_item "$advice_line"
+					done <<<"$comment_advice_candidates"
+				fi
+				if [ -n "$codex_advice_candidates" ]; then
+					while IFS= read -r advice_line; do
+						[ -n "$advice_line" ] || continue
+						_append_codex_advice_item "$advice_line"
+					done <<<"$codex_advice_candidates"
+				fi
 			elif [ -n "$advice_item$comment_advice_item$codex_advice_item" ]; then
 				log "[COMMENT] 非助言カテゴリの生成アドバイスを破棄: ${dominant_category:-unknown}"
-			fi
-			if [ -n "$strategy_advice_candidates_main" ]; then
-				while IFS= read -r advice_line; do
-					[ -n "$advice_line" ] || continue
-					_append_strategy_advice_item "$advice_line" "main"
-				done <<<"$strategy_advice_candidates_main"
-			fi
-			if [ -n "$strategy_advice_candidates_soren91" ]; then
-				while IFS= read -r advice_line; do
-					[ -n "$advice_line" ] || continue
-					_append_strategy_advice_item "$advice_line" "soren91"
-				done <<<"$strategy_advice_candidates_soren91"
-			fi
-			if [ -n "$comment_advice_candidates" ]; then
-				while IFS= read -r advice_line; do
-					[ -n "$advice_line" ] || continue
-					_append_comment_advice_item "$advice_line"
-				done <<<"$comment_advice_candidates"
-			fi
-			if [ -n "$codex_advice_candidates" ]; then
-				while IFS= read -r advice_line; do
-					[ -n "$advice_line" ] || continue
-					_append_codex_advice_item "$advice_line"
-				done <<<"$codex_advice_candidates"
 			fi
 
 			# ソ連テーマを追記
