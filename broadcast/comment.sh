@@ -1419,6 +1419,18 @@ print(json.dumps(rows, ensure_ascii=False, separators=(",", ":")))
 PY
 }
 
+_comment_category_allows_advice_append() {
+	local category="${1:-}"
+	case "$category" in
+	card_gacha | chitchat | short_reaction | bits | subscription | sing_request | raid | other)
+		return 1
+		;;
+	*)
+		return 0
+		;;
+	esac
+}
+
 _classify_comments_with_edit_contract() {
 	local classifier_prompt_file="$1" output_file="$2" primary="$3" fallback="$4" timeout_sec="$5"
 	local base_prompt agent prev_agent edit_prompt candidate_rc raw_json classification
@@ -2002,6 +2014,14 @@ else:
 " <<<"$classification_json")
 		log "[COMMENT] 分類結果: ${dominant_category:-取得失敗} (classification: ${classification_json:0:200})"
 	fi
+	if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
+		strategy_advice_candidates=""
+		strategy_advice_candidates_main=""
+		strategy_advice_candidates_soren91=""
+		comment_advice_candidates=""
+		codex_advice_candidates=""
+		log "[COMMENT] 非助言カテゴリのためアドバイス保存を抑制: ${dominant_category}"
+	fi
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -2457,15 +2477,23 @@ RETRYCOMMENT
 				_mark_comment_batch_processed "$comment_batch_hash"
 			fi
 
-			# 本文が有効なときだけアドバイスを追記
-			if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
-				_append_strategy_advice_item "$advice_item" "$_comment_mode_generated"
+			# 本文が有効で、元コメントが助言カテゴリのときだけアドバイスを追記する。
+			local _allow_advice_append=1
+			if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
+				_allow_advice_append=0
 			fi
-			if [ -n "$comment_advice_item" ] && [ "$comment_advice_item" != "（アドバイスなし）" ] && [ "$comment_advice_item" != "なし" ] && [[ "$comment_advice_item" != なし* ]] && [[ "$comment_advice_item" != （アドバイスなし）* ]]; then
-				_append_comment_advice_item "$comment_advice_item"
-			fi
-			if [ -n "$codex_advice_item" ] && [ "$codex_advice_item" != "（アドバイスなし）" ] && [ "$codex_advice_item" != "なし" ] && [[ "$codex_advice_item" != なし* ]] && [[ "$codex_advice_item" != （アドバイスなし）* ]]; then
-				_append_codex_advice_item "$codex_advice_item"
+			if [ "$_allow_advice_append" = "1" ]; then
+				if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
+					_append_strategy_advice_item "$advice_item" "$_comment_mode_generated"
+				fi
+				if [ -n "$comment_advice_item" ] && [ "$comment_advice_item" != "（アドバイスなし）" ] && [ "$comment_advice_item" != "なし" ] && [[ "$comment_advice_item" != なし* ]] && [[ "$comment_advice_item" != （アドバイスなし）* ]]; then
+					_append_comment_advice_item "$comment_advice_item"
+				fi
+				if [ -n "$codex_advice_item" ] && [ "$codex_advice_item" != "（アドバイスなし）" ] && [ "$codex_advice_item" != "なし" ] && [[ "$codex_advice_item" != なし* ]] && [[ "$codex_advice_item" != （アドバイスなし）* ]]; then
+					_append_codex_advice_item "$codex_advice_item"
+				fi
+			elif [ -n "$advice_item$comment_advice_item$codex_advice_item" ]; then
+				log "[COMMENT] 非助言カテゴリの生成アドバイスを破棄: ${dominant_category:-unknown}"
 			fi
 			if [ -n "$strategy_advice_candidates_main" ]; then
 				while IFS= read -r advice_line; do

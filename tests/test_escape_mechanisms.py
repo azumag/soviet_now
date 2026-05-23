@@ -1836,6 +1836,18 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             script.index('local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"'),
         )
 
+    def test_comment_advice_append_ignores_non_advice_categories(self):
+        script = (REPO_ROOT / "broadcast/comment.sh").read_text()
+
+        self.assertIn("_comment_category_allows_advice_append()", script)
+        self.assertIn("card_gacha | chitchat | short_reaction", script)
+        self.assertIn("非助言カテゴリのためアドバイス保存を抑制", script)
+        self.assertIn("非助言カテゴリの生成アドバイスを破棄", script)
+        self.assertLess(
+            script.index("非助言カテゴリの生成アドバイスを破棄"),
+            script.rindex('if [ -n "$strategy_advice_candidates_main" ]; then'),
+        )
+
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 
