@@ -794,29 +794,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # v682: mandatory_themes strict enforcement — NO_MERGE crossing deadline at high reactive_pairs is forbidden
-        # When merge_grade==NO && reactive_pairs>=3 && decision_crosses_deadline==true, suppress all candidates
-        # to force fallback to lowest landing_y non-crossing (or HARD_SUPPRESS if nothing safe remains)
-        if __dlg_rp_count >= 3:
-            __dlg_forbidden = [
-                c for c in __dlg_cands
-                if isinstance(c, dict)
-                and c.get("merge_grade") == "NO"
-                and c.get("decision_crosses_deadline")
-            ]
-            if __dlg_forbidden:
-                __dlg_valid = [
-                    c for c in __dlg_cands
-                    if isinstance(c, dict)
-                    and c.get("merge_grade") != "NO"
-                    and not c.get("decision_crosses_deadline")
-                ]
-                if __dlg_valid:
-                    __dlg_best = min(__dlg_valid, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                    return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MANDATORY_THEMES_STRICT"}
-                return {"x": 0.0, "reason": "DEADLINE_GUARD_HARD_SUPPRESS"}
-
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
