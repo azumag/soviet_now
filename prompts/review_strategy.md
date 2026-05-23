@@ -29,12 +29,14 @@
 - [ ] 既存の有効ロジックが誤って削除・破壊されていないか（`strategy.py` との diff で確認）
 - [ ] 変更部分の周辺に partial edit 崩れ（構文エラー、インデントずれ等）がないか
 - [ ] rollback/postmortem の制約に逆行する変更がないか
+- [ ] `height_mult` / `merge_mult` / penalty係数などを増減する変更は、コメントや分析文の「強化/緩和」と実際の計算方向が一致しているか。必ず周辺の最終式（例: `height_penalty = landing_y * ... * height_mult`）まで追って、乗算値が増えると penalty が増えるのか減るのかを検算すること
 
 ### D. 追加品質チェック
 - [ ] `turns >= N` などの固定ターン数ゲートが新規追加されていないか
 - [ ] 文字列・reason文言だけの変更になっていないか（ロジック変更があるか）
 - [ ] `CHAIN_MERGE` を直接強化する変更がないか
 - [ ] height penalty の強化を「スコアアップ手段」として扱う変更がないか
+- [ ] 係数変更の向きが逆ではないか（例: penalty式に掛かる `height_mult` を下げる変更を「height penalty強化」と説明していないか）
 
 ### E. Hard Constraint — 絶対遵守テーマ（mandatory_themes.txt）
 - [ ] `data/mandatory_themes.txt` の全テーマを遵守する実装になっているか
@@ -91,12 +93,14 @@
 - [x/✗] 既存ロジック: ...
 - [x/✗] partial edit: ...
 - [x/✗] rollback制約: ...
+- [x/✗] 係数方向の検算: ...（変更した係数が最終式でどちらに効くか）
 
 ### D. 追加品質
 - [x/✗] 固定ターン数ゲート: ...
 - [x/✗] ロジック変更: ...
 - [x/✗] CHAIN_MERGE強化なし: ...
 - [x/✗] height penalty誤用なし: ...
+- [x/✗] 係数変更の向き: ...
 
 ## Issues Found（FAILの場合のみ）
 （具体的な問題点と修正内容）
