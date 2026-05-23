@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v682: DEADLINE_GUARD fallback path merge_result_crosses_deadline filter — 
+      #       Add merge_result_crosses_deadline check to final fallback (line 808) which was
+      #       missing this filter unlike merge_preferred path (v681). Closes gap where NO_MERGE
+      #       candidate with crossing merge_result could be selected in worst game T56/T64.
+      #       Target stage: Ukraine(T13)=6/12(50%)→improve toward 12/12.
+      #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+      #       refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
+      #             game_history/20260523_151038_score0449.jsonl (worst game T56/T64)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -805,7 +813,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
         # Fallback: only when no merge candidate is available
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        # v682: add merge_result_crosses_deadline filter (mandatory_themes compliance for worst game T56/T64)
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline") and not c.get("merge_result_crosses_deadline")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
