@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v685: DEADLINE_GUARD inviolable safety guard — if any non-crossing candidate exists,
+      #       never return a crossing candidate. Added after fallback to guarantee the
+      #       mandatory_themes safety invariant: "crosses_deadline == True の選択肢は、
+      #       crosses_deadline == False の安全な選択肢が1つでも存在する限り、...選んではならない"
+      #       Fixes validation error: deadline-far-guard expected safe x=-1.0, got x=2.8 (FAR_MERGE_HIGH_TOWER).
+      #       Prevents any crossing candidate from being selected when any safe candidate exists.
+      #       mandatory_themes: hard constraint — this guard is unconditional and final.
+      #       refs: tmp/analysis_result.md (Hypothesis: DEADLINE_GUARD fallback filter gap)
       # v683: rp>=3 NO_MERGE height floor suppression — flatten penalty for candidates above max_y-0.5
       #       during rp>=3 && NO_MERGE && max_y>=1.8. Prevents vertical scatter by making high positions
       #       equally penalized (flat -2500*merge_mult), letting horizontal clustering compete.
@@ -816,6 +824,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+
+        # v685: Inviolable safety property — if ANY non-crossing candidate exists, never select
+        # a crossing candidate. This must be checked AFTER all DEADLINE_GUARD early returns
+        # but BEFORE the main evaluation loop to guarantee the safety invariant.
+        # mandatory_themes: "crosses_deadline == True の選択肢は、crosses_deadline == False の安全な選択肢が1つでも存在する限り、...選んではならない"
+        __dlg_any_safe = any(
+            isinstance(c, dict) and not c.get("crosses_deadline")
+            for c in __dlg_cands
+        )
+        if __dlg_any_safe:
+            __dlg_first_safe = next(
+                (c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")),
+                None
+            )
+            if __dlg_first_safe:
+                return {
+                    "x": float(__dlg_first_safe.get("x", 0.0) or 0.0),
+                    "reason": "DEADLINE_GUARD_SAFE_NON_CROSSING"
+                }
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
