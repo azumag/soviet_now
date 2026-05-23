@@ -2585,6 +2585,24 @@ _merge_rolling_scores_on_normalize() {
 	local stale_hash="$1" actual_hash="$2"
 	[ -n "$stale_hash" ] && [ -n "$actual_hash" ] && [ "$stale_hash" != "$actual_hash" ] || return 0
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+
+	# 永続アーカイブに stale_hash の正しいファイルがあれば、それで作業アーカイブを修復するだけ。
+	# 異なる戦略のスコアをマージしてはならない。
+	local perm_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${stale_hash}.py"
+	local work_file="${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${stale_hash}.py"
+	if [ -f "$perm_file" ]; then
+		local perm_hash
+		perm_hash=$(python3 extract_decide_hash.py "$perm_file" 2>/dev/null || echo "")
+		if [ "$perm_hash" = "$stale_hash" ]; then
+			# 永続アーカイブに正しいファイルがある → 作業アーカイブを修復してスコアはそのまま保持
+			mkdir -p "${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" 2>/dev/null || true
+			cp "$perm_file" "$work_file" 2>/dev/null || true
+			log "[ROLLING] normalize-repair: ${stale_hash} working archive repaired from permanent (skip merge)"
+			return 0
+		fi
+	fi
+
+	# 永続アーカイブにも正しいファイルがない場合のみ、同一戦略の別ハッシュとしてスコアをマージ
 	local result
 	result=$(
 		python3 - "$ROLLING_SCORES_FILE" "$stale_hash" "$actual_hash" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" 2>/dev/null <<'PY'
@@ -2623,14 +2641,9 @@ actual_scores = [int(x) for x in actual.get("scores", []) or []]
 actual_total = int(actual.get("games_total", len(actual_scores)) or len(actual_scores))
 actual_archives = [str(x) for x in (actual.get("_recent_archives", []) or [])]
 
-# stale scores are older; actual scores are newer
-merged_scores = stale_scores + actual_scores
+merged_scores = (stale_scores + actual_scores)[-hot_keep:]
 merged_total = stale_total + actual_total
 
-# keep last hot_keep (stale may have had a hot streak window too)
-merged_scores = merged_scores[-hot_keep:]
-
-# dedup archives preserving order; keep last 25
 seen = set()
 merged_archives = []
 for a in stale_archives + actual_archives:
@@ -2643,18 +2656,9 @@ merged = dict(actual)
 merged["scores"] = merged_scores
 merged["games_total"] = merged_total
 merged["_recent_archives"] = merged_archives
-merged["best_max_type"] = max(
-    int((stale.get("best_max_type") or 0)),
-    int((actual.get("best_max_type") or 0)),
-)
-merged["russia_count"] = max(
-    int((stale.get("russia_count") or 0)),
-    int((actual.get("russia_count") or 0)),
-)
-merged["soviet_count"] = max(
-    int((stale.get("soviet_count") or 0)),
-    int((actual.get("soviet_count") or 0)),
-)
+merged["best_max_type"] = max(int((stale.get("best_max_type") or 0)), int((actual.get("best_max_type") or 0)))
+merged["russia_count"] = max(int((stale.get("russia_count") or 0)), int((actual.get("russia_count") or 0)))
+merged["soviet_count"] = max(int((stale.get("soviet_count") or 0)), int((actual.get("soviet_count") or 0)))
 if merged["best_max_type"] >= 15 and merged["russia_count"] <= 0:
     merged["russia_count"] = 1
 if merged["best_max_type"] >= 16 and merged["soviet_count"] <= 0:
