@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vXXX: axis 9.68 T13/T14 proximity bonus (Kazakhstan T14 gateway fix)
+      #       T13/T14近接ボーナス追加: merge_grade=="NO" && next_type in [13,14] && current_type in [13,14]
+      #       でT13/T14ピースへの近接配置に+150-300ボーナス。T14→T15導線確保。
+      #       対象ステージ: Kazakhstan(T14)=1/12→3/12+。失敗モード: 終盤併合逃し。
+      #       refs: tmp/analysis_result.md (Implementation Plan)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -1367,6 +1372,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if _total_cluster_bonus > 50:
                     score += _total_cluster_bonus
                     reasons.append("NEAR_MISS_CLUSTERING")
+
+        # ----- vXXX: axis 9.68 T13/T14 proximity bonus (Kazakhstan T14 gateway fix) -----
+        # analysis_result.md adopted hypothesis: type14近接配置ボーナス強化 (Kazakhstan T14→Russia T15導線確保)
+        # Primary failure: Kazakhstan(T14) creation rate 1/12 (8%). best game had T14x1 but no T13x1
+        # to merge with → T15 (Russia) never reached. T14 needs 2 pieces to merge into T15.
+        # When a T13 piece exists on board and current_type is T13 or T14, bonus proximity
+        # to existing T13 pieces to set up T13+T13→T14 merge. When T14 exists, bonus proximity
+        # to T14 for T14+T14→T15 merge.
+        # Fires when: merge_grade=="NO" && !death_spiral && (type13_exists || type14_exists)
+        # && (current_type in [13, 14] || current_type == 13)
+        # Bonus: +150-300 based on horizontal proximity (capped 300)
+        # Does NOT fire when reactive>=3: axis 8.8 (-4500) must dominate
+        # Target stage: Kazakhstan(T14)=1/12→3/12+ improvement
+        # refs: tmp/analysis_result.md (Implementation Plan: type14近接配置ボーナス強化),
+        #       tmp/batch_summary.txt (Kazakhstan T14 creation rate 1/12),
+        #       game_history/20260523_183542_score2152.jsonl (best game, T14x1 but no T15)
+        # Fixes analysis_result.md failure mode: "type14が2個以上あるのにtype15未達は終盤併合逃し"
+        if merge_grade == "NO" and not death_spiral:
+            _t13_pieces = [p for p in pieces if p.get("type") == 13]
+            _t14_pieces = [p for p in pieces if p.get("type") == 14]
+            _t13_count = len(_t13_pieces)
+            _t14_count = len(_t14_pieces)
+            if _t13_count >= 1 and next_type in [13, 14] and current_type in [13, 14]:
+                _cx13 = sum(p.get("x", 0) for p in _t13_pieces) / _t13_count
+                _cy13 = sum(p.get("y", 0) for p in _t13_pieces) / _t13_count
+                _dist13 = abs(x - _cx13)
+                if _dist13 < 1.5:
+                    _bonus13 = max(0, 300.0 - _dist13 * 200.0)
+                    if _bonus13 > 0:
+                        score += _bonus13
+                        reasons.append("T13_PROXIMITY_BONUS")
+            if _t14_count >= 1 and next_type == 14 and current_type in [13, 14]:
+                _cx14 = sum(p.get("x", 0) for p in _t14_pieces) / _t14_count
+                _cy14 = sum(p.get("y", 0) for p in _t14_pieces) / _t14_count
+                _dist14 = abs(x - _cx14)
+                if _dist14 < 2.0:
+                    _bonus14 = max(0, 300.0 - _dist14 * 150.0)
+                    if _bonus14 > 0:
+                        score += _bonus14
+                        reasons.append("T14_PROXIMITY_BONUS")
 
         # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
         # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
