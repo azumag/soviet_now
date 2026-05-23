@@ -23,6 +23,8 @@ SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log"
 SEEN_LINE_HASH_FILE="$CHAT_DIR/seen_line_hashes.log"
 PAGE_TOKEN_FILE="$CHAT_DIR/page_token"
 LIVE_CHAT_ID_FILE="$CHAT_DIR/live_chat_id"
+LIVE_VIDEO_ID_FILE="$CHAT_DIR/live_video_id"
+CHANNEL_ID_FILE="$CHAT_DIR/channel_id"
 POLL_INTERVAL_FILE="$CHAT_DIR/poll_interval_sec"
 LAST_POLL_FILE="$CHAT_DIR/last_poll_epoch"
 LAST_ERROR_FILE="$CHAT_DIR/last_error.txt"
@@ -167,6 +169,41 @@ _api_get() {
 	curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "$url"
 }
 
+_youtube_json_value() {
+	local expr="$1"
+	python3 -c "
+import json
+import sys
+try:
+	data = json.load(sys.stdin)
+except Exception:
+	raise SystemExit(1)
+value = ($expr)
+if value:
+	print(str(value).strip())
+	raise SystemExit(0)
+raise SystemExit(1)
+"
+}
+
+_discover_live_video_id() {
+	[ -n "${YOUTUBE_API_KEY:-}" ] || return 1
+	local channel_id="${YOUTUBE_CHANNEL_ID:-}"
+	if [ -z "$channel_id" ] && [ -s "$CHANNEL_ID_FILE" ]; then
+		channel_id=$(cat "$CHANNEL_ID_FILE" 2>/dev/null || true)
+	fi
+	[ -n "$channel_id" ] || return 1
+	local key url resp video_id
+	key=$(_urlencode "$YOUTUBE_API_KEY")
+	channel_id=$(_urlencode "$channel_id")
+	url="https://www.googleapis.com/youtube/v3/search?part=id&channelId=${channel_id}&eventType=live&type=video&maxResults=1&key=${key}"
+	resp=$(_api_get "$url") || return 1
+	video_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("id", {}).get("videoId", "")' 2>/dev/null || true)
+	[ -n "$video_id" ] || return 1
+	printf '%s' "$video_id" >"$LIVE_VIDEO_ID_FILE"
+	printf '%s' "$video_id"
+}
+
 _resolve_live_chat_id() {
 	local force_refresh="${1:-0}"
 	if [ -n "${YOUTUBE_LIVE_CHAT_ID:-}" ]; then
@@ -179,40 +216,62 @@ _resolve_live_chat_id() {
 		return 0
 	fi
 	if [ -z "${YOUTUBE_VIDEO_ID:-}" ] || [ -z "${YOUTUBE_API_KEY:-}" ]; then
-		_log "poll: YOUTUBE_VIDEO_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required"
-		printf '%s\n' "YOUTUBE_VIDEO_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required" >"$LAST_ERROR_FILE" 2>/dev/null || true
+		if [ -z "${YOUTUBE_CHANNEL_ID:-}" ] || [ -z "${YOUTUBE_API_KEY:-}" ]; then
+			_log "poll: YOUTUBE_VIDEO_ID/YOUTUBE_CHANNEL_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required"
+			printf '%s\n' "YOUTUBE_VIDEO_ID/YOUTUBE_CHANNEL_ID/YOUTUBE_LIVE_CHAT_ID and YOUTUBE_API_KEY are required" >"$LAST_ERROR_FILE" 2>/dev/null || true
+			return 1
+		fi
+	fi
+	local video_id key url resp chat_id channel_id discovered_id
+	video_id=""
+	if [ "$force_refresh" = "1" ]; then
+		video_id=$(_discover_live_video_id 2>/dev/null || true)
+	fi
+	if [ -z "$video_id" ] && [ -s "$LIVE_VIDEO_ID_FILE" ]; then
+		video_id=$(cat "$LIVE_VIDEO_ID_FILE" 2>/dev/null || true)
+	fi
+	if [ -z "$video_id" ]; then
+		video_id="${YOUTUBE_VIDEO_ID:-}"
+	fi
+	if [ -z "$video_id" ]; then
+		_log "poll: active live video not found"
+		printf '%s\n' "active live video not found for YouTube channel" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		return 1
 	fi
-	local video_id key url resp chat_id
-	video_id=$(_urlencode "$YOUTUBE_VIDEO_ID")
 	key=$(_urlencode "$YOUTUBE_API_KEY")
-	url="https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${video_id}&key=${key}"
+	url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")&key=${key}"
 	resp=$(_api_get "$url") || {
 		_log "poll: videos.list failed"
 		printf '%s\n' "videos.list failed while resolving activeLiveChatId" >"$LAST_ERROR_FILE" 2>/dev/null || true
 		return 1
 	}
-	chat_id=$(python3 -c '
-import json
-import sys
-try:
-	data = json.load(sys.stdin)
-except Exception:
-	raise SystemExit(1)
-for item in data.get("items") or []:
-	chat_id = ((item.get("liveStreamingDetails") or {}).get("activeLiveChatId") or "").strip()
-	if chat_id:
-		print(chat_id)
-		raise SystemExit(0)
-raise SystemExit(1)
-' <<<"$resp")
+	channel_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("snippet", {}).get("channelId", "")' 2>/dev/null || true)
+	[ -n "$channel_id" ] && printf '%s' "$channel_id" >"$CHANNEL_ID_FILE"
+	chat_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("liveStreamingDetails", {}).get("activeLiveChatId", "")' 2>/dev/null || true)
+	if [ -z "$chat_id" ]; then
+		discovered_id=$(_discover_live_video_id 2>/dev/null || true)
+		if [ -n "$discovered_id" ] && [ "$discovered_id" != "$video_id" ]; then
+			video_id="$discovered_id"
+			url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")&key=${key}"
+			resp=$(_api_get "$url") || {
+				_log "poll: videos.list failed after live video refresh"
+				printf '%s\n' "videos.list failed after live video refresh" >"$LAST_ERROR_FILE" 2>/dev/null || true
+				return 1
+			}
+			channel_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("snippet", {}).get("channelId", "")' 2>/dev/null || true)
+			[ -n "$channel_id" ] && printf '%s' "$channel_id" >"$CHANNEL_ID_FILE"
+			chat_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("liveStreamingDetails", {}).get("activeLiveChatId", "")' 2>/dev/null || true)
+		fi
+	fi
 	if [ -z "$chat_id" ]; then
 		_log "poll: activeLiveChatId not found"
-		printf '%s\n' "activeLiveChatId not found for YOUTUBE_VIDEO_ID" >"$LAST_ERROR_FILE" 2>/dev/null || true
-		rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
+		printf '%s\n' "activeLiveChatId not found for current YouTube live video" >"$LAST_ERROR_FILE" 2>/dev/null || true
+		rm -f "$LIVE_CHAT_ID_FILE" "$LIVE_VIDEO_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
 		return 1
 	fi
 	printf '%s' "$chat_id" >"$LIVE_CHAT_ID_FILE"
+	printf '%s' "$video_id" >"$LIVE_VIDEO_ID_FILE"
+	rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
 	printf '%s' "$chat_id"
 }
 

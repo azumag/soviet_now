@@ -2046,6 +2046,7 @@ PY
 
 _prune_non_objective_rollback_scores() {
 	local current_hash="$1"
+	[ "${OBJECTIVE_MISS_PRUNE_ENABLED:-1}" = "1" ] || return 0
 	[ "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" = "1" ] || return 0
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 	local pruned_hashes
@@ -2323,6 +2324,8 @@ EOF
 _rollback_candidate_file_is_valid() {
 	local expected_hash="$1" candidate_file="$2"
 	[ -f "$candidate_file" ] || return 1
+	local original_hash=""
+	original_hash=$(python3 extract_decide_hash.py "$candidate_file" 2>/dev/null || echo "")
 	if ! command -v validate_strategy >/dev/null 2>&1; then
 		return 0
 	fi
@@ -2336,7 +2339,7 @@ _rollback_candidate_file_is_valid() {
 	local validated_hash=""
 	validated_hash=$(python3 extract_decide_hash.py "$tmp_file" 2>/dev/null || echo "")
 	rm -f "$tmp_file"
-	[ -z "$expected_hash" ] || [ -z "$validated_hash" ] || [ "$expected_hash" = "$validated_hash" ]
+	[ -z "$expected_hash" ] || [ -z "$validated_hash" ] || [ "$expected_hash" = "$validated_hash" ] || [ "$expected_hash" = "$original_hash" ]
 }
 
 _pick_hall_of_fame_rollback_candidate() {
