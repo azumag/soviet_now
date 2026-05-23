@@ -54,6 +54,8 @@ python3 "$ELOOP_LIB_DIR/generate_event_overlay.py" \
 	"$EVENT_OVERLAY_VISIBLE_SEC" \
 	"$CODEX_WORK_OVERLAY_STATE_FILE"
 
+./obs_control.sh stack "${OBS_DASHBOARD_SCENE:-soren}" >/dev/null 2>&1 || true
+
 if [ "${OVERLAY_NOTIFY_OBS_SHOW:-0}" = "1" ]; then
 	./obs_control.sh show "${OBS_DASHBOARD_SCENE:-soren}" "$EVENT_OVERLAY_SOURCE" >/dev/null 2>&1 || true
 fi

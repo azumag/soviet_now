@@ -48,6 +48,9 @@ const url = `ws://${host}:${port}`;
 const enabled = visibility === 'show';
 const inputKind = process.env.OBS_WINDOW_CAPTURE_INPUT_KIND || 'screen_capture';
 const allowReplaceWrongKind = process.env.OBS_WINDOW_CAPTURE_REPLACE_WRONG_KIND !== '0';
+const enforceTopOverlayStack = process.env.OBS_ENFORCE_TOP_OVERLAY_STACK !== '0';
+const topOverlaySource = process.env.OBS_TOP_OVERLAY_SOURCE || process.env.TWICA_OVERLAY_SOURCE || 'twica';
+const belowTopOverlaySource = process.env.OBS_BELOW_TOP_OVERLAY_SOURCE || process.env.OBS_EVENT_OVERLAY_SOURCE || 'eventOverlay';
 const titlePattern = new RegExp(titlePatternRaw);
 const chromeWindowPattern = /\[Google Chrome(?: for Testing)?\]/;
 
@@ -216,6 +219,26 @@ async function setSceneItemEnabled(obs, sceneItemEnabled) {
   }
 }
 
+async function enforceOverlayStack(obs) {
+  if (!enforceTopOverlayStack || !topOverlaySource || !belowTopOverlaySource) return;
+  if (topOverlaySource === belowTopOverlaySource) return;
+
+  const list = await obs.request('GetSceneItemList', { sceneName });
+  const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
+  const stack = [belowTopOverlaySource, topOverlaySource];
+  const startIndex = Math.max(0, items.length - stack.length);
+
+  for (let offset = 0; offset < stack.length; offset += 1) {
+    const item = items.find(entry => entry.sourceName === stack[offset]);
+    if (!item) continue;
+    await obs.request('SetSceneItemIndex', {
+      sceneName,
+      sceneItemId: item.sceneItemId,
+      sceneItemIndex: startIndex + offset,
+    });
+  }
+}
+
 async function main() {
   const obs = await connectAndIdentify();
   try {
@@ -247,6 +270,7 @@ async function main() {
     });
 
     await setSceneItemEnabled(obs, enabled);
+    await enforceOverlayStack(obs);
 
     console.log(`window-capture:${sourceName}:${visibility}:${target.itemName} (${target.itemValue})`);
   } finally {

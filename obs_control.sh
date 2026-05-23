@@ -6,6 +6,7 @@
 #   ./obs_control.sh status <scene> <source> [<source>...]
 #   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
 #   ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
+#   ./obs_control.sh stack <scene>
 #     By default this only initializes a source that still has OBS' default
 #     transform. Set OBS_CONTROL_TRANSFORM_MODE=force to overwrite manually
 #     adjusted OBS transforms.
@@ -24,6 +25,7 @@ Usage:
   ./obs_control.sh status <scene> <source> [<source>...]
   ./obs_control.sh batch <scene> show:<src1>,<src2> hide:<src3>,<src4>
   ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
+  ./obs_control.sh stack <scene>
     Set OBS_CONTROL_TRANSFORM_MODE=force to overwrite an existing manual transform.
 EOF
 	exit 2
@@ -40,6 +42,9 @@ show|hide|status)
 batch)
 	[ -n "$TARGET" ] || usage
 	[ "$#" -ge 3 ] || usage
+	;;
+stack)
+	[ -n "$TARGET" ] || usage
 	;;
 transform)
 	[ -n "$TARGET" ] || usage
@@ -74,6 +79,9 @@ const password = process.env.OBS_WEBSOCKET_PASSWORD || '';
 const url = `ws://${host}:${port}`;
 const requestTimeoutMs = Number(process.env.OBS_WEBSOCKET_TIMEOUT_MS || 8000);
 const transformMode = process.env.OBS_CONTROL_TRANSFORM_MODE || 'init';
+const enforceTopOverlayStack = process.env.OBS_ENFORCE_TOP_OVERLAY_STACK !== '0';
+const topOverlaySource = process.env.OBS_TOP_OVERLAY_SOURCE || process.env.TWICA_OVERLAY_SOURCE || 'twica';
+const belowTopOverlaySource = process.env.OBS_BELOW_TOP_OVERLAY_SOURCE || process.env.OBS_EVENT_OVERLAY_SOURCE || 'eventOverlay';
 
 function fail(message, code = 1) {
   console.error(`[obs_control] ${message}`);
@@ -149,6 +157,34 @@ function isDefaultTransform(transform = {}) {
     && (!transform.boundsType || transform.boundsType === 'OBS_BOUNDS_NONE')
     && approxEqual(transform.boundsWidth, 0)
     && approxEqual(transform.boundsHeight, 0);
+}
+
+async function enforceOverlayStack(obs, sceneName) {
+  if (!enforceTopOverlayStack || !topOverlaySource || !belowTopOverlaySource) return;
+  if (topOverlaySource === belowTopOverlaySource) return;
+
+  const response = await obs.request('GetSceneItemList', { sceneName });
+  const items = Array.isArray(response.sceneItems) ? response.sceneItems : [];
+  const stack = [belowTopOverlaySource, topOverlaySource];
+  const startIndex = Math.max(0, items.length - stack.length);
+  const moved = [];
+
+  for (let offset = 0; offset < stack.length; offset += 1) {
+    const sourceName = stack[offset];
+    const item = items.find(entry => entry.sourceName === sourceName);
+    if (!item) continue;
+    const sceneItemIndex = startIndex + offset;
+    await obs.request('SetSceneItemIndex', {
+      sceneName,
+      sceneItemId: item.sceneItemId,
+      sceneItemIndex,
+    });
+    moved.push(`${sourceName}:${sceneItemIndex}`);
+  }
+
+  if (moved.length > 0 && process.env.OBS_CONTROL_LOG_OVERLAY_STACK === '1') {
+    console.error(`[obs_control] overlay-stack ${moved.join(' ')}`);
+  }
 }
 
 async function connectAndIdentify() {
@@ -292,6 +328,12 @@ async function main() {
     const response = await obs.request('GetSceneItemList', { sceneName });
     const items = Array.isArray(response.sceneItems) ? response.sceneItems : [];
 
+    if (action === 'stack') {
+      await enforceOverlayStack(obs, sceneName);
+      console.log(`stack:${belowTopOverlaySource}<${topOverlaySource}`);
+      return;
+    }
+
     if (action === 'transform') {
       const [sourceName, xRaw, yRaw, scaleXRaw, scaleYRaw, boundsWRaw, boundsHRaw] = rawArgs;
       const matches = items.filter(item => item.sourceName === sourceName);
@@ -343,6 +385,7 @@ async function main() {
       if (preserved.length > 0) {
         console.log(`transform-preserved:${sourceName}:items=${preserved.length}:mode=${transformMode}`);
       }
+      await enforceOverlayStack(obs, sceneName);
       return;
     }
 
@@ -391,6 +434,7 @@ async function main() {
     if (missing.length > 0) {
       console.error(`[obs_control] Sources not found in scene "${sceneName}": ${missing.join(', ')}`);
     }
+    await enforceOverlayStack(obs, sceneName);
   } finally {
     await obs.close();
   }
