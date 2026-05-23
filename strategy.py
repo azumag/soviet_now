@@ -1629,16 +1629,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # v682: deadline超過時NO_MERGE即時制止 — Ukraine(T13)到连改善
-        # 条件: deadline_crossed=true AND merge_grade=NO AND reactive_pair_count>=2 AND |x|>=1.5
-        # 効果: edge placement追加ペナルティ -2000 + |x|*300
-        # 根拠: ワーストT59-T62 deadline超過+NO_MERGE+rp=4でedge placement、mandatory_themes違反
-        # Rollback failure mode: deadline_crossed && merge_grade==NO && rp>=2 && |x|>=1.5でのみ発動
-        # refs: tmp/analysis_result.md, mandatory_themes.txt
-        if deadline_crossed and merge_grade == "NO" and reactive_pair_count >= 2 and abs(x) >= 1.5:
-            score -= 2000.0 - abs(x) * 300.0
-            reasons.append("DEADLINE_CROSSED_NO_MERGE_EDGE_PENALTY")
-
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
         # piece_count is the key predictor of final score, not max_y.
@@ -1703,7 +1693,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else -1)
+        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
