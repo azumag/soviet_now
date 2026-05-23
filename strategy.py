@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v685: NO_MERGE height强化 at max_y>=2.0 — merge_grade=="NO" && max_y>=2.0:
+     #       height_mult *= 1.5. Stacks with v671 (×0.5 at pc>=35): net 0.75 at danger zone.
+     #       Worst T71-82 (max_y=2.4→3.46) height不足で高配置選択続き死亡. Best T149 recovery
+     #       (max_y 5.06→1.2) via NO_MERGE+height priority. Height penalty強化でNO_MERGE drought
+     #       時のpiece_count蓄積を防止。Ukraine(T13)=83%→100%改善ターゲット。
+     #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+     #       refs: tmp/analysis_result.md (adopted hypothesis)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -1498,6 +1505,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/worst T65 (NO_MERGE failure), game_history/best T137 (NO_MERGE survival)
         if merge_grade == "NO" and max_y >= 2.3 and piece_count >= 35:
             height_mult *= 0.5  # strongly prefer lower positions for NO_MERGE at danger zone
+
+        # v685: NO_MERGE height强化 at max_y>=2.0
+        # Worst game T71-82: max_y=2.4→3.46, merge_grade=NO持续, height不足で高配置选择続き死亡
+        # Best game T149: max_y 5.06→1.2 recovery via NO_MERGE+height priority
+        # At max_y>=2.0 with NO merge, strengthen height penalty to prevent piece accumulation.
+        # Stacks multiplicatively with v671 (×0.5 when pc>=35): 0.5*1.5=0.75 at danger zone.
+        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # refs: tmp/analysis_result.md (adopted hypothesis)
+        if merge_grade == "NO" and max_y >= 2.0:
+            height_mult *= 1.5
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
