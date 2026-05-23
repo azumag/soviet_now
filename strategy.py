@@ -64,15 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v683: NO_MERGE deadline crossing penalty — mandatory_themes enforcement in candidate loop
-     #       and DEADLINE_GUARD fallback. Non-russia phase with NO_MERGE crossing deadline
-     #       gets -10000 penalty (candidate) or x=0.0 center placement (fallback).
-     #       Fixes worst T54 mandatory theme violation.
-     #       refs: tmp/analysis_result.md
-     # v682: critical phase pc>=35 low placement誘導 — merge_grade=="NO" && max_y>=2.0 && pc>=35
-     #       で低landing_y配置に+400、中間配置に-200。worst T64-T66 (pc=35-37) max_y runaway防止。
-     #       対象: Kazakhstan(T14)到连率58%改善。russia_phase不改変、mandatory_themes適合。
-     #       refs: tmp/analysis_result.md (Primary hypothesis)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -799,22 +790,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # v683: Mandatory theme enforcement in DEADLINE_GUARD fallback
-        # If in non-russia phase and all remaining candidates are NO_MERGE crossing deadline,
-        # center placement (x=0.0) is safer than edge crossing. Use x=0.0.
-        # Russia phase exempt: Russia pieces justify edge placement for compression.
-        __dlg_russia = any(p.get("type") == 15 for p in __dlg_game_state.get("pieces", []))
-        __dlg_nomerge_crossing = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NO" and c.get("crosses_deadline")
-        ]
-        if __dlg_nomerge_crossing and not __dlg_russia:
-            return {"x": 0.0, "reason": "DEADLINE_GUARD_CENTER_NO_MERGE"}
-
-        # Final fallback: lowest landing_y among all candidates
-        __dlg_best = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-        return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
@@ -1584,17 +1559,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Fixes rollback failure mode: deadline scatter from v432 sign error
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-
-        # v683: Mandatory theme enforcement — NO_MERGE cannot cross deadline in non-russia phase
-        # worst T54: selected NO_MERGE crossing deadline (top_y=4.44, margin=-0.61) in non-russia phase,
-        # violating mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # Even when DEADLINE_GUARD fallback would select lowest crossing, this ensures candidate loop
-        # doesn't override with crossing NO_MERGE candidate in non-russia phase.
-        # Russia phase exempt: Russia pieces justify edge placement for compression.
-        # refs: tmp/analysis_result.md (Primary hypothesis: NO_MERGE Deadline Crossing Penalty)
-        if merge_grade == "NO" and result.get("crosses_deadline") and not russia_phase:
-            score -= 10000.0
-            reasons.append("MANDATORY_NO_MERGE_DEADLINE")
         
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
@@ -1944,21 +1908,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- v682: critical phase piece_count>=35 low placement诱导 -----
-        # worst T64-T66 (pc=35-37, max_y=1.64-2.26): NO_MERGE選択时、decision_top_y_after_drop=3.33でmax_y runaway
-        # best T124-T128 (pc=28-30, max_y=1.01-2.32): merge_available=true进取的に选择、max_y管理有效
-        # 分析: critical相 (max_y>=2.5)ではheight_mult=1.0でheight penalty强化済みだが、piece_count>=35では不足
-        # 対象: Kazakhstan(T14)到连率58%改善 (pc>=35 && max_y>=2.0局面での低配置选择促进)
-        # 禁止事项: russia_phase改変, deadline_crossedでのNO_MERGE選択獎励, piece_count<35适用
-        # refs: tmp/analysis_result.md (Primary hypothesis: critical phase pc>=35 low placement诱导)
-        if merge_grade == "NO" and max_y >= 2.0 and piece_count >= 35:
-            if landing_y < 0:
-                score += 400.0
-                reasons.append("CRITICAL_PC35_LOW_PLACEMENT_BONUS")
-            elif landing_y < 1.5:
-                score -= 200.0
-                reasons.append("CRITICAL_PC35_MID_PLACEMENT_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
