@@ -1955,6 +1955,13 @@ def render_wildcard_status(rolling, current_hash=""):
     origin_items.sort(key=lambda item: 0 if item[0] == current_origin_hash else 1)
     for h, meta in origin_items[:5]:
         scores = (rolling.get(h, {}) or {}).get("scores", []) or []
+        score_source = ""
+        if not scores and isinstance(meta, dict):
+            parallel_result = meta.get("parallel_result") or {}
+            if isinstance(parallel_result, dict):
+                scores = parallel_result.get("scores") or parallel_result.get("eval_scores") or []
+                if scores:
+                    score_source = " trial"
         m = calc_strategy_metrics(scores)
         n = len(scores)
         maxg = int((meta or {}).get("max_games_override", MIN_GAMES_FOR_BEST_ROLLBACK) or MIN_GAMES_FOR_BEST_ROLLBACK)
@@ -1973,7 +1980,7 @@ def render_wildcard_status(rolling, current_hash=""):
             delta_text = f"{C_YELLOW}{int(delta):+5d}{RST}"
         n_color = C_GREEN if n >= maxg else DIM
         lines.append(
-            f"{mark} {C_BLUE}{h[:8]}{RST} {n_color}{n:>2}/{maxg:<2}{RST} "
+            f"{mark} {C_BLUE}{h[:8]}{RST} {n_color}{n:>2}/{maxg:<2}{RST}{DIM}{score_source:<6}{RST} "
             f"{int(comp):>8} {int(m.get('p50',0)):>6} {int(m.get('p25',0)):>6} {delta_text}"
         )
     return lines

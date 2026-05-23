@@ -256,6 +256,27 @@ print("\n".join(out), end="")
 PY
 }
 
+_comment_needs_thumbnail_context() {
+	local comments="$1"
+	[ -n "$comments" ] || return 1
+	python3 - "$comments" <<'PY'
+import re
+import sys
+
+text = sys.argv[1] if len(sys.argv) > 1 else ""
+patterns = (
+    r"画面|スクショ|スクリーン|映像|見え|見えて|表示|配信|サムネ|盤面",
+    r"今の|いまの|現在|いまどう|今どう|どうなって|状況|状態",
+    r"スコア|点数|記録|順位|rank|ランク|建国|ソ連|ロシア",
+    r"type|ピース|next|ネクスト|hold|ホールド|デッドライン|ゲームオーバー",
+)
+for pattern in patterns:
+    if re.search(pattern, text, re.I):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 _is_improve_running() {
 	[ "${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}" = "1" ] || return 1
 
@@ -1767,10 +1788,11 @@ generate_comment_response() {
 		return
 	fi
 
-	# コメント処理時点の配信サムネイルを取得し、文字情報だけOCR化して使う
+	# コメントが画面や現在状態を参照している時だけサムネイルOCRを使う。
+	# 通常雑談で毎回OCRすると、返信開始前に数十秒詰まることがある。
 	local comment_screenshot="tmp/.comment_queue/comment_screenshot.jpg"
-	local comment_thumbnail_ocr_context="（配信サムネイルOCRなし）"
-	if [ "$viewer_chat_source" = "twitch" ] && curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
+	local comment_thumbnail_ocr_context="（通常コメントのためサムネイルOCR省略）"
+	if [ "$viewer_chat_source" = "twitch" ] && _comment_needs_thumbnail_context "$twitch_comments" && curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
 		log "[COMMENT] 配信サムネイル取得: $comment_screenshot"
 		local comment_thumbnail_ocr_json=""
 		local comment_ocr_script="$ELOOP_LIB_DIR/soren91/result_screen_ocr.mjs"

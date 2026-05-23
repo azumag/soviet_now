@@ -146,6 +146,19 @@ class CandidateResult:
 def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     candidates = payload.get("candidates") or []
     generated = time.strftime("%H:%M:%S")
+    ranked_candidates = sorted(
+        [c for c in candidates if _float(c.get("comp"), 0.0) > 0 and _int(c.get("games"), 0) > 0],
+        key=lambda c: (
+            _float(c.get("comp"), 0.0),
+            _float(c.get("p25"), 0.0),
+            _int(c.get("max_type"), 0),
+            _int(c.get("games"), 0),
+        ),
+        reverse=True,
+    )
+    rank_by_job = {str(c.get("job_id")): idx + 1 for idx, c in enumerate(ranked_candidates)}
+    best_comp = _float(ranked_candidates[0].get("comp"), 0.0) if ranked_candidates else 0.0
+    leader_label = str(ranked_candidates[0].get("job_id", "-")) if ranked_candidates else "-"
     cards = []
     for cand in candidates:
         applied = cand.get("applied") or []
@@ -159,6 +172,23 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
             changes = ["no perturbation yet"]
         status = str(cand.get("status") or "pending")
         klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status in {"won", "accepted"} else "run"
+        job_id = str(cand.get("job_id", "-"))
+        rank = rank_by_job.get(job_id)
+        if rank == 1:
+            klass += " leader"
+        rank_label = f"#{rank}" if rank is not None else "--"
+        rank_class = f"r{rank}" if rank is not None and rank <= 3 else "rx"
+        comp = _float(cand.get("comp"), 0.0)
+        bar_width = 0 if best_comp <= 0 else max(0, min(100, round((comp / best_comp) * 100)))
+        rank_html = (
+            f"""
+              <div class="rankline">
+                <div class="rank-badge {rank_class}">{html.escape(rank_label)}</div>
+                <div class="rank-track"><div class="rank-fill" style="width:{bar_width}%"></div></div>
+                <div class="rank-score">{html.escape(str(cand.get('comp', 0)))}</div>
+              </div>
+            """
+        )
         preview_uri = ""
         preview_path = str(cand.get("preview_path") or "")
         if preview_path:
@@ -178,7 +208,8 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         cards.append(
             f"""
             <section class="card {klass}">
-              <div class="top"><b>{html.escape(str(cand.get('job_id', '-')))}</b><span>{html.escape(status)}</span></div>
+              <div class="top"><b>{html.escape(job_id)}</b><span>{html.escape(status)}</span></div>
+              {rank_html}
               {preview_html}
               <div class="metric">games {html.escape(str(cand.get('games', 0)))} / comp {html.escape(str(cand.get('comp', 0)))}</div>
               <div class="metric">p25 {html.escape(str(cand.get('p25', 0)))} / p50 {html.escape(str(cand.get('p50', 0)))}</div>
@@ -248,16 +279,59 @@ html, body {{
 .card.run {{ border-color: rgba(96, 165, 250, 0.7); }}
 .card.good {{ border-color: rgba(74, 222, 128, 0.9); }}
 .card.bad {{ border-color: rgba(248, 113, 113, 0.9); }}
+.card.leader {{
+  border-color: rgba(250, 204, 21, 1);
+  box-shadow: inset 0 0 0 2px rgba(250, 204, 21, 0.32);
+}}
 .top {{
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  font-size: 22px;
-  margin-bottom: 12px;
+  font-size: 21px;
+  margin-bottom: 8px;
 }}
 .top span {{
   color: #fde68a;
+}}
+.rankline {{
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 82px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}}
+.rank-badge {{
+  display: grid;
+  place-items: center;
+  height: 30px;
+  border-radius: 4px;
+  color: #020617;
+  background: #94a3b8;
+  font-size: 20px;
+  font-weight: 900;
+}}
+.rank-badge.r1 {{ background: #facc15; }}
+.rank-badge.r2 {{ background: #cbd5e1; }}
+.rank-badge.r3 {{ background: #fb923c; }}
+.rank-track {{
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.25);
+}}
+.rank-fill {{
+  height: 100%;
+  min-width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8, #facc15);
+}}
+.rank-score {{
+  min-width: 0;
+  color: #e2e8f0;
+  font-size: 17px;
+  text-align: right;
+  white-space: nowrap;
 }}
 .metric {{
   font-size: 18px;
@@ -322,7 +396,23 @@ ul {{
     font-size: 15px;
     margin-bottom: 5px;
   }}
+  .rankline {{
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 5px;
+    margin-bottom: 5px;
+  }}
+  .rank-badge {{
+    height: 20px;
+    font-size: 13px;
+  }}
+  .rank-track {{
+    height: 9px;
+  }}
+  .rank-score {{
+    display: none;
+  }}
   .preview,
+  .preview.empty,
   .hash,
   ul,
   .err {{
@@ -339,7 +429,7 @@ ul {{
 <main class="wrap">
   <div class="head">
     <div class="title">WILDCARD PARALLEL TRIAL</div>
-    <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / {generated}</div>
+    <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {generated}</div>
   </div>
   <div class="grid">{''.join(cards[:6])}</div>
 </main>
@@ -956,14 +1046,15 @@ class CullCoordinator:
     def should_cull(self, candidate: CandidateResult) -> bool:
         with self.lock:
             self._append_if_new(candidate)
-            if self.args.cull_after_games <= 0 or len(candidate.scores) != self.args.cull_after_games:
+            completed_games = len(candidate.scores)
+            if self.args.cull_after_games <= 0 or completed_games < self.args.cull_after_games:
                 self._snapshot_unlocked()
                 return False
             leaders = [
                 c
                 for c in self.candidates
                 if c.job_id != candidate.job_id
-                and len(c.scores) >= self.args.cull_after_games
+                and len(c.scores) >= completed_games
                 and c.status in {"running", "accepted", "won"}
                 and c.comp > 0
             ]

@@ -962,7 +962,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertNotIn('candidate.status = "timeout"', parallel)
 
     def test_wildcard_parallel_culls_bad_slots_and_refills(self):
-        """4ゲーム時点で現トップより悪すぎる候補は補充して、最終候補まで待つ。"""
+        """4ゲーム以降で現トップより悪すぎる候補は補充して、最終候補まで待つ。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
@@ -980,6 +980,46 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('job_id = f"cand-{index + 1}" if generation <= 0 else f"cand-{index + 1}-r{generation + 1}"', parallel)
         self.assertIn("candidate = run_perturb(args, index, session_dir, generation)", parallel)
         self.assertIn("with ThreadPoolExecutor(max_workers=args.jobs) as pool", parallel)
+
+    def test_wildcard_parallel_cull_rechecks_after_minimum_games(self):
+        """cull-after-games 以降は閾値ぴったりの1回だけでなく各ゲーム後に再判定する。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            args = argparse.Namespace(cull_after_games=4, cull_comp_ratio=0.70)
+            leader = wildcard_parallel.CandidateResult(
+                job_id="leader",
+                index=0,
+                workdir=td_path / "leader",
+                strategy_path=td_path / "leader" / "strategy.py",
+                status="running",
+                scores=[100, 100, 100, 100, 100],
+                comp=100,
+            )
+            candidate = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="running",
+                scores=[75, 75, 75],
+                comp=75,
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                args,
+                td_path / "status.json",
+                td_path / "overlay.html",
+                td_path / "session",
+                [leader],
+            )
+
+            self.assertFalse(coordinator.should_cull(candidate))
+            candidate.scores.extend([45, 45])
+            candidate.comp = 63
+            self.assertTrue(coordinator.should_cull(candidate))
+            self.assertIn("culled after 5 games", candidate.error)
 
     def test_wildcard_parallel_restarts_bridge_for_each_real_game(self):
         """real 評価は GAMEOVER 状態を複数試合として重複カウントしない。"""
@@ -1008,6 +1048,32 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("capture_candidate_preview(candidate.cdp_port, workdir / \"tmp\" / \"preview.png\", workdir)", parallel)
         self.assertIn('<img class="preview live-preview"', parallel)
         self.assertIn("aspect-ratio: 16 / 9", parallel)
+
+    def test_wildcard_parallel_overlay_shows_provisional_ranking(self):
+        """parallel trial overlay は候補の暫定順位をバッジとバーで表示する。"""
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            status_path = td_path / "status.json"
+            html_path = td_path / "overlay.html"
+            wildcard_parallel.render_overlay(
+                status_path,
+                html_path,
+                {
+                    "phase": "running",
+                    "candidates": [
+                        {"job_id": "cand-1", "status": "running", "games": 2, "comp": 80, "p25": 70, "p50": 75, "max_type": 12},
+                        {"job_id": "cand-2", "status": "running", "games": 2, "comp": 120, "p25": 90, "p50": 100, "max_type": 14},
+                    ],
+                },
+            )
+            doc = html_path.read_text(encoding="utf-8")
+            self.assertIn("leader cand-2", doc)
+            self.assertIn('<div class="rank-badge r1">#1</div>', doc)
+            self.assertIn('<div class="rank-badge r2">#2</div>', doc)
+            self.assertIn('class="rank-fill"', doc)
+            self.assertIn("width:100%", doc)
 
     def test_wildcard_parallel_no_candidate_is_noop(self):
         """基準未達なら winner を返さず、本線 strategy.py は変更しない。"""
@@ -1732,6 +1798,18 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("_remember_spoken_comment()", script)
         self.assertNotIn("spoken history は外部ファイル参照に移行済み", script)
 
+    def test_comment_reply_skips_thumbnail_ocr_unless_contextual(self):
+        script = (REPO_ROOT / "broadcast/comment.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
+
+        self.assertIn("_comment_needs_thumbnail_context()", script)
+        self.assertIn('comment_thumbnail_ocr_context="（通常コメントのためサムネイルOCR省略）"', script)
+        self.assertIn('_comment_needs_thumbnail_context "$twitch_comments"', script)
+        self.assertIn('COMMENT_RESPONSE_RETRY_MAX="${COMMENT_RESPONSE_RETRY_MAX:-1}"', config)
+        self.assertIn('COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-0}"', config)
+        self.assertIn('local_llm_timeout="${COMMENT_OLLAMA_TIMEOUT:-20}"', ai_generate)
+
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 
@@ -1905,6 +1983,8 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn('origin_type") or "wildcard") == "wildcard"', dashboard)
         self.assertIn("current_origin_hash", dashboard)
         self.assertIn("Show WILDCARD origins only", dashboard)
+        self.assertIn('parallel_result = meta.get("parallel_result") or {}', dashboard)
+        self.assertIn('score_source = " trial"', dashboard)
         self.assertIn('origin_type") or "wildcard") == "wildcard"', status)
         self.assertIn("fit_dashboard_lines(output)", dashboard)
         self.assertIn("truncate_ansi_display", dashboard)
@@ -1932,6 +2012,42 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("ARCHIVE_RESTART_STREAK", dashboard)
         self.assertIn("WILDCARD_AI_ESCALATE_STREAK", dashboard)
         self.assertIn("observe-only", dashboard)
+
+    def test_wildcard_origin_status_falls_back_to_parallel_scores(self):
+        import os
+        import tempfile
+
+        import status_dashboard
+
+        with tempfile.TemporaryDirectory() as td:
+            cwd = os.getcwd()
+            try:
+                os.chdir(td)
+                state = Path("tmp/state")
+                state.mkdir(parents=True)
+                (state / "wildcard_origin.json").write_text(
+                    json.dumps(
+                        {
+                            "abc123def456": {
+                                "origin_type": "wildcard",
+                                "max_games_override": 12,
+                                "parallel_result": {"scores": [10000, 12000, 14000]},
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                lines = status_dashboard.render_wildcard_status(
+                    {"abc123def456": {"scores": []}},
+                    "abc123def456",
+                )
+            finally:
+                os.chdir(cwd)
+
+        text = "\n".join(lines)
+        self.assertIn(" 3/12", text)
+        self.assertIn("trial", text)
+        self.assertNotIn("scores none", text)
 
     def test_browser_source_ensure_preserves_manual_obs_transform(self):
         browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()

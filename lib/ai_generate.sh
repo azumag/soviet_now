@@ -569,6 +569,10 @@ _ai_call_opencode() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
+	local local_llm_timeout="$timeout_override"
+	if [[ "$label" == COMMENT* ]] && [ -z "$local_llm_timeout" ]; then
+		local_llm_timeout="${COMMENT_OLLAMA_TIMEOUT:-20}"
+	fi
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -588,21 +592,21 @@ _ai_dispatch() {
 		return 1
 		;;
 	ollama:*)
-		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$timeout_override" | tee "$_dispatch_output_file"
+		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$local_llm_timeout" | tee "$_dispatch_output_file"
 		;;
 	minimax|ccmm)
 		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	gemma4e)
-		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$timeout_override" | tee "$_dispatch_output_file"
+		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$local_llm_timeout" | tee "$_dispatch_output_file"
 		;;
 	qwen35)
-		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:27b" "$timeout_override" | tee "$_dispatch_output_file"
+		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:27b" "$local_llm_timeout" | tee "$_dispatch_output_file"
 		;;
 	qwen35e)
 		local _qwen35e_model="${RADIO_OLLAMA_MODEL:-qwen3.5:9b}"
 		[ "$label" = "COMMENT" ] && _qwen35e_model="${COMMENT_OLLAMA_MODEL:-$_qwen35e_model}"
-		_ai_call_ollama "$label" "$prompt_file" "$_qwen35e_model" "$timeout_override" | tee "$_dispatch_output_file"
+		_ai_call_ollama "$label" "$prompt_file" "$_qwen35e_model" "$local_llm_timeout" | tee "$_dispatch_output_file"
 		;;
 	qwencode)
 		_ai_call_qwencode "$label" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
