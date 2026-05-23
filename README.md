@@ -106,8 +106,9 @@ soren_loop の多重起動ロック:
 **strategy_runner 安全ガード:**
 
 - `enforce_deadline_safety` は、盤面全体の precontact pressure が低い場合でも、選択候補が `crosses_deadline=true` かつ `merge_grade=NO` で、同じ analysis set に非 crossing の safe 候補があるなら `safe_far_below_crossing` として差し替える。これは「大きい国の合体を塞ぐ」戦略評価を直接変えず、明らかなデッドライン超え NO merge 配置だけを実行直前に退避するための境界ガード。
+- `enforce_deadline_safety` は `risk_top_y_after_drop` だけに依存せず、live `game_state.pieces` と `next.r` / type 半径から候補Xの実着地 top を再推定する。`risk_top` が近く見えても実形状では高い柱へ積む候補なら、より低い safe 候補または all-crossing の最小 geometry top 候補へ戻し、デッドライン直前の見かけ上安全な高積みを避ける。
 - all-crossing 局面で `visual_deadline_same_country` が同国接触候補を拾っても、盤面 top が deadline を十分に超えている場合は視覚推定を保存せず、最小 risk_top の候補へ戻す。これにより、直近の deadline fallback 改善が NO_MERGE の高積みを選んだ場合でも、実行時により低い崩壊リスクへ寄せる。
-- 対応テストは `tests.test_escape_mechanisms.TestSovietObjectiveImproveInputs.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することを確認する。
+- 対応テストは `tests.test_escape_mechanisms.TestSovietObjectiveImproveInputs.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`、`test_deadline_safety_geometry_headroom_overrides_underestimated_safe_choice`、`test_deadline_safety_visual_same_country_falls_back_when_geometry_is_worse`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することと、形状再推定が高積み候補を退避することを確認する。
 
 判定順:
 

@@ -720,6 +720,75 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             abs(float(r.get("x", 0.0) or 0.0)),
         )
 
+    next_type = 0
+    try:
+        next_type = int(((game_state or {}).get("next") or {}).get("type", 0) or 0)
+    except Exception:
+        next_type = 0
+
+    geometry_radii = {
+        1: 0.207,
+        2: 0.259,
+        3: 0.316,
+        4: 0.380,
+        5: 0.414,
+        6: 0.470,
+        7: 0.559,
+        8: 0.660,
+        9: 0.746,
+        10: 0.846,
+        11: 0.982,
+        12: 1.068,
+        13: 1.207,
+        14: 1.385,
+        15: 1.600,
+    }
+
+    def _geom_num(value, default=0.0):
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    geometry_pieces = (game_state or {}).get("pieces") or []
+    geometry_floor_y = -5.0
+    geometry_top_cache = {}
+    try:
+        next_r_from_state = _geom_num(((game_state or {}).get("next") or {}).get("r"), 0.0)
+    except Exception:
+        next_r_from_state = 0.0
+    geometry_next_r = next_r_from_state if next_r_from_state > 0 else geometry_radii.get(next_type, 0.5)
+
+    def geometry_top_at_x(x):
+        if not geometry_pieces or geometry_next_r <= 0:
+            return None
+        try:
+            x_val = float(x)
+        except Exception:
+            return None
+        x_key = round(x_val, 3)
+        if x_key in geometry_top_cache:
+            return geometry_top_cache[x_key]
+        landing_y = geometry_floor_y + geometry_next_r
+        for p in geometry_pieces:
+            pr = _geom_num(p.get("r"), 0.0)
+            if pr <= 0:
+                pr = geometry_radii.get(int(p.get("type", 0) or 0), 0.5)
+            px = _geom_num(p.get("x"))
+            py = _geom_num(p.get("y"), geometry_floor_y)
+            dx = abs(x_val - px)
+            contact = geometry_next_r + pr
+            if dx >= contact:
+                continue
+            y = py + math.sqrt(max(contact * contact - dx * dx, 0.0))
+            if y > landing_y:
+                landing_y = y
+        top_y = landing_y + geometry_next_r
+        geometry_top_cache[x_key] = top_y
+        return top_y
+
     def risky_merge_result_deadline(r):
         return (
             isinstance(r, dict)
@@ -765,11 +834,6 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         ),
     )
     min_risk_top = risk_top(min_risk_candidate)
-    next_type = 0
-    try:
-        next_type = int(((game_state or {}).get("next") or {}).get("type", 0) or 0)
-    except Exception:
-        next_type = 0
     large_deadline_pressure = (
         current_top_edge_y >= deadline_y - 0.75
             and next_type >= 9
@@ -851,6 +915,28 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 abs(float(r.get("x", 0.0) or 0.0)),
             ),
         )
+        candidate_geom_top = geometry_top_at_x(candidate.get("x"))
+        if candidate_geom_top is not None:
+            safe_geom_pairs = [
+                (geometry_top_at_x(r.get("x")), r)
+                for r in safe
+            ]
+            safe_geom_pairs = [
+                (geom_top, r)
+                for geom_top, r in safe_geom_pairs
+                if geom_top is not None
+            ]
+            if safe_geom_pairs:
+                best_safe_geom_top, best_safe_geom = min(
+                    safe_geom_pairs,
+                    key=lambda item: (
+                        item[0],
+                        risk_top(item[1]),
+                        abs(float(item[1].get("x", 0.0) or 0.0)),
+                    ),
+                )
+                if candidate_geom_top > best_safe_geom_top + 0.20:
+                    return best_safe_geom
         if risk_top(candidate) <= risk_top(best_safe) + 0.35:
             return None
         return best_safe
@@ -1249,6 +1335,21 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         )
     ):
         preserve_visual_same_country = False
+    if (
+        preserve_visual_same_country
+        and replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
+        and not safe
+        and risk_top(replacement) <= min_risk_top + 0.35
+    ):
+        replacement_geom_top = geometry_top_at_x(replacement.get("x"))
+        minrisk_geom_top = geometry_top_at_x(min_risk_candidate.get("x"))
+        if (
+            replacement_geom_top is not None
+            and minrisk_geom_top is not None
+            and replacement_geom_top > minrisk_geom_top + 0.20
+        ):
+            preserve_visual_same_country = False
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"

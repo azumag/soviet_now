@@ -3344,6 +3344,87 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], 2.9)
         self.assertIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_safety_geometry_headroom_overrides_underestimated_safe_choice(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.6, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.72,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 2.6,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.20,
+                    },
+                    {
+                        "x": 0.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.25,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 1, "type": 14, "x": 2.55, "y": 3.3, "r": 1.3},
+                    {"id": 2, "type": 8, "x": 0.0, "y": 1.0, "r": 0.66},
+                ],
+                "next": {"type": 9},
+            },
+        )
+
+        self.assertEqual(decision["x"], 0.0)
+        self.assertIn("deadline_headroom", decision["reason"])
+
+    def test_deadline_safety_visual_same_country_falls_back_when_geometry_is_worse(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.6, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.30,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 2.6,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.55,
+                    },
+                    {
+                        "x": 0.2,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.60,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 10, "type": 9, "x": 0.0, "y": 2.5, "r": 0.746},
+                    {"id": 11, "type": 14, "x": 0.2, "y": 3.4, "r": 1.3},
+                    {"id": 12, "type": 8, "x": 2.6, "y": 1.0, "r": 0.66},
+                ],
+                "next": {"type": 9},
+            },
+        )
+
+        self.assertEqual(decision["x"], 2.6)
+        self.assertIn("minrisk_postcondition", decision["reason"])
+
     def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
         import analyze_board
 
