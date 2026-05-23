@@ -1693,7 +1693,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
+        balance_bias = (right_count - left_count) / (len(pieces) if pieces else -1)
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
