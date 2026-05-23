@@ -33,7 +33,7 @@ const BOARD_FLOOR_Y = -5.0; // The lowest Y coordinate for pieces.
 const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center* can be at is 3.5 - pieceRadius.
 
 // Strategy-specific constants (Height Management)
-const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
+const DEADLINE_Y = 3.38;                  // Unity red-line trigger bottom
 const CRITICAL_HEIGHT_MARGIN = 3.1; // v220: Adjusted from 3.0 (v219)
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.2;
 
