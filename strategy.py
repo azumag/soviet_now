@@ -853,7 +853,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "LOW"
         height_mult = 0.4  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
         merge_mult = 1.2  # 20% merge bonus increase, actively target
-    elif max_y < 0.733:
+    elif max_y < 1.8:
         phase = "MEDIUM"
         height_mult = 1.4  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
         merge_mult = 1.0
@@ -993,7 +993,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v551: Russia-building exemption + high-type next additional penalty
         russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        if merge_grade == "NEAR" and max_y >= 1.269 and not russia_merge_possible:
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             # v551: additional penalty for high-type next when merge is globally available
@@ -1457,7 +1457,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                        proximity_bonus = max(0, 120.0 - horiz_dist * 68.43)
+                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
                         if piece_count >= 28:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
@@ -2127,7 +2127,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
         #       game_history/20260416_193206_score1203.jsonl T50/T63/T66 (NEAR crosses deadline)
         margin = result.get("deadline_margin", 99)
-        if merge_grade == "NO" and not russia_phase and margin < 0.2207:
+        if merge_grade == "NO" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
