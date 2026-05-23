@@ -3892,6 +3892,8 @@ def decide(game_state, analysis):
         self.assertIn("normalized_fallback_anchor", regression)
         self.assertIn("_rollback_candidate_file_is_valid", regression)
         self.assertIn("validation失敗archive", regression)
+        self.assertIn('with open(meta_file, "w", encoding="utf-8") as f:', regression)
+        self.assertIn("json.dump(meta, f, ensure_ascii=False)", regression)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_ENABLED", config)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_MIN_GAMES", config)
         self.assertIn("anchor_best_max_type", regression)

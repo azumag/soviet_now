@@ -4094,8 +4094,8 @@ meta[stale_hash] = {
     "reason": "rollback_target_normalized",
 }
 os.makedirs(os.path.dirname(meta_file) or ".", exist_ok=True)
-	with open(meta_file, "w") as f:
-	    json.dump(meta, f)
+with open(meta_file, "w", encoding="utf-8") as f:
+    json.dump(meta, f, ensure_ascii=False)
 PY
 				local normalized_anchor_hash=""
 				normalized_anchor_hash=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_hash=([^,]+).*/\1/p')

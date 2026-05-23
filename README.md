@@ -120,6 +120,8 @@ soren_loop の多重起動ロック:
 5. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
 6. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
 
+rollback 候補が validation 後に別 hash へ正規化された場合は、元 hash を `rejected_hashes.txt` と `rejected_hash_metrics.json` の両方へ `rollback_target_normalized` として記録する。メタがない rejected hash は legacy として再許可されるため、`normalized_to_hash` を保存して同じ古い候補が何度も同じ実体 hash へ rollback されるループを防ぐ。
+
 通常サイクル中の早期脱出:
 
 - rollback 直後の再検証ではない通常改善 hash で `consecutive_no_improve >= WILDCARD_TRIGGER_STAGNATION` または `regression_streak >= WILDCARD_REGRESSION_STREAK` になり、蓄積ゲーム数が `WILDCARD_EARLY_ESCAPE_MIN_GAMES` 以上なら、`MIN_GAMES_BEFORE_IMPROVE` を待たず `early_escape_lock` を作る。
