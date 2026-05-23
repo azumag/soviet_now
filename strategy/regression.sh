@@ -2102,7 +2102,7 @@ PY
 
 _prune_non_objective_rollback_scores() {
 	local current_hash="$1"
-	[ "${OBJECTIVE_MISS_PRUNE_ENABLED:-1}" = "1" ] || return 0
+	[ "${OBJECTIVE_MISS_PRUNE_ENABLED:-0}" = "1" ] || return 0
 	[ "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" = "1" ] || return 0
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 	local pruned_hashes
@@ -2354,14 +2354,8 @@ PY
 			_remove_unusable_rolling_score_hash "$h" "missing_rollback_archive" "$current_hash"
 			continue
 		fi
-		if ! grep -q "BEGIN DEADLINE GUARD" "$candidate_file" 2>/dev/null; then
-			log "[REGRESSION] rollback候補スキップ: $h はguard未注入archive" >&2
-			_remove_unusable_rolling_score_hash "$h" "missing_deadline_guard" "$current_hash"
-			continue
-		fi
 		if ! _rollback_candidate_file_is_valid "$h" "$candidate_file"; then
 			log "[REGRESSION] rollback候補スキップ: $h はvalidation失敗archive" >&2
-			_remove_unusable_rolling_score_hash "$h" "rollback_archive_validation_failed" "$current_hash"
 			continue
 		fi
 		if [ -n "$candidate_file" ]; then
@@ -4040,11 +4034,7 @@ PY
 						anchor_candidate_file=$(_find_rollback_candidate_file_for_hash "$rollback_hash" 2>/dev/null || echo "")
 						if [ -n "$anchor_candidate_file" ] && _rollback_candidate_file_is_valid "$rollback_hash" "$anchor_candidate_file"; then
 							rollback_file="$anchor_candidate_file"
-							if [ "${anchor_candidate_file#${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/}" != "$anchor_candidate_file" ]; then
-								rollback_note="anchor_top1_permanent hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
-							else
-								rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
-							fi
+							rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
 						else
 							log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はvalidation失敗archive"
 							rollback_hash=""

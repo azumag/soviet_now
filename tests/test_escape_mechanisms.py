@@ -634,7 +634,9 @@ _refresh_best_strategy_anchor "" 2>&1
         """anchor rollback は通常 archive だけでなく permanent archive も見に行く。"""
         regression = (REPO_ROOT / "strategy" / "regression.sh").read_text()
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
-        self.assertIn("anchor_top1_permanent", regression)
+        self.assertIn("_find_rollback_candidate_file_for_hash", regression)
+        self.assertIn('rollback_note="anchor_top1 hash=${rollback_hash}', regression)
+        self.assertNotIn("anchor_top1_permanent", regression)
 
     def test_anchor_selection_skips_archives_that_would_normalize_on_validate(self):
         """guard 未注入 archive は rollback 時に別 hash へ変わるため anchor から外す。"""
@@ -4385,12 +4387,12 @@ PY
             regression.index('rollback_hash=$(printf'),
         )
         self.assertIn('rollback_note="rolling_top hash=${rollback_hash}', regression)
-        self.assertIn("rollback候補スキップ: $h はguard未注入archive", regression)
         self.assertIn("_remove_unusable_rolling_score_hash", regression)
         self.assertIn("_prune_non_objective_rollback_scores", regression)
         self.assertIn("objective_miss_no_russia", regression)
         self.assertIn("OBJECTIVE_ANCHOR_PRIORITY_ENABLED", regression)
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
+        self.assertIn('OBJECTIVE_MISS_PRUNE_ENABLED:-0', regression)
 
     def test_rollback_candidate_prefers_objective_progress_over_plain_score_top(self):
         with tempfile.TemporaryDirectory() as td:
@@ -4455,10 +4457,9 @@ _pick_best_rollback_candidate currentHash
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
             self.assertTrue(result.stdout.startswith("russiaNearTop|"), msg=result.stdout)
             rolling = json.loads(rs_file.read_text())
-            self.assertNotIn("scoreOnlyTop", rolling)
+            self.assertIn("scoreOnlyTop", rolling)
             self.assertIn("russiaNearTop", rolling)
-            audit = (td / "rolling_score_pruned_hashes.jsonl").read_text()
-            self.assertIn("objective_miss_no_russia", audit)
+            self.assertFalse((td / "rolling_score_pruned_hashes.jsonl").exists())
 
     def test_invalid_rollback_archive_is_pruned_from_rolling_scores(self):
         with tempfile.TemporaryDirectory() as td:
@@ -4509,10 +4510,9 @@ _pick_best_rollback_candidate currentHash
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
             self.assertIn("goodNext|", result.stdout)
             rolling = json.loads(rs_file.read_text())
-            self.assertNotIn("badTop", rolling)
+            self.assertIn("badTop", rolling)
             self.assertIn("goodNext", rolling)
-            audit = (td / "rolling_score_pruned_hashes.jsonl").read_text()
-            self.assertIn("rollback_archive_validation_failed", audit)
+            self.assertFalse((td / "rolling_score_pruned_hashes.jsonl").exists())
 
     def test_soren91_ranking_comments_are_prioritized_in_comment_queue(self):
         comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text()
