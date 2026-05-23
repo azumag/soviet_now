@@ -65,9 +65,10 @@ Phases (determined by board max Y):
 
 # --- Change History (compressed to 5 entries; full history in git) ---
       # vXXX: axis 9.68 T13/T14 proximity bonus (Kazakhstan T14 gateway fix)
-      #       T13/T14近接ボーナス追加: merge_grade=="NO" && reactive_pair_count<3 && next_type in [13,14] && current_type in [13,14]
+      #       T13/T14近接ボーナス: merge_grade=="NO" && reactive_pair_count<3 && !death_spiral
+      #       && (type13_exists || type14_exists) && next_type in [13,14]
       #       でT13/T14ピースへの近接配置に+150-300ボーナス。T14→T15導線確保。
-      #       対象ステージ: Kazakhstan(T14)=1/12→3/12+。失敗モード: 終盤併合逃し。
+      #       対象ステージ: Kazakhstan(T14)=0/12→1-2/12。失敗モード: 終盤併合逃し。
       #       refs: tmp/analysis_result.md (Implementation Plan)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
@@ -1394,7 +1395,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             _t14_pieces = [p for p in pieces if p.get("type") == 14]
             _t13_count = len(_t13_pieces)
             _t14_count = len(_t14_pieces)
-            if _t13_count >= 1 and next_type in [13, 14] and current_type in [13, 14]:
+            if _t13_count >= 1 and next_type in [13, 14]:
                 _cx13 = sum(p.get("x", 0) for p in _t13_pieces) / _t13_count
                 _cy13 = sum(p.get("y", 0) for p in _t13_pieces) / _t13_count
                 _dist13 = abs(x - _cx13)
@@ -1403,7 +1404,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if _bonus13 > 0:
                         score += _bonus13
                         reasons.append("T13_PROXIMITY_BONUS")
-            if _t14_count >= 1 and next_type == 14 and current_type in [13, 14]:
+            if _t14_count >= 1 and next_type in [13, 14]:
                 _cx14 = sum(p.get("x", 0) for p in _t14_pieces) / _t14_count
                 _cy14 = sum(p.get("y", 0) for p in _t14_pieces) / _t14_count
                 _dist14 = abs(x - _cx14)
