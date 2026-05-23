@@ -1820,6 +1820,19 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             script.index('pkill -P "$old_pid"'),
         )
 
+    def test_comment_generation_discards_stale_reply_when_line_processed_mid_generation(self):
+        script = (REPO_ROOT / "broadcast/comment.sh").read_text()
+
+        self.assertIn("_has_processed_comment_line()", script)
+        self.assertIn('if _has_processed_comment_line "$twitch_comments"; then', script)
+        self.assertIn("discard stale reply without ack", script)
+        self.assertIn('log "[COMMENT] 個別行フィルタ:', script)
+        self.assertIn('>&2', script)
+        self.assertLess(
+            script.index('if _has_processed_comment_line "$twitch_comments"; then'),
+            script.index('local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"'),
+        )
+
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 

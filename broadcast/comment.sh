@@ -416,10 +416,29 @@ _filter_already_processed_comment_lines() {
 		fi
 	done <<<"$comments"
 	if [ "$filtered_count" -lt "$total_count" ]; then
-		log "[COMMENT] 個別行フィルタ: ${total_count}行中 $((total_count - filtered_count))行を処理済みとして除外"
+		log "[COMMENT] 個別行フィルタ: ${total_count}行中 $((total_count - filtered_count))行を処理済みとして除外" >&2
 	fi
 	[ -n "$result" ] && printf '%s' "$result"
 	return 0
+}
+
+_has_processed_comment_line() {
+	local comments="$1"
+	[ -n "$comments" ] || return 1
+	[ -f "$COMMENT_PROCESSED_LINES_FILE" ] || return 1
+	local now line line_hash
+	now=$(date +%s)
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+		[ -n "$line_hash" ] || continue
+		if awk -F'|' -v h="$line_hash" -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
+			'$2 == h && (now - $1) <= ttl { found=1 } END { exit(found ? 0 : 1) }' \
+			"$COMMENT_PROCESSED_LINES_FILE" 2>/dev/null; then
+			return 0
+		fi
+	done <<<"$comments"
+	return 1
 }
 
 # 処理成功後に個別コメント行のハッシュを記録する
@@ -2394,6 +2413,11 @@ RETRYCOMMENT
 			_comment_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 			if [ "$_comment_mode_now" != "$_comment_mode_generated" ]; then
 				log "[COMMENT] mode changed during generation (${_comment_mode_generated} -> ${_comment_mode_now}) -> discard without ack"
+				rm -f "$comment_prompt_file"
+				exit 0
+			fi
+			if _has_processed_comment_line "$twitch_comments"; then
+				log "[COMMENT] target comment was already processed during generation -> discard stale reply without ack (batch=${comment_batch_hash:-none})"
 				rm -f "$comment_prompt_file"
 				exit 0
 			fi
