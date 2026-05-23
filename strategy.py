@@ -64,6 +64,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v682: critical phase pc>=35 low placement誘導 — merge_grade=="NO" && max_y>=2.0 && pc>=35
+     #       で低landing_y配置に+400、中間配置に-200。worst T64-T66 (pc=35-37) max_y runaway防止。
+     #       対象: Kazakhstan(T14)到连率58%改善。russia_phase不改変、mandatory_themes適合。
+     #       refs: tmp/analysis_result.md (Primary hypothesis)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -1908,6 +1912,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- v682: critical phase piece_count>=35 low placement诱导 -----
+        # worst T64-T66 (pc=35-37, max_y=1.64-2.26): NO_MERGE選択时、decision_top_y_after_drop=3.33でmax_y runaway
+        # best T124-T128 (pc=28-30, max_y=1.01-2.32): merge_available=true进取的に选择、max_y管理有效
+        # 分析: critical相 (max_y>=2.5)ではheight_mult=1.0でheight penalty强化済みだが、piece_count>=35では不足
+        # 対象: Kazakhstan(T14)到连率58%改善 (pc>=35 && max_y>=2.0局面での低配置选择促进)
+        # 禁止事项: russia_phase改変, deadline_crossedでのNO_MERGE選択獎励, piece_count<35适用
+        # refs: tmp/analysis_result.md (Primary hypothesis: critical phase pc>=35 low placement诱导)
+        if merge_grade == "NO" and max_y >= 2.0 and piece_count >= 35:
+            if landing_y < 0:
+                score += 400.0
+                reasons.append("CRITICAL_PC35_LOW_PLACEMENT_BONUS")
+            elif landing_y < 1.5:
+                score -= 200.0
+                reasons.append("CRITICAL_PC35_MID_PLACEMENT_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
