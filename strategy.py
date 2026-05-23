@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: NO_MERGE deadline-cross suppression — mandatory_themes deadline exceed filter
-     #       merge_grade=="NO" && top_y_after_drop >= 3.38 (DEADLINE_Y): candidate suppressed.
-     #       Fixes worst turn 67 (score0890): x=-1.76, top_y=3.44 > deadline 3.38, mandatory violation.
-     #       Unconditionally blocks NO_MERGE deadline exceed (v662 only blocks at margin<0.5).
-     #       Does NOT block NEAR (v662 penalty handles it) or DIRECT (merging is allowed).
-     #       Stage gate target: Ukraine(T13) 11/12 → improve toward 12/12.
-     #       refs: tmp/analysis_result.md (Hypothesis: NO_MERGE deadline-cross suppression)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -905,20 +898,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-
-        # ----- vXXX: NO_MERGE deadline-cross suppression -----
-        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # worst turn 67: deadline_crossed=false (global), but candidate top_y=3.44 > deadline_y=3.38
-        # with merge_grade="NO" — violates mandatory_themes. No axis prevents this case:
-        #   - v662 CROSSES_DEADLINE_NO_MERGE only fires when margin<0.5 (reactor margin >= 0.5 here)
-        #   - axis 9.2 only fires when deadline_crossed=true && reactive_pairs>=3
-        # Fix: unconditionally suppress NO_MERGE candidates where top_y >= DEADLINE_Y.
-        # DEADLINE_Y = 3.38 from analyze_board.py.
-        # Does NOT affect NEAR (v662 continuous penalty handles it) or DIRECT (merging is allowed).
-        top_y = result.get("top_y_after_drop", 0)
-        if top_y >= 3.38 and merge_grade == "NO":
-            suppressed += 1
-            continue
 
         # ----- HARD SUPPRESS: NEAR merge at extreme danger with high piece_count -----
         # worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
