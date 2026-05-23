@@ -137,6 +137,8 @@ soren_loop の多重起動ロック:
 2. `wildcard`: archive 候補がない、または cooldown 中なら使う。目的はランダムなスコア改善ではなく、type14→15 frontier やロシア建国経路の再獲得。
 3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので中止する。
 
+`archive_restart` が候補を選んでも validation 後に現行 hash と同一へ正規化され、実効的な hash 変更がない場合は、その候補を cooldown/quarantine に入れて `escape_ai` へフォールバックする。これは archive_restart 内での空振りループを止め、評価済み WILDCARD seed から構造変異へ進めるための経路である。
+
 ステータス監視:
 
 - `show_status.sh --once` の `ArchiveNext` は最有力候補だけを短く表示する。
