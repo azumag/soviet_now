@@ -70,17 +70,6 @@ Phases (determined by board max Y):
       #       Fixes: best game turn 91 (score1910) merge_result_crosses_deadline=true, landing_y=4.87
       #       でも DIRECT merge が選択されていた問題。Kazakhstan(T14)=2/4(50%)→4/4 へ向けた改善。
       #       refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
-      # v682: DEADLINE_GUARD fallback strict NO_MERGE edge filter — mandatory_themes compliance
-      #       Fallback (line 808) now filters NO_MERGE candidates with abs(x)>=2.5 at deadline.
-      #       Worst T65: deadline_crossed=true, |x|=0.94, merge_grade=NO → selected (safe).
-      #       Worst T67: deadline_crossed=true, |x|=1.5, merge_grade=NO → selected (violates).
-      #       v675 CROSSES_DEADLINE_EDGE_NO_MERGE triggers at |x|>=2.5, but v680's merge_preferred
-      #       path was returning NEAR candidates that still had merge_result_crosses_deadline=true.
-      #       Also restrict the final fallback to prefer center positions for NO_MERGE when
-      #       all candidates have some deadline risk.
-      #       Target stage: Ukraine(T13)=10/12(83%) → improve.
-      #       Fixes rollback failure mode: mandatory_themes violation at deadline + NO_MERGE.
-      #       refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
       # v679: DEADLINE_GUARD mandatory_themes compliance — NO_MERGE candidates crossing deadline
       #       must be excluded even when __dlg_has_clean=False. Added merge_grade filter to fallback
       #       (lines 780-789) and updated __dlg_merge_result_safe (line 753) to allow merge candidates.
@@ -816,16 +805,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
         # Fallback: only when no merge candidate is available
-        # v682: Add abs(x) < 2.5 filter for NO_MERGE at deadline to prevent mandatory_themes violation
-        # Worst T67: |x|=1.5 at deadline_crossed=true → crosses but penalty (v675) not triggered at |x|<2.5
-        # The absolute threshold catches center-ish NO_MERGE that still violates mandatory_themes.
-        __dlg_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            and not (c.get("merge_grade") == "NO" and abs(c.get("x", 0.0) or 0.0) >= 2.5)
-        ]
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
