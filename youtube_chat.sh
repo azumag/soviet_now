@@ -583,24 +583,23 @@ _oauth_access_token() {
 		"https://oauth2.googleapis.com/token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))'
 }
 
-_send() {
-	local msg="$1"
-	[ -n "$msg" ] || {
-		echo "Usage: $0 send <message>" >&2
-		return 1
-	}
-	if [ "${YOUTUBE_CHAT_SEND_ENABLED:-0}" != "1" ]; then
-		echo "YouTube send disabled (set YOUTUBE_CHAT_SEND_ENABLED=1)" >&2
-		return 1
-	fi
-	local chat_id access_token payload_file resp_file insert_url
-	chat_id=$(_resolve_live_chat_id) || return 1
-	access_token=$(_oauth_access_token) || {
-		echo "YouTube OAuth refresh settings are missing or invalid" >&2
-		return 1
-	}
-	payload_file=$(mktemp "$CHAT_DIR/.send_payload.XXXXXXXX")
-	resp_file=$(mktemp "$CHAT_DIR/.send_response.XXXXXXXX")
+_send_api() {
+	local insert_url="$1"
+	local access_token="$2"
+	local payload_file="$3"
+	local resp_file="$4"
+	local err_file="$5"
+	curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+		-X POST "$insert_url" \
+		-H "Authorization: Bearer ${access_token}" \
+		-H "Content-Type: application/json; charset=UTF-8" \
+		--data-binary "@${payload_file}" >"$resp_file" 2>"$err_file"
+}
+
+_write_send_payload() {
+	local chat_id="$1"
+	local msg="$2"
+	local payload_file="$3"
 	python3 - "$chat_id" "$msg" >"$payload_file" <<'PY'
 import json
 import sys
@@ -623,26 +622,61 @@ print(json.dumps({
 	}
 }, ensure_ascii=False))
 PY
+}
+
+_record_send_error() {
+	local err_file="$1"
+	local resp_file="$2"
+	{
+		head -5 "$err_file" 2>/dev/null || true
+		head -5 "$resp_file" 2>/dev/null || true
+	} >"$LAST_SEND_ERROR_FILE"
+}
+
+_send() {
+	local msg="$1"
+	[ -n "$msg" ] || {
+		echo "Usage: $0 send <message>" >&2
+		return 1
+	}
+	if [ "${YOUTUBE_CHAT_SEND_ENABLED:-0}" != "1" ]; then
+		echo "YouTube send disabled (set YOUTUBE_CHAT_SEND_ENABLED=1)" >&2
+		return 1
+	fi
+	local chat_id access_token payload_file resp_file err_file insert_url
+	chat_id=$(_resolve_live_chat_id) || return 1
+	access_token=$(_oauth_access_token) || {
+		echo "YouTube OAuth refresh settings are missing or invalid" >&2
+		return 1
+	}
+	payload_file=$(mktemp "$CHAT_DIR/.send_payload.XXXXXXXX")
+	resp_file=$(mktemp "$CHAT_DIR/.send_response.XXXXXXXX")
+	err_file=$(mktemp "$CHAT_DIR/.send_error.XXXXXXXX")
+	_write_send_payload "$chat_id" "$msg" "$payload_file"
 	insert_url="https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet"
 	if [ -n "${YOUTUBE_API_KEY:-}" ]; then
 		insert_url="${insert_url}&key=$(_urlencode "$YOUTUBE_API_KEY")"
 	fi
-	if curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
-		-X POST "$insert_url" \
-		-H "Authorization: Bearer ${access_token}" \
-		-H "Content-Type: application/json; charset=UTF-8" \
-		--data-binary "@${payload_file}" >"$resp_file"; then
-		rm -f "$payload_file" "$resp_file"
+	if _send_api "$insert_url" "$access_token" "$payload_file" "$resp_file" "$err_file"; then
+		rm -f "$payload_file" "$resp_file" "$err_file"
 		return 0
 	fi
-	{
-		head -5 "$resp_file" 2>/dev/null || true
-	} >"$LAST_SEND_ERROR_FILE"
+	_record_send_error "$err_file" "$resp_file"
 	if grep -q '403' "$LAST_SEND_ERROR_FILE" 2>/dev/null && [ -s "$LIVE_CHAT_ID_FILE" ]; then
 		rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
+		if chat_id=$(_resolve_live_chat_id 1 2>>"$LAST_SEND_ERROR_FILE"); then
+			_write_send_payload "$chat_id" "$msg" "$payload_file"
+			: >"$resp_file"
+			: >"$err_file"
+			if _send_api "$insert_url" "$access_token" "$payload_file" "$resp_file" "$err_file"; then
+				rm -f "$LAST_SEND_ERROR_FILE" "$payload_file" "$resp_file" "$err_file"
+				return 0
+			fi
+			_record_send_error "$err_file" "$resp_file"
+		fi
 	fi
 	cat "$LAST_SEND_ERROR_FILE" >&2 2>/dev/null || true
-	rm -f "$payload_file" "$resp_file"
+	rm -f "$payload_file" "$resp_file" "$err_file"
 	return 1
 }
 
