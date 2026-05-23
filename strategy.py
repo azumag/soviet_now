@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v683: rp>=3 NO_MERGE height floor suppression — flatten penalty for candidates above max_y-0.5
+      #       during rp>=3 && NO_MERGE && max_y>=1.8. Prevents vertical scatter by making high positions
+      #       equally penalized (flat -2500*merge_mult), letting horizontal clustering compete.
+      #       Fixes worst T55-T62: rp=4, NO_MERGE, decision_top_y=2.49-3.25 for 8 turns destroying clustering.
+      #       Target stage: Ukraine(T13)=8/12(67%) — type clustering for Kazakhstan(T14) gateway.
+      #       mandatory_themes: not violated — only fires when NO_MERGE=true.
+      #       refs: tmp/analysis_result.md (Implementation Plan: rp>=3 NO_MERGE height floor)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -1629,6 +1636,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
+        # v683: rp>=3 NO_MERGE height floor suppression — target worst T55-T62 failure
+        # When rp>=3 && NO_MERGE && max_y>=1.8: REACTIVE_PAIRS_NO_MERGE_PENALTY makes all
+        # candidates equally bad (-3000 to -7000), leaving HEIGHT_CONTROL as tie-breaker.
+        # HEIGHT_CONTROL picks highest position → vertical scatter → destroys clustering.
+        # Best game kept max_y low (1.45→2.13) and maintained type clustering.
+        # Worst game scattered high (1.87→2.28) and had no merge path at deadline.
+        # Fix: apply flat floor penalty for candidates above (max_y - 0.5) during this regime.
+        # This keeps candidates horizontally competitive instead of vertically scattered.
+        # mandatory_themes: not violated — suppression only fires when NO_MERGE=true,
+        # so merge opportunities are never blocked by this.
+        # refs: tmp/analysis_result.md (Implementation Plan: rp>=3 NO_MERGE height floor)
+        if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
+            floor_y = max_y - 0.5
+            if landing_y > floor_y:
+                # Flat floor: candidates near/above current max_y get uniform penalty.
+                # This prevents HEIGHT_CONTROL from choosing the highest position as "best
+                # among bad candidates" — instead all high positions are equally penalized,
+                # forcing the tie-breaker to consider horizontal clustering bonuses.
+                floor_penalty = 2500.0 * merge_mult
+                score -= floor_penalty
+
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
         # piece_count is the key predictor of final score, not max_y.
@@ -1693,7 +1721,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
+        balance_bias = (right_count - left_count) / (len(pieces) if pieces else -1)
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
