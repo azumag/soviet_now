@@ -6,7 +6,7 @@ _kill_comment_gen() {
 	local pidfile="tmp/.twitch_chat/comment_gen.pid"
 	local statefile="$COMMENT_GEN_STATE_FILE"
 	if [ -f "$pidfile" ]; then
-		local raw old_pid old_ppid live_ppid
+		local raw old_pid old_ppid live_ppid live_cmd
 		raw=$(cat "$pidfile" 2>/dev/null || true)
 		old_pid="${raw%%|*}"
 		case "$old_pid" in
@@ -22,7 +22,10 @@ _kill_comment_gen() {
 		fi
 		if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
 			live_ppid=$(ps -o ppid= -p "$old_pid" 2>/dev/null | tr -d ' ')
-			if [ -f "$statefile" ] && { [ -z "$old_ppid" ] || [ "$old_ppid" = "$live_ppid" ]; }; then
+			live_cmd=$(ps -o command= -p "$old_pid" 2>/dev/null || true)
+			if [[ "$live_cmd" == *"/workers/chat_worker.sh"* ]] || [[ "$live_cmd" == *"/workers/youtube_worker.sh"* ]]; then
+				log "[COMMENT] stale comment_gen pid points to worker → killスキップ (PID=$old_pid)"
+			elif [ -f "$statefile" ] && { [ -z "$old_ppid" ] || [ "$old_ppid" = "$live_ppid" ]; }; then
 				pkill -P "$old_pid" 2>/dev/null
 				kill "$old_pid" 2>/dev/null
 				log "[COMMENT] 前回のコメント生成プロセス停止 (PID=$old_pid)"
@@ -2481,7 +2484,7 @@ RETRYCOMMENT
 				local _ov_reply
 				_ov_reply=$(printf '%s' "$comments_talk" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //')
 				[ "${#_ov_reply}" -gt 90 ] && _ov_reply="${_ov_reply:0:90}…"
-				./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} attempt=${attempt}/${comment_retry_max} batch=${comment_batch_hash:-none}${_ov_reply:+ | 返信:${_ov_reply}}" "info" >/dev/null 2>&1 || true
+				timeout "${COMMENT_OVERLAY_NOTIFY_TIMEOUT_SEC:-3}" ./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} attempt=${attempt}/${comment_retry_max} batch=${comment_batch_hash:-none}${_ov_reply:+ | 返信:${_ov_reply}}" "info" >/dev/null 2>&1 || true
 			fi
 			generation_ok=true
 			break

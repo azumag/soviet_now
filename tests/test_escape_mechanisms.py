@@ -1810,6 +1810,16 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn('COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-0}"', config)
         self.assertIn('local_llm_timeout="${COMMENT_OLLAMA_TIMEOUT:-20}"', ai_generate)
 
+    def test_comment_gen_pid_never_kills_worker_processes(self):
+        script = (REPO_ROOT / "broadcast/comment.sh").read_text()
+
+        self.assertIn('stale comment_gen pid points to worker', script)
+        self.assertIn('[[ "$live_cmd" == *"/workers/chat_worker.sh"* ]]', script)
+        self.assertLess(
+            script.index('stale comment_gen pid points to worker'),
+            script.index('pkill -P "$old_pid"'),
+        )
+
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 
