@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-      # v683: DEADLINE_CROSSED_NO_MERGE_HIGH_pc_PENALTY — worst T65 (pc=41, rp=10,
-      #       merge_available=false, decision_crosses_deadline=true, |x|=1.41) で v682
-      #       EDGE_PENALTY条件(|x|>=1.5)を満たさずmandatory_themes違反。pc>=40 &&
-      #       deadline_crossed && merge_grade=="NO"で -2000 追加ペナルティ。
-      #       Target: Ukraine(T13) 10/12(83%)→12/12, Kazakhstan(T14) 3/12(25%)→improve.
-      #       refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -2048,17 +2042,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if not (deadline_crossed and reactive_pair_count >= 3):
                 score -= 4500.0
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-            # v683: DEADLINE_CROSSED_NO_MERGE_HIGH_pc_PENALTY — worst T65 (pc=41, rp=10,
-            # merge_available=false, decision_crosses_deadline=true, |x|=1.41) violated
-            # mandatory_themes because v682 EDGE_PENALTY requires |x|>=1.5. At pc>=40 with
-            # deadline_crossed && merge_available=false, add extra -2000 to prevent NO_MERGE
-            # selection when candidate crosses deadline, regardless of |x| value.
-            # Target stage: Ukraine(T13) 10/12(83%)→12/12, Kazakhstan(T14) 3/12(25%)→improve.
-            # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
-            if deadline_crossed and merge_grade == "NO" and piece_count >= 40:
-                score -= 2000.0
-                reasons.append("DEADLINE_CROSSED_NO_MERGE_HIGH_PC_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
