@@ -1425,6 +1425,7 @@ PY
 	if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
 	if [ "$HASH_AFTER" != "$archive_restart_hash" ]; then
 		log "[ARCHIVE-RESTART] selected hash normalized by validation: selected=${archive_restart_hash} actual=${HASH_AFTER}"
+		_merge_rolling_scores_on_normalize "$archive_restart_hash" "$HASH_AFTER" || true
 		archive_restart_json=$(ARCHIVE_RESTART_JSON="$archive_restart_json" python3 - "$HASH_AFTER" "$archive_restart_hash" <<'PY' 2>/dev/null || printf '%s' "$archive_restart_json"
 import json
 import os

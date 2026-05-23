@@ -2581,6 +2581,101 @@ _start_hash_archive_prune_worker() {
 	log "[HASH-ARCHIVE] prune worker started: PID=${worker_pid}"
 }
 
+_merge_rolling_scores_on_normalize() {
+	local stale_hash="$1" actual_hash="$2"
+	[ -n "$stale_hash" ] && [ -n "$actual_hash" ] && [ "$stale_hash" != "$actual_hash" ] || return 0
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+	local result
+	result=$(
+		python3 - "$ROLLING_SCORES_FILE" "$stale_hash" "$actual_hash" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" 2>/dev/null <<'PY'
+import json
+import os
+import sys
+
+rs_file, stale_hash, actual_hash, keep_raw, hot_keep_raw = sys.argv[1:6]
+try:
+    keep = int(keep_raw)
+except Exception:
+    keep = 20
+try:
+    hot_keep = int(hot_keep_raw)
+except Exception:
+    hot_keep = 200
+keep = max(1, keep)
+hot_keep = max(keep, hot_keep)
+
+try:
+    with open(rs_file, encoding="utf-8") as f:
+        rs = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+stale = rs.get(stale_hash)
+if not stale or not isinstance(stale, dict):
+    raise SystemExit(0)
+
+stale_scores = [int(x) for x in stale.get("scores", []) or []]
+stale_total = int(stale.get("games_total", len(stale_scores)) or len(stale_scores))
+stale_archives = [str(x) for x in (stale.get("_recent_archives", []) or [])]
+
+actual = rs.get(actual_hash, {}) or {}
+actual_scores = [int(x) for x in actual.get("scores", []) or []]
+actual_total = int(actual.get("games_total", len(actual_scores)) or len(actual_scores))
+actual_archives = [str(x) for x in (actual.get("_recent_archives", []) or [])]
+
+# stale scores are older; actual scores are newer
+merged_scores = stale_scores + actual_scores
+merged_total = stale_total + actual_total
+
+# keep last hot_keep (stale may have had a hot streak window too)
+merged_scores = merged_scores[-hot_keep:]
+
+# dedup archives preserving order; keep last 25
+seen = set()
+merged_archives = []
+for a in stale_archives + actual_archives:
+    if a not in seen:
+        seen.add(a)
+        merged_archives.append(a)
+merged_archives = merged_archives[-25:]
+
+merged = dict(actual)
+merged["scores"] = merged_scores
+merged["games_total"] = merged_total
+merged["_recent_archives"] = merged_archives
+merged["best_max_type"] = max(
+    int((stale.get("best_max_type") or 0)),
+    int((actual.get("best_max_type") or 0)),
+)
+merged["russia_count"] = max(
+    int((stale.get("russia_count") or 0)),
+    int((actual.get("russia_count") or 0)),
+)
+merged["soviet_count"] = max(
+    int((stale.get("soviet_count") or 0)),
+    int((actual.get("soviet_count") or 0)),
+)
+if merged["best_max_type"] >= 15 and merged["russia_count"] <= 0:
+    merged["russia_count"] = 1
+if merged["best_max_type"] >= 16 and merged["soviet_count"] <= 0:
+    merged["soviet_count"] = 1
+
+rs[actual_hash] = merged
+rs.pop(stale_hash, None)
+
+tmp = rs_file + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(rs, f, ensure_ascii=False)
+os.replace(tmp, rs_file)
+
+print(f"merged {stale_hash[:12]}({len(stale_scores)}) + {actual_hash[:12]}({len(actual_scores)}) -> {actual_hash[:12]}({len(merged_scores)}) total={merged_total}")
+PY
+	)
+	if [ -n "$result" ]; then
+		log "[ROLLING] normalize-merge: ${result}"
+	fi
+}
+
 update_rolling_scores() {
 	local score="$1" archive_file="${2:-}"
 	local strategy_source="${STRATEGY_FILE}.game_snapshot"
@@ -4071,6 +4166,7 @@ PY
 		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
 		if [ -n "$rollback_hash" ] && [ -n "$rolled_hash" ] && [ "$rollback_hash" != "$rolled_hash" ]; then
 			log "[REGRESSION] rollback target normalized: ${rollback_hash} -> ${rolled_hash}; exclude stale anchor candidate"
+			_merge_rolling_scores_on_normalize "$rollback_hash" "$rolled_hash" || true
 			echo "$rollback_hash" >>"$REJECTED_HASHES_FILE"
 			if [ -f "$REJECTED_HASHES_FILE" ]; then
 				tail -20 "$REJECTED_HASHES_FILE" >"$REJECTED_HASHES_FILE.tmp"
