@@ -3939,6 +3939,8 @@ def decide(game_state, analysis):
         self.assertIn("rollback_target_normalized", regression)
         self.assertIn("normalized fallback target rejected; retry anchor rollback", regression)
         self.assertIn("normalized_fallback_anchor", regression)
+        self.assertIn("requested_rollback_hash", regression)
+        self.assertIn("normalized_from=${requested_rollback_hash} actual_hash=${rolled_hash}", regression)
         self.assertIn("_rollback_candidate_file_is_valid", regression)
         self.assertIn("validation失敗archive", regression)
         self.assertIn('with open(meta_file, "w", encoding="utf-8") as f:', regression)

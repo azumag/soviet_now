@@ -4169,6 +4169,8 @@ PY
 		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
 		if [ -n "$rollback_hash" ] && [ -n "$rolled_hash" ] && [ "$rollback_hash" != "$rolled_hash" ]; then
+			local requested_rollback_hash="$rollback_hash"
+			local requested_rollback_note="$rollback_note"
 			log "[REGRESSION] rollback target normalized: ${rollback_hash} -> ${rolled_hash}; exclude stale anchor candidate"
 			_merge_rolling_scores_on_normalize "$rollback_hash" "$rolled_hash" || true
 			echo "$rollback_hash" >>"$REJECTED_HASHES_FILE"
@@ -4213,6 +4215,9 @@ PY
 						cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
 						return 1
 					fi
+				else
+					rollback_hash="$rolled_hash"
+					rollback_note="${requested_rollback_note}; normalized_from=${requested_rollback_hash} actual_hash=${rolled_hash}"
 				fi
 			fi
 			python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
