@@ -165,6 +165,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - Stage 3 のレビューは会話上の PASS ではなく `tmp/review_result.md` の実ファイル作成を完了条件にする。レビューAIが PASS 本文だけを返してファイルを書かない場合は no-edit retry / verdict repair の対象で、同じレビューを無駄に増やさないためプロンプト側でも最終応答前のファイル確認を必須化している。
 - AI改善の validation は、コメント・reason文言だけの staging を成功扱いしない。直近の自動改善でも一度コメント追記だけの候補が拒否され、同じ session の継続修正で実ロジック変更へ進んでから commit された。停滞監視では `logs/improve_daemon.log` の `validation failed ... 文字列・reason文言だけの変更は不可` が最終失敗ではなく、後続の `Stage 3 レビュー ... PASS` と commit まで到達したかを確認する。
 - Stage 3 のレビューは `height_mult` / `merge_mult` / penalty係数を変える diff では、説明文の「強化/緩和」だけでなく周辺の最終式まで追って係数方向を検算する。たとえば `height_penalty = landing_y * ... * height_mult` なら `height_mult` 増加は penalty 増、低下は penalty 減として扱い、コメントと実挙動の逆転を FAIL にする。
+- Stage 3 のレビューは、`low placement` / 低配置 / 高積み回避 / 盤面圧縮などをうたう新規 bonus / penalty でも単調方向を検算する。低配置を好む説明なのに `max_y` が大きいほど加点する、piece_count を減らしたい説明なのに piece_count 増加で報酬が増える、といった実式の逆向きは FAIL にする。
 - Stage 3 のレビューは、新しく `analysis` / `game_state` / `reactor` のキーや tuple/list/dict 添字を読む diff では、既存コード・`strategy_runner.py`・入力サンプルの runtime shape と照合する。未確認の型・添字仮定で通すと、今回のような frontier 誘導ロジックが実データで不発になっても PASS してしまうため、shape 未確認は FAIL として扱う。
 - Stage 3 のレビューは、availability / flags / grade 判定で `dict.get(...) != "NO"` のように欠損キーを真扱いする diff を FAIL にする。`merge_available` や `merge_grade` などはキー存在・許容値・欠損時の扱いを入力サンプルで確認し、欠損を「利用可能」と解釈しない。
 
