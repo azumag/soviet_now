@@ -163,6 +163,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - Twitch 予想の結果が `粛清` の場合は、`soren_loop.sh` が `REGRESSION_ROLLBACK_RESULT` から `regression_reason_raw` / `regression_reason_label` を予想 state に保存し、`twitch_predictions.sh` が結果文に理由を付ける。粛清が出た時は「粛清」だけでなく、`comp比率低下` / `top対比comp不足` / `ロシア経路喪失` などの原因が視聴者に見える。
 - 回帰理由は `lost_russia_path` / `lost_soviet_path` だけでなく、ロシア前段階の `lost_turkmenistan_gate` / `lost_ukraine_gate` / `lost_kazakhstan_gate` も段階到達率で判定する。rolling score が上位 grace 内の時は段階ゲートでの粛清を抑制し、上位外で frontier を失った時だけ目的後退として扱う。
 - Stage 3 のレビューは会話上の PASS ではなく `tmp/review_result.md` の実ファイル作成を完了条件にする。レビューAIが PASS 本文だけを返してファイルを書かない場合は no-edit retry / verdict repair の対象で、同じレビューを無駄に増やさないためプロンプト側でも最終応答前のファイル確認を必須化している。
+- AI改善の validation は、コメント・reason文言だけの staging を成功扱いしない。直近の自動改善でも一度コメント追記だけの候補が拒否され、同じ session の継続修正で実ロジック変更へ進んでから commit された。停滞監視では `logs/improve_daemon.log` の `validation failed ... 文字列・reason文言だけの変更は不可` が最終失敗ではなく、後続の `Stage 3 レビュー ... PASS` と commit まで到達したかを確認する。
 - Stage 3 のレビューは `height_mult` / `merge_mult` / penalty係数を変える diff では、説明文の「強化/緩和」だけでなく周辺の最終式まで追って係数方向を検算する。たとえば `height_penalty = landing_y * ... * height_mult` なら `height_mult` 増加は penalty 増、低下は penalty 減として扱い、コメントと実挙動の逆転を FAIL にする。
 
 関連設定:
