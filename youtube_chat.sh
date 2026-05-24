@@ -29,6 +29,7 @@ POLL_INTERVAL_FILE="$CHAT_DIR/poll_interval_sec"
 LAST_POLL_FILE="$CHAT_DIR/last_poll_epoch"
 LAST_ERROR_FILE="$CHAT_DIR/last_error.txt"
 LAST_SEND_ERROR_FILE="$CHAT_DIR/last_send_error.txt"
+API_BACKOFF_FILE="$CHAT_DIR/api_backoff_until"
 LOCK_DIR="$CHAT_DIR/.op_lock"
 TAB=$'\t'
 SEEN_ID_MAX="${YOUTUBE_SEEN_ID_MAX:-4000}"
@@ -40,6 +41,33 @@ LOCK_STALE_SEC=120
 CMD="${1:-fetch}"
 
 _log() { echo "[youtube_chat $(date '+%H:%M:%S')] $*" >&2; }
+
+_api_backoff_active() {
+	[ -s "$API_BACKOFF_FILE" ] || return 1
+	local until now_ts
+	until=$(cat "$API_BACKOFF_FILE" 2>/dev/null || echo 0)
+	case "$until" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	now_ts=$(date +%s)
+	[ "$now_ts" -lt "$until" ]
+}
+
+_record_api_backoff() {
+	local reason="${1:-YouTube API temporarily unavailable}"
+	local sec="${YOUTUBE_API_BACKOFF_SEC:-900}"
+	case "$sec" in
+	''|*[!0-9]*) sec=900 ;;
+	esac
+	local until
+	until=$(( $(date +%s) + sec ))
+	printf '%s\n' "$until" >"$API_BACKOFF_FILE" 2>/dev/null || true
+	printf '%s\n' "${reason}; retry after ${sec}s" >"$LAST_ERROR_FILE" 2>/dev/null || true
+}
+
+_clear_api_backoff() {
+	rm -f "$API_BACKOFF_FILE" "$LAST_ERROR_FILE" 2>/dev/null || true
+}
 
 _release_lock() {
 	[ -d "$LOCK_DIR" ] || return 0
@@ -259,9 +287,25 @@ _resolve_live_chat_id() {
 		url="${url}&key=${key}"
 	fi
 	resp=$(_api_get "$url" "$access_token") || {
-		_log "poll: videos.list failed"
-		printf '%s\n' "videos.list failed while resolving activeLiveChatId" >"$LAST_ERROR_FILE" 2>/dev/null || true
-		return 1
+		discovered_id=$(_discover_live_video_id "$access_token" 2>/dev/null || true)
+		if [ -n "$discovered_id" ] && [ "$discovered_id" != "$video_id" ]; then
+			video_id="$discovered_id"
+			url="https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id=$(_urlencode "$video_id")"
+			if [ -z "$access_token" ]; then
+				url="${url}&key=${key}"
+			fi
+			resp=$(_api_get "$url" "$access_token") || {
+				_log "poll: videos.list failed after live video refresh"
+				printf '%s\n' "videos.list failed after live video refresh" >"$LAST_ERROR_FILE" 2>/dev/null || true
+				rm -f "$LIVE_CHAT_ID_FILE" "$LIVE_VIDEO_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
+				return 1
+			}
+		else
+			_log "poll: videos.list failed"
+			printf '%s\n' "videos.list failed while resolving activeLiveChatId" >"$LAST_ERROR_FILE" 2>/dev/null || true
+			rm -f "$LIVE_CHAT_ID_FILE" "$LIVE_VIDEO_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
+			return 1
+		fi
 	}
 	channel_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("snippet", {}).get("channelId", "")' 2>/dev/null || true)
 	[ -n "$channel_id" ] && printf '%s' "$channel_id" >"$CHANNEL_ID_FILE"
@@ -376,33 +420,60 @@ _poll_nolock() {
 		_log "poll: disabled (set YOUTUBE_CHAT_ENABLED=1)"
 		return 0
 	fi
-	local chat_id key token url resp_file count
-	chat_id=$(_resolve_live_chat_id) || return 1
-	key=$(_urlencode "$YOUTUBE_API_KEY")
+	if _api_backoff_active; then
+		_log "poll: API backoff active ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
+		return 1
+	fi
+	local chat_id key token url resp_file count access_token
+	if ! chat_id=$(_resolve_live_chat_id); then
+		if grep -qE '403|videos\.list failed' "$LAST_ERROR_FILE" 2>/dev/null; then
+			access_token=$(_maybe_oauth_access_token)
+			if [ -n "$access_token" ]; then
+				chat_id=$(_resolve_live_chat_id 1 "$access_token") || {
+					_record_api_backoff "YouTube API 403/quota while resolving activeLiveChatId"
+					return 1
+				}
+			else
+				return 1
+			fi
+		else
+			return 1
+		fi
+	fi
 	chat_id=$(_urlencode "$chat_id")
 	token=""
 	[ -s "$PAGE_TOKEN_FILE" ] && token=$(cat "$PAGE_TOKEN_FILE" 2>/dev/null || true)
-	url="https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${chat_id}&part=id,snippet,authorDetails&maxResults=${YOUTUBE_CHAT_MAX_RESULTS:-200}&key=${key}"
+	url="https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${chat_id}&part=id,snippet,authorDetails&maxResults=${YOUTUBE_CHAT_MAX_RESULTS:-200}"
+	if [ -z "$access_token" ]; then
+		key=$(_urlencode "$YOUTUBE_API_KEY")
+		url="${url}&key=${key}"
+	fi
 	if [ -n "$token" ]; then
 		url="${url}&pageToken=$(_urlencode "$token")"
 	fi
 	resp_file=$(mktemp "$CHAT_DIR/.poll_response.XXXXXXXX")
-	if ! _api_get "$url" >"$resp_file" 2>"$LAST_ERROR_FILE"; then
+	if ! _api_get "$url" "$access_token" >"$resp_file" 2>"$LAST_ERROR_FILE"; then
 		if grep -q '403' "$LAST_ERROR_FILE" 2>/dev/null && [ -s "$LIVE_CHAT_ID_FILE" ]; then
 			rm -f "$LIVE_CHAT_ID_FILE" "$PAGE_TOKEN_FILE" 2>/dev/null || true
-			if chat_id=$(_resolve_live_chat_id 1 2>>"$LAST_ERROR_FILE"); then
-				key=$(_urlencode "$YOUTUBE_API_KEY")
+			access_token=$(_maybe_oauth_access_token)
+			if chat_id=$(_resolve_live_chat_id 1 "$access_token" 2>>"$LAST_ERROR_FILE"); then
 				chat_id=$(_urlencode "$chat_id")
-				url="https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${chat_id}&part=id,snippet,authorDetails&maxResults=${YOUTUBE_CHAT_MAX_RESULTS:-200}&key=${key}"
-				if _api_get "$url" >"$resp_file" 2>"$LAST_ERROR_FILE"; then
+				url="https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${chat_id}&part=id,snippet,authorDetails&maxResults=${YOUTUBE_CHAT_MAX_RESULTS:-200}"
+				if [ -z "$access_token" ]; then
+					key=$(_urlencode "$YOUTUBE_API_KEY")
+					url="${url}&key=${key}"
+				fi
+				if _api_get "$url" "$access_token" >"$resp_file" 2>"$LAST_ERROR_FILE"; then
 					:
 				else
 					_log "poll: liveChatMessages.list failed after chat id refresh ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
+					_record_api_backoff "YouTube API 403/quota while polling liveChatMessages"
 					rm -f "$resp_file"
 					return 1
 				fi
 			else
 				_log "poll: cached liveChatId invalid and no active replacement found"
+				_record_api_backoff "YouTube API 403/quota while refreshing liveChatId"
 				rm -f "$resp_file"
 				return 1
 			fi
@@ -424,6 +495,7 @@ _poll_nolock() {
 		_notify_chat_overlay "YouTube" "$notify_line"
 	done
 	echo "$(date +%s)" >"$LAST_POLL_FILE"
+	_clear_api_backoff
 	_log "poll: ${count:-0}件取得"
 }
 
@@ -604,6 +676,10 @@ _oauth_access_token() {
 		"https://oauth2.googleapis.com/token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))'
 }
 
+_maybe_oauth_access_token() {
+	_oauth_access_token 2>/dev/null || true
+}
+
 _send_api() {
 	local insert_url="$1"
 	local access_token="$2"
@@ -664,6 +740,10 @@ _send() {
 		echo "YouTube send disabled (set YOUTUBE_CHAT_SEND_ENABLED=1)" >&2
 		return 1
 	fi
+	if _api_backoff_active; then
+		cat "$LAST_ERROR_FILE" >&2 2>/dev/null || echo "YouTube API backoff active" >&2
+		return 1
+	fi
 	local chat_id access_token payload_file resp_file err_file insert_url
 	access_token=$(_oauth_access_token) || {
 		echo "YouTube OAuth refresh settings are missing or invalid" >&2
@@ -696,13 +776,16 @@ _send() {
 			_record_send_error "$err_file" "$resp_file"
 		fi
 	fi
+	if grep -q '403' "$LAST_SEND_ERROR_FILE" 2>/dev/null; then
+		_record_api_backoff "YouTube API 403/quota while sending liveChatMessages"
+	fi
 	cat "$LAST_SEND_ERROR_FILE" >&2 2>/dev/null || true
 	rm -f "$payload_file" "$resp_file" "$err_file"
 	return 1
 }
 
 _status() {
-	local pending=0 raw=0 poll_interval="-" effective_poll_interval="-" last_poll="-" last_error="" last_send_error=""
+	local pending=0 raw=0 poll_interval="-" effective_poll_interval="-" last_poll="-" last_error="" last_send_error="" backoff_until=""
 	[ -f "$PENDING_LOG" ] && pending=$(wc -l <"$PENDING_LOG" 2>/dev/null | tr -d ' ')
 	[ -f "$RAW_LOG" ] && raw=$(wc -l <"$RAW_LOG" 2>/dev/null | tr -d ' ')
 	[ -f "$POLL_INTERVAL_FILE" ] && poll_interval=$(cat "$POLL_INTERVAL_FILE" 2>/dev/null || echo "-")
@@ -713,7 +796,10 @@ _status() {
 	[ -f "$LAST_POLL_FILE" ] && last_poll=$(cat "$LAST_POLL_FILE" 2>/dev/null || echo "-")
 	[ -s "$LAST_ERROR_FILE" ] && last_error=$(head -1 "$LAST_ERROR_FILE" 2>/dev/null || true)
 	[ -s "$LAST_SEND_ERROR_FILE" ] && last_send_error=$(head -1 "$LAST_SEND_ERROR_FILE" 2>/dev/null || true)
-	echo "enabled=${YOUTUBE_CHAT_ENABLED:-0} raw=${raw:-0} pending=${pending:-0} api_poll_interval=${poll_interval}s effective_poll_interval=${effective_poll_interval}s last_poll=${last_poll}${last_error:+ last_error=${last_error}}${last_send_error:+ last_send_error=${last_send_error}}"
+	if _api_backoff_active; then
+		backoff_until=$(cat "$API_BACKOFF_FILE" 2>/dev/null || true)
+	fi
+	echo "enabled=${YOUTUBE_CHAT_ENABLED:-0} raw=${raw:-0} pending=${pending:-0} api_poll_interval=${poll_interval}s effective_poll_interval=${effective_poll_interval}s last_poll=${last_poll}${backoff_until:+ api_backoff_until=${backoff_until}}${last_error:+ last_error=${last_error}}${last_send_error:+ last_send_error=${last_send_error}}"
 }
 
 case "$CMD" in
