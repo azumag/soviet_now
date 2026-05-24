@@ -729,13 +729,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    # v681: compute global merge availability before using in guard
-    # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-    # A DIRECT/NEAR candidate may exist but merge_available=false globally (e.g., pair already consumed)
-    __dlg_merge_available = any(
-        isinstance(c, dict) and c.get("merge_grade") != "NO"
-        for c in __dlg_cands
-    )
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
@@ -749,13 +742,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         )
         def __dlg_merge_result_safe(c):
             return not c.get("merge_result_crosses_deadline")
-        # v681: also check global merge_available — DIRECT candidate without global merge is invalid
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
             and __dlg_merge_result_safe(c)
             and not c.get("merge_result_crosses_deadline")
-            and __dlg_merge_available
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -770,7 +761,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
             and __dlg_merge_result_safe(c)
             and not c.get("merge_result_crosses_deadline")
-            and __dlg_merge_available
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
@@ -801,15 +791,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
-        # Fallback: only when no merge candidate is available globally
-        # v681: mandatory_themes — when merge_available is false, NO_MERGE crossing
-        # candidates must not be selected; skip this fallback so DEADLINE_GUARD
-        # returns nothing and main logic respects the constraint
-        if __dlg_merge_available:
-            __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-            if __dlg_safe:
-                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # Fallback: only when no merge candidate is available
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        if __dlg_safe:
+            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
@@ -1902,7 +1888,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
-# ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
+        # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
         # ワーストゲーム(score0725)終盤turns 61-62: reactive_pairs=3, merge_available=falseでmax_y=3.39→2.81の高配置が選ばれゲームオーバー
@@ -1922,36 +1908,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v682 (v452 baseline): flatten to -4500, matching protected strategy (median 12789)
+            # v452: flatten to -4500, matching protected strategy (median 12789)
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-            # v682: STRENGTHENED board compression guidance during merge drought
-            # Hypothesis: worst_game T57-T65 failed because axis 8.8 flat -4500 was insufficient
-            # to override HIGH_TOWER selection when merge_available=false && rp>=3.
-            # best_game T122-T124 pattern: immediate board compression after Russia appearance
-            # (34→26 pcs, score_delta=462) followed by low placement maintenance (1.26-2.36).
-            # The flat -4500 penalty makes all NO_MERGE candidates equally bad, but HIGH_TOWER
-            # (line 1525-1527) adds height penalty only for landing_y>0.5, which differentiates
-            # within the -4500 band. We need stronger penalty + positive guidance toward low placement.
-            # Trigger: merge_available=false && rp>=3 && (deadline_crossed or reactor_margin<1.0)
-            # Forbidden (rollback constraint): height_mult<0.5 at max_y>=2.3 && pc>=35 (v671)
-            if not global_merge_available and reactive_pair_count >= 3 and (deadline_crossed or reactor_margin < 1.0):
-                # Strengthen penalty: net -6500 instead of -4500
-                score -= 2000.0  # Additional penalty on top of -4500 baseline
-                reasons.append("MERGE_DROUGHT_STRENGTHENED")
-
-                # Board compression bonus: prefer lower landing positions
-                # Formula: piece_count*30 + max_y*100 — guides toward low placement during drought
-                # At pc=35, max_y=2.5: bonus = 35*30 + 2.5*100 = 1050 + 250 = 1300
-                # This positive signal complements the negative penalty, making low placement
-                # decisions more attractive than high placement decisions.
-                compression_bonus = piece_count * 30.0 + max_y * 100.0
-                score += compression_bonus
-                reasons.append("BOARD_COMPRESSION_GUIDANCE")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
