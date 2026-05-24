@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+# v685: HIGH_POSITION_JUMP_PENALTY — when merge_grade==NO && rp>=2 && margin<2.0 && max_y<2.0,
+#       penalize candidates where landing_y exceeds max_y by >1.5 (jump to y=3+ when board is only 1.5-2.0).
+#       worst game turns 55-58: placed at y=3.01/2.71/3.06 despite max_y=1.57/1.4/1.94 → max_y runaway.
+#       Axis 8.8 (rp>=3 no-merge penalty) is separate — this targets rp>=2 regime before HARD SUPPRESS.
+#       mandatory_themes: "デッドラインを超える場合は併合できる場合に限る" — rp>=2&&NO condition.
+#       refs: tmp/analysis_result.md (Adopted Hypothesis: worst game turn 55-58 jump placement failure)
 # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
 #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
 #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -956,6 +962,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- v685: HIGH_POSITION_JUMP_PENALTY — prevent max_y runaway from jump placements -----
+        # worst game turns 55-58: max_y=1.57/1.4/1.94 but placed at y=3.01/2.71/3.06 — delta=+1.44/+1.31/+1.12
+        # This pattern caused max_y to spike from 1.4→2.27 in just 3 turns (turn 55→58).
+        # advice.md: "盤面の高さ余裕を優先的に管理し、駒の積み上げペースを抑制する戦略調整"
+        # batch_summary: high_score avg late max_y=1.72 vs low_score avg=1.52 — lower final max_y = higher score
+        # mandatory_themes: "デッドラインを超える場合は併合できる場合に限る" — turn 60 crosses_deadline && NO violates
+        # This axis fires when: merge_grade==NO && rp>=2 && deadline_margin<2.0 && max_y<2.0
+        # and landing_y exceeds max_y by more than 1.5 (i.e., jump to y=3+ when board surface is only 1.5-2.0)
+        # This is separate from axis 8.8 (rp>=3 no-merge penalty) — targets the rp>=2 regime.
+        # Does NOT apply to merge candidates — merge bonus evaluation handles those.
+        # max_y>=2.5: existing HARD SUPPRESS (v668) takes precedence.
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: worst game turn 55-58 failure analysis),
+        #       game_history/20260524_192539_score0877.jsonl (worst game turn 55-58 placement analysis)
+        # Fixes failure mode: max_y runaway from NO_MERGE jump placements at max_y=1.5-2.0
+        if (
+            merge_grade == "NO"
+            and reactive_pair_count >= 2
+            and reactor_margin < 2.0
+            and max_y < 2.0
+        ):
+            height_gap = landing_y - max_y
+            if height_gap > 1.5:
+                jump_penalty = -(height_gap - 1.5) * 1500.0
+                score += jump_penalty
+                reasons.append("HIGH_POSITION_JUMP_PENALTY")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
