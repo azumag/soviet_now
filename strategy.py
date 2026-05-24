@@ -64,10 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v682: critical phase pc>=35 low placement誘導 — merge_grade=="NO" && max_y>=2.0 && pc>=35
-     #       で低landing_y配置に+400、中間配置に-200。worst T64-T66 (pc=35-37) max_y runaway防止。
-     #       対象: Kazakhstan(T14)到连率58%改善。russia_phase不改変、mandatory_themes適合。
-     #       refs: tmp/analysis_result.md (Primary hypothesis)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -700,124 +696,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
-    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---
-    # Emergency deadline safety: when the reactor is past/near the deadline,
-    # force an immediate merge or the safest landing to avoid runaway stacking.
-    __dlg_game_state = game_state if isinstance(game_state, dict) else {}
-    __dlg_analysis = analysis if isinstance(analysis, dict) else {}
-    __dlg_reactor = __dlg_analysis.get("reactor", {}) if isinstance(__dlg_analysis.get("reactor", {}), dict) else {}
-    __dlg_margin = __dlg_reactor.get("deadline_margin", 99.0)
-    try:
-        __dlg_margin = float(__dlg_margin)
-    except (TypeError, ValueError):
-        __dlg_margin = 99.0
-    try:
-        __dlg_danger_count = int(__dlg_reactor.get("danger_piece_count", 0) or 0)
-    except (TypeError, ValueError):
-        __dlg_danger_count = 0
-    __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
-    __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
-    if isinstance(__dlg_rps, list):
-        __dlg_rp_count = len(__dlg_rps)
-    else:
-        try:
-            __dlg_rp_count = int(__dlg_rps)
-        except (TypeError, ValueError):
-            __dlg_rp_count = 0
-    __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
-    if not isinstance(__dlg_cands, list):
-        __dlg_cands = []
-    # This guard is specifically a deadline guard. Reactive pairs alone can
-    # justify merge pressure elsewhere in the strategy, but must not force a
-    # "safe landing" while the visible board is still far below the red line.
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
-    if __dlg_critical and __dlg_cands:
-        __dlg_has_clean = any(
-            isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            for c in __dlg_cands
-        )
-        def __dlg_merge_result_safe(c):
-            return not c.get("merge_result_crosses_deadline")
-        __dlg_direct = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
-            and __dlg_merge_result_safe(c)
-            and not c.get("merge_result_crosses_deadline")
-        ]
-        if __dlg_direct:
-            def __dlg_score_direct(c):
-                return (
-                    0 if c.get("danger_direct_merge_available") else 1,
-                    float(c.get("landing_y", 99.0) or 99.0),
-                )
-            __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
-        __dlg_near_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
-            and __dlg_merge_result_safe(c)
-            and not c.get("merge_result_crosses_deadline")
-        ]
-        if __dlg_near_safe:
-            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        # v679: mandatory_themes compliance — NO_MERGE candidates crossing deadline must be excluded
-        #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
-        __dlg_safe_no_merge = [
-            c for c in __dlg_cands
-            if isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            and not (c.get("merge_grade") == "NO")  # Exclude NO_MERGE + deadline cross
-        ]
-        if __dlg_safe_no_merge:
-            __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # v680: When merge available globally, prefer merge candidates over NO_MERGE in fallback
-        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        __dlg_merge_preferred = [
-            c for c in __dlg_cands
-            if isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            and c.get("merge_grade") in ["DIRECT", "NEAR"]
-        ]
-        if __dlg_merge_preferred:
-            __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # Fallback: only when no merge candidate is available
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-        if __dlg_safe:
-            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # v682: mandatory_themes strict enforcement — NO_MERGE crossing deadline at high reactive_pairs is forbidden
-        # When merge_grade==NO && reactive_pairs>=3 && decision_crosses_deadline==true, suppress all candidates
-        # to force fallback to lowest landing_y non-crossing (or HARD_SUPPRESS if nothing safe remains)
-        if __dlg_rp_count >= 3:
-            __dlg_forbidden = [
-                c for c in __dlg_cands
-                if isinstance(c, dict)
-                and c.get("merge_grade") == "NO"
-                and c.get("decision_crosses_deadline")
-            ]
-            if __dlg_forbidden:
-                __dlg_valid = [
-                    c for c in __dlg_cands
-                    if isinstance(c, dict)
-                    and c.get("merge_grade") != "NO"
-                    and not c.get("decision_crosses_deadline")
-                ]
-                if __dlg_valid:
-                    __dlg_best = min(__dlg_valid, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                    return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_MANDATORY_THEMES_STRICT"}
-                return {"x": 0.0, "reason": "DEADLINE_GUARD_HARD_SUPPRESS"}
-
-    # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
 
@@ -938,7 +816,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
         #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
         #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
-        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 2 and reactor_margin < 0.3:
+        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3:
             suppressed += 1
             continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
@@ -1935,21 +1813,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- v682: critical phase piece_count>=35 low placement诱导 -----
-        # worst T64-T66 (pc=35-37, max_y=1.64-2.26): NO_MERGE選択时、decision_top_y_after_drop=3.33でmax_y runaway
-        # best T124-T128 (pc=28-30, max_y=1.01-2.32): merge_available=true进取的に选择、max_y管理有效
-        # 分析: critical相 (max_y>=2.5)ではheight_mult=1.0でheight penalty强化済みだが、piece_count>=35では不足
-        # 対象: Kazakhstan(T14)到连率58%改善 (pc>=35 && max_y>=2.0局面での低配置选择促进)
-        # 禁止事项: russia_phase改変, deadline_crossedでのNO_MERGE選択獎励, piece_count<35适用
-        # refs: tmp/analysis_result.md (Primary hypothesis: critical phase pc>=35 low placement诱导)
-        if merge_grade == "NO" and max_y >= 2.0 and piece_count >= 35:
-            if landing_y < 0:
-                score += 400.0
-                reasons.append("CRITICAL_PC35_LOW_PLACEMENT_BONUS")
-            elif landing_y < 1.5:
-                score -= 200.0
-                reasons.append("CRITICAL_PC35_MID_PLACEMENT_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
