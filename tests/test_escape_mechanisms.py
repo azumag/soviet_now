@@ -4946,6 +4946,7 @@ _pick_best_rollback_candidate currentHash
 
         self.assertIn("ROLLBACK-POSTMORTEM", ai_generate)
         self.assertIn("ROLLBACK_POSTMORTEM_OPENCODE_LOCK_STALE_SEC", ai_generate)
+        self.assertIn('postmortem_stale_sec=$((max_wait_sec - wait_sec))', ai_generate)
         self.assertIn("stale rollback-postmortem run lock cleared", ai_generate)
         self.assertIn('OPENCODE_RUN_LOCK_STALE_SEC="${ROLLBACK_POSTMORTEM_OPENCODE_LOCK_STALE_SEC:-240}"', regression)
 

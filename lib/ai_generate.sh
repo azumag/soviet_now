@@ -232,7 +232,7 @@ _opencode_cleanup_internal_locks() {
 _opencode_run_lock_enter() {
 	local label="${1:-opencode}"
 	local agent="${2:-}"
-	local lock_dir wait_sec stale_sec max_wait_sec waited=0 token now mt age owner_summary="" owner_pid=""
+	local lock_dir wait_sec stale_sec max_wait_sec waited=0 token now mt age owner_summary="" owner_pid="" postmortem_stale_sec
 	if [ "${OPENCODE_RUN_LOCK_ENABLED:-1}" != "1" ]; then
 		OPENCODE_RUN_LOCK_LAST_TOKEN=""
 		return 0
@@ -262,7 +262,16 @@ _opencode_run_lock_enter() {
 		age=$((now - mt))
 		owner_pid=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
 		owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')
-		if [[ "$owner_summary" == *ROLLBACK-POSTMORTEM* ]] && [ "$age" -gt "${ROLLBACK_POSTMORTEM_OPENCODE_LOCK_STALE_SEC:-240}" ]; then
+		postmortem_stale_sec="${ROLLBACK_POSTMORTEM_OPENCODE_LOCK_STALE_SEC:-240}"
+		case "$postmortem_stale_sec" in
+		'' | *[!0-9]*) postmortem_stale_sec=240 ;;
+		esac
+		[ "$postmortem_stale_sec" -lt 60 ] && postmortem_stale_sec=60
+		if [ "$max_wait_sec" -gt 0 ] && [ "$postmortem_stale_sec" -ge "$max_wait_sec" ]; then
+			postmortem_stale_sec=$((max_wait_sec - wait_sec))
+			[ "$postmortem_stale_sec" -lt 60 ] && postmortem_stale_sec=60
+		fi
+		if [[ "$owner_summary" == *ROLLBACK-POSTMORTEM* ]] && [ "$age" -gt "$postmortem_stale_sec" ]; then
 			log "[OPENCODE:${label}] stale rollback-postmortem run lock cleared (age=${age}s, ${owner_summary})" >&2
 			rm -rf "$lock_dir" 2>/dev/null || true
 			continue
