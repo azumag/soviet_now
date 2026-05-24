@@ -154,6 +154,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcardParallelOverlay` は 1920x140 のヘッダ専用表示とし、候補本線は `wildcardParallelCand1..6` の macOS window capture source で映す。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
 - `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。
+- `wildcard` 並列評価の進捗は、実行中は `tmp/state/wildcard_parallel_status.json` を一次情報にする。候補 workdir 内の `game_count.txt` / `score_history.txt` / `eval_score_history.txt` は初期化値や書き込みタイミングで遅れて見える場合があるため、停滞監視では status file の `games` / `scores` / `russia_count` / `comp` と実プロセスを優先して判断する。
 - `wildcard_parallel.py` が result file に winner を書いた後で外側の timeout / TERM により非ゼロ終了した場合は、result file の winner を優先して採用処理へ進める。winner があるのに `rc=143` だけで `parallel_no_candidate` に落とすと、停滞脱出が空振りで終わるため。
 - `wildcard` 並列評価 overlay は候補を暫定 composite 順に表示し、leader と相対バーを出す。rolling score 反映前でも `wildcard_origin.json` の `parallel_result` に trial scores が残っていれば status dashboard は `trial` として n/max と composite を表示する。
 - `wildcard` 並列評価ブラウザは `SOREN_BGM_VOLUME=0` / `SOREN_SE_VOLUME=1.5` を既定で渡す。Unity の scene load 後に音量が戻ることがあるため、`soviet_local.mjs` は `SOREN_UNITY_VOLUME_REAPPLY_MS` 間隔で指定音量を再適用する。
