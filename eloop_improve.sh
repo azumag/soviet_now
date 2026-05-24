@@ -346,6 +346,24 @@ def plaintext_status():
         return "FAIL"
     return ""
 
+def contradictory_threshold_direction_claim():
+    """Reject the exact review failure that let a narrower threshold pass."""
+    normalized = re.sub(r"\s+", " ", text).lower()
+    threshold_lowered = re.search(
+        r"(?:threshold|閾値|しきい値|margin).{0,80}"
+        r"(?:0\.5\s*(?:->|→|から|to)\s*0\.3|0\.3\s*(?:<-|←|へ|に)\s*0\.5)",
+        normalized,
+    )
+    if not threshold_lowered:
+        return False
+    widening_claim = re.search(
+        r"(?:catch(?:es|ing)?\s+(?:more|all)|captures?\s+(?:more|all)|"
+        r"more\s+(?:candidates|cases)|broaden|widen|strengthen|stronger|"
+        r"より多く|すべて捕|全て捕|全部捕|発火範囲.*広|範囲.*広|強化)",
+        normalized,
+    )
+    return bool(widening_claim)
+
 data = extract_json_verdict()
 if not data:
     pt = plaintext_status()
@@ -353,6 +371,9 @@ if not data:
         # plaintext PASS still must not contradict an explicit user_review failure
         if user_review_present and re.search(r"user[_ ]?review[_ ]?satisfied\W{0,4}(false|no|0)\b", text, re.I):
             print("plaintext verdict PASS but user_review_satisfied is false")
+            raise SystemExit(1)
+        if contradictory_threshold_direction_claim():
+            print("review verdict PASS contradicts comparison threshold direction")
             raise SystemExit(1)
         raise SystemExit(0)
     if pt == "FAIL":
@@ -373,6 +394,10 @@ if status != "PASS":
 
 if user_review_present and not truthy(data.get("user_review_satisfied")):
     print("review verdict did not confirm user_review_satisfied=true")
+    raise SystemExit(1)
+
+if contradictory_threshold_direction_claim():
+    print("review verdict PASS contradicts comparison threshold direction")
     raise SystemExit(1)
 
 raise SystemExit(0)
