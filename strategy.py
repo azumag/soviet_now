@@ -64,7 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
+      # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
+      #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
+      #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
+      #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+      #       Fixes rollback failure mode: DEADLINE_GUARD returned merge candidate with merge_available=false
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis)
+      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
      #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
@@ -723,6 +729,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
+    # v681: compute global merge availability before using in guard
+    # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+    # A DIRECT/NEAR candidate may exist but merge_available=false globally (e.g., pair already consumed)
+    __dlg_merge_available = any(
+        isinstance(c, dict) and c.get("merge_grade") != "NO"
+        for c in __dlg_cands
+    )
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
@@ -736,11 +749,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         )
         def __dlg_merge_result_safe(c):
             return not c.get("merge_result_crosses_deadline")
+        # v681: also check global merge_available — DIRECT candidate without global merge is invalid
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
             and __dlg_merge_result_safe(c)
             and not c.get("merge_result_crosses_deadline")
+            and __dlg_merge_available
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -755,6 +770,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
             and __dlg_merge_result_safe(c)
             and not c.get("merge_result_crosses_deadline")
+            and __dlg_merge_available
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
@@ -785,11 +801,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
-        # Fallback: only when no merge candidate is available
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-        if __dlg_safe:
-            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # Fallback: only when no merge candidate is available globally
+        # v681: mandatory_themes — when merge_available is false, NO_MERGE crossing
+        # candidates must not be selected; skip this fallback so DEADLINE_GUARD
+        # returns nothing and main logic respects the constraint
+        if __dlg_merge_available:
+            __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+            if __dlg_safe:
+                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
