@@ -5155,6 +5155,8 @@ _pick_best_rollback_candidate currentHash
         self.assertIn("BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED", config)
         self.assertIn("BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT", config)
         self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", config)
+        self.assertIn('SOREN_BRIDGE_DESYNC_LIMIT="${SOREN_BRIDGE_DESYNC_LIMIT:-3}"', config)
+        self.assertIn('BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "3") or "3")', (REPO_ROOT / "strategy_runner.py").read_text())
         self.assertIn("即bridge復旧", loop)
         self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", loop)
         self.assertIn("[PHANTOM] bridge 再起動 成功", loop)

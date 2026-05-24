@@ -48,7 +48,7 @@ MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
 DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
 # commands未消化がこの回数連続したら bridge 非同期と判定しゲーム中断
 # (外側 eloop.sh が bridge 再起動して自己回復。0で無効)
-BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "6") or "6")
+BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "3") or "3")
 
 
 _received_signal = None

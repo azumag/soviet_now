@@ -87,6 +87,7 @@ soren_loop の多重起動ロック:
 - ロック所有者が消えた場合だけ、実行中の自身のメイン PID で `tmp/.soren_loop.lock/pid` を再採用する。
 - `start_all.sh` は `soren_loop` の lock pidfile を通常 worker pidfile として上書きしない。起動直後も lock owner PID を監視対象に採用し、supervisor がロック所有者を書き換えて試合終了後の score 登録前に duplicate 判定で落ちる事故を防ぐ。
 - `start_all.sh` は各 poll で worker 実プロセス数を `tmp/state/worker_duplicates.json` に書き、同じ worker が複数見えたら `logs/start_all.log` に `worker duplicate detected` を一度だけ出す。`show_status.sh` は新鮮な duplicate state があれば CORE に `Duplicates DETECTED` / `none` を表示する。検知は観測用で、余分な PID の自動 kill はしない。
+- `strategy_runner.py` が `commands未消化` を3連続で検出した場合は `bridge_desync` として試合を中断し、`eloop.sh` が `soviet_local.mjs` bridge を再起動して次周回で復旧する。1回の未消化は `MOVE状態待ち` 120秒 + command timeout を消費するため、6連続まで待つと十数分空転する。
 
 **シェルモジュール構成:**
 
