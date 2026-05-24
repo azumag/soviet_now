@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v684: CENTRAL_HIGH_NO_MERGE_PENALTY — central (|x|<1.5) && landing_y>=2.0 && rp>=3 && NO: extra -2000
+      #       worst T65 (x=0.1, y=3.37), T73 (x=0.98, y=3.55) — v682 edge penalty doesn't reach central.
+      #       mandatory_themes: deadline NO_MERGE violates "デッドライン付近の危険盤面領域では、併合を優先するべき"
+      #       Stage gate: Ukraine(T13) 11/12(92%) — reduces central NO_MERGE high-placement piece_count accumulation
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis: central NO_MERGE penalty)
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1914,6 +1919,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # v684: central NO_MERGE high-placement penalty — worst T65/T73 had central x=0.1/0.98
+            # with landing_y=3.37/3.55 (deadline_crossed & NO_MERGE), mandatory_themes violation.
+            # v682 edge penalty (|x|>=1.5) doesn't apply to central placements (|x|<1.5).
+            # Add +2000 penalty when central (|x|<1.5) and high placement (landing_y>=2.0).
+            if abs(x) < 1.5 and landing_y >= 2.0:
+                score -= 2000.0
+                reasons.append("CENTRAL_HIGH_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
