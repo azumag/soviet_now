@@ -50,6 +50,18 @@ _outbound_chat_youtube_mirror_configured() {
 	return 0
 }
 
+_outbound_chat_youtube_backoff_active() {
+	local backoff_file="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}/api_backoff_until"
+	local until now
+	[ -f "$backoff_file" ] || return 1
+	until=$(cat "$backoff_file" 2>/dev/null || true)
+	case "$until" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	now=$(date +%s)
+	[ "$until" -gt "$now" ]
+}
+
 _outbound_chat_log_youtube_mirror_failure() {
 	local basename="$1"
 	local err_file="$2"
@@ -101,6 +113,9 @@ _outbound_chat_send_youtube_mirror() {
 	local basename="$2"
 	_outbound_chat_youtube_mirror_configured || return 0
 	[ -x ./youtube_chat.sh ] || return 0
+	# Poll/send share the same YouTube quota backoff. Avoid retrying every Twitch
+	# outbound message while the mirror is known to be unavailable.
+	_outbound_chat_youtube_backoff_active && return 0
 	local source
 	source=$(_outbound_chat_source_from_basename "$basename")
 	_outbound_chat_source_is_youtube_mirror_excluded "$source" && return 0
