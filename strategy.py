@@ -42,10 +42,9 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
-              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-              9.16. Highest-type clustering for T14→T15 Russia path - v672: merge_grade==NO && max_type>=14 && pc>=25 && max_y>=1.5 && no reactive pair for max_type
-              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+             9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
 
@@ -65,18 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v672: axis 9.16 highest-type clustering during merge drought — when merge_grade==NO &&
-     #       max_type>=14 && pc>=25 && max_y>=1.5 && no reactive pair for max_type,
-     #       add clustering bonus toward centroid of highest-type pieces.
-     #       Fixes T14→T15 Russia path failure: 4 near-miss games had isolated T14 (no reactive pair),
-     #       pieces scattered across board, final merge impossible. axis 9.16 clusters highest-type
-     #       during NO_MERGE to create the final Russia merge path.
-     #       Stage target: Kazakhstan(T14)=4/12(33%) → Russia(T15)=0/12(0%).
-     #       Does NOT fire in death_spiral (height must be sole differentiator per postmortem).
-     #       mandatory_themes compliant: purely additive clustering, does not override merge priority.
-     #       refs: tmp/analysis_result.md (Hypothesis: T14 Near-Miss Clustering),
-     #             tmp/improve_brief.md (russia_recovery_priority),
-     #             game_history/20260524_100930_score2862.jsonl (best T119: T14 isolated)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -1359,46 +1346,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
-
-        # ----- axis 9.16: highest-type clustering during merge drought (T14→T15 Russia path) -----
-        # Hypothesis: Type 14 pieces scatter before final T14→T15 merge pair materializes
-        # Batch near-miss: 4 games reached max_type=14 but Russia=0. Common pattern:
-        #   type 14 piece at y≈-3.0 isolated, no reactive pair for type 14, no merge path created
-        # When max_type >= 14 exists but has no reactive pair (isolated), cluster highest-type
-        # pieces during NO_MERGE to create the final merge path to Russia.
-        # Conditions: merge_grade==NO AND max_type>=14 AND pc>=25 AND max_y>=1.5 AND no reactive pair for max_type
-        # Bonus: guide placement toward centroid of highest-type pieces
-        # Magnitude: max ~400, competitive with height diff (~100-200 in HIGH phase) at high max_y
-        # Does NOT fire during death_spiral (height must be sole differentiator per postmortem)
-        # mandatory_themes compliant: purely additive clustering, does not override merge priority
-        # refs: tmp/analysis_result.md (Hypothesis: T14 Near-Miss Clustering),
-        #       tmp/improve_brief.md (russia_recovery_priority),
-        #       game_history/20260524_100930_score2862.jsonl (best game T119: T14 isolated)
-        max_type_on_board = max([p["type"] for p in pieces]) if pieces else 0
-        if (merge_grade == "NO"
-            and max_type_on_board >= 14
-            and piece_count >= 25
-            and max_y >= 1.5
-            and not death_spiral):
-            # Check if max_type has reactive pairs (already clustered = merge path exists)
-            max_type_has_reactive = any(
-                rp[2] == max_type_on_board
-                for rp in reactive_pairs
-                if isinstance(rp, (list, tuple)) and len(rp) >= 3
-            )
-            if not max_type_has_reactive:
-                highest_type_pieces = [p for p in pieces if p.get("type") == max_type_on_board]
-                if len(highest_type_pieces) >= 2:
-                    centroid_x = sum(p.get("x", 0) for p in highest_type_pieces) / len(highest_type_pieces)
-                    dist_to_centroid = abs(x - centroid_x)
-                    if dist_to_centroid < 2.0:
-                        # Bonus: closer to centroid = higher clustering for final merge
-                        # Scale: at pc=35, bonus ~300, competitive with height diff
-                        clustering_bonus = max(0.0, 400.0 - dist_to_centroid * 150.0)
-                        if piece_count >= 30:
-                            congestion_scale = 1.0 + (piece_count - 30) * 0.08
-                            clustering_bonus *= min(congestion_scale, 2.0)
-                        score += clustering_bonus
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
