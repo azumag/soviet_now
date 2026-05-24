@@ -64,17 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-      # v682: SAME_TYPE_SCATTER_AVOIDANCE — suppress HEIGHT_CONTROL when same_type pieces exist
-      #       When same_type_pieces exists && merge_grade != "DIRECT": -800 penalty to encourage
-      #       same-type clustering over scattered HEIGHT_CONTROL placement.
-      #       Worst T7/T10: HEIGHT_CONTROL chosen despite merge_available → pieces scattered.
-      #       Batch: HEIGHT_CONTROL 21.2% (avg_score_delta=4.8) vs NEAR_MERGE 24.7.
-      #       Target: Ukraine(T13)=12/13(92%)→100%, Kazakhstan(T14)=7/13(54%)→improve.
-      #       Fixes rollback failure mode: HEIGHT_CONTROL scatter → no same-type merge clustering.
-      #       refs: tmp/analysis_result.md (Implementation Plan: SAME_TYPE_SCATTER_AVOIDANCE),
-      #             tmp/batch_summary.txt (HEIGHT_CONTROL 21.2%, avg_score_delta=4.8),
-      #             game_history/20260524_235922_score0830.jsonl T7/T10,
-      #             tmp/state/last_rollback_postmortem.md (early game merge constraint)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -969,30 +958,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
-
-        # ----- v682: SAME_TYPE_SCATTER_AVOIDANCE — suppress HEIGHT_CONTROL when same_type exists -----
-        # analysis_result.md adopted hypothesis: suppress HEIGHT_CONTROL when same_type pieces exist.
-        # Worst game T7/T10: merge_available=true, best_merge_grade=NEAR/DIRECT, yet HEIGHT_CONTROL
-        # chosen → pieces scattered, no merge clustering. Batch shows HEIGHT_CONTROL 21.2% of turns
-        # (avg_score_delta=4.8) vs NEAR_MERGE 24.7. When same_type pieces exist on board but
-        # no DIRECT merge is available, HEIGHT_CONTROL scatters pieces preventing same-type clustering.
-        # Over turns, scattered pieces are too far apart to merge → piece_count stays high →
-        # max_y climbs → game over. Worst game never created T13 (max_type=12) because T11 pieces
-        # were scattered. Kazakhstan(T14)=7/13(54%) is next bottleneck — T12 pieces must cluster.
-        # Penalty -800: less than DIRECT (+1200, always wins), greater than NEAR (+600, ensures
-        # NEAR/NO with clustering beats HEIGHT_CONTROL). Do NOT suppress when same_type_pieces empty
-        # (no clustering needed) or when DIRECT (merge always wins).
-        # Constraint from rollback: "Early game merges (turns 1-20) have outsized impact on
-        # piece_count compression; suppressing HEIGHT_CONTROL when same_type pieces exist enables
-        # mid-game merge availability"
-        # refs: tmp/analysis_result.md (Implementation Plan: SAME_TYPE_SCATTER_AVOIDANCE),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 21.2%, avg_score_delta=4.8),
-        #       game_history/20260524_235922_score0830.jsonl T7/T10 (HEIGHT_CONTROL despite merge_available),
-        #       tmp/state/last_rollback_postmortem.md (early game merge constraint)
-        # Fixes rollback failure mode: HEIGHT_CONTROL scatter when same_type pieces exist → no merge clustering
-        if same_type_pieces and merge_grade != "DIRECT":
-            score -= 800.0
-            reasons.append("SAME_TYPE_SCATTER_AVOIDANCE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
