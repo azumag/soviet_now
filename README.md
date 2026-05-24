@@ -163,8 +163,8 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。
 - `wildcard` / `archive_restart` の fast escape では親 `eloop_improve.sh` が候補採用と状態遷移を担う。親 PID が見えない running state は、通常改善のように長時間 fresh log 扱いで保護せず、短い猶予後に `monitor_improve_runtime.sh` が harvest して stale lock を解放する。early escape の lock は作成時 `normal` でも、改善起動時に最終 reason を書き戻すため、失敗後の再試行・表示・代打制御も fast escape として扱われる。
 - `improve_daemon` は `tmp/improve.lock` があるのに `logs/improve_daemon.log` / `tmp/state/improve_state.json` が進まない場合、supervisor が `IMPROVE_DAEMON_LOCK_STALL_SEC` 後に stale とみなして再起動する。pidfile の heartbeat だけを worker 生存と見なすと、メインループが `改善ロック待ち` のまま止まるため、lock age / log age / state age を同時に見る。
-- Twitch 予想の結果が `粛清` の場合は、`soren_loop.sh` が `REGRESSION_ROLLBACK_RESULT` から `regression_reason_raw` / `regression_reason_label` を予想 state に保存し、`twitch_predictions.sh` が結果文に理由を付ける。粛清が出た時は「粛清」だけでなく、`comp比率低下` / `top対比comp不足` / `ロシア経路喪失` などの原因が視聴者に見える。
-- 回帰理由は `lost_russia_path` / `lost_soviet_path` だけでなく、ロシア前段階の `lost_turkmenistan_gate` / `lost_ukraine_gate` / `lost_kazakhstan_gate` も段階到達率で判定する。rolling score が上位 grace 内の時は段階ゲートでの粛清を抑制し、上位外で frontier を失った時だけ目的後退として扱う。
+- Twitch 予想の結果が `粛清` の場合は、`soren_loop.sh` が `REGRESSION_ROLLBACK_RESULT` から `regression_reason_raw` / `regression_reason_label` を予想 state に保存し、`twitch_predictions.sh` が結果文に理由を付ける。粛清が出た時は「粛清」だけでなく、`comp比率低下` / `top対比comp不足` / `前段階到達率低下` / `ソ連経路喪失` などの原因が視聴者に見える。
+- 回帰理由は `lost_soviet_path` だけでなく、ロシア前段階の `lost_turkmenistan_gate` / `lost_ukraine_gate` / `lost_kazakhstan_gate` も段階到達率で判定する。ロシア到達(type15)だけは rollback/anchor 保護の直接理由にせず、archive_restart / escape の候補選別と改善入力の強い signal として扱う。rolling score が上位 grace 内の時は段階ゲートでの粛清を抑制し、上位外で frontier を失った時だけ目的後退として扱う。
 - Stage 3 のレビューは会話上の PASS ではなく `tmp/review_result.md` の実ファイル作成を完了条件にする。レビューAIが PASS 本文だけを返してファイルを書かない場合は no-edit retry / verdict repair の対象で、同じレビューを無駄に増やさないためプロンプト側でも最終応答前のファイル確認を必須化している。`Read tmp/review_result.md` が初回 `File not found` になった場合は、質問せず `Write` でテンプレートを作成する。
 - 粛清ポストモーテムは診断専用なので、opencode slot を握っている間に Stage 3 review / analyze 側の `IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC` が先に尽きる場合は、待ち上限直前で stale lock として解放して改善本線を優先する。`opencode slot wait exceeded` が先に出ると同じ review attempt を無駄に消費するため、`stale rollback-postmortem run lock cleared` が先行するのが期待挙動。
 - AI改善の validation は、コメント・reason文言だけの staging を成功扱いしない。直近の自動改善でも一度コメント追記だけの候補が拒否され、同じ session の継続修正で実ロジック変更へ進んでから commit された。停滞監視では `logs/improve_daemon.log` の `validation failed ... 文字列・reason文言だけの変更は不可` が最終失敗ではなく、後続の `Stage 3 レビュー ... PASS` と commit まで到達したかを確認する。
@@ -185,6 +185,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_TRIGGER_STAGNATION` | `3` | 通常サイクル中の停滞で WILDCARD / archive_restart / escape_ai ルーティングへ進む閾値 |
 | `WILDCARD_EARLY_ESCAPE_MIN_GAMES` | `4` | 停滞閾値到達時に 12試合を待たず早期脱出ロックを作れる最小蓄積ゲーム数 |
 | `WILDCARD_REGRESSION_STREAK` | `2` | 直接脱出や WILDCARD 発火の回帰ストリーク閾値 |
+| `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定で目的進捗を score 近傍候補の優先度に使う。現行ではソ連到達のみを保護対象にし、ロシア到達だけでは score-only anchor を押しのけない |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
 | `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` | `15` | ロシア未再現でも frontier候補として扱う最小到達type |

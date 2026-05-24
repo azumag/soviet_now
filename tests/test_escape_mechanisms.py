@@ -118,8 +118,8 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertIn(round(anchor["comp"]), [round(raw_comp_A), round(raw_comp_B)],
                           msg=f"persisted comp={anchor['comp']} is not raw")
 
-    def test_anchor_selection_prefers_near_score_objective_progress(self):
-        """anchor はトップスコア近傍なら建国進捗を優先して局所解化を避ける。"""
+    def test_anchor_selection_prefers_near_score_soviet_progress(self):
+        """anchor はトップスコア近傍ならソ連到達済みを優先して局所解化を避ける。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -142,21 +142,21 @@ _refresh_best_strategy_anchor "" 2>&1
                             "russia_count": 0,
                             "soviet_count": 0,
                         },
-                        "russiaPath": {
+                        "sovietPath": {
                             "scores": [1120] * 12,
                             "games_total": 12,
                             "_recent_archives": [],
-                            "max_types": [15] + [13] * 11,
-                            "best_max_type": 15,
+                            "max_types": [16] + [13] * 11,
+                            "best_max_type": 16,
                             "russia_count": 1,
-                            "soviet_count": 0,
+                            "soviet_count": 1,
                         },
                     }
                 )
             )
             stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
             (archive_dir / "scoreOnly.py").write_text(stable_source)
-            (archive_dir / "russiaPath.py").write_text(stable_source)
+            (archive_dir / "sovietPath.py").write_text(stable_source)
 
             env = os.environ.copy()
             env["DIVERSITY_PREMIUM_ENABLED"] = "0"
@@ -188,9 +188,10 @@ _refresh_best_strategy_anchor "" 2>&1
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
             anchor = json.loads(anchor_file.read_text())
-            self.assertEqual(anchor["hash"], "russiaPath")
-            self.assertEqual(anchor["best_max_type"], 15)
+            self.assertEqual(anchor["hash"], "sovietPath")
+            self.assertEqual(anchor["best_max_type"], 16)
             self.assertEqual(anchor["russia_count"], 1)
+            self.assertEqual(anchor["soviet_count"], 1)
 
     def test_anchor_refresh_preserves_valid_current_anchor(self):
         """current が既存 anchor の場合、2番手へ強制差し替えせず同一hash判定へ残す。"""
@@ -278,8 +279,8 @@ _refresh_best_strategy_anchor "currentRussia" 2>&1
             self.assertEqual(anchor["best_max_type"], 15)
             self.assertEqual(anchor["russia_count"], 1)
 
-    def test_direct_anchor_promotion_does_not_overwrite_russia_anchor_with_score_only(self):
-        """PROMOTE 経路の直接書き込みでも Russia anchor を score-only で潰さない。"""
+    def test_direct_anchor_promotion_can_overwrite_russia_anchor_with_score_only(self):
+        """PROMOTE 経路では Russia anchor を rollback 保護扱いしない。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -354,10 +355,10 @@ echo promote_rc=$?
                 timeout=30,
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
-            self.assertIn("promote_rc=1", result.stdout)
+            self.assertIn("promote_rc=0", result.stdout)
             anchor = json.loads(anchor_file.read_text())
-            self.assertEqual(anchor["hash"], "russiaPath")
-            self.assertEqual(anchor["russia_count"], 1)
+            self.assertEqual(anchor["hash"], "scoreOnly")
+            self.assertEqual(anchor["russia_count"], 0)
 
     def test_direct_anchor_promotion_keeps_objective_fields_when_allowed(self):
         """目的進捗を落とさない PROMOTE は成功し、anchor payload に進捗も残す。"""
@@ -446,8 +447,8 @@ echo promote_rc=$?
             self.assertIn("- source: promote_current_strategy", anchor_change)
             self.assertIn("russia=1", anchor_change)
 
-    def test_existing_russia_anchor_is_kept_against_near_score_only_candidate(self):
-        """既存 Russia anchor は近傍スコアの score-only 候補では潰さない。"""
+    def test_existing_russia_anchor_can_be_replaced_by_near_score_only_candidate(self):
+        """Russia 到達だけでは近傍スコアの score-only 候補を押しのけない。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -539,9 +540,7 @@ _refresh_best_strategy_anchor "" 2>&1
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
             anchor = json.loads(anchor_file.read_text())
-            self.assertEqual(anchor["hash"], "russiaPath")
-            self.assertEqual(anchor["best_max_type"], 15)
-            self.assertEqual(anchor["russia_count"], 1)
+            self.assertEqual(anchor["hash"], "scoreOnly")
 
     def test_existing_russia_anchor_can_be_replaced_by_far_higher_score_candidate(self):
         """score 差が十分大きい mature 候補は rollback anchor として採用できる。"""
@@ -1375,9 +1374,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("source_hash = str(selected.get(\"selected_hash\")", eloop)
         self.assertIn("archive_restart_source", eloop)
         self.assertIn("source_russia_count", regression)
-        self.assertIn("source_reliable_russia", regression)
-        self.assertIn("quarantine_archive_restart_source", regression)
-        self.assertIn("archive_restart_russia_not_reproduced", regression)
+        self.assertNotIn("source_reliable_russia", regression)
+        self.assertNotIn("archive_restart_russia_not_reproduced", regression)
         self.assertIn("source_best_max_type", regression)
         self.assertIn("archive_restart_objective_floor", regression)
         self.assertIn("mode=archive_objective_floor", regression)
@@ -4025,7 +4023,8 @@ def decide(game_state, analysis):
         config = (REPO_ROOT / "core/config.sh").read_text()
 
         self.assertIn("objective_reasons = []", regression)
-        self.assertIn("lost_russia_path", regression)
+        self.assertIn("lost_soviet_path", regression)
+        self.assertNotIn('objective_reasons.append("lost_russia_path")', regression)
         self.assertIn("lost_soviet_path", regression)
         self.assertIn("def stage_gate_regression_reason", regression)
         self.assertIn("rank <= rolling_score_russia_grace_rank", regression)
@@ -4431,8 +4430,7 @@ PY
         self.assertIn("same_hash_backslide_enabled", regression)
         self.assertIn("same_hash_backslide_min_extra_games", regression)
         self.assertIn("current_hash != anchor_hash and key(current) <= key(anchor)", regression)
-        self.assertIn("current_objective.get(\"best_max_type\"", regression)
-        self.assertIn("anchor_objective.get(\"russia_count\"", regression)
+        self.assertNotIn("anchor_objective.get(\"russia_count\"", regression)
         self.assertIn("best_max_type >= 15 and russia_count <= 0", regression)
         self.assertIn("SAME_HASH_BACKSLIDE_RESET_ENABLED", config)
         self.assertIn("SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES", config)
@@ -4975,7 +4973,7 @@ PY
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
         self.assertIn('OBJECTIVE_MISS_PRUNE_ENABLED:-0', regression)
 
-    def test_rollback_candidate_prefers_objective_progress_over_plain_score_top(self):
+    def test_rollback_candidate_does_not_prefer_russia_progress_over_plain_score_top(self):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -5036,11 +5034,74 @@ _pick_best_rollback_candidate currentHash
                 timeout=30,
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
-            self.assertTrue(result.stdout.startswith("russiaNearTop|"), msg=result.stdout)
+            self.assertTrue(result.stdout.startswith("scoreOnlyTop|"), msg=result.stdout)
             rolling = json.loads(rs_file.read_text())
             self.assertIn("scoreOnlyTop", rolling)
             self.assertIn("russiaNearTop", rolling)
             self.assertFalse((td / "rolling_score_pruned_hashes.jsonl").exists())
+
+    def test_rollback_candidate_prefers_soviet_progress_over_plain_score_top(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            archive_dir = td / "by_hash"
+            permanent_dir = td / "permanent_by_hash"
+            archive_dir.mkdir()
+            permanent_dir.mkdir()
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnlyTop": {
+                            "scores": [12000] * 12,
+                            "games_total": 12,
+                            "best_max_type": 0,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                        "sovietNearTop": {
+                            "scores": [11100] * 12,
+                            "games_total": 12,
+                            "best_max_type": 16,
+                            "russia_count": 1,
+                            "soviet_count": 1,
+                        },
+                    }
+                )
+            )
+            stable_source = (
+                "def decide(game_state, analysis):\n"
+                "    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+                "    return {'x': 0, 'reason': 'ok'}\n"
+            )
+            (archive_dir / "scoreOnlyTop.py").write_text(stable_source)
+            (permanent_dir / "sovietNearTop.py").write_text(stable_source)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+STRATEGY_HASH_PERMANENT_ARCHIVE_DIR='{permanent_dir}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+HASH_ARCHIVE_KEEP_TOP=10
+OBJECTIVE_ANCHOR_PRIORITY_ENABLED=1
+OBJECTIVE_ANCHOR_MIN_COMP_RATIO=0.90
+OBJECTIVE_ANCHOR_MAX_COMP_GAP=1500
+source strategy/regression.sh 2>/dev/null
+_rollback_candidate_file_is_valid() {{
+    return 0
+}}
+_pick_best_rollback_candidate currentHash
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            self.assertTrue(result.stdout.startswith("sovietNearTop|"), msg=result.stdout)
 
     def test_invalid_rollback_archive_remains_eligible_and_is_not_pruned(self):
         with tempfile.TemporaryDirectory() as td:

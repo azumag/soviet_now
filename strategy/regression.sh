@@ -175,7 +175,6 @@ def explain_reasons(reason_text):
         "lost_turkmenistan_gate": "anchor よりトルクメニスタン段階の到達率が後退した。",
         "lost_ukraine_gate": "anchor よりウクライナ段階の到達率が後退した。",
         "lost_kazakhstan_gate": "anchor よりカザフスタン段階の到達率が後退した。",
-        "lost_russia_path": "anchor はロシア到達済みだが current はロシア未到達だった。",
         "lost_soviet_path": "anchor はソ連到達済みだが current はソ連未到達だった。",
     }
     for reason in reasons:
@@ -194,7 +193,6 @@ def objective_triggered(reason_text):
         "lost_turkmenistan_gate",
         "lost_ukraine_gate",
         "lost_kazakhstan_gate",
-        "lost_russia_path",
         "lost_soviet_path",
     }
     return bool(reasons & objective_markers)
@@ -953,7 +951,7 @@ _refresh_best_strategy_anchor() {
 		"${DIVERSITY_PREMIUM_ENABLED:-0}" "${DIVERSITY_PREMIUM_WEIGHT:-300}" "${EXPLORE_GAP_MAX_RATIO:-0.07}" \
 		"${TABU_ENABLED:-0}" "${TABU_SIGNATURES_FILE:-tmp/state/tabu_signatures.jsonl}" "${TABU_DISTANCE_THRESHOLD:-0.15}" \
 		"${BEHAVIOR_SIGNATURES_FILE:-tmp/state/behavior_signatures.json}" "${LAST_ANCHOR_CHANGE_FILE:-tmp/state/last_anchor_change.md}" \
-		"$(pwd)" "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
+		"$(pwd)" "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
 		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY'
 import json
 import math
@@ -1233,17 +1231,14 @@ def _objective_tuple(data):
     p = objective_progress(data)
     return (
         int(p.get("soviet_count", 0) > 0),
-        int(p.get("russia_count", 0) > 0),
-        int(p.get("best_max_type", 0) or 0),
         int(p.get("soviet_count", 0) or 0),
-        int(p.get("russia_count", 0) or 0),
     )
 
 def _anchor_rank_key(h, m, data, selection_score):
     # Rollback anchors must stay score-mature, but the Soviet objective is the
     # real target. If an objective-progress candidate is still near the score
     # leader, prefer it over a score-only local optimum.
-    objective_key = (0, 0, 0, 0, 0)
+    objective_key = (0, 0)
     if objective_anchor_enabled:
         score_gap = max(0.0, top_anchor_comp - float(m.get("comp", 0.0) or 0.0))
         near_score_leader = (
@@ -1470,10 +1465,6 @@ if str(current_run.get("hash", "") or "") == current_hash:
 existing_progress = objective_progress(existing)
 current_progress = objective_progress(current_data)
 if int(existing_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
-    raise SystemExit(1)
-if int(existing_progress.get("russia_count", 0) or 0) > 0 and int(current_progress.get("russia_count", 0) or 0) <= 0:
-    raise SystemExit(1)
-if int(existing_progress.get("best_max_type", 0) or 0) >= min_best_type and int(current_progress.get("best_max_type", 0) or 0) < min_best_type:
     raise SystemExit(1)
 
 payload = {
@@ -2172,7 +2163,7 @@ PY
 _prune_non_objective_rollback_scores() {
 	local current_hash="$1"
 	[ "${OBJECTIVE_MISS_PRUNE_ENABLED:-0}" = "1" ] || return 0
-	[ "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" = "1" ] || return 0
+	[ "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" = "1" ] || return 0
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 	local pruned_hashes
 	pruned_hashes=$(
@@ -2232,7 +2223,7 @@ for h, data in list(rs.items()):
     if len(scores) < min_games:
         continue
     best_max_type, russia_count, soviet_count = objective_progress(data)
-    if soviet_count > 0 or russia_count > 0 or best_max_type >= 15:
+    if soviet_count > 0:
         continue
     removed.append((h, data))
     rs.pop(h, None)
@@ -2290,7 +2281,7 @@ _pick_best_rollback_candidate() {
 	local ranked
 	ranked=$(
 		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" \
-			"${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-1}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" <<'PY'
+			"${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" <<'PY'
 import json
 import sys
 import math
@@ -2361,10 +2352,7 @@ def objective_tuple(data):
         soviet_count = 1
     return (
         int(soviet_count > 0),
-        int(russia_count > 0),
-        best_max_type,
         soviet_count,
-        russia_count,
     )
 
 rows = []
@@ -2384,7 +2372,7 @@ top_comp = max(r[0] for r in rows)
 
 def rank_key(row):
     comp, p50, p25, lcb, n, h, data = row
-    objective_key = (0, 0, 0, 0, 0)
+    objective_key = (0, 0)
     if objective_enabled:
         score_gap = max(0.0, top_comp - comp)
         near_score_leader = comp >= top_comp * objective_min_comp_ratio or score_gap <= objective_max_comp_gap
@@ -2968,7 +2956,7 @@ check_regression() {
 			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" "${WILDCARD_ATTEMPT_STATE_FILE:-tmp/state/wildcard_attempt_state.json}" "${WILDCARD_OUTCOME_FILE:-tmp/state/wildcard_outcomes.jsonl}" \
 			"${ANNEALING_OBSERVE_FILE:-tmp/state/annealing_candidates.jsonl}" "${ANNEALING_OBSERVE_ENABLED:-1}" "${ANNEALING_BASE_TEMP:-1800}" "${ANNEALING_DECAY:-0.85}" \
 			"${EARLY_OBJECTIVE_REGRESSION_ENABLED:-1}" "${EARLY_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" "${EARLY_OBJECTIVE_REGRESSION_MIN_BEST_TYPE:-15}" \
-			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" "${RUSSIA_OBJECTIVE_REGRESSION_ENABLED:-0}" \
+			"${SAME_HASH_BACKSLIDE_RESET_ENABLED:-1}" "${SAME_HASH_BACKSLIDE_MIN_EXTRA_GAMES:-4}" \
 			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" \
 			"${ROLLBACK_TREND_GRACE_ENABLED:-1}" "${ROLLBACK_TREND_GRACE_WINDOW:-50}" "${ROLLBACK_TREND_GRACE_MIN_PRIOR:-50}" "${ROLLBACK_TREND_GRACE_MIN_DELTA:-0}" \
 			"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" "${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" \
@@ -3006,34 +2994,33 @@ early_objective_min_games = int(sys.argv[28]) if len(sys.argv) > 28 else 4
 early_objective_min_best_type = int(sys.argv[29]) if len(sys.argv) > 29 else 15
 same_hash_backslide_enabled = sys.argv[30] if len(sys.argv) > 30 else "1"
 same_hash_backslide_min_extra_games = int(sys.argv[31]) if len(sys.argv) > 31 else 4
-russia_objective_regression_enabled = sys.argv[32] if len(sys.argv) > 32 else "0"
 try:
-    rolling_score_russia_grace_rank = max(0, int(sys.argv[33])) if len(sys.argv) > 33 else 7
+    rolling_score_russia_grace_rank = max(0, int(sys.argv[32])) if len(sys.argv) > 32 else 7
 except Exception:
     rolling_score_russia_grace_rank = 7
-eval_score_history_file = sys.argv[34] if len(sys.argv) > 34 else "eval_score_history.txt"
-rollback_trend_grace_enabled = (sys.argv[35] if len(sys.argv) > 35 else "1") == "1"
+eval_score_history_file = sys.argv[33] if len(sys.argv) > 33 else "eval_score_history.txt"
+rollback_trend_grace_enabled = (sys.argv[34] if len(sys.argv) > 34 else "1") == "1"
 try:
-    rollback_trend_grace_window = max(1, int(sys.argv[36])) if len(sys.argv) > 36 else 50
+    rollback_trend_grace_window = max(1, int(sys.argv[35])) if len(sys.argv) > 35 else 50
 except Exception:
     rollback_trend_grace_window = 50
 try:
-    rollback_trend_grace_min_prior = max(1, int(sys.argv[37])) if len(sys.argv) > 37 else 50
+    rollback_trend_grace_min_prior = max(1, int(sys.argv[36])) if len(sys.argv) > 36 else 50
 except Exception:
     rollback_trend_grace_min_prior = 50
 try:
-    rollback_trend_grace_min_delta = float(sys.argv[38]) if len(sys.argv) > 38 else 0.0
+    rollback_trend_grace_min_delta = float(sys.argv[37]) if len(sys.argv) > 37 else 0.0
 except Exception:
     rollback_trend_grace_min_delta = 0.0
-archive_restart_cooldown_file = sys.argv[39] if len(sys.argv) > 39 else ""
-archive_restart_objective_fail_permanent = (sys.argv[40] if len(sys.argv) > 40 else "1") == "1"
-early_comp_top_gap_enabled = (sys.argv[41] if len(sys.argv) > 41 else "1") == "1"
+archive_restart_cooldown_file = sys.argv[38] if len(sys.argv) > 38 else ""
+archive_restart_objective_fail_permanent = (sys.argv[39] if len(sys.argv) > 39 else "1") == "1"
+early_comp_top_gap_enabled = (sys.argv[40] if len(sys.argv) > 40 else "1") == "1"
 try:
-    early_comp_top_gap_min_games = max(1, int(sys.argv[42])) if len(sys.argv) > 42 else 4
+    early_comp_top_gap_min_games = max(1, int(sys.argv[41])) if len(sys.argv) > 41 else 4
 except Exception:
     early_comp_top_gap_min_games = 4
 try:
-    early_comp_top_gap_min_ratio = float(sys.argv[43]) if len(sys.argv) > 43 else 0.85
+    early_comp_top_gap_min_ratio = float(sys.argv[42]) if len(sys.argv) > 42 else 0.85
 except Exception:
     early_comp_top_gap_min_ratio = 0.85
 
@@ -3551,7 +3538,6 @@ def trend_grace_reason():
 
 origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
 source_russia_count = int(origin_payload.get("source_russia_count", 0) or 0)
-source_reliable_russia = bool(origin_payload.get("source_reliable_russia", False)) or source_russia_count >= 2
 origin_objective_for_grace = {
     "russia_count": source_russia_count,
 }
@@ -3564,12 +3550,6 @@ if (
             and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
             and not russia_objective_graced(current, origin_objective_for_grace)
         )
-        or (
-            russia_objective_regression_enabled == "1"
-            and int(anchor_payload.get("russia_count", 0) or 0) > 0
-            and not source_reliable_russia
-            and not russia_objective_graced(current, origin_objective_for_grace)
-        )
     )
 ):
     reasons = ["archive_restart_objective_floor"]
@@ -3579,15 +3559,6 @@ if (
         and not russia_objective_graced(current, origin_objective_for_grace)
     ):
         reasons.append("lost_soviet_path")
-    if (
-        russia_objective_regression_enabled == "1"
-        and int(anchor_payload.get("russia_count", 0) or 0) > 0
-        and not source_reliable_russia
-        and not russia_objective_graced(current, origin_objective_for_grace)
-    ):
-        reasons.append("lost_russia_path")
-    if "lost_russia_path" in reasons:
-        quarantine_archive_restart_source("archive_restart_russia_not_reproduced")
     current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
     # trend_grace は score-only rollback dampener。目的退行は免除しない。
     print(
@@ -3618,10 +3589,7 @@ branch_active = str(active.get("head_hash", "") or "") == current_hash and str(a
 def objective_tuple(progress):
     return (
         int(progress.get("soviet_count", 0) > 0),
-        int(progress.get("russia_count", 0) > 0),
-        int(progress.get("best_max_type", 0) or 0),
         int(progress.get("soviet_count", 0) or 0),
-        int(progress.get("russia_count", 0) or 0),
     )
 
 if branch_active:
@@ -3683,10 +3651,6 @@ anchor_objective = objective_progress(anchor_data, anchor_scores)
 def objective_miss_against_anchor(anchor_progress, current_progress):
     if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
         return True
-    if int(anchor_progress.get("russia_count", 0) or 0) > 0 and int(current_progress.get("russia_count", 0) or 0) <= 0:
-        return True
-    if int(anchor_progress.get("best_max_type", 0) or 0) >= early_objective_min_best_type and int(current_progress.get("best_max_type", 0) or 0) < early_objective_min_best_type:
-        return True
     return False
 
 def ok_event_for_objective(anchor_progress, current_progress):
@@ -3695,17 +3659,12 @@ def ok_event_for_objective(anchor_progress, current_progress):
 def objective_allows_anchor_promotion(anchor_progress, current_progress):
     if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
         return False
-    if int(anchor_progress.get("russia_count", 0) or 0) > 0 and int(current_progress.get("russia_count", 0) or 0) <= 0:
-        return False
-    if int(anchor_progress.get("best_max_type", 0) or 0) >= early_objective_min_best_type and int(current_progress.get("best_max_type", 0) or 0) < early_objective_min_best_type:
-        return False
     return objective_tuple(current_progress) >= objective_tuple(anchor_progress)
 
 STAGE_GATE_SEQUENCE = [
     (11, "lost_turkmenistan_gate"),
     (13, "lost_ukraine_gate"),
     (14, "lost_kazakhstan_gate"),
-    (15, "lost_russia_path"),
     (16, "lost_soviet_path"),
 ]
 
@@ -3764,14 +3723,6 @@ if current_hash == anchor_hash and not branch_active:
             int(anchor_objective.get("soviet_count", 0) or 0) > 0
             and int(current_objective.get("soviet_count", 0) or 0) <= 0
         )
-        or (
-            int(anchor_objective.get("russia_count", 0) or 0) > 0
-            and int(current_objective.get("russia_count", 0) or 0) <= 0
-        )
-        or (
-            int(anchor_objective.get("best_max_type", 0) or 0) >= early_objective_min_best_type
-            and int(current_objective.get("best_max_type", 0) or 0) < early_objective_min_best_type
-        )
     ):
         _update_stagnation("OK_IDLE")
         print("OK")
@@ -3806,8 +3757,7 @@ if (
         and not russia_grace_active
     ):
         objective_reasons.append("lost_soviet_path")
-    # NOTE(2026-05-18 ユーザー指示): lost_russia_path(type15経路喪失) は早期ゲートから除外。
-    # RUSSIA_OBJECTIVE_REGRESSION_ENABLED=0 の間は通常ゲートでも粛清しない。
+    # NOTE: ロシア建国(type15)はロールバック基準にしない。
     # lost_soviet_path は従来どおり早期ゲートに残す。
     if objective_reasons:
         # trend_grace は score-only rollback dampener。目的退行は免除しない。
@@ -3874,14 +3824,6 @@ if current_hash != anchor_hash:
         and "lost_soviet_path" not in objective_reasons
     ):
         objective_reasons.append("lost_soviet_path")
-    if (
-        russia_objective_regression_enabled == "1"
-        and anchor_objective.get("best_max_type", 0) >= 15
-        and current_objective.get("best_max_type", 0) < 15
-        and not russia_grace_active
-        and "lost_russia_path" not in objective_reasons
-    ):
-        objective_reasons.append("lost_russia_path")
 if objective_reasons:
     # trend_grace は score-only rollback dampener。目的退行は免除しない。
     print(
