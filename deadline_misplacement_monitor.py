@@ -218,7 +218,7 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
 
 def append_event(path: Path, event: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"ts": int(time.time()), **event}
+    payload = {"ts": int(time.time()), "detector": "actual_snapshot_geometry", **event}
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
 
@@ -238,7 +238,12 @@ def write_heartbeat(path: Path, *, status: str, history: Path, log_path: Path, e
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def process_records(records: list[dict[str, Any]], log_path: Path, prev: dict[str, Any] | None = None) -> tuple[int, int, dict[str, Any] | None]:
+def process_records(
+    records: list[dict[str, Any]],
+    log_path: Path,
+    prev: dict[str, Any] | None = None,
+    event_extra: dict[str, Any] | None = None,
+) -> tuple[int, int, dict[str, Any] | None]:
     checked = 0
     written = 0
     last = prev
@@ -247,7 +252,7 @@ def process_records(records: list[dict[str, Any]], log_path: Path, prev: dict[st
             event = evaluate_transition(last, record)
             if event:
                 checked += 1
-                append_event(log_path, event)
+                append_event(log_path, {**event, **(event_extra or {})})
                 written += 1
         last = record
     return checked, written, last
@@ -272,7 +277,11 @@ def run_once(history: Path, log_path: Path, tail_lines: int = 300) -> tuple[int,
     lines = history.read_text(encoding="utf-8", errors="ignore").splitlines()
     if tail_lines > 0:
         lines = lines[-tail_lines:]
-    checked, written, _last = process_records(_parse_lines(lines), log_path)
+    checked, written, _last = process_records(
+        _parse_lines(lines),
+        log_path,
+        event_extra={"history": str(history)},
+    )
     return checked, written
 
 
@@ -287,7 +296,11 @@ def run_daemon(history: Path, log_path: Path, heartbeat: Path, poll_sec: float, 
             lines = history.read_text(encoding="utf-8", errors="ignore").splitlines()
             if bootstrap_lines > 0:
                 lines = lines[-bootstrap_lines:]
-            checked, written, last_record = process_records(_parse_lines(lines), log_path)
+            checked, written, last_record = process_records(
+                _parse_lines(lines),
+                log_path,
+                event_extra={"history": str(history)},
+            )
             offset = history.stat().st_size
             inode = history.stat().st_ino
         else:
@@ -310,7 +323,12 @@ def run_daemon(history: Path, log_path: Path, heartbeat: Path, poll_sec: float, 
                 chunk = f.read()
                 offset = f.tell()
             if chunk:
-                checked, written, last_record = process_records(_parse_lines(chunk.splitlines()), log_path, last_record)
+                checked, written, last_record = process_records(
+                    _parse_lines(chunk.splitlines()),
+                    log_path,
+                    last_record,
+                    event_extra={"history": str(history)},
+                )
                 write_heartbeat(heartbeat, status="running", history=history, log_path=log_path, extra={"last_checked": checked, "last_written": written})
             else:
                 write_heartbeat(heartbeat, status="running", history=history, log_path=log_path)

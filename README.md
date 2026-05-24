@@ -109,6 +109,7 @@ soren_loop の多重起動ロック:
 - `enforce_deadline_safety` は `risk_top_y_after_drop` だけに依存せず、live `game_state.pieces` と `next.r` / type 半径から候補Xの実着地 top を再推定する。`risk_top` が近く見えても実形状では高い柱へ積む候補なら、より低い safe 候補または all-crossing の最小 geometry top 候補へ戻し、デッドライン直前の見かけ上安全な高積みを避ける。
 - `enforce_deadline_safety` の all-crossing fallback は、全候補が `crosses_deadline=true` かつ NO merge の場合でも、最小リスクと同程度の非エッジ候補があれば `non_edge_postcondition` で寄せる。これにより、戦略側の DEADLINE_GUARD が NO_MERGE の壁寄り配置を避けても、runner 側の最終安全弁が `NO/cross -> NO/cross` の壁落としを再導入することを防ぐ。
 - all-crossing 局面で `visual_deadline_same_country` が同国接触候補を拾っても、盤面 top が deadline を十分に超えている場合は視覚推定を保存せず、最小 risk_top の候補へ戻す。これにより、直近の deadline fallback 改善が NO_MERGE の高積みを選んだ場合でも、実行時により低い崩壊リスクへ寄せる。
+- `visual_deadline_same_country` が all-crossing の中で候補を保存する場合でも、実形状 top と `risk_top_y_after_drop` の両方でより低い crossing 候補があるなら `geometry_min_top_postcondition` で差し替える。全候補が deadline を越える局面でも、同国接触の名目だけで高い積み上げを固定しないための最終ガード。
 - 対応テストは `tests.test_escape_mechanisms.TestSovietObjectiveImproveInputs.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`、`test_deadline_safety_geometry_headroom_overrides_underestimated_safe_choice`、`test_deadline_safety_visual_same_country_falls_back_when_geometry_is_worse`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することと、形状再推定が高積み候補を退避することを確認する。
 
 判定順:
@@ -120,7 +121,7 @@ soren_loop の多重起動ロック:
 5. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
 6. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
 
-rollback 候補が validation 後に別 hash へ正規化された場合は、元 hash を `rejected_hashes.txt` と `rejected_hash_metrics.json` の両方へ `rollback_target_normalized` として記録する。メタがない rejected hash は legacy として再許可されるため、`normalized_to_hash` を保存して同じ古い候補が何度も同じ実体 hash へ rollback されるループを防ぐ。`last_rollback_pair.json` / rollback analysis / commit target note には `normalized_from=<requested> actual_hash=<applied>` を残し、停滞監視で「候補 hash」と「実際に復帰した hash」を取り違えないようにする。
+rollback 候補が validation 後に別 hash へ正規化された場合は、元 hash を `rejected_hashes.txt` と `rejected_hash_metrics.json` の両方へ `rollback_target_normalized` として記録する。メタがない rejected hash は legacy として再許可されるため、`normalized_to_hash` を保存して同じ古い候補が何度も同じ実体 hash へ rollback されるループを防ぐ。`last_rollback_pair.json` / rollback analysis / commit target note には `normalized_from=<requested> actual_hash=<applied>` を残し、停滞監視で「候補 hash」と「実際に復帰した hash」を取り違えないようにする。後から `strategy_versions/by_hash/<hash>.py` が本来の hash に復旧した場合は、行単位一致で stale normalized reject を外して rollback 候補へ戻す。
 
 通常サイクル中の早期脱出:
 

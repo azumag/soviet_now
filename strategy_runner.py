@@ -1351,6 +1351,42 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         ):
             preserve_visual_same_country = False
     if (
+        preserve_visual_same_country
+        and replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
+        and not safe
+    ):
+        replacement_geom_top = geometry_top_at_x(replacement.get("x"))
+        crossing_geom_candidates = []
+        for candidate in results:
+            if (
+                candidate.get("merge_grade", "NO") != "NO"
+                or not candidate.get("crosses_deadline", False)
+            ):
+                continue
+            candidate_geom_top = geometry_top_at_x(candidate.get("x"))
+            if candidate_geom_top is None or candidate_geom_top <= deadline_y + 0.02:
+                continue
+            crossing_geom_candidates.append((candidate_geom_top, candidate))
+        if replacement_geom_top is not None and crossing_geom_candidates:
+            best_geom_top, best_geom_candidate = min(
+                crossing_geom_candidates,
+                key=lambda item: (
+                    item[0],
+                    risk_top(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            if (
+                replacement_geom_top > best_geom_top + 0.20
+                and risk_top(replacement) > risk_top(best_geom_candidate) + 0.35
+            ):
+                replacement = best_geom_candidate
+                preserve_visual_same_country = False
+                replacement_source = (
+                    f"{replacement_source}_geometry_min_top_postcondition"
+                )
+    if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
         and not safe

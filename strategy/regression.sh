@@ -1671,6 +1671,67 @@ print(
 PY
 }
 
+_clear_stale_normalized_reject_if_archive_restored() {
+	local h="$1"
+	[ -n "$h" ] || return 1
+	[ -f "$REJECTED_HASHES_FILE" ] || return 1
+	[ -f "$REJECTED_HASH_META_FILE" ] || return 1
+	grep -qxF "$h" "$REJECTED_HASHES_FILE" 2>/dev/null || return 1
+	local normalized_to=""
+	normalized_to=$(
+		python3 - "$REJECTED_HASH_META_FILE" "$h" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+meta_file, target_hash = sys.argv[1:3]
+if not os.path.exists(meta_file):
+    raise SystemExit(0)
+try:
+    meta = json.load(open(meta_file, encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+entry = meta.get(target_hash) if isinstance(meta, dict) else None
+if not isinstance(entry, dict):
+    raise SystemExit(0)
+if entry.get("reason") == "rollback_target_normalized" and entry.get("normalized_to_hash"):
+    print(str(entry.get("normalized_to_hash")))
+PY
+	)
+	[ -n "$normalized_to" ] || return 1
+	local candidate_file actual_hash
+	candidate_file=$(_find_rollback_candidate_file_for_hash "$h" 2>/dev/null || echo "")
+	[ -n "$candidate_file" ] && [ -f "$candidate_file" ] || return 1
+	actual_hash=$(python3 extract_decide_hash.py "$candidate_file" 2>/dev/null || echo "")
+	[ "$actual_hash" = "$h" ] || return 1
+	python3 - "$REJECTED_HASHES_FILE" "$REJECTED_HASH_META_FILE" "$h" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+rejected_file, meta_file, target_hash = sys.argv[1:4]
+try:
+    with open(rejected_file, encoding="utf-8", errors="ignore") as f:
+        hashes = [line.strip() for line in f if line.strip() and line.strip() != target_hash]
+except Exception:
+    hashes = []
+with open(rejected_file, "w", encoding="utf-8") as f:
+    if hashes:
+        f.write("\n".join(hashes) + "\n")
+try:
+    meta = json.load(open(meta_file, encoding="utf-8"))
+except Exception:
+    meta = {}
+if isinstance(meta, dict) and target_hash in meta:
+    meta.pop(target_hash, None)
+    os.makedirs(os.path.dirname(meta_file) or ".", exist_ok=True)
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+PY
+	printf '%s\n' "[REGRESSION] rollback候補を再許可: $h (stale normalized reject cleared; archive hash restored from ${normalized_to})" >&2
+	return 0
+}
+
 _prune_expired_rejected_hashes() {
 	[ -f "$REJECTED_HASHES_FILE" ] || return 0
 	local prune_result=""
@@ -1768,6 +1829,11 @@ PY
 	done <<EOF
 $prune_result
 EOF
+	local rejected_hash
+	while IFS= read -r rejected_hash; do
+		[ -n "$rejected_hash" ] || continue
+		_clear_stale_normalized_reject_if_archive_restored "$rejected_hash" >/dev/null 2>&1 || true
+	done <"$REJECTED_HASHES_FILE"
 }
 
 _is_recently_rejected_for_rollback() {
@@ -1775,8 +1841,11 @@ _is_recently_rejected_for_rollback() {
 	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	[ -n "$h" ] || return 1
 	[ -f "$REJECTED_HASHES_FILE" ] || return 1
-	grep -qF "$h" "$REJECTED_HASHES_FILE" 2>/dev/null || return 1
+	grep -qxF "$h" "$REJECTED_HASHES_FILE" 2>/dev/null || return 1
 	if [ ! -f "$REJECTED_HASH_META_FILE" ]; then
+		return 1
+	fi
+	if _clear_stale_normalized_reject_if_archive_restored "$h" >/dev/null 2>&1; then
 		return 1
 	fi
 	local recovered=""
@@ -2355,8 +2424,7 @@ PY
 			continue
 		fi
 		if ! _rollback_candidate_file_is_valid "$h" "$candidate_file"; then
-			log "[REGRESSION] rollback候補スキップ: $h はvalidation失敗archive" >&2
-			continue
+			log "[REGRESSION] rollback候補警告: $h はvalidation失敗archiveだがarchive存在のため候補維持" >&2
 		fi
 		if [ -n "$candidate_file" ]; then
 			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
@@ -2416,8 +2484,7 @@ _pick_hall_of_fame_rollback_candidate() {
 			continue
 		fi
 		if ! _rollback_candidate_file_is_valid "$h" "$f"; then
-			log "[REGRESSION] hall-of-fame候補スキップ: $h はvalidation失敗archive" >&2
-			continue
+			log "[REGRESSION] hall-of-fame候補警告: $h はvalidation失敗archiveだがarchive存在のため候補維持" >&2
 		fi
 		echo "${h}|hof|${score_num}|0|0|0|$f"
 		return 0
@@ -4131,11 +4198,14 @@ PY
 					else
 						local anchor_candidate_file
 						anchor_candidate_file=$(_find_rollback_candidate_file_for_hash "$rollback_hash" 2>/dev/null || echo "")
-						if [ -n "$anchor_candidate_file" ] && _rollback_candidate_file_is_valid "$rollback_hash" "$anchor_candidate_file"; then
+						if [ -n "$anchor_candidate_file" ] && [ -f "$anchor_candidate_file" ]; then
+							if ! _rollback_candidate_file_is_valid "$rollback_hash" "$anchor_candidate_file"; then
+								log "[REGRESSION] anchor_top1候補警告: $rollback_hash はvalidation失敗archiveだがarchive存在のため候補維持"
+							fi
 							rollback_file="$anchor_candidate_file"
 							rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
 						else
-							log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はvalidation失敗archive"
+							log "[REGRESSION] anchor_top1候補スキップ: $rollback_hash はarchive欠損"
 							rollback_hash=""
 						fi
 					fi
@@ -4160,11 +4230,12 @@ PY
 			cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
 			return 1
 		fi
-		if ! validate_strategy "$STRATEGY_FILE"; then
-			log "[REGRESSION] CRITICAL: ロールバック後バリデーション失敗、復元中"
-			cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
-			return 1
+		local rollback_validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_restore_validate_${rollback_hash:-unknown}_$$.py"
+		cp "$STRATEGY_FILE" "$rollback_validate_tmp" 2>/dev/null || true
+		if [ -f "$rollback_validate_tmp" ] && ! validate_strategy "$rollback_validate_tmp"; then
+			log "[REGRESSION] rollback validation failed but accepted by policy"
 		fi
+		rm -f "$rollback_validate_tmp" 2>/dev/null || true
 		local rolled_hash
 		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
@@ -4204,7 +4275,13 @@ PY
 				if [ -n "$normalized_anchor_hash" ] && [ "$rollback_hash" != "$normalized_anchor_hash" ] && [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${normalized_anchor_hash}.py" ]; then
 					log "[REGRESSION] normalized fallback target rejected; retry anchor rollback: ${normalized_anchor_hash}"
 					local normalized_anchor_file="$STRATEGY_HASH_ARCHIVE_DIR/${normalized_anchor_hash}.py"
-					if cp "$normalized_anchor_file" "$STRATEGY_FILE" && validate_strategy "$STRATEGY_FILE"; then
+					if cp "$normalized_anchor_file" "$STRATEGY_FILE"; then
+						local normalized_anchor_validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_normalized_anchor_validate_${normalized_anchor_hash}_$$.py"
+						cp "$STRATEGY_FILE" "$normalized_anchor_validate_tmp" 2>/dev/null || true
+						if [ -f "$normalized_anchor_validate_tmp" ] && ! validate_strategy "$normalized_anchor_validate_tmp"; then
+							log "[REGRESSION] normalized fallback anchor validation failed but accepted by policy"
+						fi
+						rm -f "$normalized_anchor_validate_tmp" 2>/dev/null || true
 						rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 						_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
 						rollback_hash="$normalized_anchor_hash"

@@ -3059,6 +3059,52 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertFalse(event["has_lower_alternative"])
         self.assertGreater(event["best_merge_alternative"]["top_y"], event["actual_new_piece"]["top_y"])
 
+    def test_deadline_monitor_run_once_logs_detector_and_history(self):
+        import deadline_misplacement_monitor as monitor
+
+        with tempfile.TemporaryDirectory() as td:
+            history_path = Path(td) / "history.jsonl"
+            log_path = Path(td) / "monitor.jsonl"
+            prev = {
+                "turn": 12,
+                "score": 100,
+                "piece_count": 30,
+                "decision_x": 1.0,
+                "decision_reason": "HIGH_TOWER",
+                "next_type": 5,
+                "state_snapshot": {
+                    "pieces": [
+                        {"id": 1, "type": 3, "x": -1.0, "y": -4.0, "r": 0.3},
+                        {"id": 2, "type": 4, "x": 1.0, "y": 2.8, "r": 0.4},
+                    ]
+                },
+            }
+            curr = {
+                "turn": 13,
+                "state_snapshot": {
+                    "pieces": prev["state_snapshot"]["pieces"] + [
+                        {"id": 3, "type": 5, "x": 1.0, "y": 3.1, "r": 0.4},
+                    ]
+                },
+            }
+            history_path.write_text(
+                json.dumps(prev, ensure_ascii=False) + "\n"
+                + json.dumps(curr, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            checked, written = monitor.run_once(history_path, log_path, tail_lines=20)
+
+            self.assertEqual(checked, 1)
+            self.assertEqual(written, 1)
+            events = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(events[-1]["detector"], "actual_snapshot_geometry")
+            self.assertEqual(events[-1]["history"], str(history_path))
+
     def test_deadline_guard_injector_filters_merge_result_crossing(self):
         injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
 
@@ -3532,6 +3578,47 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], 2.6)
         self.assertIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_safety_visual_same_country_uses_geometry_lower_crossing_band(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -2.5, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.2,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 0.7,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.4,
+                    },
+                    {
+                        "x": -0.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.9,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 1, "type": 14, "x": 0.7, "y": 2.4, "r": 1.385},
+                    {"id": 2, "type": 14, "x": -0.8, "y": 2.0, "r": 1.385},
+                    {"id": 3, "type": 7, "x": 0.6, "y": 3.2, "r": 0.559},
+                ],
+                "next": {"type": 7},
+            },
+        )
+
+        self.assertEqual(decision["x"], -0.8)
+        self.assertIn("geometry_min_top_postcondition", decision["reason"])
+
     def test_deadline_analysis_uses_nominal_radii_when_bridge_r_is_oversized(self):
         import analyze_board
 
@@ -3953,12 +4040,130 @@ def decide(game_state, analysis):
         self.assertIn("normalized_from=${requested_rollback_hash} actual_hash=${rolled_hash}", regression)
         self.assertIn("_rollback_candidate_file_is_valid", regression)
         self.assertIn("validation失敗archive", regression)
+        self.assertIn("archive存在のため候補維持", regression)
+        self.assertIn("rollback validation failed but accepted by policy", regression)
+        self.assertIn('grep -qxF "$h" "$REJECTED_HASHES_FILE"', regression)
         self.assertIn('with open(meta_file, "w", encoding="utf-8") as f:', regression)
         self.assertIn("json.dump(meta, f, ensure_ascii=False)", regression)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_ENABLED", config)
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_MIN_GAMES", config)
         self.assertIn("anchor_best_max_type", regression)
         self.assertIn("curr_best_max_type", regression)
+
+    def test_restored_normalized_rollback_candidate_clears_stale_reject(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            rejected_meta = td / "rejected_meta.json"
+
+            source = archive_dir / "candidate.py"
+            source.write_text(
+                "def decide(game_state, analysis):\n"
+                "    return {'x': 0, 'reason': 'stable'}\n",
+                encoding="utf-8",
+            )
+            actual_hash = subprocess.check_output(
+                ["python3", "extract_decide_hash.py", str(source)],
+                cwd=REPO_ROOT,
+                text=True,
+            ).strip()
+            candidate = archive_dir / f"{actual_hash}.py"
+            source.rename(candidate)
+            rejected_file.write_text(f"{actual_hash}\n", encoding="utf-8")
+            rejected_meta.write_text(
+                json.dumps(
+                    {
+                        actual_hash: {
+                            "updated_at": 4102444800,
+                            "normalized_to_hash": "otherhash",
+                            "reason": "rollback_target_normalized",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            script = f"""
+source core/config.sh 2>/dev/null
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+STRATEGY_HASH_PERMANENT_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+REJECTED_HASH_META_FILE='{rejected_meta}'
+source strategy/regression.sh 2>/dev/null
+if _is_recently_rejected_for_rollback {actual_hash}; then
+    echo blocked
+else
+    echo allowed
+fi
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertIn("allowed", result.stdout)
+            self.assertNotIn(actual_hash, rejected_file.read_text(encoding="utf-8"))
+            self.assertNotIn(actual_hash, json.loads(rejected_meta.read_text(encoding="utf-8")))
+
+    def test_rejected_prune_clears_restored_normalized_candidates_before_anchor(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            rejected_meta = td / "rejected_meta.json"
+
+            source = archive_dir / "candidate.py"
+            source.write_text(
+                "def decide(game_state, analysis):\n"
+                "    return {'x': 1, 'reason': 'anchor-safe'}\n",
+                encoding="utf-8",
+            )
+            actual_hash = subprocess.check_output(
+                ["python3", "extract_decide_hash.py", str(source)],
+                cwd=REPO_ROOT,
+                text=True,
+            ).strip()
+            source.rename(archive_dir / f"{actual_hash}.py")
+            rejected_file.write_text(f"{actual_hash}\n", encoding="utf-8")
+            rejected_meta.write_text(
+                json.dumps(
+                    {
+                        actual_hash: {
+                            "updated_at": 4102444800,
+                            "normalized_to_hash": "oldhash",
+                            "reason": "rollback_target_normalized",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            script = f"""
+source core/config.sh 2>/dev/null
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+STRATEGY_HASH_PERMANENT_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+REJECTED_HASH_META_FILE='{rejected_meta}'
+REJECTED_REEVALUATE_TTL_SEC=21600
+source strategy/regression.sh 2>/dev/null
+_prune_expired_rejected_hashes
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertNotIn(actual_hash, rejected_file.read_text(encoding="utf-8"))
+            self.assertNotIn(actual_hash, json.loads(rejected_meta.read_text(encoding="utf-8")))
 
     def test_post_regression_improve_uses_failed_batch(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -4677,8 +4882,10 @@ PY
         config = (REPO_ROOT / "core/config.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
-        self.assertIn('validate_strategy "$STRATEGY_FILE"', regression)
-        self.assertIn("ロールバック後バリデーション失敗", regression)
+        self.assertIn('rollback_restore_validate_${rollback_hash:-unknown}_$$.py', regression)
+        self.assertIn('validate_strategy "$rollback_validate_tmp"', regression)
+        self.assertNotIn('validate_strategy "$STRATEGY_FILE"', regression)
+        self.assertIn("rollback validation failed but accepted by policy", regression)
         self.assertIn('cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"', regression)
         self.assertIn("ROLLBACK_REVALIDATE_TARGET_ENABLED", config)
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', regression)
@@ -4829,7 +5036,7 @@ _pick_best_rollback_candidate currentHash
             self.assertIn("russiaNearTop", rolling)
             self.assertFalse((td / "rolling_score_pruned_hashes.jsonl").exists())
 
-    def test_invalid_rollback_archive_is_pruned_from_rolling_scores(self):
+    def test_invalid_rollback_archive_remains_eligible_and_is_not_pruned(self):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -4876,7 +5083,7 @@ _pick_best_rollback_candidate currentHash
                 timeout=30,
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
-            self.assertIn("goodNext|", result.stdout)
+            self.assertIn("badTop|", result.stdout)
             rolling = json.loads(rs_file.read_text())
             self.assertIn("badTop", rolling)
             self.assertIn("goodNext", rolling)
