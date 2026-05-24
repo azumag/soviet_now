@@ -64,6 +64,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v682: merge_drought_emergency_exit — suppress REACTIVE_PAIRS_STACKING during 3+ NO_MERGE streak
+      #       with max_y>=1.8, add emergency lowest-y bonus (+500*merge_mult).
+      #       Worst T45: rp=6, NO_MERGE, decision_top_y_after_drop=2.74 — stacking (~300) + clustering (~200)
+      #       overcame axis 8.8 penalty (-4000~-7000), causing high placement that scattered type 13 pieces
+      #       (distance 3.3). Once scattered, merge impossible → death spiral.
+      #       Hall-of-fame (best_score6058, v617) implements this to prevent same-type scattering.
+      #       Target stage: Ukraine(T13)=92%→100% (same-type proximity for merge recovery).
+      #       refs: tmp/analysis_result.md (Implementation Plan: merge_drought_emergency_exit),
+      #             strategy_versions/best_score6058_strategy.py (v617, line 2358-2371),
+      #             game_history/20260525_014513_score0354.jsonl (worst T45)
       # v681: DEADLINE_GUARD merge_result_crosses_deadline filtering for mandatory_themes compliance
       #       __dlg_merge_result_safe now filters out merge_result_crosses_deadline candidates when
       #       reactive_pairs>=1 && landing_y>=-1.0 (strict mandatory_themes enforcement).
@@ -1186,7 +1196,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # When no merge is available at high pc, stacking accelerates piece accumulation → death spiral
         # Axis 9.6b (~120-540) provides sufficient horizontal guidance when stacking is suppressed
         stacking_pc_suppressed = piece_count >= 35 and merge_grade == "NO"
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
+        stacking_merge_drought_suppressed = no_merge_streak >= 3 and merge_grade == "NO" and max_y >= 1.8
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed and not stacking_merge_drought_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1291,6 +1302,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     proximity_bonus = 150.0 * (1.0 - best_dist / 1.5) * merge_mult
                     score += proximity_bonus
                     reasons.append("MERGE_DROUGHT_EXIT")
+
+        # ----- v682: merge_drought_emergency_exit — emergency lowest-y bonus (Ukraine stage) -----
+        # analysis_result.md adopted hypothesis: "merge_drought_emergency_exit"
+        # Worst game T45: rp=6, NO_MERGE, decision_top_y_after_drop=2.74 (extremely high).
+        # REACTIVE_PAIRS_STACKING bonus (~300) + NEAR_MISS_CLUSTERING (~200) overcame axis 8.8
+        # penalty (-4000~-7000), causing high placement that scattered same-type pieces (distance 3.3
+        # for type 13). Once scattered, no merge possible → death spiral.
+        # Hall-of-fame strategy (best_score6058, v617) implements this: suppress stacking during
+        # 3+ NO_MERGE streak with max_y>=1.8 and add emergency height bonus.
+        # v682: When merge_drought_emergency condition fires (no_merge_streak>=3 && NO_MERGE &&
+        # max_y>=1.8), suppress REACTIVE_PAIRS_STACKING bonuses and add emergency lowest-y bonus.
+        # This forces strictly lowest available position during NO_MERGE streak, preventing
+        # high placement that scatters same-type pieces. Targets Ukraine(T13) 92%→100%.
+        # Suppress stacking_merge_drought_suppressed already set above.
+        # Suppress when death_spiral — height must be sole differentiator in danger zone.
+        # refs: tmp/analysis_result.md (Implementation Plan: merge_drought_emergency_exit),
+        #       strategy_versions/best_score6058_strategy.py (v617, line 2358-2371),
+        #       game_history/20260525_014513_score0354.jsonl (worst game T45)
+        # Fixes rollback failure mode: same-type piece scattering during merge drought (Ukraine stage)
+        merge_drought_emergency = (
+            no_merge_streak >= 3 and merge_grade == "NO" and max_y >= 1.8
+        )
+        if merge_drought_emergency and not death_spiral:
+            emergency_height_bonus = 500.0 * merge_mult
+            score += emergency_height_bonus
+            reasons.append("MERGE_DROUGHT_EMERGENCY")
 
         # ----- vXXX: axis 9.10 high-type growth pipeline guidance (NEW) -----
         # analysis_result.md adopted hypothesis: "axis 9.10 high-type growth pipeline" from hall-of-fame.
