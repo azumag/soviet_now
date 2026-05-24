@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+# v685: CENTRAL_HIGH_NO_MERGE_PENALTY -2000→-4000 — central (|x|<1.5) && landing_y>=2.0 &&
+#       rp>=3 && NO: extra penalty increased. Worst T65/T73 central x=0.1/0.98 with y=3.37/3.55
+#       still losing to edge. Penalty now comparable to axis 8.8 range (-3000~-7000).
+#       mandatory_themes: "デッドライン付近の危険盤面領域では、併合を優先するべき"
+#       refs: tmp/analysis_result.md
 # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
 #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
 #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -1994,6 +1999,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # v685: central NO_MERGE high-placement penalty — worst T65/T73 had central x=0.1/0.98
+            # with landing_y=3.37/3.55 (deadline_crossed & NO_MERGE), mandatory_themes violation.
+            # v682 edge penalty (|x|>=1.5) doesn't apply to central placements (|x|<1.5).
+            # Increase penalty from -2000 to -4000 (comparable to axis 8.8 range -3000~-7000).
+            if abs(x) < 1.5 and landing_y >= 2.0:
+                score -= 4000.0
+                reasons.append("CENTRAL_HIGH_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
