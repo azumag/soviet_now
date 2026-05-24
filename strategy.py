@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+# v686: v662 deadline margin threshold lowered 0.5 -> 0.3 — worst game T54 had
+#       deadline_margin=0.67>0.5, v662 penalty didn't fire, mandatory_themes violated
+#       (crosses_deadline=true && merge_grade=NO). Best game T163 same pattern.
+#       Now margin<0.3 catches all candidates approaching deadline (within 0.3 units).
+#       russia_phase and DIRECT merges remain exempt per v662 design.
+#       Fixes: deadline margin < 0.3 NO_MERGE penalty strengthening.
+#       refs: tmp/analysis_result.md (Hypothesis: v661/v662 threshold 0.5->0.3)
 # v685: HIGH_POSITION_JUMP_PENALTY — when merge_grade==NO && rp>=2 && margin<2.0 && max_y<2.0,
 #       penalize candidates where landing_y exceeds max_y by >1.5 (jump to y=3+ when board is only 1.5-2.0).
 #       worst game turns 55-58: placed at y=3.01/2.71/3.06 despite max_y=1.57/1.4/1.94 → max_y runaway.
@@ -2109,17 +2116,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # beat NO-merge low positions. NEAR success rate is only 26-47% (measured), so
         # crossing deadline for a NEAR is almost as bad as crossing for NO merge.
         # v662: unified threshold 0.5 for both NO and NEAR, NEAR penalty raised to 4000/unit.
+        # v686: threshold lowered 0.5 -> 0.3 to catch more NO_MERGE deadline violations.
+        #   worst game T54: deadline_margin=0.67>0.5, penalty didn't fire, mandatory_themes violated.
+        #   best game T163: same violation pattern at deadline approach.
+        #   margin < 0.3 now catches all candidates approaching deadline (within 0.3 units).
+        #   Penalty formula uses (0.3 - margin) to scale penalty with proximity to deadline.
         # DIRECT merges remain exempt (user confirmed: DIRECT crossing deadline is acceptable).
-        # Example at margin=-0.1: NO penalty=(0.5-(-0.1))*5000=3000, NEAR=(0.5-(-0.1))*4000=2400
-        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
-        #       game_history/20260416_193206_score1203.jsonl T50/T63/T66 (NEAR crosses deadline)
+        # Example at margin=-0.1: NO penalty=(0.3-(-0.1))*5000=2000, NEAR=(0.3-(-0.1))*4000=1600
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # refs: tmp/analysis_result.md (Hypothesis: v661/v662 threshold 0.5->0.3),
+        #       data/mandatory_themes.txt, game_history/20260524_201952_score0697.jsonl T54 (violation),
+        #       game_history/20260524_200431_score3795.jsonl T163 (violation)
         margin = result.get("deadline_margin", 99)
-        if merge_grade == "NO" and not russia_phase and margin < 0.5:
-            score -= max(0, (0.5 - margin)) * 5000
+        if merge_grade == "NO" and not russia_phase and margin < 0.3:
+            score -= max(0, (0.3 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
-        elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
-            score -= max(0, (0.5 - margin)) * 4000
+        elif merge_grade == "NEAR" and not russia_phase and margin < 0.3:
+            score -= max(0, (0.3 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
         # ----- update best candidate -----
