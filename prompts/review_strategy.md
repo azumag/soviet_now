@@ -33,6 +33,7 @@
 - [ ] availability / flags / grade 判定で `dict.get(...) != "NO"` のように欠損キーを真扱いしていないか。`merge_available` や `merge_grade` などは、入力サンプルでキー存在・許容値・欠損時の扱いまで確認し、欠損を「利用可能」と解釈する実装は FAIL にすること
 - [ ] `height_mult` / `merge_mult` / penalty係数などを増減する変更は、コメントや分析文の「強化/緩和」と実際の計算方向が一致しているか。必ず周辺の最終式（例: `height_penalty = landing_y * ... * height_mult`）まで追って、乗算値が増えると penalty が増えるのか減るのかを検算すること
 - [ ] 「低配置を好む」「高積みを避ける」「盤面圧縮を促す」など位置・高さ・piece_count の単調方向を主張する新規 bonus / penalty は、最終式でその方向に効いているか。例: 低配置を好む bonus が `+ max_y * 100` のように高い盤面ほど加点していないか、piece_count を減らしたい bonus が piece_count 増加で報酬増になっていないかを検算し、説明と逆向きなら FAIL にすること
+- [ ] 新規 axis / reason / bonus / penalty は、対象にした worst/best game log または `tmp/batch_summary.txt` の実データで発火条件が到達可能か確認すること。新 reason が一度も発火しない条件、または根拠ログの値と条件が食い違う場合は FAIL にすること
 
 ### D. 追加品質チェック
 - [ ] `turns >= N` などの固定ターン数ゲートが新規追加されていないか
@@ -41,6 +42,7 @@
 - [ ] height penalty の強化を「スコアアップ手段」として扱う変更がないか
 - [ ] 係数変更の向きが逆ではないか（例: penalty式に掛かる `height_mult` を下げる変更を「height penalty強化」と説明していないか）
 - [ ] bonus / penalty の単調方向が逆ではないか（例: `low placement` や `board compression` を説明しながら、`max_y` や `piece_count` が大きいほど加点する式になっていないか）
+- [ ] 新規 reason / axis の発火証拠があるか（該当 game log の turn 値、または batch summary の該当条件と一致するか）
 
 ### E. Hard Constraint — 絶対遵守テーマ（mandatory_themes.txt）
 - [ ] `data/mandatory_themes.txt` の全テーマを遵守する実装になっているか
@@ -101,6 +103,7 @@
 - [x/✗] 欠損キーの真扱い防止: ...（availability / flags / grade 判定で欠損を利用可能扱いしていないこと）
 - [x/✗] 係数方向の検算: ...（変更した係数が最終式でどちらに効くか）
 - [x/✗] 単調方向の検算: ...（低配置・高積み回避・盤面圧縮などの説明と、bonus / penalty の実際の増減方向が一致していること）
+- [x/✗] 新規 axis / reason の発火証拠: ...（対象ログや batch summary の値が、新規条件に到達すること）
 
 ### D. 追加品質
 - [x/✗] 固定ターン数ゲート: ...
@@ -109,6 +112,7 @@
 - [x/✗] height penalty誤用なし: ...
 - [x/✗] 係数変更の向き: ...
 - [x/✗] bonus / penalty 単調方向: ...
+- [x/✗] 新規 reason / axis の発火証拠: ...
 
 ## Issues Found（FAILの場合のみ）
 （具体的な問題点と修正内容）
