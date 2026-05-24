@@ -64,11 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v687: deadline_guard fallback merge candidates 評価追加 — merge_available=falseでもmerge
-     #       candidatesが存在する場合、fallback前にnon-crossing merge candidateを優先選択。
-     #       worst T69-T72 (merge_available=false, top_y=3.99-4.4 crossing) のmandatory_themes違反解消。
-     #       対象: Ukraine(T13) 到连率83%→100%、Kazakhstan(T14) 改善。
-     #       refs: tmp/analysis_result.md (Hypothesis: deadline_guard fallback merge evaluation)
      # v682: critical phase pc>=35 low placement誘導 — merge_grade=="NO" && max_y>=2.0 && pc>=35
      #       で低landing_y配置に+400、中間配置に-200。worst T64-T66 (pc=35-37) max_y runaway防止。
      #       対象: Kazakhstan(T14)到连率58%改善。russia_phase不改変、mandatory_themes適合。
@@ -793,25 +788,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_merge_preferred:
             __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # v687: fix merge candidates evaluation in fallback when merge_available=false
-        # merge_available=false means "merge didn't happen" not "no merge candidates exist"
-        # check if any merge candidates (DIRECT/NEAR) exist as non-crossing
-        __dlg_has_merge = any(
-            isinstance(c, dict) and c.get("merge_grade") in ["DIRECT", "NEAR"]
-            for c in __dlg_cands
-        )
-        if __dlg_has_merge:
-            # Compute safe once for use in this block
-            __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-            if __dlg_safe:
-                # Safe candidates available — must pick from safe, not crossing
-                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-            # No safe candidates — merge exists but all are crossing. Choose lowest landing_y among ALL.
-            if __dlg_cands:
-                __dlg_best = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_FALLBACK_MERGE"}
 
         # Fallback: only when no merge candidate is available
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
