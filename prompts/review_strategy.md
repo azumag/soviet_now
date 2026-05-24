@@ -30,6 +30,7 @@
 - [ ] 変更部分の周辺に partial edit 崩れ（構文エラー、インデントずれ等）がないか
 - [ ] rollback/postmortem の制約に逆行する変更がないか
 - [ ] 新しく参照する `analysis` / `game_state` / `reactor` / tuple/list/dict 構造は、既存コード・`strategy_runner.py`・入力サンプルの実データ形と一致しているか。未確認の添字・キー・型仮定がある場合は FAIL にすること
+- [ ] availability / flags / grade 判定で `dict.get(...) != "NO"` のように欠損キーを真扱いしていないか。`merge_available` や `merge_grade` などは、入力サンプルでキー存在・許容値・欠損時の扱いまで確認し、欠損を「利用可能」と解釈する実装は FAIL にすること
 - [ ] `height_mult` / `merge_mult` / penalty係数などを増減する変更は、コメントや分析文の「強化/緩和」と実際の計算方向が一致しているか。必ず周辺の最終式（例: `height_penalty = landing_y * ... * height_mult`）まで追って、乗算値が増えると penalty が増えるのか減るのかを検算すること
 
 ### D. 追加品質チェック
@@ -95,6 +96,7 @@
 - [x/✗] partial edit: ...
 - [x/✗] rollback制約: ...
 - [x/✗] runtime構造の型・shape確認: ...（新しく読むキー/添字を、既存コードや入力サンプルと照合した内容）
+- [x/✗] 欠損キーの真扱い防止: ...（availability / flags / grade 判定で欠損を利用可能扱いしていないこと）
 - [x/✗] 係数方向の検算: ...（変更した係数が最終式でどちらに効くか）
 
 ### D. 追加品質
