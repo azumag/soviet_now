@@ -60,6 +60,7 @@
 ## 出力指示（必須）
 - 作業ディレクトリは sandbox ルートです。**`tmp/review_result.md` は存在しない場合があります**。
 - レビュー結果を **`tmp/review_result.md`** に必ず書くこと。存在しない場合は `Write` で新規作成すること。
+- `Read tmp/review_result.md` が `File not found` になった場合、それは正常な初回状態です。ユーザーに質問せず、直ちに下記テンプレートを `Write tmp/review_result.md` で新規作成すること。
 - レビュー本文や JSON を会話に表示しただけでは失敗です。最終応答の前に `tmp/review_result.md` が作成・更新済みであることを確認すること。
 - `tmp/review_result.md` が既に存在する場合は、`Read` してから `Edit` / `MultiEdit` で更新してもよい。
 - `Write` / `Edit` / `MultiEdit` のうち使える手段でよい。権限エラーや read-before-write エラーが出た場合は、エラー文を読んで同じ `tmp/review_result.md` への作成または更新をやり直すこと。
