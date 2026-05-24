@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1272,10 +1273,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
         self.assertIn('SOREN_MAIN_PID="$$"', loop)
-        self.assertIn('echo "$SOREN_MAIN_PID" > "$LOCKDIR/pid"', loop)
+        self.assertRegex(loop, r'echo "\$SOREN_MAIN_PID"\s*>\s*"\$LOCKDIR/pid"')
         self.assertIn("_soren_lock_pid_alive", loop)
         self.assertIn("operation not permitted", loop)
-        self.assertIn('err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0', loop)
+        self.assertRegex(loop, r'err=\$\(\s*\{ kill -0 "\$pid" >/dev/null; \}\s*2>&1\s*\)\s*&& return 0')
         self.assertIn('*"soren_loop.sh"*', loop)
         self.assertIn("stale lock owner", loop)
         self.assertIn("replaced by self", loop)
@@ -1862,15 +1863,22 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             discard_idx,
         )
 
-    def test_t13_t14_proximity_bonus_keeps_reactive_danger_guard(self):
+    def test_frontier_proximity_guidance_keeps_congestion_suppression(self):
         strategy = (REPO_ROOT / "strategy.py").read_text()
-        block = strategy.rsplit("axis 9.68 T13/T14 proximity bonus", 1)[1].split(
-            "axis 9.7 pipeline-aware placement guidance", 1
+        readme = (REPO_ROOT / "README.md").read_text()
+        block = strategy.rsplit("v369 congestion-aware proximity", 1)[1].split(
+            "evaluation axis 9.3", 1
         )[0]
 
-        self.assertIn("reactive_pair_count < 3", block)
-        self.assertIn('reasons.append("T13_PROXIMITY_BONUS")', block)
-        self.assertIn('reasons.append("T14_PROXIMITY_BONUS")', block)
+        self.assertIn("rp_guidance_suppressed", block)
+        self.assertIn("reactive_pair_count >= 5", block)
+        self.assertIn("proximity_bonus = 0.0", block)
+        self.assertNotIn("reactive_pair_count < 3", block)
+        self.assertIn("v369 congestion-aware proximity", readme)
+        self.assertRegex(
+            readme,
+            re.compile(r"reactive_pair_count\s*>=\s*5.*proximity_bonus = 0\.0"),
+        )
 
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()

@@ -132,7 +132,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - rollback target の fresh cycle 中、または rank1 hot streak 中は早期脱出を延期する。これは過去 rolling 実績の再検証や上振れ保護を優先するため。
 - 前ハッシュ由来の `regression_streak` / `consecutive_no_improve` が残っていても、現行 `accumulated_games.json` が `russia_count > 0` / `soviet_count > 0` / `best_max_type >= 15` を示す場合は早期脱出を延期し、現在のロシア進捗を優先して評価を続ける。
 - `current_strategy_run.hash` が `best_strategy_anchor.hash` と同一の rollback 再検証中は、`show_status.sh` の `Escape stag=x/y` だけで停滞発火と判定しない。`current_strategy_run.games_total` が成熟閾値に届くまでは rolling 上の `russia_count` / `best_max_type` を保護情報として扱い、成熟後も current run にロシア再現がない時だけ regression streak から脱出へ戻す。
-- T13/T14 近接ボーナスのような frontier 誘導は `reactive_pair_count < 3` の低・中危険域に限定する。`reactive_pair_count >= 3` の NO_MERGE 局面では axis 8.8 系の危険域ペナルティを優先し、ロシア導線ボーナスが高危険域の即時併合優先を薄めないようにする。
+- 現行 `v369 congestion-aware proximity` は reactive level だけでは分岐しない。frontier 近接誘導は piece_count / 横距離 / 高さで調整しつつ、`max_y >= 3.0 && deadline_crossed` または `reactive_pair_count >= 5 && max_y >= 2.5` の混雑局面では `proximity_bonus = 0.0` にして、危険域の高さ制御を優先する。
 
 直接脱出ロックのルーティング順:
 
