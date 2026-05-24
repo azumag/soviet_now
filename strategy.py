@@ -64,6 +64,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+# v686: axis 5.68 T13/T14 proximity bonus — Ukraine stage T13→T14 chain building
+#       when current_type && next_type in [13,14] && merge_grade==NO && rp<3, bonus 150-300
+#       toward nearest T14 for Russia path (2nd T14 creation). Fixes T13x2→T14x1 only gap.
+#       refs: tmp/analysis_result.md (Hypothesis: T13/T14 Proximity Bonus for Ukraine Gate)
 # v685: HIGH_POSITION_JUMP_PENALTY — when merge_grade==NO && rp>=2 && margin<2.0 && max_y<2.0,
 #       penalize candidates where landing_y exceeds max_y by >1.5 (jump to y=3+ when board is only 1.5-2.0).
 #       worst game turns 55-58: placed at y=3.01/2.71/3.06 despite max_y=1.57/1.4/1.94 → max_y runaway.
@@ -1764,6 +1768,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity *= min(congestion_scale, 3.5)
                     if proximity > 0:
                         score += proximity
+
+        # ----- v686: axis 5.68 T13/T14 proximity bonus (Ukraine stage T13→T14 chain building) -----
+        # Improve Ukraine(T13)=8/12 toward 12/12 by encouraging T13 placements near existing T14.
+        # Best game (score3475): T13x2 existed at end, T14x1 only — T14→T15 merge path never activated.
+        # Rollback target reached Russia because it had better T13/T14 proximity for T14→T14 chain.
+        # Mechanism: when current_type and next_type are both T13/T14 and merge_grade==NO,
+        # placing near existing T14 pieces increases chance of T13+T13→T14 (2nd T14) for Russia path.
+        # Fires: merge_grade=="NO" && reactive_pair_count<3 && current_type in [13,14] && next_type in [13,14]
+        # Bonus: 150-300 based on horizontal proximity to nearest T14 (max +300 at horiz_dist=0)
+        # Does NOT override merge (only fires on NO_MERGE candidates).
+        # mandatory_themes compliant: placement near T14 horizontally, not on top of it.
+        # refs: tmp/analysis_result.md (Hypothesis: T13/T14 Proximity Bonus)
+        if merge_grade == "NO" and reactive_pair_count < 3 and not death_spiral:
+            current_piece = game_state.get("current_piece", {})
+            current_type_val = current_piece.get("type", 0)
+            if current_type_val in [13, 14] and next_type in [13, 14]:
+                t14_pieces = [p for p in pieces if p.get("type") == 14]
+                if t14_pieces:
+                    nearest_t14 = min(t14_pieces, key=lambda p: abs(x - p["x"]))
+                    horiz_dist = abs(x - nearest_t14["x"])
+                    if horiz_dist < 2.0:
+                        proximity_bonus = max(0, 300.0 - horiz_dist * 75.0)
+                        score += proximity_bonus
+                        reasons.append("T13_T14_PROXIMITY_BONUS")
 
         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。

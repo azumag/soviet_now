@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-24 21:36:12 JST`
-- Nodes: `802`
-- Edges: `119`
-- Current: `8590057fd8d9`
+- Updated: `2026-05-24 22:35:59 JST`
+- Nodes: `803`
+- Edges: `120`
+- Current: `1c805c1eed33`
 - Anchor: `8590057fd8d9`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_8590057fd8d9["8590057fd8d9<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12034.7"]
-    h_ebe43dd9d0d7["ebe43dd9d0d7<br/>g=4 n=4<br/>comp=11726.9"]
+    h_8590057fd8d9["8590057fd8d9<br/>ANCHOR<br/>g=24 n=20<br/>comp=10641.0"]
     h_ec180f35c7e5["ec180f35c7e5<br/>g=12 n=12<br/>comp=10577.5"]
     h_ec2ae6392eb2["ec2ae6392eb2<br/>g=12 n=12<br/>comp=10676.5"]
     h_ec872b894ada["ec872b894ada<br/>g=12 n=12<br/>comp=12329.6"]
@@ -76,15 +75,16 @@ flowchart TD
     h_fe57fa24fbe2["fe57fa24fbe2<br/>g=20 n=20<br/>comp=11046.9"]
     h_fedb8705c35e["fedb8705c35e<br/>g=20 n=20<br/>comp=11087.3"]
     h_ff04cff2b678["ff04cff2b678<br/>g=20 n=20<br/>comp=10711.0"]
+    h_1c805c1eed33["1c805c1eed33<br/>CURRENT"]
 
+    h_8590057fd8d9 -->|improve| h_1c805c1eed33
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_8590057fd8d9 current_anchor;
-    class h_ebe43dd9d0d7 plain;
+    class h_8590057fd8d9 anchor;
     class h_ec180f35c7e5 plain;
     class h_ec2ae6392eb2 plain;
     class h_ec872b894ada plain;
@@ -144,11 +144,12 @@ flowchart TD
     class h_fe57fa24fbe2 plain;
     class h_fedb8705c35e plain;
     class h_ff04cff2b678 plain;
+    class h_1c805c1eed33 current;
 ```
 
 ## Detail 1/11
 
-- Range: `0a8ad191f188` .. `0ac322bb0b01`
+- Range: `6a617fdda672` .. `0ac322bb0b01`
 - Nodes in this diagram: `80`
 - Internal edges in this diagram: `83`
 - Cross-chunk link: `0e899ca31b42 --improve--> 151b3f6a0061`
@@ -163,12 +164,12 @@ flowchart TD
 - Cross-chunk link: `276633ae46c0 --improve--> ce268081d79a`
 - Cross-chunk link: `0e899ca31b42 --improve--> d875a4e21e0d`
 - Cross-chunk link: `8cde5038d8a6 --improve--> e25add30a506`
-- Cross-chunk link: `... and 1 more`
+- Cross-chunk link: `... and 2 more`
 
 ```mermaid
 flowchart TD
-    h_0a8ad191f188["0a8ad191f188<br/>g=20 n=20<br/>comp=9429.9"]
     h_6a617fdda672["6a617fdda672<br/>g=4 n=4<br/>comp=9057.8"]
+    h_0a8ad191f188["0a8ad191f188<br/>g=20 n=20<br/>comp=9429.9"]
     h_25963b5f93e2["25963b5f93e2<br/>g=12 n=12<br/>comp=10228.4"]
     h_8557e49edfaa["8557e49edfaa<br/>g=12 n=12<br/>comp=10624.7"]
     h_3350586ff646["3350586ff646<br/>g=12 n=12<br/>comp=11991.3"]
@@ -217,7 +218,7 @@ flowchart TD
     h_da7da9de768e["da7da9de768e<br/>g=12 n=12<br/>comp=11066.3"]
     h_08a830d2756a["08a830d2756a<br/>g=12 n=12<br/>comp=12375.5"]
     h_5861a25e239d["5861a25e239d<br/>g=12 n=12<br/>comp=11007.4"]
-    h_8590057fd8d9["8590057fd8d9<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12034.7"]
+    h_8590057fd8d9["8590057fd8d9<br/>ANCHOR<br/>g=24 n=20<br/>comp=10641.0"]
     h_387eef5415e6["387eef5415e6<br/>g=12 n=12<br/>comp=11383.2"]
     h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=1450.8"]
     h_003e9883e188["003e9883e188<br/>g=20 n=20<br/>comp=11801.3"]
@@ -248,7 +249,6 @@ flowchart TD
     h_0aa88b190240["0aa88b190240<br/>g=12 n=12<br/>comp=11153.0"]
     h_0ac322bb0b01["0ac322bb0b01<br/>g=20 n=20<br/>comp=11101.3"]
 
-    h_0a8ad191f188 -->|improve| h_6a617fdda672
     h_6a617fdda672 -. rollback .-> h_0a8ad191f188
     h_0a8ad191f188 -->|improve| h_25963b5f93e2
     h_25963b5f93e2 -->|improve| h_8557e49edfaa
@@ -327,18 +327,19 @@ flowchart TD
     h_ccc84872ebad -. rollback .-> h_c37f7b21cad7
     h_c37f7b21cad7 -->|improve| h_8590057fd8d9
     h_8590057fd8d9 -->|improve| h_387eef5415e6
+    h_387eef5415e6 -. rollback .-> h_8590057fd8d9
     h_0e899ca31b42 -->|improve| h_026dad83a186
     h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
+    h_0a8ad191f188 -->|improve| h_6a617fdda672
     h_71f614c44a5c -->|improve| h_9e4a68debeb9
-    h_387eef5415e6 -. rollback .-> h_8590057fd8d9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_0a8ad191f188 plain;
     class h_6a617fdda672 plain;
+    class h_0a8ad191f188 plain;
     class h_25963b5f93e2 plain;
     class h_8557e49edfaa plain;
     class h_3350586ff646 plain;
@@ -387,7 +388,7 @@ flowchart TD
     class h_da7da9de768e plain;
     class h_08a830d2756a plain;
     class h_5861a25e239d plain;
-    class h_8590057fd8d9 current_anchor;
+    class h_8590057fd8d9 anchor;
     class h_387eef5415e6 plain;
     class h_00276c327ece plain;
     class h_003e9883e188 plain;
@@ -2062,14 +2063,16 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `fedb8705c35e` .. `ff04cff2b678`
-- Nodes in this diagram: `2`
+- Range: `fedb8705c35e` .. `1c805c1eed33`
+- Nodes in this diagram: `3`
 - Internal edges in this diagram: `0`
+- Cross-chunk link: `8590057fd8d9 --improve--> 1c805c1eed33`
 
 ```mermaid
 flowchart TD
     h_fedb8705c35e["fedb8705c35e<br/>g=20 n=20<br/>comp=11087.3"]
     h_ff04cff2b678["ff04cff2b678<br/>g=20 n=20<br/>comp=10711.0"]
+    h_1c805c1eed33["1c805c1eed33<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -2079,9 +2082,20 @@ flowchart TD
 
     class h_fedb8705c35e plain;
     class h_ff04cff2b678 plain;
+    class h_1c805c1eed33 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#27473 `8590057f -> 1c805c1e`
+
+- scores: `17943 6943 19797 8384 8707 15088 10648 9390 8187 17320 15889 9245`
+- v686: axis 5.68 T13/T14 proximity bonus — Ukraine stage T13→T14 chain building
+- when current_type && next_type in [13,14] && merge_grade==NO && rp<3, bonus 150-300
+- toward nearest T14 for Russia path (2nd T14 creation). Fixes T13x2→T14x1 only gap.
+- ----- v686: axis 5.68 T13/T14 proximity bonus (Ukraine stage T13→T14 chain building) -----
+- Improve Ukraine(T13)=8/12 toward 12/12 by encouraging T13 placements near existing T14.
+- Best game (score3475): T13x2 existed at end, T14x1 only — T14→T15 merge path never activated.
 
 ### Rollback Game#27461 `387eef54 -> 8590057f`
 
