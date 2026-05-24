@@ -364,6 +364,32 @@ def contradictory_threshold_direction_claim():
     )
     return bool(widening_claim)
 
+def contradictory_low_placement_constant_claim():
+    """Reject PASS text that claims a lowest-y effect from a constant bonus."""
+    normalized = re.sub(r"\s+", " ", text).lower()
+    low_claim = re.search(
+        r"(?:lowest[\s-]*y|lowest available|low placement|lower placement|"
+        r"低配置|低い候補|低い位置|高積み回避|最低(?:y|位置)|"
+        r"strictly lowest|forces? (?:strictly )?lowest)",
+        normalized,
+    )
+    if not low_claim:
+        return False
+    constant_bonus = re.search(
+        r"(?:constant|fixed|flat|same|uniform|定数|固定|一律).{0,40}(?:bonus|加点|報酬)|"
+        r"(?:bonus|加点|報酬).{0,40}(?:constant|fixed|flat|same|uniform|定数|固定|一律)|"
+        r"\+\s*500(?:\.0)?(?:\s*\*\s*merge_mult)?|500(?:\.0)?\s*\*\s*merge_mult",
+        normalized,
+    )
+    if not constant_bonus:
+        return False
+    differentiating_evidence = re.search(
+        r"(?:landing_y|risk_top_y_after_drop|decision_top_y_after_drop|top_y|height)"
+        r".{0,80}(?:低い候補|lower candidate|candidate pair|2 candidates|score差|relative|相対)",
+        normalized,
+    )
+    return not bool(differentiating_evidence)
+
 data = extract_json_verdict()
 if not data:
     pt = plaintext_status()
@@ -374,6 +400,9 @@ if not data:
             raise SystemExit(1)
         if contradictory_threshold_direction_claim():
             print("review verdict PASS contradicts comparison threshold direction")
+            raise SystemExit(1)
+        if contradictory_low_placement_constant_claim():
+            print("review verdict PASS claims low placement from a constant bonus")
             raise SystemExit(1)
         raise SystemExit(0)
     if pt == "FAIL":
@@ -398,6 +427,10 @@ if user_review_present and not truthy(data.get("user_review_satisfied")):
 
 if contradictory_threshold_direction_claim():
     print("review verdict PASS contradicts comparison threshold direction")
+    raise SystemExit(1)
+
+if contradictory_low_placement_constant_claim():
+    print("review verdict PASS claims low placement from a constant bonus")
     raise SystemExit(1)
 
 raise SystemExit(0)

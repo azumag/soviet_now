@@ -34,6 +34,7 @@
 - [ ] `height_mult` / `merge_mult` / penalty係数などを増減する変更は、コメントや分析文の「強化/緩和」と実際の計算方向が一致しているか。必ず周辺の最終式（例: `height_penalty = landing_y * ... * height_mult`）まで追って、乗算値が増えると penalty が増えるのか減るのかを検算すること
 - [ ] 比較閾値を変更する diff は、比較演算子まで含めて効果方向を検算すること。例: `margin < 0.5` を `margin < 0.3` に下げる変更は発火範囲を狭めるため、「より多く捕まえる」「強化」と説明しているなら FAIL にすること。`x > threshold` / `x < threshold` / `<=` / `>=` のいずれも、閾値増減が発火条件を広げるのか狭めるのかを具体値で確認すること
 - [ ] 「低配置を好む」「高積みを避ける」「盤面圧縮を促す」など位置・高さ・piece_count の単調方向を主張する新規 bonus / penalty は、最終式でその方向に効いているか。例: 低配置を好む bonus が `+ max_y * 100` のように高い盤面ほど加点していないか、piece_count を減らしたい bonus が piece_count 増加で報酬増になっていないかを検算し、説明と逆向きなら FAIL にすること
+- [ ] `lowest-y` / `低配置` / `lowest available position` / `高積み回避` を主張する新規 bonus は、`landing_y` / `risk_top_y_after_drop` / `decision_top_y_after_drop` など候補ごとの高さ値に依存し、同じ発火条件内で低い候補ほど相対的に有利になる式か。条件成立候補すべてに `+500` のような定数 bonus を足すだけなら低配置を選好していないため FAIL にすること。最低2候補（低い候補・高い候補）で score 差が低い候補側に増えることを確認すること
 - [ ] 新規 axis / reason / bonus / penalty は、対象にした worst/best game log または `tmp/batch_summary.txt` の実データで発火条件が到達可能か確認すること。新 reason が一度も発火しない条件、または根拠ログの値と条件が食い違う場合は FAIL にすること
 
 ### D. 追加品質チェック
@@ -43,6 +44,7 @@
 - [ ] height penalty の強化を「スコアアップ手段」として扱う変更がないか
 - [ ] 係数変更の向きが逆ではないか（例: penalty式に掛かる `height_mult` を下げる変更を「height penalty強化」と説明していないか）
 - [ ] bonus / penalty の単調方向が逆ではないか（例: `low placement` や `board compression` を説明しながら、`max_y` や `piece_count` が大きいほど加点する式になっていないか）
+- [ ] `lowest-y` / 低配置を目的にした bonus が定数加点だけになっていないか。定数加点は発火条件の gate にすぎず、候補間の高さ順位を変えないため、低配置強制・高積み回避の実装としては FAIL にすること
 - [ ] 新規 reason / axis の発火証拠があるか（該当 game log の turn 値、または batch summary の該当条件と一致するか）
 
 ### E. Hard Constraint — 絶対遵守テーマ（mandatory_themes.txt）
@@ -106,6 +108,7 @@
 - [x/✗] 係数方向の検算: ...（変更した係数が最終式でどちらに効くか）
 - [x/✗] 比較閾値の効果方向: ...（`<` / `>` などの演算子込みで、閾値増減が発火範囲を広げるか狭めるか）
 - [x/✗] 単調方向の検算: ...（低配置・高積み回避・盤面圧縮などの説明と、bonus / penalty の実際の増減方向が一致していること）
+- [x/✗] 低配置 bonus の候補間差分: ...（低い候補と高い候補の2例で、定数加点ではなく低い候補が相対的に有利になること）
 - [x/✗] 新規 axis / reason の発火証拠: ...（対象ログや batch summary の値が、新規条件に到達すること）
 
 ### D. 追加品質
@@ -115,6 +118,7 @@
 - [x/✗] height penalty誤用なし: ...
 - [x/✗] 係数変更の向き: ...
 - [x/✗] bonus / penalty 単調方向: ...
+- [x/✗] lowest-y / 低配置の定数加点チェック: ...
 - [x/✗] 新規 reason / axis の発火証拠: ...
 
 ## Issues Found（FAILの場合のみ）

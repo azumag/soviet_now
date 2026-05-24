@@ -171,6 +171,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - Stage 3 のレビューは、比較閾値を変える diff でも比較演算子込みで効果方向を検算する。たとえば `margin < 0.5` を `margin < 0.3` に下げると発火範囲は狭まるため、「より多く捕まえる」「強化」と説明しているなら FAIL にする。
 - Stage 3 の verdict validation も同じ閾値方向ミスを機械的に拒否する。レビュー本文が PASS でも、`0.5 -> 0.3` のような閾値縮小を「より多く捕まえる」「強化」と説明している場合は apply 前に失敗扱いにする。
 - Stage 3 のレビューは、`low placement` / 低配置 / 高積み回避 / 盤面圧縮などをうたう新規 bonus / penalty でも単調方向を検算する。低配置を好む説明なのに `max_y` が大きいほど加点する、piece_count を減らしたい説明なのに piece_count 増加で報酬が増える、といった実式の逆向きは FAIL にする。
+- Stage 3 のレビューは、`lowest-y` / 低配置 / 高積み回避をうたう新規 bonus が候補ごとの高さ値に依存しているかも確認する。条件成立候補へ `+500` のような定数加点を足すだけでは候補間の高さ順位を変えないため、低い候補と高い候補の2例で相対 score 差が低い候補側へ増えることを示せない場合は FAIL にする。
 - Stage 3 のレビューは、新規 axis / reason / bonus / penalty が、根拠にした worst/best game log や `tmp/batch_summary.txt` の実データで到達可能かも確認する。新 reason が発火不能な条件や、引用した turn 値と条件が食い違う変更は PASS させない。
 - Stage 3 のレビューは、新しく `analysis` / `game_state` / `reactor` のキーや tuple/list/dict 添字を読む diff では、既存コード・`strategy_runner.py`・入力サンプルの runtime shape と照合する。未確認の型・添字仮定で通すと、今回のような frontier 誘導ロジックが実データで不発になっても PASS してしまうため、shape 未確認は FAIL として扱う。
 - Stage 3 のレビューは、availability / flags / grade 判定で `dict.get(...) != "NO"` のように欠損キーを真扱いする diff を FAIL にする。`merge_available` や `merge_grade` などはキー存在・許容値・欠損時の扱いを入力サンプルで確認し、欠損を「利用可能」と解釈しない。
