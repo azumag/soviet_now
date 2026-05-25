@@ -1402,6 +1402,21 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         and not safe
         and not preserve_visual_same_country
     ):
+        # If the strategy already chose a non-edge NO crossing and every
+        # analyzer candidate crosses, do not make the lateral placement worse
+        # just for a tiny risk-top gain. Recent failures showed NO->NO
+        # overrides drifting from center-ish choices to walls in all-crossing
+        # endgames, which adds instability without preserving a merge.
+        if (
+            chosen.get("crosses_deadline", False)
+            and chosen.get("merge_grade", "NO") == "NO"
+            and abs(chosen_x) <= 2.2
+            and abs(float(replacement.get("x", 0.0) or 0.0)) > 2.2
+            and risk_top(chosen) <= min_risk_top + 0.35
+        ):
+            replacement = chosen
+            replacement_source = f"{replacement_source}_preserve_non_edge_no_postcondition"
+
         # When every analyzer candidate crosses the deadline, the final guard
         # can still choose a NO-merge wall drop just because its measured risk
         # is slightly lower. Keep the min-risk policy, but prefer a center-ish
