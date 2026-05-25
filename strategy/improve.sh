@@ -958,21 +958,49 @@ with open(rs_file, 'w') as f:
 				rm -f "$IMPROVE_LOCK_FILE"
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
-				# failed_no_apply: 有効なlockだけを残す。空lockはmain loopを止めるだけなので作らない。
+				local _failed_lock_meta="" _failed_lock_rest=""
+				local _failed_lock_hash="" _failed_lock_count="" _failed_lock_early=""
 				if [ -s "$IMPROVE_LOCK_FILE" ]; then
-					touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
-				elif [ -s "$ACCUMULATED_GAMES_FILE" ]; then
-					cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+					_failed_lock_meta=$(python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+    print("\t".join([
+        str(data.get("hash", "") or ""),
+        str(int(data.get("count", 0) or 0)),
+        "1" if data.get("early_escape_lock") else "0",
+    ]))
+except Exception:
+    pass
+PY
+)
+					_failed_lock_hash="${_failed_lock_meta%%	*}"
+					_failed_lock_rest="${_failed_lock_meta#*	}"
+					_failed_lock_count="${_failed_lock_rest%%	*}"
+					_failed_lock_early="${_failed_lock_rest#*	}"
+				fi
+				if [ -n "$_failed_lock_hash" ] && [ -n "$hash_now" ] && [ "$_failed_lock_hash" != "$hash_now" ]; then
+					log "[IMPROVE] failed_no_apply lock hash stale (${_failed_lock_hash:0:12} != current ${hash_now:0:12}) → stale lock/backoff cleared"
+					rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+				elif [ -n "$_failed_lock_count" ] && [ "${_failed_lock_early:-0}" != "1" ] && [ "${_failed_lock_count:-0}" -lt "${MIN_GAMES_BEFORE_IMPROVE:-12}" ]; then
+					log "[IMPROVE] failed_no_apply partial lock cleared (count=${_failed_lock_count}/${MIN_GAMES_BEFORE_IMPROVE:-12})"
+					rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
 				else
-					rm -f "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+					# failed_no_apply: 有効なlockだけを残す。空lockはmain loopを止めるだけなので作らない。
+					if [ -s "$IMPROVE_LOCK_FILE" ]; then
+						touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+						# バックオフを設定して即座にリトライしない (soren91 stop→start ループ防止)
+						local _backoff_count=1
+						if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+							_backoff_count=$(( $(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0) + 1 ))
+						fi
+						printf '%d\n%d\n' "$_backoff_count" "$(date +%s)" > "$TMP_STATE_DIR/rate_limit_backoff"
+						log "[IMPROVE] ロックファイル保持 → daemon再試行待ち (backoff count=${_backoff_count})"
+					else
+						log "[IMPROVE] failed_no_apply: valid lock absent → retry lock/backoff cleared"
+						rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+					fi
 				fi
-				# バックオフを設定して即座にリトライしない (soren91 stop→start ループ防止)
-				local _backoff_count=1
-				if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-					_backoff_count=$(( $(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0) + 1 ))
-				fi
-				printf '%d\n%d\n' "$_backoff_count" "$(date +%s)" > "$TMP_STATE_DIR/rate_limit_backoff"
-				log "[IMPROVE] ロックファイル保持 → daemon再試行待ち (backoff count=${_backoff_count})"
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"

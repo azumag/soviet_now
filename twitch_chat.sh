@@ -12,6 +12,10 @@
 
 cd "$(dirname "$0")"
 
+# Long-running workers may already export these, but direct send/announce/fetch
+# commands should also see the current Twitch credentials.
+[ -f .env ] && set -a && . ./.env && set +a
+
 CHAT_DIR="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
 mkdir -p "$CHAT_DIR"
 
@@ -106,8 +110,17 @@ _resolve_twitch_sender_id() {
         printf '%s' "$TWITCH_BOT_USER_ID"
         return 0
     fi
-    curl -s -H "Authorization: Bearer ${token}" -H "Client-Id: ${client_id}" \
-        https://api.twitch.tv/helix/users 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null
+    local resp sender_id err_msg
+    resp=$(curl -s -H "Authorization: Bearer ${token}" -H "Client-Id: ${client_id}" \
+        https://api.twitch.tv/helix/users 2>/dev/null) || return 1
+    sender_id=$(printf '%s' "$resp" | python3 -c "import json,sys; print((json.load(sys.stdin).get('data') or [{}])[0].get('id',''))" 2>/dev/null || true)
+    if [ -n "$sender_id" ]; then
+        printf '%s' "$sender_id"
+        return 0
+    fi
+    err_msg=$(printf '%s' "$resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('message') or d.get('error') or '')" 2>/dev/null || true)
+    [ -n "$err_msg" ] && echo "WARNING: Twitch users lookup failed: ${err_msg}" >&2
+    return 1
 }
 
 _send_api() {

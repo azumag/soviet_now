@@ -162,7 +162,7 @@ except Exception: print(0)
 		_log "STALE: prediction resolved on Twitch: $_stale_label"
 		if [ "${_stale_best}" = "3" ]; then
 			local _stale_regression_detail=""
-			_stale_regression_detail=$(python3 - "$TMP_STATE_DIR/current_prediction.json" <<'PY' 2>/dev/null || echo "")
+			_stale_regression_detail=$(python3 - "$TMP_STATE_DIR/current_prediction.json" 2>/dev/null <<'PY'
 import json, sys
 f = sys.argv[1]
 try:
@@ -176,6 +176,8 @@ try:
 except Exception:
     pass
 PY
+)
+			[ -n "${_stale_regression_detail}" ] || _stale_regression_detail=""
 			if [ -n "${_stale_regression_detail}" ]; then
 				enqueue_chat_message "予想結果：「${_stale_label}」でした！${_stale_regression_detail}" "predictions"
 			else
@@ -509,7 +511,7 @@ PY
 	_log "prediction resolved: $OUTCOME_LABEL"
 	if [ "${OUTCOME_INDEX}" = "3" ] && [ -f "$PREDICTION_STATE_FILE" ]; then
 		# 粛清理由は detail を追加で投稿
-		_regression_detail=$(python3 - "$PREDICTION_STATE_FILE" <<'PY' 2>/dev/null || echo "")
+		_regression_detail=$(python3 - "$PREDICTION_STATE_FILE" 2>/dev/null <<'PY'
 import json, sys
 f = sys.argv[1]
 try:
@@ -523,6 +525,8 @@ try:
 except Exception:
     pass
 PY
+)
+		[ -n "${_regression_detail}" ] || _regression_detail=""
 		if [ -n "${_regression_detail}" ]; then
 			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！${_regression_detail}" "predictions"
 		else

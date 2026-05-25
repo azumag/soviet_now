@@ -91,6 +91,54 @@ _outbound_chat_log_twitch_failure() {
 	cp "$err_file" "$log_dir/last_twitch_send_error.txt" 2>/dev/null || true
 }
 
+_outbound_chat_twitch_backoff_file() {
+	printf '%s/twitch_backoff_until\n' "$OUTBOUND_CHAT_QUEUE_DIR"
+}
+
+_outbound_chat_twitch_backoff_count_file() {
+	printf '%s/twitch_backoff_count\n' "$OUTBOUND_CHAT_QUEUE_DIR"
+}
+
+_outbound_chat_twitch_backoff_active() {
+	local backoff_file until now
+	backoff_file=$(_outbound_chat_twitch_backoff_file)
+	[ -f "$backoff_file" ] || return 1
+	until=$(cat "$backoff_file" 2>/dev/null || true)
+	case "$until" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	now=$(date +%s)
+	[ "$until" -gt "$now" ]
+}
+
+_outbound_chat_maybe_backoff_twitch_failure() {
+	local err_file="$1"
+	[ -f "$err_file" ] || return 0
+	if grep -Eiq "Invalid OAuth token|Login authentication failed|Improperly formatted auth|Error logging in" "$err_file" 2>/dev/null; then
+		local backoff_base="${OUTBOUND_CHAT_TWITCH_AUTH_BACKOFF_SEC:-60}"
+		local backoff_max="${OUTBOUND_CHAT_TWITCH_AUTH_BACKOFF_MAX_SEC:-900}"
+		case "$backoff_base" in
+			''|*[!0-9]*) backoff_base=60 ;;
+		esac
+		case "$backoff_max" in
+			''|*[!0-9]*) backoff_max=900 ;;
+		esac
+		[ "$backoff_max" -ge "$backoff_base" ] || backoff_max="$backoff_base"
+		local count_file count backoff_sec
+		count_file=$(_outbound_chat_twitch_backoff_count_file)
+		count=$(cat "$count_file" 2>/dev/null || echo 0)
+		case "$count" in
+			''|*[!0-9]*) count=0 ;;
+		esac
+		count=$((count + 1))
+		backoff_sec=$((backoff_base * count))
+		[ "$backoff_sec" -le "$backoff_max" ] || backoff_sec="$backoff_max"
+		mkdir -p "$OUTBOUND_CHAT_QUEUE_DIR" 2>/dev/null || true
+		printf '%s\n' "$(( $(date +%s) + backoff_sec ))" > "$(_outbound_chat_twitch_backoff_file)" 2>/dev/null || true
+		printf '%s\n' "$count" > "$count_file" 2>/dev/null || true
+	fi
+}
+
 _outbound_chat_source_from_basename() {
 	local basename="$1"
 	basename="${basename%.msg}"
@@ -223,6 +271,7 @@ enqueue_chat_message() {
 #   戻り値: 0=送信成功, 1=キューが空 or 送信失敗
 outbound_queue_consume_once() {
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_PROCESSING_DIR" "$OUTBOUND_CHAT_SENT_DIR" 2>/dev/null || true
+	_outbound_chat_twitch_backoff_active && return 1
 
 	local msg_file
 	msg_file=$(ls -1t "$OUTBOUND_CHAT_PENDING_DIR"/*.msg 2>/dev/null | tail -1)
@@ -243,11 +292,13 @@ outbound_queue_consume_once() {
 	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.twitch_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.twitch_send_err_${RANDOM}")
 	if ./twitch_chat.sh send "$message" >/dev/null 2>"$err_file"; then
 		rm -f "$err_file"
+		rm -f "$(_outbound_chat_twitch_backoff_file)" "$(_outbound_chat_twitch_backoff_count_file)" 2>/dev/null || true
 		_outbound_chat_send_youtube_mirror "$message" "$basename"
 		mv "$claim_file" "$OUTBOUND_CHAT_SENT_DIR/$basename" 2>/dev/null || rm -f "$claim_file"
 		return 0
 	else
 		_outbound_chat_log_twitch_failure "$basename" "$err_file"
+		_outbound_chat_maybe_backoff_twitch_failure "$err_file"
 		rm -f "$err_file"
 		# 送信失敗: pending に戻す (次回リトライ)
 		mv "$claim_file" "$OUTBOUND_CHAT_PENDING_DIR/$basename" 2>/dev/null || true
