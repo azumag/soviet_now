@@ -712,7 +712,7 @@ PY
 	log "[WILDCARD] adaptive scale streak=${wildcard_streak} scale=${wildcard_scale} count=${wildcard_count_min}-${wildcard_count_max} ratio=${wildcard_ratio_min}-${wildcard_ratio_max} exclude_lines=${wildcard_exclude_lines:-none} prefer_lines=${wildcard_prefer_lines:-none}"
 	_improve_progress "wildcard" "20" "perturbing_constants_streak_${wildcard_streak}_scale_${wildcard_scale}"
 	if [ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ]; then
-		log "[WILDCARD] parallel real-game trial start jobs=${WILDCARD_PARALLEL_JOBS:-6} games=${WILDCARD_PARALLEL_GAMES:-12}"
+		log "[WILDCARD] parallel real-game trial start jobs=${WILDCARD_PARALLEL_JOBS:-6} games=${WILDCARD_PARALLEL_GAMES:-6}"
 		_improve_progress "wildcard_parallel" "25" "parallel_candidate_generation"
 		wildcard_parallel_obs_show() {
 			[ -x ./obs_control.sh ] || return 0
@@ -827,7 +827,7 @@ PY
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
 			--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
-			--games "${WILDCARD_PARALLEL_GAMES:-12}" \
+			--games "${WILDCARD_PARALLEL_GAMES:-6}" \
 			--count "$wildcard_count" \
 			--ratio-min "$wildcard_ratio_min" \
 			--ratio-max "$wildcard_ratio_max" \
@@ -836,8 +836,8 @@ PY
 			--explore-rate "$wildcard_explore_rate" \
 			--seed "$wildcard_seed" \
 			--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
-			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-4}" \
-			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.70}" \
+			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
+			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \

@@ -152,7 +152,8 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - 候補がない場合は `threshold` や `R0` / `cool` / `reject` などの blocker を表示し、`escape_ai direct` へ落ちる条件を確認できるようにする。
 - `wildcard` / `archive_restart` の隔離改善中は soren91 を自動起動せず、非メリケン表示を保つ。通常改善だけが従来どおり meriken tab / soren91 presentation を復帰させる。
 - `wildcard` 並列評価の OBS overlay は、候補なし・winner欠落・validation失敗・SIGTERM でも trap で status/dashboard 表示へ復元する。`show_status.sh` の `WildParFail` は直近1時間の失敗診断であり、`improve_state.json` が idle なら脱出ロックが詰まっている状態ではない。
-- `wildcard` 並列評価は既定で 6 候補を隔離実行し、OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
+- `wildcard` 並列評価は既定で 6 候補を隔離実行し、各候補は既定 6 ゲームで評価する。OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
+- `wildcard` 並列評価のカリングは既定で 1 ゲーム目から有効になり、現 leader composite の 90% 未満に落ちた候補は補充する。先に完走した候補も、後続 leader と比べて低すぎる場合は `accepted` のまま winner pool に残さず補充する。
 - `wildcardParallelOverlay` は 1920x140 のヘッダ専用表示とし、候補本線は `wildcardParallelCand1..6` の macOS window capture source で映す。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
 - `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。
@@ -185,6 +186,9 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_TRIGGER_STAGNATION` | `3` | 通常サイクル中の停滞で WILDCARD / archive_restart / escape_ai ルーティングへ進む閾値 |
 | `WILDCARD_EARLY_ESCAPE_MIN_GAMES` | `4` | 停滞閾値到達時に 12試合を待たず早期脱出ロックを作れる最小蓄積ゲーム数 |
 | `WILDCARD_REGRESSION_STREAK` | `2` | 直接脱出や WILDCARD 発火の回帰ストリーク閾値 |
+| `WILDCARD_PARALLEL_GAMES` | `6` | WILDCARD 並列候補1本あたりの既定評価ゲーム数 |
+| `WILDCARD_PARALLEL_CULL_AFTER_GAMES` | `1` | WILDCARD 並列候補を leader 比で補充判定し始めるゲーム数 |
+| `WILDCARD_PARALLEL_CULL_COMP_RATIO` | `0.90` | leader composite に対してこの比率未満の候補を補充する閾値 |
 | `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定で目的進捗を score 近傍候補の優先度に使う。現行ではソ連到達のみを保護対象にし、ロシア到達だけでは score-only anchor を押しのけない |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |

@@ -171,7 +171,8 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         if not changes:
             changes = ["no perturbation yet"]
         status = str(cand.get("status") or "pending")
-        klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status in {"won", "accepted"} else "run"
+        display_status = "finished" if status == "accepted" else status
+        klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status == "won" else "run"
         job_id = str(cand.get("job_id", "-"))
         rank = rank_by_job.get(job_id)
         if rank == 1:
@@ -208,7 +209,7 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         cards.append(
             f"""
             <section class="card {klass}">
-              <div class="top"><b>{html.escape(job_id)}</b><span>{html.escape(status)}</span></div>
+              <div class="top"><b>{html.escape(job_id)}</b><span>{html.escape(display_status)}</span></div>
               {rank_html}
               {preview_html}
               <div class="metric">games {html.escape(str(cand.get('games', 0)))} / comp {html.escape(str(cand.get('comp', 0)))}</div>
@@ -1054,7 +1055,7 @@ class CullCoordinator:
                 c
                 for c in self.candidates
                 if c.job_id != candidate.job_id
-                and len(c.scores) >= completed_games
+                and len(c.scores) > 0
                 and c.status in {"running", "accepted", "won"}
                 and c.comp > 0
             ]
@@ -1079,6 +1080,9 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
             return candidate
         result = evaluate_real(candidate, args, session_dir, coordinator.should_cull)
         coordinator.record(result)
+        if result.status == "accepted" and coordinator.should_cull(result):
+            result.status = "culled"
+            coordinator.record(result)
         if result.status != "culled":
             return result
         generation += 1
@@ -1090,7 +1094,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--strategy", type=Path, default=REPO_ROOT / "strategy.py")
     parser.add_argument("--jobs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6))
-    parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 12))
+    parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 6))
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--ratio-min", type=float, default=0.20)
     parser.add_argument("--ratio-max", type=float, default=0.40)
@@ -1108,8 +1112,8 @@ def main() -> int:
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 1))
-    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 4))
-    parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.70))
+    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
+    parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
     args = parser.parse_args()
 
     args.jobs = max(3, args.jobs)

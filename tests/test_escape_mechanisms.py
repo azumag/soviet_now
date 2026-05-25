@@ -952,9 +952,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-        self.assertIn('WILDCARD_PARALLEL_GAMES="${WILDCARD_PARALLEL_GAMES:-12}"', config)
-        self.assertIn('--games "${WILDCARD_PARALLEL_GAMES:-12}"', eloop)
-        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 12)', parallel)
+        self.assertIn('WILDCARD_PARALLEL_GAMES="${WILDCARD_PARALLEL_GAMES:-6}"', config)
+        self.assertIn('--games "${WILDCARD_PARALLEL_GAMES:-6}"', eloop)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 6)', parallel)
         self.assertNotIn("WILDCARD_PARALLEL_GAME_TIMEOUT", config)
         self.assertNotIn("--game-timeout", parallel)
         self.assertNotIn("deadline = time.time() + args.game_timeout", parallel)
@@ -962,16 +962,16 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertNotIn('candidate.status = "timeout"', parallel)
 
     def test_wildcard_parallel_culls_bad_slots_and_refills(self):
-        """4ゲーム以降で現トップより悪すぎる候補は補充して、最終候補まで待つ。"""
+        """1ゲームごとに現トップの90%未満の候補は補充して、最終候補まで待つ。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-4}"', config)
-        self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.70}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', config)
         self.assertNotIn("WILDCARD_PARALLEL_MAX_REFILLS", config)
-        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-4}"', eloop)
-        self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.70}"', eloop)
+        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', eloop)
+        self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', eloop)
         self.assertNotIn("--max-refills", eloop)
         self.assertIn("class CullCoordinator", parallel)
         self.assertIn('candidate.status = "culled"', parallel)
@@ -988,7 +988,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
-            args = argparse.Namespace(cull_after_games=4, cull_comp_ratio=0.70)
+            args = argparse.Namespace(cull_after_games=1, cull_comp_ratio=0.90)
             leader = wildcard_parallel.CandidateResult(
                 job_id="leader",
                 index=0,
@@ -1015,11 +1015,85 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
                 [leader],
             )
 
+            self.assertTrue(coordinator.should_cull(candidate))
+            self.assertIn("culled after 3 games", candidate.error)
+
+            candidate.scores = [95]
+            candidate.comp = 95
+            candidate.error = ""
             self.assertFalse(coordinator.should_cull(candidate))
-            candidate.scores.extend([45, 45])
-            candidate.comp = 63
+
+            candidate.scores.extend([45, 45, 45, 45])
+            candidate.comp = 55
             self.assertTrue(coordinator.should_cull(candidate))
             self.assertIn("culled after 5 games", candidate.error)
+
+    def test_wildcard_parallel_culls_finished_low_candidate_before_returning(self):
+        """先に完走した低comp候補も accepted のまま返さず補充する。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            args = argparse.Namespace(cull_after_games=1, cull_comp_ratio=0.90)
+            leader = wildcard_parallel.CandidateResult(
+                job_id="leader",
+                index=0,
+                workdir=td_path / "leader",
+                strategy_path=td_path / "leader" / "strategy.py",
+                status="running",
+                scores=[100],
+                comp=100,
+            )
+            first = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="pending",
+            )
+            low_done = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="accepted",
+                scores=[80],
+                comp=80,
+            )
+            refill = wildcard_parallel.CandidateResult(
+                job_id="candidate-r2",
+                index=1,
+                workdir=td_path / "candidate-r2",
+                strategy_path=td_path / "candidate-r2" / "strategy.py",
+                status="pending",
+                generation=1,
+            )
+            good_done = wildcard_parallel.CandidateResult(
+                job_id="candidate-r2",
+                index=1,
+                workdir=td_path / "candidate-r2",
+                strategy_path=td_path / "candidate-r2" / "strategy.py",
+                status="accepted",
+                scores=[95],
+                comp=95,
+                generation=1,
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                args,
+                td_path / "status.json",
+                td_path / "overlay.html",
+                td_path / "session",
+                [leader],
+            )
+
+            with mock.patch.object(wildcard_parallel, "evaluate_real", side_effect=[low_done, good_done]), \
+                mock.patch.object(wildcard_parallel, "run_perturb", return_value=refill) as perturb:
+                result = wildcard_parallel.evaluate_slot(1, first, args, td_path / "session", coordinator)
+
+            self.assertIs(result, good_done)
+            self.assertEqual(low_done.status, "culled")
+            perturb.assert_called_once_with(args, 1, td_path / "session", 1)
 
     def test_wildcard_parallel_restarts_bridge_for_each_real_game(self):
         """real 評価は GAMEOVER 状態を複数試合として重複カウントしない。"""
