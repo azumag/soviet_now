@@ -2817,6 +2817,46 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], 1.5)
         self.assertEqual(decision["reason"], "DIRECT_MERGE")
 
+    def test_deadline_safety_does_not_downgrade_crossing_direct_to_crossing_no(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -0.9, "reason": "DIRECT_MERGE_HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.35,
+                    "deadline_crossed": True,
+                    "danger_piece_count": 1,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -0.9,
+                        "crosses_deadline": True,
+                        "merge_grade": "DIRECT",
+                        "risk_top_y_after_drop": 4.6,
+                    },
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.4,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 1, "type": 10, "x": -0.9, "y": 2.75, "r": 0.846},
+                    {"id": 2, "type": 4, "x": 3.0, "y": 2.4, "r": 0.380},
+                ],
+                "next": {"type": 10},
+            },
+        )
+
+        self.assertEqual(decision["x"], -0.9)
+        self.assertIn("DIRECT", decision["reason"])
+
     def test_deadline_safety_avoids_single_danger_merge_result_crossing(self):
         import strategy_runner
 

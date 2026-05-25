@@ -1491,6 +1491,24 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else:
             return decision
 
+    if (
+        chosen.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+        and chosen.get("crosses_deadline", False)
+        and replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
+    ):
+        merge_candidates = [
+            r for r in results
+            if r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+            and not risky_merge_result_deadline(r)
+        ]
+        if merge_candidates:
+            replacement = min(merge_candidates, key=rank_candidate)
+            replacement_source = f"{replacement_source}_preserve_crossing_merge_postcondition"
+        elif not risky_merge_result_deadline(chosen):
+            replacement = chosen
+            replacement_source = f"{replacement_source}_preserve_crossing_merge_postcondition"
+
     new_decision = dict(decision)
     old_grade = chosen.get("merge_grade", "NO")
     new_grade = replacement.get("merge_grade", "NO")
