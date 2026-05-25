@@ -77,6 +77,106 @@ _improve_note() {
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
 }
 
+_import_wildcard_parallel_game_stats() {
+	local wildcard_json="$1" adopted_hash="$2"
+	[ "${WILDCARD_PARALLEL_IMPORT_ALL_GAME_STATS:-${WILDCARD_PARALLEL_IMPORT_WINNER_STATS:-1}}" = "1" ] || return 0
+	[ -n "$wildcard_json" ] && [ -n "$adopted_hash" ] || return 0
+	mkdir -p "$HISTORY_DIR" 2>/dev/null || true
+	local import_rows=""
+	import_rows=$(WILDCARD_RESULT_JSON="$wildcard_json" python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+try:
+    data = json.loads(os.environ.get("WILDCARD_RESULT_JSON", "") or "{}")
+except Exception:
+    data = {}
+
+candidates = data.get("parallel_candidates") or []
+winner = data.get("parallel_winner") or {}
+if winner:
+    known_jobs = {str(c.get("job_id") or "") for c in candidates if isinstance(c, dict)}
+    if str(winner.get("job_id") or "") not in known_jobs:
+        candidates.append(winner)
+
+for candidate in candidates:
+    if not isinstance(candidate, dict):
+        continue
+    job_id = str(candidate.get("job_id") or "candidate").replace("\t", "_")
+    candidate_hash = str(candidate.get("hash") or "").replace("\t", "_")
+    strategy_path = str(candidate.get("strategy_path") or "").replace("\t", "_")
+    games = candidate.get("game_results") or []
+    eval_scores = candidate.get("eval_scores") or []
+    for index, game in enumerate(games, 1):
+        if not isinstance(game, dict) or "score" not in game:
+            continue
+        raw = as_int(game.get("score"), 0)
+        eval_score = as_int(eval_scores[index - 1], raw) if index - 1 < len(eval_scores) else raw
+        final_types = [as_int(v, 0) for v in (game.get("final_types") or [])]
+        russia = bool(game.get("russia_created")) or any(t >= 15 for t in final_types)
+        soviet = bool(game.get("soviet_created")) or any(t >= 16 for t in final_types)
+        turns = as_int(game.get("turns"), 0)
+        archive = str(game.get("archive_path") or "")
+        print("\t".join([
+            candidate_hash,
+            strategy_path,
+            str(index),
+            job_id,
+            str(raw),
+            str(eval_score),
+            "true" if russia else "false",
+            "true" if soviet else "false",
+            str(turns),
+            archive,
+        ]))
+PY
+)
+	[ -n "$import_rows" ] || return 0
+	local import_seen_file="${TMP_STATE_DIR:-tmp/state}/wildcard_parallel_imported.tsv"
+	mkdir -p "$(dirname "$import_seen_file")" 2>/dev/null || true
+	touch "$import_seen_file" 2>/dev/null || true
+	local imported=0
+	while IFS=$'\t' read -r candidate_hash candidate_strategy_path game_index job_id raw_score eval_score russia_created soviet_created turns archive_src; do
+		[ -n "$game_index" ] || continue
+		[ -n "$candidate_hash" ] || candidate_hash="$adopted_hash"
+		local import_key="${candidate_hash}	${archive_src}	${job_id}	${game_index}	${raw_score}	${eval_score}"
+		if [ -f "$import_seen_file" ] && grep -qxF "$import_key" "$import_seen_file" 2>/dev/null; then
+			continue
+		fi
+		local iso_ts archive_dst score_game_num
+		iso_ts=$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')
+		printf '%s\t%s\n' "$iso_ts" "$raw_score" >>score_history.txt
+		printf '%s\t%s\n' "$iso_ts" "$eval_score" >>eval_score_history.txt
+		score_game_num=$(wc -l <score_history.txt 2>/dev/null | tr -d ' ' || echo "${GAME_NUM_SNAPSHOT:-0}")
+		archive_dst=""
+		if [ -n "$archive_src" ] && [ -f "$archive_src" ]; then
+			archive_dst=$(printf "%s/%s_wildcard_parallel_%s_g%s_score%04d.jsonl" "$HISTORY_DIR" "$(date '+%Y%m%d_%H%M%S')" "$job_id" "$game_index" "$raw_score")
+			cp "$archive_src" "$archive_dst" 2>/dev/null || archive_dst=""
+		fi
+		if [ "$russia_created" = "true" ]; then
+			_append_celebration_history "russia" "$raw_score" "$turns" "$score_game_num" || true
+		fi
+		if [ "$soviet_created" = "true" ]; then
+			_append_celebration_history "soviet" "$raw_score" "$turns" "$score_game_num" || true
+		fi
+		ROLLING_SCORE_STRATEGY_HASH="$candidate_hash" ROLLING_SCORE_STRATEGY_SOURCE="${candidate_strategy_path:-$STRATEGY_FILE}" update_rolling_scores "$eval_score" "$archive_dst"
+		if [ "$candidate_hash" = "$adopted_hash" ]; then
+			_update_current_strategy_run "$adopted_hash" "$eval_score" "$archive_dst"
+		fi
+		printf '%s\n' "$import_key" >>"$import_seen_file" 2>/dev/null || true
+		imported=$((imported + 1))
+	done <<<"$import_rows"
+	if [ "$imported" -gt 0 ]; then
+		_improve_note "wildcard_parallel game stats imported: adopted=${adopted_hash:0:8} games=${imported}"
+	fi
+}
+
 _validation_error_is_structural_staging_breakage() {
 	local error_text="${1:-}"
 	printf '%s' "$error_text" | grep -Eq 'decide\(\)シグネチャチェック失敗|IndentationError|SyntaxError|NameError|UnboundLocalError|cannot access local variable'
@@ -836,7 +936,7 @@ PY
 			--explore-rate "$wildcard_explore_rate" \
 			--seed "$wildcard_seed" \
 			--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
-			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
+			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}" \
 			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
@@ -918,6 +1018,7 @@ print(json.dumps({
 }, ensure_ascii=False))
 PY
 )
+		_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER" || true
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
 			WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" WILDCARD_PARALLEL_JSON="$wildcard_result" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
 import json, os, sys, time

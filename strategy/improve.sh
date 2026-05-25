@@ -772,6 +772,9 @@ json.dump(rs, open(rs_file, 'w'))
 			case "$wall_timeout" in
 			''|*[!0-9]*) wall_timeout=3600 ;;
 			esac
+			if [ "${prev_phase:-}" = "wildcard_parallel" ]; then
+				wall_timeout=0
+			fi
 			if [ "${wall_timeout:-0}" -gt 0 ] && [ "$elapsed_age" -ge "$wall_timeout" ]; then
 				log "[IMPROVE] wall timeout harvest: elapsed=${elapsed_age}s >= ${wall_timeout}s (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
 				mkdir -p "$(dirname "${IMPROVE_HUNG_QUARANTINE_FILE:-$TMP_STATE_DIR/improve_hung_quarantine.jsonl}")" 2>/dev/null || true
@@ -804,7 +807,7 @@ PY
 					log "[IMPROVE] wall timeout harvest: PID=$pid の停止に失敗したためrunning扱いを維持"
 				fi
 			fi
-			if [ "$pid_alive" = true ] && [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
+			if [ "$pid_alive" = true ] && [ "${prev_phase:-}" != "wildcard_parallel" ] && [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
 				if [ "${IMPROVE_HUNG_REQUIRE_EVAL_STALE:-1}" = "1" ] && [ "$eval_age" -lt "$watchdog_sec" ]; then
 					log "[IMPROVE] watchdog保留: state/log は古いが eval_score_history は進行中 (${eval_age}s < ${watchdog_sec}s, PID=$pid)"
 				else

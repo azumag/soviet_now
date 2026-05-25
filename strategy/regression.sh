@@ -2737,10 +2737,11 @@ PY
 
 update_rolling_scores() {
 	local score="$1" archive_file="${2:-}"
-	local strategy_source="${STRATEGY_FILE}.game_snapshot"
+	local strategy_source="${ROLLING_SCORE_STRATEGY_SOURCE:-${STRATEGY_FILE}.game_snapshot}"
 	[ ! -f "$strategy_source" ] && strategy_source="$STRATEGY_FILE"
 	local strategy_hash
-	strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
+	strategy_hash="${ROLLING_SCORE_STRATEGY_HASH:-}"
+	[ -n "$strategy_hash" ] || strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
 	local rolling_result="" rolling_err=""
 	rolling_err="${TMP_STATE_DIR:-tmp/state}/rolling_scores_update.err"

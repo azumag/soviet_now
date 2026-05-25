@@ -951,6 +951,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
 
         self.assertIn('WILDCARD_PARALLEL_GAMES="${WILDCARD_PARALLEL_GAMES:-6}"', config)
         self.assertIn('--games "${WILDCARD_PARALLEL_GAMES:-6}"', eloop)
@@ -960,19 +961,26 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertNotIn("deadline = time.time() + args.game_timeout", parallel)
         self.assertNotIn("candidate evaluation timed out", parallel)
         self.assertNotIn('candidate.status = "timeout"', parallel)
+        self.assertIn('if [ "${prev_phase:-}" = "wildcard_parallel" ]; then', improve)
+        self.assertIn("wall_timeout=0", improve)
+        self.assertIn('[ "${prev_phase:-}" != "wildcard_parallel" ]', improve)
 
-    def test_wildcard_parallel_culls_bad_slots_and_refills(self):
-        """1ゲームごとに現トップの90%未満の候補は補充して、最終候補まで待つ。"""
+    def test_wildcard_parallel_culling_is_opt_in(self):
+        """デフォルトでは全候補を指定ゲーム数まで走らせ、cull/refill は明示設定時だけ使う。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}"', config)
+        self.assertIn('WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES="${WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES:-0}"', config)
         self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', config)
         self.assertNotIn("WILDCARD_PARALLEL_MAX_REFILLS", config)
-        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', eloop)
+        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}"', eloop)
         self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', eloop)
         self.assertNotIn("--max-refills", eloop)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 0)', parallel)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0)', parallel)
+        self.assertIn("args.min_successful_games = args.games", parallel)
         self.assertIn("class CullCoordinator", parallel)
         self.assertIn('candidate.status = "culled"', parallel)
         self.assertNotIn("max_refills", parallel)
@@ -1137,13 +1145,13 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
                 {
                     "phase": "running",
                     "candidates": [
-                        {"job_id": "cand-1", "status": "running", "games": 2, "comp": 80, "p25": 70, "p50": 75, "max_type": 12},
-                        {"job_id": "cand-2", "status": "running", "games": 2, "comp": 120, "p25": 90, "p50": 100, "max_type": 14},
+                        {"job_id": "cand-1", "index": 0, "status": "running", "games": 2, "comp": 80, "p25": 70, "p50": 75, "max_type": 12},
+                        {"job_id": "cand-2", "index": 1, "status": "running", "games": 2, "comp": 120, "p25": 90, "p50": 100, "max_type": 14},
                     ],
                 },
             )
             doc = html_path.read_text(encoding="utf-8")
-            self.assertIn("leader cand-2", doc)
+            self.assertIn("leader SLOT 2 / cand-2", doc)
             self.assertIn('<div class="rank-badge r1">#1</div>', doc)
             self.assertIn('<div class="rank-badge r2">#2</div>', doc)
             self.assertIn('class="rank-fill"', doc)
@@ -4715,6 +4723,90 @@ PY
         self.assertIn("serve_base_port", runner)
         self.assertIn("candidate.serve_port = args.serve_base_port + candidate.index", runner)
         self.assertIn('"SOREN_SERVE_PORT": str(candidate.serve_port)', runner)
+        self.assertIn("def cleanup_wildcard_server_ports", runner)
+        self.assertIn('["lsof", "-nP", f"-tiTCP:{port}", "-sTCP:LISTEN"]', runner)
+        self.assertIn("cleanup_wildcard_server_ports([candidate.serve_port])", runner)
+        self.assertIn("cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])", runner)
+
+    def test_wildcard_parallel_overlay_hides_culled_slots(self):
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            status_path = td / "status.json"
+            html_path = td / "overlay.html"
+            payload = {
+                "phase": "running",
+                "candidates": [
+                    {"job_id": "cand-1", "index": 0, "status": "culled", "games": 1, "comp": 10, "p25": 10, "p50": 10},
+                    {"job_id": "cand-1-r2", "index": 0, "status": "running", "games": 1, "comp": 12, "p25": 12, "p50": 12},
+                    {"job_id": "cand-2", "index": 1, "status": "accepted", "games": 2, "comp": 15, "p25": 14, "p50": 15},
+                    {"job_id": "cand-3", "index": 2, "status": "failed", "games": 0, "comp": 0, "error": "boom"},
+                ],
+            }
+
+            wildcard_parallel.render_overlay(status_path, html_path, payload)
+
+            status = json.loads(status_path.read_text())
+            overlay = html_path.read_text()
+            self.assertEqual(len(status["candidates"]), 4)
+            self.assertIn("SLOT 1", overlay)
+            self.assertIn("wildcardParallelCand1", overlay)
+            self.assertIn("SLOT 2", overlay)
+            self.assertIn("wildcardParallelCand2", overlay)
+            self.assertIn("leader SLOT 2 / cand-2", overlay)
+            self.assertIn("cand-1-r2", overlay)
+            self.assertIn("cand-2", overlay)
+            grid = overlay.index('class="grid"')
+            self.assertLess(overlay.index("SLOT 1", grid), overlay.index("SLOT 2", grid))
+            self.assertIn("<span>finished</span>", overlay)
+            self.assertNotIn("cand-1</b>", overlay)
+            self.assertNotIn("culled", overlay)
+            self.assertNotIn("cand-3", overlay)
+            self.assertNotIn("boom", overlay)
+
+    def test_wildcard_parallel_archives_each_winner_game_for_import(self):
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            latest = workdir / "game_history" / "latest.jsonl"
+            latest.parent.mkdir(parents=True)
+            latest.write_text('{"score": 1234, "russia_created": true}\n', encoding="utf-8")
+
+            archived = wildcard_parallel.archive_candidate_game_result(
+                workdir,
+                "cand-1",
+                0,
+                {"score": 1234, "turns": 88, "russia_created": True, "final_types": [15]},
+            )
+
+            self.assertTrue(archived.exists())
+            self.assertIn("wildcard_parallel_cand-1_game1_score1234.jsonl", str(archived))
+            self.assertIn('"russia_created": true', archived.read_text(encoding="utf-8"))
+
+    def test_wildcard_parallel_all_game_stats_import_to_histories_and_rolling(self):
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn("_import_wildcard_parallel_game_stats", improve)
+        self.assertIn("WILDCARD_PARALLEL_IMPORT_ALL_GAME_STATS", improve)
+        self.assertIn("parallel_winner", improve)
+        self.assertIn("parallel_candidates", improve)
+        self.assertIn('for candidate in candidates:', improve)
+        self.assertIn("wildcard_parallel_imported.tsv", improve)
+        self.assertIn('grep -qxF "$import_key"', improve)
+        self.assertIn('printf \'%s\\t%s\\n\' "$iso_ts" "$raw_score" >>score_history.txt', improve)
+        self.assertIn('printf \'%s\\t%s\\n\' "$iso_ts" "$eval_score" >>eval_score_history.txt', improve)
+        self.assertIn('_append_celebration_history "russia"', improve)
+        self.assertIn('ROLLING_SCORE_STRATEGY_HASH="$candidate_hash"', improve)
+        self.assertIn('if [ "$candidate_hash" = "$adopted_hash" ]; then', improve)
+        self.assertLess(
+            improve.index('wildcard_result=$(python3 - "$wildcard_parallel_result_file"'),
+            improve.index('_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER"'),
+        )
+        self.assertIn('local strategy_source="${ROLLING_SCORE_STRATEGY_SOURCE:-${STRATEGY_FILE}.game_snapshot}"', regression)
+        self.assertIn('strategy_hash="${ROLLING_SCORE_STRATEGY_HASH:-}"', regression)
 
     def test_wildcard_parallel_obs_restores_after_nonzero_exit(self):
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()

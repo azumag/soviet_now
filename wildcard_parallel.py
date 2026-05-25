@@ -88,6 +88,13 @@ def atomic_json(path: Path, data: object) -> None:
     os.replace(tmp, path)
 
 
+def overlay_visible_candidates(candidates: list[dict]) -> list[dict]:
+    """Keep OBS focused on live slots and candidates that reached a decision."""
+    visible_statuses = {"pending", "running", "accepted", "won"}
+    visible = [c for c in candidates if str(c.get("status") or "pending") in visible_statuses]
+    return sorted(visible, key=lambda c: (_int(c.get("index"), 0), str(c.get("job_id") or "")))
+
+
 @dataclass
 class CandidateResult:
     job_id: str
@@ -145,9 +152,10 @@ class CandidateResult:
 
 def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     candidates = payload.get("candidates") or []
+    display_candidates = overlay_visible_candidates(candidates)
     generated = time.strftime("%H:%M:%S")
     ranked_candidates = sorted(
-        [c for c in candidates if _float(c.get("comp"), 0.0) > 0 and _int(c.get("games"), 0) > 0],
+        [c for c in display_candidates if _float(c.get("comp"), 0.0) > 0 and _int(c.get("games"), 0) > 0],
         key=lambda c: (
             _float(c.get("comp"), 0.0),
             _float(c.get("p25"), 0.0),
@@ -158,9 +166,13 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     )
     rank_by_job = {str(c.get("job_id")): idx + 1 for idx, c in enumerate(ranked_candidates)}
     best_comp = _float(ranked_candidates[0].get("comp"), 0.0) if ranked_candidates else 0.0
-    leader_label = str(ranked_candidates[0].get("job_id", "-")) if ranked_candidates else "-"
+    if ranked_candidates:
+        leader = ranked_candidates[0]
+        leader_label = f"SLOT {_int(leader.get('index'), 0) + 1} / {leader.get('job_id', '-')}"
+    else:
+        leader_label = "-"
     cards = []
-    for cand in candidates:
+    for cand in display_candidates:
         applied = cand.get("applied") or []
         changes = []
         for item in applied[:6]:
@@ -174,6 +186,8 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         display_status = "finished" if status == "accepted" else status
         klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status == "won" else "run"
         job_id = str(cand.get("job_id", "-"))
+        slot_num = _int(cand.get("index"), 0) + 1
+        source_name = f"{os.environ.get('WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX', 'wildcardParallelCand')}{slot_num}"
         rank = rank_by_job.get(job_id)
         if rank == 1:
             klass += " leader"
@@ -209,9 +223,10 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         cards.append(
             f"""
             <section class="card {klass}">
-              <div class="top"><b>{html.escape(job_id)}</b><span>{html.escape(display_status)}</span></div>
+              <div class="top"><b><span class="slot-badge">SLOT {html.escape(str(slot_num))}</span>{html.escape(job_id)}</b><span>{html.escape(display_status)}</span></div>
               {rank_html}
               {preview_html}
+              <div class="metric source">{html.escape(source_name)}</div>
               <div class="metric">games {html.escape(str(cand.get('games', 0)))} / comp {html.escape(str(cand.get('comp', 0)))}</div>
               <div class="metric">p25 {html.escape(str(cand.get('p25', 0)))} / p50 {html.escape(str(cand.get('p50', 0)))}</div>
               <div class="metric">T{html.escape(str(cand.get('max_type', 0)))} R{html.escape(str(cand.get('russia_count', 0)))} S{html.escape(str(cand.get('soviet_count', 0)))}</div>
@@ -292,8 +307,30 @@ html, body {{
   font-size: 21px;
   margin-bottom: 8px;
 }}
+.top b {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
 .top span {{
   color: #fde68a;
+}}
+.slot-badge {{
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 72px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: #38bdf8;
+  color: #020617 !important;
+  font-size: 17px;
+  font-weight: 900;
 }}
 .rankline {{
   display: grid;
@@ -338,6 +375,10 @@ html, body {{
   font-size: 18px;
   line-height: 1.32;
   white-space: nowrap;
+}}
+.metric.source {{
+  color: #bfdbfe;
+  font-size: 16px;
 }}
 .hash {{
   margin: 9px 0;
@@ -396,6 +437,12 @@ ul {{
   .top {{
     font-size: 15px;
     margin-bottom: 5px;
+  }}
+  .slot-badge {{
+    min-width: 48px;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 11px;
   }}
   .rankline {{
     grid-template-columns: 34px minmax(0, 1fr);
@@ -569,6 +616,30 @@ def parse_runner_result(text: str) -> dict:
     return json.loads(raw)
 
 
+def archive_candidate_game_result(workdir: Path, job_id: str, game_index: int, game: dict) -> Path:
+    history_dir = workdir / "game_history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    score = _int(game.get("score"), 0)
+    out_path = history_dir / f"wildcard_parallel_{job_id}_game{game_index + 1}_score{score}.jsonl"
+    latest = history_dir / "latest.jsonl"
+    if latest.exists() and latest.stat().st_size > 0:
+        shutil.copy2(latest, out_path)
+        return out_path
+
+    final_types = [_int(v, 0) for v in (game.get("final_types") or [])]
+    row = {
+        "turn": _int(game.get("turns"), 0),
+        "score": score,
+        "russia_created": bool(game.get("russia_created")) or any(t >= 15 for t in final_types),
+        "soviet_created": bool(game.get("soviet_created")) or any(t >= 16 for t in final_types),
+        "final_types": final_types,
+        "state_snapshot": {"pieces": [{"type": t} for t in final_types]},
+        "decision_reason": "wildcard_parallel_result_archive",
+    }
+    out_path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    return out_path
+
+
 TYPE_BONUS = {
     1: 0,
     2: 0,
@@ -728,6 +799,40 @@ def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
                 pass
         if sig == signal.SIGTERM and pids:
             time.sleep(0.8)
+
+
+def cleanup_wildcard_server_ports(ports: list[int]) -> None:
+    """Free stale WILDCARD candidate game servers before reusing fixed slots."""
+    for port in sorted({p for p in ports if p > 0}):
+        try:
+            proc = subprocess.run(
+                ["lsof", "-nP", f"-tiTCP:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except Exception:
+            continue
+        if proc.returncode not in (0, 1):
+            continue
+        pids: list[int] = []
+        for raw in proc.stdout.splitlines():
+            try:
+                pid = int(raw.strip())
+            except Exception:
+                continue
+            if pid > 0 and pid != os.getpid():
+                pids.append(pid)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for pid in pids:
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+                except Exception:
+                    pass
+            if sig == signal.SIGTERM and pids:
+                time.sleep(0.5)
 
 
 def capture_candidate_preview(cdp_port: int, out_path: Path, cwd: Path) -> None:
@@ -918,6 +1023,7 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
             except Exception:
                 pass
             try:
+                cleanup_wildcard_server_ports([candidate.serve_port])
                 bridge = launch_bridge(workdir, env, args.bridge_timeout)
                 maybe_show_obs_candidate_source(candidate)
             except Exception as err:
@@ -952,6 +1058,10 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                 except Exception as err:
                     candidate.game_results.append({"error": str(err)})
                     continue
+                try:
+                    game["archive_path"] = str(archive_candidate_game_result(workdir, candidate.job_id, game_index, game))
+                except Exception as err:
+                    game["archive_error"] = str(err)
                 candidate.game_results.append(game)
                 if "score" in game:
                     candidate.raw_scores.append(_int(game.get("score"), 0))
@@ -1111,15 +1221,18 @@ def main() -> int:
     parser.add_argument("--serve-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_SERVE_BASE_PORT"), 18080))
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
     parser.add_argument("--perturb-timeout", type=int, default=30)
-    parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 1))
-    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
+    parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))
+    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 0))
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
     args = parser.parse_args()
 
     args.jobs = max(3, args.jobs)
     args.games = max(1, args.games)
+    if args.min_successful_games <= 0:
+        args.min_successful_games = args.games
     args.cull_after_games = max(0, min(args.cull_after_games, args.games))
     args.cull_comp_ratio = max(0.0, args.cull_comp_ratio)
+    cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])
     session_dir = args.session_root / time.strftime("run-%Y%m%d-%H%M%S")
     session_dir.mkdir(parents=True, exist_ok=True)
     result_file = args.result_file or (session_dir / "result.json")
