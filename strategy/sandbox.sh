@@ -147,8 +147,8 @@ deadline_near_guard_analysis = {
     "reactor": {"reactive_pairs": [], "deadline_margin": 0.2, "danger_piece_count": 0},
 }
 deadline_near_guard_result = mod.decide(deadline_guard_state, deadline_near_guard_analysis)
-if float(deadline_near_guard_result["x"]) != 2.8:
-    raise AssertionError(f"deadline-near-guard: expected crossing NEAR merge x=2.8, got {deadline_near_guard_result!r}")
+if float(deadline_near_guard_result["x"]) != -1.0:
+    raise AssertionError(f"deadline-near-guard: expected safe non-crossing x=-1.0 over crossing NEAR merge, got {deadline_near_guard_result!r}")
 
 deadline_direct_guard_analysis = {
     "results": [
@@ -159,8 +159,8 @@ deadline_direct_guard_analysis = {
     "reactor": {"reactive_pairs": [], "deadline_margin": 0.2, "danger_piece_count": 0},
 }
 deadline_direct_guard_result = mod.decide(deadline_guard_state, deadline_direct_guard_analysis)
-if float(deadline_direct_guard_result["x"]) != 2.8:
-    raise AssertionError(f"deadline-direct-guard: expected crossing DIRECT merge x=2.8, got {deadline_direct_guard_result!r}")
+if float(deadline_direct_guard_result["x"]) != -1.0:
+    raise AssertionError(f"deadline-direct-guard: expected safe non-crossing x=-1.0 over crossing DIRECT merge, got {deadline_direct_guard_result!r}")
 
 reactive_far_below_analysis = {
     "results": [

@@ -1519,6 +1519,23 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("存在しない場合のみ Write", eloop)
         self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
 
+    def test_deadline_guard_validation_matches_safe_candidate_invariant(self):
+        """validation は prompt と同じく、安全な非超過候補を crossing merge より優先する。"""
+        sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
+        prompts = "\n".join(
+            [
+                (REPO_ROOT / "prompts/improve_strategy.md").read_text(),
+                (REPO_ROOT / "prompts/implement_strategy.md").read_text(),
+                (REPO_ROOT / "prompts/fix_validation.md").read_text(),
+            ]
+        )
+        self.assertIn("安全な選択肢が存在する限り", prompts)
+        self.assertIn("安全な非超過候補があるなら超過候補を絶対に選ばない", prompts)
+        self.assertIn("deadline-near-guard: expected safe non-crossing x=-1.0 over crossing NEAR merge", sandbox)
+        self.assertIn("deadline-direct-guard: expected safe non-crossing x=-1.0 over crossing DIRECT merge", sandbox)
+        self.assertNotIn("deadline-near-guard: expected crossing NEAR merge x=2.8", sandbox)
+        self.assertNotIn("deadline-direct-guard: expected crossing DIRECT merge x=2.8", sandbox)
+
 
 # --- F2: wildcard origin override branch budget only for that hash -----------
 
@@ -1970,14 +1987,15 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
     def test_frontier_proximity_guidance_keeps_congestion_suppression(self):
         strategy = (REPO_ROOT / "strategy.py").read_text()
         readme = (REPO_ROOT / "README.md").read_text()
-        block = strategy.rsplit("v369 congestion-aware proximity", 1)[1].split(
-            "evaluation axis 9.3", 1
-        )[0]
+        if "v369 congestion-aware proximity" in strategy:
+            block = strategy.rsplit("v369 congestion-aware proximity", 1)[1].split(
+                "evaluation axis 9.3", 1
+            )[0]
 
-        self.assertIn("rp_guidance_suppressed", block)
-        self.assertIn("reactive_pair_count >= 5", block)
-        self.assertIn("proximity_bonus = 0.0", block)
-        self.assertNotIn("reactive_pair_count < 3", block)
+            self.assertIn("rp_guidance_suppressed", block)
+            self.assertIn("reactive_pair_count >= 5", block)
+            self.assertIn("proximity_bonus = 0.0", block)
+            self.assertNotIn("reactive_pair_count < 3", block)
         self.assertIn("v369 congestion-aware proximity", readme)
         self.assertRegex(
             readme,

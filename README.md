@@ -788,6 +788,7 @@ flowchart TD
 
 - `decide(game_state, analysis)` 関数の存在とシグネチャ
 - Python テスト実行 — `strategy.py.staging` を `game_state.json` + `analyze_board.py` で実行し、実データでの動作を確認
+- 合成 deadline guard テスト — 安全な非超過候補が1つでもある場合は、`merge_grade` が FAR/NEAR/DIRECT の候補でも deadline 超過 x を選ばないことを確認
 - `strategy_helpers/` 内の symlink 検査
 - `__init__.py` の存在確認
 - `extract_decide_hash.py` によるハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
