@@ -80,12 +80,13 @@ _improve_note() {
 _import_wildcard_parallel_game_stats() {
 	local wildcard_json="$1" adopted_hash="$2"
 	[ "${WILDCARD_PARALLEL_IMPORT_ALL_GAME_STATS:-${WILDCARD_PARALLEL_IMPORT_WINNER_STATS:-1}}" = "1" ] || return 0
-	[ -n "$wildcard_json" ] && [ -n "$adopted_hash" ] || return 0
+	[ -n "$wildcard_json" ] || return 0
 	mkdir -p "$HISTORY_DIR" 2>/dev/null || true
 	local import_rows=""
 	import_rows=$(WILDCARD_RESULT_JSON="$wildcard_json" python3 - <<'PY' 2>/dev/null || true
 import json
 import os
+from pathlib import Path
 
 def as_int(value, default=0):
     try:
@@ -113,6 +114,25 @@ for candidate in candidates:
     strategy_path = str(candidate.get("strategy_path") or "").replace("\t", "_")
     games = candidate.get("game_results") or []
     eval_scores = candidate.get("eval_scores") or []
+    if not games:
+        workdir = Path(str(candidate.get("workdir") or ""))
+        raw_scores = candidate.get("raw_scores") or candidate.get("scores") or []
+        for fallback_index, raw_score in enumerate(raw_scores, 1):
+            game = {}
+            archive_matches = []
+            if workdir:
+                archive_matches = sorted((workdir / "game_history").glob(f"wildcard_parallel_{job_id}_game{fallback_index}_score*.jsonl"))
+            if archive_matches:
+                archive = archive_matches[-1]
+                try:
+                    lines = archive.read_text(encoding="utf-8", errors="replace").splitlines()
+                    if lines:
+                        game = json.loads(lines[-1])
+                except Exception:
+                    game = {}
+                game.setdefault("archive_path", str(archive))
+            game.setdefault("score", raw_score)
+            games.append(game)
     for index, game in enumerate(games, 1):
         if not isinstance(game, dict) or "score" not in game:
             continue
@@ -166,14 +186,16 @@ PY
 			_append_celebration_history "soviet" "$raw_score" "$turns" "$score_game_num" || true
 		fi
 		ROLLING_SCORE_STRATEGY_HASH="$candidate_hash" ROLLING_SCORE_STRATEGY_SOURCE="${candidate_strategy_path:-$STRATEGY_FILE}" update_rolling_scores "$eval_score" "$archive_dst"
-		if [ "$candidate_hash" = "$adopted_hash" ]; then
+		if [ -n "$adopted_hash" ] && [ "$candidate_hash" = "$adopted_hash" ]; then
 			_update_current_strategy_run "$adopted_hash" "$eval_score" "$archive_dst"
 		fi
 		printf '%s\n' "$import_key" >>"$import_seen_file" 2>/dev/null || true
 		imported=$((imported + 1))
 	done <<<"$import_rows"
 	if [ "$imported" -gt 0 ]; then
-		_improve_note "wildcard_parallel game stats imported: adopted=${adopted_hash:0:8} games=${imported}"
+		local adopted_label="${adopted_hash:0:8}"
+		[ -n "$adopted_label" ] || adopted_label="none"
+		_improve_note "wildcard_parallel game stats imported: adopted=${adopted_label} games=${imported}"
 	fi
 }
 
@@ -610,8 +632,37 @@ _helpers_tree_changed() {
 	[ $? -eq 1 ]
 }
 
+_ensure_strategy_runtime_params() {
+	local target_file="$1"
+	[ -f "$target_file" ] || return 0
+	python3 - "$target_file" <<'PY' 2>/dev/null || true
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+if "FAST_DROP_DEADLINE_CONTACT" in text:
+    raise SystemExit(0)
+
+block = (
+    "\n# AI-tunable runtime parameter:\n"
+    "# True  = deadline contact skips settle wait and drops immediately.\n"
+    "# False = even during deadline contact, wait until the board is settled.\n"
+    "FAST_DROP_DEADLINE_CONTACT = True\n"
+)
+marker = '# AI prohibited: decide() signature, if __name__ == "__main__" block'
+if marker in text:
+    text = text.replace(marker, marker + block, 1)
+else:
+    text = block.lstrip("\n") + "\n" + text
+path.write_text(text, encoding="utf-8")
+PY
+}
+
 _improve_reset_sandbox_targets() {
 	cp "strategy.py" "$STAGING_FILE"
+	_ensure_strategy_runtime_params "strategy.py"
+	_ensure_strategy_runtime_params "$STAGING_FILE"
 	rm -rf "strategy_helpers" 2>/dev/null || true
 	mkdir -p "strategy_helpers" 2>/dev/null || true
 	if [ -d "$SANDBOX_HELPERS_BASELINE_DIR" ]; then
@@ -879,12 +930,20 @@ PY
 			if type wildcard_parallel_heartbeat_stop >/dev/null 2>&1; then
 				wildcard_parallel_heartbeat_stop || true
 			fi
+			python3 wildcard_parallel.py --cleanup-stale \
+				--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
+				--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+				--serve-base-port "${WILDCARD_PARALLEL_SERVE_BASE_PORT:-18080}" >/dev/null 2>&1 || true
 			wildcard_parallel_obs_restore || true
 		}
 		wildcard_parallel_restore_once() {
 			if type wildcard_parallel_heartbeat_stop >/dev/null 2>&1; then
 				wildcard_parallel_heartbeat_stop || true
 			fi
+			python3 wildcard_parallel.py --cleanup-stale \
+				--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
+				--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+				--serve-base-port "${WILDCARD_PARALLEL_SERVE_BASE_PORT:-18080}" >/dev/null 2>&1 || true
 			wildcard_parallel_obs_restore || true
 			wildcard_parallel_restore_trap_active=0
 			trap - EXIT INT TERM
@@ -936,7 +995,7 @@ PY
 			--explore-rate "$wildcard_explore_rate" \
 			--seed "$wildcard_seed" \
 			--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
-			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}" \
+			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
 			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
@@ -984,27 +1043,6 @@ PY
 				exit 1
 			fi
 		fi
-		wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || true
-import json, sys
-d = json.load(open(sys.argv[1], encoding="utf-8"))
-w = d.get("winner") or {}
-print(w.get("strategy_path") or "")
-PY
-)
-		[ -n "$wildcard_winner_path" ] && [ -f "$wildcard_winner_path" ] || {
-			log "[WILDCARD] parallel winner strategy missing: ${wildcard_winner_path:-empty}"
-			_improve_progress "wildcard_no_candidate" "100" "parallel_winner_missing"
-			wildcard_parallel_restore_once
-			exit 1
-		}
-		if ! validate_strategy_with_helpers "$wildcard_winner_path" "strategy_helpers"; then
-			log "[WILDCARD] parallel winner validation failed → no apply"
-			_improve_progress "wildcard_validate_fail" "100" "parallel_winner_invalid"
-			wildcard_parallel_restore_once
-			exit 1
-		fi
-		cp "$wildcard_winner_path" "$STRATEGY_FILE"
-		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		wildcard_result=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || echo '{}'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1018,6 +1056,29 @@ print(json.dumps({
 }, ensure_ascii=False))
 PY
 )
+		wildcard_winner_path=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || true
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(w.get("strategy_path") or "")
+PY
+)
+		[ -n "$wildcard_winner_path" ] && [ -f "$wildcard_winner_path" ] || {
+			log "[WILDCARD] parallel winner strategy missing: ${wildcard_winner_path:-empty}"
+			_import_wildcard_parallel_game_stats "$wildcard_result" "" || true
+			_improve_progress "wildcard_no_candidate" "100" "parallel_winner_missing"
+			wildcard_parallel_restore_once
+			exit 1
+		}
+		if ! validate_strategy_with_helpers "$wildcard_winner_path" "strategy_helpers"; then
+			log "[WILDCARD] parallel winner validation failed → no apply"
+			_import_wildcard_parallel_game_stats "$wildcard_result" "" || true
+			_improve_progress "wildcard_validate_fail" "100" "parallel_winner_invalid"
+			wildcard_parallel_restore_once
+			exit 1
+		fi
+		cp "$wildcard_winner_path" "$STRATEGY_FILE"
+		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER" || true
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
 			WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" WILDCARD_PARALLEL_JSON="$wildcard_result" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
@@ -1149,14 +1210,15 @@ except Exception:
 		--prefer-lines "$wildcard_prefer_lines" \
 		--explore-rate "$wildcard_explore_rate" \
 		--seed "$wildcard_seed" 2>&1)
-	wildcard_rc=$?
-	if [ "$wildcard_rc" -ne 0 ]; then
-		log "[WILDCARD] FAILED rc=$wildcard_rc: $wildcard_result"
-		_improve_progress "wildcard_fail" "100" "perturb_failed"
-		exit 1
-	fi
-	log "[WILDCARD] perturbation produced: $(echo "$wildcard_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(', '.join(f\"L{a['lineno']} {a['old']}→{a['new']}\" for a in d['applied']))" 2>/dev/null)"
-	# バリデーション (sandbox なしで実行)
+		wildcard_rc=$?
+		if [ "$wildcard_rc" -ne 0 ]; then
+			log "[WILDCARD] FAILED rc=$wildcard_rc: $wildcard_result"
+			_improve_progress "wildcard_fail" "100" "perturb_failed"
+			exit 1
+		fi
+		_ensure_strategy_runtime_params "strategy.py.staging"
+		log "[WILDCARD] perturbation produced: $(echo "$wildcard_result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(', '.join(f\"L{a['lineno']} {a['old']}→{a['new']}\" for a in d['applied']))" 2>/dev/null)"
+		# バリデーション (sandbox なしで実行)
 	if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
 		log "[WILDCARD] validation failed → revert"
 		rm -f "strategy.py.staging"
@@ -1534,10 +1596,11 @@ PY
 		_improve_progress "archive_restart_fail" "100" "invalid_archive_candidate"
 		exit 1
 	}
-	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
-	cp "$archive_restart_path" "strategy.py.staging"
-	if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
+		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
+		cp "$archive_restart_path" "strategy.py.staging"
+		_ensure_strategy_runtime_params "strategy.py.staging"
+		if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
 		log "[ARCHIVE-RESTART] validation failed → abort"
 		_improve_flow_notify \
 			"archive_restart_candidate_invalid" \
@@ -2910,9 +2973,10 @@ EOF
 		fi
 
 		# 差分チェック
-		_improve_note "entering validation (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}, wall_elapsed=$(($(date +%s) - _improve_wall_start))s)"
-		_improve_progress "validate_retry${fresh_retry}" "$validate_progress" "diff_and_validation_checks"
-		staging_changed=false
+			_improve_note "entering validation (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}, wall_elapsed=$(($(date +%s) - _improve_wall_start))s)"
+			_improve_progress "validate_retry${fresh_retry}" "$validate_progress" "diff_and_validation_checks"
+			_ensure_strategy_runtime_params "$STAGING_FILE"
+			staging_changed=false
 		helper_changed=false
 		helpers_diff=""
 		if ! diff -q "strategy.py" "$STAGING_FILE" >/dev/null 2>&1; then

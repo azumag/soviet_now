@@ -27,6 +27,7 @@ from threading import Lock
 
 
 REPO_ROOT = Path(__file__).resolve().parent
+_ACTIVE_SESSION_DIR: Path | None = None
 
 
 def _int(value: object, default: int) -> int:
@@ -95,6 +96,21 @@ def overlay_visible_candidates(candidates: list[dict]) -> list[dict]:
     return sorted(visible, key=lambda c: (_int(c.get("index"), 0), str(c.get("job_id") or "")))
 
 
+def wildcard_parallel_params(args: argparse.Namespace) -> dict:
+    return {
+        "jobs": _int(getattr(args, "jobs", 0), 0),
+        "max_games": _int(getattr(args, "games", 0), 0),
+        "min_successful_games": _int(getattr(args, "min_successful_games", 0), 0),
+        "cull_after_games": _int(getattr(args, "cull_after_games", 0), 0),
+        "cull_comp_ratio": round(_float(getattr(args, "cull_comp_ratio", 0.0), 0.0), 3),
+        "evaluate_mode": str(getattr(args, "evaluate_mode", "") or ""),
+        "deadline_fast_drop_mutate": bool(getattr(args, "deadline_fast_drop_mutate", True)),
+        "deadline_fast_drop_values": [
+            _bool_literal(v) for v in (getattr(args, "deadline_fast_drop_values", None) or [True, False])
+        ],
+    }
+
+
 @dataclass
 class CandidateResult:
     job_id: str
@@ -117,6 +133,10 @@ class CandidateResult:
     russia_count: int = 0
     soviet_count: int = 0
     error: str = ""
+    cull_leader_job_id: str = ""
+    cull_leader_games: int = 0
+    cull_leader_comp: float = 0.0
+    cull_threshold: float = 0.0
     cdp_port: int = 0
     serve_port: int = 0
     profile_dir: str = ""
@@ -135,6 +155,7 @@ class CandidateResult:
             "scores": self.scores,
             "raw_scores": self.raw_scores,
             "eval_scores": self.eval_scores,
+            "game_results": self.game_results,
             "games": len(self.scores),
             "comp": round(self.comp, 2),
             "p25": round(self.p25, 2),
@@ -143,6 +164,10 @@ class CandidateResult:
             "russia_count": self.russia_count,
             "soviet_count": self.soviet_count,
             "error": self.error,
+            "cull_leader_job_id": self.cull_leader_job_id,
+            "cull_leader_games": self.cull_leader_games,
+            "cull_leader_comp": round(self.cull_leader_comp, 2),
+            "cull_threshold": round(self.cull_threshold, 2),
             "cdp_port": self.cdp_port,
             "serve_port": self.serve_port,
             "profile_dir": self.profile_dir,
@@ -171,6 +196,27 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         leader_label = f"SLOT {_int(leader.get('index'), 0) + 1} / {leader.get('job_id', '-')}"
     else:
         leader_label = "-"
+    params = payload.get("params") or {}
+    max_games = _int(params.get("max_games"), 0)
+    min_games = _int(params.get("min_successful_games"), max_games)
+    cull_after = _int(params.get("cull_after_games"), 0)
+    cull_ratio = _float(params.get("cull_comp_ratio"), 0.0)
+    jobs = _int(params.get("jobs"), 0)
+    mode = str(params.get("evaluate_mode") or "")
+    cull_label = f"{cull_after}g" if cull_after > 0 else "off"
+    ratio_label = f"{cull_ratio:.0%}" if cull_ratio > 0 else "off"
+    param_parts = []
+    if max_games:
+        param_parts.append(f"max {max_games}g")
+    if min_games:
+        param_parts.append(f"min {min_games}g")
+    param_parts.append(f"cull {cull_label}")
+    param_parts.append(f"threshold {ratio_label}")
+    if jobs:
+        param_parts.append(f"jobs {jobs}")
+    if mode:
+        param_parts.append(mode)
+    params_label = " / ".join(param_parts)
     cards = []
     for cand in display_candidates:
         applied = cand.get("applied") or []
@@ -264,7 +310,7 @@ html, body {{
 }}
 .head {{
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 14px;
@@ -277,6 +323,15 @@ html, body {{
 .sub {{
   color: #fcd34d;
   font-size: 20px;
+  text-align: right;
+  white-space: nowrap;
+}}
+.params {{
+  margin-top: 4px;
+  color: #bae6fd;
+  font-size: 16px;
+  text-align: right;
+  white-space: nowrap;
 }}
 .grid {{
   display: grid;
@@ -426,6 +481,10 @@ ul {{
   .sub {{
     font-size: 16px;
   }}
+  .params {{
+    margin-top: 2px;
+    font-size: 12px;
+  }}
   .grid {{
     grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 8px;
@@ -477,7 +536,10 @@ ul {{
 <main class="wrap">
   <div class="head">
     <div class="title">WILDCARD PARALLEL TRIAL</div>
-    <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {generated}</div>
+    <div class="meta">
+      <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {generated}</div>
+      <div class="params">params: {html.escape(params_label)}</div>
+    </div>
   </div>
   <div class="grid">{''.join(cards[:6])}</div>
 </main>
@@ -515,6 +577,57 @@ def copy_tree_or_link(src: Path, dst: Path) -> None:
             shutil.copy2(src, dst)
 
 
+def _bool_literal(value: bool) -> str:
+    return "True" if value else "False"
+
+
+def ensure_deadline_fast_drop_param(path: Path, value: bool | None = None) -> tuple[int, str, str] | None:
+    """Ensure strategy candidates expose the runtime fast-drop toggle.
+
+    When value is None, preserve an existing assignment and only add the
+    default parameter if it is missing. When value is provided, update the
+    candidate so parallel WILDCARD can evaluate that runtime policy.
+    """
+    text = path.read_text(encoding="utf-8")
+    assignment = f"FAST_DROP_DEADLINE_CONTACT = {_bool_literal(True if value is None else value)}"
+    pattern = re.compile(r"^FAST_DROP_DEADLINE_CONTACT\s*=\s*(True|False|1|0)\s*$", re.MULTILINE)
+    match = pattern.search(text)
+    if match:
+        old_line = match.group(0)
+        if value is None or old_line == assignment:
+            return None
+        text = text[:match.start()] + assignment + text[match.end():]
+        path.write_text(text, encoding="utf-8")
+        line_no = text[:match.start()].count("\n") + 1
+        return (line_no, old_line, assignment)
+
+    block = (
+        "\n# AI-tunable runtime parameter:\n"
+        "# True  = deadline contact skips settle wait and drops immediately.\n"
+        "# False = even during deadline contact, wait until the board is settled.\n"
+        f"{assignment}\n"
+    )
+    marker = '# AI prohibited: decide() signature, if __name__ == "__main__" block'
+    if marker in text:
+        insert_at = text.index(marker) + len(marker)
+        text = text[:insert_at] + block + text[insert_at:]
+        line_no = text[:insert_at].count("\n") + 2
+    else:
+        text = block.lstrip("\n") + "\n" + text
+        line_no = 1
+    path.write_text(text, encoding="utf-8")
+    return (line_no, "<missing>", assignment)
+
+
+def parallel_deadline_fast_drop_value(args: argparse.Namespace, index: int, generation: int = 0) -> bool | None:
+    if not getattr(args, "deadline_fast_drop_mutate", True):
+        return None
+    values = getattr(args, "deadline_fast_drop_values", None) or [True, False]
+    if not values:
+        return None
+    return values[(index + generation) % len(values)]
+
+
 def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path) -> Path:
     workdir = base_dir / job_id
     workdir.mkdir(parents=True, exist_ok=True)
@@ -542,6 +655,7 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path) ->
     strategy_dst = workdir / "strategy.py"
     if strategy_source.resolve() != strategy_dst.resolve():
         shutil.copy2(strategy_source, strategy_dst)
+    ensure_deadline_fast_drop_param(strategy_dst)
     (workdir / "tmp" / "state").mkdir(parents=True, exist_ok=True)
     (workdir / "game_history").mkdir(exist_ok=True)
     (workdir / "commands.txt").write_text("", encoding="utf-8")
@@ -604,6 +718,18 @@ def run_perturb(args: argparse.Namespace, index: int, session_dir: Path, generat
         result.error = f"invalid perturb json: {err}"
         return result
     result.applied = payload.get("applied") or []
+    deadline_fast_drop_value = parallel_deadline_fast_drop_value(args, index, generation)
+    deadline_param_change = ensure_deadline_fast_drop_param(out_path, deadline_fast_drop_value)
+    if deadline_param_change:
+        line_no, old_value, new_value = deadline_param_change
+        result.applied.append(
+            {
+                "lineno": line_no,
+                "old": old_value,
+                "new": new_value,
+                "runtime_param": "FAST_DROP_DEADLINE_CONTACT",
+            }
+        )
     result.hash = compute_strategy_hash(out_path)
     return result
 
@@ -787,6 +913,57 @@ def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
         if "wildcard_parallel" not in command:
             continue
         if not any(marker and marker in command for marker in profile_markers) and port_token not in command:
+            continue
+        pids.append(pid)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+        if sig == signal.SIGTERM and pids:
+            time.sleep(0.8)
+
+
+def cleanup_wildcard_chrome_processes(session_dir: Path | None = None, session_root: Path | None = None) -> None:
+    """Stop WILDCARD-parallel Chromium processes left behind by interrupted runs."""
+    markers = {"wildcard_parallel"}
+    for path in (session_dir, session_root):
+        if not path:
+            continue
+        try:
+            markers.add(str(path))
+            markers.add(str(path.resolve()))
+        except Exception:
+            markers.add(str(path))
+    try:
+        proc = subprocess.run(
+            ["ps", "-Ao", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return
+    if proc.returncode != 0:
+        return
+    pids: list[int] = []
+    for line in proc.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        pid_raw, _, command = stripped.partition(" ")
+        try:
+            pid = int(pid_raw)
+        except Exception:
+            continue
+        if pid == os.getpid():
+            continue
+        if "Google Chrome for Testing" not in command and "Chromium" not in command:
+            continue
+        if not any(marker and marker in command for marker in markers):
             continue
         pids.append(pid)
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -1028,6 +1205,8 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                 maybe_show_obs_candidate_source(candidate)
             except Exception as err:
                 candidate.game_results.append({"error": str(err), "game_index": game_index})
+                stop_process(bridge)
+                cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
                 continue
             try:
                 capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
@@ -1069,17 +1248,18 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                     candidate.scores.append(eval_score(game))
                 final_types = [_int(v, 0) for v in (game.get("final_types") or [])]
                 candidate.max_type = max([candidate.max_type] + final_types)
-                if game.get("russia_created") or candidate.max_type >= 15:
+                if game.get("russia_created") or any(t >= 15 for t in final_types):
                     candidate.russia_count += 1
-                if game.get("soviet_created") or candidate.max_type >= 16:
+                if game.get("soviet_created") or any(t >= 16 for t in final_types):
                     candidate.soviet_count += 1
                 update_candidate_metrics(candidate)
                 if progress_callback and progress_callback(candidate):
                     candidate.status = "culled"
-                    candidate.error = (
-                        f"culled after {len(candidate.scores)} games: "
-                        f"comp {candidate.comp:.1f} below current leader"
-                    )
+                    if not candidate.error:
+                        candidate.error = (
+                            f"culled after {len(candidate.scores)} games: "
+                            f"comp {candidate.comp:.1f} below current leader"
+                        )
                     break
             finally:
                 stop_process(bridge)
@@ -1142,7 +1322,12 @@ class CullCoordinator:
         render_overlay(
             self.status_file,
             self.html_file,
-            {"phase": phase, "session_dir": str(self.session_dir), "candidates": [c.public() for c in self.candidates]},
+            {
+                "phase": phase,
+                "session_dir": str(self.session_dir),
+                "params": wildcard_parallel_params(self.args),
+                "candidates": [c.public() for c in self.candidates],
+            },
         )
 
     def snapshot(self, phase: str = "running") -> None:
@@ -1176,6 +1361,10 @@ class CullCoordinator:
             threshold = leader.comp * self.args.cull_comp_ratio
             should = candidate.comp < threshold
             if should:
+                candidate.cull_leader_job_id = leader.job_id
+                candidate.cull_leader_games = len(leader.scores)
+                candidate.cull_leader_comp = leader.comp
+                candidate.cull_threshold = threshold
                 candidate.error = f"culled after {len(candidate.scores)} games: comp {candidate.comp:.1f} < {self.args.cull_comp_ratio:.2f}x leader {leader.job_id} {leader.comp:.1f}"
             self._snapshot_unlocked()
             return should
@@ -1201,7 +1390,9 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
 
 
 def main() -> int:
+    global _ACTIVE_SESSION_DIR
     parser = argparse.ArgumentParser()
+    parser.add_argument("--cleanup-stale", action="store_true")
     parser.add_argument("--strategy", type=Path, default=REPO_ROOT / "strategy.py")
     parser.add_argument("--jobs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6))
     parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 6))
@@ -1222,9 +1413,23 @@ def main() -> int:
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))
-    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 0))
+    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
     args = parser.parse_args()
+    args.deadline_fast_drop_mutate = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_MUTATE", "1").strip().lower() not in ("0", "false", "no", "off")
+    raw_deadline_fast_drop_values = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_VALUES", "1,0")
+    args.deadline_fast_drop_values = [
+        item.strip().lower() not in ("0", "false", "no", "off")
+        for item in raw_deadline_fast_drop_values.split(",")
+        if item.strip()
+    ]
+    if not args.deadline_fast_drop_values:
+        args.deadline_fast_drop_values = [True, False]
+
+    if args.cleanup_stale:
+        cleanup_wildcard_chrome_processes(session_root=args.session_root)
+        cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(max(3, args.jobs))])
+        return 0
 
     args.jobs = max(3, args.jobs)
     args.games = max(1, args.games)
@@ -1233,11 +1438,14 @@ def main() -> int:
     args.cull_after_games = max(0, min(args.cull_after_games, args.games))
     args.cull_comp_ratio = max(0.0, args.cull_comp_ratio)
     cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])
+    cleanup_wildcard_chrome_processes(session_root=args.session_root)
     session_dir = args.session_root / time.strftime("run-%Y%m%d-%H%M%S")
+    _ACTIVE_SESSION_DIR = session_dir
     session_dir.mkdir(parents=True, exist_ok=True)
     result_file = args.result_file or (session_dir / "result.json")
 
-    payload = {"phase": "generating", "session_dir": str(session_dir), "candidates": []}
+    params = wildcard_parallel_params(args)
+    payload = {"phase": "generating", "session_dir": str(session_dir), "params": params, "candidates": []}
     render_overlay(args.status_file, args.html_file, payload)
 
     candidates = [run_perturb(args, index, session_dir) for index in range(args.jobs)]
@@ -1245,60 +1453,81 @@ def main() -> int:
     render_overlay(args.status_file, args.html_file, payload)
     if not any(c.status == "pending" for c in candidates):
         payload["phase"] = "failed"
-        atomic_json(result_file, {"ok": False, "reason": "all_perturb_failed", "candidates": [c.public() for c in candidates]})
+        atomic_json(
+            result_file,
+            {
+                "ok": False,
+                "reason": "all_perturb_failed",
+                "session_dir": str(session_dir),
+                "params": params,
+                "candidates": [c.public() for c in candidates],
+            },
+        )
         render_overlay(args.status_file, args.html_file, payload)
         print(json.dumps(json.loads(result_file.read_text(encoding="utf-8")), ensure_ascii=False))
         return 2
 
     evaluated: list[CandidateResult] = []
     payload["phase"] = "running"
-    if args.evaluate_mode == "simulate":
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            futures = {
-                pool.submit(evaluate_simulated, c, args, session_dir): c
-                for c in candidates
-                if c.status == "pending"
-            }
-            for future in as_completed(futures):
-                evaluated.append(future.result())
-                merged = evaluated + [c for c in candidates if c not in evaluated and c.status != "failed"]
-                payload["candidates"] = [c.public() for c in merged]
-                render_overlay(args.status_file, args.html_file, payload)
-        failed = [c for c in candidates if c.status == "failed" and c not in evaluated]
-        all_candidates = evaluated + failed
-    else:
-        coordinator = CullCoordinator(args, args.status_file, args.html_file, session_dir, candidates)
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            futures = {
-                pool.submit(evaluate_slot, c.index, c, args, session_dir, coordinator): c
-                for c in candidates
-                if c.status == "pending"
-            }
-            for future in as_completed(futures):
-                evaluated.append(future.result())
-                coordinator.snapshot()
-        all_candidates = list(coordinator.candidates)
-    winner = choose_winner(all_candidates, args.min_successful_games)
-    if winner:
-        winner.status = "won"
-    payload = {
-        "phase": "won" if winner else "no_candidate",
-        "session_dir": str(session_dir),
-        "winner": winner.public() if winner else None,
-        "candidates": [c.public() for c in all_candidates],
-    }
-    render_overlay(args.status_file, args.html_file, payload)
-    result = {
-        "ok": winner is not None,
-        "reason": "winner_selected" if winner else "no_candidate",
-        "session_dir": str(session_dir),
-        "winner": winner.public() if winner else None,
-        "candidates": [c.public() for c in all_candidates],
-    }
-    atomic_json(result_file, result)
-    print(json.dumps(result, ensure_ascii=False))
-    return 0 if winner else 2
+    try:
+        if args.evaluate_mode == "simulate":
+            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+                futures = {
+                    pool.submit(evaluate_simulated, c, args, session_dir): c
+                    for c in candidates
+                    if c.status == "pending"
+                }
+                for future in as_completed(futures):
+                    evaluated.append(future.result())
+                    merged = evaluated + [c for c in candidates if c not in evaluated and c.status != "failed"]
+                    payload["candidates"] = [c.public() for c in merged]
+                    render_overlay(args.status_file, args.html_file, payload)
+            failed = [c for c in candidates if c.status == "failed" and c not in evaluated]
+            all_candidates = evaluated + failed
+        else:
+            coordinator = CullCoordinator(args, args.status_file, args.html_file, session_dir, candidates)
+            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+                futures = {
+                    pool.submit(evaluate_slot, c.index, c, args, session_dir, coordinator): c
+                    for c in candidates
+                    if c.status == "pending"
+                }
+                for future in as_completed(futures):
+                    evaluated.append(future.result())
+                    coordinator.snapshot()
+            all_candidates = list(coordinator.candidates)
+        winner = choose_winner(all_candidates, args.min_successful_games)
+        if winner:
+            winner.status = "won"
+        payload = {
+            "phase": "won" if winner else "no_candidate",
+            "session_dir": str(session_dir),
+            "params": params,
+            "winner": winner.public() if winner else None,
+            "candidates": [c.public() for c in all_candidates],
+        }
+        render_overlay(args.status_file, args.html_file, payload)
+        result = {
+            "ok": winner is not None,
+            "reason": "winner_selected" if winner else "no_candidate",
+            "session_dir": str(session_dir),
+            "params": params,
+            "winner": winner.public() if winner else None,
+            "candidates": [c.public() for c in all_candidates],
+        }
+        atomic_json(result_file, result)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if winner else 2
+    finally:
+        cleanup_wildcard_chrome_processes(session_dir=session_dir)
+        _ACTIVE_SESSION_DIR = None
 
 
 if __name__ == "__main__":
+    def _handle_signal(signum: int, _frame: object) -> None:
+        cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
     raise SystemExit(main())

@@ -172,6 +172,7 @@ def explain_reasons(reason_text):
         "anchor_direct": "branch 状態なしで anchor 比の即時悪化として判定した。",
         "anchor_promoted": "現戦略が anchor を上回ったため anchor を更新した。",
         "objective_regression": "建国目標の進捗が anchor より後退した。",
+        "stage_achievement_regression": "直近ゲームの段階到達率が粛清閾値以下だった。",
         "lost_turkmenistan_gate": "anchor よりトルクメニスタン段階の到達率が後退した。",
         "lost_ukraine_gate": "anchor よりウクライナ段階の到達率が後退した。",
         "lost_kazakhstan_gate": "anchor よりカザフスタン段階の到達率が後退した。",
@@ -180,6 +181,9 @@ def explain_reasons(reason_text):
     for reason in reasons:
         if reason.startswith("rank") and reason[4:].isdigit():
             lines.append(f"成熟ランキングで上位{reason[4:]}位圏外に落ちた。")
+        elif reason.startswith("stage_type") and reason.endswith("_achievement_gate"):
+            stage = reason[len("stage_type") : -len("_achievement_gate")]
+            lines.append(f"直近ゲームの type{stage} 到達率が粛清閾値以下だった。")
         else:
             lines.append(mapping.get(reason, f"{reason} が悪化要因だった。"))
     return lines or ["詳細理由を特定できなかった。"]
@@ -190,6 +194,7 @@ def objective_triggered(reason_text):
         "objective_regression",
         "early_objective_regression",
         "archive_restart_objective_floor",
+        "stage_achievement_regression",
         "lost_turkmenistan_gate",
         "lost_ukraine_gate",
         "lost_kazakhstan_gate",
@@ -2961,7 +2966,9 @@ check_regression() {
 			"${ROLLING_SCORE_RUSSIA_GRACE_RANK:-7}" "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" \
 			"${ROLLBACK_TREND_GRACE_ENABLED:-1}" "${ROLLBACK_TREND_GRACE_WINDOW:-50}" "${ROLLBACK_TREND_GRACE_MIN_PRIOR:-50}" "${ROLLBACK_TREND_GRACE_MIN_DELTA:-0}" \
 			"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" "${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" \
-			"${EARLY_COMP_TOP_GAP_ENABLED:-1}" "${EARLY_COMP_TOP_GAP_MIN_GAMES:-4}" "${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" <<'PY'
+			"${EARLY_COMP_TOP_GAP_ENABLED:-1}" "${EARLY_COMP_TOP_GAP_MIN_GAMES:-4}" "${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" \
+			"${STAGE_ACHIEVEMENT_REGRESSION_ENABLED:-1}" "${STAGE_ACHIEVEMENT_REGRESSION_MIN_GAMES:-4}" \
+			"${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.80}" "${STAGE_ACHIEVEMENT_GATE_TYPES:-12,13,14,15}" <<'PY'
 import json
 import math
 import os
@@ -3024,6 +3031,17 @@ try:
     early_comp_top_gap_min_ratio = float(sys.argv[42]) if len(sys.argv) > 42 else 0.85
 except Exception:
     early_comp_top_gap_min_ratio = 0.85
+stage_achievement_regression_enabled = (sys.argv[43] if len(sys.argv) > 43 else "1") == "1"
+try:
+    stage_achievement_regression_min_games = max(1, int(sys.argv[44])) if len(sys.argv) > 44 else 4
+except Exception:
+    stage_achievement_regression_min_games = 4
+try:
+    stage_achievement_gate_min_rate = float(sys.argv[45]) if len(sys.argv) > 45 else 0.80
+except Exception:
+    stage_achievement_gate_min_rate = 0.80
+stage_achievement_gate_min_rate = max(0.0, min(1.0, stage_achievement_gate_min_rate))
+stage_achievement_gate_type_raw = sys.argv[46] if len(sys.argv) > 46 else "12,13,14,15"
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -3697,6 +3715,70 @@ def stage_gate_regression_reason(anchor_progress, current_progress, current_metr
             return reason
     return ""
 
+def parse_stage_achievement_gate_types(raw):
+    stages = []
+    for chunk in str(raw or "").replace(";", ",").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            stage = int(chunk.lstrip("Tt"))
+        except Exception:
+            continue
+        if stage > 0:
+            stages.append(stage)
+    return sorted(set(stages)) or [12, 13, 14, 15]
+
+STAGE_ACHIEVEMENT_GATE_TYPES = parse_stage_achievement_gate_types(stage_achievement_gate_type_raw)
+
+def stage_achievement_rates(progress):
+    max_types = []
+    for raw in (progress or {}).get("max_types", []) or []:
+        try:
+            max_types.append(int(raw))
+        except Exception:
+            pass
+    n = len(max_types)
+    if n <= 0:
+        return {}, 0
+    return {
+        stage: sum(1 for value in max_types if value >= stage) / n
+        for stage in STAGE_ACHIEVEMENT_GATE_TYPES
+    }, n
+
+def stage_achievement_target_stage(reference_progress):
+    rates, n = stage_achievement_rates(reference_progress)
+    if n < stage_achievement_regression_min_games:
+        return 0, 0.0, n
+    candidates = [
+        (stage, rate)
+        for stage, rate in rates.items()
+        if rate >= stage_achievement_gate_min_rate
+    ]
+    if not candidates:
+        return 0, 0.0, n
+    return max(candidates, key=lambda item: item[0]) + (n,)
+
+def stage_achievement_regression_reason(reference_progress, current_progress):
+    if not stage_achievement_regression_enabled:
+        return "", ""
+    current_rates, current_n = stage_achievement_rates(current_progress)
+    if current_n < stage_achievement_regression_min_games:
+        return "", ""
+    target_stage, target_rate, reference_n = stage_achievement_target_stage(reference_progress)
+    if target_stage <= 0:
+        return "", ""
+    current_best = int((current_progress or {}).get("best_max_type", 0) or 0)
+    if current_best >= target_stage:
+        return "", ""
+    current_rate = current_rates.get(target_stage, 0.0)
+    detail = (
+        f"target_type={target_stage}+target_rate={target_rate:.3f}+"
+        f"min_rate={stage_achievement_gate_min_rate:.3f}+sample_n={current_n}+reference_n={reference_n}+"
+        f"current_type{target_stage}_rate={current_rate:.3f}"
+    )
+    return f"stage_type{target_stage}_achievement_gate", detail
+
 try:
     current_games_total = int(current_data.get("games_total", current.get("n", 0)) or current.get("n", 0) or 0)
 except Exception:
@@ -3779,6 +3861,30 @@ if (
         )
         _update_stagnation("REGRESSION")
         raise SystemExit
+
+stage_achievement_reason, stage_achievement_detail = stage_achievement_regression_reason(anchor_objective, current_objective)
+if (
+    current_hash != anchor_hash
+    and stage_achievement_reason
+):
+    # trend_grace は score-only rollback dampener。段階到達率不足は免除しない。
+    print(
+        "REGRESSION:"
+        f"mode=stage_achievement_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+        f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+        f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
+        f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
+        "branch_depth=0,branch_games=0,branch_patience=0,"
+        f"anchor_best_max_type={anchor_objective.get('best_max_type', 0)},curr_best_max_type={current_objective.get('best_max_type', 0)},"
+        f"anchor_russia={anchor_objective.get('russia_count', 0)},curr_russia={current_objective.get('russia_count', 0)},"
+        f"anchor_soviet={anchor_objective.get('soviet_count', 0)},curr_soviet={current_objective.get('soviet_count', 0)},"
+        f"reasons=stage_achievement_regression+{stage_achievement_reason}+{stage_achievement_detail}"
+    )
+    _update_stagnation("REGRESSION")
+    raise SystemExit
 
 if (
     early_comp_top_gap_enabled

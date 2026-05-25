@@ -88,6 +88,7 @@
 - `decide(game_state, analysis)` のシグネチャ変更禁止
 - `if __name__ == "__main__"` ブロック変更禁止
 - 戻り値は常に `{"x": float, "reason": str}`。`x` は実質 `[-3.0, 3.0]` に収まるようにすること
+- `FAST_DROP_DEADLINE_CONTACT` は strategy_runner が読むAI調整パラメータである。`True` なら赤線接触/デッドライン超過時に盤面の静止を待たずにDROPし、`False` なら通常どおり静止待ちする。ゲームログで根拠がある場合は、このON/OFF自体を改善対象にしてよい
 - `tmp/state/last_rollback_postmortem.md` がある場合、そこで特定された Failure Modes と Constraints For Next Improve に逆行する変更は禁止
 - `tmp/state/last_rollback_analysis.md` がある場合、そこに書かれた敗因と `Next Improve Focus` に逆行する変更は禁止
 - 数値の微調整だけの変更も可。ただし `batch_summary`、ゲームログ、rollback分析、`advice.md` の複数根拠で裏づけられる場合に限る。思いつきの閾値いじりは禁止

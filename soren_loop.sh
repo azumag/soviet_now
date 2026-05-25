@@ -407,6 +407,7 @@ reason_map = {
     "early_comp_top_gap": "comp比率低下",
     "curr_comp_below_top_ratio": "top対比comp不足",
     "objective_regression": "目的到達后退行",
+    "stage_achievement_regression": "段階到達ゲート未達",
     "lost_ukraine_gate": "ウクライナ段階未達",
     "lost_russia_path": "ロシア経路喪失",
     "lost_soviet_path": "ソ連経路喪失",
@@ -426,7 +427,11 @@ if not reason_raw:
 labels = []
 for r in reason_raw.split("+"):
     key = r.split("=")[0] if "=" in r else r
-    labels.append(reason_map.get(key, key))
+    if key.startswith("stage_type") and key.endswith("_achievement_gate"):
+        stage = key[len("stage_type"):-len("_achievement_gate")]
+        labels.append(f"Type{stage}到達ゲート未達")
+    else:
+        labels.append(reason_map.get(key, key))
 print("理由: " + " / ".join(labels))
 PY
 }
@@ -510,8 +515,22 @@ anchor_best = metric("anchor_best_max_type")
 curr_best = metric("curr_best_max_type")
 curr_russia_seen = "curr_russia=" in (result or "")
 curr_best_seen = "curr_best_max_type=" in (result or "")
+stage_target = 0
+for pattern in (r"target_type=(\d+)", r"stage_type(\d+)_achievement_gate"):
+    m = re.search(pattern, result or "")
+    if m:
+        stage_target = as_int(m.group(1), 0)
+        break
+stage_objective_loss = "stage_achievement_regression" in result or "stage_type" in result
+russia_path_loss = (
+    "lost_russia_path" in result
+    or (stage_target >= 15)
+    or (curr_russia_seen and curr_russia <= 0 and anchor_russia > 0)
+    or (curr_best_seen and anchor_best >= 15 and curr_best < 15)
+)
 objective_loss = (
     "objective_regression" in result
+    or stage_objective_loss
     or "lost_russia_path" in result
     or (curr_russia_seen and curr_russia <= 0)
     or (anchor_russia > 0 and curr_russia <= 0)
@@ -522,12 +541,15 @@ objective_loss = (
 if target_has_progress:
     mode = "revalidate"
     detail = f"target_progress_russia={target_russia}_best={target_best}"
-elif objective_loss and rstreak >= threshold:
+elif objective_loss and russia_path_loss and rstreak >= threshold:
     mode = "direct_escape"
     detail = f"objective_loss_rstreak={rstreak}_target_russia={target_russia}_best={target_best}"
 else:
     mode = "post_regression"
-    detail = f"rstreak={rstreak}_objective_loss={int(objective_loss)}"
+    if stage_objective_loss and stage_target > 0:
+        detail = f"rstreak={rstreak}_stage_target={stage_target}_objective_loss={int(objective_loss)}"
+    else:
+        detail = f"rstreak={rstreak}_objective_loss={int(objective_loss)}"
 
 print(f"{mode}|{detail}|{rstreak}|{int(objective_loss)}|{int(target_has_progress)}")
 PY
@@ -984,6 +1006,7 @@ reason_map = {
     "early_comp_top_gap": "comp比率低下",
     "curr_comp_below_top_ratio": "top対比comp不足",
     "objective_regression": "目的到達后退行",
+    "stage_achievement_regression": "段階到達ゲート未達",
     "lost_ukraine_gate": "ウクライナ段階未達",
     "lost_russia_path": "ロシア経路喪失",
     "lost_soviet_path": "ソ連経路喪失",
@@ -994,7 +1017,11 @@ reason_map = {
 labels = []
 for r in reason_raw.split("+"):
     key = r.split("=")[0] if "=" in r else r
-    labels.append(reason_map.get(key, key))
+    if key.startswith("stage_type") and key.endswith("_achievement_gate"):
+        stage = key[len("stage_type"):-len("_achievement_gate")]
+        labels.append(f"Type{stage}到達ゲート未達")
+    else:
+        labels.append(reason_map.get(key, key))
 d["regression_reason_label"] = " / ".join(labels) if labels else reason_raw
 json.dump(d, open(state_file, "w"))
 PY

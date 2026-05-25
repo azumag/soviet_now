@@ -62,6 +62,17 @@ _is_card_gacha_result_message() {
     printf '%s\n' "$text" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
 }
 
+_is_ignored_author() {
+    local login="${1:-}" display="${2:-}"
+    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    local item
+    for item in $ignored; do
+        [ "$login" = "$item" ] && return 0
+        [ "$display" = "$item" ] && return 0
+    done
+    return 1
+}
+
 _notify_chat_overlay() {
     local line="$1"
     [ "${CHAT_INGEST_OVERLAY_NOTIFY:-1}" = "1" ] || return 0
@@ -154,8 +165,8 @@ while true; do
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
 
-            # 開発用アカウントは読み上げ対象から除外
-            if [ "$login_user" = "azumagdev" ] || [ "$user" = "azumagdev" ]; then
+            # Bot / broadcaster self-posts are outbound echoes, not viewer comments.
+            if _is_ignored_author "$login_user" "$user"; then
                 if ! _is_card_gacha_result_message "$msg"; then
                     continue
                 fi
@@ -182,7 +193,7 @@ while true; do
                 esac
             fi
             clean_line="${bits_tag}${user}: ${msg}"
-            if { [ "$login_user" = "azumagdev" ] || [ "$user" = "azumagdev" ]; } && _is_card_gacha_result_message "$msg"; then
+            if _is_ignored_author "$login_user" "$user" && _is_card_gacha_result_message "$msg"; then
                 clean_line="${bits_tag}${msg}"
             fi
 

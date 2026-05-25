@@ -98,6 +98,79 @@ print("\n".join(out[:8]), end="")
 PY
 }
 
+_rollback_chat_reason_from_analysis() {
+	local analysis_file="${1:-$ROLLBACK_ANALYSIS_FILE}"
+	[ -f "$analysis_file" ] || return 0
+	python3 - "$analysis_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8", errors="ignore")
+
+trigger = ""
+for raw in text.splitlines():
+    if raw.startswith("- trigger:"):
+        trigger = raw.split(":", 1)[1].strip()
+        break
+
+def pct(raw):
+    try:
+        return f"{float(raw) * 100:.1f}%"
+    except Exception:
+        return ""
+
+if "stage_achievement_regression" in trigger:
+    target = ""
+    for pattern in (r"target_type=(\d+)", r"stage_type(\d+)_achievement_gate"):
+        m = re.search(pattern, trigger)
+        if m:
+            target = m.group(1)
+            break
+    target_rate = ""
+    min_rate = ""
+    sample_n = ""
+    m = re.search(r"target_rate=([0-9.]+)", trigger)
+    if m:
+        target_rate = pct(m.group(1))
+    m = re.search(r"min_rate=([0-9.]+)", trigger)
+    if m:
+        min_rate = pct(m.group(1))
+    m = re.search(r"sample_n=(\d+)", trigger)
+    if m:
+        sample_n = m.group(1)
+    parts = []
+    if target:
+        parts.append(f"Type{target}到達ゲート未達")
+    else:
+        parts.append("段階到達ゲート未達")
+    if target_rate:
+        parts.append(f"直近到達率{target_rate}")
+    if min_rate:
+        parts.append(f"要求{min_rate}")
+    if sample_n:
+        parts.append(f"n={sample_n}")
+    print(" / ".join(parts)[:160], end="")
+    raise SystemExit
+
+part = text.split("## Why Rollback Triggered", 1)
+if len(part) == 2:
+    block = part[1].split("\n## ", 1)[0]
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        reason = line[2:].strip()
+        if reason:
+            print(reason[:160], end="")
+            raise SystemExit
+
+if trigger:
+    print(trigger[:160], end="")
+PY
+}
+
 append_phyrogenetic_event() {
 	local event_type="$1" from_hash="$2" to_hash="$3" game_num="$4" scores="$5" summary_text="$6" analysis_text="$7"
 	[ -n "$event_type" ] || return 0
@@ -235,7 +308,7 @@ _post_phyrogenetic_tree_link_to_chat() {
 	local event_type="$1" before_hash="$2" after_hash="$3" commit_hash="${4:-}"
 	[ -n "$PHYROGENETIC_TREE_URL" ] || return 0
 	local head_commit last_commit action before_short after_short transition chat_text
-	local target_hash detail_info detail_label detail_anchor tree_url
+	local target_hash detail_info detail_label detail_anchor tree_url rollback_reason reason_suffix
 	head_commit="$commit_hash"
 	[ -n "$head_commit" ] || head_commit=$(git rev-parse HEAD 2>/dev/null || true)
 	[ -n "$head_commit" ] || return 0
@@ -284,6 +357,17 @@ EOF
 		chat_text="${action}${transition}。系統樹はこちら(${detail_label}): ${tree_url}"
 	else
 		chat_text="${action}${transition}。系統樹はこちら: ${tree_url}"
+	fi
+	if [ "$event_type" = "rollback" ]; then
+		rollback_reason=$(_rollback_chat_reason_from_analysis "$ROLLBACK_ANALYSIS_FILE" 2>/dev/null || true)
+		if [ -n "$rollback_reason" ]; then
+			reason_suffix="理由: ${rollback_reason}。"
+			chat_text="${action}${transition}。${reason_suffix}系統樹はこちら"
+			if [ -n "$detail_label" ]; then
+				chat_text="${chat_text}(${detail_label})"
+			fi
+			chat_text="${chat_text}: ${tree_url}"
+		fi
 	fi
 	enqueue_chat_message "$chat_text" "phyrogenetic"
 	mkdir -p "$(dirname "$LAST_PHYROGENETIC_CHAT_COMMIT_FILE")" 2>/dev/null || true

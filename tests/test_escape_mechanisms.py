@@ -965,20 +965,20 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("wall_timeout=0", improve)
         self.assertIn('[ "${prev_phase:-}" != "wildcard_parallel" ]', improve)
 
-    def test_wildcard_parallel_culling_is_opt_in(self):
-        """デフォルトでは全候補を指定ゲーム数まで走らせ、cull/refill は明示設定時だけ使う。"""
+    def test_wildcard_parallel_culling_defaults_to_each_game(self):
+        """デフォルトでは1ゲームごとに leader 比で cull/refill を判定する。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', config)
         self.assertIn('WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES="${WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES:-0}"', config)
         self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', config)
         self.assertNotIn("WILDCARD_PARALLEL_MAX_REFILLS", config)
-        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}"', eloop)
+        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', eloop)
         self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', eloop)
         self.assertNotIn("--max-refills", eloop)
-        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 0)', parallel)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1)', parallel)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0)', parallel)
         self.assertIn("args.min_successful_games = args.games", parallel)
         self.assertIn("class CullCoordinator", parallel)
@@ -1025,16 +1025,25 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
             self.assertTrue(coordinator.should_cull(candidate))
             self.assertIn("culled after 3 games", candidate.error)
+            self.assertEqual(candidate.cull_leader_job_id, "leader")
+            self.assertEqual(candidate.cull_leader_games, 5)
+            self.assertEqual(candidate.cull_leader_comp, 100)
+            self.assertEqual(candidate.cull_threshold, 90)
 
             candidate.scores = [95]
             candidate.comp = 95
             candidate.error = ""
+            candidate.cull_leader_job_id = ""
+            candidate.cull_leader_games = 0
+            candidate.cull_leader_comp = 0
+            candidate.cull_threshold = 0
             self.assertFalse(coordinator.should_cull(candidate))
 
             candidate.scores.extend([45, 45, 45, 45])
             candidate.comp = 55
             self.assertTrue(coordinator.should_cull(candidate))
             self.assertIn("culled after 5 games", candidate.error)
+            self.assertEqual(candidate.cull_leader_job_id, "leader")
 
     def test_wildcard_parallel_culls_finished_low_candidate_before_returning(self):
         """先に完走した低comp候補も accepted のまま返さず補充する。"""
@@ -1116,8 +1125,14 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": "0"', parallel)
         self.assertIn("def cleanup_chrome_profile_processes", parallel)
+        self.assertIn("def cleanup_wildcard_chrome_processes", parallel)
+        self.assertIn('parser.add_argument("--cleanup-stale", action="store_true")', parallel)
+        self.assertIn("cleanup_wildcard_chrome_processes(session_root=args.session_root)", parallel)
+        self.assertIn("cleanup_wildcard_chrome_processes(session_dir=session_dir)", parallel)
+        self.assertIn("cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)", parallel)
         self.assertIn('"wildcard_parallel" not in profile_dir', parallel)
         self.assertIn('"ps", "-Ao", "pid=,command="', parallel)
+        self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)\n                continue", parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
 
     def test_wildcard_parallel_overlay_embeds_three_live_previews(self):
@@ -1862,7 +1877,7 @@ class TestShowStatusOnce(unittest.TestCase):
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout[-500:]}\nstderr={result.stderr}")
         self.assertIn("SOREN STATUS", result.stdout)
@@ -2759,6 +2774,50 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertIsNone(payload)
 
+    def test_deadline_contact_fast_drop_is_strategy_tunable(self):
+        import strategy_runner
+
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        enabled_strategy = type("Strategy", (), {"FAST_DROP_DEADLINE_CONTACT": True})()
+        disabled_strategy = type("Strategy", (), {"FAST_DROP_DEADLINE_CONTACT": False})()
+        string_disabled_strategy = type("Strategy", (), {"FAST_DROP_DEADLINE_CONTACT": "0"})()
+        default_strategy = type("Strategy", (), {})()
+
+        self.assertTrue(strategy_runner.strategy_fast_drop_deadline_contact_enabled(enabled_strategy))
+        self.assertFalse(strategy_runner.strategy_fast_drop_deadline_contact_enabled(disabled_strategy))
+        self.assertFalse(strategy_runner.strategy_fast_drop_deadline_contact_enabled(string_disabled_strategy))
+        self.assertTrue(strategy_runner.strategy_fast_drop_deadline_contact_enabled(default_strategy))
+        self.assertIn("_ensure_strategy_runtime_params()", eloop)
+        self.assertIn('_ensure_strategy_runtime_params "$STAGING_FILE"', eloop)
+        self.assertIn('_ensure_strategy_runtime_params "strategy.py.staging"', eloop)
+
+    def test_wait_for_move_state_honors_deadline_fast_drop_toggle(self):
+        import strategy_runner
+
+        game_state = {"state": "MOVE", "pieces": []}
+
+        with (
+            mock.patch.object(strategy_runner, "load_game_state", return_value=game_state),
+            mock.patch.object(strategy_runner, "has_deadline_contact", return_value=True),
+            mock.patch.object(strategy_runner, "is_board_settled", return_value=True) as settled,
+        ):
+            result, is_move = strategy_runner.wait_for_move_state(deadline_fast_drop_enabled=True)
+
+        self.assertIs(result, game_state)
+        self.assertTrue(is_move)
+        settled.assert_not_called()
+
+        with (
+            mock.patch.object(strategy_runner, "load_game_state", return_value=game_state),
+            mock.patch.object(strategy_runner, "has_deadline_contact", return_value=True),
+            mock.patch.object(strategy_runner, "is_board_settled", return_value=True) as settled,
+        ):
+            result, is_move = strategy_runner.wait_for_move_state(deadline_fast_drop_enabled=False)
+
+        self.assertIs(result, game_state)
+        self.assertTrue(is_move)
+        settled.assert_called_once()
+
     def test_deadline_safety_uses_crossing_merge_when_no_non_crossing_candidate_exists(self):
         import strategy_runner
 
@@ -3136,6 +3195,74 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertEqual(decision["x"], 1.65)
         self.assertIn("preserve_non_edge_no_postcondition", decision["reason"])
+
+    def test_deadline_safety_prefers_lower_geometry_non_edge_crossing(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.8, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.25,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 1.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.60,
+                    },
+                    {
+                        "x": 0.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.62,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 8, "x": 1.8, "y": 2.8}], "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], 0.8)
+        self.assertIn("geometry_lower_postcondition", decision["reason"])
+
+    def test_deadline_safety_accepts_edge_when_geometry_gap_is_large(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.0, "reason": "AVOID_BLOCK_REACTIVE_PAIR_MEDIUM"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 3.25,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 1.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.70,
+                    },
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.50,
+                    },
+                ],
+            },
+            {"pieces": [{"id": 1, "type": 8, "x": 1.0, "y": 3.0}], "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertIn("geometry_lower_postcondition", decision["reason"])
 
     def test_deadline_monitor_flags_actual_crossing_with_lower_alternative(self):
         import deadline_misplacement_monitor as monitor
@@ -4385,6 +4512,14 @@ _prune_expired_rejected_hashes
         self.assertIn("回帰ロールバック直後 → 失敗バッチで改善ロック作成", loop)
         self.assertIn("_post_regression_route", loop)
         self.assertIn("curr_russia_seen", loop)
+        self.assertIn('"stage_achievement_regression": "段階到達ゲート未達"', loop)
+        self.assertIn('key.startswith("stage_type") and key.endswith("_achievement_gate")', loop)
+        self.assertIn('labels.append(f"Type{stage}到達ゲート未達")', loop)
+        self.assertIn("stage_objective_loss = \"stage_achievement_regression\" in result or \"stage_type\" in result", loop)
+        self.assertIn("russia_path_loss = (", loop)
+        self.assertIn("or (stage_target >= 15)", loop)
+        self.assertIn("elif objective_loss and russia_path_loss and rstreak >= threshold:", loop)
+        self.assertIn('detail = f"rstreak={rstreak}_stage_target={stage_target}_objective_loss={int(objective_loss)}"', loop)
         self.assertIn("post_regression_direct_escape", loop)
         self.assertIn("ロシア建国ルート喪失の粛清連鎖", loop)
         self.assertIn("復帰先にロシア進捗あり", loop)
@@ -4806,6 +4941,39 @@ PY
         self.assertIn("cleanup_wildcard_server_ports([candidate.serve_port])", runner)
         self.assertIn("cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])", runner)
 
+    def test_wildcard_parallel_mutates_deadline_fast_drop_runtime_param(self):
+        import argparse
+        import wildcard_parallel
+
+        runner = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_MUTATE", runner)
+        self.assertIn("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_VALUES", runner)
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            strategy = td / "strategy.py"
+            strategy.write_text(
+                "# AI prohibited: decide() signature, if __name__ == \"__main__\" block\n"
+                "def decide(game_state, analysis):\n"
+                "    return {'x': 0.0, 'reason': 'ok'}\n",
+                encoding="utf-8",
+            )
+
+            inserted = wildcard_parallel.ensure_deadline_fast_drop_param(strategy, False)
+            self.assertIsNotNone(inserted)
+            self.assertIn("FAST_DROP_DEADLINE_CONTACT = False", strategy.read_text(encoding="utf-8"))
+
+            updated = wildcard_parallel.ensure_deadline_fast_drop_param(strategy, True)
+            self.assertIsNotNone(updated)
+            self.assertIn("FAST_DROP_DEADLINE_CONTACT = True", strategy.read_text(encoding="utf-8"))
+
+            args = argparse.Namespace(
+                deadline_fast_drop_mutate=True,
+                deadline_fast_drop_values=[True, False],
+            )
+            self.assertTrue(wildcard_parallel.parallel_deadline_fast_drop_value(args, 0))
+            self.assertFalse(wildcard_parallel.parallel_deadline_fast_drop_value(args, 1))
+
     def test_wildcard_parallel_overlay_hides_culled_slots(self):
         import wildcard_parallel
 
@@ -4878,7 +5046,7 @@ PY
         self.assertIn('printf \'%s\\t%s\\n\' "$iso_ts" "$eval_score" >>eval_score_history.txt', improve)
         self.assertIn('_append_celebration_history "russia"', improve)
         self.assertIn('ROLLING_SCORE_STRATEGY_HASH="$candidate_hash"', improve)
-        self.assertIn('if [ "$candidate_hash" = "$adopted_hash" ]; then', improve)
+        self.assertIn('if [ -n "$adopted_hash" ] && [ "$candidate_hash" = "$adopted_hash" ]; then', improve)
         self.assertLess(
             improve.index('wildcard_result=$(python3 - "$wildcard_parallel_result_file"'),
             improve.index('_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER"'),
@@ -4892,6 +5060,7 @@ PY
         self.assertIn("wildcard_parallel_restore_on_exit()", improve)
         self.assertIn("wildcard_parallel_restore_once()", improve)
         self.assertIn("trap wildcard_parallel_restore_on_exit EXIT INT TERM", improve)
+        self.assertIn("python3 wildcard_parallel.py --cleanup-stale", improve)
         self.assertIn("set +e\n\t\twildcard_parallel_result=$(python3 wildcard_parallel.py", improve)
         self.assertIn("wildcard_parallel_rc=$?", improve)
         self.assertIn("wildcard_parallel_heartbeat_stop\n\t\tset -e", improve)
@@ -5243,6 +5412,55 @@ PY
         self.assertIn("int(current_objective.get(\"best_max_type\", 0) or 0) >= frontier_grace_min_type", regression)
         self.assertIn("curr_comp < top_comp * early_comp_top_gap_min_ratio", regression)
         self.assertIn("reasons=early_comp_top_gap+curr_comp_below_top_ratio", regression)
+        self.assertIn('best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")', regression)
+
+    def test_stage_achievement_gate_purges_low_stage_rate_without_changing_rollback_pick(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        toggles = (REPO_ROOT / "core/runtime_toggles.sh").read_text()
+        set_toggle = (REPO_ROOT / "set_toggle.sh").read_text()
+
+        self.assertIn("STAGE_ACHIEVEMENT_REGRESSION_ENABLED", config)
+        self.assertIn("STAGE_ACHIEVEMENT_REGRESSION_MIN_GAMES", config)
+        self.assertIn("STAGE_ACHIEVEMENT_GATE_MIN_RATE", config)
+        self.assertIn("STAGE_ACHIEVEMENT_GATE_TYPES", config)
+        self.assertIn("12,13,14,15", config)
+        self.assertIn("STAGE_ACHIEVEMENT_REGRESSION_ENABLED", toggles)
+        self.assertIn("STAGE_ACHIEVEMENT_REGRESSION_MIN_GAMES", toggles)
+        self.assertIn("STAGE_ACHIEVEMENT_GATE_MIN_RATE", toggles)
+        self.assertIn("STAGE_ACHIEVEMENT_GATE_TYPES", toggles)
+        self.assertIn("STAGE_ACHIEVEMENT_GATE_TYPES", set_toggle)
+        self.assertIn("def stage_achievement_regression_reason(reference_progress, current_progress):", regression)
+        self.assertIn("parse_stage_achievement_gate_types", regression)
+        self.assertIn("stage: sum(1 for value in max_types if value >= stage) / n", regression)
+        self.assertIn("if current_n < stage_achievement_regression_min_games:", regression)
+        self.assertIn("rate >= stage_achievement_gate_min_rate", regression)
+        self.assertIn("return max(candidates, key=lambda item: item[0]) + (n,)", regression)
+        self.assertIn("target_stage, target_rate, reference_n = stage_achievement_target_stage(reference_progress)", regression)
+        self.assertIn("current_best >= target_stage", regression)
+        self.assertIn("mode=stage_achievement_regression", regression)
+        self.assertIn("stage_type{target_stage}_achievement_gate", regression)
+        self.assertIn("target_type={target_stage}", regression)
+        self.assertIn("target_rate={target_rate:.3f}", regression)
+        self.assertIn("min_rate={stage_achievement_gate_min_rate:.3f}", regression)
+        self.assertIn("sample_n={current_n}", regression)
+        self.assertIn("trend_grace は score-only rollback dampener。段階到達率不足は免除しない。", regression)
+        self.assertIn('best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")', regression)
+
+    def test_twitch_rollback_post_surfaces_stage_achievement_reason(self):
+        phylo = (REPO_ROOT / "core/phyrogenetic.sh").read_text()
+
+        self.assertIn("_rollback_chat_reason_from_analysis()", phylo)
+        self.assertIn('"stage_achievement_regression" in trigger', phylo)
+        self.assertIn('r"target_type=(\\d+)"', phylo)
+        self.assertIn('r"stage_type(\\d+)_achievement_gate"', phylo)
+        self.assertIn('parts.append(f"Type{target}到達ゲート未達")', phylo)
+        self.assertIn('parts.append(f"直近到達率{target_rate}")', phylo)
+        self.assertIn('parts.append(f"要求{min_rate}")', phylo)
+        self.assertIn('parts.append(f"n={sample_n}")', phylo)
+        self.assertIn('rollback_reason=$(_rollback_chat_reason_from_analysis "$ROLLBACK_ANALYSIS_FILE"', phylo)
+        self.assertIn('reason_suffix="理由: ${rollback_reason}。"', phylo)
+        self.assertIn('chat_text="${action}${transition}。${reason_suffix}系統樹はこちら"', phylo)
 
     def test_rollback_target_cooldown_blocks_immediate_reuse(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

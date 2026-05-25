@@ -178,6 +178,16 @@ _is_card_gacha_result_line() {
     printf '%s\n' "$message" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
 }
 
+_is_ignored_comment_author_line() {
+    local line="$1"
+    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    local item
+    for item in $ignored; do
+        printf '%s\n' "$line" | grep -Fqi -- "${item}: " && return 0
+    done
+    return 1
+}
+
 _sanitize_comment_line() {
     local line="$1"
     [ -n "$line" ] || return 1
@@ -195,8 +205,8 @@ _sanitize_comment_line() {
         return 1
     fi
 
-    # 開発用アカウントからのコメントは読み上げ対象外
-    if printf '%s\n' "$line" | grep -Eiq '^azumagdev:[[:space:]]'; then
+    # Bot / broadcaster self-posts are outbound echoes, not viewer comments.
+    if _is_ignored_comment_author_line "$line"; then
         if ! _is_card_gacha_result_line "$line"; then
             return 1
         fi

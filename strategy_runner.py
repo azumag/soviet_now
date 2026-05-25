@@ -357,6 +357,15 @@ def get_state_field(gs):
 
 
 SETTLE_FORCE_TIMEOUT = 30.0  # この秒数経過後は速度に関わらず settled 扱い
+DEFAULT_FAST_DROP_DEADLINE_CONTACT = True
+
+
+def strategy_fast_drop_deadline_contact_enabled(strategy):
+    """strategy.py のAI調整パラメータで deadline 接触時の即時DROPを切り替える。"""
+    raw = getattr(strategy, "FAST_DROP_DEADLINE_CONTACT", DEFAULT_FAST_DROP_DEADLINE_CONTACT)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ("0", "false", "no", "off")
+    return bool(raw)
 
 def has_deadline_contact(gs):
     """赤線に触れている/赤線タイマー中のピースがあれば即ドロップへ進む。"""
@@ -451,6 +460,12 @@ def get_strategy_hash():
     except Exception:
         with open("strategy.py", "rb") as f:
             return hashlib.md5(f.read()).hexdigest()[:8]
+
+
+def get_strategy_file_hash():
+    """strategy.py 全体のハッシュ。AI調整パラメータだけの変更でも再ロードするために使う。"""
+    with open("strategy.py", "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()[:8]
 
 
 def count_piece_type(game_state, piece_type):
@@ -1450,6 +1465,40 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (
         replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
+        and not safe
+        and not preserve_visual_same_country
+    ):
+        replacement_geom_top = geometry_top_at_x(replacement.get("x"))
+        crossing_geom_candidates = []
+        for candidate in results:
+            if (
+                candidate.get("merge_grade", "NO") != "NO"
+                or not candidate.get("crosses_deadline", False)
+            ):
+                continue
+            candidate_geom_top = geometry_top_at_x(candidate.get("x"))
+            if candidate_geom_top is None:
+                continue
+            crossing_geom_candidates.append((candidate_geom_top, candidate))
+        if replacement_geom_top is not None and crossing_geom_candidates:
+            best_geom_top, best_geom_candidate = min(
+                crossing_geom_candidates,
+                key=lambda item: (
+                    item[0],
+                    risk_top(item[1]),
+                    abs(float(item[1].get("x", 0.0) or 0.0)),
+                ),
+            )
+            candidate_x = float(best_geom_candidate.get("x", 0.0) or 0.0)
+            edge_candidate = abs(candidate_x) > 2.2
+            improvement_needed = 0.85 if edge_candidate else 0.35
+            if replacement_geom_top > best_geom_top + improvement_needed:
+                replacement = best_geom_candidate
+                replacement_source = f"{replacement_source}_geometry_lower_postcondition"
+
+    if (
+        replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
         and safe
     ):
         risk_band = [
@@ -1546,7 +1595,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     return new_decision
 
 
-def wait_for_move_state():
+def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT):
     """MOVE状態になるまで待つ。GAMEOVER/STOPならFalseを返す。"""
     settle_count = 0
     start = time.time()
@@ -1576,7 +1625,7 @@ def wait_for_move_state():
         if settle_force_at == 0.0:
             settle_force_at = time.time() + SETTLE_FORCE_TIMEOUT
 
-        if has_deadline_contact(gs):
+        if deadline_fast_drop_enabled and has_deadline_contact(gs):
             log("FAST_DROP_DEADLINE_CONTACT: skipping settle wait")
             return gs, True
 
@@ -1605,7 +1654,10 @@ def run_game():
     try:
         strategy = load_strategy_module()
         strategy_hash = get_strategy_hash()
+        strategy_file_hash = get_strategy_file_hash()
         log(f"Strategy hash: {strategy_hash}")
+        deadline_fast_drop_enabled = strategy_fast_drop_deadline_contact_enabled(strategy)
+        log(f"FAST_DROP_DEADLINE_CONTACT enabled={deadline_fast_drop_enabled}")
         if not hasattr(strategy, "decide"):
             log("ERROR: strategy.py に decide() がありません")
             return {"error": "no decide function", "score": 0, "turns": 0}
@@ -1643,7 +1695,7 @@ def run_game():
                 raise KeyboardInterrupt("stop file")
 
             # MOVE状態待ち
-            gs, is_move = wait_for_move_state()
+            gs, is_move = wait_for_move_state(deadline_fast_drop_enabled)
 
             if not is_move:
                 # GAMEOVER or TIMEOUT
@@ -1752,10 +1804,14 @@ def run_game():
             # strategy.py だけを書き換えた場合もプロセス再起動なしで次手から反映する。
             try:
                 current_strategy_hash = get_strategy_hash()
-                if current_strategy_hash != strategy_hash:
+                current_strategy_file_hash = get_strategy_file_hash()
+                if current_strategy_file_hash != strategy_file_hash:
                     strategy = load_strategy_module()
                     strategy_hash = current_strategy_hash
+                    strategy_file_hash = current_strategy_file_hash
+                    deadline_fast_drop_enabled = strategy_fast_drop_deadline_contact_enabled(strategy)
                     log(f"Strategy reloaded: {strategy_hash}")
+                    log(f"FAST_DROP_DEADLINE_CONTACT enabled={deadline_fast_drop_enabled}")
             except Exception as err:
                 log(f"WARN: strategy.py reload failed, keeping previous module: {err}")
 
