@@ -31,6 +31,7 @@ DROP_X_MIN = -3.0
 DROP_X_MAX = 3.0
 LOWER_EPS = 0.05
 MERGE_GAP_EPS = 0.35
+SUPPORT_GAP_EPS = 0.55
 
 TYPE_RADII = {
     1: 0.207,
@@ -167,6 +168,27 @@ def _summary_piece(piece: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _is_physically_supported(piece: dict[str, Any], before: list[dict[str, Any]], fallback_type: int) -> bool:
+    """Require contact with the prior board so transient in-air frames are ignored."""
+    px = _num(piece.get("x"))
+    py = _num(piece.get("y"))
+    pr = _radius(piece, fallback_type)
+    if pr <= 0:
+        return False
+    if abs(py - (FLOOR_Y + pr)) <= SUPPORT_GAP_EPS:
+        return True
+    for prev_piece in before:
+        qx = _num(prev_piece.get("x"))
+        qy = _num(prev_piece.get("y"))
+        qr = _radius(prev_piece)
+        if qr <= 0:
+            continue
+        dist = math.hypot(px - qx, py - qy)
+        if abs(dist - (pr + qr)) <= SUPPORT_GAP_EPS:
+            return True
+    return False
+
+
 def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str, Any] | None:
     before = _pieces(prev)
     after = _pieces(curr)
@@ -177,6 +199,8 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
     next_type = int(prev.get("next_type", 0) or 0)
     placed = _new_piece(before, after, decision_x, next_type)
     if not placed:
+        return None
+    if not _is_physically_supported(placed, before, next_type):
         return None
     actual_top = _piece_top(placed)
     if actual_top <= DEADLINE_Y:

@@ -3088,6 +3088,37 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(event["trigger"], "actual_new_piece_top_over_deadline")
         self.assertLess(event["best_lower_alternative"]["top_y"], event["actual_new_piece"]["top_y"])
 
+    def test_deadline_monitor_ignores_unsupported_new_piece_snapshot(self):
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 31,
+            "score": 468,
+            "piece_count": 20,
+            "decision_x": 2.9,
+            "decision_reason": "REACTIVE_PAIRS_COMPRESSION",
+            "next_type": 3,
+            "state_snapshot": {
+                "pieces": [
+                    {"id": 33, "type": 3, "x": -1.46, "y": -1.47, "r": 0.392},
+                    {"id": 34, "type": 8, "x": 2.68, "y": -1.68, "r": 0.977},
+                    {"id": 37, "type": 10, "x": -0.43, "y": -0.2, "r": 0.951},
+                ]
+            },
+        }
+        curr = {
+            "turn": 32,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 41, "type": 3, "x": 2.85, "y": 3.43, "r": 0.404},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNone(event)
+
     def test_deadline_monitor_accepts_actual_lowest_crossing(self):
         import deadline_misplacement_monitor as monitor
 

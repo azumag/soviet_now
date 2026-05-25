@@ -111,6 +111,7 @@ soren_loop の多重起動ロック:
 - `enforce_deadline_safety` の all-crossing fallback は、全候補が `crosses_deadline=true` かつ NO merge の場合でも、最小リスクと同程度の非エッジ候補があれば `non_edge_postcondition` で寄せる。これにより、戦略側の DEADLINE_GUARD が NO_MERGE の壁寄り配置を避けても、runner 側の最終安全弁が `NO/cross -> NO/cross` の壁落としを再導入することを防ぐ。
 - all-crossing 局面で `visual_deadline_same_country` が同国接触候補を拾っても、盤面 top が deadline を十分に超えている場合は視覚推定を保存せず、最小 risk_top の候補へ戻す。これにより、直近の deadline fallback 改善が NO_MERGE の高積みを選んだ場合でも、実行時により低い崩壊リスクへ寄せる。
 - `visual_deadline_same_country` が all-crossing の中で候補を保存する場合でも、実形状 top と `risk_top_y_after_drop` の両方でより低い crossing 候補があるなら `geometry_min_top_postcondition` で差し替える。全候補が deadline を越える局面でも、同国接触の名目だけで高い積み上げを固定しないための最終ガード。
+- `deadline_misplacement_monitor.py` は履歴スナップショットで追加されたピースが床または既存ピースに物理接触している場合だけ deadline misplacement を評価する。落下途中の transient snapshot を「実着地」と誤認し、改善ループへ存在しないデッドライン違反を渡す false positive を避けるため。
 - 対応テストは `tests.test_escape_mechanisms.TestSovietObjectiveImproveInputs.test_deadline_safety_replaces_crossing_choice_when_safe_exists_far_below_deadline`、`test_deadline_safety_geometry_headroom_overrides_underestimated_safe_choice`、`test_deadline_safety_visual_same_country_falls_back_when_geometry_is_worse`。all-crossing noise を無視する既存テストと合わせて、safe 候補がある時だけ発火することと、形状再推定が高積み候補を退避することを確認する。
 
 判定順:
