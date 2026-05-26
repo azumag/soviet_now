@@ -150,6 +150,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 ステータス監視:
 
 - `show_status.sh --once` の `ArchiveNext` は最有力候補だけを短く表示する。
+- `show_status.sh --once` の `Escape` 行は、停滞カウンタが閾値到達済みでも現行 `current_strategy_run.json` がロシア/ソ連/Type15以上を再現中なら `defer=R1,T15 11/12` のように延期理由と成熟度を併記する。これにより `stag=3/3` だけで WILDCARD 発火漏れと誤読せず、再評価完走を待つべき状態を確認できる。
 - `status_dashboard.py` / `generate_status_overlay.sh` のステータス overlay は、WILDCARD status の直後に `ArchiveRestart candidates` として上位10候補の `hash` / `comp` / `p25` / `n` / `ru` / `sv` / `t` / origin retry を表示する。
 - `WILDCARD origins` は現戦略が WILDCARD origin と一致している時だけ表示する。archive_restart origin の戦略では archive候補一覧を主表示にし、古い WILDCARD origin を誤って現状説明に混ぜない。
 - 候補がない場合は `threshold` や `R0` / `cool` / `reject` などの blocker を表示し、`escape_ai direct` へ落ちる条件を確認できるようにする。

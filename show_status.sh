@@ -780,7 +780,7 @@ PY
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-		local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
+			local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
 	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
 		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
 import json
@@ -808,10 +808,48 @@ if updated > 0:
 print(f"stagnation_count={count}")
 print("stagnation_event=" + shlex.quote(event))
 print("stagnation_age=" + shlex.quote(age))
+	PY
+	)
+		fi
+		if [[ -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
+			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/current_strategy_run.json" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, mature_s, trigger_s, count_s = sys.argv[1:5]
+try:
+    mature_n = max(1, int(mature_s or 12))
+except Exception:
+    mature_n = 12
+try:
+    trigger = int(trigger_s or 3)
+    count = int(count_s or 0)
+except Exception:
+    trigger = 3
+    count = 0
+if count < trigger:
+    raise SystemExit
+try:
+    data = json.load(open(path, encoding="utf-8")) or {}
+except Exception:
+    data = {}
+games = int(data.get("games_total", 0) or len(data.get("scores") or []))
+russia = int(data.get("russia_count", 0) or 0)
+soviet = int(data.get("soviet_count", 0) or 0)
+best_type = int(data.get("best_max_type", 0) or 0)
+bits = []
+if russia > 0:
+    bits.append(f"R{russia}")
+if soviet > 0:
+    bits.append(f"S{soviet}")
+if best_type >= 15:
+    bits.append(f"T{best_type}")
+if bits:
+    print(f"defer={','.join(bits)} {games}/{mature_n}")
 PY
 )
-	fi
-	if [[ -f "$TMP_STATE_DIR/wildcard_origin.json" ]]; then
+		fi
+		if [[ -f "$TMP_STATE_DIR/wildcard_origin.json" ]]; then
 		wildcard_origin_count=$(python3 - "$TMP_STATE_DIR/wildcard_origin.json" <<'PY' 2>/dev/null
 import json
 import sys
@@ -2050,8 +2088,10 @@ PY
 		escape_color="$C_GREEN"
 		(( stagnation_count >= WILDCARD_TRIGGER_STAGNATION )) && escape_color="$C_YELLOW"
 	fi
-	printf "    ${C_MAGENTA}◇${C_RESET} Escape      ${escape_color}D=%s T=%s W=%s${C_RESET}  ${C_DIM}stag=%s/%s %s %s ago wc=%s${C_RESET}\n" \
-		"$d_flag" "$t_flag" "$w_flag" "$stagnation_count" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_event" "$stagnation_age" "$wildcard_origin_count"
+		local stagnation_detail="stag=${stagnation_count}/${WILDCARD_TRIGGER_STAGNATION} ${stagnation_event} ${stagnation_age} ago wc=${wildcard_origin_count}"
+		[[ -n "$stagnation_defer_label" ]] && stagnation_detail="${stagnation_detail} ${stagnation_defer_label}"
+		printf "    ${C_MAGENTA}◇${C_RESET} Escape      ${escape_color}D=%s T=%s W=%s${C_RESET}  ${C_DIM}%s${C_RESET}\n" \
+			"$d_flag" "$t_flag" "$w_flag" "$stagnation_detail"
 		if [[ "$wildcard_eval_label" != "none" ]]; then
 			printf "    ${C_MAGENTA}▸${C_RESET} %-11s ${C_DIM}%s${C_RESET}\n" "$wildcard_eval_name" "$wildcard_eval_label"
 		fi
