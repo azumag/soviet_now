@@ -62,11 +62,6 @@ Phases (determined by board max Y):
 #
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
-# AI-tunable runtime parameter:
-# True  = deadline contact skips settle wait and drops immediately.
-# False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
-
 
 # --- Change History (compressed to 5 entries; full history in git) ---
 # v685: CENTRAL_HIGH_NO_MERGE_PENALTY -2000→-4000 — central (|x|<1.5) && landing_y>=2.0 &&
@@ -751,7 +746,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
             and __dlg_merge_result_safe(c)
-            and (not c.get("crosses_deadline") or c.get("danger_direct_merge_available"))
             and not c.get("merge_result_crosses_deadline")
         ]
         if __dlg_direct:
@@ -766,7 +760,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
             and __dlg_merge_result_safe(c)
-            and not c.get("crosses_deadline")
             and not c.get("merge_result_crosses_deadline")
         ]
         if __dlg_near_safe:
