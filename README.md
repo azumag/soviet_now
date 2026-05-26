@@ -144,9 +144,9 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 
 1. `archive_restart`: 評価済みアーカイブから、near-anchor かつロシア再現性または type14/15 frontier を持つ候補へ戻す。`best_max_type >= 15` だけを `russia_count=1` とみなさない。候補は `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` / `ARCHIVE_RESTART_MIN_RUSSIA_RATE` / `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` で絞る。
 2. `wildcard`: archive 候補がない、または cooldown 中なら使う。目的はランダムなスコア改善ではなく、type14→15 frontier やロシア建国経路の再獲得。
-3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので、WILDCARD連続失敗が `WILDCARD_AI_ESCALATE_STREAK` 以上で archive候補もseedもない時は、同じWILDCARDを再試行せず通常AI改善へ戻す。
+3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので、WILDCARD連続失敗が `WILDCARD_AI_ESCALATE_STREAK` 以上で archive候補もseedもない時、または archive_restart fallback 後に seed が見つからない時は、同じWILDCARD/escape_aiを再試行せず通常AI改善へ戻す。
 
-`archive_restart` が候補を選んでも validation 後に現行 hash と同一へ正規化され、実効的な hash 変更がない場合は、その候補を cooldown/quarantine に入れて `escape_ai` へフォールバックする。これは archive_restart 内での空振りループを止め、評価済み WILDCARD seed から構造変異へ進めるための経路である。
+`archive_restart` が候補を選んでも validation 後に現行 hash と同一へ正規化され、実効的な hash 変更がない場合は、その候補を cooldown/quarantine に入れて `escape_ai` へフォールバックする。評価済み WILDCARD seed があればそこから構造変異へ進め、seed がない場合は `escape_ai` 失敗で停止せず通常AI改善へ戻す。
 
 ステータス監視:
 

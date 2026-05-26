@@ -2159,10 +2159,12 @@ PY
 				"seeded_escape_ai_no" \
 				"seeded escape_ai candidate? no" \
 				"invalid selected seed: ${ESCAPE_AI_SEED_JSON:-empty}" \
-				"改善フロー: seeded escape_ai candidate exists? no。選定seedが使えないためescape_aiを中止します。" \
+				"改善フロー: seeded escape_ai candidate exists? no。選定seedが使えないため通常AI改善へフォールバックします。" \
 				"warn"
-			_improve_progress "escape_ai_fail" "100" "invalid_seed"
-			exit 1
+			log "[ESCAPE-AI] invalid seed → 通常AI改善へフォールバック"
+			IMPROVE_REASON="normal"
+			export IMPROVE_REASON
+			_improve_progress "normal" "30" "escape_ai_invalid_seed_fallback"
 		fi
 	else
 		log "[ESCAPE-AI] WILDCARD seed candidate not found: ${ESCAPE_AI_SEED_JSON:-empty}"
@@ -2170,11 +2172,12 @@ PY
 			"seeded_escape_ai_no" \
 			"seeded escape_ai candidate? no" \
 			"${ESCAPE_AI_SEED_JSON:-empty}" \
-			"改善フロー: seeded escape_ai candidate exists? no。seedなしのescape_aiは通常改善と同じなので中止します。" \
+			"改善フロー: seeded escape_ai candidate exists? no。seedなしのescape_aiは通常AI改善へフォールバックします。" \
 			"warn"
-		log "[ESCAPE-AI] seedなしのescape_aiは通常改善と同じため中止"
-		_improve_progress "escape_ai_fail" "100" "no_valid_seed"
-		exit 1
+		log "[ESCAPE-AI] seedなしのescape_aiは通常改善と同じため通常AI改善へフォールバック"
+		IMPROVE_REASON="normal"
+		export IMPROVE_REASON
+		_improve_progress "normal" "30" "escape_ai_no_seed_fallback"
 	fi
 fi
 
