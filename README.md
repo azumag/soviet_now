@@ -138,6 +138,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - 前ハッシュ由来の `regression_streak` / `consecutive_no_improve` が残っていても、現行 `accumulated_games.json` が `russia_count > 0` / `soviet_count > 0` / `best_max_type >= 15` を示す場合は早期脱出を延期し、現在のロシア進捗を優先して評価を続ける。
 - `current_strategy_run.hash` が `best_strategy_anchor.hash` と同一の rollback 再検証中は、`show_status.sh` の `Escape stag=x/y` だけで停滞発火と判定しない。`current_strategy_run.games_total` が成熟閾値に届くまでは rolling 上の `russia_count` / `best_max_type` を保護情報として扱い、成熟後も current run にロシア再現がない時だけ regression streak から脱出へ戻す。
 - 現行 `v369 congestion-aware proximity` は reactive level だけでは分岐しない。frontier 近接誘導は piece_count / 横距離 / 高さで調整しつつ、`max_y >= 3.0 && deadline_crossed` または `reactive_pair_count >= 5 && max_y >= 2.5` の混雑局面では `proximity_bonus = 0.0` にして、危険域の高さ制御を優先する。
+- 改善プロンプトと review prompt は、`rp_guidance_suppressed` が true の時に「倍率追加を止める」だけでなく、既に計算した `proximity_bonus` 自体を0へ落とすことを必須化している。直近の自動戦略がここを漏らすと `tests.test_escape_mechanisms.TestCommentReplyDepthPrompt.test_frontier_proximity_guidance_keeps_congestion_suppression` が失敗するため、次の通常改善で strategy 本体側を直す対象になる。
 
 直接脱出ロックのルーティング順:
 
@@ -161,6 +162,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard` 並列評価で他スロットが完走済みなのに最後の1スロットだけが補充カリングを繰り返す場合は、`WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` 回を超えた時点で補充を止める。これにより、十分な完走候補があるのに trailing slot の空振りで採用が長時間遅れるのを防ぐ。
 - `wildcard_parallel.py` はセッション開始時と各候補ゲームの起動直前に WILDCARD 専用 game server port (`WILDCARD_PARALLEL_SERVE_BASE_PORT` から候補数分) の古い listener を掃除する。前回の隔離ブラウザが残っても `EADDRINUSE` で候補全体が 0 game 失敗にならないようにするため。
 - `wildcard_parallel.py --cleanup-stale` は古い候補ウィンドウ/port の掃除だけでなく、WILDCARD overlay を `restored` へ更新して候補カードを消す。実体のない古い candidate 表示を停滞監視が進行中と誤読しないようにするため。
+- `wildcard_parallel.py --cleanup-sessions` は実行中 status の `session_dir` と直近 `WILDCARD_PARALLEL_KEEP_RECENT_RUNS` 件を残して古い run directory だけを掃除する。既定は3件保持で、停滞監視に必要な直近の候補履歴を消さずに、完了/失敗後の隔離ブラウザ残骸だけを減らす。
 - `wildcardParallelOverlay` は 1920x140 のヘッダ専用表示とし、候補本線は `wildcardParallelCand1..6` の macOS window capture source で映す。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
 - `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。

@@ -36,6 +36,8 @@
 - [ ] 「低配置を好む」「高積みを避ける」「盤面圧縮を促す」など位置・高さ・piece_count の単調方向を主張する新規 bonus / penalty は、最終式でその方向に効いているか。例: 低配置を好む bonus が `+ max_y * 100` のように高い盤面ほど加点していないか、piece_count を減らしたい bonus が piece_count 増加で報酬増になっていないかを検算し、説明と逆向きなら FAIL にすること
 - [ ] `lowest-y` / `低配置` / `lowest available position` / `高積み回避` を主張する新規 bonus は、`landing_y` / `risk_top_y_after_drop` / `decision_top_y_after_drop` など候補ごとの高さ値に依存し、同じ発火条件内で低い候補ほど相対的に有利になる式か。条件成立候補すべてに `+500` のような定数 bonus を足すだけなら低配置を選好していないため FAIL にすること。最低2候補（低い候補・高い候補）で score 差が低い候補側に増えることを確認すること
 - [ ] 新規 axis / reason / bonus / penalty は、対象にした worst/best game log または `tmp/batch_summary.txt` の実データで発火条件が到達可能か確認すること。新 reason が一度も発火しない条件、または根拠ログの値と条件が食い違う場合は FAIL にすること
+- [ ] `CROSSES_DEADLINE_NO_MERGE` / `MERGE_DROUGHT_DEADLINE_CROSS_PENALTY` などの deadline penalty/reason は、赤線付近の実危険局面でのみ付くか。全候補が `crosses_deadline == True` でも `deadline.top_edge_y` / `reactor.top_edge_y` が低く `deadline_margin` に余裕がある far-below 局面では raw crossing 予測を penalty 根拠にしていないか。違反する場合は FAIL にすること
+- [ ] `v369 congestion-aware proximity` 周辺を変更した場合、`rp_guidance_suppressed` が true になる混雑・deadline 危険局面で `proximity_bonus = 0.0` に落ちるか。既に計算した proximity bonus を残したまま倍率追加だけを止める実装は FAIL にすること
 
 ### D. 追加品質チェック
 - [ ] `turns >= N` などの固定ターン数ゲートが新規追加されていないか
@@ -110,6 +112,8 @@
 - [x/✗] 単調方向の検算: ...（低配置・高積み回避・盤面圧縮などの説明と、bonus / penalty の実際の増減方向が一致していること）
 - [x/✗] 低配置 bonus の候補間差分: ...（低い候補と高い候補の2例で、定数加点ではなく低い候補が相対的に有利になること）
 - [x/✗] 新規 axis / reason の発火証拠: ...（対象ログや batch summary の値が、新規条件に到達すること）
+- [x/✗] far-below raw crossing 抑制: ...（赤線から遠い全候補crossing予測を deadline penalty/reason の根拠にしていないこと）
+- [x/✗] proximity 混雑抑制: ...（`rp_guidance_suppressed` true 時に proximity bonus が0へ落ちること）
 
 ### D. 追加品質
 - [x/✗] 固定ターン数ゲート: ...

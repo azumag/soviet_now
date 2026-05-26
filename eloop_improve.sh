@@ -948,6 +948,12 @@ PY
 			wildcard_parallel_restore_trap_active=0
 			trap - EXIT INT TERM
 		}
+		wildcard_parallel_cleanup_sessions() {
+			python3 wildcard_parallel.py --cleanup-sessions \
+				--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+				--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
+				--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" >/dev/null 2>>"$TMP_DEBUG_DIR/wildcard_parallel_cleanup.log" || true
+		}
 		trap wildcard_parallel_restore_on_exit EXIT INT TERM
 		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
@@ -1043,6 +1049,7 @@ PY
 			else
 				log "[WILDCARD] parallel trial produced no candidate rc=$wildcard_parallel_rc: ${wildcard_parallel_result:0:500}"
 				_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
+				wildcard_parallel_cleanup_sessions
 				wildcard_parallel_restore_once
 				exit 1
 			fi
@@ -1070,6 +1077,7 @@ PY
 		[ -n "$wildcard_winner_path" ] && [ -f "$wildcard_winner_path" ] || {
 			log "[WILDCARD] parallel winner strategy missing: ${wildcard_winner_path:-empty}"
 			_import_wildcard_parallel_game_stats "$wildcard_result" "" || true
+			wildcard_parallel_cleanup_sessions
 			_improve_progress "wildcard_no_candidate" "100" "parallel_winner_missing"
 			wildcard_parallel_restore_once
 			exit 1
@@ -1077,6 +1085,7 @@ PY
 		if ! validate_strategy_with_helpers "$wildcard_winner_path" "strategy_helpers"; then
 			log "[WILDCARD] parallel winner validation failed → no apply"
 			_import_wildcard_parallel_game_stats "$wildcard_result" "" || true
+			wildcard_parallel_cleanup_sessions
 			_improve_progress "wildcard_validate_fail" "100" "parallel_winner_invalid"
 			wildcard_parallel_restore_once
 			exit 1
@@ -1084,6 +1093,7 @@ PY
 		cp "$wildcard_winner_path" "$STRATEGY_FILE"
 		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER" || true
+		wildcard_parallel_cleanup_sessions
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
 			WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" WILDCARD_PARALLEL_JSON="$wildcard_result" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
 import json, os, sys, time

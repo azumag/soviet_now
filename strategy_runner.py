@@ -956,6 +956,51 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             return None
         return best_safe
 
+    def geometry_underestimate_replacement_for(candidate):
+        """Catch analyzer-safe choices that geometry says are already over deadline."""
+        if not isinstance(candidate, dict) or not safe:
+            return None
+        if candidate.get("crosses_deadline", False):
+            return None
+        candidate_geom_top = geometry_top_at_x(candidate.get("x"))
+        if candidate_geom_top is None or candidate_geom_top <= deadline_y + 0.02:
+            return None
+        if piece_count < 18 and current_top_edge_y < deadline_y - 1.80:
+            return None
+        safe_geom_pairs = []
+        for option in safe:
+            if option is candidate:
+                continue
+            option_geom_top = geometry_top_at_x(option.get("x"))
+            if option_geom_top is None:
+                continue
+            safe_geom_pairs.append((option_geom_top, option))
+        if not safe_geom_pairs:
+            return None
+        best_geom_top, best_geom = min(
+            safe_geom_pairs,
+            key=lambda item: (
+                item[0],
+                risk_top(item[1]),
+                grade_rank.get(item[1].get("merge_grade", "NO"), 9),
+                abs(float(item[1].get("x", 0.0) or 0.0)),
+            ),
+        )
+        if best_geom_top > candidate_geom_top - 0.25:
+            return None
+        if (
+            candidate.get("merge_grade", "NO") in ("DIRECT", "NEAR")
+            and best_geom.get("merge_grade", "NO") == "NO"
+            and current_top_edge_y >= deadline_y - 0.75
+        ):
+            return None
+        if (
+            best_geom_top > deadline_y + 0.15
+            and risk_top(best_geom) > risk_top(candidate) + 0.40
+        ):
+            return None
+        return best_geom
+
     def visual_same_country_replacement():
         """Fallback for visually obvious same-country merges missed by analysis.
 
@@ -1108,6 +1153,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
 
     replacement_source = "generic"
     chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
+    chosen_geometry_replacement = geometry_underestimate_replacement_for(chosen)
 
     if chosen_headroom_replacement is not None:
         replacement = chosen_headroom_replacement
@@ -1225,7 +1271,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else:
             return decision
     elif not chosen.get("crosses_deadline", False):
-        return decision
+        if chosen_geometry_replacement is None:
+            return decision
+        replacement = chosen_geometry_replacement
+        replacement_source = "geometry_underestimate_postcondition"
     elif not deadline_precontact_pressure:
         # Even if the board-wide deadline pressure looks low, do not keep a
         # NO-merge crossing choice when a non-crossing alternative already

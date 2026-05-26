@@ -273,6 +273,17 @@ def comp(scores):
     lcb = mean - 1.28 * (std / math.sqrt(n))
     return 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
 
+def row_comp(row):
+    explicit = as_float(row.get("comp", 0.0), 0.0)
+    if explicit > 0:
+        return explicit
+    scores = row.get("scores", [])
+    if isinstance(scores, str):
+        scores = [x for x in scores.split() if x.strip()]
+    if isinstance(scores, list):
+        return comp(scores)
+    return 0.0
+
 def load(path):
     try:
         return json.load(open(path, encoding="utf-8"))
@@ -293,7 +304,7 @@ if isinstance(rolling, dict):
         n = as_int(row.get("n", row.get("games_total", 0)), 0)
         if n < min_games:
             continue
-        leader_comp = max(leader_comp, as_float(row.get("comp", 0.0), 0.0))
+        leader_comp = max(leader_comp, row_comp(row))
 
 ok = bool(batch_comp > 0 and (leader_comp <= 0 or batch_comp >= leader_comp * min_ratio))
 if ok and stagnation_file:

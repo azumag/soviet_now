@@ -603,6 +603,62 @@ def render_cleanup_overlay(status_path: Path, html_path: Path, detail: str = "cl
     render_overlay(status_path, html_path, payload)
 
 
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except Exception:
+        return path.absolute()
+
+
+def status_active_session(status_path: Path) -> Path | None:
+    try:
+        data = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if str(data.get("phase") or "") not in {"generating", "running"}:
+        return None
+    session = str(data.get("session_dir") or "")
+    if not session:
+        return None
+    return Path(session)
+
+
+def cleanup_wildcard_session_dirs(
+    session_root: Path,
+    keep_session_dirs: list[Path] | None = None,
+    keep_recent: int = 0,
+) -> list[Path]:
+    """Remove old WILDCARD run directories without touching active sessions."""
+    keep_resolved = {_safe_resolve(path) for path in (keep_session_dirs or []) if path}
+    keep_recent = max(0, _int(keep_recent, 0))
+    try:
+        root = _safe_resolve(session_root)
+        runs = [
+            path
+            for path in root.iterdir()
+            if path.is_dir()
+            and not path.is_symlink()
+            and re.fullmatch(r"run-\d{8}-\d{6}", path.name)
+        ]
+    except Exception:
+        return []
+
+    for path in sorted(runs, key=lambda p: p.name, reverse=True)[:keep_recent]:
+        keep_resolved.add(_safe_resolve(path))
+
+    removed: list[Path] = []
+    for path in sorted(runs, key=lambda p: p.name):
+        if _safe_resolve(path) in keep_resolved:
+            continue
+        cleanup_wildcard_chrome_processes(session_dir=path)
+        try:
+            shutil.rmtree(path)
+        except Exception:
+            continue
+        removed.append(path)
+    return removed
+
+
 def copy_tree_or_link(src: Path, dst: Path) -> None:
     if dst.exists() or dst.is_symlink():
         return
@@ -1472,6 +1528,9 @@ def main() -> int:
     global _ACTIVE_SESSION_DIR
     parser = argparse.ArgumentParser()
     parser.add_argument("--cleanup-stale", action="store_true")
+    parser.add_argument("--cleanup-sessions", action="store_true")
+    parser.add_argument("--keep-session", type=Path, action="append", default=[])
+    parser.add_argument("--keep-recent-runs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_KEEP_RECENT_RUNS"), 3))
     parser.add_argument("--strategy", type=Path, default=REPO_ROOT / "strategy.py")
     parser.add_argument("--jobs", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6))
     parser.add_argument("--games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 6))
@@ -1510,7 +1569,24 @@ def main() -> int:
     if args.cleanup_stale:
         cleanup_wildcard_chrome_processes(session_root=args.session_root)
         cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(max(3, args.jobs))])
+        if args.cleanup_sessions:
+            cleanup_wildcard_session_dirs(
+                args.session_root,
+                keep_session_dirs=args.keep_session,
+                keep_recent=args.keep_recent_runs,
+            )
         render_cleanup_overlay(args.status_file, args.html_file)
+        return 0
+    if args.cleanup_sessions:
+        keep_sessions = list(args.keep_session)
+        active_session = status_active_session(args.status_file)
+        if active_session:
+            keep_sessions.append(active_session)
+        cleanup_wildcard_session_dirs(
+            args.session_root,
+            keep_session_dirs=keep_sessions,
+            keep_recent=args.keep_recent_runs,
+        )
         return 0
 
     args.jobs = max(3, args.jobs)
@@ -1523,6 +1599,15 @@ def main() -> int:
     args.lingering_slot_max_culls = max(0, args.lingering_slot_max_culls)
     cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])
     cleanup_wildcard_chrome_processes(session_root=args.session_root)
+    keep_sessions = []
+    active_session = status_active_session(args.status_file)
+    if active_session:
+        keep_sessions.append(active_session)
+    cleanup_wildcard_session_dirs(
+        args.session_root,
+        keep_session_dirs=keep_sessions,
+        keep_recent=args.keep_recent_runs,
+    )
     session_dir = args.session_root / time.strftime("run-%Y%m%d-%H%M%S")
     _ACTIVE_SESSION_DIR = session_dir
     session_dir.mkdir(parents=True, exist_ok=True)

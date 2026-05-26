@@ -20,6 +20,8 @@ ${VALIDATE_ERROR}
 - コメントや `reason` 文言だけの修正で済ませないこと
 - `turns >= N` の固定ターン数で終盤判定を足さないこと。終盤危険局面は盤面状態で表現すること
 - **【不可侵の安全不変条件】** `crosses_deadline == True` の選択肢は、`crosses_deadline == False` の安全な選択肢が1つでも存在する限り、`merge_grade`(DIRECT/NEAR/FAR を含む)・merge-drought・HIGH_LAYER 抑制・タワー戦略など**いかなる理由でも選んではならない**。デッドライン超過は即ゲームオーバーであり、投機的マージより常に回避を優先する。`AssertionError: deadline-(far|near|direct)-guard` が出ている場合、それは安全な非超過 x が存在するのに deadline 超過 x を選んでいる証拠なので、その分岐に「安全な非超過候補があるなら超過候補を絶対に選ばない」ガードを最優先で入れること。このガードを既存ロジック(merge 優先等)より前段に置くこと
+- **【不可侵の安全不変条件】** `AssertionError: all-crossing-far-below` が出ている場合、全候補が `crosses_deadline == True` でも盤面がまだ赤線から遠く、raw crossing 予測を deadline penalty / `CROSSES_DEADLINE_NO_MERGE` / `MERGE_DROUGHT_DEADLINE_CROSS_PENALTY` の根拠にしてはいけないという意味である。安全候補がない局面でも、`deadline.top_edge_y` / `reactor.top_edge_y` と `deadline_margin` を確認し、赤線から遠いなら deadline reason を付けず通常評価に任せること
+- `v369 congestion-aware proximity` 周辺の検証で `proximity_bonus = 0.0` が不足している場合は、混雑・deadline 危険局面の `rp_guidance_suppressed` true 分岐で近接 bonus を明示的に0へ落とすこと。倍率追加だけを止めても、事前に計算した proximity bonus が残るなら失敗扱い
 - 別名の `.py` を新設して逃げないこと。前回作ってしまった不要トップレベル `.py` を再作成してはいけない
 - `strategy.py.staging` 以外のトップレベル `.py` は新規作成しないこと
 - `Edit` が2回連続で失敗した場合は、`strategy.py.staging` の該当箇所だけを狭く再読込して、より小さい差分でやり直すこと

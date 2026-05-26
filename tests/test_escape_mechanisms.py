@@ -1257,17 +1257,49 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
         self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": "0"', parallel)
         self.assertIn("def cleanup_chrome_profile_processes", parallel)
         self.assertIn("def cleanup_wildcard_chrome_processes", parallel)
+        self.assertIn("def cleanup_wildcard_session_dirs", parallel)
         self.assertIn('parser.add_argument("--cleanup-stale", action="store_true")', parallel)
+        self.assertIn('parser.add_argument("--cleanup-sessions", action="store_true")', parallel)
+        self.assertIn('WILDCARD_PARALLEL_KEEP_RECENT_RUNS"), 3', parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_root=args.session_root)", parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_dir=session_dir)", parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)", parallel)
+        self.assertIn("cleanup_wildcard_session_dirs(", parallel)
+        self.assertIn("wildcard_parallel_cleanup_sessions()", improve)
+        self.assertIn("--cleanup-sessions", improve)
         self.assertIn('"wildcard_parallel" not in profile_dir', parallel)
         self.assertIn('"ps", "-Ao", "pid=,command="', parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)\n                continue", parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
+
+    def test_wildcard_parallel_prunes_old_session_dirs_without_active(self):
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "wildcard_parallel"
+            old = root / "run-20260525-010101"
+            active = root / "run-20260527-001825"
+            newest = root / "run-20260528-001825"
+            ignored = root / "not-a-run"
+            for path in [old, active, newest, ignored]:
+                path.mkdir(parents=True)
+                (path / "marker.txt").write_text(path.name, encoding="utf-8")
+
+            removed = wildcard_parallel.cleanup_wildcard_session_dirs(
+                root,
+                keep_session_dirs=[active],
+                keep_recent=1,
+            )
+
+            self.assertEqual([p.name for p in removed], ["run-20260525-010101"])
+            self.assertFalse(old.exists())
+            self.assertTrue(active.exists())
+            self.assertTrue(newest.exists())
+            self.assertTrue(ignored.exists())
 
     def test_wildcard_parallel_overlay_embeds_three_live_previews(self):
         """OBS には候補別 CDP screenshot を3枚並べて出す。"""
@@ -1496,9 +1528,13 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("EARLY_ESCAPE_BATCH_OK", loop)
         self.assertIn("regression_streak をクリア", loop)
         self.assertIn("batch_comp >= leader_comp * min_ratio", loop)
+        self.assertIn("def row_comp(row):", loop)
+        self.assertIn("leader_comp = max(leader_comp, row_comp(row))", loop)
         self.assertIn("early_escape lock ignored: current batch is not bad enough", improve)
         self.assertIn("continue normal accumulation", improve)
         self.assertIn("rm -f \"$IMPROVE_LOCK_FILE\"", improve)
+        self.assertIn("def row_comp(row):", improve)
+        self.assertIn("leader_comp = max(leader_comp, row_comp(row))", improve)
         self.assertIn("last_rollback_pair.json", loop)
         self.assertIn("WILDCARD_TRIGGER_STAGNATION", loop)
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", loop)
@@ -1688,6 +1724,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         )
         self.assertIn("安全な選択肢が存在する限り", prompts)
         self.assertIn("安全な非超過候補があるなら超過候補を絶対に選ばない", prompts)
+        self.assertIn("all-crossing-far-below", prompts)
+        self.assertIn("raw crossing 予測を deadline penalty", prompts)
+        review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
+        self.assertIn("far-below raw crossing 抑制", review_prompt)
         self.assertIn("deadline-near-guard: expected safe non-crossing x=-1.0 over crossing NEAR merge", sandbox)
         self.assertIn("deadline-direct-guard: expected safe non-crossing x=-1.0 over crossing DIRECT merge", sandbox)
         self.assertNotIn("deadline-near-guard: expected crossing NEAR merge x=2.8", sandbox)
@@ -4006,6 +4046,87 @@ def decide(game_state, analysis):
 
         self.assertEqual(decision["x"], 0.0)
         self.assertIn("deadline_headroom", decision["reason"])
+
+    def test_deadline_safety_replaces_safe_choice_when_geometry_is_over_deadline(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 0.25, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.37,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 0.25,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.10,
+                    },
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.18,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 1, "type": 14, "x": 0.2, "y": 2.70, "r": 1.385},
+                    {"id": 2, "type": 9, "x": -1.5, "y": 1.30, "r": 0.746},
+                ],
+                "next": {"type": 10, "r": 0.846},
+            },
+        )
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertIn("geometry_underestimate_postcondition", decision["reason"])
+
+    def test_deadline_safety_replaces_underestimated_direct_when_geometry_is_worse(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 0.8, "reason": "DIRECT_MERGE_HIGH_LAYER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 1.70,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 0.8,
+                        "crosses_deadline": False,
+                        "merge_grade": "DIRECT",
+                        "risk_top_y_after_drop": 3.18,
+                    },
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.25,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 1, "type": 12, "x": 0.8, "y": 2.50, "r": 1.40},
+                    {"id": 2, "type": 8, "x": -1.8, "y": 1.10, "r": 0.660},
+                ],
+                "next": {"type": 12, "r": 1.068},
+            },
+        )
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertIn("DIRECT_TO_NO", decision["reason"])
+        self.assertIn("geometry_underestimate_postcondition", decision["reason"])
 
     def test_deadline_safety_medium_tower_replaces_near_deadline_underestimate(self):
         import strategy_runner
