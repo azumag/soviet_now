@@ -442,12 +442,13 @@ function updateExtraStats(scores) {
   const purgeTarget = purgeAnchor.target || null;
   const currentTargetRate = purgeCurrent.targetRate || null;
   const thresholdPct = Number(PURGE_TARGET_STATS.thresholdPct || 0);
+  const targetStatus = purgeCurrent.targetReached ? 'OK' : (purgeCurrent.purgeZone ? '粛清圏' : '未達');
   document.getElementById('gateFocus').textContent = purgeTarget ? purgeTarget.name : 'Inactive';
   document.getElementById('gateFocusSub').textContent = purgeTarget
-    ? ('anchor ' + purgeTarget.rate.toFixed(1) + '% >= ' + thresholdPct.toFixed(0) + '% / current ' + (purgeCurrent.targetReached ? 'OK' : '未達') + ' best T' + (purgeCurrent.bestMaxType || 0))
+    ? ('anchor ' + purgeTarget.rate.toFixed(1) + '% >= ' + thresholdPct.toFixed(0) + '% / current ' + targetStatus + ' best T' + (purgeCurrent.bestMaxType || 0))
     : ('anchor targetなし / threshold ' + thresholdPct.toFixed(0) + '%');
   document.getElementById('gateFocusCountry').textContent = purgeTarget
-    ? ('target ' + purgeTarget.name + '(T' + purgeTarget.type + ') ' + (purgeCurrent.targetReached ? 'OK' : '未達'))
+    ? ('target ' + purgeTarget.name + '(T' + purgeTarget.type + ') ' + targetStatus)
     : 'target none';
   document.getElementById('gateTurkmenistan').textContent = '-';
   document.getElementById('gateTurkmenistanSub').textContent = currentTargetRate ? (currentTargetRate.reached + ' / ' + currentTargetRate.total) : 'inactive';
@@ -473,7 +474,7 @@ function updateExtraStats(scores) {
   setDonut('recentP90Donut', SCORE_STATS.recent100P90, 3500, '#38bdf8');
   setDonut('recent3000Donut', SCORE_STATS.recent100Score3000Rate, 100, '#fb7185', SCORE_STATS.recent100Score3000 + '/100');
   setDonut('recent2000Donut', SCORE_STATS.recent100Score2000Rate, 100, '#38bdf8', SCORE_STATS.recent100Score2000 + '/100');
-  setDonut('gateFocusDonut', currentTargetRate ? currentTargetRate.rate : 0, 100, purgeCurrent.targetReached ? '#22c55e' : '#fb7185', purgeTarget ? (purgeCurrent.targetReached ? 'OK' : 'NG') : 'off');
+  setDonut('gateFocusDonut', currentTargetRate ? currentTargetRate.rate : 0, 100, purgeCurrent.targetReached ? '#22c55e' : '#fb7185', purgeTarget ? (purgeCurrent.targetReached ? 'OK' : (purgeCurrent.purgeZone ? '圏' : 'NG')) : 'off');
   setDonut('gateTurkmenistanDonut', 0, 100, '#38bdf8', '-');
   setDonut('gateUkraineDonut', gateHasSamples && ukraine ? ukraine.rate : 0, 100, '#38bdf8', gateHasSamples && ukraine ? (ukraine.reached + '/' + gateWindow) : '-');
   setDonut('gateKazakhstanDonut', gateHasSamples && kazakhstan ? kazakhstan.rate : 0, 100, '#38bdf8', gateHasSamples && kazakhstan ? (kazakhstan.reached + '/' + gateWindow) : '-');

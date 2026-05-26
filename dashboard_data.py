@@ -425,6 +425,9 @@ def stage_gate_counts_from_data(data: dict[str, Any] | None, stage: int) -> tupl
 
 def target_stage_from_regression(anchor_data: dict[str, Any] | None, current_data: dict[str, Any] | None) -> dict[str, Any] | None:
     for stage in (11, 13, 14):
+        reached, total = stage_gate_counts_from_data(current_data, stage)
+        if total <= 0:
+            return None
         current_rate = stage_gate_rate_from_data(current_data, stage)
         anchor_rate = stage_gate_rate_from_data(anchor_data, stage)
         try:
@@ -436,7 +439,6 @@ def target_stage_from_regression(anchor_data: dict[str, Any] | None, current_dat
         current_unmet = current_rate < 1.0
         regressed = anchor_rate > current_rate or (anchor_best >= stage and current_best < stage)
         if current_unmet and regressed:
-            reached, total = stage_gate_counts_from_data(current_data, stage)
             return {
                 "type": stage,
                 "name": country_name(stage),

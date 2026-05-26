@@ -625,6 +625,9 @@ def stage_gate_counts(data, stage):
 
 def target_from_stage_regression(anchor_data, current_data):
     for stage, _name in STAGE_GATE_SEQUENCE:
+        reached, total = stage_gate_counts(current_data, stage)
+        if total <= 0:
+            return None
         current_rate = stage_gate_rate(current_data, stage)
         anchor_rate = stage_gate_rate(anchor_data, stage)
         try:
@@ -636,7 +639,6 @@ def target_from_stage_regression(anchor_data, current_data):
         current_unmet = current_rate < 1.0
         regressed = anchor_rate > current_rate or (anchor_best >= stage and current_best < stage)
         if current_unmet and regressed:
-            reached, total = stage_gate_counts(current_data, stage)
             return (stage, anchor_rate, current_rate, reached, total)
     return None
 
@@ -656,6 +658,10 @@ bonus = int(eval_s) - int(raw)
 bonus_str = f"(+{bonus})" if bonus > 0 else ""
 raw_avg_str = f"raw_avg={raw_avg} " if raw_scores else ""
 current_run = read_json(sys.argv[5], {})
+current_progress = dict(current_run or {})
+if acc.get("max_types"):
+    current_progress["max_types"] = acc.get("max_types", [])
+    current_progress["best_max_type"] = max(max_types_from(current_progress), default=0)
 rolling = read_json(sys.argv[6], {})
 anchor = read_json(sys.argv[7], {})
 try:
@@ -663,13 +669,13 @@ try:
 except Exception:
     threshold = 0.80
 gate_types = parse_gate_types(sys.argv[9] if len(sys.argv) > 9 else "12,13,14,15")
-current_max_types = max_types_from(current_run)
+current_max_types = max_types_from(current_progress)
 founding = rate_line(current_max_types)
 anchor_hash = str((anchor or {}).get("hash") or "")
 anchor_data = rolling.get(anchor_hash, {}) if isinstance(rolling, dict) else {}
 target = target_from_anchor(anchor_data, threshold, gate_types)
 target_text = ""
-regression_target = target_from_stage_regression(anchor_data, current_run)
+regression_target = target_from_stage_regression(anchor_data, current_progress)
 if regression_target:
     stage, anchor_rate, current_rate, reached, total = regression_target
     remaining_games = max(0, cycle - total)
@@ -684,7 +690,7 @@ if regression_target:
         target_text += f" max={round(max_possible_rate * 100):.0f}%"
 elif target:
     stage, anchor_rate, _, _ = target
-    current_best = max([int((current_run or {}).get("best_max_type", 0) or 0)] + current_max_types) if current_max_types or (current_run or {}).get("best_max_type") else 0
+    current_best = max([int((current_progress or {}).get("best_max_type", 0) or 0)] + current_max_types) if current_max_types or (current_progress or {}).get("best_max_type") else 0
     target_ok = current_best >= stage
     target_text = f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {'OK' if target_ok else '未達'}"
 extra = " | ".join(part for part in (founding, target_text) if part)

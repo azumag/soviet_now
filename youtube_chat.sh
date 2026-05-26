@@ -25,6 +25,7 @@ PAGE_TOKEN_FILE="$CHAT_DIR/page_token"
 LIVE_CHAT_ID_FILE="$CHAT_DIR/live_chat_id"
 LIVE_VIDEO_ID_FILE="$CHAT_DIR/live_video_id"
 CHANNEL_ID_FILE="$CHAT_DIR/channel_id"
+WEB_CONTINUATION_FILE="$CHAT_DIR/web_live_chat_continuation"
 POLL_INTERVAL_FILE="$CHAT_DIR/poll_interval_sec"
 LAST_POLL_FILE="$CHAT_DIR/last_poll_epoch"
 LAST_ERROR_FILE="$CHAT_DIR/last_error.txt"
@@ -488,16 +489,175 @@ for line in lines:
 PY
 }
 
+_poll_web_live_chat() {
+	python3 - "$CHAT_DIR" "$RAW_LOG" "$WEB_CONTINUATION_FILE" "$POLL_INTERVAL_FILE" "$CHANNEL_ID_FILE" "$LIVE_VIDEO_ID_FILE" <<'PY'
+import html
+import json
+import os
+import re
+import sys
+import urllib.parse
+import urllib.request
+
+chat_dir, raw_log, continuation_file, poll_interval_file, channel_id_file, live_video_id_file = sys.argv[1:7]
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+def clean(text):
+    text = html.unescape(str(text or ""))
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\r]", "", text)
+    text = text.translate(str.maketrans("", "", "`$\\{}|;<>&"))
+    return re.sub(r"\s+", " ", text).strip()
+
+def text_runs(obj):
+    if not obj:
+        return ""
+    if isinstance(obj, str):
+        return obj
+    if "simpleText" in obj:
+        return obj.get("simpleText") or ""
+    out = []
+    for run in obj.get("runs") or []:
+        out.append(run.get("text") or "")
+    return "".join(out)
+
+def fetch(url, data=None, headers=None):
+    req = urllib.request.Request(url, data=data, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=int(os.environ.get("YOUTUBE_API_TIMEOUT_SEC", "12"))) as r:
+        return r.read().decode("utf-8", "ignore")
+
+def live_page():
+    channel_id = os.environ.get("YOUTUBE_CHANNEL_ID") or read(channel_id_file)
+    if not channel_id:
+        raise SystemExit(1)
+    return fetch(
+        "https://www.youtube.com/channel/%s/live" % urllib.parse.quote(channel_id),
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+
+continuation = read(continuation_file)
+video_id = read(live_video_id_file)
+page = ""
+if not continuation:
+    page = live_page()
+    api_key_match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', page)
+    client_match = re.search(r'"clientVersion":"([^"]+)"', page)
+    continuations = re.findall(r'"continuation":"([^"]+)"', page)
+    video_match = re.search(r'liveStreamabilityRenderer"[^\n]{0,500}?"videoId":"([A-Za-z0-9_-]{11})"', page)
+    if not video_match:
+        video_match = re.search(r'"videoId":"([A-Za-z0-9_-]{11})"[^\n]{0,500}?source=yt_live_broadcast', page)
+    if video_match:
+        video_id = video_match.group(1)
+        with open(live_video_id_file, "w", encoding="utf-8") as f:
+            f.write(video_id)
+    if not (api_key_match and client_match and continuations):
+        raise SystemExit(1)
+    api_key = api_key_match.group(1)
+    client_version = client_match.group(1)
+    continuation = continuations[0]
+else:
+    page = live_page()
+    api_key_match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', page)
+    client_match = re.search(r'"clientVersion":"([^"]+)"', page)
+    if not (api_key_match and client_match):
+        raise SystemExit(1)
+    api_key = api_key_match.group(1)
+    client_version = client_match.group(1)
+
+url = "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key=%s" % urllib.parse.quote(api_key)
+payload = {
+    "context": {"client": {"clientName": "WEB", "clientVersion": client_version}},
+    "continuation": continuation,
+}
+body = fetch(
+    url,
+    data=json.dumps(payload).encode("utf-8"),
+    headers={
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+        "Origin": "https://www.youtube.com",
+        "Referer": "https://www.youtube.com/watch?v=%s" % (video_id or ""),
+    },
+)
+data = json.loads(body)
+live = (data.get("continuationContents") or {}).get("liveChatContinuation") or {}
+next_continuation = ""
+interval_ms = 10000
+for cont in live.get("continuations") or []:
+    inner = cont.get("invalidationContinuationData") or cont.get("timedContinuationData") or cont.get("reloadContinuationData") or {}
+    next_continuation = inner.get("continuation") or next_continuation
+    interval_ms = inner.get("timeoutMs") or inner.get("pollDelayMs") or interval_ms
+if next_continuation:
+    with open(continuation_file, "w", encoding="utf-8") as f:
+        f.write(next_continuation)
+try:
+    interval_sec = max(2, int(interval_ms) // 1000)
+except Exception:
+    interval_sec = 10
+with open(poll_interval_file, "w", encoding="utf-8") as f:
+    f.write(str(interval_sec))
+
+lines = []
+for action in live.get("actions") or []:
+    item = (action.get("addChatItemAction") or {}).get("item") or {}
+    renderer = item.get("liveChatTextMessageRenderer") or item.get("liveChatPaidMessageRenderer") or item.get("liveChatMembershipItemRenderer")
+    if not renderer:
+        continue
+    msg_id = clean(renderer.get("id") or "")
+    author = clean(text_runs(renderer.get("authorName")) or "YouTube")
+    text = clean(text_runs(renderer.get("message")))
+    if not text:
+        continue
+    if not msg_id:
+        msg_id = "%s:%s" % (author, text)
+    lines.append("id=%s\t%s: %s" % (msg_id, author, text))
+
+if lines:
+    os.makedirs(os.path.dirname(raw_log) or ".", exist_ok=True)
+    with open(raw_log, "a", encoding="utf-8") as f:
+        for line in lines:
+            f.write(line + "\n")
+
+print(len(lines))
+for line in lines:
+    print(line)
+PY
+}
+
 _poll_nolock() {
 	if [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
 		_log "poll: disabled (set YOUTUBE_CHAT_ENABLED=1)"
 		return 0
 	fi
 	local chat_id key token url resp_file count access_token
+	local web_out notify_line
 	if _api_backoff_active; then
-		if ! chat_id=$(_try_backoff_recovery); then
-			_log "poll: API backoff active ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
-			return 1
+		access_token=$(_maybe_oauth_access_token)
+		if [ -s "$LIVE_CHAT_ID_FILE" ] && [ -n "$access_token" ]; then
+			_log "poll: API-key backoff active; retrying liveChatMessages with OAuth"
+		elif ! chat_id=$(_try_backoff_recovery); then
+			if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
+				rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
+				count=$(printf '%s\n' "$web_out" | head -n1)
+				printf '%s\n' "$web_out" | tail -n +2 | while IFS= read -r notify_line; do
+					[ -n "$notify_line" ] || continue
+					case "$notify_line" in
+						id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+					esac
+					_notify_chat_overlay "YouTube" "$notify_line"
+				done
+				echo "$(date +%s)" >"$LAST_POLL_FILE"
+				_log "poll: web fallback ${count:-0}件取得"
+				return 0
+			else
+				_log "poll: API backoff active ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
+				return 1
+			fi
 		fi
 	fi
 	if ! chat_id=$(_resolve_live_chat_id); then
@@ -505,8 +665,17 @@ _poll_nolock() {
 			access_token=$(_maybe_oauth_access_token)
 			if [ -n "$access_token" ]; then
 				chat_id=$(_resolve_live_chat_id 1 "$access_token") || {
-					_record_api_backoff "YouTube API 403/quota while resolving activeLiveChatId"
-					return 1
+					if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
+						_record_api_backoff "YouTube API quota while using web fallback"
+						rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
+						count=$(printf '%s\n' "$web_out" | head -n1)
+						echo "$(date +%s)" >"$LAST_POLL_FILE"
+						_log "poll: web fallback ${count:-0}件取得"
+						return 0
+					else
+						_record_api_backoff "YouTube API 403/quota while resolving activeLiveChatId"
+						return 1
+					fi
 				}
 			else
 				return 1
@@ -514,6 +683,9 @@ _poll_nolock() {
 		else
 			return 1
 		fi
+	fi
+	if [ -z "$access_token" ]; then
+		access_token=$(_maybe_oauth_access_token)
 	fi
 	chat_id=$(_urlencode "$chat_id")
 	token=""
@@ -548,9 +720,19 @@ _poll_nolock() {
 				fi
 			else
 				_log "poll: cached liveChatId invalid and no active replacement found"
-				_record_api_backoff "YouTube API 403/quota while refreshing liveChatId"
-				rm -f "$resp_file"
-				return 1
+				if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
+					_record_api_backoff "YouTube API quota while using web fallback"
+					rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
+					count=$(printf '%s\n' "$web_out" | head -n1)
+					echo "$(date +%s)" >"$LAST_POLL_FILE"
+					_log "poll: web fallback ${count:-0}件取得"
+					rm -f "$resp_file"
+					return 0
+				else
+					_record_api_backoff "YouTube API 403/quota while refreshing liveChatId"
+					rm -f "$resp_file"
+					return 1
+				fi
 			fi
 		else
 		_log "poll: liveChatMessages.list failed ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
