@@ -62,11 +62,6 @@ Phases (determined by board max Y):
 #
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
-# AI-tunable runtime parameter:
-# True  = deadline contact skips settle wait and drops immediately.
-# False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = False
-
 
 # --- Change History ---
       # v612: pre-critical height escalation — prevent NO_MERGE edge scatter during HIGH→CRITICAL transition
@@ -877,103 +872,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
-    # --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---
-    # Emergency deadline safety: when the reactor is past/near the deadline,
-    # force an immediate merge or the safest landing to avoid runaway stacking.
-    __dlg_game_state = game_state if isinstance(game_state, dict) else {}
-    __dlg_analysis = analysis if isinstance(analysis, dict) else {}
-    __dlg_reactor = __dlg_analysis.get("reactor", {}) if isinstance(__dlg_analysis.get("reactor", {}), dict) else {}
-    __dlg_margin = __dlg_reactor.get("deadline_margin", 99.0)
-    try:
-        __dlg_margin = float(__dlg_margin)
-    except (TypeError, ValueError):
-        __dlg_margin = 99.0
-    try:
-        __dlg_danger_count = int(__dlg_reactor.get("danger_piece_count", 0) or 0)
-    except (TypeError, ValueError):
-        __dlg_danger_count = 0
-    __dlg_dcross = bool(__dlg_game_state.get("deadline_crossed", False))
-    __dlg_rps = __dlg_reactor.get("reactive_pairs", [])
-    if isinstance(__dlg_rps, list):
-        __dlg_rp_count = len(__dlg_rps)
-    else:
-        try:
-            __dlg_rp_count = int(__dlg_rps)
-        except (TypeError, ValueError):
-            __dlg_rp_count = 0
-    __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
-    if not isinstance(__dlg_cands, list):
-        __dlg_cands = []
-    # This guard is specifically a deadline guard. Reactive pairs alone can
-    # justify merge pressure elsewhere in the strategy, but must not force a
-    # "safe landing" while the visible board is still far below the red line.
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
-    if __dlg_critical and __dlg_cands:
-        __dlg_has_clean = any(
-            isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            for c in __dlg_cands
-        )
-        def __dlg_merge_result_safe(c):
-            return not c.get("merge_result_crosses_deadline")
-        __dlg_direct = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
-            and __dlg_merge_result_safe(c)
-            and (not c.get("crosses_deadline") or c.get("danger_direct_merge_available"))
-            and not c.get("merge_result_crosses_deadline")
-        ]
-        if __dlg_direct:
-            def __dlg_score_direct(c):
-                return (
-                    0 if c.get("danger_direct_merge_available") else 1,
-                    float(c.get("landing_y", 99.0) or 99.0),
-                )
-            __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
-        __dlg_near_safe = [
-            c for c in __dlg_cands
-            if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
-            and __dlg_merge_result_safe(c)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-        ]
-        if __dlg_near_safe:
-            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
-        # v679: mandatory_themes compliance — NO_MERGE candidates crossing deadline must be excluded
-        #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
-        __dlg_safe_no_merge = [
-            c for c in __dlg_cands
-            if isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            and not (c.get("merge_grade") == "NO")  # Exclude NO_MERGE + deadline cross
-        ]
-        if __dlg_safe_no_merge:
-            __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # v680: When merge available globally, prefer merge candidates over NO_MERGE in fallback
-        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        __dlg_merge_preferred = [
-            c for c in __dlg_cands
-            if isinstance(c, dict)
-            and not c.get("crosses_deadline")
-            and not c.get("merge_result_crosses_deadline")
-            and c.get("merge_grade") in ["DIRECT", "NEAR"]
-        ]
-        if __dlg_merge_preferred:
-            __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-
-        # Fallback: only when no merge candidate is available
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-        if __dlg_safe:
-            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-    # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
 
@@ -2091,7 +1989,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                          # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
                          score += 900.0
                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                     elif reactive_pair_count >= -1:
+                     elif reactive_pair_count >= 1:
                          # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
                          # 即時併合機会_prioritizeするため、盤面圧縮ボーナスを半減
                          score += 400.0
