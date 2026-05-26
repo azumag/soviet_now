@@ -780,7 +780,7 @@ PY
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-			local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
+		local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
 	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
 		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
 import json
@@ -808,8 +808,8 @@ if updated > 0:
 print(f"stagnation_count={count}")
 print("stagnation_event=" + shlex.quote(event))
 print("stagnation_age=" + shlex.quote(age))
-	PY
-	)
+PY
+)
 		fi
 		if [[ -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
 			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/current_strategy_run.json" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" <<'PY' 2>/dev/null
