@@ -102,7 +102,9 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
         "max_games": _int(getattr(args, "games", 0), 0),
         "min_successful_games": _int(getattr(args, "min_successful_games", 0), 0),
         "cull_after_games": _int(getattr(args, "cull_after_games", 0), 0),
+        "cull_leader_min_games": _int(getattr(args, "cull_leader_min_games", 0), 0),
         "cull_comp_ratio": round(_float(getattr(args, "cull_comp_ratio", 0.0), 0.0), 3),
+        "lingering_slot_max_culls": _int(getattr(args, "lingering_slot_max_culls", 0), 0),
         "evaluate_mode": str(getattr(args, "evaluate_mode", "") or ""),
         "deadline_fast_drop_mutate": bool(getattr(args, "deadline_fast_drop_mutate", True)),
         "deadline_fast_drop_values": [
@@ -200,7 +202,9 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     max_games = _int(params.get("max_games"), 0)
     min_games = _int(params.get("min_successful_games"), max_games)
     cull_after = _int(params.get("cull_after_games"), 0)
+    cull_leader_min = _int(params.get("cull_leader_min_games"), 0)
     cull_ratio = _float(params.get("cull_comp_ratio"), 0.0)
+    lingering_max_culls = _int(params.get("lingering_slot_max_culls"), 0)
     jobs = _int(params.get("jobs"), 0)
     mode = str(params.get("evaluate_mode") or "")
     cull_label = f"{cull_after}g" if cull_after > 0 else "off"
@@ -211,12 +215,30 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     if min_games:
         param_parts.append(f"min {min_games}g")
     param_parts.append(f"cull {cull_label}")
+    if cull_leader_min > 0:
+        param_parts.append(f"leader min {cull_leader_min}g")
     param_parts.append(f"threshold {ratio_label}")
+    if lingering_max_culls > 0:
+        param_parts.append(f"linger >{lingering_max_culls}c")
     if jobs:
         param_parts.append(f"jobs {jobs}")
     if mode:
         param_parts.append(mode)
     params_label = " / ".join(param_parts)
+    compact_params = " ".join(
+        part
+        for part in [
+            f"J{jobs}" if jobs else "",
+            f"G{max_games}" if max_games else "",
+            f"MIN{min_games}" if min_games else "",
+            f"CULL={cull_label}",
+            f"LEADER>={cull_leader_min}g" if cull_leader_min > 0 else "",
+            f"TOP>={ratio_label}",
+            f"LINGER>{lingering_max_culls}C" if lingering_max_culls > 0 else "",
+            mode.upper() if mode else "",
+        ]
+        if part
+    )
     cards = []
     for cand in display_candidates:
         applied = cand.get("applied") or []
@@ -537,8 +559,7 @@ ul {{
   <div class="head">
     <div class="title">WILDCARD PARALLEL TRIAL</div>
     <div class="meta">
-      <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {generated}</div>
-      <div class="params">params: {html.escape(params_label)}</div>
+      <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {html.escape(compact_params or params_label or '-')} / {generated}</div>
     </div>
   </div>
   <div class="grid">{''.join(cards[:6])}</div>
@@ -563,6 +584,23 @@ ul {{
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(doc)
     os.replace(tmp, html_path)
+
+
+def render_cleanup_overlay(status_path: Path, html_path: Path, detail: str = "cleanup_stale") -> None:
+    previous: dict = {}
+    try:
+        previous = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        previous = {}
+    payload = {
+        "phase": "restored",
+        "session_dir": previous.get("session_dir", ""),
+        "params": previous.get("params", {}),
+        "candidates": [],
+        "ended_at": int(time.time()),
+        "detail": detail,
+    }
+    render_overlay(status_path, html_path, payload)
 
 
 def copy_tree_or_link(src: Path, dst: Path) -> None:
@@ -1175,6 +1213,8 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
     candidate.cdp_port = args.cdp_base_port + candidate.index
     candidate.serve_port = args.serve_base_port + candidate.index
     candidate.profile_dir = str(workdir / "tmp" / "chromium_profile")
+    if progress_callback:
+        progress_callback(candidate)
     env = os.environ.copy()
     env.pop("OBS_WEBSOCKET_PORT", None)
     env.pop("OBS_WEBSOCKET_PASSWORD", None)
@@ -1315,8 +1355,12 @@ class CullCoordinator:
         self.lock = Lock()
 
     def _append_if_new(self, candidate: CandidateResult) -> None:
-        if not any(c.job_id == candidate.job_id for c in self.candidates):
-            self.candidates.append(candidate)
+        for i, existing in enumerate(self.candidates):
+            if existing.job_id == candidate.job_id:
+                if existing is not candidate:
+                    self.candidates[i] = candidate
+                return
+        self.candidates.append(candidate)
 
     def _snapshot_unlocked(self, phase: str = "running") -> None:
         render_overlay(
@@ -1350,7 +1394,7 @@ class CullCoordinator:
                 c
                 for c in self.candidates
                 if c.job_id != candidate.job_id
-                and len(c.scores) > 0
+                and len(c.scores) >= self.args.cull_leader_min_games
                 and c.status in {"running", "accepted", "won"}
                 and c.comp > 0
             ]
@@ -1369,6 +1413,35 @@ class CullCoordinator:
             self._snapshot_unlocked()
             return should
 
+    def _min_successful_games_unlocked(self) -> int:
+        min_games = _int(getattr(self.args, "min_successful_games", 0), 0)
+        if min_games <= 0:
+            min_games = _int(getattr(self.args, "games", 0), 1)
+        return max(1, min_games)
+
+    def _eligible_slot_indices_unlocked(self) -> set[int]:
+        min_games = self._min_successful_games_unlocked()
+        return {
+            c.index
+            for c in self.candidates
+            if c.status in {"accepted", "won"} and len(c.scores) >= min_games
+        }
+
+    def lingering_slot_cutoff(self, index: int) -> tuple[bool, int]:
+        with self.lock:
+            limit = _int(getattr(self.args, "lingering_slot_max_culls", 0), 0)
+            if limit <= 0:
+                return (False, 0)
+            jobs = _int(getattr(self.args, "jobs", 0), 0)
+            if jobs <= 0:
+                jobs = max([c.index for c in self.candidates] + [index]) + 1
+            eligible_slots = self._eligible_slot_indices_unlocked()
+            unresolved_slots = {slot for slot in range(jobs) if slot not in eligible_slots}
+            if unresolved_slots != {index}:
+                return (False, 0)
+            cull_count = sum(1 for c in self.candidates if c.index == index and c.status == "culled")
+            return (cull_count > limit, cull_count)
+
 
 def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, coordinator: CullCoordinator) -> CandidateResult:
     candidate = first_candidate
@@ -1383,6 +1456,12 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
             result.status = "culled"
             coordinator.record(result)
         if result.status != "culled":
+            return result
+        stop_lingering, cull_count = coordinator.lingering_slot_cutoff(index)
+        if stop_lingering:
+            suffix = f"lingering slot cutoff after {cull_count} culls"
+            result.error = f"{result.error}; {suffix}" if result.error else suffix
+            coordinator.record(result)
             return result
         generation += 1
         candidate = run_perturb(args, index, session_dir, generation)
@@ -1414,7 +1493,9 @@ def main() -> int:
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))
     parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
+    parser.add_argument("--cull-leader-min-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES"), 2))
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
+    parser.add_argument("--lingering-slot-max-culls", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 6))
     args = parser.parse_args()
     args.deadline_fast_drop_mutate = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_MUTATE", "1").strip().lower() not in ("0", "false", "no", "off")
     raw_deadline_fast_drop_values = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_VALUES", "1,0")
@@ -1429,6 +1510,7 @@ def main() -> int:
     if args.cleanup_stale:
         cleanup_wildcard_chrome_processes(session_root=args.session_root)
         cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(max(3, args.jobs))])
+        render_cleanup_overlay(args.status_file, args.html_file)
         return 0
 
     args.jobs = max(3, args.jobs)
@@ -1436,7 +1518,9 @@ def main() -> int:
     if args.min_successful_games <= 0:
         args.min_successful_games = args.games
     args.cull_after_games = max(0, min(args.cull_after_games, args.games))
+    args.cull_leader_min_games = max(1, min(args.cull_leader_min_games, args.games))
     args.cull_comp_ratio = max(0.0, args.cull_comp_ratio)
+    args.lingering_slot_max_culls = max(0, args.lingering_slot_max_culls)
     cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])
     cleanup_wildcard_chrome_processes(session_root=args.session_root)
     session_dir = args.session_root / time.strftime("run-%Y%m%d-%H%M%S")

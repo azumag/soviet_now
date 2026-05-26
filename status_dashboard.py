@@ -378,10 +378,11 @@ def compute_decide_hash(path):
 def load_restorable_hashes():
     restorable = set()
 
-    by_hash_dir = Path(STRATEGY_HASH_ARCHIVE_DIR)
-    if by_hash_dir.exists():
-        for f in by_hash_dir.glob("*.py"):
-            restorable.add(f.stem)
+    for archive_dir in (STRATEGY_HASH_ARCHIVE_DIR, STRATEGY_HASH_PERMANENT_ARCHIVE_DIR):
+        by_hash_dir = Path(archive_dir)
+        if by_hash_dir.exists():
+            for f in by_hash_dir.glob("*.py"):
+                restorable.add(f.stem)
     return restorable
 
 

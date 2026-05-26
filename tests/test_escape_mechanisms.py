@@ -972,13 +972,19 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
         self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES="${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}"', config)
+        self.assertIn('WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS="${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-6}"', config)
         self.assertIn('WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES="${WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES:-0}"', config)
         self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', config)
         self.assertNotIn("WILDCARD_PARALLEL_MAX_REFILLS", config)
         self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', eloop)
+        self.assertIn('--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}"', eloop)
         self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', eloop)
+        self.assertIn('--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-6}"', eloop)
         self.assertNotIn("--max-refills", eloop)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1)', parallel)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES"), 2)', parallel)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 6)', parallel)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0)', parallel)
         self.assertIn("args.min_successful_games = args.games", parallel)
         self.assertIn("class CullCoordinator", parallel)
@@ -996,7 +1002,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
-            args = argparse.Namespace(cull_after_games=1, cull_comp_ratio=0.90)
+            args = argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90)
             leader = wildcard_parallel.CandidateResult(
                 job_id="leader",
                 index=0,
@@ -1045,6 +1051,46 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertIn("culled after 5 games", candidate.error)
             self.assertEqual(candidate.cull_leader_job_id, "leader")
 
+    def test_wildcard_parallel_does_not_cull_against_one_game_leader(self):
+        """cull判定自体は1ゲーム後からでも、比較先leaderは2ゲーム以上に限る。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            one_game_leader = wildcard_parallel.CandidateResult(
+                job_id="one-game-leader",
+                index=0,
+                workdir=td_path / "leader",
+                strategy_path=td_path / "leader" / "strategy.py",
+                status="running",
+                scores=[1000],
+                comp=1000,
+            )
+            candidate = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="running",
+                scores=[100],
+                comp=100,
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90),
+                td_path / "status.json",
+                td_path / "overlay.html",
+                td_path / "session",
+                [one_game_leader],
+            )
+
+            self.assertFalse(coordinator.should_cull(candidate))
+            self.assertEqual(candidate.cull_leader_job_id, "")
+
+            one_game_leader.scores.append(1000)
+            self.assertTrue(coordinator.should_cull(candidate))
+            self.assertEqual(candidate.cull_leader_job_id, "one-game-leader")
+
     def test_wildcard_parallel_culls_finished_low_candidate_before_returning(self):
         """先に完走した低comp候補も accepted のまま返さず補充する。"""
         import argparse
@@ -1052,14 +1098,14 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
-            args = argparse.Namespace(cull_after_games=1, cull_comp_ratio=0.90)
+            args = argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90)
             leader = wildcard_parallel.CandidateResult(
                 job_id="leader",
                 index=0,
                 workdir=td_path / "leader",
                 strategy_path=td_path / "leader" / "strategy.py",
                 status="running",
-                scores=[100],
+                scores=[100, 100],
                 comp=100,
             )
             first = wildcard_parallel.CandidateResult(
@@ -1112,6 +1158,88 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertEqual(low_done.status, "culled")
             perturb.assert_called_once_with(args, 1, td_path / "session", 1)
 
+    def test_wildcard_parallel_cuts_off_lingering_last_slot_after_cull_limit(self):
+        """残り1スロットが6回超カリングされたら補充を止め、既存acceptedの採用へ進む。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            args = argparse.Namespace(
+                jobs=3,
+                games=2,
+                min_successful_games=2,
+                cull_after_games=1,
+                cull_leader_min_games=2,
+                cull_comp_ratio=0.90,
+                lingering_slot_max_culls=6,
+            )
+            accepted_a = wildcard_parallel.CandidateResult(
+                job_id="accepted-a",
+                index=0,
+                workdir=td_path / "accepted-a",
+                strategy_path=td_path / "accepted-a" / "strategy.py",
+                status="accepted",
+                scores=[100, 100],
+                comp=100,
+            )
+            accepted_b = wildcard_parallel.CandidateResult(
+                job_id="accepted-b",
+                index=2,
+                workdir=td_path / "accepted-b",
+                strategy_path=td_path / "accepted-b" / "strategy.py",
+                status="accepted",
+                scores=[120, 120],
+                comp=120,
+            )
+            prior_culled = [
+                wildcard_parallel.CandidateResult(
+                    job_id=f"candidate-r{i}",
+                    index=1,
+                    workdir=td_path / f"candidate-r{i}",
+                    strategy_path=td_path / f"candidate-r{i}" / "strategy.py",
+                    status="culled",
+                    scores=[50],
+                    comp=50,
+                )
+                for i in range(6)
+            ]
+            first = wildcard_parallel.CandidateResult(
+                job_id="candidate-r7",
+                index=1,
+                workdir=td_path / "candidate-r7",
+                strategy_path=td_path / "candidate-r7" / "strategy.py",
+                status="pending",
+                generation=6,
+            )
+            low_done = wildcard_parallel.CandidateResult(
+                job_id="candidate-r7",
+                index=1,
+                workdir=td_path / "candidate-r7",
+                strategy_path=td_path / "candidate-r7" / "strategy.py",
+                status="accepted",
+                scores=[60],
+                comp=60,
+                generation=6,
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                args,
+                td_path / "status.json",
+                td_path / "overlay.html",
+                td_path / "session",
+                [accepted_a, accepted_b, *prior_culled],
+            )
+
+            with mock.patch.object(wildcard_parallel, "evaluate_real", return_value=low_done), \
+                mock.patch.object(wildcard_parallel, "run_perturb") as perturb:
+                result = wildcard_parallel.evaluate_slot(1, first, args, td_path / "session", coordinator)
+
+            self.assertIs(result, low_done)
+            self.assertEqual(low_done.status, "culled")
+            self.assertIn("lingering slot cutoff after 7 culls", low_done.error)
+            perturb.assert_not_called()
+            self.assertIs(wildcard_parallel.choose_winner(coordinator.candidates, 2), accepted_b)
+
     def test_wildcard_parallel_restarts_bridge_for_each_real_game(self):
         """real 評価は GAMEOVER 状態を複数試合として重複カウントしない。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
@@ -1119,6 +1247,12 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('(workdir / "game_state.json").write_text("{}", encoding="utf-8")', parallel)
         self.assertIn("bridge = launch_bridge(workdir, env, args.bridge_timeout)", parallel)
         self.assertIn("finally:\n                stop_process(bridge)", parallel)
+
+    def test_wildcard_parallel_records_running_before_first_game(self):
+        """補充候補が起動済みなのに overlay が pending のまま残らないようにする。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn('candidate.status = "running"', parallel)
+        self.assertIn("candidate.profile_dir = str(workdir / \"tmp\" / \"chromium_profile\")\n    if progress_callback:\n        progress_callback(candidate)", parallel)
 
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
@@ -3873,6 +4007,84 @@ def decide(game_state, analysis):
         self.assertEqual(decision["x"], 0.0)
         self.assertIn("deadline_headroom", decision["reason"])
 
+    def test_deadline_safety_medium_tower_replaces_near_deadline_underestimate(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -0.95, "reason": "MEDIUM_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.03,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -0.95,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.09,
+                        "deadline_y": 3.38,
+                    },
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.949,
+                        "deadline_y": 3.38,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 9, "x": -0.5, "y": 2.21, "r": 1.194}],
+                "next": {"type": 9, "r": 1.194},
+            },
+        )
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertIn("safe_medium_tower_underestimate_postcondition", decision["reason"])
+
+    def test_deadline_safety_medium_tower_keeps_far_below_without_margin_risk(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.2, "reason": "MEDIUM_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 1.30,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 1.2,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.0,
+                        "deadline_y": 3.38,
+                    },
+                    {
+                        "x": -0.6,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.8,
+                        "deadline_y": 3.38,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 9, "x": 0.0, "y": 1.0, "r": 0.746}],
+                "next": {"type": 9, "r": 0.746},
+            },
+        )
+
+        self.assertEqual(decision["x"], 1.2)
+        self.assertEqual(decision["reason"], "MEDIUM_TOWER")
+
     def test_deadline_safety_visual_same_country_falls_back_when_geometry_is_worse(self):
         import strategy_runner
 
@@ -5011,6 +5223,36 @@ PY
             self.assertNotIn("cand-3", overlay)
             self.assertNotIn("boom", overlay)
 
+    def test_wildcard_parallel_cleanup_overlay_clears_visible_slots(self):
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            status_path = td / "status.json"
+            html_path = td / "overlay.html"
+            wildcard_parallel.render_overlay(
+                status_path,
+                html_path,
+                {
+                    "phase": "running",
+                    "session_dir": "tmp/wildcard_parallel/run-old",
+                    "params": {"jobs": 6, "max_games": 6},
+                    "candidates": [
+                        {"job_id": "cand-1", "index": 0, "status": "running", "games": 1, "comp": 100},
+                    ],
+                },
+            )
+
+            wildcard_parallel.render_cleanup_overlay(status_path, html_path)
+
+            status = json.loads(status_path.read_text())
+            overlay = html_path.read_text()
+            self.assertEqual(status["phase"], "restored")
+            self.assertEqual(status["candidates"], [])
+            self.assertIn("restored / leader -", overlay)
+            self.assertNotIn("cand-1", overlay)
+            self.assertNotIn("SLOT 1", overlay)
+
     def test_wildcard_parallel_archives_each_winner_game_for_import(self):
         import wildcard_parallel
 
@@ -5488,6 +5730,9 @@ PY
         self.assertIn("OBJECTIVE_ANCHOR_PRIORITY_ENABLED", regression)
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
         self.assertIn('OBJECTIVE_MISS_PRUNE_ENABLED:-0', regression)
+        self.assertIn("def has_restorable_archive(hash_value):", regression)
+        self.assertIn("if not has_restorable_archive(h):", regression)
+        self.assertIn("if h != current_hash and not has_restorable_archive(h):", regression)
 
     def test_rollback_candidate_does_not_prefer_russia_progress_over_plain_score_top(self):
         with tempfile.TemporaryDirectory() as td:

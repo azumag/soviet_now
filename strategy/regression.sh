@@ -2286,10 +2286,12 @@ _pick_best_rollback_candidate() {
 	local ranked
 	ranked=$(
 		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" \
-			"${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" <<'PY'
+			"${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
+			"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY'
 import json
 import sys
 import math
+import os
 
 rs_file = sys.argv[1]
 current_hash = sys.argv[2]
@@ -2302,7 +2304,17 @@ w_lcb = float(sys.argv[8])
 objective_enabled = (sys.argv[9] if len(sys.argv) > 9 else "1") == "1"
 objective_min_comp_ratio = float(sys.argv[10]) if len(sys.argv) > 10 else 0.90
 objective_max_comp_gap = float(sys.argv[11]) if len(sys.argv) > 11 else 1500.0
+archive_dir = sys.argv[12] if len(sys.argv) > 12 else ""
+permanent_archive_dir = sys.argv[13] if len(sys.argv) > 13 else ""
 rs = json.load(open(rs_file))
+
+def has_restorable_archive(hash_value):
+    if not archive_dir and not permanent_archive_dir:
+        return True
+    return any(
+        base and os.path.exists(os.path.join(base, f"{hash_value}.py"))
+        for base in (archive_dir, permanent_archive_dir)
+    )
 
 def quantile(vals, p):
     xs = sorted(vals)
@@ -2363,6 +2375,8 @@ def objective_tuple(data):
 rows = []
 for h, data in rs.items():
     if h == current_hash:
+        continue
+    if not has_restorable_archive(h):
         continue
     scores = [int(x) for x in data.get("scores", [])]
     if len(scores) < min_games:
@@ -2968,7 +2982,8 @@ check_regression() {
 			"${ARCHIVE_RESTART_COOLDOWN_FILE:-tmp/state/archive_restart_cooldown.json}" "${ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT:-1}" \
 			"${EARLY_COMP_TOP_GAP_ENABLED:-1}" "${EARLY_COMP_TOP_GAP_MIN_GAMES:-4}" "${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" \
 			"${STAGE_ACHIEVEMENT_REGRESSION_ENABLED:-1}" "${STAGE_ACHIEVEMENT_REGRESSION_MIN_GAMES:-4}" \
-			"${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.80}" "${STAGE_ACHIEVEMENT_GATE_TYPES:-12,13,14,15}" <<'PY'
+			"${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.80}" "${STAGE_ACHIEVEMENT_GATE_TYPES:-12,13,14,15}" \
+			"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY'
 import json
 import math
 import os
@@ -3042,6 +3057,15 @@ except Exception:
     stage_achievement_gate_min_rate = 0.80
 stage_achievement_gate_min_rate = max(0.0, min(1.0, stage_achievement_gate_min_rate))
 stage_achievement_gate_type_raw = sys.argv[46] if len(sys.argv) > 46 else "12,13,14,15"
+permanent_archive_dir = sys.argv[47] if len(sys.argv) > 47 else ""
+
+def has_restorable_archive(hash_value):
+    if not archive_dir and not permanent_archive_dir:
+        return True
+    return any(
+        base and os.path.exists(os.path.join(base, f"{hash_value}.py"))
+        for base in (archive_dir, permanent_archive_dir)
+    )
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
 _BASE_BRANCH_MAX_GAMES = branch_max_games
@@ -3306,6 +3330,8 @@ def current_rolling_rank(metrics_dict):
             m = metrics((data or {}).get("scores", []) or [])
         if not m or int(m.get("n", 0) or 0) < min_games_current:
             continue
+        if h != current_hash and not has_restorable_archive(h):
+            continue
         ranked.append((key(m), h))
     if not seen_current:
         ranked.append((key(metrics_dict), current_hash))
@@ -3325,6 +3351,8 @@ def rolling_comp_leader(current_metrics):
         else:
             m = metrics((data or {}).get("scores", []) or [])
         if not m or int(m.get("n", 0) or 0) < min_games_current:
+            continue
+        if h != current_hash and not has_restorable_archive(h):
             continue
         ranked.append((key(m), h, m))
     if current_metrics and not seen_current and int(current_metrics.get("n", 0) or 0) >= min_games_current:

@@ -981,7 +981,9 @@ PY
 		export WILDCARD_PARALLEL_OBS_CANDIDATE_X
 		export WILDCARD_PARALLEL_OBS_CANDIDATE_Y
 		export WILDCARD_PARALLEL_CULL_AFTER_GAMES
+		export WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES
 		export WILDCARD_PARALLEL_CULL_COMP_RATIO
+		export WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS
 		set +e
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
@@ -996,7 +998,9 @@ PY
 			--seed "$wildcard_seed" \
 			--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
 			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
+			--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
 			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
+			--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-6}" \
 			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \

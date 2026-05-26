@@ -74,6 +74,7 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
             and __dlg_merge_result_safe(c)
+            and (not c.get("crosses_deadline") or c.get("danger_direct_merge_available"))
             and not c.get("merge_result_crosses_deadline")
         ]
         if __dlg_direct:
@@ -88,6 +89,7 @@ GUARD_BLOCK = '''    # --- BEGIN DEADLINE GUARD (injected from current strategy 
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
             and __dlg_merge_result_safe(c)
+            and not c.get("crosses_deadline")
             and not c.get("merge_result_crosses_deadline")
         ]
         if __dlg_near_safe:

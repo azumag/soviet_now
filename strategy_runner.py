@@ -1187,6 +1187,43 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         else:
             replacement = min_risk_candidate
             replacement_source = "large_deadline_minrisk"
+    elif (
+        not chosen.get("crosses_deadline", False)
+        and chosen.get("merge_grade", "NO") == "NO"
+        and safe
+        and "MEDIUM_TOWER" in str(decision.get("reason", "") or "")
+        and chosen_top >= deadline_y - 0.35
+        and current_top_edge_y >= deadline_y - 1.40
+    ):
+        no_safe_pool = [r for r in safe if r.get("merge_grade", "NO") == "NO"] or list(safe)
+        alt_pool = [r for r in no_safe_pool if r is not chosen]
+        if not alt_pool:
+            return decision
+        best_safe = min(
+            alt_pool,
+            key=lambda r: (
+                risk_top(r),
+                abs(float(r.get("x", 0.0) or 0.0)),
+            ),
+        )
+        chosen_geom_top = geometry_top_at_x(chosen.get("x"))
+        best_geom_top = geometry_top_at_x(best_safe.get("x"))
+        best_is_edge = abs(float(best_safe.get("x", 0.0) or 0.0)) > 2.2
+        risk_improvement = chosen_top - risk_top(best_safe)
+        geom_improvement = (
+            (chosen_geom_top - best_geom_top)
+            if chosen_geom_top is not None and best_geom_top is not None
+            else None
+        )
+        risk_threshold = 0.14 if best_is_edge else 0.10
+        geom_threshold = 0.28 if best_is_edge else 0.20
+        if risk_improvement >= risk_threshold or (
+            geom_improvement is not None and geom_improvement >= geom_threshold
+        ):
+            replacement = best_safe
+            replacement_source = "safe_medium_tower_underestimate_postcondition"
+        else:
+            return decision
     elif not chosen.get("crosses_deadline", False):
         return decision
     elif not deadline_precontact_pressure:

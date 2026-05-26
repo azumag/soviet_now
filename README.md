@@ -156,8 +156,10 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard` / `archive_restart` の隔離改善中は soren91 を自動起動せず、非メリケン表示を保つ。通常改善だけが従来どおり meriken tab / soren91 presentation を復帰させる。
 - `wildcard` 並列評価の OBS overlay は、候補なし・winner欠落・validation失敗・SIGTERM でも trap で status/dashboard 表示へ復元する。`show_status.sh` の `WildParFail` は直近1時間の失敗診断であり、`improve_state.json` が idle なら脱出ロックが詰まっている状態ではない。
 - `wildcard` 並列評価は既定で 6 候補を隔離実行し、各候補は既定 6 ゲームで評価する。OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
-- `wildcard` 並列評価のカリングは既定で1ゲームごとに有効で、現 leader composite の 90% 未満に落ちた候補を補充する。`WILDCARD_PARALLEL_CULL_AFTER_GAMES=0` にした時だけカリングを無効化して全候補を指定ゲーム数まで走らせる。
+- `wildcard` 並列評価のカリングは既定で1ゲームごとに有効で、現 leader composite の 90% 未満に落ちた候補を補充する。ただし比較先 leader は既定で2ゲーム以上走った候補に限り、1ゲームだけの上振れで他候補を早期に落としすぎない。`WILDCARD_PARALLEL_CULL_AFTER_GAMES=0` にした時だけカリングを無効化して全候補を指定ゲーム数まで走らせる。
+- `wildcard` 並列評価で他スロットが完走済みなのに最後の1スロットだけが補充カリングを繰り返す場合は、`WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` 回を超えた時点で補充を止める。これにより、十分な完走候補があるのに trailing slot の空振りで採用が長時間遅れるのを防ぐ。
 - `wildcard_parallel.py` はセッション開始時と各候補ゲームの起動直前に WILDCARD 専用 game server port (`WILDCARD_PARALLEL_SERVE_BASE_PORT` から候補数分) の古い listener を掃除する。前回の隔離ブラウザが残っても `EADDRINUSE` で候補全体が 0 game 失敗にならないようにするため。
+- `wildcard_parallel.py --cleanup-stale` は古い候補ウィンドウ/port の掃除だけでなく、WILDCARD overlay を `restored` へ更新して候補カードを消す。実体のない古い candidate 表示を停滞監視が進行中と誤読しないようにするため。
 - `wildcardParallelOverlay` は 1920x140 のヘッダ専用表示とし、候補本線は `wildcardParallelCand1..6` の macOS window capture source で映す。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
 - `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。
@@ -167,6 +169,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard` 並列評価ブラウザは `SOREN_BGM_VOLUME=0` / `SOREN_SE_VOLUME=1.5` を既定で渡す。Unity の scene load 後に音量が戻ることがあるため、`soviet_local.mjs` は `SOREN_UNITY_VOLUME_REAPPLY_MS` 間隔で指定音量を再適用する。
 - 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。
 - `wildcard` / `archive_restart` の fast escape では親 `eloop_improve.sh` が候補採用と状態遷移を担う。親 PID が見えない running state は、通常改善のように長時間 fresh log 扱いで保護せず、短い猶予後に `monitor_improve_runtime.sh` が harvest して stale lock を解放する。early escape の lock は作成時 `normal` でも、改善起動時に最終 reason を書き戻すため、失敗後の再試行・表示・代打制御も fast escape として扱われる。
+- rollback/overlay の候補順位は `strategy_versions/by_hash` と `strategy_versions_archive/by_hash` のどちらにも実ファイルがない hash を除外する。rolling score だけ残っている復元不能候補を top や rollback target として表示・選択し、archive_restart/rollback が空振りするのを避ける。
 - `improve_daemon` は `tmp/improve.lock` があるのに `logs/improve_daemon.log` / `tmp/state/improve_state.json` が進まない場合、supervisor が `IMPROVE_DAEMON_LOCK_STALL_SEC` 後に stale とみなして再起動する。pidfile の heartbeat だけを worker 生存と見なすと、メインループが `改善ロック待ち` のまま止まるため、lock age / log age / state age を同時に見る。
 - Twitch 予想の結果が `粛清` の場合は、`soren_loop.sh` が `REGRESSION_ROLLBACK_RESULT` から `regression_reason_raw` / `regression_reason_label` を予想 state に保存し、`twitch_predictions.sh` が結果文に理由を付ける。粛清が出た時は「粛清」だけでなく、`comp比率低下` / `top対比comp不足` / `前段階到達率低下` / `ソ連経路喪失` などの原因が視聴者に見える。
 - 回帰理由は `lost_soviet_path` だけでなく、ロシア前段階の `lost_turkmenistan_gate` / `lost_ukraine_gate` / `lost_kazakhstan_gate` も段階到達率で判定する。ロシア到達(type15)だけは rollback/anchor 保護の直接理由にせず、archive_restart / escape の候補選別と改善入力の強い signal として扱う。rolling score が上位 grace 内の時は段階ゲートでの粛清を抑制し、上位外で frontier を失った時だけ目的後退として扱う。
@@ -192,7 +195,9 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_REGRESSION_STREAK` | `2` | 直接脱出や WILDCARD 発火の回帰ストリーク閾値 |
 | `WILDCARD_PARALLEL_GAMES` | `6` | WILDCARD 並列候補1本あたりの既定評価ゲーム数 |
 | `WILDCARD_PARALLEL_CULL_AFTER_GAMES` | `1` | WILDCARD 並列候補を leader 比で補充判定し始めるゲーム数。0 ならカリング無効 |
+| `WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES` | `2` | カリング比較先 leader として扱う最小ゲーム数 |
 | `WILDCARD_PARALLEL_CULL_COMP_RATIO` | `0.90` | leader composite に対してこの比率未満の候補を補充する閾値 |
+| `WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` | `6` | 最後の未完走スロットがこの回数を超えてカリングされたら補充を止める |
 | `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定で目的進捗を score 近傍候補の優先度に使う。現行ではソ連到達のみを保護対象にし、ロシア到達だけでは score-only anchor を押しのけない |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
