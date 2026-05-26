@@ -526,9 +526,121 @@ PY
 	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress
 		pred_progress=$(
-			python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" "$MIN_GAMES_BEFORE_IMPROVE" <<'PY'
+			python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" "$MIN_GAMES_BEFORE_IMPROVE" \
+				"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+				"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+				"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" \
+				"${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.80}" \
+				"${STAGE_ACHIEVEMENT_GATE_TYPES:-12,13,14,15}" <<'PY'
 import json, sys
-acc = json.load(open(sys.argv[1]))
+
+COUNTRY_NAMES = {
+    11: "トルクメン",
+    12: "ベラルーシ",
+    13: "ウクライナ",
+    14: "カザフ",
+    15: "ロシア",
+    16: "ソ連",
+}
+
+STAGE_GATE_SEQUENCE = (
+    (11, "トルクメン"),
+    (13, "ウクライナ"),
+    (14, "カザフ"),
+)
+
+def read_json(path, fallback):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return fallback
+
+def parse_gate_types(raw):
+    stages = []
+    for chunk in str(raw or "").replace(";", ",").split(","):
+        chunk = chunk.strip().lstrip("Tt")
+        if not chunk:
+            continue
+        try:
+            stage = int(chunk)
+        except Exception:
+            continue
+        if stage > 0:
+            stages.append(stage)
+    return sorted(set(stages)) or [12, 13, 14, 15]
+
+def max_types_from(data):
+    values = []
+    for raw in (data or {}).get("max_types", []) or []:
+        try:
+            values.append(int(raw))
+        except Exception:
+            pass
+    return values
+
+def rate_line(max_types):
+    total = len(max_types)
+    if total <= 0:
+        return ""
+    parts = []
+    for stage in (13, 14, 15):
+        reached = sum(1 for value in max_types if value >= stage)
+        parts.append(f"{COUNTRY_NAMES.get(stage, 'Type'+str(stage))}={round(reached / total * 100):.0f}%")
+    return "建国率 " + " ".join(parts)
+
+def target_from_anchor(anchor_data, threshold, gate_types):
+    max_types = max_types_from(anchor_data)
+    total = len(max_types)
+    if total <= 0:
+        return None
+    candidates = []
+    for stage in gate_types:
+        reached = sum(1 for value in max_types if value >= stage)
+        rate = reached / total
+        if rate >= threshold:
+            candidates.append((stage, rate, reached, total))
+    return max(candidates, key=lambda item: item[0]) if candidates else None
+
+def stage_gate_rate(data, stage):
+    max_types = max_types_from(data)
+    if not max_types:
+        try:
+            best = int((data or {}).get("best_max_type", 0) or 0)
+        except Exception:
+            best = 0
+        return 1.0 if best >= stage else 0.0
+    return sum(1 for value in max_types if value >= stage) / len(max_types)
+
+def stage_gate_counts(data, stage):
+    max_types = max_types_from(data)
+    total = len(max_types)
+    if total <= 0:
+        try:
+            best = int((data or {}).get("best_max_type", 0) or 0)
+        except Exception:
+            best = 0
+        return (1 if best >= stage else 0, 1 if best > 0 else 0)
+    return (sum(1 for value in max_types if value >= stage), total)
+
+def target_from_stage_regression(anchor_data, current_data):
+    for stage, _name in STAGE_GATE_SEQUENCE:
+        current_rate = stage_gate_rate(current_data, stage)
+        anchor_rate = stage_gate_rate(anchor_data, stage)
+        try:
+            current_best = int((current_data or {}).get("best_max_type", 0) or 0)
+            anchor_best = int((anchor_data or {}).get("best_max_type", 0) or 0)
+        except Exception:
+            current_best = 0
+            anchor_best = 0
+        current_unmet = current_rate < 1.0
+        regressed = anchor_rate > current_rate or (anchor_best >= stage and current_best < stage)
+        if current_unmet and regressed:
+            reached, total = stage_gate_counts(current_data, stage)
+            return (stage, anchor_rate, current_rate, reached, total)
+    return None
+
+acc = read_json(sys.argv[1], {})
 count = acc.get("count", 0)
 scores = acc.get("scores", "").split()
 eval_avg = sum(int(s) for s in scores) // len(scores) if scores else 0
@@ -543,7 +655,41 @@ eval_s = sys.argv[3]
 bonus = int(eval_s) - int(raw)
 bonus_str = f"(+{bonus})" if bonus > 0 else ""
 raw_avg_str = f"raw_avg={raw_avg} " if raw_scores else ""
-print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str} (あと{remain}試合)")
+current_run = read_json(sys.argv[5], {})
+rolling = read_json(sys.argv[6], {})
+anchor = read_json(sys.argv[7], {})
+try:
+    threshold = max(0.0, min(1.0, float(sys.argv[8])))
+except Exception:
+    threshold = 0.80
+gate_types = parse_gate_types(sys.argv[9] if len(sys.argv) > 9 else "12,13,14,15")
+current_max_types = max_types_from(current_run)
+founding = rate_line(current_max_types)
+anchor_hash = str((anchor or {}).get("hash") or "")
+anchor_data = rolling.get(anchor_hash, {}) if isinstance(rolling, dict) else {}
+target = target_from_anchor(anchor_data, threshold, gate_types)
+target_text = ""
+regression_target = target_from_stage_regression(anchor_data, current_run)
+if regression_target:
+    stage, anchor_rate, current_rate, reached, total = regression_target
+    remaining_games = max(0, cycle - total)
+    final_total = max(1, total + remaining_games)
+    max_possible_rate = (reached + remaining_games) / final_total
+    status = "粛清圏" if max_possible_rate < anchor_rate else "未達"
+    target_text = (
+        f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {status}"
+        f" curr={round(current_rate * 100):.0f}% anchor={round(anchor_rate * 100):.0f}%"
+    )
+    if status == "粛清圏":
+        target_text += f" max={round(max_possible_rate * 100):.0f}%"
+elif target:
+    stage, anchor_rate, _, _ = target
+    current_best = max([int((current_run or {}).get("best_max_type", 0) or 0)] + current_max_types) if current_max_types or (current_run or {}).get("best_max_type") else 0
+    target_ok = current_best >= stage
+    target_text = f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {'OK' if target_ok else '未達'}"
+extra = " | ".join(part for part in (founding, target_text) if part)
+extra = f" | {extra}" if extra else ""
+print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str}{extra} (あと{remain}試合)")
 PY
 		)
 		enqueue_chat_message "${pred_progress}" "eloop"

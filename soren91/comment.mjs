@@ -171,11 +171,10 @@ function formatStageRate(stage) {
 
 function formatStageStatsForPrompt(stats) {
   if (!stats?.hasData) {
-    return '建国率: 現在の戦略ラン情報がまだ不足。粛清基準: 不明。';
+    return '現在戦略の建国率: 現在の戦略ラン情報がまだ不足。';
   }
   const rates = STAGE_RATE_TYPES.map(stage => formatStageRate(stageByType(stats, stage.type))).join(' / ');
-  const focus = stats.focus ? `${stats.focus.name}(type${stats.focus.type})` : '不明';
-  return `建国率: ${rates}。粛清基準ターゲット: ${focus}。対象ゲーム数: ${stats.total}。`;
+  return `現在戦略の建国率: ${rates}。対象ゲーム数: ${stats.total}。`;
 }
 
 function formatStageStatsForComment(stats) {
@@ -186,8 +185,7 @@ function formatStageStatsForComment(stats) {
       return item ? `${item.name}${item.rate.toFixed(1)}%` : `${stage.name}-`;
     })
     .join(' / ');
-  const focus = stats.focus ? `${stats.focus.name}(type${stats.focus.type})` : '不明';
-  return `建国率: ${rates}。粛清基準: ${focus}。`;
+  return `現在戦略の建国率: ${rates}。`;
 }
 
 function appendStageStatsToComment(comment, stats) {

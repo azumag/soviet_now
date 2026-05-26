@@ -4599,6 +4599,42 @@ def decide(game_state, analysis):
         self.assertIn("anchor_best_max_type", regression)
         self.assertIn("curr_best_max_type", regression)
 
+    def test_dashboard_purge_target_uses_anchor_and_current_run(self):
+        import dashboard_data
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            current_run = td / "current_strategy_run.json"
+            rolling_scores = td / "rolling_scores.json"
+            best_anchor = td / "best_strategy_anchor.json"
+            config = td / "config.sh"
+            current_run.write_text(
+                json.dumps({"hash": "current", "max_types": [13, 13, 14], "best_max_type": "bad"}),
+                encoding="utf-8",
+            )
+            rolling_scores.write_text(
+                json.dumps({"anchor": {"max_types": [14, 14, 14, 13]}}),
+                encoding="utf-8",
+            )
+            best_anchor.write_text(json.dumps({"hash": "anchor"}), encoding="utf-8")
+            config.write_text(
+                'STAGE_ACHIEVEMENT_GATE_MIN_RATE="${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.75}"\n'
+                'STAGE_ACHIEVEMENT_GATE_TYPES="${STAGE_ACHIEVEMENT_GATE_TYPES:-13,14,15}"\n',
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(dashboard_data, "CURRENT_STRATEGY_RUN", current_run), \
+                mock.patch.object(dashboard_data, "ROLLING_SCORES", rolling_scores), \
+                mock.patch.object(dashboard_data, "BEST_STRATEGY_ANCHOR", best_anchor), \
+                mock.patch.object(dashboard_data, "CORE_CONFIG", config):
+                stats = dashboard_data.purge_target_stats()
+
+        self.assertEqual(stats["anchor"]["target"]["type"], 14)
+        self.assertEqual(stats["current"]["targetRate"]["reached"], 1)
+        self.assertEqual(stats["current"]["targetRate"]["total"], 3)
+        self.assertFalse(stats["current"]["targetReached"])
+        self.assertEqual(stats["current"]["bestMaxType"], 14)
+
     def test_restored_normalized_rollback_candidate_clears_stale_reject(self):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
@@ -5402,6 +5438,9 @@ PY
         self.assertIn('2>"$err_file"', youtube)
         self.assertIn('_write_send_payload "$chat_id" "$msg" "$payload_file"', youtube)
         self.assertIn("_discover_live_video_id()", youtube)
+        self.assertIn("_discover_live_video_id_from_channel_page()", youtube)
+        self.assertIn("liveStreamabilityRenderer", youtube)
+        self.assertIn("source=yt_live_broadcast", youtube)
         self.assertIn("YOUTUBE_CHANNEL_ID", youtube)
         self.assertIn("LIVE_VIDEO_ID_FILE", youtube)
         self.assertIn("eventType=live", youtube)
@@ -5414,6 +5453,9 @@ PY
         self.assertIn('access_token=$(_maybe_oauth_access_token)', youtube)
         self.assertIn('_api_get "$url" "$access_token" >"$resp_file"', youtube)
         self.assertIn("_api_backoff_active()", youtube)
+        self.assertIn("_try_backoff_recovery()", youtube)
+        self.assertIn('YOUTUBE_API_BACKOFF_RECOVERY_PROBE_SEC:-120', youtube)
+        self.assertIn('poll: recovered activeLiveChatId during API backoff', youtube)
         self.assertIn('_record_api_backoff "YouTube API 403/quota while resolving activeLiveChatId"', youtube)
         self.assertIn('api_backoff_until=${backoff_until}', youtube)
         self.assertIn('rm -f "$LIVE_CHAT_ID_FILE" "$LIVE_VIDEO_ID_FILE" "$PAGE_TOKEN_FILE"', youtube)

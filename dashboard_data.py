@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,9 +18,19 @@ EVAL_SCORE_HISTORY = Path("eval_score_history.txt")
 RUSSIA_HISTORY = Path("tmp/history/russia_creation_history.tsv")
 GAME_HISTORY = Path("game_history")
 GAME_COUNT = Path("game_count.txt")
+CURRENT_STRATEGY_RUN = Path("tmp/state/current_strategy_run.json")
+ROLLING_SCORES = Path("tmp/state/rolling_scores.json")
+BEST_STRATEGY_ANCHOR = Path("tmp/state/best_strategy_anchor.json")
+CORE_CONFIG = Path("core/config.sh")
 DEFAULT_CHART_GAMES = 1200
 STAGE_TYPES = [
     (11, "トルクメニスタン"),
+    (12, "ベラルーシ"),
+    (13, "ウクライナ"),
+    (14, "カザフスタン"),
+    (15, "ロシア"),
+]
+FOUNDING_RATE_TYPES = [
     (13, "ウクライナ"),
     (14, "カザフスタン"),
     (15, "ロシア"),
@@ -33,6 +45,52 @@ def parse_chart_limit(raw: str | None) -> int:
     except ValueError:
         return DEFAULT_CHART_GAMES
     return value if value >= 0 else DEFAULT_CHART_GAMES
+
+
+def read_config_value(name: str, fallback: str) -> str:
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        text = CORE_CONFIG.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return fallback
+    match = re.search(rf'^{re.escape(name)}="\$\{{{re.escape(name)}:-([^}}]+)\}}"', text, re.M)
+    return match.group(1) if match else fallback
+
+
+def configured_gate_min_rate() -> float:
+    raw = read_config_value("STAGE_ACHIEVEMENT_GATE_MIN_RATE", "0.80")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.80
+    return max(0.0, min(1.0, value))
+
+
+def configured_gate_types() -> list[int]:
+    raw = read_config_value("STAGE_ACHIEVEMENT_GATE_TYPES", "12,13,14,15")
+    stages: list[int] = []
+    for chunk in raw.replace(";", ",").split(","):
+        chunk = chunk.strip().lstrip("Tt")
+        if not chunk:
+            continue
+        try:
+            stage = int(chunk)
+        except ValueError:
+            continue
+        if stage > 0:
+            stages.append(stage)
+    return sorted(set(stages)) or [12, 13, 14, 15]
+
+
+def configured_min_games() -> int:
+    raw = read_config_value("STAGE_ACHIEVEMENT_REGRESSION_MIN_GAMES", "4")
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 4
+    return max(1, value)
 
 
 def parse_score_history(path: Path) -> list[dict[str, Any]]:
@@ -126,6 +184,13 @@ def current_strategy_hash(path: Path = Path("tmp/state/current_strategy_run.json
         return None
     value = data.get("hash")
     return str(value) if value else None
+
+
+def read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 def read_current_game(path: Path, fallback: int) -> int:
@@ -239,11 +304,11 @@ def russia_stats(rows: list[dict[str, Any]], current_game: int) -> dict[str, Any
     }
 
 
-def stage_gate_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def stage_gate_stats(rows: list[dict[str, Any]], stage_types: list[tuple[int, str]] | None = None) -> dict[str, Any]:
     total = len(rows)
     stages = []
     focus = None
-    for piece_type, name in STAGE_TYPES:
+    for piece_type, name in stage_types or STAGE_TYPES:
         reached = len([d for d in rows if int(d.get("maxType", 0)) >= piece_type])
         rate = pct(reached, total)
         item = {
@@ -278,6 +343,166 @@ def stage_gate_stats_for_hash(rows: list[dict[str, Any]], strategy_hash: str | N
     return stats
 
 
+def country_name(piece_type: int) -> str:
+    return dict(STAGE_TYPES).get(piece_type, f"Type{piece_type}")
+
+
+def archive_max_type(path_value: str) -> int | None:
+    if not path_value or path_value.startswith("git:"):
+        return None
+    row = game_summary(Path(path_value))
+    return int(row["maxType"]) if row else None
+
+
+def max_types_from_strategy_data(data: dict[str, Any] | None) -> list[int]:
+    if not isinstance(data, dict):
+        return []
+    values: list[int] = []
+    for raw in data.get("max_types", []) or []:
+        try:
+            values.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if values:
+        return values
+    for archive in data.get("_recent_archives", []) or []:
+        max_type = archive_max_type(str(archive))
+        if max_type is not None:
+            values.append(max_type)
+    return values
+
+
+def stage_rates_from_max_types(max_types: list[int], gate_types: list[int]) -> dict[int, dict[str, Any]]:
+    total = len(max_types)
+    rates: dict[int, dict[str, Any]] = {}
+    for stage in gate_types:
+        reached = len([value for value in max_types if int(value) >= stage])
+        rates[stage] = {
+            "type": stage,
+            "name": country_name(stage),
+            "reached": reached,
+            "total": total,
+            "rate": pct(reached, total),
+        }
+    return rates
+
+
+def target_stage_from_anchor(anchor_data: dict[str, Any] | None, threshold: float, gate_types: list[int]) -> dict[str, Any] | None:
+    max_types = max_types_from_strategy_data(anchor_data)
+    rates = stage_rates_from_max_types(max_types, gate_types)
+    threshold_pct = threshold * 100
+    candidates = [
+        item
+        for item in rates.values()
+        if item["total"] > 0 and float(item["rate"]) >= threshold_pct
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: int(item["type"]))
+
+
+def stage_gate_rate_from_data(data: dict[str, Any] | None, stage: int) -> float:
+    max_types = max_types_from_strategy_data(data)
+    if not max_types:
+        try:
+            best = int((data or {}).get("best_max_type", 0) or 0)
+        except (TypeError, ValueError):
+            best = 0
+        return 1.0 if best >= stage else 0.0
+    return len([value for value in max_types if value >= stage]) / len(max_types)
+
+
+def stage_gate_counts_from_data(data: dict[str, Any] | None, stage: int) -> tuple[int, int]:
+    max_types = max_types_from_strategy_data(data)
+    if not max_types:
+        try:
+            best = int((data or {}).get("best_max_type", 0) or 0)
+        except (TypeError, ValueError):
+            best = 0
+        return (1 if best >= stage else 0, 1 if best > 0 else 0)
+    return (len([value for value in max_types if value >= stage]), len(max_types))
+
+
+def target_stage_from_regression(anchor_data: dict[str, Any] | None, current_data: dict[str, Any] | None) -> dict[str, Any] | None:
+    for stage in (11, 13, 14):
+        current_rate = stage_gate_rate_from_data(current_data, stage)
+        anchor_rate = stage_gate_rate_from_data(anchor_data, stage)
+        try:
+            current_best = int((current_data or {}).get("best_max_type", 0) or 0)
+            anchor_best = int((anchor_data or {}).get("best_max_type", 0) or 0)
+        except (TypeError, ValueError):
+            current_best = 0
+            anchor_best = 0
+        current_unmet = current_rate < 1.0
+        regressed = anchor_rate > current_rate or (anchor_best >= stage and current_best < stage)
+        if current_unmet and regressed:
+            reached, total = stage_gate_counts_from_data(current_data, stage)
+            return {
+                "type": stage,
+                "name": country_name(stage),
+                "rate": round(anchor_rate * 100, 2),
+                "currentRate": round(current_rate * 100, 2),
+                "currentReached": reached,
+                "currentTotal": total,
+                "mode": "regression",
+            }
+    return None
+
+
+def purge_target_stats() -> dict[str, Any]:
+    threshold = configured_gate_min_rate()
+    gate_types = configured_gate_types()
+    min_games = configured_min_games()
+    rolling = read_json(ROLLING_SCORES) or {}
+    anchor_meta = read_json(BEST_STRATEGY_ANCHOR) or {}
+    current_data = read_json(CURRENT_STRATEGY_RUN) or {}
+    anchor_hash = str(anchor_meta.get("hash") or "")
+    current_hash = str(current_data.get("hash") or "")
+    anchor_data = rolling.get(anchor_hash, {}) if isinstance(rolling, dict) and anchor_hash else {}
+    current_max_types = max_types_from_strategy_data(current_data)
+    try:
+        current_best_meta = int(current_data.get("best_max_type", 0) or 0)
+    except (TypeError, ValueError):
+        current_best_meta = 0
+    current_best = max(current_max_types + [current_best_meta], default=0)
+    target = target_stage_from_regression(anchor_data, current_data) or target_stage_from_anchor(anchor_data, threshold, gate_types)
+    current_rates = stage_rates_from_max_types(current_max_types, gate_types)
+    target_type = int(target["type"]) if target else 0
+    current_target = current_rates.get(target_type)
+    current_target_rate = float((current_target or {}).get("rate", 0.0) or 0.0)
+    target_mode = str((target or {}).get("mode") or "")
+    current_target_reached = int((target or {}).get("currentReached", (current_target or {}).get("reached", 0)) or 0)
+    current_target_total = int((target or {}).get("currentTotal", (current_target or {}).get("total", 0)) or 0)
+    remaining_games = max(0, 12 - current_target_total)
+    max_possible_rate = (
+        (current_target_reached + remaining_games) / max(1, current_target_total + remaining_games) * 100
+        if target_type
+        else 0.0
+    )
+    purge_zone = bool(target_mode == "regression" and max_possible_rate < float((target or {}).get("rate", 0.0) or 0.0))
+
+    return {
+        "threshold": threshold,
+        "thresholdPct": round(threshold * 100, 2),
+        "minGames": min_games,
+        "gateTypes": gate_types,
+        "anchor": {
+            "hash": anchor_hash or None,
+            "window": len(max_types_from_strategy_data(anchor_data)),
+            "target": target,
+        },
+        "current": {
+            "hash": current_hash or None,
+            "window": len(current_max_types),
+            "bestMaxType": current_best,
+            "targetReached": bool(target_type and current_target_rate >= 100.0),
+            "purgeZone": purge_zone,
+            "maxPossibleRate": round(max_possible_rate, 2),
+            "targetRate": current_target,
+        },
+    }
+
+
 def build_dashboard_data(chart_games: int) -> dict[str, Any]:
     scores = parse_score_history(SCORE_HISTORY)
     eval_scores = parse_score_history(EVAL_SCORE_HISTORY)
@@ -295,8 +520,9 @@ def build_dashboard_data(chart_games: int) -> dict[str, Any]:
         "scoreStats": score_stats(scores, current_game),
         "evalScoreStats": score_stats(eval_scores, current_game) if eval_scores else empty_score_stats(current_game),
         "russiaStats": russia_stats(russia, current_game),
-        "stageGateStats": stage_gate_stats(stage_history),
+        "stageGateStats": stage_gate_stats(stage_history, FOUNDING_RATE_TYPES),
         "currentStageGateStats": stage_gate_stats_for_hash(stage_history, strategy_hash),
+        "purgeTargetStats": purge_target_stats(),
     }
 
 

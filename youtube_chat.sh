@@ -30,6 +30,7 @@ LAST_POLL_FILE="$CHAT_DIR/last_poll_epoch"
 LAST_ERROR_FILE="$CHAT_DIR/last_error.txt"
 LAST_SEND_ERROR_FILE="$CHAT_DIR/last_send_error.txt"
 API_BACKOFF_FILE="$CHAT_DIR/api_backoff_until"
+RECOVERY_PROBE_FILE="$CHAT_DIR/last_recovery_probe_epoch"
 LOCK_DIR="$CHAT_DIR/.op_lock"
 TAB=$'\t'
 SEEN_ID_MAX="${YOUTUBE_SEEN_ID_MAX:-4000}"
@@ -67,6 +68,43 @@ _record_api_backoff() {
 
 _clear_api_backoff() {
 	rm -f "$API_BACKOFF_FILE" "$LAST_ERROR_FILE" 2>/dev/null || true
+}
+
+_recovery_probe_due() {
+	local interval="${YOUTUBE_API_BACKOFF_RECOVERY_PROBE_SEC:-120}"
+	case "$interval" in
+	''|*[!0-9]*) interval=120 ;;
+	esac
+	local now_ts last_ts
+	now_ts=$(date +%s)
+	last_ts=0
+	if [ -s "$RECOVERY_PROBE_FILE" ]; then
+		last_ts=$(cat "$RECOVERY_PROBE_FILE" 2>/dev/null || echo 0)
+		case "$last_ts" in
+		''|*[!0-9]*) last_ts=0 ;;
+		esac
+	fi
+	[ $((now_ts - last_ts)) -ge "$interval" ]
+}
+
+_record_recovery_probe() {
+	date +%s >"$RECOVERY_PROBE_FILE" 2>/dev/null || true
+}
+
+_try_backoff_recovery() {
+	[ ! -s "$LIVE_CHAT_ID_FILE" ] || return 1
+	_recovery_probe_due || return 1
+	_record_recovery_probe
+	local chat_id
+	[ -n "${access_token:-}" ] || access_token=$(_maybe_oauth_access_token)
+	[ -n "$access_token" ] || return 1
+	if chat_id=$(_resolve_live_chat_id 1 "$access_token" 2>>"$LAST_ERROR_FILE"); then
+		_clear_api_backoff
+		_log "poll: recovered activeLiveChatId during API backoff"
+		printf '%s' "$chat_id"
+		return 0
+	fi
+	return 1
 }
 
 _release_lock() {
@@ -221,6 +259,35 @@ raise SystemExit(1)
 "
 }
 
+_discover_live_video_id_from_channel_page() {
+	local channel_id="${YOUTUBE_CHANNEL_ID:-}"
+	if [ -z "$channel_id" ] && [ -s "$CHANNEL_ID_FILE" ]; then
+		channel_id=$(cat "$CHANNEL_ID_FILE" 2>/dev/null || true)
+	fi
+	[ -n "$channel_id" ] || return 1
+	local page video_id
+	page=$(curl -fsSL --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "https://www.youtube.com/channel/${channel_id}/live") || return 1
+	video_id=$(printf '%s' "$page" | python3 -c '
+import re
+import sys
+
+html = sys.stdin.read()
+patterns = [
+    r"liveStreamabilityRenderer\"[^\n]{0,500}?\"videoId\":\"([A-Za-z0-9_-]{11})\"",
+    r"\"videoId\":\"([A-Za-z0-9_-]{11})\"[^\n]{0,500}?source=yt_live_broadcast",
+]
+for pattern in patterns:
+    match = re.search(pattern, html)
+    if match:
+        print(match.group(1))
+        raise SystemExit(0)
+raise SystemExit(1)
+' 2>/dev/null || true)
+	[ -n "$video_id" ] || return 1
+	printf '%s' "$video_id" >"$LIVE_VIDEO_ID_FILE"
+	printf '%s' "$video_id"
+}
+
 _discover_live_video_id() {
 	local access_token="${1:-}"
 	[ -n "${YOUTUBE_API_KEY:-}" ] || [ -n "$access_token" ] || return 1
@@ -236,9 +303,15 @@ _discover_live_video_id() {
 		key=$(_urlencode "$YOUTUBE_API_KEY")
 		url="${url}&key=${key}"
 	fi
-	resp=$(_api_get "$url" "$access_token") || return 1
+	resp=$(_api_get "$url" "$access_token") || {
+		_discover_live_video_id_from_channel_page
+		return $?
+	}
 	video_id=$(printf '%s' "$resp" | _youtube_json_value '(data.get("items") or [{}])[0].get("id", {}).get("videoId", "")' 2>/dev/null || true)
-	[ -n "$video_id" ] || return 1
+	if [ -z "$video_id" ]; then
+		_discover_live_video_id_from_channel_page
+		return $?
+	fi
 	printf '%s' "$video_id" >"$LIVE_VIDEO_ID_FILE"
 	printf '%s' "$video_id"
 }
@@ -420,11 +493,13 @@ _poll_nolock() {
 		_log "poll: disabled (set YOUTUBE_CHAT_ENABLED=1)"
 		return 0
 	fi
-	if _api_backoff_active; then
-		_log "poll: API backoff active ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
-		return 1
-	fi
 	local chat_id key token url resp_file count access_token
+	if _api_backoff_active; then
+		if ! chat_id=$(_try_backoff_recovery); then
+			_log "poll: API backoff active ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
+			return 1
+		fi
+	fi
 	if ! chat_id=$(_resolve_live_chat_id); then
 		if grep -qE '403|videos\.list failed' "$LAST_ERROR_FILE" 2>/dev/null; then
 			access_token=$(_maybe_oauth_access_token)
