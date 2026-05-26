@@ -192,13 +192,12 @@ def objective_triggered(reason_text):
     reasons = set(r for r in (reason_text or "").split("+") if r)
     objective_markers = {
         "objective_regression",
-        "early_objective_regression",
-        "archive_restart_objective_floor",
         "stage_achievement_regression",
         "lost_turkmenistan_gate",
         "lost_ukraine_gate",
         "lost_kazakhstan_gate",
         "lost_soviet_path",
+        "archive_restart_objective_floor",
     }
     return bool(reasons & objective_markers)
 
@@ -3583,48 +3582,6 @@ def trend_grace_reason():
         f"delta={trend_grace.get('delta', 0.0):.1f},prior_n={int(trend_grace.get('prior_n', 0) or 0)}"
     )
 
-origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
-source_russia_count = int(origin_payload.get("source_russia_count", 0) or 0)
-origin_objective_for_grace = {
-    "russia_count": source_russia_count,
-}
-if (
-    current_hash != anchor_hash
-    and str(origin_payload.get("origin_type") or "") == "archive_restart"
-    and (
-        (
-            int(anchor_payload.get("soviet_count", 0) or 0) > 0
-            and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
-            and not russia_objective_graced(current, origin_objective_for_grace)
-        )
-    )
-):
-    reasons = ["archive_restart_objective_floor"]
-    if (
-        int(anchor_payload.get("soviet_count", 0) or 0) > 0
-        and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
-        and not russia_objective_graced(current, origin_objective_for_grace)
-    ):
-        reasons.append("lost_soviet_path")
-    current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
-    # trend_grace は score-only rollback dampener。目的退行は免除しない。
-    print(
-        "REGRESSION:"
-        f"mode=archive_objective_floor,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
-        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
-        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
-        "comp_gap=0.0,p50_gap=0.0,p25_gap=0.0,breach_count=0,min_breach_count=0,"
-        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
-        "best_comp_gap=0.0,best_p50_gap=0.0,best_p25_gap=0.0,best_breach_count=0,"
-        "branch_depth=0,branch_games=0,branch_patience=0,"
-        f"anchor_best_max_type={int(anchor_payload.get('best_max_type', 0) or 0)},curr_best_max_type={int(origin_payload.get('source_best_max_type', 0) or 0)},"
-        f"anchor_russia={int(anchor_payload.get('russia_count', 0) or 0)},curr_russia={int(origin_payload.get('source_russia_count', 0) or 0)},"
-        f"anchor_soviet={int(anchor_payload.get('soviet_count', 0) or 0)},curr_soviet={int(origin_payload.get('source_soviet_count', 0) or 0)},"
-        f"reasons={'+'.join(reasons)}"
-    )
-    _update_stagnation("REGRESSION")
-    raise SystemExit
-
 if not current:
     _update_stagnation("OK_IDLE")
     print("OK")
@@ -3695,6 +3652,33 @@ for x in (anchor_data.get("scores", []) or []):
 current_objective = objective_progress(current_data, current_scores)
 anchor_objective = objective_progress(anchor_data, anchor_scores)
 
+origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
+if (
+    current_hash != anchor_hash
+    and str(origin_payload.get("origin_type") or "") == "archive_restart"
+    and int(anchor_objective.get("soviet_count", 0) or 0) > 0
+    and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
+):
+    current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
+    reasons = ["archive_restart_objective_floor", "lost_soviet_path"]
+    # trend_grace は score-only rollback dampener。ソ連到達済み anchor の喪失は免除しない。
+    print(
+        "REGRESSION:"
+        f"mode=archive_objective_floor,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+        "comp_gap=0.0,p50_gap=0.0,p25_gap=0.0,breach_count=0,min_breach_count=0,"
+        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
+        "best_comp_gap=0.0,best_p50_gap=0.0,best_p25_gap=0.0,best_breach_count=0,"
+        "branch_depth=0,branch_games=0,branch_patience=0,"
+        f"anchor_best_max_type={int(anchor_objective.get('best_max_type', 0) or 0)},curr_best_max_type={int(origin_payload.get('source_best_max_type', 0) or 0)},"
+        f"anchor_russia={int(anchor_objective.get('russia_count', 0) or 0)},curr_russia={int(origin_payload.get('source_russia_count', 0) or 0)},"
+        f"anchor_soviet={int(anchor_objective.get('soviet_count', 0) or 0)},curr_soviet={int(origin_payload.get('source_soviet_count', 0) or 0)},"
+        f"reasons={'+'.join(reasons)}"
+    )
+    _update_stagnation("REGRESSION")
+    raise SystemExit
+
 def objective_miss_against_anchor(anchor_progress, current_progress):
     if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
         return True
@@ -3712,7 +3696,6 @@ STAGE_GATE_SEQUENCE = [
     (11, "lost_turkmenistan_gate"),
     (13, "lost_ukraine_gate"),
     (14, "lost_kazakhstan_gate"),
-    (16, "lost_soviet_path"),
 ]
 
 def stage_gate_rate(progress, threshold):
@@ -3856,39 +3839,37 @@ frontier_grace_active = (
 )
 
 objective_reasons = []
-russia_grace_active = russia_objective_graced(current, current_objective)
 if (
     early_objective_enabled == "1"
     and current_hash != anchor_hash
     and current["n"] >= max(1, early_objective_min_games)
+    and int(anchor_objective.get("soviet_count", 0) or 0) > 0
+    and int(current_objective.get("soviet_count", 0) or 0) <= 0
 ):
-    if (
-        anchor_objective.get("soviet_count", 0) > 0
-        and current_objective.get("soviet_count", 0) <= 0
-        and not russia_grace_active
-    ):
-        objective_reasons.append("lost_soviet_path")
-    # NOTE: ロシア建国(type15)はロールバック基準にしない。
-    # lost_soviet_path は従来どおり早期ゲートに残す。
-    if objective_reasons:
-        # trend_grace は score-only rollback dampener。目的退行は免除しない。
-        print(
-            "REGRESSION:"
-            f"mode=early_objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
-            f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
-            f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
-            f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
-            f"breach_count={curr_breach},min_breach_count={min_breach_count},"
-            "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
-            f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
-            f"branch_depth=0,branch_games=0,branch_patience=0,"
-            f"anchor_best_max_type={anchor_objective.get('best_max_type', 0)},curr_best_max_type={current_objective.get('best_max_type', 0)},"
-            f"anchor_russia={anchor_objective.get('russia_count', 0)},curr_russia={current_objective.get('russia_count', 0)},"
-            f"anchor_soviet={anchor_objective.get('soviet_count', 0)},curr_soviet={current_objective.get('soviet_count', 0)},"
-            f"reasons=early_objective_regression+{'+'.join(objective_reasons)}"
-        )
-        _update_stagnation("REGRESSION")
-        raise SystemExit
+    objective_reasons.append("lost_soviet_path")
+
+if objective_reasons:
+    # trend_grace は score-only rollback dampener。ソ連到達済み anchor の喪失は免除しない。
+    print(
+        "REGRESSION:"
+        f"mode=early_objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+        f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+        f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
+        f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
+        "branch_depth=0,branch_games=0,branch_patience=0,"
+        f"anchor_best_max_type={anchor_objective.get('best_max_type', 0)},curr_best_max_type={current_objective.get('best_max_type', 0)},"
+        f"anchor_russia={anchor_objective.get('russia_count', 0)},curr_russia={current_objective.get('russia_count', 0)},"
+        f"anchor_soviet={anchor_objective.get('soviet_count', 0)},curr_soviet={current_objective.get('soviet_count', 0)},"
+        f"reasons=early_objective_regression+{'+'.join(objective_reasons)}"
+    )
+    _update_stagnation("REGRESSION")
+    raise SystemExit
+
+# Direct Russia loss is not a rollback gate. Stage achievement rates below
+# remain the objective backslide signal before the Soviet completion target exists.
 
 stage_achievement_reason, stage_achievement_detail = stage_achievement_regression_reason(anchor_objective, current_objective)
 if (
@@ -3941,7 +3922,7 @@ if (
     raise SystemExit
 
 # 最小サンプルガード: n<12 では p50/p25 の変動が大きすぎて通常 regression 判定できない。
-# ただし上の早期目的退行ゲートだけは、ソ連経路喪失を短いサンプルで止める。
+# ただし上の段階到達率ゲートだけは、短いサンプルでも目的後退を止める。
 if current["n"] < min_games_current:
     _update_stagnation("OK_IDLE")
     print("OK")
@@ -3953,9 +3934,8 @@ if current_hash != anchor_hash:
     if stage_gate_reason:
         objective_reasons.append(stage_gate_reason)
     if (
-        anchor_objective.get("soviet_count", 0) > 0
-        and current_objective.get("soviet_count", 0) <= 0
-        and not russia_grace_active
+        int(anchor_objective.get("soviet_count", 0) or 0) > 0
+        and int(current_objective.get("soviet_count", 0) or 0) <= 0
         and "lost_soviet_path" not in objective_reasons
     ):
         objective_reasons.append("lost_soviet_path")

@@ -4569,7 +4569,7 @@ def decide(game_state, analysis):
         self.assertIn("objective_reasons = []", regression)
         self.assertIn("lost_soviet_path", regression)
         self.assertNotIn('objective_reasons.append("lost_russia_path")', regression)
-        self.assertIn("lost_soviet_path", regression)
+        self.assertIn('objective_reasons.append("lost_soviet_path")', regression)
         self.assertIn("def stage_gate_regression_reason", regression)
         self.assertIn("rank <= rolling_score_russia_grace_rank", regression)
         self.assertIn("lost_ukraine_gate", regression)

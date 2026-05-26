@@ -342,8 +342,8 @@ cat > "$__DASH_TMP" <<HTMLEOF
   <div class="mini-stat"><div class="mini-label">Eval Score</div><div class="metric-row"><div class="mini-value eval" id="evalAvg">-</div><div class="trend-badge" id="evalRecent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-lines"><div>best <b id="evalBest">-</b> / r100 <b id="evalRecent100Avg">-</b></div><div>p90 <b id="evalRecentP90">-</b> / <span id="evalAvgSub">-</span></div></div></div>
   <div class="mini-stat"><div class="mini-label">Raw Recent</div><div class="metric-row"><div class="mini-value recent" id="recent100Avg">-</div><div class="trend-badge" id="recent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-lines"><div>r10 <b id="recent10Avg">-</b> / r50 <b id="recent50Avg">-</b></div><div>best <b id="recentBest">-</b> / med <b id="recentMedian">-</b></div></div></div>
   <div class="mini-stat"><div class="mini-label">Raw Band</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-lines"><div>3000+ <b id="recent3000">-</b> <span id="recent3000Sub"></span></div><div>2000+ <b id="recent2000">-</b> <span id="recent2000Sub"></span></div></div></div>
-  <div class="mini-stat"><div class="mini-label">Improve Gate</div><div class="metric-row"><div class="mini-value hot" id="gateFocus">-</div><div class="donut" id="gateFocusDonut"><span>-</span></div></div><div class="mini-sub" id="gateFocusSub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Gate Stages</div><div class="metric-row"><div class="mini-value cool" id="gateUkraine">-</div><div class="donut" id="gateUkraineDonut"><span>-</span></div></div><div class="mini-lines"><div>T11 <b id="gateTurkmenistan">-</b> / T13 <b id="gateUkraineInline">-</b></div><div>T14 <b id="gateKazakhstan">-</b> / <span id="gateTurkmenistanSub">-</span></div></div><div style="display:none"><span id="gateUkraineSub"></span><span id="gateKazakhstanSub"></span></div></div>
+  <div class="mini-stat"><div class="mini-label">Purge Target</div><div class="metric-row"><div class="mini-value hot" id="gateFocus">-</div><div class="donut" id="gateFocusDonut"><span>-</span></div></div><div class="mini-sub" id="gateFocusSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Founding Rates</div><div class="metric-row"><div class="mini-value cool" id="gateRussia">-</div><div class="donut" id="gateRussiaDonut"><span>-</span></div></div><div class="mini-lines"><div>T15 <b id="gateRussiaInline">-</b> / T14 <b id="gateKazakhstan">-</b></div><div>T13 <b id="gateUkraineInline">-</b> / <span id="gateFocusCountry">-</span></div></div><div style="display:none"><span id="gateTurkmenistan"></span><span id="gateTurkmenistanSub"></span><span id="gateUkraine"></span><span id="gateUkraineSub"></span><span id="gateKazakhstanSub"></span><span id="gateRussiaSub"></span></div></div>
   <div class="mini-stat"><div class="mini-label">Russia Now</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-lines"><div>today <b id="russiaToday">-</b> / 24h <b id="russiaLast24h">-</b></div><div id="russiaRecent100Sub">-</div></div><div style="display:none"><span id="russiaTodaySub"></span></div></div>
   <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Recent Trend</div><div class="metric-row"><div class="mini-value trend" id="trend">-</div><div class="trend-badge" id="chartTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub" id="trendSub">chart window</div></div>
@@ -363,7 +363,6 @@ const EVAL_SCORE_STATS = DASHBOARD_DATA.evalScoreStats || null;
 const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
 const STAGE_GATE_STATS = DASHBOARD_DATA.stageGateStats || { window: 0, stages: [], focus: null };
 const CURRENT_STAGE_GATE_STATS = DASHBOARD_DATA.currentStageGateStats || STAGE_GATE_STATS;
-const GATE_MIN_CURRENT_SAMPLES = 10;
 const CURRENT_GAME = SCORE_STATS.currentGame;
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
@@ -430,24 +429,31 @@ function updateExtraStats(scores) {
   document.getElementById('recent3000Sub').textContent = '(' + SCORE_STATS.recent100Score3000 + '/100)';
   document.getElementById('recent2000').textContent = SCORE_STATS.recent100Score2000Rate.toFixed(2) + '%';
   document.getElementById('recent2000Sub').textContent = '(' + SCORE_STATS.recent100Score2000 + '/100)';
-  const gateStats = CURRENT_STAGE_GATE_STATS;
+  const gateStats = STAGE_GATE_STATS;
   const gateWindow = gateStats.window || 0;
-  const gateActive = gateWindow >= GATE_MIN_CURRENT_SAMPLES;
+  const gateHasSamples = gateWindow > 0;
   const stages = gateStats.stages || [];
   const focus = gateStats.focus || stages[stages.length - 1] || null;
   const stageByType = Object.fromEntries(stages.map((s) => [String(s.type), s]));
   const turkmenistan = stageByType['11'] || null;
   const ukraine = stageByType['13'] || null;
   const kazakhstan = stageByType['14'] || null;
-  document.getElementById('gateFocus').textContent = gateActive && focus ? focus.name : 'Inactive';
-  document.getElementById('gateFocusSub').textContent = gateActive && focus ? (focus.rate.toFixed(1) + '% / current hash last ' + gateWindow) : ('sample不足 ' + gateWindow + '/' + GATE_MIN_CURRENT_SAMPLES);
-  document.getElementById('gateTurkmenistan').textContent = gateActive && turkmenistan ? turkmenistan.rate.toFixed(1) + '%' : '-';
-  document.getElementById('gateTurkmenistanSub').textContent = gateActive && turkmenistan ? (turkmenistan.reached + ' / ' + gateWindow) : 'inactive';
-  document.getElementById('gateUkraine').textContent = gateActive && ukraine ? ukraine.rate.toFixed(1) + '%' : '-';
-  document.getElementById('gateUkraineInline').textContent = gateActive && ukraine ? ukraine.rate.toFixed(1) + '%' : '-';
-  document.getElementById('gateUkraineSub').textContent = gateActive && ukraine ? (ukraine.reached + ' / ' + gateWindow) : 'inactive';
-  document.getElementById('gateKazakhstan').textContent = gateActive && kazakhstan ? kazakhstan.rate.toFixed(1) + '%' : '-';
-  document.getElementById('gateKazakhstanSub').textContent = gateActive && kazakhstan ? (kazakhstan.reached + ' / ' + gateWindow) : 'inactive';
+  const russia = stageByType['15'] || null;
+  document.getElementById('gateFocus').textContent = gateHasSamples && focus ? focus.name : 'Inactive';
+  document.getElementById('gateFocusSub').textContent = gateHasSamples && focus
+    ? ('type' + focus.type + ' / ' + focus.rate.toFixed(1) + '% / recent ' + gateWindow)
+    : 'recent 0';
+  document.getElementById('gateFocusCountry').textContent = gateHasSamples && focus ? ('target ' + focus.name + '(T' + focus.type + ')') : 'inactive';
+  document.getElementById('gateTurkmenistan').textContent = gateHasSamples && turkmenistan ? turkmenistan.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateTurkmenistanSub').textContent = gateHasSamples && turkmenistan ? (turkmenistan.reached + ' / ' + gateWindow) : 'inactive';
+  document.getElementById('gateUkraine').textContent = gateHasSamples && ukraine ? ukraine.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateUkraineInline').textContent = gateHasSamples && ukraine ? ukraine.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateUkraineSub').textContent = gateHasSamples && ukraine ? (ukraine.reached + ' / ' + gateWindow) : 'inactive';
+  document.getElementById('gateKazakhstan').textContent = gateHasSamples && kazakhstan ? kazakhstan.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateKazakhstanSub').textContent = gateHasSamples && kazakhstan ? (kazakhstan.reached + ' / ' + gateWindow) : 'inactive';
+  document.getElementById('gateRussia').textContent = gateHasSamples && russia ? russia.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateRussiaInline').textContent = gateHasSamples && russia ? russia.rate.toFixed(1) + '%' : '-';
+  document.getElementById('gateRussiaSub').textContent = gateHasSamples && russia ? (russia.reached + ' / ' + gateWindow) : 'inactive';
 
   setDonut('bestDonut', SCORE_STATS.best, 6000, '#ffd700');
   setDonut('gamesDonut', SCORE_STATS.count % 1000, 1000, '#a78bfa', (SCORE_STATS.count % 1000) + '/1k');
@@ -462,10 +468,11 @@ function updateExtraStats(scores) {
   setDonut('recentP90Donut', SCORE_STATS.recent100P90, 3500, '#38bdf8');
   setDonut('recent3000Donut', SCORE_STATS.recent100Score3000Rate, 100, '#fb7185', SCORE_STATS.recent100Score3000 + '/100');
   setDonut('recent2000Donut', SCORE_STATS.recent100Score2000Rate, 100, '#38bdf8', SCORE_STATS.recent100Score2000 + '/100');
-  setDonut('gateFocusDonut', gateActive && focus ? focus.rate : 0, 100, '#fb7185', gateActive && focus ? focus.rate.toFixed(0) + '%' : 'off');
-  setDonut('gateTurkmenistanDonut', gateActive && turkmenistan ? turkmenistan.rate : 0, 100, '#38bdf8', gateActive && turkmenistan ? (turkmenistan.reached + '/' + gateWindow) : '-');
-  setDonut('gateUkraineDonut', gateActive && ukraine ? ukraine.rate : 0, 100, '#38bdf8', gateActive && ukraine ? (ukraine.reached + '/' + gateWindow) : '-');
-  setDonut('gateKazakhstanDonut', gateActive && kazakhstan ? kazakhstan.rate : 0, 100, '#38bdf8', gateActive && kazakhstan ? (kazakhstan.reached + '/' + gateWindow) : '-');
+  setDonut('gateFocusDonut', gateHasSamples && focus ? focus.rate : 0, 100, '#fb7185', gateHasSamples && focus ? focus.rate.toFixed(0) + '%' : 'off');
+  setDonut('gateTurkmenistanDonut', gateHasSamples && turkmenistan ? turkmenistan.rate : 0, 100, '#38bdf8', gateHasSamples && turkmenistan ? (turkmenistan.reached + '/' + gateWindow) : '-');
+  setDonut('gateUkraineDonut', gateHasSamples && ukraine ? ukraine.rate : 0, 100, '#38bdf8', gateHasSamples && ukraine ? (ukraine.reached + '/' + gateWindow) : '-');
+  setDonut('gateKazakhstanDonut', gateHasSamples && kazakhstan ? kazakhstan.rate : 0, 100, '#38bdf8', gateHasSamples && kazakhstan ? (kazakhstan.reached + '/' + gateWindow) : '-');
+  setDonut('gateRussiaDonut', gateHasSamples && russia ? russia.rate : 0, 100, '#facc15', gateHasSamples && russia ? (russia.reached + '/' + gateWindow) : '-');
   setDonut('russiaRecent100Donut', RUSSIA_STATS.recent100Rate, 20, '#facc15', RUSSIA_STATS.recent100 + '/100');
   setDonut('russiaTodayDonut', RUSSIA_STATS.today, 20, '#facc15', String(RUSSIA_STATS.today));
   setDonut('russiaLastDonut', Math.max(0, 100 - gamesSinceRussia), 100, '#facc15', gamesSinceRussia + 'g');

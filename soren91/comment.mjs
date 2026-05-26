@@ -34,6 +34,20 @@ const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');
 const RANKING_COMMENT_LAST_INPUT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_input.json');
 const SOREN91_COMMENT_MAX_SPEAK_CHARS = parsePositiveInt(process.env.SOREN91_COMMENT_MAX_SPEAK_CHARS, 0);
+const CURRENT_STRATEGY_RUN_PATH = join('tmp', 'state', 'current_strategy_run.json');
+const HISTORY_DIR = 'game_history';
+const STAGE_STATS_MAX_GAMES = parsePositiveInt(process.env.SOREN91_STAGE_STATS_MAX_GAMES, 120);
+const STAGE_RATE_TYPES = [
+  { type: 15, name: 'ロシア' },
+  { type: 14, name: 'カザフスタン' },
+  { type: 13, name: 'ウクライナ' },
+];
+const PURGE_GATE_TYPES = [
+  { type: 11, name: 'トルクメニスタン' },
+  { type: 13, name: 'ウクライナ' },
+  { type: 14, name: 'カザフスタン' },
+  { type: 15, name: 'ロシア' },
+];
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -56,6 +70,131 @@ function compactForSpeech(text, maxChars = SOREN91_COMMENT_MAX_SPEAK_CHARS) {
   );
   const cutAt = boundary >= 40 ? boundary + 1 : hardLimit;
   return `${normalized.slice(0, cutAt).trim()}…`;
+}
+
+function readJsonFile(path) {
+  try {
+    if (!existsSync(path)) return null;
+    return JSON.parse(readFileSync(path, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function pct(part, total) {
+  return total > 0 ? (part / total) * 100 : 0;
+}
+
+function padGameNumber(gameNumber) {
+  return String(Number(gameNumber) || 0).padStart(4, '0');
+}
+
+function readGameMaxType(gameNumber) {
+  const path = join(HISTORY_DIR, `game_${padGameNumber(gameNumber)}.jsonl`);
+  if (!existsSync(path)) return null;
+  let maxType = 0;
+  try {
+    for (const line of readFileSync(path, 'utf-8').split(/\r?\n/u)) {
+      if (!line.trim()) continue;
+      let row;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const pieces = row?.state?.pieces || row?.state_snapshot?.pieces || [];
+      for (const piece of pieces) {
+        const type = Number.parseInt(String(piece?.type ?? 0), 10);
+        if (Number.isInteger(type) && type > maxType) maxType = type;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return maxType > 0 ? maxType : null;
+}
+
+function deriveMaxTypesFromRun(run) {
+  if (Array.isArray(run?.max_types)) {
+    return run.max_types;
+  }
+  const results = Array.isArray(run?.results) ? run.results : [];
+  const recentResults = STAGE_STATS_MAX_GAMES > 0 ? results.slice(-STAGE_STATS_MAX_GAMES) : results;
+  return recentResults
+    .map(result => readGameMaxType(result?.gameNumber))
+    .filter(value => value != null);
+}
+
+function buildStageAchievementStats() {
+  const run = readJsonFile(CURRENT_STRATEGY_RUN_PATH);
+  const rawMaxTypes = deriveMaxTypesFromRun(run);
+  const maxTypes = rawMaxTypes
+    .map(value => Number.parseInt(String(value), 10))
+    .filter(value => Number.isInteger(value) && value > 0);
+  const total = maxTypes.length;
+  if (total <= 0) {
+    return {
+      hasData: false,
+      hash: run?.hash || null,
+      total: 0,
+      stages: [],
+      focus: null,
+    };
+  }
+
+  const stages = PURGE_GATE_TYPES.map(stage => {
+    const reached = maxTypes.filter(maxType => maxType >= stage.type).length;
+    return {
+      ...stage,
+      reached,
+      total,
+      rate: pct(reached, total),
+    };
+  });
+  return {
+    hasData: true,
+    hash: run?.hash || null,
+    total,
+    stages,
+    focus: stages.find(stage => stage.rate < 100) || stages.at(-1) || null,
+  };
+}
+
+function stageByType(stats, type) {
+  return (stats?.stages || []).find(stage => Number(stage.type) === Number(type)) || null;
+}
+
+function formatStageRate(stage) {
+  if (!stage) return '-';
+  return `${stage.name}(type${stage.type}) ${stage.rate.toFixed(1)}%(${stage.reached}/${stage.total})`;
+}
+
+function formatStageStatsForPrompt(stats) {
+  if (!stats?.hasData) {
+    return '建国率: 現在の戦略ラン情報がまだ不足。粛清基準: 不明。';
+  }
+  const rates = STAGE_RATE_TYPES.map(stage => formatStageRate(stageByType(stats, stage.type))).join(' / ');
+  const focus = stats.focus ? `${stats.focus.name}(type${stats.focus.type})` : '不明';
+  return `建国率: ${rates}。粛清基準ターゲット: ${focus}。対象ゲーム数: ${stats.total}。`;
+}
+
+function formatStageStatsForComment(stats) {
+  if (!stats?.hasData) return '';
+  const rates = STAGE_RATE_TYPES
+    .map(stage => {
+      const item = stageByType(stats, stage.type);
+      return item ? `${item.name}${item.rate.toFixed(1)}%` : `${stage.name}-`;
+    })
+    .join(' / ');
+  const focus = stats.focus ? `${stats.focus.name}(type${stats.focus.type})` : '不明';
+  return `建国率: ${rates}。粛清基準: ${focus}。`;
+}
+
+function appendStageStatsToComment(comment, stats) {
+  const stageLine = formatStageStatsForComment(stats);
+  if (!stageLine) return comment;
+  if (/建国率[:：]/u.test(comment)) return comment;
+  return `${String(comment || '').trim()} ${stageLine}`.trim();
 }
 
 function readEnvFileValue(envPath, key) {
@@ -272,12 +411,14 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     const rankingContext = await buildRankingTextPrompt(rankingImagePath, myRank);
     const promptText = rankingContext.promptText;
     const effectiveRank = rankingContext.effectiveRank;
+    const stageInfo = rankingContext.stageInfo;
     writeRankingCommentDebugSnapshot({
       rankingImagePath,
       gameNumber,
       myRank,
       effectiveRank,
       promptText,
+      stageInfo,
     });
     let comment = null;
     if (rankingContext.hasUsableContext) {
@@ -290,6 +431,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     if (!comment) {
       comment = fallbackRankingComment(effectiveRank, gameNumber);
     }
+    comment = appendStageStatsToComment(comment, stageInfo);
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
       return null;
@@ -315,7 +457,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
   }
 }
 
-function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank, effectiveRank, promptText }) {
+function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank, effectiveRank, promptText, stageInfo }) {
   try {
     const textConfig = resolveTextAiConfig();
     writeFileSync(RANKING_COMMENT_LAST_PROMPT_PATH, String(promptText || ''), 'utf-8');
@@ -326,6 +468,14 @@ function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank
       effectiveRank: effectiveRank ?? null,
       rankingImagePath: rankingImagePath || null,
       rankingImageExists: Boolean(rankingImagePath && existsSync(rankingImagePath)),
+      stageInfo: stageInfo ? {
+        hasData: Boolean(stageInfo.hasData),
+        hash: stageInfo.hash || null,
+        total: stageInfo.total || 0,
+        rates: STAGE_RATE_TYPES.map(stage => stageByType(stageInfo, stage.type)).filter(Boolean),
+        focus: stageInfo.focus || null,
+        commentLine: formatStageStatsForComment(stageInfo),
+      } : null,
       textGeneration: {
         claudePreset: textConfig.claudePreset,
         claudeFallbackPreset: textConfig.claudeFallbackPreset,
@@ -415,6 +565,7 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
   let ocrInfo = '- ランキング画面の文字情報はありません。';
   let effectiveRank = myRank != null ? Number(myRank) : null;
   let hasOcrContext = false;
+  const stageInfo = buildStageAchievementStats();
   
   if (rankingImagePath) {
     try {
@@ -443,9 +594,11 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
     promptText: loadPrompt('ranking_comment.md', {
       rankInfo: effectiveRank != null ? `自分の順位: ${effectiveRank}位/91人中。` : '自分の順位: 不明。順位を断定してはいけない。',
       ocrInfo,
+      stageInfo: formatStageStatsForPrompt(stageInfo),
     }),
     effectiveRank,
     hasUsableContext: effectiveRank != null || hasOcrContext,
+    stageInfo,
   };
 }
 
