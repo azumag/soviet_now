@@ -19,8 +19,8 @@ ${VALIDATE_ERROR}
 - 数値だけの修正でもよいが、今回のエラー回避に必要な最小限かつログ根拠のある変更に限ること
 - コメントや `reason` 文言だけの修正で済ませないこと
 - `turns >= N` の固定ターン数で終盤判定を足さないこと。終盤危険局面は盤面状態で表現すること
-- **【不可侵の安全不変条件】** `crosses_deadline == True` の選択肢は、`crosses_deadline == False` の安全な選択肢が1つでも存在する限り、`merge_grade`(DIRECT/NEAR/FAR を含む)・merge-drought・HIGH_LAYER 抑制・タワー戦略など**いかなる理由でも選んではならない**。デッドライン超過は即ゲームオーバーであり、投機的マージより常に回避を優先する。`AssertionError: deadline-(far|near|direct)-guard` が出ている場合、それは安全な非超過 x が存在するのに deadline 超過 x を選んでいる証拠なので、その分岐に「安全な非超過候補があるなら超過候補を絶対に選ばない」ガードを最優先で入れること。このガードを既存ロジック(merge 優先等)より前段に置くこと
-- **【不可侵の安全不変条件】** `AssertionError: all-crossing-far-below` が出ている場合、全候補が `crosses_deadline == True` でも盤面がまだ赤線から遠く、raw crossing 予測を deadline penalty / `CROSSES_DEADLINE_NO_MERGE` / `MERGE_DROUGHT_DEADLINE_CROSS_PENALTY` の根拠にしてはいけないという意味である。安全候補がない局面でも、`deadline.top_edge_y` / `reactor.top_edge_y` と `deadline_margin` を確認し、赤線から遠いなら deadline reason を付けず通常評価に任せること
+- **【不可侵の安全不変条件】** `crosses_deadline == True` の選択肢は、`crosses_deadline == False` の安全な選択肢が1つでも存在する限り、`merge_grade`(DIRECT/NEAR/FAR を含む)・merge-drought・HIGH_LAYER 抑制・タワー戦略など**原則として選んではならない**。デッドライン超過は即ゲームオーバーであり、投機的マージより常に回避を優先する。`AssertionError: deadline-(far|near|direct)-guard` が出ている場合、それは安全な非超過 x が存在するのに deadline 超過 x を選んでいる証拠なので、その分岐に「安全な非超過候補があるなら超過候補を絶対に選ばない」ガードを最優先で入れること。このガードを既存ロジック(merge 優先等)より前段に置くこと
+- **【例外: active-filter】** `AssertionError: active-filter: expected danger DIRECT merge x=0.0` が出ている場合は上記ガードの例外である。安全な非超過 `merge_grade=="NO"` 候補があっても、`deadline_crossed==True` かつ `danger_piece_count>0` で、`crosses_deadline==True` の `merge_grade=="DIRECT"` 候補が `danger_direct_merge_available==True` または `merges[].target_is_danger==True` なら、その危険ピース DIRECT merge を選ぶこと。`deadline-direct-guard` の通常 DIRECT merge とは区別し、危険ピース対象の DIRECT merge だけを例外にすること。
 - `v369 congestion-aware proximity` 周辺の検証で `proximity_bonus = 0.0` が不足している場合は、混雑・deadline 危険局面の `rp_guidance_suppressed` true 分岐で近接 bonus を明示的に0へ落とすこと。倍率追加だけを止めても、事前に計算した proximity bonus が残るなら失敗扱い
 - 別名の `.py` を新設して逃げないこと。前回作ってしまった不要トップレベル `.py` を再作成してはいけない
 - `strategy.py.staging` 以外のトップレベル `.py` は新規作成しないこと

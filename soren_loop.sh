@@ -753,14 +753,6 @@ if ! validate_strategy; then
 	log "ERROR: 初期バリデーション失敗"
 	exit 1
 fi
-# validate_strategy may inject the runtime deadline guard. If that changes
-# decide() hash, keep the live run bucket aligned before any new score lands.
-_validated_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-_current_run_hash=$(python3 -c "import json; print(json.load(open('$CURRENT_STRATEGY_RUN_FILE')).get('hash',''))" 2>/dev/null || echo "")
-if [ -n "$_validated_hash" ] && [ "$_validated_hash" != "$_current_run_hash" ]; then
-	log "[CURRENT-RUN] validation後hash同期: ${_current_run_hash:-none} -> $_validated_hash"
-	_reset_current_strategy_run "$_validated_hash"
-fi
 
 # 前回中断した改善プロセスの状態復元
 check_and_harvest_improvement
@@ -1057,11 +1049,11 @@ EOF
 				"${_post_regression_detail} → rollback target revalidation / light improve" \
 				"改善フロー: russia path still alive? yes。復帰先にロシア進捗があるため、脱出せず再検証を優先します。" \
 				"info"
-		elif [ "${POST_REGRESSION_IMPROVE_ENABLED:-1}" = "1" ] &&
-			[ -f "$ACCUMULATED_GAMES_FILE" ] &&
-			[ ! -f "$IMPROVE_LOCK_FILE" ] &&
-			! _is_improve_running; then
-			if [ "${POST_REGRESSION_DIRECT_ESCAPE_ENABLED:-1}" = "1" ] && [ "${_post_regression_mode:-}" = "direct_escape" ]; then
+		elif [ "${POST_REGRESSION_DIRECT_ESCAPE_ENABLED:-1}" = "1" ] &&
+			[ "${_post_regression_mode:-}" = "direct_escape" ]; then
+			if [ -f "$ACCUMULATED_GAMES_FILE" ] &&
+				[ ! -f "$IMPROVE_LOCK_FILE" ] &&
+				! _is_improve_running; then
 				log "[CYCLE] 回帰ロールバック直後 → ロシア建国ルート喪失の粛清連鎖 (${_post_regression_detail}) のため直接脱出ロック作成"
 				_evolution_flow_notify \
 					"direct_escape" \
@@ -1069,32 +1061,17 @@ EOF
 					"russia_path_dead rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-2} ${_post_regression_detail:-unknown}" \
 					"改善フロー: direct escape, no next game。ロシア進捗なし・粛清連鎖のため次ゲームを待たず脱出します。" \
 					"warn"
-			else
-				log "[CYCLE] 回帰ロールバック直後 → 失敗バッチで改善ロック作成"
-				if [ "${_post_regression_target_progress:-0}" != "1" ]; then
-					_evolution_flow_notify \
-						"post_regression_improve" \
-						"post_regression improve" \
-						"russia_path_dead but rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-2}; direct escape threshold not reached" \
-						"改善フロー: post_regression improve。ロシア進捗は弱いが粛清連鎖閾値未満のため、失敗バッチで通常の回帰後改善に入ります。" \
-						"info"
-				fi
-			fi
-			enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
-			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
-			enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
-			_direct_escape_flag=0
-			if [ "${POST_REGRESSION_DIRECT_ESCAPE_ENABLED:-1}" = "1" ] && [ "${_post_regression_mode:-}" = "direct_escape" ]; then
-				_direct_escape_flag=1
-			fi
-			POST_REGRESSION_MODE="${_post_regression_mode:-post_regression}" \
-				POST_REGRESSION_DETAIL="${_post_regression_detail:-}" \
-				POST_REGRESSION_DIRECT="${_direct_escape_flag:-0}" \
-				POST_REGRESSION_RSTREAK="${_post_regression_rstreak:-0}" \
-				POST_REGRESSION_OBJECTIVE_LOSS="${_post_regression_objective_loss:-0}" \
-				REGRESSION_ROLLBACK_HASH_VALUE="${REGRESSION_ROLLBACK_HASH:-}" \
-				REGRESSION_ROLLBACK_RESULT_VALUE="${REGRESSION_ROLLBACK_RESULT:-}" \
-				python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+				enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+				cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+				enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				POST_REGRESSION_MODE="${_post_regression_mode:-post_regression}" \
+					POST_REGRESSION_DETAIL="${_post_regression_detail:-}" \
+					POST_REGRESSION_DIRECT="1" \
+					POST_REGRESSION_RSTREAK="${_post_regression_rstreak:-0}" \
+					POST_REGRESSION_OBJECTIVE_LOSS="${_post_regression_objective_loss:-0}" \
+					REGRESSION_ROLLBACK_HASH_VALUE="${REGRESSION_ROLLBACK_HASH:-}" \
+					REGRESSION_ROLLBACK_RESULT_VALUE="${REGRESSION_ROLLBACK_RESULT:-}" \
+					python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
 import json
 import os
 import sys
@@ -1122,13 +1099,26 @@ data["post_regression_objective_loss"] = bool(as_int(os.environ.get("POST_REGRES
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f)
 PY
-			if [ -x ./overlay_notify.sh ]; then
-				if [ "${_direct_escape_flag:-0}" = "1" ]; then
+				if [ -x ./overlay_notify.sh ]; then
 					./overlay_notify.sh worker "粛清連鎖脱出 queued (game ${GAME_NUM:-?})" "ロシア建国ルート喪失 | route=direct_escape | ${_post_regression_detail:-unknown} | 復帰先=${REGRESSION_ROLLBACK_HASH:-unknown}" "warn" >/dev/null 2>&1 || true
-				else
-					./overlay_notify.sh worker "回帰後改善 queued (game ${GAME_NUM:-?})" "粛清後の失敗バッチを改善入力として投入 | reason=post_regression | 復帰先=${REGRESSION_ROLLBACK_HASH:-unknown} | game=${GAME_NUM:-?}" "warn" >/dev/null 2>&1 || true
 				fi
+			else
+				log "[CYCLE] 回帰ロールバック直後 → direct_escape判定だが改善中/lockありのため既存改善を優先 (${_post_regression_detail})"
+				_evolution_flow_notify \
+					"direct_escape_deferred" \
+					"direct escape deferred" \
+					"direct_escape pending but improve lock/running exists; rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-2}" \
+					"改善フロー: direct escape deferred。粛清連鎖閾値には達していますが、既存の改善ロックまたは改善プロセスを優先します。" \
+					"warn"
 			fi
+		else
+			log "[CYCLE] 回帰ロールバック直後 → 旧戦略の失敗バッチは改善に使わず、復帰先戦略の再評価を優先 (${_post_regression_detail})"
+			_evolution_flow_notify \
+				"rollback_target_revalidate" \
+				"rollback target revalidation" \
+				"old failed batch discarded; rollback target=${REGRESSION_ROLLBACK_HASH:-unknown} rstreak=${_post_regression_rstreak:-0}/${WILDCARD_REGRESSION_STREAK:-2}" \
+				"改善フロー: rollback target revalidation。粛清前の失敗バッチは別戦略のデータなので改善に使わず、復帰先戦略でワンサイクル再評価します。" \
+				"info"
 		fi
 		_clear_accumulated_data
 	else

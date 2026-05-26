@@ -2,14 +2,14 @@
 """Wildcard パラメータ摂動: AI を介さず strategy.py の数値定数を ±σ 摂動させる。
 
 帯域脱出機構 F の本体。改善が連続で空振り (stagnation_counter >= WILDCARD_TRIGGER_STAGNATION)
-した時、AI 改善の代わりに本スクリプトが strategy.py の decide() 関数内の魔法定数を
+した時、AI 改善の代わりに本スクリプトが strategy.py の戦略ロジック内の魔法定数を
 ランダム選択して摂動する。
 
 - スコープは `strategy.py` のみ。strategy_helpers/ は触らない。
 - ast.unparse で全体再生成しない。AST で Constant ノードを特定し、テキストを
   lineno/col_offset で **スライス置換**する。コメント・空行・docstring を破壊しない。
-- 摂動候補は decide() 関数 AST の Assign/Compare/BinOp/Return 右辺にある float/int
-  リテラル、絶対値が 0.05〜500 のもの。
+- 摂動候補は decide() から到達できる helper と参照グローバル定数の
+  Assign/Compare/BinOp/Return 右辺にある float/int リテラル。
 
 Usage:
     python3 wildcard_perturb.py [--dry-run] [--input strategy.py] [--output strategy.py.staging]
@@ -29,18 +29,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-MAGIC_MIN = 0.05
-MAGIC_MAX = 500.0
-
-
 @dataclass
 class Candidate:
     lineno: int
     col_offset: int
     end_lineno: int
     end_col_offset: int
-    value: float
+    value: float | bool
     is_int: bool
+    is_bool: bool
     context: str  # parent node kind for logging
 
 
@@ -51,28 +48,101 @@ def _find_decide_func(tree: ast.AST) -> ast.FunctionDef | None:
     return None
 
 
-def _collect_candidates(decide_node: ast.FunctionDef) -> list[Candidate]:
+def _top_level_name_targets(node: ast.AST) -> set[str]:
+    targets: list[ast.AST] = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, ast.AnnAssign):
+        targets = [node.target]
+    names: set[str] = set()
+    for target in targets:
+        for child in ast.walk(target):
+            if isinstance(child, ast.Name):
+                names.add(child.id)
+    return names
+
+
+def _load_names(node: ast.AST) -> set[str]:
+    return {child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)}
+
+
+def _called_function_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            names.add(child.func.id)
+    return names
+
+
+def _walk_strategy_node(root: ast.AST):
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        if node is not root and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+
+
+def _reachable_strategy_nodes(tree: ast.Module, decide_node: ast.FunctionDef) -> list[ast.AST]:
+    top_functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    global_assignments: dict[str, list[ast.AST]] = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        for name in _top_level_name_targets(node):
+            global_assignments.setdefault(name, []).append(node)
+
+    reachable_functions: dict[str, ast.FunctionDef] = {decide_node.name: decide_node}
+    referenced_names: set[str] = set()
+    queue = [decide_node.name]
+    while queue:
+        name = queue.pop(0)
+        func = reachable_functions[name]
+        referenced_names.update(_load_names(func))
+        for called_name in _called_function_names(func):
+            if called_name in top_functions and called_name not in reachable_functions:
+                reachable_functions[called_name] = top_functions[called_name]
+                queue.append(called_name)
+
+    reachable_global_names = {name for name in referenced_names if name in global_assignments}
+    global_queue = list(reachable_global_names)
+    while global_queue:
+        name = global_queue.pop(0)
+        for assignment in global_assignments.get(name, []):
+            for ref in _load_names(assignment):
+                if ref in global_assignments and ref not in reachable_global_names:
+                    reachable_global_names.add(ref)
+                    global_queue.append(ref)
+
+    nodes: list[ast.AST] = list(reachable_functions.values())
+    seen_assignments: set[int] = set()
+    for name in sorted(reachable_global_names):
+        for assignment in global_assignments.get(name, []):
+            ident = id(assignment)
+            if ident in seen_assignments:
+                continue
+            seen_assignments.add(ident)
+            nodes.append(assignment)
+    return nodes
+
+
+def _collect_candidates(tree: ast.Module, decide_node: ast.FunctionDef) -> list[Candidate]:
     candidates: list[Candidate] = []
     parents: dict[ast.AST, ast.AST] = {}
-    for parent in ast.walk(decide_node):
+    for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
 
     def _record(node: ast.Constant, parent_kind: str) -> None:
         v = node.value
-        if isinstance(v, bool):
-            return  # True/False は除外
-        if not isinstance(v, (int, float)):
-            return
-        if v == 0:
-            return
-        absv = abs(float(v))
-        if absv < MAGIC_MIN or absv > MAGIC_MAX:
+        if not isinstance(v, (bool, int, float)):
             return
         if node.end_lineno is None or node.end_col_offset is None:
-            return
-        parent = parents.get(node)
-        if isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Pow) and parent.right is node:
             return
         candidates.append(
             Candidate(
@@ -80,40 +150,49 @@ def _collect_candidates(decide_node: ast.FunctionDef) -> list[Candidate]:
                 col_offset=node.col_offset,
                 end_lineno=node.end_lineno,
                 end_col_offset=node.end_col_offset,
-                value=float(v),
-                is_int=isinstance(v, int),
+                value=v if isinstance(v, bool) else float(v),
+                is_int=isinstance(v, int) and not isinstance(v, bool),
+                is_bool=isinstance(v, bool),
                 context=parent_kind,
             )
         )
 
-    # decide() 関数全体を歩く。ただし AST 解析対象は Assign / Compare / BinOp / Return / If.test の中の Constant に限定
-    for parent in ast.walk(decide_node):
-        if isinstance(parent, ast.Assign):
-            for child in ast.walk(parent.value):
-                if isinstance(child, ast.Constant):
-                    _record(child, "Assign")
-        elif isinstance(parent, ast.AugAssign):
-            for child in ast.walk(parent.value):
-                if isinstance(child, ast.Constant):
-                    _record(child, "AugAssign")
-        elif isinstance(parent, ast.Compare):
-            for child in parent.comparators:
-                for sub in ast.walk(child):
-                    if isinstance(sub, ast.Constant):
-                        _record(sub, "Compare")
-        elif isinstance(parent, ast.BinOp):
-            for side in (parent.left, parent.right):
-                if isinstance(side, ast.Constant):
-                    _record(side, "BinOp")
-        elif isinstance(parent, ast.Return):
-            if parent.value is not None:
+    # decide() から到達できる戦略ロジックを歩く。ただし AST 解析対象は
+    # Assign / Compare / BinOp / Return / If.test の中の Constant に限定する。
+    for root in _reachable_strategy_nodes(tree, decide_node):
+        for parent in _walk_strategy_node(root):
+            if isinstance(parent, ast.Assign):
                 for child in ast.walk(parent.value):
                     if isinstance(child, ast.Constant):
-                        _record(child, "Return")
-        elif isinstance(parent, ast.If):
-            for child in ast.walk(parent.test):
-                if isinstance(child, ast.Constant):
-                    _record(child, "If")
+                        _record(child, "Assign")
+            elif isinstance(parent, ast.AnnAssign):
+                if parent.value is None:
+                    continue
+                for child in ast.walk(parent.value):
+                    if isinstance(child, ast.Constant):
+                        _record(child, "Assign")
+            elif isinstance(parent, ast.AugAssign):
+                for child in ast.walk(parent.value):
+                    if isinstance(child, ast.Constant):
+                        _record(child, "AugAssign")
+            elif isinstance(parent, ast.Compare):
+                for child in parent.comparators:
+                    for sub in ast.walk(child):
+                        if isinstance(sub, ast.Constant):
+                            _record(sub, "Compare")
+            elif isinstance(parent, ast.BinOp):
+                for side in (parent.left, parent.right):
+                    if isinstance(side, ast.Constant):
+                        _record(side, "BinOp")
+            elif isinstance(parent, ast.Return):
+                if parent.value is not None:
+                    for child in ast.walk(parent.value):
+                        if isinstance(child, ast.Constant):
+                            _record(child, "Return")
+            elif isinstance(parent, ast.If):
+                for child in ast.walk(parent.test):
+                    if isinstance(child, ast.Constant):
+                        _record(child, "If")
 
     # 重複除去 (同じ位置の Constant が複数の親経路から拾われる)
     seen = set()
@@ -127,24 +206,71 @@ def _collect_candidates(decide_node: ast.FunctionDef) -> list[Candidate]:
     return unique
 
 
-def _perturb_value(value: float, is_int: bool, ratio: float, rng: random.Random) -> tuple[float | int, str]:
+def _magnitude_ratio_scale(value: float) -> float:
+    absv = abs(value)
+    if absv < 0.1:
+        return 2.6
+    if absv < 1:
+        return 2.0
+    if absv < 5:
+        return 1.6
+    if absv < 20:
+        return 1.25
+    if absv < 100:
+        return 1.0
+    if absv < 500:
+        return 0.8
+    return 0.55
+
+
+def _pick_perturb_ratio(
+    value: float,
+    ratio_min: float,
+    ratio_max: float,
+    rng: random.Random,
+) -> tuple[float, float, bool]:
+    low = max(0.0, min(ratio_min, ratio_max))
+    high = max(low, max(ratio_min, ratio_max))
+    scale = _magnitude_ratio_scale(value)
+    mean = ((low + high) / 2.0) * scale
+    sigma = max((high - low) / 2.0, high * 0.35, 0.01) * scale
+    ratio = abs(rng.gauss(mean, sigma))
+    floor = max(0.005, low * scale * 0.25)
+    ceiling = max(high * scale * 3.0, floor)
+    outlier = ratio > high * scale
+    ratio = min(max(ratio, floor), ceiling)
+    return ratio, scale, outlier
+
+
+def _perturb_value(
+    value: float | bool,
+    is_int: bool,
+    is_bool: bool,
+    ratio: float,
+    rng: random.Random,
+) -> tuple[float | int | bool, str]:
+    if is_bool:
+        new_bool = not bool(value)
+        return new_bool, "True" if new_bool else "False"
     direction = rng.choice([-1, 1])
-    delta = abs(value) * ratio * direction
-    new_val = value + delta
+    numeric_value = float(value)
+    delta_base = abs(numeric_value) if numeric_value != 0 else 1.0
+    delta = delta_base * ratio * direction
+    new_val = numeric_value + delta
     # 符号は変えない (絶対値が大きい場合は同符号を維持)
-    if value > 0 and new_val <= 0:
-        new_val = abs(new_val) or value * 0.1
-    elif value < 0 and new_val >= 0:
-        new_val = -(abs(new_val) or abs(value) * 0.1)
+    if numeric_value > 0 and new_val <= 0:
+        new_val = abs(new_val) or numeric_value * 0.1
+    elif numeric_value < 0 and new_val >= 0:
+        new_val = -(abs(new_val) or abs(numeric_value) * 0.1)
     if is_int:
         new_int = int(round(new_val))
-        if new_int == int(value):
-            new_int = int(value) + direction  # 最低 1 動かす
+        if new_int == int(numeric_value):
+            new_int = int(numeric_value) + direction  # 最低 1 動かす
         if new_int == 0:
             # 0 への着地は退化なので、元の符号を保ったまま 1 段ずらす
-            new_int = int(value) + (direction * 2)
+            new_int = int(numeric_value) + (direction * 2)
             if new_int == 0:
-                new_int = int(value) + (1 if value > 0 else -1)
+                new_int = int(numeric_value) + (1 if numeric_value > 0 else -1)
         return new_int, str(new_int)
     # float: 桁を value に合わせる (元が 0.5 なら 1 桁、12.0 なら 1 桁)
     if abs(value) >= 100:
@@ -194,6 +320,7 @@ def run(
     exclude_lines: set[int] | None = None,
     prefer_lines: set[int] | None = None,
     explore_rate: float = 0.35,
+    random_count: bool = False,
 ) -> dict:
     text = Path(input_path).read_text(encoding="utf-8")
     try:
@@ -204,9 +331,9 @@ def run(
     if decide_node is None:
         raise RuntimeError("decide() not found")
 
-    candidates = _collect_candidates(decide_node)
+    candidates = _collect_candidates(tree, decide_node)
     if not candidates:
-        raise RuntimeError("no perturbable constants found in decide()")
+        raise RuntimeError("no perturbable constants found in reachable strategy logic")
 
     rng = random.Random(seed)
     excluded = exclude_lines or set()
@@ -222,14 +349,27 @@ def run(
     )
     if use_preferred:
         candidates_for_sample = preferred_candidates
-    actual_count = min(count, len(candidates_for_sample))
+    max_count = len(candidates_for_sample)
+    requested_count = count
+    if random_count:
+        actual_count = rng.randint(1, max_count)
+    else:
+        actual_count = min(count, max_count)
     chosen = rng.sample(candidates_for_sample, actual_count)
 
     patches: list[tuple[Candidate, str]] = []
     summary = []
     for c in chosen:
-        ratio = rng.uniform(ratio_min, ratio_max)
-        new_val, new_repr = _perturb_value(c.value, c.is_int, ratio, rng)
+        if c.is_bool:
+            ratio, magnitude_scale, normal_outlier = 1.0, 1.0, False
+        else:
+            ratio, magnitude_scale, normal_outlier = _pick_perturb_ratio(
+                float(c.value),
+                ratio_min,
+                ratio_max,
+                rng,
+            )
+        new_val, new_repr = _perturb_value(c.value, c.is_int, c.is_bool, ratio, rng)
         patches.append((c, new_repr))
         summary.append(
             {
@@ -240,6 +380,8 @@ def run(
                 "new": new_val,
                 "new_repr": new_repr,
                 "ratio": round(ratio, 3),
+                "magnitude_scale": round(magnitude_scale, 3),
+                "normal_outlier": normal_outlier,
             }
         )
 
@@ -263,6 +405,11 @@ def run(
         "prefer_applied": use_preferred,
         "explore_rate": max(0.0, min(1.0, explore_rate)),
         "exclude_applied": exclude_applied,
+        "available_candidates": len(candidates),
+        "sample_pool_candidates": len(candidates_for_sample),
+        "requested_count": requested_count,
+        "selected_count": actual_count,
+        "random_count": random_count,
         "dry_run": dry_run,
     }
 
@@ -279,6 +426,7 @@ def main() -> int:
     p.add_argument("--exclude-lines", default="")
     p.add_argument("--prefer-lines", default="")
     p.add_argument("--explore-rate", type=float, default=0.35)
+    p.add_argument("--random-count", action="store_true")
     args = p.parse_args()
 
     count = max(1, min(args.count, 5))
@@ -314,6 +462,7 @@ def main() -> int:
             exclude_lines,
             prefer_lines,
             args.explore_rate,
+            args.random_count,
         )
     except RuntimeError as e:
         print(f"[wildcard_perturb] FAIL: {e}", file=sys.stderr)

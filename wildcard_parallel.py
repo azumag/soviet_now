@@ -106,6 +106,7 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
         "cull_comp_ratio": round(_float(getattr(args, "cull_comp_ratio", 0.0), 0.0), 3),
         "lingering_slot_max_culls": _int(getattr(args, "lingering_slot_max_culls", 0), 0),
         "evaluate_mode": str(getattr(args, "evaluate_mode", "") or ""),
+        "random_count": bool(getattr(args, "random_count", False)),
         "deadline_fast_drop_mutate": bool(getattr(args, "deadline_fast_drop_mutate", True)),
         "deadline_fast_drop_values": [
             _bool_literal(v) for v in (getattr(args, "deadline_fast_drop_values", None) or [True, False])
@@ -799,6 +800,8 @@ def run_perturb(args: argparse.Namespace, index: int, session_dir: Path, generat
         "--seed",
         str(seed),
     ]
+    if getattr(args, "random_count", False):
+        cmd.append("--random-count")
     result = CandidateResult(job_id=job_id, index=index, workdir=candidate_dir, strategy_path=out_path, seed=seed, generation=generation)
     proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=args.perturb_timeout)
     if proc.returncode != 0:
@@ -1540,6 +1543,11 @@ def main() -> int:
     parser.add_argument("--exclude-lines", default="")
     parser.add_argument("--prefer-lines", default="")
     parser.add_argument("--explore-rate", type=float, default=0.35)
+    parser.add_argument(
+        "--random-count",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("WILDCARD_PERTURB_RANDOM_COUNT", "1").strip().lower() not in ("0", "false", "no", "off"),
+    )
     parser.add_argument("--seed", type=int, default=int(time.time()))
     parser.add_argument("--evaluate-mode", choices=["real", "simulate"], default=os.getenv("WILDCARD_PARALLEL_EVALUATE_MODE", "real"))
     parser.add_argument("--session-root", type=Path, default=REPO_ROOT / os.getenv("WILDCARD_PARALLEL_WORK_DIR", "tmp/wildcard_parallel"))

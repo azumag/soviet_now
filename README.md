@@ -123,7 +123,7 @@ soren_loop の多重起動ロック:
 3. 復帰先に `russia_count > 0` または `best_max_type >= 15` がある場合は、脱出ではなく rollback target の再検証を優先する。`current_strategy_run.json` が rollback 直後の fresh cycle で空でも、同じハッシュの `rolling_scores.json` 上のロシア実績を参照して誤脱出を防ぐ。
 4. ただし rollback target の fresh cycle が `MIN_GAMES_BEFORE_IMPROVE` に達した後は、過去の rolling 実績だけではロシア進捗ありとみなさない。current run / improve lock にロシア再現がなく、`regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は脱出ルーティングへ戻す。
 5. 復帰先にロシア進捗がなく、かつ `regression_streak >= WILDCARD_REGRESSION_STREAK` の場合は、次ゲームへ進まず `post_regression_direct_escape` ロックを作る。
-6. それ以外は従来どおり、粛清後の失敗バッチを `post_regression` 改善入力として使う。
+6. それ以外は粛清前の失敗バッチを改善入力に使わない。rollback 後の戦略は別 hash なので、`current_strategy_run` を復帰先 hash の fresh cycle として回し、そのワンサイクル結果で通常改善する。
 
 rollback 候補が validation 後に別 hash へ正規化された場合は、元 hash を `rejected_hashes.txt` と `rejected_hash_metrics.json` の両方へ `rollback_target_normalized` として記録する。メタがない rejected hash は legacy として再許可されるため、`normalized_to_hash` を保存して同じ古い候補が何度も同じ実体 hash へ rollback されるループを防ぐ。`last_rollback_pair.json` / rollback analysis / commit target note には `normalized_from=<requested> actual_hash=<applied>` を残し、停滞監視で「候補 hash」と「実際に復帰した hash」を取り違えないようにする。後から `strategy_versions/by_hash/<hash>.py` が本来の hash に復旧した場合は、行単位一致で stale normalized reject を外して rollback 候補へ戻す。
 

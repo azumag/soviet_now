@@ -4382,8 +4382,12 @@ PY
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
 		if [ -n "$rolled_hash" ]; then
 			if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then
-				_reset_current_strategy_run "$rolled_hash"
-				log "[CURRENT-RUN] rollback revalidate fresh cycle: hash=${rolled_hash}"
+				if _seed_current_strategy_run_from_rolling "$rolled_hash"; then
+					log "[CURRENT-RUN] rollback revalidate seed from rolling: hash=${rolled_hash}"
+				else
+					_reset_current_strategy_run "$rolled_hash"
+					log "[CURRENT-RUN] rollback seed missing -> revalidate fresh cycle: hash=${rolled_hash}"
+				fi
 			elif _seed_current_strategy_run_from_rolling "$rolled_hash"; then
 				log "[CURRENT-RUN] rollback seed from rolling: hash=${rolled_hash}"
 			else

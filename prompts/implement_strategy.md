@@ -64,8 +64,8 @@
 - `analysis["results"]`, `analysis["reactor"]`, `analysis["deadline"]`, `next/nextNext`, `pieces` の未活用情報を優先活用
 - 特に `deadline_y`, `top_edge_y`, `deadline_margin`, `danger_piece_count`, `min_redline_time`, `crosses_deadline`, `danger_merge_available`, `danger_direct_merge_available` を読むこと
 - 連鎖狙いより、いま取れる併合機会の確保と盤面圧迫の回避を優先すること
-- **【不可侵の安全不変条件】** `crosses_deadline == True` の選択肢は、`crosses_deadline == False` の安全な選択肢が存在する限り、`merge_grade`(DIRECT/NEAR/FAR)・merge-drought・HIGH_LAYER 抑制等**いかなる理由でも選んではならない**。デッドライン超過は即ゲームオーバー。新しい併合・タワー・drought 対策ロジックを足すときは、必ず「安全な非超過候補があるなら超過候補を選ばない」判定をそれらより前段に通すこと。sandbox の `deadline-(far|near|direct)-guard` テストはこの不変条件を検証しており、緩和不可
-- **【不可侵の安全不変条件】** 全候補が `crosses_deadline == True` でも、`deadline.top_edge_y` / `reactor.top_edge_y` がまだ低く `deadline_margin` に余裕がある局面では、raw crossing 予測を deadline penalty や `CROSSES_DEADLINE_NO_MERGE` / `MERGE_DROUGHT_DEADLINE_CROSS_PENALTY` reason の根拠にしてはいけない。これは赤線付近の実危険ではなく予測ノイズなので、sandbox の `all-crossing-far-below` テストを壊す変更は禁止
+- **【不可侵の安全不変条件】** `crosses_deadline == True` の選択肢は、`crosses_deadline == False` の安全な選択肢が存在する限り、`merge_grade`(DIRECT/NEAR/FAR)・merge-drought・HIGH_LAYER 抑制等**原則として選んではならない**。デッドライン超過は即ゲームオーバー。新しい併合・タワー・drought 対策ロジックを足すときは、必ず「安全な非超過候補があるなら超過候補を選ばない」判定をそれらより前段に通すこと。sandbox の `deadline-(far|near|direct)-guard` テストはこの不変条件を検証しており、緩和不可
+- 例外として、sandbox の `active-filter` は危険ピースへの DIRECT merge を要求する。`deadline_crossed==True` かつ `danger_piece_count>0` で、`crosses_deadline==True` の `merge_grade=="DIRECT"` 候補が `danger_direct_merge_available==True` または `merges[].target_is_danger==True` の場合だけ、非超過 `NO` 候補より危険ピース DIRECT merge を優先すること。通常の DIRECT/NEAR/FAR merge にはこの例外を広げないこと。
 - `v369 congestion-aware proximity` 周辺を変更する場合、`rp_guidance_suppressed` が true の混雑・deadline 危険局面では必ず `proximity_bonus = 0.0` に落とし、既に計算済みの近接 bonus を後から加算してはいけない。`reactive_pair_count >= 5 && max_y >= 2.5` などの抑制条件は「追加倍率を止める」だけでは不十分
 - 「終盤8ターン」は固定ターン数ではなく、dead line 接近、`max_y>=2.0`, 反応可能ペア滞留などの局面条件に読み替えること
 - `random` や時刻依存など非決定的要素は導入しない

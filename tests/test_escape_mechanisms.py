@@ -1724,10 +1724,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         )
         self.assertIn("安全な選択肢が存在する限り", prompts)
         self.assertIn("安全な非超過候補があるなら超過候補を絶対に選ばない", prompts)
-        self.assertIn("all-crossing-far-below", prompts)
-        self.assertIn("raw crossing 予測を deadline penalty", prompts)
         review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
-        self.assertIn("far-below raw crossing 抑制", review_prompt)
+        self.assertNotIn("far-below raw crossing 抑制", review_prompt)
+        self.assertNotIn("all-crossing", sandbox)
         self.assertIn("deadline-near-guard: expected safe non-crossing x=-1.0 over crossing NEAR merge", sandbox)
         self.assertIn("deadline-direct-guard: expected safe non-crossing x=-1.0 over crossing DIRECT merge", sandbox)
         self.assertNotIn("deadline-near-guard: expected crossing NEAR merge x=2.8", sandbox)
@@ -1872,8 +1871,8 @@ class TestWildcardPerturbPreservesComments(unittest.TestCase):
             self.assertTrue(payload["prefer_applied"])
             self.assertEqual([3], [item["lineno"] for item in payload["applied"]])
 
-    def test_power_exponents_are_not_wildcard_targets(self):
-        """累乗指数を揺らすと距離計算が複素数化しうるため候補から外す。"""
+    def test_power_exponents_are_wildcard_targets(self):
+        """大域脱出用に累乗指数も摂動候補に含める。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             sample = td / "strategy.py"
@@ -1905,8 +1904,194 @@ class TestWildcardPerturbPreservesComments(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
             payload = json.loads(result.stdout)
-            self.assertNotIn(4, [item["lineno"] for item in payload["applied"]])
+            self.assertIn(4, [item["lineno"] for item in payload["applied"]])
             self.assertIn(5, [item["lineno"] for item in payload["applied"]])
+
+    def test_numeric_range_no_longer_excludes_constants(self):
+        """大域脱出用に 0 や巨大値も摂動候補に含める。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    zero = 0.0
+                    tiny = 0.02
+                    normal = 3.0
+                    huge = 6000.0
+                    return {"x": zero + tiny + normal + huge, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "4",
+                    "--seed", "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertEqual({2, 3, 4, 5}, {item["lineno"] for item in payload["applied"]})
+            self.assertNotEqual(0.0, next(item["new"] for item in payload["applied"] if item["lineno"] == 2))
+
+    def test_booleans_are_wildcard_targets(self):
+        """True/False は boolean のまま反転する。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    enabled = True
+                    disabled = False
+                    return {"x": 1.0 if enabled and not disabled else 0.0, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "2",
+                    "--seed", "0",
+                    "--prefer-lines", "2,3",
+                    "--explore-rate", "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertEqual({2, 3}, {item["lineno"] for item in payload["applied"]})
+            self.assertIn("enabled = False", out.read_text())
+            self.assertIn("disabled = True", out.read_text())
+
+    def test_random_count_uses_available_candidate_pool(self):
+        """--random-count は変更可能候補を数え、そのプール内で変更数を乱数決定する。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    a = 1.0
+                    b = 2.0
+                    c = 3.0
+                    d = 4.0
+                    return {"x": a + b + c + d, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "1",
+                    "--random-count",
+                    "--seed", "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["random_count"])
+            self.assertEqual(4, payload["available_candidates"])
+            self.assertEqual(4, payload["sample_pool_candidates"])
+            self.assertEqual(1, payload["requested_count"])
+            self.assertEqual(4, payload["selected_count"])
+            self.assertEqual(4, len(payload["applied"]))
+
+    def test_normal_ratio_reports_scale_and_outlier(self):
+        """摂動比率は値の大きさでスケールし、正規乱数の外れ値も記録する。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    threshold = 10.0
+                    return {"x": threshold, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "1",
+                    "--seed", "2",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            applied = json.loads(result.stdout)["applied"][0]
+            self.assertEqual(applied["magnitude_scale"], 1.25)
+            self.assertTrue(applied["normal_outlier"])
+            self.assertGreater(applied["ratio"], 0.4)
+
+    def test_decide_reachable_helpers_and_globals_are_targets(self):
+        """decide() から到達する helper と参照グローバル定数も摂動対象にする。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                GLOBAL_SCALE = 4.0
+                GLOBAL_OFFSET = GLOBAL_SCALE + 1.5
+                UNRELATED_GLOBAL = 8.0
+
+                def helper(value):
+                    local = 2.5
+                    if value > 7.0:
+                        return value * GLOBAL_OFFSET + local
+                    return value + GLOBAL_SCALE
+
+                def unrelated():
+                    return 9.0
+
+                def decide(game_state, analysis):
+                    base = 3.0
+                    return {"x": helper(base), "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "5",
+                    "--seed", "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            lines = {item["lineno"] for item in payload["applied"]}
+            self.assertEqual({1, 2, 6, 7, 15}, lines)
+            self.assertNotIn(3, lines)
+            self.assertNotIn(12, lines)
 
 
 # --- 共通: stagnation counter transitions ------------------------------------
@@ -3615,38 +3800,15 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
             self.assertEqual(events[-1]["detector"], "actual_snapshot_geometry")
             self.assertEqual(events[-1]["history"], str(history_path))
 
-    def test_deadline_guard_injector_filters_merge_result_crossing(self):
-        injector = (REPO_ROOT / "inject_deadline_guard.py").read_text()
+    def test_validate_strategy_does_not_inject_deadline_guard(self):
+        sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
-        self.assertIn("__dlg_merge_result_safe", injector)
-        self.assertIn("__dlg_has_clean", injector)
-        self.assertIn("merge_result_crosses_deadline", injector)
-        self.assertIn("return not c.get(\"merge_result_crosses_deadline\")", injector)
-        self.assertIn("__dlg_safe_no_merge", injector)
-        self.assertIn("__dlg_merge_preferred", injector)
-
-    def test_deadline_guard_injector_replaces_stale_guard(self):
-        import inject_deadline_guard
-
-        stale_src = '''
-def decide(game_state, analysis):
-    """strategy"""
-    # --- BEGIN DEADLINE GUARD (old) ---
-    if True:
-        return {"x": 0.0, "reason": "OLD_DEADLINE_GUARD"}
-    # --- END DEADLINE GUARD ---
-    return {"x": 1.0, "reason": "NORMAL"}
-'''
-
-        updated = inject_deadline_guard.inject_guard(stale_src)
-
-        self.assertIsNotNone(updated)
-        self.assertNotIn("OLD_DEADLINE_GUARD", updated)
-        self.assertIn("__dlg_has_clean", updated)
-        self.assertIn("merge_result_crosses_deadline", updated)
-        self.assertIn("__dlg_safe_no_merge", updated)
-        self.assertIn("__dlg_merge_preferred", updated)
-        self.assertEqual(inject_deadline_guard.inject_guard(updated), None)
+        self.assertFalse((REPO_ROOT / "inject_deadline_guard.py").exists())
+        self.assertNotIn("DEADLINE_GUARD_AUTO_INJECT", sandbox)
+        self.assertNotIn("inject_deadline_guard", sandbox)
+        self.assertNotIn("validation後hash同期", loop)
+        self.assertNotIn("validate_strategy may inject", loop)
 
     def test_deadline_safety_prefers_visible_safe_landing_when_all_candidates_flag_crossing(self):
         import strategy_runner
@@ -4871,14 +5033,15 @@ _prune_expired_rejected_hashes
             self.assertNotIn(actual_hash, rejected_file.read_text(encoding="utf-8"))
             self.assertNotIn(actual_hash, json.loads(rejected_meta.read_text(encoding="utf-8")))
 
-    def test_post_regression_improve_uses_failed_batch(self):
+    def test_post_regression_revalidates_rollback_target_instead_of_failed_batch(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
 
-        self.assertIn("POST_REGRESSION_IMPROVE_ENABLED", config)
+        self.assertNotIn("POST_REGRESSION_IMPROVE_ENABLED", config)
         self.assertIn("POST_REGRESSION_DIRECT_ESCAPE_ENABLED", config)
-        self.assertIn("回帰ロールバック直後 → 失敗バッチで改善ロック作成", loop)
+        self.assertNotIn("回帰ロールバック直後 → 失敗バッチで改善ロック作成", loop)
+        self.assertIn("旧戦略の失敗バッチは改善に使わず、復帰先戦略の再評価を優先", loop)
         self.assertIn("_post_regression_route", loop)
         self.assertIn("curr_russia_seen", loop)
         self.assertIn('"stage_achievement_regression": "段階到達ゲート未達"', loop)
@@ -4909,12 +5072,16 @@ _prune_expired_rejected_hashes
         self.assertIn("classify rollback reason", loop)
         self.assertIn("russia path still alive? yes", loop)
         self.assertIn("direct escape, no next game", loop)
-        self.assertIn("post_regression improve", loop)
+        self.assertNotIn("post_regression improve", loop)
+        self.assertIn("rollback target revalidation", loop)
+        self.assertIn("粛清前の失敗バッチは別戦略のデータなので改善に使わず", loop)
         self.assertIn('data["improve_reason"] = "post_regression"', loop)
         self.assertIn('data["regression_result"]', loop)
         self.assertIn("REGRESSION_ROLLBACK_HASH", loop)
         self.assertIn('[ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ]', loop)
-        self.assertIn("ロールバック直後の失敗バッチを改善入力として使用", improve)
+        self.assertIn("ロールバック直後の直接脱出ロックを処理", improve)
+        self.assertIn("legacy post_regression lock", improve)
+        self.assertNotIn("ロールバック直後の失敗バッチを改善入力として使用", improve)
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn("post_regression_direct_escape", improve)
         self.assertIn("archive candidate unavailable → wildcard", improve)
@@ -5062,12 +5229,11 @@ _prune_expired_rejected_hashes
         self.assertIn("enqueue_audio_text \"メリケンAI改善が無音で固まったため", control)
         self.assertIn("soren91_harvest_hung_improve || true", improve)
 
-    def test_startup_validation_syncs_current_run_hash_after_guard_injection(self):
+    def test_startup_validation_does_not_reset_current_run_hash(self):
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
-        self.assertIn("validation後hash同期", loop)
-        self.assertIn("extract_decide_hash.py \"$STRATEGY_FILE\"", loop)
-        self.assertIn("_reset_current_strategy_run \"$_validated_hash\"", loop)
+        self.assertNotIn("validation後hash同期", loop)
+        self.assertNotIn("_reset_current_strategy_run \"$_validated_hash\"", loop)
 
     def test_current_strategy_run_reset_and_seed_write_valid_json(self):
         """hash切替時の current_run reset/seed は静かに失敗せず JSON を書く。"""
@@ -5182,6 +5348,10 @@ PY
         self.assertIn("current strategy has Russia progress", improve)
         self.assertIn("current_russia_progress", improve)
         self.assertIn('russia > 0 or best_type >= 15', improve)
+        self.assertIn("lock_matches_current", improve)
+        self.assertIn('lock_hash == current_hash', improve)
+        self.assertIn('lock_russia = as_int(lock.get("russia_count", 0)) if lock_matches_current else 0', improve)
+        self.assertIn('lock_best = as_int(lock.get("best_max_type", 0)) if lock_matches_current else 0', improve)
         self.assertIn('[ "$current_russia_progress" != "1" ]', improve)
         self.assertLess(
             improve.index("current strategy has Russia progress"),
@@ -5774,8 +5944,10 @@ PY
         self.assertIn('cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"', regression)
         self.assertIn("ROLLBACK_REVALIDATE_TARGET_ENABLED", config)
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', regression)
+        self.assertIn('if _seed_current_strategy_run_from_rolling "$rolled_hash"; then', regression)
+        self.assertIn("rollback revalidate seed from rolling", regression)
         self.assertIn('_reset_current_strategy_run "$rolled_hash"', regression)
-        self.assertIn("rollback revalidate fresh cycle", regression)
+        self.assertIn("rollback seed missing -> revalidate fresh cycle", regression)
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ] &&', loop)
         self.assertIn('[ "${REGRESSION_ROLLBACK_DONE:-0}" = "1" ] &&', loop)
         self.assertIn("復帰先にロシア進捗あり", loop)

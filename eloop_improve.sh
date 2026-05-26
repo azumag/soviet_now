@@ -990,12 +990,15 @@ PY
 		export WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES
 		export WILDCARD_PARALLEL_CULL_COMP_RATIO
 		export WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS
+		wildcard_random_count_arg="--random-count"
+		[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || wildcard_random_count_arg="--no-random-count"
 		set +e
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
 			--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
 			--games "${WILDCARD_PARALLEL_GAMES:-6}" \
 			--count "$wildcard_count" \
+			"$wildcard_random_count_arg" \
 			--ratio-min "$wildcard_ratio_min" \
 			--ratio-max "$wildcard_ratio_max" \
 			--exclude-lines "$wildcard_exclude_lines" \
@@ -1214,10 +1217,13 @@ except Exception:
 	wildcard_count=$((wildcard_count_min + RANDOM % (wildcard_count_max - wildcard_count_min + 1)))
 	[ "$wildcard_count" -lt 1 ] && wildcard_count=1
 	wildcard_seed=$(date +%s)
+	wildcard_random_count_args=()
+	[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] && wildcard_random_count_args=(--random-count)
 	wildcard_result=$(python3 wildcard_perturb.py \
 		--input "$STRATEGY_FILE" \
 		--output "strategy.py.staging" \
 		--count "$wildcard_count" \
+		"${wildcard_random_count_args[@]}" \
 		--ratio-min "$wildcard_ratio_min" \
 		--ratio-max "$wildcard_ratio_max" \
 		--exclude-lines "$wildcard_exclude_lines" \

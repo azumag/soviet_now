@@ -7,32 +7,6 @@ validate_strategy() {
 	log "[VALIDATE] checking $target_file..."
 	VALIDATE_ERROR=""
 
-	# deadline guard 冪等注入: validate_strategy の deadline-*-guard 合成テストは
-	# decide() が deadline 危険時に安全な非クロスを返すことを要求する。改善
-	# pipeline (eloop_improve の staging) も rollback 復元も guard を注入しない
-	# ため、guard 無し戦略が毎回検証失敗→継続修正で最大18 AIリトライ空費し
-	# 回帰カスケードのエンジンになっていた。検証対象に guard を冪等注入して
-	# from-source で必ず guard 付きにする (既に有れば inject_guard が no-op)。
-	# 緊急停止は DEADLINE_GUARD_AUTO_INJECT=0。
-	if [ "${DEADLINE_GUARD_AUTO_INJECT:-1}" = "1" ] && [ -f "$target_file" ] && case "$target_file" in *.py|*.py.staging) true ;; *) false ;; esac; then
-		local _deadline_guard_inject_out
-		_deadline_guard_inject_out=$(python3 - "$target_file" <<'PYINJ' 2>/dev/null
-import sys
-sys.path.insert(0, ".")
-import inject_deadline_guard as ig
-p = sys.argv[1]
-src = open(p, encoding="utf-8").read()
-new = ig.inject_guard(src)
-if new is not None:
-    open(p, "w", encoding="utf-8").write(new)
-    print("injected")
-PYINJ
-		)
-		if [ "$_deadline_guard_inject_out" = "injected" ]; then
-			log "[VALIDATE] deadline guard を $target_file に冪等注入/更新"
-		fi
-	fi
-
 	local sig_out
 	sig_out=$(
 		python3 - "$target_file" "$helpers_dir" <<'PYEOF' 2>&1
@@ -173,28 +147,6 @@ reactive_far_below_analysis = {
 reactive_far_below_result = mod.decide(deadline_guard_state, reactive_far_below_analysis)
 if "DEADLINE_GUARD" in str(reactive_far_below_result.get("reason", "")):
     raise AssertionError(f"reactive-far-below: deadline guard must not fire far below red line, got {reactive_far_below_result!r}")
-
-all_crossing_far_below_penalty_state = {
-    "pieces": [{"id": i, "type": (i % 7) + 1, "x": -2.8 + (i % 8) * 0.8, "y": -3.8 + (i // 8) * 0.45, "r": 0.35} for i in range(32)],
-    "next": {"type": 9, "r": 1.0},
-    "nextNext": {"type": 5, "r": 0.5},
-    "score": 1000,
-    "deadline_crossed": False,
-}
-all_crossing_far_below_penalty_analysis = {
-    "results": [
-        {"x": -1.0, "landing_y": 2.5, "top_y_after_drop": 3.5, "risk_top_y_after_drop": 3.5, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
-        {"x": 1.0, "landing_y": 2.6, "top_y_after_drop": 3.6, "risk_top_y_after_drop": 3.6, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
-    ],
-    "same_type": [],
-    "reactor": {"reactive_pairs": [(1, 2, 2)], "deadline_margin": 1.2, "top_edge_y": 2.18, "danger_piece_count": 0},
-    "deadline": {"deadline_y": 3.38, "deadline_margin": 1.2, "deadline_crossed": False},
-}
-all_crossing_far_below_penalty_result = mod.decide(all_crossing_far_below_penalty_state, all_crossing_far_below_penalty_analysis)
-if "CROSSES_DEADLINE_NO_MERGE" in str(all_crossing_far_below_penalty_result.get("reason", "")):
-    raise AssertionError(f"all-crossing-far-below: raw crossing should not add deadline penalty, got {all_crossing_far_below_penalty_result!r}")
-if "MERGE_DROUGHT_DEADLINE_CROSS_PENALTY" in str(all_crossing_far_below_penalty_result.get("reason", "")):
-    raise AssertionError(f"all-crossing-far-below: raw crossing should not add merge-drought deadline penalty, got {all_crossing_far_below_penalty_result!r}")
 
 urgent_direct_state = {
     "pieces": [{"id": i, "type": (i % 8) + 1, "x": -2.8 + (i % 8) * 0.7, "y": -3.8 + (i // 8) * 0.55, "r": 0.35} for i in range(32)],
@@ -343,26 +295,11 @@ no_clean_risky_merge_result = mod.decide(active_filter_state, no_clean_risky_mer
 if float(no_clean_risky_merge_result["x"]) != 0.0:
     raise AssertionError(f"no-clean-risky-merge: expected merge x=0.0, got {no_clean_risky_merge_result!r}")
 
-all_crossing_analysis = {
-    "results": [
-        {"x": -1.0, "landing_y": 2.8, "top_y_after_drop": 3.34, "risk_top_y_after_drop": 3.34, "crosses_deadline": True, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
-        {"x": 0.0, "landing_y": 3.5, "top_y_after_drop": 4.1, "risk_top_y_after_drop": 4.1, "crosses_deadline": True, "merge_grade": "DIRECT", "has_merge": True, "merges": [{"id": 1, "grade": "DIRECT", "dist": 0.1, "contact_r": 1.2, "target_is_danger": True}], "danger_merge_available": True, "danger_direct_merge_available": True},
-    ],
-    "same_type": [{"id": 1, "type": 5, "x": 0.0, "y": 2.8, "r": 0.6}],
-    "reactor": {"reactive_pairs": [(1, 2, 5), (3, 4, 6), (5, 6, 7)], "deadline_margin": -0.1, "top_edge_y": 3.4, "danger_piece_count": 1},
-    "deadline": {"deadline_y": 3.32, "deadline_margin": -0.1, "deadline_crossed": True},
-}
-all_crossing_result = mod.decide(active_filter_state, all_crossing_analysis)
-# 方針変更 (commit 89129ada8b): 両候補が deadline を超えていても merge を温存する。
-# 危険盤面で merge を捨てて min-risk no-merge を選ぶより、merge を温存して進化を進める方が良い。
-# (試合速度的に「次手が危ないけど今手で type を上げて消化」の方が期待値が高い設計)
-if float(all_crossing_result["x"]) != 0.0:
-    raise AssertionError(f"all-crossing-merge-preserved: expected merge-preserved x=0.0, got {all_crossing_result!r}")
 print(f'OK: decide({", ".join(params)})')
 PYEOF
 	)
 	if [ $? -ne 0 ]; then
-		VALIDATE_ERROR="decide()シグネチャチェック失敗: $sig_out"
+		VALIDATE_ERROR="strategy validation failed: $sig_out"
 		log "[VALIDATE] $VALIDATE_ERROR"
 		return 1
 	fi

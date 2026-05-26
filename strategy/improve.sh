@@ -1944,7 +1944,11 @@ PY
 	*) improve_reason="normal" ;;
 	esac
 	if [ "$improve_reason" = "post_regression" ]; then
-		log "[IMPROVE] ロールバック直後の失敗バッチを改善入力として使用"
+		if echo "$lock_data" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("post_regression_direct_escape") else 0)' 2>/dev/null | grep -qx 1; then
+			log "[IMPROVE] ロールバック直後の直接脱出ロックを処理"
+		else
+			log "[IMPROVE] legacy post_regression lock: ロールバック前バッチ由来のため可能なら復帰先再評価へ移行"
+		fi
 	fi
 	local russia_recovery_mode russia_recovery_reason
 	russia_recovery_reason=""
@@ -2008,9 +2012,11 @@ current_hash = str(current.get("hash") or "")
 rolling_current = rolling.get(current_hash) if current_hash else {}
 if not isinstance(rolling_current, dict):
     rolling_current = {}
+lock_hash = str(lock.get("hash") or lock.get("strategy_hash") or "")
+lock_matches_current = bool(current_hash and lock_hash and lock_hash == current_hash)
 current_russia = int(current.get("russia_count", 0) or 0)
 rolling_russia = int(rolling_current.get("russia_count", 0) or 0)
-lock_russia = int(lock.get("russia_count", 0) or 0)
+lock_russia = int(lock.get("russia_count", 0) or 0) if lock_matches_current else 0
 current_games = int(current.get("games_total", 0) or len(current.get("scores", []) or []))
 rolling_allowed = current_games < mature_n
 rstreak = int(stagnation.get("regression_streak", 0) or 0)
@@ -2116,12 +2122,14 @@ current_hash = str(current.get("hash") or "")
 rolling_current = rolling.get(current_hash) if current_hash else {}
 if not isinstance(rolling_current, dict):
     rolling_current = {}
+lock_hash = str(lock.get("hash") or lock.get("strategy_hash") or "")
+lock_matches_current = bool(current_hash and lock_hash and lock_hash == current_hash)
 current_russia = as_int(current.get("russia_count", 0))
 rolling_russia = as_int(rolling_current.get("russia_count", 0))
-lock_russia = as_int(lock.get("russia_count", 0))
+lock_russia = as_int(lock.get("russia_count", 0)) if lock_matches_current else 0
 current_best = as_int(current.get("best_max_type", 0))
 rolling_best = as_int(rolling_current.get("best_max_type", 0))
-lock_best = as_int(lock.get("best_max_type", 0))
+lock_best = as_int(lock.get("best_max_type", 0)) if lock_matches_current else 0
 current_games = as_int(current.get("games_total", len(current.get("scores", []) or [])))
 rolling_allowed = current_games < mature_n
 best_type = max(current_best, lock_best, rolling_best if rolling_allowed else 0)
