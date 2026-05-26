@@ -1091,6 +1091,62 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertTrue(coordinator.should_cull(candidate))
             self.assertEqual(candidate.cull_leader_job_id, "one-game-leader")
 
+    def test_wildcard_parallel_score_baseline_can_cull_without_becoming_winner(self):
+        """元戦略に既存スコアがあれば culling 比較用 leader として使うが winner にはしない。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            strategy = td_path / "strategy.py"
+            strategy.write_text("def decide(gs, analysis):\n    return {'x': 0}\n", encoding="utf-8")
+            current_run = td_path / "current_strategy_run.json"
+            current_run.write_text(
+                json.dumps(
+                    {
+                        "hash": wildcard_parallel.compute_strategy_hash(strategy),
+                        "scores": [1200],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rolling = td_path / "rolling_scores.json"
+            rolling.write_text("{}", encoding="utf-8")
+            baseline = wildcard_parallel.load_score_baseline(strategy, td_path / "session", rolling, current_run)
+            self.assertIsNotNone(baseline)
+            self.assertEqual(baseline.status, "baseline")
+            self.assertTrue(baseline.score_baseline)
+            self.assertEqual(baseline.scores, [1200])
+
+            candidate = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="running",
+                scores=[900],
+                comp=900,
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90),
+                td_path / "status.json",
+                td_path / "overlay.html",
+                td_path / "session",
+                [baseline],
+            )
+
+            self.assertTrue(coordinator.should_cull(candidate))
+            self.assertEqual(candidate.cull_leader_job_id, "baseline-score")
+            self.assertIsNone(wildcard_parallel.choose_winner([baseline], 1))
+
+    def test_wildcard_parallel_score_baseline_is_skipped_for_baseline_slot1_mode(self):
+        """戦略改善後パラメータ探索の baseline-slot1 mode では既存スコア baseline を注入しない。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+
+        self.assertIn("if not args.baseline_slot1:", parallel)
+        self.assertIn("score_baseline = load_score_baseline", parallel)
+        self.assertIn('if c.status == "pending" and not c.score_baseline', parallel)
+
     def test_wildcard_parallel_culls_finished_low_candidate_before_returning(self):
         """先に完走した低comp候補も accepted のまま返さず補充する。"""
         import argparse
@@ -1156,6 +1212,121 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
             self.assertIs(result, good_done)
             self.assertEqual(low_done.status, "culled")
+            perturb.assert_called_once_with(args, 1, td_path / "session", 1)
+
+    def test_wildcard_parallel_culls_runner_error_result_without_scoring(self):
+        """strategy_runner が error 付き結果を返した場合はスコア化せず補充対象へ回す。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            candidate = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=0,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="pending",
+            )
+            candidate.strategy_path.parent.mkdir(parents=True)
+            candidate.strategy_path.write_text("def decide(gs, analysis):\n    return {'x': 0}\n", encoding="utf-8")
+            args = argparse.Namespace(
+                games=1,
+                bridge_timeout=1,
+                cdp_base_port=19000,
+                serve_base_port=18000,
+            )
+
+            bridge = mock.Mock()
+            bridge.poll.return_value = None
+            bridge._soren_log_files = ()
+
+            with mock.patch.object(wildcard_parallel, "launch_bridge", return_value=bridge), \
+                mock.patch.object(wildcard_parallel, "capture_candidate_preview"), \
+                mock.patch.object(wildcard_parallel, "cleanup_wildcard_server_ports"), \
+                mock.patch.object(wildcard_parallel, "cleanup_chrome_profile_processes"), \
+                mock.patch.object(wildcard_parallel.subprocess, "Popen") as popen:
+                proc = mock.Mock()
+                proc.poll.return_value = 0
+                proc.communicate.return_value = (
+                    '---RESULT---\n{"error":"bridge_desync","score":0,"turns":1,"state":"MOVE","pieces":1,"final_types":[1]}\n',
+                    "",
+                )
+                proc.returncode = 0
+                popen.return_value = proc
+
+                result = wildcard_parallel.evaluate_real(candidate, args, td_path / "session")
+
+            self.assertEqual(result.status, "culled")
+            self.assertEqual(result.scores, [])
+            self.assertEqual(result.raw_scores, [])
+            self.assertIn("bridge_desync", result.error)
+            self.assertFalse(list((result.workdir / "game_history").glob("wildcard_parallel_*_score0.jsonl")))
+
+    def test_wildcard_parallel_refills_runner_error_cull(self):
+        """未完走 cull は通常の cull と同じく次の候補で slot を埋め直す。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            args = argparse.Namespace(
+                jobs=3,
+                games=2,
+                min_successful_games=2,
+                cull_after_games=1,
+                cull_leader_min_games=2,
+                cull_comp_ratio=0.90,
+                lingering_slot_max_culls=6,
+            )
+            first = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="pending",
+            )
+            incomplete = wildcard_parallel.CandidateResult(
+                job_id="candidate",
+                index=1,
+                workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="culled",
+                error="incomplete game culled without score: bridge_desync",
+            )
+            refill = wildcard_parallel.CandidateResult(
+                job_id="candidate-r2",
+                index=1,
+                workdir=td_path / "candidate-r2",
+                strategy_path=td_path / "candidate-r2" / "strategy.py",
+                status="pending",
+                generation=1,
+            )
+            good_done = wildcard_parallel.CandidateResult(
+                job_id="candidate-r2",
+                index=1,
+                workdir=td_path / "candidate-r2",
+                strategy_path=td_path / "candidate-r2" / "strategy.py",
+                status="accepted",
+                scores=[100, 120],
+                comp=110,
+                generation=1,
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                args,
+                td_path / "status.json",
+                td_path / "overlay.html",
+                td_path / "session",
+                [],
+            )
+
+            with mock.patch.object(wildcard_parallel, "evaluate_real", side_effect=[incomplete, good_done]), \
+                mock.patch.object(wildcard_parallel, "run_perturb", return_value=refill) as perturb:
+                result = wildcard_parallel.evaluate_slot(1, first, args, td_path / "session", coordinator)
+
+            self.assertIs(result, good_done)
+            self.assertEqual(incomplete.status, "culled")
+            self.assertEqual(incomplete.scores, [])
             perturb.assert_called_once_with(args, 1, td_path / "session", 1)
 
     def test_wildcard_parallel_cuts_off_lingering_last_slot_after_cull_limit(self):
@@ -1240,25 +1411,30 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             perturb.assert_not_called()
             self.assertIs(wildcard_parallel.choose_winner(coordinator.candidates, 2), accepted_b)
 
-    def test_wildcard_parallel_restarts_bridge_for_each_real_game(self):
-        """real 評価は GAMEOVER 状態を複数試合として重複カウントしない。"""
+    def test_wildcard_parallel_reuses_bridge_and_retries_between_real_games(self):
+        """real 評価は候補ごとの Chrome を開き直さず retry で次ゲームへ進む。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn('for game_index in range(args.games):', parallel)
+        self.assertIn("def reset_bridge_for_next_game", parallel)
+        self.assertIn('(workdir / "commands.txt").write_text("retry\\n", encoding="utf-8")', parallel)
+        self.assertIn("if game_index > 0:\n                    reset_bridge_for_next_game(workdir, bridge, args.bridge_timeout)", parallel)
         self.assertIn('(workdir / "game_state.json").write_text("{}", encoding="utf-8")', parallel)
         self.assertIn("bridge = launch_bridge(workdir, env, args.bridge_timeout)", parallel)
-        self.assertIn("finally:\n                stop_process(bridge)", parallel)
+        self.assertEqual(parallel.count("bridge = launch_bridge(workdir, env, args.bridge_timeout)"), 1)
+        self.assertIn("stop_process(bridge)\n        cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
 
     def test_wildcard_parallel_records_running_before_first_game(self):
         """補充候補が起動済みなのに overlay が pending のまま残らないようにする。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn('candidate.status = "running"', parallel)
-        self.assertIn("candidate.profile_dir = str(workdir / \"tmp\" / \"chromium_profile\")\n    if progress_callback:\n        progress_callback(candidate)", parallel)
+        self.assertIn("candidate.profile_dir = str((workdir / \"tmp\" / \"chromium_profile\").resolve())", parallel)
+        self.assertIn("if progress_callback:\n        progress_callback(candidate)", parallel)
 
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
-        self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": "0"', parallel)
+        self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": os.environ.get("WILDCARD_PARALLEL_NO_FOCUS_LAUNCH", "1")', parallel)
         self.assertIn("def cleanup_chrome_profile_processes", parallel)
         self.assertIn("def cleanup_wildcard_chrome_processes", parallel)
         self.assertIn("def cleanup_wildcard_session_dirs", parallel)
@@ -1273,7 +1449,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("--cleanup-sessions", improve)
         self.assertIn('"wildcard_parallel" not in profile_dir', parallel)
         self.assertIn('"ps", "-Ao", "pid=,command="', parallel)
-        self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)\n                continue", parallel)
+        self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)\n            bridge = None", parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
 
     def test_wildcard_parallel_prunes_old_session_dirs_without_active(self):
@@ -1469,6 +1645,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn('improve_reason="escape_ai"', improve)
         self.assertIn("seeded escape_ai 構造変異モードで脱出", improve)
+        self.assertIn('improve_reason="normal"', improve)
+        self.assertIn("fallback normal AI? yes", improve)
+        self.assertIn("escape_ai seedなし。WILDCARD再試行を止め、通常AI改善へ戻します。", improve)
+        self.assertIn("通常AI改善へフォールバック", improve)
         self.assertIn("_escape_ai_seed_available", improve)
         self.assertIn("rejected_hash_metrics.json", improve)
         self.assertIn("rolling_scores.json", improve)
@@ -5084,7 +5264,7 @@ _prune_expired_rejected_hashes
         self.assertNotIn("ロールバック直後の失敗バッチを改善入力として使用", improve)
         self.assertIn("normal|post_regression|wildcard|escape_ai", improve)
         self.assertIn("post_regression_direct_escape", improve)
-        self.assertIn("archive candidate unavailable → wildcard", improve)
+        self.assertIn("archive candidate unavailable → WILDCARD", improve)
         self.assertIn("_persist_improve_lock_reason()", improve)
         self.assertIn('data["improve_reason"] = reason', improve)
         self.assertIn('_persist_improve_lock_reason "$reason"', improve)
@@ -5330,7 +5510,7 @@ PY
         self.assertIn("mechanical wildcard suppressed", improve)
         self.assertIn("no_russia_24h", improve)
         self.assertIn("archive_restart を即時優先", improve)
-        self.assertIn("archive candidate unavailable → wildcard でtype14→15 frontier 復旧", improve)
+        self.assertIn("archive candidate unavailable → WILDCARD で構造変異候補を評価", improve)
         self.assertIn("archive/wildcard unavailable → seeded escape_ai", improve)
         self.assertIn("russia path still alive? no", improve)
         self.assertIn("archive_restart candidate? yes", improve)

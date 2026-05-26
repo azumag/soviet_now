@@ -199,6 +199,219 @@ PY
 	fi
 }
 
+_wildcard_parallel_obs_show() {
+	[ -x ./obs_control.sh ] || return 0
+	local scene="${OBS_DASHBOARD_SCENE:-soren}"
+	local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+	local cand_prefix="${WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX:-wildcardParallelCand}"
+	local cand_sources="${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6"
+	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
+	local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
+	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
+	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
+	local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
+	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-170}"
+	local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
+	[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
+	[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+	./obs_control.sh batch "$scene" show:"$overlay" hide:"$hide_sources,$cand_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+	OBS_CONTROL_TRANSFORM_MODE=force ./obs_control.sh transform "$scene" "$overlay" 0 0 1 1 "$overlay_width" "$overlay_height" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+}
+
+_wildcard_parallel_obs_restore() {
+	[ -x ./obs_control.sh ] || return 0
+	local scene="${OBS_DASHBOARD_SCENE:-soren}"
+	local overlay="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+	local cand_prefix="${WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX:-wildcardParallelCand}"
+	local cand_sources="${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6"
+	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
+	local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
+	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
+	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
+	local show_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
+	[ -n "$game_source" ] && show_sources="$show_sources,$game_source"
+	./obs_control.sh batch "$scene" hide:"$overlay,$cand_sources" show:"$show_sources" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+	./obs_control.sh transform "$scene" "$status_source" "${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}" "${STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+	./obs_control.sh transform "$scene" "$show_status_source" "${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_X:-0.86}" "${SHOW_STATUS_OVERLAY_OBS_SCALE_Y:-0.78}" >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
+	python3 - "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+if not path or not os.path.exists(path):
+    raise SystemExit(0)
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    data = {}
+if data.get("phase") == "running":
+    data["phase"] = "restored"
+    data["ended_at"] = int(time.time())
+    data["detail"] = "obs_restore"
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+PY
+}
+
+_wildcard_parallel_cleanup_sessions() {
+	python3 wildcard_parallel.py --cleanup-sessions \
+		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
+		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" >/dev/null 2>>"$TMP_DEBUG_DIR/wildcard_parallel_cleanup.log" || true
+}
+
+_post_improve_param_parallel_trial() {
+	[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-1}" = "1" ] || return 0
+	[ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ] || return 0
+	[ -f "$STRATEGY_FILE" ] || return 0
+
+	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${WILDCARD_PARALLEL_JOBS:-6} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
+	_improve_progress "wildcard_parallel" "86" "post_improve_param_parallel"
+	_wildcard_parallel_obs_show || true
+
+	local result_file started_at count_min count_max param_count seed random_count_arg result rc has_winner winner_path winner_hash baseline_hash winner_job
+	baseline_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	count_min="${WILDCARD_PARAM_COUNT_MIN:-1}"
+	count_max="${WILDCARD_PARAM_COUNT_MAX:-3}"
+	case "$count_min" in ''|*[!0-9]*) count_min=1 ;; esac
+	case "$count_max" in ''|*[!0-9]*) count_max="$count_min" ;; esac
+	[ "$count_max" -lt "$count_min" ] && count_max="$count_min"
+	param_count=$((count_min + RANDOM % (count_max - count_min + 1)))
+	[ "$param_count" -lt 1 ] && param_count=1
+	seed=$(date +%s)
+	result_file="${POST_IMPROVE_PARAM_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/post_improve_param_parallel_result.json}"
+	started_at=$(date +%s)
+	rm -f "$result_file" 2>/dev/null || true
+	random_count_arg="--random-count"
+	[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || random_count_arg="--no-random-count"
+
+	set +e
+	result=$(python3 wildcard_parallel.py \
+		--strategy "$STRATEGY_FILE" \
+		--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
+		--games "${WILDCARD_PARALLEL_GAMES:-6}" \
+		--count "$param_count" \
+		"$random_count_arg" \
+		--ratio-min "${WILDCARD_PERTURB_RATIO_MIN:-0.20}" \
+		--ratio-max "${WILDCARD_PERTURB_RATIO_MAX:-0.40}" \
+		--exclude-lines "" \
+		--prefer-lines "" \
+		--explore-rate "${WILDCARD_BANDIT_EXPLORE_RATE:-0.35}" \
+		--seed "$seed" \
+		--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
+		--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
+		--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
+		--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
+		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-6}" \
+		--baseline-slot1 \
+		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
+		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
+		--result-file "$result_file" 2>&1)
+	rc=$?
+	set -e
+
+	if [ "$rc" -ne 0 ]; then
+		has_winner=$(python3 - "$result_file" "$started_at" <<'PY' 2>/dev/null || echo 0
+import json
+import os
+import sys
+
+path = sys.argv[1]
+try:
+    started_at = int(float(sys.argv[2]))
+except Exception:
+    started_at = 0
+if not path or not os.path.exists(path):
+    print(0)
+    raise SystemExit(0)
+try:
+    if started_at and os.path.getmtime(path) < started_at:
+        print(0)
+        raise SystemExit(0)
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    print(0)
+    raise SystemExit(0)
+winner = data.get("winner") or {}
+print(1 if data.get("ok") and winner.get("strategy_path") else 0)
+PY
+)
+		if [ "$has_winner" != "1" ]; then
+			log "[PARAM-PARALLEL] no candidate rc=$rc: ${result:0:500}"
+			_wildcard_parallel_cleanup_sessions
+			_wildcard_parallel_obs_restore || true
+			return 0
+		fi
+		log "[PARAM-PARALLEL] trial exited rc=$rc but result file has winner → continue"
+	fi
+
+	winner_path=$(python3 - "$result_file" <<'PY' 2>/dev/null || true
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(w.get("strategy_path") or "")
+PY
+)
+	[ -n "$winner_path" ] && [ -f "$winner_path" ] || {
+		log "[PARAM-PARALLEL] winner strategy missing: ${winner_path:-empty}"
+		_wildcard_parallel_cleanup_sessions
+		_wildcard_parallel_obs_restore || true
+		return 0
+	}
+	if ! validate_strategy_with_helpers "$winner_path" "strategy_helpers"; then
+		log "[PARAM-PARALLEL] winner validation failed → keep AI-improved baseline"
+		_wildcard_parallel_cleanup_sessions
+		_wildcard_parallel_obs_restore || true
+		return 0
+	fi
+
+	winner_hash=$(python3 extract_decide_hash.py "$winner_path" 2>/dev/null || echo "")
+	cp "$winner_path" "$STRATEGY_FILE"
+	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	winner_job=$(python3 - "$result_file" <<'PY' 2>/dev/null || true
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(w.get("job_id") or "")
+PY
+)
+	local compact_result
+	compact_result=$(python3 - "$result_file" <<'PY' 2>/dev/null || echo '{}'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(json.dumps({
+    "applied": w.get("applied") or [],
+    "parallel_job_id": w.get("job_id") or "",
+    "parallel_winner": w,
+    "parallel_candidates": d.get("candidates") or [],
+    "parallel_session_dir": d.get("session_dir") or "",
+}, ensure_ascii=False))
+PY
+)
+	_import_wildcard_parallel_game_stats "$compact_result" "$HASH_AFTER" || true
+	_wildcard_parallel_cleanup_sessions
+	_wildcard_parallel_obs_restore || true
+	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$baseline_hash" ]; then
+		log "[PARAM-PARALLEL] selected tuned winner ${winner_job:-unknown}: ${baseline_hash} → ${HASH_AFTER}"
+		{
+			echo
+			echo "## post-improve parameter parallel trial @ game #${GAME_NUM_SNAPSHOT}"
+			echo "$compact_result" | python3 -c "import json,sys; d=json.load(sys.stdin); w=d.get('parallel_winner') or {}; print(f'- winner {w.get(\"job_id\",\"\")}: comp={w.get(\"comp\",0)} p25={w.get(\"p25\",0)} p50={w.get(\"p50\",0)} hash={w.get(\"hash\",\"\")[:12]}'); [print(f'- L{a.get(\"lineno\", \"?\")}: {a.get(\"old\", \"?\")} -> {a.get(\"new\", \"?\")}') for a in d.get('applied', [])]" 2>/dev/null
+		} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+		strategy_diff=$(diff -u "tmp/revert_strategy.py" "$STRATEGY_FILE" 2>/dev/null || true)
+	else
+		log "[PARAM-PARALLEL] slot1/baseline kept best: ${baseline_hash}"
+	fi
+}
+
 _validation_error_is_structural_staging_breakage() {
 	local error_text="${1:-}"
 	printf '%s' "$error_text" | grep -Eq 'decide\(\)シグネチャチェック失敗|IndentationError|SyntaxError|NameError|UnboundLocalError|cannot access local variable'
@@ -1587,7 +1800,7 @@ PY
 			"archive_restart_candidate_no" \
 			"archive_restart candidate? no" \
 			"archive_restart_json=${archive_restart_json:-empty}" \
-			"改善フロー: archive_restart with Russia-capable candidate? no。次の脱出手段へ進みます。" \
+			"改善フロー: archive_restart candidate? no。次の脱出手段へ進みます。" \
 			"warn"
 		no_candidate_marker="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-tmp/state/.archive_restart_no_candidate}"
 		mkdir -p "$(dirname "$no_candidate_marker")" 2>/dev/null || true
@@ -3277,6 +3490,7 @@ if $improve_ok; then
 		[ -f "strategy_helpers/__init__.py" ] || : >"strategy_helpers/__init__.py"
 		# ユーザーレビューは改善適用後に消去（1回限りの指示）
 		: >"data/user_review.md" 2>/dev/null || true
+		_post_improve_param_parallel_trial || true
 	fi
 fi
 [ -n "$HOST_INTEGRITY_BEFORE_FILE" ] && rm -f "$HOST_INTEGRITY_BEFORE_FILE" 2>/dev/null || true

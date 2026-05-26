@@ -25,7 +25,36 @@ source ./eloop_lib.sh
 
 POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
 DAEMON_TTY_FILE="$TMP_STATE_DIR/improve_daemon.tty"
+DAEMON_LOCK_DIR="$TMP_STATE_DIR/improve_daemon.lockdir"
+DAEMON_LOCK_PID_FILE="$DAEMON_LOCK_DIR/pid"
 _HEARTBEAT_PID=""
+
+_pid_alive_local() {
+	local pid="${1:-}"
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null
+}
+
+_acquire_daemon_singleton() {
+	local old_pid
+	while ! mkdir "$DAEMON_LOCK_DIR" 2>/dev/null; do
+		old_pid=$(cat "$DAEMON_LOCK_PID_FILE" 2>/dev/null || true)
+		if _pid_alive_local "$old_pid"; then
+			echo "[$(date '+%H:%M:%S')] [improve_daemon] 既存 daemon PID=${old_pid} が稼働中 → 重複起動を終了"
+			exit 0
+		fi
+		rm -rf "$DAEMON_LOCK_DIR" 2>/dev/null || true
+	done
+	printf '%s\n' "$$" >"$DAEMON_LOCK_PID_FILE" 2>/dev/null || true
+}
+
+_release_daemon_singleton() {
+	local old_pid
+	old_pid=$(cat "$DAEMON_LOCK_PID_FILE" 2>/dev/null || true)
+	if [ "$old_pid" = "$$" ]; then
+		rm -rf "$DAEMON_LOCK_DIR" 2>/dev/null || true
+	fi
+}
 
 _require_visible_terminal() {
 	# 配信用フォアグラウンド端末前提は廃止。進捗は HTML オーバーレイに
@@ -48,7 +77,24 @@ _require_visible_terminal() {
 	fi
 }
 
+_reject_detached_headless_duplicate() {
+	# Headless operation is managed by start_all.sh. A detached standalone
+	# launcher can bypass backoff and repeatedly flash OBS wildcard layouts.
+	if [ -t 0 ] || [ -t 1 ]; then
+		return 0
+	fi
+	if [ "${IMPROVE_DAEMON_ALLOW_STANDALONE_HEADLESS:-0}" = "1" ]; then
+		return 0
+	fi
+	if [ "${PPID:-0}" = "1" ]; then
+		echo "[$(date '+%H:%M:%S')] [improve_daemon] detached headless standalone 起動を拒否 (supervisor 管理に統一)"
+		exit 0
+	fi
+}
+
 _require_visible_terminal
+_reject_detached_headless_duplicate
+_acquire_daemon_singleton
 echo "[$(date '+%H:%M:%S')] [improve_daemon] 起動 (poll=${POLL_INTERVAL}s)"
 echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 
@@ -66,6 +112,7 @@ _daemon_cleanup() {
 	if [ -n "$_HEARTBEAT_PID" ]; then
 		kill "$_HEARTBEAT_PID" 2>/dev/null || true
 	fi
+	_release_daemon_singleton
 	local recorded_pid
 	recorded_pid=$(cat "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true)
 	if [ "$recorded_pid" = "$$" ]; then
@@ -94,7 +141,17 @@ while true; do
 	# harvest → ロックファイルがあれば trigger
 	check_and_harvest_improvement
 	if [ -f "$IMPROVE_LOCK_FILE" ]; then
-		trigger_adaptive_improvement
+		if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+			now=$(date +%s)
+			last_log=$(cat "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || echo 0)
+			case "$last_log" in '' | *[!0-9]*) last_log=0 ;; esac
+			if [ $((now - last_log)) -ge "${IMPROVE_DAEMON_BACKOFF_LOG_INTERVAL:-60}" ]; then
+				echo "[$(date '+%H:%M:%S')] [IMPROVE] rate-limit backoff中のため daemon trigger をスキップ"
+				printf '%s\n' "$now" >"$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+			fi
+		else
+			trigger_adaptive_improvement
+		fi
 	fi
 
 	sleep "$POLL_INTERVAL"

@@ -111,6 +111,7 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
         "deadline_fast_drop_values": [
             _bool_literal(v) for v in (getattr(args, "deadline_fast_drop_values", None) or [True, False])
         ],
+        "baseline_slot1": bool(getattr(args, "baseline_slot1", False)),
     }
 
 
@@ -143,6 +144,8 @@ class CandidateResult:
     cdp_port: int = 0
     serve_port: int = 0
     profile_dir: str = ""
+    baseline: bool = False
+    score_baseline: bool = False
 
     def public(self) -> dict:
         return {
@@ -175,6 +178,8 @@ class CandidateResult:
             "serve_port": self.serve_port,
             "profile_dir": self.profile_dir,
             "preview_path": str(self.workdir / "tmp" / "preview.png"),
+            "baseline": self.baseline,
+            "score_baseline": self.score_baseline,
         }
 
 
@@ -249,14 +254,23 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
                 f"L{html.escape(str(item.get('lineno', '?')))} "
                 f"{html.escape(str(item.get('old', '?')))} -> {html.escape(str(item.get('new', '?')))}"
             )
-        if not changes:
+        if cand.get("score_baseline"):
+            changes = ["source strategy virtual leader"]
+        elif cand.get("baseline"):
+            changes = ["slot 1 baseline unchanged"]
+        elif not changes:
             changes = ["no perturbation yet"]
         status = str(cand.get("status") or "pending")
         display_status = "finished" if status == "accepted" else status
         klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status == "won" else "run"
         job_id = str(cand.get("job_id", "-"))
         slot_num = _int(cand.get("index"), 0) + 1
-        source_name = f"{os.environ.get('WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX', 'wildcardParallelCand')}{slot_num}"
+        slot_label = "SRC" if cand.get("score_baseline") else str(slot_num)
+        source_name = (
+            "virtualLeader"
+            if cand.get("score_baseline")
+            else f"{os.environ.get('WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX', 'wildcardParallelCand')}{slot_num}"
+        )
         rank = rank_by_job.get(job_id)
         if rank == 1:
             klass += " leader"
@@ -292,7 +306,7 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         cards.append(
             f"""
             <section class="card {klass}">
-              <div class="top"><b><span class="slot-badge">SLOT {html.escape(str(slot_num))}</span>{html.escape(job_id)}</b><span>{html.escape(display_status)}</span></div>
+              <div class="top"><b><span class="slot-badge">SLOT {html.escape(slot_label)}</span>{html.escape(job_id)}</b><span>{html.escape(display_status)}</span></div>
               {rank_html}
               {preview_html}
               <div class="metric source">{html.escape(source_name)}</div>
@@ -723,7 +737,7 @@ def parallel_deadline_fast_drop_value(args: argparse.Namespace, index: int, gene
     return values[(index + generation) % len(values)]
 
 
-def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path) -> Path:
+def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path, preserve_exact: bool = False) -> Path:
     workdir = base_dir / job_id
     workdir.mkdir(parents=True, exist_ok=True)
     for rel in [
@@ -750,7 +764,8 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path) ->
     strategy_dst = workdir / "strategy.py"
     if strategy_source.resolve() != strategy_dst.resolve():
         shutil.copy2(strategy_source, strategy_dst)
-    ensure_deadline_fast_drop_param(strategy_dst)
+    if not preserve_exact:
+        ensure_deadline_fast_drop_param(strategy_dst)
     (workdir / "tmp" / "state").mkdir(parents=True, exist_ok=True)
     (workdir / "game_history").mkdir(exist_ok=True)
     (workdir / "commands.txt").write_text("", encoding="utf-8")
@@ -772,12 +787,83 @@ def update_candidate_metrics(candidate: CandidateResult) -> None:
     candidate.p50 = median(candidate.scores)
 
 
+def _score_list(value: object) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    return [_int(item, 0) for item in value if _int(item, 0) > 0]
+
+
+def load_score_baseline(
+    strategy_path: Path,
+    session_dir: Path,
+    rolling_scores_path: Path | None,
+    current_run_path: Path | None,
+) -> CandidateResult | None:
+    strategy_hash = compute_strategy_hash(strategy_path)
+    scores: list[int] = []
+    source = ""
+
+    if rolling_scores_path:
+        try:
+            rolling = json.loads(Path(rolling_scores_path).read_text(encoding="utf-8"))
+            entry = rolling.get(strategy_hash) if isinstance(rolling, dict) else None
+            scores = _score_list((entry or {}).get("scores")) if isinstance(entry, dict) else []
+            if scores:
+                source = "rolling_scores"
+        except Exception:
+            scores = []
+
+    if current_run_path:
+        try:
+            current = json.loads(Path(current_run_path).read_text(encoding="utf-8"))
+            current_scores = []
+            if isinstance(current, dict) and current.get("hash") == strategy_hash:
+                current_scores = _score_list(current.get("scores"))
+            if current_scores:
+                scores = scores + current_scores
+                source = f"{source}+current_run" if source else "current_run"
+        except Exception:
+            pass
+
+    if not scores:
+        return None
+
+    baseline = CandidateResult(
+        job_id="baseline-score",
+        index=-1,
+        workdir=session_dir / "baseline-score",
+        strategy_path=strategy_path,
+        status="baseline",
+        hash=strategy_hash,
+        applied=[{"lineno": "-", "old": source or "source", "new": "virtual leader"}],
+        scores=scores,
+        raw_scores=list(scores),
+        eval_scores=list(scores),
+        score_baseline=True,
+    )
+    update_candidate_metrics(baseline)
+    return baseline
+
+
 def run_perturb(args: argparse.Namespace, index: int, session_dir: Path, generation: int = 0) -> CandidateResult:
     job_id = f"cand-{index + 1}" if generation <= 0 else f"cand-{index + 1}-r{generation + 1}"
     candidate_dir = session_dir / job_id
     candidate_dir.mkdir(parents=True, exist_ok=True)
     out_path = candidate_dir / "strategy.py"
     seed = args.seed + index + (generation * args.jobs)
+    if getattr(args, "baseline_slot1", False) and index == 0 and generation == 0:
+        shutil.copy2(args.strategy, out_path)
+        result = CandidateResult(
+            job_id=job_id,
+            index=index,
+            workdir=candidate_dir,
+            strategy_path=out_path,
+            seed=seed,
+            generation=generation,
+            baseline=True,
+        )
+        result.hash = compute_strategy_hash(out_path)
+        return result
     cmd = [
         sys.executable,
         str(REPO_ROOT / "wildcard_perturb.py"),
@@ -837,6 +923,13 @@ def parse_runner_result(text: str) -> dict:
         raise RuntimeError("strategy_runner result marker missing")
     raw = text.rsplit(marker, 1)[1].strip().splitlines()[0]
     return json.loads(raw)
+
+
+def runner_result_error(game: dict) -> str:
+    error = str(game.get("error") or "").strip()
+    if error:
+        return error
+    return ""
 
 
 def archive_candidate_game_result(workdir: Path, job_id: str, game_index: int, game: dict) -> Path:
@@ -924,6 +1017,22 @@ def bridge_failure_detail(workdir: Path, rc: int | None = None) -> str:
     return " | ".join(parts)
 
 
+def wait_for_bridge_state(workdir: Path, proc: subprocess.Popen, timeout: int, predicate, label: str) -> dict:
+    deadline = time.time() + timeout
+    state_path = workdir / "game_state.json"
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(bridge_failure_detail(workdir, proc.returncode))
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+            if data.get("state") and predicate(data):
+                return data
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise RuntimeError(f"bridge timed out waiting for {label}: {bridge_failure_detail(workdir)}")
+
+
 def launch_bridge(workdir: Path, env: dict, timeout: int) -> subprocess.Popen:
     stdout_path = workdir / "tmp" / "soviet_local.stdout.log"
     stderr_path = workdir / "tmp" / "soviet_local.stderr.log"
@@ -939,37 +1048,40 @@ def launch_bridge(workdir: Path, env: dict, timeout: int) -> subprocess.Popen:
         start_new_session=True,
     )
     proc._soren_log_files = (stdout_f, stderr_f)  # type: ignore[attr-defined]
-    deadline = time.time() + timeout
-    state_path = workdir / "game_state.json"
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            stdout_f.close()
-            stderr_f.close()
-            raise RuntimeError(bridge_failure_detail(workdir, proc.returncode))
-        try:
-            data = json.loads(state_path.read_text(encoding="utf-8"))
-            if data.get("state"):
-                return proc
-        except Exception:
-            pass
-        time.sleep(0.5)
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        wait_for_bridge_state(workdir, proc, timeout, lambda data: True, "initial game_state")
+        return proc
     except Exception:
         try:
-            proc.terminate()
+            os.killpg(proc.pid, signal.SIGTERM)
         except Exception:
-            pass
-    try:
-        proc.wait(timeout=5)
-    except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=5)
         except Exception:
-            pass
-    stdout_f.close()
-    stderr_f.close()
-    raise RuntimeError(bridge_failure_detail(workdir))
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
+        stdout_f.close()
+        stderr_f.close()
+        raise
+
+
+def reset_bridge_for_next_game(workdir: Path, proc: subprocess.Popen, timeout: int) -> None:
+    (workdir / "commands.txt").write_text("", encoding="utf-8")
+    (workdir / "game_state.json").write_text("{}", encoding="utf-8")
+    (workdir / "commands.txt").write_text("retry\n", encoding="utf-8")
+    wait_for_bridge_state(
+        workdir,
+        proc,
+        timeout,
+        lambda data: data.get("state") == "MOVE",
+        "retry MOVE state",
+    )
 
 
 def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
@@ -1266,48 +1378,94 @@ def stop_process(proc: subprocess.Popen | None) -> None:
 
 def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, progress_callback=None) -> CandidateResult:
     candidate.status = "running"
-    workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path)
+    workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path, preserve_exact=candidate.baseline)
     candidate.workdir = workdir
     candidate.strategy_path = workdir / "strategy.py"
     candidate.cdp_port = args.cdp_base_port + candidate.index
     candidate.serve_port = args.serve_base_port + candidate.index
-    candidate.profile_dir = str(workdir / "tmp" / "chromium_profile")
+    candidate.profile_dir = str((workdir / "tmp" / "chromium_profile").resolve())
+    candidate_home = str((workdir / "tmp" / "home").resolve())
+    candidate_config_home = str((workdir / "tmp" / "config").resolve())
+    candidate_cache_home = str((workdir / "tmp" / "cache").resolve())
+    playwright_browsers_path = os.environ.get(
+        "PLAYWRIGHT_BROWSERS_PATH",
+        str(Path.home() / "Library" / "Caches" / "ms-playwright"),
+    )
+    chrome_app_path = os.environ.get("WILDCARD_PARALLEL_CHROME_APP_PATH", "")
+    chrome_executable_path = os.environ.get("WILDCARD_PARALLEL_CHROME_EXECUTABLE_PATH", "")
+    default_headless = "1"
+    if sys.platform == "darwin" and not chrome_app_path:
+        system_chrome_app = Path("/Applications/Google Chrome.app")
+        system_chrome_exe = system_chrome_app / "Contents" / "MacOS" / "Google Chrome"
+        if system_chrome_app.exists() and system_chrome_exe.exists():
+            chrome_app_path = str(system_chrome_app)
+            chrome_executable_path = chrome_executable_path or str(system_chrome_exe)
+            default_headless = "0"
     if progress_callback:
         progress_callback(candidate)
     env = os.environ.copy()
     env.pop("OBS_WEBSOCKET_PORT", None)
     env.pop("OBS_WEBSOCKET_PASSWORD", None)
+    base_path = env.get("PATH", "")
+    candidate_path = ":".join(
+        part
+        for part in [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            base_path,
+        ]
+        if part
+    )
     env.update(
         {
+            "PATH": candidate_path,
             "SOREN_CDP_PORT": str(candidate.cdp_port),
             "SOREN_SERVE_PORT": str(candidate.serve_port),
             "SOREN_LOCAL_USER_DATA_DIR": candidate.profile_dir,
-            "SOREN_CHROME_NO_FOCUS_LAUNCH": "0",
+            "SOREN_CHROME_HEADLESS": os.environ.get("WILDCARD_PARALLEL_HEADLESS", default_headless),
+            "HOME": candidate_home,
+            "XDG_CONFIG_HOME": candidate_config_home,
+            "XDG_CACHE_HOME": candidate_cache_home,
+            "PLAYWRIGHT_BROWSERS_PATH": playwright_browsers_path,
+            "SOREN_CHROME_NO_FOCUS_LAUNCH": os.environ.get("WILDCARD_PARALLEL_NO_FOCUS_LAUNCH", "1"),
             "RUSSIA_CELEBRATION_ENABLED": "0",
             "SOREN_BRIDGE_DESYNC_LIMIT": os.environ.get("WILDCARD_PARALLEL_BRIDGE_DESYNC_LIMIT", "3"),
             "SOREN_BGM_VOLUME": os.environ.get("WILDCARD_PARALLEL_BGM_VOLUME", "0"),
             "SOREN_SE_VOLUME": os.environ.get("WILDCARD_PARALLEL_SE_VOLUME", "1.5"),
         }
     )
+    if chrome_app_path:
+        env["SOREN_CHROME_APP_PATH"] = chrome_app_path
+    if chrome_executable_path:
+        env["SOREN_CHROME_EXECUTABLE_PATH"] = chrome_executable_path
     try:
+        bridge: subprocess.Popen | None = None
+        (workdir / "commands.txt").write_text("", encoding="utf-8")
+        (workdir / "game_state.json").write_text("{}", encoding="utf-8")
+        try:
+            cleanup_wildcard_server_ports([candidate.serve_port])
+            bridge = launch_bridge(workdir, env, args.bridge_timeout)
+            maybe_show_obs_candidate_source(candidate)
+        except Exception as err:
+            candidate.game_results.append({"error": str(err), "game_index": 0})
+            stop_process(bridge)
+            cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
+            bridge = None
         for game_index in range(args.games):
-            bridge: subprocess.Popen | None = None
             (workdir / "commands.txt").write_text("", encoding="utf-8")
-            (workdir / "game_state.json").write_text("{}", encoding="utf-8")
             try:
                 (workdir / "game_history" / "latest.jsonl").write_text("", encoding="utf-8")
             except Exception:
                 pass
+            if bridge is None:
+                break
             try:
-                cleanup_wildcard_server_ports([candidate.serve_port])
-                bridge = launch_bridge(workdir, env, args.bridge_timeout)
-                maybe_show_obs_candidate_source(candidate)
-            except Exception as err:
-                candidate.game_results.append({"error": str(err), "game_index": game_index})
-                stop_process(bridge)
-                cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
-                continue
-            try:
+                if game_index > 0:
+                    reset_bridge_for_next_game(workdir, bridge, args.bridge_timeout)
                 capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                 proc = subprocess.Popen(
                     [sys.executable, "strategy_runner.py"],
@@ -1336,6 +1494,12 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                 except Exception as err:
                     candidate.game_results.append({"error": str(err)})
                     continue
+                game_error = runner_result_error(game)
+                if game_error:
+                    candidate.game_results.append(game)
+                    candidate.status = "culled"
+                    candidate.error = f"incomplete game culled without score: {game_error}"
+                    break
                 try:
                     game["archive_path"] = str(archive_candidate_game_result(workdir, candidate.job_id, game_index, game))
                 except Exception as err:
@@ -1361,10 +1525,11 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                         )
                     break
             finally:
-                stop_process(bridge)
-                cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
+                pass
             if candidate.status == "culled":
                 break
+        stop_process(bridge)
+        cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
         if candidate.status == "culled":
             return candidate
         if candidate.scores:
@@ -1372,20 +1537,26 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
             candidate.status = "accepted"
         else:
             candidate.status = "failed"
-            candidate.error = "no successful games"
+            if not candidate.error:
+                candidate.error = "no successful games"
     except Exception as err:
+        try:
+            stop_process(bridge)  # type: ignore[name-defined]
+            cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
+        except Exception:
+            pass
         candidate.status = "failed"
         candidate.error = str(err)
     return candidate
 
 
 def evaluate_simulated(candidate: CandidateResult, args: argparse.Namespace, session_dir: Path) -> CandidateResult:
-    workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path)
+    workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path, preserve_exact=candidate.baseline)
     candidate.workdir = workdir
     candidate.strategy_path = workdir / "strategy.py"
     candidate.cdp_port = args.cdp_base_port + candidate.index
     candidate.serve_port = args.serve_base_port + candidate.index
-    candidate.profile_dir = str(workdir / "tmp" / "chromium_profile")
+    candidate.profile_dir = str((workdir / "tmp" / "chromium_profile").resolve())
     candidate.status = "accepted"
     base = 1000 + (candidate.index * 75)
     candidate.scores = [base + (i * 11) for i in range(args.games)]
@@ -1398,10 +1569,23 @@ def evaluate_simulated(candidate: CandidateResult, args: argparse.Namespace, ses
 
 
 def choose_winner(candidates: list[CandidateResult], min_successful_games: int) -> CandidateResult | None:
-    eligible = [c for c in candidates if c.status == "accepted" and len(c.scores) >= min_successful_games]
+    def rank_key(c: CandidateResult) -> tuple[bool, bool, float, float, int]:
+        return (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type)
+
+    eligible = [
+        c
+        for c in candidates
+        if not c.score_baseline and c.status == "accepted" and len(c.scores) >= min_successful_games
+    ]
     if not eligible:
         return None
-    return max(eligible, key=lambda c: (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type))
+    winner = max(eligible, key=rank_key)
+    baseline_leaders = [c for c in candidates if c.score_baseline and c.comp > 0]
+    if baseline_leaders:
+        source_leader = max(baseline_leaders, key=rank_key)
+        if rank_key(winner) <= rank_key(source_leader):
+            return None
+    return winner
 
 
 class CullCoordinator:
@@ -1453,8 +1637,8 @@ class CullCoordinator:
                 c
                 for c in self.candidates
                 if c.job_id != candidate.job_id
-                and len(c.scores) >= self.args.cull_leader_min_games
-                and c.status in {"running", "accepted", "won"}
+                and (len(c.scores) >= self.args.cull_leader_min_games or c.score_baseline)
+                and c.status in {"running", "accepted", "won", "leader", "baseline"}
                 and c.comp > 0
             ]
             if not leaders:
@@ -1483,7 +1667,7 @@ class CullCoordinator:
         return {
             c.index
             for c in self.candidates
-            if c.status in {"accepted", "won"} and len(c.scores) >= min_games
+            if not c.score_baseline and c.status in {"accepted", "won"} and len(c.scores) >= min_games
         }
 
     def lingering_slot_cutoff(self, index: int) -> tuple[bool, int]:
@@ -1491,6 +1675,7 @@ class CullCoordinator:
             limit = _int(getattr(self.args, "lingering_slot_max_culls", 0), 0)
             if limit <= 0:
                 return (False, 0)
+            cull_count = sum(1 for c in self.candidates if c.index == index and c.status == "culled")
             jobs = _int(getattr(self.args, "jobs", 0), 0)
             if jobs <= 0:
                 jobs = max([c.index for c in self.candidates] + [index]) + 1
@@ -1498,7 +1683,6 @@ class CullCoordinator:
             unresolved_slots = {slot for slot in range(jobs) if slot not in eligible_slots}
             if unresolved_slots != {index}:
                 return (False, 0)
-            cull_count = sum(1 for c in self.candidates if c.index == index and c.status == "culled")
             return (cull_count > limit, cull_count)
 
 
@@ -1554,6 +1738,8 @@ def main() -> int:
     parser.add_argument("--status-file", type=Path, default=REPO_ROOT / os.getenv("WILDCARD_PARALLEL_STATUS_FILE", "tmp/state/wildcard_parallel_status.json"))
     parser.add_argument("--html-file", type=Path, default=REPO_ROOT / os.getenv("WILDCARD_PARALLEL_HTML_FILE", "tmp/state/wildcard_parallel_overlay.html"))
     parser.add_argument("--result-file", type=Path, default=None)
+    parser.add_argument("--rolling-scores-file", type=Path, default=REPO_ROOT / os.getenv("ROLLING_SCORES_FILE", "tmp/state/rolling_scores.json"))
+    parser.add_argument("--current-run-file", type=Path, default=REPO_ROOT / os.getenv("CURRENT_STRATEGY_RUN_FILE", "tmp/state/current_strategy_run.json"))
     parser.add_argument("--cdp-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CDP_BASE_PORT"), 19320))
     parser.add_argument("--serve-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_SERVE_BASE_PORT"), 18080))
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
@@ -1563,6 +1749,11 @@ def main() -> int:
     parser.add_argument("--cull-leader-min-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES"), 2))
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
     parser.add_argument("--lingering-slot-max-culls", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 6))
+    parser.add_argument(
+        "--baseline-slot1",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("WILDCARD_PARALLEL_BASELINE_SLOT1", "0").strip().lower() in ("1", "true", "yes", "on"),
+    )
     args = parser.parse_args()
     args.deadline_fast_drop_mutate = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_MUTATE", "1").strip().lower() not in ("0", "false", "no", "off")
     raw_deadline_fast_drop_values = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_VALUES", "1,0")
@@ -1625,8 +1816,12 @@ def main() -> int:
     payload = {"phase": "generating", "session_dir": str(session_dir), "params": params, "candidates": []}
     render_overlay(args.status_file, args.html_file, payload)
 
+    score_baseline = None
+    if not args.baseline_slot1:
+        score_baseline = load_score_baseline(args.strategy, session_dir, args.rolling_scores_file, args.current_run_file)
     candidates = [run_perturb(args, index, session_dir) for index in range(args.jobs)]
-    payload["candidates"] = [c.public() for c in candidates]
+    display_candidates = ([score_baseline] if score_baseline else []) + candidates
+    payload["candidates"] = [c.public() for c in display_candidates]
     render_overlay(args.status_file, args.html_file, payload)
     if not any(c.status == "pending" for c in candidates):
         payload["phase"] = "failed"
@@ -1637,7 +1832,7 @@ def main() -> int:
                 "reason": "all_perturb_failed",
                 "session_dir": str(session_dir),
                 "params": params,
-                "candidates": [c.public() for c in candidates],
+                "candidates": [c.public() for c in display_candidates],
             },
         )
         render_overlay(args.status_file, args.html_file, payload)
@@ -1652,22 +1847,28 @@ def main() -> int:
                 futures = {
                     pool.submit(evaluate_simulated, c, args, session_dir): c
                     for c in candidates
-                    if c.status == "pending"
+                    if c.status == "pending" and not c.score_baseline
                 }
                 for future in as_completed(futures):
                     evaluated.append(future.result())
-                    merged = evaluated + [c for c in candidates if c not in evaluated and c.status != "failed"]
+                    merged = ([score_baseline] if score_baseline else []) + evaluated + [c for c in candidates if c not in evaluated and c.status != "failed"]
                     payload["candidates"] = [c.public() for c in merged]
                     render_overlay(args.status_file, args.html_file, payload)
             failed = [c for c in candidates if c.status == "failed" and c not in evaluated]
-            all_candidates = evaluated + failed
+            all_candidates = ([score_baseline] if score_baseline else []) + evaluated + failed
         else:
-            coordinator = CullCoordinator(args, args.status_file, args.html_file, session_dir, candidates)
+            coordinator = CullCoordinator(
+                args,
+                args.status_file,
+                args.html_file,
+                session_dir,
+                display_candidates,
+            )
             with ThreadPoolExecutor(max_workers=args.jobs) as pool:
                 futures = {
                     pool.submit(evaluate_slot, c.index, c, args, session_dir, coordinator): c
                     for c in candidates
-                    if c.status == "pending"
+                    if c.status == "pending" and not c.score_baseline
                 }
                 for future in as_completed(futures):
                     evaluated.append(future.result())

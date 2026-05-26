@@ -161,7 +161,7 @@ notify_rank1_hot_streak_extension() {
 }
 
 queue_early_escape_lock_if_needed() {
-	# 停滞/回帰閾値到達済みのバッチは、12試合満了を待たず改善daemonへ渡す。
+	# 停滞/回帰閾値到達済みのバッチは、通常の蓄積満了を待たず改善daemonへ渡す。
 	# post-game 経路と next-game-preflight の両方から呼び、取りこぼしを防ぐ。
 	[ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] || return 1
 	[ "${WILDCARD_ENABLED:-0}" = "1" ] || return 1
@@ -405,8 +405,9 @@ d['early_escape_regression_streak']=${_rstreak_count:-0}
 json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で12試合待ちを短縮。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
+		./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で通常満了前に改善へ。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
 	fi
+	enqueue_chat_message "改善フロー: early escape queued。停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} のため、通常満了を待たず改善ロックを作成します。最終モードは改善側で判定します。" "improve_flow" 4 || true
 	_clear_accumulated_data
 	return 0
 }
@@ -1125,8 +1126,8 @@ PY
 		_evolution_flow_notify \
 			"no_rollback" \
 			"rollback happened? no" \
-			"normal cycle / 12-game improve / hot streak extension" \
-			"改善フロー: rollback happened? no。通常サイクル、12ゲーム改善、またはhot streak延長へ進みます。" \
+			"normal cycle / threshold improve / hot streak extension" \
+			"改善フロー: rollback happened? no。通常サイクル、蓄積閾値での改善、またはhot streak延長へ進みます。" \
 			"info"
 	fi
 	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
@@ -1171,9 +1172,9 @@ PY
 			fi
 			_evolution_flow_notify \
 				"twelve_game_improve" \
-				"12-game improve" \
+				"threshold improve" \
 				"acc=${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} daemon_alive=${_improve_daemon_alive}" \
-				"改善フロー: 12-game improve。${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE}試合が貯まったため改善ロックを作成します。" \
+				"改善フロー: threshold improve。蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} が閾値に達したため改善ロックを作成します。" \
 				"info"
 			enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"

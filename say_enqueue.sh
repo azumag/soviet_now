@@ -685,6 +685,12 @@ _launch_ffmpeg_bg() {
 	_launch_bg_exec "$cleanup_file" ffmpeg -y -loglevel error -i "$audio_file" -f audiotoolbox -audio_device_index "$device_index" ""
 }
 
+_launch_chrome_wav_bg() {
+	local audio_file="$1" cleanup_file="${2:-}"
+	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
+	_launch_bg_exec "$cleanup_file" node ./chrome_audio_player.mjs "$audio_file" "$label"
+}
+
 _launch_say_bg() {
 	local rate="$1" content_file="$2"
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
@@ -812,8 +818,8 @@ _launch_stream_wav() {
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			_launch_afplay_bg "$wav_file"
+			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → Chrome/BlackHole再生にフォールバック"
+			_launch_chrome_wav_bg "$wav_file"
 			return 0
 		}
 		_launch_ffmpeg_bg "$wav_file" "$device_index"
@@ -920,10 +926,10 @@ _launch_say() {
 		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 			local device_index
 			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-				_launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+				_launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
 				LAUNCH_MODE="voicevox_pre"
 				LAUNCHED_SAY_PID="$!"
-				_log "事前合成WAV再生 (device=default)"
+				_log "事前合成WAV再生 (device=Chrome/BlackHole fallback)"
 				return
 			}
 			_launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"

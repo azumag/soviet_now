@@ -2052,16 +2052,16 @@ PY
 				"archive_restart_candidate_yes" \
 				"archive_restart candidate? yes" \
 				"Russia-capable archive candidate available; improve_reason=archive_restart" \
-				"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+				"改善フロー: archive_restart candidate? yes。評価済みアーカイブからの復帰を試します。" \
 				"warn"
 		elif [ "${WILDCARD_ENABLED:-0}" = "1" ]; then
 			improve_reason="wildcard"
-			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → wildcard でtype14→15 frontier 復旧"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → WILDCARD で構造変異候補を評価"
 			_improve_flow_notify \
 				"wildcard_frontier" \
 				"wildcard frontier recovery possible? yes" \
 				"archive candidate unavailable; WILDCARD_ENABLED=1; improve_reason=wildcard" \
-				"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+				"改善フロー: archive_restart candidate? no。WILDCARDで構造変異候補を評価します。" \
 				"warn"
 		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ] && _escape_ai_seed_available; then
 			improve_reason="escape_ai"
@@ -2287,7 +2287,7 @@ PY
 					"archive_restart_candidate_yes" \
 					"archive_restart candidate? yes" \
 					"stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=archive_restart" \
-					"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+					"改善フロー: archive_restart candidate? yes。評価済みアーカイブからの復帰を試します。" \
 					"warn"
 			elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
 				if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ] && _escape_ai_seed_available; then
@@ -2299,6 +2299,15 @@ PY
 						"archive unavailable; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=escape_ai" \
 						"改善フロー: seeded escape_ai candidate exists? yes。評価済みseedからescape_aiを実行します。" \
 						"warn"
+				elif [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
+					improve_reason="normal"
+					log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} だが escape_ai seed なし → 通常AI改善へフォールバック"
+					_improve_flow_notify \
+						"fallback_normal_ai" \
+						"fallback normal AI? yes" \
+						"archive unavailable; no valid escape_ai seed; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=normal" \
+						"改善フロー: escape_ai seedなし。WILDCARD再試行を止め、通常AI改善へ戻します。" \
+						"warn"
 				fi
 			fi
 			if [ "$improve_reason" = "wildcard" ]; then
@@ -2306,7 +2315,7 @@ PY
 					"wildcard_frontier" \
 					"wildcard frontier recovery possible? yes" \
 					"archive candidate unavailable; stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}; improve_reason=wildcard" \
-					"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+					"改善フロー: archive_restart candidate? no。WILDCARDで構造変異候補を評価します。" \
 					"warn"
 			fi
 			log "[WILDCARD] stagnation=$stag >= ${WILDCARD_TRIGGER_STAGNATION:-3} → ${improve_reason} モードで起動"
@@ -2330,7 +2339,7 @@ PY
 						"archive_restart_candidate_yes" \
 						"archive_restart candidate? yes" \
 						"regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=archive_restart" \
-						"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+						"改善フロー: archive_restart candidate? yes。評価済みアーカイブからの復帰を試します。" \
 						"warn"
 				elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
 					if [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ] && _escape_ai_seed_available; then
@@ -2342,6 +2351,15 @@ PY
 							"archive unavailable; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=escape_ai" \
 							"改善フロー: seeded escape_ai candidate exists? yes。評価済みseedからescape_aiを実行します。" \
 							"warn"
+					elif [ "$wildcard_escape_streak" -ge "${WILDCARD_AI_ESCALATE_STREAK:-3}" ]; then
+						improve_reason="normal"
+						log "[WILDCARD] consecutive_wildcards=${wildcard_escape_streak} >= ${WILDCARD_AI_ESCALATE_STREAK:-3} だが escape_ai seed なし → 通常AI改善へフォールバック"
+						_improve_flow_notify \
+							"fallback_normal_ai" \
+							"fallback normal AI? yes" \
+							"archive unavailable; no valid escape_ai seed; wildcard_escape_streak=${wildcard_escape_streak}; improve_reason=normal" \
+							"改善フロー: escape_ai seedなし。WILDCARD再試行を止め、通常AI改善へ戻します。" \
+							"warn"
 					fi
 				fi
 				if [ "$improve_reason" = "wildcard" ]; then
@@ -2349,7 +2367,7 @@ PY
 						"wildcard_frontier" \
 						"wildcard frontier recovery possible? yes" \
 						"archive candidate unavailable; regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}; improve_reason=wildcard" \
-						"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+						"改善フロー: archive_restart candidate? no。WILDCARDで構造変異候補を評価します。" \
 						"warn"
 				fi
 				: >"$_wccd" 2>/dev/null || true
@@ -2367,16 +2385,16 @@ PY
 				"archive_restart_candidate_yes" \
 				"archive_restart candidate? yes" \
 				"Russia recovery reroute selected archive_restart" \
-				"改善フロー: archive_restart with Russia-capable candidate? yes。archive_restart を実行します。" \
+				"改善フロー: archive_restart candidate? yes。評価済みアーカイブからの復帰を試します。" \
 				"warn"
 		elif [ "${WILDCARD_ENABLED:-0}" = "1" ]; then
 			improve_reason="wildcard"
-			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → wildcard でtype14→15 frontier 復旧"
+			log "[IMPROVE] Russia recovery mode: archive candidate unavailable → WILDCARD で構造変異候補を評価"
 			_improve_flow_notify \
 				"wildcard_frontier" \
 				"wildcard frontier recovery possible? yes" \
 				"archive candidate unavailable; WILDCARD_ENABLED=1; improve_reason=wildcard" \
-				"改善フロー: archive_restart candidate? no。wildcard でtype14→15 frontier回復を狙います。" \
+				"改善フロー: archive_restart candidate? no。WILDCARDで構造変異候補を評価します。" \
 				"warn"
 		elif [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ] && _escape_ai_seed_available; then
 			improve_reason="escape_ai"

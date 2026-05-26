@@ -48,6 +48,7 @@ const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
+const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.SOREN_CHROME_HEADLESS || '').toLowerCase());
 // Unity WebGL can crash Chrome when AudioContext.setSinkId() is applied to its
 // context on some macOS audio graphs. Keep per-context routing opt-in; OBS
 // application-audio capture is safer for the live game.
@@ -101,6 +102,7 @@ function seedChromeTranslatePreferences(userDataDir) {
 }
 
 function chromeAppPathFromExecutable(executablePath) {
+  if (process.env.SOREN_CHROME_APP_PATH) return process.env.SOREN_CHROME_APP_PATH;
   const marker = '.app/Contents/MacOS/';
   const idx = executablePath.indexOf(marker);
   if (idx === -1) return '';
@@ -126,7 +128,7 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
     return null;
   }
 
-  const appPath = chromeAppPathFromExecutable(chromium.executablePath());
+  const appPath = chromeAppPathFromExecutable(process.env.SOREN_CHROME_EXECUTABLE_PATH || chromium.executablePath());
   if (!appPath) return null;
 
   fs.mkdirSync(userDataDir, { recursive: true });
@@ -636,8 +638,13 @@ async function runLocalController() {
       // 復元バブルが配信画面隅に出続けるのを抑止
       '--hide-crash-restore-bubble',
       '--disable-session-crashed-bubble',
+      '--disable-crash-reporter',
+      '--disable-crashpad',
+      `--crash-dumps-dir=${path.join(USER_DATA_DIR, 'Crashpad')}`,
       '--no-first-run',
       '--no-default-browser-check',
+      '--password-store=basic',
+      '--use-mock-keychain',
       // Chrome の翻訳バー(英語→日本語 このページを翻訳しますか)を配信画面に出さない。
       // Playwright 既定の --disable-features に既に Translate が含まれるため、
       // ここで別の --disable-features を渡すと後勝ちで Playwright の hardening を
@@ -648,7 +655,7 @@ async function runLocalController() {
       // suspended のまま resume できず無音化する。bridge 再起動毎の無音を防ぐ。
       '--autoplay-policy=no-user-gesture-required',
     ];
-    const backgroundLaunch = await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs).catch(err => {
+    const backgroundLaunch = CHROME_HEADLESS ? null : await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs).catch(err => {
       console.error(`[NO-FOCUS] background launch failed, falling back to Playwright launch: ${err.message}`);
       return null;
     });
@@ -658,7 +665,8 @@ async function runLocalController() {
       closeBrowserAfterContext = true;
     } else {
       context = await chromium.launchPersistentContext(USER_DATA_DIR, {
-        headless: false,
+        executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
+        headless: CHROME_HEADLESS,
         viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
         args: launchArgs,
