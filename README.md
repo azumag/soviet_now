@@ -182,7 +182,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard_parallel.py` が result file に winner を書いた後で外側の timeout / TERM により非ゼロ終了した場合は、result file の winner を優先して採用処理へ進める。winner があるのに `rc=143` だけで `parallel_no_candidate` に落とすと、停滞脱出が空振りで終わるため。
 - `wildcard_parallel.py` は全候補が 0 game のまま `bridge exited` / `SIGABRT` / port 競合で失敗した時、性能比較上の候補なしではなく `infra_failed` として status/result に出す。停滞監視では `no_candidate` と区別し、ブラウザ/bridge 側の失敗として扱う。
 - `wildcard` 並列評価が `infra_failed` で winner を返せない場合は、旧来の直接 `wildcard_perturb.py` にフォールバックして脱出自体は進める。`no_candidate` は性能上の候補なしなので従来どおり no-op/延期扱いに残す。
-- `post_improve_param_parallel` の `infra_failed` は、通常改善後の追加パラメータ試行が 0 game で空振りした診断であり、`improve_state.json` が idle かつ現 hash の本線評価が進んでいるなら脱出ロック詰まりではない。WILDCARD 停滞脱出の `infra_failed` だけが direct fallback 対象。
+- `post_improve_param_parallel` の `infra_failed` は、通常改善後の追加パラメータ試行が 0 game で空振りした診断であり、`improve_state.json` が idle かつ現 hash の本線評価が進んでいるなら脱出ロック詰まりではない。`show_status.sh --once` はこの失敗を `PostParamFail` と表示し、WILDCARD 停滞脱出本線の `WildParFail` と分ける。WILDCARD 停滞脱出の `infra_failed` だけが direct fallback 対象。
 - `wildcard` 並列評価 overlay は候補を暫定 composite 順に表示し、leader と相対バーを出す。rolling score 反映前でも `wildcard_origin.json` の `parallel_result` に trial scores が残っていれば status dashboard は `trial` として n/max と composite を表示する。
 - `wildcard` 並列評価ブラウザは `SOREN_BGM_VOLUME=0` / `SOREN_SE_VOLUME=1.5` を既定で渡す。Unity の scene load 後に音量が戻ることがあるため、`soviet_local.mjs` は `SOREN_UNITY_VOLUME_REAPPLY_MS` 間隔で指定音量を再適用する。
 - 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。

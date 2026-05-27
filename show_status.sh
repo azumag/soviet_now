@@ -1302,6 +1302,7 @@ PY
 
 		# --- WILDCARD 並列評価の発動失敗監視 ---
 		local wildcard_parallel_label=""
+		local wildcard_parallel_name="WildParFail"
 		if [[ -f "${WILDCARD_PARALLEL_STATUS_FILE:-${TMP_STATE_DIR}/wildcard_parallel_status.json}" ]]; then
 			eval $(python3 - "${WILDCARD_PARALLEL_STATUS_FILE:-${TMP_STATE_DIR}/wildcard_parallel_status.json}" <<'PY' 2>/dev/null
 import json
@@ -1318,6 +1319,9 @@ try:
 except Exception:
     data = {}
 phase = str(data.get("phase", "") or "")
+detail = str(data.get("detail", "") or "")
+params = data.get("params") or {}
+is_post_improve = bool(params.get("baseline_slot1")) or "post_improve_param_parallel" in detail
 try:
     age = max(0, int(time.time()) - int(os.path.getmtime(path)))
 except Exception:
@@ -1346,6 +1350,8 @@ if phase in ("no_candidate", "infra_failed", "failed") and age <= 3600:
         display_phase = "infra_failed"
     err = errors[0][:28] if errors else "no successful candidates"
     label = f"{display_phase} f{len(failed)}/{len(candidates)} z{len(zero_game)}/{len(candidates)} {fmt_age(age)} {err}"
+name = "PostParamFail" if is_post_improve else "WildParFail"
+print("wildcard_parallel_name=" + shlex.quote(name))
 print("wildcard_parallel_label=" + shlex.quote(label))
 PY
 )
@@ -2183,7 +2189,7 @@ PY
 			printf "    ${C_YELLOW}▸${C_RESET} ArchiveNext ${C_YELLOW}%s${C_RESET}\n" "$archive_next_label"
 		fi
 		if [[ -n "$wildcard_parallel_label" ]]; then
-			printf "    ${C_YELLOW}▸${C_RESET} WildParFail ${C_YELLOW}%s${C_RESET}\n" "$wildcard_parallel_label"
+			printf "    ${C_YELLOW}▸${C_RESET} %-11s ${C_YELLOW}%s${C_RESET}\n" "$wildcard_parallel_name" "$wildcard_parallel_label"
 		fi
 			if [[ "$viewer_chat_label" != "none" ]]; then
 				printf "    ${C_CYAN}▸${C_RESET} ChatObs     ${C_DIM}%s${C_RESET}\n" "$viewer_chat_label"
