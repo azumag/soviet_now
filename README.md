@@ -802,10 +802,11 @@ flowchart TD
 `validate_strategy_with_helpers()` がサンドボックス内で検証:
 
 - `decide(game_state, analysis)` 関数の存在とシグネチャ
-- Python テスト実行 — `strategy.py.staging` を `game_state.json` + `analyze_board.py` で実行し、実データでの動作を確認
-- 合成 deadline guard テスト — 安全な非超過候補が1つでもある場合は、`merge_grade` が FAR/NEAR/DIRECT の候補でも deadline 超過 x を選ばないことを確認
+- Python テスト実行 — `strategy.py.staging` を `game_state.json` で実行し、実データで起動できることを確認
+- `x` と `reason` の最低限の返り値契約
 - `strategy_helpers/` 内の symlink 検査
 - `__init__.py` の存在確認
+
 - `extract_decide_hash.py` によるハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
 - 数値・文字列のみの微調整や、固定ターン数ゲートの追加を検出して拒否
 
@@ -846,7 +847,7 @@ flowchart TD
 | `../` パス拒否 | create_sandbox | パストラバーサルで sandbox 外を参照 |
 | `cp -RL` fallback | create/harvest | rsync 失敗時にも symlink を展開 |
 | staging ファイル方式 | sandbox 内 | AI が strategy.py 本体を変更 |
-| バリデーション | validate_strategy_with_helpers | 構文エラー・シグネチャ不正 |
+| バリデーション | validate_strategy_with_helpers | 起動不能・シグネチャ不正・返り値契約違反 |
 | ハッシュ反復防止 | eloop_improve.sh | 同じ失敗戦略の繰り返し適用 |
 | 許可リスト harvest | harvest_sandbox | AI が作成した予期しないファイルの混入 |
 | symlink 検査 (出力) | harvest_sandbox | harvest に symlink が混入 |

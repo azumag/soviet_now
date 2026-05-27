@@ -1430,11 +1430,26 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("candidate.profile_dir = str((workdir / \"tmp\" / \"chromium_profile\").resolve())", parallel)
         self.assertIn("if progress_callback:\n        progress_callback(candidate)", parallel)
 
+    def test_wildcard_parallel_prefers_bundled_chrome_for_testing(self):
+        """候補評価は同梱 Chromium を使い、macOS では no-focus attach を既定にする。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn("def resolve_playwright_chrome_for_testing", parallel)
+        self.assertIn("def prelaunch_candidate_chrome", parallel)
+        self.assertIn("Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing", parallel)
+        self.assertIn("chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)", parallel)
+        self.assertIn('if chrome_executable_path and sys.platform == "darwin":\n        default_headless = "0"', parallel)
+        self.assertIn('"/usr/bin/open",\n        "-g",\n        "-n",\n        app_path,', parallel)
+        self.assertNotIn('"-a",\n        app_path,', parallel)
+        self.assertIn('os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "") == "1"', parallel)
+
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+        self.assertIn('"SOREN_CHROME_HOME": str((workdir / "tmp" / "chrome_home").resolve())', parallel)
         self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": os.environ.get("WILDCARD_PARALLEL_NO_FOCUS_LAUNCH", "1")', parallel)
+        self.assertIn('"SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH": os.environ.get("WILDCARD_PARALLEL_FORCE_PLAYWRIGHT_LAUNCH", "0")', parallel)
+        self.assertIn('"SOREN_LAUNCHSERVICES_HOME": str(Path.home())', parallel)
         self.assertIn("def cleanup_chrome_profile_processes", parallel)
         self.assertIn("def cleanup_wildcard_chrome_processes", parallel)
         self.assertIn("def cleanup_wildcard_session_dirs", parallel)
@@ -1892,26 +1907,33 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("Read 後に既存ファイルを直す場合は Edit", eloop)
         self.assertIn("存在しない場合のみ Write", eloop)
         self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
+        self.assertIn("Stage3: review verdict rejected apply", eloop)
+        self.assertNotIn("review verdict advisory failure; apply continues after runtime smoke", eloop)
 
-    def test_deadline_guard_validation_matches_safe_candidate_invariant(self):
-        """validation は prompt と同じく、安全な非超過候補を crossing merge より優先する。"""
+    def test_strategy_validation_keeps_runtime_smoke_but_rejects_noop_changes(self):
+        """validation は方針固定を避けつつ、無変更・文言だけ・既却下 hash は適用しない。"""
         sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
-        prompts = "\n".join(
-            [
-                (REPO_ROOT / "prompts/improve_strategy.md").read_text(),
-                (REPO_ROOT / "prompts/implement_strategy.md").read_text(),
-                (REPO_ROOT / "prompts/fix_validation.md").read_text(),
-            ]
-        )
-        self.assertIn("安全な選択肢が存在する限り", prompts)
-        self.assertIn("安全な非超過候補があるなら超過候補を絶対に選ばない", prompts)
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
+
         self.assertNotIn("far-below raw crossing 抑制", review_prompt)
         self.assertNotIn("all-crossing", sandbox)
-        self.assertIn("deadline-near-guard: expected safe non-crossing x=-1.0 over crossing NEAR merge", sandbox)
-        self.assertIn("deadline-direct-guard: expected safe non-crossing x=-1.0 over crossing DIRECT merge", sandbox)
-        self.assertNotIn("deadline-near-guard: expected crossing NEAR merge x=2.8", sandbox)
-        self.assertNotIn("deadline-direct-guard: expected crossing DIRECT merge x=2.8", sandbox)
+        self.assertNotIn("deadline-near-guard", sandbox)
+        self.assertNotIn("deadline-direct-guard", sandbox)
+        self.assertNotIn("active-filter: expected danger DIRECT merge", sandbox)
+        self.assertNotIn("risky-single-danger-merge", sandbox)
+        self.assertIn("ERROR: decide() not found", sandbox)
+        self.assertIn("ERROR: {label}: missing x", sandbox)
+        self.assertIn("テスト実行失敗", sandbox)
+        self.assertIn("テスト出力契約違反", sandbox)
+        self.assertIn("この変更は過去にリジェクトされた戦略と同一", eloop)
+        self.assertIn("decide()関数の本体に実質的な変更がない", eloop)
+        self.assertIn("文字列・reason文言だけの変更は不可", eloop)
+        self.assertIn("終盤判定を turns>=N の固定ターン数で追加してはいけない", eloop)
+        self.assertIn("Stage3: review mutation rejected (string-only) → restore snapshot", eloop)
+        self.assertIn("Stage3: review verdict rejected apply", eloop)
+        self.assertNotIn("validation observation: repeated rejected hash", eloop)
+        self.assertNotIn("apply continues because runtime smoke passed", eloop)
 
 
 # --- F2: wildcard origin override branch budget only for that hash -----------
@@ -2911,9 +2933,19 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("launchPersistentContextWithoutFocus", local)
         self.assertIn("'/usr/bin/open'", local)
         self.assertIn("'-g'", local)
+        self.assertNotIn("'-a'", local)
         self.assertIn("SOREN_CHROME_NO_FOCUS_LAUNCH", local)
+        self.assertIn("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH", local)
+        self.assertIn("SOREN_CHROME_ATTACH_ONLY", local)
+        self.assertIn("env: browserLaunchEnv(USER_DATA_DIR)", local)
         self.assertIn("chromium.launchPersistentContext", local)
+        self.assertIn("const playwrightLaunchArgs = launchArgs.filter(arg => !arg.startsWith('--remote-debugging-port='));", local)
+        self.assertIn("launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs)", local)
+        self.assertIn("args: playwrightLaunchArgs", local)
         self.assertIn("Google Chrome(?: for Testing)?", local)
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn('"/usr/bin/open",\n        "-g",\n        "-n",\n        app_path,', parallel)
+        self.assertNotIn('"-a",\n        app_path,', parallel)
 
 
 # --- Prediction worker pause --------------------------------------------------

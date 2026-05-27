@@ -3257,7 +3257,6 @@ EOF
 					continue
 				fi
 			fi
-
 			# 改善前と同一ハッシュなら差分なしとして扱う
 			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ] && [ "$helper_changed" != true ]; then
 				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
@@ -3272,32 +3271,30 @@ EOF
 				continue_retry=0
 				continue
 			fi
-
-				if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-					VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
-					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-						continue_retry=$((continue_retry + 1))
-						continue
-					fi
-					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-					fresh_retry=$((fresh_retry + 1))
-					continue_retry=0
+			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
 					continue
 				fi
-
-				if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
-					VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
-					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-						continue_retry=$((continue_retry + 1))
-						continue
-					fi
-					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-					fresh_retry=$((fresh_retry + 1))
-					continue_retry=0
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
+				continue
+			fi
+			if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+				VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
 					continue
 				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
+				continue
+			fi
 
 				strategy_diff=""
 				if [ "$staging_changed" = true ]; then
@@ -3370,7 +3367,6 @@ ${helpers_diff}"
 			log "[IMPROVE] Stage 3 レビューにより staging が修正された → バリデーション再実行"
 			_improve_note "Stage3: review mutated staging → re-validate"
 			_review_validate_ok=false
-			# 既存バリデーション一式を再実行
 			if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
 				_r_hash=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
 				_r_rejected=false
@@ -3385,19 +3381,19 @@ ${helpers_diff}"
 					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし → スナップショット復元"
 					_improve_note "Stage3: review mutation rejected (no logic change) → restore snapshot"
 					cp "$_pre_review_snapshot" "$STAGING_FILE"
-					elif _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-						log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
-						_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
-						cp "$_pre_review_snapshot" "$STAGING_FILE"
-					elif _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
-						log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 → スナップショット復元"
-						_improve_note "Stage3: review mutation rejected (fixed turn gate) → restore snapshot"
-						cp "$_pre_review_snapshot" "$STAGING_FILE"
-					else
-						log "[IMPROVE] Stage 3 レビュー修正: バリデーション成功"
-						_improve_note "Stage3: review mutation accepted"
-						_review_validate_ok=true
-					fi
+				elif _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+				elif _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (fixed turn gate) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+				else
+					log "[IMPROVE] Stage 3 レビュー修正: バリデーション成功"
+					_improve_note "Stage3: review mutation accepted"
+					_review_validate_ok=true
+				fi
 			else
 				log "[IMPROVE] Stage 3 レビュー修正: バリデーション失敗 → スナップショット復元"
 				_improve_note "Stage3: review mutation failed validation → restore snapshot"

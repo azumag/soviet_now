@@ -127,6 +127,19 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
   if (process.platform !== 'darwin' || process.env.SOREN_CHROME_NO_FOCUS_LAUNCH === '0') {
     return null;
   }
+  if (process.env.SOREN_CHROME_ATTACH_ONLY === '1') {
+    const browser = await waitForCdpBrowser(CDP_PORT);
+    const context = browser.contexts()[0];
+    if (!context) {
+      await browser.close().catch(() => {});
+      throw new Error('attached Chromium has no default context');
+    }
+    console.log('[NO-FOCUS] attached to prelaunched Chromium via CDP');
+    return { browser, context };
+  }
+  if (process.env.SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH === '1') {
+    return null;
+  }
 
   const appPath = chromeAppPathFromExecutable(process.env.SOREN_CHROME_EXECUTABLE_PATH || chromium.executablePath());
   if (!appPath) return null;
@@ -142,7 +155,19 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
   ];
 
   await new Promise((resolve, reject) => {
+    const savedEnv = {
+      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
+    };
+    delete process.env.XDG_CONFIG_HOME;
+    delete process.env.XDG_CACHE_HOME;
+    delete process.env.PLAYWRIGHT_BROWSERS_PATH;
     execFile('/usr/bin/open', openArgs, (err) => {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (typeof value === 'undefined') delete process.env[key];
+        else process.env[key] = value;
+      }
       if (err) reject(err);
       else resolve();
     });
@@ -156,6 +181,22 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
   }
   console.log('[NO-FOCUS] Chromium launched in background via macOS open -g');
   return { browser, context };
+}
+
+function browserLaunchEnv(userDataDir) {
+  const env = { ...process.env };
+  const homeDir = env.SOREN_CHROME_HOME || env.HOME || '';
+  const configHome = env.XDG_CONFIG_HOME || (homeDir ? path.join(homeDir, '.config') : '');
+  const cacheHome = env.XDG_CACHE_HOME || (homeDir ? path.join(homeDir, '.cache') : '');
+  const tmpDir = env.TMPDIR || path.join(userDataDir, 'tmp');
+  for (const dir of [homeDir, configHome, cacheHome, tmpDir]) {
+    if (dir) fs.mkdirSync(dir, { recursive: true });
+  }
+  if (homeDir) env.HOME = homeDir;
+  if (configHome) env.XDG_CONFIG_HOME = configHome;
+  if (cacheHome) env.XDG_CACHE_HOME = cacheHome;
+  env.TMPDIR = tmpDir;
+  return env;
 }
 
 function sha256Base64(text) {
@@ -664,12 +705,14 @@ async function runLocalController() {
       context = backgroundLaunch.context;
       closeBrowserAfterContext = true;
     } else {
+      const playwrightLaunchArgs = launchArgs.filter(arg => !arg.startsWith('--remote-debugging-port='));
       context = await chromium.launchPersistentContext(USER_DATA_DIR, {
         executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
         headless: CHROME_HEADLESS,
         viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
-        args: launchArgs,
+        env: browserLaunchEnv(USER_DATA_DIR),
+        args: playwrightLaunchArgs,
       });
       browser = context.browser();
     }

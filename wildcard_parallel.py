@@ -115,6 +115,64 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
     }
 
 
+def resolve_playwright_chrome_for_testing(playwright_browsers_path: str) -> str:
+    """Return Playwright's bundled Chromium executable when it is installed."""
+    root = Path(playwright_browsers_path).expanduser()
+    if sys.platform == "darwin":
+        patterns = [
+            "chromium-*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            "chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    elif sys.platform.startswith("linux"):
+        patterns = ["chromium-*/chrome-linux*/chrome"]
+    elif sys.platform.startswith("win"):
+        patterns = ["chromium-*/chrome-win*/chrome.exe"]
+    else:
+        patterns = []
+    for pattern in patterns:
+        for candidate in sorted(root.glob(pattern), reverse=True):
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                return str(candidate)
+    return ""
+
+
+def chrome_app_path_from_executable(executable_path: str) -> str:
+    marker = ".app/Contents/MacOS/"
+    idx = executable_path.find(marker)
+    if idx < 0:
+        return ""
+    return executable_path[: idx + len(".app")]
+
+
+def prelaunch_candidate_chrome(app_path: str, profile_dir: str, cdp_port: int) -> bool:
+    if sys.platform != "darwin" or not app_path:
+        return False
+    args = [
+        "/usr/bin/open",
+        "-g",
+        "-n",
+        app_path,
+        "--args",
+        f"--user-data-dir={profile_dir}",
+        "--window-size=1300,800",
+        f"--remote-debugging-port={cdp_port}",
+        "--hide-crash-restore-bubble",
+        "--disable-session-crashed-bubble",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--password-store=basic",
+        "--use-mock-keychain",
+        "--disable-translate",
+        "--autoplay-policy=no-user-gesture-required",
+        "about:blank",
+    ]
+    try:
+        subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        return True
+    except Exception:
+        return False
+
+
 @dataclass
 class CandidateResult:
     job_id: str
@@ -1384,7 +1442,6 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
     candidate.cdp_port = args.cdp_base_port + candidate.index
     candidate.serve_port = args.serve_base_port + candidate.index
     candidate.profile_dir = str((workdir / "tmp" / "chromium_profile").resolve())
-    candidate_home = str((workdir / "tmp" / "home").resolve())
     candidate_config_home = str((workdir / "tmp" / "config").resolve())
     candidate_cache_home = str((workdir / "tmp" / "cache").resolve())
     playwright_browsers_path = os.environ.get(
@@ -1394,7 +1451,18 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
     chrome_app_path = os.environ.get("WILDCARD_PARALLEL_CHROME_APP_PATH", "")
     chrome_executable_path = os.environ.get("WILDCARD_PARALLEL_CHROME_EXECUTABLE_PATH", "")
     default_headless = "1"
-    if sys.platform == "darwin" and not chrome_app_path:
+    if not chrome_executable_path:
+        chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)
+    if not chrome_app_path and chrome_executable_path:
+        chrome_app_path = chrome_app_path_from_executable(chrome_executable_path)
+    if chrome_executable_path and sys.platform == "darwin":
+        default_headless = "0"
+    if (
+        sys.platform == "darwin"
+        and not chrome_app_path
+        and not chrome_executable_path
+        and os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "") == "1"
+    ):
         system_chrome_app = Path("/Applications/Google Chrome.app")
         system_chrome_exe = system_chrome_app / "Contents" / "MacOS" / "Google Chrome"
         if system_chrome_app.exists() and system_chrome_exe.exists():
@@ -1427,11 +1495,13 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
             "SOREN_SERVE_PORT": str(candidate.serve_port),
             "SOREN_LOCAL_USER_DATA_DIR": candidate.profile_dir,
             "SOREN_CHROME_HEADLESS": os.environ.get("WILDCARD_PARALLEL_HEADLESS", default_headless),
-            "HOME": candidate_home,
+            "SOREN_LAUNCHSERVICES_HOME": str(Path.home()),
             "XDG_CONFIG_HOME": candidate_config_home,
             "XDG_CACHE_HOME": candidate_cache_home,
             "PLAYWRIGHT_BROWSERS_PATH": playwright_browsers_path,
+            "SOREN_CHROME_HOME": str((workdir / "tmp" / "chrome_home").resolve()),
             "SOREN_CHROME_NO_FOCUS_LAUNCH": os.environ.get("WILDCARD_PARALLEL_NO_FOCUS_LAUNCH", "1"),
+            "SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH": os.environ.get("WILDCARD_PARALLEL_FORCE_PLAYWRIGHT_LAUNCH", "0"),
             "RUSSIA_CELEBRATION_ENABLED": "0",
             "SOREN_BRIDGE_DESYNC_LIMIT": os.environ.get("WILDCARD_PARALLEL_BRIDGE_DESYNC_LIMIT", "3"),
             "SOREN_BGM_VOLUME": os.environ.get("WILDCARD_PARALLEL_BGM_VOLUME", "0"),
@@ -1442,6 +1512,13 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
         env["SOREN_CHROME_APP_PATH"] = chrome_app_path
     if chrome_executable_path:
         env["SOREN_CHROME_EXECUTABLE_PATH"] = chrome_executable_path
+    if (
+        env.get("SOREN_CHROME_HEADLESS") not in {"1", "true", "yes", "on"}
+        and env.get("SOREN_CHROME_NO_FOCUS_LAUNCH") != "0"
+        and env.get("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH") != "1"
+        and prelaunch_candidate_chrome(chrome_app_path, candidate.profile_dir, candidate.cdp_port)
+    ):
+        env["SOREN_CHROME_ATTACH_ONLY"] = "1"
     try:
         bridge: subprocess.Popen | None = None
         (workdir / "commands.txt").write_text("", encoding="utf-8")
