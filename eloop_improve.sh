@@ -68,6 +68,7 @@ _improve_progress() {
 	export RUN_CMD_IMPROVE_DETAIL="$detail"
 	export RUN_CMD_IMPROVE_STARTED_AT="$IMPROVE_STARTED_AT"
 	export RUN_CMD_IMPROVE_PID_BIRTH_EPOCH="$IMPROVE_BIRTH_EPOCH"
+	export RUN_CMD_IMPROVE_REASON="${IMPROVE_REASON:-normal}"
 	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH" "${IMPROVE_REASON:-normal}"
 	_improve_audio_summary_maybe "$phase" "$progress" "$detail" >/dev/null 2>&1 || true
 }

@@ -5274,12 +5274,16 @@ _prune_expired_rejected_hashes
     def test_fast_escape_harvest_does_not_start_soren91_handover(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        ai = (REPO_ROOT / "strategy/ai.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
         self.assertIn("IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC", config)
         self.assertIn("improve_reason", improve)
         self.assertIn('if status == "running" and not improve_reason:', improve)
         self.assertIn('improve_reason = previous_reason or "normal"', improve)
+        self.assertIn('export RUN_CMD_IMPROVE_REASON="${IMPROVE_REASON:-normal}"', eloop)
+        self.assertIn('"${RUN_CMD_IMPROVE_REASON:-}"', ai)
         self.assertIn('_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch" "$reason"', improve)
         self.assertIn('prev_improve_reason=$(echo "$state"', improve)
         self.assertIn("state理由欠落をlockから復元", improve)

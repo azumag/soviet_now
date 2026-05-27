@@ -86,7 +86,8 @@ _run_cmd_start_heartbeat() {
 					"${RUN_CMD_IMPROVE_PROGRESS:-0}" \
 					"${RUN_CMD_IMPROVE_DETAIL:-run_cmd_wait}" \
 					"${RUN_CMD_IMPROVE_STARTED_AT:-0}" \
-					"${RUN_CMD_IMPROVE_PID_BIRTH_EPOCH:-0}"
+					"${RUN_CMD_IMPROVE_PID_BIRTH_EPOCH:-0}" \
+					"${RUN_CMD_IMPROVE_REASON:-}"
 			fi
 		done
 	) &
