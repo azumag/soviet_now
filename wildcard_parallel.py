@@ -96,6 +96,19 @@ def overlay_visible_candidates(candidates: list[dict]) -> list[dict]:
     return sorted(visible, key=lambda c: (_int(c.get("index"), 0), str(c.get("job_id") or "")))
 
 
+def no_winner_reason(candidates: list["CandidateResult"]) -> str:
+    eval_candidates = [c for c in candidates if not c.score_baseline]
+    if not eval_candidates:
+        return "no_candidate"
+    failed = [c for c in eval_candidates if c.status in ("failed", "timeout")]
+    zero_game = [c for c in eval_candidates if len(c.scores) <= 0]
+    errors = " ".join(c.error for c in failed if c.error)
+    infra_markers = ("bridge exited", "BRIDGE-EXIT", "SIGABRT", "process did exit", "EADDRINUSE")
+    if len(failed) == len(eval_candidates) and len(zero_game) == len(eval_candidates) and any(m in errors for m in infra_markers):
+        return "infra_failed"
+    return "no_candidate"
+
+
 def wildcard_parallel_params(args: argparse.Namespace) -> dict:
     return {
         "jobs": _int(getattr(args, "jobs", 0), 0),
@@ -1954,8 +1967,9 @@ def main() -> int:
         winner = choose_winner(all_candidates, args.min_successful_games)
         if winner:
             winner.status = "won"
+        reason = "winner_selected" if winner else no_winner_reason(all_candidates)
         payload = {
-            "phase": "won" if winner else "no_candidate",
+            "phase": "won" if winner else reason,
             "session_dir": str(session_dir),
             "params": params,
             "winner": winner.public() if winner else None,
@@ -1964,7 +1978,7 @@ def main() -> int:
         render_overlay(args.status_file, args.html_file, payload)
         result = {
             "ok": winner is not None,
-            "reason": "winner_selected" if winner else "no_candidate",
+            "reason": reason,
             "session_dir": str(session_dir),
             "params": params,
             "winner": winner.public() if winner else None,

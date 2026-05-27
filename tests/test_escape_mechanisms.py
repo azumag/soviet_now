@@ -1577,6 +1577,23 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertEqual(result["reason"], "no_candidate")
             self.assertEqual(strategy.read_text(encoding="utf-8"), original)
 
+    def test_wildcard_parallel_classifies_zero_game_bridge_failures_as_infra_failed(self):
+        """全候補が bridge 起動前に落ちた場合は候補負けと区別する。"""
+        import wildcard_parallel
+
+        candidates = []
+        for index in range(3):
+            candidate = wildcard_parallel.CandidateResult(
+                job_id=f"cand-{index + 1}",
+                index=index,
+                workdir=Path("/tmp"),
+                strategy_path=Path("/tmp/strategy.py"),
+                status="failed",
+                error="bridge exited rc=1 | stderr: process did exit: signal=SIGABRT",
+            )
+            candidates.append(candidate)
+        self.assertEqual(wildcard_parallel.no_winner_reason(candidates), "infra_failed")
+
     def test_obs_control_supports_wildcard_parallel_transform(self):
         """OBS helper は wildcardParallelOverlay を表示し、候補6面を3列x2行に配置できる。"""
         obs_control = (REPO_ROOT / "obs_control.sh").read_text()

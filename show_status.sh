@@ -1331,13 +1331,21 @@ def fmt_age(seconds):
     return f"{seconds // 3600}h"
 
 label = ""
-if phase in ("no_candidate", "failed") and age <= 3600:
+if phase in ("no_candidate", "infra_failed", "failed") and age <= 3600:
     candidates = data.get("candidates", []) or []
     failed = [c for c in candidates if str(c.get("status", "") or "") in ("failed", "timeout")]
     zero_game = [c for c in candidates if int(c.get("games", 0) or 0) <= 0]
     errors = [str(c.get("error", "") or "") for c in failed if str(c.get("error", "") or "")]
+    eval_candidates = [c for c in candidates if not bool(c.get("score_baseline"))]
+    eval_failed = [c for c in eval_candidates if str(c.get("status", "") or "") in ("failed", "timeout")]
+    eval_zero_game = [c for c in eval_candidates if int(c.get("games", 0) or 0) <= 0]
+    error_blob = " ".join(errors)
+    infra_markers = ("bridge exited", "BRIDGE-EXIT", "SIGABRT", "process did exit", "EADDRINUSE")
+    display_phase = phase
+    if eval_candidates and len(eval_failed) == len(eval_candidates) and len(eval_zero_game) == len(eval_candidates) and any(m in error_blob for m in infra_markers):
+        display_phase = "infra_failed"
     err = errors[0][:28] if errors else "no successful candidates"
-    label = f"{phase} f{len(failed)}/{len(candidates)} z{len(zero_game)}/{len(candidates)} {fmt_age(age)} {err}"
+    label = f"{display_phase} f{len(failed)}/{len(candidates)} z{len(zero_game)}/{len(candidates)} {fmt_age(age)} {err}"
 print("wildcard_parallel_label=" + shlex.quote(label))
 PY
 )
