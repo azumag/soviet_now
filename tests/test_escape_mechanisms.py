@@ -6032,6 +6032,16 @@ PY
         self.assertIn("operation not permitted", worker)
         self.assertIn('_pid_alive "$_DAEMON_PID"', worker)
 
+    def test_chat_workers_duplicate_start_is_idempotent(self):
+        chat_worker = (REPO_ROOT / "workers/chat_worker.sh").read_text()
+        youtube_worker = (REPO_ROOT / "workers/youtube_worker.sh").read_text()
+
+        for worker in (chat_worker, youtube_worker):
+            self.assertIn('already running (PID=$old_pid) -> no-op', worker)
+            self.assertIn("exit 0", worker)
+        self.assertIn('if _pid_alive "$old_pid"; then', chat_worker)
+        self.assertIn('if _pid_alive "$old_pid"; then', youtube_worker)
+
     def test_chat_ingest_notifies_event_overlay(self):
         twitch = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
         twitch_send = (REPO_ROOT / "twitch_chat.sh").read_text()

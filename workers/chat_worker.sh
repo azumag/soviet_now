@@ -125,9 +125,9 @@ trap '_request_reload USR1' USR1
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
 	old_pid=$(cat "$PID_FILE" 2>/dev/null)
-	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-		_log "ERROR: 既に起動中 (PID=$old_pid)"
-		exit 1
+	if _pid_alive "$old_pid"; then
+		_log "already running (PID=$old_pid) -> no-op"
+		exit 0
 	fi
 	rm -f "$PID_FILE"
 fi
