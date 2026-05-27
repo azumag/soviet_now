@@ -5278,6 +5278,8 @@ _prune_expired_rejected_hashes
 
         self.assertIn("IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC", config)
         self.assertIn("improve_reason", improve)
+        self.assertIn('if status == "running" and not improve_reason:', improve)
+        self.assertIn('improve_reason = previous_reason or "normal"', improve)
         self.assertIn('_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch" "$reason"', improve)
         self.assertIn('prev_improve_reason=$(echo "$state"', improve)
         self.assertIn("state理由欠落をlockから復元", improve)

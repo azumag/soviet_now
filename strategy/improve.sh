@@ -425,6 +425,15 @@ try:
 except Exception:
     pid_birth_epoch = 0
 
+if status == "running" and not improve_reason:
+    previous_reason = ""
+    try:
+        with open(out_file, encoding="utf-8") as f:
+            previous_reason = str(json.load(f).get("improve_reason") or "")
+    except Exception:
+        previous_reason = ""
+    improve_reason = previous_reason or "normal"
+
 if started_at <= 0 and status == "running":
     started_at = now
 
