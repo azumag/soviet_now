@@ -175,8 +175,8 @@ def chrome_app_path_from_executable(executable_path: str) -> str:
     return executable_path[: idx + len(".app")]
 
 
-def prelaunch_candidate_chrome(app_path: str, profile_dir: str, cdp_port: int) -> bool:
-    if sys.platform != "darwin" or not app_path:
+def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir: str, cdp_port: int) -> bool:
+    if sys.platform != "darwin":
         return False
     profile_path = Path(profile_dir)
     env_root = profile_path.parent
@@ -190,12 +190,7 @@ def prelaunch_candidate_chrome(app_path: str, profile_dir: str, cdp_port: int) -
             path.mkdir(parents=True, exist_ok=True)
     except Exception:
         return False
-    args = [
-        "/usr/bin/open",
-        "-g",
-        "-n",
-        app_path,
-        "--args",
+    chrome_args = [
         f"--user-data-dir={profile_dir}",
         "--window-size=1300,800",
         f"--remote-debugging-port={cdp_port}",
@@ -222,8 +217,31 @@ def prelaunch_candidate_chrome(app_path: str, profile_dir: str, cdp_port: int) -
             "TMPDIR": str(tmp_dir.resolve()),
         }
     )
+    if app_path:
+        open_args = [
+            "/usr/bin/open",
+            "-g",
+            "-n",
+            app_path,
+            "--args",
+            *chrome_args,
+        ]
+        try:
+            subprocess.run(open_args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
+            return True
+        except Exception:
+            pass
+    if not executable_path:
+        return False
     try:
-        subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
+        subprocess.Popen(
+            [executable_path, *chrome_args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            start_new_session=True,
+        )
         return True
     except Exception:
         return False
@@ -1618,7 +1636,7 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
         env.get("SOREN_CHROME_HEADLESS") not in {"1", "true", "yes", "on"}
         and env.get("SOREN_CHROME_NO_FOCUS_LAUNCH") != "0"
         and env.get("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH") != "1"
-        and prelaunch_candidate_chrome(chrome_app_path, candidate.profile_dir, candidate.cdp_port)
+        and prelaunch_candidate_chrome(chrome_app_path, chrome_executable_path, candidate.profile_dir, candidate.cdp_port)
     ):
         env["SOREN_CHROME_ATTACH_ONLY"] = "1"
     try:

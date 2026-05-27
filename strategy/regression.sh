@@ -956,7 +956,7 @@ _refresh_best_strategy_anchor() {
 		"${TABU_ENABLED:-0}" "${TABU_SIGNATURES_FILE:-tmp/state/tabu_signatures.jsonl}" "${TABU_DISTANCE_THRESHOLD:-0.15}" \
 		"${BEHAVIOR_SIGNATURES_FILE:-tmp/state/behavior_signatures.json}" "${LAST_ANCHOR_CHANGE_FILE:-tmp/state/last_anchor_change.md}" \
 		"$(pwd)" "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
-		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY'
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" <<'PY'
 import json
 import math
 import os
@@ -987,6 +987,7 @@ objective_anchor_enabled = (sys.argv[20] if len(sys.argv) > 20 else "1") == "1"
 objective_anchor_min_comp_ratio = float(sys.argv[21]) if len(sys.argv) > 21 else 0.90
 objective_anchor_max_comp_gap = float(sys.argv[22]) if len(sys.argv) > 22 else 1500.0
 permanent_archive_dir = sys.argv[23] if len(sys.argv) > 23 else ""
+wildcard_origin_file = sys.argv[24] if len(sys.argv) > 24 else ""
 
 # lib.behavior_signature の import (帯域脱出機構 ON 時のみ必要)
 _compute_signature = None
@@ -1007,6 +1008,38 @@ try:
     rs = json.load(open(rs_file))
 except Exception:
     raise SystemExit(0)
+
+try:
+    wildcard_origin = json.load(open(wildcard_origin_file, encoding="utf-8")) if wildcard_origin_file and os.path.exists(wildcard_origin_file) else {}
+except Exception:
+    wildcard_origin = {}
+
+origin_progress_by_hash = {}
+if isinstance(wildcard_origin, dict):
+    for origin_hash, meta in wildcard_origin.items():
+        if not isinstance(meta, dict):
+            continue
+        targets = [str(origin_hash)]
+        source_hash = str(meta.get("source_hash") or "")
+        if source_hash:
+            targets.append(source_hash)
+        for target in targets:
+            if not target:
+                continue
+            current = origin_progress_by_hash.get(target, {})
+            best = max(int(current.get("best_max_type", 0) or 0), int(meta.get("source_best_max_type", 0) or 0))
+            russia = max(int(current.get("russia_count", 0) or 0), int(meta.get("source_russia_count", 0) or 0))
+            soviet = max(int(current.get("soviet_count", 0) or 0), int(meta.get("source_soviet_count", 0) or 0))
+            if best or russia or soviet:
+                if best >= 15 and russia <= 0:
+                    russia = 1
+                if best >= 16 and soviet <= 0:
+                    soviet = 1
+                origin_progress_by_hash[target] = {
+                    "best_max_type": best,
+                    "russia_count": russia,
+                    "soviet_count": soviet,
+                }
 
 rejected = set()
 if rejected_file and os.path.exists(rejected_file):
@@ -1113,18 +1146,32 @@ def metrics(scores):
         "n": n,
     }
 
-def objective_progress(data):
+def objective_progress(data, hash_value=""):
     max_types = []
     for x in data.get("max_types", []) or []:
         try:
-            max_types.append(int(x))
+            value = int(x)
         except Exception:
             pass
+        else:
+            if value > 0:
+                max_types.append(value)
     best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
+    russia_count = int(data.get("russia_count", 0) or 0)
+    soviet_count = int(data.get("soviet_count", 0) or 0)
+    origin_progress = origin_progress_by_hash.get(hash_value or "")
+    if origin_progress and not max_types:
+        best_max_type = max(best_max_type, int(origin_progress.get("best_max_type", 0) or 0))
+        russia_count = max(russia_count, int(origin_progress.get("russia_count", 0) or 0))
+        soviet_count = max(soviet_count, int(origin_progress.get("soviet_count", 0) or 0))
+    if best_max_type >= 15 and russia_count <= 0:
+        russia_count = 1
+    if best_max_type >= 16 and soviet_count <= 0:
+        soviet_count = 1
     return {
         "best_max_type": best_max_type,
-        "russia_count": int(data.get("russia_count", 0) or 0),
-        "soviet_count": int(data.get("soviet_count", 0) or 0),
+        "russia_count": russia_count,
+        "soviet_count": soviet_count,
     }
 
 def archive_is_runtime_stable(path):
@@ -1231,8 +1278,8 @@ def _selection_score(h, m, data):
     premium = diversity_weight * dist
     return base + premium, premium
 
-def _objective_tuple(data):
-    p = objective_progress(data)
+def _objective_tuple(h, data):
+    p = objective_progress(data, h)
     return (
         int(p.get("soviet_count", 0) > 0),
         int(p.get("soviet_count", 0) or 0),
@@ -1250,7 +1297,7 @@ def _anchor_rank_key(h, m, data, selection_score):
             or score_gap <= objective_anchor_max_comp_gap
         )
         if near_score_leader:
-            objective_key = _objective_tuple(data)
+            objective_key = _objective_tuple(h, data)
     return (
         *objective_key,
         selection_score,
@@ -1339,7 +1386,7 @@ else:
 if not replace:
     raise SystemExit(0)
 
-best_objective = objective_progress(best_data)
+best_objective = objective_progress(best_data, best_hash)
 payload = {
     "hash": best_hash,
     "comp": round(best_metrics["comp"], 4),
@@ -2868,18 +2915,20 @@ if archive_file:
 rs[h]["_recent_archives"] = recent_archives
 progress_archives = recent_archives[-len(rs[h]["scores"]):] if rs[h]["scores"] else []
 progress = [nation_progress(path) for path in progress_archives]
-rs[h]["max_types"] = [item[0] for item in progress]
-rs[h]["best_max_type"] = max([int(rs[h].get("best_max_type", 0) or 0)] + [item[0] for item in progress])
-rs[h]["russia_count"] = max(int(rs[h].get("russia_count", 0) or 0), sum(1 for item in progress if item[1]))
-rs[h]["soviet_count"] = max(int(rs[h].get("soviet_count", 0) or 0), sum(1 for item in progress if item[2]))
+known_progress = [item for item in progress if item[0] > 0 or item[1] or item[2]]
+known_max_types = [item[0] for item in known_progress if item[0] > 0]
+rs[h]["max_types"] = known_max_types
+rs[h]["best_max_type"] = max([int(rs[h].get("best_max_type", 0) or 0)] + known_max_types)
+rs[h]["russia_count"] = max(int(rs[h].get("russia_count", 0) or 0), sum(1 for item in known_progress if item[1]))
+rs[h]["soviet_count"] = max(int(rs[h].get("soviet_count", 0) or 0), sum(1 for item in known_progress if item[2]))
 if rs[h]["best_max_type"] >= 15 and rs[h]["russia_count"] <= 0:
     rs[h]["russia_count"] = 1
 if rs[h]["best_max_type"] >= 16 and rs[h]["soviet_count"] <= 0:
     rs[h]["soviet_count"] = 1
-rs[h]["frontier_hints"] = [item[3] for item in progress]
-rs[h]["peak_high_type_counts"] = [item[4] for item in progress]
-rs[h]["deadline_guard_counts"] = [item[5] for item in progress]
-rs[h]["deadline_guard_reason_tops"] = [item[6] for item in progress]
+rs[h]["frontier_hints"] = [item[3] for item in known_progress]
+rs[h]["peak_high_type_counts"] = [item[4] for item in known_progress]
+rs[h]["deadline_guard_counts"] = [item[5] for item in known_progress]
+rs[h]["deadline_guard_reason_tops"] = [item[6] for item in known_progress]
 
 with open(rs_file, "w") as f:
     json.dump(rs, f)

@@ -360,9 +360,11 @@ def max_types_from_strategy_data(data: dict[str, Any] | None) -> list[int]:
     values: list[int] = []
     for raw in data.get("max_types", []) or []:
         try:
-            values.append(int(raw))
+            value = int(raw)
         except (TypeError, ValueError):
             continue
+        if value > 0:
+            values.append(value)
     if values:
         return values
     for archive in data.get("_recent_archives", []) or []:
@@ -389,6 +391,13 @@ def stage_rates_from_max_types(max_types: list[int], gate_types: list[int]) -> d
 
 def target_stage_from_anchor(anchor_data: dict[str, Any] | None, threshold: float, gate_types: list[int]) -> dict[str, Any] | None:
     max_types = max_types_from_strategy_data(anchor_data)
+    if not max_types:
+        try:
+            best = int((anchor_data or {}).get("best_max_type", 0) or 0)
+        except (TypeError, ValueError):
+            best = 0
+        if best > 0:
+            max_types = [best]
     rates = stage_rates_from_max_types(max_types, gate_types)
     threshold_pct = threshold * 100
     candidates = [
@@ -460,13 +469,29 @@ def purge_target_stats() -> dict[str, Any]:
     current_data = read_json(CURRENT_STRATEGY_RUN) or {}
     anchor_hash = str(anchor_meta.get("hash") or "")
     current_hash = str(current_data.get("hash") or "")
-    anchor_data = rolling.get(anchor_hash, {}) if isinstance(rolling, dict) and anchor_hash else {}
+    anchor_data = dict(rolling.get(anchor_hash, {}) if isinstance(rolling, dict) and anchor_hash else {})
+    for key in ("best_max_type", "russia_count", "soviet_count"):
+        try:
+            anchor_value = int(anchor_meta.get(key, 0) or 0)
+            rolling_value = int(anchor_data.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if anchor_value > rolling_value:
+            anchor_data[key] = anchor_value
     current_max_types = max_types_from_strategy_data(current_data)
     try:
         current_best_meta = int(current_data.get("best_max_type", 0) or 0)
     except (TypeError, ValueError):
         current_best_meta = 0
     current_best = max(current_max_types + [current_best_meta], default=0)
+    anchor_max_types = max_types_from_strategy_data(anchor_data)
+    if not anchor_max_types:
+        try:
+            anchor_best_meta = int(anchor_data.get("best_max_type", 0) or 0)
+        except (TypeError, ValueError):
+            anchor_best_meta = 0
+        if anchor_best_meta > 0:
+            anchor_max_types = [anchor_best_meta]
     target = target_stage_from_regression(anchor_data, current_data) or target_stage_from_anchor(anchor_data, threshold, gate_types)
     current_rates = stage_rates_from_max_types(current_max_types, gate_types)
     target_type = int(target["type"]) if target else 0
@@ -490,7 +515,7 @@ def purge_target_stats() -> dict[str, Any]:
         "gateTypes": gate_types,
         "anchor": {
             "hash": anchor_hash or None,
-            "window": len(max_types_from_strategy_data(anchor_data)),
+            "window": len(anchor_max_types),
             "target": target,
         },
         "current": {

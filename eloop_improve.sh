@@ -268,7 +268,7 @@ _wildcard_parallel_cleanup_sessions() {
 }
 
 _post_improve_param_parallel_trial() {
-	[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-1}" = "1" ] || return 0
+	[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}" = "1" ] || return 0
 	[ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ] || return 0
 	[ -f "$STRATEGY_FILE" ] || return 0
 
@@ -294,8 +294,8 @@ _post_improve_param_parallel_trial() {
 	rm -f "$result_file" 2>/dev/null || true
 	random_count_arg="--random-count"
 	[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || random_count_arg="--no-random-count"
-	export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-1}"
-	export WILDCARD_PARALLEL_OBS_BROWSER_SOURCES="${WILDCARD_PARALLEL_OBS_BROWSER_SOURCES:-1}"
+	export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"
+	export WILDCARD_PARALLEL_OBS_BROWSER_SOURCES="${WILDCARD_PARALLEL_OBS_BROWSER_SOURCES:-0}"
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_COLS
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_W
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_H

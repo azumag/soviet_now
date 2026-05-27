@@ -193,6 +193,80 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertEqual(anchor["russia_count"], 1)
             self.assertEqual(anchor["soviet_count"], 1)
 
+    def test_anchor_refresh_uses_archive_restart_source_objective_metadata(self):
+        """archive_restart の source メタがあれば、pruned 履歴でも建国進捗を 0 扱いしない。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            origin_file = td / "wildcard_origin.json"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "scores": [12000] * 12,
+                            "games_total": 12,
+                            "max_types": [0],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            origin_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "origin_type": "archive_restart",
+                            "source_hash": "scoreOnly",
+                            "source_best_max_type": 15,
+                            "source_russia_count": 1,
+                            "source_soviet_count": 0,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "scoreOnly.py").write_text(stable_source, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "0"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+WILDCARD_ORIGIN_FILE='{origin_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "scoreOnly")
+            self.assertEqual(anchor["best_max_type"], 15)
+            self.assertEqual(anchor["russia_count"], 1)
+            self.assertEqual(anchor["soviet_count"], 0)
+
     def test_anchor_refresh_preserves_valid_current_anchor(self):
         """current が既存 anchor の場合、2番手へ強制差し替えせず同一hash判定へ残す。"""
         with tempfile.TemporaryDirectory() as td:
@@ -797,7 +871,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_PARALLEL_ENABLED", config)
         self.assertIn("WILDCARD_PARALLEL_JOBS", config)
         self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
-        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-1}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_JOBS="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
@@ -1438,18 +1512,23 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("def resolve_playwright_chrome_for_testing", parallel)
         self.assertIn("chromium.executablePath()", parallel)
         self.assertIn("def prelaunch_candidate_chrome", parallel)
+        self.assertIn("subprocess.Popen(\n            [executable_path, *chrome_args]", parallel)
         self.assertIn("Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing", parallel)
         self.assertIn("chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)", parallel)
         self.assertIn('default_headless = "0" if sys.platform == "darwin" else "1"', parallel)
         self.assertIn('"HOME": str((workdir / "tmp" / "chrome_home").resolve())', parallel)
         self.assertIn('"HOME": str(chrome_home.resolve())', parallel)
         self.assertIn("env=env", parallel)
-        self.assertIn('"/usr/bin/open",\n        "-g",\n        "-n",\n        app_path,', parallel)
+        self.assertIn('"/usr/bin/open",\n            "-g",\n            "-n",\n            app_path,', parallel)
+        self.assertIn("prelaunch_candidate_chrome(chrome_app_path, chrome_executable_path, candidate.profile_dir, candidate.cdp_port)", parallel)
         self.assertIn('"--disable-crashpad"', parallel)
         self.assertIn('f"--crash-dumps-dir={crashpad_dir}"', parallel)
         self.assertNotIn('"-a",\n        app_path,', parallel)
         self.assertIn('use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "0")', parallel)
         self.assertIn('os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "1")', parallel)
+        self.assertIn('[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}" = "1" ] || return 0', (REPO_ROOT / "eloop_improve.sh").read_text())
+        self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"', (REPO_ROOT / "eloop_improve.sh").read_text())
+        self.assertIn('export WILDCARD_PARALLEL_OBS_BROWSER_SOURCES="${WILDCARD_PARALLEL_OBS_BROWSER_SOURCES:-0}"', (REPO_ROOT / "eloop_improve.sh").read_text())
 
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
@@ -1668,7 +1747,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("OBS_WINDOW_AUDIO_SOURCE_ENABLED=1", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("OBS_WINDOW_AUDIO_SOURCE_ENABLED=0", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("OBS_WINDOW_CAPTURE_AUDIO=0", (REPO_ROOT / "soren91_control.sh").read_text())
-        self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-1}"', eloop)
+        self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"', eloop)
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
         self.assertIn("hide:\"$hide_sources,", eloop)
         self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"', eloop)
@@ -5227,7 +5306,7 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
                 encoding="utf-8",
             )
             rolling_scores.write_text(
-                json.dumps({"anchor": {"max_types": [14, 14, 14, 13]}}),
+                json.dumps({"anchor": {"max_types": [0, 14, 14, 14, 13]}}),
                 encoding="utf-8",
             )
             best_anchor.write_text(json.dumps({"hash": "anchor"}), encoding="utf-8")
@@ -5244,10 +5323,49 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
                 stats = dashboard_data.purge_target_stats()
 
         self.assertEqual(stats["anchor"]["target"]["type"], 14)
+        self.assertEqual(stats["anchor"]["window"], 4)
         self.assertEqual(stats["current"]["targetRate"]["reached"], 1)
         self.assertEqual(stats["current"]["targetRate"]["total"], 3)
         self.assertFalse(stats["current"]["targetReached"])
         self.assertEqual(stats["current"]["bestMaxType"], 14)
+
+    def test_dashboard_purge_target_uses_anchor_meta_when_rolling_progress_is_pruned(self):
+        import dashboard_data
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            current_run = td / "current_strategy_run.json"
+            rolling_scores = td / "rolling_scores.json"
+            best_anchor = td / "best_strategy_anchor.json"
+            config = td / "config.sh"
+            current_run.write_text(
+                json.dumps({"hash": "current", "max_types": [15, 15, 15], "best_max_type": 15}),
+                encoding="utf-8",
+            )
+            rolling_scores.write_text(
+                json.dumps({"anchor": {"scores": [12000] * 12, "games_total": 12}}),
+                encoding="utf-8",
+            )
+            best_anchor.write_text(
+                json.dumps({"hash": "anchor", "best_max_type": 15, "russia_count": 1, "soviet_count": 0}),
+                encoding="utf-8",
+            )
+            config.write_text(
+                'STAGE_ACHIEVEMENT_GATE_MIN_RATE="${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.75}"\n'
+                'STAGE_ACHIEVEMENT_GATE_TYPES="${STAGE_ACHIEVEMENT_GATE_TYPES:-13,14,15}"\n',
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(dashboard_data, "CURRENT_STRATEGY_RUN", current_run), \
+                mock.patch.object(dashboard_data, "ROLLING_SCORES", rolling_scores), \
+                mock.patch.object(dashboard_data, "BEST_STRATEGY_ANCHOR", best_anchor), \
+                mock.patch.object(dashboard_data, "CORE_CONFIG", config):
+                stats = dashboard_data.purge_target_stats()
+
+        self.assertEqual(stats["anchor"]["target"]["type"], 15)
+        self.assertEqual(stats["anchor"]["window"], 1)
+        self.assertEqual(stats["current"]["targetRate"]["reached"], 3)
+        self.assertEqual(stats["current"]["targetRate"]["total"], 3)
 
     def test_restored_normalized_rollback_candidate_clears_stale_reject(self):
         with tempfile.TemporaryDirectory() as td:
@@ -5656,7 +5774,7 @@ PY
 
         self.assertIn("Rollback anchors must stay score-mature, but the Soviet objective is the", regression)
         self.assertIn("near_score_leader = (", regression)
-        self.assertIn("objective_key = _objective_tuple(data)", regression)
+        self.assertIn("objective_key = _objective_tuple(h, data)", regression)
         self.assertIn("*objective_key,\n        selection_score", regression)
 
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
