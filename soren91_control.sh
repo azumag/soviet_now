@@ -79,14 +79,14 @@ _soren91_switch_obs_layout() {
 	case "$mode" in
 	meriken)
 		if [ -n "$game_source" ] && [ -x "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ]; then
-			"$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" '91人対戦|ソ連ゲーム91' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
+			OBS_WINDOW_CAPTURE_AUDIO=0 OBS_WINDOW_AUDIO_SOURCE="${SOREN91_OBS_AUDIO_SOURCE:-soren91Audio}" OBS_WINDOW_AUDIO_SOURCE_ENABLED=1 "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" '91人対戦|ソ連ゲーム91' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
 		fi
 		"$SOREN91_OBS_CONTROL" batch soren show:"$meriken_show_sources" $s91_show_op hide:"$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
 		if [ -n "$game_source" ] && [ -x "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ]; then
-			"$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" 'Unity WebGL Player \| soren-game' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
+			OBS_WINDOW_CAPTURE_AUDIO=0 OBS_WINDOW_AUDIO_SOURCE="${SOREN91_OBS_AUDIO_SOURCE:-soren91Audio}" OBS_WINDOW_AUDIO_SOURCE_ENABLED=0 "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" 'Unity WebGL Player \| soren-game' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
 		fi
 		# 改善中も stats/ops は監視用に維持し、dashboard/game だけを
 		# china レイアウトへ戻す。改善オーバーレイは別途管理される。

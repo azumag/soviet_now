@@ -71,6 +71,21 @@ const topOverlaySource = process.env.OBS_TOP_OVERLAY_SOURCE || process.env.TWICA
 const belowTopOverlaySource = process.env.OBS_BELOW_TOP_OVERLAY_SOURCE || process.env.OBS_EVENT_OVERLAY_SOURCE || 'eventOverlay';
 const titlePattern = new RegExp(titlePatternRaw);
 const chromeWindowPattern = /\[Google Chrome(?: for Testing)?\]/;
+const muteInputAudio = /^wildcardParallelCand\d+$/.test(sourceName)
+  && process.env.WILDCARD_PARALLEL_CANDIDATE_AUDIO !== '1';
+const captureAudioSetting = (() => {
+  const raw = process.env.OBS_WINDOW_CAPTURE_AUDIO;
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return null;
+})();
+const appAudioSourceName = process.env.OBS_WINDOW_AUDIO_SOURCE || '';
+const appAudioSourceEnabled = (() => {
+  const raw = process.env.OBS_WINDOW_AUDIO_SOURCE_ENABLED;
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return enabled;
+})();
 
 function fail(message, code = 1) {
   console.error(`[obs_window_capture_source] ${message}`);
@@ -206,6 +221,10 @@ async function ensureInput(obs) {
     show_cursor: false,
     show_empty_names: false,
   };
+  if (captureAudioSetting !== null) {
+    initialSettings.capture_audio = captureAudioSetting;
+    initialSettings.audio = captureAudioSetting;
+  }
 
   if (!input) {
     await obs.request('CreateInput', {
@@ -229,6 +248,58 @@ async function setSceneItemEnabled(obs, sceneItemEnabled) {
   const list = await obs.request('GetSceneItemList', { sceneName });
   const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
   for (const item of items.filter(item => item.sourceName === sourceName)) {
+    await obs.request('SetSceneItemEnabled', {
+      sceneName,
+      sceneItemId: item.sceneItemId,
+      sceneItemEnabled,
+    });
+  }
+}
+
+async function ensureAppAudioSource(obs) {
+  if (!appAudioSourceName) return;
+
+  let input = await getInput(obs, appAudioSourceName);
+  if (!input) {
+    await obs.request('CreateInput', {
+      sceneName,
+      inputName: appAudioSourceName,
+      inputKind: 'sck_audio_capture',
+      inputSettings: {
+        type: 1,
+        application: appId,
+      },
+      sceneItemEnabled: false,
+    });
+  } else {
+    await obs.request('SetInputSettings', {
+      inputName: appAudioSourceName,
+      inputSettings: {
+        type: 1,
+        application: appId,
+      },
+      overlay: true,
+    });
+  }
+
+  await obs.request('SetInputMute', { inputName: appAudioSourceName, inputMuted: false });
+
+  const list = await obs.request('GetSceneItemList', { sceneName });
+  const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
+  if (!items.some(item => item.sourceName === appAudioSourceName)) {
+    await obs.request('CreateSceneItem', {
+      sceneName,
+      sourceName: appAudioSourceName,
+      sceneItemEnabled: false,
+    });
+  }
+}
+
+async function setAppAudioSourceEnabled(obs, sceneItemEnabled) {
+  if (!appAudioSourceName) return;
+  const list = await obs.request('GetSceneItemList', { sceneName });
+  const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
+  for (const item of items.filter(item => item.sourceName === appAudioSourceName)) {
     await obs.request('SetSceneItemEnabled', {
       sceneName,
       sceneItemId: item.sceneItemId,
@@ -261,6 +332,7 @@ async function main() {
   const obs = await connectAndIdentify();
   try {
     await ensureInput(obs);
+    await ensureAppAudioSource(obs);
 
     const response = await obs.request('GetInputPropertiesListPropertyItems', {
       inputName: sourceName,
@@ -272,22 +344,33 @@ async function main() {
     );
     if (!target) {
       await setSceneItemEnabled(obs, false).catch(() => {});
+      await setAppAudioSourceEnabled(obs, false).catch(() => {});
       throw new Error(`target window not found for ${sourceName}: /${titlePatternRaw}/`);
+    }
+
+    const inputSettings = {
+      type: 1,
+      application: appId,
+      window: target.itemValue,
+      show_cursor: false,
+      show_empty_names: false,
+    };
+    if (captureAudioSetting !== null) {
+      inputSettings.capture_audio = captureAudioSetting;
+      inputSettings.audio = captureAudioSetting;
     }
 
     await obs.request('SetInputSettings', {
       inputName: sourceName,
-      inputSettings: {
-        type: 1,
-        application: appId,
-        window: target.itemValue,
-        show_cursor: false,
-        show_empty_names: false,
-      },
+      inputSettings,
       overlay: true,
     });
+    if (muteInputAudio) {
+      await obs.request('SetInputMute', { inputName: sourceName, inputMuted: true });
+    }
 
     await setSceneItemEnabled(obs, enabled);
+    await setAppAudioSourceEnabled(obs, appAudioSourceEnabled);
     await enforceOverlayStack(obs);
 
     console.log(`window-capture:${sourceName}:${visibility}:${target.itemName} (${target.itemValue})`);

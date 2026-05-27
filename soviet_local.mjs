@@ -170,20 +170,9 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
     ...args,
   ];
 
+  const launchEnv = browserLaunchEnv(userDataDir);
   await new Promise((resolve, reject) => {
-    const savedEnv = {
-      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
-      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH,
-    };
-    delete process.env.XDG_CONFIG_HOME;
-    delete process.env.XDG_CACHE_HOME;
-    delete process.env.PLAYWRIGHT_BROWSERS_PATH;
-    execFile('/usr/bin/open', openArgs, (err) => {
-      for (const [key, value] of Object.entries(savedEnv)) {
-        if (typeof value === 'undefined') delete process.env[key];
-        else process.env[key] = value;
-      }
+    execFile('/usr/bin/open', openArgs, { env: launchEnv }, (err) => {
       if (err) reject(err);
       else resolve();
     });
@@ -213,6 +202,25 @@ function browserLaunchEnv(userDataDir) {
   if (cacheHome) env.XDG_CACHE_HOME = cacheHome;
   env.TMPDIR = tmpDir;
   return env;
+}
+
+async function withBrowserLaunchEnv(userDataDir, fn) {
+  const launchEnv = browserLaunchEnv(userDataDir);
+  const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TMPDIR'];
+  const saved = {};
+  for (const key of keys) {
+    saved[key] = process.env[key];
+    if (launchEnv[key]) process.env[key] = launchEnv[key];
+    else delete process.env[key];
+  }
+  try {
+    return await fn(launchEnv);
+  } finally {
+    for (const key of keys) {
+      if (typeof saved[key] === 'undefined') delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
 }
 
 function sha256Base64(text) {
@@ -716,14 +724,14 @@ async function runLocalController() {
       context = backgroundLaunch.context;
       closeBrowserAfterContext = true;
     } else {
-      context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+      context = await withBrowserLaunchEnv(USER_DATA_DIR, launchEnv => chromium.launchPersistentContext(USER_DATA_DIR, {
         executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
         headless: CHROME_HEADLESS,
         viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
-        env: browserLaunchEnv(USER_DATA_DIR),
+        env: launchEnv,
         args: launchArgs,
-      });
+      }));
       browser = context.browser();
     }
   } catch (e) {
