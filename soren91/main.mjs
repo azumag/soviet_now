@@ -936,7 +936,8 @@ async function main() {
   // 共有ブラウザ接続を試行、失敗なら従来の単独起動
   const sharedBrowser = await connectToSharedBrowser();
   const isSharedMode = sharedBrowser != null;
-  const launchArgs = ['--window-size=1280,720'];
+  const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
+  const launchArgs = ['--window-size=1280,720', `--window-position=${standaloneWindowPosition}`];
   const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs).catch(err => {
     console.log(`[main] Background launch failed, falling back to Playwright launch: ${err.message}`);
     return null;

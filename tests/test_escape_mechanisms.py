@@ -2935,6 +2935,9 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("'/usr/bin/open'", main)
         self.assertIn("'-g'", main)
         self.assertIn("SOREN91_CHROME_NO_FOCUS_LAUNCH", main)
+        self.assertIn("SOREN91_STANDALONE_WINDOW_POSITION", main)
+        self.assertIn("'2400,1200'", main)
+        self.assertIn("`--window-position=${standaloneWindowPosition}`", main)
         self.assertNotIn(".bringToFront()", main)
 
     def test_soviet_local_browser_launch_does_not_raise_focus_on_macos(self):
