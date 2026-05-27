@@ -797,6 +797,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_PARALLEL_ENABLED", config)
         self.assertIn("WILDCARD_PARALLEL_JOBS", config)
         self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_JOBS="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
         self.assertIn("WILDCARD_PARALLEL_BGM_VOLUME", config)
@@ -1437,10 +1438,12 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("def prelaunch_candidate_chrome", parallel)
         self.assertIn("Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing", parallel)
         self.assertIn("chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)", parallel)
-        self.assertIn('if chrome_executable_path and sys.platform == "darwin":\n        default_headless = "0"', parallel)
+        self.assertIn('default_headless = "0" if sys.platform == "darwin" else "1"', parallel)
         self.assertIn('"/usr/bin/open",\n        "-g",\n        "-n",\n        app_path,', parallel)
+        self.assertIn('"--disable-crashpad"', parallel)
+        self.assertIn('f"--crash-dumps-dir={crashpad_dir}"', parallel)
         self.assertNotIn('"-a",\n        app_path,', parallel)
-        self.assertIn('os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "") == "1"', parallel)
+        self.assertIn('use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "1" if sys.platform == "darwin" else "")', parallel)
 
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
@@ -1628,6 +1631,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("await enforceOverlayStack(obs)", window_source)
         self.assertIn("wildcard_parallel_obs_show", eloop)
         self.assertIn("wildcardParallelOverlay", eloop)
+        self.assertIn('WILDCARD_PARALLEL_OVERLAY_TITLE="POST-IMPROVE PARAM TUNING"', eloop)
         self.assertIn("wildcardParallelCand", eloop)
         self.assertIn("${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6", eloop)
         self.assertIn("wildcardParallelCand", parallel)
@@ -1645,7 +1649,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("本線ゲームを止め", loop := (REPO_ROOT / "soren_loop.sh").read_text())
         self.assertIn("候補6面", loop)
         self.assertIn("本線は見えない裏で進ませない", loop)
-        self.assertIn('case "$_pause_reason" in\n\t\twildcard|archive_restart)', loop)
+        self.assertIn('case "${_pause_reason}:${pause_phase:-}:${pause_detail:-}" in', loop)
+        self.assertIn('wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)', loop)
         self.assertIn("maybe_show_obs_candidate_source", parallel)
         self.assertIn('"./obs_window_capture_source.sh", "ensure", scene, source, window_pattern', parallel)
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
@@ -2952,6 +2957,10 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("live_pid_after_start", control)
         self.assertIn("_soren91_read_alive_player_pid 2>/dev/null", control)
         self.assertIn("exec /bin/bash '$SOREN91_RUNNER_SCRIPT'", control)
+        self.assertIn('CHILD_MAIN_PID=""', runner)
+        self.assertIn('CHILD_MAIN_PID=$!', runner)
+        self.assertIn('wait "$CHILD_MAIN_PID"', runner)
+        self.assertIn('kill -9 "$pid"', runner)
         self.assertIn("trap '' HUP", runner)
         self.assertIn("trap '_on_signal TERM' TERM", runner)
         self.assertIn("trap '_on_exit' EXIT", runner)
@@ -2971,6 +2980,24 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn('$SOREN91_DIR/tmp/in_game', control)
         self.assertIn('_soren91_observable_fresh || return 1', control)
 
+    def test_soren91_stop_recovers_orphan_main_process_without_pid_files(self):
+        control = (REPO_ROOT / "soren91_control.sh").read_text()
+
+        self.assertIn("_soren91_scan_alive_main_pids()", control)
+        self.assertIn("_soren91_scan_log_writer_pids()", control)
+        self.assertIn("_soren91_clear_stale_runner_lock()", control)
+        self.assertIn("tmux display-message -p -t soren91_runner '#{pane_pid}'", control)
+        self.assertIn('lsof -nP "$log_file"', control)
+        self.assertIn('NR > 1 && $1 == "node" && $2 ~ /^[0-9]+$/ { print $2 }', control)
+        self.assertIn('rm -rf "$lock_dir"', control)
+        self.assertIn("ps -Ao pid=,ppid=,command= 2>/dev/null", control)
+        self.assertIn("grep -Eq '(^|[ /])node([[:space:]].*)?main\\.mjs([[:space:]]|$)'", control)
+        self.assertIn('runner_pids="$(_soren91_scan_alive_runner_pids 2>/dev/null | tr \'\\n\' \' \')"', control)
+        self.assertIn('pid=$(_soren91_scan_alive_main_pids | head -n 1)', control)
+        self.assertIn('player_pids="$player_pids $(_soren91_scan_alive_main_pids 2>/dev/null | tr \'\\n\' \' \')"', control)
+        self.assertIn('player_pids="$player_pids $(_soren91_scan_log_writer_pids 2>/dev/null | tr \'\\n\' \' \')"', control)
+        self.assertNotIn("pgrep -f", control)
+
     def test_soren91_browser_launch_does_not_raise_focus_on_macos(self):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
 
@@ -2982,6 +3009,8 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("SOREN91_STANDALONE_WINDOW_POSITION", main)
         self.assertIn("'2400,1200'", main)
         self.assertIn("standaloneBrowserLaunchArgs(standaloneWindowPosition)", main)
+        self.assertIn("const playwrightLaunchArgs = launchArgs.filter(arg => !/^[a-z][a-z0-9+.-]*:/i.test(arg));", main)
+        self.assertIn("args: playwrightLaunchArgs", main)
         self.assertIn("'--password-store=basic'", main)
         self.assertIn("'--use-mock-keychain'", main)
         self.assertIn("'about:blank'", main)
@@ -5393,7 +5422,7 @@ _prune_expired_rejected_hashes
         self.assertIn("improve_overlay_hide_token", improve)
         self.assertIn("_live_improve_pid=", loop)
         self.assertIn("実改善PIDなし: soren91は起動せず回収待ち", loop)
-        self.assertIn("wildcard|archive_restart)", loop)
+        self.assertIn("wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)", loop)
         self.assertIn("手動改善待ちは実改善PIDがないため soren91 代打は起動しない", improve)
 
     def test_post_improve_soren91_session_improve_is_opt_in(self):
@@ -6218,13 +6247,26 @@ PY
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
         self.assertIn("_improve_reason_get", monitor)
-        self.assertIn("wildcard|archive_restart)", monitor)
+        self.assertIn("wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)", monitor)
         self.assertIn("leaving soren91 stopped", monitor)
         self.assertLess(
-            monitor.index("wildcard|archive_restart)"),
+            monitor.index("wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)"),
             monitor.index("calling existing soren91_start"),
         )
-        self.assertIn("${_pause_reason}改善中(隔離評価): soren91代打を立てず待機", loop)
+        self.assertIn("${_pause_reason:-isolated}改善中(隔離評価): soren91代打を立てず待機", loop)
+        self.assertIn("pause_phase=", loop)
+        self.assertIn("pause_detail=", loop)
+        self.assertIn("SOREN91_STOP_TIMEOUT=0 soren91_stop", loop)
+
+    def test_monitor_forces_soren91_stop_when_returning_to_normal_mode(self):
+        monitor = (REPO_ROOT / "monitor_improve_runtime.sh").read_text()
+
+        self.assertIn("improve idle but soren91 is active; forcing existing soren91_stop", monitor)
+        self.assertIn("SOREN91_STOP_TIMEOUT=0 soren91_stop", monitor)
+        self.assertLess(
+            monitor.index("improve idle but soren91 is active; forcing existing soren91_stop"),
+            monitor.rindex("SOREN91_STOP_TIMEOUT=0 soren91_stop"),
+        )
 
     def test_rollback_revalidates_strategy_after_restore(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()

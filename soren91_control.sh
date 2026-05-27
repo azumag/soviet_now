@@ -271,18 +271,78 @@ _set_soren91_mode_flag() {
 }
 
 _soren91_scan_alive_runner_pids() {
-	local pattern="" pid=""
-	pattern="$SOREN91_RUNNER_SCRIPT|$SOREN91_DIR/run_player_loop.sh|soren91/run_player_loop.sh"
-	while IFS= read -r pid; do
+	local pid="" ppid="" cmd=""
+	pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || true)
+	case "$pid" in
+	''|*[!0-9]*) ;;
+	*)
+		if _soren91_pid_is_alive "$pid"; then
+			printf '%s\n' "$pid"
+		fi
+		;;
+	esac
+	pid=$(sed -n 's/^pid=//p' "$SOREN91_DIR/tmp/.runner.lock/owner" 2>/dev/null | head -n 1)
+	case "$pid" in
+	''|*[!0-9]*) ;;
+	*)
+		if _soren91_pid_is_alive "$pid"; then
+			printf '%s\n' "$pid"
+		fi
+		;;
+	esac
+	ps -Ao pid=,ppid=,command= 2>/dev/null | while read -r pid ppid cmd; do
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
 		[ "$pid" = "$$" ] && continue
 		_soren91_pid_is_alive "$pid" || continue
+		printf '%s' "$cmd" | grep -F -- "$SOREN91_RUNNER_SCRIPT" >/dev/null 2>&1 || \
+			printf '%s' "$cmd" | grep -F -- "$SOREN91_DIR/run_player_loop.sh" >/dev/null 2>&1 || \
+			printf '%s' "$cmd" | grep -F -- "soren91/run_player_loop.sh" >/dev/null 2>&1 || continue
 		printf '%s\n' "$pid"
-	done <<EOF
-$(pgrep -f "$pattern" 2>/dev/null || true)
-EOF
+	done | awk '!seen[$0]++'
+}
+
+_soren91_scan_log_writer_pids() {
+	local log_file="$SOREN91_DIR/tmp/soren91.log"
+	[ -f "$log_file" ] || return 0
+	lsof -nP "$log_file" 2>/dev/null | awk '
+		NR > 1 && $1 == "node" && $2 ~ /^[0-9]+$/ { print $2 }
+	' | awk '!seen[$0]++'
+}
+
+_soren91_clear_stale_runner_lock() {
+	local lock_dir="$SOREN91_DIR/tmp/.runner.lock"
+	local owner=""
+	[ -d "$lock_dir" ] || return 0
+	owner=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+	case "$owner" in
+	''|*[!0-9]*) ;;
+	*)
+		_soren91_pid_is_alive "$owner" && return 0
+		;;
+	esac
+	rm -rf "$lock_dir" 2>/dev/null || true
+}
+
+_soren91_scan_alive_main_pids() {
+	local runner_pids="" pid="" ppid="" cmd="" runner_pid=""
+	_soren91_scan_log_writer_pids 2>/dev/null
+	runner_pids="$(_soren91_scan_alive_runner_pids 2>/dev/null | tr '\n' ' ')"
+	[ -n "$runner_pids" ] || return 0
+	ps -Ao pid=,ppid=,command= 2>/dev/null | while read -r pid ppid cmd; do
+		case "$pid" in
+		''|*[!0-9]*) continue ;;
+		esac
+		[ "$pid" = "$$" ] && continue
+		_soren91_pid_is_alive "$pid" || continue
+		printf '%s' "$cmd" | grep -Eq '(^|[ /])node([[:space:]].*)?main\.mjs([[:space:]]|$)' || continue
+		for runner_pid in $runner_pids; do
+			[ "$ppid" = "$runner_pid" ] || continue
+			printf '%s\n' "$pid"
+			break
+		done
+	done | awk '!seen[$0]++'
 }
 
 _soren91_read_alive_player_pid() {
@@ -315,7 +375,17 @@ _soren91_read_alive_player_pid() {
 	fi
 
 	# PIDファイルは停止処理の途中で消えることがある。実プロセスが残っていると
-	# "Not running" と誤判定して stop file を出せないため、runnerをプロセス表から復旧する。
+	# "Not running" と誤判定して stop file を出せないため、実プレイヤーをプロセス表から復旧する。
+	pid=$(_soren91_scan_alive_main_pids | head -n 1)
+	if [ -n "$pid" ]; then
+		printf '%s' "$pid"
+		return 0
+	fi
+	pid=$(_soren91_scan_log_writer_pids | head -n 1)
+	if [ -n "$pid" ]; then
+		printf '%s' "$pid"
+		return 0
+	fi
 	pid=$(_soren91_scan_alive_runner_pids | head -n 1)
 	if [ -n "$pid" ]; then
 		printf '%s' "$pid"
@@ -1076,6 +1146,7 @@ soren91_stop() {
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+		_soren91_clear_stale_runner_lock
 		local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 		_soren91_close_shared_game_tabs
@@ -1147,6 +1218,7 @@ soren91_stop() {
 
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 	rm -f "$SOREN91_LAST_ACTIVATE_STATE_FILE"
+	_soren91_clear_stale_runner_lock
 	_clear_meriken_time_state
 	_clear_soren91_mode_flag
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
@@ -1243,6 +1315,8 @@ soren91_cleanup() {
 		*) player_pids="$player_pids $pid" ;;
 		esac
 	fi
+	player_pids="$player_pids $(_soren91_scan_alive_main_pids 2>/dev/null | tr '\n' ' ')"
+	player_pids="$player_pids $(_soren91_scan_log_writer_pids 2>/dev/null | tr '\n' ' ')"
 	player_pids="$player_pids $(_soren91_scan_alive_runner_pids 2>/dev/null | tr '\n' ' ')"
 	for pid in $player_pids; do
 		case "$pid" in
@@ -1289,6 +1363,7 @@ soren91_cleanup() {
 		"$SOREN91_MAIN_PID_FILE" \
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+	_soren91_clear_stale_runner_lock
 	_clear_meriken_time_state
 	_soren91_close_shared_game_tabs
 	_soren91_stop_standalone_browser

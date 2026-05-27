@@ -10,6 +10,7 @@ MAIN_PID_FILE="$SCRIPT_DIR/tmp/main.pid"
 RUNNER_LOCK_DIR="$SCRIPT_DIR/tmp/.runner.lock"
 RETRY_DELAY_SEC="${SOREN91_RESTART_DELAY_SEC:-3}"
 RUNNER_LOCK_STALE_SEC="${SOREN91_RUNNER_LOCK_STALE_SEC:-120}"
+CHILD_MAIN_PID=""
 
 mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null || true
 
@@ -53,9 +54,17 @@ _acquire_runner_lock() {
 _stop_child_main() {
 	local pid=""
 	pid=$(cat "$MAIN_PID_FILE" 2>/dev/null || true)
+	case "$pid" in ''|*[!0-9]*) pid="$CHILD_MAIN_PID" ;; esac
 	if _pid_alive "$pid"; then
 		kill "$pid" 2>/dev/null || true
-		sleep 1
+		local waited=0
+		while _pid_alive "$pid" && [ "$waited" -lt 20 ]; do
+			sleep 0.1
+			waited=$((waited + 1))
+		done
+		if _pid_alive "$pid"; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
 	fi
 	rm -f "$MAIN_PID_FILE" 2>/dev/null || true
 }
@@ -88,8 +97,11 @@ while true; do
 	attempt=$((attempt + 1))
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
 
-	SOREN91_EXTERNAL_IMPROVE="${SOREN91_EXTERNAL_IMPROVE:-1}" node main.mjs >>"$LOG_FILE" 2>&1
+	SOREN91_EXTERNAL_IMPROVE="${SOREN91_EXTERNAL_IMPROVE:-1}" node main.mjs >>"$LOG_FILE" 2>&1 &
+	CHILD_MAIN_PID=$!
+	wait "$CHILD_MAIN_PID"
 	rc=$?
+	CHILD_MAIN_PID=""
 	rm -f "$MAIN_PID_FILE" 2>/dev/null || true
 
 	[ -f "$STOP_FILE" ] && exit 0

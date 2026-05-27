@@ -281,6 +281,9 @@ PY
 }
 
 _is_improve_running() {
+	if command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active; then
+		return 0
+	fi
 	[ "${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}" = "1" ] || return 1
 
 	local state status pid

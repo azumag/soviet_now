@@ -160,6 +160,12 @@ def chrome_app_path_from_executable(executable_path: str) -> str:
 def prelaunch_candidate_chrome(app_path: str, profile_dir: str, cdp_port: int) -> bool:
     if sys.platform != "darwin" or not app_path:
         return False
+    profile_path = Path(profile_dir)
+    crashpad_dir = profile_path / "Crashpad"
+    try:
+        crashpad_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return False
     args = [
         "/usr/bin/open",
         "-g",
@@ -171,6 +177,9 @@ def prelaunch_candidate_chrome(app_path: str, profile_dir: str, cdp_port: int) -
         f"--remote-debugging-port={cdp_port}",
         "--hide-crash-restore-bubble",
         "--disable-session-crashed-bubble",
+        "--disable-crash-reporter",
+        "--disable-crashpad",
+        f"--crash-dumps-dir={crashpad_dir}",
         "--no-first-run",
         "--no-default-browser-check",
         "--password-store=basic",
@@ -258,6 +267,7 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     candidates = payload.get("candidates") or []
     display_candidates = overlay_visible_candidates(candidates)
     generated = time.strftime("%H:%M:%S")
+    title = os.environ.get("WILDCARD_PARALLEL_OVERLAY_TITLE", "WILDCARD PARALLEL TRIAL")
     ranked_candidates = sorted(
         [c for c in display_candidates if _float(c.get("comp"), 0.0) > 0 and _int(c.get("games"), 0) > 0],
         key=lambda c: (
@@ -284,6 +294,24 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     lingering_max_culls = _int(params.get("lingering_slot_max_culls"), 0)
     jobs = _int(params.get("jobs"), 0)
     mode = str(params.get("evaluate_mode") or "")
+    status_counts: dict[str, int] = {}
+    total_games = 0
+    for cand in display_candidates:
+        if cand.get("score_baseline"):
+            continue
+        status = str(cand.get("status") or "pending")
+        display_status = "finished" if status == "accepted" else status
+        status_counts[display_status] = status_counts.get(display_status, 0) + 1
+        total_games += _int(cand.get("games"), 0)
+    total_slots = jobs or len([c for c in display_candidates if not c.get("score_baseline")])
+    target_games = total_slots * max_games if total_slots and max_games else 0
+    progress_pct = 0 if target_games <= 0 else max(0, min(100, round((total_games / target_games) * 100)))
+    progress_label = f"{total_games}/{target_games} games" if target_games else f"{total_games} games"
+    counts_label = " ".join(
+        f"{key}:{status_counts.get(key, 0)}"
+        for key in ("pending", "running", "finished", "won", "failed", "timeout")
+        if status_counts.get(key, 0)
+    ) or "pending"
     cull_label = f"{cull_after}g" if cull_after > 0 else "off"
     ratio_label = f"{cull_ratio:.0%}" if cull_ratio > 0 else "off"
     param_parts = []
@@ -441,11 +469,35 @@ html, body {{
   text-align: right;
   white-space: nowrap;
 }}
+.progress {{
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+  color: #dbeafe;
+  font-size: 16px;
+}}
+.progress-track {{
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.25);
+}}
+.progress-fill {{
+  height: 100%;
+  min-width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22c55e, #facc15);
+}}
+.progress-text {{
+  white-space: nowrap;
+}}
 .grid {{
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  height: calc(100vh - 74px);
+  height: calc(100vh - 100px);
 }}
 .card {{
   min-width: 0;
@@ -575,7 +627,7 @@ ul {{
   font-size: 15px;
   line-height: 1.3;
 }}
-@media (max-height: 220px) {{
+@media (max-height: 360px) {{
   .wrap {{
     padding: 9px 14px;
   }}
@@ -593,8 +645,12 @@ ul {{
     margin-top: 2px;
     font-size: 12px;
   }}
+  .progress {{
+    margin-top: 4px;
+    font-size: 12px;
+  }}
   .grid {{
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     height: auto;
   }}
@@ -643,9 +699,13 @@ ul {{
 <body>
 <main class="wrap">
   <div class="head">
-    <div class="title">WILDCARD PARALLEL TRIAL</div>
+    <div class="title">{html.escape(title)}</div>
     <div class="meta">
       <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {html.escape(compact_params or params_label or '-')} / {generated}</div>
+      <div class="progress">
+        <div class="progress-track"><div class="progress-fill" style="width:{progress_pct}%"></div></div>
+        <div class="progress-text">{html.escape(progress_label)} / {html.escape(counts_label)}</div>
+      </div>
     </div>
   </div>
   <div class="grid">{''.join(cards[:6])}</div>
@@ -1463,25 +1523,19 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
     )
     chrome_app_path = os.environ.get("WILDCARD_PARALLEL_CHROME_APP_PATH", "")
     chrome_executable_path = os.environ.get("WILDCARD_PARALLEL_CHROME_EXECUTABLE_PATH", "")
-    default_headless = "1"
-    if not chrome_executable_path:
-        chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)
-    if not chrome_app_path and chrome_executable_path:
-        chrome_app_path = chrome_app_path_from_executable(chrome_executable_path)
-    if chrome_executable_path and sys.platform == "darwin":
-        default_headless = "0"
-    if (
-        sys.platform == "darwin"
-        and not chrome_app_path
-        and not chrome_executable_path
-        and os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "") == "1"
-    ):
+    default_headless = "0" if sys.platform == "darwin" else "1"
+    use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "1" if sys.platform == "darwin" else "")
+    if sys.platform == "darwin" and not chrome_app_path and not chrome_executable_path and use_system_chrome != "0":
         system_chrome_app = Path("/Applications/Google Chrome.app")
         system_chrome_exe = system_chrome_app / "Contents" / "MacOS" / "Google Chrome"
         if system_chrome_app.exists() and system_chrome_exe.exists():
             chrome_app_path = str(system_chrome_app)
             chrome_executable_path = chrome_executable_path or str(system_chrome_exe)
             default_headless = "0"
+    if not chrome_app_path and not chrome_executable_path:
+        chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)
+    if not chrome_app_path and chrome_executable_path:
+        chrome_app_path = chrome_app_path_from_executable(chrome_executable_path)
     if progress_callback:
         progress_callback(candidate)
     env = os.environ.copy()
@@ -1541,6 +1595,7 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
             bridge = launch_bridge(workdir, env, args.bridge_timeout)
             maybe_show_obs_candidate_source(candidate)
         except Exception as err:
+            candidate.error = str(err)
             candidate.game_results.append({"error": str(err), "game_index": 0})
             stop_process(bridge)
             cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)

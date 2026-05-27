@@ -365,6 +365,9 @@ PY
 }
 
 _is_improve_running() {
+	if _wildcard_parallel_active; then
+		return 0
+	fi
 	# lock が欠落しても、improve_state が新鮮な running/manual なら main loop を止める。
 	# stale state だけで永久停止しないよう、updated_at/started_at の鮮度を必ず見る。
 	if [ -f "$IMPROVE_LOCK_FILE" ] &&
@@ -372,6 +375,23 @@ _is_improve_running() {
 		return 0
 	fi
 	_improve_state_claims_running_fresh
+}
+
+_wildcard_parallel_active() {
+	local status_file="${WILDCARD_PARALLEL_STATUS_FILE:-$TMP_STATE_DIR/wildcard_parallel_status.json}"
+	[ -f "$status_file" ] || return 1
+	python3 - "$status_file" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+phase = str(data.get("phase") or "")
+raise SystemExit(0 if phase in {"generating", "running"} else 1)
+PY
 }
 
 _scheduled_meriken_time_should_run() {

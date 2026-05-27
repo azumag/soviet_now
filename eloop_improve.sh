@@ -212,7 +212,7 @@ _wildcard_parallel_obs_show() {
 	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
 	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 	local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
-	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-170}"
+	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-900}"
 	local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
 	[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 	[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
@@ -272,7 +272,10 @@ _post_improve_param_parallel_trial() {
 	[ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ] || return 0
 	[ -f "$STRATEGY_FILE" ] || return 0
 
-	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${WILDCARD_PARALLEL_JOBS:-6} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
+	local param_parallel_jobs="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"
+	case "$param_parallel_jobs" in ''|*[!0-9]*) param_parallel_jobs=6 ;; esac
+	[ "$param_parallel_jobs" -lt 6 ] && param_parallel_jobs=6
+	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${param_parallel_jobs} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
 	_improve_progress "wildcard_parallel" "86" "post_improve_param_parallel"
 	_wildcard_parallel_obs_show || true
 
@@ -291,11 +294,16 @@ _post_improve_param_parallel_trial() {
 	rm -f "$result_file" 2>/dev/null || true
 	random_count_arg="--random-count"
 	[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || random_count_arg="--no-random-count"
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_COLS
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_W
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_H
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_X
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_Y
 
 	set +e
-	result=$(python3 wildcard_parallel.py \
+	result=$(WILDCARD_PARALLEL_OVERLAY_TITLE="POST-IMPROVE PARAM TUNING" python3 wildcard_parallel.py \
 		--strategy "$STRATEGY_FILE" \
-		--jobs "${WILDCARD_PARALLEL_JOBS:-6}" \
+		--jobs "$param_parallel_jobs" \
 		--games "${WILDCARD_PARALLEL_GAMES:-6}" \
 		--count "$param_count" \
 		"$random_count_arg" \
@@ -1091,7 +1099,7 @@ PY
 			local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
 			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 			local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
-			local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-170}"
+			local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-900}"
 			local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
 			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true

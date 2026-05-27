@@ -956,13 +956,14 @@ async function main() {
   const isSharedMode = sharedBrowser != null;
   const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
   const launchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
+  const playwrightLaunchArgs = launchArgs.filter(arg => !/^[a-z][a-z0-9+.-]*:/i.test(arg));
   const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs).catch(err => {
     console.log(`[main] Background launch failed, falling back to Playwright launch: ${err.message}`);
     return null;
   });
   const browser = sharedBrowser || noFocusStandaloneBrowser || await chromium.launch({
     headless: false,
-    args: launchArgs,
+    args: playwrightLaunchArgs,
   });
   let context = null;
   let ownsContext = false;

@@ -36,7 +36,25 @@ if [ -z "${OBS_WEBSOCKET_PORT:-}" ] || [ -z "${OBS_WEBSOCKET_PASSWORD:-}" ]; the
 	exit 1
 fi
 
-node --input-type=commonjs - "$scene" "$source_name" "$window_title_regex" "$app_id" "$visibility" <<'NODE'
+NODE_BIN="${NODE_BIN:-$(command -v node 2>/dev/null || true)}"
+if [ -z "$NODE_BIN" ]; then
+	for candidate in \
+		"$HOME/.nvm/versions/node/v23.10.0/bin/node" \
+		"/opt/homebrew/bin/node" \
+		"/usr/local/bin/node" \
+		"/Volumes/satelite/homebrew/homebrew/bin/node"; do
+		if [ -x "$candidate" ]; then
+			NODE_BIN="$candidate"
+			break
+		fi
+	done
+fi
+if [ -z "$NODE_BIN" ]; then
+	echo "[obs_window_capture_source] node not found" >&2
+	exit 1
+fi
+
+"$NODE_BIN" --input-type=commonjs - "$scene" "$source_name" "$window_title_regex" "$app_id" "$visibility" <<'NODE'
 const crypto = require('crypto');
 
 const [sceneName, sourceName, titlePatternRaw, appId, visibility] = process.argv.slice(2);

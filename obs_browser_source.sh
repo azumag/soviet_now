@@ -37,6 +37,24 @@ if [ -z "${OBS_WEBSOCKET_PORT:-}" ] || [ -z "${OBS_WEBSOCKET_PASSWORD:-}" ]; the
 	exit 1
 fi
 
+NODE_BIN="${NODE_BIN:-$(command -v node 2>/dev/null || true)}"
+if [ -z "$NODE_BIN" ]; then
+	for candidate in \
+		"$HOME/.nvm/versions/node/v23.10.0/bin/node" \
+		"/opt/homebrew/bin/node" \
+		"/usr/local/bin/node" \
+		"/Volumes/satelite/homebrew/homebrew/bin/node"; do
+		if [ -x "$candidate" ]; then
+			NODE_BIN="$candidate"
+			break
+		fi
+	done
+fi
+if [ -z "$NODE_BIN" ]; then
+	echo "[obs_browser_source] node not found" >&2
+	exit 1
+fi
+
 case "$target" in
 http://*|https://*)
 	source_url="$target"
@@ -47,11 +65,11 @@ http://*|https://*)
 		printf '<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent"></body>\n' >"$target"
 	fi
 	abs_file="$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
-	source_url="$(node -e "console.log(require('url').pathToFileURL(process.argv[1]).href)" "$abs_file")"
+	source_url="$("$NODE_BIN" -e "console.log(require('url').pathToFileURL(process.argv[1]).href)" "$abs_file")"
 	;;
 esac
 
-node - "$scene" "$source_name" "$source_url" "$width" "$height" "$visibility" <<'NODE'
+"$NODE_BIN" - "$scene" "$source_name" "$source_url" "$width" "$height" "$visibility" <<'NODE'
 const crypto = require('crypto');
 
 const [sceneName, sourceName, sourceUrl, widthRaw, heightRaw, visibility] = process.argv.slice(2);

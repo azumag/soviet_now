@@ -478,9 +478,14 @@ if [ "$live_pid" -ne 0 ]; then
 	if [ -n "${IMPROVE_LEGACY_CONSOLE_SOURCE:-}" ]; then
 		./obs_control.sh hide soren "$IMPROVE_LEGACY_CONSOLE_SOURCE" >/dev/null 2>&1 || true
 	fi
-	case "$improve_reason" in
-	wildcard|archive_restart)
-		_monitor_log "improve reason=${improve_reason}; leaving soren91 stopped and preserving non-Meriken presentation"
+	case "${improve_reason}:${phase:-}:${detail:-}" in
+	wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)
+		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+			_monitor_log "isolated improve reason=${improve_reason} phase=${phase:-?} detail=${detail:-?}; forcing existing soren91_stop"
+			SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
+		else
+			_monitor_log "improve reason=${improve_reason} phase=${phase:-?} detail=${detail:-?}; leaving soren91 stopped and preserving non-Meriken presentation"
+		fi
 		;;
 	*)
 		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
@@ -530,8 +535,8 @@ fi
 _maybe_queue_early_escape_from_monitor || true
 
 if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
-	_monitor_log "improve idle but soren91 is active; calling existing soren91_stop"
-	soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
+	_monitor_log "improve idle but soren91 is active; forcing existing soren91_stop for normal-mode return"
+	SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
 fi
 _activate_shared_browser_tab china
 _write_status idle 0 0 0 "layout_reconciled" "improve idle"

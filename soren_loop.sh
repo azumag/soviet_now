@@ -847,13 +847,26 @@ for path in sys.argv[1:]:
         print(reason)
         raise SystemExit(0)
 " "$IMPROVE_STATE_FILE" "$IMPROVE_LOCK_FILE" 2>/dev/null || echo "")
+		_pause_phase_detail=$(python3 -c "import json,shlex,sys
+try:
+    data=json.load(open(sys.argv[1], encoding='utf-8'))
+except Exception:
+    data={}
+print('pause_phase=' + shlex.quote(str(data.get('phase') or '')))
+print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
+" "$IMPROVE_STATE_FILE" 2>/dev/null || true)
+		eval "$_pause_phase_detail"
 		_live_improve_pid=""
 		if command -v _find_live_improve_pid >/dev/null 2>&1; then
 			_live_improve_pid=$(_find_live_improve_pid 2>/dev/null || true)
 		fi
-		case "$_pause_reason" in
-		wildcard|archive_restart)
-			log_pause_throttled "${_pause_reason}_improve" "[PAUSE] ${_pause_reason}改善中(隔離評価): soren91代打を立てず待機"
+		case "${_pause_reason}:${pause_phase:-}:${pause_detail:-}" in
+		wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)
+			if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+				log_pause_throttled "isolated_improve_stop_soren91" "[PAUSE] 隔離評価中: soren91/メインゲーム残存を停止して候補評価だけにします"
+				SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+			fi
+			log_pause_throttled "${_pause_reason:-isolated}_improve" "[PAUSE] ${_pause_reason:-isolated}改善中(隔離評価): soren91代打を立てず待機"
 			_run_improve_runtime_monitor
 			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 			continue

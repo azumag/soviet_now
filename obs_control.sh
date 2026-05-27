@@ -65,7 +65,25 @@ if [ -z "${OBS_WEBSOCKET_PASSWORD:-}" ]; then
 	exit 1
 fi
 
-node - "$@" <<'NODE'
+NODE_BIN="${NODE_BIN:-$(command -v node 2>/dev/null || true)}"
+if [ -z "$NODE_BIN" ]; then
+	for candidate in \
+		"$HOME/.nvm/versions/node/v23.10.0/bin/node" \
+		"/opt/homebrew/bin/node" \
+		"/usr/local/bin/node" \
+		"/Volumes/satelite/homebrew/homebrew/bin/node"; do
+		if [ -x "$candidate" ]; then
+			NODE_BIN="$candidate"
+			break
+		fi
+	done
+fi
+if [ -z "$NODE_BIN" ]; then
+	_log "ERROR: node not found"
+	exit 1
+fi
+
+"$NODE_BIN" - "$@" <<'NODE'
 const crypto = require('crypto');
 
 const argv = process.argv.slice(2);
