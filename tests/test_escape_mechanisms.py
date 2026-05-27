@@ -1594,6 +1594,20 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             candidates.append(candidate)
         self.assertEqual(wildcard_parallel.no_winner_reason(candidates), "infra_failed")
 
+    def test_wildcard_parallel_infra_failed_falls_back_to_direct_perturb(self):
+        """並列評価のインフラ失敗は脱出を空振りで終わらせず直接摂動へ落とす。"""
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn('wildcard_parallel_fail_reason=$(python3 - "$wildcard_parallel_result_file"', improve)
+        self.assertIn('= "infra_failed" ] && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1"', improve)
+        self.assertIn("parallel infra_failed → direct wildcard perturb fallback", improve)
+        self.assertIn("wildcard_parallel_fallback_direct=1", improve)
+        self.assertIn('if [ "${wildcard_parallel_fallback_direct:-0}" != "1" ]; then', improve)
+        self.assertLess(
+            improve.index("parallel infra_failed → direct wildcard perturb fallback"),
+            improve.rindex('HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE"'),
+        )
+
     def test_obs_control_supports_wildcard_parallel_transform(self):
         """OBS helper は wildcardParallelOverlay を表示し、候補6面を3列x2行に配置できる。"""
         obs_control = (REPO_ROOT / "obs_control.sh").read_text()

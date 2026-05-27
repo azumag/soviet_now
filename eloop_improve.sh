@@ -1176,6 +1176,7 @@ PY
 		wildcard_seed=$(date +%s)
 		wildcard_parallel_result_file="${WILDCARD_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/wildcard_parallel_result.json}"
 		wildcard_parallel_started_at=$(date +%s)
+		wildcard_parallel_fallback_direct=0
 		rm -f "$wildcard_parallel_result_file" 2>/dev/null || true
 		wildcard_parallel_heartbeat_pid=""
 		wildcard_parallel_heartbeat_interval="${WILDCARD_PARALLEL_HEARTBEAT_SEC:-30}"
@@ -1265,12 +1266,36 @@ PY
 				log "[WILDCARD] parallel trial exited rc=$wildcard_parallel_rc but result file has winner → continue with selected candidate"
 			else
 				log "[WILDCARD] parallel trial produced no candidate rc=$wildcard_parallel_rc: ${wildcard_parallel_result:0:500}"
-				_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
-				wildcard_parallel_cleanup_sessions
-				wildcard_parallel_restore_once
-				exit 1
+				wildcard_parallel_fail_reason=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+
+path = sys.argv[1]
+if not path or not os.path.exists(path):
+    raise SystemExit(0)
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+print(data.get("reason") or "")
+PY
+)
+				if [ "${wildcard_parallel_fail_reason:-}" = "infra_failed" ] && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1" ]; then
+					log "[WILDCARD] parallel infra_failed → direct wildcard perturb fallback"
+					_improve_progress "wildcard" "30" "parallel_infra_failed_direct_fallback"
+					wildcard_parallel_cleanup_sessions
+					wildcard_parallel_restore_once
+					wildcard_parallel_fallback_direct=1
+				else
+					_improve_progress "wildcard_no_candidate" "100" "parallel_no_candidate"
+					wildcard_parallel_cleanup_sessions
+					wildcard_parallel_restore_once
+					exit 1
+				fi
 			fi
 		fi
+		if [ "${wildcard_parallel_fallback_direct:-0}" != "1" ]; then
 		wildcard_result=$(python3 - "$wildcard_parallel_result_file" <<'PY' 2>/dev/null || echo '{}'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1425,6 +1450,7 @@ except Exception:
 		log "[WILDCARD] parallel cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
 		wildcard_parallel_restore_once
 		exit 0
+		fi
 	fi
 	HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
