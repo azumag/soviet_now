@@ -2,6 +2,10 @@
 
 start_spinner() {
 	local label="$1"
+	if [ "${RUN_CMD_SPINNER_FORCE:-0}" != "1" ] && [ ! -t 2 ]; then
+		_spinner_pid=0
+		return 0
+	fi
 	(
 		local frames=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
 		local i=0 start=$SECONDS

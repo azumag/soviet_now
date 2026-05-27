@@ -2483,6 +2483,14 @@ class TestOpencodeRunLock(unittest.TestCase):
         self.assertIn('_opencode_run_lock_leave "$opencode_lock_token"', text)
         self.assertIn('[ "$type" = "glm" ] || [ "$type" = "opencode" ]', text)
 
+    def test_strategy_run_cmd_suppresses_spinner_in_headless_logs(self):
+        """headless improve_daemon のログを opencode spinner で汚さない。"""
+        text = (REPO_ROOT / "strategy/ai.sh").read_text()
+        self.assertIn("RUN_CMD_SPINNER_FORCE", text)
+        self.assertIn('[ ! -t 2 ]', text)
+        self.assertIn("_spinner_pid=0", text)
+        self.assertLess(text.index('[ ! -t 2 ]'), text.index("local frames=("))
+
     def test_shared_ai_generate_serializes_opencode(self):
         """チャット/ラジオ側の opencode 呼び出しも改善側と同じロック実装を使う。"""
         text = (REPO_ROOT / "lib/ai_generate.sh").read_text()
