@@ -1464,7 +1464,7 @@ def _regex_escape(value: str) -> str:
 def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     window_sources = os.environ.get(
         "WILDCARD_PARALLEL_OBS_WINDOW_SOURCES",
-        os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "1"),
+        os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "0"),
     )
     if window_sources != "1":
         return

@@ -571,14 +571,10 @@ async function installAudioOutputRouter(page, audioOutputLabel) {
     globalThis.__soren91AudioOutputDeviceId = '';
     globalThis.__soren91AudioOutputError = '';
     globalThis.__soren91AudioContexts = [];
+    globalThis.__soren91SinkId = '';
 
-    globalThis.__soren91RouteAudioOutput = async (nextLabel = globalThis.__soren91AudioOutputLabel) => {
+    globalThis.__soren91ResolveSink = async (nextLabel = globalThis.__soren91AudioOutputLabel) => {
       if (!nextLabel || !navigator.mediaDevices?.enumerateDevices) return false;
-      const AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
-      if (!AudioContextCtor?.prototype?.setSinkId) {
-        globalThis.__soren91AudioOutputError = 'AudioContext.setSinkId is unavailable';
-        return false;
-      }
 
       const devices = await navigator.mediaDevices.enumerateDevices();
       const target = devices.find(device =>
@@ -591,42 +587,38 @@ async function installAudioOutputRouter(page, audioOutputLabel) {
         return false;
       }
 
+      globalThis.__soren91SinkId = target.deviceId;
       globalThis.__soren91AudioOutputDeviceId = target.deviceId;
-      const currentContexts = globalThis.__soren91AudioContexts || [];
-      const alreadyRouted = currentContexts.length > 0 && currentContexts.every(ctx =>
-        !ctx || typeof ctx.sinkId === 'undefined' || ctx.sinkId === target.deviceId
-      );
-      const allRunning = currentContexts.every(ctx => !ctx || ctx.state === 'running');
-      if (alreadyRouted && allRunning) return true;
-      for (const ctx of globalThis.__soren91AudioContexts || []) {
-        if (typeof ctx.setSinkId !== 'function') continue;
-        try {
-          if (ctx.state === 'suspended' && ctx.sinkId) {
-            await ctx.setSinkId('');
-            try { ctx.resume().catch(() => {}); } catch (_) {}
-            await new Promise(r => setTimeout(r, 250));
-          }
-          await ctx.setSinkId(target.deviceId);
-          if (ctx.state === 'suspended') {
-            try { ctx.resume().catch(() => {}); } catch (_) {}
-          }
-        } catch (err) {
-          globalThis.__soren91AudioOutputError = err && err.message ? err.message : String(err);
-          return false;
-        }
-      }
       globalThis.__soren91AudioOutputError = '';
       return true;
     };
+    globalThis.__soren91RouteAudioOutput = globalThis.__soren91ResolveSink;
+
+    (async () => {
+      for (let i = 0; i < 40 && !globalThis.__soren91SinkId; i += 1) {
+        if (await globalThis.__soren91ResolveSink()) break;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    })();
 
     const OriginalAudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (OriginalAudioContext && !globalThis.__soren91AudioOutputPatched) {
       const WrappedAudioContext = function(...args) {
-        const ctx = new OriginalAudioContext(...args);
-        globalThis.__soren91AudioContexts.push(ctx);
-        globalThis.__soren91RouteAudioOutput().catch(err => {
+        let ctx;
+        try {
+          const sinkId = globalThis.__soren91SinkId;
+          const options = args[0] && typeof args[0] === 'object' ? args[0] : null;
+          if (sinkId && (!options || !('sinkId' in options))) {
+            ctx = new OriginalAudioContext(Object.assign({}, options || {}, { sinkId }));
+          } else {
+            ctx = new OriginalAudioContext(...args);
+          }
+        } catch (err) {
+          try { ctx = new OriginalAudioContext(...args); }
+          catch { ctx = new OriginalAudioContext(); }
           globalThis.__soren91AudioOutputError = err && err.message ? err.message : String(err);
-        });
+        }
+        globalThis.__soren91AudioContexts.push(ctx);
         return ctx;
       };
       WrappedAudioContext.prototype = OriginalAudioContext.prototype;
@@ -641,7 +633,7 @@ async function installAudioOutputRouter(page, audioOutputLabel) {
     if (!globalThis.__soren91AudioOutputWatchdogInstalled) {
       globalThis.__soren91AudioOutputWatchdogInstalled = true;
       setInterval(() => {
-        globalThis.__soren91RouteAudioOutput?.().catch(err => {
+        globalThis.__soren91ResolveSink?.().catch(err => {
           globalThis.__soren91AudioOutputError = err && err.message ? err.message : String(err);
         });
       }, 5000);

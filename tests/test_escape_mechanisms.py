@@ -797,6 +797,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_PARALLEL_ENABLED", config)
         self.assertIn("WILDCARD_PARALLEL_JOBS", config)
         self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_JOBS="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
@@ -1448,6 +1449,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('f"--crash-dumps-dir={crashpad_dir}"', parallel)
         self.assertNotIn('"-a",\n        app_path,', parallel)
         self.assertIn('use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "0")', parallel)
+        self.assertIn('os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "0")', parallel)
 
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
@@ -1666,6 +1668,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("OBS_WINDOW_AUDIO_SOURCE_ENABLED=1", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("OBS_WINDOW_AUDIO_SOURCE_ENABLED=0", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("OBS_WINDOW_CAPTURE_AUDIO=0", (REPO_ROOT / "soren91_control.sh").read_text())
+        self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"', eloop)
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
         self.assertIn("hide:\"$hide_sources,", eloop)
         self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"', eloop)
@@ -2961,7 +2964,7 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         runner = (REPO_ROOT / "soren91/run_player_loop.sh").read_text()
 
         self.assertIn("tmux new-session -d -s soren91_runner", control)
-        self.assertIn("SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-0}'", control)
+        self.assertIn("SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}'", control)
         self.assertNotIn("export SOREN91_SHARED_BROWSER=1", control)
         self.assertIn("_soren91_stop_standalone_browser", control)
         self.assertIn("_soren91_scan_standalone_browser_pids()", control)
@@ -3146,15 +3149,15 @@ class TestMainAudioRecovery(unittest.TestCase):
         self.assertIn("grantAudioPermissions", local)
         self.assertIn("AUDIO-ROUTE-HEAL-ERROR", local)
 
-    def test_soren91_reapplies_blackhole_sink_after_unity_audio_context_starts(self):
+    def test_soren91_resolves_blackhole_sink_before_unity_audio_context_starts(self):
         soren91 = (REPO_ROOT / "soren91/main.mjs").read_text()
 
         self.assertIn("__soren91AudioOutputWatchdogInstalled", soren91)
         self.assertIn("setInterval(() =>", soren91)
-        self.assertIn("globalThis.__soren91RouteAudioOutput?.()", soren91)
-        self.assertIn("ctx.resume().catch(() => {})", soren91)
-        self.assertIn("await ctx.setSinkId('')", soren91)
-        self.assertIn("alreadyRouted && allRunning", soren91)
+        self.assertIn("globalThis.__soren91ResolveSink?.()", soren91)
+        self.assertIn("globalThis.__soren91SinkId = target.deviceId", soren91)
+        self.assertIn("ctx = new OriginalAudioContext(Object.assign({}, options || {}, { sinkId }))", soren91)
+        self.assertNotIn("await ctx.setSinkId", soren91)
 
 
 # --- Soviet objective is visible to improvement AI ---------------------------

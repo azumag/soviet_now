@@ -32,7 +32,7 @@ SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || _soren91_env_get SOREN91_OBS_SOURCE 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-${SOREN91_OBS_SOURCE:-}}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
 SOREN91_TEXT_FALLBACKS="$(_soren91_env_get SOREN91_TEXT_FALLBACKS 2>/dev/null || printf '%s' "${SOREN91_TEXT_FALLBACKS:-claude}")"
-SOREN91_SHARED_BROWSER="$(_soren91_env_get SOREN91_SHARED_BROWSER 2>/dev/null || printf '%s' "${SOREN91_SHARED_BROWSER:-0}")"
+SOREN91_SHARED_BROWSER="$(_soren91_env_get SOREN91_SHARED_BROWSER 2>/dev/null || printf '%s' "${SOREN91_SHARED_BROWSER:-1}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
 SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
@@ -1000,13 +1000,13 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-0}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
 		pid=$(
 			cd "$SOREN91_DIR" || exit 1
-			SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-0}" \
+			SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-1}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
 			SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
 			IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
@@ -1141,8 +1141,20 @@ _soren91_restart_bridge_after_improve() {
 	# _br_relaunch は Fix0 lease を取得し他復旧アクターと競合しない。
 	# lease 他者保持(=2) や一過性ロックは soviet_watchdog が後追い復旧するので
 	# ここでは soren91_stop を失敗させない。
-	_br_relaunch && log "[SOREN91] bridge再起動 成功 (改善復帰)" \
-		|| log "[SOREN91] bridge再起動 譲渡/失敗 (rc=$? → watchdog委譲)"
+	local retries="${SOREN91_BRIDGE_RESTART_RETRIES:-2}"
+	case "$retries" in ''|*[!0-9]*) retries=2 ;; esac
+	local attempt=1 rc=1
+	while [ "$attempt" -le "$retries" ]; do
+		if _br_relaunch; then
+			log "[SOREN91] bridge再起動 成功 (改善復帰 attempt=$attempt)"
+			return 0
+		fi
+		rc=$?
+		log "[SOREN91] bridge再起動 失敗 (attempt=$attempt/$retries rc=$rc)"
+		[ "$attempt" -lt "$retries" ] && sleep "${SOREN91_BRIDGE_RESTART_RETRY_SLEEP:-5}"
+		attempt=$((attempt + 1))
+	done
+	log "[SOREN91] bridge再起動 譲渡/失敗 (rc=$rc → watchdog委譲)"
 	return 0
 }
 
