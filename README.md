@@ -90,7 +90,7 @@ soren_loop の多重起動ロック:
 - ロック所有者が消えた場合だけ、実行中の自身のメイン PID で `tmp/.soren_loop.lock/pid` を再採用する。
 - `start_all.sh` は `soren_loop` の lock pidfile を通常 worker pidfile として上書きしない。起動直後も lock owner PID を監視対象に採用し、supervisor がロック所有者を書き換えて試合終了後の score 登録前に duplicate 判定で落ちる事故を防ぐ。
 - `start_all.sh` は各 poll で worker 実プロセス数を `tmp/state/worker_duplicates.json` に書き、同じ worker が複数見えたら `logs/start_all.log` に `worker duplicate detected` を一度だけ出す。`show_status.sh` は新鮮な duplicate state があれば CORE に `Duplicates DETECTED` / `none` を表示する。検知は観測用で、余分な PID の自動 kill はしない。
-- `workers/chat_worker.sh` / `workers/youtube_worker.sh` は既存 pidfile の worker が生存している時、外部からの再起動試行を no-op 成功として終了する。自動起動側の冪等チェックで `ERROR: 既に起動中` がログに積み上がっても、実 duplicate がない状態を不安定と誤読しないため。
+- `workers/chat_worker.sh` / `workers/youtube_worker.sh` / `workers/audio_worker.sh` / `workers/radio_worker.sh` は既存 pidfile の worker が生存している時、外部からの再起動試行を no-op 成功として終了する。自動起動側の冪等チェックで `ERROR: 既に起動中` や停止ログが積み上がっても、実 duplicate がない状態を不安定と誤読しないため。
 - `strategy_runner.py` が `commands未消化` を3連続で検出した場合は `bridge_desync` として試合を中断し、`eloop.sh` が `soviet_local.mjs` bridge を再起動して次周回で復旧する。1回の未消化は `MOVE状態待ち` 120秒 + command timeout を消費するため、6連続まで待つと十数分空転する。
 
 **シェルモジュール構成:**
@@ -191,7 +191,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - macOS の候補 Chrome 事前起動は、まず LaunchServices の `open -g -n` を試し、失敗したら同じ隔離 `HOME` / `XDG_*` / `TMPDIR` で Chrome executable を直接起動してから CDP attach する。CDP port が応答してから attach-only にすることで、起動直後の `ECONNREFUSED` で Playwright launch に戻って短命ウィンドウを量産しない。`open` が `kLSNoExecutableErr` で失敗しても Node 側の Playwright launch に落とさず、Crashpad がユーザー本体プロファイルへ触る経路を避けるため。
 - macOS の候補 bridge は既定で tmux セッション (`soren_wp_*`) 内に起動する。Codex や改善プロセスの実行コンテキストから直接 Chrome を起動すると Mach port / Crashpad 権限で落ちることがあるため、本線 bridge 復旧と同じ tmux 側の権限コンテキストへ寄せる。切り分け時だけ `WILDCARD_PARALLEL_BRIDGE_TMUX=0` で従来の direct `Popen` に戻せる。
 - `wildcard` / `post_improve_param_parallel` の候補 Unity HTML title は `Wildcard Parallel Slot N` に書き換える。本線 OBS の `sorengame` window capture が `Unity WebGL Player | soren-game` を掴むため、候補ウィンドウを同名にすると本線キャプチャが候補へ誤バインドする。
-- 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。
+- 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。CDP 権限付与や page evaluate は短い timeout で抜けるため、音声ルーティングの一時停止が game loop / health 更新を固めない。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。
 - `wildcard` / `archive_restart` の fast escape では親 `eloop_improve.sh` が候補採用と状態遷移を担う。親 PID が見えない running state は、通常改善のように長時間 fresh log 扱いで保護せず、短い猶予後に `monitor_improve_runtime.sh` が harvest して stale lock を解放する。early escape の lock は作成時 `normal` でも、改善起動時に最終 reason を書き戻すため、失敗後の再試行・表示・代打制御も fast escape として扱われる。
 - `wildcard_parallel` / `post_improve_param_parallel` の隔離評価中は、`phase` / `detail` も見て soren91 代打を止める。pid file が消えた孤児 `node main.mjs` や stale runner lock は `soren91_control.sh` が tmux/log writer/process table から回収し、隔離評価や通常復帰時に meriken 側が残って本線表示を隠さないようにする。
 - rollback/overlay の候補順位は `strategy_versions/by_hash` と `strategy_versions_archive/by_hash` のどちらにも実ファイルがない hash を除外する。rolling score だけ残っている復元不能候補を top や rollback target として表示・選択し、archive_restart/rollback が空振りするのを避ける。

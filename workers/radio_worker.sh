@@ -81,16 +81,18 @@ _dump_diag() {
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
+	local active_pid=""
+	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+	if [ "$active_pid" != "$$" ]; then
+		_log "cleanup skipped: pidfile owner is ${active_pid:-none} (self=$$)"
+		return 0
+	fi
 	_dump_diag "${_LAST_SIGNAL:-EXIT}"
 	_log "shutdown: ${WORKER_NAME} 停止 (cause=${_LAST_SIGNAL:-EXIT})"
 	if [ -n "$_HEARTBEAT_PID" ]; then
 		kill "$_HEARTBEAT_PID" 2>/dev/null || true
 	fi
-	local active_pid=""
-	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
-	if [ "$active_pid" = "$$" ]; then
-		rm -f "$PID_FILE"
-	fi
+	rm -f "$PID_FILE"
 }
 
 _handle_signal() {
@@ -153,8 +155,8 @@ trap '_request_reload USR2' USR2
 if [ -f "$PID_FILE" ]; then
 	old_pid=$(cat "$PID_FILE" 2>/dev/null)
 	if _pid_alive "$old_pid"; then
-		_log "ERROR: 既に起動中 (PID=$old_pid)"
-		exit 1
+		_log "already running (PID=$old_pid) -> no-op"
+		exit 0
 	fi
 	rm -f "$PID_FILE"
 fi

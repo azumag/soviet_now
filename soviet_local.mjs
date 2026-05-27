@@ -521,9 +521,19 @@ function writeAudioHealth(health) {
   } catch {}
 }
 
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
+}
+
 async function inspectUnityAudio(page) {
   try {
-    return await page.evaluate(() => {
+    return await withTimeout(page.evaluate(() => {
       const unity = (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext)
         ? Module.WebAudio.audioContext : null;
       const tracked = (window.__sorenAudioContexts || []).map((ctx) => ({
@@ -539,7 +549,7 @@ async function inspectUnityAudio(page) {
         visibility: document.visibilityState,
         hidden: document.hidden,
       };
-    });
+    }), 3000, 'inspectUnityAudio');
   } catch (e) {
     return { error: (e && e.message) || String(e) };
   }
@@ -562,7 +572,7 @@ async function recoverUnityAudio(page, audioDiagLog, reason) {
     audioDiagLog(`[AUDIO-WATCHDOG-CLICK-ERROR] ${(e && e.message) || String(e)}`);
   }
   try {
-    const result = await page.evaluate(async () => {
+    const result = await withTimeout(page.evaluate(async () => {
       window.__sorenMuted = false;
       const list = [...(window.__sorenAudioContexts || [])];
       const unity = (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext)
@@ -570,7 +580,10 @@ async function recoverUnityAudio(page, audioDiagLog, reason) {
       if (unity && !list.includes(unity)) list.push(unity);
       for (let attempt = 0; attempt < 5; attempt++) {
         for (const ctx of list) {
-          try { ctx.resume(); } catch {}
+          try {
+            const resume = ctx.resume();
+            if (resume && typeof resume.catch === 'function') resume.catch(() => {});
+          } catch {}
         }
         await new Promise(r => setTimeout(r, 500));
       }
@@ -578,7 +591,7 @@ async function recoverUnityAudio(page, audioDiagLog, reason) {
         unityState: unity ? unity.state : null,
         tracked: list.map((ctx) => ({ state: ctx ? ctx.state : null })),
       };
-    });
+    }), 8000, 'recoverUnityAudio');
     audioDiagLog(`[AUDIO-WATCHDOG-RECOVER] reason=${reason} ${JSON.stringify(result)}`);
     return result;
   } catch (e) {
@@ -803,12 +816,12 @@ async function runLocalController() {
   const grantAudioPermissions = async () => {
     try {
       if (!speakerPermissionSession) {
-        speakerPermissionSession = await context.newCDPSession(page);
+        speakerPermissionSession = await withTimeout(context.newCDPSession(page), 3000, 'new speaker CDP session');
       }
-      await speakerPermissionSession.send('Browser.grantPermissions', {
+      await withTimeout(speakerPermissionSession.send('Browser.grantPermissions', {
         origin: gameOrigin,
         permissions: ['speakerSelection', 'audioCapture'],
-      });
+      }), 3000, 'grant speakerSelection');
       return true;
     } catch (e) {
       console.warn(`Failed to grant speakerSelection: ${e.message}`);
@@ -1200,9 +1213,9 @@ async function runLocalController() {
       lastAudioRouteHealAt = Date.now();
       await grantAudioPermissions();
       try {
-        await page.evaluate((label) => {
+        await withTimeout(page.evaluate((label) => {
           window.__sorenRouteAudioOutput?.(label).catch(() => {});
-        }, CHROME_AUDIO_OUTPUT_LABEL);
+        }, CHROME_AUDIO_OUTPUT_LABEL), 3000, 'audio route heal evaluate');
       } catch (e) {
         audioDiagLog(`[AUDIO-ROUTE-HEAL-ERROR] ${(e && e.message) || String(e)}`);
       }

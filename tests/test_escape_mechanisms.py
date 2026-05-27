@@ -1786,6 +1786,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("window.__sorenUnityVolumeReapplyTimer", local)
         self.assertIn("SOREN_UNITY_AUDIO_WATCHDOG_MS", local)
         self.assertIn("local_audio_health.json", local)
+        self.assertIn("function withTimeout", local)
+        self.assertIn("3000, 'inspectUnityAudio'", local)
+        self.assertIn("audio route heal evaluate", local)
+        self.assertIn("grant speakerSelection", local)
+        self.assertIn("typeof resume.catch === 'function'", local)
         self.assertIn("recoverUnityAudio", local)
         self.assertIn("[AUDIO-WATCHDOG-RECOVER]", local)
 
@@ -6212,15 +6217,20 @@ PY
         self.assertIn("operation not permitted", worker)
         self.assertIn('_pid_alive "$_DAEMON_PID"', worker)
 
-    def test_chat_workers_duplicate_start_is_idempotent(self):
+    def test_chat_and_audio_workers_duplicate_start_is_idempotent(self):
         chat_worker = (REPO_ROOT / "workers/chat_worker.sh").read_text()
         youtube_worker = (REPO_ROOT / "workers/youtube_worker.sh").read_text()
+        audio_worker = (REPO_ROOT / "workers/audio_worker.sh").read_text()
+        radio_worker = (REPO_ROOT / "workers/radio_worker.sh").read_text()
 
-        for worker in (chat_worker, youtube_worker):
+        for worker in (chat_worker, youtube_worker, audio_worker, radio_worker):
             self.assertIn('already running (PID=$old_pid) -> no-op', worker)
             self.assertIn("exit 0", worker)
+            self.assertIn("cleanup skipped: pidfile owner is", worker)
         self.assertIn('if _pid_alive "$old_pid"; then', chat_worker)
         self.assertIn('if _pid_alive "$old_pid"; then', youtube_worker)
+        self.assertIn('if _pid_alive "$old_pid"; then', audio_worker)
+        self.assertIn('if _pid_alive "$old_pid"; then', radio_worker)
 
     def test_chat_ingest_notifies_event_overlay(self):
         twitch = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
