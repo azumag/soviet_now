@@ -171,6 +171,239 @@ with open(path, "w", encoding="utf-8") as f:
 PY
 }
 
+_maybe_queue_early_escape_from_monitor() {
+	# The main loop queues this in post-game and next-game preflight. The monitor
+	# repeats the guard so a missed threshold cannot drift into another normal game.
+	[ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] || return 1
+	[ "${WILDCARD_ENABLED:-0}" = "1" ] || return 1
+	[ -f "${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" ] || return 1
+	[ ! -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] || return 1
+	[ ! -f "${TMP_STATE_DIR:-tmp/state}/rate_limit_backoff" ] || return 1
+	! _is_improve_running || return 1
+
+	command -v enrich_accumulated_game_metadata >/dev/null 2>&1 &&
+		enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+
+	local probe action note stag rstreak acc_count batch_hash lock_file
+	probe=$(
+		python3 - \
+			"${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" \
+			"${STAGNATION_COUNTER_FILE:-tmp/state/stagnation_counter.json}" \
+			"${ROLLING_SCORES_FILE:-tmp/state/rolling_scores.json}" \
+			"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+			"${TMP_STATE_DIR:-tmp/state}/last_rollback_pair.json" \
+			"${WILDCARD_TRIGGER_STAGNATION:-3}" \
+			"${WILDCARD_REGRESSION_STREAK:-2}" \
+			"${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}" \
+			"${MIN_GAMES_BEFORE_IMPROVE:-12}" \
+			"${MIN_GAMES_BEFORE_REGRESSION:-12}" \
+			"${EARLY_COMP_TOP_GAP_MIN_RATIO:-0.85}" <<'PY' 2>/dev/null || echo "skip|unreadable|0|0|0|"
+import json
+import math
+import os
+import sys
+import time
+
+(
+    acc_file,
+    stagnation_file,
+    rolling_file,
+    current_file,
+    pair_file,
+    trigger_raw,
+    rstreak_trigger_raw,
+    early_min_raw,
+    mature_raw,
+    min_games_raw,
+    min_ratio_raw,
+) = sys.argv[1:12]
+
+def load(path):
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def as_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def comp(scores):
+    xs = [as_int(x) for x in scores]
+    if not xs:
+        return 0.0
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in xs) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    return 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+
+def row_comp(row):
+    explicit = as_float(row.get("comp", 0.0), 0.0)
+    if explicit > 0:
+        return explicit
+    scores = row.get("scores", [])
+    if isinstance(scores, str):
+        scores = [x for x in scores.split() if x.strip()]
+    if isinstance(scores, list):
+        return comp(scores)
+    return 0.0
+
+acc = load(acc_file)
+stagnation = load(stagnation_file)
+current = load(current_file)
+pair = load(pair_file)
+trigger = as_int(trigger_raw, 3)
+rstreak_trigger = as_int(rstreak_trigger_raw, 2)
+early_min = max(1, as_int(early_min_raw, 4))
+mature = max(1, as_int(mature_raw, 12))
+min_games = max(1, as_int(min_games_raw, 12))
+min_ratio = as_float(min_ratio_raw, 0.85)
+
+acc_count = as_int(acc.get("count", 0), 0)
+stag = as_int(stagnation.get("consecutive_no_improve", 0), 0)
+rstreak = as_int(stagnation.get("regression_streak", 0), 0)
+batch_hash = str(acc.get("hash", "") or "")
+prefix = f"{stag}|{rstreak}|{acc_count}|{batch_hash}"
+
+if acc_count < early_min:
+    print(f"defer|early_min {acc_count}/{early_min}|{prefix}")
+    raise SystemExit
+if stag < trigger and rstreak < rstreak_trigger:
+    print(f"skip|below_threshold {stag}/{trigger} {rstreak}/{rstreak_trigger}|{prefix}")
+    raise SystemExit
+
+russia = as_int(acc.get("russia_count", 0), 0)
+soviet = 1 if bool(acc.get("soviet", False)) or as_int(acc.get("soviet_count", 0), 0) > 0 else 0
+best_type = as_int(acc.get("best_max_type", 0), 0)
+if soviet > 0 or russia > 0 or best_type >= 15:
+    print(f"defer|progress R{russia} S{soviet} T{best_type}|{prefix}")
+    raise SystemExit
+
+scores = [as_int(x) for x in str(acc.get("scores", "") or "").split() if str(x).strip()]
+batch_comp = comp(scores)
+leader_comp = 0.0
+rolling = load(rolling_file)
+if rolling:
+    for row in rolling.values():
+        if not isinstance(row, dict):
+            continue
+        n = as_int(row.get("n", row.get("games_total", 0)), 0)
+        if n < min_games:
+            continue
+        leader_comp = max(leader_comp, row_comp(row))
+ratio = (batch_comp / leader_comp) if leader_comp > 0 else 0.0
+if batch_comp > 0 and (leader_comp <= 0 or batch_comp >= leader_comp * min_ratio):
+    if stagnation_file:
+        stagnation["regression_streak"] = 0
+        stagnation["last_event"] = "EARLY_ESCAPE_BATCH_OK"
+        stagnation["updated_at"] = int(time.time())
+        try:
+            os.makedirs(os.path.dirname(stagnation_file) or ".", exist_ok=True)
+            tmp = stagnation_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(stagnation, f, ensure_ascii=False)
+            os.replace(tmp, stagnation_file)
+        except Exception:
+            pass
+    print(f"defer|batch_ok comp={batch_comp:.1f} leader={leader_comp:.1f} ratio={ratio:.3f}|{prefix}")
+    raise SystemExit
+
+current_hash = str(current.get("hash", "") or "")
+rollback_hash = str(pair.get("to_hash", "") or "")
+current_n = as_int(current.get("games_total", 0) or len(current.get("scores", []) or []), 0)
+if current_hash and rollback_hash and current_hash == rollback_hash and current_n < mature:
+    print(f"defer|rollback_revalidate {current_hash[:8]} {current_n}/{mature}|{prefix}")
+    raise SystemExit
+
+print(f"queue|threshold {stag}/{trigger} {rstreak}/{rstreak_trigger}|{prefix}")
+PY
+	)
+	action="${probe%%|*}"
+	probe="${probe#*|}"
+	note="${probe%%|*}"
+	probe="${probe#*|}"
+	stag="${probe%%|*}"
+	probe="${probe#*|}"
+	rstreak="${probe%%|*}"
+	probe="${probe#*|}"
+	acc_count="${probe%%|*}"
+	batch_hash="${probe#*|}"
+
+	case "$action" in
+	queue)
+		if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] &&
+			command -v _is_rank1_hot_streak >/dev/null 2>&1 && _is_rank1_hot_streak; then
+			_monitor_log "early escape monitor defer: rank1 hot streak stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}"
+			_write_status idle 0 0 0 "early_escape_deferred" "rank1 hot streak"
+			return 1
+		fi
+		_monitor_log "early escape monitor queued: ${note} acc=${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} hash=${batch_hash:0:12}"
+		lock_file="${IMPROVE_LOCK_FILE:-tmp/improve.lock}"
+		cp "${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" "$lock_file" || return 1
+		command -v enrich_accumulated_game_metadata >/dev/null 2>&1 &&
+			enrich_accumulated_game_metadata "$lock_file" 2>/dev/null || true
+		python3 - "$lock_file" "$stag" "$rstreak" <<'PY' 2>/dev/null || true
+import json
+import sys
+import time
+
+path, stag, rstreak = sys.argv[1:4]
+data = json.load(open(path, encoding="utf-8"))
+data["started_at"] = int(time.time())
+data["improve_reason"] = "normal"
+data["early_escape_lock"] = True
+data["early_escape_source"] = "monitor_improve_runtime"
+data["early_escape_stagnation"] = int(stag)
+data["early_escape_regression_streak"] = int(rstreak)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+PY
+		if [ -x ./overlay_notify.sh ]; then
+			./overlay_notify.sh worker "早期脱出ロック queued (monitor)" "停滞 ${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12}。monitor が取りこぼし補助で改善ロックを作成" "warn" >/dev/null 2>&1 || true
+		fi
+		command -v enqueue_chat_message >/dev/null 2>&1 &&
+			enqueue_chat_message "改善フロー: early escape queued。monitor が停滞 ${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} を検出し、通常満了を待たず改善ロックを作成しました。" "improve_flow" 4 || true
+		command -v _clear_accumulated_data >/dev/null 2>&1 && _clear_accumulated_data
+		_write_status idle 0 0 0 "early_escape_queued" "$note"
+		return 0
+		;;
+	defer)
+		_monitor_log "early escape monitor defer: ${note} stagnation=${stag}/${WILDCARD_TRIGGER_STAGNATION:-3} regression_streak=${rstreak}/${WILDCARD_REGRESSION_STREAK:-2} acc=${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} hash=${batch_hash:0:12}"
+		_write_status idle 0 0 0 "early_escape_deferred" "$note"
+		return 1
+		;;
+	esac
+	return 1
+}
+
 now=$(date +%s)
 state_status=$(_json_get status idle)
 state_pid=$(_json_get pid 0)
@@ -293,6 +526,8 @@ if command -v scheduled_meriken_time_is_active >/dev/null 2>&1 && scheduled_meri
 	_write_status scheduled 0 0 0 "scheduled_meriken_active" "scheduled meriken window"
 	exit 0
 fi
+
+_maybe_queue_early_escape_from_monitor || true
 
 if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
 	_monitor_log "improve idle but soren91 is active; calling existing soren91_stop"

@@ -127,6 +127,7 @@ DIVERSITY_PREMIUM_ENABLED=${DIVERSITY_PREMIUM_ENABLED:-$(_env_config_value_defau
 TABU_ENABLED=${TABU_ENABLED:-$(_env_config_value_default TABU_ENABLED 0)}
 WILDCARD_ENABLED=${WILDCARD_ENABLED:-$(_env_config_value_default WILDCARD_ENABLED 0)}
 WILDCARD_TRIGGER_STAGNATION=${WILDCARD_TRIGGER_STAGNATION:-$(_env_config_value_default WILDCARD_TRIGGER_STAGNATION 3)}
+WILDCARD_REGRESSION_STREAK=${WILDCARD_REGRESSION_STREAK:-$(_env_config_value_default WILDCARD_REGRESSION_STREAK 2)}
 
 case "$WATCH_INTERVAL" in
 ''|*[!0-9]*) WATCH_INTERVAL=10 ;;
@@ -780,7 +781,7 @@ PY
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-		local stagnation_count=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
+		local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
 	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
 		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
 import json
@@ -794,6 +795,7 @@ try:
 except Exception:
     data = {}
 count = int(data.get("consecutive_no_improve", 0) or 0)
+regression_streak = int(data.get("regression_streak", 0) or 0)
 event = str(data.get("last_event", "unknown") or "unknown")
 updated = int(data.get("updated_at", 0) or 0)
 age = "n/a"
@@ -806,6 +808,7 @@ if updated > 0:
     else:
         age = f"{diff // 3600}h"
 print(f"stagnation_count={count}")
+print(f"regression_streak={regression_streak}")
 print("stagnation_event=" + shlex.quote(event))
 print("stagnation_age=" + shlex.quote(age))
 PY
@@ -2155,8 +2158,9 @@ PY
 	if [[ "$WILDCARD_ENABLED" == "1" ]]; then
 		escape_color="$C_GREEN"
 		(( stagnation_count >= WILDCARD_TRIGGER_STAGNATION )) && escape_color="$C_YELLOW"
+		(( regression_streak >= ${WILDCARD_REGRESSION_STREAK:-2} )) && escape_color="$C_YELLOW"
 	fi
-		local stagnation_detail="stag=${stagnation_count}/${WILDCARD_TRIGGER_STAGNATION}"
+		local stagnation_detail="stag=${stagnation_count}/${WILDCARD_TRIGGER_STAGNATION} reg=${regression_streak}/${WILDCARD_REGRESSION_STREAK:-2}"
 		[[ -n "$stagnation_defer_label" ]] && stagnation_detail="${stagnation_defer_label} ${stagnation_detail}"
 		stagnation_detail="${stagnation_detail} ${stagnation_event} ${stagnation_age} ago wc=${wildcard_origin_count}"
 		printf "    ${C_MAGENTA}◇${C_RESET} Escape      ${escape_color}D=%s T=%s W=%s${C_RESET}  ${C_DIM}%s${C_RESET}\n" \

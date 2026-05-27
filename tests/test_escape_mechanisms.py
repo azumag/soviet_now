@@ -1744,6 +1744,12 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("replaced by self", loop)
         self.assertIn("queue_early_escape_lock_if_needed", loop)
         self.assertIn("next-game-preflight", loop)
+        monitor = (REPO_ROOT / "monitor_improve_runtime.sh").read_text()
+        self.assertIn("_maybe_queue_early_escape_from_monitor", monitor)
+        self.assertIn("early_escape_source", monitor)
+        self.assertIn("monitor_improve_runtime", monitor)
+        self.assertIn("early escape monitor queued", monitor)
+        self.assertIn("batch_ok comp=", monitor)
         self.assertLess(
             loop.index("rollback revalidate fresh cycle 中"),
             loop.index("rank1 hot streak 中 → 早期脱出ロックを延期"),
@@ -6145,6 +6151,7 @@ PY
         self.assertIn("state_activity_fresh", dashboard)
         self.assertIn("Imp:{improve.get('progress', 0):>3}% {phase} log", dashboard)
         self.assertIn("improve_monitor_status.json", status)
+        self.assertIn("reg=${regression_streak}/${WILDCARD_REGRESSION_STREAK:-2}", status)
         self.assertIn("imp_state_activity_fresh", status)
         self.assertIn("PID=%s not visible, log fresh", status)
         self.assertIn("activity is fresh; preserving active state", monitor)
