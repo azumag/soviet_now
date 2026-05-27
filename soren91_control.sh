@@ -32,6 +32,7 @@ SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || _soren91_env_get SOREN91_OBS_SOURCE 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-${SOREN91_OBS_SOURCE:-}}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
 SOREN91_TEXT_FALLBACKS="$(_soren91_env_get SOREN91_TEXT_FALLBACKS 2>/dev/null || printf '%s' "${SOREN91_TEXT_FALLBACKS:-claude}")"
+SOREN91_SHARED_BROWSER="$(_soren91_env_get SOREN91_SHARED_BROWSER 2>/dev/null || printf '%s' "${SOREN91_SHARED_BROWSER:-0}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
 SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
@@ -60,7 +61,7 @@ _soren91_switch_obs_layout() {
 	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
 	local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
 	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
-	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-}}"
+	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 	local china_show_sources="$dashboard_source"
 	local meriken_hide_sources="$dashboard_source"
 	local s91_show_op=""
@@ -76,10 +77,16 @@ _soren91_switch_obs_layout() {
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
+		if [ -n "$game_source" ] && [ -x "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ]; then
+			"$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" '91人対戦|ソ連ゲーム91' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
+		fi
 		"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source" $s91_show_op hide:"$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
+		if [ -n "$game_source" ] && [ -x "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ]; then
+			"$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" 'Unity WebGL Player \| soren-game' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
+		fi
 		# 改善中も stats/ops は監視用に維持し、dashboard/game だけを
 		# china レイアウトへ戻す。改善オーバーレイは別途管理される。
 		if _soren91_improve_active; then
@@ -846,13 +853,13 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER=1 SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-0}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
 		pid=$(
 			cd "$SOREN91_DIR" || exit 1
-			SOREN91_SHARED_BROWSER=1 \
+			SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-0}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
 			SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
 			IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
@@ -870,8 +877,10 @@ soren91_start() {
 
 	# 5秒後に生存チェック
 	sleep 5
-	if kill -0 "$pid" 2>/dev/null; then
-		log "[SOREN91] Started successfully (PID=$pid, start_game=$start_game)"
+	local live_pid_after_start=""
+	live_pid_after_start=$(_soren91_read_alive_player_pid 2>/dev/null || true)
+	if kill -0 "$pid" 2>/dev/null || [ -n "$live_pid_after_start" ]; then
+		log "[SOREN91] Started successfully (PID=$pid, live=${live_pid_after_start:-$pid}, start_game=$start_game)"
 		# 中華AI側のBGMをミュート（改善中は不要）
 		touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 		log "[SOREN91] Muted local game BGM (flag file)"
