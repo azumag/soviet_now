@@ -797,7 +797,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_PARALLEL_ENABLED", config)
         self.assertIn("WILDCARD_PARALLEL_JOBS", config)
         self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
-        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-1}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_JOBS="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
@@ -1449,7 +1449,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('f"--crash-dumps-dir={crashpad_dir}"', parallel)
         self.assertNotIn('"-a",\n        app_path,', parallel)
         self.assertIn('use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "0")', parallel)
-        self.assertIn('os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "0")', parallel)
+        self.assertIn('os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "1")', parallel)
 
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
@@ -1668,7 +1668,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("OBS_WINDOW_AUDIO_SOURCE_ENABLED=1", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("OBS_WINDOW_AUDIO_SOURCE_ENABLED=0", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("OBS_WINDOW_CAPTURE_AUDIO=0", (REPO_ROOT / "soren91_control.sh").read_text())
-        self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"', eloop)
+        self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-1}"', eloop)
         self.assertIn('"./obs_control.sh", "transform", scene, source', parallel)
         self.assertIn("hide:\"$hide_sources,", eloop)
         self.assertIn('hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"', eloop)
