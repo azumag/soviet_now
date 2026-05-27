@@ -17,9 +17,12 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
-# --- 端末/ログ両方に出力を残す（診断用） ---
+# --- ログ出力 ---
+# supervisor 起動時は start_all.sh が logs/radio_worker.log へ標準出力を保存する。
+# ここで process substitution tee を使うと macOS/Codex sandbox の /dev/fd 制限で
+# duplicate 起動の即時終了時に "Operation not permitted" が出るため、worker 側では
+# 標準出力を差し替えない。
 mkdir -p tmp 2>/dev/null || true
-exec > >(tee -a "tmp/radio_worker_runtime.log") 2>&1
 
 # --- 環境変数読み込み ---
 [ -f .env ] && set -a && . ./.env && set +a
