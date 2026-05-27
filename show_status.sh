@@ -812,15 +812,19 @@ PY
 )
 		fi
 		if [[ -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
-			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/current_strategy_run.json" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" <<'PY' 2>/dev/null
+			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/current_strategy_run.json" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" "${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}" <<'PY' 2>/dev/null
 import json
 import sys
 
-path, mature_s, trigger_s, count_s = sys.argv[1:5]
+path, mature_s, trigger_s, count_s, early_min_s = sys.argv[1:6]
 try:
     mature_n = max(1, int(mature_s or 12))
 except Exception:
     mature_n = 12
+try:
+    early_min = max(1, int(early_min_s or 4))
+except Exception:
+    early_min = 4
 try:
     trigger = int(trigger_s or 3)
     count = int(count_s or 0)
@@ -845,7 +849,9 @@ if soviet > 0:
 if best_type >= 15:
     bits.append(f"T{best_type}")
 if bits:
-    print(f"defer={','.join(bits)} {games}/{mature_n}")
+    print(f"defer={','.join(bits)}{games}/{mature_n}")
+elif games < early_min:
+    print(f"defer=early{games}/{early_min}")
 PY
 )
 		fi
@@ -2088,8 +2094,9 @@ PY
 		escape_color="$C_GREEN"
 		(( stagnation_count >= WILDCARD_TRIGGER_STAGNATION )) && escape_color="$C_YELLOW"
 	fi
-		local stagnation_detail="stag=${stagnation_count}/${WILDCARD_TRIGGER_STAGNATION} ${stagnation_event} ${stagnation_age} ago wc=${wildcard_origin_count}"
-		[[ -n "$stagnation_defer_label" ]] && stagnation_detail="${stagnation_detail} ${stagnation_defer_label}"
+		local stagnation_detail="stag=${stagnation_count}/${WILDCARD_TRIGGER_STAGNATION}"
+		[[ -n "$stagnation_defer_label" ]] && stagnation_detail="${stagnation_defer_label} ${stagnation_detail}"
+		stagnation_detail="${stagnation_detail} ${stagnation_event} ${stagnation_age} ago wc=${wildcard_origin_count}"
 		printf "    ${C_MAGENTA}◇${C_RESET} Escape      ${escape_color}D=%s T=%s W=%s${C_RESET}  ${C_DIM}%s${C_RESET}\n" \
 			"$d_flag" "$t_flag" "$w_flag" "$stagnation_detail"
 		if [[ "$wildcard_eval_label" != "none" ]]; then
