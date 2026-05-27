@@ -1054,9 +1054,10 @@ _launch_say() {
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 				local device_index
 				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-					_launch_afplay_bg "$vo_wav" "$vo_wav"
+					_launch_chrome_wav_bg "$vo_wav" "$vo_wav"
 					LAUNCH_MODE="voicevox"
 					LAUNCHED_SAY_PID="$!"
+					_log "VOICEVOX WAV再生 (device=Chrome/BlackHole fallback)"
 					return
 				}
 				_launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"

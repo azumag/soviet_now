@@ -21,8 +21,9 @@ if (!audioFile || !fs.existsSync(audioFile) || fs.statSync(audioFile).size <= 0)
   process.exit(2);
 }
 
-const browser = await chromium.connectOverCDP(cdpUrl);
+let browser;
 try {
+  browser = await chromium.connectOverCDP(cdpUrl);
   const context = browser.contexts()[0];
   const page = context?.pages().find(p => p.url().startsWith(origin)) || context?.pages()[0];
   if (!context || !page) {
@@ -73,5 +74,5 @@ try {
   log(`ERROR ${(error && error.stack) || error}`);
   process.exit(1);
 } finally {
-  await browser.close().catch(() => {});
+  await browser?.close().catch(() => {});
 }

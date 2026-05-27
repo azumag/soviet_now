@@ -123,6 +123,22 @@ async function waitForCdpBrowser(port, timeoutMs = 10000) {
   throw lastError || new Error(`CDP did not become ready on port ${port}`);
 }
 
+async function waitForCdpHttp(port, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (res.ok) return true;
+      lastError = new Error(`CDP HTTP ${res.status}`);
+    } catch (err) {
+      lastError = err;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw lastError || new Error(`CDP HTTP did not become ready on port ${port}`);
+}
+
 async function launchPersistentContextWithoutFocus(userDataDir, args) {
   if (process.platform !== 'darwin' || process.env.SOREN_CHROME_NO_FOCUS_LAUNCH === '0') {
     return null;
@@ -700,14 +716,13 @@ async function runLocalController() {
       context = backgroundLaunch.context;
       closeBrowserAfterContext = true;
     } else {
-      const playwrightLaunchArgs = launchArgs.filter(arg => !arg.startsWith('--remote-debugging-port='));
       context = await chromium.launchPersistentContext(USER_DATA_DIR, {
         executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
         headless: CHROME_HEADLESS,
         viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
         env: browserLaunchEnv(USER_DATA_DIR),
-        args: playwrightLaunchArgs,
+        args: launchArgs,
       });
       browser = context.browser();
     }
@@ -718,8 +733,10 @@ async function runLocalController() {
     process.exit(1);
   }
 
-  // Write CDP endpoint file for soren91 shared browser mode
+  // Write CDP endpoint file for soren91 shared browser mode only after the
+  // advertised endpoint is actually reachable.
   try {
+    await waitForCdpHttp(CDP_PORT);
     fs.writeFileSync(CDP_ENDPOINT_FILE, JSON.stringify({
       url: `http://localhost:${CDP_PORT}`,
       port: CDP_PORT,

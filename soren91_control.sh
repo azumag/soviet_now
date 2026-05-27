@@ -209,7 +209,22 @@ _soren91_pid_is_alive() {
 	if kill -0 "$pid" 2>/dev/null; then
 		return 0
 	fi
+	if [ -f "$SOREN91_DIR/tmp/soren91.log" ] &&
+		lsof -nP "$SOREN91_DIR/tmp/soren91.log" 2>/dev/null |
+			awk -v target="$pid" 'NR > 1 && $2 == target { found=1 } END { exit(found ? 0 : 1) }'; then
+		return 0
+	fi
+	if [ "$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || true)" = "$pid" ]; then
+		return 0
+	fi
 	ps -p "$pid" -o pid= 2>/dev/null | awk 'NF { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+_soren91_kill_runner_session() {
+	command -v tmux >/dev/null 2>&1 || return 0
+	tmux has-session -t soren91_runner 2>/dev/null || return 0
+	log "[SOREN91] Killing stray tmux runner session"
+	tmux kill-session -t soren91_runner 2>/dev/null || true
 }
 
 _soren91_scan_standalone_browser_pids() {
@@ -1143,6 +1158,7 @@ soren91_stop() {
 		log "[SOREN91] Not running, recording end_game"
 		local eg
 		eg=$(_soren91_record_end_game)
+		_soren91_kill_runner_session
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
@@ -1195,6 +1211,7 @@ soren91_stop() {
 		log "[SOREN91] Post-game timeout, force stopping..."
 		_stop_loop_descendants "$pid"
 		_stop_pid_with_fallback "$pid" "soren91"
+		_soren91_kill_runner_session
 	fi
 
 	# Phase 4: run_player_loop.sh (runner) の確実な終了を待つ
@@ -1212,6 +1229,7 @@ soren91_stop() {
 			kill "$runner_pid" 2>/dev/null || true
 		fi
 	fi
+	_soren91_kill_runner_session
 
 	local eg
 	eg=$(_soren91_record_end_game)
@@ -1322,10 +1340,10 @@ soren91_cleanup() {
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
-		if kill -0 "$pid" 2>/dev/null; then
+		if _soren91_pid_is_alive "$pid"; then
 			local cmd
 			cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-			if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
+			if [ -z "$cmd" ] || echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
 				log "[SOREN91] Cleanup: stopping player (PID=$pid)"
 				_stop_loop_descendants "$pid"
 				_stop_pid_with_fallback "$pid" "soren91_player"
@@ -1334,6 +1352,7 @@ soren91_cleanup() {
 			fi
 		fi
 	done
+	_soren91_kill_runner_session
 
 	# 改善プロセス停止 (コマンド名を検証)
 	if [ -f "$SOREN91_IMPROVE_PID_FILE" ]; then

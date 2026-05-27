@@ -237,6 +237,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - コメント返しプロセスは `disown` で親プロセスから独立しており、次のゲーム開始時にトーク生成が kill されても再生が中断されない
 - `RADIO_SAY_RATE=180` で読み上げ速度を制御（macOS `say -r` に渡される）
 - `SAY_AUDIO_DEVICE` を設定すると `say` で生成したAIFFを `ffmpeg -f audiotoolbox` で指定デバイス（例: `BlackHole 2ch`）へ出力
+- VOICEVOX WAV 再生で `SAY_AUDIO_DEVICE` の CoreAudio index 解決に失敗した場合は、`chrome_audio_player.mjs` が既存 Chrome CDP に接続して Audio element の `setSinkId` で BlackHole/対象ラベルへ再生する。CDP 接続前に失敗しても finally は安全に抜けるため、音声 worker のリトライを壊さない。
 - USB機器（例: GoPro）の抜き差しでCoreAudio再列挙が起きた際の途中切断に備え、再生実時間が想定尺より短すぎる場合は失敗扱いで自動リトライ
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
@@ -336,6 +337,7 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 OBS 表示は `sorengame` window capture を `obs_window_capture_source.sh` で切り替える。soren91 は既定で専用 Chrome ウィンドウ (`SOREN91_SHARED_BROWSER=0`) に出し、meriken 表示では `【91人対戦】ソ連ゲーム91` へ再バインドした `sorengame` を表示したままにする。通常復帰では `Unity WebGL Player | soren-game` へ再バインドする。同一 Chrome ウィンドウの別タブ運用に戻す場合は、OBS が現在タブを掴まず通常ゲームに固定されるため、91 専用 OBS source を別途用意する。
 専用 soren91 Chrome は通常の作業画面に残らないよう、既定で画面外寄りの位置 (`SOREN91_STANDALONE_WINDOW_POSITION=2400,1200`) に起動する。OBS capture が掴めない環境ではこの値を表示内座標に上書きする。
 メインループ / soren91 の Chrome は、配信中の操作を邪魔しないよう macOS で `open -g` による背面起動を既定にし、改善モード切替時の CDP `/json/activate` タブ前面化も既定無効 (`SOREN_BROWSER_TAB_ACTIVATE=0`) にしている。手元デバッグでタブ自動前面化が必要な場合だけ `SOREN_BROWSER_TAB_ACTIVATE=1` を指定する。
+本線 `soviet_local.mjs` は Playwright fallback 起動でも `--remote-debugging-port` を保持し、`/json/version` が実際に返るまで CDP endpoint file を公開しない。soren91 停止/掃除は pid file だけでなく tmux pane と `soren91.log` の writer も確認し、残った `soren91_runner` session を kill して meriken 側の孤児表示を残さない。
 
 ### jloop.sh — JSON-based State Loop
 
