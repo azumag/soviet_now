@@ -8,17 +8,20 @@ own runtime directory, and reports a single winner for the live loop to adopt.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import math
 import os
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -175,6 +178,18 @@ def chrome_app_path_from_executable(executable_path: str) -> str:
     return executable_path[: idx + len(".app")]
 
 
+def wait_for_candidate_chrome_cdp(cdp_port: int, timeout: float = 8.0) -> bool:
+    deadline = time.time() + timeout
+    url = f"http://127.0.0.1:{cdp_port}/json/version"
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=0.5) as response:
+                return response.status == 200
+        except Exception:
+            time.sleep(0.2)
+    return False
+
+
 def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir: str, cdp_port: int) -> bool:
     if sys.platform != "darwin":
         return False
@@ -228,13 +243,14 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
         ]
         try:
             subprocess.run(open_args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
-            return True
+            if wait_for_candidate_chrome_cdp(cdp_port):
+                return True
         except Exception:
             pass
     if not executable_path:
         return False
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [executable_path, *chrome_args],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -242,7 +258,13 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
             env=env,
             start_new_session=True,
         )
-        return True
+        if wait_for_candidate_chrome_cdp(cdp_port):
+            return True
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        return False
     except Exception:
         return False
 
@@ -959,6 +981,18 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path, pr
     return workdir
 
 
+def set_candidate_html_window_title(workdir: Path, slot_index: int) -> None:
+    title = f"Wildcard Parallel Slot {slot_index + 1}"
+    index_path = workdir / "sorengame" / "build" / "index.html"
+    try:
+        text = index_path.read_text(encoding="utf-8")
+    except Exception:
+        return
+    text = re.sub(r"<title>.*?</title>", f"<title>{title}</title>", text, count=1, flags=re.S)
+    text = text.replace('productName: "soren-game"', f'productName: "{title}"')
+    index_path.write_text(text, encoding="utf-8")
+
+
 def update_candidate_metrics(candidate: CandidateResult) -> None:
     if not candidate.scores:
         candidate.comp = 0.0
@@ -1216,10 +1250,104 @@ def wait_for_bridge_state(workdir: Path, proc: subprocess.Popen, timeout: int, p
     raise RuntimeError(f"bridge timed out waiting for {label}: {bridge_failure_detail(workdir)}")
 
 
+class TmuxBridgeProcess:
+    def __init__(self, session_name: str, pid: int = 0):
+        self.session_name = session_name
+        self.pid = pid
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        proc = subprocess.run(
+            ["tmux", "has-session", "-t", self.session_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return None
+        self.returncode = 0
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = None if timeout is None else time.time() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.time() >= deadline:
+                raise subprocess.TimeoutExpired(["tmux", self.session_name], timeout)
+            time.sleep(0.2)
+        return int(self.returncode or 0)
+
+    def terminate(self) -> None:
+        subprocess.run(["tmux", "kill-session", "-t", self.session_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def _bridge_tmux_session_name(workdir: Path) -> str:
+    digest = hashlib.sha1(str(workdir.resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"soren_wp_{digest}"
+
+
+def _write_tmux_bridge_script(workdir: Path, env: dict, stdout_path: Path, stderr_path: Path) -> Path:
+    script_path = workdir / "tmp" / "launch_soviet_bridge.sh"
+    allowed_exact = {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "RUSSIA_CELEBRATION_ENABLED",
+    }
+    allowed_prefixes = ("SOREN_", "WILDCARD_", "NODE_")
+    lines = ["#!/bin/bash", "set -e", f"cd {shlex.quote(str(workdir.resolve()))}"]
+    for key, value in sorted(env.items()):
+        if key not in allowed_exact and not any(key.startswith(prefix) for prefix in allowed_prefixes):
+            continue
+        if value is None:
+            continue
+        lines.append(f"export {key}={shlex.quote(str(value))}")
+    lines.append(f"exec node soviet_local.mjs >>{shlex.quote(str(stdout_path.resolve()))} 2>>{shlex.quote(str(stderr_path.resolve()))}")
+    script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    script_path.chmod(0o755)
+    return script_path
+
+
 def launch_bridge(workdir: Path, env: dict, timeout: int) -> subprocess.Popen:
     stdout_path = workdir / "tmp" / "soviet_local.stdout.log"
     stderr_path = workdir / "tmp" / "soviet_local.stderr.log"
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "darwin" and os.environ.get("WILDCARD_PARALLEL_BRIDGE_TMUX", "1") != "0" and shutil.which("tmux"):
+        session_name = _bridge_tmux_session_name(workdir)
+        script_path = _write_tmux_bridge_script(workdir, env, stdout_path, stderr_path)
+        subprocess.run(["tmux", "kill-session", "-t", session_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session_name, str(script_path.resolve())],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        pid_proc = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", session_name, "#{pane_pid}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            pane_pid = int(pid_proc.stdout.strip() or "0")
+        except Exception:
+            pane_pid = 0
+        proc = TmuxBridgeProcess(session_name, pane_pid)
+        try:
+            wait_for_bridge_state(workdir, proc, timeout, lambda data: True, "initial game_state")
+            return proc
+        except Exception:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            raise
     stdout_f = open(stdout_path, "ab")
     stderr_f = open(stderr_path, "ab")
     proc = subprocess.Popen(
@@ -1493,7 +1621,7 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     scene = os.environ.get("OBS_DASHBOARD_SCENE", "soren")
     prefix = os.environ.get("WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX", "wildcardParallelCand")
     source = f"{prefix}{candidate.index + 1}"
-    title = f"Wildcard Parallel Cand {candidate.index + 1} | soren-game"
+    title = f"Wildcard Parallel Cand {candidate.index + 1}"
     window_pattern = _regex_escape(title)
     cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
     w = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "660"))
@@ -1530,6 +1658,14 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
 def stop_process(proc: subprocess.Popen | None) -> None:
     if not proc:
         return
+    if isinstance(proc, TmuxBridgeProcess):
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        return
     log_files = getattr(proc, "_soren_log_files", ())
     if proc.poll() is not None:
         for f in log_files:
@@ -1559,11 +1695,26 @@ def stop_process(proc: subprocess.Popen | None) -> None:
             pass
 
 
-def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, progress_callback=None) -> CandidateResult:
+def evaluate_real(
+    candidate: CandidateResult,
+    args: argparse.Namespace,
+    session_dir: Path,
+    progress_callback=None,
+    slot_runtime: dict | None = None,
+) -> CandidateResult:
     candidate.status = "running"
-    workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path, preserve_exact=candidate.baseline)
+    reuse_slot_runtime = slot_runtime is not None
+    if reuse_slot_runtime:
+        runtime_workdir = slot_runtime.get("workdir")
+        if runtime_workdir is None:
+            runtime_workdir = session_dir / f"slot-{candidate.index + 1}"
+            slot_runtime["workdir"] = runtime_workdir
+        workdir = prepare_candidate_dir(Path(runtime_workdir), "", candidate.strategy_path, preserve_exact=candidate.baseline)
+    else:
+        workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path, preserve_exact=candidate.baseline)
     candidate.workdir = workdir
     candidate.strategy_path = workdir / "strategy.py"
+    set_candidate_html_window_title(workdir, candidate.index)
     candidate.cdp_port = args.cdp_base_port + candidate.index
     candidate.serve_port = args.serve_base_port + candidate.index
     candidate.profile_dir = str((workdir / "tmp" / "chromium_profile").resolve())
@@ -1632,27 +1783,37 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
         env["SOREN_CHROME_APP_PATH"] = chrome_app_path
     if chrome_executable_path:
         env["SOREN_CHROME_EXECUTABLE_PATH"] = chrome_executable_path
+    existing_bridge = slot_runtime.get("bridge") if slot_runtime else None
     if (
-        env.get("SOREN_CHROME_HEADLESS") not in {"1", "true", "yes", "on"}
+        existing_bridge is None
+        and env.get("SOREN_CHROME_HEADLESS") not in {"1", "true", "yes", "on"}
         and env.get("SOREN_CHROME_NO_FOCUS_LAUNCH") != "0"
         and env.get("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH") != "1"
         and prelaunch_candidate_chrome(chrome_app_path, chrome_executable_path, candidate.profile_dir, candidate.cdp_port)
     ):
         env["SOREN_CHROME_ATTACH_ONLY"] = "1"
     try:
-        bridge: subprocess.Popen | None = None
+        bridge: subprocess.Popen | None = existing_bridge
+        reused_bridge = bridge is not None and bridge.poll() is None
+        if slot_runtime is not None:
+            slot_runtime["env"] = env
         (workdir / "commands.txt").write_text("", encoding="utf-8")
         (workdir / "game_state.json").write_text("{}", encoding="utf-8")
         try:
-            cleanup_wildcard_server_ports([candidate.serve_port])
-            bridge = launch_bridge(workdir, env, args.bridge_timeout)
-            maybe_show_obs_candidate_source(candidate)
+            if bridge is None or bridge.poll() is not None:
+                cleanup_wildcard_server_ports([candidate.serve_port])
+                bridge = launch_bridge(workdir, env, args.bridge_timeout)
+                if slot_runtime is not None:
+                    slot_runtime["bridge"] = bridge
+                maybe_show_obs_candidate_source(candidate)
         except Exception as err:
             candidate.error = str(err)
             candidate.game_results.append({"error": str(err), "game_index": 0})
             stop_process(bridge)
             cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
             bridge = None
+            if slot_runtime is not None:
+                slot_runtime["bridge"] = None
         for game_index in range(args.games):
             (workdir / "commands.txt").write_text("", encoding="utf-8")
             try:
@@ -1662,8 +1823,9 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
             if bridge is None:
                 break
             try:
-                if game_index > 0:
+                if game_index > 0 or reused_bridge:
                     reset_bridge_for_next_game(workdir, bridge, args.bridge_timeout)
+                    reused_bridge = False
                 capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                 proc = subprocess.Popen(
                     [sys.executable, "strategy_runner.py"],
@@ -1726,8 +1888,9 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
                 pass
             if candidate.status == "culled":
                 break
-        stop_process(bridge)
-        cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
+        if not reuse_slot_runtime:
+            stop_process(bridge)
+            cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
         if candidate.status == "culled":
             return candidate
         if candidate.scores:
@@ -1738,11 +1901,12 @@ def evaluate_real(candidate: CandidateResult, args: argparse.Namespace, session_
             if not candidate.error:
                 candidate.error = "no successful games"
     except Exception as err:
-        try:
-            stop_process(bridge)  # type: ignore[name-defined]
-            cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
-        except Exception:
-            pass
+        if not reuse_slot_runtime:
+            try:
+                stop_process(bridge)  # type: ignore[name-defined]
+                cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)
+            except Exception:
+                pass
         candidate.status = "failed"
         candidate.error = str(err)
     return candidate
@@ -1887,26 +2051,37 @@ class CullCoordinator:
 def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, coordinator: CullCoordinator) -> CandidateResult:
     candidate = first_candidate
     generation = candidate.generation
-    while True:
-        coordinator.record(candidate)
-        if candidate.status == "failed":
-            return candidate
-        result = evaluate_real(candidate, args, session_dir, coordinator.should_cull)
-        coordinator.record(result)
-        if result.status == "accepted" and coordinator.should_cull(result):
-            result.status = "culled"
+    slot_runtime: dict = {"workdir": session_dir / f"slot-{index + 1}"}
+    try:
+        while True:
+            coordinator.record(candidate)
+            if candidate.status == "failed":
+                return candidate
+            result = evaluate_real(candidate, args, session_dir, coordinator.should_cull, slot_runtime=slot_runtime)
             coordinator.record(result)
-        if result.status != "culled":
-            return result
-        stop_lingering, cull_count = coordinator.lingering_slot_cutoff(index)
-        if stop_lingering:
-            suffix = f"lingering slot cutoff after {cull_count} culls"
-            result.error = f"{result.error}; {suffix}" if result.error else suffix
-            coordinator.record(result)
-            return result
-        generation += 1
-        candidate = run_perturb(args, index, session_dir, generation)
-        coordinator.record(candidate)
+            if result.status == "accepted" and coordinator.should_cull(result):
+                result.status = "culled"
+                coordinator.record(result)
+            if result.status != "culled":
+                return result
+            stop_lingering, cull_count = coordinator.lingering_slot_cutoff(index)
+            if stop_lingering:
+                suffix = f"lingering slot cutoff after {cull_count} culls"
+                result.error = f"{result.error}; {suffix}" if result.error else suffix
+                coordinator.record(result)
+                return result
+            generation += 1
+            candidate = run_perturb(args, index, session_dir, generation)
+            coordinator.record(candidate)
+    finally:
+        bridge = slot_runtime.get("bridge")
+        stop_process(bridge)
+        workdir = slot_runtime.get("workdir")
+        if workdir is not None:
+            cleanup_chrome_profile_processes(
+                str((Path(workdir) / "tmp" / "chromium_profile").resolve()),
+                _int(getattr(args, "cdp_base_port", 19000), 19000) + index,
+            )
 
 
 def main() -> int:

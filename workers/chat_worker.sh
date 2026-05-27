@@ -278,6 +278,7 @@ while true; do
 		# idle時は pending から生成
 		generate_comment_response 2>/dev/null || true
 	fi
+	[ -x ./codex_bug_dispatcher.sh ] && ./codex_bug_dispatcher.sh kick >/dev/null 2>&1 || true
 
 	# Outbound queue 消化
 	_consume_outbound_queue

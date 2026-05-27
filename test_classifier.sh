@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test classifier with example comments for each category
 
 set -e
@@ -19,6 +19,7 @@ declare -A TEST_COMMENTS=(
 	["general_question"]="今日の天気教えて"
 	["strategy_advice"]="大型ピースは片側にまとめるべき"
 	["comment_advice"]="コメントもっと短くして"
+	["stream_bug_report"]="配信画面が止まって音声も出てない"
 	["short_reaction"]="なるほど"
 	["chitchat"]=" 오늘 뭐 해?"
 	["other"]="hello world"
@@ -27,7 +28,7 @@ declare -A TEST_COMMENTS=(
 echo "=== Classifier Test ==="
 echo ""
 
-for category in card_gacha raid subscription bits sing_request game_question game_status general_question strategy_advice comment_advice short_reaction chitchat other; do
+for category in card_gacha raid subscription bits sing_request game_question game_status general_question strategy_advice comment_advice stream_bug_report short_reaction chitchat other; do
 	comment="${TEST_COMMENTS[$category]}"
 	echo "--- $category ---"
 	echo "Input: $comment"

@@ -1380,13 +1380,28 @@ except OSError:
 def classify(user: str, comment: str) -> str:
     text = comment.strip()
     lower = text.lower()
+    compact = re.sub(r"\s+", "", lower)
     system_user = user.lower() in {"wizebot", "nightbot", "streamelements", "streamlabs"}
     strategy_hint = re.search(r"戦略|盤面|併合|連鎖|next|nextnext|hold|type\s*[a-z0-9]+|高さ|左|右|置|積|デッドライン|ゲームオーバー|merge|drop|ピース|ロシア|ソ連|建国|おじゃま|相手|順位|盤面タイプ", text, re.I)
     advice_hint = re.search(r"したほうが|した方が|ほうが|方が|ほうがいい|方がいい|よくない|良くない|すべき|べき|狙|優先|避け|やめ|見るべき|考え|意識|改善|閾値|なら|よりも|だめ|ダメ|危ない|注意", text)
+    stream_bug_terms = (
+        "配信", "映像", "画面", "表示", "出てない", "出ない", "消えた", "止まった",
+        "固ま", "フリーズ", "重い", "遅延", "音", "音楽", "bgm", "音声", "読み上げ", "voicevox",
+        "tts", "obs", "overlay", "オーバーレイ", "eventoverlay", "dashboard",
+        "ダッシュボード", "show_status", "show-status", "ステータス", "コメント",
+        "拾えて", "拾ってない", "反応しない", "返信", "返答", "worker", "ワーカー",
+        "chat_worker", "youtube_worker", "audio_worker", "監視", "watchdog", "分類器",
+        "classifier", "codex", "コーデックス", "不具合", "バグ", "壊れ", "動いてない",
+        "不調", "いつもと違う", "record", "レコード",
+    )
+    stream_bug_failure = re.search(r"不具合|バグ|壊れ|止ま|固ま|フリーズ|出てない|出ない|消え|拾えてない|拾ってない|反応しない|動いてない|聞こえない|鳴らない|遅延|ずれ|ない|無い|不調|いつもと違う", text, re.I)
+    stream_bug_hint = any(term.lower().replace(" ", "") in compact for term in stream_bug_terms)
     if system_user and ("raid" in lower or "レイド" in text):
         return "raid"
     if system_user or "配信が終了" in text or "配信が再開" in text or "新しいステータス" in text:
         return "other"
+    if stream_bug_hint and stream_bug_failure and not strategy_hint:
+        return "stream_bug_report"
     if re.search(r"が【.+?】.+?を獲得しました", text):
         return "card_gacha"
     if "bits" in lower or "cheer" in lower:
@@ -1425,13 +1440,116 @@ PY
 _comment_category_allows_advice_append() {
 	local category="${1:-}"
 	case "$category" in
-	card_gacha | chitchat | short_reaction | bits | subscription | sing_request | raid | other)
+	card_gacha | chitchat | short_reaction | bits | subscription | sing_request | raid | other | stream_bug_report)
 		return 1
 		;;
 	*)
 		return 0
 		;;
 	esac
+}
+
+_queue_stream_bug_reports_from_classification() {
+	local classification_json="$1" source="${2:-unknown}" batch_hash="${3:-}"
+	[ -n "$classification_json" ] || return 0
+	[ "${CODEX_BUG_DISPATCH_ENABLED:-1}" = "1" ] || return 0
+	python3 - "$classification_json" "$source" "$batch_hash" \
+		"${CODEX_BUG_QUEUE_DIR:-tmp/codex_bug_queue}" \
+		"${CODEX_BUG_DISPATCH_DEDUP_FILE:-tmp/state/codex_bug_dispatch_hashes.log}" <<'PY'
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+classification_raw, source, batch_hash, queue_dir_raw, dedup_file_raw = sys.argv[1:6]
+
+try:
+    rows = json.loads(classification_raw)
+except Exception:
+    raise SystemExit(0)
+if not isinstance(rows, list):
+    raise SystemExit(0)
+
+queue_dir = Path(queue_dir_raw)
+dedup_file = Path(dedup_file_raw)
+queue_dir.mkdir(parents=True, exist_ok=True)
+dedup_file.parent.mkdir(parents=True, exist_ok=True)
+
+now = int(time.time())
+keep_sec = 24 * 3600
+seen = set()
+kept = []
+if dedup_file.exists():
+    try:
+        with dedup_file.open("r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                parts = raw.split("|", 1)
+                if len(parts) != 2:
+                    continue
+                try:
+                    ts = int(parts[0])
+                except Exception:
+                    continue
+                digest = parts[1]
+                if now - ts <= keep_sec:
+                    seen.add(digest)
+                    kept.append((ts, digest))
+    except Exception:
+        seen.clear()
+        kept.clear()
+
+def normalize(text):
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+queued = []
+for item in rows:
+    if not isinstance(item, dict):
+        continue
+    if item.get("category") != "stream_bug_report":
+        continue
+    user = normalize(item.get("user"))
+    comment = normalize(item.get("comment"))
+    if not comment:
+        continue
+    digest = hashlib.sha256(f"{source}\0{user}\0{comment}".encode("utf-8")).hexdigest()
+    if digest in seen:
+        continue
+    payload = {
+        "created_at": now,
+        "source": source,
+        "batch_hash": batch_hash,
+        "hash": digest,
+        "index": item.get("index"),
+        "user": user,
+        "comment": comment,
+        "category": "stream_bug_report",
+        "status": "pending",
+    }
+    fd, tmp = tempfile.mkstemp(prefix=".bug_", suffix=".json", dir=str(queue_dir))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+        f.write("\n")
+    dest = queue_dir / f"{now}_{digest[:16]}.json"
+    os.replace(tmp, dest)
+    seen.add(digest)
+    kept.append((now, digest))
+    queued.append(dest.name)
+
+if queued:
+    tmp_path = dedup_file.with_suffix(dedup_file.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        for ts, digest in kept[-500:]:
+            f.write(f"{ts}|{digest}\n")
+    os.replace(tmp_path, dedup_file)
+    print("\n".join(queued))
+PY
 }
 
 _classify_comments_with_edit_contract() {
@@ -2020,6 +2138,11 @@ else:
         print('mixed')
 " <<<"$classification_json")
 		log "[COMMENT] 分類結果: ${dominant_category:-取得失敗} (classification: ${classification_json:0:200})"
+		local queued_stream_bug_reports=""
+		queued_stream_bug_reports=$(_queue_stream_bug_reports_from_classification "$classification_json" "$viewer_chat_source" "$comment_batch_hash" 2>/dev/null || true)
+		if [ -n "$queued_stream_bug_reports" ]; then
+			log "[COMMENT] 配信不具合レポートをCodexキューへ追加: $(printf '%s' "$queued_stream_bug_reports" | tr '\n' ' ')"
+		fi
 	fi
 	if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
 		strategy_advice_candidates=""

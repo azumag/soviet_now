@@ -168,6 +168,7 @@ while true; do
 	else
 		generate_comment_response youtube 2>/dev/null || true
 	fi
+	[ -x ./codex_bug_dispatcher.sh ] && ./codex_bug_dispatcher.sh kick >/dev/null 2>&1 || true
 
 	interval="$POLL_INTERVAL"
 	if [ -f tmp/.youtube_chat/poll_interval_sec ]; then
