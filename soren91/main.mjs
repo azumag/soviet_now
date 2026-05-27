@@ -151,6 +151,24 @@ function clearSoren91ModeFlag() {
   } catch {}
 }
 
+function standaloneBrowserLaunchArgs(windowPosition) {
+  return [
+    '--window-size=1280,720',
+    `--window-position=${windowPosition}`,
+    '--hide-crash-restore-bubble',
+    '--disable-session-crashed-bubble',
+    '--disable-crash-reporter',
+    '--disable-crashpad',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--password-store=basic',
+    '--use-mock-keychain',
+    '--disable-translate',
+    '--autoplay-policy=no-user-gesture-required',
+    'about:blank',
+  ];
+}
+
 function isSoren91GameUrl(url) {
   return typeof url === 'string' && (
     url.includes('sorengame91') ||
@@ -937,7 +955,7 @@ async function main() {
   const sharedBrowser = await connectToSharedBrowser();
   const isSharedMode = sharedBrowser != null;
   const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
-  const launchArgs = ['--window-size=1280,720', `--window-position=${standaloneWindowPosition}`];
+  const launchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
   const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs).catch(err => {
     console.log(`[main] Background launch failed, falling back to Playwright launch: ${err.message}`);
     return null;

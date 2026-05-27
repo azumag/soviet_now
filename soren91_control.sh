@@ -197,6 +197,62 @@ const base = process.argv[2];
 NODE
 }
 
+_soren91_standalone_user_data_dir() {
+	printf '%s' "${SOREN91_STANDALONE_USER_DATA_DIR:-$SOREN91_DIR/tmp/standalone_chromium_profile}"
+}
+
+_soren91_pid_is_alive() {
+	local pid="${1:-}"
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	if kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	ps -p "$pid" -o pid= 2>/dev/null | awk 'NF { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+_soren91_scan_standalone_browser_pids() {
+	[ "${SOREN91_SHARED_BROWSER:-0}" = "1" ] && return 0
+	local user_data_dir cdp_port
+	user_data_dir=$(_soren91_standalone_user_data_dir)
+	cdp_port="${SOREN91_STANDALONE_CDP_PORT:-9223}"
+	ps -Ao pid=,command= 2>/dev/null | while IFS= read -r line; do
+		local pid cmd
+		pid="${line%% *}"
+		cmd="${line#"$pid"}"
+		cmd="${cmd# }"
+		case "$pid" in
+		''|*[!0-9]*) continue ;;
+		esac
+		[ "$pid" = "$$" ] && continue
+		printf '%s' "$cmd" | grep -F -- "$user_data_dir" >/dev/null 2>&1 || \
+			printf '%s' "$cmd" | grep -F -- "--remote-debugging-port=${cdp_port}" >/dev/null 2>&1 || continue
+		printf '%s' "$cmd" | grep -Eq 'Google Chrome for Testing|Chromium|chrome-mac-arm64' || continue
+		printf '%s\n' "$pid"
+	done | awk '!seen[$0]++'
+}
+
+_soren91_stop_standalone_browser() {
+	[ "${SOREN91_SHARED_BROWSER:-0}" = "1" ] && return 0
+	local pid stopped=0
+	while IFS= read -r pid; do
+		case "$pid" in
+		''|*[!0-9]*) continue ;;
+		esac
+		if _soren91_pid_is_alive "$pid"; then
+			log "[SOREN91] Cleaning stale standalone Chrome for Testing (PID=$pid)"
+			_stop_loop_descendants "$pid"
+			_stop_pid_with_fallback "$pid" "soren91_standalone_browser"
+			stopped=1
+		fi
+	done <<EOF
+$(_soren91_scan_standalone_browser_pids 2>/dev/null || true)
+EOF
+	[ "$stopped" -eq 1 ] && log "[SOREN91] Standalone Chrome cleanup complete"
+	return 0
+}
+
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
 }
@@ -222,7 +278,7 @@ _soren91_scan_alive_runner_pids() {
 		''|*[!0-9]*) continue ;;
 		esac
 		[ "$pid" = "$$" ] && continue
-		kill -0 "$pid" 2>/dev/null || continue
+		_soren91_pid_is_alive "$pid" || continue
 		printf '%s\n' "$pid"
 	done <<EOF
 $(pgrep -f "$pattern" 2>/dev/null || true)
@@ -236,7 +292,7 @@ _soren91_read_alive_player_pid() {
 		pid=$(cat "$f" 2>/dev/null)
 		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
 		[ -n "$pid" ] || continue
-		kill -0 "$pid" 2>/dev/null || continue
+		_soren91_pid_is_alive "$pid" || continue
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
 		if [ -z "$cmd" ]; then
 			printf '%s' "$pid"
@@ -253,7 +309,7 @@ _soren91_read_alive_player_pid() {
 
 	pid=$(sed -n 's/^pid=//p' "$SOREN91_DIR/tmp/.runner.lock/owner" 2>/dev/null | head -n 1)
 	case "$pid" in ''|*[!0-9]*) pid="" ;; esac
-	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+	if [ -n "$pid" ] && _soren91_pid_is_alive "$pid"; then
 		printf '%s' "$pid"
 		return 0
 	fi
@@ -812,6 +868,7 @@ soren91_start() {
 	rm -f "$SOREN91_LAST_ACTIVATE_STATE_FILE"
 	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE" "$TMP_STATE_DIR/.soren91_bye_sent"
 	mkdir -p "$SOREN91_DIR/tmp" 2>/dev/null || true
+	_soren91_stop_standalone_browser
 
 	# 前回の soren91 improve がまだ実行中なら session_games.json を上書きしない
 	if [ -f "$SOREN91_IMPROVE_LOCK" ] && [ -f "$SOREN91_IMPROVE_PID_FILE" ]; then
@@ -884,7 +941,7 @@ soren91_start() {
 	sleep 5
 	local live_pid_after_start=""
 	live_pid_after_start=$(_soren91_read_alive_player_pid 2>/dev/null || true)
-	if kill -0 "$pid" 2>/dev/null || [ -n "$live_pid_after_start" ]; then
+	if _soren91_pid_is_alive "$pid" || [ -n "$live_pid_after_start" ]; then
 		log "[SOREN91] Started successfully (PID=$pid, live=${live_pid_after_start:-$pid}, start_game=$start_game)"
 		# 中華AI側のBGMをミュート（改善中は不要）
 		touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
@@ -1011,7 +1068,7 @@ soren91_stop() {
 	local pid=""
 	pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
 
-	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+	if [ -z "$pid" ] || ! _soren91_pid_is_alive "$pid"; then
 		# プロセスが既に終了 → end_game だけ記録して終了
 		log "[SOREN91] Not running, recording end_game"
 		local eg
@@ -1022,6 +1079,7 @@ soren91_stop() {
 		local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 		_soren91_close_shared_game_tabs
+		_soren91_stop_standalone_browser
 		_soren91_switch_obs_layout china || true
 		log "[SOREN91] Unmuted local game BGM (flag file removed)"
 		_soren91_restart_bridge_after_improve "$_had_mute"
@@ -1043,7 +1101,7 @@ soren91_stop() {
 	case "$max_game_wait" in
 	''|*[!0-9]*) max_game_wait=300 ;;
 	esac
-	while [ -f "$in_game_file" ] && kill -0 "$pid" 2>/dev/null && [ "$game_waited" -lt "$max_game_wait" ]; do
+	while [ -f "$in_game_file" ] && _soren91_pid_is_alive "$pid" && [ "$game_waited" -lt "$max_game_wait" ]; do
 		log "[SOREN91] Game in progress, waiting for round to end... (${game_waited}s/${max_game_wait}s)"
 		sleep 5
 		game_waited=$((game_waited + 5))
@@ -1053,7 +1111,7 @@ soren91_stop() {
 	local waited=0
 	local post_game_timeout=30
 	while [ "$waited" -lt "$post_game_timeout" ]; do
-		if ! kill -0 "$pid" 2>/dev/null; then
+		if ! _soren91_pid_is_alive "$pid"; then
 			log "[SOREN91] Stopped gracefully after game ended"
 			break
 		fi
@@ -1062,7 +1120,7 @@ soren91_stop() {
 	done
 
 	# Phase 3: それでも生きていたら強制停止 (従来通り)
-	if kill -0 "$pid" 2>/dev/null; then
+	if _soren91_pid_is_alive "$pid"; then
 		log "[SOREN91] Post-game timeout, force stopping..."
 		_stop_loop_descendants "$pid"
 		_stop_pid_with_fallback "$pid" "soren91"
@@ -1072,13 +1130,13 @@ soren91_stop() {
 	local runner_pid=""
 	[ -f "$SOREN91_PID_FILE" ] && runner_pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
 	case "$runner_pid" in ''|*[!0-9]*) runner_pid="" ;; esac
-	if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+	if [ -n "$runner_pid" ] && _soren91_pid_is_alive "$runner_pid"; then
 		local runner_waited=0
-		while kill -0 "$runner_pid" 2>/dev/null && [ "$runner_waited" -lt 10 ]; do
+		while _soren91_pid_is_alive "$runner_pid" && [ "$runner_waited" -lt 10 ]; do
 			sleep 1
 			runner_waited=$((runner_waited + 1))
 		done
-		if kill -0 "$runner_pid" 2>/dev/null; then
+		if _soren91_pid_is_alive "$runner_pid"; then
 			log "[SOREN91] Killing stray runner process (PID=$runner_pid)"
 			kill "$runner_pid" 2>/dev/null || true
 		fi
@@ -1095,6 +1153,7 @@ soren91_stop() {
 	local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_close_shared_game_tabs
+	_soren91_stop_standalone_browser
 	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM (flag file removed)"
 	_soren91_restart_bridge_after_improve "$_had_mute"
@@ -1232,5 +1291,6 @@ soren91_cleanup() {
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_clear_meriken_time_state
 	_soren91_close_shared_game_tabs
+	_soren91_stop_standalone_browser
 	_soren91_switch_obs_layout china || true
 }

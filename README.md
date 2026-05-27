@@ -81,6 +81,9 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `manual_meriken_mode.sh` | メリケンAI手動固定 (`on` で soren91 維持、`off` で通常運用) |
 | `soren91_control.sh` | soren91の起動・停止・改善キック・手動メリケンモード・OBS連携 |
 
+- `soren91` の既定は standalone `Google Chrome for Testing` です。`soren91_stop` / `soren91_cleanup` / `soren91_start` は共有タブの close だけでなく、`soren91/tmp/standalone_chromium_profile` または `SOREN91_STANDALONE_CDP_PORT` に紐づく stale standalone Chromium も掃除する。改善終了後に `新しいタブ` の残骸ウィンドウが積み上がるのを防ぐため。
+- `soren91/main.mjs` の standalone 起動引数は `soviet_local.mjs` と揃え、`--password-store=basic` と `--use-mock-keychain` を常に付ける。macOS の "Chromium Safe Storage" キーチェーン許可ダイアログを毎回出さないため。
+
 soren_loop の多重起動ロック:
 
 - `kill -0` が macOS の制限で `Operation not permitted` を返す PID は「生存中」と扱う。実行中ループのロックを stale と誤判定すると、二重起動や早期脱出 preflight の競合につながるため。

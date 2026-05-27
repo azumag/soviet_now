@@ -2908,6 +2908,10 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("tmux new-session -d -s soren91_runner", control)
         self.assertIn("SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-0}'", control)
         self.assertNotIn("export SOREN91_SHARED_BROWSER=1", control)
+        self.assertIn("_soren91_stop_standalone_browser", control)
+        self.assertIn("_soren91_scan_standalone_browser_pids()", control)
+        self.assertIn("standalone_chromium_profile", control)
+        self.assertIn("--remote-debugging-port=${cdp_port}", control)
         self.assertIn("live_pid_after_start", control)
         self.assertIn("_soren91_read_alive_player_pid 2>/dev/null", control)
         self.assertIn("exec /bin/bash '$SOREN91_RUNNER_SCRIPT'", control)
@@ -2918,6 +2922,8 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
     def test_soren91_pid_file_survives_hidden_command_lookup(self):
         control = (REPO_ROOT / "soren91_control.sh").read_text()
 
+        self.assertIn("_soren91_pid_is_alive()", control)
+        self.assertIn('ps -p "$pid" -o pid= 2>/dev/null', control)
         self.assertIn('cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")', control)
         self.assertIn('if [ -z "$cmd" ]; then', control)
         self.assertIn('printf \'%s\' "$pid"\n\t\t\treturn 0', control)
@@ -2932,12 +2938,16 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
 
         self.assertIn("launchStandaloneBrowserWithoutFocus", main)
+        self.assertIn("standaloneBrowserLaunchArgs", main)
         self.assertIn("'/usr/bin/open'", main)
         self.assertIn("'-g'", main)
         self.assertIn("SOREN91_CHROME_NO_FOCUS_LAUNCH", main)
         self.assertIn("SOREN91_STANDALONE_WINDOW_POSITION", main)
         self.assertIn("'2400,1200'", main)
-        self.assertIn("`--window-position=${standaloneWindowPosition}`", main)
+        self.assertIn("standaloneBrowserLaunchArgs(standaloneWindowPosition)", main)
+        self.assertIn("'--password-store=basic'", main)
+        self.assertIn("'--use-mock-keychain'", main)
+        self.assertIn("'about:blank'", main)
         self.assertNotIn(".bringToFront()", main)
 
     def test_soviet_local_browser_launch_does_not_raise_focus_on_macos(self):
