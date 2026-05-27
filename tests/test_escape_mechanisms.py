@@ -6153,6 +6153,12 @@ PY
         self.assertIn("_run_improve_runtime_monitor", loop)
         self.assertIn("./monitor_improve_runtime.sh >/dev/null 2>&1", loop)
         self.assertIn("improve runtime monitor skipped/failed", loop)
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        self.assertIn("_improve_state_claims_running_fresh()", improve)
+        self.assertIn("IMPROVE_STATE_RUNNING_FRESH_SEC", improve)
+        self.assertIn('state.get("status") not in {"running", "manual"}', improve)
+        self.assertIn("_improve_state_claims_running_fresh", improve)
+        self.assertNotIn('[ -f "$IMPROVE_LOCK_FILE" ] || return 1', improve)
         self.assertIn("./monitor_improve_runtime.sh", eloop)
         self.assertIn("post_game_bookkeeping", eloop)
 

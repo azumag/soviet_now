@@ -322,11 +322,56 @@ PY
 
 #=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
 
+_improve_state_claims_running_fresh() {
+	python3 - "$IMPROVE_STATE_FILE" "${IMPROVE_STATE_RUNNING_FRESH_SEC:-1800}" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+state_file = sys.argv[1]
+try:
+    fresh_sec = int(sys.argv[2])
+except Exception:
+    fresh_sec = 1800
+try:
+    with open(state_file, encoding="utf-8") as f:
+        state = json.load(f)
+except Exception:
+    raise SystemExit(1)
+
+if state.get("status") not in {"running", "manual"}:
+    raise SystemExit(1)
+
+timestamps = []
+for key in ("updated_at", "started_at"):
+    try:
+        value = int(float(state.get(key, 0) or 0))
+    except Exception:
+        value = 0
+    if value > 0:
+        timestamps.append(value)
+
+if not timestamps:
+    raise SystemExit(1)
+
+age = time.time() - max(timestamps)
+if age < 0:
+    age = 0
+if age <= max(1, fresh_sec):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 _is_improve_running() {
-	# ロックファイルが存在し、かつ実際に改善プロセスが動いている(status=running/manual)時のみtrue
-	# ロックのみ存在(daemon待ち/failed後)ではfalseを返し、main loopがゲームを続行できるようにする
-	[ -f "$IMPROVE_LOCK_FILE" ] || return 1
-	grep -q '"status"[[:space:]]*:[[:space:]]*"running"\|"status"[[:space:]]*:[[:space:]]*"manual"' "$IMPROVE_STATE_FILE" 2>/dev/null
+	# lock が欠落しても、improve_state が新鮮な running/manual なら main loop を止める。
+	# stale state だけで永久停止しないよう、updated_at/started_at の鮮度を必ず見る。
+	if [ -f "$IMPROVE_LOCK_FILE" ] &&
+		grep -q '"status"[[:space:]]*:[[:space:]]*"running"\|"status"[[:space:]]*:[[:space:]]*"manual"' "$IMPROVE_STATE_FILE" 2>/dev/null; then
+		return 0
+	fi
+	_improve_state_claims_running_fresh
 }
 
 _scheduled_meriken_time_should_run() {
