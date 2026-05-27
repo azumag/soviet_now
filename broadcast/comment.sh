@@ -1386,7 +1386,7 @@ def classify(user: str, comment: str) -> str:
     advice_hint = re.search(r"したほうが|した方が|ほうが|方が|ほうがいい|方がいい|よくない|良くない|すべき|べき|狙|優先|避け|やめ|見るべき|考え|意識|改善|閾値|なら|よりも|だめ|ダメ|危ない|注意", text)
     stream_bug_terms = (
         "配信", "映像", "画面", "表示", "出てない", "出ない", "消えた", "止まった",
-        "固ま", "フリーズ", "重い", "遅延", "音", "音楽", "bgm", "音声", "読み上げ", "voicevox",
+        "固ま", "フリーズ", "重い", "遅延", "音", "無音", "音楽", "bgm", "音声", "読み上げ", "voicevox",
         "tts", "obs", "overlay", "オーバーレイ", "eventoverlay", "dashboard",
         "ダッシュボード", "show_status", "show-status", "ステータス", "コメント",
         "拾えて", "拾ってない", "反応しない", "返信", "返答", "worker", "ワーカー",
@@ -1394,7 +1394,7 @@ def classify(user: str, comment: str) -> str:
         "classifier", "codex", "コーデックス", "不具合", "バグ", "壊れ", "動いてない",
         "不調", "いつもと違う", "record", "レコード",
     )
-    stream_bug_failure = re.search(r"不具合|バグ|壊れ|止ま|固ま|フリーズ|出てない|出ない|消え|拾えてない|拾ってない|反応しない|動いてない|聞こえない|鳴らない|遅延|ずれ|ない|無い|不調|いつもと違う", text, re.I)
+    stream_bug_failure = re.search(r"不具合|バグ|壊れ|止ま|固ま|フリーズ|出てない|出ない|消え|拾えてない|拾ってない|反応しない|動いてない|聞こえない|鳴らない|無音|遅延|ずれ|ない|無い|不調|いつもと違う", text, re.I)
     stream_bug_hint = any(term.lower().replace(" ", "") in compact for term in stream_bug_terms)
     if system_user and ("raid" in lower or "レイド" in text):
         return "raid"

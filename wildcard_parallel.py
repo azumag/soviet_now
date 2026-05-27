@@ -128,6 +128,7 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
             _bool_literal(v) for v in (getattr(args, "deadline_fast_drop_values", None) or [True, False])
         ],
         "baseline_slot1": bool(getattr(args, "baseline_slot1", False)),
+        "block_main_loop": bool(getattr(args, "block_main_loop", True)),
     }
 
 
@@ -983,13 +984,23 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path, pr
 
 def set_candidate_html_window_title(workdir: Path, slot_index: int) -> None:
     title = f"Wildcard Parallel Slot {slot_index + 1}"
+    sorengame_dir = workdir / "sorengame"
+    if sorengame_dir.is_symlink() or _safe_resolve(sorengame_dir) == _safe_resolve(REPO_ROOT / "sorengame"):
+        try:
+            if sorengame_dir.is_symlink():
+                sorengame_dir.unlink()
+            elif sorengame_dir.exists():
+                shutil.rmtree(sorengame_dir)
+            shutil.copytree(REPO_ROOT / "sorengame", sorengame_dir, symlinks=True)
+        except Exception:
+            return
     index_path = workdir / "sorengame" / "build" / "index.html"
     try:
         text = index_path.read_text(encoding="utf-8")
     except Exception:
         return
     text = re.sub(r"<title>.*?</title>", f"<title>{title}</title>", text, count=1, flags=re.S)
-    text = text.replace('productName: "soren-game"', f'productName: "{title}"')
+    text = re.sub(r'productName:\s*"[^"]*"', f'productName: "{title}"', text, count=1)
     index_path.write_text(text, encoding="utf-8")
 
 
@@ -2038,6 +2049,8 @@ class CullCoordinator:
             if limit <= 0:
                 return (False, 0)
             cull_count = sum(1 for c in self.candidates if c.index == index and c.status == "culled")
+            if cull_count > limit:
+                return (True, cull_count)
             jobs = _int(getattr(self.args, "jobs", 0), 0)
             if jobs <= 0:
                 jobs = max([c.index for c in self.candidates] + [index]) + 1
@@ -2121,11 +2134,16 @@ def main() -> int:
     parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
     parser.add_argument("--cull-leader-min-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES"), 2))
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
-    parser.add_argument("--lingering-slot-max-culls", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 6))
+    parser.add_argument("--lingering-slot-max-culls", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 0))
     parser.add_argument(
         "--baseline-slot1",
         action=argparse.BooleanOptionalAction,
         default=os.getenv("WILDCARD_PARALLEL_BASELINE_SLOT1", "0").strip().lower() in ("1", "true", "yes", "on"),
+    )
+    parser.add_argument(
+        "--block-main-loop",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("WILDCARD_PARALLEL_BLOCK_MAIN_LOOP", "1").strip().lower() not in ("0", "false", "no", "off"),
     )
     args = parser.parse_args()
     args.deadline_fast_drop_mutate = os.getenv("WILDCARD_PARALLEL_FAST_DROP_DEADLINE_CONTACT_MUTATE", "1").strip().lower() not in ("0", "false", "no", "off")
@@ -2186,7 +2204,13 @@ def main() -> int:
     result_file = args.result_file or (session_dir / "result.json")
 
     params = wildcard_parallel_params(args)
-    payload = {"phase": "generating", "session_dir": str(session_dir), "params": params, "candidates": []}
+    payload = {
+        "phase": "generating",
+        "session_dir": str(session_dir),
+        "params": params,
+        "block_main_loop": bool(args.block_main_loop),
+        "candidates": [],
+    }
     render_overlay(args.status_file, args.html_file, payload)
 
     score_baseline = None

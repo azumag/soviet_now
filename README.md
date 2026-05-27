@@ -171,11 +171,11 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard` 並列評価は既定で 6 候補を隔離実行し、各候補は既定 6 ゲームで評価する。OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
 - 通常改善後の `post_improve_param_parallel` は `POST_IMPROVE_PARAM_PARALLEL_JOBS` で候補数を個別に調整する。WILDCARD 脱出本線の `WILDCARD_PARALLEL_JOBS` と分け、slot1 baseline を含む追加パラメータ試行だけを増減できるようにする。
 - `wildcard` 並列評価のカリングは既定で1ゲームごとに有効で、現 leader composite の 90% 未満に落ちた候補を補充する。ただし比較先 leader は既定で2ゲーム以上走った候補に限り、1ゲームだけの上振れで他候補を早期に落としすぎない。`WILDCARD_PARALLEL_CULL_AFTER_GAMES=0` にした時だけカリングを無効化して全候補を指定ゲーム数まで走らせる。
-- `wildcard` 並列評価で他スロットが完走済みなのに最後の1スロットだけが補充カリングを繰り返す場合は、`WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` 回を超えた時点で補充を止める。これにより、十分な完走候補があるのに trailing slot の空振りで採用が長時間遅れるのを防ぐ。
+- `wildcard` 並列評価の slot ごとの補充回数上限は既定で無効 (`WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS=0`)。壊れる戦略が続いても、各 slot は完走候補が出るまで探索を粘る。
 - `wildcard_parallel.py` はセッション開始時と各候補ゲームの起動直前に WILDCARD 専用 game server port (`WILDCARD_PARALLEL_SERVE_BASE_PORT` から候補数分) の古い listener を掃除する。前回の隔離ブラウザが残っても `EADDRINUSE` で候補全体が 0 game 失敗にならないようにするため。
 - `wildcard_parallel.py --cleanup-stale` は古い候補ウィンドウ/port の掃除だけでなく、WILDCARD overlay を `restored` へ更新して候補カードを消す。実体のない古い candidate 表示を停滞監視が進行中と誤読しないようにするため。
 - `wildcard_parallel.py --cleanup-sessions` は実行中 status の `session_dir` と直近 `WILDCARD_PARALLEL_KEEP_RECENT_RUNS` 件を残して古い run directory だけを掃除する。既定は3件保持で、停滞監視に必要な直近の候補履歴を消さずに、完了/失敗後の隔離ブラウザ残骸だけを減らす。
-- `wildcardParallelOverlay` は 1920x900 の進捗・状況表示で、候補6本を3列x2行に並べる。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
+- `wildcardParallelOverlay` は 1920x900 の進捗・状況表示で、候補6本を3列x2行に並べる。候補 Chrome には `Wildcard Parallel Slot N` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `wildcardParallelOverlay` は環境変数 `WILDCARD_PARALLEL_OVERLAY_TITLE` で見出しを切り替え、候補別 game 数と status counts を進捗バーで表示する。WILDCARD 脱出と post-improve 追加試行を同じ overlay で見ても、どちらの評価かを取り違えないための表示である。
 - `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
 - `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。
@@ -223,7 +223,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_PARALLEL_CULL_AFTER_GAMES` | `1` | WILDCARD 並列候補を leader 比で補充判定し始めるゲーム数。0 ならカリング無効 |
 | `WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES` | `2` | カリング比較先 leader として扱う最小ゲーム数 |
 | `WILDCARD_PARALLEL_CULL_COMP_RATIO` | `0.90` | leader composite に対してこの比率未満の候補を補充する閾値 |
-| `WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` | `6` | 最後の未完走スロットがこの回数を超えてカリングされたら補充を止める |
+| `WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` | `0` | slot ごとの補充回数上限。0 なら無制限 |
 | `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定で目的進捗を score 近傍候補の優先度に使う。現行ではソ連到達のみを保護対象にし、ロシア到達だけでは score-only anchor を押しのけない |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
@@ -254,6 +254,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - コメント返しの生成中に別プロセスが同じコメント行を先に処理済みにした場合は、古い返答をキューへ入れずに破棄する。これにより pending 再試行や mode 切替後の遅延生成が、同じ視聴者コメントへ二重返答する事故を防ぐ。
 - コメント返しは、画面・現在状況・スコアなどを参照するコメントだけ配信サムネイルOCRを使う。通常雑談ではOCRを省略し、改善中は短い timeout と少ない retry で fallback へ早めに進めて pending 滞留を抑える。
 - コメント返しが抽出する `ADVICE` / `COMMENT_ADVICE` / `CODEX_ADVICE` は、元コメントの分類が助言系のときだけ保存する。ガチャ、短い反応、通常雑談では返信本文だけを使い、構造抽出候補や生成ブロックも含めて、戦略・コメント改善・Codex改善メモへは混ぜない。
+- `stream_bug_report` は「無音になってる？」「BGM聞こえない？」のような疑問形でも配信不具合として扱い、`tmp/codex_bug_queue` 経由で Codex 側へ渡す。通常の一般質問へ落とすと音声/表示トラブルが再現中に埋もれるため。
 - **サブスク/ビッツ検出**: Twitch IRC の USERNOTICE (sub/resub/subgift) と PRIVMSG の bits タグを検出し、`[SUB]` / `[BITS]` タグ付きでコメントキューに入れる。コメント応答AIが名前を呼んでお礼する（金額には言及しない）
 - **歌声シンガー固定**: 歌リクエスト時、中華AIは九州そら(id=3016)、メリケンAIは冥鳴ひまり(id=3014)で歌う
 - ラジオ原稿は生成後に別AIでファクトチェック兼リライトを行う。必要なら `RADIO_FACT_CHECK_ENABLED=0` で無効化できる

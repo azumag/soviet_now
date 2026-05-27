@@ -390,6 +390,11 @@ except Exception:
     raise SystemExit(1)
 
 phase = str(data.get("phase") or "")
+if data.get("block_main_loop") is False:
+    raise SystemExit(1)
+params = data.get("params")
+if isinstance(params, dict) and params.get("block_main_loop") is False:
+    raise SystemExit(1)
 raise SystemExit(0 if phase in {"generating", "running"} else 1)
 PY
 }

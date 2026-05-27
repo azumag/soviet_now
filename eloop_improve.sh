@@ -316,11 +316,14 @@ _post_improve_param_parallel_trial() {
 		--explore-rate "${WILDCARD_BANDIT_EXPLORE_RATE:-0.35}" \
 		--seed "$seed" \
 		--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
+		--serve-base-port "${POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT:-18180}" \
+		--cdp-base-port "${POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT:-19320}" \
 		--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
 		--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
 		--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
-		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-6}" \
+		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
 		--baseline-slot1 \
+		--no-block-main-loop \
 		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
@@ -1234,7 +1237,7 @@ PY
 			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
 			--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
 			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
-			--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-6}" \
+			--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
 			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
