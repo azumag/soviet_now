@@ -95,6 +95,13 @@ _activate_shared_browser_tab() {
 	local mode="${1:-china}"
 	local last_mode
 	mode="$(printf '%s' "$mode" | tr -d '[:space:]')"
+	if [ "${SOREN_BROWSER_TAB_ACTIVATE:-0}" != "1" ]; then
+		mkdir -p "$(dirname "${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}")" 2>/dev/null || true
+		printf '%s [IMPROVE_ACTIVATE] event=skip_no_focus mode=%s prev_mode=disabled\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mode" \
+			>>"${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}"
+		return 0
+	fi
 	last_mode="$(cat "$IMPROVE_LAST_ACTIVATE_STATE_FILE" 2>/dev/null || printf '')"
 	if [ "$IMPROVE_LAST_ACTIVATE_MODE" = "$mode" ] || [ "$last_mode" = "$mode" ]; then
 		mkdir -p "$(dirname "${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}")" 2>/dev/null || true

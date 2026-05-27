@@ -533,11 +533,6 @@ function unityAudioNeedsRecovery(health) {
 
 async function recoverUnityAudio(page, audioDiagLog, reason) {
   try {
-    await page.bringToFront();
-  } catch (e) {
-    audioDiagLog(`[AUDIO-WATCHDOG-BRINGTOFRONT-ERROR] ${(e && e.message) || String(e)}`);
-  }
-  try {
     await page.mouse.click(640, 360);
   } catch (e) {
     audioDiagLog(`[AUDIO-WATCHDOG-CLICK-ERROR] ${(e && e.message) || String(e)}`);
@@ -1110,11 +1105,6 @@ async function runLocalController() {
       // event, and Chrome gates resume() the same way. Deliver one real
       // trusted gesture (Space keypress, ignored by this mouse-only game)
       // before resuming so Unity's handler fires and resume() is honored.
-      try {
-        await page.bringToFront();
-      } catch (e) {
-        console.warn(`bringToFront failed on unmute: ${e.message}`);
-      }
       try {
         await page.keyboard.press('Space');
       } catch (e) {

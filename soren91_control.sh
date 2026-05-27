@@ -63,14 +63,15 @@ _soren91_switch_obs_layout() {
 	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
 	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 	local china_show_sources="$dashboard_source"
+	local meriken_show_sources="$status_source,$show_status_source"
 	local meriken_hide_sources="$dashboard_source"
 	local s91_show_op=""
 	local s91_hide_op=""
 	if [ -n "$game_source" ]; then
 		china_show_sources="$game_source,$china_show_sources"
-		meriken_hide_sources="$game_source,$meriken_hide_sources"
+		meriken_show_sources="$meriken_show_sources,$game_source"
 	fi
-	if [ -n "$SOREN91_OBS_INPUT_NAME" ]; then
+	if [ -n "$SOREN91_OBS_INPUT_NAME" ] && [ "$SOREN91_OBS_INPUT_NAME" != "$game_source" ]; then
 		s91_show_op="show:$SOREN91_OBS_INPUT_NAME"
 		s91_hide_op="hide:$SOREN91_OBS_INPUT_NAME"
 	fi
@@ -80,7 +81,7 @@ _soren91_switch_obs_layout() {
 		if [ -n "$game_source" ] && [ -x "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ]; then
 			"$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" '91人対戦|ソ連ゲーム91' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
 		fi
-		"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source" $s91_show_op hide:"$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		"$SOREN91_OBS_CONTROL" batch soren show:"$meriken_show_sources" $s91_show_op hide:"$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		_soren91_activate_shared_browser_tab meriken
 		;;
 	china)
@@ -138,6 +139,10 @@ _soren91_log_activate_state() {
 _soren91_activate_shared_browser_tab() {
 	local mode="${1:-meriken}"
 	mode="$(printf '%s' "$mode" | tr -d '[:space:]')"
+	if [ "${SOREN_BROWSER_TAB_ACTIVATE:-0}" != "1" ]; then
+		_soren91_log_activate_state "skip_no_focus" "$mode" "disabled"
+		return 0
+	fi
 	local base
 	local last_mode
 	last_mode="$(cat "$SOREN91_LAST_ACTIVATE_STATE_FILE" 2>/dev/null || printf '')"

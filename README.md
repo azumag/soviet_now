@@ -319,7 +319,8 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 | `soren91_control.sh` | 親ループからの起動・停止・改善キック・手動メリケンモード・OBS連携 |
 
 親プロジェクトの `soren_loop.sh` から `soren91_control.sh` 経由で連携。`SOREN91_ENABLED=1` (.env) で有効化。詳細は `soren91/CLAUDE.md` を参照。
-OBS 表示は `sorengame` window capture を `obs_window_capture_source.sh` で切り替える。soren91 は既定で専用 Chrome ウィンドウ (`SOREN91_SHARED_BROWSER=0`) に出し、meriken 表示では `【91人対戦】ソ連ゲーム91`、通常復帰では `Unity WebGL Player | soren-game` へ再バインドする。同一 Chrome ウィンドウの別タブ運用に戻す場合は、OBS が現在タブを掴まず通常ゲームに固定されるため、91 専用 OBS source を別途用意する。
+OBS 表示は `sorengame` window capture を `obs_window_capture_source.sh` で切り替える。soren91 は既定で専用 Chrome ウィンドウ (`SOREN91_SHARED_BROWSER=0`) に出し、meriken 表示では `【91人対戦】ソ連ゲーム91` へ再バインドした `sorengame` を表示したままにする。通常復帰では `Unity WebGL Player | soren-game` へ再バインドする。同一 Chrome ウィンドウの別タブ運用に戻す場合は、OBS が現在タブを掴まず通常ゲームに固定されるため、91 専用 OBS source を別途用意する。
+メインループ / soren91 の Chrome は、配信中の操作を邪魔しないよう macOS で `open -g` による背面起動を既定にし、改善モード切替時の CDP `/json/activate` タブ前面化も既定無効 (`SOREN_BROWSER_TAB_ACTIVATE=0`) にしている。手元デバッグでタブ自動前面化が必要な場合だけ `SOREN_BROWSER_TAB_ACTIVATE=1` を指定する。
 
 ### jloop.sh — JSON-based State Loop
 
