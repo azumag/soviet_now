@@ -54,6 +54,25 @@ if [ -z "$NODE_BIN" ]; then
 	exit 1
 fi
 
+cleanup_stale_wildcard_candidates_for_main_game() {
+	[ "${OBS_WINDOW_CAPTURE_CLEAN_STALE_WILDCARD:-1}" = "1" ] || return 0
+	[ "$source_name" = "${OBS_MAIN_GAME_SOURCE:-sorengame}" ] || return 0
+	case "$window_title_regex" in
+	*soren-game*) ;;
+	*) return 0 ;;
+	esac
+	[ -f ./wildcard_parallel.py ] || return 0
+
+	mkdir -p "${TMP_DEBUG_DIR:-tmp/debug}"
+	"${PYTHON:-python3}" ./wildcard_parallel.py --cleanup-stale \
+		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
+		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
+		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
+		>>"${TMP_DEBUG_DIR:-tmp/debug}/wildcard_parallel_cleanup.log" 2>&1 || true
+}
+
+cleanup_stale_wildcard_candidates_for_main_game
+
 "$NODE_BIN" --input-type=commonjs - "$scene" "$source_name" "$window_title_regex" "$app_id" "$visibility" <<'NODE'
 const crypto = require('crypto');
 
