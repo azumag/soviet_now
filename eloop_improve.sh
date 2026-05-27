@@ -3241,6 +3241,7 @@ EOF
 			log "[IMPROVE] バリデーション成功"
 
 			# 最近リジェクトされたハッシュは強い観測ログに残すが、適用は実ゲーム評価へ進める。
+			# 一方で実質無変更や文言だけの変更は探索を進めず、ここで再試行させる。
 			HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
 			if [ -n "$HASH_STAGING" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
 				if REJECTED_HASHES_FILE="$HOST_REJECTED_HASHES_FILE" REJECTED_HASH_META_FILE="$HOST_REJECTED_HASH_META_FILE" _is_recently_rejected_for_rollback "$HASH_STAGING"; then
@@ -3249,12 +3250,30 @@ EOF
 				fi
 			fi
 			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ] && [ "$helper_changed" != true ]; then
-				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING、起動検証OKのため適用は継続)"
-				_improve_note "validation observation: decide hash unchanged; apply continues because runtime smoke passed"
+				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
+				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない。コメント・文言ではなくロジックを変更せよ。"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
+				continue
 			fi
 			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-				log "[IMPROVE] 文字列・reason文言のみの変更を検出 (起動検証OKのため適用は継続)"
-				_improve_note "validation observation: string-only change; apply continues because runtime smoke passed"
+				log "[IMPROVE] 文字列・reason文言のみの変更を検出"
+				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
+				continue
 			fi
 			if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
 				log "[IMPROVE] 固定ターンゲートを検出 (起動検証OKのため適用は継続)"
@@ -3333,6 +3352,7 @@ ${helpers_diff}"
 			_improve_note "Stage3: review mutated staging → re-validate"
 			_review_validate_ok=false
 			if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
+				_review_reverted=false
 				_r_hash=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
 				if [ -n "$_r_hash" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
 					if REJECTED_HASHES_FILE="$HOST_REJECTED_HASHES_FILE" REJECTED_HASH_META_FILE="$HOST_REJECTED_HASH_META_FILE" _is_recently_rejected_for_rollback "$_r_hash"; then
@@ -3341,20 +3361,26 @@ ${helpers_diff}"
 					fi
 				fi
 				if [ -n "$_r_hash" ] && [ "$_r_hash" = "$HASH_BEFORE" ]; then
-					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし (起動検証OKのため適用は継続)"
-					_improve_note "Stage3: review mutation observation: no logic hash change; apply continues"
+					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (no logic change) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+					_review_reverted=true
 				fi
-				if _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 (起動検証OKのため適用は継続)"
-					_improve_note "Stage3: review mutation observation: string-only; apply continues"
+				if [ "$_review_reverted" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+					_review_reverted=true
 				fi
-				if _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+				if [ "$_review_reverted" != true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
 					log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 (起動検証OKのため適用は継続)"
 					_improve_note "Stage3: review mutation observation: fixed-turn gate; apply continues"
 				fi
-				log "[IMPROVE] Stage 3 レビュー修正: 起動検証成功"
-				_improve_note "Stage3: review mutation accepted after runtime smoke"
-				_review_validate_ok=true
+				if [ "$_review_reverted" != true ]; then
+					log "[IMPROVE] Stage 3 レビュー修正: 起動検証成功"
+					_improve_note "Stage3: review mutation accepted after runtime smoke"
+					_review_validate_ok=true
+				fi
 			else
 				log "[IMPROVE] Stage 3 レビュー修正: バリデーション失敗 → スナップショット復元"
 				_improve_note "Stage3: review mutation failed validation → restore snapshot"

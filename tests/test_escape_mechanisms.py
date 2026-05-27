@@ -1910,8 +1910,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("review verdict advisory failure; apply continues after runtime smoke", eloop)
         self.assertNotIn("Stage3: review verdict rejected apply", eloop)
 
-    def test_strategy_validation_is_runtime_smoke_only(self):
-        """validation は方針固定ではなく、起動不能と返り値契約だけを止める。"""
+    def test_strategy_validation_blocks_useless_edits_but_leaves_policy_advisory(self):
+        """validation は構造エラーと無駄編集を止め、方針判定は観測に寄せる。"""
         sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
@@ -1927,9 +1927,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("テスト実行失敗", sandbox)
         self.assertIn("テスト出力契約違反", sandbox)
         self.assertIn("validation observation: repeated rejected hash", eloop)
-        self.assertIn("validation observation: string-only change", eloop)
         self.assertIn("validation observation: fixed-turn gate", eloop)
-        self.assertNotIn("文字列・reason文言だけの変更は不可", eloop)
+        self.assertIn("decide()関数の本体に実質的な変更がない", eloop)
+        self.assertIn("文字列・reason文言だけの変更は不可", eloop)
+        self.assertIn("Stage3: review mutation rejected (no logic change)", eloop)
+        self.assertIn("Stage3: review mutation rejected (string-only)", eloop)
         self.assertNotIn("この変更は過去にリジェクトされた戦略と同一", eloop)
 
 

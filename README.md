@@ -181,7 +181,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - ダッシュボードの `Purge Target` は `best_strategy_anchor.json` と `rolling_scores.json` から次に守るべき段階到達率 target を表示し、`Founding r100` は直近100ゲームの type15(ロシア) / type14(カザフスタン) / type13(ウクライナ) 到達率を表示する。soren91 ランキングコメントは視聴者向けに現行 hash の `current_strategy_run.json` 由来の建国率だけを短く出し、粛清基準 target はダッシュボード側へ分離する。これによりロシア建国率の低下・停滞と、現在の rollback / purge target を混同せず確認できる。
 - Stage 3 のレビューは会話上の PASS ではなく `tmp/review_result.md` の実ファイル作成を完了条件にする。レビューAIが PASS 本文だけを返してファイルを書かない場合は no-edit retry / verdict repair の対象で、同じレビューを無駄に増やさないためプロンプト側でも最終応答前のファイル確認を必須化している。`Read tmp/review_result.md` が初回 `File not found` になった場合は、質問せず `Write` でテンプレートを作成する。
 - 粛清ポストモーテムは診断専用なので、opencode slot を握っている間に Stage 3 review / analyze 側の `IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC` が先に尽きる場合は、待ち上限直前で stale lock として解放して改善本線を優先する。`opencode slot wait exceeded` が先に出ると同じ review attempt を無駄に消費するため、`stale rollback-postmortem run lock cleared` が先行するのが期待挙動。
-- AI改善の validation は、起動不能・`decide()` 契約違反・完全無変更だけを強く止める。コメント・reason文言だけの変更、過去 rejected hash、固定ターンゲート、Stage 3 レビュー FAIL は観測ログに残すが、余計な validation で探索を止めないため採用後の実ゲーム評価に委ねる。
+- AI改善の validation は、起動不能・`decide()` 契約違反・完全無変更・`decide()` 実質無変更・コメント/reason文言だけの変更を強く止める。過去 rejected hash、固定ターンゲート、Stage 3 レビュー FAIL は観測ログに残すが、余計な validation で探索を止めないため採用後の実ゲーム評価に委ねる。
 - Stage 3 のレビューは `height_mult` / `merge_mult` / penalty係数を変える diff では、説明文の「強化/緩和」だけでなく周辺の最終式まで追って係数方向を検算する。たとえば `height_penalty = landing_y * ... * height_mult` なら `height_mult` 増加は penalty 増、低下は penalty 減として扱い、コメントと実挙動の逆転を FAIL にする。
 - Stage 3 のレビューは、比較閾値を変える diff でも比較演算子込みで効果方向を検算する。たとえば `margin < 0.5` を `margin < 0.3` に下げると発火範囲は狭まるため、「より多く捕まえる」「強化」と説明しているなら FAIL にする。
 - Stage 3 の verdict validation も同じ閾値方向ミスを検出してログに残す。レビュー本文が PASS でも、`0.5 -> 0.3` のような閾値縮小を「より多く捕まえる」「強化」と説明している場合は advisory failure として扱い、起動検証OKなら apply は継続する。
@@ -807,7 +807,7 @@ flowchart TD
 - `strategy_helpers/` 内の symlink 検査
 - `__init__.py` の存在確認
 
-固定局面の期待手、deadline guard の方針、過去リジェクト済み hash、文字列のみ変更、固定ターンゲート、Stage 3 レビュー FAIL は、現在は観測ログとして残すだけで適用を止めない。`failed_no_apply` で建国導線の探索が止まることを避けるため、戦略が起動できて最低限の出力契約を満たすなら採用後の実ゲーム評価に委ねる。
+固定局面の期待手、deadline guard の方針、過去リジェクト済み hash、固定ターンゲート、Stage 3 レビュー FAIL は、現在は観測ログとして残すだけで適用を止めない。`failed_no_apply` で建国導線の探索が止まることを避けるため、戦略が起動できて最低限の出力契約を満たすなら採用後の実ゲーム評価に委ねる。ただし `decide()` 実質無変更や文字列・reason だけの変更は実ゲーム探索を進めないため、continue/fresh retry の対象にする。
 
 #### (4) harvest_sandbox — 許可ファイルのみ抽出
 
