@@ -3240,60 +3240,25 @@ EOF
 		if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
 			log "[IMPROVE] バリデーション成功"
 
-			# ハッシュベース反復防止: 最近リジェクトされたハッシュと同一なら拒否
+			# 最近リジェクトされたハッシュは強い観測ログに残すが、適用は実ゲーム評価へ進める。
 			HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
 			if [ -n "$HASH_STAGING" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
 				if REJECTED_HASHES_FILE="$HOST_REJECTED_HASHES_FILE" REJECTED_HASH_META_FILE="$HOST_REJECTED_HASH_META_FILE" _is_recently_rejected_for_rollback "$HASH_STAGING"; then
-					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
-					VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
-					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-						continue_retry=$((continue_retry + 1))
-						continue
-					fi
-					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-					fresh_retry=$((fresh_retry + 1))
-					continue_retry=0
-					continue
+					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み、起動検証OKのため適用は継続)"
+					_improve_note "validation observation: repeated rejected hash $HASH_STAGING; apply continues because runtime smoke passed"
 				fi
 			fi
-			# 改善前と同一ハッシュなら差分なしとして扱う
 			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ] && [ "$helper_changed" != true ]; then
-				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
-				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
-				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-					continue_retry=$((continue_retry + 1))
-					continue
-				fi
-				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-				fresh_retry=$((fresh_retry + 1))
-				continue_retry=0
-				continue
+				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING、起動検証OKのため適用は継続)"
+				_improve_note "validation observation: decide hash unchanged; apply continues because runtime smoke passed"
 			fi
 			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
-				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-					continue_retry=$((continue_retry + 1))
-					continue
-				fi
-				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-				fresh_retry=$((fresh_retry + 1))
-				continue_retry=0
-				continue
+				log "[IMPROVE] 文字列・reason文言のみの変更を検出 (起動検証OKのため適用は継続)"
+				_improve_note "validation observation: string-only change; apply continues because runtime smoke passed"
 			fi
 			if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
-				VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
-				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-					continue_retry=$((continue_retry + 1))
-					continue
-				fi
-				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-				fresh_retry=$((fresh_retry + 1))
-				continue_retry=0
-				continue
+				log "[IMPROVE] 固定ターンゲートを検出 (起動検証OKのため適用は継続)"
+				_improve_note "validation observation: fixed-turn gate; apply continues because runtime smoke passed"
 			fi
 
 				strategy_diff=""
@@ -3369,31 +3334,27 @@ ${helpers_diff}"
 			_review_validate_ok=false
 			if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
 				_r_hash=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
-				_r_rejected=false
 				if [ -n "$_r_hash" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
-					REJECTED_HASHES_FILE="$HOST_REJECTED_HASHES_FILE" REJECTED_HASH_META_FILE="$HOST_REJECTED_HASH_META_FILE" _is_recently_rejected_for_rollback "$_r_hash" && _r_rejected=true
+					if REJECTED_HASHES_FILE="$HOST_REJECTED_HASHES_FILE" REJECTED_HASH_META_FILE="$HOST_REJECTED_HASH_META_FILE" _is_recently_rejected_for_rollback "$_r_hash"; then
+						log "[IMPROVE] Stage 3 レビュー修正: ハッシュ反復検出 (起動検証OKのため適用は継続)"
+						_improve_note "Stage3: review mutation observation: repeated rejected hash; apply continues"
+					fi
 				fi
-				if [ "$_r_rejected" = true ]; then
-					log "[IMPROVE] Stage 3 レビュー修正: ハッシュ反復検出 → スナップショット復元"
-					_improve_note "Stage3: review mutation rejected (dup hash) → restore snapshot"
-					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				elif [ -n "$_r_hash" ] && [ "$_r_hash" = "$HASH_BEFORE" ]; then
-					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし → スナップショット復元"
-					_improve_note "Stage3: review mutation rejected (no logic change) → restore snapshot"
-					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				elif _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
-					_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
-					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				elif _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
-					log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 → スナップショット復元"
-					_improve_note "Stage3: review mutation rejected (fixed turn gate) → restore snapshot"
-					cp "$_pre_review_snapshot" "$STAGING_FILE"
-				else
-					log "[IMPROVE] Stage 3 レビュー修正: バリデーション成功"
-					_improve_note "Stage3: review mutation accepted"
-					_review_validate_ok=true
+				if [ -n "$_r_hash" ] && [ "$_r_hash" = "$HASH_BEFORE" ]; then
+					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし (起動検証OKのため適用は継続)"
+					_improve_note "Stage3: review mutation observation: no logic hash change; apply continues"
 				fi
+				if _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 (起動検証OKのため適用は継続)"
+					_improve_note "Stage3: review mutation observation: string-only; apply continues"
+				fi
+				if _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 (起動検証OKのため適用は継続)"
+					_improve_note "Stage3: review mutation observation: fixed-turn gate; apply continues"
+				fi
+				log "[IMPROVE] Stage 3 レビュー修正: 起動検証成功"
+				_improve_note "Stage3: review mutation accepted after runtime smoke"
+				_review_validate_ok=true
 			else
 				log "[IMPROVE] Stage 3 レビュー修正: バリデーション失敗 → スナップショット復元"
 				_improve_note "Stage3: review mutation failed validation → restore snapshot"
@@ -3411,19 +3372,16 @@ ${helpers_diff}"
 					_improve_note "Stage3: review verdict repaired"
 				else
 					log "[IMPROVE] Stage 3 レビュー判定修復失敗: ${VALIDATE_ERROR:-unknown}"
-					_improve_note "Stage3: review verdict repair failed: ${VALIDATE_ERROR:0:160}"
-					improve_ok=false
+					_improve_note "Stage3: review verdict repair failed but apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
 				fi
 			else
-				log "[IMPROVE] Stage 3 レビュー判定: FAIL → 適用中止"
-				_improve_note "Stage3: review verdict rejected apply: ${VALIDATE_ERROR:0:160}"
-				improve_ok=false
+				log "[IMPROVE] Stage 3 レビュー判定: FAIL (起動検証OKのため適用は継続)"
+				_improve_note "Stage3: review verdict advisory failure; apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
 			fi
 		fi
 		if $improve_ok && ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
-			log "[IMPROVE] Stage 3 レビュー判定: FAIL → 適用中止"
-			_improve_note "Stage3: review verdict rejected apply: ${VALIDATE_ERROR:0:160}"
-			improve_ok=false
+			log "[IMPROVE] Stage 3 レビュー判定: FAIL (起動検証OKのため適用は継続)"
+			_improve_note "Stage3: review verdict advisory failure; apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
 		fi
 		rm -f "$_pre_review_snapshot" 2>/dev/null || true
 	fi

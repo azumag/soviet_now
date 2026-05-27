@@ -181,10 +181,10 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - ダッシュボードの `Purge Target` は `best_strategy_anchor.json` と `rolling_scores.json` から次に守るべき段階到達率 target を表示し、`Founding r100` は直近100ゲームの type15(ロシア) / type14(カザフスタン) / type13(ウクライナ) 到達率を表示する。soren91 ランキングコメントは視聴者向けに現行 hash の `current_strategy_run.json` 由来の建国率だけを短く出し、粛清基準 target はダッシュボード側へ分離する。これによりロシア建国率の低下・停滞と、現在の rollback / purge target を混同せず確認できる。
 - Stage 3 のレビューは会話上の PASS ではなく `tmp/review_result.md` の実ファイル作成を完了条件にする。レビューAIが PASS 本文だけを返してファイルを書かない場合は no-edit retry / verdict repair の対象で、同じレビューを無駄に増やさないためプロンプト側でも最終応答前のファイル確認を必須化している。`Read tmp/review_result.md` が初回 `File not found` になった場合は、質問せず `Write` でテンプレートを作成する。
 - 粛清ポストモーテムは診断専用なので、opencode slot を握っている間に Stage 3 review / analyze 側の `IMPROVE_OPENCODE_LOCK_MAX_WAIT_SEC` が先に尽きる場合は、待ち上限直前で stale lock として解放して改善本線を優先する。`opencode slot wait exceeded` が先に出ると同じ review attempt を無駄に消費するため、`stale rollback-postmortem run lock cleared` が先行するのが期待挙動。
-- AI改善の validation は、コメント・reason文言だけの staging を成功扱いしない。直近の自動改善でも一度コメント追記だけの候補が拒否され、同じ session の継続修正で実ロジック変更へ進んでから commit された。停滞監視では `logs/improve_daemon.log` の `validation failed ... 文字列・reason文言だけの変更は不可` が最終失敗ではなく、後続の `Stage 3 レビュー ... PASS` と commit まで到達したかを確認する。
+- AI改善の validation は、起動不能・`decide()` 契約違反・完全無変更だけを強く止める。コメント・reason文言だけの変更、過去 rejected hash、固定ターンゲート、Stage 3 レビュー FAIL は観測ログに残すが、余計な validation で探索を止めないため採用後の実ゲーム評価に委ねる。
 - Stage 3 のレビューは `height_mult` / `merge_mult` / penalty係数を変える diff では、説明文の「強化/緩和」だけでなく周辺の最終式まで追って係数方向を検算する。たとえば `height_penalty = landing_y * ... * height_mult` なら `height_mult` 増加は penalty 増、低下は penalty 減として扱い、コメントと実挙動の逆転を FAIL にする。
 - Stage 3 のレビューは、比較閾値を変える diff でも比較演算子込みで効果方向を検算する。たとえば `margin < 0.5` を `margin < 0.3` に下げると発火範囲は狭まるため、「より多く捕まえる」「強化」と説明しているなら FAIL にする。
-- Stage 3 の verdict validation も同じ閾値方向ミスを機械的に拒否する。レビュー本文が PASS でも、`0.5 -> 0.3` のような閾値縮小を「より多く捕まえる」「強化」と説明している場合は apply 前に失敗扱いにする。
+- Stage 3 の verdict validation も同じ閾値方向ミスを検出してログに残す。レビュー本文が PASS でも、`0.5 -> 0.3` のような閾値縮小を「より多く捕まえる」「強化」と説明している場合は advisory failure として扱い、起動検証OKなら apply は継続する。
 - Stage 3 のレビューは、`low placement` / 低配置 / 高積み回避 / 盤面圧縮などをうたう新規 bonus / penalty でも単調方向を検算する。低配置を好む説明なのに `max_y` が大きいほど加点する、piece_count を減らしたい説明なのに piece_count 増加で報酬が増える、といった実式の逆向きは FAIL にする。
 - Stage 3 のレビューは、`lowest-y` / 低配置 / 高積み回避をうたう新規 bonus が候補ごとの高さ値に依存しているかも確認する。条件成立候補へ `+500` のような定数加点を足すだけでは候補間の高さ順位を変えないため、低い候補と高い候補の2例で相対 score 差が低い候補側へ増えることを示せない場合は FAIL にする。
 - Stage 3 のレビューは、新規 axis / reason / bonus / penalty が、根拠にした worst/best game log や `tmp/batch_summary.txt` の実データで到達可能かも確認する。新 reason が発火不能な条件や、引用した turn 値と条件が食い違う変更は PASS させない。
@@ -793,7 +793,7 @@ flowchart TD
 
 `eloop_improve.sh` が `pushd "$SANDBOX_DIR"` でサンドボックスに移動してから `run_ai` を呼び出す。AI のカレントディレクトリは `/tmp` 配下なので、ホストのファイルに直接アクセスできない。
 
-- 最大3回 fresh リトライ × 各最大6回 continue リトライ（バリデーション失敗時は staging をリセットして再試行）
+- 最大3回 fresh リトライ × 各最大6回 continue リトライ（起動不能・返り値契約違反などの構造エラー時は staging をリセットして再試行）
 - リトライ時には前回のエラーメッセージをプロンプトに含めて修正を促す
 - AI 実行タイムアウト: デフォルト1100秒（`IMPROVE_RUN_CMD_TIMEOUT_SEC` で変更可）。全体のウォールタイムアウトは2400秒（`IMPROVE_WALL_TIMEOUT`）
 
@@ -807,8 +807,7 @@ flowchart TD
 - `strategy_helpers/` 内の symlink 検査
 - `__init__.py` の存在確認
 
-- `extract_decide_hash.py` によるハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
-- 数値・文字列のみの微調整や、固定ターン数ゲートの追加を検出して拒否
+固定局面の期待手、deadline guard の方針、過去リジェクト済み hash、文字列のみ変更、固定ターンゲート、Stage 3 レビュー FAIL は、現在は観測ログとして残すだけで適用を止めない。`failed_no_apply` で建国導線の探索が止まることを避けるため、戦略が起動できて最低限の出力契約を満たすなら採用後の実ゲーム評価に委ねる。
 
 #### (4) harvest_sandbox — 許可ファイルのみ抽出
 
@@ -848,7 +847,7 @@ flowchart TD
 | `cp -RL` fallback | create/harvest | rsync 失敗時にも symlink を展開 |
 | staging ファイル方式 | sandbox 内 | AI が strategy.py 本体を変更 |
 | バリデーション | validate_strategy_with_helpers | 起動不能・シグネチャ不正・返り値契約違反 |
-| ハッシュ反復防止 | eloop_improve.sh | 同じ失敗戦略の繰り返し適用 |
+| ハッシュ反復観測 | eloop_improve.sh | 同じ失敗戦略の再出現をログに残す |
 | 許可リスト harvest | harvest_sandbox | AI が作成した予期しないファイルの混入 |
 | symlink 検査 (出力) | harvest_sandbox | harvest に symlink が混入 |
 | hard link 検査 | harvest_sandbox | harvest に hard link が混入 |

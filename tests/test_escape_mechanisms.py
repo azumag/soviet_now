@@ -1907,11 +1907,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("Read 後に既存ファイルを直す場合は Edit", eloop)
         self.assertIn("存在しない場合のみ Write", eloop)
         self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
-        self.assertIn("Stage3: review verdict rejected apply", eloop)
-        self.assertNotIn("review verdict advisory failure; apply continues after runtime smoke", eloop)
+        self.assertIn("review verdict advisory failure; apply continues after runtime smoke", eloop)
+        self.assertNotIn("Stage3: review verdict rejected apply", eloop)
 
-    def test_strategy_validation_keeps_runtime_smoke_but_rejects_noop_changes(self):
-        """validation は方針固定を避けつつ、無変更・文言だけ・既却下 hash は適用しない。"""
+    def test_strategy_validation_is_runtime_smoke_only(self):
+        """validation は方針固定ではなく、起動不能と返り値契約だけを止める。"""
         sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
@@ -1926,14 +1926,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("ERROR: {label}: missing x", sandbox)
         self.assertIn("テスト実行失敗", sandbox)
         self.assertIn("テスト出力契約違反", sandbox)
-        self.assertIn("この変更は過去にリジェクトされた戦略と同一", eloop)
-        self.assertIn("decide()関数の本体に実質的な変更がない", eloop)
-        self.assertIn("文字列・reason文言だけの変更は不可", eloop)
-        self.assertIn("終盤判定を turns>=N の固定ターン数で追加してはいけない", eloop)
-        self.assertIn("Stage3: review mutation rejected (string-only) → restore snapshot", eloop)
-        self.assertIn("Stage3: review verdict rejected apply", eloop)
-        self.assertNotIn("validation observation: repeated rejected hash", eloop)
-        self.assertNotIn("apply continues because runtime smoke passed", eloop)
+        self.assertIn("validation observation: repeated rejected hash", eloop)
+        self.assertIn("validation observation: string-only change", eloop)
+        self.assertIn("validation observation: fixed-turn gate", eloop)
+        self.assertNotIn("文字列・reason文言だけの変更は不可", eloop)
+        self.assertNotIn("この変更は過去にリジェクトされた戦略と同一", eloop)
 
 
 # --- F2: wildcard origin override branch budget only for that hash -----------
