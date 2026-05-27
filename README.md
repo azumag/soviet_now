@@ -173,13 +173,14 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard_parallel.py` はセッション開始時と各候補ゲームの起動直前に WILDCARD 専用 game server port (`WILDCARD_PARALLEL_SERVE_BASE_PORT` から候補数分) の古い listener を掃除する。前回の隔離ブラウザが残っても `EADDRINUSE` で候補全体が 0 game 失敗にならないようにするため。
 - `wildcard_parallel.py --cleanup-stale` は古い候補ウィンドウ/port の掃除だけでなく、WILDCARD overlay を `restored` へ更新して候補カードを消す。実体のない古い candidate 表示を停滞監視が進行中と誤読しないようにするため。
 - `wildcard_parallel.py --cleanup-sessions` は実行中 status の `session_dir` と直近 `WILDCARD_PARALLEL_KEEP_RECENT_RUNS` 件を残して古い run directory だけを掃除する。既定は3件保持で、停滞監視に必要な直近の候補履歴を消さずに、完了/失敗後の隔離ブラウザ残骸だけを減らす。
-- `wildcardParallelOverlay` は 1920x140 のヘッダ専用表示とし、候補本線は `wildcardParallelCand1..6` の macOS window capture source で映す。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
+- `wildcardParallelOverlay` は 1920x900 の進捗・状況表示で、候補6本を3列x2行に並べる。候補 Chrome には `Wildcard Parallel Cand N | soren-game` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `obs_control.sh transform` は既定では OBS 側で手調整済みの transform を保持し、初期値のままの source だけを配置する。自動配置が必要な `wildcardParallelOverlay` / `wildcardParallelCandN` は `OBS_CONTROL_TRANSFORM_MODE=force` を付けて明示的に上書きする。
 - `wildcard` 並列評価中は親 `eloop_improve.sh` が `WILDCARD_PARALLEL_HEARTBEAT_SEC` ごとに `improve_state.json` を更新する。隔離評価が長くても runtime monitor が stale lock と誤認しないようにし、終了・SIGTERM・候補なしでは heartbeat を止めて OBS を復元する。
 - `wildcard` 並列評価の進捗は、実行中は `tmp/state/wildcard_parallel_status.json` を一次情報にする。候補 workdir 内の `game_count.txt` / `score_history.txt` / `eval_score_history.txt` は初期化値や書き込みタイミングで遅れて見える場合があるため、停滞監視では status file の `games` / `scores` / `russia_count` / `comp` と実プロセスを優先して判断する。
 - `wildcard_parallel.py` が result file に winner を書いた後で外側の timeout / TERM により非ゼロ終了した場合は、result file の winner を優先して採用処理へ進める。winner があるのに `rc=143` だけで `parallel_no_candidate` に落とすと、停滞脱出が空振りで終わるため。
 - `wildcard_parallel.py` は全候補が 0 game のまま `bridge exited` / `SIGABRT` / port 競合で失敗した時、性能比較上の候補なしではなく `infra_failed` として status/result に出す。停滞監視では `no_candidate` と区別し、ブラウザ/bridge 側の失敗として扱う。
 - `wildcard` 並列評価が `infra_failed` で winner を返せない場合は、旧来の直接 `wildcard_perturb.py` にフォールバックして脱出自体は進める。`no_candidate` は性能上の候補なしなので従来どおり no-op/延期扱いに残す。
+- `post_improve_param_parallel` の `infra_failed` は、通常改善後の追加パラメータ試行が 0 game で空振りした診断であり、`improve_state.json` が idle かつ現 hash の本線評価が進んでいるなら脱出ロック詰まりではない。WILDCARD 停滞脱出の `infra_failed` だけが direct fallback 対象。
 - `wildcard` 並列評価 overlay は候補を暫定 composite 順に表示し、leader と相対バーを出す。rolling score 反映前でも `wildcard_origin.json` の `parallel_result` に trial scores が残っていれば status dashboard は `trial` として n/max と composite を表示する。
 - `wildcard` 並列評価ブラウザは `SOREN_BGM_VOLUME=0` / `SOREN_SE_VOLUME=1.5` を既定で渡す。Unity の scene load 後に音量が戻ることがあるため、`soviet_local.mjs` は `SOREN_UNITY_VOLUME_REAPPLY_MS` 間隔で指定音量を再適用する。
 - 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。
