@@ -154,6 +154,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 ステータス監視:
 
 - `show_status.sh --once` の `ArchiveNext` は最有力候補だけを短く表示する。
+- `show_status.sh --once` の `ROLLBACKS` は git の auto-revert commit 履歴だけでなく、ライブの `tmp/state/last_rollback_pair.json` も読む。直近 rollback がまだ commit 履歴に現れていない時も `last=` と `RB1` が現実の rollback 時刻/hash を示す。
 - `show_status.sh --once` の `Escape` 行は、停滞カウンタが閾値到達済みでも現行 `current_strategy_run.json` がロシア/ソ連/Type15以上を再現中なら `defer=R1,T15 11/12` のように延期理由と成熟度を併記する。これにより `stag=3/3` だけで WILDCARD 発火漏れと誤読せず、再評価完走を待つべき状態を確認できる。
 - `tmp/state/improve_state.json` は実行中の `improve_reason` を監視の一次情報として扱う。running state を更新する時に理由が空なら既存理由、なければ `normal` を保持し、archive_restart/escape_ai fallback 後の通常AI改善を理由不明にしない。
 - メインループの改善中判定は `tmp/improve.lock` だけに依存しない。lock が欠落しても `tmp/state/improve_state.json` が新鮮な `running` / `manual` を示す間はゲーム進行を止め、stale state は `IMPROVE_STATE_RUNNING_FRESH_SEC` 経過後に無視する。

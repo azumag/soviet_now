@@ -1475,6 +1475,8 @@ PY
 import ast
 import datetime as dt
 import hashlib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -1537,6 +1539,33 @@ def age_text(seconds):
     return f"{seconds // 86400}d ago"
 
 
+def load_live_rollback_event():
+    path = "tmp/state/last_rollback_pair.json"
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    try:
+        epoch = int(data.get("updated_at", 0) or 0)
+    except Exception:
+        epoch = 0
+    if epoch <= 0:
+        return None
+    from_hash = str(data.get("from_hash") or "?")[:12]
+    to_hash = str(data.get("to_hash") or "?")[:12]
+    if from_hash == "?" and to_hash == "?":
+        return None
+    return {
+        "dt": dt.datetime.fromtimestamp(epoch).astimezone(),
+        "from_hash": from_hash,
+        "to_hash": to_hash,
+        "target_hash": to_hash if to_hash != "?" else "",
+    }
+
+
 log_text = run(
     [
         "git",
@@ -1549,7 +1578,19 @@ log_text = run(
     ]
 )
 if not log_text:
-    print("COUNT|0")
+    live_event = load_live_rollback_event()
+    if live_event:
+        now = dt.datetime.now().astimezone()
+        print("COUNT|1")
+        print(f"LAST_AT|{live_event['dt'].strftime('%Y-%m-%d %H:%M')}")
+        print(f"LAST_AGE|{age_text((now - live_event['dt']).total_seconds())}")
+        print(
+            "EVENT|"
+            f"{live_event['dt'].strftime('%m-%d %H:%M')}|"
+            f"{live_event['from_hash']}|{live_event['to_hash']}|{live_event['target_hash']}"
+        )
+    else:
+        print("COUNT|0")
     raise SystemExit(0)
 
 rows = []
@@ -1558,16 +1599,36 @@ for line in log_text.splitlines():
     if len(parts) == 3:
         rows.append(parts)
 
-print(f"COUNT|{len(rows)}")
 now = dt.datetime.now().astimezone()
+live_event = load_live_rollback_event()
+live_is_newer = False
 try:
-    last_dt = dt.datetime.fromisoformat(rows[0][1])
+    if live_event:
+        first_git_dt = dt.datetime.fromisoformat(rows[0][1])
+        live_is_newer = live_event["dt"] > first_git_dt
+except Exception:
+    live_is_newer = bool(live_event)
+
+print(f"COUNT|{len(rows) + (1 if live_is_newer else 0)}")
+try:
+    last_dt = live_event["dt"] if live_is_newer else dt.datetime.fromisoformat(rows[0][1])
     print(f"LAST_AT|{last_dt.strftime('%Y-%m-%d %H:%M')}")
     print(f"LAST_AGE|{age_text((now - last_dt).total_seconds())}")
 except Exception:
     pass
 
+printed = 0
+if live_is_newer and live_event:
+    print(
+        "EVENT|"
+        f"{live_event['dt'].strftime('%m-%d %H:%M')}|"
+        f"{live_event['from_hash']}|{live_event['to_hash']}|{live_event['target_hash']}"
+    )
+    printed += 1
+
 for commit, ad, subj in rows[:event_limit]:
+    if printed >= event_limit:
+        break
     when_disp = ad
     try:
         when_disp = dt.datetime.fromisoformat(ad).strftime("%m-%d %H:%M")
@@ -1589,6 +1650,7 @@ for commit, ad, subj in rows[:event_limit]:
         to_hash = target_hash
 
     print(f"EVENT|{when_disp}|{from_hash[:12]}|{to_hash[:12]}|{target_hash[:12]}")
+    printed += 1
 PY
 )
 
