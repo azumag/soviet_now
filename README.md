@@ -138,6 +138,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `strategy/improve.sh` 側の Russia recovery / regression streak ルーティングも `WILDCARD_REGRESSION_STREAK` の既定値は `2` に統一する。設定未読込の単体確認やログ文言でも `show_status.sh` の `Escape stag=x/y` と同じ閾値として読む。
 - 同じ判定は post-game 直後だけでなく next-game preflight でも再実行する。これにより、閾値到達済みの `accumulated_games.json` が残ったまま通常プレイへ流れ続ける取りこぼしを止める。
 - `monitor_improve_runtime.sh` も idle watchdog として同じ早期脱出判定を再実行する。メインループの post-game / preflight が取りこぼしても、`regression_streak >= WILDCARD_REGRESSION_STREAK` または停滞閾値到達済みの蓄積を検出し、ロシア進捗・batch quality・rollback fresh cycle でなければ `tmp/improve.lock` を作る。`show_status.sh --once` の `Escape` 行は `stag=x/y reg=a/b` を表示するため、回帰閾値だけで発火すべき状態も見落とさない。
+- WILDCARD が `no_candidate` で終わった直後も、現行 batch の composite が leader 比 `EARLY_COMP_TOP_GAP_MIN_RATIO` 以上なら即再発火せず `EARLY_ESCAPE_BATCH_OK` として延期する。停滞カウンタは残るため、次の発火条件は batch quality が下限を割る、ロシア進捗が出ないまま回帰閾値へ戻る、または 12/12 完走で通常改善へ進むこと。
 - rollback target の fresh cycle 中、または rank1 hot streak 中は早期脱出を延期する。これは過去 rolling 実績の再検証や上振れ保護を優先するため。
 - 前ハッシュ由来の `regression_streak` / `consecutive_no_improve` が残っていても、現行 `accumulated_games.json` が `russia_count > 0` / `soviet_count > 0` / `best_max_type >= 15` を示す場合は早期脱出を延期し、現在のロシア進捗を優先して評価を続ける。
 - `current_strategy_run.hash` が `best_strategy_anchor.hash` と同一の rollback 再検証中は、`show_status.sh` の `Escape stag=x/y` だけで停滞発火と判定しない。`current_strategy_run.games_total` が成熟閾値に届くまでは rolling 上の `russia_count` / `best_max_type` を保護情報として扱い、成熟後も current run にロシア再現がない時だけ regression streak から脱出へ戻す。
