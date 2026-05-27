@@ -192,6 +192,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - macOS の候補 bridge は既定で tmux セッション (`soren_wp_*`) 内に起動する。Codex や改善プロセスの実行コンテキストから直接 Chrome を起動すると Mach port / Crashpad 権限で落ちることがあるため、本線 bridge 復旧と同じ tmux 側の権限コンテキストへ寄せる。切り分け時だけ `WILDCARD_PARALLEL_BRIDGE_TMUX=0` で従来の direct `Popen` に戻せる。
 - `wildcard` / `post_improve_param_parallel` の候補 Unity HTML title は `Wildcard Parallel Slot N` に書き換える。本線 OBS の `sorengame` window capture が `Unity WebGL Player | soren-game` を掴むため、候補ウィンドウを同名にすると本線キャプチャが候補へ誤バインドする。
 - 本線 `soviet_local.mjs` は `SOREN_UNITY_AUDIO_WATCHDOG_MS` 間隔で Unity WebAudio 状態を `tmp/state/local_audio_health.json` に書き、mute 中でないのに AudioContext が `suspended` / `interrupted` のままなら実入力クリックと `resume()` を自動投入する。CDP 権限付与や page evaluate は短い timeout で抜けるため、音声ルーティングの一時停止が game loop / health 更新を固めない。BGM が戻らない場合はこの health file と `tmp/audio_diag.log` の `[AUDIO-WATCHDOG-RECOVER]` を確認する。
+- bridge recovery はゲーム進行が fresh でも、`tmp/audio_diag.log` に `[AUDIO-WATCHDOG-RECOVER]` が短時間に複数回続き、`local_audio_health.json` が `muted=false` かつ `suspended` / `interrupted` のままなら `soviet_local.mjs` を再起動して AudioContext を作り直す。閾値は `BRIDGE_AUDIO_STUCK_RECOVER_COUNT` と `BRIDGE_AUDIO_STUCK_WINDOW_SEC` で調整する。
 - `wildcard` / `archive_restart` の fast escape では親 `eloop_improve.sh` が候補採用と状態遷移を担う。親 PID が見えない running state は、通常改善のように長時間 fresh log 扱いで保護せず、短い猶予後に `monitor_improve_runtime.sh` が harvest して stale lock を解放する。early escape の lock は作成時 `normal` でも、改善起動時に最終 reason を書き戻すため、失敗後の再試行・表示・代打制御も fast escape として扱われる。
 - `wildcard_parallel` / `post_improve_param_parallel` の隔離評価中は、`phase` / `detail` も見て soren91 代打を止める。pid file が消えた孤児 `node main.mjs` や stale runner lock は `soren91_control.sh` が tmux/log writer/process table から回収し、隔離評価や通常復帰時に meriken 側が残って本線表示を隠さないようにする。
 - rollback/overlay の候補順位は `strategy_versions/by_hash` と `strategy_versions_archive/by_hash` のどちらにも実ファイルがない hash を除外する。rolling score だけ残っている復元不能候補を top や rollback target として表示・選択し、archive_restart/rollback が空振りするのを避ける。
@@ -254,7 +255,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - コメント返しの生成中に別プロセスが同じコメント行を先に処理済みにした場合は、古い返答をキューへ入れずに破棄する。これにより pending 再試行や mode 切替後の遅延生成が、同じ視聴者コメントへ二重返答する事故を防ぐ。
 - コメント返しは、画面・現在状況・スコアなどを参照するコメントだけ配信サムネイルOCRを使う。通常雑談ではOCRを省略し、改善中は短い timeout と少ない retry で fallback へ早めに進めて pending 滞留を抑える。
 - コメント返しが抽出する `ADVICE` / `COMMENT_ADVICE` / `CODEX_ADVICE` は、元コメントの分類が助言系のときだけ保存する。ガチャ、短い反応、通常雑談では返信本文だけを使い、構造抽出候補や生成ブロックも含めて、戦略・コメント改善・Codex改善メモへは混ぜない。
-- `stream_bug_report` は「無音になってる？」「BGM聞こえない？」のような疑問形でも配信不具合として扱い、`tmp/codex_bug_queue` 経由で Codex 側へ渡す。通常の一般質問へ落とすと音声/表示トラブルが再現中に埋もれるため。
+- `stream_bug_report` は「無音になってる？」「BGM聞こえない？」「ゲーム音なし」のような疑問形・短文でも配信不具合として扱い、`tmp/codex_bug_queue` 経由で Codex 側へ渡す。通常の一般質問や短文リアクションへ落とすと音声/表示トラブルが再現中に埋もれるため。
 - **サブスク/ビッツ検出**: Twitch IRC の USERNOTICE (sub/resub/subgift) と PRIVMSG の bits タグを検出し、`[SUB]` / `[BITS]` タグ付きでコメントキューに入れる。コメント応答AIが名前を呼んでお礼する（金額には言及しない）
 - **歌声シンガー固定**: 歌リクエスト時、中華AIは九州そら(id=3016)、メリケンAIは冥鳴ひまり(id=3014)で歌う
 - ラジオ原稿は生成後に別AIでファクトチェック兼リライトを行う。必要なら `RADIO_FACT_CHECK_ENABLED=0` で無効化できる

@@ -19,6 +19,11 @@ _BR_PROFILE="${SOREN_LOCAL_USER_DATA_DIR:-$_BR_ROOT/tmp/soviet_local_chromium_pr
 _BR_STALE_SEC="${BRIDGE_STALE_SEC:-240}"
 _BR_BASE_GAP="${BRIDGE_RELAUNCH_BASE_GAP:-90}"
 _BR_MAX_GAP="${BRIDGE_RELAUNCH_MAX_GAP:-600}"
+_BR_AUDIO_HEALTH="${BRIDGE_AUDIO_HEALTH_FILE:-$_BR_ROOT/tmp/state/local_audio_health.json}"
+_BR_AUDIO_DIAG="${BRIDGE_AUDIO_DIAG_FILE:-$_BR_ROOT/tmp/audio_diag.log}"
+_BR_AUDIO_STUCK_WINDOW="${BRIDGE_AUDIO_STUCK_WINDOW_SEC:-240}"
+_BR_AUDIO_STUCK_RECOVER_COUNT="${BRIDGE_AUDIO_STUCK_RECOVER_COUNT:-4}"
+_BR_RELAUNCH_REASON="${_BR_RELAUNCH_REASON:-}"
 # soviet_local.mjs の [BRIDGE-FATAL] も検知署名に含める (clean-exit 連携)
 _BR_FATAL_RE='\[BRIDGE-FATAL\]|Target page, context or browser has been closed|browser has been closed|EADDRINUSE|^Node\.js v'
 # 毎周回 eloop_lib 再 source されても backoff 状態を保持 (未設定時のみ初期化)
@@ -128,6 +133,76 @@ _br_fatal_in_log() {
 	fi
 }
 
+_br_audio_stuck_reason() {
+	[ -f "$_BR_AUDIO_HEALTH" ] || return 1
+	[ -f "$_BR_AUDIO_DIAG" ] || return 1
+	python3 - "$_BR_AUDIO_HEALTH" "$_BR_AUDIO_DIAG" "$_BR_AUDIO_STUCK_WINDOW" "$_BR_AUDIO_STUCK_RECOVER_COUNT" <<'PY'
+import json
+import re
+import sys
+import time
+from datetime import datetime, timezone
+
+health_path, diag_path, window_raw, count_raw = sys.argv[1:5]
+try:
+    window = max(60, int(window_raw))
+except Exception:
+    window = 240
+try:
+    threshold = max(1, int(count_raw))
+except Exception:
+    threshold = 4
+
+try:
+    with open(health_path, encoding="utf-8") as f:
+        health = json.load(f)
+except Exception:
+    raise SystemExit(1)
+
+view = health
+if isinstance(health.get("after"), dict):
+    view = health.get("after") or {}
+before = health.get("before") if isinstance(health.get("before"), dict) else {}
+
+if health.get("muted") or before.get("muted") or view.get("muted"):
+    raise SystemExit(1)
+
+states = []
+if view.get("unityState"):
+    states.append(str(view.get("unityState")))
+for item in view.get("tracked") or []:
+    if isinstance(item, dict) and item.get("state"):
+        states.append(str(item.get("state")))
+if not any(state in {"suspended", "interrupted"} for state in states):
+    raise SystemExit(1)
+
+now = time.time()
+recent = 0
+line_re = re.compile(r"^\[([0-9T:.\-]+Z)\]\s+\[AUDIO-WATCHDOG-RECOVER\]")
+try:
+    with open(diag_path, encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()[-200:]
+except Exception:
+    raise SystemExit(1)
+
+for line in lines:
+    match = line_re.match(line)
+    if not match:
+        continue
+    try:
+        ts = datetime.fromisoformat(match.group(1).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        continue
+    if now - ts <= window:
+        recent += 1
+
+if recent < threshold:
+    raise SystemExit(1)
+
+print(f"audio_context_stuck(states={','.join(states)}, recoveries={recent}/{threshold} in {window}s)")
+PY
+}
+
 _br_relaunch() {
 	local pids p
 	# Fix0: 共有 lease を取得してから kill/relaunch。他の復旧アクター
@@ -161,14 +236,20 @@ _br_relaunch() {
 		case "$hc" in
 			*soviet_local.mjs*) _br_log "port $_BR_PORT 旧 bridge 保持(PID=$hp) → 強制kill"; kill -9 "$hp" 2>/dev/null || true; sleep 2 ;;
 			*)
-				local live_m live_n
-				live_m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
-				live_n=$(date +%s)
-				if [ "$live_m" -gt 0 ] && [ "$((live_n - live_m))" -lt 30 ] && ! _br_fatal_in_log; then
-					_br_log "port $_BR_PORT 保持PIDの詳細不明だが game_state fresh=$((live_n-live_m))s → 稼働中として復旧成功扱い"
-					return 0
+				if [[ "$_BR_RELAUNCH_REASON" == audio_context_stuck* ]]; then
+					_br_log "port $_BR_PORT 保持PIDの詳細不明だが audio_context_stuck 復旧のため強制kill(PID=$hp)"
+					kill -9 "$hp" 2>/dev/null || true
+					sleep 2
+				else
+					local live_m live_n
+					live_m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+					live_n=$(date +%s)
+					if [ "$live_m" -gt 0 ] && [ "$((live_n - live_m))" -lt 30 ] && ! _br_fatal_in_log; then
+						_br_log "port $_BR_PORT 保持PIDの詳細不明だが game_state fresh=$((live_n-live_m))s → 稼働中として復旧成功扱い"
+						return 0
+					fi
+					_br_log "ERROR: port $_BR_PORT を対象外プロセス保持(PID=$hp CMD=[$hc]) → 復旧中止・次ループ再判定"; return 1
 				fi
-				_br_log "ERROR: port $_BR_PORT を対象外プロセス保持(PID=$hp CMD=[$hc]) → 復旧中止・次ループ再判定"; return 1
 				;;
 			esac
 		[ -n "$(_br_port_pid)" ] && { _br_log "ERROR: port $_BR_PORT 解放不可 → 復旧中止"; return 1; }
@@ -204,11 +285,14 @@ _ensure_bridge_alive() {
 	[ -f tmp/stop ] && return 0
 	[ -f tmp/state/manual_improve_mode ] && return 0
 
-	local crash="" m n
+	local crash="" audio_crash="" m n
 	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
 	n=$(date +%s)
+	audio_crash=$(_br_audio_stuck_reason 2>/dev/null || true)
 	if _br_fatal_in_log; then
 		crash="致命ログ署名"
+	elif [ -n "$audio_crash" ]; then
+		crash="$audio_crash"
 	elif [ "$m" -gt 0 ] && [ "$((n - m))" -lt "$_BR_STALE_SEC" ]; then
 		# macOS privacy/sandbox boundaries can hide cwd/command details from
 		# pgrep+lsof even while the bridge is actively writing game_state.json.
@@ -235,7 +319,9 @@ _ensure_bridge_alive() {
 	fi
 	_br_log "クラッシュ検知($crash) → 復旧開始 (consecutive_fail=$_BR_CONSEC_FAIL)"
 	_BR_LAST_ATTEMPT=$now
+	_BR_RELAUNCH_REASON="$crash"
 	_br_relaunch; local rc=$?
+	_BR_RELAUNCH_REASON=""
 	if [ "$rc" -eq 0 ]; then
 		_BR_CONSEC_FAIL=0
 	elif [ "$rc" -eq 2 ]; then

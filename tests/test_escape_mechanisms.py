@@ -2741,7 +2741,9 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("配信不具合レポートをCodexキューへ追加", comment)
         self.assertIn('"音楽"', comment)
         self.assertIn('"無音"', comment)
+        self.assertIn("なし|無し", comment)
         self.assertIn("無音になってる？", classifier)
+        self.assertIn("ゲーム音なし", classifier)
         self.assertIn('"record"', comment)
         self.assertIn("いつもと違う", comment)
         self.assertIn("Record showing 0", classifier)
@@ -3257,6 +3259,21 @@ class TestMainAudioRecovery(unittest.TestCase):
         self.assertIn('[ "$((n - m))" -lt "$_BR_STALE_SEC" ]', bridge)
         self.assertIn("稼働中として復旧成功扱い", bridge)
         self.assertIn('[ "$((live_n - live_m))" -lt 30 ]', bridge)
+
+    def test_bridge_recovery_relaunches_repeated_audio_resume_failures(self):
+        bridge = (REPO_ROOT / "lib" / "bridge_recovery.sh").read_text()
+
+        self.assertIn("_br_audio_stuck_reason()", bridge)
+        self.assertIn("BRIDGE_AUDIO_STUCK_RECOVER_COUNT", bridge)
+        self.assertIn("AUDIO-WATCHDOG-RECOVER", bridge)
+        self.assertIn("audio_context_stuck", bridge)
+        self.assertIn('audio_crash=$(_br_audio_stuck_reason', bridge)
+        self.assertIn("audio_context_stuck 復旧のため強制kill", bridge)
+        self.assertIn('health.get("after")', bridge)
+        self.assertLess(
+            bridge.index('elif [ -n "$audio_crash" ]'),
+            bridge.index('[ "$((n - m))" -lt "$_BR_STALE_SEC" ]'),
+        )
 
     def test_main_audio_resolves_sink_before_context_creation(self):
         local = (REPO_ROOT / "soviet_local.mjs").read_text()
