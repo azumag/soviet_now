@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
-from threading import Lock
+from threading import Event, Lock, Timer
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -35,6 +35,21 @@ _ACTIVE_RESULT_FILE: Path | None = None
 _ACTIVE_STATUS_FILE: Path | None = None
 _ACTIVE_HTML_FILE: Path | None = None
 _ACTIVE_ARGS: argparse.Namespace | None = None
+
+# Cooperative stop: set by the signal handler so worker threads (evaluate_slot /
+# evaluate_real game loop) return promptly instead of letting the ThreadPoolExecutor
+# block forever joining infinite-regeneration workers. Also used to break out once the
+# overall wall-clock deadline is reached so the process self-terminates instead of
+# spinning + leaking chrome (which is what stranded the post-improve param run).
+_STOP_EVENT = Event()
+_DEADLINE_TS: float = 0.0
+
+
+def _stop_now() -> bool:
+    """True when a signal asked us to stop or the wall-clock deadline has passed."""
+    if _STOP_EVENT.is_set():
+        return True
+    return _DEADLINE_TS > 0 and time.time() >= _DEADLINE_TS
 
 
 def _int(value: object, default: int) -> int:
@@ -1919,6 +1934,14 @@ def evaluate_real(
     if chrome_executable_path:
         env["SOREN_CHROME_EXECUTABLE_PATH"] = chrome_executable_path
     existing_bridge = slot_runtime.get("bridge") if slot_runtime else None
+    if existing_bridge is None or existing_bridge.poll() is not None:
+        # Free any stale listener squatting on our CDP port (e.g. an orphaned chrome
+        # left by a prior interrupted run) BEFORE prelaunch. Otherwise prelaunch's CDP
+        # probe (wait_for_candidate_chrome_cdp) connects to the FOREIGN chrome that
+        # answers on the port, the candidate silently attaches to the wrong browser,
+        # never gets a real board, and is culled instantly -> infinite regeneration.
+        # The main game runs on a different CDP port, so this never touches it.
+        cleanup_wildcard_server_ports([candidate.cdp_port])
     if (
         existing_bridge is None
         and env.get("SOREN_CHROME_HEADLESS") not in {"1", "true", "yes", "on"}
@@ -1975,8 +1998,25 @@ def evaluate_real(
                 next_preview_at = 0.0
                 game_timeout = max(30, _int(getattr(args, "game_timeout", 420), 420))
                 game_deadline = time.time() + game_timeout
+                stop_break = False
                 while proc.poll() is None:
                     now = time.time()
+                    if _stop_now():
+                        # Signal received or wall-clock deadline hit: abort this game
+                        # immediately instead of waiting up to game_timeout, so the
+                        # worker returns and the executor can drain promptly.
+                        try:
+                            proc.terminate()
+                            proc.communicate(timeout=5)
+                        except Exception:
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                        if not candidate.error:
+                            candidate.error = "stopped before completion (deadline/signal)"
+                        stop_break = True
+                        break
                     if now >= game_deadline:
                         try:
                             proc.terminate()
@@ -2001,6 +2041,8 @@ def evaluate_real(
                         capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                         next_preview_at = now + 2.0
                     time.sleep(0.25)
+                if stop_break:
+                    break
                 if candidate.status == "timeout":
                     break
                 stdout, stderr = proc.communicate(timeout=5)
@@ -2217,6 +2259,13 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
     slot_runtime: dict = {"workdir": session_dir / f"slot-{index + 1}"}
     try:
         while True:
+            if _stop_now():
+                # Stop requested (signal) or wall-clock deadline reached: do not start
+                # another game; return whatever we have so the executor can drain.
+                if not candidate.error:
+                    candidate.error = "stopped before evaluation (deadline/signal)"
+                coordinator.record(candidate)
+                return candidate
             coordinator.record(candidate)
             if candidate.status == "failed":
                 return candidate
@@ -2230,6 +2279,14 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
             stop_lingering, cull_count = coordinator.lingering_slot_cutoff(index)
             if stop_lingering:
                 suffix = f"lingering slot cutoff after {cull_count} culls"
+                result.error = f"{result.error}; {suffix}" if result.error else suffix
+                coordinator.record(result)
+                return result
+            if _stop_now():
+                # Deadline/signal reached after a cull: stop regenerating. This is the
+                # primary guard against the infinite perturb->cull->perturb loop that
+                # ran 4.5h (431 generations) when every candidate kept failing to launch.
+                suffix = "stopped: deadline/signal reached, not regenerating"
                 result.error = f"{result.error}; {suffix}" if result.error else suffix
                 coordinator.record(result)
                 return result
@@ -2248,7 +2305,7 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
 
 
 def main() -> int:
-    global _ACTIVE_ARGS, _ACTIVE_HTML_FILE, _ACTIVE_RESULT_FILE, _ACTIVE_SESSION_DIR, _ACTIVE_STATUS_FILE
+    global _ACTIVE_ARGS, _ACTIVE_HTML_FILE, _ACTIVE_RESULT_FILE, _ACTIVE_SESSION_DIR, _ACTIVE_STATUS_FILE, _DEADLINE_TS
     parser = argparse.ArgumentParser()
     parser.add_argument("--cleanup-stale", action="store_true")
     parser.add_argument("--cleanup-sessions", action="store_true")
@@ -2280,6 +2337,7 @@ def main() -> int:
     parser.add_argument("--serve-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_SERVE_BASE_PORT"), 18080))
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
     parser.add_argument("--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 420))
+    parser.add_argument("--max-runtime-sec", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MAX_RUNTIME_SEC"), 1500))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))
     parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
@@ -2339,7 +2397,15 @@ def main() -> int:
     args.cull_leader_min_games = max(1, min(args.cull_leader_min_games, args.games))
     args.cull_comp_ratio = max(0.0, args.cull_comp_ratio)
     args.lingering_slot_max_culls = max(0, args.lingering_slot_max_culls)
+    args.max_runtime_sec = max(0, _int(getattr(args, "max_runtime_sec", 0), 0))
+    # Overall wall-clock deadline: the orchestrator self-terminates instead of spinning
+    # forever (and getting orphaned past the main-loop block timeout). 0 disables it.
+    _DEADLINE_TS = (time.time() + args.max_runtime_sec) if args.max_runtime_sec > 0 else 0.0
+    # Free both the candidate game-server ports AND the CDP debug ports up front so an
+    # orphaned chrome from a prior interrupted run cannot squat them and starve every
+    # new candidate (the root cause of the 4.5h runaway).
     cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])
+    cleanup_wildcard_server_ports([args.cdp_base_port + index for index in range(args.jobs)])
     cleanup_wildcard_chrome_processes(session_root=args.session_root)
     keep_sessions = []
     active_session = status_active_session(args.status_file)
@@ -2442,18 +2508,57 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Seconds to wait for the cooperative drain before force-exiting. Kept above the
+    # bridge launch timeout (45s) so a normal stop drains gracefully (workers return,
+    # their finally blocks stop bridges) and the watchdog only fires for a real hang.
+    _WATCHDOG_GRACE_SEC = _int(os.getenv("WILDCARD_PARALLEL_STOP_GRACE_SEC"), 60)
+
     def _handle_signal(signum: int, _frame: object) -> None:
+        # 1) Ask every worker to stop cooperatively. The old handler raised SystemExit
+        #    here, which then blocked forever in ThreadPoolExecutor.__exit__ joining
+        #    workers stuck in the infinite perturb->cull loop. Setting the event instead
+        #    lets the workers return so the executor can actually drain.
+        _STOP_EVENT.set()
+        # 2) Persist a best-effort result now, in case the graceful drain can't finish
+        #    and the watchdog has to force-exit below.
         if _ACTIVE_ARGS and _ACTIVE_STATUS_FILE and _ACTIVE_HTML_FILE and _ACTIVE_RESULT_FILE and _ACTIVE_SESSION_DIR:
-            write_interrupted_result_from_status(
-                _ACTIVE_ARGS,
-                _ACTIVE_STATUS_FILE,
-                _ACTIVE_HTML_FILE,
-                _ACTIVE_RESULT_FILE,
-                _ACTIVE_SESSION_DIR,
-                signum,
-            )
-        cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)
-        raise SystemExit(128 + signum)
+            try:
+                write_interrupted_result_from_status(
+                    _ACTIVE_ARGS,
+                    _ACTIVE_STATUS_FILE,
+                    _ACTIVE_HTML_FILE,
+                    _ACTIVE_RESULT_FILE,
+                    _ACTIVE_SESSION_DIR,
+                    signum,
+                )
+            except Exception:
+                pass
+
+        # 3) Watchdog backstop: if the drain wedges, force the process down (and reap
+        #    its chrome + node bridges) so SIGTERM can never hang like it did before.
+        def _force_exit() -> None:
+            try:
+                cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)
+            except Exception:
+                pass
+            try:
+                if _ACTIVE_ARGS is not None:
+                    jobs = max(3, _int(getattr(_ACTIVE_ARGS, "jobs", 6), 6))
+                    base_serve = _int(getattr(_ACTIVE_ARGS, "serve_base_port", 18080), 18080)
+                    base_cdp = _int(getattr(_ACTIVE_ARGS, "cdp_base_port", 19320), 19320)
+                    # node bridges listen on the serve ports; chrome on the cdp ports.
+                    cleanup_wildcard_server_ports(
+                        [base_serve + i for i in range(jobs)] + [base_cdp + i for i in range(jobs)]
+                    )
+            except Exception:
+                pass
+            os._exit(128 + signum)
+
+        watchdog = Timer(_WATCHDOG_GRACE_SEC, _force_exit)
+        watchdog.daemon = True
+        watchdog.start()
+        # Return (do NOT raise): main() finishes via the cooperative drain and exits
+        # cleanly; if it can't, the watchdog above forces termination.
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
