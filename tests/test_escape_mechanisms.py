@@ -3297,7 +3297,7 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("SOREN_BROWSER_TAB_ACTIVATE:-0", (REPO_ROOT / "soren91_control.sh").read_text())
         self.assertIn("skip_no_focus", (REPO_ROOT / "soren91_control.sh").read_text())
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
-        self.assertIn('"/usr/bin/open",\n        "-g",\n        "-n",\n        app_path,', parallel)
+        self.assertIn('"/usr/bin/open",\n            "-g",\n            "-n",\n            app_path,', parallel)
         self.assertNotIn('"-a",\n        app_path,', parallel)
 
 

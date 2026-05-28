@@ -734,7 +734,9 @@ def contradictory_low_placement_constant_claim():
         return False
     differentiating_evidence = re.search(
         r"(?:landing_y|risk_top_y_after_drop|decision_top_y_after_drop|top_y|height)"
-        r".{0,80}(?:低い候補|lower candidate|candidate pair|2 candidates|score差|relative|相対)",
+        r".{0,120}(?:低い候補|lower candidate|lower placement|candidate pair|2 candidates|score差|relative|相対|factor|係数|差分)|"
+        r"(?:低い候補|lower candidate|lower placement|candidate pair|2 candidates|score差|relative|相対|factor|係数|差分)"
+        r".{0,120}(?:landing_y|risk_top_y_after_drop|decision_top_y_after_drop|top_y|height)",
         normalized,
     )
     return not bool(differentiating_evidence)
