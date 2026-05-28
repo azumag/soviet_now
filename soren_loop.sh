@@ -860,6 +860,20 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		if command -v _find_live_improve_pid >/dev/null 2>&1; then
 			_live_improve_pid=$(_find_live_improve_pid 2>/dev/null || true)
 		fi
+		# 堅牢化: improve_state が idle/欠落でも、wildcard_parallel の status が
+		# アクティブなら param並列調整(隔離評価)とみなし soren91 を確実に停止する。
+		# wildcard_parallel が親improveより長生きして孤児化し improve_state=idle に
+		# 戻ると、下の case が空文字(::)でマッチせず soren91 が止まらない事故を防ぐ。
+		if command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active 2>/dev/null; then
+			if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+				log_pause_throttled "wildcard_parallel_stop_soren91" "[PAUSE] param並列調整中(wildcard status検出): soren91残存を停止して候補評価だけにします"
+				SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+			fi
+			log_pause_throttled "wildcard_parallel_isolated" "[PAUSE] param並列調整中(隔離評価): soren91代打を立てず待機"
+			_run_improve_runtime_monitor
+			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+			continue
+		fi
 		case "${_pause_reason}:${pause_phase:-}:${pause_detail:-}" in
 		wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)
 			if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then

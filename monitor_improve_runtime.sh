@@ -525,27 +525,39 @@ if [ "$live_pid" -ne 0 ]; then
 	if [ -n "${IMPROVE_LEGACY_CONSOLE_SOURCE:-}" ]; then
 		./obs_control.sh hide soren "$IMPROVE_LEGACY_CONSOLE_SOURCE" >/dev/null 2>&1 || true
 	fi
-	case "${improve_reason}:${phase:-}:${detail:-}" in
-	wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)
+	# 堅牢化: improve_state の reason/phase が空でも wildcard_parallel status が
+	# アクティブなら param並列調整(隔離評価)とみなし soren91 を停止する。
+	# 孤児化した wildcard_parallel で improve_state がidleに戻り、下の case が
+	# *) にマッチして soren91_start(代打)してしまう事故を防ぐ。
+	if command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active 2>/dev/null; then
+		# wildcard_parallel status がアクティブ → 隔離評価。soren91代打を立てず停止維持。
 		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
-			_monitor_log "isolated improve reason=${improve_reason} phase=${phase:-?} detail=${detail:-?}; forcing existing soren91_stop"
+			_monitor_log "wildcard_parallel active (status file); forcing soren91_stop (no Meriken substitute)"
 			SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
-		else
-			_monitor_log "improve reason=${improve_reason} phase=${phase:-?} detail=${detail:-?}; leaving soren91 stopped and preserving non-Meriken presentation"
 		fi
-		;;
-	*)
-		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
-			if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
-				_monitor_log "improve running but soren91 stop is in progress; leaving process control to soren91_stop"
+	else
+		case "${improve_reason}:${phase:-}:${detail:-}" in
+		wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)
+			if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+				_monitor_log "isolated improve reason=${improve_reason} phase=${phase:-?} detail=${detail:-?}; forcing existing soren91_stop"
+				SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
 			else
-				_monitor_log "improve running but soren91 is not active; calling existing soren91_start"
-				soren91_start >/dev/null 2>&1 || true
+				_monitor_log "improve reason=${improve_reason} phase=${phase:-?} detail=${detail:-?}; leaving soren91 stopped and preserving non-Meriken presentation"
 			fi
-		fi
-		_activate_shared_browser_tab meriken
-		;;
-	esac
+			;;
+		*)
+			if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
+				if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
+					_monitor_log "improve running but soren91 stop is in progress; leaving process control to soren91_stop"
+				else
+					_monitor_log "improve running but soren91 is not active; calling existing soren91_start"
+					soren91_start >/dev/null 2>&1 || true
+				fi
+			fi
+			_activate_shared_browser_tab meriken
+			;;
+		esac
+	fi
 
 	if [ "$elapsed" -ge "$LONG_SEC" ] || [ "$stale_age" -ge "$STALE_SEC" ]; then
 		note="long_or_stale phase=${phase:-?} detail=${detail:-?}"

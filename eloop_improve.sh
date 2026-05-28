@@ -277,6 +277,13 @@ _post_improve_param_parallel_trial() {
 	[ "$param_parallel_jobs" -lt 3 ] && param_parallel_jobs=3
 	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${param_parallel_jobs} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
 	_improve_progress "wildcard_parallel" "86" "post_improve_param_parallel"
+	# param並列調整(隔離評価)はメインゲーム/soren91が止まってから行う設計。
+	# 主導的に soren91 を停止してから起動し、評価スロットだけが走る状態を保証する。
+	# (主ループ/monitor の停止反応に頼ると起動直後に一時的な同時稼働が生じるため)
+	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+		log "[PARAM-PARALLEL] soren91稼働中 → 隔離評価開始前に停止する"
+		SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+	fi
 	_wildcard_parallel_obs_show || true
 
 	local result_file started_at count_min count_max param_count seed random_count_arg result rc has_winner winner_path winner_hash baseline_hash winner_job
