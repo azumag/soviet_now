@@ -162,6 +162,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `tmp/state/improve_state.json` は実行中の `improve_reason` を監視の一次情報として扱う。running state を更新する時に理由が空なら既存理由、なければ `normal` を保持し、archive_restart/escape_ai fallback 後の通常AI改善を理由不明にしない。
 - メインループの改善中判定は `tmp/improve.lock` だけに依存しない。lock が欠落しても `tmp/state/improve_state.json` が新鮮な `running` / `manual` を示す間はゲーム進行を止め、stale state は `IMPROVE_STATE_RUNNING_FRESH_SEC` 経過後に無視する。
 - `run_cmd` の長時間 heartbeat も `RUN_CMD_IMPROVE_REASON` を渡して `improve_state.json` を更新する。AI待機中に archive_restart/escape_ai 起点の通常改善が `normal` や空 reason へ戻り、完了時の fast-escape 判定だけ lock 復元に頼る状態を防ぐ。
+- `monitor_improve_runtime.sh` は改善 idle 復帰時に `improveOverlay` / `wildcardParallelOverlay` を必ず hide し、ゲーム中なら `dashboard` も hide して `sorengame` / `statsOverlay` / `opsOverlay` を再表示する。`soren91_is_running` が false になる stale soren91 player も回収し、メリケンAIや並列評価の表示が本線プレイ画面へ重なり続ける状態を残さない。
 - `status_dashboard.py` / `generate_status_overlay.sh` のステータス overlay は、WILDCARD status の直後に `ArchiveRestart candidates` として上位10候補の `hash` / `comp` / `p25` / `n` / `ru` / `sv` / `t` / origin retry を表示する。
 - `WILDCARD origins` は現戦略が WILDCARD origin と一致している時だけ表示する。archive_restart origin の戦略では archive候補一覧を主表示にし、古い WILDCARD origin を誤って現状説明に混ぜない。
 - 候補がない場合は `threshold` や `R0` / `cool` / `reject` などの blocker を表示し、`escape_ai direct` へ落ちる条件を確認できるようにする。

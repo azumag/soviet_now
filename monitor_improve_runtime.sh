@@ -144,6 +144,53 @@ NODE
 	printf '%s\n' "$mode" > "$IMPROVE_LAST_ACTIVATE_STATE_FILE"
 }
 
+_main_game_active_for_obs() {
+	python3 - <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    state = json.load(open("game_state.json", encoding="utf-8")).get("state", "")
+except Exception:
+    state = ""
+
+if state and state != "STOP":
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+_cleanup_stale_soren91_player_if_present() {
+	command -v _soren91_recovered_player_stale >/dev/null 2>&1 || return 0
+	command -v _soren91_force_stop_recovered_player >/dev/null 2>&1 || return 0
+
+	local stale_pid=""
+	stale_pid=$(_soren91_recovered_player_stale 2>/dev/null || true)
+	[ -n "$stale_pid" ] || return 0
+
+	_monitor_log "improve idle but stale soren91 player remains pid=$stale_pid; cleaning normal-mode presentation"
+	soren91_cleanup >/dev/null 2>&1 || true
+	_soren91_force_stop_recovered_player "$stale_pid" >/dev/null 2>&1 || true
+}
+
+_reconcile_normal_obs_layout() {
+	local scene="${OBS_DASHBOARD_SCENE:-soren}"
+	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
+	local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
+	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
+	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
+	local wildcard_overlay_source="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+	local hide_sources="$improve_source,$wildcard_overlay_source"
+	local show_sources="$status_source,$show_status_source,$game_source"
+
+	if _main_game_active_for_obs; then
+		hide_sources="$hide_sources,$dashboard_source"
+	fi
+
+	./obs_control.sh batch "$scene" show:"$show_sources" hide:"$hide_sources" >/dev/null 2>&1 || true
+}
+
 _write_status() {
 	local status="$1" improve_pid="$2" elapsed="$3" stale="$4" action="$5" note="$6"
 	python3 - "$STATUS_FILE" "$status" "$improve_pid" "$elapsed" "$stale" "$action" "$note" <<'PY'
@@ -538,5 +585,7 @@ if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/nu
 	_monitor_log "improve idle but soren91 is active; forcing existing soren91_stop for normal-mode return"
 	SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
 fi
+_cleanup_stale_soren91_player_if_present
 _activate_shared_browser_tab china
+_reconcile_normal_obs_layout
 _write_status idle 0 0 0 "layout_reconciled" "improve idle"
