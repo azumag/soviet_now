@@ -7,6 +7,8 @@
 ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ELOOP_LIB_DIR"
 
+[ -f "$ELOOP_LIB_DIR/.env" ] && set -a && . "$ELOOP_LIB_DIR/.env" && set +a
+
 # Layer 0: 定数・初期化
 source "$ELOOP_LIB_DIR/core/config.sh"
 source "$ELOOP_LIB_DIR/core/runtime_toggles.sh"

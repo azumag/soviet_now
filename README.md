@@ -601,7 +601,7 @@ TWITCH_BROADCASTER_ID=123456789
 
 `TWITCH_BOT_NICK` は、トークンを取得したTwitchアカウント名に合わせること。未設定時は `azumagdev` を既定値として使う。`TWITCH_CLIENT_ID` と `TWITCH_BROADCASTER_ID` がある場合は、成功判定を返す Twitch `chat/messages` API を優先する。
 
-`soren_loop.sh` 起動時に `.env` が自動で読み込まれる。
+`soren_loop.sh` 起動時に `.env` が自動で読み込まれる。`eloop_lib.sh` を直接 source する補助スクリプトやテストでも、core/config の既定値を展開する前に同じ `.env` を読み込む。
 
 #### 動作確認
 

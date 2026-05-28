@@ -2599,6 +2599,15 @@ class TestOpencodeRunLock(unittest.TestCase):
 # --- 共通: hot-reload runtime toggles ----------------------------------------
 
 class TestRuntimeToggleHotReload(unittest.TestCase):
+    def test_eloop_lib_loads_env_before_config_defaults(self):
+        """eloop_lib.sh 直sourceでも .env override を config defaults より先に読む。"""
+        lib = (REPO_ROOT / "eloop_lib.sh").read_text()
+        env_load = '[ -f "$ELOOP_LIB_DIR/.env" ] && set -a && . "$ELOOP_LIB_DIR/.env" && set +a'
+        config_load = 'source "$ELOOP_LIB_DIR/core/config.sh"'
+
+        self.assertIn(env_load, lib)
+        self.assertLess(lib.index(env_load), lib.index(config_load))
+
     def test_toggle_propagates_on_mtime_change(self):
         """`.env` を編集して reload_runtime_toggles_force すると、対象 var が更新される。"""
         with tempfile.TemporaryDirectory() as td:
