@@ -1392,9 +1392,10 @@ def classify(user: str, comment: str) -> str:
         "拾えて", "拾ってない", "反応しない", "返信", "返答", "worker", "ワーカー",
         "chat_worker", "youtube_worker", "audio_worker", "監視", "watchdog", "分類器",
         "classifier", "codex", "コーデックス", "不具合", "バグ", "壊れ", "動いてない",
+        "動いてねえ", "動いてねぇ", "動かない", "動かん", "動いていない",
         "不調", "いつもと違う", "record", "レコード",
     )
-    stream_bug_failure = re.search(r"不具合|バグ|壊れ|止ま|固ま|フリーズ|出てない|出ない|出なくなる|でなくなる|消え|拾えてない|拾ってない|反応しない|動いてない|聞こえない|聞こえん|聞こえなくなる|鳴らない|鳴らなくなる|無音|遅延|ずれ|ない|無い|なし|無し|不調|いつもと違う", text, re.I)
+    stream_bug_failure = re.search(r"不具合|バグ|壊れ|止ま|固ま|フリーズ|出てない|出ない|出なくなる|でなくなる|消え|拾えてない|拾ってない|反応しない|動いてない|動いてね[えぇ]|動かない|動かん|動いていない|聞こえない|聞こえん|聞こえなくなる|鳴らない|鳴らなくなる|無音|遅延|ずれ|ない|無い|なし|無し|不調|いつもと違う", text, re.I)
     stream_bug_hint = any(term.lower().replace(" ", "") in compact for term in stream_bug_terms)
     if system_user and ("raid" in lower or "レイド" in text):
         return "raid"
