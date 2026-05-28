@@ -1875,7 +1875,8 @@ def evaluate_real(
                 stdout = ""
                 stderr = ""
                 next_preview_at = 0.0
-                game_deadline = time.time() + max(1, args.game_timeout)
+                game_timeout = max(30, _int(getattr(args, "game_timeout", 420), 420))
+                game_deadline = time.time() + game_timeout
                 while proc.poll() is None:
                     now = time.time()
                     if now >= game_deadline:
@@ -1889,7 +1890,7 @@ def evaluate_real(
                                 pass
                             stdout, stderr = proc.communicate(timeout=5)
                         candidate.status = "timeout"
-                        candidate.error = f"strategy_runner timeout after {args.game_timeout}s"
+                        candidate.error = f"strategy_runner timeout after {game_timeout}s"
                         candidate.game_results.append(
                             {
                                 "error": candidate.error,

@@ -1024,24 +1024,29 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         )
         self.assertIs(wildcard_parallel.choose_winner([cand_b, cand_a], 1), cand_a)
 
-    def test_wildcard_parallel_does_not_kill_long_surviving_game_by_timeout(self):
-        """長く生きている候補ゲームを timeout で落とさない。"""
+    def test_wildcard_parallel_bounds_game_and_main_loop_blocking(self):
+        """隔離評価の詰まりは bounded にし、本線停止は stale status だけで続けない。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
-        config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        readme = (REPO_ROOT / "README.md").read_text()
 
-        self.assertIn('WILDCARD_PARALLEL_GAMES="${WILDCARD_PARALLEL_GAMES:-6}"', config)
         self.assertIn('--games "${WILDCARD_PARALLEL_GAMES:-6}"', eloop)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 6)', parallel)
-        self.assertNotIn("WILDCARD_PARALLEL_GAME_TIMEOUT", config)
-        self.assertNotIn("--game-timeout", parallel)
-        self.assertNotIn("deadline = time.time() + args.game_timeout", parallel)
-        self.assertNotIn("candidate evaluation timed out", parallel)
-        self.assertNotIn('candidate.status = "timeout"', parallel)
+        self.assertIn('--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 420)', parallel)
+        self.assertIn('game_timeout = max(30, _int(getattr(args, "game_timeout", 420), 420))', parallel)
+        self.assertIn("game_deadline = time.time() + game_timeout", parallel)
+        self.assertIn('candidate.status = "timeout"', parallel)
+        self.assertIn('candidate.error = f"strategy_runner timeout after {game_timeout}s"', parallel)
+        self.assertIn('payload.setdefault("started_at", now_epoch)', parallel)
+        self.assertIn('payload["updated_at"] = now_epoch', parallel)
+        self.assertIn('WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC', improve)
+        self.assertIn('if phase in {"generating", "running"} and max_sec > 0 and started_at > 0:', improve)
         self.assertIn('if [ "${prev_phase:-}" = "wildcard_parallel" ]; then', improve)
         self.assertIn("wall_timeout=0", improve)
         self.assertIn('[ "${prev_phase:-}" != "wildcard_parallel" ]', improve)
+        self.assertIn("WILDCARD_PARALLEL_GAME_TIMEOUT", readme)
+        self.assertIn("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", readme)
 
     def test_wildcard_parallel_culling_defaults_to_each_game(self):
         """デフォルトでは1ゲームごとに leader 比で cull/refill を判定する。"""
