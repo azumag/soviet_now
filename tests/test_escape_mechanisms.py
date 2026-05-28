@@ -873,6 +873,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_JOBS="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT="${POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT:-18180}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT="${POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT:-19320}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
         self.assertIn("WILDCARD_PARALLEL_OVERLAY_SOURCE", config)
         self.assertIn("WILDCARD_PARALLEL_BGM_VOLUME", config)
@@ -1543,6 +1545,35 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"', (REPO_ROOT / "eloop_improve.sh").read_text())
         self.assertIn('export WILDCARD_PARALLEL_OBS_BROWSER_SOURCES="${WILDCARD_PARALLEL_OBS_BROWSER_SOURCES:-0}"', (REPO_ROOT / "eloop_improve.sh").read_text())
 
+    def test_post_improve_param_parallel_blocks_main_and_respects_small_jobs(self):
+        """post-improve 追加試行は改善扱いで本線を止め、軽量 slot 数指定は 6 に戻さない。"""
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+
+        self.assertIn('[ "$param_parallel_jobs" -lt 3 ] && param_parallel_jobs=3', improve)
+        self.assertNotIn('[ "$param_parallel_jobs" -lt 6 ] && param_parallel_jobs=6', improve)
+        self.assertIn('--block-main-loop', improve)
+        self.assertNotIn('--no-block-main-loop', improve)
+        self.assertIn('--serve-base-port "${POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT:-18180}"', improve)
+        self.assertIn('--cdp-base-port "${POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT:-19320}"', improve)
+
+    def test_wildcard_parallel_candidate_title_does_not_mutate_main_game_html(self):
+        """候補 window title の変更は candidate copy に限定し、本線 OBS target の HTML は変えない。"""
+        import wildcard_parallel
+
+        main_index = REPO_ROOT / "sorengame" / "build" / "index.html"
+        before = main_index.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            (workdir / "sorengame").symlink_to(REPO_ROOT / "sorengame")
+
+            wildcard_parallel.set_candidate_html_window_title(workdir, 2)
+
+            after = main_index.read_text(encoding="utf-8")
+            candidate = (workdir / "sorengame" / "build" / "index.html").read_text(encoding="utf-8")
+            self.assertEqual(after, before)
+            self.assertIn("<title>Wildcard Parallel Slot 3</title>", candidate)
+            self.assertIn('productName: "Wildcard Parallel Slot 3"', candidate)
+
     def test_wildcard_parallel_cleans_candidate_chrome_windows(self):
         """WILDCARD 候補 Chrome は profile/port 指定で残骸 cleanup する。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
@@ -1553,11 +1584,13 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"SOREN_LAUNCHSERVICES_HOME": str(Path.home())', parallel)
         self.assertIn("def cleanup_chrome_profile_processes", parallel)
         self.assertIn("def cleanup_wildcard_chrome_processes", parallel)
+        self.assertIn("def cleanup_ports_from_status", parallel)
         self.assertIn("def cleanup_wildcard_session_dirs", parallel)
         self.assertIn('parser.add_argument("--cleanup-stale", action="store_true")', parallel)
         self.assertIn('parser.add_argument("--cleanup-sessions", action="store_true")', parallel)
         self.assertIn('WILDCARD_PARALLEL_KEEP_RECENT_RUNS"), 3', parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_root=args.session_root)", parallel)
+        self.assertIn("cleanup_wildcard_server_ports(cleanup_ports_from_status(args.status_file, args.serve_base_port, args.jobs))", parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_dir=session_dir)", parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)", parallel)
         self.assertIn("cleanup_wildcard_session_dirs(", parallel)
@@ -1567,6 +1600,48 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"ps", "-Ao", "pid=,command="', parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)\n            bridge = None", parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
+
+    def test_wildcard_parallel_status_records_ports_for_cleanup(self):
+        import argparse
+        import wildcard_parallel
+
+        args = argparse.Namespace(
+            jobs=4,
+            games=6,
+            min_successful_games=6,
+            cull_after_games=1,
+            cull_leader_min_games=2,
+            cull_comp_ratio=0.9,
+            lingering_slot_max_culls=0,
+            evaluate_mode="real",
+            random_count=True,
+            serve_base_port=18180,
+            cdp_base_port=19320,
+            deadline_fast_drop_mutate=True,
+            deadline_fast_drop_values=[True, False],
+            baseline_slot1=True,
+            block_main_loop=True,
+        )
+
+        params = wildcard_parallel.wildcard_parallel_params(args)
+        self.assertEqual(params["serve_base_port"], 18180)
+        self.assertEqual(params["cdp_base_port"], 19320)
+        with tempfile.TemporaryDirectory() as td:
+            status = Path(td) / "status.json"
+            status.write_text(
+                json.dumps(
+                    {
+                        "params": {"jobs": 2, "serve_base_port": 18180},
+                        "candidates": [{"serve_port": 18182}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ports = wildcard_parallel.cleanup_ports_from_status(status, 18080, 3)
+            self.assertIn(18080, ports)
+            self.assertIn(18180, ports)
+            self.assertIn(18181, ports)
+            self.assertIn(18182, ports)
 
     def test_wildcard_parallel_prunes_old_session_dirs_without_active(self):
         import wildcard_parallel

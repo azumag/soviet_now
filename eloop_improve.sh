@@ -274,7 +274,7 @@ _post_improve_param_parallel_trial() {
 
 	local param_parallel_jobs="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"
 	case "$param_parallel_jobs" in ''|*[!0-9]*) param_parallel_jobs=6 ;; esac
-	[ "$param_parallel_jobs" -lt 6 ] && param_parallel_jobs=6
+	[ "$param_parallel_jobs" -lt 3 ] && param_parallel_jobs=3
 	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${param_parallel_jobs} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
 	_improve_progress "wildcard_parallel" "86" "post_improve_param_parallel"
 	_wildcard_parallel_obs_show || true
@@ -323,7 +323,7 @@ _post_improve_param_parallel_trial() {
 		--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
 		--baseline-slot1 \
-		--no-block-main-loop \
+		--block-main-loop \
 		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \

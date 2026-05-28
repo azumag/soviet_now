@@ -123,6 +123,8 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
         "lingering_slot_max_culls": _int(getattr(args, "lingering_slot_max_culls", 0), 0),
         "evaluate_mode": str(getattr(args, "evaluate_mode", "") or ""),
         "random_count": bool(getattr(args, "random_count", False)),
+        "serve_base_port": _int(getattr(args, "serve_base_port", 0), 0),
+        "cdp_base_port": _int(getattr(args, "cdp_base_port", 0), 0),
         "deadline_fast_drop_mutate": bool(getattr(args, "deadline_fast_drop_mutate", True)),
         "deadline_fast_drop_values": [
             _bool_literal(v) for v in (getattr(args, "deadline_fast_drop_values", None) or [True, False])
@@ -1543,6 +1545,27 @@ def cleanup_wildcard_server_ports(ports: list[int]) -> None:
                 time.sleep(0.5)
 
 
+def cleanup_ports_from_status(status_file: Path, fallback_base_port: int, fallback_jobs: int) -> list[int]:
+    ports = [fallback_base_port + index for index in range(max(3, fallback_jobs))]
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+    except Exception:
+        return ports
+    params = data.get("params")
+    if isinstance(params, dict):
+        jobs = _int(params.get("jobs"), 0)
+        base = _int(params.get("serve_base_port"), 0)
+        if jobs > 0 and base > 0:
+            ports.extend(base + index for index in range(jobs))
+    for candidate in data.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        port = _int(candidate.get("serve_port"), 0)
+        if port > 0:
+            ports.append(port)
+    return sorted({port for port in ports if port > 0})
+
+
 def capture_candidate_preview(cdp_port: int, out_path: Path, cwd: Path) -> None:
     out_path = out_path.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2158,7 +2181,7 @@ def main() -> int:
 
     if args.cleanup_stale:
         cleanup_wildcard_chrome_processes(session_root=args.session_root)
-        cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(max(3, args.jobs))])
+        cleanup_wildcard_server_ports(cleanup_ports_from_status(args.status_file, args.serve_base_port, args.jobs))
         if args.cleanup_sessions:
             cleanup_wildcard_session_dirs(
                 args.session_root,

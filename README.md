@@ -169,11 +169,11 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 - `wildcard` 並列評価の OBS overlay は、候補なし・winner欠落・validation失敗・SIGTERM でも trap で status/dashboard 表示へ復元する。`show_status.sh` の `WildParFail` は直近1時間の失敗診断であり、`improve_state.json` が idle なら脱出ロックが詰まっている状態ではない。
 - `workers/radio_worker.sh` は標準出力を自前で `tee >(...)` しない。`start_all.sh` が `logs/radio_worker.log` へ保存する前提にし、macOS/Codex sandbox の `/dev/fd` 制限で duplicate 起動時に `Operation not permitted` を出さない。
 - `wildcard` 並列評価は既定で 6 候補を隔離実行し、各候補は既定 6 ゲームで評価する。OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
-- 通常改善後の `post_improve_param_parallel` は `POST_IMPROVE_PARAM_PARALLEL_JOBS` で候補数を個別に調整する。WILDCARD 脱出本線の `WILDCARD_PARALLEL_JOBS` と分け、slot1 baseline を含む追加パラメータ試行だけを増減できるようにする。
+- 通常改善後の `post_improve_param_parallel` は `POST_IMPROVE_PARAM_PARALLEL_JOBS` で候補数を個別に調整する。WILDCARD 脱出本線の `WILDCARD_PARALLEL_JOBS` と分け、slot1 baseline を含む追加パラメータ試行だけを増減できるようにする。改善中は本線 game loop を止め、winner の即時適用で評価中 hash がずれないようにする。
 - `wildcard` 並列評価のカリングは既定で1ゲームごとに有効で、現 leader composite の 90% 未満に落ちた候補を補充する。ただし比較先 leader は既定で2ゲーム以上走った候補に限り、1ゲームだけの上振れで他候補を早期に落としすぎない。`WILDCARD_PARALLEL_CULL_AFTER_GAMES=0` にした時だけカリングを無効化して全候補を指定ゲーム数まで走らせる。
 - `wildcard` 並列評価の slot ごとの補充回数上限は既定で無効 (`WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS=0`)。壊れる戦略が続いても、各 slot は完走候補が出るまで探索を粘る。
 - `wildcard_parallel.py` はセッション開始時と各候補ゲームの起動直前に WILDCARD 専用 game server port (`WILDCARD_PARALLEL_SERVE_BASE_PORT` から候補数分) の古い listener を掃除する。前回の隔離ブラウザが残っても `EADDRINUSE` で候補全体が 0 game 失敗にならないようにするため。
-- `wildcard_parallel.py --cleanup-stale` は古い候補ウィンドウ/port の掃除だけでなく、WILDCARD overlay を `restored` へ更新して候補カードを消す。実体のない古い candidate 表示を停滞監視が進行中と誤読しないようにするため。
+- `wildcard_parallel.py --cleanup-stale` は古い候補ウィンドウ/port の掃除だけでなく、WILDCARD overlay を `restored` へ更新して候補カードを消す。status に残った `serve_base_port` / candidate `serve_port` も掃除対象に入れ、post-improve 用の 18180+ port が残っても次回の候補起動を妨げないようにする。
 - `wildcard_parallel.py --cleanup-sessions` は実行中 status の `session_dir` と直近 `WILDCARD_PARALLEL_KEEP_RECENT_RUNS` 件を残して古い run directory だけを掃除する。既定は3件保持で、停滞監視に必要な直近の候補履歴を消さずに、完了/失敗後の隔離ブラウザ残骸だけを減らす。
 - `wildcardParallelOverlay` は 1920x900 の進捗・状況表示で、候補6本を3列x2行に並べる。候補 Chrome には `Wildcard Parallel Slot N` の window title を付け、`obs_window_capture_source.sh` が該当 window を source に再バインドする。
 - `wildcardParallelOverlay` は環境変数 `WILDCARD_PARALLEL_OVERLAY_TITLE` で見出しを切り替え、候補別 game 数と status counts を進捗バーで表示する。WILDCARD 脱出と post-improve 追加試行を同じ overlay で見ても、どちらの評価かを取り違えないための表示である。
@@ -228,6 +228,8 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES` | `2` | カリング比較先 leader として扱う最小ゲーム数 |
 | `WILDCARD_PARALLEL_CULL_COMP_RATIO` | `0.90` | leader composite に対してこの比率未満の候補を補充する閾値 |
 | `WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` | `0` | slot ごとの補充回数上限。0 なら無制限 |
+| `POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT` | `18180` | post-improve 追加試行の候補 game server port 起点 |
+| `POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT` | `19320` | post-improve 追加試行の候補 Chrome CDP port 起点 |
 | `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定で目的進捗を score 近傍候補の優先度に使う。現行ではソ連到達のみを保護対象にし、ロシア到達だけでは score-only anchor を押しのけない |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
