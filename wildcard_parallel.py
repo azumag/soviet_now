@@ -31,6 +31,10 @@ from threading import Lock
 
 REPO_ROOT = Path(__file__).resolve().parent
 _ACTIVE_SESSION_DIR: Path | None = None
+_ACTIVE_RESULT_FILE: Path | None = None
+_ACTIVE_STATUS_FILE: Path | None = None
+_ACTIVE_HTML_FILE: Path | None = None
+_ACTIVE_ARGS: argparse.Namespace | None = None
 
 
 def _int(value: object, default: int) -> int:
@@ -338,6 +342,100 @@ class CandidateResult:
             "baseline": self.baseline,
             "score_baseline": self.score_baseline,
         }
+
+
+def candidate_from_public(data: dict) -> CandidateResult:
+    candidate = CandidateResult(
+        job_id=str(data.get("job_id") or ""),
+        index=_int(data.get("index"), 0),
+        workdir=Path(str(data.get("workdir") or REPO_ROOT)),
+        strategy_path=Path(str(data.get("strategy_path") or REPO_ROOT / "strategy.py")),
+        status=str(data.get("status") or "pending"),
+        hash=str(data.get("hash") or ""),
+        seed=_int(data.get("seed"), 0),
+        generation=_int(data.get("generation"), 0),
+        applied=list(data.get("applied") or []),
+        scores=[_int(v, 0) for v in (data.get("scores") or [])],
+        raw_scores=[_int(v, 0) for v in (data.get("raw_scores") or [])],
+        eval_scores=[_int(v, 0) for v in (data.get("eval_scores") or [])],
+        game_results=list(data.get("game_results") or []),
+        comp=_float(data.get("comp"), 0.0),
+        p25=_float(data.get("p25"), 0.0),
+        p50=_float(data.get("p50"), 0.0),
+        max_type=_int(data.get("max_type"), 0),
+        russia_count=_int(data.get("russia_count"), 0),
+        soviet_count=_int(data.get("soviet_count"), 0),
+        error=str(data.get("error") or ""),
+        cull_leader_job_id=str(data.get("cull_leader_job_id") or ""),
+        cull_leader_games=_int(data.get("cull_leader_games"), 0),
+        cull_leader_comp=_float(data.get("cull_leader_comp"), 0.0),
+        cull_threshold=_float(data.get("cull_threshold"), 0.0),
+        cdp_port=_int(data.get("cdp_port"), 0),
+        serve_port=_int(data.get("serve_port"), 0),
+        profile_dir=str(data.get("profile_dir") or ""),
+        baseline=bool(data.get("baseline")),
+        score_baseline=bool(data.get("score_baseline")),
+    )
+    return candidate
+
+
+def build_parallel_result(
+    args: argparse.Namespace,
+    session_dir: Path,
+    candidates: list[CandidateResult],
+    interrupted: bool = False,
+    signum: int | None = None,
+) -> tuple[dict, dict, int]:
+    winner = choose_winner(candidates, args.min_successful_games)
+    if winner:
+        winner.status = "won"
+    reason = "winner_selected" if winner else no_winner_reason(candidates)
+    payload = {
+        "phase": "won" if winner else reason,
+        "session_dir": str(session_dir),
+        "params": wildcard_parallel_params(args),
+        "winner": winner.public() if winner else None,
+        "candidates": [c.public() for c in candidates],
+    }
+    result = {
+        "ok": winner is not None,
+        "reason": reason,
+        "session_dir": str(session_dir),
+        "params": wildcard_parallel_params(args),
+        "winner": winner.public() if winner else None,
+        "candidates": [c.public() for c in candidates],
+    }
+    if interrupted:
+        result["interrupted"] = True
+        payload["interrupted"] = True
+        if signum is not None:
+            result["signal"] = signum
+            payload["signal"] = signum
+    return result, payload, 0 if winner else 2
+
+
+def write_interrupted_result_from_status(
+    args: argparse.Namespace,
+    status_file: Path,
+    html_file: Path,
+    result_file: Path,
+    session_dir: Path,
+    signum: int,
+) -> bool:
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    candidates = [candidate_from_public(item) for item in (data.get("candidates") or []) if isinstance(item, dict)]
+    if not candidates:
+        return False
+    result, payload, _ = build_parallel_result(args, session_dir, candidates, interrupted=True, signum=signum)
+    atomic_json(result_file, result)
+    try:
+        render_overlay(status_file, html_file, payload)
+    except Exception:
+        pass
+    return True
 
 
 def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
@@ -2150,7 +2248,7 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
 
 
 def main() -> int:
-    global _ACTIVE_SESSION_DIR
+    global _ACTIVE_ARGS, _ACTIVE_HTML_FILE, _ACTIVE_RESULT_FILE, _ACTIVE_SESSION_DIR, _ACTIVE_STATUS_FILE
     parser = argparse.ArgumentParser()
     parser.add_argument("--cleanup-stale", action="store_true")
     parser.add_argument("--cleanup-sessions", action="store_true")
@@ -2256,6 +2354,10 @@ def main() -> int:
     _ACTIVE_SESSION_DIR = session_dir
     session_dir.mkdir(parents=True, exist_ok=True)
     result_file = args.result_file or (session_dir / "result.json")
+    _ACTIVE_ARGS = args
+    _ACTIVE_RESULT_FILE = result_file
+    _ACTIVE_STATUS_FILE = args.status_file
+    _ACTIVE_HTML_FILE = args.html_file
 
     params = wildcard_parallel_params(args)
     payload = {
@@ -2325,36 +2427,31 @@ def main() -> int:
                     evaluated.append(future.result())
                     coordinator.snapshot()
             all_candidates = list(coordinator.candidates)
-        winner = choose_winner(all_candidates, args.min_successful_games)
-        if winner:
-            winner.status = "won"
-        reason = "winner_selected" if winner else no_winner_reason(all_candidates)
-        payload = {
-            "phase": "won" if winner else reason,
-            "session_dir": str(session_dir),
-            "params": params,
-            "winner": winner.public() if winner else None,
-            "candidates": [c.public() for c in all_candidates],
-        }
+        result, payload, exit_code = build_parallel_result(args, session_dir, all_candidates)
         render_overlay(args.status_file, args.html_file, payload)
-        result = {
-            "ok": winner is not None,
-            "reason": reason,
-            "session_dir": str(session_dir),
-            "params": params,
-            "winner": winner.public() if winner else None,
-            "candidates": [c.public() for c in all_candidates],
-        }
         atomic_json(result_file, result)
         print(json.dumps(result, ensure_ascii=False))
-        return 0 if winner else 2
+        return exit_code
     finally:
         cleanup_wildcard_chrome_processes(session_dir=session_dir)
+        _ACTIVE_ARGS = None
+        _ACTIVE_RESULT_FILE = None
+        _ACTIVE_STATUS_FILE = None
+        _ACTIVE_HTML_FILE = None
         _ACTIVE_SESSION_DIR = None
 
 
 if __name__ == "__main__":
     def _handle_signal(signum: int, _frame: object) -> None:
+        if _ACTIVE_ARGS and _ACTIVE_STATUS_FILE and _ACTIVE_HTML_FILE and _ACTIVE_RESULT_FILE and _ACTIVE_SESSION_DIR:
+            write_interrupted_result_from_status(
+                _ACTIVE_ARGS,
+                _ACTIVE_STATUS_FILE,
+                _ACTIVE_HTML_FILE,
+                _ACTIVE_RESULT_FILE,
+                _ACTIVE_SESSION_DIR,
+                signum,
+            )
         cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)
         raise SystemExit(128 + signum)
 

@@ -1758,6 +1758,100 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertEqual(result["reason"], "no_candidate")
             self.assertEqual(strategy.read_text(encoding="utf-8"), original)
 
+    def test_wildcard_parallel_signal_persists_best_effort_winner(self):
+        """長時間探索がSIGTERMされても完走済み候補から result を残す。"""
+        import argparse
+        import signal
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            status_file = td_path / "status.json"
+            html_file = td_path / "wildcard.html"
+            result_file = td_path / "result.json"
+            args = argparse.Namespace(
+                jobs=3,
+                games=6,
+                min_successful_games=6,
+                cull_after_games=1,
+                cull_leader_min_games=2,
+                cull_comp_ratio=0.90,
+                lingering_slot_max_culls=0,
+                evaluate_mode="real",
+                random_count=True,
+                serve_base_port=18180,
+                cdp_base_port=19320,
+                deadline_fast_drop_mutate=True,
+                deadline_fast_drop_values=[True, False],
+                baseline_slot1=True,
+                block_main_loop=True,
+            )
+            wildcard_parallel.render_overlay(
+                status_file,
+                html_file,
+                {
+                    "phase": "running",
+                    "session_dir": str(td_path / "session"),
+                    "params": wildcard_parallel.wildcard_parallel_params(args),
+                    "candidates": [
+                        {
+                            "job_id": "cand-1",
+                            "index": 0,
+                            "workdir": str(td_path / "slot-1"),
+                            "strategy_path": str(td_path / "slot-1" / "strategy.py"),
+                            "status": "accepted",
+                            "scores": [100, 100, 100, 100, 100, 100],
+                            "comp": 100,
+                            "p25": 100,
+                            "p50": 100,
+                            "baseline": True,
+                            "serve_port": 18180,
+                            "cdp_port": 19320,
+                        },
+                        {
+                            "job_id": "cand-2-r15",
+                            "index": 1,
+                            "workdir": str(td_path / "slot-2"),
+                            "strategy_path": str(td_path / "slot-2" / "strategy.py"),
+                            "status": "accepted",
+                            "scores": [120, 120, 120, 120, 120, 120],
+                            "comp": 120,
+                            "p25": 120,
+                            "p50": 120,
+                            "serve_port": 18181,
+                            "cdp_port": 19321,
+                        },
+                        {
+                            "job_id": "cand-3-r156",
+                            "index": 2,
+                            "workdir": str(td_path / "slot-3"),
+                            "strategy_path": str(td_path / "slot-3" / "strategy.py"),
+                            "status": "running",
+                            "scores": [],
+                            "comp": 0,
+                            "serve_port": 18182,
+                            "cdp_port": 19322,
+                        },
+                    ],
+                },
+            )
+
+            wrote = wildcard_parallel.write_interrupted_result_from_status(
+                args,
+                status_file,
+                html_file,
+                result_file,
+                td_path / "session",
+                signal.SIGTERM,
+            )
+
+            self.assertTrue(wrote)
+            result = json.loads(result_file.read_text(encoding="utf-8"))
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["interrupted"])
+            self.assertEqual(result["reason"], "winner_selected")
+            self.assertEqual(result["winner"]["job_id"], "cand-2-r15")
+
     def test_wildcard_parallel_classifies_zero_game_bridge_failures_as_infra_failed(self):
         """全候補が bridge 起動前に落ちた場合は候補負けと区別する。"""
         import wildcard_parallel
@@ -2804,7 +2898,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 
         self.assertIn("_comment_category_allows_advice_append()", script)
-        self.assertIn("card_gacha | chitchat | short_reaction", script)
+        self.assertIn("card_gacha | chitchat | bits", script)
+        self.assertNotIn("card_gacha | chitchat | short_reaction", script)
         self.assertIn("stream_bug_report", script)
         self.assertIn("非助言カテゴリのためアドバイス保存を抑制", script)
         self.assertIn("非助言カテゴリの生成アドバイスを破棄", script)

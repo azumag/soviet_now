@@ -11,9 +11,8 @@ Classify each comment into ONE of these categories:
 - general_question: questions about non-game topics (people, facts, etc.)
 - strategy_advice: comments offering game strategy advice. This includes question-shaped suggestions such as "右に置いた方がよくない？", "nextを見て置くべきでは？", or any advice about board, placement, merging, chain, score, deadline, pieces, hold/next, Russia/Soviet creation strategy.
 - comment_advice: comments offering advice on reply style
-- stream_bug_report: bug reports about the live stream system itself: OBS/eventOverlay, audio/BGM/TTS/game sound, comment fetching/replies, chat workers, dashboard/status displays, monitoring/watchdogs, classifiers, Codex operation, feedback collection, or stream UI counters such as Record showing 0. Question-shaped or blunt short reports like "無音になってる？", "BGM聞こえない？", or "動いてねえんだわ" are still stream_bug_report, not general_question or short_reaction. Examples: "音楽がない", "ゲーム音なし", "すぐゲーム音でなくなるね", "無音になってる？", "動いてねえんだわ", "画面が不調", "Recordも0でいつもと違う". Do NOT use this for gameplay strategy, board placement, scoring, or ordinary game state comments.
-- short_reaction: short reactions like "へえ", "なるほど", "それな"
-- chitchat: casual conversation not fitting other categories
+- stream_bug_report: bug reports about the live stream system itself: OBS/eventOverlay, audio/BGM/TTS/game sound, comment fetching/replies, chat workers, dashboard/status displays, monitoring/watchdogs, classifiers, Codex operation, feedback collection, or stream UI counters such as Record showing 0. Question-shaped or blunt short reports like "無音になってる？", "BGM聞こえない？", or "動いてねえんだわ" are still stream_bug_report, not general_question or chitchat. Examples: "音楽がない", "ゲーム音なし", "すぐゲーム音でなくなるね", "無音になってる？", "動いてねえんだわ", "画面が不調", "Recordも0でいつもと違う". Do NOT use this for gameplay strategy, board placement, scoring, or ordinary game state comments.
+- chitchat: casual conversation not fitting other categories, including short reactions like "へえ", "なるほど", "それな". Short reactions must still receive a substantive 3-5 sentence reply; do not create a separate short-reaction category.
 - other: anything else
 
 Output format (must be valid JSON array):

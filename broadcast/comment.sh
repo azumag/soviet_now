@@ -1362,6 +1362,24 @@ for item in data:
 '
 }
 
+_normalize_comment_classification_json() {
+	python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(data, list) or not data:
+    raise SystemExit(1)
+for item in data:
+    if isinstance(item, dict) and item.get("category") == "short_reaction":
+        item["category"] = "chitchat"
+print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+'
+}
+
 _classify_comments_heuristic() {
 	local comments_file="$1"
 	[ -f "$comments_file" ] || return 1
@@ -1421,8 +1439,6 @@ def classify(user: str, comment: str) -> str:
         return "game_status"
     if re.search(r"したほうが|すべき|狙|置|改善|閾値|ワーカー|返答|コメント", text):
         return "strategy_advice" if re.search(r"戦略|置|狙|スコア|閾値", text) else "comment_advice"
-    if len(text) <= 24 or re.fullmatch(r"(azumag\w+\s*)+", text):
-        return "short_reaction"
     return "chitchat"
 
 for idx, raw in enumerate(lines, 1):
@@ -1441,7 +1457,7 @@ PY
 _comment_category_allows_advice_append() {
 	local category="${1:-}"
 	case "$category" in
-	card_gacha | chitchat | short_reaction | bits | subscription | sing_request | raid | other | stream_bug_report)
+	card_gacha | chitchat | bits | subscription | sing_request | raid | other | stream_bug_report)
 		return 1
 		;;
 	*)
@@ -1591,6 +1607,7 @@ _classify_comments_with_edit_contract() {
 		raw_json=$(cat "$output_file" 2>/dev/null)
 		classification=$(printf '%s' "$raw_json" | _extract_comment_classification_json 2>/dev/null || true)
 		if [ -n "$classification" ] && printf '%s' "$classification" | _validate_comment_classification_json 2>/dev/null; then
+			classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
 			printf '%s\n%s' "$agent" "$classification"
 			return 0
 		fi
@@ -1616,6 +1633,7 @@ _classify_comments() {
 		classification=$(_classify_comments_heuristic "$comments_file" 2>/dev/null || true)
 		rm -f "$classifier_prompt_file"
 		if [ -n "$classification" ]; then
+			classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
 			log "[COMMENT] 分類器: model=heuristic mode=local" >&2
 			printf '%s' "$classification"
 			return 0
@@ -1638,6 +1656,7 @@ _classify_comments() {
 	if [ -n "$edit_result" ]; then
 		classifier_model_used=$(printf '%s' "$edit_result" | sed -n '1p')
 		classification=$(printf '%s' "$edit_result" | sed '1d')
+		classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
 		rm -f "$classifier_prompt_file" "$classifier_edit_file"
 		log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=edit" >&2
 		printf '%s' "$classification"
@@ -1666,6 +1685,7 @@ _classify_comments() {
 		log "[COMMENT] 分類器: JSON不正 -> ${classification:0:200}" >&2
 		return 1
 	fi
+	classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
 	log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=stdout_fallback" >&2
 	printf '%s' "$classification"
 	return 0
@@ -1712,7 +1732,7 @@ _build_category_prompt() {
 	local template_category="$category"
 	case "$category" in
 	game_question | game_status) template_category="game" ;;
-	strategy_advice | comment_advice | short_reaction | general_question) template_category="default" ;;
+	strategy_advice | comment_advice | general_question) template_category="default" ;;
 	subscription | bits | other) template_category="default" ;;
 	esac
 	local template_file="$ELOOP_LIB_DIR/prompts/comment_response_${template_category}.md"
