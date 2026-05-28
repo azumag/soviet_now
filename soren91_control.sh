@@ -429,6 +429,42 @@ _soren91_observable_fresh() {
 	return 1
 }
 
+_soren91_has_runtime_marker() {
+	[ -f "$SOREN91_PID_FILE" ] && return 0
+	[ -f "$SOREN91_MAIN_PID_FILE" ] && return 0
+	[ -d "$SOREN91_DIR/tmp/.runner.lock" ] && return 0
+	command -v tmux >/dev/null 2>&1 && tmux has-session -t soren91_runner 2>/dev/null && return 0
+	return 1
+}
+
+_soren91_recovered_player_stale() {
+	local pid=""
+	pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
+	[ -n "$pid" ] || return 1
+	_soren91_observable_fresh && return 1
+	_soren91_has_runtime_marker && return 1
+	printf '%s' "$pid"
+	return 0
+}
+
+_soren91_force_stop_recovered_player() {
+	local stale_pid="${1:-}" pid="" player_pids=""
+	player_pids="$stale_pid"
+	player_pids="$player_pids $(_soren91_scan_alive_main_pids 2>/dev/null | tr '\n' ' ')"
+	player_pids="$player_pids $(_soren91_scan_log_writer_pids 2>/dev/null | tr '\n' ' ')"
+	player_pids="$player_pids $(_soren91_scan_alive_runner_pids 2>/dev/null | tr '\n' ' ')"
+	for pid in $player_pids; do
+		case "$pid" in
+		''|*[!0-9]*) continue ;;
+		esac
+		_soren91_pid_is_alive "$pid" || continue
+		log "[SOREN91] Force stopping stale recovered player PID=$pid"
+		_stop_loop_descendants "$pid"
+		_stop_pid_with_fallback "$pid" "soren91_stale_recovered"
+	done
+	_soren91_kill_runner_session
+}
+
 _write_manual_meriken_mode_state() {
 	local enabled="$1" note="${2:-}"
 	mkdir -p "$(dirname "$MANUAL_MERIKEN_MODE_FILE")" 2>/dev/null || true
@@ -613,6 +649,9 @@ soren91_is_running() {
 	if [ -z "$pid" ]; then
 		_soren91_observable_fresh || return 1
 		return 0
+	fi
+	if ! _soren91_observable_fresh && ! _soren91_has_runtime_marker; then
+		return 1
 	fi
 	# pid file は soren91 起動用の bash subshell を指すことがあり、
 	# 実行環境によっては ps でそのコマンドラインを安定取得できない。
@@ -940,6 +979,13 @@ _soren91_rewrite_strategy_explanation_to_japanese() {
 
 soren91_start() {
 	_soren91_enabled || return 0
+	local stale_pid=""
+	stale_pid=$(_soren91_recovered_player_stale 2>/dev/null || true)
+	if [ -n "$stale_pid" ]; then
+		log "[SOREN91] stale recovered player detected (PID=$stale_pid, no runtime marker/fresh log) → cleanup before start"
+		soren91_cleanup || true
+		_soren91_force_stop_recovered_player "$stale_pid"
+	fi
 	if soren91_is_running; then
 		log "[SOREN91] Already running, skip start"
 		return 0

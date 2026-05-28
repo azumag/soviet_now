@@ -3218,9 +3218,18 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn('s/^pid=//p', control)
         self.assertIn('$SOREN91_DIR/tmp/.runner.lock/owner', control)
         self.assertIn("_soren91_observable_fresh()", control)
+        self.assertIn("_soren91_has_runtime_marker()", control)
+        self.assertIn("_soren91_recovered_player_stale()", control)
+        self.assertIn("_soren91_force_stop_recovered_player()", control)
         self.assertIn('SOREN91_OBSERVABLE_FRESH_SEC:-120', control)
         self.assertIn('$SOREN91_DIR/tmp/in_game', control)
         self.assertIn('_soren91_observable_fresh || return 1', control)
+        self.assertIn('if ! _soren91_observable_fresh && ! _soren91_has_runtime_marker; then', control)
+        self.assertIn('stale recovered player detected', control)
+        self.assertIn('soren91_cleanup || true', control)
+        self.assertIn('_soren91_force_stop_recovered_player "$stale_pid"', control)
+        self.assertIn("Force stopping stale recovered player PID=$pid", control)
+        self.assertIn('"soren91_stale_recovered"', control)
 
     def test_soren91_stop_recovers_orphan_main_process_without_pid_files(self):
         control = (REPO_ROOT / "soren91_control.sh").read_text()
