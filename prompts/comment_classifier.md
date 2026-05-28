@@ -11,7 +11,7 @@ Classify each comment into ONE of these categories:
 - general_question: questions about non-game topics (people, facts, etc.)
 - strategy_advice: comments offering game strategy advice. This includes question-shaped suggestions such as "右に置いた方がよくない？", "nextを見て置くべきでは？", or any advice about board, placement, merging, chain, score, deadline, pieces, hold/next, Russia/Soviet creation strategy.
 - comment_advice: comments offering advice on reply style
-- stream_bug_report: bug reports about the live stream system itself: OBS/eventOverlay, audio/BGM/TTS/game sound, comment fetching/replies, chat workers, dashboard/status displays, monitoring/watchdogs, classifiers, Codex operation, feedback collection, or stream UI counters such as Record showing 0. Question-shaped reports like "無音になってる？" or "BGM聞こえない？" are still stream_bug_report, not general_question. Examples: "音楽がない", "ゲーム音なし", "無音になってる？", "画面が不調", "Recordも0でいつもと違う". Do NOT use this for gameplay strategy, board placement, scoring, or ordinary game state comments.
+- stream_bug_report: bug reports about the live stream system itself: OBS/eventOverlay, audio/BGM/TTS/game sound, comment fetching/replies, chat workers, dashboard/status displays, monitoring/watchdogs, classifiers, Codex operation, feedback collection, or stream UI counters such as Record showing 0. Question-shaped reports like "無音になってる？" or "BGM聞こえない？" are still stream_bug_report, not general_question. Examples: "音楽がない", "ゲーム音なし", "すぐゲーム音でなくなるね", "無音になってる？", "画面が不調", "Recordも0でいつもと違う". Do NOT use this for gameplay strategy, board placement, scoring, or ordinary game state comments.
 - short_reaction: short reactions like "へえ", "なるほど", "それな"
 - chitchat: casual conversation not fitting other categories
 - other: anything else
