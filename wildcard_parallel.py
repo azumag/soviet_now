@@ -341,6 +341,9 @@ class CandidateResult:
 
 
 def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
+    now_epoch = int(time.time())
+    payload.setdefault("started_at", now_epoch)
+    payload["updated_at"] = now_epoch
     candidates = payload.get("candidates") or []
     display_candidates = overlay_visible_candidates(candidates)
     generated = time.strftime("%H:%M:%S")
@@ -1872,12 +1875,35 @@ def evaluate_real(
                 stdout = ""
                 stderr = ""
                 next_preview_at = 0.0
+                game_deadline = time.time() + max(1, args.game_timeout)
                 while proc.poll() is None:
                     now = time.time()
+                    if now >= game_deadline:
+                        try:
+                            proc.terminate()
+                            stdout, stderr = proc.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                            stdout, stderr = proc.communicate(timeout=5)
+                        candidate.status = "timeout"
+                        candidate.error = f"strategy_runner timeout after {args.game_timeout}s"
+                        candidate.game_results.append(
+                            {
+                                "error": candidate.error,
+                                "game_index": game_index,
+                                "stderr": (stderr or "")[-500:],
+                            }
+                        )
+                        break
                     if now >= next_preview_at:
                         capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                         next_preview_at = now + 2.0
                     time.sleep(0.25)
+                if candidate.status == "timeout":
+                    break
                 stdout, stderr = proc.communicate(timeout=5)
                 capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                 if proc.returncode != 0:
@@ -1992,6 +2018,7 @@ class CullCoordinator:
         self.session_dir = session_dir
         self.candidates = list(candidates)
         self.lock = Lock()
+        self.started_at = int(time.time())
 
     def _append_if_new(self, candidate: CandidateResult) -> None:
         for i, existing in enumerate(self.candidates):
@@ -2009,6 +2036,7 @@ class CullCoordinator:
                 "phase": phase,
                 "session_dir": str(self.session_dir),
                 "params": wildcard_parallel_params(self.args),
+                "started_at": self.started_at,
                 "candidates": [c.public() for c in self.candidates],
             },
         )
@@ -2152,6 +2180,7 @@ def main() -> int:
     parser.add_argument("--cdp-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CDP_BASE_PORT"), 19320))
     parser.add_argument("--serve-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_SERVE_BASE_PORT"), 18080))
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
+    parser.add_argument("--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 420))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))
     parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
@@ -2204,6 +2233,7 @@ def main() -> int:
 
     args.jobs = max(3, args.jobs)
     args.games = max(1, args.games)
+    args.game_timeout = max(30, args.game_timeout)
     if args.min_successful_games <= 0:
         args.min_successful_games = args.games
     args.cull_after_games = max(0, min(args.cull_after_games, args.games))

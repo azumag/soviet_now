@@ -382,7 +382,9 @@ _wildcard_parallel_active() {
 	[ -f "$status_file" ] || return 1
 	python3 - "$status_file" <<'PY' 2>/dev/null
 import json
+import os
 import sys
+import time
 
 try:
     data = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -395,6 +397,18 @@ if data.get("block_main_loop") is False:
 params = data.get("params")
 if isinstance(params, dict) and params.get("block_main_loop") is False:
     raise SystemExit(1)
+try:
+    max_sec = int(float(os.environ.get("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", "3600") or "3600"))
+except Exception:
+    max_sec = 3600
+try:
+    started_at = int(float(data.get("started_at", 0) or 0))
+except Exception:
+    started_at = 0
+if phase in {"generating", "running"} and max_sec > 0 and started_at > 0:
+    age = time.time() - started_at
+    if age > max_sec:
+        raise SystemExit(1)
 raise SystemExit(0 if phase in {"generating", "running"} else 1)
 PY
 }
