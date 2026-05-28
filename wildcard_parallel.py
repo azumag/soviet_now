@@ -52,6 +52,36 @@ def _stop_now() -> bool:
     return _DEADLINE_TS > 0 and time.time() >= _DEADLINE_TS
 
 
+_NODE_BIN_CACHE: str | None = None
+
+
+def resolve_node_bin() -> str:
+    """Resolve a usable `node` even when PATH lacks it.
+
+    The orchestrator is spawned from the improve subprocess, whose PATH may not have
+    nvm sourced. Calling bare "node" there raises FileNotFoundError that the callers
+    swallow, so the chrome window title was never set and OBS window capture could not
+    find the candidate window. Mirror obs_control.sh's fallback list so node-backed
+    helpers (window title, preview capture, bridge launch) work in any launch context.
+    """
+    global _NODE_BIN_CACHE
+    if _NODE_BIN_CACHE:
+        return _NODE_BIN_CACHE
+    found = shutil.which("node")
+    if not found:
+        for candidate in (
+            os.path.expanduser("~/.nvm/versions/node/v23.10.0/bin/node"),
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            "/Volumes/satelite/homebrew/homebrew/bin/node",
+        ):
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                found = candidate
+                break
+    _NODE_BIN_CACHE = found or "node"
+    return _NODE_BIN_CACHE
+
+
 def _int(value: object, default: int) -> int:
     try:
         return int(value)
@@ -158,7 +188,7 @@ def resolve_playwright_chrome_for_testing(playwright_browsers_path: str) -> str:
     try:
         proc = subprocess.run(
             [
-                "node",
+                resolve_node_bin(),
                 "-e",
                 "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())",
             ],
@@ -1480,7 +1510,7 @@ def launch_bridge(workdir: Path, env: dict, timeout: int) -> subprocess.Popen:
     stdout_f = open(stdout_path, "ab")
     stderr_f = open(stderr_path, "ab")
     proc = subprocess.Popen(
-        ["node", "soviet_local.mjs"],
+        [resolve_node_bin(), "soviet_local.mjs"],
         cwd=workdir,
         env=env,
         stdout=stdout_f,
@@ -1706,7 +1736,7 @@ const outPath = process.argv[2];
 """
     try:
         subprocess.run(
-            ["node", "-e", script, str(cdp_port), str(out_path)],
+            [resolve_node_bin(), "-e", script, str(cdp_port), str(out_path)],
             cwd=cwd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -1742,7 +1772,7 @@ const title = process.argv[2];
 """
     try:
         subprocess.run(
-            ["node", "-e", script, str(cdp_port), title],
+            [resolve_node_bin(), "-e", script, str(cdp_port), title],
             cwd=cwd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
