@@ -224,6 +224,12 @@ _br_relaunch() {
 		$(pgrep -f -- "$_BR_PROFILE" 2>/dev/null || true); do
 		[ -n "$p" ] && kill -9 "$p" 2>/dev/null || true
 	done
+	# tmux-hosted bridge can hide cwd/command attribution from _br_target_pids().
+	# Stop the session before the port-free wait; otherwise the old pane keeps
+	# 8080 bound and the relaunch path fails before it reaches the tmux reset below.
+	if command -v tmux >/dev/null 2>&1; then
+		tmux kill-session -t soren_bridge 2>/dev/null || true
+	fi
 	# SERVE/CDP 両ポート解放待ち最大15s
 	local w=0
 	while [ "$w" -lt 15 ]; do
@@ -266,7 +272,7 @@ _br_relaunch() {
 	fi
 	sleep 12
 	local m n; m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0); n=$(date +%s)
-	if [ -n "$(_br_target_pids)" ] && { [ -n "$(_br_port_pid)" ] || [ "$((n - m))" -lt 30 ]; } && ! _br_fatal_in_log; then
+	if { [ -n "$(_br_target_pids)" ] || [ -n "$(_br_port_pid)" ] || [ "$((n - m))" -lt 30 ]; } && ! _br_fatal_in_log; then
 		_br_log "復旧成功 (port=$([ -n "$(_br_port_pid)" ] && echo up || echo '?') game_state_age=$((n-m))s)"
 		return 0
 	fi

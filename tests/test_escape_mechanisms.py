@@ -3267,6 +3267,7 @@ class TestMainAudioRecovery(unittest.TestCase):
         self.assertIn('[ "$((n - m))" -lt "$_BR_STALE_SEC" ]', bridge)
         self.assertIn("稼働中として復旧成功扱い", bridge)
         self.assertIn('[ "$((live_n - live_m))" -lt 30 ]', bridge)
+        self.assertIn('[ -n "$(_br_port_pid)" ] || [ "$((n - m))" -lt 30 ]', bridge)
 
     def test_bridge_recovery_relaunches_repeated_audio_resume_failures(self):
         bridge = (REPO_ROOT / "lib" / "bridge_recovery.sh").read_text()
@@ -3281,6 +3282,15 @@ class TestMainAudioRecovery(unittest.TestCase):
         self.assertLess(
             bridge.index('elif [ -n "$audio_crash" ]'),
             bridge.index('[ "$((n - m))" -lt "$_BR_STALE_SEC" ]'),
+        )
+
+    def test_bridge_recovery_stops_tmux_before_port_wait(self):
+        bridge = (REPO_ROOT / "lib" / "bridge_recovery.sh").read_text()
+
+        self.assertIn("tmux-hosted bridge can hide cwd/command attribution", bridge)
+        self.assertLess(
+            bridge.index("tmux kill-session -t soren_bridge"),
+            bridge.index("# SERVE/CDP 両ポート解放待ち最大15s"),
         )
 
     def test_main_audio_resolves_sink_before_context_creation(self):
