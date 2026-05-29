@@ -764,6 +764,11 @@ async function runLocalController() {
       `--crash-dumps-dir=${path.join(USER_DATA_DIR, 'Crashpad')}`,
       '--no-first-run',
       '--no-default-browser-check',
+      // Chrome for Testing が出す「自動テスト専用です…標準版 Chrome を…」帯
+      // (infobar) を抑止。これが無いと配信/param tuning 窓の表示領域が削られる。
+      // 実測 (CfT v145): --disable-infobars で消える / --test-type は無効。
+      // no-focus `open -g` 経路はこの launchArgs だけを渡すため、ここに置く。
+      '--disable-infobars',
       '--password-store=basic',
       '--use-mock-keychain',
       // Chrome の翻訳バー(英語→日本語 このページを翻訳しますか)を配信画面に出さない。
