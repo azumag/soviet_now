@@ -1144,24 +1144,26 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("WILDCARD_PARALLEL_GAME_TIMEOUT", readme)
         self.assertIn("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", readme)
 
-    def test_wildcard_parallel_culling_defaults_to_each_game(self):
-        """デフォルトでは1ゲームごとに leader 比で cull/refill を判定する。"""
+    def test_wildcard_parallel_culling_defaults_to_full_game_search(self):
+        """デフォルト(cull_after_games=0)では early culling を行わず、全候補が
+        --games を完走してから勝者を選ぶ。1試合の分散で有望候補を早期脱落させ
+        「finishedが1つ」になる探索浅化を防ぐ (機構は env で再有効化可能)。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
-        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', config)
+        self.assertIn('WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}"', config)
         self.assertIn('WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES="${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}"', config)
         self.assertIn('WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS="${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}"', config)
         self.assertIn('WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES="${WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES:-0}"', config)
         self.assertIn('WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', config)
         self.assertNotIn("WILDCARD_PARALLEL_MAX_REFILLS", config)
-        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"', eloop)
+        self.assertIn('--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}"', eloop)
         self.assertIn('--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}"', eloop)
         self.assertIn('--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"', eloop)
         self.assertIn('--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}"', eloop)
         self.assertNotIn("--max-refills", eloop)
-        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1)', parallel)
+        self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 0)', parallel)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES"), 2)', parallel)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 0)', parallel)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0)', parallel)
@@ -1173,6 +1175,35 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('job_id = f"cand-{index + 1}" if generation <= 0 else f"cand-{index + 1}-r{generation + 1}"', parallel)
         self.assertIn("candidate = run_perturb(args, index, session_dir, generation)", parallel)
         self.assertIn("with ThreadPoolExecutor(max_workers=args.jobs) as pool", parallel)
+
+    def test_wildcard_parallel_no_cull_when_disabled(self):
+        """cull_after_games=0 (新デフォルト) では候補が leader を大きく下回っても
+        cull せず、全候補が --games を完走できる (探索浅化の防止)。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            args = argparse.Namespace(
+                cull_after_games=0, cull_leader_min_games=2, cull_comp_ratio=0.90,
+                jobs=2, games=6, min_successful_games=6, lingering_slot_max_culls=0,
+            )
+            leader = wildcard_parallel.CandidateResult(
+                job_id="leader", index=0, workdir=td_path / "leader",
+                strategy_path=td_path / "leader" / "strategy.py",
+                status="running", scores=[100, 100, 100, 100, 100], comp=100,
+            )
+            candidate = wildcard_parallel.CandidateResult(
+                job_id="candidate", index=1, workdir=td_path / "candidate",
+                strategy_path=td_path / "candidate" / "strategy.py",
+                status="running", scores=[10], comp=10,  # far below leader
+            )
+            coordinator = wildcard_parallel.CullCoordinator(
+                args, td_path / "status.json", td_path / "overlay.html",
+                td_path / "session", [leader],
+            )
+            self.assertFalse(coordinator.should_cull(candidate))
+            self.assertFalse(candidate.error)
 
     def test_wildcard_parallel_cull_rechecks_after_minimum_games(self):
         """cull-after-games 以降は閾値ぴったりの1回だけでなく各ゲーム後に再判定する。"""

@@ -1850,14 +1850,14 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     window_pattern = _regex_escape(title)
     cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
     # tile size (occupies only the reserved preview box in each card) ...
-    w = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W"), 590)
-    h = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H"), 188)
+    w = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W"), 592)
+    h = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H"), 190)
     # ... and grid stride is SEPARATE from tile size: cell spacing matches the
     # overlay card grid so the stats rendered below each tile stay uncovered.
-    col_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE"), 624)
-    row_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE"), 430)
-    x = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X"), 38) + (candidate.index % cols) * col_stride
-    y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 170) + (candidate.index // cols) * row_stride
+    col_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE"), 630)
+    row_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE"), 496)
+    x = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X"), 60) + (candidate.index % cols) * col_stride
+    y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 173) + (candidate.index // cols) * row_stride
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -2420,7 +2420,7 @@ def main() -> int:
     parser.add_argument("--max-runtime-sec", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MAX_RUNTIME_SEC"), 1500))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))
-    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 1))
+    parser.add_argument("--cull-after-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_AFTER_GAMES"), 0))
     parser.add_argument("--cull-leader-min-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES"), 2))
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
     parser.add_argument("--lingering-slot-max-culls", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 0))

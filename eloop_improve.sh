@@ -212,7 +212,7 @@ _wildcard_parallel_obs_show() {
 	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
 	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 	local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
-	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-900}"
+	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-1080}"
 	local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
 	[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 	[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
@@ -325,7 +325,7 @@ _post_improve_param_parallel_trial() {
 		--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
 		--serve-base-port "${POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT:-18180}" \
 		--cdp-base-port "${POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT:-19320}" \
-		--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
+		--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}" \
 		--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
 		--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
@@ -1113,7 +1113,7 @@ PY
 			local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
 			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 			local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
-			local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-900}"
+			local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-1080}"
 			local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
 			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
@@ -1243,7 +1243,7 @@ PY
 			--explore-rate "$wildcard_explore_rate" \
 			--seed "$wildcard_seed" \
 			--evaluate-mode "${WILDCARD_PARALLEL_EVALUATE_MODE:-real}" \
-			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}" \
+			--cull-after-games "${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-0}" \
 			--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
 			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 			--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
