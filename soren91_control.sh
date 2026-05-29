@@ -1089,6 +1089,16 @@ soren91_start() {
 	_soren91_sweep_orphan_runners
 	_soren91_clear_stale_runner_lock
 
+	# 中華AIのBGMミュートは soren91 起動の *前* に立てる。
+	# soren91 は起動直後に共有Chrome(SOREN_CDP_PORT=9322)へ
+	# window.open('about:blank') で自タブを開いてから unityroom へ遷移する。
+	# 旧コードは生存チェック(sleep 5)の *後* に mute を立てていたため、この startup
+	# 窓(~5s)は !isMuted のまま。soviet_local 側の stray-tab ガードが soren91 の
+	# 生成直後 about:blank を孤児と誤認して掃除/前面化で奪い合う恐れがあった。
+	# 先に mute を立てて soren91 アクティブ期間(起動含む)を丸ごと覆い、競合を無くす。
+	# 起動失敗時は下の各 return 経路で rm して中華AIの無音固着を防ぐ。
+	touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+
 	# 再試行付きランナーを完全 detach 起動。
 	# Playwright + 共有ChromeはTTYなしnohupで起動するとタイトル直後に消えることがあるため、
 	# tmux が使える環境では専用セッションでTTYを保持する。
@@ -1113,6 +1123,7 @@ soren91_start() {
 	case "$pid" in
 	''|*[!0-9]*)
 		log "[SOREN91] Failed to launch detached runner"
+		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 		return 1
 		;;
 	esac
@@ -1124,7 +1135,7 @@ soren91_start() {
 	live_pid_after_start=$(_soren91_read_alive_player_pid 2>/dev/null || true)
 	if _soren91_pid_is_alive "$pid" || [ -n "$live_pid_after_start" ]; then
 		log "[SOREN91] Started successfully (PID=$pid, live=${live_pid_after_start:-$pid}, start_game=$start_game)"
-		# 中華AI側のBGMをミュート（改善中は不要）
+		# 中華AI側のBGMミュートは起動前に立て済み。ここは冪等な再確認（消えていたら再set）。
 		touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 		log "[SOREN91] Muted local game BGM (flag file)"
 		log "[SOREN91] soren91 browser audio gain=${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}"
@@ -1194,6 +1205,7 @@ soren91_start() {
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
 		rm -f "$SOREN91_PID_FILE"
+		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 		return 1
 	fi
 	return 0

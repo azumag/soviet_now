@@ -43,6 +43,12 @@ const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
+// Stray-tab guard cadence. soren91 runs as a GUEST tab in this same Chrome
+// (SOREN91_SHARED_BROWSER) and can orphan an about:blank tab over the local
+// game, turning the OBS window-capture white. While the local game is active
+// (!isMuted) we reap such blanks and re-foreground the game tab.
+const STRAY_TAB_GUARD_INTERVAL_MS = 2000;
+const STRAY_BLANK_REAP_AFTER_MS = 4000;
 const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
 // Persisted BlackHole (CHROME_AUDIO_OUTPUT_LABEL) audiooutput deviceId. Chrome's
 // mediaDevices deviceId is stable per (origin, persistent profile), so caching the
@@ -1170,6 +1176,8 @@ async function runLocalController() {
   let lastAudioRouteHealAt = 0;
   let lastAudioWatchdogAt = 0;
   let lastUnityAudioRecoverAt = 0;
+  let lastStrayTabGuardAt = 0;
+  const strayBlankFirstSeen = new Map(); // Page -> ms first observed as about:blank
   while (true) {
     // Check mute flag file (independent of commands.txt to avoid race condition)
     const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
@@ -1296,6 +1304,54 @@ async function runLocalController() {
           after: recovered,
           lastRecoverAt: new Date(lastUnityAudioRecoverAt).toISOString(),
         });
+      }
+    }
+
+    // --- Stray-tab guard: keep the OBS-captured window showing the local game ---
+    // soren91 runs as a GUEST tab in this same Chrome (SOREN91_SHARED_BROWSER) and
+    // opens its tab via window.open('about:blank') → navigate. If soren91 is
+    // hard-killed (or dies before navigating) that blank tab is orphaned and sits
+    // foreground over the local game, so the OBS window-capture shows a white
+    // screen. While the local game is active (!isMuted = not the meriken/soren91
+    // turn — soren91 mutes for its whole session incl. startup) any about:blank /
+    // extra tab is stray: reap blanks (after a short grace so we never race a tab
+    // mid-navigation) and re-assert the local game as the visible (foreground) tab.
+    if (!shouldMute && !isMuted && Date.now() - lastStrayTabGuardAt > STRAY_TAB_GUARD_INTERVAL_MS) {
+      lastStrayTabGuardAt = Date.now();
+      try {
+        const allPages = context.pages();
+        if (allPages.length > 1) {
+          const now = Date.now();
+          const liveBlank = new Set();
+          for (const p of allPages) {
+            if (p === page) continue; // never touch the local game tab itself
+            let url = '';
+            try { url = p.url(); } catch {}
+            const isBlank = url === 'about:blank' || url === '' || url.startsWith('chrome://new');
+            if (!isBlank) { strayBlankFirstSeen.delete(p); continue; }
+            liveBlank.add(p);
+            if (!strayBlankFirstSeen.has(p)) strayBlankFirstSeen.set(p, now);
+            if (now - strayBlankFirstSeen.get(p) >= STRAY_BLANK_REAP_AFTER_MS) {
+              try {
+                await p.close({ runBeforeUnload: false });
+                strayBlankFirstSeen.delete(p);
+                console.log(`[TAB-GUARD] closed stray ${url || '(empty)'} tab over local game`);
+              } catch (e) { /* page may already be gone */ }
+            }
+          }
+          // Forget pages that are no longer blank / already closed.
+          for (const p of [...strayBlankFirstSeen.keys()]) {
+            if (!liveBlank.has(p)) strayBlankFirstSeen.delete(p);
+          }
+          // Re-assert the local game as the foreground tab so the window-capture
+          // shows the game, not whatever tab a guest left in front. Safe here: we
+          // only reach this when the local game owns the window (!isMuted).
+          try { await page.bringToFront(); } catch (e) { /* ignore */ }
+        } else {
+          strayBlankFirstSeen.clear();
+        }
+      } catch (e) {
+        console.warn(`[TAB-GUARD] sweep failed: ${(e && e.message) || e}`);
       }
     }
 
