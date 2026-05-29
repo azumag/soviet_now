@@ -7722,5 +7722,35 @@ class TestSoren91FastExitBackoff(unittest.TestCase):
         self.assertEqual(delays[7], 3)
 
 
+class TestPostImproveImportsRussiaOnAllPaths(unittest.TestCase):
+    """post-improve param並列は no-candidate / winner欠落 / validation失敗 でも候補ゲーム
+    統計(建国履歴含む)を import する。winner採用パスだけ import していた旧実装では、
+    時間切れで no-candidate 終了した run の候補が建国したロシアが
+    russia_creation_history.tsv に残らなかった (実測: 候補 cand-5-r5 が russia=1 だが
+    01:42:59 no-candidate 終了で記録漏れ)。"""
+
+    def test_import_called_on_all_exit_paths_before_cleanup(self):
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        self.assertIn("_post_improve_import_result_stats() {", eloop)
+        # 3 early-return paths import with "" (no winner) + the success path with $HASH_AFTER
+        self.assertEqual(eloop.count('_post_improve_import_result_stats "$result_file" ""'), 3)
+        self.assertIn('_post_improve_import_result_stats "$result_file" "$HASH_AFTER"', eloop)
+        # in the no-candidate path the import must precede cleanup (archives still present)
+        nc = eloop.split('[PARAM-PARALLEL] no candidate', 1)[1].split("return 0", 1)[0]
+        self.assertIn("_post_improve_import_result_stats", nc)
+        self.assertLess(
+            nc.index("_post_improve_import_result_stats"),
+            nc.index("_wildcard_parallel_cleanup_sessions"),
+            "import must run before cleanup wipes candidate game archives",
+        )
+        # the helper records via _import_wildcard_parallel_game_stats, which appends
+        # russia/soviet creation history when a candidate game founded a nation.
+        helper = eloop.split("_post_improve_import_result_stats() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("_import_wildcard_parallel_game_stats", helper)
+        self.assertIn("parallel_candidates", helper)
+        importer = eloop.split("_import_wildcard_parallel_game_stats() {", 1)[1]
+        self.assertIn('_append_celebration_history "russia"', importer)
+
+
 if __name__ == "__main__":
     unittest.main()

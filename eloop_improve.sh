@@ -308,6 +308,35 @@ except Exception:
 PY
 }
 
+# Build the compact result JSON from a param-parallel result file and import ALL
+# candidate game stats (scores, rolling, AND russia/soviet creation history).
+# Call on EVERY exit path of _post_improve_param_parallel_trial — including
+# no-candidate / timeout / winner-missing / validation-failed — so a Russia (or
+# Soviet) founded by ANY candidate is recorded to the global creation history even
+# when no winner is adopted. Previously only the winner-adopted path imported, so
+# Russias founded by candidates in no-candidate/timeout runs were silently lost.
+# Must run BEFORE _wildcard_parallel_cleanup_sessions (the import reads candidate
+# game archives for candidates without inline game_results).
+_post_improve_import_result_stats() {
+	local result_file="$1" hash_after="${2:-}"
+	[ -f "$result_file" ] || return 0
+	local compact
+	compact=$(python3 - "$result_file" <<'PY' 2>/dev/null || echo '{}'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = d.get("winner") or {}
+print(json.dumps({
+    "applied": w.get("applied") or [],
+    "parallel_job_id": w.get("job_id") or "",
+    "parallel_winner": w,
+    "parallel_candidates": d.get("candidates") or [],
+    "parallel_session_dir": d.get("session_dir") or "",
+}, ensure_ascii=False))
+PY
+)
+	_import_wildcard_parallel_game_stats "$compact" "$hash_after" || true
+}
+
 _post_improve_param_parallel_trial() {
 	[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}" = "1" ] || return 0
 	[ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ] || return 0
@@ -384,6 +413,7 @@ _post_improve_param_parallel_trial() {
 		--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
 		--baseline-slot1 \
+		--max-runtime-sec "${WILDCARD_PARALLEL_POST_PARAM_MAX_RUNTIME_SEC:-7200}" \
 		--block-main-loop \
 		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
@@ -420,6 +450,9 @@ PY
 )
 		if [ "$has_winner" != "1" ]; then
 			log "[PARAM-PARALLEL] no candidate rc=$rc: ${result:0:500}"
+			# Even with no winner, record candidate game stats (incl. any Russia/Soviet
+			# founded during this run) BEFORE cleanup wipes the candidate archives.
+			_post_improve_import_result_stats "$result_file" ""
 			_wildcard_parallel_cleanup_sessions
 			_wildcard_parallel_obs_restore || true
 			return 0
@@ -436,12 +469,14 @@ PY
 )
 	[ -n "$winner_path" ] && [ -f "$winner_path" ] || {
 		log "[PARAM-PARALLEL] winner strategy missing: ${winner_path:-empty}"
+		_post_improve_import_result_stats "$result_file" ""
 		_wildcard_parallel_cleanup_sessions
 		_wildcard_parallel_obs_restore || true
 		return 0
 	}
 	if ! validate_strategy_with_helpers "$winner_path" "strategy_helpers"; then
 		log "[PARAM-PARALLEL] winner validation failed → keep AI-improved baseline"
+		_post_improve_import_result_stats "$result_file" ""
 		_wildcard_parallel_cleanup_sessions
 		_wildcard_parallel_obs_restore || true
 		return 0
@@ -457,21 +492,7 @@ w = d.get("winner") or {}
 print(w.get("job_id") or "")
 PY
 )
-	local compact_result
-	compact_result=$(python3 - "$result_file" <<'PY' 2>/dev/null || echo '{}'
-import json, sys
-d = json.load(open(sys.argv[1], encoding="utf-8"))
-w = d.get("winner") or {}
-print(json.dumps({
-    "applied": w.get("applied") or [],
-    "parallel_job_id": w.get("job_id") or "",
-    "parallel_winner": w,
-    "parallel_candidates": d.get("candidates") or [],
-    "parallel_session_dir": d.get("session_dir") or "",
-}, ensure_ascii=False))
-PY
-)
-	_import_wildcard_parallel_game_stats "$compact_result" "$HASH_AFTER" || true
+	_post_improve_import_result_stats "$result_file" "$HASH_AFTER"
 	_wildcard_parallel_cleanup_sessions
 	_wildcard_parallel_obs_restore || true
 	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$baseline_hash" ]; then
