@@ -956,7 +956,8 @@ _refresh_best_strategy_anchor() {
 		"${TABU_ENABLED:-0}" "${TABU_SIGNATURES_FILE:-tmp/state/tabu_signatures.jsonl}" "${TABU_DISTANCE_THRESHOLD:-0.15}" \
 		"${BEHAVIOR_SIGNATURES_FILE:-tmp/state/behavior_signatures.json}" "${LAST_ANCHOR_CHANGE_FILE:-tmp/state/last_anchor_change.md}" \
 		"$(pwd)" "${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
-		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" <<'PY'
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" "${WILDCARD_ORIGIN_FILE:-tmp/state/wildcard_origin.json}" \
+		"${OBJECTIVE_FRONTIER_MIN_GAMES:-2}" <<'PY'
 import json
 import math
 import os
@@ -988,6 +989,7 @@ objective_anchor_min_comp_ratio = float(sys.argv[21]) if len(sys.argv) > 21 else
 objective_anchor_max_comp_gap = float(sys.argv[22]) if len(sys.argv) > 22 else 1500.0
 permanent_archive_dir = sys.argv[23] if len(sys.argv) > 23 else ""
 wildcard_origin_file = sys.argv[24] if len(sys.argv) > 24 else ""
+objective_frontier_min_games = int(sys.argv[25]) if len(sys.argv) > 25 else 2
 
 # lib.behavior_signature の import (帯域脱出機構 ON 時のみ必要)
 _compute_signature = None
@@ -1146,6 +1148,28 @@ def metrics(scores):
         "n": n,
     }
 
+def _parse_high_type_counts(peak_str):
+    counts = {}
+    for tok in str(peak_str or "").split():
+        if not tok.startswith("T") or "x" not in tok:
+            continue
+        try:
+            t, c = tok[1:].split("x", 1)
+            t, c = int(t), int(c)
+        except Exception:
+            continue
+        if t > 0 and c > 0:
+            counts[t] = max(counts.get(t, 0), c)
+    return counts
+
+
+def _is_soviet_frontier(peak_str):
+    # Genuine 2nd-Russia frontier on ONE board: T15x2, OR T15x1 co-occurring T14x2.
+    # Single T15x1 alone is NOT a frontier (that is the 2026-05-25 failure mode).
+    c = _parse_high_type_counts(peak_str)
+    return c.get(15, 0) >= 2 or (c.get(15, 0) >= 1 and c.get(14, 0) >= 2)
+
+
 def objective_progress(data, hash_value=""):
     max_types = []
     for x in data.get("max_types", []) or []:
@@ -1168,10 +1192,16 @@ def objective_progress(data, hash_value=""):
         russia_count = 1
     if best_max_type >= 16 and soviet_count <= 0:
         soviet_count = 1
+    # Soviet-frontier: REPEATABLE 2nd-Russia board signal across >= OBJECTIVE_FRONTIER_MIN_GAMES
+    # games, NOT a single lucky board and NOT single Russia. A founded Soviet is itself the
+    # strongest frontier (keep the ladder monotone).
+    frontier_n = sum(1 for p in (data.get("peak_high_type_counts", []) or []) if _is_soviet_frontier(p))
+    soviet_frontier = frontier_n >= objective_frontier_min_games or soviet_count > 0
     return {
         "best_max_type": best_max_type,
         "russia_count": russia_count,
         "soviet_count": soviet_count,
+        "soviet_frontier": bool(soviet_frontier),
     }
 
 def archive_is_runtime_stable(path):
@@ -1280,16 +1310,20 @@ def _selection_score(h, m, data):
 
 def _objective_tuple(h, data):
     p = objective_progress(data, h)
+    soviet = int(p.get("soviet_count", 0) or 0)
+    # Ladder (high→low): founded Soviet > soviet_count > repeatable 2nd-Russia frontier.
+    # Single Russia is NOT a rung (stays 0,0,0) — the 2026-05-25 failure surface.
     return (
-        int(p.get("soviet_count", 0) > 0),
-        int(p.get("soviet_count", 0) or 0),
+        int(soviet > 0),
+        soviet,
+        int(bool(p.get("soviet_frontier", False))),
     )
 
 def _anchor_rank_key(h, m, data, selection_score):
     # Rollback anchors must stay score-mature, but the Soviet objective is the
     # real target. If an objective-progress candidate is still near the score
     # leader, prefer it over a score-only local optimum.
-    objective_key = (0, 0)
+    objective_key = (0, 0, 0)
     if objective_anchor_enabled:
         score_gap = max(0.0, top_anchor_comp - float(m.get("comp", 0.0) or 0.0))
         near_score_leader = (
@@ -1416,7 +1450,7 @@ if last_anchor_change_file:
             f"- p50: {best_metrics['p50']:.2f}, p25: {best_metrics['p25']:.2f}, n: {best_metrics['n']}\n"
             f"- objective: best_type={best_objective.get('best_max_type', 0)} "
             f"russia={best_objective.get('russia_count', 0)} soviet={best_objective.get('soviet_count', 0)}\n"
-            f"- objective_priority_enabled: {objective_anchor_enabled}, objective_rank_key: {best_rank_key[:6]}\n"
+            f"- objective_priority_enabled: {objective_anchor_enabled}, objective_rank_key: {best_rank_key[:7]}\n"
             f"- diversity_enabled: {diversity_enabled}, tabu_enabled: {tabu_enabled}, "
             f"tabu_active: {len(tabu_entries)}\n"
         )
@@ -2333,7 +2367,8 @@ _pick_best_rollback_candidate() {
 	ranked=$(
 		python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" \
 			"${OBJECTIVE_ANCHOR_PRIORITY_ENABLED:-0}" "${OBJECTIVE_ANCHOR_MIN_COMP_RATIO:-0.90}" "${OBJECTIVE_ANCHOR_MAX_COMP_GAP:-1500}" \
-			"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" <<'PY'
+			"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
+			"${OBJECTIVE_FRONTIER_MIN_GAMES:-2}" <<'PY'
 import json
 import sys
 import math
@@ -2352,6 +2387,7 @@ objective_min_comp_ratio = float(sys.argv[10]) if len(sys.argv) > 10 else 0.90
 objective_max_comp_gap = float(sys.argv[11]) if len(sys.argv) > 11 else 1500.0
 archive_dir = sys.argv[12] if len(sys.argv) > 12 else ""
 permanent_archive_dir = sys.argv[13] if len(sys.argv) > 13 else ""
+objective_frontier_min_games = int(sys.argv[14]) if len(sys.argv) > 14 else 2
 rs = json.load(open(rs_file))
 
 def has_restorable_archive(hash_value):
@@ -2388,6 +2424,28 @@ def metrics(scores):
     composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
     return composite, p50, p25, lcb, n
 
+def _parse_high_type_counts(peak_str):
+    counts = {}
+    for tok in str(peak_str or "").split():
+        if not tok.startswith("T") or "x" not in tok:
+            continue
+        try:
+            t, c = tok[1:].split("x", 1)
+            t, c = int(t), int(c)
+        except Exception:
+            continue
+        if t > 0 and c > 0:
+            counts[t] = max(counts.get(t, 0), c)
+    return counts
+
+
+def _is_soviet_frontier(peak_str):
+    # Genuine 2nd-Russia frontier on ONE board: T15x2, OR T15x1 co-occurring T14x2.
+    # Single T15x1 alone is NOT a frontier (the 2026-05-25 failure mode).
+    c = _parse_high_type_counts(peak_str)
+    return c.get(15, 0) >= 2 or (c.get(15, 0) >= 1 and c.get(14, 0) >= 2)
+
+
 def objective_tuple(data):
     max_types = []
     for x in data.get("max_types", []) or []:
@@ -2413,9 +2471,14 @@ def objective_tuple(data):
         russia_count = 1
     if best_max_type >= 16 and soviet_count <= 0:
         soviet_count = 1
+    # Repeatable 2nd-Russia frontier (>= OBJECTIVE_FRONTIER_MIN_GAMES games), NOT single Russia.
+    frontier_n = sum(1 for p in (data.get("peak_high_type_counts", []) or []) if _is_soviet_frontier(p))
+    soviet_frontier = frontier_n >= objective_frontier_min_games or soviet_count > 0
+    # Ladder (high→low): founded Soviet > soviet_count > repeatable 2nd-Russia frontier.
     return (
         int(soviet_count > 0),
         soviet_count,
+        int(bool(soviet_frontier)),
     )
 
 rows = []
@@ -2437,7 +2500,7 @@ top_comp = max(r[0] for r in rows)
 
 def rank_key(row):
     comp, p50, p25, lcb, n, h, data = row
-    objective_key = (0, 0)
+    objective_key = (0, 0, 0)
     if objective_enabled:
         score_gap = max(0.0, top_comp - comp)
         near_score_leader = comp >= top_comp * objective_min_comp_ratio or score_gap <= objective_max_comp_gap

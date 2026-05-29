@@ -193,6 +193,102 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertEqual(anchor["russia_count"], 1)
             self.assertEqual(anchor["soviet_count"], 1)
 
+    def _run_frontier_anchor_case(self, td, frontier_peaks, frontier_min_games="2", enabled="1"):
+        """Helper: scoreOnly (higher comp, no frontier) vs frontierStrain (near comp,
+        peak_high_type_counts=frontier_peaks). Returns the selected anchor hash."""
+        td = Path(td)
+        rs_file = td / "rolling_scores.json"
+        anchor_file = td / "best_strategy_anchor.json"
+        archive_dir = td / "by_hash"
+        archive_dir.mkdir()
+        rejected_file = td / "rejected.txt"
+        beh_file = td / "behavior_signatures.json"
+        tabu_file = td / "tabu.jsonl"
+        last_anchor_change_file = td / "last_anchor_change.md"
+        rs_file.write_text(json.dumps({
+            "scoreOnly": {
+                "scores": [1200] * 12, "games_total": 12, "_recent_archives": [],
+                "best_max_type": 14, "russia_count": 0, "soviet_count": 0,
+            },
+            "frontierStrain": {
+                "scores": [1120] * 12, "games_total": 12, "_recent_archives": [],
+                "max_types": [15] + [14] * 11, "best_max_type": 15,
+                "russia_count": 1, "soviet_count": 0,
+                "peak_high_type_counts": frontier_peaks,
+            },
+        }))
+        stable = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+        (archive_dir / "scoreOnly.py").write_text(stable)
+        (archive_dir / "frontierStrain.py").write_text(stable)
+        env = os.environ.copy()
+        env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+        env["TABU_ENABLED"] = "0"
+        env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = enabled
+        env["OBJECTIVE_ANCHOR_MIN_COMP_RATIO"] = "0.90"
+        env["OBJECTIVE_ANCHOR_MAX_COMP_GAP"] = "1500"
+        env["OBJECTIVE_FRONTIER_MIN_GAMES"] = frontier_min_games
+        env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+        env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+        env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+        script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+        result = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT, env=env,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+        return json.loads(anchor_file.read_text())["hash"]
+
+    def test_frontier_strain_promoted_when_repeatable_and_near_leader(self):
+        """2nd-Russia frontier (T15x1+T14x2) reached in >= OBJECTIVE_FRONTIER_MIN_GAMES
+        games AND near the score leader => protected as anchor over a score-only optimum."""
+        with tempfile.TemporaryDirectory() as td:
+            peaks = ["T15x1 T14x2 T13x1"] * 2 + ["T13x1 T12x2"] * 10
+            self.assertEqual(self._run_frontier_anchor_case(td, peaks), "frontierStrain")
+
+    def test_single_frontier_game_not_promoted(self):
+        """Fluke guard: frontier in only 1 game (< min_games=2) must NOT be promoted —
+        this is the live situation (every existing frontier hash = exactly 1 game)."""
+        with tempfile.TemporaryDirectory() as td:
+            peaks = ["T15x1 T14x2 T13x1"] * 1 + ["T13x1 T12x2"] * 11
+            self.assertEqual(self._run_frontier_anchor_case(td, peaks), "scoreOnly")
+
+    def test_single_russia_not_promoted(self):
+        """2026-05-25 guard: single Russia (T15x1 with only T14x1, no 2nd-Russia
+        material) is NOT a frontier in ANY game, so a lower-comp single-Russia strain
+        must NOT displace the score anchor."""
+        with tempfile.TemporaryDirectory() as td:
+            peaks = ["T15x1 T14x1 T13x2"] * 12
+            self.assertEqual(self._run_frontier_anchor_case(td, peaks), "scoreOnly")
+
+    def test_frontier_rung_is_noop_when_priority_disabled(self):
+        """Reversibility: with OBJECTIVE_ANCHOR_PRIORITY_ENABLED=0, a repeatable frontier
+        strain is ignored (byte-identical legacy behavior) => score anchor wins."""
+        with tempfile.TemporaryDirectory() as td:
+            peaks = ["T15x1 T14x2 T13x1"] * 4 + ["T13x1 T12x2"] * 8
+            self.assertEqual(self._run_frontier_anchor_case(td, peaks, enabled="0"), "scoreOnly")
+
+    def test_both_anchor_paths_carry_soviet_frontier_rung(self):
+        """Both objective-aware selectors (_refresh_best_strategy_anchor and
+        _pick_best_rollback_candidate) must carry the graded frontier ladder so the
+        anchor baseline AND the rollback target consistently protect the Soviet path."""
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        # frontier detection helper present (defined in BOTH heredoc blocks)
+        self.assertEqual(regression.count("def _is_soviet_frontier(peak_str):"), 2)
+        self.assertIn("c.get(15, 0) >= 2 or (c.get(15, 0) >= 1 and c.get(14, 0) >= 2)", regression)
+        # graded ladder default keys widened to 3 rungs in both blocks
+        self.assertEqual(regression.count("objective_key = (0, 0, 0)"), 2)
+        # repeatable-games threshold threaded + parsed in both blocks
+        self.assertEqual(regression.count("objective_frontier_min_games = int(sys.argv["), 2)
+        self.assertIn('OBJECTIVE_FRONTIER_MIN_GAMES="${OBJECTIVE_FRONTIER_MIN_GAMES:-2}"', config)
+
     def test_anchor_refresh_uses_archive_restart_source_objective_metadata(self):
         """archive_restart の source メタがあれば、pruned 履歴でも建国進捗を 0 扱いしない。"""
         with tempfile.TemporaryDirectory() as td:

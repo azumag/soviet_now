@@ -235,7 +235,8 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS` | `0` | slot ごとの補充回数上限。0 なら無制限 |
 | `POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT` | `18180` | post-improve 追加試行の候補 game server port 起点 |
 | `POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT` | `19320` | post-improve 追加試行の候補 Chrome CDP port 起点 |
-| `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定で目的進捗を score 近傍候補の優先度に使う。現行ではソ連到達のみを保護対象にし、ロシア到達だけでは score-only anchor を押しのけない |
+| `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定 (`_refresh_best_strategy_anchor`) と rollback target 選定 (`_pick_best_rollback_candidate`) の両方で、目的進捗を score 近傍候補 (`near_score_leader`) の優先度に使う。優先順位は段階ラダー: ソ連到達 > **2nd-Russia/ソ連フロンティア再現** > その他。**単発ロシア(T15x1単独)は対象外** — score-only anchor を押しのけるのは 2026-05-25 のスコア崩壊の原因だったため。default 0 (安全)、本番は `.env=1` で有効。`near_score_leader` 帯 (comp比≥`OBJECTIVE_ANCHOR_MIN_COMP_RATIO` または gap≤`OBJECTIVE_ANCHOR_MAX_COMP_GAP`) の外の候補は保護しないので、大幅低comp戦略は昇格しない |
+| `OBJECTIVE_FRONTIER_MIN_GAMES` | `2` | 戦略を「ソ連フロンティア」とみなすのに必要な、2nd-Russia フロンティア局面 (一盤面に `T15x2`、または `T15x1`+`T14x2`) を達成した最小ゲーム数。`1` だと一発フロックも保護され局所解に固着するため `>=2` の再現性を要求する。`peak_high_type_counts` から判定 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |
 | `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` | `15` | ロシア未再現でも frontier候補として扱う最小到達type |
