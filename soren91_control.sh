@@ -75,6 +75,13 @@ _soren91_switch_obs_layout() {
 		s91_show_op="show:$SOREN91_OBS_INPUT_NAME"
 		s91_hide_op="hide:$SOREN91_OBS_INPUT_NAME"
 	fi
+	# Persist the active display mode so the OBS capture watchdog
+	# (obs_capture_watchdog_check.mjs) knows which window title to expect and can
+	# rebind the shared game capture to the live window after a Chrome crash/restart.
+	if [ "$mode" = "meriken" ] || [ "$mode" = "china" ]; then
+		mkdir -p "$ELOOP_LIB_DIR/tmp/state" 2>/dev/null || true
+		printf '%s\n' "$mode" > "$ELOOP_LIB_DIR/tmp/state/soren_display_mode" 2>/dev/null || true
+	fi
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
@@ -230,8 +237,9 @@ _soren91_kill_runner_session() {
 # 多重runnerフラッピング対策: pidfile/tmux 管理外で生き残った run_player_loop.sh
 # 孤児（別tmuxや過去サイクルの取り残し）と、その子 main.mjs を確実に一掃する。
 # soren91_stop は追跡中の1個しか止めないため、孤児が共有Chrome(SOREN_CDP_PORT=9322)に
-# about:blank を開き続けてメイン配信のキャプチャを乱す事故を防ぐ。stop 経路でのみ呼ぶ
-# 想定（停止時に全 runner を落とすのが正しい）。
+# about:blank を開き続けてメイン配信のキャプチャを乱す事故を防ぐ。stop 経路(全停止)と
+# soren91_start の起動直前(新規1本を立てる前に既存を全消し)の両方から呼ぶ。
+# いずれも「呼んだ時点で全 runner を落とす」のが正しい挙動。
 _soren91_sweep_orphan_runners() {
 	local pids="" p self="$$"
 	pids=$( { pgrep -f "$SOREN91_DIR/run_player_loop.sh" 2>/dev/null; pgrep -f 'soren91/run_player_loop.sh' 2>/dev/null; } | grep -E '^[0-9]+$' | sort -u )
@@ -1069,6 +1077,17 @@ soren91_start() {
 		_improve_interval="$SOREN91_MERIKEN_IMPROVE_INTERVAL"
 		log "[SOREN91] メリケンAIモード: 内部改善有効 (${_improve_interval}ゲームごと)"
 	fi
+
+	# 多重runner防止 (2026-05-29): 起動直前に既存 run_player_loop.sh を全て掃討する。
+	# soren91_is_running は soren91_runner tmux 配下の runner しか検出できないため、
+	# tmux kill-session を生き延びた孤児 (run_player_loop.sh は `trap '' HUP` で HUP を
+	# 無視するので kill-session では死なず別tmux配下へ再parent される) が残っていると、
+	# このまま2本目を起動して多重化し、共有Chrome(SOREN_CDP_PORT=9322)を奪い合って
+	# メイン配信(中華AI)のウィンドウキャプチャを固着させる。起動経路で必ず全 runner を
+	# 一掃→stale ロック片付け→新規1本、の順にして「常に高々1本」を保証する。
+	# 掃討対象が無ければ即 return する no-op なので通常起動のオーバーヘッドはほぼ無し。
+	_soren91_sweep_orphan_runners
+	_soren91_clear_stale_runner_lock
 
 	# 再試行付きランナーを完全 detach 起動。
 	# Playwright + 共有ChromeはTTYなしnohupで起動するとタイトル直後に消えることがあるため、
