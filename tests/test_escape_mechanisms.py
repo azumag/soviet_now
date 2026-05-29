@@ -1318,6 +1318,75 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertEqual(candidate.cull_leader_job_id, "baseline-score")
             self.assertIsNone(wildcard_parallel.choose_winner([baseline], 1))
 
+    def test_baseline_slot1_played_baseline_is_anchor_not_winner_and_uncullable(self):
+        """--baseline-slot1 の slot-1 に置く played baseline (baseline=True) は、
+        winner にならず・cull されず・勝者比較の基準として使われる。これが無いと
+        baseline が比較基準として認識されず cull もされ、現行より低スコアの戦略が
+        無条件採用される (報告されたバグ)。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+
+            def mk(job_id, index, comp, *, baseline=False):
+                return wildcard_parallel.CandidateResult(
+                    job_id=job_id, index=index, workdir=td_path / job_id,
+                    strategy_path=td_path / job_id / "strategy.py",
+                    status="accepted", scores=[int(comp)] * 6, comp=comp, baseline=baseline,
+                )
+
+            played_baseline = mk("cand-1", 0, 12000.0, baseline=True)
+            worse = mk("cand-6", 5, 9696.0)
+            better = mk("cand-3", 2, 13000.0)
+
+            # worse-than-baseline candidate must NOT be adopted (the reported bug).
+            self.assertIsNone(wildcard_parallel.choose_winner([played_baseline, worse], 6))
+            # a strictly-better candidate IS adopted, and the baseline itself never wins.
+            self.assertIs(wildcard_parallel.choose_winner([played_baseline, better], 6), better)
+
+            # the played baseline must never be culled — it has to finish as a stable anchor.
+            high_leader = mk("cand-9", 8, 20000.0)  # threshold 18000 > baseline 12000
+            coordinator = wildcard_parallel.CullCoordinator(
+                argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90),
+                td_path / "status.json", td_path / "overlay.html", td_path / "session",
+                [high_leader],
+            )
+            self.assertFalse(coordinator.should_cull(played_baseline))
+
+    def test_cull_threshold_anchored_to_baseline_not_lucky_outlier(self):
+        """cull 閾値は baseline の成績基準 (90%) であって、運良く高得点を出した候補
+        基準ではない。lucky outlier 基準だと baseline 比 95% の有望候補まで過剰 cull
+        してしまう (ユーザー意図: baseline の 90% 以上のパラメータを探索)。"""
+        import argparse
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+
+            def mk(job_id, index, comp, scores, *, baseline=False):
+                return wildcard_parallel.CandidateResult(
+                    job_id=job_id, index=index, workdir=td_path / job_id,
+                    strategy_path=td_path / job_id / "strategy.py",
+                    status="running", scores=scores, comp=comp, p25=comp, baseline=baseline,
+                )
+
+            baseline = mk("cand-1", 0, 10000.0, [10000, 10000, 10000], baseline=True)
+            lucky = mk("cand-2", 1, 20000.0, [20000, 20000])  # high-variance outlier leader
+            candidate = mk("cand-3", 2, 9500.0, [9500])       # 95% of baseline → keep
+            coordinator = wildcard_parallel.CullCoordinator(
+                argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90),
+                td_path / "status.json", td_path / "overlay.html", td_path / "session",
+                [baseline, lucky],
+            )
+            # threshold = 0.90 * baseline(10000) = 9000; 9500 >= 9000 → survives.
+            # (Against the lucky outlier it would be 0.90*20000=18000 and be culled.)
+            self.assertFalse(coordinator.should_cull(candidate))
+            # A candidate below 90% of the baseline is still culled against the baseline.
+            below = mk("cand-4", 3, 8000.0, [8000])
+            self.assertTrue(coordinator.should_cull(below))
+            self.assertEqual(below.cull_leader_job_id, "cand-1")
+
     def test_wildcard_parallel_score_baseline_is_skipped_for_baseline_slot1_mode(self):
         """戦略改善後パラメータ探索の baseline-slot1 mode では既存スコア baseline を注入しない。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
@@ -1325,6 +1394,10 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("if not args.baseline_slot1:", parallel)
         self.assertIn("score_baseline = load_score_baseline", parallel)
         self.assertIn('if c.status == "pending" and not c.score_baseline', parallel)
+        # The played slot-1 baseline (baseline=True) is the comparison anchor too.
+        self.assertIn("def is_baseline(c: CandidateResult) -> bool:", parallel)
+        self.assertIn("return c.score_baseline or c.baseline", parallel)
+        self.assertIn("if candidate.baseline or candidate.score_baseline:", parallel)
 
     def test_wildcard_parallel_culls_finished_low_candidate_before_returning(self):
         """先に完走した低comp候補も accepted のまま返さず補充する。"""

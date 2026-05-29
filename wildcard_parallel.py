@@ -2215,15 +2215,23 @@ def choose_winner(candidates: list[CandidateResult], min_successful_games: int) 
     def rank_key(c: CandidateResult) -> tuple[bool, bool, float, float, int]:
         return (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type)
 
+    # The baseline (slot-1 played reference via --baseline-slot1, or a static
+    # score_baseline loaded from history) is the comparison anchor, NOT a winner
+    # candidate. A perturbed candidate must STRICTLY beat it (rank_key) to be
+    # adopted — otherwise the live loop would replace the current strategy with a
+    # worse one. Treat both baseline kinds the same here.
+    def is_baseline(c: CandidateResult) -> bool:
+        return c.score_baseline or c.baseline
+
     eligible = [
         c
         for c in candidates
-        if not c.score_baseline and c.status == "accepted" and len(c.scores) >= min_successful_games
+        if not is_baseline(c) and c.status == "accepted" and len(c.scores) >= min_successful_games
     ]
     if not eligible:
         return None
     winner = max(eligible, key=rank_key)
-    baseline_leaders = [c for c in candidates if c.score_baseline and c.comp > 0]
+    baseline_leaders = [c for c in candidates if is_baseline(c) and c.comp > 0]
     if baseline_leaders:
         source_leader = max(baseline_leaders, key=rank_key)
         if rank_key(winner) <= rank_key(source_leader):
@@ -2274,6 +2282,13 @@ class CullCoordinator:
     def should_cull(self, candidate: CandidateResult) -> bool:
         with self.lock:
             self._append_if_new(candidate)
+            # The baseline (played slot-1 reference or static score_baseline) must
+            # NEVER be culled: it has to finish its full games so it is a stable
+            # comparison anchor for choose_winner. Culling it (the old bug) left the
+            # run with no reference, so a worse-than-current winner got adopted.
+            if candidate.baseline or candidate.score_baseline:
+                self._snapshot_unlocked()
+                return False
             completed_games = len(candidate.scores)
             if self.args.cull_after_games <= 0 or completed_games < self.args.cull_after_games:
                 self._snapshot_unlocked()
@@ -2282,14 +2297,22 @@ class CullCoordinator:
                 c
                 for c in self.candidates
                 if c.job_id != candidate.job_id
-                and (len(c.scores) >= self.args.cull_leader_min_games or c.score_baseline)
+                and (len(c.scores) >= self.args.cull_leader_min_games or c.score_baseline or c.baseline)
                 and c.status in {"running", "accepted", "won", "leader", "baseline"}
                 and c.comp > 0
             ]
             if not leaders:
                 self._snapshot_unlocked()
                 return False
-            leader = max(leaders, key=lambda c: (c.comp, c.p25, c.max_type))
+            # Cull against the BASELINE's score specifically (the current strategy):
+            # the intent is to keep perturbations that reach >= cull_comp_ratio of the
+            # baseline. Using max-comp leader instead would let a lucky high-variance
+            # candidate raise the bar and over-cull viable perturbations. Fall back to
+            # the score leader only when no baseline is present in this run.
+            baseline_leader = next((c for c in leaders if c.score_baseline or c.baseline), None)
+            leader = baseline_leader if baseline_leader is not None else max(
+                leaders, key=lambda c: (c.comp, c.p25, c.max_type)
+            )
             threshold = leader.comp * self.args.cull_comp_ratio
             should = candidate.comp < threshold
             if should:
