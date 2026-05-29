@@ -322,19 +322,37 @@ async function updateObsGameSource() {
   const obs = await connectObs();
   if (!obs) return;
 
+  // The local game ALWAYS runs in "Google Chrome for Testing"
+  // (com.google.chrome.for.testing) with the page title
+  // "Unity WebGL Player | soren-game". Bind ONLY to that window — never to the
+  // user's personal "[Google Chrome]" window (e.g. a New Tab / DuckDuckGo page),
+  // a wildcard-parallel candidate, or the meriken/91 window. Binding the wrong
+  // window freezes the broadcast on unrelated content (the classic "audio plays
+  // but the screen is frozen" symptom). The macOS window title can lag a
+  // freshly-loaded page by a moment, so if the titled game window isn't visible
+  // yet we retry briefly, then leave the last-good binding untouched (the
+  // capture watchdog rebinds once the title appears) rather than guess a window.
+  const SOREN_TITLE = /Unity WebGL Player \| soren-game/;
+  const FOR_TESTING = /\[Google Chrome for Testing\]/;
+  const findTarget = (windows) => windows.find(item =>
+    FOR_TESTING.test(item.itemName || '') && SOREN_TITLE.test(item.itemName || '')
+  ) || null;
+
   try {
-    const response = await obs.request('GetInputPropertiesListPropertyItems', {
-      inputName: OBS_GAME_SOURCE_NAME,
-      propertyName: 'window',
-    });
-    const windows = Array.isArray(response.propertyItems) ? response.propertyItems : [];
-    const chromeWindowPattern = /\[Google Chrome(?: for Testing)?\]/;
-    const target = windows.find(item =>
-      chromeWindowPattern.test(item.itemName || '') && /Unity WebGL Player \| soren-game/.test(item.itemName || '')
-    ) || windows.find(item => chromeWindowPattern.test(item.itemName || ''));
+    let target = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const response = await obs.request('GetInputPropertiesListPropertyItems', {
+        inputName: OBS_GAME_SOURCE_NAME,
+        propertyName: 'window',
+      });
+      const windows = Array.isArray(response.propertyItems) ? response.propertyItems : [];
+      target = findTarget(windows);
+      if (target) break;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
 
     if (!target) {
-      console.warn(`OBS game source target window not found for ${OBS_GAME_SOURCE_NAME}`);
+      console.warn(`OBS game source: soren-game window not visible yet for ${OBS_GAME_SOURCE_NAME}; leaving existing binding untouched (watchdog will rebind)`);
       return;
     }
 
