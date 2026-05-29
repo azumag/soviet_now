@@ -1636,8 +1636,19 @@ def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
             time.sleep(0.8)
 
 
-def cleanup_wildcard_chrome_processes(session_dir: Path | None = None, session_root: Path | None = None) -> None:
-    """Stop WILDCARD-parallel Chromium processes left behind by interrupted runs."""
+def cleanup_wildcard_chrome_processes(
+    session_dir: Path | None = None,
+    session_root: Path | None = None,
+    exclude_markers: list[str] | None = None,
+) -> None:
+    """Stop WILDCARD-parallel Chromium processes left behind by interrupted runs.
+
+    exclude_markers: if a process command contains any of these substrings it is
+    spared. Used to keep the CURRENTLY ACTIVE session's Chrome alive while sweeping
+    orphans from ended sessions (e.g. when a kept run dir still has live windows
+    because WILDCARD_PARALLEL_KEEP_RECENT_RUNS preserved its directory).
+    """
+    excludes = [m for m in (exclude_markers or []) if m]
     markers = {"wildcard_parallel"}
     for path in (session_dir, session_root):
         if not path:
@@ -1673,6 +1684,8 @@ def cleanup_wildcard_chrome_processes(session_dir: Path | None = None, session_r
         if "Google Chrome for Testing" not in command and "Chromium" not in command:
             continue
         if not any(marker and marker in command for marker in markers):
+            continue
+        if any(ex in command for ex in excludes):
             continue
         pids.append(pid)
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -2453,6 +2466,13 @@ def main() -> int:
             keep_session_dirs=keep_sessions,
             keep_recent=args.keep_recent_runs,
         )
+        # Sweep orphan Chrome from ENDED sessions even when their run dir is kept.
+        # WILDCARD_PARALLEL_KEEP_RECENT_RUNS preserves the latest dir, and the
+        # dir-removal path is the only place that killed leftover Chrome — so a
+        # kept dir's windows linger forever on the main stream. Spare ONLY the
+        # currently active session (None when nothing is running -> sweep all).
+        exclude_markers = [str(active_session), active_session.name] if active_session else []
+        cleanup_wildcard_chrome_processes(session_root=args.session_root, exclude_markers=exclude_markers)
         return 0
 
     args.jobs = max(3, args.jobs)
