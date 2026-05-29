@@ -83,6 +83,29 @@ _on_exit() {
 	_cleanup_lock
 }
 
+# The lock is only checked once at startup (_acquire_runner_lock). A runner then
+# loops forever, so if the lock dir is later cleared (stale cleanup /
+# soren91_cleanup) and a NEW runner acquires it, the old runner keeps running too
+# -> accumulated multi-runner flapping (observed: 6 concurrent runners). Re-assert
+# ownership each iteration: if a DIFFERENT live runner owns the lock, defer to it
+# and exit; if the lock is gone / its owner is dead, reclaim it for ourselves so
+# exactly the latest runner survives.
+_runner_still_owner() {
+	local owner=""
+	owner=$(sed -n 's/^pid=//p' "$RUNNER_LOCK_DIR/owner" 2>/dev/null | head -n 1)
+	if [ -n "$owner" ] && [ "$owner" != "$$" ] && _pid_alive "$owner"; then
+		return 1
+	fi
+	if [ "$owner" != "$$" ]; then
+		mkdir -p "$RUNNER_LOCK_DIR" 2>/dev/null || true
+		{
+			printf 'pid=%s\n' "$$"
+			printf 'started_at=%s\n' "$(date '+%F %T')"
+		} >"$RUNNER_LOCK_DIR/owner" 2>/dev/null || true
+	fi
+	return 0
+}
+
 trap '_on_signal INT' INT
 trap '_on_signal TERM' TERM
 trap '' HUP
@@ -90,13 +113,28 @@ trap '_on_exit' EXIT
 _acquire_runner_lock
 echo "$$" >"$PID_FILE" 2>/dev/null || true
 
+# rc=0-即時終了は「今は走るべきでない」(共有Chrome attach失敗等を main().catch が
+# 握り潰して rc=0 終了する) を意味する。3s固定で再試行すると、共有Chrome不安定時に
+# 1秒未満で死ぬ→3sで再試行を無限ループし、候補chrome群と GUI登録を奪い合って
+# crash/flapping を悪化させる。即時終了が連続したら指数バックオフ(上限付き)で
+# リトライ間隔を伸ばす。十分長く走った(=実ゲーム)場合はカウンタをリセットする。
+FAST_EXIT_THRESHOLD_SEC="${SOREN91_FAST_EXIT_THRESHOLD_SEC:-20}"
+FAST_EXIT_BACKOFF_MAX_SEC="${SOREN91_FAST_EXIT_BACKOFF_MAX_SEC:-60}"
+fast_exit_streak=0
+
 attempt=0
 while true; do
 	[ -f "$STOP_FILE" ] && exit 0
+	if ! _runner_still_owner; then
+		printf '[%s] [runner] another live runner owns the lock; exiting to avoid multi-runner flapping\n' \
+			"$(date '+%H:%M:%S')" >>"$LOG_FILE" 2>/dev/null || true
+		exit 0
+	fi
 
 	attempt=$((attempt + 1))
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
 
+	run_start=$(date +%s)
 	SOREN91_EXTERNAL_IMPROVE="${SOREN91_EXTERNAL_IMPROVE:-1}" node main.mjs >>"$LOG_FILE" 2>&1 &
 	CHILD_MAIN_PID=$!
 	wait "$CHILD_MAIN_PID"
@@ -106,7 +144,20 @@ while true; do
 
 	[ -f "$STOP_FILE" ] && exit 0
 
-	printf '[%s] [runner] node exited rc=%s, retry in %ss\n' \
-		"$(date '+%H:%M:%S')" "$rc" "$RETRY_DELAY_SEC" >>"$LOG_FILE" 2>/dev/null || true
-	sleep "$RETRY_DELAY_SEC"
+	run_dur=$(( $(date +%s) - run_start ))
+	retry_delay="$RETRY_DELAY_SEC"
+	if [ "$run_dur" -lt "$FAST_EXIT_THRESHOLD_SEC" ]; then
+		fast_exit_streak=$((fast_exit_streak + 1))
+		# 指数バックオフ: RETRY_DELAY_SEC * 2^(streak-1)、FAST_EXIT_BACKOFF_MAX_SEC で頭打ち
+		retry_delay=$((RETRY_DELAY_SEC << (fast_exit_streak - 1)))
+		[ "$retry_delay" -gt "$FAST_EXIT_BACKOFF_MAX_SEC" ] && retry_delay="$FAST_EXIT_BACKOFF_MAX_SEC"
+		[ "$retry_delay" -lt "$RETRY_DELAY_SEC" ] && retry_delay="$RETRY_DELAY_SEC"
+		printf '[%s] [runner] node exited rc=%s after %ss (fast-exit streak=%d), backing off %ss\n' \
+			"$(date '+%H:%M:%S')" "$rc" "$run_dur" "$fast_exit_streak" "$retry_delay" >>"$LOG_FILE" 2>/dev/null || true
+	else
+		fast_exit_streak=0
+		printf '[%s] [runner] node exited rc=%s after %ss, retry in %ss\n' \
+			"$(date '+%H:%M:%S')" "$rc" "$run_dur" "$retry_delay" >>"$LOG_FILE" 2>/dev/null || true
+	fi
+	sleep "$retry_delay"
 done

@@ -267,16 +267,69 @@ _wildcard_parallel_cleanup_sessions() {
 		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" >/dev/null 2>>"$TMP_DEBUG_DIR/wildcard_parallel_cleanup.log" || true
 }
 
+# wildcard_parallel.py 起動前に status を phase=generating で先置きし、
+# 検出ラグ(python が status を書くまでの数秒)中に主ループが soren91 を代打起動
+# するのを防ぐ。python 本体が main() で同じ status を上書きするまでのつなぎ。
+# block_main_loop=true を含めるので _wildcard_parallel_active が即 true を返す。
+_wildcard_parallel_prewrite_status() {
+	local started_at="${1:-$(date +%s)}"
+	local status_file="${WILDCARD_PARALLEL_STATUS_FILE:-$TMP_STATE_DIR/wildcard_parallel_status.json}"
+	mkdir -p "$(dirname "$status_file")" 2>/dev/null || true
+	WP_PREWRITE_STATUS_FILE="$status_file" WP_PREWRITE_STARTED_AT="$started_at" python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+import tempfile
+
+path = os.environ["WP_PREWRITE_STATUS_FILE"]
+try:
+    started_at = int(float(os.environ.get("WP_PREWRITE_STARTED_AT", "0") or 0))
+except Exception:
+    started_at = 0
+payload = {
+    "phase": "generating",
+    "block_main_loop": True,
+    "started_at": started_at,
+    "updated_at": started_at,
+    "candidates": [],
+    "prewrite": True,
+}
+d = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".wp_status.", suffix=".json")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    os.replace(tmp, path)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except Exception:
+        pass
+    raise
+PY
+}
+
 _post_improve_param_parallel_trial() {
 	[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}" = "1" ] || return 0
 	[ "${WILDCARD_PARALLEL_ENABLED:-1}" = "1" ] || return 0
 	[ -f "$STRATEGY_FILE" ] || return 0
 
 	local param_parallel_jobs="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"
+	local started_at_prewrite
+	started_at_prewrite=$(date +%s)
 	case "$param_parallel_jobs" in ''|*[!0-9]*) param_parallel_jobs=6 ;; esac
 	[ "$param_parallel_jobs" -lt 3 ] && param_parallel_jobs=3
 	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${param_parallel_jobs} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
 	_improve_progress "wildcard_parallel" "86" "post_improve_param_parallel"
+	# 検出ラグ封じ: wildcard_parallel.py 起動前に status を phase=generating で先置きする。
+	# python が main() で status を書くまで(プロセス spawn+import+到達)に数秒の窓があり、
+	# その間 _wildcard_parallel_active が false のため主ループが soren91 を代打起動し、
+	# 直後に launch する候補chrome群と共有Chromeの GUI登録が競合して crash した
+	# (NSApplication _RegisterApplication abort / soren91 attach失敗 rc=0 flapping)。
+	# ここで先置きすれば主ループの branch1 (_wildcard_parallel_active) が即発火し
+	# soren91 を代打起動しない。WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC(3600s) の age 上限が
+	# あるので、孤児 status が本線を永久ブロックすることはない。python 本体が数秒後に
+	# 同 status を上書きするので phase 連続性も保たれる。
+	_wildcard_parallel_prewrite_status "$started_at_prewrite"
 	# param並列調整(隔離評価)はメインゲーム/soren91が止まってから行う設計。
 	# 主導的に soren91 を停止してから起動し、評価スロットだけが走る状態を保証する。
 	# (主ループ/monitor の停止反応に頼ると起動直後に一時的な同時稼働が生じるため)
@@ -297,7 +350,8 @@ _post_improve_param_parallel_trial() {
 	[ "$param_count" -lt 1 ] && param_count=1
 	seed=$(date +%s)
 	result_file="${POST_IMPROVE_PARAM_PARALLEL_RESULT_FILE:-$TMP_STATE_DIR/post_improve_param_parallel_result.json}"
-	started_at=$(date +%s)
+	# prewrite で確定済みの起動時刻を共有 (status の started_at と result mtime ガードを一致させる)
+	started_at="${started_at_prewrite:-$(date +%s)}"
 	rm -f "$result_file" 2>/dev/null || true
 	random_count_arg="--random-count"
 	[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || random_count_arg="--no-random-count"

@@ -7522,5 +7522,205 @@ exit 9
             self.assertFalse((tmpdir / "nc.log").exists())
 
 
+class TestParamParallelDetectionLagClosed(unittest.TestCase):
+    """POST-IMPROVE param並列(隔離評価)の検出ラグを封じ、soren91が代打起動されない。
+
+    バグ: wildcard_parallel.py 起動から status 書込みまでの数秒、
+    _wildcard_parallel_active が false のため主ループが soren91 を代打起動し、
+    候補chrome群と共有Chromeの GUI登録が競合して crash + soren91 flapping。
+    修正: _post_improve_param_parallel_trial が python 起動前に status を先置きする。
+    """
+
+    @staticmethod
+    def _extract_fn(text: str, name: str) -> str:
+        """column-0 で開始/終了する shell 関数を、内包 heredoc を尊重して抽出。
+
+        関数本体の python heredoc 内にも column-0 の `}` (dict 閉じ) が出るため、
+        <<'TAG' ... TAG の heredoc 区間を追跡し、その外側の `}` だけを関数終端とみなす。
+        """
+        lines = text.splitlines(keepends=True)
+        out, capturing, heredoc_tag = [], False, None
+        for ln in lines:
+            if not capturing and ln.startswith(name + "() {"):
+                capturing = True
+            if not capturing:
+                continue
+            out.append(ln)
+            stripped = ln.rstrip("\n")
+            if heredoc_tag is not None:
+                if stripped.strip() == heredoc_tag:
+                    heredoc_tag = None
+                continue
+            m = re.search(r"<<-?'?([A-Za-z_][A-Za-z0-9_]*)'?", ln)
+            if m:
+                heredoc_tag = m.group(1)
+                continue
+            if stripped == "}":  # heredoc 外の column-0 `}` が関数終端
+                break
+        return "".join(out)
+
+    def test_prewrite_happens_before_python_launch_and_soren91_stop(self):
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        # prewrite 呼び出しが python3 wildcard_parallel.py 起動より前にある
+        prewrite_idx = eloop.index("_wildcard_parallel_prewrite_status \"$started_at_prewrite\"")
+        launch_idx = eloop.index("python3 wildcard_parallel.py \\")
+        self.assertLess(
+            prewrite_idx, launch_idx,
+            "status の先置きは wildcard_parallel.py 起動より前で行うこと",
+        )
+        # prewrite は soren91 停止より前 (代打を立てさせない窓を残さない)
+        stop_idx = eloop.index("SOREN91_STOP_TIMEOUT=0 soren91_stop")
+        self.assertLess(
+            prewrite_idx, stop_idx,
+            "status の先置きは soren91 停止より前で行うこと",
+        )
+        # prewrite ヘルパが定義されている
+        self.assertIn("_wildcard_parallel_prewrite_status() {", eloop)
+        # phase=generating + block_main_loop=True で書く
+        self.assertIn('"phase": "generating"', eloop)
+        self.assertIn('"block_main_loop": True', eloop)
+
+    def test_prewrite_makes_active_true_then_age_bound_releases(self):
+        """先置き status で _wildcard_parallel_active が即 true、かつ age 上限で解放。"""
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        fn1 = self._extract_fn(eloop, "_wildcard_parallel_prewrite_status")
+        fn2 = self._extract_fn(improve, "_wildcard_parallel_active")
+        self.assertIn("python3", fn1)
+        self.assertIn("phase", fn2)
+
+        with tempfile.TemporaryDirectory() as td:
+            status = Path(td) / "wildcard_parallel_status.json"
+            script = textwrap.dedent(f"""
+                set +e
+                export TMP_STATE_DIR="{td}"
+                export WILDCARD_PARALLEL_STATUS_FILE="{status}"
+                {fn1}
+                {fn2}
+                NOW=$(date +%s)
+                _wildcard_parallel_prewrite_status "$NOW"
+                if _wildcard_parallel_active; then echo FRESH_ACTIVE; else echo FRESH_INACTIVE; fi
+                OLD=$((NOW - 4000))
+                _wildcard_parallel_prewrite_status "$OLD"
+                if WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC=3600 _wildcard_parallel_active; then
+                    echo STALE_ACTIVE; else echo STALE_INACTIVE; fi
+            """)
+            res = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
+                                 text=True, capture_output=True, check=False)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            out = res.stdout
+            # 先置き直後: active=true → 主ループ branch1 が発火 → soren91 代打を立てない
+            self.assertIn("FRESH_ACTIVE", out, res.stderr)
+            # 3600s 超の孤児 status: active=false → 本線を永久ブロックしない
+            self.assertIn("STALE_INACTIVE", out, res.stderr)
+
+    def test_prewrite_status_age_bound_constant_exists(self):
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        # 既存の age 上限 (孤児が永久ブロックしない保証) を退行させない
+        self.assertIn("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", improve)
+        self.assertIn('if phase in {"generating", "running"} and max_sec > 0 and started_at > 0:', improve)
+
+
+class TestSoren91FastExitBackoff(unittest.TestCase):
+    """soren91 runner が rc=0 即時終了を繰り返す flap storm をバックオフで抑える。
+
+    rc=0 即時終了 = 共有Chrome attach失敗等を main().catch が握り潰した結果で
+    「今は走るべきでない」。3s固定 retry を続けると候補chrome群と GUI登録を奪い合う。
+    """
+
+    def test_run_player_loop_reasserts_lock_to_prevent_multi_runner(self):
+        """各ループ反復で lock 所有権を再確認し、別の生存runnerが所有していれば退避exit
+        する。起動時だけ lock を見る旧実装では、lock がクリアされ新runnerが起動した後も
+        旧runnerが走り続け、多重runner flapping が累積した (実測で6並走)。"""
+        import subprocess
+
+        loop = (REPO_ROOT / "soren91/run_player_loop.sh").read_text(encoding="utf-8")
+        self.assertIn("_runner_still_owner() {", loop)
+        self.assertIn("if ! _runner_still_owner; then", loop)
+        self.assertIn("to avoid multi-runner flapping", loop)
+
+        # behavioral: extract just the function (no heredoc inside) and exercise it.
+        fn_lines, capturing = [], False
+        for ln in loop.splitlines(keepends=True):
+            if ln.startswith("_runner_still_owner() {"):
+                capturing = True
+            if capturing:
+                fn_lines.append(ln)
+                if ln.rstrip("\n") == "}":
+                    break
+        fn = "".join(fn_lines)
+        self.assertIn("return 1", fn)
+
+        with tempfile.TemporaryDirectory() as td:
+            script = textwrap.dedent(f"""
+                set +e
+                RUNNER_LOCK_DIR="{td}/.runner.lock"
+                _pid_alive(){{ case "$1" in ""|*[!0-9]*) return 1;; esac; kill -0 "$1" 2>/dev/null; }}
+                {fn}
+                sleep 60 & ALIVE=$!
+                mkdir -p "$RUNNER_LOCK_DIR"; printf 'pid=%s\\n' "$ALIVE" > "$RUNNER_LOCK_DIR/owner"
+                _runner_still_owner; echo "live_other=$?"
+                kill "$ALIVE" 2>/dev/null
+                rm -rf "$RUNNER_LOCK_DIR"
+                _runner_still_owner; echo "gone=$?"
+                _runner_still_owner; echo "self=$?"
+            """)
+            res = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+            out = dict(x.split("=") for x in res.stdout.split() if "=" in x)
+            self.assertEqual(out.get("live_other"), "1", f"defer to live owner; {res.stdout}{res.stderr}")
+            self.assertEqual(out.get("gone"), "0", "reclaim when lock gone")
+            self.assertEqual(out.get("self"), "0", "continue when self owns")
+
+    def test_run_player_loop_has_fast_exit_backoff(self):
+        loop = (REPO_ROOT / "soren91/run_player_loop.sh").read_text(encoding="utf-8")
+        self.assertIn("FAST_EXIT_THRESHOLD_SEC", loop)
+        self.assertIn("FAST_EXIT_BACKOFF_MAX_SEC", loop)
+        self.assertIn("fast_exit_streak", loop)
+        self.assertIn("run_dur=", loop)
+        # 実ゲーム(閾値以上)で streak をリセットし、代打を恒久停止しない
+        self.assertIn("fast_exit_streak=0", loop)
+        # 指数バックオフ (上限頭打ち)
+        self.assertIn("RETRY_DELAY_SEC << (fast_exit_streak - 1)", loop)
+
+    def test_backoff_progression_and_reset(self):
+        """連続即時終了で 3→6→12...→上限、実ゲームでリセット、を実挙動で確認。"""
+        loop_path = REPO_ROOT / "soren91/run_player_loop.sh"
+        loop = loop_path.read_text(encoding="utf-8")
+        # ループ本体の delay 計算ロジックだけを再現する最小スクリプト
+        # (定数とバックオフ式は本体と同一の文字列であることを上で検証済)
+        self.assertIn("RETRY_DELAY_SEC=\"${SOREN91_RESTART_DELAY_SEC:-3}\"", loop)
+        script = textwrap.dedent("""
+            RETRY_DELAY_SEC=3
+            FAST_EXIT_THRESHOLD_SEC=20
+            FAST_EXIT_BACKOFF_MAX_SEC=60
+            fast_exit_streak=0
+            calc() {
+              local run_dur="$1"
+              local retry_delay="$RETRY_DELAY_SEC"
+              if [ "$run_dur" -lt "$FAST_EXIT_THRESHOLD_SEC" ]; then
+                fast_exit_streak=$((fast_exit_streak + 1))
+                retry_delay=$((RETRY_DELAY_SEC << (fast_exit_streak - 1)))
+                [ "$retry_delay" -gt "$FAST_EXIT_BACKOFF_MAX_SEC" ] && retry_delay="$FAST_EXIT_BACKOFF_MAX_SEC"
+                [ "$retry_delay" -lt "$RETRY_DELAY_SEC" ] && retry_delay="$RETRY_DELAY_SEC"
+              else
+                fast_exit_streak=0
+              fi
+              echo "$retry_delay"
+            }
+            for d in 1 1 2 1 0 1; do calc "$d"; done
+            calc 120
+            calc 1
+        """)
+        res = subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=False)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        delays = [int(x) for x in res.stdout.split()]
+        # 6 連続即時終了: 指数増 + 60 で頭打ち
+        self.assertEqual(delays[:6], [3, 6, 12, 24, 48, 60])
+        # 実ゲーム(120s)後: base に戻る
+        self.assertEqual(delays[6], 3)
+        # 直後の即時終了: streak リセット済なので再び base から
+        self.assertEqual(delays[7], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
