@@ -1032,28 +1032,57 @@ for part in regression_result.split(","):
         reason_raw = part[8:]  # "reasons=" の長さ
         break
 d["regression_reason_raw"] = reason_raw
-# 人が読みやすい理由テーブル
+# 視聴者にも伝わる平易な理由テーブル(内部用語を使わない)
 reason_map = {
-    "early_comp_top_gap": "comp比率低下",
-    "curr_comp_below_top_ratio": "top対比comp不足",
-    "objective_regression": "目的到達后退行",
-    "stage_achievement_regression": "段階到達ゲート未達",
-    "lost_ukraine_gate": "ウクライナ段階未達",
-    "lost_russia_path": "ロシア経路喪失",
-    "lost_soviet_path": "ソ連経路喪失",
-    "archive_restart_objective_floor": "archive再起動目的未達",
-    "lost_turkmenistan_gate": "トゥルクメニスタン段階未達",
-    "lost_kazakhstan_gate": "カザフスタン段階未達",
+    # 成績(スコア)が以前の安定戦略を下回った系
+    "comp": "総合成績が前の戦略を下回った",
+    "p50": "平均的な成績が前より落ちた",
+    "p25": "調子が悪い時の成績(下振れ)が悪化した",
+    "trend50": "直近50試合の平均成績が下降した",
+    "trend100": "直近100試合の平均成績が下降した",
+    "early_comp_top_gap": "総合成績が過去ベストに届かなかった",
+    "curr_comp_below_top_ratio": "総合成績が歴代トップ戦略に及ばなかった",
+    # 建国の進み具合が後退した系
+    "objective_regression": "建国への到達度が前より後退した",
+    "stage_achievement_regression": "国を成長段階まで育てられる回数が減った",
+    "archive_restart_objective_floor": "やり直し後も建国到達度が基準に届かなかった",
+    "lost_soviet_path": "ソ連建国ルートを見失った",
+    "lost_russia_path": "ロシア建国ルートを見失った",
+    "lost_ukraine_gate": "ウクライナ段階まで届かなくなった",
+    "lost_turkmenistan_gate": "トルクメニスタン段階まで届かなくなった",
+    "lost_kazakhstan_gate": "カザフスタン段階まで届かなくなった",
+    # 判定の経緯系
+    "budget_exhausted": "改良を試し切っても成績が戻らなかった",
+    "depth": "戦略を作り直し続けても成果が出なかった",
+    "games": "規定の試合数を試しても成果が出なかった",
+    "patience": "改良してもベスト更新できない状態が続いた",
+    "soft_fail": "成績悪化の基準ラインに達した",
+    "hard_fail": "明確に成績が悪化して即ストップとなった",
+    "branch": "一連の戦略改良がまとめて失敗と判定された",
+    "anchor_direct": "安定戦略と比べて成績が即座に悪化した",
 }
 labels = []
+seen = set()
 for r in reason_raw.split("+"):
     key = r.split("=")[0] if "=" in r else r
+    if not key:
+        continue
     if key.startswith("stage_type") and key.endswith("_achievement_gate"):
         stage = key[len("stage_type"):-len("_achievement_gate")]
-        labels.append(f"Type{stage}到達ゲート未達")
+        label = f"国をType{stage}まで育てられる回数が減った"
+    elif key.startswith("rank") and key[4:].isdigit():
+        label = f"成熟度ランキングで上位{key[4:]}位圏から落ちた"
     else:
-        labels.append(reason_map.get(key, key))
-d["regression_reason_label"] = " / ".join(labels) if labels else reason_raw
+        label = reason_map.get(key, "")
+    # マップに無い内部コードは視聴者に見せない(英語コード露出を防止)
+    if not label or label in seen:
+        continue
+    seen.add(label)
+    labels.append(label)
+# 表示は要点を絞る(最大3件)。多すぎると読みづらいため
+if len(labels) > 3:
+    labels = labels[:3]
+d["regression_reason_label"] = "、".join(labels)
 json.dump(d, open(state_file, "w"))
 PY
 		fi

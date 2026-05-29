@@ -1343,10 +1343,13 @@ async function runLocalController() {
           for (const p of [...strayBlankFirstSeen.keys()]) {
             if (!liveBlank.has(p)) strayBlankFirstSeen.delete(p);
           }
-          // Re-assert the local game as the foreground tab so the window-capture
-          // shows the game, not whatever tab a guest left in front. Safe here: we
-          // only reach this when the local game owns the window (!isMuted).
-          try { await page.bringToFront(); } catch (e) { /* ignore */ }
+          // NOTE: deliberately do NOT raise/activate the game tab here. On macOS a
+          // Playwright tab-activation (Target.activateTarget) raises the Chrome
+          // window / steals OS focus, violating the no-focus launch convention
+          // (launchPersistentContextWithoutFocus, `open -g`) — and it would fire
+          // every guard tick. OBS window-capture does not need focus. Closing the
+          // stray blank tab(s) above already leaves the local game as the active
+          // tab in the captured window, clearing the white screen without focus.
         } else {
           strayBlankFirstSeen.clear();
         }

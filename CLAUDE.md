@@ -1,3 +1,7 @@
+# Principal
+- 実装は必ず自己レビューすること
+- 完了報告の前に、それが本当に達成されているか確認すること
+
 # Soren Game Project
 
 Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロジェクト。
@@ -239,8 +243,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 ## Twitch チャネルポイント予想
 
-- 12ゲームサイクルの開始時に「建国できる？」予想を作成
-- 選択肢: 建国なし / ロシア建国(ソ連不成立) / ソ連建国 / 粛清
+- 12ゲームサイクルの開始時に「建国できる？」予想を作成 - 選択肢: 建国なし / ロシア建国(ソ連不成立) / ソ連建国 / 粛清
 - ソ連建国・粛清は即 resolve、ロシア建国は12ゲーム後に判定
 - azumagdev ボットが GQL API でランダムに1票自動投票。`TWITCH_BOT_GQL_TOKEN` 設定時は残高の10%を賭ける。未設定時は固定 `TWITCH_AUTO_VOTE_POINTS`（デフォルト10pt）
 - `cleanup` サブコマンドで `PREDICTION_MAX_GAMES`（デフォルト12）超過等の古い予想状態を自動クリア
@@ -265,20 +268,27 @@ TWITCH_BROADCASTER_ID=<Helix /users APIで取得>
 - 同一ゲーム内で複数イベント発火時はデデュプ（最初の1クリップのみ）
 - 配信オフライン時やAPI失敗時はサイレントにスキップ
 
+## 作業表示・報告
+このリポジトリで が調査・修正・テスト・検証を行う間は、OBS の eventOverlay 内の常設作業表示を使ってください。
 
-# 実装計画立案時のルール
-- ユーザーに計画を提示する前に、 codex コマンドで計画のレビュー>を行うこと
-- 本質的でない指摘は無視しても良い
-```
-# initial plan review
-codex exec "please review: {plan_full_path}"
+作業開始時:
+cd /Users/azumag/azumag/work/soren
+./codex_work_indicator.sh start
 
-# updated plan review
-codex exec resule --last "plan updated: {plan_full_path}"
-```
+これにより eventOverlay に以下のような表示が出ます:
+- システム自動分析・修正作業中
+- メリケンAI が確認・修正・検証を進めています
 
-### Codex review
-```
-codex exec "PROMPT"
-```
-上記によってレビューを依頼できる
+作業中はこの表示を消さず、修正・テスト・検証・必要な live restart/check がすべて終わるまで表示し続けてください。
+
+作業終了時、final response を返す直前:
+cd /Users/azumag/azumag/work/soren
+./codex_work_indicator.sh stop
+
+重要:
+- ./obs_control.sh show soren systemMsg は使わない
+- ./obs_control.sh hide soren systemMsg も通常は使わない
+- 作業表示は ./codex_work_indicator.sh start / stop で管理する
+- start/stop が失敗した場合は、作業は続行し、最後に失敗内容を報告する
+
+作業中の重要な節目では `./system_progress_report.sh "進捗本文"` を使い、audio worker に進捗を読ませる。読み上げ文では主語を Codex ではなく「メリケンAI」にする。作業・検証・必要な再起動確認がすべて終わったら、final response 直前に完了報告を `./system_progress_report.sh` で読ませ、最後に `./codex_work_indicator.sh stop` で表示を消す。OBS の `systemMsg` source は show/hide しない。

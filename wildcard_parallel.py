@@ -1596,7 +1596,7 @@ def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
         pass
     try:
         proc = subprocess.run(
-            ["ps", "-Ao", "pid=,command="],
+            ["ps", "-Ao", "pid=,command=", "-ww"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -1660,7 +1660,7 @@ def cleanup_wildcard_chrome_processes(
             markers.add(str(path))
     try:
         proc = subprocess.run(
-            ["ps", "-Ao", "pid=,command="],
+            ["ps", "-Ao", "pid=,command=", "-ww"],
             capture_output=True,
             text=True,
             timeout=5,

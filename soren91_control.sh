@@ -242,7 +242,11 @@ _soren91_kill_runner_session() {
 # いずれも「呼んだ時点で全 runner を落とす」のが正しい挙動。
 _soren91_sweep_orphan_runners() {
 	local pids="" p self="$$"
-	pids=$( { pgrep -f "$SOREN91_DIR/run_player_loop.sh" 2>/dev/null; pgrep -f 'soren91/run_player_loop.sh' 2>/dev/null; } | grep -E '^[0-9]+$' | sort -u )
+	# Use the awk/ps + tmux/lock scanner instead of bare process-name matching. In
+	# the shared-Chrome setup command-line matching is fragile;
+	# _soren91_scan_alive_runner_pids covers tmux pane_pid, the runner lock owner,
+	# AND the ps-scan, so it finds at least what command matching would, and more.
+	pids=$(_soren91_scan_alive_runner_pids 2>/dev/null | grep -E '^[0-9]+$' | sort -u)
 	[ -n "$pids" ] || return 0
 	for p in $pids; do
 		[ "$p" = "$self" ] && continue
@@ -258,9 +262,9 @@ _soren91_sweep_orphan_runners() {
 			log "[SOREN91] swept orphan runner PID=$p"
 		fi
 	done
-	# 取り残しの main.mjs 単体も掃討
+	# 取り残しの main.mjs 単体も掃討 (awk/ps scanner; bare process-name 照合は使わない)
 	local mp
-	for mp in $(pgrep -f 'soren91/main.mjs' 2>/dev/null | grep -E '^[0-9]+$'); do
+	for mp in $(_soren91_scan_alive_main_pids 2>/dev/null | grep -E '^[0-9]+$'); do
 		[ "$mp" = "$self" ] && continue
 		kill -TERM "$mp" 2>/dev/null || true
 	done

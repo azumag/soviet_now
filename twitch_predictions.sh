@@ -167,21 +167,19 @@ import json, sys
 f = sys.argv[1]
 try:
     d = json.load(open(f))
+    # 視聴者向けに整形済みのラベルのみ使う(生コードは出さない)
     label = d.get("regression_reason_label", "")
-    raw = d.get("regression_reason_raw", "")
     if label:
-        print(f"理由: {label}")
-    elif raw:
-        print(f"理由: {raw}")
+        print(f"理由：{label}")
 except Exception:
     pass
 PY
 )
 			[ -n "${_stale_regression_detail}" ] || _stale_regression_detail=""
 			if [ -n "${_stale_regression_detail}" ]; then
-				enqueue_chat_message "予想結果：「${_stale_label}」でした！${_stale_regression_detail}" "predictions"
+				enqueue_chat_message "予想結果：「${_stale_label}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。${_stale_regression_detail}" "predictions"
 			else
-				enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
+				enqueue_chat_message "予想結果：「${_stale_label}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。" "predictions"
 			fi
 		else
 			enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
@@ -516,21 +514,19 @@ import json, sys
 f = sys.argv[1]
 try:
     d = json.load(open(f))
+    # 視聴者向けに整形済みのラベルのみ使う(生コードは出さない)
     label = d.get("regression_reason_label", "")
-    raw = d.get("regression_reason_raw", "")
     if label:
-        print(f"理由: {label}")
-    elif raw:
-        print(f"理由: {raw}")
+        print(f"理由：{label}")
 except Exception:
     pass
 PY
 )
 		[ -n "${_regression_detail}" ] || _regression_detail=""
 		if [ -n "${_regression_detail}" ]; then
-			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！${_regression_detail}" "predictions"
+			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。${_regression_detail}" "predictions"
 		else
-			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
+			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。" "predictions"
 		fi
 	else
 		enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"

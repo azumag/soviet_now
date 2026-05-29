@@ -8,7 +8,6 @@
     "improve": "node improve.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
     "dotenv": "^16.4.0",
     "playwright": "^1.59.1",
     "sharp": "^0.33.0"

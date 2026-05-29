@@ -14,6 +14,12 @@ last_file="${CODEX_BUG_DISPATCH_LAST_FILE:-tmp/state/codex_bug_dispatch_last.ts}
 log_dir="${CODEX_BUG_DISPATCH_LOG_DIR:-tmp/debug/codex_bug_dispatch}"
 min_interval="${CODEX_BUG_DISPATCH_MIN_INTERVAL_SEC:-900}"
 codex_cmd="${CODEX_BUG_DISPATCH_CODEX_CMD:-codex}"
+# Claude fallback (used when codex hits a rate limit)
+claude_fallback_enabled="${CODEX_BUG_DISPATCH_CLAUDE_FALLBACK:-1}"
+claude_cmd="${CODEX_BUG_DISPATCH_CLAUDE_CMD:-claude}"
+claude_model="${CODEX_BUG_DISPATCH_CLAUDE_MODEL:-}"
+claude_permission_mode="${CODEX_BUG_DISPATCH_CLAUDE_PERMISSION_MODE:-bypassPermissions}"
+rate_limit_re="${CODEX_BUG_DISPATCH_RATE_LIMIT_REGEX:-rate.?limit|rate_limit|429|too many requests|usage limit|quota|resource_exhausted|overloaded|insufficient_quota}"
 
 _pid_alive() {
 	local pid="${1:-}" err=""
@@ -97,6 +103,17 @@ _interval_allows_dispatch() {
 	'' | *[!0-9]*) return 0 ;;
 	esac
 	[ $((now - last)) -ge "$min_interval" ]
+}
+
+_output_indicates_rate_limit() {
+	local f
+	for f in "$@"; do
+		[ -f "$f" ] || continue
+		if grep -Eiq "$rate_limit_re" "$f" 2>/dev/null; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 _build_prompt() {
@@ -214,6 +231,27 @@ _run_once() {
 		"$codex_cmd" exec -C "$ELOOP_LIB_DIR" -o "$output_file" "$(cat "$prompt_file")" >>"$log_file" 2>&1 || rc=$?
 	fi
 	printf '%s\n' "$(date +%s)" >"$last_file"
+	# Fall back to Claude when codex is rate-limited.
+	if [ "$rc" -ne 0 ] && [ "$claude_fallback_enabled" = "1" ] && _output_indicates_rate_limit "$log_file" "$output_file"; then
+		if command -v "$claude_cmd" >/dev/null 2>&1; then
+			echo "[codex_bug_dispatcher] codex rate-limited (rc=$rc); falling back to claude" >>"$log_file"
+			local claude_output_file fallback_rc=0
+			local -a claude_args
+			claude_output_file="$log_dir/last_${ts}_$$_claude.txt"
+			claude_args=(--print -p "$(cat "$prompt_file")" --permission-mode="$claude_permission_mode" --no-session-persistence)
+			[ -n "$claude_model" ] && claude_args+=(--model="$claude_model")
+			(cd "$ELOOP_LIB_DIR" && "$claude_cmd" "${claude_args[@]}") >"$claude_output_file" 2>>"$log_file" || fallback_rc=$?
+			if [ "$fallback_rc" -eq 0 ]; then
+				echo "[codex_bug_dispatcher] claude fallback succeeded" >>"$log_file"
+				rc=0
+			else
+				echo "[codex_bug_dispatcher] claude fallback failed (rc=$fallback_rc)" >>"$log_file"
+				rc=$fallback_rc
+			fi
+		else
+			echo "[codex_bug_dispatcher] claude command not found: $claude_cmd (skipping fallback)" >>"$log_file"
+		fi
+	fi
 	if [ "$rc" -eq 0 ]; then
 		_mark_report "$report_file" "done" "$rc"
 	else

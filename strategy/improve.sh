@@ -263,12 +263,15 @@ _escape_ai_seed_available() {
 		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
 		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
 		"${WILDCARD_ESCAPE_AI_SEED_MIN_GAMES:-4}" \
-		"${WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE:-14}" <<'PY' >/dev/null 2>&1
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE:-14}" \
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
+		"${ARCHIVE_RESTART_INCLUDE_PERMANENT:-1}" <<'PY' >/dev/null 2>&1
 import json
 import os
 import sys
 
-origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw = sys.argv[1:7]
+origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]
+include_permanent = str(include_permanent_raw).strip().lower() not in {"0", "false", "no", "off", ""}
 
 def load(path):
     try:
@@ -303,8 +306,16 @@ for h, meta in (origin or {}).items():
         continue
     if str((meta or {}).get("origin_type") or "wildcard") != "wildcard":
         continue
-    path = os.path.join(archive_dir, f"{h}.py")
-    if not os.path.exists(path) or not archive_is_runtime_stable(path):
+    # Mirror _archive_restart_has_candidate/find_archive_path: wildcard-origin
+    # seeds live almost entirely in the PERMANENT archive (by_hash is pruned to
+    # ~16 entries), so a by_hash-only search makes escape_ai seed-starved and the
+    # AI escape can never fire. Search both, gated by the same env archive_restart
+    # already trusts.
+    paths = [os.path.join(archive_dir, f"{h}.py")]
+    if include_permanent and permanent_archive_dir:
+        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    path = next((p for p in paths if os.path.exists(p) and archive_is_runtime_stable(p)), "")
+    if not path:
         continue
     entry = rolling.get(h) or {}
     n = len(entry.get("scores", []) or [])

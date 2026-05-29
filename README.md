@@ -150,9 +150,11 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 
 1. `archive_restart`: 評価済みアーカイブから、near-anchor かつロシア再現性または type14/15 frontier を持つ候補へ戻す。`best_max_type >= 15` だけを `russia_count=1` とみなさない。候補は `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` / `ARCHIVE_RESTART_MIN_RUSSIA_RATE` / `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` で絞る。
 2. `wildcard`: archive 候補がない、または cooldown 中なら使う。目的はランダムなスコア改善ではなく、type14→15 frontier やロシア建国経路の再獲得。
-3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので、WILDCARD連続失敗が `WILDCARD_AI_ESCALATE_STREAK` 以上で archive候補もseedもない時、または archive_restart fallback 後に seed が見つからない時は、同じWILDCARD/escape_aiを再試行せず通常AI改善へ戻す。
+3. `escape_ai`: 最後の手段。評価済み WILDCARD seed があり、その seed が `russia_count > 0` または `best_max_type >= WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` を満たす場合だけ使う。seed なしの `escape_ai` は通常改善と同じなので、WILDCARD連続失敗が `WILDCARD_AI_ESCALATE_STREAK` 以上で archive候補もseedもない時、または archive_restart fallback 後に seed が見つからない時は、同じWILDCARD/escape_aiを再試行せず通常AI改善へ戻す。seed の探索先は `_archive_restart_has_candidate` と同様に `STRATEGY_HASH_ARCHIVE_DIR` (by_hash) と `STRATEGY_HASH_PERMANENT_ARCHIVE_DIR` (`ARCHIVE_RESTART_INCLUDE_PERMANENT=1`) の両方。by_hash は刈り取られて十数件しか残らず、wildcard origin の大半は permanent archive にあるため、by_hash だけを見ると seed 枯渇で `escape_ai` が永久に発火しない。
 
 `archive_restart` が候補を選んでも validation 後に現行 hash と同一へ正規化され、実効的な hash 変更がない場合は、その候補を cooldown/quarantine に入れて `escape_ai` へフォールバックする。評価済み WILDCARD seed があればそこから構造変異へ進め、seed がない場合は `escape_ai` 失敗で停止せず通常AI改善へ戻す。
+
+エスカレーション streak の保持: `consecutive_wildcards`（archive_restart / escape_ai へ昇格させるための脱出失敗カウント）は、**wildcard / archive_restart / escape_ai の origin が昇格した「脱出成功」時のみ** 0 にリセットする。素の incumbent（rolling_top）が PROMOTE しただけでは維持する。これは `regression_streak` が非 origin PROMOTE で 0 リセットせず減衰のみする扱いと対称。incumbent の PROMOTE でリセットしてしまうと、`no_candidate` に終わった機械的脱出の失敗が一度も蓄積されず、`WILDCARD_AI_ESCALATE_STREAK` / `ARCHIVE_RESTART_STREAK` に到達できないため、強い局所最適が勝ち続ける限り構造変異を生む `escape_ai` に永久に到達できなくなる。
 
 ステータス監視:
 

@@ -1602,7 +1602,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("wildcard_parallel_cleanup_sessions()", improve)
         self.assertIn("--cleanup-sessions", improve)
         self.assertIn('"wildcard_parallel" not in profile_dir', parallel)
-        self.assertIn('"ps", "-Ao", "pid=,command="', parallel)
+        self.assertIn('"ps", "-Ao", "pid=,command=", "-ww"', parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)\n            bridge = None", parallel)
         self.assertIn("cleanup_chrome_profile_processes(candidate.profile_dir, candidate.cdp_port)", parallel)
 
@@ -2965,7 +2965,18 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
 
             self.assertIn("rp_guidance_suppressed", block)
             self.assertIn("reactive_pair_count >= 5", block)
-            self.assertIn("proximity_bonus = 0.0", block)
+            # The safety property is "no proximity bonus while congested". The AI
+            # may express that either by explicitly zeroing the bonus
+            # (proximity_bonus = 0.0) or by GATING the whole guidance behind
+            # `if not rp_guidance_suppressed` (current form). Accept both so a valid
+            # refactor of an AI-owned file doesn't trip the guard, while still
+            # requiring the suppression to actually gate/zero the bonus.
+            self.assertTrue(
+                "proximity_bonus = 0.0" in block
+                or "if not rp_guidance_suppressed" in block,
+                "v369 congestion suppression must gate or zero proximity_bonus "
+                "when rp_guidance_suppressed",
+            )
             self.assertNotIn("reactive_pair_count < 3", block)
         self.assertIn("v369 congestion-aware proximity", readme)
         self.assertRegex(
@@ -3393,7 +3404,12 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("await waitForCdpHttp(CDP_PORT);", local)
         self.assertIn("launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs)", local)
         self.assertIn("args: launchArgs", local)
-        self.assertIn("Google Chrome(?: for Testing)?", local)
+        # The OBS game capture must bind ONLY to the "Google Chrome for Testing"
+        # window, never the user's personal "[Google Chrome]" (commit 7fd2ad123
+        # "never bind OBS game capture to personal Chrome"). The old permissive
+        # /\[Google Chrome(?: for Testing)?\]/ matched both and is forbidden.
+        self.assertIn(r"/\[Google Chrome for Testing\]/", local)
+        self.assertNotIn("Google Chrome(?: for Testing)?", local)
         self.assertNotIn(".bringToFront()", local)
         self.assertIn("SOREN_BROWSER_TAB_ACTIVATE:-0", (REPO_ROOT / "monitor_improve_runtime.sh").read_text())
         self.assertIn("skip_no_focus", (REPO_ROOT / "monitor_improve_runtime.sh").read_text())
@@ -6112,6 +6128,39 @@ PY
         self.assertIn('elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):\n            c += 1', regression)
         self.assertIn('elif event in ("REGRESSION", "RESET", "OBJECTIVE_MISS"):\n            rs += 1', regression)
         self.assertIn('if event in ("PROMOTE", "OK_BEAT"):', regression)
+
+    def test_incumbent_promote_does_not_reset_escape_streak(self):
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        # consecutive_wildcards (the escape-escalation streak) must reset ONLY on a
+        # genuine escape success — a wildcard/archive_restart/escape_ai ORIGIN being
+        # promoted. A plain incumbent (rolling_top) PROMOTE must NOT reset it, or
+        # repeated FAILED mechanical escapes (wildcard no_candidate, regressed
+        # candidates) never accumulate toward archive_restart/escape_ai escalation
+        # and the only novelty-injecting AI escape can never fire.
+        self.assertIn(
+            'if event in ("PROMOTE", "OK_BEAT") and is_wildcard_origin:', regression
+        )
+        self.assertIn('elif event in ("PROMOTE", "OK_BEAT"):', regression)
+
+    def test_escape_ai_seed_finder_searches_permanent_archive(self):
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+
+        # _escape_ai_seed_available must search the PERMANENT archive like its
+        # sibling _archive_restart_has_candidate. Wildcard-origin seeds live almost
+        # entirely in strategy_versions_archive/by_hash (the live strategy_versions/
+        # by_hash is pruned to ~16 entries), so a by_hash-only search makes escape_ai
+        # seed-starved and the AI escape can never fire.
+        self.assertIn(
+            'origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, '
+            'min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]',
+            improve,
+        )
+        self.assertIn("if include_permanent and permanent_archive_dir:", improve)
+        self.assertIn(
+            '"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}"',
+            improve,
+        )
 
     def test_structural_validation_errors_restart_fresh_sandbox_early(self):
         config = (REPO_ROOT / "core/config.sh").read_text()

@@ -3141,13 +3141,24 @@ def _update_wildcard_attempt_state(event):
                 data = {}
         is_wildcard_origin = current_hash in _WILDCARD_ORIGIN
         origin = _WILDCARD_ORIGIN.get(current_hash, {}) if is_wildcard_origin else {}
-        if event in ("PROMOTE", "OK_BEAT"):
+        if event in ("PROMOTE", "OK_BEAT") and is_wildcard_origin:
+            # Genuine escape SUCCESS (a wildcard/archive_restart/escape_ai origin
+            # was promoted): reset the escape streak + perturbation scale so we do
+            # not immediately re-fire (anti-churn).
             data["consecutive_wildcards"] = 0
             data["scale"] = 1.0
             data["last_reset_event"] = event
             data["last_reset_hash"] = current_hash
             data["last_reset_epoch"] = int(time.time())
             data["last_reason"] = "wildcard_success_reset"
+        elif event in ("PROMOTE", "OK_BEAT"):
+            # Incumbent (non-escape) promotion: the plain rolling_top just kept
+            # winning. Do NOT reset the escape streak — otherwise repeated FAILED
+            # mechanical escapes (wildcard no_candidate, regressed candidates) never
+            # accumulate toward archive_restart/escape_ai escalation, and the only
+            # novelty-injecting AI escape can never fire. Mirrors regression_streak,
+            # which already decays (not zeroes) on a non-wildcard-origin PROMOTE.
+            pass
         else:
             data["last_regression_event"] = event
             data["last_regression_hash"] = current_hash
