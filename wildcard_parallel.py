@@ -242,6 +242,24 @@ def wait_for_candidate_chrome_cdp(cdp_port: int, timeout: float = 8.0) -> bool:
     return False
 
 
+# Serialize + stagger Chrome spawns across slots. Launching ~6 Chrome-for-Testing
+# instances concurrently races on the macOS app/window-server registration
+# (GetCurrentProcess -> _RegisterApplication -> NSApplication init), which aborts
+# one of them with EXC_CRASH/SIGABRT during launch. Holding a global lock through
+# the spawn + a short stagger spaces the registrations out; the slow CDP-readiness
+# wait stays OUTSIDE the lock so slots still warm up in parallel.
+_CHROME_LAUNCH_LOCK = Lock()
+
+
+def _spawn_with_launch_stagger(spawn_fn):
+    stagger = _float(os.getenv("WILDCARD_PARALLEL_CHROME_LAUNCH_STAGGER_SEC"), 1.2)
+    with _CHROME_LAUNCH_LOCK:
+        result = spawn_fn()
+        if stagger > 0:
+            time.sleep(stagger)
+    return result
+
+
 def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir: str, cdp_port: int) -> bool:
     if sys.platform != "darwin":
         return False
@@ -297,7 +315,7 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
             *chrome_args,
         ]
         try:
-            subprocess.run(open_args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
+            _spawn_with_launch_stagger(lambda: subprocess.run(open_args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env))
             if wait_for_candidate_chrome_cdp(cdp_port):
                 return True
         except Exception:
@@ -305,14 +323,14 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
     if not executable_path:
         return False
     try:
-        proc = subprocess.Popen(
+        proc = _spawn_with_launch_stagger(lambda: subprocess.Popen(
             [executable_path, *chrome_args],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             env=env,
             start_new_session=True,
-        )
+        ))
         if wait_for_candidate_chrome_cdp(cdp_port):
             return True
         try:

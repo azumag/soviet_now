@@ -7752,5 +7752,24 @@ class TestPostImproveImportsRussiaOnAllPaths(unittest.TestCase):
         self.assertIn('_append_celebration_history "russia"', importer)
 
 
+class TestCandidateChromeLaunchStagger(unittest.TestCase):
+    """6 候補 Chrome の同時起動が macOS の app/window-server 登録
+    (_RegisterApplication -> NSApplication init) を奪い合い、起動中の Chrome を
+    EXC_CRASH/SIGABRT で落とす crash を、起動の直列化 + stagger で防ぐ。"""
+
+    def test_prelaunch_serializes_and_staggers_chrome_spawns(self):
+        wp = (REPO_ROOT / "wildcard_parallel.py").read_text(encoding="utf-8")
+        self.assertIn("_CHROME_LAUNCH_LOCK = Lock()", wp)
+        self.assertIn("def _spawn_with_launch_stagger(spawn_fn):", wp)
+        self.assertIn("WILDCARD_PARALLEL_CHROME_LAUNCH_STAGGER_SEC", wp)
+        # both launch paths (open -g -n, and the direct Popen fallback) go through it
+        self.assertIn("_spawn_with_launch_stagger(lambda: subprocess.run(open_args", wp)
+        self.assertIn("_spawn_with_launch_stagger(lambda: subprocess.Popen(", wp)
+        # the lock is held through the spawn + stagger sleep (so registrations are spaced)
+        fn = wp.split("def _spawn_with_launch_stagger(spawn_fn):", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("with _CHROME_LAUNCH_LOCK:", fn)
+        self.assertIn("time.sleep(stagger)", fn)
+
+
 if __name__ == "__main__":
     unittest.main()
