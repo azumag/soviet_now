@@ -39,6 +39,7 @@ declare -a WORKER_NAMES=(
 	"radio_worker"
 	"prediction_worker"
 	"improve_daemon"
+	"obs_capture_watchdog"
 )
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
@@ -49,6 +50,7 @@ declare -a WORKER_CMDS=(
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
 	"./improve_daemon.sh"
+	"./obs_capture_watchdog.sh"
 )
 
 # ランタイム状態
@@ -140,6 +142,7 @@ _pidfile_for_worker() {
 	radio_worker) echo "tmp/state/radio_worker.pid" ;;
 	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
 	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
+	obs_capture_watchdog) echo "tmp/state/obs_capture_watchdog.pid" ;;
 	*) echo "" ;;
 	esac
 }
@@ -154,6 +157,7 @@ _pattern_for_worker() {
 	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
 	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
 	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
+	obs_capture_watchdog) echo '[/ ]obs_capture_watchdog[.]sh([[:space:]]|$)' ;;
 	*) echo "" ;;
 	esac
 }

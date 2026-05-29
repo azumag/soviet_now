@@ -573,6 +573,23 @@ if [ "$live_pid" -ne 0 ]; then
 	exit 0
 fi
 
+# 根本修正: improveのpidを見失っても(live_pid=0)、wildcard_parallel status が
+# アクティブなら param並列(隔離評価)が前面を所有しているとみなし、normal-mode へ
+# 復帰しない。pid消失→idle誤判定→メイン/soren91再開→param並列と三重並行＋OBS
+# バインド孤児化、を防ぐ。_wildcard_parallel_active は phase=generating/running の
+# 間のみ true で、started_at から WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC(既定3600s)
+# 超過時は false に落ちるため、stale な running で永久ブロックされることはない。
+if command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active 2>/dev/null; then
+	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+		_monitor_log "wildcard_parallel active (status file) but improve pid lost; keeping soren91 stopped, NOT resuming normal mode"
+		SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
+	else
+		_monitor_log "wildcard_parallel active (status file) but improve pid lost; preserving isolated state, NOT resuming normal mode"
+	fi
+	_write_status running 0 0 0 "wildcard_parallel_active_pidless" "param parallel active per status; main/soren91 kept stopped"
+	exit 0
+fi
+
 check_and_harvest_improvement >/dev/null 2>&1 || true
 
 ./generate_improve_overlay.sh once >/dev/null 2>&1 || true

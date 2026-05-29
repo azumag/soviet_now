@@ -227,6 +227,37 @@ _soren91_kill_runner_session() {
 	tmux kill-session -t soren91_runner 2>/dev/null || true
 }
 
+# 多重runnerフラッピング対策: pidfile/tmux 管理外で生き残った run_player_loop.sh
+# 孤児（別tmuxや過去サイクルの取り残し）と、その子 main.mjs を確実に一掃する。
+# soren91_stop は追跡中の1個しか止めないため、孤児が共有Chrome(SOREN_CDP_PORT=9322)に
+# about:blank を開き続けてメイン配信のキャプチャを乱す事故を防ぐ。stop 経路でのみ呼ぶ
+# 想定（停止時に全 runner を落とすのが正しい）。
+_soren91_sweep_orphan_runners() {
+	local pids="" p self="$$"
+	pids=$( { pgrep -f "$SOREN91_DIR/run_player_loop.sh" 2>/dev/null; pgrep -f 'soren91/run_player_loop.sh' 2>/dev/null; } | grep -E '^[0-9]+$' | sort -u )
+	[ -n "$pids" ] || return 0
+	for p in $pids; do
+		[ "$p" = "$self" ] && continue
+		pkill -TERM -P "$p" 2>/dev/null || true   # 子 main.mjs を先に
+		kill -TERM "$p" 2>/dev/null || true
+	done
+	sleep 2
+	for p in $pids; do
+		[ "$p" = "$self" ] && continue
+		if _soren91_pid_is_alive "$p"; then
+			pkill -KILL -P "$p" 2>/dev/null || true
+			kill -KILL "$p" 2>/dev/null || true
+			log "[SOREN91] swept orphan runner PID=$p"
+		fi
+	done
+	# 取り残しの main.mjs 単体も掃討
+	local mp
+	for mp in $(pgrep -f 'soren91/main.mjs' 2>/dev/null | grep -E '^[0-9]+$'); do
+		[ "$mp" = "$self" ] && continue
+		kill -TERM "$mp" 2>/dev/null || true
+	done
+}
+
 _soren91_scan_standalone_browser_pids() {
 	[ "${SOREN91_SHARED_BROWSER:-0}" = "1" ] && return 0
 	local user_data_dir cdp_port
@@ -1217,6 +1248,7 @@ soren91_stop() {
 		local eg
 		eg=$(_soren91_record_end_game)
 		_soren91_kill_runner_session
+		_soren91_sweep_orphan_runners
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
@@ -1288,6 +1320,7 @@ soren91_stop() {
 		fi
 	fi
 	_soren91_kill_runner_session
+	_soren91_sweep_orphan_runners
 
 	local eg
 	eg=$(_soren91_record_end_game)

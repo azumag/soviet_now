@@ -268,6 +268,9 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
         f"--crash-dumps-dir={crashpad_dir}",
         "--no-first-run",
         "--no-default-browser-check",
+        # suppress the "Chrome for Testing ... / automated test software" infobar
+        "--test-type",
+        "--disable-infobars",
         "--password-store=basic",
         "--use-mock-keychain",
         "--disable-translate",
@@ -483,6 +486,19 @@ def write_interrupted_result_from_status(
     return True
 
 
+def _overlay_preview_enabled() -> bool:
+    """Whether to show per-candidate screenshot previews in the HTML overlay.
+
+    When OBS window capture is active the live Chrome windows are already on
+    screen, so the embedded screenshots are redundant. Default: off if window
+    capture is on. Explicit override via WILDCARD_PARALLEL_OVERLAY_PREVIEW.
+    """
+    val = os.environ.get("WILDCARD_PARALLEL_OVERLAY_PREVIEW")
+    if val is not None and val.strip() != "":
+        return val.strip().lower() not in ("0", "false", "no", "off")
+    return os.environ.get("WILDCARD_PARALLEL_OBS_WINDOW_SOURCES", "0") != "1"
+
+
 def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     now_epoch = int(time.time())
     payload.setdefault("started_at", now_epoch)
@@ -609,22 +625,28 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
               </div>
             """
         )
-        preview_uri = ""
-        preview_path = str(cand.get("preview_path") or "")
-        if preview_path:
-            try:
-                path_obj = Path(preview_path)
-                if not path_obj.is_absolute():
-                    path_obj = REPO_ROOT / path_obj
-                if path_obj.exists():
-                    preview_uri = path_obj.resolve().as_uri()
-            except Exception:
-                preview_uri = ""
-        preview_html = (
-            f'<img class="preview live-preview" data-src="{html.escape(preview_uri)}" src="{html.escape(preview_uri)}?t={int(time.time())}" alt="">'
-            if preview_uri
-            else '<div class="preview empty">waiting for preview</div>'
-        )
+        if not _overlay_preview_enabled():
+            # OBS window capture mode: don't embed a screenshot, but RESERVE a
+            # fixed-height box where the live window tile sits, so the stats
+            # below it stay visible (and are not covered by the tile).
+            preview_html = '<div class="preview reserved"></div>'
+        else:
+            preview_uri = ""
+            preview_path = str(cand.get("preview_path") or "")
+            if preview_path:
+                try:
+                    path_obj = Path(preview_path)
+                    if not path_obj.is_absolute():
+                        path_obj = REPO_ROOT / path_obj
+                    if path_obj.exists():
+                        preview_uri = path_obj.resolve().as_uri()
+                except Exception:
+                    preview_uri = ""
+            preview_html = (
+                f'<img class="preview live-preview" data-src="{html.escape(preview_uri)}" src="{html.escape(preview_uri)}?t={int(time.time())}" alt="">'
+                if preview_uri
+                else '<div class="preview empty">waiting for preview</div>'
+            )
         cards.append(
             f"""
             <section class="card {klass}">
@@ -838,6 +860,14 @@ html, body {{
   place-items: center;
   color: #94a3b8;
   font-size: 16px;
+}}
+/* OBS window-capture mode: reserve the tile's footprint (no aspect-ratio so it
+   stays a fixed height), so the live tile overlays here and stats render below. */
+.preview.reserved {{
+  aspect-ratio: auto;
+  height: var(--tile-h, 188px);
+  background: rgba(0, 0, 0, 0.18);
+  border-style: dashed;
 }}
 ul {{
   padding-left: 18px;
@@ -1713,6 +1743,8 @@ def cleanup_ports_from_status(status_file: Path, fallback_base_port: int, fallba
 
 
 def capture_candidate_preview(cdp_port: int, out_path: Path, cwd: Path) -> None:
+    if not _overlay_preview_enabled():
+        return
     out_path = out_path.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     script = r"""
@@ -1804,10 +1836,15 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     title = f"Wildcard Parallel Cand {candidate.index + 1}"
     window_pattern = _regex_escape(title)
     cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
-    w = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W", "660"))
-    h = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H", "425"))
-    x = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X", "-30")) + (candidate.index % cols) * w
-    y = int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y", "180")) + (candidate.index // cols) * h
+    # tile size (occupies only the reserved preview box in each card) ...
+    w = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W"), 590)
+    h = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H"), 188)
+    # ... and grid stride is SEPARATE from tile size: cell spacing matches the
+    # overlay card grid so the stats rendered below each tile stay uncovered.
+    col_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE"), 624)
+    row_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE"), 430)
+    x = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X"), 38) + (candidate.index % cols) * col_stride
+    y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 170) + (candidate.index // cols) * row_stride
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
