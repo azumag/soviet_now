@@ -44,6 +44,16 @@ const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
+// Persisted BlackHole (CHROME_AUDIO_OUTPUT_LABEL) audiooutput deviceId. Chrome's
+// mediaDevices deviceId is stable per (origin, persistent profile), so caching the
+// last-resolved id lets us seed __sorenSinkId BEFORE Unity creates its AudioContext.
+// This wins the resolve-vs-create race deterministically: without it, when Unity's
+// context is constructed before the async enumerateDevices resolve completes, it
+// binds to the default macOS output (sinkId='') and — since live setSinkId crashes
+// Unity (#90) — stays off BlackHole for the whole bridge run, so OBS captures
+// silence ("ゲーム音でてない"). A stale id just throws at construction and falls
+// back to default (no crash), and the async resolve refreshes it next launch.
+const AUDIO_SINK_CACHE_FILE = 'tmp/state/chrome_audio_sink_id.txt';
 const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
@@ -521,6 +531,25 @@ function writeAudioHealth(health) {
   } catch {}
 }
 
+function readCachedSinkId() {
+  try {
+    const v = fs.readFileSync(AUDIO_SINK_CACHE_FILE, 'utf8').trim();
+    return /^[0-9a-f]{16,}$/i.test(v) ? v : '';
+  } catch {
+    return '';
+  }
+}
+
+function writeCachedSinkId(deviceId) {
+  if (!deviceId || !/^[0-9a-f]{16,}$/i.test(deviceId)) return;
+  if (writeCachedSinkId._last === deviceId) return;
+  try {
+    fs.mkdirSync(path.dirname(AUDIO_SINK_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(AUDIO_SINK_CACHE_FILE, `${deviceId}\n`);
+    writeCachedSinkId._last = deviceId;
+  } catch {}
+}
+
 function withTimeout(promise, ms, label) {
   let timer;
   return Promise.race([
@@ -546,6 +575,7 @@ async function inspectUnityAudio(page) {
         tracked,
         muted: Boolean(window.__sorenMuted),
         routeError: window.__sorenAudioOutputError || '',
+        routedDeviceId: window.__sorenAudioOutputDeviceId || '',
         visibility: document.visibilityState,
         hidden: document.hidden,
       };
@@ -835,18 +865,23 @@ async function runLocalController() {
 
   // Hook AudioContext to track all instances for mute/unmute control and route
   // browser game audio to BlackHole without changing the macOS default output.
-  await page.addInitScript((audioOutputLabel) => {
+  await page.addInitScript((cfg) => {
+    const audioOutputLabel = cfg.label;
     window.__sorenAudioContexts = [];
     window.__sorenMuted = false;
     window.__sorenAudioOutputLabel = audioOutputLabel;
-    window.__sorenAudioOutputDeviceId = '';
+    window.__sorenAudioOutputDeviceId = cfg.cachedSinkId || '';
     window.__sorenAudioOutputError = '';
     // #90 安定化: ライブ setSinkId(稼働中コンテキストの出力デバイス切替) は macOS
     // CoreAudio + Unity WASM グラフでクラッシュ要因 → 廃止。代わりに deviceId を
     // 事前解決し、AudioContext を生成時に {sinkId} で目的デバイスに固定する
     // (生成時バインド=デバイス切替イベント無し=クラッシュしない)。
     // システム既定出力デバイスは変更しない (ハウリング回避・恒久制約)。
-    window.__sorenSinkId = '';
+    // 前回起動で解決済の deviceId をキャッシュから種付けし、Unity の
+    // AudioContext 生成より前に __sorenSinkId を確定させる (競合を決定的に勝つ)。
+    // deviceId は (origin, 永続プロファイル) で安定。stale なら生成時 throw →
+    // 既定デバイスにフォールバック (crash せず) し、下の resolve ループが更新する。
+    window.__sorenSinkId = cfg.cachedSinkId || '';
     // label から audiooutput deviceId を解決し __sorenSinkId に保存 (setSinkId は呼ばない)
     window.__sorenResolveSink = async (label = window.__sorenAudioOutputLabel) => {
       if (!label || !navigator.mediaDevices?.enumerateDevices) return false;
@@ -954,7 +989,7 @@ async function runLocalController() {
         window.__sorenAudioHealBusy = false;
       }
     }, 5000);
-  }, CHROME_AUDIO_OUTPUT_LABEL);
+  }, { label: CHROME_AUDIO_OUTPUT_LABEL, cachedSinkId: readCachedSinkId() });
 
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
 
@@ -1007,6 +1042,7 @@ async function runLocalController() {
       };
     }, CHROME_AUDIO_OUTPUT_LABEL);
     console.log('Chrome audio route:', JSON.stringify(audioRoute));
+    writeCachedSinkId(audioRoute.deviceId);
   } catch (e) {
     console.warn(`Failed to route Chrome audio: ${e.message}`);
   }
@@ -1228,6 +1264,7 @@ async function runLocalController() {
         ...health,
         lastRecoverAt: lastUnityAudioRecoverAt ? new Date(lastUnityAudioRecoverAt).toISOString() : null,
       });
+      writeCachedSinkId(health && health.routedDeviceId);
       if (unityAudioNeedsRecovery(health) && Date.now() - lastUnityAudioRecoverAt > UNITY_AUDIO_RECOVER_COOLDOWN_MS) {
         lastUnityAudioRecoverAt = Date.now();
         const recovered = await recoverUnityAudio(page, audioDiagLog, health.unityState || 'tracked_suspended');

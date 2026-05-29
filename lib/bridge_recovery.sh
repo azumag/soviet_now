@@ -23,6 +23,16 @@ _BR_AUDIO_HEALTH="${BRIDGE_AUDIO_HEALTH_FILE:-$_BR_ROOT/tmp/state/local_audio_he
 _BR_AUDIO_DIAG="${BRIDGE_AUDIO_DIAG_FILE:-$_BR_ROOT/tmp/audio_diag.log}"
 _BR_AUDIO_STUCK_WINDOW="${BRIDGE_AUDIO_STUCK_WINDOW_SEC:-240}"
 _BR_AUDIO_STUCK_RECOVER_COUNT="${BRIDGE_AUDIO_STUCK_RECOVER_COUNT:-4}"
+# Wrong-sink detection: a running AudioContext bound to the default output
+# (sinkId='') while the BlackHole sink is resolvable (routedDeviceId set) means
+# game audio never reaches OBS — the "ゲーム音でてない" class. It does not crash
+# and does not show suspended/interrupted, so _br_audio_stuck_reason misses it.
+# Gate (default on), confirm twice before acting (debounce snapshots), and cap
+# consecutive relaunches so a fundamentally-unsupported {sinkId} can't flap.
+_BR_AUDIO_WRONG_SINK_RELAUNCH="${BRIDGE_AUDIO_WRONG_SINK_RELAUNCH:-1}"
+_BR_AUDIO_WRONG_SINK_MAX="${BRIDGE_AUDIO_WRONG_SINK_MAX:-3}"
+: "${_BR_WRONG_SINK_PENDING:=0}"
+: "${_BR_WRONG_SINK_RELAUNCHES:=0}"
 _BR_RELAUNCH_REASON="${_BR_RELAUNCH_REASON:-}"
 # soviet_local.mjs の [BRIDGE-FATAL] も検知署名に含める (clean-exit 連携)
 _BR_FATAL_RE='\[BRIDGE-FATAL\]|Target page, context or browser has been closed|browser has been closed|EADDRINUSE|^Node\.js v'
@@ -203,6 +213,34 @@ print(f"audio_context_stuck(states={','.join(states)}, recoveries={recent}/{thre
 PY
 }
 
+# Classify the live audio sink: prints one of
+#   OK            a running context is bound to the resolved sink (routedDeviceId)
+#   WRONG <info>  every running context is on a different/default device (sinkId!=routed)
+#   NA            indeterminate (muted / no running context yet / sink unresolved)
+_br_audio_sink_status() {
+	[ -f "$_BR_AUDIO_HEALTH" ] || { echo NA; return 0; }
+	python3 - "$_BR_AUDIO_HEALTH" <<'PY' 2>/dev/null || echo NA
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        health = json.load(f)
+except Exception:
+    print("NA"); raise SystemExit(0)
+view = health.get("after") if isinstance(health.get("after"), dict) else health
+before = health.get("before") if isinstance(health.get("before"), dict) else {}
+if health.get("muted") or before.get("muted") or view.get("muted"):
+    print("NA"); raise SystemExit(0)
+routed = str(view.get("routedDeviceId") or "")
+running = [t for t in (view.get("tracked") or [])
+          if isinstance(t, dict) and t.get("state") == "running"]
+if not routed or not running:
+    print("NA"); raise SystemExit(0)
+if any(str(t.get("sinkId") or "") == routed for t in running):
+    print("OK"); raise SystemExit(0)
+print(f"WRONG routed={routed[:8]} running={len(running)} sink_empty")
+PY
+}
+
 _br_relaunch() {
 	local pids p
 	# Fix0: 共有 lease を取得してから kill/relaunch。他の復旧アクター
@@ -291,14 +329,40 @@ _ensure_bridge_alive() {
 	[ -f tmp/stop ] && return 0
 	[ -f tmp/state/manual_improve_mode ] && return 0
 
-	local crash="" audio_crash="" m n
+	local crash="" audio_crash="" wrong_sink="" m n
 	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
 	n=$(date +%s)
 	audio_crash=$(_br_audio_stuck_reason 2>/dev/null || true)
+
+	# 稼働中だが既定デバイスに繋がった (sinkId='') = ゲーム音が OBS に乗らない。
+	# crash/suspended にならないので debounce で確認し、上限付きで復旧する。
+	if [ "$_BR_AUDIO_WRONG_SINK_RELAUNCH" = "1" ]; then
+		local sink_status; sink_status=$(_br_audio_sink_status)
+		case "$sink_status" in
+			OK)
+				_BR_WRONG_SINK_PENDING=0
+				_BR_WRONG_SINK_RELAUNCHES=0
+				;;
+			WRONG*)
+				_BR_WRONG_SINK_PENDING=$((_BR_WRONG_SINK_PENDING + 1))
+				if [ "$_BR_WRONG_SINK_PENDING" -lt 2 ]; then
+					_br_log "audio_wrong_sink 検知($sink_status) debounce ${_BR_WRONG_SINK_PENDING}/2 → 次周回で確認"
+				elif [ "$_BR_WRONG_SINK_RELAUNCHES" -ge "$_BR_AUDIO_WRONG_SINK_MAX" ]; then
+					_br_log "audio_wrong_sink: 連続復旧上限(${_BR_AUDIO_WRONG_SINK_MAX})到達 → 自動再起動停止($sink_status)"
+				else
+					wrong_sink="audio_wrong_sink($sink_status)"
+				fi
+				;;
+			*) : ;;  # NA: muted/未生成/未解決 → 判定保留
+		esac
+	fi
+
 	if _br_fatal_in_log; then
 		crash="致命ログ署名"
 	elif [ -n "$audio_crash" ]; then
 		crash="$audio_crash"
+	elif [ -n "$wrong_sink" ]; then
+		crash="$wrong_sink"
 	elif [ "$m" -gt 0 ] && [ "$((n - m))" -lt "$_BR_STALE_SEC" ]; then
 		# macOS privacy/sandbox boundaries can hide cwd/command details from
 		# pgrep+lsof even while the bridge is actively writing game_state.json.
@@ -328,6 +392,12 @@ _ensure_bridge_alive() {
 	_BR_RELAUNCH_REASON="$crash"
 	_br_relaunch; local rc=$?
 	_BR_RELAUNCH_REASON=""
+	if [[ "$crash" == audio_wrong_sink* ]]; then
+		# debounce をリセットし、復旧成功(=bridge は起動)時のみ上限カウンタを進める。
+		# 起動後も sink が直らなければ次の OK 観測まで蓄積し、上限で flap を止める。
+		_BR_WRONG_SINK_PENDING=0
+		[ "$rc" -eq 0 ] && _BR_WRONG_SINK_RELAUNCHES=$((_BR_WRONG_SINK_RELAUNCHES + 1))
+	fi
 	if [ "$rc" -eq 0 ]; then
 		_BR_CONSEC_FAIL=0
 	elif [ "$rc" -eq 2 ]; then
