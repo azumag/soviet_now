@@ -409,9 +409,9 @@ params = data.get("params")
 if isinstance(params, dict) and params.get("block_main_loop") is False:
     raise SystemExit(1)
 try:
-    max_sec = int(float(os.environ.get("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", "3600") or "3600"))
+    max_sec = int(float(os.environ.get("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", "7800") or "7800"))
 except Exception:
-    max_sec = 3600
+    max_sec = 7800
 try:
     started_at = int(float(data.get("started_at", 0) or 0))
 except Exception:
