@@ -601,32 +601,23 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         ]
         if part
     )
-    cards = []
+    # Compact top-strip cells: one per slot showing SLOT, rank, comp, games(試行).
+    # The strip is the ONLY opaque region; the area below is transparent so the
+    # higher-layer candidate window tiles are never hidden by the overlay.
+    strip_h = _int(os.environ.get("WILDCARD_PARALLEL_OVERLAY_STRIP_H"), 200)
+    cur_game = max(
+        (_int(c.get("games"), 0) for c in display_candidates if not c.get("score_baseline")),
+        default=0,
+    )
+    game_label = f"game {cur_game}/{max_games}" if max_games else f"game {cur_game}"
+    pcells = []
     for cand in display_candidates:
-        applied = cand.get("applied") or []
-        changes = []
-        for item in applied[:6]:
-            changes.append(
-                f"L{html.escape(str(item.get('lineno', '?')))} "
-                f"{html.escape(str(item.get('old', '?')))} -> {html.escape(str(item.get('new', '?')))}"
-            )
-        if cand.get("score_baseline"):
-            changes = ["source strategy virtual leader"]
-        elif cand.get("baseline"):
-            changes = ["slot 1 baseline unchanged"]
-        elif not changes:
-            changes = ["no perturbation yet"]
         status = str(cand.get("status") or "pending")
         display_status = "finished" if status == "accepted" else status
         klass = "bad" if status in {"failed", "timeout", "culled"} else "good" if status == "won" else "run"
         job_id = str(cand.get("job_id", "-"))
         slot_num = _int(cand.get("index"), 0) + 1
         slot_label = "SRC" if cand.get("score_baseline") else str(slot_num)
-        source_name = (
-            "virtualLeader"
-            if cand.get("score_baseline")
-            else f"{os.environ.get('WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX', 'wildcardParallelCand')}{slot_num}"
-        )
         rank = rank_by_job.get(job_id)
         if rank == 1:
             klass += " leader"
@@ -634,55 +625,20 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
         rank_class = f"r{rank}" if rank is not None and rank <= 3 else "rx"
         comp = _float(cand.get("comp"), 0.0)
         bar_width = 0 if best_comp <= 0 else max(0, min(100, round((comp / best_comp) * 100)))
-        rank_html = (
+        games_n = _int(cand.get("games"), 0)
+        comp_label = str(int(round(comp))) if comp else "-"
+        pcells.append(
             f"""
-              <div class="rankline">
-                <div class="rank-badge {rank_class}">{html.escape(rank_label)}</div>
-                <div class="rank-track"><div class="rank-fill" style="width:{bar_width}%"></div></div>
-                <div class="rank-score">{html.escape(str(cand.get('comp', 0)))}</div>
-              </div>
+            <div class="pcell {klass}">
+              <div class="pcell-head"><span class="pslot">{html.escape(slot_label)}</span><span class="prank {rank_class}">{html.escape(rank_label)}</span><span class="pstatus">{html.escape(display_status)}</span></div>
+              <div class="pbar"><div class="pbar-fill" style="width:{bar_width}%"></div></div>
+              <div class="pmetrics"><span class="pcomp">{html.escape(comp_label)}</span><span class="pgames">g{games_n}</span></div>
+            </div>
             """
         )
-        if not _overlay_preview_enabled():
-            # OBS window capture mode: don't embed a screenshot, but RESERVE a
-            # fixed-height box where the live window tile sits, so the stats
-            # below it stay visible (and are not covered by the tile).
-            preview_html = '<div class="preview reserved"></div>'
-        else:
-            preview_uri = ""
-            preview_path = str(cand.get("preview_path") or "")
-            if preview_path:
-                try:
-                    path_obj = Path(preview_path)
-                    if not path_obj.is_absolute():
-                        path_obj = REPO_ROOT / path_obj
-                    if path_obj.exists():
-                        preview_uri = path_obj.resolve().as_uri()
-                except Exception:
-                    preview_uri = ""
-            preview_html = (
-                f'<img class="preview live-preview" data-src="{html.escape(preview_uri)}" src="{html.escape(preview_uri)}?t={int(time.time())}" alt="">'
-                if preview_uri
-                else '<div class="preview empty">waiting for preview</div>'
-            )
-        cards.append(
-            f"""
-            <section class="card {klass}">
-              <div class="top"><b><span class="slot-badge">SLOT {html.escape(slot_label)}</span>{html.escape(job_id)}</b><span>{html.escape(display_status)}</span></div>
-              {rank_html}
-              {preview_html}
-              <div class="metric source">{html.escape(source_name)}</div>
-              <div class="metric">games {html.escape(str(cand.get('games', 0)))} / comp {html.escape(str(cand.get('comp', 0)))}</div>
-              <div class="metric">p25 {html.escape(str(cand.get('p25', 0)))} / p50 {html.escape(str(cand.get('p50', 0)))}</div>
-              <div class="metric">T{html.escape(str(cand.get('max_type', 0)))} R{html.escape(str(cand.get('russia_count', 0)))} S{html.escape(str(cand.get('soviet_count', 0)))}</div>
-              <div class="hash">{html.escape(str(cand.get('hash', ''))[:12])}</div>
-              <ul>{''.join(f'<li>{line}</li>' for line in changes)}</ul>
-              <div class="err">{html.escape(str(cand.get('error') or ''))[:180]}</div>
-            </section>
-            """
-        )
-    if not cards:
-        cards.append('<section class="card run"><div class="top"><b>waiting</b><span>pending</span></div></section>')
+    if not pcells:
+        pcells.append('<div class="pcell run"><div class="pcell-head"><span class="pslot">-</span><span class="pstatus">waiting</span></div></div>')
+    pcell_cols = max(1, len(pcells))
 
     doc = f"""<!doctype html>
 <html lang="ja">
@@ -699,13 +655,135 @@ html, body {{
   color: #eaf2ff;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }}
-.wrap {{
-  box-sizing: border-box;
+.pstrip {{
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 100vw;
-  height: 100vh;
-  padding: 18px;
-  background: rgba(3, 8, 13, 0.86);
-  border-left: 6px solid #f59e0b;
+  height: {strip_h}px;
+  box-sizing: border-box;
+  padding: 12px 18px;
+  background: rgba(3, 8, 13, 0.92);
+  border-bottom: 4px solid #f59e0b;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}}
+.phead {{
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+}}
+.ptitle {{
+  font-size: 26px;
+  font-weight: 800;
+  white-space: nowrap;
+}}
+.pgame {{
+  font-size: 26px;
+  font-weight: 800;
+  color: #facc15;
+  white-space: nowrap;
+}}
+.psub {{
+  font-size: 15px;
+  color: #bae6fd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.pcells {{
+  display: grid;
+  grid-template-columns: repeat({pcell_cols}, minmax(0, 1fr));
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}}
+.pcell {{
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.85);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}}
+.pcell.good {{ border-color: rgba(74, 222, 128, 0.9); }}
+.pcell.bad {{ border-color: rgba(248, 113, 113, 0.9); }}
+.pcell.leader {{
+  border-color: rgba(250, 204, 21, 1);
+  box-shadow: inset 0 0 0 2px rgba(250, 204, 21, 0.35);
+}}
+.pcell-head {{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}}
+.pslot {{
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #38bdf8;
+  color: #020617;
+  font-weight: 900;
+  font-size: 15px;
+}}
+.prank {{
+  display: inline-grid;
+  place-items: center;
+  min-width: 36px;
+  height: 24px;
+  border-radius: 4px;
+  background: #94a3b8;
+  color: #020617;
+  font-weight: 900;
+  font-size: 15px;
+}}
+.prank.r1 {{ background: #facc15; }}
+.prank.r2 {{ background: #cbd5e1; }}
+.prank.r3 {{ background: #fb923c; }}
+.pstatus {{
+  margin-left: auto;
+  color: #fde68a;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.pbar {{
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.25);
+}}
+.pbar-fill {{
+  height: 100%;
+  min-width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8, #facc15);
+}}
+.pmetrics {{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}}
+.pcomp {{
+  font-size: 22px;
+  font-weight: 800;
+  color: #e2e8f0;
+}}
+.pgames {{
+  font-size: 14px;
+  color: #93c5fd;
 }}
 .head {{
   display: flex;
@@ -968,30 +1046,14 @@ ul {{
 </style>
 </head>
 <body>
-<main class="wrap">
-  <div class="head">
-    <div class="title">{html.escape(title)}</div>
-    <div class="meta">
-      <div class="sub">{html.escape(str(payload.get('phase', 'running')))} / leader {html.escape(leader_label)} / {html.escape(compact_params or params_label or '-')} / {generated}</div>
-      <div class="progress">
-        <div class="progress-track"><div class="progress-fill" style="width:{progress_pct}%"></div></div>
-        <div class="progress-text">{html.escape(progress_label)} / {html.escape(counts_label)}</div>
-      </div>
-    </div>
+<div class="pstrip">
+  <div class="phead">
+    <div class="ptitle">{html.escape(title)}</div>
+    <div class="pgame">{html.escape(game_label)}</div>
+    <div class="psub">{html.escape(str(payload.get('phase', 'running')))} / {html.escape(compact_params or params_label or '-')} / {html.escape(counts_label)} / {generated}</div>
   </div>
-  <div class="grid">{''.join(cards[:6])}</div>
-</main>
-<script>
-(() => {{
-  const refresh = () => {{
-    const stamp = Date.now();
-    document.querySelectorAll('img.live-preview[data-src]').forEach((img) => {{
-      img.src = `${{img.dataset.src}}?t=${{stamp}}`;
-    }});
-  }};
-  setInterval(refresh, 2000);
-}})();
-</script>
+  <div class="pcells">{''.join(pcells)}</div>
+</div>
 </body>
 </html>
 """
@@ -1866,16 +1928,17 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     source = f"{prefix}{candidate.index + 1}"
     title = f"Wildcard Parallel Cand {candidate.index + 1}"
     window_pattern = _regex_escape(title)
+    # 3 cols x 2 rows tile grid filling the area BELOW the overlay strip:
+    # x=[0,1920] (3*640), y=[200,1080] (strip 200 + 2*440). Tiles are a higher
+    # OBS layer than the overlay, so they occupy the transparent area only and
+    # never cover the opaque top strip.
     cols = max(1, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COLS"), 3))
-    # tile size (occupies only the reserved preview box in each card) ...
-    w = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W"), 590)
-    h = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H"), 188)
-    # ... and grid stride is SEPARATE from tile size: cell spacing matches the
-    # overlay card grid so the stats rendered below each tile stay uncovered.
-    col_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE"), 624)
-    row_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE"), 430)
-    x = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X"), 38) + (candidate.index % cols) * col_stride
-    y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 170) + (candidate.index // cols) * row_stride
+    w = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_W"), 640)
+    h = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_H"), 440)
+    col_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE"), 640)
+    row_stride = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE"), 440)
+    x = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_X"), 0) + (candidate.index % cols) * col_stride
+    y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 200) + (candidate.index // cols) * row_stride
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1893,7 +1956,15 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
             subprocess.run(
                 ["./obs_control.sh", "transform", scene, source, str(x), str(y), "1", "1", str(w), str(h)],
                 cwd=REPO_ROOT,
-                env={**os.environ, "OBS_CONTROL_TRANSFORM_MODE": "force"},
+                env={
+                    **os.environ,
+                    "OBS_CONTROL_TRANSFORM_MODE": "force",
+                    # crop-to-fill: cover the whole cell with no letterbox gaps
+                    "OBS_CONTROL_BOUNDS_TYPE": os.environ.get(
+                        "WILDCARD_PARALLEL_OBS_CANDIDATE_BOUNDS_TYPE",
+                        "OBS_BOUNDS_SCALE_OUTER",
+                    ),
+                },
                 stdout=subprocess.DEVNULL,
                 stderr=err,
                 timeout=8,

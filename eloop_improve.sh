@@ -212,7 +212,7 @@ _wildcard_parallel_obs_show() {
 	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
 	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 	local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
-	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-900}"
+	local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-1080}"
 	local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
 	[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 	[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
@@ -391,6 +391,8 @@ _post_improve_param_parallel_trial() {
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_H
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_X
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_Y
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE
+	export WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE
 
 	set +e
 	result=$(WILDCARD_PARALLEL_OVERLAY_TITLE="POST-IMPROVE PARAM TUNING" python3 wildcard_parallel.py \
@@ -1188,7 +1190,7 @@ PY
 			local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
 			local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
 			local overlay_width="${WILDCARD_PARALLEL_OVERLAY_WIDTH:-1920}"
-			local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-900}"
+			local overlay_height="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-1080}"
 			local hide_sources="$dashboard_source,$status_source,$show_status_source,$improve_source"
 			[ -n "$game_source" ] && hide_sources="$hide_sources,$game_source"
 			[ -x ./obs_browser_source.sh ] && ./obs_browser_source.sh ensure "$scene" "$overlay" "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" "$overlay_width" "$overlay_height" show >/dev/null 2>>"$TMP_DEBUG_DIR/obs_control.err.log" || true
@@ -1298,6 +1300,8 @@ PY
 		export WILDCARD_PARALLEL_OBS_CANDIDATE_H
 		export WILDCARD_PARALLEL_OBS_CANDIDATE_X
 		export WILDCARD_PARALLEL_OBS_CANDIDATE_Y
+		export WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE
+		export WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE
 		export WILDCARD_PARALLEL_CULL_AFTER_GAMES
 		export WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES
 		export WILDCARD_PARALLEL_CULL_COMP_RATIO

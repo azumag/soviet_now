@@ -97,6 +97,10 @@ const password = process.env.OBS_WEBSOCKET_PASSWORD || '';
 const url = `ws://${host}:${port}`;
 const requestTimeoutMs = Number(process.env.OBS_WEBSOCKET_TIMEOUT_MS || 8000);
 const transformMode = process.env.OBS_CONTROL_TRANSFORM_MODE || 'init';
+// Bounds type used when boundsW/boundsH are given. Default SCALE_INNER (letterbox,
+// whole source visible). SCALE_OUTER crops to fill the box (no gaps) — used for
+// the wildcard candidate window tiles. Any valid OBS_BOUNDS_* value is accepted.
+const boundsType = process.env.OBS_CONTROL_BOUNDS_TYPE || 'OBS_BOUNDS_SCALE_INNER';
 const enforceTopOverlayStack = process.env.OBS_ENFORCE_TOP_OVERLAY_STACK !== '0';
 const topOverlaySource = process.env.OBS_TOP_OVERLAY_SOURCE || process.env.TWICA_OVERLAY_SOURCE || 'twica';
 const belowTopOverlaySource = process.env.OBS_BELOW_TOP_OVERLAY_SOURCE || process.env.OBS_EVENT_OVERLAY_SOURCE || 'eventOverlay';
@@ -385,7 +389,7 @@ async function main() {
           boundsType: 'OBS_BOUNDS_NONE',
         };
         if (boundsWRaw !== undefined && boundsHRaw !== undefined) {
-          sceneItemTransform.boundsType = 'OBS_BOUNDS_SCALE_INNER';
+          sceneItemTransform.boundsType = boundsType;
           sceneItemTransform.boundsWidth = Number(boundsWRaw);
           sceneItemTransform.boundsHeight = Number(boundsHRaw);
           sceneItemTransform.boundsAlignment = 5;

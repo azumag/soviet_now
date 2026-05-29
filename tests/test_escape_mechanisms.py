@@ -1842,16 +1842,16 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertTrue(newest.exists())
             self.assertTrue(ignored.exists())
 
-    def test_wildcard_parallel_overlay_embeds_three_live_previews(self):
-        """OBS には候補別 CDP screenshot を3枚並べて出す。"""
+    def test_wildcard_parallel_overlay_uses_window_capture_tiles_not_embedded_previews(self):
+        """候補のライブ画面は OBS window-capture タイルで出す。overlay 自身は画面を
+        <img> 埋め込みしない（タイルは上位レイヤーなので埋め込み画像は隠れてしまう）。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
-        self.assertIn('"preview_path": str(self.workdir / "tmp" / "preview.png")', parallel)
-        self.assertIn("def capture_candidate_preview", parallel)
-        self.assertIn("chromium.connectOverCDP", parallel)
-        self.assertIn("page.screenshot", parallel)
-        self.assertIn("capture_candidate_preview(candidate.cdp_port, workdir / \"tmp\" / \"preview.png\", workdir)", parallel)
-        self.assertIn('<img class="preview live-preview"', parallel)
-        self.assertIn("aspect-ratio: 16 / 9", parallel)
+        # live候補画面は OBS の window-capture source として strip の下に並べる
+        self.assertIn("def maybe_show_obs_candidate_source", parallel)
+        self.assertIn("obs_window_capture_source.sh", parallel)
+        # overlay HTML は screenshot を <img> 埋め込みしない（タイルに隠れるため）
+        self.assertNotIn('<img class="preview live-preview"', parallel)
+        self.assertNotIn('class="preview live-preview"', parallel)
 
     def test_wildcard_parallel_overlay_shows_provisional_ranking(self):
         """parallel trial overlay は候補の暫定順位をバッジとバーで表示する。"""
@@ -1873,11 +1873,15 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
                 },
             )
             doc = html_path.read_text(encoding="utf-8")
-            self.assertIn("leader SLOT 2 / cand-2", doc)
-            self.assertIn('<div class="rank-badge r1">#1</div>', doc)
-            self.assertIn('<div class="rank-badge r2">#2</div>', doc)
-            self.assertIn('class="rank-fill"', doc)
-            self.assertIn("width:100%", doc)
+            # compact top strip: per-slot rank badge + comp bar + comp value + g{games}
+            self.assertIn('<span class="prank r1">#1</span>', doc)
+            self.assertIn('<span class="prank r2">#2</span>', doc)
+            self.assertIn('class="pbar-fill"', doc)
+            self.assertIn("width:100%", doc)                  # leader's comp bar is full
+            self.assertIn('class="pcell run leader"', doc)    # rank-1 slot marked as leader
+            self.assertIn('<span class="pcomp">120</span>', doc)
+            self.assertIn('<span class="pcomp">80</span>', doc)
+            self.assertIn('<span class="pgames">g2</span>', doc)
 
     def test_wildcard_parallel_no_candidate_is_noop(self):
         """基準未達なら winner を返さず、本線 strategy.py は変更しない。"""
@@ -2082,14 +2086,25 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("${cand_prefix}1,${cand_prefix}2,${cand_prefix}3,${cand_prefix}4,${cand_prefix}5,${cand_prefix}6", eloop)
         self.assertIn("wildcardParallelCand", parallel)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_JOBS"), 6)', parallel)
-        self.assertIn('cards[:6]', parallel)
+        # New layered design: compact opaque top strip (pstrip) instead of full-area cards.
+        self.assertIn("''.join(pcells)", parallel)
+        self.assertIn("pstrip", parallel)
         self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_COLS', parallel)
-        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_W="${WILDCARD_PARALLEL_OBS_CANDIDATE_W:-660}"', (REPO_ROOT / "core/config.sh").read_text())
-        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_H="${WILDCARD_PARALLEL_OBS_CANDIDATE_H:-425}"', (REPO_ROOT / "core/config.sh").read_text())
-        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_X="${WILDCARD_PARALLEL_OBS_CANDIDATE_X:--30}"', (REPO_ROOT / "core/config.sh").read_text())
-        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_Y="${WILDCARD_PARALLEL_OBS_CANDIDATE_Y:-180}"', (REPO_ROOT / "core/config.sh").read_text())
+        config_sh = (REPO_ROOT / "core/config.sh").read_text()
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_W="${WILDCARD_PARALLEL_OBS_CANDIDATE_W:-640}"', config_sh)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_H="${WILDCARD_PARALLEL_OBS_CANDIDATE_H:-440}"', config_sh)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_X="${WILDCARD_PARALLEL_OBS_CANDIDATE_X:-0}"', config_sh)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_Y="${WILDCARD_PARALLEL_OBS_CANDIDATE_Y:-200}"', config_sh)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE="${WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE:-640}"', config_sh)
+        self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE="${WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE:-440}"', config_sh)
+        self.assertIn('WILDCARD_PARALLEL_OVERLAY_HEIGHT="${WILDCARD_PARALLEL_OVERLAY_HEIGHT:-1080}"', config_sh)
+        # tiles use crop-to-fill so they leave no gaps; overlay strip stays the default letterbox bounds.
+        self.assertIn("OBS_CONTROL_BOUNDS_TYPE", obs_control)
+        self.assertIn("OBS_BOUNDS_SCALE_OUTER", parallel)
         self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_W", eloop)
         self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_Y", eloop)
+        self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE", eloop)
+        self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_ROW_STRIDE", eloop)
         self.assertIn('candidate.index % cols', parallel)
         self.assertIn('candidate.index // cols', parallel)
         self.assertIn("本線ゲームを止め", loop := (REPO_ROOT / "soren_loop.sh").read_text())
@@ -6500,18 +6515,15 @@ PY
 
             status = json.loads(status_path.read_text())
             overlay = html_path.read_text()
-            self.assertEqual(len(status["candidates"]), 4)
-            self.assertIn("SLOT 1", overlay)
-            self.assertIn("wildcardParallelCand1", overlay)
-            self.assertIn("SLOT 2", overlay)
-            self.assertIn("wildcardParallelCand2", overlay)
-            self.assertIn("leader SLOT 2 / cand-2", overlay)
-            self.assertIn("cand-1-r2", overlay)
-            self.assertIn("cand-2", overlay)
-            grid = overlay.index('class="grid"')
-            self.assertLess(overlay.index("SLOT 1", grid), overlay.index("SLOT 2", grid))
-            self.assertIn("<span>finished</span>", overlay)
-            self.assertNotIn("cand-1</b>", overlay)
+            self.assertEqual(len(status["candidates"]), 4)        # status keeps every slot
+            # 表示は live/decided slot のみ: culled(cand-1) と failed(cand-3) は非表示
+            self.assertEqual(overlay.count('<div class="pcell '), 2)
+            self.assertIn('<span class="pslot">1</span>', overlay)   # cand-1-r2 → slot1
+            self.assertIn('<span class="pslot">2</span>', overlay)   # cand-2   → slot2
+            self.assertIn("finished", overlay)                       # accepted → finished
+            # higher comp (cand-2, slot2) は暫定 rank 1
+            self.assertIn('<span class="prank r1">#1</span>', overlay)
+            # culled / failed slot とその error は漏れない
             self.assertNotIn("culled", overlay)
             self.assertNotIn("cand-3", overlay)
             self.assertNotIn("boom", overlay)
@@ -6542,9 +6554,11 @@ PY
             overlay = html_path.read_text()
             self.assertEqual(status["phase"], "restored")
             self.assertEqual(status["candidates"], [])
-            self.assertIn("restored / leader -", overlay)
+            self.assertIn("restored", overlay)        # psub に restored phase
+            self.assertIn("waiting", overlay)          # idle 時は waiting placeholder cell
+            self.assertIn("game 0/6", overlay)         # eval 進捗は 0 にリセット
             self.assertNotIn("cand-1", overlay)
-            self.assertNotIn("SLOT 1", overlay)
+            self.assertNotIn('<span class="pslot">1</span>', overlay)
 
     def test_wildcard_parallel_archives_each_winner_game_for_import(self):
         import wildcard_parallel
