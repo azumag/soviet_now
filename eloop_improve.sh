@@ -83,8 +83,17 @@ _import_wildcard_parallel_game_stats() {
 	[ "${WILDCARD_PARALLEL_IMPORT_ALL_GAME_STATS:-${WILDCARD_PARALLEL_IMPORT_WINNER_STATS:-1}}" = "1" ] || return 0
 	[ -n "$wildcard_json" ] || return 0
 	mkdir -p "$HISTORY_DIR" 2>/dev/null || true
+	# 2026-05-31 fix: the compact result JSON can be many MB (hundreds of candidates ×
+	# full game_results — e.g. 11.4MB for a 400-candidate run). Passing it via an env var
+	# overflows ARG_MAX (1MB) → the python launch fails with E2BIG and `|| true` silently
+	# swallows it → every Russia/Soviet founding in a large run was lost (dashboard
+	# undercount). Stage the JSON through a temp file; the env var holds only the small path.
+	local _wp_json_file=""
+	_wp_json_file=$(mktemp "${TMPDIR:-/tmp}/wp_import.XXXXXX" 2>/dev/null) || _wp_json_file=""
+	[ -n "$_wp_json_file" ] || return 0
+	printf '%s' "$wildcard_json" >"$_wp_json_file" 2>/dev/null || { rm -f "$_wp_json_file"; return 0; }
 	local import_rows=""
-	import_rows=$(WILDCARD_RESULT_JSON="$wildcard_json" python3 - <<'PY' 2>/dev/null || true
+	import_rows=$(WILDCARD_RESULT_JSON_FILE="$_wp_json_file" python3 - <<'PY' 2>/dev/null || true
 import json
 import os
 from pathlib import Path
@@ -96,7 +105,8 @@ def as_int(value, default=0):
         return default
 
 try:
-    data = json.loads(os.environ.get("WILDCARD_RESULT_JSON", "") or "{}")
+    with open(os.environ.get("WILDCARD_RESULT_JSON_FILE", ""), encoding="utf-8") as _jf:
+        data = json.load(_jf)
 except Exception:
     data = {}
 
@@ -158,6 +168,7 @@ for candidate in candidates:
         ]))
 PY
 )
+	rm -f "$_wp_json_file" 2>/dev/null || true
 	[ -n "$import_rows" ] || return 0
 	local import_seen_file="${TMP_STATE_DIR:-tmp/state}/wildcard_parallel_imported.tsv"
 	mkdir -p "$(dirname "$import_seen_file")" 2>/dev/null || true
