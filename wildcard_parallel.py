@@ -2459,6 +2459,87 @@ def _interrupted_min_games() -> int:
         return 2
 
 
+def _cull_protect_russia() -> bool:
+    # CULL PROTECTION (2026-05-31, user request): when ON (default), should_cull never
+    # culls a candidate that has founded Russia (russia_count >= 1). Russia (type 15) is a
+    # rare upper-tail event, so a Russia strategy's MEDIAN-based comp is routinely below the
+    # leader threshold and the comp-only cull (cull_after_games=1) kills exactly the Russia
+    # candidates we want — before game 2 can confirm recurrence, removing them from
+    # choose_winner (erosion to a non-Russia winner) and risking the Russia being lost from
+    # stats. Protecting them lets the candidate finish its full allotment (bounded by
+    # --max-runtime-sec). Set WILDCARD_PARALLEL_CULL_PROTECT_RUSSIA=0 to restore comp-only
+    # culling.
+    return str(os.getenv("WILDCARD_PARALLEL_CULL_PROTECT_RUSSIA", "1")).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _adopt_russia_recurrence() -> bool:
+    # ADOPTION 05-25-SAFETY (2026-05-31): when ON (default), the leading objective bit in
+    # choose_winner's rank_key requires RECURRENT Russia (reliable_russia), NOT a single
+    # lucky Russia. A weak single-Russia strain (founded Russia once by luck, low comp,
+    # could not escape) was the known 2026-05-25 固着 failure; a single-Russia candidate
+    # that survives the cull would otherwise lexicographically outrank EVERY higher-comp
+    # non-Russia purely on the russia>0 boolean. With this ON it instead competes on comp
+    # like any candidate (the comp-competitiveness escape) unless it is recurrent. Set
+    # WILDCARD_PARALLEL_ADOPT_RUSSIA_RECURRENCE=0 to restore the legacy russia_count>0 bit.
+    return str(os.getenv("WILDCARD_PARALLEL_ADOPT_RUSSIA_RECURRENCE", "1")).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _russia_recurrence_min_count() -> int:
+    # A Russia candidate is "recurrent" at russia_count >= this (default 2), mirroring
+    # eloop_improve.sh archive-restart min_russia_count=2 and the >= OBJECTIVE_FRONTIER_MIN_GAMES
+    # frontier rule. Overridable via WILDCARD_PARALLEL_RUSSIA_RECURRENCE_MIN_COUNT.
+    try:
+        return max(1, int(float(os.getenv("WILDCARD_PARALLEL_RUSSIA_RECURRENCE_MIN_COUNT", "2") or "2")))
+    except Exception:
+        return 2
+
+
+def _russia_frontier_min_games() -> int:
+    # Number of game boards that must each satisfy the 2nd-Russia frontier rule (T15x2 OR
+    # T15x1+T14x2) for a candidate to count as recurrent via reproduced frontier — mirrors
+    # regression.sh OBJECTIVE_FRONTIER_MIN_GAMES (default 2). Overridable via
+    # WILDCARD_PARALLEL_RUSSIA_FRONTIER_MIN_GAMES.
+    try:
+        return max(1, int(float(os.getenv("WILDCARD_PARALLEL_RUSSIA_FRONTIER_MIN_GAMES", "2") or "2")))
+    except Exception:
+        return 2
+
+
+def _board_is_soviet_frontier(final_types: object) -> bool:
+    # Mirror regression.sh _is_soviet_frontier on ONE board: a genuine 2nd-Russia frontier
+    # is T15x2, OR T15x1 co-occurring with T14x2. A single T15x1 alone is NOT a frontier —
+    # that is the 2026-05-25 failure mode. Crash-safe against malformed final_types.
+    try:
+        types = [int(v) for v in (final_types or [])]
+    except Exception:
+        return False
+    n15 = sum(1 for t in types if t == 15)
+    n14 = sum(1 for t in types if t == 14)
+    return n15 >= 2 or (n15 >= 1 and n14 >= 2)
+
+
+def candidate_reliable_russia(c: CandidateResult) -> bool:
+    # Candidate-level RECURRENT-Russia predicate, consistent with the two definitions the
+    # project already uses: russia_count >= 2 (eloop_improve.sh archive-restart) OR a
+    # reproduced soviet-frontier over >= OBJECTIVE_FRONTIER_MIN_GAMES boards (regression.sh).
+    # Used as the leading rank_key objective bit (so a single lucky Russia does NOT outrank a
+    # higher-comp non-Russia) and could gate other adoption paths. Crash-safe: every field
+    # access is guarded so a malformed candidate never raises in winner selection.
+    try:
+        russia_count = int(getattr(c, "russia_count", 0) or 0)
+    except Exception:
+        russia_count = 0
+    if russia_count >= _russia_recurrence_min_count():
+        return True
+    frontier_n = 0
+    for game in (getattr(c, "game_results", None) or []):
+        if not isinstance(game, dict):
+            continue
+        if _board_is_soviet_frontier(game.get("final_types")):
+            frontier_n += 1
+    return frontier_n >= _russia_frontier_min_games()
+
+
 def choose_winner(
     candidates: list[CandidateResult],
     min_successful_games: int,
@@ -2466,7 +2547,14 @@ def choose_winner(
     interrupted: bool = False,
 ) -> CandidateResult | None:
     def rank_key(c: CandidateResult) -> tuple[bool, bool, float, float, int]:
-        return (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type)
+        # ADOPTION 05-25-SAFETY: the leading objective bit requires RECURRENT Russia
+        # (reliable_russia: russia_count>=2 OR reproduced frontier) so a single lucky Russia
+        # cannot lexicographically beat a higher-comp non-Russia. A single-Russia candidate
+        # still competes on comp/p25 (the comp-competitiveness escape — preserves the search
+        # escape valve / avoids 固着). With the recurrence guard OFF, fall back to the legacy
+        # russia_count>0 bit (behavior unchanged).
+        russia_bit = candidate_reliable_russia(c) if _adopt_russia_recurrence() else (c.russia_count > 0)
+        return (russia_bit, c.soviet_count > 0, c.comp, c.p25, c.max_type)
 
     # The baseline (slot-1 played reference via --baseline-slot1, or a static
     # score_baseline loaded from history) is the comparison anchor, NOT a winner
@@ -2589,6 +2677,27 @@ class CullCoordinator:
                 and c.comp > 0
             ]
             if not leaders:
+                self._snapshot_unlocked()
+                return False
+            # CULL PROTECTION (2026-05-31, user request): never comp-cull a candidate that
+            # has founded Russia (russia_count >= 1). Russia is a rare upper-tail event, so a
+            # Russia strategy's median-based comp is routinely below the leader threshold and
+            # cull_after_games=1 would kill it on the very game it founded Russia — before
+            # game 2 can confirm recurrence, before it reaches choose_winner, and risking the
+            # Russia being lost from stats. Protecting it lets it finish its full game
+            # allotment to PROVE recurrence (which choose_winner then requires for adoption).
+            # The exemption is bounded by --max-runtime-sec (timeout adopts best-so-far), so
+            # it does not re-introduce 固着. Placed AFTER the baseline/leaders guards and
+            # BEFORE the comp threshold. Disable via WILDCARD_PARALLEL_CULL_PROTECT_RUSSIA=0.
+            try:
+                russia_count = int(getattr(candidate, "russia_count", 0) or 0)
+            except Exception:
+                russia_count = 0
+            if _cull_protect_russia() and russia_count >= 1:
+                candidate.error = (
+                    f"cull-protected after {len(candidate.scores)} games: "
+                    f"russia_count={russia_count} (Russia candidate exempt from comp-cull)"
+                )
                 self._snapshot_unlocked()
                 return False
             # Cull anchor (2026-05-30, user-configurable via WILDCARD_PARALLEL_CULL_ANCHOR):

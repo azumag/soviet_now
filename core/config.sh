@@ -366,6 +366,23 @@ WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS="${WILDCARD_PARALLEL_LINGERING_SLOT_M
 # wildcard_parallel.py subprocess sees them via os.getenv.
 export WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT="${WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT:-1}"
 export WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO="${WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO:-1.15}"
+# Russia cull protection + adoption recurrence (2026-05-31, user request). Two coordinated
+# knobs that fix "Russia-founding SLOTS got culled":
+#   CULL_PROTECT_RUSSIA=1 (default ON, the requested fix): should_cull never comp-culls a
+#     candidate with russia_count>=1, so a rare upper-tail Russia (whose median comp is
+#     routinely below the leader threshold) is not killed by cull_after_games=1 before it
+#     can prove recurrence / reach choose_winner / be recorded. Bounded by --max-runtime-sec.
+#   ADOPT_RUSSIA_RECURRENCE=1 (default ON, 05-25-safe): choose_winner's leading objective
+#     bit requires RECURRENT Russia (russia_count>=RECURRENCE_MIN_COUNT OR a reproduced
+#     2nd-Russia frontier over >=FRONTIER_MIN_GAMES boards: T15x2 OR T15x1+T14x2), so a WEAK
+#     single lucky Russia does NOT lexicographically beat a higher-comp non-Russia (the
+#     2026-05-25 固着 trap). A single Russia may still win only on comp/p25 (escape valve).
+#   Thresholds mirror eloop_improve.sh (russia>=2) and regression.sh OBJECTIVE_FRONTIER_MIN_GAMES=2.
+# Set either to 0 to disable. Exported so the wildcard_parallel.py subprocess sees them.
+export WILDCARD_PARALLEL_CULL_PROTECT_RUSSIA="${WILDCARD_PARALLEL_CULL_PROTECT_RUSSIA:-1}"
+export WILDCARD_PARALLEL_ADOPT_RUSSIA_RECURRENCE="${WILDCARD_PARALLEL_ADOPT_RUSSIA_RECURRENCE:-1}"
+export WILDCARD_PARALLEL_RUSSIA_RECURRENCE_MIN_COUNT="${WILDCARD_PARALLEL_RUSSIA_RECURRENCE_MIN_COUNT:-2}"
+export WILDCARD_PARALLEL_RUSSIA_FRONTIER_MIN_GAMES="${WILDCARD_PARALLEL_RUSSIA_FRONTIER_MIN_GAMES:-2}"
 # Cull anchor (2026-05-30, user request): "leader" culls candidates below cull_comp_ratio
 # of the STRONGEST survivor (harder culling → wider exploration via regeneration);
 # "baseline" culls only against the current strategy (prior behavior, narrower search).

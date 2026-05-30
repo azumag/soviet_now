@@ -1436,6 +1436,54 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             worse = mk("cand-4", 3, 9000.0, 3, "running")
             self.assertIsNone(cw([baseline, worse], 6, interrupted=True))
 
+    def test_russia_cull_protection_and_recurrence_adoption(self):
+        """2026-05-31 (user: Russia-founding slots were getting culled). Pins the two-part fix:
+        (A) candidate_reliable_russia = RECURRENT Russia only — russia_count >= RECURRENCE_MIN_COUNT
+        (default 2) OR a reproduced 2nd-Russia frontier (T15x2 / T15x1+T14x2) over >=
+        FRONTIER_MIN_GAMES (default 2) boards. A single lucky Russia is NOT reliable.
+        (B) choose_winner's leading objective bit uses reliable_russia when ADOPT_RUSSIA_RECURRENCE=1
+        (default): a WEAK single-Russia (russia==1, comp below the baseline) is NOT adopted
+        (05-25-safe), a RECURRENT Russia IS; ADOPT_RUSSIA_RECURRENCE=0 restores the legacy
+        russia_count>0 bit. env pinned for determinism."""
+        import wildcard_parallel as wp
+
+        def mk(job_id, index, comp, *, baseline=False, russia=0, soviet=0, game_results=None):
+            return wp.CandidateResult(
+                job_id=job_id, index=index, workdir=Path("/tmp") / job_id,
+                strategy_path=Path("/tmp") / job_id / "strategy.py",
+                status="accepted", scores=[int(comp)] * 6, comp=comp, p25=comp,
+                baseline=baseline, russia_count=russia, soviet_count=soviet,
+                game_results=list(game_results or []),
+            )
+
+        env = {"WILDCARD_PARALLEL_ADOPT_RUSSIA_RECURRENCE": "1",
+               "WILDCARD_PARALLEL_RUSSIA_RECURRENCE_MIN_COUNT": "2",
+               "WILDCARD_PARALLEL_RUSSIA_FRONTIER_MIN_GAMES": "2"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            # (A) candidate_reliable_russia
+            self.assertTrue(wp.candidate_reliable_russia(mk("c", 0, 1.0, russia=2)))   # recurrence by count
+            self.assertFalse(wp.candidate_reliable_russia(mk("c", 0, 1.0, russia=1)))  # single lucky → NOT reliable
+            two_frontier = [{"final_types": [15, 15, 14]}, {"final_types": [15, 14, 14]}]
+            self.assertTrue(wp.candidate_reliable_russia(mk("c", 0, 1.0, russia=1, game_results=two_frontier)))
+            self.assertFalse(wp.candidate_reliable_russia(  # one frontier board is not enough
+                mk("c", 0, 1.0, russia=1, game_results=[{"final_types": [15, 15]}])))
+            # malformed game_results must not raise
+            self.assertFalse(wp.candidate_reliable_russia(
+                mk("c", 0, 1.0, russia=1, game_results=[{"final_types": ["x", None]}, "junk"])))
+            # (B) choose_winner adoption — weak single-Russia below baseline comp is NOT adopted (05-25)
+            cw = wp.choose_winner
+            baseline = mk("base", 0, 12000.0, baseline=True, russia=0)
+            single = mk("single", 1, 11000.0, russia=1)
+            recurrent = mk("recur", 2, 11000.0, russia=2)
+            self.assertIsNone(cw([baseline, single], 6, baseline_historical_russia=0))
+            self.assertIs(cw([baseline, recurrent], 6, baseline_historical_russia=0), recurrent)
+        # legacy: with the recurrence guard OFF, the single-Russia regains russia>0 and IS adopted
+        with mock.patch.dict(os.environ, {**env, "WILDCARD_PARALLEL_ADOPT_RUSSIA_RECURRENCE": "0"}, clear=False):
+            cw = wp.choose_winner
+            baseline = mk("base", 0, 12000.0, baseline=True, russia=0)
+            single = mk("single", 1, 11000.0, russia=1)
+            self.assertIs(cw([baseline, single], 6, baseline_historical_russia=0), single)
+
     def test_russia_rate_guard_protects_capable_baseline(self):
         """choose_winner は、歴史的にロシア建国可能な baseline(現戦略)を、ロシア未実証の
         高スコア摂動で置換しない (2026-05-30 07:12回帰の恒久対策)。~6ゲームでは稀なロシア
@@ -1470,8 +1518,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             # large score gain (12000→14000 = +16.7% >= 1.15) overrides protection (避固着).
             winner_big = mk(td_path, "cand-4", 3, 14000.0, russia=0)
             self.assertIs(cw([baseline, winner_big], 6, baseline_historical_russia=1), winner_big)
-            # a winner that DOES found Russia is adopted even at lower score (回復).
-            winner_russia = mk(td_path, "cand-5", 4, 11000.0, russia=1)
+            # a winner with RECURRENT Russia (russia>=2, the 2026-05-31 adoption-recurrence
+            # contract) is adopted even at lower score (回復). A single lucky Russia (russia==1)
+            # is NO LONGER auto-adopted — it competes on comp like any candidate (05-25-safe);
+            # see test_weak_single_russia_NOT_adopted_over_higher_comp_nonrussia.
+            winner_russia = mk(td_path, "cand-5", 4, 11000.0, russia=2)
             self.assertIs(cw([baseline, winner_russia], 6, baseline_historical_russia=1), winner_russia)
 
         # the MIN_COUNT knob works: at MIN_COUNT=2 a single demonstrated Russia is below
