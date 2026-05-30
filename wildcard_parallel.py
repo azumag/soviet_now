@@ -2194,7 +2194,7 @@ def evaluate_real(
                 stdout = ""
                 stderr = ""
                 next_preview_at = 0.0
-                game_timeout = max(30, _int(getattr(args, "game_timeout", 420), 420))
+                game_timeout = max(30, _int(getattr(args, "game_timeout", 1200), 1200))
                 game_deadline = time.time() + game_timeout
                 stop_break = False
                 while proc.poll() is None:
@@ -2652,7 +2652,11 @@ def main() -> int:
     parser.add_argument("--cdp-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_CDP_BASE_PORT"), 19320))
     parser.add_argument("--serve-base-port", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_SERVE_BASE_PORT"), 18080))
     parser.add_argument("--bridge-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_BRIDGE_TIMEOUT"), 45))
-    parser.add_argument("--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 420))
+    # 2026-05-30: raised 420→1200s. A 7-min timeout was biased AGAINST good strategies —
+    # they merge well, advance more turns, and run LONGER, so a short timeout killed the
+    # best candidates (observed: the highest-comp candidate was timed out at game 5 and
+    # left ineligible with <min_successful_games). 20 min lets long high-type games finish.
+    parser.add_argument("--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 1200))
     parser.add_argument("--max-runtime-sec", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MAX_RUNTIME_SEC"), 1500))
     parser.add_argument("--perturb-timeout", type=int, default=30)
     parser.add_argument("--min-successful-games", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_MIN_SUCCESSFUL_GAMES"), 0))

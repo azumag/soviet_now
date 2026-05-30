@@ -373,6 +373,11 @@ export WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO="${WILDCARD_PARALLEL_RUSSIA
 # games, still beating the baseline) is adopted instead of discarding the run.
 export WILDCARD_PARALLEL_CULL_ANCHOR="${WILDCARD_PARALLEL_CULL_ANCHOR:-leader}"
 export WILDCARD_PARALLEL_INTERRUPTED_MIN_GAMES="${WILDCARD_PARALLEL_INTERRUPTED_MIN_GAMES:-2}"
+# Per-candidate-game timeout (2026-05-30): raised 420→1200s. Good strategies merge well,
+# play more turns, and run LONGER, so a 7-min timeout was killing the BEST candidates
+# (timed out → accepted with <min_successful_games → ineligible to win → slot wasted).
+# 20 min lets long high-type games finish. Bounded overall by --max-runtime-sec.
+export WILDCARD_PARALLEL_GAME_TIMEOUT="${WILDCARD_PARALLEL_GAME_TIMEOUT:-1200}"
 WILDCARD_PARALLEL_EVALUATE_MODE="${WILDCARD_PARALLEL_EVALUATE_MODE:-real}"
 WILDCARD_PARALLEL_CDP_BASE_PORT="${WILDCARD_PARALLEL_CDP_BASE_PORT:-19320}"
 WILDCARD_PARALLEL_BRIDGE_TIMEOUT="${WILDCARD_PARALLEL_BRIDGE_TIMEOUT:-45}"
