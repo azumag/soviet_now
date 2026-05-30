@@ -1484,6 +1484,35 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             single = mk("single", 1, 11000.0, russia=1)
             self.assertIs(cw([baseline, single], 6, baseline_historical_russia=0), single)
 
+    def test_transient_launch_failure_classifier(self):
+        """2026-05-31 (user: 'スロットは6つあって…のこりの二つはどこに行った'). A param-parallel
+        slot whose candidate Chrome closed mid-startup used to fail terminally and lose the slot
+        for the whole run (2/6 boxes went dead). evaluate_slot now gives a BOUNDED relaunch on a
+        TRANSIENT launch/bridge failure only. This pins the classifier that gates that retry:
+        launch/bridge-startup failures (no game produced) → retry; a strategy that actually played
+        then crashed, or a perturb-generator failure, → do NOT retry (would waste the budget)."""
+        import wildcard_parallel as wp
+
+        # the real slot-5 crash string observed in this incident
+        real = ("bridge timed out waiting for initial game_state: bridge did not produce "
+                "game_state | stderr: [BRIDGE-FATAL] runLocalController rejected: "
+                "page.waitForTimeout: Target page, context or browser has been closed")
+        self.assertTrue(wp._is_transient_launch_failure(real))
+        self.assertTrue(wp._is_transient_launch_failure("Target page, context or browser has been closed"))
+        self.assertTrue(wp._is_transient_launch_failure("bridge timed out"))
+        # NON-transient: never retry these
+        self.assertFalse(wp._is_transient_launch_failure("no successful games"))
+        self.assertFalse(wp._is_transient_launch_failure("decide() raised ValueError on turn 40"))
+        self.assertFalse(wp._is_transient_launch_failure("wildcard_perturb rc=1"))
+        self.assertFalse(wp._is_transient_launch_failure(None))
+        self.assertFalse(wp._is_transient_launch_failure(""))
+        # retry cap defaults to 3 and is env-overridable (0 restores give-up-immediately)
+        with mock.patch.dict(os.environ, {"WILDCARD_PARALLEL_MAX_LAUNCH_RETRIES": "0"}, clear=False):
+            self.assertEqual(wp._int(os.getenv("WILDCARD_PARALLEL_MAX_LAUNCH_RETRIES"), 3), 0)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("WILDCARD_PARALLEL_MAX_LAUNCH_RETRIES", None)
+            self.assertEqual(wp._int(os.getenv("WILDCARD_PARALLEL_MAX_LAUNCH_RETRIES"), 3), 3)
+
     def test_russia_rate_guard_protects_capable_baseline(self):
         """choose_winner は、歴史的にロシア建国可能な baseline(現戦略)を、ロシア未実証の
         高スコア摂動で置換しない (2026-05-30 07:12回帰の恒久対策)。~6ゲームでは稀なロシア

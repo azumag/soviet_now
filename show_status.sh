@@ -14,6 +14,28 @@ SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
 _is_wildcard_parallel_active() {
+	# 2026-05-31 fix (OBS overlay flicker): improve_state.json routinely goes idle while
+	# wildcard_parallel.py is still running (orphaned), so checking ONLY it returns false during
+	# a live param-parallel — then --html-obs re-SHOWS ops/stats overlays and they FLICKER (~15s)
+	# against the param-parallel reconcile that hides them. So ALSO treat a FRESH
+	# wildcard_parallel_status.json (phase generating/running, mtime <= 180s so a crashed/stale
+	# run releases the overlays) as active.
+	local _wp="${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}"
+	if [ -f "$_wp" ] && python3 - "$_wp" <<'PY' >/dev/null 2>&1
+import json, os, sys, time
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+try:
+    age = time.time() - os.path.getmtime(sys.argv[1])
+except Exception:
+    age = 1e9
+raise SystemExit(0 if str(d.get("phase") or "") in ("generating", "running") and age <= 180 else 1)
+PY
+	then
+		return 0
+	fi
 	[ -f tmp/state/improve_state.json ] || return 1
 	python3 - tmp/state/improve_state.json <<'PY' >/dev/null 2>&1
 import json

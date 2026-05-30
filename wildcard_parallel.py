@@ -2763,10 +2763,44 @@ class CullCoordinator:
             return (cull_count > limit, cull_count)
 
 
+# Substrings that mark a *transient launch/bridge* failure — the candidate Chrome closed
+# mid-startup (load/memory pressure, CDP race) or the bridge never produced an initial
+# game_state. These never produced a game, so the candidate's strategy is innocent; the slot
+# can be safely relaunched. (Distinct from a strategy that crashes once it is actually playing.)
+_TRANSIENT_LAUNCH_MARKERS = (
+    "browser has been closed",
+    "target page, context or browser has been closed",
+    "target closed",
+    "bridge timed out",
+    "bridge did not produce game_state",
+    "did not produce game_state",
+    "page.waitfortimeout",
+    "page.waittimeout",
+    "waiting for initial game_state",
+    "econnrefused",
+    "websocket error",
+    "cdp",
+)
+
+
+def _is_transient_launch_failure(error: str | None) -> bool:
+    if not error:
+        return False
+    low = error.lower()
+    return any(marker in low for marker in _TRANSIENT_LAUNCH_MARKERS)
+
+
 def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.Namespace, session_dir: Path, coordinator: CullCoordinator) -> CandidateResult:
     candidate = first_candidate
     generation = candidate.generation
     slot_runtime: dict = {"workdir": session_dir / f"slot-{index + 1}"}
+    # A transient launch/bridge failure used to kill the whole slot for the rest of the run
+    # (evaluate_slot returned on any non-culled status). With 6 slots that meant the user saw
+    # "only N windows" and 2/6 candidate boxes went dead/black (Chrome closed mid-startup under
+    # load). Give each slot a BOUNDED number of relaunch attempts instead. Set
+    # WILDCARD_PARALLEL_MAX_LAUNCH_RETRIES=0 to restore the old give-up-immediately behavior.
+    launch_retries = 0
+    max_launch_retries = _int(os.getenv("WILDCARD_PARALLEL_MAX_LAUNCH_RETRIES"), 3)
     try:
         while True:
             if _stop_now():
@@ -2785,6 +2819,25 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
                 result.status = "culled"
                 coordinator.record(result)
             if result.status != "culled":
+                if (
+                    result.status == "failed"
+                    and (result.games or 0) == 0
+                    and launch_retries < max_launch_retries
+                    and _is_transient_launch_failure(result.error)
+                    and not _stop_now()
+                ):
+                    # Transient launch/bridge failure: the candidate never produced a game, so
+                    # keep the SLOT alive with a fresh candidate instead of losing it. Force a
+                    # clean bridge so evaluate_real prelaunches a brand-new candidate Chrome.
+                    # Runaway-safe: capped per slot AND still gated by _stop_now() (the same
+                    # deadline guard that ended the 4.5h perturb->cull->perturb runaway below).
+                    stop_process(slot_runtime.get("bridge"))
+                    slot_runtime["bridge"] = None
+                    launch_retries += 1
+                    generation += 1
+                    candidate = run_perturb(args, index, session_dir, generation)
+                    coordinator.record(candidate)
+                    continue
                 return result
             stop_lingering, cull_count = coordinator.lingering_slot_cutoff(index)
             if stop_lingering:
