@@ -1937,13 +1937,34 @@ const title = process.argv[2];
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   try {
     const pages = browser.contexts().flatMap(ctx => ctx.pages());
-    const page = pages.find(p => !p.url().startsWith('about:blank')) || pages[0];
-    if (!page) throw new Error('no page');
+    const nonblank = pages.filter(p => !p.url().startsWith('about:blank'));
+    const page = nonblank[0] || pages[0];
+    if (!page) throw new Error('no page (total=' + pages.length + ')');
     await page.evaluate((nextTitle) => {
       document.title = nextTitle;
       const titleEl = document.querySelector('title') || document.head?.appendChild(document.createElement('title'));
       if (titleEl) titleEl.textContent = nextTitle;
     }, title);
+    // Reap orphaned about:blank tabs. OBS macOS window-capture matches the OS WINDOW
+    // title, which reflects the ACTIVE tab; an about:blank tab in front leaves the window
+    // title blank so OBS cannot find "Wildcard Parallel Cand N" → "target window not
+    // found" (the observed failure). Closing the blanks leaves just the titled game tab,
+    // which is then the active tab so the window title is the one we set. Mirrors the
+    // soviet_local white-screen blank-reap; we deliberately do NOT foreground the tab via
+    // the playwright focus API (that method is avoided in the main/local paths because it
+    // caused focus/white-screen issues). Only reap when a real game page exists; never
+    // close the game page. (Display-only; no game effect — also un-throttles the tab.)
+    if (nonblank.length) {
+      for (const b of pages) {
+        if (b.url().startsWith('about:blank')) {
+          await b.close().catch(() => {});
+        }
+      }
+    }
+    const after = await page.title().catch(() => '?');
+    // Diagnostic so the NEXT param-parallel self-reveals the exact cause if the window
+    // is still not found: did the title stick, how many tabs, which url.
+    console.error(`[set_title] port=${port} pages=${pages.length} nonblank=${nonblank.length} url=${page.url()} set=${JSON.stringify(title)} after=${JSON.stringify(after)}`);
   } finally {
     await browser.close().catch(() => {});
   }
@@ -1953,14 +1974,17 @@ const title = process.argv[2];
 });
 """
     try:
-        subprocess.run(
-            [resolve_node_bin(), "-e", script, str(cdp_port), title],
-            cwd=cwd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=8,
-            check=False,
-        )
+        diag_path = REPO_ROOT / "tmp" / "debug" / "set_candidate_window_title.log"
+        diag_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(diag_path, "ab") as _diag:
+            subprocess.run(
+                [resolve_node_bin(), "-e", script, str(cdp_port), title],
+                cwd=cwd,
+                stdout=subprocess.DEVNULL,
+                stderr=_diag,
+                timeout=8,
+                check=False,
+            )
     except Exception:
         pass
 

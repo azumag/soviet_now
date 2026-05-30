@@ -1949,6 +1949,20 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertNotIn('<img class="preview live-preview"', parallel)
         self.assertNotIn('class="preview live-preview"', parallel)
 
+    def test_candidate_window_title_reaps_blank_tabs_for_obs_capture(self):
+        """候補窓が OBS window-capture で映らない("target window not found") 根因は、
+        about:blank タブがアクティブで OS 窓タイトルが空になり "Wildcard Parallel Cand N"
+        にマッチしないこと。set_candidate_window_title はゲームタブにタイトルを設定後、
+        about:blank タブを reap して、ゲームタブを唯一=アクティブにする(窓タイトルが正しく
+        なる)。.bringToFront() は main/local 同様に使わない(focus/white-screen を起こす)。
+        次の param並列が自己診断できるよう stderr を tmp/debug にログする。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        title_fn = parallel.split("def set_candidate_window_title", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("startsWith('about:blank')", title_fn)  # reap blanks
+        self.assertIn("b.close()", title_fn)
+        self.assertNotIn(".bringToFront()", title_fn)  # avoid focus/white-screen like main/local
+        self.assertIn("set_candidate_window_title.log", parallel)  # diagnostic for next run
+
     def test_wildcard_parallel_overlay_shows_provisional_ranking(self):
         """parallel trial overlay は候補の暫定順位をバッジとバーで表示する。"""
         import wildcard_parallel
