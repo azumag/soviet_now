@@ -1129,11 +1129,14 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
         self.assertIn('--games "${WILDCARD_PARALLEL_GAMES:-6}"', eloop)
         self.assertIn('default=_int(os.getenv("WILDCARD_PARALLEL_GAMES"), 6)', parallel)
-        self.assertIn('--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 420)', parallel)
-        self.assertIn('game_timeout = max(30, _int(getattr(args, "game_timeout", 420), 420))', parallel)
+        self.assertIn('--game-timeout", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_GAME_TIMEOUT"), 1200)', parallel)
+        self.assertIn('game_timeout = max(30, _int(getattr(args, "game_timeout", 1200), 1200))', parallel)
         self.assertIn("game_deadline = time.time() + game_timeout", parallel)
         self.assertIn('candidate.status = "timeout"', parallel)
-        self.assertIn('candidate.error = f"strategy_runner timeout after {game_timeout}s"', parallel)
+        # on timeout we now score the live board instead of discarding the game (good
+        # long-game strategies must not be killed by the per-game timeout).
+        self.assertIn("timeout_game = _score_timeout_board(workdir)", parallel)
+        self.assertIn("candidate.scores.append(eval_score(timeout_game))", parallel)
         self.assertIn('payload.setdefault("started_at", now_epoch)', parallel)
         self.assertIn('payload["updated_at"] = now_epoch', parallel)
         self.assertIn('WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC', improve)
@@ -3237,7 +3240,11 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             )[0]
 
             self.assertIn("rp_guidance_suppressed", block)
-            self.assertIn("reactive_pair_count >= 5", block)
+            # The suppression must gate on a reactive_pair_count threshold, but the exact
+            # threshold (>= 5 originally) is a TUNABLE constant the param-parallel perturbs
+            # (observed live: perturbed to >= 9). Assert the gate uses reactive_pair_count,
+            # not a specific number, so normal auto-tuning of strategy.py doesn't break this.
+            self.assertIn("reactive_pair_count >=", block)
             # The safety property is "no proximity bonus while congested". The AI
             # may express that either by explicitly zeroing the bonus
             # (proximity_bonus = 0.0) or by GATING the whole guidance behind

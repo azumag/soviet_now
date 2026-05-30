@@ -1500,6 +1500,34 @@ def eval_score(game: dict) -> int:
     return raw_score + bonus
 
 
+def _score_timeout_board(workdir: Path) -> dict | None:
+    """Build a scoreable game dict from a candidate's LIVE board (game_state.json) when its
+    game hits the per-game timeout, so the partial-but-real progress is counted instead of
+    discarded. Good strategies merge well, advance more turns, and play LONGER, so a per-game
+    timeout disproportionately kills the BEST candidates — yet the board they built (high-type
+    pieces) carries the bulk of the EVAL building bonus, and a game can also be stopped
+    mid-way exactly because it founded the Soviet. Returns None when no usable board state is
+    present (the game never really started)."""
+    try:
+        gs = json.loads((workdir / "game_state.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(gs, dict):
+        return None
+    pieces = gs.get("pieces") or []
+    final_types = [_int(p.get("type"), 0) for p in pieces if isinstance(p, dict)]
+    raw_score = _int(gs.get("score"), 0)
+    if not final_types and raw_score <= 0:
+        return None
+    return {
+        "score": raw_score,
+        "final_types": final_types,
+        "soviet_created": _int(gs.get("makeSorenCount"), 0) > 0 or any(t >= 16 for t in final_types),
+        "russia_created": any(t >= 15 for t in final_types),
+        "timeout_partial": True,
+    }
+
+
 def tail_text(path: Path, limit: int = 500) -> str:
     try:
         if not path.exists():
@@ -2197,6 +2225,7 @@ def evaluate_real(
                 game_timeout = max(30, _int(getattr(args, "game_timeout", 1200), 1200))
                 game_deadline = time.time() + game_timeout
                 stop_break = False
+                timeout_scored = False
                 while proc.poll() is None:
                     now = time.time()
                     if _stop_now():
@@ -2225,15 +2254,40 @@ def evaluate_real(
                             except Exception:
                                 pass
                             stdout, stderr = proc.communicate(timeout=5)
-                        candidate.status = "timeout"
-                        candidate.error = f"strategy_runner timeout after {game_timeout}s"
-                        candidate.game_results.append(
-                            {
-                                "error": candidate.error,
-                                "game_index": game_index,
-                                "stderr": (stderr or "")[-500:],
-                            }
-                        )
+                        # 2026-05-30: score the board at the timeout instead of discarding
+                        # the game. Good strategies merge well + play LONGER, so a per-game
+                        # timeout disproportionately killed the BEST candidates; the board they
+                        # built carries real EVAL building-bonus value, so count it.
+                        timeout_game = _score_timeout_board(workdir)
+                        if timeout_game is not None:
+                            timeout_game["game_index"] = game_index
+                            timeout_game["timed_out_after_s"] = game_timeout
+                            candidate.game_results.append(timeout_game)
+                            candidate.raw_scores.append(_int(timeout_game.get("score"), 0))
+                            candidate.eval_scores.append(eval_score(timeout_game))
+                            candidate.scores.append(eval_score(timeout_game))
+                            _ft = [_int(v, 0) for v in (timeout_game.get("final_types") or [])]
+                            candidate.max_type = max([candidate.max_type] + _ft)
+                            if timeout_game.get("russia_created") or any(t >= 15 for t in _ft):
+                                candidate.russia_count += 1
+                            if timeout_game.get("soviet_created") or any(t >= 16 for t in _ft):
+                                candidate.soviet_count += 1
+                            update_candidate_metrics(candidate)
+                            candidate.error = (
+                                f"game {game_index} timed out after {game_timeout}s; "
+                                f"scored from board eval={eval_score(timeout_game)} max_type={max(_ft) if _ft else 0}"
+                            )
+                            timeout_scored = True
+                        else:
+                            candidate.status = "timeout"
+                            candidate.error = f"strategy_runner timeout after {game_timeout}s (no usable board state)"
+                            candidate.game_results.append(
+                                {
+                                    "error": candidate.error,
+                                    "game_index": game_index,
+                                    "stderr": (stderr or "")[-500:],
+                                }
+                            )
                         break
                     if now >= next_preview_at:
                         capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
@@ -2243,6 +2297,13 @@ def evaluate_real(
                     break
                 if candidate.status == "timeout":
                     break
+                if timeout_scored:
+                    # the timed-out game was scored from its board; treat it like a normal
+                    # completed game — run the cull check, then move on to the next game.
+                    if progress_callback and progress_callback(candidate):
+                        candidate.status = "culled"
+                        break
+                    continue
                 stdout, stderr = proc.communicate(timeout=5)
                 capture_candidate_preview(candidate.cdp_port, workdir / "tmp" / "preview.png", workdir)
                 if proc.returncode != 0:
