@@ -191,6 +191,28 @@ _reconcile_normal_obs_layout() {
 	./obs_control.sh batch "$scene" show:"$show_sources" hide:"$hide_sources" >/dev/null 2>&1 || true
 }
 
+_reconcile_param_parallel_obs_layout() {
+	# During a post-improve param-parallel the wildcard overlay (+ the candidate windows,
+	# which wildcard_parallel.py shows itself) own the screen. A stray post-improve main
+	# game (the 1-game window that fires in the brief race where _wildcard_parallel_active
+	# is momentarily false) flips the display back to the normal dashboard/sorengame and
+	# leaves wildcardParallelOverlay hidden — user-reported: dashboard stuck on, the param/
+	# wildcard overlay gone. Re-assert the param-parallel layout on every monitor tick so
+	# the overlay can never stay wrong for more than one tick. Candidate windows are NOT
+	# touched here (hiding them would fight maybe_show_obs_candidate_source).
+	local scene="${OBS_DASHBOARD_SCENE:-soren}"
+	local status_source="${STATUS_OVERLAY_SOURCE:-statsOverlay}"
+	local show_status_source="${SHOW_STATUS_OVERLAY_SOURCE:-opsOverlay}"
+	local game_source="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE_NAME:-sorengame}}}"
+	local dashboard_source="${OBS_DASHBOARD_SOURCE:-dashboard}"
+	local improve_source="${IMPROVE_OVERLAY_SOURCE:-improveOverlay}"
+	local wildcard_overlay_source="${WILDCARD_PARALLEL_OVERLAY_SOURCE:-wildcardParallelOverlay}"
+	./obs_control.sh batch "$scene" \
+		show:"$wildcard_overlay_source" \
+		hide:"$dashboard_source,$status_source,$show_status_source,$improve_source,$game_source" \
+		>/dev/null 2>&1 || true
+}
+
 _write_status() {
 	local status="$1" improve_pid="$2" elapsed="$3" stale="$4" action="$5" note="$6"
 	python3 - "$STATUS_FILE" "$status" "$improve_pid" "$elapsed" "$stale" "$action" "$note" <<'PY'
@@ -535,6 +557,8 @@ if [ "$live_pid" -ne 0 ]; then
 			_monitor_log "wildcard_parallel active (status file); forcing soren91_stop (no Meriken substitute)"
 			SOREN91_STOP_TIMEOUT=0 soren91_stop >/dev/null 2>&1 || soren91_cleanup >/dev/null 2>&1 || true
 		fi
+		# Re-assert the param-parallel overlay (a stray main game may have flipped it back).
+		_reconcile_param_parallel_obs_layout
 	else
 		case "${improve_reason}:${phase:-}:${detail:-}" in
 		wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)
@@ -586,6 +610,10 @@ if command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_ac
 	else
 		_monitor_log "wildcard_parallel active (status file) but improve pid lost; preserving isolated state, NOT resuming normal mode"
 	fi
+	# Re-assert the param-parallel overlay even when the improve pid is lost (orphaned
+	# wildcard_parallel): the run still owns the screen, so keep its overlay shown and
+	# the normal dashboard/sorengame hidden.
+	_reconcile_param_parallel_obs_layout
 	_write_status running 0 0 0 "wildcard_parallel_active_pidless" "param parallel active per status; main/soren91 kept stopped"
 	exit 0
 fi
