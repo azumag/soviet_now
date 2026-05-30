@@ -391,7 +391,16 @@ _is_improve_running() {
 _wildcard_parallel_active() {
 	local status_file="${WILDCARD_PARALLEL_STATUS_FILE:-$TMP_STATE_DIR/wildcard_parallel_status.json}"
 	[ -f "$status_file" ] || return 1
-	python3 - "$status_file" <<'PY' 2>/dev/null
+	# wildcard_parallel.py プロセス生存を python に渡す。連続wildcard(consecutive>1)では
+	# 各ラウンド末に wildcard_parallel.py が終端phase(winner_selected/winner/won/finished/
+	# no_candidate 等)を status に書いてから終了する。その「終端phase書込み〜プロセス終了」の
+	# 窓で本線ループがゲートを再評価すると、phase が generating/running 以外なので一瞬 un-pause
+	# し、slip ゲームを開始 → OBS sorengame が param overlay を奪い、overlay が消える。
+	# プロセスが生きている間は finalize/次ラウンド準備中とみなし active を継続して slip を封じる。
+	# プロセスが死ねば自然に inactive へ落ちる(終端phase + 死亡)ので永久pauseにはならない。
+	local wp_alive=0
+	if pgrep -f 'python.* wildcard_parallel\.py' >/dev/null 2>&1; then wp_alive=1; fi
+	WP_PROC_ALIVE="$wp_alive" python3 - "$status_file" <<'PY' 2>/dev/null
 import json
 import os
 import sys
@@ -416,11 +425,15 @@ try:
     started_at = int(float(data.get("started_at", 0) or 0))
 except Exception:
     started_at = 0
-if phase in {"generating", "running"} and max_sec > 0 and started_at > 0:
-    age = time.time() - started_at
-    if age > max_sec:
-        raise SystemExit(1)
-raise SystemExit(0 if phase in {"generating", "running"} else 1)
+# セッション経年ガード(全phase共通): 起動から max_sec 超過なら解放し、orphan時の永久pauseを防ぐ。
+if max_sec > 0 and started_at > 0 and (time.time() - started_at) > max_sec:
+    raise SystemExit(1)
+if phase in {"generating", "running"}:
+    raise SystemExit(0)
+# 終端/過渡phase: wildcard_parallel.py が生存中ならラウンド境界の過渡とみなし active を継続。
+if os.environ.get("WP_PROC_ALIVE") == "1":
+    raise SystemExit(0)
+raise SystemExit(1)
 PY
 }
 

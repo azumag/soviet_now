@@ -1140,7 +1140,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('payload.setdefault("started_at", now_epoch)', parallel)
         self.assertIn('payload["updated_at"] = now_epoch', parallel)
         self.assertIn('WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC', improve)
-        self.assertIn('if phase in {"generating", "running"} and max_sec > 0 and started_at > 0:', improve)
+        self.assertIn('(time.time() - started_at) > max_sec', improve)
+        # terminal phase (winner_selected etc.) between consecutive wildcard rounds
+        # keeps the main loop paused while wildcard_parallel.py is alive, so a slip
+        # game can't grab the OBS sorengame source over the param overlay.
+        self.assertIn('WP_PROC_ALIVE', improve)
         self.assertIn('if [ "${prev_phase:-}" = "wildcard_parallel" ]; then', improve)
         self.assertIn("wall_timeout=0", improve)
         self.assertIn('[ "${prev_phase:-}" != "wildcard_parallel" ]', improve)
@@ -7728,7 +7732,7 @@ class TestParamParallelDetectionLagClosed(unittest.TestCase):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
         # 既存の age 上限 (孤児が永久ブロックしない保証) を退行させない
         self.assertIn("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", improve)
-        self.assertIn('if phase in {"generating", "running"} and max_sec > 0 and started_at > 0:', improve)
+        self.assertIn("(time.time() - started_at) > max_sec", improve)
 
 
 class TestSoren91FastExitBackoff(unittest.TestCase):
