@@ -366,6 +366,13 @@ WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS="${WILDCARD_PARALLEL_LINGERING_SLOT_M
 # wildcard_parallel.py subprocess sees them via os.getenv.
 export WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT="${WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT:-1}"
 export WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO="${WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO:-1.15}"
+# Cull anchor (2026-05-30, user request): "leader" culls candidates below cull_comp_ratio
+# of the STRONGEST survivor (harder culling → wider exploration via regeneration);
+# "baseline" culls only against the current strategy (prior behavior, narrower search).
+# On the --max-runtime-sec timeout the best-so-far candidate (>= INTERRUPTED_MIN_GAMES
+# games, still beating the baseline) is adopted instead of discarding the run.
+export WILDCARD_PARALLEL_CULL_ANCHOR="${WILDCARD_PARALLEL_CULL_ANCHOR:-leader}"
+export WILDCARD_PARALLEL_INTERRUPTED_MIN_GAMES="${WILDCARD_PARALLEL_INTERRUPTED_MIN_GAMES:-2}"
 WILDCARD_PARALLEL_EVALUATE_MODE="${WILDCARD_PARALLEL_EVALUATE_MODE:-real}"
 WILDCARD_PARALLEL_CDP_BASE_PORT="${WILDCARD_PARALLEL_CDP_BASE_PORT:-19320}"
 WILDCARD_PARALLEL_BRIDGE_TIMEOUT="${WILDCARD_PARALLEL_BRIDGE_TIMEOUT:-45}"

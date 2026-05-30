@@ -477,7 +477,10 @@ def build_parallel_result(
     signum: int | None = None,
 ) -> tuple[dict, dict, int]:
     winner = choose_winner(
-        candidates, args.min_successful_games, _baseline_historical_russia(args, candidates)
+        candidates,
+        args.min_successful_games,
+        _baseline_historical_russia(args, candidates),
+        interrupted=interrupted,
     )
     if winner:
         winner.status = "won"
@@ -2353,10 +2356,29 @@ def _russia_guard_override_ratio() -> float:
         return 1.15
 
 
+def _cull_anchor() -> str:
+    # Which candidate anchors the cull threshold: "leader" (default, 2026-05-30) culls
+    # against the strongest survivor → harder culling → wider exploration via
+    # regeneration. "baseline" culls only against the current strategy → near-baseline
+    # perturbations all survive (less breadth). Over-culling under "leader" only
+    # lengthens the run, which --max-runtime-sec bounds (timeout adopts best-so-far).
+    return "baseline" if os.getenv("WILDCARD_PARALLEL_CULL_ANCHOR", "leader").strip().lower() == "baseline" else "leader"
+
+
+def _interrupted_min_games() -> int:
+    # On a deadline timeout / stop we adopt the best-so-far instead of discarding the
+    # run, but require at least this many games so a single lucky game can't win.
+    try:
+        return max(1, int(float(os.getenv("WILDCARD_PARALLEL_INTERRUPTED_MIN_GAMES", "2") or "2")))
+    except Exception:
+        return 2
+
+
 def choose_winner(
     candidates: list[CandidateResult],
     min_successful_games: int,
     baseline_historical_russia: int = 0,
+    interrupted: bool = False,
 ) -> CandidateResult | None:
     def rank_key(c: CandidateResult) -> tuple[bool, bool, float, float, int]:
         return (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type)
@@ -2369,10 +2391,22 @@ def choose_winner(
     def is_baseline(c: CandidateResult) -> bool:
         return c.score_baseline or c.baseline
 
+    # On a deadline timeout / stop, adopt the best-so-far instead of discarding the run
+    # (2026-05-30 user request): candidates are cut short before reaching the full
+    # min_successful_games, and the still-"running" best is what we want to keep. Relax
+    # the games floor and accept in-flight candidates. The winner must STILL strictly
+    # beat the baseline (below) — a timeout never adopts a worse-than-current strategy.
+    if interrupted:
+        eligible_min = max(1, min(min_successful_games, _interrupted_min_games()))
+        eligible_statuses = {"accepted", "won", "running", "leader"}
+    else:
+        eligible_min = min_successful_games
+        eligible_statuses = {"accepted"}
+
     eligible = [
         c
         for c in candidates
-        if not is_baseline(c) and c.status == "accepted" and len(c.scores) >= min_successful_games
+        if not is_baseline(c) and c.status in eligible_statuses and len(c.scores) >= eligible_min
     ]
     if not eligible:
         return None
@@ -2472,15 +2506,26 @@ class CullCoordinator:
             if not leaders:
                 self._snapshot_unlocked()
                 return False
-            # Cull against the BASELINE's score specifically (the current strategy):
-            # the intent is to keep perturbations that reach >= cull_comp_ratio of the
-            # baseline. Using max-comp leader instead would let a lucky high-variance
-            # candidate raise the bar and over-cull viable perturbations. Fall back to
-            # the score leader only when no baseline is present in this run.
-            baseline_leader = next((c for c in leaders if c.score_baseline or c.baseline), None)
-            leader = baseline_leader if baseline_leader is not None else max(
-                leaders, key=lambda c: (c.comp, c.p25, c.max_type)
-            )
+            # Cull anchor (2026-05-30, user-configurable via WILDCARD_PARALLEL_CULL_ANCHOR):
+            #   "leader"  (default) — cull against the STRONGEST survivor (highest comp
+            #     among candidates with >= cull_leader_min_games games, plus the baseline).
+            #     Only perturbations within cull_comp_ratio of the BEST survive, so weaker
+            #     ones are culled and regenerated → wider exploration. Baseline-anchoring
+            #     let every near-baseline-score perturbation survive, which converged the
+            #     search on similar strategies with too little breadth. Over-culling is
+            #     acceptable: it only lengthens the run (bounded by --max-runtime-sec, and
+            #     a timeout adopts the best-so-far). cull_leader_min_games still keeps a
+            #     single-game fluke from setting the bar.
+            #   "baseline" — cull only against the current strategy (the prior behavior).
+            # The baseline itself is never culled (guarded above), so it always finishes
+            # as the choose_winner comparison anchor regardless of this setting.
+            if _cull_anchor() == "baseline":
+                baseline_leader = next((c for c in leaders if c.score_baseline or c.baseline), None)
+                leader = baseline_leader if baseline_leader is not None else max(
+                    leaders, key=lambda c: (c.comp, c.p25, c.max_type)
+                )
+            else:
+                leader = max(leaders, key=lambda c: (c.comp, c.p25, c.max_type))
             threshold = leader.comp * self.args.cull_comp_ratio
             should = candidate.comp < threshold
             if should:
@@ -2771,7 +2816,14 @@ def main() -> int:
                     evaluated.append(future.result())
                     coordinator.snapshot()
             all_candidates = list(coordinator.candidates)
-        result, payload, exit_code = build_parallel_result(args, session_dir, all_candidates)
+        # If the wall-clock deadline (or a stop) cut the run short, candidates never
+        # reached the full min_successful_games. Treat this like an interrupt so
+        # choose_winner relaxes its games floor and adopts the best-so-far instead of
+        # discarding the whole run as no_candidate (2026-05-30 user request).
+        stopped_early = _stop_now()
+        result, payload, exit_code = build_parallel_result(
+            args, session_dir, all_candidates, interrupted=stopped_early
+        )
         render_overlay(args.status_file, args.html_file, payload)
         atomic_json(result_file, result)
         print(json.dumps(result, ensure_ascii=False))

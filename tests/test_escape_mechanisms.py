@@ -1354,10 +1354,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             )
             self.assertFalse(coordinator.should_cull(played_baseline))
 
-    def test_cull_threshold_anchored_to_baseline_not_lucky_outlier(self):
-        """cull 閾値は baseline の成績基準 (90%) であって、運良く高得点を出した候補
-        基準ではない。lucky outlier 基準だと baseline 比 95% の有望候補まで過剰 cull
-        してしまう (ユーザー意図: baseline の 90% 以上のパラメータを探索)。"""
+    def test_cull_threshold_anchored_to_leader_by_default(self):
+        """cull 閾値は既定で「最強の生存者(leader)」の cull_comp_ratio (2026-05-30 ユーザー
+        要望で baseline基準→leader基準に変更)。leader の 90% に満たない摂動を刈って探索幅を
+        広げる。WILDCARD_PARALLEL_CULL_ANCHOR=baseline で従来の現戦略基準に戻せる。baseline
+        自身は anchor に関わらず決して刈られない。"""
         import argparse
         import wildcard_parallel
 
@@ -1372,20 +1373,61 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
                 )
 
             baseline = mk("cand-1", 0, 10000.0, [10000, 10000, 10000], baseline=True)
-            lucky = mk("cand-2", 1, 20000.0, [20000, 20000])  # high-variance outlier leader
-            candidate = mk("cand-3", 2, 9500.0, [9500])       # 95% of baseline → keep
-            coordinator = wildcard_parallel.CullCoordinator(
-                argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90),
-                td_path / "status.json", td_path / "overlay.html", td_path / "session",
-                [baseline, lucky],
-            )
-            # threshold = 0.90 * baseline(10000) = 9000; 9500 >= 9000 → survives.
-            # (Against the lucky outlier it would be 0.90*20000=18000 and be culled.)
-            self.assertFalse(coordinator.should_cull(candidate))
-            # A candidate below 90% of the baseline is still culled against the baseline.
-            below = mk("cand-4", 3, 8000.0, [8000])
-            self.assertTrue(coordinator.should_cull(below))
-            self.assertEqual(below.cull_leader_job_id, "cand-1")
+            leader = mk("cand-2", 1, 20000.0, [20000, 20000])  # strongest survivor (>=2 games)
+            ns = argparse.Namespace(cull_after_games=1, cull_leader_min_games=2, cull_comp_ratio=0.90)
+
+            # leader-anchored (default): threshold = 0.90 * leader(20000) = 18000; a
+            # candidate at 95% of the BASELINE but 47% of the leader is now culled — this
+            # is the harder culling that widens exploration.
+            with mock.patch.dict(os.environ, {"WILDCARD_PARALLEL_CULL_ANCHOR": "leader"}, clear=False):
+                coordinator = wildcard_parallel.CullCoordinator(
+                    ns, td_path / "s.json", td_path / "o.html", td_path / "session", [baseline, leader],
+                )
+                near_base = mk("cand-3", 2, 9500.0, [9500])
+                self.assertTrue(coordinator.should_cull(near_base))
+                self.assertEqual(near_base.cull_leader_job_id, "cand-2")
+                # the baseline itself is never culled (stays as the comparison anchor).
+                self.assertFalse(coordinator.should_cull(baseline))
+
+            # knob: baseline anchor restores the prior, narrower behavior (keep >= 90% of
+            # the current strategy regardless of a lucky high-variance leader).
+            with mock.patch.dict(os.environ, {"WILDCARD_PARALLEL_CULL_ANCHOR": "baseline"}, clear=False):
+                coordinator2 = wildcard_parallel.CullCoordinator(
+                    ns, td_path / "s2.json", td_path / "o2.html", td_path / "session2", [baseline, leader],
+                )
+                near_base2 = mk("cand-3", 2, 9500.0, [9500])
+                self.assertFalse(coordinator2.should_cull(near_base2))  # 9500 >= 0.90*10000
+
+    def test_choose_winner_interrupted_adopts_best_so_far(self):
+        """deadline timeout/中断時は、min_successful_games 未達でも(>= INTERRUPTED_MIN_GAMES、
+        まだ running でも)その時点の最良候補を採用する。ただし baseline を上回ることは必須
+        (timeoutでも現戦略より悪い戦略は採用しない=回帰防止)。"""
+        import wildcard_parallel
+
+        cw = wildcard_parallel.choose_winner
+        with mock.patch.dict(os.environ, {"WILDCARD_PARALLEL_INTERRUPTED_MIN_GAMES": "2"}, clear=False), \
+                tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+
+            def mk(job_id, index, comp, n, status, *, baseline=False):
+                return wildcard_parallel.CandidateResult(
+                    job_id=job_id, index=index, workdir=td_path / job_id,
+                    strategy_path=td_path / job_id / "strategy.py",
+                    status=status, scores=[int(comp)] * n, comp=comp, p25=comp, baseline=baseline,
+                )
+
+            baseline = mk("cand-1", 0, 10000.0, 6, "accepted", baseline=True)
+            running_best = mk("cand-2", 1, 12000.0, 3, "running")  # cut short at 3 games, beats baseline
+            # normal (not interrupted): a still-running candidate < min_successful_games is NOT eligible.
+            self.assertIsNone(cw([baseline, running_best], 6))
+            # interrupted: the running best (>= 2 games, beats baseline) IS adopted.
+            self.assertIs(cw([baseline, running_best], 6, interrupted=True), running_best)
+            # interrupted but only 1 game (< INTERRUPTED_MIN_GAMES 2) → not eligible.
+            one_game = mk("cand-3", 2, 15000.0, 1, "running")
+            self.assertIsNone(cw([baseline, one_game], 6, interrupted=True))
+            # interrupted, best-so-far does NOT beat the baseline → no adoption (no regression).
+            worse = mk("cand-4", 3, 9000.0, 3, "running")
+            self.assertIsNone(cw([baseline, worse], 6, interrupted=True))
 
     def test_russia_rate_guard_protects_capable_baseline(self):
         """choose_winner は、歴史的にロシア建国可能な baseline(現戦略)を、ロシア未実証の
