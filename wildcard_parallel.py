@@ -445,6 +445,30 @@ def candidate_from_public(data: dict) -> CandidateResult:
     return candidate
 
 
+def _baseline_historical_russia(args: argparse.Namespace, candidates: list[CandidateResult]) -> int:
+    """Proven historical Russia-founding count for the baseline (current) strategy,
+    read from current_strategy_run.json. The in-run sample (~min_successful_games) is
+    too small to observe a rare Russia reliably, so choose_winner uses this proven
+    capability to avoid trading a Russia-capable current strategy away for a non-Russia
+    perturbation (the 2026-05-30 07:12 regression). Returns 0 on any failure / when the
+    run file does not describe the baseline strategy."""
+    try:
+        run_file = getattr(args, "current_run_file", None)
+        if not run_file:
+            return 0
+        data = json.loads(Path(run_file).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return 0
+        baseline_hashes = {
+            c.hash for c in candidates if (c.score_baseline or c.baseline) and c.hash
+        }
+        if baseline_hashes and str(data.get("hash", "") or "") not in baseline_hashes:
+            return 0
+        return int(data.get("russia_count", 0) or 0)
+    except Exception:
+        return 0
+
+
 def build_parallel_result(
     args: argparse.Namespace,
     session_dir: Path,
@@ -452,7 +476,9 @@ def build_parallel_result(
     interrupted: bool = False,
     signum: int | None = None,
 ) -> tuple[dict, dict, int]:
-    winner = choose_winner(candidates, args.min_successful_games)
+    winner = choose_winner(
+        candidates, args.min_successful_games, _baseline_historical_russia(args, candidates)
+    )
     if winner:
         winner.status = "won"
     reason = "winner_selected" if winner else no_winner_reason(candidates)
@@ -2300,7 +2326,38 @@ def evaluate_simulated(candidate: CandidateResult, args: argparse.Namespace, ses
     return candidate
 
 
-def choose_winner(candidates: list[CandidateResult], min_successful_games: int) -> CandidateResult | None:
+def _russia_guard_min_count() -> int:
+    # Minimum PROVEN historical Russia foundings (current_strategy_run.json) for the
+    # baseline to count as "Russia-capable" worth protecting. Default 1: a strategy
+    # that founded Russia even once has DEMONSTRATED its decide() can reach type 15,
+    # which is the capability we must not tune away. Empirically russia_count rarely
+    # reaches 2 before a strategy is replaced (~12-14 games/strategy), so a higher
+    # threshold makes the guard inert. The 2026-05-25 single-Russia 固着 is avoided NOT
+    # by raising this count but by the soft score-override below (that hard version had
+    # no escape). Raise to 2 via WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT if score
+    # progress stalls.
+    try:
+        return max(1, int(float(os.getenv("WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT", "1") or "1")))
+    except Exception:
+        return 1
+
+
+def _russia_guard_override_ratio() -> float:
+    # A non-Russia winner may still be adopted over a Russia-capable baseline if its
+    # composite gain is at least this ratio — a large score jump is worth losing
+    # Russia, and the override keeps the search from freezing (avoids 固着).
+    try:
+        r = float(os.getenv("WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO", "1.15") or "1.15")
+        return r if r > 1.0 else 1.15
+    except Exception:
+        return 1.15
+
+
+def choose_winner(
+    candidates: list[CandidateResult],
+    min_successful_games: int,
+    baseline_historical_russia: int = 0,
+) -> CandidateResult | None:
     def rank_key(c: CandidateResult) -> tuple[bool, bool, float, float, int]:
         return (c.russia_count > 0, c.soviet_count > 0, c.comp, c.p25, c.max_type)
 
@@ -2325,6 +2382,28 @@ def choose_winner(candidates: list[CandidateResult], min_successful_games: int) 
         source_leader = max(baseline_leaders, key=rank_key)
         if rank_key(winner) <= rank_key(source_leader):
             return None
+        # Russia-rate protection (objective integrity, 2026-05-30). The param-parallel
+        # plays only ~min_successful_games per candidate — far too few to observe a rare
+        # Russia (type 15) reliably — so a Russia-capable baseline routinely shows
+        # russia_count=0 in-run and gets traded away for a higher-score perturbation that
+        # cannot found Russia at all. That is exactly the 07:12 regression that started a
+        # multi-hour Russia drought and blocks the Soviet goal (Soviet REQUIRES founding
+        # two Russias). Use the baseline's PROVEN historical Russia count and refuse to
+        # adopt a winner that fails to demonstrate Russia/Soviet over a Russia-capable
+        # baseline, UNLESS its composite gain is large enough to be worth losing Russia
+        # capability. The override is the 2026-05-25 固着 safeguard: that prior single-
+        # Russia protection had NO score escape and froze the search on a low-score
+        # strain; here a large score jump always wins, so we can protect even a single
+        # demonstrated Russia (min count 1) without freezing.
+        effective_baseline_russia = max(
+            int(source_leader.russia_count or 0), int(baseline_historical_russia or 0)
+        )
+        baseline_russia_capable = effective_baseline_russia >= _russia_guard_min_count()
+        winner_shows_objective = winner.russia_count > 0 or winner.soviet_count > 0
+        if baseline_russia_capable and not winner_shows_objective:
+            base_comp = float(source_leader.comp or 0.0)
+            if base_comp <= 0 or float(winner.comp or 0.0) < base_comp * _russia_guard_override_ratio():
+                return None
     return winner
 
 

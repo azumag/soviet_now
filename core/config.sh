@@ -353,6 +353,19 @@ WILDCARD_PARALLEL_CULL_AFTER_GAMES="${WILDCARD_PARALLEL_CULL_AFTER_GAMES:-1}"
 WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES="${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}"
 WILDCARD_PARALLEL_CULL_COMP_RATIO="${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}"
 WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS="${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}"
+# Russia-rate objective guard (2026-05-30): choose_winner refuses to adopt a non-Russia
+# winner over a baseline that is PROVEN Russia-capable (>= MIN_COUNT historical Russia
+# foundings, read from current_strategy_run.json) unless the winner's composite gain is
+# >= OVERRIDE_RATIO (large enough to be worth losing Russia capability). Prevents the
+# 07:12-style regression where ~6-game sampling can't see a rare Russia and tunes it
+# away for raw score. MIN_COUNT=1 (default) protects any strategy that has demonstrated
+# Russia capability — strategies rarely accumulate 2 Russias before turnover, so a higher
+# threshold makes the guard inert. The 2026-05-25 single-Russia 固着 is avoided by the
+# soft OVERRIDE_RATIO escape (that prior protection had none), NOT by MIN_COUNT. Raise
+# MIN_COUNT to 2 (or OVERRIDE_RATIO) if score progress stalls. Exported so the
+# wildcard_parallel.py subprocess sees them via os.getenv.
+export WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT="${WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT:-1}"
+export WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO="${WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO:-1.15}"
 WILDCARD_PARALLEL_EVALUATE_MODE="${WILDCARD_PARALLEL_EVALUATE_MODE:-real}"
 WILDCARD_PARALLEL_CDP_BASE_PORT="${WILDCARD_PARALLEL_CDP_BASE_PORT:-19320}"
 WILDCARD_PARALLEL_BRIDGE_TIMEOUT="${WILDCARD_PARALLEL_BRIDGE_TIMEOUT:-45}"

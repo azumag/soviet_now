@@ -1387,6 +1387,53 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertTrue(coordinator.should_cull(below))
             self.assertEqual(below.cull_leader_job_id, "cand-1")
 
+    def test_russia_rate_guard_protects_capable_baseline(self):
+        """choose_winner は、歴史的にロシア建国可能な baseline(現戦略)を、ロシア未実証の
+        高スコア摂動で置換しない (2026-05-30 07:12回帰の恒久対策)。~6ゲームでは稀なロシア
+        を観測できず baseline の in-run russia=0 になるため、実証済みの歴史的 russia_count
+        で判定する。MIN_COUNT=1(既定)で「一度でもロシア建国した能力」を保護。05-25のhard固着
+        は OVERRIDE_RATIO のスコア上書きで回避(当時の保護にはこの脱出弁が無かった)。env を
+        pin して環境非依存にする。"""
+        import wildcard_parallel
+
+        def mk(td_path, job_id, index, comp, *, baseline=False, russia=0, soviet=0):
+            return wildcard_parallel.CandidateResult(
+                job_id=job_id, index=index, workdir=td_path / job_id,
+                strategy_path=td_path / job_id / "strategy.py",
+                status="accepted", scores=[int(comp)] * 6, comp=comp, p25=comp,
+                baseline=baseline, russia_count=russia, soviet_count=soviet,
+            )
+
+        cw = wildcard_parallel.choose_winner
+        env = {"WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT": "1",
+               "WILDCARD_PARALLEL_RUSSIA_GUARD_OVERRIDE_RATIO": "1.15"}
+        with mock.patch.dict(os.environ, env, clear=False), tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            # played slot-1 baseline: in-run russia=0 (sample too small to see rare Russia).
+            baseline = mk(td_path, "cand-1", 0, 12000.0, baseline=True, russia=0)
+            winner_small = mk(td_path, "cand-3", 2, 12600.0, russia=0)  # +5% score, no Russia
+
+            # demonstrated historical Russia (>= MIN_COUNT 1) → protect: do NOT adopt the
+            # non-Russia winner whose score gain (+5%) is below the override.
+            self.assertIsNone(cw([baseline, winner_small], 6, baseline_historical_russia=1))
+            # no proven historical Russia → existing behavior: adopt the higher-score winner.
+            self.assertIs(cw([baseline, winner_small], 6, baseline_historical_russia=0), winner_small)
+            # large score gain (12000→14000 = +16.7% >= 1.15) overrides protection (避固着).
+            winner_big = mk(td_path, "cand-4", 3, 14000.0, russia=0)
+            self.assertIs(cw([baseline, winner_big], 6, baseline_historical_russia=1), winner_big)
+            # a winner that DOES found Russia is adopted even at lower score (回復).
+            winner_russia = mk(td_path, "cand-5", 4, 11000.0, russia=1)
+            self.assertIs(cw([baseline, winner_russia], 6, baseline_historical_russia=1), winner_russia)
+
+        # the MIN_COUNT knob works: at MIN_COUNT=2 a single demonstrated Russia is below
+        # threshold and is NOT protected (conservative mode trades coverage for safety).
+        with mock.patch.dict(os.environ, {**env, "WILDCARD_PARALLEL_RUSSIA_GUARD_MIN_COUNT": "2"}, clear=False), \
+                tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            baseline = mk(td_path, "cand-1", 0, 12000.0, baseline=True, russia=0)
+            winner_small = mk(td_path, "cand-3", 2, 12600.0, russia=0)
+            self.assertIs(cw([baseline, winner_small], 6, baseline_historical_russia=1), winner_small)
+
     def test_wildcard_parallel_score_baseline_is_skipped_for_baseline_slot1_mode(self):
         """戦略改善後パラメータ探索の baseline-slot1 mode では既存スコア baseline を注入しない。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
