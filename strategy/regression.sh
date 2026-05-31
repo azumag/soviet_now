@@ -3961,6 +3961,21 @@ frontier_grace_active = (
     and int(current_objective.get("russia_count", 0) or 0) <= 0
 )
 
+# 2026-05-31 fix: russia_advantage_grace — proven russia strategies (current has MORE
+# russia than anchor, e.g. russia=2 vs anchor russia=1) get suppressed from the
+# early_comp_top_gap gate for up to EARLY_COMP_TOP_GAP_RUSSIA_ADVANTAGE_GRACE_GAMES
+# (default 16) games. This gives them a full improvement cycle to reproduce russia in
+# live play before being evaluated on composite alone — solving the structural problem
+# where a high-variance russia strategy (comp lower than steady-scorer anchor in short
+# window) is rolled back before it can demonstrate the founding it was adopted for.
+# Set =0 to restore old behavior (no russia advantage grace).
+_russia_adv_grace_games = max(0, int(os.environ.get("EARLY_COMP_TOP_GAP_RUSSIA_ADVANTAGE_GRACE_GAMES", "16") or "16"))
+russia_advantage_grace = (
+    _russia_adv_grace_games > 0
+    and current["n"] < _russia_adv_grace_games
+    and int(current_objective.get("russia_count", 0) or 0) > int(anchor_objective.get("russia_count", 0) or 0)
+)
+
 objective_reasons = []
 if (
     early_objective_enabled == "1"
@@ -4025,6 +4040,7 @@ if (
     and top_comp > 0
     and current["n"] >= early_comp_top_gap_min_games
     and not frontier_grace_active
+    and not russia_advantage_grace
     and curr_comp < top_comp * early_comp_top_gap_min_ratio
 ):
     top_comp_gap, top_p50_gap, top_p25_gap = gap(top_metrics, current)
