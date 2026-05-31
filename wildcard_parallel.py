@@ -2831,7 +2831,7 @@ def evaluate_slot(index: int, first_candidate: CandidateResult, args: argparse.N
             if result.status != "culled":
                 if (
                     result.status == "failed"
-                    and (result.games or 0) == 0
+                    and len(result.scores) == 0
                     and launch_retries < max_launch_retries
                     and _is_transient_launch_failure(result.error)
                     and not _stop_now()
