@@ -97,7 +97,21 @@ _soren91_switch_obs_layout() {
 		fi
 		# 改善中も stats/ops は監視用に維持し、dashboard/game だけを
 		# china レイアウトへ戻す。改善オーバーレイは別途管理される。
-		if _soren91_improve_active; then
+		# 2026-05-31 fix: param並列実行中は stats/ops を show しない。
+		# param並列 reconcile が hide しているのに soren91_stop 経由で
+		# _soren91_switch_obs_layout china が show し点滅が起きるのを防ぐ。
+		local _wp_active=0
+		local _wp_sf="${WILDCARD_PARALLEL_STATUS_FILE:-${ELOOP_LIB_DIR:-.}/tmp/state/wildcard_parallel_status.json}"
+		if [ -f "$_wp_sf" ]; then
+			local _wp_ph
+			_wp_ph=$(python3 -c "import json,os,time,sys;d=json.load(open(sys.argv[1]));print(d.get('phase','') if time.time()-os.path.getmtime(sys.argv[1])<=600 else '')" "$_wp_sf" 2>/dev/null || true)
+			[ "$_wp_ph" = "generating" ] || [ "$_wp_ph" = "running" ] && _wp_active=1
+		fi
+		pgrep -f 'python.* wildcard_parallel\.py' >/dev/null 2>&1 && _wp_active=1
+		if [ "$_wp_active" = "1" ]; then
+			# param並列がオーバーレイを管理中: stats/ops の restore を省略し点滅を防ぐ
+			"$SOREN91_OBS_CONTROL" batch soren show:"$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
+		elif _soren91_improve_active; then
 			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		else
 			"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &

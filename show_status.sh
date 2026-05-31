@@ -31,11 +31,14 @@ try:
     age = time.time() - os.path.getmtime(sys.argv[1])
 except Exception:
     age = 1e9
-raise SystemExit(0 if str(d.get("phase") or "") in ("generating", "running") and age <= 180 else 1)
+raise SystemExit(0 if str(d.get("phase") or "") in ("generating", "running") and age <= 600 else 1)
 PY
 	then
 		return 0
 	fi
+	# Process-liveness fallback: if wildcard_parallel.py is running, treat as active
+	# regardless of status file mtime (covers long games where file doesn't update for >3min)
+	pgrep -f 'python.* wildcard_parallel\.py' >/dev/null 2>&1 && return 0
 	[ -f tmp/state/improve_state.json ] || return 1
 	python3 - tmp/state/improve_state.json <<'PY' >/dev/null 2>&1
 import json
