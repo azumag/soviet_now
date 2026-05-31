@@ -145,6 +145,11 @@ _HEARTBEAT_PID=$!
 _start_irc_daemon() {
 	# 既存 daemon が動いていたら停止
 	./twitch_chat.sh stop 2>/dev/null || true
+	# 2026-05-31 fix: chat_worker が高速再起動されると PID ファイルが上書きされ
+	# 以前の twitch_chat_daemon.sh が孤立(PPID=1)したまま残る→IRC接続が複数になり
+	# 同じコメント返答が N 回送信される。stop の後に全インスタンスを pkill で掃除。
+	pkill -f 'twitch_chat_daemon\.sh' 2>/dev/null || true
+	sleep 0.5
 
 	# raw.log と offset を初期化 (存在しない場合のみ)
 	local chat_dir="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
