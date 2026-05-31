@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -275,19 +276,23 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertEqual(self._run_frontier_anchor_case(td, peaks, enabled="0"), "scoreOnly")
 
     def test_both_anchor_paths_carry_soviet_frontier_rung(self):
-        """Both objective-aware selectors (_refresh_best_strategy_anchor and
-        _pick_best_rollback_candidate) must carry the graded frontier ladder so the
-        anchor baseline AND the rollback target consistently protect the Soviet path."""
+        """Objective-aware selectors and rollback checks must carry the graded
+        frontier ladder so anchor, rollback target, and purge checks consistently
+        protect the Soviet path."""
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
-        # frontier detection helper present (defined in BOTH heredoc blocks)
-        self.assertEqual(regression.count("def _is_soviet_frontier(peak_str):"), 2)
+        # frontier detection helper present in both selector blocks and check_regression.
+        self.assertEqual(regression.count("def _is_soviet_frontier(peak_str):"), 3)
         self.assertIn("c.get(15, 0) >= 2 or (c.get(15, 0) >= 1 and c.get(14, 0) >= 2)", regression)
-        # graded ladder default keys widened to 3 rungs in both blocks
-        self.assertEqual(regression.count("objective_key = (0, 0, 0)"), 2)
-        # repeatable-games threshold threaded + parsed in both blocks
-        self.assertEqual(regression.count("objective_frontier_min_games = int(sys.argv["), 2)
+        # graded ladder default keys carry Soviet, frontier, and recurrent-Russia rungs in both blocks.
+        self.assertEqual(regression.count("objective_key = (0, 0, 0, 0, 0)"), 2)
+        # repeatable-games threshold threaded + parsed in both selector blocks and check_regression.
+        self.assertIn("objective_frontier_min_games = int(sys.argv[25])", regression)
+        self.assertIn("objective_frontier_min_games = int(sys.argv[14])", regression)
+        self.assertIn("objective_frontier_min_games = max(1, int(sys.argv[48]))", regression)
         self.assertIn('OBJECTIVE_FRONTIER_MIN_GAMES="${OBJECTIVE_FRONTIER_MIN_GAMES:-2}"', config)
+        self.assertIn('OBJECTIVE_RUSSIA_MIN_COUNT="${OBJECTIVE_RUSSIA_MIN_COUNT:-2}"', config)
+        self.assertIn('OBJECTIVE_RUSSIA_MIN_RATE="${OBJECTIVE_RUSSIA_MIN_RATE:-0.15}"', config)
 
     def test_anchor_refresh_uses_archive_restart_source_objective_metadata(self):
         """archive_restart の source メタがあれば、pruned 履歴でも建国進捗を 0 扱いしない。"""
@@ -1522,12 +1527,13 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         pin して環境非依存にする。"""
         import wildcard_parallel
 
-        def mk(td_path, job_id, index, comp, *, baseline=False, russia=0, soviet=0):
+        def mk(td_path, job_id, index, comp, *, baseline=False, russia=0, soviet=0, max_type=14):
             return wildcard_parallel.CandidateResult(
                 job_id=job_id, index=index, workdir=td_path / job_id,
                 strategy_path=td_path / job_id / "strategy.py",
                 status="accepted", scores=[int(comp)] * 6, comp=comp, p25=comp,
                 baseline=baseline, russia_count=russia, soviet_count=soviet,
+                max_type=max_type,
             )
 
         cw = wildcard_parallel.choose_winner
@@ -1547,11 +1553,18 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             # large score gain (12000→14000 = +16.7% >= 1.15) overrides protection (避固着).
             winner_big = mk(td_path, "cand-4", 3, 14000.0, russia=0)
             self.assertIs(cw([baseline, winner_big], 6, baseline_historical_russia=1), winner_big)
+            # But a no-Russia winner must not erase a proven T15/Russia frontier just by score.
+            self.assertIsNone(cw(
+                [baseline, winner_big],
+                6,
+                baseline_historical_russia=1,
+                baseline_historical_best_max_type=15,
+            ))
             # a winner with RECURRENT Russia (russia>=2, the 2026-05-31 adoption-recurrence
             # contract) is adopted even at lower score (回復). A single lucky Russia (russia==1)
             # is NO LONGER auto-adopted — it competes on comp like any candidate (05-25-safe);
             # see test_weak_single_russia_NOT_adopted_over_higher_comp_nonrussia.
-            winner_russia = mk(td_path, "cand-5", 4, 11000.0, russia=2)
+            winner_russia = mk(td_path, "cand-5", 4, 11000.0, russia=2, max_type=15)
             self.assertIs(cw([baseline, winner_russia], 6, baseline_historical_russia=1), winner_russia)
 
         # the MIN_COUNT knob works: at MIN_COUNT=2 a single demonstrated Russia is below
@@ -3362,6 +3375,25 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             re.compile(r"reactive_pair_count\s*>=\s*5.*proximity_bonus = 0\.0"),
         )
 
+    def test_pre_russia_bridge_clustering_is_bounded_to_near_miss_inventory(self):
+        strategy = (REPO_ROOT / "strategy.py").read_text()
+
+        self.assertIn("PRE_RUSSIA_BRIDGE_CLUSTER", strategy)
+        self.assertIn("RUSSIA_PAIR_CLUSTER", strategy)
+        self.assertIn("SECOND_RUSSIA_BRIDGE_CLUSTER", strategy)
+        self.assertIn("max_type_on_board in (12, 13, 14)", strategy)
+        self.assertIn("pre_russia_counts.get(13, 0) >= 3", strategy)
+        self.assertIn("pre_russia_counts.get(13, 0) >= 2", strategy)
+        self.assertIn("pre_russia_counts.get(12, 0) >= 2", strategy)
+        self.assertIn("pre_russia_counts.get(11, 0) >= 2", strategy)
+        self.assertIn("pre_russia_counts.get(11, 0) >= 3", strategy)
+        self.assertIn("pre_russia_counts.get(12, 0) >= 4", strategy)
+        self.assertIn("pre_russia_counts.get(14, 0) >= 1", strategy)
+        self.assertIn('p.get("type") == 14', strategy)
+        self.assertIn("second_russia_counts.get(13, 0) >= 2", strategy)
+        self.assertIn("not death_spiral", strategy)
+        self.assertIn("max_y < 3.2", strategy)
+
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 
@@ -4436,6 +4468,45 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], -0.8)
         self.assertIn("avoid_merge_result_deadline_safe", decision["reason"])
 
+    def test_deadline_safety_preserves_midboard_direct_merge_result_warning(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -1.8, "reason": "DIRECT_MERGE_MEDIUM_TOWER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 1.86,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": [{}, {}]},
+                "results": [
+                    {
+                        "x": -1.8,
+                        "crosses_deadline": True,
+                        "merge_grade": "DIRECT",
+                        "merge_result_crosses_deadline": True,
+                        "risk_top_y_after_drop": 3.4,
+                    },
+                    {
+                        "x": 1.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "merge_result_crosses_deadline": False,
+                        "risk_top_y_after_drop": 3.12,
+                    },
+                ],
+            },
+            {
+                "pieces": [{"id": 1, "type": 11, "x": -1.8, "y": 0.8, "r": 1.67}],
+                "next": {"type": 11, "r": 1.67},
+            },
+        )
+
+        self.assertEqual(decision["x"], -1.8)
+        self.assertNotIn("DIRECT_TO_NO", decision["reason"])
+
     def test_deadline_safety_preserves_merge_result_crossing_when_no_clean_candidate(self):
         import strategy_runner
 
@@ -5190,6 +5261,41 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("visual_deadline_same_country", decision["reason"])
         self.assertNotIn("minrisk_postcondition", decision["reason"])
 
+    def test_deadline_safety_drops_visual_same_country_when_dense_at_redline(self):
+        import strategy_runner
+
+        pieces = [{"id": 144, "type": 8, "x": -1.14, "y": 2.17}]
+        pieces.extend(
+            {"id": i, "type": 1, "x": -2.8 + (i % 8) * 0.7, "y": -4.4, "r": 0.207}
+            for i in range(200, 231)
+        )
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 2.9, "reason": "HIGH_TOWER"},
+            {
+                "deadline": {"top_edge_y": 3.30, "deadline_crossed": False},
+                "reactor": {"reactive_pairs": [{}, {}, {}]},
+                "results": [
+                    {
+                        "x": 2.9,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.5,
+                    },
+                    {
+                        "x": -1.1,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 4.2,
+                    },
+                ],
+            },
+            {"pieces": pieces, "next": {"type": 8}},
+        )
+
+        self.assertEqual(decision["x"], 2.9)
+        self.assertIn("minrisk_postcondition", decision["reason"])
+
     def test_deadline_safety_visual_same_country_falls_back_when_too_high(self):
         import strategy_runner
 
@@ -5377,6 +5483,46 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], 3.0)
         self.assertIn("DIRECT_TO_NO", decision["reason"])
         self.assertIn("geometry_underestimate_postcondition", decision["reason"])
+
+    def test_deadline_safety_preserves_far_below_direct_geometry_noise(self):
+        import strategy_runner
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 1.5, "reason": "DIRECT_MERGE_HIGH_LAYER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": -0.83,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 1.5,
+                        "crosses_deadline": False,
+                        "merge_grade": "DIRECT",
+                        "risk_top_y_after_drop": 3.18,
+                    },
+                    {
+                        "x": -3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.10,
+                    },
+                ],
+            },
+            {
+                "pieces": [
+                    {"id": 1, "type": 11, "x": 1.45, "y": 2.55, "r": 0.982},
+                    {"id": 2, "type": 8, "x": -1.8, "y": 1.10, "r": 0.660},
+                ],
+                "next": {"type": 11, "r": 0.982},
+            },
+        )
+
+        self.assertEqual(decision["x"], 1.5)
+        self.assertEqual(decision["reason"], "DIRECT_MERGE_HIGH_LAYER")
 
     def test_deadline_safety_medium_tower_replaces_near_deadline_underestimate(self):
         import strategy_runner
@@ -5774,6 +5920,7 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
             self.assertIn("russia_created=1/1", result.stdout)
             self.assertIn("max_piece_type=15", result.stdout)
             self.assertIn("high_type_counts=T15x1", result.stdout)
+            self.assertIn("pre-Russia near-miss", result.stdout)
             self.assertIn("[RUSSIA]", result.stdout)
 
     def test_improve_prompts_do_not_send_ai_searching_for_batch_runner(self):
@@ -5801,12 +5948,14 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("最終目標は type16 のソ連建国", text)
         self.assertIn("hard_signal: 今回バッチはロシア未到達", text)
         self.assertIn("high_type_counts is final-board type10+ inventory", text)
+        self.assertIn("pre-Russia near-miss: T12x4, T12x3+T11x3, T13x2, T13x3, T13x2+T12x2, T13x1+T12x2+T11x2, T13x1+T12x4, T14x2, T14x1+T12x2, or T14x1+T13x1+T12x2", text)
         self.assertIn("deadline_guard_rate", text)
         self.assertIn("deadline_guard_reason_top", text)
         self.assertIn("guard_reason_top=", text)
         self.assertIn("deadline guard が多発", text)
         self.assertIn("ガードを弱めず", text)
         self.assertIn("peak_high_type_counts", text)
+        self.assertIn("high_type_spans", text)
         self.assertIn("frontier_hint", text)
         self.assertIn("type13以下で止まっている", text)
 
@@ -5935,10 +6084,13 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
     def test_regression_guard_blocks_objective_backslide(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
 
         self.assertIn("objective_reasons = []", regression)
         self.assertIn("lost_soviet_path", regression)
+        self.assertIn("lost_soviet_frontier_path", regression)
+        self.assertIn("lost_recurrent_russia_path", regression)
         self.assertNotIn('objective_reasons.append("lost_russia_path")', regression)
         self.assertIn('objective_reasons.append("lost_soviet_path")', regression)
         self.assertIn("def stage_gate_regression_reason", regression)
@@ -5948,6 +6100,26 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("mode=objective_regression", regression)
         self.assertIn("mode=early_objective_regression", regression)
         self.assertIn("early_objective_min_games", regression)
+        self.assertIn("early_objective_lost_russia_low_stage_min_games", regression)
+        self.assertIn("EARLY_OBJECTIVE_LOST_RUSSIA_LOW_STAGE_MIN_GAMES", config)
+        self.assertIn("fresh_objective_regression", regression)
+        self.assertIn("fresh_current_objective", regression)
+        self.assertIn("prefer_requested_rollback", regression)
+        self.assertIn("requested_rollback_hash", regression)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES", config)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_LOW_STAGE_MIN_GAMES", config)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_EARLY_LOCK_ENABLED", config)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE", config)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES", config)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE", config)
+        self.assertIn("queue_fresh_objective_same_hash_lock_if_needed", improve)
+        self.assertIn("fresh_objective_same_hash_lock", improve)
+        self.assertIn("seeded_same_hash_fresh_no_russia", improve)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE", improve)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES", improve)
+        self.assertIn("low_stage_miss", improve)
+        self.assertIn("fresh_objective_trigger", improve)
+        self.assertIn("queue_fresh_objective_same_hash_lock_if_needed || true", improve)
         self.assertIn("early_objective_min_best_type", regression)
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
         self.assertIn("permanent_archive_dir", regression)
@@ -5969,6 +6141,31 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("EARLY_OBJECTIVE_REGRESSION_MIN_GAMES", config)
         self.assertIn("anchor_best_max_type", regression)
         self.assertIn("curr_best_max_type", regression)
+
+    def test_strategy_runner_merge_result_guard_is_pressure_gated(self):
+        runner = (REPO_ROOT / "strategy_runner.py").read_text()
+
+        self.assertIn("def merge_result_deadline_guard_active", runner)
+        self.assertIn("or danger_piece_count > 0", runner)
+        self.assertIn("or current_top_edge_y >= deadline_y - 0.35", runner)
+        self.assertIn("and merge_result_deadline_guard_active()", runner)
+
+    def test_strategy_restores_same_type_proximity_drought_axis(self):
+        strategy = (REPO_ROOT / "strategy.py").read_text()
+
+        self.assertIn("evaluation axis 9.74: same-type proximity for merge drought", strategy)
+        self.assertIn('reactor.get("recent_results", [])', strategy)
+        self.assertIn('if r.get("merge_grade") == "NO":', strategy)
+        self.assertIn("if not recent_results and same_type_pieces:", strategy)
+        self.assertIn("high_feeder_window", strategy)
+        self.assertIn("and next_type >= 12", strategy)
+        self.assertIn("and next_type >= max_type_on_board - 1", strategy)
+        self.assertIn("reactive_pair_count < 8 and no_merge_streak >= 3", strategy)
+        self.assertIn("not (reactive_pair_count >= 5 and max_y >= 4.0)", strategy)
+        self.assertIn("drought_bonus = max(0, 600.0 - min_horiz_dist * 100.0) * merge_mult", strategy)
+        self.assertIn('reasons.append("SAME_TYPE_PROXIMITY_DROUGHT")', strategy)
+        self.assertIn("evaluation axis 9.75: high-type feeder lane", strategy)
+        self.assertIn('reasons.append("HIGH_TYPE_FEEDER_LANE")', strategy)
 
     def test_dashboard_purge_target_uses_anchor_and_current_run(self):
         import dashboard_data
@@ -6311,6 +6508,11 @@ _prune_expired_rejected_hashes
         self.assertIn("IMPROVE_HUNG_REQUIRE_EVAL_STALE", config)
         self.assertIn("IMPROVE_WALL_TIMEOUT", config)
         self.assertIn("EVAL_SCORE_HISTORY_FILE", config)
+        self.assertIn("_strategy_decide_hash_or_md5()", improve)
+        self.assertIn('python3 extract_decide_hash.py "$path"', improve)
+        self.assertIn('strategy_hash=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")', improve)
+        self.assertIn('hash_now=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")', improve)
+        self.assertIn('[ -n "$hash_before" ] || hash_before=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")', improve)
         self.assertIn("_is_recorded_running_improve_pid()", improve)
         self.assertIn('if [ -z "$cmd" ]; then', improve)
         self.assertIn('_is_recorded_running_improve_pid "$pid"', improve)
@@ -6402,6 +6604,8 @@ p = Path('{run_file}')
 d = json.load(open(p))
 assert d['hash'] == 'reset_hash'
 assert d['scores'] == []
+assert d['_seeded_score_count'] == 0
+assert d['_fresh_score_count'] == 0
 PY
                 _seed_current_strategy_run_from_rolling seedhash
                 python3 - <<'PY'
@@ -6412,6 +6616,8 @@ d = json.load(open(p))
 assert d['hash'] == 'seedhash'
 assert d['scores'] == [1, 2, 3]
 assert d['games_total'] == 3
+assert d['_seeded_score_count'] == 3
+assert d['_fresh_score_count'] == 0
 assert d['_recent_archives'] == ['game_history/a.jsonl']
 assert d['max_types'] == [15, 12, 12]
 assert d['russia_count'] == 1
@@ -6454,6 +6660,9 @@ PY
         self.assertIn("near_score_leader = (", regression)
         self.assertIn("objective_key = _objective_tuple(h, data)", regression)
         self.assertIn("*objective_key,\n        selection_score", regression)
+        self.assertIn("lost_soviet_frontier_path", regression)
+        self.assertIn("anchor_obj_tuple[2] > 0 and current_obj_tuple[2] <= 0", regression)
+        self.assertIn("anchor_obj_tuple[3] > 0 and current_obj_tuple[3] <= 0", regression)
 
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
@@ -6474,6 +6683,8 @@ PY
         )
         self.assertIn("archive_restart を優先", improve)
         self.assertIn("russia_recovery_mode: type14 near-miss", eloop)
+        self.assertIn("type13 pre-Russia near-miss", eloop)
+        self.assertIn("T13x3", eloop)
 
     def test_russia_progress_suppresses_mechanical_wildcard(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
@@ -6961,6 +7172,12 @@ PY
         self.assertIn("_outbound_chat_youtube_backoff_active()", outbound)
         self.assertIn('local backoff_file="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}/api_backoff_until"', outbound)
         self.assertIn("_outbound_chat_youtube_backoff_active && return 0", outbound)
+        self.assertIn("_outbound_chat_youtube_auth_backoff_active()", outbound)
+        self.assertIn("OUTBOUND_CHAT_YOUTUBE_AUTH_BACKOFF_MAX_SEC", outbound)
+        self.assertIn("_outbound_chat_youtube_auth_backoff_active && return 0", outbound)
+        self.assertIn("YouTube OAuth refresh|OAuth refresh settings are missing or invalid", outbound)
+        self.assertIn("_outbound_chat_maybe_backoff_youtube_failure", outbound)
+        self.assertIn("_outbound_chat_clear_youtube_failure_state", outbound)
         self.assertIn("OutboundErr", status)
         self.assertIn("DEGRADED", status)
         self.assertIn("last_send_error.txt", status)
@@ -7260,10 +7477,13 @@ PY
 
         self.assertIn("ROLLBACK_TARGET_COOLDOWN_FILE", config)
         self.assertIn("ROLLBACK_TARGET_COOLDOWN_SEC", config)
+        self.assertIn("ROLLBACK_OBJECTIVE_REQUESTED_COOLDOWN_BYPASS", config)
         self.assertIn("_is_rollback_target_on_cooldown()", regression)
         self.assertIn("_record_rollback_target_cooldown()", regression)
         self.assertIn("anchor_top1候補スキップ", regression)
         self.assertIn("rollback先cooldown中", regression)
+        self.assertIn("objective requested rollback bypasses cooldown", regression)
+        self.assertIn("ROLLBACK_OBJECTIVE_REQUESTED_COOLDOWN_BYPASS", regression)
         self.assertIn('_record_rollback_target_cooldown "$strategy_hash" "$rolled_hash"', regression)
 
     def test_regression_rollback_prefers_current_rolling_top_candidate(self):
@@ -7523,15 +7743,23 @@ _pick_best_rollback_candidate currentHash
     def test_bridge_desync_stops_stale_soren91_only_outside_improve(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         loop = (REPO_ROOT / "eloop.sh").read_text()
+        runner = (REPO_ROOT / "strategy_runner.py").read_text()
 
         self.assertIn("BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED", config)
         self.assertIn("BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT", config)
         self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", config)
         self.assertIn('SOREN_BRIDGE_DESYNC_LIMIT="${SOREN_BRIDGE_DESYNC_LIMIT:-3}"', config)
-        self.assertIn('BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "3") or "3")', (REPO_ROOT / "strategy_runner.py").read_text())
+        self.assertIn('BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "3") or "3")', runner)
+        self.assertIn("improve_started_midgame", runner)
+        self.assertIn("IMPROVE STARTED MIDGAME", runner)
+        self.assertIn("IMPROVE STARTED BEFORE DROP", runner)
         self.assertIn("即bridge復旧", loop)
         self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", loop)
         self.assertIn("[PHANTOM] bridge 再起動 成功", loop)
+        self.assertIn("improve_started_midgame", loop)
+        self.assertIn("評価/rollingへ入れず", loop)
+        self.assertIn("_bridge_desync_improve_active", loop)
+        self.assertIn('[ "${_bridge_desync_improve_active:-0}" != "1" ]', loop)
         self.assertIn("中華AIプレイ中に soren91 残存を検出", loop)
         self.assertIn('SOREN91_STOP_TIMEOUT="${BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT:-0}" soren91_stop', loop)
         self.assertIn("! _is_improve_running", loop)
@@ -7827,6 +8055,136 @@ class TestParamParallelDetectionLagClosed(unittest.TestCase):
         # 既存の age 上限 (孤児が永久ブロックしない保証) を退行させない
         self.assertIn("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", improve)
         self.assertIn("(time.time() - started_at) > max_sec", improve)
+
+    def test_slot_activity_fresh_guard_structural(self):
+        """_wildcard_parallel_active が slot game_history 活性チェックを含む。"""
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        self.assertIn("slot_activity_fresh", improve)
+        self.assertIn("game_history/latest.jsonl", improve)
+        self.assertIn("WILDCARD_PARALLEL_SLOT_FRESH_SEC", improve)
+
+    def test_slot_activity_fresh_blocks_terminal_phase(self):
+        """終端phaseでも fresh な game_history があれば active=true を維持する。
+
+        pgrep で親プロセスが検出漏れしてもスロットがゲーム中なら main loop をブロック。
+        """
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        fn2 = self._extract_fn(improve, "_wildcard_parallel_active")
+
+        with tempfile.TemporaryDirectory() as td:
+            session_dir = Path(td) / "session"
+            gh_dir = session_dir / "cand-1" / "game_history"
+            gh_dir.mkdir(parents=True)
+            gh_file = gh_dir / "latest.jsonl"
+            gh_file.write_text("{}\n", encoding="utf-8")
+            # 直近に更新 → 鮮度OK
+            now = time.time()
+            os.utime(gh_file, (now, now))
+
+            status = Path(td) / "wildcard_parallel_status.json"
+            status.write_text(
+                json.dumps({
+                    "phase": "winner_selected",
+                    "block_main_loop": True,
+                    "started_at": now,
+                    "session_dir": str(session_dir),
+                }),
+                encoding="utf-8",
+            )
+            script = textwrap.dedent(f"""
+                set +e
+                export TMP_STATE_DIR="{td}"
+                export WILDCARD_PARALLEL_STATUS_FILE="{status}"
+                export WILDCARD_PARALLEL_SLOT_FRESH_SEC=180
+                {fn2}
+                if _wildcard_parallel_active; then echo SLOT_ACTIVE; else echo SLOT_INACTIVE; fi
+            """)
+            res = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
+                                 text=True, capture_output=True, check=False)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            # 終端phaseでも fresh なスロットがあれば active=true
+            self.assertIn("SLOT_ACTIVE", res.stdout, res.stderr)
+
+    def test_slot_activity_stale_releases_terminal_phase(self):
+        """終端phaseで game_history が古い(stale)なら active=false にする。"""
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        fn2 = self._extract_fn(improve, "_wildcard_parallel_active")
+
+        with tempfile.TemporaryDirectory() as td:
+            session_dir = Path(td) / "session"
+            gh_dir = session_dir / "cand-1" / "game_history"
+            gh_dir.mkdir(parents=True)
+            gh_file = gh_dir / "latest.jsonl"
+            gh_file.write_text("{}\n", encoding="utf-8")
+            stale_ts = time.time() - 400  # 400s 前 > SLOT_FRESH_SEC=180
+            os.utime(gh_file, (stale_ts, stale_ts))
+
+            now = time.time()
+            status = Path(td) / "wildcard_parallel_status.json"
+            status.write_text(
+                json.dumps({
+                    "phase": "no_candidate",
+                    "block_main_loop": True,
+                    "started_at": now,
+                    "session_dir": str(session_dir),
+                }),
+                encoding="utf-8",
+            )
+            script = textwrap.dedent(f"""
+                set +e
+                export TMP_STATE_DIR="{td}"
+                export WILDCARD_PARALLEL_STATUS_FILE="{status}"
+                export WILDCARD_PARALLEL_SLOT_FRESH_SEC=180
+                {fn2}
+                if _wildcard_parallel_active; then echo STALE_ACTIVE; else echo STALE_INACTIVE; fi
+            """)
+            res = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
+                                 text=True, capture_output=True, check=False)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            # stale なスロット + 終端phase + プロセス無し → inactive
+            self.assertIn("STALE_INACTIVE", res.stdout, res.stderr)
+
+    def test_slot_activity_fresh_terminal_phase_slot_dir_pattern(self):
+        """終端phaseでも slot-N/game_history 形式の fresh なファイルがあれば active=true。
+
+        glob `*/game_history/latest.jsonl` が slot-N と cand-N の両ディレクトリ命名を
+        正しく拾うことを確認する。
+        """
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        fn2 = self._extract_fn(improve, "_wildcard_parallel_active")
+
+        with tempfile.TemporaryDirectory() as td:
+            session_dir = Path(td) / "session"
+            gh_dir = session_dir / "slot-3" / "game_history"
+            gh_dir.mkdir(parents=True)
+            gh_file = gh_dir / "latest.jsonl"
+            gh_file.write_text("{}\n", encoding="utf-8")
+            now = time.time()
+            os.utime(gh_file, (now, now))
+
+            status = Path(td) / "wildcard_parallel_status.json"
+            status.write_text(
+                json.dumps({
+                    "phase": "no_candidate",
+                    "block_main_loop": True,
+                    "started_at": now,
+                    "session_dir": str(session_dir),
+                }),
+                encoding="utf-8",
+            )
+            # 終端phase + no process + fresh slot-N → active
+            script = textwrap.dedent(f"""
+                set +e
+                export TMP_STATE_DIR="{td}"
+                export WILDCARD_PARALLEL_STATUS_FILE="{status}"
+                export WILDCARD_PARALLEL_SLOT_FRESH_SEC=180
+                {fn2}
+                if _wildcard_parallel_active; then echo SLOTDIR_ACTIVE; else echo SLOTDIR_INACTIVE; fi
+            """)
+            res = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
+                                 text=True, capture_output=True, check=False)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("SLOTDIR_ACTIVE", res.stdout, res.stderr)
 
 
 class TestSoren91FastExitBackoff(unittest.TestCase):

@@ -398,6 +398,8 @@ _wildcard_parallel_active() {
 	# し、slip ゲームを開始 → OBS sorengame が param overlay を奪い、overlay が消える。
 	# プロセスが生きている間は finalize/次ラウンド準備中とみなし active を継続して slip を封じる。
 	# プロセスが死ねば自然に inactive へ落ちる(終端phase + 死亡)ので永久pauseにはならない。
+	# pgrep だけだと親プロセスが検出漏れ・終了後にスロットが残るケースで漏れる。
+	# 状態ファイルベースのガード: session_dir 内の slot game_history 更新が新鮮な間は block を継続。
 	local wp_alive=0
 	if pgrep -f 'python.* wildcard_parallel\.py' >/dev/null 2>&1; then wp_alive=1; fi
 	WP_PROC_ALIVE="$wp_alive" python3 - "$status_file" <<'PY' 2>/dev/null
@@ -405,6 +407,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
 try:
     data = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -428,10 +431,34 @@ except Exception:
 # セッション経年ガード(全phase共通): 起動から max_sec 超過なら解放し、orphan時の永久pauseを防ぐ。
 if max_sec > 0 and started_at > 0 and (time.time() - started_at) > max_sec:
     raise SystemExit(1)
+
+# 状態ファイルベースのスロット活性チェック:
+# pgrep が親プロセスを検出漏れしても、スロットが game_history/latest.jsonl を
+# 書き続けている間は main loop を止め続ける。
+# WILDCARD_PARALLEL_SLOT_FRESH_SEC(デフォルト180)秒以内に更新があれば active とみなす。
+try:
+    slot_fresh_sec = int(float(os.environ.get("WILDCARD_PARALLEL_SLOT_FRESH_SEC", "180") or "180"))
+except Exception:
+    slot_fresh_sec = 180
+slot_activity_fresh = False
+try:
+    session_dir = str(data.get("session_dir") or "")
+    if session_dir and slot_fresh_sec > 0:
+        now = time.time()
+        for gh in Path(session_dir).glob("*/game_history/latest.jsonl"):
+            try:
+                if now - gh.stat().st_mtime < slot_fresh_sec:
+                    slot_activity_fresh = True
+                    break
+            except OSError:
+                pass
+except Exception:
+    pass
+
 if phase in {"generating", "running"}:
     raise SystemExit(0)
-# 終端/過渡phase: wildcard_parallel.py が生存中ならラウンド境界の過渡とみなし active を継続。
-if os.environ.get("WP_PROC_ALIVE") == "1":
+# 終端/過渡phase: wildcard_parallel.py が生存中、またはスロットがまだゲーム中なら active を継続。
+if os.environ.get("WP_PROC_ALIVE") == "1" or slot_activity_fresh:
     raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -563,6 +590,19 @@ with open(out_file, "w", encoding="utf-8") as f:
 PY
 }
 
+_strategy_decide_hash_or_md5() {
+	local path="${1:-$STRATEGY_FILE}"
+	local hash=""
+	[ -n "$path" ] || return 0
+	if [ -f "$path" ]; then
+		hash=$(python3 extract_decide_hash.py "$path" 2>/dev/null || true)
+		if [ -z "$hash" ]; then
+			hash=$(md5 -q "$path" 2>/dev/null | cut -c1-8 || true)
+		fi
+	fi
+	printf '%s\n' "$hash"
+}
+
 _persist_improve_lock_reason() {
 	local reason="${1:-normal}"
 	case "$reason" in
@@ -641,6 +681,24 @@ raise SystemExit(0)
 PY
 }
 
+_log_improve_pid_cmd_missing_if_due() {
+	local pid="$1" now last_ts interval state_file
+	interval="${IMPROVE_PID_CMD_MISSING_LOG_INTERVAL_SEC:-300}"
+	case "$interval" in
+	''|*[!0-9]*) interval=300 ;;
+	esac
+	now=$(date +%s)
+	state_file="$TMP_STATE_DIR/improve_pid_cmd_missing_${pid}.ts"
+	last_ts=$(cat "$state_file" 2>/dev/null || echo 0)
+	case "$last_ts" in
+	''|*[!0-9]*) last_ts=0 ;;
+	esac
+	if [ "$last_ts" -le 0 ] || [ $((now - last_ts)) -ge "$interval" ]; then
+		log "[IMPROVE] PID=$pid のcommand取得不可だが、記録済みrunning状態と一致 → live扱いを維持"
+		printf '%s\n' "$now" >"$state_file" 2>/dev/null || true
+	fi
+}
+
 _find_live_improve_pid() {
 	local candidate=""
 	if [ -f "$IMPROVE_STATE_FILE" ]; then
@@ -690,7 +748,7 @@ if reason:
 PY
 )
 	fi
-	[ -n "$hash_before" ] || hash_before=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+	[ -n "$hash_before" ] || hash_before=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
 	# PIDが変わった場合はbirth_epochを再計算
 	if [ "${current_pid:-0}" != "$live_pid" ] || [ "${pid_birth_epoch:-0}" -eq 0 ]; then
 		pid_birth_epoch=$(ps -p "$live_pid" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
@@ -760,7 +818,7 @@ check_and_harvest_improvement() {
 		log "[IMPROVE][MANUAL] フラグ削除検出 → harvest処理開始"
 		local hash_before hash_now
 		hash_before=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null)
-		hash_now=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+		hash_now=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
 		if [ "$hash_before" != "$hash_now" ]; then
 			log "[IMPROVE][MANUAL] 戦略更新検出: $hash_before -> $hash_now"
 			local new_decide_hash prev_decide_hash=""
@@ -848,7 +906,7 @@ json.dump(rs, open(rs_file, 'w'))
 					pid_alive=true
 				fi
 			elif [ -z "$pid_cmd" ] && _is_recorded_running_improve_pid "$pid"; then
-				log "[IMPROVE] PID=$pid のcommand取得不可だが、記録済みrunning状態と一致 → live扱いを維持"
+				_log_improve_pid_cmd_missing_if_due "$pid"
 				pid_alive=true
 			else
 				log "[IMPROVE] PID=$pid は別プロセス ($pid_cmd) → stale状態クリア"
@@ -998,7 +1056,7 @@ PY
 				fi
 			fi
 			local hash_now
-			hash_now=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+			hash_now=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
 
 			if [ "$hash_before" != "$hash_now" ]; then
 				log "[IMPROVE] 戦略更新検出: $hash_before -> $hash_now"
@@ -1247,6 +1305,214 @@ print(f'[ACCUMULATE] 蓄積: {acc[\"count\"]}試合')
 " 2>/dev/null
 }
 
+queue_fresh_objective_same_hash_lock_if_needed() {
+	[ "${CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_ENABLED:-1}" = "1" ] || return 1
+	[ "${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_EARLY_LOCK_ENABLED:-1}" = "1" ] || return 1
+	[ -f "$ACCUMULATED_GAMES_FILE" ] || return 1
+	[ -f "${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" ] || return 1
+	[ ! -f "$IMPROVE_LOCK_FILE" ] || return 1
+	[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] || return 1
+	! _is_improve_running || return 1
+	if _has_active_branch; then
+		return 1
+	fi
+
+	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+	local _fresh_probe _fresh_ok _fresh_rest _fresh_n _seeded_n _hist_russia _fresh_russia _fresh_best _fresh_t14_peak _fresh_hash _fresh_trigger _fresh_acc_count
+	_fresh_probe=$(python3 - \
+		"$ACCUMULATED_GAMES_FILE" \
+		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+		"${CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" \
+		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE:-14}" \
+		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES:-3}" \
+		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE:-13}" <<'PY' 2>/dev/null || echo "0:0:0:0:0:0:0:0:none:0"
+import json
+import os
+import sys
+
+acc_file, current_file, min_games_raw, min_best_raw, low_stage_min_raw, low_stage_max_raw = sys.argv[1:7]
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def archive_progress(path):
+    best = 0
+    russia = False
+    soviet = False
+    peak_counts = {}
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except Exception:
+                    continue
+                russia = russia or bool(row.get("russia_created")) or bool(row.get("russia_announced"))
+                soviet = soviet or bool(row.get("soviet_created")) or bool(row.get("soviet_announced"))
+                pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+                counts = {}
+                for piece in pieces:
+                    try:
+                        t = int((piece or {}).get("type", 0) or 0)
+                    except Exception:
+                        continue
+                    best = max(best, t)
+                    counts[t] = counts.get(t, 0) + 1
+                for t, count in counts.items():
+                    if t >= 10:
+                        peak_counts[t] = max(peak_counts.get(t, 0), count)
+    except Exception:
+        pass
+    if best >= 15:
+        russia = True
+    if best >= 16:
+        soviet = True
+    return best, int(russia), int(soviet), peak_counts
+
+acc = load(acc_file)
+current = load(current_file)
+min_games = max(1, as_int(min_games_raw, 4))
+min_best = max(1, as_int(min_best_raw, 14))
+low_stage_min_games = max(1, as_int(low_stage_min_raw, 3))
+low_stage_max_best = max(1, as_int(low_stage_max_raw, 13))
+sample_floor = min(min_games, low_stage_min_games)
+acc_hash = str(acc.get("hash") or "")
+current_hash = str(current.get("hash") or "")
+acc_count = as_int(acc.get("count", 0))
+seeded_n = as_int(current.get("_seeded_score_count", 0))
+fresh_n = as_int(current.get("_fresh_score_count", 0))
+historical_russia = as_int(current.get("russia_count", 0))
+historical_best = as_int(current.get("best_max_type", 0))
+
+eligible = False
+fresh_best = 0
+fresh_russia = 0
+fresh_t14_peak = 0
+trigger = "none"
+if (
+    acc_hash
+    and current_hash
+    and acc_hash == current_hash
+    and seeded_n > 0
+    and fresh_n >= sample_floor
+    and acc_count >= sample_floor
+    and (historical_russia > 0 or historical_best >= 15)
+):
+    archives = [str(x) for x in (current.get("_recent_archives") or []) if str(x)]
+    fresh_archives = archives[-fresh_n:] if fresh_n > 0 else []
+    if fresh_archives:
+        for path in fresh_archives:
+            best, russia, soviet, peaks = archive_progress(path)
+            fresh_best = max(fresh_best, best)
+            fresh_russia += int(bool(russia))
+            fresh_t14_peak = max(fresh_t14_peak, int(peaks.get(14, 0) or 0))
+    else:
+        max_types = [as_int(x) for x in (current.get("max_types") or [])]
+        fresh_types = max_types[-fresh_n:] if fresh_n > 0 else []
+        fresh_best = max(fresh_types or [0])
+        fresh_russia = sum(1 for value in fresh_types if value >= 15)
+    high_frontier_miss = bool(fresh_russia <= 0 and fresh_n >= min_games and acc_count >= min_games and fresh_best >= min_best)
+    low_stage_miss = bool(
+        fresh_russia <= 0
+        and fresh_n >= low_stage_min_games
+        and acc_count >= low_stage_min_games
+        and 0 < fresh_best <= low_stage_max_best
+    )
+    if high_frontier_miss:
+        trigger = "high_frontier_miss"
+    elif low_stage_miss:
+        trigger = "low_stage_miss"
+    eligible = bool(high_frontier_miss or low_stage_miss)
+
+print(
+    f"{1 if eligible else 0}:{fresh_n}:{seeded_n}:{historical_russia}:"
+    f"{fresh_russia}:{fresh_best}:{fresh_t14_peak}:{current_hash}:{trigger}:{acc_count}"
+)
+PY
+	)
+	_fresh_ok="${_fresh_probe%%:*}"
+	_fresh_rest="${_fresh_probe#*:}"
+	_fresh_n="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_seeded_n="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_hist_russia="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_russia="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_best="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_t14_peak="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_hash="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_trigger="${_fresh_rest%%:*}"
+	_fresh_acc_count="${_fresh_rest##*:}"
+	[ "$_fresh_ok" = "1" ] || return 1
+
+	log "[FRESH_OBJECTIVE] seeded同一hashの再評価でfresh R0 (hash=${_fresh_hash:0:8} fresh=${_fresh_n}/${MIN_GAMES_BEFORE_IMPROVE:-12} seeded=${_seeded_n} histR=${_hist_russia} fresh_best=T${_fresh_best} T14peak=${_fresh_t14_peak} trigger=${_fresh_trigger}) → 早期改善ロック作成"
+	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
+	cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+	enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+	FRESH_OBJECTIVE_SAMPLE_N="${_fresh_n:-0}" \
+		FRESH_OBJECTIVE_SEEDED_N="${_seeded_n:-0}" \
+		FRESH_OBJECTIVE_HIST_RUSSIA="${_hist_russia:-0}" \
+		FRESH_OBJECTIVE_FRESH_RUSSIA="${_fresh_russia:-0}" \
+		FRESH_OBJECTIVE_FRESH_BEST="${_fresh_best:-0}" \
+		FRESH_OBJECTIVE_T14_PEAK="${_fresh_t14_peak:-0}" \
+		FRESH_OBJECTIVE_TRIGGER="${_fresh_trigger:-}" \
+		python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+
+def as_int(name):
+    try:
+        return int(os.environ.get(name, "0") or 0)
+    except Exception:
+        return 0
+
+data["started_at"] = int(time.time())
+data["improve_reason"] = "normal"
+data["fresh_objective_same_hash_lock"] = True
+data["fresh_objective_reason"] = "seeded_same_hash_fresh_no_russia"
+data["fresh_objective_sample_n"] = as_int("FRESH_OBJECTIVE_SAMPLE_N")
+data["fresh_objective_seeded_score_count"] = as_int("FRESH_OBJECTIVE_SEEDED_N")
+data["fresh_objective_historical_russia_count"] = as_int("FRESH_OBJECTIVE_HIST_RUSSIA")
+data["fresh_objective_fresh_russia_count"] = as_int("FRESH_OBJECTIVE_FRESH_RUSSIA")
+data["fresh_objective_fresh_best_max_type"] = as_int("FRESH_OBJECTIVE_FRESH_BEST")
+data["fresh_objective_t14_peak"] = as_int("FRESH_OBJECTIVE_T14_PEAK")
+data["fresh_objective_trigger"] = os.environ.get("FRESH_OBJECTIVE_TRIGGER", "")
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh worker "fresh目的再評価 queued (game ${GAME_NUM:-?})" "seed済みhash=${_fresh_hash:0:8} がfresh ${_fresh_n}本でR0/T${_fresh_best}止まり。通常満了を待たず改善へ。" "warn" >/dev/null 2>&1 || true
+	fi
+	_clear_accumulated_data
+	return 0
+}
+
 enrich_accumulated_game_metadata() {
 	local target_file="${1:-$ACCUMULATED_GAMES_FILE}"
 	[ -f "$target_file" ] || return 0
@@ -1368,6 +1634,9 @@ payload = {
     "hash": strategy_hash,
     "scores": [],
     "games_total": 0,
+    "_seeded_score_count": 0,
+    "_fresh_score_count": 0,
+    "_fresh_games_total": 0,
     "_recent_archives": [],
     "frontier_hints": [],
     "peak_high_type_counts": [],
@@ -1407,10 +1676,14 @@ for x in entry.get("scores", []) or []:
 recent_archives = entry.get("_recent_archives", []) or []
 if not isinstance(recent_archives, list):
     recent_archives = []
+seed_scores = scores[-20:]
 payload = {
     "hash": strategy_hash,
-    "scores": scores[-20:],
+    "scores": seed_scores,
     "games_total": int(entry.get("games_total", len(scores)) or len(scores)),
+    "_seeded_score_count": len(seed_scores),
+    "_fresh_score_count": 0,
+    "_fresh_games_total": 0,
     "_recent_archives": recent_archives[-50:],
     "max_types": (entry.get("max_types", []) or [])[-20:],
     "russia_count": int(entry.get("russia_count", 0) or 0),
@@ -1465,6 +1738,9 @@ if run.get("hash") != strategy_hash:
         "hash": strategy_hash,
         "scores": [],
         "games_total": 0,
+        "_seeded_score_count": 0,
+        "_fresh_score_count": 0,
+        "_fresh_games_total": 0,
         "_recent_archives": [],
         "frontier_hints": [],
         "peak_high_type_counts": [],
@@ -1481,10 +1757,19 @@ if archive_file and archive_file in recent_archives:
     raise SystemExit
 
 scores = [int(x) for x in run.get("scores", [])]
+try:
+    seeded_score_count = max(0, int(run.get("_seeded_score_count", 0) or 0))
+except Exception:
+    seeded_score_count = 0
+seeded_score_count = min(seeded_score_count, len(scores))
 prev_best = max(scores) if scores else None
 scores.append(score)
 keep = hot_keep if hot_enabled and prev_best is not None and score > prev_best else normal_keep
+dropped_scores = max(0, len(scores) - keep)
 run["scores"] = scores[-keep:]
+run["_seeded_score_count"] = max(0, min(len(run["scores"]), seeded_score_count - dropped_scores))
+run["_fresh_score_count"] = max(0, len(run["scores"]) - int(run.get("_seeded_score_count", 0) or 0))
+run["_fresh_games_total"] = int(run.get("_fresh_games_total", 0) or 0) + 1
 run["games_total"] = int(run.get("games_total", 0) or 0) + 1
 
 def nation_progress(path):
@@ -1724,6 +2009,7 @@ record_completed_game_for_adaptive_improvement() {
 			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
 		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
+		queue_fresh_objective_same_hash_lock_if_needed || true
 	fi
 	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
 		./repair_current_run_from_history.sh "${CURRENT_RUN_AUTO_REPAIR_LIMIT:-12}" >/dev/null 2>&1 ||
@@ -1741,7 +2027,7 @@ _start_improvement_job() {
 	# 手動改善モード: プロセスを起動せず待機状態にする
 	if [[ -f "$TMP_STATE_DIR/manual_improve_mode" ]]; then
 		local strategy_hash
-		strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+		strategy_hash=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
 		_write_improve_state "manual" "0" "$strategy_hash" "manual_wait" "0" "手動改善待ち" "$(date +%s)"
 		log "[IMPROVE] 手動改善モード: strategy.py を編集後 ./manual_improve_off.sh を実行してください"
 		log "[IMPROVE] 手動改善待ちは実改善PIDがないため soren91 代打は起動しない"
@@ -1778,7 +2064,7 @@ _start_improvement_job() {
 
 	# 戦略ハッシュ記録
 	local strategy_hash
-	strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+	strategy_hash=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
 	local improve_ai_log="$IMPROVE_AI_LOG_FILE"
 	mkdir -p "$(dirname "$improve_ai_log")" 2>/dev/null || true
 	: >"$improve_ai_log"
