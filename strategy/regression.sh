@@ -3970,10 +3970,12 @@ frontier_grace_active = (
 # window) is rolled back before it can demonstrate the founding it was adopted for.
 # Set =0 to restore old behavior (no russia advantage grace).
 _russia_adv_grace_games = max(0, int(os.environ.get("EARLY_COMP_TOP_GAP_RUSSIA_ADVANTAGE_GRACE_GAMES", "16") or "16"))
+_curr_russia_adv = int(current_objective.get("russia_count", 0) or 0)
+_anch_russia_adv = int((anchor_objective or {}).get("russia_count", 0) or 0)
 russia_advantage_grace = (
     _russia_adv_grace_games > 0
     and current["n"] < _russia_adv_grace_games
-    and int(current_objective.get("russia_count", 0) or 0) > int(anchor_objective.get("russia_count", 0) or 0)
+    and _curr_russia_adv > _anch_russia_adv
 )
 
 objective_reasons = []
