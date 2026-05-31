@@ -95,7 +95,10 @@ async function boundWindow(obs) {
 // macOS to drop the old (possibly dead) capture and grab the target window fresh.
 async function bounce(obs, value) {
   await obs.req('SetInputSettings', { inputName: NAME, inputSettings: { application: APP_ID, type: 2, show_cursor: false, capture_audio: false }, overlay: false });
-  await sleep(800);
+  // Wait long enough for mac-capture to fully teardown the old SCStream before the
+  // second SetInputSettings arrives. 800ms was too short, causing a double-free in
+  // mac-capture when OBS thread-pool workers raced on the same source object.
+  await sleep(2500);
   const settings = { application: APP_ID, type: 1, show_cursor: false, show_empty_names: false, capture_audio: false };
   if (value != null) settings.window = value;
   await obs.req('SetInputSettings', { inputName: NAME, inputSettings: settings, overlay: false });
