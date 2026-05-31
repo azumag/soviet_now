@@ -2022,18 +2022,28 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 200) + (candidate.index // cols) * row_stride
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    # 2026-05-31 fix: stagger OBS WS calls by slot index so 6 parallel slots don't all
+    # hit OBS WebSocket at once → "non-101 status code" (WS handshake rejected under load).
+    import time as _time
+    _time.sleep(candidate.index * 0.4)
     try:
         with open(log_path, "ab") as err:
             if candidate.cdp_port and candidate.workdir:
                 set_candidate_window_title(candidate.cdp_port, title, candidate.workdir)
-            subprocess.run(
-                ["./obs_window_capture_source.sh", "ensure", scene, source, window_pattern, "com.google.chrome.for.testing", "show"],
-                cwd=REPO_ROOT,
-                stdout=subprocess.DEVNULL,
-                stderr=err,
-                timeout=8,
-                check=False,
-            )
+            for _attempt in range(2):
+                proc = subprocess.run(
+                    ["./obs_window_capture_source.sh", "ensure", scene, source, window_pattern, "com.google.chrome.for.testing", "show"],
+                    cwd=REPO_ROOT,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=10,
+                    check=False,
+                )
+                err.write(proc.stderr or b"")
+                if proc.returncode == 0 and b"non-101" not in (proc.stderr or b"") and b"network error" not in (proc.stderr or b"").lower():
+                    break
+                if _attempt == 0:
+                    _time.sleep(1.5)
             subprocess.run(
                 ["./obs_control.sh", "transform", scene, source, str(x), str(y), "1", "1", str(w), str(h)],
                 cwd=REPO_ROOT,
