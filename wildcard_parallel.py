@@ -2120,10 +2120,23 @@ def evaluate_real(
             runtime_workdir = session_dir / f"slot-{candidate.index + 1}"
             slot_runtime["workdir"] = runtime_workdir
         workdir = prepare_candidate_dir(Path(runtime_workdir), "", candidate.strategy_path, preserve_exact=candidate.baseline)
+        # The slot dir (session_dir/slot-N/) is shared across all generations of this slot:
+        # each new generation's prepare_candidate_dir overwrites slot-N/strategy.py.
+        # Any candidate whose strategy_path points to slot-N/strategy.py will silently
+        # pick up the CURRENT generation's strategy, not its own — causing the wrong
+        # strategy to be applied when an earlier-generation winner is selected.
+        # Fix: freeze the deployed strategy to a unique per-job path that survives overwrites.
+        frozen_strategy = session_dir / candidate.job_id / "strategy.py"
+        frozen_strategy.parent.mkdir(parents=True, exist_ok=True)
+        slot_strategy = workdir / "strategy.py"
+        if slot_strategy.resolve() != frozen_strategy.resolve():
+            shutil.copy2(slot_strategy, frozen_strategy)
+        candidate.workdir = workdir
+        candidate.strategy_path = frozen_strategy
     else:
         workdir = prepare_candidate_dir(session_dir, candidate.job_id, candidate.strategy_path, preserve_exact=candidate.baseline)
-    candidate.workdir = workdir
-    candidate.strategy_path = workdir / "strategy.py"
+        candidate.workdir = workdir
+        candidate.strategy_path = workdir / "strategy.py"
     set_candidate_html_window_title(workdir, candidate.index)
     candidate.cdp_port = args.cdp_base_port + candidate.index
     candidate.serve_port = args.serve_base_port + candidate.index
