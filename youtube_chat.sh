@@ -46,6 +46,10 @@ _log() { echo "[youtube_chat $(date '+%H:%M:%S')] $*" >&2; }
 
 _api_backoff_active() {
 	[ -s "$API_BACKOFF_FILE" ] || return 1
+	if [ ! -s "$LAST_ERROR_FILE" ]; then
+		rm -f "$API_BACKOFF_FILE" 2>/dev/null || true
+		return 1
+	fi
 	local until now_ts
 	until=$(cat "$API_BACKOFF_FILE" 2>/dev/null || echo 0)
 	case "$until" in
@@ -65,6 +69,11 @@ _record_api_backoff() {
 	until=$(( $(date +%s) + sec ))
 	printf '%s\n' "$until" >"$API_BACKOFF_FILE" 2>/dev/null || true
 	printf '%s\n' "${reason}; retry after ${sec}s" >"$LAST_ERROR_FILE" 2>/dev/null || true
+}
+
+_record_send_failure_backoff_if_enabled() {
+	[ "${YOUTUBE_SEND_FAILURE_BACKOFFS_POLL:-0}" = "1" ] || return 0
+	_record_api_backoff "$1"
 }
 
 _clear_api_backoff() {
@@ -629,6 +638,25 @@ for line in lines:
 PY
 }
 
+_handle_web_poll_success() {
+	local web_out="$1"
+	local reason="${2:-YouTube API unavailable while using web fallback}"
+	local count notify_line
+	_record_api_backoff "$reason"
+	rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
+	count=$(printf '%s\n' "$web_out" | head -n1)
+	printf '%s\n' "$web_out" | tail -n +2 | while IFS= read -r notify_line; do
+		[ -n "$notify_line" ] || continue
+		case "$notify_line" in
+			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+		esac
+		_notify_chat_overlay "YouTube" "$notify_line"
+	done
+	echo "$(date +%s)" >"$LAST_POLL_FILE"
+	_log "poll: web fallback ${count:-0}件取得"
+	return 0
+}
+
 _poll_nolock() {
 	if [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
 		_log "poll: disabled (set YOUTUBE_CHAT_ENABLED=1)"
@@ -642,18 +670,8 @@ _poll_nolock() {
 			_log "poll: API-key backoff active; retrying liveChatMessages with OAuth"
 		elif ! chat_id=$(_try_backoff_recovery); then
 			if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
-				rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
-				count=$(printf '%s\n' "$web_out" | head -n1)
-				printf '%s\n' "$web_out" | tail -n +2 | while IFS= read -r notify_line; do
-					[ -n "$notify_line" ] || continue
-					case "$notify_line" in
-						id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
-					esac
-					_notify_chat_overlay "YouTube" "$notify_line"
-				done
-				echo "$(date +%s)" >"$LAST_POLL_FILE"
-				_log "poll: web fallback ${count:-0}件取得"
-				return 0
+				_handle_web_poll_success "$web_out" "YouTube API backoff while using web fallback"
+				return $?
 			else
 				_log "poll: API backoff active ($(head -1 "$LAST_ERROR_FILE" 2>/dev/null))"
 				return 1
@@ -661,23 +679,24 @@ _poll_nolock() {
 		fi
 	fi
 	if ! chat_id=$(_resolve_live_chat_id); then
-		if grep -qE '403|videos\.list failed' "$LAST_ERROR_FILE" 2>/dev/null; then
+		if grep -qE '403|videos\.list failed|activeLiveChatId not found' "$LAST_ERROR_FILE" 2>/dev/null; then
 			access_token=$(_maybe_oauth_access_token)
 			if [ -n "$access_token" ]; then
 				chat_id=$(_resolve_live_chat_id 1 "$access_token") || {
 					if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
-						_record_api_backoff "YouTube API quota while using web fallback"
-						rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
-						count=$(printf '%s\n' "$web_out" | head -n1)
-						echo "$(date +%s)" >"$LAST_POLL_FILE"
-						_log "poll: web fallback ${count:-0}件取得"
-						return 0
+						_handle_web_poll_success "$web_out" "YouTube API quota while using web fallback"
+						return $?
 					else
 						_record_api_backoff "YouTube API 403/quota while resolving activeLiveChatId"
 						return 1
 					fi
 				}
 			else
+				if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
+					_handle_web_poll_success "$web_out" "YouTube API/OAuth unavailable while using web fallback"
+					return $?
+				fi
+				_record_api_backoff "YouTube live chat unavailable while resolving activeLiveChatId"
 				return 1
 			fi
 		else
@@ -721,13 +740,9 @@ _poll_nolock() {
 			else
 				_log "poll: cached liveChatId invalid and no active replacement found"
 				if web_out=$(_poll_web_live_chat 2>>"$LAST_ERROR_FILE"); then
-					_record_api_backoff "YouTube API quota while using web fallback"
-					rm -f "$LAST_ERROR_FILE" 2>/dev/null || true
-					count=$(printf '%s\n' "$web_out" | head -n1)
-					echo "$(date +%s)" >"$LAST_POLL_FILE"
-					_log "poll: web fallback ${count:-0}件取得"
+					_handle_web_poll_success "$web_out" "YouTube API quota while using web fallback"
 					rm -f "$resp_file"
-					return 0
+					return $?
 				else
 					_record_api_backoff "YouTube API 403/quota while refreshing liveChatId"
 					rm -f "$resp_file"
@@ -925,12 +940,88 @@ _ack_batch() {
 
 _oauth_access_token() {
 	[ -n "${YOUTUBE_OAUTH_CLIENT_ID:-}" ] && [ -n "${YOUTUBE_OAUTH_CLIENT_SECRET:-}" ] && [ -n "${YOUTUBE_OAUTH_REFRESH_TOKEN:-}" ] || return 1
-	curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
-		--data-urlencode "client_id=${YOUTUBE_OAUTH_CLIENT_ID}" \
-		--data-urlencode "client_secret=${YOUTUBE_OAUTH_CLIENT_SECRET}" \
-		--data-urlencode "refresh_token=${YOUTUBE_OAUTH_REFRESH_TOKEN}" \
-		-d "grant_type=refresh_token" \
-		"https://oauth2.googleapis.com/token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))'
+	local resp_file err_file token rc attempts attempt http_code oauth_err
+	attempts="${YOUTUBE_OAUTH_REFRESH_RETRIES:-2}"
+	case "$attempts" in
+	''|*[!0-9]*) attempts=2 ;;
+	esac
+	[ "$attempts" -lt 1 ] 2>/dev/null && attempts=1
+	resp_file=$(mktemp "$CHAT_DIR/.oauth_response.XXXXXXXX")
+	err_file=$(mktemp "$CHAT_DIR/.oauth_error.XXXXXXXX")
+	attempt=1
+	while :; do
+		: >"$resp_file"
+		: >"$err_file"
+		# 注意: -f は付けない。HTTP/2 + 4xx だと curl が exit 56 を返し、実エラー
+		# (invalid_grant=トークン失効 等) がトランスポート障害(recv失敗)に誤認され、
+		# 無駄なリトライ＆誤った状態表示(「curl exit 56」)になるため。HTTP ステータスで判定する。
+		http_code=$(curl -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+			-o "$resp_file" -w '%{http_code}' \
+			--data-urlencode "client_id=${YOUTUBE_OAUTH_CLIENT_ID}" \
+			--data-urlencode "client_secret=${YOUTUBE_OAUTH_CLIENT_SECRET}" \
+			--data-urlencode "refresh_token=${YOUTUBE_OAUTH_REFRESH_TOKEN}" \
+			-d "grant_type=refresh_token" \
+			"https://oauth2.googleapis.com/token" 2>"$err_file")
+		rc=$?
+		# 2xx: 成功
+		case "$http_code" in
+		2??) break ;;
+		esac
+		# HTTP レスポンスあり(4xx/5xx): トランスポートは正常、認可/サーバ側エラー
+		if [ -n "$http_code" ] && [ "$http_code" != "000" ]; then
+			# 5xx は一時的の可能性があるためリトライ。4xx(認可エラー)は恒久エラーで即失敗。
+			if [ "$http_code" -ge 500 ] 2>/dev/null && [ "$attempt" -lt "$attempts" ]; then
+				sleep 1
+				attempt=$((attempt + 1))
+				continue
+			fi
+			oauth_err=$(python3 - "$resp_file" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8", errors="ignore") as f:
+        d = json.load(f)
+    e = (d.get("error") or "").strip()
+    desc = (d.get("error_description") or "").strip()
+    if e:
+        print(e + (" (%s)" % desc if desc else ""))
+except Exception:
+    pass
+PY
+)
+			if [ -n "$oauth_err" ]; then
+				printf '%s\n' "YouTube OAuth refresh rejected: ${oauth_err} [HTTP ${http_code}] — refresh token の再認証が必要" >"$LAST_SEND_ERROR_FILE" 2>/dev/null || true
+			else
+				printf '%s\n' "YouTube OAuth refresh failed: HTTP ${http_code}" >"$LAST_SEND_ERROR_FILE" 2>/dev/null || true
+			fi
+			rm -f "$resp_file" "$err_file"
+			return 1
+		fi
+		# http_code が空/000: トランスポート障害(timeout/接続不可/recv失敗)。リトライ対象。
+		if [ "$attempt" -lt "$attempts" ]; then
+			sleep 1
+			attempt=$((attempt + 1))
+			continue
+		fi
+		printf '%s\n' "YouTube OAuth refresh failed: network error (curl exit ${rc}, attempt ${attempt}/${attempts})" >"$LAST_SEND_ERROR_FILE" 2>/dev/null || true
+		rm -f "$resp_file" "$err_file"
+		return 1
+	done
+	token=$(python3 - "$resp_file" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8", errors="ignore") as f:
+        print((json.load(f).get("access_token") or "").strip())
+except Exception:
+    raise SystemExit(1)
+PY
+)
+	rm -f "$resp_file" "$err_file"
+	[ -n "$token" ] || {
+		printf '%s\n' "YouTube OAuth refresh returned no access token" >"$LAST_SEND_ERROR_FILE" 2>/dev/null || true
+		return 1
+	}
+	printf '%s\n' "$token"
 }
 
 _maybe_oauth_access_token() {
@@ -1003,6 +1094,7 @@ _send() {
 	fi
 	local chat_id access_token payload_file resp_file err_file insert_url
 	access_token=$(_oauth_access_token) || {
+		_record_send_failure_backoff_if_enabled "YouTube OAuth refresh failed while sending liveChatMessages"
 		echo "YouTube OAuth refresh settings are missing or invalid" >&2
 		return 1
 	}
@@ -1034,7 +1126,7 @@ _send() {
 		fi
 	fi
 	if grep -q '403' "$LAST_SEND_ERROR_FILE" 2>/dev/null; then
-		_record_api_backoff "YouTube API 403/quota while sending liveChatMessages"
+		_record_send_failure_backoff_if_enabled "YouTube API 403/quota while sending liveChatMessages"
 	fi
 	cat "$LAST_SEND_ERROR_FILE" >&2 2>/dev/null || true
 	rm -f "$payload_file" "$resp_file" "$err_file"
