@@ -505,6 +505,13 @@ w = d.get("winner") or {}
 print(w.get("job_id") or "")
 PY
 )
+	# Commit immediately after applying the winner so the new strategy.py is preserved
+	# even if eloop_improve.sh is killed before reaching the main git_commit phase.
+	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$baseline_hash" ]; then
+		git add strategy.py 2>/dev/null || true
+		git commit -m "eloop Improve [param-parallel] adopt ${winner_job:-winner} after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+		git push 2>/dev/null || true
+	fi
 	_post_improve_import_result_stats "$result_file" "$HASH_AFTER"
 	_wildcard_parallel_cleanup_sessions
 	_wildcard_parallel_obs_restore || true
@@ -1446,6 +1453,13 @@ PY
 		fi
 		cp "$wildcard_winner_path" "$STRATEGY_FILE"
 		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		# Commit immediately after applying the winner so strategy.py is preserved
+		# even if the process is killed before reaching the git_commit phase below.
+		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
+			git add strategy.py 2>/dev/null || true
+			git commit -m "eloop Improve [wildcard] adopt parallel winner after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+			git push 2>/dev/null || true
+		fi
 		_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER" || true
 		wildcard_parallel_cleanup_sessions
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
