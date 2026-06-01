@@ -113,82 +113,81 @@ async function waitForCdpBrowser(port, timeoutMs = 10000) {
   throw lastError || new Error(`CDP did not become ready on port ${port}`);
 }
 
-async function launchStandaloneBrowserWithoutFocus(args) {
-  // Launch the 2nd Chrome-for-Testing via macOS `open -g` (LaunchServices). This
-  // registers the app in the user's GUI/Aqua session, which AVOIDS the
-  // +[NSApplication sharedApplication] -> RegisterApplication dispatch_once SIGABRT
-  // that a direct Playwright/spawn launch hits when started from the headless
-  // soren_loop daemon context (validated: a direct spawn works from an interactive
-  // shell but SIGABRTs under the daemon; `open -g` CDP comes up in ~1s).
-  // `open` uses the real HOME + the shared global crashpad
-  // (~/Library/.../Chrome for Testing/Crashpad); that is fine while that dir is
-  // healthy. If it ever returns EPERM on settings.dat (a corrupted/locked state
-  // from a prior crash storm), recovery is to clear that Crashpad dir.
-  // The legacy SOREN91_CHROME_NO_FOCUS_LAUNCH=0 opt-out forced the daemon-unsafe
-  // direct launch, so a 2nd Chrome could never start — ignore it here.
-  if (process.platform !== 'darwin') return null;
+// Isolated HOME/XDG/TMPDIR for the 2nd Chrome, mirroring the china bridge
+// (soviet_local.mjs browserLaunchEnv). Keeping Chrome for Testing's macOS
+// Crashpad/config writes inside the project profile — instead of the real
+// ~/Library/Application Support/Google/Chrome for Testing — is what stops Chrome
+// aborting on crashpad bootstrap (signal 6 / "bootstrap_check_in ... Permission
+// denied (1100)") when launched from the session-less soren_loop daemon.
+function standaloneBrowserLaunchEnv(userDataDir) {
+  const env = { ...process.env };
+  const homeDir = env.SOREN91_CHROME_HOME || join(userDataDir, 'chrome_home');
+  const configHome = env.XDG_CONFIG_HOME || join(homeDir, '.config');
+  const cacheHome = env.XDG_CACHE_HOME || join(homeDir, '.cache');
+  const tmpDir = env.TMPDIR || join(userDataDir, 'tmp');
+  for (const dir of [homeDir, configHome, cacheHome, tmpDir]) {
+    try { mkdirSync(dir, { recursive: true }); } catch {}
+  }
+  env.HOME = homeDir;
+  env.XDG_CONFIG_HOME = configHome;
+  env.XDG_CACHE_HOME = cacheHome;
+  env.TMPDIR = tmpDir;
+  return env;
+}
 
-  const appPath = chromeAppPathFromExecutable(chromium.executablePath());
-  if (!appPath) return null;
-
-  const port = Number.parseInt(process.env.SOREN91_STANDALONE_CDP_PORT || '', 10) || DEFAULT_STANDALONE_CDP_PORT;
-  const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
-  mkdirSync(userDataDir, { recursive: true });
-  const killLeftover = () => { try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {} };
-  // Start each attempt from a FRESH profile. A polluted/corrupt persistent profile
-  // (e.g. leftover chrome_home/Crashpad subdirs from earlier isolation experiments)
-  // makes the open -g Chrome fail to bring up CDP — it silently never spawns a
-  // listenable instance. Validated: identical args + open -g on a fresh profile
-  // brings CDP up in ~2s, while the stale profile yields ECONNREFUSED every attempt.
-  // soren91 loads a signed game URL fresh each run, so there is no session to keep.
-  const wipeProfile = () => {
-    try { rmSync(userDataDir, { recursive: true, force: true }); } catch {}
-    try { mkdirSync(userDataDir, { recursive: true }); } catch {}
-  };
-
-  // From the soren_loop daemon context, a bare `/usr/bin/open` returns 0 but the GUI
-  // launchd does not actually spawn Chrome (the daemon's bootstrap namespace lacks
-  // Aqua/GUI session access — same root as the crashpad bootstrap_check_in EPERM). The
-  // fix is to enter the console user's per-user GUI bootstrap via `launchctl asuser`,
-  // which is the documented way to launch a GUI app from a session-less context.
-  // Validated read-only: `launchctl asuser 501 open -g -n <app> ...` brings CDP up in
-  // ~2s, while a bare `open` from this context spawns no listenable instance at all.
-  // attempt 1 = asuser (correct for the daemon); attempt 2 = bare open (covers the case
-  // where this process already has session access, e.g. an interactive run).
-  const openArgs = [
-    '-g', '-n', appPath, '--args',
-    `--user-data-dir=${userDataDir}`,
-    `--remote-debugging-port=${port}`,
-    ...args,
-  ];
-  const uid = (typeof process.getuid === 'function') ? process.getuid() : 501;
-  const spawnOpen = (useAsuser) => new Promise((resolve) => {
-    if (useAsuser) {
-      execFile('/bin/launchctl', ['asuser', String(uid), '/usr/bin/open', ...openArgs], () => resolve());
-    } else {
-      execFile('/usr/bin/open', openArgs, () => resolve());
-    }
-  });
-
-  const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    killLeftover();
-    wipeProfile();
-    const useAsuser = attempt === 1;
-    await spawnOpen(useAsuser);
-    const how = useAsuser ? `launchctl asuser ${uid} open -g` : 'open -g';
-    try {
-      const browser = await waitForCdpBrowser(port, 12000);
-      console.log(`[main] Chromium launched in background via macOS ${how} (attempt ${attempt})`);
-      return browser;
-    } catch (err) {
-      console.warn(`[main] standalone Chrome CDP did not open via ${how} (attempt ${attempt}/${maxAttempts}): ${err.message}`);
-      killLeftover();
-      await sleep(2000);
+async function withStandaloneBrowserLaunchEnv(userDataDir, fn) {
+  const launchEnv = standaloneBrowserLaunchEnv(userDataDir);
+  const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TMPDIR'];
+  const saved = {};
+  for (const key of keys) {
+    saved[key] = process.env[key];
+    if (launchEnv[key]) process.env[key] = launchEnv[key];
+    else delete process.env[key];
+  }
+  try {
+    return await fn(launchEnv);
+  } finally {
+    for (const key of keys) {
+      if (typeof saved[key] === 'undefined') delete process.env[key];
+      else process.env[key] = saved[key];
     }
   }
-  console.warn('[main] standalone open -g launch failed (no Playwright fallback in daemon context); runner will retry');
-  return null;
+}
+
+async function launchStandaloneBrowserWithoutFocus(args) {
+  // Launch the 2nd Chrome-for-Testing the SAME proven way the china bridge
+  // (soviet_local.mjs) launches Chrome from this identical session-less soren_loop
+  // daemon: a Playwright chromium.launch wrapped in an ISOLATED HOME (+ --crash-dumps-dir
+  // inside the profile). Earlier open / open -g / launchctl-asuser variants either never
+  // spawned Chrome (no Aqua/GUI session in the daemon's bootstrap namespace) or spawned
+  // one that immediately aborted on the real-HOME crashpad bootstrap; redirecting HOME
+  // and the crash dumps into the project profile is what lets it survive. chromium.launch
+  // returns the browser object directly, so no CDP-port handshake is needed.
+  if (process.platform !== 'darwin') return null;
+
+  const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
+  // Fresh isolated HOME each launch — a polluted/corrupt one can wedge Chrome.
+  try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {}
+  try { rmSync(userDataDir, { recursive: true, force: true }); } catch {}
+  mkdirSync(userDataDir, { recursive: true });
+
+  // chromium.launch manages its own user-data-dir, so drop any URL/positional arg
+  // (e.g. about:blank) and add the project-local crash dumps dir like the china bridge.
+  const launchArgs = [
+    ...args.filter(a => typeof a === 'string' && a.startsWith('--')),
+    `--crash-dumps-dir=${join(userDataDir, 'Crashpad')}`,
+  ];
+  try {
+    const browser = await withStandaloneBrowserLaunchEnv(userDataDir, () => chromium.launch({
+      headless: false,
+      args: launchArgs,
+    }));
+    console.log('[main] standalone Chromium launched via Playwright with isolated HOME (china bridge recipe)');
+    return browser;
+  } catch (err) {
+    console.warn(`[main] standalone Playwright launch failed: ${err.message}`);
+    return null;
+  }
 }
 
 function clearSoren91ModeFlag() {
