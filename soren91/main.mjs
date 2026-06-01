@@ -113,79 +113,27 @@ async function waitForCdpBrowser(port, timeoutMs = 10000) {
   throw lastError || new Error(`CDP did not become ready on port ${port}`);
 }
 
-// Isolated HOME/XDG/TMPDIR for the 2nd Chrome, mirroring the china bridge
-// (soviet_local.mjs browserLaunchEnv). Keeping Chrome for Testing's macOS
-// Crashpad/config writes inside the project profile — instead of the real
-// ~/Library/Application Support/Google/Chrome for Testing — is what stops Chrome
-// aborting on crashpad bootstrap (signal 6 / "bootstrap_check_in ... Permission
-// denied (1100)") when launched from the session-less soren_loop daemon.
-function standaloneBrowserLaunchEnv(userDataDir) {
-  const env = { ...process.env };
-  const homeDir = env.SOREN91_CHROME_HOME || join(userDataDir, 'chrome_home');
-  const configHome = env.XDG_CONFIG_HOME || join(homeDir, '.config');
-  const cacheHome = env.XDG_CACHE_HOME || join(homeDir, '.cache');
-  const tmpDir = env.TMPDIR || join(userDataDir, 'tmp');
-  for (const dir of [homeDir, configHome, cacheHome, tmpDir]) {
-    try { mkdirSync(dir, { recursive: true }); } catch {}
-  }
-  env.HOME = homeDir;
-  env.XDG_CONFIG_HOME = configHome;
-  env.XDG_CACHE_HOME = cacheHome;
-  env.TMPDIR = tmpDir;
-  return env;
-}
-
-async function withStandaloneBrowserLaunchEnv(userDataDir, fn) {
-  const launchEnv = standaloneBrowserLaunchEnv(userDataDir);
-  const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TMPDIR'];
-  const saved = {};
-  for (const key of keys) {
-    saved[key] = process.env[key];
-    if (launchEnv[key]) process.env[key] = launchEnv[key];
-    else delete process.env[key];
-  }
-  try {
-    return await fn(launchEnv);
-  } finally {
-    for (const key of keys) {
-      if (typeof saved[key] === 'undefined') delete process.env[key];
-      else process.env[key] = saved[key];
-    }
-  }
-}
-
-async function launchStandaloneBrowserWithoutFocus(args) {
-  // Launch the 2nd Chrome-for-Testing the SAME proven way the china bridge
-  // (soviet_local.mjs) launches Chrome from this identical session-less soren_loop
-  // daemon: a Playwright chromium.launch wrapped in an ISOLATED HOME (+ --crash-dumps-dir
-  // inside the profile). Earlier open / open -g / launchctl-asuser variants either never
-  // spawned Chrome (no Aqua/GUI session in the daemon's bootstrap namespace) or spawned
-  // one that immediately aborted on the real-HOME crashpad bootstrap; redirecting HOME
-  // and the crash dumps into the project profile is what lets it survive. chromium.launch
-  // returns the browser object directly, so no CDP-port handshake is needed.
+async function launchStandaloneBrowserWithoutFocus(_args) {
+  // ATTACH-ONLY. The soren_loop daemon is session-less (parented to launchd, no Aqua/GUI
+  // session), and from that bootstrap namespace a freshly SPAWNED 2nd Chrome-for-Testing
+  // always aborts on crashpad bootstrap (signal 6 / "bootstrap_check_in ... Permission
+  // denied (1100)") — verified across every launch method: /usr/bin/open (never spawns),
+  // open -g, launchctl asuser open, and Playwright chromium.launch with BOTH real and
+  // isolated HOME (+ --crash-dumps-dir). The china bridge (soviet_local.mjs) only works
+  // because it launches Chrome ONCE and keeps it alive for the whole session (its Chrome
+  // has been up 4.7h); it never relaunches per game. soren91's runner is per-game, so it
+  // cannot spawn its own Chrome here. Spawning anyway just churns SIGABRTs (an OBS-crash
+  // risk), so we do NOT spawn. Instead ATTACH to a standalone Chrome that was prelaunched
+  // in a real GUI session (e.g. a LaunchAgent / interactive shell) on the standalone CDP
+  // port. If none is up, return null and the caller skips cleanly this cycle.
   if (process.platform !== 'darwin') return null;
-
-  const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
-  // Fresh isolated HOME each launch — a polluted/corrupt one can wedge Chrome.
-  try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {}
-  try { rmSync(userDataDir, { recursive: true, force: true }); } catch {}
-  mkdirSync(userDataDir, { recursive: true });
-
-  // chromium.launch manages its own user-data-dir, so drop any URL/positional arg
-  // (e.g. about:blank) and add the project-local crash dumps dir like the china bridge.
-  const launchArgs = [
-    ...args.filter(a => typeof a === 'string' && a.startsWith('--')),
-    `--crash-dumps-dir=${join(userDataDir, 'Crashpad')}`,
-  ];
+  const port = Number.parseInt(process.env.SOREN91_STANDALONE_CDP_PORT || '', 10) || DEFAULT_STANDALONE_CDP_PORT;
   try {
-    const browser = await withStandaloneBrowserLaunchEnv(userDataDir, () => chromium.launch({
-      headless: false,
-      args: launchArgs,
-    }));
-    console.log('[main] standalone Chromium launched via Playwright with isolated HOME (china bridge recipe)');
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 4000 });
+    console.log(`[main] attached to prelaunched standalone Chrome via CDP :${port}`);
     return browser;
-  } catch (err) {
-    console.warn(`[main] standalone Playwright launch failed: ${err.message}`);
+  } catch {
+    console.warn(`[main] no prelaunched standalone Chrome on CDP :${port}; skipping standalone this cycle (daemon cannot spawn a 2nd Chrome)`);
     return null;
   }
 }
