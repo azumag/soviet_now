@@ -457,6 +457,18 @@ except Exception:
 
 if phase in {"generating", "running"}:
     raise SystemExit(0)
+# 終了確定済みの復元/cleanup status は、直前の slot latest.jsonl が新鮮でも
+# main loop を解放する。OBS再起動後や cleanup_stale 後に phase=restored +
+# ended_at だけが残り、最後の slot mtime で永久pauseする事故を防ぐ。
+try:
+    ended_at = float(data.get("ended_at", 0) or 0)
+except Exception:
+    ended_at = 0.0
+if ended_at > 0 and phase in {
+    "restored", "cleanup_stale", "no_candidate", "infra_failed",
+    "failed", "winner_selected", "winner", "won", "finished",
+} and os.environ.get("WP_PROC_ALIVE") != "1":
+    raise SystemExit(1)
 # 終端/過渡phase: wildcard_parallel.py が生存中、またはスロットがまだゲーム中なら active を継続。
 if os.environ.get("WP_PROC_ALIVE") == "1" or slot_activity_fresh:
     raise SystemExit(0)

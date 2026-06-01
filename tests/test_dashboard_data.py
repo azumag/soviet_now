@@ -18,8 +18,7 @@ class DashboardDataTest(unittest.TestCase):
             os.chdir(tmp)
             try:
                 Path("score_history.txt").write_text(
-                    "2026-05-21T00:00:00+09:00\t100\n"
-                    "2026-05-21T00:01:00+09:00\t300\n",
+                    "2026-05-21T00:00:00+09:00\t100\n2026-05-21T00:01:00+09:00\t300\n",
                     encoding="utf-8",
                 )
                 Path("eval_score_history.txt").write_text(
@@ -52,6 +51,82 @@ class DashboardDataTest(unittest.TestCase):
         self.assertEqual(stats["hash"], "current")
         self.assertEqual(stats["window"], 0)
         self.assertIsNone(stats["focus"])
+
+    def test_russia_rate_series_caps_window_at_current_game(self):
+        rows = [
+            {
+                "ts": "2026-06-01T00:00:00+09:00",
+                "label": "x",
+                "game": 50,
+                "score": 1000,
+                "turns": 50,
+            },
+            {
+                "ts": "2026-06-01T00:01:00+09:00",
+                "label": "x",
+                "game": 150,
+                "score": 1000,
+                "turns": 50,
+            },
+            {
+                "ts": "2026-06-01T00:02:00+09:00",
+                "label": "x",
+                "game": 199,
+                "score": 1000,
+                "turns": 50,
+            },
+            {
+                "ts": "2026-06-01T00:03:00+09:00",
+                "label": "x",
+                "game": 200,
+                "score": 1000,
+                "turns": 50,
+            },
+            {
+                "ts": "2026-06-01T00:04:00+09:00",
+                "label": "x",
+                "game": 210,
+                "score": 1000,
+                "turns": 50,
+            },
+        ]
+
+        series = dashboard_data.russia_rate_series(
+            rows, current_game=200, window=100, max_points=50
+        )
+
+        self.assertEqual(series["window"], 100)
+        self.assertEqual(series["current"]["game"], 200)
+        self.assertEqual(series["current"]["count"], 3)
+        self.assertEqual(series["current"]["rate"], 3.0)
+        self.assertGreater(len(series["points"]), 0)
+        for point in series["points"]:
+            self.assertGreaterEqual(point["count"], 0)
+            self.assertLessEqual(point["count"], 100)
+        for point in series["points"]:
+            self.assertLessEqual(point["game"], 200)
+
+    def test_russia_rate_series_returns_empty_when_window_exceeds_history(self):
+        rows = [
+            {
+                "ts": "2026-06-01T00:00:00+09:00",
+                "label": "x",
+                "game": 10,
+                "score": 1000,
+                "turns": 50,
+            },
+        ]
+
+        series = dashboard_data.russia_rate_series(rows, current_game=50, window=100)
+
+        self.assertEqual(series["points"], [])
+        self.assertIsNone(series["current"])
+
+    def test_russia_rate_series_handles_no_creation_events(self):
+        series = dashboard_data.russia_rate_series([], current_game=200, window=100)
+
+        self.assertEqual(series["points"], [])
+        self.assertIsNone(series["current"])
 
 
 if __name__ == "__main__":

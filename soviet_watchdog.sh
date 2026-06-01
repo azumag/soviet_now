@@ -23,6 +23,7 @@ cd "$SCRIPT_DIR" || exit 1
 INTERVAL="${SOVIET_WATCHDOG_INTERVAL:-60}"
 PORT="${SOVIET_WATCHDOG_PORT:-8080}"
 GAME_LOG="${SOVIET_WATCHDOG_LOG:-tmp/soviet_local.log}"
+CDP_ENDPOINT_FILE="tmp/cdp_endpoint.json"
 LOCK_DIR="tmp/state/.soviet_watchdog.lock"
 HEARTBEAT_STALE=$((INTERVAL * 3))
 RELAUNCH_BASE_GAP="${SOVIET_WATCHDOG_BASE_GAP:-90}"
@@ -96,12 +97,18 @@ trap 'release_singleton; exit 0' INT TERM EXIT
 
 # --- 対象プロセス (cwd==SCRIPT_DIR の node soviet_local.mjs) ---
 target_pids() {
-	local pids p cwd
+	local pids p cwd found ep
 	pids=$(pgrep -f "soviet_local\.mjs" 2>/dev/null || true)
 	for p in $pids; do
 		cwd=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
-		[ "$cwd" = "$SCRIPT_DIR" ] && echo "$p"
+		[ "$cwd" = "$SCRIPT_DIR" ] && { echo "$p"; found=1; }
 	done
+	[ "${found:-0}" = "1" ] && return 0
+	ep=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CDP_ENDPOINT_FILE" 2>/dev/null | head -1)
+	if [ -n "$ep" ] && kill -0 "$ep" 2>/dev/null; then
+		cwd=$(lsof -a -p "$ep" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+		[ "$cwd" = "$SCRIPT_DIR" ] && echo "$ep"
+	fi
 }
 
 # --- 致命ログ署名 (現プロセス起動後に限定) ---
@@ -191,6 +198,8 @@ while :; do
 	crash=""
 	if [ -z "$(target_pids)" ]; then
 		crash="プロセス消失"
+	elif [ -z "$(port_held)" ]; then
+		crash="port消失"
 	elif fatal_in_log; then
 		crash="致命ログ署名"
 	fi

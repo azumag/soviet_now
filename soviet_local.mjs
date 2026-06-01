@@ -4,7 +4,7 @@ import http from 'http';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +18,7 @@ function loadDotEnv() {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
+    if (Object.prototype.hasOwnProperty.call(process.env, match[1])) continue;
     process.env[match[1]] = value;
   }
 }
@@ -125,6 +126,10 @@ function chromeAppPathFromExecutable(executablePath) {
   return executablePath.slice(0, idx + '.app'.length);
 }
 
+function chromeExecutablePath() {
+  return process.env.SOREN_CHROME_EXECUTABLE_PATH || chromium.executablePath();
+}
+
 async function waitForCdpBrowser(port, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
@@ -155,8 +160,28 @@ async function waitForCdpHttp(port, timeoutMs = 10000) {
   throw lastError || new Error(`CDP HTTP did not become ready on port ${port}`);
 }
 
-async function launchPersistentContextWithoutFocus(userDataDir, args) {
-  if (process.platform !== 'darwin' || process.env.SOREN_CHROME_NO_FOCUS_LAUNCH === '0') {
+function isCrashpadPermissionLaunchFailure(error) {
+  const text = String((error && (error.stack || error.message)) || error || '');
+  return /crashpad|Crashpad|settings\.dat|SIGABRT|Permission denied/.test(text);
+}
+
+function isMacOpenExecutableMissingFailure(error) {
+  const text = String((error && (error.stack || error.message)) || error || '');
+  return /kLSNoExecutableErr|executable is missing|NSOSStatusErrorDomain Code=-10827/.test(text);
+}
+
+function launchChromiumExecutableDetached(executablePath, userDataDir, args, launchEnv) {
+  const child = spawn(executablePath, [`--user-data-dir=${userDataDir}`, ...args], {
+    detached: true,
+    env: launchEnv,
+    stdio: 'ignore',
+  });
+  child.unref();
+}
+
+async function launchPersistentContextWithoutFocus(userDataDir, args, opts = {}) {
+  const force = Boolean(opts.force);
+  if (process.platform !== 'darwin' || (!force && process.env.SOREN_CHROME_NO_FOCUS_LAUNCH === '0')) {
     return null;
   }
   if (process.env.SOREN_CHROME_ATTACH_ONLY === '1') {
@@ -169,17 +194,19 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
     console.log('[NO-FOCUS] attached to prelaunched Chromium via CDP');
     return { browser, context };
   }
-  if (process.env.SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH === '1') {
+  if (!force && process.env.SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH === '1') {
     return null;
   }
 
-  const appPath = chromeAppPathFromExecutable(process.env.SOREN_CHROME_EXECUTABLE_PATH || chromium.executablePath());
+  const executablePath = chromeExecutablePath();
+  const appPath = chromeAppPathFromExecutable(executablePath);
   if (!appPath) return null;
 
   fs.mkdirSync(userDataDir, { recursive: true });
   const openArgs = [
     '-g',
     '-n',
+    '-a',
     appPath,
     '--args',
     `--user-data-dir=${userDataDir}`,
@@ -192,6 +219,10 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
       if (err) reject(err);
       else resolve();
     });
+  }).catch(err => {
+    if (!force || !isMacOpenExecutableMissingFailure(err)) throw err;
+    console.error('[CRASHPAD] macOS open -g could not launch the app bundle; retrying detached Chrome executable');
+    launchChromiumExecutableDetached(executablePath, userDataDir, args, launchEnv);
   });
 
   const browser = await waitForCdpBrowser(CDP_PORT);
@@ -206,7 +237,11 @@ async function launchPersistentContextWithoutFocus(userDataDir, args) {
 
 function browserLaunchEnv(userDataDir) {
   const env = { ...process.env };
-  const homeDir = env.SOREN_CHROME_HOME || env.HOME || '';
+  // Keep Chrome for Testing's macOS Crashpad/config writes inside the project
+  // profile. If HOME falls through to the real user home, Crashpad may touch
+  // ~/Library/Application Support/Google/Chrome for Testing and abort under
+  // sandboxed relaunches even with --disable-crashpad.
+  const homeDir = env.SOREN_CHROME_HOME || path.join(userDataDir, 'chrome_home');
   const configHome = env.XDG_CONFIG_HOME || (homeDir ? path.join(homeDir, '.config') : '');
   const cacheHome = env.XDG_CACHE_HOME || (homeDir ? path.join(homeDir, '.cache') : '');
   const tmpDir = env.TMPDIR || path.join(userDataDir, 'tmp');
@@ -796,15 +831,32 @@ async function runLocalController() {
       context = backgroundLaunch.context;
       closeBrowserAfterContext = true;
     } else {
-      context = await withBrowserLaunchEnv(USER_DATA_DIR, launchEnv => chromium.launchPersistentContext(USER_DATA_DIR, {
-        executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
-        headless: CHROME_HEADLESS,
-        viewport: { width: 1280, height: 720 },
-        deviceScaleFactor: 1,
-        env: launchEnv,
-        args: launchArgs,
-      }));
-      browser = context.browser();
+      try {
+        context = await withBrowserLaunchEnv(USER_DATA_DIR, launchEnv => chromium.launchPersistentContext(USER_DATA_DIR, {
+          executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
+          headless: CHROME_HEADLESS,
+          viewport: { width: 1280, height: 720 },
+          deviceScaleFactor: 1,
+          env: launchEnv,
+          args: launchArgs,
+        }));
+        browser = context.browser();
+      } catch (launchErr) {
+        const allowOpenFallback = !['0', 'false', 'no', 'off'].includes(String(process.env.SOREN_CHROME_OPEN_FALLBACK_ON_CRASHPAD_FAIL || '1').toLowerCase());
+        if (!CHROME_HEADLESS && allowOpenFallback && isCrashpadPermissionLaunchFailure(launchErr)) {
+          console.error('[CRASHPAD] Playwright launch hit Chrome for Testing crashpad permission failure; retrying via macOS open -g fallback');
+          const fallbackLaunch = await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs, { force: true });
+          if (fallbackLaunch) {
+            browser = fallbackLaunch.browser;
+            context = fallbackLaunch.context;
+            closeBrowserAfterContext = true;
+          } else {
+            throw launchErr;
+          }
+        } else {
+          throw launchErr;
+        }
+      }
     }
   } catch (e) {
     console.error(`Failed to launch browser: ${e.message}`);

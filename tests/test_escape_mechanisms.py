@@ -3011,6 +3011,47 @@ class TestWildcardPerturbPreservesComments(unittest.TestCase):
             self.assertNotIn(3, lines)
             self.assertNotIn(12, lines)
 
+    def test_type_adjacency_step_literals_are_not_wildcard_targets(self):
+        """next_type +/- 1 は隣接タイプ判定の構造なので、符号反転させない。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sample = td / "strategy.py"
+            sample.write_text(
+                textwrap.dedent('''\
+                def decide(game_state, analysis):
+                    next_type = game_state.get("nextType", 1)
+                    pieces = game_state.get("pieces", [])
+                    threshold = 12.0
+                    hits = 0
+                    for p in pieces:
+                        p_type = p.get("type", 1)
+                        if p_type == next_type - 1 or p_type == next_type + 1:
+                            hits += threshold
+                    return {"x": hits, "reason": "DIRECT"}
+                ''')
+            )
+            out = td / "out.py"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "wildcard_perturb.py"),
+                    "--input", str(sample),
+                    "--output", str(out),
+                    "--count", "5",
+                    "--seed", "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}")
+            payload = json.loads(result.stdout)
+            applied_lines = {item["lineno"] for item in payload["applied"]}
+            self.assertNotIn(8, applied_lines)
+            self.assertIn(4, applied_lines)
+            self.assertIn("next_type + 1", out.read_text())
+            self.assertNotIn("next_type + -1", out.read_text())
+
 
 # --- 共通: stagnation counter transitions ------------------------------------
 
@@ -3802,13 +3843,22 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("launchPersistentContextWithoutFocus", local)
         self.assertIn("'/usr/bin/open'", local)
         self.assertIn("'-g'", local)
-        self.assertNotIn("'-a'", local)
+        self.assertIn("'-a'", local)
+        self.assertIn("appPath", local)
+        self.assertIn("Object.prototype.hasOwnProperty.call(process.env, match[1])", local)
         self.assertIn("SOREN_CHROME_NO_FOCUS_LAUNCH", local)
         self.assertIn("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH", local)
         self.assertIn("SOREN_CHROME_ATTACH_ONLY", local)
         self.assertIn("async function withBrowserLaunchEnv", local)
+        self.assertIn("const homeDir = env.SOREN_CHROME_HOME || path.join(userDataDir, 'chrome_home');", local)
         self.assertIn("env: launchEnv", local)
         self.assertIn("execFile('/usr/bin/open', openArgs, { env: launchEnv }", local)
+        self.assertIn("isCrashpadPermissionLaunchFailure", local)
+        self.assertIn("SOREN_CHROME_OPEN_FALLBACK_ON_CRASHPAD_FAIL", local)
+        self.assertIn("launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs, { force: true })", local)
+        self.assertIn("isMacOpenExecutableMissingFailure", local)
+        self.assertIn("launchChromiumExecutableDetached", local)
+        self.assertIn("spawn(executablePath, [`--user-data-dir=${userDataDir}`, ...args]", local)
         self.assertIn("chromium.launchPersistentContext", local)
         self.assertIn("async function waitForCdpHttp", local)
         self.assertIn("await waitForCdpHttp(CDP_PORT);", local)
@@ -3952,6 +4002,26 @@ class TestMainAudioRecovery(unittest.TestCase):
 # --- Soviet objective is visible to improvement AI ---------------------------
 
 class TestSovietObjectiveImproveInputs(unittest.TestCase):
+    def test_strategy_runner_exposes_reactor_deadline_state_to_strategy_game_state(self):
+        import strategy_runner
+
+        gs = {"score": 0, "pieces": []}
+        enriched = strategy_runner.enrich_game_state_deadline_fields(
+            gs,
+            {"reactor": {"deadline_crossed": False, "deadline_margin": 7.25}},
+        )
+
+        self.assertIs(enriched, gs)
+        self.assertIs(enriched["deadline_crossed"], False)
+        self.assertEqual(enriched["deadline_margin"], 7.25)
+
+        explicit = {"deadline_crossed": True}
+        strategy_runner.enrich_game_state_deadline_fields(
+            explicit,
+            {"reactor": {"deadline_crossed": False, "deadline_margin": 3.0}},
+        )
+        self.assertIs(explicit["deadline_crossed"], True)
+
     def test_deadline_crossing_overlay_payload_distinguishes_safe_slot_available(self):
         import strategy_runner
 
@@ -7008,6 +7078,23 @@ PY
         self.assertIn('local strategy_source="${ROLLING_SCORE_STRATEGY_SOURCE:-${STRATEGY_FILE}.game_snapshot}"', regression)
         self.assertIn('strategy_hash="${ROLLING_SCORE_STRATEGY_HASH:-}"', regression)
 
+    def test_active_branch_head_repair_runs_before_game_snapshot(self):
+        eloop = (REPO_ROOT / "eloop.sh").read_text()
+
+        self.assertIn("repair_strategy_to_active_branch_head_if_needed()", eloop)
+        self.assertIn('data.get("head_hash")', eloop)
+        self.assertIn('${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${expected_hash}.py', eloop)
+        self.assertIn('${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${expected_hash}.py', eloop)
+        self.assertIn("_strategy_source_has_invalid_structural_wildcard", eloop)
+        self.assertIn("fallback to best", eloop)
+        self.assertIn("_clear_active_branch", eloop)
+        self.assertIn('_seed_current_strategy_run_from_rolling "$actual_hash"', eloop)
+        self.assertIn("_clear_accumulated_data", eloop)
+        self.assertLess(
+            eloop.index("repair_strategy_to_active_branch_head_if_needed\n"),
+            eloop.index('cp "$STRATEGY_FILE" "${STRATEGY_FILE}.game_snapshot"'),
+        )
+
     def test_wildcard_parallel_obs_restores_after_nonzero_exit(self):
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
 
@@ -7765,6 +7852,15 @@ _pick_best_rollback_candidate currentHash
         self.assertIn("! _is_improve_running", loop)
         self.assertIn("manual_meriken_mode_is_enabled", loop)
 
+    def test_soviet_watchdog_falls_back_to_cdp_endpoint_pid(self):
+        watchdog = (REPO_ROOT / "soviet_watchdog.sh").read_text()
+
+        self.assertIn('CDP_ENDPOINT_FILE="tmp/cdp_endpoint.json"', watchdog)
+        self.assertIn('ep=$(sed -n', watchdog)
+        self.assertIn('"pid"', watchdog)
+        self.assertIn('[ "$cwd" = "$SCRIPT_DIR" ] && echo "$ep"', watchdog)
+        self.assertIn('crash="port消失"', watchdog)
+
     def test_rollback_postmortem_opencode_lock_cannot_block_live_radio_forever(self):
         ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -8143,6 +8239,45 @@ class TestParamParallelDetectionLagClosed(unittest.TestCase):
             self.assertEqual(res.returncode, 0, res.stderr)
             # stale なスロット + 終端phase + プロセス無し → inactive
             self.assertIn("STALE_INACTIVE", res.stdout, res.stderr)
+
+    def test_restored_ended_status_releases_even_with_fresh_slot_activity(self):
+        """cleanup/restore 済み status は fresh slot mtime が残っていても解放する。"""
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        fn2 = self._extract_fn(improve, "_wildcard_parallel_active")
+
+        with tempfile.TemporaryDirectory() as td:
+            session_dir = Path(td) / "session"
+            gh_dir = session_dir / "slot-1" / "game_history"
+            gh_dir.mkdir(parents=True)
+            gh_file = gh_dir / "latest.jsonl"
+            gh_file.write_text("{}\n", encoding="utf-8")
+            now = time.time()
+            os.utime(gh_file, (now, now))
+
+            status = Path(td) / "wildcard_parallel_status.json"
+            status.write_text(
+                json.dumps({
+                    "phase": "restored",
+                    "block_main_loop": True,
+                    "started_at": now - 30,
+                    "ended_at": now,
+                    "detail": "cleanup_stale",
+                    "session_dir": str(session_dir),
+                }),
+                encoding="utf-8",
+            )
+            script = textwrap.dedent(f"""
+                set +e
+                export TMP_STATE_DIR="{td}"
+                export WILDCARD_PARALLEL_STATUS_FILE="{status}"
+                export WILDCARD_PARALLEL_SLOT_FRESH_SEC=180
+                {fn2}
+                if _wildcard_parallel_active; then echo RESTORED_ACTIVE; else echo RESTORED_INACTIVE; fi
+            """)
+            res = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
+                                 text=True, capture_output=True, check=False)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("RESTORED_INACTIVE", res.stdout, res.stderr)
 
     def test_slot_activity_fresh_terminal_phase_slot_dir_pattern(self):
         """終端phaseでも slot-N/game_history 形式の fresh なファイルがあれば active=true。

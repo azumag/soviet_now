@@ -138,11 +138,32 @@ def _collect_candidates(tree: ast.Module, decide_node: ast.FunctionDef) -> list[
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
 
+    def _expr_has_type_like_name(expr: ast.AST) -> bool:
+        for child in ast.walk(expr):
+            if isinstance(child, ast.Name) and "type" in child.id:
+                return True
+        return False
+
+    def _is_structural_type_step_literal(node: ast.Constant) -> bool:
+        if isinstance(node.value, bool) or node.value != 1:
+            return False
+        parent = parents.get(node)
+        effective_child: ast.AST = node
+        if isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.USub):
+            effective_child = parent
+            parent = parents.get(parent)
+        if not isinstance(parent, ast.BinOp) or not isinstance(parent.op, (ast.Add, ast.Sub)):
+            return False
+        other = parent.left if parent.right is effective_child else parent.right
+        return _expr_has_type_like_name(other)
+
     def _record(node: ast.Constant, parent_kind: str) -> None:
         v = node.value
         if not isinstance(v, (bool, int, float)):
             return
         if node.end_lineno is None or node.end_col_offset is None:
+            return
+        if _is_structural_type_step_literal(node):
             return
         candidates.append(
             Candidate(

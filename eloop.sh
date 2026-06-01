@@ -122,6 +122,108 @@ _handle_decide_exception_recovery() {
 	fi
 }
 
+_find_strategy_archive_for_hash() {
+	local expected_hash="$1" candidate actual_hash
+	[ -n "$expected_hash" ] || return 1
+	for candidate in \
+		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${expected_hash}.py" \
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${expected_hash}.py"; do
+		[ -f "$candidate" ] || continue
+		actual_hash=$(python3 extract_decide_hash.py "$candidate" 2>/dev/null || echo "")
+		if [ "$actual_hash" = "$expected_hash" ]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+_strategy_source_has_invalid_structural_wildcard() {
+	local source_file="$1"
+	[ -f "$source_file" ] || return 1
+	grep -Eq 'next_type[[:space:]]*\+[[:space:]]*-1|next_type[[:space:]]*-[[:space:]]*-1' "$source_file"
+}
+
+repair_strategy_to_active_branch_head_if_needed() {
+	[ "${ACTIVE_BRANCH_STRATEGY_REPAIR_ENABLED:-1}" = "1" ] || return 0
+	[ -f "${ACTIVE_BRANCH_FILE:-tmp/state/active_branch.json}" ] || return 0
+
+	local expected_hash fallback_hash current_hash source_file fallback_source actual_hash backup_file abandon_active_branch
+	abandon_active_branch=false
+	IFS='|' read -r expected_hash fallback_hash <<EOF
+$(python3 - "${ACTIVE_BRANCH_FILE:-tmp/state/active_branch.json}" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    data = {}
+print(str(data.get("head_hash") or "") + "|" + str(data.get("best_hash") or ""))
+PY
+)
+EOF
+	[ -n "$expected_hash" ] || return 0
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	[ -n "$current_hash" ] || current_hash="unknown"
+
+	source_file=$(_find_strategy_archive_for_hash "$expected_hash" 2>/dev/null || true)
+	if [ -n "$source_file" ] && _strategy_source_has_invalid_structural_wildcard "$source_file"; then
+		if [ -n "$fallback_hash" ] && [ "$fallback_hash" != "$expected_hash" ]; then
+			fallback_source=$(_find_strategy_archive_for_hash "$fallback_hash" 2>/dev/null || true)
+			if [ -n "$fallback_source" ]; then
+				log "[STRATEGY-REPAIR] active_branch head ${expected_hash:0:12} has invalid structural wildcard; fallback to best=${fallback_hash:0:12}"
+				expected_hash="$fallback_hash"
+				source_file="$fallback_source"
+				abandon_active_branch=true
+			else
+				log "[STRATEGY-REPAIR] active_branch head ${expected_hash:0:12} invalid but fallback archive missing: best=${fallback_hash:0:12}"
+			fi
+		fi
+	fi
+	[ "$current_hash" != "$expected_hash" ] || return 0
+
+	if [ -z "${source_file:-}" ]; then
+		log "[STRATEGY-REPAIR] active_branch head mismatch current=${current_hash:0:12} expected=${expected_hash:0:12} だが archive が見つからないため維持"
+		return 0
+	fi
+
+	mkdir -p "${TMP_STATE_DIR:-tmp/state}/strategy_repair_backups" 2>/dev/null || true
+	backup_file="${TMP_STATE_DIR:-tmp/state}/strategy_repair_backups/pre_active_branch_repair_${current_hash}_${expected_hash}_$(date +%s).py"
+	cp "$STRATEGY_FILE" "$backup_file" 2>/dev/null || true
+	if ! cp "$source_file" "$STRATEGY_FILE"; then
+		log "[STRATEGY-REPAIR] CRITICAL: active_branch head restore copy failed source=$source_file"
+		return 1
+	fi
+	if ! validate_strategy "$STRATEGY_FILE"; then
+		log "[STRATEGY-REPAIR] CRITICAL: restored active_branch head failed validation; reverting backup"
+		[ -f "$backup_file" ] && cp "$backup_file" "$STRATEGY_FILE" 2>/dev/null || true
+		return 1
+	fi
+	actual_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	if [ "$actual_hash" != "$expected_hash" ]; then
+		log "[STRATEGY-REPAIR] CRITICAL: restored hash mismatch expected=${expected_hash:0:12} actual=${actual_hash:0:12}; reverting backup"
+		[ -f "$backup_file" ] && cp "$backup_file" "$STRATEGY_FILE" 2>/dev/null || true
+		return 1
+	fi
+
+	_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$actual_hash" 2>/dev/null || true
+	if command -v _seed_current_strategy_run_from_rolling >/dev/null 2>&1 && _seed_current_strategy_run_from_rolling "$actual_hash"; then
+		log "[STRATEGY-REPAIR] current_run reseeded from rolling: hash=${actual_hash:0:12}"
+	elif command -v _reset_current_strategy_run >/dev/null 2>&1; then
+		_reset_current_strategy_run "$actual_hash" || true
+		log "[STRATEGY-REPAIR] current_run reset: hash=${actual_hash:0:12}"
+	fi
+	if command -v _clear_accumulated_data >/dev/null 2>&1; then
+		_clear_accumulated_data || true
+	fi
+	if [ "$abandon_active_branch" = true ] && command -v _clear_active_branch >/dev/null 2>&1; then
+		_clear_active_branch || true
+	fi
+	rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+	log "[STRATEGY-REPAIR] active_branch head restored before game: ${current_hash:0:12} -> ${actual_hash:0:12} source=$source_file"
+}
+
 #=== 1試合プレイ ===
 play_one_game() {
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
@@ -147,6 +249,7 @@ play_one_game() {
 	log ""
 	log "── Game #${game_num_display} ──"
 	_clear_stale_commands_if_any "before play_one_game"
+	repair_strategy_to_active_branch_head_if_needed
 
 	# 試合開始時の strategy.py をスナップショット保存
 	# (裏で改善が strategy.py を書き換えても、この試合で使った戦略を正確に保存できる)

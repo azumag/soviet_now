@@ -6,9 +6,9 @@ cd "$(dirname "$0")"
 
 # 引数でゲーム状態を受け取る
 if [ -n "$1" ]; then
-    GAME_STATE="$1"
+	GAME_STATE="$1"
 else
-    GAME_STATE="MOVE"
+	GAME_STATE="MOVE"
 fi
 
 DASHBOARD_SHOW_WHILE_PLAYING="${DASHBOARD_SHOW_WHILE_PLAYING:-0}"
@@ -18,19 +18,19 @@ SOREN91_PID_FILE="${SOREN91_PID_FILE:-soren91/tmp/soren91.pid}"
 SOREN91_MAIN_PID_FILE="${SOREN91_MAIN_PID_FILE:-soren91/tmp/main.pid}"
 
 write_empty_dashboard() {
-    cat > score_dashboard.html <<'EMPTYEOF'
+	cat >score_dashboard.html <<'EMPTYEOF'
 <!DOCTYPE html><html><head><meta charset="UTF-8">
 </head>
 <body style="background:transparent">
 <script>setInterval(function(){location.reload();},3000);</script>
 </body></html>
 EMPTYEOF
-    chmod 644 score_dashboard.html 2>/dev/null || true
+	chmod 644 score_dashboard.html 2>/dev/null || true
 }
 
 manual_meriken_mode_file_enabled() {
-    [ -f "$MANUAL_MERIKEN_MODE_FILE" ] || return 1
-    python3 - "$MANUAL_MERIKEN_MODE_FILE" <<'PY' >/dev/null 2>&1
+	[ -f "$MANUAL_MERIKEN_MODE_FILE" ] || return 1
+	python3 - "$MANUAL_MERIKEN_MODE_FILE" <<'PY' >/dev/null 2>&1
 import json
 import sys
 
@@ -44,48 +44,48 @@ PY
 }
 
 soren91_pid_file_alive() {
-    local f="" pid="" cmd=""
-    for f in "$SOREN91_MAIN_PID_FILE" "$SOREN91_PID_FILE"; do
-        [ -f "$f" ] || continue
-        pid=$(cat "$f" 2>/dev/null)
-        case "$pid" in ''|*[!0-9]*) continue ;; esac
-        kill -0 "$pid" 2>/dev/null || continue
-        cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
-        case "$cmd" in
-            *main.mjs*|*run_player_loop.sh*) return 0 ;;
-        esac
-    done
-    return 1
+	local f="" pid="" cmd=""
+	for f in "$SOREN91_MAIN_PID_FILE" "$SOREN91_PID_FILE"; do
+		[ -f "$f" ] || continue
+		pid=$(cat "$f" 2>/dev/null)
+		case "$pid" in '' | *[!0-9]*) continue ;; esac
+		kill -0 "$pid" 2>/dev/null || continue
+		cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+		case "$cmd" in
+		*main.mjs* | *run_player_loop.sh*) return 0 ;;
+		esac
+	done
+	return 1
 }
 
 # 非GAMEOVER時は空HTML（OBSで非表示）
 if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" = "0" ]; then
-    write_empty_dashboard
-    exit 0
+	write_empty_dashboard
+	exit 0
 fi
 
 # メリケンAI中はSoren91側の画面を優先し、プレイ中のダッシュボードだけ非表示にする。
 # GAMEOVER/STOP はメインゲーム終了時に OBS で show されるため、soren91 タブや
 # stale PID が残っていても空HTMLで上書きしない。
 if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
-    if [ -f "$SOREN91_MODE_FLAG_FILE" ] || manual_meriken_mode_file_enabled || soren91_pid_file_alive; then
-        write_empty_dashboard
-        exit 0
-    fi
+	if [ -f "$SOREN91_MODE_FLAG_FILE" ] || manual_meriken_mode_file_enabled || soren91_pid_file_alive; then
+		write_empty_dashboard
+		exit 0
+	fi
 fi
 
 # 全履歴をHTMLへ丸ごと埋め込むとOBS側が重くなるため、統計は生成時に集計し、
 # グラフ描画用の点列だけ直近N件へ絞る。
 DASHBOARD_CHART_GAMES="${DASHBOARD_CHART_GAMES:-300}"
-case "$DASHBOARD_CHART_GAMES" in ''|*[!0-9]*) DASHBOARD_CHART_GAMES=300 ;; esac
+case "$DASHBOARD_CHART_GAMES" in '' | *[!0-9]*) DASHBOARD_CHART_GAMES=300 ;; esac
 
 DASHBOARD_DATA_JSON=$(python3 dashboard_data.py "$DASHBOARD_CHART_GAMES")
 
 # データ取得が失敗 (空 JSON) なら、既存 HTML を温存して即終了。
 # OBS で表示中の dashboard を空ファイルで上書きしてしまう事故を防ぐ。
 if [ -z "$DASHBOARD_DATA_JSON" ] || [ "$DASHBOARD_DATA_JSON" = "{}" ]; then
-    echo "[generate_dashboard] WARN: dashboard_data.py returned empty; keeping existing HTML" >&2
-    exit 0
+	echo "[generate_dashboard] WARN: dashboard_data.py returned empty; keeping existing HTML" >&2
+	exit 0
 fi
 
 # アトミック書き込み: temp に書き、成功時のみ rename する。
@@ -97,7 +97,7 @@ fi
 __DASH_TMP=$(mktemp "./score_dashboard.XXXXXX.html" 2>/dev/null) || __DASH_TMP="./score_dashboard.html.tmp"
 trap '[ -n "$__DASH_TMP" ] && [ -f "$__DASH_TMP" ] && rm -f "$__DASH_TMP"' EXIT
 
-cat > "$__DASH_TMP" <<HTMLEOF
+cat >"$__DASH_TMP" <<HTMLEOF
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -318,6 +318,46 @@ cat > "$__DASH_TMP" <<HTMLEOF
     flex: 1 1 auto;
     overflow: hidden;
   }
+  .charts-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .chart-main { flex: 1 1 auto; min-height: 0; }
+  .chart-rate {
+    flex: 0 0 210px;
+    padding: 8px 18px 6px 18px;
+    display: flex;
+    flex-direction: column;
+  }
+  .rate-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    color: #8b93a7;
+    font-size: 0.82em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+    flex: 0 0 auto;
+  }
+  .rate-chart-title { white-space: nowrap; }
+  .rate-chart-current {
+    color: #facc15;
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 1.05em;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .rate-chart-current.zero { color: #fb7185; }
+  .rate-chart-current.high { color: #86efac; }
+  #rateChart {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
   canvas { width: 100%; display: block; }
   .refresh-indicator {
     position: fixed;
@@ -348,8 +388,17 @@ cat > "$__DASH_TMP" <<HTMLEOF
   <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Recent Trend</div><div class="metric-row"><div class="mini-value trend" id="trend">-</div><div class="trend-badge" id="chartTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub" id="trendSub">chart window</div></div>
 </div>
-<div class="chart-container">
+<div class="charts-wrap">
+<div class="chart-container chart-main">
   <canvas id="chart"></canvas>
+</div>
+<div class="chart-container chart-rate">
+  <div class="rate-chart-header">
+    <span class="rate-chart-title">ろシア建国率 rolling 100</span>
+    <span class="rate-chart-current" id="rateChartCurrent">-</span>
+  </div>
+  <canvas id="rateChart"></canvas>
+</div>
 </div>
 </div>
 
@@ -361,11 +410,14 @@ const EVAL_SCORES = DASHBOARD_DATA.chartEvalScores || [];
 const SCORE_STATS = DASHBOARD_DATA.scoreStats;
 const EVAL_SCORE_STATS = DASHBOARD_DATA.evalScoreStats || null;
 const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
+const RUSSIA_RATE_SERIES = DASHBOARD_DATA.russiaRateSeries || { window: 100, step: 0, maxPoints: 300, current: null, points: [] };
 const STAGE_GATE_STATS = DASHBOARD_DATA.stageGateStats || { window: 0, stages: [], focus: null };
 const PURGE_TARGET_STATS = DASHBOARD_DATA.purgeTargetStats || {};
 const CURRENT_GAME = SCORE_STATS.currentGame;
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
+const rateCanvas = document.getElementById('rateChart');
+const rateCtx = rateCanvas ? rateCanvas.getContext('2d') : null;
 
 function clampPct(value, max) {
   if (!isFinite(value) || !isFinite(max) || max <= 0) return 0;
@@ -699,8 +751,112 @@ function drawChart(scores, evalScores) {
   }
 }
 
+function drawRussiaRateChart(series) {
+  const currentEl = document.getElementById('rateChartCurrent');
+  if (!rateCanvas || !rateCtx) return;
+  const points = (series && series.points) || [];
+  const current = series ? series.current : null;
+  if (currentEl) {
+    if (current) {
+      const r = current.rate;
+      currentEl.textContent = r.toFixed(2) + '% (' + current.count + '/' + (series.window || 100) + ') @G' + current.game;
+      currentEl.classList.remove('zero', 'high');
+      if (r === 0) currentEl.classList.add('zero');
+      else if (r >= 5) currentEl.classList.add('high');
+    } else {
+      currentEl.textContent = 'no data';
+      currentEl.classList.remove('high');
+      currentEl.classList.add('zero');
+    }
+  }
+  if (!points.length) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const rect = rateCanvas.parentElement.getBoundingClientRect();
+  const W = Math.max(160, Math.floor(rect.width - 36));
+  const H = Math.max(80, Math.floor(rect.height - 8));
+  rateCanvas.width = W * dpr; rateCanvas.height = H * dpr;
+  rateCanvas.style.width = W + 'px'; rateCanvas.style.height = H + 'px';
+  rateCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const padL = 44, padR = 12, padT = 6, padB = 22;
+  const cW = W - padL - padR, cH = H - padT - padB;
+  const rates = points.map(p => p.rate);
+  const maxRate = Math.max.apply(null, rates);
+  const yMax = Math.max(1, Math.ceil((maxRate + 0.5) * 2) / 2);
+  const gameMin = points[0].game;
+  const gameMax = points[points.length - 1].game;
+  const xRange = Math.max(1, gameMax - gameMin);
+  const xScale = g => padL + ((g - gameMin) / xRange) * cW;
+  const yScale = v => padT + cH - (v / yMax) * cH;
+
+  rateCtx.clearRect(0, 0, W, H);
+
+  rateCtx.strokeStyle = '#2a2b55'; rateCtx.lineWidth = 1;
+  rateCtx.font = '11px monospace'; rateCtx.fillStyle = '#8b93a7';
+  for (let i = 0; i <= 3; i++) {
+    const v = (yMax / 3) * i, y = yScale(v);
+    rateCtx.beginPath();
+    rateCtx.moveTo(padL, y);
+    rateCtx.lineTo(W - padR, y);
+    rateCtx.stroke();
+    rateCtx.fillText(v.toFixed(1) + '%', 2, y + 4);
+  }
+
+  rateCtx.fillStyle = '#8b93a7';
+  const xi = Math.max(1, Math.ceil(points.length / 6));
+  for (let i = 0; i < points.length; i += xi) {
+    rateCtx.fillText('G' + points[i].game, xScale(points[i].game) - 18, H - 6);
+  }
+  if ((points.length - 1) % xi !== 0) {
+    const last = points[points.length - 1];
+    rateCtx.fillText('G' + last.game, xScale(last.game) - 18, H - 6);
+  }
+
+  rateCtx.fillStyle = 'rgba(250,204,21,0.12)';
+  rateCtx.beginPath();
+  points.forEach((p, i) => {
+    const x = xScale(p.game), y = yScale(p.rate);
+    i === 0 ? rateCtx.moveTo(x, y) : rateCtx.lineTo(x, y);
+  });
+  rateCtx.lineTo(xScale(gameMax), yScale(0));
+  rateCtx.lineTo(xScale(gameMin), yScale(0));
+  rateCtx.closePath();
+  rateCtx.fill();
+
+  rateCtx.strokeStyle = 'rgba(250,204,21,0.95)';
+  rateCtx.lineWidth = 2.2;
+  rateCtx.beginPath();
+  points.forEach((p, i) => {
+    const x = xScale(p.game), y = yScale(p.rate);
+    i === 0 ? rateCtx.moveTo(x, y) : rateCtx.lineTo(x, y);
+  });
+  rateCtx.stroke();
+
+  if (current) {
+    const cx = xScale(current.game), cy = yScale(current.rate);
+    rateCtx.fillStyle = '#facc15';
+    rateCtx.beginPath();
+    rateCtx.arc(cx, cy, 4, 0, Math.PI * 2);
+    rateCtx.fill();
+    rateCtx.strokeStyle = 'rgba(0,0,0,0.7)';
+    rateCtx.lineWidth = 3;
+    rateCtx.beginPath();
+    rateCtx.arc(cx, cy, 4, 0, Math.PI * 2);
+    rateCtx.stroke();
+  }
+
+  rateCtx.fillStyle = '#facc15';
+  rateCtx.font = 'bold 11px monospace';
+  rateCtx.fillText('window ' + (series.window || 100) + ' / step ' + (series.step || 0), padL + 4, padT + 12);
+}
+
 drawChart(SCORES, EVAL_SCORES);
-window.addEventListener('resize', () => drawChart(SCORES, EVAL_SCORES));
+drawRussiaRateChart(RUSSIA_RATE_SERIES);
+window.addEventListener('resize', () => {
+  drawChart(SCORES, EVAL_SCORES);
+  drawRussiaRateChart(RUSSIA_RATE_SERIES);
+});
 
 // Auto-reload every 3 seconds (OBS CEF doesn't support meta refresh on file://)
 setInterval(function(){location.reload();},3000);
@@ -711,14 +867,14 @@ HTMLEOF
 
 # サイズ妥当性チェック: テンプレート (178 byte) より大きいことを確認してから rename
 if [ -s "$__DASH_TMP" ] && [ "$(wc -c <"$__DASH_TMP")" -gt 500 ]; then
-    # OBS / Web から file:// で読まれるためパーミッションを明示的に 644 に
-    chmod 644 "$__DASH_TMP" 2>/dev/null || true
-    mv "$__DASH_TMP" score_dashboard.html
-    trap - EXIT
-    echo "Generated score_dashboard.html ($(python3 -c 'import json,sys; print(json.load(sys.stdin)["scoreStats"]["count"])' <<<"${DASHBOARD_DATA_JSON}") games, chart=${DASHBOARD_CHART_GAMES})"
+	# OBS / Web から file:// で読まれるためパーミッションを明示的に 644 に
+	chmod 644 "$__DASH_TMP" 2>/dev/null || true
+	mv "$__DASH_TMP" score_dashboard.html
+	trap - EXIT
+	echo "Generated score_dashboard.html ($(python3 -c 'import json,sys; print(json.load(sys.stdin)["scoreStats"]["count"])' <<<"${DASHBOARD_DATA_JSON}") games, chart=${DASHBOARD_CHART_GAMES})"
 else
-    echo "[generate_dashboard] WARN: temp file too small ($(wc -c <"$__DASH_TMP" 2>/dev/null) bytes); keeping existing HTML" >&2
-    rm -f "$__DASH_TMP"
-    trap - EXIT
-    exit 0
+	echo "[generate_dashboard] WARN: temp file too small ($(wc -c <"$__DASH_TMP" 2>/dev/null) bytes); keeping existing HTML" >&2
+	rm -f "$__DASH_TMP"
+	trap - EXIT
+	exit 0
 fi

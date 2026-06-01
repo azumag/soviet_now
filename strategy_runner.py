@@ -570,6 +570,25 @@ def build_analysis(game_state):
         return {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
 
+def enrich_game_state_deadline_fields(game_state, analysis):
+    """Expose analyzer deadline fields through game_state for legacy strategies."""
+    if not isinstance(game_state, dict):
+        return game_state
+    if not isinstance(analysis, dict):
+        analysis = {}
+    reactor = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
+    deadline = analysis.get("deadline") if isinstance(analysis.get("deadline"), dict) else {}
+    if "deadline_crossed" not in game_state:
+        game_state["deadline_crossed"] = bool(
+            reactor.get("deadline_crossed", deadline.get("deadline_crossed", False))
+        )
+    if "deadline_margin" not in game_state:
+        margin = reactor.get("deadline_margin", deadline.get("deadline_margin", None))
+        if margin is not None:
+            game_state["deadline_margin"] = margin
+    return game_state
+
+
 def record_turn(history_f, turn, game_state, decision, analysis, russia_created=False, soviet_created=False, strategy_hash=None, score_delta=0):
     """1ターン分の履歴をJSONLに記録"""
     pieces = game_state.get("pieces", [])
@@ -1885,6 +1904,7 @@ def run_game():
 
             # 盤面解析
             analysis = build_analysis(gs)
+            enrich_game_state_deadline_fields(gs, analysis)
 
             # strategy.py は手番ごとに再ロードする。これにより、ライブ改善で
             # strategy.py だけを書き換えた場合もプロセス再起動なしで次手から反映する。
