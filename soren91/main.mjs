@@ -131,21 +131,28 @@ async function launchStandaloneBrowserWithoutFocus(args, launchEnv) {
   mkdirSync(userDataDir, { recursive: true });
   const spawnArgs = [`--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`, ...args];
 
-  // Cold-start retry: macOS 26.5 / Chrome for Testing 145 can intermittently abort
-  // in +[NSApplication sharedApplication] on a fresh instance. Kill the dead Chrome
-  // + back off + retry so a one-off race doesn't drop us to the less-reliable
-  // chromium.launch fallback.
+  // Each cold-start must be LONE. macOS 26.5 / Chrome for Testing 145 aborts
+  // (SIGABRT in +[NSApplication sharedApplication] -> RegisterApplication
+  // dispatch_once) when a 2nd Chrome instance cold-starts while ANOTHER Chrome is
+  // concurrently starting or tearing down — e.g. a previous crashed attempt of this
+  // same launch, or a prior crash-looped run still dying. A single isolated launch
+  // with no concurrent Chrome reliably succeeds (validated 2026-06-02). So before
+  // EVERY attempt, kill + wait for any leftover standalone Chrome to be fully gone,
+  // making this spawn a lone cold-start.
+  const killLeftover = () => { try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {} };
+  const leftoverAlive = () => { try { execSync(`pgrep -f ${JSON.stringify(userDataDir)}`, { stdio: ['ignore', 'pipe', 'ignore'] }); return true; } catch { return false; } };
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    killLeftover();
+    for (let w = 0; w < 12 && leftoverAlive(); w++) await sleep(500);
     const child = spawn(executablePath, spawnArgs, { env: launchEnv || process.env, detached: true, stdio: 'ignore' });
     child.unref();
     try {
       const browser = await waitForCdpBrowser(port, 12000);
-      console.log(`[main] Chromium launched in background (isolated direct spawn, attempt ${attempt})`);
+      console.log(`[main] Chromium launched in background (isolated lone cold-start, attempt ${attempt})`);
       return browser;
     } catch (err) {
       console.warn(`[main] standalone Chrome CDP did not open (attempt ${attempt}/${maxAttempts}): ${err.message}`);
-      try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {}
       await sleep(2000);
     }
   }
