@@ -454,8 +454,8 @@ _refresh_best_strategy_anchor "currentRussia" 2>&1
             self.assertEqual(anchor["best_max_type"], 15)
             self.assertEqual(anchor["russia_count"], 1)
 
-    def test_direct_anchor_promotion_can_overwrite_russia_anchor_with_score_only(self):
-        """PROMOTE 経路では Russia anchor を rollback 保護扱いしない。"""
+    def test_direct_anchor_promotion_preserves_russia_anchor_from_score_only(self):
+        """PROMOTE 経路でも Russia anchor を score-only で直接上書きしない。"""
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             rs_file = td / "rolling_scores.json"
@@ -530,10 +530,10 @@ echo promote_rc=$?
                 timeout=30,
             )
             self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
-            self.assertIn("promote_rc=0", result.stdout)
+            self.assertIn("promote_rc=1", result.stdout)
             anchor = json.loads(anchor_file.read_text())
-            self.assertEqual(anchor["hash"], "scoreOnly")
-            self.assertEqual(anchor["russia_count"], 0)
+            self.assertEqual(anchor["hash"], "russiaPath")
+            self.assertEqual(anchor["russia_count"], 1)
 
     def test_direct_anchor_promotion_keeps_objective_fields_when_allowed(self):
         """目的進捗を落とさない PROMOTE は成功し、anchor payload に進捗も残す。"""
@@ -2497,6 +2497,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("_archive_restart_has_candidate", improve)
         self.assertIn("preflight no candidate", improve)
         self.assertIn("preflight_no_candidate", improve)
+        self.assertIn("no_candidate cooldown stale", improve)
+        self.assertIn("marker_candidate_override", improve)
         self.assertIn("archive_is_runtime_stable", improve)
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", improve)
         self.assertIn("allow_origin_retry", improve)
@@ -2506,6 +2508,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("anchor_soviet", improve)
         self.assertIn("reliable_russia", improve)
         self.assertIn("frontier_candidate", improve)
+        self.assertIn("not (reliable_russia or frontier_candidate or russia > 0)", improve)
         self.assertNotIn("if best_type >= 15 and russia <= 0:\n        russia = 1", improve)
         self.assertIn("archive_restart を飛ばして次の脱出手段", improve)
         self.assertIn("_improve_flow_notify", improve)
@@ -2535,6 +2538,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("anchor_soviet", eloop)
         self.assertIn("reliable_russia", eloop)
         self.assertIn("frontier_candidate", eloop)
+        self.assertIn("not (reliable_russia or frontier_candidate or russia > 0)", eloop)
         self.assertIn("russia_rate", eloop)
         self.assertIn("archive_restart_russia_not_reproduced", eloop)
         self.assertNotIn("if best_type >= 15 and russia <= 0:\n        russia = 1", eloop)
@@ -3229,6 +3233,14 @@ class TestShowStatusOnce(unittest.TestCase):
         self.assertIn("LC_ALL=C ps -Ao pid=,command=", status)
         self.assertIn("| LC_ALL=C awk -v pattern=", status)
 
+    def test_show_status_separates_youtube_send_degraded_from_chat(self):
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("local youtube_send_error=", status)
+        self.assertIn("last_send_error.txt", status)
+        self.assertIn('printf "    ${C_YELLOW}▸${C_RESET} Send        ${C_YELLOW}DEGRADED${C_RESET}', status)
+        self.assertNotIn('elif [[ -s tmp/.youtube_chat/last_send_error.txt', status)
+
 
 # --- Hot streak extension ----------------------------------------------------
 
@@ -3628,6 +3640,8 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("best_type < min_best_type", dashboard)
         self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", dashboard)
         self.assertIn("no_candidate_cooldown", dashboard)
+        self.assertIn("if no_candidate_cooldown is not None", dashboard)
+        self.assertIn("no_candidate_age = None", status)
         self.assertIn('"status": "no_candidate"', dashboard)
         self.assertIn("threshold c>=", dashboard)
         self.assertIn("escape_ai direct", dashboard)
@@ -6159,8 +6173,8 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertIn("objective_reasons = []", regression)
         self.assertIn("lost_soviet_path", regression)
-        self.assertIn("lost_soviet_frontier_path", regression)
-        self.assertIn("lost_recurrent_russia_path", regression)
+        self.assertIn("stage_achievement_regression", regression)
+        self.assertIn("STAGE_GATE_SEQUENCE", regression)
         self.assertNotIn('objective_reasons.append("lost_russia_path")', regression)
         self.assertIn('objective_reasons.append("lost_soviet_path")', regression)
         self.assertIn("def stage_gate_regression_reason", regression)
@@ -6170,25 +6184,30 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("mode=objective_regression", regression)
         self.assertIn("mode=early_objective_regression", regression)
         self.assertIn("early_objective_min_games", regression)
-        self.assertIn("early_objective_lost_russia_low_stage_min_games", regression)
-        self.assertIn("EARLY_OBJECTIVE_LOST_RUSSIA_LOW_STAGE_MIN_GAMES", config)
-        self.assertIn("fresh_objective_regression", regression)
-        self.assertIn("fresh_current_objective", regression)
-        self.assertIn("prefer_requested_rollback", regression)
+        self.assertIn("stage_achievement_regression_reason", regression)
+        self.assertIn("STAGE_ACHIEVEMENT_GATE_TYPES", regression)
+        self.assertIn("queue_fresh_objective_same_hash_lock_if_needed", improve)
+        self.assertIn("fresh_objective_same_hash_lock", improve)
         self.assertIn("requested_rollback_hash", regression)
+        self.assertIn("DIRECT_ANCHOR_PROMOTION_OBJECTIVE_GUARD_ENABLED", config)
+        self.assertIn("DIRECT_ANCHOR_PROMOTION_OBJECTIVE_GUARD_ENABLED", regression)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES", config)
-        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_LOW_STAGE_MIN_GAMES", config)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_EARLY_LOCK_ENABLED", config)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE", config)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES", config)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE", config)
         self.assertIn("queue_fresh_objective_same_hash_lock_if_needed", improve)
         self.assertIn("fresh_objective_same_hash_lock", improve)
-        self.assertIn("seeded_same_hash_fresh_no_russia", improve)
+        self.assertIn("current_hash_fresh_no_russia", improve)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE", improve)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES", improve)
         self.assertIn("low_stage_miss", improve)
         self.assertIn("fresh_objective_trigger", improve)
+        self.assertIn("fresh_objective_reference", improve)
+        self.assertIn("archive_restart_candidate", improve)
+        self.assertIn("fresh_objective_anchor_russia_count", improve)
+        self.assertIn("fresh_objective_archive_restart_available", improve)
+        self.assertIn("route=${_fresh_improve_reason}", improve)
         self.assertIn("queue_fresh_objective_same_hash_lock_if_needed || true", improve)
         self.assertIn("early_objective_min_best_type", regression)
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
@@ -6730,9 +6749,8 @@ PY
         self.assertIn("near_score_leader = (", regression)
         self.assertIn("objective_key = _objective_tuple(h, data)", regression)
         self.assertIn("*objective_key,\n        selection_score", regression)
-        self.assertIn("lost_soviet_frontier_path", regression)
-        self.assertIn("anchor_obj_tuple[2] > 0 and current_obj_tuple[2] <= 0", regression)
-        self.assertIn("anchor_obj_tuple[3] > 0 and current_obj_tuple[3] <= 0", regression)
+        self.assertIn("int(bool(p.get(\"soviet_frontier\", False)))", regression)
+        self.assertIn("Single Russia is NOT a rung", regression)
 
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
@@ -7858,6 +7876,7 @@ _pick_best_rollback_candidate currentHash
         self.assertIn('CDP_ENDPOINT_FILE="tmp/cdp_endpoint.json"', watchdog)
         self.assertIn('ep=$(sed -n', watchdog)
         self.assertIn('"pid"', watchdog)
+        self.assertIn('if [ -n "$ep" ]; then', watchdog)
         self.assertIn('[ "$cwd" = "$SCRIPT_DIR" ] && echo "$ep"', watchdog)
         self.assertIn('crash="port消失"', watchdog)
 

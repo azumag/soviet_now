@@ -2346,9 +2346,26 @@ PY
 			comment_third_agent=""
 			comment_allow_claude_fallback=false
 		else
-			comment_primary_agent="${COMMENT_MAIN_AGENT:-opencode:qwen35pgo}"
-			comment_second_agent="${COMMENT_MAIN_FALLBACK:-qwen35e}"
-			comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
+			# COMMENT_AGENTS が設定されていればリストから primary/second/third を展開
+			if [ -n "${COMMENT_AGENTS:-}" ]; then
+				local _ca_arr=()
+				local _IFS_save="$IFS"
+				IFS=',' read -ra _ca_arr <<< "$COMMENT_AGENTS"
+				IFS="$_IFS_save"
+				comment_primary_agent="${_ca_arr[0]:-}"
+				comment_primary_agent="${comment_primary_agent#"${comment_primary_agent%%[![:space:]]*}"}"
+				comment_primary_agent="${comment_primary_agent%"${comment_primary_agent##*[![:space:]]}"}"
+				comment_second_agent="${_ca_arr[1]:-}"
+				comment_second_agent="${comment_second_agent#"${comment_second_agent%%[![:space:]]*}"}"
+				comment_second_agent="${comment_second_agent%"${comment_second_agent##*[![:space:]]}"}"
+				comment_third_agent="${_ca_arr[2]:-}"
+				comment_third_agent="${comment_third_agent#"${comment_third_agent%%[![:space:]]*}"}"
+				comment_third_agent="${comment_third_agent%"${comment_third_agent##*[![:space:]]}"}"
+			else
+				comment_primary_agent="${COMMENT_MAIN_AGENT:-opencode:qwen35pgo}"
+				comment_second_agent="${COMMENT_MAIN_FALLBACK:-qwen35e}"
+				comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-haiku}"
+			fi
 			case "${COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK:-0}" in
 			1 | true | TRUE | yes | YES) comment_allow_claude_fallback=true ;;
 			*) comment_allow_claude_fallback=false ;;

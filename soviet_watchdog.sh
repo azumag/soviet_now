@@ -105,7 +105,7 @@ target_pids() {
 	done
 	[ "${found:-0}" = "1" ] && return 0
 	ep=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CDP_ENDPOINT_FILE" 2>/dev/null | head -1)
-	if [ -n "$ep" ] && kill -0 "$ep" 2>/dev/null; then
+	if [ -n "$ep" ]; then
 		cwd=$(lsof -a -p "$ep" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
 		[ "$cwd" = "$SCRIPT_DIR" ] && echo "$ep"
 	fi

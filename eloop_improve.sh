@@ -7,7 +7,11 @@
 #
 # Usage: ./eloop_improve.sh <history_files> <scores> <soviet> <game_num> <turns>
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${SOREN_SCRIPT_ROOT:-}" ]; then
+	SCRIPT_DIR="$(cd "$SOREN_SCRIPT_ROOT" && pwd)"
+else
+	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 cd "$SCRIPT_DIR"
 HOST_ROOT="$SCRIPT_DIR"
 CHANGE_LOG_FILE="logs/change_log.txt"
@@ -42,10 +46,18 @@ export RUN_CMD_LOG_FILE
 _improve_cleanup_active_ai() {
 	local active_pid="${RUN_CMD_ACTIVE_PID:-0}"
 	case "$active_pid" in
-	'' | 0 | *[!0-9]*) return 0 ;;
+	'' | 0 | *[!0-9]*) ;;
+	*)
+		_stop_loop_descendants "$active_pid"
+		_stop_pid_with_fallback "$active_pid" "improve_ai_child"
+		;;
 	esac
-	_stop_loop_descendants "$active_pid"
-	_stop_pid_with_fallback "$active_pid" "improve_ai_child"
+	local runtime_script="${ELOOP_RUNTIME_SCRIPT_FILE:-}"
+	case "$runtime_script" in
+	"$SCRIPT_DIR"/tmp/state/eloop_improve_runtime.*.sh)
+		rm -f "$runtime_script" 2>/dev/null || true
+		;;
+	esac
 }
 
 _improve_handle_signal() {
@@ -1902,7 +1914,7 @@ for h, entry in (rolling or {}).items():
         soviet = 1
     if anchor_soviet > 0 and soviet <= 0:
         continue
-    if anchor_russia > 0 and not reliable_russia:
+    if anchor_russia > 0 and not (reliable_russia or frontier_candidate or russia > 0):
         continue
     # archive_restart is an objective escape mechanism, not a plain score
     # sampler. Avoid spending escape attempts on old hashes with no recorded

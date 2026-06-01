@@ -1174,6 +1174,17 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
     chosen_geometry_replacement = geometry_underestimate_replacement_for(chosen)
 
+    if (
+        chosen.get("merge_grade", "NO") == "DIRECT"
+        and chosen.get("crosses_deadline", False)
+        and not risky_merge_result_deadline(chosen)
+    ):
+        # A DIRECT merge is the one deadline-crossing move that can remove the
+        # risky contact immediately. Older runtime safety could downgrade this
+        # to a generic NO safe landing whenever such a landing existed, which
+        # helped survival but starved the high-type merge route needed for type16.
+        return decision
+
     if chosen_headroom_replacement is not None:
         replacement = chosen_headroom_replacement
         replacement_source = "deadline_headroom"

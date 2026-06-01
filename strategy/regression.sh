@@ -1551,6 +1551,17 @@ existing_progress = objective_progress(existing)
 current_progress = objective_progress(current_data)
 if int(existing_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
     raise SystemExit(1)
+objective_guard_enabled = str(os.environ.get("DIRECT_ANCHOR_PROMOTION_OBJECTIVE_GUARD_ENABLED", "1")).strip().lower() not in {"0", "false", "no", "off"}
+existing_russia_path = (
+    int(existing_progress.get("russia_count", 0) or 0) > 0
+    or int(existing_progress.get("best_max_type", 0) or 0) >= 15
+)
+current_russia_path = (
+    int(current_progress.get("russia_count", 0) or 0) > 0
+    or int(current_progress.get("best_max_type", 0) or 0) >= 15
+)
+if objective_guard_enabled and existing_russia_path and not current_russia_path:
+    raise SystemExit(1)
 
 payload = {
     "hash": current_hash,
@@ -4286,6 +4297,8 @@ PY
 		if _promote_current_strategy_to_anchor "$strategy_hash"; then
 			_clear_active_branch
 			log "[BRANCH] current strategy promoted to anchor: ${strategy_hash}"
+		else
+			log "[BRANCH] anchor promotion suppressed by objective guard: ${strategy_hash}"
 		fi
 		return 1
 	fi

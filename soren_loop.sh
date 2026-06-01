@@ -79,8 +79,19 @@ _soren_lock_pid_alive() {
 if ! mkdir "$LOCKDIR" 2>/dev/null; then
 	old_pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
 	if _soren_lock_pid_alive "$old_pid"; then
-		echo "ERROR: soren_loop.sh is already running (PID=$old_pid). Aborting."
-		exit 1
+		# Supervisor/ad-hoc retries can race with the live loop.  Do not pollute
+		# the game log; record a rate-limited breadcrumb for diagnosis instead.
+		dup_log="tmp/debug/soren_loop_duplicate_start.log"
+		dup_stamp="tmp/state/soren_loop_duplicate_start_last"
+		now_epoch=$(date +%s)
+		last_epoch=$(cat "$dup_stamp" 2>/dev/null || echo 0)
+		case "$last_epoch" in ''|*[!0-9]*) last_epoch=0 ;; esac
+		if [ "$((now_epoch - last_epoch))" -ge "${SOREN_LOOP_DUPLICATE_LOG_INTERVAL:-60}" ]; then
+			mkdir -p tmp/debug tmp/state 2>/dev/null || true
+			echo "$now_epoch" >"$dup_stamp" 2>/dev/null || true
+			printf '[%s] duplicate start ignored: live PID=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$old_pid" >>"$dup_log" 2>/dev/null || true
+		fi
+		exit 0
 	fi
 	# stale lock — force acquire
 	rm -rf "$LOCKDIR"

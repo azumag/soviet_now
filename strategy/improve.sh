@@ -69,17 +69,23 @@ _archive_restart_should_run() {
 	[ "$wildcard_escape_streak" -ge "${ARCHIVE_RESTART_STREAK:-3}" ] || return 1
 	local marker="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-tmp/state/.archive_restart_no_candidate}"
 	local cooldown="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC:-900}"
+	local marker_candidate_override=0
 	if [ -f "$marker" ]; then
 		local marker_m now age
 		marker_m=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
 		now=$(date +%s)
 		age=$((now - marker_m))
 		if [ "$marker_m" -gt 0 ] && [ "$age" -lt "$cooldown" ]; then
-			log "[ARCHIVE-RESTART] no_candidate cooldown active age=${age}s/${cooldown}s → archive_restart を飛ばして次の脱出手段へ"
-			return 1
+			if _archive_restart_has_candidate; then
+				marker_candidate_override=1
+				log "[ARCHIVE-RESTART] no_candidate cooldown stale age=${age}s/${cooldown}s but candidate now exists → archive_restart を許可"
+			else
+				log "[ARCHIVE-RESTART] no_candidate cooldown active age=${age}s/${cooldown}s → archive_restart を飛ばして次の脱出手段へ"
+				return 1
+			fi
 		fi
 	fi
-	if ! _archive_restart_has_candidate; then
+	if [ "$marker_candidate_override" != "1" ] && ! _archive_restart_has_candidate; then
 		mkdir -p "$(dirname "$marker")" 2>/dev/null || true
 		printf '%s\n' "preflight_no_candidate $(date +%s)" >"$marker" 2>/dev/null || true
 		log "[ARCHIVE-RESTART] preflight no candidate → archive_restart を飛ばして次の脱出手段へ"
@@ -242,7 +248,7 @@ for h, entry in (rolling or {}).items():
         soviet = 1
     if anchor_soviet > 0 and soviet <= 0:
         continue
-    if anchor_russia > 0 and not reliable_russia:
+    if anchor_russia > 0 and not (reliable_russia or frontier_candidate or russia > 0):
         continue
     if min_best_type > 0 and not reliable_russia and soviet <= 0 and not frontier_candidate and best_type < min_best_type:
         continue
@@ -1325,24 +1331,34 @@ queue_fresh_objective_same_hash_lock_if_needed() {
 	[ ! -f "$IMPROVE_LOCK_FILE" ] || return 1
 	[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] || return 1
 	! _is_improve_running || return 1
+	local _fresh_active_branch=0
 	if _has_active_branch; then
-		return 1
+		_fresh_active_branch=1
 	fi
 
 	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
-	local _fresh_probe _fresh_ok _fresh_rest _fresh_n _seeded_n _hist_russia _fresh_russia _fresh_best _fresh_t14_peak _fresh_hash _fresh_trigger _fresh_acc_count
+	local _fresh_archive_restart_preflight=0
+	if _archive_restart_should_run 999; then
+		_fresh_archive_restart_preflight=1
+	fi
+	if [ "$_fresh_active_branch" = "1" ] && [ "$_fresh_archive_restart_preflight" != "1" ]; then
+		return 1
+	fi
+	local _fresh_probe _fresh_ok _fresh_rest _fresh_n _seeded_n _hist_russia _fresh_russia _fresh_best _fresh_t14_peak _fresh_hash _fresh_trigger _fresh_acc_count _fresh_anchor_russia _fresh_anchor_best _fresh_reference
 	_fresh_probe=$(python3 - \
 		"$ACCUMULATED_GAMES_FILE" \
 		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
+		"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" \
+		"${_fresh_archive_restart_preflight:-0}" \
 		"${CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" \
 		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE:-14}" \
 		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES:-3}" \
-		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE:-13}" <<'PY' 2>/dev/null || echo "0:0:0:0:0:0:0:0:none:0"
+		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE:-13}" <<'PY' 2>/dev/null || echo "0:0:0:0:0:0:0:0:none:0:0:0:none"
 import json
 import os
 import sys
 
-acc_file, current_file, min_games_raw, min_best_raw, low_stage_min_raw, low_stage_max_raw = sys.argv[1:7]
+acc_file, current_file, anchor_file, archive_restart_available_raw, min_games_raw, min_best_raw, low_stage_min_raw, low_stage_max_raw = sys.argv[1:9]
 
 def load(path):
     try:
@@ -1398,6 +1414,7 @@ def archive_progress(path):
 
 acc = load(acc_file)
 current = load(current_file)
+anchor = load(anchor_file)
 min_games = max(1, as_int(min_games_raw, 4))
 min_best = max(1, as_int(min_best_raw, 14))
 low_stage_min_games = max(1, as_int(low_stage_min_raw, 3))
@@ -1410,6 +1427,20 @@ seeded_n = as_int(current.get("_seeded_score_count", 0))
 fresh_n = as_int(current.get("_fresh_score_count", 0))
 historical_russia = as_int(current.get("russia_count", 0))
 historical_best = as_int(current.get("best_max_type", 0))
+anchor_russia = as_int(anchor.get("russia_count", 0))
+anchor_best = as_int(anchor.get("best_max_type", 0))
+archive_restart_available = as_int(archive_restart_available_raw)
+objective_reference = "none"
+if historical_russia > 0:
+    objective_reference = "historical_russia"
+elif historical_best >= 15:
+    objective_reference = "historical_best"
+elif anchor_russia > 0:
+    objective_reference = "anchor_russia"
+elif anchor_best >= 15:
+    objective_reference = "anchor_best"
+elif archive_restart_available > 0:
+    objective_reference = "archive_restart_candidate"
 
 eligible = False
 fresh_best = 0
@@ -1420,10 +1451,9 @@ if (
     acc_hash
     and current_hash
     and acc_hash == current_hash
-    and seeded_n > 0
     and fresh_n >= sample_floor
     and acc_count >= sample_floor
-    and (historical_russia > 0 or historical_best >= 15)
+    and objective_reference != "none"
 ):
     archives = [str(x) for x in (current.get("_recent_archives") or []) if str(x)]
     fresh_archives = archives[-fresh_n:] if fresh_n > 0 else []
@@ -1453,7 +1483,8 @@ if (
 
 print(
     f"{1 if eligible else 0}:{fresh_n}:{seeded_n}:{historical_russia}:"
-    f"{fresh_russia}:{fresh_best}:{fresh_t14_peak}:{current_hash}:{trigger}:{acc_count}"
+    f"{fresh_russia}:{fresh_best}:{fresh_t14_peak}:{current_hash}:{trigger}:{acc_count}:"
+    f"{anchor_russia}:{anchor_best}:{objective_reference}"
 )
 PY
 	)
@@ -1474,20 +1505,36 @@ PY
 	_fresh_hash="${_fresh_rest%%:*}"
 	_fresh_rest="${_fresh_rest#*:}"
 	_fresh_trigger="${_fresh_rest%%:*}"
-	_fresh_acc_count="${_fresh_rest##*:}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_acc_count="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_anchor_russia="${_fresh_rest%%:*}"
+	_fresh_rest="${_fresh_rest#*:}"
+	_fresh_anchor_best="${_fresh_rest%%:*}"
+	_fresh_reference="${_fresh_rest##*:}"
 	[ "$_fresh_ok" = "1" ] || return 1
 
-	log "[FRESH_OBJECTIVE] seeded同一hashの再評価でfresh R0 (hash=${_fresh_hash:0:8} fresh=${_fresh_n}/${MIN_GAMES_BEFORE_IMPROVE:-12} seeded=${_seeded_n} histR=${_hist_russia} fresh_best=T${_fresh_best} T14peak=${_fresh_t14_peak} trigger=${_fresh_trigger}) → 早期改善ロック作成"
+	local _fresh_improve_reason="normal" _fresh_archive_restart_available="${_fresh_archive_restart_preflight:-0}"
+	if [ "${_fresh_archive_restart_available:-0}" = "1" ]; then
+		_fresh_improve_reason="archive_restart"
+	fi
+
+	log "[FRESH_OBJECTIVE] 現行hashのfresh目的再評価でR0 (hash=${_fresh_hash:0:8} fresh=${_fresh_n}/${MIN_GAMES_BEFORE_IMPROVE:-12} seeded=${_seeded_n} ref=${_fresh_reference} histR=${_hist_russia} anchorR=${_fresh_anchor_russia} anchorBest=T${_fresh_anchor_best} fresh_best=T${_fresh_best} T14peak=${_fresh_t14_peak} trigger=${_fresh_trigger} route=${_fresh_improve_reason}) → 早期改善ロック作成"
 	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 	cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 	enrich_accumulated_game_metadata "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 	FRESH_OBJECTIVE_SAMPLE_N="${_fresh_n:-0}" \
 		FRESH_OBJECTIVE_SEEDED_N="${_seeded_n:-0}" \
 		FRESH_OBJECTIVE_HIST_RUSSIA="${_hist_russia:-0}" \
+		FRESH_OBJECTIVE_ANCHOR_RUSSIA="${_fresh_anchor_russia:-0}" \
+		FRESH_OBJECTIVE_ANCHOR_BEST="${_fresh_anchor_best:-0}" \
 		FRESH_OBJECTIVE_FRESH_RUSSIA="${_fresh_russia:-0}" \
 		FRESH_OBJECTIVE_FRESH_BEST="${_fresh_best:-0}" \
 		FRESH_OBJECTIVE_T14_PEAK="${_fresh_t14_peak:-0}" \
 		FRESH_OBJECTIVE_TRIGGER="${_fresh_trigger:-}" \
+		FRESH_OBJECTIVE_REFERENCE="${_fresh_reference:-none}" \
+		FRESH_OBJECTIVE_IMPROVE_REASON="${_fresh_improve_reason:-normal}" \
+		FRESH_OBJECTIVE_ARCHIVE_RESTART_AVAILABLE="${_fresh_archive_restart_available:-0}" \
 		python3 - "$IMPROVE_LOCK_FILE" <<'PY' 2>/dev/null || true
 import json
 import os
@@ -1505,21 +1552,25 @@ def as_int(name):
         return 0
 
 data["started_at"] = int(time.time())
-data["improve_reason"] = "normal"
+data["improve_reason"] = os.environ.get("FRESH_OBJECTIVE_IMPROVE_REASON", "normal") or "normal"
 data["fresh_objective_same_hash_lock"] = True
-data["fresh_objective_reason"] = "seeded_same_hash_fresh_no_russia"
+data["fresh_objective_reason"] = "current_hash_fresh_no_russia"
 data["fresh_objective_sample_n"] = as_int("FRESH_OBJECTIVE_SAMPLE_N")
 data["fresh_objective_seeded_score_count"] = as_int("FRESH_OBJECTIVE_SEEDED_N")
 data["fresh_objective_historical_russia_count"] = as_int("FRESH_OBJECTIVE_HIST_RUSSIA")
+data["fresh_objective_anchor_russia_count"] = as_int("FRESH_OBJECTIVE_ANCHOR_RUSSIA")
+data["fresh_objective_anchor_best_max_type"] = as_int("FRESH_OBJECTIVE_ANCHOR_BEST")
 data["fresh_objective_fresh_russia_count"] = as_int("FRESH_OBJECTIVE_FRESH_RUSSIA")
 data["fresh_objective_fresh_best_max_type"] = as_int("FRESH_OBJECTIVE_FRESH_BEST")
 data["fresh_objective_t14_peak"] = as_int("FRESH_OBJECTIVE_T14_PEAK")
 data["fresh_objective_trigger"] = os.environ.get("FRESH_OBJECTIVE_TRIGGER", "")
+data["fresh_objective_reference"] = os.environ.get("FRESH_OBJECTIVE_REFERENCE", "none") or "none"
+data["fresh_objective_archive_restart_available"] = bool(as_int("FRESH_OBJECTIVE_ARCHIVE_RESTART_AVAILABLE"))
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f)
 PY
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh worker "fresh目的再評価 queued (game ${GAME_NUM:-?})" "seed済みhash=${_fresh_hash:0:8} がfresh ${_fresh_n}本でR0/T${_fresh_best}止まり。通常満了を待たず改善へ。" "warn" >/dev/null 2>&1 || true
+		./overlay_notify.sh worker "fresh目的再評価 queued (game ${GAME_NUM:-?})" "現行hash=${_fresh_hash:0:8} がfresh ${_fresh_n}本でR0/T${_fresh_best}止まり。reference=${_fresh_reference} route=${_fresh_improve_reason}。" "warn" >/dev/null 2>&1 || true
 	fi
 	_clear_accumulated_data
 	return 0
@@ -2095,7 +2146,31 @@ _start_improvement_job() {
 	[ "${LAST_TURNS:-0}" -eq 0 ] && LAST_TURNS=$(cat "tmp/state/last_turns.txt" 2>/dev/null || echo 0)
 
 	# バックグラウンド改善開始 (reason は wildcard モード判定のため eloop_improve.sh に伝搬)
-	RUN_CMD_LOG_FILE="$improve_ai_log" ./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason" &
+	# 実行中にCodex/人間が eloop_improve.sh を編集しても、bash が後半を読み直して
+	# ジョブを壊さないよう、起動時点のスナップショットを固定実行する。
+	local runtime_root runtime_dir runtime_script
+	runtime_root="$PWD"
+	runtime_dir="${TMP_STATE_DIR:-tmp/state}"
+	case "$runtime_dir" in
+	/*) ;;
+	*) runtime_dir="$runtime_root/$runtime_dir" ;;
+	esac
+	mkdir -p "$runtime_dir" 2>/dev/null || true
+	runtime_script=$(mktemp "$runtime_dir/eloop_improve_runtime.XXXXXX.sh" 2>/dev/null || true)
+	if [ -n "$runtime_script" ] && cp ./eloop_improve.sh "$runtime_script" 2>/dev/null; then
+		chmod +x "$runtime_script" 2>/dev/null || true
+	else
+		runtime_script="$runtime_root/eloop_improve.sh"
+	fi
+	if ! bash -n "$runtime_script" 2>>"$improve_ai_log"; then
+		log "[IMPROVE] eloop runtime snapshot syntax invalid → 起動中止 (${runtime_script})"
+		case "$runtime_script" in
+		"$runtime_root"/tmp/state/eloop_improve_runtime.*.sh) rm -f "$runtime_script" 2>/dev/null || true ;;
+		esac
+		_release_spawn_lock
+		return 1
+	fi
+	RUN_CMD_LOG_FILE="$improve_ai_log" SOREN_SCRIPT_ROOT="$runtime_root" ELOOP_RUNTIME_SCRIPT_FILE="$runtime_script" bash "$runtime_script" "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason" &
 	IMPROVE_PID=$!
 	local _pid_birth_epoch
 	_pid_birth_epoch=$(ps -p "$IMPROVE_PID" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)

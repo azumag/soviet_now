@@ -680,3 +680,131 @@ ai_generate() {
 	log "[${label}] all agents failed (primary=$primary, fallback=${fallback:-none})" >&2
 	return 1
 }
+
+# === バックオフ付きエージェントリスト ===
+
+_ai_backoff_dir() {
+	if [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/ai_backoff\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/ai_backoff\n'
+	fi
+}
+
+# _ai_backoff_check AGENT  → 0: 使用可 / 1: バックオフ中
+_ai_backoff_check() {
+	local agent="$1" key bf_file now bf_until
+	key=$(_ai_lock_sanitize_key "$agent")
+	bf_file="$(_ai_backoff_dir)/${key}"
+	[ -f "$bf_file" ] || return 0
+	now=$(date +%s)
+	bf_until=$(cat "$bf_file" 2>/dev/null || echo "0")
+	case "$bf_until" in ''|*[!0-9]*) bf_until=0 ;; esac
+	if [ "$now" -lt "$bf_until" ]; then
+		return 1
+	fi
+	rm -f "$bf_file" 2>/dev/null || true
+	return 0
+}
+
+# _ai_backoff_set AGENT [SEC]
+_ai_backoff_set() {
+	local agent="$1" backoff_sec="${2:-${AI_AGENT_BACKOFF_SEC:-600}}"
+	local key bf_file bf_until
+	key=$(_ai_lock_sanitize_key "$agent")
+	mkdir -p "$(_ai_backoff_dir)" 2>/dev/null || true
+	bf_file="$(_ai_backoff_dir)/${key}"
+	bf_until=$(( $(date +%s) + backoff_sec ))
+	printf '%s\n' "$bf_until" > "$bf_file" 2>/dev/null || true
+}
+
+# _ai_backoff_remaining AGENT  → 残りバックオフ秒数 (0: バックオフなし)
+_ai_backoff_remaining() {
+	local agent="$1" key bf_file now bf_until rem
+	key=$(_ai_lock_sanitize_key "$agent")
+	bf_file="$(_ai_backoff_dir)/${key}"
+	[ -f "$bf_file" ] || { printf '0\n'; return; }
+	now=$(date +%s)
+	bf_until=$(cat "$bf_file" 2>/dev/null || echo "0")
+	case "$bf_until" in ''|*[!0-9]*) bf_until=0 ;; esac
+	rem=$(( bf_until - now ))
+	[ "$rem" -lt 0 ] && rem=0
+	printf '%s\n' "$rem"
+}
+
+# ai_generate_list LABEL PROMPT_FILE AGENT_LIST [TIMEOUT]
+#   AGENT_LIST: カンマ区切りのエージェント識別子（優先度順）
+#     例: "opencode:minimax-m3,opencode:qwen35pgo,qwen35e,opencode:glmflash"
+#   バックオフ中のエージェントをスキップし、失敗したエージェントにバックオフを設定する。
+#   全エージェントがバックオフ中の場合は最古のバックオフを強制解除して再試行する。
+#   stdout: 生成テキスト
+#   AI_GENERATE_LAST_AGENT に実際に使用したエージェントを設定
+AI_GENERATE_LIST_LAST_AGENT=""
+
+ai_generate_list() {
+	local label="$1" prompt_file="$2" agent_list_raw="$3"
+	local timeout_override="${4:-}"
+	local backoff_sec="${AI_AGENT_BACKOFF_SEC:-600}"
+	local _bd agent output rc _rem
+
+	AI_GENERATE_LAST_AGENT=""
+	AI_GENERATE_LIST_LAST_AGENT=""
+
+	_bd=$(_ai_backoff_dir)
+	mkdir -p "$_bd" 2>/dev/null || true
+
+	# カンマ区切りをリストに展開 (bash配列)
+	local agents=()
+	local _IFS_save="$IFS"
+	IFS=',' read -ra agents <<< "$agent_list_raw"
+	IFS="$_IFS_save"
+
+	local skipped_backoff=()
+
+	# 第1パス: バックオフ中でないエージェントを順に試行
+	for agent in "${agents[@]}"; do
+		# 前後の空白を除去
+		agent="${agent#"${agent%%[![:space:]]*}"}"
+		agent="${agent%"${agent##*[![:space:]]}"}"
+		[ -z "$agent" ] && continue
+
+		if ! _ai_backoff_check "$agent"; then
+			_rem=$(_ai_backoff_remaining "$agent")
+			log "[${label}] backoff skip: ${agent} (${_rem}s remaining)" >&2
+			skipped_backoff+=("$agent")
+			continue
+		fi
+
+		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
+		rc=$?
+		if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+			AI_GENERATE_LAST_AGENT="$agent"
+			AI_GENERATE_LIST_LAST_AGENT="$agent"
+			printf '%s' "$output"
+			return 0
+		fi
+		log "[${label}] ${agent} failed → backoff ${backoff_sec}s" >&2
+		_ai_backoff_set "$agent" "$backoff_sec"
+	done
+
+	# 第2パス: 全エージェントがバックオフ中の場合、強制再試行
+	if [ ${#skipped_backoff[@]} -gt 0 ]; then
+		for agent in "${skipped_backoff[@]}"; do
+			log "[${label}] force retry (backoff overridden): ${agent}" >&2
+			output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
+			rc=$?
+			if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+				AI_GENERATE_LAST_AGENT="$agent"
+				AI_GENERATE_LIST_LAST_AGENT="$agent"
+				local _key
+				_key=$(_ai_lock_sanitize_key "$agent")
+				rm -f "${_bd}/${_key}" 2>/dev/null || true
+				printf '%s' "$output"
+				return 0
+			fi
+		done
+	fi
+
+	log "[${label}] all agents failed (list=${agent_list_raw})" >&2
+	return 1
+}

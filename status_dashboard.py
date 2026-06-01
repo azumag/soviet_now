@@ -1335,6 +1335,7 @@ def load_archive_restart_candidate():
         "ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE",
         ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE,
     ))
+    no_candidate_cooldown = None
     if no_candidate_marker.exists():
         try:
             ttl = int(os.getenv("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", "900") or 900)
@@ -1345,7 +1346,7 @@ def load_archive_restart_candidate():
         except Exception:
             age = ttl + 1
         if age < ttl:
-            return {"status": "no_candidate_cooldown", "age": fmt_age(age), "ttl": fmt_age(ttl)}
+            no_candidate_cooldown = {"status": "no_candidate_cooldown", "age": fmt_age(age), "ttl": fmt_age(ttl)}
     rejected = set()
     p = Path(REJECTED_HASH_META_FILE)
     if p.exists():
@@ -1474,6 +1475,8 @@ def load_archive_restart_candidate():
         rows.append((objective_score, h, metrics, russia, soviet, best_type, origin_type))
     rows.sort(reverse=True)
     if not rows:
+        if no_candidate_cooldown is not None:
+            return no_candidate_cooldown
         blockers = {}
 
         def bump(name):

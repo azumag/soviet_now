@@ -1470,7 +1470,7 @@ _radio_generate_and_play() {
 	local talk="" prompt_snapshot debug_dump="" provider_used=""
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
-	local radio_prepass_agent=""
+	local radio_prepass_agent="" radio_agents_list=""
 	local radio_allow_claude_fallback=true
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
@@ -1479,10 +1479,11 @@ _radio_generate_and_play() {
 		radio_third_agent=""
 		radio_allow_claude_fallback=false
 	else
+		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-opencode:minimax-m3}"
+		radio_agents_list="${RADIO_AGENTS:-opencode:minimax-m3,opencode:qwen35pgo,qwen35e,haiku}"
+		# 後方互換 (soren91モード向け)
 		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode:qwen35pgo}"
-		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-opencode:minimax}"
-		radio_second_agent="${RADIO_MAIN_FALLBACK:-gemma4e}"
-		radio_third_agent="${RADIO_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
+		radio_second_agent="${RADIO_MAIN_FALLBACK:-qwen35e}"
 	fi
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
@@ -1540,24 +1541,23 @@ PREPASS_APPEND
 
 		talk=""
 		provider_used=""
-		talk=$(_run_radio_agent "$radio_primary_agent" "$_current_prompt_file")
-		[ -n "$talk" ] && provider_used="$radio_primary_agent" && log "[RADIO:${corner_name}] ${radio_primary_agent} OK"
-		if [ -z "$talk" ]; then
-			log "[RADIO:${corner_name}] ${radio_primary_agent} fail -> ${radio_second_agent}"
-			talk=$(_run_radio_agent "$radio_second_agent" "$_current_prompt_file")
-			[ -n "$talk" ] && provider_used="$radio_second_agent" && log "[RADIO:${corner_name}] ${radio_second_agent} OK"
+		local _radio_gen_list
+		if [ "$host_mode_generated" = "soren91" ]; then
+			_radio_gen_list="${radio_primary_agent},${radio_second_agent}"
+		else
+			_radio_gen_list="${radio_agents_list}"
 		fi
-		local _radio_fallback_source="$radio_second_agent"
+		talk=$(ai_generate_list "RADIO:${corner_name}" "$_current_prompt_file" "$_radio_gen_list")
+		if [ -n "$talk" ]; then
+			provider_used="$AI_GENERATE_LAST_AGENT"
+			log "[RADIO:${corner_name}] ${provider_used} OK"
+		fi
+		local _radio_fallback_source="${AI_GENERATE_LAST_AGENT:-all_failed}"
 		if [ -z "$talk" ] && [ "$radio_allow_claude_fallback" = "true" ]; then
-			log "[RADIO:${corner_name}] ${radio_second_agent} fail -> claude:${RADIO_CLAUDE_MODEL}"
+			log "[RADIO:${corner_name}] all agents fail -> claude:${RADIO_CLAUDE_MODEL}"
 			talk=$(_run_claude_radio "$_current_prompt_file")
 			[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}" && log "[RADIO:${corner_name}] claude:${RADIO_CLAUDE_MODEL} OK"
 			_radio_fallback_source="claude:${RADIO_CLAUDE_MODEL}"
-		fi
-		if [ -z "$talk" ] && [ -n "$radio_third_agent" ]; then
-			log "[RADIO:${corner_name}] ${_radio_fallback_source} fail -> ${radio_third_agent}"
-			talk=$(_run_radio_agent "$radio_third_agent" "$_current_prompt_file")
-			[ -n "$talk" ] && provider_used="$radio_third_agent" && log "[RADIO:${corner_name}] ${radio_third_agent} OK"
 		fi
 		# 使い終わったプロンプトを削除（保存コピーは除く）
 		[ "$_current_prompt_file" != "$_saved_prompt" ] && rm -f "$_current_prompt_file" 2>/dev/null || true

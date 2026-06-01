@@ -1201,15 +1201,14 @@ try:
     no_ttl = int(os.getenv("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", "900") or 900)
 except Exception:
     no_ttl = 900
+no_candidate_age = None
 if os.path.exists(no_candidate_file):
     try:
         age = max(0, int(time.time()) - int(os.path.getmtime(no_candidate_file)))
     except Exception:
         age = no_ttl + 1
     if age < no_ttl:
-        label = f"no cand cd {fmt_age(age)}/{fmt_age(no_ttl)} -> escape_ai"
-        print("archive_next_label=" + shlex.quote(label))
-        raise SystemExit
+        no_candidate_age = age
 
 rolling = load(rolling_file, {})
 anchor = load(anchor_file, {})
@@ -1272,6 +1271,10 @@ for h, entry in (rolling or {}).items():
 
 rows.sort(reverse=True)
 if not rows:
+    if no_candidate_age is not None:
+        label = f"no cand cd {fmt_age(no_candidate_age)}/{fmt_age(no_ttl)} -> escape_ai"
+        print("archive_next_label=" + shlex.quote(label))
+        raise SystemExit
     blockers = {}
     def bump(name):
         blockers[name] = blockers.get(name, 0) + 1
@@ -1845,10 +1848,27 @@ PY
 			radio_corner=$(echo "$last_radio_line" | grep -oE '\[[a-z_]+\]' | tail -1 | tr -d '[]')
 		fi
 
+	# --- ラジオ deferred キュー状態 ---
+	local radio_deferred_pending=0 radio_deferred_playing=0
+	if [[ -d tmp/.radio_deferred_queue ]]; then
+		radio_deferred_pending=$(find tmp/.radio_deferred_queue -name 'radio_*.txt' 2>/dev/null | wc -l | tr -d ' ')
+		radio_deferred_playing=$(find tmp/.radio_deferred_queue -name 'radio_*.playing' 2>/dev/null | wc -l | tr -d ' ')
+	fi
+
 	# radio_state の "playing" は予約済み/待機中も含むため、実再生状況で補正
 	local radio_effective_status="$radio_status"
+	if [[ "$radio_effective_status" == "queued" ]] && ! $say_running && [[ "$say_effective_status" != "playing" ]] && (( radio_deferred_pending == 0 && radio_deferred_playing == 0 )); then
+		radio_effective_status="idle"
+		radio_elapsed=""
+	fi
 	if [[ "$radio_effective_status" == "playing" ]]; then
-		if ! $say_running && [[ "$say_effective_status" != "playing" ]]; then
+		if ! $say_running && [[ "$say_effective_status" != "playing" ]] && ! $say_source_is_radio && (( radio_deferred_pending == 0 && radio_deferred_playing == 0 )); then
+			# audio_worker completion can leave .radio_state briefly at playing.
+			# With no live radio source and no deferred item, show it as idle
+			# instead of a misleading QUEUED timer.
+			radio_effective_status="idle"
+			radio_elapsed=""
+		elif ! $say_running && [[ "$say_effective_status" != "playing" ]]; then
 			radio_effective_status="queued"
 		elif [[ -n "$say_phase" ]] && [[ "$say_phase" != "playing" ]]; then
 			radio_effective_status="queued"
@@ -1867,13 +1887,6 @@ PY
 	local manual_audio_trigger_count=0
 	if [[ -d tmp/.manual_audio_triggers ]]; then
 		manual_audio_trigger_count=$(find tmp/.manual_audio_triggers -name '*.cmd' 2>/dev/null | wc -l | tr -d ' ')
-	fi
-
-	# --- ラジオ deferred キュー状態 ---
-	local radio_deferred_pending=0 radio_deferred_playing=0
-	if [[ -d tmp/.radio_deferred_queue ]]; then
-		radio_deferred_pending=$(find tmp/.radio_deferred_queue -name 'radio_*.txt' 2>/dev/null | wc -l | tr -d ' ')
-		radio_deferred_playing=$(find tmp/.radio_deferred_queue -name 'radio_*.playing' 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
 	# コメント生成プロセス (PIDファイル + 状態ファイル)
@@ -2057,10 +2070,12 @@ PY
 		youtube_pending=$(wc -l < tmp/.youtube_chat/pending.log | tr -d ' ')
 	fi
 	local youtube_error=""
+	local youtube_send_error=""
 	if [[ -s tmp/.youtube_chat/last_error.txt ]] && _recent_file_active "tmp/.youtube_chat/last_error.txt" 300; then
 		youtube_error=$(head -1 tmp/.youtube_chat/last_error.txt 2>/dev/null)
-	elif [[ -s tmp/.youtube_chat/last_send_error.txt ]] && _recent_file_active "tmp/.youtube_chat/last_send_error.txt" 300; then
-		youtube_error=$(head -1 tmp/.youtube_chat/last_send_error.txt 2>/dev/null)
+	fi
+	if [[ -s tmp/.youtube_chat/last_send_error.txt ]] && _recent_file_active "tmp/.youtube_chat/last_send_error.txt" 300; then
+		youtube_send_error=$(head -1 tmp/.youtube_chat/last_send_error.txt 2>/dev/null)
 	fi
 
 	# 最新コメント
@@ -2404,6 +2419,11 @@ PY
 		fi
 	else
 		printf "    ${C_DIM}○${C_RESET} Chat        ${C_DIM}DISABLED${C_RESET}\n"
+	fi
+
+	if [[ "${YOUTUBE_CHAT_SEND_ENABLED:-0}" == "1" && -n "$youtube_send_error" ]]; then
+		(( ${#youtube_send_error} > 48 )) && youtube_send_error="${youtube_send_error:0:45}..."
+		printf "    ${C_YELLOW}▸${C_RESET} Send        ${C_YELLOW}DEGRADED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$youtube_send_error"
 	fi
 
 	if (( youtube_pending > 0 )); then
