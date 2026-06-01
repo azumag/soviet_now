@@ -86,7 +86,12 @@ _soren91_switch_obs_layout() {
 	case "$mode" in
 	meriken)
 		if [ -n "$game_source" ] && [ -x "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ]; then
-			OBS_WINDOW_CAPTURE_AUDIO=0 OBS_WINDOW_AUDIO_SOURCE="${SOREN91_OBS_AUDIO_SOURCE:-soren91Audio}" OBS_WINDOW_AUDIO_SOURCE_ENABLED=1 "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" '91人対戦|ソ連ゲーム91' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
+			# soren91Audio (SCK app capture of com.google.chrome.for.testing) は方針B(専用窓)用。
+			# B 断念で soren91 は共有Chromeで動き、その音声は既に blackhole(BlackHole device capture)
+			# が取り込む。soren91Audio を有効化すると同じ Chrome 音声を二重取り込みして同志AIの声が
+			# 2重になるため無効化(ENABLED=0)。video窓キャプチャ(sorengame)は従来どおり。
+			# 詳細: memory obs-sorengame-shared-tab-foreground-stuck。
+			OBS_WINDOW_CAPTURE_AUDIO=0 OBS_WINDOW_AUDIO_SOURCE="${SOREN91_OBS_AUDIO_SOURCE:-soren91Audio}" OBS_WINDOW_AUDIO_SOURCE_ENABLED=0 "$ELOOP_LIB_DIR/obs_window_capture_source.sh" ensure soren "$game_source" '91人対戦|ソ連ゲーム91' com.google.chrome.for.testing show >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" || true
 		fi
 		"$SOREN91_OBS_CONTROL" batch soren show:"$meriken_show_sources" $s91_show_op hide:"$meriken_hide_sources" >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
 		_soren91_activate_shared_browser_tab meriken
