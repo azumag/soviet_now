@@ -103,6 +103,10 @@ cleanup_tmp_files() {
 	# --- AI dispatch デバッグログ: 2日より古いものを削除 ---
 	[ -d "${TMP_DEBUG_DIR:-tmp/debug}/ai_dispatch" ] && find "${TMP_DEBUG_DIR:-tmp/debug}/ai_dispatch" -type f -mtime +2 -delete 2>/dev/null
 
+	# --- ラジオWebグラウンディングキャッシュ: TTL 6時間なので1日より古いものを削除 ---
+	[ -d "tmp/.radio_grounding_cache" ] && find "tmp/.radio_grounding_cache" -type f -mtime +1 -delete 2>/dev/null
+	[ -d "tmp/cache/radio_grounding" ] && find "tmp/cache/radio_grounding" -type f -mtime +1 -delete 2>/dev/null
+
 	# --- 肥大ログ: 20MB超は直近5000行を残して inode 維持トリム (追記中の writer を壊さない) ---
 	local _lg _lgsz
 	for _lg in logs/improve_daemon.log logs/audio_worker.log logs/chat_worker.log logs/radio_worker.log logs/improve_monitor.log logs/deadline_misplacement_monitor.jsonl; do
