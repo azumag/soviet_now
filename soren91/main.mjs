@@ -146,24 +146,43 @@ async function launchStandaloneBrowserWithoutFocus(args) {
     try { mkdirSync(userDataDir, { recursive: true }); } catch {}
   };
 
+  // From the soren_loop daemon context, a bare `/usr/bin/open` returns 0 but the GUI
+  // launchd does not actually spawn Chrome (the daemon's bootstrap namespace lacks
+  // Aqua/GUI session access — same root as the crashpad bootstrap_check_in EPERM). The
+  // fix is to enter the console user's per-user GUI bootstrap via `launchctl asuser`,
+  // which is the documented way to launch a GUI app from a session-less context.
+  // Validated read-only: `launchctl asuser 501 open -g -n <app> ...` brings CDP up in
+  // ~2s, while a bare `open` from this context spawns no listenable instance at all.
+  // attempt 1 = asuser (correct for the daemon); attempt 2 = bare open (covers the case
+  // where this process already has session access, e.g. an interactive run).
+  const openArgs = [
+    '-g', '-n', appPath, '--args',
+    `--user-data-dir=${userDataDir}`,
+    `--remote-debugging-port=${port}`,
+    ...args,
+  ];
+  const uid = (typeof process.getuid === 'function') ? process.getuid() : 501;
+  const spawnOpen = (useAsuser) => new Promise((resolve) => {
+    if (useAsuser) {
+      execFile('/bin/launchctl', ['asuser', String(uid), '/usr/bin/open', ...openArgs], () => resolve());
+    } else {
+      execFile('/usr/bin/open', openArgs, () => resolve());
+    }
+  });
+
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     killLeftover();
     wipeProfile();
-    await new Promise((resolve) => {
-      execFile('/usr/bin/open', [
-        '-g', '-n', appPath, '--args',
-        `--user-data-dir=${userDataDir}`,
-        `--remote-debugging-port=${port}`,
-        ...args,
-      ], () => resolve());
-    });
+    const useAsuser = attempt === 1;
+    await spawnOpen(useAsuser);
+    const how = useAsuser ? `launchctl asuser ${uid} open -g` : 'open -g';
     try {
       const browser = await waitForCdpBrowser(port, 12000);
-      console.log(`[main] Chromium launched in background via macOS open -g (attempt ${attempt})`);
+      console.log(`[main] Chromium launched in background via macOS ${how} (attempt ${attempt})`);
       return browser;
     } catch (err) {
-      console.warn(`[main] standalone Chrome CDP did not open via open -g (attempt ${attempt}/${maxAttempts}): ${err.message}`);
+      console.warn(`[main] standalone Chrome CDP did not open via ${how} (attempt ${attempt}/${maxAttempts}): ${err.message}`);
       killLeftover();
       await sleep(2000);
     }
