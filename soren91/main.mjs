@@ -113,50 +113,51 @@ async function waitForCdpBrowser(port, timeoutMs = 10000) {
   throw lastError || new Error(`CDP did not become ready on port ${port}`);
 }
 
-async function launchStandaloneBrowserWithoutFocus(args, launchEnv) {
-  // Direct detached spawn (NOT macOS `open`) with an isolated HOME (launchEnv from
-  // standaloneChromeIsolation): a 2nd Chrome-for-Testing instance next to the main
-  // soviet_local Chrome aborts (SIGABRT) on the shared global crashpad settings.dat
-  // unless ~/Library is redirected via CFFIXED_USER_HOME, which `open`/LaunchServices
-  // cannot do (it forces the real HOME). The legacy SOREN91_CHROME_NO_FOCUS_LAUNCH=0
-  // opt-out referred to the old `open -g` path and must NOT skip this isolated spawn.
-  // Non-darwin has no shared-crashpad conflict → fall through to chromium.launch.
+async function launchStandaloneBrowserWithoutFocus(args) {
+  // Launch the 2nd Chrome-for-Testing via macOS `open -g` (LaunchServices). This
+  // registers the app in the user's GUI/Aqua session, which AVOIDS the
+  // +[NSApplication sharedApplication] -> RegisterApplication dispatch_once SIGABRT
+  // that a direct Playwright/spawn launch hits when started from the headless
+  // soren_loop daemon context (validated: a direct spawn works from an interactive
+  // shell but SIGABRTs under the daemon; `open -g` CDP comes up in ~1s).
+  // `open` uses the real HOME + the shared global crashpad
+  // (~/Library/.../Chrome for Testing/Crashpad); that is fine while that dir is
+  // healthy. If it ever returns EPERM on settings.dat (a corrupted/locked state
+  // from a prior crash storm), recovery is to clear that Crashpad dir.
+  // The legacy SOREN91_CHROME_NO_FOCUS_LAUNCH=0 opt-out forced the daemon-unsafe
+  // direct launch, so a 2nd Chrome could never start — ignore it here.
   if (process.platform !== 'darwin') return null;
 
-  const executablePath = process.env.SOREN91_CHROME_EXECUTABLE_PATH || chromium.executablePath();
-  if (!executablePath) return null;
+  const appPath = chromeAppPathFromExecutable(chromium.executablePath());
+  if (!appPath) return null;
 
   const port = Number.parseInt(process.env.SOREN91_STANDALONE_CDP_PORT || '', 10) || DEFAULT_STANDALONE_CDP_PORT;
   const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
   mkdirSync(userDataDir, { recursive: true });
-  const spawnArgs = [`--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`, ...args];
-
-  // Each cold-start must be LONE. macOS 26.5 / Chrome for Testing 145 aborts
-  // (SIGABRT in +[NSApplication sharedApplication] -> RegisterApplication
-  // dispatch_once) when a 2nd Chrome instance cold-starts while ANOTHER Chrome is
-  // concurrently starting or tearing down — e.g. a previous crashed attempt of this
-  // same launch, or a prior crash-looped run still dying. A single isolated launch
-  // with no concurrent Chrome reliably succeeds (validated 2026-06-02). So before
-  // EVERY attempt, kill + wait for any leftover standalone Chrome to be fully gone,
-  // making this spawn a lone cold-start.
   const killLeftover = () => { try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {} };
-  const leftoverAlive = () => { try { execSync(`pgrep -f ${JSON.stringify(userDataDir)}`, { stdio: ['ignore', 'pipe', 'ignore'] }); return true; } catch { return false; } };
-  const maxAttempts = 3;
+
+  const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     killLeftover();
-    for (let w = 0; w < 12 && leftoverAlive(); w++) await sleep(500);
-    const child = spawn(executablePath, spawnArgs, { env: launchEnv || process.env, detached: true, stdio: 'ignore' });
-    child.unref();
+    await new Promise((resolve) => {
+      execFile('/usr/bin/open', [
+        '-g', '-n', appPath, '--args',
+        `--user-data-dir=${userDataDir}`,
+        `--remote-debugging-port=${port}`,
+        ...args,
+      ], () => resolve());
+    });
     try {
       const browser = await waitForCdpBrowser(port, 12000);
-      console.log(`[main] Chromium launched in background (isolated lone cold-start, attempt ${attempt})`);
+      console.log(`[main] Chromium launched in background via macOS open -g (attempt ${attempt})`);
       return browser;
     } catch (err) {
-      console.warn(`[main] standalone Chrome CDP did not open (attempt ${attempt}/${maxAttempts}): ${err.message}`);
+      console.warn(`[main] standalone Chrome CDP did not open via open -g (attempt ${attempt}/${maxAttempts}): ${err.message}`);
+      killLeftover();
       await sleep(2000);
     }
   }
-  console.warn('[main] standalone direct spawn failed after retries; falling back to Playwright launch');
+  console.warn('[main] standalone open -g launch failed; falling back to Playwright launch');
   return null;
 }
 
@@ -187,43 +188,6 @@ function standaloneBrowserLaunchArgs(windowPosition) {
     '--autoplay-policy=no-user-gesture-required',
     'about:blank',
   ];
-}
-
-function standaloneChromeIsolation() {
-  // Isolate a 2nd Chrome-for-Testing instance's HOME so it doesn't abort (SIGABRT)
-  // on the shared global ~/Library/.../Chrome for Testing/Crashpad/settings.dat
-  // ("Operation not permitted"). The macOS-specific key is CFFIXED_USER_HOME
-  // (redirects ~/Library); HOME alone is insufficient. Mirrors wildcard_parallel.py
-  // prelaunch_candidate_chrome / soviet_local.mjs browserLaunchEnv (validated
-  // 2026-06-01: 2nd instance launched cleanly → unityroom → 27 turns of play, no crash).
-  // Also WIPE the profile each launch: a prior crash can corrupt chrome_home and
-  // make every subsequent launch abort too (observed as a consistent crash-loop
-  // that only cleared after wiping). soren91 standalone keeps no essential
-  // persistent state (signed game URL fetched fresh, name re-entered), so a clean
-  // profile each time is safe and self-heals a one-off crash.
-  const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR
-    || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
-  const chromeHome = process.env.SOREN91_CHROME_HOME || join(userDataDir, 'chrome_home');
-  const configHome = join(chromeHome, '.config');
-  const cacheHome = join(chromeHome, '.cache');
-  const tmpDir = join(userDataDir, 'tmp');
-  const crashpadDir = join(userDataDir, 'Crashpad');
-  const macCrashpadDir = join(chromeHome, 'Library', 'Application Support', 'Google', 'Chrome for Testing', 'Crashpad');
-  try { rmSync(userDataDir, { recursive: true, force: true }); } catch {}
-  for (const dir of [userDataDir, chromeHome, configHome, cacheHome, tmpDir, crashpadDir, macCrashpadDir]) {
-    try { mkdirSync(dir, { recursive: true }); } catch {}
-  }
-  const env = {
-    ...process.env,
-    HOME: chromeHome,
-    CFFIXED_USER_HOME: chromeHome,
-    SOREN_CHROME_HOME: chromeHome,
-    XDG_CONFIG_HOME: configHome,
-    XDG_CACHE_HOME: cacheHome,
-    TMPDIR: tmpDir,
-  };
-  const crashpadArgs = ['--disable-crashpad-for-testing', `--crash-dumps-dir=${crashpadDir}`];
-  return { env, crashpadArgs };
 }
 
 function isSoren91GameUrl(url) {
@@ -1004,25 +968,18 @@ async function main() {
   const sharedBrowser = await connectToSharedBrowser();
   const isSharedMode = sharedBrowser != null;
   const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
-  const baseLaunchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
-  // Standalone (non-shared) = a 2nd Chrome-for-Testing instance next to the main
-  // soviet_local Chrome. Isolate HOME (CFFIXED_USER_HOME) + crashpad dir so it
-  // doesn't SIGABRT on the shared global crashpad. Shared mode reuses the main
-  // Chrome and needs none of this.
-  const standaloneIsolation = sharedBrowser ? null : standaloneChromeIsolation();
-  const launchEnv = standaloneIsolation ? standaloneIsolation.env : undefined;
-  const launchArgs = standaloneIsolation
-    ? [...standaloneIsolation.crashpadArgs, ...baseLaunchArgs]
-    : baseLaunchArgs;
+  const launchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
   const playwrightLaunchArgs = launchArgs.filter(arg => !/^[a-z][a-z0-9+.-]*:/i.test(arg));
-  const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs, launchEnv).catch(err => {
+  // Standalone (non-shared) = a 2nd Chrome-for-Testing instance. Launch it via
+  // macOS `open -g` (LaunchServices) inside launchStandaloneBrowserWithoutFocus so
+  // it registers in the GUI session and doesn't SIGABRT from the soren_loop daemon.
+  const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs).catch(err => {
     console.log(`[main] Background launch failed, falling back to Playwright launch: ${err.message}`);
     return null;
   });
   const browser = sharedBrowser || noFocusStandaloneBrowser || await chromium.launch({
     headless: false,
     args: playwrightLaunchArgs,
-    env: launchEnv,
   });
   let context = null;
   let ownsContext = false;
