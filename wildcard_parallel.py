@@ -149,15 +149,23 @@ def overlay_visible_candidates(candidates: list[dict]) -> list[dict]:
 
 
 def no_winner_reason(candidates: list["CandidateResult"]) -> str:
-    eval_candidates = [c for c in candidates if not c.score_baseline]
+    baseline_kept = any(
+        (c.score_baseline or c.baseline)
+        and c.status in ("accepted", "won")
+        and len(c.scores) > 0
+        for c in candidates
+    )
+    eval_candidates = [c for c in candidates if not c.score_baseline and not c.baseline]
     if not eval_candidates:
-        return "no_candidate"
+        return "baseline_kept" if baseline_kept else "no_candidate"
     failed = [c for c in eval_candidates if c.status in ("failed", "timeout")]
     zero_game = [c for c in eval_candidates if len(c.scores) <= 0]
     errors = " ".join(c.error for c in failed if c.error)
     infra_markers = ("bridge exited", "BRIDGE-EXIT", "SIGABRT", "process did exit", "EADDRINUSE")
     if len(failed) == len(eval_candidates) and len(zero_game) == len(eval_candidates) and any(m in errors for m in infra_markers):
         return "infra_failed"
+    if baseline_kept:
+        return "baseline_kept"
     return "no_candidate"
 
 
@@ -170,6 +178,7 @@ def wildcard_parallel_params(args: argparse.Namespace) -> dict:
         "cull_leader_min_games": _int(getattr(args, "cull_leader_min_games", 0), 0),
         "cull_comp_ratio": round(_float(getattr(args, "cull_comp_ratio", 0.0), 0.0), 3),
         "lingering_slot_max_culls": _int(getattr(args, "lingering_slot_max_culls", 0), 0),
+        "baseline_accepted_slot_cull_limit": _int(getattr(args, "baseline_accepted_slot_cull_limit", 0), 0),
         "evaluate_mode": str(getattr(args, "evaluate_mode", "") or ""),
         "random_count": bool(getattr(args, "random_count", False)),
         "serve_base_port": _int(getattr(args, "serve_base_port", 0), 0),
@@ -249,6 +258,14 @@ def wait_for_candidate_chrome_cdp(cdp_port: int, timeout: float = 8.0) -> bool:
 # the spawn + a short stagger spaces the registrations out; the slow CDP-readiness
 # wait stays OUTSIDE the lock so slots still warm up in parallel.
 _CHROME_LAUNCH_LOCK = Lock()
+# Serialise all OBS SetInputSettings calls from parallel slot threads.
+# mac-capture (SCK) crashes with a double-free / heap corruption when two
+# threads call obs_source_update concurrently — even on different sources —
+# because OBS's internal timer threads race with the WebSocket handler thread
+# during SCStream teardown/recreate.  A single mutex + 3s settle delay
+# eliminates the race window.  (Root cause confirmed from OBS crash report
+# OBS-2026-06-01-132749.ips: Thread 84 abort in obs_source_update.)
+_OBS_SOURCE_LOCK = Lock()
 
 
 def _spawn_with_launch_stagger(spawn_fn):
@@ -469,6 +486,30 @@ def _baseline_historical_russia(args: argparse.Namespace, candidates: list[Candi
         return 0
 
 
+def _baseline_historical_best_max_type(args: argparse.Namespace, candidates: list[CandidateResult]) -> int:
+    """Best proven max type for the baseline strategy from current_strategy_run.json.
+
+    This keeps the Russia guard objective-aware: a high-score no-Russia winner
+    must not replace a baseline that has already proven type15/Russia frontier
+    progress unless it at least preserves that frontier.
+    """
+    try:
+        run_file = getattr(args, "current_run_file", None)
+        if not run_file:
+            return 0
+        data = json.loads(Path(run_file).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return 0
+        baseline_hashes = {
+            c.hash for c in candidates if (c.score_baseline or c.baseline) and c.hash
+        }
+        if baseline_hashes and str(data.get("hash", "") or "") not in baseline_hashes:
+            return 0
+        return int(data.get("best_max_type", 0) or 0)
+    except Exception:
+        return 0
+
+
 def build_parallel_result(
     args: argparse.Namespace,
     session_dir: Path,
@@ -480,6 +521,7 @@ def build_parallel_result(
         candidates,
         args.min_successful_games,
         _baseline_historical_russia(args, candidates),
+        _baseline_historical_best_max_type(args, candidates),
         interrupted=interrupted,
     )
     if winner:
@@ -2022,47 +2064,64 @@ def maybe_show_obs_candidate_source(candidate: CandidateResult) -> None:
     y = _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_Y"), 200) + (candidate.index // cols) * row_stride
     log_path = REPO_ROOT / "tmp" / "debug" / "obs_control.err.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    # 2026-05-31 fix: stagger OBS WS calls by slot index so 6 parallel slots don't all
-    # hit OBS WebSocket at once → "non-101 status code" (WS handshake rejected under load).
     import time as _time
-    _time.sleep(candidate.index * 0.4)
-    try:
-        with open(log_path, "ab") as err:
-            if candidate.cdp_port and candidate.workdir:
-                set_candidate_window_title(candidate.cdp_port, title, candidate.workdir)
-            for _attempt in range(2):
-                proc = subprocess.run(
-                    ["./obs_window_capture_source.sh", "ensure", scene, source, window_pattern, "com.google.chrome.for.testing", "show"],
+    # Set the Chrome window title BEFORE acquiring the OBS lock so CDP work
+    # happens in parallel while we wait for the mutex.
+    if candidate.cdp_port and candidate.workdir:
+        try:
+            set_candidate_window_title(candidate.cdp_port, title, candidate.workdir)
+        except Exception:
+            pass
+    # Serialize all obs_source_update calls under a single process-wide lock.
+    # mac-capture (SCK) has a double-free when two threads hit obs_source_update
+    # concurrently — even on different sources — due to OBS internal timer vs
+    # WebSocket handler races on SCStream teardown.  Hold the lock for the full
+    # SetInputSettings + 3s SCK-settle window so no other slot can fire until
+    # macOS finishes tearing down the old stream.
+    with _OBS_SOURCE_LOCK:
+        # Secondary stagger: within the lock window, space calls by slot index
+        # to avoid hammering the OBS WebSocket handshake queue.
+        _time.sleep(candidate.index * 0.4)
+        try:
+            with open(log_path, "ab") as err:
+                for _attempt in range(2):
+                    proc = subprocess.run(
+                        ["./obs_window_capture_source.sh", "ensure", scene, source, window_pattern, "com.google.chrome.for.testing", "show"],
+                        cwd=REPO_ROOT,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        timeout=10,
+                        check=False,
+                    )
+                    err.write(proc.stderr or b"")
+                    if proc.returncode == 0 and b"non-101" not in (proc.stderr or b"") and b"network error" not in (proc.stderr or b"").lower():
+                        break
+                    if _attempt == 0:
+                        _time.sleep(1.5)
+                subprocess.run(
+                    ["./obs_control.sh", "transform", scene, source, str(x), str(y), "1", "1", str(w), str(h)],
                     cwd=REPO_ROOT,
+                    env={
+                        **os.environ,
+                        "OBS_CONTROL_TRANSFORM_MODE": "force",
+                        # crop-to-fill: cover the whole cell with no letterbox gaps
+                        "OBS_CONTROL_BOUNDS_TYPE": os.environ.get(
+                            "WILDCARD_PARALLEL_OBS_CANDIDATE_BOUNDS_TYPE",
+                            "OBS_BOUNDS_SCALE_OUTER",
+                        ),
+                    },
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    timeout=10,
+                    stderr=err,
+                    timeout=8,
                     check=False,
                 )
-                err.write(proc.stderr or b"")
-                if proc.returncode == 0 and b"non-101" not in (proc.stderr or b"") and b"network error" not in (proc.stderr or b"").lower():
-                    break
-                if _attempt == 0:
-                    _time.sleep(1.5)
-            subprocess.run(
-                ["./obs_control.sh", "transform", scene, source, str(x), str(y), "1", "1", str(w), str(h)],
-                cwd=REPO_ROOT,
-                env={
-                    **os.environ,
-                    "OBS_CONTROL_TRANSFORM_MODE": "force",
-                    # crop-to-fill: cover the whole cell with no letterbox gaps
-                    "OBS_CONTROL_BOUNDS_TYPE": os.environ.get(
-                        "WILDCARD_PARALLEL_OBS_CANDIDATE_BOUNDS_TYPE",
-                        "OBS_BOUNDS_SCALE_OUTER",
-                    ),
-                },
-                stdout=subprocess.DEVNULL,
-                stderr=err,
-                timeout=8,
-                check=False,
-            )
-    except Exception:
-        pass
+            # Give SCK 3s to finish tearing down the old stream before the next
+            # slot's SetInputSettings arrives.  Without this settle period, rapid
+            # sequential calls on adjacent sources still trigger the race in OBS's
+            # internal timer threads.
+            _time.sleep(3.0)
+        except Exception:
+            pass
 
 
 def stop_process(proc: subprocess.Popen | None) -> None:
@@ -2517,6 +2576,17 @@ def _russia_recurrence_min_count() -> int:
         return 2
 
 
+def _objective_priority_comp_ratio() -> float:
+    # A single-Russia / higher max_type result is valuable only if it remains score-
+    # competitive. This keeps the 05-25 weak-single-Russia escape valve while preventing
+    # the post-improve selector from throwing away a near-equal T15 for a score-only T14.
+    try:
+        r = float(os.getenv("WILDCARD_PARALLEL_OBJECTIVE_PRIORITY_COMP_RATIO", "0.95") or "0.95")
+        return r if 0.0 < r <= 1.0 else 0.95
+    except Exception:
+        return 0.95
+
+
 def _russia_frontier_min_games() -> int:
     # Number of game boards that must each satisfy the 2nd-Russia frontier rule (T15x2 OR
     # T15x1+T14x2) for a candidate to count as recurrent via reproduced frontier — mirrors
@@ -2567,9 +2637,26 @@ def choose_winner(
     candidates: list[CandidateResult],
     min_successful_games: int,
     baseline_historical_russia: int = 0,
+    baseline_historical_best_max_type: int = 0,
     interrupted: bool = False,
 ) -> CandidateResult | None:
-    def rank_key(c: CandidateResult) -> tuple[bool, bool, float, float, int]:
+    def comp_value(c: CandidateResult) -> float:
+        try:
+            return float(c.comp or 0.0)
+        except Exception:
+            return 0.0
+
+    score_anchor_comp = max((comp_value(c) for c in candidates), default=0.0)
+    objective_comp_floor = score_anchor_comp * _objective_priority_comp_ratio()
+
+    def objective_competitive(c: CandidateResult) -> bool:
+        if c.soviet_count > 0:
+            return True
+        if score_anchor_comp <= 0.0:
+            return True
+        return comp_value(c) >= objective_comp_floor
+
+    def rank_key(c: CandidateResult) -> tuple[bool, bool, int, int, float, float]:
         # ADOPTION 05-25-SAFETY: the leading objective bit requires RECURRENT Russia
         # (reliable_russia: russia_count>=2 OR reproduced frontier) so a single lucky Russia
         # cannot lexicographically beat a higher-comp non-Russia. A single-Russia candidate
@@ -2577,7 +2664,10 @@ def choose_winner(
         # escape valve / avoids 固着). With the recurrence guard OFF, fall back to the legacy
         # russia_count>0 bit (behavior unchanged).
         russia_bit = candidate_reliable_russia(c) if _adopt_russia_recurrence() else (c.russia_count > 0)
-        return (russia_bit, c.soviet_count > 0, c.comp, c.p25, c.max_type)
+        objective_ok = russia_bit or objective_competitive(c)
+        objective_max_type = int(c.max_type or 0) if objective_ok else 0
+        objective_russia_count = int(c.russia_count or 0) if objective_ok else 0
+        return (c.soviet_count > 0, russia_bit, objective_max_type, objective_russia_count, c.comp, c.p25)
 
     # The baseline (slot-1 played reference via --baseline-slot1, or a static
     # score_baseline loaded from history) is the comparison anchor, NOT a winner
@@ -2628,9 +2718,14 @@ def choose_winner(
         effective_baseline_russia = max(
             int(source_leader.russia_count or 0), int(baseline_historical_russia or 0)
         )
+        effective_baseline_best = max(
+            int(source_leader.max_type or 0), int(baseline_historical_best_max_type or 0)
+        )
         baseline_russia_capable = effective_baseline_russia >= _russia_guard_min_count()
         winner_shows_objective = winner.russia_count > 0 or winner.soviet_count > 0
         if baseline_russia_capable and not winner_shows_objective:
+            if effective_baseline_best >= 15 and int(winner.max_type or 0) < effective_baseline_best:
+                return None
             base_comp = float(source_leader.comp or 0.0)
             if base_comp <= 0 or float(winner.comp or 0.0) < base_comp * _russia_guard_override_ratio():
                 return None
@@ -2770,10 +2865,19 @@ class CullCoordinator:
 
     def lingering_slot_cutoff(self, index: int) -> tuple[bool, int]:
         with self.lock:
+            cull_count = sum(1 for c in self.candidates if c.index == index and c.status == "culled")
+            baseline_limit = _int(getattr(self.args, "baseline_accepted_slot_cull_limit", 0), 0)
+            if baseline_limit > 0 and bool(getattr(self.args, "baseline_slot1", False)):
+                min_games = self._min_successful_games_unlocked()
+                baseline_ready = any(
+                    c.baseline and c.status in {"accepted", "won"} and len(c.scores) >= min_games
+                    for c in self.candidates
+                )
+                if baseline_ready and cull_count > baseline_limit:
+                    return (True, cull_count)
             limit = _int(getattr(self.args, "lingering_slot_max_culls", 0), 0)
             if limit <= 0:
                 return (False, 0)
-            cull_count = sum(1 for c in self.candidates if c.index == index and c.status == "culled")
             if cull_count > limit:
                 return (True, cull_count)
             jobs = _int(getattr(self.args, "jobs", 0), 0)
@@ -2935,6 +3039,11 @@ def main() -> int:
     parser.add_argument("--cull-comp-ratio", type=float, default=_float(os.getenv("WILDCARD_PARALLEL_CULL_COMP_RATIO"), 0.90))
     parser.add_argument("--lingering-slot-max-culls", type=int, default=_int(os.getenv("WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS"), 0))
     parser.add_argument(
+        "--baseline-accepted-slot-cull-limit",
+        type=int,
+        default=_int(os.getenv("WILDCARD_PARALLEL_BASELINE_ACCEPTED_SLOT_CULL_LIMIT"), 6),
+    )
+    parser.add_argument(
         "--baseline-slot1",
         action=argparse.BooleanOptionalAction,
         default=os.getenv("WILDCARD_PARALLEL_BASELINE_SLOT1", "0").strip().lower() in ("1", "true", "yes", "on"),
@@ -2994,6 +3103,7 @@ def main() -> int:
     args.cull_leader_min_games = max(1, min(args.cull_leader_min_games, args.games))
     args.cull_comp_ratio = max(0.0, args.cull_comp_ratio)
     args.lingering_slot_max_culls = max(0, args.lingering_slot_max_culls)
+    args.baseline_accepted_slot_cull_limit = max(0, args.baseline_accepted_slot_cull_limit)
     args.max_runtime_sec = max(0, _int(getattr(args, "max_runtime_sec", 0), 0))
     # Overall wall-clock deadline: the orchestrator self-terminates instead of spinning
     # forever (and getting orphaned past the main-loop block timeout). 0 disables it.
