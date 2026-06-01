@@ -157,7 +157,7 @@ async function launchStandaloneBrowserWithoutFocus(args) {
       await sleep(2000);
     }
   }
-  console.warn('[main] standalone open -g launch failed; falling back to Playwright launch');
+  console.warn('[main] standalone open -g launch failed (no Playwright fallback in daemon context); runner will retry');
   return null;
 }
 
@@ -969,18 +969,23 @@ async function main() {
   const isSharedMode = sharedBrowser != null;
   const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
   const launchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
-  const playwrightLaunchArgs = launchArgs.filter(arg => !/^[a-z][a-z0-9+.-]*:/i.test(arg));
   // Standalone (non-shared) = a 2nd Chrome-for-Testing instance. Launch it via
   // macOS `open -g` (LaunchServices) inside launchStandaloneBrowserWithoutFocus so
   // it registers in the GUI session and doesn't SIGABRT from the soren_loop daemon.
   const noFocusStandaloneBrowser = sharedBrowser ? null : await launchStandaloneBrowserWithoutFocus(launchArgs).catch(err => {
-    console.log(`[main] Background launch failed, falling back to Playwright launch: ${err.message}`);
+    console.log(`[main] standalone open -g launch threw: ${err.message}`);
     return null;
   });
-  const browser = sharedBrowser || noFocusStandaloneBrowser || await chromium.launch({
-    headless: false,
-    args: playwrightLaunchArgs,
-  });
+  // Do NOT fall back to chromium.launch() here. From the soren_loop daemon context a
+  // direct Playwright Chrome launch SIGABRTs on crashpad bootstrap_check_in (Permission
+  // denied 1100) and surfaces later at newContext/newPage — it produced a 184-SIGABRT
+  // storm that risks crashing OBS. `open -g` (LaunchServices/GUI session) is the only
+  // launch path that works from the daemon, and it is intermittent, so on failure we
+  // exit cleanly and let the runner retry open -g rather than crash-looping.
+  const browser = sharedBrowser || noFocusStandaloneBrowser;
+  if (!browser) {
+    throw new Error('standalone Chrome did not come up via open -g (LaunchServices); skipping this attempt, runner will retry');
+  }
   let context = null;
   let ownsContext = false;
   if (isSharedMode) {
