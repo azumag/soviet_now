@@ -135,10 +135,21 @@ async function launchStandaloneBrowserWithoutFocus(args) {
   const userDataDir = process.env.SOREN91_STANDALONE_USER_DATA_DIR || join(SOREN91_DIR, 'tmp', 'standalone_chromium_profile');
   mkdirSync(userDataDir, { recursive: true });
   const killLeftover = () => { try { execSync(`pkill -f ${JSON.stringify(userDataDir)}`, { stdio: 'ignore' }); } catch {} };
+  // Start each attempt from a FRESH profile. A polluted/corrupt persistent profile
+  // (e.g. leftover chrome_home/Crashpad subdirs from earlier isolation experiments)
+  // makes the open -g Chrome fail to bring up CDP — it silently never spawns a
+  // listenable instance. Validated: identical args + open -g on a fresh profile
+  // brings CDP up in ~2s, while the stale profile yields ECONNREFUSED every attempt.
+  // soren91 loads a signed game URL fresh each run, so there is no session to keep.
+  const wipeProfile = () => {
+    try { rmSync(userDataDir, { recursive: true, force: true }); } catch {}
+    try { mkdirSync(userDataDir, { recursive: true }); } catch {}
+  };
 
   const maxAttempts = 2;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     killLeftover();
+    wipeProfile();
     await new Promise((resolve) => {
       execFile('/usr/bin/open', [
         '-g', '-n', appPath, '--args',
