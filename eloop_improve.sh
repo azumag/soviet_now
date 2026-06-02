@@ -371,6 +371,15 @@ _post_improve_param_parallel_trial() {
 	case "$param_parallel_jobs" in ''|*[!0-9]*) param_parallel_jobs=6 ;; esac
 	[ "$param_parallel_jobs" -lt 3 ] && param_parallel_jobs=3
 	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${param_parallel_jobs} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
+	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+		if [ "${POST_IMPROVE_PARAM_PARALLEL_STOP_SOREN91:-0}" = "1" ]; then
+			log "[PARAM-PARALLEL] soren91 active; explicit opt-in allows isolated trial stop"
+		else
+			log "[PARAM-PARALLEL] soren91 active → skip isolated param trial (POST_IMPROVE_PARAM_PARALLEL_STOP_SOREN91=0)"
+			_improve_progress "post_improve" "86" "post_improve_param_parallel_skipped_soren91_active"
+			return 0
+		fi
+	fi
 	_improve_progress "wildcard_parallel" "86" "post_improve_param_parallel"
 	# 検出ラグ封じ: wildcard_parallel.py 起動前に status を phase=generating で先置きする。
 	# python が main() で status を書くまで(プロセス spawn+import+到達)に数秒の窓があり、
@@ -383,10 +392,9 @@ _post_improve_param_parallel_trial() {
 	# 同 status を上書きするので phase 連続性も保たれる。
 	_wildcard_parallel_prewrite_status "$started_at_prewrite"
 	# param並列調整(隔離評価)はメインゲーム/soren91が止まってから行う設計。
-	# 主導的に soren91 を停止してから起動し、評価スロットだけが走る状態を保証する。
-	# (主ループ/monitor の停止反応に頼ると起動直後に一時的な同時稼働が生じるため)
+	# デフォルトでは既存のsoren91を止めずに試験をスキップする。停止は明示opt-inのみ。
 	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
-		log "[PARAM-PARALLEL] soren91稼働中 → 隔離評価開始前に停止する"
+		log "[PARAM-PARALLEL] soren91稼働中 → 明示opt-inにより隔離評価開始前に停止する"
 		SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
 	fi
 	_wildcard_parallel_obs_show || true
@@ -913,66 +921,26 @@ _repair_review_verdict_file() {
 	local review_result_file="${1:-tmp/review_result.md}"
 	local analysis_file="${2:-tmp/analysis_result.md}"
 	local staging_file="${3:-strategy.py.staging}"
-	local repair_prompt_file
-	repair_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/review_verdict_repair.XXXXXX.md") || return 1
-	cat >"$repair_prompt_file" <<'EOF'
-あなたはソ連ゲーム戦略のレビュー判定ファイル修復AIです。
-
-目的:
-- 既存レビューが `tmp/review_result.md` に必須の verdict を書き漏らした場合だけ、そのファイルを完成させる。
-- `strategy.py.staging` や `strategy_helpers/` は絶対に編集しない。
-
-必ず行うこと:
-1. `tmp/analysis_result.md`、`strategy.py`、`strategy.py.staging`、`data/mandatory_themes.txt`、存在する場合は `data/user_review.md` を読む。
-2. `tmp/review_result.md` があれば必ず先に Read する。読まずに上書きしようとするとツール制約で失敗する。
-3. Read 後に既存ファイルを直す場合は Edit、存在しない場合だけ Write で新規作成する。
-4. `tmp/review_result.md` に次の両方を必ず含める。
-   - `## VERDICT: PASS` または `## VERDICT: FAIL`
-   - fenced block の `review_verdict` JSON
-
-ツール制約:
-- この修復環境では `Read` / `Glob` / `Grep` / `Edit` / `Write` だけを使うこと。
-- `Bash` / `bash` / `shell` / `command` / `python` / `pytest` / `diff` などの実行系ツールは使えない。呼ぼうとすると修復がタイムアウトする。
-- ファイルの存在確認は `Read` の File not found 結果、または `Glob` / `Grep` で行うこと。
-- 差分確認は `strategy.py` と `strategy.py.staging` の該当箇所を `Read` / `Grep` して目視で行うこと。
-
-出力ファイル形式:
-
+	mkdir -p "$(dirname "$review_result_file")" 2>/dev/null || true
+	cat >"$review_result_file" <<EOF
 # Strategy Review Result
 
-## VERDICT: PASS
+## VERDICT: FAIL
 
-```review_verdict
+\`\`\`review_verdict
 {
-  "verdict": "PASS",
+  "verdict": "FAIL",
   "user_review_satisfied": true,
-  "summary": "PASS理由を1文で書く",
-  "unresolved_items": []
+  "summary": "Auto-generated advisory FAIL: review verdict could not be produced by the review stage, so no independent PASS review is available.",
+  "unresolved_items": [
+    "Review verdict was missing after the review stage.",
+    "analysis_file=$analysis_file",
+    "staging_file=$staging_file"
+  ]
 }
-```
-
-FAILの場合は `## VERDICT: FAIL` とし、`verdict` を `"FAIL"`、`unresolved_items` に具体的な未解決項目を書く。
-
-重要:
-- `strategy.py.staging` は編集禁止。
-- レビュー本文を会話に出すだけでは失敗。必ず `tmp/review_result.md` を Read してから Edit、または存在しない場合のみ Write する。
-- `data/user_review.md` が存在して非空の場合、満たしているとコード条件で説明できるときだけ `user_review_satisfied: true`。
+\`\`\`
 EOF
-	local prev_timeout="${RUN_CMD_TIMEOUT_SEC-}"
-	RUN_CMD_TIMEOUT_SEC="${IMPROVE_REVIEW_VERDICT_REPAIR_TIMEOUT_SEC:-300}"
-	export RUN_CMD_TIMEOUT_SEC
-	run_ai "REVIEW-VERDICT-REPAIR" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
-		"$repair_prompt_file" "$review_result_file" \
-		"$analysis_file" "$staging_file" "strategy.py" "data/mandatory_themes.txt" "data/user_review.md"
-	local rc=$?
-	if [ -n "$prev_timeout" ]; then
-		RUN_CMD_TIMEOUT_SEC="$prev_timeout"
-		export RUN_CMD_TIMEOUT_SEC
-	else
-		unset RUN_CMD_TIMEOUT_SEC
-	fi
-	rm -f "$repair_prompt_file" 2>/dev/null || true
-	return "$rc"
+	return 0
 }
 
 _helpers_tree_changed() {

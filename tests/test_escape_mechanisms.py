@@ -974,6 +974,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('WILDCARD_PARALLEL_JOBS="${WILDCARD_PARALLEL_JOBS:-6}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_ENABLED="${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_JOBS="${POST_IMPROVE_PARAM_PARALLEL_JOBS:-6}"', config)
+        self.assertIn('POST_IMPROVE_PARAM_PARALLEL_STOP_SOREN91="${POST_IMPROVE_PARAM_PARALLEL_STOP_SOREN91:-0}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT="${POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT:-18180}"', config)
         self.assertIn('POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT="${POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT:-19320}"', config)
         self.assertIn("WILDCARD_PARALLEL_GAMES", config)
@@ -2722,6 +2723,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         """opencode write 制約に合わせ、analysis/review 出力は空ファイル作成しない。"""
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         review_prompt = (REPO_ROOT / "prompts/review_strategy.md").read_text()
+        strategy = (REPO_ROOT / "strategy.py").read_text()
         self.assertIn('rm -f "$ANALYSIS_RESULT_FILE"', eloop)
         self.assertIn('rm -f "$REVIEW_RESULT_FILE"', eloop)
         self.assertNotIn(': >"$ANALYSIS_RESULT_FILE"', eloop)
@@ -2762,9 +2764,14 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('`dict.get(...) != "NO"`', review_prompt)
         self.assertIn("欠損を「利用可能」と解釈する実装は FAIL", review_prompt)
         self.assertIn("欠損キーの真扱い防止", review_prompt)
+        self.assertNotIn('get("merge_grade") != "NO"', strategy)
+        self.assertIn('c.get("merge_grade") not in (None, "", "NO")', strategy)
+        self.assertIn('r.get("merge_grade") not in (None, "", "NO")', strategy)
+        self.assertIn("if __dlg_safe_filtered:", strategy)
         self.assertNotIn("`tmp/review_result.md` は既に存在", review_prompt)
         self.assertIn("_repair_review_verdict_file", eloop)
-        self.assertIn("REVIEW-VERDICT-REPAIR", eloop)
+        self.assertNotIn("REVIEW-VERDICT-REPAIR", eloop)
+        self.assertNotIn('run_ai "REVIEW-VERDICT-REPAIR"', eloop)
         self.assertIn("Stage3: review verdict missing → repair verdict file", eloop)
         self.assertIn("IMPROVE_REVIEW_CMD_TIMEOUT_SEC", eloop)
         self.assertIn("IMPROVE_REVIEW_PRIMARY_RETRIES", eloop)
@@ -2775,13 +2782,11 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("0\\.5\\s*(?:->|→|から|to)\\s*0\\.3", eloop)
         self.assertIn("より多く", eloop)
         self.assertIn("strengthen", eloop)
-        self.assertIn("strategy.py.staging` は編集禁止", eloop)
-        self.assertIn("読まずに上書きしようとするとツール制約で失敗する", eloop)
-        self.assertIn("Read 後に既存ファイルを直す場合は Edit", eloop)
-        self.assertIn("この修復環境では `Read` / `Glob` / `Grep` / `Edit` / `Write` だけを使うこと", eloop)
-        self.assertIn("実行系ツールは使えない。呼ぼうとすると修復がタイムアウトする", eloop)
-        self.assertIn("差分確認は `strategy.py` と `strategy.py.staging` の該当箇所", eloop)
-        self.assertIn("存在しない場合のみ Write", eloop)
+        self.assertIn('"verdict": "FAIL"', eloop)
+        self.assertIn("Auto-generated advisory FAIL", eloop)
+        self.assertIn("review verdict could not be produced by the review stage", eloop)
+        self.assertIn("Review verdict was missing after the review stage.", eloop)
+        self.assertIn('mkdir -p "$(dirname "$review_result_file")"', eloop)
         self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
         self.assertIn("review verdict advisory failure; apply continues after runtime smoke", eloop)
         self.assertNotIn("Stage3: review verdict rejected apply", eloop)
@@ -12456,20 +12461,28 @@ class TestParamParallelDetectionLagClosed(unittest.TestCase):
                 break
         return "".join(out)
 
-    def test_prewrite_happens_before_python_launch_and_soren91_stop(self):
+    def test_prewrite_happens_before_python_launch_and_opt_in_soren91_stop(self):
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        # soren91 が既に動いている場合、デフォルトでは隔離評価をスキップし、停止しない。
+        skip_idx = eloop.index("post_improve_param_parallel_skipped_soren91_active")
         # prewrite 呼び出しが python3 wildcard_parallel.py 起動より前にある
         prewrite_idx = eloop.index("_wildcard_parallel_prewrite_status \"$started_at_prewrite\"")
         launch_idx = eloop.index("python3 wildcard_parallel.py \\")
         self.assertLess(
+            skip_idx, prewrite_idx,
+            "既存soren91を止めないskip判定は wildcard status の先置きより前で行うこと",
+        )
+        self.assertLess(
             prewrite_idx, launch_idx,
             "status の先置きは wildcard_parallel.py 起動より前で行うこと",
         )
-        # prewrite は soren91 停止より前 (代打を立てさせない窓を残さない)
+        # opt-in 停止時だけ prewrite 後に soren91 を止める (代打を立てさせない窓を残さない)
+        self.assertIn("POST_IMPROVE_PARAM_PARALLEL_STOP_SOREN91:-0", eloop)
+        self.assertIn("explicit opt-in allows isolated trial stop", eloop)
         stop_idx = eloop.index("SOREN91_STOP_TIMEOUT=0 soren91_stop")
         self.assertLess(
             prewrite_idx, stop_idx,
-            "status の先置きは soren91 停止より前で行うこと",
+            "status の先置きは opt-in soren91 停止より前で行うこと",
         )
         # prewrite ヘルパが定義されている
         self.assertIn("_wildcard_parallel_prewrite_status() {", eloop)

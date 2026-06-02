@@ -69,6 +69,14 @@ FAST_DROP_DEADLINE_CONTACT = True
 
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vXXX: DEADLINE_GUARD cluster NO_MERGE fallback rejection at tight deadline
+      #       When deadline_margin<0.5 && merge_available=false && cluster_piece merge_grade==NO,
+      #       reject cluster fallback (violates mandatory_themes #2) and use lowest safe placement.
+      #       Worst game T86: deadline_margin=0.39, merge_available=false, cluster NO_MERGE selected -> max_y runaway
+      #       Best game T105-T108: deadline_margin>0.5, cluster still valid -> survived 21 more turns.
+      #       Target stage: Kazakhstan(T14) 1/3 (russia_recovery_mode: type14→15 route restoration)
+      #       mandatory_themes: デッドライン付近の危険盤面領域では、併合優先するべき
+      #       refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_GUARD fallback NO_MERGE rejection)
       # vXXX: axis 1.7c NEAR suppression at tight deadline_margin — Ukraine(T13) gate fix
       #       When reactor_margin < 0.3 && deadline_crossed && merge_grade==NEAR && NOT russia_phase,
       #       suppress NEAR unless landing_y < max_y - 0.5 (safety valve for compression).
@@ -1584,6 +1592,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __dlg_cluster_early = __dlg_pre_russia_cluster_pick(__dlg_cands)
         if __dlg_cluster_early is not None:
             __dlg_cluster_piece, __dlg_cluster_mode = __dlg_cluster_early
+            # vXXX: tight deadline + no merge available + NO_MERGE cluster fallback rejection
+            # mandatory_themes #2: "deadline near dangerous zone should prioritize merge"
+            # Worst game T86: deadline_margin=0.39, merge_available=false, cluster NO_MERGE selected
+            # -> violated mandatory_themes. Reject cluster fallback and use lowest safe candidate.
+            __dlg_global_merge = any(
+                isinstance(c, dict) and c.get("merge_grade") not in (None, "", "NO")
+                for c in __dlg_cands
+            )
+            if (__dlg_margin < 0.5 and not __dlg_global_merge and
+                __dlg_cluster_piece.get("merge_grade") == "NO"):
+                # Reconstruct __dlg_safe from __dlg_cands (same filter as line 1550-1554)
+                __dlg_safe_filtered = [
+                    c for c in __dlg_cands
+                    if isinstance(c, dict)
+                    and not c.get("crosses_deadline")
+                    and not c.get("merge_result_crosses_deadline")
+                ]
+                if __dlg_safe_filtered:
+                    __dlg_lowest = min(__dlg_safe_filtered, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                    return {"x": float(__dlg_lowest.get("x", 0.0)), "reason": "DEADLINE_GUARD_LOWEST_SAFE"}
             __dlg_reason = (
                 "DEADLINE_GUARD_SECOND_RUSSIA_T12_PAIR_LOCK"
                 if __dlg_cluster_mode == "second_russia_t12_pair_lock"
@@ -2003,7 +2031,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         # v551: Russia-building exemption + high-type next additional penalty
         russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
-        global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
+        global_merge_available = any(
+            isinstance(r, dict) and r.get("merge_grade") not in (None, "", "NO")
+            for r in results
+        )
         if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
