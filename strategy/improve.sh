@@ -437,6 +437,16 @@ except Exception:
 # セッション経年ガード(全phase共通): 起動から max_sec 超過なら解放し、orphan時の永久pauseを防ぐ。
 if max_sec > 0 and started_at > 0 and (time.time() - started_at) > max_sec:
     raise SystemExit(1)
+try:
+    pidless_stale_sec = int(float(os.environ.get("WILDCARD_PARALLEL_PIDLESS_STALE_SEC", "600") or "600"))
+except Exception:
+    pidless_stale_sec = 600
+if phase in {"generating", "running"} and not data.get("controller_pid"):
+    # Pre-controller_pid legacy/orphan statuses can be refreshed forever by a
+    # stranded parent. New runs always stamp controller_pid, so release old
+    # pidless active statuses after a bounded grace window.
+    if pidless_stale_sec > 0 and started_at > 0 and (time.time() - started_at) > pidless_stale_sec:
+        raise SystemExit(1)
 
 # 状態ファイルベースのスロット活性チェック:
 # pgrep が親プロセスを検出漏れしても、スロットが game_history/latest.jsonl を

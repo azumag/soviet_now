@@ -31,7 +31,19 @@ try:
     age = time.time() - os.path.getmtime(sys.argv[1])
 except Exception:
     age = 1e9
-raise SystemExit(0 if str(d.get("phase") or "") in ("generating", "running") and age <= 600 else 1)
+try:
+    started_at = float(d.get("started_at") or 0)
+except Exception:
+    started_at = 0
+try:
+    pidless_stale_sec = float(os.environ.get("WILDCARD_PARALLEL_PIDLESS_STALE_SEC", "600") or "600")
+except Exception:
+    pidless_stale_sec = 600
+phase = str(d.get("phase") or "")
+if phase in ("generating", "running") and not d.get("controller_pid"):
+    if pidless_stale_sec > 0 and started_at > 0 and (time.time() - started_at) > pidless_stale_sec:
+        raise SystemExit(1)
+raise SystemExit(0 if phase in ("generating", "running") and age <= 600 else 1)
 PY
 	then
 		return 0

@@ -236,7 +236,18 @@ play_one_game() {
 	# 全 pause continue (改善中/Meriken/soren91/stop) の後でのみ呼ばれるため
 	# pause 安全性は保たれる。eloop.sh は毎周回 re-source されるので
 	# 実行中 soren_loop に再起動なしで反映される (hot-reload)。
-	command -v _ensure_bridge_alive >/dev/null 2>&1 && _ensure_bridge_alive
+	if command -v _ensure_bridge_alive >/dev/null 2>&1; then
+		if ! _ensure_bridge_alive; then
+			log "[BRIDGE] 復旧未完了 → 試合開始を次周回へ延期"
+			LAST_SCORE=0
+			LAST_TURNS=0
+			LAST_RUSSIA="false"
+			LAST_RUSSIA_ANNOUNCED="false"
+			LAST_SOVIET="false"
+			rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+			return "${PLAY_RECOVERED_RETRY_RC:-75}"
+		fi
+	fi
 
 	# 前試合のダッシュボードを非表示
 	./generate_dashboard.sh MOVE || true

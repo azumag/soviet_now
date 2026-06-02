@@ -52,6 +52,7 @@ _br_target_pids() {
 }
 
 _br_port_pid() { lsof -nP -iTCP:"$_BR_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1; }
+_br_cdp_port_pid() { lsof -nP -iTCP:"$_BR_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1; }
 _br_cmd_of() { ps -o command= -p "$1" 2>/dev/null; }
 
 # ---- Fix0: 共有 recovery lease (guardian/_ensure_bridge_alive/soviet_watchdog 共通) ----
@@ -230,6 +231,8 @@ view = health.get("after") if isinstance(health.get("after"), dict) else health
 before = health.get("before") if isinstance(health.get("before"), dict) else {}
 if health.get("muted") or before.get("muted") or view.get("muted"):
     print("NA"); raise SystemExit(0)
+if view.get("unityPresent") is False:
+    print("NA"); raise SystemExit(0)
 routed = str(view.get("routedDeviceId") or "")
 running = [t for t in (view.get("tracked") or [])
           if isinstance(t, dict) and t.get("state") == "running"]
@@ -308,18 +311,34 @@ _br_relaunch() {
 	else
 		( cd "$_BR_ROOT" && nohup node soviet_local.mjs > "$_BR_GAME_LOG" 2>&1 < /dev/null & )
 	fi
-	sleep 12
-	local m n; m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0); n=$(date +%s)
-	if { [ -n "$(_br_target_pids)" ] || [ -n "$(_br_port_pid)" ] || [ "$((n - m))" -lt 30 ]; } && ! _br_fatal_in_log; then
-		_br_log "復旧成功 (port=$([ -n "$(_br_port_pid)" ] && echo up || echo '?') game_state_age=$((n-m))s)"
-		return 0
-	fi
+	local verify_deadline m n serve_pid cdp_pid verify_sec
+	verify_sec="${BRIDGE_RELAUNCH_VERIFY_SEC:-150}"
+	case "$verify_sec" in ''|*[!0-9]*) verify_sec=150 ;; esac
+	[ "$verify_sec" -lt 15 ] && verify_sec=15
+	verify_deadline=$(($(date +%s) + verify_sec))
+	while [ "$(date +%s)" -lt "$verify_deadline" ]; do
+		sleep 2
+		m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+		n=$(date +%s)
+		serve_pid=$(_br_port_pid)
+		cdp_pid=$(_br_cdp_port_pid)
+		if [ -n "$serve_pid" ] && [ -n "$cdp_pid" ] &&
+			[ "$m" -gt 0 ] && [ "$((n - m))" -lt 30 ] && ! _br_fatal_in_log; then
+			_br_log "復旧成功 (serve=up cdp=up game_state_age=$((n-m))s)"
+			return 0
+		fi
+		_br_log "復旧検証待ち (serve=$([ -n "$serve_pid" ] && echo up || echo down) cdp=$([ -n "$cdp_pid" ] && echo up || echo down) game_state_age=$([ "$m" -gt 0 ] && echo $((n-m)) || echo NA)s)"
+	done
 	# 一過性 (profile/CDP/port ロックの掃け残り) は指数 cooldown を汚染しない (codex#8)
 	if tail -40 "$_BR_GAME_LOG" 2>/dev/null | grep -qiE 'SingletonLock|ProcessSingleton|ProfileInUse|profile.*in use|EADDRINUSE|cdp.*in use'; then
 		_br_log "WARNING: 一過性ロック (profile/CDP/port 掃け残り) → 次ループ短間隔で再試行"
 		return 2
 	fi
-	_br_log "WARNING: 復旧後検証失敗"
+	serve_pid=$(_br_port_pid)
+	cdp_pid=$(_br_cdp_port_pid)
+	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+	n=$(date +%s)
+	_br_log "WARNING: 復旧後検証失敗 (serve=$([ -n "$serve_pid" ] && echo up || echo down) cdp=$([ -n "$cdp_pid" ] && echo up || echo down) game_state_age=$([ "$m" -gt 0 ] && echo $((n-m)) || echo NA)s)"
 	return 1
 }
 
@@ -385,7 +404,7 @@ _ensure_bridge_alive() {
 	fi
 	if [ "$_BR_CONSEC_FAIL" -gt 0 ] && [ "$((now - _BR_LAST_ATTEMPT))" -lt "$gap" ]; then
 		_br_log "クラッシュ検知($crash) 連続失敗${_BR_CONSEC_FAIL}・cooldown残$((gap-(now-_BR_LAST_ATTEMPT)))s → 次周回再試行"
-		return 0
+		return 1
 	fi
 	_br_log "クラッシュ検知($crash) → 復旧開始 (consecutive_fail=$_BR_CONSEC_FAIL)"
 	_BR_LAST_ATTEMPT=$now
@@ -400,11 +419,12 @@ _ensure_bridge_alive() {
 	fi
 	if [ "$rc" -eq 0 ]; then
 		_BR_CONSEC_FAIL=0
+		return 0
 	elif [ "$rc" -eq 2 ]; then
 		# 一過性ロック: 指数化せず base gap で速やかに再試行 (cooldown 汚染回避)
 		_BR_CONSEC_FAIL=1
 	else
 		_BR_CONSEC_FAIL=$((_BR_CONSEC_FAIL + 1))
 	fi
-	return 0
+	return 1
 }

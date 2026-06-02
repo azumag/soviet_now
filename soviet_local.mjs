@@ -372,8 +372,13 @@ async function macOpenChromium(openArgs, launchEnv) {
   const held = await lock.acquireChromeLaunchLock();
   try {
     const shellCommand = `exec /usr/bin/open ${openArgs.map(shellQuote).join(' ')}`;
+    const openTimeoutSec = Math.max(
+      3,
+      Math.min(60, Number(process.env.SOREN_CHROME_OPEN_TIMEOUT_SEC || '20') || 20),
+    );
+    const openTimeoutMs = Math.round(openTimeoutSec * 1000);
     await new Promise((resolve, reject) => {
-      execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv }, (err) => {
+      execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv, timeout: openTimeoutMs }, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -425,6 +430,19 @@ async function launchPersistentContextWithoutFocus(userDataDir, args, opts = {})
     }).catch(async err => {
       if (!isMacOpenExecutableMissingFailure(err)) throw err;
       console.error(`[NO-FOCUS] macOS open app-path failed (${appPath}): ${err.message}`);
+      const allowDetachedOpenMissingFallback = !isDisabledEnvValue(
+        process.env.SOREN_CHROME_DETACHED_FALLBACK_ON_OPEN_MISSING || '1',
+      );
+      if (allowDetachedOpenMissingFallback) {
+        try {
+          console.error('[NO-FOCUS] macOS open app-path missing executable; trying detached Chrome executable fallback');
+          await launchDetachedChromeFallback(userDataDir, args, executablePath);
+          launched = true;
+          return;
+        } catch (detachedErr) {
+          console.error(`[NO-FOCUS] detached Chrome executable fallback failed: ${detachedErr.message}`);
+        }
+      }
       const fallbackNames = macOpenFallbackAppNames();
       let lastFallbackErr = err;
       for (const fallbackAppPath of chromeFallbackAppPaths(appPath)) {

@@ -567,6 +567,7 @@ def prelaunch_candidate_chrome(
         "--autoplay-policy=no-user-gesture-required",
         "about:blank",
     ]
+    open_timeout = max(3.0, min(60.0, _float(os.environ.get("WILDCARD_PARALLEL_OPEN_TIMEOUT_SEC"), 20.0)))
 
     def run_macos_open(open_args: list[str], candidate_env: dict[str, str]) -> subprocess.CompletedProcess:
         # Direct Python/Node exec of `/usr/bin/open` can return kLSNoExecutableErr
@@ -580,6 +581,7 @@ def prelaunch_candidate_chrome(
             stderr=subprocess.PIPE,
             text=True,
             env=candidate_env,
+            timeout=open_timeout,
         )
 
     def run_macos_open_and_wait(open_args: list[str], candidate_env: dict[str, str]) -> bool:
@@ -941,6 +943,8 @@ def _overlay_preview_enabled() -> bool:
 def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     now_epoch = int(time.time())
     payload.setdefault("started_at", now_epoch)
+    if str(payload.get("phase") or "") not in ("restored",):
+        payload.setdefault("controller_pid", os.getpid())
     payload["updated_at"] = now_epoch
     candidates = payload.get("candidates") or []
     display_candidates = overlay_visible_candidates(candidates)
@@ -1500,6 +1504,7 @@ def render_cleanup_overlay(status_path: Path, html_path: Path, detail: str = "cl
         "phase": "restored",
         "previous_phase": previous.get("phase", ""),
         "previous_candidate_count": len(previous.get("candidates") or []),
+        "previous_controller_pid": previous.get("controller_pid", 0),
         "session_dir": previous.get("session_dir", ""),
         "params": previous.get("params", {}),
         "candidates": [],
@@ -1507,6 +1512,46 @@ def render_cleanup_overlay(status_path: Path, html_path: Path, detail: str = "cl
         "detail": detail,
     }
     render_overlay(status_path, html_path, payload)
+
+
+def stop_status_controller(status_file: Path, wait_sec: float = 5.0) -> bool:
+    """Stop a live wildcard_parallel parent recorded in the shared status file."""
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if str(data.get("phase") or "") not in {"generating", "running"}:
+        return False
+    try:
+        pid = int(data.get("controller_pid") or 0)
+    except Exception:
+        pid = 0
+    if pid <= 0 or pid == os.getpid():
+        return False
+
+    def alive() -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError as exc:
+            return exc.errno == errno.EPERM
+
+    if not alive():
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    deadline = time.time() + max(0.5, wait_sec)
+    while time.time() < deadline:
+        if not alive():
+            return True
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return not alive()
+    return True
 
 
 def hide_wildcard_candidate_obs_sources(
@@ -3611,6 +3656,7 @@ def main() -> int:
         args.deadline_fast_drop_values = [True, False]
 
     if args.cleanup_stale:
+        stop_status_controller(args.status_file)
         cleanup_wildcard_chrome_processes(session_root=args.session_root)
         cleanup_wildcard_server_ports(cleanup_ports_from_status(args.status_file, args.serve_base_port, args.jobs))
         hide_wildcard_candidate_obs_sources(args.status_file, args.jobs, "cleanup_stale")

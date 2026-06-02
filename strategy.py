@@ -996,6 +996,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             ):
                 __dlg_mode = "first_russia_single_t13_t12_bank"
             elif (
+                __dlg_t13_pair_compress_ready
+                and (
+                    __dlg_next_type >= 10
+                    or __dlg_next_next_type >= 10
+                )
+            ):
+                __dlg_mode = "t13_pair_compress"
+            elif (
                 __dlg_first_russia_pair_ready
                 and __dlg_next_type in (10, 11, 12, 13)
             ):
@@ -1018,14 +1026,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and __dlg_next_type in (10, 11, 12, 13)
             ):
                 __dlg_mode = "second_russia_t12_ladder"
-            elif (
-                __dlg_t13_pair_compress_ready
-                and (
-                    __dlg_next_type >= 10
-                    or __dlg_next_next_type >= 10
-                )
-            ):
-                __dlg_mode = "t13_pair_compress"
             elif __dlg_t13_pair_single_t12_tether_ready:
                 __dlg_mode = "t13_pair_single_t12_tether"
             elif __dlg_single_t13_t12_compress_ready:
@@ -1565,7 +1565,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_lowest = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             __dlg_lowest_y = float(__dlg_lowest.get("landing_y", 99.0) or 99.0)
             __dlg_window = __dlg_lowest_y + (
-                1.20
+                1.45
+                if __dlg_mode == "russia_pair"
+                else 1.20
                 if __dlg_mode in ("second_russia_t12_pair_lock", "first_russia_single_t13_t12_bank")
                 else 0.85
             )
@@ -1584,7 +1586,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             __dlg_lowest_dist = abs(float(__dlg_lowest.get("x", 0.0) or 0.0) - __dlg_center_x)
             __dlg_cluster_dist = abs(float(__dlg_cluster.get("x", 0.0) or 0.0) - __dlg_center_x)
-            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "first_russia_t13_pair_lift", "first_russia_single_t13_t12_bank", "t13_pair_compress", "t13_pair_single_t12_tether", "single_t13_t12_compress", "single_t13_single_t12_ladder", "single_t12_anchor_ladder", "second_russia_t12_pair_lock", "second_russia_t12_ladder", "soviet_ladder", "t11_density", "t12_consolidate") else 0.35
+            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "first_russia_t13_pair_lift", "first_russia_single_t13_t12_bank", "t13_pair_compress", "t13_pair_single_t12_tether", "single_t13_t12_compress", "single_t13_single_t12_ladder", "single_t12_anchor_ladder", "second_russia_t12_pair_lock", "second_russia_t12_ladder", "soviet_ladder", "t11_density", "t12_consolidate", "russia_pair") else 0.35
             if __dlg_cluster_dist + __dlg_required_gain < __dlg_lowest_dist:
                 return (__dlg_cluster, __dlg_mode)
             return None
@@ -1625,6 +1627,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if __dlg_cluster_mode == "first_russia_single_t13_t12_bank"
                 else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
                 if __dlg_cluster_mode == "first_russia_pair"
+                else "DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER"
+                if __dlg_cluster_mode == "russia_pair"
                 else "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"
             )
             return {"x": float(__dlg_cluster_piece.get("x", 0.0) or 0.0), "reason": __dlg_reason}
@@ -1679,6 +1683,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if __dlg_cluster_mode == "first_russia_single_t13_t12_bank"
                     else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
                     if __dlg_cluster_mode == "first_russia_pair"
+                    else "DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER"
+                    if __dlg_cluster_mode == "russia_pair"
                     else "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"
                 )
                 return {"x": float(__dlg_cluster_piece.get("x", 0.0) or 0.0), "reason": __dlg_reason}
@@ -1711,11 +1717,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
-    # --- vXXX: russia phase detection (type 14/15 pieces on board) ---
-    # ロシアフェーズ: 盤面上にtype 14（ロシア）またはtype 15（ソ連）が存在する場合
+    # --- vXXX: russia phase detection (type 15 pieces on board) ---
+    # ロシアフェーズ: 盤面上にtype 15（ロシア）が存在する場合。
+    # type 14（カザフ）はロシア前段であり、ここで russia_phase に入ると
+    # T14->T15 の初回ロシア育成を二個目ロシア戦略で上書きしてしまう。
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-    russia_phase_count = sum(1 for p in pieces if p.get("type") in [14, 15])
+    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
     high_type_counts = {}
     for p in pieces:
@@ -1765,7 +1773,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     best_pair = (pair_center, pair_top_y)
         return best_pair
 
-    # v548: double_russia_phase — 2つ目の(type 14/15)が盤面にある場合、
+    # v548: double_russia_phase — 2つ目のtype 15が盤面にある場合、
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。

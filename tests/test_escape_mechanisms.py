@@ -2001,6 +2001,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('parser.add_argument("--cleanup-stale", action="store_true")', parallel)
         self.assertIn('parser.add_argument("--cleanup-sessions", action="store_true")', parallel)
         self.assertIn('WILDCARD_PARALLEL_KEEP_RECENT_RUNS"), 3', parallel)
+        self.assertIn("def stop_status_controller", parallel)
+        self.assertIn("stop_status_controller(args.status_file)", parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_root=args.session_root)", parallel)
         self.assertIn("cleanup_wildcard_server_ports(cleanup_ports_from_status(args.status_file, args.serve_base_port, args.jobs))", parallel)
         self.assertIn("cleanup_wildcard_chrome_processes(session_dir=session_dir)", parallel)
@@ -2054,6 +2056,26 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
             self.assertIn(18180, ports)
             self.assertIn(18181, ports)
             self.assertIn(18182, ports)
+
+    def test_wildcard_cleanup_stops_status_controller_pid(self):
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            status_path = Path(td) / "status.json"
+            status_path.write_text(json.dumps({"phase": "running", "controller_pid": 424242}), encoding="utf-8")
+            calls = []
+
+            def fake_kill(pid, sig):
+                calls.append((pid, sig))
+                if sig == 0 and len(calls) > 2:
+                    raise OSError()
+
+            with mock.patch.object(wildcard_parallel.os, "kill", side_effect=fake_kill), \
+                 mock.patch.object(wildcard_parallel.time, "sleep", return_value=None):
+                stopped = wildcard_parallel.stop_status_controller(status_path, wait_sec=0.5)
+
+            self.assertTrue(stopped)
+            self.assertIn((424242, wildcard_parallel.signal.SIGTERM), calls)
 
     def test_wildcard_parallel_prunes_old_session_dirs_without_active(self):
         import wildcard_parallel
@@ -7493,7 +7515,14 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("function macOpenChromium(openArgs, launchEnv)", local)
         self.assertIn("function shellQuote(value)", local)
         self.assertIn("exec /usr/bin/open ${openArgs.map(shellQuote).join(' ')}", local)
-        self.assertIn("execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv }", local)
+        self.assertIn("SOREN_CHROME_OPEN_TIMEOUT_SEC", local)
+        self.assertIn("timeout: openTimeoutMs", local)
+        self.assertIn("SOREN_CHROME_DETACHED_FALLBACK_ON_OPEN_MISSING", local)
+        self.assertIn("macOS open app-path missing executable; trying detached Chrome executable fallback", local)
+        self.assertLess(
+            local.index("macOS open app-path missing executable; trying detached Chrome executable fallback"),
+            local.index("const fallbackNames = macOpenFallbackAppNames();"),
+        )
         self.assertIn("isCrashpadPermissionLaunchFailure", local)
         self.assertIn("SOREN_CHROME_OPEN_FALLBACK_ON_CRASHPAD_FAIL", local)
         self.assertIn("launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs, { force: true })", local)
@@ -7600,12 +7629,22 @@ class TestMainAudioRecovery(unittest.TestCase):
         self.assertIn('[ "$((n - m))" -lt "$_BR_STALE_SEC" ]', bridge)
         self.assertIn("稼働中として復旧成功扱い", bridge)
         self.assertIn('[ "$((live_n - live_m))" -lt 30 ]', bridge)
-        self.assertIn('[ -n "$(_br_port_pid)" ] || [ "$((n - m))" -lt 30 ]', bridge)
+        self.assertIn("_br_cdp_port_pid()", bridge)
+        self.assertIn("BRIDGE_RELAUNCH_VERIFY_SEC", bridge)
+        self.assertIn('BRIDGE_RELAUNCH_VERIFY_SEC:-150', bridge)
+        self.assertIn('[ -n "$serve_pid" ] && [ -n "$cdp_pid" ] &&', bridge)
+        self.assertIn("serve=up cdp=up", bridge)
+        self.assertIn("復旧検証待ち", bridge)
+
+        eloop = (REPO_ROOT / "eloop.sh").read_text()
+        self.assertIn("if ! _ensure_bridge_alive; then", eloop)
+        self.assertIn("復旧未完了 → 試合開始を次周回へ延期", eloop)
 
     def test_bridge_recovery_relaunches_repeated_audio_resume_failures(self):
         bridge = (REPO_ROOT / "lib" / "bridge_recovery.sh").read_text()
 
         self.assertIn("_br_audio_stuck_reason()", bridge)
+        self.assertIn('view.get("unityPresent") is False', bridge)
         self.assertIn("BRIDGE_AUDIO_STUCK_RECOVER_COUNT", bridge)
         self.assertIn("AUDIO-WATCHDOG-RECOVER", bridge)
         self.assertIn("audio_context_stuck", bridge)
@@ -11396,6 +11435,7 @@ PY
             self.assertEqual(status["phase"], "restored")
             self.assertEqual(status["previous_phase"], "running")
             self.assertEqual(status["previous_candidate_count"], 1)
+            self.assertGreater(status["previous_controller_pid"], 0)
             self.assertEqual(status["candidates"], [])
             self.assertIn("restored", overlay)        # psub に restored phase
             self.assertIn("restored&lt;-running", overlay)
@@ -12514,6 +12554,10 @@ class TestParamParallelDetectionLagClosed(unittest.TestCase):
                 _wildcard_parallel_prewrite_status "$OLD"
                 if WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC=3600 _wildcard_parallel_active; then
                     echo STALE_ACTIVE; else echo STALE_INACTIVE; fi
+                PIDLESS_OLD=$((NOW - 700))
+                _wildcard_parallel_prewrite_status "$PIDLESS_OLD"
+                if WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC=3600 _wildcard_parallel_active; then
+                    echo PIDLESS_ACTIVE; else echo PIDLESS_INACTIVE; fi
             """)
             res = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
                                  text=True, capture_output=True, check=False)
@@ -12523,12 +12567,16 @@ class TestParamParallelDetectionLagClosed(unittest.TestCase):
             self.assertIn("FRESH_ACTIVE", out, res.stderr)
             # 3600s 超の孤児 status: active=false → 本線を永久ブロックしない
             self.assertIn("STALE_INACTIVE", out, res.stderr)
+            # controller_pid 導入前の古い running status は短い猶予後に解放する
+            self.assertIn("PIDLESS_INACTIVE", out, res.stderr)
 
     def test_prewrite_status_age_bound_constant_exists(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
         # 既存の age 上限 (孤児が永久ブロックしない保証) を退行させない
         self.assertIn("WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC", improve)
         self.assertIn("(time.time() - started_at) > max_sec", improve)
+        self.assertIn("WILDCARD_PARALLEL_PIDLESS_STALE_SEC", improve)
+        self.assertIn("controller_pid", improve)
 
     def test_slot_activity_fresh_guard_structural(self):
         """_wildcard_parallel_active が slot game_history 活性チェックを含む。"""
@@ -12846,6 +12894,8 @@ class TestCandidateChromeLaunchStagger(unittest.TestCase):
         # launch lock until CDP is reachable, not merely until the process is spawned.
         self.assertIn("def run_macos_open(open_args: list[str], candidate_env: dict[str, str])", wp)
         self.assertIn("def run_macos_open_and_wait(open_args: list[str], candidate_env: dict[str, str])", wp)
+        self.assertIn('WILDCARD_PARALLEL_OPEN_TIMEOUT_SEC', wp)
+        self.assertIn('timeout=open_timeout', wp)
         self.assertIn('" ".join(shlex.quote(part) for part in open_args)', wp)
         self.assertIn('["/bin/zsh", "-lc", shell_cmd]', wp)
         self.assertIn("return bool(_run_with_launch_stagger(launch_and_wait))", wp)
@@ -12856,6 +12906,31 @@ class TestCandidateChromeLaunchStagger(unittest.TestCase):
         fn = wp.split("def _run_with_launch_stagger(launch_fn):", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("with _CHROME_LAUNCH_LOCK:", fn)
         self.assertIn("time.sleep(stagger)", fn)
+
+
+class TestStrategyRussiaPhaseBoundary(unittest.TestCase):
+    """T14 is still the pre-Russia gate; only T15 should switch to Russia phase."""
+
+    def test_russia_phase_uses_type15_not_type14(self):
+        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
+        self.assertIn('russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)', strategy)
+        self.assertIn("double_russia_phase = russia_phase_count >= 2", strategy)
+        self.assertNotIn('p.get("type") in [14, 15]', strategy)
+        self.assertIn("type 14（カザフ）はロシア前段", strategy)
+
+    def test_deadline_guard_prefers_t13_pair_compress_before_pair_center(self):
+        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
+        mode_chain = strategy.split("__dlg_mode = None", 1)[1].split("if __dlg_mode is None:", 1)[0]
+        self.assertLess(
+            mode_chain.index('__dlg_mode = "t13_pair_compress"'),
+            mode_chain.index('__dlg_mode = "first_russia_pair"'),
+        )
+
+    def test_deadline_guard_t14_pair_gets_cluster_priority(self):
+        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
+        self.assertIn('if __dlg_mode == "russia_pair"', strategy)
+        self.assertIn('"t12_consolidate", "russia_pair"', strategy)
+        self.assertIn('DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER', strategy)
 
 
 if __name__ == "__main__":
