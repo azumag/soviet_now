@@ -361,6 +361,54 @@ _CHROME_LAUNCH_LOCK = Lock()
 # OBS-2026-06-01-132749.ips: Thread 84 abort in obs_source_update.)
 _OBS_SOURCE_LOCK = Lock()
 
+# Repaired-once-per-process guard for the LaunchServices registration of the
+# resolved Chrome-for-Testing bundle.
+_LSREGISTER_LOCK = Lock()
+_LSREGISTER_DONE: set[str] = set()
+
+
+def ensure_chrome_launchservices_registration(app_path: str) -> None:
+    """Re-register the resolved Chrome-for-Testing bundle with LaunchServices.
+
+    Candidate slots launch Chrome via `/usr/bin/open` (LaunchServices) so the GUI
+    session registers a capturable window. But Playwright upgrades Chrome (e.g.
+    chromium-1208 -> a newer chromium-NNNN) and deletes the old directory, while
+    LaunchServices keeps the STALE registration pointing at the deleted path. Then
+    `open <new path>` fails with `kLSNoExecutableErr: The executable is missing`,
+    every slot's bridge exits 1, and the whole trial aborts as `infra_failed`
+    (observed 100% of trials 08:30-12:09 on 2026-06-02, all on a stale chromium-1200
+    registration after the real binary moved to chromium-1208).
+
+    A targeted `lsregister -f <app>` repoints the registration to the live bundle.
+    We deliberately do NOT use `lsregister -kill -r` (it rebuilds the whole DB and
+    freezes Finder/Dock for 5-30s). Idempotent; runs at most once per app_path per
+    process. Gate off with WILDCARD_PARALLEL_LSREGISTER_FIX=0.
+    """
+    if sys.platform != "darwin" or not app_path:
+        return
+    if os.environ.get("WILDCARD_PARALLEL_LSREGISTER_FIX", "1") != "1":
+        return
+    with _LSREGISTER_LOCK:
+        if app_path in _LSREGISTER_DONE:
+            return
+        _LSREGISTER_DONE.add(app_path)
+    lsregister = (
+        "/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+        "LaunchServices.framework/Support/lsregister"
+    )
+    if not os.path.exists(lsregister) or not os.path.exists(app_path):
+        return
+    try:
+        subprocess.run(
+            [lsregister, "-f", app_path],
+            timeout=20,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
 
 def _chrome_launch_stagger_sec() -> float:
     stagger = _float(os.getenv("WILDCARD_PARALLEL_CHROME_LAUNCH_STAGGER_SEC"), 1.2)
@@ -2583,6 +2631,9 @@ def evaluate_real(
         chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)
     if not chrome_app_path and chrome_executable_path:
         chrome_app_path = chrome_app_path_from_executable(chrome_executable_path)
+    # Repoint a stale LaunchServices registration at the live Chrome bundle before
+    # any slot runs `open` on it (else kLSNoExecutableErr aborts the whole trial).
+    ensure_chrome_launchservices_registration(chrome_app_path)
     chrome_fallback_app_path_list = chrome_fallback_app_paths(chrome_app_path)
     chrome_fallback_executable_path_list = chrome_fallback_executable_paths(chrome_executable_path)
     if progress_callback:
