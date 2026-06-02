@@ -3195,6 +3195,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- vXXX: pre-Russia single-T12 anchor ladder -----
         # Clean #29429 stalled at T12x2/T11x5/T10x4 after the only low T12
         # anchor was ignored and high T11 material made the second T12 at redline.
+        early_single_t12_dense_pressure = (
+            pre_russia_counts.get(11, 0) >= 1
+            and (type10_count >= 3 or type9_count >= 2)
+        )
         pre_russia_single_t12_anchor_ladder_ready = (
             not russia_phase
             and max_type_on_board == 12
@@ -3207,8 +3211,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     and (type10_count >= 3 or type9_count >= 4)
                 )
             )
-            and next_type in (9, 10, 11, 12)
-            and piece_count >= 26
+            and next_type in (6, 7, 8, 9, 10, 11, 12)
+            and (piece_count >= 26 or (piece_count >= 18 and early_single_t12_dense_pressure))
         )
         if (
             merge_grade in ("NO", "DIRECT", "NEAR")
@@ -3219,6 +3223,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t12_targets = [p for p in pieces if p.get("type") == 12]
             t11_targets = [p for p in pieces if p.get("type") == 11]
             t10_targets = [p for p in pieces if p.get("type") == 10]
+            t8_targets = [p for p in pieces if p.get("type") == 8]
+            t7_targets = [p for p in pieces if p.get("type") == 7]
+            t6_targets = [p for p in pieces if p.get("type") == 6]
             anchor_target = None
             if t12_targets:
                 t12_anchor = min(t12_targets, key=lambda tp: (tp.get("y", -10), abs(tp.get("x", 0))))
@@ -3273,18 +3280,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         anchor_target = min(near_anchor_t9, key=_pre_russia_single_t12_anchor_t9_key)
                     else:
                         anchor_target = {"x": anchor_x, "y": anchor_y, "type": 10}
+                elif next_type in (6, 7, 8):
+                    same_targets = (
+                        t8_targets if next_type == 8
+                        else t7_targets if next_type == 7
+                        else t6_targets
+                    )
+                    up_targets = [
+                        p for p in pieces if next_type < p.get("type", 0) <= 12
+                    ]
+                    if same_targets:
+                        def _pre_russia_single_t12_anchor_low_key(tp):
+                            tp_x = tp.get("x", 0)
+                            tp_y = tp.get("y", -10)
+                            up_dist = min(
+                                ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                                for up in up_targets
+                            ) if up_targets else 999.0
+                            anchor_dist = abs(tp_x - anchor_x)
+                            return (
+                                anchor_dist * 0.74
+                                + up_dist * 0.34
+                                + max(0.0, anchor_dist - 1.25) * 1.05
+                                + max(0.0, tp_y - 0.45) * 1.1,
+                                tp_y,
+                            )
+                        anchor_target = min(same_targets, key=_pre_russia_single_t12_anchor_low_key)
+                    else:
+                        anchor_target = {"x": anchor_x, "y": anchor_y, "type": next_type + 1}
             if anchor_target is not None:
                 anchor_dist = abs(x - anchor_target.get("x", 0))
                 anchor_bonus = max(0.0, 2250.0 - anchor_dist * 540.0)
                 if dense_anchor_pressure:
                     anchor_bonus *= 1.3
-                if dense_anchor_pressure and next_type in (9, 10) and anchor_dist <= 0.8:
+                if dense_anchor_pressure and next_type in (6, 7, 8, 9, 10) and anchor_dist <= 0.8:
                     anchor_bonus += 650.0
                 if piece_count >= 32:
                     anchor_bonus *= min(1.85, 1.0 + (piece_count - 32) * 0.08)
                 if pre_russia_t11_density_high_veto_ready and next_type == 11 and landing_y > 1.15:
                     anchor_bonus *= 0.12
-                if dense_anchor_pressure and next_type in (9, 10, 11) and landing_y > 1.25:
+                if dense_anchor_pressure and next_type in (6, 7, 8, 9, 10, 11) and landing_y > 1.25:
                     score -= 1300.0 + max(0.0, landing_y - 1.25) * 1800.0
                     reasons.append("PRE_RUSSIA_SINGLE_T12_ANCHOR_DENSE_HIGH_VETO")
                 if landing_y > 1.5:
@@ -3297,6 +3332,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= 1900.0
                 if abs(x) >= 2.5 and anchor_dist >= 1.1:
                     score -= 1800.0
+                if next_type <= 8 and anchor_dist >= 1.05 and landing_y > 0.55:
+                    score -= 2300.0 + max(0.0, landing_y - 0.55) * 1000.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T12_ANCHOR_LOW_OFFLANE_VETO")
                 if landing_y > 1.6 and anchor_dist >= 0.8:
                     score -= 1650.0
                 if next_type == 11 and merge_grade in ("DIRECT", "NEAR") and landing_y > 1.0 and anchor_dist >= 0.9:
@@ -3411,7 +3449,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or pre_russia_counts.get(11, 0) >= 2
                 or type10_count >= 2
             )
-            and next_type in (9, 10, 11, 12)
+            and next_type in (6, 7, 8, 9, 10, 11, 12)
         )
         if (
             merge_grade == "NO"
@@ -3469,7 +3507,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     consolidate_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 12}
             else:
                 same_targets = [p for p in pieces if p.get("type") == next_type]
-                up_types = (10, 11, 12) if next_type == 9 else (11, 12)
+                up_types = (
+                    (9, 10, 11, 12)
+                    if next_type <= 8
+                    else (10, 11, 12) if next_type == 9
+                    else (11, 12)
+                )
                 up_targets = [p for p in pieces if p.get("type") in up_types]
                 if same_targets and up_targets:
                     anchor_x = t12_pair_center
@@ -3485,6 +3528,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             )
                             lane_dist = abs(tp_x - anchor_x)
                             high_penalty = max(0.0, tp_y + 0.1) * (0.75 if next_type == 9 else 0.9)
+                            if next_type <= 8:
+                                return (
+                                    lane_dist * 0.74
+                                    + up_dist * 0.34
+                                    + max(0.0, lane_dist - 1.25) * 1.05
+                                    + max(0.0, tp_y - 0.45) * 1.05,
+                                    tp_y,
+                                )
                             return (min(up_dist, lane_dist) + high_penalty, tp_y)
                         consolidate_target = min(same_targets, key=_pre_russia_t12_consolidate_low_key)
                 elif t12_pair_center is not None:
@@ -3492,6 +3543,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if consolidate_target is not None:
                 consolidate_dist = abs(x - consolidate_target.get("x", 0))
                 consolidate_bonus = max(0.0, 2300.0 - consolidate_dist * 700.0)
+                if next_type <= 8 and consolidate_dist <= 0.8:
+                    consolidate_bonus += 1800.0
                 if piece_count >= 34:
                     consolidate_bonus *= min(1.85, 1.0 + (piece_count - 34) * 0.09)
                 elif piece_count >= 28:
@@ -3503,10 +3556,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if abs(x) >= 2.5 and consolidate_dist >= 1.3:
                     score -= 3600.0
                     reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_OFFLANE_VETO")
+                if next_type <= 8 and consolidate_dist >= 1.05 and landing_y > 0.55:
+                    score -= 2600.0 + max(0.0, landing_y - 0.55) * 1100.0
+                    reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_LOW_OFFLANE_VETO")
                 if (
                     pre_russia_counts.get(12, 0) >= 2
                     and pre_russia_counts.get(13, 0) == 0
-                    and next_type in (9, 10, 11, 12)
+                    and next_type in (6, 7, 8, 9, 10, 11, 12)
                     and consolidate_dist >= 1.05
                     and landing_y > 0.65
                 ):
@@ -3704,30 +3760,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # T12 left; generic safe landings then scattered T9/T10/T11 material
         # away from the T13 lane until deadline guard took over. Keep this
         # narrow: it only applies pre-Russia with exactly one T13 and no T12.
+        early_single_t13_no_t12_rebuild_pressure = (
+            pre_russia_counts.get(11, 0) >= 1
+            or type10_count >= 1
+            or type9_count >= 2
+        )
         pre_russia_single_t13_no_t12_rebuild_ready = (
             not russia_phase
             and max_type_on_board == 13
             and pre_russia_counts.get(13, 0) == 1
             and pre_russia_counts.get(14, 0) == 0
             and pre_russia_counts.get(12, 0) == 0
-            and next_type in (9, 10, 11, 12)
-            and (
-                pre_russia_counts.get(11, 0) >= 1
-                or type10_count >= 1
-                or pre_russia_counts.get(9, 0) >= 2
-            )
+            and next_type in (6, 7, 8, 9, 10, 11, 12)
+            and early_single_t13_no_t12_rebuild_pressure
         )
         if (
             merge_grade == "NO"
             and pre_russia_single_t13_no_t12_rebuild_ready
             and not death_spiral
             and max_y < 3.1
-            and piece_count >= 20
+            and (
+                piece_count >= 20
+                or (piece_count >= 13 and early_single_t13_no_t12_rebuild_pressure)
+            )
         ):
             t13_targets = [p for p in pieces if p.get("type") == 13]
             t11_targets = [p for p in pieces if p.get("type") == 11]
             t10_targets = [p for p in pieces if p.get("type") == 10]
             t9_targets = [p for p in pieces if p.get("type") == 9]
+            t8_targets = [p for p in pieces if p.get("type") == 8]
+            t7_targets = [p for p in pieces if p.get("type") == 7]
+            t6_targets = [p for p in pieces if p.get("type") == 6]
             rebuild_target = None
             if t13_targets:
                 t13_anchor = min(t13_targets, key=lambda tp: tp.get("y", 10))
@@ -3824,6 +3887,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         t9_targets,
                         key=_pre_russia_single_t13_no_t12_t9_key,
                     )
+                elif next_type in (6, 7, 8):
+                    same_targets = (
+                        t8_targets if next_type == 8
+                        else t7_targets if next_type == 7
+                        else t6_targets
+                    )
+                    up_targets = [
+                        p for p in pieces if next_type < p.get("type", 0) <= 11
+                    ]
+                    if same_targets:
+                        def _pre_russia_single_t13_no_t12_low_key(tp):
+                            tp_x = tp.get("x", 0)
+                            tp_y = tp.get("y", -10)
+                            up_dist = min(
+                                (
+                                    (up.get("x", 0) - tp_x) ** 2
+                                    + (up.get("y", -10) - tp_y) ** 2
+                                ) ** 0.5
+                                for up in up_targets
+                            ) if up_targets else 999.0
+                            lane_dist = abs(tp_x - rebuild_anchor_x)
+                            return (
+                                lane_dist * 0.74
+                                + up_dist * 0.34
+                                + max(0.0, lane_dist - 1.25) * 1.05
+                                + max(0.0, tp_y - 0.45) * 1.1,
+                                tp_y,
+                            )
+
+                        rebuild_target = min(
+                            same_targets,
+                            key=_pre_russia_single_t13_no_t12_low_key,
+                        )
+                    else:
+                        rebuild_target = {
+                            "x": rebuild_anchor_x,
+                            "y": rebuild_anchor_y,
+                            "type": next_type + 1,
+                        }
                 else:
                     rebuild_target = {
                         "x": rebuild_anchor_x,
@@ -3834,6 +3936,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if rebuild_target is not None:
                 rebuild_dist = abs(x - rebuild_target.get("x", 0))
                 rebuild_bonus = max(0.0, 1850.0 - rebuild_dist * 560.0)
+                if next_type <= 8 and rebuild_dist <= 0.8:
+                    rebuild_bonus += 1900.0
                 if piece_count >= 28:
                     rebuild_bonus *= min(1.75, 1.0 + (piece_count - 28) * 0.08)
                 if landing_y > 2.0:
@@ -3845,6 +3949,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if abs(x) >= 2.45 and rebuild_dist >= 1.35:
                     score -= 1700.0
                     reasons.append("PRE_RUSSIA_SINGLE_T13_NO_T12_REBUILD_OFFLANE_VETO")
+                if next_type <= 8 and rebuild_dist >= 1.05 and landing_y > 0.65:
+                    score -= 2400.0 + max(0.0, landing_y - 0.65) * 1000.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_NO_T12_REBUILD_LOW_OFFLANE_VETO")
                 if landing_y > 2.15 and rebuild_dist >= 0.95:
                     score -= 1100.0
                     reasons.append("PRE_RUSSIA_SINGLE_T13_NO_T12_REBUILD_HIGH_OFFLANE_VETO")
@@ -4132,6 +4239,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t12_pair_center = None
             t12_pair_y = -10.0
             t12_pair_span = 999.0
+            split_t13_t12_bank = False
+            wide_t12_pair_rebuild = False
+            wide_t12_anchor = None
             if len(t12_targets) >= 2:
                 best_pair = None
                 best_pair_key = (999.0, 999.0)
@@ -4167,46 +4277,103 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         + (best_pair[0].get("y", -10) - best_pair[1].get("y", -10)) ** 2
                     ) ** 0.5
                     compress_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 12}
+                    wide_t12_pair_rebuild = (
+                        pre_russia_counts.get(12, 0) == 2
+                        and t12_pair_span > 3.25
+                    )
+                    if wide_t12_pair_rebuild:
+                        wide_t12_anchor = min(
+                            best_pair,
+                            key=lambda tp: (
+                                tp.get("y", -10),
+                                abs(tp.get("x", 0) - (t13_center if t13_center is not None else tp.get("x", 0))),
+                            ),
+                        )
             t12_bank_pressure = (
                 pre_russia_counts.get(12, 0) >= 3
                 or (t12_pair_center is not None and max_y >= 2.1)
             )
+            if t12_pair_center is not None and t13_center is not None:
+                split_t13_t12_bank = (
+                    pre_russia_counts.get(12, 0) <= 2
+                    and abs(t12_pair_center - t13_center) > 1.75
+                )
             if next_type == 11 and t11_targets:
-                up_targets = t12_targets if t12_bank_pressure else t12_targets + t13_targets
-                def _pre_russia_single_t13_t12_compress_t11_key(tp):
-                    tp_x = tp.get("x", 0)
-                    tp_y = tp.get("y", -10)
-                    up_dist = min(
-                        ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
-                        for up in up_targets
-                    ) if up_targets else 999.0
-                    if t12_pair_center is not None and t12_pair_span <= 2.35:
-                        lane_dist = abs(tp_x - t12_pair_center)
+                up_targets = (
+                    t12_targets + t13_targets
+                    if split_t13_t12_bank
+                    else t12_targets if t12_bank_pressure
+                    else t12_targets + t13_targets
+                )
+                t11_targets_for_key = t11_targets
+                wide_t12_virtual_target = False
+                if wide_t12_pair_rebuild and wide_t12_anchor is not None:
+                    wide_anchor_x = wide_t12_anchor.get("x", 0)
+                    near_anchor_t11 = [
+                        tp for tp in t11_targets
+                        if abs(tp.get("x", 0) - wide_anchor_x) <= 1.25
+                    ]
+                    if not near_anchor_t11:
+                        compress_target = {
+                            "x": wide_anchor_x,
+                            "y": wide_t12_anchor.get("y", -10),
+                            "type": 12,
+                        }
+                        wide_t12_virtual_target = True
                     else:
-                        lane_dist = min(
-                            abs(tp_x - t12.get("x", 0))
-                            for t12 in t12_targets
-                        ) if t12_targets else 999.0
-                    t13_dist = abs(tp_x - t13_center) if t13_center is not None else 0.0
-                    if t12_bank_pressure:
+                        t11_targets_for_key = near_anchor_t11
+                if not wide_t12_virtual_target:
+                    def _pre_russia_single_t13_t12_compress_t11_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        up_dist = min(
+                            ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                            for up in up_targets
+                        ) if up_targets else 999.0
+                        if wide_t12_pair_rebuild and wide_t12_anchor is not None:
+                            lane_dist = abs(tp_x - wide_t12_anchor.get("x", 0))
+                        elif t12_pair_center is not None and t12_pair_span <= 2.35:
+                            lane_dist = abs(tp_x - t12_pair_center)
+                        else:
+                            lane_dist = min(
+                                abs(tp_x - t12.get("x", 0))
+                                for t12 in t12_targets
+                            ) if t12_targets else 999.0
+                        t13_dist = abs(tp_x - t13_center) if t13_center is not None else 0.0
+                        if split_t13_t12_bank:
+                            return (
+                                t13_dist * 0.78
+                                + up_dist * 0.24
+                                + max(0.0, tp_y - 0.55) * 1.45,
+                                tp_y,
+                            )
+                        if wide_t12_pair_rebuild:
+                            return (
+                                lane_dist * 0.64
+                                + up_dist * 0.34
+                                + max(0.0, lane_dist - 1.05) * 1.45
+                                + max(0.0, tp_y - 0.45) * 1.45,
+                                tp_y,
+                            )
+                        if t12_bank_pressure:
+                            return (
+                                lane_dist * 0.74
+                                + up_dist * 0.46
+                                + max(0.0, lane_dist - 1.15) * 1.45
+                                + t13_dist * 0.04
+                                + max(0.0, tp_y - 0.45) * 1.55,
+                                tp_y,
+                            )
                         return (
-                            lane_dist * 0.74
-                            + up_dist * 0.46
-                            + max(0.0, lane_dist - 1.15) * 1.45
-                            + t13_dist * 0.04
-                            + max(0.0, tp_y - 0.45) * 1.55,
+                            min(up_dist, lane_dist)
+                            + t13_dist * 0.14
+                            + max(0.0, tp_y - 0.55) * 1.25,
                             tp_y,
                         )
-                    return (
-                        min(up_dist, lane_dist)
-                        + t13_dist * 0.14
-                        + max(0.0, tp_y - 0.55) * 1.25,
-                        tp_y,
+                    compress_target = min(
+                        t11_targets_for_key,
+                        key=_pre_russia_single_t13_t12_compress_t11_key,
                     )
-                compress_target = min(
-                    t11_targets,
-                    key=_pre_russia_single_t13_t12_compress_t11_key,
-                )
             elif next_type == 10 and t10_targets:
                 up_targets = t11_targets + t12_targets
                 if not t12_bank_pressure:
@@ -4310,6 +4477,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     compress_bonus += 650.0
                 if t12_bank_pressure and compress_dist <= 0.85:
                     compress_bonus += 950.0
+                if wide_t12_pair_rebuild and compress_dist <= 0.85:
+                    compress_bonus += 1350.0
+                if split_t13_t12_bank and next_type == 11 and compress_dist <= 0.75:
+                    compress_bonus += 1600.0
                 if next_type <= 8 and compress_dist <= 0.8:
                     compress_bonus += 2200.0
                 if next_type == 10 and compress_target.get("type") == 10 and compress_dist <= 0.65:
@@ -4335,6 +4506,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if next_type == 11 and compress_target.get("type") == 11 and compress_dist >= 1.0:
                     score -= 2600.0 + max(0.0, landing_y - 0.6) * 1200.0
                     reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_T11_OFFLANE_VETO")
+                if wide_t12_pair_rebuild and next_type in (10, 11) and compress_dist >= 1.05 and landing_y > 0.55:
+                    score -= 2600.0 + max(0.0, landing_y - 0.55) * 1300.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_WIDE_T12_OFFLANE_VETO")
+                if split_t13_t12_bank and next_type == 11 and compress_dist >= 0.95:
+                    score -= 2200.0 + max(0.0, landing_y - 0.65) * 1200.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_SPLIT_T11_VETO")
                 if next_type <= 8 and compress_dist >= 1.05 and landing_y > 0.55:
                     score -= 2800.0 + max(0.0, landing_y - 0.55) * 1100.0
                     reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_LOW_OFFLANE_VETO")
@@ -4362,8 +4539,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and (
                 pre_russia_counts.get(11, 0) >= 2
                 or type10_count >= 2
+                or type9_count >= 2
             )
-            and next_type in (10, 11, 12, 13)
+            and next_type in (6, 7, 8, 9, 10, 11, 12, 13)
         )
         if (
             merge_grade == "NO"
@@ -4376,6 +4554,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t12_targets = [p for p in pieces if p.get("type") == 12]
             t11_targets = [p for p in pieces if p.get("type") == 11]
             t10_targets = [p for p in pieces if p.get("type") == 10]
+            t9_targets = [p for p in pieces if p.get("type") == 9]
+            t8_targets = [p for p in pieces if p.get("type") == 8]
+            t7_targets = [p for p in pieces if p.get("type") == 7]
+            t6_targets = [p for p in pieces if p.get("type") == 6]
             t13_center = _weighted_center_x(t13_targets)
             t12_anchor = min(
                 t12_targets,
@@ -4437,6 +4619,60 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         t10_targets,
                         key=_pre_russia_single_t13_single_t12_t10_key,
                     )
+                elif next_type == 9 and t9_targets:
+                    up_targets = t10_targets + t11_targets + t12_targets
+                    def _pre_russia_single_t13_single_t12_t9_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        up_dist = min(
+                            ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                            for up in up_targets
+                        ) if up_targets else 999.0
+                        return (
+                            min(up_dist, abs(tp_x - t12_x))
+                            + max(0.0, tp_y - 0.7) * 0.9,
+                            tp_y,
+                        )
+                    ladder_target = min(
+                        t9_targets,
+                        key=_pre_russia_single_t13_single_t12_t9_key,
+                    )
+                elif next_type in (6, 7, 8):
+                    same_targets = (
+                        t8_targets if next_type == 8
+                        else t7_targets if next_type == 7
+                        else t6_targets
+                    )
+                    up_targets = [
+                        p for p in pieces if next_type < p.get("type", 0) <= 12
+                    ]
+                    lane_x = (t12_x * 0.70) + ((t13_center if t13_center is not None else t12_x) * 0.30)
+                    if same_targets:
+                        def _pre_russia_single_t13_single_t12_low_key(tp):
+                            tp_x = tp.get("x", 0)
+                            tp_y = tp.get("y", -10)
+                            up_dist = min(
+                                ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                                for up in up_targets
+                            ) if up_targets else 999.0
+                            lane_dist = abs(tp_x - lane_x)
+                            return (
+                                lane_dist * 0.74
+                                + up_dist * 0.34
+                                + max(0.0, lane_dist - 1.25) * 1.05
+                                + max(0.0, tp_y - 0.45) * 1.1,
+                                tp_y,
+                            )
+                        ladder_target = min(
+                            same_targets,
+                            key=_pre_russia_single_t13_single_t12_low_key,
+                        )
+                    else:
+                        ladder_target = {
+                            "x": lane_x,
+                            "y": max(t12_y, -0.8),
+                            "type": next_type + 1,
+                        }
                 elif t13_center is not None:
                     ladder_target = {
                         "x": (t12_x * 0.68) + (t13_center * 0.32),
@@ -4446,6 +4682,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if ladder_target is not None:
                 ladder_dist = abs(x - ladder_target.get("x", 0))
                 ladder_bonus = max(0.0, 2300.0 - ladder_dist * 540.0)
+                if next_type <= 9 and ladder_dist <= 0.85:
+                    ladder_bonus += 1700.0
                 if piece_count >= 32:
                     ladder_bonus *= min(1.8, 1.0 + (piece_count - 32) * 0.08)
                 if landing_y > 1.9:
@@ -4456,6 +4694,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     ladder_bonus *= 0.7
                 if abs(x) >= 2.5 and ladder_dist >= 1.45:
                     score -= 1650.0
+                if next_type <= 9 and ladder_dist >= 1.05 and landing_y > 0.55:
+                    score -= 2300.0 + max(0.0, landing_y - 0.55) * 1000.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_SINGLE_T12_LOW_OFFLANE_VETO")
                 if landing_y > 2.35 and ladder_dist >= 0.95:
                     score -= 1150.0
                 if ladder_bonus > 0:
@@ -4464,7 +4705,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- vXXX: pre-Russia T13-pair ladder when T12 material is missing -----
         # Clean #29397 ended with T13x2 but no T12s, plus T11/T10 material
-        # stranded away from the pair. In this near-miss, feed T10/T11/T12
+        # stranded away from the pair. In this near-miss, feed T6+ rebuild material
         # back toward the T13 pair lane so it can rebuild T12/T13 material for
         # the first T14 instead of waiting for broad bridge clustering.
         pre_russia_t13_pair_ladder_ready = (
@@ -4477,7 +4718,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pre_russia_counts.get(11, 0) >= 2
                 or type10_count >= 2
             )
-            and next_type in (10, 11, 12)
+            and next_type in (6, 7, 8, 9, 10, 11, 12)
         )
         if (
             merge_grade == "NO"
@@ -4489,6 +4730,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t13_targets = [p for p in pieces if p.get("type") == 13]
             t13_pair_center = _weighted_center_x(t13_targets)
             ladder_target = None
+            no_t12_pair_rebuild = pre_russia_counts.get(12, 0) == 0
             if next_type == 12 and t13_pair_center is not None:
                 same_targets = [p for p in pieces if p.get("type") == 12]
                 if same_targets:
@@ -4504,14 +4746,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     def _pre_russia_t13_pair_ladder_key(tp):
                         tp_x = tp.get("x", 0)
                         tp_y = tp.get("y", -10)
-                        high_penalty = max(0.0, tp_y + 0.1) * 0.95
-                        return (abs(tp_x - t13_pair_center) + high_penalty, tp_y)
+                        lane_dist = abs(tp_x - t13_pair_center)
+                        high_penalty = max(0.0, tp_y + 0.1) * (
+                            1.35 if no_t12_pair_rebuild else 0.95
+                        )
+                        offlane_penalty = max(0.0, lane_dist - 1.35) * (
+                            1.45 if no_t12_pair_rebuild else 0.0
+                        )
+                        return (lane_dist + high_penalty + offlane_penalty, tp_y)
                     ladder_target = min(same_targets, key=_pre_russia_t13_pair_ladder_key)
+                    if (
+                        no_t12_pair_rebuild
+                        and next_type == 11
+                        and abs(ladder_target.get("x", 0) - t13_pair_center) > 1.45
+                    ):
+                        ladder_target = {"x": t13_pair_center, "y": -0.8, "type": 12}
                 else:
                     ladder_target = {"x": t13_pair_center, "y": -0.8, "type": next_type + 1}
             if ladder_target is not None:
                 ladder_dist = abs(x - ladder_target.get("x", 0))
-                ladder_bonus = max(0.0, 1520.0 - ladder_dist * 390.0)
+                ladder_bonus = max(0.0, 1820.0 - ladder_dist * 450.0)
+                if next_type <= 9 and ladder_dist <= 0.8:
+                    ladder_bonus += 1800.0
+                if no_t12_pair_rebuild and ladder_dist <= 0.85:
+                    ladder_bonus += 950.0
                 if piece_count >= 34:
                     ladder_bonus *= min(1.75, 1.0 + (piece_count - 34) * 0.08)
                 if landing_y > 2.7:
@@ -4520,6 +4778,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     ladder_bonus *= 0.72
                 if abs(x) >= 2.5 and ladder_dist >= 1.7:
                     score -= 1500.0
+                if next_type <= 9 and ladder_dist >= 1.1 and landing_y > 0.45:
+                    score -= 2300.0 + max(0.0, landing_y - 0.45) * 1000.0
+                    reasons.append("PRE_RUSSIA_T13_PAIR_LADDER_LOW_OFFLANE_VETO")
+                if no_t12_pair_rebuild and landing_y > 1.45 and ladder_dist >= 0.8:
+                    score -= 1400.0 + max(0.0, landing_y - 1.45) * 1200.0
+                    reasons.append("PRE_RUSSIA_T13_PAIR_LADDER_REBUILD_HIGH_VETO")
                 if ladder_bonus > 0:
                     score += ladder_bonus
                     reasons.append("PRE_RUSSIA_T13_PAIR_LADDER")

@@ -1314,7 +1314,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         ):
             return None
         pieces = (game_state or {}).get("pieces") or []
-        if not pieces or next_type < 8:
+        if not pieces or next_type < 6:
             return None
         high_counts = {}
         for piece in pieces:
@@ -1362,7 +1362,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             + _geom_num(best_pair[1].get("x"))
         ) / 2.0
 
-        if next_type in (10, 11, 12):
+        if next_type in (6, 7, 8, 9, 10, 11, 12):
             same_targets = [
                 p for p in pieces if int(p.get("type", 0) or 0) == next_type
             ]
@@ -1370,8 +1370,21 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 def same_key(piece):
                     px = _geom_num(piece.get("x"))
                     py = _geom_num(piece.get("y"), -10.0)
-                    return (abs(px - target_x) + max(0.0, py - 1.0) * 0.9, py)
-                target_x = _geom_num(min(same_targets, key=same_key).get("x"))
+                    lane_dist = abs(px - target_x)
+                    return (
+                        lane_dist
+                        + max(0.0, lane_dist - 1.35) * 1.25
+                        + max(0.0, py - 0.8) * 1.05,
+                        py,
+                    )
+                same_target = min(same_targets, key=same_key)
+                same_dx = abs(_geom_num(same_target.get("x")) - target_x)
+                if not (
+                    next_type == 11
+                    and high_counts.get(12, 0) == 0
+                    and same_dx > 1.45
+                ):
+                    target_x = _geom_num(same_target.get("x"))
 
         current_dx = abs(_geom_num(candidate.get("x")) - target_x)
         pool = results or safe
@@ -1491,6 +1504,9 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             _geom_num(best_pair[0].get("x"))
             + _geom_num(best_pair[1].get("x"))
         ) / 2.0
+        split_t13_t12_bank = high_counts.get(12, 0) <= 2 and abs(target_x - t13_x) > 1.75
+        if split_t13_t12_bank and next_type == 11:
+            target_x = t13_x
 
         same_map = {
             6: t6_targets,
@@ -1519,6 +1535,13 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 ) if up_targets else 999.0
                 lane_dist = abs(px - target_x)
                 if t12_bank_pressure:
+                    if split_t13_t12_bank and next_type == 11:
+                        return (
+                            abs(px - t13_x) * 0.78
+                            + up_dist * 0.24
+                            + max(0.0, py - 0.55) * 1.35,
+                            py,
+                        )
                     return (
                         lane_dist * 0.74
                         + up_dist * 0.44
