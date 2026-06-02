@@ -913,6 +913,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and __dlg_counts.get(12, 0) >= 1
                 and __dlg_counts.get(11, 0) >= 3
             )
+            __dlg_t11_cloud_to_t12_ready = (
+                __dlg_counts.get(15, 0) == 0
+                and __dlg_counts.get(14, 0) == 0
+                and __dlg_counts.get(13, 0) == 0
+                and __dlg_counts.get(12, 0) == 0
+                and __dlg_counts.get(11, 0) >= 3
+                and (
+                    __dlg_counts.get(11, 0) >= 4
+                    or __dlg_counts.get(10, 0) >= 2
+                )
+            )
             __dlg_t12_consolidate_ready = (
                 __dlg_counts.get(15, 0) == 0
                 and __dlg_counts.get(14, 0) == 0
@@ -953,6 +964,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or __dlg_second_russia_t12_ladder_ready
                 or __dlg_first_russia_pair_ready
                 or __dlg_t11_density_ready
+                or __dlg_t11_cloud_to_t12_ready
                 or __dlg_t12_consolidate_ready
                 or __dlg_first_russia_ready
             ):
@@ -1051,8 +1063,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif (
                 __dlg_t12_consolidate_ready
                 and (
-                    __dlg_next_type >= 10
-                    or __dlg_next_next_type >= 11
+                    __dlg_next_type >= 9
+                    or __dlg_next_next_type >= 10
                 )
             ):
                 __dlg_mode = "t12_consolidate"
@@ -1064,6 +1076,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 )
             ):
                 __dlg_mode = "t11_density"
+            elif (
+                __dlg_t11_cloud_to_t12_ready
+                and (
+                    __dlg_next_type in (9, 10, 11)
+                    or __dlg_next_next_type >= 10
+                )
+            ):
+                __dlg_mode = "t11_cloud_to_t12"
             elif (
                 __dlg_first_russia_ready
                 and (
@@ -1244,11 +1264,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     __dlg_targets = __dlg_t12_targets + __dlg_t11_targets
             elif __dlg_mode == "t13_pair_compress":
+                __dlg_t13_targets = [
+                    p for p in __dlg_targets
+                    if int(p.get("type", 0) or 0) == 13
+                ]
                 __dlg_t12_targets = [
                     p for p in __dlg_targets
                     if int(p.get("type", 0) or 0) == 12
                 ]
-                if len(__dlg_t12_targets) >= 2:
+                if len(__dlg_t13_targets) >= 3:
+                    __dlg_pair = None
+                    __dlg_pair_key = (999.0, 999.0, 999.0)
+                    for __dlg_i, __dlg_a in enumerate(__dlg_t13_targets):
+                        for __dlg_b in __dlg_t13_targets[__dlg_i + 1:]:
+                            __dlg_ax = float(__dlg_a.get("x", 0.0) or 0.0)
+                            __dlg_ay = float(__dlg_a.get("y", -10.0) or -10.0)
+                            __dlg_bx = float(__dlg_b.get("x", 0.0) or 0.0)
+                            __dlg_by = float(__dlg_b.get("y", -10.0) or -10.0)
+                            __dlg_center = (__dlg_ax + __dlg_bx) / 2.0
+                            __dlg_dist = ((__dlg_ax - __dlg_bx) ** 2 + (__dlg_ay - __dlg_by) ** 2) ** 0.5
+                            __dlg_top = max(__dlg_ay, __dlg_by)
+                            __dlg_key = (
+                                __dlg_dist + max(0.0, __dlg_top - 1.3) * 0.45,
+                                __dlg_top,
+                                abs(__dlg_center),
+                            )
+                            if __dlg_key < __dlg_pair_key:
+                                __dlg_pair_key = __dlg_key
+                                __dlg_pair = (__dlg_a, __dlg_b)
+                    if __dlg_pair is not None:
+                        __dlg_center = (
+                            float(__dlg_pair[0].get("x", 0.0) or 0.0)
+                            + float(__dlg_pair[1].get("x", 0.0) or 0.0)
+                        ) / 2.0
+                        __dlg_targets = [{"x": __dlg_center, "type": 13}]
+                    else:
+                        __dlg_targets = __dlg_t13_targets
+                elif len(__dlg_t12_targets) >= 2:
                     __dlg_pair = None
                     __dlg_pair_key = (999.0, 999.0)
                     for __dlg_i, __dlg_a in enumerate(__dlg_t12_targets):
@@ -1276,6 +1328,58 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         __dlg_targets = __dlg_t12_targets
                 else:
                     __dlg_targets = __dlg_t12_targets
+            elif __dlg_mode == "t11_cloud_to_t12":
+                __dlg_t11_targets = [
+                    p for p in __dlg_targets
+                    if int(p.get("type", 0) or 0) == 11
+                ]
+                __dlg_t10_targets = [
+                    p for p in __dlg_pieces
+                    if int(p.get("type", 0) or 0) == 10
+                ]
+                __dlg_t9_targets = [
+                    p for p in __dlg_pieces
+                    if int(p.get("type", 0) or 0) == 9
+                ]
+                if __dlg_next_type == 11 and __dlg_t11_targets:
+                    __dlg_targets = __dlg_t11_targets
+                elif __dlg_next_type == 10 and __dlg_t10_targets and __dlg_t11_targets:
+                    def __dlg_t11_cloud_t10_key(tp):
+                        __dlg_tp_x = float(tp.get("x", 0.0) or 0.0)
+                        __dlg_tp_y = float(tp.get("y", -10.0) or -10.0)
+                        __dlg_t11_dist = min(
+                            (
+                                (
+                                    float(up.get("x", 0.0) or 0.0) - __dlg_tp_x
+                                ) ** 2
+                                + (
+                                    float(up.get("y", -10.0) or -10.0) - __dlg_tp_y
+                                ) ** 2
+                            ) ** 0.5
+                            for up in __dlg_t11_targets
+                        )
+                        return (__dlg_t11_dist + max(0.0, __dlg_tp_y - 0.9) * 0.95, __dlg_tp_y)
+                    __dlg_targets = [min(__dlg_t10_targets, key=__dlg_t11_cloud_t10_key)]
+                elif __dlg_next_type == 9 and __dlg_t9_targets and (__dlg_t10_targets or __dlg_t11_targets):
+                    __dlg_up_targets = __dlg_t10_targets + __dlg_t11_targets
+                    def __dlg_t11_cloud_t9_key(tp):
+                        __dlg_tp_x = float(tp.get("x", 0.0) or 0.0)
+                        __dlg_tp_y = float(tp.get("y", -10.0) or -10.0)
+                        __dlg_up_dist = min(
+                            (
+                                (
+                                    float(up.get("x", 0.0) or 0.0) - __dlg_tp_x
+                                ) ** 2
+                                + (
+                                    float(up.get("y", -10.0) or -10.0) - __dlg_tp_y
+                                ) ** 2
+                            ) ** 0.5
+                            for up in __dlg_up_targets
+                        )
+                        return (__dlg_up_dist + max(0.0, __dlg_tp_y - 0.7) * 0.85, __dlg_tp_y)
+                    __dlg_targets = [min(__dlg_t9_targets, key=__dlg_t11_cloud_t9_key)]
+                else:
+                    __dlg_targets = __dlg_t11_targets
             elif __dlg_mode == "t13_pair_single_t12_tether":
                 __dlg_targets = [
                     p for p in __dlg_targets
@@ -1567,6 +1671,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_window = __dlg_lowest_y + (
                 1.45
                 if __dlg_mode == "russia_pair"
+                else 1.35
+                if __dlg_mode == "single_t13_t12_compress"
+                else 1.30
+                if __dlg_mode == "t12_consolidate"
                 else 1.20
                 if __dlg_mode in ("second_russia_t12_pair_lock", "first_russia_single_t13_t12_bank")
                 else 0.85
@@ -1586,7 +1694,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             __dlg_lowest_dist = abs(float(__dlg_lowest.get("x", 0.0) or 0.0) - __dlg_center_x)
             __dlg_cluster_dist = abs(float(__dlg_cluster.get("x", 0.0) or 0.0) - __dlg_center_x)
-            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "first_russia_t13_pair_lift", "first_russia_single_t13_t12_bank", "t13_pair_compress", "t13_pair_single_t12_tether", "single_t13_t12_compress", "single_t13_single_t12_ladder", "single_t12_anchor_ladder", "second_russia_t12_pair_lock", "second_russia_t12_ladder", "soviet_ladder", "t11_density", "t12_consolidate", "russia_pair") else 0.35
+            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "first_russia_t13_pair_lift", "first_russia_single_t13_t12_bank", "t13_pair_compress", "t13_pair_single_t12_tether", "single_t13_t12_compress", "single_t13_single_t12_ladder", "single_t12_anchor_ladder", "second_russia_t12_pair_lock", "second_russia_t12_ladder", "soviet_ladder", "t11_density", "t11_cloud_to_t12", "t12_consolidate", "russia_pair") else 0.35
+            if (
+                __dlg_mode in (
+                    "single_t13_t12_compress",
+                    "single_t13_single_t12_ladder",
+                    "t13_pair_compress",
+                    "t12_consolidate",
+                    "first_russia_pair",
+                )
+                and __dlg_cluster_dist <= __dlg_lowest_dist + 0.35
+                and float(__dlg_cluster.get("landing_y", 99.0) or 99.0) <= __dlg_window
+            ):
+                return (__dlg_cluster, __dlg_mode)
             if __dlg_cluster_dist + __dlg_required_gain < __dlg_lowest_dist:
                 return (__dlg_cluster, __dlg_mode)
             return None
@@ -1613,7 +1733,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ]
                 if __dlg_safe_filtered:
                     __dlg_lowest = min(__dlg_safe_filtered, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                    return {"x": float(__dlg_lowest.get("x", 0.0)), "reason": "DEADLINE_GUARD_LOWEST_SAFE"}
+                    __dlg_lowest_y = float(__dlg_lowest.get("landing_y", 99.0) or 99.0)
+                    __dlg_cluster_y = float(__dlg_cluster_piece.get("landing_y", 99.0) or 99.0)
+                    __dlg_allow_constructive_no_merge = (
+                        __dlg_cluster_mode in (
+                            "single_t13_t12_compress",
+                            "single_t13_single_t12_ladder",
+                            "t13_pair_compress",
+                            "t12_consolidate",
+                            "first_russia_pair",
+                        )
+                        and __dlg_cluster_y <= __dlg_lowest_y + 1.35
+                    )
+                    if not __dlg_allow_constructive_no_merge:
+                        return {"x": float(__dlg_lowest.get("x", 0.0)), "reason": "DEADLINE_GUARD_LOWEST_SAFE"}
             __dlg_reason = (
                 "DEADLINE_GUARD_SECOND_RUSSIA_T12_PAIR_LOCK"
                 if __dlg_cluster_mode == "second_russia_t12_pair_lock"
@@ -1621,12 +1754,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if __dlg_cluster_mode == "second_russia_t12_ladder"
                 else "DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR"
                 if __dlg_cluster_mode == "single_t12_anchor_ladder"
+                else "DEADLINE_GUARD_PRE_RUSSIA_T11_CLOUD_TO_T12"
+                if __dlg_cluster_mode == "t11_cloud_to_t12"
                 else "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT"
                 if __dlg_cluster_mode == "first_russia_t13_pair_lift"
+                else "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT"
+                if __dlg_cluster_mode == "single_t13_single_t12_ladder"
                 else "DEADLINE_GUARD_FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT"
                 if __dlg_cluster_mode == "first_russia_single_t13_t12_bank"
                 else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
                 if __dlg_cluster_mode == "first_russia_pair"
+                else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
+                if __dlg_cluster_mode == "t13_pair_compress"
                 else "DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER"
                 if __dlg_cluster_mode == "russia_pair"
                 else "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"
@@ -1677,12 +1816,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if __dlg_cluster_mode == "second_russia_t12_ladder"
                     else "DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR"
                     if __dlg_cluster_mode == "single_t12_anchor_ladder"
+                    else "DEADLINE_GUARD_PRE_RUSSIA_T11_CLOUD_TO_T12"
+                    if __dlg_cluster_mode == "t11_cloud_to_t12"
                     else "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT"
                     if __dlg_cluster_mode == "first_russia_t13_pair_lift"
+                    else "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT"
+                    if __dlg_cluster_mode == "single_t13_single_t12_ladder"
                     else "DEADLINE_GUARD_FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT"
                     if __dlg_cluster_mode == "first_russia_single_t13_t12_bank"
                     else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
                     if __dlg_cluster_mode == "first_russia_pair"
+                    else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
+                    if __dlg_cluster_mode == "t13_pair_compress"
                     else "DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER"
                     if __dlg_cluster_mode == "russia_pair"
                     else "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"
@@ -2837,6 +2982,101 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += seed_bonus
                     reasons.append("PRE_RUSSIA_SEED_CLUSTER")
 
+        # ----- vXXX: pre-Russia T11 cloud to first T12 -----
+        # Clean #29490 ended at T11x5 with no T12 after T11 material scattered
+        # across safe-land/deadline lanes. Before the first T12 exists, compress
+        # the T11 cloud and feed T9/T10/T11 into that lane so the T12 ladder can
+        # start instead of entering low-stage miss.
+        pre_russia_t11_cloud_to_t12_ready = (
+            not russia_phase
+            and max_type_on_board == 11
+            and pre_russia_counts.get(13, 0) == 0
+            and pre_russia_counts.get(12, 0) == 0
+            and pre_russia_counts.get(11, 0) >= 3
+            and (
+                pre_russia_counts.get(11, 0) >= 4
+                or type10_count >= 2
+            )
+            and next_type in (9, 10, 11)
+        )
+        if (
+            merge_grade == "NO"
+            and pre_russia_t11_cloud_to_t12_ready
+            and not death_spiral
+            and max_y < 2.75
+            and piece_count >= 20
+        ):
+            t11_cloud_targets = [p for p in pieces if p.get("type") == 11]
+            t10_cloud_targets = [p for p in pieces if p.get("type") == 10]
+            t9_cloud_targets = [p for p in pieces if p.get("type") == 9]
+            cloud_target = None
+            if next_type == 11 and t11_cloud_targets:
+                def _pre_russia_t11_cloud_key(tp):
+                    tp_x = tp.get("x", 0)
+                    tp_y = tp.get("y", -10)
+                    peer_dist = min(
+                        (
+                            (peer.get("x", 0) - tp_x) ** 2
+                            + (peer.get("y", -10) - tp_y) ** 2
+                        ) ** 0.5
+                        for peer in t11_cloud_targets
+                        if peer is not tp
+                    ) if len(t11_cloud_targets) >= 2 else 0.0
+                    return (peer_dist + max(0.0, tp_y - 1.0) * 1.15, tp_y)
+                cloud_target = min(t11_cloud_targets, key=_pre_russia_t11_cloud_key)
+            elif next_type == 10:
+                up_targets = t11_cloud_targets
+                if t10_cloud_targets and up_targets:
+                    def _pre_russia_t11_cloud_t10_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        up_dist = min(
+                            (
+                                (up.get("x", 0) - tp_x) ** 2
+                                + (up.get("y", -10) - tp_y) ** 2
+                            ) ** 0.5
+                            for up in up_targets
+                        )
+                        return (up_dist + max(0.0, tp_y - 0.9) * 1.0, tp_y)
+                    cloud_target = min(t10_cloud_targets, key=_pre_russia_t11_cloud_t10_key)
+                elif up_targets:
+                    cloud_center = _weighted_center_x(up_targets)
+                    if cloud_center is not None:
+                        cloud_target = {"x": cloud_center, "y": -0.8, "type": 10}
+            elif next_type == 9:
+                up_targets = t10_cloud_targets + t11_cloud_targets
+                if t9_cloud_targets and up_targets:
+                    def _pre_russia_t11_cloud_t9_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        up_dist = min(
+                            (
+                                (up.get("x", 0) - tp_x) ** 2
+                                + (up.get("y", -10) - tp_y) ** 2
+                            ) ** 0.5
+                            for up in up_targets
+                        )
+                        return (up_dist + max(0.0, tp_y - 0.7) * 0.9, tp_y)
+                    cloud_target = min(t9_cloud_targets, key=_pre_russia_t11_cloud_t9_key)
+            if cloud_target is not None:
+                cloud_dist = abs(x - cloud_target.get("x", 0))
+                cloud_bonus = max(0.0, 2300.0 - cloud_dist * 520.0)
+                if piece_count >= 28:
+                    cloud_bonus *= min(1.9, 1.0 + (piece_count - 28) * 0.09)
+                if landing_y > 1.55:
+                    cloud_bonus *= 0.55
+                if landing_y > 2.25:
+                    cloud_bonus *= 0.35
+                if cloud_target.get("y", -10) > 1.2:
+                    cloud_bonus *= 0.68
+                if abs(x) >= 2.5 and cloud_dist >= 1.25:
+                    score -= 1900.0
+                if landing_y > 1.75 and cloud_dist >= 0.85:
+                    score -= 1500.0
+                if cloud_bonus > 0:
+                    score += cloud_bonus
+                    reasons.append("PRE_RUSSIA_T11_CLOUD_TO_T12")
+
         # ----- vXXX: pre-Russia T11 density latch -----
         # Clean #29386 peaked at T12x1 T11x6 T10x3: seed clustering was present
         # but too weak to close the T11 cloud into more T12/T13 material before
@@ -3111,7 +3351,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Clean #29390 kept T12x3/T11x3/T10x4 but never closed the first T13;
         # the broad T12 center was pulled by an outlier lane. Once multiple
         # T12s exist before the first T13, prefer the nearest T12 pair and feed
-        # T10/T11/T12 material into that lane.
+        # T9/T10/T11/T12 material into that lane.
         pre_russia_t12_consolidate_ready = (
             not russia_phase
             and max_type_on_board == 12
@@ -3122,7 +3362,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or pre_russia_counts.get(11, 0) >= 2
                 or type10_count >= 2
             )
-            and next_type in (10, 11, 12)
+            and next_type in (9, 10, 11, 12)
         )
         if (
             merge_grade == "NO"
@@ -3179,14 +3419,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 elif t12_pair_center is not None:
                     consolidate_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 12}
             else:
-                same_targets = [p for p in pieces if p.get("type") == 10]
-                up_targets = [p for p in pieces if p.get("type") in (11, 12)]
+                same_targets = [p for p in pieces if p.get("type") == next_type]
+                up_types = (10, 11, 12) if next_type == 9 else (11, 12)
+                up_targets = [p for p in pieces if p.get("type") in up_types]
                 if same_targets and up_targets:
                     anchor_x = t12_pair_center
                     if anchor_x is None:
                         anchor_x = _weighted_center_x(up_targets)
                     if anchor_x is not None:
-                        def _pre_russia_t12_consolidate_t10_key(tp):
+                        def _pre_russia_t12_consolidate_low_key(tp):
                             tp_x = tp.get("x", 0)
                             tp_y = tp.get("y", -10)
                             up_dist = min(
@@ -3194,11 +3435,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                 for up in up_targets
                             )
                             lane_dist = abs(tp_x - anchor_x)
-                            high_penalty = max(0.0, tp_y + 0.1) * 0.9
+                            high_penalty = max(0.0, tp_y + 0.1) * (0.75 if next_type == 9 else 0.9)
                             return (min(up_dist, lane_dist) + high_penalty, tp_y)
-                        consolidate_target = min(same_targets, key=_pre_russia_t12_consolidate_t10_key)
+                        consolidate_target = min(same_targets, key=_pre_russia_t12_consolidate_low_key)
                 elif t12_pair_center is not None:
-                    consolidate_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 11}
+                    consolidate_target = {"x": t12_pair_center, "y": t12_pair_y, "type": next_type + 1}
             if consolidate_target is not None:
                 consolidate_dist = abs(x - consolidate_target.get("x", 0))
                 consolidate_bonus = max(0.0, 2300.0 - consolidate_dist * 700.0)
@@ -3216,7 +3457,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if (
                     pre_russia_counts.get(12, 0) >= 2
                     and pre_russia_counts.get(13, 0) == 0
-                    and next_type in (10, 11, 12)
+                    and next_type in (9, 10, 11, 12)
                     and consolidate_dist >= 1.05
                     and landing_y > 0.65
                 ):
@@ -3629,7 +3870,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- vXXX: pre-Russia single T13 + T12 bank compression -----
         # Clean #29402 built T13x1 + T12x4 but the T12 bank split into high
         # islands and never promoted the second T13 needed for Kazakhstan.
-        # With one T13 already present, keep incoming T10/T11/T12 material near
+        # With one T13 already present, keep incoming T9/T10/T11/T12 material near
         # the lowest viable T12 pair lane instead of broad first-Russia weight.
         pre_russia_single_t13_t12_compress_ready = (
             not russia_phase
@@ -3637,7 +3878,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and pre_russia_counts.get(13, 0) == 1
             and pre_russia_counts.get(14, 0) == 0
             and pre_russia_counts.get(12, 0) >= 2
-            and next_type in (10, 11, 12, 13)
+            and next_type in (9, 10, 11, 12, 13)
         )
         if (
             merge_grade == "NO"
@@ -3650,10 +3891,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t12_targets = [p for p in pieces if p.get("type") == 12]
             t11_targets = [p for p in pieces if p.get("type") == 11]
             t10_targets = [p for p in pieces if p.get("type") == 10]
+            t9_targets = [p for p in pieces if p.get("type") == 9]
             t13_center = _weighted_center_x(t13_targets)
             compress_target = None
             t12_pair_center = None
             t12_pair_y = -10.0
+            t12_pair_span = 999.0
             if len(t12_targets) >= 2:
                 best_pair = None
                 best_pair_key = (999.0, 999.0)
@@ -3684,8 +3927,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_pair[0].get("y", -10),
                         best_pair[1].get("y", -10),
                     )
+                    t12_pair_span = (
+                        (best_pair[0].get("x", 0) - best_pair[1].get("x", 0)) ** 2
+                        + (best_pair[0].get("y", -10) - best_pair[1].get("y", -10)) ** 2
+                    ) ** 0.5
                     compress_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 12}
-            if next_type == 10 and t10_targets:
+            if next_type == 11 and t11_targets:
+                up_targets = t12_targets + t13_targets
+                def _pre_russia_single_t13_t12_compress_t11_key(tp):
+                    tp_x = tp.get("x", 0)
+                    tp_y = tp.get("y", -10)
+                    up_dist = min(
+                        ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                        for up in up_targets
+                    ) if up_targets else 999.0
+                    if t12_pair_center is not None and t12_pair_span <= 2.35:
+                        lane_dist = abs(tp_x - t12_pair_center)
+                    else:
+                        lane_dist = min(
+                            abs(tp_x - t12.get("x", 0))
+                            for t12 in t12_targets
+                        ) if t12_targets else 999.0
+                    t13_dist = abs(tp_x - t13_center) if t13_center is not None else 0.0
+                    return (
+                        min(up_dist, lane_dist)
+                        + t13_dist * 0.14
+                        + max(0.0, tp_y - 0.55) * 1.25,
+                        tp_y,
+                    )
+                compress_target = min(
+                    t11_targets,
+                    key=_pre_russia_single_t13_t12_compress_t11_key,
+                )
+            elif next_type == 10 and t10_targets:
                 up_targets = t11_targets + t12_targets + t13_targets
                 def _pre_russia_single_t13_t12_compress_t10_key(tp):
                     tp_x = tp.get("x", 0)
@@ -3706,13 +3980,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     t10_targets,
                     key=_pre_russia_single_t13_t12_compress_t10_key,
                 )
+            elif next_type == 9 and t9_targets:
+                up_targets = t10_targets + t11_targets + t12_targets + t13_targets
+                def _pre_russia_single_t13_t12_compress_t9_key(tp):
+                    tp_x = tp.get("x", 0)
+                    tp_y = tp.get("y", -10)
+                    up_dist = min(
+                        ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                        for up in up_targets
+                    ) if up_targets else 999.0
+                    lane_dist = abs(tp_x - t12_pair_center) if t12_pair_center is not None else 999.0
+                    t13_dist = abs(tp_x - t13_center) if t13_center is not None else 0.0
+                    return (
+                        min(up_dist, lane_dist)
+                        + t13_dist * 0.12
+                        + max(0.0, tp_y - 0.45) * 1.3,
+                        tp_y,
+                    )
+                compress_target = min(
+                    t9_targets,
+                    key=_pre_russia_single_t13_t12_compress_t9_key,
+                )
             if compress_target is None and t13_center is not None:
                 compress_target = {"x": t13_center, "y": -0.8, "type": 13}
             if compress_target is not None:
                 compress_dist = abs(x - compress_target.get("x", 0))
                 compress_bonus = max(0.0, 2800.0 - compress_dist * 760.0)
+                if pre_russia_counts.get(12, 0) >= 3:
+                    compress_bonus += 650.0
                 if next_type == 10 and compress_target.get("type") == 10 and compress_dist <= 0.65:
                     compress_bonus += 900.0
+                if next_type == 11 and compress_target.get("type") == 11 and compress_dist <= 0.65:
+                    compress_bonus += 1800.0
+                if next_type == 9 and compress_target.get("type") == 9 and compress_dist <= 0.65:
+                    compress_bonus += 3600.0
                 if piece_count >= 34:
                     compress_bonus *= min(1.75, 1.0 + (piece_count - 34) * 0.08)
                 if landing_y > 1.8:
@@ -3724,6 +4025,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if abs(x) >= 2.45 and compress_dist >= 1.35:
                     score -= 2400.0
                     reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_OFFLANE_VETO")
+                if next_type == 9 and compress_target.get("type") == 9 and compress_dist >= 1.1:
+                    score -= 3200.0 + max(0.0, landing_y - 0.5) * 1100.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_T9_OFFLANE_VETO")
+                if next_type == 11 and compress_target.get("type") == 11 and compress_dist >= 1.0:
+                    score -= 2600.0 + max(0.0, landing_y - 0.6) * 1200.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_T11_OFFLANE_VETO")
                 if landing_y > 1.2 and compress_dist >= 0.5:
                     score -= 1800.0 + max(0.0, landing_y - 1.2) * 1300.0
                     reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_HIGH_OFFLANE_VETO")
