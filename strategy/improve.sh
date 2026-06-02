@@ -1641,7 +1641,7 @@ PY
 		./overlay_notify.sh worker "中華AI 早期改善を決断 (game ${GAME_NUM:-?})" "直近${_fresh_n}試合は最高${_fresh_country}でロシア建国0。建国実績のある安定版に追いつけていないため、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たず戦略を練り直します。" "warn" >/dev/null 2>&1 || true
 	fi
 	if command -v enqueue_chat_message >/dev/null 2>&1; then
-		enqueue_chat_message "🔧 中華AI、戦略を早期見直し！直近${_fresh_n}試合は最高${_fresh_country}でロシア建国に届かず。建国実績のある安定版に追いつけていないので、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たずに改善を始めます💪" "fresh_objective" 4 || true
+		enqueue_chat_message "中華AI、戦略を早期見直し！直近${_fresh_n}試合は最高${_fresh_country}でロシア建国に届かず。建国実績のある安定版に追いつけていないので、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たずに改善を始めます" "fresh_objective" 4 || true
 	fi
 	_clear_accumulated_data
 	return 0
