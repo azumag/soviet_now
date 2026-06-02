@@ -69,6 +69,11 @@ FAST_DROP_DEADLINE_CONTACT = True
 
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vXXX: axis 1.7c NEAR suppression at tight deadline_margin — Ukraine(T13) gate fix
+      #       When reactor_margin < 0.3 && deadline_crossed && merge_grade==NEAR && NOT russia_phase,
+      #       suppress NEAR unless landing_y < max_y - 0.5 (safety valve for compression).
+      #       Worst game T56-T64: tight deadline NEAR/NO_MERGE choices caused max_y runaway.
+      #       Target stage: Ukraine(T13)=2/3; preserves DIRECT merge priority near deadline.
       # vXXX: axis 8.8 suppression bug fix — remove `if not (deadline_crossed and rp>=3)` condition
       #       that suppressed REACTIVE_PAIRS_NO_MERGE_PENALTY exactly when it was most needed.
       #       postmortem constraint requires penalty whenever rp>=3 && NO_MERGE, regardless of deadline_crossed.
@@ -1845,6 +1850,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += penalty
             reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
 
+        # ----- axis 1.7c: tight deadline NEAR suppression (Ukraine gate fix) -----
+        # At very tight deadline margin, NEAR merge failure adds a piece and can
+        # push max_y into a runaway. Keep NEAR only when it clearly compresses.
+        if merge_grade == "NEAR" and reactor_margin < 0.3 and deadline_crossed and not russia_phase:
+            if not (landing_y < max_y - 0.5):
+                score -= 2500.0
+                reasons.append("TIGHT_DEADLINE_NEAR_SUPPRESSION")
+
         # ----- axis 1.5d: merge compression check (vXXX: Ukraine gate fix) -----
         # Worst game T62-T63: NEAR merge at landing_y=4.75/5.2, max_y=2.96-3.18.
         # Merge raised max_y instead of compressing — score_delta=36-45 (partial benefit only).
@@ -2956,6 +2969,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     consolidate_bonus *= 0.75
                 if abs(x) >= 2.5 and consolidate_dist >= 1.6:
                     score -= 1700.0
+                if landing_y > 2.05 and consolidate_dist >= 0.85:
+                    score -= 2100.0 + max(0.0, landing_y - 2.05) * 1600.0
+                    reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_HIGH_OFFLANE_VETO")
+                if landing_y > 2.55 and merge_grade == "NO" and consolidate_dist >= 0.45:
+                    score -= 1250.0 + max(0.0, landing_y - 2.55) * 1400.0
+                    reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_REDLINE_VETO")
                 if consolidate_bonus > 0:
                     score += consolidate_bonus
                     reasons.append("PRE_RUSSIA_T12_CONSOLIDATE")

@@ -1263,7 +1263,12 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
 
         current_dx = abs(_geom_num(candidate.get("x")) - target_x)
         pool = results or safe
-        if not pool or current_dx <= 1.25:
+        all_crossing_lane_pressure = (
+            not safe
+            and current_top_edge_y >= deadline_y - 0.75
+        )
+        min_lane_correction_dx = 0.35 if all_crossing_lane_pressure else 1.25
+        if not pool or current_dx <= min_lane_correction_dx:
             return None
         lane_band = [
             r for r in pool
@@ -1272,6 +1277,17 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             and not r.get("crosses_deadline", False)
             and risk_top(r) <= max(risk_top(candidate) + 0.85, min_risk_top + 1.8)
         ]
+        if not lane_band and all_crossing_lane_pressure:
+            # In all-crossing endgames, generic min-risk can abandon the only
+            # T12/T11 ladder lane and spend the last drops on high side junk.
+            # Keep the strategic lane when its measured risk is in the same
+            # band as the fallback; the final guard has no non-crossing option.
+            lane_band = [
+                r for r in pool
+                if abs(_geom_num(r.get("x")) - target_x) < current_dx
+                and abs(_geom_num(r.get("x")) - target_x) <= 1.35
+                and risk_top(r) <= max(risk_top(candidate) + 0.55, min_risk_top + 1.05)
+            ]
         if not lane_band:
             return None
         return min(
