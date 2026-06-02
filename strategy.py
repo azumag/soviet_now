@@ -804,6 +804,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and __dlg_counts.get(14, 0) == 1
                 and __dlg_counts.get(13, 0) >= 2
             )
+            __dlg_first_russia_single_t13_t12_bank_ready = (
+                __dlg_counts.get(15, 0) == 0
+                and __dlg_counts.get(14, 0) == 1
+                and __dlg_counts.get(13, 0) == 1
+                and __dlg_counts.get(12, 0) >= 1
+                and (
+                    __dlg_counts.get(12, 0) >= 2
+                    or __dlg_counts.get(11, 0) >= 1
+                    or __dlg_counts.get(10, 0) >= 2
+                )
+            )
             __dlg_double_t14_ready = __dlg_counts.get(14, 0) >= 2
             __dlg_first_russia_pair_ready = (
                 __dlg_counts.get(14, 0) == 0
@@ -923,6 +934,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or __dlg_soviet_ladder_ready
                 or __dlg_double_t14_ready
                 or __dlg_first_russia_t13_pair_lift_ready
+                or __dlg_first_russia_single_t13_t12_bank_ready
                 or __dlg_russia_pair_ready
                 or __dlg_t13_pair_compress_ready
                 or __dlg_t13_pair_single_t12_tether_ready
@@ -970,6 +982,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 )
             ):
                 __dlg_mode = "first_russia_t13_pair_lift"
+            elif (
+                __dlg_first_russia_single_t13_t12_bank_ready
+                and __dlg_next_type in (10, 11, 12, 13)
+            ):
+                __dlg_mode = "first_russia_single_t13_t12_bank"
+            elif (
+                __dlg_first_russia_pair_ready
+                and __dlg_next_type in (10, 11, 12, 13)
+            ):
+                __dlg_mode = "first_russia_pair"
             elif (
                 (__dlg_double_t14_ready or __dlg_russia_pair_ready)
                 and (
@@ -1050,6 +1072,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         p for p in __dlg_targets
                         if int(p.get("type", 0) or 0) in (14, 15)
                     ]
+                elif (
+                    __dlg_next_type == 11
+                    and __dlg_counts.get(12, 0) == 0
+                    and __dlg_counts.get(13, 0) >= 1
+                    and __dlg_counts.get(11, 0) >= 1
+                ):
+                    __dlg_t13_targets = [
+                        p for p in __dlg_targets
+                        if int(p.get("type", 0) or 0) == 13
+                    ]
+                    __dlg_t11_targets = [
+                        p for p in __dlg_targets
+                        if int(p.get("type", 0) or 0) == 11
+                    ]
+                    if __dlg_t13_targets and __dlg_t11_targets:
+                        def __dlg_soviet_t11_rebuild_key(tp):
+                            __dlg_tp_x = float(tp.get("x", 0.0) or 0.0)
+                            __dlg_tp_y = float(tp.get("y", -10.0) or -10.0)
+                            __dlg_t13_dist = min(
+                                (
+                                    (
+                                        float(up.get("x", 0.0) or 0.0) - __dlg_tp_x
+                                    ) ** 2
+                                    + (
+                                        float(up.get("y", -10.0) or -10.0) - __dlg_tp_y
+                                    ) ** 2
+                                ) ** 0.5
+                                for up in __dlg_t13_targets
+                            )
+                            return (
+                                __dlg_t13_dist * 0.35
+                                + max(0.0, __dlg_tp_y - 1.0) * 1.1,
+                                __dlg_tp_y,
+                            )
+                        __dlg_targets = [min(__dlg_t11_targets, key=__dlg_soviet_t11_rebuild_key)]
+                    else:
+                        __dlg_targets = __dlg_t11_targets
                 else:
                     __dlg_targets = [
                         p for p in __dlg_targets
@@ -1214,7 +1273,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     p for p in __dlg_targets
                     if int(p.get("type", 0) or 0) in (12, 13)
                 ]
-            elif __dlg_mode == "single_t13_t12_compress":
+            elif __dlg_mode in ("single_t13_t12_compress", "first_russia_single_t13_t12_bank"):
                 __dlg_t13_targets = [
                     p for p in __dlg_targets
                     if int(p.get("type", 0) or 0) == 13
@@ -1240,7 +1299,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         __dlg_t13_total += 1.0
                     if __dlg_t13_total > 0:
                         __dlg_t13_center = __dlg_t13_weighted / __dlg_t13_total
-                if len(__dlg_t12_targets) >= 2:
+                if (
+                    __dlg_mode == "first_russia_single_t13_t12_bank"
+                    and __dlg_next_type == 13
+                    and __dlg_t13_targets
+                ):
+                    __dlg_targets = __dlg_t13_targets
+                elif len(__dlg_t12_targets) >= 2:
                     __dlg_pair = None
                     __dlg_pair_key = (999.0, 999.0)
                     for __dlg_i, __dlg_a in enumerate(__dlg_t12_targets):
@@ -1369,10 +1434,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     __dlg_targets = __dlg_t12_targets + __dlg_t11_targets
             elif __dlg_mode == "first_russia_pair":
-                __dlg_targets = [
+                __dlg_t13_targets = [
                     p for p in __dlg_targets
                     if int(p.get("type", 0) or 0) == 13
                 ]
+                if len(__dlg_t13_targets) >= 2:
+                    __dlg_pair = None
+                    __dlg_pair_key = (999.0, 999.0, 999.0)
+                    for __dlg_i, __dlg_a in enumerate(__dlg_t13_targets):
+                        for __dlg_b in __dlg_t13_targets[__dlg_i + 1:]:
+                            __dlg_ax = float(__dlg_a.get("x", 0.0) or 0.0)
+                            __dlg_ay = float(__dlg_a.get("y", -10.0) or -10.0)
+                            __dlg_bx = float(__dlg_b.get("x", 0.0) or 0.0)
+                            __dlg_by = float(__dlg_b.get("y", -10.0) or -10.0)
+                            __dlg_center = (__dlg_ax + __dlg_bx) / 2.0
+                            __dlg_dist = ((__dlg_ax - __dlg_bx) ** 2 + (__dlg_ay - __dlg_by) ** 2) ** 0.5
+                            __dlg_top = max(__dlg_ay, __dlg_by)
+                            __dlg_key = (
+                                __dlg_dist + max(0.0, __dlg_top - 1.3) * 0.45,
+                                __dlg_top,
+                                abs(__dlg_center),
+                            )
+                            if __dlg_key < __dlg_pair_key:
+                                __dlg_pair_key = __dlg_key
+                                __dlg_pair = (__dlg_a, __dlg_b)
+                    if __dlg_pair is not None:
+                        __dlg_center = (
+                            float(__dlg_pair[0].get("x", 0.0) or 0.0)
+                            + float(__dlg_pair[1].get("x", 0.0) or 0.0)
+                        ) / 2.0
+                        __dlg_targets = [{"x": __dlg_center, "type": 13}]
+                    else:
+                        __dlg_targets = __dlg_t13_targets
+                else:
+                    __dlg_targets = __dlg_t13_targets
             elif __dlg_mode == "single_t12_anchor_ladder":
                 __dlg_t12_targets = [p for p in __dlg_targets if int(p.get("type", 0) or 0) == 12]
                 __dlg_t11_targets = [p for p in __dlg_targets if int(p.get("type", 0) or 0) == 11]
@@ -1462,7 +1557,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_lowest = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             __dlg_lowest_y = float(__dlg_lowest.get("landing_y", 99.0) or 99.0)
             __dlg_window = __dlg_lowest_y + (
-                1.20 if __dlg_mode == "second_russia_t12_pair_lock" else 0.85
+                1.20
+                if __dlg_mode in ("second_russia_t12_pair_lock", "first_russia_single_t13_t12_bank")
+                else 0.85
             )
             __dlg_eligible = [
                 c for c in __dlg_safe
@@ -1479,7 +1576,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             __dlg_lowest_dist = abs(float(__dlg_lowest.get("x", 0.0) or 0.0) - __dlg_center_x)
             __dlg_cluster_dist = abs(float(__dlg_cluster.get("x", 0.0) or 0.0) - __dlg_center_x)
-            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "first_russia_t13_pair_lift", "t13_pair_compress", "t13_pair_single_t12_tether", "single_t13_t12_compress", "single_t13_single_t12_ladder", "single_t12_anchor_ladder", "second_russia_t12_pair_lock", "second_russia_t12_ladder", "soviet_ladder", "t11_density", "t12_consolidate") else 0.35
+            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "first_russia_t13_pair_lift", "first_russia_single_t13_t12_bank", "t13_pair_compress", "t13_pair_single_t12_tether", "single_t13_t12_compress", "single_t13_single_t12_ladder", "single_t12_anchor_ladder", "second_russia_t12_pair_lock", "second_russia_t12_ladder", "soviet_ladder", "t11_density", "t12_consolidate") else 0.35
             if __dlg_cluster_dist + __dlg_required_gain < __dlg_lowest_dist:
                 return (__dlg_cluster, __dlg_mode)
             return None
@@ -1496,6 +1593,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if __dlg_cluster_mode == "single_t12_anchor_ladder"
                 else "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT"
                 if __dlg_cluster_mode == "first_russia_t13_pair_lift"
+                else "DEADLINE_GUARD_FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT"
+                if __dlg_cluster_mode == "first_russia_single_t13_t12_bank"
+                else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
+                if __dlg_cluster_mode == "first_russia_pair"
                 else "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"
             )
             return {"x": float(__dlg_cluster_piece.get("x", 0.0) or 0.0), "reason": __dlg_reason}
@@ -1546,6 +1647,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if __dlg_cluster_mode == "single_t12_anchor_ladder"
                     else "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT"
                     if __dlg_cluster_mode == "first_russia_t13_pair_lift"
+                    else "DEADLINE_GUARD_FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT"
+                    if __dlg_cluster_mode == "first_russia_single_t13_t12_bank"
+                    else "DEADLINE_GUARD_FIRST_RUSSIA_PAIR"
+                    if __dlg_cluster_mode == "first_russia_pair"
                     else "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"
                 )
                 return {"x": float(__dlg_cluster_piece.get("x", 0.0) or 0.0), "reason": __dlg_reason}
@@ -1607,6 +1712,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if total_weight <= 0:
             return None
         return weighted_sum / total_weight
+
+    def _closest_pair_center_x(targets, top_soft_y=1.3):
+        if len(targets) < 2:
+            return None
+        best_pair = None
+        best_pair_key = (999.0, 999.0, 999.0)
+        for pair_i, pair_a in enumerate(targets):
+            for pair_b in targets[pair_i + 1:]:
+                ax = float(pair_a.get("x", 0.0) or 0.0)
+                ay = float(pair_a.get("y", -10.0) or -10.0)
+                bx = float(pair_b.get("x", 0.0) or 0.0)
+                by = float(pair_b.get("y", -10.0) or -10.0)
+                pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                pair_top_y = max(ay, by)
+                pair_center = (ax + bx) / 2.0
+                pair_key = (
+                    pair_dist + max(0.0, pair_top_y - top_soft_y) * 0.45,
+                    pair_top_y,
+                    abs(pair_center),
+                )
+                if pair_key < best_pair_key:
+                    best_pair_key = pair_key
+                    best_pair = (pair_center, pair_top_y)
+        return best_pair
 
     # v548: double_russia_phase — 2つ目の(type 14/15)が盤面にある場合、
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
@@ -3278,18 +3407,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t13_pair_targets = [
                 p for p in pieces if p.get("type") == 13
             ]
-            t13_pair_center = _weighted_center_x(t13_pair_targets)
-            if t13_pair_center is not None:
+            t13_pair_info = _closest_pair_center_x(t13_pair_targets)
+            if t13_pair_info is not None:
+                t13_pair_center, t13_pair_top_y = t13_pair_info
                 pair_dist = abs(x - t13_pair_center)
-                pair_bonus = max(0.0, 880.0 - pair_dist * 290.0)
+                pair_bonus = max(0.0, 2800.0 - pair_dist * 760.0)
                 if piece_count >= 30:
-                    pair_bonus *= min(1.6, 1.0 + (piece_count - 30) * 0.08)
-                if landing_y > 2.2:
+                    pair_bonus *= min(2.0, 1.0 + (piece_count - 30) * 0.10)
+                if landing_y > 2.1:
                     pair_bonus *= 0.45
-                if max((p.get("y", -10) for p in t13_pair_targets), default=-10) > 1.5:
-                    pair_bonus *= 0.7
-                if abs(x) >= 2.5 and pair_dist >= 1.7:
-                    score -= 1100.0
+                if t13_pair_top_y > 1.45:
+                    pair_bonus *= 0.65
+                if abs(x) >= 2.45 and pair_dist >= 1.25:
+                    score -= 2200.0
+                    reasons.append("PRE_RUSSIA_T13_PAIR_OFFLANE_VETO")
+                if landing_y > 2.1 and pair_dist >= 0.85:
+                    score -= 1600.0
+                if pair_dist >= 1.25 and landing_y <= 0.25:
+                    score -= 900.0
                 if pair_bonus > 0:
                     score += pair_bonus
                     reasons.append("PRE_RUSSIA_T13_PAIR_CLUSTER")
@@ -4359,14 +4494,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y < 3.4
             and piece_count >= 28
         ):
+            soviet_lift_reason = "SOVIET_T15_LIFT"
             if next_type == 11:
-                soviet_lift_targets = [
-                    p for p in pieces if p.get("type") in (12, 13)
-                ]
-                if not soviet_lift_targets:
+                t13_targets = [p for p in pieces if p.get("type") == 13]
+                t12_targets = [p for p in pieces if p.get("type") == 12]
+                t11_targets = [p for p in pieces if p.get("type") == 11]
+                if not t12_targets and t13_targets and t11_targets:
+                    def _soviet_t15_t11_rebuild_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        t13_dist = min(
+                            ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                            for up in t13_targets
+                        )
+                        return (
+                            t13_dist * 0.35
+                            + max(0.0, tp_y - 1.0) * 1.1,
+                            tp_y,
+                        )
                     soviet_lift_targets = [
-                        p for p in pieces if p.get("type") == 11
+                        min(t11_targets, key=_soviet_t15_t11_rebuild_key)
                     ]
+                    soviet_lift_reason = "SOVIET_T15_T11_REBUILD"
+                else:
+                    soviet_lift_targets = t12_targets + t13_targets
+                    if not soviet_lift_targets:
+                        soviet_lift_targets = t11_targets
             elif next_type == 12:
                 soviet_lift_targets = [
                     p for p in pieces if p.get("type") == 13
@@ -4378,18 +4531,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             soviet_lift_center = _weighted_center_x(soviet_lift_targets)
             if soviet_lift_center is not None:
                 soviet_lift_dist = abs(x - soviet_lift_center)
-                soviet_lift_bonus = max(0.0, 1080.0 - soviet_lift_dist * 330.0)
+                if soviet_lift_reason == "SOVIET_T15_T11_REBUILD":
+                    soviet_lift_bonus = max(0.0, 3000.0 - soviet_lift_dist * 760.0)
+                else:
+                    soviet_lift_bonus = max(0.0, 1080.0 - soviet_lift_dist * 330.0)
                 if piece_count >= 32:
-                    soviet_lift_bonus *= min(1.65, 1.0 + (piece_count - 32) * 0.08)
+                    if soviet_lift_reason == "SOVIET_T15_T11_REBUILD":
+                        soviet_lift_bonus *= min(1.9, 1.0 + (piece_count - 32) * 0.10)
+                    else:
+                        soviet_lift_bonus *= min(1.65, 1.0 + (piece_count - 32) * 0.08)
                 if landing_y > 2.5:
                     soviet_lift_bonus *= 0.5
+                if soviet_lift_reason == "SOVIET_T15_T11_REBUILD" and landing_y > 2.9:
+                    soviet_lift_bonus *= 0.38
                 if max((p.get("y", -10) for p in soviet_lift_targets), default=-10) > 1.8:
                     soviet_lift_bonus *= 0.7
                 if abs(x) >= 2.5 and soviet_lift_dist >= 1.7:
                     score -= 1200.0
+                if (
+                    soviet_lift_reason == "SOVIET_T15_T11_REBUILD"
+                    and landing_y > 2.45
+                    and soviet_lift_dist >= 0.85
+                ):
+                    score -= 1500.0
                 if soviet_lift_bonus > 0:
                     score += soviet_lift_bonus
-                    reasons.append("SOVIET_T15_LIFT")
+                    reasons.append(soviet_lift_reason)
 
         # ----- vXXX: Soviet T10 ladder after Russia creation -----
         # Clean #29380 reached T15 with a remaining T12, then leaked into

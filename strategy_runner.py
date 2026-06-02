@@ -1299,6 +1299,101 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             ),
         )
 
+    def pre_russia_t13_pair_replacement_for(candidate):
+        """Keep no-T14 / multi-T13 boards on the closest first-Russia pair lane."""
+        if not isinstance(candidate, dict):
+            return None
+        if not any(
+            marker in reason_text
+            for marker in (
+                "PRE_RUSSIA_T13_PAIR_CLUSTER",
+                "PRE_RUSSIA_T13_PAIR_COMPRESS",
+                "PRE_RUSSIA_T13_PAIR_LADDER",
+                "DEADLINE_GUARD_FIRST_RUSSIA_PAIR",
+            )
+        ):
+            return None
+        pieces = (game_state or {}).get("pieces") or []
+        if not pieces or next_type < 8:
+            return None
+        high_counts = {}
+        for piece in pieces:
+            try:
+                piece_type = int(piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            if piece_type >= 10:
+                high_counts[piece_type] = high_counts.get(piece_type, 0) + 1
+        if (
+            high_counts.get(14, 0) > 0
+            or high_counts.get(15, 0) > 0
+            or high_counts.get(13, 0) < 2
+            or piece_count < 28
+        ):
+            return None
+
+        t13_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 13
+        ]
+        best_pair = None
+        best_pair_key = (999.0, 999.0)
+        for idx, left in enumerate(t13_targets):
+            for right in t13_targets[idx + 1:]:
+                ax = _geom_num(left.get("x"))
+                ay = _geom_num(left.get("y"), -10.0)
+                bx = _geom_num(right.get("x"))
+                by = _geom_num(right.get("y"), -10.0)
+                pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                pair_top = max(ay, by)
+                pair_center = (ax + bx) / 2.0
+                pair_key = (
+                    pair_dist
+                    + max(0.0, pair_top - 0.9) * 0.85
+                    + abs(pair_center) * 0.08,
+                    pair_top,
+                )
+                if pair_key < best_pair_key:
+                    best_pair_key = pair_key
+                    best_pair = (left, right)
+        if best_pair is None:
+            return None
+        target_x = (
+            _geom_num(best_pair[0].get("x"))
+            + _geom_num(best_pair[1].get("x"))
+        ) / 2.0
+
+        if next_type in (10, 11, 12):
+            same_targets = [
+                p for p in pieces if int(p.get("type", 0) or 0) == next_type
+            ]
+            if same_targets:
+                def same_key(piece):
+                    px = _geom_num(piece.get("x"))
+                    py = _geom_num(piece.get("y"), -10.0)
+                    return (abs(px - target_x) + max(0.0, py - 1.0) * 0.9, py)
+                target_x = _geom_num(min(same_targets, key=same_key).get("x"))
+
+        current_dx = abs(_geom_num(candidate.get("x")) - target_x)
+        pool = results or safe
+        if not pool or current_dx <= 0.85:
+            return None
+        lane_band = [
+            r for r in pool
+            if abs(_geom_num(r.get("x")) - target_x) < current_dx
+            and abs(_geom_num(r.get("x")) - target_x) <= 1.45
+            and risk_top(r) <= max(risk_top(candidate) + 1.10, min_risk_top + 2.00)
+        ]
+        if not lane_band:
+            return None
+        return min(
+            lane_band,
+            key=lambda r: (
+                abs(_geom_num(r.get("x")) - target_x),
+                bool(r.get("crosses_deadline", False)),
+                risk_top(r),
+            ),
+        )
+
     def second_russia_t12_pair_replacement_for(candidate):
         """Keep one-T14 / two-T12 boards on the second-Russia pair lane."""
         if not isinstance(candidate, dict):
@@ -1600,6 +1695,127 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             ),
         )
 
+    def first_russia_single_t13_t12_bank_replacement_for(candidate):
+        """Keep one-T14 / one-T13 / T12-bank boards on the second-T14 lane."""
+        if not isinstance(candidate, dict):
+            return None
+        if not any(
+            marker in reason_text
+            for marker in (
+                "FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT",
+                "DEADLINE_GUARD_FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT",
+            )
+        ):
+            return None
+        pieces = (game_state or {}).get("pieces") or []
+        if not pieces or next_type not in (10, 11, 12, 13):
+            return None
+        high_counts = {}
+        for piece in pieces:
+            try:
+                piece_type = int(piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            if piece_type >= 10:
+                high_counts[piece_type] = high_counts.get(piece_type, 0) + 1
+        if (
+            high_counts.get(15, 0) > 0
+            or high_counts.get(14, 0) != 1
+            or high_counts.get(13, 0) != 1
+            or high_counts.get(12, 0) < 1
+            or piece_count < 28
+        ):
+            return None
+
+        t13_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 13
+        ]
+        t12_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 12
+        ]
+        t11_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 11
+        ]
+        t10_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 10
+        ]
+        if not t13_targets or not t12_targets:
+            return None
+        t13_center = sum(_geom_num(p.get("x")) for p in t13_targets) / len(t13_targets)
+        target_x = t13_center
+        if next_type == 12 and t12_targets:
+            if len(t12_targets) >= 2:
+                best_pair = None
+                best_pair_key = (999.0, 999.0)
+                for idx, left in enumerate(t12_targets):
+                    for right in t12_targets[idx + 1:]:
+                        ax = _geom_num(left.get("x"))
+                        ay = _geom_num(left.get("y"), -10.0)
+                        bx = _geom_num(right.get("x"))
+                        by = _geom_num(right.get("y"), -10.0)
+                        center = (ax + bx) / 2.0
+                        pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                        pair_top = max(ay, by)
+                        pair_key = (
+                            pair_dist
+                            + abs(center - t13_center) * 0.35
+                            + max(0.0, pair_top - 1.1) * 1.4,
+                            pair_top,
+                        )
+                        if pair_key < best_pair_key:
+                            best_pair_key = pair_key
+                            best_pair = (left, right)
+                if best_pair is not None:
+                    target_x = (
+                        _geom_num(best_pair[0].get("x"))
+                        + _geom_num(best_pair[1].get("x"))
+                    ) / 2.0
+            else:
+                target_x = _geom_num(t12_targets[0].get("x"))
+        elif next_type == 11 and t11_targets:
+            up_targets = t12_targets + t13_targets
+            def t11_key(piece):
+                px = _geom_num(piece.get("x"))
+                py = _geom_num(piece.get("y"), -10.0)
+                up_dist = min(
+                    ((_geom_num(up.get("x")) - px) ** 2 + (_geom_num(up.get("y"), -10.0) - py) ** 2) ** 0.5
+                    for up in up_targets
+                )
+                return (min(up_dist, abs(px - t13_center)) + max(0.0, py - 1.0) * 1.0, py)
+            target_x = _geom_num(min(t11_targets, key=t11_key).get("x"))
+        elif next_type == 10 and t10_targets:
+            up_targets = t11_targets + t12_targets
+            def t10_key(piece):
+                px = _geom_num(piece.get("x"))
+                py = _geom_num(piece.get("y"), -10.0)
+                up_dist = min(
+                    ((_geom_num(up.get("x")) - px) ** 2 + (_geom_num(up.get("y"), -10.0) - py) ** 2) ** 0.5
+                    for up in up_targets
+                ) if up_targets else 999.0
+                return (up_dist + max(0.0, py - 0.9) * 0.85, py)
+            target_x = _geom_num(min(t10_targets, key=t10_key).get("x"))
+
+        current_dx = abs(_geom_num(candidate.get("x")) - target_x)
+        pool = results or safe
+        if not pool or current_dx <= 1.05:
+            return None
+        lane_band = [
+            r for r in pool
+            if abs(_geom_num(r.get("x")) - target_x) < current_dx
+            and abs(_geom_num(r.get("x")) - target_x) <= 1.35
+            and risk_top(r) <= max(risk_top(candidate) + 1.15, min_risk_top + 2.05)
+        ]
+        if not lane_band:
+            return None
+        return min(
+            lane_band,
+            key=lambda r: (
+                abs(_geom_num(r.get("x")) - target_x),
+                bool(r.get("crosses_deadline", False)),
+                risk_top(r),
+            ),
+        )
+
     country_route_reason = (
         10 <= next_type <= 12
         and (
@@ -1857,9 +2073,17 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         replacement = pre_russia_lane_replacement
         replacement_source = f"{replacement_source}_pre_russia_t12_lane"
 
+    if (pre_russia_t13_replacement := pre_russia_t13_pair_replacement_for(replacement)) is not None:
+        replacement = pre_russia_t13_replacement
+        replacement_source = f"{replacement_source}_pre_russia_t13_pair_lane"
+
     if (first_russia_lane_replacement := first_russia_t13_pair_replacement_for(replacement)) is not None:
         replacement = first_russia_lane_replacement
         replacement_source = f"{replacement_source}_first_russia_t13_pair_lane"
+
+    if (single_t13_bank_replacement := first_russia_single_t13_t12_bank_replacement_for(replacement)) is not None:
+        replacement = single_t13_bank_replacement
+        replacement_source = f"{replacement_source}_first_russia_single_t13_t12_bank_lane"
 
     if (second_russia_ladder_replacement := second_russia_t12_ladder_replacement_for(replacement)) is not None:
         replacement = second_russia_ladder_replacement
@@ -2141,9 +2365,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         if (pre_russia_lane_replacement := pre_russia_t12_lane_replacement_for(replacement)) is not None:
             replacement = pre_russia_lane_replacement
             replacement_source = f"{replacement_source}_pre_russia_t12_lane"
+        if (pre_russia_t13_replacement := pre_russia_t13_pair_replacement_for(replacement)) is not None:
+            replacement = pre_russia_t13_replacement
+            replacement_source = f"{replacement_source}_pre_russia_t13_pair_lane"
         if (first_russia_lane_replacement := first_russia_t13_pair_replacement_for(replacement)) is not None:
             replacement = first_russia_lane_replacement
             replacement_source = f"{replacement_source}_first_russia_t13_pair_lane"
+        if (single_t13_bank_replacement := first_russia_single_t13_t12_bank_replacement_for(replacement)) is not None:
+            replacement = single_t13_bank_replacement
+            replacement_source = f"{replacement_source}_first_russia_single_t13_t12_bank_lane"
         if (second_russia_ladder_replacement := second_russia_t12_ladder_replacement_for(replacement)) is not None:
             replacement = second_russia_ladder_replacement
             replacement_source = f"{replacement_source}_second_russia_t12_ladder_lane"
@@ -2187,6 +2417,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (pre_russia_lane_replacement := pre_russia_t12_lane_replacement_for(replacement)) is not None:
         replacement = pre_russia_lane_replacement
         replacement_source = f"{replacement_source}_pre_russia_t12_lane"
+
+    if (pre_russia_t13_replacement := pre_russia_t13_pair_replacement_for(replacement)) is not None:
+        replacement = pre_russia_t13_replacement
+        replacement_source = f"{replacement_source}_pre_russia_t13_pair_lane"
 
     new_decision = dict(decision)
     old_grade = chosen.get("merge_grade", "NO")
