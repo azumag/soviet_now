@@ -463,8 +463,17 @@ handle_soviet_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
 	log "!!! SOVIET CREATED !!!"
-	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num" "${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
 	_append_celebration_history "soviet" "$score" "$turns" "$game_num"
+
+	# 祝賀読み上げ/クリップの有効・無効 (ロシア祝賀の RUSSIA_CELEBRATION_ENABLED と同パターン)。
+	# 0 のときは建国履歴のみ記録し、トーク生成・音声・クリップ・コメント停止は行わない。
+	if [ "${SOVIET_CELEBRATION_ENABLED:-1}" = "0" ]; then
+		log "[SOVIET] 祝賀読み上げは無効化中 (SOVIET_CELEBRATION_ENABLED=0)"
+		rm -f "$TMP_MARKERS_DIR/.soviet_created"
+		return 0
+	fi
+
+	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num" "${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
 
 	# ロシア祝賀が走っていたら中止してソ連祝賀を優先
 	_cancel_russia_celebration_worker
