@@ -803,6 +803,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     or __dlg_counts.get(11, 0) >= 2
                 )
             )
+            __dlg_t13_pair_compress_ready = (
+                __dlg_counts.get(14, 0) == 0
+                and __dlg_counts.get(13, 0) >= 2
+                and __dlg_counts.get(12, 0) >= 2
+            )
             __dlg_soviet_lift_ready = (
                 __dlg_counts.get(15, 0) == 1
                 and (
@@ -864,6 +869,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or __dlg_soviet_ladder_ready
                 or __dlg_double_t14_ready
                 or __dlg_russia_pair_ready
+                or __dlg_t13_pair_compress_ready
                 or __dlg_first_russia_pair_ready
                 or __dlg_t11_density_ready
                 or __dlg_t12_consolidate_ready
@@ -903,6 +909,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 )
             ):
                 __dlg_mode = "russia_pair"
+            elif (
+                __dlg_t13_pair_compress_ready
+                and (
+                    __dlg_next_type >= 10
+                    or __dlg_next_next_type >= 10
+                )
+            ):
+                __dlg_mode = "t13_pair_compress"
             elif (
                 __dlg_first_russia_pair_ready
                 and (
@@ -959,10 +973,74 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if int(p.get("type", 0) or 0) == 14
                 ]
             elif __dlg_russia_pair_ready:
-                __dlg_targets = [
+                __dlg_t13_targets = [
                     p for p in __dlg_targets
-                    if int(p.get("type", 0) or 0) in (13, 14)
+                    if int(p.get("type", 0) or 0) == 13
                 ]
+                if __dlg_counts.get(14, 0) >= 1 and len(__dlg_t13_targets) >= 2:
+                    __dlg_pair = None
+                    __dlg_pair_key = (999.0, 999.0)
+                    for __dlg_i, __dlg_a in enumerate(__dlg_t13_targets):
+                        for __dlg_b in __dlg_t13_targets[__dlg_i + 1:]:
+                            __dlg_ax = float(__dlg_a.get("x", 0.0) or 0.0)
+                            __dlg_ay = float(__dlg_a.get("y", -10.0) or -10.0)
+                            __dlg_bx = float(__dlg_b.get("x", 0.0) or 0.0)
+                            __dlg_by = float(__dlg_b.get("y", -10.0) or -10.0)
+                            __dlg_dist = ((__dlg_ax - __dlg_bx) ** 2 + (__dlg_ay - __dlg_by) ** 2) ** 0.5
+                            __dlg_top = max(__dlg_ay, __dlg_by)
+                            __dlg_key = (
+                                __dlg_dist + max(0.0, __dlg_top - 1.1) * 0.55,
+                                __dlg_top,
+                            )
+                            if __dlg_key < __dlg_pair_key:
+                                __dlg_pair_key = __dlg_key
+                                __dlg_pair = (__dlg_a, __dlg_b)
+                    if __dlg_pair is not None:
+                        __dlg_center = (
+                            float(__dlg_pair[0].get("x", 0.0) or 0.0)
+                            + float(__dlg_pair[1].get("x", 0.0) or 0.0)
+                        ) / 2.0
+                        __dlg_targets = [{"x": __dlg_center, "type": 13}]
+                    else:
+                        __dlg_targets = __dlg_t13_targets
+                else:
+                    __dlg_targets = [
+                        p for p in __dlg_targets
+                        if int(p.get("type", 0) or 0) in (13, 14)
+                    ]
+            elif __dlg_mode == "t13_pair_compress":
+                __dlg_t12_targets = [
+                    p for p in __dlg_targets
+                    if int(p.get("type", 0) or 0) == 12
+                ]
+                if len(__dlg_t12_targets) >= 2:
+                    __dlg_pair = None
+                    __dlg_pair_key = (999.0, 999.0)
+                    for __dlg_i, __dlg_a in enumerate(__dlg_t12_targets):
+                        for __dlg_b in __dlg_t12_targets[__dlg_i + 1:]:
+                            __dlg_ax = float(__dlg_a.get("x", 0.0) or 0.0)
+                            __dlg_ay = float(__dlg_a.get("y", -10.0) or -10.0)
+                            __dlg_bx = float(__dlg_b.get("x", 0.0) or 0.0)
+                            __dlg_by = float(__dlg_b.get("y", -10.0) or -10.0)
+                            __dlg_dist = ((__dlg_ax - __dlg_bx) ** 2 + (__dlg_ay - __dlg_by) ** 2) ** 0.5
+                            __dlg_top = max(__dlg_ay, __dlg_by)
+                            __dlg_key = (
+                                __dlg_dist + max(0.0, __dlg_top - 1.2) * 0.5,
+                                __dlg_top,
+                            )
+                            if __dlg_key < __dlg_pair_key:
+                                __dlg_pair_key = __dlg_key
+                                __dlg_pair = (__dlg_a, __dlg_b)
+                    if __dlg_pair is not None:
+                        __dlg_center = (
+                            float(__dlg_pair[0].get("x", 0.0) or 0.0)
+                            + float(__dlg_pair[1].get("x", 0.0) or 0.0)
+                        ) / 2.0
+                        __dlg_targets = [{"x": __dlg_center, "type": 12}]
+                    else:
+                        __dlg_targets = __dlg_t12_targets
+                else:
+                    __dlg_targets = __dlg_t12_targets
             elif __dlg_mode == "first_russia_pair":
                 __dlg_targets = [
                     p for p in __dlg_targets
@@ -1051,10 +1129,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             __dlg_lowest_dist = abs(float(__dlg_lowest.get("x", 0.0) or 0.0) - __dlg_center_x)
             __dlg_cluster_dist = abs(float(__dlg_cluster.get("x", 0.0) or 0.0) - __dlg_center_x)
-            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "soviet_ladder", "t11_density", "t12_consolidate") else 0.35
+            __dlg_required_gain = 0.15 if __dlg_mode in ("first_russia_pair", "t13_pair_compress", "soviet_ladder", "t11_density", "t12_consolidate") else 0.35
             if __dlg_cluster_dist + __dlg_required_gain < __dlg_lowest_dist:
                 return __dlg_cluster
             return None
+
+        __dlg_cluster_early = __dlg_pre_russia_cluster_pick(__dlg_cands)
+        if __dlg_cluster_early is not None:
+            return {"x": float(__dlg_cluster_early.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"}
 
         # v679: mandatory_themes compliance — NO_MERGE candidates crossing deadline must be excluded
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
@@ -2413,6 +2495,138 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += pair_bonus
                     reasons.append("PRE_RUSSIA_T13_PAIR_CLUSTER")
 
+        # ----- vXXX: pre-Russia T13-pair compression with T12 material -----
+        # Clean #29400 reached T13x2 + T12x2 but the T13s were vertically split;
+        # generic safe landings preserved the board without closing T12/T13
+        # material into the first T14. When T12 material still exists, feed the
+        # next T10/T11/T12 toward the closest T12-pair lane instead of the edge.
+        pre_russia_t13_pair_compress_ready = (
+            not russia_phase
+            and max_type_on_board == 13
+            and pre_russia_counts.get(13, 0) >= 2
+            and pre_russia_counts.get(14, 0) == 0
+            and pre_russia_counts.get(12, 0) >= 2
+            and next_type in (10, 11, 12, 13)
+        )
+        if (
+            merge_grade == "NO"
+            and pre_russia_t13_pair_compress_ready
+            and not death_spiral
+            and max_y < 3.35
+            and piece_count >= 30
+        ):
+            t12_targets = [p for p in pieces if p.get("type") == 12]
+            compress_target = None
+            if len(t12_targets) >= 2:
+                best_pair = None
+                best_pair_key = (999.0, 999.0)
+                for pair_i, pair_a in enumerate(t12_targets):
+                    for pair_b in t12_targets[pair_i + 1:]:
+                        ax = pair_a.get("x", 0)
+                        ay = pair_a.get("y", -10)
+                        bx = pair_b.get("x", 0)
+                        by = pair_b.get("y", -10)
+                        pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                        pair_top = max(ay, by)
+                        pair_key = (
+                            pair_dist + max(0.0, pair_top - 1.2) * 0.5,
+                            pair_top,
+                        )
+                        if pair_key < best_pair_key:
+                            best_pair_key = pair_key
+                            best_pair = (pair_a, pair_b)
+                if best_pair is not None:
+                    compress_target = {
+                        "x": (best_pair[0].get("x", 0) + best_pair[1].get("x", 0)) / 2.0,
+                        "y": max(best_pair[0].get("y", -10), best_pair[1].get("y", -10)),
+                        "type": 12,
+                    }
+            if compress_target is None:
+                t13_targets = [p for p in pieces if p.get("type") == 13]
+                t13_pair_center = _weighted_center_x(t13_targets)
+                if t13_pair_center is not None:
+                    compress_target = {"x": t13_pair_center, "y": -0.8, "type": 13}
+            if compress_target is not None:
+                compress_dist = abs(x - compress_target.get("x", 0))
+                compress_bonus = max(0.0, 2300.0 - compress_dist * 560.0)
+                if piece_count >= 36:
+                    compress_bonus *= min(1.8, 1.0 + (piece_count - 36) * 0.09)
+                if landing_y > 1.8:
+                    compress_bonus *= 0.58
+                if landing_y > 2.45:
+                    compress_bonus *= 0.45
+                if compress_target.get("y", -10) > 1.2:
+                    compress_bonus *= 0.78
+                if abs(x) >= 2.4 and compress_dist >= 1.3:
+                    score -= 1700.0
+                if landing_y > 2.4 and compress_dist >= 0.9:
+                    score -= 1100.0
+                if compress_bonus > 0:
+                    score += compress_bonus
+                    reasons.append("PRE_RUSSIA_T13_PAIR_COMPRESS")
+
+        # ----- vXXX: pre-Russia T13-pair ladder when T12 material is missing -----
+        # Clean #29397 ended with T13x2 but no T12s, plus T11/T10 material
+        # stranded away from the pair. In this near-miss, feed T10/T11/T12
+        # back toward the T13 pair lane so it can rebuild T12/T13 material for
+        # the first T14 instead of waiting for broad bridge clustering.
+        pre_russia_t13_pair_ladder_ready = (
+            not russia_phase
+            and max_type_on_board == 13
+            and pre_russia_counts.get(13, 0) >= 2
+            and pre_russia_counts.get(14, 0) == 0
+            and pre_russia_counts.get(12, 0) <= 1
+            and (
+                pre_russia_counts.get(11, 0) >= 2
+                or pre_russia_counts.get(10, 0) >= 2
+            )
+            and next_type in (10, 11, 12)
+        )
+        if (
+            merge_grade == "NO"
+            and pre_russia_t13_pair_ladder_ready
+            and not death_spiral
+            and max_y < 3.35
+            and piece_count >= 28
+        ):
+            t13_targets = [p for p in pieces if p.get("type") == 13]
+            t13_pair_center = _weighted_center_x(t13_targets)
+            ladder_target = None
+            if next_type == 12 and t13_pair_center is not None:
+                same_targets = [p for p in pieces if p.get("type") == 12]
+                if same_targets:
+                    ladder_target = min(
+                        same_targets,
+                        key=lambda tp: (abs(tp.get("x", 0) - t13_pair_center), tp.get("y", -10)),
+                    )
+                else:
+                    ladder_target = {"x": t13_pair_center, "y": -0.8, "type": 13}
+            elif t13_pair_center is not None:
+                same_targets = [p for p in pieces if p.get("type") == next_type]
+                if same_targets:
+                    def _pre_russia_t13_pair_ladder_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        high_penalty = max(0.0, tp_y + 0.1) * 0.95
+                        return (abs(tp_x - t13_pair_center) + high_penalty, tp_y)
+                    ladder_target = min(same_targets, key=_pre_russia_t13_pair_ladder_key)
+                else:
+                    ladder_target = {"x": t13_pair_center, "y": -0.8, "type": next_type + 1}
+            if ladder_target is not None:
+                ladder_dist = abs(x - ladder_target.get("x", 0))
+                ladder_bonus = max(0.0, 1520.0 - ladder_dist * 390.0)
+                if piece_count >= 34:
+                    ladder_bonus *= min(1.75, 1.0 + (piece_count - 34) * 0.08)
+                if landing_y > 2.7:
+                    ladder_bonus *= 0.55
+                if ladder_target.get("y", -10) > 1.5:
+                    ladder_bonus *= 0.72
+                if abs(x) >= 2.5 and ladder_dist >= 1.7:
+                    score -= 1500.0
+                if ladder_bonus > 0:
+                    score += ladder_bonus
+                    reasons.append("PRE_RUSSIA_T13_PAIR_LADDER")
+
         # ----- vXXX: pre-Russia T10/T11 ladder after first T13 -----
         # Clean loss 20260602_142211 built T13x1 and T12x1 by T32 but then
         # accumulated T10x6/T11x3 while never making the second T12. Bridge and
@@ -2598,6 +2812,90 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if second_latch_bonus > 0:
                     score += second_latch_bonus
                     reasons.append("SECOND_RUSSIA_SAME_TYPE_LATCH")
+
+        # ----- vXXX: first-Russia T13-pair lift after first T14 -----
+        # Clean #29392 held T14x1 + T13x2 from T93 to game over. The generic
+        # Russia-pair center included the T14 and pulled low material away from
+        # the T13 pair that needed to become the second T14. In the one-T14
+        # near-miss, feed T10/T11/T12/T13 material into the T13 pair lane first.
+        first_russia_t13_pair_lift_ready = (
+            russia_phase
+            and not double_russia_phase
+            and pre_russia_counts.get(14, 0) >= 1
+            and pre_russia_counts.get(15, 0) == 0
+            and pre_russia_counts.get(13, 0) >= 2
+            and next_type in (10, 11, 12, 13)
+        )
+        if (
+            merge_grade == "NO"
+            and first_russia_t13_pair_lift_ready
+            and not death_spiral
+            and max_y < 3.4
+            and piece_count >= 26
+        ):
+            t13_pair_targets = [p for p in pieces if p.get("type") == 13]
+            t13_pair_center = None
+            t13_pair_y = -10.0
+            if len(t13_pair_targets) >= 2:
+                best_pair = None
+                best_pair_key = (999.0, 999.0)
+                for pair_i, pair_a in enumerate(t13_pair_targets):
+                    for pair_b in t13_pair_targets[pair_i + 1:]:
+                        ax = pair_a.get("x", 0)
+                        ay = pair_a.get("y", -10)
+                        bx = pair_b.get("x", 0)
+                        by = pair_b.get("y", -10)
+                        pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                        pair_top = max(ay, by)
+                        pair_key = (
+                            pair_dist + max(0.0, pair_top - 1.1) * 0.55,
+                            pair_top,
+                        )
+                        if pair_key < best_pair_key:
+                            best_pair_key = pair_key
+                            best_pair = (pair_a, pair_b)
+                if best_pair is not None:
+                    t13_pair_center = (
+                        best_pair[0].get("x", 0) + best_pair[1].get("x", 0)
+                    ) / 2.0
+                    t13_pair_y = max(
+                        best_pair[0].get("y", -10),
+                        best_pair[1].get("y", -10),
+                    )
+            pair_lift_target = None
+            if next_type == 13 and t13_pair_center is not None:
+                pair_lift_target = {"x": t13_pair_center, "y": t13_pair_y, "type": 14}
+            else:
+                same_targets = [p for p in pieces if p.get("type") == next_type]
+                if same_targets and t13_pair_center is not None:
+                    def _first_russia_t13_pair_lift_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        high_penalty = max(0.0, tp_y + 0.1) * 1.05
+                        return (abs(tp_x - t13_pair_center) + high_penalty, tp_y)
+                    pair_lift_target = min(same_targets, key=_first_russia_t13_pair_lift_key)
+                elif t13_pair_center is not None:
+                    pair_lift_target = {
+                        "x": t13_pair_center,
+                        "y": t13_pair_y,
+                        "type": min(13, next_type + 1),
+                    }
+            if pair_lift_target is not None:
+                pair_lift_dist = abs(x - pair_lift_target.get("x", 0))
+                pair_lift_bonus = max(0.0, 2400.0 - pair_lift_dist * 560.0)
+                if piece_count >= 34:
+                    pair_lift_bonus *= min(1.85, 1.0 + (piece_count - 34) * 0.09)
+                if landing_y > 2.8:
+                    pair_lift_bonus *= 0.55
+                if pair_lift_target.get("y", -10) > 1.6:
+                    pair_lift_bonus *= 0.85
+                if t13_pair_center is not None and abs(x - t13_pair_center) >= 1.2:
+                    score -= 950.0
+                if abs(x) >= 2.5 and pair_lift_dist >= 1.7:
+                    score -= 1800.0
+                if pair_lift_bonus > 0:
+                    score += pair_lift_bonus
+                    reasons.append("FIRST_RUSSIA_T13_PAIR_LIFT")
 
         # ----- vXXX: Soviet T15 lift after Russia creation -----
         # Clean #29377 (20260602_143048) founded Russia at T98, then died with
@@ -2833,11 +3131,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += bridge_bonus
                         reasons.append("PRE_RUSSIA_BRIDGE_CLUSTER")
 
-            russia_pair_targets = [
-                p for p in pieces if p.get("type") == 14
-            ] + [
-                p for p in pieces if p.get("type") == 13
-            ]
+            if (
+                pre_russia_counts.get(14, 0) >= 1
+                and pre_russia_counts.get(13, 0) >= 2
+                and pre_russia_counts.get(15, 0) == 0
+            ):
+                russia_pair_targets = [
+                    p for p in pieces if p.get("type") == 13
+                ]
+            else:
+                russia_pair_targets = [
+                    p for p in pieces if p.get("type") == 14
+                ] + [
+                    p for p in pieces if p.get("type") == 13
+                ]
             russia_pair_material_ready = next_type >= 10 or next_next_type >= 12
             if (
                 pre_russia_counts.get(14, 0) >= 1
@@ -3170,6 +3477,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # refs: tmp/analysis_result.md (axis 8.8 suppression bug fix), tmp/state/last_rollback_postmortem.md
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            if (
+                not russia_phase
+                and not deadline_crossed
+                and piece_count >= 16
+                and max_y >= -0.4
+                and abs(x) >= 2.5
+            ):
+                edge_scatter_penalty = 900.0 + min(2200.0, max(0, piece_count - 16) * 130.0)
+                edge_scatter_penalty += max(0.0, landing_y + 0.2) * 450.0
+                score -= edge_scatter_penalty
+                reasons.append("PRE_RUSSIA_REACTIVE_EDGE_SCATTER")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
