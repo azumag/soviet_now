@@ -366,24 +366,104 @@ _OBS_SOURCE_LOCK = Lock()
 # resolved Chrome-for-Testing bundle.
 _LSREGISTER_LOCK = Lock()
 _LSREGISTER_DONE: set[str] = set()
+_LSREGISTER_BIN = (
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+    "LaunchServices.framework/Support/lsregister"
+)
+
+
+def _cft_path_is_live(app_path: str) -> bool:
+    return os.path.exists(os.path.join(app_path, "Contents", "MacOS", "Google Chrome for Testing"))
+
+
+def _open_launch_probe_ok(app_path: str, timeout_sec: float = 8.0) -> bool:
+    """Ground-truth test: can `/usr/bin/open` actually launch this Chrome bundle
+    right now? Launches a throwaway HEADLESS instance and checks CDP.
+
+    We probe instead of reading `lsregister -dump`, because the dead higher-version
+    registrations keep showing in the dump even after a rebuild — the dump is NOT a
+    reliable "is it broken" signal. Whether `open` resolves the bundle to a live or
+    a deleted path is intermittent, so the live probe reflects the actual state the
+    candidate launches will see."""
+    import socket
+    try:
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+    except Exception:
+        return True  # can't probe; assume ok rather than force a rebuild
+    profile = tempfile.mkdtemp(prefix="cft_lsprobe_")
+    try:
+        try:
+            subprocess.run(
+                ["/usr/bin/open", "-g", "-n", app_path, "--args",
+                 f"--user-data-dir={profile}", f"--remote-debugging-port={port}",
+                 "--headless=new", "--no-first-run", "--no-default-browser-check"],
+                timeout=15, check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+        ok = False
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1) as resp:
+                    if resp.status == 200:
+                        ok = True
+                        break
+            except Exception:
+                time.sleep(0.4)
+        return ok
+    finally:
+        # Kill by the UNIQUE profile path, not the port: headless Chrome spawns
+        # helper processes (gpu/renderer) that carry --user-data-dir=<profile> but
+        # not the debugging port, so a port-only pkill leaks them.
+        try:
+            subprocess.run(["pkill", "-f", profile], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.3)
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(profile, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _lsregister_repair_log(msg: str) -> None:
+    try:
+        log_path = REPO_ROOT / "tmp" / "debug" / "lsregister_repair.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
 
 
 def ensure_chrome_launchservices_registration(app_path: str) -> None:
-    """Re-register the resolved Chrome-for-Testing bundle with LaunchServices.
+    """Detect-and-repair the LaunchServices registration of Chrome-for-Testing.
 
     Candidate slots launch Chrome via `/usr/bin/open` (LaunchServices) so the GUI
-    session registers a capturable window. But Playwright upgrades Chrome (e.g.
-    chromium-1208 -> a newer chromium-NNNN) and deletes the old directory, while
-    LaunchServices keeps the STALE registration pointing at the deleted path. Then
-    `open <new path>` fails with `kLSNoExecutableErr: The executable is missing`,
-    every slot's bridge exits 1, and the whole trial aborts as `infra_failed`
-    (observed 100% of trials 08:30-12:09 on 2026-06-02, all on a stale chromium-1200
-    registration after the real binary moved to chromium-1208).
+    session registers a capturable window. Playwright/puppeteer churn Chrome
+    versions (chromium-1200 -> 1208 -> 1217 -> 1223 ...) and delete old dirs, but
+    LaunchServices keeps the STALE registrations — including HIGHER versions whose
+    paths are now gone. macOS resolves the bundle id to the highest version, so it
+    picks a deleted path and `open` fails with `kLSNoExecutableErr` intermittently;
+    every slot's bridge then exits 1 and the trial aborts as `infra_failed`
+    (2026-06-02: 100% of trials; `lsregister -f` could not fix it because the
+    deleted higher-version entries cannot be `-u`'d away).
 
-    A targeted `lsregister -f <app>` repoints the registration to the live bundle.
-    We deliberately do NOT use `lsregister -kill -r` (it rebuilds the whole DB and
-    freezes Finder/Dock for 5-30s). Idempotent; runs at most once per app_path per
-    process. Gate off with WILDCARD_PARALLEL_LSREGISTER_FIX=0.
+    Detect: PROBE `open` (launch a throwaway headless instance, check CDP). Only
+    when the probe fails do we repair, so a working DB is left untouched and there
+    is NO Finder/Dock freeze on healthy trials.
+    Repair: scoped `lsregister -kill -r -domain local -domain user` to purge dead
+    entries (rebuilds only user+local domains; Finder/Dock briefly freezes), then
+    `-f <app>` to register the live bundle, then re-probe and log the outcome.
+    Runs at most once per app_path per process. Gates:
+    WILDCARD_PARALLEL_LSREGISTER_FIX=0 disables all;
+    WILDCARD_PARALLEL_LSREGISTER_REBUILD=0 keeps the cheap `-f` but skips the purge.
     """
     if sys.platform != "darwin" or not app_path:
         return
@@ -393,22 +473,37 @@ def ensure_chrome_launchservices_registration(app_path: str) -> None:
         if app_path in _LSREGISTER_DONE:
             return
         _LSREGISTER_DONE.add(app_path)
-    lsregister = (
-        "/System/Library/Frameworks/CoreServices.framework/Frameworks/"
-        "LaunchServices.framework/Support/lsregister"
-    )
-    if not os.path.exists(lsregister) or not os.path.exists(app_path):
+    if not os.path.exists(_LSREGISTER_BIN) or not _cft_path_is_live(app_path):
         return
+
+    if _open_launch_probe_ok(app_path):
+        _lsregister_repair_log("open probe OK -> no repair needed")
+        return
+
+    rebuild_allowed = os.environ.get("WILDCARD_PARALLEL_LSREGISTER_REBUILD", "1") == "1"
+    _lsregister_repair_log(
+        f"open probe FAILED -> repair (rebuild={'on' if rebuild_allowed else 'off'})"
+    )
+    if rebuild_allowed:
+        try:
+            subprocess.run(
+                [_LSREGISTER_BIN, "-kill", "-r", "-domain", "local", "-domain", "user"],
+                timeout=180, check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            _lsregister_repair_log(f"rebuild failed: {exc}")
     try:
         subprocess.run(
-            [lsregister, "-f", app_path],
-            timeout=20,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            [_LSREGISTER_BIN, "-f", app_path],
+            timeout=30, check=False,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:
         pass
+    _lsregister_repair_log(
+        f"post-repair open probe: {'OK' if _open_launch_probe_ok(app_path) else 'STILL FAILING'}"
+    )
 
 
 def _chrome_launch_stagger_sec() -> float:
