@@ -346,19 +346,47 @@ else:
             continue
         rows.append((parts[0], parts[1], parts[2]))
 
-    for name, pattern in patterns.items():
-        rx = re.compile(pattern)
-        matched = []
-        for pid, ppid, cmd in rows:
-            if pid == str(os.getpid()):
+    def root_worker_pids(parsed_rows):
+        roots = {}
+        for name, pattern in patterns.items():
+            rx = re.compile(pattern)
+            matched = []
+            for pid, ppid, cmd in parsed_rows:
+                if pid == str(os.getpid()):
+                    continue
+                if rx.search(cmd):
+                    matched.append((pid, ppid))
+            matched_pids = {pid for pid, _ppid in matched}
+            # Worker shell loops often spawn a same-command child shell. Count only
+            # root instances so normal child shells do not look like duplicates.
+            roots[name] = sorted(
+                {pid for pid, ppid in matched if ppid not in matched_pids},
+                key=lambda p: int(p),
+            )
+        return roots
+
+    first_roots = root_worker_pids(rows)
+    second_roots = first_roots
+    try:
+        time.sleep(0.35)
+        raw2 = subprocess.check_output(["ps", "-Ao", "pid=,ppid=,command="], text=True, errors="replace")
+        rows2 = []
+        for line in raw2.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            if rx.search(cmd):
-                matched.append((pid, ppid))
-        matched_pids = {pid for pid, _ppid in matched}
-        # Worker shell loops often spawn a same-command child shell. Count only
-        # root instances so normal child shells do not look like duplicates.
-        pids = [pid for pid, ppid in matched if ppid not in matched_pids]
-        unique_pids = sorted(set(pids), key=lambda p: int(p))
+            parts = line.split(None, 2)
+            if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                rows2.append((parts[0], parts[1], parts[2]))
+        second_roots = root_worker_pids(rows2)
+    except Exception:
+        pass
+
+    for name in patterns:
+        unique_pids = sorted(
+            set(first_roots.get(name, [])) & set(second_roots.get(name, [])),
+            key=lambda p: int(p),
+        )
         all_counts[name] = len(unique_pids)
         if len(unique_pids) > 1:
             owner = managed.get(name, "")

@@ -2420,6 +2420,43 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}"', eloop)
         self.assertIn('"${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}"', eloop)
 
+    def test_obs_mac_capture_setinputsettings_serialized_cross_process(self):
+        """全プロセスの mac-capture SetInputSettings は単一のファイルロックで直列化される。
+
+        macOS mac-capture(SCK) は obs_source_update が並行すると二重free→OBSが
+        SIGABRT落ち。in-process ロック(wildcard_parallel.py)では別プロセス(キャプチャ
+        watchdog / 本線bridge / soren91 / 候補スロット)を直列化できないため、
+        SetInputSettings を出す全箇所が lib/obs_source_lock.{sh,mjs} の同一ロックを
+        必ず取得する。これが外れると並列パラメータ調整中にOBSごと落ちる回帰になる。
+        """
+        # The shared lock helpers exist and expose acquire/release in both languages.
+        sh_lock = (REPO_ROOT / "lib" / "obs_source_lock.sh").read_text()
+        mjs_lock = (REPO_ROOT / "lib" / "obs_source_lock.mjs").read_text()
+        self.assertIn("obs_source_lock_acquire", sh_lock)
+        self.assertIn("obs_source_lock_release", sh_lock)
+        self.assertIn("mkdir \"$OBS_SOURCE_LOCK_DIR\"", sh_lock)
+        self.assertIn("OBS_SOURCE_LOCK_SETTLE_SEC", sh_lock)
+        self.assertIn("export async function acquireObsSourceLock", mjs_lock)
+        self.assertIn("export async function releaseObsSourceLock", mjs_lock)
+        self.assertIn("obs_source_update.lock", sh_lock)
+        self.assertIn("obs_source_update.lock", mjs_lock)
+
+        # Every mac-capture SetInputSettings site wraps its update in the lock.
+        window_source = (REPO_ROOT / "obs_window_capture_source.sh").read_text()
+        self.assertIn("obs_source_lock.sh", window_source)
+        self.assertIn("obs_source_lock_acquire", window_source)
+        self.assertIn("trap 'obs_source_lock_release", window_source)
+
+        watchdog = (REPO_ROOT / "obs_capture_watchdog_check.mjs").read_text()
+        self.assertIn("obs_source_lock.mjs", watchdog)
+        self.assertIn("acquireObsSourceLock", watchdog)
+        self.assertIn("releaseObsSourceLock", watchdog)
+
+        bridge = (REPO_ROOT / "soviet_local.mjs").read_text()
+        self.assertIn("obs_source_lock.mjs", bridge)
+        self.assertIn("acquireObsSourceLock", bridge)
+        self.assertIn("releaseObsSourceLock", bridge)
+
     def test_wildcard_parallel_runtime_mutes_bgm_and_halves_se(self):
         """並列評価ブラウザだけ BGM=0 / SE=1.5 を渡す。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
@@ -3604,6 +3641,12 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
     def test_pre_russia_bridge_clustering_is_bounded_to_near_miss_inventory(self):
         strategy = (REPO_ROOT / "strategy.py").read_text()
 
+        self.assertIn("PRE_RUSSIA_SEED_CLUSTER", strategy)
+        self.assertIn("pre_russia_seed_ready", strategy)
+        self.assertIn("pre_russia_seed_material_ready", strategy)
+        self.assertIn("next_type >= 9", strategy)
+        self.assertIn("next_next_type >= 11", strategy)
+        self.assertIn("max_type_on_board in (11, 12)", strategy)
         self.assertIn("PRE_RUSSIA_BRIDGE_CLUSTER", strategy)
         self.assertIn("RUSSIA_PAIR_CLUSTER", strategy)
         self.assertIn("SECOND_RUSSIA_BRIDGE_CLUSTER", strategy)
@@ -3612,11 +3655,17 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("pre_russia_counts.get(13, 0) >= 2", strategy)
         self.assertIn("pre_russia_counts.get(12, 0) >= 2", strategy)
         self.assertIn("pre_russia_counts.get(11, 0) >= 2", strategy)
+        self.assertIn("pre_russia_counts.get(13, 0) >= 1", strategy)
+        self.assertIn("pre_russia_counts.get(12, 0) >= 1", strategy)
+        self.assertIn("pre_russia_counts.get(11, 0) >= 1", strategy)
         self.assertIn("pre_russia_counts.get(11, 0) >= 3", strategy)
         self.assertIn("pre_russia_counts.get(12, 0) >= 4", strategy)
         self.assertIn("pre_russia_counts.get(14, 0) >= 1", strategy)
         self.assertIn('p.get("type") == 14', strategy)
         self.assertIn("second_russia_counts.get(13, 0) >= 2", strategy)
+        self.assertIn("second_russia_counts.get(13, 0) >= 1", strategy)
+        self.assertIn("second_russia_counts.get(12, 0) >= 1", strategy)
+        self.assertIn("second_russia_counts.get(11, 0) >= 2", strategy)
         self.assertIn("not death_spiral", strategy)
         self.assertIn("max_y < 3.2", strategy)
         self.assertIn("pre_russia_bridge_material_ready", strategy)
@@ -3625,6 +3674,109 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("landing_y > 1.2 or piece_count >= 28", strategy)
         self.assertIn("russia_pair_material_ready", strategy)
         self.assertIn("second_russia_material_ready", strategy)
+        self.assertIn("DEADLINE_GUARD_PRE_RUSSIA_CLUSTER", strategy)
+
+    def test_deadline_guard_clusters_safe_high_material_when_pre_russia_near_miss(self):
+        import strategy
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": True,
+                "pieces": [
+                    {"id": 1, "type": 14, "x": 0.4, "y": -1.5},
+                    {"id": 2, "type": 13, "x": -2.3, "y": 0.1},
+                    {"id": 3, "type": 13, "x": 0.7, "y": -3.1},
+                ],
+                "next": {"type": 11},
+                "nextNext": {"type": 4},
+            },
+            {
+                "reactor": {"deadline_margin": 0.2, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 2.2,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.2,
+                    },
+                    {
+                        "x": -0.4,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.75,
+                    },
+                    {
+                        "x": -2.9,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.1,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], -0.4)
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+
+    def test_pre_russia_seed_cluster_guides_t10_t11_toward_t12_lane(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 12, "x": -1.0, "y": -1.2},
+            {"id": 2, "type": 12, "x": 0.9, "y": -1.0},
+            {"id": 3, "type": 11, "x": 0.4, "y": -0.7},
+            {"id": 4, "type": 8, "x": -2.4, "y": -1.6},
+        ]
+        for i in range(5, 20):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 6),
+                    "x": -2.8 + (i % 6) * 0.9,
+                    "y": -2.4 + (i % 3) * 0.25,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 10},
+                "nextNext": {"type": 3},
+            },
+            {
+                "reactor": {"deadline_margin": 2.0, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -2.7,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.1,
+                    },
+                    {
+                        "x": 0.25,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.15,
+                    },
+                    {
+                        "x": 2.7,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.1,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 0.25)
+        self.assertIn("PRE_RUSSIA_SEED_CLUSTER", decision["reason"])
 
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
@@ -6383,6 +6535,9 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn('"duplicates": duplicates', supervisor)
         self.assertIn("normal child shells do not look like duplicates", supervisor)
         self.assertIn("ppid not in matched_pids", supervisor)
+        self.assertIn("root_worker_pids", supervisor)
+        self.assertIn("time.sleep(0.35)", supervisor)
+        self.assertIn("second_roots", supervisor)
         self.assertIn('"pid=,ppid=,command="', supervisor)
         self.assertIn("worker_duplicates.ps.$$.txt", supervisor)
         self.assertIn('LC_ALL=C ps -Ao pid=,ppid=,command= >"$ps_snapshot_file"', supervisor)
@@ -6396,6 +6551,9 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("duplicate scan unavailable", status)
         self.assertIn("_worker_duplicates_from_ps_fallback", status)
         self.assertIn("show_status_worker_ps.$$.txt", status)
+        self.assertIn("root_worker_pids", status)
+        self.assertIn("time.sleep(0.35)", status)
+        self.assertIn("second_roots", status)
         self.assertIn('LC_ALL=C ps -Ao pid=,ppid=,command= >"$snapshot_file"', status)
         self.assertIn('duplicate_fallback_info=$(_worker_duplicates_from_ps_fallback)', status)
 

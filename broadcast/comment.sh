@@ -1722,6 +1722,98 @@ for cat, items in categories.items():
 PY
 }
 
+# ガチャの「コンプリート(全種制覇)」言及を一度きりにする。
+# 「N 種中 N 種所持」(owned==total) を達成したユーザーを検出し、
+#   - 既に祝福済み(GACHA_COMPLETED_USERS_FILE に記録済み)なら「触れないで」指示
+#   - 今回が初達成なら「一度だけ祝う」指示を出し、ファイルに追記して以後は抑制
+# 結果の指示文を GACHA_COMPLETION_NOTE に格納する。
+_build_gacha_completion_note() {
+	local comments_block="$1"
+	local list_file="${GACHA_COMPLETED_USERS_FILE:-${TMP_HISTORY_DIR:-tmp/history}/gacha_completed_users.txt}"
+	GACHA_COMPLETION_NOTE=""
+	[ -n "$comments_block" ] || return 0
+	mkdir -p "$(dirname "$list_file")" 2>/dev/null || true
+	GACHA_COMPLETION_NOTE=$(_GACHA_BLOCK="$comments_block" python3 - "$list_file" <<'PY' 2>/dev/null || true
+import sys, os, re
+
+list_file = sys.argv[1]
+text = os.environ.get("_GACHA_BLOCK", "")
+
+# 既に祝福済みのコンプリートユーザーを読み込む(小文字キーで照合)
+known = {}
+try:
+    with open(list_file, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            name = line.strip()
+            if name:
+                known.setdefault(name.lower(), name)
+except FileNotFoundError:
+    pass
+
+known_keys = set(known.keys())
+count_re = re.compile(r"(\d+)\s*種中\s*(\d+)\s*種所持")
+
+def extract_user(line):
+    s = line.strip()
+    if ": " in s:
+        head, rest = s.split(": ", 1)
+        m = re.match(r"\s*@?([^\s　:]+)\s*が", rest)
+        if m:
+            return m.group(1).lstrip("@")
+        h = head.strip().lstrip("@")
+        if h and not h.startswith("["):
+            return h
+        s = rest.strip()
+    m = re.match(r"\s*@?([^\s　:]+)\s*が", s)
+    if m:
+        return m.group(1).lstrip("@")
+    return ""
+
+already, newly, newly_keys = [], [], set()
+for raw in text.splitlines():
+    line = raw.strip()
+    if not line:
+        continue
+    m = count_re.search(line)
+    if not m:
+        continue
+    total, owned = int(m.group(1)), int(m.group(2))
+    if total <= 0 or owned < total:
+        continue  # 未コンプリート
+    user = extract_user(line)
+    if not user:
+        continue
+    key = user.lower()
+    if key in known_keys:
+        disp = known[key]
+        if disp not in already:
+            already.append(disp)
+        continue
+    if key in newly_keys:
+        continue
+    newly_keys.add(key)
+    newly.append(user)
+
+# 初コンプリート達成者を記録(以後は抑制対象になる)
+if newly:
+    try:
+        with open(list_file, "a", encoding="utf-8") as f:
+            for u in newly:
+                f.write(u + "\n")
+    except OSError:
+        pass
+
+out = []
+if already:
+    out.append("次のユーザーは過去に全種コンプリート達成済みで、既に何度も祝福しています: " + "、".join(already) + "。")
+    out.append("このユーザーにはコンプリート・全種制覇・制覇・112種制覇といった達成自体には一切触れず、今回引いたカードそのものの話だけをしてください。")
+if newly:
+    out.append("次のユーザーは今回が初のコンプリート達成です: " + "、".join(newly) + "。一度だけ達成を祝ってください。")
+print("\n".join(out))
+PY
+)
+}
+
 # カテゴリ別の追加指示を取得
 # 指定カテゴリのプロンプトを構築
 _build_category_prompt() {
@@ -1742,10 +1834,18 @@ _build_category_prompt() {
 	[ -f "$template_file" ] || return 1
 	local out_file="$4"
 	[ -z "$out_file" ] && return 1
+	# ガチャのコンプリート言及を一度きりにするための指示文を組み立てる
+	local gacha_completion_note=""
+	if [ "$category" = "card_gacha" ]; then
+		_build_gacha_completion_note "$comments_block"
+		gacha_completion_note="$GACHA_COMPLETION_NOTE"
+	fi
+	[ -n "$gacha_completion_note" ] || gacha_completion_note="（今回はコンプリート関連の特記事項はありません。）"
+	export gacha_completion_note
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {

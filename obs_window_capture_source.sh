@@ -73,6 +73,16 @@ cleanup_stale_wildcard_candidates_for_main_game() {
 
 cleanup_stale_wildcard_candidates_for_main_game
 
+# Serialize the SetInputSettings below against every other process that updates a
+# mac-capture source (game-capture watchdog, main soviet_local bridge, soren91,
+# sibling wildcard candidate slots). Concurrent obs_source_update on mac-capture
+# double-frees and crashes OBS outright. See lib/obs_source_lock.sh.
+if [ -f ./lib/obs_source_lock.sh ]; then . ./lib/obs_source_lock.sh; fi
+command -v obs_source_lock_acquire >/dev/null 2>&1 || obs_source_lock_acquire() { return 1; }
+command -v obs_source_lock_release >/dev/null 2>&1 || obs_source_lock_release() { return 0; }
+obs_source_lock_acquire || true
+trap 'obs_source_lock_release || true' EXIT
+
 "$NODE_BIN" --input-type=commonjs - "$scene" "$source_name" "$window_title_regex" "$app_id" "$visibility" <<'NODE'
 const crypto = require('crypto');
 

@@ -27,6 +27,9 @@ Usage:
   ./obs_control.sh transform <scene> <source> <x> <y> <scaleX> <scaleY> [<boundsW> <boundsH>]
   ./obs_control.sh stack <scene>
     Set OBS_CONTROL_TRANSFORM_MODE=force to overwrite an existing manual transform.
+  ./obs_control.sh stream-status            # prints "streaming=on|off"
+  ./obs_control.sh stream-start             # start streaming (no-op if already live)
+  ./obs_control.sh stream-stop              # stop streaming (no-op if not live)
 EOF
 	exit 2
 }
@@ -49,6 +52,9 @@ stack)
 transform)
 	[ -n "$TARGET" ] || usage
 	[ "$#" -ge 7 ] || usage
+	;;
+stream-status|stream-start|stream-stop)
+	# 配信(ストリーム)制御。scene/source 指定は不要。
 	;;
 *)
 	usage
@@ -346,6 +352,30 @@ async function main() {
   const obs = await connectAndIdentify();
 
   try {
+    if (action === 'stream-status' || action === 'stream-start' || action === 'stream-stop') {
+      const status = await obs.request('GetStreamStatus', {});
+      const active = !!(status && status.outputActive);
+      if (action === 'stream-status') {
+        console.log(`streaming=${active ? 'on' : 'off'}`);
+      } else if (action === 'stream-start') {
+        // 既に配信中なら何もしない(コメント連投での誤発火・悪用を防ぐ)
+        if (active) {
+          console.log('stream-start:already-live');
+        } else {
+          await obs.request('StartStream', {});
+          console.log('stream-start:started');
+        }
+      } else {
+        if (!active) {
+          console.log('stream-stop:not-live');
+        } else {
+          await obs.request('StopStream', {});
+          console.log('stream-stop:stopped');
+        }
+      }
+      return;
+    }
+
     const sceneName = targetName;
     const response = await obs.request('GetSceneItemList', { sceneName });
     const items = Array.isArray(response.sceneItems) ? response.sceneItems : [];

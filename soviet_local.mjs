@@ -602,6 +602,23 @@ async function connectObs() {
   };
 }
 
+// Cross-process mutex so the main bridge's SetInputSettings on the mac-capture
+// `sorengame` source never races the game-capture watchdog, soren91, or a
+// param-parallel candidate update — concurrent obs_source_update on mac-capture
+// double-frees and crashes OBS. Dynamic + best-effort: candidate bridges never
+// reach this (their OBS websocket env is stripped, so connectObs() returns null
+// before SetInputSettings), and a missing helper degrades to "no lock".
+let _obsLock = null;
+async function obsLock() {
+  if (_obsLock) return _obsLock;
+  try {
+    _obsLock = await import('./lib/obs_source_lock.mjs');
+  } catch {
+    _obsLock = { acquireObsSourceLock: async () => false, releaseObsSourceLock: async () => {} };
+  }
+  return _obsLock;
+}
+
 async function updateObsGameSource() {
   const obs = await connectObs();
   if (!obs) return;
@@ -640,16 +657,22 @@ async function updateObsGameSource() {
       return;
     }
 
-    await obs.request('SetInputSettings', {
-      inputName: OBS_GAME_SOURCE_NAME,
-      inputSettings: {
-        type: 1,
-        application: 'com.google.chrome.for.testing',
-        window: target.itemValue,
-        show_cursor: false,
-      },
-      overlay: true,
-    });
+    const lock = await obsLock();
+    const held = await lock.acquireObsSourceLock();
+    try {
+      await obs.request('SetInputSettings', {
+        inputName: OBS_GAME_SOURCE_NAME,
+        inputSettings: {
+          type: 1,
+          application: 'com.google.chrome.for.testing',
+          window: target.itemValue,
+          show_cursor: false,
+        },
+        overlay: true,
+      });
+    } finally {
+      await lock.releaseObsSourceLock(held);
+    }
     console.log(`OBS game source ${OBS_GAME_SOURCE_NAME} -> ${target.itemName} (${target.itemValue})`);
   } finally {
     obs.close();

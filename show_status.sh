@@ -312,7 +312,9 @@ _worker_duplicates_from_ps_fallback() {
 	python3 - "$snapshot_file" <<'PY' 2>/dev/null || true
 import os
 import re
+import subprocess
 import sys
+import time
 
 snapshot_file = sys.argv[1] if len(sys.argv) > 1 else ""
 patterns = {
@@ -339,12 +341,42 @@ for line in raw.splitlines():
     if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
         continue
     rows.append((parts[0], parts[1], parts[2]))
+
+def root_worker_pids(parsed_rows):
+    roots = {}
+    for worker_name, pattern in patterns.items():
+        rx = re.compile(pattern)
+        matched = [(pid, ppid) for pid, ppid, cmd in parsed_rows if rx.search(cmd)]
+        matched_pids = {pid for pid, _ppid in matched}
+        roots[worker_name] = sorted(
+            {pid for pid, ppid in matched if ppid not in matched_pids},
+            key=lambda p: int(p),
+        )
+    return roots
+
+first_roots = root_worker_pids(rows)
+second_roots = first_roots
+try:
+    time.sleep(0.35)
+    raw2 = subprocess.check_output(["ps", "-Ao", "pid=,ppid=,command="], text=True, errors="replace")
+    rows2 = []
+    for line in raw2.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows2.append((parts[0], parts[1], parts[2]))
+    second_roots = root_worker_pids(rows2)
+except Exception:
+    pass
+
 duplicates = []
-for name, pattern in patterns.items():
-    rx = re.compile(pattern)
-    matched = [(pid, ppid) for pid, ppid, cmd in rows if rx.search(cmd)]
-    matched_pids = {pid for pid, _ppid in matched}
-    root_pids = sorted({pid for pid, ppid in matched if ppid not in matched_pids}, key=lambda p: int(p))
+for name in patterns:
+    root_pids = sorted(
+        set(first_roots.get(name, [])) & set(second_roots.get(name, [])),
+        key=lambda p: int(p),
+    )
     if len(root_pids) > 1:
         duplicates.append((name, root_pids))
 if duplicates:

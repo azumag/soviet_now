@@ -775,6 +775,75 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+
+        def __dlg_pre_russia_cluster_pick(candidates):
+            __dlg_pieces = __dlg_game_state.get("pieces", [])
+            if not isinstance(__dlg_pieces, list):
+                return None
+            __dlg_counts = {}
+            __dlg_targets = []
+            for __dlg_piece in __dlg_pieces:
+                if not isinstance(__dlg_piece, dict):
+                    continue
+                __dlg_type = int(__dlg_piece.get("type", 0) or 0)
+                if __dlg_type >= 11:
+                    __dlg_counts[__dlg_type] = __dlg_counts.get(__dlg_type, 0) + 1
+                if __dlg_type in (13, 14):
+                    __dlg_targets.append(__dlg_piece)
+            if __dlg_counts.get(14, 0) < 1 or __dlg_counts.get(13, 0) < 2:
+                return None
+            __dlg_next = __dlg_game_state.get("next", {})
+            __dlg_next_next = __dlg_game_state.get("nextNext", {})
+            if not isinstance(__dlg_next, dict):
+                __dlg_next = {}
+            if not isinstance(__dlg_next_next, dict):
+                __dlg_next_next = {}
+            __dlg_next_type = int(__dlg_next.get("type", 0) or 0)
+            __dlg_next_next_type = int(__dlg_next_next.get("type", 0) or 0)
+            if __dlg_next_type < 10 and __dlg_next_next_type < 10:
+                return None
+
+            __dlg_total_weight = 0.0
+            __dlg_weighted_x = 0.0
+            for __dlg_piece in __dlg_targets:
+                __dlg_type = int(__dlg_piece.get("type", 0) or 0)
+                __dlg_weight = 1.0 + max(0, __dlg_type - 11) * 0.65
+                __dlg_weighted_x += float(__dlg_piece.get("x", 0.0) or 0.0) * __dlg_weight
+                __dlg_total_weight += __dlg_weight
+            if __dlg_total_weight <= 0:
+                return None
+            __dlg_center_x = __dlg_weighted_x / __dlg_total_weight
+
+            __dlg_safe = [
+                c for c in candidates
+                if isinstance(c, dict)
+                and not c.get("crosses_deadline")
+                and not c.get("merge_result_crosses_deadline")
+            ]
+            if not __dlg_safe:
+                return None
+            __dlg_lowest = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            __dlg_lowest_y = float(__dlg_lowest.get("landing_y", 99.0) or 99.0)
+            __dlg_window = __dlg_lowest_y + 0.85
+            __dlg_eligible = [
+                c for c in __dlg_safe
+                if float(c.get("landing_y", 99.0) or 99.0) <= __dlg_window
+            ]
+            if not __dlg_eligible:
+                return None
+            __dlg_cluster = min(
+                __dlg_eligible,
+                key=lambda c: (
+                    abs(float(c.get("x", 0.0) or 0.0) - __dlg_center_x),
+                    float(c.get("landing_y", 99.0) or 99.0),
+                ),
+            )
+            __dlg_lowest_dist = abs(float(__dlg_lowest.get("x", 0.0) or 0.0) - __dlg_center_x)
+            __dlg_cluster_dist = abs(float(__dlg_cluster.get("x", 0.0) or 0.0) - __dlg_center_x)
+            if __dlg_cluster_dist + 0.35 < __dlg_lowest_dist:
+                return __dlg_cluster
+            return None
+
         # v679: mandatory_themes compliance — NO_MERGE candidates crossing deadline must be excluded
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
         __dlg_safe_no_merge = [
@@ -804,6 +873,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fallback: only when no merge candidate is available
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_safe:
+            __dlg_cluster_best = __dlg_pre_russia_cluster_pick(__dlg_safe)
+            if __dlg_cluster_best is not None:
+                return {"x": float(__dlg_cluster_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER"}
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
@@ -1769,6 +1841,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
+        # ----- vXXX: pre-Russia seed clustering -----
+        # Live clean loss 20260602_131226: the board reached T12x3 T11x1 T10x3
+        # by T35, but the T12/T11 seed lane scattered before the existing
+        # pre-Russia bridge axes (T13/T14 near-miss) could help. Keep this
+        # bounded to high incoming material so low types do not get dragged into
+        # the high cluster, preserving the d441 low-type throttle intent.
+        pre_russia_seed_ready = (
+            not russia_phase
+            and max_type_on_board in (11, 12)
+            and (
+                pre_russia_counts.get(12, 0) >= 2
+                or (
+                    pre_russia_counts.get(12, 0) >= 1
+                    and pre_russia_counts.get(11, 0) >= 2
+                )
+                or pre_russia_counts.get(11, 0) >= 3
+            )
+        )
+        pre_russia_seed_material_ready = next_type >= 9 or next_next_type >= 11
+        if (
+            merge_grade == "NO"
+            and pre_russia_seed_ready
+            and pre_russia_seed_material_ready
+            and not death_spiral
+            and max_y < 2.0
+            and piece_count >= 18
+        ):
+            seed_targets = [p for p in pieces if p.get("type") in (11, 12)]
+            seed_center_x = _weighted_center_x(seed_targets)
+            if seed_center_x is not None:
+                seed_dist = abs(x - seed_center_x)
+                seed_bonus = max(0.0, 300.0 - seed_dist * 140.0)
+                if piece_count >= 28:
+                    seed_bonus *= min(1.6, 1.0 + (piece_count - 28) * 0.06)
+                if landing_y > 1.6:
+                    seed_bonus *= 0.4
+                if seed_bonus > 0:
+                    score += seed_bonus
+                    reasons.append("PRE_RUSSIA_SEED_CLUSTER")
+
         # ----- vXXX: Soviet objective bridge clustering -----
         # Live failure 20260602_121816: after Russia(type15) creation, the board ended with
         # T15x1 T13x2 T12x2. DEADLINE_GUARD kept the board alive, but repeated safe
@@ -1787,6 +1899,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     or (
                         pre_russia_counts.get(11, 0) >= 2
                         and pre_russia_counts.get(12, 0) >= 2
+                    )
+                    or (
+                        pre_russia_counts.get(13, 0) >= 1
+                        and pre_russia_counts.get(12, 0) >= 1
+                        and pre_russia_counts.get(11, 0) >= 1
                     )
                     or (
                         pre_russia_counts.get(11, 0) >= 3
@@ -1848,6 +1965,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     or (
                         second_russia_counts.get(13, 0) >= 1
                         and second_russia_counts.get(12, 0) >= 2
+                    )
+                    or (
+                        second_russia_counts.get(13, 0) >= 1
+                        and second_russia_counts.get(12, 0) >= 1
+                        and second_russia_counts.get(11, 0) >= 2
                     )
                     or second_russia_counts.get(14, 0) >= 1
                 )

@@ -36,3 +36,9 @@ ${comment_followup_hints}
 - The "A obtained B" comment means person A obtained card B (not the streamer).
 - The count in the comment is their cumulative total, not necessarily what they got this time.
 - 【EXCUSES PROHIBITED】When criticized about score, mistakes, or performance, simply agree. Never justify or make excuses.
+
+【コンプリート(全種制覇)の言及ルール】
+- 「N 種中 N 種所持」(所持数が総数と同じ)は全種コンプリート達成です。これは、その人が初めて達成した回だけ祝ってください。
+- 一度コンプリートを祝った相手には、それ以降の回ではコンプリート・全種制覇・制覇・112種といった達成自体に毎回は触れず、今回引いたカードそのものの話に集中してください。
+- 下記の指示に従ってください:
+${gacha_completion_note}

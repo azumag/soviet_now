@@ -59,6 +59,22 @@ const gameStateSig = () => { try { const s = fs.statSync('game_state.json'); ret
 const sha = (s) => crypto.createHash('sha256').update(s).digest('base64');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Cross-process mutex so this watchdog's SetInputSettings (bounce/rebind of the
+// mac-capture `sorengame` source) never races a param-parallel candidate update,
+// the main soviet_local bridge, or soren91 — concurrent obs_source_update on
+// mac-capture double-frees and crashes OBS. Loaded dynamically + best-effort so a
+// missing helper degrades to "no lock" instead of crashing the watchdog.
+let _obsLock = null;
+async function obsLock() {
+  if (_obsLock) return _obsLock;
+  try {
+    _obsLock = await import('./lib/obs_source_lock.mjs');
+  } catch {
+    _obsLock = { acquireObsSourceLock: async () => false, releaseObsSourceLock: async () => {} };
+  }
+  return _obsLock;
+}
+
 const currentMode = () => { try { return fs.readFileSync(MODE_FILE, 'utf8').trim() === 'meriken' ? 'meriken' : 'china'; } catch { return 'china'; } };
 const expectedRe = () => (currentMode() === 'meriken' ? MERIKEN_RE : CHINA_RE);
 
@@ -147,14 +163,20 @@ async function boundWindow(obs) {
 // Recreate the SCStream and point it at `value`. window->application->window forces
 // macOS to drop the old (possibly dead) capture and grab the target window fresh.
 async function bounce(obs, value) {
-  await obs.req('SetInputSettings', { inputName: NAME, inputSettings: { application: APP_ID, type: 2, show_cursor: false, capture_audio: false }, overlay: false });
-  // Wait long enough for mac-capture to fully teardown the old SCStream before the
-  // second SetInputSettings arrives. 800ms was too short, causing a double-free in
-  // mac-capture when OBS thread-pool workers raced on the same source object.
-  await sleep(2500);
-  const settings = { application: APP_ID, type: 1, show_cursor: false, show_empty_names: false, capture_audio: false };
-  if (value != null) settings.window = value;
-  await obs.req('SetInputSettings', { inputName: NAME, inputSettings: settings, overlay: false });
+  const lock = await obsLock();
+  const held = await lock.acquireObsSourceLock();
+  try {
+    await obs.req('SetInputSettings', { inputName: NAME, inputSettings: { application: APP_ID, type: 2, show_cursor: false, capture_audio: false }, overlay: false });
+    // Wait long enough for mac-capture to fully teardown the old SCStream before the
+    // second SetInputSettings arrives. 800ms was too short, causing a double-free in
+    // mac-capture when OBS thread-pool workers raced on the same source object.
+    await sleep(2500);
+    const settings = { application: APP_ID, type: 1, show_cursor: false, show_empty_names: false, capture_audio: false };
+    if (value != null) settings.window = value;
+    await obs.req('SetInputSettings', { inputName: NAME, inputSettings: settings, overlay: false });
+  } finally {
+    await lock.releaseObsSourceLock(held);
+  }
 }
 
 let obs = null;

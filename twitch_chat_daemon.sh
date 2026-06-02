@@ -18,6 +18,14 @@ WAVE_LINK_REPAIR_SCRIPT="${WAVE_LINK_REPAIR_SCRIPT:-./repair_wave_link.sh}"
 case "$WAVE_LINK_REPAIR_COOLDOWN_SEC" in
     ''|*[!0-9]*) WAVE_LINK_REPAIR_COOLDOWN_SEC=3600 ;;
 esac
+# 「配信を開始できますか？」系コメントでOBS配信を開始する。既に配信中なら何もしない
+# (obs_control.sh stream-start 側で no-op になるため悪用リスクなし)。
+STREAM_START_ON_COMMENT_ENABLED="${STREAM_START_ON_COMMENT_ENABLED:-1}"
+STREAM_START_COOLDOWN_FILE="$CHAT_DIR/stream_start_cooldown"
+STREAM_START_COOLDOWN_SEC="${STREAM_START_COOLDOWN_SEC:-60}"
+case "$STREAM_START_COOLDOWN_SEC" in
+    ''|*[!0-9]*) STREAM_START_COOLDOWN_SEC=60 ;;
+esac
 
 cd "$(dirname "$0")"
 mkdir -p "$CHAT_DIR"
@@ -60,6 +68,22 @@ _is_card_gacha_result_message() {
     local text="$1"
     [ -n "$text" ] || return 1
     printf '%s\n' "$text" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
+}
+
+# 「配信を開始できますか？」「配信がされていない…配信を開始して」等を検出。
+# locale非依存にするため正規表現ではなく部分一致(case)で判定する。
+# 「配信」+ 開始系の動詞の両方を含む時のみ真。「配信おもしろい」等では発火しない。
+_is_stream_start_request() {
+    local text="$1"
+    [ -n "$text" ] || return 1
+    case "$text" in
+        *配信*) ;;
+        *) return 1 ;;
+    esac
+    case "$text" in
+        *開始*|*始め*|*つけて*|*点けて*|*立ち上げ*|*オンにして*) return 0 ;;
+    esac
+    return 1
 }
 
 _is_ignored_author() {
@@ -145,6 +169,32 @@ while true; do
                 [ -n "$sub_user_msg" ] && sub_line="[SUB] ${sub_display}: ${sub_label} / ${sub_user_msg}"
                 echo "${sub_line}" >> "$RAW_LOG"
                 ;;
+            viewermilestone)
+                # 連続視聴記録(watch-streak)などの視聴者マイルストーン。
+                # 通常のPRIVMSGには出ないので、ここで拾ってコメントとしてraw.logに流す。
+                ms_category=""
+                ms_category=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^msg-param-category=//p' | head -n1)
+                if [ -z "$ms_category" ] || [ "$ms_category" = "watch-streak" ]; then
+                    ms_display=""
+                    ms_display=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^display-name=//p' | head -n1)
+                    ms_display=$(printf '%s' "$ms_display" | sed -e 's/\\s/ /g' -e 's/\\:/;/g' -e 's/\\\\/\\/g')
+                    [ -z "$ms_display" ] && ms_display=$(echo "$payload" | sed -n 's/^:\([^!]*\)!.*/\1/p')
+                    ms_display=$(echo "$ms_display" | tr -d '`$\\{}|;<>&')
+                    ms_value=""
+                    ms_value=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^msg-param-value=//p' | head -n1)
+                    case "$ms_value" in
+                        ''|*[!0-9]*) ms_value="" ;;
+                    esac
+                    if [ -n "$ms_display" ]; then
+                        if [ -n "$ms_value" ]; then
+                            ms_line="[視聴記録] ${ms_display}: ${ms_value}連続視聴を達成しました"
+                        else
+                            ms_line="[視聴記録] ${ms_display}: 連続視聴記録を達成しました"
+                        fi
+                        echo "${ms_line}" >> "$RAW_LOG"
+                    fi
+                fi
+                ;;
             esac
         fi
 
@@ -207,6 +257,29 @@ while true; do
                     echo "$now_ts" > "$CLIP_COOLDOWN_FILE"
                     ( ./twitch_clip.sh "📎 Clip by ${user}" 2>>"tmp/debug/twitch_clip.log" || true ) &
                 fi
+            fi
+
+            # 「配信を開始できますか？」系コメント → OBS配信を開始（既に配信中なら no-op）
+            if [ "${STREAM_START_ON_COMMENT_ENABLED:-1}" = "1" ] && _is_stream_start_request "$msg"; then
+                now_ts=0; last_ss_ts=0; ss_age=0
+                now_ts=$(date +%s)
+                last_ss_ts=$(cat "$STREAM_START_COOLDOWN_FILE" 2>/dev/null || echo 0)
+                case "$last_ss_ts" in ''|*[!0-9]*) last_ss_ts=0 ;; esac
+                ss_age=$((now_ts - last_ss_ts))
+                if [ "$ss_age" -ge "$STREAM_START_COOLDOWN_SEC" ]; then
+                    echo "$now_ts" > "$STREAM_START_COOLDOWN_FILE"
+                    (
+                        mkdir -p tmp/debug 2>/dev/null || true
+                        ss_result=$(./obs_control.sh stream-start 2>>"tmp/debug/stream_start.log" || true)
+                        case "$ss_result" in
+                            *stream-start:started*)
+                                source lib/outbound_queue.sh 2>/dev/null || true
+                                enqueue_chat_message "同志、配信を開始しました！" "chat_daemon" 2>/dev/null || true
+                                ;;
+                        esac
+                    ) &
+                fi
+                # continue しない: コメントとしても通常処理し、AIが反応できるようにする
             fi
 
             # !音声修復 — Elgato Wave Link を通常終了→再起動（1時間クールダウン）
