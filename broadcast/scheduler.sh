@@ -472,6 +472,10 @@ start_random_radio_corner() {
 }
 
 schedule_nonessential_audio_jobs() {
+	# 2026-06-03: ラジオ自動生成 一時disable (ユーザー指示)。RADIO_GENERATION_ENABLED=0 で
+	# 全自動ラジオ生成(時刻ベース/新試合コーナー)を停止。radio_worker が毎tick この関数を
+	# re-source するため .env 変更が即反映(worker再起動不要)。手動トリガーは別経路で生存。
+	[ "${RADIO_GENERATION_ENABLED:-1}" = "0" ] && return 0
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
