@@ -2457,6 +2457,33 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("acquireObsSourceLock", bridge)
         self.assertIn("releaseObsSourceLock", bridge)
 
+    def test_chrome_launch_serialized_cross_process(self):
+        """全プロセスのChrome-for-Testing起動は単一ファイルロックで直列化される。
+
+        macOSは2つのChromeが _RegisterApplication / NSApplication init を同時に走らせると
+        SIGABRTで落ちる(crash 2026-06-02 16:23 本線bridge再起動 / 11:47候補burst)。
+        wildcard_parallel.py の in-process ロックは本線soviet_local bridgeを直列化できない
+        ため、Chromeをspawnする全箇所が lib/chrome_launch_lock.mjs の同一ロックを取得する。
+        外れると並列調整/交代時にChrome起動レースでSIGABRT落ちする回帰になる。
+        """
+        mjs_lock = (REPO_ROOT / "lib" / "chrome_launch_lock.mjs").read_text()
+        self.assertIn("export async function acquireChromeLaunchLock", mjs_lock)
+        self.assertIn("export async function releaseChromeLaunchLock", mjs_lock)
+        self.assertIn("chrome_launch.lock", mjs_lock)
+
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        self.assertIn("def _acquire_chrome_launch_lock", parallel)
+        self.assertIn("def _release_chrome_launch_lock", parallel)
+        self.assertIn("chrome_launch.lock", parallel)
+        self.assertIn("_acquire_chrome_launch_lock()", parallel)
+        self.assertIn("_release_chrome_launch_lock(held)", parallel)
+
+        bridge = (REPO_ROOT / "soviet_local.mjs").read_text()
+        self.assertIn("chrome_launch_lock.mjs", bridge)
+        self.assertIn("acquireChromeLaunchLock", bridge)
+        self.assertIn("releaseChromeLaunchLock", bridge)
+        self.assertIn("async function macOpenChromium", bridge)
+
     def test_wildcard_parallel_runtime_mutes_bgm_and_halves_se(self):
         """並列評価ブラウザだけ BGM=0 / SE=1.5 を渡す。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
@@ -3657,6 +3684,9 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("PRE_RUSSIA_T13_PAIR_COMPRESS", strategy)
         self.assertIn("pre_russia_t13_pair_compress_ready", strategy)
         self.assertIn("__dlg_t13_pair_compress_ready", strategy)
+        self.assertIn("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS", strategy)
+        self.assertIn("pre_russia_single_t13_t12_compress_ready", strategy)
+        self.assertIn("__dlg_single_t13_t12_compress_ready", strategy)
         self.assertIn("PRE_RUSSIA_T13_PAIR_LADDER", strategy)
         self.assertIn("pre_russia_t13_pair_ladder_ready", strategy)
         self.assertIn("PRE_RUSSIA_T10_LADDER", strategy)
@@ -4456,6 +4486,112 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 0.0)
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+
+    def test_pre_russia_single_t13_t12_compress_guides_t11_to_low_t12_pair(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 13, "x": -1.8, "y": -1.6},
+            {"id": 2, "type": 12, "x": 0.45, "y": -3.5},
+            {"id": 3, "type": 12, "x": 2.05, "y": -0.25},
+            {"id": 4, "type": 12, "x": 0.65, "y": 2.0},
+            {"id": 5, "type": 11, "x": -2.5, "y": 0.1},
+            {"id": 6, "type": 10, "x": 2.5, "y": 0.8},
+        ]
+        for i in range(7, 36):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.0 + (i % 4) * 0.22,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 11},
+                "nextNext": {"type": 7},
+            },
+            {
+                "reactor": {"deadline_margin": 1.4, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.2,
+                    },
+                    {
+                        "x": 1.25,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.55,
+                    },
+                    {
+                        "x": 2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.1,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 1.25)
+        self.assertIn("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS", decision["reason"])
+
+    def test_deadline_guard_clusters_single_t13_with_t12_bank(self):
+        import strategy
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": True,
+                "pieces": [
+                    {"id": 1, "type": 13, "x": -1.8, "y": -1.6},
+                    {"id": 2, "type": 12, "x": 0.45, "y": -3.5},
+                    {"id": 3, "type": 12, "x": 2.05, "y": -0.25},
+                    {"id": 4, "type": 12, "x": 0.65, "y": 2.0},
+                    {"id": 5, "type": 11, "x": -2.5, "y": 0.1},
+                ],
+                "next": {"type": 4},
+                "nextNext": {"type": 3},
+            },
+            {
+                "reactor": {"deadline_margin": 0.0, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.2,
+                    },
+                    {
+                        "x": 1.25,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.45,
+                    },
+                    {
+                        "x": 2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.1,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 1.25)
         self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
 
     def test_pre_russia_t13_pair_ladder_guides_t11_back_to_pair_lane(self):

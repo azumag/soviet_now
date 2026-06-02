@@ -8,6 +8,7 @@ own runtime directory, and reports a single winner for the live loop to adopt.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import html
 import json
@@ -415,12 +416,108 @@ def _chrome_launch_stagger_sec() -> float:
     return max(0.0, stagger)
 
 
+def _chrome_launch_lock_dir() -> str:
+    return os.environ.get("CHROME_LAUNCH_LOCK_DIR") or str(REPO_ROOT / "tmp" / "state" / "chrome_launch.lock")
+
+
+def _acquire_chrome_launch_lock() -> bool:
+    """Cross-process mutex serializing Chrome-for-Testing LAUNCHES across this
+    orchestrator's slots AND the main soviet_local bridge / soren91. macOS aborts
+    (SIGABRT) in _RegisterApplication / NSApplication init when two Chrome apps
+    register concurrently; the in-process _CHROME_LAUNCH_LOCK only covers our own
+    threads. Same filesystem-lock contract as lib/chrome_launch_lock.mjs (atomic
+    mkdir, stale-owner steal). Best-effort: returns False (proceed unlocked) on
+    error/timeout rather than hang a launch. Gate off with CHROME_LAUNCH_LOCK_ENABLED=0.
+    """
+    if os.environ.get("CHROME_LAUNCH_LOCK_ENABLED", "1") == "0":
+        return False
+    lock_dir = _chrome_launch_lock_dir()
+    owner_file = os.path.join(lock_dir, "owner")
+    stale = _float(os.getenv("CHROME_LAUNCH_LOCK_STALE_SEC"), 60.0)
+    max_wait = _float(os.getenv("CHROME_LAUNCH_LOCK_MAX_WAIT_SEC"), 60.0)
+    try:
+        os.makedirs(os.path.dirname(lock_dir), exist_ok=True)
+    except Exception:
+        pass
+    deadline = time.time() + max_wait
+    while True:
+        try:
+            os.mkdir(lock_dir)
+            try:
+                with open(owner_file, "w") as fh:
+                    fh.write(f"{os.getpid()}:{int(time.time())}")
+            except Exception:
+                pass
+            return True
+        except FileExistsError:
+            pass
+        except Exception:
+            return False
+        pid = ""
+        try:
+            with open(owner_file) as fh:
+                pid = fh.read().split(":")[0].strip()
+        except Exception:
+            pass
+        alive = False
+        if pid.isdigit():
+            try:
+                os.kill(int(pid), 0)
+                alive = True
+            except OSError as exc:
+                alive = exc.errno == errno.EPERM
+        age = 0.0
+        try:
+            age = time.time() - os.stat(lock_dir).st_mtime
+        except Exception:
+            pass
+        if not alive and age > stale:
+            try:
+                os.remove(owner_file)
+            except Exception:
+                pass
+            try:
+                os.rmdir(lock_dir)
+            except Exception:
+                pass
+            continue
+        if time.time() > deadline:
+            return False
+        time.sleep(0.15)
+
+
+def _release_chrome_launch_lock(held: bool) -> None:
+    if not held:
+        return
+    # Settle while STILL holding so the next launcher waits out the new Chrome's
+    # NSApplication-init registration before starting its own.
+    settle = _float(os.getenv("CHROME_LAUNCH_LOCK_SETTLE_SEC"), 2.5)
+    if settle > 0:
+        time.sleep(settle)
+    lock_dir = _chrome_launch_lock_dir()
+    try:
+        os.remove(os.path.join(lock_dir, "owner"))
+    except Exception:
+        pass
+    try:
+        os.rmdir(lock_dir)
+    except Exception:
+        pass
+
+
 def _run_with_launch_stagger(launch_fn):
     with _CHROME_LAUNCH_LOCK:
-        result = launch_fn()
-        stagger = _chrome_launch_stagger_sec()
-        if stagger > 0:
-            time.sleep(stagger)
+        held = _acquire_chrome_launch_lock()
+        try:
+            result = launch_fn()
+        finally:
+            _release_chrome_launch_lock(held)
+        # Fall back to the legacy in-process stagger only when the cross-process
+        # lock is disabled/unavailable (so launch spacing never regresses).
+        if not held:
+            stagger = _chrome_launch_stagger_sec()
+            if stagger > 0:
+                time.sleep(stagger)
     return result
 
 

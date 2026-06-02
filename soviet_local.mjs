@@ -293,14 +293,38 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function macOpenChromium(openArgs, launchEnv) {
-  const shellCommand = `exec /usr/bin/open ${openArgs.map(shellQuote).join(' ')}`;
-  return new Promise((resolve, reject) => {
-    execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv }, (err) => {
-      if (err) reject(err);
-      else resolve();
+// Cross-process mutex for Chrome-for-Testing LAUNCHES (see lib/chrome_launch_lock.mjs):
+// serialize the macOS app-registration window so this bridge's launch never races a
+// wildcard candidate / sibling launch into a _RegisterApplication SIGABRT (crash
+// 2026-06-02 16:23). Dynamic + best-effort; candidate copies of this file run
+// ATTACH_ONLY and never reach a launch, so they never import it.
+let _chromeLaunchLockMod = null;
+async function chromeLaunchLock() {
+  if (_chromeLaunchLockMod) return _chromeLaunchLockMod;
+  try {
+    _chromeLaunchLockMod = await import('./lib/chrome_launch_lock.mjs');
+  } catch {
+    _chromeLaunchLockMod = { acquireChromeLaunchLock: async () => false, releaseChromeLaunchLock: async () => {} };
+  }
+  return _chromeLaunchLockMod;
+}
+
+async function macOpenChromium(openArgs, launchEnv) {
+  const lock = await chromeLaunchLock();
+  const held = await lock.acquireChromeLaunchLock();
+  try {
+    const shellCommand = `exec /usr/bin/open ${openArgs.map(shellQuote).join(' ')}`;
+    await new Promise((resolve, reject) => {
+      execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv }, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
-  });
+  } finally {
+    // Hold a settle (in release) so the next launcher waits out this Chrome's
+    // NSApplication-init registration before starting its own.
+    await lock.releaseChromeLaunchLock(held);
+  }
 }
 
 async function launchPersistentContextWithoutFocus(userDataDir, args, opts = {}) {
@@ -445,7 +469,13 @@ async function launchDetachedChromeFallback(userDataDir, args, primaryExecutable
     let child = null;
     try {
       console.error(`[CRASHPAD] retrying detached Chrome executable: ${candidatePath}`);
-      child = launchChromiumExecutableDetached(candidatePath, userDataDir, args, launchEnv);
+      const lock = await chromeLaunchLock();
+      const held = await lock.acquireChromeLaunchLock();
+      try {
+        child = launchChromiumExecutableDetached(candidatePath, userDataDir, args, launchEnv);
+      } finally {
+        await lock.releaseChromeLaunchLock(held); // settle covers the registration window
+      }
       await waitForCdpHttp(CDP_PORT);
       if (candidatePath !== primaryExecutablePath) {
         console.error(`[CRASHPAD] detached Chrome fallback launched: ${candidatePath}`);
