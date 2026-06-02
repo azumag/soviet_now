@@ -788,9 +788,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 __dlg_type = int(__dlg_piece.get("type", 0) or 0)
                 if __dlg_type >= 11:
                     __dlg_counts[__dlg_type] = __dlg_counts.get(__dlg_type, 0) + 1
-                if __dlg_type in (13, 14):
+                if __dlg_type in (11, 12, 13, 14):
                     __dlg_targets.append(__dlg_piece)
-            if __dlg_counts.get(14, 0) < 1 or __dlg_counts.get(13, 0) < 2:
+            __dlg_russia_pair_ready = (
+                __dlg_counts.get(14, 0) >= 1
+                and __dlg_counts.get(13, 0) >= 2
+            )
+            __dlg_first_russia_ready = (
+                __dlg_counts.get(13, 0) >= 1
+                and (
+                    (
+                        __dlg_counts.get(12, 0) >= 2
+                        and __dlg_counts.get(11, 0) >= 2
+                    )
+                    or (
+                        __dlg_counts.get(12, 0) >= 1
+                        and __dlg_counts.get(11, 0) >= 3
+                    )
+                )
+            )
+            if not (__dlg_russia_pair_ready or __dlg_first_russia_ready):
                 return None
             __dlg_next = __dlg_game_state.get("next", {})
             __dlg_next_next = __dlg_game_state.get("nextNext", {})
@@ -800,7 +817,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 __dlg_next_next = {}
             __dlg_next_type = int(__dlg_next.get("type", 0) or 0)
             __dlg_next_next_type = int(__dlg_next_next.get("type", 0) or 0)
-            if __dlg_next_type < 10 and __dlg_next_next_type < 10:
+            __dlg_material_floor = 10 if __dlg_russia_pair_ready else 8
+            __dlg_material_next_floor = 10 if __dlg_russia_pair_ready else 10
+            if (
+                __dlg_next_type < __dlg_material_floor
+                and __dlg_next_next_type < __dlg_material_next_floor
+            ):
+                return None
+            if __dlg_russia_pair_ready:
+                __dlg_targets = [
+                    p for p in __dlg_targets
+                    if int(p.get("type", 0) or 0) in (13, 14)
+                ]
+            else:
+                __dlg_targets = [
+                    p for p in __dlg_targets
+                    if int(p.get("type", 0) or 0) in (11, 12, 13)
+                ]
+            if not __dlg_targets:
                 return None
 
             __dlg_total_weight = 0.0
@@ -1881,6 +1915,215 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += seed_bonus
                     reasons.append("PRE_RUSSIA_SEED_CLUSTER")
 
+        # ----- vXXX: pre-Russia next-up latch before first T13 -----
+        # Clean loss 20260602_140507 had T12x3 by T37, but incoming T11 was
+        # placed as broad seed material and the second T13 arrived too late.
+        # Before the first T13 exists, prefer placing T10/T11 near its next-up
+        # lane (T11/T12) so the pre-Russia bridge has compact material to lift.
+        pre_russia_next_up_latch_ready = (
+            not russia_phase
+            and max_type_on_board == 12
+            and pre_russia_counts.get(12, 0) >= 2
+            and next_type in (10, 11)
+        )
+        if (
+            merge_grade == "NO"
+            and pre_russia_next_up_latch_ready
+            and not death_spiral
+            and max_y < 2.4
+            and piece_count >= 20
+        ):
+            next_up_lane_targets = [
+                p for p in pieces if p.get("type") == next_type + 1
+            ]
+            if next_up_lane_targets:
+                lane_dist = min(
+                    abs(x - target.get("x", 0))
+                    for target in next_up_lane_targets
+                )
+                lane_bonus = max(0.0, 700.0 - lane_dist * 260.0)
+                if piece_count >= 28:
+                    lane_bonus *= min(1.6, 1.0 + (piece_count - 28) * 0.07)
+                if landing_y > 2.0:
+                    lane_bonus *= 0.35
+                if min(target.get("y", -10) for target in next_up_lane_targets) > 1.2:
+                    lane_bonus *= 0.5
+                if lane_bonus > 0:
+                    score += lane_bonus
+                    reasons.append("PRE_RUSSIA_NEXT_UP_LATCH")
+
+        # ----- vXXX: pre-Russia T13 lift after first T13 appears -----
+        # Clean losses 20260602_141216 and 20260602_141514 reached T13/T12
+        # material but did not convert it to a first T14 before deadline guard
+        # dominated the board. When T13x1 and T12x2+ already exist, treat
+        # incoming T11/T12/T13 as lift material for the T12/T13 lane even if no
+        # same-type latch is available yet. This is deliberately pre-Russia only.
+        pre_russia_t13_lift_ready = (
+            not russia_phase
+            and max_type_on_board == 13
+            and pre_russia_counts.get(13, 0) >= 1
+            and pre_russia_counts.get(12, 0) >= 2
+            and next_type in (11, 12, 13)
+        )
+        if (
+            merge_grade == "NO"
+            and pre_russia_t13_lift_ready
+            and not death_spiral
+            and max_y < 2.8
+            and piece_count >= 26
+        ):
+            if next_type == 11:
+                lift_targets = [
+                    p for p in pieces if p.get("type") in (12, 13)
+                ]
+            else:
+                lift_targets = [
+                    p for p in pieces if p.get("type") in (13,)
+                ]
+            lift_center_x = _weighted_center_x(lift_targets)
+            if lift_center_x is not None:
+                lift_dist = abs(x - lift_center_x)
+                lift_bonus = max(0.0, 880.0 - lift_dist * 300.0)
+                if piece_count >= 34:
+                    lift_bonus *= min(1.55, 1.0 + (piece_count - 34) * 0.07)
+                if landing_y > 2.0:
+                    lift_bonus *= 0.45
+                if max((p.get("y", -10) for p in lift_targets), default=-10) > 1.3:
+                    lift_bonus *= 0.65
+                if abs(x) >= 2.5 and lift_dist >= 1.8:
+                    score -= 900.0
+                if lift_bonus > 0:
+                    score += lift_bonus
+                    reasons.append("PRE_RUSSIA_T13_LIFT")
+
+        # ----- vXXX: pre-Russia same-type latch -----
+        # Clean loss 20260602_133619 reached T13x1 T12x2 T11x4 T10x3.
+        # The bridge center fired, but incoming T10/T11 pieces still landed as
+        # loose high material instead of latching onto the same-type lane that
+        # would promote a second T12/T13. Keep this scoped to the first-Russia
+        # near-miss inventory and high incoming material so low pieces are not
+        # dragged into the high cluster.
+        pre_russia_first_lane_ready = (
+            not russia_phase
+            and max_type_on_board in (12, 13)
+            and pre_russia_counts.get(13, 0) >= 1
+            and (
+                (
+                    pre_russia_counts.get(12, 0) >= 2
+                    and pre_russia_counts.get(11, 0) >= 2
+                )
+                or (
+                    pre_russia_counts.get(12, 0) >= 1
+                    and pre_russia_counts.get(11, 0) >= 3
+                )
+            )
+        )
+        if (
+            merge_grade == "NO"
+            and pre_russia_first_lane_ready
+            and next_type in (10, 11, 12, 13)
+            and not death_spiral
+            and max_y < 2.7
+            and piece_count >= 20
+        ):
+            latch_targets = [p for p in pieces if p.get("type") == next_type]
+            if latch_targets:
+                next_up_targets = [
+                    p for p in pieces if p.get("type") == next_type + 1
+                ]
+                if next_up_targets:
+                    def _pre_russia_latch_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        up_dist = min(
+                            ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                            for up in next_up_targets
+                        )
+                        return (up_dist, tp_y)
+                    latch_target = min(latch_targets, key=_pre_russia_latch_key)
+                else:
+                    latch_target = min(latch_targets, key=lambda tp: tp.get("y", 10))
+                latch_dist = abs(x - latch_target.get("x", 0))
+                latch_bonus = max(0.0, 620.0 - latch_dist * 240.0)
+                if piece_count >= 28:
+                    latch_bonus *= min(1.8, 1.0 + (piece_count - 28) * 0.08)
+                if landing_y > 2.2:
+                    latch_bonus *= 0.35
+                if latch_target.get("y", -10) > 1.0:
+                    latch_bonus *= 0.5
+                if latch_bonus > 0:
+                    score += latch_bonus
+                    reasons.append("PRE_RUSSIA_SAME_TYPE_LATCH")
+
+        # ----- vXXX: second-Russia same-type latch after first T14 -----
+        # Clean loss 20260602_135500 reached T14x1, then ended T14x1 T12x1
+        # T11x3: after the first high-country piece appeared, the remaining
+        # T10/T11 material kept spreading until the deadline guard took over.
+        # Keep the latch scoped to one-T14 near-misses so it does not rewrite
+        # ordinary russia_phase survival or double-russia handling.
+        second_russia_lane_ready = (
+            russia_phase
+            and not double_russia_phase
+            and pre_russia_counts.get(14, 0) >= 1
+            and pre_russia_counts.get(15, 0) == 0
+            and (
+                (
+                    pre_russia_counts.get(13, 0) >= 1
+                    and pre_russia_counts.get(12, 0) >= 1
+                )
+                or (
+                    pre_russia_counts.get(12, 0) >= 1
+                    and pre_russia_counts.get(11, 0) >= 1
+                )
+                or pre_russia_counts.get(11, 0) >= 2
+            )
+        )
+        if (
+            merge_grade == "NO"
+            and second_russia_lane_ready
+            and next_type in (10, 11, 12, 13)
+            and not death_spiral
+            and max_y < 2.8
+            and piece_count >= 28
+        ):
+            second_latch_targets = [
+                p for p in pieces if p.get("type") == next_type
+            ]
+            if second_latch_targets:
+                second_latch_up_targets = [
+                    p for p in pieces
+                    if next_type < p.get("type", 0) <= 14
+                ]
+                if second_latch_up_targets:
+                    def _second_russia_latch_key(tp):
+                        tp_x = tp.get("x", 0)
+                        tp_y = tp.get("y", -10)
+                        up_dist = min(
+                            ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                            for up in second_latch_up_targets
+                        )
+                        return (up_dist, tp_y)
+                    second_latch_target = min(
+                        second_latch_targets,
+                        key=_second_russia_latch_key,
+                    )
+                else:
+                    second_latch_target = min(
+                        second_latch_targets,
+                        key=lambda tp: tp.get("y", 10),
+                    )
+                second_latch_dist = abs(x - second_latch_target.get("x", 0))
+                second_latch_bonus = max(0.0, 760.0 - second_latch_dist * 250.0)
+                if piece_count >= 34:
+                    second_latch_bonus *= min(1.6, 1.0 + (piece_count - 34) * 0.08)
+                if landing_y > 2.2:
+                    second_latch_bonus *= 0.35
+                if second_latch_target.get("y", -10) > 1.2:
+                    second_latch_bonus *= 0.55
+                if second_latch_bonus > 0:
+                    score += second_latch_bonus
+                    reasons.append("SECOND_RUSSIA_SAME_TYPE_LATCH")
+
         # ----- vXXX: Soviet objective bridge clustering -----
         # Live failure 20260602_121816: after Russia(type15) creation, the board ended with
         # T15x1 T13x2 T12x2. DEADLINE_GUARD kept the board alive, but repeated safe
@@ -1912,10 +2155,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     or pre_russia_counts.get(14, 0) >= 1
                 )
             )
-            pre_russia_targets = [
-                p for p in pieces if p.get("type") in (12, 13, 14)
-            ]
-            pre_russia_bridge_material_ready = next_type >= 8 or next_next_type >= 10
+            if pre_russia_first_lane_ready and pre_russia_counts.get(14, 0) == 0:
+                pre_russia_targets = [
+                    p for p in pieces if p.get("type") in (11, 12, 13)
+                ]
+            else:
+                pre_russia_targets = [
+                    p for p in pieces if p.get("type") in (12, 13, 14)
+                ]
+            pre_russia_bridge_current_material_ready = next_type >= 8
+            pre_russia_bridge_future_material_ready = next_next_type >= 10
+            pre_russia_bridge_material_ready = (
+                pre_russia_bridge_current_material_ready
+                or pre_russia_bridge_future_material_ready
+            )
             if pre_russia_bridge_ready and pre_russia_targets:
                 pre_center_x = _weighted_center_x(pre_russia_targets)
                 if pre_center_x is not None:
@@ -1923,6 +2176,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     bridge_bonus = max(0.0, 420.0 - bridge_dist * 170.0)
                     if not pre_russia_bridge_material_ready:
                         if landing_y > 1.2 or piece_count >= 28:
+                            bridge_bonus = 0.0
+                        else:
+                            bridge_bonus *= 0.20
+                    elif not pre_russia_bridge_current_material_ready:
+                        if landing_y > 0.6 or piece_count >= 30:
                             bridge_bonus = 0.0
                         else:
                             bridge_bonus *= 0.20

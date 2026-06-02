@@ -2106,13 +2106,12 @@ record_completed_game_for_adaptive_improvement() {
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
 
-	update_rolling_scores "$score" "$archive_file"
-
 	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
 		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
 		_clear_accumulated_data
 		_reset_current_strategy_run "$current_hash"
 	else
+		update_rolling_scores "$score" "$archive_file"
 		if [ -n "$current_hash" ]; then
 			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
