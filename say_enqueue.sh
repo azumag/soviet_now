@@ -250,6 +250,8 @@ if [ "$WAV_MODE" = "false" ]; then
 		-e 's/MADE IN CHINA/メイドインチャイナ/g' \
 		-e 's/Made in China/メイドインチャイナ/g' \
 		"$MY_CONTENT"
+	# type表記の国名置換 + アルファベット小文字化（上の大文字辞書の後に実行）
+	python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
 fi
 
 _infer_source_label() {

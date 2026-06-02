@@ -1273,6 +1273,89 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             ),
         )
 
+    def second_russia_t12_pair_replacement_for(candidate):
+        """Keep one-T14 / two-T12 boards on the second-Russia pair lane."""
+        if not isinstance(candidate, dict):
+            return None
+        if not any(
+            marker in reason_text
+            for marker in (
+                "SECOND_RUSSIA_T12_PAIR_LOCK",
+                "DEADLINE_GUARD_SECOND_RUSSIA_T12_PAIR_LOCK",
+            )
+        ):
+            return None
+        pieces = (game_state or {}).get("pieces") or []
+        if not pieces or next_type not in (10, 11, 12, 13):
+            return None
+        high_counts = {}
+        for piece in pieces:
+            try:
+                piece_type = int(piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            if piece_type >= 10:
+                high_counts[piece_type] = high_counts.get(piece_type, 0) + 1
+        if (
+            high_counts.get(15, 0) > 0
+            or high_counts.get(14, 0) < 1
+            or high_counts.get(13, 0) > 0
+            or high_counts.get(12, 0) < 2
+            or piece_count < 34
+        ):
+            return None
+
+        t12_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 12
+        ]
+        best_pair = None
+        best_pair_key = (999.0, 999.0)
+        for idx, left in enumerate(t12_targets):
+            for right in t12_targets[idx + 1:]:
+                ax = _geom_num(left.get("x"))
+                ay = _geom_num(left.get("y"), -10.0)
+                bx = _geom_num(right.get("x"))
+                by = _geom_num(right.get("y"), -10.0)
+                pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                pair_top = max(ay, by)
+                pair_center = (ax + bx) / 2.0
+                pair_key = (
+                    pair_dist
+                    + max(0.0, pair_top - 1.15) * 1.15
+                    + abs(pair_center) * 0.18,
+                    pair_top,
+                )
+                if pair_key < best_pair_key:
+                    best_pair_key = pair_key
+                    best_pair = (left, right)
+        if best_pair is None:
+            return None
+        target_x = (
+            _geom_num(best_pair[0].get("x"))
+            + _geom_num(best_pair[1].get("x"))
+        ) / 2.0
+
+        current_dx = abs(_geom_num(candidate.get("x")) - target_x)
+        pool = results or safe
+        if not pool or current_dx <= 1.15:
+            return None
+        lane_band = [
+            r for r in pool
+            if abs(_geom_num(r.get("x")) - target_x) < current_dx
+            and abs(_geom_num(r.get("x")) - target_x) <= 1.2
+            and risk_top(r) <= max(risk_top(candidate) + 0.9, min_risk_top + 1.8)
+        ]
+        if not lane_band:
+            return None
+        return min(
+            lane_band,
+            key=lambda r: (
+                abs(_geom_num(r.get("x")) - target_x),
+                bool(r.get("crosses_deadline", False)),
+                risk_top(r),
+            ),
+        )
+
     country_route_reason = (
         10 <= next_type <= 12
         and (
@@ -1530,6 +1613,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         replacement = pre_russia_lane_replacement
         replacement_source = f"{replacement_source}_pre_russia_t12_lane"
 
+    if (second_russia_lane_replacement := second_russia_t12_pair_replacement_for(replacement)) is not None:
+        replacement = second_russia_lane_replacement
+        replacement_source = f"{replacement_source}_second_russia_t12_pair_lane"
+
     # Absolute postcondition: when a non-crossing candidate exists, the runtime
     # safety layer must never finish on a deadline-crossing NO-merge candidate.
     # Crossing DIRECT/NEAR candidates are allowed by the mandatory rule because
@@ -1785,6 +1872,9 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (headroom_replacement := deadline_headroom_replacement_for(replacement)) is not None:
         replacement = headroom_replacement
         replacement_source = f"{replacement_source}_deadline_headroom"
+        if (second_russia_lane_replacement := second_russia_t12_pair_replacement_for(replacement)) is not None:
+            replacement = second_russia_lane_replacement
+            replacement_source = f"{replacement_source}_second_russia_t12_pair_lane"
 
     if risky_merge_result_deadline(replacement):
         safer_merges = [
