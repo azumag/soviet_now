@@ -472,6 +472,27 @@ except Exception:
     pass
 
 if phase in {"generating", "running"}:
+    # Orphan guard (priority-2: recover the main game when a param trial crashes/
+    # is killed). A running/generating status stamps controller_pid. If that PID is
+    # gone AND no wildcard_parallel.py process is alive AND no slot is still writing
+    # game_history, the orchestrator died mid-run — release the main loop NOW instead
+    # of blocking it until max_sec (~130min). A LIVE controller_pid (or live pgrep /
+    # fresh slot) keeps main blocked, so this never releases while a trial is really
+    # running.
+    def _pid_alive(pid):
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except PermissionError:
+            return True
+        except Exception:
+            return False
+    _controller_pid = data.get("controller_pid")
+    if (os.environ.get("WP_PROC_ALIVE") != "1"
+            and not slot_activity_fresh
+            and _controller_pid
+            and not _pid_alive(_controller_pid)):
+        raise SystemExit(1)
     raise SystemExit(0)
 # 終了確定済みの復元/cleanup status は、直前の slot latest.jsonl が新鮮でも
 # main loop を解放する。OBS再起動後や cleanup_stale 後に phase=restored +
