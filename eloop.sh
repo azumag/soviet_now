@@ -788,6 +788,8 @@ cycle = int(sys.argv[4]) if len(sys.argv) > 4 else 12
 remain = cycle - count
 russia = acc.get("russia_count", 0)
 russia_str = f" 🇷🇺×{russia}" if russia > 0 else ""
+soviet = acc.get("soviet_count", 0)
+soviet_str = f" ☭×{soviet}" if soviet > 0 else ""
 raw = sys.argv[2]
 eval_s = sys.argv[3]
 bonus = int(eval_s) - int(raw)
@@ -831,7 +833,7 @@ elif target:
     target_text = f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {'OK' if target_ok else '未達'}"
 extra = " | ".join(part for part in (founding, target_text) if part)
 extra = f" | {extra}" if extra else ""
-print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str}{extra} (あと{remain}試合)")
+print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str}{soviet_str}{extra} (あと{remain}試合)")
 PY
 		)
 		enqueue_chat_message "${pred_progress}" "eloop"

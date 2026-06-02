@@ -1304,11 +1304,11 @@ if os.path.exists(acc_file):
     with open(acc_file) as f:
         acc = json.load(f)
 else:
-    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': '', 'russia_count': 0}
+    acc = {'files': [], 'scores': '', 'soviet': False, 'soviet_count': 0, 'count': 0, 'hash': '', 'russia_count': 0}
 
 curr_hash = '$strategy_hash'
 if acc.get('hash') and curr_hash and acc.get('hash') != curr_hash:
-    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': curr_hash, 'russia_count': 0}
+    acc = {'files': [], 'scores': '', 'soviet': False, 'soviet_count': 0, 'count': 0, 'hash': curr_hash, 'russia_count': 0}
 elif curr_hash:
     acc['hash'] = curr_hash
 
@@ -1319,6 +1319,7 @@ if raw_score:
     acc['raw_scores'] = (acc.get('raw_scores', '') + ' ' + raw_score).strip()
 if '$soviet' == 'true':
     acc['soviet'] = True
+    acc['soviet_count'] = acc.get('soviet_count', 0) + 1
 if '$russia' == 'true':
     acc['russia_count'] = acc.get('russia_count', 0) + 1
 acc['count'] += 1
