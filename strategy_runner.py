@@ -1377,12 +1377,191 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         pool = results or safe
         if not pool or current_dx <= 0.85:
             return None
+        hard_deadline_pair_pressure = (
+            deadline_crossed
+            or danger_piece_count > 0
+            or current_top_edge_y >= deadline_y - 0.15
+        )
+        lane_risk_limit = max(risk_top(candidate) + 1.10, min_risk_top + 2.00)
+        if hard_deadline_pair_pressure:
+            lane_risk_limit = min(lane_risk_limit, min_risk_top + 0.45)
         lane_band = [
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.45
-            and risk_top(r) <= max(risk_top(candidate) + 1.10, min_risk_top + 2.00)
+            and not (
+                hard_deadline_pair_pressure
+                and r.get("crosses_deadline", False)
+                and r.get("merge_grade", "NO") == "NO"
+            )
+            and risk_top(r) <= lane_risk_limit
         ]
+        if not lane_band:
+            return None
+        return min(
+            lane_band,
+            key=lambda r: (
+                abs(_geom_num(r.get("x")) - target_x),
+                bool(r.get("crosses_deadline", False)),
+                risk_top(r),
+            ),
+        )
+
+    def pre_russia_single_t13_t12_replacement_for(candidate):
+        """Keep a lone T13 plus T12 bank from choosing a high hard-deadline lane."""
+        if not isinstance(candidate, dict):
+            return None
+        if "PRE_RUSSIA_SINGLE_T13_T12_COMPRESS" not in reason_text:
+            return None
+        pieces = (game_state or {}).get("pieces") or []
+        if not pieces or next_type not in (6, 7, 8, 9, 10, 11, 12):
+            return None
+        high_counts = {}
+        for piece in pieces:
+            try:
+                piece_type = int(piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            if piece_type >= 9:
+                high_counts[piece_type] = high_counts.get(piece_type, 0) + 1
+        if (
+            high_counts.get(14, 0) > 0
+            or high_counts.get(15, 0) > 0
+            or high_counts.get(13, 0) != 1
+            or high_counts.get(12, 0) < 2
+            or piece_count < 28
+        ):
+            return None
+
+        t13_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 13
+        ]
+        t12_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 12
+        ]
+        t11_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 11
+        ]
+        t10_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 10
+        ]
+        t9_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 9
+        ]
+        t8_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 8
+        ]
+        t7_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 7
+        ]
+        t6_targets = [
+            p for p in pieces if int(p.get("type", 0) or 0) == 6
+        ]
+        if not t13_targets or len(t12_targets) < 2:
+            return None
+
+        t13_x = _geom_num(t13_targets[0].get("x"))
+        best_pair = None
+        best_pair_key = (999.0, 999.0)
+        for idx, left in enumerate(t12_targets):
+            for right in t12_targets[idx + 1:]:
+                ax = _geom_num(left.get("x"))
+                ay = _geom_num(left.get("y"), -10.0)
+                bx = _geom_num(right.get("x"))
+                by = _geom_num(right.get("y"), -10.0)
+                pair_center = (ax + bx) / 2.0
+                pair_top = max(ay, by)
+                pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                pair_key = (
+                    pair_dist
+                    + abs(pair_center - t13_x) * 0.22
+                    + max(0.0, pair_top - 1.0) * 0.95,
+                    pair_top,
+                )
+                if pair_key < best_pair_key:
+                    best_pair_key = pair_key
+                    best_pair = (left, right)
+        if best_pair is None:
+            return None
+        t12_bank_pressure = (
+            high_counts.get(12, 0) >= 3
+            or current_top_edge_y >= deadline_y - 0.75
+        )
+        target_x = (
+            _geom_num(best_pair[0].get("x"))
+            + _geom_num(best_pair[1].get("x"))
+        ) / 2.0
+
+        same_map = {
+            6: t6_targets,
+            7: t7_targets,
+            8: t8_targets,
+            9: t9_targets,
+            10: t10_targets,
+            11: t11_targets,
+            12: t12_targets,
+        }
+        same_targets = same_map.get(next_type) or []
+        if same_targets:
+            up_targets = (
+                [
+                    p for p in pieces
+                    if next_type < int(p.get("type", 0) or 0) <= (12 if t12_bank_pressure else 13)
+                ]
+                or t12_targets
+            )
+            def same_key(piece):
+                px = _geom_num(piece.get("x"))
+                py = _geom_num(piece.get("y"), -10.0)
+                up_dist = min(
+                    ((_geom_num(up.get("x")) - px) ** 2 + (_geom_num(up.get("y"), -10.0) - py) ** 2) ** 0.5
+                    for up in up_targets
+                ) if up_targets else 999.0
+                lane_dist = abs(px - target_x)
+                if t12_bank_pressure:
+                    return (
+                        lane_dist * 0.74
+                        + up_dist * 0.44
+                        + max(0.0, lane_dist - 1.15) * 1.35
+                        + max(0.0, py - 0.45) * 1.35,
+                        py,
+                    )
+                return (
+                    min(up_dist, lane_dist)
+                    + abs(px - t13_x) * 0.12
+                    + max(0.0, py - 0.8) * 1.05,
+                    py,
+                )
+            target_x = _geom_num(min(same_targets, key=same_key).get("x"))
+
+        current_dx = abs(_geom_num(candidate.get("x")) - target_x)
+        pool = results or safe
+        if not pool or current_dx <= 0.85:
+            return None
+        hard_deadline_single_t13_pressure = (
+            deadline_crossed
+            or danger_piece_count > 0
+            or current_top_edge_y >= deadline_y - 0.15
+            or not non_crossing_safe
+        )
+        lane_risk_limit = max(risk_top(candidate) + 1.05, min_risk_top + 2.0)
+        if hard_deadline_single_t13_pressure:
+            lane_risk_limit = min(lane_risk_limit, min_risk_top + 0.45)
+        lane_band = [
+            r for r in pool
+            if abs(_geom_num(r.get("x")) - target_x) < current_dx
+            and abs(_geom_num(r.get("x")) - target_x) <= 1.45
+            and not (
+                hard_deadline_single_t13_pressure
+                and r.get("crosses_deadline", False)
+                and r.get("merge_grade", "NO") == "NO"
+            )
+            and risk_top(r) <= lane_risk_limit
+        ]
+        if not lane_band and hard_deadline_single_t13_pressure:
+            if risk_top(min_risk_candidate) + 0.05 < risk_top(candidate):
+                return min_risk_candidate
+            return None
         if not lane_band:
             return None
         return min(
@@ -2077,6 +2256,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         replacement = pre_russia_t13_replacement
         replacement_source = f"{replacement_source}_pre_russia_t13_pair_lane"
 
+    if (single_t13_t12_replacement := pre_russia_single_t13_t12_replacement_for(replacement)) is not None:
+        replacement = single_t13_t12_replacement
+        replacement_source = f"{replacement_source}_pre_russia_single_t13_t12_lane"
+
     if (first_russia_lane_replacement := first_russia_t13_pair_replacement_for(replacement)) is not None:
         replacement = first_russia_lane_replacement
         replacement_source = f"{replacement_source}_first_russia_t13_pair_lane"
@@ -2368,6 +2551,9 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         if (pre_russia_t13_replacement := pre_russia_t13_pair_replacement_for(replacement)) is not None:
             replacement = pre_russia_t13_replacement
             replacement_source = f"{replacement_source}_pre_russia_t13_pair_lane"
+        if (single_t13_t12_replacement := pre_russia_single_t13_t12_replacement_for(replacement)) is not None:
+            replacement = single_t13_t12_replacement
+            replacement_source = f"{replacement_source}_pre_russia_single_t13_t12_lane"
         if (first_russia_lane_replacement := first_russia_t13_pair_replacement_for(replacement)) is not None:
             replacement = first_russia_lane_replacement
             replacement_source = f"{replacement_source}_first_russia_t13_pair_lane"
@@ -2421,6 +2607,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     if (pre_russia_t13_replacement := pre_russia_t13_pair_replacement_for(replacement)) is not None:
         replacement = pre_russia_t13_replacement
         replacement_source = f"{replacement_source}_pre_russia_t13_pair_lane"
+
+    if (single_t13_t12_replacement := pre_russia_single_t13_t12_replacement_for(replacement)) is not None:
+        replacement = single_t13_t12_replacement
+        replacement_source = f"{replacement_source}_pre_russia_single_t13_t12_lane"
 
     new_decision = dict(decision)
     old_grade = chosen.get("merge_grade", "NO")
