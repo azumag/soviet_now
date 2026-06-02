@@ -228,6 +228,7 @@ LOCK_HELD=0
 VOICEVOX_SYNTH_LOCK_HELD=0
 LAUNCHED_SAY_PID=""
 LAUNCHED_EXPECTED_SEC=0
+CHROME_AUDIO_USED=0
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
@@ -688,7 +689,13 @@ _launch_ffmpeg_bg() {
 _launch_chrome_wav_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
+	CHROME_AUDIO_USED=1
 	_launch_bg_exec "$cleanup_file" node ./chrome_audio_player.mjs "$audio_file" "$label"
+}
+
+_stop_chrome_audio_players() {
+	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
+	node ./chrome_audio_player.mjs --stop "$label" >/dev/null 2>&1 || true
 }
 
 _launch_say_bg() {
@@ -861,12 +868,14 @@ _play_prerendered_voicevox_chunks() {
 			play_failed=1
 			break
 		fi
+		CHROME_AUDIO_USED=0
 		_launch_stream_wav "$chunk_wav"
 		play_pid=$!
 		current_expected_sec=$(_estimate_audio_duration_sec "$chunk_wav")
 		echo "$play_pid" >"$PID_FILE"
 		LAST_SAY_PID="$play_pid"
 		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" 0; then
+			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
 			play_failed=1
 			rm -f "$chunk_wav" 2>/dev/null
 			break
@@ -1183,6 +1192,7 @@ _play_with_retry() {
 		_log "say開始 (attempt=${attempt}, rate=${RATE})"
 		local say_pid
 		LAUNCHED_SAY_PID=""
+		CHROME_AUDIO_USED=0
 		_launch_say
 		say_pid="${LAUNCHED_SAY_PID:-}"
 		if [ -z "$say_pid" ]; then
@@ -1221,6 +1231,13 @@ _play_with_retry() {
 		fi
 		if [ "$say_rc" -eq 0 ]; then
 			return 0
+		fi
+		if [ "${CHROME_AUDIO_USED:-0}" = "1" ]; then
+			_stop_chrome_audio_players
+			if [ "${timed_out:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] && ! _is_truncated_playback "$elapsed" "$expected_sec"; then
+				_log "Chrome/BlackHole fallback異常終了だが終盤まで再生済み (rc=$say_rc, elapsed=${elapsed}s, expected=${expected_sec}s) → 重複防止のため再試行せず完了扱い"
+				return 0
+			fi
 		fi
 		# 粛清等による外部killフラグがあればリトライしない
 		if [ -f "$QUEUE_DIR/kill_flag" ]; then

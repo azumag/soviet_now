@@ -447,6 +447,9 @@ def load_strategy_module():
     if spec is None or spec.loader is None:
         raise ImportError("strategy.py not found")
     mod = importlib.util.module_from_spec(spec)
+    # Match normal import semantics so strategy.py can safely use __name__ and
+    # sys.modules["strategy"] during runtime reloads.
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 

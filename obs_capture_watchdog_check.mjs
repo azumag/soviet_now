@@ -29,6 +29,25 @@
 //   SOREN_CHROME_APP_ID        (default com.google.chrome.for.testing)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+function loadDotEnv(path = '.env') {
+  try {
+    const text = fs.readFileSync(path, 'utf8');
+    for (const line of text.split(/\n/)) {
+      const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
+      if (!match || Object.prototype.hasOwnProperty.call(process.env, match[1])) continue;
+      let value = match[2].trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      process.env[match[1]] = value;
+    }
+  } catch {}
+}
+
+loadDotEnv();
 
 const NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
 const MODE_FILE = process.env.SOREN_DISPLAY_STATE_FILE || 'tmp/state/soren_display_mode';
@@ -42,6 +61,40 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const currentMode = () => { try { return fs.readFileSync(MODE_FILE, 'utf8').trim() === 'meriken' ? 'meriken' : 'china'; } catch { return 'china'; } };
 const expectedRe = () => (currentMode() === 'meriken' ? MERIKEN_RE : CHINA_RE);
+
+function latestObsLog() {
+  const dir = process.env.OBS_LOG_DIR || path.join(os.homedir(), 'Library', 'Application Support', 'obs-studio', 'logs');
+  try {
+    return fs.readdirSync(dir)
+      .filter((name) => name.endsWith('.txt'))
+      .map((name) => {
+        const fullPath = path.join(dir, name);
+        const stat = fs.statSync(fullPath);
+        return { fullPath, mtimeMs: stat.mtimeMs, size: stat.size };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function obsSafeModePromptHint() {
+  const log = latestObsLog();
+  if (!log) return null;
+  let text = '';
+  try {
+    const fd = fs.openSync(log.fullPath, 'r');
+    const length = Math.min(log.size, 8192);
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, 0);
+    fs.closeSync(fd);
+    text = buffer.toString('utf8');
+  } catch {
+    return null;
+  }
+  if (!/\[Safe Mode\]\s+Unclean shutdown detected!/.test(text)) return null;
+  return log;
+}
 
 async function connectObs() {
   const port = process.env.OBS_WEBSOCKET_PORT;
@@ -104,7 +157,18 @@ async function bounce(obs, value) {
   await obs.req('SetInputSettings', { inputName: NAME, inputSettings: settings, overlay: false });
 }
 
-const obs = await connectObs();
+let obs = null;
+try {
+  obs = await connectObs();
+} catch (err) {
+  const safeModeLog = obsSafeModePromptHint();
+  if (safeModeLog) {
+    console.error(`OBS unavailable: Safe Mode prompt is blocking websocket startup (latest_log=${safeModeLog.fullPath}). Choose normal startup in OBS, then watchdog can recheck capture.`);
+  } else {
+    console.error('OBS unavailable:', err?.message || String(err));
+  }
+  process.exit(2);
+}
 if (!obs) { console.log('OBS not configured'); process.exit(2); }
 try {
   const mode = currentMode();
@@ -151,4 +215,4 @@ try {
 } catch (err) {
   console.error('watchdog check error:', err?.message || String(err));
   process.exit(2);
-} finally { obs.close(); }
+} finally { if (obs) obs.close(); }

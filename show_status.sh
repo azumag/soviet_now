@@ -210,6 +210,62 @@ _file_recent() {
 	(( age >= 0 && age <= max_age ))
 }
 
+_obs_status_line() {
+	python3 - <<'PY' 2>/dev/null || printf 'unknown|status unavailable'
+import os
+import socket
+from pathlib import Path
+
+env = {}
+try:
+    for line in Path(".env").read_text(encoding="utf-8").splitlines():
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.strip().strip('"').strip("'")
+        env.setdefault(k.strip(), v)
+except Exception:
+    pass
+
+port_raw = os.environ.get("OBS_WEBSOCKET_PORT") or env.get("OBS_WEBSOCKET_PORT") or "4455"
+try:
+    port = int(float(port_raw))
+except Exception:
+    port = 4455
+host = os.environ.get("OBS_WEBSOCKET_HOST") or env.get("OBS_WEBSOCKET_HOST") or "127.0.0.1"
+
+try:
+    with socket.create_connection((host, port), timeout=0.25):
+        print(f"ok|ws {host}:{port}")
+        raise SystemExit(0)
+except Exception:
+    pass
+
+obs_dir = Path.home() / "Library" / "Application Support" / "obs-studio"
+safe_file = obs_dir / "safe_mode"
+latest = None
+try:
+    logs = sorted((obs_dir / "logs").glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    latest = logs[0] if logs else None
+except Exception:
+    latest = None
+
+safe_prompt = False
+if latest:
+    try:
+        text = latest.read_text(encoding="utf-8", errors="replace")[:8192]
+        safe_prompt = "[Safe Mode] Unclean shutdown detected!" in text
+    except Exception:
+        safe_prompt = False
+
+if safe_file.exists() or safe_prompt:
+    detail = "SafeMode prompt" if safe_prompt else "safe_mode flag"
+    print(f"safe|{detail}")
+else:
+    print(f"down|ws {host}:{port} closed")
+PY
+}
+
 # PIDが生きていて指定パターンのプロセスかチェック
 _pid_alive_as() {
 	local pid="$1" pattern="$2"
@@ -244,6 +300,62 @@ _find_process_pid() {
 			exit
 		}
 	'
+}
+
+_worker_duplicates_from_ps_fallback() {
+	local snapshot_file="tmp/state/show_status_worker_ps.$$.txt"
+	mkdir -p tmp/state 2>/dev/null || true
+	if ! LC_ALL=C ps -Ao pid=,ppid=,command= >"$snapshot_file" 2>/dev/null; then
+		rm -f "$snapshot_file" 2>/dev/null || true
+		return 1
+	fi
+	python3 - "$snapshot_file" <<'PY' 2>/dev/null || true
+import os
+import re
+import sys
+
+snapshot_file = sys.argv[1] if len(sys.argv) > 1 else ""
+patterns = {
+    "soren_loop": r"[/ ]soren_loop[.]sh([ \t]|$)",
+    "chat_worker": r"[/ ]workers/chat_worker[.]sh([ \t]|$)",
+    "youtube_worker": r"[/ ]workers/youtube_worker[.]sh([ \t]|$)",
+    "audio_worker": r"[/ ]workers/audio_worker[.]sh([ \t]|$)",
+    "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
+    "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
+    "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
+    "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
+}
+rows = []
+try:
+    with open(snapshot_file, "r", encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+except Exception:
+    raw = ""
+for line in raw.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    parts = line.split(None, 2)
+    if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+        continue
+    rows.append((parts[0], parts[1], parts[2]))
+duplicates = []
+for name, pattern in patterns.items():
+    rx = re.compile(pattern)
+    matched = [(pid, ppid) for pid, ppid, cmd in rows if rx.search(cmd)]
+    matched_pids = {pid for pid, _ppid in matched}
+    root_pids = sorted({pid for pid, ppid in matched if ppid not in matched_pids}, key=lambda p: int(p))
+    if len(root_pids) > 1:
+        duplicates.append((name, root_pids))
+if duplicates:
+    detail = "; ".join(f"{name} x{len(pids)} pids={','.join(pids)}" for name, pids in duplicates)
+    print(f"duplicate:{detail[:120]}")
+elif rows:
+    print("ok:")
+else:
+    print("unknown:duplicate scan unavailable")
+PY
+	rm -f "$snapshot_file" 2>/dev/null || true
 }
 
 _recent_file_active() {
@@ -754,9 +866,11 @@ h=d.get('hash','')
 if h and h == '$current_hash_for_acc':
     print('acc_russia_count=' + shlex.quote(str(int(d.get('russia_count', 0) or 0))))
     print('acc_soviet=' + shlex.quote('true' if d.get('soviet', False) else 'false'))
+    print('acc_max_type=' + shlex.quote(str(int(d.get('best_max_type', 0) or 0))))
 else:
     print('acc_russia_count=0')
     print('acc_soviet=false')
+    print('acc_max_type=0')
 " 2>/dev/null)
 	fi
 
@@ -806,7 +920,7 @@ PY
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-		local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
+		local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" fresh_objective_label="none" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
 	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
 		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
 import json
@@ -839,12 +953,13 @@ print("stagnation_age=" + shlex.quote(age))
 PY
 )
 		fi
-		if [[ -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
-			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/current_strategy_run.json" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" "${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}" <<'PY' 2>/dev/null
+		if [[ -f "$TMP_STATE_DIR/accumulated_games.json" || -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
+			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/accumulated_games.json" "$TMP_STATE_DIR/current_strategy_run.json" "$current_hash_for_acc" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" "${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}" <<'PY' 2>/dev/null
 import json
+import os
 import sys
 
-path, mature_s, trigger_s, count_s, early_min_s = sys.argv[1:6]
+acc_path, current_path, current_hash, mature_s, trigger_s, count_s, early_min_s = sys.argv[1:8]
 try:
     mature_n = max(1, int(mature_s or 12))
 except Exception:
@@ -861,13 +976,46 @@ except Exception:
     count = 0
 if count < trigger:
     raise SystemExit
+data = {}
+source = "none"
+acc_exists = os.path.exists(acc_path)
+if acc_exists:
+    try:
+        acc = json.load(open(acc_path, encoding="utf-8")) or {}
+    except Exception:
+        acc = {}
+    if current_hash and str(acc.get("hash", "") or "") == current_hash:
+        data = acc
+        source = "accumulated"
+if not data and not acc_exists:
+    try:
+        data = json.load(open(current_path, encoding="utf-8")) or {}
+        source = "current_strategy"
+    except Exception:
+        data = {}
+if not data:
+    raise SystemExit
+if source == "accumulated":
+    raw_scores = data.get("scores", "")
+    if isinstance(raw_scores, str):
+        score_count = len([x for x in raw_scores.split() if x.strip()])
+    elif isinstance(raw_scores, list):
+        score_count = len(raw_scores)
+    else:
+        score_count = 0
+    games = int(data.get("count", 0) or score_count)
+else:
+    games = int(data.get("games_total", 0) or len(data.get("scores") or []))
 try:
-    data = json.load(open(path, encoding="utf-8")) or {}
+    russia = int(data.get("russia_count", 0) or 0)
 except Exception:
-    data = {}
-games = int(data.get("games_total", 0) or len(data.get("scores") or []))
-russia = int(data.get("russia_count", 0) or 0)
-soviet = int(data.get("soviet_count", 0) or 0)
+    russia = 0
+try:
+    soviet = int(data.get("soviet_count", 0) or 0)
+except Exception:
+    soviet = 0
+if not soviet and bool(data.get("soviet", False)):
+    soviet = 1
 best_type = int(data.get("best_max_type", 0) or 0)
 bits = []
 if russia > 0:
@@ -878,8 +1026,100 @@ if best_type >= 15:
     bits.append(f"T{best_type}")
 if bits:
     print(f"defer={','.join(bits)}{games}/{mature_n}")
-elif games < early_min:
+elif source == "accumulated" and games < early_min:
     print(f"defer=early{games}/{early_min}")
+PY
+)
+		fi
+		if [[ -f tmp/improve.lock ]]; then
+			fresh_objective_label=$(python3 - tmp/improve.lock <<'PY' 2>/dev/null || echo "none"
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8")) or {}
+except Exception:
+    data = {}
+if not data.get("fresh_objective_same_hash_lock"):
+    print("none")
+    raise SystemExit
+trigger = str(data.get("fresh_objective_trigger") or "objective")
+sample_n = int(data.get("fresh_objective_sample_n", 0) or 0)
+count = int(data.get("count", sample_n) or sample_n)
+fresh_best = int(data.get("fresh_objective_fresh_best_max_type", 0) or 0)
+t14_peak = int(data.get("fresh_objective_t14_peak", 0) or 0)
+reference = str(data.get("fresh_objective_reference") or "none")
+route = str(data.get("improve_reason") or "normal")
+print(f"locked {trigger} {sample_n}/{count} T{fresh_best} T14p{t14_peak} ref={reference} route={route}")
+PY
+)
+		fi
+		if [[ "$fresh_objective_label" == "none" && -f "$TMP_STATE_DIR/accumulated_games.json" && -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
+			fresh_objective_label=$(python3 - "$TMP_STATE_DIR/accumulated_games.json" "$TMP_STATE_DIR/current_strategy_run.json" "$TMP_STATE_DIR/best_strategy_anchor.json" "${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE:-14}" "${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES:-3}" "${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE:-13}" <<'PY' 2>/dev/null || echo "none"
+import json
+import os
+import sys
+
+acc_file, current_file, anchor_file, min_best_raw, low_stage_min_raw, low_stage_max_raw = sys.argv[1:7]
+
+def load(path):
+    try:
+        if path and os.path.exists(path):
+            data = json.load(open(path, encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def as_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+acc = load(acc_file)
+current = load(current_file)
+anchor = load(anchor_file)
+acc_hash = str(acc.get("hash") or "")
+current_hash = str(current.get("hash") or "")
+if not acc_hash or acc_hash != current_hash:
+    print("none")
+    raise SystemExit
+acc_count = as_int(acc.get("count", 0))
+fresh_n = as_int(current.get("_fresh_score_count", 0))
+historical_russia = as_int(current.get("russia_count", 0))
+historical_best = as_int(current.get("best_max_type", 0))
+anchor_russia = as_int(anchor.get("russia_count", 0))
+anchor_best = as_int(anchor.get("best_max_type", 0))
+reference = "none"
+if historical_russia > 0:
+    reference = "historical_russia"
+elif historical_best >= 15:
+    reference = "historical_best"
+elif anchor_russia > 0:
+    reference = "anchor_russia"
+elif anchor_best >= 15:
+    reference = "anchor_best"
+if reference == "none" or acc_count <= 0:
+    print("none")
+    raise SystemExit
+min_best = max(1, as_int(min_best_raw, 14))
+low_stage_min = max(1, as_int(low_stage_min_raw, 3))
+low_stage_max = max(1, as_int(low_stage_max_raw, 13))
+max_types = [as_int(x) for x in (current.get("max_types") or [])]
+fresh_types = max_types[-fresh_n:] if fresh_n > 0 else []
+fresh_best = max(fresh_types or [0])
+fresh_russia = sum(1 for value in fresh_types if value >= 15)
+if fresh_russia > 0:
+    print("none")
+elif 0 < fresh_best <= low_stage_max:
+    state = "ready low_stage_miss" if acc_count >= low_stage_min else "wait low_stage_miss"
+    print(f"{state} {acc_count}/{low_stage_min} T{fresh_best} ref={reference}")
+elif fresh_best >= min_best:
+    state = "ready high_frontier_miss" if acc_count >= low_stage_min else "wait high_frontier_miss"
+    print(f"{state} {acc_count}/{low_stage_min} T{fresh_best} ref={reference}")
+else:
+    print("none")
 PY
 )
 		fi
@@ -2029,21 +2269,36 @@ PY
 	fi
 	local duplicate_status="" duplicate_detail=""
 	if [[ -f tmp/state/worker_duplicates.json ]] && _recent_file_active "tmp/state/worker_duplicates.json" 120; then
-		duplicate_detail=$(python3 - <<'PY' 2>/dev/null || true
+		local duplicate_info=""
+		duplicate_info=$(python3 - <<'PY' 2>/dev/null || true
 import json
 try:
     d = json.load(open("tmp/state/worker_duplicates.json", encoding="utf-8"))
     items = d.get("duplicates") or []
+    status = str(d.get("status") or ("duplicate" if items else "ok"))
     if items:
-        print("; ".join(f"{i.get('name')} x{i.get('count')} pids={','.join(map(str, i.get('pids') or []))}" for i in items)[:120])
+        detail = "; ".join(f"{i.get('name')} x{i.get('count')} pids={','.join(map(str, i.get('pids') or []))}" for i in items)
+    elif status not in ("ok", "duplicate"):
+        detail = str(d.get("error") or "duplicate scan unavailable")
+    else:
+        detail = ""
+    detail = detail.replace("\n", " ")[:120]
+    print(f"{status}:{detail}")
 except Exception:
     pass
 PY
 )
-		if [[ -n "$duplicate_detail" ]]; then
-			duplicate_status="duplicate"
-		else
-			duplicate_status="ok"
+		if [[ -n "$duplicate_info" ]]; then
+			duplicate_status="${duplicate_info%%:*}"
+			duplicate_detail="${duplicate_info#*:}"
+		fi
+	fi
+	if [[ -z "$duplicate_status" || "$duplicate_status" == "unknown" ]]; then
+		local duplicate_fallback_info=""
+		duplicate_fallback_info=$(_worker_duplicates_from_ps_fallback)
+		if [[ -n "$duplicate_fallback_info" ]]; then
+			duplicate_status="${duplicate_fallback_info%%:*}"
+			duplicate_detail="${duplicate_fallback_info#*:}"
 		fi
 	fi
 
@@ -2164,7 +2419,27 @@ PY
 		printf "    ${C_RED}!${C_RESET} Duplicates  ${C_RED}DETECTED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$duplicate_detail"
 	elif [[ "$duplicate_status" == "ok" ]]; then
 		printf "    ${C_GREEN}✓${C_RESET} Duplicates  ${C_DIM}none${C_RESET}\n"
+	elif [[ "$duplicate_status" == "unknown" ]]; then
+		printf "    ${C_YELLOW}!${C_RESET} Duplicates  ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${duplicate_detail:-duplicate scan unavailable}"
 	fi
+	local obs_status_line obs_status obs_detail
+	obs_status_line="$(_obs_status_line)"
+	obs_status="${obs_status_line%%|*}"
+	obs_detail="${obs_status_line#*|}"
+	case "$obs_status" in
+	ok)
+		printf "    ${C_GREEN}●${C_RESET} OBSWS       ${C_GREEN}OK${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$obs_detail"
+		;;
+	safe)
+		printf "    ${C_YELLOW}!${C_RESET} OBSWS       ${C_YELLOW}SAFE MODE${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$obs_detail"
+		;;
+	down)
+		printf "    ${C_RED}!${C_RESET} OBSWS       ${C_RED}DOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$obs_detail"
+		;;
+	*)
+		printf "    ${C_YELLOW}!${C_RESET} OBSWS       ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${obs_detail:-status unavailable}"
+		;;
+	esac
 	if ! $improve_daemon_running && (( acc_count >= min_games )); then
 		printf "    ${C_RED}!${C_RESET} ImproveD    ${C_RED}RESTART REQUIRED${C_RESET}  ${C_DIM}lock/improve gate reached${C_RESET}\n"
 	elif ! $improve_daemon_running && (( min_games - acc_count <= 2 )); then
@@ -2227,6 +2502,11 @@ PY
 		fi
 		if [[ "$archive_next_label" != "none" ]]; then
 			printf "    ${C_YELLOW}▸${C_RESET} ArchiveNext ${C_YELLOW}%s${C_RESET}\n" "$archive_next_label"
+		fi
+		if [[ "$fresh_objective_label" != "none" ]]; then
+			local fresh_objective_display="$fresh_objective_label"
+			fresh_objective_display=$(_truncate_display_width "$fresh_objective_display" "$(( W - 18 ))")
+			printf "    ${C_YELLOW}▸${C_RESET} FreshObj   ${C_YELLOW}%s${C_RESET}\n" "$fresh_objective_display"
 		fi
 		if [[ -n "$wildcard_parallel_label" ]]; then
 			printf "    ${C_YELLOW}▸${C_RESET} %-11s ${C_YELLOW}%s${C_RESET}\n" "$wildcard_parallel_name" "$wildcard_parallel_label"

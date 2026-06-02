@@ -8,6 +8,13 @@
 
 レビューAIは追加の batch 実行環境を探さないこと。`tmp/batch_summary.txt` とゲームログは入力証拠として読み、README/Makefile/*.sh や新しい実行コマンドを探索し続けず、検証は下記チェックリストと `tmp/review_result.md` の verdict で完結させる。
 
+## ツール制約（必須）
+- このレビュー環境では `Read` / `Glob` / `Grep` / `Edit` / `Write` だけを使うこと。
+- `Bash` / `bash` / `shell` / `command` / `python` / `pytest` / `diff` などの実行系ツールは使えない。使おうとするとレビューがタイムアウトするため、絶対に呼ばないこと。
+- ファイルの存在確認は `Read` の File not found 結果、または `Glob` / `Grep` で行うこと。
+- 差分比較は `strategy.py` と `strategy.py.staging` の該当箇所を `Read` / `Grep` して目視で行うこと。
+- `tmp/review_result.md` が無い場合は、存在確認のために実行系ツールを呼ばず、直ちに `Write tmp/review_result.md` で作成すること。
+
 ## レビューチェックリスト
 
 以下を全て確認すること:

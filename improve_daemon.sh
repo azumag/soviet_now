@@ -37,6 +37,13 @@ _pid_alive_local() {
 
 _acquire_daemon_singleton() {
 	local old_pid
+	old_pid=$(cat "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true)
+	if _pid_alive_local "$old_pid" && [ "$old_pid" != "$$" ]; then
+		mkdir -p "$DAEMON_LOCK_DIR" 2>/dev/null || true
+		printf '%s\n' "$old_pid" >"$DAEMON_LOCK_PID_FILE" 2>/dev/null || true
+		echo "[$(date '+%H:%M:%S')] [improve_daemon] 既存 daemon PID=${old_pid} が稼働中 → 重複起動を終了"
+		exit 0
+	fi
 	while ! mkdir "$DAEMON_LOCK_DIR" 2>/dev/null; do
 		old_pid=$(cat "$DAEMON_LOCK_PID_FILE" 2>/dev/null || true)
 		if _pid_alive_local "$old_pid"; then
@@ -92,9 +99,9 @@ _reject_detached_headless_duplicate() {
 	fi
 }
 
-_require_visible_terminal
 _reject_detached_headless_duplicate
 _acquire_daemon_singleton
+_require_visible_terminal
 echo "[$(date '+%H:%M:%S')] [improve_daemon] 起動 (poll=${POLL_INTERVAL}s)"
 echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 

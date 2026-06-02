@@ -590,6 +590,14 @@ if status == "running" and not improve_reason:
 if started_at <= 0 and status == "running":
     started_at = now
 
+if status == "idle" and pid == 0 and progress <= 0:
+    hash_before = ""
+    phase = ""
+    detail = ""
+    started_at = 0
+    pid_birth_epoch = 0
+    improve_reason = ""
+
 data = {
     "status": status,
     "pid": pid,
@@ -647,6 +655,23 @@ with open(tmp, "w", encoding="utf-8") as f:
     json.dump(data, f, ensure_ascii=False)
 os.replace(tmp, path)
 PY
+}
+
+_main_strategy_runner_active_for_improve() {
+	local marker="${MAIN_STRATEGY_RUNNER_ACTIVE_FILE:-${TMP_STATE_DIR:-tmp/state}/main_strategy_runner_active.json}"
+	[ -f "$marker" ] || return 1
+	local runner_pid=""
+	runner_pid=$(python3 - "$marker" <<'PY' 2>/dev/null || true
+import json
+import sys
+try:
+    print(int(json.load(open(sys.argv[1], encoding="utf-8")).get("pid", 0) or 0))
+except Exception:
+    print("")
+PY
+)
+	case "$runner_pid" in ''|0|*[!0-9]*) return 1 ;; esac
+	kill -0 "$runner_pid" 2>/dev/null
 }
 
 _is_live_improve_pid() {
@@ -1336,13 +1361,15 @@ queue_fresh_objective_same_hash_lock_if_needed() {
 		_fresh_active_branch=1
 	fi
 
+	# Keep the objective reference fresh before probing. A just-promoted mature
+	# Russia/T15 anchor can otherwise appear only after this check and delay an
+	# obvious R0 high-frontier miss by one extra game.
+	command -v _refresh_best_strategy_anchor >/dev/null 2>&1 &&
+		_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
 	enrich_accumulated_game_metadata "$ACCUMULATED_GAMES_FILE" 2>/dev/null || true
 	local _fresh_archive_restart_preflight=0
 	if _archive_restart_should_run 999; then
 		_fresh_archive_restart_preflight=1
-	fi
-	if [ "$_fresh_active_branch" = "1" ] && [ "$_fresh_archive_restart_preflight" != "1" ]; then
-		return 1
 	fi
 	local _fresh_probe _fresh_ok _fresh_rest _fresh_n _seeded_n _hist_russia _fresh_russia _fresh_best _fresh_t14_peak _fresh_hash _fresh_trigger _fresh_acc_count _fresh_anchor_russia _fresh_anchor_best _fresh_reference
 	_fresh_probe=$(python3 - \
@@ -1350,7 +1377,7 @@ queue_fresh_objective_same_hash_lock_if_needed() {
 		"${CURRENT_STRATEGY_RUN_FILE:-tmp/state/current_strategy_run.json}" \
 		"${BEST_STRATEGY_ANCHOR_FILE:-tmp/state/best_strategy_anchor.json}" \
 		"${_fresh_archive_restart_preflight:-0}" \
-		"${CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES:-4}" \
+		"${CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES:-2}" \
 		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE:-14}" \
 		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES:-3}" \
 		"${CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MAX_BEST_TYPE:-13}" <<'PY' 2>/dev/null || echo "0:0:0:0:0:0:0:0:none:0:0:0:none"
@@ -1468,7 +1495,19 @@ if (
         fresh_types = max_types[-fresh_n:] if fresh_n > 0 else []
         fresh_best = max(fresh_types or [0])
         fresh_russia = sum(1 for value in fresh_types if value >= 15)
-    high_frontier_miss = bool(fresh_russia <= 0 and fresh_n >= min_games and acc_count >= min_games and fresh_best >= min_best)
+    frontier_min_games = min_games
+    if objective_reference in {"historical_russia", "historical_best", "anchor_russia", "anchor_best"}:
+        # When we have a proven Russia/T15 objective reference, a fresh R0 batch that
+        # already reaches the T14 frontier is enough evidence at the low-stage sample
+        # size. Waiting for the full frontier window burns an extra game on a known
+        # no-Russia miss.
+        frontier_min_games = min(min_games, low_stage_min_games)
+    high_frontier_miss = bool(
+        fresh_russia <= 0
+        and fresh_n >= frontier_min_games
+        and acc_count >= frontier_min_games
+        and fresh_best >= min_best
+    )
     low_stage_miss = bool(
         fresh_russia <= 0
         and fresh_n >= low_stage_min_games
@@ -1513,6 +1552,12 @@ PY
 	_fresh_anchor_best="${_fresh_rest%%:*}"
 	_fresh_reference="${_fresh_rest##*:}"
 	[ "$_fresh_ok" = "1" ] || return 1
+	if [ "$_fresh_active_branch" = "1" ] &&
+		[ "$_fresh_archive_restart_preflight" != "1" ] &&
+		[ "$_fresh_trigger" != "high_frontier_miss" ] &&
+		[ "$_fresh_trigger" != "low_stage_miss" ]; then
+		return 1
+	fi
 
 	local _fresh_improve_reason="normal" _fresh_archive_restart_available="${_fresh_archive_restart_preflight:-0}"
 	if [ "${_fresh_archive_restart_available:-0}" = "1" ]; then
@@ -2244,6 +2289,10 @@ trigger_adaptive_improvement() {
 
 	# ロックファイルが存在しない場合は何もしない（メインループが作成する）
 	[ -f "$IMPROVE_LOCK_FILE" ] || return 0
+	if _main_strategy_runner_active_for_improve; then
+		log "[IMPROVE] strategy_runner active → improve lock consumption deferred until game boundary"
+		return 0
+	fi
 
 	# 既に改善プロセス中（状態ファイルで確認）
 	local state status

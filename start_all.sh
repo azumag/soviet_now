@@ -281,14 +281,16 @@ _soren_loop_lock_pid() {
 }
 
 _detect_worker_duplicates() {
-	local managed="" sep="" idx name pid signature=""
+	local managed="" sep="" idx name pid signature="" ps_snapshot_file=""
 	for idx in "${!WORKER_NAMES[@]}"; do
 		name="${WORKER_NAMES[$idx]}"
 		pid="${WORKER_PIDS[$idx]:-}"
 		managed="${managed}${sep}${name}:${pid}"
 		sep=","
 	done
-	signature=$(python3 - "$managed" "$DUPLICATE_STATE_FILE" <<'PY' 2>/dev/null || true
+	ps_snapshot_file="tmp/state/worker_duplicates.ps.$$.txt"
+	LC_ALL=C ps -Ao pid=,ppid=,command= >"$ps_snapshot_file" 2>/dev/null || : >"$ps_snapshot_file"
+	signature=$(python3 - "$managed" "$DUPLICATE_STATE_FILE" "$ps_snapshot_file" <<'PY' 2>/dev/null || true
 import json
 import os
 import re
@@ -298,6 +300,7 @@ import time
 
 managed_arg = sys.argv[1] if len(sys.argv) > 1 else ""
 out_file = sys.argv[2] if len(sys.argv) > 2 else "tmp/state/worker_duplicates.json"
+ps_snapshot_file = sys.argv[3] if len(sys.argv) > 3 else ""
 managed = {}
 for item in managed_arg.split(","):
     if ":" not in item:
@@ -317,7 +320,12 @@ patterns = {
 }
 
 try:
-    raw = subprocess.check_output(["ps", "-Ao", "pid=,ppid=,command="], text=True, errors="replace")
+    raw = ""
+    if ps_snapshot_file and os.path.exists(ps_snapshot_file):
+        with open(ps_snapshot_file, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    if not raw:
+        raw = subprocess.check_output(["ps", "-Ao", "pid=,ppid=,command="], text=True, errors="replace")
 except Exception as exc:
     state = {
         "status": "unknown",
@@ -383,6 +391,7 @@ if state["status"] == "duplicate":
     ))
 PY
 )
+	rm -f "$ps_snapshot_file" 2>/dev/null || true
 	if [ -n "$signature" ] && [ "$signature" != "${_SUPERVISOR_DUP_LAST_SIGNATURE:-}" ]; then
 		_SUPERVISOR_DUP_LAST_SIGNATURE="$signature"
 		_log "WARN: worker duplicate detected: ${signature}"

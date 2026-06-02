@@ -5,7 +5,7 @@
 # Phase C: バッチサマリー生成 → AI改善 → バリデーション → git commit
 # Phase D: ラジオトーク生成
 #
-# Usage: ./eloop_improve.sh <history_files> <scores> <soviet> <game_num> <turns>
+# Usage: ./eloop_improve.sh <history_files> <scores> <soviet> <game_num> <turns> <reason>
 
 if [ -n "${SOREN_SCRIPT_ROOT:-}" ]; then
 	SCRIPT_DIR="$(cd "$SOREN_SCRIPT_ROOT" && pwd)"
@@ -929,6 +929,12 @@ _repair_review_verdict_file() {
 4. `tmp/review_result.md` に次の両方を必ず含める。
    - `## VERDICT: PASS` または `## VERDICT: FAIL`
    - fenced block の `review_verdict` JSON
+
+ツール制約:
+- この修復環境では `Read` / `Glob` / `Grep` / `Edit` / `Write` だけを使うこと。
+- `Bash` / `bash` / `shell` / `command` / `python` / `pytest` / `diff` などの実行系ツールは使えない。呼ぼうとすると修復がタイムアウトする。
+- ファイルの存在確認は `Read` の File not found 結果、または `Glob` / `Grep` で行うこと。
+- 差分確認は `strategy.py` と `strategy.py.staging` の該当箇所を `Read` / `Grep` して目視で行うこと。
 
 出力ファイル形式:
 
@@ -2172,13 +2178,16 @@ if [ "${IMPROVE_REASON:-normal}" = "escape_ai" ] && [ "${WILDCARD_ESCAPE_AI_SEED
 		"${REJECTED_HASH_META_FILE:-tmp/state/rejected_hash_metrics.json}" \
 		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" \
 		"${WILDCARD_ESCAPE_AI_SEED_MIN_GAMES:-4}" \
-		"${WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE:-14}" <<'PY' 2>/dev/null || true
+		"${WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE:-14}" \
+		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}" \
+		"${ARCHIVE_RESTART_INCLUDE_PERMANENT:-1}" <<'PY' 2>/dev/null || true
 import json
 import math
 import os
 import sys
 
-origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw = sys.argv[1:7]
+origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]
+include_permanent = str(include_permanent_raw).strip().lower() not in {"0", "false", "no", "off", ""}
 
 def load(path, default):
     try:
@@ -2251,8 +2260,11 @@ for h, meta in (origin or {}).items():
     origin_type = str((meta or {}).get("origin_type") or "wildcard")
     if origin_type != "wildcard":
         continue
-    path = os.path.join(archive_dir, f"{h}.py")
-    if not os.path.exists(path) or not archive_is_runtime_stable(path):
+    paths = [os.path.join(archive_dir, f"{h}.py")]
+    if include_permanent and permanent_archive_dir:
+        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
+    path = next((p for p in paths if os.path.exists(p) and archive_is_runtime_stable(p)), "")
+    if not path:
         continue
     entry = rolling.get(h) or {}
     m = metrics_from_scores(entry.get("scores", []))
@@ -2779,6 +2791,14 @@ summary_lines.append(
     f"deadline_guard_rate={nation_progress['deadline_guard_rate']:.1%} "
     f"deadline_guard_reason_top={nation_progress['deadline_guard_reason_top']}"
 )
+russia_recovery_active = (
+    nation_progress["russia_count"] == 0
+    and any(
+        g.get("max_type", 0) >= 14
+        or "T14x2" in str(g.get("peak_high_type_counts", ""))
+        for g in nation_progress["games"]
+    )
+)
 if nation_progress["stage_gates"]:
     gate_text = " ".join(
         f"{g['name']}(T{g['type']})={g['reached']}/{g['total']}({g['rate']:.0%})"
@@ -2792,8 +2812,15 @@ if nation_progress["stage_gates"]:
         summary_lines.append(
             f"- main_gate_target: {main_gate['name']}(T{main_gate['type']}) "
             f"{main_gate['reached']}/{main_gate['total']}({main_gate['rate']:.0%}). "
-            "今回の分析/実装はこの未達段階へ効く変更を優先すること。"
+            "通常はこの未達段階へ効く変更を優先する。"
         )
+        if russia_recovery_active:
+            summary_lines.append(
+                "- main_gate_target_priority_override: this lower-stage gate is context only because "
+                "russia_recovery_mode is active (R0 with a type14 near-miss). Prioritize restoring "
+                "the type14→15 Russia route over generic lower-gate tuning; do not interpret the "
+                "gate line as 'avoid Russia focus'."
+            )
     else:
         summary_lines.append(f"- stage_gate_rates: {gate_text}")
         summary_lines.append("- main_gate_target: all configured gates are 100%; prioritize Russia→Soviet transition quality.")
@@ -3506,9 +3533,27 @@ ${helpers_diff}"
 		_improve_progress "review" "75" "review_phase"
 		log "[IMPROVE] Stage 3 レビューフェーズ..."
 		_improve_note "Stage3: review start"
+		_review_prev_timeout="${RUN_CMD_TIMEOUT_SEC-}"
+		_review_prev_primary_retries="${RUN_AI_PRIMARY_RETRIES-}"
+		RUN_CMD_TIMEOUT_SEC="${IMPROVE_REVIEW_CMD_TIMEOUT_SEC:-600}"
+		RUN_AI_PRIMARY_RETRIES="${IMPROVE_REVIEW_PRIMARY_RETRIES:-1}"
+		export RUN_CMD_TIMEOUT_SEC
+		export RUN_AI_PRIMARY_RETRIES
 		run_ai "REVIEW" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 			"prompts/review_strategy.md" "$REVIEW_RESULT_FILE" \
 			"$ANALYSIS_RESULT_FILE" "$STAGING_FILE" "${improve_ref_files[@]}"
+		if [ -n "$_review_prev_timeout" ]; then
+			RUN_CMD_TIMEOUT_SEC="$_review_prev_timeout"
+			export RUN_CMD_TIMEOUT_SEC
+		else
+			unset RUN_CMD_TIMEOUT_SEC
+		fi
+		if [ -n "$_review_prev_primary_retries" ]; then
+			RUN_AI_PRIMARY_RETRIES="$_review_prev_primary_retries"
+			export RUN_AI_PRIMARY_RETRIES
+		else
+			unset RUN_AI_PRIMARY_RETRIES
+		fi
 		_improve_note "Stage3: review done"
 		# レビューがstagingを変更した場合、バリデーション再実行
 		if ! cmp -s "$_pre_review_snapshot" "$STAGING_FILE" 2>/dev/null; then

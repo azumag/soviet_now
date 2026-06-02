@@ -12,6 +12,7 @@ validate_strategy() {
 		python3 - "$target_file" "$helpers_dir" <<'PYEOF' 2>&1
 import os
 import sys
+import ast
 import inspect
 import types
 
@@ -28,6 +29,194 @@ if helpers_dir and os.path.isdir(helpers_dir):
 # .py.staging ファイルを扱うため、exec() でモジュールを作成
 with open(target, 'r', encoding='utf-8') as f:
     source = f.read()
+
+
+def check_decide_load_before_local_assign(source, filename):
+    tree = ast.parse(source, filename=filename)
+    decide_node = None
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "decide":
+            decide_node = node
+            break
+    if decide_node is None:
+        return
+
+    params = {a.arg for a in decide_node.args.posonlyargs + decide_node.args.args + decide_node.args.kwonlyargs}
+    if decide_node.args.vararg:
+        params.add(decide_node.args.vararg.arg)
+    if decide_node.args.kwarg:
+        params.add(decide_node.args.kwarg.arg)
+
+    class LocalCollector(ast.NodeVisitor):
+        def __init__(self):
+            self.locals = set()
+
+        def visit_FunctionDef(self, node):
+            if node is decide_node:
+                for stmt in node.body:
+                    self.visit(stmt)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Lambda(self, node):
+            return
+
+        def visit_ClassDef(self, node):
+            return
+
+        def visit_ListComp(self, node):
+            return
+
+        visit_SetComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+        visit_DictComp = visit_ListComp
+
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                self.locals.add(node.id)
+
+    collector = LocalCollector()
+    collector.visit(decide_node)
+    local_names = collector.locals - params
+    violations = []
+
+    def note_load(node, assigned):
+        if (
+            isinstance(node.ctx, ast.Load)
+            and node.id in local_names
+            and node.id not in assigned
+        ):
+            violations.append((node.id, getattr(node, "lineno", 0), getattr(node, "col_offset", 0)))
+
+    def visit_expr(node, assigned):
+        if node is None:
+            return
+        if isinstance(node, ast.Name):
+            note_load(node, assigned)
+            return
+        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            # Comprehension targets have their own scope/order. Only outer iterables
+            # matter for deciding whether decide() locals are already available.
+            for gen in node.generators:
+                visit_expr(gen.iter, assigned)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit_expr(child, assigned)
+
+    def bind_target(target_node, assigned):
+        if isinstance(target_node, ast.Name):
+            assigned.add(target_node.id)
+        elif isinstance(target_node, (ast.Tuple, ast.List)):
+            for elt in target_node.elts:
+                bind_target(elt, assigned)
+        elif isinstance(target_node, ast.Starred):
+            bind_target(target_node.value, assigned)
+        else:
+            visit_expr(target_node, assigned)
+
+    def analyze_block(statements, incoming):
+        assigned = set(incoming)
+        for stmt in statements:
+            if isinstance(stmt, ast.Assign):
+                visit_expr(stmt.value, assigned)
+                for target_node in stmt.targets:
+                    bind_target(target_node, assigned)
+            elif isinstance(stmt, ast.AnnAssign):
+                visit_expr(stmt.value, assigned)
+                bind_target(stmt.target, assigned)
+            elif isinstance(stmt, ast.AugAssign):
+                visit_expr(stmt.target, assigned)
+                visit_expr(stmt.value, assigned)
+                bind_target(stmt.target, assigned)
+            elif isinstance(stmt, ast.For):
+                visit_expr(stmt.iter, assigned)
+                body_assigned = set(assigned)
+                bind_target(stmt.target, body_assigned)
+                analyze_block(stmt.body, body_assigned)
+                if stmt.orelse:
+                    analyze_block(stmt.orelse, set(assigned))
+            elif isinstance(stmt, ast.While):
+                visit_expr(stmt.test, assigned)
+                analyze_block(stmt.body, set(assigned))
+                analyze_block(stmt.orelse, set(assigned))
+            elif isinstance(stmt, ast.If):
+                visit_expr(stmt.test, assigned)
+                body_out = analyze_block(stmt.body, set(assigned))
+                else_out = analyze_block(stmt.orelse, set(assigned)) if stmt.orelse else set(assigned)
+                assigned = body_out & else_out
+            elif isinstance(stmt, ast.With):
+                for item in stmt.items:
+                    visit_expr(item.context_expr, assigned)
+                    if item.optional_vars:
+                        bind_target(item.optional_vars, assigned)
+                assigned = analyze_block(stmt.body, assigned)
+            elif isinstance(stmt, ast.Try):
+                analyze_block(stmt.body, set(assigned))
+                for handler in stmt.handlers:
+                    handler_assigned = set(assigned)
+                    if handler.name:
+                        handler_assigned.add(handler.name)
+                    analyze_block(handler.body, handler_assigned)
+                analyze_block(stmt.orelse, set(assigned))
+                analyze_block(stmt.finalbody, set(assigned))
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                assigned.add(stmt.name)
+            elif isinstance(stmt, (ast.Return, ast.Expr, ast.Assert, ast.Delete, ast.Raise)):
+                visit_expr(stmt, assigned)
+            else:
+                visit_expr(stmt, assigned)
+        return assigned
+
+    analyze_block(decide_node.body, params)
+    if violations:
+        name, line, col = violations[0]
+        print(
+            f"ERROR: decide() load-before-local-assign: {name} at line {line}, col {col} "
+            "(would raise UnboundLocalError / cannot access local variable on some branch)"
+        )
+        sys.exit(1)
+
+
+check_decide_load_before_local_assign(source, target)
+
+
+def check_suspicious_list_number_comparisons(source, filename):
+    tree = ast.parse(source, filename=filename)
+    list_like_names = {"pieces", "same_type_pieces", "danger_pieces"}
+    relational_ops = (ast.Gt, ast.GtE, ast.Lt, ast.LtE)
+
+    def is_list_like_name(node):
+        return isinstance(node, ast.Name) and (
+            node.id in list_like_names or node.id.endswith("_pieces")
+        )
+
+    def is_number_literal(node):
+        return isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        operands = [node.left] + list(node.comparators)
+        for op, left, right in zip(node.ops, operands, operands[1:]):
+            if not isinstance(op, relational_ops):
+                continue
+            if is_list_like_name(left) and is_number_literal(right):
+                print(
+                    f"ERROR: decide() list-number-comparison: {left.id} at line {node.lineno} "
+                    "compared directly to a number; use len(...) for count checks"
+                )
+                sys.exit(1)
+            if is_number_literal(left) and is_list_like_name(right):
+                print(
+                    f"ERROR: decide() list-number-comparison: {right.id} at line {node.lineno} "
+                    "compared directly to a number; use len(...) for count checks"
+                )
+                sys.exit(1)
+
+
+check_suspicious_list_number_comparisons(source, target)
 
 mod = types.ModuleType('strategy')
 exec(source, mod.__dict__)

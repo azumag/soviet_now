@@ -945,7 +945,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("AI実装が冗長または挙動が変わらない変更と自己申告した", eloop)
         # _start_improvement_job 側も 6 番目に reason を渡している
         improve_sh = (REPO_ROOT / "strategy/improve.sh").read_text()
-        self.assertIn('./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason"', improve_sh)
+        self.assertIn('bash "$runtime_script" "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" "$reason"', improve_sh)
 
     def test_wildcard_adapts_perturbation_after_consecutive_attempts(self):
         """WILDCARD 連続発火時は state を記録し、摂動幅と対象数を段階的に拡張する。"""
@@ -1875,34 +1875,70 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("if progress_callback:\n        progress_callback(candidate)", parallel)
 
     def test_wildcard_parallel_prefers_bundled_chrome_for_testing(self):
-        """候補評価は同梱 Chromium を使い、macOS では no-focus attach を既定にする。"""
+        """候補評価は同梱 Chromium 優先、失敗時のみ通常Chromeへ退避する。"""
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn("def resolve_playwright_chrome_for_testing", parallel)
+        self.assertIn("def resolve_macos_system_chrome", parallel)
+        self.assertIn("def chrome_fallback_app_paths", parallel)
+        self.assertIn("def chrome_fallback_executable_paths", parallel)
         self.assertIn("chromium.executablePath()", parallel)
         self.assertIn("def prelaunch_candidate_chrome", parallel)
+        self.assertIn("def is_regular_macos_chrome_path", parallel)
+        self.assertIn("def chrome_open_fallback_bundle_ids", parallel)
         self.assertIn("def set_candidate_html_window_title", parallel)
         self.assertIn('f"Wildcard Parallel Slot {slot_index + 1}"', parallel)
         self.assertIn('re.sub(r\'productName:\\s*"[^"]*"\', f\'productName: "{title}"\', text, count=1)', parallel)
         self.assertIn("def wait_for_candidate_chrome_cdp", parallel)
+        self.assertIn("def wait_for_candidate_chrome_cdp(cdp_port: int, timeout: float = 15.0)", parallel)
         self.assertIn("urllib.request.urlopen(url, timeout=0.5)", parallel)
-        self.assertIn("if wait_for_candidate_chrome_cdp(cdp_port):\n                return True", parallel)
-        self.assertIn("subprocess.Popen(\n            [executable_path, *chrome_args]", parallel)
+        self.assertIn("return wait_for_candidate_chrome_cdp(cdp_port)", parallel)
+        self.assertIn("return bool(_run_with_launch_stagger(launch_and_wait))", parallel)
+        self.assertIn("[candidate_executable_path, *chrome_args]", parallel)
         self.assertIn("Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing", parallel)
         self.assertIn("chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)", parallel)
+        self.assertIn("chrome_fallback_app_path_list = chrome_fallback_app_paths(chrome_app_path)", parallel)
+        self.assertIn("chrome_fallback_executable_path_list = chrome_fallback_executable_paths(chrome_executable_path)", parallel)
+        self.assertIn('"WILDCARD_PARALLEL_CHROME_FALLBACK_APP_PATHS"', parallel)
+        self.assertIn('"SOREN_CHROME_OPEN_FALLBACK_APP_PATHS"', parallel)
+        self.assertIn('"WILDCARD_PARALLEL_CHROME_FALLBACK_EXECUTABLE_PATHS"', parallel)
+        self.assertIn('"SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS"', parallel)
         self.assertIn('default_headless = "0" if sys.platform == "darwin" else "1"', parallel)
         self.assertIn('"HOME": str((workdir / "tmp" / "chrome_home").resolve())', parallel)
-        self.assertIn('"HOME": str(chrome_home.resolve())', parallel)
+        self.assertIn('"SOREN_CHROME_USE_REAL_HOME": os.environ.get("WILDCARD_PARALLEL_USE_REAL_CHROME_HOME", "0")', parallel)
+        self.assertIn('"SOREN_CHROME_SET_CFFIXED_HOME": os.environ.get("WILDCARD_PARALLEL_SET_CFFIXED_HOME", "1")', parallel)
+        self.assertIn('use_real_home = os.environ.get("SOREN_CHROME_USE_REAL_HOME", "0").strip().lower() in {"1", "true", "yes", "on"}', parallel)
+        self.assertIn('cffixed_home_setting = os.environ.get("SOREN_CHROME_SET_CFFIXED_HOME", "").strip().lower()', parallel)
+        self.assertIn("else not use_real_home", parallel)
+        self.assertIn("real_home = os.environ.get(\"SOREN_LAUNCHSERVICES_HOME\") or str(Path.home())", parallel)
+        self.assertIn("def launch_env_for(candidate_app_path: str, candidate_executable_path: str, launch_services: bool = False)", parallel)
+        self.assertIn("if use_real_home:", parallel)
+        self.assertIn("launch_home = real_home", parallel)
+        self.assertIn('env["HOME"] = launch_home', parallel)
+        self.assertIn('env.pop("CFFIXED_USER_HOME", None)', parallel)
+        self.assertIn('env.pop("XDG_CONFIG_HOME", None)', parallel)
+        self.assertIn('env.pop("XDG_CACHE_HOME", None)', parallel)
+        self.assertIn("if set_cffixed_home:", parallel)
+        self.assertIn('env["CFFIXED_USER_HOME"] = cf_home', parallel)
         self.assertIn("env=env", parallel)
         self.assertIn('"/usr/bin/open",\n            "-g",\n            "-n",\n            app_path,', parallel)
-        self.assertIn("prelaunch_candidate_chrome(chrome_app_path, chrome_executable_path, candidate.profile_dir, candidate.cdp_port)", parallel)
+        self.assertIn('"/usr/bin/open",\n                "-g",\n                "-n",\n                fallback_app_path,', parallel)
+        self.assertIn('"-b",\n                bundle_id,', parallel)
+        self.assertIn("prelaunch_ok = prelaunch_candidate_chrome(", parallel)
+        self.assertIn("chrome_app_path,\n            chrome_executable_path,\n            candidate.profile_dir,\n            candidate.cdp_port,", parallel)
+        self.assertIn("chrome_fallback_app_path_list,\n            chrome_fallback_executable_path_list,\n        )", parallel)
         self.assertNotIn('Wildcard Parallel Cand {candidate.index + 1} | soren-game', parallel)
         self.assertIn("class TmuxBridgeProcess", parallel)
         self.assertIn('os.environ.get("WILDCARD_PARALLEL_BRIDGE_TMUX", "1")', parallel)
         self.assertIn('["tmux", "new-session", "-d", "-s", session_name, str(script_path.resolve())]', parallel)
         self.assertIn('"--disable-crashpad"', parallel)
+        self.assertNotIn('"--disable-breakpad"', parallel)
+        self.assertNotIn('"--disable-crashpad-for-testing"', parallel)
         self.assertIn('f"--crash-dumps-dir={crashpad_dir}"', parallel)
-        self.assertNotIn('"-a",\n        app_path,', parallel)
+        self.assertNotIn('"-a",\n            app_path,', parallel)
         self.assertIn('use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "0")', parallel)
+        self.assertIn('use_system_chrome not in {"0", "1"}', parallel)
+        self.assertIn("not explicit_chrome_path", parallel)
+        self.assertIn('env["SOREN_CHROME_APP_PATH"] = chrome_app_path', parallel)
         self.assertIn('os.environ.get("WILDCARD_PARALLEL_OBS_BROWSER_SOURCES", "1")', parallel)
         self.assertIn('[ "${POST_IMPROVE_PARAM_PARALLEL_ENABLED:-0}" = "1" ] || return 0', (REPO_ROOT / "eloop_improve.sh").read_text())
         self.assertIn('export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"', (REPO_ROOT / "eloop_improve.sh").read_text())
@@ -1942,11 +1978,23 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
         self.assertIn('"SOREN_CHROME_HOME": str((workdir / "tmp" / "chrome_home").resolve())', parallel)
+        self.assertIn('"SOREN_CHROME_USE_REAL_HOME": os.environ.get("WILDCARD_PARALLEL_USE_REAL_CHROME_HOME", "0")', parallel)
+        self.assertIn('"SOREN_CHROME_SET_CFFIXED_HOME": os.environ.get("WILDCARD_PARALLEL_SET_CFFIXED_HOME", "1")', parallel)
         self.assertIn('"SOREN_CHROME_NO_FOCUS_LAUNCH": os.environ.get("WILDCARD_PARALLEL_NO_FOCUS_LAUNCH", "1")', parallel)
         self.assertIn('"SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH": os.environ.get("WILDCARD_PARALLEL_FORCE_PLAYWRIGHT_LAUNCH", "0")', parallel)
+        self.assertIn('"SOREN_CHROME_OPEN_FALLBACK_APP_NAME": os.environ.get(', parallel)
+        self.assertIn('"WILDCARD_PARALLEL_OPEN_FALLBACK_APP_NAME"', parallel)
+        self.assertIn('"SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID": os.environ.get(', parallel)
+        self.assertIn('"WILDCARD_PARALLEL_OPEN_FALLBACK_BUNDLE_ID"', parallel)
+        self.assertIn('"SOREN_CHROME_OPEN_FALLBACK_APP_PATHS": os.environ.get(', parallel)
+        self.assertIn('"WILDCARD_PARALLEL_CHROME_FALLBACK_APP_PATHS"', parallel)
+        self.assertIn('"SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS": os.environ.get(', parallel)
+        self.assertIn('"WILDCARD_PARALLEL_CHROME_FALLBACK_EXECUTABLE_PATHS"', parallel)
+        self.assertIn("com.google.chrome.for.testing,com.google.Chrome", parallel)
         self.assertIn('"SOREN_LAUNCHSERVICES_HOME": str(Path.home())', parallel)
         self.assertIn("def cleanup_chrome_profile_processes", parallel)
         self.assertIn("def cleanup_wildcard_chrome_processes", parallel)
+        self.assertIn('"Chrome" not in command and "Chromium" not in command', parallel)
         self.assertIn("def cleanup_ports_from_status", parallel)
         self.assertIn("def cleanup_wildcard_session_dirs", parallel)
         self.assertIn('parser.add_argument("--cleanup-stale", action="store_true")', parallel)
@@ -2041,6 +2089,45 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         # overlay HTML は screenshot を <img> 埋め込みしない（タイルに隠れるため）
         self.assertNotIn('<img class="preview live-preview"', parallel)
         self.assertNotIn('class="preview live-preview"', parallel)
+
+    def test_wildcard_parallel_cleanup_hides_obs_candidate_sources(self):
+        """OBSクラッシュ後も候補window-capture sourceをcleanupで非表示に戻す。"""
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            status = Path(td) / "status.json"
+            status.write_text(
+                json.dumps(
+                    {
+                        "params": {"jobs": 2},
+                        "candidates": [
+                            {"index": 0, "status": "accepted"},
+                            {"index": 5, "status": "running"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append((cmd, kwargs))
+                return subprocess.CompletedProcess(cmd, 0)
+
+            with mock.patch.object(wildcard_parallel.subprocess, "run", side_effect=fake_run):
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        "WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX": "wpCand",
+                        "WILDCARD_PARALLEL_OBS_CLEANUP_TIMEOUT_MS": "1200",
+                    },
+                    clear=False,
+                ):
+                    sources = wildcard_parallel.hide_wildcard_candidate_obs_sources(status, jobs=3, reason="test")
+
+            self.assertEqual([f"wpCand{i}" for i in range(1, 7)], sources)
+            self.assertEqual(["./obs_control.sh", "hide", "soren", *sources], calls[0][0])
+            self.assertEqual("1200", calls[0][1]["env"]["OBS_WEBSOCKET_TIMEOUT_MS"])
 
     def test_candidate_window_title_reaps_blank_tabs_for_obs_capture(self):
         """候補窓が OBS window-capture で映らない("target window not found") 根因は、
@@ -2615,6 +2702,8 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("_repair_review_verdict_file", eloop)
         self.assertIn("REVIEW-VERDICT-REPAIR", eloop)
         self.assertIn("Stage3: review verdict missing → repair verdict file", eloop)
+        self.assertIn("IMPROVE_REVIEW_CMD_TIMEOUT_SEC", eloop)
+        self.assertIn("IMPROVE_REVIEW_PRIMARY_RETRIES", eloop)
         self.assertIn("def contradictory_threshold_direction_claim():", eloop)
         self.assertIn("def contradictory_low_placement_constant_claim():", eloop)
         self.assertIn("review verdict PASS contradicts comparison threshold direction", eloop)
@@ -2625,6 +2714,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("strategy.py.staging` は編集禁止", eloop)
         self.assertIn("読まずに上書きしようとするとツール制約で失敗する", eloop)
         self.assertIn("Read 後に既存ファイルを直す場合は Edit", eloop)
+        self.assertIn("この修復環境では `Read` / `Glob` / `Grep` / `Edit` / `Write` だけを使うこと", eloop)
+        self.assertIn("実行系ツールは使えない。呼ぼうとすると修復がタイムアウトする", eloop)
+        self.assertIn("差分確認は `strategy.py` と `strategy.py.staging` の該当箇所", eloop)
         self.assertIn("存在しない場合のみ Write", eloop)
         self.assertIn("emit a non-empty verdict/status in the review_verdict JSON block", eloop)
         self.assertIn("review verdict advisory failure; apply continues after runtime smoke", eloop)
@@ -3191,6 +3283,87 @@ destroy_sandbox "$sandbox"
         )
         self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
+    def test_strategy_validation_blocks_conditional_load_before_assignment(self):
+        """空状態 smoke では通るが、別分岐で UnboundLocalError になる変更を検証で止める。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            helpers = td / "strategy_helpers"
+            helpers.mkdir()
+            (helpers / "__init__.py").write_text("", encoding="utf-8")
+            bad_strategy = td / "strategy.py"
+            bad_strategy.write_text(
+                textwrap.dedent(
+                    """
+                    def decide(game_state, analysis):
+                        score = 0
+                        if game_state.get("gate"):
+                            branch_bonus = 1
+                        if game_state.get("other") and branch_bonus > 0:
+                            score += branch_bonus
+                        return {"x": 0, "reason": f"score={score}"}
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            script = f"""
+source ./eloop_lib.sh
+GAME_STATE='{td / "missing_game_state.json"}'
+validate_strategy_with_helpers '{bad_strategy}' '{helpers}'
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            combined = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, msg=combined)
+            self.assertIn("load-before-local-assign", combined)
+            self.assertIn("branch_bonus", combined)
+            self.assertIn("cannot access local variable", combined)
+
+    def test_strategy_validation_blocks_list_number_comparison(self):
+        """list と数値の直接比較は smoke 到達前に検証で止める。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            helpers = td / "strategy_helpers"
+            helpers.mkdir()
+            (helpers / "__init__.py").write_text("", encoding="utf-8")
+            bad_strategy = td / "strategy.py"
+            bad_strategy.write_text(
+                textwrap.dedent(
+                    """
+                    def decide(game_state, analysis):
+                        pieces = game_state.get("pieces", [])
+                        same_type_pieces = [p for p in pieces if p.get("type") == 13]
+                        if same_type_pieces >= 2:
+                            return {"x": 0, "reason": "bad-list-compare"}
+                        return {"x": 0, "reason": "ok"}
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            script = f"""
+source ./eloop_lib.sh
+GAME_STATE='{td / "missing_game_state.json"}'
+validate_strategy_with_helpers '{bad_strategy}' '{helpers}'
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            combined = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, msg=combined)
+            self.assertIn("list-number-comparison", combined)
+            self.assertIn("same_type_pieces", combined)
+            self.assertIn("use len(...)", combined)
+
 
 class TestRollbackRadioPrompt(unittest.TestCase):
     def test_rollback_radio_distinguishes_wildcard_from_plain_replacement(self):
@@ -3446,6 +3619,12 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("second_russia_counts.get(13, 0) >= 2", strategy)
         self.assertIn("not death_spiral", strategy)
         self.assertIn("max_y < 3.2", strategy)
+        self.assertIn("pre_russia_bridge_material_ready", strategy)
+        self.assertIn("next_type >= 8", strategy)
+        self.assertIn("next_next_type >= 10", strategy)
+        self.assertIn("landing_y > 1.2 or piece_count >= 28", strategy)
+        self.assertIn("russia_pair_material_ready", strategy)
+        self.assertIn("second_russia_material_ready", strategy)
 
     def test_soviet_theme_append_rejects_gacha_and_non_soviet_topics(self):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
@@ -3855,26 +4034,67 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         local = (REPO_ROOT / "soviet_local.mjs").read_text()
 
         self.assertIn("launchPersistentContextWithoutFocus", local)
-        self.assertIn("'/usr/bin/open'", local)
+        self.assertIn("exec /usr/bin/open", local)
         self.assertIn("'-g'", local)
-        self.assertIn("'-a'", local)
         self.assertIn("appPath", local)
+        self.assertIn("'-n',\n    appPath,\n    '--args'", local)
+        self.assertIn("SOREN_CHROME_OPEN_FALLBACK_APP_NAME", local)
+        self.assertIn("'-a',\n          appName", local)
+        self.assertIn("macOS open app-name fallback launched", local)
+        self.assertIn("SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID", local)
+        self.assertIn("com.google.chrome.for.testing,com.google.Chrome", local)
+        self.assertIn("'-b',\n          bundleId", local)
+        self.assertIn("macOS open bundle-id fallback launched", local)
+        self.assertIn("function systemChromeExecutablePath", local)
+        self.assertIn("function systemChromeAppPath", local)
+        self.assertIn("function chromeFallbackAppPaths", local)
+        self.assertIn("function chromeFallbackExecutablePaths", local)
+        self.assertIn("SOREN_CHROME_OPEN_FALLBACK_APP_PATHS", local)
+        self.assertIn("SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS", local)
+        self.assertIn("macOS open app-path fallback launched", local)
+        self.assertIn("launchDetachedChromeFallback", local)
+        self.assertIn("detached Chrome fallback launched", local)
+        self.assertIn("soren_chrome_detached.stderr.log", local)
         self.assertIn("Object.prototype.hasOwnProperty.call(process.env, match[1])", local)
         self.assertIn("SOREN_CHROME_NO_FOCUS_LAUNCH", local)
         self.assertIn("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH", local)
         self.assertIn("SOREN_CHROME_ATTACH_ONLY", local)
         self.assertIn("async function withBrowserLaunchEnv", local)
-        self.assertIn("const homeDir = env.SOREN_CHROME_HOME || path.join(userDataDir, 'chrome_home');", local)
+        self.assertIn("function isRegularMacChrome(executablePath, appPath = '')", local)
+        self.assertIn("const chromeHomeDir = env.SOREN_CHROME_HOME || path.join(userDataDir, 'chrome_home');", local)
+        self.assertIn("const useRealMacHome = ['1', 'true', 'yes', 'on'].includes(String(env.SOREN_CHROME_USE_REAL_HOME || '').toLowerCase());", local)
+        self.assertIn("const cffixedHomeSetting = String(env.SOREN_CHROME_SET_CFFIXED_HOME || '').toLowerCase();", local)
+        self.assertIn("const setCffixedHome = cffixedHomeSetting", local)
+        self.assertIn(": !useRealMacHome;", local)
+        self.assertIn("delete env.CFFIXED_USER_HOME", local)
+        self.assertIn("delete env.XDG_CONFIG_HOME", local)
+        self.assertIn("delete env.XDG_CACHE_HOME", local)
+        self.assertIn("else if (setCffixedHome)", local)
+        self.assertIn("env.CFFIXED_USER_HOME = chromeHomeDir", local)
+        self.assertIn("'CFFIXED_USER_HOME'", local)
+        self.assertIn("const configHome = useRealMacHome ? '' :", local)
+        self.assertIn("const cacheHome = useRealMacHome ? '' :", local)
+        self.assertIn("browserLaunchEnv(userDataDir, candidatePath, { launchServices: false })", local)
+        self.assertNotIn("'--disable-breakpad'", local)
+        self.assertNotIn("'--disable-crashpad-for-testing'", local)
         self.assertIn("env: launchEnv", local)
-        self.assertIn("execFile('/usr/bin/open', openArgs, { env: launchEnv }", local)
+        self.assertIn("function macOpenChromium(openArgs, launchEnv)", local)
+        self.assertIn("function shellQuote(value)", local)
+        self.assertIn("exec /usr/bin/open ${openArgs.map(shellQuote).join(' ')}", local)
+        self.assertIn("execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv }", local)
         self.assertIn("isCrashpadPermissionLaunchFailure", local)
         self.assertIn("SOREN_CHROME_OPEN_FALLBACK_ON_CRASHPAD_FAIL", local)
         self.assertIn("launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs, { force: true })", local)
+        self.assertIn("openFallbackErr", local)
+        self.assertIn("macOS open fallback failed", local)
         self.assertIn("isMacOpenExecutableMissingFailure", local)
         self.assertIn("launchChromiumExecutableDetached", local)
         self.assertIn("spawn(executablePath, [`--user-data-dir=${userDataDir}`, ...args]", local)
+        self.assertIn("headless Playwright fallback executable", local)
         self.assertIn("chromium.launchPersistentContext", local)
         self.assertIn("async function waitForCdpHttp", local)
+        self.assertIn("SOREN_CDP_ATTACH_TIMEOUT_MS", local)
+        self.assertIn("await waitForCdpHttp(port, timeoutMs);", local)
         self.assertIn("await waitForCdpHttp(CDP_PORT);", local)
         self.assertIn("launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs)", local)
         self.assertIn("args: launchArgs", local)
@@ -3891,7 +4111,6 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn("skip_no_focus", (REPO_ROOT / "soren91_control.sh").read_text())
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
         self.assertIn('"/usr/bin/open",\n            "-g",\n            "-n",\n            app_path,', parallel)
-        self.assertNotIn('"-a",\n        app_path,', parallel)
 
 
 # --- Prediction worker pause --------------------------------------------------
@@ -3929,6 +4148,20 @@ class TestMainAudioRecovery(unittest.TestCase):
         self.assertIn("process.env.SOREN_CHROME_AUDIO_OUTPUT_LABEL || ''", watchdog)
         self.assertIn("per-context audio routing disabled", local)
         self.assertIn("per-context audio routing disabled", watchdog)
+
+    def test_chrome_audio_fallback_stops_lingering_audio_before_retry(self):
+        player = (REPO_ROOT / "chrome_audio_player.mjs").read_text()
+        say = (REPO_ROOT / "say_enqueue.sh").read_text()
+
+        self.assertIn("data-soren-chrome-audio-player", player)
+        self.assertIn("stopTaggedAudioOnPage", player)
+        self.assertIn("await stopTaggedAudioOnPage(page, playerKey)", player)
+        self.assertIn("await stopTaggedAudio(browser.contexts()[0], playerKey)", player)
+        self.assertIn("process.argv[2] === '--stop'", player)
+        self.assertIn("CHROME_AUDIO_USED=1", say)
+        self.assertIn("_stop_chrome_audio_players", say)
+        self.assertIn("重複防止のため再試行せず完了扱い", say)
+        self.assertIn("! _is_truncated_playback \"$elapsed\" \"$expected_sec\"", say)
 
     def test_main_audio_never_changes_macos_default_output(self):
         forbidden = [
@@ -6032,15 +6265,18 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("最終目標は type16 のソ連建国", text)
         self.assertIn("hard_signal: 今回バッチはロシア未到達", text)
         self.assertIn("high_type_counts is final-board type10+ inventory", text)
-        self.assertIn("pre-Russia near-miss: T12x4, T12x3+T11x3, T13x2, T13x3, T13x2+T12x2, T13x1+T12x2+T11x2, T13x1+T12x4, T14x2, T14x1+T12x2, or T14x1+T13x1+T12x2", text)
+        self.assertIn("main_gate_target_priority_override", text)
+        self.assertIn("do not interpret the", text)
+        self.assertIn("T14x2 appears without type15", text)
+        self.assertIn("russia_recovery_mode: type14 near-miss", text)
         self.assertIn("deadline_guard_rate", text)
         self.assertIn("deadline_guard_reason_top", text)
         self.assertIn("guard_reason_top=", text)
         self.assertIn("deadline guard が多発", text)
         self.assertIn("ガードを弱めず", text)
         self.assertIn("peak_high_type_counts", text)
-        self.assertIn("high_type_spans", text)
         self.assertIn("frontier_hint", text)
+        self.assertIn("peak_high_type_counts/frontier_hint show", text)
         self.assertIn("type13以下で止まっている", text)
 
     def test_score_state_persists_nation_progress_metadata(self):
@@ -6148,10 +6384,20 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("normal child shells do not look like duplicates", supervisor)
         self.assertIn("ppid not in matched_pids", supervisor)
         self.assertIn('"pid=,ppid=,command="', supervisor)
+        self.assertIn("worker_duplicates.ps.$$.txt", supervisor)
+        self.assertIn('LC_ALL=C ps -Ao pid=,ppid=,command= >"$ps_snapshot_file"', supervisor)
+        self.assertIn("ps_snapshot_file = sys.argv[3]", supervisor)
+        self.assertIn("with open(ps_snapshot_file", supervisor)
         self.assertIn("_detect_worker_duplicates", supervisor[supervisor.index("# --- 全 worker 起動 ---"):])
         self.assertIn("tmp/state/worker_duplicates.json", status)
         self.assertIn("Duplicates", status)
         self.assertIn("DETECTED", status)
+        self.assertIn("UNKNOWN", status)
+        self.assertIn("duplicate scan unavailable", status)
+        self.assertIn("_worker_duplicates_from_ps_fallback", status)
+        self.assertIn("show_status_worker_ps.$$.txt", status)
+        self.assertIn('LC_ALL=C ps -Ao pid=,ppid=,command= >"$snapshot_file"', status)
+        self.assertIn('duplicate_fallback_info=$(_worker_duplicates_from_ps_fallback)', status)
 
     def test_rollback_analysis_surfaces_soviet_objective_delta(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
@@ -6169,6 +6415,7 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
     def test_regression_guard_blocks_objective_backslide(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        loop = (REPO_ROOT / "eloop.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
 
         self.assertIn("objective_reasons = []", regression)
@@ -6202,13 +6449,28 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_MIN_BEST_TYPE", improve)
         self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_SAME_HASH_LOW_STAGE_MIN_GAMES", improve)
         self.assertIn("low_stage_miss", improve)
+        self.assertIn("frontier_min_games = min_games", improve)
+        self.assertIn('objective_reference in {"historical_russia", "historical_best", "anchor_russia", "anchor_best"}', improve)
+        self.assertIn("frontier_min_games = min(min_games, low_stage_min_games)", improve)
+        self.assertIn('[ "$_fresh_trigger" != "low_stage_miss" ]', improve)
         self.assertIn("fresh_objective_trigger", improve)
         self.assertIn("fresh_objective_reference", improve)
         self.assertIn("archive_restart_candidate", improve)
         self.assertIn("fresh_objective_anchor_russia_count", improve)
         self.assertIn("fresh_objective_archive_restart_available", improve)
         self.assertIn("route=${_fresh_improve_reason}", improve)
+        self.assertIn("_refresh_best_strategy_anchor \"\" >/dev/null 2>&1", improve)
+        self.assertLess(
+            improve.index("_refresh_best_strategy_anchor \"\" >/dev/null 2>&1"),
+            improve.index("enrich_accumulated_game_metadata \"$ACCUMULATED_GAMES_FILE\""),
+        )
+        self.assertIn("_main_strategy_runner_active_for_improve", improve)
+        self.assertIn("improve lock consumption deferred until game boundary", improve)
+        self.assertIn("MAIN_STRATEGY_RUNNER_ACTIVE_FILE", improve)
         self.assertIn("queue_fresh_objective_same_hash_lock_if_needed || true", improve)
+        self.assertIn("MAIN_STRATEGY_RUNNER_ACTIVE_FILE", loop)
+        self.assertIn("main_strategy_runner_active.json", loop)
+        self.assertIn("rm -f \"$runner_active_file\"", loop)
         self.assertIn("early_objective_min_best_type", regression)
         self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", regression)
         self.assertIn("permanent_archive_dir", regression)
@@ -6722,6 +6984,39 @@ PY
             )
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
+    def test_improve_state_idle_zero_progress_clears_stale_runtime_phase(self):
+        """idle + progress=0 は古い runtime_recovery/detail を監視面へ残さない。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            state_file = td / "improve_state.json"
+            script = textwrap.dedent(f"""\
+                source ./core/config.sh
+                IMPROVE_STATE_FILE='{state_file}'
+                source ./strategy/improve.sh
+                _write_improve_state "idle" "0" "" "runtime_recovery" "0" "decide_exception"
+                python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('{state_file}')
+d = json.load(open(p))
+assert d['status'] == 'idle'
+assert d['phase'] == ''
+assert d['detail'] == ''
+assert d['strategy_hash_before'] == ''
+assert d['started_at'] == 0
+assert d['pid_birth_epoch'] == 0
+assert d['improve_reason'] == ''
+PY
+            """)
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+
     def test_same_hash_objective_gap_does_not_escalate_wildcard_stagnation(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -6822,12 +7117,13 @@ PY
 
     def test_escape_ai_seed_finder_searches_permanent_archive(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
 
         # _escape_ai_seed_available must search the PERMANENT archive like its
         # sibling _archive_restart_has_candidate. Wildcard-origin seeds live almost
         # entirely in strategy_versions_archive/by_hash (the live strategy_versions/
-        # by_hash is pruned to ~16 entries), so a by_hash-only search makes escape_ai
-        # seed-starved and the AI escape can never fire.
+        # by_hash is pruned to ~16 entries), so both the daemon pre-check and the
+        # actual eloop seed picker must search permanent archive.
         self.assertIn(
             'origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, '
             'min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]',
@@ -6837,6 +7133,16 @@ PY
         self.assertIn(
             '"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}"',
             improve,
+        )
+        self.assertIn(
+            'origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, '
+            'min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]',
+            eloop,
+        )
+        self.assertIn("if include_permanent and permanent_archive_dir:", eloop)
+        self.assertIn(
+            '"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}"',
+            eloop,
         )
 
     def test_structural_validation_errors_restart_fresh_sandbox_early(self):
@@ -6878,8 +7184,17 @@ PY
         self.assertIn("defer={','.join(bits)}", status)
         self.assertIn("WILDCARD_EARLY_ESCAPE_MIN_GAMES", status)
         self.assertIn("defer=early", status)
+        self.assertIn('"$TMP_STATE_DIR/accumulated_games.json" "$TMP_STATE_DIR/current_strategy_run.json"', status)
+        self.assertIn('source = "accumulated"', status)
+        self.assertIn("games = int(data.get(\"count\", 0) or score_count)", status)
+        self.assertIn("if not data and not acc_exists", status)
         self.assertIn('stagnation_detail="${stagnation_defer_label} ${stagnation_detail}"', status)
         self.assertIn("best_max_type", status)
+        self.assertIn("fresh_objective_label", status)
+        self.assertIn("FreshObj", status)
+        self.assertIn("fresh_objective_same_hash_lock", status)
+        self.assertIn("wait low_stage_miss", status)
+        self.assertIn("ready low_stage_miss", status)
         self.assertIn("ChatObs", status)
         self.assertIn("rate_limit_backoff", status)
         self.assertIn("improve_backoff_label", status)
@@ -7046,8 +7361,11 @@ PY
             status = json.loads(status_path.read_text())
             overlay = html_path.read_text()
             self.assertEqual(status["phase"], "restored")
+            self.assertEqual(status["previous_phase"], "running")
+            self.assertEqual(status["previous_candidate_count"], 1)
             self.assertEqual(status["candidates"], [])
             self.assertIn("restored", overlay)        # psub に restored phase
+            self.assertIn("restored&lt;-running", overlay)
             self.assertIn("waiting", overlay)          # idle 時は waiting placeholder cell
             self.assertIn("game 0/6", overlay)         # eval 進捗は 0 にリセット
             self.assertNotIn("cand-1", overlay)
@@ -8481,12 +8799,20 @@ class TestCandidateChromeLaunchStagger(unittest.TestCase):
         wp = (REPO_ROOT / "wildcard_parallel.py").read_text(encoding="utf-8")
         self.assertIn("_CHROME_LAUNCH_LOCK = Lock()", wp)
         self.assertIn("def _spawn_with_launch_stagger(spawn_fn):", wp)
+        self.assertIn("def _run_with_launch_stagger(launch_fn):", wp)
         self.assertIn("WILDCARD_PARALLEL_CHROME_LAUNCH_STAGGER_SEC", wp)
-        # both launch paths (open -g -n, and the direct Popen fallback) go through it
-        self.assertIn("_spawn_with_launch_stagger(lambda: subprocess.run(open_args", wp)
-        self.assertIn("_spawn_with_launch_stagger(lambda: subprocess.Popen(", wp)
-        # the lock is held through the spawn + stagger sleep (so registrations are spaced)
-        fn = wp.split("def _spawn_with_launch_stagger(spawn_fn):", 1)[1].split("\ndef ", 1)[0]
+        # both prelaunch paths (open -g -n, and the direct Popen fallback) hold the
+        # launch lock until CDP is reachable, not merely until the process is spawned.
+        self.assertIn("def run_macos_open(open_args: list[str], candidate_env: dict[str, str])", wp)
+        self.assertIn("def run_macos_open_and_wait(open_args: list[str], candidate_env: dict[str, str])", wp)
+        self.assertIn('" ".join(shlex.quote(part) for part in open_args)', wp)
+        self.assertIn('["/bin/zsh", "-lc", shell_cmd]', wp)
+        self.assertIn("return bool(_run_with_launch_stagger(launch_and_wait))", wp)
+        self.assertIn("return wait_for_candidate_chrome_cdp(cdp_port)", wp)
+        self.assertIn("launch_bridge_with_chrome_lock", wp)
+        self.assertIn("WILDCARD_PARALLEL_SERIALIZE_BRIDGE_LAUNCH", wp)
+        # the lock is held through browser readiness/failure + stagger sleep
+        fn = wp.split("def _run_with_launch_stagger(launch_fn):", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("with _CHROME_LAUNCH_LOCK:", fn)
         self.assertIn("time.sleep(stagger)", fn)
 

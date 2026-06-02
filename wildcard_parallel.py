@@ -239,7 +239,101 @@ def chrome_app_path_from_executable(executable_path: str) -> str:
     return executable_path[: idx + len(".app")]
 
 
-def wait_for_candidate_chrome_cdp(cdp_port: int, timeout: float = 8.0) -> bool:
+def chrome_executable_path_from_app_path(app_path: str) -> str:
+    if not app_path:
+        return ""
+    macos_dir = Path(app_path) / "Contents" / "MacOS"
+    for name in ("Google Chrome", "Google Chrome for Testing", "Chromium"):
+        candidate = macos_dir / name
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""
+
+
+def resolve_macos_system_chrome() -> tuple[str, str]:
+    """Return regular Chrome paths for isolated macOS parallel slots."""
+    if sys.platform != "darwin":
+        return "", ""
+    app_path = Path("/Applications/Google Chrome.app")
+    exe_path = app_path / "Contents" / "MacOS" / "Google Chrome"
+    if app_path.exists() and exe_path.exists() and os.access(exe_path, os.X_OK):
+        return str(app_path), str(exe_path)
+    return "", ""
+
+
+def chrome_fallback_app_paths(primary_app_path: str) -> list[str]:
+    raw = os.environ.get(
+        "WILDCARD_PARALLEL_CHROME_FALLBACK_APP_PATHS",
+        os.environ.get("SOREN_CHROME_OPEN_FALLBACK_APP_PATHS", ""),
+    )
+    if is_disabled_env_value(raw):
+        return []
+    candidates = [part.strip() for part in str(raw or "").split(",") if part.strip()]
+    system_app, _ = resolve_macos_system_chrome()
+    if system_app:
+        candidates.append(system_app)
+    primary_resolved = str(Path(primary_app_path).resolve()) if primary_app_path else ""
+    seen: set[str] = set()
+    result: list[str] = []
+    for candidate in candidates:
+        candidate_path = Path(candidate)
+        resolved = str(candidate_path.resolve())
+        if resolved == primary_resolved or resolved in seen:
+            continue
+        if not chrome_executable_path_from_app_path(str(candidate_path)):
+            continue
+        seen.add(resolved)
+        result.append(str(candidate_path))
+    return result
+
+
+def chrome_fallback_executable_paths(primary_executable_path: str) -> list[str]:
+    raw = os.environ.get(
+        "WILDCARD_PARALLEL_CHROME_FALLBACK_EXECUTABLE_PATHS",
+        os.environ.get("SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS", ""),
+    )
+    if is_disabled_env_value(raw):
+        return []
+    candidates = [part.strip() for part in str(raw or "").split(",") if part.strip()]
+    _, system_executable = resolve_macos_system_chrome()
+    if system_executable:
+        candidates.append(system_executable)
+    primary_resolved = str(Path(primary_executable_path).resolve()) if primary_executable_path else ""
+    seen: set[str] = set()
+    result: list[str] = []
+    for candidate in candidates:
+        candidate_path = Path(candidate)
+        resolved = str(candidate_path.resolve())
+        if resolved == primary_resolved or resolved in seen:
+            continue
+        if not (candidate_path.exists() and os.access(candidate_path, os.X_OK)):
+            continue
+        seen.add(resolved)
+        result.append(str(candidate_path))
+    return result
+
+
+def is_regular_macos_chrome_path(app_path: str, executable_path: str) -> bool:
+    if sys.platform != "darwin":
+        return False
+    return str(app_path or "").endswith("/Google Chrome.app") or "/Google Chrome.app/Contents/MacOS/Google Chrome" in str(executable_path or "")
+
+
+def is_disabled_env_value(value: str | None) -> bool:
+    return str(value or "").lower() in {"0", "false", "no", "off"}
+
+
+def chrome_open_fallback_bundle_ids() -> list[str]:
+    raw = os.environ.get(
+        "WILDCARD_PARALLEL_OPEN_FALLBACK_BUNDLE_ID",
+        os.environ.get("SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID", "com.google.chrome.for.testing,com.google.Chrome"),
+    )
+    if not raw or is_disabled_env_value(raw):
+        return []
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+
+def wait_for_candidate_chrome_cdp(cdp_port: int, timeout: float = 15.0) -> bool:
     deadline = time.time() + timeout
     url = f"http://127.0.0.1:{cdp_port}/json/version"
     while time.time() < deadline:
@@ -268,16 +362,32 @@ _CHROME_LAUNCH_LOCK = Lock()
 _OBS_SOURCE_LOCK = Lock()
 
 
-def _spawn_with_launch_stagger(spawn_fn):
+def _chrome_launch_stagger_sec() -> float:
     stagger = _float(os.getenv("WILDCARD_PARALLEL_CHROME_LAUNCH_STAGGER_SEC"), 1.2)
+    return max(0.0, stagger)
+
+
+def _run_with_launch_stagger(launch_fn):
     with _CHROME_LAUNCH_LOCK:
-        result = spawn_fn()
+        result = launch_fn()
+        stagger = _chrome_launch_stagger_sec()
         if stagger > 0:
             time.sleep(stagger)
     return result
 
 
-def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir: str, cdp_port: int) -> bool:
+def _spawn_with_launch_stagger(spawn_fn):
+    return _run_with_launch_stagger(spawn_fn)
+
+
+def prelaunch_candidate_chrome(
+    app_path: str,
+    executable_path: str,
+    profile_dir: str,
+    cdp_port: int,
+    fallback_app_paths: list[str] | None = None,
+    fallback_executable_paths: list[str] | None = None,
+) -> bool:
     if sys.platform != "darwin":
         return False
     profile_path = Path(profile_dir)
@@ -312,16 +422,92 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
         "--autoplay-policy=no-user-gesture-required",
         "about:blank",
     ]
-    env = os.environ.copy()
-    env.update(
-        {
-            "HOME": str(chrome_home.resolve()),
+
+    def run_macos_open(open_args: list[str], candidate_env: dict[str, str]) -> subprocess.CompletedProcess:
+        # Direct Python/Node exec of `/usr/bin/open` can return kLSNoExecutableErr
+        # for app bundles after OBS/Chrome crash recovery; invoking it through the
+        # user's shell matches the manual path that LaunchServices accepts.
+        shell_cmd = "exec " + " ".join(shlex.quote(part) for part in open_args)
+        return subprocess.run(
+            ["/bin/zsh", "-lc", shell_cmd],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=candidate_env,
+        )
+
+    def run_macos_open_and_wait(open_args: list[str], candidate_env: dict[str, str]) -> bool:
+        def launch_and_wait() -> bool:
+            run_macos_open(open_args, candidate_env)
+            return wait_for_candidate_chrome_cdp(cdp_port)
+
+        return bool(_run_with_launch_stagger(launch_and_wait))
+
+    def launch_env_for(candidate_app_path: str, candidate_executable_path: str, launch_services: bool = False) -> dict[str, str]:
+        env = os.environ.copy()
+        real_home = os.environ.get("SOREN_LAUNCHSERVICES_HOME") or str(Path.home())
+        use_real_home = os.environ.get("SOREN_CHROME_USE_REAL_HOME", "0").strip().lower() in {"1", "true", "yes", "on"}
+        cffixed_home_setting = os.environ.get("SOREN_CHROME_SET_CFFIXED_HOME", "").strip().lower()
+        set_cffixed_home = (
+            cffixed_home_setting in {"1", "true", "yes", "on"}
+            if cffixed_home_setting
+            else not use_real_home
+        )
+        if use_real_home:
+            launch_home = real_home
+            env["HOME"] = launch_home
+            env.pop("CFFIXED_USER_HOME", None)
+            env.pop("XDG_CONFIG_HOME", None)
+            env.pop("XDG_CACHE_HOME", None)
+            env.setdefault("SOREN_CHROME_HOME", str(chrome_home.resolve()))
+            env.setdefault("SOREN_LAUNCHSERVICES_HOME", os.environ.get("SOREN_LAUNCHSERVICES_HOME", str(Path.home())))
+            if tmp_dir:
+                env["TMPDIR"] = os.environ.get("TMPDIR", str(tmp_dir.resolve()))
+            return env
+        cf_home = str(chrome_home.resolve())
+        env.update({
+            "HOME": cf_home,
             "SOREN_CHROME_HOME": str(chrome_home.resolve()),
+            "SOREN_LAUNCHSERVICES_HOME": os.environ.get("SOREN_LAUNCHSERVICES_HOME", str(Path.home())),
             "XDG_CONFIG_HOME": str(config_home.resolve()),
             "XDG_CACHE_HOME": str(cache_home.resolve()),
             "TMPDIR": str(tmp_dir.resolve()),
-        }
-    )
+        })
+        if set_cffixed_home:
+            env["CFFIXED_USER_HOME"] = cf_home
+        else:
+            env.pop("CFFIXED_USER_HOME", None)
+        return env
+
+    def launch_direct(candidate_executable_path: str) -> bool:
+        if not candidate_executable_path:
+            return False
+        candidate_app_path = chrome_app_path_from_executable(candidate_executable_path)
+        candidate_env = launch_env_for(candidate_app_path, candidate_executable_path)
+        try:
+            def launch_and_wait() -> bool:
+                proc = subprocess.Popen(
+                    [candidate_executable_path, *chrome_args],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    env=candidate_env,
+                    start_new_session=True,
+                )
+                if wait_for_candidate_chrome_cdp(cdp_port):
+                    return True
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                return False
+
+            return bool(_run_with_launch_stagger(launch_and_wait))
+        except Exception:
+            return False
+
+    env = launch_env_for(app_path, executable_path, launch_services=True)
     if app_path:
         open_args = [
             "/usr/bin/open",
@@ -332,31 +518,50 @@ def prelaunch_candidate_chrome(app_path: str, executable_path: str, profile_dir:
             *chrome_args,
         ]
         try:
-            _spawn_with_launch_stagger(lambda: subprocess.run(open_args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env))
-            if wait_for_candidate_chrome_cdp(cdp_port):
+            if run_macos_open_and_wait(open_args, env):
                 return True
         except Exception:
             pass
-    if not executable_path:
-        return False
-    try:
-        proc = _spawn_with_launch_stagger(lambda: subprocess.Popen(
-            [executable_path, *chrome_args],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            env=env,
-            start_new_session=True,
-        ))
-        if wait_for_candidate_chrome_cdp(cdp_port):
+        for fallback_app_path in fallback_app_paths or []:
+            fallback_env = launch_env_for(
+                fallback_app_path,
+                chrome_executable_path_from_app_path(fallback_app_path),
+                launch_services=True,
+            )
+            fallback_open_args = [
+                "/usr/bin/open",
+                "-g",
+                "-n",
+                fallback_app_path,
+                "--args",
+                *chrome_args,
+            ]
+            try:
+                if run_macos_open_and_wait(fallback_open_args, fallback_env):
+                    return True
+            except Exception:
+                pass
+        for bundle_id in chrome_open_fallback_bundle_ids():
+            bundle_open_args = [
+                "/usr/bin/open",
+                "-g",
+                "-n",
+                "-b",
+                bundle_id,
+                "--args",
+                *chrome_args,
+            ]
+            try:
+                if run_macos_open_and_wait(bundle_open_args, env):
+                    return True
+            except Exception:
+                pass
+    if executable_path and launch_direct(executable_path):
+        return True
+    for fallback_executable_path in fallback_executable_paths or []:
+        if launch_direct(fallback_executable_path):
             return True
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        return False
-    except Exception:
-        return False
+    return False
 
 
 @dataclass
@@ -596,6 +801,10 @@ def render_overlay(status_path: Path, html_path: Path, payload: dict) -> None:
     display_candidates = overlay_visible_candidates(candidates)
     generated = time.strftime("%H:%M:%S")
     title = os.environ.get("WILDCARD_PARALLEL_OVERLAY_TITLE", "WILDCARD PARALLEL TRIAL")
+    phase_label = str(payload.get("phase", "running"))
+    previous_phase = str(payload.get("previous_phase") or "")
+    if phase_label == "restored" and previous_phase and previous_phase != phase_label:
+        phase_label = f"{phase_label}<-{previous_phase}"
     ranked_candidates = sorted(
         [c for c in display_candidates if _float(c.get("comp"), 0.0) > 0 and _int(c.get("games"), 0) > 0],
         key=lambda c: (
@@ -1121,7 +1330,7 @@ ul {{
   <div class="phead">
     <div class="ptitle">{html.escape(title)}</div>
     <div class="pgame">{html.escape(game_label)}</div>
-    <div class="psub">{html.escape(str(payload.get('phase', 'running')))} / {html.escape(compact_params or params_label or '-')} / {html.escape(counts_label)} / {generated}</div>
+    <div class="psub">{html.escape(phase_label)} / {html.escape(compact_params or params_label or '-')} / {html.escape(counts_label)} / {generated}</div>
   </div>
   <div class="pcells">{''.join(pcells)}</div>
 </div>
@@ -1144,6 +1353,8 @@ def render_cleanup_overlay(status_path: Path, html_path: Path, detail: str = "cl
         previous = {}
     payload = {
         "phase": "restored",
+        "previous_phase": previous.get("phase", ""),
+        "previous_candidate_count": len(previous.get("candidates") or []),
         "session_dir": previous.get("session_dir", ""),
         "params": previous.get("params", {}),
         "candidates": [],
@@ -1151,6 +1362,78 @@ def render_cleanup_overlay(status_path: Path, html_path: Path, detail: str = "cl
         "detail": detail,
     }
     render_overlay(status_path, html_path, payload)
+
+
+def hide_wildcard_candidate_obs_sources(
+    status_file: Path | None = None,
+    jobs: int = 0,
+    reason: str = "cleanup",
+) -> list[str]:
+    """Hide stale OBS candidate window-capture tiles after a parallel run ends.
+
+    The candidate Chrome cleanup reaps browser processes, but after an OBS crash
+    the scene items can remain visible with the last captured frame. Hiding the
+    known wildcardParallelCandN items is idempotent and leaves the main game
+    capture untouched.
+    """
+    if os.environ.get("WILDCARD_PARALLEL_OBS_CLEANUP_SOURCES", "1") == "0":
+        return []
+    if not (REPO_ROOT / "obs_control.sh").exists():
+        return []
+
+    prefix = os.environ.get("WILDCARD_PARALLEL_CANDIDATE_SOURCE_PREFIX", "wildcardParallelCand")
+    scene = os.environ.get("OBS_DASHBOARD_SCENE", "soren")
+    count = max(6, _int(jobs, 0))
+    indexes: set[int] = set()
+
+    if status_file:
+        try:
+            data = json.loads(Path(status_file).read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        try:
+            count = max(count, _int((data.get("params") or {}).get("jobs"), 0))
+        except Exception:
+            pass
+        for candidate in data.get("candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            index = _int(candidate.get("index"), -1)
+            if index >= 0:
+                indexes.add(index + 1)
+
+    count = max(count, _int(os.environ.get("WILDCARD_PARALLEL_OBS_CANDIDATE_CLEANUP_COUNT"), 0))
+    count = max(0, min(count, 64))
+    indexes.update(range(1, count + 1))
+    sources = [f"{prefix}{index}" for index in sorted(indexes) if index > 0]
+    if not sources:
+        return []
+
+    log_path = REPO_ROOT / "tmp" / "debug" / "wildcard_parallel_obs_cleanup.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = {
+        **os.environ,
+        "OBS_WEBSOCKET_TIMEOUT_MS": os.environ.get(
+            "WILDCARD_PARALLEL_OBS_CLEANUP_TIMEOUT_MS",
+            "2500",
+        ),
+    }
+    timeout = max(5, min(20, 3 + len(sources)))
+    try:
+        with open(log_path, "ab") as err:
+            err.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] hide {reason}: {' '.join(sources)}\n".encode("utf-8"))
+            subprocess.run(
+                ["./obs_control.sh", "hide", scene, *sources],
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+                timeout=timeout,
+                check=False,
+            )
+    except Exception:
+        pass
+    return sources
 
 
 def _safe_resolve(path: Path) -> Path:
@@ -1660,6 +1943,7 @@ def _write_tmux_bridge_script(workdir: Path, env: dict, stdout_path: Path, stder
     allowed_exact = {
         "PATH",
         "HOME",
+        "CFFIXED_USER_HOME",
         "TMPDIR",
         "XDG_CONFIG_HOME",
         "XDG_CACHE_HOME",
@@ -1750,6 +2034,24 @@ def launch_bridge(workdir: Path, env: dict, timeout: int) -> subprocess.Popen:
         raise
 
 
+def launch_bridge_with_chrome_lock(workdir: Path, env: dict, timeout: int) -> subprocess.Popen:
+    """Serialize macOS bridge startup until Chrome has produced initial game_state.
+
+    The bridge starts Chrome internally.  If six bridges all enter Chrome/Crashpad
+    initialization at once, macOS can reject Crashpad mach bootstrap registration
+    and SIGABRT most candidate browsers.  Holding the same launch lock through
+    launch_bridge() keeps the slot startup path serialized without changing
+    game-time parallelism after each browser is ready.
+    """
+    if (
+        sys.platform != "darwin"
+        or os.environ.get("WILDCARD_PARALLEL_SERIALIZE_BRIDGE_LAUNCH", "1").strip().lower()
+        in {"0", "false", "no", "off"}
+    ):
+        return launch_bridge(workdir, env, timeout)
+    return _run_with_launch_stagger(lambda: launch_bridge(workdir, env, timeout))
+
+
 def reset_bridge_for_next_game(workdir: Path, proc: subprocess.Popen, timeout: int) -> None:
     (workdir / "commands.txt").write_text("", encoding="utf-8")
     (workdir / "game_state.json").write_text("{}", encoding="utf-8")
@@ -1761,6 +2063,60 @@ def reset_bridge_for_next_game(workdir: Path, proc: subprocess.Popen, timeout: i
         lambda data: data.get("state") == "MOVE",
         "retry MOVE state",
     )
+
+
+def collect_chrome_pids_from_lsof_paths(paths: list[Path | str]) -> list[int]:
+    """Find Chrome/Chromium PIDs holding files under WILDCARD session paths.
+
+    macOS process listing can temporarily fail when sysmond is unavailable. lsof
+    still sees the profile files the orphaned candidate browser has open, so use
+    it as a narrow fallback and only accept Chrome-like commands.
+    """
+    pids: set[int] = set()
+    for raw_path in paths:
+        if not raw_path:
+            continue
+        try:
+            path = Path(raw_path)
+            marker = str(path)
+            resolved = str(path.resolve())
+        except Exception:
+            marker = str(raw_path)
+            resolved = marker
+            path = Path(marker)
+        if "wildcard_parallel" not in marker and "wildcard_parallel" not in resolved:
+            continue
+        if not path.exists():
+            continue
+        try:
+            proc = subprocess.run(
+                ["lsof", "-nP", "+D", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+        except Exception:
+            continue
+        if proc.returncode not in (0, 1):
+            continue
+        for line in proc.stdout.splitlines()[1:]:
+            parts = line.split(None, 8)
+            if len(parts) < 2:
+                continue
+            command = parts[0].lower()
+            if not (
+                "chrome" in command
+                or "chromium" in command
+                or command.startswith("google")
+            ):
+                continue
+            try:
+                pid = int(parts[1])
+            except Exception:
+                continue
+            if pid > 0 and pid != os.getpid():
+                pids.add(pid)
+    return sorted(pids)
 
 
 def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
@@ -1781,28 +2137,29 @@ def cleanup_chrome_profile_processes(profile_dir: str, cdp_port: int) -> None:
             timeout=5,
         )
     except Exception:
-        return
-    if proc.returncode != 0:
-        return
+        proc = None
     pids: list[int] = []
-    for line in proc.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        pid_raw, _, command = stripped.partition(" ")
-        try:
-            pid = int(pid_raw)
-        except Exception:
-            continue
-        if pid == os.getpid():
-            continue
-        if "Google Chrome for Testing" not in command and "Chromium" not in command:
-            continue
-        if "wildcard_parallel" not in command:
-            continue
-        if not any(marker and marker in command for marker in profile_markers) and port_token not in command:
-            continue
-        pids.append(pid)
+    if proc is not None and proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            pid_raw, _, command = stripped.partition(" ")
+            try:
+                pid = int(pid_raw)
+            except Exception:
+                continue
+            if pid == os.getpid():
+                continue
+            if "Chrome" not in command and "Chromium" not in command:
+                continue
+            if "wildcard_parallel" not in command:
+                continue
+            if not any(marker and marker in command for marker in profile_markers) and port_token not in command:
+                continue
+            pids.append(pid)
+    if not pids:
+        pids = collect_chrome_pids_from_lsof_paths([profile_dir])
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for pid in pids:
             try:
@@ -1845,28 +2202,33 @@ def cleanup_wildcard_chrome_processes(
             timeout=5,
         )
     except Exception:
-        return
-    if proc.returncode != 0:
-        return
+        proc = None
     pids: list[int] = []
-    for line in proc.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        pid_raw, _, command = stripped.partition(" ")
-        try:
-            pid = int(pid_raw)
-        except Exception:
-            continue
-        if pid == os.getpid():
-            continue
-        if "Google Chrome for Testing" not in command and "Chromium" not in command:
-            continue
-        if not any(marker and marker in command for marker in markers):
-            continue
-        if any(ex in command for ex in excludes):
-            continue
-        pids.append(pid)
+    if proc is not None and proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            pid_raw, _, command = stripped.partition(" ")
+            try:
+                pid = int(pid_raw)
+            except Exception:
+                continue
+            if pid == os.getpid():
+                continue
+            if "Chrome" not in command and "Chromium" not in command:
+                continue
+            if not any(marker and marker in command for marker in markers):
+                continue
+            if any(ex in command for ex in excludes):
+                continue
+            pids.append(pid)
+    if not pids:
+        lsof_paths: list[Path | str] = []
+        for path in (session_dir, session_root):
+            if path:
+                lsof_paths.append(path)
+        pids = collect_chrome_pids_from_lsof_paths(lsof_paths)
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for pid in pids:
             try:
@@ -2208,19 +2570,21 @@ def evaluate_real(
     )
     chrome_app_path = os.environ.get("WILDCARD_PARALLEL_CHROME_APP_PATH", "")
     chrome_executable_path = os.environ.get("WILDCARD_PARALLEL_CHROME_EXECUTABLE_PATH", "")
+    explicit_chrome_path = bool(chrome_app_path or chrome_executable_path)
     default_headless = "0" if sys.platform == "darwin" else "1"
     use_system_chrome = os.environ.get("WILDCARD_PARALLEL_USE_SYSTEM_CHROME", "0")
-    if sys.platform == "darwin" and not chrome_app_path and not chrome_executable_path and use_system_chrome != "0":
-        system_chrome_app = Path("/Applications/Google Chrome.app")
-        system_chrome_exe = system_chrome_app / "Contents" / "MacOS" / "Google Chrome"
-        if system_chrome_app.exists() and system_chrome_exe.exists():
-            chrome_app_path = str(system_chrome_app)
-            chrome_executable_path = chrome_executable_path or str(system_chrome_exe)
-            default_headless = "0"
-    if not chrome_app_path and not chrome_executable_path:
+    if use_system_chrome not in {"0", "1"}:
+        use_system_chrome = "0"
+    system_chrome_app, system_chrome_executable = resolve_macos_system_chrome()
+    if sys.platform == "darwin" and not explicit_chrome_path and use_system_chrome == "1" and system_chrome_app:
+        chrome_app_path = system_chrome_app
+        chrome_executable_path = system_chrome_executable
+    elif not chrome_app_path and not chrome_executable_path:
         chrome_executable_path = resolve_playwright_chrome_for_testing(playwright_browsers_path)
     if not chrome_app_path and chrome_executable_path:
         chrome_app_path = chrome_app_path_from_executable(chrome_executable_path)
+    chrome_fallback_app_path_list = chrome_fallback_app_paths(chrome_app_path)
+    chrome_fallback_executable_path_list = chrome_fallback_executable_paths(chrome_executable_path)
     if progress_callback:
         progress_callback(candidate)
     env = os.environ.copy()
@@ -2243,6 +2607,9 @@ def evaluate_real(
     env.update(
         {
             "PATH": candidate_path,
+            # Keep per-slot browser profile and Crashpad data isolated. Sharing
+            # the real Google Crashpad database across six parallel slots makes
+            # Chrome for Testing prone to SIGABRT on macOS after crash recovery.
             "HOME": str((workdir / "tmp" / "chrome_home").resolve()),
             "SOREN_CDP_PORT": str(candidate.cdp_port),
             "SOREN_SERVE_PORT": str(candidate.serve_port),
@@ -2253,8 +2620,30 @@ def evaluate_real(
             "XDG_CACHE_HOME": candidate_cache_home,
             "PLAYWRIGHT_BROWSERS_PATH": playwright_browsers_path,
             "SOREN_CHROME_HOME": str((workdir / "tmp" / "chrome_home").resolve()),
+            "SOREN_CHROME_USE_REAL_HOME": os.environ.get("WILDCARD_PARALLEL_USE_REAL_CHROME_HOME", "0"),
+            "SOREN_CHROME_SET_CFFIXED_HOME": os.environ.get("WILDCARD_PARALLEL_SET_CFFIXED_HOME", "1"),
             "SOREN_CHROME_NO_FOCUS_LAUNCH": os.environ.get("WILDCARD_PARALLEL_NO_FOCUS_LAUNCH", "1"),
             "SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH": os.environ.get("WILDCARD_PARALLEL_FORCE_PLAYWRIGHT_LAUNCH", "0"),
+            "SOREN_CHROME_OPEN_FALLBACK_APP_NAME": os.environ.get(
+                "WILDCARD_PARALLEL_OPEN_FALLBACK_APP_NAME",
+                os.environ.get("SOREN_CHROME_OPEN_FALLBACK_APP_NAME", "Google Chrome"),
+            ),
+            "SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID": os.environ.get(
+                "WILDCARD_PARALLEL_OPEN_FALLBACK_BUNDLE_ID",
+                os.environ.get("SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID", "com.google.chrome.for.testing,com.google.Chrome"),
+            ),
+            "SOREN_CHROME_OPEN_FALLBACK_APP_PATHS": os.environ.get(
+                "WILDCARD_PARALLEL_CHROME_FALLBACK_APP_PATHS",
+                os.environ.get("SOREN_CHROME_OPEN_FALLBACK_APP_PATHS", ",".join(chrome_fallback_app_path_list)),
+            ),
+            "SOREN_CHROME_HEADLESS_FALLBACK_ON_CRASHPAD_FAIL": os.environ.get(
+                "WILDCARD_PARALLEL_HEADLESS_FALLBACK_ON_CRASHPAD_FAIL",
+                os.environ.get("WILDCARD_PARALLEL_HEADLESS_FALLBACK_ON_PRELAUNCH_FAIL", "1"),
+            ),
+            "SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS": os.environ.get(
+                "WILDCARD_PARALLEL_CHROME_FALLBACK_EXECUTABLE_PATHS",
+                os.environ.get("SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS", ",".join(chrome_fallback_executable_path_list)),
+            ),
             "RUSSIA_CELEBRATION_ENABLED": "0",
             "SOREN_BRIDGE_DESYNC_LIMIT": os.environ.get("WILDCARD_PARALLEL_BRIDGE_DESYNC_LIMIT", "3"),
             "SOREN_BGM_VOLUME": os.environ.get("WILDCARD_PARALLEL_BGM_VOLUME", "0"),
@@ -2274,14 +2663,23 @@ def evaluate_real(
         # never gets a real board, and is culled instantly -> infinite regeneration.
         # The main game runs on a different CDP port, so this never touches it.
         cleanup_wildcard_server_ports([candidate.cdp_port])
-    if (
+    should_prelaunch = (
         existing_bridge is None
         and env.get("SOREN_CHROME_HEADLESS") not in {"1", "true", "yes", "on"}
         and env.get("SOREN_CHROME_NO_FOCUS_LAUNCH") != "0"
         and env.get("SOREN_CHROME_FORCE_PLAYWRIGHT_LAUNCH") != "1"
-        and prelaunch_candidate_chrome(chrome_app_path, chrome_executable_path, candidate.profile_dir, candidate.cdp_port)
-    ):
-        env["SOREN_CHROME_ATTACH_ONLY"] = "1"
+    )
+    if should_prelaunch:
+        prelaunch_ok = prelaunch_candidate_chrome(
+            chrome_app_path,
+            chrome_executable_path,
+            candidate.profile_dir,
+            candidate.cdp_port,
+            chrome_fallback_app_path_list,
+            chrome_fallback_executable_path_list,
+        )
+        if prelaunch_ok:
+            env["SOREN_CHROME_ATTACH_ONLY"] = "1"
     try:
         bridge: subprocess.Popen | None = existing_bridge
         reused_bridge = bridge is not None and bridge.poll() is None
@@ -2292,7 +2690,7 @@ def evaluate_real(
         try:
             if bridge is None or bridge.poll() is not None:
                 cleanup_wildcard_server_ports([candidate.serve_port])
-                bridge = launch_bridge(workdir, env, args.bridge_timeout)
+                bridge = launch_bridge_with_chrome_lock(workdir, env, args.bridge_timeout)
                 if slot_runtime is not None:
                     slot_runtime["bridge"] = bridge
                 maybe_show_obs_candidate_source(candidate)
@@ -3067,6 +3465,7 @@ def main() -> int:
     if args.cleanup_stale:
         cleanup_wildcard_chrome_processes(session_root=args.session_root)
         cleanup_wildcard_server_ports(cleanup_ports_from_status(args.status_file, args.serve_base_port, args.jobs))
+        hide_wildcard_candidate_obs_sources(args.status_file, args.jobs, "cleanup_stale")
         if args.cleanup_sessions:
             cleanup_wildcard_session_dirs(
                 args.session_root,
@@ -3092,6 +3491,8 @@ def main() -> int:
         # currently active session (None when nothing is running -> sweep all).
         exclude_markers = [str(active_session), active_session.name] if active_session else []
         cleanup_wildcard_chrome_processes(session_root=args.session_root, exclude_markers=exclude_markers)
+        if not active_session:
+            hide_wildcard_candidate_obs_sources(args.status_file, args.jobs, "cleanup_sessions")
         return 0
 
     args.jobs = max(3, args.jobs)
@@ -3114,6 +3515,7 @@ def main() -> int:
     cleanup_wildcard_server_ports([args.serve_base_port + index for index in range(args.jobs)])
     cleanup_wildcard_server_ports([args.cdp_base_port + index for index in range(args.jobs)])
     cleanup_wildcard_chrome_processes(session_root=args.session_root)
+    hide_wildcard_candidate_obs_sources(args.status_file, args.jobs, "pre_run_sweep")
     keep_sessions = []
     active_session = status_active_session(args.status_file)
     if active_session:
@@ -3214,6 +3616,7 @@ def main() -> int:
         return exit_code
     finally:
         cleanup_wildcard_chrome_processes(session_dir=session_dir)
+        hide_wildcard_candidate_obs_sources(args.status_file, args.jobs, "run_finally")
         _ACTIVE_ARGS = None
         _ACTIVE_RESULT_FILE = None
         _ACTIVE_STATUS_FILE = None
@@ -3253,6 +3656,15 @@ if __name__ == "__main__":
         def _force_exit() -> None:
             try:
                 cleanup_wildcard_chrome_processes(session_dir=_ACTIVE_SESSION_DIR)
+            except Exception:
+                pass
+            try:
+                if _ACTIVE_ARGS is not None and _ACTIVE_STATUS_FILE is not None:
+                    hide_wildcard_candidate_obs_sources(
+                        _ACTIVE_STATUS_FILE,
+                        _int(getattr(_ACTIVE_ARGS, "jobs", 6), 6),
+                        "signal_force_exit",
+                    )
             except Exception:
                 pass
             try:

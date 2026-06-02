@@ -126,12 +126,93 @@ function chromeAppPathFromExecutable(executablePath) {
   return executablePath.slice(0, idx + '.app'.length);
 }
 
+function chromeExecutablePathFromAppPath(appPath) {
+  if (!appPath) return '';
+  const macosDir = path.join(appPath, 'Contents', 'MacOS');
+  for (const name of ['Google Chrome', 'Google Chrome for Testing', 'Chromium']) {
+    const candidate = path.join(macosDir, name);
+    if (executableExists(candidate)) return candidate;
+  }
+  return '';
+}
+
 function chromeExecutablePath() {
   return process.env.SOREN_CHROME_EXECUTABLE_PATH || chromium.executablePath();
 }
 
-async function waitForCdpBrowser(port, timeoutMs = 10000) {
-  const deadline = Date.now() + timeoutMs;
+function executableExists(executablePath) {
+  try {
+    fs.accessSync(executablePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function systemChromeExecutablePath() {
+  if (process.platform !== 'darwin') return '';
+  const executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  return executableExists(executablePath) ? executablePath : '';
+}
+
+function systemChromeAppPath() {
+  if (process.platform !== 'darwin') return '';
+  const appPath = '/Applications/Google Chrome.app';
+  return executableExists(chromeExecutablePathFromAppPath(appPath)) ? appPath : '';
+}
+
+function chromeFallbackAppPaths(primaryAppPath) {
+  const raw = Object.prototype.hasOwnProperty.call(process.env, 'SOREN_CHROME_OPEN_FALLBACK_APP_PATHS')
+    ? process.env.SOREN_CHROME_OPEN_FALLBACK_APP_PATHS
+    : '';
+  if (isDisabledEnvValue(raw)) return [];
+  const candidates = String(raw || '').split(',').map(v => v.trim()).filter(Boolean);
+  const systemApp = systemChromeAppPath();
+  if (systemApp) candidates.push(systemApp);
+  const primaryResolved = primaryAppPath ? path.resolve(primaryAppPath) : '';
+  const seen = new Set();
+  const result = [];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (resolved === primaryResolved || seen.has(resolved)) continue;
+    if (!executableExists(chromeExecutablePathFromAppPath(candidate))) continue;
+    seen.add(resolved);
+    result.push(candidate);
+  }
+  return result;
+}
+
+function chromeFallbackExecutablePaths(primaryExecutablePath) {
+  const raw = Object.prototype.hasOwnProperty.call(process.env, 'SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS')
+    ? process.env.SOREN_CHROME_FALLBACK_EXECUTABLE_PATHS
+    : '';
+  if (isDisabledEnvValue(raw)) return [];
+  const candidates = String(raw || '').split(',').map(v => v.trim()).filter(Boolean);
+  const systemChrome = systemChromeExecutablePath();
+  if (systemChrome) candidates.push(systemChrome);
+  const primaryResolved = primaryExecutablePath ? path.resolve(primaryExecutablePath) : '';
+  const seen = new Set();
+  const result = [];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (resolved === primaryResolved || seen.has(resolved)) continue;
+    if (!executableExists(candidate)) continue;
+    seen.add(resolved);
+    result.push(candidate);
+  }
+  return result;
+}
+
+function isRegularMacChrome(executablePath, appPath = '') {
+  if (process.platform !== 'darwin') return false;
+  return String(appPath || '').endsWith('/Google Chrome.app') ||
+    String(executablePath || '').includes('/Google Chrome.app/Contents/MacOS/Google Chrome');
+}
+
+async function waitForCdpBrowser(port, timeoutMs = parseInt(process.env.SOREN_CDP_ATTACH_TIMEOUT_MS || '30000', 10)) {
+  const startedAt = Date.now();
+  await waitForCdpHttp(port, timeoutMs);
+  const deadline = Date.now() + Math.max(1000, timeoutMs - (Date.now() - startedAt));
   let lastError = null;
   while (Date.now() < deadline) {
     try {
@@ -171,12 +252,55 @@ function isMacOpenExecutableMissingFailure(error) {
 }
 
 function launchChromiumExecutableDetached(executablePath, userDataDir, args, launchEnv) {
+  const stderrPath = path.join(userDataDir, 'soren_chrome_detached.stderr.log');
+  fs.mkdirSync(userDataDir, { recursive: true });
+  let stderrFd = 'ignore';
+  try {
+    stderrFd = fs.openSync(stderrPath, 'a');
+  } catch {
+    stderrFd = 'ignore';
+  }
   const child = spawn(executablePath, [`--user-data-dir=${userDataDir}`, ...args], {
     detached: true,
     env: launchEnv,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', stderrFd],
   });
   child.unref();
+  return child;
+}
+
+function isDisabledEnvValue(value) {
+  return ['0', 'false', 'no', 'off'].includes(String(value || '').toLowerCase());
+}
+
+function macOpenFallbackAppNames() {
+  const raw = Object.prototype.hasOwnProperty.call(process.env, 'SOREN_CHROME_OPEN_FALLBACK_APP_NAME')
+    ? process.env.SOREN_CHROME_OPEN_FALLBACK_APP_NAME
+    : 'Google Chrome';
+  if (!raw || isDisabledEnvValue(raw)) return [];
+  return String(raw).split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function macOpenFallbackBundleIds() {
+  const raw = Object.prototype.hasOwnProperty.call(process.env, 'SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID')
+    ? process.env.SOREN_CHROME_OPEN_FALLBACK_BUNDLE_ID
+    : 'com.google.chrome.for.testing,com.google.Chrome';
+  if (!raw || isDisabledEnvValue(raw)) return [];
+  return String(raw).split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function macOpenChromium(openArgs, launchEnv) {
+  const shellCommand = `exec /usr/bin/open ${openArgs.map(shellQuote).join(' ')}`;
+  return new Promise((resolve, reject) => {
+    execFile('/bin/zsh', ['-lc', shellCommand], { env: launchEnv }, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
 }
 
 async function launchPersistentContextWithoutFocus(userDataDir, args, opts = {}) {
@@ -200,30 +324,105 @@ async function launchPersistentContextWithoutFocus(userDataDir, args, opts = {})
 
   const executablePath = chromeExecutablePath();
   const appPath = chromeAppPathFromExecutable(executablePath);
-  if (!appPath) return null;
 
   fs.mkdirSync(userDataDir, { recursive: true });
   const openArgs = [
     '-g',
     '-n',
-    '-a',
     appPath,
     '--args',
     `--user-data-dir=${userDataDir}`,
     ...args,
   ];
 
-  const launchEnv = browserLaunchEnv(userDataDir);
-  await new Promise((resolve, reject) => {
-    execFile('/usr/bin/open', openArgs, { env: launchEnv }, (err) => {
-      if (err) reject(err);
-      else resolve();
+  const launchEnv = browserLaunchEnv(userDataDir, executablePath, { launchServices: true });
+  let launched = false;
+  if (appPath) {
+    await macOpenChromium(openArgs, launchEnv).then(() => {
+      launched = true;
+    }).catch(async err => {
+      if (!isMacOpenExecutableMissingFailure(err)) throw err;
+      console.error(`[NO-FOCUS] macOS open app-path failed (${appPath}): ${err.message}`);
+      const fallbackNames = macOpenFallbackAppNames();
+      let lastFallbackErr = err;
+      for (const fallbackAppPath of chromeFallbackAppPaths(appPath)) {
+        const fallbackOpenArgs = [
+          '-g',
+          '-n',
+          fallbackAppPath,
+          '--args',
+          `--user-data-dir=${userDataDir}`,
+          ...args,
+        ];
+        const fallbackExecutablePath = chromeExecutablePathFromAppPath(fallbackAppPath) || executablePath;
+        try {
+          await macOpenChromium(fallbackOpenArgs, browserLaunchEnv(userDataDir, fallbackExecutablePath, { launchServices: true }));
+          console.error(`[NO-FOCUS] macOS open app-path fallback launched: ${fallbackAppPath}`);
+          launched = true;
+          return;
+        } catch (fallbackErr) {
+          lastFallbackErr = fallbackErr;
+          console.error(`[NO-FOCUS] macOS open app-path fallback failed (${fallbackAppPath}): ${fallbackErr.message}`);
+        }
+      }
+      for (const appName of fallbackNames) {
+        const fallbackOpenArgs = [
+          '-g',
+          '-n',
+          '-a',
+          appName,
+          '--args',
+          `--user-data-dir=${userDataDir}`,
+          ...args,
+        ];
+        try {
+          await macOpenChromium(fallbackOpenArgs, launchEnv);
+          console.error(`[NO-FOCUS] macOS open app-name fallback launched: ${appName}`);
+          launched = true;
+          return;
+        } catch (fallbackErr) {
+          lastFallbackErr = fallbackErr;
+          console.error(`[NO-FOCUS] macOS open app-name fallback failed (${appName}): ${fallbackErr.message}`);
+        }
+      }
+      for (const bundleId of macOpenFallbackBundleIds()) {
+        const fallbackOpenArgs = [
+          '-g',
+          '-n',
+          '-b',
+          bundleId,
+          '--args',
+          `--user-data-dir=${userDataDir}`,
+          ...args,
+        ];
+        try {
+          await macOpenChromium(fallbackOpenArgs, launchEnv);
+          console.error(`[NO-FOCUS] macOS open bundle-id fallback launched: ${bundleId}`);
+          launched = true;
+          return;
+        } catch (fallbackErr) {
+          lastFallbackErr = fallbackErr;
+          console.error(`[NO-FOCUS] macOS open bundle-id fallback failed (${bundleId}): ${fallbackErr.message}`);
+        }
+      }
+      if (!force) throw lastFallbackErr;
     });
-  }).catch(err => {
-    if (!force || !isMacOpenExecutableMissingFailure(err)) throw err;
-    console.error('[CRASHPAD] macOS open -g could not launch the app bundle; retrying detached Chrome executable');
-    launchChromiumExecutableDetached(executablePath, userDataDir, args, launchEnv);
-  });
+  } else if (!force) {
+    return null;
+  }
+
+  if (launched) {
+    try {
+      await waitForCdpHttp(CDP_PORT);
+    } catch (err) {
+      if (!force) throw err;
+      console.error(`[CRASHPAD] macOS open launch did not expose CDP; retrying detached Chrome fallback: ${err.message}`);
+      launched = false;
+    }
+  }
+  if (!launched && force) {
+    await launchDetachedChromeFallback(userDataDir, args, executablePath);
+  }
 
   const browser = await waitForCdpBrowser(CDP_PORT);
   const context = browser.contexts()[0];
@@ -235,29 +434,73 @@ async function launchPersistentContextWithoutFocus(userDataDir, args, opts = {})
   return { browser, context };
 }
 
-function browserLaunchEnv(userDataDir) {
+async function launchDetachedChromeFallback(userDataDir, args, primaryExecutablePath) {
+  const candidates = [
+    primaryExecutablePath,
+    ...chromeFallbackExecutablePaths(primaryExecutablePath),
+  ].filter(Boolean);
+  let lastErr = null;
+  for (const candidatePath of candidates) {
+    const launchEnv = browserLaunchEnv(userDataDir, candidatePath, { launchServices: false });
+    let child = null;
+    try {
+      console.error(`[CRASHPAD] retrying detached Chrome executable: ${candidatePath}`);
+      child = launchChromiumExecutableDetached(candidatePath, userDataDir, args, launchEnv);
+      await waitForCdpHttp(CDP_PORT);
+      if (candidatePath !== primaryExecutablePath) {
+        console.error(`[CRASHPAD] detached Chrome fallback launched: ${candidatePath}`);
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.error(`[CRASHPAD] detached Chrome executable failed (${candidatePath}): ${err.message}`);
+      if (child) {
+        try { child.kill('SIGTERM'); } catch {}
+      }
+    }
+  }
+  throw lastErr || new Error('detached Chrome fallback failed');
+}
+
+function browserLaunchEnv(userDataDir, executablePathOverride = null, opts = {}) {
   const env = { ...process.env };
-  // Keep Chrome for Testing's macOS Crashpad/config writes inside the project
-  // profile. If HOME falls through to the real user home, Crashpad may touch
-  // ~/Library/Application Support/Google/Chrome for Testing and abort under
-  // sandboxed relaunches even with --disable-crashpad.
-  const homeDir = env.SOREN_CHROME_HOME || path.join(userDataDir, 'chrome_home');
-  const configHome = env.XDG_CONFIG_HOME || (homeDir ? path.join(homeDir, '.config') : '');
-  const cacheHome = env.XDG_CACHE_HOME || (homeDir ? path.join(homeDir, '.cache') : '');
-  const tmpDir = env.TMPDIR || path.join(userDataDir, 'tmp');
-  for (const dir of [homeDir, configHome, cacheHome, tmpDir]) {
+  // Keep Chrome's macOS config/Crashpad writes inside the per-slot profile.
+  // Sharing the real ~/Library/Application Support/Google Crashpad database
+  // across parallel slots can make all of them SIGABRT on macOS.
+  const chromeHomeDir = env.SOREN_CHROME_HOME || path.join(userDataDir, 'chrome_home');
+  const useRealMacHome = ['1', 'true', 'yes', 'on'].includes(String(env.SOREN_CHROME_USE_REAL_HOME || '').toLowerCase());
+  const cffixedHomeSetting = String(env.SOREN_CHROME_SET_CFFIXED_HOME || '').toLowerCase();
+  const setCffixedHome = cffixedHomeSetting
+    ? ['1', 'true', 'yes', 'on'].includes(cffixedHomeSetting)
+    : !useRealMacHome;
+  const homeDir = useRealMacHome
+    ? (env.SOREN_LAUNCHSERVICES_HOME || env.HOME || chromeHomeDir)
+    : chromeHomeDir;
+  const configHome = useRealMacHome ? '' : (env.XDG_CONFIG_HOME || path.join(homeDir, '.config'));
+  const cacheHome = useRealMacHome ? '' : (env.XDG_CACHE_HOME || path.join(homeDir, '.cache'));
+  const tmpDir = env.TMPDIR || (useRealMacHome ? '' : path.join(userDataDir, 'tmp'));
+  for (const dir of [chromeHomeDir, homeDir, configHome, cacheHome, tmpDir]) {
     if (dir) fs.mkdirSync(dir, { recursive: true });
   }
   if (homeDir) env.HOME = homeDir;
+  if (useRealMacHome) {
+    delete env.CFFIXED_USER_HOME;
+    delete env.XDG_CONFIG_HOME;
+    delete env.XDG_CACHE_HOME;
+  } else if (setCffixedHome) {
+    env.CFFIXED_USER_HOME = chromeHomeDir;
+  } else {
+    delete env.CFFIXED_USER_HOME;
+  }
   if (configHome) env.XDG_CONFIG_HOME = configHome;
   if (cacheHome) env.XDG_CACHE_HOME = cacheHome;
-  env.TMPDIR = tmpDir;
+  if (tmpDir) env.TMPDIR = tmpDir;
   return env;
 }
 
-async function withBrowserLaunchEnv(userDataDir, fn) {
-  const launchEnv = browserLaunchEnv(userDataDir);
-  const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TMPDIR'];
+async function withBrowserLaunchEnv(userDataDir, fn, executablePathOverride = null, opts = {}) {
+  const launchEnv = browserLaunchEnv(userDataDir, executablePathOverride, opts);
+  const keys = ['HOME', 'CFFIXED_USER_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TMPDIR'];
   const saved = {};
   for (const key of keys) {
     saved[key] = process.env[key];
@@ -843,15 +1086,44 @@ async function runLocalController() {
         browser = context.browser();
       } catch (launchErr) {
         const allowOpenFallback = !['0', 'false', 'no', 'off'].includes(String(process.env.SOREN_CHROME_OPEN_FALLBACK_ON_CRASHPAD_FAIL || '1').toLowerCase());
-        if (!CHROME_HEADLESS && allowOpenFallback && isCrashpadPermissionLaunchFailure(launchErr)) {
+        const allowHeadlessFallback = !['0', 'false', 'no', 'off'].includes(String(
+          process.env.SOREN_CHROME_HEADLESS_FALLBACK_ON_CRASHPAD_FAIL ||
+          process.env.SOREN_CHROME_HEADLESS_FALLBACK_ON_PRELAUNCH_FAIL ||
+          '0'
+        ).toLowerCase());
+        if (!CHROME_HEADLESS && isCrashpadPermissionLaunchFailure(launchErr)) {
           console.error('[CRASHPAD] Playwright launch hit Chrome for Testing crashpad permission failure; retrying via macOS open -g fallback');
-          const fallbackLaunch = await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs, { force: true });
+          let fallbackLaunch = null;
+          let openFallbackErr = null;
+          if (allowOpenFallback) {
+            try {
+              fallbackLaunch = await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs, { force: true });
+            } catch (err) {
+              openFallbackErr = err;
+              console.error(`[CRASHPAD] macOS open fallback failed: ${err.message}`);
+            }
+          }
           if (fallbackLaunch) {
             browser = fallbackLaunch.browser;
             context = fallbackLaunch.context;
             closeBrowserAfterContext = true;
+          } else if (allowHeadlessFallback) {
+            console.error('[CRASHPAD] macOS open fallback unavailable; retrying headless Playwright launch');
+            const headlessFallbackExecutablePath = chromeFallbackExecutablePaths(chromeExecutablePath())[0] || process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined;
+            if (headlessFallbackExecutablePath) {
+              console.error(`[CRASHPAD] headless Playwright fallback executable: ${headlessFallbackExecutablePath}`);
+            }
+            context = await withBrowserLaunchEnv(USER_DATA_DIR, launchEnv => chromium.launchPersistentContext(USER_DATA_DIR, {
+              executablePath: headlessFallbackExecutablePath,
+              headless: true,
+              viewport: { width: 1280, height: 720 },
+              deviceScaleFactor: 1,
+              env: launchEnv,
+              args: launchArgs,
+            }), headlessFallbackExecutablePath || null, { launchServices: false });
+            browser = context.browser();
           } else {
-            throw launchErr;
+            throw openFallbackErr || launchErr;
           }
         } else {
           throw launchErr;

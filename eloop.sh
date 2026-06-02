@@ -268,10 +268,23 @@ play_one_game() {
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
 	python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
 	local py_pid=$!
+	local runner_active_file="${MAIN_STRATEGY_RUNNER_ACTIVE_FILE:-${TMP_STATE_DIR:-tmp/state}/main_strategy_runner_active.json}"
+	python3 - "$runner_active_file" "$py_pid" "$game_num_display" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+path, pid, game = sys.argv[1:4]
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump({"pid": int(pid), "game": int(game), "started_at": int(time.time())}, f, ensure_ascii=False)
+PY
 	tail -n +1 -f "$runner_tmpfile" &
 	local tail_pid=$!
 	wait "$py_pid"
 	local py_rc=$?
+	rm -f "$runner_active_file" 2>/dev/null || true
 	kill "$tail_pid" 2>/dev/null
 	wait "$tail_pid" 2>/dev/null || true
 	if [ "$py_rc" -eq 130 ] || [ "$py_rc" -eq 143 ]; then
