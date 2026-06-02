@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
+Change Log:
+  - vXXX: PRE_RUSSIA cluster window reduction during merge drought (ref: tmp/analysis_result.md)
+    Ukraine T13 gate fix: shrink cluster window to __dlg_lowest_y+0.40 when
+    __dlg_global_merge=false && deadline_margin<2.0. Prevents max_y runaway
+    (0.60→2.86 in worst game T50-T57) by tightening height ceiling before
+    Kazakhstan Gateway ceiling (margin<0.5) activates.
+
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -1679,6 +1686,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if __dlg_mode in ("second_russia_t12_pair_lock", "first_russia_single_t13_t12_bank")
                 else 0.85
             )
+            __dlg_global_merge = any(
+                isinstance(c, dict) and c.get("merge_grade") not in (None, "", "NO")
+                for c in __dlg_cands
+            )
+            if not __dlg_global_merge and __dlg_margin < 2.0:
+                __dlg_merge_drought_ceiling = __dlg_lowest_y + 0.40
+                __dlg_window = min(__dlg_window, __dlg_merge_drought_ceiling)
             __dlg_eligible = [
                 c for c in __dlg_safe
                 if float(c.get("landing_y", 99.0) or 99.0) <= __dlg_window
@@ -3227,6 +3241,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             t7_targets = [p for p in pieces if p.get("type") == 7]
             t6_targets = [p for p in pieces if p.get("type") == 6]
             anchor_target = None
+            dense_anchor_pressure = False
             if t12_targets:
                 t12_anchor = min(t12_targets, key=lambda tp: (tp.get("y", -10), abs(tp.get("x", 0))))
                 anchor_x = t12_anchor.get("x", 0)
@@ -4313,15 +4328,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         tp for tp in t11_targets
                         if abs(tp.get("x", 0) - wide_anchor_x) <= 1.25
                     ]
-                    if not near_anchor_t11:
+                    bridge_t11 = []
+                    if t13_center is not None and abs(wide_anchor_x - t13_center) >= 2.35:
+                        bridge_left = min(wide_anchor_x, t13_center) - 0.25
+                        bridge_right = max(wide_anchor_x, t13_center) + 0.25
+                        bridge_t11 = [
+                            tp for tp in t11_targets
+                            if (
+                                bridge_left <= tp.get("x", 0) <= bridge_right
+                                and tp.get("y", -10) <= 0.25
+                                and abs(tp.get("x", 0) - wide_anchor_x) <= 1.85
+                                and abs(tp.get("x", 0) - t13_center) <= 1.9
+                            )
+                        ]
+                    if near_anchor_t11:
+                        t11_targets_for_key = near_anchor_t11
+                    elif bridge_t11:
+                        t11_targets_for_key = bridge_t11
+                    else:
                         compress_target = {
                             "x": wide_anchor_x,
                             "y": wide_t12_anchor.get("y", -10),
                             "type": 12,
                         }
                         wide_t12_virtual_target = True
-                    else:
-                        t11_targets_for_key = near_anchor_t11
                 if not wide_t12_virtual_target:
                     def _pre_russia_single_t13_t12_compress_t11_key(tp):
                         tp_x = tp.get("x", 0)

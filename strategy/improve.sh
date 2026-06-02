@@ -1624,8 +1624,24 @@ data["fresh_objective_archive_restart_available"] = bool(as_int("FRESH_OBJECTIVE
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f)
 PY
+	# 視聴者向けシグナル: 早期改善トリガーをチャット＋画面通知で平易に告知（中華AI視点）。
+	# 技術詳細(hash/reference/route)は上の [FRESH_OBJECTIVE] ログとlockファイルに残るので、
+	# ここでは視聴者に伝わる文言にする。
+	local _fresh_country
+	case "${_fresh_best:-0}" in
+		16) _fresh_country="ソ連" ;;
+		15) _fresh_country="ロシア" ;;
+		14) _fresh_country="カザフ" ;;
+		13) _fresh_country="ウクライナ" ;;
+		12) _fresh_country="ベラルーシ" ;;
+		11) _fresh_country="トルクメン" ;;
+		*) _fresh_country="最高T${_fresh_best:-0}" ;;
+	esac
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh worker "fresh目的再評価 queued (game ${GAME_NUM:-?})" "現行hash=${_fresh_hash:0:8} がfresh ${_fresh_n}本でR0/T${_fresh_best}止まり。reference=${_fresh_reference} route=${_fresh_improve_reason}。" "warn" >/dev/null 2>&1 || true
+		./overlay_notify.sh worker "中華AI 早期改善を決断 (game ${GAME_NUM:-?})" "直近${_fresh_n}試合は最高${_fresh_country}でロシア建国0。建国実績のある安定版に追いつけていないため、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たず戦略を練り直します。" "warn" >/dev/null 2>&1 || true
+	fi
+	if command -v enqueue_chat_message >/dev/null 2>&1; then
+		enqueue_chat_message "🔧 中華AI、戦略を早期見直し！直近${_fresh_n}試合は最高${_fresh_country}でロシア建国に届かず。建国実績のある安定版に追いつけていないので、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たずに改善を始めます💪" "fresh_objective" 4 || true
 	fi
 	_clear_accumulated_data
 	return 0

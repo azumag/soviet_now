@@ -5910,6 +5910,67 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertEqual(decision["x"], -1.6)
         self.assertIn("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS", decision["reason"])
 
+    def test_pre_russia_single_t13_t12_compress_uses_low_t11_bridge_when_t12_pair_vertical_split(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 13, "x": -1.10, "y": 1.15},
+            {"id": 2, "type": 12, "x": 1.85, "y": -2.55},
+            {"id": 3, "type": 12, "x": 2.15, "y": 1.40},
+            {"id": 4, "type": 11, "x": 0.41, "y": -1.82},
+            {"id": 5, "type": 10, "x": -2.38, "y": -0.55},
+            {"id": 6, "type": 9, "x": 2.82, "y": -3.22},
+            {"id": 7, "type": 9, "x": 2.37, "y": -0.84},
+            {"id": 8, "type": 9, "x": -0.03, "y": -0.87},
+        ]
+        for i in range(9, 35):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.0 + (i % 5) * 0.18,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 11},
+                "nextNext": {"type": 2},
+            },
+            {
+                "reactor": {"deadline_margin": 0.8, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 0.4,
+                        "crosses_deadline": True,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 1.05,
+                    },
+                    {
+                        "x": 1.4,
+                        "crosses_deadline": True,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.95,
+                    },
+                    {
+                        "x": 2.05,
+                        "crosses_deadline": True,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.65,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 0.4)
+        self.assertIn("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS", decision["reason"])
+
     def test_pre_russia_single_t13_single_t12_ladder_guides_t11_to_t12_lane(self):
         import strategy
 
