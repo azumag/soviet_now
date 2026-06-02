@@ -3702,6 +3702,12 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("pre_russia_t13_pair_ladder_ready", strategy)
         self.assertIn("PRE_RUSSIA_T10_LADDER", strategy)
         self.assertIn("pre_russia_t10_ladder_ready", strategy)
+        self.assertIn("PRE_RUSSIA_EARLY_T10_LADDER", strategy)
+        self.assertIn("pre_russia_early_t10_ladder_ready", strategy)
+        self.assertIn("PRE_RUSSIA_SINGLE_T12_ANCHOR_LADDER", strategy)
+        self.assertIn("pre_russia_single_t12_anchor_ladder_ready", strategy)
+        self.assertIn("DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR", strategy)
+        self.assertIn("__dlg_single_t12_anchor_ladder_ready", strategy)
         self.assertIn("PRE_RUSSIA_SAME_TYPE_LATCH", strategy)
         self.assertIn("pre_russia_first_lane_ready", strategy)
         self.assertIn("SECOND_RUSSIA_SAME_TYPE_LATCH", strategy)
@@ -3709,12 +3715,15 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("SECOND_RUSSIA_T12_LADDER", strategy)
         self.assertIn("second_russia_t12_ladder_ready", strategy)
         self.assertIn("__dlg_second_russia_t12_ladder_ready", strategy)
+        self.assertIn("DEADLINE_GUARD_SECOND_RUSSIA_T12_LADDER", strategy)
         self.assertIn("SECOND_RUSSIA_T12_PAIR_LOCK", strategy)
         self.assertIn("second_russia_t12_pair_lock_ready", strategy)
         self.assertIn("__dlg_second_russia_t12_pair_lock_ready", strategy)
         self.assertIn("DEADLINE_GUARD_SECOND_RUSSIA_T12_PAIR_LOCK", strategy)
         self.assertIn("FIRST_RUSSIA_T13_PAIR_LIFT", strategy)
         self.assertIn("first_russia_t13_pair_lift_ready", strategy)
+        self.assertIn("__dlg_first_russia_t13_pair_lift_ready", strategy)
+        self.assertIn("DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT", strategy)
         self.assertIn("FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT", strategy)
         self.assertIn("first_russia_single_t13_t12_bank_ready", strategy)
         self.assertIn("SECOND_RUSSIA_REDLINE_NO_MERGE_VETO", strategy)
@@ -5076,7 +5085,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.6)
-        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT")
 
     def test_deadline_guard_clusters_single_t13_with_t12_bank(self):
         import strategy
@@ -5182,6 +5191,66 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.25)
+        self.assertIn("PRE_RUSSIA_T13_PAIR_LADDER", decision["reason"])
+
+    def test_pre_russia_t13_pair_ladder_uses_t10_bank_without_t11s(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 13, "x": -1.05, "y": 1.65},
+            {"id": 2, "type": 13, "x": -0.46, "y": -1.11},
+            {"id": 3, "type": 13, "x": 1.89, "y": -2.56},
+            {"id": 4, "type": 10, "x": 2.25, "y": -0.45},
+            {"id": 5, "type": 10, "x": 2.33, "y": 1.4},
+            {"id": 6, "type": 10, "x": -0.26, "y": 0.56},
+            {"id": 7, "type": 10, "x": -2.3, "y": -1.0},
+        ]
+        for i in range(8, 35):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.0 + (i % 4) * 0.24,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 11},
+                "nextNext": {"type": 9},
+            },
+            {
+                "reactor": {"deadline_margin": 1.0, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 0.1,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 1.1,
+                    },
+                    {
+                        "x": 2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.1,
+                    },
+                    {
+                        "x": -2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.2,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 0.1)
         self.assertIn("PRE_RUSSIA_T13_PAIR_LADDER", decision["reason"])
 
     def test_first_russia_t13_pair_lift_guides_t11_to_second_t14_lane(self):
@@ -5403,7 +5472,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.6)
-        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT")
 
     def test_second_russia_t12_ladder_guides_t11_after_first_t14(self):
         import strategy
@@ -5452,6 +5521,66 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
                     },
                     {
                         "x": 2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.2,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], -0.4)
+        self.assertIn("SECOND_RUSSIA_T12_LADDER", decision["reason"])
+
+    def test_second_russia_t12_ladder_keeps_single_t12_rebuild_off_edges_after_t14(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 14, "x": -1.95, "y": -2.1},
+            {"id": 2, "type": 12, "x": 0.75, "y": 0.0},
+            {"id": 3, "type": 11, "x": -2.35, "y": 0.35},
+            {"id": 4, "type": 11, "x": -0.65, "y": -3.75},
+            {"id": 5, "type": 10, "x": -0.75, "y": 0.65},
+            {"id": 6, "type": 10, "x": 2.25, "y": 0.35},
+            {"id": 7, "type": 10, "x": -0.35, "y": -2.35},
+        ]
+        for i in range(8, 39):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.1 + (i % 5) * 0.20,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 10},
+                "nextNext": {"type": 9},
+            },
+            {
+                "reactor": {"deadline_margin": 1.1, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -0.4,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.9,
+                    },
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.1,
+                    },
+                    {
+                        "x": -3.0,
                         "crosses_deadline": False,
                         "merge_result_crosses_deadline": False,
                         "merge_grade": "NO",
@@ -5687,6 +5816,126 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
 
         self.assertEqual(decision["x"], -0.35)
         self.assertEqual(decision["reason"], "DEADLINE_GUARD_SECOND_RUSSIA_T12_PAIR_LOCK")
+
+    def test_pre_russia_early_t10_ladder_guides_t10_before_first_t13(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 12, "x": 0.35, "y": -2.9},
+            {"id": 2, "type": 11, "x": 1.4, "y": -1.5},
+            {"id": 3, "type": 10, "x": -2.35, "y": -0.2},
+            {"id": 4, "type": 10, "x": 2.33, "y": -1.1},
+            {"id": 5, "type": 10, "x": 0.1, "y": -1.85},
+            {"id": 6, "type": 9, "x": 2.1, "y": 0.7},
+            {"id": 7, "type": 9, "x": -0.45, "y": -0.6},
+        ]
+        for i in range(8, 31):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.1 + (i % 4) * 0.24,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 10},
+                "nextNext": {"type": 3},
+            },
+            {
+                "reactor": {"deadline_margin": 1.4, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -3.0,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.1,
+                    },
+                    {
+                        "x": 0.1,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.8,
+                    },
+                    {
+                        "x": 2.8,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.2,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 2.8)
+        self.assertIn("PRE_RUSSIA_EARLY_T10_LADDER", decision["reason"])
+
+    def test_pre_russia_single_t12_anchor_ladder_avoids_high_direct_t11_merge(self):
+        import strategy
+
+        pieces = [
+            {"id": 1, "type": 12, "x": 2.45, "y": -3.35},
+            {"id": 2, "type": 11, "x": -0.85, "y": -3.75},
+            {"id": 3, "type": 11, "x": -0.85, "y": -2.05},
+            {"id": 4, "type": 11, "x": 2.0, "y": 0.75},
+            {"id": 5, "type": 11, "x": -1.6, "y": 0.9},
+            {"id": 6, "type": 10, "x": -0.3, "y": 0.15},
+            {"id": 7, "type": 10, "x": 1.25, "y": -2.2},
+        ]
+        for i in range(8, 40):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.1 + (i % 5) * 0.20,
+                }
+            )
+
+        decision = strategy.decide(
+            {
+                "deadline_crossed": False,
+                "pieces": pieces,
+                "next": {"type": 11},
+                "nextNext": {"type": 3},
+            },
+            {
+                "reactor": {"deadline_margin": 1.2, "reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -0.7,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "DIRECT",
+                        "landing_y": 2.2,
+                    },
+                    {
+                        "x": 2.35,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": 0.35,
+                    },
+                    {
+                        "x": -3.0,
+                        "crosses_deadline": False,
+                        "merge_result_crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "landing_y": -0.15,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(decision["x"], 2.35)
+        self.assertIn("PRE_RUSSIA_SINGLE_T12_ANCHOR_LADDER", decision["reason"])
 
     def test_pre_russia_t10_ladder_guides_t11_to_single_t12_lane(self):
         import strategy
@@ -8388,6 +8637,66 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], -0.8)
         self.assertIn("pre_russia_t12_lane", decision["reason"])
 
+    def test_deadline_safety_keeps_first_russia_t13_pair_lane_under_pressure(self):
+        import strategy_runner
+
+        pieces = [
+            {"id": 1, "type": 14, "x": -0.96, "y": -1.96, "r": 1.385},
+            {"id": 2, "type": 13, "x": -1.50, "y": 2.00, "r": 1.235},
+            {"id": 3, "type": 13, "x": 2.25, "y": -2.65, "r": 1.235},
+            {"id": 4, "type": 12, "x": -2.00, "y": -0.32, "r": 1.068},
+            {"id": 5, "type": 12, "x": 1.10, "y": -0.61, "r": 1.068},
+            {"id": 6, "type": 12, "x": 0.41, "y": -3.26, "r": 1.068},
+            {"id": 7, "type": 10, "x": -0.48, "y": 0.43, "r": 0.846},
+        ]
+        for i in range(8, 42):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.2 + (i % 5) * 0.2,
+                    "r": 0.4,
+                }
+            )
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 3.0, "reason": "HIGH_TOWER_FIRST_RUSSIA_T13_PAIR_LIFT"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.80,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.10,
+                    },
+                    {
+                        "x": -2.8,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.45,
+                    },
+                    {
+                        "x": 0.35,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.35,
+                    },
+                ],
+            },
+            {"pieces": pieces, "next": {"type": 11, "r": 0.982}},
+        )
+
+        self.assertEqual(decision["x"], 0.35)
+        self.assertIn("first_russia_t13_pair_lane", decision["reason"])
+
     def test_deadline_safety_keeps_second_russia_t12_pair_lane_under_pressure(self):
         import strategy_runner
 
@@ -8446,6 +8755,126 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
         self.assertEqual(decision["x"], -0.35)
         self.assertIn("second_russia_t12_pair_lane", decision["reason"])
+
+    def test_deadline_safety_keeps_second_russia_single_t12_ladder_lane_under_pressure(self):
+        import strategy_runner
+
+        pieces = [
+            {"id": 1, "type": 14, "x": -1.95, "y": -2.1, "r": 1.385},
+            {"id": 2, "type": 12, "x": 0.75, "y": 0.0, "r": 1.068},
+            {"id": 3, "type": 11, "x": -2.35, "y": 0.35, "r": 0.982},
+            {"id": 4, "type": 11, "x": -0.65, "y": -3.75, "r": 0.982},
+            {"id": 5, "type": 10, "x": -0.75, "y": 0.65, "r": 0.846},
+            {"id": 6, "type": 10, "x": 2.25, "y": 0.35, "r": 0.846},
+            {"id": 7, "type": 10, "x": -0.35, "y": -2.35, "r": 0.846},
+        ]
+        for i in range(8, 41):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.2 + (i % 5) * 0.2,
+                    "r": 0.4,
+                }
+            )
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": 3.0, "reason": "MEDIUM_TOWER_SECOND_RUSSIA_T12_LADDER"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.80,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": 3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.65,
+                    },
+                    {
+                        "x": -2.8,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.45,
+                    },
+                    {
+                        "x": -0.4,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.20,
+                    },
+                ],
+            },
+            {"pieces": pieces, "next": {"type": 10, "r": 0.846}},
+        )
+
+        self.assertEqual(decision["x"], -0.4)
+        self.assertIn("second_russia_t12_ladder_lane", decision["reason"])
+
+    def test_deadline_safety_keeps_pre_russia_single_t12_anchor_lane_under_pressure(self):
+        import strategy_runner
+
+        pieces = [
+            {"id": 1, "type": 12, "x": 2.45, "y": -3.35, "r": 1.068},
+            {"id": 2, "type": 11, "x": -0.85, "y": -3.75, "r": 0.982},
+            {"id": 3, "type": 11, "x": -0.85, "y": -2.05, "r": 0.982},
+            {"id": 4, "type": 11, "x": 2.0, "y": 0.75, "r": 0.982},
+            {"id": 5, "type": 11, "x": -1.6, "y": 0.9, "r": 0.982},
+            {"id": 6, "type": 10, "x": -0.3, "y": 0.15, "r": 0.846},
+            {"id": 7, "type": 10, "x": 1.25, "y": -2.2, "r": 0.846},
+        ]
+        for i in range(8, 41):
+            pieces.append(
+                {
+                    "id": i,
+                    "type": 1 + (i % 8),
+                    "x": -2.8 + (i % 8) * 0.7,
+                    "y": -2.2 + (i % 5) * 0.2,
+                    "r": 0.4,
+                }
+            )
+
+        decision = strategy_runner.enforce_deadline_safety(
+            {"x": -0.7, "reason": "DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR"},
+            {
+                "deadline": {
+                    "deadline_y": 3.38,
+                    "top_edge_y": 2.85,
+                    "deadline_crossed": False,
+                    "danger_piece_count": 0,
+                },
+                "reactor": {"reactive_pairs": []},
+                "results": [
+                    {
+                        "x": -3.0,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 2.45,
+                    },
+                    {
+                        "x": -0.7,
+                        "crosses_deadline": True,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.15,
+                    },
+                    {
+                        "x": 2.35,
+                        "crosses_deadline": False,
+                        "merge_grade": "NO",
+                        "risk_top_y_after_drop": 3.25,
+                    },
+                ],
+            },
+            {"pieces": pieces, "next": {"type": 11, "r": 0.982}},
+        )
+
+        self.assertEqual(decision["x"], 2.35)
+        self.assertIn("pre_russia_t12_lane", decision["reason"])
 
     def test_deadline_safety_replaces_underestimated_direct_when_geometry_is_worse(self):
         import strategy_runner
