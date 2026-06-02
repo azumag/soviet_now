@@ -203,6 +203,64 @@ function chromeFallbackExecutablePaths(primaryExecutablePath) {
   return result;
 }
 
+function playwrightHeadlessShellExecutablePath() {
+  if (process.platform !== 'darwin') return '';
+  const candidates = [];
+  const primary = chromeExecutablePath();
+  const match = primary.match(/^(.*\/ms-playwright\/)chromium-(\d+)\//);
+  if (match) {
+    candidates.push(path.join(
+      match[1],
+      `chromium_headless_shell-${match[2]}`,
+      'chrome-headless-shell-mac-arm64',
+      'chrome-headless-shell',
+    ));
+  }
+  const root = process.env.PLAYWRIGHT_BROWSERS_PATH ||
+    (process.env.HOME ? path.join(process.env.HOME, 'Library', 'Caches', 'ms-playwright') : '');
+  try {
+    for (const dirent of fs.readdirSync(root, { withFileTypes: true }).sort((a, b) => b.name.localeCompare(a.name))) {
+      if (!dirent.isDirectory() || !dirent.name.startsWith('chromium_headless_shell-')) continue;
+      candidates.push(path.join(root, dirent.name, 'chrome-headless-shell-mac-arm64', 'chrome-headless-shell'));
+    }
+  } catch {}
+  for (const candidate of candidates) {
+    if (executableExists(candidate)) return candidate;
+  }
+  return '';
+}
+
+function headlessCrashpadFallbackExecutablePaths(primaryExecutablePath) {
+  const candidates = [
+    playwrightHeadlessShellExecutablePath(),
+    primaryExecutablePath,
+    ...chromeFallbackExecutablePaths(primaryExecutablePath),
+  ].filter(Boolean);
+  const seen = new Set();
+  const result = [];
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (seen.has(resolved) || !executableExists(candidate)) continue;
+    seen.add(resolved);
+    result.push(candidate);
+  }
+  return result;
+}
+
+function isPlaywrightHeadlessShellExecutable(executablePath) {
+  return path.basename(String(executablePath || '')) === 'chrome-headless-shell';
+}
+
+function headlessCrashpadFallbackArgs(executablePath, launchArgs) {
+  if (!isPlaywrightHeadlessShellExecutable(executablePath)) return launchArgs;
+  return [
+    ...launchArgs,
+    '--single-process',
+    '--no-zygote',
+    '--disable-gpu',
+  ];
+}
+
 function isRegularMacChrome(executablePath, appPath = '') {
   if (process.platform !== 'darwin') return false;
   return String(appPath || '').endsWith('/Google Chrome.app') ||
@@ -1162,7 +1220,7 @@ async function runLocalController() {
             closeBrowserAfterContext = true;
           } else if (allowHeadlessFallback) {
             console.error('[CRASHPAD] macOS open fallback unavailable; retrying headless Playwright launch');
-            const headlessFallbackExecutablePath = chromeFallbackExecutablePaths(chromeExecutablePath())[0] || process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined;
+            const headlessFallbackExecutablePath = headlessCrashpadFallbackExecutablePaths(chromeExecutablePath())[0] || process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined;
             if (headlessFallbackExecutablePath) {
               console.error(`[CRASHPAD] headless Playwright fallback executable: ${headlessFallbackExecutablePath}`);
             }
@@ -1172,7 +1230,7 @@ async function runLocalController() {
               viewport: { width: 1280, height: 720 },
               deviceScaleFactor: 1,
               env: launchEnv,
-              args: launchArgs,
+              args: headlessCrashpadFallbackArgs(headlessFallbackExecutablePath, launchArgs),
             }), headlessFallbackExecutablePath || null, { launchServices: false });
             browser = context.browser();
           } else {

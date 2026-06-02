@@ -1192,7 +1192,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 high_counts.get(12, 0) < 2
                 and high_counts.get(11, 0) < 2
             )
-            or piece_count < 30
+            or piece_count < 26
         ):
             return None
         single_t12_anchor_reason = (
@@ -1267,15 +1267,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             not safe
             and current_top_edge_y >= deadline_y - 0.75
         )
-        min_lane_correction_dx = 0.35 if all_crossing_lane_pressure else 1.25
+        min_lane_correction_dx = 0.35 if all_crossing_lane_pressure else 0.85
         if not pool or current_dx <= min_lane_correction_dx:
             return None
         lane_band = [
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
-            and abs(_geom_num(r.get("x")) - target_x) <= 1.25
+            and abs(_geom_num(r.get("x")) - target_x) <= 1.35
             and not r.get("crosses_deadline", False)
-            and risk_top(r) <= max(risk_top(candidate) + 0.85, min_risk_top + 1.8)
+            and risk_top(r) <= max(risk_top(candidate) + 1.05, min_risk_top + 2.05)
         ]
         if not lane_band and all_crossing_lane_pressure:
             # In all-crossing endgames, generic min-risk can abandon the only
@@ -1569,12 +1569,26 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         pool = results or safe
         if not pool or current_dx <= 1.15:
             return None
+        redline_lane_pressure = (
+            not non_crossing_safe
+            and (
+                deadline_crossed
+                or current_top_edge_y >= deadline_y - 0.15
+            )
+        )
+        lane_risk_limit = min_risk_top + (0.45 if redline_lane_pressure else 1.9)
+        if not redline_lane_pressure:
+            lane_risk_limit = max(risk_top(candidate) + 1.05, lane_risk_limit)
         lane_band = [
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.3
-            and risk_top(r) <= max(risk_top(candidate) + 1.05, min_risk_top + 1.9)
+            and risk_top(r) <= lane_risk_limit
         ]
+        if not lane_band and redline_lane_pressure:
+            if risk_top(min_risk_candidate) + 0.05 < risk_top(candidate):
+                return min_risk_candidate
+            return None
         if not lane_band:
             return None
         return min(
@@ -2066,6 +2080,20 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             if replacement_geom_top > best_geom_top + improvement_needed:
                 replacement = best_geom_candidate
                 replacement_source = f"{replacement_source}_geometry_lower_postcondition"
+
+    if (
+        "FIRST_RUSSIA_T13_PAIR_LIFT" in reason_text
+        and replacement.get("crosses_deadline", False)
+        and replacement.get("merge_grade", "NO") == "NO"
+        and not non_crossing_safe
+        and (
+            deadline_crossed
+            or current_top_edge_y >= deadline_y - 0.15
+        )
+        and risk_top(min_risk_candidate) + 0.45 < risk_top(replacement)
+    ):
+        replacement = min_risk_candidate
+        replacement_source = f"{replacement_source}_first_russia_t13_pair_minrisk"
 
     if (
         replacement.get("crosses_deadline", False)

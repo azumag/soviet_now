@@ -1223,6 +1223,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     p for p in __dlg_targets
                     if int(p.get("type", 0) or 0) == 12
                 ]
+                __dlg_t11_targets = [
+                    p for p in __dlg_targets
+                    if int(p.get("type", 0) or 0) == 11
+                ]
+                __dlg_t10_targets = [
+                    p for p in __dlg_pieces
+                    if int(p.get("type", 0) or 0) == 10
+                ]
                 __dlg_t13_center = None
                 if __dlg_t13_targets:
                     __dlg_t13_total = 0.0
@@ -1259,7 +1267,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             float(__dlg_pair[0].get("x", 0.0) or 0.0)
                             + float(__dlg_pair[1].get("x", 0.0) or 0.0)
                         ) / 2.0
-                        __dlg_targets = [{"x": __dlg_center, "type": 12}]
+                        if __dlg_next_type == 10 and __dlg_t10_targets:
+                            __dlg_up_targets = __dlg_t11_targets + __dlg_t12_targets + __dlg_t13_targets
+                            def __dlg_single_t13_t12_t10_key(tp):
+                                __dlg_tp_x = float(tp.get("x", 0.0) or 0.0)
+                                __dlg_tp_y = float(tp.get("y", -10.0) or -10.0)
+                                __dlg_up_dist = min(
+                                    (
+                                        (
+                                            float(up.get("x", 0.0) or 0.0) - __dlg_tp_x
+                                        ) ** 2
+                                        + (
+                                            float(up.get("y", -10.0) or -10.0) - __dlg_tp_y
+                                        ) ** 2
+                                    ) ** 0.5
+                                    for up in __dlg_up_targets
+                                ) if __dlg_up_targets else 999.0
+                                __dlg_lane_dist = abs(__dlg_tp_x - __dlg_center)
+                                __dlg_t13_dist = abs(__dlg_tp_x - __dlg_t13_center) if __dlg_t13_center is not None else 0.0
+                                return (
+                                    min(__dlg_up_dist, __dlg_lane_dist)
+                                    + __dlg_t13_dist * 0.20
+                                    + max(0.0, __dlg_tp_y - 0.6) * 1.1,
+                                    __dlg_tp_y,
+                                )
+                            __dlg_targets = [min(__dlg_t10_targets, key=__dlg_single_t13_t12_t10_key)]
+                        else:
+                            __dlg_targets = [{"x": __dlg_center, "type": 12}]
                     else:
                         __dlg_targets = __dlg_t12_targets
                 else:
@@ -1493,7 +1527,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
         # Fallback: only when no merge candidate is available
-        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        __dlg_safe = [
+            c for c in __dlg_cands
+            if isinstance(c, dict)
+            and not c.get("crosses_deadline")
+            and not c.get("merge_result_crosses_deadline")
+        ]
         if __dlg_safe:
             __dlg_cluster_best = __dlg_pre_russia_cluster_pick(__dlg_safe)
             if __dlg_cluster_best is not None:
@@ -1672,6 +1711,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- vXXX: merge_result_crosses_deadline danger veto -----
+        # mandatory_themes: "デッドライン超出時は併合できる場合に限る"
+        # merge_result_crosses_deadline=true means the merge result itself crosses deadline.
+        # In redline/danger states this is not merely a risky merge; it preserves the
+        # lethal top edge, so DIRECT/NEAR bonuses must not outvote lower-risk survival.
+        if result.get("merge_result_crosses_deadline", False) and merge_grade in ("DIRECT", "NEAR"):
+            merge_result_top_y = result.get(
+                "merge_result_top_y",
+                result.get("risk_top_y_after_drop", result.get("top_y_after_drop", landing_y)),
+            )
+            try:
+                merge_result_top_y = float(merge_result_top_y)
+            except (TypeError, ValueError):
+                merge_result_top_y = float(landing_y or 0.0)
+            merge_result_deadline_y = result.get("deadline_y", 3.38)
+            try:
+                merge_result_deadline_y = float(merge_result_deadline_y)
+            except (TypeError, ValueError):
+                merge_result_deadline_y = 3.38
+            merge_result_redline_excess = max(0.0, merge_result_top_y - merge_result_deadline_y)
+            merge_result_deadline_penalty = 1200.0
+            if deadline_crossed or reactor_margin < 0.35 or danger_piece_count > 0:
+                merge_result_deadline_penalty += (
+                    4800.0
+                    + merge_result_redline_excess * 4200.0
+                    + max(0.0, landing_y) * 900.0
+                )
+                reasons.append("MERGE_RESULT_CROSSES_DEADLINE_DANGER_VETO")
+            elif merge_result_redline_excess > 0.35:
+                merge_result_deadline_penalty += merge_result_redline_excess * 1800.0
+                reasons.append("MERGE_RESULT_CROSSES_DEADLINE_REDLINE_EXCESS")
+            score -= merge_result_deadline_penalty
+            reasons.append("MERGE_RESULT_CROSSES_DEADLINE_PENALTY")
 
         # ----- v701: mandatory_themes Theme 1 relaxation — penalty instead of pre-exclusion -----
         # v701 pre-filter excluded all crosses_deadline && merge_grade=NO before scoring,
@@ -2960,15 +3033,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     consolidate_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 11}
             if consolidate_target is not None:
                 consolidate_dist = abs(x - consolidate_target.get("x", 0))
-                consolidate_bonus = max(0.0, 1480.0 - consolidate_dist * 420.0)
+                consolidate_bonus = max(0.0, 2300.0 - consolidate_dist * 700.0)
                 if piece_count >= 34:
                     consolidate_bonus *= min(1.85, 1.0 + (piece_count - 34) * 0.09)
+                elif piece_count >= 28:
+                    consolidate_bonus *= 1.18
                 if landing_y > 2.8:
                     consolidate_bonus *= 0.55
                 if consolidate_target.get("y", -10) > 1.7:
                     consolidate_bonus *= 0.75
-                if abs(x) >= 2.5 and consolidate_dist >= 1.6:
-                    score -= 1700.0
+                if abs(x) >= 2.5 and consolidate_dist >= 1.3:
+                    score -= 3600.0
+                    reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_OFFLANE_VETO")
+                if (
+                    pre_russia_counts.get(12, 0) >= 2
+                    and pre_russia_counts.get(13, 0) == 0
+                    and next_type in (10, 11, 12)
+                    and consolidate_dist >= 1.05
+                    and landing_y > 0.65
+                ):
+                    score -= 2200.0 + max(0.0, landing_y - 0.65) * 1500.0
+                    reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_LANE_VETO")
                 if landing_y > 2.05 and consolidate_dist >= 0.85:
                     score -= 2100.0 + max(0.0, landing_y - 2.05) * 1600.0
                     reasons.append("PRE_RUSSIA_T12_CONSOLIDATE_HIGH_OFFLANE_VETO")
@@ -3389,8 +3474,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ):
             t13_targets = [p for p in pieces if p.get("type") == 13]
             t12_targets = [p for p in pieces if p.get("type") == 12]
+            t11_targets = [p for p in pieces if p.get("type") == 11]
+            t10_targets = [p for p in pieces if p.get("type") == 10]
             t13_center = _weighted_center_x(t13_targets)
             compress_target = None
+            t12_pair_center = None
+            t12_pair_y = -10.0
             if len(t12_targets) >= 2:
                 best_pair = None
                 best_pair_key = (999.0, 999.0)
@@ -3414,16 +3503,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             best_pair_key = pair_key
                             best_pair = (pair_a, pair_b)
                 if best_pair is not None:
-                    compress_target = {
-                        "x": (best_pair[0].get("x", 0) + best_pair[1].get("x", 0)) / 2.0,
-                        "y": max(best_pair[0].get("y", -10), best_pair[1].get("y", -10)),
-                        "type": 12,
-                    }
+                    t12_pair_center = (
+                        best_pair[0].get("x", 0) + best_pair[1].get("x", 0)
+                    ) / 2.0
+                    t12_pair_y = max(
+                        best_pair[0].get("y", -10),
+                        best_pair[1].get("y", -10),
+                    )
+                    compress_target = {"x": t12_pair_center, "y": t12_pair_y, "type": 12}
+            if next_type == 10 and t10_targets:
+                up_targets = t11_targets + t12_targets + t13_targets
+                def _pre_russia_single_t13_t12_compress_t10_key(tp):
+                    tp_x = tp.get("x", 0)
+                    tp_y = tp.get("y", -10)
+                    up_dist = min(
+                        ((up.get("x", 0) - tp_x) ** 2 + (up.get("y", -10) - tp_y) ** 2) ** 0.5
+                        for up in up_targets
+                    ) if up_targets else 999.0
+                    lane_dist = abs(tp_x - t12_pair_center) if t12_pair_center is not None else 999.0
+                    t13_dist = abs(tp_x - t13_center) if t13_center is not None else 0.0
+                    return (
+                        min(up_dist, lane_dist)
+                        + t13_dist * 0.20
+                        + max(0.0, tp_y - 0.6) * 1.1,
+                        tp_y,
+                    )
+                compress_target = min(
+                    t10_targets,
+                    key=_pre_russia_single_t13_t12_compress_t10_key,
+                )
             if compress_target is None and t13_center is not None:
                 compress_target = {"x": t13_center, "y": -0.8, "type": 13}
             if compress_target is not None:
                 compress_dist = abs(x - compress_target.get("x", 0))
-                compress_bonus = max(0.0, 2100.0 - compress_dist * 520.0)
+                compress_bonus = max(0.0, 2800.0 - compress_dist * 760.0)
+                if next_type == 10 and compress_target.get("type") == 10 and compress_dist <= 0.65:
+                    compress_bonus += 900.0
                 if piece_count >= 34:
                     compress_bonus *= min(1.75, 1.0 + (piece_count - 34) * 0.08)
                 if landing_y > 1.8:
@@ -3433,7 +3548,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if compress_target.get("y", -10) > 1.2:
                     compress_bonus *= 0.66
                 if abs(x) >= 2.45 and compress_dist >= 1.35:
-                    score -= 1500.0
+                    score -= 2400.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_OFFLANE_VETO")
+                if landing_y > 1.2 and compress_dist >= 0.5:
+                    score -= 1800.0 + max(0.0, landing_y - 1.2) * 1300.0
+                    reasons.append("PRE_RUSSIA_SINGLE_T13_T12_COMPRESS_HIGH_OFFLANE_VETO")
                 if landing_y > 2.35 and compress_dist >= 0.9:
                     score -= 1250.0
                 if compress_bonus > 0:
@@ -3463,7 +3582,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and pre_russia_single_t13_single_t12_ladder_ready
             and not death_spiral
             and max_y < 3.25
-            and piece_count >= 24
+            and piece_count >= 18
         ):
             t13_targets = [p for p in pieces if p.get("type") == 13]
             t12_targets = [p for p in pieces if p.get("type") == 12]
