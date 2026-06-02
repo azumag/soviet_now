@@ -539,8 +539,9 @@ json.dump(d,open(f,'w'))
 
 	# チャネルポイント予想: prediction_worker が state file を監視して create/cleanup/resolve する
 
-	# 蓄積用にロシア建国フラグを保存（後でリセットされるため）
+	# 蓄積用にロシア/ソ連建国フラグを保存（後でリセットされるため）
 	local _russia_for_acc="$LAST_RUSSIA"
+	local _soviet_for_acc="$LAST_SOVIET"
 
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
@@ -614,7 +615,7 @@ print(d.get('score', 0) + bonus)
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	export LAST_RAW_SCORE="$LAST_SCORE"
-		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
+		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
 		if [ -x ./monitor_improve_runtime.sh ]; then
 			(
 				./monitor_improve_runtime.sh >/dev/null 2>&1 ||
