@@ -235,6 +235,14 @@ _soren91_pid_is_alive() {
 	if kill -0 "$pid" 2>/dev/null; then
 		return 0
 	fi
+	# 安価な存在チェックを先に行う。ps でプロセス自体が存在しないなら確実に死んでいるので、
+	# 高コストな lsof / tmux フォールバックは行わない（全プロセス走査ループで lsof を
+	# pid ごとに呼ぶと O(N)×lsof でコメント再生がブロックされるため）。
+	if ! ps -p "$pid" -o pid= 2>/dev/null | awk 'NF { found=1 } END { exit(found ? 0 : 1) }'; then
+		return 1
+	fi
+	# ここに来るのは kill -0 は失敗したが ps ではプロセスが見える稀なケース（権限差等）。
+	# 念のため soren91 由来かどうかを lsof / tmux で確認する。
 	if [ -f "$SOREN91_DIR/tmp/soren91.log" ] &&
 		lsof -nP "$SOREN91_DIR/tmp/soren91.log" 2>/dev/null |
 			awk -v target="$pid" 'NR > 1 && $2 == target { found=1 } END { exit(found ? 0 : 1) }'; then
@@ -243,7 +251,8 @@ _soren91_pid_is_alive() {
 	if [ "$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || true)" = "$pid" ]; then
 		return 0
 	fi
-	ps -p "$pid" -o pid= 2>/dev/null | awk 'NF { found=1 } END { exit(found ? 0 : 1) }'
+	# ps で見えるプロセスなので生存とみなす。
+	return 0
 }
 
 _soren91_kill_runner_session() {
@@ -367,17 +376,20 @@ _soren91_scan_alive_runner_pids() {
 		fi
 		;;
 	esac
-	ps -Ao pid=,ppid=,command= 2>/dev/null | while read -r pid ppid cmd; do
-		case "$pid" in
-		''|*[!0-9]*) continue ;;
-		esac
-		[ "$pid" = "$$" ] && continue
-		_soren91_pid_is_alive "$pid" || continue
-		printf '%s' "$cmd" | grep -F -- "$SOREN91_RUNNER_SCRIPT" >/dev/null 2>&1 || \
-			printf '%s' "$cmd" | grep -F -- "$SOREN91_DIR/run_player_loop.sh" >/dev/null 2>&1 || \
-			printf '%s' "$cmd" | grep -F -- "soren91/run_player_loop.sh" >/dev/null 2>&1 || continue
-		printf '%s\n' "$pid"
-	done | awk '!seen[$0]++'
+	# ps -Ao の出力に現れる pid はその時点で生存しているため、ループ内で
+	# _soren91_pid_is_alive を呼ぶ必要はない（pid ごとの ps -p / lsof で
+	# O(N) のサブプロセス起爆を招き、コメント再生がブロックされる原因になる）。
+	# cmd マッチも awk 1本に集約してプロセス起動数を抑える。
+	ps -Ao pid=,ppid=,command= 2>/dev/null | awk -v self="$$" \
+		-v r1="$SOREN91_RUNNER_SCRIPT" -v r2="$SOREN91_DIR/run_player_loop.sh" -v r3="soren91/run_player_loop.sh" '
+		{
+			pid = $1
+			if (pid !~ /^[0-9]+$/) next
+			if (pid == self) next
+			if (index($0, r1) || index($0, r2) || index($0, r3)) {
+				if (!seen[pid]++) print pid
+			}
+		}'
 }
 
 _soren91_scan_log_writer_pids() {
@@ -407,19 +419,17 @@ _soren91_scan_alive_main_pids() {
 	_soren91_scan_log_writer_pids 2>/dev/null
 	runner_pids="$(_soren91_scan_alive_runner_pids 2>/dev/null | tr '\n' ' ')"
 	[ -n "$runner_pids" ] || return 0
-	ps -Ao pid=,ppid=,command= 2>/dev/null | while read -r pid ppid cmd; do
-		case "$pid" in
-		''|*[!0-9]*) continue ;;
-		esac
-		[ "$pid" = "$$" ] && continue
-		_soren91_pid_is_alive "$pid" || continue
-		printf '%s' "$cmd" | grep -Eq '(^|[ /])node([[:space:]].*)?main\.mjs([[:space:]]|$)' || continue
-		for runner_pid in $runner_pids; do
-			[ "$ppid" = "$runner_pid" ] || continue
-			printf '%s\n' "$pid"
-			break
-		done
-	done | awk '!seen[$0]++'
+	# ps -Ao に現れる pid は生存しているため per-pid の生存チェックは不要。
+	# node main.mjs かつ親が runner_pids のいずれか、を awk 1本で判定する。
+	ps -Ao pid=,ppid=,command= 2>/dev/null | awk -v self="$$" -v runners="$runner_pids" '
+		BEGIN { n = split(runners, ra, " "); for (i = 1; i <= n; i++) isr[ra[i]] = 1 }
+		{
+			pid = $1; ppid = $2
+			if (pid !~ /^[0-9]+$/) next
+			if (pid == self) next
+			if ($0 !~ /(^|[ \/])node([ \t].*)?main\.mjs([ \t]|$)/) next
+			if (ppid in isr) { if (!seen[pid]++) print pid }
+		}'
 }
 
 _soren91_read_alive_player_pid() {
