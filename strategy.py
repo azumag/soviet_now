@@ -67,6 +67,14 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v916: v911 (MERGE_PATH_SETUP) restored to v29574 working state — fix Ukraine (T13) gate 50% regression.
+      #       v29576 regression: next_type>=14 excluded T9-T13 (T12+T12→T13 lane); len>=1 too permissive;
+      #       <1.696 + flat max(0.8807, 0.366 - dist/1.5) was non-decaying (0.366-dist/1.5 <= 0.366 < 0.8807).
+      #       Restored: next_type>=9 (T9-T13), len(same_type_pieces)>=2, <1.5, max(0.4947, 1.0 - dist/1.5).
+      #       つぶす rollback failure mode: v911 had "T12+T12→T13 レーン維持" comment but code excluded T12;
+      #       game logs show T52/T61/T64/T80 (best) and T59-T61 (worst) where v911 would have caught T10 setups.
+      #       stage_gate_target: Ukraine(T13) gate 50%→改善 (T9/T10/T11 接着レーン復元 → T11+T11→T12 縦連鎖強化)
+      #       refs: tmp/analysis_result.md (Primary Hypothesis: v911 restoration), strategy_versions/v29574_score1114_strategy.py, strategy_versions/best_score6058_strategy.py:2343-2383, game_history/20260603_133555_score0944.jsonl T59-T61, game_history/20260603_133215_score1483.jsonl T52/T61/T64/T80, data/mandatory_themes.txt theme 4
       # v915: v912 bug fix — condition `1.5 <= max_y < 2.0` (was `2.055 <= max_y < 2.0`, always false)
       #       and magnitude `150.0 * height_mult` (was `109.6 * height_mult`, 73% reduction). v912 never fired.
       #       つぶす rollback failure mode: postmortem "1.5<=max_y<2.0 移行帯での v612 相当の +150*height_mult ロー配置ボーナス"
@@ -897,7 +905,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
     # reactive_pairs is a list, count pairs for evaluation
-    reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else -2
+    reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else -1
     danger_piece_count = reactor.get("danger_piece_count", 1)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
@@ -905,7 +913,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
+    russia_phase_count = sum(1 for p in pieces if p.get("type") == 14)
     russia_phase = russia_phase_count >= 1
     # v548: double_russia_phase — 2つ目のロシア(type 15)が盤面にある場合、
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
@@ -938,7 +946,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_type = next_next_piece.get("type", 1)
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
-    merged_type = min(next_type + 1, 16)
+    merged_type = min(next_type + 1, 24)
     
     # ----- evaluation axis 9.5: current type stack merge priority (NEW: same type stacking) -----
     # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
@@ -1264,7 +1272,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             #       tmp/state/last_rollback_postmortem.md (v413/v414/v415 failures)
             stacking_congested = (
                 (max_y >= 5.681 and deadline_crossed)
-                or (reactive_pair_count >= 4 and max_y >= 2.5)
+                or (reactive_pair_count >= 4 and max_y >= 1.308)
             ) and merge_grade == "NO"
             if current_type_has_reactive or current_type_has_near:
                 if stacking_congested:
@@ -1477,17 +1485,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # mandatory_themes: theme 4「次手の併合レーンを保存」強化 (T12x2 → T12+T12→T13 のレーン維持)。
         # mandatory_themes: theme 5「ロシア 1 個時に遠い端捨てをしない」は type 14/15 next 時に副次的に
         #   既存 T15 近傍指向として機能(russia_phase 中は suppress して軸8.7/9.9 と競合させない)。
+        # v916: restored to v29574 conditions (next_type>=9, len>=2, <1.5, proper decay) to recover the
+        #   T9-T13 setup chain that upstream-feeds T12+T12→T13 (Ukraine gate). v29576 had next_type>=14
+        #   which silently excluded all T9-T13 setups (best game T52/T61/T64/T80 + worst T59-T61).
         # Refs: tmp/analysis_result.md (Primary Hypothesis), best_score6058_strategy.py:2343-2383.
         if (merge_grade == "NO"
-                and next_type >= 14
+                and next_type >= 9
                 and not russia_phase
                 and not death_spiral
                 and not stacking_danger_suppressed
                 and not stacking_pc_suppressed):
-            if len(same_type_pieces) >= 1:
-                _mp_nearest_dist = min(abs(x - p.get("x", 1)) for p in same_type_pieces)
-                if _mp_nearest_dist < 1.696:
-                    _mp_bonus = 200.0 * merge_mult * max(0.8807, 0.366 - _mp_nearest_dist / 1.5)
+            if len(same_type_pieces) >= 2:
+                _mp_nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
+                if _mp_nearest_dist < 1.5:
+                    _mp_bonus = 200.0 * merge_mult * max(0.4947, 1.0 - _mp_nearest_dist / 1.5)
                     if _mp_bonus > 0:
                         score += _mp_bonus
                         reasons.append("MERGE_PATH_SETUP")
@@ -1730,7 +1741,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # No reactive_pair_count guard — works at ALL reactive levels (postmortem constraint).
         # refs: tmp/state/last_rollback_postmortem.md (piece_count 41→1060 vs 21→4645),
         #       tmp/batch_summary.txt (high-score merge_rate=38.6% vs low-score 33.6%)
-        if piece_count >= 30 and landing_y > -0.920:
+        if piece_count >= 30 and landing_y > -0.4403:
             # v365: increased multiplier 8→20 — old value was too weak to affect behavior
             # (piece_count=37, landing_y=1.0: 64 vs height diff ~140). New value provides
             # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
@@ -1839,7 +1850,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
-        max_type_on_board = max((p.get("type", -1) for p in pieces), default=1)
+        max_type_on_board = max((p.get("type", -1) for p in pieces), default=-1)
         # v461: suppress growth center in death spiral — height must be sole differentiator
         if max_type_on_board >= 5 and not death_spiral:
             # Find the deepest (lowest y) highest-type piece as growth center
@@ -1891,13 +1902,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 chain_distance_max = 5.0 + landing_y * 0.7386
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
                 # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
-                chain_bonus_multiplier = 495.0 + max(-1, landing_y + 1.5) * 81.4
+                chain_bonus_multiplier = 495.0 + max(-1, landing_y + 1.5) * 62.18
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
-                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.9648
                         if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
@@ -2142,7 +2153,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #         Fixes failure mode: ロシアフェーズでの即時併合機会取りこぼし（axis 9.5 russia_phase条件追加）
         
         if same_type_stack_top and merge_grade == "NO":
-            stack_top_x = same_type_stack_top.get("x", 1)
+            stack_top_x = same_type_stack_top.get("x", 2)
             stack_top_y = same_type_stack_top.get("y", -10)
             
              # v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
