@@ -631,8 +631,7 @@ _run_improve_runtime_monitor() {
 		return 0
 	fi
 	_SOREN_IMPROVE_MONITOR_TS=$now
-	./monitor_improve_runtime.sh >/dev/null 2>&1 ||
-		log "[MONITOR] improve runtime monitor skipped/failed"
+	./monitor_improve_runtime.sh >/dev/null 2>&1 &
 }
 
 _cleanup_once() {

@@ -115,3 +115,21 @@ _notify_webfetch_failure() {
 _contains_claude_login_error_text() {
 	printf '%s' "$1" | grep -Eiq 'not logged in|please run /login'
 }
+
+# soren_loop.sh の同名関数をバックグラウンド実行版で上書き。
+# eloop_lib.sh は毎ループ source されるためこちらが優先される。
+# フォアグラウンド実行だと monitor が詰まった際にメインループ全体がブロックされる。
+_run_improve_runtime_monitor() {
+	[ -x ./monitor_improve_runtime.sh ] || return 0
+	local now interval
+	now=$(date +%s)
+	interval="${SOREN_IMPROVE_MONITOR_INTERVAL_SEC:-15}"
+	case "$interval" in
+	'' | *[!0-9]*) interval=15 ;;
+	esac
+	if [ "${_SOREN_IMPROVE_MONITOR_TS:-0}" -gt 0 ] && [ $((now - _SOREN_IMPROVE_MONITOR_TS)) -lt "$interval" ]; then
+		return 0
+	fi
+	_SOREN_IMPROVE_MONITOR_TS=$now
+	./monitor_improve_runtime.sh >/dev/null 2>&1 &
+}
