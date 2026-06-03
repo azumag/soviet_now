@@ -65,8 +65,29 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
+FAST_DROP_DEADLINE_CONTACT = False
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v913: bug fix — v664 "danger-based height enforcement" condition `>= -1` was a
+      #       wildcard-perturbation artifact that always fired, collapsing height_mult to
+      #       0.1485 in every max_y>=1.8 NO_MERGE turn. This silently nullified v912's
+      #       +150*height_mult bonus to ~22pt (HIGH phase 0.1485×150=22.3 instead of 387).
+      #       Restored original "when danger pieces exist" intent with `danger_piece_count > 0`.
+      #       No-danger-piece turns (the common case in worst T66-T69 where danger_piece_count=0)
+      #       now keep phase-default height_mult, letting v912 actually compete with
+      #       AVOID_BLOCK (-500) and edge scatter for the low-placement tie-break.
+      #       v912 自体は変更なし (前回の改善方針を維持)。
+      #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, game_history/20260603_102009_score1118.jsonl T66-T69
+      # v912: pre-critical height escalation (v612-equivalent) — 1.5<=max_y<2.0 移行帯で NO_MERGE
+      #       + rp>=3 + reactor_margin<2.0 のとき +150*height_mult の低配置ボーナス。height penalty
+      #       計算前に加算し、low landing_y 候補ほど height_penalty との和で有利になる (effectively
+      #       (150 - landing_y*50) * height_mult)。HIGH phase で ~270-390pt 差となり AVOID_BLOCK
+      #       や edge scatter (axis 9.10/v911 競合) に打ち勝つ tie-breaker として機能。DIRECT/NEAR
+      #       候補は axis 1 (+1200/+600) が優先するため v912 は merge_grade==NO 限定。
+      #       stage_gate_target: Kazakhstan(T14) 0%→改善 (T12+T12 接触維持で max_y 安定化)
+      #       つぶす rollback failure mode: postmortem "1.5<=max_y<2.0 移行帯で v612 相当の
+      #       +150*height_mult ロー配置ボーナスも併せて実装" (constraints for next improve)
+      #       (worst 20260603_102009_score1118 T59-T70 で max_y 1.74→2.69 +0.95 jump を抑制)
+      #       refs: tmp/analysis_result.md (Primary Hypothesis: v612-equivalent), best_score6058_strategy.py:99-104,1830, tmp/state/last_rollback_postmortem.md, game_history/20260603_102009_score1118.jsonl T59-T70
       # v911: MERGE_PATH_SETUP for high-type (T9+) — next_type >= 9 && len(same_type_pieces) >= 2 &&
       #       merge_grade==NO のとき、既存同 type 1.5u 以内の candidate に +200*merge_mult の proximity bonus。
       #       analyzer の reactive/near 判定に依存せず T12+T12 接触準備を継続。best_score6058 v600 を
@@ -1086,7 +1107,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NOT modifying existing HEIGHT_CONTROL, NEAR suppression (v668), HARD GUARD (v665), or russia_phase.
         # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/worst T44, game_history/best T118
         # Fixes rollback failure mode: NEAR selected over available DIRECT at deadline danger (v670)
-        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", True):
+        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", False):
             score += 5531.2
             reasons.append("DANGER_DIRECT_OVERWHELMING")
 
@@ -1582,7 +1603,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
         # Rollback constraint: NEAR_MERGE must be prioritized when merge_available=true.
         # postmortem constraint: not landing_y-only (uses board state + danger count).
-        if not death_spiral and danger_piece_count >= -1 and merge_grade == "NO" and max_y >= 1.8:
+        # v913: bug fix — restore original "danger pieces exist" intent. Previous `>= -1` was
+        # a wildcard-perturbation artifact that always fired, collapsing height_mult to
+        # 0.1485 in every max_y>=1.8 NO_MERGE turn and nullifying v912 (pre-critical height
+        # escalation) bonus to ~22pt. Restoring `> 0` lets v912 land at its designed
+        # magnitude (HIGH phase +387pt) and aligns v664 with its documented intent.
+        # Behaviour delta: in the common case (no danger pieces) max_y in [1.8, 2.0] the
+        # height_mult stays at phase default (2.587) instead of 0.384, so the v912 bonus
+        # actually competes with AVOID_BLOCK (-500) and edge scatter.
+        if not death_spiral and danger_piece_count > 0 and merge_grade == "NO" and max_y >= 1.8:
             height_mult *= 0.1485  # very strong reduction — stay low when danger exists
 
         # v671: NO_MERGE height penalty强化 at high danger zone
@@ -1596,6 +1625,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/worst T65 (NO_MERGE failure), game_history/best T137 (NO_MERGE survival)
         if merge_grade == "NO" and max_y >= 2.3 and piece_count >= 47:
             height_mult *= 0.5  # strongly prefer lower positions for NO_MERGE at danger zone
+
+        # ----- v912: pre-critical height escalation (v612-equivalent) -----
+        # Worst T59-T70: 1.5<=max_y<2.0 移行帯で AVOID_BLOCK+AXIS_9_10+REACTIVE_PAIRS が edge 配置を繰り返し
+        #   max_y 1.74→2.69 (+0.95) 8 ターンでジャンプ。best_score6058 v612 (line 99-104, 1830) ベース:
+        #   1.5<=max_y<2.0 && deadline_crossed && rp>=3 で base=150*height_mult の低配置ボーナス。
+        #   base 150*1.8(HIGH)=270pt / 150*1.4(MEDIUM)=210pt diff が edge scatter 抑制の tie-breaker になる。
+        # postmortem prioritize: "1.5<=max_y<2.0 移行帯での v612 相当の +150*height_mult ロー配置ボーナスも併せて実装"
+        #   (constraints for next improve)
+        # mandatory_themes: theme 1 (デッドライン超出時は併合できる場合に限る) 強化 + theme 4 (次手の併合レーン保存) 支援
+        # stage_gate_target: Kazakhstan(T14) 0%→改善 (T12+T12 接触維持で max_y 安定化、chain merge 機会延長)
+        #   - 副次的に Russia(T15) 経路: ゲーム生存ターン延長 → ロシア建国機会も増加
+        # death_spiral 中は抑制: death_spiral 自身が stacking/guidance を全抑制するため v912 と二重不要、
+        #   さらに postmortem 制約 (axis 9.6b/5.6/9.3 を death_spiral で全抑制する既存契約) を尊重
+        # russia_phase 中は抑制: RUSSIA_PHASE_BOARD_COMPRESSION 等と競合、mandatory_themes #5
+        #   (二個目ロシア経路維持) と矛盾する可能性。RUSSIA_PHASE は別途 axis 8.7 系で処理
+        # merge_grade==NO 限定: DIRECT/NEAR 候補は axis 1 (+1200/+600) が優先するため v912 は無関係。
+        #   merge_grade を限定しないと axis 1 の優先順位が崩れる (postmortem 制約)
+        # reactor_margin<2.0 限定: deadline から遠い (margin>=2.0) 状態では LOW/MEDIUM phase 維持のため
+        #   v912 不要。1.5<=max_y<2.0 + margin<2.0 で「deadline 接近 + 移行帯」の交差条件のみ発火
+        # 影響: HIGH phase 387pt / MEDIUM phase 210pt。axis 8.8 (-4500) や axis 9.3 (-500) には勝てない
+        #   が、AVOID_BLOCK (max -500) と height_penalty diff (~250-450) には勝てる tie-breaker
+        # 安全性: HEIGHT_CONTROL/edge scatter 候補にのみ +150-390pt 付与 → 該当候補の score 上昇 →
+        #   main decide() が低配置を選択する確率上昇 → max_y 安定化。DIRECT/NEAR/DEADLINE_GUARD
+        #   には一切干渉しない (signatures / branching unchanged)
+        # refs: tmp/analysis_result.md (Primary Hypothesis), best_score6058_strategy.py:99-104,1830 (v612 source),
+        #       tmp/state/last_rollback_postmortem.md (constraints for next improve),
+        #       game_history/20260603_102009_score1118.jsonl T59-T70 (worst 移行帯失敗)
+        if (1.5 <= max_y < 2.0
+                and merge_grade == "NO"
+                and reactive_pair_count >= 3
+                and not death_spiral
+                and not russia_phase
+                and reactor_margin < 2.0):
+            _v912_bonus = 150.0 * height_mult
+            score += _v912_bonus
+            reasons.append("PRE_CRITICAL_HEIGHT_ESCALATION")
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
@@ -2052,7 +2117,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
                 pass
             else:
-                if danger_piece_count == 0 and reactive_pair_count == 1:
+                if danger_piece_count == 0 and reactive_pair_count == 2:
                     # v459: +300 bonus removed — axis 9.6b already provides proximity guidance
                     # toward same-type pieces (~120-540). The +300 was redundant additive
                     # noise that overrode height differentiation when combined with 9.6b's
