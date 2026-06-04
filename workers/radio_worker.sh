@@ -216,6 +216,24 @@ _run_iteration() {
 	return 0
 }
 
+# --- pause gate (durable operator stop via tmp/state/<name>.paused) ---
+_worker_is_paused() { [ -f "tmp/state/${WORKER_NAME}.paused" ]; }
+_park_while_paused() {
+	# Idle quietly while the pause marker exists (no radio scheduling). Process
+	# stays alive so the supervisor keeps adopting it (no respawn storm).
+	# Auto-resumes when the marker is removed. Returns 1 if tmp/stop appeared.
+	_worker_is_paused || return 0
+	_log "paused (tmp/state/${WORKER_NAME}.paused) → アイドル待機 (作業停止・マーカー削除で自動再開)"
+	while _worker_is_paused; do
+		[ -f tmp/stop ] && return 1
+		echo $$ >"$PID_FILE" 2>/dev/null || true
+		_reload_runtime 2>/dev/null || true
+		sleep "${WORKER_PAUSE_POLL_SEC:-10}"
+	done
+	_log "resumed (marker removed) → 通常運転に復帰"
+	return 0
+}
+
 while true; do
 	_ensure_single_owner
 	_reload_runtime
@@ -223,6 +241,9 @@ while true; do
 		_log "tmp/stop 検出 → 終了"
 		break
 	fi
+
+	# pause gate (durable operator stop): idle without doing work
+	_park_while_paused || break
 
 	# 1イテレーションの失敗は握りつぶし、次回に継続
 	_run_iteration || _log "WARNING: iteration failed (rc=$?) — 継続"

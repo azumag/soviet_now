@@ -253,10 +253,37 @@ _ensure_irc_daemon() {
 	_start_irc_daemon
 }
 
+# --- pause gate (durable operator stop via tmp/state/<name>.paused) ---
+_worker_is_paused() { [ -f "tmp/state/${WORKER_NAME}.paused" ]; }
+_park_while_paused() {
+	# Idle quietly while the pause marker exists; release the IRC daemon so no
+	# chat ingest/replies happen. The process stays alive so the supervisor keeps
+	# adopting it (no respawn storm) — it just does no work. Auto-resumes when the
+	# marker is removed. Returns 1 if tmp/stop appeared (caller should break).
+	_worker_is_paused || return 0
+	if [ -n "$_DAEMON_PID" ] && _pid_alive "$_DAEMON_PID"; then
+		_log "paused: IRC daemon 停止 (PID=$_DAEMON_PID)"
+		kill "$_DAEMON_PID" 2>/dev/null || true
+		wait "$_DAEMON_PID" 2>/dev/null || true
+	fi
+	_DAEMON_PID=""
+	pkill -f 'twitch_chat_daemon\.sh' 2>/dev/null || true
+	rm -f "$TWITCH_DAEMON_PID_FILE" 2>/dev/null || true
+	_log "paused (tmp/state/${WORKER_NAME}.paused) → アイドル待機 (作業停止・マーカー削除で自動再開)"
+	while _worker_is_paused; do
+		[ -f tmp/stop ] && return 1
+		echo $$ >"$PID_FILE" 2>/dev/null || true
+		_reload_runtime 2>/dev/null || true
+		sleep "${WORKER_PAUSE_POLL_SEC:-10}"
+	done
+	_log "resumed (marker removed) → 通常運転に復帰"
+	return 0
+}
+
 # === メインループ ===
 _log "起動 (PID=$$, channel=$CHANNEL, interval=${POLL_INTERVAL}s)"
 
-_start_irc_daemon
+_worker_is_paused || _start_irc_daemon
 
 while true; do
 	echo $$ >"$PID_FILE" 2>/dev/null || true
@@ -266,6 +293,9 @@ while true; do
 		_log "stop ファイル検出 → 終了"
 		break
 	fi
+
+	# pause gate (durable operator stop): idle without doing work
+	_park_while_paused || break
 
 	# eloop_lib.sh を再読み込み (設定変更の反映)
 	if ! source ./eloop_lib.sh 2>/dev/null; then

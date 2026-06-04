@@ -38,7 +38,6 @@ declare -a WORKER_NAMES=(
 	"deadline_monitor"
 	"radio_worker"
 	"prediction_worker"
-	"improve_daemon"
 	"obs_capture_watchdog"
 )
 declare -a WORKER_CMDS=(
@@ -49,7 +48,6 @@ declare -a WORKER_CMDS=(
 	"./workers/deadline_monitor.sh"
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
-	"./improve_daemon.sh"
 	"./obs_capture_watchdog.sh"
 )
 
@@ -441,6 +439,14 @@ if [ -f "$PID_FILE" ]; then
 fi
 echo $$ > "$PID_FILE"
 
+# Worker pause gate: while tmp/state/<name>.paused exists, the worker is not
+# started and not respawned (durable operator-level stop). Generalizes the
+# previous prediction_worker-specific pause so any worker can be held down.
+_worker_paused() {
+	local name="$1"
+	[ -n "$name" ] && [ -f "tmp/state/${name}.paused" ]
+}
+
 # --- Worker 起動 ---
 _start_worker() {
 	local idx="$1"
@@ -449,7 +455,7 @@ _start_worker() {
 	local log_file="logs/${name}.log"
 	local existing_pid=""
 
-	if [ "$name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
+	if _worker_paused "$name"; then
 		_log "スキップ: ${name} paused"
 		WORKER_PIDS[$idx]=""
 		WORKER_LAST_START[$idx]=$(date +%s)
@@ -604,7 +610,7 @@ while true; do
 
 		# worker が死んだ → 再起動判定
 		_w_restarts="${WORKER_RESTARTS[$idx]:-0}"
-		if [ "$_w_name" = "prediction_worker" ] && [ -f "tmp/state/prediction_worker.paused" ]; then
+		if _worker_paused "$_w_name"; then
 			continue
 		fi
 		if [ "$_w_name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
