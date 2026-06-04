@@ -913,6 +913,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
+    # --- GOAL(2026-06-05, user idea): per-type counts for "don't bury a mergeable piece" axis ---
+    # Used by axis 5.5b to reason logically about WHAT to place on top of board pieces: covering a
+    # piece that still has a same-type partner wastes that merge. Computed once before the loop.
+    _type_counts = {}
+    for _p in pieces:
+        _t = _p.get("type", 0)
+        _type_counts[_t] = _type_counts.get(_t, 0) + 1
+
     # --- GOAL(2026-06-04): 2nd-Russia nucleus for single-russia_phase growth bias ---
     # ソ連建国 requires a *second* T15. In single-russia_phase the lone T15 is un-mergeable,
     # so the only productive growth is a separate sub-Russia tower. Identify the deepest
@@ -1652,6 +1660,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                             reasons.append("AVOID_BLOCK_NEXTNEXT")
                             break
+
+        # ----- evaluation axis 5.5b: don't bury a mergeable high piece (GOAL 2026-06-05, user idea) -----
+        # Logical "what to place on top of board pieces" reasoning, generalizing axis 5.5 beyond
+        # the nextNext case. When this drop lands ON TOP of a board piece P that still has a
+        # same-type partner elsewhere (so P could merge later), covering P with a different type
+        # wastes that merge. Penalty scaled by P's type — burying a HIGH piece (T10+) is costly and
+        # directly stalls the high-tier pipeline (→ 2nd Russia → ソ連). Find the actual support
+        # piece (top piece under the landing column). nextNext-type is left to axis 5.5 (no double
+        # count); low/mid types (<10) are abundant/cheap so burying them is fine.
+        if merge_grade == "NO" and not death_spiral:
+            _ly = result.get("landing_y", 0)
+            _support = None
+            for _p in pieces:
+                if abs(x - _p.get("x", 0)) < 0.9 and _p.get("y", -10) < _ly:
+                    if _support is None or _p.get("y", -10) > _support.get("y", -10):
+                        _support = _p
+            if _support is not None:
+                _st = _support.get("type", 0)
+                if (
+                    _st >= 10
+                    and _st != next_type
+                    and _st != next_next_type
+                    and _type_counts.get(_st, 0) >= 2
+                ):
+                    score -= (_st - 9) * 120.0  # T10:-120 T12:-360 T14:-600 (protect high pipeline)
+                    reasons.append("AVOID_BURY_MERGEABLE")
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
