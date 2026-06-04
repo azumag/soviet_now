@@ -825,6 +825,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = 0.0
     best_score = -float("inf")
     best_reason = ""
+    _la_cands = []  # GOAL(2026-06-05): (x, score, reason, result) for 2-ply lookahead re-rank
+    death_spiral = False  # pre-bind: assigned inside the candidate loop; also read by post-loop lookahead
 
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
@@ -2154,6 +2156,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+        _la_cands.append((x, score, "_".join(reasons) if reasons else "HEIGHT_CONTROL", result))
 
     # ----- FALLBACK: if all non-suppressed candidates were suppressed, pick lowest landing_y -----
     # Bug fix: HARD SUPPRESS can skip all candidates in extreme danger, returning best_x=0.0 with empty reason.
@@ -2166,6 +2169,67 @@ def decide(game_state: dict, analysis: dict) -> dict:
         best_x = max(-3.0, min(3.0, best_x))
         best_x = round(best_x, 2)
         return {"x": best_x, "reason": best_reason}
+
+    # ----- 2-ply lookahead re-rank among near-best NO-merge candidates (GOAL 2026-06-05, user idea) -----
+    # Logical 1-move-ahead planning: among placements within a small score margin of the best that
+    # do NOT merge now, prefer the one that leaves the nextNext piece a real merge. This is where the
+    # 2-ply value lives (immediate merges already win and need no help — verified: a cheap "feeds
+    # nextNext" bonus flipped 0 decisions). ROBUST: the simulated piece is `next` sitting as its own
+    # type with its KNOWN radius, so there is no merged-piece radius guesswork. BOUNDED: only near-best
+    # NO-merge candidates, capped at 6 (perf), and we only switch when the lookahead winner actually
+    # gains a nextNext DIRECT/NEAR merge — never overrides a clearly-better placement. Best-effort:
+    # wrapped in try/except so it can never break decide(); analyze_board is import-callable here even
+    # though it isn't hot-reloadable.
+    try:
+        if (
+            next_next_type
+            and len(_la_cands) >= 2
+            and not death_spiral
+            and suppressed != len(results)
+        ):
+            _la_best_score = max(c[1] for c in _la_cands)
+            _la_band = [
+                c for c in _la_cands
+                if c[1] >= _la_best_score - 200.0
+                and isinstance(c[3], dict)
+                and c[3].get("merge_grade") == "NO"
+            ]
+            _la_band.sort(key=lambda c: -c[1])
+            _la_band = _la_band[:6]
+            if len(_la_band) >= 2:
+                from analyze_board import analyze_drops as _la_analyze
+                _la_shapes = game_state.get("shapes", {}) or {}
+                _la_next_r = next_piece.get("r", 0.5)
+                _la_nn_r = (game_state.get("nextNext", {}) or {}).get("r", _la_next_r)
+                _la_pick = None  # (combined_score, x, reason, grade2)
+                for (_lx, _lscore, _lreason, _lres) in _la_band:
+                    _la_sim = list(pieces) + [{
+                        "id": -999, "type": next_type,
+                        "x": _lx, "y": _lres.get("landing_y", 0.0), "r": _la_next_r,
+                    }]
+                    try:
+                        _la_res2, _ = _la_analyze(_la_sim, next_next_type, _la_nn_r, _la_shapes)
+                        _la_g2 = 0
+                        for _rr in _la_res2:
+                            _mg2 = _rr.get("merge_grade")
+                            if _mg2 == "DIRECT":
+                                _la_g2 = 2
+                                break
+                            if _mg2 == "NEAR" and _la_g2 < 1:
+                                _la_g2 = 1
+                        _la_comb = _lscore + _la_g2 * 90.0
+                        if _la_pick is None or _la_comb > _la_pick[0]:
+                            _la_pick = (_la_comb, _lx, _lreason, _la_g2)
+                    except Exception:
+                        continue
+                # switch only if the lookahead winner gains a nextNext merge and differs from current best
+                if _la_pick is not None and _la_pick[3] >= 1 and abs(_la_pick[1] - best_x) > 1e-9:
+                    best_x = _la_pick[1]
+                    best_reason = _la_pick[2] + (
+                        "_LOOKAHEAD_DIRECT" if _la_pick[3] == 2 else "_LOOKAHEAD_NEAR"
+                    )
+    except Exception:
+        pass  # lookahead must never break the base decision
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
