@@ -1936,7 +1936,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                   # Self-limiting: as the nucleus column grows, drops there stop being safe and
                   # lose the bonus, so growth spreads instead of spiking max_y. Scoped to
                   # single-russia_phase (~9% of games, all currently failing to reach Soviet).
-                  if soviet_nucleus_x is not None:
+                  # GOAL-loop(2026-06-05): only pull BUILDING-relevant pieces (next_type>=8)
+                  # toward the 2nd-Russia nucleus; low drops clutter the board otherwise.
+                  if soviet_nucleus_x is not None and next_type >= 8:
                       _cand_margin = result.get("deadline_margin", 99)
                       _cand_crosses = result.get("crosses_deadline", False)
                       if (not _cand_crosses) and _cand_margin >= 0.5:
@@ -1957,9 +1959,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # for high-tier throughput, aligned with the Soviet-rate goal (not score-max).
         # Never selects a deadline-CROSSING drop. Restore-protected; assess over ~20 games and
         # roll back to 82443b56bfb7/aef4abf6558e if median collapses without high-tier gains.
+        # GOAL-loop(2026-06-05): only concentrate BUILDING-relevant pieces (next_type>=8).
+        # Measured death-mode: russia game (3993, 164t) died clogged with 22 LOW pieces (T1-7)
+        # while the concentration bias fired on low drops 33x, dragging them to the high nucleus
+        # and scattering them from their same-type partners so they never merged -> clutter ->
+        # height death. Gating next_type>=8 lets low pieces clear via normal same-type/height
+        # axes, while T8+ still build the 2nd tower.
         if (
             (not russia_phase)
             and merge_grade == "NO"
+            and next_type >= 8
             and max_type_on_board >= 12
             and piece_count >= 30
         ):
