@@ -2015,8 +2015,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _ht_crosses = result.get("crosses_deadline", False)
                 if (not _ht_crosses) and _ht_margin >= 0.3:
                     _ht_dist = abs(x - float(_hi_nuc.get("x", 0.0)))
-                    if _ht_dist < 2.2:
-                        score += max(0.0, 700.0 - _ht_dist * 300.0)
+                    # GOAL(2026-06-05) NARROW build-2nd-T14-beside: ONLY when exactly one T14
+                    # already exists, peak the bonus BESIDE the nucleus (~1.0 offset) so the 2nd
+                    # T14 forms adjacent and can merge -> 2nd Russia -> ソ連. All climbing (T12/T13,
+                    # or 1st of a tier) keeps tight on-nucleus concentration. The broad beside
+                    # version dispersed climbing and dropped T14+ 30%->13%; gating on
+                    # max_type==14 & count==1 leaves climbing byte-identical (validated: 0 change
+                    # when max_type<14), so T14+ reach is provably preserved.
+                    if max_type_on_board == 14 and len(_hi_pieces) == 1:
+                        _ht_metric = abs(_ht_dist - 1.0)  # peak BESIDE (adjacent 2nd T14)
+                        _ht_gate = 1.2
+                    else:
+                        _ht_metric = _ht_dist  # tight on-nucleus (climbing path, unchanged)
+                        _ht_gate = 2.2
+                    if _ht_metric < _ht_gate:
+                        score += max(0.0, 700.0 - _ht_metric * 300.0)
                         reasons.append("HIGH_TIER_BUILD_2ND")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
