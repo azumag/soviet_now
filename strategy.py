@@ -1978,14 +1978,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       _cand_margin = result.get("deadline_margin", 99)
                       _cand_crosses = result.get("crosses_deadline", False)
                       if (not _cand_crosses) and _cand_margin >= 0.5:
-                          # GOAL(2026-06-05, user-approved): build the 2nd tower BESIDE the
-                          # nucleus (bonus peaks at ~1.0 offset), not on top. Confirmed blocker:
-                          # 2xT14 form separated and never merge; building the top tier as an
-                          # ADJACENT pair lets them merge upward toward a 2nd Russia -> ソ連.
-                          _noff = abs(abs(x - soviet_nucleus_x) - 1.0)
-                          if _noff < 1.2:
-                              score += max(0.0, 500.0 - _noff * 300.0)
-                              reasons.append("SOVIET_NUCLEUS_GROWTH_BESIDE")
+                          _ndist = abs(x - soviet_nucleus_x)
+                          if _ndist < 2.0:
+                              score += max(0.0, 500.0 - _ndist * 250.0)
+                              reasons.append("SOVIET_NUCLEUS_GROWTH")
 
         # ----- GOAL-loop BOLD(2026-06-04, user-approved w/ rollback): build the 2nd high tier -----
         # Diagnosed wall: a 2nd copy of the top tier NEVER coexists (measured: 2xT14 in 0/14
@@ -2018,13 +2014,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _ht_margin = result.get("deadline_margin", 99)
                 _ht_crosses = result.get("crosses_deadline", False)
                 if (not _ht_crosses) and _ht_margin >= 0.3:
-                    # GOAL(2026-06-05, user-approved): peak BESIDE the nucleus (~1.0 offset),
-                    # not on top. Builds the top tier as an ADJACENT pair -> merges upward,
-                    # fixing the confirmed "2xT14 form separated and never merge" blocker.
-                    _ht_off = abs(abs(x - float(_hi_nuc.get("x", 0.0))) - 1.0)
-                    if _ht_off < 1.2:
-                        score += max(0.0, 700.0 - _ht_off * 350.0)
-                        reasons.append("HIGH_TIER_BUILD_2ND_BESIDE")
+                    _ht_dist = abs(x - float(_hi_nuc.get("x", 0.0)))
+                    if _ht_dist < 2.2:
+                        score += max(0.0, 700.0 - _ht_dist * 300.0)
+                        reasons.append("HIGH_TIER_BUILD_2ND")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
