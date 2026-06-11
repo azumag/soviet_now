@@ -2070,9 +2070,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _pcp_lo = min(_pcp_xa, _pcp_xb)
                 _pcp_hi = max(_pcp_xa, _pcp_xb)
                 _pcp_gap = _pcp_hi - _pcp_lo
-                if 1.0 <= _pcp_gap <= 5.0 and (_pcp_lo + 0.4) < x < (_pcp_hi - 0.4):
+                # GOAL-loop(2026-06-12 hourly v4): 2D separator zone. Measured: with the
+                # x-corridor kept clear, pairs now end VERTICALLY separated (dx 0.59-2.48,
+                # dy 2.6-4.0, contact gap only 0.38-0.74) with a thin layer of T3-T7 wedged
+                # between their heights. The x-only corridor test misses this: vertical
+                # pairs (dx<1.0) are gated out entirely, and wedge pieces land ON TOP at
+                # x outside the thin corridor. Add an OR condition using the candidate's
+                # predicted landing (x, landing_y): penalize NO-merge drops landing inside
+                # the inter-pair bounding box (x +-0.4, y strictly between the pair
+                # heights) whenever the pair is height-separated (dy >= 1.0). Same penalty
+                # magnitudes; still far below safety axes.
+                _pcp_ya = float(_pcp_pair[0].get("y", 0.0))
+                _pcp_yb = float(_pcp_pair[1].get("y", 0.0))
+                _pcp_ylo = min(_pcp_ya, _pcp_yb)
+                _pcp_yhi = max(_pcp_ya, _pcp_yb)
+                _pcp_dy = _pcp_yhi - _pcp_ylo
+                _pcp_land_y = result.get("landing_y")
+                try:
+                    _pcp_land_y = float(_pcp_land_y)
+                except (TypeError, ValueError):
+                    _pcp_land_y = None
+                _pcp_in_corridor = (
+                    1.0 <= _pcp_gap <= 5.0 and (_pcp_lo + 0.4) < x < (_pcp_hi - 0.4)
+                )
+                _pcp_in_wedge = (
+                    _pcp_dy >= 1.0
+                    and _pcp_land_y is not None
+                    and (_pcp_lo - 0.4) <= x <= (_pcp_hi + 0.4)
+                    and (_pcp_ylo + 0.2) < _pcp_land_y < (_pcp_yhi - 0.2)
+                )
+                if _pcp_in_corridor or _pcp_in_wedge:
                     score -= 600.0 if next_type <= 7 else 350.0
-                    reasons.append("PAIR_CORRIDOR_PROTECT")
+                    reasons.append(
+                        "PAIR_CORRIDOR_PROTECT" if _pcp_in_corridor else "PAIR_WEDGE_PROTECT"
+                    )
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
