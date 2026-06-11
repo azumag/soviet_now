@@ -2032,6 +2032,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += max(0.0, 700.0 - _ht_metric * 300.0)
                         reasons.append("HIGH_TIER_BUILD_2ND")
 
+        # ----- GOAL-loop(2026-06-12): PAIR_CORRIDOR_PROTECT — keep the merge corridor clear -----
+        # Measured (game_history 2026-06-12): when a same-type top pair (2xT13) finally
+        # coexists, it ends height-ALIGNED (dy=0.53) but separated by dx=3.45 with 19 LOW
+        # pieces (T1-T7 clutter) packed in the corridor between them. Mechanism: the height
+        # axis prefers the lowest landing — and the valley between two high towers IS the
+        # lowest spot — so every no-merge low drop is funneled exactly between the pair,
+        # walling them apart so they can never roll together and merge (-> no 2nd T14/T15,
+        # no ソ連). No existing axis counters this: HIGH_TIER_BUILD_2ND only steers T8+.
+        # Fix: while a same-type pair of type>=13 coexists, penalize NO-merge drops whose x
+        # falls strictly between the pair (gap 1.0-5.0, inner margin 0.4). Low clutter
+        # (T1-7) -600, mid builders -350: both clearly beat the valley's height advantage
+        # (landing_y*50*height_mult ~ 40-180) yet stay far below safety axes (-2500..-7000),
+        # so deadline/danger handling is unchanged. Merging drops (DIRECT/NEAR) into the
+        # corridor are untouched — they CLEAR it. Scope is rare (pair-coexist turns only),
+        # so climbing outside pair-coexist states is provably preserved.
+        if merge_grade == "NO":
+            _pcp_counts = {}
+            for _pp in pieces:
+                _ppt = _pp.get("type", 0)
+                if _ppt >= 13:
+                    _pcp_counts.setdefault(_ppt, []).append(_pp)
+            _pcp_pair = None
+            for _ppt in sorted(_pcp_counts.keys(), reverse=True):
+                if len(_pcp_counts[_ppt]) == 2:
+                    _pcp_pair = _pcp_counts[_ppt]
+                    break
+            if _pcp_pair is not None and next_type < _pcp_pair[0].get("type", 15):
+                _pcp_xa = float(_pcp_pair[0].get("x", 0.0))
+                _pcp_xb = float(_pcp_pair[1].get("x", 0.0))
+                _pcp_lo = min(_pcp_xa, _pcp_xb)
+                _pcp_hi = max(_pcp_xa, _pcp_xb)
+                _pcp_gap = _pcp_hi - _pcp_lo
+                if 1.0 <= _pcp_gap <= 5.0 and (_pcp_lo + 0.4) < x < (_pcp_hi - 0.4):
+                    score -= 600.0 if next_type <= 7 else 350.0
+                    reasons.append("PAIR_CORRIDOR_PROTECT")
+
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
