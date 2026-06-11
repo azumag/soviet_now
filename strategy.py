@@ -2051,7 +2051,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             _pcp_counts = {}
             for _pp in pieces:
                 _ppt = _pp.get("type", 0)
-                if _ppt >= 13:
+                # GOAL-loop(2026-06-12 hourly): extend to T12 pairs. Measured: the T12 pair
+                # coexists from turn 21-26 while the T13 pair only forms at turn 49-92, and
+                # by then 7-11 clutter pieces already wall the corridor (protection started
+                # too late to matter; fired=0 in 2 of 4 pair games). The T12-pair corridor
+                # IS the path to the 2nd T13 — protecting it earlier keeps the merge lane
+                # open through the whole climb.
+                if _ppt >= 12:
                     _pcp_counts.setdefault(_ppt, []).append(_pp)
             _pcp_pair = None
             for _ppt in sorted(_pcp_counts.keys(), reverse=True):
