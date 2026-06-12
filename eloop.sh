@@ -148,6 +148,35 @@ repair_strategy_to_active_branch_head_if_needed() {
 	[ "${ACTIVE_BRANCH_STRATEGY_REPAIR_ENABLED:-1}" = "1" ] || return 0
 	[ -f "${ACTIVE_BRANCH_FILE:-tmp/state/active_branch.json}" ] || return 0
 
+	# #93 defense-in-depth: while an improve subprocess is alive, defer repair.
+	# Apply sites now advance the pin atomically (_atomic_pin_advance_after_apply),
+	# but a repair landing inside the brief cp->pin window would still silently
+	# revert the winner (measured: 28 reverts in 9h on 2026-06-02/03). Guards
+	# against orphan lockout: requires status=running AND live pid AND fresh
+	# updated_at; any of them failing lets repair proceed as before.
+	local _is_file="${IMPROVE_STATE_FILE:-tmp/state/improve_state.json}"
+	if [ -f "$_is_file" ]; then
+		local _is_info _is_status _is_pid _is_age
+		_is_info=$(python3 - "$_is_file" <<'PY' 2>/dev/null || echo "idle|0|999999"
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+print(f"{d.get('status') or 'idle'}|{int(d.get('pid') or 0)}|{int(time.time()) - int(d.get('updated_at') or 0)}")
+PY
+)
+		IFS='|' read -r _is_status _is_pid _is_age <<EOF
+$_is_info
+EOF
+		if [ "$_is_status" = "running" ] &&
+			[ "${_is_age:-999999}" -lt "${STRATEGY_REPAIR_IMPROVE_GRACE_SEC:-1800}" ] &&
+			[ "${_is_pid:-0}" -gt 0 ] && kill -0 "$_is_pid" 2>/dev/null; then
+			log "[STRATEGY-REPAIR] improve running (pid=$_is_pid age=${_is_age}s) → repair deferred (#93)"
+			return 0
+		fi
+	fi
+
 	local expected_hash fallback_hash current_hash source_file fallback_source actual_hash backup_file abandon_active_branch
 	abandon_active_branch=false
 	IFS='|' read -r expected_hash fallback_hash <<EOF
@@ -568,7 +597,8 @@ json.dump(d,open(f,'w'))
 		# ここは同期実行して、次ゲーム開始時の MOVE 生成で空HTMLへ戻る前に
 		# OBS 側の表示切り替えとブラウザソースの再読込時間を確保する。
 		local _dashboard_shown=0
-		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ]; then
+		# ソ連建国後はdashboardを表示しない（opsOverlay/statsOverlayに被るため）
+		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 0 ]; then
 			if ./obs_control.sh show "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1; then
 				_dashboard_shown=1
 			else

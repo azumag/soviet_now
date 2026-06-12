@@ -1672,6 +1672,14 @@ def key(metrics):
     )
 
 active = load_json(active_file)
+# #93: idempotent — the apply site may have advanced the pin atomically already
+# (eloop_improve.sh _atomic_pin_advance_after_apply). Without this early exit the
+# completion handler would see head != base_hash and WIPE depth/lineage by starting
+# a fresh branch payload for the same transition. Checked before the anchor
+# requirement so a noop never fails on a missing anchor file.
+if str(active.get("head_hash", "") or "") == new_hash and new_hash:
+    print(f"noop|head_already={new_hash[:8]}")
+    raise SystemExit(0)
 anchor = load_json(anchor_file)
 base_metrics = metrics_from_run(run_file, base_hash) if base_hash else None
 

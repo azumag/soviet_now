@@ -118,8 +118,9 @@ cleanup_tmp_files() {
 		fi
 	done
 
-	# --- wildcard_parallel セッション残骸: 1日より古い run-* を削除 (orchestrator が落ちると残る) ---
-	[ -d tmp/wildcard_parallel ] && find tmp/wildcard_parallel -maxdepth 1 -name 'run-*' -type d -mtime +1 -exec rm -rf {} + 2>/dev/null
+	# --- wildcard_parallel セッション残骸: 1日より古い run-* / smoke-* を削除 (orchestrator が落ちると残る) ---
+	# #94: smoke-* はデバッグ用 Chrome 起動テストの残骸 (2026-06-02 に ~128MB 滞留)。run-* と同基準で刈る。
+	[ -d tmp/wildcard_parallel ] && find tmp/wildcard_parallel -maxdepth 1 \( -name 'run-*' -o -name 'smoke-*' \) -type d -mtime +1 -exec rm -rf {} + 2>/dev/null
 
 	if [ "$cleaned" -gt 0 ]; then
 		log "[CLEANUP] tmp/ クリーンアップ完了: ${cleaned}ファイル削除"

@@ -19,6 +19,36 @@ CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 source ./eloop_lib.sh
 
+# #93: close the apply->pin race. Every site that writes a new strategy.py must
+# archive it and advance active_branch.head_hash in the SAME step — otherwise the
+# per-game repair (eloop.sh repair_strategy_to_active_branch_head_if_needed) sees
+# an applied-but-unpinned strategy and silently reverts it to the old head
+# (measured: 28 reverts in 9h on 2026-06-02/03). _branch_transition_after_improve
+# is idempotent (noop when head already == new), so the main-loop completion
+# handler that later runs the same transition stays harmless.
+_atomic_pin_advance_after_apply() {
+	local prev_hash="$1" tag="${2:-apply}"
+	local new_hash bt head_now
+	new_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	[ -n "$new_hash" ] || return 0
+	[ "$new_hash" = "$prev_hash" ] && return 0
+	# Branch continuation in _branch_transition_after_improve requires base ==
+	# current head. Callers sometimes hold a stale/non-decide prev (e.g. the md5
+	# fallback of IMPROVE_BASE_HASH); prefer the live head so the lineage continues
+	# instead of being reset to a fresh depth-1 branch.
+	head_now=$(python3 -c "import json;print((json.load(open('${ACTIVE_BRANCH_FILE:-tmp/state/active_branch.json}')) or {}).get('head_hash',''))" 2>/dev/null || echo "")
+	if [ -n "$head_now" ] && [ "$head_now" != "$prev_hash" ]; then
+		[ "$head_now" = "$new_hash" ] && return 0
+		prev_hash="$head_now"
+	fi
+	command -v _archive_strategy_snapshot_by_hash >/dev/null 2>&1 &&
+		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$new_hash" 2>/dev/null || true
+	if command -v _branch_transition_after_improve >/dev/null 2>&1; then
+		bt=$(_branch_transition_after_improve "$prev_hash" "$new_hash" 2>/dev/null || true)
+		log "[PIN] atomic advance (${tag}): ${prev_hash:0:8} -> ${new_hash:0:8}${bt:+ ($bt)}"
+	fi
+}
+
 # --- 引数 ---
 HISTORY_FILES="$1"
 SCORES="$2"
@@ -518,6 +548,7 @@ PY
 	winner_hash=$(python3 extract_decide_hash.py "$winner_path" 2>/dev/null || echo "")
 	cp "$winner_path" "$STRATEGY_FILE"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	_atomic_pin_advance_after_apply "$baseline_hash" "param-parallel"
 	winner_job=$(python3 - "$result_file" <<'PY' 2>/dev/null || true
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1439,6 +1470,7 @@ PY
 		fi
 		cp "$wildcard_winner_path" "$STRATEGY_FILE"
 		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		_atomic_pin_advance_after_apply "$HASH_BEFORE" "wildcard-parallel"
 		# Commit immediately after applying the winner so strategy.py is preserved
 		# even if the process is killed before reaching the git_commit phase below.
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
@@ -1463,7 +1495,7 @@ winner = parallel.get("parallel_winner") or {}
 data[h] = {
     "origin_type": "wildcard",
     "created_at_game": int(game_num),
-    "patience_override": 1,
+    "patience_override": int(os.environ.get("WILDCARD_ORIGIN_PATIENCE", "3") or 3),  # 93: 1 -> default 3 (adoption churn: 1 bad eval insta-rollbacked winners)
     "max_games_override": int(max_games),
     "created_at_epoch": int(time.time()),
     "wildcard_streak": int(os.environ.get("WILDCARD_CURRENT_STREAK", "1") or 1),
@@ -1601,6 +1633,7 @@ except Exception:
 	cp "strategy.py.staging" "$STRATEGY_FILE"
 	rm -f "strategy.py.staging"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	_atomic_pin_advance_after_apply "$HASH_BEFORE" "wildcard-direct"
 	# wildcard 起源 hash を登録 (regression.sh の patience override 用)
 	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
 		WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
@@ -1615,7 +1648,7 @@ if os.path.exists(path):
 data[h] = {
     "origin_type": "wildcard",
     "created_at_game": int(game_num),
-    "patience_override": 1,
+    "patience_override": int(os.environ.get("WILDCARD_ORIGIN_PATIENCE", "3") or 3),  # 93: 1 -> default 3 (adoption churn: 1 bad eval insta-rollbacked winners)
     "max_games_override": int(max_games),
     "created_at_epoch": int(time.time()),
     "wildcard_streak": int(os.environ.get("WILDCARD_CURRENT_STREAK", "1") or 1),
@@ -2055,7 +2088,7 @@ origin[h] = {
     "origin_type": "archive_restart",
     "created_at_game": int(game_num or 0),
     "created_at_epoch": now,
-    "patience_override": 1,
+    "patience_override": int(os.environ.get("WILDCARD_ORIGIN_PATIENCE", "3") or 3),  # 93: 1 -> default 3 (adoption churn: 1 bad eval insta-rollbacked winners)
     "max_games_override": int(max_games),
     "source_hash": source_hash,
     "source_comp": selected.get("comp"),
@@ -3628,6 +3661,7 @@ fi
 if $improve_ok; then
 	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
 		cp "$HARVEST_DIR/strategy.py.staging" "$STRATEGY_FILE"
+		_atomic_pin_advance_after_apply "$IMPROVE_BASE_HASH" "improve"
 		if [ -f "$HARVEST_DIR/logs/change_log.txt" ] && [ -s "$HARVEST_DIR/logs/change_log.txt" ]; then
 			cat "$HARVEST_DIR/logs/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
 			log "[IMPROVE] change_log harvested and appended"

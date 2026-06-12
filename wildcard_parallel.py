@@ -998,6 +998,46 @@ def build_parallel_result(
     return result, payload, 0 if winner else 2
 
 
+def append_failure_summary(result: dict) -> None:
+    """#94: persist per-candidate failure evidence beyond run-dir cleanup.
+
+    Run dirs (and their candidate logs) are pruned a day later by infra/cleanup.sh,
+    which made every infra_failed / Chrome-crash investigation impossible after the
+    fact. Append one compact line per run to logs/wildcard_failures.jsonl so crash
+    patterns survive cleanup. Append-only and tiny; never raises.
+    """
+    try:
+        rows = []
+        for c in result.get("candidates") or []:
+            if not isinstance(c, dict):
+                continue
+            status = str(c.get("status") or "")
+            err = str(c.get("error") or "")
+            if not err and status in ("accepted", "won", "leader", "running"):
+                continue
+            rows.append({
+                "job_id": c.get("job_id"),
+                "status": status,
+                "error": err[:300],
+                "games": len(c.get("scores") or []),
+                "generation": c.get("generation"),
+            })
+        out = {
+            "ts": int(time.time()),
+            "ok": bool(result.get("ok")),
+            "reason": result.get("reason"),
+            "interrupted": bool(result.get("interrupted")),
+            "session_dir": result.get("session_dir"),
+            "failures": rows,
+        }
+        path = REPO_ROOT / "logs" / "wildcard_failures.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(out, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def write_interrupted_result_from_status(
     args: argparse.Namespace,
     status_file: Path,
@@ -1015,6 +1055,7 @@ def write_interrupted_result_from_status(
         return False
     result, payload, _ = build_parallel_result(args, session_dir, candidates, interrupted=True, signum=signum)
     atomic_json(result_file, result)
+    append_failure_summary(result)
     try:
         render_overlay(status_file, html_file, payload)
     except Exception:
@@ -3109,6 +3150,17 @@ def evaluate_real(
                 game_error = runner_result_error(game)
                 if game_error:
                     candidate.game_results.append(game)
+                    # The baseline (slot-1 played reference / score_baseline) is the
+                    # comparison anchor and must NEVER be culled. should_cull() guards the
+                    # comp-based cull, but this game-error path sets status directly and
+                    # bypassed it — a mid-game decide_exception in the current strategy
+                    # culled the baseline, after which the slot regenerated into
+                    # perturbations (losing the anchor and churning dozens of culls).
+                    # For the baseline, stop here and finalize with whatever games it has
+                    # already scored instead of culling.
+                    if candidate.baseline or candidate.score_baseline:
+                        candidate.error = f"baseline incomplete game (not culled): {game_error}"
+                        break
                     candidate.status = "culled"
                     candidate.error = f"incomplete game culled without score: {game_error}"
                     break
@@ -3901,6 +3953,7 @@ def main() -> int:
         )
         render_overlay(args.status_file, args.html_file, payload)
         atomic_json(result_file, result)
+        append_failure_summary(result)
         print(json.dumps(result, ensure_ascii=False))
         return exit_code
     finally:
