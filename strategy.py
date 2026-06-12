@@ -2104,6 +2104,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append(
                         "PAIR_CORRIDOR_PROTECT" if _pcp_in_corridor else "PAIR_WEDGE_PROTECT"
                     )
+                # GOAL-loop(2026-06-12 hourly v5): PAIR_PRESS — a settled near-touching
+                # pair NEVER merges on its own (measured: 21-22 turns at contact_gap
+                # -0.79..-0.22, immobile +-0.02). Both observed delayed merges were
+                # triggered by an external impulse: a T8 landing on the pair compressed
+                # gap -0.28 -> -0.47 -> merged next turn (092830 t77-79); a nearby T11
+                # merge explosion collapsed a gap-1.24 pair the same turn (094837 t80).
+                # So when the top pair (>=13) is near-touching, reward NO-merge drops
+                # that land ON TOP of the pair (weight impulse pressing them together).
+                # +250 is a tie-breaker: far below merge bonuses and safety axes, and the
+                # corridor/wedge penalty (-600/-350) still wins where zones overlap, so
+                # protected zones stay protected. Deadline-gated: never presses a drop
+                # that crosses or comes within 0.3 of the deadline.
+                if (
+                    _pcp_pair[0].get("type", 0) >= 13
+                    and _pcp_land_y is not None
+                    and not result.get("crosses_deadline", False)
+                ):
+                    _prs_margin = result.get("deadline_margin", 99)
+                    try:
+                        _prs_margin = float(_prs_margin)
+                    except (TypeError, ValueError):
+                        _prs_margin = 99.0
+                    _prs_dx = float(_pcp_pair[0].get("x", 0.0)) - float(_pcp_pair[1].get("x", 0.0))
+                    _prs_dyy = float(_pcp_pair[0].get("y", 0.0)) - float(_pcp_pair[1].get("y", 0.0))
+                    _prs_rr = float(_pcp_pair[0].get("r", 1.0) or 1.0) + float(_pcp_pair[1].get("r", 1.0) or 1.0)
+                    _prs_gap = (_prs_dx * _prs_dx + _prs_dyy * _prs_dyy) ** 0.5 - _prs_rr
+                    _prs_midx = (float(_pcp_pair[0].get("x", 0.0)) + float(_pcp_pair[1].get("x", 0.0))) / 2.0
+                    _prs_top = max(float(_pcp_pair[0].get("y", 0.0)), float(_pcp_pair[1].get("y", 0.0)))
+                    if (
+                        _prs_margin >= 0.3
+                        and _prs_gap < 0.6
+                        and abs(x - _prs_midx) <= 1.0
+                        and _pcp_land_y >= _prs_top
+                    ):
+                        score += 250.0
+                        reasons.append("PAIR_PRESS")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
