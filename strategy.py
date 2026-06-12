@@ -867,13 +867,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        # GOAL-loop EXPERIMENT-1(2026-06-13): survival bias 1.8 -> 2.4. Measured
-        # structural ceiling: pair-reproduction cycle is 30-60 turns vs game life
-        # median 83 turns — Russia needs 2-3 cycles, so longevity is the binding
-        # constraint on ソ連 chances (and on score). Live A/B vs f81635d02363:
-        # endpoints = turns median >= +8%, score median > -10%, T14+ >= 22%;
-        # revert the pin if violated after ~30-40 games.
-        height_mult = 2.4
+        height_mult = 1.8  # HIGH phase height_mult from v42
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
