@@ -2051,6 +2051,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             _pcp_counts = {}
             for _pp in pieces:
                 _ppt = _pp.get("type", 0)
+                # GOAL-loop(2026-06-12 hourly v9): ignore physics-glitched pieces that
+                # escaped the board. Measured live (164732 turns 102-142): a T14 flew
+                # off-board from (-8.3,10.6) to y=44000, making pair geometry absurd
+                # (gap 18965) — it fakes 2xT14 states and can blanket the wedge zone
+                # across the whole board. Real board is ~|x|<=3.2, |y|<=5.5.
+                if _ppt >= 12:
+                    try:
+                        if abs(float(_pp.get("x", 0.0))) > 6.0 or abs(float(_pp.get("y", 0.0))) > 8.0:
+                            continue
+                    except (TypeError, ValueError):
+                        continue
                 # GOAL-loop(2026-06-12 hourly): extend to T12 pairs. Measured: the T12 pair
                 # coexists from turn 21-26 while the T13 pair only forms at turn 49-92, and
                 # by then 7-11 clutter pieces already wall the corridor (protection started
