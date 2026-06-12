@@ -2138,7 +2138,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         and abs(x - _prs_midx) <= 1.0
                         and _pcp_land_y >= _prs_top
                     ):
-                        score += 250.0
+                        score += 500.0
                         reasons.append("PAIR_PRESS")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
