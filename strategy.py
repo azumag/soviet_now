@@ -2132,9 +2132,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     _prs_gap = (_prs_dx * _prs_dx + _prs_dyy * _prs_dyy) ** 0.5 - _prs_rr
                     _prs_midx = (float(_pcp_pair[0].get("x", 0.0)) + float(_pcp_pair[1].get("x", 0.0))) / 2.0
                     _prs_top = max(float(_pcp_pair[0].get("y", 0.0)), float(_pcp_pair[1].get("y", 0.0)))
+                    # GOAL-loop(2026-06-12 hourly v8): T14 pairs stall OUTSIDE the press
+                    # gate — measured 29 consecutive 2xT14 turns at gap 1.16-1.67 with
+                    # zero presses (gate was <0.6), so the Russia-critical pair never
+                    # gets an impulse. Widen the gate to <2.0 for pair type>=14 only
+                    # (rare states; T13 pairs keep 0.6 to bound press volume).
+                    _prs_gate = 2.0 if _pcp_pair[0].get("type", 0) >= 14 else 0.6
                     if (
                         _prs_margin >= 0.3
-                        and _prs_gap < 0.6
+                        and _prs_gap < _prs_gate
                         and abs(x - _prs_midx) <= 1.0
                         and _pcp_land_y >= _prs_top
                     ):
