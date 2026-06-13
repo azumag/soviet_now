@@ -1386,20 +1386,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # refs: advice.md (Pitman_live), tmp/batch_summary.txt
                         if next_type == next_next_type:
                             proximity_bonus *= 1.5
-                        # EXPERIMENT-2b(2026-06-13): mid-builder clustering acceleration.
-                        # Merge SELECTION is saturated (measured: merge_mult 1.0->1.2 gave
-                        # 0 flips over 31701 replay turns) — the binding constraint is
-                        # CREATING merge opportunities. When a high tower exists, the 2nd
-                        # tier's materials are T8-12: boost their same-type clustering 1.5x
-                        # to shorten the measured 30-60 turn pair-reproduction cycle.
-                        # Total capped at 600 to respect the postmortem accumulation
-                        # warning (bonus must not mask height differentiation broadly).
-                        # Live A/B vs f81635d02363; endpoints: pair-rate>=35% or T14+>=33%;
-                        # floors score>=1230, turns>=78; verdict n>=40.
-                        if 8 <= next_type <= 12:
-                            _x2b_maxt = max((p.get("type", 0) for p in pieces), default=0)
-                            if _x2b_maxt >= 12:
-                                proximity_bonus = min(proximity_bonus * 1.5, 600.0)
                         # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
