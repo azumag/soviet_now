@@ -20,8 +20,8 @@ cd /Users/azumag/azumag/work/soren
 cp -n game_history/2026*_score*.jsonl tmp/replay_20260612/corpus/ 2>/dev/null   # 証拠保全（後述）
 pgrep -f 'soren_loop.sh'|head -1            # 期待: 9000 (生存)
 pgrep -f 'strategy_runner.py'|head -1       # 毎ゲーム別PID。生存していればOK
-python3 extract_decide_hash.py strategy.py  # 期待: d5fff9501436
-python3 -c "import json; print(json.load(open('tmp/state/active_branch.json'))['head_hash'])"  # 期待: d5fff9501436 と一致
+python3 extract_decide_hash.py strategy.py  # 期待: a4b6bfb84d88 (EXP-6 live; 旧EXP-3=d5fff9501436)
+python3 -c "import json; print(json.load(open('tmp/state/active_branch.json'))['head_hash'])"  # 期待: a4b6bfb84d88 と一致
 grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557のみ。>1 で新ソ連！
 ```
 
@@ -29,13 +29,17 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 
 ## 1. 現在の状態 (2026-06-15)
 
-- **稼働中の戦略 (live=head)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 本日の確定ベスト
+- **稼働中の戦略 (live=head)**: `a4b6bfb84d88` = **EXP-6 (MID_NUCLEUS_COMPLETE)** ← 2026-06-15 06:13 デプロイ。**効果は未測定（ライブA/B中）**。オフライン検証のみクリア（crash 0・flip 17全in-scope）。efficacyは未だ「直った」と言えない
+- **ロールバック先 (=直前ベスト)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 本日の確定ベスト。EXP-6が n>=20 で改善を示さなければ §2ロールバック手順で即復帰
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
 - **ループ稼働**: soren_loop.sh PID 9000。strategy_runner は毎ゲーム別プロセス起動 → **strategy.py / analyze_board.py の変更は次ゲームに自動反映**（手動restart不要）
 
-### EXP-3 (現行ベスト) の実績 vs 対照 f81635d02363
-score mean +19% / T14+到達 +7pp(28%→) / pair-rate +10pp(36%→47%) / Russia率 5倍(1%→5%)。n=114で安定(score_med 1338, mean 1550)。
+### EXP-3 (直前ベスト/ロールバック先) の実績 vs 対照 f81635d02363
+score mean +19% / T14+到達 +7pp(28%→) / pair-rate +10pp(36%→47%) / Russia率 5倍(1%→5%)。n=116で安定(score_med 1331, mean 1538, T14pair 5%, Russia 5%)。
+
+### EXP-6 効果判定の見方（次パスで実施）
+§5の計測スクリプトの比較対象に `a4b6bfb84d88` を追加し、**T14pair率**と**Russia率**を EXP-3(d5fff9501436) と比較。EXP-6の狙いは「到達済T14の2個目高ティア完成率(=T14pair)を上げる」こと。**T14pairが上がらなければ即ロールバック**（EXP-4/5同様、生スコア床割れも警戒）。
 
 ---
 
@@ -78,9 +82,11 @@ git add strategy.py && git commit -m "revert ..." && git push origin main
 | **EXP-3** | **LOW_DRAIN_CLUSTER**: T1-7非併合を高さ安全時のみ低相手へ寄せ+200 | **★採用確定★** n=55 | 散在低ピース予防排出→盤面余裕→建設↑。**低い相手に寄せる=高さ上げない**のが鍵 |
 | EXP-4 | LOW_DRAIN +200→+300(排出強化) | **棄却** n=22 pair-rate半減 | 排出強すぎると低集積を過剰優先し建設を奪う。**最適は+200** |
 | EXP-5 | LOW_DRAINを高phase(max_y≥2.0)へgap-fillで拡張 | **棄却** n=37 2nd-T14/Russia=0% | 高phaseの着手は高ティア完成に使うべき。**EXP-3のmargin≥0.5ゲートは正しい** |
+| **EXP-6** | **MID_NUCLEUS_COMPLETE**: T11-12非併合を、高ティア(>=13)が既に盤上にある時のみ、height-safe(margin>=0.5)で最近傍同type相手へ寄せ+200 | **ライブA/B中(効果未測定)** 2026-06-15デプロイ。offline crash0/flip17全in-scope | §4新診断「2個目高ティアは材料あるのに散在で未組立(失敗の96%が未併合の2nd-nucleus材料を抱えて死)」に基づく。EXP-2bと違い**高nucleusでなく低い同type相手へ・height-gate**。次パスでT14pair率を判定 |
 
 ### 再試行禁止リスト
-broad/narrow build-beside（両方失敗）、height_mult増、merge優先増、高ティア/中ティア集積強化、drain強化(+300)、drainの高phase拡張、next_next埋没回避(証拠0)。
+broad/narrow build-beside（両方失敗）、height_mult増、merge優先増、**高ティア集積強化（高nucleus方向=EXP-2b失敗）**、drain強化(+300)、drainの高phase拡張、next_next埋没回避(証拠0)。
+※中ティア集積は EXP-6 で「高ティア存在ゲート+height-safe+低い相手寄せ」という EXP-2b と異なる形で再挑戦中。EXP-6が失敗したら**中ティア集積は全形態が禁止リスト入り**。
 
 ---
 
@@ -92,10 +98,17 @@ EXP-3 のソ連ファネル(n=83):
 - Russia 6% → ソ連 0%
 
 **ボトルネック = 2個目の高ティア形成**。T13ペア→T14変換は74%と優秀(press/corridor機構が効く)。問題は2個目の高ピースが形成されないこと。
-原因切り分け: 2nd-T14を作れるか否かは**T14到達後の生存ターン数**で決まる(形成組58 vs 失敗組34、材料は両者同じ~12個)。
 
-**ただし**「生存延長で2nd-T14を増やす」直接アプローチは EXP-1(height)・EXP-4(drain強)・EXP-5(高phase drain)で全滅。高phaseの着手は高ティア完成に回すのが正しく、生存延長と建設はトレードオフ。
-→ 次は **drop-heuristic以外**の角度が必要。候補: analyze_board.py に新特徴(高ピース横の高さ安全な着地点検出、ドリフト予測精緻化、埋没度)を追加。ただし analyze_board は pin保護なし・全決定に即時影響の高リスク。慎重に設計し、replay harnessは2版import方式でA/B(既存fieldは触らず追加fieldのみ)。
+### 診断の更新 (2026-06-15, EXP-6の根拠)
+従来は「2nd-T14は生存ターン数で決まる(形成58 vs 失敗34)＝throughput問題」と見ていたが、**より深い計測で覆った**:
+- 形成組と失敗組の**死因シグネチャは同一**(max_y 3.2/低ピース~27/deadline crossed/高ティア>=13が2個)。違いは生存ターン長のみ。
+- 失敗組18件中15件が **[T14, T13]** を抱えて死(2個目の高ティアは孤立T13)。
+- **決定打**: 失敗組の96%が死亡時に **>=1.0 T13相当の未併合中ティア材料**(中央値2×T12)を抱えている。形成組(1.50)より失敗組(2.25)の方が**材料は多い**。
+→ **2個目高ティアは「材料不足(throughput)」でなく「材料が散在して未組立(assembly)」が真因**。2×T12が併合→T13できれば[T14,T13,T13]→2nd-T14。これが EXP-6 の設計根拠。
+
+**ただし**「生存延長で2nd-T14を増やす」直接アプローチは EXP-1(height)・EXP-4(drain強)・EXP-5(高phase drain)で全滅(生存延長と建設はトレードオフ)。EXP-6 はその罠を避け、散在中ティアを**height-safeな時だけ**早期に組み立てて散らからせない方向。
+
+→ EXP-6 が失敗したら次は **drop-heuristic以外**の角度: analyze_board.py に新特徴(高ピース横の高さ安全な着地点検出、ドリフト予測精緻化、埋没度)を追加。ただし analyze_board は pin保護なし・全決定に即時影響の高リスク。慎重に設計し、replay harnessは2版import方式でA/B(既存fieldは触らず追加fieldのみ)。
 **重要**: strategy.pyのドロップ位置レバーはほぼ汲み尽くした。安易な数値いじりは避け、明確な実測診断のある変更のみ。
 
 ---
@@ -132,7 +145,7 @@ def measure(target):
         if had: g['pair_games']+=1
         if had14: g['pair14']+=1
     return g
-for tgt,lab in (('d5fff9501436','EXP-3(current best)'),):   # 比較対象を追加
+for tgt,lab in (('a4b6bfb84d88','EXP-6(live)'),('d5fff9501436','EXP-3(prev best/rollback)')):   # T14pair率を比較
     g=measure(tgt)
     if g['games']:
         print(f"{lab}: n={g['games']} score_med={statistics.median(g['scores']):.0f} mean={statistics.mean(g['scores']):.0f} max={max(g['scores'])} turns_med={statistics.median(g['turns']):.0f} T14+={100*g['t14']/g['games']:.0f}% pair-rate={100*g['pair_games']/g['games']:.0f}% T14pair={g['pair14']}({100*g['pair14']/g['games']:.0f}%) russia={g['russia']}({100*g['russia']/g['games']:.0f}%)")
