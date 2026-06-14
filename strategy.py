@@ -2186,31 +2186,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += max(0.0, 200.0 - _ld_dist * 130.0)
                         reasons.append("LOW_DRAIN_CLUSTER")
 
-        # ----- GOAL-loop EXPERIMENT-6(2026-06-15): MID_NUCLEUS_COMPLETE -----
-        # Measured (EXP-3 corpus n=116): of games that reached T14 but never formed a 2nd T14,
-        # 96% died holding >=1.0 T13-equiv of UNMERGED mid material (median 2x T12) while a high
-        # tier (>=13) already existed. The 2nd-nucleus material is PRESENT but SCATTERED, not
-        # absent -> an assembly problem, not throughput. Merging two scattered T12 -> T13
-        # completes the 2nd nucleus ([T14,T13,T13] -> 2nd T14). Mirror the EXP-3 LOW_DRAIN
-        # safety contract exactly (height-SAFE only: margin>=0.5, no deadline cross; modest
-        # tie-breaker <=200, below merge/AVOID bonuses) but for T11-12 no-merge drops, and ONLY
-        # when a high tier already exists -> targets 2nd-nucleus COMPLETION, not blanket mid
-        # clustering (the EXP-2b failure pulled toward the HIGH nucleus and added height; this
-        # is height-gated and pulls toward the nearest same-type partner instead).
-        if merge_grade == "NO" and 11 <= next_type <= 12 and not result.get("crosses_deadline", False):
-            _mn_margin = result.get("deadline_margin", 99)
-            try:
-                _mn_margin = float(_mn_margin)
-            except (TypeError, ValueError):
-                _mn_margin = 99.0
-            if _mn_margin >= 0.5 and any(p.get("type", 0) >= 13 for p in pieces):
-                _mn_partners = [p for p in pieces if p.get("type") == next_type]
-                if _mn_partners:
-                    _mn_dist = min(abs(x - float(p.get("x", 0.0))) for p in _mn_partners)
-                    if _mn_dist < 1.5:
-                        score += max(0.0, 200.0 - _mn_dist * 130.0)
-                        reasons.append("MID_NUCLEUS_COMPLETE")
-
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
