@@ -107,8 +107,16 @@ EXP-3 のソ連ファネル(n=83):
 
 **ただし**「生存延長で2nd-T14を増やす」直接アプローチは EXP-1(height)・EXP-4(drain強)・EXP-5(高phase drain)で全滅(生存延長と建設はトレードオフ)。EXP-6 はその罠を避け、散在中ティアを**height-safeな時だけ**早期に組み立てて散らからせない方向。
 
-→ EXP-6 が失敗したら次は **drop-heuristic以外**の角度: analyze_board.py に新特徴(高ピース横の高さ安全な着地点検出、ドリフト予測精緻化、埋没度)を追加。ただし analyze_board は pin保護なし・全決定に即時影響の高リスク。慎重に設計し、replay harnessは2版import方式でA/B(既存fieldは触らず追加fieldのみ)。
-**重要**: strategy.pyのドロップ位置レバーはほぼ汲み尽くした。安易な数値いじりは避け、明確な実測診断のある変更のみ。
+### プラトー確定 (2026-06-15 08:31, EXP-6棄却後)
+**EXP-4/5/6 が3連続で EXP-3 を超えられず**、drop-heuristic アプローチは天井に到達:
+- EXP-6の教訓: 同type誘導を**足すとペア形成軸(PAIR_PRESS/SOVIET_NUCLEUS_GROWTH/axis9.6b)と干渉**しhighpairが下がる。盤面は微妙な均衡で、軸追加=ノイズ。
+- 「散在材料を寄せる(assembly)」は効かない。理由は[[clutter-death-dominant-but-undrainable-2026-06-14]]の通り**埋没した相手は動かせない**(84%)。EXP-6が実証。
+- **埋没予防は既にモデル済**: strategy.py axis 5.5b AVOID_BURY_MERGEABLE(L1666)が、partner(count>=2)を持つT10+を埋める着手に -(type-9)*120(T14=-600)。→「埋没度をanalyze_boardに足す」案は**冗長**。再調査不要。
+- analyze_board.py には bury/reach/cover/exposed の独立計算は無い(埋没判定はstrategy.py inline)。
+
+**結論: strategy.pyのドロップ位置/集積/埋没予防レバーは汲み尽くした**。残る前進角度はいずれも高リスク・多パス要:
+(a) analyze_board.py の richer特徴(ドリフト予測精緻化等。pin保護なし・全決定即時影響・慎重設計必須)、(b) multi-turn lookahead強化(next_next埋没回避は証拠0で棄却済)、(c) EXP-3を現アプローチの天井と受容。
+→ **ユーザー相談事項**(russia-drought memoryの「1-2改善で回復しなければ相談」を超過): 高リスク frontier(a/b)に多パスかけて挑むか、(c)現状維持か、別方針か。autonomous cronは相談を待たず EXP-3 で安定運用を継続。
 
 ---
 
