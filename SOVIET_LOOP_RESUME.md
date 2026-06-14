@@ -20,8 +20,8 @@ cd /Users/azumag/azumag/work/soren
 cp -n game_history/2026*_score*.jsonl tmp/replay_20260612/corpus/ 2>/dev/null   # 証拠保全（後述）
 pgrep -f 'soren_loop.sh'|head -1            # 期待: 9000 (生存)
 pgrep -f 'strategy_runner.py'|head -1       # 毎ゲーム別PID。生存していればOK
-python3 extract_decide_hash.py strategy.py  # 期待: a4b6bfb84d88 (EXP-6 live; 旧EXP-3=d5fff9501436)
-python3 -c "import json; print(json.load(open('tmp/state/active_branch.json'))['head_hash'])"  # 期待: a4b6bfb84d88 と一致
+python3 extract_decide_hash.py strategy.py  # 期待: d5fff9501436 (EXP-3=確定ベスト。EXP-6は2026-06-15棄却・revert済)
+python3 -c "import json; print(json.load(open('tmp/state/active_branch.json'))['head_hash'])"  # 期待: d5fff9501436 と一致
 grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557のみ。>1 で新ソ連！
 ```
 
@@ -29,17 +29,16 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 
 ## 1. 現在の状態 (2026-06-15)
 
-- **稼働中の戦略 (live=head)**: `a4b6bfb84d88` = **EXP-6 (MID_NUCLEUS_COMPLETE)** ← 2026-06-15 06:13 デプロイ。**効果は未測定（ライブA/B中）**。オフライン検証のみクリア（crash 0・flip 17全in-scope）。efficacyは未だ「直った」と言えない
-- **ロールバック先 (=直前ベスト)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 本日の確定ベスト。EXP-6が n>=20 で改善を示さなければ §2ロールバック手順で即復帰
+- **稼働中の戦略 (live=head)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 確定ベスト。**EXP-6は2026-06-15 棄却・revert済**（commit 27d123f7f）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
 - **ループ稼働**: soren_loop.sh PID 9000。strategy_runner は毎ゲーム別プロセス起動 → **strategy.py / analyze_board.py の変更は次ゲームに自動反映**（手動restart不要）
 
-### EXP-3 (直前ベスト/ロールバック先) の実績 vs 対照 f81635d02363
-score mean +19% / T14+到達 +7pp(28%→) / pair-rate +10pp(36%→47%) / Russia率 5倍(1%→5%)。n=116で安定(score_med 1331, mean 1538, T14pair 5%, Russia 5%)。
+### EXP-3 (確定ベスト) の実績 vs 対照 f81635d02363
+score mean +19% / T14+到達 +7pp(28%→) / pair-rate +10pp(36%→47%) / Russia率 5倍(1%→5%)。n=121で安定(score_med 1315, mean 1535, T14pair 5%, Russia 5%, floor<1150 36%)。
 
-### EXP-6 効果判定の見方（次パスで実施）
-§5の計測スクリプトの比較対象に `a4b6bfb84d88` を追加し、**T14pair率**と**Russia率**を EXP-3(d5fff9501436) と比較。EXP-6の狙いは「到達済T14の2個目高ティア完成率(=T14pair)を上げる」こと。**T14pairが上がらなければ即ロールバック**（EXP-4/5同様、生スコア床割れも警戒）。
+### EXP-6 棄却の記録（2026-06-15, n=21）
+EXP-6(MID_NUCLEUS_COMPLETE, a4b6bfb84d88)を06:13デプロイ→07:31にn=21で判定。**T14pair 5%(1/21) vs EXP-3 5% = 改善ゼロ**。precursorの highpair はむしろ低下(33% vs 40%)=EXP-4型のペア形成阻害シグナル。T14+到達/meanは上振れ気味だがn=21ノイズ・score_med/turns/floorは同点。pre-registered基準「n≥20でT14pair改善なし→rollback」に従い revert。→**中ティアassembly仮説は不成立。中ティア集積は全形態が再試行禁止リスト入り**(§3)。
 
 ---
 
@@ -82,11 +81,11 @@ git add strategy.py && git commit -m "revert ..." && git push origin main
 | **EXP-3** | **LOW_DRAIN_CLUSTER**: T1-7非併合を高さ安全時のみ低相手へ寄せ+200 | **★採用確定★** n=55 | 散在低ピース予防排出→盤面余裕→建設↑。**低い相手に寄せる=高さ上げない**のが鍵 |
 | EXP-4 | LOW_DRAIN +200→+300(排出強化) | **棄却** n=22 pair-rate半減 | 排出強すぎると低集積を過剰優先し建設を奪う。**最適は+200** |
 | EXP-5 | LOW_DRAINを高phase(max_y≥2.0)へgap-fillで拡張 | **棄却** n=37 2nd-T14/Russia=0% | 高phaseの着手は高ティア完成に使うべき。**EXP-3のmargin≥0.5ゲートは正しい** |
-| **EXP-6** | **MID_NUCLEUS_COMPLETE**: T11-12非併合を、高ティア(>=13)が既に盤上にある時のみ、height-safe(margin>=0.5)で最近傍同type相手へ寄せ+200 | **ライブA/B中(効果未測定)** 2026-06-15デプロイ。offline crash0/flip17全in-scope | §4新診断「2個目高ティアは材料あるのに散在で未組立(失敗の96%が未併合の2nd-nucleus材料を抱えて死)」に基づく。EXP-2bと違い**高nucleusでなく低い同type相手へ・height-gate**。次パスでT14pair率を判定 |
+| **EXP-6** | **MID_NUCLEUS_COMPLETE**: T11-12非併合を、高ティア(>=13)が既に盤上にある時のみ、height-safe(margin>=0.5)で最近傍同type相手へ寄せ+200 | **棄却** n=21 T14pair改善ゼロ(5%=5%)・highpair低下(40%→33%) | offline検証はクリア(crash0/flip17全in-scope)だが**ライブで効果出ず**。中ティアassembly仮説不成立。highpair低下=EXP-4型ペア阻害。**中ティア集積は全形態禁止確定** |
 
 ### 再試行禁止リスト
-broad/narrow build-beside（両方失敗）、height_mult増、merge優先増、**高ティア集積強化（高nucleus方向=EXP-2b失敗）**、drain強化(+300)、drainの高phase拡張、next_next埋没回避(証拠0)。
-※中ティア集積は EXP-6 で「高ティア存在ゲート+height-safe+低い相手寄せ」という EXP-2b と異なる形で再挑戦中。EXP-6が失敗したら**中ティア集積は全形態が禁止リスト入り**。
+broad/narrow build-beside（両方失敗）、height_mult増、merge優先増、**高ティア集積強化（高nucleus方向=EXP-2b失敗）**、**中ティア集積=全形態（EXP-2b高nucleus + EXP-6 height-safe低相手寄せ、両方失敗で確定）**、drain強化(+300)、drainの高phase拡張、next_next埋没回避(証拠0)。
+※**結論: strategy.pyのドロップ位置/集積レバーは汲み尽くした**。次の前進は analyze_board.py の新特徴(§4)か、全く別角度。
 
 ---
 
@@ -145,7 +144,7 @@ def measure(target):
         if had: g['pair_games']+=1
         if had14: g['pair14']+=1
     return g
-for tgt,lab in (('a4b6bfb84d88','EXP-6(live)'),('d5fff9501436','EXP-3(prev best/rollback)')):   # T14pair率を比較
+for tgt,lab in (('d5fff9501436','EXP-3(current best)'),):   # 新実験デプロイ時に比較対象を追加
     g=measure(tgt)
     if g['games']:
         print(f"{lab}: n={g['games']} score_med={statistics.median(g['scores']):.0f} mean={statistics.mean(g['scores']):.0f} max={max(g['scores'])} turns_med={statistics.median(g['turns']):.0f} T14+={100*g['t14']/g['games']:.0f}% pair-rate={100*g['pair_games']/g['games']:.0f}% T14pair={g['pair14']}({100*g['pair14']/g['games']:.0f}%) russia={g['russia']}({100*g['russia']/g['games']:.0f}%)")
