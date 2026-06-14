@@ -2178,26 +2178,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _ld_margin = float(_ld_margin)
             except (TypeError, ValueError):
                 _ld_margin = 99.0
-            # EXPERIMENT-5(2026-06-15): extend drain into the LATE/HIGH phase. Measured
-            # (EXP-3 n=83): the 2nd-T14 leak is survival-time-limited (games that form a
-            # 2nd T14 simply last 58 vs 34 turns AFTER the 1st T14; mid material is the
-            # same ~12). And LOW_DRAIN fires 90% at max_y<1.0 but only 33% at max_y>=2.0
-            # — the margin>=0.5 gate shuts the drain off in exactly the late phase where
-            # clearing clutter buys the survival time the 2nd T14 needs. Add a high-phase
-            # path: when max_y>=2.0, allow the drain at lower margin (>=0.2) BUT ONLY for
-            # GAP-FILLING drops that land at least 0.5 BELOW the current peak
-            # (landing_y <= max_y - 0.5) — these provably cannot raise the height-death
-            # ceiling (the EXP-1/EXP-4 failure mode), they only drain clutter from the
-            # valley. Same modest +200 tie-breaker.
-            _ld_landing = result.get("landing_y", 99)
-            try:
-                _ld_landing = float(_ld_landing)
-            except (TypeError, ValueError):
-                _ld_landing = 99.0
-            _ld_gate = (_ld_margin >= 0.5) or (
-                max_y >= 2.0 and _ld_margin >= 0.2 and _ld_landing <= max_y - 0.5
-            )
-            if _ld_gate:
+            if _ld_margin >= 0.5:
                 _ld_partners = [p for p in pieces if p.get("type") == next_type]
                 if _ld_partners:
                     _ld_dist = min(abs(x - float(p.get("x", 0.0))) for p in _ld_partners)
