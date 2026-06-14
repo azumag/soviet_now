@@ -2158,6 +2158,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += 500.0
                         reasons.append("PAIR_PRESS")
 
+        # ----- GOAL-loop EXPERIMENT-3(2026-06-14): LOW_DRAIN_CLUSTER -----
+        # Measured (post-recovery n=83): clutter-death = 81% of all game-overs
+        # (board fills with T1-7 at 60-70% while a high tier exists). Root: 32% of
+        # low(T1-7) no-merge drops that HAVE a same-type partner land FAR (>=1.0)
+        # from it, leaving scattered low pieces that later can't merge -> pile-up ->
+        # overflow. Guide those low no-merge drops toward their nearest same-type
+        # partner so they merge soon and drain off the board. CRITICAL safety (vs the
+        # EXP-2b clustering failure, which pulled toward the HIGH nucleus and added
+        # height): fire ONLY when the landing is height-SAFE (margin>=0.5, no deadline
+        # cross), and pull toward LOW partners (which sit low) — so it can never add
+        # dangerous height. Bonus is a modest tie-breaker (max 200 at dist 0, 0 at
+        # dist 1.5), far below merge bonuses (600-1200) and the AVOID_BLOCK/AVOID_BURY
+        # axes, so it never overrides a real reason for a far drop — only breaks ties
+        # among safe candidates. Scoped to T1-7 no-merge with a board partner.
+        if merge_grade == "NO" and next_type <= 7 and not result.get("crosses_deadline", False):
+            _ld_margin = result.get("deadline_margin", 99)
+            try:
+                _ld_margin = float(_ld_margin)
+            except (TypeError, ValueError):
+                _ld_margin = 99.0
+            if _ld_margin >= 0.5:
+                _ld_partners = [p for p in pieces if p.get("type") == next_type]
+                if _ld_partners:
+                    _ld_dist = min(abs(x - float(p.get("x", 0.0))) for p in _ld_partners)
+                    if _ld_dist < 1.5:
+                        score += max(0.0, 200.0 - _ld_dist * 130.0)
+                        reasons.append("LOW_DRAIN_CLUSTER")
+
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
