@@ -2182,13 +2182,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _ld_partners = [p for p in pieces if p.get("type") == next_type]
                 if _ld_partners:
                     _ld_dist = min(abs(x - float(p.get("x", 0.0))) for p in _ld_partners)
-                    # EXPERIMENT-4(2026-06-14): strengthen drain 200->300. EXP-3 won
-                    # (n=55: score_med 1335 vs 1240, T14+ 29% vs 19%) but ALL 55 games
-                    # still die low(T1-7)-clutter-dominant -> drain isn't keeping up with
-                    # low inflow. Bump the bonus (still height-gated, still a tie-breaker
-                    # below AVOID axes ~-500) to drain more. A/B vs d5fff9501436.
                     if _ld_dist < 1.5:
-                        score += max(0.0, 300.0 - _ld_dist * 195.0)
+                        score += max(0.0, 200.0 - _ld_dist * 130.0)
                         reasons.append("LOW_DRAIN_CLUSTER")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
