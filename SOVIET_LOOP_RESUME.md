@@ -34,6 +34,9 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
 - **ループ稼働**: soren_loop.sh PID 9000。strategy_runner は毎ゲーム別プロセス起動 → **strategy.py / analyze_board.py の変更は次ゲームに自動反映**（手動restart不要）
 
+### ⚠ WATCH (2026-06-15 11:39): 直近窓がやや低温
+本日のEXP-3ローカル59ゲームは score_med ~1230(対 確定ベースライン1331)・Russia 0〜1/59(対 ~5%)とやや低温。**ただし退行機構なし**を実測確認済: strategy.py は archived EXP-3 と md5一致(改変なし)・turns_med 80で終日安定(早死にでない)・score0/infra兆候ゼロ。turns安定+scoreのみ微減=piece-sequence variance(RNG)が最有力で、環境劣化(lag/missed drop)なら turns が落ちるはず。→**variance と判断・HOLD**。次パスで監視: score_med が2パス連続 ≤1230 **かつ** turns_med が <76 に落ちたら環境調査へ昇格(bridge/フレーム/OBS負荷)。Russia 0継続も併せて監視。
+
 ### EXP-3 (確定ベスト) の実績 vs 対照 f81635d02363
 score mean +19% / T14+到達 +7pp(28%→) / pair-rate +10pp(36%→47%) / Russia率 5倍(1%→5%)。n=121で安定(score_med 1315, mean 1535, T14pair 5%, Russia 5%, floor<1150 36%)。
 
