@@ -38,6 +38,7 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 直近40ゲームで **T14+ 到達 8%(対 lifetime 25%)** が持続(last25もlast40も8%)・score_med 1149-1201(対 baseline 1331)。T13+は78-80%(≒baseline)＝**T13までは届くがT14に押し上がらない**。40ゲームで統計的に有意(期待~10 vs 実~3, p<0.01)＝単純noiseでは説明しにくい。
 - **実測した除外項目**: strategy.py md5不変(EXP-3純正・退行機構なし)・memory 32%free(OKだが19:39の56%から低下傾向)・load 5.43(中程度)・暴走プロセスなし・infra zerosゼロ・**turns_med 82(≒baseline=早死にでない=ラグ説に反する)**。
 - **判断**: 環境要因の特定できず・robust指標(T13+/score_med)は≒baseline・戦略凍結ゆえ、**戦略変更も無断restartも不可**。HOLDで監視。次パス以降も T14+ ≤10% 継続 or score_med 床割れ継続なら、(a)memory推移を精査 (b)ユーザーに live game Chrome の再起動可否を相談。lifetime T14+ 25%なので回復すればvariance確定。
+- **04:39追記: T14+ 回復 (8%→last15で20%)**。escalation条件(≤10%継続)不成立＝**variance寄りと判明**。memory 33%で横ばい(更なる低下なし)。score_medはまだ軟調(last15 876)だがT13+/T14+は≒baselineへ復帰中＝建設は正常。引き続き監視のみ。
 
 ### WATCH解決 (2026-06-15 12:39): 低温窓は variance と確定
 11:39〜12:39 で score_med が ~1150 まで下がり floor も 35%→50% に上昇したが、**決定的証拠で variance と確定**:
