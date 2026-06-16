@@ -20,8 +20,8 @@ cd /Users/azumag/azumag/work/soren
 cp -n game_history/2026*_score*.jsonl tmp/replay_20260612/corpus/ 2>/dev/null   # 証拠保全（後述）
 pgrep -f 'soren_loop.sh'|head -1            # 期待: 9000 (生存)
 pgrep -f 'strategy_runner.py'|head -1       # 毎ゲーム別PID。生存していればOK
-python3 extract_decide_hash.py strategy.py  # 期待: A/B中につき d841bdcb3a42(EXP-7) または d5fff9501436(EXP-3,A/B棄却後)。§8参照
-python3 -c "import json; print(json.load(open('tmp/state/active_branch.json'))['head_hash'])"  # live decide hash と一致していること
+python3 extract_decide_hash.py strategy.py  # 期待: d5fff9501436 (EXP-3=確定ベスト。EXP-6/EXP-7とも棄却・revert済)
+python3 -c "import json; print(json.load(open('tmp/state/active_branch.json'))['head_hash'])"  # 期待: d5fff9501436 と一致
 grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557のみ。>1 で新ソ連！
 ```
 
@@ -29,7 +29,7 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 
 ## 1. 現在の状態 (2026-06-15)
 
-- **稼働中の戦略 (live=head)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 確定ベスト。**EXP-6は2026-06-15 棄却・revert済**（commit 27d123f7f）
+- **稼働中の戦略 (live=head)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 確定ベスト。**EXP-6(2026-06-15)・EXP-7(2026-06-16, param並列勝者)とも棄却・revert済**（§8）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
 - **ループ稼働**: soren_loop.sh PID 9000。strategy_runner は毎ゲーム別プロセス起動 → **strategy.py / analyze_board.py の変更は次ゲームに自動反映**（手動restart不要）
@@ -237,5 +237,5 @@ decide()複数手先探索の実現可能性ゲートを検証 → **物理併�
 - **Step1 simulateドライラン ✅完了clean (2026-06-16 14:09)**: `python3 wildcard_parallel.py --evaluate-mode simulate --jobs 3 --games 3` を**全パス隔離**(session-root/status/result/rolling/current-run を tmp/wildcard_dryrun/ に向ける)で実行 → `{"ok":true,"winner_selected"}`・100param摂動→eval→cull→winner選定が無crashで完走。**live state無変更を実測確認**(strategy.py md5一致・pin=d5fff9501436不変・隔離パス使用)。wildcard_parallel.py自体はlive書込/adoptをしない(winnerをresult-fileに報告するだけ、adoptはeloop_improve.sh側)。orchestration(#93経路)健全。
 - **Step2 real-modeドライラン ✅完了clean (2026-06-16 15:44, 配信OFF時に実施)**: ユーザー「やっていいよ」「今はもう配信してない」を受け実施。`--evaluate-mode real --jobs 2 --games 1`(隔離パス・OBS sources無効・10分cap)。結果 winner=cand-3-r6(EVAL 12669)・cand-2-r12(8389)が実ゲーム完走。**#94 Chrome-launch経路クリア**: 候補Chromeが本線ゲームChromeと同時起動してもSIGABRTなし(chrome_launch_lock有効)。**ただし重要発見**: wildcard_failures.jsonl は failures=36 (35×`culled: decide_exception` + 1 failed) を記録。result.jsonの「failures=0」はインフラ障害のみカウントで、実態は**37候補中35が摂動strategy.pyのdecide()例外で自滅(~95%)**。原因: 100パラメータを20-40%振幅で同時摂動するとどれかが必ずcomplex/div0/index等の例外を起こす(cf [[strategy-complex-float-crash-and-baseline-cull-bypass]])。→ **param並列インフラは安定だが、摂動探索は極めて非効率。生存候補も「tuned済EXP-3の大規模ランダム変異」で改善見込み薄**。productiveに使うには摂動を穏やかに(param数↓・振幅↓)する設定変更が要る。**実測クリーン**: live hash=pin=d5fff9501436不変・strategy.py md5不変・孤児プロセス0・候補Chrome全cleanup(cdp port解放)・本線ゲーム健全継続・OBS未起動。**⚠caveat: OBSが落ちていたため#94のOBS-source-race(obs_source_lock/SetInputSettings)は「OBS down時のgraceful失敗」しか検証できていない。配信再開(OBS up)時の初回realランでOBS-source raceを要監視**。trace: tmp/wildcard_dryrun_real/, logs/wildcard_failures.jsonl。
 - **Step3 フェア実証ラン ✅完了 (2026-06-16 18:31-19:11, ユーザー「やる」承認)**: 穏やか摂動(`WILDCARD_PERTURB_RANDOM_COUNT=0` --count 3 --ratio 0.05-0.15, **jobs=4**[6だとメモリパンク, [[param-parallel-manual-jobs-4-memory-2026-06-16]]])で1ラウンド。**decide_exception 0件**(摂動穏やか化で95%→0%)・メモリ56%回復・本線無傷。**ただし勝者はノイズ選抜**: 信頼できるn=5候補(med~11000-11160)は EXP-3 baseline(~11627)と同等か下、勝者cand-3-r3はn=3で運の良い2ゲーム([14172,17208,6664])で選ばれただけ。勝者d841bdcb3a42 = EXP-3 + 実質1tweak(L1435 span 0.5→0.3735; L816/L2301はedge/no-op)。
-- **EXP-7 デプロイ (live A/B, 2026-06-16 19:1x, commit 124abe103)**: 勝者d841bdcb3a42を**白黒つけるため**ライブA/Bデプロイ。offline replay crash0/0・flip 506/8656(5.85%)。**期待は中立(ノイズ選抜ゆえ)**。判定: n≥20でEXP-3 baseline(T13+~82%/score_med~1331)を**明確に超えなければ即ロールバック→d5fff9501436**(§2手順)。これで「param並列はEXP-3を超えるか」に実データで決着。
-- **注意: パラメータ摂動はEXP-3動作点の改善どまり。ソ連の構造的天井は破れない**(lookahead blocked + 信頼候補がEXP-3同等 = ほぼ確定)。
+- **EXP-7 棄却 (live A/B n=20で revert, 2026-06-16 20:39, commit f3e9dfaa2)**: 勝者d841bdcb3a42をライブA/B→n=20判定。score_med 1360 vs EXP-3 1293・floor 25% vs 38% は良いが**n=20ノイズ内**。**T13+ はむしろ低い(70% vs 82%)**・ソ連ファネル(T14+/T14pair/Russia/T15)は同等/1-of-20ノイズ。**統計的にEXP-3と区別不能・ソ連関連指標で改善なし**。pre-registered基準「明確に超えなければrollback」に従い d5fff9501436 へ revert。
+- **★結論(2026-06-16): param並列はソ連プラトーを破らない＝実データで確定★**: 信頼できるn=5候補が全てEXP-3同等、勝者はn=3ノイズ選抜、ライブA/Bでも区別不能。lookahead(物理で予測不能)に続き、**ドロップ位置/パラメータ調整の路線は天井に到達。ソ連到達には別アーキテクチャ(実エンジン探索の学習基盤等、数週間規模)が必要** ← ユーザー方針待ち(選択肢C)。
