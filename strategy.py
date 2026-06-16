@@ -66,8 +66,6 @@ Phases (determined by board max Y):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
-
-
 # --- Change History (compressed to 5 entries; full history in git) ---
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
@@ -813,7 +811,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_merge_available:
             __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
             if __dlg_safe:
-                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 88.88) or 99.0))
                 return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
@@ -1432,7 +1430,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                 x1, y1 = pos1
                                 x2, y2 = pos2
                                 # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.5
+                                span_min = min(x1, x2) - 0.3735
                                 span_max = max(x1, x2) + 0.5
                                 if span_min <= x <= span_max:
                                     # Penalize if landing at or above the reactive pair level
@@ -2298,7 +2296,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260416_193206_score1203.jsonl T50/T63/T66 (NEAR crosses deadline)
         margin = result.get("deadline_margin", 99)
         if merge_grade == "NO" and not russia_phase and margin < 0.5:
-            score -= max(0, (0.5 - margin)) * 5000
+            score -= max(-1, (0.5 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 4000
