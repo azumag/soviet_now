@@ -218,3 +218,22 @@ EOF
 - `manual-strategy-deploy-active-branch-pin.md` — pin張替えデプロイ手順
 - `daily-pass-soren-loop-log-is-dateless-append.md` — ログ落とし穴
 - `soviet-strategy-pass-cadence.md` — 毎時+毎回改善のケイデンス指示
+- `lookahead-infeasible-physics-merges-2026-06-16.md` — lookahead非現実的の実証
+- `param-parallel-bugs-issues-93-94.md` — param並列の既知バグ#93(修正済)/#94(オープン)
+
+---
+
+## 8. 抜本策ワークストリーム (2026-06-16〜, ユーザー指示)
+
+ユーザー指示(2026-06-16)「全然伸びてない、もっと抜本的に。あと定期的に並列パラメータ調整も」を受けた作業。AskUserQuestionで方針確定:
+- **param並列**: 「ドライラン検証→定期有効化(推奨)・初回は監視下で」
+- **抜本策**: 「両方を順に/おまかせ」(まずlookahead、頭打ちならanalyze_board)
+
+### (1) lookahead抜本策 → ❌ blocked確定 (2026-06-16)
+decide()複数手先探索の実現可能性ゲートを検証 → **物理併合が予測不能で非現実的**。詳細は [[lookahead-infeasible-physics-merges-2026-06-16]]。要点: 自作drop-simulatorをJSONL ground truthで検証 → 併合予測 drift-aware版でも acc61%・予測15%vs実際35%・混雑エンドゲームでも改善せず。併合の大半はsettling/drift/cascade物理で発生し盤面から予測不能。**だからdecide()は単手heuristic(設計は正しい)**。検証コード tmp/replay_20260612/sim_validate{,2}.py。
+
+### (2) param並列 段階的再有効化プラン
+現状: `POST_IMPROVE_PARAM_PARALLEL_ENABLED=0`・`WILDCARD_ENABLED=0`(2026-06-03クラッシュ後無効)。#93(apply非原子)=修正クローズ済、#94(Chrome/OBS不安定)=修正コードありだがライブ未検証=オープン。
+- **Step1 simulateドライラン ✅完了clean (2026-06-16 14:09)**: `python3 wildcard_parallel.py --evaluate-mode simulate --jobs 3 --games 3` を**全パス隔離**(session-root/status/result/rolling/current-run を tmp/wildcard_dryrun/ に向ける)で実行 → `{"ok":true,"winner_selected"}`・100param摂動→eval→cull→winner選定が無crashで完走。**live state無変更を実測確認**(strategy.py md5一致・pin=d5fff9501436不変・隔離パス使用)。wildcard_parallel.py自体はlive書込/adoptをしない(winnerをresult-fileに報告するだけ、adoptはeloop_improve.sh側)。orchestration(#93経路)健全。
+- **Step2 real-modeドライラン（次の集中作業, 配信中断あり）**: #94のChrome/OBSクラッシュ経路を検証。**配信が中断**するので低viewership窓+監視+証跡保全(logs/wildcard_failures.jsonl)で実施。最小構成(--jobs 2 --games 1 --max-runtime-sec ~300)で短時間化。soren91は現在停止中(contention源が1つ減)。注意: realモードを忠実に#94検証するにはeloop_improve.shのharness(OBS source作成/soren91停止/window capture)経由が要る可能性。bare python realだとOBS連携が抜ける。要事前確認。
+- **Step3 定期有効化**: Step2 clean後、`.env POST_IMPROVE_PARAM_PARALLEL_ENABLED=1` + 定期トリガー(cron or サイクル)。**注意: パラメータ摂動はEXP-3の動作点改善どまり。ソ連の構造的天井は破れない可能性大**(lookaheadがblockedな以上、天井破りは別途要)。
