@@ -34,7 +34,10 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
 - **ループ稼働**: soren_loop.sh PID 9000。strategy_runner は毎ゲーム別プロセス起動 → **strategy.py / analyze_board.py の変更は次ゲームに自動反映**（手動restart不要）
 
-### ⚠ WATCH (2026-06-17 03:39): T14+到達が持続的に低い
+### WATCH解決 (2026-06-17 05:39): T14+低下は variance と確定
+03:39に T14+ 8%/40ゲームで警戒したが、**8%→20%(04:39)→36%(05:39, baseline 25%超)** と回復・score_medも876→1312(≒baseline)復帰。memory 31-33%横ばい・strategy凍結・infra zeros 0 で、**環境異常でなく variance と確定**。教訓: T14+は ~25%基準でn=25-40でも大きく振れる(8%↔40%)。単独の低温窓では警報せず、score_med と T13+(robust)が両方落ちて持続する時のみ環境調査へ。
+
+### (旧)WATCH (2026-06-17 03:39): T14+到達が持続的に低い [解決済]
 直近40ゲームで **T14+ 到達 8%(対 lifetime 25%)** が持続(last25もlast40も8%)・score_med 1149-1201(対 baseline 1331)。T13+は78-80%(≒baseline)＝**T13までは届くがT14に押し上がらない**。40ゲームで統計的に有意(期待~10 vs 実~3, p<0.01)＝単純noiseでは説明しにくい。
 - **実測した除外項目**: strategy.py md5不変(EXP-3純正・退行機構なし)・memory 32%free(OKだが19:39の56%から低下傾向)・load 5.43(中程度)・暴走プロセスなし・infra zerosゼロ・**turns_med 82(≒baseline=早死にでない=ラグ説に反する)**。
 - **判断**: 環境要因の特定できず・robust指標(T13+/score_med)は≒baseline・戦略凍結ゆえ、**戦略変更も無断restartも不可**。HOLDで監視。次パス以降も T14+ ≤10% 継続 or score_med 床割れ継続なら、(a)memory推移を精査 (b)ユーザーに live game Chrome の再起動可否を相談。lifetime T14+ 25%なので回復すればvariance確定。
