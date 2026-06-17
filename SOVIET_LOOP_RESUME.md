@@ -289,3 +289,11 @@ score_med 1548 vs 1313(+18%)・turns 92 vs 84・T14+ 32% vs 25%・T13pair 39% vs
 
 ### EXP-9 n=61更新 + option2 round2起動 (2026-06-18 00:49)
 EXP-9 n=61: score_med 1466(+12%)/turns 90(+7%)/T14+ 30%/floor 33% は安定して better。**但しRussia uptickは退行(7%@44→5%@61, 直近17ゲームで新Russia 0)＝早期3件は一部luck。Russia/Soviet改善は未確認**。EXP-9は確実な better baseline。runtime behavior switchはFAST_DROP唯一で既に最適化済(他にgetattr(strategy)無し)。scoring軸はinterfere(EXP-6/8)。→ productiveなoption2を継続: **EXP-9をbaseに option2 round2起動**(pid記録、jobs=4/games8/count5/2h cap/隔離 tmp/wildcard_opt3/)。完了時に勝者をoffline検証→A/B。次パスでopt3結果確認。
+
+### ユーザー「併合無視」観察の徹底調査結論 (2026-06-18)
+ユーザー「明らかに併合できれば助かるのに無視して別所に置く/どう見ても失敗」。3角度×4緩和で精査:
+- 検出緩和(NEAR contact_gap 0.04→0.20): flip 1.5% (ほぼno-op)
+- HARD SUPPRESS緩和(max_y 2.5→2.8, EXP-10): flip 0
+- HIGH_MAX_Y_NEAR penalty 600→300 (EXP-11): flip 0
+- NEAR_DEADLINE_RISK 300→120 + HIGH_MAX_Y 600→200 (EXP-12): flip 0
+**結論**: 全緩和がno-op=「危険域で取れるNEAR併合」は実データで稀。「同type至近でNO」の**75%は埋没target(満杯盤で着地が相手の2近く上=物理的に届かない)**、残りNEARも合体で背が伸びる/31.5%失敗。**ユーザーの観察は構造的clutter問題(埋もれた2個目核は動かせない)の可視化であって、修正可能な併合ロジックbugではない**。EXP-10/11/12は未デプロイ(no-opゆえ)。merge-tuning路線は打ち止め。残る道: 構造問題を別角度(analyze_board埋没度特徴 or 受容)。live=EXP-9維持。
