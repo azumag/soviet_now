@@ -32,7 +32,7 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 ### ★運用モード: 全力ソ連到達 (2026-06-17 ユーザー指示)
 「option2(大規模最適化)+3(analyze_board新特徴)を確認で止まらず、ソ連できる最後まで一気に」。**方針確認では止まらず自律的に機構を設計→検証→デプロイ→A/B→反復**。但し検証(replay harness crash0/A/B funnel)は品質のため継続。各機構の狙い=**2nd-nucleus形成(2個目の高ティア)**。判定は2nd-nucleus funnel(T13pair/T14pair/Russia)で、改善あれば採用・なければEXP-3へロールバック。cron=cc853f20(push mode)。
 
-- **稼働中の戦略 (live=head)**: `ba5935ce2a9a` = **EXP-9 (opt2勝者: FAST_DROP=False)** = **採用(新working baseline, n=29で modestly better)**。score_med 1436 vs EXP-3 1313・floor 28% vs 38%・全指標 better-or-equal。但しソ連funnel(T14pair/Russia)は同等〜やや上(noise)で**ソ連を明確に進めてはいない**。**深いfallback=EXP-3(d5fff9501436, n=694検証)**。EXP-9が問題出たらEXP-3へ。
+- **稼働中の戦略 (live=head)**: `2da8233f49d5` = **EXP-13 (AVOID_BURY lone-seed拡張)** ← 2026-06-18デプロイ・ライブA/B中。EXP-9上に「孤立した2nd-nucleus seed(lone T13+)を埋没から保護」を追加。judge T13pair/Russia n≥25、ダメなら→EXP-9(ba5935ce2a9a)。**rollback先=EXP-9(better baseline)・深いfallback=EXP-3(d5fff9501436)**。
 - **ロールバック先=確定ベスト**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)**。**EXP-6/EXP-7とも棄却・revert済**（§8）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
@@ -172,7 +172,7 @@ def measure(target):
         if had: g['pair_games']+=1
         if had14: g['pair14']+=1
     return g
-for tgt,lab in (('ba5935ce2a9a','EXP-9(live A/B)'),('d5fff9501436','EXP-3(baseline/rollback)')):   # T13pair/T14pair funnelを比較
+for tgt,lab in (('2da8233f49d5','EXP-13(live A/B)'),('ba5935ce2a9a','EXP-9(rollback)'),('d5fff9501436','EXP-3(deep baseline)')):
     g=measure(tgt)
     if g['games']:
         print(f"{lab}: n={g['games']} score_med={statistics.median(g['scores']):.0f} mean={statistics.mean(g['scores']):.0f} max={max(g['scores'])} turns_med={statistics.median(g['turns']):.0f} T14+={100*g['t14']/g['games']:.0f}% pair-rate={100*g['pair_games']/g['games']:.0f}% T14pair={g['pair14']}({100*g['pair14']/g['games']:.0f}%) russia={g['russia']}({100*g['russia']/g['games']:.0f}%)")
@@ -307,3 +307,6 @@ EXP-9: score_med 1451(+11%)/floor 30%(vs38%)/turns 89/T13pair 38% は安定し�
 - merge-tuning(EXP-10/11/12, ユーザー観察起点): 4緩和全no-op=buried-clutterが本体で修正不能
 - AVOID_BURY(埋没予防)は既存(axis5.5b)
 **結論: ドロップx制御で到達可能なレバーはほぼ汲み尽くした。ソ連(2×Russia)は構造的に困難で、EXP-9(best baseline)でも~3%Russia/0%Soviet。** 残る現実的進展は (a)EXP-9を最良として長時間走らせSoviet監視(numbers game) (b)analyze_board埋没度特徴(高risk・AVOID_BURY冗長の懸念) (c)受容。live=EXP-9維持・monitor継続。
+
+### EXP-13 デプロイ (AVOID_BURY lone-seed拡張, live=2da8233f49d5, 2026-06-18, A/B中)
+merge調査の核心「2nd核失敗=材料の埋没(75%)」に対し、既存axis5.5b AVOID_BURYがpartner有(count>=2)しか保護しない点を突く: **孤立した高ティアseed(lone T13+, count==1)=2nd核の種を埋没から保護**(half penalty (_st-9)*60)。失敗組が[T14,孤立T13]で死ぬ→そのlone T13を埋めない。EXP-9上に構築、既存軸の拡張ゆえEXP-6/8の新軸より干渉小。offline crash0/0・flip 155/10016(1.5%, 実挙動変化=merge-tuning no-opと違い本物)。**判定: n≥25でT13pair/Russia funnelがEXP-9を超えるか。ダメならEXP-9へrollback**。これが効けば「seed保護で2nd核形成↑」が裏付く。
