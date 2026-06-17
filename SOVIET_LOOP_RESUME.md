@@ -277,3 +277,6 @@ param並列(opt2)実行中、メインループが `[PAUSE] param並列調整中
 
 ### EXP-9 デプロイ (opt2勝者, live=ba5935ce2a9a, 2026-06-17 20:46, commit cd003c620, A/B中)
 option2大規模ラン(jobs=4/games=8/2h)の勝者 cand-3-r6: n=8 median 12627・**floor games 0**(EXP-7のn=3ノイズより本物寄り)。5変更のうち効くのは **L68 FAST_DROP_DEADLINE_CONTACT True→False**(strategy_runnerが毎ゲームgetattrで読む実runtime param: False=デッドライン接触時もsettle待ち=より慎重=survival延長狙い)+L1862 bonus 3000→3289・L1421 reactive閾値5→6。offline replay: decide() crash0/0・flip 5/7603(0.07%=decideはほぼ同一、効くのはruntime flagでreplay非対象)。判定: n≥25で2nd-nucleus funnel(T13pair/T14pair)・survival(turns)・score_medが EXP-3 を明確に超えなければ即ロールバック。**FAST_DROP=Falseがsurvivalを延ばすか**が見どころ。
+
+### EXP-9 早期シグナル★有望 (2026-06-17 21:47, n=13, 判定閾値未満)
+turns_med **107 vs EXP-3 84(+27%)**・score_med 2046 vs 1313・T14+ 38% vs 25%・T13pair 38% vs 35%・floor 23% vs 38%。**FAST_DROP=False(デッドライン慎重化)がsurvivalを延ばしている**(mechanistic=信頼できる)。**但し**: (1)n=13<25で未判定 (2)究極指標 T14pair 0/13・Russia 0/13 は未だ動かず(rare event, n≥25+要) (3)比較confound: EXP-9はopt2終了後の非contended、EXP-3 baselineは一部contended履歴混入で過大評価の可能性。→ n≥25まで継続観察、**特にT14pair/Russiaが実際に増えるか**を見る。これが本物なら今セッション初の実進展。
