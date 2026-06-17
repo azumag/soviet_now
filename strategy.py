@@ -1678,18 +1678,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         _support = _p
             if _support is not None:
                 _st = _support.get("type", 0)
-                _bury_ct = _type_counts.get(_st, 0)
                 if (
                     _st >= 10
                     and _st != next_type
                     and _st != next_next_type
-                    and (_bury_ct >= 2 or (_st >= 13 and _bury_ct == 1))
+                    and _type_counts.get(_st, 0) >= 2
                 ):
-                    # EXP-13 (2026-06-18): also protect a LONE high-tier seed (T13+, count==1) from
-                    # burial — it is the 2nd-nucleus seed that gets buried before a partner forms
-                    # (diagnosis: failed games die holding a lone buried T13). Half penalty for the
-                    # lone case (less certain to pair) vs full for count>=2.
-                    score -= (_st - 9) * (120.0 if _bury_ct >= 2 else 60.0)
+                    score -= (_st - 9) * 120.0  # T10:-120 T12:-360 T14:-600 (protect high pipeline)
                     reasons.append("AVOID_BURY_MERGEABLE")
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
