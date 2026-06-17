@@ -283,3 +283,6 @@ turns_med **107 vs EXP-3 84(+27%)**・score_med 2046 vs 1313・T14+ 38% vs 25%�
 
 ### EXP-9 判定: 採用(modestly better, 2026-06-17 22:47, n=29)
 n=13の劇的シグナル(turns+27%/score+56%)は小サンプル+contention confoundで誇張だった→n=29で縮小。最終: score_med 1436 vs 1313(+9%)・**floor 28% vs 38%(disaster減)**・turns 87 vs 84・T13+86%/T14+28%/T13pair38%(全てやや上, noise内)。**ソ連funnel(T14pair 1/29・Russia 1/29)は EXP-3(2%/2%)と同等〜やや上だが明確改善ではない**。→ **better-or-equalかつ低リスク(FAST_DROP=Falseは実runtime tunable・survival整合)ゆえ採用=新working baseline**。深いfallback=EXP-3。次: EXP-9上に option3機構 or 追加 option2。延びたsurvivalを2nd-nucleus建設に変換させるのが課題(T13pair微増だがT14pair未変換)。
+
+### ★EXP-9 Russia上昇シグナル (2026-06-17 23:47, n=44)
+score_med 1548 vs 1313(+18%)・turns 92 vs 84・T14+ 32% vs 25%・T13pair 39% vs 35%・floor 25% vs 38%・**Russia 3/44=7% vs EXP-3 2%(~3×!)**。survival延長(FAST_DROP=False)が2nd核→Russiaに変換され始めた兆候。funnel全体が一貫して上昇。T14pair snapshotが2%なのは2nd-T14ペアが即T15/Russiaに合体してcoexistence検出を逃れるため(Russiaが真の信号)。**caveat: n=44/Russia3件でnoisy(CI広)・contention confound残**。→ **EXP-9を走らせ続ける(opt runで止めない)。7% Russiaなのでライブゲームこそ最良のSoviet狙い(=2×Russia)**。monitorがSoviet監視中。n蓄積で確認。次の更なる改善はEXP-9上にoption2/3。
