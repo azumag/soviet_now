@@ -32,7 +32,7 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 ### ★運用モード: 全力ソ連到達 (2026-06-17 ユーザー指示)
 「option2(大規模最適化)+3(analyze_board新特徴)を確認で止まらず、ソ連できる最後まで一気に」。**方針確認では止まらず自律的に機構を設計→検証→デプロイ→A/B→反復**。但し検証(replay harness crash0/A/B funnel)は品質のため継続。各機構の狙い=**2nd-nucleus形成(2個目の高ティア)**。判定は2nd-nucleus funnel(T13pair/T14pair/Russia)で、改善あれば採用・なければEXP-3へロールバック。cron=cc853f20(push mode)。
 
-- **稼働中の戦略 (live=head)**: `ba5935ce2a9a` = **EXP-9 (opt2勝者: FAST_DROP_DEADLINE_CONTACT=False)** ← 2026-06-17 デプロイ・**ライブA/B中(効果未測定)**。EXP-8は棄却済(§9)。判定: n≥25で2nd-nucleus funnel/survivalが EXP-3 を明確に超えなければ即ロールバック→d5fff9501436。
+- **稼働中の戦略 (live=head)**: `ba5935ce2a9a` = **EXP-9 (opt2勝者: FAST_DROP=False)** = **採用(新working baseline, n=29で modestly better)**。score_med 1436 vs EXP-3 1313・floor 28% vs 38%・全指標 better-or-equal。但しソ連funnel(T14pair/Russia)は同等〜やや上(noise)で**ソ連を明確に進めてはいない**。**深いfallback=EXP-3(d5fff9501436, n=694検証)**。EXP-9が問題出たらEXP-3へ。
 - **ロールバック先=確定ベスト**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)**。**EXP-6/EXP-7とも棄却・revert済**（§8）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
@@ -280,3 +280,6 @@ option2大規模ラン(jobs=4/games=8/2h)の勝者 cand-3-r6: n=8 median 12627�
 
 ### EXP-9 早期シグナル★有望 (2026-06-17 21:47, n=13, 判定閾値未満)
 turns_med **107 vs EXP-3 84(+27%)**・score_med 2046 vs 1313・T14+ 38% vs 25%・T13pair 38% vs 35%・floor 23% vs 38%。**FAST_DROP=False(デッドライン慎重化)がsurvivalを延ばしている**(mechanistic=信頼できる)。**但し**: (1)n=13<25で未判定 (2)究極指標 T14pair 0/13・Russia 0/13 は未だ動かず(rare event, n≥25+要) (3)比較confound: EXP-9はopt2終了後の非contended、EXP-3 baselineは一部contended履歴混入で過大評価の可能性。→ n≥25まで継続観察、**特にT14pair/Russiaが実際に増えるか**を見る。これが本物なら今セッション初の実進展。
+
+### EXP-9 判定: 採用(modestly better, 2026-06-17 22:47, n=29)
+n=13の劇的シグナル(turns+27%/score+56%)は小サンプル+contention confoundで誇張だった→n=29で縮小。最終: score_med 1436 vs 1313(+9%)・**floor 28% vs 38%(disaster減)**・turns 87 vs 84・T13+86%/T14+28%/T13pair38%(全てやや上, noise内)。**ソ連funnel(T14pair 1/29・Russia 1/29)は EXP-3(2%/2%)と同等〜やや上だが明確改善ではない**。→ **better-or-equalかつ低リスク(FAST_DROP=Falseは実runtime tunable・survival整合)ゆえ採用=新working baseline**。深いfallback=EXP-3。次: EXP-9上に option3機構 or 追加 option2。延びたsurvivalを2nd-nucleus建設に変換させるのが課題(T13pair微増だがT14pair未変換)。
