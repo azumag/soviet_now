@@ -32,7 +32,7 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 ### ★運用モード: 全力ソ連到達 (2026-06-17 ユーザー指示)
 「option2(大規模最適化)+3(analyze_board新特徴)を確認で止まらず、ソ連できる最後まで一気に」。**方針確認では止まらず自律的に機構を設計→検証→デプロイ→A/B→反復**。但し検証(replay harness crash0/A/B funnel)は品質のため継続。各機構の狙い=**2nd-nucleus形成(2個目の高ティア)**。判定は2nd-nucleus funnel(T13pair/T14pair/Russia)で、改善あれば採用・なければEXP-3へロールバック。cron=cc853f20(push mode)。
 
-- **稼働中の戦略 (live=head)**: `ff80c0b2fce6` = **EXP-8 (SECOND_NUCLEUS_ZONE)** ← 2026-06-17 デプロイ・**ライブA/B中(効果未測定)**。判定: n≥25で T14pair funnel が EXP-3 baseline(T14pair~5%)を明確に超えなければ即ロールバック→d5fff9501436。
+- **稼働中の戦略 (live=head)**: `ba5935ce2a9a` = **EXP-9 (opt2勝者: FAST_DROP_DEADLINE_CONTACT=False)** ← 2026-06-17 デプロイ・**ライブA/B中(効果未測定)**。EXP-8は棄却済(§9)。判定: n≥25で2nd-nucleus funnel/survivalが EXP-3 を明確に超えなければ即ロールバック→d5fff9501436。
 - **ロールバック先=確定ベスト**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)**。**EXP-6/EXP-7とも棄却・revert済**（§8）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
@@ -172,7 +172,7 @@ def measure(target):
         if had: g['pair_games']+=1
         if had14: g['pair14']+=1
     return g
-for tgt,lab in (('ff80c0b2fce6','EXP-8(live A/B)'),('d5fff9501436','EXP-3(baseline/rollback)')):   # T13pair/T14pair funnelを比較
+for tgt,lab in (('ba5935ce2a9a','EXP-9(live A/B)'),('d5fff9501436','EXP-3(baseline/rollback)')):   # T13pair/T14pair funnelを比較
     g=measure(tgt)
     if g['games']:
         print(f"{lab}: n={g['games']} score_med={statistics.median(g['scores']):.0f} mean={statistics.mean(g['scores']):.0f} max={max(g['scores'])} turns_med={statistics.median(g['turns']):.0f} T14+={100*g['t14']/g['games']:.0f}% pair-rate={100*g['pair_games']/g['games']:.0f}% T14pair={g['pair14']}({100*g['pair14']/g['games']:.0f}%) russia={g['russia']}({100*g['russia']/g['games']:.0f}%)")
@@ -274,3 +274,6 @@ EXP-7より本格的に: jobs=4・--games 8(ノイズ減)・--count 4・gentle�
 
 ### ⚠ 注意(2026-06-17): opt2稼働中は本線ゲームが自動PAUSEされる
 param並列(opt2)実行中、メインループが `[PAUSE] param並列調整中(隔離評価)` を出して**本線ゲームを意図的に停止**(設計通り・contention回避)。soren_loop.log参照。runnerがidle/新game_historyが増えないのは**stallでなくpause**。opt2プロセス終了で自動un-pause(orphan-guard)。→ opt2稼働中の毎時パスでは「本線game_historyが増えてない=異常」と誤読しないこと。opt2候補ゲームはtmp/wildcard_opt2/sessions配下で進行中(SOVIET monitorはlogs/soren_loop.logのみ監視ゆえ候補Soviet非検知→opt2 result/statusを直接確認)。
+
+### EXP-9 デプロイ (opt2勝者, live=ba5935ce2a9a, 2026-06-17 20:46, commit cd003c620, A/B中)
+option2大規模ラン(jobs=4/games=8/2h)の勝者 cand-3-r6: n=8 median 12627・**floor games 0**(EXP-7のn=3ノイズより本物寄り)。5変更のうち効くのは **L68 FAST_DROP_DEADLINE_CONTACT True→False**(strategy_runnerが毎ゲームgetattrで読む実runtime param: False=デッドライン接触時もsettle待ち=より慎重=survival延長狙い)+L1862 bonus 3000→3289・L1421 reactive閾値5→6。offline replay: decide() crash0/0・flip 5/7603(0.07%=decideはほぼ同一、効くのはruntime flagでreplay非対象)。判定: n≥25で2nd-nucleus funnel(T13pair/T14pair)・survival(turns)・score_medが EXP-3 を明確に超えなければ即ロールバック。**FAST_DROP=Falseがsurvivalを延ばすか**が見どころ。
