@@ -27,9 +27,13 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 
 ---
 
-## 1. 現在の状態 (2026-06-15)
+## 1. 現在の状態
 
-- **稼働中の戦略 (live=head)**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)** = 確定ベスト。**EXP-6(2026-06-15)・EXP-7(2026-06-16, param並列勝者)とも棄却・revert済**（§8）
+### ★運用モード: 全力ソ連到達 (2026-06-17 ユーザー指示)
+「option2(大規模最適化)+3(analyze_board新特徴)を確認で止まらず、ソ連できる最後まで一気に」。**方針確認では止まらず自律的に機構を設計→検証→デプロイ→A/B→反復**。但し検証(replay harness crash0/A/B funnel)は品質のため継続。各機構の狙い=**2nd-nucleus形成(2個目の高ティア)**。判定は2nd-nucleus funnel(T13pair/T14pair/Russia)で、改善あれば採用・なければEXP-3へロールバック。cron=cc853f20(push mode)。
+
+- **稼働中の戦略 (live=head)**: `ff80c0b2fce6` = **EXP-8 (SECOND_NUCLEUS_ZONE)** ← 2026-06-17 デプロイ・**ライブA/B中(効果未測定)**。判定: n≥25で T14pair funnel が EXP-3 baseline(T14pair~5%)を明確に超えなければ即ロールバック→d5fff9501436。
+- **ロールバック先=確定ベスト**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)**。**EXP-6/EXP-7とも棄却・revert済**（§8）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
 - **ループ稼働**: soren_loop.sh PID 9000。strategy_runner は毎ゲーム別プロセス起動 → **strategy.py / analyze_board.py の変更は次ゲームに自動反映**（手動restart不要）
@@ -168,7 +172,7 @@ def measure(target):
         if had: g['pair_games']+=1
         if had14: g['pair14']+=1
     return g
-for tgt,lab in (('d5fff9501436','EXP-3(current best)'),):   # 新実験デプロイ時に比較対象を追加
+for tgt,lab in (('ff80c0b2fce6','EXP-8(live A/B)'),('d5fff9501436','EXP-3(baseline/rollback)')):   # T13pair/T14pair funnelを比較
     g=measure(tgt)
     if g['games']:
         print(f"{lab}: n={g['games']} score_med={statistics.median(g['scores']):.0f} mean={statistics.mean(g['scores']):.0f} max={max(g['scores'])} turns_med={statistics.median(g['turns']):.0f} T14+={100*g['t14']/g['games']:.0f}% pair-rate={100*g['pair_games']/g['games']:.0f}% T14pair={g['pair14']}({100*g['pair14']/g['games']:.0f}%) russia={g['russia']}({100*g['russia']/g['games']:.0f}%)")
@@ -248,3 +252,15 @@ decide()複数手先探索の実現可能性ゲートを検証 → **物理併�
 - **Step3 フェア実証ラン ✅完了 (2026-06-16 18:31-19:11, ユーザー「やる」承認)**: 穏やか摂動(`WILDCARD_PERTURB_RANDOM_COUNT=0` --count 3 --ratio 0.05-0.15, **jobs=4**[6だとメモリパンク, [[param-parallel-manual-jobs-4-memory-2026-06-16]]])で1ラウンド。**decide_exception 0件**(摂動穏やか化で95%→0%)・メモリ56%回復・本線無傷。**ただし勝者はノイズ選抜**: 信頼できるn=5候補(med~11000-11160)は EXP-3 baseline(~11627)と同等か下、勝者cand-3-r3はn=3で運の良い2ゲーム([14172,17208,6664])で選ばれただけ。勝者d841bdcb3a42 = EXP-3 + 実質1tweak(L1435 span 0.5→0.3735; L816/L2301はedge/no-op)。
 - **EXP-7 棄却 (live A/B n=20で revert, 2026-06-16 20:39, commit f3e9dfaa2)**: 勝者d841bdcb3a42をライブA/B→n=20判定。score_med 1360 vs EXP-3 1293・floor 25% vs 38% は良いが**n=20ノイズ内**。**T13+ はむしろ低い(70% vs 82%)**・ソ連ファネル(T14+/T14pair/Russia/T15)は同等/1-of-20ノイズ。**統計的にEXP-3と区別不能・ソ連関連指標で改善なし**。pre-registered基準「明確に超えなければrollback」に従い d5fff9501436 へ revert。
 - **★結論(2026-06-16): param並列はソ連プラトーを破らない＝実データで確定★**: 信頼できるn=5候補が全てEXP-3同等、勝者はn=3ノイズ選抜、ライブA/Bでも区別不能。lookahead(物理で予測不能)に続き、**ドロップ位置/パラメータ調整の路線は天井に到達。ソ連到達には別アーキテクチャ(実エンジン探索の学習基盤等、数週間規模)が必要** ← ユーザー方針待ち(選択肢C)。
+
+---
+
+## 9. 全力ソ連到達ワークストリーム (2026-06-17〜, ユーザー指示「ソ連できる最後まで一気に」)
+
+方針: 2nd-nucleus形成を阻む構造的天井に、新機構(option3)＋大規模最適化(option2)で反復挑戦。確認では止まらず自律実行・検証は継続。判定指標=**2nd-nucleus funnel(T13pair/T14pair/Russia)**。
+
+### 診断 (2026-06-17, EXP-3 T14到達 n=172)
+2nd-T14形成は11/172(6%)のみ。**first-T14時点の盤面状態が決定的**: 形成組 max_y 0.24・survival_after 53、失敗組 max_y 0.50・survival_after 35。低クラッター 16 vs 17(同等)。→ **T14到達時に盤面が高い(=2nd核を作る空間がない)と失敗**。死亡時は両組とも盤面full(tautology)。
+
+### EXP-8 SECOND_NUCLEUS_ZONE (live=ff80c0b2fce6, 2026-06-17デプロイ, A/B中)
+高ティア(>=13)存在時、最高ピースの反対側に1.4幅のgrowth zoneを予約: ZONE_CLEAR(低クラッターをzoneから遠ざける+150)・ZONE_BUILD(T11-12材料をzoneへ寄せる+250)。height-safe(margin>=0.5)。offline replay crash0/0・flip 477/7630全in-scope。**効果未測定**。判定: n≥25でT14pair funnelがEXP-3(T14pair~5%)を明確に超えなければ即ロールバック→d5fff9501436。素朴build-besideと違い動的zone・高ティア出現後限定。
