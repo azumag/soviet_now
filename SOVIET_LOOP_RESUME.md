@@ -286,3 +286,6 @@ n=13の劇的シグナル(turns+27%/score+56%)は小サンプル+contention conf
 
 ### ★EXP-9 Russia上昇シグナル (2026-06-17 23:47, n=44)
 score_med 1548 vs 1313(+18%)・turns 92 vs 84・T14+ 32% vs 25%・T13pair 39% vs 35%・floor 25% vs 38%・**Russia 3/44=7% vs EXP-3 2%(~3×!)**。survival延長(FAST_DROP=False)が2nd核→Russiaに変換され始めた兆候。funnel全体が一貫して上昇。T14pair snapshotが2%なのは2nd-T14ペアが即T15/Russiaに合体してcoexistence検出を逃れるため(Russiaが真の信号)。**caveat: n=44/Russia3件でnoisy(CI広)・contention confound残**。→ **EXP-9を走らせ続ける(opt runで止めない)。7% Russiaなのでライブゲームこそ最良のSoviet狙い(=2×Russia)**。monitorがSoviet監視中。n蓄積で確認。次の更なる改善はEXP-9上にoption2/3。
+
+### EXP-9 n=61更新 + option2 round2起動 (2026-06-18 00:49)
+EXP-9 n=61: score_med 1466(+12%)/turns 90(+7%)/T14+ 30%/floor 33% は安定して better。**但しRussia uptickは退行(7%@44→5%@61, 直近17ゲームで新Russia 0)＝早期3件は一部luck。Russia/Soviet改善は未確認**。EXP-9は確実な better baseline。runtime behavior switchはFAST_DROP唯一で既に最適化済(他にgetattr(strategy)無し)。scoring軸はinterfere(EXP-6/8)。→ productiveなoption2を継続: **EXP-9をbaseに option2 round2起動**(pid記録、jobs=4/games8/count5/2h cap/隔離 tmp/wildcard_opt3/)。完了時に勝者をoffline検証→A/B。次パスでopt3結果確認。
