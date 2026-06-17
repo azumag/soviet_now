@@ -264,3 +264,10 @@ decide()複数手先探索の実現可能性ゲートを検証 → **物理併�
 
 ### EXP-8 SECOND_NUCLEUS_ZONE (live=ff80c0b2fce6, 2026-06-17デプロイ, A/B中)
 高ティア(>=13)存在時、最高ピースの反対側に1.4幅のgrowth zoneを予約: ZONE_CLEAR(低クラッターをzoneから遠ざける+150)・ZONE_BUILD(T11-12材料をzoneへ寄せる+250)。height-safe(margin>=0.5)。offline replay crash0/0・flip 477/7630全in-scope。**効果未測定**。判定: n≥25でT14pair funnelがEXP-3(T14pair~5%)を明確に超えなければ即ロールバック→d5fff9501436。素朴build-besideと違い動的zone・高ティア出現後限定。
+
+### EXP-8 棄却 (2026-06-17 18:47, n=32, revert commit 70d238c33)
+T13pair 31% vs EXP-3 35%(2nd-nucleus precursorがむしろ低下)・T14pair 3% vs 2%(ノイズ)・score_med 1172 vs 1313・floor 50% vs 39%＝改善なし/やや悪化。zone機構がEXP-3のバランスに干渉(EXP-6と同じ失敗クラス)。**教訓: 追加drop-position軸(EXP-6/8)は干渉する。directional clutter routingは清浄空間を作らずクラッターを別所に集約するだけ**。→ d5fff9501436へrevert。
+
+### option2 大規模最適化ラン (2026-06-17 18:49開始, pid記録なし=2h cap)
+EXP-7より本格的に: jobs=4・--games 8(ノイズ減)・--count 4・gentle摂動(RANDOM_COUNT=0,ratio0.05-0.15)・cull-after-4・2h cap・全パス隔離(tmp/wildcard_opt2/、auto-adopt無し)。配信OFF・mem 28%でjobs=4稼働。狙い: 局所最適周辺をEXP-7(n=5)より低ノイズで探索。**次パスで result.json の勝者を確認→offline crash0検証→ライブA/B(n≥30)でEXP-3と比較**。勝者がノイズ選抜(EXP-7同様)なら採用せず。
+※次の機構方針: 追加drop-position軸は干渉で全滅(EXP-6/8)。次はanalyze_board新特徴(option3, 既存field不変・追加のみ)か、本ラン結果次第。
