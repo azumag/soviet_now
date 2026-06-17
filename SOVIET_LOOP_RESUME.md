@@ -271,3 +271,6 @@ T13pair 31% vs EXP-3 35%(2nd-nucleus precursorがむしろ低下)・T14pair 3% v
 ### option2 大規模最適化ラン (2026-06-17 18:49開始, pid記録なし=2h cap)
 EXP-7より本格的に: jobs=4・--games 8(ノイズ減)・--count 4・gentle摂動(RANDOM_COUNT=0,ratio0.05-0.15)・cull-after-4・2h cap・全パス隔離(tmp/wildcard_opt2/、auto-adopt無し)。配信OFF・mem 28%でjobs=4稼働。狙い: 局所最適周辺をEXP-7(n=5)より低ノイズで探索。**次パスで result.json の勝者を確認→offline crash0検証→ライブA/B(n≥30)でEXP-3と比較**。勝者がノイズ選抜(EXP-7同様)なら採用せず。
 ※次の機構方針: 追加drop-position軸は干渉で全滅(EXP-6/8)。次はanalyze_board新特徴(option3, 既存field不変・追加のみ)か、本ラン結果次第。
+
+### ⚠ 注意(2026-06-17): opt2稼働中は本線ゲームが自動PAUSEされる
+param並列(opt2)実行中、メインループが `[PAUSE] param並列調整中(隔離評価)` を出して**本線ゲームを意図的に停止**(設計通り・contention回避)。soren_loop.log参照。runnerがidle/新game_historyが増えないのは**stallでなくpause**。opt2プロセス終了で自動un-pause(orphan-guard)。→ opt2稼働中の毎時パスでは「本線game_historyが増えてない=異常」と誤読しないこと。opt2候補ゲームはtmp/wildcard_opt2/sessions配下で進行中(SOVIET monitorはlogs/soren_loop.logのみ監視ゆえ候補Soviet非検知→opt2 result/statusを直接確認)。
