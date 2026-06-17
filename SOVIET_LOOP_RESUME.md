@@ -297,3 +297,13 @@ EXP-9 n=61: score_med 1466(+12%)/turns 90(+7%)/T14+ 30%/floor 33% は安定し�
 - HIGH_MAX_Y_NEAR penalty 600→300 (EXP-11): flip 0
 - NEAR_DEADLINE_RISK 300→120 + HIGH_MAX_Y 600→200 (EXP-12): flip 0
 **結論**: 全緩和がno-op=「危険域で取れるNEAR併合」は実データで稀。「同type至近でNO」の**75%は埋没target(満杯盤で着地が相手の2近く上=物理的に届かない)**、残りNEARも合体で背が伸びる/31.5%失敗。**ユーザーの観察は構造的clutter問題(埋もれた2個目核は動かせない)の可視化であって、修正可能な併合ロジックbugではない**。EXP-10/11/12は未デプロイ(no-opゆえ)。merge-tuning路線は打ち止め。残る道: 構造問題を別角度(analyze_board埋没度特徴 or 受容)。live=EXP-9維持。
+
+### EXP-9 確定 (n=96, 2026-06-18 03:47) + セッション総括
+EXP-9: score_med 1451(+11%)/floor 30%(vs38%)/turns 89/T13pair 38% は安定して better baseline。**但しRussia 3/96=3% ≈ EXP-3 2.3%(早期7%はluck, 7→5→3%と退行)＝ソ連funnel非改善**。EXP-9は「一般的に良い土台」だがソ連breakerではない。
+**セッション総括(全力ソ連push 2026-06-17〜18)**: 試した打開策と結果:
+- lookahead: 物理予測不能でblocked
+- param並列×2(opt2/opt3): EXP-9(FAST_DROP=False, 実runtime lever)=唯一の実成果(modest)。他winnerはnoise選抜
+- 追加scoring軸(EXP-6 mid-assembly/EXP-8 zone): EXP-9balanceに干渉して棄却
+- merge-tuning(EXP-10/11/12, ユーザー観察起点): 4緩和全no-op=buried-clutterが本体で修正不能
+- AVOID_BURY(埋没予防)は既存(axis5.5b)
+**結論: ドロップx制御で到達可能なレバーはほぼ汲み尽くした。ソ連(2×Russia)は構造的に困難で、EXP-9(best baseline)でも~3%Russia/0%Soviet。** 残る現実的進展は (a)EXP-9を最良として長時間走らせSoviet監視(numbers game) (b)analyze_board埋没度特徴(高risk・AVOID_BURY冗長の懸念) (c)受容。live=EXP-9維持・monitor継続。
