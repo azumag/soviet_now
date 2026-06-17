@@ -2186,42 +2186,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += max(0.0, 200.0 - _ld_dist * 130.0)
                         reasons.append("LOW_DRAIN_CLUSTER")
 
-        # ----- GOAL-loop EXPERIMENT-8(2026-06-17): SECOND_NUCLEUS_ZONE -----
-        # Diagnosis (EXP-3, T14-reached n=172): 2nd-T14 fails because the board has no clear
-        # space for a 2nd nucleus. At the first-T14 moment, FAILED games already sit HIGHER
-        # (max_y 0.50 vs formed 0.24) and die 35 turns later (vs formed 53) — the low clutter
-        # has filled the whole board incl. the would-be 2nd-nucleus region. Mechanism: once a
-        # high tier (>=13) exists, RESERVE a growth zone (1.4-wide window on the side OPPOSITE
-        # the highest piece) and (a) ZONE_CLEAR: push LOW no-merge clutter AWAY from it (keep
-        # it clear), (b) ZONE_BUILD: pull MID (T11-12) no-merge material TOWARD it (assemble
-        # the 2nd nucleus there). Height-SAFE gated (margin>=0.5, no deadline cross) so it can
-        # never add dangerous height; tie-breaker magnitude (<=250), below merge/AVOID bonuses.
-        # Distinct from the rejected naive build-beside: dynamic zone, only AFTER a high tier
-        # exists (the moment the 2nd-nucleus problem becomes live).
-        if merge_grade == "NO" and not result.get("crosses_deadline", False):
-            _zn_margin = result.get("deadline_margin", 99)
-            try:
-                _zn_margin = float(_zn_margin)
-            except (TypeError, ValueError):
-                _zn_margin = 99.0
-            if _zn_margin >= 0.5:
-                _zn_highs = [p for p in pieces if (p.get("type", 0) or 0) >= 13]
-                if _zn_highs:
-                    _zn_top = max(_zn_highs, key=lambda p: p.get("type", 0) or 0)
-                    _zn_hx = float(_zn_top.get("x", 0.0) or 0.0)
-                    _zn_center = 1.8 if _zn_hx < 0 else -1.8
-                    _zn_dist = abs(x - _zn_center)
-                    if next_type <= 7:
-                        # LOW clutter: keep the growth zone clear (reward being away from it)
-                        if _zn_dist >= 1.2:
-                            score += 150.0
-                            reasons.append("ZONE_CLEAR")
-                    elif 11 <= next_type <= 12:
-                        # MID material: assemble the 2nd nucleus inside the growth zone
-                        if _zn_dist < 1.0:
-                            score += max(0.0, 250.0 - _zn_dist * 200.0)
-                            reasons.append("ZONE_BUILD")
-
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
