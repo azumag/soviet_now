@@ -2184,25 +2184,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += max(0.0, 200.0 - _ld_dist * 130.0)
                         reasons.append("LOW_DRAIN_CLUSTER")
 
-        # ----- GOAL-loop EXPERIMENT-14(2026-06-18, web research): VALLEY_SHAPE -----
-        # Suika-game expert strategy (the "Double Watermelon" = our Soviet=2xRussia): build a
-        # U/valley — keep the SIDES higher and the CENTER LOW, so the two large pieces settle
-        # into the central cradle and merge. Our strategy does generic height-control but not
-        # explicit valley-shaping. Mechanism: for LOW (T1-7) no-merge clutter that is height-safe,
-        # a small tie-breaker toward the SIDES (|x|>=1.3) — routes clutter to the sides, keeping
-        # the center a low cradle for the high-tier pieces. Distinct from EXP-8 zone (which
-        # reserved a side zone for the 2nd nucleus); valley keeps the CENTER clear instead.
-        # Tie-breaker <=120, below merge/LOW_DRAIN, fires only when no merge + height-safe.
-        if merge_grade == "NO" and next_type <= 7 and not result.get("crosses_deadline", False):
-            _vl_margin = result.get("deadline_margin", 99)
-            try:
-                _vl_margin = float(_vl_margin)
-            except (TypeError, ValueError):
-                _vl_margin = 99.0
-            if _vl_margin >= 0.5 and abs(x) >= 1.3:
-                score += min(120.0, (abs(x) - 1.3) * 80.0 + 40.0)
-                reasons.append("VALLEY_SHAPE")
-
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
