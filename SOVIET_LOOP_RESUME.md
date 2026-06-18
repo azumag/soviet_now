@@ -32,7 +32,7 @@ grep -c 'SOVIET UNION CREATED' logs/soren_loop.log   # 1 = frozen game29557の�
 ### ★運用モード: 全力ソ連到達 (2026-06-17 ユーザー指示)
 「option2(大規模最適化)+3(analyze_board新特徴)を確認で止まらず、ソ連できる最後まで一気に」。**方針確認では止まらず自律的に機構を設計→検証→デプロイ→A/B→反復**。但し検証(replay harness crash0/A/B funnel)は品質のため継続。各機構の狙い=**2nd-nucleus形成(2個目の高ティア)**。判定は2nd-nucleus funnel(T13pair/T14pair/Russia)で、改善あれば採用・なければEXP-3へロールバック。cron=cc853f20(push mode)。
 
-- **稼働中の戦略 (live=head)**: `ba5935ce2a9a` = **EXP-9 (FAST_DROP=False)** = working baseline。EXP-13(seed保護)はn=32で全指標悪化→revert済。**深いfallback=EXP-3(d5fff9501436)**。
+- **稼働中の戦略 (live=head)**: `5f2a6937363c` = **EXP-14 (VALLEY_SHAPE, web research)** ← 2026-06-18デプロイ・ライブA/B中。EXP-9上に「低クラッターをサイドへ→中央を低く保つU字cradle」。judge T13pair/Russia n≥25、ダメなら→EXP-9(ba5935ce2a9a)。深いfallback=EXP-3(d5fff9501436)。
 - **ロールバック先=確定ベスト**: `d5fff9501436` = **EXP-3 (LOW_DRAIN_CLUSTER)**。**EXP-6/EXP-7とも棄却・revert済**（§8）
 - **frozen 復元先**: `d88fc8bfd580`（`tmp/goal_restore_20260604/RESTORE_FROZEN.sh` で復元）
 - **ソ連建国**: まだ達成なし（マーカー=1=過去のframezn game29557のみ）。Russia(単独)は ~5% で散発
@@ -172,7 +172,7 @@ def measure(target):
         if had: g['pair_games']+=1
         if had14: g['pair14']+=1
     return g
-for tgt,lab in (('ba5935ce2a9a','EXP-9(current best)'),('d5fff9501436','EXP-3(deep baseline)')):
+for tgt,lab in (('5f2a6937363c','EXP-14(live A/B)'),('ba5935ce2a9a','EXP-9(rollback)'),('d5fff9501436','EXP-3(deep)')):
     g=measure(tgt)
     if g['games']:
         print(f"{lab}: n={g['games']} score_med={statistics.median(g['scores']):.0f} mean={statistics.mean(g['scores']):.0f} max={max(g['scores'])} turns_med={statistics.median(g['turns']):.0f} T14+={100*g['t14']/g['games']:.0f}% pair-rate={100*g['pair_games']/g['games']:.0f}% T14pair={g['pair14']}({100*g['pair14']/g['games']:.0f}%) russia={g['russia']}({100*g['russia']/g['games']:.0f}%)")
@@ -320,3 +320,6 @@ merge調査の核心「2nd核失敗=材料の埋没(75%)」に対し、既存axi
 - 実形状でdriftは65%発火(no-shapesは0)＝確かに条件が違った。但しdrift予測量~0.07 vs 実drift~0.35(5×過小)・着地誤差は同じ(median0.35)。drift方向は66%正解だが**増幅(×3-7)すると誤差悪化**=実scatterは大半irreducible物理ノイズ。
 - merge-tuning(EXP-12)は実形状でもflip~0(smoke 1file=0)。
 **→結論維持: 物理予測はirreducible(lookahead blocked/merge失敗は本物)。shapes flawは結論を覆さず、より厳密に確認した。** 教訓: 今後のreplayは tmp/replay_20260612/live_shapes.json を gs["shapes"] に渡すこと(より正確)。
+
+### EXP-14 VALLEY_SHAPE デプロイ (web research, live=5f2a6937363c, 2026-06-18, A/B中)
+Suika専門家戦略「ダブルすいか(=ソ連)はU字/谷型で勝つ(両サイド高・中央低で大ピースをcradle)」を実装。低(T1-7)非併合height-safeクラッターをサイド(|x|>=1.3)へ寄せ中央を低く保つ(tie-breaker<=120)。EXP-8 zone(2nd核用に側を予約)と逆=中央をクリアに保つ。offline(実形状) crash0/0・flip 926/6140(15.1%, 強い実変化)。判定: n≥25でT13pair/Russia funnelがEXP-9超えるか。ダメならEXP-9へrollback。**research-backedな初の機構**。
