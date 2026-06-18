@@ -314,3 +314,9 @@ merge調査の核心「2nd核失敗=材料の埋没(75%)」に対し、既存axi
 ### EXP-13 棄却 (2026-06-18 07:47, n=32, revert ae6203206)
 全指標悪化: T13pair 22% vs EXP-9 38%(target)・score_med 1202 vs 1456・T14+ 19% vs 29%・floor 41% vs 26%・Russia 0/32。seed保護仮説は失敗=lone seed埋没penaltyが**配置を過剰制約し建設を減らす**(EXP-6/8と同じ干渉)。→EXP-9へrevert。
 **★確定パターン: scoring軸の追加/拡張は EXP-9 の tight balance に干渉して全部悪化(EXP-6/8/13)。buried-clutter天井はburial penaltyでは破れない。** 効いたのは非scoring runtime switch(FAST_DROP/EXP-9)のみ=これは唯一で枯渇済。→ ドロップx制御の全レバー(scoring軸/merge-tuning/runtime switch/param並列)を実測で汲み尽くした。EXP-9が実用上の最良。残=数の勝負(EXP-9走らせSoviet監視) or 受容。
+
+### shapes方法論的見落とし→再検証で結論は維持 (2026-06-18)
+**重大発見**: 全offline replayが shapes={} で回っていた(game_history JSONLはshapes非保存、live game_state.jsonは保存)。実ゲームはruntime shapesでドリフト予測。→merge-tuning no-op等の結論が偽陰性の懸念。**実形状(tmp/replay_20260612/live_shapes.json, types1-8,10,13)で再検証**:
+- 実形状でdriftは65%発火(no-shapesは0)＝確かに条件が違った。但しdrift予測量~0.07 vs 実drift~0.35(5×過小)・着地誤差は同じ(median0.35)。drift方向は66%正解だが**増幅(×3-7)すると誤差悪化**=実scatterは大半irreducible物理ノイズ。
+- merge-tuning(EXP-12)は実形状でもflip~0(smoke 1file=0)。
+**→結論維持: 物理予測はirreducible(lookahead blocked/merge失敗は本物)。shapes flawは結論を覆さず、より厳密に確認した。** 教訓: 今後のreplayは tmp/replay_20260612/live_shapes.json を gs["shapes"] に渡すこと(より正確)。
