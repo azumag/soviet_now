@@ -671,6 +671,10 @@ FAST_DROP_DEADLINE_CONTACT = False
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+# CASCADE_STAIRCASE (2026-06-20): per-type approximate radii for multi-stage cascade detection.
+_CASC_RAD = {1: 0.363, 2: 0.406, 3: 0.442, 4: 0.623, 5: 0.533, 6: 0.652, 7: 0.677, 8: 0.880,
+             9: 1.092, 10: 0.978, 11: 1.600, 12: 1.306, 13: 1.507, 14: 1.704, 15: 2.145}
+
 def decide(game_state: dict, analysis: dict) -> dict:
     """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
 
@@ -983,6 +987,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- evaluation axis CASCADE_STAIRCASE (user expert technique, 2026-06-20) -----
+        # User (~10% manual Soviet): arrange T(N+1) below T(N); drop T(N) on board T(N) -> T(N+1)
+        # -> merges with the T(N+1) below -> T(N+2) ... cascade; plan several stages. EXP-9 pipeline
+        # only does single-stage; this rewards completing a MULTI-stage cascade. Additive bonus
+        # (max +800) below merge(1200)/deadline(-4500), so no safety override; prefers cascade merges.
+        if merge_grade in ("DIRECT", "NEAR") and merged_type <= 15:
+            _casc_depth = 0
+            _cur_type = merged_type
+            _cur_x = float(x)
+            _cur_y = float(landing_y)
+            _casc_used = set()
+            for _casc_stage in range(6):
+                if _cur_type > 15:
+                    break
+                _r_cur = _CASC_RAD.get(_cur_type, 1.0)
+                _casc_best = None
+                _casc_best_d = 1e9
+                for _cp in pieces:
+                    if _cp.get("type") != _cur_type or _cp.get("id") in _casc_used:
+                        continue
+                    _cd = ((_cp.get("x", 0.0) - _cur_x) ** 2 + (_cp.get("y", 0.0) - _cur_y) ** 2) ** 0.5
+                    if _cd < _r_cur * 2.6 and _cd < _casc_best_d:
+                        _casc_best_d = _cd
+                        _casc_best = _cp
+                if _casc_best is None:
+                    break
+                _casc_depth += 1
+                _casc_used.add(_casc_best.get("id"))
+                _cur_x = float(_casc_best.get("x", 0.0))
+                _cur_y = float(_casc_best.get("y", 0.0))
+                _cur_type += 1
+            if _casc_depth > 0:
+                score += min(_casc_depth, 4) * 200.0
+                reasons.append("CASCADE_STAIRCASE_%d" % _casc_depth)
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
