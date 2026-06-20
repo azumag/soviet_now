@@ -1317,7 +1317,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_dist = adj_dist
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
-                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 31.30)
+                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
@@ -1608,7 +1608,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
             # height penalty be the only position differentiator — consistent low placement.
             # Fixes rollback failure mode: deadline scatter from v432 sign error
-            score -= 4635.6
+            score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
          # ----- evaluation axis 3: drift penalty -----
