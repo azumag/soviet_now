@@ -65,7 +65,9 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = False
+FAST_DROP_DEADLINE_CONTACT = True
+
+
 # --- Change History (compressed to 5 entries; full history in git) ---
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
@@ -1416,7 +1418,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v461: also suppress in death spiral — height must be sole differentiator
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
-                or (reactive_pair_count >= 6 and max_y >= 2.5)
+                or (reactive_pair_count >= 5 and max_y >= 2.5)
             )
             if not board_congested and not death_spiral:
                 blocking_penalty = 0.0
@@ -1857,7 +1859,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/analysis_result.md, data/user_review.md
         if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"]:
             if merge_grade == "DIRECT":
-                score += 3288.7
+                score += 3000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
                 # NEAR: suppress bonus when this candidate crosses or nearly crosses deadline
@@ -1922,7 +1924,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
                      # ボーナスを抑制し、height penaltyが効くようにする
                      # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
-                     score += 190.7
+                     score += 200.0
                      reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
@@ -2140,7 +2142,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     _prs_rr = float(_pcp_pair[0].get("r", 1.0) or 1.0) + float(_pcp_pair[1].get("r", 1.0) or 1.0)
                     _prs_gap = (_prs_dx * _prs_dx + _prs_dyy * _prs_dyy) ** 0.5 - _prs_rr
                     _prs_midx = (float(_pcp_pair[0].get("x", 0.0)) + float(_pcp_pair[1].get("x", 0.0))) / 2.0
-                    _prs_top = max(float(_pcp_pair[0].get("y", 0.0)), float(_pcp_pair[1].get("y", 0.3613)))
+                    _prs_top = max(float(_pcp_pair[0].get("y", 0.0)), float(_pcp_pair[1].get("y", 0.0)))
                     # GOAL-loop(2026-06-12 hourly v8): T14 pairs stall OUTSIDE the press
                     # gate — measured 29 consecutive 2xT14 turns at gap 1.16-1.67 with
                     # zero presses (gate was <0.6), so the Russia-critical pair never
