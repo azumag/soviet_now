@@ -984,38 +984,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- axis: ZONE RESERVATION (2026-06-21, user-chosen Soviet path) -----
-        # Reserve the corner OPPOSITE the main high chain for a 2nd nucleus; keep it CLEAR
-        # of low-piece clutter; seed/extend the 2nd chain there once main is mature (T12+).
-        # Goal: raise endgame compaction / 2x-T15-material rate (the measured Soviet gate).
-        # NO-merge placements only (never touches merge bonuses). Magnitudes moderate to
-        # avoid the v417 edge-scatter failure mode; low pieces get a CENTER pull (not edge).
-        if merge_grade == "NO":
-            _zr_highs = [p for p in pieces if p.get("type", 0) >= 8]
-            if _zr_highs:
-                _zr_px = max(_zr_highs, key=lambda p: p.get("type", 0)).get("x", 0.0)
-                _zr_pside = -1.0 if _zr_px < 0 else 1.0
-                _zr_rside = -_zr_pside
-                _zr_mature = any(p.get("type", 0) >= 12 for p in pieces)
-                _zr_x = float(x)
-                _zr_on_reserve = (_zr_x * _zr_rside > 0 and abs(_zr_x) > 1.3)
-                _zr_on_main = (_zr_x * _zr_pside > 0 and abs(_zr_x) > 1.3)
-                _zr_center = abs(_zr_x) <= 1.0
-                if next_type <= 7:
-                    if _zr_on_reserve:
-                        score -= 200.0
-                        reasons.append("ZR_KEEP_CLEAR")
-                    elif _zr_center:
-                        score += 120.0
-                        reasons.append("ZR_DRAIN_CENTER")
-                elif next_type >= 9:
-                    if _zr_on_main:
-                        score += 150.0
-                        reasons.append("ZR_BUILD_MAIN")
-                    elif _zr_on_reserve and _zr_mature:
-                        score += 140.0
-                        reasons.append("ZR_SEED_2ND")
-
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
         # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
