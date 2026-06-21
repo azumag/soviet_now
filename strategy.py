@@ -984,6 +984,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
+        # ----- axis: SOVIET PRECURSOR COMPLETION (2026-06-21, real-data breakthrough) -----
+        # Real Russia games get a T14 within 1.5 of the T15 = Soviet ONE merge away, but the
+        # partner T14 never completes: the existing growth bias height-gates OFF (margin>=0.5)
+        # as max_y rises, and pieces drain. When Soviet is one-merge-away (T15 + a T14 within
+        # 3.0), COMMIT to completing the partner T14 adjacent to the existing one: relaxed gate
+        # (margin>=0.2, never crossing) + strong pull toward the partner T14's x. Rare (fires
+        # only with T15 + a nearby T14) -> low overall risk; trades a little survival for the
+        # Soviet last mile. Stacks with SOVIET_NUCLEUS_GROWTH in the margin>=0.5 band.
+        if merge_grade == "NO" and next_type >= 8 and not result.get("crosses_deadline", False):
+            _sv_t15s = [p for p in pieces if p.get("type", 0) >= 15]
+            if _sv_t15s:
+                _sv_partner = None
+                for _sv_t14 in (p for p in pieces if p.get("type", 0) == 14):
+                    for _sv_t15 in _sv_t15s:
+                        _sv_d = ((_sv_t14.get("x", 0.0) - _sv_t15.get("x", 0.0)) ** 2 + (_sv_t14.get("y", 0.0) - _sv_t15.get("y", 0.0)) ** 2) ** 0.5
+                        if _sv_d < 3.0:
+                            _sv_partner = _sv_t14
+                            break
+                    if _sv_partner is not None:
+                        break
+                if _sv_partner is not None and result.get("deadline_margin", 99) >= 0.2:
+                    _sv_pdist = abs(float(x) - float(_sv_partner.get("x", 0.0)))
+                    if _sv_pdist < 2.2:
+                        score += max(0.0, 600.0 - _sv_pdist * 280.0)
+                        reasons.append("SOVIET_PRECURSOR_COMPLETE")
+
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
         # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
