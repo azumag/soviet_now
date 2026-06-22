@@ -1009,3 +1009,9 @@ HEALTH全green(monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)�
 **実施(全て可逆)**: .env凍結解除(PARAM_PARALLEL=1/JOBS=4/WILDCARD=1/MIN_GAMES=12/REGRESSION再有効化=粛清でEXP-9保護)→soren_loop毎試合hot-reload確認(ログTOGGLES)。improve_daemon停止してたので手動起動(supervisor8982管理)。EXP-9復元点保存(tmp/PRE_PARAM_REENABLE_*.py)。acc=190蓄積なので初回改善+param並列は速やかに発火。
 **残リスク(監視中)**: #94 Chrome/OBSクラッシュ群(修正コミット済だが実機未検証・param並列realモードで再発しうる)、初回AI改善のEXP-9 churn(粛清+validation+手動revertで保護)。soren91はparam並列中に停止される(設計)。
 **次**: 初回param並列サイクルの実発火を実測検証→#94クラッシュ監視→winner採用時はEXP-9超えのみ(baseline-slot1自己保護)。churn/クラッシュ酷ければ.env=0で即凍結復帰。
+
+### §8追記★粛清再有効化でlive=ソ連建国戦略d88fc8bfd580へauto-revert (2026-06-23 08:05)
+param並列再開のため REGRESSION_DISABLED=0(粛清再有効化)した瞬間、**粛清が作動しEXP-9(fe0a6e6)をd88fc8bfd580へauto-revert**(git commit 4eb26d32c)。理由(粛清ログ): `reasons=objective_regression+lost_turkmenistan_gate+lost_soviet_path, anchor_soviet=1 curr_soviet=0, anchor_best_max_type=16(ソ連) curr=15, anchor_comp=11198 curr=10625`。
+**意味**: d88fc8bfd580 は**実際にソ連建国した戦略(soviet=1, type16)**で、EXP-9はソ連未達(type15)。粛清の lost_soviet_path ゲートが**ソ連建国実績株を保護**し、ソ連未達のEXP-9を「ソ連の道を失った」と判定してrevert。**しかもcomposite/p25もd88fcが上**=設計通り正しい動作。
+**現状**: live=d88fc8bfd580健全稼働、daemon稼働、フレッシュcycle計数中(12でparam並列発火)、粛清active(ソ連path保護)。active_branchはauto-revertでクリア(次cycleで再設定・repairは空head早期return無害)。**param並列はソ連建国実績のあるd88fcから探索**=ユーザーのソ連目標に沿う。
+**自己訂正**: 私の長い「EXP-9がPareto最適・ソ連near-impossible」論は、**システムがソ連建国株d88fcを最良anchorとして保持していた事実を見落としていた**。d88fcのソ連1回はluck可能性あるが、システムは正当にこれを保護。今後param並列がd88fcから帯域脱出を試みる。EXP-9復元点は tmp/PRE_PARAM_REENABLE_*.py に保全。
