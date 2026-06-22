@@ -944,3 +944,26 @@ HEALTH全green(SOVIET monitor 2proc/loop9000/runner/live==head==fe0a6e6ab496/SOV
 3. 2nd核早期育成 = **EXP-9 BOLD軸(strategy.py:2021, `not russia_phase`)が既に実装**。max_type==14&count==1 で building piece(T8+)を nucleus BESIDE配置し隣接2個目T14形成。コメント記録「broad版は T14+ 30%→13%に低下」=**既にT14+到達の縁まで調整済**。
 **結論(実測)**: height@T14シグナルは実在するが、その実装可能レバーは(禁止/revert済/BOLD実装済)で**全て飽和**。安全にデプロイ可能な新形は無し。→ within-scope policy天井=EXP-9 を **height診断角度からも(今度はliveコード実読で)確定**。strategy.py無変更(BOLD既に最適化済・liveは健全)。
 **残オプション(将来)**: ①BOLD beside-offset/gateのparam微調整(但しparam並列は天井破らず[[memory]]・低期待)②faithful-sim大規模offline MC研究(理論Soviet率の上限探索・但しdeep-horizon fidelity限界)③ユーザー(C)入力。当てずっぽうの≈/禁止形デプロイはしない。次パス: 安定監視 + 新角度/Soviet発火で動く。
+
+### §8追記★★決定的再フレーミング: ソ連は「生存ターン数」律速 (2026-06-23 05:00, ユーザー"それで？"に対する実探索)
+ユーザーの「それで？」(=飽和繰り返すな・行動せよ)に対し、**測るだけでなく忠実simで実際にソ連を建てに行った**:
+**(1) 構築的探索(tmp/mcsim/soviet_build_search.py)**: 実near-Soviet盤面6個(一部既に1st=T14&2nd-cluster=T14)から、両チェーン最大化貪欲[4*min(c1,c2)+...]で16手探索×3feed。**結果 ソ連0/18・2nd-clusterはT14天井でT15未到達**。死なないrunでも両balance時に**1本目すらT15届かず両方T14停滞**=材料分割backfireを忠実simで構築的実証(相関的≈より遥かに強い)。
+**(2) 材料検算(決定的)**: マージはT1換算保存→**材料効率100%(無駄ゼロ)**。1ゲーム配給材料=**中央値15,448(ソ連32,768の47%)・最大34,157(104%)**。配給≥2×T15(ソ連床)は**全ゲームの0.2%のみ**。≥1×T15は40%。
+**(3) 生存ターン分布**: median85turn/p90 116/max201。**corr(turns, 配給材料)=+0.75**。ソ連床32,768には**~178ターン生存が必要**だがEXP-9 median=85(47%地点で死)。
+**★結論(定量)**: ソ連の第一律速は2nd-chain構築でも効率でもなく**生存ターン数**。EXP-9はスコア最適化ゆえ高ピース早期構築→un-mergeable singletonが盤面を詰まらせ**85ターンで早死**。ソ連には**survival-first/build-late(盤面を低くmergeableに保ち高ティア commitを遅延、150-200ターン生存して2×T15材料を蓄積、終盤に2本構築)**という**EXP-9と根本的に異なる方策**が必要。
+**★検証可能性**: survival-firstは**中間指標(turns survived/材料handed)で検証できる**(稀なソ連event不要)=これまでのunverifiableレバーと違う。
+**★トレードオフ(ユーザー判断要)**: survival-first=高ティア構築遅延=**スコア低下・長いゲーム・配信のgames/hour減**。EXP-9はスコア最適化(配信映え)。**ソ連を本気で狙う=スコアを犠牲にする**。→ユーザーに(A)survival-first追求 vs (B)EXP-9維持 を確認。
+
+### §8追記★★survival-first 反証 = EXP-9はPareto最適 (2026-06-23 05:30, ユーザー"survival-first追求"選択→offline先行検証)
+ユーザーが survival-first を選択。**約束通りデプロイ前にoffline(忠実sim)で「生存が実際に伸びるか」を先行検証** (tmp/mcsim/survival_first_test.py, full-game n=6/policy, 相対比較):
+| policy | turns med | peak material max |
+|---|---|---|
+| build_greedy(積極構築=EXP-9型, w_build4/w_height1.5) | **98** | **20786 (63% of Soviet)** |
+| survive_low (w_height8/w_clog4) | 86 | 17312 (53%) |
+| survive_xtrem (w_height14/w_clog8) | 79 | 17312 (53%) |
+
+**★survival-firstは反証**: 生存ターンも蓄積材料も **build_greedy > survive_low > survive_xtrem** で単調。**構築を遅らせるほど早く死に材料も少ない**。理由=**マージ(=構築)こそ盤面からピースを除去する唯一機構**。構築遅延→低ピースclog→早死。survive_xtremは盤面を最も低く保つのに最速死(simは低盤面を有利判定するバイアスがあるのに負けた=結論強固)。
+**★EXP-9はPareto最適**: 積極構築はスコアだけでなく**生存・材料蓄積でも最適**。survival-firstは「スコア低下×生存短縮」の最悪両取り→**デプロイせず**(先行検証の価値実証)。
+**★最深の結論**: ソ連にスコア vs 生存のtradeoffは**存在しない**。build-greedy(=EXP-9)が全軸でPareto最適。材料天井(~63% sim / 実tail 104%)は**盤面幾何の硬い限界で、どの方策でも超えられない**(構築最適でも死ぬまでに2×T15を積めない)。
+**ソ連の真のgate(確定)**: (a)178ターン生存して2×T15材料が配られる稀な長尺tail(全game 0.2%・運律速・EXP-9が既に期待生存最大化) × (b)その材料を2本chainに完全packing(BOLD軸が狙うが soviet_build_search で 0/18・1本に collapse)。**両gateとも per-drop policyで動かせない**。
+**within-scope(strategy.py/analyze_board.py)の最後の未検証レバー(survival-first)も反証で消滅**。Soviet到達には per-drop以外(別engine仮定/別game/lottery受容)が要る=要ユーザー判断。strategy.py無変更・live=fe0a6e6ab496健全継続。
