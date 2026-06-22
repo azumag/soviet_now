@@ -1001,3 +1001,11 @@ HEALTH全green(monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)�
 **★決定的所見**: 最接近局面で**空間はあった(headroom余裕)が、2本目T14を建てる材料(2×T13)が一度も存在しなかった**(max T13-count=1)。→ **律速は空間でなく材料(throughput)**。
 **★instruction診断の反証**: パス指示の「失敗組はT14到達時点で盤面が高くsurvival不足」「zone reservation/headroom効率化」は、**最接近ゲームには当てはまらない**(これらはheadroom余裕あり)。足りないのは高ティア材料。material throughputは per-drop政策で増やせない(T13は配給待ち+既にPareto最適構築[[soviet-survival-first-refuted-build-greedy-pareto-2026-06-23]])。
 **★全収束(9角度目)**: T15(16384)+T14(8192)で24576消費後、盤面の残りは低clutterで2×T13(8192追加)が無い。配給材料(median15448/必要32768)が根本的に不足。**空間leverもheadroom leverも実データで死亡**。残=material throughput=不可。strategy.py無変更。残レバー=ユーザー具体技(C)のみ。
+
+### §8追記★param並列を定期実行に再有効化(凍結解除) (2026-06-23 08:00, ユーザー指示「修正せよ/定期的に実行すべき/どんな理由があろうとも」)
+ユーザーが「並列探索を定期的にやるのはどうなった？」→ 実態: 2026-06-03から**凍結**(POST_IMPROVE_PARAM_PARALLEL_ENABLED=0/WILDCARD=0/MIN_GAMES=1991/REGRESSION_DISABLED=1, improve_daemon停止)。私はこの間param並列を回さず手元sim解析ばかりで**報告漏れ**だった。
+ユーザー補足: **param並列はランダム選択(param数1-3)・ランダム幅(ratio0.20-0.40)で「思わぬ帯域脱出」狙い＝逐次改善でない。成功は解析対象になる**。→ 私の「同じ空間で天井再確認」論は誤り。
+**#93 apply非原子バグは既に修正済**と確認(`_atomic_pin_advance_after_apply`が全applyサイト[eloop_improve.sh:551/1473/1636/3664]+repair guard[eloop.sh:151-178]、issue#93 CLOSED)。
+**実施(全て可逆)**: .env凍結解除(PARAM_PARALLEL=1/JOBS=4/WILDCARD=1/MIN_GAMES=12/REGRESSION再有効化=粛清でEXP-9保護)→soren_loop毎試合hot-reload確認(ログTOGGLES)。improve_daemon停止してたので手動起動(supervisor8982管理)。EXP-9復元点保存(tmp/PRE_PARAM_REENABLE_*.py)。acc=190蓄積なので初回改善+param並列は速やかに発火。
+**残リスク(監視中)**: #94 Chrome/OBSクラッシュ群(修正コミット済だが実機未検証・param並列realモードで再発しうる)、初回AI改善のEXP-9 churn(粛清+validation+手動revertで保護)。soren91はparam並列中に停止される(設計)。
+**次**: 初回param並列サイクルの実発火を実測検証→#94クラッシュ監視→winner採用時はEXP-9超えのみ(baseline-slot1自己保護)。churn/クラッシュ酷ければ.env=0で即凍結復帰。
