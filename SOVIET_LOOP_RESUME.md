@@ -932,3 +932,15 @@ SEED(fe0a6e6ab496)=≈EXP-9・no-harm・unverifiable で確定。**no-harm Sovie
 **tooling投資の正味成果(正直)**: ✓ verified asset=faithfulな単発forward model(overlap-sim)。✗ それを deployable な Soviet前進に変換する path無し(horizon mismatch)。→ **tooling投資は「なぜ無理か」を粗さでなくhorizonとして精密化したが、Soviet到達lever は産まなかった**。
 **残る未試行lever(将来pass候補, within-scope strategy.py)**: 「1本目T15を早期完成させ chain2に残ターンをbank」(rush-1st-chain)。但しmemory既知の「169ターン長尺でも2nd-chain 0.88×止まり」=ターン数でなくpacking律速の可能性大→投機deployはmedian悪化(検証可能harm) vs Soviet改善(検証不能)でrisk非対称。faithful-simでoffline medium-horizon検証してからのみ。
 **この pass の確定**: live=fe0a6e6ab496 健全(本日Russia 1件 00:50/score_med~1413/T13+ ~85%/live==head)。strategy.py無変更。Soviet=0継続。tooling角度も壁を破らず。次パス: 安定監視 + (任意)faithful-simでrush-1st-chain offline検証 + 新角度/ユーザー入力/Soviet発火で動く。
+
+### §8追記★rush-lever実データ反証 + height@T14シグナル + BOLD飽和確認 (2026-06-23 04:00)
+HEALTH全green(SOVIET monitor 2proc/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)。MEASURE: **大標本n=1500 corpus = T14+ 25%・T15+ 2.6% = EXP-9一致 → live(PROTECT_2ND_SEED)は≈EXP-9・no-harm確定**(前パスの「T14+ 10-18%」は窓ノイズと確定)。本日Russia 1件(00:50, 既存)。
+**ADVANCE: 前パスで残した唯一の未試行lever「rush-1st-chain」を sim非依存の純データで決定的検証** (tmp/mcsim/rush_lever_analysis.py, T14+到達 n=380):
+- **rush(早期T14)は反証**: turn_first_T14 vs 2nd-chain himat の相関 **r=-0.07(ほぼ無)**。runway r=+0.23/length r=+0.18/final_mat r=+0.14(弱正)。
+- **真のシグナル=height@T14**: TOP-decile(2nd発達)games は T14到達時の盤面 **max_y=0.16 vs REST=0.43**(大差)。パス指示の診断「失敗組は高い」を実データで確認。
+**height@T14レバーの実装可能形を全て trace → 全て飽和/禁止/実装済(liveコード直読で確認)**:
+1. 圧縮強化 = **landing_y-only=postmortem禁止**(v338/v359 scatter失敗、コード全体に明記)。
+2. drain強化 = git履歴 **EXP-4/5 が over-drain・pair率半減でrevert済**。
+3. 2nd核早期育成 = **EXP-9 BOLD軸(strategy.py:2021, `not russia_phase`)が既に実装**。max_type==14&count==1 で building piece(T8+)を nucleus BESIDE配置し隣接2個目T14形成。コメント記録「broad版は T14+ 30%→13%に低下」=**既にT14+到達の縁まで調整済**。
+**結論(実測)**: height@T14シグナルは実在するが、その実装可能レバーは(禁止/revert済/BOLD実装済)で**全て飽和**。安全にデプロイ可能な新形は無し。→ within-scope policy天井=EXP-9 を **height診断角度からも(今度はliveコード実読で)確定**。strategy.py無変更(BOLD既に最適化済・liveは健全)。
+**残オプション(将来)**: ①BOLD beside-offset/gateのparam微調整(但しparam並列は天井破らず[[memory]]・低期待)②faithful-sim大規模offline MC研究(理論Soviet率の上限探索・但しdeep-horizon fidelity限界)③ユーザー(C)入力。当てずっぽうの≈/禁止形デプロイはしない。次パス: 安定監視 + 新角度/Soviet発火で動く。
