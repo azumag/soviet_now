@@ -967,3 +967,11 @@ HEALTH全green(SOVIET monitor 2proc/loop9000/runner/live==head==fe0a6e6ab496/SOV
 **★最深の結論**: ソ連にスコア vs 生存のtradeoffは**存在しない**。build-greedy(=EXP-9)が全軸でPareto最適。材料天井(~63% sim / 実tail 104%)は**盤面幾何の硬い限界で、どの方策でも超えられない**(構築最適でも死ぬまでに2×T15を積めない)。
 **ソ連の真のgate(確定)**: (a)178ターン生存して2×T15材料が配られる稀な長尺tail(全game 0.2%・運律速・EXP-9が既に期待生存最大化) × (b)その材料を2本chainに完全packing(BOLD軸が狙うが soviet_build_search で 0/18・1本に collapse)。**両gateとも per-drop policyで動かせない**。
 **within-scope(strategy.py/analyze_board.py)の最後の未検証レバー(survival-first)も反証で消滅**。Soviet到達には per-drop以外(別engine仮定/別game/lottery受容)が要る=要ユーザー判断。strategy.py無変更・live=fe0a6e6ab496健全継続。
+
+### §8追記★clairvoyant planning も2本chain建てられず=最後の理論的扉も閉じる (2026-06-23 06:00)
+HEALTH全green(SOVIET monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)。MEASURE: recent60 T13+83%/T14+18%/T15 0%(T14+はCI 14-36%内=低luck窓・床割れ無し)、prior300 T13+81%/T14+27%/T15 1.7%=**≈EXP-9健全**。本日Russia 1件(00:50)以降途絶(Poisson noise内)。
+**ADVANCE: 唯一未検証だった「計画(planning)」を upper-bound で検証** (tmp/mcsim/clairvoyant_beam.py)。全prior testは近視眼(greedy0/18・depth1・crude rollout)。人間はソ連時に**計画**する→clairvoyant beam(未来8手既知・忠実sim・width4 depth8)=**任意方策の上限**をnear-Soviet実盤面(一部既に2nd-cluster T14)から実行:
+- **結果: 2nd-cluster T14天井・ソ連0/8・2nd-clusterは毎回T0崩壊**(生存のため1本統合)。greedyと同天井。
+- → **壁は近視眼でなく構造**。全知の計画者でも2本chainを生存と両立不可。**planning/MCTS/蒸留はソ連レバーでない**と確定(最後の理論的扉も閉)。
+**★正直な留保(重要)**: 忠実simは実ポリゴンよりpacking過小評価([[soviet-geometric-packing-constraint-2026-06-19]]「実ポリゴンは遥かに密nestle」)。simは2本共存を実際より厳しく判定の可能性→現実天井はsimより僅か高い。これが「人間が稀にやれる(~10%主張)」と整合: deployable policyでは無理だが、現実の稀な長尺ゲーム+幸運なpacking でSovietはありうるゆえEXP-9(期待生存・期待Soviet最大化済)で監視継続が最善。
+**全角度の最終確定**: per-drop policy(Pareto最適)/B-arch/shallow-lookahead/rush/height@T14(BOLD飽和)/survival-first(反証)/**clairvoyant planning(崩壊)** — **検証可能な全レバーをsim/data/code/実験で尽くした**。Soviet=現実の稀lottery(EXP-9が確率最大化)。残=ユーザー具体技(C)のみ。strategy.py無変更継続。
