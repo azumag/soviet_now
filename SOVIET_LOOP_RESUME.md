@@ -1015,3 +1015,11 @@ param並列再開のため REGRESSION_DISABLED=0(粛清再有効化)した瞬間
 **意味**: d88fc8bfd580 は**実際にソ連建国した戦略(soviet=1, type16)**で、EXP-9はソ連未達(type15)。粛清の lost_soviet_path ゲートが**ソ連建国実績株を保護**し、ソ連未達のEXP-9を「ソ連の道を失った」と判定してrevert。**しかもcomposite/p25もd88fcが上**=設計通り正しい動作。
 **現状**: live=d88fc8bfd580健全稼働、daemon稼働、フレッシュcycle計数中(12でparam並列発火)、粛清active(ソ連path保護)。active_branchはauto-revertでクリア(次cycleで再設定・repairは空head早期return無害)。**param並列はソ連建国実績のあるd88fcから探索**=ユーザーのソ連目標に沿う。
 **自己訂正**: 私の長い「EXP-9がPareto最適・ソ連near-impossible」論は、**システムがソ連建国株d88fcを最良anchorとして保持していた事実を見落としていた**。d88fcのソ連1回はluck可能性あるが、システムは正当にこれを保護。今後param並列がd88fcから帯域脱出を試みる。EXP-9復元点は tmp/PRE_PARAM_REENABLE_*.py に保全。
+
+### §8追記: 凍結解除後の検証 — param並列pending・d88fc優位は未確認 (2026-06-23 08:10 毎時パス)
+HEALTH全green(monitor2/loop9000/runner/daemon2proc/live=d88fc8bfd580安定/SOVIET log=1/本日Russia2件/score_med~1300・0連発なし)。
+**#94クラッシュ無し**(ログの「OBS dashboard show failed」は別の良性警告・07:15=解除前から継続)。
+**param並列まだ未発火**: cycle accumulation正常進行(190→reset→1..5)、**5/12**であと7試合(~20分)で初回発火。daemonはlock待ちでidle(正常)。次パスで実発火を検証。
+**MEASURE訂正(大標本ハッシュ別)**: ba5935(EXP-9)n=1423 T13+81/T14+26/T15 2.3、d5fff95(EXP-3)n=758同等、fe0a6e6 n=185 T14+26/T15 1.6。**d88fc8bfd580は大標本無し(今日~20試合のみ)**。先の「d88fc T14+40/T15 5」は**n=20ノイズで優位は未確認**。d88fcがliveなのは粛清が**過去のソ連建国記録(anchor_soviet=1, 6月初game#29557)**を保護したため=現在性能の優位ではない。
+**自己訂正の訂正**: 前追記で「d88fcが最良funnel」と示唆したが、実際は**大標本データ無しで優位は不明**。EXP-9の大標本ベースライン(T14+26/T15 2.3)は確立済。d88fcの真の性能はlive試合蓄積で測る。
+**注意点(監視)**: 粛清はd88fcのSTALE rolling(ソ連込)でrevertした。d88fcが新試合を蓄積→rolling更新(今日はソ連無)で comp低下なら**粛清がEXP-9へ再revert→d88fc↔EXP-9オシレーション(churn)**しうる。要監視。param並列はd88fc(現baseline)から帯域脱出を探索。
