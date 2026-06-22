@@ -1687,6 +1687,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= (_st - 9) * 120.0  # T10:-120 T12:-360 T14:-600 (protect high pipeline)
                     reasons.append("AVOID_BURY_MERGEABLE")
 
+        # ----- axis: PROTECT 2ND-CHAIN SEED (2026-06-22, consolidation finding, low-risk tweak) -----
+        # Axis 5.5b protects PAIRED high pieces. But an ISOLATED high piece (T12/13, count 1) is a
+        # potential 2nd-chain SEED; burying it kills the 2nd chain before it can pair/consolidate.
+        # EXP-9 skips these (might never pair), but for Soviet keeping the seed alive matters. Fires
+        # only when a MORE-advanced piece exists (so the isolated high IS a 2nd-chain seed) + safe.
+        if merge_grade == "NO" and not death_spiral and result.get("deadline_margin", 99) >= 0.5:
+            _ps_ly = result.get("landing_y", 0)
+            _ps_support = None
+            for _p in pieces:
+                if abs(x - _p.get("x", 0)) < 0.9 and _p.get("y", -10) < _ps_ly:
+                    if _ps_support is None or _p.get("y", -10) > _ps_support.get("y", -10):
+                        _ps_support = _p
+            if _ps_support is not None:
+                _ps_t = _ps_support.get("type", 0)
+                if 12 <= _ps_t <= 13 and _type_counts.get(_ps_t, 0) == 1 and _ps_t != next_type and _ps_t != next_next_type:
+                    if max((p.get("type", 0) for p in pieces), default=0) > _ps_t:
+                        score -= 220.0
+                        reasons.append("PROTECT_2ND_SEED")
+
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
         # Re-introduced in v364 but was limited to reactive<3 with max bonus 50 — too weak.
