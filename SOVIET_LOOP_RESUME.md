@@ -975,3 +975,18 @@ HEALTH全green(SOVIET monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET l
 - → **壁は近視眼でなく構造**。全知の計画者でも2本chainを生存と両立不可。**planning/MCTS/蒸留はソ連レバーでない**と確定(最後の理論的扉も閉)。
 **★正直な留保(重要)**: 忠実simは実ポリゴンよりpacking過小評価([[soviet-geometric-packing-constraint-2026-06-19]]「実ポリゴンは遥かに密nestle」)。simは2本共存を実際より厳しく判定の可能性→現実天井はsimより僅か高い。これが「人間が稀にやれる(~10%主張)」と整合: deployable policyでは無理だが、現実の稀な長尺ゲーム+幸運なpacking でSovietはありうるゆえEXP-9(期待生存・期待Soviet最大化済)で監視継続が最善。
 **全角度の最終確定**: per-drop policy(Pareto最適)/B-arch/shallow-lookahead/rush/height@T14(BOLD飽和)/survival-first(反証)/**clairvoyant planning(崩壊)** — **検証可能な全レバーをsim/data/code/実験で尽くした**。Soviet=現実の稀lottery(EXP-9が確率最大化)。残=ユーザー具体技(C)のみ。strategy.py無変更継続。
+
+### §8追記★実データで壁をpinpoint(sim非依存): T15+2×T14=0/3377 (2026-06-23 07:00)
+HEALTH全green(monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)。score床健全(recent40 median=1243>1150・prior200=1386、直近8件の低スコアは短期noise)。本日Russia 1件(00:50)以降途絶(Poisson内)。
+**ADVANCE: 前パスの「sim悲観(2本chain崩壊)」留保を、sim非依存の実データで決着** (全3377 corpus, simの packing過小評価をbypass):
+| 状態 | 頻度 | 意味 |
+|---|---|---|
+| T15到達(1本Russia) | 2.0% | — |
+| **2×T13共存** | **32.6%** | 2本chainがT13まで育つのはありふれてる |
+| 2×T14共存 | 1.81% | 2本目T14も時々(BOLD「0/14」は小標本) |
+| T15+T14共存 | 0.33% | 2本目T15まであと1×T14(=実最接近) |
+| **T15+2×T14(ソ連目前)** | **0/3377** | **ここで完全途絶** |
+**★sim悲観を実データが訂正**: simは「2本chain崩壊」(clairvoyant 2nd→T0)と言ったが、**実際は2×T13が32%・2×T14が1.8%共存**=2本chain development自体は可能。壁は「崩壊」でなく**最終組み立て(T15+2×T14)**にpinpoint。
+**★壁=材料+幾何(政策でない)**: (a)2×T14には**4個のT13(2ペア)要**だが2×T13共存は通常「1本目T14になる1ペア」=throughput律速。(b)T15(径3.2)+2×T14(径5.54)=8.74径分 >> 盤幅6.1=幾何律速。(c)EXP-9は既に**広範なrussia_phase 2本目装置**(axis5.6 growth-center / SOVIET_NUCLEUS_GROWTH sub-nucleus pull / compression / immediate-merge / pre-T15 BOLD)を持つ→新軸はredundant(SOVIET_BUILD v2 4/1350前例)。**追加せず**。
+**★human-10%との整合**: botは全装置込みでも0/3377。人間は稀に優れた空間プレイでT15+2×T14を通すかもだが極限edge。deployable policyでは材料+幾何で不可。
+**収束**: 8つの独立角度(per-drop Pareto最適/B-arch/shallow-lookahead/rush/height@T14/survival-first反証/clairvoyant崩壊/**実データpinpoint**)が**全て同じ壁(材料/幾何/throughput)に収束**。strategy.py無変更。残=ユーザー具体技(C)。
