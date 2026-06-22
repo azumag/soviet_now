@@ -990,3 +990,14 @@ HEALTH全green(monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)�
 **★壁=材料+幾何(政策でない)**: (a)2×T14には**4個のT13(2ペア)要**だが2×T13共存は通常「1本目T14になる1ペア」=throughput律速。(b)T15(径3.2)+2×T14(径5.54)=8.74径分 >> 盤幅6.1=幾何律速。(c)EXP-9は既に**広範なrussia_phase 2本目装置**(axis5.6 growth-center / SOVIET_NUCLEUS_GROWTH sub-nucleus pull / compression / immediate-merge / pre-T15 BOLD)を持つ→新軸はredundant(SOVIET_BUILD v2 4/1350前例)。**追加せず**。
 **★human-10%との整合**: botは全装置込みでも0/3377。人間は稀に優れた空間プレイでT15+2×T14を通すかもだが極限edge。deployable policyでは材料+幾何で不可。
 **収束**: 8つの独立角度(per-drop Pareto最適/B-arch/shallow-lookahead/rush/height@T14/survival-first反証/clairvoyant崩壊/**実データpinpoint**)が**全て同じ壁(材料/幾何/throughput)に収束**。strategy.py無変更。残=ユーザー具体技(C)。
+
+### §8追記★最接近11ゲーム法医学: 空間はあった・材料(2×T13)が無かった (2026-06-23 08:00)
+HEALTH全green(monitor2/loop9000/runner/live==head==fe0a6e6ab496/SOVIET log=1)。recent60: T13+80%/**T14+25%(基準回復)**=健全、Russia 00:50以降途絶はPoisson noise(高ティア到達は正常)。
+**ADVANCE: 実最接近=T15+T14共存11ゲームをターン単位で法医学精査**(sim非依存、空間 vs 材料のどちらが律速か決着):
+| 観測 | 結果 |
+|---|---|
+| T15+T14窓での T13個数(2nd-T14材料) | **全11ゲームで0〜1個・2個は皆無** |
+| T15+T14窓での headroom(max_y) | 多くが-0.5〜1.6 = **deadline3.3に余裕あり** |
+**★決定的所見**: 最接近局面で**空間はあった(headroom余裕)が、2本目T14を建てる材料(2×T13)が一度も存在しなかった**(max T13-count=1)。→ **律速は空間でなく材料(throughput)**。
+**★instruction診断の反証**: パス指示の「失敗組はT14到達時点で盤面が高くsurvival不足」「zone reservation/headroom効率化」は、**最接近ゲームには当てはまらない**(これらはheadroom余裕あり)。足りないのは高ティア材料。material throughputは per-drop政策で増やせない(T13は配給待ち+既にPareto最適構築[[soviet-survival-first-refuted-build-greedy-pareto-2026-06-23]])。
+**★全収束(9角度目)**: T15(16384)+T14(8192)で24576消費後、盤面の残りは低clutterで2×T13(8192追加)が無い。配給材料(median15448/必要32768)が根本的に不足。**空間leverもheadroom leverも実データで死亡**。残=material throughput=不可。strategy.py無変更。残レバー=ユーザー具体技(C)のみ。
