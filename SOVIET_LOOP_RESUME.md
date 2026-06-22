@@ -1023,3 +1023,13 @@ HEALTH全green(monitor2/loop9000/runner/daemon2proc/live=d88fc8bfd580安定/SOVI
 **MEASURE訂正(大標本ハッシュ別)**: ba5935(EXP-9)n=1423 T13+81/T14+26/T15 2.3、d5fff95(EXP-3)n=758同等、fe0a6e6 n=185 T14+26/T15 1.6。**d88fc8bfd580は大標本無し(今日~20試合のみ)**。先の「d88fc T14+40/T15 5」は**n=20ノイズで優位は未確認**。d88fcがliveなのは粛清が**過去のソ連建国記録(anchor_soviet=1, 6月初game#29557)**を保護したため=現在性能の優位ではない。
 **自己訂正の訂正**: 前追記で「d88fcが最良funnel」と示唆したが、実際は**大標本データ無しで優位は不明**。EXP-9の大標本ベースライン(T14+26/T15 2.3)は確立済。d88fcの真の性能はlive試合蓄積で測る。
 **注意点(監視)**: 粛清はd88fcのSTALE rolling(ソ連込)でrevertした。d88fcが新試合を蓄積→rolling更新(今日はソ連無)で comp低下なら**粛清がEXP-9へ再revert→d88fc↔EXP-9オシレーション(churn)**しうる。要監視。param並列はd88fc(現baseline)から帯域脱出を探索。
+
+### §8追記★param並列の実発火を実測検証(成功) (2026-06-23 08:48 毎時パス)
+前回pending(cycle5/12)のparam並列が**実発火・正常稼働を実測確認**:
+- `improve_state: running phase=wildcard_parallel`、`wildcard_parallel.py`1本、**候補Chrome 45プロセスが並列評価中**、soren91停止で隔離評価(全て設計通り)、経過~9分。
+- **#94クラッシュ 0**(直近200行、SIGABRT/infra_failed/kLSNoExec無し)。**ユーザー指示「param並列を定期実行」end-to-end検証成功**。
+- 粛清ON保持(.env REGRESSION_DISABLED=0)、daemon2proc、MIN_GAMES=12。ログの「REGRESSION_DISABLED=1」エントリは過去日(dateless append)で誤読注意。
+**自己改善の churn 経過**: 凍結解除→粛清がd88fc(ソ連建国株)へrevert→cycle改善→**現live=96f11ac0bc0c**(AI改善の出力、param並列が周辺探索中)。96f11ac0bc0cは**まだ0試合=測定不能**(次パスで tier/Russia 測定)。大標本baseline: EXP-9(ba5935)n1423 T14+26/T15 2.3/score_med1329。
+**メモリ監視**: 空き26%・**swap 92%(13.2/14GB)使用**=候補45procで圧迫気味だがjobs=4安全下限内・クリティカルでない。param並列終了で解放見込み。次パスで空き<15%なら要介入(jobs削減/中断 kill -TERM後 pkill -f tmp/wildcard)。
+**配信影響**: param並列中は主ゲームpause(設計、画面は改善表示)。MIN_GAMES=12なので~12試合毎に改善+param並列(pause発生)。ユーザー要求の探索稼働ゆえ想定内。
+**次**: param並列のwinner採否を実測→96f11ac0bc0cの実性能測定→d88fc↔他のオシレーション/churn監視→メモリ監視。
