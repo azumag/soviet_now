@@ -984,6 +984,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
+        # ----- axis: B3 GLOBAL 2-CHAIN BALANCE OVERRIDE (2026-06-22, user-approved bounded gamble) -----
+        # Soviet needs TWO balanced high chains; EXP-9 greedily builds ONE. This OVERRIDES greedy:
+        # (1) start a 2nd cluster when one high chain leads and none exists elsewhere;
+        # (2) build the LAGGING cluster; (3) suppress the LEADER's speculative (NEAR/FAR) merges
+        # when imbalanced -> keep two chains balanced for a simultaneous 2x-T15 (Soviet).
+        # DIRECT merges never suppressed (keep guaranteed merges). Survival-guarded (margin>=0.6).
+        # Bounded-risk LIVE test with tight score-floor revert.
+        if result.get("deadline_margin", 99) >= 0.6 and not result.get("crosses_deadline", False):
+            _b3_highs = [p for p in pieces if p.get("type", 0) >= 11]
+            if _b3_highs:
+                _b3_lead = max(_b3_highs, key=lambda p: p.get("type", 0))
+                _b3_lx = float(_b3_lead.get("x", 0.0)); _b3_lt = _b3_lead.get("type", 0)
+                _b3_far = [p for p in _b3_highs if abs(p.get("x", 0.0) - _b3_lx) > 2.0]
+                _b3_x = float(x)
+                if _b3_far:
+                    _b3_lag = max(_b3_far, key=lambda p: p.get("type", 0))
+                    _b3_gx = float(_b3_lag.get("x", 0.0)); _b3_gt = _b3_lag.get("type", 0)
+                    if _b3_lt >= _b3_gt + 2:  # imbalanced -> rebalance toward the lagging chain
+                        if abs(_b3_x - _b3_gx) < 1.3:
+                            score += 380.0; reasons.append("B3_BUILD_LAG")
+                        elif abs(_b3_x - _b3_lx) < 1.3 and merge_grade in ("NEAR", "FAR"):
+                            score -= 450.0; reasons.append("B3_SUPPRESS_LEAD")
+                elif _b3_lt >= 13 and next_type >= 10 and merge_grade == "NO":
+                    # no 2nd cluster yet + leader is high + current piece is high -> START a 2nd cluster
+                    # on the opposite side of the leader (away from it)
+                    _b3_side = -1.0 if _b3_lx > 0 else 1.0
+                    if _b3_x * _b3_side > 0 and abs(_b3_x) > 1.5:
+                        score += 320.0; reasons.append("B3_START_2ND")
+
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
         # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
