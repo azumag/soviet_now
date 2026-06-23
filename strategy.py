@@ -65,10 +65,20 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
-
-
+FAST_DROP_DEADLINE_CONTACT = False
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v890: axis 8.9 STAGNATION BREAK — reactive_pairs>=2 && NO_MERGE && max_y>=2.0 && margin<0.8
+      #       で x=±3.0 edge 候補に追加罰 (最大 -4500)。worst score0562 T57-T65 / extra_low
+      #       score0811 T55-T64 の edge 散乱 9連続 NO_MERGE / pc+7 / score_delta=0 の
+      #       死のスパイラル潰し。既存 deepest low-y 同type (visual_same_type_lowest_*)
+      #       を anchor として axis 2 height penalty と並行。中央候補を勝たせる。
+      #       主ターゲット: Ukraine(T13) 81%。改善対象は低段階ゲート (Turkmenistan 100% 達成済、
+      #       Ukraine が次の未達段階)。russia_phase 時は発火しない (mandatory_themes 整合)。
+      #       Fixes rollback failure mode: 終盤 stagnation pattern で edge (x=±3.0) 散乱 →
+      #       pc 蓄積 → max_y runaway → game_over (worst score0562 T57-T65, extra_low score0811)
+      #       refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+      #       game_history/20260623_193745_score0562.jsonl T57-T65,
+      #       game_history/20260623_190636_score0811.jsonl T55-T64
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -891,6 +901,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     if same_type_pieces:
         # 盤面上の現在タイプの最も高い位置のピースを見つける
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
+        # axis 8.9 STAGNATION BREAK: lowest same-type piece (deepest anchor for placement)
+        # Computed from pieces list (analysis dict has no visual_same_type_* field;
+        # only JSONL logs expose that key). Used by axis 8.9 to detect edge candidates
+        # far from existing same-type anchors when reactive pairs are stuck unmerged.
+        __v890_lowest = min(same_type_pieces, key=lambda p: p.get("y", -10))
+        visual_same_type_lowest_y = __v890_lowest.get("y", -10)
+        visual_same_type_lowest_x = __v890_lowest.get("x", 0.0)
+        del __v890_lowest
+    else:
+        visual_same_type_lowest_y = None
+        visual_same_type_lowest_x = None
 
     # --- v360: per-type reactive/near pair extraction (unutilized reactor info) ---
     # reactive_pairs is list of (piece_id_1, piece_id_2, type) tuples
@@ -1343,13 +1364,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                         proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
-                        if piece_count >= 28:
+                        if piece_count >= 34:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
                             congestion_scale = 1.0 + (piece_count - 28) * 0.12
-                            proximity_bonus *= min(congestion_scale, 3.0)
+                            proximity_bonus *= min(congestion_scale, 4.332)
                         if target_y > 0:
-                            proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
+                            proximity_bonus *= max(0.0, 1.0 - target_y * 0.4726)
                         # v412: nextNext-aware proximity — when next two pieces are same type,
                         # strengthen guidance. After next merges (creating N+1), remaining same-type
                         # targets are nearby for the next-next piece. 1.5x multiplier raises bonus
@@ -1598,7 +1619,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if phase == "HIGH":
             balance_strength = 40.0
         elif phase == "MEDIUM":
-            balance_strength = 30.0
+            balance_strength = 28.50
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -1671,7 +1692,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 2.5:
                     # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                    proximity = max(0, 60.0 - horiz_dist * 40.0)
+                    proximity = max(0, 52.01 - horiz_dist * 40.0)
                     # Decay if growth center is high — don't override height control
                     if gc_y > 0:
                         proximity *= max(0.0, 1.0 - gc_y * 0.4)
@@ -1771,7 +1792,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
+        elif reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
             # reactive_pairsが3以上ある場合、即時併合機会を最優先
             score += 1000.0
@@ -1810,7 +1831,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 # NEAR: suppress bonus when this candidate crosses or nearly crosses deadline
                 candidate_margin = result.get("deadline_margin", 99)
-                if candidate_margin >= 0.3:
+                if candidate_margin >= 0.0445:
                     score += 2500.0
                     reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
                 else:
@@ -1899,7 +1920,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                   elif reactive_pair_count >= 1:
                       # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
                       # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
-                      score += 400.0
+                      score += 348.8
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                   else:
                       # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
@@ -1933,6 +1954,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- axis 8.9 STAGNATION BREAK: prevent edge scatter when reactive pairs are stuck -----
+        # Fixes rollback failure mode: 終盤 reactive_pairs>=2 + NO_MERGE + max_y>=2.0 で
+        # x=±3.0 edge 散乱が連続し pc +7/9 ターン / score_delta=0 / max_y +1.35 の死のスパイラル
+        # (worst score0562 T57-T65, extra_low score0811 T55-T64)。
+        # 既存 axis 8.8 は reactive_pairs>=3 のみ -4500 罰。reactive_pairs=2 では罰なし →
+        # AVOID_BLOCK + height penalty の競合で edge (x=±3.0) 候補が勝つ。
+        # 本軸: stagnation pattern (reactive_pairs>=2 && NO_MERGE && max_y>=2.0 && margin<0.8)
+        # に限り、edge (|x|>=2.5) 候補に追加罰を与えて中央寄せを優先させる。
+        # 既存 deepest low-y 同type (visual_same_type_lowest_*、pieces から算出済み) を
+        # 利用し、当該候補が最深同typeから十分近い場合は追加罰を抑え、離れていれば強く罰する
+        # (=中央・既存同type方向への配置を誘導)。
+        # 制約: russia_phase 時は発火しない(RUSSIA_PHASE_BOARD_COMPRESSION を尊重)。
+        # 制約: 既存 crosses_deadline 安全鎖(v662 CROSSES_DEADLINE_NO_MERGE + DEADLINE_GUARD +
+        # axis 2 height penalty)を壊さないよう罰は加算のみ。crosses_deadline==True を優先させない。
+        # 制約: mandatory_themes 「deadline付近の危険盤面領域では、併合を優先するべき」と整合
+        # (max_y>=2.0 && margin<0.8 で発火する stagnation のみ罰し、安全域は罰さない)。
+        # 制約: 既存 reactive_pairs>=3 axis 8.8 と重複しない強度 (本軸は 2<=rp<3 を含む)。
+        # 主ターゲット: Ukraine(T13)=25/31(81%)。max_y>=2.0 での stagnation は
+        # Ukraine 段階の T12 大量保有時 (T12×3〜4 を含む低スコア群) に頻発する。
+        # refs: tmp/analysis_result.md (Hypothesis: STAGNATION BREAK), tmp/batch_summary.txt
+        #       (low-score HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY 3.7% > high-score 2.9%),
+        #       game_history/20260623_193745_score0562.jsonl T57-T65,
+        #       game_history/20260623_190636_score0811.jsonl T55-T64
+        if (
+            reactive_pair_count >= 2
+            and merge_grade == "NO"
+            and not russia_phase
+            and max_y >= 2.0
+            and reactor_margin < 0.8
+            and abs(x) >= 2.5
+        ):
+            # Base edge penalty scales with how close to the deadline we are.
+            # At margin=0.8 -> 0; at margin=0 -> -3000; at margin<0 -> grows further.
+            stagnation_penalty = -3000.0 * max(0.0, 0.8 - reactor_margin)
+            # Additional penalty if candidate is far from deepest same-type anchor.
+            # Encourages placement near existing same-type (which a future reactive_pair
+            # could consume). If no same-type on board (visual_same_type_lowest_y is None),
+            # skip the proximity component.
+            if visual_same_type_lowest_y is not None:
+                anchor_dx = abs(float(x) - float(visual_same_type_lowest_x))
+                if anchor_dx > 1.5:
+                    stagnation_penalty -= 1500.0
+            score += stagnation_penalty
+            reasons.append("STAGNATION_BREAK")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
