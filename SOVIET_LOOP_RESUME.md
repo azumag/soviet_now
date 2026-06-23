@@ -1033,3 +1033,10 @@ HEALTH全green(monitor2/loop9000/runner/daemon2proc/live=d88fc8bfd580安定/SOVI
 **メモリ監視**: 空き26%・**swap 92%(13.2/14GB)使用**=候補45procで圧迫気味だがjobs=4安全下限内・クリティカルでない。param並列終了で解放見込み。次パスで空き<15%なら要介入(jobs削減/中断 kill -TERM後 pkill -f tmp/wildcard)。
 **配信影響**: param並列中は主ゲームpause(設計、画面は改善表示)。MIN_GAMES=12なので~12試合毎に改善+param並列(pause発生)。ユーザー要求の探索稼働ゆえ想定内。
 **次**: param並列のwinner採否を実測→96f11ac0bc0cの実性能測定→d88fc↔他のオシレーション/churn監視→メモリ監視。
+
+### §8追記: param並列完了→96f11ac0bc0c維持・健全(n=13) (2026-06-23 09:47 毎時パス)
+HEALTH全green(monitor2/loop9000/runner66381/daemon2/live==head==96f11ac0bc0c/SOVIET log=1/本日Russia2件)。param並列完了(wildcard_parallel.py 0本・improve idle)、**96f11ac0bc0c維持**。
+**MEASURE(96f11ac0bc0c n=13)**: T13+85/T14+23/T15 0/**score_med1577(床1150超・EXP-9 1329より高)**/<1150=31%。**回帰なし・床割れなし**。tier≈EXP-9。n=13でT14+/Russiaは判定不能→**n≥25で funnel判定**(指示通り継続)。score0は前回08:41 bridge crash 1件のみ(直近crash0・回復済・孤立、infra障害でない)。
+**churn経過**: d88fc(Soviet株,n12 T14+58/score1934)→AI改善→96f11ac0bc0c(n13 T14+23/score1577)。両方n~12-13でノイズ・優劣不明。**監視点: 96f11ac0bc0cはSoviet未実証ゆえ粛清のlost_soviet_pathで d88fcへ再revertしうる(d88fc↔96f11 オシレーション)**。次パスでn≥25蓄積を待ち funnel判定。
+**メモリ**: param並列終了でswap総量14→10GB低下(候補解放)。jobs=4内。
+**次**: 96f11ac0bc0c をn≥25で funnel/Russia判定(改善なら継続/床割れor明確劣化なら粛清/手動revert)、次param並列サイクル監視、オシレーション/メモリ監視。
