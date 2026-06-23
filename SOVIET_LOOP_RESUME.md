@@ -1048,3 +1048,10 @@ HEALTH: monitor2/loop9000/runner(改善pause中で一時非稼働=正常)/daemon
 **重要な再評価**: 凍結解除でシステムが**d88fc(ソ連建国株・現在T14+58% n12)を最良として復元**。私のEXP-9(T14+26%)固執より良いSoviet baselineの可能性。但しd88fc n=12は小標本でluck可能性残(大標本無し)。**d88fc rollingが蓄積→真値収束で判明**: 高comp維持なら genuinely良い、regressなら噪音でオシレーション解消。
 **churn cost(監視)**: 改善サイクルが現状futile(毎回d88fcへrevert)=~12試合毎にimprove+param並列でstream pause→revert(無駄)。branch_depth=0で自己制限弱い。**もし無駄churnが続き配信が頻繁pauseするなら MIN_GAMES↑で頻度減(param並列はperiodic維持)を検討**。但しd88fcが真に最良なら現状で正しい。
 **次**: d88fc rolling comp/T14+が大標本で維持されるか監視(真値収束)。churn過剰なら cadence調整をユーザーに相談。新Russia 4件(祝)・新ソ連なし。
+
+### §8追記★不安定化を実測→churn頻度を下げて安定化 (2026-06-23 11:47)
+HEALTH: monitor2/loop9000/runner6827/daemon2/SOVIET log=1/本日Russia5件(前回4→+1🎉)。live=8f510119ea5d(また新improve、未revert)。
+**問題: 断続的0/低スコア連発**(score_history: 0,0,25,36,55,215...正常と混在)。診断: メモリ37%空き(OK)・ブリッジcrash 0・param並列中は主ゲームpause。→ **原因=オシレーションで改善サイクルが高頻度化(param並列が11:00,11:16,11:31=~15分毎に発火)→進行中ゲーム中断→0/低スコア**。「score=0,pieces=0」ログは新ゲーム開始検出(失敗でない)と訂正。
+**対処(可逆)**: MIN_GAMES_BEFORE_IMPROVE 12→36(改善頻度1/3)。hot-reload確認(11:54:53)。param並列はperiodic維持(頻度減)。stream中断を削減。
+**根本の正直な評価**: オシレーションは**futile**(全improveがd88fc(現best comp12258/T14+58%n12/soviet1)へrevert)。**param並列の探索は無効化(何もd88fcを超えられずrevert)=ユーザーの「帯域脱出」が達成されていない**。2解釈: ①d88fcが真にbest(高T14+)→param並列が正しく「超えるもの無し」を確認(=正常) ②d88fc compがSovietボーナスでinflateされててN小luck→大標本でregressすればオシレーション解消。**要: d88fc大標本性能の収束監視**。
+**次**: MIN_GAMES36で0スコア減るか監視→d88fc真値収束(T14+維持か)→オシレーション解消するか。param並列を真に有効化する(粛清anchor調整でadopt可能に)か現状(d88fc固定)維持かは、d88fc性能確認後にユーザー相談。
