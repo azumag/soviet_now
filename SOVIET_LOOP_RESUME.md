@@ -1072,3 +1072,10 @@ HEALTH全green: monitor2/loop9000/runner75736/daemon2/SOVIET log=1/本日Russia5
 **結論の訂正**: 会話中の「EXP-9最適/ソ連near-impossible」は誤り。**ユーザーのparam並列定期実行の主張が正しく、自己改善ループがd88fc(ソ連株・高funnel)を回復した**。私のEXP-9固執が過小評価だった。
 **現状=クリーン安定**: d88fc(確定best)pin済・churn無し・stream健全・param並列は36試合毎に探索(d88fcを超えれば採用)。
 **次**: param並列がd88fcを超える株を見つけるか監視・d88fc T15率の収束・新Russia/ソ連。pin保持監視。
+
+### §8追記: 安定確認・d88fc優位収束・param並列は次サイクル発火予定 (2026-06-23 14:47)
+HEALTH全green: monitor2/loop9000/runner9493/daemon2/SOVIET log=1/**本日Russia6件(+1)**。pin保持(live==head==d88fc8bfd580 465B)、**churn 0(2h継続)**、stream健全(recent12中央値~1500・高スコア多数3637/2694/2532・0なし)。
+**d88fc優位 n=58で収束確定**: T13+83/**T14+38**/T15 5.2%/score_med1290。T14+はn26→43→58で38/37/38%=完全安定。T15は7.7→4.7→5.2%で~5%収束=EXP-9(2.3%)の約2倍。ソ連funnelはd88fcが明確優秀で確定。score_med1290はEXP-9 1329より僅か低いが床超(funnel優位とのトレードオフ、ソ連目標には正)。
+**param並列は維持**: cycle 34/36→次(36)で発火予定(~2試合後)。pinでrank1延長停止せず、cadence36で定期実行継続。pin後初のparam並列(d88fcをbaselineに探索、超えれば採用/超えなければd88fc維持)。
+**現状=理想的安定**: d88fc(確定best)pin・churn無・stream健全・param並列periodic。ユーザーのparam並列定期実行の主張が結果的に最良戦略d88fcを回復させた。
+**次**: 次param並列発火を実測検証(クリーンに走るか/d88fc超える株出るか/0スコア再発しないか)・d88fc T15維持・新Russia/ソ連。
