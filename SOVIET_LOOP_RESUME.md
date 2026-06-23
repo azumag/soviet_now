@@ -1143,3 +1143,9 @@ HEALTH全green: monitor2/loop9000/runner15785/daemon2/SOVIET log=1/本日Russia1
 **=戦略churnと0スコア不安定の両方が解消**。d88fc(Soviet最良 T14+35/T15~4.5)がクリーン安定稼働。
 **「両立」の決着**: param並列を頻繁(MIN36)に回すと改善サイクルのstrategy churn→遷移0スコア不安定。**MIN100で改善を稀(~100試合/~5h毎)にし安定優先**=ユーザーのソ連目標(d88fc Russia量産)に最適。param並列はperiodic維持だが稀。完全両立(頻繁param並列+無不安定)は要transition-safety(複雑・ユーザー判断待ち)。
 **次**: 安定継続監視・次param並列(~100試合後)の挙動・d88fc維持・新Russia/ソ連。
+
+### §8追記: 安定継続・d88fc優位は大標本で平均回帰(modest但し実) (2026-06-23 23:47)
+HEALTH全green: monitor2/loop9000/runner66864/daemon2/SOVIET log=1/本日Russia12件。**安定継続**: live==head==anchor==d88fc8bfd580/churn0(70min)/0スコアなし(recent20)。
+**d88fc大標本MEASURE(n=134)**: T13+82/**T14+31**/T15 3.7%/score_med1280。**早期小標本(T14+37-38/T15 5-7.7)から平均回帰**したが、**EXP-9(26/2.3/1329)より funnel優位は維持(T14+ +5pt, T15約1.6倍)**。score_medは僅か低(funnel優位とのトレードオフ)。recent40 score_med1224>床1150(breach無)。Russia鈍化(~2h)も真T15率3.7%ならPoisson内。
+**結論**: d88fcは「dramatically better」でなく「modestly better」がより正確。但しSoviet funnel(T15)はEXP-9の約1.6倍で、deployableな最良baseline継続。安定運用(MIN100でchurn稀)が最適。
+**次**: 安定継続・床score監視(1150割れ持続なら要対応)・次param並列(~100試合)・新Russia/ソ連。
