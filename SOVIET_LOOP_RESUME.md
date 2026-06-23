@@ -1102,3 +1102,10 @@ HEALTH全green: monitor2/loop9000/runner62861/daemon2/SOVIET log=1/**本日Russi
 **d88fc best維持(n=84)**: T14+35%/T15 4.8%/score_med1293(EXP-9 26/2.3/1329)。funnel優位大標本安定。
 **「両立」現状**: param並列稼働(cycle1/36, 次発火~36試合後), d88fc funnel保護(完全anchor+粛清gates), 不安定解消(anchor drift停止)。**残検証: 次param並列発火時にgatesが低funnel株を正しくrevert&安定維持するか**(完全anchorで機能するはず)。
 **次**: 次param並列発火(~36試合)の挙動実測(funnel gate効くか/0スコア出るか/d88fc維持)・pin保持・新Russia/ソ連。
+
+### §8追記: 安定継続・Russia量産(本日10件) (2026-06-23 18:47)
+HEALTH全green: monitor2/loop9000/runner15913/daemon2/SOVIET log=1。pin保持(live==head==d88fc8bfd580)、**revert以降churn0**(improve/revert無)、stream健全(recent16全健全0なし)。
+**本日Russia10件**: d88fc T15~5%率(EXP-9 2.3%の約2倍)が反映=ソ連への2nd-chain機会増。新ソ連なし。
+**param並列未発火**: cycle acc=8/36(前回1/36から進行)、次発火~28試合後(~1.5h)。次発火が「両立」検証ポイント(funnel gates効くか/0スコア/d88fc維持)だが今回未到達。
+**現状=理想**: d88fc(Soviet-best, T14+35/T15 4.8% n84)安定pin・churn無・Russia量産・stream健全。param並列はperiodic待機。
+**次**: 次param並列発火(~28試合)で gates/安定を実測検証・pin保持・新Russia/ソ連監視。
