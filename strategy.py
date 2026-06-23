@@ -69,6 +69,19 @@ FAST_DROP_DEADLINE_CONTACT = True
 
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vT14K: axis T14_MERGE_KEEP — Kazakhstan(T14) gate fix for type14→15 Russia route.
+      #       Batch evidence (2026-06-23): russia=0/12, soviet=0/12. 2/12 games (2642 T111-T122,
+      #       2172 T95-T111) had T14×2 coexisting for 12-17 turns without T14→T15 merge.
+      #       When next_type≠14, no axis biased placement toward T14 cluster to keep them
+      #       merge-ready. next=14 probability ~7%/turn → waiting passively insufficient.
+      #       New axis fires when len(t14_pieces)>=2 && max_y<2.5 && merge_grade in (NO,FAR)
+      #       && not death_spiral. Bias: +500*(1 - dx/2.5) toward lower T14, +200 toward
+      #       upper T14 if dy>2.0. Cap 700 to stay below axis 8.8 (-4500) and height diffs.
+      #       Target stage: Kazakhstan(T14)=7/12(58%) → recover T14→T15 final merge path.
+      #       Fixes rollback failure mode: T14×2 merge opportunity lost → Russia/ソ連未到達.
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis: T14_merge_keep),
+      #             game_history/20260623_080232_score2642.jsonl T111-T122,
+      #             game_history/20260623_083315_score2172.jsonl T95-T111
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1904,8 +1917,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                   else:
                       # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
-                      score += 800.0
-                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                       score += 800.0
+                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+
+        # ----- axis T14_MERGE_KEEP: preserve T14×2 merge opportunity for type14→15 Russia route -----
+        # Batch evidence: 0/12 Russia reached. 2/12 games (2172 T95-T111, 2642 T111-T122) had
+        # T14×2 coexisting for 12-17 turns without T14→T15 merge. Advice "大きい国の下にスペースを
+        # 先確保してから小さい国を入れる配置順序" and "隣接するピースの間にピースを置くのを避ける"
+        # require keeping T14 cluster merge-ready even when next_type≠14 (probability ~7%/turn
+        # for next=14 is too low to recover over 17 turns).
+        # Fires only when: 2+ T14 pieces on board, max_y<2.5 (avoid death spiral where axis 8.8
+        # dominates), merge_grade∈{NO,FAR} (DIRECT/NEAR already get axis 1 bonuses), and not
+        # death_spiral. Bonuses are additive but capped at 700 to stay below axis 8.8 (-4500)
+        # and typical height penalty diffs (~200-450), so survival logic is preserved.
+        # Target stage: Kazakhstan(T14)=7/12(58%) → restore T14→T15 final-merge pathway.
+        # This axis targets the Kazakhstan(T14)→Russia(T15) gate, not lower-stage gates.
+        # NOT modifying: axis 8.8 (-4500), axis 5.6 magnitude, height_mult/merge_mult,
+        # russia_phase fork (dormant in batch — no evidence to alter).
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: T14_merge_keep)
+        t14_pieces = [p for p in pieces if p.get("type") == 14]
+        if len(t14_pieces) >= 2 and max_y < 2.5 and merge_grade in ["NO", "FAR"] and not death_spiral:
+            t14_lower = min(t14_pieces, key=lambda p: p.get("y", 10))
+            t14_upper = max(t14_pieces, key=lambda p: p.get("y", -10))
+            t14_lower_x = t14_lower.get("x", 0)
+            t14_upper_x = t14_upper.get("x", 0)
+            t14_lower_y = t14_lower.get("y", -10)
+            t14_upper_y = t14_upper.get("y", -10)
+            dx_lower = abs(x - t14_lower_x)
+            dy_upper = t14_upper_y - t14_lower_y
+            keep_bonus = 0.0
+            # Bias toward stacking on lower T14 so a future next=14 drops into merge position
+            if dx_lower < 2.5:
+                keep_bonus += max(0.0, 500.0 - dx_lower * 200.0)
+            # When upper T14 is floating high (vertical gap), weakly nudge pieces toward it
+            # so small pieces accumulate underneath and absorb the upper T14 downward
+            if dy_upper > 2.0 and abs(x - t14_upper_x) < 2.5:
+                keep_bonus += 200.0
+            # Cap to avoid overriding axis 8.8 (-4500) or height penalty diffs (~200-450)
+            keep_bonus = min(keep_bonus, 700.0)
+            if keep_bonus > 0:
+                score += keep_bonus
+                reasons.append("T14_MERGE_KEEP")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
