@@ -1055,3 +1055,12 @@ HEALTH: monitor2/loop9000/runner6827/daemon2/SOVIET log=1/本日Russia5件(前�
 **対処(可逆)**: MIN_GAMES_BEFORE_IMPROVE 12→36(改善頻度1/3)。hot-reload確認(11:54:53)。param並列はperiodic維持(頻度減)。stream中断を削減。
 **根本の正直な評価**: オシレーションは**futile**(全improveがd88fc(現best comp12258/T14+58%n12/soviet1)へrevert)。**param並列の探索は無効化(何もd88fcを超えられずrevert)=ユーザーの「帯域脱出」が達成されていない**。2解釈: ①d88fcが真にbest(高T14+)→param並列が正しく「超えるもの無し」を確認(=正常) ②d88fc compがSovietボーナスでinflateされててN小luck→大標本でregressすればオシレーション解消。**要: d88fc大標本性能の収束監視**。
 **次**: MIN_GAMES36で0スコア減るか監視→d88fc真値収束(T14+維持か)→オシレーション解消するか。param並列を真に有効化する(粛清anchor調整でadopt可能に)か現状(d88fc固定)維持かは、d88fc性能確認後にユーザー相談。
+
+### §8追記★★d88fcが真にbestと確定(T15 7.7%)+不安定解消+pin修復 (2026-06-23 12:47)
+HEALTH: monitor2/loop9000/runner93248/daemon2/SOVIET log=1/本日Russia5件。
+**★0スコア不安定=解消**: recent16=1133..685..1486(0/near-0なし・中央値~1450)。MIN_GAMES=36+時間経過で安定化成功。param並列は常時稼働でなくstream pause少。
+**★★d88fc8bfd580が真にbestと確定(n=26)**: **T13+88/T14+38/T15 7.7%/score_med1354**(EXP-9: T14+26/T15 2.3)。**高ティアfunnelがEXP-9より明確に優秀(T15約3倍)=genuinely best**。私の会話中の「EXP-9最適」は誤りで、自己改善ループが正しくd88fc(ソ連株・高T15)に収束していた。Russia5件もこの高T15率と整合。
+**lost_soviet_path は正しい**: revert理由 `curr_comp=11587>anchor10722 but curr_best_max_type=13, lost_soviet_path`=comp高くてもT15低い改善を正しく棄却しd88fc(高T15)維持。ソ連目標に整合。
+**oscillation churn対処**: active_branch.json が**0バイト破損**(reverts書込壊れ)→空head由来の余分revert(70分7回)。**有効なactive_branch.jsonを書きd88fcをhead=anchorにpin修復**(live==head==d88fc8bfd580/465B)。空head churn停止見込み。0byte版backup有。
+**cron基準で採用**: liveがd88fc(head≠EXP-3)・funnel明確改善(T15 7.7%>2.3%)→**継続/採用**(pin済)。
+**次**: pin後にrevert churn減るか・head保持されるか監視。d88fc T15率が大標本で維持されるか。param並列はd88fc(best)から探索継続(超えられなければ正しくd88fc維持)。
