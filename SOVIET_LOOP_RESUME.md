@@ -1152,3 +1152,6 @@ HEALTH全green: monitor2/loop9000/runner66864/daemon2/SOVIET log=1/本日Russia1
 
 ### §8追記: 安定継続(2026-06-24 00:47)
 HEALTH全green: monitor2/loop9000/runner21286/daemon2/SOVIET log=1。live==head==anchor==d88fc8bfd580/churn0(70min)/0スコアなし(recent24中央値~1250)/床breach無。06-23 Russia最終12件、06-24は新日開始で0件(正常)。数パス安定継続=d88fc(Soviet最良 T14+31/T15 3.7 n134)がMIN100下でクリーン稼働。「両立」決着済(安定優先・param並列稀)。次param並列~100試合後。新Russia/ソ連監視継続。
+
+### §8追記: 安定継続(2026-06-24 01:47)
+HEALTH全green: monitor2/loop9000/daemon2/SOVIET log=1。live==head==anchor==d88fc8bfd580/churn0/0スコアなし(recent24中央値~1200)/床OK。Russia 06-24=1件。cycle acc=64/100(次param並列~36試合後)。runner pgrep一瞬空はゲーム間再起動タイミング(スコア更新継続=稼働中)。d88fc安定運用継続。
