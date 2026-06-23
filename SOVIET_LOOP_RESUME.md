@@ -1079,3 +1079,11 @@ HEALTH全green: monitor2/loop9000/runner9493/daemon2/SOVIET log=1/**本日Russia
 **param並列は維持**: cycle 34/36→次(36)で発火予定(~2試合後)。pinでrank1延長停止せず、cadence36で定期実行継続。pin後初のparam並列(d88fcをbaselineに探索、超えれば採用/超えなければd88fc維持)。
 **現状=理想的安定**: d88fc(確定best)pin・churn無・stream健全・param並列periodic。ユーザーのparam並列定期実行の主張が結果的に最良戦略d88fcを回復させた。
 **次**: 次param並列発火を実測検証(クリーンに走るか/d88fc超える株出るか/0スコア再発しないか)・d88fc T15維持・新Russia/ソ連。
+
+### §8追記★param並列がソ連最良d88fcからdrift+不安定再発 (2026-06-23 15:47)
+HEALTH: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia7件。
+**pin後初param並列発火(15:06-15:36 3回)の結果, 2問題**:
+1. **0スコア不安定再発**: recent14に36,76,0,0,6,36=param並列発火が毎回進行中ゲーム中断。pin(空head修復)はspurious revert止めたが、**param並列発火自体のゲーム中断は別問題で残存**。
+2. **ソ連最良d88fcからdrift**: live=d88fc→**8ce7fb12ca41**(改善が採用, 私のpin上書き)。測定: 8ce7 n=8 **T14+12%/T15 0%/score_med1597** vs d88fc n60 T14+37/T15 5/1312。**スコア高いがソ連funnel大幅低**。
+**根因**: 改善ループの粛清は**EVAL_SCORE(スコア)基準**→高スコア低funnel戦略を採用→**ソ連最良d88fcからdrift**。param並列は「探索」だがスコア最適化でソ連goalと不一致。
+**ユーザーの2要求が衝突**: ①param並列を回す ②ソ連最良d88fcを守る。→ユーザーに判断要請(A:d88fc固定/B:param並列継続drift許容/C:粛清をfunnel基準に改修)。
