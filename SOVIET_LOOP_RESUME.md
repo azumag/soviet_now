@@ -1133,3 +1133,13 @@ HEALTH: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia12件。
 **対処**: ①**d88fcへrevert**(live==head==anchor==d88fc, churn停止) ②**MIN_GAMES 36→100**(改善サイクル頻度↓→churn稀→安定。param並列はperiodic維持(~100試合毎=稀)）。完全なtransition-safety修正(遷移で0スコア出さない)は複雑ゆえ保留、安定優先。
 **正直**: ユーザーは「両立」を選んだが、param並列のchurnは不安定を生みd88fcを超えない=net-negative。ソ連目標に沿い安定d88fc優先・param並列は稀に維持。完全両立は要transition-safety(複雑)。
 **次**: revert+MIN100で0スコア減るか・d88fc rolling_top復帰でchurn解消か監視・新Russia/ソ連。
+
+### §8追記★安定化成功: churn/0スコア解消・d88fc完全収束 (2026-06-23 22:47)
+HEALTH全green: monitor2/loop9000/runner15785/daemon2/SOVIET log=1/本日Russia12件。
+**revert+MIN_GAMES=100の効果を実測確認=安定化成功**:
+- **live==head==anchor==d88fc8bfd580で完全一致**(前回head=候補/anchor=d88fcの分離が解消→head/anchor両方d88fcに収束→rolling_top churn停止)。
+- **churn 0**(70分improve/revert無)。
+- **0スコア解消**: recent20に0なし(中央値~1250、399/480は低いが実ゲーム=failed 0でない)。
+**=戦略churnと0スコア不安定の両方が解消**。d88fc(Soviet最良 T14+35/T15~4.5)がクリーン安定稼働。
+**「両立」の決着**: param並列を頻繁(MIN36)に回すと改善サイクルのstrategy churn→遷移0スコア不安定。**MIN100で改善を稀(~100試合/~5h毎)にし安定優先**=ユーザーのソ連目標(d88fc Russia量産)に最適。param並列はperiodic維持だが稀。完全両立(頻繁param並列+無不安定)は要transition-safety(複雑・ユーザー判断待ち)。
+**次**: 安定継続監視・次param並列(~100試合後)の挙動・d88fc維持・新Russia/ソ連。
