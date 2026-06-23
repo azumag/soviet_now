@@ -1064,3 +1064,11 @@ HEALTH: monitor2/loop9000/runner93248/daemon2/SOVIET log=1/本日Russia5件。
 **oscillation churn対処**: active_branch.json が**0バイト破損**(reverts書込壊れ)→空head由来の余分revert(70分7回)。**有効なactive_branch.jsonを書きd88fcをhead=anchorにpin修復**(live==head==d88fc8bfd580/465B)。空head churn停止見込み。0byte版backup有。
 **cron基準で採用**: liveがd88fc(head≠EXP-3)・funnel明確改善(T15 7.7%>2.3%)→**継続/採用**(pin済)。
 **次**: pin後にrevert churn減るか・head保持されるか監視。d88fc T15率が大標本で維持されるか。param並列はd88fc(best)から探索継続(超えられなければ正しくd88fc維持)。
+
+### §8追記★pin成功(churn停止)+d88fc優位を大標本確認 (2026-06-23 13:47)
+HEALTH全green: monitor2/loop9000/runner75736/daemon2/SOVIET log=1/本日Russia5件。
+**★pin修復成功**: live==head==d88fc8bfd580(465B保持)。**pin後60分でchurn 0イベント**(pin前70分7回)→ **0バイト破損が余分revertの原因と確定、修復で完全停止**。stream安定(recent14全健全・0なし・中央値~1250)。
+**★d88fc優位を大標本確認(n=43)**: T13+86/**T14+37**/T15 4.7%/score_med1285。EXP-9(n1423: T14+26/T15 2.3/1285<1329)。**T14+37%は安定維持(n26→43で38→37)、T15は7.7→4.7%に平均回帰したがEXP-9の約2倍**。score僅か低いが床超。**ソ連funnelはd88fcが明確に優秀=確定**。
+**結論の訂正**: 会話中の「EXP-9最適/ソ連near-impossible」は誤り。**ユーザーのparam並列定期実行の主張が正しく、自己改善ループがd88fc(ソ連株・高funnel)を回復した**。私のEXP-9固執が過小評価だった。
+**現状=クリーン安定**: d88fc(確定best)pin済・churn無し・stream健全・param並列は36試合毎に探索(d88fcを超えれば採用)。
+**次**: param並列がd88fcを超える株を見つけるか監視・d88fc T15率の収束・新Russia/ソ連。pin保持監視。
