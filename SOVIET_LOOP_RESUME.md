@@ -1171,3 +1171,10 @@ HEALTH全green: monitor2/loop9000/runner/daemon2/SOVIET log=1/Russia 06-24=2件�
 **★但し新問題発見: param並列max-runtime=7200(2h)**。現improveが49分経過、最大2hまでstream pauseしうる(offline tuning用設定がライブに不適)。→ **.envに WILDCARD_PARALLEL_POST_PARAM_MAX_RUNTIME_SEC=900(15min) + MAIN_BLOCK_MAX_SEC=1100(~18min) 追加**。現49分runは cron手順(kill -TERM後 pkill -f tmp/wildcard)で**中断→クリーン回復**(improve idle/lock無/daemon生存)。live=f0130cbd2d2b(best-so-far winner)/anchor=d88fc保持→粛清が評価しd88fc超えなければrevert。
 **「両立」進展**: param並列クリーン(不安定無)+時間制限(~15-18min, 2h→)+anchor=d88fc funnel保護。stream pause短縮。
 **次**: f0130cbd2d2bの粛清評価(d88fcへrevert見込み)・次param並列が15分で収まるか・d88fc維持・新Russia/ソ連。
+
+### §8追記★★0バイト破損の根本を恒久修正(非原子書込→原子化) (2026-06-24 05:47)
+HEALTH全green: monitor2/loop9000/runner/daemon2/SOVIET log=1/Russia 06-24=3件。f0130cbd→d88fc revert済(anchor保護機能)。
+**★recurring churn/不安定の根本原因を特定&恒久修正**: active_branch.jsonの0バイト破損は、**regression.shの非原子書込`open(active_file,'w')`(即truncate→書込失敗/中断/killで0バイト残存)**が原因(3箇所: 1732 continuation/1760 new-branch/3784 anchor-sync)。同ファイルの他書込は既に tmp+os.replace 原子パターン使用。**3箇所すべてを原子化(.tmp+fsync+os.replace)**。検証: bash -n OK・python heredoc7個全compile OK・非原子書込0残・loop健全。regression.sh毎ゲームre-source=次粛清から有効。commit済(strategy/regression.sh)。
+**意味**: 今後revert/書込でactive_branchが0バイト破損せず→pin喪失→rolling_top churn→遷移0スコア不安定の**再発が止まる**。「両立」の安定性が恒久化。
+**今回の経緯**: 中断後f0130cbd採用→粛清revert(3aaa7ea59)時に0バイト破損→re-pin d88fc(暫定)→根本修正。軽微不安定(6,247=破損churn由来)。
+**次**: 原子化修正後に0バイト破損が再発しないか・churn解消・d88fc維持・param並列が15分制限で収まるか・新Russia/ソ連。
