@@ -1193,3 +1193,6 @@ HEALTH全green: monitor2/loop9000/runner31342/daemon2/SOVIET log=1/**Russia 06-2
 **原子化修正live確証は保留(revert未発生=churn無)**: settleしているので revert自体起きず。次サイクル(acc~100)のimprove候補revert時に破損しないか確証する。churn無=望ましい。
 **「両立」恒久安定形が稼働**: d88fc(Soviet-best)クリーン安定・param並列稀(15min cap)・funnel保護・Russia量産。多パスのparam並列saga = 安定形に決着。
 **次**: 安定継続・次サイクルimprove/revert時の原子化確証・d88fc維持・新Russia/ソ連。
+
+### §8追記: 安定継続(~3h churn0) (2026-06-24 08:47)
+HEALTH全green: monitor2/loop9000/runner84117/daemon2/SOVIET log=1/Russia 06-24=4件。live==head==anchor==d88fc8bfd580/active_branch VALID(465B)/churn0(修正以降~3h improve/revert無)/stream健全(recent20 0スコアなし中央値~1580・高スコア3890/2758/2343)。cycle acc=51/100(次param並列~49試合後)。原子書込+MIN100+anchorでchurn根絶durable。原子化修正live確証は次サイクルimprove/revert待ち(settle中=revert無)。d88fc(Soviet-best)安定運用。
