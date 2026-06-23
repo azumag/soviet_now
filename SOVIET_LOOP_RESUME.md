@@ -1109,3 +1109,9 @@ HEALTH全green: monitor2/loop9000/runner15913/daemon2/SOVIET log=1。pin保持(l
 **param並列未発火**: cycle acc=8/36(前回1/36から進行)、次発火~28試合後(~1.5h)。次発火が「両立」検証ポイント(funnel gates効くか/0スコア/d88fc維持)だが今回未到達。
 **現状=理想**: d88fc(Soviet-best, T14+35/T15 4.8% n84)安定pin・churn無・Russia量産・stream健全。param並列はperiodic待機。
 **次**: 次param並列発火(~28試合)で gates/安定を実測検証・pin保持・新Russia/ソ連監視。
+
+### §8追記: 安定継続(数時間churn0)・param並列発火接近 (2026-06-23 19:47)
+HEALTH全green: monitor2/loop9000/runner60840/daemon2/SOVIET log=1/本日Russia10件維持。pin保持(live==head==d88fc8bfd580)、**revert以降churn0継続**(この1h improve/revert無)、stream健全(recent18全健全0なし中央値~1300・Russia級3127/3115/2359)。
+**param並列発火接近**: cycle acc=23/36(1→8→23と進行)、次発火~13試合後(~30-45分)。「両立」検証ポイント(完全anchorでfunnel gates効くか/0スコア/d88fc維持)だが今回も未到達。
+**現状=理想安定**: d88fc(Soviet-best, T14+35/T15 4.8% n84+)が数時間安定pin・churn無・Russia量産(本日10=EXP-9の約2倍)・stream健全。Soviet到達には d88fc の高Russia率が2nd-chain機会を増やす(deployableな最善)。
+**次**: 次param並列発火(~13試合)で gates/安定を実測検証(これが「両立」の最終確認)・pin保持・新Russia/ソ連監視。
