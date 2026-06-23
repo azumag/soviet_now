@@ -1125,3 +1125,11 @@ HEALTH全green: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia11件(
 **= 設計通りの「両立」が動作**: param並列クリーン探索 + anchor=d88fc funnel保護。e059が真に良ければ採用/劣ればd88fcへrevert(評価中, ~12試合後判明)。ユーザーの望んだ動作。
 **正直な注記**: d88fc soviet=1のためlost_soviet_pathで候補は通常revert=param並列は「探索するがd88fcが最良ゆえ通常d88fc維持」。但しクリーン(不安定なし)なので問題なし。真にfunnel優位な候補のみ残る。
 **次**: e059のrevert(d88fcへ)を実測確認・pin/anchor保持・次param並列クリーン継続・新Russia/ソ連。
+
+### §8追記★「両立」の難しさ実証→d88fc revert+churn減速で安定優先 (2026-06-23 21:47)
+HEALTH: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia12件。
+**前回「クリーン発火」は運の良い窓だった**: その後 e059→d99c340→b0993065→5a32606→24528 と**5戦略をchurn**し0スコア再発(46,166,31,0,0,469)。切り分け: 24528等の候補ゲーム自体は健全(2624/3223等)→**0スコアはstrategy遷移の失敗ゲーム**(粛清がrolling_top(毎回別)へrevert→head churn→遷移毎にstrategy.py書換がゲーム破壊)。anchor=d88fcは保持(drift防止は効くがhead churnは別問題)。
+**「両立」根本的困難**: param並列/改善サイクルがstrategyをchurnし遷移毎に不安定。d88fcがbestゆえchurnは改善ゼロで害のみ。**ソ連目標(overriding)には安定d88fcが最善**。
+**対処**: ①**d88fcへrevert**(live==head==anchor==d88fc, churn停止) ②**MIN_GAMES 36→100**(改善サイクル頻度↓→churn稀→安定。param並列はperiodic維持(~100試合毎=稀)）。完全なtransition-safety修正(遷移で0スコア出さない)は複雑ゆえ保留、安定優先。
+**正直**: ユーザーは「両立」を選んだが、param並列のchurnは不安定を生みd88fcを超えない=net-negative。ソ連目標に沿い安定d88fc優先・param並列は稀に維持。完全両立は要transition-safety(複雑)。
+**次**: revert+MIN100で0スコア減るか・d88fc rolling_top復帰でchurn解消か監視・新Russia/ソ連。
