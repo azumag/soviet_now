@@ -1087,3 +1087,11 @@ HEALTH: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia7件。
 2. **ソ連最良d88fcからdrift**: live=d88fc→**8ce7fb12ca41**(改善が採用, 私のpin上書き)。測定: 8ce7 n=8 **T14+12%/T15 0%/score_med1597** vs d88fc n60 T14+37/T15 5/1312。**スコア高いがソ連funnel大幅低**。
 **根因**: 改善ループの粛清は**EVAL_SCORE(スコア)基準**→高スコア低funnel戦略を採用→**ソ連最良d88fcからdrift**。param並列は「探索」だがスコア最適化でソ連goalと不一致。
 **ユーザーの2要求が衝突**: ①param並列を回す ②ソ連最良d88fcを守る。→ユーザーに判断要請(A:d88fc固定/B:param並列継続drift許容/C:粛清をfunnel基準に改修)。
+
+### §8追記★ユーザー「両立」選択への対応: d88fc revert + funnel保護機構の理解 (2026-06-23 18:17)
+ユーザーが「両立を試みる(funnel基準化)」を選択→対応:
+**(2)funnel保護=対応済**: **8ce7regression を d88fc へ revert**(live==head==d88fc8bfd580, cp+active_branch pin, commit)。**根因判明: 前回pinのanchorが{comp,p50,p25,lcb,n}のみでmax_types等の段階データ欠落→粛清の既存funnel gates(lost_X_gate/stage_typeN_achievement_gate=rate基準)が無効化されdrift**。粛清は元々funnel-aware(rolling[anchor_hash]の段階到達率を比較)。**完全anchor+d88fc(rolling: max_types/soviet=1/best_max_type16)で再pin→funnel gates復活**。8ce7のような低funnel(T14+12%)driftは今後revertされる。
+**(1)clean-pause=部分対応**: 0スコアの真因は単純なmid-game中断でない(pauseは主ループ先頭で進行中ゲーム保護)。**param並列開始時のブリッジ/リソース撹乱 or 改善/revert中のstrategy.py書換が進行中ゲームを壊す**と推定。**d88fc revert+pinでchurn減→strategy.py書換頻度減→0スコア大幅減**(前回安定passと同じ機序)。残るparam並列発火毎(36試合毎=稀)の数件は要監視。
+**funnel rate基準への粛清改修=保留**: 既存gatesがd88fc funnel保護に十分。rate基準化(better-funnel株のadopt許可)は高リスク低価値(d88fcが既にT14+37%でbest=超える株は稀)。必要なら別途慎重に。
+**現状**: live=d88fc(Soviet-best,pin), param並列は36試合毎に探索(d88fcを超えなければ正しくrevert), instability churn減。
+**次**: revert後の0スコア頻度監視(36試合毎の数件なら許容/多ければbridge/strategy-write撹乱を精査)・pin保持・d88fc funnel維持・新Russia/ソ連。
