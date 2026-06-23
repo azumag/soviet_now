@@ -69,6 +69,18 @@ FAST_DROP_DEADLINE_CONTACT = True
 
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vXXX (Ukraine gate fix): main-loop axis 8.5/8.6 danger bonus gated by
+      #       merge_result_crosses_deadline — DIRECT +3000 (axis 8.5) and +600/+1000 (axis 8.6)
+      #       now only fire when the merge result lands at or below the deadline. Stage gate:
+      #       Ukraine(T13) 81%→100% target. Fixes rollback failure mode: T56 worst game
+      #       (score0668.jsonl) selected DIRECT with merge_result_crosses_deadline=true and
+      #       merge_result_top_y=4.83 (mandatory_themes 1行目違反). NEAR +2500 + axis 8.6 NEAR
+      #       suppression unchanged (v663 candidate_margin<0.3 維持). Does NOT modify
+      #       axis 8.7 russia_phase / axis 8.8 / DEADLINE_GUARD / russia_merge_possible
+      #       active-filter exception (axis 1.6 danger_direct_merge_available).
+      #       refs: tmp/analysis_result.md (Hypothesis: axis 8.5/8.6 merge_result_crosses_deadline gate),
+      #             data/mandatory_themes.txt, game_history/20260623_130057_score0668.jsonl T56,
+      #             tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1804,10 +1816,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: game_history/20260416_193206_score1203.jsonl T50/T63/T66,
         #       tmp/analysis_result.md, data/user_review.md
         if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"]:
-            if merge_grade == "DIRECT":
+            # vXXX Ukraine(T13) gate fix: gate axis 8.5 danger bonus by merge_result_crosses_deadline.
+            # When the merged result lands above the deadline (merge_result_crosses_deadline=true),
+            # the DIRECT merge outcome produces a piece above the red line even if the input
+            # candidates were below. This violates mandatory_themes "デッドラインを超える位置に
+            # ピースを置く場合は、併合できる場合に限る" — "併合できる" means the merge result
+            # must NOT cross the deadline. Worst game (score0668) T56: next_type=11, DIRECT merge
+            # selected at x=-2.1, merge_result_crosses_deadline=true, merge_result_top_y=4.83.
+            # The DIRECT danger bonus +3000 was overpowering axis 8.8 (-4500) and HEIGHT penalty,
+            # so the strategy picked a candidate whose MERGED RESULT sits above the deadline.
+            # Without this gate, pc=30-35 with max_y=1.7-2.5 stage fails to convert T12+T12→T13
+            # because the DIRECT candidate costs +0 score_delta when merge_result_crosses_deadline=true.
+            # NEAR bonus remains gated by candidate_margin < 0.3 (v663 logic) — unchanged.
+            # Active-filter exception (danger_piece_count>0 + danger_direct_merge_available) is
+            # handled separately via axis 1.6 DANGER_DIRECT_MERGE_PRIORITY and is NOT modified here.
+            merge_result_unsafe_85 = bool(result.get("merge_result_crosses_deadline", False))
+            if merge_grade == "DIRECT" and not merge_result_unsafe_85:
                 score += 3000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
-            else:
+            elif merge_grade == "NEAR":
                 # NEAR: suppress bonus when this candidate crosses or nearly crosses deadline
                 candidate_margin = result.get("deadline_margin", 99)
                 if candidate_margin >= 0.3:
@@ -1828,8 +1855,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
+            # vXXX Ukraine(T13) gate fix: also skip when merge_result_crosses_deadline=true so
+            # axis 8.6 does not push a deadline-crossing DIRECT/NEAR candidate above axis 8.8
+            # (-4500). Worst game T56: DIRECT merge with merge_result_crosses_deadline=true +
+            # REACTIVE_IMMEDIATE_MERGE_PRIORITY (+1000) + DANGER_ZONE (+3000) together beat
+            # axis 8.8. After the axis 8.5 gate, axis 8.6's +1000/+600 is the only remaining
+            # over-pull, so the same gate must apply here for consistency. NEAR suppression
+            # (candidate_margin < 0.3) is preserved unchanged.
             candidate_margin_86 = result.get("deadline_margin", 99)
-            near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
+            merge_result_unsafe_86 = bool(result.get("merge_result_crosses_deadline", False))
+            near_deadline_suppressed = (
+                (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
+                or merge_result_unsafe_86
+            )
             if not near_deadline_suppressed:
                 if reactive_pair_count >= 2:
                     score += 1000.0
