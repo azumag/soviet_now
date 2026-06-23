@@ -1178,3 +1178,11 @@ HEALTH全green: monitor2/loop9000/runner/daemon2/SOVIET log=1/Russia 06-24=3件�
 **意味**: 今後revert/書込でactive_branchが0バイト破損せず→pin喪失→rolling_top churn→遷移0スコア不安定の**再発が止まる**。「両立」の安定性が恒久化。
 **今回の経緯**: 中断後f0130cbd採用→粛清revert(3aaa7ea59)時に0バイト破損→re-pin d88fc(暫定)→根本修正。軽微不安定(6,247=破損churn由来)。
 **次**: 原子化修正後に0バイト破損が再発しないか・churn解消・d88fc維持・param並列が15分制限で収まるか・新Russia/ソ連。
+
+### §8追記: 原子化修正後の安定確認・15分cap稼働 (2026-06-24 06:47)
+HEALTH全green: monitor2/loop9000/runner42994/daemon2/SOVIET log=1/Russia 06-24=3件。
+**安定状態**: live==head==anchor==d88fc8bfd580/**active_branch VALID(465B, 0byte破損なし)**/stream健全(recent22 0スコアなし・中央値~1500・高スコア2845/2766/2580)/improve idle。
+**15分cap稼働**: .env POST_PARAM_MAX=900/MAIN_BLOCK_MAX=1100 ロード済→今後param並列~15-18分制限(2h pause問題解決)。cycle acc=19/100(次~81試合後)。
+**原子化修正のlive検証は保留**: 修正(05:53)以降のrevert未発生(直近revert 05:38=修正前)。構文検証済(bash -n+heredoc7全compile)・現状active_branch健全。次のrevert時に0byte破損しないかで確証する。
+**「両立」の恒久安定形が揃った**: 原子書込(0byte破損防止)+15min cap(pause短縮)+anchor=d88fc(funnel保護)+MIN100(稀発火)。param並列クリーン稼働。
+**次**: 次revert時に原子化修正を実測確証・churn解消継続・d88fc維持・param並列15分内・新Russia/ソ連。
