@@ -1186,3 +1186,10 @@ HEALTH全green: monitor2/loop9000/runner42994/daemon2/SOVIET log=1/Russia 06-24=
 **原子化修正のlive検証は保留**: 修正(05:53)以降のrevert未発生(直近revert 05:38=修正前)。構文検証済(bash -n+heredoc7全compile)・現状active_branch健全。次のrevert時に0byte破損しないかで確証する。
 **「両立」の恒久安定形が揃った**: 原子書込(0byte破損防止)+15min cap(pause短縮)+anchor=d88fc(funnel保護)+MIN100(稀発火)。param並列クリーン稼働。
 **次**: 次revert時に原子化修正を実測確証・churn解消継続・d88fc維持・param並列15分内・新Russia/ソ連。
+
+### §8追記★~2時間churn0で安定settle (2026-06-24 07:47)
+HEALTH全green: monitor2/loop9000/runner31342/daemon2/SOVIET log=1/**Russia 06-24=4件(+1)**。live==head==anchor==d88fc8bfd580/active_branch VALID(465B)/stream健全(recent20 0スコアなし・中央値~1500・Russia級3755/3517/3131/2845/2758)。
+**★修正(05:53)以降churn完全停止=~2h improve/revert 0**(直近revert 05:38=修正前)。系がd88fcにクリーンにsettle=最長安定期。原子書込+re-pin+MIN100+anchor=d88fcの組合せで churn根絶。
+**原子化修正live確証は保留(revert未発生=churn無)**: settleしているので revert自体起きず。次サイクル(acc~100)のimprove候補revert時に破損しないか確証する。churn無=望ましい。
+**「両立」恒久安定形が稼働**: d88fc(Soviet-best)クリーン安定・param並列稀(15min cap)・funnel保護・Russia量産。多パスのparam並列saga = 安定形に決着。
+**次**: 安定継続・次サイクルimprove/revert時の原子化確証・d88fc維持・新Russia/ソ連。
