@@ -1155,3 +1155,6 @@ HEALTH全green: monitor2/loop9000/runner21286/daemon2/SOVIET log=1。live==head=
 
 ### §8追記: 安定継続(2026-06-24 01:47)
 HEALTH全green: monitor2/loop9000/daemon2/SOVIET log=1。live==head==anchor==d88fc8bfd580/churn0/0スコアなし(recent24中央値~1200)/床OK。Russia 06-24=1件。cycle acc=64/100(次param並列~36試合後)。runner pgrep一瞬空はゲーム間再起動タイミング(スコア更新継続=稼働中)。d88fc安定運用継続。
+
+### §8追記: 安定継続(2026-06-24 02:48)
+HEALTH全green: monitor2/loop9000/runner31168/daemon2/SOVIET log=1。live==head==anchor==d88fc8bfd580/churn0/0スコアなし(recent22中央値~1380・高スコア2931/2632/2563)/床OK。Russia 06-24=1件。cycle acc=80/100(次param並列~20試合後)。MIN100で param並列稀(~6h毎)=stream安定優先で発火遅い。d88fc安定運用継続。
