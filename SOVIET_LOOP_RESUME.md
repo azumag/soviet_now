@@ -1040,3 +1040,11 @@ HEALTH全green(monitor2/loop9000/runner66381/daemon2/live==head==96f11ac0bc0c/SO
 **churn経過**: d88fc(Soviet株,n12 T14+58/score1934)→AI改善→96f11ac0bc0c(n13 T14+23/score1577)。両方n~12-13でノイズ・優劣不明。**監視点: 96f11ac0bc0cはSoviet未実証ゆえ粛清のlost_soviet_pathで d88fcへ再revertしうる(d88fc↔96f11 オシレーション)**。次パスでn≥25蓄積を待ち funnel判定。
 **メモリ**: param並列終了でswap総量14→10GB低下(候補解放)。jobs=4内。
 **次**: 96f11ac0bc0c をn≥25で funnel/Russia判定(改善なら継続/床割れor明確劣化なら粛清/手動revert)、次param並列サイクル監視、オシレーション/メモリ監視。
+
+### §8追記★オシレーション診断: システムはd88fc(ソ連株・高ティア)を最良と正判定 (2026-06-23 10:47)
+HEALTH: monitor2/loop9000/runner(改善pause中で一時非稼働=正常)/daemon2/SOVIET log=1/本日Russia4件(前回2→+2)。score床健全(recent30 median1318>1150, prior1563)。
+**live=d88fc8bfd580に戻った(96f11ac0bc0cからrevert)=予測したd88fc↔improveオシレーション発生**。git: 4eb26d32c(revert d88fc)→2bdf9f196(improve 96f11)→8a5b69976(revert d88fc)。3hでimprove+revert 2回。
+**根本原因(実測・stale anchorバグでない)**: 最新revert理由 `anchor_comp=12258(d88fc,今日T14+58%,soviet=1,type16) vs curr_comp=10767(96f11,T14+23%,soviet=0,type14), reasons=objective_regression+lost_soviet_path`。**d88fcは現在comp/ティア/Soviet全てで上→粛清が正しくrevert**。AI改善が毎サイクル「より悪い戦略」を作りrevertされる構図。**param並列の探索もd88fcを超えられず無効化(revert)**。
+**重要な再評価**: 凍結解除でシステムが**d88fc(ソ連建国株・現在T14+58% n12)を最良として復元**。私のEXP-9(T14+26%)固執より良いSoviet baselineの可能性。但しd88fc n=12は小標本でluck可能性残(大標本無し)。**d88fc rollingが蓄積→真値収束で判明**: 高comp維持なら genuinely良い、regressなら噪音でオシレーション解消。
+**churn cost(監視)**: 改善サイクルが現状futile(毎回d88fcへrevert)=~12試合毎にimprove+param並列でstream pause→revert(無駄)。branch_depth=0で自己制限弱い。**もし無駄churnが続き配信が頻繁pauseするなら MIN_GAMES↑で頻度減(param並列はperiodic維持)を検討**。但しd88fcが真に最良なら現状で正しい。
+**次**: d88fc rolling comp/T14+が大標本で維持されるか監視(真値収束)。churn過剰なら cadence調整をユーザーに相談。新Russia 4件(祝)・新ソ連なし。
