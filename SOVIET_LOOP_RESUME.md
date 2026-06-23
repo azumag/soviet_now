@@ -1164,3 +1164,10 @@ HEALTH全green: monitor2/loop9000/runner91510/daemon2/SOVIET log=1/Russia 06-24=
 **param並列が03:50発火(MIN_GAMES=100で初)**: wildcard_parallel.py稼働・"param並列調整中(隔離評価)"・**live=d88fc維持(anchor保護下)**・**発火前後0スコアなし(recent: 3296/3202/3618等Russia級全健全)**。発火時点クリーン。但しparam並列中は主ゲームpauseゆえ不安定が出るならresume後→次パスでresume/winner/0スコア確認。
 **stream安定継続**: churn0・0スコアなし・d88fc(T14+31/T15 3.7)安定。MIN100でparam並列稀(~6h毎)+anchor=d88fc保護=「両立」の安定優先形が機能。
 **次**: param並列resume後の0スコア有無・winner採否(d88fc超えれば採用/劣ればrevert)・d88fc維持を実測。
+
+### §8追記★param並列MIN100検証: 不安定解消・但しmax-runtime 2h問題を発見&修正 (2026-06-24 04:47)
+HEALTH全green: monitor2/loop9000/runner/daemon2/SOVIET log=1/Russia 06-24=2件。
+**★MIN_GAMES=100でのparam並列=不安定解消を実測確認**: 03:50発火のparam並列、resume後recent24に**0スコアなし**(中央値~1300・Russia級3618/3296/3202)。**MIN100+anchor=d88fc保護で単発クリーン発火**=前回MIN36のrapid churn不安定が根治。
+**★但し新問題発見: param並列max-runtime=7200(2h)**。現improveが49分経過、最大2hまでstream pauseしうる(offline tuning用設定がライブに不適)。→ **.envに WILDCARD_PARALLEL_POST_PARAM_MAX_RUNTIME_SEC=900(15min) + MAIN_BLOCK_MAX_SEC=1100(~18min) 追加**。現49分runは cron手順(kill -TERM後 pkill -f tmp/wildcard)で**中断→クリーン回復**(improve idle/lock無/daemon生存)。live=f0130cbd2d2b(best-so-far winner)/anchor=d88fc保持→粛清が評価しd88fc超えなければrevert。
+**「両立」進展**: param並列クリーン(不安定無)+時間制限(~15-18min, 2h→)+anchor=d88fc funnel保護。stream pause短縮。
+**次**: f0130cbd2d2bの粛清評価(d88fcへrevert見込み)・次param並列が15分で収まるか・d88fc維持・新Russia/ソ連。
