@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-24 04:51:48 JST`
+- Updated: `2026-06-24 05:38:24 JST`
 - Nodes: `3159`
-- Edges: `308`
-- Current: `f0130cbd2d2b`
+- Edges: `309`
+- Current: `d88fc8bfd580`
 - Anchor: `d88fc8bfd580`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_d88fc8bfd580["d88fc8bfd580<br/>ANCHOR<br/>g=635 n=20<br/>comp=11669.1"]
-    h_f0130cbd2d2b["f0130cbd2d2b<br/>CURRENT<br/>g=3 n=3<br/>comp=13051.3"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>CURRENT ANCHOR<br/>g=635 n=20<br/>comp=11669.1"]
     h_c73d3a0ede2d["c73d3a0ede2d<br/>g=1 n=1<br/>comp=0.0"]
     h_2b6dad705db1["2b6dad705db1<br/>g=1 n=1<br/>comp=0.0"]
     h_bbfd24258fdf["bbfd24258fdf<br/>g=1 n=1<br/>comp=75.0"]
@@ -78,15 +77,13 @@ flowchart TD
     h_a7343a87a295["a7343a87a295<br/>g=3 n=3<br/>comp=12286.2"]
     h_66b4fa81e069["66b4fa81e069<br/>g=1 n=1<br/>comp=247.0"]
 
-    h_d88fc8bfd580 -->|improve| h_f0130cbd2d2b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_d88fc8bfd580 anchor;
-    class h_f0130cbd2d2b current;
+    class h_d88fc8bfd580 current_anchor;
     class h_c73d3a0ede2d plain;
     class h_2b6dad705db1 plain;
     class h_bbfd24258fdf plain;
@@ -153,7 +150,7 @@ flowchart TD
 
 - Range: `dd326517d64f` .. `0a4a4352cd60`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `78`
+- Internal edges in this diagram: `79`
 - Cross-chunk link: `8cde5038d8a6 --improve--> 0a4a4352cd60`
 - Cross-chunk link: `0e899ca31b42 --improve--> 151b3f6a0061`
 - Cross-chunk link: `0e899ca31b42 --improve--> 19b772b1ac66`
@@ -172,7 +169,7 @@ flowchart TD
 flowchart TD
     h_dd326517d64f["dd326517d64f<br/>g=12 n=12<br/>comp=10408.3"]
     h_71880cd47617["71880cd47617<br/>g=4 n=4<br/>comp=13716.3"]
-    h_d88fc8bfd580["d88fc8bfd580<br/>ANCHOR<br/>g=635 n=20<br/>comp=11669.1"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>CURRENT ANCHOR<br/>g=635 n=20<br/>comp=11669.1"]
     h_6672652e0a7c["6672652e0a7c<br/>g=8 n=8<br/>comp=10229.7"]
     h_a10075482c12["a10075482c12<br/>g=8 n=8<br/>comp=11110.7"]
     h_cca273b0d6c0["cca273b0d6c0<br/>g=8 n=8<br/>comp=12083.1"]
@@ -224,7 +221,7 @@ flowchart TD
     h_bcf6915c6c58["bcf6915c6c58<br/>g=14 n=14<br/>comp=12010.2"]
     h_b9ca9ac970b9["b9ca9ac970b9<br/>g=41 n=20<br/>comp=10891.1"]
     h_24528ec4bd35["24528ec4bd35<br/>g=11 n=11<br/>comp=11527.7"]
-    h_f0130cbd2d2b["f0130cbd2d2b<br/>CURRENT<br/>g=3 n=3<br/>comp=13051.3"]
+    h_f0130cbd2d2b["f0130cbd2d2b<br/>g=15 n=15<br/>comp=11848.2"]
     h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=1450.8"]
     h_003e9883e188["003e9883e188<br/>g=25 n=20<br/>comp=11410.8"]
     h_007f02d1457f["007f02d1457f<br/>g=20 n=20<br/>comp=10701.2"]
@@ -327,8 +324,9 @@ flowchart TD
     h_b9ca9ac970b9 -. rollback .-> h_d88fc8bfd580
     h_d88fc8bfd580 -->|improve| h_24528ec4bd35
     h_24528ec4bd35 -. rollback .-> h_d88fc8bfd580
-    h_0e899ca31b42 -->|improve| h_026dad83a186
     h_d88fc8bfd580 -->|improve| h_f0130cbd2d2b
+    h_0e899ca31b42 -->|improve| h_026dad83a186
+    h_f0130cbd2d2b -. rollback .-> h_d88fc8bfd580
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -337,7 +335,7 @@ flowchart TD
 
     class h_dd326517d64f plain;
     class h_71880cd47617 plain;
-    class h_d88fc8bfd580 anchor;
+    class h_d88fc8bfd580 current_anchor;
     class h_6672652e0a7c plain;
     class h_a10075482c12 plain;
     class h_cca273b0d6c0 plain;
@@ -389,7 +387,7 @@ flowchart TD
     class h_bcf6915c6c58 plain;
     class h_b9ca9ac970b9 plain;
     class h_24528ec4bd35 plain;
-    class h_f0130cbd2d2b current;
+    class h_f0130cbd2d2b plain;
     class h_00276c327ece plain;
     class h_003e9883e188 plain;
     class h_007f02d1457f plain;
@@ -7511,6 +7509,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#37836 `f0130cbd -> d88fc8bf`
+
+- - rollback from f0130cbd2d2b to d88fc8bfd580 at game 37836
+- - reasons: objective_regression+lost_soviet_path
+- - current comp/p50/p25=11630.0/12169.0/10865.5 vs target 11669.1/12216.5/10445.0
+- - bad recent scores: 10114 7206 11286 12113 7525 12258 16294 11116
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor はソ連到達済みだが current はソ連未到達だった。
+- current: comp=11630.0 p50=12169.0 p25=10865.5 mean=12611.9 n=12
+- rollback_target: comp=11669.1 p50=12216.5 p25=10445.0 mean=13152.6 n=20
+- metric_gap_vs_target: comp=-39.2 p50=-47.5 p25=420.5 mean=-540.7
+- recent12_avg: bad=12611.9 target=14020.0
+- recent12_floor: bad=7206 target=8556
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
 
 ### Improve Game#37824 `d88fc8bf -> f0130cbd`
 
