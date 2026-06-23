@@ -1158,3 +1158,9 @@ HEALTH全green: monitor2/loop9000/daemon2/SOVIET log=1。live==head==anchor==d88
 
 ### §8追記: 安定継続(2026-06-24 02:48)
 HEALTH全green: monitor2/loop9000/runner31168/daemon2/SOVIET log=1。live==head==anchor==d88fc8bfd580/churn0/0スコアなし(recent22中央値~1380・高スコア2931/2632/2563)/床OK。Russia 06-24=1件。cycle acc=80/100(次param並列~20試合後)。MIN100で param並列稀(~6h毎)=stream安定優先で発火遅い。d88fc安定運用継続。
+
+### §8追記: param並列発火(MIN100下)=発火時クリーン (2026-06-24 03:48)
+HEALTH全green: monitor2/loop9000/runner91510/daemon2/SOVIET log=1/Russia 06-24=2件。
+**param並列が03:50発火(MIN_GAMES=100で初)**: wildcard_parallel.py稼働・"param並列調整中(隔離評価)"・**live=d88fc維持(anchor保護下)**・**発火前後0スコアなし(recent: 3296/3202/3618等Russia級全健全)**。発火時点クリーン。但しparam並列中は主ゲームpauseゆえ不安定が出るならresume後→次パスでresume/winner/0スコア確認。
+**stream安定継続**: churn0・0スコアなし・d88fc(T14+31/T15 3.7)安定。MIN100でparam並列稀(~6h毎)+anchor=d88fc保護=「両立」の安定優先形が機能。
+**次**: param並列resume後の0スコア有無・winner採否(d88fc超えれば採用/劣ればrevert)・d88fc維持を実測。
