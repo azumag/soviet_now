@@ -1095,3 +1095,10 @@ HEALTH: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia7件。
 **funnel rate基準への粛清改修=保留**: 既存gatesがd88fc funnel保護に十分。rate基準化(better-funnel株のadopt許可)は高リスク低価値(d88fcが既にT14+37%でbest=超える株は稀)。必要なら別途慎重に。
 **現状**: live=d88fc(Soviet-best,pin), param並列は36試合毎に探索(d88fcを超えなければ正しくrevert), instability churn減。
 **次**: revert後の0スコア頻度監視(36試合毎の数件なら許容/多ければbridge/strategy-write撹乱を精査)・pin保持・d88fc funnel維持・新Russia/ソ連。
+
+### §8追記: revert後 安定確認・churn根因はanchor drift (2026-06-23 18:18)
+HEALTH全green: monitor2/loop9000/runner62861/daemon2/SOVIET log=1/**本日Russia9件(+2)**/stream健全(recent16全健全0なし中央値~1500)。
+**pin保持・オシレーション停止**: my revert(8f06c182a)以降 auto-revert 0。git の revert群(50447c316等)は全て revert前(8ce7 drift期)。**churn/不安定の根因判明=anchor自体が複数戦略へdrift**(35729075cdbb→b9ca9ac970b9→bcf6915c6c58→8ce7, 各々へrolling_top revert連発)。私の**完全d88fc anchor再pinがanchor driftを停止**=「両立」核心修正。
+**d88fc best維持(n=84)**: T14+35%/T15 4.8%/score_med1293(EXP-9 26/2.3/1329)。funnel優位大標本安定。
+**「両立」現状**: param並列稼働(cycle1/36, 次発火~36試合後), d88fc funnel保護(完全anchor+粛清gates), 不安定解消(anchor drift停止)。**残検証: 次param並列発火時にgatesが低funnel株を正しくrevert&安定維持するか**(完全anchorで機能するはず)。
+**次**: 次param並列発火(~36試合)の挙動実測(funnel gate効くか/0スコア出るか/d88fc維持)・pin保持・新Russia/ソ連。
