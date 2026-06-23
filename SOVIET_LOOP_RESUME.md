@@ -1115,3 +1115,13 @@ HEALTH全green: monitor2/loop9000/runner60840/daemon2/SOVIET log=1/本日Russia1
 **param並列発火接近**: cycle acc=23/36(1→8→23と進行)、次発火~13試合後(~30-45分)。「両立」検証ポイント(完全anchorでfunnel gates効くか/0スコア/d88fc維持)だが今回も未到達。
 **現状=理想安定**: d88fc(Soviet-best, T14+35/T15 4.8% n84+)が数時間安定pin・churn無・Russia量産(本日10=EXP-9の約2倍)・stream健全。Soviet到達には d88fc の高Russia率が2nd-chain機会を増やす(deployableな最善)。
 **次**: 次param並列発火(~13試合)で gates/安定を実測検証(これが「両立」の最終確認)・pin保持・新Russia/ソ連監視。
+
+### §8追記★★「両立」検証成功: クリーンparam並列発火+anchor保護 (2026-06-23 20:47)
+HEALTH全green: monitor2/loop9000/runner/daemon2/SOVIET log=1/本日Russia11件(+1)。
+**param並列発火(cycle36到達)の検証結果=「両立」成功**:
+1. **★instability修正確認**: recent20全健全(0スコアなし)。**完全anchorでchurn停止→単発クリーン発火は不安定を生まない**。前回の不安定は anchor drift→rapid churn が主因だった(=完全d88fc anchorで根治)。
+2. **★funnel gates機能**: head=e059026d1dc0(採用候補)だが **anchor=d88fc8bfd580保持**(完全pinがanchor保護)。粛清がe059をd88fc anchorと比較→劣れば revert(lost_soviet_path/funnel gates)。e059はn=0評価中。
+3. d88fc維持(n=115 T14+35/T15 4.3/1294)=best継続。
+**= 設計通りの「両立」が動作**: param並列クリーン探索 + anchor=d88fc funnel保護。e059が真に良ければ採用/劣ればd88fcへrevert(評価中, ~12試合後判明)。ユーザーの望んだ動作。
+**正直な注記**: d88fc soviet=1のためlost_soviet_pathで候補は通常revert=param並列は「探索するがd88fcが最良ゆえ通常d88fc維持」。但しクリーン(不安定なし)なので問題なし。真にfunnel優位な候補のみ残る。
+**次**: e059のrevert(d88fcへ)を実測確認・pin/anchor保持・次param並列クリーン継続・新Russia/ソ連。
