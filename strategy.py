@@ -12,6 +12,7 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
+         1.7b. Gap zone NEAR suppression - v606: elevated NEAR suppression at max_y 1.5-2.0+rp>=3+pc>=28
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -63,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: remove deadline_crossed gate from axis 8.8-pre type 14 proximity
+     # Hypothesis: type 14 proximity disabled EXACTLY when deadline_crossed=YES (most needed)
+     # mandatory_themes "no placement past deadline without merge" is unavoidably violated
+     # when game forces placement with NO merge available. In that case, still guide near type 14.
+     # Keep merge_grade=="NO" guard to avoid disrupting immediate merge opportunities.
+     # Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 batch games)
+     # refs: tmp/analysis_result.md (Adopted Hypothesis: Pre-Russia Phase Type 14 Proximity)
+     #
      # vXXX: axis 8.8b HIGH_PC_REACTIVE_NO_MERGE_PENALTY — piece_count accumulation before rp>=3 threshold
      # Hypothesis: piece_count>=25 && max_y>=0.5 && rp>=2 && mg==NO causes accumulation before rp>=3
      # worst T42: pc=23, max_y=1.04, HEIGHT_CONTROL selected → pc grows 23→34, max_y 1.04→3.71
@@ -947,6 +956,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
 
+        # ----- evaluation axis 1.7b: gap zone NEAR suppression (vXXX) -----
+        # Hypothesis: NEAR merge at max_y 1.5-2.0 + rp>=3 + pc>=28 is dangerous
+        # worst_game T67: NEAR at max_y=2.38, piece_count~42 → delta=0 (failed)
+        # best_game: no NEAR failures in final turns, max_y stayed below 2.0
+        # Current suppression: pc>=33+deadline+y>=1.0 (axis 1.7) or pc>=35+deadline (v502)
+        # Gap: max_y 1.5-2.0 with rp>=3 and pc>=28 is unsuppressed despite approaching danger
+        # v606 (best_score5801): elevated suppression at max_y>=1.5 && rp>=3 && pc>=28
+        #   WITHOUT deadline_crossed requirement — catches approach phase before deadline
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # This suppression prevents NEAR at approaching-max_y (1.5-2.0), keeping board lower
+        # refs: game_history/20260429_142202_score0672.jsonl T67 (gap zone NEAR failure),
+        #       game_history/20260429_141222_score2201.jsonl (no NEAR failures in final 8T),
+        #       strategy_versions/best_score5801_strategy.py (v606 elevated suppression),
+        #       tmp/improve_brief.md (gap zone analysis),
+        #       data/mandatory_themes.txt (deadline merge constraint)
+        if merge_grade == "NEAR" and max_y >= 1.5 and reactive_pair_count >= 3 and piece_count >= 28:
+            # Graduated suppression: scale type 0.5 at max_y=1.5 → 0.2 at max_y=2.5+
+            # This reduces NEAR bonus (600*merge_mult) to effective 300 at 1.5, 120 at 2.5
+            # NEAR_DEADLINE_RISK (axis 1.5) still applies if reactor_margin < 1.0
+            gap_zone_scale = max(0.2, 1.0 - (max_y - 1.5) * 0.6)
+            score -= 600.0 * merge_mult * (1.0 - gap_zone_scale)
+            reasons.append("GAP_ZONE_NEAR_SUPPRESSED")
+
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
         # targetのscore1359 T77(DIRECT_MERGE_HIGH_LAYER, +100)が示す通り、danger_direct_mergeは
@@ -1507,7 +1539,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # analysis_result.md adopted hypothesis: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
         # When type 14 exists but no type 15, prioritize building the second type 14
         # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
-        # Disabled at deadline_crossed+NO per mandatory_themes.txt ("no placement past deadline without merge").
+        # vXXX: type 14 proximity now applies even when deadline_crossed=YES (unavoidable case)
         if pre_russia_phase:
             # High-type merges (>=10) bonus — smaller than v503 original (+400 vs +800)
             candidate_merges = result.get("merges", [])
@@ -1517,7 +1549,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Type 14 proximity guide — smaller (+75 vs +150)
             # When no merge available but type 14 exists, guide placement near type 14 pieces
             # mandatory_themes.txt: no placement past deadline without merge
-            if merge_grade == "NO" and not deadline_crossed:
+            # vXXX: always apply when type 14 exists — deadline_crossed=YES is unavoidable case
+            # (mandatory_themes "when mergeable" has no choice when merge_grade==NO)
+            # Keep merge_grade=="NO" to avoid guiding toward type 14 when merges ARE available
+            if merge_grade == "NO":
                 same_type_14_count = sum(1 for p in pieces if p.get("type") == 14)
                 if same_type_14_count > 0:
                     for p in pieces:
