@@ -1149,3 +1149,6 @@ HEALTH全green: monitor2/loop9000/runner66864/daemon2/SOVIET log=1/本日Russia1
 **d88fc大標本MEASURE(n=134)**: T13+82/**T14+31**/T15 3.7%/score_med1280。**早期小標本(T14+37-38/T15 5-7.7)から平均回帰**したが、**EXP-9(26/2.3/1329)より funnel優位は維持(T14+ +5pt, T15約1.6倍)**。score_medは僅か低(funnel優位とのトレードオフ)。recent40 score_med1224>床1150(breach無)。Russia鈍化(~2h)も真T15率3.7%ならPoisson内。
 **結論**: d88fcは「dramatically better」でなく「modestly better」がより正確。但しSoviet funnel(T15)はEXP-9の約1.6倍で、deployableな最良baseline継続。安定運用(MIN100でchurn稀)が最適。
 **次**: 安定継続・床score監視(1150割れ持続なら要対応)・次param並列(~100試合)・新Russia/ソ連。
+
+### §8追記: 安定継続(2026-06-24 00:47)
+HEALTH全green: monitor2/loop9000/runner21286/daemon2/SOVIET log=1。live==head==anchor==d88fc8bfd580/churn0(70min)/0スコアなし(recent24中央値~1250)/床breach無。06-23 Russia最終12件、06-24は新日開始で0件(正常)。数パス安定継続=d88fc(Soviet最良 T14+31/T15 3.7 n134)がMIN100下でクリーン稼働。「両立」決着済(安定優先・param並列稀)。次param並列~100試合後。新Russia/ソ連監視継続。
