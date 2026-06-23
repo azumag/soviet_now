@@ -69,6 +69,16 @@ FAST_DROP_DEADLINE_CONTACT = True
 
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vNEXT: AVOID_BLOCK height gate — when max_y>=1.8, axis 9.3 suppressed so HEIGHT_CONTROL
+      #       picks the lowest landing without being overridden by reactive-pair blocking noise.
+      #       Worst T56-57 (max_y=2.11, rp=4): AVOID_BLOCK fired on edge x=-3.0 (top_y=2.81) and
+      #       x=-0.3 (top_y=2.7), accelerating max_y runaway and piece_count accumulation.
+      #       Batch low-score AVOID_BLOCK 5.2% vs high-score 3.0% (1.7x frequency diff).
+      #       Fixes rollback failure mode: max_y runaway + AVOID_BLOCK edge scatter at HIGH/CRITICAL phase
+      #       Low/MEDIUM phase (max_y<1.8) keeps original advisory so advice.md 隣接ピース間進入回避 holds.
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/20260623_102909_score0618.jsonl T56-57,
+      #             tmp/batch_summary.txt (low/high reason diff), advice.md, tmp/improve_brief.md,
+      #             logs/change_log.txt
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1388,10 +1398,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and reactive_pair_count >= 1:
             # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
             # v461: also suppress in death spiral — height must be sole differentiator
-            board_congested = (
-                (max_y >= 3.0 and deadline_crossed)
-                or (reactive_pair_count >= 5 and max_y >= 2.5)
-            )
+            # vNEXT: AVOID_BLOCK height gate — suppress axis 9.3 when board is already stressed
+            # (max_y>=1.8). Old gate only fired in extreme danger (max_y>=3.0 with crossed, or
+            # rp>=5 with max_y>=2.5), so worst-game T56-57 (max_y=2.11, rp=4) was unprotected and
+            # AVOID_BLOCK pushed landing to edge (x=-3.0) / high-y (top_y=2.81). At max_y>=1.8 the
+            # board is already in HIGH/CRITICAL phase; height penalty must dominate to stop max_y
+            # runaway. Below 1.8 (LOW/MEDIUM) we keep the original guidance (advice.md: 隣接ピース間
+            # 進入回避).
+            board_congested = max_y >= 1.8
             if not board_congested and not death_spiral:
                 blocking_penalty = 0.0
                 for rp in reactive_pairs:
