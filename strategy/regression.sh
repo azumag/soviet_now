@@ -1729,8 +1729,13 @@ if existing_head and existing_head == base_hash and existing_anchor_hash:
         "started_at": int(active.get("started_at", now) or now),
         "updated_at": now,
     }
-    with open(active_file, "w", encoding="utf-8") as f:
+    import os as _os
+    _atmp = active_file + ".tmp"
+    with open(_atmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
+        f.flush()
+        _os.fsync(f.fileno())
+    _os.replace(_atmp, active_file)
     print(
         f"continue|anchor={existing_anchor_hash[:8]}|head={new_hash[:8]}|"
         f"depth={payload['depth']}|closed={closed_games}|patience={patience}|best={(best_hash[:8] if best_hash else '-')}"
@@ -1757,8 +1762,13 @@ if base_hash and base_hash != anchor_hash and base_metrics:
     payload["depth"] = 2
     payload["lineage"] = [base_hash, new_hash]
 
-with open(active_file, "w", encoding="utf-8") as f:
+import os as _os
+_atmp = active_file + ".tmp"
+with open(_atmp, "w", encoding="utf-8") as f:
     json.dump(payload, f, ensure_ascii=False)
+    f.flush()
+    _os.fsync(f.fileno())
+_os.replace(_atmp, active_file)
 print(
     f"start|anchor={anchor_hash[:8]}|head={new_hash[:8]}|depth={payload['depth']}|"
     f"closed={payload['closed_games']}|patience={payload['patience']}|best={(payload['best_hash'][:8] if payload['best_hash'] else '-')}"
@@ -3776,8 +3786,13 @@ if branch_active:
             active["anchor"] = global_anchor
             active["anchor_synced_from_global"] = int(time.time())
             active["anchor_sync_reason"] = "global_objective_anchor_better"
-            with open(active_branch_file, "w", encoding="utf-8") as f:
+            import os as _os
+            _atmp = active_branch_file + ".tmp"
+            with open(_atmp, "w", encoding="utf-8") as f:
                 json.dump(active, f, ensure_ascii=False)
+                f.flush()
+                _os.fsync(f.fileno())
+            _os.replace(_atmp, active_branch_file)
         except Exception:
             pass
     else:
