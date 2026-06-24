@@ -62,8 +62,21 @@ Phases (determined by board max Y):
 #
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
+# AI-tunable runtime parameter:
+# True  = deadline contact skips settle wait and drops immediately.
+# False = even during deadline contact, wait until the board is settled.
+FAST_DROP_DEADLINE_CONTACT = True
+
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v682: axis 9.68 T13/T14-specific proximity guidance for T14→T15 pipeline —
+      #       next_type in [13,14] && (T14>=1 or T13>=1) && rp<3 && !death_spiral で
+      #       既存T14/T13ペアへ+150-300近接ボーナス。best game T155-T166 の T14x2 12ターン
+      #       無誘導状態を解消、type14→15導線(カザフスタン→ロシア)を能動誘導。
+      #       Stage focus: カザフスタン(T14)→ロシア(T15)導線。
+      #       Fixes rollback-adjacent failure: T14+T14 物理的隔たりによる type15 未到達 (41/41試合)。
+      #       refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/improve_brief.md,
+      #       game_history/20260625_012200_score4096.jsonl T155-T166
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1366,6 +1379,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- v682: axis 9.68 T13/T14-specific proximity guidance for T14→T15 pipeline -----
+        # Best game (score4096) T155-T166: T14x2 12ターン連続存在、merge_available=false 継続。
+        # T14+T14 → T15 への導線が axis 9.6b では捕捉されない（current_type(next_type)がT13/T14でない、
+        # merged_type隣接性も効かない）。同type近接誘導を type-specific に発動し、
+        # 既存T14/T13ペアへ別ピースを置く経路を誘導して将来の type15/type14 併合レーンを保全する。
+        # Fires when: merge_grade=="NO" && !death_spiral && reactive_pair_count<3
+        #             && (T14_count>=1 OR T13_count>=1) && next_type in [13, 14]
+        # Bonus: +150-300 (T14 x within 2.0u: max(0, 300 - 150*dist))
+        #        +150-300 (T13 x within 1.5u: max(0, 300 - 200*dist))
+        # postmortem制約遵守: rp<3 ガード（axis 8.8 -4500 支配領域を侵食しない）、
+        # death_spiral 抑制（height penaltyを sole differentiator として残す）、
+        # russia_phase 不問（type==15 個数は本バッチで常に 0、過剰反応不要）。
+        # mandatory_themes 4 整合: 別typeピースが既T13/T14ペアを塞ぐ経路を遠ざける方向。
+        # Stage focus: カザフスタン(T14)→ロシア(T15)導線。type14x2 完成後に次のtype14/type13
+        # が来た時のレーン保存誘導。best game T155-T166 の 12ターン無誘導を解決。
+        # refs: tmp/analysis_result.md (Hypothesis: axis 9.68 T13/T14 proximity guidance),
+        #       game_history/20260625_012200_score4096.jsonl T155-T166 (T14x2 no guidance),
+        #       tmp/batch_summary.txt (russia=0/41, peak T14x2 in best game),
+        #       tmp/state/last_rollback_postmortem.md (rp<3 ガード遵守)
+        if merge_grade == "NO" and not death_spiral and reactive_pair_count < 3 and next_type in [13, 14]:
+            _t13_pieces = [p for p in pieces if p.get("type") == 13]
+            _t14_pieces = [p for p in pieces if p.get("type") == 14]
+            if _t14_pieces:
+                _cx14 = sum(p.get("x", 0.0) for p in _t14_pieces) / len(_t14_pieces)
+                _dist14 = abs(x - _cx14)
+                if _dist14 < 2.0:
+                    _bonus14 = max(0, 300.0 - _dist14 * 150.0)
+                    score += _bonus14
+                    if "T14_PROXIMITY" not in "_".join(reasons):
+                        reasons.append("T14_PROXIMITY")
+            if _t13_pieces:
+                _cx13 = sum(p.get("x", 0.0) for p in _t13_pieces) / len(_t13_pieces)
+                _dist13 = abs(x - _cx13)
+                if _dist13 < 1.5:
+                    _bonus13 = max(0, 300.0 - _dist13 * 200.0)
+                    score += _bonus13
+                    if "T13_PROXIMITY" not in "_".join(reasons):
+                        reasons.append("T13_PROXIMITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
