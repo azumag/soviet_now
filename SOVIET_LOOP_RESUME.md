@@ -1196,3 +1196,9 @@ HEALTH全green: monitor2/loop9000/runner31342/daemon2/SOVIET log=1/**Russia 06-2
 
 ### §8追記: 安定継続(~3h churn0) (2026-06-24 08:47)
 HEALTH全green: monitor2/loop9000/runner84117/daemon2/SOVIET log=1/Russia 06-24=4件。live==head==anchor==d88fc8bfd580/active_branch VALID(465B)/churn0(修正以降~3h improve/revert無)/stream健全(recent20 0スコアなし中央値~1580・高スコア3890/2758/2343)。cycle acc=51/100(次param並列~49試合後)。原子書込+MIN100+anchorでchurn根絶durable。原子化修正live確証は次サイクルimprove/revert待ち(settle中=revert無)。d88fc(Soviet-best)安定運用。
+
+### §8追記: 安定継続(churn0 ~5h)・床懸念は低luck窓と判明 (2026-06-24 10:47)
+HEALTH全green: monitor2/loop9000/runner8967/daemon2/SOVIET log=1/Russia 06-24=5件。live==head==anchor==d88fc8bfd580/active_branch valid(465B)/**churn0 ~5h継続**(直近revert 05:38=修正前)/acc=86/100(次param並列~14試合後)。
+**床score懸念=低luck窓と確認**: recent40 median1152(ボーダー)だったが、**大標本(n=206) score_med=1293・recent60=1298**で床1150を十分超=narrow窓ノイズ。床割れなし。funnel大標本: T14+28(vs26)/T15 3.4%(vs2.3, ~1.5倍)=平均回帰でmodestだがdeployable最良baseline維持。
+**現状=理想安定**: d88fc(Soviet-best)クリーン・churn無・param並列稀(15min cap)・funnel保護・Russia量産。原子書込修正で0byte破損根絶durable。
+**次**: 安定継続・次サイクル(acc~100)improve/revert時の原子化確証・床score・d88fc維持・新Russia/ソ連。
