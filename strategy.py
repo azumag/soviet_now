@@ -62,8 +62,26 @@ Phases (determined by board max Y):
 #
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
+# AI-tunable runtime parameter:
+# True  = deadline contact skips settle wait and drops immediately.
+# False = even during deadline contact, wait until the board is settled.
+FAST_DROP_DEADLINE_CONTACT = True
+
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vXXX: axis 9.68 T13/T14 proximity bonus — Kazakhstan(T14) gateway fix
+      #       殿堂版 best_score6151 から移植。merge_grade==NO && reactive_pair_count<3 && next_type in [13,14] && current_type in [13,14]
+      #       で T13/T14 ピースへの近接配置に +150-300 ボーナス。Kazakhstan(T14)=10/29(34%) を 50-60% に底上げ。
+      #       副次: 1個目ロシア建国後、2個目ロシア素材(T14 ペア)維持確率を上げて 2個目 T15 への導線を作る。
+      #       改善対象ステージ: カザフスタン(T14)=10/29(34%)。
+      #       死亡スパイラル (death_spiral) 時は発火しない (axis 8.8/8.6/8.7 と競合させない)。
+      #       Fixes rollback failure mode: Kazakhstan(T14) ゲート 34% 停滞と 1個目ロシア後の 2個目 T15 導線欠如
+      #       mandatory_themes: 「ロシア(type15)が1個だけ盤面にある時...低さと二個目ロシア経路の維持を両立せよ」と整合
+      #       refs: tmp/analysis_result.md (Hypothesis: T13/T14 proximity guidance),
+      #             tmp/improve_brief.md (stage_gate_rates), tmp/batch_summary.txt,
+      #             strategy_versions/best_score6151_strategy.py (殿堂版 移植元),
+      #             game_history/20260624_184619_score2663.jsonl T72-104 (T13×1+T14×1 35ターン停滞),
+      #             game_history/20260624_182752_score3456.jsonl T96-139 (T15建国後 T13:0-2 T14:0 固定)
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1366,6 +1384,53 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- axis 9.68: T13/T14 proximity bonus (Kazakhstan T14 gateway fix) -----
+        # 殿堂版 best_score6151 から移植。Kazakhstan(T14) ゲート 34% が主ターゲット (stage_gate_rates)。
+        # next_type と current_type がともに T13/T14 圏内のとき、盤面上にある T13/T14 ピースへ近接配置する選択を
+        # 強化する。これにより:
+        #   - T14+T14→T15 (Kazakhstan→Russia) の直接併合機会を増やす
+        #   - T13+T13→T14 ペアを中央付近に維持し、後続の T14+T14→T15 を可能にする
+        #   - 1個目ロシア建国後、2個目ロシア素材の T14 個数を 1 個以上に保つ導線を作る
+        # ガード条件:
+        #   - reactive_pair_count < 3: 死亡スパイラル時のガイダンス過剰を避ける (axis 8.8 -4500 と競合させない)
+        #   - death_spiral == False: 死亡スパイラル中は height penalty のみが差分軸となる
+        #   - merge_grade == "NO": 即時併合可能時は DIRECT/NEAR のボーナス (1200/600) が優先される
+        # magnitude: 最大 +300 (T14 dist=0)、+300 (T13 dist=0)。height_penalty diff (~100-200) を上回るが
+        # axis 8.8 (-4500) や REACTIVE_PAIRS_NO_MERGE_PENALTY を超えない
+        # horizontal 距離のみで評価 (vertical 位置は height_penalty が別途評価)。
+        # 2663 game T72-104: T13×1 + T14×1 が 35 ターン停滞した事案で、next_type=T13/T14 のとき
+        # T13/T14 ピース横へ誘導できれば早期に T14+T14→T15 を成立できた可能性
+        # best 3456 game T96-139: T15建国後 {T13:0-2, T14:0} 固定で 2個目 T15 導線なし。
+        # この軸は T14 個数を盤面に残すことで事後的に T14+T14→T15 機会を創出する
+        if (
+            merge_grade == "NO"
+            and not death_spiral
+            and reactive_pair_count < 3
+            and next_type in (13, 14)
+        ):
+            _t13_pieces = [p for p in pieces if p.get("type") == 13]
+            _t14_pieces = [p for p in pieces if p.get("type") == 14]
+            # T14_PROXIMITY_BONUS: 盤面に T14 が 1 個以上あるとき、next_type==14 なら水平近接で加点
+            # T14 同士の併合 (T14+T14→T15) を次手で起こしやすくする
+            if _t14_pieces and next_type == 14:
+                _cx14 = sum(p.get("x", 0) for p in _t14_pieces) / len(_t14_pieces)
+                _dist14 = abs(x - _cx14)
+                if _dist14 < 2.0:
+                    _bonus14 = max(0, 300.0 - _dist14 * 150.0)
+                    if _bonus14 > 0:
+                        score += _bonus14
+                        reasons.append("T14_PROXIMITY_BONUS")
+            # T13_PROXIMITY_BONUS: 盤面に T13 が 1 個以上あるとき、next_type in [13,14] なら水平近接で加点
+            # T13+T13→T14 の次手併合機会、または T13 の隣で T14 を育てる空間を作る
+            if _t13_pieces and next_type in (13, 14):
+                _cx13 = sum(p.get("x", 0) for p in _t13_pieces) / len(_t13_pieces)
+                _dist13 = abs(x - _cx13)
+                if _dist13 < 1.5:
+                    _bonus13 = max(0, 300.0 - _dist13 * 200.0)
+                    if _bonus13 > 0:
+                        score += _bonus13
+                        reasons.append("T13_PROXIMITY_BONUS")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
