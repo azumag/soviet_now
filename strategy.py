@@ -65,18 +65,22 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
-
-
+FAST_DROP_DEADLINE_CONTACT = False
 # --- Change History (compressed to 5 entries; full history in git) ---
-      # v682: axis 9.68 T13/T14-specific proximity guidance for T14→T15 pipeline —
-      #       next_type in [13,14] && (T14>=1 or T13>=1) && rp<3 && !death_spiral で
-      #       既存T14/T13ペアへ+150-300近接ボーナス。best game T155-T166 の T14x2 12ターン
-      #       無誘導状態を解消、type14→15導線(カザフスタン→ロシア)を能動誘導。
-      #       Stage focus: カザフスタン(T14)→ロシア(T15)導線。
-      #       Fixes rollback-adjacent failure: T14+T14 物理的隔たりによる type15 未到達 (41/41試合)。
-      #       refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/improve_brief.md,
-      #       game_history/20260625_012200_score4096.jsonl T155-T166
+      # v682: axis 9.15 — Merge drought low-type digest priority (best_score5801 v622 minimal移植)
+      #       主ターゲット: Ukraine(T13) gate 76%→100%。worst T55-T60 (rp=3-7 で6連続 NO merge, score_delta=0) を代表とする
+      #       merge_drought → pc蓄積 → max_y runaway 死亡パターンの脱出経路を追加。
+      #       merge_grade==NO && rp>=3 && max_y>=1.5 && not death_spiral のとき、reactive_pairs/near_pairs から
+      #       type<=5 のペアを走査し、最も低typeのペアの重心 (cx,cy) への Manhattan 近接ボーナスを加点。
+      #       Bonus: max(0, 600 - dist*200) * merge_mult。Manhattan dist<=3 で発火。
+      #       death_spiral中は完全抑制（axis 8.8 -4500 を唯一の識別軸として維持）。
+      #       type>5ペアは対象外（本hypの目的はpc削減。高typeペアは別hyp）。
+      #       mandatory_themes 整合: NO merge限定、DIRECT/NEAR merge機会への干渉なし。
+      #       Fixes rollback failure mode: "6-7 連続 NO merge で score_delta=0 の death cascade"
+      #       refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py v622,
+      #       game_history/20260624_022542_score0585.jsonl T55-T60,
+      #       game_history/20260624_032757_score3296.jsonl T153-T160,
+      #       game_history/20260624_030150_score0640.jsonl T51-T60
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -567,7 +571,7 @@ FAST_DROP_DEADLINE_CONTACT = True
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
-# v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
+# [BEST:6527] v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
 # worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
 # extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
 # NEAR success rate 68.5%. At extreme danger conditions, failure rate 31.5% combined with piece_count
@@ -1299,8 +1303,65 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_dist = adj_dist
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
-                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 45.05)
                 score += pipeline_bonus
+
+        # ----- v682-NEW: axis 9.15 — Merge drought low-type digest priority (best_score5801 v622 minimal移植) -----
+        # 主ターゲット: Ukraine(T13) gate 76%→100%。worst T55-T60 (rp=3-7 で 6 連続 NO merge, score_delta=0)
+        # を代表とする merge_drought → pc 蓄積 → max_y runaway 死亡パターンの脱出経路。
+        # 既存 axis 9.6b/9.7 は current_type のペアまたは隣接typeを誘導するが、current_type が
+        # 中-高 type (例: type 8, 9) で type<=5 の low-type ペアが散在しているとき、低 type 消化の
+        # incentive がなく death spiral に入る。本 axis は reactive_pairs/near_pairs から type<=5
+        # のペアを走査し、最も低 type のペア重心への Manhattan 近接ボーナスを加点して低 type 消化を促す。
+        # bonus = max(0, 600 - dist*200) * merge_mult。 dist<=3 で発火、dist>=3 で 0。
+        # max ~600*merge_mult (HIGH phase merge_mult=1.0 で +600)。 axis 8.8 の -4500 と競合する
+        # 範囲だが、低 type ペアへの近接は通常 edge 配置 (軸 9.6b や AVOID_BLOCK) よりも
+        # score_delta 改善効果が高い (worst ゲーム終盤 pc 28→36 の死の連鎖を 1-2 ターンで脱出)。
+        # death_spiral中は完全抑制。type>5 ペアは対象外（本hypの目的はpc削減、高typeペアは別hyp）。
+        # mandatory_themes 整合:
+        #   - 「デッドラインを超える位置は併合できる場合に限る」: NO merge 限定、DIRECT/NEAR merge への干渉なし
+        #   - 「NEXTを考慮」/「nextNext ペア保護」: 既存 axis 5/5.5 維持、本 axis は干渉なし
+        #   - 「ロシア(type15)が1個だけの時、二個目type15素材から遠い端捨て禁止」:
+        #     type<=5 ペアが既存 type 15 から遠い場合は加点ゼロ。端捨てを助長しない
+        # worst T55-T60 (rp=3-7, max_y=1.5+, type<=5 ペア散在) への直接対策。
+        # best T122-T145 (Russia 出現後) で type 2 ペア重心 (2.82,-2.26) への近接候補も加点され得る。
+        # refs: tmp/analysis_result.md (Hypothesis: Merge drought low-type digest priority),
+        #       strategy_versions/best_score5801_strategy.py axis 9.15 (v622),
+        #       game_history/20260624_022542_score0585.jsonl T55-T60 (6 連続 NO merge),
+        #       game_history/20260624_032757_score3296.jsonl T153-T160 (端配置 death cascade)
+        if (
+            merge_grade == "NO"
+            and reactive_pair_count >= 3
+            and max_y >= 1.5
+            and not death_spiral
+        ):
+            # reactive_pairs: list of (id1, id2, type)
+            _low_type_pairs = []
+            for _rp_entry in reactive_pairs:
+                if isinstance(_rp_entry, (list, tuple)) and len(_rp_entry) >= 3:
+                    if _rp_entry[2] <= 5:
+                        _p1 = piece_pos_by_id.get(_rp_entry[0])
+                        _p2 = piece_pos_by_id.get(_rp_entry[1])
+                        if _p1 and _p2:
+                            _low_type_pairs.append((_rp_entry[2], (_p1[0] + _p2[0]) / 2.0, (_p1[1] + _p2[1]) / 2.0))
+            # near_pairs: list of (id1, id2, type, gap) — 同様に走査
+            for _np_entry in near_pairs:
+                if isinstance(_np_entry, (list, tuple)) and len(_np_entry) >= 3:
+                    if _np_entry[2] <= 5:
+                        _p1 = piece_pos_by_id.get(_np_entry[0])
+                        _p2 = piece_pos_by_id.get(_np_entry[1])
+                        if _p1 and _p2:
+                            _low_type_pairs.append((_np_entry[2], (_p1[0] + _p2[0]) / 2.0, (_p1[1] + _p2[1]) / 2.0))
+            if _low_type_pairs:
+                # 最も低 type のペア（pc 削減効率最大化）を選ぶ
+                _low_type_pairs.sort(key=lambda t: t[0])
+                _best_type, _best_cx, _best_cy = _low_type_pairs[0]
+                # Manhattan 距離: より penalty 重視で column に縛らない
+                _dist = abs(x - _best_cx) + abs(landing_y - _best_cy)
+                _digest_bonus = max(0.0, 600.0 - _dist * 200.0) * merge_mult
+                if _digest_bonus > 20:
+                    score += _digest_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
@@ -1379,45 +1440,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
-
-        # ----- v682: axis 9.68 T13/T14-specific proximity guidance for T14→T15 pipeline -----
-        # Best game (score4096) T155-T166: T14x2 12ターン連続存在、merge_available=false 継続。
-        # T14+T14 → T15 への導線が axis 9.6b では捕捉されない（current_type(next_type)がT13/T14でない、
-        # merged_type隣接性も効かない）。同type近接誘導を type-specific に発動し、
-        # 既存T14/T13ペアへ別ピースを置く経路を誘導して将来の type15/type14 併合レーンを保全する。
-        # Fires when: merge_grade=="NO" && !death_spiral && reactive_pair_count<3
-        #             && (T14_count>=1 OR T13_count>=1) && next_type in [13, 14]
-        # Bonus: +150-300 (T14 x within 2.0u: max(0, 300 - 150*dist))
-        #        +150-300 (T13 x within 1.5u: max(0, 300 - 200*dist))
-        # postmortem制約遵守: rp<3 ガード（axis 8.8 -4500 支配領域を侵食しない）、
-        # death_spiral 抑制（height penaltyを sole differentiator として残す）、
-        # russia_phase 不問（type==15 個数は本バッチで常に 0、過剰反応不要）。
-        # mandatory_themes 4 整合: 別typeピースが既T13/T14ペアを塞ぐ経路を遠ざける方向。
-        # Stage focus: カザフスタン(T14)→ロシア(T15)導線。type14x2 完成後に次のtype14/type13
-        # が来た時のレーン保存誘導。best game T155-T166 の 12ターン無誘導を解決。
-        # refs: tmp/analysis_result.md (Hypothesis: axis 9.68 T13/T14 proximity guidance),
-        #       game_history/20260625_012200_score4096.jsonl T155-T166 (T14x2 no guidance),
-        #       tmp/batch_summary.txt (russia=0/41, peak T14x2 in best game),
-        #       tmp/state/last_rollback_postmortem.md (rp<3 ガード遵守)
-        if merge_grade == "NO" and not death_spiral and reactive_pair_count < 3 and next_type in [13, 14]:
-            _t13_pieces = [p for p in pieces if p.get("type") == 13]
-            _t14_pieces = [p for p in pieces if p.get("type") == 14]
-            if _t14_pieces:
-                _cx14 = sum(p.get("x", 0.0) for p in _t14_pieces) / len(_t14_pieces)
-                _dist14 = abs(x - _cx14)
-                if _dist14 < 2.0:
-                    _bonus14 = max(0, 300.0 - _dist14 * 150.0)
-                    score += _bonus14
-                    if "T14_PROXIMITY" not in "_".join(reasons):
-                        reasons.append("T14_PROXIMITY")
-            if _t13_pieces:
-                _cx13 = sum(p.get("x", 0.0) for p in _t13_pieces) / len(_t13_pieces)
-                _dist13 = abs(x - _cx13)
-                if _dist13 < 1.5:
-                    _bonus13 = max(0, 300.0 - _dist13 * 200.0)
-                    score += _bonus13
-                    if "T13_PROXIMITY" not in "_".join(reasons):
-                        reasons.append("T13_PROXIMITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
@@ -1761,7 +1783,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
-                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.3609
                         if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
@@ -1770,7 +1792,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # v155成功構造: 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
                 if len(nearby_pieces) >= 1:
-                    dist, _ = nearby_pieces[0]
+                    dist, _ = nearby_pieces[-1]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
                     score += chain_bonus
 
@@ -2069,7 +2091,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= max(0, (0.5 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
-            score -= max(0, (0.5 - margin)) * 4000
+            score -= max(1, (0.5 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
         # ----- update best candidate -----
