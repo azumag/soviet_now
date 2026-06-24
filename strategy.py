@@ -66,9 +66,18 @@ Phases (determined by board max Y):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
-
-
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # vXXX: axis 9.9 / 9.9a — high-type pipeline guidance (max_type>=10) — broadened scope.
+      #       前版: russia_phase 限定 (1/49 game のみ fire → 実効性乏しく self-flagged 冗長)。
+      #       今回: russia_phase ガード撤去し、max_type_on_board>=10 / pc>=20 / max_y>=1.0 / !death_spiral /
+      #             merge_grade==NO / !crosses_deadline に拡張。
+      #       効果: best_score5801 (L3063-3176) と同型の真下/重心/low-type-under を T10+ 任意の
+      #             最高 type ピースに適用。T10 蓋 (worst score0499 T55-67), T14 蓋 (best score3121
+      #             T111-118), T15 蓋 (best score3008 T117-126) を 1 軸でカバー。
+      #       段階ゲート: ウクライナ(T13) 82% / カザフスタン(T14) 22% への T12→T13→T14 パス強化。
+      #       Fixes failure mode: 高 type ピースの真下/斜め下レーンが塞がれ、2 つ目素材が育たず死亡
+      #       refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py L3063-3176,
+      #             game_history/{score0499, score3121, score3008}
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
       #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
       #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
@@ -1284,7 +1293,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 p_type = p.get("type", 0)
                 if p_type == next_type - 1 or p_type == next_type + 1:
                     p_x = p.get("x", 0)
-                    p_y = p.get("y", 10)
+                    p_y = p.get("y", 16)
                     # Prefer deeper (lower y) pieces — more accessible for future merges
                     adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
                     if adj_dist < best_adjacent_dist:
@@ -1906,6 +1915,87 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+
+        # ----- axis 9.9 / 9.9a: high-type pipeline guidance (max_type>=10) -----
+        # 直前: russia_phase 限定 (1/49 game のみ fire → 実効性乏しく self-flagged 冗長)
+        # 今回: russia_phase ガードを撤去し、max_type_on_board>=10 に拡張。
+        #       best_score5801 (L3063-3176) と同型の真下/重心クラスタリング/low-type-under を
+        #       T10+ 任意の最高 type ピースに適用。score0499 (T10 蓋), score3121 (T14 蓋),
+        #       best score3008 T117-126 (T15 蓋) すべてを 1 軸でカバー。
+        # main_gate_target Ukraine(T13) 82% / Kazakhstan(T14) 22% への T12→T13→T14 パス強化。
+        # mandatory_themes line 4: 既存同 type ペアの併合レーンを塞がないように、
+        #   最高 type ピースの真下/斜め下に寄せる (2 つ目素材育成レーン)。
+        # ガード:
+        #   - max_type_on_board >= 10 (T10 以上が盤面にあるとき)
+        #   - merge_grade == "NO" (DIRECT/NEAR 時は既存軸が即時併合を処理)
+        #   - max_y >= 1.0 (LOW フェーズでは蓋化リスク低、適用不要)
+        #   - not death_spiral (v460/v461 death_spiral 整合)
+        #   - not crosses_deadline (mandatory_themes「デッドライン超出時は併合できる場合に限る」)
+        #   - piece_count >= 20 (序盤の局所配置は別ロジックに任せる)
+        # refs: tmp/analysis_result.md (Adopted Hypothesis),
+        #       strategy_versions/best_score5801_strategy.py L3063-3176 (reference impl),
+        #       game_history/20260624_093030_score3008.jsonl T117-126 (T15 蓋失敗),
+        #       game_history/20260624_113217_score3121.jsonl T111-118 (T14 蓋失敗),
+        #       game_history/20260624_084838_score0499.jsonl T55-67 (T10 蓋失敗)
+        max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
+        if (max_type_on_board >= 10
+                and merge_grade == "NO"
+                and max_y >= 1.0
+                and not death_spiral
+                and not result.get("crosses_deadline", False)
+                and piece_count >= 20):
+            # axis 9.9: 最高 type ピースの真下/斜め下配置 + 高 type 重心クラスタリング
+            high_pieces = [p for p in pieces if p.get("type") == max_type_on_board]
+            if high_pieces:
+                # 最深 (lowest y) 最高 type ピースを優先ターゲット
+                deepest_high = min(high_pieces, key=lambda p: p.get("y", 10))
+                high_y = deepest_high.get("y", -10)
+                high_x = deepest_high.get("x", 0)
+                # pm: 既存最高 type が深いほど 2 つ目育成しやすいので multiplier 強化。
+                # y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x (線形, clamp [0.3, 2.0])
+                pipeline_mult = max(0.3, min(2.0, 1.0 - high_y * 0.25))
+
+                # (a) 既存最高 type ピースの真下/斜め下配置ボーナス
+                dx = abs(x - high_x)
+                dy = landing_y - high_y  # positive = 候補が対象より下
+                # 範囲: 横 ±1.5, 縦 -0.5 (少し上) 〜 +1.0 (下) → 育成レーン
+                if dx < 1.5 and -0.5 <= dy <= 1.0:
+                    ideal_dy = 0.5
+                    below_bonus = 150.0 * merge_mult * pipeline_mult
+                    below_bonus *= max(0.0, 1.0 - dx / 1.5)  # 横距離減衰
+                    below_bonus *= max(0.0, 1.0 - abs(dy - ideal_dy) * 0.5)  # 縦方向 ideal 寄せ
+                    if below_bonus > 20.0:
+                        score += below_bonus
+                        reasons.append("HIGH_TYPE_PIPELINE_BELOW")
+
+                # (b) 高 type ピースの重心クラスタリング (2 つ目素材は type+1 〜 +3)
+                nearby_high = [p for p in pieces if p.get("type") >= max(10, max_type_on_board - 2)]
+                if len(nearby_high) >= 2:
+                    hc_x = sum(p.get("x", 0) for p in nearby_high) / len(nearby_high)
+                    hc_y = sum(p.get("y", -10) for p in nearby_high) / len(nearby_high)
+                    dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.5
+                    if dist_to_centroid < 3.0:
+                        cluster_bonus = 80.0 * merge_mult * pipeline_mult
+                        cluster_bonus *= max(0.0, 1.0 - dist_to_centroid / 3.0)
+                        if cluster_bonus > 10.0:
+                            score += cluster_bonus
+                            reasons.append("HIGH_TYPE_PIPELINE_CLUSTER")
+
+            # axis 9.9a: 低 type (type<=5) ピースの真下配置 (蓋防止 / 将来 merge レーン確保)
+            # advice.md「大きい国の下にスペースを先確保してから小さい国を入れる」と整合。
+            for p in pieces:
+                p_type = p.get("type", 0)
+                if p_type <= 5:
+                    p_x = p.get("x", 0)
+                    p_y = p.get("y", 0)
+                    target_y = p_y - 0.5  # その低 type ピースの真下
+                    if landing_y < target_y:
+                        dist = abs(x - p_x)
+                        if dist < 1.5:
+                            low_type_under_bonus = 100.0 * merge_mult * (1.804 - dist / 1.5)
+                            score += low_type_under_bonus
+                            reasons.append("LOW_TYPE_UNDER")
+                            break  # 1 候補に複数 LOW_TYPE_UNDER が重複しないよう break
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
