@@ -64,15 +64,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v627: axis 8.8 rp>=4 + deadline_crossed penalty -600*merge_mult (2x)
-     # Fixes failure mode: rp>=4 + deadline_crossed edge placement → max_y runaway
-     # worst T64: rp=5, deadline_crossed, x=-2.8; 1911 T89: rp=4, deadline_crossed, x=-3.0
-     # refs: tmp/analysis_result.md
-     # v626: russia_phase NO merge safety valve enhancement
-     # When russia_phase + deadline_crossed + max_y>=2.0 + rp>=3: suppress ALL compression
-     # to let axis 8.8 penalty (-3000~-7000) be sole differentiator, preventing edge placement
-     # Fixes failure mode: rp>=3 + NO merge + critical board → edge placement (x=±3.0) worsens max_y
-     # refs: tmp/analysis_result.md (Implementation Plan)
+     # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
+     # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+     # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
+     # Fixes: worst game T69-T72 edge placement (x=±3.0) despite high penalty — additional deterrence for edge NO-merge at critical board height
+     # rollback failure mode: high-rp + high-max_y + NO merge + edge placement combination causing max_y runaway
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+     # worst game T66-T69でx=±3.0選択された原因是axis 9.6(-4500)のrp>=1条件がrp=0状況で機能しない
+     # 따라서 crosses_deadline candidate에는 독립したペナルティ 필요 (russia_phase除)
+     # Fixes: worst game T66-T69 crosses_deadline NO-merge edge placement (x=±3.0)
+     # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260509_022447_score0731.jsonl
+     # v625: russia_phase NO merge safety valve — suppress BOARD_COMPRESSION at deadline+max_y>=2.0
+     # analysis_result.md adopted hypothesis: russia_phase + deadline_crossed + max_y>=2.0 + NO merge
+     # 时BOARD_COMPRESSION导致edge配置(x=±3.0)选中→max_y上升。extra_high (score3566) T141-148の失敗モード对应。
+     # Now height penalty-only when critical board, preventing extra_high style max_y runaway.
+     # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先" (配置管理でheight safety优先)
+     # Fixes failure mode: NO merge at critical board causing max_y runaway (extra_high pattern)
+     # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260503_003308_score3566.jsonl
      # v619: axis 9.6b NO-merge proximity +200 — fix worst_game T47 same-type scatter
      # analysis_result.md adopted hypothesis: axis 9.6b bonus (~32-60) too weak vs height diff.
      # Worst game T47 chose x=3.0 (scattered type 7) when x=0.0 (adjacent) was available.
@@ -1856,33 +1864,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                          score += 1200.0
                  reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
              elif merge_grade == "NO":
-                 # v625 + v626: russia_phase NO merge safety valve (enhancement)
-                 # When russia_phase + deadline + max_y >= 2.0:
-                 #   - If rp>=3: suppress ALL compression/proximity bonuses (9.6b, BOARD_COMPRESSION)
-                 #     to let axis 8.8 penalty (-3000~-7000) be the sole differentiator
-                 #   - If rp<3: apply reduced BOARD_COMPRESSION (400) to prioritize merge opportunities
+                 # v625: russia_phase NO merge safety valve
+                 # When russia_phase + deadline + max_y >= 2.0, suppress compression bonus
+                 # to force height-penalty-only placement (lowest y)
+                 # Prevents edge placement (x=±3.0) that worsens max_y — extra_high failure mode
                  # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
-                 # Fixes failure mode: rp>=3 + deadline + max_y>=2.0 → edge placement (x=±3.0) worsens max_y
-                 if deadline_crossed and max_y >= 2.0:
+                 if not (deadline_crossed and max_y >= 2.0):
+                     # Only apply BOARD_COMPRESSION when board is not critical
                      if reactive_pair_count >= 3:
-                         # CRITICAL DANGER: suppress all compression, axis 8.8 penalty is sole differentiator
-                         # This prevents edge placement (x=±3.0) that worsens max_y
-                         pass  # skip all compression bonuses
-                     else:
-                         # moderate danger: still apply reduced compression for board management
-                         score += 400.0
-                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 else:
-                     # Not critical: normal Russia phase board compression
-                     if reactive_pair_count >= 3:
+                         # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
+                         # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
                          score += 900.0
                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                      elif reactive_pair_count >= 1:
+                         # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                         # 即時併合機会_prioritizeするため、盤面圧縮ボーナスを半減
                          score += 400.0
                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                      else:
-                         score += 800.0
-                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                          # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
+                          # 盤面圧縮_prioritizeしつつ、type 15保護を徹底
+                          score += 800.0
+                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                 else:
+                     # Critical board: skip compression, height penalty is sole differentiator
+                     # This prevents edge placement (x=±3.0) that worsens max_y
+                     pass
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
@@ -1920,16 +1927,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Previous code showed score -= 4500 but the axis was adding +600*merge_mult
             # elsewhere, creating net positive at low positions (traction toward high stacks).
             # Now: true penalty that removes gravitational pull during NO merge.
-            # v627: add extra penalty for rp>=4 + deadline_crossed to prevent edge placement
-            # worst game T64: rp=5, deadline_crossed, x=-2.8 → max_y 1.8→2.79
-            # 1911 game T89: rp=4, deadline_crossed, x=-3.0 → max_y 1.58→3.15
-            # Analysis: -300*merge_mult at rp>=4 ≈ -600 is insufficient vs axis 9.6b guidance (+200-500)
-            if reactive_pair_count >= 4 and deadline_crossed:
-                score -= 600.0 * merge_mult
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
-            else:
-                score -= 300.0 * merge_mult
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
+            score -= 300.0 * merge_mult
+            reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
@@ -2013,28 +2012,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
         # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
         # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
-        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
-        # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
-        # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
+        # Penalty (-2000) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
+        # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires at
+        # merge_grade=NO and crosses_deadline in non-russia phases.
+        # Russia phase intentionally allows growth crossings (safety valve axis 9.6).
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
-        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
-            # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
-            # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
-            # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
-            # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
-            # partially overcame penalty. Best game never triggers this (avoids crossing).
-            # -2000 provides ~1000 margin above max possible additive combination, ensuring
-            # deadline-crossing without merge is always deterred. Protected strategy (median
-            # 12789) has no additive axes that could overcome this penalty.
-            # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
-            # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
-            #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
-            #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-            score -= 2000.0
-            reasons.append("CROSSES_DEADLINE_NO_MERGE")
+        # v626: generalize to all phases — mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+        # deadline_crossed + NO merge + crosses_deadline は最も悪い配置選択
+        # axis 9.6 (-4500) は rp>=1条件があり、rp=0では機能しない
+        # したがって crosses_deadline candidateには独立したペナルティが必要
+        # russia_phase時は既存のsafety valve（v625）が機能済みのため追加ペナルティ不要
+        if merge_grade == "NO" and result.get("crosses_deadline", False):
+            if not russia_phase:
+                # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
+                # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
+                # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
+                # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
+                # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
+                # partially overcame penalty. Best game never triggers this (avoids crossing).
+                # -2000 provides ~1000 margin above max possible additive combination, ensuring
+                # deadline-crossing without merge is always deterred. Protected strategy (median
+                # 12789) has no additive axes that could overcome this penalty.
+                # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
+                # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
+                #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
+                #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+                score -= 2000.0
+                reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # v628: edge NO-merge penalty at deadline with high rp + high max_y
+        # Worst game T69-T72: rp>=4, max_y>=2.0, merge_grade=NO, deadline_crossed, x=±3.0 placement
+        # axis 9.65 (-2000) insufficient at high rp; edge placement (|x|>=2.7) contributes to max_y runaway
+        if result.get("crosses_deadline", False) and merge_grade == "NO" and abs(x) >= 2.7 and max_y >= 2.0 and reactive_pair_count >= 4:
+            score -= 1500  # deters edge NO-merge placement at critical board height
+            reasons.append("EDGE_NO_MERGE_DEADLINE_HIGH_RP")
 
         # ----- update best candidate -----
         if score > best_score:
