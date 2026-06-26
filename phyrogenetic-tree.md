@@ -1,8 +1,8 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-27 06:51:44 JST`
+- Updated: `2026-06-27 08:23:11 JST`
 - Nodes: `3333`
-- Edges: `282`
+- Edges: `280`
 - Current: `880278a14edf`
 - Anchor: `dc1586607983`
 - Solid edge: mutation/improvement
@@ -150,9 +150,9 @@ flowchart TD
 
 ## Detail 1/42
 
-- Range: `839930b44612` .. `0ff7f425d879`
+- Range: `8ce7fb12ca41` .. `0ff7f425d879`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `55`
+- Internal edges in this diagram: `53`
 - Cross-chunk link: `0e899ca31b42 --improve--> 151b3f6a0061`
 - Cross-chunk link: `0e899ca31b42 --improve--> 19b772b1ac66`
 - Cross-chunk link: `0e899ca31b42 --improve--> 1a499eef5d15`
@@ -169,16 +169,16 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_839930b44612["839930b44612<br/>g=40 n=20<br/>comp=10411.5"]
-    h_d88fc8bfd580["d88fc8bfd580<br/>g=1539 n=20<br/>comp=10085.2"]
     h_8ce7fb12ca41["8ce7fb12ca41<br/>g=18 n=18<br/>comp=11362.6"]
     h_bcf6915c6c58["bcf6915c6c58<br/>g=31 n=20<br/>comp=10627.6"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>g=1563 n=20<br/>comp=10976.4"]
     h_b9ca9ac970b9["b9ca9ac970b9<br/>g=41 n=20<br/>comp=10891.1"]
     h_24528ec4bd35["24528ec4bd35<br/>g=11 n=11<br/>comp=11527.7"]
     h_f0130cbd2d2b["f0130cbd2d2b<br/>g=22 n=20<br/>comp=11365.2"]
     h_e460a06c1ee8["e460a06c1ee8<br/>g=15 n=15<br/>comp=9815.2"]
     h_f40e606e27dd["f40e606e27dd<br/>g=16 n=16<br/>comp=10921.0"]
     h_131321b07c04["131321b07c04<br/>g=16 n=16<br/>comp=10741.1"]
+    h_839930b44612["839930b44612<br/>g=40 n=20<br/>comp=10411.5"]
     h_1e40c5541032["1e40c5541032<br/>g=20 n=20<br/>comp=11476.5"]
     h_75c38e41e873["75c38e41e873<br/>g=13 n=13<br/>comp=11290.2"]
     h_301434b90c7a["301434b90c7a<br/>g=21 n=20<br/>comp=11422.5"]
@@ -250,8 +250,6 @@ flowchart TD
     h_0fe801339bf1["0fe801339bf1<br/>g=12 n=12<br/>comp=1804.4"]
     h_0ff7f425d879["0ff7f425d879<br/>g=20 n=20<br/>comp=11474.0"]
 
-    h_839930b44612 -. rollback .-> h_d88fc8bfd580
-    h_d88fc8bfd580 -->|improve| h_8ce7fb12ca41
     h_8ce7fb12ca41 -. rollback .-> h_bcf6915c6c58
     h_bcf6915c6c58 -. rollback .-> h_d88fc8bfd580
     h_d88fc8bfd580 -. rollback .-> h_b9ca9ac970b9
@@ -311,16 +309,16 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_839930b44612 plain;
-    class h_d88fc8bfd580 plain;
     class h_8ce7fb12ca41 plain;
     class h_bcf6915c6c58 plain;
+    class h_d88fc8bfd580 plain;
     class h_b9ca9ac970b9 plain;
     class h_24528ec4bd35 plain;
     class h_f0130cbd2d2b plain;
     class h_e460a06c1ee8 plain;
     class h_f40e606e27dd plain;
     class h_131321b07c04 plain;
+    class h_839930b44612 plain;
     class h_1e40c5541032 plain;
     class h_75c38e41e873 plain;
     class h_301434b90c7a plain;
@@ -7860,6 +7858,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#39001 `d88fc8bf -> 880278a1`
+
+- - rollback from d88fc8bfd580 to 880278a14edf at game 39001
+- - reasons: objective_regression+lost_turkmenistan_gate
+- - current comp/p50/p25=10976.4/11482.5/10008.8 vs target 11424.6/12164.0/9925.2
+- - bad recent scores: 11037 10026 10511 7547 9723 11332 11633 13194
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりトルクメニスタン段階の到達率が後退した。
+- current: comp=10976.4 p50=11482.5 p25=10008.8 mean=12165.8 n=20
+- rollback_target: comp=11424.6 p50=12164.0 p25=9925.2 mean=12928.9 n=20
+- metric_gap_vs_target: comp=-448.1 p50=-681.5 p25=83.5 mean=-763.1
+- recent12_avg: bad=11324.4 target=11601.2
+- recent12_floor: bad=7547 target=7376
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
 
 ### Rollback Game#38977 `d88fc8bf -> 880278a1`
 
