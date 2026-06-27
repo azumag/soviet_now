@@ -62,6 +62,11 @@ Phases (determined by board max Y):
 #
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
+# AI-tunable runtime parameter:
+# True  = deadline contact skips settle wait and drops immediately.
+# False = even during deadline contact, wait until the board is settled.
+FAST_DROP_DEADLINE_CONTACT = True
+
 
 # --- Change History (compressed to 5 entries; full history in git) ---
       # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
@@ -554,7 +559,7 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
-# v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
+# [BEST:6527] v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
 # worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
 # extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
 # NEAR success rate 68.5%. At extreme danger conditions, failure rate 31.5% combined with piece_count
@@ -820,6 +825,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = 0.0
     best_score = -float("inf")
     best_reason = ""
+    _la_cands = []  # GOAL(2026-06-05): (x, score, reason, result) for 2-ply lookahead re-rank
+    death_spiral = False  # pre-bind: assigned inside the candidate loop; also read by post-loop lookahead
 
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
@@ -907,6 +914,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = any(
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
+
+    # --- GOAL(2026-06-05, user idea): per-type counts for "don't bury a mergeable piece" axis ---
+    # Used by axis 5.5b to reason logically about WHAT to place on top of board pieces: covering a
+    # piece that still has a same-type partner wastes that merge. Computed once before the loop.
+    _type_counts = {}
+    for _p in pieces:
+        _t = _p.get("type", 0)
+        _type_counts[_t] = _type_counts.get(_t, 0) + 1
+
+    # --- GOAL(2026-06-04): 2nd-Russia nucleus for single-russia_phase growth bias ---
+    # ソ連建国 requires a *second* T15. In single-russia_phase the lone T15 is un-mergeable,
+    # so the only productive growth is a separate sub-Russia tower. Identify the deepest
+    # highest sub-Russia (T8..T14) piece as the nucleus to concentrate growth around.
+    # Used below to add a height-SAFE-gated growth bias among NO-merge placements.
+    soviet_nucleus_x = None
+    if russia_phase and not double_russia_phase:
+        _nuc_candidates = [p for p in pieces if 8 <= p.get("type", 0) <= 14]
+        if _nuc_candidates:
+            _nuc_type = max(p["type"] for p in _nuc_candidates)
+            _nuc = min(
+                (p for p in pieces if p.get("type") == _nuc_type),
+                key=lambda p: p.get("y", 10),
+                default=None,
+            )
+            if _nuc is not None:
+                soviet_nucleus_x = float(_nuc.get("x", 0.0))
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -1630,6 +1663,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             reasons.append("AVOID_BLOCK_NEXTNEXT")
                             break
 
+        # ----- evaluation axis 5.5b: don't bury a mergeable high piece (GOAL 2026-06-05, user idea) -----
+        # Logical "what to place on top of board pieces" reasoning, generalizing axis 5.5 beyond
+        # the nextNext case. When this drop lands ON TOP of a board piece P that still has a
+        # same-type partner elsewhere (so P could merge later), covering P with a different type
+        # wastes that merge. Penalty scaled by P's type — burying a HIGH piece (T10+) is costly and
+        # directly stalls the high-tier pipeline (→ 2nd Russia → ソ連). Find the actual support
+        # piece (top piece under the landing column). nextNext-type is left to axis 5.5 (no double
+        # count); low/mid types (<10) are abundant/cheap so burying them is fine.
+        if merge_grade == "NO" and not death_spiral:
+            _ly = result.get("landing_y", 0)
+            _support = None
+            for _p in pieces:
+                if abs(x - _p.get("x", 0)) < 0.9 and _p.get("y", -10) < _ly:
+                    if _support is None or _p.get("y", -10) > _support.get("y", -10):
+                        _support = _p
+            if _support is not None:
+                _st = _support.get("type", 0)
+                if (
+                    _st >= 10
+                    and _st != next_type
+                    and _st != next_next_type
+                    and _type_counts.get(_st, 0) >= 2
+                ):
+                    score -= (_st - 9) * 120.0  # T10:-120 T12:-360 T14:-600 (protect high pipeline)
+                    reasons.append("AVOID_BURY_MERGEABLE")
+
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
         # Re-introduced in v364 but was limited to reactive<3 with max bonus 50 — too weak.
@@ -1902,6 +1961,64 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
+                  # GOAL(2026-06-04): height-SAFE 2nd-Russia growth bias.
+                  # Among NO-merge placements that are height-safe (do not cross the deadline;
+                  # margin >= 0.5), pull toward the sub-Russia nucleus so survival turns
+                  # concentrate pieces into the 2nd tower — the only path to ソ連建国.
+                  # The bonus is gated on safety, so it can never *select* a runaway placement.
+                  # Since russia_phase disables the global deadline-cross penalty (axis v662
+                  # `not russia_phase`), rewarding only safe drops here also re-introduces a
+                  # mild survival preference, fighting the "die with 1 Russia" failure mode.
+                  # Self-limiting: as the nucleus column grows, drops there stop being safe and
+                  # lose the bonus, so growth spreads instead of spiking max_y. Scoped to
+                  # single-russia_phase (~9% of games, all currently failing to reach Soviet).
+                  # GOAL-loop(2026-06-05): only pull BUILDING-relevant pieces (next_type>=8)
+                  # toward the 2nd-Russia nucleus; low drops clutter the board otherwise.
+                  if soviet_nucleus_x is not None and next_type >= 8:
+                      _cand_margin = result.get("deadline_margin", 99)
+                      _cand_crosses = result.get("crosses_deadline", False)
+                      if (not _cand_crosses) and _cand_margin >= 0.5:
+                          _ndist = abs(x - soviet_nucleus_x)
+                          if _ndist < 2.0:
+                              score += max(0.0, 500.0 - _ndist * 250.0)
+                              reasons.append("SOVIET_NUCLEUS_GROWTH")
+
+        # ----- GOAL-loop BOLD(2026-06-04, user-approved w/ rollback): build the 2nd high tier -----
+        # Diagnosed wall: a 2nd copy of the top tier NEVER coexists (measured: 2xT14 in 0/14
+        # games) -> T15 -> Russia -> ソ連 is mechanically impossible. The board reaches a high
+        # singleton then dies from low-piece pileup before a 2nd high tower is built. Bounded
+        # safety-only nudges (prior HIGH_TIER_CONCENTRATION) measured at baseline -> not enough.
+        # BOLD lever: when the top tier T_max>=12 has only 1-2 copies, COMMIT board space to
+        # concentrating NO-merge pieces near the high nucleus to manufacture the 2nd tower —
+        # stronger bonus (700), wider catchment (2.2), earlier+broader gate (max_type>=12,
+        # pc>=30), and a relaxed-but-never-crossing margin (>=0.3). This trades some survival
+        # for high-tier throughput, aligned with the Soviet-rate goal (not score-max).
+        # Never selects a deadline-CROSSING drop. Restore-protected; assess over ~20 games and
+        # roll back to 82443b56bfb7/aef4abf6558e if median collapses without high-tier gains.
+        # GOAL-loop(2026-06-05): only concentrate BUILDING-relevant pieces (next_type>=8).
+        # Measured death-mode: russia game (3993, 164t) died clogged with 22 LOW pieces (T1-7)
+        # while the concentration bias fired on low drops 33x, dragging them to the high nucleus
+        # and scattering them from their same-type partners so they never merged -> clutter ->
+        # height death. Gating next_type>=8 lets low pieces clear via normal same-type/height
+        # axes, while T8+ still build the 2nd tower.
+        if (
+            (not russia_phase)
+            and merge_grade == "NO"
+            and next_type >= 8
+            and max_type_on_board >= 12
+            and piece_count >= 30
+        ):
+            _hi_pieces = [p for p in pieces if p.get("type") == max_type_on_board]
+            if 1 <= len(_hi_pieces) <= 2:  # building toward / completing the top-tier pair
+                _hi_nuc = min(_hi_pieces, key=lambda p: p.get("y", 10))
+                _ht_margin = result.get("deadline_margin", 99)
+                _ht_crosses = result.get("crosses_deadline", False)
+                if (not _ht_crosses) and _ht_margin >= 0.3:
+                    _ht_dist = abs(x - float(_hi_nuc.get("x", 0.0)))
+                    if _ht_dist < 2.2:
+                        score += max(0.0, 700.0 - _ht_dist * 300.0)
+                        reasons.append("HIGH_TIER_BUILD_2ND")
+
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
@@ -2019,12 +2136,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
+        # ----- GOAL-loop(2026-06-05): graduated russia-phase deadline penalty -----
+        # Measured: russia games die from HEIGHT RUNAWAY (max_y 3.2-3.6, deadline crossed) at
+        # 114-178 turns while still building (T12x3,T11x2 alongside the Russia) — the board
+        # fills before the 2nd tower completes. russia_phase had the deadline-cross penalty
+        # DISABLED entirely (above `not russia_phase`), which is *why* it can self-stack to
+        # death. advice.md ("ロシア建国後の死亡速度が早い…より慎重な盤面進行を") + code comment
+        # ("ロシア1つのままゲームオーバーが最も惜しい") agree: survive longer after founding.
+        # So apply a SOFTER NO-merge penalty (3000 vs 5000) in russia_phase to discourage
+        # self-killing height stacks, while the safety-gated SOVIET_NUCLEUS_GROWTH (margin>=0.5)
+        # keeps building the 2nd tower at safe heights. Surviving longer = more turns to reach
+        # the 2nd T15. DIRECT merges remain exempt (acceptable to cross for a real merge).
+        elif merge_grade == "NO" and russia_phase and margin < 0.5:
+            score -= max(0, (0.5 - margin)) * 3000
+            reasons.append("RUSSIA_CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+        _la_cands.append((x, score, "_".join(reasons) if reasons else "HEIGHT_CONTROL", result))
 
     # ----- FALLBACK: if all non-suppressed candidates were suppressed, pick lowest landing_y -----
     # Bug fix: HARD SUPPRESS can skip all candidates in extreme danger, returning best_x=0.0 with empty reason.
@@ -2037,6 +2169,67 @@ def decide(game_state: dict, analysis: dict) -> dict:
         best_x = max(-3.0, min(3.0, best_x))
         best_x = round(best_x, 2)
         return {"x": best_x, "reason": best_reason}
+
+    # ----- 2-ply lookahead re-rank among near-best NO-merge candidates (GOAL 2026-06-05, user idea) -----
+    # Logical 1-move-ahead planning: among placements within a small score margin of the best that
+    # do NOT merge now, prefer the one that leaves the nextNext piece a real merge. This is where the
+    # 2-ply value lives (immediate merges already win and need no help — verified: a cheap "feeds
+    # nextNext" bonus flipped 0 decisions). ROBUST: the simulated piece is `next` sitting as its own
+    # type with its KNOWN radius, so there is no merged-piece radius guesswork. BOUNDED: only near-best
+    # NO-merge candidates, capped at 6 (perf), and we only switch when the lookahead winner actually
+    # gains a nextNext DIRECT/NEAR merge — never overrides a clearly-better placement. Best-effort:
+    # wrapped in try/except so it can never break decide(); analyze_board is import-callable here even
+    # though it isn't hot-reloadable.
+    try:
+        if (
+            next_next_type
+            and len(_la_cands) >= 2
+            and not death_spiral
+            and suppressed != len(results)
+        ):
+            _la_best_score = max(c[1] for c in _la_cands)
+            _la_band = [
+                c for c in _la_cands
+                if c[1] >= _la_best_score - 200.0
+                and isinstance(c[3], dict)
+                and c[3].get("merge_grade") == "NO"
+            ]
+            _la_band.sort(key=lambda c: -c[1])
+            _la_band = _la_band[:6]
+            if len(_la_band) >= 2:
+                from analyze_board import analyze_drops as _la_analyze
+                _la_shapes = game_state.get("shapes", {}) or {}
+                _la_next_r = next_piece.get("r", 0.5)
+                _la_nn_r = (game_state.get("nextNext", {}) or {}).get("r", _la_next_r)
+                _la_pick = None  # (combined_score, x, reason, grade2)
+                for (_lx, _lscore, _lreason, _lres) in _la_band:
+                    _la_sim = list(pieces) + [{
+                        "id": -999, "type": next_type,
+                        "x": _lx, "y": _lres.get("landing_y", 0.0), "r": _la_next_r,
+                    }]
+                    try:
+                        _la_res2, _ = _la_analyze(_la_sim, next_next_type, _la_nn_r, _la_shapes)
+                        _la_g2 = 0
+                        for _rr in _la_res2:
+                            _mg2 = _rr.get("merge_grade")
+                            if _mg2 == "DIRECT":
+                                _la_g2 = 2
+                                break
+                            if _mg2 == "NEAR" and _la_g2 < 1:
+                                _la_g2 = 1
+                        _la_comb = _lscore + _la_g2 * 90.0
+                        if _la_pick is None or _la_comb > _la_pick[0]:
+                            _la_pick = (_la_comb, _lx, _lreason, _la_g2)
+                    except Exception:
+                        continue
+                # switch only if the lookahead winner gains a nextNext merge and differs from current best
+                if _la_pick is not None and _la_pick[3] >= 1 and abs(_la_pick[1] - best_x) > 1e-9:
+                    best_x = _la_pick[1]
+                    best_reason = _la_pick[2] + (
+                        "_LOOKAHEAD_DIRECT" if _la_pick[3] == 2 else "_LOOKAHEAD_NEAR"
+                    )
+    except Exception:
+        pass  # lookahead must never break the base decision
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
