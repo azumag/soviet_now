@@ -42,9 +42,10 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-             9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+              9.16. Highest-type clustering for T14→T15 Russia path - v672: merge_grade==NO && max_type>=14 && pc>=25 && max_y>=1.5 && no reactive pair for max_type
+              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
 
@@ -64,13 +65,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-      # v681: DEADLINE_GUARD global merge_available check — DIRECT/NEAR candidates selected
-      #       even when no global merge exists (worst T57 score_delta=0, T61 crossing violation).
-      #       Added __dlg_merge_available check to guard at lines 745/759 and fallback at 798.
-      #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-      #       Fixes rollback failure mode: DEADLINE_GUARD returned merge candidate with merge_available=false
-      #       refs: tmp/analysis_result.md (Adopted Hypothesis)
-      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
+     # v672: axis 9.16 highest-type clustering during merge drought — when merge_grade==NO &&
+     #       max_type>=14 && pc>=25 && max_y>=1.5 && no reactive pair for max_type,
+     #       add clustering bonus toward centroid of highest-type pieces.
+     #       Fixes T14→T15 Russia path failure: 4 near-miss games had isolated T14 (no reactive pair),
+     #       pieces scattered across board, final merge impossible. axis 9.16 clusters highest-type
+     #       during NO_MERGE to create the final Russia merge path.
+     #       Stage target: Kazakhstan(T14)=4/12(33%) → Russia(T15)=0/12(0%).
+     #       Does NOT fire in death_spiral (height must be sole differentiator per postmortem).
+     #       mandatory_themes compliant: purely additive clustering, does not override merge priority.
+     #       refs: tmp/analysis_result.md (Hypothesis: T14 Near-Miss Clustering),
+     #             tmp/improve_brief.md (russia_recovery_priority),
+     #             game_history/20260524_100930_score2862.jsonl (best T119: T14 isolated)
+     # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
      #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
@@ -729,13 +736,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    # v681: compute global merge availability before using in guard
-    # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-    # A DIRECT/NEAR candidate may exist but merge_available=false globally (e.g., pair already consumed)
-    __dlg_merge_available = any(
-        isinstance(c, dict) and c.get("merge_grade") != "NO"
-        for c in __dlg_cands
-    )
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
@@ -749,13 +749,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         )
         def __dlg_merge_result_safe(c):
             return not c.get("merge_result_crosses_deadline")
-        # v681: also check global merge_available — DIRECT candidate without global merge is invalid
         __dlg_direct = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"
             and __dlg_merge_result_safe(c)
             and not c.get("merge_result_crosses_deadline")
-            and __dlg_merge_available
         ]
         if __dlg_direct:
             def __dlg_score_direct(c):
@@ -770,7 +768,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
             and __dlg_merge_result_safe(c)
             and not c.get("merge_result_crosses_deadline")
-            and __dlg_merge_available
         ]
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
@@ -801,15 +798,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_best = min(__dlg_merge_preferred, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
-        # Fallback: only when no merge candidate is available globally
-        # v681: mandatory_themes — when merge_available is false, NO_MERGE crossing
-        # candidates must not be selected; skip this fallback so DEADLINE_GUARD
-        # returns nothing and main logic respects the constraint
-        if __dlg_merge_available:
-            __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-            if __dlg_safe:
-                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # Fallback: only when no merge candidate is available
+        __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+        if __dlg_safe:
+            __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
@@ -931,7 +924,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
         #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
         #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
-        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3:
+        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 2 and reactor_margin < 0.3:
             suppressed += 1
             continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
@@ -1366,6 +1359,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- axis 9.16: highest-type clustering during merge drought (T14→T15 Russia path) -----
+        # Hypothesis: Type 14 pieces scatter before final T14→T15 merge pair materializes
+        # Batch near-miss: 4 games reached max_type=14 but Russia=0. Common pattern:
+        #   type 14 piece at y≈-3.0 isolated, no reactive pair for type 14, no merge path created
+        # When max_type >= 14 exists but has no reactive pair (isolated), cluster highest-type
+        # pieces during NO_MERGE to create the final merge path to Russia.
+        # Conditions: merge_grade==NO AND max_type>=14 AND pc>=25 AND max_y>=1.5 AND no reactive pair for max_type
+        # Bonus: guide placement toward centroid of highest-type pieces
+        # Magnitude: max ~400, competitive with height diff (~100-200 in HIGH phase) at high max_y
+        # Does NOT fire during death_spiral (height must be sole differentiator per postmortem)
+        # mandatory_themes compliant: purely additive clustering, does not override merge priority
+        # refs: tmp/analysis_result.md (Hypothesis: T14 Near-Miss Clustering),
+        #       tmp/improve_brief.md (russia_recovery_priority),
+        #       game_history/20260524_100930_score2862.jsonl (best game T119: T14 isolated)
+        max_type_on_board = max([p["type"] for p in pieces]) if pieces else 0
+        if (merge_grade == "NO"
+            and max_type_on_board >= 14
+            and piece_count >= 25
+            and max_y >= 1.5
+            and not death_spiral):
+            # Check if max_type has reactive pairs (already clustered = merge path exists)
+            max_type_has_reactive = any(
+                rp[2] == max_type_on_board
+                for rp in reactive_pairs
+                if isinstance(rp, (list, tuple)) and len(rp) >= 3
+            )
+            if not max_type_has_reactive:
+                highest_type_pieces = [p for p in pieces if p.get("type") == max_type_on_board]
+                if len(highest_type_pieces) >= 2:
+                    centroid_x = sum(p.get("x", 0) for p in highest_type_pieces) / len(highest_type_pieces)
+                    dist_to_centroid = abs(x - centroid_x)
+                    if dist_to_centroid < 2.0:
+                        # Bonus: closer to centroid = higher clustering for final merge
+                        # Scale: at pc=35, bonus ~300, competitive with height diff
+                        clustering_bonus = max(0.0, 400.0 - dist_to_centroid * 150.0)
+                        if piece_count >= 30:
+                            congestion_scale = 1.0 + (piece_count - 30) * 0.08
+                            clustering_bonus *= min(congestion_scale, 2.0)
+                        score += clustering_bonus
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
