@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-28 17:59:11 JST`
+- Updated: `2026-06-28 18:32:32 JST`
 - Nodes: `3333`
-- Edges: `266`
-- Current: `10e2128c3467`
+- Edges: `267`
+- Current: `880278a14edf`
 - Anchor: `fd3d35ac8361`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_10e2128c3467["10e2128c3467<br/>CURRENT<br/>g=12 n=12<br/>comp=11437.2"]
+    h_880278a14edf["880278a14edf<br/>CURRENT<br/>g=16 n=16<br/>comp=11709.8"]
     h_fd3d35ac8361["fd3d35ac8361<br/>ANCHOR<br/>g=25 n=20<br/>comp=11346.2"]
     h_941785f7671d["941785f7671d<br/>g=1 n=1<br/>comp=247.0"]
     h_4b072e28c929["4b072e28c929<br/>g=1 n=1<br/>comp=10.0"]
@@ -84,7 +84,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_10e2128c3467 current;
+    class h_880278a14edf current;
     class h_fd3d35ac8361 anchor;
     class h_941785f7671d plain;
     class h_4b072e28c929 plain;
@@ -150,9 +150,9 @@ flowchart TD
 
 ## Detail 1/42
 
-- Range: `880278a14edf` .. `14798af73897`
+- Range: `d88fc8bfd580` .. `14798af73897`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `39`
+- Internal edges in this diagram: `40`
 - Cross-chunk link: `0e899ca31b42 --improve--> 151b3f6a0061`
 - Cross-chunk link: `0e899ca31b42 --improve--> 19b772b1ac66`
 - Cross-chunk link: `0e899ca31b42 --improve--> 1a499eef5d15`
@@ -169,9 +169,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_880278a14edf["880278a14edf<br/>g=16 n=16<br/>comp=11709.8"]
     h_d88fc8bfd580["d88fc8bfd580<br/>g=1977 n=20<br/>comp=10219.3"]
     h_35729075cdbb["35729075cdbb<br/>g=27 n=20<br/>comp=10191.6"]
+    h_880278a14edf["880278a14edf<br/>CURRENT<br/>g=16 n=16<br/>comp=11709.8"]
     h_eca5c4a98a8a["eca5c4a98a8a<br/>g=21 n=20<br/>comp=11203.5"]
     h_21a90c8429a9["21a90c8429a9<br/>g=32 n=20<br/>comp=10121.2"]
     h_8bb16b7dbe3b["8bb16b7dbe3b<br/>g=72 n=20<br/>comp=10976.2"]
@@ -192,6 +192,7 @@ flowchart TD
     h_8a2c0083198b["8a2c0083198b<br/>g=21 n=20<br/>comp=11403.2"]
     h_83703f8c4c67["83703f8c4c67<br/>g=75 n=20<br/>comp=10651.2"]
     h_7bd6203f37b5["7bd6203f37b5<br/>g=22 n=20<br/>comp=11178.2"]
+    h_10e2128c3467["10e2128c3467<br/>g=20 n=20<br/>comp=11355.6"]
     h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=1450.8"]
     h_003e9883e188["003e9883e188<br/>g=25 n=20<br/>comp=11410.8"]
     h_007f02d1457f["007f02d1457f<br/>g=20 n=20<br/>comp=10701.2"]
@@ -242,7 +243,6 @@ flowchart TD
     h_1015e03235fa["1015e03235fa<br/>g=32 n=20<br/>comp=9404.9"]
     h_10b331a30057["10b331a30057<br/>g=12 n=12<br/>comp=11249.4"]
     h_10d72f1047f4["10d72f1047f4<br/>g=12 n=12<br/>comp=10160.5"]
-    h_10e2128c3467["10e2128c3467<br/>CURRENT<br/>g=12 n=12<br/>comp=11437.2"]
     h_11e54fb5a8f0["11e54fb5a8f0<br/>g=12 n=12<br/>comp=11354.7"]
     h_127c12556064["127c12556064<br/>g=20 n=20<br/>comp=10925.6"]
     h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
@@ -250,9 +250,9 @@ flowchart TD
     h_1325437f1dee["1325437f1dee<br/>g=20 n=20<br/>comp=10168.8"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
 
-    h_880278a14edf -. rollback .-> h_d88fc8bfd580
     h_d88fc8bfd580 -. rollback .-> h_35729075cdbb
     h_35729075cdbb -. rollback .-> h_880278a14edf
+    h_880278a14edf -. rollback .-> h_d88fc8bfd580
     h_d88fc8bfd580 -. rollback .-> h_880278a14edf
     h_d88fc8bfd580 -. rollback .-> h_eca5c4a98a8a
     h_eca5c4a98a8a -. rollback .-> h_21a90c8429a9
@@ -284,20 +284,21 @@ flowchart TD
     h_83703f8c4c67 -. rollback .-> h_880278a14edf
     h_d88fc8bfd580 -. rollback .-> h_7bd6203f37b5
     h_7bd6203f37b5 -. rollback .-> h_880278a14edf
+    h_d88fc8bfd580 -. rollback .-> h_10e2128c3467
     h_0e899ca31b42 -->|improve| h_026dad83a186
     h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
     h_5f1036c9e3cf -->|improve| h_0e24bff87c81
     h_6631d2da812d -->|improve| h_0e5bda808d88
-    h_d88fc8bfd580 -. rollback .-> h_10e2128c3467
+    h_10e2128c3467 -. rollback .-> h_880278a14edf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_880278a14edf plain;
     class h_d88fc8bfd580 plain;
     class h_35729075cdbb plain;
+    class h_880278a14edf current;
     class h_eca5c4a98a8a plain;
     class h_21a90c8429a9 plain;
     class h_8bb16b7dbe3b plain;
@@ -318,6 +319,7 @@ flowchart TD
     class h_8a2c0083198b plain;
     class h_83703f8c4c67 plain;
     class h_7bd6203f37b5 plain;
+    class h_10e2128c3467 plain;
     class h_00276c327ece plain;
     class h_003e9883e188 plain;
     class h_007f02d1457f plain;
@@ -368,7 +370,6 @@ flowchart TD
     class h_1015e03235fa plain;
     class h_10b331a30057 plain;
     class h_10d72f1047f4 plain;
-    class h_10e2128c3467 current;
     class h_11e54fb5a8f0 plain;
     class h_127c12556064 plain;
     class h_128f831aab73 plain;
@@ -7842,6 +7843,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#39527 `10e2128c -> 880278a1`
+
+- - rollback from 10e2128c3467 to 880278a14edf at game 39527
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=11355.6/11681.0/10670.0 vs target 11346.2/12091.5/9992.0
+- - bad recent scores: 22705 8906 12713 11543 12754 10568 11223 11270
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=11355.6 p50=11681.0 p25=10670.0 mean=12447.5 n=20
+- rollback_target: comp=11346.2 p50=12091.5 p25=9992.0 mean=12306.8 n=20
+- metric_gap_vs_target: comp=9.4 p50=-410.5 p25=678.0 mean=140.8
+- recent12_avg: bad=12484.1 target=10563.8
+- recent12_floor: bad=8906 target=6212
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
 
 ### Rollback Game#39519 `d88fc8bf -> 10e2128c`
 
