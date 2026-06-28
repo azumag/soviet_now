@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-28 22:44:52 JST`
+- Updated: `2026-06-28 22:52:30 JST`
 - Nodes: `3333`
 - Edges: `268`
-- Current: `177d95081d93`
+- Current: `1813ba4eef44`
 - Anchor: `fd3d35ac8361`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_177d95081d93["177d95081d93<br/>CURRENT<br/>g=23 n=20<br/>comp=11433.2"]
+    h_1813ba4eef44["1813ba4eef44<br/>CURRENT<br/>g=20 n=20<br/>comp=11433.2"]
     h_fd3d35ac8361["fd3d35ac8361<br/>ANCHOR<br/>g=25 n=20<br/>comp=11346.2"]
     h_941785f7671d["941785f7671d<br/>g=1 n=1<br/>comp=247.0"]
     h_4b072e28c929["4b072e28c929<br/>g=1 n=1<br/>comp=10.0"]
@@ -84,7 +84,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_177d95081d93 current;
+    class h_1813ba4eef44 current;
     class h_fd3d35ac8361 anchor;
     class h_941785f7671d plain;
     class h_4b072e28c929 plain;
@@ -150,9 +150,9 @@ flowchart TD
 
 ## Detail 1/42
 
-- Range: `d88fc8bfd580` .. `14798af73897`
+- Range: `eca5c4a98a8a` .. `14798af73897`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `41`
+- Internal edges in this diagram: `40`
 - Cross-chunk link: `0e899ca31b42 --improve--> 151b3f6a0061`
 - Cross-chunk link: `0e899ca31b42 --improve--> 19b772b1ac66`
 - Cross-chunk link: `0e899ca31b42 --improve--> 1a499eef5d15`
@@ -165,19 +165,19 @@ flowchart TD
 - Cross-chunk link: `0a8ad191f188 --improve--> 7258749977ce`
 - Cross-chunk link: `8cde5038d8a6 --improve--> 7b994b0502ad`
 - Cross-chunk link: `8cde5038d8a6 --improve--> 9db7c99981e9`
-- Cross-chunk link: `... and 18 more`
+- Cross-chunk link: `... and 19 more`
 
 ```mermaid
 flowchart TD
-    h_d88fc8bfd580["d88fc8bfd580<br/>g=2024 n=20<br/>comp=9804.0"]
     h_eca5c4a98a8a["eca5c4a98a8a<br/>g=21 n=20<br/>comp=11203.5"]
     h_21a90c8429a9["21a90c8429a9<br/>g=32 n=20<br/>comp=10121.2"]
     h_880278a14edf["880278a14edf<br/>g=16 n=16<br/>comp=11709.8"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>g=2024 n=20<br/>comp=9804.0"]
     h_8bb16b7dbe3b["8bb16b7dbe3b<br/>g=72 n=20<br/>comp=10976.2"]
     h_d4ce48dcb063["d4ce48dcb063<br/>g=19 n=19<br/>comp=11253.7"]
     h_cf8d40cf3949["cf8d40cf3949<br/>g=13 n=13<br/>comp=10985.8"]
     h_7448a3adf70e["7448a3adf70e<br/>g=13 n=13<br/>comp=11228.7"]
-    h_177d95081d93["177d95081d93<br/>CURRENT<br/>g=23 n=20<br/>comp=11433.2"]
+    h_177d95081d93["177d95081d93<br/>g=25 n=20<br/>comp=11105.5"]
     h_f6fee256d321["f6fee256d321<br/>g=21 n=20<br/>comp=11269.7"]
     h_3be2ff0f8381["3be2ff0f8381<br/>g=13 n=13<br/>comp=11082.8"]
     h_1e40c5541032["1e40c5541032<br/>g=21 n=20<br/>comp=11260.5"]
@@ -250,7 +250,6 @@ flowchart TD
     h_1325437f1dee["1325437f1dee<br/>g=20 n=20<br/>comp=10168.8"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
 
-    h_d88fc8bfd580 -. rollback .-> h_eca5c4a98a8a
     h_eca5c4a98a8a -. rollback .-> h_21a90c8429a9
     h_21a90c8429a9 -. rollback .-> h_880278a14edf
     h_880278a14edf -. rollback .-> h_d88fc8bfd580
@@ -286,26 +285,26 @@ flowchart TD
     h_10e2128c3467 -. rollback .-> h_880278a14edf
     h_d88fc8bfd580 -. rollback .-> h_b82a96df2781
     h_b82a96df2781 -. rollback .-> h_880278a14edf
+    h_d88fc8bfd580 -. rollback .-> h_177d95081d93
     h_0e899ca31b42 -->|improve| h_026dad83a186
     h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
     h_5f1036c9e3cf -->|improve| h_0e24bff87c81
     h_6631d2da812d -->|improve| h_0e5bda808d88
-    h_d88fc8bfd580 -. rollback .-> h_177d95081d93
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_d88fc8bfd580 plain;
     class h_eca5c4a98a8a plain;
     class h_21a90c8429a9 plain;
     class h_880278a14edf plain;
+    class h_d88fc8bfd580 plain;
     class h_8bb16b7dbe3b plain;
     class h_d4ce48dcb063 plain;
     class h_cf8d40cf3949 plain;
     class h_7448a3adf70e plain;
-    class h_177d95081d93 current;
+    class h_177d95081d93 plain;
     class h_f6fee256d321 plain;
     class h_3be2ff0f8381 plain;
     class h_1e40c5541032 plain;
@@ -393,6 +392,7 @@ flowchart TD
 - Cross-chunk link: `276633ae46c0 --improve--> ce268081d79a`
 - Cross-chunk link: `0032381a7233 --improve--> b8124b290915`
 - Cross-chunk link: `0032381a7233 --improve--> 938185e07929`
+- Cross-chunk link: `177d95081d93 -.rollback.-> 1813ba4eef44`
 
 ```mermaid
 flowchart TD
@@ -405,7 +405,7 @@ flowchart TD
     h_16bc5b207f52["16bc5b207f52<br/>g=12 n=12<br/>comp=11193.3"]
     h_16e0ca9a82d5["16e0ca9a82d5<br/>g=20 n=20<br/>comp=10343.1"]
     h_177e228d6908["177e228d6908<br/>g=12 n=12<br/>comp=1484.1"]
-    h_1813ba4eef44["1813ba4eef44<br/>g=20 n=20<br/>comp=11433.2"]
+    h_1813ba4eef44["1813ba4eef44<br/>CURRENT<br/>g=20 n=20<br/>comp=11433.2"]
     h_19255e00c73d["19255e00c73d<br/>g=20 n=20<br/>comp=10724.9"]
     h_19541065acc3["19541065acc3<br/>g=20 n=20<br/>comp=11684.0"]
     h_19b772b1ac66["19b772b1ac66<br/>g=4 n=4<br/>comp=11438.1"]
@@ -494,7 +494,7 @@ flowchart TD
     class h_16bc5b207f52 plain;
     class h_16e0ca9a82d5 plain;
     class h_177e228d6908 plain;
-    class h_1813ba4eef44 plain;
+    class h_1813ba4eef44 current;
     class h_19255e00c73d plain;
     class h_19541065acc3 plain;
     class h_19b772b1ac66 plain;
@@ -7842,6 +7842,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#39581 `177d9508 -> 1813ba4e`
+
+- - rollback from 177d95081d93 to 1813ba4eef44 at game 39581
+- - reasons: objective_regression+lost_turkmenistan_gate
+- - current comp/p50/p25=11105.5/11751.0/9989.2 vs target 11346.2/12091.5/9992.0
+- - bad recent scores: 11765 15405 8265 11206 15106 11176 7358 7366
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりトルクメニスタン段階の到達率が後退した。
+- current: comp=11105.5 p50=11751.0 p25=9989.2 mean=11809.1 n=20
+- rollback_target: comp=11346.2 p50=12091.5 p25=9992.0 mean=12306.8 n=20
+- metric_gap_vs_target: comp=-240.7 p50=-340.5 p25=-2.8 mean=-497.6
+- recent12_avg: bad=11592.1 target=10563.8
+- recent12_floor: bad=7358 target=6212
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#39579 `d88fc8bf -> 177d9508`
 
