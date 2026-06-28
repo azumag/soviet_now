@@ -1,6 +1,6 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-28 19:57:27 JST`
+- Updated: `2026-06-28 21:53:15 JST`
 - Nodes: `3333`
 - Edges: `267`
 - Current: `880278a14edf`
@@ -169,7 +169,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_d88fc8bfd580["d88fc8bfd580<br/>g=1989 n=20<br/>comp=10430.3"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>g=2012 n=20<br/>comp=10400.9"]
     h_880278a14edf["880278a14edf<br/>CURRENT<br/>g=16 n=16<br/>comp=11709.8"]
     h_eca5c4a98a8a["eca5c4a98a8a<br/>g=21 n=20<br/>comp=11203.5"]
     h_21a90c8429a9["21a90c8429a9<br/>g=32 n=20<br/>comp=10121.2"]
@@ -250,7 +250,6 @@ flowchart TD
     h_1325437f1dee["1325437f1dee<br/>g=20 n=20<br/>comp=10168.8"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
 
-    h_d88fc8bfd580 -. rollback .-> h_880278a14edf
     h_880278a14edf -. rollback .-> h_d88fc8bfd580
     h_d88fc8bfd580 -. rollback .-> h_eca5c4a98a8a
     h_eca5c4a98a8a -. rollback .-> h_21a90c8429a9
@@ -285,11 +284,12 @@ flowchart TD
     h_d88fc8bfd580 -. rollback .-> h_10e2128c3467
     h_10e2128c3467 -. rollback .-> h_880278a14edf
     h_d88fc8bfd580 -. rollback .-> h_b82a96df2781
+    h_b82a96df2781 -. rollback .-> h_880278a14edf
     h_0e899ca31b42 -->|improve| h_026dad83a186
     h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
     h_5f1036c9e3cf -->|improve| h_0e24bff87c81
     h_6631d2da812d -->|improve| h_0e5bda808d88
-    h_b82a96df2781 -. rollback .-> h_880278a14edf
+    h_d88fc8bfd580 -. rollback .-> h_880278a14edf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -7841,6 +7841,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#39567 `d88fc8bf -> 880278a1`
+
+- - rollback from d88fc8bfd580 to 880278a14edf at game 39567
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=10400.9/10831.5/9792.2 vs target 11346.2/12091.5/9992.0
+- - bad recent scores: 10600 11732 7362 13519 10871 9319 11318 5557
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=10400.9 p50=10831.5 p25=9792.2 mean=10774.1 n=20
+- rollback_target: comp=11346.2 p50=12091.5 p25=9992.0 mean=12306.8 n=20
+- metric_gap_vs_target: comp=-945.3 p50=-1260.0 p25=-199.8 mean=-1532.6
+- recent12_avg: bad=10197.4 target=10563.8
+- recent12_floor: bad=5557 target=6212
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#39544 `b82a96df -> 880278a1`
 
