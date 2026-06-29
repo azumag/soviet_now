@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-29 10:04:24 JST`
+- Updated: `2026-06-29 11:07:14 JST`
 - Nodes: `3333`
 - Edges: `267`
-- Current: `889399ef2cd1`
+- Current: `880278a14edf`
 - Anchor: `b4362aa4d1ef`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_889399ef2cd1["889399ef2cd1<br/>CURRENT<br/>g=12 n=12<br/>comp=11412.2"]
+    h_880278a14edf["880278a14edf<br/>CURRENT<br/>g=17 n=17<br/>comp=11617.3"]
     h_b4362aa4d1ef["b4362aa4d1ef<br/>ANCHOR<br/>g=13 n=13<br/>comp=11266.9"]
     h_4b072e28c929["4b072e28c929<br/>g=1 n=1<br/>comp=10.0"]
     h_3545e78da016["3545e78da016<br/>g=1 n=1<br/>comp=0.0"]
@@ -84,7 +84,7 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_889399ef2cd1 current;
+    class h_880278a14edf current;
     class h_b4362aa4d1ef anchor;
     class h_4b072e28c929 plain;
     class h_3545e78da016 plain;
@@ -169,8 +169,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_880278a14edf["880278a14edf<br/>g=17 n=17<br/>comp=11617.3"]
-    h_d88fc8bfd580["d88fc8bfd580<br/>g=2154 n=20<br/>comp=10488.2"]
+    h_880278a14edf["880278a14edf<br/>CURRENT<br/>g=17 n=17<br/>comp=11617.3"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>g=2166 n=20<br/>comp=9932.9"]
     h_1e40c5541032["1e40c5541032<br/>g=21 n=20<br/>comp=11260.5"]
     h_a3e3965087ab["a3e3965087ab<br/>g=21 n=20<br/>comp=11177.0"]
     h_0ff7f425d879["0ff7f425d879<br/>g=56 n=20<br/>comp=10749.5"]
@@ -190,7 +190,7 @@ flowchart TD
     h_ece1446454bf["ece1446454bf<br/>g=18 n=18<br/>comp=11380.1"]
     h_301434b90c7a["301434b90c7a<br/>g=24 n=20<br/>comp=11002.4"]
     h_a95d8b3c3cb1["a95d8b3c3cb1<br/>g=26 n=20<br/>comp=11087.3"]
-    h_889399ef2cd1["889399ef2cd1<br/>CURRENT<br/>g=12 n=12<br/>comp=11412.2"]
+    h_889399ef2cd1["889399ef2cd1<br/>g=12 n=12<br/>comp=11412.2"]
     h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=1450.8"]
     h_003e9883e188["003e9883e188<br/>g=25 n=20<br/>comp=11410.8"]
     h_007f02d1457f["007f02d1457f<br/>g=20 n=20<br/>comp=10701.2"]
@@ -251,7 +251,6 @@ flowchart TD
     h_152efdf4068b["152efdf4068b<br/>g=12 n=12<br/>comp=9696.2"]
 
     h_880278a14edf -. rollback .-> h_d88fc8bfd580
-    h_d88fc8bfd580 -. rollback .-> h_880278a14edf
     h_d88fc8bfd580 -. rollback .-> h_1e40c5541032
     h_1e40c5541032 -. rollback .-> h_a3e3965087ab
     h_a3e3965087ab -. rollback .-> h_0ff7f425d879
@@ -284,20 +283,21 @@ flowchart TD
     h_301434b90c7a -. rollback .-> h_880278a14edf
     h_d88fc8bfd580 -. rollback .-> h_a95d8b3c3cb1
     h_a95d8b3c3cb1 -. rollback .-> h_880278a14edf
+    h_d88fc8bfd580 -. rollback .-> h_889399ef2cd1
     h_889399ef2cd1 -. rollback .-> h_d88fc8bfd580
     h_0e899ca31b42 -->|improve| h_026dad83a186
     h_8cde5038d8a6 -->|improve| h_0a4a4352cd60
     h_5f1036c9e3cf -->|improve| h_0e24bff87c81
     h_6631d2da812d -->|improve| h_0e5bda808d88
     h_0e899ca31b42 -->|improve| h_151b3f6a0061
-    h_d88fc8bfd580 -. rollback .-> h_889399ef2cd1
+    h_d88fc8bfd580 -. rollback .-> h_880278a14edf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_880278a14edf plain;
+    class h_880278a14edf current;
     class h_d88fc8bfd580 plain;
     class h_1e40c5541032 plain;
     class h_a3e3965087ab plain;
@@ -318,7 +318,7 @@ flowchart TD
     class h_ece1446454bf plain;
     class h_301434b90c7a plain;
     class h_a95d8b3c3cb1 plain;
-    class h_889399ef2cd1 current;
+    class h_889399ef2cd1 plain;
     class h_00276c327ece plain;
     class h_003e9883e188 plain;
     class h_007f02d1457f plain;
@@ -7839,6 +7839,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#39744 `d88fc8bf -> 880278a1`
+
+- - rollback from d88fc8bfd580 to 880278a14edf at game 39744
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9836.2/9971.5/9127.0 vs target 11266.9/11980.0/9748.0
+- - bad recent scores: 9597 10091 8158 9852 22645 7009 9450 16502
+- - soviet objective: current best_type=15 russia=2 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9836.2 p50=9971.5 p25=9127.0 mean=12683.9 n=12
+- rollback_target: comp=11266.9 p50=11980.0 p25=9748.0 mean=13279.3 n=13
+- metric_gap_vs_target: comp=-1430.7 p50=-2008.5 p25=-621.0 mean=-595.4
+- recent12_avg: bad=12683.9 target=13595.8
+- recent12_floor: bad=7009 target=8547
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
 
 ### Rollback Game#39732 `d88fc8bf -> 889399ef`
 
