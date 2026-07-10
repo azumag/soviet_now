@@ -56,6 +56,8 @@ Phases (determined by board max Y):
      CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
+import math
+
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
 #    Returns: {"x": float, "reason": str}
@@ -668,6 +670,74 @@ Phases (determined by board max Y):
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+
+def _deadline_soviet_second_chain_target(pieces, next_type):
+    """Return the safest useful x anchor after exactly one Russia exists."""
+    valid = [piece for piece in pieces if isinstance(piece, dict)]
+    counts = {
+        piece_type: sum(1 for piece in valid if piece.get("type") == piece_type)
+        for piece_type in range(10, 16)
+    }
+    if counts.get(15, 0) != 1 or counts.get(14, 0) != 0:
+        return None
+
+    def weighted_center(targets):
+        if not targets:
+            return None
+        weighted = [
+            (
+                float(target.get("x", 0.0) or 0.0),
+                2.0 ** max(0, int(target.get("type", 0) or 0) - 10),
+            )
+            for target in targets
+        ]
+        total = sum(weight for _, weight in weighted)
+        return sum(x_pos * weight for x_pos, weight in weighted) / total
+
+    if next_type == 11:
+        t13_targets = [piece for piece in valid if piece.get("type") == 13]
+        t12_targets = [piece for piece in valid if piece.get("type") == 12]
+        t11_targets = [piece for piece in valid if piece.get("type") == 11]
+        if t12_targets:
+            return weighted_center(t12_targets + t13_targets)
+        if t13_targets and t11_targets:
+            def rebuild_key(target):
+                target_x = float(target.get("x", 0.0) or 0.0)
+                target_y = float(target.get("y", -10.0) or -10.0)
+                distance = min(
+                    math.hypot(
+                        float(up.get("x", 0.0) or 0.0) - target_x,
+                        float(up.get("y", -10.0) or -10.0) - target_y,
+                    )
+                    for up in t13_targets
+                )
+                return (distance * 0.35 + max(0.0, target_y - 1.0) * 1.1, target_y)
+            return float(min(t11_targets, key=rebuild_key).get("x", 0.0) or 0.0)
+    elif next_type == 10 and counts.get(12, 0) >= 1:
+        up_targets = [piece for piece in valid if piece.get("type") in (11, 12, 13)]
+        same_targets = [piece for piece in valid if piece.get("type") == 10]
+        if same_targets and up_targets:
+            def ladder_key(target):
+                target_x = float(target.get("x", 0.0) or 0.0)
+                target_y = float(target.get("y", -10.0) or -10.0)
+                distance = min(
+                    math.hypot(
+                        float(up.get("x", 0.0) or 0.0) - target_x,
+                        float(up.get("y", -10.0) or -10.0) - target_y,
+                    )
+                    for up in up_targets
+                )
+                return (distance + max(0.0, target_y - 1.0) * 0.6, target_y)
+            return float(min(same_targets, key=ladder_key).get("x", 0.0) or 0.0)
+        return weighted_center(up_targets or same_targets)
+    elif next_type in (12, 13):
+        return weighted_center(
+            [piece for piece in valid if piece.get("type") == 13]
+            or [piece for piece in valid if piece.get("type") == 12]
+        )
+    return None
+
+
 def decide(game_state: dict, analysis: dict) -> dict:
     """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
 
@@ -775,6 +845,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+
+        # Preserve the remaining T10-13 lane after the first Russia even when
+        # the deadline guard owns the turn. Selection is restricted to clean
+        # NO-merge candidates, so this objective cannot weaken redline safety.
+        __dlg_pieces = __dlg_game_state.get("pieces", [])
+        __dlg_next = __dlg_game_state.get("next", {})
+        if not isinstance(__dlg_pieces, list):
+            __dlg_pieces = []
+        if not isinstance(__dlg_next, dict):
+            __dlg_next = {}
+        __dlg_soviet_target = _deadline_soviet_second_chain_target(
+            __dlg_pieces,
+            int(__dlg_next.get("type", 0) or 0),
+        )
+        if __dlg_soviet_target is not None and not __dlg_merge_available:
+            __dlg_soviet_safe = [
+                candidate
+                for candidate in __dlg_cands
+                if isinstance(candidate, dict)
+                and candidate.get("merge_grade") == "NO"
+                and not candidate.get("crosses_deadline")
+                and not candidate.get("merge_result_crosses_deadline")
+            ]
+            if __dlg_soviet_safe:
+                __dlg_best = min(
+                    __dlg_soviet_safe,
+                    key=lambda candidate: (
+                        abs(float(candidate.get("x", 0.0) or 0.0) - __dlg_soviet_target),
+                        float(candidate.get("landing_y", 99.0) or 99.0),
+                    ),
+                )
+                return {
+                    "x": float(__dlg_best.get("x", 0.0) or 0.0),
+                    "reason": "DEADLINE_GUARD_SOVIET_SECOND_CHAIN",
+                }
         # v679: mandatory_themes compliance — NO_MERGE candidates crossing deadline must be excluded
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
         __dlg_safe_no_merge = [
@@ -872,6 +977,140 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
+
+    # --- Soviet objective signal from analyze_board.py ---
+    # The proven d88fc baseline can create the first Russia, but after that its
+    # generic board-compression score scatters the remaining T10-14 material.
+    # Consume the analyzer's second-chain summary only in the single-T15 phase;
+    # all ordinary and emergency behavior remains unchanged.
+    soviet_signal = reactor.get("soviet", {})
+    if not isinstance(soviet_signal, dict):
+        soviet_signal = {}
+    soviet_counts = soviet_signal.get("high_type_count", {})
+    if not isinstance(soviet_counts, dict):
+        soviet_counts = {}
+    if not soviet_counts:
+        soviet_counts = {
+            piece_type: sum(1 for p in pieces if p.get("type") == piece_type)
+            for piece_type in range(10, 16)
+        }
+    else:
+        soviet_counts = {
+            piece_type: int(
+                soviet_counts.get(piece_type, soviet_counts.get(str(piece_type), 0)) or 0
+            )
+            for piece_type in range(10, 16)
+        }
+    single_type15_phase = (
+        soviet_signal.get("stage") == "second_russia"
+        or soviet_counts.get(15, 0) == 1
+    ) and soviet_counts.get(15, 0) == 1
+
+    def _weighted_center_x(targets):
+        if not targets:
+            return None
+        weighted = []
+        for target in targets:
+            target_type = int(target.get("type", 0) or 0)
+            weighted.append(
+                (
+                    float(target.get("x", 0.0) or 0.0),
+                    2.0 ** max(0, target_type - 10),
+                )
+            )
+        total_weight = sum(weight for _, weight in weighted)
+        return sum(x_pos * weight for x_pos, weight in weighted) / total_weight
+
+    soviet_lift_target_x = None
+    soviet_lift_reason = None
+    if (
+        single_type15_phase
+        and soviet_counts.get(14, 0) == 0
+        and next_type in (11, 12, 13)
+        and (
+            (
+                soviet_counts.get(13, 0) >= 1
+                and (
+                    soviet_counts.get(12, 0) >= 1
+                    or soviet_counts.get(11, 0) >= 1
+                )
+            )
+            or (
+                soviet_counts.get(12, 0) >= 1
+                and soviet_counts.get(11, 0) >= 2
+            )
+        )
+    ):
+        if next_type == 11:
+            t13_targets = [p for p in pieces if p.get("type") == 13]
+            t12_targets = [p for p in pieces if p.get("type") == 12]
+            t11_targets = [p for p in pieces if p.get("type") == 11]
+            if not t12_targets and t13_targets and t11_targets:
+                def _soviet_t11_rebuild_key(target):
+                    target_x = float(target.get("x", 0.0) or 0.0)
+                    target_y = float(target.get("y", -10.0) or -10.0)
+                    t13_distance = min(
+                        math.hypot(
+                            float(up.get("x", 0.0) or 0.0) - target_x,
+                            float(up.get("y", -10.0) or -10.0) - target_y,
+                        )
+                        for up in t13_targets
+                    )
+                    return (t13_distance * 0.35 + max(0.0, target_y - 1.0) * 1.1, target_y)
+                soviet_lift_target_x = float(
+                    min(t11_targets, key=_soviet_t11_rebuild_key).get("x", 0.0) or 0.0
+                )
+                soviet_lift_reason = "SOVIET_T15_T11_REBUILD"
+            else:
+                soviet_lift_target_x = _weighted_center_x(t12_targets + t13_targets)
+                soviet_lift_reason = "SOVIET_T15_LIFT"
+        else:
+            soviet_lift_target_x = _weighted_center_x(
+                [p for p in pieces if p.get("type") == 13]
+            )
+            soviet_lift_reason = "SOVIET_T15_LIFT"
+
+    soviet_ladder_target_x = None
+    if (
+        single_type15_phase
+        and soviet_counts.get(14, 0) == 0
+        and soviet_counts.get(12, 0) >= 1
+        and next_type in (10, 11, 12)
+        and (
+            soviet_counts.get(13, 0) >= 1
+            or soviet_counts.get(11, 0) >= 1
+            or soviet_counts.get(10, 0) >= 2
+        )
+    ):
+        if next_type == 10:
+            up_targets = [p for p in pieces if p.get("type") in (11, 12, 13)]
+            same_targets = [p for p in pieces if p.get("type") == 10]
+            if same_targets and up_targets:
+                def _soviet_t10_ladder_key(target):
+                    target_x = float(target.get("x", 0.0) or 0.0)
+                    target_y = float(target.get("y", -10.0) or -10.0)
+                    up_distance = min(
+                        math.hypot(
+                            float(up.get("x", 0.0) or 0.0) - target_x,
+                            float(up.get("y", -10.0) or -10.0) - target_y,
+                        )
+                        for up in up_targets
+                    )
+                    return (up_distance + max(0.0, target_y - 1.0) * 0.6, target_y)
+                soviet_ladder_target_x = float(
+                    min(same_targets, key=_soviet_t10_ladder_key).get("x", 0.0) or 0.0
+                )
+            else:
+                soviet_ladder_target_x = _weighted_center_x(up_targets or same_targets)
+        elif next_type == 11:
+            soviet_ladder_target_x = _weighted_center_x(
+                [p for p in pieces if p.get("type") in (12, 13)]
+            )
+        else:
+            soviet_ladder_target_x = _weighted_center_x(
+                [p for p in pieces if p.get("type") == 13]
+                or [p for p in pieces if p.get("type") == 12]
+            )
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -1172,6 +1411,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and deadline_crossed
         )
+
+        # ----- Soviet second-chain guidance (analyze_board objective signal) -----
+        # Bounded to NO-merge placements after exactly one Russia. It never
+        # overrides an immediate merge or the death-spiral safety behavior.
+        if (
+            merge_grade == "NO"
+            and not death_spiral
+            and max_y < 3.4
+            and piece_count >= 28
+        ):
+            if soviet_lift_target_x is not None:
+                lift_distance = abs(x - soviet_lift_target_x)
+                lift_base = 3000.0 if soviet_lift_reason == "SOVIET_T15_T11_REBUILD" else 1080.0
+                lift_decay = 760.0 if soviet_lift_reason == "SOVIET_T15_T11_REBUILD" else 330.0
+                lift_bonus = max(0.0, lift_base - lift_distance * lift_decay)
+                if piece_count >= 32:
+                    lift_bonus *= min(1.75, 1.0 + (piece_count - 32) * 0.08)
+                if landing_y > 2.5:
+                    lift_bonus *= 0.45
+                if abs(x) >= 2.5 and lift_distance >= 1.7:
+                    score -= 1200.0
+                if lift_bonus > 0:
+                    score += lift_bonus
+                    reasons.append(soviet_lift_reason)
+            elif soviet_ladder_target_x is not None:
+                ladder_distance = abs(x - soviet_ladder_target_x)
+                ladder_bonus = max(0.0, 920.0 - ladder_distance * 310.0)
+                if next_type == 10:
+                    ladder_bonus *= 0.9
+                if piece_count >= 32:
+                    ladder_bonus *= min(1.6, 1.0 + (piece_count - 32) * 0.08)
+                if landing_y > 2.4:
+                    ladder_bonus *= 0.45
+                if abs(x) >= 2.5 and ladder_distance >= 1.7:
+                    score -= 1050.0
+                if ladder_bonus > 0:
+                    score += ladder_bonus
+                    reasons.append("SOVIET_T10_LADDER")
         stacking_danger_suppressed = death_spiral
         # v549: suppress stacking at high pc without merge — prevents pc runaway when rp drops to 1-2
         # score1290 T86-91: rp=1, pc=38-47, stacking bonus ~1200 overwhelms height diff ~100-150

@@ -8152,7 +8152,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 1.35)
-        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_SOVIET_SECOND_CHAIN")
 
     def test_deadline_guard_clusters_soviet_t11_rebuild_after_type15(self):
         import strategy
@@ -8198,7 +8198,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 1.1)
-        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_SOVIET_SECOND_CHAIN")
 
     def test_deadline_guard_clusters_soviet_t10_ladder_material_after_type15(self):
         import strategy
@@ -8245,7 +8245,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 1.15)
-        self.assertEqual(decision["reason"], "DEADLINE_GUARD_PRE_RUSSIA_CLUSTER")
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_SOVIET_SECOND_CHAIN")
 
     def test_deadline_guard_clusters_double_t14_frontier_material(self):
         import strategy
@@ -14298,6 +14298,7 @@ class TestStrategyRussiaPhaseBoundary(unittest.TestCase):
         self.assertNotIn('p.get("type") in [14, 15]', strategy)
         self.assertIn("type 14（カザフ）はロシア前段", strategy)
 
+
     def test_deadline_guard_prefers_t13_pair_compress_before_pair_center(self):
         strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
         mode_chain = strategy.split("__dlg_mode = None", 1)[1].split("if __dlg_mode is None:", 1)[0]
@@ -14320,6 +14321,40 @@ class TestStrategyRussiaPhaseBoundary(unittest.TestCase):
         self.assertIn("pre_russia_counts.get(12, 0) == 0", strategy)
         self.assertIn('"t11_cloud_to_t12"', strategy)
         self.assertIn("DEADLINE_GUARD_PRE_RUSSIA_T11_CLOUD_TO_T12", strategy)
+
+
+class TestSovietBoardAnalysis(unittest.TestCase):
+    def test_reactor_reports_second_russia_lane_and_mass(self):
+        from analyze_board import calc_reactor_state
+
+        reactor = calc_reactor_state(
+            [
+                {"id": 1, "type": 15, "x": -0.5, "y": -1.8, "r": 1.6},
+                {"id": 2, "type": 13, "x": 1.0, "y": 1.2, "r": 1.3},
+                {"id": 3, "type": 12, "x": 2.2, "y": -2.1, "r": 1.1},
+                {"id": 4, "type": 11, "x": 1.2, "y": 0.1, "r": 1.0},
+            ]
+        )
+
+        soviet = reactor["soviet"]
+        self.assertEqual(soviet["stage"], "second_russia")
+        self.assertEqual(soviet["russia_count"], 1)
+        self.assertAlmostEqual(soviet["remaining_russia_equivalent"], 0.4375)
+        self.assertAlmostEqual(soviet["second_russia_lane_x"], 1.4)
+
+    def test_reactor_reports_closest_double_russia_gap(self):
+        from analyze_board import calc_soviet_progress
+
+        soviet = calc_soviet_progress(
+            [
+                {"id": 1, "type": 15, "x": -1.0, "y": -2.0, "r": 1.0},
+                {"id": 2, "type": 15, "x": 1.05, "y": -2.0, "r": 1.0},
+            ]
+        )
+
+        self.assertEqual(soviet["stage"], "double_russia")
+        self.assertAlmostEqual(soviet["t15_gap"], 0.05)
+        self.assertFalse(soviet["t15_merge_ready"])
 
 
 if __name__ == "__main__":

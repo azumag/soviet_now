@@ -171,7 +171,24 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(tmp, out_file)
 PY
 	chmod 644 "$out_file" 2>/dev/null || true
+	# eventOverlay の生成中インジケーター (コメント/ラジオ) を同じ ~2s tick で再描画する。
+	# 状態ファイル (.comment_gen_state / .radio_state) の鮮度を読み、生成が続く間だけ
+	# スピナーを表示し、シグナルが消える/期限切れになると自動的に消える。
+	render_event_overlay_indicators || true
 	printf 'generated:%s\n' "$out_file"
+}
+
+render_event_overlay_indicators() {
+	[ -f "$ELOOP_LIB_DIR/generate_event_overlay.py" ] || return 0
+	EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
+	EVENT_OVERLAY_COMMENT_GEN_STATE="${COMMENT_GEN_STATE_FILE:-tmp/state/.comment_gen_state}" \
+	EVENT_OVERLAY_RADIO_STATE="${RADIO_STATE_FILE:-tmp/state/.radio_state}" \
+	python3 "$ELOOP_LIB_DIR/generate_event_overlay.py" \
+		"$EVENT_OVERLAY_EVENTS_FILE" \
+		"$EVENT_OVERLAY_HTML_FILE" \
+		"$EVENT_OVERLAY_KEEP_EVENTS" \
+		"$EVENT_OVERLAY_VISIBLE_SEC" \
+		"$CODEX_WORK_OVERLAY_STATE_FILE" >/dev/null 2>&1 || true
 }
 
 case "$mode" in

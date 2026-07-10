@@ -2077,7 +2077,7 @@ generate_comment_response() {
 		local comment_thumbnail_ocr_json=""
 		local comment_ocr_script="$ELOOP_LIB_DIR/soren91/result_screen_ocr.mjs"
 		if [ -f "$comment_ocr_script" ]; then
-			comment_thumbnail_ocr_json=$(node "$comment_ocr_script" "$comment_screenshot" 2>/dev/null || true)
+			comment_thumbnail_ocr_json=$(timeout --kill-after=5s 25s node "$comment_ocr_script" "$comment_screenshot" 2>/dev/null || true)
 			if [ -n "$comment_thumbnail_ocr_json" ]; then
 				comment_thumbnail_ocr_context=$(printf '%s' "$comment_thumbnail_ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); lines=(d.get('lines') or [])[:8]; print('\n'.join(f'- {line}' for line in lines) if lines else '（OCRで読める文字なし）')" 2>/dev/null)
 			else
@@ -2476,8 +2476,11 @@ PY
 			comment_claude_only=true
 			log "[COMMENT] !claude 指定のため claude ${RADIO_CLAUDE_MODEL} で生成"
 		elif [ "$_comment_mode_generated" != "soren91" ] && _is_improve_running; then
-			comment_ollama_improving_only=true
-			log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
+			# wildcard_parallel中はollamaが常にリソース競合で失敗するのでスキップし通常パスへ
+			if ! (command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active); then
+				comment_ollama_improving_only=true
+				log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
+			fi
 		fi
 		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, max_retry=${comment_retry_max})"
