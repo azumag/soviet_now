@@ -1,6 +1,6 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-06-29 11:07:14 JST`
+- Updated: `2026-08-06 06:11:39 JST`
 - Nodes: `3333`
 - Edges: `267`
 - Current: `880278a14edf`
@@ -170,7 +170,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     h_880278a14edf["880278a14edf<br/>CURRENT<br/>g=17 n=17<br/>comp=11617.3"]
-    h_d88fc8bfd580["d88fc8bfd580<br/>g=2166 n=20<br/>comp=9932.9"]
+    h_d88fc8bfd580["d88fc8bfd580<br/>g=2178 n=20<br/>comp=9538.9"]
     h_1e40c5541032["1e40c5541032<br/>g=21 n=20<br/>comp=11260.5"]
     h_a3e3965087ab["a3e3965087ab<br/>g=21 n=20<br/>comp=11177.0"]
     h_0ff7f425d879["0ff7f425d879<br/>g=56 n=20<br/>comp=10749.5"]
@@ -7839,6 +7839,22 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#39756 `d88fc8bf -> 880278a1`
+
+- - rollback from d88fc8bfd580 to 880278a14edf at game 39756
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9713.0/10451.0/8613.2 vs target 11266.9/11980.0/9748.0
+- - bad recent scores: 11547 11559 12768 7840 10748 11352 8871 10525
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9713.0 p50=10451.0 p25=8613.2 mean=9907.1 n=12
+- rollback_target: comp=11266.9 p50=11980.0 p25=9748.0 mean=13279.3 n=13
+- metric_gap_vs_target: comp=-1554.0 p50=-1529.0 p25=-1134.8 mean=-3372.2
+- recent12_avg: bad=9907.1 target=13595.8
+- recent12_floor: bad=6279 target=8547
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
 
 ### Rollback Game#39744 `d88fc8bf -> 880278a1`
 
