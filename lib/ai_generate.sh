@@ -504,7 +504,7 @@ _ai_call_opencode_unqueued() {
 	raw_file=$(mktemp /tmp/ai_opencode_raw_XXXXXXXX)
 	# opencode 1.3.x 以降は非 TTY でも動くため、旧 script(1) pty ラッパは廃止
 	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
-		timeout "$timeout_sec" opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		timeout --kill-after=10s "$timeout_sec" opencode run --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	_opencode_run_lock_leave "$lock_token" "${label}:opencode:${agent}" "$agent"
@@ -622,6 +622,17 @@ _ai_dispatch() {
 		;;
 	haiku|claude)
 		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override" | tee "$_dispatch_output_file"
+		;;
+	sonnet|opus)
+		# agent名そのものをclaudeモデルエイリアスとして使う (RADIO_CLAUDE_MODEL非依存)。
+		# sonnetはラジオ生成で使用。Web調査込みで100s超えることがあるため、明示overrideが
+		# 無い場合は余裕のあるタイムアウトを使う (RADIO_CLAUDE_TIMEOUT=120はコメントhaiku等と
+		# 共有なので触らない)。コメントはsonnetを使わないので影響しない。
+		_ai_call_claude "$label" "$prompt_file" "$agent" "${timeout_override:-${RADIO_SONNET_TIMEOUT:-240}}" | tee "$_dispatch_output_file"
+		;;
+	claude:*)
+		# claude:<model> で明示モデル指定
+		_ai_call_claude "$label" "$prompt_file" "${agent#claude:}" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	opencode:*)
 		local _opencode_timeout="$timeout_override"

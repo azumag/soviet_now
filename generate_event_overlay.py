@@ -41,6 +41,108 @@ def read_work_indicator(path: Path) -> dict[str, Any] | None:
     return item
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def read_gen_indicators(now: int) -> list[dict[str, Any]]:
+    """Collect "still generating" signals (comment / radio) into indicator rows.
+
+    Reads small state files written by broadcast/comment.sh and
+    broadcast/radio_state.sh. Each row is shown only while its signal is
+    fresh (mtime/epoch within a stale window) so a crashed generator does
+    not leave a permanent ghost indicator.
+    """
+    base = os.environ.get("EVENT_OVERLAY_STATE_BASE", "")
+    base_path = Path(base) if base else Path.cwd()
+
+    def resolve(raw: str) -> Path:
+        p = Path(raw)
+        return p if p.is_absolute() else (base_path / p)
+
+    indicators: list[dict[str, Any]] = []
+
+    # --- コメント生成中: tmp/state/.comment_gen_state = "generating:comment:<epoch>" ---
+    comment_raw = os.environ.get("EVENT_OVERLAY_COMMENT_GEN_STATE", "")
+    comment_stale = int(os.environ.get("EVENT_OVERLAY_COMMENT_GEN_STALE_SEC", "90") or "90")
+    if comment_raw:
+        path = resolve(comment_raw)
+        try:
+            line = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            line = ""
+        if line.startswith("generating:"):
+            parts = line.split(":")
+            ts = 0
+            if len(parts) >= 3 and parts[-1].isdigit():
+                ts = int(parts[-1])
+            if ts <= 0:
+                try:
+                    ts = int(path.stat().st_mtime)
+                except OSError:
+                    ts = now
+            if 0 <= now - ts <= comment_stale:
+                indicators.append({
+                    "key": "comment",
+                    "icon": "💬",
+                    "label": "コメント生成中",
+                    "ts": ts,
+                })
+
+    # --- ラジオ生成中: tmp/state/.radio_state = "mode:corner:ts:owner_pid" ---
+    # 生成 (jiji の Web 検索等) は数分かかることがあり ts は開始時にしか刻まれない。
+    # owner_pid が生きている間は project の RADIO_STATE_STALE_SEC (既定600s) まで信頼し、
+    # pid が死んでいる/不明な場合のみ短い窓 (dead window) でゴーストを防ぐ。
+    radio_raw = os.environ.get("EVENT_OVERLAY_RADIO_STATE", "")
+    radio_alive_stale = int(os.environ.get("EVENT_OVERLAY_RADIO_GEN_STALE_SEC", "600") or "600")
+    radio_dead_stale = int(os.environ.get("EVENT_OVERLAY_RADIO_GEN_DEAD_STALE_SEC", "20") or "20")
+    if radio_raw:
+        path = resolve(radio_raw)
+        try:
+            line = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            line = ""
+        if line:
+            fields = line.split(":")
+            mode = fields[0] if fields else ""
+            corner = fields[1] if len(fields) > 1 else ""
+            ts = int(fields[2]) if len(fields) > 2 and fields[2].isdigit() else 0
+            owner_pid = int(fields[3]) if len(fields) > 3 and fields[3].isdigit() else 0
+            if ts <= 0:
+                try:
+                    ts = int(path.stat().st_mtime)
+                except OSError:
+                    ts = now
+            age = now - ts
+            # Only "being produced" phases count as a loading indicator.
+            if mode in ("generating", "verifying"):
+                alive = bool(owner_pid) and _pid_alive(owner_pid)
+                window = radio_alive_stale if alive else radio_dead_stale
+                fresh = 0 <= age <= window
+                if fresh:
+                    label = "ラジオ生成中" if mode == "generating" else "ラジオ検証中"
+                    if corner:
+                        label = f"{label} ({corner})"
+                    indicators.append({
+                        "key": "radio",
+                        "icon": "📻",
+                        "label": label,
+                        "ts": ts,
+                    })
+
+    return indicators
+
+
 def main() -> None:
     events_path = Path(sys.argv[1])
     out_path = Path(sys.argv[2])
@@ -51,9 +153,11 @@ def main() -> None:
     work = read_work_indicator(work_state_path) if work_state_path else None
     now = int(time.time())
     recent = [e for e in events if now - int(e.get("ts", 0) or 0) <= max(visible_sec * 4, 60)]
+    gen_indicators = read_gen_indicators(now)
 
     payload = json.dumps(recent[-18:], ensure_ascii=False, separators=(",", ":"))
     work_payload = json.dumps(work or {}, ensure_ascii=False, separators=(",", ":"))
+    gen_payload = json.dumps(gen_indicators, ensure_ascii=False, separators=(",", ":"))
     doc = f"""<!doctype html>
 <html lang="ja">
 <head>
@@ -200,6 +304,71 @@ html, body {{
   -webkit-line-clamp: 2;
 }}
 .empty {{ display: none; }}
+#gen-loaders {{
+  position: fixed;
+  right: 24px;
+  top: 24px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}}
+#gen-loaders:empty {{ display: none; }}
+.gen-loader {{
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 15px 9px 13px;
+  color: #ecfeff;
+  background: rgba(8, 17, 30, 0.90);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  border-left: 4px solid #38bdf8;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.40);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.15;
+}}
+.gen-loader.comment {{ border-left-color: #a78bfa; border-color: rgba(167, 139, 250, 0.55); }}
+.gen-loader.radio {{ border-left-color: #22c55e; border-color: rgba(34, 197, 94, 0.55); }}
+.gen-loader .gen-icon {{ font-size: 18px; line-height: 1; }}
+.gen-loader .gen-label {{
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.gen-loader .gen-elapsed {{
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(236, 254, 255, 0.62);
+  font-variant-numeric: tabular-nums;
+}}
+.gen-loader .gen-dots::after {{
+  content: "";
+  animation: genDots 1.4s steps(4, end) infinite;
+}}
+.gen-spinner {{
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 3px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: genSpin 0.8s linear infinite;
+}}
+.gen-loader.comment .gen-spinner {{ border-top-color: #a78bfa; }}
+.gen-loader.radio .gen-spinner {{ border-top-color: #22c55e; }}
+@keyframes genSpin {{ to {{ transform: rotate(360deg); }} }}
+@keyframes genDots {{
+  0% {{ content: ""; }}
+  25% {{ content: "."; }}
+  50% {{ content: ".."; }}
+  75% {{ content: "..."; }}
+  100% {{ content: ""; }}
+}}
 @keyframes slideIn {{
   from {{ transform: translateX(18px); opacity: 0; }}
   to {{ transform: translateX(0); opacity: 1; }}
@@ -217,15 +386,18 @@ html, body {{
     <div class="work-body"></div>
   </div>
 </section>
+<div id="gen-loaders" aria-live="polite"></div>
 <div id="toasts"></div>
 <script>
 const EVENTS = {payload};
 const WORK = {work_payload};
+const GEN = {gen_payload};
 const VISIBLE_SEC = {visible_sec};
 const ANIMATE_MAX_AGE = 3;
 const now = Math.floor(Date.now() / 1000);
 const container = document.getElementById('toasts');
 const workIndicator = document.getElementById('work-indicator');
+const genLoaders = document.getElementById('gen-loaders');
 function pad(n) {{ return String(n).padStart(2, '0'); }}
 function timeLabel(ts) {{
   const d = new Date(ts * 1000);
@@ -242,6 +414,19 @@ if (WORK && WORK.active) {{
   workIndicator.querySelector('.work-title').textContent = WORK.title || 'システム自動分析・修正作業中';
   workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(WORK.ts);
   workIndicator.querySelector('.work-body').textContent = WORK.body || 'メリケンAI が確認・修正・検証を進めています';
+}}
+for (const g of (GEN || [])) {{
+  const row = document.createElement('div');
+  row.className = `gen-loader ${{g.key || ''}}`;
+  row.innerHTML = `<span class="gen-spinner"></span><span class="gen-icon"></span><span class="gen-label"></span><span class="gen-elapsed"></span>`;
+  row.querySelector('.gen-icon').textContent = g.icon || '⏳';
+  const labelEl = row.querySelector('.gen-label');
+  labelEl.textContent = (g.label || '生成中');
+  const dots = document.createElement('span');
+  dots.className = 'gen-dots';
+  labelEl.appendChild(dots);
+  row.querySelector('.gen-elapsed').textContent = ' ' + elapsedLabel(g.ts);
+  genLoaders.appendChild(row);
 }}
 for (const ev of EVENTS.slice().reverse()) {{
   const age = now - Number(ev.ts || 0);

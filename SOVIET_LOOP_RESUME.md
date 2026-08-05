@@ -1202,3 +1202,82 @@ HEALTH全green: monitor2/loop9000/runner8967/daemon2/SOVIET log=1/Russia 06-24=5
 **床score懸念=低luck窓と確認**: recent40 median1152(ボーダー)だったが、**大標本(n=206) score_med=1293・recent60=1298**で床1150を十分超=narrow窓ノイズ。床割れなし。funnel大標本: T14+28(vs26)/T15 3.4%(vs2.3, ~1.5倍)=平均回帰でmodestだがdeployable最良baseline維持。
 **現状=理想安定**: d88fc(Soviet-best)クリーン・churn無・param並列稀(15min cap)・funnel保護・Russia量産。原子書込修正で0byte破損根絶durable。
 **次**: 安定継続・次サイクル(acc~100)improve/revert時の原子化確証・床score・d88fc維持・新Russia/ソ連。
+
+### §8追記: cycle-100 AI改善 進行中・原子化LIVE検証待ち (2026-06-24 12:01)
+**HEALTH全green**: SOVIETモニタ2/loop9000(20d)/daemon2/live==head==anchor==d88fc8bfd580/active_branch valid(465B,depth1,closed20)。今日のRussia≥5(10:47時点5・可視窓に09:30の1残存)/新ソ連0/raw床=今日min499(0連続なし=infra健全)。
+**MEASURE d88fc live funnel(粛清anchor rolling n=20)**: EVAL score_med=11128/min6044・T13+80%/T14+25%/T15(窓内)0%。**うち1局面が2×T14=ニアソ連(各1併合でソ連)**。累積russia2/soviet1(best_max_type=16=過去ソ連)。corrected baseline(n=43 T14+37/T15 4.7)に対し小標本ばらつき内、健全。
+**cycle-100 AI改善 進行中(11:35発火)**: fix_retry1_1で~19分stuck(opencode minimax-m3がvalidation修正反復)→**review phaseへ進行(~24分,候補生成成功)**=apply/eval間近。soren91(pid51892)代打が画面被覆=凍結ではない。改善中もactive_branch valid維持(原子化修正holding)。
+**新知見(キャップの作用範囲)**: 私の追加した`MAIN_BLOCK_MAX_SEC=1100`(~18min)は**param並列statusの陳腐化age上限のみ**で、AI改善fix_retry局面には非適用。AI改善は`IMPROVE_WALL_TIMEOUT=3600`(60min)+retry(fresh3×continue6)+各opencode`timeout600`で境界付き=最悪60分の主AI pause(soren91代打被覆)。今回は~24分で進行中ゆえ介入不要(境界内・代打稼働)。
+**ADVANCE**: 今パスのコード変更なし(改善実行中=deploy衝突回避。per-drop政策レバー枯渇結論は維持、本改善が自律advance機構)。
+**WATCHER bhcbu1dty**: 改善決着まで監視→apply/revert時のactive_branch健全性(原子化LIVE確証)+stream再開を次notifyで検証。
+**次**: 改善決着の検証(failed_no_apply→d88fc維持 か 候補採用→粛清eval)・原子化LIVE確証・churn0継続・d88fc維持・新Russia/ソ連。
+
+### §8追記: ★原子化修正 LIVE検証 成功・cycle-100がソ連狙い候補559da5採用 (2026-06-24 12:03)
+**★★原子化書込修正のLIVE確証(懸案完了)**: cycle-100 AI改善が**実apply**を実行(live d88fc8bfd580→**559da5ffa21d**、depth1→2、closed20→40、patience0→1、`_atomic_pin_advance_after_apply`発火)。この実pin-advanceを経て **active_branch.json = 401B・VALID JSON維持**(0byte破損ゼロ)。revertでなく**より厳しいapply経路**で原子化修正が機能=durable確証。anchor/best=d88fc8bfd580保持(粛清比較基準&revert先)。live==head==559da5一致。
+**採用候補559da5の正体=ソ連2nd-chain狙い(非churn)**: cycle-100改善が今日の蓋(lid)失敗3ゲーム(score0499=T10蓋/score3121=T14蓋/score3008=T15蓋[09:30 Russia])を解析し、**axis 9.9「高type(max_type≥10)ピースの真下/斜め下レーンを空け、2個目素材育成レーンを確保」をrussia_phase限定(1/49 fire=冗長)→max_type≥10全般に拡張**。ガード: merge_grade==NO/max_y≥1.0/!death_spiral/!crosses_deadline/pc≥20。+FAST_DROP_DEADLINE_CONTACT=True追加。狙いはまさに実証済みボトルネック(2nd高ティア素材未発達)。diff=99行。
+**probation下**: 559daは anchor=d88fc に対し粛清が funnel基準(T14+/T15/russia/soviet)で評価中。劣化なら**原子的にd88fcへrevert**(修正済で安全)。**両立設計が稼働**: periodic改善は走るが採用はfunnel-gate。
+**post_improve param並列 稼働(cap内)**: phase=running・run_elapsed4.5min/cap15min(900s)・controller32712生存・soren91停止(12:02:06 SIGTERM、隔離評価=6パネル画面)。~12:17キャップ。
+**WATCHER bhcbu1dty継続**: param並列終了+559da probation結果(keep/粛清revert)+stream再開を次notifyで捕捉。
+**次**: param並列15分cap遵守確認・559daのfunnel vs d88fc(2nd-chain改善 or revert)・stream再開・churn0継続・新Russia/ソ連。**559daがソ連近接funnel(2×T14/T15)を上げれば前進、下げればd88fc復帰**。
+
+### §8追記: cycle-100決着・live=e460a06c(d88fcから2段)・原子化2連続apply健全・stream再開 (2026-06-24 12:20)
+**cycle-100フル決着(11:35→12:19, pause~44min)**: AI改善(opencode)~27分(fix_retry stuck)→**559da5採用(axis9.9 高type レーン確保)**→post_improve param並列15分(12:02-12:17, cap正確遵守)→**perturbation勝者e460a06c1ee8採用**。lineage=[d88fc8bfd580→559da5ffa21d→e460a06c1ee8] depth3。**live=e460a06c**(d88fcから2段churn)。
+**★原子化修正=2連続apply健全**: 559da5 apply時(401B)・e460a06c apply時(417B)とも active_branch VALID JSON維持(0byte破損ゼロ)。最も厳しい連続pin-advanceで durable確証。
+**安全網 全構成present(実測)**: anchor=d88fc/best=d88fc保持・e460a06cアーカイブ(by_hash 12:17)・d88fcアーカイブ(revert target)健在。→ 粛清がe460a06cをfunnel基準でd88fcと比較し劣化なら原子的revert可能。
+**stream再開確認(12:19)**: main loop child稼働・commands.txt/game_state.json mtime鮮度=e460a06cで実プレイ再開。soren91代打(AI改善中11:35-12:02)→6パネル(param並列12:02-12:17)→main復帰、全境界内。
+**注意/次パス必須検証**: live=e460a06cは**proven Soviet-best d88fcから2段・isolated eval基盤**=未実証。**両立設計の核心テスト=粛清funnel-gateが次~12ゲームでe460a06c vs d88fcを正しく評価しkeep/revert判定するか**を実測する。e460a06cがソ連近接funnel(2×T14/T15)を上げれば前進、下げればd88fc復帰を確認。新Russia/ソ連も監視。
+**pause長(44min)所見**: AI改善stuck(opencode)が主因。MIN_GAMES=100で稀(~数時間に1回)だが、AI改善はIMPROVE_WALL_TIMEOUT=3600(60min)上限ゆえ最悪60分pause可能。許容範囲だが、頻発するなら短縮検討。
+
+### §8追記: e460a06c probation n=10実測・rolling汚染訂正・床ソフト懸念 (2026-06-24 12:50)
+**HEALTH全green**: モニタ2/loop9000(20d)/improve idle/active_branch valid(417B)/live==head==e460a06c1ee8/depth3/anchor=d88fc保持/SOVIET log=1(新ソ連なし)/0連発なし。
+**★rolling汚染を実測訂正(検証してから報告)**: 前パスの「e460a06c T14+33%/T15 8%/russia1」は**汚染値だった**。`_recent_archives`実測で rolling先頭3件が**wildcard_parallel eval games(cand-4-r2_g1/g2/g3, isolated評価)**=main-loop外。**rolling russia=1/T15はparam eval由来で、実main-game(12:19+, n=10)にrussia_created=True無し**。
+**e460a06c クリーンmain funnel(n=10)**: max_types=[13,14,13,13,14,13,13,13,12,14] → **T14+30%/T13+90%/T15 0%**(d88fc: T14+25/T13+80/T15 0)。funnelは僅か上・早期死なし(T13+90%)。但し **raw median~1010・6/10が1150未満=床ソフト**(d88fc raw~1293)。→ 高ティア到達は微増だが raw床が下=高分散プロファイル。EVAL med9736は funnel良で嵩上げ。
+**判定保留(n=10<25)**: directiveの判定閾値n≥25未達。funnel僅か改善ゆえ「改善なし」即revert条件には非該当・床<1150も n=10では「持続」未確立。→ **accumulate継続**。粛清(anchor=d88fc)が自律評価中。劣化(床持続割れ or funnel低下)なら原子的にd88fcへrevert。
+**システム所見(汚染)**: rolling_scoresは param eval games を取り込む(e460a06cで3/13)。粛清funnel-gateの評価データが一時的にeval汚染されるが、main games蓄積で希釈・自己補正。scope外(regression.sh)ゆえ今パスは未修正・記録のみ。
+**次パス必須**: e460a06cが**clean main n≥25**到達時に funnel(T14+/T15) と raw床(med<1150持続?)を再判定。改善明確→継続/採用、床割れ持続 or funnel無改善→d88fcへrollback(§2)。新Russia/ソ連監視。
+
+### §8追記: ★粛清がソ連能力ゼロ株bcfへドリフト→d88fc手動復元 (2026-06-24 13:52)
+**重大ドリフト診断(検証済)**: 12:55:36 commit 8bdecb33a で粛清がe460a06cを`objective_regression+lost_soviet_path`検出(curr russia0/soviet0/best_mt14 vs anchor d88fc russia2/soviet1/best_mt16, comp_gap1218, breach2)し正しくrevert。**だがrollback先がanchor d88fcでなく composite rolling_top=bcf6915c6c58**。bcf実測=n=29 **T14+13%/best_mt14/russia0/soviet0=ソ連能力ゼロ**(一度もRussia未到達)の高consistency株。**compositeメトリックがソ連tail(高ティア)を無視→lost_soviet_pathゲートの意図(ソ連保持)を裏切り、ソ連能力ゼロ株へドリフト**。これは[[soviet-investigation-conclusion-2026-06-22]]のmetric mismatchの具体顕在化。
+**副次バグ**: best_strategy_anchor.json が未アーカイブhash 35729075cdbb を指す壊れ状態(復元不能anchor)。
+**対処(directive「d88fcへrollback §2」実行)**: live=bcfは「全力ソ連」に反するため手動復元。(1)strategy.py←d88fc archive (2)active_branch.json原子書込(head=anchor=best=d88fc,depth1, 301B valid) (3)best_strategy_anchor.json←d88fc(soviet1/russia2/best_mt16, 35729壊れ修正)。検証: live==d88fc8bfd580==head一致。commit be04068bd(strategy.pyのみ)。backup=tmp/state/_manual_restore_bak_20260624_134929。
+**安定性**: 12:55以降commit1件のみ・0スコアchurnなし(直近20 median~1158=bcf低天井)=atomic-fix維持。repair(active_branch present)がd88fc enforce・regression不発(current==anchor==d88fc)。
+**未解決の設計欠陥(scope外)**: 粛清のrollback-target選定が composite rolling_top優先で**ソ連能力株を選ばない**。これがある限り次improve→revert時に再度ソ連ゼロ株へドリフトしうる。regression.sh修正はstrategy.py/analyze_board.py限定scope外ゆえ未着手・記録のみ。**次improve(~100ゲーム後)前にユーザー相談 or rollback-target=soviet-anchor修正を検討**。
+**次パス**: d88fc stickiness確認(watcher起動)・床/funnel・新Russia/ソ連・rollback-target欠陥の扱い判断。
+
+### §8追記: ★d88fc復元HELD＋復元直後にRussia建国・rollback欠陥の完全診断 (2026-06-24 14:02)
+**✅d88fc復元 stickiness確認＋即Russia**: 13:49復元のd88fcはlive==head==anchor維持(churn無)。**13:59:10 d88fcがRussia建国(game 135902, score3408, turn132, russia_created=True実測)**。ドリフト先bcf(29ゲームでRussia0/best_mt14)が失ったソ連能力を、復元d88fcが即実証=復元判断の正しさが裏付けられた。HEALTH全green(モニタ2/loop/improve idle/0連発なし)。
+**★rollback欠陥の完全診断(なぜソ連株bcfが選ばれたか)**: 粛清には**objective-anchor-priority機構が存在**(`_pick_best_rollback_candidate`, OBJECTIVE_ANCHOR_PRIORITY_ENABLED=1)。rank_key=(soviet>0, soviet_count, soviet_frontier, comp,...)でソ連能力株を優先するはず。**だが2条件で無効化**: (1)候補プールは`len(scores)>=MIN_GAMES_FOR_BEST_ROLLBACK=12`必須→**12:55時点でd88fcのrolling窓が12未満に回転していてプール除外**(現にrestore後d88fc rolling n=1)。(2)near_score_leader条件(comp gap≤OBJECTIVE_ANCHOR_MAX_COMP_GAP=1500 or ratio≥0.90)。d88fc comp10722 vs bcf top12010=gap1288≤1500ゆえ(2)は満たすが、(1)のプール除外で候補にすらならず→composite最高bcfが選ばれた。anchor_top1フォールバック(line4421)は`_pick_best_rollback_candidate`が空の時のみ発火だが、bcfが返ったため不発。
+**fix候補(regression.sh, scope外)**: lost_soviet_path検出時はcomposite rolling_topでなくsoviet-anchorをrollback先にする(line4413-4447)。またはMIN_GAMES_FOR_BEST_ROLLBACK除外を受けるソ連株を救済。**strategy.py/analyze_board.py限定scope外ゆえユーザー判断待ち**。修正すれば次improve→revert時のソ連ドリフト再発を防止。
+**現状の安全性**: live=d88fc安定・次improveは~100ゲーム後ゆえ欠陥再発は当面なし。d88fcはRussia量産中(numbers gameでソ連狙い継続)。
+**次パス**: d88fc安定継続・新Russia/ソ連・rollback欠陥fixの可否(ユーザー判断)・可なら実装+offline test。
+
+### §8追記: d88fc=soviet-best稼働確認・2nd-chain T13×3律速・param並列はrollback欠陥で危険 (2026-06-24 14:50)
+**HEALTH全green**: モニタ2/loop生存/live==head==anchor==d88fc(churn無)/improve idle(1.9h)/0連発なし。**今日Russia3件**(135902/140421/143341, score3408/3260/3275)=復元d88fc productive。rolling russia=3/soviet=1/best_mt=16。
+**MEASURE(2nd-nucleus律速の実データ確認)**: d88fc Russia game peak=`T15x1 T13x3 T12x2 T11x2`。1個目T15形成後、**2nd chainはT13×3止まり**。2個目T15には T13×4以上(→T14×2→T15)必要=**1〜2個のT13不足**。T13×3は「材料はあるが2nd-T14ペアに1個足りない」near-miss。[[soviet-investigation-conclusion-2026-06-22]]のthroughput律速(0.38× vs 1.0×)を実データ再確認。
+**ADVANCE判断**: per-drop strategy.pyレバーは枯渇確認済(EXP-3..13/scoring軸/merge-tuning/drain/axis9.9/EXP-6 assembly[=2nd-chain merge priorityで T14pair改善ゼロ]全て≈or revert)。T13×3が merge しないのは spatial/physics(per-drop制御不能)。**新experiment deployは低EV(≈d88fc)かつrollback欠陥で危険**(branch experimentがrevert時にソ連ゼロ株へドリフト)。
+**param並列の安全性問題**: ユーザー favored の param並列(plateau-escape)は winner採用が adopt→粛清経路を通り、**rollback欠陥(soviet-anchorがプール除外でcomposite非ソ連株へdrift)未修正のまま走らせると再ドリフトrisk**。前回のd88fc→559da5→e460a06c→bcf churnがその実例。**param並列を安全に回すには regression.sh の rollback-fix が前提**。
+**現状の最善**: live=d88fc(productive soviet-best)保持=numbers gameでソ連狙い継続(2×T15はtail event)。新Russia量産中。
+**次の一手(ユーザー判断要)**: (A)regression.sh rollback-fix(scope外, soviet-anchor優先)→param並列を安全に再開可 / (B)numbers game継続(d88fc保持)。impasse=per-drop枯渇＋param並列は欠陥で危険。recommend=(A)(param並列はユーザー favored の唯一の plateau-escape 機構ゆえ、その安全化が最大leverage)。
+
+### §8追記: ★d88fc現Russia 3ゲームの空間実測で構造的壁を確定・per-drop closed (2026-06-24 15:50)
+**HEALTH全green**: モニタ2/loop生存/live==head==anchor==d88fc/improve idle/0連発なし。今日Russia3件(productive)。
+**決定的分析(state_snapshot.piecesで2nd-chain空間/在庫を実測)**: d88fc Russia 3ゲーム全てで、**1個目T15形成の瞬間、盤面の2nd材料はほぼ皆無**(T15x1 + T11/T12x1のみ=盤面は1個目T15建設で消費済)。post-T15の31-42ターンで2nd-chain(T11-14)は最大でも**0.25-0.44×**(2nd T15に必要な16=2×T14換算)。game別: 3408(T15@t90→0.44×)/3260(@t106→0.38×)/3275(@t109→0.25×)。
+**→ 壁は「材料が存在しない(構造=幾何+ターン予算)」であって「到達可能だが未merge(strategy修正可能)」ではないと確定**。rolling集計の"T13×3"は1個目T15形成**前**のピーク(その材料が1個目T15に消費される)。[[soviet-investigation-conclusion-2026-06-22]]のthroughput律速0.38×を、d88fc現データ+full空間情報で再確認・sharpen(消費は「ターン切れ」でなく「T15形成時点で盤面が空」)。
+**埋没度/到達可能列 analyze_board特徴は再試行せず**(doc L134: AVOID_BURY_MERGEABLE axis5.5bで埋没予防済=冗長。assembly=EXP-6反証/merge-tuning=EXP-10/11/12 no-op)。今回の分析で「未merge材料」自体が存在しない(post-T15は1×T13)と判明=これら特徴の前提が成立しない。
+**弱signal(参考・未行動)**: 早期1個目T15(t90)ほど2nd材料多い(0.44×)傾向だがn=3・rushは[[clutter-death-dominant-but-undrainable-2026-06-14]]系でr=-0.07反証済の素朴形ゆえ不採用。
+**ADVANCE結論**: per-drop/analyze_board は新証拠で確定的にclosed。soviet前進の非per-drop経路=(A)param並列[rollback欠陥未修正で危険] (B)別アーキ[dualcore反証済] (C)numbers game[d88fc継続=現在]。**live=d88fc保持・Russia量産でtail event監視**。
+
+### §8追記: ★live d88fc = ソ連達成した唯一の戦略と確認・numbers game最適状態 (2026-06-24 16:50)
+**HEALTH全green**: モニタ2/loop生存/live==head==anchor==d88fc/improve idle/0連発なし/d88fc productive(Russia量産)。
+**★決定的確認**: `strategy_versions_archive/best_score6527_soviet_strategy.py`(2026-06-03ソ連建国game29557, score6527の戦略)の decide hash = **d88fc8bfd580 = 現在live と同一**。→ **私は「ソ連を実際に建国した唯一の戦略」をそのまま走らせている**。soviet_creation_history.tsv=1件(29,557試合で1回 ≈ **0.0034%/game**)=numbers game基底レート。
+**祝賀文の機構記述(出典: 過去ソ連の手動祝賀txt)**: 「1つ目ロシアが盤面を圧迫し、残り空間で再び同じ道を登る…時間と空間の戦い」=今パスの空間実測(1個目T15形成時点で2nd材料皆無)と完全一致。最終盤は「2つのロシア(T15×2)隣接→ソ連auto-merge」。これは幾何+throughput律速の当事者記述。
+**結論=最適戦略デプロイ済・稀少イベント監視**: per-drop/analyze_board/param並列でソ連レート(0.0034%/game)を上げるleverは全て枯渇・refuted確認済。**現状はソ連到達のため出来る最善(=ソ連実証済のd88fcを最大スループットで走らせ続ける)を既に実施中**。検出経路健全(monitor2 + grep 'SOVIET UNION CREATED' logs)=次ソ連は捕捉・祝賀される。
+**numbers game期待値**: ~480 games/day × 0.0034% ≈ 60日に1回の桁。d88fc維持・新Russia/ソ連監視継続が唯一かつ最適のin-scope行動。
+**重要(将来drift防止)**: d88fc8bfd580 = ソ連唯一達成株。粛清/param並列がここから離れたら(前回bcfドリフトの如く)即d88fcへ復元すべし。
+
+### §8追記: 占有分解で near-miss 0.62×・headroom非律速・rate vs 上昇が律速 (2026-06-24 17:50)
+**HEALTH全green**: モニタ2/loop生存/live==head==anchor==d88fc/improve idle/0連発なし/d88fc productive(recent 3372/4116=Russia)。
+**占有分解(現存Russia 2ゲーム, state_snapshot area share)**: 4116(@T15 turn147): T15 29%/2nd-seed(T11-14)29%/mid(T6-10)34%/clutter(T1-5)8%, headroom2.41, **2nd-chain peak 0.62×**(実測最良級)。3372(@turn120): T15 29%/seed23%/mid33%/clutter15%, headroom2.33, **0.50×**。
+**精緻化(新)**: ①near-missは0.50-0.62×=前回0.25-0.44より良好(窓variance大)。②**1個目T15形成時点でheadroom十分(2.3-2.4 vs deadline3.3)=高さ/clutterは律速でない**(clutter僅か8-15%)。③律速=post-T15残り~32ターンで「2nd-chain発達rate < 盤面上昇rate」。directiveの「形成組max_y低い(0.24)」診断は2nd核のT14到達時点で、1個目T15形成時点(headroom余裕)とは別moment。
+**lever無し確認**: 律速解消には post-T15 survival mode(盤面上昇を遅らせ2nd-chainに時間を与える)が要るが、survival-first=[[soviet-survival-first-refuted-build-greedy-pareto-2026-06-23]]で材料減反証・drain強化=EXP-4/5 revert・post-T15 survival=政策不変実証([[lookahead-infeasible-physics-merges-2026-06-16]])。全refuted。
+**結論(多角確定)**: 空間/在庫/占有/headroom/唯一成功株、全角度からper-drop枯渇・d88fc最適・numbers game(0.0034%/game)を確認。**ソ連調査は包括的に完了**。今後は軽量監視(health/drift保護/Russia・ソ連祝賀)が適切で、毎時の重複deep-diveは不要。live=d88fc維持。
