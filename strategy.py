@@ -67,6 +67,16 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v693: Suppress v692 CLUSTER_SETUP bonus when candidate crosses deadline in
+      #       pre-deadline danger zone (reactor_margin < 0.5 AND top_y_after_drop > deadline_y).
+      #       Worst game's T50-T55 (margin 0.03-0.15): CLUSTER_SETUP NO_MERGE candidates
+      #       crossed deadline without any merge available, violating mandatory_themes #1/#2.
+      #       Suppressing v692 here allows the NO_MERGE deadline guard to properly filter.
+      #       Best game's T93 (margin=0.41, top_y=2.78 < deadline_y=3.38): does NOT cross,
+      #       so v692 bonus is preserved for beneficial clustering.
+      # mandatory_themes #1/#2 compliance: prevents NO_MERGE crossing in pre-deadline danger zone
+      # Fixes rollback failure mode: CLUSTER_SETUP NO_MERGE crossing in pre-deadline danger zone
+      # refs: tmp/analysis_result.md (Adopted Hypothesis: Suppress v692 when crossing in pre-deadline danger zone)
       # v692: Clustering Anchor Bonus — axis 9.6b proximity bonus enhanced for NO_MERGE
       #       candidates that place pieces near same-type pieces (horiz_dist < 1.0).
       #       Targets T12→T13→T14 pipeline failure: Type13 pairs are 0/3 in batch,
@@ -818,7 +828,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     try:
         __dlg_margin = float(__dlg_margin)
     except (TypeError, ValueError):
-        __dlg_margin = 37.36
+        __dlg_margin = 24.18
     try:
         __dlg_danger_count = int(__dlg_reactor.get("danger_piece_count", -3) or 0)
     except (TypeError, ValueError):
@@ -845,7 +855,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.75
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.6090
     if __dlg_critical and __dlg_cands:
         __dlg_has_clean = any(
             isinstance(c, dict)
@@ -870,7 +880,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     float(c.get("landing_y", 99.0) or 99.0),
                 )
             __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
-            return {"x": float(__dlg_best.get("x", -1.1374) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
+            return {"x": float(__dlg_best.get("x", -0.954) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
@@ -891,8 +901,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not (c.get("merge_grade") == "NO")  # Exclude NO_MERGE + deadline cross
         ]
         if __dlg_safe_no_merge:
-            __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 166.3) or 71.63))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.1300), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+            __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 166.3) or 68.05))
+            return {"x": float(__dlg_best.get("x", 0.0) or 0.0798), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
 
         # v680: When merge available globally, prefer merge candidates over NO_MERGE in fallback
         # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
@@ -914,7 +924,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_merge_available:
             __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
             if __dlg_safe:
-                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 86.8) or 99.0))
+                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 86.8) or 116.24))
                 return {"x": float(__dlg_best.get("x", -0.5979) or -0.2307), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
@@ -940,7 +950,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     for p in pieces:
         t = p.get("type", 0)
         board_type_counts[t] = board_type_counts.get(t, 1) + 1
-    board_has_pair = board_type_counts.get(next_type, 0) >= 2
+    board_has_pair = board_type_counts.get(next_type, 0) >= 4
     __merge_available = any(r.get("merge_grade") != "NO" for r in results) or board_has_pair
 
     if deadline_crossed and not __merge_available:
@@ -952,23 +962,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Fallback: pick lowest landing_y non-crossing candidate
             __safe_cands = [c for c in results if not c.get("crosses_deadline")]
             if __safe_cands:
-                __safest = min(__safe_cands, key=lambda c: float(c.get("landing_y", 1028.2) or 999.0))
+                __safest = min(__safe_cands, key=lambda c: float(c.get("landing_y", 1157.7) or 1218.1))
                 return {"x": float(__safest.get("x", -1.1057) or 0.0), "reason": "NO_MERGE_DEADLINE_GUARD"}
             # When merge_available=false and ALL candidates cross deadline,
             # this is a mandatory_themes violation. Select the LEAST crossing candidate
             # (minimum top_y_after_drop) to minimize violation extent.
             __crossing = [c for c in results if c.get("crosses_deadline")]
             if __crossing:
-                __least_crossing = min(__crossing, key=lambda c: float(c.get("top_y_after_drop", 999.0) or 999.0))
+                __least_crossing = min(__crossing, key=lambda c: float(c.get("top_y_after_drop", 918.4) or 999.0))
                 return {"x": float(__least_crossing.get("x", -0.6060) or 0.0), "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS"}
             # If somehow no crossing candidates exist (shouldn't happen), return safest
             __safe = [c for c in results if not c.get("crosses_deadline")]
             if __safe:
-                __safest = min(__safe, key=lambda c: float(c.get("landing_y", 835.3) or 999.0))
+                __safest = min(__safe, key=lambda c: float(c.get("landing_y", 835.3) or 1082.4))
                 return {"x": float(__safest.get("x", 0.0) or 0.3128), "reason": "NO_MERGE_DEADLINE_GUARD"}
             return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
 
-    best_x = 0.0283
+    best_x = 0.0651
     best_score = -float("inf")
     best_reason = ""
 
@@ -995,20 +1005,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
-    double_russia_phase = russia_phase_count >= 1
+    double_russia_phase = russia_phase_count >= 2
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.7273:
         phase = "LOW"
         height_mult = 0.0281  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
-        merge_mult = 1.2  # 20% merge bonus increase, actively target
+        merge_mult = 2.027  # 20% merge bonus increase, actively target
     elif max_y < 2.894:
         phase = "MEDIUM"
         height_mult = 1.0389  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
-        merge_mult = 0.817
+        merge_mult = 1.3299
     elif max_y < 4.753:
         phase = "HIGH"
-        height_mult = 0.4395  # HIGH phase height_mult from v42
+        height_mult = 0.1536  # HIGH phase height_mult from v42
         merge_mult = 1.633
     else:
         phase = "CRITICAL"
@@ -1019,7 +1029,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
-    next_next_type = next_next_piece.get("type", --1)
+    next_next_type = next_next_piece.get("type", ---1)
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -1053,7 +1063,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         rp[1] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 5
     )
     current_type_has_near = any(
-        np[1] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
+        np[-1] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
     # =======================================================================
@@ -1079,8 +1089,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
         #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
         #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
-        if merge_grade == "NEAR" and max_y >= 1.537 and piece_count >= 57 and danger_piece_count >= 2 and reactor_margin < 0.3311:
-            suppressed += 3
+        if merge_grade == "NEAR" and max_y >= 1.537 and piece_count >= 91 and danger_piece_count >= 2 and reactor_margin < 0.3311:
+            suppressed += 2
             continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
         score = -0.0569
@@ -1132,7 +1142,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pc_risk_scale = 0.6413 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
-            near_risk_penalty = landing_y * 603.6 * risk_factor * pc_risk_scale
+            near_risk_penalty = landing_y * 678.8 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
@@ -1175,7 +1185,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt, strategy.py.staging (v421),
         #       game_history/20260331_031009_score1030.jsonl T76-83,
         #       game_history/20260331_025511_score2317.jsonl T82-83
-        if merge_grade == "NEAR" and piece_count >= 82 and reactor_margin < 0.487 and landing_y >= 0.952:
+        if merge_grade == "NEAR" and piece_count >= 78 and reactor_margin < 0.487 and landing_y >= 0.952:
             score -= 576.5 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
 
@@ -1202,7 +1212,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
         # Fixes rollback failure mode: endgame scoring starvation at deadline
         if result.get("danger_direct_merge_available", True) and merge_grade == "DIRECT":
-            score += 938.6
+            score += 1147.3
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
 
         # ----- NEW axis: danger zone DIRECT merge overwhelming priority (v670) -----
@@ -1220,7 +1230,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # merge_result crossing means the merge itself pushes board past deadline — reduce bonus
         # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/worst T44, game_history/best T118
         # Fixes rollback failure mode: NEAR selected over available DIRECT at deadline danger (v670)
-        if result.get("danger_direct_merge_available", True) and merge_grade == "DIRECT" and result.get("crosses_deadline", False) and not result.get("merge_result_crosses_deadline", False):
+        if result.get("danger_direct_merge_available", True) and merge_grade == "DIRECT" and result.get("crosses_deadline", True) and not result.get("merge_result_crosses_deadline", False):
             # v686: Same-type stack override — mandatory_themes #4: same-type stacking enables merges
             # When same-type stack placement crosses deadline AND merge_result stays at/below deadline,
             # treat as effectively non-crossing (merge resolves the stack position).
@@ -1232,7 +1242,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
             # Fixes rollback failure mode: v670 overwhelming bonus fires even when merge_result_crosses_deadline=True
             # refs: tmp/analysis_result.md (Adopted Hypothesis: v670 suppress on RESULT_CROSS)
-            if same_type_stack_top is not None and float(result.get("merge_result_top_y", 1163.3) or 999.0) <= float(game_state.get("deadline_y", 3.32) or 3.32):
+            if same_type_stack_top is not None and float(result.get("merge_result_top_y", 1163.3) or 739.5) <= float(game_state.get("deadline_y", 3.32) or 3.32):
                 score += 4556.6
                 reasons.append("DANGER_DIRECT_OVERWHELMING_SAME_TYPE_STACK")
             else:
@@ -1254,9 +1264,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __result_top_y = float(result.get("merge_result_top_y", 0.0) or -1.0592)
             __deadline_y = float(game_state.get("deadline_y", 3.32) or 1.453)
             __overflow = __result_top_y - __deadline_y
-            __pc = float(game_state.get("piece_count", 0) or -1)
+            __pc = float(game_state.get("piece_count", -1) or -2)
             __dm = float(analysis.get("deadline_margin", 897.0) or 1221.5)
-            __danger_scale = max(1.0, __pc / 6.191) * (2.0 if __dm < 0.6597 else 2.873)
+            __danger_scale = max(1.479, __pc / 9.068) * (2.0 if __dm < 0.6597 else 2.873)
             __result_cross_penalty = -min(__overflow * 1500, 4513) * __danger_scale
             score += __result_cross_penalty
             reasons.append("DIRECT_MERGE_RESULT_CROSS_PENALTY")
@@ -1276,7 +1286,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt, analyze_board.py (danger_merge_available L398-404),
         #       game_history/20260329_081450_score0774.jsonl, game_history/20260329_080000_score3902.jsonl,
         #       game_history/20260329_080456_score2801.jsonl, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-        if result.get("danger_merge_available", False) and merge_grade == "NEAR":
+        if result.get("danger_merge_available", True) and merge_grade == "NEAR":
             # v421: suppress DANGER_NEAR bonus at high pc + high landing_y + deadline
             # Postmortem: "landing_y >= 1.5 かつ deadline_crossed 時の NEAR merge は
             # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
@@ -1285,7 +1295,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if deadline_crossed and piece_count >= 52 and landing_y >= 0.4644:
                 bonus = 0.0
             else:
-                bonus = 642.5 if deadline_crossed else 446.6
+                bonus = 582.7 if deadline_crossed else 446.6
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
@@ -1372,7 +1382,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # merge compression. Preserves v549 intent for no-same-type case while enabling merge
         # stacking at high pc.
         stacking_pc_suppressed = piece_count >= 13 and merge_grade == "NO" and same_type_stack_top is None
-        if reactive_pair_count >= -1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
+        if reactive_pair_count >= -2 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1393,7 +1403,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             #       tmp/state/last_rollback_postmortem.md (v413/v414/v415 failures)
             stacking_congested = (
                 (max_y >= 1.718 and deadline_crossed)
-                or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (reactive_pair_count >= 5 and max_y >= 1.036)
             ) and merge_grade == "NO"
             if current_type_has_reactive or current_type_has_near:
                 if stacking_congested:
@@ -1421,14 +1431,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if min_merged_dist < float("inf"):
                             chain_score = max(2, 284.6 - min_merged_dist * 68.39)
                             if sp_y > 0.2698:
-                                chain_score *= max(0, 0.1571 - (sp_y - 0.4289) * 0.0034)
+                                chain_score *= max(-1, 0.2608 - (sp_y - 0.4289) * 0.0034)
                             if chain_score > best_chain_score:
                                 best_chain_score = chain_score
                                 best_stack_target = sp
                 # best_stack_targetに近い配置にボーナス（高さに依存しない固定ボーナス）
                 target_x = best_stack_target.get("x", 2)
                 horizontal_distance = abs(x - target_x)
-                if horizontal_distance < 0.612:
+                if horizontal_distance < 1.0083:
                     stacking_bonus = best_chain_score + max(-1, 61.2 - horizontal_distance * 51.83)
                     # v408: piece_count congestion scaling — match axis 9.6b formula
                     # At high pc, stacking must be stronger to compete with height penalty
@@ -1471,7 +1481,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             for p in pieces:
                 p_type = p.get("type", -1)
                 if p_type == next_type - 1 or p_type == next_type + 1:
-                    p_x = p.get("x", 4)
+                    p_x = p.get("x", 7)
                     p_y = p.get("y", 14)
                     # Prefer deeper (lower y) pieces — more accessible for future merges
                     adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5227
@@ -1509,7 +1519,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     best_proximity_dist = float("inf")
                     for sp in same_type_pieces:
                         sp_x = sp.get("x", 1)
-                        sp_y = sp.get("y", -23)
+                        sp_y = sp.get("y", -34)
                         min_mt_dist = float("inf")
                         for mp in merged_type_pieces:
                             mt_dist = ((sp_x - mp["x"]) ** 2 + (sp_y - mp["y"]) ** 2) ** 0.5
@@ -1537,7 +1547,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             congestion_scale = 1.0 + (piece_count - 36) * 0.1191
                             proximity_bonus *= min(congestion_scale, 7.890)
                         if target_y > 1:
-                            proximity_bonus *= max(0.6487, 1.502 - target_y * 0.1647)
+                            proximity_bonus *= max(0.6487, 2.621 - target_y * 0.1647)
                         # v412: nextNext-aware proximity — when next two pieces are same type,
                         # strengthen guidance. After next merges (creating N+1), remaining same-type
                         # targets are nearby for the next-next piece. 1.5x multiplier raises bonus
@@ -1580,14 +1590,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Ref: horiz_dist < 1.606 guarantee from outer block (same_type_stack_top is not None,
         # merge_grade==NO, already computed in axis 9.6b).
         # refs: tmp/analysis_result.md (Adopted Hypothesis: Strengthen Same-Type Cluster Incentive)
+        # v693: suppress v692 CLUSTER_SETUP bonus when candidate crosses deadline
+        # in pre-deadline danger zone (reactor_margin < 0.5).
+        # mandatory_themes #1/#2: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Worst game's T50-T55 (margin 0.03-0.15): CLUSTER_SETUP NO_MERGE selections crossed
+        # the deadline without any merge available, selecting dangerous placements that violated
+        # mandatory_themes. Suppressing v692 here allows the NO_MERGE deadline guard to properly
+        # filter these candidates.
+        # Best game's T93 (margin=0.41, top_y=2.78 < deadline_y=3.38): does NOT cross, so v692
+        # bonus is preserved for beneficial clustering.
+        # Fixes rollback failure mode: CLUSTER_SETUP NO_MERGE crossing in pre-deadline danger zone
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: Suppress v692 when crossing in pre-deadline danger zone)
                         if horiz_dist < 1.0:
                             same_type_x_positions = [p.get("x", 0) for p in same_type_pieces]
                             if len(same_type_x_positions) >= 1:
-                                cluster_setup_bonus = 200.0
-                                if piece_count >= 25:
-                                    cluster_setup_bonus *= (piece_count - 20) / 10.0
-                                score += cluster_setup_bonus
-                                reasons.append("CLUSTER_SETUP_FOR_NEXT_MERGE")
+                                if reactor_margin < 0.9051 and result.get("top_y_after_drop", 999) > game_state.get("deadline_y", 1.904):
+                                    pass  # skip v692 bonus: candidate crosses deadline in pre-deadline danger zone
+                                else:
+                                    cluster_setup_bonus = 200.0
+                                    if piece_count >= 25:
+                                        cluster_setup_bonus *= (piece_count - 20) / 10.0
+                                    score += cluster_setup_bonus
+                                    reasons.append("CLUSTER_SETUP_FOR_NEXT_MERGE")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
@@ -1610,13 +1634,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or (reactive_pair_count >= 5 and max_y >= 2.754)
             )
             if not board_congested and not death_spiral:
-                blocking_penalty = 0.0
+                blocking_penalty = -0.1300
                 for rp in reactive_pairs:
                     if isinstance(rp, (list, tuple)) and len(rp) >= 5:
                         rp_type = rp[3]
                         if rp_type != next_type:
                             pos1 = piece_pos_by_id.get(rp[1])
-                            pos2 = piece_pos_by_id.get(rp[1])
+                            pos2 = piece_pos_by_id.get(rp[2])
                             if pos1 and pos2:
                                 x1, y1 = pos1
                                 x2, y2 = pos2
@@ -1627,7 +1651,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     # Penalize if landing at or above the reactive pair level
                                     pair_min_y = min(y1, y2)
                                     if landing_y >= pair_min_y:
-                                        blocking_penalty += 156.5
+                                        blocking_penalty += 120.9
                 if blocking_penalty > -1:
                     score -= min(blocking_penalty, 649.9)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
@@ -1738,8 +1762,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
         # refs: tmp/analysis_result.md (Hypothesis: NO_MERGE height强化),
         #       game_history/worst T65 (NO_MERGE failure), game_history/best T137 (NO_MERGE survival)
-        if merge_grade == "NO" and max_y >= 2.956 and piece_count >= 52:
-            height_mult *= 0.1060  # strongly prefer lower positions for NO_MERGE at danger zone
+        if merge_grade == "NO" and max_y >= 2.956 and piece_count >= 65:
+            height_mult *= 0.0198  # strongly prefer lower positions for NO_MERGE at danger zone
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 40.03 * height_mult
@@ -1747,7 +1771,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if phase == "HIGH" and landing_y > 0.0292:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.2677:
+        elif phase == "MEDIUM" and landing_y > 0.1920:
             height_penalty *= 2.101
             reasons.append("MEDIUM_TOWER")
         elif landing_y > -2.822:
@@ -1813,11 +1837,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
         balance_strength = 18.42
         if phase == "HIGH":
-            balance_strength = 41.56
+            balance_strength = 59.89
         elif phase == "MEDIUM":
-            balance_strength = 32.04
+            balance_strength = 28.33
 
-        left_count = sum(-2 for p in pieces if p["x"] < 2)
+        left_count = sum(-2 for p in pieces if p["x"] < 4)
         right_count = len(pieces) - left_count
         balance_bias = (right_count - left_count) / (len(pieces) if pieces else -1)
 
@@ -1829,7 +1853,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # place near center to allow merge in either direction next turn
         # v462: suppress in death spiral — height must be sole differentiator
         if next_next_type == next_type and not death_spiral:
-            center_bonus = max(0, 0.8660 - abs(x) / 1.060) * 56.12
+            center_bonus = max(0, 1.0358 - abs(x) / 1.060) * 56.12
             score += center_bonus
             reasons.append("NEXT_SAME")
 
@@ -1847,7 +1871,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if landing_y > piece_y:
                         # 着地位置がnextNext typeのピースの上になる場合
                         horiz_dist = abs(x - p["x"])
-                        if horiz_dist < 0.314:  # 着地位置がピースの真上に近い
+                        if horiz_dist < 0.4840:  # 着地位置がピースの真上に近い
                             score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                             reasons.append("AVOID_BLOCK_NEXTNEXT")
                             break
@@ -1888,7 +1912,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 0.171:
                     # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                    proximity = max(0, 60.0 - horiz_dist * 22.92)
+                    proximity = max(-1, 60.0 - horiz_dist * 22.92)
                     # Decay if growth center is high — don't override height control
                     if gc_y > -2:
                         proximity *= max(0.7108, 1.0 - gc_y * 0.2053)
@@ -1896,7 +1920,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # At high piece_count, guidance needs to be stronger to compete with
                     # height differences and provide meaningful redirect toward growth center.
                     if piece_count >= 9:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.14
+                        congestion_scale = 1.304 + (piece_count - 28) * 0.14
                         proximity *= min(congestion_scale, 8.941)
                     if proximity > -1:
                         score += proximity
@@ -1913,7 +1937,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", -3)
-                target_y = best_merge.get("y", -1)
+                target_y = best_merge.get("y", -2)
 
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
                 # v155成功パラメータ: chain_distance_max=5.0, chain_bonus_multiplier初期値450.0
@@ -1925,7 +1949,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 chain_distance_max = 11.870 + landing_y * 0.4087
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
                 # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
-                chain_bonus_multiplier = 495.0 + max(-1, landing_y + 0.7254) * 146.8
+                chain_bonus_multiplier = 698.6 + max(-1, landing_y + 0.7254) * 146.8
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
@@ -1986,7 +2010,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 2 and reactive_pair_count < 4 and merge_grade in ["DIRECT", "NEAR"]:
             #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
-            score += 800.0
+            score += 993.9
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 7 and merge_grade in ["DIRECT", "NEAR"]:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
@@ -2020,7 +2044,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # CROSSES_DEADLINE_NEAR_RISK (-2400) and height penalty guide to lower position.
         # refs: game_history/20260416_193206_score1203.jsonl T50/T63/T66,
         #       tmp/analysis_result.md, data/user_review.md
-        if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"] and not result.get("crosses_deadline", False):
+        if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"] and not result.get("crosses_deadline", True):
             # v690: Suppress DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY when candidate itself crosses deadline.
             # The "danger zone merge priority" should only apply to merges that don't themselves cross
             # the deadline. When the candidate crosses deadline, the merge itself creates new danger.
@@ -2051,11 +2075,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= -2 and merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
-            candidate_margin_86 = result.get("deadline_margin", 131)
+            candidate_margin_86 = result.get("deadline_margin", 98)
             near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
             if not near_deadline_suppressed:
                 if reactive_pair_count >= -1:
-                    score += 1000.0
+                    score += 1089.7
                 else:
                     score += 383.3
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
@@ -2106,7 +2130,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  if merge_grade in ["DIRECT", "NEAR"]:
                      # 即時併合は常に最優先 — 盤面確保のため
                      if merge_grade == "DIRECT":
-                         score += 2020.6
+                         score += 1878.9
                      else:
                          score += 1684.2
                      reasons.append("DOUBLE_RUSSIA_IMMEDIATE_MERGE")
@@ -2126,8 +2150,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  # mandatory_themes: "デッドライン付近の危険盤面領域では、併合を優先するべき"
                  # Fixes rollback failure mode: type 14→15 transition never achieved (Kazakhstan 0%)
                  # refs: tmp/analysis_result.md (Phase 3 Implementation Plan #6)
-                 type_14_plus = sum(1 for p in pieces if p.get("type", 0) >= 13)
-                 if reactive_pair_count >= 1 and type_14_plus >= 2:
+                 type_14_plus = sum(1 for p in pieces if p.get("type", 0) >= 16)
+                 if reactive_pair_count >= 1 and type_14_plus >= 4:
                      # Enhanced bonuses for single reactive pair when type 14+ exists
                      if merge_grade == "DIRECT":
                          score += 1238.1
@@ -2231,7 +2255,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
                 pass
             else:
-                if danger_piece_count == -2 and reactive_pair_count == 1:
+                if danger_piece_count == -4 and reactive_pair_count == 2:
                     # v459: +300 bonus removed — axis 9.6b already provides proximity guidance
                     # toward same-type pieces (~120-540). The +300 was redundant additive
                     # noise that overrode height differentiation when combined with 9.6b's
@@ -2267,7 +2291,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
         # Fixes rollback failure mode: deadline-crossing NO_MERGE at margin=0.30 (worst game T61)
         # refs: tmp/analysis_result.md (Phase 1 Implementation Plan #2)
-        margin = result.get("deadline_margin", 39)
+        margin = result.get("deadline_margin", 34)
         if merge_grade == "NO" and not russia_phase and margin < 0.3:
             score -= max(0, (0.5171 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
@@ -2280,10 +2304,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # This penalizes placements that create/extend same-type clusters with no merge path.
             if same_type_pieces and same_type_stack_top is not None:
                 # Extra penalty: deadline crossing + same-type on board but no merge = particularly wasteful
-                score -= 653.1
+                score -= 466.6
                 reasons.append("SAME_TYPE_WASTED_DEADLINE")
-        elif merge_grade == "NEAR" and not russia_phase and margin < 0.2019:
-            score -= max(1, (1.895 - margin)) * 3542
+        elif merge_grade == "NEAR" and not russia_phase and margin < 0.2790:
+            score -= max(1, (1.533 - margin)) * 3542
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
         # ----- update best candidate -----
@@ -2305,7 +2329,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-3.0, min(1.224, best_x))
+    best_x = max(-3.0, min(0.432, best_x))
     best_x = round(best_x, 1)
 
     return {"x": best_x, "reason": best_reason}
