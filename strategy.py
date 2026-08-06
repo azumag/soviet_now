@@ -67,6 +67,15 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v691: T14 merge priority in russia_phase — when T14 pieces exist on board
+      #       (russia_phase) and same_type_stack_top is type 14, apply +1500 bonus
+      #       to prioritize T14 chain building toward Russia (T15) creation.
+      #       Evidence: best game had T14 at y=-0.55 and y=-0.54, but NO_MERGE
+      #       was chosen at T104 instead of placing near T14 pieces. russia_phase
+      #       axis 8.7 bonuses fire for ANY immediate merge, not specifically for T14.
+      #       T14 pieces are extremely rare; when they exist, they must be merged.
+      #       Fixes rollback failure mode: Russia(T15)=0/3 — T14→T15 transition never achieved
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis: Russia-Phase T14 Merge Priority)
       # v690: Suppress v670 when merge_result_crosses_deadline + strengthen v685 penalty — 3 changes:
       #   1. v670: Add `and not result.get("merge_result_crosses_deadline", False)` to condition.
       #      The danger_direct_merge bonus only applies when merge result stays within bounds.
@@ -2020,6 +2029,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     score += 383.3
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+
+        # ----- NEW axis: T14 merge priority in russia_phase -----
+        # Adopted hypothesis: Russia-Phase T14 Merge Priority (analysis_result.md)
+        # When russia_phase is active (T14 piece on board) and same_type_stack_top is type 14,
+        # apply a strong bonus to prioritize T14 chain building toward Russia (T15) creation.
+        # Evidence: best game had T14 at y=-0.55 and y=-0.54, but NO_MERGE was chosen at T104
+        # instead of placing near T14 pieces. DEADLINE_GUARD captured T5/T8 merges but T14 remained unmerged.
+        # russia_phase axis 8.7 bonuses fire for ANY immediate merge, not specifically for T14.
+        # T14 pieces are extremely rare; when they exist, they must be merged immediately.
+        # This axis specifically targets the rare T14+T14→T15 (Russia) creation opportunity.
+        # Bonus: +1500 (stronger than most other bonuses, less than DIRECT_MERGE +1566)
+        # mandatory_theme #5: "二個目ロシア経路の維持を両立せよ" — this axis enables that path
+        # mandatory_theme #2: T14→T15 merge is a merge — this axis is deadline-proximity merge priority
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: Russia-Phase T14 Merge Priority),
+        #       game_history/20260806_193143_score2505.jsonl T104-T111 (T14 pieces unmerged),
+        #       tmp/improve_brief.md (stage_gate: Kazakhstan=33%, Russia=0%)
+        # Fixes rollback failure mode: T14→T15 (Russia) transition never achieved (Russia=0/3)
+        if russia_phase and same_type_stack_top is not None:
+            if same_type_stack_top.get("type") == 14:  # T14 piece on board
+                score += 1500.0
+                reasons.append("RUSSIA_PHASE_T14_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
