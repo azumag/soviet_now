@@ -65,7 +65,7 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
+FAST_DROP_DEADLINE_CONTACT = False
 # --- Change History (compressed to 5 entries; full history in git) ---
       # v685: H1 DIRECT merge with merge_result_crosses_deadline penalty — when merge_result_top_y
       #       exceeds deadline and merge_grade==DIRECT (and not danger_direct_merge_available),
@@ -77,6 +77,17 @@ FAST_DROP_DEADLINE_CONTACT = True
       #       Fixes rollback failure mode: DIRECT merge with merge_result_crosses_deadline causes
       #       catastrophic deadline violations (worst T60, middle T87)
       #       refs: tmp/analysis_result.md (H1: DIRECT MERGE with merge_result_crosses_deadline penalty)
+      # v686: Same-type stack override in v670 RESULT_CROSS branch — when same_type_stack_top
+      #       exists (placement creates same-type stack) and merge_result_top_y <= deadline_y,
+      #       apply full +4556.6 bonus instead of reduced +1200. Fixes extra game T79:
+      #       type14 first appeared with deadline_margin=0.06, same-type stack opportunity was
+      #       penalized AVOID_BLOCK instead of encouraged, preventing type14→type15 pathway.
+      #       mandatory_themes #4: same-type stacking enables merges; #2: deadline-proximity
+      #       merge priority. v670's +1200 for same-type RESULT_CROSS was still too high,
+      #       overwhelming v685's intended penalty. Full bonus now encourages same-type
+      #       stack merges at deadline when the merge result resolves the crossing.
+      #       Fixes rollback failure mode: same-type stack blocking near deadline (extra game T79)
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis: Same-Type Stack Blocking)
       # v683: Fix russia_phase detection — type==5 detects Turkmenistan, not Russia (type 15).
       #       DOUBLE_RUSSIA_* bonuses were firing incorrectly in games with no Russia pieces.
       #       Also fix NO_MERGE_DEADLINE_GUARD fallback: when all candidates cross deadline
@@ -885,7 +896,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 return {"x": float(__safest.get("x", 0.0) or 0.0), "reason": "NO_MERGE_DEADLINE_GUARD"}
             return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
 
-    best_x = 0.0
+    best_x = 0.7685
     best_score = -float("inf")
     best_reason = ""
 
@@ -1137,8 +1148,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # merge_result crossing means the merge itself pushes board past deadline — reduce bonus
         # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/worst T44, game_history/best T118
         # Fixes rollback failure mode: NEAR selected over available DIRECT at deadline danger (v670)
-        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", False):
-            if result.get("merge_result_crosses_deadline", True):
+        if result.get("danger_direct_merge_available", True) and merge_grade == "DIRECT" and result.get("crosses_deadline", False):
+            # v686: Same-type stack override — mandatory_themes #4: same-type stacking enables merges
+            # When same-type stack placement crosses deadline AND merge_result stays at/below deadline,
+            # treat as effectively non-crossing (merge resolves the stack position).
+            # same_type_stack_top is already computed at line 950-953.
+            if same_type_stack_top is not None and float(result.get("merge_result_top_y", 999.0) or 999.0) <= float(game_state.get("deadline_y", 3.32) or 3.32):
+                score += 4556.6
+                reasons.append("DANGER_DIRECT_OVERWHELMING_SAME_TYPE_STACK")
+            elif result.get("merge_result_crosses_deadline", True):
                 score += 1200  # Was 4556.6; still prioritize but not overwhelming when result crosses
                 reasons.append("DANGER_DIRECT_OVERWHELMING_RESULT_CROSS")
             else:
@@ -1162,7 +1180,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __overflow = __result_top_y - __deadline_y
             __pc = float(game_state.get("piece_count", 0) or -1)
             __dm = float(analysis.get("deadline_margin", 897.0) or 1221.5)
-            __danger_scale = max(1.0, __pc / 12.23) * (2.0 if __dm < 0.5 else 2.873)
+            __danger_scale = max(1.0, __pc / 13.95) * (2.0 if __dm < 0.5 else 2.873)
             __result_cross_penalty = -min(__overflow * 979, 3000) * __danger_scale
             score += __result_cross_penalty
             reasons.append("DIRECT_MERGE_RESULT_CROSS_PENALTY")
@@ -1261,7 +1279,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
         # Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
         death_spiral = (
-            danger_piece_count > 0
+            danger_piece_count > -1
             and reactive_pair_count >= 3
             and merge_grade == "NO"
             and deadline_crossed
@@ -1342,7 +1360,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 21:
-                        congestion_scale = 0.541 + (piece_count - 39) * 0.0895
+                        congestion_scale = 0.541 + (piece_count - 56) * 0.0895
                         stacking_bonus *= min(congestion_scale, 4.113)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
@@ -1456,14 +1474,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
                         # differentiation" that occurred when rp_density_scale went up to 2.5x.
+                        # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
+                        # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
+                        # the postmortem warning about "additive bonus accumulation masking height
+                        # differentiation" that occurred when rp_density_scale went up to 2.5x.
                         # rp_guidance_suppressed still used for congestion state detection:
                         rp_guidance_suppressed = (
                             (max_y >= 4.463 and deadline_crossed)
                             or (reactive_pair_count >= 5 and max_y >= 1.164)
                         )
-                        if rp_guidance_suppressed:
-                            proximity_bonus = 1.2275
-                        if proximity_bonus > -1:
+                        # v369 fix: when rp_guidance_suppressed, proximity_bonus was already added
+                        # to score above. Undo it and set to 0 so it is not added again.
+                        if rp_guidance_suppressed and horiz_dist < 1.225:
+                            score -= proximity_bonus
+                            proximity_bonus = 0.0
+                        if horiz_dist < 1.691 and proximity_bonus > -1:
                             score += proximity_bonus
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
@@ -1479,7 +1504,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: advice.md, tmp/state/last_rollback_postmortem.md,
         #       game_history/20260329_090616_score0296.jsonl T37-47,
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
-        if merge_grade == "NO" and reactive_pair_count >= --1:
+        if merge_grade == "NO" and reactive_pair_count >= --2:
             # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
             # v461: also suppress in death spiral — height must be sole differentiator
             board_congested = (
@@ -1925,7 +1950,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             candidate_margin_86 = result.get("deadline_margin", 99)
             near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
             if not near_deadline_suppressed:
-                if reactive_pair_count >= 1:
+                if reactive_pair_count >= -1:
                     score += 1000.0
                 else:
                     score += 383.3
@@ -1972,7 +1997,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  if reactive_pair_count >= 2:
                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                      if merge_grade == "DIRECT":
-                         score += 1400.0 if reactive_pair_count >= 7 else 1065.0
+                         score += 1400.0 if reactive_pair_count >= 2 else 1065.0
                      else:
                          score += 1255.0 if reactive_pair_count >= 3 else 1000.0
                  else:
