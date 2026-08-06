@@ -3,6 +3,13 @@
 # ELOOP_LIB_DIR は eloop_lib.sh (shim) で設定済み。
 # このファイルでは再設定しない。
 
+# --- モード切替 ---
+# EXPLORE_MODE=1: 探索モード（配信なし）。実ゲームで戦略改善ループのみ回す。
+# ・.benv/.env に書かない（explore.sh が export + tmp/state/explore_mode マーカで固定）
+# ・runtime_toggles.sh のホワイトリストに含めない（実行中 hot-toggle 不可）
+EXPLORE_MODE="${EXPLORE_MODE:-0}"
+STREAMING_ENABLED="${STREAMING_ENABLED:-$((1 - EXPLORE_MODE))}"
+
 # --- 定数 ---
 COMMANDS="commands.txt"
 GAME_STATE="game_state.json"
@@ -262,6 +269,14 @@ RUNTIME_RECOVERY_GATE_FILE="$TMP_STATE_DIR/recovery_gate"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE="${MIN_GAMES_BEFORE_IMPROVE:-12}"
+# 探索モード (EXPLORE_MODE=1) では探索専用の改善サイクルに上書きする。
+# 環境変数 EXPLORE_MODE は .env 再読込やホットリロードで失われる可能性があるため、
+# explore.sh が作成する tmp/state/explore_mode マーカの存在を基準にする。
+# これにより soren_loop.sh が毎周回 .env を再読込しても MIN_GAMES_BEFORE_IMPROVE=100 に
+# 戻らない。EXPLORE_MIN_GAMES_BEFORE_IMPROVE 未指定時は 12。配信モードには影響しない。
+if [ -f "$ELOOP_LIB_DIR/tmp/state/explore_mode" ]; then
+	MIN_GAMES_BEFORE_IMPROVE="${EXPLORE_MIN_GAMES_BEFORE_IMPROVE:-12}"
+fi
 MIN_GAMES_BEFORE_REGRESSION="${MIN_GAMES_BEFORE_REGRESSION:-12}"
 EARLY_OBJECTIVE_REGRESSION_ENABLED="${EARLY_OBJECTIVE_REGRESSION_ENABLED:-1}"
 EARLY_OBJECTIVE_REGRESSION_MIN_GAMES="${EARLY_OBJECTIVE_REGRESSION_MIN_GAMES:-4}"
@@ -550,6 +565,14 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$STRATEGY_HASH_P
 
 if [ -f "tmp/advice.md" ] && [ ! -f "$MAIN_STRATEGY_ADVICE_FILE" ]; then
 	mv "tmp/advice.md" "$MAIN_STRATEGY_ADVICE_FILE" 2>/dev/null || cp "tmp/advice.md" "$MAIN_STRATEGY_ADVICE_FILE" 2>/dev/null || true
+fi
+
+# 探索モード固定化: explore.sh が作成するマーカを再アサートする。
+# soren_loop.sh が毎周回 .env を再読込しても EXPLORE_MODE=1 が剥がれないようにする。
+if [ -f "$ELOOP_LIB_DIR/tmp/state/explore_mode" ]; then
+	EXPLORE_MODE=1
+	STREAMING_ENABLED=0
+	export EXPLORE_MODE STREAMING_ENABLED
 fi
 
 # --- tmp/ レイアウト移行 (旧パス → 新サブディレクトリ) ---

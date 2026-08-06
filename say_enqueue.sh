@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では音声合成・再生を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # say_enqueue.sh - mkdirロックベースのsayキュー（FIFO順次再生）
 #
 # 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] <content_file> [rate] [pre_delay_sec]

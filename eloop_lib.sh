@@ -25,21 +25,28 @@ source "$ELOOP_LIB_DIR/core/version.sh"
 source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
 source "$ELOOP_LIB_DIR/strategy/regression.sh"
-# Layer 3: 放送系
-source "$ELOOP_LIB_DIR/broadcast/radio_state.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_engine.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_persona.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_themes.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_news.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_quality.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_factcheck.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
-source "$ELOOP_LIB_DIR/broadcast/radio_celebration.sh"
-source "$ELOOP_LIB_DIR/broadcast/comment.sh"
-source "$ELOOP_LIB_DIR/broadcast/comment_lib.sh"
-source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
+# Layer 3: 放送系（配信モードのみ。探索モードでは source しない）
+# 探索モードでは配信系関数は core/streaming_shim.sh の no-op 定義で代替される。
+if [ "${EXPLORE_MODE:-0}" != "1" ]; then
+	source "$ELOOP_LIB_DIR/broadcast/radio_state.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_engine.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_persona.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_themes.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_news.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_quality.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_factcheck.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_celebration.sh"
+	source "$ELOOP_LIB_DIR/broadcast/comment.sh"
+	source "$ELOOP_LIB_DIR/broadcast/comment_lib.sh"
+	source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
+fi
 # Layer 4: インフラ
 source "$ELOOP_LIB_DIR/infra/cleanup.sh"
 [ -f "$ELOOP_LIB_DIR/lib/bridge_recovery.sh" ] && source "$ELOOP_LIB_DIR/lib/bridge_recovery.sh"
-# Layer 5: soren91 integration (optional)
-[ -f "$ELOOP_LIB_DIR/soren91_control.sh" ] && source "$ELOOP_LIB_DIR/soren91_control.sh"
+# Layer 5: soren91 integration (配信モードのみ)
+if [ "${EXPLORE_MODE:-0}" != "1" ]; then
+	[ -f "$ELOOP_LIB_DIR/soren91_control.sh" ] && source "$ELOOP_LIB_DIR/soren91_control.sh"
+fi
+# Layer 6: 探索モード shim (EXPLORE_MODE=1 のとき配信系 sink を no-op 定義)
+source "$ELOOP_LIB_DIR/core/streaming_shim.sh"

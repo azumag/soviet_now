@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では OBS ウィンドウキャプチャ設定を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # obs_window_capture_source.sh - ensure an OBS macOS window capture source targets a real window.
 #
 # Usage:

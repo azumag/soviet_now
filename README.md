@@ -335,6 +335,31 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 
 コメントキューがあるとラジオ再生は deferred queue に回し、コメント消化後に再生。
 
+### explore.sh — 探索モード（配信なし）
+
+配信系機能（ラジオ・コメント・TTS・Twitch・OBS・soren91）を一切使わず、実ゲームの連続プレイで戦略改善ループだけを回すモード。
+
+```bash
+# 起動（改善サイクル長は既定 12 試合）
+./explore.sh
+# 改善サイクル長を指定する場合
+EXPLORE_MIN_GAMES_BEFORE_IMPROVE=3 nohup ./explore.sh > logs/explore.log 2>&1 &
+
+# 停止（配信モードと同じ）
+./stop_soren.sh
+```
+
+**挙動:**
+- `EXPLORE_MODE=1` を export し、`tmp/state/explore_mode` マーカでモードを固定（soren_loop.sh が毎周回 `.env` を再読込しても剥がれない）
+- 配信系スクリプト（`obs_control.sh` 等 15 本）は先頭 guard で即時終了、配信系関数は `core/streaming_shim.sh` の no-op 定義で置換
+- 改善サイクル長は配信モードの `MIN_GAMES_BEFORE_IMPROVE`（.env の 100）を無視し `EXPLORE_MIN_GAMES_BEFORE_IMPROVE`（未指定なら 12）を使う
+- `generate_dashboard.sh`（HTMLダッシュボード）は探索モードでも動作
+- soren_loop.sh の多重起動ロックで配信モードと排他（同時起動は abort）
+
+**注意:**
+- `EXPLORE_MODE` / `STREAMING_ENABLED` は `.env` に書かない（explore.sh が export + マーカで固定）
+- 停止時は `stop_soren.sh` を使う（explore.pid 検出でブリッジ/daemon/watchdog までクリーンアップ）
+
 ### soren91 — 91人対戦版自動プレイヤー (メリケンAI)
 
 `soren91/` ディレクトリに独立したサブプロジェクト。unityroom の91人対戦版ソ連ゲームをスクリーンショットベースで自動プレイする。

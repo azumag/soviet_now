@@ -116,6 +116,14 @@ reload_runtime_toggles() {
 		*" $key "*) ;;
 		*) continue ;;
 		esac
+		# 探索モードでは MIN_GAMES_BEFORE_IMPROVE/REGRESSION を .env から再読込しない。
+		# config.sh が探索用の値 (EXPLORE_MIN_GAMES_BEFORE_IMPROVE) を設定しているため、
+		# ここで .env の値 (例: 100) に上書きすると探索サイクルが壊れる。
+		# EXPLORE_MODE はホットリロードで失われる可能性があるため、マーカも併用する。
+		if { [ "${EXPLORE_MODE:-0}" = "1" ] || [ -f "$ELOOP_LIB_DIR/tmp/state/explore_mode" ]; } &&
+			{ [ "$key" = "MIN_GAMES_BEFORE_IMPROVE" ] || [ "$key" = "MIN_GAMES_BEFORE_REGRESSION" ]; }; then
+			continue
+		fi
 		# クォート剥がし
 		case "$val" in
 		\"*\") val="${val%\"}"; val="${val#\"}" ;;

@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では Twitch クリップ作成を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # twitch_clip.sh - Twitchクリップ自動作成 + チャット投稿
 # Usage: ./twitch_clip.sh "イベントメッセージ"
 cd "$(dirname "$0")"

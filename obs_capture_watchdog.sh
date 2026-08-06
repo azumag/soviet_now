@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では OBS キャプチャ watchdog を実行しない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # obs_capture_watchdog.sh — periodic self-heal for the OBS game window capture.
 #
 # Every OBS_CAPTURE_WATCHDOG_INTERVAL seconds (default 90): if the `sorengame`

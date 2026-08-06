@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では Twitch チャット連携を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # twitch_chat.sh - Twitch チャット常駐デーモン + 差分フェッチ
 #
 # 使い方:

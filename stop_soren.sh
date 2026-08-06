@@ -46,6 +46,26 @@ if [ -f "$SUPERVISOR_PID_FILE" ]; then
 	_signal_pid "supervisor" "$SUPERVISOR_PID_FILE" "TERM"
 fi
 
+# 探索モード (explore.sh) で動いている場合は explore.sh に SIGINT を送る。
+# explore.sh の trap がブリッジ/daemon/watchdog をクリーンアップし、
+# その後に soren_loop.sh の多重起動ロックも解放される。
+if [ -f "tmp/state/explore.pid" ]; then
+	_explore_pid=$(cat "tmp/state/explore.pid" 2>/dev/null || true)
+	case "$_explore_pid" in
+	'' | *[!0-9]*)
+		_explore_pid=0
+		;;
+	esac
+	if [ "$_explore_pid" -gt 0 ] && kill -0 "$_explore_pid" 2>/dev/null; then
+		echo "Sending SIGINT to explore.sh (PID=$_explore_pid)"
+		kill -INT "$_explore_pid" 2>/dev/null
+	else
+		# stale な explore.pid / explore_mode マーカ掃除 (SIGKILL 等で explore.sh の
+		# EXIT trap が走らなかった場合に配信モードが無言で headless 化するのを防ぐ)
+		rm -f "tmp/state/explore.pid" "tmp/state/explore_mode"
+	fi
+fi
+
 # soren_loop が単体で動いている場合 (supervisor なし)
 if [ -f "$LOCKFILE" ]; then
 	_signal_pid "soren_loop" "$LOCKFILE" "INT"

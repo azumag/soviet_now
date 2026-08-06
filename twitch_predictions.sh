@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では Twitch 予想を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # twitch_predictions.sh - Twitch チャネルポイント予想 (Predictions) API wrapper
 # Usage:
 #   ./twitch_predictions.sh create              → prediction_id と outcome_ids を stdout に JSON 出力

@@ -1,4 +1,6 @@
 #!/bin/zsh
+# 探索モード (EXPLORE_MODE=1) ではステータス表示を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # show_status_g.sh - CUI Graphical Statistics Dashboard
 #
 # Usage: ./show_status_g.sh             # 10秒間隔で常時表示
