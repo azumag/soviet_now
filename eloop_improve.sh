@@ -948,6 +948,97 @@ PY
 	return 0
 }
 
+# レビューAIが tmp/review_result.md を実ファイルとして書かず、応答内に
+# 判定 (## VERDICT / 結果: PASS 等) だけを出した場合 (haiku フォールバックで
+# 実測) に、AIログ末尾の最後のREVIEW応答から判定を抽出してファイルを作る。
+# 成功時 0 (ファイル作成済み)。判定が検出できない場合は 1。
+_extract_review_verdict_from_ai_log() {
+	local log_file="${1:-$RUN_CMD_LOG_FILE}" out_file="${2:-tmp/review_result.md}"
+	[ -s "$log_file" ] || return 1
+	mkdir -p "$(dirname "$out_file")" 2>/dev/null || true
+	python3 - "$log_file" "$out_file" <<'PY' || return 1
+import json
+import re
+import sys
+
+log_path, out_path = sys.argv[1], sys.argv[2]
+with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+    text = f.read()
+
+# 最後の [AI:REVIEW:...] START 以降を REVIEW 応答とする
+starts = [m.start() for m in re.finditer(r"\[AI:REVIEW:[^\]]*\] START", text)]
+if not starts:
+    sys.exit(1)
+section = text[starts[-1]:]
+# トレーサビリティ行 (START/HEARTBEAT/WAIT_DONE/END) を除いた本体
+body = re.sub(r"\[AI:REVIEW:[^\]]*\] (?:START|HEARTBEAT[^\n]*|WAIT_DONE[^\n]*|END)[^\n]*\n?", "", section)
+
+verdict = ""
+
+
+def _verdict_candidates():
+    # 明示的な ## VERDICT ヘッダを最優先し、その後に緩い表現 (結果: PASS 等) を探す
+    found = []
+    for m in re.finditer(r"##\s*VERDICT\s*:\s*(PASS|FAIL)", body, re.I):
+        found.append(m)
+    for m in re.finditer(r"(?:verdict|判定|結論|結果|review[_ ]?result)\W{0,4}(PASS|FAIL|REJECT|APPROVE[D]?)", body, re.I):
+        found.append(m)
+    if not found:
+        return ""
+    # 後方優先: 最終応答の末尾付近ほど最終判定である可能性が高い
+    m = found[-1]
+    tok = m.group(1).upper()
+    # 否定文脈 (「PASS とは言えない」「判定: FAIL ではなく」等) を除外する
+    after = body[m.end():m.end() + 40]
+    if re.search(r"とは言え|ではない|ではありません|言えな|言い切れな|できませ|ありませ|できない|とは限ら|とはいえ|cannot|not\b|unclear|not clear", after, re.I):
+        # 直前の候補をさらに遡る
+        for m2 in reversed(found[:-1]):
+            tok2 = m2.group(1).upper()
+            after2 = body[m2.end():m2.end() + 40]
+            if not re.search(r"とは言え|ではない|ではありません|言えな|言い切れな|できませ|ありませ|できない|とは限ら|とはいえ|cannot|not\b|unclear|not clear", after2, re.I):
+                m = m2
+                tok = tok2
+                break
+        else:
+            return ""
+    return "PASS" if tok in ("PASS", "APPROVE", "APPROVED") else "FAIL"
+
+
+verdict = _verdict_candidates()
+if verdict not in ("PASS", "FAIL"):
+    sys.exit(1)
+
+# summary: 「### 検証結果サマリ」以降 or 冒頭を1行に圧縮
+summary = ""
+m = re.search(r"###\s*[^\n]*サマリ[^\n]*\n(.*?)(?:\n#{1,4}\s|\Z)", body, re.S)
+if m:
+    summary = re.sub(r"\s+", " ", m.group(1)).strip()
+if not summary:
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith(("✅", "❌"))]
+    summary = " ".join(lines[:3])
+summary = summary[:300]
+
+data = {
+    "verdict": verdict,
+    "user_review_satisfied": False,
+    "summary": summary,
+    "unresolved_items": [],
+}
+content = (
+    "# Strategy Review Result\n\n"
+    f"## VERDICT: {verdict}\n\n"
+    "```review_verdict\n"
+    + json.dumps(data, ensure_ascii=False, indent=2)
+    + "\n```\n\n"
+    "# (extracted from review AI response; the agent did not write the file)\n"
+)
+with open(out_path, "w", encoding="utf-8") as f:
+    f.write(content)
+sys.exit(0)
+PY
+	return 0
+}
+
 _repair_review_verdict_file() {
 	local review_result_file="${1:-tmp/review_result.md}"
 	local analysis_file="${2:-tmp/analysis_result.md}"
@@ -3602,13 +3693,24 @@ ${helpers_diff}"
 		fi
 		if ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
 			if printf '%s' "${VALIDATE_ERROR:-}" | grep -qi "review verdict missing"; then
-				_improve_note "Stage3: review verdict missing → repair verdict file"
-				if _repair_review_verdict_file "$REVIEW_RESULT_FILE" "$ANALYSIS_RESULT_FILE" "$STAGING_FILE" &&
-					_validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
-					_improve_note "Stage3: review verdict repaired"
+				# レビューAIが応答内に判定を出したのにファイル未作成の場合
+				# (haiku フォールバックで実測) は応答から抽出して救済する
+				if _extract_review_verdict_from_ai_log "$RUN_CMD_LOG_FILE" "$REVIEW_RESULT_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー: AI応答から判定を抽出 ($REVIEW_RESULT_FILE 作成)"
+					_improve_note "Stage3: review verdict extracted from AI response"
+					if ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
+						log "[IMPROVE] Stage 3 レビュー抽出判定が不成立: ${VALIDATE_ERROR:-unknown}"
+						_improve_note "Stage3: extracted verdict rejected: ${VALIDATE_ERROR:0:160}"
+					fi
 				else
-					log "[IMPROVE] Stage 3 レビュー判定修復失敗: ${VALIDATE_ERROR:-unknown}"
-					_improve_note "Stage3: review verdict repair failed but apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
+					_improve_note "Stage3: review verdict missing → repair verdict file"
+					if _repair_review_verdict_file "$REVIEW_RESULT_FILE" "$ANALYSIS_RESULT_FILE" "$STAGING_FILE" &&
+						_validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
+						_improve_note "Stage3: review verdict repaired"
+					else
+						log "[IMPROVE] Stage 3 レビュー判定修復失敗: ${VALIDATE_ERROR:-unknown}"
+						_improve_note "Stage3: review verdict repair failed but apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
+					fi
 				fi
 			else
 				log "[IMPROVE] Stage 3 レビュー判定: FAIL (起動検証OKのため適用は継続)"
