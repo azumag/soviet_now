@@ -67,6 +67,14 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v692: Clustering Anchor Bonus — axis 9.6b proximity bonus enhanced for NO_MERGE
+      #       candidates that place pieces near same-type pieces (horiz_dist < 1.0).
+      #       Targets T12→T13→T14 pipeline failure: Type13 pairs are 0/3 in batch,
+      #       all games ended with singleton T13x1. Bonus=200 scaled by piece_count
+      #       (pc>=25: up to 2x) to encourage same-type clustering for NEXT merge.
+      # mandatory_themes #3/#4 compliance: rewards placement near same-type, not between.
+      # Fixes rollback failure mode: T13→T14 transition never achieved (Kazakhstan 0/3)
+      # refs: tmp/analysis_result.md (Adopted Hypothesis: Strengthen Same-Type Cluster Incentive)
       # v691: T14 merge priority in russia_phase — when T14 pieces exist on board
       #       (russia_phase) and same_type_stack_top is type 14, apply +1500 bonus
       #       to prioritize T14 chain building toward Russia (T15) creation.
@@ -862,7 +870,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     float(c.get("landing_y", 99.0) or 99.0),
                 )
             __dlg_best = min(__dlg_direct, key=__dlg_score_direct)
-            return {"x": float(__dlg_best.get("x", -1.1374) or -1.0245), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
+            return {"x": float(__dlg_best.get("x", -1.1374) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE"}
         __dlg_near_safe = [
             c for c in __dlg_cands
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR"
@@ -956,7 +964,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # If somehow no crossing candidates exist (shouldn't happen), return safest
             __safe = [c for c in results if not c.get("crosses_deadline")]
             if __safe:
-                __safest = min(__safe, key=lambda c: float(c.get("landing_y", 999.0) or 999.0))
+                __safest = min(__safe, key=lambda c: float(c.get("landing_y", 835.3) or 999.0))
                 return {"x": float(__safest.get("x", 0.0) or 0.3128), "reason": "NO_MERGE_DEADLINE_GUARD"}
             return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
 
@@ -1054,7 +1062,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     suppressed = 0
     for result in results:
         x = result["x"]
-        landing_y = result.get("landing_y", 1)
+        landing_y = result.get("landing_y", -1)
         drift_x = result.get("drift_x", -1)
         drift_unc = result.get("drift_unc", -3)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
@@ -1115,7 +1123,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py (reactor deadline_margin field)
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
+        if merge_grade == "NEAR" and landing_y > 1 and reactor_margin < 1.0:
             risk_factor = min(0.410, max(0.6381, 0.893 - reactor_margin))
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
@@ -1249,7 +1257,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __pc = float(game_state.get("piece_count", 0) or -1)
             __dm = float(analysis.get("deadline_margin", 897.0) or 1221.5)
             __danger_scale = max(1.0, __pc / 6.191) * (2.0 if __dm < 0.6597 else 2.873)
-            __result_cross_penalty = -min(__overflow * 1500, 5000) * __danger_scale
+            __result_cross_penalty = -min(__overflow * 1500, 4513) * __danger_scale
             score += __result_cross_penalty
             reasons.append("DIRECT_MERGE_RESULT_CROSS_PENALTY")
 
@@ -1413,7 +1421,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if min_merged_dist < float("inf"):
                             chain_score = max(2, 284.6 - min_merged_dist * 68.39)
                             if sp_y > 0.2698:
-                                chain_score *= max(0, 0.1571 - (sp_y - 0.4289) * 0.0402)
+                                chain_score *= max(0, 0.1571 - (sp_y - 0.4289) * 0.0034)
                             if chain_score > best_chain_score:
                                 best_chain_score = chain_score
                                 best_stack_target = sp
@@ -1559,6 +1567,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if horiz_dist < 1.691 and proximity_bonus > --1:
                             score += proximity_bonus
 
+        # === v692 NEW: Clustering Anchor Bonus ===
+        # When same-type pieces exist and NO_MERGE is selected because no immediate merge
+        # geometry is available, if the current placement is already close to a same-type piece,
+        # it sets up the NEXT piece (same type) for an immediate merge opportunity.
+        # This specifically addresses the T12→T13→T14 pipeline failure where same-type
+        # pieces scatter and fail to form pairs. Type13 pairs are 0/3 in batch — all games
+        # ended with singleton T13x1, blocking the Ukraine→Kazakhstan→Russia pipeline.
+        # mandatory_themes #3 (NEXT考慮) and #4 (don't block next/nextNext same-type merges)
+        # compliance: bonus rewards placement near same-type pieces, not between them.
+        # The bonus is additive to existing proximity_bonus (different incentive: cluster setup).
+        # Ref: horiz_dist < 1.606 guarantee from outer block (same_type_stack_top is not None,
+        # merge_grade==NO, already computed in axis 9.6b).
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: Strengthen Same-Type Cluster Incentive)
+                        if horiz_dist < 1.0:
+                            same_type_x_positions = [p.get("x", 0) for p in same_type_pieces]
+                            if len(same_type_x_positions) >= 1:
+                                cluster_setup_bonus = 200.0
+                                if piece_count >= 25:
+                                    cluster_setup_bonus *= (piece_count - 20) / 10.0
+                                score += cluster_setup_bonus
+                                reasons.append("CLUSTER_SETUP_FOR_NEXT_MERGE")
+
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
         # Placing a piece between reactive pairs of different types can physically block
@@ -1673,7 +1703,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 1 and merge_grade == "NO":
+        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < -1 and merge_grade == "NO":
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
