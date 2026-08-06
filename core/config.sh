@@ -25,7 +25,7 @@ PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet
 MODEL_IMPROVE="${MODEL_IMPROVE:-opencode:minimax-m3}"
 REGRESSION_DISABLED=0
 MERIKEN_SCHEDULED_TIME_ENABLED=0 # 20-21時メリケンAIタイムを無効化
-MODEL_FALLBACK_IMPROVE="opencode:nvdeepseekv4pro"
+MODEL_FALLBACK_IMPROVE="${MODEL_FALLBACK_IMPROVE:-opencode:nvdeepseekv4pro}"
 MODEL_LAST_RESORT="haiku"
 
 GAME_COUNT_FILE="game_count.txt"

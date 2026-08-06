@@ -3836,7 +3836,7 @@ def main() -> int:
             hide_wildcard_candidate_obs_sources(args.status_file, args.jobs, "cleanup_sessions")
         return 0
 
-    args.jobs = max(3, args.jobs)
+    args.jobs = max(2, args.jobs)
     args.games = max(1, args.games)
     args.game_timeout = max(30, args.game_timeout)
     if args.min_successful_games <= 0:

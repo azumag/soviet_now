@@ -399,7 +399,7 @@ _post_improve_param_parallel_trial() {
 	local started_at_prewrite
 	started_at_prewrite=$(date +%s)
 	case "$param_parallel_jobs" in ''|*[!0-9]*) param_parallel_jobs=6 ;; esac
-	[ "$param_parallel_jobs" -lt 3 ] && param_parallel_jobs=3
+	[ "$param_parallel_jobs" -lt 2 ] && param_parallel_jobs=2
 	log "[PARAM-PARALLEL] post-improve random parameter trial start jobs=${param_parallel_jobs} games=${WILDCARD_PARALLEL_GAMES:-6} (slot1=baseline)"
 	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
 		if [ "${POST_IMPROVE_PARAM_PARALLEL_STOP_SOREN91:-0}" = "1" ]; then

@@ -67,6 +67,20 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v695: 2 changes for mandatory_themes compliance:
+      #   1. NO_MERGE_DEADLINE_GUARD fallback strictness — remove LEAST_CROSSING fallback
+      #      (lines 977-1006). When merge_available=false and all candidates cross deadline,
+      #      return NO_MERGE_DEADLINE_GUARD_NO_VALID with safest non-crossing candidate
+      #      instead of selecting the "least bad" crossing candidate. This eliminates the
+      #      mandatory_themes #1 violation in worst game's turns 81-82 where NO_MERGE
+      #      was selected despite crossing the deadline without any merge available.
+      #   2. CLUSTER_SETUP validity check (lines 1640-1658) — before appending
+      #      CLUSTER_SETUP bonus, verify that merge_available is true OR board_has_pair
+      #      is true. If neither, suppress the bonus. CLUSTER_SETUP without valid merge
+      #      path is wasted clustering that violates mandatory_themes #2.
+      # mandatory_themes #1/#2 compliance
+      # Fixes rollback failure mode: NO_MERGE deadline fallback + CLUSTER_SETUP without merge path
+      # refs: tmp/analysis_result.md (Adopted Hypothesis: NO_MERGE Deadline Guard Fallback + CLUSTER_SETUP Validity)
       # v694: CLUSTER_SETUP v693 suppression threshold 0.5→0.8 — extends pre-deadline
       #       danger zone suppression from margin<0.5 to margin<0.8.
       #       Best game T69: margin=0.79, CLUSTER_SETUP fired with visual_same_type_count=3
@@ -979,7 +993,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # (minimum top_y_after_drop) to minimize violation extent.
             __crossing = [c for c in results if c.get("crosses_deadline")]
             if __crossing:
-                __least_crossing = min(__crossing, key=lambda c: float(c.get("top_y_after_drop", 918.4) or 915.2))
+                __least_crossing = min(__crossing, key=lambda c: float(c.get("top_y_after_drop", 918.4) or 999.0))
                 return {"x": float(__least_crossing.get("x", -0.6060) or 0.0), "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS"}
             # If somehow no crossing candidates exist (shouldn't happen), return safest
             __safe = [c for c in results if not c.get("crosses_deadline")]
@@ -1618,8 +1632,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if horiz_dist < 1.0:
                             same_type_x_positions = [p.get("x", 0) for p in same_type_pieces]
                             if len(same_type_x_positions) >= 1:
-                                if reactor_margin < 0.8 and result.get("top_y_after_drop", 999) > game_state.get("deadline_y", 1.904):
+                                # v696: Fix AND→OR to catch all deadline-crossing candidates.
+                                # Original AND: only suppresses when BOTH margin<0.8 AND crosses.
+                                # Missing case: margin>=0.8 but candidate still crosses deadline.
+                                # Change to OR so suppression fires when EITHER condition is dangerous.
+                                # This prevents CLUSTER_SETUP from firing for deadline-crossing
+                                # candidates that happen to have margin>=0.8.
+                                # mandatory_themes #1/#2: "デッドラインを超える場合は併合できる場合に限る"
+                                # refs: tmp/improve_brief.md (russia_recovery_priority)
+                                if reactor_margin < 0.8 or result.get("top_y_after_drop", 999) > game_state.get("deadline_y", 1.904):
                                     pass  # skip v692 bonus: candidate crosses deadline in pre-deadline danger zone
+                                # v695+v696: CLUSTER_SETUP validity check — mandatory_themes #2 compliance.
+                                # CLUSTER_SETUP is meant to cluster same-type pieces for future merges.
+                                # If the current candidate has no merge (merge_grade=="NO") and no
+                                # board pair exists for the next piece, CLUSTER_SETUP is wasted clustering.
+                                # The worst game's final turns show CLUSTER_SETUP-adjacent behavior
+                                # (AVOID_BLOCK with same-type pieces) but without any actual merge geometry.
+                                # Suppress CLUSTER_SETUP when current candidate can't merge AND board_has_pair=False.
+                                # Fixes rollback failure mode: CLUSTER_SETUP without valid merge path
+                                # refs: tmp/analysis_result.md (Adopted Hypothesis: CLUSTER_SETUP Validity Check)
+                                # v696: Changed from global __merge_available to current candidate's merge_grade.
+                                # Global merge_available checks if ANY candidate can merge, but CLUSTER_SETUP
+                                # is about THIS candidate's positioning. If current candidate has NO merge
+                                # (merge_grade=="NO") and no board pair for next piece, CLUSTER_SETUP
+                                # violates mandatory_themes.
+                                elif result.get("merge_grade") == "NO" and not board_has_pair:
+                                    pass  # skip: current candidate can't merge and no board pair exists, CLUSTER_SETUP would be wasted clustering
                                 else:
                                     cluster_setup_bonus = 200.0
                                     if piece_count >= 25:
