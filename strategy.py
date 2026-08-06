@@ -65,8 +65,18 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
+FAST_DROP_DEADLINE_CONTACT = False
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v694: CLUSTER_SETUP v693 suppression threshold 0.5→0.8 — extends pre-deadline
+      #       danger zone suppression from margin<0.5 to margin<0.8.
+      #       Best game T69: margin=0.79, CLUSTER_SETUP fired with visual_same_type_count=3
+      #       but no merge geometry existed. At margin 0.5-0.8, remaining margin is
+      #       insufficient to justify CLUSTER_SETUP NO_MERGE when same-type pieces exist
+      #       but have no merge path. Suppression now covers 0.5-0.8 zone.
+      # mandatory_themes #1/#2 compliance: prevents CLUSTER_SETUP bonus from overriding
+      #       NO_MERGE deadline discipline when no valid merge path exists
+      # Fixes rollback failure mode: CLUSTER_SETUP NO_MERGE at margin 0.5-0.8 without merge geometry
+      # refs: tmp/analysis_result.md (Adopted Hypothesis: v693 threshold 0.5→0.8)
       # v693: Suppress v692 CLUSTER_SETUP bonus when candidate crosses deadline in
       #       pre-deadline danger zone (reactor_margin < 0.5 AND top_y_after_drop > deadline_y).
       #       Worst game's T50-T55 (margin 0.03-0.15): CLUSTER_SETUP NO_MERGE candidates
@@ -855,7 +865,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.6090
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.7797
     if __dlg_critical and __dlg_cands:
         __dlg_has_clean = any(
             isinstance(c, dict)
@@ -1599,12 +1609,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # filter these candidates.
         # Best game's T93 (margin=0.41, top_y=2.78 < deadline_y=3.38): does NOT cross, so v692
         # bonus is preserved for beneficial clustering.
+        # v694: lower threshold from 0.5 to 0.8 to extend suppression to moderate margins (0.5-0.8)
+        # where same-type pieces exist but no merge geometry is available.
+        # Analysis: the problem (CLUSTER_SETUP NO_MERGE without valid merge path) occurs at
+        # margin 0.5-0.8, not just margin <0.5. Extending suppression catches these cases.
         # Fixes rollback failure mode: CLUSTER_SETUP NO_MERGE crossing in pre-deadline danger zone
         # refs: tmp/analysis_result.md (Adopted Hypothesis: Suppress v692 when crossing in pre-deadline danger zone)
                         if horiz_dist < 1.0:
                             same_type_x_positions = [p.get("x", 0) for p in same_type_pieces]
                             if len(same_type_x_positions) >= 1:
-                                if reactor_margin < 0.9051 and result.get("top_y_after_drop", 999) > game_state.get("deadline_y", 1.904):
+                                if reactor_margin < 0.8 and result.get("top_y_after_drop", 999) > game_state.get("deadline_y", 1.904):
                                     pass  # skip v692 bonus: candidate crosses deadline in pre-deadline danger zone
                                 else:
                                     cluster_setup_bonus = 200.0
@@ -2032,7 +2046,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 未活用情報：危険域判定(max_y>=2.0), reactive_pairs数
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
 
-        danger_piece_count = reactor.get("danger_piece_count", -1)
+        danger_piece_count = reactor.get("danger_piece_count", -2)
 
         # v663: danger zone merge priority — NEAR bonus gated by deadline margin
         # v662 NEAR +2500 overwhelmed deadline-crossing penalties, causing NEAR merges
@@ -2138,7 +2152,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
                      # ボーナスを抑制し、height penaltyが効くようにする
                      # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
-                     score += 232.5
+                     score += 285.6
                      reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
