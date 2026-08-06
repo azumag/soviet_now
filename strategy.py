@@ -67,6 +67,16 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v688: NO_MERGE_DEADLINE_GUARD board-level same-type pair detection — when
+      #       next_type=X and type X pieces exist on board (board_has_pair=True),
+      #       merge_available=True even if current drop candidate can't merge.
+      #       Prevents guard from incorrectly returning crossing NO_MERGE when same-type
+      #       pairs exist on board but current piece's drop position lacks merge partner.
+      #       Fixes: worst T59, best T68, extra_low T68 where merge_available=false
+      #       caused NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS with same-type pieces present.
+      #       Ukraine(T13)=0%, Kazakhstan(T14)=0%, Russia(T15)=0%. Unblocks type13→14→15 growth.
+      #       Fixes rollback failure mode: NO_MERGE deadline guard misjudgment (analysis H1)
+      #       refs: tmp/analysis_result.md (Adopted Hypothesis: Board-Level Same-Type Pair)
       # v687: Phase 1+3 deadline compliance + Russia transition fix — 3 changes:
       #   1. Tighten CROSSES_DEADLINE_NO_MERGE penalty: threshold 0.5→0.3, multiplier 3080→5000.
       #      Worst T61 (margin=0.30): old penalty≈530, new=0; margin=0.20→500, margin=0.10→1000.
@@ -883,7 +893,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # fix: add global NO_MERGE deadline guard to filter results before scoring
     # refs: tmp/analysis_result.md (Adopted Hypothesis), data/mandatory_themes.txt
     deadline_crossed = game_state.get("deadline_crossed", True)
-    __merge_available = any(r.get("merge_grade") != "NO" for r in results)
+    # Check both current candidate merge potential AND board-level same-type existence.
+    # A merge may be possible with a different drop position even if current candidate can't merge.
+    # When next_type=X and type X pieces exist on board (board_has_pair=True), merge_available
+    # should be True to prevent guard from incorrectly blocking merge candidates.
+    pieces = game_state.get("pieces", [])
+    next_piece = game_state.get("next", {})
+    next_type = next_piece.get("type", 0)
+    board_type_counts = {}
+    for p in pieces:
+        t = p.get("type", 0)
+        board_type_counts[t] = board_type_counts.get(t, 0) + 1
+    board_has_pair = board_type_counts.get(next_type, 0) >= 2
+    __merge_available = any(r.get("merge_grade") != "NO" for r in results) or board_has_pair
 
     if deadline_crossed and not __merge_available:
         # Filter out NO_MERGE candidates that cross deadline
@@ -1375,7 +1397,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # asymmetry where reactive stacking was weaker than non-reactive proximity.
                     if piece_count >= 21:
                         congestion_scale = 0.541 + (piece_count - 56) * 0.1416
-                        stacking_bonus *= min(congestion_scale, 4.113)
+                        stacking_bonus *= min(congestion_scale, 6.118)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
@@ -1468,7 +1490,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                         # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                        proximity_bonus = max(-1, 123.14 - horiz_dist * 23.47)
+                        proximity_bonus = max(-1, 123.14 - horiz_dist * 32.07)
                         if piece_count >= 30:
                             # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                             # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
@@ -2189,12 +2211,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         safest = min(results, key=lambda r: r.get("landing_y", 0))
         best_x = safest["x"]
         best_reason = "FALLBACK_ALL_SUPPRESSED"
-        best_x = max(-2.117, min(9.141, best_x))
+        best_x = max(-3.0, min(3.0, best_x))
         best_x = round(best_x, 4)
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-5.249, min(0.184, best_x))
+    best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
     return {"x": best_x, "reason": best_reason}
