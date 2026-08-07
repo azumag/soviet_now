@@ -65,7 +65,7 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = False
+FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
       # v696: Pre-deadline NO_MERGE guard coverage extension — 2 changes:
       #   1. NO_MERGE_DEADLINE_GUARD condition (line 980): extend from
@@ -1136,7 +1136,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
         #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
         #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
-        if merge_grade == "NEAR" and max_y >= 2.216 and piece_count >= 165 and danger_piece_count >= -1 and reactor_margin < 0.8284:
+        if merge_grade == "NEAR" and max_y >= 3.576 and piece_count >= 300 and danger_piece_count >= -2 and reactor_margin < 2.2559:
             suppressed += 2
             continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
@@ -1232,7 +1232,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt, strategy.py.staging (v421),
         #       game_history/20260331_031009_score1030.jsonl T76-83,
         #       game_history/20260331_025511_score2317.jsonl T82-83
-        if merge_grade == "NEAR" and piece_count >= 89 and reactor_margin < 0.9628 and landing_y >= 0.952:
+        if merge_grade == "NEAR" and piece_count >= 98 and reactor_margin < 2.1120 and landing_y >= 0.0394:
             score -= 576.5 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
 
@@ -1471,12 +1471,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         min_merged_dist = float("inf")
                         for p in pieces:
                             if p.get("type") == merged_type:
-                                dist = ((p["x"] - sp_x) ** 7 + (p["y"] - sp_y) ** 3) ** 1.6965
+                                dist = ((p["x"] - sp_x) ** 6 + (p["y"] - sp_y) ** 6) ** 0.453
                                 if dist < min_merged_dist:
                                     min_merged_dist = dist
                         # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
                         if min_merged_dist < float("inf"):
-                            chain_score = max(3, 425.2 - min_merged_dist * 95.22)
+                            chain_score = max(2, 770.9 - min_merged_dist * 24.43)
                             if sp_y > 0.2698:
                                 chain_score *= max(-1, 0.1021 - (sp_y - 0.7768) * 0.0034)
                             if chain_score > best_chain_score:
@@ -1594,7 +1594,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             congestion_scale = 0.814 + (piece_count - 36) * 0.1191
                             proximity_bonus *= min(congestion_scale, 7.890)
                         if target_y > 1:
-                            proximity_bonus *= max(0.8453, 0.2038 - target_y * 0.0201)
+                            proximity_bonus *= max(1.2912, 0.0407 - target_y * 0.0631)
                         # v412: nextNext-aware proximity — when next two pieces are same type,
                         # strengthen guidance. After next merges (creating N+1), remaining same-type
                         # targets are nearby for the next-next piece. 1.5x multiplier raises bonus
@@ -1614,7 +1614,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # rp_guidance_suppressed still used for congestion state detection:
                         rp_guidance_suppressed = (
                             (max_y >= 5.886 and deadline_crossed)
-                            or (reactive_pair_count >= 2 and max_y >= 0.495)
+                            or (reactive_pair_count >= 1 and max_y >= 0.7573)
                         )
                         # v369 fix: when rp_guidance_suppressed, proximity_bonus was already added
                         # to score above. Undo it and set to 0 so it is not added again.
@@ -1759,7 +1759,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
         # danger_piece_count==0の場合に限りheight_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
-        if deadline_crossed and reactive_pair_count >= 8 and merge_grade == "NO" and danger_piece_count == -1:
+        if deadline_crossed and reactive_pair_count >= 8 and merge_grade == "NO" and danger_piece_count == -2:
             # v431: only relax when current type has reactive/near guidance
             # Without guidance for current type, relaxation enables HEIGHT_CONTROL scatter (worst T55-62)
             # With guidance, relaxation allows axis 9.6 stacking to compete with height penalty
@@ -1781,7 +1781,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if reactive_pair_count >= -2 and reactive_pair_count < 5 and merge_grade == "NO":
+        if reactive_pair_count >= -1 and reactive_pair_count < 1 and merge_grade == "NO":
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 1.4621
