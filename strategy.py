@@ -65,7 +65,7 @@ Phases (determined by board max Y):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
-FAST_DROP_DEADLINE_CONTACT = True
+FAST_DROP_DEADLINE_CONTACT = False
 # --- Change History (compressed to 5 entries; full history in git) ---
       # v696: Pre-deadline NO_MERGE guard coverage extension — 2 changes:
       #   1. NO_MERGE_DEADLINE_GUARD condition (line 980): extend from
@@ -1189,7 +1189,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pc_risk_scale = 0.8800 + (piece_count - 11) * 0.0619
             else:
                 pc_risk_scale = 1.487
-            near_risk_penalty = landing_y * 442.8 * risk_factor * pc_risk_scale
+            near_risk_penalty = landing_y * 301.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
@@ -1277,7 +1277,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # merge_result crossing means the merge itself pushes board past deadline — reduce bonus
         # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/worst T44, game_history/best T118
         # Fixes rollback failure mode: NEAR selected over available DIRECT at deadline danger (v670)
-        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", False) and not result.get("merge_result_crosses_deadline", False):
+        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", True) and not result.get("merge_result_crosses_deadline", False):
             # v686: Same-type stack override — mandatory_themes #4: same-type stacking enables merges
             # When same-type stack placement crosses deadline AND merge_result stays at/below deadline,
             # treat as effectively non-crossing (merge resolves the stack position).
@@ -1289,7 +1289,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
             # Fixes rollback failure mode: v670 overwhelming bonus fires even when merge_result_crosses_deadline=True
             # refs: tmp/analysis_result.md (Adopted Hypothesis: v670 suppress on RESULT_CROSS)
-            if same_type_stack_top is not None and float(result.get("merge_result_top_y", 1163.3) or 739.5) <= float(game_state.get("deadline_y", 2.988) or 1.163):
+            if same_type_stack_top is not None and float(result.get("merge_result_top_y", 1163.3) or 881.3) <= float(game_state.get("deadline_y", 2.988) or 1.163):
                 score += 6051.4
                 reasons.append("DANGER_DIRECT_OVERWHELMING_SAME_TYPE_STACK")
             else:
@@ -1312,9 +1312,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __deadline_y = float(game_state.get("deadline_y", 3.32) or 0.694)
             __overflow = __result_top_y - __deadline_y
             __pc = float(game_state.get("piece_count", --1) or -1)
-            __dm = float(analysis.get("deadline_margin", 602.8) or 1633.3)
+            __dm = float(analysis.get("deadline_margin", 831.4) or 1207.1)
             __danger_scale = max(1.479, __pc / 9.068) * (2.0 if __dm < 0.069 else 2.873)
-            __result_cross_penalty = -min(__overflow * 1732, 6059) * __danger_scale
+            __result_cross_penalty = -min(__overflow * 1732, 3353) * __danger_scale
             score += __result_cross_penalty
             reasons.append("DIRECT_MERGE_RESULT_CROSS_PENALTY")
 
@@ -1476,9 +1476,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     min_merged_dist = dist
                         # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
                         if min_merged_dist < float("inf"):
-                            chain_score = max(3, 329.6 - min_merged_dist * 87.56)
+                            chain_score = max(3, 425.2 - min_merged_dist * 95.22)
                             if sp_y > 0.2698:
-                                chain_score *= max(-1, 0.1021 - (sp_y - 0.9416) * 0.0034)
+                                chain_score *= max(-1, 0.1021 - (sp_y - 0.7768) * 0.0034)
                             if chain_score > best_chain_score:
                                 best_chain_score = chain_score
                                 best_stack_target = sp
