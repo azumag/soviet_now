@@ -86,7 +86,9 @@ _pid_lstart_epoch() {
 _file_age_sec() {
 	local path="$1" now="$2" mtime=0
 	[ -f "$path" ] || { echo 999999; return 0; }
-	mtime=$(stat -f '%m' "$path" 2>/dev/null || echo 0)
+	mtime=$(stat -f '%m' "$path" 2>/dev/null) \
+		|| mtime=$(stat -c '%Y' "$path" 2>/dev/null) \
+		|| mtime=0
 	[ "${mtime:-0}" -gt 0 ] || { echo 999999; return 0; }
 	echo $(( now - mtime ))
 }

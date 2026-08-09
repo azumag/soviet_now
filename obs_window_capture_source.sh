@@ -1,5 +1,14 @@
 #!/bin/bash
-# obs_window_capture_source.sh - ensure an OBS macOS window capture source targets a real window.
+# 探索モード (EXPLORE_MODE=1) では OBS ウィンドウキャプチャ設定を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
+# obs_window_capture_source.sh - ensure an OBS window capture source targets a real window.
+#
+# macOS keeps using ScreenCaptureKit (`screen_capture`). On Linux/X11 the
+# default is OBS's XComposite source (`xcomposite_input`), which stores its
+# selected window in `capture_window`. Linux operators may explicitly opt into
+# OBS's full-display XSHM source (`xshm_input`) when XComposite cannot produce
+# frames. Explicit input-kind/family/property overrides remain authoritative for
+# unusual OBS builds.
 #
 # Usage:
 #   ./obs_window_capture_source.sh ensure <scene> <source> <window-title-regex> [app-id] [show|hide]
@@ -40,6 +49,7 @@ NODE_BIN="${NODE_BIN:-$(command -v node 2>/dev/null || true)}"
 if [ -z "$NODE_BIN" ]; then
 	for candidate in \
 		"$HOME/.nvm/versions/node/v23.10.0/bin/node" \
+		"/usr/bin/node" \
 		"/opt/homebrew/bin/node" \
 		"/usr/local/bin/node" \
 		"/Volumes/satelite/homebrew/homebrew/bin/node"; do
@@ -71,17 +81,21 @@ cleanup_stale_wildcard_candidates_for_main_game() {
 		>>"${TMP_DEBUG_DIR:-tmp/debug}/wildcard_parallel_cleanup.log" 2>&1 || true
 }
 
-cleanup_stale_wildcard_candidates_for_main_game
+if [ "${OBS_WINDOW_CAPTURE_CONFIG_ONLY:-0}" != "1" ]; then
+	cleanup_stale_wildcard_candidates_for_main_game
 
-# Serialize the SetInputSettings below against every other process that updates a
-# mac-capture source (game-capture watchdog, main soviet_local bridge, soren91,
-# sibling wildcard candidate slots). Concurrent obs_source_update on mac-capture
-# double-frees and crashes OBS outright. See lib/obs_source_lock.sh.
-if [ -f ./lib/obs_source_lock.sh ]; then . ./lib/obs_source_lock.sh; fi
-command -v obs_source_lock_acquire >/dev/null 2>&1 || obs_source_lock_acquire() { return 1; }
-command -v obs_source_lock_release >/dev/null 2>&1 || obs_source_lock_release() { return 0; }
-obs_source_lock_acquire || true
-trap 'obs_source_lock_release || true' EXIT
+	# Serialize the SetInputSettings below against every other process that updates a
+	# mac-capture source (game-capture watchdog, main soviet_local bridge, soren91,
+	# sibling wildcard candidate slots). Concurrent obs_source_update on mac-capture
+	# double-frees and crashes OBS outright. See lib/obs_source_lock.sh. Keep the
+	# lock on Linux too: it is harmless, preserves ordering across mixed callers,
+	# and can be relaxed after real-VM soak testing.
+	if [ -f ./lib/obs_source_lock.sh ]; then . ./lib/obs_source_lock.sh; fi
+	command -v obs_source_lock_acquire >/dev/null 2>&1 || obs_source_lock_acquire() { return 1; }
+	command -v obs_source_lock_release >/dev/null 2>&1 || obs_source_lock_release() { return 0; }
+	obs_source_lock_acquire || true
+	trap 'obs_source_lock_release || true' EXIT
+fi
 
 "$NODE_BIN" --input-type=commonjs - "$scene" "$source_name" "$window_title_regex" "$app_id" "$visibility" <<'NODE'
 const crypto = require('crypto');
@@ -93,13 +107,40 @@ const password = process.env.OBS_WEBSOCKET_PASSWORD || '';
 const requestTimeoutMs = Number(process.env.OBS_WEBSOCKET_TIMEOUT_MS || 8000);
 const url = `ws://${host}:${port}`;
 const enabled = visibility === 'show';
-const inputKind = process.env.OBS_WINDOW_CAPTURE_INPUT_KIND || 'screen_capture';
+const capturePlatform = String(process.env.SOREN_OBS_PLATFORM || process.platform).toLowerCase();
+const inputKind = process.env.OBS_WINDOW_CAPTURE_INPUT_KIND
+  || (capturePlatform === 'linux' ? 'xcomposite_input' : 'screen_capture');
+const captureFamilyOverride = String(process.env.OBS_WINDOW_CAPTURE_FAMILY || '').toLowerCase();
+const inferredCaptureFamily = /^xshm_input(?:_v\d+)?$/.test(inputKind)
+  ? 'xshm'
+  : /^xcomposite_input(?:_v\d+)?$/.test(inputKind)
+    ? 'xcomposite'
+    : /^screen_capture(?:_v\d+)?$/.test(inputKind)
+      ? 'screen_capture'
+      : capturePlatform === 'linux'
+        ? 'xcomposite'
+        : 'screen_capture';
+const captureFamily = ['xcomposite', 'xshm', 'screen_capture'].includes(captureFamilyOverride)
+  ? captureFamilyOverride
+  : inferredCaptureFamily;
+const isXComposite = captureFamily === 'xcomposite';
+const isXshm = captureFamily === 'xshm';
+const windowPropertyName = process.env.OBS_WINDOW_CAPTURE_WINDOW_PROPERTY
+  || (isXComposite ? 'capture_window' : 'window');
 const allowReplaceWrongKind = process.env.OBS_WINDOW_CAPTURE_REPLACE_WRONG_KIND !== '0';
 const enforceTopOverlayStack = process.env.OBS_ENFORCE_TOP_OVERLAY_STACK !== '0';
 const topOverlaySource = process.env.OBS_TOP_OVERLAY_SOURCE || process.env.TWICA_OVERLAY_SOURCE || 'twica';
 const belowTopOverlaySource = process.env.OBS_BELOW_TOP_OVERLAY_SOURCE || process.env.OBS_EVENT_OVERLAY_SOURCE || 'eventOverlay';
 const titlePattern = new RegExp(titlePatternRaw);
-const chromeWindowPattern = /\[Google Chrome(?: for Testing)?\]/;
+const defaultBrowserWindowPattern = isXComposite
+  ? '(?:Google Chrome(?: for Testing)?|Chromium)'
+  : '\\[Google Chrome(?: for Testing)?\\]';
+const browserWindowPatternOverride = process.env.OBS_WINDOW_CAPTURE_BROWSER_REGEX;
+const browserWindowPatternRaw = browserWindowPatternOverride || defaultBrowserWindowPattern;
+const browserWindowPattern = new RegExp(
+  browserWindowPatternRaw,
+  !browserWindowPatternOverride && isXComposite ? 'i' : '',
+);
 const muteInputAudio = /^wildcardParallelCand\d+$/.test(sourceName)
   && process.env.WILDCARD_PARALLEL_CANDIDATE_AUDIO !== '1';
 const captureAudioSetting = (() => {
@@ -115,6 +156,111 @@ const appAudioSourceEnabled = (() => {
   if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
   return enabled;
 })();
+const appAudioSupported = captureFamily === 'screen_capture';
+
+function booleanEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (/^(?:1|true|yes|on)$/.test(normalized)) return true;
+  if (/^(?:0|false|no|off)$/.test(normalized)) return false;
+  throw new Error(`${name} must be one of 1/0, true/false, yes/no, or on/off`);
+}
+
+function integerEnv(name, fallback = 0, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const normalized = raw.trim();
+  if (!/^-?\d+$/.test(normalized)) throw new Error(`${name} must be an integer`);
+  const value = Number(normalized);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer from ${min} through ${max}`);
+  }
+  return value;
+}
+
+function xshmInputSettings() {
+  const advanced = booleanEnv('OBS_XSHM_ADVANCED');
+  const settings = {
+    screen: integerEnv('OBS_XSHM_SCREEN', 0, { min: 0 }),
+    show_cursor: booleanEnv('OBS_XSHM_SHOW_CURSOR'),
+    advanced,
+    cut_top: integerEnv('OBS_XSHM_CUT_TOP', 0, { min: -4096, max: 4096 }),
+    cut_left: integerEnv('OBS_XSHM_CUT_LEFT', 0, { min: -4096, max: 4096 }),
+    cut_right: integerEnv('OBS_XSHM_CUT_RIGHT', 0, { min: 0, max: 4096 }),
+    cut_bot: integerEnv('OBS_XSHM_CUT_BOT', 0, { min: 0, max: 4096 }),
+  };
+  if (advanced) settings.server = process.env.OBS_XSHM_SERVER || '';
+  return settings;
+}
+
+function normalizedBoolean(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'string') return /^(?:1|true|yes|on)$/i.test(value);
+  return Boolean(value);
+}
+
+function normalizedXshmSettings(settings = {}) {
+  const advanced = normalizedBoolean(settings.advanced, false);
+  const normalized = {
+    screen: Number.isInteger(Number(settings.screen)) ? Number(settings.screen) : 0,
+    // GetInputSettings omits values still at the input's defaults. OBS 30.0.2
+    // xshm_input defaults show_cursor to true, whereas Soren explicitly wants
+    // false, so an absent value must trigger one corrective full-settings update.
+    show_cursor: normalizedBoolean(settings.show_cursor, true),
+    advanced,
+    cut_top: Number.isInteger(Number(settings.cut_top)) ? Number(settings.cut_top) : 0,
+    cut_left: Number.isInteger(Number(settings.cut_left)) ? Number(settings.cut_left) : 0,
+    cut_right: Number.isInteger(Number(settings.cut_right)) ? Number(settings.cut_right) : 0,
+    cut_bot: Number.isInteger(Number(settings.cut_bot)) ? Number(settings.cut_bot) : 0,
+  };
+  if (advanced) normalized.server = String(settings.server || '');
+  return normalized;
+}
+
+function xshmSettingsEqual(current, desired) {
+  return JSON.stringify(normalizedXshmSettings(current))
+    === JSON.stringify(normalizedXshmSettings(desired));
+}
+
+function captureInputSettings(windowValue) {
+  if (isXshm) return xshmInputSettings();
+
+  if (isXComposite) {
+    return { [windowPropertyName]: windowValue == null ? '' : String(windowValue) };
+  }
+
+  const settings = {
+    type: 1,
+    application: appId,
+    [windowPropertyName]: windowValue == null ? 0 : windowValue,
+    show_cursor: false,
+    show_empty_names: false,
+  };
+  if (captureAudioSetting !== null) {
+    settings.capture_audio = captureAudioSetting;
+    settings.audio = captureAudioSetting;
+  }
+  return settings;
+}
+
+if (process.env.OBS_WINDOW_CAPTURE_CONFIG_ONLY === '1') {
+  console.log(JSON.stringify({
+    capturePlatform,
+    inputKind,
+    captureFamily,
+    isXComposite,
+    isXshm,
+    captureMode: isXshm ? 'full_display' : 'window',
+    requiresWindowBinding: !isXshm,
+    windowPropertyName,
+    browserWindowPattern: browserWindowPattern.source,
+    initialSettings: captureInputSettings(null),
+    targetSettings: captureInputSettings('test-window'),
+    appAudioSupported,
+  }));
+  process.exit(0);
+}
 
 function fail(message, code = 1) {
   console.error(`[obs_window_capture_source] ${message}`);
@@ -233,26 +379,18 @@ async function getInput(obs, inputName) {
   return (response.inputs || []).find(input => input.inputName === inputName) || null;
 }
 
-async function ensureInput(obs) {
+async function ensureInput(obs, initialSettings) {
   let input = await getInput(obs, sourceName);
   if (input && input.unversionedInputKind !== inputKind && input.inputKind !== inputKind) {
     if (!allowReplaceWrongKind || !/^wildcardParallelCand\d+$/.test(sourceName)) {
-      throw new Error(`${sourceName} is ${input.inputKind}, not ${inputKind}`);
+      throw new Error(
+        `${sourceName} is ${input.inputKind}, not ${inputKind}; refusing to auto-replace a `
+        + 'persistent source because that would discard OBS filters/transform. Back up the '
+        + `scene collection and recreate ${sourceName} as ${inputKind}, then rerun ensure`,
+      );
     }
     await obs.request('RemoveInput', { inputName: sourceName });
     input = null;
-  }
-
-  const initialSettings = {
-    type: 1,
-    application: appId,
-    window: 0,
-    show_cursor: false,
-    show_empty_names: false,
-  };
-  if (captureAudioSetting !== null) {
-    initialSettings.capture_audio = captureAudioSetting;
-    initialSettings.audio = captureAudioSetting;
   }
 
   if (!input) {
@@ -263,7 +401,7 @@ async function ensureInput(obs) {
       inputSettings: initialSettings,
       sceneItemEnabled: false,
     });
-    return;
+    return { created: true };
   }
 
   const list = await obs.request('GetSceneItemList', { sceneName });
@@ -271,6 +409,7 @@ async function ensureInput(obs) {
   if (!items.some(item => item.sourceName === sourceName)) {
     await obs.request('CreateSceneItem', { sceneName, sourceName, sceneItemEnabled: false });
   }
+  return { created: false };
 }
 
 async function setSceneItemEnabled(obs, sceneItemEnabled) {
@@ -286,7 +425,9 @@ async function setSceneItemEnabled(obs, sceneItemEnabled) {
 }
 
 async function ensureAppAudioSource(obs) {
-  if (!appAudioSourceName) return;
+  // `sck_audio_capture` is macOS-only. Linux audio is handled separately via a
+  // PulseAudio/PipeWire monitor source in the Linux scene collection (Phase 2).
+  if (!appAudioSourceName || !appAudioSupported) return;
 
   let input = await getInput(obs, appAudioSourceName);
   if (!input) {
@@ -325,7 +466,7 @@ async function ensureAppAudioSource(obs) {
 }
 
 async function setAppAudioSourceEnabled(obs, sceneItemEnabled) {
-  if (!appAudioSourceName) return;
+  if (!appAudioSourceName || !appAudioSupported) return;
   const list = await obs.request('GetSceneItemList', { sceneName });
   const items = Array.isArray(list.sceneItems) ? list.sceneItems : [];
   for (const item of items.filter(item => item.sourceName === appAudioSourceName)) {
@@ -358,18 +499,50 @@ async function enforceOverlayStack(obs) {
 }
 
 async function main() {
+  // Validate and materialize all explicit settings before opening OBS. In
+  // particular, an invalid XSHM override must fail without even constructing a
+  // WebSocket, so a typo cannot mutate or reinitialize a healthy capture source.
+  const initialSettings = captureInputSettings(null);
   const obs = await connectAndIdentify();
   try {
-    await ensureInput(obs);
+    const ensured = await ensureInput(obs, initialSettings);
     await ensureAppAudioSource(obs);
+
+    if (isXshm) {
+      const desiredSettings = initialSettings;
+      let settingsState = 'created';
+      if (!ensured.created) {
+        const response = await obs.request('GetInputSettings', { inputName: sourceName });
+        if (xshmSettingsEqual(response.inputSettings || {}, desiredSettings)) {
+          settingsState = 'unchanged';
+        } else {
+          // xshm_input is a full-display source. Send its complete official OBS
+          // 30.0.2 setting set only when something actually changed; mode switches
+          // call this script repeatedly and must not reinitialize capture needlessly.
+          await obs.request('SetInputSettings', {
+            inputName: sourceName,
+            inputSettings: desiredSettings,
+            overlay: false,
+          });
+          settingsState = 'updated';
+        }
+      }
+
+      await setSceneItemEnabled(obs, enabled);
+      await enforceOverlayStack(obs);
+      console.log(
+        `xshm-screen-capture:${sourceName}:${visibility}:display=${desiredSettings.screen}:${settingsState}`,
+      );
+      return;
+    }
 
     const response = await obs.request('GetInputPropertiesListPropertyItems', {
       inputName: sourceName,
-      propertyName: 'window',
+      propertyName: windowPropertyName,
     });
     const windows = Array.isArray(response.propertyItems) ? response.propertyItems : [];
     const target = windows.find(item =>
-      chromeWindowPattern.test(item.itemName || '') && titlePattern.test(item.itemName || '')
+      browserWindowPattern.test(item.itemName || '') && titlePattern.test(item.itemName || '')
     );
     if (!target) {
       await setSceneItemEnabled(obs, false).catch(() => {});
@@ -377,23 +550,25 @@ async function main() {
       throw new Error(`target window not found for ${sourceName}: /${titlePatternRaw}/`);
     }
 
-    const inputSettings = {
-      type: 1,
-      application: appId,
-      window: target.itemValue,
-      show_cursor: false,
-      show_empty_names: false,
-    };
-    if (captureAudioSetting !== null) {
-      inputSettings.capture_audio = captureAudioSetting;
-      inputSettings.audio = captureAudioSetting;
+    const inputSettings = captureInputSettings(target.itemValue);
+    let bindingUnchanged = false;
+    if (isXComposite && !ensured.created) {
+      const current = await obs.request('GetInputSettings', { inputName: sourceName });
+      const currentValue = (current.inputSettings || {})[windowPropertyName];
+      // XComposite itemValue is OBS's encoded `XID\r\ntitle\r\nWM_CLASS` string.
+      // Compare it byte-for-byte: even a same-value update makes OBS 30.0.2
+      // register another watcher without first unregistering the existing one.
+      bindingUnchanged = typeof currentValue === 'string'
+        && typeof target.itemValue === 'string'
+        && currentValue === target.itemValue;
     }
-
-    await obs.request('SetInputSettings', {
-      inputName: sourceName,
-      inputSettings,
-      overlay: true,
-    });
+    if (!bindingUnchanged) {
+      await obs.request('SetInputSettings', {
+        inputName: sourceName,
+        inputSettings,
+        overlay: true,
+      });
+    }
     if (muteInputAudio) {
       await obs.request('SetInputMute', { inputName: sourceName, inputMuted: true });
     }

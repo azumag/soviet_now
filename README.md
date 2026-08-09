@@ -367,6 +367,23 @@ OBS 表示は `sorengame` window capture を `obs_window_capture_source.sh` で�
 メインループ / soren91 の Chrome は、配信中の操作を邪魔しないよう macOS で `open -g` による背面起動を既定にし、改善モード切替時の CDP `/json/activate` タブ前面化も既定無効 (`SOREN_BROWSER_TAB_ACTIVATE=0`) にしている。手元デバッグでタブ自動前面化が必要な場合だけ `SOREN_BROWSER_TAB_ACTIVATE=1` を指定する。
 本線 `soviet_local.mjs` は Playwright fallback 起動でも `--remote-debugging-port` を保持し、`/json/version` が実際に返るまで CDP endpoint file を公開しない。soren91 停止/掃除は pid file だけでなく tmux pane と `soren91.log` の writer も確認し、残った `soren91_runner` session を kill して meriken 側の孤児表示を残さない。
 
+#### Linux / Xvfb の OBS window capture
+
+- headed Chromium は `SOREN_CHROME_HEADLESS=0` かつ OBS と同じ `DISPLAY`（例 `:99`）で起動する。Linux は自動判定され、`obs_window_capture_source.sh` / capture watchdog は互換性維持のため既定で `xcomposite_input` と `capture_window` を使う。特殊な OBS build だけ `SOREN_OBS_PLATFORM`、`OBS_WINDOW_CAPTURE_INPUT_KIND`、`OBS_WINDOW_CAPTURE_FAMILY`、`OBS_WINDOW_CAPTURE_WINDOW_PROPERTY` を明示する。
+- Oracle Ubuntu VM + OBS 30.0.2 での実測では、Xvfb `:99` の XComposite は正しい XID/title/WM_CLASS を保持し scene も enabled なのに `sourceWidth/sourceHeight=0` かつ黒画像だった。Xorg modesetting `:100` も EGL/DRI3 初期化失敗時は同じ 0x0 になった。一方、OBS 公式 `xshm_input` は 1280x800 の非黒画像を取得できた。この環境では次を明示する。
+
+  ```bash
+  OBS_WINDOW_CAPTURE_INPUT_KIND=xshm_input
+  OBS_WINDOW_CAPTURE_FAMILY=xshm
+  ```
+
+- 既存の `sorengame` が `xcomposite_input` の場合、上の環境変数だけでは input kind は変わらない。`obs_window_capture_source.sh` は filter / transform 消失を避けるため、永続 source の自動 Remove/Create を拒否する。配信と Soren の自動制御を停止し scene collection をバックアップしたうえで、OBS UI から `sorengame` を `xshm_input` として同名で再作成し、transform / filter / scene visibility を復元してから ensure を実行する。この移行をライブ配信中に行わない。
+- XSHM はウィンドウ単位ではなく指定 display の**全画面**を取得する。OBS UI は最小化し、ゲーム用 Chromium を OBS と同じ専用 display 上で前面・最大化して、他のウィンドウを重ねない。画面番号は `OBS_XSHM_SCREEN`（既定 `0`）、カーソルは `OBS_XSHM_SHOW_CURSOR`（既定 false）、crop は `OBS_XSHM_CUT_TOP/LEFT/RIGHT/BOT`（各既定 `0`）で調整する。`OBS_XSHM_ADVANCED=1` の場合だけ `OBS_XSHM_SERVER` も使用する。
+- XSHM watchdog は window property の列挙・binding 判定・再 bind を行わず、スクリーンショットの freeze 監視だけを行う。frame が同一のまま `game_state` が進んでも警告のみで終了し、`SetInputSettings` は送らない。画面ソースは Chrome 再起動後も bind し直す必要がない。
+- Linux watchdog の OBS 再起動は `OBS_LINUX_RESTART_MODE=systemd` が既定で、`OBS_SYSTEMD_UNIT`（既定 `obs.service`）が active な user unit の場合だけ再起動する。プロセス一括 kill や直接起動への fallback は行わない。自動再起動を止める場合は `OBS_LINUX_RESTART_MODE=disabled`、Safe Mode 検出自体を試す場合だけ `OBS_SAFE_MODE_AUTOFIX=1` を明示する。
+- XComposite を使う場合、Xvfb 上では `GetSourceScreenshot` が黒画像でも X11 window 自体は正常な場合がある。さらに OBS 30.0.2 の XComposite は同じ window 値の反復 update で watcher registry が重複し得るため、通常の ensure も同一 binding なら更新せず、同値 pixel-freeze bounce は既定無効。実機検証後にリスクを受け入れる場合だけ `OBS_XCOMPOSITE_SAME_VALUE_BOUNCE_ENABLED=1` を指定する。新しい window 値への stale rebind は引き続き自動実行する。
+- shell helper `lib/obs_source_lock.sh` の settle は Linux 既定 `0` 秒、macOS 既定 `2` 秒。必要なら `OBS_SOURCE_LOCK_SETTLE_SEC` の明示値を優先する。
+
 ### jloop.sh — JSON-based State Loop
 
 毎ターン AI (LLM) を呼び出して盤面判断→ドロップを行う。`analyze_board.py` の解析レポートを入力とする。
