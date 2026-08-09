@@ -64,7 +64,7 @@ _release_lock() {
 
 _acquire_lock() {
     local op_name="${1:-op}"
-    local start_ts now_ts lock_age lock_pid
+    local start_ts now_ts lock_age lock_mtime lock_pid
     start_ts=$(date +%s)
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
         # 孤立ロック回収: PID死亡 or ロックが古すぎる
@@ -76,7 +76,10 @@ _acquire_lock() {
             fi
         fi
         now_ts=$(date +%s)
-        lock_age=$((now_ts - $(stat -f %m "$LOCK_DIR" 2>/dev/null || echo "$now_ts")))
+        lock_mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null) \
+            || lock_mtime=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) \
+            || lock_mtime="$now_ts"
+        lock_age=$((now_ts - lock_mtime))
         if [ "$lock_age" -ge "$LOCK_STALE_SEC" ]; then
             rm -rf "$LOCK_DIR" 2>/dev/null || true
             continue

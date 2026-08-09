@@ -4,14 +4,12 @@
 # obs_capture_watchdog.sh — periodic self-heal for the OBS game window capture.
 #
 # Every OBS_CAPTURE_WATCHDOG_INTERVAL seconds (default 90): if the `sorengame`
-# source is visible, run obs_capture_watchdog_check.mjs which (1) rebinds the
-# capture to the live Chrome window if the bound macOS window is stale/dead/wrong
-# for the current display mode (the classic symptom after a Chrome crash/restart;
-# mode = china/meriken from tmp/state/soren_display_mode), and (2) bounces the
-# macOS screen_capture if the stream is frozen while the game advances. It only
-# acts when the binding is actually wrong or the output is actually frozen, so
-# there is no flicker during normal operation, and it never blanks a last-good
-# capture when no live window matches yet.
+# source is visible, run obs_capture_watchdog_check.mjs. Window-capture families
+# validate/rebind a stale Chrome window; macOS may also bounce a frozen source and
+# Linux XComposite does so only after explicit opt-in. XSHM has no window binding:
+# it samples screenshots and only warns on a freeze signal, without mutating the
+# full-display source. No path blanks a last-good capture when no live window
+# matches yet.
 #
 # Background daemon: singleton via pidfile, honors tmp/stop. Started by
 # soren_loop.sh / start_all.sh; can also be run standalone.
@@ -26,20 +24,60 @@ GAME_SOURCE="${SOREN_GAME_OBS_SOURCE:-${OBS_GAME_SOURCE:-${SOREN_OBS_GAME_SOURCE
 GAME_STATE_MAX_AGE="${OBS_CAPTURE_WATCHDOG_GAME_MAX_AGE:-90}"
 PIDFILE="tmp/state/obs_capture_watchdog.pid"
 LOG="logs/obs_capture_watchdog.log"
-mkdir -p tmp/state logs 2>/dev/null || true
+
+OBS_CAPTURE_PLATFORM="${SOREN_OBS_PLATFORM:-}"
+if [ -z "$OBS_CAPTURE_PLATFORM" ]; then
+	case "$(uname -s 2>/dev/null || true)" in
+		Linux) OBS_CAPTURE_PLATFORM=linux ;;
+		Darwin) OBS_CAPTURE_PLATFORM=darwin ;;
+		*) OBS_CAPTURE_PLATFORM=unknown ;;
+	esac
+else
+	OBS_CAPTURE_PLATFORM=$(printf '%s' "$OBS_CAPTURE_PLATFORM" | tr '[:upper:]' '[:lower:]')
+fi
+
+case "$OBS_CAPTURE_PLATFORM" in
+	linux)
+		_OBS_SAFE_MODE_AUTOFIX_DEFAULT=0
+		_OBS_PROCESS_NAME_DEFAULT=obs
+		_OBS_APP_PATH_DEFAULT=obs
+		_OBS_LOG_DIR_DEFAULT="$HOME/.config/obs-studio/logs"
+		;;
+	*)
+		# Keep every existing macOS default unchanged.
+		_OBS_SAFE_MODE_AUTOFIX_DEFAULT=1
+		_OBS_PROCESS_NAME_DEFAULT=OBS
+		_OBS_APP_PATH_DEFAULT=/Applications/OBS.app
+		_OBS_LOG_DIR_DEFAULT="$HOME/Library/Application Support/obs-studio/logs"
+		;;
+esac
 
 # --- クラッシュ後の Safe Mode ダイアログ自動対処 ---
 # OBSはクラッシュ後の再起動時に「セーフモードで起動/通常モードで起動」ダイアログで
 # 止まることがある。これを検出して OBS を --disable-shutdown-check 付きで再起動し、
 # ダイアログを出さず通常モードで自動復帰させる(アクセシビリティ権限不要)。
-OBS_SAFE_MODE_AUTOFIX="${OBS_SAFE_MODE_AUTOFIX:-1}"
+OBS_SAFE_MODE_AUTOFIX="${OBS_SAFE_MODE_AUTOFIX:-$_OBS_SAFE_MODE_AUTOFIX_DEFAULT}"
 OBS_SAFE_MODE_STREAK="${OBS_SAFE_MODE_STREAK:-2}"          # 連続検出tick数(誤検出回避の猶予)
 case "$OBS_SAFE_MODE_STREAK" in ''|*[!0-9]*) OBS_SAFE_MODE_STREAK=2 ;; esac
 OBS_SAFE_MODE_RELAUNCH_COOLDOWN="${OBS_SAFE_MODE_RELAUNCH_COOLDOWN:-300}"  # 再起動の連打防止
 case "$OBS_SAFE_MODE_RELAUNCH_COOLDOWN" in ''|*[!0-9]*) OBS_SAFE_MODE_RELAUNCH_COOLDOWN=300 ;; esac
-OBS_APP_PATH="${OBS_APP_PATH:-/Applications/OBS.app}"
-OBS_LOG_DIR="${OBS_LOG_DIR:-$HOME/Library/Application Support/obs-studio/logs}"
+OBS_PROCESS_NAME="${OBS_PROCESS_NAME:-$_OBS_PROCESS_NAME_DEFAULT}"
+OBS_APP_PATH="${OBS_APP_PATH:-$_OBS_APP_PATH_DEFAULT}"
+OBS_LOG_DIR="${OBS_LOG_DIR:-$_OBS_LOG_DIR_DEFAULT}"
 OBS_SAFE_RELAUNCH_TS="tmp/state/obs_safe_relaunch_last.ts"
+OBS_LINUX_RESTART_MODE="${OBS_LINUX_RESTART_MODE:-systemd}"
+OBS_SYSTEMD_UNIT="${OBS_SYSTEMD_UNIT:-obs.service}"
+OBS_DISPLAY="${OBS_DISPLAY:-${DISPLAY:-:99}}"
+OBS_LINUX_RELAUNCH_LOG="${OBS_LINUX_RELAUNCH_LOG:-logs/obs_linux_relaunch.log}"
+
+if [ "${1:-}" = "--print-config" ] || [ "${OBS_CAPTURE_WATCHDOG_PRINT_CONFIG:-0}" = "1" ]; then
+	printf 'platform=%s\nprocess_name=%s\nlog_dir=%s\nsafe_mode_autofix=%s\napp_path=%s\nrestart_mode=%s\ndisplay=%s\n' \
+		"$OBS_CAPTURE_PLATFORM" "$OBS_PROCESS_NAME" "$OBS_LOG_DIR" "$OBS_SAFE_MODE_AUTOFIX" \
+		"$OBS_APP_PATH" "$OBS_LINUX_RESTART_MODE" "$OBS_DISPLAY"
+	exit 0
+fi
+
+mkdir -p tmp/state logs 2>/dev/null || true
 
 # singleton
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
@@ -58,7 +96,9 @@ _game_state_fresh() {
 	[ -f game_state.json ] || return 1
 	local age now mt
 	now=$(date +%s)
-	mt=$(stat -f %m game_state.json 2>/dev/null || echo 0)
+	mt=$(stat -f %m game_state.json 2>/dev/null) \
+		|| mt=$(stat -c %Y game_state.json 2>/dev/null) \
+		|| mt=0
 	age=$(( now - mt ))
 	[ "$age" -le "$GAME_STATE_MAX_AGE" ]
 }
@@ -69,7 +109,7 @@ _sorengame_visible() {
 }
 
 # OBS 本体プロセス(ヘルパー除く)が生きているか
-_obs_running() { pgrep -x OBS >/dev/null 2>&1; }
+_obs_running() { pgrep -x "$OBS_PROCESS_NAME" >/dev/null 2>&1; }
 
 _latest_obs_log() { ls -t "$OBS_LOG_DIR"/*.txt 2>/dev/null | head -n1; }
 
@@ -106,6 +146,38 @@ _obs_relaunch_normal() {
 	fi
 	echo "$now" >"$OBS_SAFE_RELAUNCH_TS" 2>/dev/null || true
 	_log "safe-mode: ダイアログ検出 → OBSを終了して通常モードで再起動する"
+
+	if [ "$OBS_CAPTURE_PLATFORM" = "linux" ]; then
+		case "$OBS_LINUX_RESTART_MODE" in
+			systemd)
+				if ! command -v systemctl >/dev/null 2>&1; then
+					_log "safe-mode: systemctl not found; Linux OBS restart left untouched"
+					return 1
+				fi
+				if ! systemctl --user is-active --quiet "$OBS_SYSTEMD_UNIT" 2>/dev/null; then
+					_log "safe-mode: specified user unit is not active (${OBS_SYSTEMD_UNIT}); Linux OBS left untouched"
+					return 1
+				fi
+				if systemctl --user restart "$OBS_SYSTEMD_UNIT" >>"$OBS_LINUX_RELAUNCH_LOG" 2>&1; then
+					_log "safe-mode: systemd user unit ${OBS_SYSTEMD_UNIT} を再起動しました"
+					return 0
+				fi
+				_log "safe-mode: systemd restart failed (${OBS_SYSTEMD_UNIT}); no process fallback attempted"
+				return 1
+				;;
+			disabled|off|0)
+				_log "safe-mode: Linux OBS restart disabled; OBS left untouched"
+				return 1
+				;;
+			*)
+				_log "safe-mode: invalid OBS_LINUX_RESTART_MODE=${OBS_LINUX_RESTART_MODE}"
+				return 1
+				;;
+		esac
+		# Never fall through from Linux into the macOS process-control path.
+		return 1
+	fi
+
 	# モーダルダイアログでは graceful quit が効かないことが多いので、待って強制終了
 	osascript -e 'tell application "OBS" to quit' >/dev/null 2>&1 || true
 	while _obs_running && [ "$waited" -lt 4 ]; do sleep 1; waited=$((waited + 1)); done
