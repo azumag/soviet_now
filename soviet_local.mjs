@@ -5,6 +5,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
+import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
+import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +53,7 @@ const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 const STRAY_TAB_GUARD_INTERVAL_MS = 2000;
 const STRAY_BLANK_REAP_AFTER_MS = 4000;
 const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
+const GAME_RENDER_HEALTH_FILE = 'tmp/state/game_render_health.json';
 // Persisted BlackHole (CHROME_AUDIO_OUTPUT_LABEL) audiooutput deviceId. Chrome's
 // mediaDevices deviceId is stable per (origin, persistent profile), so caching the
 // last-resolved id lets us seed __sorenSinkId BEFORE Unity creates its AudioContext.
@@ -61,16 +64,9 @@ const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
 // silence ("ゲーム音でてない"). A stale id just throws at construction and falls
 // back to default (no crash), and the async resolve refreshes it next launch.
 const AUDIO_SINK_CACHE_FILE = 'tmp/state/chrome_audio_sink_id.txt';
-// Linux の Unity WebGL ビルドにゲーム音声ストリームが含まれない環境向けの外部 BGM。
-// このファイルが設定されると ffplay で soren_null (既定 PulseAudio sink) にループ
-// 再生し、OBS の Desktop Audio 経由で配信に乗せる。空なら従来どおり何もしない。
-const GAME_BGM_FILE = process.env.SOREN_GAME_BGM_FILE || '';
-// 外部 BGM の ffplay 音量 (0-100)。既定 60 (約 -4.4dB) でクリッピングを避ける。
-const GAME_BGM_VOLUME_PCT_RAW = process.env.SOREN_GAME_BGM_VOLUME_PCT ?? '60';
-const GAME_BGM_VOLUME_PCT = (() => {
-  const n = Number(GAME_BGM_VOLUME_PCT_RAW);
-  return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 60;
-})();
+// Linux の音声欠落 WebGL build向け外部BGM/SE。通常BGM→ソ連成立BGMの
+// 切替と4種類のSEタイミングは external_game_audio.mjs に集約する。
+const EXTERNAL_GAME_AUDIO_CONFIG = loadExternalGameAudioConfig();
 const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
@@ -86,6 +82,17 @@ const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
 // SOREN_CHROME_KIOSK=0 で無効化できる。
 const CHROME_KIOSK = process.platform === 'linux' && !CHROME_HEADLESS
   && String(process.env.SOREN_CHROME_KIOSK || '1') !== '0';
+// OBS出力は30fpsなので、A1 LinuxではUnity描画も30fpsに上限を揃える。
+// --disable-frame-rate-limit はXvfbで1fps化する不具合を避けるため維持しつつ、
+// WebGLの重い描画だけを30fpsへ整流し、OBS encoderとPulseAudioへCPUを残す。
+// 0で無効化。macOSは従来挙動を保つため既定0。
+const GAME_RENDER_FPS_LIMIT = (() => {
+  const fallback = process.platform === 'linux' ? 30 : 0;
+  const parsed = Number(process.env.SOREN_GAME_RENDER_FPS ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(60, Math.max(15, Math.round(parsed)));
+})();
+const GAME_RENDER_HEALTH_INTERVAL_MS = 10000;
 // kiosk では Playwright の viewport エミュレーションを無効化し、ページビューポートを
 // 実ウィンドウ(1920x1080)に追従させる。通常(macOS/非kiosk)は従来どおり 1280x720。
 const CHROME_VIEWPORT = CHROME_KIOSK ? null : { width: 1280, height: 720 };
@@ -1108,9 +1115,10 @@ function stateChanged(prev, curr) {
 }
 
 // Execute a command via JS Bridge
-async function executeCommand(page, command) {
+async function executeCommand(page, command, externalGameAudio = null) {
   if (command.action === 'retry') {
     console.log('Executing: RETRY');
+    externalGameAudio?.resetForNewGame();
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
     await page.waitForTimeout(2000);
     // Re-inject best score after scene reload
@@ -1128,6 +1136,7 @@ async function executeCommand(page, command) {
     await page.waitForTimeout(1000);
   } else if (command.action === 'drop') {
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
+    externalGameAudio?.playDrop();
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
     await page.waitForTimeout(500);
   } else if (command.action === 'mute') {
@@ -1149,6 +1158,7 @@ async function executeCommand(page, command) {
   // Update state after command
   const state = await getGameState(page);
   writeGameState(state);
+  externalGameAudio?.observeState(state);
   return state;
 }
 
@@ -1186,7 +1196,7 @@ async function runLocalController() {
   let browser;
   let context;
   let closeBrowserAfterContext = false;
-  let bgmChild = null;
+  const externalGameAudio = new ExternalGameAudio(EXTERNAL_GAME_AUDIO_CONFIG);
   async function closeBrowser() {
     if (context) {
       try {
@@ -1201,46 +1211,8 @@ async function runLocalController() {
     }
   }
 
-  // Linux 外部 BGM: ゲームビルドに音声が無い環境向けのフォールバック再生。
-  // ffplay でループ再生し、既定 PulseAudio sink (soren_null) に流す。
-  function startExternalBgm() {
-    if (!GAME_BGM_FILE || process.platform !== 'linux') return;
-    if (!fs.existsSync(GAME_BGM_FILE)) {
-      console.warn(`[BGM] file not found: ${GAME_BGM_FILE}`);
-      return;
-    }
-    try {
-      bgmChild = spawn('ffplay', [
-        '-nodisp', '-loglevel', 'quiet', '-loop', '0',
-        '-volume', String(GAME_BGM_VOLUME_PCT),
-        GAME_BGM_FILE,
-      ], { stdio: 'ignore' });
-      bgmChild.on('error', (e) => {
-        console.warn(`[BGM] ffplay spawn failed: ${e && e.message}`);
-        bgmChild = null;
-      });
-      bgmChild.on('exit', (code, sig) => {
-        if (code !== 0 && code !== null) {
-          console.warn(`[BGM] ffplay exited code=${code} sig=${sig}`);
-        }
-        bgmChild = null;
-      });
-      console.log(`[BGM] external loop started: ${GAME_BGM_FILE} (vol=${GAME_BGM_VOLUME_PCT}%)`);
-    } catch (e) {
-      console.warn(`[BGM] start failed: ${e && e.message}`);
-      bgmChild = null;
-    }
-  }
-
-  function stopExternalBgm() {
-    if (bgmChild) {
-      try { bgmChild.kill('SIGTERM'); } catch {}
-      bgmChild = null;
-    }
-  }
-
-  startExternalBgm();
-  process.on('exit', stopExternalBgm);
+  externalGameAudio.start();
+  process.on('exit', () => externalGameAudio.shutdown());
 
   try {
     fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
@@ -1442,6 +1414,8 @@ async function runLocalController() {
     if (await grantAudioPermissions()) console.log(`Granted speakerSelection for ${gameOrigin}`);
   } catch {}
 
+  await page.addInitScript(installAnimationFrameLimit, { renderFps: GAME_RENDER_FPS_LIMIT });
+
   // Hook AudioContext to track all instances for mute/unmute control and route
   // browser game audio to BlackHole without changing the macOS default output.
   await page.addInitScript((cfg) => {
@@ -1568,7 +1542,10 @@ async function runLocalController() {
         window.__sorenAudioHealBusy = false;
       }
     }, 5000);
-  }, { label: CHROME_AUDIO_OUTPUT_LABEL, cachedSinkId: readCachedSinkId() });
+  }, {
+    label: CHROME_AUDIO_OUTPUT_LABEL,
+    cachedSinkId: readCachedSinkId(),
+  });
 
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
 
@@ -1712,6 +1689,7 @@ async function runLocalController() {
   // Initial state
   const initialState = await getGameState(page);
   writeGameState(initialState);
+  externalGameAudio.observeState(initialState);
   console.log('Initial game state saved');
   console.log(`Watching for commands in: ${COMMAND_FILE}`);
 
@@ -1729,6 +1707,7 @@ async function runLocalController() {
   let lastAudioWatchdogAt = 0;
   let lastUnityAudioRecoverAt = 0;
   let lastStrayTabGuardAt = 0;
+  let lastGameRenderHealthAt = 0;
   const strayBlankFirstSeen = new Map(); // Page -> ms first observed as about:blank
   while (true) {
     // Check mute flag file (independent of commands.txt to avoid race condition)
@@ -1740,6 +1719,7 @@ async function runLocalController() {
     };
     if (shouldMute && !isMuted) {
       audioDiagLog('MUTE flag detected, muting audio');
+      externalGameAudio.setMuted(true);
       await page.evaluate(() => {
         window.__sorenMuted = true;
         // Suspend all known AudioContexts
@@ -1754,6 +1734,7 @@ async function runLocalController() {
       isMuted = true;
     } else if (!shouldMute && isMuted) {
       audioDiagLog('MUTE flag removed, resuming audio');
+      externalGameAudio.setMuted(false);
       // Diagnosis (from [AUDIO-UNMUTE] logs): the tracked AudioContext stays
       // "suspended" after resume() even though the tab is visible. The local
       // game is driven via the window.__sorenCommand JS bridge, so after the
@@ -1859,6 +1840,24 @@ async function runLocalController() {
       }
     }
 
+    if (!shouldMute && !isMuted && Date.now() - lastGameRenderHealthAt > GAME_RENDER_HEALTH_INTERVAL_MS) {
+      lastGameRenderHealthAt = Date.now();
+      try {
+        const renderHealth = await withTimeout(page.evaluate(() => ({
+          ...(window.__sorenRenderStats || {}),
+          visibility: document.visibilityState,
+          canvasWidth: document.querySelector('canvas')?.width || 0,
+          canvasHeight: document.querySelector('canvas')?.height || 0,
+        })), 2000, 'render health evaluate');
+        writeJsonAtomic(GAME_RENDER_HEALTH_FILE, {
+          ...renderHealth,
+          observedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn(`[RENDER-HEALTH] ${(e && e.message) || String(e)}`);
+      }
+    }
+
     // --- Stray-tab guard: keep the OBS-captured window showing the local game ---
     // soren91 runs as a GUEST tab in this same Chrome (SOREN91_SHARED_BROWSER) and
     // opens its tab via window.open('about:blank') → navigate. If soren91 is
@@ -1920,7 +1919,7 @@ async function runLocalController() {
 
     if (commands.length > processedCount) {
       for (let i = processedCount; i < commands.length; i++) {
-        const state = await executeCommand(page, commands[i]);
+        const state = await executeCommand(page, commands[i], externalGameAudio);
         lastState = state;
         if (state) nullStateCount = 0;
         processedCount++;
@@ -1950,6 +1949,7 @@ async function runLocalController() {
                 const s = await getGameState(page);
                 if (s && s.state) {
                   console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
+                  externalGameAudio.observeState(s);
                   // Re-inject best score
                   try {
                     const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
@@ -1979,6 +1979,7 @@ async function runLocalController() {
           }
           nullStateCount = 0;
 
+          externalGameAudio.observeState(state);
           if (stateChanged(lastState, state)) {
             writeGameState(state);
             console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);

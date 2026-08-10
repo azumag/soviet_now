@@ -418,7 +418,43 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
 
    再起動後、`pactl list clients` に `obs` が現れ、OBS ログに `Started recording from 'soren_null.monitor'` が出れば接続成功。
 
-7. 1080p 配信（Xvfb 1920x1080 + OBS output 1920x1080）では、Linux の headed Chromium は既定で `--kiosk`（`SOREN_CHROME_KIOSK=1`）で起動し、Playwright の `--enable-automation` を外してブラウザ UI・自動テスト帯を配信画面から排除する。`SOREN_CHROME_WINDOW_SIZE=1920,1080` を `.env` に設定する。Unity ビルド側の `sorengame/build/index.html` は canvas を `window.innerWidth/innerHeight` に追従させる（1280x720 固定のままだと画面左上に小さく表示される）。
+7. Oracle Always Free A1 は、テナンシーに表示される無料割当の上限（この環境では 4 OCPU / 24GB）まで割り当てる。それでも1080p software GL + x264は負荷変動が大きいため、まず安定運用プロファイルとして Xvfb/Chrome/OBS base を1280x720、OBS outputを720p30、x264 `ultrafast`、Unity内部render targetを320x180としてCSSで全画面へ拡大する。Linux headed Chromiumは既定で `--kiosk`になり、Playwrightの自動操作帯とブラウザUIを除去する。`.env` は次を指定する。
+
+   ```bash
+   SOREN_CHROME_HEADLESS=0
+   SOREN_CHROME_KIOSK=1
+   SOREN_CHROME_WINDOW_SIZE=1280,720
+   SOREN_GAME_RENDER_FPS=30
+   ```
+
+   `--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
+
+8. systemdのOBSを `Nice=15` のような低優先度で動かすと、上限解除されたsoftware GLにCPUを奪われ、encoder skipped frameが0でもrendering lagと音切れが発生し得る。A1配信ではOBSを優先し、ゲーム側を上記30fpsに制限する。system-scope serviceの例:
+
+   ```ini
+   # /etc/systemd/system/obs.service.d/priority.conf
+   [Service]
+   Nice=-5
+   CPUWeight=10000
+   ```
+
+   変更後は `sudo systemctl daemon-reload && sudo systemctl restart obs.service` が必要。`GetStats` の `renderSkippedFrames` と `outputSkippedFrames` の両方を確認し、前者が増える場合は出力を720p30より上げない。
+
+9. Unity WebGL buildに音声streamが含まれないLinux環境では、外部BGM/SEを `ffplay` から既定の `soren_null` へ流す。通常プレイは「インターナショナル」、最初のソ連成立演出から「ソ連国歌」へ切り替え、落下・通常合体・ロシア合体・鎌と槌のSEを元のUnity実装と同じタイミングで再生する。
+
+   ```bash
+   SOREN_GAME_BGM_INITIAL_FILE=/home/ubuntu/soren/sorengame/assets/BGM/インターナショナル.ogg
+   SOREN_GAME_BGM_SOVIET_FILE=/home/ubuntu/soren/sorengame/assets/BGM/ソ連国歌.ogg
+   SOREN_GAME_SE_DROP_FILE=/home/ubuntu/soren/sorengame/assets/SE/落下開始SE.wav
+   SOREN_GAME_SE_MERGE_FILE=/home/ubuntu/soren/sorengame/assets/SE/合体SE.wav
+   SOREN_GAME_SE_RUSSIA_FILE=/home/ubuntu/soren/sorengame/assets/SE/ロシア合体時SE.wav
+   SOREN_GAME_SE_HAMMER_SICKLE_FILE=/home/ubuntu/soren/sorengame/assets/SE/鎌と槌合体時SE.wav
+   SOREN_GAME_BGM_VOLUME_PCT=60
+   SOREN_GAME_SE_VOLUME_PCT=70
+   SOREN_GAME_AUDIO_PULSE_LATENCY_MS=350
+   ```
+
+   旧 `SOREN_GAME_BGM_FILE` は通常BGM用の後方互換名としてのみ残す。新構成では曖昧さを避けるため `SOREN_GAME_BGM_INITIAL_FILE` を使う。`SOREN_GAME_AUDIO_PULSE_LATENCY_MS` はCPUが瞬間的に飽和してもBGMを途切れにくくするPulseAudio bufferで、既定350ms、許容範囲50〜2000ms。
 
 Unity ブラウザ音声も既定 sink が `soren_null` なら自動的に配信へ乗る。`SOREN_CHROME_AUDIO_OUTPUT_LABEL` は Linux では使用しない（空にする）。
 
