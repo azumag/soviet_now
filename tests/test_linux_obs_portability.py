@@ -346,6 +346,37 @@ esac
             },
         )
 
+    def test_window_capture_family_only_override_drives_input_kind(self) -> None:
+        # A bare OBS_WINDOW_CAPTURE_FAMILY=xshm (without INPUT_KIND) must still
+        # create an xshm_input source on Linux; previously it left the platform
+        # default xcomposite_input in place while treating the source as XSHM.
+        xshm = self.window_capture_config(
+            "linux",
+            OBS_WINDOW_CAPTURE_FAMILY="xshm",
+        )
+        self.assertEqual(xshm["captureFamily"], "xshm")
+        self.assertEqual(xshm["inputKind"], "xshm_input")
+        self.assertTrue(xshm["isXshm"])
+        self.assertEqual(xshm["captureMode"], "full_display")
+        self.assertFalse(xshm["requiresWindowBinding"])
+
+        xcomposite = self.window_capture_config(
+            "linux",
+            OBS_WINDOW_CAPTURE_FAMILY="xcomposite",
+        )
+        self.assertEqual(xcomposite["captureFamily"], "xcomposite")
+        self.assertEqual(xcomposite["inputKind"], "xcomposite_input")
+        self.assertTrue(xcomposite["isXComposite"])
+
+        # Explicit INPUT_KIND still wins over the family-derived kind.
+        explicit = self.window_capture_config(
+            "linux",
+            OBS_WINDOW_CAPTURE_FAMILY="xshm",
+            OBS_WINDOW_CAPTURE_INPUT_KIND="xshm_input_v2",
+        )
+        self.assertEqual(explicit["captureFamily"], "xshm")
+        self.assertEqual(explicit["inputKind"], "xshm_input_v2")
+
     def test_xshm_ensure_is_idempotent_and_updates_only_changed_settings(self) -> None:
         desired = {
             "screen": 0,
