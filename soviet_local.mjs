@@ -61,6 +61,16 @@ const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
 // silence ("ゲーム音でてない"). A stale id just throws at construction and falls
 // back to default (no crash), and the async resolve refreshes it next launch.
 const AUDIO_SINK_CACHE_FILE = 'tmp/state/chrome_audio_sink_id.txt';
+// Linux の Unity WebGL ビルドにゲーム音声ストリームが含まれない環境向けの外部 BGM。
+// このファイルが設定されると ffplay で soren_null (既定 PulseAudio sink) にループ
+// 再生し、OBS の Desktop Audio 経由で配信に乗せる。空なら従来どおり何もしない。
+const GAME_BGM_FILE = process.env.SOREN_GAME_BGM_FILE || '';
+// 外部 BGM の ffplay 音量 (0-100)。既定 60 (約 -4.4dB) でクリッピングを避ける。
+const GAME_BGM_VOLUME_PCT_RAW = process.env.SOREN_GAME_BGM_VOLUME_PCT ?? '60';
+const GAME_BGM_VOLUME_PCT = (() => {
+  const n = Number(GAME_BGM_VOLUME_PCT_RAW);
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 60;
+})();
 const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
@@ -1176,6 +1186,7 @@ async function runLocalController() {
   let browser;
   let context;
   let closeBrowserAfterContext = false;
+  let bgmChild = null;
   async function closeBrowser() {
     if (context) {
       try {
@@ -1189,6 +1200,47 @@ async function runLocalController() {
       await browser.close();
     }
   }
+
+  // Linux 外部 BGM: ゲームビルドに音声が無い環境向けのフォールバック再生。
+  // ffplay でループ再生し、既定 PulseAudio sink (soren_null) に流す。
+  function startExternalBgm() {
+    if (!GAME_BGM_FILE || process.platform !== 'linux') return;
+    if (!fs.existsSync(GAME_BGM_FILE)) {
+      console.warn(`[BGM] file not found: ${GAME_BGM_FILE}`);
+      return;
+    }
+    try {
+      bgmChild = spawn('ffplay', [
+        '-nodisp', '-loglevel', 'quiet', '-loop', '0',
+        '-volume', String(GAME_BGM_VOLUME_PCT),
+        GAME_BGM_FILE,
+      ], { stdio: 'ignore' });
+      bgmChild.on('error', (e) => {
+        console.warn(`[BGM] ffplay spawn failed: ${e && e.message}`);
+        bgmChild = null;
+      });
+      bgmChild.on('exit', (code, sig) => {
+        if (code !== 0 && code !== null) {
+          console.warn(`[BGM] ffplay exited code=${code} sig=${sig}`);
+        }
+        bgmChild = null;
+      });
+      console.log(`[BGM] external loop started: ${GAME_BGM_FILE} (vol=${GAME_BGM_VOLUME_PCT}%)`);
+    } catch (e) {
+      console.warn(`[BGM] start failed: ${e && e.message}`);
+      bgmChild = null;
+    }
+  }
+
+  function stopExternalBgm() {
+    if (bgmChild) {
+      try { bgmChild.kill('SIGTERM'); } catch {}
+      bgmChild = null;
+    }
+  }
+
+  startExternalBgm();
+  process.on('exit', stopExternalBgm);
 
   try {
     fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
@@ -1229,6 +1281,10 @@ async function runLocalController() {
     ];
     if (CHROME_KIOSK) {
       launchArgs.push('--kiosk');
+      // llvmpipe (ソフトウェア GL) 上で Unity WebGL の描画が vsync/フレームレート
+      // 制限で 1fps 級に落ちるため、制限を解除して描画ループを最大限回す。
+      // Xvfb には実 vsync が無いので実害はない。
+      launchArgs.push('--disable-frame-rate-limit', '--disable-gpu-vsync');
     }
     const backgroundLaunch = CHROME_HEADLESS ? null : await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs).catch(err => {
       console.error(`[NO-FOCUS] background launch failed, falling back to Playwright launch: ${err.message}`);
