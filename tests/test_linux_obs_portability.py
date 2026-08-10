@@ -805,9 +805,13 @@ esac
     def test_say_enqueue_linux_missing_players_fails_cleanly(self) -> None:
         # Linux で paplay/ffplay が両方ない場合、$! 未定義（unbound variable）を
         # 出さず、明示的な失敗経路（再試行上限 → 非0）へ到達すること。
-        with tempfile.TemporaryDirectory(prefix="say-test-") as temp_dir:
-            root = Path(temp_dir)
-            fake_bin = root / "bin"
+        # 専用ルートの sibling に sentinel を置き、後始末が共有親（/tmp 等）を
+        # 削除しないことを、同じ実処理の終了後に検証する。
+        parent = Path(tempfile.mkdtemp(prefix="say-test-root-"))
+        sentinel = parent / "sentinel.txt"
+        sentinel.write_text("keep me", encoding="utf-8")
+        try:
+            fake_bin = parent / "bin"
             fake_bin.mkdir()
             for name in (
                 "bash", "sh", "sed", "awk", "grep", "cat", "cp", "mkdir", "rm",
@@ -820,7 +824,7 @@ esac
                 if real:
                     os.symlink(real, fake_bin / name)
 
-            content = root / "say_test.txt"
+            content = parent / "say_test.txt"
             content.write_text("テスト", encoding="utf-8")
 
             env = os.environ.copy()
@@ -848,22 +852,7 @@ esac
             self.assertNotIn("unbound variable", combined)
             self.assertIn("再生プレイヤー起動失敗", combined)
             self.assertIn("say起動失敗", combined)
-
-    def test_say_cleanup_never_deletes_shared_parent_directory(self) -> None:
-        # Sol review BLOCKER: TemporaryDirectory の親（共有 /tmp 等）を再帰削除しない。
-        # 専用ディレクトリの sibling に sentinel を置き、テスト後も残ることを確認する。
-        parent = Path(tempfile.mkdtemp(prefix="say-parent-sentinel-"))
-        sentinel = parent / "sentinel.txt"
-        sentinel.write_text("keep me", encoding="utf-8")
-        try:
-            # 同じ parent 配下に専用ディレクトリを作り、破壊的削除パターンを再現する
-            with tempfile.TemporaryDirectory(prefix="say-child-", dir=parent) as child:
-                child_path = Path(child)
-                # 旧実装がやっていた「親を再帰削除」を実行しないことの検証:
-                # ここでは単に専用ディレクトリが使われていることを確認
-                self.assertTrue(child_path.is_dir())
-                self.assertTrue(sentinel.is_file())
-            # TemporaryDirectory 終了後も sentinel と parent が残る
+            # 後始末後も sentinel と parent が残る（共有親を再帰削除していない）
             self.assertTrue(sentinel.is_file())
             self.assertTrue(parent.is_dir())
         finally:
