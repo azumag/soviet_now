@@ -766,14 +766,20 @@ esac
 
     def test_say_enqueue_has_linux_pulseaudio_path(self) -> None:
         text = (REPO_ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
+        # EXPLORE_MODE=1 では音声キューに触れず即終了する
+        self.assertIn('[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0', text)
         self.assertIn('case "${SOREN_OBS_PLATFORM:-$(uname -s', text)
         self.assertIn('IS_LINUX=1', text)
         # Linux では paplay --device で soren_null へ再生する
-        self.assertIn('paplay --device="${SAY_AUDIO_DEVICE:-default}"', text)
+        self.assertIn("_linux_play_bg", text)
+        self.assertIn('paplay --device="$device"', text)
+        self.assertIn('ffplay -nodisp -autoexit -loglevel error "$audio_file"', text)
         # Linux では audiotoolbox / afplay / say の代わりに分岐
         self.assertIn('if [ "$IS_LINUX" = "1" ]; then', text)
         self.assertIn('_launch_say_bg', text)
         self.assertIn("say は macOS 専用のため Linux ではスキップ", text)
+        # Linux では say 最終フォールバック全体をスキップ
+        self.assertIn("Linux では say フォールバックなし", text)
         # GNU sed 対応（BSD の sed -i '' を Linux で使わない）
         sed_block = text.split('if [ "$WAV_MODE" = "false" ]; then', 1)[1]
         sed_block = sed_block.split("python3 lib/normalize_speech_text.py", 1)[0]

@@ -21,10 +21,13 @@ _play_tts() {
 	if [ "$IS_LINUX" = "1" ]; then
 		if command -v paplay >/dev/null 2>&1; then
 			paplay --device="${SAY_AUDIO_DEVICE:-default}" "$file" >/dev/null 2>&1
+			return $?
 		elif command -v ffplay >/dev/null 2>&1; then
 			ffplay -nodisp -autoexit -loglevel error "$file" >/dev/null 2>&1
+			return $?
 		fi
-		return 0
+		echo "[google_tts] Linux 再生プレイヤーがありません (paplay/ffplay 未導入)" >&2
+		return 1
 	fi
 	afplay "$file"
 }

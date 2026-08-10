@@ -609,15 +609,15 @@ _resolve_audio_device_index() {
 		# PulseAudio の sink 名を解決。存在すればそのまま sink 名を返す
 		# （paplay --device は sink 名を直接受け付ける）。
 		if command -v pactl >/dev/null 2>&1; then
-			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$name"; then
-				echo "$name"
+			# .monitor suffix は先に取り除いてから sink 一覧と照合する
+			# （soren_null.monitor -> soren_null）。
+			local sink_candidate="${name%.monitor}"
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$sink_candidate"; then
+				echo "$sink_candidate"
 				return 0
 			fi
-			# モニター名 (soren_null.monitor) で指定された場合も sink 側に解決
-			local monitor_sink
-			monitor_sink=$(pactl list short sinks 2>/dev/null | awk -v n="$name" '$2 == n {print $2; exit}' | sed 's/\.monitor$//')
-			if [ -n "$monitor_sink" ] && pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$monitor_sink"; then
-				echo "$monitor_sink"
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$name"; then
+				echo "$name"
 				return 0
 			fi
 		fi
@@ -722,11 +722,29 @@ _launch_bg_exec() {
 	' _ "$cleanup_file" "$@" >/dev/null 2>&1 &
 }
 
+# Linux 専用: paplay を優先し、無ければ ffplay へフォールバックする。
+# device 引数は _resolve_audio_device_index が返した sink 名。
+# paplay が使える場合は明示された sink を維持し、両方無ければ失敗を返す。
+_linux_play_bg() {
+	local audio_file="$1" device="${2:-${SAY_AUDIO_DEVICE:-default}}" cleanup_file="${3:-}"
+	if command -v paplay >/dev/null 2>&1; then
+		_launch_bg_exec "$cleanup_file" paplay --device="$device" "$audio_file"
+		return 0
+	fi
+	if command -v ffplay >/dev/null 2>&1; then
+		# ffplay は PulseAudio 既定出力へ流す（既定 sink = soren_null 運用）
+		_launch_bg_exec "$cleanup_file" ffplay -nodisp -autoexit -loglevel error "$audio_file"
+		return 0
+	fi
+	_log "[say_enqueue] Linux 再生プレイヤーがありません (paplay/ffplay 未導入)"
+	return 1
+}
+
 _launch_afplay_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
 	if [ "$IS_LINUX" = "1" ]; then
-		_launch_bg_exec "$cleanup_file" paplay --device="${SAY_AUDIO_DEVICE:-default}" "$audio_file"
-		return 0
+		_linux_play_bg "$audio_file" "${SAY_AUDIO_DEVICE:-default}" "$cleanup_file"
+		return $?
 	fi
 	# afplay has no output-device selector; -d is debug mode, not a device flag.
 	# Device-targeted WAV playback uses ffmpeg/audiotoolbox. This helper is only
@@ -738,12 +756,8 @@ _launch_ffmpeg_bg() {
 	local audio_file="$1" device_index="$2" cleanup_file="${3:-}"
 	if [ "$IS_LINUX" = "1" ]; then
 		# device_index は _resolve_audio_device_index が返した sink 名
-		if command -v paplay >/dev/null 2>&1; then
-			_launch_bg_exec "$cleanup_file" paplay --device="${device_index:-${SAY_AUDIO_DEVICE:-default}}" "$audio_file"
-		else
-			_launch_bg_exec "$cleanup_file" ffplay -nodisp -autoexit -loglevel error "$audio_file"
-		fi
-		return 0
+		_linux_play_bg "$audio_file" "${device_index:-${SAY_AUDIO_DEVICE:-default}}" "$cleanup_file"
+		return $?
 	fi
 	_launch_bg_exec "$cleanup_file" ffmpeg -y -loglevel error -i "$audio_file" -f audiotoolbox -audio_device_index "$device_index" ""
 }
@@ -753,9 +767,9 @@ _launch_chrome_wav_bg() {
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
 	if [ "$IS_LINUX" = "1" ]; then
 		# Linux では Chrome CDP 経由の sink 指定は不安定なため、PulseAudio 既定出力へ
-		# paplay で直接再生する（null-sink が既定出力なので配信へ乗る）。
-		_launch_bg_exec "$cleanup_file" paplay --device="${SAY_AUDIO_DEVICE:-default}" "$audio_file"
-		return 0
+		# paplay/ffplay で直接再生する（null-sink が既定出力なので配信へ乗る）。
+		_linux_play_bg "$audio_file" "${SAY_AUDIO_DEVICE:-default}" "$cleanup_file"
+		return $?
 	fi
 	CHROME_AUDIO_USED=1
 	_launch_bg_exec "$cleanup_file" node ./chrome_audio_player.mjs "$audio_file" "$label"
@@ -1219,6 +1233,12 @@ _launch_say() {
 	fi
 
 	# --- macOS say (最終フォールバック) ---
+	# Linux には say が存在しないため、このフォールバック全体を macOS のみに限定する。
+	if [ "$IS_LINUX" = "1" ]; then
+		_log "Linux では say フォールバックなし (Google TTS も失敗済み)"
+		LAUNCHED_SAY_PID=""
+		return
+	fi
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
