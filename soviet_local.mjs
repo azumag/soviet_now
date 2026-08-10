@@ -66,6 +66,9 @@ const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
 const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.SOREN_CHROME_HEADLESS || '').toLowerCase());
+// ゲームウィンドウのサイズ (WxH)。Xvfb を 1920x1080 で運用する Linux 配信では
+// SOREN_CHROME_WINDOW_SIZE=1920,1080 を .env で指定する。macOS 既定は従来どおり。
+const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
 // Unity WebGL can crash Chrome when AudioContext.setSinkId() is applied to its
 // context on some macOS audio graphs. Keep per-context routing opt-in; OBS
 // application-audio capture is safer for the live game.
@@ -1166,7 +1169,7 @@ async function runLocalController() {
     fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
     seedChromeTranslatePreferences(USER_DATA_DIR);
     const launchArgs = [
-      '--window-size=1300,800',
+      `--window-size=${CHROME_WINDOW_SIZE}`,
       `--remote-debugging-port=${CDP_PORT}`,
       // 復旧時の kill -9 でプロファイルが unclean になり「正しく終了しませんでした」
       // 復元バブルが配信画面隅に出続けるのを抑止
