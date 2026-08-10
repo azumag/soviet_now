@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では音声合成・再生を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # say_enqueue.sh - mkdirロックベースのsayキュー（FIFO順次再生）
 #
 # 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] <content_file> [rate] [pre_delay_sec]
@@ -18,6 +20,14 @@ cd "$(dirname "$0")"
 # .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
 [ -f .env ] && . ./.env
 source lib/outbound_queue.sh 2>/dev/null || true
+
+# Linux 判定: SOREN_OBS_PLATFORM=linux が最優先、無ければ uname。
+# Linux では BlackHole/afplay/audiotoolbox/say の代わりに
+# PulseAudio null-sink (SAY_AUDIO_DEVICE=soren_null) へ paplay/ffplay で再生する。
+IS_LINUX=0
+case "${SOREN_OBS_PLATFORM:-$(uname -s 2>/dev/null || echo Darwin)}" in
+linux | Linux | linux-gnu) IS_LINUX=1 ;;
+esac
 
 # フラグ処理
 NO_PREEMPT=false
@@ -235,21 +245,39 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 
 # 読み上げ修正: よくある誤読を事前に置換（WAVモード時はスキップ）
 if [ "$WAV_MODE" = "false" ]; then
-	sed -i '' \
-		-e 's/zoumotu3/ザモートゥ/g' \
-		-e 's/静寂/せいじゃく/g' \
-		-e 's/地政学的/ちせいがくてき/g' \
-		-e 's/地政学/ちせいがく/g' \
-		-e 's/WILDCARD/ワイルドカード/g' \
-		-e 's/NISA/ニーサ/g' \
-		-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
-		-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
-		-e 's/MAGA/マガ/g' \
-		-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
-		-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
-		-e 's/MADE IN CHINA/メイドインチャイナ/g' \
-		-e 's/Made in China/メイドインチャイナ/g' \
-		"$MY_CONTENT"
+	if [ "$IS_LINUX" = "1" ]; then
+		sed -i \
+			-e 's/zoumotu3/ザモートゥ/g' \
+			-e 's/静寂/せいじゃく/g' \
+			-e 's/地政学的/ちせいがくてき/g' \
+			-e 's/地政学/ちせいがく/g' \
+			-e 's/WILDCARD/ワイルドカード/g' \
+			-e 's/NISA/ニーサ/g' \
+			-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/MAGA/マガ/g' \
+			-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+			-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+			-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+			-e 's/Made in China/メイドインチャイナ/g' \
+			"$MY_CONTENT"
+	else
+		sed -i '' \
+			-e 's/zoumotu3/ザモートゥ/g' \
+			-e 's/静寂/せいじゃく/g' \
+			-e 's/地政学的/ちせいがくてき/g' \
+			-e 's/地政学/ちせいがく/g' \
+			-e 's/WILDCARD/ワイルドカード/g' \
+			-e 's/NISA/ニーサ/g' \
+			-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/MAGA/マガ/g' \
+			-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+			-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+			-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+			-e 's/Made in China/メイドインチャイナ/g' \
+			"$MY_CONTENT"
+	fi
 	# type表記の国名置換 + アルファベット小文字化（上の大文字辞書の後に実行）
 	python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
 fi
@@ -577,6 +605,25 @@ _resolve_audio_device_index() {
 		return 0
 		;;
 	esac
+	if [ "$IS_LINUX" = "1" ]; then
+		# PulseAudio の sink 名を解決。存在すればそのまま sink 名を返す
+		# （paplay --device は sink 名を直接受け付ける）。
+		if command -v pactl >/dev/null 2>&1; then
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$name"; then
+				echo "$name"
+				return 0
+			fi
+			# モニター名 (soren_null.monitor) で指定された場合も sink 側に解決
+			local monitor_sink
+			monitor_sink=$(pactl list short sinks 2>/dev/null | awk -v n="$name" '$2 == n {print $2; exit}' | sed 's/\.monitor$//')
+			if [ -n "$monitor_sink" ] && pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$monitor_sink"; then
+				echo "$monitor_sink"
+				return 0
+			fi
+		fi
+		echo "[say_enqueue] audio device not found: $name (pactl)" >&2
+		return 1
+	fi
 	local devices line idx alt_name
 	devices=$(ffmpeg -y -f lavfi -i sine=frequency=1:duration=0.001 -f audiotoolbox -list_devices true "" 2>&1)
 
@@ -677,6 +724,10 @@ _launch_bg_exec() {
 
 _launch_afplay_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
+	if [ "$IS_LINUX" = "1" ]; then
+		_launch_bg_exec "$cleanup_file" paplay --device="${SAY_AUDIO_DEVICE:-default}" "$audio_file"
+		return 0
+	fi
 	# afplay has no output-device selector; -d is debug mode, not a device flag.
 	# Device-targeted WAV playback uses ffmpeg/audiotoolbox. This helper is only
 	# for default-output fallback.
@@ -685,23 +736,47 @@ _launch_afplay_bg() {
 
 _launch_ffmpeg_bg() {
 	local audio_file="$1" device_index="$2" cleanup_file="${3:-}"
+	if [ "$IS_LINUX" = "1" ]; then
+		# device_index は _resolve_audio_device_index が返した sink 名
+		if command -v paplay >/dev/null 2>&1; then
+			_launch_bg_exec "$cleanup_file" paplay --device="${device_index:-${SAY_AUDIO_DEVICE:-default}}" "$audio_file"
+		else
+			_launch_bg_exec "$cleanup_file" ffplay -nodisp -autoexit -loglevel error "$audio_file"
+		fi
+		return 0
+	fi
 	_launch_bg_exec "$cleanup_file" ffmpeg -y -loglevel error -i "$audio_file" -f audiotoolbox -audio_device_index "$device_index" ""
 }
 
 _launch_chrome_wav_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
+	if [ "$IS_LINUX" = "1" ]; then
+		# Linux では Chrome CDP 経由の sink 指定は不安定なため、PulseAudio 既定出力へ
+		# paplay で直接再生する（null-sink が既定出力なので配信へ乗る）。
+		_launch_bg_exec "$cleanup_file" paplay --device="${SAY_AUDIO_DEVICE:-default}" "$audio_file"
+		return 0
+	fi
 	CHROME_AUDIO_USED=1
 	_launch_bg_exec "$cleanup_file" node ./chrome_audio_player.mjs "$audio_file" "$label"
 }
 
 _stop_chrome_audio_players() {
+	if [ "$IS_LINUX" = "1" ]; then
+		return 0
+	fi
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
 	node ./chrome_audio_player.mjs --stop "$label" >/dev/null 2>&1 || true
 }
 
 _launch_say_bg() {
 	local rate="$1" content_file="$2"
+	if [ "$IS_LINUX" = "1" ]; then
+		# Linux に say は存在しない。device 解決失敗時の最終フォールバックなので、
+		# ここでは何も再生せず failure を返す（呼び出し元がリトライ/スキップ処理）。
+		_log "say は macOS 専用のため Linux ではスキップ (content=${content_file})"
+		return 1
+	fi
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 		_launch_bg_exec "" say -a "$SAY_AUDIO_DEVICE" -r "$rate" -f "$content_file"
 	else

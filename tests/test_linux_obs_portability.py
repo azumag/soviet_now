@@ -760,6 +760,38 @@ esac
                 self.assertEqual(epoch, fallback)
                 self.assertEqual(calls, ["-f", "-c"])
 
+    def test_say_enqueue_has_linux_pulseaudio_path(self) -> None:
+        text = (REPO_ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
+        self.assertIn('case "${SOREN_OBS_PLATFORM:-$(uname -s', text)
+        self.assertIn('IS_LINUX=1', text)
+        # Linux では paplay --device で soren_null へ再生する
+        self.assertIn('paplay --device="${SAY_AUDIO_DEVICE:-default}"', text)
+        # Linux では audiotoolbox / afplay / say の代わりに分岐
+        self.assertIn('if [ "$IS_LINUX" = "1" ]; then', text)
+        self.assertIn('_launch_say_bg', text)
+        self.assertIn("say は macOS 専用のため Linux ではスキップ", text)
+        # GNU sed 対応（BSD の sed -i '' を Linux で使わない）
+        sed_block = text.split('if [ "$WAV_MODE" = "false" ]; then', 1)[1]
+        sed_block = sed_block.split("python3 lib/normalize_speech_text.py", 1)[0]
+        linux_sed = sed_block.split('if [ "$IS_LINUX" = "1" ]; then', 1)[1]
+        linux_sed = linux_sed.split("\n\telse", 1)[0]
+        self.assertNotIn("sed -i ''", linux_sed)
+
+    def test_google_tts_has_linux_playback_path(self) -> None:
+        text = (REPO_ROOT / "google_tts.sh").read_text(encoding="utf-8")
+        self.assertIn("IS_LINUX=1", text)
+        self.assertIn("_play_tts", text)
+        self.assertIn('paplay --device="${SAY_AUDIO_DEVICE:-default}"', text)
+        # _play_tts 関数の Linux 分岐には afplay を含まない
+        play_fn = text.split("_play_tts() {", 1)[1].split("\n}", 1)[0]
+        linux_branch = play_fn.split('if [ "$IS_LINUX" = "1" ]; then', 1)[1]
+        linux_branch = linux_branch.split("\n\tfi", 1)[0]
+        self.assertNotIn("afplay", linux_branch)
+        # macOS フォールバックとして afplay は関数末尾に残る
+        self.assertIn("afplay", play_fn)
+        self.assertIn("_play_tts \"$OUT\"", text)
+        self.assertIn("_play_tts \"$OUTPUT\"", text)
+
 
 if __name__ == "__main__":
     unittest.main()
