@@ -406,6 +406,18 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
 4. OBS の Desktop Audio（`pulse_output_capture`）の `device_id` を `soren_null.monitor` に設定する。OBS の設定変更は obs-websocket から `SetInputSettings` で反映できる。
 5. 検証: `pactl list short sinks` で `soren_null` を確認し、VOICEVOX WAV を `paplay --device=soren_null` で再生して OBS の録音レベル（`ffmpeg -i out.mkv -af volumedetect`）が -60dB より大きいことを確認する。
 
+6. systemd で OBS を起動している場合（例: `/etc/systemd/system/obs.service`）、PulseAudio のユーザーソケットへ接続するため `XDG_RUNTIME_DIR`（と必要なら `PULSE_SERVER`）を service に明示する。これを欠くと OBS ログに `pulse-input: Unable to get server info !` が出て、Desktop Audio が `soren_null.monitor` に設定されていても音声が完全に無音になる。Ubuntu 24.04 / uid 1001 の例:
+
+   ```bash
+   sudo mkdir -p /etc/systemd/system/obs.service.d
+   printf '[Service]\nEnvironment=XDG_RUNTIME_DIR=/run/user/1001\nEnvironment=PULSE_SERVER=unix:/run/user/1001/pulse/native\n' \
+     | sudo tee /etc/systemd/system/obs.service.d/pulse.conf >/dev/null
+   sudo systemctl daemon-reload
+   sudo systemctl restart obs.service
+   ```
+
+   再起動後、`pactl list clients` に `obs` が現れ、OBS ログに `Started recording from 'soren_null.monitor'` が出れば接続成功。
+
 Unity ブラウザ音声も既定 sink が `soren_null` なら自動的に配信へ乗る。`SOREN_CHROME_AUDIO_OUTPUT_LABEL` は Linux では使用しない（空にする）。
 
 ### jloop.sh — JSON-based State Loop
