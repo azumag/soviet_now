@@ -69,6 +69,16 @@ const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.S
 // ゲームウィンドウのサイズ (WxH)。Xvfb を 1920x1080 で運用する Linux 配信では
 // SOREN_CHROME_WINDOW_SIZE=1920,1080 を .env で指定する。macOS 既定は従来どおり。
 const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
+// Linux の headed 運用では XSHM が画面全体をキャプチャするため、ブラウザの
+// タブバー/アドレスバー/自動テスト帯が配信に映り込む。--kiosk で Chrome UI を
+// 消してゲームキャンバスだけを画面いっぱいに表示する。macOS の OBS window
+// capture はウィンドウ内だけを撮るので kiosk は使わない (従来動作を維持)。
+// SOREN_CHROME_KIOSK=0 で無効化できる。
+const CHROME_KIOSK = process.platform === 'linux' && !CHROME_HEADLESS
+  && String(process.env.SOREN_CHROME_KIOSK || '1') !== '0';
+// kiosk では Playwright の viewport エミュレーションを無効化し、ページビューポートを
+// 実ウィンドウ(1920x1080)に追従させる。通常(macOS/非kiosk)は従来どおり 1280x720。
+const CHROME_VIEWPORT = CHROME_KIOSK ? null : { width: 1280, height: 720 };
 // Unity WebGL can crash Chrome when AudioContext.setSinkId() is applied to its
 // context on some macOS audio graphs. Keep per-context routing opt-in; OBS
 // application-audio capture is safer for the live game.
@@ -89,6 +99,21 @@ function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(data));
   fs.renameSync(tmpPath, filePath);
+}
+
+// canvas の CSS 表示領域の中央をクリックする。Unity キャンバスがウィンドウ/画面
+// サイズに追従して拡大縮小しても、クリック位置がゲーム中央に一致するようにする
+// (1280x720 固定の頃はハードコード (640,360) だった)。
+async function clickGameCenter(page) {
+  const rect = await page.evaluate(() => {
+    const c = document.querySelector('canvas');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const cx = rect && rect.w > 0 ? rect.x + rect.w / 2 : 960;
+  const cy = rect && rect.h > 0 ? rect.y + rect.h / 2 : 540;
+  await page.mouse.click(cx, cy);
 }
 
 function seedChromeTranslatePreferences(userDataDir) {
@@ -1031,7 +1056,7 @@ function unityAudioNeedsRecovery(health) {
 
 async function recoverUnityAudio(page, audioDiagLog, reason) {
   try {
-    await page.mouse.click(640, 360);
+    await clickGameCenter(page);
   } catch (e) {
     audioDiagLog(`[AUDIO-WATCHDOG-CLICK-ERROR] ${(e && e.message) || String(e)}`);
   }
@@ -1196,7 +1221,15 @@ async function runLocalController() {
       // 自動操作ブラウザはユーザー操作が無く、autoplay ポリシーで AudioContext が
       // suspended のまま resume できず無音化する。bridge 再起動毎の無音を防ぐ。
       '--autoplay-policy=no-user-gesture-required',
+      // Linux kiosk 配信で「Chrome は自動テスト ソフトウェアによって制御されています」
+      // の帯(高さ約52px)が画面最上部に映り込む。--disable-infobars は Playwright が
+      // 追加する --enable-automation に打ち消されるため、--test-type で抑止する。
+      // 通常の kiosk 配信 (macOS window capture / Linux XSHM 全画面) には影響しない。
+      '--test-type',
     ];
+    if (CHROME_KIOSK) {
+      launchArgs.push('--kiosk');
+    }
     const backgroundLaunch = CHROME_HEADLESS ? null : await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs).catch(err => {
       console.error(`[NO-FOCUS] background launch failed, falling back to Playwright launch: ${err.message}`);
       return null;
@@ -1210,8 +1243,13 @@ async function runLocalController() {
         context = await withBrowserLaunchEnv(USER_DATA_DIR, launchEnv => chromium.launchPersistentContext(USER_DATA_DIR, {
           executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
           headless: CHROME_HEADLESS,
-          viewport: { width: 1280, height: 720 },
-          deviceScaleFactor: 1,
+          viewport: CHROME_VIEWPORT,
+          // viewport: null (kiosk) のとき deviceScaleFactor は指定できない
+          deviceScaleFactor: CHROME_VIEWPORT ? 1 : undefined,
+          // kiosk 配信では Playwright が自動追加する --enable-automation を外して
+          // 「自動テスト ソフトウェアによって制御されています」帯(約52px)を消す。
+          // ゲーム操作 (evaluate/mouse) は CDP 経由なので自動化フラグは不要。
+          ignoreDefaultArgs: CHROME_KIOSK ? ['--enable-automation'] : undefined,
           env: launchEnv,
           args: launchArgs,
         }));
@@ -1533,7 +1571,9 @@ async function runLocalController() {
   }
 
   // Force canvas to fill viewport exactly — hide footer, reset margins, override container positioning
-  const canvasInfo = await page.evaluate(() => {
+  // kiosk (Linux 全画面配信) ではキャンバスを実ビューポート(1920x1080)に追従させ、
+  // ブラウザUI・余白を画面から排除する。非kioskは従来どおり 1280x720 固定。
+  const canvasInfo = await page.evaluate((kiosk) => {
     // Hide footer
     const footer = document.getElementById('unity-footer');
     if (footer) footer.style.display = 'none';
@@ -1555,8 +1595,8 @@ async function runLocalController() {
     // Ensure canvas fills exactly
     const canvas = document.getElementById('unity-canvas');
     if (canvas) {
-      canvas.style.width = '1280px';
-      canvas.style.height = '720px';
+      canvas.style.width = kiosk ? (window.innerWidth + 'px') : '1280px';
+      canvas.style.height = kiosk ? (window.innerHeight + 'px') : '720px';
       canvas.style.display = 'block';
     }
     return {
@@ -1567,7 +1607,7 @@ async function runLocalController() {
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
     };
-  });
+  }, CHROME_KIOSK);
   console.log('Canvas layout:', JSON.stringify(canvasInfo));
 
   // Capture browser console for debugging
@@ -1610,7 +1650,7 @@ async function runLocalController() {
   }
 
   // Click to start the game
-  await page.mouse.click(640, 360);
+  await clickGameCenter(page);
   await page.waitForTimeout(2000);
 
   // Initial state
@@ -1864,7 +1904,7 @@ async function runLocalController() {
                     }
                   } catch (e2) { /* ignore */ }
                   // Click to start game
-                  await page.mouse.click(640, 360);
+                  await clickGameCenter(page);
                   await page.waitForTimeout(2000);
                   lastState = s;
                   writeGameState(s);

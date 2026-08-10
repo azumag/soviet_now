@@ -418,6 +418,8 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
 
    再起動後、`pactl list clients` に `obs` が現れ、OBS ログに `Started recording from 'soren_null.monitor'` が出れば接続成功。
 
+7. 1080p 配信（Xvfb 1920x1080 + OBS output 1920x1080）では、Linux の headed Chromium は既定で `--kiosk`（`SOREN_CHROME_KIOSK=1`）で起動し、Playwright の `--enable-automation` を外してブラウザ UI・自動テスト帯を配信画面から排除する。`SOREN_CHROME_WINDOW_SIZE=1920,1080` を `.env` に設定する。Unity ビルド側の `sorengame/build/index.html` は canvas を `window.innerWidth/innerHeight` に追従させる（1280x720 固定のままだと画面左上に小さく表示される）。
+
 Unity ブラウザ音声も既定 sink が `soren_null` なら自動的に配信へ乗る。`SOREN_CHROME_AUDIO_OUTPUT_LABEL` は Linux では使用しない（空にする）。
 
 ### jloop.sh — JSON-based State Loop
