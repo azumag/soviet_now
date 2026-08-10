@@ -675,8 +675,12 @@ esac
     def test_linux_relaunch_only_touches_active_named_systemd_unit(self) -> None:
         watchdog = (REPO_ROOT / "obs_capture_watchdog.sh").read_text()
 
-        self.assertIn('systemctl --user restart "$OBS_SYSTEMD_UNIT"', watchdog)
-        self.assertIn('systemctl --user is-active --quiet "$OBS_SYSTEMD_UNIT"', watchdog)
+        # systemd scope (user/system) を選択可能にし、スコープごとに unit を検証してから再起動
+        self.assertIn('OBS_SYSTEMD_SCOPE="${OBS_SYSTEMD_SCOPE:-user}"', watchdog)
+        self.assertIn('systemctl --"$OBS_SYSTEMD_SCOPE" restart "$OBS_SYSTEMD_UNIT"', watchdog)
+        self.assertIn('systemctl --"$OBS_SYSTEMD_SCOPE" is-active --quiet "$OBS_SYSTEMD_UNIT"', watchdog)
+        self.assertIn('case "$OBS_SYSTEMD_SCOPE" in', watchdog)
+        self.assertIn("user|system", watchdog)
         self.assertNotIn('DISPLAY="$OBS_DISPLAY" nohup "$OBS_APP_PATH"', watchdog)
         self.assertNotIn('pkill -x "$OBS_PROCESS_NAME"', watchdog)
         self.assertNotIn("OBS_LINUX_RESTART_MODE:-auto", watchdog)

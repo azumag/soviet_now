@@ -65,6 +65,7 @@ OBS_LOG_DIR="${OBS_LOG_DIR:-$_OBS_LOG_DIR_DEFAULT}"
 OBS_SAFE_RELAUNCH_TS="tmp/state/obs_safe_relaunch_last.ts"
 OBS_LINUX_RESTART_MODE="${OBS_LINUX_RESTART_MODE:-systemd}"
 OBS_SYSTEMD_UNIT="${OBS_SYSTEMD_UNIT:-obs.service}"
+OBS_SYSTEMD_SCOPE="${OBS_SYSTEMD_SCOPE:-user}"
 OBS_DISPLAY="${OBS_DISPLAY:-${DISPLAY:-:99}}"
 OBS_LINUX_RELAUNCH_LOG="${OBS_LINUX_RELAUNCH_LOG:-logs/obs_linux_relaunch.log}"
 
@@ -152,16 +153,24 @@ _obs_relaunch_normal() {
 					_log "safe-mode: systemctl not found; Linux OBS restart left untouched"
 					return 1
 				fi
-				if ! systemctl --user is-active --quiet "$OBS_SYSTEMD_UNIT" 2>/dev/null; then
-					_log "safe-mode: specified user unit is not active (${OBS_SYSTEMD_UNIT}); Linux OBS left untouched"
-					return 1
-				fi
-				if systemctl --user restart "$OBS_SYSTEMD_UNIT" >>"$OBS_LINUX_RELAUNCH_LOG" 2>&1; then
-					_log "safe-mode: systemd user unit ${OBS_SYSTEMD_UNIT} を再起動しました"
-					return 0
-				fi
-				_log "safe-mode: systemd restart failed (${OBS_SYSTEMD_UNIT}); no process fallback attempted"
-				return 1
+				case "$OBS_SYSTEMD_SCOPE" in
+					user|system)
+						if ! systemctl --"$OBS_SYSTEMD_SCOPE" is-active --quiet "$OBS_SYSTEMD_UNIT" 2>/dev/null; then
+							_log "safe-mode: specified $OBS_SYSTEMD_SCOPE unit is not active (${OBS_SYSTEMD_UNIT}); Linux OBS left untouched"
+							return 1
+						fi
+						if systemctl --"$OBS_SYSTEMD_SCOPE" restart "$OBS_SYSTEMD_UNIT" >>"$OBS_LINUX_RELAUNCH_LOG" 2>&1; then
+							_log "safe-mode: systemd $OBS_SYSTEMD_SCOPE unit ${OBS_SYSTEMD_UNIT} を再起動しました"
+							return 0
+						fi
+						_log "safe-mode: systemd restart failed (${OBS_SYSTEMD_UNIT}); no process fallback attempted"
+						return 1
+						;;
+					*)
+						_log "safe-mode: invalid OBS_SYSTEMD_SCOPE=${OBS_SYSTEMD_SCOPE}"
+						return 1
+						;;
+				esac
 				;;
 			disabled|off|0)
 				_log "safe-mode: Linux OBS restart disabled; OBS left untouched"
