@@ -133,6 +133,24 @@ _obs_ws_down() {
 	case "$s" in streaming=*) return 1 ;; *) return 0 ;; esac
 }
 
+# Linux のみ: Xvfb 上でゲーム(Chromium)ウィンドウが最小化(Iconic)されると Unity WebGL の
+# 描画が止まり、XSHM の画面全体が静止する。FROZEN 検出時に Iconic なら復元する。
+# OBS ウィンドウは触らない(--minimize-to-tray 運用のまま)。
+_restore_game_window_linux() {
+	[ "$OBS_CAPTURE_PLATFORM" = "linux" ] || return 0
+	command -v xdotool >/dev/null 2>&1 || return 0
+	command -v xprop >/dev/null 2>&1 || return 0
+	local wid
+	wid=$(DISPLAY="$OBS_DISPLAY" xdotool search --class 'Chromium' 2>/dev/null | head -n1)
+	[ -n "$wid" ] || wid=$(DISPLAY="$OBS_DISPLAY" xdotool search --name 'soren-game' 2>/dev/null | head -n1)
+	[ -n "$wid" ] || return 0
+	if DISPLAY="$OBS_DISPLAY" xprop -id "$wid" WM_STATE 2>/dev/null | grep -q 'Iconic'; then
+		DISPLAY="$OBS_DISPLAY" xdotool windowmap "$wid" >/dev/null 2>&1 || true
+		DISPLAY="$OBS_DISPLAY" xdotool windowactivate "$wid" >/dev/null 2>&1 || true
+		_log "restore: game window ${wid} was Iconic -> restored (WM_CLASS=Chromium)"
+	fi
+}
+
 # OBSを終了して --disable-shutdown-check 付きで再起動(ダイアログを出さず通常起動)
 _obs_relaunch_normal() {
 	local now last waited=0
@@ -233,9 +251,16 @@ while true; do
 	out=$(node obs_capture_watchdog_check.mjs 2>&1)
 	rc=$?
 	case "$rc" in
-		10) _log "FROZEN -> bounced. ${out##*$'\n'}" ;;
+		10) _log "FROZEN -> bounced. ${out##*$'\n'}"
+		    _restore_game_window_linux
+		    ;;
 		11) _log "STALE -> rebound. ${out##*$'\n'}" ;;
-		0)  _log "ok. ${out##*$'\n'}" ;;
+		0)
+			_log "ok. ${out##*$'\n'}"
+			case "$out" in
+				*FROZEN*) _restore_game_window_linux ;;
+			esac
+			;;
 		*)  _log "check rc=$rc: ${out##*$'\n'}" ;;
 	esac
 done
