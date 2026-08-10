@@ -456,6 +456,8 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
 
    旧 `SOREN_GAME_BGM_FILE` は通常BGM用の後方互換名としてのみ残す。新構成では曖昧さを避けるため `SOREN_GAME_BGM_INITIAL_FILE` を使う。`SOREN_GAME_AUDIO_PULSE_LATENCY_MS` はCPUが瞬間的に飽和してもBGMを途切れにくくするPulseAudio bufferで、既定350ms、許容範囲50〜2000ms。
 
+   Linux配信機でコードと上記設定をまとめて反映する場合は、対象ブランチを `git pull --ff-only` した後に `./configure_linux_stream_profile.sh` を実行する。このスクリプトは既存 `.env` を時刻付きでバックアップし、配信関連キーだけを更新して、OBSの優先度とsoren supervisorを再起動する。APIキーや配信キーは表示・変更しない。
+
 Unity ブラウザ音声も既定 sink が `soren_null` なら自動的に配信へ乗る。`SOREN_CHROME_AUDIO_OUTPUT_LABEL` は Linux では使用しない（空にする）。
 
 ### jloop.sh — JSON-based State Loop
