@@ -802,6 +802,53 @@ esac
         self.assertIn("_play_tts \"$OUT\"", text)
         self.assertIn("_play_tts \"$OUTPUT\"", text)
 
+    def test_say_enqueue_linux_missing_players_fails_cleanly(self) -> None:
+        # Linux で paplay/ffplay が両方ない場合、$! 未定義（unbound variable）を
+        # 出さず、明示的な失敗経路（再試行上限 → 非0）へ到達すること。
+        fake_bin = Path(tempfile.mkdtemp(prefix="say-fake-bin-"))
+        try:
+            for name in (
+                "bash", "sh", "sed", "awk", "grep", "cat", "cp", "mkdir", "rm",
+                "rmdir", "date", "sleep", "wc", "tr", "kill", "pgrep", "xargs",
+                "printf", "ffmpeg", "ffprobe", "curl", "python3", "node", "uname",
+                "dirname", "basename", "nohup", "env", "timeout", "head", "tail",
+                "sort", "cut", "touch", "stat", "true", "false",
+            ):
+                real = shutil.which(name)
+                if real:
+                    os.symlink(real, fake_bin / name)
+
+            content = fake_bin.parent / "say_test.txt"
+            content.write_text("テスト", encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = str(fake_bin)
+            env["SOREN_OBS_PLATFORM"] = "linux"
+            env["OBS_WEBSOCKET_PORT"] = ""
+            env["OBS_WEBSOCKET_PASSWORD"] = ""
+            env["SAY_AUDIO_DEVICE"] = "soren_null"
+            env["SAY_RETRY_MAX"] = "1"
+            env["SAY_RETRY_SLEEP_SEC"] = "0"
+            env["LOCK_STALE_SEC"] = "0"
+            env["EXPLORE_MODE"] = "0"
+
+            result = subprocess.run(
+                ["bash", str(REPO_ROOT / "say_enqueue.sh"), "--wav", str(content), "120", "0"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+            combined = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("unbound variable", combined)
+            self.assertIn("再生プレイヤー起動失敗", combined)
+            self.assertIn("say起動失敗", combined)
+        finally:
+            shutil.rmtree(fake_bin.parent, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

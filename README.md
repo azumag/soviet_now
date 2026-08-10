@@ -388,16 +388,23 @@ OBS 表示は `sorengame` window capture を `obs_window_capture_source.sh` で�
 
 macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux では PulseAudio の null-sink を使う。Oracle Ubuntu VM でのセットアップ手順:
 
-1. null-sink を作成し既定出力にする（`~/.config/pulse/default.pa` に書けば再起動後も維持される）:
+1. null-sink を作成し既定出力にする。まず一回限りのシェル操作で動作確認する:
 
    ```bash
    pactl load-module module-null-sink sink_name=soren_null sink_properties=device.description=soren_null
    pactl set-default-sink soren_null
    ```
 
-2. `.env` で `SAY_AUDIO_DEVICE="soren_null"` を設定する。`say_enqueue.sh` と `google_tts.sh` は Linux 判定（`SOREN_OBS_PLATFORM=linux` または uname）で `pactl` により sink 名を解決し、`paplay --device=<sink>` で再生する。`paplay` が無い環境は `ffplay` へフォールバックする（既定 sink が `soren_null` なので配信へ乗る）。macOS の `afplay`/`audiotoolbox`/`say`/`chrome_audio_player.mjs` 経路は Linux では実行しない。
-3. OBS の Desktop Audio（`pulse_output_capture`）の `device_id` を `soren_null.monitor` に設定する。OBS の設定変更は obs-websocket から `SetInputSettings` で反映できる。
-4. 検証: `pactl list short sinks` で `soren_null` を確認し、VOICEVOX WAV を `paplay --device=soren_null` で再生して OBS の録音レベル（`ffmpeg -i out.mkv -af volumedetect`）が -60dB より大きいことを確認する。
+2. 再起動後も維持するには、`~/.config/pulse/default.pa` に永続設定を書く（シェルコマンドではなく PulseAudio 設定ディレクティブ）:
+
+   ```text
+   load-module module-null-sink sink_name=soren_null sink_properties=device.description=soren_null
+   set-default-sink soren_null
+   ```
+
+3. `.env` で `SAY_AUDIO_DEVICE="soren_null"` を設定する。`say_enqueue.sh` は Linux 判定（`SOREN_OBS_PLATFORM=linux` または uname）で `pactl` により sink 名（`.monitor` 表記も `soren_null` へ解決）を検証し、`paplay --device=<sink>` で再生する。`paplay` が無い環境は `ffplay` へフォールバックする（既定 sink が `soren_null` なので配信へ乗る）。`google_tts.sh` も Linux では `paplay`（無ければ `ffplay`）で再生し、macOS の `afplay`/`audiotoolbox`/`say`/`chrome_audio_player.mjs` 経路は Linux では実行しない。
+4. OBS の Desktop Audio（`pulse_output_capture`）の `device_id` を `soren_null.monitor` に設定する。OBS の設定変更は obs-websocket から `SetInputSettings` で反映できる。
+5. 検証: `pactl list short sinks` で `soren_null` を確認し、VOICEVOX WAV を `paplay --device=soren_null` で再生して OBS の録音レベル（`ffmpeg -i out.mkv -af volumedetect`）が -60dB より大きいことを確認する。
 
 Unity ブラウザ音声も既定 sink が `soren_null` なら自動的に配信へ乗る。`SOREN_CHROME_AUDIO_OUTPUT_LABEL` は Linux では使用しない（空にする）。
 

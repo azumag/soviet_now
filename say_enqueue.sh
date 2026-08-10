@@ -918,13 +918,14 @@ _launch_stream_wav() {
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → Chrome/BlackHole再生にフォールバック"
 			_launch_chrome_wav_bg "$wav_file"
-			return 0
+			return $?
 		}
 		_launch_ffmpeg_bg "$wav_file" "$device_index"
+		return $?
 	else
 		_launch_afplay_bg "$wav_file"
+		return $?
 	fi
-	return 0
 }
 
 # 事前合成済みチャンク再生: 呼び出し時点で全WAVが生成済みであること
@@ -960,7 +961,11 @@ _play_prerendered_voicevox_chunks() {
 			break
 		fi
 		CHROME_AUDIO_USED=0
-		_launch_stream_wav "$chunk_wav"
+		if ! _launch_stream_wav "$chunk_wav"; then
+			_log "再生プレイヤー起動失敗: $chunk_wav"
+			play_failed=1
+			break
+		fi
 		play_pid=$!
 		current_expected_sec=$(_estimate_audio_duration_sec "$chunk_wav")
 		echo "$play_pid" >"$PID_FILE"
@@ -1014,7 +1019,11 @@ _launch_say() {
 	# --- Pre-synthesized WAV (--wav mode) ---
 	if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
-		_launch_stream_wav "$MY_CONTENT"
+		if ! _launch_stream_wav "$MY_CONTENT"; then
+			_log "WAV 再生プレイヤー起動失敗"
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="wav"
 		LAUNCHED_SAY_PID="$!"
 		return
@@ -1026,15 +1035,27 @@ _launch_say() {
 		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 			local device_index
 			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-				_launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+				if ! _launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"; then
+					_log "事前合成WAV再生プレイヤー起動失敗"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 				LAUNCH_MODE="voicevox_pre"
 				LAUNCHED_SAY_PID="$!"
 				_log "事前合成WAV再生 (device=Chrome/BlackHole fallback)"
 				return
 			}
-			_launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"
+			if ! _launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"; then
+				_log "事前合成WAV再生プレイヤー起動失敗 (ffmpeg)"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 		else
-			_launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+			if ! _launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"; then
+				_log "事前合成WAV再生プレイヤー起動失敗 (afplay)"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 		fi
 		LAUNCH_MODE="voicevox_pre"
 		LAUNCHED_SAY_PID="$!"
@@ -1154,15 +1175,27 @@ _launch_say() {
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 				local device_index
 				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-					_launch_chrome_wav_bg "$vo_wav" "$vo_wav"
+					if ! _launch_chrome_wav_bg "$vo_wav" "$vo_wav"; then
+						_log "VOICEVOX WAV再生プレイヤー起動失敗"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="voicevox"
 					LAUNCHED_SAY_PID="$!"
 					_log "VOICEVOX WAV再生 (device=Chrome/BlackHole fallback)"
 					return
 				}
-				_launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"
+				if ! _launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"; then
+					_log "VOICEVOX WAV再生プレイヤー起動失敗 (ffmpeg)"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 			else
-				_launch_afplay_bg "$vo_wav" "$vo_wav"
+				if ! _launch_afplay_bg "$vo_wav" "$vo_wav"; then
+					_log "VOICEVOX WAV再生プレイヤー起動失敗 (afplay)"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 			fi
 			LAUNCH_MODE="voicevox"
 			LAUNCHED_SAY_PID="$!"
@@ -1182,7 +1215,11 @@ _launch_say() {
 		if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
 			./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
-			_launch_afplay_bg "$coe_wav" "$coe_wav"
+			if ! _launch_afplay_bg "$coe_wav" "$coe_wav"; then
+				_log "COEIROINK WAV再生プレイヤー起動失敗"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 			LAUNCH_MODE="coeiroink"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1211,15 +1248,27 @@ _launch_say() {
 					local device_index
 					device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 						_log "audio device解決失敗 → afplayフォールバック"
-						_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
+						if ! _launch_afplay_bg "$gtts_mp3" "$gtts_mp3"; then
+							_log "Google TTS再生プレイヤー起動失敗"
+							LAUNCHED_SAY_PID=""
+							return
+						fi
 						LAUNCH_MODE="google_tts"
 						LAUNCHED_SAY_PID="$!"
 						return
 					}
-					_launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"
+					if ! _launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"; then
+						_log "Google TTS再生プレイヤー起動失敗 (ffmpeg)"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="ffmpeg"
 				else
-					_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
+					if ! _launch_afplay_bg "$gtts_mp3" "$gtts_mp3"; then
+						_log "Google TTS再生プレイヤー起動失敗 (afplay)"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="google_tts"
 				fi
 				LAUNCHED_SAY_PID="$!"
@@ -1243,7 +1292,10 @@ _launch_say() {
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			_launch_say_bg "$RATE" "$MY_CONTENT"
+			if ! _launch_say_bg "$RATE" "$MY_CONTENT"; then
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 			LAUNCH_MODE="say"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1261,10 +1313,17 @@ _launch_say() {
 			LAUNCHED_SAY_PID=""
 			return
 		fi
-		_launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"
+		if ! _launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"; then
+			_log "say AIFF再生プレイヤー起動失敗"
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="ffmpeg"
 	else
-		_launch_say_bg "$RATE" "$MY_CONTENT"
+		if ! _launch_say_bg "$RATE" "$MY_CONTENT"; then
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="say"
 		LAUNCHED_EXPECTED_SEC=$(_estimate_text_duration_sec "$MY_CONTENT" "$RATE")
 	fi
