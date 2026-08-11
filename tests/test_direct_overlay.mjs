@@ -103,6 +103,7 @@ test('A/V sync surface is transparent unless its generated probe file exists', (
   assert.equal(probe.pollMs, 250);
   assert.equal(directOverlaySurfaceVisible(probe), true);
   assert.match(probe.htmlFile, /tmp\/state\/direct_av_sync_probe[.]html$/);
+  assert.equal(probe.key, 'avsync');
 });
 
 
