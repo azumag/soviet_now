@@ -84,6 +84,32 @@ class DirectSoakTests(unittest.TestCase):
         self.assertFalse(summary["requirements"]["single_publisher"])
         self.assertFalse(summary["requirements"]["single_relay_publisher_connection"])
 
+    def test_tiny_cfr_corrections_do_not_count_as_sustained_drop_growth(self) -> None:
+        rows = [
+            sample(0, 0, drops=0, dups=0),
+            sample(60, 1800, drops=1, dups=1),
+            sample(120, 3600, drops=7, dups=7),
+            sample(180, 5400, drops=8, dups=8),
+        ]
+        summary = direct_soak.summarize_samples(rows, 180)
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["max_consecutive_drop_growth"], 3)
+        self.assertEqual(summary["max_consecutive_significant_drop_growth"], 1)
+        self.assertTrue(summary["requirements"]["drop_not_continuous"])
+        self.assertTrue(summary["requirements"]["drop_ratio_under_1pct"])
+        self.assertTrue(summary["requirements"]["dup_ratio_under_1pct"])
+
+    def test_one_large_frame_adjustment_burst_fails_aggregate_ratio(self) -> None:
+        rows = [
+            sample(0, 0, drops=0, dups=0),
+            sample(60, 1800, drops=20, dups=20),
+        ]
+        summary = direct_soak.summarize_samples(rows, 60)
+        self.assertFalse(summary["ok"])
+        self.assertTrue(summary["requirements"]["drop_not_continuous"])
+        self.assertFalse(summary["requirements"]["drop_ratio_under_1pct"])
+        self.assertFalse(summary["requirements"]["dup_ratio_under_1pct"])
+
     def test_missing_or_silent_combined_audio_fails(self) -> None:
         rows = [
             sample(0, 0),

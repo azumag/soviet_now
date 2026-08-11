@@ -548,7 +548,7 @@ push先は運用者がVM上で `sudoedit /etc/soren-rtmp/push.conf` を使って
 ./cutover_direct_stream.sh --rollback --confirm-live-rollback
 ```
 
-切替後の1時間カナリアと24時間受入は、同じ監視器を時間だけ変えて実行する。監視器は資格情報やrelayの送信先を保存せず、送出frame差分、fps、speed、drop/dup、direct publisher process数、relayへのRTMP入力接続数、relay/OBS相互排他、ゲーム描画FPS、load/memory、FFmpeg CPU時間に加え、`soren_null.monitor` を既定1秒だけ読み取った合成音声の平均/最大音量をJSONLへ記録する。音量検査は既定60秒間隔で、最大音量 -60 dB未満を無音とする。24時間の機械判定は平均29.5fps以上、speedの5パーセンタイル0.98以上、dropが2区間以上連続増加しないこと、direct processとrelay入力接続がともに常時1つであること、音声probe成功率と非無音率が各99%以上であることを含む。BGM/SE/TTSそれぞれの同定、A/V同期、overlay見た目、Twitch側codec、OBS比CPU削減は別の実機検査であり、この監視だけでは合格扱いにしない。
+切替後の1時間カナリアと24時間受入は、同じ監視器を時間だけ変えて実行する。監視器は資格情報やrelayの送信先を保存せず、送出frame差分、fps、speed、drop/dup、direct publisher process数、relayへのRTMP入力接続数、relay/OBS相互排他、ゲーム描画FPS、load/memory、FFmpeg CPU時間に加え、`soren_null.monitor` を既定1秒だけ読み取った合成音声の平均/最大音量をJSONLへ記録する。音量検査は既定60秒間隔で、最大音量 -60 dB未満を無音とする。24時間の機械判定は平均29.5fps以上、speedの5パーセンタイル0.98以上、区間drop率0.1%以上の増加が2区間以上連続しないこと、全体drop率とdup率が各1%未満であること、direct processとrelay入力接続がともに常時1つであること、音声probe成功率と非無音率が各99%以上であることを含む。CFRが30fpsを維持するための散発的な1frame補正はraw counterとして残すが、持続dropとは扱わない。BGM/SE/TTSそれぞれの同定、A/V同期、overlay見た目、Twitch側codec、OBS比CPU削減は別の実機検査であり、この監視だけでは合格扱いにしない。
 
 FFmpegカナリア中のローカルrelay断復旧は `./direct_stream_recovery_test.sh --run --confirm-live-recovery-test` で検査する。このテストはrelayだけを非同期再起動し、60秒以内に新しいFFmpeg run、30fps近傍、speed 0.97以上、direct process 1件、relay入力1件へ戻ることを要求する。nginx-rtmpのgraceful stopが配信中publisherを待ち続けないよう、relay unitの停止猶予は5秒に制限する。失敗時はcutover時に記録したOBS backupへ自動rollbackする。これは外部RTMP宛先の回線断試験とは別であり、外部再接続はrelayログと配信プラットフォーム側の連続性も合わせて確認する。
 

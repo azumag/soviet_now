@@ -21,6 +21,8 @@ from typing import Mapping, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SIGNIFICANT_INTERVAL_DROP_RATIO = 0.001
+MAX_TOTAL_FRAME_ADJUSTMENT_RATIO = 0.01
 
 
 class SoakConfigError(RuntimeError):
@@ -431,6 +433,9 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
     drop_growth_intervals = 0
     max_consecutive_drop_growth = 0
     consecutive_drop_growth = 0
+    significant_drop_growth_intervals = 0
+    max_consecutive_significant_drop_growth = 0
+    consecutive_significant_drop_growth = 0
     restart_count = 0
     previous: Mapping[str, object] | None = None
     speed_values: list[float] = []
@@ -496,6 +501,21 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
                     max_consecutive_drop_growth = max(max_consecutive_drop_growth, consecutive_drop_growth)
                 else:
                     consecutive_drop_growth = 0
+                # CFR capture occasionally performs a one-frame correction even
+                # while effective FPS and speed stay healthy.  Count only an
+                # interval-level correction of at least 0.1% as sustained drop
+                # growth; the aggregate 1% guard below still catches isolated
+                # large bursts.
+                interval_drop_ratio = drops / max(frames, 1) if drops > 0 else 0.0
+                if interval_drop_ratio >= SIGNIFICANT_INTERVAL_DROP_RATIO:
+                    significant_drop_growth_intervals += 1
+                    consecutive_significant_drop_growth += 1
+                    max_consecutive_significant_drop_growth = max(
+                        max_consecutive_significant_drop_growth,
+                        consecutive_significant_drop_growth,
+                    )
+                else:
+                    consecutive_significant_drop_growth = 0
                 if dups > 0:
                     dup_delta += dups
             elif direct.get("started_at") != prior_direct.get("started_at"):
@@ -514,11 +534,15 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
     speed_p05 = _percentile(speed_values, 0.05)
     audio_probe_success_ratio = audio_probe_success_count / count if count else 0.0
     audio_present_ratio = audio_present_count / count if count else 0.0
+    drop_ratio = drop_delta / max(frame_delta, 1)
+    dup_ratio = dup_delta / max(frame_delta, 1)
     requirements = {
         "duration_covered": elapsed >= expected_duration * 0.99,
         "mean_output_fps_29_5": mean_output_fps >= 29.5,
         "speed_p05_0_98": speed_p05 is not None and speed_p05 >= 0.98,
-        "drop_not_continuous": max_consecutive_drop_growth < 2,
+        "drop_not_continuous": max_consecutive_significant_drop_growth < 2,
+        "drop_ratio_under_1pct": drop_ratio < MAX_TOTAL_FRAME_ADJUSTMENT_RATIO,
+        "dup_ratio_under_1pct": dup_ratio < MAX_TOTAL_FRAME_ADJUSTMENT_RATIO,
         "single_publisher": publisher_min == 1 and publisher_max == 1,
         "single_relay_publisher_connection": (
             relay_publisher_min == 1 and relay_publisher_max == 1
@@ -541,8 +565,13 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
         "speed_min": round(min(speed_values), 4) if speed_values else None,
         "drop_delta": drop_delta,
         "dup_delta": dup_delta,
+        "drop_ratio": round(drop_ratio, 8),
+        "dup_ratio": round(dup_ratio, 8),
         "drop_growth_intervals": drop_growth_intervals,
         "max_consecutive_drop_growth": max_consecutive_drop_growth,
+        "significant_interval_drop_ratio": SIGNIFICANT_INTERVAL_DROP_RATIO,
+        "significant_drop_growth_intervals": significant_drop_growth_intervals,
+        "max_consecutive_significant_drop_growth": max_consecutive_significant_drop_growth,
         "restart_count": restart_count,
         "direct_running_ratio": round(running_ratio, 6),
         "relay_active_ratio": round(relay_ratio, 6),
