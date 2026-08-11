@@ -42,7 +42,7 @@ declare -a WORKER_NAMES=(
 )
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
-	"./workers/chat_worker.sh"
+	"./workers/chat_worker.sh ${TWITCH_CHANNEL:-azumagbanjo}"
 	"./workers/youtube_worker.sh"
 	"./workers/audio_worker.sh"
 	"./workers/deadline_monitor.sh"
