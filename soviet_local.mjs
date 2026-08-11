@@ -9,6 +9,7 @@ import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_
 import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
 import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
 import {
+  directOverlayIdleHtml,
   directOverlaySurfaceVisible,
   installDirectOverlay,
   loadDirectOverlayConfig,
@@ -919,7 +920,7 @@ function startServer() {
           && fs.existsSync(directOverlaySurface.htmlFile)) {
           fs.createReadStream(directOverlaySurface.htmlFile).pipe(res);
         } else {
-          res.end('<!doctype html><meta http-equiv="refresh" content="2"><style>html,body{margin:0;background:transparent}</style>');
+          res.end(directOverlayIdleHtml());
         }
         return;
       }

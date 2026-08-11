@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   DIRECT_OVERLAY_ELEMENT_ID,
   DIRECT_OVERLAY_ROUTE,
+  directOverlayIdleHtml,
   directOverlaySurfaceVisible,
   installDirectOverlay,
   loadDirectOverlayConfig,
@@ -100,6 +101,13 @@ test('A/V sync surface is transparent unless its generated probe file exists', (
   assert.equal(probe.style.width, '128px');
   assert.equal(directOverlaySurfaceVisible(probe), true);
   assert.match(probe.htmlFile, /tmp\/state\/direct_av_sync_probe[.]html$/);
+});
+
+
+test('idle overlay actively reloads so a later generated probe is discovered', () => {
+  const html = directOverlayIdleHtml();
+  assert.match(html, /background:transparent/);
+  assert.match(html, /setTimeout\(\(\)=>location[.]reload\(\),1000\)/);
 });
 
 
