@@ -50,8 +50,10 @@ test('overlay installer persists across reload and installs current page', async
   assert.equal(await installDirectOverlay(page, config), true);
   assert.deepEqual(calls.map(([kind]) => kind), ['init', 'evaluate']);
   assert.equal(calls[0][2].length, 6);
+  assert.match(String(calls[0][1]), /window[.]top !== window/);
   assert.equal(calls[0][2][0].route, DIRECT_OVERLAY_ROUTE);
   assert.equal(calls[0][2][0].elementId, DIRECT_OVERLAY_ELEMENT_ID);
+  assert.equal(calls[0][2][0].key, 'event');
   assert.equal(calls[0][2].find((item) => item.route.endsWith('/av-sync')).pollMs, 250);
 });
 
