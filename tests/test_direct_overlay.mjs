@@ -8,6 +8,7 @@ import {
   directOverlaySurfaceVisible,
   installDirectOverlay,
   loadDirectOverlayConfig,
+  stripOverlaySelfRefresh,
 } from '../lib/direct_overlay.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -54,7 +55,11 @@ test('overlay installer persists across reload and installs current page', async
   assert.equal(calls[0][2][0].route, DIRECT_OVERLAY_ROUTE);
   assert.equal(calls[0][2][0].elementId, DIRECT_OVERLAY_ELEMENT_ID);
   assert.equal(calls[0][2][0].key, 'event');
+  assert.equal(calls[0][2][0].pollMs, 1000);
   assert.equal(calls[0][2].find((item) => item.route.endsWith('/av-sync')).pollMs, 250);
+  assert.match(String(calls[0][1]), /elementId}-buffer/);
+  assert.match(String(calls[0][1]), /incoming[.]addEventListener\('load'/);
+  assert.match(String(calls[0][1]), /outgoing[.]style[.]visibility = 'hidden'/);
 });
 
 
@@ -109,10 +114,19 @@ test('A/V sync surface is transparent unless its generated probe file exists', (
 });
 
 
-test('idle overlay actively reloads so a later generated probe is discovered', () => {
+test('idle overlay stays transparent without a self-refresh navigation', () => {
   const html = directOverlayIdleHtml();
   assert.match(html, /background:transparent/);
-  assert.match(html, /setTimeout\(\(\)=>location[.]reload\(\),1000\)/);
+  assert.doesNotMatch(html, /http-equiv=["']?refresh/i);
+  assert.doesNotMatch(html, /location[.]reload/);
+});
+
+
+test('direct overlay polling strips generated self-refresh navigation', () => {
+  const html = '<!doctype html><meta http-equiv="refresh" content="2"><main>stable</main>'
+    + '<script>setTimeout(()=>location.reload(),1000)</script>';
+  const cleaned = stripOverlaySelfRefresh(html);
+  assert.equal(cleaned, '<!doctype html><main>stable</main>');
 });
 
 

@@ -511,7 +511,7 @@ PoCの非配信録画と状態確認:
 ./benchmark_direct_stream.sh --confirm-live-interruption --duration 30
 ```
 
-loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。event/stats/ops/improvement/wildcardの既存HTMLは、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。stats/opsはゲーム内部解像度を縮めず左右上部へ縮小表示し、wildcard中は非表示になる。improvement/wildcardは対応stateがactiveの間だけ全面表示する。backendがOBSまたはmacOSの場合はiframeを作らず既存動作を維持する。
+loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。event/stats/ops/improvement/wildcardの既存HTMLは、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。生成HTMLに含まれるmeta refreshは直接配信側で除去し、旧iframeを表示したまま更新後HTMLを非表示bufferへ読み込み、load完了時だけ交換する。これにより2秒更新時の透明化ちらつきを配信へ載せない。stats/opsはゲーム内部解像度を縮めず左右上部へ縮小表示し、wildcard中は非表示になる。improvement/wildcardは対応stateがactiveの間だけ全面表示する。backendがOBSまたはmacOSの場合はiframeを作らず既存動作を維持する。
 
 OBSの停止、relayのsystemd化、複数配信先へのpushは後続の移行ゲートであり、PoCだけを理由に現行OBSを停止しない。
 
