@@ -1696,7 +1696,6 @@ async function runLocalController() {
   // Main loop: poll commands and game state
   let processedCount = 0;
   let lastState = null;
-  const STATE_CHECK_INTERVAL = 3;
   const NULL_STATE_WARN_THRESHOLD = 10;
   const NULL_STATE_RELOAD_THRESHOLD = 30;
 
@@ -1931,65 +1930,62 @@ async function runLocalController() {
       }
     } else {
       checkCount++;
-      if (checkCount >= STATE_CHECK_INTERVAL) {
-        checkCount = 0;
-        const state = await getGameState(page);
+      const state = await getGameState(page);
 
-        if (!state) {
-          nullStateCount++;
-          if (nullStateCount === NULL_STATE_WARN_THRESHOLD) {
-            console.warn(`[BRIDGE] game state null ${nullStateCount} times in a row — JS Bridge may be broken`);
-          }
-          if (nullStateCount >= NULL_STATE_RELOAD_THRESHOLD) {
-            console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
-            try {
-              await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-              // Wait for Unity canvas + Bridge to re-init
-              for (let i = 0; i < 60; i++) {
-                const s = await getGameState(page);
-                if (s && s.state) {
-                  console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
-                  externalGameAudio.observeState(s);
-                  // Re-inject best score
-                  try {
-                    const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
-                    if (bestScore > 0) {
-                      await page.evaluate((sc) => { window.__sorenCommand = 'SET_RECORD:' + sc; }, bestScore);
-                      console.log(`[BRIDGE] Re-injected best score: ${bestScore}`);
-                      await page.waitForTimeout(500);
-                    }
-                  } catch (e2) { /* ignore */ }
-                  // Click to start game
-                  await clickGameCenter(page);
-                  await page.waitForTimeout(2000);
-                  lastState = s;
-                  writeGameState(s);
-                  break;
-                }
-                await page.waitForTimeout(1000);
+      if (!state) {
+        nullStateCount++;
+        if (nullStateCount === NULL_STATE_WARN_THRESHOLD) {
+          console.warn(`[BRIDGE] game state null ${nullStateCount} times in a row — JS Bridge may be broken`);
+        }
+        if (nullStateCount >= NULL_STATE_RELOAD_THRESHOLD) {
+          console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
+          try {
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+            // Wait for Unity canvas + Bridge to re-init
+            for (let i = 0; i < 60; i++) {
+              const s = await getGameState(page);
+              if (s && s.state) {
+                console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
+                externalGameAudio.observeState(s);
+                // Re-inject best score
+                try {
+                  const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
+                  if (bestScore > 0) {
+                    await page.evaluate((sc) => { window.__sorenCommand = 'SET_RECORD:' + sc; }, bestScore);
+                    console.log(`[BRIDGE] Re-injected best score: ${bestScore}`);
+                    await page.waitForTimeout(500);
+                  }
+                } catch (e2) { /* ignore */ }
+                // Click to start game
+                await clickGameCenter(page);
+                await page.waitForTimeout(2000);
+                lastState = s;
+                writeGameState(s);
+                break;
               }
-            } catch (e) {
-              console.error(`[BRIDGE] Reload failed: ${e.message}`);
+              await page.waitForTimeout(1000);
             }
-            nullStateCount = 0;
-          }
-        } else {
-          if (nullStateCount >= NULL_STATE_WARN_THRESHOLD) {
-            console.log(`[BRIDGE] game state recovered after ${nullStateCount} null reads`);
+          } catch (e) {
+            console.error(`[BRIDGE] Reload failed: ${e.message}`);
           }
           nullStateCount = 0;
-
-          externalGameAudio.observeState(state);
-          if (stateChanged(lastState, state)) {
-            writeGameState(state);
-            console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
-          }
-          lastState = state;
         }
+      } else {
+        if (nullStateCount >= NULL_STATE_WARN_THRESHOLD) {
+          console.log(`[BRIDGE] game state recovered after ${nullStateCount} null reads`);
+        }
+        nullStateCount = 0;
+
+        externalGameAudio.observeState(state);
+        if (stateChanged(lastState, state)) {
+          writeGameState(state);
+          console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
+        }
+        lastState = state;
       }
     }
 
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(100);
   }
 }
 
