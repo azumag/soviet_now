@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -787,6 +788,57 @@ esac
         linux_sed = sed_block.split('if [ "$IS_LINUX" = "1" ]; then', 1)[1]
         linux_sed = linux_sed.split("\n\telse", 1)[0]
         self.assertNotIn("sed -i ''", linux_sed)
+
+    def test_say_enqueue_mtime_fallback_executes_cleanly_on_bsd_and_gnu_stat(self) -> None:
+        source = (REPO_ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
+        match = re.search(r"(?ms)^_file_mtime_epoch\(\) \{\n.*?^\}\n", source)
+        self.assertIsNotNone(match)
+        helper = match.group(0)
+        self.assertEqual(source.count('lock_hb=$(_file_mtime_epoch "'), 2)
+
+        scenarios = {
+            "bsd-success": ("111", ["-f"]),
+            "gnu-success": ("222", ["-f", "-c"]),
+            "both-fail": ("0", ["-f", "-c"]),
+        }
+        for mode, (expected_epoch, expected_calls) in scenarios.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp_dir:
+                fake_bin = Path(temp_dir)
+                calls_path = fake_bin / "calls.txt"
+                fake_stat = fake_bin / "stat"
+                fake_stat.write_text(
+                    """#!/bin/sh
+printf '%s\\n' "$1" >> "$FAKE_STAT_CALLS"
+case "$FAKE_STAT_MODE:$1" in
+  bsd-success:-f) printf '%s\\n' 111; exit 0 ;;
+  gnu-success:-f) printf '%s\\n' poison-from-failed-bsd; exit 7 ;;
+  gnu-success:-c) printf '%s\\n' 222; exit 0 ;;
+  both-fail:-f) printf '%s\\n' poison-from-failed-bsd; exit 7 ;;
+  both-fail:-c) printf '%s\\n' poison-from-failed-gnu; exit 8 ;;
+  *) exit 64 ;;
+esac
+""",
+                    encoding="utf-8",
+                )
+                fake_stat.chmod(0o755)
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "PATH": str(fake_bin),
+                        "FAKE_STAT_MODE": mode,
+                        "FAKE_STAT_CALLS": str(calls_path),
+                    }
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", helper + "\n_file_mtime_epoch /unused/lock"],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertEqual(result.stdout.strip(), expected_epoch)
+                self.assertEqual(calls_path.read_text().splitlines(), expected_calls)
 
     def test_google_tts_has_linux_playback_path(self) -> None:
         text = (REPO_ROOT / "google_tts.sh").read_text(encoding="utf-8")

@@ -327,6 +327,20 @@ _log() {
 	echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN label=${SOURCE_LABEL:-unknown}" >>tmp/.say_queue/debug.log
 }
 
+# GNU stat accepts -f with a different meaning and can emit filesystem details
+# before returning non-zero. Keep the BSD and GNU assignments separate so a
+# failed BSD-style probe can never be mixed with the GNU epoch value.
+_file_mtime_epoch() {
+	local target="$1" mtime
+	mtime=$(stat -f %m "$target" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$target" 2>/dev/null) \
+		|| mtime=0
+	case "$mtime" in
+	'' | *[!0-9]*) mtime=0 ;;
+	esac
+	printf '%s\n' "$mtime"
+}
+
 _append_played_log() {
 	local status="$1" now_h now_ts
 	now_h=$(date '+%H:%M:%S')
@@ -455,7 +469,7 @@ _acquire_lock() {
 			lock_hb=$(cat "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true)
 			case "$lock_hb" in
 			'' | *[!0-9]*)
-				lock_hb=$(stat -f %m "$LOCK_DIR" 2>/dev/null || true)
+				lock_hb=$(_file_mtime_epoch "$LOCK_DIR")
 				;;
 			esac
 			now=$(date +%s)
@@ -534,7 +548,7 @@ _acquire_voicevox_synth_lock() {
 			lock_hb=$(cat "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true)
 			case "$lock_hb" in
 			'' | *[!0-9]*)
-				lock_hb=$(stat -f %m "$VOICEVOX_SYNTH_LOCK" 2>/dev/null || true)
+				lock_hb=$(_file_mtime_epoch "$VOICEVOX_SYNTH_LOCK")
 				;;
 			esac
 			now=$(date +%s)
