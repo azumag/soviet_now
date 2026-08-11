@@ -262,7 +262,9 @@ except Exception:
     print("")' 2>/dev/null || echo "")
 	case "$state" in
 	STOP|GAMEOVER)
-		log_m=$(stat -f %m logs/soren_loop.log 2>/dev/null || stat -c %Y logs/soren_loop.log 2>/dev/null || echo 0)
+		log_m=$(stat -f %m logs/soren_loop.log 2>/dev/null) \
+			|| log_m=$(stat -c %Y logs/soren_loop.log 2>/dev/null) \
+			|| log_m=0
 		now=$(date +%s)
 		case "$log_m" in ''|*[!0-9]*) log_m=0 ;; esac
 		age=$((now - log_m))
@@ -284,9 +286,15 @@ _improve_daemon_responsive() {
 	threshold="${IMPROVE_DAEMON_LOCK_STALL_SEC:-180}"
 	case "$threshold" in ''|*[!0-9]*) threshold=180 ;; esac
 	now=$(date +%s)
-	lock_m=$(stat -f %m "$lock_file" 2>/dev/null || stat -c %Y "$lock_file" 2>/dev/null || echo 0)
-	log_m=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo 0)
-	state_m=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null || echo 0)
+	lock_m=$(stat -f %m "$lock_file" 2>/dev/null) \
+		|| lock_m=$(stat -c %Y "$lock_file" 2>/dev/null) \
+		|| lock_m=0
+	log_m=$(stat -f %m "$log_file" 2>/dev/null) \
+		|| log_m=$(stat -c %Y "$log_file" 2>/dev/null) \
+		|| log_m=0
+	state_m=$(stat -f %m "$state_file" 2>/dev/null) \
+		|| state_m=$(stat -c %Y "$state_file" 2>/dev/null) \
+		|| state_m=0
 	case "$lock_m" in ''|*[!0-9]*) lock_m=0 ;; esac
 	case "$log_m" in ''|*[!0-9]*) log_m=0 ;; esac
 	case "$state_m" in ''|*[!0-9]*) state_m=0 ;; esac

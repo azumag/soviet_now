@@ -2106,7 +2106,11 @@ PY
 		fi
 		say_lock_hb=$(cat tmp/.say_queue/.lock/heartbeat 2>/dev/null || true)
 		case "$say_lock_hb" in
-		''|*[!0-9]*) say_lock_hb=$(stat -f %m tmp/.say_queue/.lock 2>/dev/null || echo 0) ;;
+		''|*[!0-9]*)
+			say_lock_hb=$(stat -f %m tmp/.say_queue/.lock 2>/dev/null) \
+				|| say_lock_hb=$(stat -c %Y tmp/.say_queue/.lock 2>/dev/null) \
+				|| say_lock_hb=0
+			;;
 		esac
 		case "$say_lock_hb" in
 		''|*[!0-9]*) say_lock_hb=0 ;;

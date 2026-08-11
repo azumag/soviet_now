@@ -202,11 +202,13 @@ class LinuxObsPortabilityTests(unittest.TestCase):
         relative_path: str,
         variable: str,
         mode: str,
+        search_fragment: str | None = None,
     ) -> tuple[str, list[str]]:
         lines = (REPO_ROOT / relative_path).read_text().splitlines()
+        needle = search_fragment or f"{variable}=$(stat -f"
         start = next(
             index for index, line in enumerate(lines)
-            if f"{variable}=$(stat -f" in line
+            if needle in line
         )
         assignment = "\n".join(lines[start:start + 3])
 
@@ -241,6 +243,15 @@ esac
                     "set -eu",
                     "LOCK_DIR=/unused/lock",
                     "OBS_SOURCE_LOCK_DIR=/unused/obs-lock",
+                    "GAME_STATE=/unused/game-state",
+                    "lock_file=/unused/lock-file",
+                    "log_file=/unused/log-file",
+                    "state_file=/unused/state-file",
+                    "lock_dir=/unused/lock-dir",
+                    "lock=/unused/internal-lock",
+                    "RUNNER_LOCK_DIR=/unused/runner-lock",
+                    "marker=/unused/marker",
+                    "orphan=/unused/orphan",
                     "path=/unused/path",
                     "f=/unused/file",
                     "now_ts=777",
@@ -762,6 +773,46 @@ esac
                     self.assertEqual(calls, expected_calls)
             with self.subTest(path=relative_path, mode="both-fail"):
                 epoch, calls = self.evaluate_stat_fallback(relative_path, variable, "both-fail")
+                self.assertEqual(epoch, fallback)
+                self.assertEqual(calls, ["-f", "-c"])
+
+    def test_linux_runtime_mtime_sites_execute_without_gnu_stat_poison(self) -> None:
+        sites = (
+            ("eloop.sh", "_pg_state_mtime0", "_pg_state_mtime0=$(stat -f", "0"),
+            ("eloop.sh", "_rr_mt_now", "_rr_mt_now=$(stat -f", "0"),
+            ("eloop.sh", "_pg_state_mtime1", "_pg_state_mtime1=$(stat -f", "0"),
+            ("start_all.sh", "log_m", "log_m=$(stat -f %m logs/soren_loop.log", "0"),
+            ("start_all.sh", "lock_m", 'lock_m=$(stat -f %m "$lock_file"', "0"),
+            ("start_all.sh", "log_m", 'log_m=$(stat -f %m "$log_file"', "0"),
+            ("start_all.sh", "state_m", 'state_m=$(stat -f %m "$state_file"', "0"),
+            ("lib/outbound_queue.sh", "mt", 'mt=$(stat -f %m "$marker"', "777"),
+            ("lib/outbound_queue.sh", "mtime", 'mtime=$(stat -f %m "$f"', "777"),
+            ("lib/ai_generate.sh", "mt", 'mt=$(stat -f %m "$lock_dir"', "777"),
+            ("lib/ai_generate.sh", "mt", 'mt=$(stat -f %m "$lock"', "777"),
+            ("soren91/run_player_loop.sh", "mt", 'mt=$(stat -f %m "$RUNNER_LOCK_DIR"', "777"),
+            ("core/helpers.sh", "mt", 'mt=$(stat -f %m "$marker"', "0"),
+            ("broadcast/comment_lib.sh", "mtime", 'mtime=$(stat -f %m "$orphan"', "777"),
+            ("show_status.sh", "say_lock_hb", "say_lock_hb=$(stat -f %m tmp/.say_queue/.lock", "0"),
+            ("core/runtime_toggles.sh", "mtime", 'mtime=$(stat -f %m "$path"', "0"),
+        )
+        scenarios = {
+            "bsd-success": ("111", ["-f"]),
+            "gnu-success": ("222", ["-f", "-c"]),
+        }
+        for relative_path, variable, fragment, fallback in sites:
+            source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+            self.assertNotRegex(source, r"\$\(stat -f %m [^\n]*\|\|")
+            for mode, (expected_epoch, expected_calls) in scenarios.items():
+                with self.subTest(path=relative_path, fragment=fragment, mode=mode):
+                    epoch, calls = self.evaluate_stat_fallback(
+                        relative_path, variable, mode, fragment
+                    )
+                    self.assertEqual(epoch, expected_epoch)
+                    self.assertEqual(calls, expected_calls)
+            with self.subTest(path=relative_path, fragment=fragment, mode="both-fail"):
+                epoch, calls = self.evaluate_stat_fallback(
+                    relative_path, variable, "both-fail", fragment
+                )
                 self.assertEqual(epoch, fallback)
                 self.assertEqual(calls, ["-f", "-c"])
 

@@ -10,7 +10,9 @@ _recover_orphan_comment_playing_files() {
 		[ -f "$orphan" ] || continue
 		local now mtime age
 		now=$(date +%s)
-		mtime=$(stat -f %m "$orphan" 2>/dev/null || echo "$now")
+		mtime=$(stat -f %m "$orphan" 2>/dev/null) \
+			|| mtime=$(stat -c %Y "$orphan" 2>/dev/null) \
+			|| mtime="$now"
 		age=$((now - mtime))
 		# 直近で生成された .playing はリネーム直後の可能性があるためスキップ
 		[ "$age" -lt 30 ] && continue
