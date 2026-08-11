@@ -430,7 +430,7 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
    SOREN_GAME_RENDER_FPS=30
    ```
 
-`SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。`configure_linux_stream_profile.sh` は実2 OCPUのfree-safe形状では480x270、4 OCPU以上では576x324を選び、どちらも1280x720へ拡大する。4 OCPU以上の576x324は480x270比で44%高精細にしつつ、640x360試験で発生したOBS描画時間45ms・実FPS22までの低下を避ける中間値である。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。リミッターは直前の実フレーム時刻ではなく累積deadlineを進める。Xvfbのnative RAFが約100Hzでも40msごと（約25fps）へ量子化せず、30/40msの利用可能なslotを組み合わせて長期平均30fpsを保つ。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
+`SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。`configure_linux_stream_profile.sh` は実2 OCPUのfree-safe形状では480x270、4 OCPU以上では576x324を選ぶ。FFmpeg dashboardでは内部576x324をCSS 960x540へ拡大し、出力1280x720の残りをデータ領域にする。4 OCPU以上の576x324は480x270比で44%高精細にしつつ、640x360試験で発生したOBS描画時間45ms・実FPS22までの低下を避ける中間値である。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。リミッターは直前の実フレーム時刻ではなく累積deadlineを進める。Xvfbのnative RAFが約100Hzでも40msごと（約25fps）へ量子化せず、30/40msの利用可能なslotを組み合わせて長期平均30fpsを保つ。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
 
 FFmpeg本番経路で内部解像度の上限を探るときは、出力1280x720を固定し、`./set_game_internal_size.sh --apply 640x360 --confirm-live-restart` で内部描画だけを変更する。576x324をbaselineに、640x360から64x36ずつ1280x720まで10分単位で上げ、各候補で出力平均29.5fps以上、ゲーム平均29.5fps以上、speed p05 0.98以上、drop/dup各1%未満、音声・単一publisher・OBS排他を要求する。最初に失敗した候補ではそれ以上へ進まず、直前の合格サイズへ戻す。この操作はactive soak monitorがある間は拒否し、runtime readinessに失敗した場合も`.env` backupへ自動復帰する。
 
@@ -490,6 +490,8 @@ SOREN_DIRECT_SOAK_DURATION_SEC=86400
 SOREN_DIRECT_SOAK_INTERVAL_SEC=60
 SOREN_DIRECT_OVERLAY_ENABLED=1
 SOREN_DIRECT_OVERLAY_HTML_FILE=tmp/state/event_overlay.html
+SOREN_DIRECT_STAGE_LAYOUT=dashboard
+SOREN_DIRECT_GAME_DISPLAY_SIZE=960x540
 SOREN_DIRECT_EVENT_OVERLAY_ENABLED=1
 SOREN_DIRECT_STATS_OVERLAY_ENABLED=1
 SOREN_DIRECT_OPS_OVERLAY_ENABLED=1
@@ -511,7 +513,9 @@ PoCの非配信録画と状態確認:
 ./benchmark_direct_stream.sh --confirm-live-interruption --duration 30
 ```
 
-loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。event/stats/ops/improvement/wildcardの既存HTMLは、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。生成HTMLに含まれるmeta refreshは直接配信側で除去し、旧iframeを表示したまま更新後HTMLを非表示bufferへ読み込み、load完了時だけ交換する。これにより2秒更新時の透明化ちらつきを配信へ載せない。stats/opsはゲーム内部解像度を縮めず左右上部へ縮小表示し、wildcard中は非表示になる。improvement/wildcardは対応stateがactiveの間だけ全面表示する。backendがOBSまたはmacOSの場合はiframeを作らず既存動作を維持する。
+loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。event/stats/ops/improvement/wildcardの既存HTMLは、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。生成HTMLに含まれるmeta refreshは直接配信側で除去し、旧iframeを表示したまま更新後HTMLを非表示bufferへ読み込み、load完了時だけ交換する。これにより2秒更新時の透明化ちらつきを配信へ載せない。
+
+`SOREN_DIRECT_STAGE_LAYOUT=dashboard` では、Unity内部描画576x324とFFmpeg出力1280x720を変えず、ゲームのCSS表示だけを左中央960x540にする。右320pxへstats/opsを縦積みし、左側の上下90pxを通知・作業状態用railとして確保する。canvasには`image-rendering: pixelated`を使い、1280x720全面へ2.22倍拡大していた粗さと、データpanelのゲーム重なりを避ける。`fullscreen`を指定すれば従来のviewport全面表示へ戻る。improvement/wildcardは対応stateがactiveの間だけ全面表示し、backendがOBSまたはmacOSの場合はstage/iframeを作らず既存動作を維持する。
 
 OBSの停止、relayのsystemd化、複数配信先へのpushは後続の移行ゲートであり、PoCだけを理由に現行OBSを停止しない。
 

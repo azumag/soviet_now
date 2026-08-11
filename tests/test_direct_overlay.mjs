@@ -4,15 +4,21 @@ import test from 'node:test';
 import {
   DIRECT_OVERLAY_ELEMENT_ID,
   DIRECT_OVERLAY_ROUTE,
+  DIRECT_STAGE_ELEMENT_ID,
   directOverlayIdleHtml,
   directOverlaySurfaceVisible,
   installDirectOverlay,
   loadDirectOverlayConfig,
+  loadDirectStageConfig,
   stripOverlaySelfRefresh,
 } from '../lib/direct_overlay.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 
 test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
@@ -60,6 +66,76 @@ test('overlay installer persists across reload and installs current page', async
   assert.match(String(calls[0][1]), /elementId}-buffer/);
   assert.match(String(calls[0][1]), /incoming[.]addEventListener\('load'/);
   assert.match(String(calls[0][1]), /outgoing[.]style[.]visibility = 'hidden'/);
+});
+
+
+test('default FFmpeg stage keeps a 960x540 game and a 320px dashboard', () => {
+  const stage = loadDirectStageConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
+  assert.deepEqual(stage, {
+    enabled: true,
+    mode: 'dashboard',
+    elementId: DIRECT_STAGE_ELEMENT_ID,
+    outputWidth: 1280,
+    outputHeight: 720,
+    gameLeft: 0,
+    gameTop: 90,
+    gameWidth: 960,
+    gameHeight: 540,
+    sidebarLeft: 960,
+    sidebarWidth: 320,
+    topRailHeight: 90,
+    bottomRailTop: 630,
+    bottomRailHeight: 90,
+  });
+
+  const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
+  const byKey = Object.fromEntries(config.surfaces.map((item) => [item.key, item]));
+  assert.equal(config.stage.gameWidth, 960);
+  assert.equal(byKey.event.style.width, '960px');
+  assert.equal(byKey.event.style.height, '720px');
+  assert.ok(Number.parseInt(byKey.stats.style.left, 10) >= 960);
+  assert.ok(Number.parseInt(byKey.ops.style.left, 10) >= 960);
+  assert.match(byKey.stats.style.transform, /^scale\(0[.]/);
+  assert.match(byKey.ops.style.transform, /^scale\(0[.]/);
+});
+
+
+test('stage validates dashboard room and supports explicit fullscreen compatibility', () => {
+  assert.throws(
+    () => loadDirectStageConfig({
+      SOREN_STREAM_BACKEND: 'ffmpeg',
+      SOREN_DIRECT_GAME_DISPLAY_SIZE: '1152x648',
+    }, 'linux'),
+    /at least 256px/,
+  );
+  assert.throws(
+    () => loadDirectStageConfig({
+      SOREN_STREAM_BACKEND: 'ffmpeg',
+      SOREN_DIRECT_GAME_DISPLAY_SIZE: '900x540',
+    }, 'linux'),
+    /16:9/,
+  );
+  const fullscreen = loadDirectOverlayConfig({
+    SOREN_STREAM_BACKEND: 'ffmpeg',
+    SOREN_DIRECT_STAGE_LAYOUT: 'fullscreen',
+  }, 'linux');
+  assert.equal(fullscreen.stage.enabled, false);
+  assert.equal(fullscreen.surfaces[0].style.width, '100vw');
+});
+
+
+test('stage changes only canvas CSS size, never the Unity drawing buffer', () => {
+  const source = fs.readFileSync(path.join(TEST_DIR, '..', 'soviet_local.mjs'), 'utf8');
+  const start = source.indexOf('// Linux FFmpeg dashboard');
+  const end = source.indexOf("console.log('Canvas layout:'", start);
+  const layout = source.slice(start, end);
+  assert.match(layout, /stage[.]gameWidth/);
+  assert.match(layout, /stage[.]gameHeight/);
+  assert.match(layout, /imageRendering = staged \? 'pixelated'/);
+  assert.doesNotMatch(layout, /canvas[.]width\s*=/);
+  assert.doesNotMatch(layout, /canvas[.]height\s*=/);
+  assert.match(source, /canvasCssWidth: rect \? Math[.]round\(rect[.]width\) : 0/);
+  assert.match(source, /stageMode: document[.]getElementById\('soren-direct-stream-stage'\)/);
 });
 
 

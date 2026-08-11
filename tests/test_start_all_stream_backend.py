@@ -105,6 +105,8 @@ class StartAllStreamBackendTests(unittest.TestCase):
         self.assertIn("set_env_value SOREN_DIRECT_STREAM_LOCAL_URL rtmp://127.0.0.1:1935/soren/live", profile)
         self.assertIn("set_env_value SOREN_DIRECT_CUTOVER_WARMUP_SEC 15", profile)
         self.assertIn("set_env_value SOREN_DIRECT_OVERLAY_ENABLED 1", profile)
+        self.assertIn("set_env_value SOREN_DIRECT_STAGE_LAYOUT dashboard", profile)
+        self.assertIn("set_env_value SOREN_DIRECT_GAME_DISPLAY_SIZE 960x540", profile)
         self.assertIn("install_soren_runtime_service.sh", profile)
         self.assertIn("stream_backend_condition.sh", profile)
         self.assertIn("wait_soren_runtime_prereqs.sh", profile)
