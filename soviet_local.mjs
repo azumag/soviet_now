@@ -8,6 +8,11 @@ import { execFile, spawn } from 'child_process';
 import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
 import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
 import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
+import {
+  directOverlaySurfaceVisible,
+  installDirectOverlay,
+  loadDirectOverlayConfig,
+} from './lib/direct_overlay.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -116,6 +121,7 @@ const UNITY_VOLUME_REAPPLY_MS = parseInt(process.env.SOREN_UNITY_VOLUME_REAPPLY_
 const UNITY_AUDIO_WATCHDOG_MS = parseInt(process.env.SOREN_UNITY_AUDIO_WATCHDOG_MS || '10000', 10);
 const UNITY_AUDIO_RECOVER_COOLDOWN_MS = parseInt(process.env.SOREN_UNITY_AUDIO_RECOVER_COOLDOWN_MS || '30000', 10);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig();
 
 function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
@@ -898,6 +904,25 @@ async function installUnityVolumeReapply(page) {
 function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
+      const requestPath = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      const directOverlaySurface = DIRECT_OVERLAY_CONFIG.enabled
+        ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.route === requestPath)
+        : null;
+      if (directOverlaySurface) {
+        const noCache = {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        };
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noCache });
+        if (directOverlaySurfaceVisible(directOverlaySurface)
+          && fs.existsSync(directOverlaySurface.htmlFile)) {
+          fs.createReadStream(directOverlaySurface.htmlFile).pipe(res);
+        } else {
+          res.end('<!doctype html><meta http-equiv="refresh" content="2"><style>html,body{margin:0;background:transparent}</style>');
+        }
+        return;
+      }
       let filePath = path.join(BUILD_DIR, req.url === '/' ? 'index.html' : req.url);
       filePath = decodeURIComponent(filePath);
 
@@ -1654,6 +1679,14 @@ async function runLocalController() {
     };
   }, CHROME_KIOSK);
   console.log('Canvas layout:', JSON.stringify(canvasInfo));
+
+  try {
+    if (await installDirectOverlay(page, DIRECT_OVERLAY_CONFIG)) {
+      console.log(`Direct stream overlays installed: ${DIRECT_OVERLAY_CONFIG.surfaces.map((item) => item.key).join(',')}`);
+    }
+  } catch (e) {
+    console.warn(`Failed to install direct stream event overlay: ${e.message}`);
+  }
 
   // Capture browser console for debugging
   page.on('console', msg => {

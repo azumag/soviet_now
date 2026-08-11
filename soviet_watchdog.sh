@@ -41,7 +41,9 @@ rr_acquire() {
 	mkdir -p tmp/state 2>/dev/null || true
 	if mkdir "$RR_LOCK" 2>/dev/null; then echo "soviet_watchdog $$ $(date +%s)" >"$RR_LOCK/owner" 2>/dev/null||true; return 0; fi
 	local now lk; now=$(date +%s)
-	lk=$(stat -f %m "$RR_LOCK" 2>/dev/null || stat -c %Y "$RR_LOCK" 2>/dev/null || echo "$now")
+	lk=$(stat -f %m "$RR_LOCK" 2>/dev/null) \
+		|| lk=$(stat -c %Y "$RR_LOCK" 2>/dev/null) \
+		|| lk="$now"
 	if [ $(( now - lk )) -ge "$RR_TTL" ]; then
 		rm -rf "$RR_LOCK" 2>/dev/null || true
 		mkdir "$RR_LOCK" 2>/dev/null && { echo "soviet_watchdog $$ $now stolen" >"$RR_LOCK/owner" 2>/dev/null||true; return 0; }
@@ -52,7 +54,13 @@ rr_release() { rm -rf "$RR_LOCK" 2>/dev/null || true; }
 
 # --- singleton (heartbeat 付き) ---
 _cmd_of() { ps -o command= -p "$1" 2>/dev/null; }
-_lock_mtime() { stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0; }
+_lock_mtime() {
+	local mt
+	mt=$(stat -f %m "$LOCK_DIR" 2>/dev/null) \
+		|| mt=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) \
+		|| mt=0
+	printf '%s\n' "$mt"
+}
 
 acquire_singleton() {
 	if mkdir "$LOCK_DIR" 2>/dev/null; then

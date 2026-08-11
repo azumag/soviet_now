@@ -8,7 +8,7 @@ export function installAnimationFrameLimit(cfg) {
   const intervalMs = 1000 / cfg.renderFps;
   let nextHandle = 1;
   let nativeHandle = 0;
-  let lastRenderAt = Number.NEGATIVE_INFINITY;
+  let nextRenderAt = Number.NEGATIVE_INFINITY;
   let statsStartedAt = 0;
   let statsFrames = 0;
   window.__sorenRenderStats = {
@@ -18,8 +18,19 @@ export function installAnimationFrameLimit(cfg) {
   };
   const pump = (timestamp) => {
     nativeHandle = 0;
-    if (timestamp - lastRenderAt >= intervalMs - 0.5) {
-      lastRenderAt = timestamp;
+    if (!Number.isFinite(nextRenderAt)) nextRenderAt = timestamp;
+    if (timestamp + 0.5 >= nextRenderAt) {
+      // Advance the accumulated deadline instead of restarting the interval at
+      // the native frame timestamp.  On Xvfb the native RAF cadence can be
+      // close to 100 Hz; restarting at each accepted frame quantizes a 30 fps
+      // limit to every fourth native frame (about 25 fps).  Deadline carry
+      // alternates the available 30/40 ms slots and keeps the long-run rate at
+      // 30 fps without dispatching catch-up callbacks after a stall.
+      const intervalsElapsed = Math.max(
+        1,
+        Math.floor(Math.max(0, timestamp - nextRenderAt) / intervalMs) + 1,
+      );
+      nextRenderAt += intervalsElapsed * intervalMs;
       if (!statsStartedAt) statsStartedAt = timestamp;
       statsFrames += 1;
       const statsElapsed = timestamp - statsStartedAt;

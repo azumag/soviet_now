@@ -610,8 +610,10 @@ _ensure_status_overlays_watchers() {
 	fi
 	_SOREN_OVERLAY_RECOVER_BOOTSTRAPPED=1
 	_SOREN_OVERLAY_RECOVER_TS=$now
-	./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
-	./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+	if [ "${SOREN_STATUS_OVERLAY_WATCHERS_ENABLED:-0}" != "1" ]; then
+		./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+		./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+	fi
 	# stats/ops are monitoring overlays. Keep them visible even while the
 	# improve overlay is shown; hiding them here races with soren91 layout
 	# switching and causes visible flicker.

@@ -140,6 +140,10 @@ _env_config_value_default() {
 MIN_GAMES_BEFORE_IMPROVE_ENV="${MIN_GAMES_BEFORE_IMPROVE:-}"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-$(_config_int_default MIN_GAMES_BEFORE_IMPROVE 12)}
 YOUTUBE_CHAT_ENABLED=${YOUTUBE_CHAT_ENABLED:-$(_env_config_value_default YOUTUBE_CHAT_ENABLED 0)}
+STREAM_BACKEND=${SOREN_STREAM_BACKEND:-$(_env_config_value_default SOREN_STREAM_BACKEND obs)}
+STREAM_BACKEND=${STREAM_BACKEND:l}
+DIRECT_SOAK_STATE_DIR=${SOREN_DIRECT_SOAK_STATE_DIR:-tmp/state/direct_soak}
+DIRECT_AV_SYNC_STATE_FILE=${SOREN_DIRECT_AV_SYNC_STATE_FILE:-tmp/state/direct_av_sync_probe.json}
 MIN_GAMES_BEFORE_REGRESSION=${MIN_GAMES_BEFORE_REGRESSION:-12}
 MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
 REGRESSION_MAX_RANK=${REGRESSION_MAX_RANK:-20}
@@ -275,6 +279,92 @@ if safe_file.exists() or safe_prompt:
     print(f"safe|{detail}")
 else:
     print(f"down|ws {host}:{port} closed")
+PY
+}
+
+_direct_stream_status_line() {
+	local raw=""
+	if [[ ! -x ./direct_stream.sh ]]; then
+		printf 'unknown|direct_stream.sh missing'
+		return 0
+	fi
+	raw=$(./direct_stream.sh status 2>/dev/null || true)
+	DIRECT_STREAM_STATUS_RAW="$raw" python3 - <<'PY' 2>/dev/null || printf 'unknown|status unavailable'
+import json
+import os
+
+try:
+    state = json.loads(os.environ.get("DIRECT_STREAM_STATUS_RAW", ""))
+except Exception:
+    print("unknown|invalid status JSON")
+    raise SystemExit(0)
+
+if state.get("running") is True:
+    fps = state.get("fps", 0)
+    speed = state.get("speed", 0)
+    drop = state.get("drop_frames", 0)
+    dup = state.get("dup_frames", 0)
+    print(f"ok|fps={fps} speed={speed} drop={drop} dup={dup}")
+else:
+    print(f"down|state={state.get('state', 'not_started')}")
+PY
+}
+
+_direct_soak_status_line() {
+	python3 - "$DIRECT_SOAK_STATE_DIR/status.json" <<'PY' 2>/dev/null || printf 'unknown|status unavailable'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+try:
+    state = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print("not_started|not started")
+    raise SystemExit
+
+name = str(state.get("state") or "unknown")
+if state.get("running") is True:
+    latest = state.get("latest") if isinstance(state.get("latest"), dict) else {}
+    direct = latest.get("direct") if isinstance(latest.get("direct"), dict) else {}
+    audio = latest.get("audio") if isinstance(latest.get("audio"), dict) else {}
+    if audio.get("ok") is not True:
+        audio_label = "audio=probe-fail"
+    else:
+        audio_label = f"audio={'on' if audio.get('non_silent') is True else 'silent'} max={audio.get('max_db', '?')}dB"
+    elapsed = int(float(state.get("elapsed_sec") or 0))
+    print(f"running|{audio_label} t={elapsed}s fps={direct.get('fps', '?')} speed={direct.get('speed', '?')}")
+    raise SystemExit
+
+summary = state.get("summary") if isinstance(state.get("summary"), dict) else {}
+audio_ratio = summary.get("combined_audio_present_ratio")
+audio_label = "?" if audio_ratio is None else f"{float(audio_ratio) * 100:.1f}%"
+print(
+    f"{name}|fps={summary.get('mean_output_fps', '?')} "
+    f"speed={summary.get('speed_p05', '?')} audio={audio_label} "
+    f"relay={summary.get('relay_publisher_connection_count_min', '?')}-"
+    f"{summary.get('relay_publisher_connection_count_max', '?')}"
+)
+PY
+}
+
+_direct_av_sync_status_line() {
+	python3 - "$DIRECT_AV_SYNC_STATE_FILE" <<'PY' 2>/dev/null || printf 'unknown|status unavailable'
+import json
+from pathlib import Path
+import sys
+
+try:
+    state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    print("not_started|not tested")
+    raise SystemExit
+result = state.get("result") if isinstance(state.get("result"), dict) else {}
+name = str(state.get("state") or "unknown")
+print(
+    f"{name}|pairs={result.get('pair_count', '?')} "
+    f"max={result.get('max_abs_offset_ms', '?')}ms drift={result.get('drift_ms', '?')}ms"
+)
 PY
 }
 
@@ -2485,22 +2575,67 @@ PY
 	elif [[ "$duplicate_status" == "unknown" ]]; then
 		printf "    ${C_YELLOW}!${C_RESET} Duplicates  ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${duplicate_detail:-duplicate scan unavailable}"
 	fi
-	local obs_status_line obs_status obs_detail
-	obs_status_line="$(_obs_status_line)"
-	obs_status="${obs_status_line%%|*}"
-	obs_detail="${obs_status_line#*|}"
-	case "$obs_status" in
-	ok)
-		printf "    ${C_GREEN}●${C_RESET} OBSWS       ${C_GREEN}OK${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$obs_detail"
+	local stream_status_line stream_status stream_detail
+	case "$STREAM_BACKEND" in
+	ffmpeg)
+		stream_status_line="$(_direct_stream_status_line)"
+		stream_status="${stream_status_line%%|*}"
+		stream_detail="${stream_status_line#*|}"
+		case "$stream_status" in
+		ok)
+			printf "    ${C_GREEN}●${C_RESET} Backend     ${C_GREEN}FFMPEG LIVE${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$stream_detail"
+			;;
+		down)
+			printf "    ${C_RED}!${C_RESET} Backend     ${C_RED}FFMPEG DOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$stream_detail"
+			;;
+		*)
+			printf "    ${C_YELLOW}!${C_RESET} Backend     ${C_YELLOW}FFMPEG UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${stream_detail:-status unavailable}"
+			;;
+		esac
+		local soak_status_line soak_status soak_detail
+		soak_status_line="$(_direct_soak_status_line)"
+		soak_status="${soak_status_line%%|*}"
+		soak_detail="${soak_status_line#*|}"
+		case "$soak_status" in
+		running) printf "    ${C_CYAN}◉${C_RESET} Soak        ${C_CYAN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
+		passed) printf "    ${C_GREEN}✓${C_RESET} Soak        ${C_GREEN}PASSED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
+		failed) printf "    ${C_RED}!${C_RESET} Soak        ${C_RED}FAILED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
+		not_started) printf "    ${C_DIM}○${C_RESET} Soak        ${C_DIM}NOT STARTED${C_RESET}\n" ;;
+		*) printf "    ${C_YELLOW}!${C_RESET} Soak        ${C_YELLOW}%s${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${soak_status:u}" "$soak_detail" ;;
+		esac
+		local av_status_line av_status av_detail
+		av_status_line="$(_direct_av_sync_status_line)"
+		av_status="${av_status_line%%|*}"
+		av_detail="${av_status_line#*|}"
+		case "$av_status" in
+		passed) printf "    ${C_GREEN}✓${C_RESET} AVSync      ${C_GREEN}PASSED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$av_detail" ;;
+		failed) printf "    ${C_RED}!${C_RESET} AVSync      ${C_RED}FAILED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$av_detail" ;;
+		not_started) printf "    ${C_DIM}○${C_RESET} AVSync      ${C_DIM}NOT TESTED${C_RESET}\n" ;;
+		*) printf "    ${C_YELLOW}!${C_RESET} AVSync      ${C_YELLOW}%s${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${av_status:u}" "$av_detail" ;;
+		esac
 		;;
-	safe)
-		printf "    ${C_YELLOW}!${C_RESET} OBSWS       ${C_YELLOW}SAFE MODE${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$obs_detail"
-		;;
-	down)
-		printf "    ${C_RED}!${C_RESET} OBSWS       ${C_RED}DOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$obs_detail"
+	obs)
+		printf "    ${C_GREEN}▸${C_RESET} Backend     ${C_GREEN}OBS${C_RESET}\n"
+		stream_status_line="$(_obs_status_line)"
+		stream_status="${stream_status_line%%|*}"
+		stream_detail="${stream_status_line#*|}"
+		case "$stream_status" in
+		ok)
+			printf "    ${C_GREEN}●${C_RESET} OBSWS       ${C_GREEN}OK${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$stream_detail"
+			;;
+		safe)
+			printf "    ${C_YELLOW}!${C_RESET} OBSWS       ${C_YELLOW}SAFE MODE${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$stream_detail"
+			;;
+		down)
+			printf "    ${C_RED}!${C_RESET} OBSWS       ${C_RED}DOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$stream_detail"
+			;;
+		*)
+			printf "    ${C_YELLOW}!${C_RESET} OBSWS       ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${stream_detail:-status unavailable}"
+			;;
+		esac
 		;;
 	*)
-		printf "    ${C_YELLOW}!${C_RESET} OBSWS       ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${obs_detail:-status unavailable}"
+		printf "    ${C_RED}!${C_RESET} Backend     ${C_RED}INVALID${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$STREAM_BACKEND"
 		;;
 	esac
 	if ! $improve_daemon_running && (( acc_count >= min_games )); then
