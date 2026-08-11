@@ -52,6 +52,7 @@ test('overlay installer persists across reload and installs current page', async
   assert.equal(calls[0][2].length, 6);
   assert.equal(calls[0][2][0].route, DIRECT_OVERLAY_ROUTE);
   assert.equal(calls[0][2][0].elementId, DIRECT_OVERLAY_ELEMENT_ID);
+  assert.equal(calls[0][2].find((item) => item.route.endsWith('/av-sync')).pollMs, 250);
 });
 
 
@@ -99,6 +100,7 @@ test('A/V sync surface is transparent unless its generated probe file exists', (
   assert.ok(probe);
   assert.equal(probe.route, '/__soren_overlay/av-sync');
   assert.equal(probe.style.width, '128px');
+  assert.equal(probe.pollMs, 250);
   assert.equal(directOverlaySurfaceVisible(probe), true);
   assert.match(probe.htmlFile, /tmp\/state\/direct_av_sync_probe[.]html$/);
 });
