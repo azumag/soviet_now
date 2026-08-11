@@ -12,9 +12,10 @@
 # `wildcardParallelCandN` — that cross-process race is what crashes OBS entirely.
 #
 # So EVERY site that issues SetInputSettings on a mac-capture (screen_capture /
-# window_capture / sck_audio_capture) source must hold THIS one filesystem lock.
+# sck_audio_capture) source must hold THIS one filesystem lock.
 # Atomic mkdir (macOS-compatible), stale-owner detection, and a post-op settle so
 # macOS finishes tearing down the old SCStream before the next holder runs.
+# Linux callers retain ordering but default the macOS-only settle delay to zero.
 #
 # Usage (source this, then wrap the SetInputSettings call):
 #     . ./lib/obs_source_lock.sh
@@ -31,7 +32,24 @@ if [ -z "${OBS_SOURCE_LOCK_DIR:-}" ]; then
 	OBS_SOURCE_LOCK_DIR="${_osl_repo}/tmp/state/obs_source_update.lock"
 fi
 : "${OBS_SOURCE_LOCK_STALE_SEC:=30}"
-: "${OBS_SOURCE_LOCK_SETTLE_SEC:=2}"
+if [ "${OBS_SOURCE_LOCK_SETTLE_SEC+x}" != x ]; then
+	_obs_source_lock_platform="${SOREN_OBS_PLATFORM:-}"
+	if [ -z "$_obs_source_lock_platform" ]; then
+		case "$(uname -s 2>/dev/null || true)" in
+			Linux) _obs_source_lock_platform=linux ;;
+			*) _obs_source_lock_platform=darwin ;;
+		esac
+	else
+		_obs_source_lock_platform=$(printf '%s' "$_obs_source_lock_platform" | tr '[:upper:]' '[:lower:]')
+	fi
+	if [ "$_obs_source_lock_platform" = "linux" ]; then
+		OBS_SOURCE_LOCK_SETTLE_SEC=0
+	else
+		# Preserve the established macOS ScreenCaptureKit teardown guard.
+		OBS_SOURCE_LOCK_SETTLE_SEC=2
+	fi
+	unset _obs_source_lock_platform
+fi
 : "${OBS_SOURCE_LOCK_MAX_WAIT_SEC:=30}"
 _OBS_SOURCE_LOCK_HELD=0
 
@@ -50,7 +68,9 @@ obs_source_lock_acquire() {
 				alive=true
 			fi
 			now=$(date +%s 2>/dev/null || echo 0)
-			mt=$(stat -f %m "$OBS_SOURCE_LOCK_DIR" 2>/dev/null || echo "$now")
+			mt=$(stat -f %m "$OBS_SOURCE_LOCK_DIR" 2>/dev/null) \
+				|| mt=$(stat -c %Y "$OBS_SOURCE_LOCK_DIR" 2>/dev/null) \
+				|| mt="$now"
 			age=$((now - mt))
 			if [ "$alive" = false ] && [ "$age" -gt "$OBS_SOURCE_LOCK_STALE_SEC" ]; then
 				rm -rf "$OBS_SOURCE_LOCK_DIR" 2>/dev/null || true

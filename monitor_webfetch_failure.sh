@@ -73,7 +73,9 @@ except FileNotFoundError:
 PY
 		return 0
 	fi
-	mt=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+	mt=$(stat -f %m "$f" 2>/dev/null) \
+		|| mt=$(stat -c %Y "$f" 2>/dev/null) \
+		|| mt=0
 	[ "${mt:-0}" -ge "$SINCE" ] || return 0
 	if grep -Eiq "$pattern" "$f" 2>/dev/null; then
 		grep -EHin "$pattern" "$f" 2>/dev/null | head -5 >>"$tmp_hits"

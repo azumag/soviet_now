@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では音声合成・再生を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # say_enqueue.sh - mkdirロックベースのsayキュー（FIFO順次再生）
 #
 # 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] <content_file> [rate] [pre_delay_sec]
@@ -18,6 +20,14 @@ cd "$(dirname "$0")"
 # .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
 [ -f .env ] && . ./.env
 source lib/outbound_queue.sh 2>/dev/null || true
+
+# Linux 判定: SOREN_OBS_PLATFORM=linux が最優先、無ければ uname。
+# Linux では BlackHole/afplay/audiotoolbox/say の代わりに
+# PulseAudio null-sink (SAY_AUDIO_DEVICE=soren_null) へ paplay/ffplay で再生する。
+IS_LINUX=0
+case "${SOREN_OBS_PLATFORM:-$(uname -s 2>/dev/null || echo Darwin)}" in
+linux | Linux | linux-gnu) IS_LINUX=1 ;;
+esac
 
 # フラグ処理
 NO_PREEMPT=false
@@ -235,21 +245,39 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 
 # 読み上げ修正: よくある誤読を事前に置換（WAVモード時はスキップ）
 if [ "$WAV_MODE" = "false" ]; then
-	sed -i '' \
-		-e 's/zoumotu3/ザモートゥ/g' \
-		-e 's/静寂/せいじゃく/g' \
-		-e 's/地政学的/ちせいがくてき/g' \
-		-e 's/地政学/ちせいがく/g' \
-		-e 's/WILDCARD/ワイルドカード/g' \
-		-e 's/NISA/ニーサ/g' \
-		-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
-		-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
-		-e 's/MAGA/マガ/g' \
-		-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
-		-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
-		-e 's/MADE IN CHINA/メイドインチャイナ/g' \
-		-e 's/Made in China/メイドインチャイナ/g' \
-		"$MY_CONTENT"
+	if [ "$IS_LINUX" = "1" ]; then
+		sed -i \
+			-e 's/zoumotu3/ザモートゥ/g' \
+			-e 's/静寂/せいじゃく/g' \
+			-e 's/地政学的/ちせいがくてき/g' \
+			-e 's/地政学/ちせいがく/g' \
+			-e 's/WILDCARD/ワイルドカード/g' \
+			-e 's/NISA/ニーサ/g' \
+			-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/MAGA/マガ/g' \
+			-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+			-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+			-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+			-e 's/Made in China/メイドインチャイナ/g' \
+			"$MY_CONTENT"
+	else
+		sed -i '' \
+			-e 's/zoumotu3/ザモートゥ/g' \
+			-e 's/静寂/せいじゃく/g' \
+			-e 's/地政学的/ちせいがくてき/g' \
+			-e 's/地政学/ちせいがく/g' \
+			-e 's/WILDCARD/ワイルドカード/g' \
+			-e 's/NISA/ニーサ/g' \
+			-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/MAGA/マガ/g' \
+			-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+			-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+			-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+			-e 's/Made in China/メイドインチャイナ/g' \
+			"$MY_CONTENT"
+	fi
 	# type表記の国名置換 + アルファベット小文字化（上の大文字辞書の後に実行）
 	python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
 fi
@@ -577,6 +605,25 @@ _resolve_audio_device_index() {
 		return 0
 		;;
 	esac
+	if [ "$IS_LINUX" = "1" ]; then
+		# PulseAudio の sink 名を解決。存在すればそのまま sink 名を返す
+		# （paplay --device は sink 名を直接受け付ける）。
+		if command -v pactl >/dev/null 2>&1; then
+			# .monitor suffix は先に取り除いてから sink 一覧と照合する
+			# （soren_null.monitor -> soren_null）。
+			local sink_candidate="${name%.monitor}"
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$sink_candidate"; then
+				echo "$sink_candidate"
+				return 0
+			fi
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$name"; then
+				echo "$name"
+				return 0
+			fi
+		fi
+		echo "[say_enqueue] audio device not found: $name (pactl)" >&2
+		return 1
+	fi
 	local devices line idx alt_name
 	devices=$(ffmpeg -y -f lavfi -i sine=frequency=1:duration=0.001 -f audiotoolbox -list_devices true "" 2>&1)
 
@@ -675,8 +722,31 @@ _launch_bg_exec() {
 	' _ "$cleanup_file" "$@" >/dev/null 2>&1 &
 }
 
+# Linux 専用: paplay を優先し、無ければ ffplay へフォールバックする。
+# device 引数は _resolve_audio_device_index が返した sink 名。
+# paplay が使える場合は明示された sink を維持し、両方無ければ失敗を返す。
+_linux_play_bg() {
+	local audio_file="$1" device="${2:-${SAY_AUDIO_DEVICE:-default}}" cleanup_file="${3:-}"
+	local pulse_latency="${SAY_PULSE_LATENCY_MS:-80}"
+	if command -v paplay >/dev/null 2>&1; then
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" paplay --device="$device" "$audio_file"
+		return 0
+	fi
+	if command -v ffplay >/dev/null 2>&1; then
+		# ffplay は PulseAudio 既定出力へ流す（既定 sink = soren_null 運用）
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" ffplay -nodisp -autoexit -loglevel error -fflags nobuffer "$audio_file"
+		return 0
+	fi
+	_log "[say_enqueue] Linux 再生プレイヤーがありません (paplay/ffplay 未導入)"
+	return 1
+}
+
 _launch_afplay_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
+	if [ "$IS_LINUX" = "1" ]; then
+		_linux_play_bg "$audio_file" "${SAY_AUDIO_DEVICE:-default}" "$cleanup_file"
+		return $?
+	fi
 	# afplay has no output-device selector; -d is debug mode, not a device flag.
 	# Device-targeted WAV playback uses ffmpeg/audiotoolbox. This helper is only
 	# for default-output fallback.
@@ -685,23 +755,43 @@ _launch_afplay_bg() {
 
 _launch_ffmpeg_bg() {
 	local audio_file="$1" device_index="$2" cleanup_file="${3:-}"
+	if [ "$IS_LINUX" = "1" ]; then
+		# device_index は _resolve_audio_device_index が返した sink 名
+		_linux_play_bg "$audio_file" "${device_index:-${SAY_AUDIO_DEVICE:-default}}" "$cleanup_file"
+		return $?
+	fi
 	_launch_bg_exec "$cleanup_file" ffmpeg -y -loglevel error -i "$audio_file" -f audiotoolbox -audio_device_index "$device_index" ""
 }
 
 _launch_chrome_wav_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
+	if [ "$IS_LINUX" = "1" ]; then
+		# Linux では Chrome CDP 経由の sink 指定は不安定なため、PulseAudio 既定出力へ
+		# paplay/ffplay で直接再生する（null-sink が既定出力なので配信へ乗る）。
+		_linux_play_bg "$audio_file" "${SAY_AUDIO_DEVICE:-default}" "$cleanup_file"
+		return $?
+	fi
 	CHROME_AUDIO_USED=1
 	_launch_bg_exec "$cleanup_file" node ./chrome_audio_player.mjs "$audio_file" "$label"
 }
 
 _stop_chrome_audio_players() {
+	if [ "$IS_LINUX" = "1" ]; then
+		return 0
+	fi
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
 	node ./chrome_audio_player.mjs --stop "$label" >/dev/null 2>&1 || true
 }
 
 _launch_say_bg() {
 	local rate="$1" content_file="$2"
+	if [ "$IS_LINUX" = "1" ]; then
+		# Linux に say は存在しない。device 解決失敗時の最終フォールバックなので、
+		# ここでは何も再生せず failure を返す（呼び出し元がリトライ/スキップ処理）。
+		_log "say は macOS 専用のため Linux ではスキップ (content=${content_file})"
+		return 1
+	fi
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 		_launch_bg_exec "" say -a "$SAY_AUDIO_DEVICE" -r "$rate" -f "$content_file"
 	else
@@ -829,13 +919,14 @@ _launch_stream_wav() {
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → Chrome/BlackHole再生にフォールバック"
 			_launch_chrome_wav_bg "$wav_file"
-			return 0
+			return $?
 		}
 		_launch_ffmpeg_bg "$wav_file" "$device_index"
+		return $?
 	else
 		_launch_afplay_bg "$wav_file"
+		return $?
 	fi
-	return 0
 }
 
 # 事前合成済みチャンク再生: 呼び出し時点で全WAVが生成済みであること
@@ -871,7 +962,11 @@ _play_prerendered_voicevox_chunks() {
 			break
 		fi
 		CHROME_AUDIO_USED=0
-		_launch_stream_wav "$chunk_wav"
+		if ! _launch_stream_wav "$chunk_wav"; then
+			_log "再生プレイヤー起動失敗: $chunk_wav"
+			play_failed=1
+			break
+		fi
 		play_pid=$!
 		current_expected_sec=$(_estimate_audio_duration_sec "$chunk_wav")
 		echo "$play_pid" >"$PID_FILE"
@@ -925,7 +1020,11 @@ _launch_say() {
 	# --- Pre-synthesized WAV (--wav mode) ---
 	if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
-		_launch_stream_wav "$MY_CONTENT"
+		if ! _launch_stream_wav "$MY_CONTENT"; then
+			_log "WAV 再生プレイヤー起動失敗"
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="wav"
 		LAUNCHED_SAY_PID="$!"
 		return
@@ -937,15 +1036,27 @@ _launch_say() {
 		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 			local device_index
 			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-				_launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+				if ! _launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"; then
+					_log "事前合成WAV再生プレイヤー起動失敗"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 				LAUNCH_MODE="voicevox_pre"
 				LAUNCHED_SAY_PID="$!"
 				_log "事前合成WAV再生 (device=Chrome/BlackHole fallback)"
 				return
 			}
-			_launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"
+			if ! _launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"; then
+				_log "事前合成WAV再生プレイヤー起動失敗 (ffmpeg)"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 		else
-			_launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+			if ! _launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"; then
+				_log "事前合成WAV再生プレイヤー起動失敗 (afplay)"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 		fi
 		LAUNCH_MODE="voicevox_pre"
 		LAUNCHED_SAY_PID="$!"
@@ -1065,15 +1176,27 @@ _launch_say() {
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 				local device_index
 				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-					_launch_chrome_wav_bg "$vo_wav" "$vo_wav"
+					if ! _launch_chrome_wav_bg "$vo_wav" "$vo_wav"; then
+						_log "VOICEVOX WAV再生プレイヤー起動失敗"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="voicevox"
 					LAUNCHED_SAY_PID="$!"
 					_log "VOICEVOX WAV再生 (device=Chrome/BlackHole fallback)"
 					return
 				}
-				_launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"
+				if ! _launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"; then
+					_log "VOICEVOX WAV再生プレイヤー起動失敗 (ffmpeg)"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 			else
-				_launch_afplay_bg "$vo_wav" "$vo_wav"
+				if ! _launch_afplay_bg "$vo_wav" "$vo_wav"; then
+					_log "VOICEVOX WAV再生プレイヤー起動失敗 (afplay)"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 			fi
 			LAUNCH_MODE="voicevox"
 			LAUNCHED_SAY_PID="$!"
@@ -1093,7 +1216,11 @@ _launch_say() {
 		if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
 			./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
-			_launch_afplay_bg "$coe_wav" "$coe_wav"
+			if ! _launch_afplay_bg "$coe_wav" "$coe_wav"; then
+				_log "COEIROINK WAV再生プレイヤー起動失敗"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 			LAUNCH_MODE="coeiroink"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1122,15 +1249,27 @@ _launch_say() {
 					local device_index
 					device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 						_log "audio device解決失敗 → afplayフォールバック"
-						_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
+						if ! _launch_afplay_bg "$gtts_mp3" "$gtts_mp3"; then
+							_log "Google TTS再生プレイヤー起動失敗"
+							LAUNCHED_SAY_PID=""
+							return
+						fi
 						LAUNCH_MODE="google_tts"
 						LAUNCHED_SAY_PID="$!"
 						return
 					}
-					_launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"
+					if ! _launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"; then
+						_log "Google TTS再生プレイヤー起動失敗 (ffmpeg)"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="ffmpeg"
 				else
-					_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
+					if ! _launch_afplay_bg "$gtts_mp3" "$gtts_mp3"; then
+						_log "Google TTS再生プレイヤー起動失敗 (afplay)"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="google_tts"
 				fi
 				LAUNCHED_SAY_PID="$!"
@@ -1144,11 +1283,20 @@ _launch_say() {
 	fi
 
 	# --- macOS say (最終フォールバック) ---
+	# Linux には say が存在しないため、このフォールバック全体を macOS のみに限定する。
+	if [ "$IS_LINUX" = "1" ]; then
+		_log "Linux では say フォールバックなし (Google TTS も失敗済み)"
+		LAUNCHED_SAY_PID=""
+		return
+	fi
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			_launch_say_bg "$RATE" "$MY_CONTENT"
+			if ! _launch_say_bg "$RATE" "$MY_CONTENT"; then
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 			LAUNCH_MODE="say"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1166,10 +1314,17 @@ _launch_say() {
 			LAUNCHED_SAY_PID=""
 			return
 		fi
-		_launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"
+		if ! _launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"; then
+			_log "say AIFF再生プレイヤー起動失敗"
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="ffmpeg"
 	else
-		_launch_say_bg "$RATE" "$MY_CONTENT"
+		if ! _launch_say_bg "$RATE" "$MY_CONTENT"; then
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="say"
 		LAUNCHED_EXPECTED_SEC=$(_estimate_text_duration_sec "$MY_CONTENT" "$RATE")
 	fi
