@@ -14,6 +14,7 @@ RELAY_UNIT="soren-rtmp-relay.service"
 RELAY_CONFIG="/etc/soren-rtmp/nginx.conf"
 PUSH_CONFIG="/etc/soren-rtmp/push.conf"
 VERIFY_SEC="${SOREN_DIRECT_CUTOVER_VERIFY_SEC:-20}"
+WARMUP_SEC="${SOREN_DIRECT_CUTOVER_WARMUP_SEC:-15}"
 MIN_FPS="${SOREN_DIRECT_CUTOVER_MIN_FPS:-29.0}"
 MIN_SPEED="${SOREN_DIRECT_CUTOVER_MIN_SPEED:-0.97}"
 MAX_DROP_DELTA="${SOREN_DIRECT_CUTOVER_MAX_DROP_DELTA:-2}"
@@ -40,7 +41,7 @@ case "${1:-}" in
 		'2. Reload the syntax-validated relay so the current private push destinations are active.' \
 		'3. Back up .env without displaying it.' \
 		'4. Stop the Soren supervisor and OBS, then set SOREN_STREAM_BACKEND=ffmpeg.' \
-		'5. Start the supervisor and verify FFmpeg fps/speed/drop/dup progress.' \
+		'5. Start the supervisor, isolate startup warm-up, then verify steady FFmpeg fps/speed/drop/dup progress.' \
 		'6. On any failure, restore .env, OBS streaming, and the supervisor.' \
 		'7. A confirmed rollback restores the recorded OBS .env backup and measures the recovery time.'
 	exit 0
@@ -80,11 +81,14 @@ for file in direct_stream.sh start_all.sh stop_soren.sh obs_control.sh lib/direc
 		die "missing required file: $file"
 	fi
 done
-case "$VERIFY_SEC:$MAX_DROP_DELTA:$MAX_DUP_DELTA" in
-*[!0-9:]*|:*|*::*|*:) die "verification seconds and frame deltas must be non-negative integers" ;;
+case "$VERIFY_SEC:$WARMUP_SEC:$MAX_DROP_DELTA:$MAX_DUP_DELTA" in
+*[!0-9:]*|:*|*::*|*:) die "warm-up/verification seconds and frame deltas must be non-negative integers" ;;
 esac
 if [ "$VERIFY_SEC" -lt 10 ] || [ "$VERIFY_SEC" -gt 120 ]; then
 	die "SOREN_DIRECT_CUTOVER_VERIFY_SEC must be between 10 and 120"
+fi
+if [ "$WARMUP_SEC" -gt 60 ]; then
+	die "SOREN_DIRECT_CUTOVER_WARMUP_SEC must be between 0 and 60"
 fi
 python3 - "$MIN_FPS" "$MIN_SPEED" <<'PY' >/dev/null || die "fps/speed thresholds are invalid"
 import sys
@@ -292,16 +296,17 @@ PY
 
 verify_progress() {
 	local before="$1" after="$2"
-	python3 - "$before" "$after" "$VERIFY_SEC" "$MIN_FPS" "$MIN_SPEED" "$MAX_DROP_DELTA" "$MAX_DUP_DELTA" <<'PY'
+	python3 - "$before" "$after" "$VERIFY_SEC" "$WARMUP_SEC" "$MIN_FPS" "$MIN_SPEED" "$MAX_DROP_DELTA" "$MAX_DUP_DELTA" <<'PY'
 import json
 import sys
 
 before, after = map(json.loads, sys.argv[1:3])
 seconds = int(sys.argv[3])
-min_fps = float(sys.argv[4])
-min_speed = float(sys.argv[5])
-max_drop = int(sys.argv[6])
-max_dup = int(sys.argv[7])
+warmup_seconds = int(sys.argv[4])
+min_fps = float(sys.argv[5])
+min_speed = float(sys.argv[6])
+max_drop = int(sys.argv[7])
+max_dup = int(sys.argv[8])
 
 frame_delta = int(after.get("frame", 0)) - int(before.get("frame", 0))
 drop_delta = int(after.get("drop_frames", 0)) - int(before.get("drop_frames", 0))
@@ -311,6 +316,11 @@ speed = float(after.get("speed", 0))
 effective_fps = frame_delta / seconds
 checks = {
     "running": after.get("running") is True,
+    "same_run": (
+        before.get("running") is True
+        and before.get("started_at")
+        and before.get("started_at") == after.get("started_at")
+    ),
     "fps": fps >= min_fps,
     "speed": speed >= min_speed,
     "frame_progress": effective_fps >= min_fps - 1,
@@ -325,6 +335,7 @@ result = {
     "effective_fps": round(effective_fps, 3),
     "drop_delta": drop_delta,
     "dup_delta": dup_delta,
+    "warmup_seconds": warmup_seconds,
     "verify_seconds": seconds,
 }
 print(json.dumps(result, sort_keys=True))
@@ -549,8 +560,28 @@ sudo -n systemctl stop "$OBS_UNIT"
 set_env_backend ffmpeg
 start_supervisor >/dev/null
 
-if ! STATUS_BEFORE=$(wait_direct_running "$CUTOVER_STARTED"); then
+if ! STATUS_STARTED=$(wait_direct_running "$CUTOVER_STARTED"); then
 	echo "cutover: FFmpeg runner did not become healthy within 30 seconds" >&2
+	rollback 1
+fi
+sleep "$WARMUP_SEC"
+STATUS_BEFORE=$(./direct_stream.sh status)
+if ! python3 - "$STATUS_STARTED" "$STATUS_BEFORE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+started, warmed = map(json.loads, sys.argv[1:3])
+same_run = (
+    started.get("running") is True
+    and warmed.get("running") is True
+    and started.get("started_at")
+    and started.get("started_at") == warmed.get("started_at")
+    and int(warmed.get("frame", 0)) >= int(started.get("frame", 0))
+)
+raise SystemExit(0 if same_run else 1)
+PY
+then
+	echo "cutover: FFmpeg runner was not stable through warm-up" >&2
 	rollback 1
 fi
 sleep "$VERIFY_SEC"

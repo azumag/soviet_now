@@ -25,6 +25,7 @@ class DirectStreamCutoverTests(unittest.TestCase):
         relay_reload_fails: bool = False,
         push_mode: str = "640",
         push_symlink: bool = False,
+        startup_transient: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], int, dict[str, str], Path]:
         fake_bin = root / "bin"
         state = root / "fake-state"
@@ -174,15 +175,25 @@ status)
     count=$(cat "$FAKE_STATE_DIR/direct.count" 2>/dev/null || printf 0)
     count=$((count + 1))
     printf '%s\n' "$count" >"$FAKE_STATE_DIR/direct.count"
+    if [ ! -f "$FAKE_STATE_DIR/direct.started" ]; then
+        date +%s >"$FAKE_STATE_DIR/direct.started"
+    fi
+    started_at=$(cat "$FAKE_STATE_DIR/direct.started")
     frame=$((count * 300))
     fps=30.0
+    drop=0
+    dup=0
+    if [ "${FAKE_STARTUP_TRANSIENT:-0}" = 1 ] && [ "$count" -ge 2 ]; then
+        drop=4
+        dup=6
+    fi
     if [ "${FAKE_DIRECT_BAD:-0}" = 1 ] && [ "$count" -ge 2 ]; then
         frame=350
         fps=10.0
     fi
-    printf '{"running":true,"state":"running","started_at":%s,"frame":%s,"fps":%s,"speed":1.0,"drop_frames":0,"dup_frames":0}\n' "$(date +%s)" "$frame" "$fps"
+    printf '{"running":true,"state":"running","started_at":%s,"frame":%s,"fps":%s,"speed":1.0,"drop_frames":%s,"dup_frames":%s}\n' "$started_at" "$frame" "$fps" "$drop" "$dup"
     ;;
-stop) rm -f "$FAKE_STATE_DIR/direct.active" ;;
+stop) rm -f "$FAKE_STATE_DIR/direct.active" "$FAKE_STATE_DIR/direct.started" ;;
 *) exit 2 ;;
 esac
 """,
@@ -215,11 +226,13 @@ esac
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "FAKE_STATE_DIR": str(state),
                 "FAKE_DIRECT_BAD": "1" if bad_quality else "0",
+                "FAKE_STARTUP_TRANSIENT": "1" if startup_transient else "0",
                 "FAKE_REPO": str(repo),
                 "FAKE_RELAY_RELOAD_FAILS": "1" if relay_reload_fails else "0",
                 "FAKE_PUSH_MODE": push_mode,
                 "SOREN_ENV_FILE": str(env_file),
                 "SOREN_DIRECT_CUTOVER_VERIFY_SEC": "10",
+                "SOREN_DIRECT_CUTOVER_WARMUP_SEC": "15",
             }
         )
         result = subprocess.run(
@@ -297,6 +310,20 @@ esac
                 (root / "fake-state" / "relay.actions").read_text().splitlines(),
                 ["reload"],
             )
+            self._stop_fake_supervisor(root)
+
+    def test_startup_drop_and_dup_are_excluded_but_steady_window_stays_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            result, _initial_pid, _env, _cutover = self._fake_cutover(
+                root,
+                bad_quality=False,
+                startup_transient=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('"drop_delta": 0', result.stdout)
+            self.assertIn('"dup_delta": 0', result.stdout)
+            self.assertIn('"warmup_seconds": 15', result.stdout)
             self._stop_fake_supervisor(root)
 
     def test_relay_reload_failure_leaves_obs_and_environment_untouched(self) -> None:
