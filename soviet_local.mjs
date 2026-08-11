@@ -78,7 +78,7 @@ const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.S
 const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
 // Unity buildのcanvas描画バッファ。CSS表示サイズとは独立しており、元HTMLの
 // 320x180を1280x720へ引き伸ばすだけでは配信が粗くなる。Linux A1では
-// 480x270が画質とCPUの中間点。未指定ならbuildの元設定をそのまま使う。
+// 576x324が画質とCPUの中間点。未指定ならbuildの元設定をそのまま使う。
 const GAME_INTERNAL_SIZE = parseUnityCanvasSize(process.env.SOREN_GAME_INTERNAL_SIZE);
 // Linux の headed 運用では XSHM が画面全体をキャプチャするため、ブラウザの
 // タブバー/アドレスバー/自動テスト帯が配信に映り込む。--kiosk で Chrome UI を

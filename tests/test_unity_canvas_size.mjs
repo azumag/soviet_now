@@ -5,6 +5,7 @@ import { parseUnityCanvasSize, rewriteUnityCanvasSize } from '../lib/unity_canva
 
 test('parses balanced 16:9 Unity canvas sizes', () => {
   assert.deepEqual(parseUnityCanvasSize('480,270'), { width: 480, height: 270 });
+  assert.deepEqual(parseUnityCanvasSize('576,324'), { width: 576, height: 324 });
   assert.deepEqual(parseUnityCanvasSize('640x360'), { width: 640, height: 360 });
   assert.equal(parseUnityCanvasSize(''), null);
 });

@@ -74,7 +74,7 @@ set_env_value() {
 set_env_value SOREN_CHROME_HEADLESS 0
 set_env_value SOREN_CHROME_KIOSK 1
 set_env_value SOREN_CHROME_WINDOW_SIZE 1280,720
-set_env_value SOREN_GAME_INTERNAL_SIZE 480,270
+set_env_value SOREN_GAME_INTERNAL_SIZE 576,324
 set_env_value SOREN_GAME_RENDER_FPS 30
 set_env_value SOREN_GAME_BGM_INITIAL_FILE "$SCRIPT_DIR/sorengame/assets/BGM/インターナショナル.ogg"
 set_env_value SOREN_GAME_BGM_FILE "$SCRIPT_DIR/sorengame/assets/BGM/インターナショナル.ogg"
