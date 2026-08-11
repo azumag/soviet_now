@@ -535,7 +535,7 @@ Linuxのops overlayは既存の `show_status.sh` がZshスクリプトである�
 
 relayへの実配信スモーク試験では、OBSとFFmpegを同時に動かすと短時間でもdropが発生した。したがって本番切替では、relayとpush先を先に検証した後、OBS配信を停止してからFFmpeg workerを起動する。OBSと直接配信を同一VM上で並行稼働させる方式は、同時配信の手段にはしない。同時配信はrelayの複数 `push` で1回のエンコードを共有する。
 
-push先は運用者がVM上で `sudoedit /etc/soren-rtmp/push.conf` を使って非公開に設定する。チャットやissueへキーを貼らない。設定後は次の順で、資格情報を表示せずpreflightと切替を行う。`--preflight` は構文とdestination数だけを非破壊確認し、明示確認付き`--cutover`がOBSを止める前にrelayをreloadして検証済みpush先を有効化する。reload失敗時はOBSと`.env`へ触れず終了する。切替後20秒のfps/speed/drop/dup検証に失敗した場合、スクリプトは `.env`、OBS配信、Soren supervisorを自動復帰する。
+push先は運用者がVM上で `sudoedit /etc/soren-rtmp/push.conf` を使って非公開に設定する。チャットやissueへキーを貼らない。設定後は次の順で、資格情報を表示せずpreflightと切替を行う。`--preflight` はpush fileが通常ファイルかつ非symlink、`root:soren-relay`、0640であることを強制し、構文とdestination数を非破壊確認する。明示確認付き`--cutover`がOBSを止める前にrelayをreloadして検証済みpush先を有効化する。reload失敗時はOBSと`.env`へ触れず終了する。切替後20秒のfps/speed/drop/dup検証に失敗した場合、スクリプトは `.env`、OBS配信、Soren supervisorを自動復帰する。
 
 ```bash
 ./cutover_direct_stream.sh --print-plan

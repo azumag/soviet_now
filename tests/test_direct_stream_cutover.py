@@ -23,6 +23,8 @@ class DirectStreamCutoverTests(unittest.TestCase):
         bad_quality: bool,
         system_runtime: bool = False,
         relay_reload_fails: bool = False,
+        push_mode: str = "640",
+        push_symlink: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], int, dict[str, str], Path]:
         fake_bin = root / "bin"
         state = root / "fake-state"
@@ -43,7 +45,12 @@ class DirectStreamCutoverTests(unittest.TestCase):
         cutover = repo / SCRIPT.name
         self._write_executable(cutover, script_source)
         relay_config.write_text("events {}\n", encoding="utf-8")
-        push_config.write_text("push rtmp://example.invalid/app/placeholder;\n", encoding="utf-8")
+        if push_symlink:
+            push_target = root / "push-target.conf"
+            push_target.write_text("push rtmp://example.invalid/app/placeholder;\n", encoding="utf-8")
+            push_config.symlink_to(push_target)
+        else:
+            push_config.write_text("push rtmp://example.invalid/app/placeholder;\n", encoding="utf-8")
         env_file = repo / ".env"
         env_file.write_text("SOREN_STREAM_BACKEND='obs'\n", encoding="utf-8")
 
@@ -58,6 +65,25 @@ class DirectStreamCutoverTests(unittest.TestCase):
         self._write_executable(
             fake_bin / "sudo",
             "#!/bin/bash\n[ \"${1:-}\" = -n ] && shift\nexec \"$@\"\n",
+        )
+        self._write_executable(
+            fake_bin / "stat",
+            """#!/bin/bash
+set -u
+format=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    -c) format="$2"; shift 2 ;;
+    *) shift ;;
+    esac
+done
+case "$format" in
+%U) printf '%s\\n' root ;;
+%G) printf '%s\\n' soren-relay ;;
+%a) printf '%s\\n' "${FAKE_PUSH_MODE:-640}" ;;
+*) exit 2 ;;
+esac
+""",
         )
         self._write_executable(fake_bin / "nginx", "#!/bin/bash\nexit 0\n")
         self._write_executable(
@@ -191,6 +217,7 @@ esac
                 "FAKE_DIRECT_BAD": "1" if bad_quality else "0",
                 "FAKE_REPO": str(repo),
                 "FAKE_RELAY_RELOAD_FAILS": "1" if relay_reload_fails else "0",
+                "FAKE_PUSH_MODE": push_mode,
                 "SOREN_ENV_FILE": str(env_file),
                 "SOREN_DIRECT_CUTOVER_VERIFY_SEC": "10",
             }
@@ -286,6 +313,40 @@ esac
             self.assertEqual((root / "fake-state" / "obs.service").read_text().strip(), "active")
             self.assertEqual((root / "fake-state" / "obs.stream").read_text().strip(), "on")
             self.assertTrue(self._pid_exists(initial_pid))
+            self._stop_fake_supervisor(root)
+
+    def test_insecure_push_permissions_leave_obs_and_environment_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            result, initial_pid, _env, _cutover = self._fake_cutover(
+                root,
+                bad_quality=False,
+                push_mode="644",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("root:soren-relay mode 0640", result.stderr)
+            self.assertIn("SOREN_STREAM_BACKEND='obs'", (root / "repo" / ".env").read_text())
+            self.assertEqual((root / "fake-state" / "obs.service").read_text().strip(), "active")
+            self.assertEqual((root / "fake-state" / "obs.stream").read_text().strip(), "on")
+            self.assertTrue(self._pid_exists(initial_pid))
+            self.assertFalse((root / "fake-state" / "relay.actions").exists())
+            self._stop_fake_supervisor(root)
+
+    def test_symlinked_push_config_leaves_obs_and_environment_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            result, initial_pid, _env, _cutover = self._fake_cutover(
+                root,
+                bad_quality=False,
+                push_symlink=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must not be a symbolic link", result.stderr)
+            self.assertIn("SOREN_STREAM_BACKEND='obs'", (root / "repo" / ".env").read_text())
+            self.assertEqual((root / "fake-state" / "obs.service").read_text().strip(), "active")
+            self.assertEqual((root / "fake-state" / "obs.stream").read_text().strip(), "on")
+            self.assertTrue(self._pid_exists(initial_pid))
+            self.assertFalse((root / "fake-state" / "relay.actions").exists())
             self._stop_fake_supervisor(root)
 
     def test_simulated_quality_failure_restores_obs_and_environment(self) -> None:

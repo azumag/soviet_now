@@ -108,6 +108,25 @@ push_destination_count() {
 	printf '%s\n' "$count"
 }
 
+validate_push_config_metadata() {
+	local owner group mode
+	if ! sudo -n test -f "$PUSH_CONFIG"; then
+		die "private relay push config is missing or is not a regular file: $PUSH_CONFIG"
+	fi
+	if sudo -n test -L "$PUSH_CONFIG"; then
+		die "private relay push config must not be a symbolic link: $PUSH_CONFIG"
+	fi
+	owner=$(sudo -n stat -c '%U' "$PUSH_CONFIG") \
+		|| die "cannot inspect private relay push config owner"
+	group=$(sudo -n stat -c '%G' "$PUSH_CONFIG") \
+		|| die "cannot inspect private relay push config group"
+	mode=$(sudo -n stat -c '%a' "$PUSH_CONFIG") \
+		|| die "cannot inspect private relay push config permissions"
+	if [ "$owner:$group:$mode" != "root:soren-relay:640" ]; then
+		die "private relay push config must be root:soren-relay mode 0640"
+	fi
+}
+
 validate_direct_live() (
 	set -a
 	# shellcheck disable=SC1090
@@ -159,6 +178,7 @@ preflight() {
 	if ! systemctl is-active --quiet "$RELAY_UNIT"; then
 		die "$RELAY_UNIT is not active"
 	fi
+	validate_push_config_metadata
 	PUSH_COUNT=$(push_destination_count)
 	if [ "$PUSH_COUNT" -lt 1 ]; then
 		die "no private relay push destination is configured; use sudoedit on $PUSH_CONFIG"
