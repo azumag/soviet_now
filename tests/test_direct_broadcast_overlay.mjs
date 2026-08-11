@@ -87,8 +87,18 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /data-soren-region="bottom"/);
   assert.match(html, /data-soren-region="sidebar"[^}]+#broadcast-sidebar\s*\{\s*left:\s*0/s);
   assert.match(html, /data-soren-region="bottom"[^}]+#bottom-rail\s*\{\s*top:\s*0/s);
-  assert.match(html, /const FEED_PAGE_MS = 12000/);
-  assert.match(html, /const FEED_LINES_PER_PAGE = 58/);
+  assert.match(html, /id="feed-g"/);
+  assert.match(html, /id="feed-s"/);
+  assert.doesNotMatch(html, /FEED_PAGE_MS/);
+  assert.doesNotMatch(html, /FEED_LINES_PER_PAGE/);
+  assert.match(html, /feed-line /);
+  assert.match(html, /feed-line\.run/);
+  assert.match(html, /feed-line\.down/);
+  assert.match(html, /feed-line\.g-recent/);
+  assert.match(html, /badge-g/);
+  assert.match(html, /badge-s/);
+  assert.match(html, /summary-line\.sum-head/);
+  assert.match(html, /summary-line\.sum-live/);
   assert.match(html, /const TOASTS_PER_PAGE = 3/);
   assert.match(html, /feeds[?][.]showStatusG/);
   assert.match(html, /feeds[?][.]showStatus/);
@@ -96,7 +106,8 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /notifications[?][.]work/);
   assert.match(html, /notifications[?][.]generators/);
   assert.match(html, new RegExp(DIRECT_BROADCAST_STATE_ROUTE.replaceAll('/', '\\/')));
-  assert.match(html, /textContent = page[.]text/);
+  assert.match(html, /renderFeedLines/);
+  assert.match(html, /STATUS MERGE/);
   assert.doesNotMatch(html, /http-equiv=["']refresh/i);
   assert.doesNotMatch(html, /location[.]reload/);
   assert.doesNotMatch(html, /<iframe\b/i);
@@ -202,6 +213,10 @@ async function runBroadcastOverlayScript(initialState) {
   };
   const byId = {
     feed: new FakeElement('pre'),
+    'feed-g': new FakeElement('div'),
+    'feed-s': new FakeElement('div'),
+    'feed-g-lines': new FakeElement('span'),
+    'feed-s-lines': new FakeElement('span'),
     'feed-label': new FakeElement('span'),
     'feed-age': new FakeElement('span'),
     'feed-progress': new FakeElement('span'),
@@ -277,6 +292,9 @@ async function runBroadcastOverlayScript(initialState) {
     calls,
     tick,
     toastCards,
+    feedG: byId['feed-g'],
+    feedS: byId['feed-s'],
+    summary: byId.summary,
     setState: (next) => { state = next; },
     fetchCount: () => fetchCount,
   };
@@ -364,4 +382,58 @@ test('only genuine events within three seconds get the fresh enter animation', a
   const stale = overlay.toastCards().find((card) => card.title === 'old viewer');
   assert.ok(stale);
   assert.doesNotMatch(stale.className, /fresh/);
+});
+
+
+test('merged sidebar renders both status feeds at once with colored lines and never switches', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG #10 games\nRecent30: 1097\nStrategy: 32b5edcf\nLive: MOVE score=875',
+        updatedAt: 1780000080,
+        lineCount: 4,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Loop        RUNNING\n○ ImproveD    STOPPED\n◆ Queued      49/100 games',
+        updatedAt: 1780000080,
+        lineCount: 3,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  assert.equal(overlay.feedG.children.length, 4, 'game stats feed must be fully visible');
+  assert.equal(overlay.feedS.children.length, 3, 'ops feed must be fully visible');
+  const gClasses = overlay.feedG.children.map((line) => line.className);
+  assert.ok(gClasses.some((cls) => cls.includes('g-head')), 'SOREN/OBS header line must be colored');
+  assert.ok(gClasses.some((cls) => cls.includes('g-recent')), 'Recent30 line must be colored');
+  const sClasses = overlay.feedS.children.map((line) => line.className);
+  assert.ok(sClasses.some((cls) => cls.includes('run')), 'RUNNING line must be green');
+  assert.ok(sClasses.some((cls) => cls.includes('down')), 'STOPPED line must be red');
+  assert.ok(sClasses.some((cls) => cls.includes('yellow')), 'Queued line must be yellow');
+
+  const summaryClasses = overlay.summary.children.map((line) => line.className);
+  assert.ok(summaryClasses.some((cls) => cls.includes('sum-head')), 'summary SOREN/OBS line must be colored');
+  assert.ok(summaryClasses.some((cls) => cls.includes('sum-live')), 'summary Live line must be colored');
+
+  await overlay.tick(12);
+  await overlay.tick(12);
+  assert.equal(overlay.feedG.children.length, 4, 'no pagination may hide game lines');
+  assert.equal(overlay.feedS.children.length, 3, 'no pagination may hide ops lines');
+
+  overlay.setState({
+    ...base,
+    feeds: {
+      showStatusG: { ...base.feeds.showStatusG, text: base.feeds.showStatusG.text + '\nLastDrop: T46' },
+      showStatus: base.feeds.showStatus,
+    },
+  });
+  await overlay.tick(1);
+  assert.equal(overlay.feedG.children.length, 5, 'feed update must re-render the merged panel');
+  assert.equal(overlay.feedS.children.length, 3);
 });

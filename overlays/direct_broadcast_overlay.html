@@ -87,19 +87,110 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   background: #22c55e;
   box-shadow: 0 0 10px rgba(34, 197, 94, .8);
 }
-#feed-label { margin-left: auto; color: #c8d7e6; letter-spacing: .04em; }
-#feed-age { color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+#feed-label {
+  margin-left: auto;
+  color: #c8d7e6;
+  letter-spacing: .04em;
+  font-size: 9px;
+}
+#feed-age {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  font-size: 9px;
+}
 #feed {
   margin: 6px 0 0;
   width: 306px;
   height: 642px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   overflow: hidden;
-  white-space: pre;
-  color: #d9edff;
-  font: 8.45px/10.35px "SF Mono", Menlo, Consolas, "Noto Sans Mono", monospace;
+}
+.feed-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.feed-panel + .feed-panel {
+  padding-top: 3px;
+  border-top: 1px solid rgba(103, 232, 249, .18);
+}
+.panel-head {
+  height: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 2px;
+  font-size: 7.5px;
+  font-weight: 950;
+  letter-spacing: .1em;
+}
+.badge {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 7px;
+  font-weight: 950;
+  letter-spacing: .12em;
+}
+.badge-g {
+  color: #67e8f9;
+  background: rgba(34, 211, 238, .14);
+  border: 1px solid rgba(103, 232, 249, .5);
+}
+.badge-s {
+  color: #c4b5fd;
+  background: rgba(168, 85, 247, .15);
+  border: 1px solid rgba(168, 85, 247, .55);
+}
+.panel-name { color: #9fb3c8; letter-spacing: .06em; font-size: 7px; }
+.panel-meta { margin-left: auto; color: #5f748b; font-variant-numeric: tabular-nums; font-size: 7px; }
+.feed-lines {
+  width: 306px;
+  overflow: hidden;
+  font: 700 6.7px/7.75px "SF Mono", Menlo, Consolas, "Noto Sans Mono", monospace;
   letter-spacing: 0;
+}
+.feed-line {
+  width: 306px;
+  min-height: 7.75px;
+  padding-left: 3px;
+  border-left: 2px solid transparent;
+  white-space: pre;
+  overflow: hidden;
+  color: #c6d9ec;
   text-shadow: 0 1px 0 rgba(0, 0, 0, .75);
 }
+.feed-line.dim { color: #52657a; }
+.feed-line.run { color: #6ee7a0; border-color: #22c55e; }
+.feed-line.down { color: #fca5a5; border-color: #ef4444; }
+.feed-line.ok { color: #86efac; border-color: #22c55e; }
+.feed-line.amber { color: #fcd34d; border-color: #f59e0b; }
+.feed-line.yellow { color: #fde047; border-color: #eab308; }
+.feed-line.orange { color: #fdba74; border-color: #f97316; }
+.feed-line.blue { color: #7dd3fc; border-color: #38bdf8; }
+.feed-line.purple { color: #c4b5fd; border-color: #8b5cf6; }
+.feed-line.pink { color: #f9a8d4; border-color: #ec4899; }
+.feed-line.teal { color: #5eead4; border-color: #14b8a6; }
+.feed-line.violet { color: #d8b4fe; border-color: #a855f7; }
+.feed-line.indigo { color: #a5b4fc; border-color: #6366f1; }
+.feed-line.idle { color: #94a3b8; border-color: #64748b; }
+.feed-line.s-core { color: #7dd3fc; border-color: #38bdf8; font-weight: 950; }
+.feed-line.s-audio { color: #f9a8d4; border-color: #ec4899; font-weight: 950; }
+.feed-line.s-twitch { color: #c4b5fd; border-color: #8b5cf6; font-weight: 950; }
+.feed-line.s-youtube { color: #fca5a5; border-color: #ef4444; font-weight: 950; }
+.feed-line.s-rollback { color: #fcd34d; border-color: #f59e0b; font-weight: 950; }
+.feed-line.g-head { color: #e2f7ff; border-color: #22d3ee; font-weight: 950; }
+.feed-line.g-section { color: #67e8f9; border-color: #22d3ee; font-weight: 950; }
+.feed-line.g-top { color: #fde047; border-color: #eab308; font-weight: 950; }
+.feed-line.g-recent { color: #fcd34d; border-color: #f59e0b; }
+.feed-line.g-strategy { color: #c4b5fd; border-color: #8b5cf6; }
+.feed-line.g-live { color: #86efac; border-color: #22c55e; }
+.feed-line.g-drop { color: #fdba74; border-color: #f97316; }
+.feed-line.g-core { color: #7dd3fc; border-color: #38bdf8; }
+.feed-line.g-chart { color: #67e8f9; border-color: #22d3ee; }
+.feed-line.g-dist { color: #4ade80; border-color: #22c55e; }
 .feed-foot {
   position: absolute;
   left: 12px;
@@ -145,15 +236,25 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   display: flex;
   align-items: center;
   padding: 0 11px;
+  border-left: 4px solid #64748b;
+  border-radius: 5px;
   color: #dceefe;
   background: rgba(12, 28, 48, .72);
   border: 1px solid rgba(103, 232, 249, .14);
-  border-radius: 5px;
   font: 800 12.5px/1.1 "SF Mono", Menlo, Consolas, monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.summary-line.sum-head { color: #67e8f9; border-left-color: #22d3ee; background: rgba(8, 51, 68, .72); }
+.summary-line.sum-recent { color: #fcd34d; border-left-color: #f59e0b; background: rgba(64, 43, 4, .72); }
+.summary-line.sum-strategy { color: #c4b5fd; border-left-color: #8b5cf6; background: rgba(46, 23, 80, .72); }
+.summary-line.sum-live { color: #86efac; border-left-color: #22c55e; background: rgba(10, 55, 34, .72); }
+.summary-line.sum-backend { color: #7dd3fc; border-left-color: #38bdf8; background: rgba(9, 47, 73, .72); }
+.summary-line.sum-queue { color: #fde047; border-left-color: #eab308; background: rgba(56, 47, 4, .72); }
+.summary-line.sum-drop { color: #fdba74; border-left-color: #f97316; background: rgba(61, 27, 5, .72); }
+.summary-line.sum-av { color: #f9a8d4; border-left-color: #ec4899; background: rgba(63, 12, 44, .72); }
+.summary-line.sum-muted { color: #aab8c8; border-left-color: #64748b; }
 #work {
   height: 73px;
   display: none;
@@ -196,6 +297,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
 .toast.radio .toast-bar { background: #22c55e; }
 .toast.prediction .toast-bar { background: #fb7185; }
 .toast.rollback .toast-bar { background: #f97316; }
+.toast.system .toast-bar { background: linear-gradient(180deg, #22d3ee, #8b5cf6); }
 .toast-copy { min-width: 0; padding: 7px 8px 6px; }
 .toast-head { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
 .toast-title { min-width: 0; flex: 1; font-size: 11.5px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -206,7 +308,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
 </style>
 </head>
 <body>
-<main id="broadcast-overlay" data-broadcast-overlay-version="2">
+<main id="broadcast-overlay" data-broadcast-overlay-version="3">
   <section id="top-rail" class="rail" aria-live="polite">
     <div id="summary"></div>
     <div id="work">
@@ -217,21 +319,31 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   </section>
   <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
   <aside id="broadcast-sidebar">
-    <div class="feed-head"><span class="live-dot"></span><span>SOREN DATA</span><span id="feed-label">WAITING</span><span id="feed-age">--</span></div>
-    <pre id="feed">配信専用オーバーレイを準備しています…</pre>
-    <div class="feed-foot"><span>FULL LEGACY DATA · READ ONLY</span><span id="feed-progress">0/0</span></div>
+    <div class="feed-head"><span class="live-dot"></span><span>SOREN DATA</span><span id="feed-label">G + STATUS</span><span id="feed-age">--</span></div>
+    <div id="feed">
+      <section class="feed-panel panel-g">
+        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">SHOW-STATUS-G</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
+        <div class="feed-lines" id="feed-g"></div>
+      </section>
+      <section class="feed-panel panel-s">
+        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">SHOW-STATUS</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
+        <div class="feed-lines" id="feed-s"></div>
+      </section>
+    </div>
+    <div class="feed-foot"><span>STATUS MERGE · READ ONLY</span><span id="feed-progress">0L</span></div>
   </aside>
 </main>
 <script>
 (() => {
   'use strict';
   const STATE_ROUTE = '/__soren_overlay/broadcast/state';
-  const FEED_PAGE_MS = 12000;
   const TOAST_PAGE_MS = 3000;
-  const FEED_LINES_PER_PAGE = 58;
   const TOASTS_PER_PAGE = 3;
   const SURFACE_REGION = document.documentElement.dataset.sorenRegion || 'full';
-  const feed = document.getElementById('feed');
+  const feedG = document.getElementById('feed-g');
+  const feedS = document.getElementById('feed-s');
+  const feedGLines = document.getElementById('feed-g-lines');
+  const feedSLines = document.getElementById('feed-s-lines');
   const feedLabel = document.getElementById('feed-label');
   const feedAge = document.getElementById('feed-age');
   const feedProgress = document.getElementById('feed-progress');
@@ -239,8 +351,8 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   const work = document.getElementById('work');
   const toastGrid = document.getElementById('toast-grid');
   let state = null;
-  let feedPages = [];
-  let lastFeedKey = '';
+  let lastFeedGKey = '';
+  let lastFeedSKey = '';
   let lastSummaryKey = '';
   let lastToastKey = '';
 
@@ -257,40 +369,82 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
     const seconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(epoch || 0));
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
   }
-  function chunks(text) {
-    const lines = String(text || 'データを待っています…').split('\n');
-    const result = [];
-    for (let index = 0; index < lines.length; index += FEED_LINES_PER_PAGE) {
-      result.push(lines.slice(index, index + FEED_LINES_PER_PAGE).join('\n'));
-    }
-    return result.length ? result : ['データを待っています…'];
+  function feedLineClass(line) {
+    const raw = String(line || '');
+    const text = raw.replace(/^[│┃\s]+/, '');
+    if (/^━+$/.test(raw) || /^[┌└]─+[┐┘]$/.test(raw)) return 'dim';
+    if (/^  CORE$/.test(raw)) return 's-core';
+    if (/^  AUDIO$/.test(raw)) return 's-audio';
+    if (/^  TWITCH$/.test(raw)) return 's-twitch';
+    if (/^  YOUTUBE$/.test(raw)) return 's-youtube';
+    if (/^  ROLLBACKS$/.test(raw)) return 's-rollback';
+    if (/^│? *SOREN[/]|^│? *Best:|^│? *Avg:/.test(raw)) return 'g-head';
+    if (/^Score (Timeline|Distribution)/.test(text) || /^Strategy Comparison/.test(text)) return 'g-section';
+    if (/^rk hash/.test(text)) return 'g-head';
+    if (/^► 1 /.test(text)) return 'g-top';
+    if (/^[0-9][0-9.,k]*[┃│]/.test(text)) return 'g-dist';
+    if (/[⠀-⣿]/.test(text)) return 'g-chart';
+    if (/^● /.test(text)) return 'run';
+    if (/^○ /.test(text)) return 'down';
+    if (/^✓ /.test(text)) return 'ok';
+    if (/^◉ /.test(text)) return 'amber';
+    if (/^◆ /.test(text)) return 'yellow';
+    if (/^▾ /.test(text)) return 'orange';
+    if (/^▸ /.test(text)) return 'blue';
+    if (/^◇ /.test(text)) return 'purple';
+    if (/^♪ |^♫ /.test(text)) return 'pink';
+    if (/^📻 /.test(text)) return 'teal';
+    if (/^⟳ /.test(text)) return 'violet';
+    if (/^💬 /.test(text)) return 'indigo';
+    if (/Recent30/.test(text)) return 'g-recent';
+    if (/Strategy:/.test(text)) return 'g-strategy';
+    if (/^Live:/.test(text)) return 'g-live';
+    if (/LastDrop/.test(text)) return 'g-drop';
+    if (/Curr |Reg NO/.test(text)) return 'g-core';
+    if (/RUNNING|CONNECTED/.test(text)) return 'run';
+    if (/STOPPED/.test(text)) return 'down';
+    if (/SILENT|IDLE|empty/.test(text)) return 'idle';
+    if (/PASSED|none/.test(text)) return 'ok';
+    return 'dim';
   }
-  function rebuildFeedPages() {
-    const sources = [state?.feeds?.showStatusG, state?.feeds?.showStatus];
-    feedPages = [];
-    for (const source of sources) {
-      const pages = chunks(source?.text);
-      pages.forEach((text, index) => feedPages.push({
-        label: source?.label || 'UNKNOWN',
-        text,
-        page: index + 1,
-        pages: pages.length,
-        updatedAt: source?.updatedAt || 0,
-      }));
-    }
+  function renderFeedLines(container, text) {
+    const lines = String(text || 'データを待っています…').split('\n');
+    container.replaceChildren(...lines.map((line) => {
+      const row = document.createElement('div');
+      row.className = `feed-line ${feedLineClass(line)}`;
+      row.textContent = line === '' ? ' ' : line;
+      return row;
+    }));
   }
   function renderFeed() {
-    if (!feedPages.length) return;
-    const index = Math.floor(Date.now() / FEED_PAGE_MS) % feedPages.length;
-    const page = feedPages[index];
-    const key = `${index}:${page.updatedAt}:${page.text}`;
-    if (key !== lastFeedKey) {
-      feed.textContent = page.text;
-      feedLabel.textContent = `${page.label} ${page.page}/${page.pages}`;
-      feedProgress.textContent = `${index + 1}/${feedPages.length}`;
-      lastFeedKey = key;
+    const g = state?.feeds?.showStatusG;
+    const s = state?.feeds?.showStatus;
+    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
+    const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
+    if (gKey !== lastFeedGKey) {
+      renderFeedLines(feedG, g?.text);
+      feedGLines.textContent = `${g?.lineCount || 0}L`;
+      lastFeedGKey = gKey;
     }
-    feedAge.textContent = ageLabel(page.updatedAt);
+    if (sKey !== lastFeedSKey) {
+      renderFeedLines(feedS, s?.text);
+      feedSLines.textContent = `${s?.lineCount || 0}L`;
+      lastFeedSKey = sKey;
+    }
+    feedLabel.textContent = 'G + STATUS';
+    feedAge.textContent = ageLabel(Math.max(g?.updatedAt || 0, s?.updatedAt || 0));
+    feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0)}L`;
+  }
+  function summaryClass(text) {
+    if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
+    if (/Recent30/.test(text)) return 'sum-recent';
+    if (/Strategy/.test(text)) return 'sum-strategy';
+    if (/^Live:/.test(text)) return 'sum-live';
+    if (/Backend/.test(text)) return 'sum-backend';
+    if (/Queued/.test(text)) return 'sum-queue';
+    if (/LastDrop/.test(text)) return 'sum-drop';
+    if (/AVSync/.test(text)) return 'sum-av';
+    return 'sum-muted';
   }
   function selectedSummaryLines() {
     const stats = String(state?.feeds?.showStatusG?.text || '').split('\n');
@@ -321,7 +475,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
       if (key !== lastSummaryKey) {
         summary.replaceChildren(...lines.map((text) => {
           const row = document.createElement('div');
-          row.className = 'summary-line';
+          row.className = `summary-line ${summaryClass(text)}`;
           row.textContent = text;
           return row;
         }));
@@ -400,15 +554,16 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   }
   function publishHealth(error = '') {
     window.__sorenBroadcastOverlayHealth = {
-      version: 1,
+      version: 3,
       updatedAt: state?.updatedAt || 0,
       lastClientUpdateAt: Math.floor(Date.now() / 1000),
       showStatusGLineCount: state?.feeds?.showStatusG?.lineCount || 0,
       showStatusLineCount: state?.feeds?.showStatus?.lineCount || 0,
+      feedLines: (state?.feeds?.showStatusG?.lineCount || 0) + (state?.feeds?.showStatus?.lineCount || 0),
       notificationCount: state?.notifications?.events?.length || 0,
       workActive: Boolean(state?.notifications?.work?.active),
       generatorCount: state?.notifications?.generators?.length || 0,
-      feedPages: feedPages.length,
+      merged: true,
       error,
       region: SURFACE_REGION,
       layout: { game: [0, 90, 960, 540], sidebar: [960, 0, 320, 720], rails: [90, 90] },
@@ -426,7 +581,6 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
       const response = await fetch(STATE_ROUTE, { cache: 'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       state = await response.json();
-      rebuildFeedPages();
       render();
     } catch (error) {
       publishHealth(String(error?.message || error));
