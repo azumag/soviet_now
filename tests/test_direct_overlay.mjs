@@ -38,8 +38,12 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
   assert.equal(enabled.elementId, DIRECT_OVERLAY_ELEMENT_ID);
   assert.match(enabled.htmlFile, /tmp\/state\/event_overlay[.]html$/);
   assert.deepEqual(enabled.surfaces.map((item) => item.key), [
-    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync',
+    'broadcast', 'improve', 'wildcard', 'avsync',
   ]);
+  assert.equal(enabled.broadcast.stateRoute, '/__soren_overlay/broadcast/state');
+  assert.match(enabled.broadcast.sources.eventHtmlFile, /event_overlay[.]html$/);
+  assert.match(enabled.broadcast.sources.statsHtmlFile, /status_overlay[.]html$/);
+  assert.match(enabled.broadcast.sources.opsHtmlFile, /show_status_overlay[.]html$/);
 });
 
 
@@ -56,12 +60,12 @@ test('overlay installer persists across reload and installs current page', async
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   assert.equal(await installDirectOverlay(page, config), true);
   assert.deepEqual(calls.map(([kind]) => kind), ['init', 'evaluate']);
-  assert.equal(calls[0][2].length, 6);
+  assert.equal(calls[0][2].length, 4);
   assert.match(String(calls[0][1]), /window[.]top !== window/);
-  assert.equal(calls[0][2][0].route, DIRECT_OVERLAY_ROUTE);
-  assert.equal(calls[0][2][0].elementId, DIRECT_OVERLAY_ELEMENT_ID);
-  assert.equal(calls[0][2][0].key, 'event');
-  assert.equal(calls[0][2][0].pollMs, 1000);
+  assert.equal(calls[0][2][0].route, '/__soren_overlay/broadcast');
+  assert.equal(calls[0][2][0].elementId, 'soren-direct-stream-overlay-broadcast');
+  assert.equal(calls[0][2][0].key, 'broadcast');
+  assert.equal(calls[0][2][0].pollMs, 60000);
   assert.equal(calls[0][2].find((item) => item.route.endsWith('/av-sync')).pollMs, 250);
   assert.match(String(calls[0][1]), /elementId}-buffer/);
   assert.match(String(calls[0][1]), /incoming[.]addEventListener\('load'/);
@@ -91,12 +95,13 @@ test('default FFmpeg stage keeps a 960x540 game and a 320px dashboard', () => {
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   const byKey = Object.fromEntries(config.surfaces.map((item) => [item.key, item]));
   assert.equal(config.stage.gameWidth, 960);
-  assert.equal(byKey.event.style.width, '960px');
-  assert.equal(byKey.event.style.height, '720px');
-  assert.ok(Number.parseInt(byKey.stats.style.left, 10) >= 960);
-  assert.ok(Number.parseInt(byKey.ops.style.left, 10) >= 960);
-  assert.match(byKey.stats.style.transform, /^scale\(0[.]/);
-  assert.match(byKey.ops.style.transform, /^scale\(0[.]/);
+  assert.equal(byKey.broadcast.style.inset, '0');
+  assert.equal(byKey.broadcast.style.width, '1280px');
+  assert.equal(byKey.broadcast.style.height, '720px');
+  assert.match(byKey.broadcast.htmlFile, /overlays\/direct_broadcast_overlay[.]html$/);
+  assert.equal(byKey.event, undefined);
+  assert.equal(byKey.stats, undefined);
+  assert.equal(byKey.ops, undefined);
 });
 
 
@@ -121,6 +126,10 @@ test('stage validates dashboard room and supports explicit fullscreen compatibil
   }, 'linux');
   assert.equal(fullscreen.stage.enabled, false);
   assert.equal(fullscreen.surfaces[0].style.width, '100vw');
+  assert.deepEqual(fullscreen.surfaces.map((item) => item.key), [
+    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync',
+  ]);
+  assert.equal(fullscreen.broadcast, null);
 });
 
 
@@ -152,26 +161,34 @@ test('state-driven surfaces match normal, improvement, and wildcard layouts', ()
 
   fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'idle' }));
   fs.writeFileSync(improveState, JSON.stringify({ status: 'running' }));
-  assert.equal(directOverlaySurfaceVisible(byKey.stats), true);
-  assert.equal(directOverlaySurfaceVisible(byKey.ops), true);
+  assert.equal(directOverlaySurfaceVisible(byKey.broadcast), true);
   assert.equal(directOverlaySurfaceVisible(byKey.improve), true);
   assert.equal(directOverlaySurfaceVisible(byKey.wildcard), false);
 
   fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'running' }));
-  assert.equal(directOverlaySurfaceVisible(byKey.stats), false);
-  assert.equal(directOverlaySurfaceVisible(byKey.ops), false);
+  assert.equal(directOverlaySurfaceVisible(byKey.broadcast), true);
   assert.equal(directOverlaySurfaceVisible(byKey.improve), false);
   assert.equal(directOverlaySurfaceVisible(byKey.wildcard), true);
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
 
-test('individual direct overlay surfaces can be disabled without affecting event', () => {
+test('broadcast opt-out falls back to legacy dashboard surfaces without changing their flags', () => {
   const config = loadDirectOverlayConfig({
     SOREN_STREAM_BACKEND: 'ffmpeg',
-    SOREN_DIRECT_OPS_OVERLAY_ENABLED: '0',
+    SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED: '0',
   }, 'linux');
   assert.deepEqual(config.surfaces.map((item) => item.key), [
+    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync',
+  ]);
+  assert.equal(config.broadcast, null);
+
+  const fullscreen = loadDirectOverlayConfig({
+    SOREN_STREAM_BACKEND: 'ffmpeg',
+    SOREN_DIRECT_STAGE_LAYOUT: 'fullscreen',
+    SOREN_DIRECT_OPS_OVERLAY_ENABLED: '0',
+  }, 'linux');
+  assert.deepEqual(fullscreen.surfaces.map((item) => item.key), [
     'event', 'stats', 'improve', 'wildcard', 'avsync',
   ]);
 });

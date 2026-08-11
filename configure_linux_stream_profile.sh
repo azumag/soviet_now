@@ -63,6 +63,8 @@ required_code=(
 	lib/direct_soak.py
 	lib/direct_av_sync.py
 	lib/direct_overlay.mjs
+	lib/direct_broadcast_overlay.mjs
+	overlays/direct_broadcast_overlay.html
 	lib/overlay_text.py
 	install_direct_stream_relay.sh
 	install_soren_runtime_service.sh
@@ -150,6 +152,8 @@ set_env_value SOREN_DIRECT_OVERLAY_ENABLED 1
 set_env_value SOREN_DIRECT_OVERLAY_HTML_FILE tmp/state/event_overlay.html
 set_env_value SOREN_DIRECT_STAGE_LAYOUT dashboard
 set_env_value SOREN_DIRECT_GAME_DISPLAY_SIZE 960x540
+set_env_value SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED 1
+set_env_value SOREN_DIRECT_BROADCAST_OVERLAY_HTML_FILE overlays/direct_broadcast_overlay.html
 set_env_value SOREN_DIRECT_EVENT_OVERLAY_ENABLED 1
 set_env_value SOREN_DIRECT_STATS_OVERLAY_ENABLED 1
 set_env_value SOREN_DIRECT_OPS_OVERLAY_ENABLED 1

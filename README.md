@@ -492,6 +492,8 @@ SOREN_DIRECT_OVERLAY_ENABLED=1
 SOREN_DIRECT_OVERLAY_HTML_FILE=tmp/state/event_overlay.html
 SOREN_DIRECT_STAGE_LAYOUT=dashboard
 SOREN_DIRECT_GAME_DISPLAY_SIZE=960x540
+SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED=1
+SOREN_DIRECT_BROADCAST_OVERLAY_HTML_FILE=overlays/direct_broadcast_overlay.html
 SOREN_DIRECT_EVENT_OVERLAY_ENABLED=1
 SOREN_DIRECT_STATS_OVERLAY_ENABLED=1
 SOREN_DIRECT_OPS_OVERLAY_ENABLED=1
@@ -513,9 +515,9 @@ PoCの非配信録画と状態確認:
 ./benchmark_direct_stream.sh --confirm-live-interruption --duration 30
 ```
 
-loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。event/stats/ops/improvement/wildcardの既存HTMLは、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。生成HTMLに含まれるmeta refreshは直接配信側で除去し、旧iframeを表示したまま更新後HTMLを非表示bufferへ読み込み、load完了時だけ交換する。これにより2秒更新時の透明化ちらつきを配信へ載せない。
+loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。fullscreen互換ではevent/stats/ops/improvement/wildcardの既存HTMLを、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。生成HTMLに含まれるmeta refreshは直接配信側で除去し、旧iframeを表示したまま更新後HTMLを非表示bufferへ読み込み、load完了時だけ交換する。これにより2秒更新時の透明化ちらつきを配信へ載せない。
 
-`SOREN_DIRECT_STAGE_LAYOUT=dashboard` では、Unity内部描画576x324とFFmpeg出力1280x720を変えず、ゲームのCSS表示だけを左中央960x540にする。右320pxへstats/opsを縦積みし、左側の上下90pxを通知・作業状態用railとして確保する。canvasには`image-rendering: pixelated`を使い、1280x720全面へ2.22倍拡大していた粗さと、データpanelのゲーム重なりを避ける。`fullscreen`を指定すれば従来のviewport全面表示へ戻る。improvement/wildcardは対応stateがactiveの間だけ全面表示し、backendがOBSまたはmacOSの場合はstage/iframeを作らず既存動作を維持する。
+`SOREN_DIRECT_STAGE_LAYOUT=dashboard` では、Unity内部描画576x324とFFmpeg出力1280x720を変えず、ゲームのCSS表示だけを左中央960x540にする。右320pxと左側の上下90pxには `overlays/direct_broadcast_overlay.html` の配信専用面を1枚だけ重ねる。既存の `show-status` / `show-status-g` / `overlay_notify.sh` と各HTML generatorは変更せずread-only data sourceとして使うため、OBS表示やCUI表示は従来のまま残る。右320pxは上下分割せず、`show-status-g` と `show-status` の全行を12秒ごとに切り替える。58行を超えた出力は自動page分割し、縮小・切り捨てで項目を落とさない。上90pxはscore/strategy/live要約またはCodex作業状態、下90pxは最大3件ずつ循環する通知toastとコメント・ラジオ生成状態に割り当てる。配信専用面は1秒ごとにJSON stateをDOMへ差分反映し、meta refresh・iframe自己navigation・legacy HTMLの直接縮小を行わない。canvasには`image-rendering: pixelated`を使い、1280x720全面へ2.22倍拡大していた粗さと、データpanelのゲーム重なりを避ける。`fullscreen`を指定すれば従来の個別overlayとviewport全面表示へ戻る。improvement/wildcardは対応stateがactiveの間だけ全面表示し、backendがOBSまたはmacOSの場合はstage/iframeを作らず既存動作を維持する。
 
 OBSの停止、relayのsystemd化、複数配信先へのpushは後続の移行ゲートであり、PoCだけを理由に現行OBSを停止しない。
 

@@ -8,6 +8,7 @@ import { execFile, spawn } from 'child_process';
 import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
 import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
 import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
+import { buildDirectBroadcastOverlayState } from './lib/direct_broadcast_overlay.mjs';
 import {
   directOverlayIdleHtml,
   directOverlaySurfaceVisible,
@@ -906,6 +907,23 @@ function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const requestPath = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      if (DIRECT_OVERLAY_CONFIG.enabled
+        && DIRECT_OVERLAY_CONFIG.broadcast?.stateRoute === requestPath) {
+        const noCache = {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        };
+        try {
+          const payload = buildDirectBroadcastOverlayState(DIRECT_OVERLAY_CONFIG.broadcast);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
+          res.end(JSON.stringify(payload));
+        } catch {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
+          res.end(JSON.stringify({ version: 1, error: 'broadcast overlay state unavailable' }));
+        }
+        return;
+      }
       const directOverlaySurface = DIRECT_OVERLAY_CONFIG.enabled
         ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.route === requestPath)
         : null;
