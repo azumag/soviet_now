@@ -37,6 +37,9 @@ class DirectAVSyncTests(unittest.TestCase):
         self.assertIn("Date.now()", html)
         self.assertIn("'transparent'", html)
         self.assertIn("'#fff'", html)
+        self.assertIn("lastEventEnd", html)
+        self.assertIn("location.reload()", html)
+        self.assertIn("lastEventEnd-Date.now()+5000", html)
 
     def test_generated_tone_is_48khz_mono_pcm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

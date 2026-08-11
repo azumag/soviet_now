@@ -188,6 +188,7 @@ html,body,#flash{{margin:0;width:100%;height:100%;overflow:hidden;background:tra
 const events={events};
 const duration={int(duration_ms)};
 const flash=document.getElementById('flash');
+const lastEventEnd=events.length?Math.max(...events)+duration:Date.now();
 function draw(){{
   const now=Date.now();
   const active=events.some((at)=>now>=at&&now<at+duration);
@@ -195,6 +196,9 @@ function draw(){{
   requestAnimationFrame(draw);
 }}
 draw();
+// Keep the absolute schedule stable while the probe is active, then return to
+// the server route so a later run cannot remain stuck on this expired page.
+setTimeout(()=>location.reload(),Math.max(250,lastEventEnd-Date.now()+5000));
 </script>
 """
 
