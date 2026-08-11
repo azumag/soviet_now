@@ -478,6 +478,7 @@ SOREN_DIRECT_STREAM_SIZE=1280x720
 SOREN_DIRECT_STREAM_FPS=30
 SOREN_DIRECT_STREAM_VIDEO_KBPS=4500
 SOREN_DIRECT_STREAM_AUDIO_KBPS=160
+SOREN_DIRECT_STREAM_AUDIO_DELAY_MS=150
 SOREN_DIRECT_STREAM_PULSE_SOURCE=soren_null.monitor
 SOREN_DIRECT_STREAM_AUDIO_HZ=48000
 SOREN_DIRECT_STREAM_AUDIO_CHANNELS=2
@@ -552,6 +553,8 @@ push先は運用者がVM上で `sudoedit /etc/soren-rtmp/push.conf` を使って
 FFmpegカナリア中のローカルrelay断復旧は `./direct_stream_recovery_test.sh --run --confirm-live-recovery-test` で検査する。このテストはrelayだけを再起動し、60秒以内に新しいFFmpeg run、30fps近傍、speed 0.97以上、direct process 1件、relay入力1件へ戻ることを要求する。失敗時はcutover時に記録したOBS backupへ自動rollbackする。これは外部RTMP宛先の回線断試験とは別であり、外部再接続はrelayログと配信プラットフォーム側の連続性も合わせて確認する。
 
 A/V同期はFFmpegカナリア切替直後、soak monitorを開始する前に `./direct_av_sync_test.sh --run --confirm-live-av-sync-test` で測定する。通常時は透明な128px角のprobe iframeだけが存在し、生成HTMLが無いので画面へ何も描かない。検査時は6回の白フラッシュと17kHz/180ms toneを同一の絶対時刻で発生させ、loopback relayから実際のH.264/AAC出力をcopy録画する。このcopy録画中だけrelayのlocal client接続が1本増えるため、soakの「接続数は常時1」判定とは同時実行しない。録画の輝度eventとtone eventを照合し、各offsetの絶対値100ms以内かつ先頭から末尾のdrift 50ms以内を要求する。検査HTMLは終了時に必ず削除され、資格情報や外部RTMP URLは設定・結果・argvへ保存しない。
+
+`SOREN_DIRECT_STREAM_AUDIO_DELAY_MS` はFFmpegで合成音声へ加える固定遅延で、0〜2000msだけを許可する。Oracle A1のX11grab/PulseAudio実測では音声が映像より約150ms先行したためLinux profileは150msとし、A/V probeの合格値に基づいてのみ調整する。
 
 ```bash
 # 1時間カナリア

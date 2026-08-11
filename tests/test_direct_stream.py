@@ -26,6 +26,7 @@ def base_env(**overrides: str) -> dict[str, str]:
         "SOREN_DIRECT_STREAM_FPS": "30",
         "SOREN_DIRECT_STREAM_VIDEO_KBPS": "4500",
         "SOREN_DIRECT_STREAM_AUDIO_KBPS": "160",
+        "SOREN_DIRECT_STREAM_AUDIO_DELAY_MS": "150",
         "SOREN_DIRECT_STREAM_PULSE_SOURCE": "soren_null.monitor",
         "SOREN_DIRECT_STREAM_LOCAL_URL": "rtmp://127.0.0.1:1935/soren/live",
     }
@@ -44,7 +45,7 @@ class DirectStreamTests(unittest.TestCase):
         self.assertIn("-video_size 1280x720", joined)
         self.assertIn("-f pulse", joined)
         self.assertIn("soren_null.monitor", command)
-        self.assertIn("aresample=async=1:first_pts=0", command)
+        self.assertIn("adelay=150:all=1,aresample=async=1:first_pts=0", command)
         self.assertIn("libx264", command)
         self.assertIn("yuv420p", command)
         self.assertIn("-g 60", joined)
@@ -83,6 +84,8 @@ class DirectStreamTests(unittest.TestCase):
             ("SOREN_DIRECT_STREAM_FPS", "30fps"),
             ("SOREN_DIRECT_STREAM_VIDEO_KBPS", "6001"),
             ("SOREN_DIRECT_STREAM_AUDIO_KBPS", "0"),
+            ("SOREN_DIRECT_STREAM_AUDIO_DELAY_MS", "2001"),
+            ("SOREN_DIRECT_STREAM_AUDIO_DELAY_MS", "150ms"),
             ("SOREN_DIRECT_STREAM_DISPLAY", "localhost:99"),
             ("SOREN_DIRECT_STREAM_PULSE_SOURCE", "sink;touch /tmp/no"),
         )

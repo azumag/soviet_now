@@ -50,6 +50,7 @@ class DirectStreamConfig:
     fps: int
     video_kbps: int
     audio_kbps: int
+    audio_delay_ms: int
     pulse_source: str
     pulse_sample_rate: int
     pulse_channels: int
@@ -147,6 +148,7 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
         fps=_strict_int(source, "SOREN_DIRECT_STREAM_FPS", 30, 1, 60),
         video_kbps=_strict_int(source, "SOREN_DIRECT_STREAM_VIDEO_KBPS", 4500, 500, 6000),
         audio_kbps=_strict_int(source, "SOREN_DIRECT_STREAM_AUDIO_KBPS", 160, 64, 320),
+        audio_delay_ms=_strict_int(source, "SOREN_DIRECT_STREAM_AUDIO_DELAY_MS", 0, 0, 2000),
         pulse_source=pulse_source,
         pulse_sample_rate=_strict_int(source, "SOREN_DIRECT_STREAM_AUDIO_HZ", 48000, 8000, 192000),
         pulse_channels=_strict_int(source, "SOREN_DIRECT_STREAM_AUDIO_CHANNELS", 2, 1, 2),
@@ -234,7 +236,7 @@ def build_ffmpeg_command(
         "-bufsize",
         f"{config.video_kbps * 2}k",
         "-af",
-        "aresample=async=1:first_pts=0",
+        f"adelay={config.audio_delay_ms}:all=1,aresample=async=1:first_pts=0",
         "-c:a",
         "aac",
         "-ar",
