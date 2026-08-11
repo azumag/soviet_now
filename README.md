@@ -424,10 +424,11 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
    SOREN_CHROME_HEADLESS=0
    SOREN_CHROME_KIOSK=1
    SOREN_CHROME_WINDOW_SIZE=1280,720
+   SOREN_GAME_INTERNAL_SIZE=480,270
    SOREN_GAME_RENDER_FPS=30
    ```
 
-   `--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
+   `SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。A1無料枠では480x270を1280x720へ拡大する設定を標準とし、従来の320x180より画質を上げつつソフトウェアWebGLの負荷を抑える。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
 
 8. systemdのOBSを `Nice=15` のような低優先度で動かすと、上限解除されたsoftware GLにCPUを奪われ、encoder skipped frameが0でもrendering lagと音切れが発生し得る。A1配信ではOBSを優先し、ゲーム側を上記30fpsに制限する。system-scope serviceの例:
 

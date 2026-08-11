@@ -18,7 +18,14 @@ if [ ! -f "$ENV_FILE" ]; then
 	exit 2
 fi
 
-required_code=(external_game_audio.mjs browser_frame_limiter.mjs soviet_local.mjs start_all.sh)
+required_code=(
+	external_game_audio.mjs
+	browser_frame_limiter.mjs
+	lib/unity_canvas_size.mjs
+	soviet_local.mjs
+	start_all.sh
+	hide_obs_ui.sh
+)
 required_assets=(
 	"sorengame/assets/BGM/インターナショナル.ogg"
 	"sorengame/assets/BGM/ソ連国歌.ogg"
@@ -67,6 +74,7 @@ set_env_value() {
 set_env_value SOREN_CHROME_HEADLESS 0
 set_env_value SOREN_CHROME_KIOSK 1
 set_env_value SOREN_CHROME_WINDOW_SIZE 1280,720
+set_env_value SOREN_GAME_INTERNAL_SIZE 480,270
 set_env_value SOREN_GAME_RENDER_FPS 30
 set_env_value SOREN_GAME_BGM_INITIAL_FILE "$SCRIPT_DIR/sorengame/assets/BGM/インターナショナル.ogg"
 set_env_value SOREN_GAME_BGM_FILE "$SCRIPT_DIR/sorengame/assets/BGM/インターナショナル.ogg"
@@ -83,9 +91,13 @@ set_env_value WILDCARD_PARALLEL_JOBS 1
 if systemctl cat obs.service >/dev/null 2>&1; then
 	priority_tmp=$(mktemp "$SCRIPT_DIR/tmp/obs-priority.XXXXXX")
 	printf '%s\n' '[Service]' 'Nice=-5' 'CPUWeight=10000' >"$priority_tmp"
+	hide_ui_tmp=$(mktemp "$SCRIPT_DIR/tmp/obs-hide-ui.XXXXXX")
+	printf '%s\n' '[Service]' "ExecStartPost=$SCRIPT_DIR/hide_obs_ui.sh" >"$hide_ui_tmp"
 	sudo install -d -m 0755 /etc/systemd/system/obs.service.d
 	sudo install -m 0644 "$priority_tmp" /etc/systemd/system/obs.service.d/priority.conf
-	rm -f "$priority_tmp"
+	sudo install -m 0644 "$hide_ui_tmp" /etc/systemd/system/obs.service.d/hide-ui.conf
+	rm -f "$priority_tmp" "$hide_ui_tmp"
+	chmod +x "$SCRIPT_DIR/hide_obs_ui.sh"
 	sudo systemctl daemon-reload
 	sudo systemctl restart obs.service
 else

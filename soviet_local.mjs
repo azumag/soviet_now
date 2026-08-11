@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
 import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
 import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
+import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -75,6 +76,10 @@ const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.S
 // ゲームウィンドウのサイズ (WxH)。Xvfb を 1920x1080 で運用する Linux 配信では
 // SOREN_CHROME_WINDOW_SIZE=1920,1080 を .env で指定する。macOS 既定は従来どおり。
 const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
+// Unity buildのcanvas描画バッファ。CSS表示サイズとは独立しており、元HTMLの
+// 320x180を1280x720へ引き伸ばすだけでは配信が粗くなる。Linux A1では
+// 480x270が画質とCPUの中間点。未指定ならbuildの元設定をそのまま使う。
+const GAME_INTERNAL_SIZE = parseUnityCanvasSize(process.env.SOREN_GAME_INTERNAL_SIZE);
 // Linux の headed 運用では XSHM が画面全体をキャプチャするため、ブラウザの
 // タブバー/アドレスバー/自動テスト帯が配信に映り込む。--kiosk で Chrome UI を
 // 消してゲームキャンバスだけを画面いっぱいに表示する。macOS の OBS window
@@ -922,6 +927,13 @@ function startServer() {
       } else {
         const contentType = MIME_TYPES[ext] || 'application/octet-stream';
         res.writeHead(200, { 'Content-Type': contentType, ...noCache });
+      }
+
+      if (GAME_INTERNAL_SIZE && path.basename(filePath) === 'index.html') {
+        const html = fs.readFileSync(filePath, 'utf8');
+        const body = rewriteUnityCanvasSize(html, GAME_INTERNAL_SIZE);
+        res.end(body);
+        return;
       }
 
       fs.createReadStream(filePath).pipe(res);
