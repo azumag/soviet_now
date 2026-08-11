@@ -442,9 +442,31 @@ bash sloop.sh
 - **Node.js**: v18+ (Playwright 依存)
 - **Python**: 3.10+ (`analyze_board.py`, `strategy.py` 用)
 - **LLM CLI ツール** (AI ループで使用):
-  - [opencode](https://github.com/opencode-ai/opencode) — GLM 系モデルをエージェントとして実行
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — Anthropic Claude を CLI から実行
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`) — Google Gemini を CLI から実行
+  - [Codex CLI](https://github.com/openai/codex) (`codex`) — 全AI生成を codex CLI に統一
+
+### ハーネス統一 (codex / opencode-go / deepseek-v4-flash)
+
+2026-08 以降、コメント応答・ラジオコーナー・AI改善ループの全AI生成は **codex CLI に統一**されている。
+opencode CLI / claude CLI / gemini CLI / minimax / ollama の個別呼び出しは行わず、
+`lib/ai_generate.sh` の `_ai_call_codex` と `strategy/ai.sh` の `run_cmd` が
+`codex exec -m "$CODEX_MODEL"` を実行する。
+
+モデルは **`opencode-go/deepseek-v4-flash` のみ** (環境変数 `CODEX_MODEL` で固定)。
+接続先は `~/.codex/config.toml` の `model_providers.opencode-go` で指定する:
+
+```toml
+model = "opencode-go/deepseek-v4-flash"
+model_provider = "opencode-go"
+
+[model_providers.opencode-go]
+name = "opencode-go"
+base_url = "https://opencode.ai/zen/go/v1"
+env_key = "OPENCODE_GO_API_KEY"
+```
+
+`OPENCODE_GO_API_KEY` は `.env` に設定する。この構成で
+`codex exec --skip-git-repo-check -m opencode-go/deepseek-v4-flash "..."` が
+opencode.ai の OpenAI 互換 `/v1/chat/completions` を叩く。
 
 ### LLM モデル設定
 
@@ -453,13 +475,14 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 #### モデル変数
 
 ```bash
-MODEL_PRIMARY="zai"              # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="haiku"
-MODEL_IMPROVE="zai"              # 改善primary
-MODEL_FALLBACK_IMPROVE="qwen36f" # 改善fallback
-MODEL_LAST_RESORT="opencode:glmflash"
-ROLLBACK_POSTMORTEM_MODEL="qwen36f"
-ROLLBACK_POSTMORTEM_FALLBACK="opencode:glmflash"
+MODEL_PRIMARY="codex:opencode-go/deepseek-v4-flash"      # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
+MODEL_FALLBACK="codex:opencode-go/deepseek-v4-flash"
+MODEL_IMPROVE="codex:opencode-go/deepseek-v4-flash"      # 改善primary
+MODEL_FALLBACK_IMPROVE="codex:opencode-go/deepseek-v4-flash" # 改善fallback
+MODEL_LAST_RESORT="codex:opencode-go/deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_MODEL="codex:opencode-go/deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_FALLBACK="codex:opencode-go/deepseek-v4-flash"
+CODEX_MODEL="opencode-go/deepseek-v4-flash"              # codex CLI のモデル指定
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
@@ -474,30 +497,27 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `zai` | `qwen36f` | `opencode:glmflash` | - |
-| **ラジオ生成** | `qwen36f` | `ollama` | `glmflash` | `haiku` |
-| **コメント返し** | `qwen36f` | `ollama` | `glmflash` | `haiku` |
-| **コメント(改善中)** | `ollama` (gemma4e) | →通常モードへ | - | - |
-| **コメント(!claude)** | `haiku` | →通常モードへ | - | - |
-| **粛清ポストモーテム** | `qwen36f` | `opencode:glmflash` | - | - |
-| **メリケンAI(全コメント)** | `ollama` (gemma4e) | `haiku` | - | - |
+| **改善** | `codex:...` | `codex:...` | - | - |
+| **ラジオ生成** | `codex:...` | - | - | - |
+| **コメント返し** | `codex:...` | - | - | - |
+| **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
+| **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |
+| **粛清ポストモーテム** | `codex:...` | - | - | - |
+| **メリケンAI(全コメント)** | `codex:...` | - | - | - |
+
+`codex:...` は `codex:opencode-go/deepseek-v4-flash` の略記。全チャンネル同一モデル。
 
 #### スペック別詳細
 
 | スペック | 実装 | 説明 |
 |---------|------|------|
-| `zai` | `claude -p --model=haiku` (z.ai経由) | z.ai API (GLM-5.1) via Claude Code |
-| `qwen36f` | `claude -p --model=qwen/qwen3.6-plus:free` (OpenRouter経由) | OpenRouter free tier. `OPENROUTER_API_KEY` が必要 |
-| `glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
-| `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash 同上 |
-| `ollama` | `claude -p --model=$RADIO_OLLAMA_MODEL` (OLLAMA_BASE_URL) | デフォルト `qwen3.5:9b`. ローカルOllama |
-| `gemma4e` | `claude -p --model=gemma4:latest` (OLLAMA_BASE_URL) | ローカルOllama Gemma4 |
-| `haiku` | `claude -p --model=haiku` | Claude Haiku 直実行 |
+| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `opencode-go/deepseek-v4-flash` |
+| 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧opencode/claude/gemini等もcodexへ正規化 |
 
 #### 必要なAPIキー
 
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-...  # qwen36f用 (.env)
+OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 ```
 
 #### モデルスペックと CLI マッピング
@@ -506,24 +526,15 @@ OPENROUTER_API_KEY=sk-or-v1-...  # qwen36f用 (.env)
 
 | スペック | CLI コマンド | 説明 |
 |---------|------------|------|
-| `zai` | `claude -p --model=haiku` (z.ai API経由) | z.ai エンドポイント (GLM-5.1)。`ANTHROPIC_BASE_URL` を差し替えて claude CLI で実行 |
-| `glm` | `opencode run --agent="zai"` | GLM-4.7 (zhipu) — opencode の **zai エージェント**として設定済み |
-| `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
-| `opencode:<agent>` | `opencode run --agent="<agent>"` | 任意の opencode エージェント |
-| `sonnet` | `claude -p --model=sonnet --permission-mode=acceptEdits` | Claude Sonnet |
-| `opus` | `claude -p --model=opus --permission-mode=acceptEdits` | Claude Opus |
-| `claude` | `claude -p --model=Haiku --permission-mode=acceptEdits` | Claude Haiku |
-| `gemini` | `gemini -p -y -s` | Gemini (デフォルトモデル) |
-| `gemini-flash` | `gemini -p -y -s --model=gemini-2.5-flash` | Gemini 2.5 Flash |
+| `codex:<model>` | `codex exec --skip-git-repo-check -m <model> --dangerously-bypass-approvals-and-sandbox` | 全AI呼び出し (改善ループはファイル編集のため bypass) |
+| `codex` | 同上 (`CODEX_MODEL` 使用) | ハーネス既定 |
 
-#### opencode のエージェント設定
+#### codex のエージェント設定
 
-opencode は `.opencode/agents/` ディレクトリにエージェント設定ファイルを配置して使用する。本プロジェクトでは:
-
-- **zai** — GLM-4.7 (zhipu/glm-4.7) を使用するメインエージェント。`MODEL_PRIMARY="glm"` で呼び出される
-- **glmflash** — GLM-4-Flash を使用する軽量エージェント。`MODEL_FALLBACK="opencode:glmflash"` で呼び出される
-
-`opencode run --agent="zai"` のように `--agent` フラグでエージェント名を指定すると、対応するモデル設定で LLM が実行される。
+codex CLI は `~/.codex/config.toml` と `model_providers` を使用する。プロジェクト側では
+`codex:<model>` スペックのみを使い、エージェント定義ファイルは不要。
+VM では `codex exec -m opencode-go/deepseek-v4-flash` が opencode.ai へ接続できるよう
+`~/.codex/config.toml` と `.env` の `OPENCODE_GO_API_KEY` を設定する。
 
 #### Claude Code の使い方
 

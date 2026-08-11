@@ -570,6 +570,52 @@ _ai_call_opencode() {
 	_ai_generation_queue_run "$(_ai_queue_label "$label" "opencode" "$agent")" _ai_call_opencode_unqueued "$@"
 }
 
+# === Codex (統一ハーネス) ===
+
+# _ai_call_codex LABEL AGENT PROMPT_FILE [TIMEOUT]
+#   codex CLI 経由で opencode-go/deepseek-v4-flash を呼ぶ（モデルは CODEX_MODEL で固定）。
+#   opencode CLI / claude / minimax / ollama は使用しない。
+_ai_call_codex_unqueued() {
+	local label="$1" agent="$2" prompt_file="$3"
+	local timeout_sec="${4:-${CODEX_TIMEOUT:-300}}"
+	local model="${CODEX_MODEL:-opencode-go/deepseek-v4-flash}"
+	local codex_bin="${CODEX_BIN:-codex}"
+	local out_file rc cleaned
+	[ -s "$prompt_file" ] || return 1
+	out_file=$(mktemp /tmp/ai_codex_out_XXXXXXXX)
+	case "$timeout_sec" in
+	'' | *[!0-9]*) timeout_sec=300 ;;
+	esac
+	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
+	log "[${label}] codex call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	timeout --kill-after=10s "$timeout_sec" "$codex_bin" exec \
+		--skip-git-repo-check -m "$model" -o "$out_file" "$(cat "$prompt_file")" \
+		>/dev/null 2>&1
+	rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[${label}] codex timeout (${timeout_sec}s, model=$model)" >&2
+		rm -f "$out_file"
+		return 1
+	fi
+	if [ $rc -ne 0 ] && [ ! -s "$out_file" ]; then
+		log "[${label}] codex failed (rc=$rc, no output, model=$model)" >&2
+		rm -f "$out_file"
+		return 1
+	fi
+	cleaned=$(cat "$out_file")
+	rm -f "$out_file"
+	if _contains_provider_error_text "$cleaned"; then
+		log "[${label}] codex provider error (model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$cleaned"
+}
+
+_ai_call_codex() {
+	local label="${1:-AI}" agent="${2:-codex}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "codex" "$agent")" _ai_call_codex_unqueued "$@"
+}
+
 # === 統一ディスパッチャ ===
 
 # _ai_dispatch LABEL AGENT PROMPT_FILE [TIMEOUT]
@@ -578,10 +624,6 @@ _ai_call_opencode() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
-	local local_llm_timeout="$timeout_override"
-	if [[ "$label" == COMMENT* ]] && [ -z "$local_llm_timeout" ]; then
-		local_llm_timeout="${COMMENT_OLLAMA_TIMEOUT:-20}"
-	fi
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -596,55 +638,21 @@ _ai_dispatch() {
 
 	local _dispatch_output_file="$_dispatch_log_dir/${_dispatch_tag}_output.txt"
 
+	# ハーネスは codex CLI に統一。エージェント識別子はログ用に保持し、
+	# モデルは CODEX_MODEL (既定 opencode-go/deepseek-v4-flash) に固定する。
+	local _codex_timeout="$timeout_override"
 	case "$agent" in
 	'' )
 		return 1
 		;;
-	ollama:*)
-		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	minimax|ccmm)
-		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	gemma4e)
-		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	qwen35)
-		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:27b" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	qwen35e)
-		local _qwen35e_model="${RADIO_OLLAMA_MODEL:-qwen3.5:9b}"
-		[ "$label" = "COMMENT" ] && _qwen35e_model="${COMMENT_OLLAMA_MODEL:-$_qwen35e_model}"
-		_ai_call_ollama "$label" "$prompt_file" "$_qwen35e_model" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	qwencode)
-		_ai_call_qwencode "$label" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	haiku|claude)
-		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	sonnet|opus)
-		# agent名そのものをclaudeモデルエイリアスとして使う (RADIO_CLAUDE_MODEL非依存)。
-		# sonnetはラジオ生成で使用。Web調査込みで100s超えることがあるため、明示overrideが
-		# 無い場合は余裕のあるタイムアウトを使う (RADIO_CLAUDE_TIMEOUT=120はコメントhaiku等と
-		# 共有なので触らない)。コメントはsonnetを使わないので影響しない。
-		_ai_call_claude "$label" "$prompt_file" "$agent" "${timeout_override:-${RADIO_SONNET_TIMEOUT:-240}}" | tee "$_dispatch_output_file"
-		;;
-	claude:*)
-		# claude:<model> で明示モデル指定
-		_ai_call_claude "$label" "$prompt_file" "${agent#claude:}" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	opencode:*)
-		local _opencode_timeout="$timeout_override"
-		local _opencode_permission="${RADIO_OPENCODE_PERMISSION:-}"
-		if [[ "$label" == COMMENT* ]]; then
-			_opencode_timeout="${_opencode_timeout:-${COMMENT_OPENCODE_TIMEOUT:-}}"
-			_opencode_permission="${COMMENT_OPENCODE_PERMISSION:-$_opencode_permission}"
-		fi
-		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$_opencode_timeout" "$_opencode_permission" | tee "$_dispatch_output_file"
-		;;
 	*)
-		_ai_call_opencode "$label" "$agent" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
+		if [[ "$label" == COMMENT* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
+		fi
+		if [[ "$label" == RADIO* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${RADIO_CODEX_TIMEOUT:-240}"
+		fi
+		_ai_call_codex "$label" "$agent" "$prompt_file" "$_codex_timeout" | tee "$_dispatch_output_file"
 		;;
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}

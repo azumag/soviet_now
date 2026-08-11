@@ -230,11 +230,12 @@ _run_claude_comment_with_model_unqueued() {
 }
 
 _run_claude_comment_with_model() {
-	_ai_generation_queue_run "COMMENT:claude:${2:-$RADIO_CLAUDE_MODEL}" _run_claude_comment_with_model_unqueued "$@"
+	# ハーネス統一: codex CLI (opencode-go/deepseek-v4-flash) で応答生成
+	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_claude_comment() {
-	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
+	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_minimax_comment_unqueued() {
@@ -312,23 +313,13 @@ _run_minimax_comment_unqueued() {
 }
 
 _run_minimax_comment() {
-	_ai_generation_queue_run "COMMENT:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_comment_unqueued "$@"
+	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_comment_agent() {
 	local agent="$1" prompt_file="$2"
-	if [[ "$agent" == opencode:* || "$agent" != *:* && "$agent" != ollama && "$agent" != qwen35e && "$agent" != gemma4e && "$agent" != haiku && "$agent" != claude && "$agent" != minimax && "$agent" != ccmm && "$agent" != qwencode ]]; then
-		local _comment_opencode_lock=""
-		if [[ "$agent" == opencode:* ]]; then
-			_comment_opencode_lock=$(_opencode_run_lock_dir "${agent#opencode:}" 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
-		else
-			_comment_opencode_lock=$(_opencode_run_lock_dir "$agent" 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
-		fi
-		if [ -d "$_comment_opencode_lock" ]; then
-			log "[COMMENT] opencode busy -> skip agent=${agent} for low-latency comment fallback" >&2
-			return 1
-		fi
-	fi
+	# ハーネス統一: codex CLI は opencode スロットロックに依存しないため
+	# opencode busy チェックは行わない（codex は単発プロセス）。
 	_ai_dispatch "COMMENT" "$agent" "$prompt_file"
 }
 
@@ -375,11 +366,11 @@ _run_claude_radio_with_model_unqueued() {
 }
 
 _run_claude_radio_with_model() {
-	_ai_generation_queue_run "RADIO:claude:${2:-$RADIO_CLAUDE_MODEL}" _run_claude_radio_with_model_unqueued "$@"
+	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_claude_radio() {
-	_ai_call_claude "RADIO" "$1" "$RADIO_CLAUDE_MODEL"
+	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_minimax_radio_unqueued() {
@@ -422,7 +413,7 @@ _run_minimax_radio_unqueued() {
 }
 
 _run_minimax_radio() {
-	_ai_generation_queue_run "RADIO:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_radio_unqueued "$@"
+	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_radio_agent() {
@@ -559,7 +550,7 @@ _run_ollama_radio_unqueued() {
 }
 
 _run_ollama_radio() {
-	_ai_generation_queue_run "RADIO:ollama:${2:-$RADIO_OLLAMA_MODEL}" _run_ollama_radio_unqueued "$@"
+	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _run_ollama_comment_unqueued() {
@@ -601,7 +592,7 @@ _run_ollama_comment_unqueued() {
 }
 
 _run_ollama_comment() {
-	_ai_generation_queue_run "COMMENT:ollama:${2:-$COMMENT_OLLAMA_MODEL}" _run_ollama_comment_unqueued "$@"
+	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
 }
 
 _write_radio_corner_status() {
