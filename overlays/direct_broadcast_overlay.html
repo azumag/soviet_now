@@ -206,7 +206,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
 </style>
 </head>
 <body>
-<main id="broadcast-overlay" data-broadcast-overlay-version="1">
+<main id="broadcast-overlay" data-broadcast-overlay-version="2">
   <section id="top-rail" class="rail" aria-live="polite">
     <div id="summary"></div>
     <div id="work">
@@ -345,7 +345,13 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
     if (!displayItems.length) {
       const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
       return [/Backend/, /Queued/, /LastDrop/].map((pattern) => ops.find((line) => pattern.test(line)))
-        .filter(Boolean).map((line) => ({ category: 'system', title: 'LIVE STATUS', body: line.trim(), ts: now }));
+        .filter(Boolean).map((line) => ({
+          category: 'system',
+          title: 'LIVE STATUS',
+          body: line.trim(),
+          ts: 0,
+          liveStatus: true,
+        }));
     }
     const pageCount = Math.max(1, Math.ceil(displayItems.length / TOASTS_PER_PAGE));
     const page = Math.floor(Date.now() / TOAST_PAGE_MS) % pageCount;
@@ -353,13 +359,23 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   }
   function renderToasts() {
     const items = currentToasts();
-    const key = JSON.stringify(items.map((item) => [item.ts, item.category, item.title, item.body]));
-    if (key === lastToastKey) return;
+    const key = JSON.stringify(items.map((item) => item.liveStatus
+      ? ['live-status', item.category, item.title, item.body]
+      : [item.ts, item.category, item.title, item.body]));
     const now = Math.floor(Date.now() / 1000);
+    if (key === lastToastKey) {
+      // 既定 LIVE STATUS カードは再構築せず時計だけ進め、enter アニメーションの再実行を防ぐ。
+      for (const card of toastGrid.querySelectorAll('.toast[data-live-status="1"]')) {
+        const time = card.querySelector('.toast-time');
+        if (time) time.textContent = timeLabel(now);
+      }
+      return;
+    }
     toastGrid.replaceChildren(...items.map((item) => {
       const category = String(item.category || 'system').toLowerCase().replace(/[^a-z0-9_-]/g, '');
       const card = document.createElement('article');
-      card.className = `toast ${category}${now - Number(item.ts || 0) <= 3 ? ' fresh' : ''}`;
+      card.className = `toast ${category}${!item.liveStatus && now - Number(item.ts || 0) <= 3 ? ' fresh' : ''}`;
+      if (item.liveStatus) card.dataset.liveStatus = '1';
       const bar = document.createElement('div');
       bar.className = 'toast-bar';
       const copy = document.createElement('div');
@@ -371,7 +387,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
       title.textContent = item.title || item.category || 'event';
       const time = document.createElement('div');
       time.className = 'toast-time';
-      time.textContent = timeLabel(item.ts);
+      time.textContent = item.liveStatus ? timeLabel(now) : timeLabel(item.ts);
       const body = document.createElement('div');
       body.className = 'toast-body';
       body.textContent = item.body || '';

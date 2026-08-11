@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 import {
   DIRECT_BROADCAST_STATE_ROUTE,
@@ -114,4 +115,253 @@ test('legacy generators remain independent and the bridge exposes a dedicated JS
   assert.match(bridge, /buildDirectBroadcastOverlayState/);
   assert.match(bridge, /broadcast[?][.]stateRoute === requestPath/);
   assert.match(bridge, /application\/json; charset=utf-8/);
+});
+
+
+class FakeClassList {
+  constructor(host) {
+    this.host = host;
+    this.tokens = new Set();
+  }
+
+  toggle(token, force) {
+    const on = force === undefined ? !this.tokens.has(token) : force;
+    if (on) this.tokens.add(token);
+    else this.tokens.delete(token);
+    return on;
+  }
+}
+
+
+class FakeElement {
+  constructor(tagName) {
+    this.tagName = String(tagName).toUpperCase();
+    this.children = [];
+    this.textContent = '';
+    this.style = {};
+    this.dataset = {};
+    this.className = '';
+    this.classList = new FakeClassList(this);
+  }
+
+  append(...nodes) {
+    this.children.push(...nodes);
+  }
+
+  appendChild(node) {
+    this.children.push(node);
+    return node;
+  }
+
+  replaceChildren(...nodes) {
+    this.children = nodes;
+  }
+
+  matches(selector) {
+    if (selector === '.toast[data-live-status="1"]') {
+      return this.className.split(/\s+/).includes('toast') && this.dataset.liveStatus === '1';
+    }
+    if (selector.startsWith('.')) {
+      return this.className.split(/\s+/).includes(selector.slice(1));
+    }
+    return false;
+  }
+
+  querySelector(selector) {
+    const stack = [...this.children];
+    while (stack.length) {
+      const child = stack.pop();
+      if (child.matches(selector)) return child;
+      stack.push(...child.children);
+    }
+    return null;
+  }
+
+  querySelectorAll(selector) {
+    const found = [];
+    const stack = [...this.children];
+    while (stack.length) {
+      const child = stack.pop();
+      if (child.matches(selector)) found.push(child);
+      stack.push(...child.children);
+    }
+    return found;
+  }
+}
+
+
+async function runBroadcastOverlayScript(initialState) {
+  const html = fs.readFileSync(BROADCAST_HTML, 'utf8');
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+  assert.ok(scripts.length >= 2, 'broadcast overlay must carry its setup and render scripts');
+
+  const document = {
+    documentElement: { dataset: {} },
+    createElement: (tag) => new FakeElement(tag),
+    getElementById: () => null,
+  };
+  const byId = {
+    feed: new FakeElement('pre'),
+    'feed-label': new FakeElement('span'),
+    'feed-age': new FakeElement('span'),
+    'feed-progress': new FakeElement('span'),
+    summary: new FakeElement('div'),
+    work: new FakeElement('div'),
+    'toast-grid': new FakeElement('div'),
+  };
+  for (const [id, element] of Object.entries(byId)) {
+    element.id = id;
+  }
+  document.getElementById = (id) => byId[id] || null;
+
+  let state = initialState;
+  const intervalCallbacks = [];
+  let fetchCount = 0;
+  const calls = { toastRebuilds: 0 };
+  const toastGrid = byId['toast-grid'];
+  const originalReplace = toastGrid.replaceChildren.bind(toastGrid);
+  toastGrid.replaceChildren = (...nodes) => {
+    calls.toastRebuilds += 1;
+    originalReplace(...nodes);
+  };
+
+  const RealDate = Date;
+  let nowMs = 1780001000000;
+  function FakeDate(...args) {
+    return args.length ? new RealDate(...args) : new RealDate(nowMs);
+  }
+  FakeDate.now = () => nowMs;
+
+  const context = vm.createContext({
+    console,
+    document,
+    window: { frameElement: undefined },
+    fetch: async () => {
+      fetchCount += 1;
+      return { ok: true, json: async () => state };
+    },
+    setInterval: (callback) => {
+      intervalCallbacks.push(callback);
+      return intervalCallbacks.length;
+    },
+    Date: FakeDate,
+    Math,
+    Number,
+    String,
+    Array,
+    Object,
+    JSON,
+    RegExp,
+    Promise,
+  });
+  for (const script of scripts) {
+    vm.runInContext(script, context, { filename: 'direct_broadcast_overlay.html' });
+  }
+  assert.ok(intervalCallbacks.length >= 2, 'overlay script must install its refresh and render loops');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const tick = async (seconds) => {
+    nowMs += seconds * 1000;
+    for (const callback of [...intervalCallbacks]) {
+      await callback();
+    }
+  };
+  const toastCards = () => toastGrid.children.map((card) => ({
+    className: card.className,
+    liveStatus: card.dataset.liveStatus || '',
+    title: card.querySelector('.toast-title')?.textContent || '',
+    body: card.querySelector('.toast-body')?.textContent || '',
+  }));
+
+  return {
+    calls,
+    tick,
+    toastCards,
+    setState: (next) => { state = next; },
+    fetchCount: () => fetchCount,
+  };
+}
+
+
+test('live-status toasts stay stable and never re-animate while idle', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG\nRecent30: 30.0',
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Backend     FFMPEG LIVE\n◆ Queued      34/100 games\n▾ LastDrop   T36',
+        updatedAt: 1780000080,
+        lineCount: 3,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const first = overlay.toastCards();
+  assert.equal(first.length, 3);
+  for (const card of first) {
+    assert.equal(card.title, 'LIVE STATUS');
+    assert.equal(card.liveStatus, '1');
+    assert.doesNotMatch(card.className, /fresh/);
+  }
+  assert.equal(overlay.calls.toastRebuilds, 1);
+
+  await overlay.tick(1);
+  await overlay.tick(1);
+  await overlay.tick(2);
+  assert.equal(overlay.calls.toastRebuilds, 1, 'idle live-status cards must not rebuild every second');
+});
+
+
+test('only genuine events within three seconds get the fresh enter animation', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: { label: 'SHOW-STATUS-G', text: 'SOREN/OBS FFMPEG\nRecent30: 30.0', updatedAt: 1780000080, lineCount: 2 },
+      showStatus: { label: 'SHOW-STATUS', text: '● Backend     FFMPEG LIVE', updatedAt: 1780000080, lineCount: 1 },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+  assert.equal(overlay.calls.toastRebuilds, 1);
+
+  const now = Math.floor(1780001000000 / 1000) + 3;
+  overlay.setState({
+    ...base,
+    notifications: {
+      visibleSec: 18,
+      events: [{ ts: now, category: 'chat', title: 'viewer', body: 'hello' }],
+      work: { active: false },
+      generators: [],
+    },
+  });
+  await overlay.tick(3);
+  const cards = overlay.toastCards();
+  const chat = cards.find((card) => card.title === 'viewer');
+  assert.ok(chat);
+  assert.match(chat.className, /fresh/);
+  assert.equal(overlay.calls.toastRebuilds, 2);
+
+  overlay.setState({
+    ...base,
+    notifications: {
+      visibleSec: 18,
+      events: [{ ts: now - 10, category: 'chat', title: 'old viewer', body: 'stale' }],
+      work: { active: false },
+      generators: [],
+    },
+  });
+  await overlay.tick(2);
+  const stale = overlay.toastCards().find((card) => card.title === 'old viewer');
+  assert.ok(stale);
+  assert.doesNotMatch(stale.className, /fresh/);
 });
