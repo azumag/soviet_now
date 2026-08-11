@@ -20,7 +20,7 @@ export function loadExternalGameAudioConfig(env = process.env, platform = proces
     hammerSickleSeFile: env.SOREN_GAME_SE_HAMMER_SICKLE_FILE || '',
     bgmVolumePct: clampInteger(env.SOREN_GAME_BGM_VOLUME_PCT, 60, 0, 100),
     seVolumePct: clampInteger(env.SOREN_GAME_SE_VOLUME_PCT, 70, 0, 100),
-    pulseLatencyMs: clampInteger(env.SOREN_GAME_AUDIO_PULSE_LATENCY_MS, 350, 50, 2000),
+    pulseLatencyMs: clampInteger(env.SOREN_GAME_AUDIO_PULSE_LATENCY_MS, 100, 50, 2000),
     hammerSickleDelayMs: clampInteger(env.SOREN_GAME_SE_HAMMER_SICKLE_DELAY_MS, 1000, 0, 10000),
     sovietBgmDelayMs: clampInteger(env.SOREN_GAME_BGM_SOVIET_DELAY_MS, 5250, 0, 15000),
   };
@@ -75,11 +75,31 @@ export class ExternalGameAudio {
       this.logger.warn(`[GAME-AUDIO] ${label} file not found: ${filePath}`);
       return null;
     }
+    // WAV の SE は paplay を使う。ffplay は起動が遅く、さらに
+    // `-fflags nobuffer` と `-autoexit` の併用では短い SE が無音になるため、
+    // ループ再生の BGM 以外では nobuffer を付けない。
+    if (!loop && filePath.toLowerCase().endsWith('.wav')) {
+      const volumeLinear = String(Math.round(Math.min(1, Math.max(0, volume / 100)) * 65536));
+      try {
+        return this.spawnFn('paplay', [
+          '--device=@DEFAULT_SINK@',
+          `--volume=${volumeLinear}`,
+          filePath,
+        ], {
+          stdio: 'ignore',
+          env: this._audioEnvironment(),
+        });
+      } catch (error) {
+        this.logger.warn(`[GAME-AUDIO] ${label} paplay start failed: ${error && error.message}`);
+        return null;
+      }
+    }
     const args = [
       '-nodisp', '-nostats', '-loglevel', 'quiet',
       '-threads', '1',
       '-volume', String(volume),
     ];
+    if (loop) args.splice(4, 0, '-fflags', 'nobuffer');
     if (loop) args.push('-loop', '0');
     else args.push('-autoexit');
     args.push(filePath);

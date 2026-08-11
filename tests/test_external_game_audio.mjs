@@ -63,7 +63,7 @@ function harness(overrides = {}) {
     hammerSickleSeFile: '/audio/hammer.wav',
     bgmVolumePct: 60,
     seVolumePct: 70,
-    pulseLatencyMs: 350,
+    pulseLatencyMs: 100,
     hammerSickleDelayMs: 1000,
     sovietBgmDelayMs: 5250,
     ...overrides,
@@ -106,7 +106,21 @@ test('normal game starts International BGM with a buffered PulseAudio ffplay', (
   assert.equal(spawns[0].file, '/audio/International.ogg');
   assert.ok(spawns[0].args.includes('-loop'));
   assert.equal(spawns[0].options.env.SDL_AUDIODRIVER, 'pulse');
-  assert.equal(spawns[0].options.env.PULSE_LATENCY_MSEC, '350');
+  assert.equal(spawns[0].options.env.PULSE_LATENCY_MSEC, '100');
+  assert.ok(spawns[0].args.includes('-fflags'));
+  assert.ok(spawns[0].args.includes('nobuffer'));
+});
+
+test('WAV SE plays through paplay with linear volume', () => {
+  const { audio, spawns } = harness();
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  audio.playDrop();
+
+  assert.equal(spawns.at(-1).command, 'paplay');
+  assert.equal(spawns.at(-1).file, '/audio/drop.wav');
+  assert.ok(spawns.at(-1).args.includes('--device=@DEFAULT_SINK@'));
+  assert.ok(spawns.at(-1).args.includes('--volume=45875')); // 70% of 65536
+  assert.equal(spawns.at(-1).options.env.PULSE_LATENCY_MSEC, '100');
 });
 
 test('first Soviet formation reproduces Unity SE timing and changes BGM', () => {

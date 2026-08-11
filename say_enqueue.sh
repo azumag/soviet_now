@@ -727,13 +727,14 @@ _launch_bg_exec() {
 # paplay が使える場合は明示された sink を維持し、両方無ければ失敗を返す。
 _linux_play_bg() {
 	local audio_file="$1" device="${2:-${SAY_AUDIO_DEVICE:-default}}" cleanup_file="${3:-}"
+	local pulse_latency="${SAY_PULSE_LATENCY_MS:-80}"
 	if command -v paplay >/dev/null 2>&1; then
-		_launch_bg_exec "$cleanup_file" paplay --device="$device" "$audio_file"
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" paplay --device="$device" "$audio_file"
 		return 0
 	fi
 	if command -v ffplay >/dev/null 2>&1; then
 		# ffplay は PulseAudio 既定出力へ流す（既定 sink = soren_null 運用）
-		_launch_bg_exec "$cleanup_file" ffplay -nodisp -autoexit -loglevel error "$audio_file"
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" ffplay -nodisp -autoexit -loglevel error -fflags nobuffer "$audio_file"
 		return 0
 	fi
 	_log "[say_enqueue] Linux 再生プレイヤーがありません (paplay/ffplay 未導入)"

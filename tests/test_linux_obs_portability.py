@@ -773,7 +773,8 @@ esac
         # Linux では paplay --device で soren_null へ再生する
         self.assertIn("_linux_play_bg", text)
         self.assertIn('paplay --device="$device"', text)
-        self.assertIn('ffplay -nodisp -autoexit -loglevel error "$audio_file"', text)
+        self.assertIn('ffplay -nodisp -autoexit -loglevel error -fflags nobuffer "$audio_file"', text)
+        self.assertIn('PULSE_LATENCY_MSEC="$pulse_latency"', text)
         # Linux では audiotoolbox / afplay / say の代わりに分岐
         self.assertIn('if [ "$IS_LINUX" = "1" ]; then', text)
         self.assertIn('_launch_say_bg', text)

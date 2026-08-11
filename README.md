@@ -451,10 +451,10 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
    SOREN_GAME_SE_HAMMER_SICKLE_FILE=/home/ubuntu/soren/sorengame/assets/SE/鎌と槌合体時SE.wav
    SOREN_GAME_BGM_VOLUME_PCT=60
    SOREN_GAME_SE_VOLUME_PCT=70
-   SOREN_GAME_AUDIO_PULSE_LATENCY_MS=350
+   SOREN_GAME_AUDIO_PULSE_LATENCY_MS=100
    ```
 
-   旧 `SOREN_GAME_BGM_FILE` は通常BGM用の後方互換名としてのみ残す。新構成では曖昧さを避けるため `SOREN_GAME_BGM_INITIAL_FILE` を使う。`SOREN_GAME_AUDIO_PULSE_LATENCY_MS` はCPUが瞬間的に飽和してもBGMを途切れにくくするPulseAudio bufferで、既定350ms、許容範囲50〜2000ms。
+   旧 `SOREN_GAME_BGM_FILE` は通常BGM用の後方互換名としてのみ残す。新構成では曖昧さを避けるため `SOREN_GAME_BGM_INITIAL_FILE` を使う。`SOREN_GAME_AUDIO_PULSE_LATENCY_MS` はPulseAudio bufferで、既定100ms、許容範囲50〜2000ms。大きすぎると映像に対して音が遅れて聞こえるため、CPUが安定している場合は100ms前後（低遅延側）を推奨する。ffplay/paplay は `-fflags nobuffer` と `PULSE_LATENCY_MSEC` により再生遅延を抑える。
 
    Linux配信機でコードと上記設定をまとめて反映する場合は、対象ブランチを `git pull --ff-only` した後に `./configure_linux_stream_profile.sh` を実行する。このスクリプトは既存 `.env` を時刻付きでバックアップし、配信関連キーだけを更新して、OBSの優先度とsoren supervisorを再起動する。APIキーや配信キーは表示・変更しない。
 

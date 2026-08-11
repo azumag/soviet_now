@@ -77,7 +77,7 @@ set_env_value SOREN_GAME_SE_RUSSIA_FILE "$SCRIPT_DIR/sorengame/assets/SE/ロシ�
 set_env_value SOREN_GAME_SE_HAMMER_SICKLE_FILE "$SCRIPT_DIR/sorengame/assets/SE/鎌と槌合体時SE.wav"
 set_env_value SOREN_GAME_BGM_VOLUME_PCT 60
 set_env_value SOREN_GAME_SE_VOLUME_PCT 70
-set_env_value SOREN_GAME_AUDIO_PULSE_LATENCY_MS 350
+set_env_value SOREN_GAME_AUDIO_PULSE_LATENCY_MS 100
 set_env_value WILDCARD_PARALLEL_JOBS 1
 
 if systemctl cat obs.service >/dev/null 2>&1; then
