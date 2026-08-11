@@ -330,11 +330,13 @@ def match_events(
             "offsets_ms": [],
             "max_abs_offset_ms": None,
             "drift_ms": None,
+            "jitter_spread_ms": None,
             "reason": "insufficient_events",
         }
     offsets = best[1]
     maximum = max(abs(value) for value in offsets)
-    drift = max(offsets) - min(offsets)
+    jitter_spread = max(offsets) - min(offsets)
+    drift = abs(offsets[-1] - offsets[0])
     return {
         "ok": maximum <= max_abs_offset_ms and drift <= max_drift_ms,
         "pair_count": len(offsets),
@@ -342,6 +344,7 @@ def match_events(
         "mean_offset_ms": round(sum(offsets) / len(offsets), 3),
         "max_abs_offset_ms": round(maximum, 3),
         "drift_ms": round(drift, 3),
+        "jitter_spread_ms": round(jitter_spread, 3),
         "limits": {
             "max_abs_offset_ms": max_abs_offset_ms,
             "max_drift_ms": max_drift_ms,

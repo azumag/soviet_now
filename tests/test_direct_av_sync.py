@@ -97,6 +97,18 @@ class DirectAVSyncTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertGreater(result["drift_ms"], 50)
 
+    def test_drift_is_first_to_last_while_mid_run_jitter_remains_visible(self) -> None:
+        result = direct_av_sync.match_events(
+            [1, 3, 5, 7, 9, 11],
+            [1.003, 2.959, 4.926, 6.993, 8.959, 10.959],
+            expected_count=6,
+            max_abs_offset_ms=100,
+            max_drift_ms=50,
+        )
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(result["drift_ms"], 44, delta=0.001)
+        self.assertAlmostEqual(result["jitter_spread_ms"], 77, delta=0.001)
+
 
 if __name__ == "__main__":
     unittest.main()
