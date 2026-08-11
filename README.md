@@ -430,7 +430,9 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
    SOREN_GAME_RENDER_FPS=30
    ```
 
-   `SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。`configure_linux_stream_profile.sh` は実2 OCPUのfree-safe形状では480x270、4 OCPU以上では576x324を選び、どちらも1280x720へ拡大する。4 OCPU以上の576x324は480x270比で44%高精細にしつつ、640x360試験で発生したOBS描画時間45ms・実FPS22までの低下を避ける中間値である。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。リミッターは直前の実フレーム時刻ではなく累積deadlineを進める。Xvfbのnative RAFが約100Hzでも40msごと（約25fps）へ量子化せず、30/40msの利用可能なslotを組み合わせて長期平均30fpsを保つ。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
+`SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。`configure_linux_stream_profile.sh` は実2 OCPUのfree-safe形状では480x270、4 OCPU以上では576x324を選び、どちらも1280x720へ拡大する。4 OCPU以上の576x324は480x270比で44%高精細にしつつ、640x360試験で発生したOBS描画時間45ms・実FPS22までの低下を避ける中間値である。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。リミッターは直前の実フレーム時刻ではなく累積deadlineを進める。Xvfbのnative RAFが約100Hzでも40msごと（約25fps）へ量子化せず、30/40msの利用可能なslotを組み合わせて長期平均30fpsを保つ。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
+
+FFmpeg本番経路で内部解像度の上限を探るときは、出力1280x720を固定し、`./set_game_internal_size.sh --apply 640x360 --confirm-live-restart` で内部描画だけを変更する。576x324をbaselineに、640x360から64x36ずつ1280x720まで10分単位で上げ、各候補で出力平均29.5fps以上、ゲーム平均29.5fps以上、speed p05 0.98以上、drop/dup各1%未満、音声・単一publisher・OBS排他を要求する。最初に失敗した候補ではそれ以上へ進まず、直前の合格サイズへ戻す。この操作はactive soak monitorがある間は拒否し、runtime readinessに失敗した場合も`.env` backupへ自動復帰する。
 
    deadline修正後の実2 OCPU / 12GB・480x270再計測では、OBS中のゲーム平均26.773fps（最小21.8、最大29.7）、FFmpeg直接録画は出力29.81fps・speed 0.995に対してゲーム平均25.353fps（最小19.5、最大30.0）・drop 33・dup 35/899・system busy 99.45%だった。出力だけは720p30条件を満たすが、実ゲーム30fpsとdrop/dup 1%条件は不合格である。修正前の384x216比較でも480x270より描画が改善しなかったうえ画質をさらに失うため、内部解像度を下げる方法は採用しない。XvfbのMesa llvmpipeを使うANGLE OpenGL経路も実機比較したがWebGL contextを生成できず描画healthが停止したため、Chrome既定のSwiftShaderを維持する。
 
@@ -548,7 +550,7 @@ push先は運用者がVM上で `sudoedit /etc/soren-rtmp/push.conf` を使って
 ./cutover_direct_stream.sh --rollback --confirm-live-rollback
 ```
 
-切替後の1時間カナリアと24時間受入は、同じ監視器を時間だけ変えて実行する。監視器は資格情報やrelayの送信先を保存せず、送出frame差分、fps、speed、drop/dup、direct publisher process数、relayへのRTMP入力接続数、relay/OBS相互排他、ゲーム描画FPS、load/memory、FFmpeg CPU時間に加え、`soren_null.monitor` を既定1秒だけ読み取った合成音声の平均/最大音量をJSONLへ記録する。音量検査は既定60秒間隔で、最大音量 -60 dB未満を無音とする。24時間の機械判定は平均29.5fps以上、speedの5パーセンタイル0.98以上、区間drop率0.1%以上の増加が2区間以上連続しないこと、全体drop率とdup率が各1%未満であること、direct processとrelay入力接続がともに常時1つであること、音声probe成功率と非無音率が各99%以上であることを含む。CFRが30fpsを維持するための散発的な1frame補正はraw counterとして残すが、持続dropとは扱わない。BGM/SE/TTSそれぞれの同定、A/V同期、overlay見た目、Twitch側codec、OBS比CPU削減は別の実機検査であり、この監視だけでは合格扱いにしない。
+切替後の短時間カナリアと24時間受入は、同じ監視器を時間だけ変えて実行する。内部解像度の閾値探索では各候補10分、最終候補の連続安定性は24時間で確認する。監視器は資格情報やrelayの送信先を保存せず、送出frame差分、fps、speed、drop/dup、direct publisher process数、relayへのRTMP入力接続数、relay/OBS相互排他、ゲーム描画FPS、load/memory、FFmpeg CPU時間に加え、`soren_null.monitor` を既定1秒だけ読み取った合成音声の平均/最大音量をJSONLへ記録する。音量検査は既定60秒間隔で、最大音量 -60 dB未満を無音とする。機械判定は出力平均とゲーム平均が各29.5fps以上、speedの5パーセンタイル0.98以上、区間drop率0.1%以上の増加が2区間以上連続しないこと、全体drop率とdup率が各1%未満であること、direct processとrelay入力接続がともに常時1つであること、音声probe成功率と非無音率が各99%以上であることを含む。CFRが30fpsを維持するための散発的な1frame補正はraw counterとして残すが、持続dropとは扱わない。BGM/SE/TTSそれぞれの同定、A/V同期、overlay見た目、Twitch側codec、OBS比CPU削減は別の実機検査であり、この監視だけでは合格扱いにしない。
 
 FFmpegカナリア中のローカルrelay断復旧は `./direct_stream_recovery_test.sh --run --confirm-live-recovery-test` で検査する。このテストはrelayだけを非同期再起動し、60秒以内に新しいFFmpeg run、30fps近傍、speed 0.97以上、direct process 1件、relay入力1件へ戻ることを要求する。nginx-rtmpのgraceful stopが配信中publisherを待ち続けないよう、relay unitの停止猶予は5秒に制限する。失敗時はcutover時に記録したOBS backupへ自動rollbackする。これは外部RTMP宛先の回線断試験とは別であり、外部再接続はrelayログと配信プラットフォーム側の連続性も合わせて確認する。
 

@@ -32,6 +32,7 @@ def sample(
     relay_publishers: int = 1,
     audio_ok: bool = True,
     audio_present: bool = True,
+    game_fps: float = 30.0,
 ) -> dict[str, object]:
     return {
         "sampled_at": at,
@@ -44,7 +45,7 @@ def sample(
             "drop_frames": drops,
             "dup_frames": dups,
         },
-        "game": {"measuredFps": 27.5},
+        "game": {"measuredFps": game_fps},
         "relay": {"active": relay, "restarts": 0},
         "obs": {"active": obs, "restarts": 0},
         "publisher_process_count": publishers,
@@ -120,6 +121,17 @@ class DirectSoakTests(unittest.TestCase):
         self.assertFalse(summary["ok"])
         self.assertFalse(summary["requirements"]["audio_probe_success_ratio_0_99"])
         self.assertFalse(summary["requirements"]["combined_audio_present_ratio_0_99"])
+
+    def test_slow_game_render_fps_fails_even_when_output_is_30fps(self) -> None:
+        rows = [
+            sample(0, 0, game_fps=29.4),
+            sample(60, 1800, game_fps=29.3),
+            sample(120, 3600, game_fps=29.4),
+        ]
+        summary = direct_soak.summarize_samples(rows, 120)
+        self.assertFalse(summary["ok"])
+        self.assertTrue(summary["requirements"]["mean_output_fps_29_5"])
+        self.assertFalse(summary["requirements"]["game_fps_mean_29_5"])
 
     def test_config_is_strict_and_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

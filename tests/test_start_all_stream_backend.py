@@ -117,7 +117,11 @@ class StartAllStreamBackendTests(unittest.TestCase):
         self.assertIn("game_internal_size=480,270", profile)
         self.assertIn("game_internal_size=576,324", profile)
         self.assertIn('profile_internal_size="${SOREN_PROFILE_GAME_INTERNAL_SIZE:-}"', profile)
-        self.assertIn("320,180|384,216|480,270|576,324|640,360", profile)
+        self.assertIn(
+            "576,324|640,360|704,396|768,432|832,468|896,504|960,540|"
+            "1024,576|1088,612|1152,648|1216,684|1280,720",
+            profile,
+        )
         self.assertLess(
             profile.index('profile_internal_size="${SOREN_PROFILE_GAME_INTERNAL_SIZE:-}"'),
             profile.index('backup="${ENV_FILE}'),

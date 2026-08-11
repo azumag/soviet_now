@@ -36,7 +36,7 @@ fi
 profile_internal_size="${SOREN_PROFILE_GAME_INTERNAL_SIZE:-}"
 case "$profile_internal_size" in
 "") ;;
-320,180|384,216|480,270|576,324|640,360) ;;
+320,180|384,216|480,270|576,324|640,360|704,396|768,432|832,468|896,504|960,540|1024,576|1088,612|1152,648|1216,684|1280,720) ;;
 *)
 	echo "SOREN_PROFILE_GAME_INTERNAL_SIZE must be a supported 16:9 size" >&2
 	exit 2
@@ -57,6 +57,7 @@ required_code=(
 	direct_stream_soak.sh
 	direct_stream_recovery_test.sh
 	direct_av_sync_test.sh
+	set_game_internal_size.sh
 	cutover_direct_stream.sh
 	lib/direct_stream.py
 	lib/direct_soak.py

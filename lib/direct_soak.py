@@ -532,6 +532,7 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
     relay_publisher_max = max(relay_publisher_counts) if relay_publisher_counts else -1
     relay_publisher_min = min(relay_publisher_counts) if relay_publisher_counts else -1
     speed_p05 = _percentile(speed_values, 0.05)
+    game_fps_mean = statistics.fmean(game_fps_values) if game_fps_values else None
     audio_probe_success_ratio = audio_probe_success_count / count if count else 0.0
     audio_present_ratio = audio_present_count / count if count else 0.0
     drop_ratio = drop_delta / max(frame_delta, 1)
@@ -539,6 +540,7 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
     requirements = {
         "duration_covered": elapsed >= expected_duration * 0.99,
         "mean_output_fps_29_5": mean_output_fps >= 29.5,
+        "game_fps_mean_29_5": game_fps_mean is not None and game_fps_mean >= 29.5,
         "speed_p05_0_98": speed_p05 is not None and speed_p05 >= 0.98,
         "drop_not_continuous": max_consecutive_significant_drop_growth < 2,
         "drop_ratio_under_1pct": drop_ratio < MAX_TOTAL_FRAME_ADJUSTMENT_RATIO,
@@ -580,7 +582,7 @@ def summarize_samples(samples: Sequence[Mapping[str, object]], expected_duration
         "publisher_count_max": publisher_max,
         "relay_publisher_connection_count_min": relay_publisher_min,
         "relay_publisher_connection_count_max": relay_publisher_max,
-        "game_fps_mean": round(statistics.fmean(game_fps_values), 4) if game_fps_values else None,
+        "game_fps_mean": round(game_fps_mean, 4) if game_fps_mean is not None else None,
         "audio_probe_success_ratio": round(audio_probe_success_ratio, 6),
         "combined_audio_present_ratio": round(audio_present_ratio, 6),
         "audio_mean_db_mean": (
