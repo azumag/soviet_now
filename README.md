@@ -418,7 +418,7 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
 
    再起動後、`pactl list clients` に `obs` が現れ、OBS ログに `Started recording from 'soren_null.monitor'` が出れば接続成功。
 
-7. Oracle Free Tier の**無料アカウント**がトライアル終了後も保持できる Always Free A1 は、テナンシー合計 2 OCPU / 12GB。トライアル中または Pay As You Go アカウントでは、A1 の月間先頭 3,000 OCPU時間 / 18,000 GB時間が無料料金枠で、他のA1を使わなければ4 OCPU / 24GBの常時稼働も計算上その範囲に収まる。ただしPAYGでは無料枠超過分が課金対象になるため予算・使用量アラートを併用し、無料アカウントを維持する場合の最終受入は実2 OCPU / 12GB形状で行う。詳細はOracle公式の [Free Tier](https://docs.oracle.com/iaas/Content/FreeTier/freetier.htm) と [Ampere A1 Compute](https://docs.oracle.com/en-us/iaas/Content/Compute/References/arm.htm) を参照。
+7. Oracle Free Tier の**無料アカウント**がトライアル終了後も保持できる Always Free A1 は、テナンシー合計 2 OCPU / 12GB。Oracle公式の現行値は月間先頭 1,500 OCPU時間 / 9,000 GB時間で、4 OCPU / 24GBの常時稼働はこの両方を超える。実2/12の受入試験は下記のとおり不合格、4/24は合格だったため、本番ターゲットはユーザー判断で4 OCPU / 24GBとする。トライアル終了前にPay As You Goへ移行し、予算・使用量アラートを設定する。詳細はOracle公式の [Free Tier](https://docs.oracle.com/iaas/Content/FreeTier/freetier.htm) と [Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) を参照。
 
    1080p software GL + x264は負荷変動が大きいため、まず安定運用プロファイルとして Xvfb/Chrome/OBS base を1280x720、OBS outputを720p30、x264 `ultrafast`、Unity内部render targetを実2 OCPUでは480x270、4 OCPU以上では576x324としてCSSで全画面へ拡大する。Linux headed Chromiumは既定で `--kiosk`になり、Playwrightの自動操作帯とブラウザUIを除去する。`.env` は次を指定する。
 
@@ -434,7 +434,7 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
 
    deadline修正後の実2 OCPU / 12GB・480x270再計測では、OBS中のゲーム平均26.773fps（最小21.8、最大29.7）、FFmpeg直接録画は出力29.81fps・speed 0.995に対してゲーム平均25.353fps（最小19.5、最大30.0）・drop 33・dup 35/899・system busy 99.45%だった。出力だけは720p30条件を満たすが、実ゲーム30fpsとdrop/dup 1%条件は不合格である。修正前の384x216比較でも480x270より描画が改善しなかったうえ画質をさらに失うため、内部解像度を下げる方法は採用しない。XvfbのMesa llvmpipeを使うANGLE OpenGL経路も実機比較したがWebGL contextを生成できず描画healthが停止したため、Chrome既定のSwiftShaderを維持する。
 
-   4 OCPU / 24GB実機の576x324→720p30再計測では、OBS中のゲーム平均29.847fps、FFmpeg直接録画は出力29.97fps・speed 0.999・ゲーム平均29.900fps・drop 0・dup 2/900となり、`direct_720p30_acceptance=true`を満たした。一方、実2 OCPU / 12GBは上記のとおり実ゲーム30fpsを満たさないため、現時点の運用候補は4 OCPU / 24GBとする。
+   4 OCPU / 24GB実機の576x324→720p30再計測では、OBS中のゲーム平均29.847fps、FFmpeg直接録画は出力29.97fps・speed 0.999・ゲーム平均29.900fps・drop 0・dup 2/900となり、`direct_720p30_acceptance=true`を満たした。一方、実2 OCPU / 12GBは上記のとおり実ゲーム30fpsを満たさないため、本番ターゲットは4 OCPU / 24GBとする。2/12は不合格の比較結果として保持するが、これ以上画質や機能を削って本番化しない。
 
 8. systemdのOBSを `Nice=15` のような低優先度で動かすと、上限解除されたsoftware GLにCPUを奪われ、encoder skipped frameが0でもrendering lagと音切れが発生し得る。A1配信ではOBSを優先し、ゲーム側を上記30fpsに制限する。system-scope serviceの例:
 
