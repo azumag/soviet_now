@@ -38,7 +38,7 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
   assert.equal(enabled.elementId, DIRECT_OVERLAY_ELEMENT_ID);
   assert.match(enabled.htmlFile, /tmp\/state\/event_overlay[.]html$/);
   assert.deepEqual(enabled.surfaces.map((item) => item.key), [
-    'broadcast', 'improve', 'wildcard', 'avsync',
+    'broadcastSidebar', 'broadcastTop', 'broadcastBottom', 'improve', 'wildcard', 'avsync',
   ]);
   assert.equal(enabled.broadcast.stateRoute, '/__soren_overlay/broadcast/state');
   assert.match(enabled.broadcast.sources.eventHtmlFile, /event_overlay[.]html$/);
@@ -60,11 +60,12 @@ test('overlay installer persists across reload and installs current page', async
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   assert.equal(await installDirectOverlay(page, config), true);
   assert.deepEqual(calls.map(([kind]) => kind), ['init', 'evaluate']);
-  assert.equal(calls[0][2].length, 4);
+  assert.equal(calls[0][2].length, 6);
   assert.match(String(calls[0][1]), /window[.]top !== window/);
-  assert.equal(calls[0][2][0].route, '/__soren_overlay/broadcast');
-  assert.equal(calls[0][2][0].elementId, 'soren-direct-stream-overlay-broadcast');
-  assert.equal(calls[0][2][0].key, 'broadcast');
+  assert.equal(calls[0][2][0].route, '/__soren_overlay/broadcast/sidebar');
+  assert.equal(calls[0][2][0].elementId, 'soren-direct-stream-overlay-broadcastSidebar');
+  assert.equal(calls[0][2][0].key, 'broadcastSidebar');
+  assert.equal(calls[0][2][0].region, 'sidebar');
   assert.equal(calls[0][2][0].pollMs, 60000);
   assert.equal(calls[0][2].find((item) => item.route.endsWith('/av-sync')).pollMs, 250);
   assert.match(String(calls[0][1]), /elementId}-buffer/);
@@ -95,10 +96,22 @@ test('default FFmpeg stage keeps a 960x540 game and a 320px dashboard', () => {
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   const byKey = Object.fromEntries(config.surfaces.map((item) => [item.key, item]));
   assert.equal(config.stage.gameWidth, 960);
-  assert.equal(byKey.broadcast.style.inset, '0');
-  assert.equal(byKey.broadcast.style.width, '1280px');
-  assert.equal(byKey.broadcast.style.height, '720px');
-  assert.match(byKey.broadcast.htmlFile, /overlays\/direct_broadcast_overlay[.]html$/);
+  assert.deepEqual(
+    ['broadcastSidebar', 'broadcastTop', 'broadcastBottom'].map((key) => byKey[key].region),
+    ['sidebar', 'top', 'bottom'],
+  );
+  assert.deepEqual(byKey.broadcastSidebar.style, {
+    left: '960px', top: '0', width: '320px', height: '720px', zIndex: '2147483630',
+  });
+  assert.deepEqual(byKey.broadcastTop.style, {
+    left: '0', top: '0', width: '960px', height: '90px', zIndex: '2147483630',
+  });
+  assert.deepEqual(byKey.broadcastBottom.style, {
+    left: '0', top: '630px', width: '960px', height: '90px', zIndex: '2147483630',
+  });
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+    assert.match(byKey[key].htmlFile, /overlays\/direct_broadcast_overlay[.]html$/);
+  }
   assert.equal(byKey.event, undefined);
   assert.equal(byKey.stats, undefined);
   assert.equal(byKey.ops, undefined);
@@ -161,12 +174,14 @@ test('state-driven surfaces match normal, improvement, and wildcard layouts', ()
 
   fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'idle' }));
   fs.writeFileSync(improveState, JSON.stringify({ status: 'running' }));
-  assert.equal(directOverlaySurfaceVisible(byKey.broadcast), true);
+  assert.equal(directOverlaySurfaceVisible(byKey.broadcastSidebar), true);
+  assert.equal(directOverlaySurfaceVisible(byKey.broadcastTop), true);
+  assert.equal(directOverlaySurfaceVisible(byKey.broadcastBottom), true);
   assert.equal(directOverlaySurfaceVisible(byKey.improve), true);
   assert.equal(directOverlaySurfaceVisible(byKey.wildcard), false);
 
   fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'running' }));
-  assert.equal(directOverlaySurfaceVisible(byKey.broadcast), true);
+  assert.equal(directOverlaySurfaceVisible(byKey.broadcastSidebar), true);
   assert.equal(directOverlaySurfaceVisible(byKey.improve), false);
   assert.equal(directOverlaySurfaceVisible(byKey.wildcard), true);
   fs.rmSync(temp, { recursive: true, force: true });

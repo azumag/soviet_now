@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=1280,height=720,initial-scale=1">
 <title>Soren direct broadcast overlay</title>
+<script>
+document.documentElement.dataset.sorenRegion = window.frameElement?.dataset.sorenOverlayRegion || 'full';
+</script>
 <style>
 :root {
   color-scheme: dark;
@@ -31,6 +34,28 @@ html, body {
   overflow: hidden;
   pointer-events: none;
 }
+html[data-soren-region="sidebar"],
+html[data-soren-region="sidebar"] body,
+html[data-soren-region="sidebar"] #broadcast-overlay {
+  width: 320px;
+  height: 720px;
+}
+html[data-soren-region="sidebar"] #broadcast-sidebar { left: 0; }
+html[data-soren-region="sidebar"] .rail { display: none; }
+html[data-soren-region="top"],
+html[data-soren-region="top"] body,
+html[data-soren-region="top"] #broadcast-overlay,
+html[data-soren-region="bottom"],
+html[data-soren-region="bottom"] body,
+html[data-soren-region="bottom"] #broadcast-overlay {
+  width: 960px;
+  height: 90px;
+}
+html[data-soren-region="top"] #broadcast-sidebar,
+html[data-soren-region="top"] #bottom-rail,
+html[data-soren-region="bottom"] #broadcast-sidebar,
+html[data-soren-region="bottom"] #top-rail { display: none; }
+html[data-soren-region="bottom"] #bottom-rail { top: 0; }
 #broadcast-sidebar {
   position: absolute;
   left: 960px;
@@ -205,6 +230,7 @@ html, body {
   const TOAST_PAGE_MS = 3000;
   const FEED_LINES_PER_PAGE = 58;
   const TOASTS_PER_PAGE = 3;
+  const SURFACE_REGION = document.documentElement.dataset.sorenRegion || 'full';
   const feed = document.getElementById('feed');
   const feedLabel = document.getElementById('feed-label');
   const feedAge = document.getElementById('feed-age');
@@ -368,6 +394,7 @@ html, body {
       generatorCount: state?.notifications?.generators?.length || 0,
       feedPages: feedPages.length,
       error,
+      region: SURFACE_REGION,
       layout: { game: [0, 90, 960, 540], sidebar: [960, 0, 320, 720], rails: [90, 90] },
     };
   }

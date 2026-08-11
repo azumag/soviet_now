@@ -80,6 +80,12 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /height:\s*90px/);
   assert.match(html, /id="bottom-rail"/);
   assert.match(html, /top:\s*630px/);
+  assert.match(html, /sorenOverlayRegion/);
+  assert.match(html, /data-soren-region="sidebar"/);
+  assert.match(html, /data-soren-region="top"/);
+  assert.match(html, /data-soren-region="bottom"/);
+  assert.match(html, /data-soren-region="sidebar"[^}]+#broadcast-sidebar\s*\{\s*left:\s*0/s);
+  assert.match(html, /data-soren-region="bottom"[^}]+#bottom-rail\s*\{\s*top:\s*0/s);
   assert.match(html, /const FEED_PAGE_MS = 12000/);
   assert.match(html, /const FEED_LINES_PER_PAGE = 58/);
   assert.match(html, /const TOASTS_PER_PAGE = 3/);
