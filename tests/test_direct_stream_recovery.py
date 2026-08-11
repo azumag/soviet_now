@@ -43,7 +43,7 @@ class DirectStreamRecoveryTests(unittest.TestCase):
 
     def test_source_has_bounded_recovery_and_failure_rollback(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn('systemctl restart "$RELAY_UNIT"', source)
+        self.assertIn('systemctl --no-block restart "$RELAY_UNIT"', source)
         self.assertIn('TIMEOUT_SEC="${SOREN_DIRECT_RECOVERY_TIMEOUT_SEC:-60}"', source)
         self.assertIn('if [ "$(publisher_shape)" != "1:1" ]', source)
         self.assertIn("--rollback --confirm-live-rollback", source)

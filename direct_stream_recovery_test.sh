@@ -140,7 +140,12 @@ trap 'recover_obs_on_failure $?' ERR
 trap 'recover_obs_on_failure 130' INT TERM
 
 TEST_STARTED=$(date +%s)
-sudo -n systemctl restart "$RELAY_UNIT"
+# nginx-rtmp's graceful SIGQUIT waits for the active publisher connection to
+# close, while that publisher waits for the relay to return.  The unit bounds
+# that graceful stop at five seconds; --no-block lets this acceptance timer
+# include the whole stop/start/reconnect sequence instead of blocking inside
+# systemctl until the stop timeout expires.
+sudo -n systemctl --no-block restart "$RELAY_UNIT"
 DEADLINE=$(( TEST_STARTED + TIMEOUT_SEC ))
 AFTER_STATUS=""
 while [ "$(date +%s)" -le "$DEADLINE" ]; do

@@ -32,6 +32,7 @@ class DirectStreamRelayTests(unittest.TestCase):
         self.assertIn("ProtectSystem=strict", unit)
         self.assertIn("CapabilityBoundingSet=", unit)
         self.assertIn("Restart=on-failure", unit)
+        self.assertIn("TimeoutStopSec=5", unit)
         self.assertIn('-g "daemon off;"', unit)
         self.assertNotIn("daemon\\ off", unit)
 

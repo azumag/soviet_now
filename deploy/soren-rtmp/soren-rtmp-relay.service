@@ -13,6 +13,7 @@ ExecStartPre=/usr/sbin/nginx -t -c /etc/soren-rtmp/nginx.conf
 ExecStart=/usr/sbin/nginx -c /etc/soren-rtmp/nginx.conf -g "daemon off;"
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGQUIT
+TimeoutStopSec=5
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
