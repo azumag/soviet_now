@@ -135,9 +135,10 @@ _broadcast_expected_mode_matches() {
 
 _radio_voicevox_speaker_override() {
 	local corner="${1:-}"
-	if [ "$(_radio_host_mode)" = "soren91" ]; then
-		printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}"
-	fi
+	# ラジオコーナーの読み上げは常にメイン話者（tmp/voicevox_voice.txt=東北イタコ 109）を使う。
+	# soren91(メリケンAI) 稼働中でも SOREN91_VOICEVOX_SPEAKER へ上書きしない
+	# （soren91 自身のアナウンス声は soren91_control.sh 側で別途指定される）。
+	return 0
 }
 
 _radio_persona_block() {
