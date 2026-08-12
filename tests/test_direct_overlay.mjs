@@ -74,7 +74,7 @@ test('overlay installer persists across reload and installs current page', async
 });
 
 
-test('TwiCa external overlay uses iframe src and skips polling', () => {
+test('TwiCa external overlay rewrites to local proxy, keeps upstream, skips polling', () => {
   const config = loadDirectOverlayConfig({
     SOREN_STREAM_BACKEND: 'ffmpeg',
     SOREN_DIRECT_TWICA_OVERLAY_ENABLED: '1',
@@ -82,12 +82,24 @@ test('TwiCa external overlay uses iframe src and skips polling', () => {
   }, 'linux');
   const twica = config.surfaces.find((item) => item.key === 'twica');
   assert.ok(twica);
-  assert.equal(twica.srcUrl, 'https://twica.bluemoon.works/overlay/demo?pName=true');
+  // X-Frame-Options: SAMEORIGIN を回避する同一オリジンプロキシ経由に書き換わる
+  assert.equal(twica.srcUrl, 'http://127.0.0.1:18080/overlay/demo?pName=true');
+  assert.equal(twica.upstreamUrl, 'https://twica.bluemoon.works/overlay/demo?pName=true');
   assert.equal(twica.route, '/__soren_overlay/twica');
   assert.equal(twica.style.zIndex, '2147483645');
   assert.equal(twica.style.inset, '0');
   assert.equal(twica.style.width, '100vw');
   assert.equal(twica.style.height, '100vh');
+
+  // プロキシポート変更も env で追随できる
+  const custom = loadDirectOverlayConfig({
+    SOREN_STREAM_BACKEND: 'ffmpeg',
+    SOREN_DIRECT_TWICA_OVERLAY_ENABLED: '1',
+    SOREN_DIRECT_TWICA_OVERLAY_URL: 'https://twica.bluemoon.works/overlay/demo?pName=true',
+    SOREN_DIRECT_TWICA_PROXY_PORT: '19091',
+  }, 'linux');
+  assert.equal(custom.surfaces.find((item) => item.key === 'twica').srcUrl,
+    'http://127.0.0.1:19091/overlay/demo?pName=true');
 });
 
 

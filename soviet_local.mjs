@@ -15,6 +15,7 @@ import {
   installDirectOverlay,
   loadDirectOverlayConfig,
 } from './lib/direct_overlay.mjs';
+import { startTwicaOverlayProxy } from './lib/twica_overlay_proxy.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1237,6 +1238,24 @@ async function runLocalController() {
     process.exit(1);
   }
 
+  // TwiCa 外部オーバーレイ用ローカルプロキシ（X-Frame-Options 回避・WebSocket 中継）。
+  // 有効時のみ起動する。.env の SOREN_DIRECT_TWICA_OVERLAY_URL が無ければ起動しない。
+  let twicaProxyServer = null;
+  const twicaSurface = DIRECT_OVERLAY_CONFIG.enabled
+    ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.key === 'twica')
+    : null;
+  if (twicaSurface?.srcUrl && twicaSurface.upstreamUrl) {
+    const twicaProxyPort = parseInt(process.env.SOREN_DIRECT_TWICA_PROXY_PORT || '18080', 10);
+    try {
+      twicaProxyServer = await startTwicaOverlayProxy({
+        port: twicaProxyPort,
+        upstream: twicaSurface.upstreamUrl,
+      });
+    } catch (e) {
+      console.error(`Failed to start TwiCa overlay proxy: ${e.message}`);
+    }
+  }
+
   // Cleanup on exit
   function removeCdpEndpoint() {
     try { fs.unlinkSync(CDP_ENDPOINT_FILE); } catch {}
@@ -1245,6 +1264,7 @@ async function runLocalController() {
     console.log('\nShutting down...');
     removeCdpEndpoint();
     server.close();
+    if (twicaProxyServer) twicaProxyServer.close();
     process.exit(0);
   });
   process.on('exit', removeCdpEndpoint);
