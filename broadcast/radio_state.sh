@@ -95,7 +95,12 @@ _play_priority_audio_file() {
 	_play_detail=$(_radio_generation_debug_summary "$audio_file" 2>/dev/null || true)
 	_radio_set_state "playing" "$corner_name" "$_play_detail"
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
-	SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
+	# ラジオ読み上げ中はコメントが割り込まない（読み上げ終了後にコメント再生へ）。
+	# コメント返信の生成（chat_worker）は別プロセスで並行進行するため、再生順序だけ
+	# ラジオ優先にしてもコメントの作成は遅れない。
+	SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" \
+		SAY_DISABLE_COMMENT_YIELD=1 \
+		SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
 
 _cancel_russia_celebration_worker() {
