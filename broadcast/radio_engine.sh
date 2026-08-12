@@ -1809,13 +1809,9 @@ PREPASS_APPEND
 	local host_mode_now=""
 	host_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_now" != "$host_mode_generated" ]; then
-		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> discard"
-		_write_radio_corner_status "stale_mode_discarded" "$corner_name" "$game_num" "$score" "$topic" "mode_changed" "$selected_news" "{\"expected_mode\": \"${host_mode_generated}\", \"current_mode\": \"${host_mode_now}\"}"
-		_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
-		rm -f "$talk_file"
-		_radio_clear_state "$corner_name" "stale_mode_discarded"
-		rmdir "$inflight_dir" 2>/dev/null || true
-		return 0
+		# 生成完了までにモードが変わっても破棄せず、キュー投入を継続する。
+		# 再生側も mode 不一致では破棄しないため、生成されたラジオは必ず順番に再生される。
+		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> 破棄せずキューへ投入"
 	fi
 
 	# 再生は常に deferred キューへ積み、audio_worker に委譲する
@@ -1829,6 +1825,7 @@ PREPASS_APPEND
 		[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" >"${deferred_file%.txt}.cc_text"
 	fi
 	if [ -n "$deferred_file" ]; then
+		_radio_mark_done "$done_marker"
 		_radio_set_state "queued" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "$provider_used")"
 		_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "deferred" "$selected_news" "{\"deferred_file\": \"$(basename "$deferred_file")\"}"
 		log "[RADIO:${corner_name}] deferred queue投入: $(basename "$deferred_file")"

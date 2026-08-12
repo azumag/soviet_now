@@ -437,18 +437,6 @@ _play_deferred_radio_queue_once() {
 	[ -n "$qf" ] || return 0
 	[ -f "$qf" ] || return 0
 
-	local deferred_expected_mode="" deferred_current_mode=""
-	deferred_expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
-	deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-	if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-		log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-		_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
-		_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
-		_radio_clear_generation_meta "$qf" 2>/dev/null || true
-		rm -f "$qf" "$(_radio_ready_wav_path "$qf")" "$(_radio_ready_wav_path "$qf").tmp" "$(_radio_render_marker_path "$qf")" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
-		return 0
-	fi
-
 	local deferred_corner=""
 	deferred_corner=$(basename "$qf" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/')
 	local news_title_file="${qf%.txt}.news_title"
@@ -476,16 +464,6 @@ _play_deferred_radio_queue_once() {
 
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
-		deferred_expected_mode=$(_broadcast_read_expected_mode "$playing_file" 2>/dev/null || true)
-		deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-			log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-			_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
-			_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-			rm -f "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-			return 0
-		fi
 		_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 		local radio_meta_summary=""
 		radio_meta_summary=$(_radio_generation_debug_summary "$playing_file" 2>/dev/null || true)
