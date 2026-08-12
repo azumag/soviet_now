@@ -256,7 +256,7 @@ run_cmd() {
 		fi
 	fi
 	[ -n "$timeout_sec" ] && timeout_label="${timeout_sec}s"
-	# ハーネスは codex CLI に統一 (モデル: opencode-go/deepseek-v4-flash)。
+	# ハーネスは codex CLI に統一 (モデル: deepseek-v4-flash)。
 	# 旧 zai/minimax/glm/opencode/gemini/claude/ollama 指定はすべて codex へ正規化する。
 	local original_type="$type"
 	if [ "$type" != "codex" ]; then
@@ -313,7 +313,7 @@ run_cmd() {
 	fi
 
 	# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
-	local codex_model="${CODEX_MODEL:-opencode-go/deepseek-v4-flash}"
+	local codex_model="${CODEX_MODEL:-deepseek-v4-flash}"
 	local codex_out_file
 	codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
 	local -a codex_args=(

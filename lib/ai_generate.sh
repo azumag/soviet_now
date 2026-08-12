@@ -573,12 +573,12 @@ _ai_call_opencode() {
 # === Codex (統一ハーネス) ===
 
 # _ai_call_codex LABEL AGENT PROMPT_FILE [TIMEOUT]
-#   codex CLI 経由で opencode-go/deepseek-v4-flash を呼ぶ（モデルは CODEX_MODEL で固定）。
+#   codex CLI 経由で deepseek-v4-flash を呼ぶ（モデルは CODEX_MODEL で固定）。
 #   opencode CLI / claude / minimax / ollama は使用しない。
 _ai_call_codex_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_sec="${4:-${CODEX_TIMEOUT:-300}}"
-	local model="${CODEX_MODEL:-opencode-go/deepseek-v4-flash}"
+	local model="${CODEX_MODEL:-deepseek-v4-flash}"
 	local codex_bin="${CODEX_BIN:-codex}"
 	local out_file rc cleaned
 	[ -s "$prompt_file" ] || return 1
@@ -639,7 +639,7 @@ _ai_dispatch() {
 	local _dispatch_output_file="$_dispatch_log_dir/${_dispatch_tag}_output.txt"
 
 	# ハーネスは codex CLI に統一。エージェント識別子はログ用に保持し、
-	# モデルは CODEX_MODEL (既定 opencode-go/deepseek-v4-flash) に固定する。
+	# モデルは CODEX_MODEL (既定 deepseek-v4-flash) に固定する。
 	local _codex_timeout="$timeout_override"
 	case "$agent" in
 	'' )

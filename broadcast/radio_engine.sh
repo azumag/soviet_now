@@ -230,12 +230,12 @@ _run_claude_comment_with_model_unqueued() {
 }
 
 _run_claude_comment_with_model() {
-	# ハーネス統一: codex CLI (opencode-go/deepseek-v4-flash) で応答生成
-	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
+	# ハーネス統一: codex CLI (deepseek-v4-flash) で応答生成
+	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_claude_comment() {
-	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_minimax_comment_unqueued() {
@@ -313,7 +313,7 @@ _run_minimax_comment_unqueued() {
 }
 
 _run_minimax_comment() {
-	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_comment_agent() {
@@ -366,11 +366,11 @@ _run_claude_radio_with_model_unqueued() {
 }
 
 _run_claude_radio_with_model() {
-	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_claude_radio() {
-	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_minimax_radio_unqueued() {
@@ -413,7 +413,7 @@ _run_minimax_radio_unqueued() {
 }
 
 _run_minimax_radio() {
-	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_radio_agent() {
@@ -550,7 +550,7 @@ _run_ollama_radio_unqueued() {
 }
 
 _run_ollama_radio() {
-	_ai_call_codex "RADIO" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
 }
 
 _run_ollama_comment_unqueued() {
@@ -592,7 +592,7 @@ _run_ollama_comment_unqueued() {
 }
 
 _run_ollama_comment() {
-	_ai_call_codex "COMMENT" "codex:opencode-go/deepseek-v4-flash" "$1"
+	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
 }
 
 _write_radio_corner_status() {
