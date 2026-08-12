@@ -960,20 +960,29 @@ _synthesize_chunk() {
 	local text="$1" output="$2"
 	local _chunk_timeout
 	_chunk_timeout=$(_voicevox_synth_timeout_sec)
-	local _sc_cmd="VOICEVOX_SPEAKER=\"$VOICEVOX_SPEAKER\" \
-		VOICEVOX_PITCH=\"${PRE_SYNTH_PITCH:-}\" \
-		VOICEVOX_TEMPO=\"${PRE_SYNTH_TEMPO:-}\" \
-		VOICEVOX_INTONATION=\"${PRE_SYNTH_INTONATION:-}\" \
-		# 合成は文字数に比例して数十秒かかる（高負荷時）。30秒では長いチャンクが
-		# タイムアウトで失敗するため、VOICEVOX_SYNTH_TIMEOUT_SEC と揃えた十分な値を使う。
-		VOICEVOX_TIMEOUT=\"$_chunk_timeout\" \
-		VOICEVOX_MAX_CHARS=99999 \
-		./voicevox_tts.sh -o \"$output\" \"$text\""
+	# 合成は文字数に比例して数十秒かかる（高負荷時）。30秒では長いチャンクが
+	# タイムアウトで失敗するため、コンテキスト別 timeout を使う。
+	# 注意: 変数代入を bash -c の文字列に混ぜるとコメント行で代入が壊れ、
+	# VOICEVOX_SPEAKER が voicevox_tts.sh に渡らずデフォルト(ずんだもん)になる。
+	# 必ず env/コマンド前置き形式で渡すこと。
 	if [ -n "$TIMEOUT_CMD" ]; then
 		$TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$_chunk_timeout" \
-			bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+			env \
+				VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+				VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+				VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+				VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+				VOICEVOX_TIMEOUT="$_chunk_timeout" \
+				VOICEVOX_MAX_CHARS=99999 \
+				./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	else
-		bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+		VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+			VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+			VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+			VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+			VOICEVOX_TIMEOUT="$_chunk_timeout" \
+			VOICEVOX_MAX_CHARS=99999 \
+			./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	fi
 }
 
