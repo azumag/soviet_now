@@ -61,7 +61,10 @@ _synthesize_one_at_url() {
     local output="$2"
 
     # VOICEVOXクラッシュ防止: 推論を壊す文字を除去
-    text=$(printf '%s' "$text" | tr -d '#＃')
+    # (GNU tr はバイト単位で '＃' が 0xEF/0xBC/0x83 の各バイト削除になり
+    #  ニ・ュ・ー等の多バイト文字を破壊するため bash 置換を使う)
+    text=${text//"#"/}
+    text=${text//"＃"/}
 
     # 読み替え辞書: VOICEVOXが誤読する単語を修正
     if [ -f "$SCRIPT_DIR/config/voicevox_word_replace.txt" ]; then
