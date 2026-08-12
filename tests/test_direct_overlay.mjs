@@ -38,7 +38,7 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
   assert.equal(enabled.elementId, DIRECT_OVERLAY_ELEMENT_ID);
   assert.match(enabled.htmlFile, /tmp\/state\/event_overlay[.]html$/);
   assert.deepEqual(enabled.surfaces.map((item) => item.key), [
-    'broadcastSidebar', 'broadcastTop', 'broadcastBottom', 'improve', 'wildcard', 'avsync',
+    'broadcastSidebar', 'broadcastTop', 'broadcastBottom', 'twica', 'improve', 'wildcard', 'avsync',
   ]);
   assert.equal(enabled.broadcast.stateRoute, '/__soren_overlay/broadcast/state');
   assert.match(enabled.broadcast.sources.eventHtmlFile, /event_overlay[.]html$/);
@@ -60,7 +60,7 @@ test('overlay installer persists across reload and installs current page', async
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   assert.equal(await installDirectOverlay(page, config), true);
   assert.deepEqual(calls.map(([kind]) => kind), ['init', 'evaluate']);
-  assert.equal(calls[0][2].length, 6);
+  assert.equal(calls[0][2].length, 7);
   assert.match(String(calls[0][1]), /window[.]top !== window/);
   assert.equal(calls[0][2][0].route, '/__soren_overlay/broadcast/sidebar');
   assert.equal(calls[0][2][0].elementId, 'soren-direct-stream-overlay-broadcastSidebar');
@@ -71,6 +71,23 @@ test('overlay installer persists across reload and installs current page', async
   assert.match(String(calls[0][1]), /elementId}-buffer/);
   assert.match(String(calls[0][1]), /incoming[.]addEventListener\('load'/);
   assert.match(String(calls[0][1]), /outgoing[.]style[.]visibility = 'hidden'/);
+});
+
+
+test('TwiCa external overlay uses iframe src and skips polling', () => {
+  const config = loadDirectOverlayConfig({
+    SOREN_STREAM_BACKEND: 'ffmpeg',
+    SOREN_DIRECT_TWICA_OVERLAY_ENABLED: '1',
+    SOREN_DIRECT_TWICA_OVERLAY_URL: 'https://twica.bluemoon.works/overlay/demo?pName=true',
+  }, 'linux');
+  const twica = config.surfaces.find((item) => item.key === 'twica');
+  assert.ok(twica);
+  assert.equal(twica.srcUrl, 'https://twica.bluemoon.works/overlay/demo?pName=true');
+  assert.equal(twica.route, '/__soren_overlay/twica');
+  assert.equal(twica.style.zIndex, '2147483645');
+  assert.equal(twica.style.inset, '0');
+  assert.equal(twica.style.width, '100vw');
+  assert.equal(twica.style.height, '100vh');
 });
 
 
@@ -140,7 +157,7 @@ test('stage validates dashboard room and supports explicit fullscreen compatibil
   assert.equal(fullscreen.stage.enabled, false);
   assert.equal(fullscreen.surfaces[0].style.width, '100vw');
   assert.deepEqual(fullscreen.surfaces.map((item) => item.key), [
-    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync',
+    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync', 'twica',
   ]);
   assert.equal(fullscreen.broadcast, null);
 });
@@ -194,7 +211,7 @@ test('broadcast opt-out falls back to legacy dashboard surfaces without changing
     SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED: '0',
   }, 'linux');
   assert.deepEqual(config.surfaces.map((item) => item.key), [
-    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync',
+    'event', 'stats', 'ops', 'improve', 'wildcard', 'avsync', 'twica',
   ]);
   assert.equal(config.broadcast, null);
 
@@ -204,7 +221,7 @@ test('broadcast opt-out falls back to legacy dashboard surfaces without changing
     SOREN_DIRECT_OPS_OVERLAY_ENABLED: '0',
   }, 'linux');
   assert.deepEqual(fullscreen.surfaces.map((item) => item.key), [
-    'event', 'stats', 'improve', 'wildcard', 'avsync',
+    'event', 'stats', 'improve', 'wildcard', 'avsync', 'twica',
   ]);
 });
 

@@ -161,6 +161,10 @@ set_env_value SOREN_DIRECT_IMPROVE_OVERLAY_ENABLED 1
 set_env_value SOREN_DIRECT_WILDCARD_OVERLAY_ENABLED 1
 set_env_value SOREN_DIRECT_AV_SYNC_OVERLAY_ENABLED 1
 set_env_value SOREN_DIRECT_AV_SYNC_OVERLAY_HTML_FILE tmp/state/direct_av_sync_probe.html
+# TwiCa カードガチャオーバーレイ（外部URL、最前面・透過）
+# SOREN_DIRECT_TWICA_OVERLAY_URL が空なら有効化しても表示しない
+set_env_value SOREN_DIRECT_TWICA_OVERLAY_ENABLED 1
+set_env_value SOREN_DIRECT_TWICA_OVERLAY_URL ""
 
 if [ "$PREPARE_DIRECT_ONLY" -eq 1 ]; then
 	echo "Prepared FFmpeg direct-stream settings with backend=obs. Backup: $backup"
