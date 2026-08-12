@@ -10,9 +10,7 @@ _recover_orphan_comment_playing_files() {
 		[ -f "$orphan" ] || continue
 		local now mtime age
 		now=$(date +%s)
-		mtime=$(stat -f %m "$orphan" 2>/dev/null) \
-			|| mtime=$(stat -c %Y "$orphan" 2>/dev/null) \
-			|| mtime="$now"
+		mtime=$(stat -f %m "$orphan" 2>/dev/null || echo "$now")
 		age=$((now - mtime))
 		# 直近で生成された .playing はリネーム直後の可能性があるためスキップ
 		[ "$age" -lt 30 ] && continue
@@ -242,12 +240,10 @@ _play_comment_queue() {
 					tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 						mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
 				fi
-					# speaker/context override: サイドカーファイル > soren91判定
+				# speaker/context override: サイドカーファイルのみ。
+				# コメント読み上げは soren91 稼働中でもメイン話者(東北イタコ 109)を維持する。
 				local _cw_vo_speaker=""
 				_cw_vo_speaker=$(_comment_read_speaker_override "$playing_file" "$qf" 2>/dev/null || true)
-				if [ -z "$_cw_vo_speaker" ] && [ "$expected_mode" != "main" ] && soren91_is_running 2>/dev/null; then
-					_cw_vo_speaker="${SOREN91_VOICEVOX_SPEAKER:-46}"
-				fi
 				local _cw_context_label=""
 				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
 				if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
