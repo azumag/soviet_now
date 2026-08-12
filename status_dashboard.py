@@ -1591,7 +1591,10 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     inner = W - 3  # │ + content(inner) + space + │ = W
     lines.append(f"{C_CYAN}┌{'─' * (W - 2)}┐{RST}")
 
-    row1 = f" SOREN AI  #{game_count} games   Best:{best}   Avg:{avg_all}"
+    stream_backend = str(os.getenv("SOREN_STREAM_BACKEND", "obs") or "obs").strip().lower()
+    if stream_backend not in {"obs", "ffmpeg"}:
+        stream_backend = "invalid"
+    row1 = f" SOREN/{stream_backend.upper()}  #{game_count} games   Best:{best}   Avg:{avg_all}"
     lines.append(f"{C_CYAN}│{RST}{BOLD}{row1:<{inner}}{RST} {C_CYAN}│{RST}")
 
     # Row 2: Recent30, Trend, Rejected

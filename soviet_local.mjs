@@ -7,6 +7,15 @@ import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
 import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
 import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
+import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
+import { buildDirectBroadcastOverlayState } from './lib/direct_broadcast_overlay.mjs';
+import {
+  directOverlayIdleHtml,
+  directOverlaySurfaceVisible,
+  installDirectOverlay,
+  loadDirectOverlayConfig,
+} from './lib/direct_overlay.mjs';
+import { startTwicaOverlayProxy } from './lib/twica_overlay_proxy.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -75,6 +84,10 @@ const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.S
 // ゲームウィンドウのサイズ (WxH)。Xvfb を 1920x1080 で運用する Linux 配信では
 // SOREN_CHROME_WINDOW_SIZE=1920,1080 を .env で指定する。macOS 既定は従来どおり。
 const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
+// Unity buildのcanvas描画バッファ。CSS表示サイズとは独立しており、元HTMLの
+// 320x180を1280x720へ引き伸ばすだけでは配信が粗くなる。Linux A1では
+// 576x324が画質とCPUの中間点。未指定ならbuildの元設定をそのまま使う。
+const GAME_INTERNAL_SIZE = parseUnityCanvasSize(process.env.SOREN_GAME_INTERNAL_SIZE);
 // Linux の headed 運用では XSHM が画面全体をキャプチャするため、ブラウザの
 // タブバー/アドレスバー/自動テスト帯が配信に映り込む。--kiosk で Chrome UI を
 // 消してゲームキャンバスだけを画面いっぱいに表示する。macOS の OBS window
@@ -111,6 +124,7 @@ const UNITY_VOLUME_REAPPLY_MS = parseInt(process.env.SOREN_UNITY_VOLUME_REAPPLY_
 const UNITY_AUDIO_WATCHDOG_MS = parseInt(process.env.SOREN_UNITY_AUDIO_WATCHDOG_MS || '10000', 10);
 const UNITY_AUDIO_RECOVER_COOLDOWN_MS = parseInt(process.env.SOREN_UNITY_AUDIO_RECOVER_COOLDOWN_MS || '30000', 10);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig();
 
 function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
@@ -893,6 +907,42 @@ async function installUnityVolumeReapply(page) {
 function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
+      const requestPath = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      if (DIRECT_OVERLAY_CONFIG.enabled
+        && DIRECT_OVERLAY_CONFIG.broadcast?.stateRoute === requestPath) {
+        const noCache = {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        };
+        try {
+          const payload = buildDirectBroadcastOverlayState(DIRECT_OVERLAY_CONFIG.broadcast);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
+          res.end(JSON.stringify(payload));
+        } catch {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
+          res.end(JSON.stringify({ version: 1, error: 'broadcast overlay state unavailable' }));
+        }
+        return;
+      }
+      const directOverlaySurface = DIRECT_OVERLAY_CONFIG.enabled
+        ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.route === requestPath)
+        : null;
+      if (directOverlaySurface) {
+        const noCache = {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        };
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noCache });
+        if (directOverlaySurfaceVisible(directOverlaySurface)
+          && fs.existsSync(directOverlaySurface.htmlFile)) {
+          fs.createReadStream(directOverlaySurface.htmlFile).pipe(res);
+        } else {
+          res.end(directOverlayIdleHtml());
+        }
+        return;
+      }
       let filePath = path.join(BUILD_DIR, req.url === '/' ? 'index.html' : req.url);
       filePath = decodeURIComponent(filePath);
 
@@ -922,6 +972,13 @@ function startServer() {
       } else {
         const contentType = MIME_TYPES[ext] || 'application/octet-stream';
         res.writeHead(200, { 'Content-Type': contentType, ...noCache });
+      }
+
+      if (GAME_INTERNAL_SIZE && path.basename(filePath) === 'index.html') {
+        const html = fs.readFileSync(filePath, 'utf8');
+        const body = rewriteUnityCanvasSize(html, GAME_INTERNAL_SIZE);
+        res.end(body);
+        return;
       }
 
       fs.createReadStream(filePath).pipe(res);
@@ -1181,6 +1238,24 @@ async function runLocalController() {
     process.exit(1);
   }
 
+  // TwiCa 外部オーバーレイ用ローカルプロキシ（X-Frame-Options 回避・WebSocket 中継）。
+  // 有効時のみ起動する。.env の SOREN_DIRECT_TWICA_OVERLAY_URL が無ければ起動しない。
+  let twicaProxyServer = null;
+  const twicaSurface = DIRECT_OVERLAY_CONFIG.enabled
+    ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.key === 'twica')
+    : null;
+  if (twicaSurface?.srcUrl && twicaSurface.upstreamUrl) {
+    const twicaProxyPort = parseInt(process.env.SOREN_DIRECT_TWICA_PROXY_PORT || '18080', 10);
+    try {
+      twicaProxyServer = await startTwicaOverlayProxy({
+        port: twicaProxyPort,
+        upstream: twicaSurface.upstreamUrl,
+      });
+    } catch (e) {
+      console.error(`Failed to start TwiCa overlay proxy: ${e.message}`);
+    }
+  }
+
   // Cleanup on exit
   function removeCdpEndpoint() {
     try { fs.unlinkSync(CDP_ENDPOINT_FILE); } catch {}
@@ -1189,6 +1264,7 @@ async function runLocalController() {
     console.log('\nShutting down...');
     removeCdpEndpoint();
     server.close();
+    if (twicaProxyServer) twicaProxyServer.close();
     process.exit(0);
   });
   process.on('exit', removeCdpEndpoint);
@@ -1603,10 +1679,11 @@ async function runLocalController() {
     console.warn(`Failed to route Chrome audio: ${e.message}`);
   }
 
-  // Force canvas to fill viewport exactly — hide footer, reset margins, override container positioning
-  // kiosk (Linux 全画面配信) ではキャンバスを実ビューポート(1920x1080)に追従させ、
-  // ブラウザUI・余白を画面から排除する。非kioskは従来どおり 1280x720 固定。
-  const canvasInfo = await page.evaluate((kiosk) => {
+  // Linux FFmpeg dashboardではUnityの内部描画bufferを変えず、CSS表示だけを
+  // 960x540へ縮める。残りの右320pxと上下90pxはoverlay専用stageにする。
+  // fullscreen/OBS/macOSは従来のviewport全面表示を維持する。
+  const canvasInfo = await page.evaluate(({ kiosk, stage }) => {
+    const staged = Boolean(kiosk && stage?.enabled);
     // Hide footer
     const footer = document.getElementById('unity-footer');
     if (footer) footer.style.display = 'none';
@@ -1617,20 +1694,74 @@ async function runLocalController() {
     document.body.style.margin = '0';
     document.body.style.padding = '0';
     document.body.style.overflow = 'hidden';
-    // Override container — remove centering transform, pin to top-left
+    document.body.style.background = staged ? '#050914' : '';
+    document.documentElement.style.background = staged ? '#050914' : '';
+
+    const oldStage = document.getElementById(stage?.elementId || 'soren-direct-stream-stage');
+    if (oldStage) oldStage.remove();
+    if (staged) {
+      const stageElement = document.createElement('div');
+      stageElement.id = stage.elementId;
+      stageElement.setAttribute('aria-hidden', 'true');
+      Object.assign(stageElement.style, {
+        position: 'fixed',
+        inset: '0',
+        width: `${stage.outputWidth}px`,
+        height: `${stage.outputHeight}px`,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        zIndex: '0',
+        background: '#050914',
+      });
+      const panel = (style) => {
+        const element = document.createElement('div');
+        Object.assign(element.style, { position: 'absolute', boxSizing: 'border-box', ...style });
+        stageElement.appendChild(element);
+      };
+      panel({
+        left: `${stage.sidebarLeft}px`, top: '0', width: `${stage.sidebarWidth}px`,
+        height: `${stage.outputHeight}px`,
+        background: 'linear-gradient(180deg, #07111f 0%, #030914 100%)',
+        borderLeft: '1px solid rgba(56,189,248,.28)',
+      });
+      panel({
+        left: '0', top: '0', width: `${stage.gameWidth}px`, height: `${stage.topRailHeight}px`,
+        background: 'linear-gradient(180deg, #07111f 0%, #050b15 100%)',
+        borderBottom: '1px solid rgba(56,189,248,.22)',
+      });
+      panel({
+        left: '0', top: `${stage.bottomRailTop}px`, width: `${stage.gameWidth}px`,
+        height: `${stage.bottomRailHeight}px`,
+        background: 'linear-gradient(180deg, #050b15 0%, #07111f 100%)',
+        borderTop: '1px solid rgba(56,189,248,.22)',
+      });
+      document.body.appendChild(stageElement);
+    }
+
+    // Override container — remove centering transform and place it in the stage.
     const container = document.getElementById('unity-container');
     if (container) {
-      container.style.position = 'absolute';
-      container.style.left = '0';
-      container.style.top = '0';
+      container.style.position = staged ? 'fixed' : 'absolute';
+      container.style.left = staged ? `${stage.gameLeft}px` : '0';
+      container.style.top = staged ? `${stage.gameTop}px` : '0';
+      container.style.width = staged ? `${stage.gameWidth}px` : '';
+      container.style.height = staged ? `${stage.gameHeight}px` : '';
       container.style.transform = 'none';
+      container.style.overflow = 'hidden';
+      container.style.zIndex = staged ? '1' : '';
+      container.style.boxShadow = staged ? '0 0 0 1px rgba(148, 205, 255, .28)' : '';
     }
-    // Ensure canvas fills exactly
+    // Keep the Unity drawing buffer unchanged; only its CSS display box changes.
     const canvas = document.getElementById('unity-canvas');
     if (canvas) {
-      canvas.style.width = kiosk ? (window.innerWidth + 'px') : '1280px';
-      canvas.style.height = kiosk ? (window.innerHeight + 'px') : '720px';
+      canvas.style.width = staged
+        ? `${stage.gameWidth}px`
+        : (kiosk ? (window.innerWidth + 'px') : '1280px');
+      canvas.style.height = staged
+        ? `${stage.gameHeight}px`
+        : (kiosk ? (window.innerHeight + 'px') : '720px');
       canvas.style.display = 'block';
+      canvas.style.imageRendering = staged ? 'pixelated' : '';
     }
     return {
       canvasWidth: canvas?.width,
@@ -1639,9 +1770,19 @@ async function runLocalController() {
       cssHeight: canvas?.style.height,
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
+      stageMode: staged ? stage.mode : 'fullscreen',
+      stageSidebarWidth: staged ? stage.sidebarWidth : 0,
     };
-  }, CHROME_KIOSK);
+  }, { kiosk: CHROME_KIOSK, stage: DIRECT_OVERLAY_CONFIG.stage });
   console.log('Canvas layout:', JSON.stringify(canvasInfo));
+
+  try {
+    if (await installDirectOverlay(page, DIRECT_OVERLAY_CONFIG)) {
+      console.log(`Direct stream overlays installed: ${DIRECT_OVERLAY_CONFIG.surfaces.map((item) => item.key).join(',')}`);
+    }
+  } catch (e) {
+    console.warn(`Failed to install direct stream event overlay: ${e.message}`);
+  }
 
   // Capture browser console for debugging
   page.on('console', msg => {
@@ -1842,12 +1983,23 @@ async function runLocalController() {
     if (!shouldMute && !isMuted && Date.now() - lastGameRenderHealthAt > GAME_RENDER_HEALTH_INTERVAL_MS) {
       lastGameRenderHealthAt = Date.now();
       try {
-        const renderHealth = await withTimeout(page.evaluate(() => ({
-          ...(window.__sorenRenderStats || {}),
-          visibility: document.visibilityState,
-          canvasWidth: document.querySelector('canvas')?.width || 0,
-          canvasHeight: document.querySelector('canvas')?.height || 0,
-        })), 2000, 'render health evaluate');
+        const renderHealth = await withTimeout(page.evaluate(() => {
+          const canvas = document.querySelector('canvas');
+          const rect = canvas?.getBoundingClientRect();
+          return {
+            ...(window.__sorenRenderStats || {}),
+            visibility: document.visibilityState,
+            canvasWidth: canvas?.width || 0,
+            canvasHeight: canvas?.height || 0,
+            canvasCssWidth: rect ? Math.round(rect.width) : 0,
+            canvasCssHeight: rect ? Math.round(rect.height) : 0,
+            canvasLeft: rect ? Math.round(rect.left) : 0,
+            canvasTop: rect ? Math.round(rect.top) : 0,
+            stageMode: document.getElementById('soren-direct-stream-stage')
+              ? 'dashboard'
+              : 'fullscreen',
+          };
+        }), 2000, 'render health evaluate');
         writeJsonAtomic(GAME_RENDER_HEALTH_FILE, {
           ...renderHealth,
           observedAt: new Date().toISOString(),

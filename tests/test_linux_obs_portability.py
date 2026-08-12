@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -201,11 +202,13 @@ class LinuxObsPortabilityTests(unittest.TestCase):
         relative_path: str,
         variable: str,
         mode: str,
+        search_fragment: str | None = None,
     ) -> tuple[str, list[str]]:
         lines = (REPO_ROOT / relative_path).read_text().splitlines()
+        needle = search_fragment or f"{variable}=$(stat -f"
         start = next(
             index for index, line in enumerate(lines)
-            if f"{variable}=$(stat -f" in line
+            if needle in line
         )
         assignment = "\n".join(lines[start:start + 3])
 
@@ -240,6 +243,15 @@ esac
                     "set -eu",
                     "LOCK_DIR=/unused/lock",
                     "OBS_SOURCE_LOCK_DIR=/unused/obs-lock",
+                    "GAME_STATE=/unused/game-state",
+                    "lock_file=/unused/lock-file",
+                    "log_file=/unused/log-file",
+                    "state_file=/unused/state-file",
+                    "lock_dir=/unused/lock-dir",
+                    "lock=/unused/internal-lock",
+                    "RUNNER_LOCK_DIR=/unused/runner-lock",
+                    "marker=/unused/marker",
+                    "orphan=/unused/orphan",
                     "path=/unused/path",
                     "f=/unused/file",
                     "now_ts=777",
@@ -764,6 +776,46 @@ esac
                 self.assertEqual(epoch, fallback)
                 self.assertEqual(calls, ["-f", "-c"])
 
+    def test_linux_runtime_mtime_sites_execute_without_gnu_stat_poison(self) -> None:
+        sites = (
+            ("eloop.sh", "_pg_state_mtime0", "_pg_state_mtime0=$(stat -f", "0"),
+            ("eloop.sh", "_rr_mt_now", "_rr_mt_now=$(stat -f", "0"),
+            ("eloop.sh", "_pg_state_mtime1", "_pg_state_mtime1=$(stat -f", "0"),
+            ("start_all.sh", "log_m", "log_m=$(stat -f %m logs/soren_loop.log", "0"),
+            ("start_all.sh", "lock_m", 'lock_m=$(stat -f %m "$lock_file"', "0"),
+            ("start_all.sh", "log_m", 'log_m=$(stat -f %m "$log_file"', "0"),
+            ("start_all.sh", "state_m", 'state_m=$(stat -f %m "$state_file"', "0"),
+            ("lib/outbound_queue.sh", "mt", 'mt=$(stat -f %m "$marker"', "777"),
+            ("lib/outbound_queue.sh", "mtime", 'mtime=$(stat -f %m "$f"', "777"),
+            ("lib/ai_generate.sh", "mt", 'mt=$(stat -f %m "$lock_dir"', "777"),
+            ("lib/ai_generate.sh", "mt", 'mt=$(stat -f %m "$lock"', "777"),
+            ("soren91/run_player_loop.sh", "mt", 'mt=$(stat -f %m "$RUNNER_LOCK_DIR"', "777"),
+            ("core/helpers.sh", "mt", 'mt=$(stat -f %m "$marker"', "0"),
+            ("broadcast/comment_lib.sh", "mtime", 'mtime=$(stat -f %m "$orphan"', "777"),
+            ("show_status.sh", "say_lock_hb", "say_lock_hb=$(stat -f %m tmp/.say_queue/.lock", "0"),
+            ("core/runtime_toggles.sh", "mtime", 'mtime=$(stat -f %m "$path"', "0"),
+        )
+        scenarios = {
+            "bsd-success": ("111", ["-f"]),
+            "gnu-success": ("222", ["-f", "-c"]),
+        }
+        for relative_path, variable, fragment, fallback in sites:
+            source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+            self.assertNotRegex(source, r"\$\(stat -f %m [^\n]*\|\|")
+            for mode, (expected_epoch, expected_calls) in scenarios.items():
+                with self.subTest(path=relative_path, fragment=fragment, mode=mode):
+                    epoch, calls = self.evaluate_stat_fallback(
+                        relative_path, variable, mode, fragment
+                    )
+                    self.assertEqual(epoch, expected_epoch)
+                    self.assertEqual(calls, expected_calls)
+            with self.subTest(path=relative_path, fragment=fragment, mode="both-fail"):
+                epoch, calls = self.evaluate_stat_fallback(
+                    relative_path, variable, "both-fail", fragment
+                )
+                self.assertEqual(epoch, fallback)
+                self.assertEqual(calls, ["-f", "-c"])
+
     def test_say_enqueue_has_linux_pulseaudio_path(self) -> None:
         text = (REPO_ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
         # EXPLORE_MODE=1 では音声キューに触れず即終了する
@@ -787,6 +839,57 @@ esac
         linux_sed = sed_block.split('if [ "$IS_LINUX" = "1" ]; then', 1)[1]
         linux_sed = linux_sed.split("\n\telse", 1)[0]
         self.assertNotIn("sed -i ''", linux_sed)
+
+    def test_say_enqueue_mtime_fallback_executes_cleanly_on_bsd_and_gnu_stat(self) -> None:
+        source = (REPO_ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
+        match = re.search(r"(?ms)^_file_mtime_epoch\(\) \{\n.*?^\}\n", source)
+        self.assertIsNotNone(match)
+        helper = match.group(0)
+        self.assertEqual(source.count('lock_hb=$(_file_mtime_epoch "'), 2)
+
+        scenarios = {
+            "bsd-success": ("111", ["-f"]),
+            "gnu-success": ("222", ["-f", "-c"]),
+            "both-fail": ("0", ["-f", "-c"]),
+        }
+        for mode, (expected_epoch, expected_calls) in scenarios.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp_dir:
+                fake_bin = Path(temp_dir)
+                calls_path = fake_bin / "calls.txt"
+                fake_stat = fake_bin / "stat"
+                fake_stat.write_text(
+                    """#!/bin/sh
+printf '%s\\n' "$1" >> "$FAKE_STAT_CALLS"
+case "$FAKE_STAT_MODE:$1" in
+  bsd-success:-f) printf '%s\\n' 111; exit 0 ;;
+  gnu-success:-f) printf '%s\\n' poison-from-failed-bsd; exit 7 ;;
+  gnu-success:-c) printf '%s\\n' 222; exit 0 ;;
+  both-fail:-f) printf '%s\\n' poison-from-failed-bsd; exit 7 ;;
+  both-fail:-c) printf '%s\\n' poison-from-failed-gnu; exit 8 ;;
+  *) exit 64 ;;
+esac
+""",
+                    encoding="utf-8",
+                )
+                fake_stat.chmod(0o755)
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "PATH": str(fake_bin),
+                        "FAKE_STAT_MODE": mode,
+                        "FAKE_STAT_CALLS": str(calls_path),
+                    }
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", helper + "\n_file_mtime_epoch /unused/lock"],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertEqual(result.stdout.strip(), expected_epoch)
+                self.assertEqual(calls_path.read_text().splitlines(), expected_calls)
 
     def test_google_tts_has_linux_playback_path(self) -> None:
         text = (REPO_ROOT / "google_tts.sh").read_text(encoding="utf-8")

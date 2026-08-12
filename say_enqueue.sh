@@ -327,6 +327,20 @@ _log() {
 	echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN label=${SOURCE_LABEL:-unknown}" >>tmp/.say_queue/debug.log
 }
 
+# GNU stat accepts -f with a different meaning and can emit filesystem details
+# before returning non-zero. Keep the BSD and GNU assignments separate so a
+# failed BSD-style probe can never be mixed with the GNU epoch value.
+_file_mtime_epoch() {
+	local target="$1" mtime
+	mtime=$(stat -f %m "$target" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$target" 2>/dev/null) \
+		|| mtime=0
+	case "$mtime" in
+	'' | *[!0-9]*) mtime=0 ;;
+	esac
+	printf '%s\n' "$mtime"
+}
+
 _append_played_log() {
 	local status="$1" now_h now_ts
 	now_h=$(date '+%H:%M:%S')
@@ -455,7 +469,7 @@ _acquire_lock() {
 			lock_hb=$(cat "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true)
 			case "$lock_hb" in
 			'' | *[!0-9]*)
-				lock_hb=$(stat -f %m "$LOCK_DIR" 2>/dev/null || true)
+				lock_hb=$(_file_mtime_epoch "$LOCK_DIR")
 				;;
 			esac
 			now=$(date +%s)
@@ -517,6 +531,38 @@ _release_voicevox_synth_lock() {
 	VOICEVOX_SYNTH_LOCK_HELD=0
 }
 
+# 合成ロック待ち時間をコンテキストで変える:
+#   - コメントは長く待つ（必ず合成・再生に到達させる）
+#   - ラジオ render は短く諦めてコメントへ譲る
+_voicevox_synth_lock_wait_sec() {
+	case "${SOURCE_LABEL:-}" in
+	comment | comment:*)
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC:-180}"
+		;;
+	radio_render:* | radio | radio:*)
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_RADIO_SEC:-15}"
+		;;
+	*)
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_DEFAULT_SEC:-30}"
+		;;
+	esac
+}
+
+# チャンク合成タイムアウト: コメントは長め（確実に完読）、ラジオは短め（待たせない）
+_voicevox_synth_timeout_sec() {
+	case "${SOURCE_LABEL:-}" in
+	comment | comment:*)
+		printf '%s' "${VOICEVOX_COMMENT_SYNTH_TIMEOUT_SEC:-180}"
+		;;
+	radio_render:* | radio | radio:*)
+		printf '%s' "${VOICEVOX_RADIO_SYNTH_TIMEOUT_SEC:-90}"
+		;;
+	*)
+		printf '%s' "${VOICEVOX_SYNTH_TIMEOUT_SEC:-120}"
+		;;
+	esac
+}
+
 _acquire_voicevox_synth_lock() {
 	local timeout_sec="${1:-30}" waited=0 max_waits
 	max_waits=$((timeout_sec * 2))
@@ -534,7 +580,7 @@ _acquire_voicevox_synth_lock() {
 			lock_hb=$(cat "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true)
 			case "$lock_hb" in
 			'' | *[!0-9]*)
-				lock_hb=$(stat -f %m "$VOICEVOX_SYNTH_LOCK" 2>/dev/null || true)
+				lock_hb=$(_file_mtime_epoch "$VOICEVOX_SYNTH_LOCK")
 				;;
 			esac
 			now=$(date +%s)
@@ -728,8 +774,23 @@ _launch_bg_exec() {
 _linux_play_bg() {
 	local audio_file="$1" device="${2:-${SAY_AUDIO_DEVICE:-default}}" cleanup_file="${3:-}"
 	local pulse_latency="${SAY_PULSE_LATENCY_MS:-80}"
+	# 声量は SAY_PLAY_VOLUME_LINEAR (0..65536, 既定 65536 = 100%) で制御。
+	# 1.3倍 = 85197 を .env で設定すると声を 30% 大きくできる。
+	# 環境変数に無い場合は .env から直接読む（audio_worker/supervisor の環境が古くても確実に適用）。
+	local say_volume="${SAY_PLAY_VOLUME_LINEAR:-}"
+	if [ -z "$say_volume" ] && [ -f .env ]; then
+		say_volume=$(grep -E "^SAY_PLAY_VOLUME_LINEAR=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\r")
+	fi
+	[ -z "$say_volume" ] && say_volume=65536
+	case "$say_volume" in
+	'' | *[!0-9]*)  say_volume=65536 ;;
+	esac
+	[ "$say_volume" -lt 0 ] && say_volume=0
+	# 声量: SAY_PLAY_VOLUME_LINEAR (0..65536, 100% = 65536) を paplay --volume へ渡す。
+	# 65536 超は PulseAudio がブーストとして扱うためクランプしない。
+	local play_volume="$say_volume"
 	if command -v paplay >/dev/null 2>&1; then
-		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" paplay --device="$device" "$audio_file"
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" paplay --device="$device" --volume="$play_volume" "$audio_file"
 		return 0
 	fi
 	if command -v ffplay >/dev/null 2>&1; then
@@ -897,18 +958,31 @@ for c in chunks:
 # timeout で外側からもkill保証（VOICEVOX起動濟みだがcurlが返らない場合に対応）
 _synthesize_chunk() {
 	local text="$1" output="$2"
-	local _sc_cmd="VOICEVOX_SPEAKER=\"$VOICEVOX_SPEAKER\" \
-		VOICEVOX_PITCH=\"${PRE_SYNTH_PITCH:-}\" \
-		VOICEVOX_TEMPO=\"${PRE_SYNTH_TEMPO:-}\" \
-		VOICEVOX_INTONATION=\"${PRE_SYNTH_INTONATION:-}\" \
-		VOICEVOX_TIMEOUT=30 \
-		VOICEVOX_MAX_CHARS=99999 \
-		./voicevox_tts.sh -o \"$output\" \"$text\""
+	local _chunk_timeout
+	_chunk_timeout=$(_voicevox_synth_timeout_sec)
+	# 合成は文字数に比例して数十秒かかる（高負荷時）。30秒では長いチャンクが
+	# タイムアウトで失敗するため、コンテキスト別 timeout を使う。
+	# 注意: 変数代入を bash -c の文字列に混ぜるとコメント行で代入が壊れ、
+	# VOICEVOX_SPEAKER が voicevox_tts.sh に渡らずデフォルト(ずんだもん)になる。
+	# 必ず env/コマンド前置き形式で渡すこと。
 	if [ -n "$TIMEOUT_CMD" ]; then
-		$TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
-			bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+		$TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$_chunk_timeout" \
+			env \
+				VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+				VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+				VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+				VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+				VOICEVOX_TIMEOUT="$_chunk_timeout" \
+				VOICEVOX_MAX_CHARS=99999 \
+				./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	else
-		bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+		VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+			VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+			VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+			VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+			VOICEVOX_TIMEOUT="$_chunk_timeout" \
+			VOICEVOX_MAX_CHARS=99999 \
+			./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	fi
 }
 
@@ -1124,9 +1198,12 @@ _launch_say() {
 		_log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
 		local vo_wav
 		vo_wav="${MY_CONTENT%.txt}.wav"
+		# フォールバック合成のタイムアウトもコンテキスト連動（コメント=長め/ラジオ=短め）
+		local _fb_timeout
+		_fb_timeout=$(_voicevox_synth_timeout_sec)
 		# フォールバック合成時もVOICEVOX合成ロックを取得（同時1リクエスト制限）
 		local _vo_synth_locked=0 _hb_pid=""
-		if ! _acquire_voicevox_synth_lock 30; then
+		if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 			_log "VOICEVOX合成ロック取得タイムアウト → リトライへ"
 		else
 			_vo_synth_locked=1
@@ -1142,11 +1219,11 @@ _launch_say() {
 			_hb_pid=$!
 			if [ -n "$TIMEOUT_CMD" ]; then
 				# 一時的にtimeoutを無効化: 原因調査中
-				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$_fb_timeout" \
 					./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
 					_vo_ok=1
 				fi
-			elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+			elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$_fb_timeout" \
 				./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
 				_vo_ok=1
 			fi
@@ -1512,9 +1589,9 @@ _prepare_playback_turn() {
 PRE_SYNTH_WAV=""
 PRE_SYNTH_PLAYLIST_FILE=""
 if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
-	# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
-	if ! _acquire_voicevox_synth_lock 30; then
-		_log "事前合成スキップ（別プロセスが合成中）"
+			# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
+			if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
+				_log "事前合成スキップ（別プロセスが合成中）"
 	else
 		_log "事前合成開始"
 		_pre_synth_hb_pid=""
@@ -1597,9 +1674,10 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 
 			if [ ${#_pre_chunks[@]} -le 1 ]; then
 				# 短いテキスト: 従来通り全文を1回で合成
+				PRE_SINGLE_TIMEOUT=$(_voicevox_synth_timeout_sec)
 				if [ -n "$TIMEOUT_CMD" ]; then
 					if $TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
-						VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+						VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$PRE_SINGLE_TIMEOUT" \
 						./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
 						_log "事前合成完了: $PRE_SYNTH_WAV"
 					else
@@ -1607,7 +1685,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 						rm -f "$PRE_SYNTH_WAV" 2>/dev/null
 						PRE_SYNTH_WAV=""
 					fi
-				elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+				elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$PRE_SINGLE_TIMEOUT" \
 					./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
 					_log "事前合成完了: $PRE_SYNTH_WAV"
 				else
@@ -1616,14 +1694,41 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 					PRE_SYNTH_WAV=""
 				fi
 			else
-				# 複数チャンク: 再生ロック取得前に全チャンクを合成してから再生待ちへ入る
-				_log "テキスト分割: ${#_pre_chunks[@]}チャンク → 全チャンク事前合成"
+				# 複数チャンク: 再生ロック取得前に全チャンクを合成してから再生待ちへ入る。
+				# ラジオ render はチャンク上限を超えたら超過分を合成せず、再生時に
+				# フォールバックさせる（合成ロックの長時間占有でコメントを待たせない）。
+				PRE_MAX_CHUNKS="${#_pre_chunks[@]}"
+				if [ "${SOURCE_LABEL#radio_render:}" != "$SOURCE_LABEL" ] \
+					|| [ "$SOURCE_LABEL" = "radio" ] || [ "${SOURCE_LABEL#radio:}" != "$SOURCE_LABEL" ]; then
+					PRE_RADIO_CHUNK_CAP="${VOICEVOX_RADIO_MAX_CHUNKS:-12}"
+					case "$PRE_RADIO_CHUNK_CAP" in
+					'' | *[!0-9]*) PRE_RADIO_CHUNK_CAP=12 ;;
+					esac
+					[ "$PRE_RADIO_CHUNK_CAP" -lt 1 ] && PRE_RADIO_CHUNK_CAP=1
+					[ "$PRE_MAX_CHUNKS" -gt "$PRE_RADIO_CHUNK_CAP" ] && PRE_MAX_CHUNKS="$PRE_RADIO_CHUNK_CAP"
+				fi
+				if [ "$PRE_MAX_CHUNKS" -lt "${#_pre_chunks[@]}" ]; then
+					_log "テキスト分割: ${#_pre_chunks[@]}チャンク → ラジオ上限${PRE_MAX_CHUNKS}で事前合成（超過分は再生時フォールバック）"
+				else
+					_log "テキスト分割: ${#_pre_chunks[@]}チャンク → 全チャンク事前合成"
+				fi
 				_stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
 				mkdir -p "$_stream_dir"
 				PRE_SYNTH_PLAYLIST_FILE="${MY_CONTENT%.txt}_wav_playlist.txt"
 				: >"$PRE_SYNTH_PLAYLIST_FILE"
 				_pre_synth_failed=0
-				for ((_pc_i = 0; _pc_i < ${#_pre_chunks[@]}; _pc_i++)); do
+				for ((_pc_i = 0; _pc_i < PRE_MAX_CHUNKS; _pc_i++)); do
+					# チャンク間で合成ロックを一時解放し、コメント（長め待ち）が
+					# 割り込めるようにする。ラジオ render は短い待ちで再取得を諦め、
+					# 残りは再生時フォールバックへ回す。
+					if [ "$_pc_i" -gt 0 ]; then
+						_release_voicevox_synth_lock
+						if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
+							_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
+							_pre_synth_failed=1
+							break
+						fi
+					fi
 					_pre_chunk_wav="$_stream_dir/chunk_${_pc_i}.wav"
 					_touch_voicevox_synth_lock_heartbeat
 					if _synthesize_chunk "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"; then

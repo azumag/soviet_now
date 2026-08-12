@@ -301,7 +301,9 @@ play_one_game() {
 	# phantom ゲーム検知用: strategy_runner 実行前の game_state.json mtime を退避。
 	# ブリッジ凍結中は実プレイされず mtime が一切進まない。
 	local _pg_state_mtime0 _pg_start_epoch
-	_pg_state_mtime0=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+	_pg_state_mtime0=$(stat -f %m "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime0=$(stat -c %Y "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime0=0
 	_pg_start_epoch=$(date +%s)
 
 	local runner_tmpfile
@@ -378,7 +380,9 @@ PY
 			&& [ "$_rr_gs" -le "$(( _rr_now + _rr_win ))" ] && _rr_match=1
 		local _rr_state _rr_mt_now
 		_rr_state=$(echo "$RESULT_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
-		_rr_mt_now=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+		_rr_mt_now=$(stat -f %m "$GAME_STATE" 2>/dev/null) \
+			|| _rr_mt_now=$(stat -c %Y "$GAME_STATE" 2>/dev/null) \
+			|| _rr_mt_now=0
 		if [ "$_rr_match" -eq 1 ] && { [ "${LAST_TURNS:-0}" -eq 0 ] \
 			|| [ "${LAST_SCORE:-0}" -eq 0 ] \
 			|| [ "$_rr_state" = "UNKNOWN" ] || [ "$_rr_state" = "STOP" ] \
@@ -397,7 +401,9 @@ PY
 	# 0ターン終了した幽霊試合。戦略ロード失敗/decide例外 (turns=0 だが
 	# py_rc!=0 or error 有 or state=UNKNOWN) は除外し通常エラー経路に流す (codex 指摘)。
 	local _pg_state_mtime1 _pg_result_state
-	_pg_state_mtime1=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+	_pg_state_mtime1=$(stat -f %m "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime1=$(stat -c %Y "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime1=0
 	_pg_result_state=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
 	if [ "${LAST_TURNS:-0}" -eq 0 ] && [ "$_pg_state_mtime1" = "$_pg_state_mtime0" ] \
 		&& [ "${py_rc:-1}" -eq 0 ] && [ -z "$runner_error" ] \

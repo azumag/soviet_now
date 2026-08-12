@@ -42,8 +42,10 @@ import sys
 import tempfile
 import time
 
+from lib.overlay_text import normalize_overlay_text
+
 out_file, width, height = sys.argv[1:4]
-raw = os.environ.get("SHOW_STATUS_OVERLAY_RAW", "")
+raw = normalize_overlay_text(os.environ.get("SHOW_STATUS_OVERLAY_RAW", ""))
 csi_re = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 palette = {
     "0": "",

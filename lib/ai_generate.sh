@@ -88,7 +88,9 @@ _ai_generation_queue_enter() {
 
 	while ! mkdir "$lock_dir" 2>/dev/null; do
 		now=$(date +%s)
-		mt=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$lock_dir" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$lock_dir" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		if [ "$age" -gt "$stale_sec" ]; then
 			log "[AIQ:${label}] stale generation lock cleared (age=${age}s)" >&2
@@ -221,7 +223,9 @@ _opencode_cleanup_internal_locks() {
 	now=$(date +%s)
 	while IFS= read -r lock; do
 		[ -n "$lock" ] || continue
-		mt=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$lock" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$lock" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		if [ "$age" -gt "$stale_sec" ]; then
 			rm -rf "$lock" 2>/dev/null || true
@@ -258,7 +262,9 @@ _opencode_run_lock_enter() {
 
 	while ! mkdir "$lock_dir" 2>/dev/null; do
 		now=$(date +%s)
-		mt=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$lock_dir" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$lock_dir" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		owner_pid=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
 		owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')

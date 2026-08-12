@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280,height=720,initial-scale=1">
+<title>Soren direct broadcast overlay</title>
+<script>
+document.documentElement.dataset.sorenRegion = window.frameElement?.dataset.sorenOverlayRegion || 'full';
+</script>
+<style>
+:root {
+  color-scheme: dark;
+  --cyan: #67e8f9;
+  --blue: #38bdf8;
+  --muted: #91a4ba;
+  --line: rgba(103, 232, 249, .23);
+  --panel: rgba(3, 10, 22, .94);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  width: 1280px;
+  height: 720px;
+  overflow: hidden;
+  color: #eaf7ff;
+  background: transparent;
+  font-family: Inter, "Noto Sans JP", "Segoe UI", sans-serif;
+}
+#broadcast-overlay {
+  position: fixed;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  overflow: hidden;
+  pointer-events: none;
+}
+html[data-soren-region="sidebar"],
+html[data-soren-region="sidebar"] body,
+html[data-soren-region="sidebar"] #broadcast-overlay {
+  width: 320px;
+  height: 720px;
+}
+html[data-soren-region="sidebar"] #broadcast-sidebar { left: 0; }
+html[data-soren-region="sidebar"] .rail { display: none; }
+html[data-soren-region="top"],
+html[data-soren-region="top"] body,
+html[data-soren-region="top"] #broadcast-overlay,
+html[data-soren-region="bottom"],
+html[data-soren-region="bottom"] body,
+html[data-soren-region="bottom"] #broadcast-overlay {
+  width: 960px;
+  height: 90px;
+}
+html[data-soren-region="top"] #broadcast-sidebar,
+html[data-soren-region="top"] #bottom-rail,
+html[data-soren-region="bottom"] #broadcast-sidebar,
+html[data-soren-region="bottom"] #top-rail { display: none; }
+html[data-soren-region="bottom"] #bottom-rail { top: 0; }
+#broadcast-sidebar {
+  position: absolute;
+  left: 960px;
+  top: 0;
+  width: 320px;
+  height: 720px;
+  padding: 8px 7px 7px;
+  background: linear-gradient(180deg, rgba(4, 13, 28, .97), rgba(2, 8, 18, .97));
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+}
+.feed-head {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 5px 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 10px rgba(34, 197, 94, .8);
+}
+#feed-label {
+  margin-left: auto;
+  color: #c8d7e6;
+  letter-spacing: .04em;
+  font-size: 9px;
+}
+#feed-age {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  font-size: 9px;
+}
+#feed {
+  margin: 6px 0 0;
+  width: 306px;
+  height: 642px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.feed-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.feed-panel + .feed-panel {
+  padding-top: 3px;
+  border-top: 1px solid rgba(103, 232, 249, .18);
+}
+.panel-head {
+  height: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 2px;
+  font-size: 7.5px;
+  font-weight: 950;
+  letter-spacing: .1em;
+}
+.badge {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 7px;
+  font-weight: 950;
+  letter-spacing: .12em;
+}
+.badge-g {
+  color: #67e8f9;
+  background: rgba(34, 211, 238, .14);
+  border: 1px solid rgba(103, 232, 249, .5);
+}
+.badge-s {
+  color: #c4b5fd;
+  background: rgba(168, 85, 247, .15);
+  border: 1px solid rgba(168, 85, 247, .55);
+}
+.panel-name { color: #9fb3c8; letter-spacing: .06em; font-size: 7px; }
+.panel-meta { margin-left: auto; color: #5f748b; font-variant-numeric: tabular-nums; font-size: 7px; }
+.feed-lines {
+  width: 306px;
+  overflow: hidden;
+  font: 700 6.7px/7.75px "SF Mono", Menlo, Consolas, "Noto Sans Mono", monospace;
+  letter-spacing: 0;
+}
+.feed-line {
+  width: 306px;
+  min-height: 7.75px;
+  padding-left: 3px;
+  border-left: 2px solid transparent;
+  white-space: pre;
+  overflow: hidden;
+  color: #c6d9ec;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .75);
+}
+.feed-line.dim { color: #52657a; }
+.feed-line.run { color: #6ee7a0; border-color: #22c55e; }
+.feed-line.down { color: #fca5a5; border-color: #ef4444; }
+.feed-line.ok { color: #86efac; border-color: #22c55e; }
+.feed-line.amber { color: #fcd34d; border-color: #f59e0b; }
+.feed-line.yellow { color: #fde047; border-color: #eab308; }
+.feed-line.orange { color: #fdba74; border-color: #f97316; }
+.feed-line.blue { color: #7dd3fc; border-color: #38bdf8; }
+.feed-line.purple { color: #c4b5fd; border-color: #8b5cf6; }
+.feed-line.pink { color: #f9a8d4; border-color: #ec4899; }
+.feed-line.teal { color: #5eead4; border-color: #14b8a6; }
+.feed-line.violet { color: #d8b4fe; border-color: #a855f7; }
+.feed-line.indigo { color: #a5b4fc; border-color: #6366f1; }
+.feed-line.idle { color: #94a3b8; border-color: #64748b; }
+.feed-line.s-core { color: #7dd3fc; border-color: #38bdf8; font-weight: 950; }
+.feed-line.s-audio { color: #f9a8d4; border-color: #ec4899; font-weight: 950; }
+.feed-line.s-twitch { color: #c4b5fd; border-color: #8b5cf6; font-weight: 950; }
+.feed-line.s-youtube { color: #fca5a5; border-color: #ef4444; font-weight: 950; }
+.feed-line.s-rollback { color: #fcd34d; border-color: #f59e0b; font-weight: 950; }
+.feed-line.g-head { color: #e2f7ff; border-color: #22d3ee; font-weight: 950; }
+.feed-line.g-section { color: #67e8f9; border-color: #22d3ee; font-weight: 950; }
+.feed-line.g-top { color: #fde047; border-color: #eab308; font-weight: 950; }
+.feed-line.g-recent { color: #fcd34d; border-color: #f59e0b; }
+.feed-line.g-strategy { color: #c4b5fd; border-color: #8b5cf6; }
+.feed-line.g-live { color: #86efac; border-color: #22c55e; }
+.feed-line.g-drop { color: #fdba74; border-color: #f97316; }
+.feed-line.g-core { color: #7dd3fc; border-color: #38bdf8; }
+.feed-line.g-chart { color: #67e8f9; border-color: #22d3ee; }
+.feed-line.g-dist { color: #4ade80; border-color: #22c55e; }
+.feed-foot {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 7px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  color: #60758b;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+#feed-progress { margin-left: auto; font-variant-numeric: tabular-nums; }
+.rail {
+  position: absolute;
+  left: 0;
+  width: 960px;
+  overflow: hidden;
+}
+#top-rail {
+  top: 0;
+  height: 90px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(4, 13, 28, .95), rgba(3, 10, 21, .92));
+}
+#bottom-rail {
+  top: 630px;
+  height: 90px;
+  padding: 8px 9px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(3, 10, 21, .92), rgba(4, 13, 28, .95));
+}
+#summary {
+  height: 73px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+.summary-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 11px;
+  border-left: 4px solid #64748b;
+  border-radius: 5px;
+  color: #dceefe;
+  background: rgba(12, 28, 48, .72);
+  border: 1px solid rgba(103, 232, 249, .14);
+  font: 800 12.5px/1.1 "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary-line.sum-head { color: #67e8f9; border-left-color: #22d3ee; background: rgba(8, 51, 68, .72); }
+.summary-line.sum-recent { color: #fcd34d; border-left-color: #f59e0b; background: rgba(64, 43, 4, .72); }
+.summary-line.sum-strategy { color: #c4b5fd; border-left-color: #8b5cf6; background: rgba(46, 23, 80, .72); }
+.summary-line.sum-live { color: #86efac; border-left-color: #22c55e; background: rgba(10, 55, 34, .72); }
+.summary-line.sum-backend { color: #7dd3fc; border-left-color: #38bdf8; background: rgba(9, 47, 73, .72); }
+.summary-line.sum-queue { color: #fde047; border-left-color: #eab308; background: rgba(56, 47, 4, .72); }
+.summary-line.sum-drop { color: #fdba74; border-left-color: #f97316; background: rgba(61, 27, 5, .72); }
+.summary-line.sum-av { color: #f9a8d4; border-left-color: #ec4899; background: rgba(63, 12, 44, .72); }
+.summary-line.sum-muted { color: #aab8c8; border-left-color: #64748b; }
+#work {
+  height: 73px;
+  display: none;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  column-gap: 13px;
+  align-items: center;
+  padding-right: 14px;
+  color: #fff7ed;
+  background: rgba(31, 17, 5, .93);
+  border: 1px solid rgba(251, 146, 60, .7);
+  border-radius: 6px;
+}
+#work.active { display: grid; }
+.work-bar { align-self: stretch; background: linear-gradient(180deg, #f97316, #facc15); border-radius: 5px 0 0 5px; }
+.work-copy { min-width: 0; }
+.work-title { font-size: 20px; font-weight: 950; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.work-body { margin-top: 4px; color: #fed7aa; font-size: 12px; font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.work-elapsed { color: #fdba74; font: 900 14px/1 "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+#toast-grid {
+  height: 73px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.toast {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr);
+  overflow: hidden;
+  color: #eef7ff;
+  background: rgba(8, 18, 32, .94);
+  border: 1px solid rgba(184, 205, 235, .2);
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .28);
+}
+.toast-bar { background: #8ab4ff; }
+.toast.game .toast-bar { background: #facc15; }
+.toast.worker .toast-bar { background: #38bdf8; }
+.toast.chat .toast-bar { background: #a78bfa; }
+.toast.radio .toast-bar { background: #22c55e; }
+.toast.prediction .toast-bar { background: #fb7185; }
+.toast.rollback .toast-bar { background: #f97316; }
+.toast.system .toast-bar { background: linear-gradient(180deg, #22d3ee, #8b5cf6); }
+.toast-copy { min-width: 0; padding: 7px 8px 6px; }
+.toast-head { display: flex; gap: 7px; align-items: baseline; min-width: 0; }
+.toast-title { min-width: 0; flex: 1; font-size: 11.5px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast-time { color: #72869b; font: 750 8.5px/1 "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.toast-body { margin-top: 5px; color: #c9daea; font-size: 10px; font-weight: 650; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast.fresh { animation: enter .18s ease-out; }
+@keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<main id="broadcast-overlay" data-broadcast-overlay-version="3">
+  <section id="top-rail" class="rail" aria-live="polite">
+    <div id="summary"></div>
+    <div id="work">
+      <div class="work-bar"></div>
+      <div class="work-copy"><div class="work-title"></div><div class="work-body"></div></div>
+      <div class="work-elapsed"></div>
+    </div>
+  </section>
+  <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
+  <aside id="broadcast-sidebar">
+    <div class="feed-head"><span class="live-dot"></span><span>SOREN DATA</span><span id="feed-label">G + STATUS</span><span id="feed-age">--</span></div>
+    <div id="feed">
+      <section class="feed-panel panel-g">
+        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">SHOW-STATUS-G</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
+        <div class="feed-lines" id="feed-g"></div>
+      </section>
+      <section class="feed-panel panel-s">
+        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">SHOW-STATUS</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
+        <div class="feed-lines" id="feed-s"></div>
+      </section>
+    </div>
+    <div class="feed-foot"><span>STATUS MERGE · READ ONLY</span><span id="feed-progress">0L</span></div>
+  </aside>
+</main>
+<script>
+(() => {
+  'use strict';
+  const STATE_ROUTE = '/__soren_overlay/broadcast/state';
+  const TOAST_PAGE_MS = 3000;
+  const TOASTS_PER_PAGE = 3;
+  const SURFACE_REGION = document.documentElement.dataset.sorenRegion || 'full';
+  const feedG = document.getElementById('feed-g');
+  const feedS = document.getElementById('feed-s');
+  const feedGLines = document.getElementById('feed-g-lines');
+  const feedSLines = document.getElementById('feed-s-lines');
+  const feedLabel = document.getElementById('feed-label');
+  const feedAge = document.getElementById('feed-age');
+  const feedProgress = document.getElementById('feed-progress');
+  const summary = document.getElementById('summary');
+  const work = document.getElementById('work');
+  const toastGrid = document.getElementById('toast-grid');
+  let state = null;
+  let lastFeedGKey = '';
+  let lastFeedSKey = '';
+  let lastSummaryKey = '';
+  let lastToastKey = '';
+
+  function pad(value) { return String(value).padStart(2, '0'); }
+  function timeLabel(epoch) {
+    const date = new Date(Number(epoch || Date.now() / 1000) * 1000);
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+  function elapsedLabel(epoch) {
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(epoch || 0));
+    return `${Math.floor(seconds / 60)}:${pad(seconds % 60)}`;
+  }
+  function ageLabel(epoch) {
+    const seconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(epoch || 0));
+    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
+  }
+  function feedLineClass(line) {
+    const raw = String(line || '');
+    const text = raw.replace(/^[│┃\s]+/, '');
+    if (/^━+$/.test(raw) || /^[┌└]─+[┐┘]$/.test(raw)) return 'dim';
+    if (/^  CORE$/.test(raw)) return 's-core';
+    if (/^  AUDIO$/.test(raw)) return 's-audio';
+    if (/^  TWITCH$/.test(raw)) return 's-twitch';
+    if (/^  YOUTUBE$/.test(raw)) return 's-youtube';
+    if (/^  ROLLBACKS$/.test(raw)) return 's-rollback';
+    if (/^│? *SOREN[/]|^│? *Best:|^│? *Avg:/.test(raw)) return 'g-head';
+    if (/^Score (Timeline|Distribution)/.test(text) || /^Strategy Comparison/.test(text)) return 'g-section';
+    if (/^rk hash/.test(text)) return 'g-head';
+    if (/^► 1 /.test(text)) return 'g-top';
+    if (/^[0-9][0-9.,k]*[┃│]/.test(text)) return 'g-dist';
+    if (/[⠀-⣿]/.test(text)) return 'g-chart';
+    if (/^● /.test(text)) return 'run';
+    if (/^○ /.test(text)) return 'down';
+    if (/^✓ /.test(text)) return 'ok';
+    if (/^◉ /.test(text)) return 'amber';
+    if (/^◆ /.test(text)) return 'yellow';
+    if (/^▾ /.test(text)) return 'orange';
+    if (/^▸ /.test(text)) return 'blue';
+    if (/^◇ /.test(text)) return 'purple';
+    if (/^♪ |^♫ /.test(text)) return 'pink';
+    if (/^📻 /.test(text)) return 'teal';
+    if (/^⟳ /.test(text)) return 'violet';
+    if (/^💬 /.test(text)) return 'indigo';
+    if (/Recent30/.test(text)) return 'g-recent';
+    if (/Strategy:/.test(text)) return 'g-strategy';
+    if (/^Live:/.test(text)) return 'g-live';
+    if (/LastDrop/.test(text)) return 'g-drop';
+    if (/Curr |Reg NO/.test(text)) return 'g-core';
+    if (/RUNNING|CONNECTED/.test(text)) return 'run';
+    if (/STOPPED/.test(text)) return 'down';
+    if (/SILENT|IDLE|empty/.test(text)) return 'idle';
+    if (/PASSED|none/.test(text)) return 'ok';
+    return 'dim';
+  }
+  function renderFeedLines(container, text) {
+    const lines = String(text || 'データを待っています…').split('\n');
+    container.replaceChildren(...lines.map((line) => {
+      const row = document.createElement('div');
+      row.className = `feed-line ${feedLineClass(line)}`;
+      row.textContent = line === '' ? ' ' : line;
+      return row;
+    }));
+  }
+  function renderFeed() {
+    const g = state?.feeds?.showStatusG;
+    const s = state?.feeds?.showStatus;
+    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
+    const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
+    if (gKey !== lastFeedGKey) {
+      renderFeedLines(feedG, g?.text);
+      feedGLines.textContent = `${g?.lineCount || 0}L`;
+      lastFeedGKey = gKey;
+    }
+    if (sKey !== lastFeedSKey) {
+      renderFeedLines(feedS, s?.text);
+      feedSLines.textContent = `${s?.lineCount || 0}L`;
+      lastFeedSKey = sKey;
+    }
+    feedLabel.textContent = 'G + STATUS';
+    feedAge.textContent = ageLabel(Math.max(g?.updatedAt || 0, s?.updatedAt || 0));
+    feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0)}L`;
+  }
+  function summaryClass(text) {
+    if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
+    if (/Recent30/.test(text)) return 'sum-recent';
+    if (/Strategy/.test(text)) return 'sum-strategy';
+    if (/^Live:/.test(text)) return 'sum-live';
+    if (/Backend/.test(text)) return 'sum-backend';
+    if (/Queued/.test(text)) return 'sum-queue';
+    if (/LastDrop/.test(text)) return 'sum-drop';
+    if (/AVSync/.test(text)) return 'sum-av';
+    return 'sum-muted';
+  }
+  function selectedSummaryLines() {
+    const stats = String(state?.feeds?.showStatusG?.text || '').split('\n');
+    const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
+    const patterns = [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
+    const selected = patterns.map((pattern) => stats.find((line) => pattern.test(line))).filter(Boolean);
+    if (selected.length < 4) {
+      for (const pattern of [/Backend/, /Queued/, /LastDrop/, /AVSync/]) {
+        const line = ops.find((candidate) => pattern.test(candidate));
+        if (line && !selected.includes(line)) selected.push(line);
+        if (selected.length >= 4) break;
+      }
+    }
+    return selected.slice(0, 4).map((line) => line.replace(/[│┌┐└┘─━]/g, '').trim());
+  }
+  function renderTopRail() {
+    const workState = state?.notifications?.work || {};
+    const active = Boolean(workState.active);
+    work.classList.toggle('active', active);
+    summary.style.display = active ? 'none' : 'grid';
+    if (active) {
+      work.querySelector('.work-title').textContent = workState.title || 'システム作業中';
+      work.querySelector('.work-body').textContent = workState.body || '確認・修正・検証を進めています';
+      work.querySelector('.work-elapsed').textContent = elapsedLabel(workState.ts);
+    } else {
+      const lines = selectedSummaryLines();
+      const key = JSON.stringify(lines);
+      if (key !== lastSummaryKey) {
+        summary.replaceChildren(...lines.map((text) => {
+          const row = document.createElement('div');
+          row.className = `summary-line ${summaryClass(text)}`;
+          row.textContent = text;
+          return row;
+        }));
+        lastSummaryKey = key;
+      }
+    }
+  }
+  function currentToasts() {
+    const now = Math.floor(Date.now() / 1000);
+    const visibleSec = Number(state?.notifications?.visibleSec || 18);
+    const events = (Array.isArray(state?.notifications?.events) ? state.notifications.events : [])
+      .filter((item) => now - Number(item.ts || 0) <= visibleSec);
+    const generatorEvents = (Array.isArray(state?.notifications?.generators)
+      ? state.notifications.generators : []).map((item) => ({
+      category: item.key || 'worker',
+      title: `${item.icon || '⏳'} ${item.label || '生成中'}`,
+      body: `処理継続中 ${elapsedLabel(item.ts)}`,
+      ts: item.ts || now,
+    }));
+    const displayItems = [...generatorEvents, ...events];
+    if (!displayItems.length) {
+      const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
+      return [/Backend/, /Queued/, /LastDrop/].map((pattern) => ops.find((line) => pattern.test(line)))
+        .filter(Boolean).map((line) => ({
+          category: 'system',
+          title: 'LIVE STATUS',
+          body: line.trim(),
+          ts: 0,
+          liveStatus: true,
+        }));
+    }
+    const pageCount = Math.max(1, Math.ceil(displayItems.length / TOASTS_PER_PAGE));
+    const page = Math.floor(Date.now() / TOAST_PAGE_MS) % pageCount;
+    return displayItems.slice(page * TOASTS_PER_PAGE, (page + 1) * TOASTS_PER_PAGE);
+  }
+  function renderToasts() {
+    const items = currentToasts();
+    const key = JSON.stringify(items.map((item) => item.liveStatus
+      ? ['live-status', item.category, item.title, item.body]
+      : [item.ts, item.category, item.title, item.body]));
+    const now = Math.floor(Date.now() / 1000);
+    if (key === lastToastKey) {
+      // 既定 LIVE STATUS カードは再構築せず時計だけ進め、enter アニメーションの再実行を防ぐ。
+      for (const card of toastGrid.querySelectorAll('.toast[data-live-status="1"]')) {
+        const time = card.querySelector('.toast-time');
+        if (time) time.textContent = timeLabel(now);
+      }
+      return;
+    }
+    toastGrid.replaceChildren(...items.map((item) => {
+      const category = String(item.category || 'system').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const card = document.createElement('article');
+      card.className = `toast ${category}${!item.liveStatus && now - Number(item.ts || 0) <= 3 ? ' fresh' : ''}`;
+      if (item.liveStatus) card.dataset.liveStatus = '1';
+      const bar = document.createElement('div');
+      bar.className = 'toast-bar';
+      const copy = document.createElement('div');
+      copy.className = 'toast-copy';
+      const head = document.createElement('div');
+      head.className = 'toast-head';
+      const title = document.createElement('div');
+      title.className = 'toast-title';
+      title.textContent = item.title || item.category || 'event';
+      const time = document.createElement('div');
+      time.className = 'toast-time';
+      time.textContent = item.liveStatus ? timeLabel(now) : timeLabel(item.ts);
+      const body = document.createElement('div');
+      body.className = 'toast-body';
+      body.textContent = item.body || '';
+      head.append(title, time);
+      copy.append(head, body);
+      card.append(bar, copy);
+      return card;
+    }));
+    lastToastKey = key;
+  }
+  function publishHealth(error = '') {
+    window.__sorenBroadcastOverlayHealth = {
+      version: 3,
+      updatedAt: state?.updatedAt || 0,
+      lastClientUpdateAt: Math.floor(Date.now() / 1000),
+      showStatusGLineCount: state?.feeds?.showStatusG?.lineCount || 0,
+      showStatusLineCount: state?.feeds?.showStatus?.lineCount || 0,
+      feedLines: (state?.feeds?.showStatusG?.lineCount || 0) + (state?.feeds?.showStatus?.lineCount || 0),
+      notificationCount: state?.notifications?.events?.length || 0,
+      workActive: Boolean(state?.notifications?.work?.active),
+      generatorCount: state?.notifications?.generators?.length || 0,
+      merged: true,
+      error,
+      region: SURFACE_REGION,
+      layout: { game: [0, 90, 960, 540], sidebar: [960, 0, 320, 720], rails: [90, 90] },
+    };
+  }
+  function render() {
+    if (!state) return;
+    renderFeed();
+    renderTopRail();
+    renderToasts();
+    publishHealth();
+  }
+  async function refresh() {
+    try {
+      const response = await fetch(STATE_ROUTE, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      state = await response.json();
+      render();
+    } catch (error) {
+      publishHealth(String(error?.message || error));
+    }
+  }
+  void refresh();
+  setInterval(refresh, 1000);
+  setInterval(render, 1000);
+})();
+</script>
+</body>
+</html>
