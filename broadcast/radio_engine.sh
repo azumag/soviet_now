@@ -230,12 +230,11 @@ _run_claude_comment_with_model_unqueued() {
 }
 
 _run_claude_comment_with_model() {
-	# ハーネス統一: codex CLI (deepseek-v4-flash) で応答生成
-	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
+	_ai_generation_queue_run "COMMENT:claude:${2:-$RADIO_CLAUDE_MODEL}" _run_claude_comment_with_model_unqueued "$@"
 }
 
 _run_claude_comment() {
-	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
+	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
 _run_minimax_comment_unqueued() {
@@ -313,13 +312,23 @@ _run_minimax_comment_unqueued() {
 }
 
 _run_minimax_comment() {
-	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
+	_ai_generation_queue_run "COMMENT:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_comment_unqueued "$@"
 }
 
 _run_comment_agent() {
 	local agent="$1" prompt_file="$2"
-	# ハーネス統一: codex CLI は opencode スロットロックに依存しないため
-	# opencode busy チェックは行わない（codex は単発プロセス）。
+	if [[ "$agent" == opencode:* || "$agent" != *:* && "$agent" != ollama && "$agent" != qwen35e && "$agent" != gemma4e && "$agent" != haiku && "$agent" != claude && "$agent" != minimax && "$agent" != ccmm && "$agent" != qwencode ]]; then
+		local _comment_opencode_lock=""
+		if [[ "$agent" == opencode:* ]]; then
+			_comment_opencode_lock=$(_opencode_run_lock_dir "${agent#opencode:}" 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
+		else
+			_comment_opencode_lock=$(_opencode_run_lock_dir "$agent" 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
+		fi
+		if [ -d "$_comment_opencode_lock" ]; then
+			log "[COMMENT] opencode busy -> skip agent=${agent} for low-latency comment fallback" >&2
+			return 1
+		fi
+	fi
 	_ai_dispatch "COMMENT" "$agent" "$prompt_file"
 }
 
@@ -366,11 +375,11 @@ _run_claude_radio_with_model_unqueued() {
 }
 
 _run_claude_radio_with_model() {
-	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
+	_ai_generation_queue_run "RADIO:claude:${2:-$RADIO_CLAUDE_MODEL}" _run_claude_radio_with_model_unqueued "$@"
 }
 
 _run_claude_radio() {
-	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
+	_ai_call_claude "RADIO" "$1" "$RADIO_CLAUDE_MODEL"
 }
 
 _run_minimax_radio_unqueued() {
@@ -413,7 +422,7 @@ _run_minimax_radio_unqueued() {
 }
 
 _run_minimax_radio() {
-	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
+	_ai_generation_queue_run "RADIO:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_radio_unqueued "$@"
 }
 
 _run_radio_agent() {
@@ -550,7 +559,7 @@ _run_ollama_radio_unqueued() {
 }
 
 _run_ollama_radio() {
-	_ai_call_codex "RADIO" "codex:deepseek-v4-flash" "$1"
+	_ai_generation_queue_run "RADIO:ollama:${2:-$RADIO_OLLAMA_MODEL}" _run_ollama_radio_unqueued "$@"
 }
 
 _run_ollama_comment_unqueued() {
@@ -592,7 +601,7 @@ _run_ollama_comment_unqueued() {
 }
 
 _run_ollama_comment() {
-	_ai_call_codex "COMMENT" "codex:deepseek-v4-flash" "$1"
+	_ai_generation_queue_run "COMMENT:ollama:${2:-$COMMENT_OLLAMA_MODEL}" _run_ollama_comment_unqueued "$@"
 }
 
 _write_radio_corner_status() {
@@ -1462,7 +1471,8 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
 	local radio_prepass_agent="" radio_agents_list=""
-	local radio_allow_claude_fallback=true
+	# claude は不使用方針（codex ハーネス統一）のためフォールバック無効。
+	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
 		radio_primary_agent="${RADIO_SOREN91_AGENT:-haiku}"
@@ -1800,13 +1810,9 @@ PREPASS_APPEND
 	local host_mode_now=""
 	host_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_now" != "$host_mode_generated" ]; then
-		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> discard"
-		_write_radio_corner_status "stale_mode_discarded" "$corner_name" "$game_num" "$score" "$topic" "mode_changed" "$selected_news" "{\"expected_mode\": \"${host_mode_generated}\", \"current_mode\": \"${host_mode_now}\"}"
-		_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
-		rm -f "$talk_file"
-		_radio_clear_state "$corner_name" "stale_mode_discarded"
-		rmdir "$inflight_dir" 2>/dev/null || true
-		return 0
+		# 生成完了までにモードが変わっても破棄せず、キュー投入を継続する。
+		# 再生側も mode 不一致では破棄しないため、生成されたラジオは必ず順番に再生される。
+		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> 破棄せずキューへ投入"
 	fi
 
 	# 再生は常に deferred キューへ積み、audio_worker に委譲する
@@ -1820,6 +1826,7 @@ PREPASS_APPEND
 		[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" >"${deferred_file%.txt}.cc_text"
 	fi
 	if [ -n "$deferred_file" ]; then
+		_radio_mark_done "$done_marker"
 		_radio_set_state "queued" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "$provider_used")"
 		_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "deferred" "$selected_news" "{\"deferred_file\": \"$(basename "$deferred_file")\"}"
 		log "[RADIO:${corner_name}] deferred queue投入: $(basename "$deferred_file")"

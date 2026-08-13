@@ -18,7 +18,13 @@ trap ':' PIPE
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-[ -f .env ] && set -a && . ./.env && set +a
+ENV_FILE="${SOREN_ENV_FILE:-$SCRIPT_DIR/.env}"
+if [ -f "$ENV_FILE" ]; then
+	set -a
+	# shellcheck disable=SC1090
+	. "$ENV_FILE"
+	set +a
+fi
 
 # --- 設定 ---
 MAX_RESTARTS="${SUPERVISOR_MAX_RESTARTS:-10}"
@@ -38,18 +44,65 @@ declare -a WORKER_NAMES=(
 	"deadline_monitor"
 	"radio_worker"
 	"prediction_worker"
-	"obs_capture_watchdog"
 )
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
-	"./workers/chat_worker.sh"
+	"./workers/chat_worker.sh ${TWITCH_CHANNEL:-azumagbanjo}"
 	"./workers/youtube_worker.sh"
 	"./workers/audio_worker.sh"
 	"./workers/deadline_monitor.sh"
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
-	"./obs_capture_watchdog.sh"
 )
+
+# The Linux broadcast VM historically launched soviet_local.mjs from a
+# separate manual tmux session. Under the boot-persistent runtime, keep the
+# existing bridge watchdog inside the same supervisor lifecycle so a reboot
+# cannot leave only the AI loop running against a stale game_state.json.
+BRIDGE_WATCHDOG_ENABLED="${SOREN_SOVIET_WATCHDOG_ENABLED:-0}"
+case "$BRIDGE_WATCHDOG_ENABLED" in
+0) ;;
+1)
+	WORKER_NAMES=("soviet_watchdog" "${WORKER_NAMES[@]}")
+	WORKER_CMDS=("./soviet_watchdog.sh" "${WORKER_CMDS[@]}")
+	;;
+*)
+	echo "SOREN_SOVIET_WATCHDOG_ENABLED must be 0 or 1" >&2
+	exit 2
+	;;
+esac
+
+# OBS' two HTML status surfaces used to live in detached tmux panes. On the
+# boot-persistent Linux runtime, supervise their watch loops directly so every
+# process belongs to the unit lifecycle and is recreated after a restart.
+OVERLAY_WATCHERS_ENABLED="${SOREN_STATUS_OVERLAY_WATCHERS_ENABLED:-0}"
+case "$OVERLAY_WATCHERS_ENABLED" in
+0) ;;
+1)
+	WORKER_NAMES+=("status_overlay_watch" "show_status_overlay_watch")
+	WORKER_CMDS+=("./generate_status_overlay.sh watch 2" "./generate_show_status_overlay.sh watch 2")
+	;;
+*)
+	echo "SOREN_STATUS_OVERLAY_WATCHERS_ENABLED must be 0 or 1" >&2
+	exit 2
+	;;
+esac
+
+STREAM_BACKEND="${SOREN_STREAM_BACKEND:-obs}"
+case "$STREAM_BACKEND" in
+obs)
+	WORKER_NAMES+=("obs_capture_watchdog")
+	WORKER_CMDS+=("./obs_capture_watchdog.sh")
+	;;
+ffmpeg)
+	WORKER_NAMES+=("direct_stream")
+	WORKER_CMDS+=("./direct_stream.sh run")
+	;;
+*)
+	echo "SOREN_STREAM_BACKEND must be obs or ffmpeg" >&2
+	exit 2
+	;;
+esac
 
 # ランタイム状態
 declare -a WORKER_PIDS=()
@@ -80,7 +133,20 @@ _pid_alive() {
 }
 
 case "${1:-}" in
+--print-worker-config)
+	python3 - "$STREAM_BACKEND" "${WORKER_NAMES[@]}" <<'PY'
+import json
+import sys
+
+print(json.dumps({"backend": sys.argv[1], "workers": sys.argv[2:]}, sort_keys=True))
+PY
+	exit 0
+	;;
 --daemon|daemon|start)
+	if [ "$STREAM_BACKEND" = "ffmpeg" ] && [ "$(uname -s)" != "Linux" ]; then
+		echo "SOREN_STREAM_BACKEND=ffmpeg is Linux-only" >&2
+		exit 2
+	fi
 	mkdir -p tmp/state logs 2>/dev/null || true
 	if [ -f "$PID_FILE" ]; then
 		old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
@@ -119,13 +185,17 @@ case "${1:-}" in
 	exit 0
 	;;
 --supervisor|"")
+	if [ "$STREAM_BACKEND" = "ffmpeg" ] && [ "$(uname -s)" != "Linux" ]; then
+		echo "SOREN_STREAM_BACKEND=ffmpeg is Linux-only" >&2
+		exit 2
+	fi
 	;;
 --help|-h)
-	echo "Usage: $0 [--daemon|--supervisor]"
+	echo "Usage: $0 [--daemon|--supervisor|--print-worker-config]"
 	exit 0
 	;;
 *)
-	echo "Usage: $0 [--daemon|--supervisor]" >&2
+	echo "Usage: $0 [--daemon|--supervisor|--print-worker-config]" >&2
 	exit 2
 	;;
 esac
@@ -141,6 +211,10 @@ _pidfile_for_worker() {
 	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
 	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
 	obs_capture_watchdog) echo "tmp/state/obs_capture_watchdog.pid" ;;
+	soviet_watchdog) echo "tmp/state/.soviet_watchdog.lock/owner" ;;
+	status_overlay_watch) echo "tmp/state/status_overlay_watch.pid" ;;
+	show_status_overlay_watch) echo "tmp/state/show_status_overlay_watch.pid" ;;
+	direct_stream) echo "tmp/state/direct_stream.pid" ;;
 	*) echo "" ;;
 	esac
 }
@@ -156,6 +230,10 @@ _pattern_for_worker() {
 	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
 	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
 	obs_capture_watchdog) echo '[/ ]obs_capture_watchdog[.]sh([[:space:]]|$)' ;;
+	soviet_watchdog) echo '[/ ]soviet_watchdog[.]sh([[:space:]]|$)' ;;
+	status_overlay_watch) echo '[/ ]generate_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	show_status_overlay_watch) echo '[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	direct_stream) echo '[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
 	*) echo "" ;;
 	esac
 }
@@ -184,7 +262,9 @@ except Exception:
     print("")' 2>/dev/null || echo "")
 	case "$state" in
 	STOP|GAMEOVER)
-		log_m=$(stat -f %m logs/soren_loop.log 2>/dev/null || stat -c %Y logs/soren_loop.log 2>/dev/null || echo 0)
+		log_m=$(stat -f %m logs/soren_loop.log 2>/dev/null) \
+			|| log_m=$(stat -c %Y logs/soren_loop.log 2>/dev/null) \
+			|| log_m=0
 		now=$(date +%s)
 		case "$log_m" in ''|*[!0-9]*) log_m=0 ;; esac
 		age=$((now - log_m))
@@ -206,9 +286,15 @@ _improve_daemon_responsive() {
 	threshold="${IMPROVE_DAEMON_LOCK_STALL_SEC:-180}"
 	case "$threshold" in ''|*[!0-9]*) threshold=180 ;; esac
 	now=$(date +%s)
-	lock_m=$(stat -f %m "$lock_file" 2>/dev/null || stat -c %Y "$lock_file" 2>/dev/null || echo 0)
-	log_m=$(stat -f %m "$log_file" 2>/dev/null || stat -c %Y "$log_file" 2>/dev/null || echo 0)
-	state_m=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null || echo 0)
+	lock_m=$(stat -f %m "$lock_file" 2>/dev/null) \
+		|| lock_m=$(stat -c %Y "$lock_file" 2>/dev/null) \
+		|| lock_m=0
+	log_m=$(stat -f %m "$log_file" 2>/dev/null) \
+		|| log_m=$(stat -c %Y "$log_file" 2>/dev/null) \
+		|| log_m=0
+	state_m=$(stat -f %m "$state_file" 2>/dev/null) \
+		|| state_m=$(stat -c %Y "$state_file" 2>/dev/null) \
+		|| state_m=0
 	case "$lock_m" in ''|*[!0-9]*) lock_m=0 ;; esac
 	case "$log_m" in ''|*[!0-9]*) log_m=0 ;; esac
 	case "$state_m" in ''|*[!0-9]*) state_m=0 ;; esac
@@ -252,6 +338,15 @@ _find_existing_worker_pid() {
 		fi
 		rm -f "$pid_file" 2>/dev/null || true
 	fi
+	# The bridge watchdog owns a singleton lock and records its PID there.  Do
+	# not fall back to pgrep for this worker: a deployment/SSH command whose
+	# arguments merely mention soviet_watchdog.sh can otherwise be mistaken for
+	# the worker and adopted until that short-lived shell exits.
+	case "$name" in
+	soviet_watchdog|status_overlay_watch|show_status_overlay_watch)
+		return 1
+		;;
+	esac
 	if [ -n "$pattern" ]; then
 		pid=$(pgrep -f "$pattern" 2>/dev/null | head -n 1 || true)
 		if _pid_alive "$pid"; then
@@ -315,6 +410,10 @@ patterns = {
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
     "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
     "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
+    "soviet_watchdog": r"[/ ]soviet_watchdog[.]sh([ \t]|$)",
+    "status_overlay_watch": r"[/ ]generate_status_overlay[.]sh[ \t]+watch([ \t]|$)",
+    "show_status_overlay_watch": r"[/ ]generate_show_status_overlay[.]sh[ \t]+watch([ \t]|$)",
+    "direct_stream": r"[/ ]lib/direct_stream[.]py[ \t]+run([ \t]|$)",
 }
 
 try:
@@ -550,7 +649,9 @@ _handle_supervisor_signal() {
 	SUPERVISOR_STOP_REQUESTED=1
 	_cleanup
 	trap - EXIT
-	exit 130
+	# INT/TERM is the normal systemd stop path. Returning success prevents a
+	# deliberate restart or shutdown from being recorded as a unit failure.
+	exit 0
 }
 
 trap '_cleanup' EXIT

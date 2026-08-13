@@ -1,6 +1,4 @@
 #!/bin/bash
-# 探索モード (EXPLORE_MODE=1) ではステータスオーバーレイ生成を行わない
-[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # generate_status_overlay.sh - render show_status_g/status_dashboard as an OBS HTML overlay.
 #
 # Usage:
@@ -44,8 +42,10 @@ import sys
 import tempfile
 import time
 
+from lib.overlay_text import normalize_overlay_text
+
 out_file, width, height = sys.argv[1:4]
-raw = os.environ.get("STATUS_OVERLAY_RAW", "")
+raw = normalize_overlay_text(os.environ.get("STATUS_OVERLAY_RAW", ""))
 csi_re = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 palette = {
     "0": "",

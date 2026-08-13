@@ -1067,7 +1067,7 @@ EOF
 
 _helpers_tree_changed() {
 	local before_dir="$1" after_dir="$2"
-	diff -qr "$before_dir" "$after_dir" >/dev/null 2>&1
+	diff -qr --exclude="__pycache__" --exclude="*.pyc" "$before_dir" "$after_dir" >/dev/null 2>&1
 	[ $? -eq 1 ]
 }
 

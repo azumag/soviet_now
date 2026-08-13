@@ -41,7 +41,9 @@ rr_acquire() {
 	mkdir -p tmp/state 2>/dev/null || true
 	if mkdir "$RR_LOCK" 2>/dev/null; then echo "soviet_watchdog $$ $(date +%s)" >"$RR_LOCK/owner" 2>/dev/null||true; return 0; fi
 	local now lk; now=$(date +%s)
-	lk=$(stat -f %m "$RR_LOCK" 2>/dev/null || stat -c %Y "$RR_LOCK" 2>/dev/null || echo "$now")
+	lk=$(stat -f %m "$RR_LOCK" 2>/dev/null) \
+		|| lk=$(stat -c %Y "$RR_LOCK" 2>/dev/null) \
+		|| lk="$now"
 	if [ $(( now - lk )) -ge "$RR_TTL" ]; then
 		rm -rf "$RR_LOCK" 2>/dev/null || true
 		mkdir "$RR_LOCK" 2>/dev/null && { echo "soviet_watchdog $$ $now stolen" >"$RR_LOCK/owner" 2>/dev/null||true; return 0; }
@@ -52,7 +54,13 @@ rr_release() { rm -rf "$RR_LOCK" 2>/dev/null || true; }
 
 # --- singleton (heartbeat 付き) ---
 _cmd_of() { ps -o command= -p "$1" 2>/dev/null; }
-_lock_mtime() { stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0; }
+_lock_mtime() {
+	local mt
+	mt=$(stat -f %m "$LOCK_DIR" 2>/dev/null) \
+		|| mt=$(stat -c %Y "$LOCK_DIR" 2>/dev/null) \
+		|| mt=0
+	printf '%s\n' "$mt"
+}
 
 acquire_singleton() {
 	if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -168,9 +176,15 @@ relaunch() {
 		[ -n "$(port_held)" ] && { log "ERROR: port $PORT 解放できず → relaunch 中止"; return 1; }
 	fi
 	log "relaunch: node soviet_local.mjs (cwd=$SCRIPT_DIR)"
+	# クラッシュ原因調査用に直前ログを退避する（次回 relaunch で上書きされるため）
+	if [ -f "$GAME_LOG" ] && [ -s "$GAME_LOG" ]; then
+		local crash_log="$SCRIPT_DIR/tmp/debug/soviet_local.log.$(date +%Y%m%d_%H%M%S)"
+		cp "$GAME_LOG" "$crash_log" 2>/dev/null || true
+		ls -1t "$SCRIPT_DIR"/tmp/debug/soviet_local.log.* 2>/dev/null | tail -n +31 | xargs -r rm -f 2>/dev/null || true
+	fi
 	if command -v tmux >/dev/null 2>&1; then
 		tmux kill-session -t soren_bridge 2>/dev/null || true
-		tmux new-session -d -s soren_bridge "cd '$SCRIPT_DIR' && exec node soviet_local.mjs > '$GAME_LOG' 2>&1"
+		tmux new-session -d -s soren_bridge "cd '$SCRIPT_DIR' && set -a && . ./.env && set +a && exec node soviet_local.mjs > '$GAME_LOG' 2>&1"
 	else
 		nohup node soviet_local.mjs > "$GAME_LOG" 2>&1 &
 	fi

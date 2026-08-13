@@ -69,11 +69,14 @@ EOF
 _RUNTIME_TOGGLES_MIN_INTERVAL=${RUNTIME_TOGGLES_MIN_INTERVAL:-10}
 
 _runtime_toggle_stat_mtime() {
-	local path="$1"
-	if stat -f %m "$path" 2>/dev/null; then
-		return 0
-	fi
-	stat -c %Y "$path" 2>/dev/null
+	local path="$1" mtime
+	mtime=$(stat -f %m "$path" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$path" 2>/dev/null) \
+		|| mtime=0
+	case "$mtime" in
+	'' | *[!0-9]*) mtime=0 ;;
+	esac
+	printf '%s\n' "$mtime"
 }
 
 reload_runtime_toggles() {
@@ -116,14 +119,6 @@ reload_runtime_toggles() {
 		*" $key "*) ;;
 		*) continue ;;
 		esac
-		# 探索モードでは MIN_GAMES_BEFORE_IMPROVE/REGRESSION を .env から再読込しない。
-		# config.sh が探索用の値 (EXPLORE_MIN_GAMES_BEFORE_IMPROVE) を設定しているため、
-		# ここで .env の値 (例: 100) に上書きすると探索サイクルが壊れる。
-		# EXPLORE_MODE はホットリロードで失われる可能性があるため、マーカも併用する。
-		if { [ "${EXPLORE_MODE:-0}" = "1" ] || [ -f "$ELOOP_LIB_DIR/tmp/state/explore_mode" ]; } &&
-			{ [ "$key" = "MIN_GAMES_BEFORE_IMPROVE" ] || [ "$key" = "MIN_GAMES_BEFORE_REGRESSION" ]; }; then
-			continue
-		fi
 		# クォート剥がし
 		case "$val" in
 		\"*\") val="${val%\"}"; val="${val#\"}" ;;

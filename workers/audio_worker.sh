@@ -118,16 +118,33 @@ trap '_handle_signal' INT TERM
 trap '_request_reload HUP' HUP
 trap '_request_reload USR1' USR1
 
-# --- 多重起動防止 ---
-if [ -f "$PID_FILE" ]; then
-	old_pid=$(cat "$PID_FILE" 2>/dev/null)
-	if _pid_alive "$old_pid"; then
-		_log "already running (PID=$old_pid) -> no-op"
+# --- 多重起動防止 (mkdir アトミックロック + PID検証) ---
+mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
+LOCK_DIR="${PID_FILE}.lock"
+LOCK_ACQUIRED=0
+if mkdir "$LOCK_DIR" 2>/dev/null; then
+	LOCK_ACQUIRED=1
+	printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+else
+	# ロックが既にある: 所有者が生きていれば no-op、死んでいれば stale として奪取
+	lock_owner=""
+	[ -f "$LOCK_DIR/pid" ] && lock_owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+	case "$lock_owner" in ''|*[!0-9]*) lock_owner="" ;; esac
+	if [ -n "$lock_owner" ] && _pid_alive "$lock_owner"; then
+		_log "already running (PID=$lock_owner) -> no-op"
 		exit 0
 	fi
-	rm -f "$PID_FILE"
+	# stale ロックを回収して再取得
+	rm -rf "$LOCK_DIR" 2>/dev/null || true
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		LOCK_ACQUIRED=1
+		printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+	else
+		_log "lock race lost -> no-op"
+		exit 0
+	fi
 fi
-mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
+# pidfile は既存互換のためロック所有者PIDを書き、heartbeat も同じPIDを維持する
 echo $$ > "$PID_FILE"
 _start_pid_heartbeat
 

@@ -451,11 +451,11 @@ opencode CLI / claude CLI / gemini CLI / minimax / ollama の個別呼び出し�
 `lib/ai_generate.sh` の `_ai_call_codex` と `strategy/ai.sh` の `run_cmd` が
 `codex exec -m "$CODEX_MODEL"` を実行する。
 
-モデルは **`deepseek-v4-flash` のみ** (環境変数 `CODEX_MODEL` で固定)。
+モデルは **`opencode-go/deepseek-v4-flash` のみ** (環境変数 `CODEX_MODEL` で固定)。
 接続先は `~/.codex/config.toml` の `model_providers.opencode-go` で指定する:
 
 ```toml
-model = "deepseek-v4-flash"
+model = "opencode-go/deepseek-v4-flash"
 model_provider = "opencode-go"
 
 [model_providers.opencode-go]
@@ -465,7 +465,7 @@ env_key = "OPENCODE_GO_API_KEY"
 ```
 
 `OPENCODE_GO_API_KEY` は `.env` に設定する。この構成で
-`codex exec --skip-git-repo-check -m deepseek-v4-flash "..."` が
+`codex exec --skip-git-repo-check -m opencode-go/deepseek-v4-flash "..."` が
 opencode.ai の OpenAI 互換 `/v1/chat/completions` を叩く。
 
 ### LLM モデル設定
@@ -475,14 +475,14 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 #### モデル変数
 
 ```bash
-MODEL_PRIMARY="codex:deepseek-v4-flash"      # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="codex:deepseek-v4-flash"
-MODEL_IMPROVE="codex:deepseek-v4-flash"      # 改善primary
-MODEL_FALLBACK_IMPROVE="codex:deepseek-v4-flash" # 改善fallback
-MODEL_LAST_RESORT="codex:deepseek-v4-flash"
-ROLLBACK_POSTMORTEM_MODEL="codex:deepseek-v4-flash"
-ROLLBACK_POSTMORTEM_FALLBACK="codex:deepseek-v4-flash"
-CODEX_MODEL="deepseek-v4-flash"              # codex CLI のモデル指定
+MODEL_PRIMARY="codex:opencode-go/deepseek-v4-flash"      # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
+MODEL_FALLBACK="codex:opencode-go/deepseek-v4-flash"
+MODEL_IMPROVE="codex:opencode-go/deepseek-v4-flash"      # 改善primary
+MODEL_FALLBACK_IMPROVE="codex:opencode-go/deepseek-v4-flash" # 改善fallback
+MODEL_LAST_RESORT="codex:opencode-go/deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_MODEL="codex:opencode-go/deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_FALLBACK="codex:opencode-go/deepseek-v4-flash"
+CODEX_MODEL="opencode-go/deepseek-v4-flash"              # codex CLI のモデル指定
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
@@ -505,13 +505,13 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 | **粛清ポストモーテム** | `codex:...` | - | - | - |
 | **メリケンAI(全コメント)** | `codex:...` | - | - | - |
 
-`codex:...` は `codex:deepseek-v4-flash` の略記。全チャンネル同一モデル。
+`codex:...` は `codex:opencode-go/deepseek-v4-flash` の略記。全チャンネル同一モデル。
 
 #### スペック別詳細
 
 | スペック | 実装 | 説明 |
 |---------|------|------|
-| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `deepseek-v4-flash` |
+| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `opencode-go/deepseek-v4-flash` |
 | 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧opencode/claude/gemini等もcodexへ正規化 |
 
 #### 必要なAPIキー
@@ -533,7 +533,7 @@ OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 
 codex CLI は `~/.codex/config.toml` と `model_providers` を使用する。プロジェクト側では
 `codex:<model>` スペックのみを使い、エージェント定義ファイルは不要。
-VM では `codex exec -m deepseek-v4-flash` が opencode.ai へ接続できるよう
+VM では `codex exec -m opencode-go/deepseek-v4-flash` が opencode.ai へ接続できるよう
 `~/.codex/config.toml` と `.env` の `OPENCODE_GO_API_KEY` を設定する。
 
 #### Claude Code の使い方
