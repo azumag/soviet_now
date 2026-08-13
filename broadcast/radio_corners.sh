@@ -52,6 +52,14 @@ _news_self_search_fallback() {
 	_radio_time_context
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
+	local past_news_titles=""
+	if [ -f "$PAST_NEWS_READ" ]; then
+		past_news_titles=$(tail -20 "$PAST_NEWS_READ" 2>/dev/null | sed 's/^/  - /')
+	fi
+	local past_news_topics=""
+	if [ -f "$PAST_NEWS_TOPIC_KEYS" ]; then
+		past_news_topics=$(tail -30 "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null | sed 's/^/  - /')
+	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -69,6 +77,12 @@ $(_radio_persona_block)
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
+
+【直近で読んだニュース一覧（これらと同じ記事・同じ話題・同じ切り口は選ばないこと）】
+${past_news_titles:-  （直近の既読ニュース記録なし）}
+
+【直近ニュースの固有名詞・キーワード（これらに言及する話題も避けること）】
+${past_news_topics:-  （記録なし）}
 
 【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
 
@@ -149,9 +163,9 @@ start_radio_corner_news() {
 		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 		_append_news_read_source "$selected_source_key"
 		_append_news_read_url_hash "$selected_url_hash"
-		tail -80 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
-		tail -80 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
-		tail -50 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+		tail -300 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+		tail -300 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+		tail -300 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
 		log "[NEWS] 既読記録: ${selected_news}"
 	fi
 
