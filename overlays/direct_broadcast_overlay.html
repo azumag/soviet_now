@@ -117,6 +117,13 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   padding-top: 3px;
   border-top: 1px solid rgba(103, 232, 249, .18);
 }
+.feed-panel.panel-i { display: none; }
+html[data-improve-active="1"] .feed-panel.panel-g { display: none; }
+html[data-improve-active="1"] .feed-panel.panel-s { flex: 1 1 38%; }
+html[data-improve-active="1"] .feed-panel.panel-i {
+  display: block;
+  flex: 1 1 62%;
+}
 .panel-head {
   height: 13px;
   display: flex;
@@ -144,7 +151,13 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   background: rgba(168, 85, 247, .15);
   border: 1px solid rgba(168, 85, 247, .55);
 }
+.badge-i {
+  color: #fdba74;
+  background: rgba(249, 115, 22, .15);
+  border: 1px solid rgba(249, 115, 22, .55);
+}
 .panel-name { color: #9fb3c8; letter-spacing: .06em; font-size: 7px; }
+.panel-status { min-width: 0; color: #fbbf24; font-size: 7px; font-weight: 900; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-meta { margin-left: auto; color: #5f748b; font-variant-numeric: tabular-nums; font-size: 7px; }
 .feed-lines {
   width: 306px;
@@ -329,6 +342,10 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
         <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">SHOW-STATUS</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
         <div class="feed-lines" id="feed-s"></div>
       </section>
+      <section class="feed-panel panel-i">
+        <div class="panel-head"><span class="badge badge-i">AI</span><span class="panel-name">IMPROVE</span><span class="panel-status" id="feed-i-status"></span><span class="panel-meta" id="feed-i-lines">0L</span></div>
+        <div class="feed-lines" id="feed-i"></div>
+      </section>
     </div>
     <div class="feed-foot"><span>STATUS MERGE · READ ONLY</span><span id="feed-progress">0L</span></div>
   </aside>
@@ -342,8 +359,11 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   const SURFACE_REGION = document.documentElement.dataset.sorenRegion || 'full';
   const feedG = document.getElementById('feed-g');
   const feedS = document.getElementById('feed-s');
+  const feedI = document.getElementById('feed-i');
   const feedGLines = document.getElementById('feed-g-lines');
   const feedSLines = document.getElementById('feed-s-lines');
+  const feedILines = document.getElementById('feed-i-lines');
+  const feedIStatus = document.getElementById('feed-i-status');
   const feedLabel = document.getElementById('feed-label');
   const feedAge = document.getElementById('feed-age');
   const feedProgress = document.getElementById('feed-progress');
@@ -353,6 +373,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   let state = null;
   let lastFeedGKey = '';
   let lastFeedSKey = '';
+  let lastFeedIKey = '';
   let lastSummaryKey = '';
   let lastToastKey = '';
 
@@ -369,7 +390,7 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
     const seconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(epoch || 0));
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
   }
-  function feedLineClass(line) {
+  function feedLineClass(line, opts = {}) {
     const raw = String(line || '');
     const text = raw.replace(/^[│┃\s]+/, '');
     if (/^━+$/.test(raw) || /^[┌└]─+[┐┘]$/.test(raw)) return 'dim';
@@ -396,6 +417,12 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
     if (/^📻 /.test(text)) return 'teal';
     if (/^⟳ /.test(text)) return 'violet';
     if (/^💬 /.test(text)) return 'indigo';
+    if (opts.improve) {
+      if (/^\[\d{2}:\d{2}:\d{2}\] \[IMPROVE\]/.test(raw)) return 'teal';
+      if (/^\[\d{2}:\d{2}:\d{2}\] \[(PIN|BRANCH)\]/.test(raw)) return 'purple';
+      if (/^\[\d{2}:\d{2}:\d{2}\] \[(WARN|ERROR)\]/.test(raw)) return 'down';
+      if (/FAILED|failed|失敗/.test(text)) return 'down';
+    }
     if (/Recent30/.test(text)) return 'g-recent';
     if (/Strategy:/.test(text)) return 'g-strategy';
     if (/^Live:/.test(text)) return 'g-live';
@@ -407,11 +434,11 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
     if (/PASSED|none/.test(text)) return 'ok';
     return 'dim';
   }
-  function renderFeedLines(container, text) {
+  function renderFeedLines(container, text, opts = {}) {
     const lines = String(text || 'データを待っています…').split('\n');
     container.replaceChildren(...lines.map((line) => {
       const row = document.createElement('div');
-      row.className = `feed-line ${feedLineClass(line)}`;
+      row.className = `feed-line ${feedLineClass(line, opts)}`;
       row.textContent = line === '' ? ' ' : line;
       return row;
     }));
@@ -419,6 +446,9 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   function renderFeed() {
     const g = state?.feeds?.showStatusG;
     const s = state?.feeds?.showStatus;
+    const i = state?.feeds?.improve;
+    const improveActive = Boolean(i?.active);
+    document.documentElement.dataset.improveActive = improveActive ? '1' : '';
     const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
@@ -431,9 +461,31 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
       feedSLines.textContent = `${s?.lineCount || 0}L`;
       lastFeedSKey = sKey;
     }
-    feedLabel.textContent = 'G + STATUS';
-    feedAge.textContent = ageLabel(Math.max(g?.updatedAt || 0, s?.updatedAt || 0));
-    feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0)}L`;
+    if (improveActive) {
+      const iKey = `${i?.updatedAt || 0}:${(i?.logLines || []).join('\n')}`;
+      if (iKey !== lastFeedIKey) {
+        renderFeedLines(feedI, (i?.logLines || []).join('\n') || '改善ログを待機中…', { improve: true });
+        feedILines.textContent = `${i?.lineCount || 0}L`;
+        feedIStatus.textContent = [i?.status, i?.phase, i?.detail]
+          .filter(Boolean).join(' · ') || 'running';
+        lastFeedIKey = iKey;
+      }
+      feedLabel.textContent = 'IMPROVE + OPS';
+    } else {
+      if (lastFeedIKey !== '') {
+        feedI.replaceChildren();
+        feedILines.textContent = '0L';
+        feedIStatus.textContent = '';
+        lastFeedIKey = '';
+      }
+      feedLabel.textContent = 'G + STATUS';
+    }
+    feedAge.textContent = ageLabel(Math.max(
+      g?.updatedAt || 0,
+      s?.updatedAt || 0,
+      improveActive ? (i?.logUpdatedAt || 0) : (i?.updatedAt || 0),
+    ));
+    feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
   }
   function summaryClass(text) {
     if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
@@ -559,7 +611,11 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
       lastClientUpdateAt: Math.floor(Date.now() / 1000),
       showStatusGLineCount: state?.feeds?.showStatusG?.lineCount || 0,
       showStatusLineCount: state?.feeds?.showStatus?.lineCount || 0,
-      feedLines: (state?.feeds?.showStatusG?.lineCount || 0) + (state?.feeds?.showStatus?.lineCount || 0),
+      improveActive: Boolean(state?.feeds?.improve?.active),
+      improveLineCount: state?.feeds?.improve?.lineCount || 0,
+      feedLines: (state?.feeds?.showStatusG?.lineCount || 0)
+        + (state?.feeds?.showStatus?.lineCount || 0)
+        + (state?.feeds?.improve?.active ? (state?.feeds?.improve?.lineCount || 0) : 0),
       notificationCount: state?.notifications?.events?.length || 0,
       workActive: Boolean(state?.notifications?.work?.active),
       generatorCount: state?.notifications?.generators?.length || 0,

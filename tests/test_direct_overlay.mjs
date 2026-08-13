@@ -38,12 +38,15 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
   assert.equal(enabled.elementId, DIRECT_OVERLAY_ELEMENT_ID);
   assert.match(enabled.htmlFile, /tmp\/state\/event_overlay[.]html$/);
   assert.deepEqual(enabled.surfaces.map((item) => item.key), [
-    'broadcastSidebar', 'broadcastTop', 'broadcastBottom', 'twica', 'improve', 'wildcard', 'avsync',
+    'broadcastSidebar', 'broadcastTop', 'broadcastBottom', 'twica', 'wildcard', 'avsync',
   ]);
   assert.equal(enabled.broadcast.stateRoute, '/__soren_overlay/broadcast/state');
   assert.match(enabled.broadcast.sources.eventHtmlFile, /event_overlay[.]html$/);
   assert.match(enabled.broadcast.sources.statsHtmlFile, /status_overlay[.]html$/);
   assert.match(enabled.broadcast.sources.opsHtmlFile, /show_status_overlay[.]html$/);
+  assert.match(enabled.broadcast.sources.improveStateFile, /improve_state[.]json$/);
+  assert.match(enabled.broadcast.sources.improveLogFile, /improve_ai[.]log$/);
+  assert.match(enabled.broadcast.sources.wildcardStateFile, /wildcard_parallel_status[.]json$/);
 });
 
 
@@ -60,7 +63,7 @@ test('overlay installer persists across reload and installs current page', async
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   assert.equal(await installDirectOverlay(page, config), true);
   assert.deepEqual(calls.map(([kind]) => kind), ['init', 'evaluate']);
-  assert.equal(calls[0][2].length, 7);
+  assert.equal(calls[0][2].length, 6);
   assert.match(String(calls[0][1]), /window[.]top !== window/);
   assert.equal(calls[0][2][0].route, '/__soren_overlay/broadcast/sidebar');
   assert.equal(calls[0][2][0].elementId, 'soren-direct-stream-overlay-broadcastSidebar');
@@ -194,6 +197,8 @@ test('state-driven surfaces match normal, improvement, and wildcard layouts', ()
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-direct-overlay-'));
   const wildcardState = path.join(temp, 'wildcard.json');
   const improveState = path.join(temp, 'improve.json');
+  // dashboard broadcast 構成では改善状態をサイドバーフィードへ統合するため、
+  // 全画面 improve surface 自体を持たない。
   const config = loadDirectOverlayConfig({
     SOREN_STREAM_BACKEND: 'ffmpeg',
     WILDCARD_PARALLEL_STATUS_FILE: wildcardState,
@@ -203,16 +208,28 @@ test('state-driven surfaces match normal, improvement, and wildcard layouts', ()
 
   fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'idle' }));
   fs.writeFileSync(improveState, JSON.stringify({ status: 'running' }));
+  assert.equal(byKey.improve, undefined, 'dashboard broadcast must not install a full-screen improve surface');
   assert.equal(directOverlaySurfaceVisible(byKey.broadcastSidebar), true);
   assert.equal(directOverlaySurfaceVisible(byKey.broadcastTop), true);
   assert.equal(directOverlaySurfaceVisible(byKey.broadcastBottom), true);
-  assert.equal(directOverlaySurfaceVisible(byKey.improve), true);
   assert.equal(directOverlaySurfaceVisible(byKey.wildcard), false);
 
   fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'running' }));
   assert.equal(directOverlaySurfaceVisible(byKey.broadcastSidebar), true);
-  assert.equal(directOverlaySurfaceVisible(byKey.improve), false);
   assert.equal(directOverlaySurfaceVisible(byKey.wildcard), true);
+
+  // fullscreen 互換構成では従来どおり improve 全画面 surface が有効。
+  const fullscreen = loadDirectOverlayConfig({
+    SOREN_STREAM_BACKEND: 'ffmpeg',
+    SOREN_DIRECT_STAGE_LAYOUT: 'fullscreen',
+    WILDCARD_PARALLEL_STATUS_FILE: wildcardState,
+    IMPROVE_STATE_FILE: improveState,
+  }, 'linux');
+  const fsByKey = Object.fromEntries(fullscreen.surfaces.map((item) => [item.key, item]));
+  fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'idle' }));
+  assert.equal(directOverlaySurfaceVisible(fsByKey.improve), true);
+  fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'running' }));
+  assert.equal(directOverlaySurfaceVisible(fsByKey.improve), false);
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
