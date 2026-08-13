@@ -1471,7 +1471,8 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
 	local radio_prepass_agent="" radio_agents_list=""
-	local radio_allow_claude_fallback=true
+	# claude は不使用方針（codex ハーネス統一）のためフォールバック無効。
+	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
 		radio_primary_agent="${RADIO_SOREN91_AGENT:-haiku}"
