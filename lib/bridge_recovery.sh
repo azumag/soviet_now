@@ -309,6 +309,12 @@ _br_relaunch() {
 	# (--hide-crash-restore-bubble と二重の保険。既存 unclean 状態も修復)
 	_br_clean_profile_exit
 	_br_log "relaunch: node soviet_local.mjs (cwd=$_BR_ROOT)"
+	# クラッシュ原因調査用に直前ログを退避する（次回 relaunch で上書きされるため）
+	if [ -f "$_BR_GAME_LOG" ] && [ -s "$_BR_GAME_LOG" ]; then
+		local _br_crash_log="$_BR_ROOT/tmp/debug/soviet_local.log.$(date +%Y%m%d_%H%M%S)"
+		cp "$_BR_GAME_LOG" "$_br_crash_log" 2>/dev/null || true
+		ls -1t "$_BR_ROOT"/tmp/debug/soviet_local.log.* 2>/dev/null | tail -n +31 | xargs -r rm -f 2>/dev/null || true
+	fi
 	if command -v tmux >/dev/null 2>&1; then
 		tmux kill-session -t soren_bridge 2>/dev/null || true
 		tmux new-session -d -s soren_bridge "cd '$_BR_ROOT' && exec node soviet_local.mjs > '$_BR_GAME_LOG' 2>&1"

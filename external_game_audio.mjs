@@ -23,6 +23,8 @@ export function loadExternalGameAudioConfig(env = process.env, platform = proces
     pulseLatencyMs: clampInteger(env.SOREN_GAME_AUDIO_PULSE_LATENCY_MS, 100, 50, 2000),
     hammerSickleDelayMs: clampInteger(env.SOREN_GAME_SE_HAMMER_SICKLE_DELAY_MS, 1000, 0, 10000),
     sovietBgmDelayMs: clampInteger(env.SOREN_GAME_BGM_SOVIET_DELAY_MS, 5250, 0, 15000),
+    bgmRestartDelayMs: clampInteger(env.SOREN_GAME_BGM_RESTART_DELAY_MS, 2000, 500, 30000),
+    bgmHealthIntervalMs: clampInteger(env.SOREN_GAME_BGM_HEALTH_INTERVAL_MS, 30000, 5000, 300000),
   };
 }
 
@@ -38,10 +40,17 @@ export class ExternalGameAudio {
     this.fileExists = dependencies.fileExists || fs.existsSync;
     this.setTimeoutFn = dependencies.setTimeoutFn || setTimeout;
     this.clearTimeoutFn = dependencies.clearTimeoutFn || clearTimeout;
+    this.setIntervalFn = dependencies.setIntervalFn || setInterval;
+    this.clearIntervalFn = dependencies.clearIntervalFn || clearInterval;
     this.nowFn = dependencies.nowFn || Date.now;
     this.logger = dependencies.logger || console;
 
     this.bgmChild = null;
+    this.bgmRestartTimer = null;
+    this.bgmRestartBackoff = 1;
+    this.bgmRestartDelayMs = this.config.bgmRestartDelayMs ?? 2000;
+    this.bgmHealthIntervalMs = this.config.bgmHealthIntervalMs ?? 30000;
+    this.bgmHealthTimer = null;
     this.seChildren = new Set();
     this.timers = new Set();
     this.activeBgmMode = null;
@@ -119,9 +128,48 @@ export class ExternalGameAudio {
     const child = this.bgmChild;
     this.bgmChild = null;
     this.activeBgmMode = null;
+    this._clearBgmRestart();
     if (child) {
       try { child.kill('SIGTERM'); } catch {}
     }
+  }
+
+  _clearBgmRestart() {
+    if (this.bgmRestartTimer) {
+      this.clearTimeoutFn(this.bgmRestartTimer);
+      this.bgmRestartTimer = null;
+    }
+  }
+
+  _startBgmHealthTimer() {
+    this._stopBgmHealthTimer();
+    if (!this.isEnabled()) return;
+    this.bgmHealthTimer = this.setIntervalFn(() => {
+      if (this.stopped || this.muted) return;
+      if (!this.bgmChild && !this.bgmRestartTimer) {
+        this.logger.warn('[GAME-AUDIO] BGM health check: missing, re-ensuring');
+        this._ensureBgm(this.desiredBgmMode);
+      }
+    }, this.bgmHealthIntervalMs);
+  }
+
+  _stopBgmHealthTimer() {
+    if (this.bgmHealthTimer) {
+      this.clearIntervalFn(this.bgmHealthTimer);
+      this.bgmHealthTimer = null;
+    }
+  }
+
+  _scheduleBgmRestart() {
+    if (this.stopped || this.muted || this.bgmRestartTimer) return;
+    const delay = this.bgmRestartDelayMs * this.bgmRestartBackoff;
+    this.bgmRestartBackoff = Math.min(this.bgmRestartBackoff * 2, 16);
+    this.logger.warn(`[GAME-AUDIO] BGM unexpected exit; restart in ${delay}ms`);
+    this.bgmRestartTimer = this.setTimeoutFn(() => {
+      this.bgmRestartTimer = null;
+      if (this.stopped || this.muted) return;
+      this._ensureBgm(this.desiredBgmMode);
+    }, delay);
   }
 
   _ensureBgm(mode = this.desiredBgmMode) {
@@ -140,19 +188,19 @@ export class ExternalGameAudio {
     if (!child) return;
     this.bgmChild = child;
     this.activeBgmMode = mode;
+    this.bgmRestartBackoff = 1;
     child.on?.('error', (error) => {
       if (this.bgmChild !== child) return;
       this.logger.warn(`[GAME-AUDIO] BGM:${mode} ffplay error: ${error && error.message}`);
       this.bgmChild = null;
       this.activeBgmMode = null;
+      this._scheduleBgmRestart();
     });
     child.on?.('exit', (code, signal) => {
       if (this.bgmChild !== child) return;
       this.bgmChild = null;
       this.activeBgmMode = null;
-      if (!this.stopped && !this.muted && code !== 0 && code !== null) {
-        this.logger.warn(`[GAME-AUDIO] BGM:${mode} exited code=${code} signal=${signal}`);
-      }
+      if (!this.stopped && !this.muted) this._scheduleBgmRestart();
     });
     this.logger.log(`[GAME-AUDIO] BGM:${mode} started: ${filePath} (vol=${this.config.bgmVolumePct}%, pulse=${this.config.pulseLatencyMs}ms)`);
   }
@@ -193,6 +241,9 @@ export class ExternalGameAudio {
   start(initialState = null) {
     if (!this.isEnabled()) return;
     this.stopped = false;
+    this.bgmRestartBackoff = 1;
+    this._clearBgmRestart();
+    this._startBgmHealthTimer();
     if (initialState) {
       this.lastState = initialState;
       this.desiredBgmMode = stateNumber(initialState, 'makeSorenCount') > 0 ? 'soviet' : 'initial';
@@ -206,6 +257,8 @@ export class ExternalGameAudio {
     this.muted = next;
     if (next) {
       this._clearTimers();
+      this._clearBgmRestart();
+      this._stopBgmHealthTimer();
       this._stopBgm();
       for (const child of this.seChildren) {
         try { child.kill('SIGTERM'); } catch {}
@@ -269,6 +322,8 @@ export class ExternalGameAudio {
   shutdown() {
     this.stopped = true;
     this._clearTimers();
+    this._clearBgmRestart();
+    this._stopBgmHealthTimer();
     this._stopBgm();
     for (const child of this.seChildren) {
       try { child.kill('SIGTERM'); } catch {}
