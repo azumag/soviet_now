@@ -2,9 +2,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -187,6 +189,233 @@ class DirectStreamTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertFalse(state_dir.exists())
             self.assertFalse(output.exists())
+
+    def test_reconnect_config_defaults_and_strict_validation(self) -> None:
+        config = direct_stream.load_reconnect_config(
+            {"TWITCH_CHANNEL": "dociai"}
+        )
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.twitch_channel, "dociai")
+        self.assertEqual(config.probe_interval_sec, 60)
+        self.assertEqual(config.offline_threshold, 2)
+        self.assertEqual(config.backoff_sec, 10)
+        self.assertEqual(config.max_consecutive_restarts, 10)
+        self.assertTrue(config.reload_relay)
+
+        with self.assertRaises(direct_stream.ConfigError):
+            direct_stream.load_reconnect_config(
+                {"SOREN_DIRECT_STREAM_RECONNECT_OFFLINE_THRESHOLD": "0"}
+            )
+        with self.assertRaises(direct_stream.ConfigError):
+            direct_stream.load_reconnect_config(
+                {"SOREN_DIRECT_STREAM_RECONNECT_ENABLED": "maybe"}
+            )
+        with self.assertRaises(direct_stream.ConfigError):
+            direct_stream.load_reconnect_config(
+                {"SOREN_DIRECT_STREAM_TWITCH_CHANNEL": "bad name!"}
+            )
+
+    def test_twitch_channel_is_live_parses_public_gql(self) -> None:
+        channel = "dociai"
+        request_capture: list[object] = []
+
+        def fake_urlopen(request, timeout):
+            request_capture.append(request)
+            response = mock.MagicMock()
+            response.read.return_value = json.dumps(
+                {"data": {"user": {"stream": {"id": "1"}}}}
+            ).encode("utf-8")
+            response.__enter__.return_value = response
+            return response
+
+        with mock.patch.object(
+            direct_stream.urllib.request, "urlopen", side_effect=fake_urlopen
+        ):
+            self.assertTrue(direct_stream.twitch_channel_is_live(channel))
+        request = request_capture[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertIn("dociai", body["query"])
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        self.assertEqual(
+            headers.get("client-id"), direct_stream.TWITCH_WEB_CLIENT_ID
+        )
+
+    def test_twitch_channel_is_live_handles_offline_and_probe_failures(self) -> None:
+        offline_response = mock.MagicMock()
+        offline_response.read.return_value = json.dumps(
+            {"data": {"user": {"stream": None}}}
+        ).encode("utf-8")
+        offline_response.__enter__.return_value = offline_response
+        with mock.patch.object(
+            direct_stream.urllib.request,
+            "urlopen",
+            return_value=offline_response,
+        ):
+            self.assertFalse(direct_stream.twitch_channel_is_live("dociai"))
+
+        with mock.patch.object(
+            direct_stream.urllib.request,
+            "urlopen",
+            side_effect=direct_stream.urllib.error.URLError("boom"),
+        ):
+            self.assertIsNone(direct_stream.twitch_channel_is_live("dociai"))
+
+        self.assertIsNone(direct_stream.twitch_channel_is_live(""))
+
+    def test_reconnect_monitor_requests_reconnect_after_offline_streak(self) -> None:
+        reconnect = direct_stream.load_reconnect_config(
+            {
+                "TWITCH_CHANNEL": "dociai",
+                "SOREN_DIRECT_STREAM_RECONNECT_PROBE_SEC": "10",
+                "SOREN_DIRECT_STREAM_RECONNECT_OFFLINE_THRESHOLD": "2",
+            }
+        )
+        child = mock.Mock()
+        child.pid = 12345
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+            "offline_streak": 0,
+            "last_live": None,
+        }
+        config = direct_stream.load_config(base_env())
+
+        with mock.patch.object(
+            direct_stream, "twitch_channel_is_live", return_value=False
+        ), mock.patch.object(direct_stream.time, "sleep"), mock.patch.object(
+            direct_stream, "_pid_alive", return_value=True
+        ):
+            thread = direct_stream._start_reconnect_monitor(
+                config, reconnect, child, monitor_state
+            )
+            thread.join(timeout=5)
+
+        self.assertTrue(monitor_state["reconnect"])
+        self.assertEqual(monitor_state["reconnect_reason"], "twitch_offline")
+        child.send_signal.assert_called_with(signal.SIGINT)
+
+    def test_reconnect_monitor_resets_streak_on_live(self) -> None:
+        reconnect = direct_stream.load_reconnect_config(
+            {
+                "TWITCH_CHANNEL": "dociai",
+                "SOREN_DIRECT_STREAM_RECONNECT_PROBE_SEC": "10",
+                "SOREN_DIRECT_STREAM_RECONNECT_OFFLINE_THRESHOLD": "3",
+            }
+        )
+        child = mock.Mock()
+        child.pid = 12345
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+            "offline_streak": 0,
+            "last_live": None,
+        }
+        config = direct_stream.load_config(base_env())
+        probe_results = [False, True, False, False, False]
+
+        with mock.patch.object(
+            direct_stream,
+            "twitch_channel_is_live",
+            side_effect=lambda channel: probe_results.pop(0),
+        ), mock.patch.object(direct_stream.time, "sleep"), mock.patch.object(
+            direct_stream, "_pid_alive", return_value=True
+        ):
+            thread = direct_stream._start_reconnect_monitor(
+                config, reconnect, child, monitor_state
+            )
+            thread.join(timeout=5)
+
+        self.assertTrue(monitor_state["reconnect"])
+        self.assertEqual(monitor_state["offline_streak"], 3)
+
+    def test_run_ffmpeg_supervise_restarts_on_reconnect(self) -> None:
+        config = direct_stream.load_config(
+            base_env(SOREN_DIRECT_STREAM_STATE_DIR=tempfile.mkdtemp())
+        )
+        reconnect = direct_stream.load_reconnect_config(
+            {
+                "TWITCH_CHANNEL": "dociai",
+                "SOREN_DIRECT_STREAM_RECONNECT_BACKOFF_SEC": "1",
+            }
+        )
+        outcomes = [
+            direct_stream.RunOutcome(
+                exit_code=0,
+                state="reconnect",
+                started_at=1,
+                reconnect_reason="twitch_offline",
+                ffmpeg_exit_code=255,
+            ),
+            direct_stream.RunOutcome(
+                exit_code=0,
+                state="stopped",
+                started_at=2,
+                ffmpeg_exit_code=255,
+            ),
+        ]
+        calls: list[direct_stream.RunOutcome] = []
+
+        def fake_once(config_, command, *, mode, reconnect):
+            calls.append(outcomes.pop(0))
+            return calls[-1]
+
+        with mock.patch.object(
+            direct_stream, "_run_ffmpeg_once", side_effect=fake_once
+        ) as once, mock.patch.object(
+            direct_stream, "_reload_relay", return_value=True
+        ) as reload_relay, mock.patch.object(
+            direct_stream, "validate_runtime"
+        ):
+            result = direct_stream._run_ffmpeg(
+                config,
+                mode="live",
+                output_path=None,
+                duration_sec=None,
+                reconnect=reconnect,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(once.call_count, 2)
+        self.assertEqual(calls[0].state, "reconnect")
+        self.assertEqual(calls[1].state, "stopped")
+        reload_relay.assert_called_once_with(config)
+
+    def test_run_ffmpeg_supervise_stops_after_restart_limit(self) -> None:
+        config = direct_stream.load_config(
+            base_env(SOREN_DIRECT_STREAM_STATE_DIR=tempfile.mkdtemp())
+        )
+        reconnect = direct_stream.load_reconnect_config(
+            {
+                "TWITCH_CHANNEL": "dociai",
+                "SOREN_DIRECT_STREAM_RECONNECT_BACKOFF_SEC": "1",
+                "SOREN_DIRECT_STREAM_RECONNECT_MAX_CONSECUTIVE": "2",
+            }
+        )
+
+        def fake_once(config_, command, *, mode, reconnect):
+            return direct_stream.RunOutcome(
+                exit_code=0,
+                state="reconnect",
+                started_at=1,
+                reconnect_reason="twitch_offline",
+                ffmpeg_exit_code=255,
+            )
+
+        with mock.patch.object(
+            direct_stream, "_run_ffmpeg_once", side_effect=fake_once
+        ), mock.patch.object(direct_stream, "validate_runtime"):
+            with self.assertRaisesRegex(
+                direct_stream.RuntimeCheckError, "reconnect limit reached"
+            ):
+                direct_stream._run_ffmpeg(
+                    config,
+                    mode="live",
+                    output_path=None,
+                    duration_sec=None,
+                    reconnect=reconnect,
+                )
 
 
 if __name__ == "__main__":
