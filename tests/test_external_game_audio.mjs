@@ -31,6 +31,14 @@ function fakeClock() {
     clearTimeoutFn(timer) {
       tasks.delete(timer);
     },
+    setIntervalFn(action, delay) {
+      const timer = { id: ++sequence, due: now + delay, interval: delay };
+      tasks.set(timer, action);
+      return timer;
+    },
+    clearIntervalFn(timer) {
+      tasks.delete(timer);
+    },
     advance(ms) {
       const target = now + ms;
       while (true) {
@@ -40,7 +48,12 @@ function fakeClock() {
         if (!next) break;
         now = next.due;
         const action = tasks.get(next);
-        tasks.delete(next);
+        if (next.interval) {
+          next.due += next.interval;
+          tasks.set(next, action);
+        } else {
+          tasks.delete(next);
+        }
         action();
       }
       now = target;
@@ -159,7 +172,7 @@ test('drop, mute, and retry control external audio without stale timers', () => 
   assert.equal(spawns.at(-1).file, '/audio/drop.wav');
 
   audio.observeState({ state: 'STOP', score: 0, makeSorenCount: 1 });
-  assert.equal(clock.pending(), 2);
+  assert.equal(clock.pending(), 3, 'hammer + soviet BGM timers plus the BGM health interval');
   audio.setMuted(true);
   assert.equal(clock.pending(), 0);
   const spawnCountWhileMuted = spawns.length;
@@ -172,4 +185,73 @@ test('drop, mute, and retry control external audio without stale timers', () => 
   assert.equal(spawns.at(-1).file, '/audio/International.ogg');
   clock.advance(10000);
   assert.equal(spawns.at(-1).file, '/audio/International.ogg');
+});
+
+
+test('unexpected BGM exit schedules an auto-restart with backoff', () => {
+  const { audio, clock, spawns, logs } = harness();
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  assert.equal(spawns.length, 1);
+  const first = spawns[0].child;
+
+  first.emit('exit', 1, null);
+  assert.ok(logs.some((line) => line.includes('BGM unexpected exit')));
+  assert.equal(spawns.length, 1, 'restart must wait for the backoff delay');
+
+  clock.advance(1999);
+  assert.equal(spawns.length, 1);
+  clock.advance(1);
+  assert.equal(spawns.length, 2, 'BGM must respawn after the restart delay');
+  assert.equal(spawns.at(-1).file, '/audio/International.ogg');
+
+  // Second unexpected exit uses a longer backoff, then recovers on success.
+  const second = spawns[1].child;
+  second.emit('exit', 1, null);
+  clock.advance(1999);
+  assert.equal(spawns.length, 2);
+  clock.advance(2001);
+  assert.equal(spawns.length, 3, 'backoff doubles after repeated failures');
+  assert.equal(spawns.at(-1).file, '/audio/International.ogg');
+});
+
+
+test('intentional stop, mute, and shutdown never auto-restart BGM', () => {
+  const { audio, clock, spawns } = harness();
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  assert.equal(spawns.length, 1);
+
+  audio.setMuted(true);
+  spawns[0].child.emit('exit', 1, null);
+  clock.advance(30000);
+  assert.equal(spawns.length, 1, 'muted BGM exit must not schedule a restart');
+
+  audio.setMuted(false);
+  assert.equal(spawns.length, 2);
+  audio.shutdown();
+  spawns[1].child.emit('exit', 0, null);
+  clock.advance(30000);
+  assert.equal(spawns.length, 2, 'shutdown must not schedule a restart');
+});
+
+
+test('periodic health check re-ensures BGM when it silently disappears', () => {
+  const { audio, clock, spawns, logs } = harness({ bgmHealthIntervalMs: 30000 });
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  assert.equal(spawns.length, 1);
+
+  // BGM child vanishes without an exit event (e.g., SIGKILL that orphaned the
+  // reference). The periodic check must detect the gap and respawn.
+  audio.bgmChild = null;
+  audio.activeBgmMode = null;
+  clock.advance(29999);
+  assert.equal(spawns.length, 1, 'health check must respect its interval');
+  clock.advance(1);
+  assert.equal(spawns.length, 2, 'health check must respawn missing BGM');
+  assert.ok(logs.some((line) => line.includes('BGM health check')));
+  assert.equal(spawns.at(-1).file, '/audio/International.ogg');
+
+  // With BGM alive, the health check stays quiet and does not duplicate.
+  const before = spawns.length;
+  clock.advance(60000);
+  assert.equal(spawns.length, before, 'healthy BGM must not be duplicated');
 });
