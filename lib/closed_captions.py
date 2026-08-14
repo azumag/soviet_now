@@ -155,7 +155,10 @@ def wrap_caption_pages(
 
 
 def _translation_prompt(chunks: Sequence[str], max_chars: int) -> str:
-    target_chars = min(max_chars, 40)
+    # Batch radio requests can contain many proper nouns. A 32-character target
+    # leaves enough margin for occasional model overshoot while preserving the
+    # hard two-line CEA-608 limit of 64 characters.
+    target_chars = min(max_chars, 32)
     numbered = "\n".join(
         f"{index}: {json.dumps(chunk, ensure_ascii=False)}"
         for index, chunk in enumerate(chunks)
