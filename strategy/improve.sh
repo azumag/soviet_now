@@ -943,7 +943,10 @@ json.dump(rs, open(rs_file, 'w'))
 		IMPROVE_PID=0
 		log "[IMPROVE][MANUAL] 手動改善完了 → idle"
 		_improve_overlay_hide
-		if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
+		if _improve_keep_main_game_running; then
+			log "[IMPROVE][MANUAL] 継続プレイ設定のため、代打停止・交代処理なしでメインゲームを継続"
+			rm -f "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
+		elif command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 			log "[IMPROVE][MANUAL] manual_meriken_mode=on のため、メリケンAI継続"
 		elif _scheduled_meriken_time_should_run; then
 			log "[IMPROVE][MANUAL] 20時台: メリケンAIタイムに移行 → soren91継続"
@@ -1200,7 +1203,9 @@ with open(rs_file, 'w') as f:
 				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			fi
 
-			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
+			if _improve_keep_main_game_running; then
+				:
+			elif command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				:
 			elif _scheduled_meriken_time_should_run; then
 				:
@@ -1264,6 +1269,12 @@ PY
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 			# OBS: 改善中オーバーレイ非表示
+			if _improve_keep_main_game_running; then
+				log "[IMPROVE] 継続プレイ設定: soren91_stop/session improve/交代処理を行わず、メインゲームを継続"
+				rm -f "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
+				_improve_overlay_hide
+				return 0
+			fi
 			case "$prev_improve_reason" in
 			wildcard|archive_restart)
 				log "[WILDCARD] ${prev_improve_reason} 完了: 高速脱出のため soren91_stop/soren91_improve/handover/bridge再起動をスキップ"
@@ -2298,7 +2309,9 @@ _start_improvement_job() {
 		# WILDCARD / archive_restart は AI を介さない脱出処理のため、
 		# soren91 代打/ミュート/OBS切替/完了時bridge再起動 を一切起こさない。
 		# (post-escape の bridge 再起動が commands 経路 desync=空転の発生源だった)
-		if [ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]; then
+		if _improve_keep_main_game_running; then
+			log "[IMPROVE] 継続プレイ設定: soren91代打を起動せず、メインゲームと改善を並行実行"
+		elif [ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]; then
 			log "[WILDCARD] ${reason} は高速脱出(AI不使用・短時間)互換の隔離脱出処理のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
 		else
 			# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ

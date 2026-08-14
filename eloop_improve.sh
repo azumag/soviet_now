@@ -323,12 +323,15 @@ _wildcard_parallel_cleanup_sessions() {
 # wildcard_parallel.py 起動前に status を phase=generating で先置きし、
 # 検出ラグ(python が status を書くまでの数秒)中に主ループが soren91 を代打起動
 # するのを防ぐ。python 本体が main() で同じ status を上書きするまでのつなぎ。
-# block_main_loop=true を含めるので _wildcard_parallel_active が即 true を返す。
+# 継続プレイ設定時は block_main_loop=false を先置きし、状態ファイル上も
+# 「候補評価は実行中だがメインゲームは止めない」という契約を明示する。
 _wildcard_parallel_prewrite_status() {
 	local started_at="${1:-$(date +%s)}"
 	local status_file="${WILDCARD_PARALLEL_STATUS_FILE:-$TMP_STATE_DIR/wildcard_parallel_status.json}"
+	local block_main_loop=1
+	_improve_keep_main_game_running && block_main_loop=0
 	mkdir -p "$(dirname "$status_file")" 2>/dev/null || true
-	WP_PREWRITE_STATUS_FILE="$status_file" WP_PREWRITE_STARTED_AT="$started_at" python3 - <<'PY' 2>/dev/null || true
+	WP_PREWRITE_STATUS_FILE="$status_file" WP_PREWRITE_STARTED_AT="$started_at" WP_PREWRITE_BLOCK_MAIN_LOOP="$block_main_loop" python3 - <<'PY' 2>/dev/null || true
 import json
 import os
 import tempfile
@@ -340,7 +343,7 @@ except Exception:
     started_at = 0
 payload = {
     "phase": "generating",
-    "block_main_loop": True,
+    "block_main_loop": os.environ.get("WP_PREWRITE_BLOCK_MAIN_LOOP", "1") != "0",
     "started_at": started_at,
     "updated_at": started_at,
     "candidates": [],
@@ -429,7 +432,7 @@ _post_improve_param_parallel_trial() {
 	fi
 	_wildcard_parallel_obs_show || true
 
-	local result_file started_at count_min count_max param_count seed random_count_arg result rc has_winner winner_path winner_hash baseline_hash winner_job
+	local result_file started_at count_min count_max param_count seed random_count_arg main_loop_arg result rc has_winner winner_path winner_hash baseline_hash winner_job
 	baseline_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	count_min="${WILDCARD_PARAM_COUNT_MIN:-1}"
 	count_max="${WILDCARD_PARAM_COUNT_MAX:-3}"
@@ -445,6 +448,8 @@ _post_improve_param_parallel_trial() {
 	rm -f "$result_file" 2>/dev/null || true
 	random_count_arg="--random-count"
 	[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || random_count_arg="--no-random-count"
+	main_loop_arg="--block-main-loop"
+	_improve_keep_main_game_running && main_loop_arg="--no-block-main-loop"
 	export WILDCARD_PARALLEL_OBS_WINDOW_SOURCES="${WILDCARD_PARALLEL_OBS_WINDOW_SOURCES:-0}"
 	export WILDCARD_PARALLEL_OBS_BROWSER_SOURCES="${WILDCARD_PARALLEL_OBS_BROWSER_SOURCES:-0}"
 	export WILDCARD_PARALLEL_OBS_CANDIDATE_COLS
@@ -477,7 +482,7 @@ _post_improve_param_parallel_trial() {
 		--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
 		--baseline-slot1 \
 		--max-runtime-sec "${WILDCARD_PARALLEL_POST_PARAM_MAX_RUNTIME_SEC:-7200}" \
-		--block-main-loop \
+		"$main_loop_arg" \
 		--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 		--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 		--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
@@ -546,9 +551,10 @@ PY
 	fi
 
 	winner_hash=$(python3 extract_decide_hash.py "$winner_path" 2>/dev/null || echo "")
-	cp "$winner_path" "$STRATEGY_FILE"
+	strategy_runtime_atomic_apply_then \
+		"$winner_path" "$STRATEGY_FILE" \
+		"_atomic_pin_advance_after_apply" "$baseline_hash" "param-parallel"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	_atomic_pin_advance_after_apply "$baseline_hash" "param-parallel"
 	winner_job=$(python3 - "$result_file" <<'PY' 2>/dev/null || true
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1067,7 +1073,7 @@ EOF
 
 _helpers_tree_changed() {
 	local before_dir="$1" after_dir="$2"
-	diff -qr "$before_dir" "$after_dir" >/dev/null 2>&1
+	diff -qr --exclude="__pycache__" --exclude="*.pyc" "$before_dir" "$after_dir" >/dev/null 2>&1
 	[ $? -eq 1 ]
 }
 
@@ -1434,6 +1440,8 @@ PY
 		export WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS
 		wildcard_random_count_arg="--random-count"
 		[ "${WILDCARD_PERTURB_RANDOM_COUNT:-1}" = "1" ] || wildcard_random_count_arg="--no-random-count"
+		wildcard_main_loop_arg="--block-main-loop"
+		_improve_keep_main_game_running && wildcard_main_loop_arg="--no-block-main-loop"
 		set +e
 		wildcard_parallel_result=$(python3 wildcard_parallel.py \
 			--strategy "$STRATEGY_FILE" \
@@ -1452,6 +1460,7 @@ PY
 			--cull-leader-min-games "${WILDCARD_PARALLEL_CULL_LEADER_MIN_GAMES:-2}" \
 			--cull-comp-ratio "${WILDCARD_PARALLEL_CULL_COMP_RATIO:-0.90}" \
 			--lingering-slot-max-culls "${WILDCARD_PARALLEL_LINGERING_SLOT_MAX_CULLS:-0}" \
+			"$wildcard_main_loop_arg" \
 			--session-root "${WILDCARD_PARALLEL_WORK_DIR:-tmp/wildcard_parallel}" \
 			--status-file "${WILDCARD_PARALLEL_STATUS_FILE:-tmp/state/wildcard_parallel_status.json}" \
 			--html-file "${WILDCARD_PARALLEL_HTML_FILE:-tmp/state/wildcard_parallel_overlay.html}" \
@@ -1559,9 +1568,10 @@ PY
 			wildcard_parallel_restore_once
 			exit 1
 		fi
-		cp "$wildcard_winner_path" "$STRATEGY_FILE"
+		strategy_runtime_atomic_apply_then \
+			"$wildcard_winner_path" "$STRATEGY_FILE" \
+			"_atomic_pin_advance_after_apply" "$HASH_BEFORE" "wildcard-parallel"
 		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-		_atomic_pin_advance_after_apply "$HASH_BEFORE" "wildcard-parallel"
 		# Commit immediately after applying the winner so strategy.py is preserved
 		# even if the process is killed before reaching the git_commit phase below.
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
@@ -1721,10 +1731,11 @@ except Exception:
 		exit 1
 	fi
 	# 摂動結果を適用
-	cp "strategy.py.staging" "$STRATEGY_FILE"
+	strategy_runtime_atomic_apply_then \
+		"strategy.py.staging" "$STRATEGY_FILE" \
+		"_atomic_pin_advance_after_apply" "$HASH_BEFORE" "wildcard-direct"
 	rm -f "strategy.py.staging"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	_atomic_pin_advance_after_apply "$HASH_BEFORE" "wildcard-direct"
 	# wildcard 起源 hash を登録 (regression.sh の patience override 用)
 	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
 		WILDCARD_CURRENT_STREAK="$wildcard_streak" WILDCARD_APPLIED_JSON="$(echo "$wildcard_result" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('applied', []), ensure_ascii=False))" 2>/dev/null || echo "[]")" python3 - "$WILDCARD_ORIGIN_FILE" "$HASH_AFTER" "${WILDCARD_PATIENCE_GAMES:-12}" "$GAME_NUM_SNAPSHOT" <<'PY' 2>/dev/null || true
@@ -2117,7 +2128,7 @@ PY
 		fi
 	fi
 	if [ "${IMPROVE_REASON:-normal}" = "archive_restart" ]; then
-	cp "strategy.py.staging" "$STRATEGY_FILE"
+	strategy_runtime_atomic_apply "strategy.py.staging" "$STRATEGY_FILE"
 	rm -f "strategy.py.staging"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	if [ -z "$HASH_AFTER" ] || [ "$HASH_AFTER" = "$HASH_BEFORE" ]; then
@@ -2129,7 +2140,7 @@ PY
 			"改善フロー: archive_restart no effective change。次の脱出手段へ進みます。" \
 			"warn"
 		_archive_restart_quarantine_candidate "$archive_restart_json" "archive_restart_no_effective_hash_change"
-		cp "tmp/revert_strategy.py" "$STRATEGY_FILE" 2>/dev/null || true
+		strategy_runtime_atomic_apply "tmp/revert_strategy.py" "$STRATEGY_FILE" 2>/dev/null || true
 		if [ "${WILDCARD_AI_ESCALATE_ENABLED:-1}" = "1" ]; then
 			log "[ARCHIVE-RESTART] no effective hash change → escape_ai へフォールバック"
 			IMPROVE_REASON="escape_ai"
@@ -2410,7 +2421,7 @@ PY
 		if [ -n "$escape_ai_seed_hash" ] && [ -f "$escape_ai_seed_path" ]; then
 			ESCAPE_AI_SEED_ORIGINAL_FILE="tmp/escape_ai_seed_original.py"
 			cp "$STRATEGY_FILE" "$ESCAPE_AI_SEED_ORIGINAL_FILE"
-			cp "$escape_ai_seed_path" "$STRATEGY_FILE"
+			strategy_runtime_atomic_apply "$escape_ai_seed_path" "$STRATEGY_FILE"
 			ESCAPE_AI_SEED_HASH=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			ESCAPE_AI_SEED_APPLIED=1
 			export ESCAPE_AI_SEED_JSON ESCAPE_AI_SEED_HASH
@@ -3762,13 +3773,25 @@ fi
 
 if $improve_ok; then
 	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
-		cp "$HARVEST_DIR/strategy.py.staging" "$STRATEGY_FILE"
-		_atomic_pin_advance_after_apply "$IMPROVE_BASE_HASH" "improve"
-		if [ -f "$HARVEST_DIR/logs/change_log.txt" ] && [ -s "$HARVEST_DIR/logs/change_log.txt" ]; then
-			cat "$HARVEST_DIR/logs/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
-			log "[IMPROVE] change_log harvested and appended"
+		if ! strategy_runtime_atomic_apply_bundle_then \
+			"$HARVEST_DIR/strategy.py.staging" \
+			"$STRATEGY_FILE" \
+			"$HARVEST_DIR/strategy_helpers" \
+			"strategy_helpers" \
+			"_atomic_pin_advance_after_apply" \
+			"$IMPROVE_BASE_HASH" \
+			"improve"; then
+			VALIDATE_ERROR="strategy/helper bundle の原子的反映に失敗"
+			log "[IMPROVE] $VALIDATE_ERROR"
+			improve_ok=false
 		fi
-		rm -f "$STAGING_FILE" 2>/dev/null || true
+		if $improve_ok; then
+			if [ -f "$HARVEST_DIR/logs/change_log.txt" ] && [ -s "$HARVEST_DIR/logs/change_log.txt" ]; then
+				cat "$HARVEST_DIR/logs/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+				log "[IMPROVE] change_log harvested and appended"
+			fi
+			rm -f "$STAGING_FILE" 2>/dev/null || true
+		fi
 	else
 		VALIDATE_ERROR="harvestに strategy.py.staging がない"
 		log "[IMPROVE] $VALIDATE_ERROR"
@@ -3776,15 +3799,6 @@ if $improve_ok; then
 	fi
 
 	if $improve_ok; then
-		mkdir -p "strategy_helpers"
-		if [ -d "$HARVEST_DIR/strategy_helpers" ]; then
-			rsync -a --delete --no-links "$HARVEST_DIR/strategy_helpers"/ "strategy_helpers"/ 2>/dev/null || {
-				rm -rf "strategy_helpers"
-				mkdir -p "strategy_helpers"
-				cp -RL "$HARVEST_DIR/strategy_helpers"/. "strategy_helpers"/ 2>/dev/null || true
-			}
-		fi
-		[ -f "strategy_helpers/__init__.py" ] || : >"strategy_helpers/__init__.py"
 		# ユーザーレビューは改善適用後に消去（1回限りの指示）
 		: >"data/user_review.md" 2>/dev/null || true
 		_post_improve_param_parallel_trial || true
@@ -3795,7 +3809,7 @@ fi
 if [ "${ESCAPE_AI_SEED_APPLIED:-0}" = "1" ] && ! $improve_ok; then
 	current_after_fail=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	if [ -n "${ESCAPE_AI_SEED_ORIGINAL_FILE:-}" ] && [ -f "$ESCAPE_AI_SEED_ORIGINAL_FILE" ] && [ "$current_after_fail" = "${ESCAPE_AI_SEED_HASH:-}" ]; then
-		cp "$ESCAPE_AI_SEED_ORIGINAL_FILE" "$STRATEGY_FILE" 2>/dev/null || true
+		strategy_runtime_atomic_apply "$ESCAPE_AI_SEED_ORIGINAL_FILE" "$STRATEGY_FILE" 2>/dev/null || true
 		log "[ESCAPE-AI] AI改善失敗のためWILDCARD seed適用を元へ戻した: ${ESCAPE_AI_SEED_HASH}"
 	else
 		log "[ESCAPE-AI] AI改善失敗後のstrategy.pyがseed hashと異なるため自動復元をスキップ"

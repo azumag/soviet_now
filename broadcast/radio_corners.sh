@@ -1711,7 +1711,13 @@ _run_opencode_jiji_research_unqueued() {
 }
 
 _run_opencode_jiji_research() {
-	local agent="$1"
+	local agent="$1" prompt_file="$2"
+	case "$agent" in
+	codex | codex:*)
+		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
+		return $?
+		;;
+	esac
 	_ai_generation_queue_run "JIJI:research:${agent}" _run_opencode_jiji_research_unqueued "$@"
 }
 

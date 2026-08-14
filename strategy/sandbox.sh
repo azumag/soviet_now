@@ -351,7 +351,7 @@ create_sandbox() {
 
 	mkdir -p "$sandbox_dir/strategy_helpers" "$sandbox_dir/logs" "$sandbox_dir/data" "$sandbox_dir/tmp/state"
 	if [ -d "strategy_helpers" ]; then
-		rsync -a --no-links "strategy_helpers"/ "$sandbox_dir/strategy_helpers"/ 2>/dev/null || cp -RL "strategy_helpers"/. "$sandbox_dir/strategy_helpers"/ 2>/dev/null || true
+		rsync -a --no-links --exclude="__pycache__" --exclude="*.pyc" "strategy_helpers"/ "$sandbox_dir/strategy_helpers"/ 2>/dev/null || cp -RL "strategy_helpers"/. "$sandbox_dir/strategy_helpers"/ 2>/dev/null || true
 	fi
 	[ -f "$sandbox_dir/strategy_helpers/__init__.py" ] || : >"$sandbox_dir/strategy_helpers/__init__.py"
 	[ -f "$sandbox_dir/data/user_review.md" ] || : >"$sandbox_dir/data/user_review.md"
@@ -404,7 +404,7 @@ harvest_sandbox() {
 
 	if [ -d "$sandbox_dir/strategy_helpers" ]; then
 		mkdir -p "$harvest_dir/strategy_helpers"
-		rsync -a --no-links "$sandbox_dir/strategy_helpers"/ "$harvest_dir/strategy_helpers"/ 2>/dev/null ||
+		rsync -a --no-links --exclude="__pycache__" --exclude="*.pyc" "$sandbox_dir/strategy_helpers"/ "$harvest_dir/strategy_helpers"/ 2>/dev/null ||
 			cp -RL "$sandbox_dir/strategy_helpers"/. "$harvest_dir/strategy_helpers"/ 2>/dev/null || true
 	fi
 
@@ -495,7 +495,7 @@ _write_host_integrity_snapshot() {
 			shasum "$STRATEGY_FILE" 2>/dev/null || true
 		fi
 		if [ -d strategy_helpers ]; then
-			find strategy_helpers -type f ! -name '.DS_Store' -print 2>/dev/null | sort | while IFS= read -r _host_file; do
+			find strategy_helpers -type f ! -name '.DS_Store' ! -path '*/__pycache__/*' ! -name '*.pyc' -print 2>/dev/null | sort | while IFS= read -r _host_file; do
 				shasum "$_host_file" 2>/dev/null || true
 			done
 		fi

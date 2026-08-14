@@ -1,6 +1,4 @@
 #!/bin/bash
-# 探索モード (EXPLORE_MODE=1) ではステータスオーバーレイ生成を行わない
-[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # generate_status_overlay.sh - render show_status_g/status_dashboard as an OBS HTML overlay.
 #
 # Usage:

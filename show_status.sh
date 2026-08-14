@@ -1,6 +1,4 @@
 #!/bin/zsh
-# 探索モード (EXPLORE_MODE=1) ではステータス表示を行わない
-[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # show_status.sh - eloop 全体のステータス表示
 #
 # Usage: ./show_status.sh        # 10秒間隔で常時表示

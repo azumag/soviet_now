@@ -451,7 +451,7 @@ _ai_call_ollama_unqueued() {
 _ai_call_qwencode_unqueued() {
 	local label="$1" prompt_file="$2"
 	local timeout_sec="${3:-${RADIO_QWENCODE_TIMEOUT:-120}}"
-	local output
+	local output rc
 
 	[ -s "$prompt_file" ] || return 1
 	log "[${label}] qwencode call (prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
@@ -567,6 +567,100 @@ _ai_call_opencode() {
 	_ai_generation_queue_run "$(_ai_queue_label "$label" "opencode" "$agent")" _ai_call_opencode_unqueued "$@"
 }
 
+# === Codex (統一ハーネス) ===
+
+# codex:<model> は指定モデルを使い、codex または従来形式の agent 名は
+# CODEX_MODEL にフォールバックする。従来の agent 名を壊さず、明示した
+# codex モデルだけを確実に -m へ渡す。
+_ai_codex_model_from_agent() {
+	local agent="${1:-}" model=""
+	case "$agent" in
+	codex:*) model="${agent#codex:}" ;;
+	*) model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
+	esac
+	[ -n "$model" ] || model="${CODEX_MODEL:-deepseek-v4-flash}"
+	printf '%s' "$model"
+}
+
+# MiniMax 系が最終出力へ含めることがある非公開推論ブロックを、本文ごと除去する。
+# タグだけを消すと推論本文が読み上げ対象に残るため、複数行を一括処理する。
+_ai_strip_reasoning_blocks() {
+	python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+for tag in ("think", "analysis"):
+    text = re.sub(
+        rf"<{tag}\b[^>]*>.*?</{tag}\s*>",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text = re.sub(
+        rf"<{tag}\b[^>]*>.*\Z",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+text = re.sub(
+    r"</?(?:final|assistant_response)\b[^>]*>",
+    "",
+    text,
+    flags=re.IGNORECASE,
+)
+sys.stdout.write(text.strip())
+'
+}
+
+# _ai_call_codex LABEL AGENT PROMPT_FILE [TIMEOUT]
+#   codex CLI 経由で agent が示すモデルを呼ぶ。
+_ai_call_codex_unqueued() {
+	local label="$1" agent="$2" prompt_file="$3"
+	local timeout_sec="${4:-${CODEX_TIMEOUT:-300}}"
+	local model
+	model=$(_ai_codex_model_from_agent "$agent")
+	local codex_bin="${CODEX_BIN:-codex}"
+	local out_file rc cleaned
+	[ -s "$prompt_file" ] || return 1
+	out_file=$(mktemp /tmp/ai_codex_out_XXXXXXXX)
+	case "$timeout_sec" in
+	'' | *[!0-9]*) timeout_sec=300 ;;
+	esac
+	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
+	log "[${label}] codex call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	timeout --kill-after=10s "$timeout_sec" "$codex_bin" exec \
+		--skip-git-repo-check -m "$model" -o "$out_file" "$(cat "$prompt_file")" \
+		>/dev/null 2>&1
+	rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[${label}] codex timeout (${timeout_sec}s, model=$model)" >&2
+		rm -f "$out_file"
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] codex failed (rc=$rc, model=$model)" >&2
+		rm -f "$out_file"
+		return 1
+	fi
+	cleaned=$(_ai_strip_reasoning_blocks <"$out_file")
+	rm -f "$out_file"
+	if [ -z "$cleaned" ]; then
+		log "[${label}] codex empty after cleanup (model=$model)" >&2
+		return 1
+	fi
+	if _contains_provider_error_text "$cleaned"; then
+		log "[${label}] codex provider error (model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$cleaned"
+}
+
+_ai_call_codex() {
+	local label="${1:-AI}" agent="${2:-codex}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "codex" "$agent")" _ai_call_codex_unqueued "$@"
+}
+
 # === 統一ディスパッチャ ===
 
 # _ai_dispatch LABEL AGENT PROMPT_FILE [TIMEOUT]
@@ -575,10 +669,6 @@ _ai_call_opencode() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
-	local local_llm_timeout="$timeout_override"
-	if [[ "$label" == COMMENT* ]] && [ -z "$local_llm_timeout" ]; then
-		local_llm_timeout="${COMMENT_OLLAMA_TIMEOUT:-20}"
-	fi
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -593,55 +683,21 @@ _ai_dispatch() {
 
 	local _dispatch_output_file="$_dispatch_log_dir/${_dispatch_tag}_output.txt"
 
+	# ハーネスは codex CLI に統一。codex:<model> はそのモデルを選択し、
+	# 従来形式のエージェント識別子は CODEX_MODEL を使う。
+	local _codex_timeout="$timeout_override"
 	case "$agent" in
 	'' )
 		return 1
 		;;
-	ollama:*)
-		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	minimax|ccmm)
-		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	gemma4e)
-		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	qwen35)
-		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:27b" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	qwen35e)
-		local _qwen35e_model="${RADIO_OLLAMA_MODEL:-qwen3.5:9b}"
-		[ "$label" = "COMMENT" ] && _qwen35e_model="${COMMENT_OLLAMA_MODEL:-$_qwen35e_model}"
-		_ai_call_ollama "$label" "$prompt_file" "$_qwen35e_model" "$local_llm_timeout" | tee "$_dispatch_output_file"
-		;;
-	qwencode)
-		_ai_call_qwencode "$label" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	haiku|claude)
-		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	sonnet|opus)
-		# agent名そのものをclaudeモデルエイリアスとして使う (RADIO_CLAUDE_MODEL非依存)。
-		# sonnetはラジオ生成で使用。Web調査込みで100s超えることがあるため、明示overrideが
-		# 無い場合は余裕のあるタイムアウトを使う (RADIO_CLAUDE_TIMEOUT=120はコメントhaiku等と
-		# 共有なので触らない)。コメントはsonnetを使わないので影響しない。
-		_ai_call_claude "$label" "$prompt_file" "$agent" "${timeout_override:-${RADIO_SONNET_TIMEOUT:-240}}" | tee "$_dispatch_output_file"
-		;;
-	claude:*)
-		# claude:<model> で明示モデル指定
-		_ai_call_claude "$label" "$prompt_file" "${agent#claude:}" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	opencode:*)
-		local _opencode_timeout="$timeout_override"
-		local _opencode_permission="${RADIO_OPENCODE_PERMISSION:-}"
-		if [[ "$label" == COMMENT* ]]; then
-			_opencode_timeout="${_opencode_timeout:-${COMMENT_OPENCODE_TIMEOUT:-}}"
-			_opencode_permission="${COMMENT_OPENCODE_PERMISSION:-$_opencode_permission}"
-		fi
-		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$_opencode_timeout" "$_opencode_permission" | tee "$_dispatch_output_file"
-		;;
 	*)
-		_ai_call_opencode "$label" "$agent" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
+		if [[ "$label" == COMMENT* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
+		fi
+		if [[ "$label" == RADIO* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${RADIO_CODEX_TIMEOUT:-240}"
+		fi
+		_ai_call_codex "$label" "$agent" "$prompt_file" "$_codex_timeout" | tee "$_dispatch_output_file"
 		;;
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}
@@ -652,7 +708,7 @@ _ai_dispatch() {
 
 # === フォールバック付き生成 ===
 
-# ai_generate LABEL PROMPT_FILE PRIMARY_AGENT [FALLBACK_AGENT] [TIMEOUT]
+# ai_generate LABEL PROMPT_FILE PRIMARY_AGENT [FALLBACK_AGENT] [TIMEOUT] [VALIDATOR]
 #   PRIMARY_AGENT で生成を試み、失敗したら FALLBACK_AGENT にフォールバック。
 #   stdout: 生成テキスト
 #   メタデータ: AI_GENERATE_LAST_AGENT に実際に使用した agent を設定
@@ -662,26 +718,35 @@ ai_generate() {
 	local label="$1" prompt_file="$2" primary="$3"
 	local fallback="${4:-}"
 	local timeout_override="${5:-}"
+	local validator="${6:-}"
 	local output
 
 	AI_GENERATE_LAST_AGENT=""
 
 	# Primary
 	output=$(_ai_dispatch "$label" "$primary" "$prompt_file" "$timeout_override")
-	if [ $? -eq 0 ] && [ -n "$output" ]; then
+	rc=$?
+	if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 		AI_GENERATE_LAST_AGENT="$primary"
 		printf '%s' "$output"
 		return 0
+	fi
+	if [ "$rc" -eq 0 ] && [ -n "$output" ] && [ -n "$validator" ]; then
+		log "[${label}] primary ($primary) returned invalid output" >&2
 	fi
 
 	# Fallback
 	if [ -n "$fallback" ]; then
 		log "[${label}] primary ($primary) failed → fallback ($fallback)" >&2
 		output=$(_ai_dispatch "$label" "$fallback" "$prompt_file" "$timeout_override")
-		if [ $? -eq 0 ] && [ -n "$output" ]; then
+		rc=$?
+		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 			AI_GENERATE_LAST_AGENT="$fallback"
 			printf '%s' "$output"
 			return 0
+		fi
+		if [ "$rc" -eq 0 ] && [ -n "$output" ] && [ -n "$validator" ]; then
+			log "[${label}] fallback ($fallback) returned invalid output" >&2
 		fi
 	fi
 
@@ -697,6 +762,23 @@ _ai_backoff_dir() {
 	else
 		printf 'tmp/state/ai_backoff\n'
 	fi
+}
+
+# コメント・ラジオでは、一度 primary から fallback へ進んだ後に同じ
+# unavailable provider を毎回待たない。agent単位のbackoffファイルは両経路で
+# 共有されるため、どちらかでDeepSeekが失敗すれば両方が5時間直接MiniMaxへ進む。
+_ai_backoff_sec_for_label() {
+	local label="${1:-AI}" value default_value
+	case "$label" in
+	COMMENT*) value="${COMMENT_AGENT_BACKOFF_SEC:-18000}"; default_value=18000 ;;
+	RADIO*) value="${RADIO_AGENT_BACKOFF_SEC:-18000}"; default_value=18000 ;;
+	*) value="${AI_AGENT_BACKOFF_SEC:-600}"; default_value=600 ;;
+	esac
+	case "$value" in
+	'' | *[!0-9]*) value="$default_value" ;;
+	esac
+	[ "$value" -lt 1 ] && value="$default_value"
+	printf '%s\n' "$value"
 }
 
 # _ai_backoff_check AGENT  → 0: 使用可 / 1: バックオフ中
@@ -740,23 +822,28 @@ _ai_backoff_remaining() {
 	printf '%s\n' "$rem"
 }
 
-# ai_generate_list LABEL PROMPT_FILE AGENT_LIST [TIMEOUT]
+# ai_generate_list LABEL PROMPT_FILE AGENT_LIST [TIMEOUT] [VALIDATOR] [LAST_AGENT_FILE]
 #   AGENT_LIST: カンマ区切りのエージェント識別子（優先度順）
 #     例: "opencode:minimax-m3,opencode:qwen35pgo,qwen35e,opencode:glmflash"
 #   バックオフ中のエージェントをスキップし、失敗したエージェントにバックオフを設定する。
 #   全エージェントがバックオフ中の場合は最古のバックオフを強制解除して再試行する。
 #   stdout: 生成テキスト
 #   AI_GENERATE_LAST_AGENT に実際に使用したエージェントを設定
+#   LAST_AGENT_FILE を指定すると、command substitution の外側でも実使用モデルを読める。
 AI_GENERATE_LIST_LAST_AGENT=""
 
 ai_generate_list() {
 	local label="$1" prompt_file="$2" agent_list_raw="$3"
 	local timeout_override="${4:-}"
-	local backoff_sec="${AI_AGENT_BACKOFF_SEC:-600}"
-	local _bd agent output rc _rem
+	local validator="${5:-}"
+	local last_agent_file="${6:-}"
+	local backoff_sec
+	local _bd agent output rc _rem attempted_count=0
+	backoff_sec=$(_ai_backoff_sec_for_label "$label")
 
 	AI_GENERATE_LAST_AGENT=""
 	AI_GENERATE_LIST_LAST_AGENT=""
+	[ -n "$last_agent_file" ] && : >"$last_agent_file"
 
 	_bd=$(_ai_backoff_dir)
 	mkdir -p "$_bd" 2>/dev/null || true
@@ -783,27 +870,45 @@ ai_generate_list() {
 			continue
 		fi
 
+		attempted_count=$((attempted_count + 1))
 		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 		rc=$?
-		if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 			AI_GENERATE_LAST_AGENT="$agent"
 			AI_GENERATE_LIST_LAST_AGENT="$agent"
+			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 			printf '%s' "$output"
 			return 0
 		fi
-		log "[${label}] ${agent} failed → backoff ${backoff_sec}s" >&2
+		if [ "$rc" -eq 0 ] && [ -n "$output" ] && [ -n "$validator" ]; then
+			log "[${label}] ${agent} returned invalid output → fallback" >&2
+		else
+			log "[${label}] ${agent} failed → fallback" >&2
+		fi
+		log "[${label}] ${agent} backoff ${backoff_sec}s" >&2
 		_ai_backoff_set "$agent" "$backoff_sec"
 	done
 
-	# 第2パス: 全エージェントがバックオフ中の場合、強制再試行
-	if [ ${#skipped_backoff[@]} -gt 0 ]; then
-		for agent in "${skipped_backoff[@]}"; do
+	# 第2パス: 呼び出し開始時点で全エージェントがバックオフ中だった場合だけ強制再試行。
+	# COMMENT/RADIO は末尾のfallbackだけを再試行し、5時間backoff中のprimaryを呼ばない。
+	if [ "$attempted_count" -eq 0 ] && [ ${#skipped_backoff[@]} -gt 0 ]; then
+		local force_retry_agents=()
+		case "$label" in
+		COMMENT* | RADIO*)
+			local fallback_index
+			fallback_index=$((${#skipped_backoff[@]} - 1))
+			force_retry_agents=("${skipped_backoff[$fallback_index]}")
+			;;
+		*) force_retry_agents=("${skipped_backoff[@]}") ;;
+		esac
+		for agent in "${force_retry_agents[@]}"; do
 			log "[${label}] force retry (backoff overridden): ${agent}" >&2
 			output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 			rc=$?
-			if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+			if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 				AI_GENERATE_LAST_AGENT="$agent"
 				AI_GENERATE_LIST_LAST_AGENT="$agent"
+				[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 				local _key
 				_key=$(_ai_lock_sanitize_key "$agent")
 				rm -f "${_bd}/${_key}" 2>/dev/null || true

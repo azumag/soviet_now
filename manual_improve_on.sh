@@ -22,5 +22,9 @@ if [ -f "$IMPROVE_STATE_FILE" ]; then
     echo "[manual_improve] 現在の改善状態: $current_status"
 fi
 
-echo "[manual_improve] 次の改善タイミング(12ゲーム後)でメインループが一時停止します。"
-echo "[manual_improve] strategy.py を編集したら ./manual_improve_off.sh で再開してください。"
+if [ "${IMPROVE_KEEP_MAIN_GAME_RUNNING:-0}" = "1" ]; then
+    echo "[manual_improve] 次の改善タイミング後もメインゲームは継続します。"
+else
+    echo "[manual_improve] 次の改善タイミング(12ゲーム後)でメインループが一時停止します。"
+fi
+echo "[manual_improve] strategy.py を編集したら ./manual_improve_off.sh で改善完了を反映してください。"

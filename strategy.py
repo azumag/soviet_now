@@ -67,6 +67,15 @@ Phases (determined by board max Y):
 # False = even during deadline contact, wait until the board is settled.
 FAST_DROP_DEADLINE_CONTACT = True
 # --- Change History (compressed to 5 entries; full history in git) ---
+      # v699: REACTIVE_PAIR_ZONE_GUIDANCE — 中盤 NO_MERGE（max_y<2.0・非crossed・margin>=1.0）で
+      #       type>=11 reactive ペアゾーン（中点±span+半径・着地y<=top_y+1.8）低位置誘導
+      #       （60+(type-11)*10・距離/高さ減衰・congestionなし）とギャップ塞ぎペナルティ(-80〜-200)、
+      #       next/nextNext 一致ペアはスキップ。副次修正: russia_phase=type in (14,15)/double_russia=type15>=1。
+      #       対象段階: ウクライナ(T13)→カザフスタン(T14)→ロシア(T15) 経路（type14→15 の前提強化）。
+      # Fixes rollback failure mode: 中盤 type>=11 reactive ペア放置 → T13→T14 転換率12% の途絶（010536型28ターン放置・230255型29ターン遅延）
+      # refs: tmp/analysis_result.md (Adopted Hypothesis: REACTIVE_PAIR_ZONE_GUIDANCE), tmp/batch_summary.txt,
+      #       tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt,
+      #       advice.md, game_history/20260813_010536_score2108.jsonl, game_history/20260812_230255_score1888.jsonl
       # v696: Pre-deadline NO_MERGE guard coverage extension — 2 changes:
       #   1. NO_MERGE_DEADLINE_GUARD condition (line 980): extend from
       #      `deadline_crossed and not __merge_available` to
@@ -890,10 +899,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # v681: compute global merge availability before using in guard
     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
     # A DIRECT/NEAR candidate may exist but merge_available=false globally (e.g., pair already consumed)
+    # v700: フィルタ前に計算する（フィルタで超過 merge 候補が除かれても、DEADLINE_GUARD の
+    #       安全着地フォールバックが「merge が存在しない」と誤判定しないようにする）
     __dlg_merge_available = any(
         isinstance(c, dict) and c.get("merge_grade") != "NO"
         for c in __dlg_cands
     )
+
+    # 【不可侵の安全不変条件】安全な非超過候補が1つでも存在する限り、deadline 超過候補は
+    # merge_grade（DIRECT/NEAR/FAR）を問わず選択してはならない（v700: deadline-far/near/direct-guard）。
+    # 例外: deadline_crossed かつ danger_piece_count>0 のとき、危険ピース対象の DIRECT merge
+    # （danger_direct_merge_available または merges[].target_is_danger）のみ超過を許容する。
+    # ガードは既存の merge 優先ロジック（DEADLINE_GUARD の DIRECT/NEAR 選択）より前段に配置。
+    # デッドライン超過は即ゲームオーバーであり、投機的マージより常に回避を優先する。
+    if __dlg_cands:
+        __dlg_has_safe = any(
+            isinstance(c, dict) and not c.get("crosses_deadline")
+            for c in __dlg_cands
+        )
+        if __dlg_has_safe:
+            __dlg_cands = [
+                c for c in __dlg_cands
+                if (
+                    isinstance(c, dict) and not c.get("crosses_deadline")
+                )
+                or (
+                    isinstance(c, dict)
+                    and c.get("merge_grade") == "DIRECT"
+                    and __dlg_dcross
+                    and __dlg_danger_count > 0
+                    and (
+                        c.get("danger_direct_merge_available", False)
+                        or any(
+                            isinstance(m, dict) and m.get("target_is_danger")
+                            for m in (c.get("merges") or [])
+                        )
+                    )
+                )
+            ]
     # This guard is specifically a deadline guard. Reactive pairs alone can
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
@@ -972,7 +1015,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
     # --- END DEADLINE GUARD ---
 
-    results = analysis.get("results", [])
+    # v700: 安全不変条件ガード済みの候補リストをメイン採点にも使用
+    # （安全な非超過候補が存在する場合、超過候補は除外済み。例外は危険ピース DIRECT merge のみ）
+    results = __dlg_cands
 
     if not results:
         return {"x": -0.8762, "reason": "no analysis data"}
@@ -1046,13 +1091,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-    russia_phase_count = sum(1 for p in pieces if p.get("type") == 14)  # Russia is type 15
+    # v699: russia_phase 判定を type in (14, 15) に拡張（テーマ#5遵守・殿堂入り挙動の復元）。
+    # 現行 type==14 のみ検出では type15 単独局面で axis 8.7 が発火せず、
+    # 「ロシア1個時の二個目ロシア導線維持」が構造的に未対応だった。
+    # T14 窓の現行挙動（v691 意図）を保ちつつ type15 単独でもフェーズ発火させる。
+    russia_phase_count = sum(1 for p in pieces if p.get("type") in (14, 15))  # T14=Kazakhstan precursor, T15=Russia
     russia_phase = russia_phase_count >= 1
     # v548: double_russia_phase — 最初のロシア(type 15)が盤面にある場合、
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
-    double_russia_phase = russia_phase_count >= 1
+    double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.2884:
@@ -1112,6 +1161,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = any(
         np[-1] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 2
     )
+
+    # --- v699: REACTIVE_PAIR_ZONE_GUIDANCE pre-computation ---
+    # 中盤（max_y<2.0・非deadline）で type>=11 の reactive 同typeペアが放置されると
+    # T13→T14 転換率が下がる（010536: T13ペア28ターン放置→T14未到達 / 230255: 29ターン遅延）。
+    # reactive_pairs は (id1, id2, type) の3要素タプル。ペア毎に併合ゾーン（中点・横span・帯域）と、
+    # ギャップが他ピースで塞がれているか(gap_blocked)を候補ループ前に一度だけ計算する。
+    reactive_zone_pairs = []
+    if isinstance(reactive_pairs, list):
+        _piece_info_by_id = {p["id"]: p for p in pieces}
+        for _rp in reactive_pairs:
+            if not isinstance(_rp, (list, tuple)) or len(_rp) < 3:
+                continue
+            _ptype = _rp[2]
+            if _ptype < 11:
+                continue
+            _p1 = _piece_info_by_id.get(_rp[0])
+            _p2 = _piece_info_by_id.get(_rp[1])
+            if not _p1 or not _p2:
+                continue
+            _x1, _y1 = _p1.get("x", 0.0), _p1.get("y", 0.0)
+            _x2, _y2 = _p2.get("x", 0.0), _p2.get("y", 0.0)
+            _zr = max(float(_p1.get("r", 0.5) or 0.5), float(_p2.get("r", 0.5) or 0.5))
+            _zmin_x, _zmax_x = min(_x1, _x2), max(_x1, _x2)
+            _zmin_y, _ztop = min(_y1, _y2), max(_y1, _y2)
+            _zmid = (_x1 + _x2) / 2.0
+            _zspan = (_zmax_x - _zmin_x) / 2.0
+            # gap_blocked: ペア2点の矩形内（x: min〜max, y: min_y〜top_y）に他ピースが1個以上存在
+            _zblocked = any(
+                p.get("id") not in (_rp[0], _rp[1])
+                and _zmin_x <= p.get("x", 99.0) <= _zmax_x
+                and _zmin_y <= p.get("y", 99.0) <= _ztop
+                for p in pieces
+            )
+            reactive_zone_pairs.append((_ptype, _zmid, _zspan, _ztop, _zmin_y, _zr, _zblocked))
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -1730,6 +1813,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if blocking_penalty > -1:
                     score -= min(blocking_penalty, 810.9)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+
+        # ----- v699: REACTIVE_PAIR_ZONE_GUIDANCE (中盤 type>=11 reactive ペア解決誘導) -----
+        # 採用仮説: NO_MERGE 中盤ターンで type>=11 同type reactive ペアを放置せず、
+        # (a) ギャップが空いていればペアゾーンへの低位置ドロップ（連鎖・爆風による接触併合の誘発）に
+        # 小ボーナス、(b) ギャップが他ピースで塞がれていればギャップ内への追加配置にペナルティ。
+        # 既存 v698 失敗（発火0回）は near_pairs 対象・landing_y>_top_y 除外・congestion 倍率が原因のため、
+        # 本軸は reactive のみ・着地許容 top_y+1.8・congestion 倍率なし・grade=="NO" 限定で再設計。
+        # テーマ#3/#4: pair type が next/nextNext と一致するペアはキュー併合レーン保護のためスキップ。
+        # 安全不変条件: 非 crossed 候補のみ対象（crosses_deadline は前段で除外済み）。
+        if (
+            merge_grade == "NO"
+            and max_y < 2.0
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not death_spiral
+            and reactive_zone_pairs
+        ):
+            for _zptype, _zmid, _zspan, _ztop, _zmin, _zr, _zblocked in reactive_zone_pairs:
+                if _zptype == next_type or _zptype == next_next_type:
+                    continue  # 次手以降の併合レーンを塞がない（テーマ#3/#4）
+                _dist_mid = abs(x - _zmid)
+                if not _zblocked:
+                    # (a) ギャップが空いている: ペアゾーン（中点±span+半径、着地y<=上端+1.8）への誘導
+                    if _dist_mid <= _zspan + _zr + 0.8 and landing_y <= _ztop + 1.8:
+                        _zone_bonus = (60.0 + (_zptype - 11) * 10.0) * max(
+                            0.5, 1.0 - _dist_mid / max(_zspan + _zr, 1e-9)
+                        ) * max(0.4, 1.0 - max(0.0, landing_y - _ztop) / 2.0)
+                        score += _zone_bonus
+                        reasons.append("REACTIVE_PAIR_ZONE_GUIDANCE")
+                else:
+                    # (b) ギャップ塞ぎ: ペア矩形内（±0.3マージン）・ペア帯域内への追加配置を抑止
+                    if (
+                        _zmid - _zspan - 0.3 <= x <= _zmid + _zspan + 0.3
+                        and _zmin <= landing_y <= _ztop + 1.8
+                    ):
+                        score -= min(80.0 + (_zptype - 11) * 8.0, 200.0)
+                        reasons.append("REACTIVE_PAIR_GAP_BLOCK")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.

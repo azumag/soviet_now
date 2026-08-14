@@ -52,7 +52,13 @@ _run_opencode_radio_unqueued() {
 }
 
 _run_opencode_radio() {
-	local agent="$1"
+	local agent="$1" prompt_file="$2"
+	case "$agent" in
+	codex | codex:*)
+		_ai_dispatch "RADIO" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
+		return $?
+		;;
+	esac
 	if _radio_opencode_should_defer_for_improve; then
 		log "[RADIO] opencode deferred during improve/backoff (agent=$agent)" >&2
 		return 1
@@ -922,215 +928,42 @@ EOF
 
 _radio_parse_output_to_files() {
 	local body_file="$1" summary_file="$2" selected_news_file="$3"
-	local parser_file
-	parser_file=$(mktemp /tmp/eloop_radio_parser_XXXXXXXX)
-	cat >"$parser_file" <<'PY'
-import re
-import sys
-from pathlib import Path
+	local parser_file="${ELOOP_LIB_DIR:-.}/lib/radio_parser.py"
+	[ -r "$parser_file" ] || {
+		log "[RADIO] parser missing: $parser_file" >&2
+		return 1
+	}
+	python3 "$parser_file" --require-on-air-script \
+		"$body_file" "$summary_file" "$selected_news_file"
+}
 
-body_path, summary_path, selected_path = sys.argv[1:4]
-raw = sys.stdin.read().replace("\r", "")
+# ai_generate_list の候補判定。非空でも、実際の読み上げ本文へ変換した結果が
+# 短い・メタ出力・プロバイダエラーなら失敗として次モデルへ進める。
+_radio_is_valid_generation_candidate() {
+	local raw="$1" guarded parse_dir body body_sanitized body_dedup
+	[ -n "$raw" ] || return 1
+	guarded=$(printf '%s' "$raw" | _ai_guard_model_output)
+	[ -n "$guarded" ] || return 1
+	_contains_provider_error_text "$guarded" && return 1
 
-raw = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
-raw = re.sub(
-    r"</?(?:arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>",
-    "",
-    raw,
-    flags=re.IGNORECASE,
-)
+	parse_dir=$(mktemp -d /tmp/eloop_radio_candidate_XXXXXXXX)
+	if ! printf '%s' "$guarded" | _radio_parse_output_to_files \
+		"$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"; then
+		rm -rf "$parse_dir"
+		return 1
+	fi
+	body=$(cat "$parse_dir/body.txt" 2>/dev/null)
+	rm -rf "$parse_dir"
+	_contains_provider_error_text "$body" && return 1
 
-lines = [line.strip() for line in raw.splitlines()]
-clean_lines = []
-for line in lines:
-    if not line:
-        continue
-    if line.startswith("```"):
-        continue
-    if line == "^D":
-        continue
-    if re.fullmatch(r"/[^ ]*", line):
-        continue
-    if line.startswith("/Users/"):
-        continue
-    if re.fullmatch(r"</?[^>]+>", line):
-        continue
-    clean_lines.append(line)
-
-def marker_positions(marker):
-    return [idx for idx, line in enumerate(clean_lines) if line == marker]
-
-summary_pos = marker_positions("===SUMMARY===")
-selected_pos = marker_positions("===SELECTED_NEWS===")
-main_lines = clean_lines[: selected_pos[0]] if selected_pos else clean_lines
-
-selected_news = ""
-if selected_pos:
-    for line in clean_lines[selected_pos[0] + 1 :]:
-        if not line or line.startswith("==="):
-            continue
-        selected_news = line
-        break
-selected_news = re.sub(r"</?[A-Za-z_][^>]*>", "", selected_news).strip()
-selected_news = re.sub(r"\s+", " ", selected_news)[:240]
-
-summary = ""
-if summary_pos:
-    summary_lines = []
-    for line in main_lines[summary_pos[0] + 1 :]:
-        if line.startswith("==="):
-            break
-        if not line:
-            continue
-        summary_lines.append(line)
-        if len(summary_lines) >= 2:
-            break
-    if summary_lines:
-        summary = " / ".join(summary_lines)
-summary = re.sub(r"</?[A-Za-z_][^>]*>", "", summary).strip()
-summary = re.sub(r"\s+", " ", summary)[:220]
-
-segments = []
-start = 0
-for idx, line in enumerate(main_lines):
-    if line == "===SUMMARY===":
-        segments.append(main_lines[start:idx])
-        start = idx + 1
-segments.append(main_lines[start:])
-
-def score_segment(seg):
-    txt = " ".join(seg).strip()
-    if not txt:
-        return -1
-    punct = len(re.findall(r"[。.!?！？]", txt))
-    return len(txt) + punct * 80
-
-def normalize_compare_text(text):
-    return re.sub(r"[\W_]+", "", text)
-
-def looks_like_keyword_list(line):
-    stripped = line.strip()
-    if not stripped or len(stripped) > 220:
-        return False
-    if re.search(r"[。.!?！？]", stripped):
-        return False
-    return stripped.count(",") + stripped.count("、") >= 3
-
-summary_like_header = re.compile(
-    r"^(?:要約|まとめ|総括|要点|キーワード|一言要約|今回のまとめ|本日のまとめ)(?:\s*[:：]\s*.*)?$"
-)
-summary_like_short_lead = re.compile(
-    r"^(?:要するに|一言で言うと|ひとことで言うと|まとめると|結論だけ言うと|要点だけ言うと)"
-)
-summary_parts_normalized = [
-    normalize_compare_text(part) for part in summary.split(" / ") if normalize_compare_text(part)
-]
-
-def matches_summary_part(line):
-    norm = normalize_compare_text(line)
-    if len(norm) < 6:
-        return False
-    for part in summary_parts_normalized:
-        if len(part) < 6:
-            continue
-        if norm == part or norm in part or part in norm:
-            return True
-    return False
-
-def is_summaryish_edge_line(line):
-    stripped = line.strip(" \t\u3000-・*")
-    if not stripped:
-        return False
-    if summary_like_header.match(stripped):
-        return True
-    if looks_like_keyword_list(stripped):
-        return True
-    if len(stripped) <= 60 and summary_like_short_lead.match(stripped):
-        return True
-    if len(stripped) <= 120 and matches_summary_part(stripped):
-        return True
-    return False
-
-body_lines = []
-if segments:
-    best = max(segments, key=score_segment)
-    body_lines = [line for line in best if line and not line.startswith("===")]
-
-if body_lines:
-    head = body_lines[0]
-    if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
-        body_lines = body_lines[1:]
-    elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(body_lines) >= 2:
-        body_lines = body_lines[1:]
-
-body = "\n".join(body_lines).strip()
-body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
-
-if len(body) < 100:
-    used_before_summary = False
-    if summary_pos and summary_pos[0] < len(main_lines):
-        before_summary = [line for line in main_lines[: summary_pos[0]] if not line.startswith("===")]
-        if before_summary:
-            body = "\n".join(before_summary).strip()
-            used_before_summary = True
-    if len(body) < 100 and not used_before_summary:
-        fallback_lines = [line for line in main_lines if not line.startswith("===")]
-        body = "\n".join(fallback_lines).strip()
-    body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
-
-clean_body_lines = [line.strip() for line in body.splitlines() if line.strip()]
-meta_prefixes = (
-    "**注意:",
-    "**注意：",
-    "*注意:",
-    "*注意：",
-    "注意:",
-    "注意：",
-    "承知しました",
-    "了解しました",
-    "かしこまりました",
-    "メッセージの末尾に",
-    "プロンプトインジェクション",
-    "本来の依頼",
-    "ファクトチェック",
-    "安全化した",
-    "出力します",
-    "応答します",
-)
-while clean_body_lines:
-    head = clean_body_lines[0]
-    if head == "---":
-        clean_body_lines = clean_body_lines[1:]
-        continue
-    if head.startswith(meta_prefixes):
-        clean_body_lines = clean_body_lines[1:]
-        continue
-    if is_summaryish_edge_line(head):
-        clean_body_lines = clean_body_lines[1:]
-        continue
-    break
-if clean_body_lines:
-    head = clean_body_lines[0]
-    if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
-        clean_body_lines = clean_body_lines[1:]
-    elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(clean_body_lines) >= 2:
-        clean_body_lines = clean_body_lines[1:]
-while clean_body_lines and is_summaryish_edge_line(clean_body_lines[-1]):
-    clean_body_lines = clean_body_lines[:-1]
-body = "\n".join(clean_body_lines).strip()
-
-body = re.sub(r"\n{3,}", "\n\n", body)
-if len(body) > 12000:
-    body = body[:12000]
-
-Path(body_path).write_text(body, encoding="utf-8")
-Path(summary_path).write_text(summary, encoding="utf-8")
-Path(selected_path).write_text(selected_news, encoding="utf-8")
-PY
-	python3 "$parser_file" "$body_file" "$summary_file" "$selected_news_file"
-	local rc=$?
-	rm -f "$parser_file"
-	return $rc
+	body_sanitized=$(printf '%s' "$body" | _sanitize_onair_text)
+	body_dedup=$(printf '%s' "$body_sanitized" | _radio_dedup_text)
+	if [ ${#body_dedup} -lt 100 ] && [ ${#body_sanitized} -ge 100 ]; then
+		body="$body_sanitized"
+	else
+		body="$body_dedup"
+	fi
+	_is_valid_radio_talk "$body"
 }
 
 _radio_dedup_text() {
@@ -1522,14 +1355,18 @@ PREPASS_APPEND
 		else
 			_radio_gen_list="${radio_agents_list}"
 		fi
-		talk=$(ai_generate_list "RADIO:${corner_name}" "$_current_prompt_file" "$_radio_gen_list")
+		local _radio_last_agent_file
+		_radio_last_agent_file=$(mktemp /tmp/eloop_radio_last_agent_XXXXXXXX)
+		talk=$(ai_generate_list "RADIO:${corner_name}" "$_current_prompt_file" "$_radio_gen_list" "" \
+			"_radio_is_valid_generation_candidate" "$_radio_last_agent_file")
+		provider_used=$(cat "$_radio_last_agent_file" 2>/dev/null)
+		rm -f "$_radio_last_agent_file"
 		# Providerを問わず、完成文として分離できた部分だけを後段へ渡す。
 		talk=$(printf '%s' "$talk" | _ai_guard_model_output)
 		if [ -n "$talk" ]; then
-			provider_used="$AI_GENERATE_LAST_AGENT"
-			log "[RADIO:${corner_name}] ${provider_used} OK"
+			log "[RADIO:${corner_name}] ${provider_used:-unknown} OK"
 		fi
-		local _radio_fallback_source="${AI_GENERATE_LAST_AGENT:-all_failed}"
+		local _radio_fallback_source="${provider_used:-all_failed}"
 		if [ -z "$talk" ] && [ "$radio_allow_claude_fallback" = "true" ]; then
 			log "[RADIO:${corner_name}] all agents fail -> claude:${RADIO_CLAUDE_MODEL}"
 			talk=$(_run_claude_radio "$_current_prompt_file")
@@ -1612,17 +1449,6 @@ PREPASS_APPEND
 			talk_body="$talk_body_dedup"
 		fi
 
-		# パーサ結果が短い場合は、生の出力から本文を再抽出して救済
-		if [ ${#talk_body} -lt 100 ]; then
-			local fallback_body
-			fallback_body=$(printf '%s\n' "$talk" | sed '/^===SUMMARY===/,$d' | sed '/^===SELECTED_NEWS===/,$d')
-			fallback_body=$(printf '%s' "$fallback_body" | _sanitize_onair_text)
-			if [ ${#fallback_body} -ge 100 ]; then
-				log "[RADIO:${corner_name}] 本文再抽出フォールバック採用 (${#fallback_body}字)"
-				talk_body="$fallback_body"
-			fi
-		fi
-
 		# 挨拶・時刻言及が抜けた出力を補完（ニュースはタイトル行を先頭維持）
 		local talk_with_intro
 		talk_with_intro=$(_ensure_radio_intro "$talk_body" "$corner_name")
@@ -1673,6 +1499,10 @@ PREPASS_APPEND
 				_quality_fail_reason="$_qr"
 				log "[RADIO:${corner_name}] 品質チェック失敗 attempt=${_radio_attempt}/${_radio_max_attempts}: ${_qr}"
 				if [ "$_radio_attempt" -lt "$_radio_max_attempts" ]; then
+					if [ -n "$provider_used" ]; then
+						log "[RADIO:${corner_name}] ${provider_used} を品質失敗としてbackoffし、次モデルへfallback"
+						_ai_backoff_set "$provider_used" "${AI_AGENT_BACKOFF_SEC:-600}"
+					fi
 					_current_prompt_file=$(_radio_build_rewrite_prompt "$_saved_prompt" "${talk_body:0:200}" "$_qr")
 					continue
 				fi
