@@ -793,6 +793,8 @@ esac
             ("core/helpers.sh", "mt", 'mt=$(stat -f %m "$marker"', "0"),
             ("broadcast/comment_lib.sh", "mtime", 'mtime=$(stat -f %m "$orphan"', "777"),
             ("show_status.sh", "say_lock_hb", "say_lock_hb=$(stat -f %m tmp/.say_queue/.lock", "0"),
+            ("show_status.sh", "recent_mod", 'recent_mod=$(stat -f %m "$f"', ""),
+            ("show_status.sh", "file_mod", 'file_mod=$(stat -f %m "$f"', ""),
             ("core/runtime_toggles.sh", "mtime", 'mtime=$(stat -f %m "$path"', "0"),
         )
         scenarios = {

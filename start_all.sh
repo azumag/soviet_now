@@ -38,6 +38,7 @@ DUPLICATE_STATE_FILE="${SUPERVISOR_DUPLICATE_STATE_FILE:-tmp/state/worker_duplic
 # Worker 定義: name と command
 declare -a WORKER_NAMES=(
 	"soren_loop"
+	"improve_daemon"
 	"chat_worker"
 	"youtube_worker"
 	"audio_worker"
@@ -47,6 +48,7 @@ declare -a WORKER_NAMES=(
 )
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
+	"./improve_daemon.sh"
 	"./workers/chat_worker.sh ${TWITCH_CHANNEL:-azumagbanjo}"
 	"./workers/youtube_worker.sh"
 	"./workers/audio_worker.sh"

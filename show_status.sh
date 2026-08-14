@@ -495,12 +495,14 @@ PY
 }
 
 _recent_file_active() {
-	local f="$1" max_age="$2" mod="" age=""
+	local f="$1" max_age="$2" recent_mod="" age=""
 	[[ -f "$f" ]] || return 1
 	case "$max_age" in ''|*[!0-9]*) return 1 ;; esac
-	mod=$(stat -f '%m' "$f" 2>/dev/null) || return 1
-	[[ -n "$mod" ]] || return 1
-	age=$(( $(date +%s) - mod ))
+	recent_mod=$(stat -f %m "$f" 2>/dev/null) \
+		|| recent_mod=$(stat -c %Y "$f" 2>/dev/null) \
+		|| recent_mod=""
+	case "$recent_mod" in ''|*[!0-9]*) return 1 ;; esac
+	age=$(( $(date +%s) - recent_mod ))
 	(( age >= 0 && age <= max_age ))
 }
 
@@ -513,11 +515,13 @@ _activity_label() {
 
 # ファイルの経過時間を返す
 _file_age() {
-	local f="$1"
+	local f="$1" file_mod="" age=""
 	[[ -f "$f" ]] || return
-	local mod=$(stat -f '%m' "$f" 2>/dev/null)
-	[[ -n "$mod" ]] || return
-	local age=$(( $(date +%s) - mod ))
+	file_mod=$(stat -f %m "$f" 2>/dev/null) \
+		|| file_mod=$(stat -c %Y "$f" 2>/dev/null) \
+		|| file_mod=""
+	case "$file_mod" in ''|*[!0-9]*) return ;; esac
+	age=$(( $(date +%s) - file_mod ))
 	if (( age < 60 )); then
 		echo "${age}s ago"
 	elif (( age < 3600 )); then
