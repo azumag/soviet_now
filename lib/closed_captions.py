@@ -246,6 +246,10 @@ class TranslationRuntimeClient:
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                     "max_tokens": max(256, len(chunks) * 96),
+                    # The local OpenAI-compatible runtime supports JSON mode.
+                    # This suppresses model reasoning/prose at generation time;
+                    # the strict parser below remains the trust boundary.
+                    "response_format": {"type": "json_object"},
                 }
                 request = urllib.request.Request(
                     self.endpoint,

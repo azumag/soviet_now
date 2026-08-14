@@ -77,10 +77,17 @@ class ClosedCaptionPlanTests(unittest.TestCase):
         response = {
             "choices": [{"message": {"content": '{"translations":["Hello."]}'}}]
         }
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(json.loads(request.data.decode("utf-8")))
+            return _Response(response)
+
         client = closed_captions.TranslationRuntimeClient(
-            opener=lambda *_args, **_kwargs: _Response(response)
+            opener=opener
         )
         self.assertEqual(client.translate(["こんにちは。"]), ["Hello."])
+        self.assertEqual(requests[0]["response_format"], {"type": "json_object"})
 
     def test_translation_client_rejects_thinking_around_json(self) -> None:
         response = {

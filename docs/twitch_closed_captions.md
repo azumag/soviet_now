@@ -79,7 +79,7 @@ DOCICH_CC_TRANSLATION_ATTEMPTS=3
 DOCICH_CC_SOCKET_TIMEOUT_SEC=3
 ```
 
-翻訳応答がthinking、説明文、壊れたJSONを含む場合、その応答は抽出せず破棄します。同じモデルへ最大`DOCICH_CC_TRANSLATION_ATTEMPTS`回（1〜5、既定3）新規リクエストを行い、それでも厳密JSONにならなければ当該発話だけ字幕なしで音声を続行します。接続失敗やtimeoutはこの再試行対象にせず次のモデルへ移るため、1モデルの通信障害で音声開始待ちが試行回数倍に延びることはありません。
+翻訳APIにはJSON mode（`response_format: {"type":"json_object"}`）を指定し、thinkingや説明文を生成段階から抑えます。そのうえで、応答にthinking、説明文、壊れたJSONが含まれる場合は抽出せず破棄します。同じモデルへ最大`DOCICH_CC_TRANSLATION_ATTEMPTS`回（1〜5、既定3）新規リクエストを行い、それでも厳密JSONにならなければ当該発話だけ字幕なしで音声を続行します。接続失敗やtimeoutはこの再試行対象にせず次のモデルへ移るため、1モデルの通信障害で音声開始待ちが試行回数倍に延びることはありません。
 
 `./direct_stream.sh validate --mode live` の `closed_captions_active` が `false` の場合も、映像・音声のpreflight自体は成功できます。これは意図したfail-openです。字幕を試すカナリアだけ `DOCICH_CC_ENABLED=1` にし、validate結果、FFmpeg statusの `closed_captions.active`、socket mode 0600を確認します。
 
