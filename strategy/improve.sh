@@ -15,7 +15,9 @@ _acquire_spawn_lock() {
 	# 取得失敗 → stale 判定 (owner 死亡 or TTL 超過時のみ steal)
 	local owner_pid lk_m now age
 	owner_pid=$(cat "$d/owner" 2>/dev/null || echo "")
-	lk_m=$(stat -f %m "$d" 2>/dev/null || stat -c %Y "$d" 2>/dev/null || echo 0)
+	lk_m=$(stat -f %m "$d" 2>/dev/null) \
+		|| lk_m=$(stat -c %Y "$d" 2>/dev/null) \
+		|| lk_m=0
 	now=$(date +%s)
 	age=$((now - lk_m))
 	local stale=0
@@ -72,7 +74,9 @@ _archive_restart_should_run() {
 	local marker_candidate_override=0
 	if [ -f "$marker" ]; then
 		local marker_m now age
-		marker_m=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
+		marker_m=$(stat -f %m "$marker" 2>/dev/null) \
+			|| marker_m=$(stat -c %Y "$marker" 2>/dev/null) \
+			|| marker_m=0
 		now=$(date +%s)
 		age=$((now - marker_m))
 		if [ "$marker_m" -gt 0 ] && [ "$age" -lt "$cooldown" ]; then
@@ -876,7 +880,9 @@ check_and_harvest_improvement() {
 	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ]; then
 		local _lock_age _lock_mtime _orphan_threshold
 		_orphan_threshold="${IMPROVE_STALE_WATCHDOG_SEC:-600}"
-		_lock_mtime=$(stat -f '%m' "$IMPROVE_LOCK_FILE" 2>/dev/null || echo 0)
+		_lock_mtime=$(stat -f %m "$IMPROVE_LOCK_FILE" 2>/dev/null) \
+			|| _lock_mtime=$(stat -c %Y "$IMPROVE_LOCK_FILE" 2>/dev/null) \
+			|| _lock_mtime=0
 		_lock_age=$(( $(date +%s) - ${_lock_mtime:-0} ))
 		if [ "${_lock_age:-0}" -gt "${_orphan_threshold}" ]; then
 			log "[IMPROVE] 孤立ロックファイル検出 (age=${_lock_age}s > ${_orphan_threshold}s, status=idle) → 削除"
@@ -937,7 +943,10 @@ json.dump(rs, open(rs_file, 'w'))
 		IMPROVE_PID=0
 		log "[IMPROVE][MANUAL] 手動改善完了 → idle"
 		_improve_overlay_hide
-		if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
+		if _improve_keep_main_game_running; then
+			log "[IMPROVE][MANUAL] 継続プレイ設定のため、代打停止・交代処理なしでメインゲームを継続"
+			rm -f "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
+		elif command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 			log "[IMPROVE][MANUAL] manual_meriken_mode=on のため、メリケンAI継続"
 		elif _scheduled_meriken_time_should_run; then
 			log "[IMPROVE][MANUAL] 20時台: メリケンAIタイムに移行 → soren91継続"
@@ -1005,14 +1014,18 @@ json.dump(rs, open(rs_file, 'w'))
 			fi
 			log_age=$updated_age
 			if [ -f "$IMPROVE_AI_LOG_FILE" ]; then
-				log_mtime=$(stat -f '%m' "$IMPROVE_AI_LOG_FILE" 2>/dev/null || echo 0)
+				log_mtime=$(stat -f %m "$IMPROVE_AI_LOG_FILE" 2>/dev/null) \
+					|| log_mtime=$(stat -c %Y "$IMPROVE_AI_LOG_FILE" 2>/dev/null) \
+					|| log_mtime=0
 				if [ "${log_mtime:-0}" -gt 0 ]; then
 					log_age=$(( now_epoch - log_mtime ))
 				fi
 			fi
 			eval_age=$updated_age
 			if [ -f "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" ]; then
-				eval_mtime=$(stat -f '%m' "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null || echo 0)
+				eval_mtime=$(stat -f %m "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null) \
+					|| eval_mtime=$(stat -c %Y "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null) \
+					|| eval_mtime=0
 				if [ "${eval_mtime:-0}" -gt 0 ]; then
 					eval_age=$(( now_epoch - eval_mtime ))
 				fi
@@ -1190,7 +1203,9 @@ with open(rs_file, 'w') as f:
 				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			fi
 
-			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
+			if _improve_keep_main_game_running; then
+				:
+			elif command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				:
 			elif _scheduled_meriken_time_should_run; then
 				:
@@ -1254,6 +1269,12 @@ PY
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 			# OBS: 改善中オーバーレイ非表示
+			if _improve_keep_main_game_running; then
+				log "[IMPROVE] 継続プレイ設定: soren91_stop/session improve/交代処理を行わず、メインゲームを継続"
+				rm -f "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
+				_improve_overlay_hide
+				return 0
+			fi
 			case "$prev_improve_reason" in
 			wildcard|archive_restart)
 				log "[WILDCARD] ${prev_improve_reason} 完了: 高速脱出のため soren91_stop/soren91_improve/handover/bridge再起動をスキップ"
@@ -2288,7 +2309,9 @@ _start_improvement_job() {
 		# WILDCARD / archive_restart は AI を介さない脱出処理のため、
 		# soren91 代打/ミュート/OBS切替/完了時bridge再起動 を一切起こさない。
 		# (post-escape の bridge 再起動が commands 経路 desync=空転の発生源だった)
-		if [ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]; then
+		if _improve_keep_main_game_running; then
+			log "[IMPROVE] 継続プレイ設定: soren91代打を起動せず、メインゲームと改善を並行実行"
+		elif [ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]; then
 			log "[WILDCARD] ${reason} は高速脱出(AI不使用・短時間)互換の隔離脱出処理のため soren91 代打/PAUSE/bridge再起動 を全スキップ"
 		else
 			# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
@@ -2912,7 +2935,9 @@ PY
 			local _wccd_sec="${WILDCARD_STREAK_COOLDOWN_SEC:-1800}" _wccd_ok=1
 			if [ -f "$_wccd" ]; then
 				local _wm _wnow
-				_wm=$(stat -f %m "$_wccd" 2>/dev/null || stat -c %Y "$_wccd" 2>/dev/null || echo 0)
+				_wm=$(stat -f %m "$_wccd" 2>/dev/null) \
+					|| _wm=$(stat -c %Y "$_wccd" 2>/dev/null) \
+					|| _wm=0
 				_wnow=$(date +%s)
 				[ "$(( _wnow - _wm ))" -lt "$_wccd_sec" ] && _wccd_ok=0
 			fi

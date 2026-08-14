@@ -97,6 +97,14 @@ _is_ignored_author() {
     return 1
 }
 
+_extract_usernotice_message() {
+    local payload="${1:-}"
+    printf '%s\n' "$payload" \
+        | sed -n 's/^.*USERNOTICE [^ ]* ://p' \
+        | tr -d '\000-\010\013-\037\r' \
+        | tr -d '`$\\{}|;<>&'
+}
+
 _notify_chat_overlay() {
     local line="$1"
     [ "${CHAT_INGEST_OVERLAY_NOTIFY:-1}" = "1" ] || return 0
@@ -159,7 +167,7 @@ while true; do
                 [ -z "$sub_display" ] && sub_display=$(echo "$payload" | sed -n 's/^:\([^!]*\)!.*/\1/p')
                 sub_display=$(echo "$sub_display" | tr -d '`$\\{}|;<>&')
                 sub_user_msg=""
-                sub_user_msg=$(echo "$payload" | sed 's/^.*USERNOTICE [^ ]* ://' | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
+                sub_user_msg=$(_extract_usernotice_message "$payload")
                 sub_label="サブスクありがとう"
                 case "$sub_msg_id" in
                     subgift|anonsubgift) sub_label="サブスクギフトありがとう" ;;

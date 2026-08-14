@@ -16,6 +16,7 @@ source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
 # Layer 1: コアヘルパー
 source "$ELOOP_LIB_DIR/core/helpers.sh"
 source "$ELOOP_LIB_DIR/core/game_state.sh"
+source "$ELOOP_LIB_DIR/core/strategy_runtime.sh"
 # Layer 1.5: AI共通ディスパッチ (helpers.sh に依存)
 source "$ELOOP_LIB_DIR/lib/ai_generate.sh"
 # Layer 2: 戦略インフラ

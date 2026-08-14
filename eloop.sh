@@ -289,11 +289,31 @@ play_one_game() {
 	log ""
 	log "── Game #${game_num_display} ──"
 	_clear_stale_commands_if_any "before play_one_game"
-	repair_strategy_to_active_branch_head_if_needed
 
-	# 試合開始時の strategy.py をスナップショット保存
-	# (裏で改善が strategy.py を書き換えても、この試合で使った戦略を正確に保存できる)
-	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.game_snapshot"
+	# 系統headの自己修復から strategy.py/strategy_helpers の固定までを同じ排他区間で行う。
+	# 改善結果が試合中に反映されても、進行中の試合はこの不変スナップショットを使い続ける。
+	local strategy_runtime_dir strategy_runtime_root strategy_runtime_file
+	strategy_runtime_dir="${MAIN_GAME_STRATEGY_RUNTIME_DIR:-${TMP_STATE_DIR:-tmp/state}/main_game_strategy_runtime}"
+	if ! strategy_runtime_create_game_snapshot \
+		"$STRATEGY_FILE" \
+		"$strategy_runtime_dir" \
+		"${STRATEGY_FILE}.game_snapshot" \
+		"strategy_helpers" \
+		"repair_strategy_to_active_branch_head_if_needed"; then
+		log "[STRATEGY-SNAPSHOT] 作成失敗 → 試合開始を次周回へ延期"
+		LAST_SCORE=0
+		LAST_TURNS=0
+		LAST_RUSSIA="false"
+		LAST_RUSSIA_ANNOUNCED="false"
+		LAST_SOVIET="false"
+		return "${PLAY_RECOVERED_RETRY_RC:-75}"
+	fi
+	strategy_runtime_root=$(cd "$strategy_runtime_dir" && pwd -P) || {
+		log "[STRATEGY-SNAPSHOT] runtime path 解決失敗 → 試合開始を次周回へ延期"
+		rm -rf "$strategy_runtime_dir"
+		return "${PLAY_RECOVERED_RETRY_RC:-75}"
+	}
+	strategy_runtime_file="$strategy_runtime_root/strategy.py"
 
 	# strategy_runner.py で1試合プレイ
 	# パイプラインを使わない: bash はパイプライン中 INT trap を遅延するため Ctrl-C が効かない。
@@ -301,12 +321,16 @@ play_one_game() {
 	# phantom ゲーム検知用: strategy_runner 実行前の game_state.json mtime を退避。
 	# ブリッジ凍結中は実プレイされず mtime が一切進まない。
 	local _pg_state_mtime0 _pg_start_epoch
-	_pg_state_mtime0=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+	_pg_state_mtime0=$(stat -f %m "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime0=$(stat -c %Y "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime0=0
 	_pg_start_epoch=$(date +%s)
 
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
-	python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
+		STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
+		python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
 	local py_pid=$!
 	local runner_active_file="${MAIN_STRATEGY_RUNNER_ACTIVE_FILE:-${TMP_STATE_DIR:-tmp/state}/main_strategy_runner_active.json}"
 	python3 - "$runner_active_file" "$py_pid" "$game_num_display" <<'PY' 2>/dev/null || true
@@ -325,6 +349,7 @@ PY
 	wait "$py_pid"
 	local py_rc=$?
 	rm -f "$runner_active_file" 2>/dev/null || true
+	rm -rf "$strategy_runtime_dir"
 	kill "$tail_pid" 2>/dev/null
 	wait "$tail_pid" 2>/dev/null || true
 	if [ "$py_rc" -eq 130 ] || [ "$py_rc" -eq 143 ]; then
@@ -378,7 +403,9 @@ PY
 			&& [ "$_rr_gs" -le "$(( _rr_now + _rr_win ))" ] && _rr_match=1
 		local _rr_state _rr_mt_now
 		_rr_state=$(echo "$RESULT_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
-		_rr_mt_now=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+		_rr_mt_now=$(stat -f %m "$GAME_STATE" 2>/dev/null) \
+			|| _rr_mt_now=$(stat -c %Y "$GAME_STATE" 2>/dev/null) \
+			|| _rr_mt_now=0
 		if [ "$_rr_match" -eq 1 ] && { [ "${LAST_TURNS:-0}" -eq 0 ] \
 			|| [ "${LAST_SCORE:-0}" -eq 0 ] \
 			|| [ "$_rr_state" = "UNKNOWN" ] || [ "$_rr_state" = "STOP" ] \
@@ -397,7 +424,9 @@ PY
 	# 0ターン終了した幽霊試合。戦略ロード失敗/decide例外 (turns=0 だが
 	# py_rc!=0 or error 有 or state=UNKNOWN) は除外し通常エラー経路に流す (codex 指摘)。
 	local _pg_state_mtime1 _pg_result_state
-	_pg_state_mtime1=$(stat -f %m "$GAME_STATE" 2>/dev/null || stat -c %Y "$GAME_STATE" 2>/dev/null || echo 0)
+	_pg_state_mtime1=$(stat -f %m "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime1=$(stat -c %Y "$GAME_STATE" 2>/dev/null) \
+		|| _pg_state_mtime1=0
 	_pg_result_state=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
 	if [ "${LAST_TURNS:-0}" -eq 0 ] && [ "$_pg_state_mtime1" = "$_pg_state_mtime0" ] \
 		&& [ "${py_rc:-1}" -eq 0 ] && [ -z "$runner_error" ] \

@@ -37,7 +37,9 @@ _acquire_runner_lock() {
 			exit 0
 		fi
 		now=$(date +%s)
-		mt=$(stat -f %m "$RUNNER_LOCK_DIR" 2>/dev/null || stat -c %Y "$RUNNER_LOCK_DIR" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$RUNNER_LOCK_DIR" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$RUNNER_LOCK_DIR" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		if [ "$age" -gt "$RUNNER_LOCK_STALE_SEC" ]; then
 			rm -rf "$RUNNER_LOCK_DIR" 2>/dev/null || true

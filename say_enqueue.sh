@@ -3,7 +3,9 @@
 [ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # say_enqueue.sh - mkdirロックベースのsayキュー（FIFO順次再生）
 #
-# 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] <content_file> [rate] [pre_delay_sec]
+# 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] [--wav]
+#           [--wav-playlist <playlist> --caption-chunks <chunks_file>]
+#           <content_file> [rate] [pre_delay_sec]
 #
 # --no-preempt: 後方互換のため受け付ける（現在は常に順次再生）
 #
@@ -20,12 +22,35 @@ cd "$(dirname "$0")"
 # .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
 [ -f .env ] && . ./.env
 source lib/outbound_queue.sh 2>/dev/null || true
+if [ -f lib/closed_captions.sh ] && source lib/closed_captions.sh; then
+	:
+else
+	# Partial/rollback deployments must never break the existing audio path.
+	docich_cc_init() { :; }
+	docich_cc_is_enabled() { return 1; }
+	docich_cc_start_plan() { return 1; }
+	docich_cc_prepare() { return 1; }
+	docich_cc_commit() { return 1; }
+	docich_cc_clear() { return 0; }
+	docich_cc_cleanup() { :; }
+fi
+
+# Linux 判定: SOREN_OBS_PLATFORM=linux が最優先、無ければ uname。
+# Linux では BlackHole/afplay/audiotoolbox/say の代わりに
+# PulseAudio null-sink (SAY_AUDIO_DEVICE=soren_null) へ paplay/ffplay で再生する。
+IS_LINUX=0
+case "${SOREN_OBS_PLATFORM:-$(uname -s 2>/dev/null || echo Darwin)}" in
+linux | Linux | linux-gnu) IS_LINUX=1 ;;
+esac
 
 # フラグ処理
 NO_PREEMPT=false
 WAV_MODE=false
 RENDER_ONLY=false
 RENDER_OUTPUT=""
+WAV_PLAYLIST_MODE=false
+WAV_PLAYLIST_FILE=""
+CAPTION_CHUNKS_FILE=""
 while true; do
 	case "${1:-}" in
 	--no-preempt)
@@ -39,6 +64,15 @@ while true; do
 	--render-only)
 		RENDER_ONLY=true
 		RENDER_OUTPUT="${2:?Usage: say_enqueue.sh --render-only <wav_file> <content_file> [rate]}"
+		shift 2
+		;;
+	--wav-playlist)
+		WAV_PLAYLIST_MODE=true
+		WAV_PLAYLIST_FILE="${2:?Usage: say_enqueue.sh --wav-playlist <playlist> --caption-chunks <chunks_file> <content_file> [rate]}"
+		shift 2
+		;;
+	--caption-chunks)
+		CAPTION_CHUNKS_FILE="${2:?Usage: say_enqueue.sh --wav-playlist <playlist> --caption-chunks <chunks_file> <content_file> [rate]}"
 		shift 2
 		;;
 	*) break ;;
@@ -216,10 +250,27 @@ VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
 VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
 VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
 VOICEVOX_SYNTH_LOCK_STALE_SEC="${VOICEVOX_SYNTH_LOCK_STALE_SEC:-180}"
+VOICEVOX_SYNTH_PRIORITY_WAIT_DIR="$QUEUE_DIR/.voicevox_synth_priority_waiters"
+VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
+VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
+VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-180}"
 
 if [ ! -s "$CONTENT_FILE" ]; then
 	echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
 	exit 1
+fi
+if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
+	if [ "$WAV_MODE" = "true" ] || [ "$RENDER_ONLY" = "true" ]; then
+		echo "[say_enqueue] --wav-playlist cannot be combined with --wav or --render-only" >&2
+		exit 2
+	fi
+	if [ ! -s "$WAV_PLAYLIST_FILE" ] || [ ! -s "$CAPTION_CHUNKS_FILE" ]; then
+		echo "[say_enqueue] wav playlist and caption chunks are required" >&2
+		exit 2
+	fi
+elif [ -n "$CAPTION_CHUNKS_FILE" ]; then
+	echo "[say_enqueue] --caption-chunks requires --wav-playlist" >&2
+	exit 2
 fi
 
 # ユニークトークン（PID + ランダム + 秒 で衝突回避）
@@ -234,24 +285,43 @@ CHROME_AUDIO_USED=0
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
+docich_cc_init "$MY_TOKEN" "$MY_CONTENT"
 
 # 読み上げ修正: よくある誤読を事前に置換（WAVモード時はスキップ）
 if [ "$WAV_MODE" = "false" ]; then
-	sed -i '' \
-		-e 's/zoumotu3/ザモートゥ/g' \
-		-e 's/静寂/せいじゃく/g' \
-		-e 's/地政学的/ちせいがくてき/g' \
-		-e 's/地政学/ちせいがく/g' \
-		-e 's/WILDCARD/ワイルドカード/g' \
-		-e 's/NISA/ニーサ/g' \
-		-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
-		-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
-		-e 's/MAGA/マガ/g' \
-		-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
-		-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
-		-e 's/MADE IN CHINA/メイドインチャイナ/g' \
-		-e 's/Made in China/メイドインチャイナ/g' \
-		"$MY_CONTENT"
+	if [ "$IS_LINUX" = "1" ]; then
+		sed -i \
+			-e 's/zoumotu3/ザモートゥ/g' \
+			-e 's/静寂/せいじゃく/g' \
+			-e 's/地政学的/ちせいがくてき/g' \
+			-e 's/地政学/ちせいがく/g' \
+			-e 's/WILDCARD/ワイルドカード/g' \
+			-e 's/NISA/ニーサ/g' \
+			-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/MAGA/マガ/g' \
+			-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+			-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+			-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+			-e 's/Made in China/メイドインチャイナ/g' \
+			"$MY_CONTENT"
+	else
+		sed -i '' \
+			-e 's/zoumotu3/ザモートゥ/g' \
+			-e 's/静寂/せいじゃく/g' \
+			-e 's/地政学的/ちせいがくてき/g' \
+			-e 's/地政学/ちせいがく/g' \
+			-e 's/WILDCARD/ワイルドカード/g' \
+			-e 's/NISA/ニーサ/g' \
+			-e 's/MAKE AMERICA GREAT AGAIN/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/Make America Great Again/メイクア・メリケン・グレートアゲイン/g' \
+			-e 's/MAGA/マガ/g' \
+			-e 's/RTA IN JAPAN/アールティーエー・インジャパン/g' \
+			-e 's/RTA in Japan/アールティーエー・インジャパン/g' \
+			-e 's/MADE IN CHINA/メイドインチャイナ/g' \
+			-e 's/Made in China/メイドインチャイナ/g' \
+			"$MY_CONTENT"
+	fi
 	# type表記の国名置換 + アルファベット小文字化（上の大文字辞書の後に実行）
 	python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
 fi
@@ -299,6 +369,20 @@ fi
 _log() {
 	echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2
 	echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN label=${SOURCE_LABEL:-unknown}" >>tmp/.say_queue/debug.log
+}
+
+# GNU stat accepts -f with a different meaning and can emit filesystem details
+# before returning non-zero. Keep the BSD and GNU assignments separate so a
+# failed BSD-style probe can never be mixed with the GNU epoch value.
+_file_mtime_epoch() {
+	local target="$1" mtime
+	mtime=$(stat -f %m "$target" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$target" 2>/dev/null) \
+		|| mtime=0
+	case "$mtime" in
+	'' | *[!0-9]*) mtime=0 ;;
+	esac
+	printf '%s\n' "$mtime"
 }
 
 _append_played_log() {
@@ -429,7 +513,7 @@ _acquire_lock() {
 			lock_hb=$(cat "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true)
 			case "$lock_hb" in
 			'' | *[!0-9]*)
-				lock_hb=$(stat -f %m "$LOCK_DIR" 2>/dev/null || true)
+				lock_hb=$(_file_mtime_epoch "$LOCK_DIR")
 				;;
 			esac
 			now=$(date +%s)
@@ -491,10 +575,114 @@ _release_voicevox_synth_lock() {
 	VOICEVOX_SYNTH_LOCK_HELD=0
 }
 
+_voicevox_synth_is_background_render() {
+	case "${SOURCE_LABEL:-}" in
+	radio_render:*) return 0 ;;
+	esac
+	return 1
+}
+
+_voicevox_gc_priority_waiters() {
+	[ -d "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" ] || return 0
+	local waiter waiter_pid waiter_ts waiter_age now
+	now=$(date +%s)
+	for waiter in "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR"/*.wait; do
+		[ -f "$waiter" ] || continue
+		read -r waiter_pid waiter_ts <"$waiter" || true
+		case "$waiter_pid" in '' | *[!0-9]*) waiter_pid="" ;; esac
+		case "$waiter_ts" in
+		'' | *[!0-9]*) waiter_ts=$(_file_mtime_epoch "$waiter") ;;
+		esac
+		case "$waiter_ts" in '' | *[!0-9]* | 0) waiter_age=0 ;; *) waiter_age=$((now - waiter_ts)) ;; esac
+		if { [ -z "$waiter_pid" ] || ! kill -0 "$waiter_pid" 2>/dev/null; } \
+			&& [ "$waiter_age" -gt "$VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC" ]; then
+			rm -f "$waiter" 2>/dev/null || true
+		fi
+	done
+	rmdir "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || true
+}
+
+_voicevox_priority_waiter_exists() {
+	_voicevox_gc_priority_waiters
+	local waiter
+	for waiter in "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR"/*.wait; do
+		[ -f "$waiter" ] && return 0
+	done
+	return 1
+}
+
+_register_voicevox_priority_waiter() {
+	_voicevox_synth_is_background_render && return 0
+	mkdir -p "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || return 1
+	VOICEVOX_SYNTH_PRIORITY_WAIT_FILE="$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR/${MY_TOKEN}.wait"
+	printf '%s %s\n' "${BASHPID:-$$}" "$(date +%s)" >"$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" 2>/dev/null || return 1
+	VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=1
+	return 0
+}
+
+_touch_voicevox_priority_waiter() {
+	[ "$VOICEVOX_SYNTH_PRIORITY_WAIT_HELD" -eq 1 ] || return 0
+	[ -n "$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" ] || return 0
+	printf '%s %s\n' "${BASHPID:-$$}" "$(date +%s)" >"$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" 2>/dev/null || true
+}
+
+_unregister_voicevox_priority_waiter() {
+	[ "$VOICEVOX_SYNTH_PRIORITY_WAIT_HELD" -eq 1 ] || return 0
+	[ -n "$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" ] && rm -f "$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" 2>/dev/null || true
+	rmdir "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || true
+	VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
+	VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
+}
+
+# 合成ロック待ち時間をコンテキストで変える:
+#   - コメント・改善進捗などの前景音声は長く待つ（必ず合成・再生に到達させる）
+#   - ラジオ render は短く諦めてコメントへ譲る
+_voicevox_synth_lock_wait_sec() {
+	case "${SOURCE_LABEL:-}" in
+	comment | comment:*)
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC:-180}"
+		;;
+	radio_render:*)
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_RADIO_SEC:-15}"
+		;;
+	*)
+		# 改善進捗など comment: 接頭辞を持たない前景音声も、背景ラジオより優先する。
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_FOREGROUND_SEC:-${VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC:-180}}"
+		;;
+	esac
+}
+
+# チャンク合成タイムアウト: コメントは長め（確実に完読）、ラジオは短め（待たせない）
+_voicevox_synth_timeout_sec() {
+	case "${SOURCE_LABEL:-}" in
+	comment | comment:*)
+		printf '%s' "${VOICEVOX_COMMENT_SYNTH_TIMEOUT_SEC:-180}"
+		;;
+	radio_render:* | radio | radio:*)
+		printf '%s' "${VOICEVOX_RADIO_SYNTH_TIMEOUT_SEC:-90}"
+		;;
+	*)
+		printf '%s' "${VOICEVOX_SYNTH_TIMEOUT_SEC:-120}"
+		;;
+	esac
+}
+
 _acquire_voicevox_synth_lock() {
-	local timeout_sec="${1:-30}" waited=0 max_waits
+	local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
+	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
+	_voicevox_synth_is_background_render && background_render=1
+	if [ "$background_render" -eq 0 ]; then
+		_register_voicevox_priority_waiter || true
+	fi
 	max_waits=$((timeout_sec * 2))
-	while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
+	while true; do
+		if [ "$background_render" -eq 1 ] && _voicevox_priority_waiter_exists; then
+			VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
+			return 1
+		fi
+		if mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; then
+			break
+		fi
 		if [ -d "$VOICEVOX_SYNTH_LOCK" ]; then
 			local lock_owner_raw lock_owner_pid lock_hb now lock_age owner_alive=false
 			lock_owner_raw=$(cat "$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || true)
@@ -508,7 +696,7 @@ _acquire_voicevox_synth_lock() {
 			lock_hb=$(cat "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true)
 			case "$lock_hb" in
 			'' | *[!0-9]*)
-				lock_hb=$(stat -f %m "$VOICEVOX_SYNTH_LOCK" 2>/dev/null || true)
+				lock_hb=$(_file_mtime_epoch "$VOICEVOX_SYNTH_LOCK")
 				;;
 			esac
 			now=$(date +%s)
@@ -523,30 +711,44 @@ _acquire_voicevox_synth_lock() {
 				continue
 			fi
 		fi
+		_touch_voicevox_priority_waiter
 		sleep 0.5
 		waited=$((waited + 1))
 		if [ "$waited" -ge "$max_waits" ]; then
+			VOICEVOX_SYNTH_LOCK_BUSY_REASON="timeout"
+			_unregister_voicevox_priority_waiter
 			return 1
 		fi
 	done
 	echo "$MY_OWNER" >"$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || {
 		rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+		VOICEVOX_SYNTH_LOCK_BUSY_REASON="owner_write_failed"
+		_unregister_voicevox_priority_waiter
 		return 1
 	}
 	date +%s >"$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true
 	VOICEVOX_SYNTH_LOCK_HELD=1
+	_unregister_voicevox_priority_waiter
 	return 0
 }
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
+	docich_cc_cleanup
+	_unregister_voicevox_priority_waiter
 	_clear_current_source_if_owner
 	_release_voicevox_synth_lock
 	_release_lock
 	rm -f "$MY_CONTENT"
+	rm -f "${MY_CONTENT%.txt}_pre.wav" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_chunks.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt.concat" 2>/dev/null
+	rm -f "${MY_CONTENT%.txt}_render_chunks.txt" 2>/dev/null
+	rm -f "${MY_CONTENT%.txt}_render_playlist.txt" 2>/dev/null
+	if [ -n "${RENDER_OUTPUT:-}" ]; then
+		rm -rf "${RENDER_OUTPUT}.bundle.tmp.${MY_TOKEN}" 2>/dev/null
+	fi
 	rm -rf "$QUEUE_DIR/stream_${MY_TOKEN}" 2>/dev/null
 }
 trap '_cleanup' EXIT
@@ -579,6 +781,25 @@ _resolve_audio_device_index() {
 		return 0
 		;;
 	esac
+	if [ "$IS_LINUX" = "1" ]; then
+		# PulseAudio の sink 名を解決。存在すればそのまま sink 名を返す
+		# （paplay --device は sink 名を直接受け付ける）。
+		if command -v pactl >/dev/null 2>&1; then
+			# .monitor suffix は先に取り除いてから sink 一覧と照合する
+			# （soren_null.monitor -> soren_null）。
+			local sink_candidate="${name%.monitor}"
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$sink_candidate"; then
+				echo "$sink_candidate"
+				return 0
+			fi
+			if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -Fxq "$name"; then
+				echo "$name"
+				return 0
+			fi
+		fi
+		echo "[say_enqueue] audio device not found: $name (pactl)" >&2
+		return 1
+	fi
 	local devices line idx alt_name
 	devices=$(ffmpeg -y -f lavfi -i sine=frequency=1:duration=0.001 -f audiotoolbox -list_devices true "" 2>&1)
 
@@ -677,8 +898,46 @@ _launch_bg_exec() {
 	' _ "$cleanup_file" "$@" >/dev/null 2>&1 &
 }
 
+# Linux 専用: paplay を優先し、無ければ ffplay へフォールバックする。
+# device 引数は _resolve_audio_device_index が返した sink 名。
+# paplay が使える場合は明示された sink を維持し、両方無ければ失敗を返す。
+_linux_play_bg() {
+	local audio_file="$1" device="${2:-${SAY_AUDIO_DEVICE:-default}}" cleanup_file="${3:-}"
+	local pulse_latency="${SAY_PULSE_LATENCY_MS:-80}"
+	# 声量は SAY_PLAY_VOLUME_LINEAR (0..65536, 既定 65536 = 100%) で制御。
+	# 1.3倍 = 85197 を .env で設定すると声を 30% 大きくできる。
+	# 環境変数に無い場合は .env から直接読む（audio_worker/supervisor の環境が古くても確実に適用）。
+	local say_volume="${SAY_PLAY_VOLUME_LINEAR:-}"
+	if [ -z "$say_volume" ] && [ -f .env ]; then
+		say_volume=$(grep -E "^SAY_PLAY_VOLUME_LINEAR=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\r")
+	fi
+	[ -z "$say_volume" ] && say_volume=65536
+	case "$say_volume" in
+	'' | *[!0-9]*)  say_volume=65536 ;;
+	esac
+	[ "$say_volume" -lt 0 ] && say_volume=0
+	# 声量: SAY_PLAY_VOLUME_LINEAR (0..65536, 100% = 65536) を paplay --volume へ渡す。
+	# 65536 超は PulseAudio がブーストとして扱うためクランプしない。
+	local play_volume="$say_volume"
+	if command -v paplay >/dev/null 2>&1; then
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" paplay --device="$device" --volume="$play_volume" "$audio_file"
+		return 0
+	fi
+	if command -v ffplay >/dev/null 2>&1; then
+		# ffplay は PulseAudio 既定出力へ流す（既定 sink = soren_null 運用）
+		_launch_bg_exec "$cleanup_file" env PULSE_LATENCY_MSEC="$pulse_latency" ffplay -nodisp -autoexit -loglevel error -fflags nobuffer "$audio_file"
+		return 0
+	fi
+	_log "[say_enqueue] Linux 再生プレイヤーがありません (paplay/ffplay 未導入)"
+	return 1
+}
+
 _launch_afplay_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
+	if [ "$IS_LINUX" = "1" ]; then
+		_linux_play_bg "$audio_file" "${SAY_AUDIO_DEVICE:-default}" "$cleanup_file"
+		return $?
+	fi
 	# afplay has no output-device selector; -d is debug mode, not a device flag.
 	# Device-targeted WAV playback uses ffmpeg/audiotoolbox. This helper is only
 	# for default-output fallback.
@@ -687,23 +946,43 @@ _launch_afplay_bg() {
 
 _launch_ffmpeg_bg() {
 	local audio_file="$1" device_index="$2" cleanup_file="${3:-}"
+	if [ "$IS_LINUX" = "1" ]; then
+		# device_index は _resolve_audio_device_index が返した sink 名
+		_linux_play_bg "$audio_file" "${device_index:-${SAY_AUDIO_DEVICE:-default}}" "$cleanup_file"
+		return $?
+	fi
 	_launch_bg_exec "$cleanup_file" ffmpeg -y -loglevel error -i "$audio_file" -f audiotoolbox -audio_device_index "$device_index" ""
 }
 
 _launch_chrome_wav_bg() {
 	local audio_file="$1" cleanup_file="${2:-}"
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
+	if [ "$IS_LINUX" = "1" ]; then
+		# Linux では Chrome CDP 経由の sink 指定は不安定なため、PulseAudio 既定出力へ
+		# paplay/ffplay で直接再生する（null-sink が既定出力なので配信へ乗る）。
+		_linux_play_bg "$audio_file" "${SAY_AUDIO_DEVICE:-default}" "$cleanup_file"
+		return $?
+	fi
 	CHROME_AUDIO_USED=1
 	_launch_bg_exec "$cleanup_file" node ./chrome_audio_player.mjs "$audio_file" "$label"
 }
 
 _stop_chrome_audio_players() {
+	if [ "$IS_LINUX" = "1" ]; then
+		return 0
+	fi
 	local label="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-${SAY_AUDIO_DEVICE:-}}"
 	node ./chrome_audio_player.mjs --stop "$label" >/dev/null 2>&1 || true
 }
 
 _launch_say_bg() {
 	local rate="$1" content_file="$2"
+	if [ "$IS_LINUX" = "1" ]; then
+		# Linux に say は存在しない。device 解決失敗時の最終フォールバックなので、
+		# ここでは何も再生せず failure を返す（呼び出し元がリトライ/スキップ処理）。
+		_log "say は macOS 専用のため Linux ではスキップ (content=${content_file})"
+		return 1
+	fi
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 		_launch_bg_exec "" say -a "$SAY_AUDIO_DEVICE" -r "$rate" -f "$content_file"
 	else
@@ -809,18 +1088,31 @@ for c in chunks:
 # timeout で外側からもkill保証（VOICEVOX起動濟みだがcurlが返らない場合に対応）
 _synthesize_chunk() {
 	local text="$1" output="$2"
-	local _sc_cmd="VOICEVOX_SPEAKER=\"$VOICEVOX_SPEAKER\" \
-		VOICEVOX_PITCH=\"${PRE_SYNTH_PITCH:-}\" \
-		VOICEVOX_TEMPO=\"${PRE_SYNTH_TEMPO:-}\" \
-		VOICEVOX_INTONATION=\"${PRE_SYNTH_INTONATION:-}\" \
-		VOICEVOX_TIMEOUT=30 \
-		VOICEVOX_MAX_CHARS=99999 \
-		./voicevox_tts.sh -o \"$output\" \"$text\""
+	local _chunk_timeout
+	_chunk_timeout=$(_voicevox_synth_timeout_sec)
+	# 合成は文字数に比例して数十秒かかる（高負荷時）。30秒では長いチャンクが
+	# タイムアウトで失敗するため、コンテキスト別 timeout を使う。
+	# 注意: 変数代入を bash -c の文字列に混ぜるとコメント行で代入が壊れ、
+	# VOICEVOX_SPEAKER が voicevox_tts.sh に渡らずデフォルト(ずんだもん)になる。
+	# 必ず env/コマンド前置き形式で渡すこと。
 	if [ -n "$TIMEOUT_CMD" ]; then
-		$TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
-			bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+		$TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$_chunk_timeout" \
+			env \
+				VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+				VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+				VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+				VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+				VOICEVOX_TIMEOUT="$_chunk_timeout" \
+				VOICEVOX_MAX_CHARS=99999 \
+				./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	else
-		bash -c "$_sc_cmd" 2>/dev/null && [ -s "$output" ]
+		VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+			VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+			VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+			VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
+			VOICEVOX_TIMEOUT="$_chunk_timeout" \
+			VOICEVOX_MAX_CHARS=99999 \
+			./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	fi
 }
 
@@ -831,26 +1123,38 @@ _launch_stream_wav() {
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → Chrome/BlackHole再生にフォールバック"
 			_launch_chrome_wav_bg "$wav_file"
-			return 0
+			return $?
 		}
 		_launch_ffmpeg_bg "$wav_file" "$device_index"
+		return $?
 	else
 		_launch_afplay_bg "$wav_file"
+		return $?
 	fi
-	return 0
 }
 
 # 事前合成済みチャンク再生: 呼び出し時点で全WAVが生成済みであること
 # 呼び出し時点で再生ロック(LOCK_DIR)を保持済みであること
 _play_prerendered_voicevox_chunks() {
 	local playlist_file="$1"
-	local wavs=()
+	local playlist_dir="" playlist_entry="" wavs=()
+	playlist_dir=$(cd "$(dirname "$playlist_file")" 2>/dev/null && pwd) || return 1
 	while IFS= read -r _pw_line; do
-		[ -n "$_pw_line" ] && wavs+=("$_pw_line")
+		[ -n "$_pw_line" ] || continue
+		case "$_pw_line" in
+		/*) playlist_entry="$_pw_line" ;;
+		*) playlist_entry="$playlist_dir/$_pw_line" ;;
+		esac
+		wavs+=("$playlist_entry")
 	done <"$playlist_file"
 
 	local total=${#wavs[@]}
 	[ "$total" -gt 0 ] || return 1
+	local cc_available=0 cc_prepared=0 cc_clear_after_chunk=0
+	if docich_cc_prepare 0 0; then
+		cc_available=1
+		cc_prepared=1
+	fi
 	_set_current_source "playing"
 	_log "事前合成済みチャンク再生開始 (${total}チャンク)"
 
@@ -872,25 +1176,52 @@ _play_prerendered_voicevox_chunks() {
 			play_failed=1
 			break
 		fi
+		if [ "$cc_prepared" -eq 1 ]; then
+			if ! docich_cc_commit "$i"; then
+				cc_available=0
+				cc_prepared=0
+				docich_cc_clear || true
+			fi
+		fi
 		CHROME_AUDIO_USED=0
-		_launch_stream_wav "$chunk_wav"
+		if ! _launch_stream_wav "$chunk_wav"; then
+			_log "再生プレイヤー起動失敗: $chunk_wav"
+			play_failed=1
+			break
+		fi
 		play_pid=$!
 		current_expected_sec=$(_estimate_audio_duration_sec "$chunk_wav")
 		echo "$play_pid" >"$PID_FILE"
 		LAST_SAY_PID="$play_pid"
+		cc_clear_after_chunk=0
+		if [ "$cc_available" -eq 1 ] && [ "$i" -lt $((total - 1)) ]; then
+			if docich_cc_prepare "$((i + 1))" "$((i + 1))"; then
+				cc_prepared=1
+			else
+				cc_available=0
+				cc_prepared=0
+				cc_clear_after_chunk=1
+			fi
+		else
+			cc_prepared=0
+		fi
 		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" 0; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
 			play_failed=1
-			rm -f "$chunk_wav" 2>/dev/null
+			[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
 			break
 		fi
-		rm -f "$chunk_wav" 2>/dev/null
+		if [ "$cc_clear_after_chunk" -eq 1 ]; then
+			docich_cc_clear || true
+		fi
+		[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
 		if [ "$i" -lt $((total - 1)) ] && [ -n "$SAY_CHUNK_GAP_SEC" ] && [ "$SAY_CHUNK_GAP_SEC" != "0" ]; then
 			_touch_lock_heartbeat
 			sleep "$SAY_CHUNK_GAP_SEC"
 			_touch_lock_heartbeat
 		fi
 	done
+	docich_cc_clear || true
 
 	[ "$play_failed" -eq 0 ] || return 1
 	_log "事前合成済みチャンク再生完了"
@@ -920,6 +1251,53 @@ _concat_prerendered_voicevox_chunks() {
 	fi
 }
 
+_export_prerendered_voicevox_bundle() {
+	local playlist_file="$1" captions_file="$2" bundle_dir="$3"
+	local bundle_tmp="${bundle_dir}.tmp.${MY_TOKEN}"
+	local playlist_dir="" entry="" source_wav="" target_name=""
+	local audio_count=0 caption_count=0
+	[ -s "$playlist_file" ] && [ -s "$captions_file" ] || return 1
+	[ ! -e "$bundle_dir" ] || return 1
+	playlist_dir=$(cd "$(dirname "$playlist_file")" 2>/dev/null && pwd) || return 1
+	rm -rf "$bundle_tmp" 2>/dev/null || true
+	mkdir -p "$bundle_tmp" || return 1
+	: >"$bundle_tmp/playlist.txt" || return 1
+	while IFS= read -r entry; do
+		[ -n "$entry" ] || continue
+		case "$entry" in
+		/*) source_wav="$entry" ;;
+		*) source_wav="$playlist_dir/$entry" ;;
+		esac
+		[ -s "$source_wav" ] || {
+			rm -rf "$bundle_tmp" 2>/dev/null || true
+			return 1
+		}
+		printf -v target_name 'chunk_%03d.wav' "$audio_count"
+		cp "$source_wav" "$bundle_tmp/$target_name" 2>/dev/null || {
+			rm -rf "$bundle_tmp" 2>/dev/null || true
+			return 1
+		}
+		printf '%s\n' "$target_name" >>"$bundle_tmp/playlist.txt"
+		audio_count=$((audio_count + 1))
+	done <"$playlist_file"
+	while IFS= read -r entry; do
+		[ -n "$entry" ] && caption_count=$((caption_count + 1))
+	done <"$captions_file"
+	if [ "$audio_count" -le 0 ] || [ "$audio_count" -ne "$caption_count" ]; then
+		rm -rf "$bundle_tmp" 2>/dev/null || true
+		return 1
+	fi
+	cp "$captions_file" "$bundle_tmp/captions.txt" 2>/dev/null || {
+		rm -rf "$bundle_tmp" 2>/dev/null || true
+		return 1
+	}
+	mv "$bundle_tmp" "$bundle_dir" 2>/dev/null || {
+		rm -rf "$bundle_tmp" 2>/dev/null || true
+		return 1
+	}
+	return 0
+}
+
 _launch_say() {
 	LAUNCHED_EXPECTED_SEC=0
 	LAUNCH_MODE="say"
@@ -927,7 +1305,11 @@ _launch_say() {
 	# --- Pre-synthesized WAV (--wav mode) ---
 	if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
-		_launch_stream_wav "$MY_CONTENT"
+		if ! _launch_stream_wav "$MY_CONTENT"; then
+			_log "WAV 再生プレイヤー起動失敗"
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="wav"
 		LAUNCHED_SAY_PID="$!"
 		return
@@ -939,15 +1321,27 @@ _launch_say() {
 		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 			local device_index
 			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-				_launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+				if ! _launch_chrome_wav_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"; then
+					_log "事前合成WAV再生プレイヤー起動失敗"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 				LAUNCH_MODE="voicevox_pre"
 				LAUNCHED_SAY_PID="$!"
 				_log "事前合成WAV再生 (device=Chrome/BlackHole fallback)"
 				return
 			}
-			_launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"
+			if ! _launch_ffmpeg_bg "$PRE_SYNTH_WAV" "$device_index" "$PRE_SYNTH_WAV"; then
+				_log "事前合成WAV再生プレイヤー起動失敗 (ffmpeg)"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 		else
-			_launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"
+			if ! _launch_afplay_bg "$PRE_SYNTH_WAV" "$PRE_SYNTH_WAV"; then
+				_log "事前合成WAV再生プレイヤー起動失敗 (afplay)"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 		fi
 		LAUNCH_MODE="voicevox_pre"
 		LAUNCHED_SAY_PID="$!"
@@ -1015,9 +1409,12 @@ _launch_say() {
 		_log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
 		local vo_wav
 		vo_wav="${MY_CONTENT%.txt}.wav"
+		# フォールバック合成のタイムアウトもコンテキスト連動（コメント=長め/ラジオ=短め）
+		local _fb_timeout
+		_fb_timeout=$(_voicevox_synth_timeout_sec)
 		# フォールバック合成時もVOICEVOX合成ロックを取得（同時1リクエスト制限）
 		local _vo_synth_locked=0 _hb_pid=""
-		if ! _acquire_voicevox_synth_lock 30; then
+		if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 			_log "VOICEVOX合成ロック取得タイムアウト → リトライへ"
 		else
 			_vo_synth_locked=1
@@ -1033,11 +1430,11 @@ _launch_say() {
 			_hb_pid=$!
 			if [ -n "$TIMEOUT_CMD" ]; then
 				# 一時的にtimeoutを無効化: 原因調査中
-				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+				if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$_fb_timeout" \
 					./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
 					_vo_ok=1
 				fi
-			elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+			elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$_fb_timeout" \
 				./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
 				_vo_ok=1
 			fi
@@ -1067,15 +1464,27 @@ _launch_say() {
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 				local device_index
 				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-					_launch_chrome_wav_bg "$vo_wav" "$vo_wav"
+					if ! _launch_chrome_wav_bg "$vo_wav" "$vo_wav"; then
+						_log "VOICEVOX WAV再生プレイヤー起動失敗"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="voicevox"
 					LAUNCHED_SAY_PID="$!"
 					_log "VOICEVOX WAV再生 (device=Chrome/BlackHole fallback)"
 					return
 				}
-				_launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"
+				if ! _launch_ffmpeg_bg "$vo_wav" "$device_index" "$vo_wav"; then
+					_log "VOICEVOX WAV再生プレイヤー起動失敗 (ffmpeg)"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 			else
-				_launch_afplay_bg "$vo_wav" "$vo_wav"
+				if ! _launch_afplay_bg "$vo_wav" "$vo_wav"; then
+					_log "VOICEVOX WAV再生プレイヤー起動失敗 (afplay)"
+					LAUNCHED_SAY_PID=""
+					return
+				fi
 			fi
 			LAUNCH_MODE="voicevox"
 			LAUNCHED_SAY_PID="$!"
@@ -1095,7 +1504,11 @@ _launch_say() {
 		if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
 			./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
-			_launch_afplay_bg "$coe_wav" "$coe_wav"
+			if ! _launch_afplay_bg "$coe_wav" "$coe_wav"; then
+				_log "COEIROINK WAV再生プレイヤー起動失敗"
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 			LAUNCH_MODE="coeiroink"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1124,15 +1537,27 @@ _launch_say() {
 					local device_index
 					device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 						_log "audio device解決失敗 → afplayフォールバック"
-						_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
+						if ! _launch_afplay_bg "$gtts_mp3" "$gtts_mp3"; then
+							_log "Google TTS再生プレイヤー起動失敗"
+							LAUNCHED_SAY_PID=""
+							return
+						fi
 						LAUNCH_MODE="google_tts"
 						LAUNCHED_SAY_PID="$!"
 						return
 					}
-					_launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"
+					if ! _launch_ffmpeg_bg "$gtts_mp3" "$device_index" "$gtts_mp3"; then
+						_log "Google TTS再生プレイヤー起動失敗 (ffmpeg)"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="ffmpeg"
 				else
-					_launch_afplay_bg "$gtts_mp3" "$gtts_mp3"
+					if ! _launch_afplay_bg "$gtts_mp3" "$gtts_mp3"; then
+						_log "Google TTS再生プレイヤー起動失敗 (afplay)"
+						LAUNCHED_SAY_PID=""
+						return
+					fi
 					LAUNCH_MODE="google_tts"
 				fi
 				LAUNCHED_SAY_PID="$!"
@@ -1146,11 +1571,20 @@ _launch_say() {
 	fi
 
 	# --- macOS say (最終フォールバック) ---
+	# Linux には say が存在しないため、このフォールバック全体を macOS のみに限定する。
+	if [ "$IS_LINUX" = "1" ]; then
+		_log "Linux では say フォールバックなし (Google TTS も失敗済み)"
+		LAUNCHED_SAY_PID=""
+		return
+	fi
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			_launch_say_bg "$RATE" "$MY_CONTENT"
+			if ! _launch_say_bg "$RATE" "$MY_CONTENT"; then
+				LAUNCHED_SAY_PID=""
+				return
+			fi
 			LAUNCH_MODE="say"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -1168,10 +1602,17 @@ _launch_say() {
 			LAUNCHED_SAY_PID=""
 			return
 		fi
-		_launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"
+		if ! _launch_ffmpeg_bg "$aiff_file" "$device_index" "$aiff_file"; then
+			_log "say AIFF再生プレイヤー起動失敗"
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="ffmpeg"
 	else
-		_launch_say_bg "$RATE" "$MY_CONTENT"
+		if ! _launch_say_bg "$RATE" "$MY_CONTENT"; then
+			LAUNCHED_SAY_PID=""
+			return
+		fi
 		LAUNCH_MODE="say"
 		LAUNCHED_EXPECTED_SEC=$(_estimate_text_duration_sec "$MY_CONTENT" "$RATE")
 	fi
@@ -1187,6 +1628,10 @@ fi
 
 _play_with_retry() {
 	local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
+	local cc_for_retry=0 cc_prepared=0
+	if [ "${DOCICH_CC_PLAN_CHUNK_COUNT:-0}" -eq 1 ]; then
+		cc_for_retry=1
+	fi
 	LAST_SAY_PID=""
 	SAY_FORCE_DIRECT=0
 	GOOGLE_TTS_FAILED=0
@@ -1195,6 +1640,14 @@ _play_with_retry() {
 		_set_current_source "playing"
 		_log "say開始 (attempt=${attempt}, rate=${RATE})"
 		local say_pid
+		cc_prepared=0
+		if [ "$cc_for_retry" -eq 1 ]; then
+			if docich_cc_prepare 0 0; then
+				cc_prepared=1
+			else
+				cc_for_retry=0
+			fi
+		fi
 		LAUNCHED_SAY_PID=""
 		CHROME_AUDIO_USED=0
 		_launch_say
@@ -1202,6 +1655,10 @@ _play_with_retry() {
 		if [ -z "$say_pid" ]; then
 			_log "say起動失敗"
 		else
+			if [ "$cc_prepared" -eq 1 ] && ! docich_cc_commit 0; then
+				cc_for_retry=0
+				docich_cc_clear || true
+			fi
 			LAST_SAY_PID="$say_pid"
 			echo "$say_pid" >"$PID_FILE"
 			# 初回再生開始時にCC表記をTwitchチャットに投稿
@@ -1234,8 +1691,10 @@ _play_with_retry() {
 			_log "say途中切断の疑い (elapsed=${elapsed}s, expected=${expected_sec}s)"
 		fi
 		if [ "$say_rc" -eq 0 ]; then
+			docich_cc_clear || true
 			return 0
 		fi
+		docich_cc_clear || true
 		if [ "${CHROME_AUDIO_USED:-0}" = "1" ]; then
 			_stop_chrome_audio_players
 			if [ "${timed_out:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] && ! _is_truncated_playback "$elapsed" "$expected_sec"; then
@@ -1358,10 +1817,29 @@ _prepare_playback_turn() {
 # --- VOICEVOX 事前合成（ロック取得前＝前の再生中に並行合成） ---
 PRE_SYNTH_WAV=""
 PRE_SYNTH_PLAYLIST_FILE=""
-if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
-	# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
-	if ! _acquire_voicevox_synth_lock 30; then
-		_log "事前合成スキップ（別プロセスが合成中）"
+_pre_chunks=()
+if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
+	_external_caption_chunks=()
+	_external_playlist_count=0
+	while IFS= read -r _external_line; do
+		[ -n "$_external_line" ] && _external_caption_chunks+=("$_external_line")
+	done <"$CAPTION_CHUNKS_FILE"
+	while IFS= read -r _external_line; do
+		[ -n "$_external_line" ] && _external_playlist_count=$((_external_playlist_count + 1))
+	done <"$WAV_PLAYLIST_FILE"
+	if [ "$_external_playlist_count" -le 0 ] || [ "$_external_playlist_count" -ne "${#_external_caption_chunks[@]}" ]; then
+		_log "WAV bundle不整合: audio=${_external_playlist_count} captions=${#_external_caption_chunks[@]}"
+		exit 2
+	fi
+	docich_cc_start_plan "${_external_caption_chunks[@]}" || true
+elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
+			# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
+			if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
+				if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+					_log "事前合成一時保留（優先音声待ち）"
+				else
+					_log "事前合成スキップ（別プロセスが合成中）"
+				fi
 	else
 		_log "事前合成開始"
 		_pre_synth_hb_pid=""
@@ -1435,18 +1913,21 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			PRE_SYNTH_CHUNKS_FILE=""
 			PRE_SYNTH_PLAYLIST_FILE=""
 
-			# テキストを ~100文字チャンクに分割
+			# 既存のVOICEVOX分割を字幕計画にもそのまま使い、音声経路を変えない。
 			_pre_text=$(cat "$MY_CONTENT" 2>/dev/null)
+			_pre_chunk_chars=100
 			_pre_chunks=()
 			while IFS= read -r _pc_line; do
 				[ -n "$_pc_line" ] && _pre_chunks+=("$_pc_line")
-			done < <(_split_tts_text "$_pre_text" 100)
+			done < <(_split_tts_text "$_pre_text" "$_pre_chunk_chars")
 
 			if [ ${#_pre_chunks[@]} -le 1 ]; then
+				docich_cc_start_plan "${_pre_chunks[@]}" || true
 				# 短いテキスト: 従来通り全文を1回で合成
+				PRE_SINGLE_TIMEOUT=$(_voicevox_synth_timeout_sec)
 				if [ -n "$TIMEOUT_CMD" ]; then
 					if $TIMEOUT_CMD -k "$VOICEVOX_SYNTH_KILL_AFTER_SEC" "$VOICEVOX_SYNTH_TIMEOUT_SEC" \
-						VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+						VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$PRE_SINGLE_TIMEOUT" \
 						./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
 						_log "事前合成完了: $PRE_SYNTH_WAV"
 					else
@@ -1454,7 +1935,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 						rm -f "$PRE_SYNTH_WAV" 2>/dev/null
 						PRE_SYNTH_WAV=""
 					fi
-				elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
+				elif VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT="$PRE_SINGLE_TIMEOUT" \
 					./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
 					_log "事前合成完了: $PRE_SYNTH_WAV"
 				else
@@ -1463,15 +1944,54 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 					PRE_SYNTH_WAV=""
 				fi
 			else
-				# 複数チャンク: 再生ロック取得前に全チャンクを合成してから再生待ちへ入る
-				_log "テキスト分割: ${#_pre_chunks[@]}チャンク → 全チャンク事前合成"
+				# 複数チャンク: 再生ロック取得前に全チャンクを合成してから再生待ちへ入る。
+				# 通常再生には従来の上限を残す。render-only は途中で切れたWAVを
+				# 完成品にしないため全チャンクを対象にし、各チャンク境界で前景音声へ譲る。
+				PRE_MAX_CHUNKS="${#_pre_chunks[@]}"
+				if [ "$RENDER_ONLY" != "true" ]; then
+					case "${SOURCE_LABEL:-}" in
+					radio_render:* | radio | radio:*)
+						PRE_RADIO_CHUNK_CAP="${VOICEVOX_RADIO_MAX_CHUNKS:-12}"
+						case "$PRE_RADIO_CHUNK_CAP" in
+						'' | *[!0-9]*) PRE_RADIO_CHUNK_CAP=12 ;;
+						esac
+						[ "$PRE_RADIO_CHUNK_CAP" -lt 1 ] && PRE_RADIO_CHUNK_CAP=1
+						[ "$PRE_MAX_CHUNKS" -gt "$PRE_RADIO_CHUNK_CAP" ] && PRE_MAX_CHUNKS="$PRE_RADIO_CHUNK_CAP"
+						;;
+					esac
+				fi
+				if [ "$PRE_MAX_CHUNKS" -lt "${#_pre_chunks[@]}" ]; then
+					_log "テキスト分割: ${#_pre_chunks[@]}チャンク → ラジオ上限${PRE_MAX_CHUNKS}で事前合成（超過分は再生時フォールバック）"
+				else
+					_log "テキスト分割: ${#_pre_chunks[@]}チャンク → 全チャンク事前合成"
+				fi
+				docich_cc_start_plan "${_pre_chunks[@]:0:PRE_MAX_CHUNKS}" || true
 				_stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
 				mkdir -p "$_stream_dir"
 				PRE_SYNTH_PLAYLIST_FILE="${MY_CONTENT%.txt}_wav_playlist.txt"
 				: >"$PRE_SYNTH_PLAYLIST_FILE"
 				_pre_synth_failed=0
-				for ((_pc_i = 0; _pc_i < ${#_pre_chunks[@]}; _pc_i++)); do
-					_pre_chunk_wav="$_stream_dir/chunk_${_pc_i}.wav"
+				for ((_pc_i = 0; _pc_i < PRE_MAX_CHUNKS; _pc_i++)); do
+					# チャンク間で合成ロックを一時解放し、コメント（長め待ち）が
+					# 割り込めるようにする。ラジオ render は短い待ちで再取得を諦め、
+					# 残りは再生時フォールバックへ回す。
+					if [ "$_pc_i" -gt 0 ]; then
+						_release_voicevox_synth_lock
+						if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
+							if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → ラジオは後で再試行"
+							else
+								_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
+							fi
+							_pre_synth_failed=1
+							break
+						fi
+					fi
+					# The playback list may later be read from beside the content copy,
+					# while deferred bundles intentionally use paths relative to the
+					# bundle.  Store locally synthesized chunks as absolute paths so the
+					# two playlist formats cannot be confused.
+					_pre_chunk_wav="$(pwd)/$_stream_dir/chunk_${_pc_i}.wav"
 					_touch_voicevox_synth_lock_heartbeat
 					if _synthesize_chunk "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"; then
 						printf '%s\n' "$_pre_chunk_wav" >>"$PRE_SYNTH_PLAYLIST_FILE"
@@ -1501,16 +2021,34 @@ fi
 
 if [ "$RENDER_ONLY" = "true" ]; then
 	mkdir -p "$(dirname "$RENDER_OUTPUT")" 2>/dev/null || true
-	if [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
-		if _concat_prerendered_voicevox_chunks "$PRE_SYNTH_PLAYLIST_FILE" "$RENDER_OUTPUT"; then
-			_log "render-only 完了: $RENDER_OUTPUT"
+	_render_bundle="${RENDER_OUTPUT}.bundle"
+	_render_captions_file="${MY_CONTENT%.txt}_render_chunks.txt"
+	_render_playlist_file="${PRE_SYNTH_PLAYLIST_FILE:-}"
+	: >"$_render_captions_file"
+	for _render_chunk in "${_pre_chunks[@]}"; do
+		[ -n "$_render_chunk" ] && printf '%s\n' "$_render_chunk" >>"$_render_captions_file"
+	done
+	if [ -z "$_render_playlist_file" ] && [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
+		_render_playlist_file="${MY_CONTENT%.txt}_render_playlist.txt"
+		printf '%s\n' "$PRE_SYNTH_WAV" >"$_render_playlist_file"
+	fi
+	if [ -n "$_render_playlist_file" ] && [ -s "$_render_playlist_file" ] \
+		&& _export_prerendered_voicevox_bundle "$_render_playlist_file" "$_render_captions_file" "$_render_bundle"; then
+		if [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
+			_concat_prerendered_voicevox_chunks "$PRE_SYNTH_PLAYLIST_FILE" "$RENDER_OUTPUT" || true
+		elif [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
+			cp "$PRE_SYNTH_WAV" "$RENDER_OUTPUT" 2>/dev/null || true
+		fi
+		if [ -s "$RENDER_OUTPUT" ]; then
+			_log "render-only 完了: $RENDER_OUTPUT (bundle=${_render_bundle})"
 			exit 0
 		fi
-	elif [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
-		if cp "$PRE_SYNTH_WAV" "$RENDER_OUTPUT" 2>/dev/null && [ -s "$RENDER_OUTPUT" ]; then
-			_log "render-only 完了: $RENDER_OUTPUT"
-			exit 0
-		fi
+	fi
+	rm -f "$RENDER_OUTPUT" 2>/dev/null || true
+	rm -rf "$_render_bundle" 2>/dev/null || true
+	if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+		_log "render-only 一時保留（優先音声待ち）"
+		exit 75
 	fi
 	_log "render-only 失敗"
 	exit 1
@@ -1523,7 +2061,12 @@ _prepare_playback_turn "$PRE_DELAY"
 # --- ロック内: say再生（単発 + 自動リトライ / 事前合成済みチャンク） ---
 PLAYBACK_FAILED=0
 LAST_SAY_PID=""
-if [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
+if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
+	# 外部bundleは再試行に再利用するため、個々のWAVをここでは削除しない。
+	if ! SAY_PRESERVE_PRERENDERED_CHUNKS=1 _play_prerendered_voicevox_chunks "$WAV_PLAYLIST_FILE"; then
+		PLAYBACK_FAILED=1
+	fi
+elif [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
 	# 事前合成済みチャンク再生: ロック内では生成しない
 	# CC表記をTwitchチャットに投稿
 	if [ -n "${SAY_CC_TEXT:-}" ]; then

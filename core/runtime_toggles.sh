@@ -27,6 +27,7 @@ WILDCARD_PARAM_COUNT_MAX
 WILDCARD_PERTURB_RATIO_MIN
 WILDCARD_PERTURB_RATIO_MAX
 WILDCARD_PATIENCE_GAMES
+IMPROVE_KEEP_MAIN_GAME_RUNNING
 WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE
 ARCHIVE_RESTART_MIN_RUSSIA_COUNT
 ARCHIVE_RESTART_MIN_RUSSIA_RATE
@@ -68,12 +69,21 @@ EOF
 # 過剰な stat 呼び出しを避けるため最低 10 秒間隔でチェック
 _RUNTIME_TOGGLES_MIN_INTERVAL=${RUNTIME_TOGGLES_MIN_INTERVAL:-10}
 
+# 改善中もメインゲームを継続する共通判定。既定値は従来互換の停止(0)とし、
+# 本番VMでは .env で明示的に有効化する。
+_improve_keep_main_game_running() {
+	[ "${IMPROVE_KEEP_MAIN_GAME_RUNNING:-0}" = "1" ]
+}
+
 _runtime_toggle_stat_mtime() {
-	local path="$1"
-	if stat -f %m "$path" 2>/dev/null; then
-		return 0
-	fi
-	stat -c %Y "$path" 2>/dev/null
+	local path="$1" mtime
+	mtime=$(stat -f %m "$path" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$path" 2>/dev/null) \
+		|| mtime=0
+	case "$mtime" in
+	'' | *[!0-9]*) mtime=0 ;;
+	esac
+	printf '%s\n' "$mtime"
 }
 
 reload_runtime_toggles() {
@@ -116,14 +126,6 @@ reload_runtime_toggles() {
 		*" $key "*) ;;
 		*) continue ;;
 		esac
-		# 探索モードでは MIN_GAMES_BEFORE_IMPROVE/REGRESSION を .env から再読込しない。
-		# config.sh が探索用の値 (EXPLORE_MIN_GAMES_BEFORE_IMPROVE) を設定しているため、
-		# ここで .env の値 (例: 100) に上書きすると探索サイクルが壊れる。
-		# EXPLORE_MODE はホットリロードで失われる可能性があるため、マーカも併用する。
-		if { [ "${EXPLORE_MODE:-0}" = "1" ] || [ -f "$ELOOP_LIB_DIR/tmp/state/explore_mode" ]; } &&
-			{ [ "$key" = "MIN_GAMES_BEFORE_IMPROVE" ] || [ "$key" = "MIN_GAMES_BEFORE_REGRESSION" ]; }; then
-			continue
-		fi
 		# クォート剥がし
 		case "$val" in
 		\"*\") val="${val%\"}"; val="${val#\"}" ;;

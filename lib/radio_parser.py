@@ -2,7 +2,7 @@
 """Parse raw radio talk output into body, summary, and selected-news files.
 
 Usage:
-    python3 radio_parser.py <body_path> <summary_path> <selected_news_path>
+    python3 radio_parser.py [--require-on-air-script] <body_path> <summary_path> <selected_news_path>
 
 Reads raw radio output from stdin and writes parsed results to the three files.
 """
@@ -10,7 +10,20 @@ import re
 import sys
 from pathlib import Path
 
-body_path, summary_path, selected_path = sys.argv[1:4]
+args = sys.argv[1:]
+require_on_air_script = False
+if "--require-on-air-script" in args:
+    require_on_air_script = True
+    args.remove("--require-on-air-script")
+if len(args) != 3:
+    print(
+        "Usage: radio_parser.py [--require-on-air-script] "
+        "<body_path> <summary_path> <selected_news_path>",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+body_path, summary_path, selected_path = args
 raw = sys.stdin.read().replace("\r", "")
 
 raw = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
@@ -38,16 +51,33 @@ for line in lines:
         continue
     clean_lines.append(line)
 
-def marker_positions(marker):
-    return [idx for idx, line in enumerate(clean_lines) if line == marker]
+def marker_positions(lines, marker):
+    return [idx for idx, line in enumerate(lines) if line == marker]
 
-summary_pos = marker_positions("===SUMMARY===")
-selected_pos = marker_positions("===SELECTED_NEWS===")
-main_lines = clean_lines[: selected_pos[0]] if selected_pos else clean_lines
+script_markers = {
+    "ON_AIR_SCRIPT_START",
+    "===ON_AIR_SCRIPT===",
+    "ON_AIR_SCRIPT===",
+}
+script_pos = [idx for idx, line in enumerate(clean_lines) if line in script_markers]
+if require_on_air_script and not script_pos:
+    print("radio output missing ON_AIR_SCRIPT_START", file=sys.stderr)
+    sys.exit(2)
+
+# The last exact script marker wins. Any model reasoning, search narration, or
+# tool chatter emitted before it is outside the on-air boundary by definition.
+script_start = script_pos[-1] + 1 if script_pos else 0
+scoped_lines = clean_lines[script_start:]
+summary_pos = marker_positions(scoped_lines, "===SUMMARY===")
+selected_pos = marker_positions(scoped_lines, "===SELECTED_NEWS===")
+if require_on_air_script and not summary_pos:
+    print("radio output missing ===SUMMARY=== after on-air marker", file=sys.stderr)
+    sys.exit(2)
+main_lines = scoped_lines[: selected_pos[0]] if selected_pos else scoped_lines
 
 selected_news = ""
 if selected_pos:
-    for line in clean_lines[selected_pos[0] + 1 :]:
+    for line in scoped_lines[selected_pos[0] + 1 :]:
         if not line or line.startswith("==="):
             continue
         selected_news = line
@@ -133,7 +163,12 @@ def is_summaryish_edge_line(line):
     return False
 
 body_lines = []
-if segments:
+if script_pos:
+    body_end = summary_pos[0] if summary_pos else len(main_lines)
+    body_lines = [
+        line for line in main_lines[:body_end] if line and not line.startswith("===")
+    ]
+elif segments:
     best = max(segments, key=score_segment)
     body_lines = [line for line in best if line and not line.startswith("===")]
 

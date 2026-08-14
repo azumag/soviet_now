@@ -16,6 +16,8 @@ VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-3}"  # デフォルト: ずんだもん �
 VOICEVOX_TIMEOUT="${VOICEVOX_TIMEOUT:-30}"
 VOICEVOX_HEALTH_TIMEOUT="${VOICEVOX_HEALTH_TIMEOUT:-0.7}"
 VOICEVOX_MAX_CHARS="${VOICEVOX_MAX_CHARS:-200}"
+VOICEVOX_NY_PAUSE_FIX="${VOICEVOX_NY_PAUSE_FIX:-1}"     # i母音直後「ニュ」の鼻音欠落対策 (0で無効)
+VOICEVOX_NY_PAUSE_LEN="${VOICEVOX_NY_PAUSE_LEN:-0.20}"  # 対策で挿入するポーズ長 (秒)
 
 _voicevox_candidate_urls() {
     printf '%s\n' "$VOICEVOX_URL_PRIMARY" "$VOICEVOX_URL" "$VOICEVOX_URL_FALLBACK" "$VOICEVOX_URL_LOCAL" \
@@ -59,7 +61,10 @@ _synthesize_one_at_url() {
     local output="$2"
 
     # VOICEVOXクラッシュ防止: 推論を壊す文字を除去
-    text=$(printf '%s' "$text" | tr -d '#＃')
+    # (GNU tr はバイト単位で '＃' が 0xEF/0xBC/0x83 の各バイト削除になり
+    #  ニ・ュ・ー等の多バイト文字を破壊するため bash 置換を使う)
+    text=${text//"#"/}
+    text=${text//"＃"/}
 
     # 読み替え辞書: VOICEVOXが誤読する単語を修正
     if [ -f "$SCRIPT_DIR/config/voicevox_word_replace.txt" ]; then
@@ -94,6 +99,58 @@ if t: d['speedScale']=float(t)
 if i: d['intonationScale']=float(i)
 json.dump(d,sys.stdout)
 " 2>/dev/null) || true
+    fi
+
+    # i母音直後の「ニュ」(ny) はモデルが鼻音を生成せず「ュ」に聞こえるため、
+    # ny モーラ直前にポーズを挿入して回避 (VOICEVOX_NY_PAUSE_FIX=0 で無効)
+    if [ "$VOICEVOX_NY_PAUSE_FIX" != "0" ]; then
+        local fixed_json
+        fixed_json=$(echo "$query_json" | python3 -c "
+import json, sys
+
+def pause_mora(length):
+    return {'text': '、', 'consonant': None, 'consonant_length': None,
+            'vowel': 'pau', 'vowel_length': length, 'pitch': 0.0}
+
+def is_i_ny(prev, cur):
+    return cur.get('consonant') == 'ny' and str(prev.get('vowel') or '').lower() == 'i'
+
+pause_len = float(sys.argv[1])
+if not (0.0 < pause_len <= 1.0):
+    raise SystemExit(1)
+q = json.load(sys.stdin)
+out = []
+for ap in q.get('accent_phrases', []):
+    cur = ap
+    while True:
+        moras = cur['moras']
+        idx = None
+        for i in range(1, len(moras)):
+            if is_i_ny(moras[i - 1], moras[i]):
+                idx = i
+                break
+        if idx is None:
+            out.append(cur)
+            break
+        out.append({'moras': moras[:idx], 'accent': min(cur['accent'], idx),
+                    'pause_mora': pause_mora(pause_len), 'is_interrogative': False})
+        cur = {'moras': moras[idx:],
+               'accent': max(1, min(cur['accent'] - idx, len(moras) - idx)),
+               'pause_mora': cur.get('pause_mora'),
+               'is_interrogative': cur.get('is_interrogative', False)}
+for i in range(len(out) - 1):
+    cur, nxt = out[i], out[i + 1]
+    if (cur.get('pause_mora') is None and cur['moras'] and nxt['moras']
+            and is_i_ny(cur['moras'][-1], nxt['moras'][0])):
+        cur['pause_mora'] = pause_mora(pause_len)
+q['accent_phrases'] = out
+json.dump(q, sys.stdout)
+" "$VOICEVOX_NY_PAUSE_LEN" 2>/dev/null) || fixed_json=""
+        if [ -n "$fixed_json" ]; then
+            query_json="$fixed_json"
+        else
+            echo "WARN: ny pause fix skipped, using original query" >&2
+        fi
     fi
 
     # Step 2: synthesis

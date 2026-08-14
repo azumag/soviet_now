@@ -241,6 +241,7 @@ run_cmd() {
 	local cmd_log_tag="${RUN_CMD_LOG_TAG:-$type}"
 	local prompt_body="$prompt"
 	local resume_session=""
+	local RUN_CMD_CODEX_OUT_FILE=""
 	local timeout_sec="${RUN_CMD_TIMEOUT_SEC:-}"
 	local timeout_bin=""
 	local timeout_label="none"
@@ -255,8 +256,26 @@ run_cmd() {
 		fi
 	fi
 	[ -n "$timeout_sec" ] && timeout_label="${timeout_sec}s"
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
-		resume_session=$(_run_cmd_load_resume_session "$spec" 2>/dev/null || true)
+	# litellm プロキシ経由運用時は、codex 起動前にプロキシ生存を確認する。
+	# 死亡時に無駄な codex 起動を避け、run_ai のフォールバック判定 (rc=79) へ乗せる。
+	local litellm_health_url="${LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health}"
+	if [ -n "$litellm_health_url" ]; then
+		if ! curl -fsS --max-time 5 "$litellm_health_url" >/dev/null 2>&1; then
+			log "[CMD] litellm proxy unreachable ($litellm_health_url) → rc=79 fallback"
+			if [ -n "$cmd_log_file" ]; then
+				printf '[%s] [AI:%s] LITELLM_DOWN url=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$litellm_health_url" >>"$cmd_log_file" 2>/dev/null || true
+			fi
+			return 79
+		fi
+	fi
+	# ハーネスは codex CLI に統一 (モデル: deepseek-v4-flash)。
+	# 旧 zai/minimax/glm/opencode/gemini/claude/ollama 指定はすべて codex へ正規化する。
+	local original_type="$type"
+	if [ "$type" != "codex" ]; then
+		log "[CMD] ${type} → codex (ハーネス統一)"
+		type="codex"
+		agent=""
+		target="codex"
 	fi
 
 	local prompt_file
@@ -305,287 +324,30 @@ run_cmd() {
 		export XDG_DATA_HOME="$(_opencode_xdg_data_home)"
 	fi
 
-	case "$type" in
-	zai)
-		local -a zai_claude_args
-		zai_claude_args=(--print -p "$prompt_body" --model=haiku --permission-mode=acceptEdits --no-session-persistence)
-		[ -n "$resume_session" ] && zai_claude_args+=(-c)
-		local -a zai_env=(
-			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
-			ANTHROPIC_AUTH_TOKEN="${ZAI_API_KEY:-}"
-			ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5.1"
-			CLAUDE_CODE_EFFORT_LEVEL="max"
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${zai_env[@]}" "$timeout_bin" "$timeout_sec" claude "${zai_claude_args[@]}" >>"$cmd_log_file" 2>&1 &
-			else
-				env "${zai_env[@]}" claude "${zai_claude_args[@]}" >>"$cmd_log_file" 2>&1 &
-			fi
+	# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
+	local codex_model="${agent:-${CODEX_MODEL:-deepseek-v4-flash}}"
+	local codex_out_file
+	codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
+	local -a codex_args=(
+		exec --skip-git-repo-check -m "$codex_model"
+		--dangerously-bypass-approvals-and-sandbox
+		-o "$codex_out_file" "$prompt_body"
+	)
+	if [ -n "$cmd_log_file" ]; then
+		if [ -n "$timeout_sec" ]; then
+			"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" >>"$cmd_log_file" 2>&1 &
 		else
-			if [ -n "$timeout_sec" ]; then
-				env "${zai_env[@]}" "$timeout_bin" "$timeout_sec" claude "${zai_claude_args[@]}" &
-			else
-				env "${zai_env[@]}" claude "${zai_claude_args[@]}" &
-			fi
+			codex "${codex_args[@]}" >>"$cmd_log_file" 2>&1 &
 		fi
-		;;
-	minimax|ccmm)
-		local minimax_model="${MINIMAX_MODEL:-MiniMax-M2.7}"
-		_prepare_minimax_claude_command "$prompt_body" "$minimax_model" "acceptEdits"
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${MINIMAX_CLAUDE_ENV[@]}" "$timeout_bin" "$timeout_sec" "${MINIMAX_CLAUDE_CMD[@]}" >>"$cmd_log_file" 2>&1 &
-			else
-				env "${MINIMAX_CLAUDE_ENV[@]}" "${MINIMAX_CLAUDE_CMD[@]}" >>"$cmd_log_file" 2>&1 &
-			fi
+	else
+		if [ -n "$timeout_sec" ]; then
+			"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" &
 		else
-			if [ -n "$timeout_sec" ]; then
-				env "${MINIMAX_CLAUDE_ENV[@]}" "$timeout_bin" "$timeout_sec" "${MINIMAX_CLAUDE_CMD[@]}" &
-			else
-				env "${MINIMAX_CLAUDE_ENV[@]}" "${MINIMAX_CLAUDE_CMD[@]}" &
-			fi
+			codex "${codex_args[@]}" &
 		fi
-		;;
-	glm)
-		local -a glm_args
-		glm_args=(run "$prompt_body" --agent="zai")
-		[ -n "$resume_session" ] && glm_args+=(--continue --session "$resume_session")
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				if [ -n "$timeout_sec" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
-				else
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
-				fi
-			else
-				if [ -n "$timeout_sec" ]; then
-					"$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
-				else
-					opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
-				fi
-			fi
-		else
-			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				if [ -n "$timeout_sec" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" &
-				else
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" &
-				fi
-			else
-				if [ -n "$timeout_sec" ]; then
-					"$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" &
-				else
-					opencode "${glm_args[@]}" &
-				fi
-			fi
-		fi
-		;;
-	gemini)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s >>"$cmd_log_file" 2>&1 &
-			else
-				gemini -p "$prompt_body" -y -s >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s &
-			else
-				gemini -p "$prompt_body" -y -s &
-			fi
-		fi
-		;;
-	gemini-flash)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
-			else
-				gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash &
-			else
-				gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash &
-			fi
-		fi
-		;;
-	sonnet)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
-			else
-				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
-			else
-				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
-			fi
-		fi
-		;;
-	opus)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
-			else
-				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
-			else
-				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
-			fi
-		fi
-		;;
-	haiku|claude)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
-			else
-				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
-			else
-				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
-			fi
-		fi
-		;;
-	opencode)
-		local -a opencode_args
-		opencode_args=(run "$prompt_body" --agent="$agent")
-		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				if [ -n "$timeout_sec" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
-				else
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
-				fi
-			else
-				if [ -n "$timeout_sec" ]; then
-					"$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
-				else
-					opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
-				fi
-			fi
-		else
-			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				if [ -n "$timeout_sec" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" &
-				else
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" &
-				fi
-			else
-				if [ -n "$timeout_sec" ]; then
-					"$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" &
-				else
-					opencode "${opencode_args[@]}" &
-				fi
-			fi
-		fi
-		;;
-	gemma4e)
-		local -a ollama_env=(
-			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.13:11434"
-			ANTHROPIC_API_KEY=""
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence &
-			fi
-		fi
-		;;
-	gemma4)
-		local -a ollama_env=(
-			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.13:11434"
-			ANTHROPIC_API_KEY=""
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence &
-			fi
-		fi
-		;;
-	qwen35)
-		local -a ollama_env=(
-			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.13:11434"
-			ANTHROPIC_API_KEY=""
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence &
-			fi
-		fi
-		;;
-	qwencode)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" qwen -p "$prompt_body" -y >>"$cmd_log_file" 2>&1 &
-			else
-				qwen -p "$prompt_body" -y >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" qwen -p "$prompt_body" -y &
-			else
-				qwen -p "$prompt_body" -y &
-			fi
-		fi
-		;;
-	qwen36f)
-		local -a openrouter_env=(
-			ANTHROPIC_BASE_URL="https://openrouter.ai/api"
-			ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY:-}"
-			ANTHROPIC_API_KEY=""
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			else
-				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence &
-			else
-				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence &
-			fi
-		fi
-		;;
-	esac
+	fi
+	# 出力ファイルを後処理でログへ追記するため、一時ファイルパスを保存
+	RUN_CMD_CODEX_OUT_FILE="$codex_out_file"
 	local cmd_pid=$!
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		if [ "$opencode_had_xdg_state_home" -eq 1 ]; then
@@ -613,6 +375,15 @@ run_cmd() {
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
+	# codex exec の最終メッセージをログへ追記（後段の判定抽出が読めるように）
+	if [ -n "${RUN_CMD_CODEX_OUT_FILE:-}" ] && [ -s "$RUN_CMD_CODEX_OUT_FILE" ]; then
+		if [ -n "$cmd_log_file" ]; then
+			printf '\n[%s] [AI:%s] FINAL_MESSAGE\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" >>"$cmd_log_file" 2>/dev/null || true
+			cat "$RUN_CMD_CODEX_OUT_FILE" >>"$cmd_log_file" 2>/dev/null || true
+		fi
+		rm -f "$RUN_CMD_CODEX_OUT_FILE"
+	fi
+	RUN_CMD_CODEX_OUT_FILE=""
 	_run_cmd_stop_heartbeat
 	_opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"
 	opencode_lock_token=""

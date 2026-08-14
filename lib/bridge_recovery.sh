@@ -73,7 +73,9 @@ rr_lease_acquire() {
 	fi
 	# 既存ロック: stale (TTL超過) なら奪取
 	now=$(date +%s)
-	lk=$(stat -f %m "$_RR_LOCK" 2>/dev/null || stat -c %Y "$_RR_LOCK" 2>/dev/null || echo "$now")
+	lk=$(stat -f %m "$_RR_LOCK" 2>/dev/null) \
+		|| lk=$(stat -c %Y "$_RR_LOCK" 2>/dev/null) \
+		|| lk=$now
 	if [ $(( now - lk )) -ge "$_RR_TTL" ]; then
 		rm -rf "$_RR_LOCK" 2>/dev/null || true
 		if mkdir "$_RR_LOCK" 2>/dev/null; then
@@ -289,7 +291,9 @@ _br_relaunch() {
 					sleep 2
 				else
 					local live_m live_n
-					live_m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+					live_m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null) \
+						|| live_m=$(stat -c %Y "$_BR_GAME_STATE" 2>/dev/null) \
+						|| live_m=0
 					live_n=$(date +%s)
 					if [ "$live_m" -gt 0 ] && [ "$((live_n - live_m))" -lt 30 ] && ! _br_fatal_in_log; then
 						_br_log "port $_BR_PORT 保持PIDの詳細不明だが game_state fresh=$((live_n-live_m))s → 稼働中として復旧成功扱い"
@@ -305,6 +309,12 @@ _br_relaunch() {
 	# (--hide-crash-restore-bubble と二重の保険。既存 unclean 状態も修復)
 	_br_clean_profile_exit
 	_br_log "relaunch: node soviet_local.mjs (cwd=$_BR_ROOT)"
+	# クラッシュ原因調査用に直前ログを退避する（次回 relaunch で上書きされるため）
+	if [ -f "$_BR_GAME_LOG" ] && [ -s "$_BR_GAME_LOG" ]; then
+		local _br_crash_log="$_BR_ROOT/tmp/debug/soviet_local.log.$(date +%Y%m%d_%H%M%S)"
+		cp "$_BR_GAME_LOG" "$_br_crash_log" 2>/dev/null || true
+		ls -1t "$_BR_ROOT"/tmp/debug/soviet_local.log.* 2>/dev/null | tail -n +31 | xargs -r rm -f 2>/dev/null || true
+	fi
 	if command -v tmux >/dev/null 2>&1; then
 		tmux kill-session -t soren_bridge 2>/dev/null || true
 		tmux new-session -d -s soren_bridge "cd '$_BR_ROOT' && exec node soviet_local.mjs > '$_BR_GAME_LOG' 2>&1"
@@ -318,7 +328,9 @@ _br_relaunch() {
 	verify_deadline=$(($(date +%s) + verify_sec))
 	while [ "$(date +%s)" -lt "$verify_deadline" ]; do
 		sleep 2
-		m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+		m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null) \
+			|| m=$(stat -c %Y "$_BR_GAME_STATE" 2>/dev/null) \
+			|| m=0
 		n=$(date +%s)
 		serve_pid=$(_br_port_pid)
 		cdp_pid=$(_br_cdp_port_pid)
@@ -336,7 +348,9 @@ _br_relaunch() {
 	fi
 	serve_pid=$(_br_port_pid)
 	cdp_pid=$(_br_cdp_port_pid)
-	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null) \
+		|| m=$(stat -c %Y "$_BR_GAME_STATE" 2>/dev/null) \
+		|| m=0
 	n=$(date +%s)
 	_br_log "WARNING: 復旧後検証失敗 (serve=$([ -n "$serve_pid" ] && echo up || echo down) cdp=$([ -n "$cdp_pid" ] && echo up || echo down) game_state_age=$([ "$m" -gt 0 ] && echo $((n-m)) || echo NA)s)"
 	return 1
@@ -349,7 +363,9 @@ _ensure_bridge_alive() {
 	[ -f tmp/state/manual_improve_mode ] && return 0
 
 	local crash="" audio_crash="" wrong_sink="" m n
-	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null || stat -c %Y "$_BR_GAME_STATE" 2>/dev/null || echo 0)
+	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null) \
+		|| m=$(stat -c %Y "$_BR_GAME_STATE" 2>/dev/null) \
+		|| m=0
 	n=$(date +%s)
 	audio_crash=$(_br_audio_stuck_reason 2>/dev/null || true)
 

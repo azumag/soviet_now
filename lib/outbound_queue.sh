@@ -193,7 +193,9 @@ _outbound_chat_cleanup_dedup_markers() {
 	now=$(date +%s)
 	for marker in "$OUTBOUND_CHAT_DEDUP_DIR"/*; do
 		[ -d "$marker" ] || continue
-		mt=$(stat -f %m "$marker" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$marker" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$marker" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		[ "$age" -gt "$ttl" ] && rm -rf "$marker" 2>/dev/null || true
 	done
@@ -220,7 +222,9 @@ _outbound_chat_claim_enqueue_key() {
 		return 0
 	fi
 
-	mt=$(stat -f %m "$marker" 2>/dev/null || echo "$now")
+	mt=$(stat -f %m "$marker" 2>/dev/null) \
+		|| mt=$(stat -c %Y "$marker" 2>/dev/null) \
+		|| mt="$now"
 	age=$((now - mt))
 	if [ "$age" -le "$ttl" ]; then
 		return 1
@@ -377,7 +381,9 @@ outbound_queue_cleanup_sent() {
 	for f in "$OUTBOUND_CHAT_SENT_DIR"/*.msg; do
 		[ -f "$f" ] || continue
 		local mtime
-		mtime=$(stat -f %m "$f" 2>/dev/null || echo "$now")
+		mtime=$(stat -f %m "$f" 2>/dev/null) \
+			|| mtime=$(stat -c %Y "$f" 2>/dev/null) \
+			|| mtime="$now"
 		local age=$((now - mtime))
 		if [ "$age" -gt "$max_age" ]; then
 			rm -f "$f"

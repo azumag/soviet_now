@@ -610,8 +610,10 @@ _ensure_status_overlays_watchers() {
 	fi
 	_SOREN_OVERLAY_RECOVER_BOOTSTRAPPED=1
 	_SOREN_OVERLAY_RECOVER_TS=$now
-	./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
-	./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+	if [ "${SOREN_STATUS_OVERLAY_WATCHERS_ENABLED:-0}" != "1" ]; then
+		./show_status_g.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+		./show_status.sh --html-start "${SOREN_LOOP_OVERLAY_REFRESH_SEC:-2}" >/dev/null 2>&1 || true
+	fi
 	# stats/ops are monitoring overlays. Keep them visible even while the
 	# improve overlay is shown; hiding them here races with soren91 layout
 	# switching and causes visible flicker.
@@ -832,7 +834,7 @@ while true; do
 		continue
 	fi
 
-	# 改善中は中華AIのゲームプレイを一時停止 (soren91が代わりにプレイ中)
+	# 手動メリケンモードは従来どおり専用ゲームへ切り替える。
 	if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
 			soren91_start 2>/dev/null || true
@@ -842,7 +844,27 @@ while true; do
 		sleep 10
 		continue
 	fi
-	if _is_improve_running; then
+
+	# 継続プレイ時はゲーム境界で主ループ自身が改善を非同期起動する。
+	# daemon の30秒poll待ちで次ゲームが先に始まり、改善ロックが飢餓するのを防ぐ。
+	_improve_running_now=0
+	_is_improve_running && _improve_running_now=1
+	if _improve_keep_main_game_running && [ "$_improve_running_now" -eq 0 ] &&
+		[ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+		log_pause_throttled "continuous_improve_spawn" "[IMPROVE] 改善ロックをゲーム境界で非同期起動（メインゲーム継続）"
+		IMPROVE_DAEMON_MODE=0 trigger_adaptive_improvement || true
+		_is_improve_running && _improve_running_now=1
+	fi
+
+	if [ "$_improve_running_now" -eq 1 ] && _improve_keep_main_game_running; then
+		# 代打とメインが同じcommands経路を奪い合わないよう、代打だけを停止する。
+		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+			log "[IMPROVE] 継続プレイへ切替: soren91代打を停止"
+			SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+		fi
+		log_pause_throttled "improve_running_main_continues" "[IMPROVE] 改善プロセス実行中もメインゲームを継続"
+		_run_improve_runtime_monitor
+	elif [ "$_improve_running_now" -eq 1 ]; then
 		# WILDCARD 改善 (AI不使用・隔離評価) は本線ゲームを止め、
 		# soren91 代打も立てない。WILDCARD PARALLEL 中は OBS に候補6面
 		# (wildcardParallelCand1..6) を出し、本線は見えない裏で進ませない。
@@ -921,11 +943,13 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		! { command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; }; then
 		rm -f "$_post_improve_marker" 2>/dev/null || true
 		log "[CYCLE] 改善完了→次改善前にメインゲームを1回実行 (代打無限化防止)"
-	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && ! _improve_keep_main_game_running; then
 		log_pause_throttled "improve_lock_wait" "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
 		_run_improve_runtime_monitor
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
+	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+		log_pause_throttled "improve_lock_main_continues" "[IMPROVE] 改善ロック待ちでもメインゲームを継続"
 	fi
 	if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
 		log_pause_throttled "soren91_stop_in_progress" "[PAUSE] soren91停止中: 完全停止までメインゲーム再開を待機"
@@ -1274,14 +1298,14 @@ json.dump(d,open(f,'w'))
 		fi
 	fi
 
-	# 改善実行中 or ロック待ち(バックオフ中でない): 次ゲーム準備を保留
-	if _is_improve_running; then
+	# 旧来モードだけ次ゲーム準備を保留する。継続プレイ時は通常どおりretryする。
+	if ! _improve_keep_main_game_running && _is_improve_running; then
 		log_pause_throttled "cycle_improve_running" "[CYCLE] 改善実行中 → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
 		continue
 	fi
-	if [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+	if ! _improve_keep_main_game_running && [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
 		log_pause_throttled "cycle_improve_lock_wait" "[CYCLE] 改善ロック待ち → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
