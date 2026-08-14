@@ -41,6 +41,46 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
+_comment_failure_backoff_remaining() {
+	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
+	local now backoff_until remaining
+	[ -f "$backoff_file" ] || {
+		printf '0\n'
+		return 0
+	}
+	now=$(date +%s)
+	backoff_until=$(cat "$backoff_file" 2>/dev/null || printf '0')
+	case "$backoff_until" in
+	'' | *[!0-9]*) backoff_until=0 ;;
+	esac
+	remaining=$((backoff_until - now))
+	if [ "$remaining" -le 0 ]; then
+		rm -f "$backoff_file" 2>/dev/null || true
+		printf '0\n'
+		return 0
+	fi
+	printf '%s\n' "$remaining"
+}
+
+_comment_failure_backoff_set() {
+	local backoff_sec="${1:-${COMMENT_FAILURE_BACKOFF_SEC:-${AI_AGENT_BACKOFF_SEC:-600}}}"
+	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
+	local backoff_tmp
+	case "$backoff_sec" in
+	'' | *[!0-9]*) backoff_sec=600 ;;
+	esac
+	[ "$backoff_sec" -lt 1 ] && backoff_sec=1
+	mkdir -p "$(dirname "$backoff_file")" 2>/dev/null || true
+	backoff_tmp="${backoff_file}.tmp.$$"
+	printf '%s\n' "$(( $(date +%s) + backoff_sec ))" >"$backoff_tmp" &&
+		mv -f "$backoff_tmp" "$backoff_file"
+}
+
+_comment_failure_backoff_clear() {
+	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
+	rm -f "$backoff_file" 2>/dev/null || true
+}
+
 _comment_meta_sidecar_path() {
 	local target="$1"
 	case "$target" in
@@ -2068,6 +2108,16 @@ generate_comment_response() {
 	fi
 	[ -z "$twitch_comments" ] && return
 
+	# Provider障害時はpendingを保持したまま待機し、短周期の再試行で429を長引かせない。
+	# オペレーターが明示した !claude だけは別providerへ迂回できるため待機を無視する。
+	if ! _comment_has_manual_claude_trigger "$twitch_comments"; then
+		local comment_failure_backoff_remaining=0
+		comment_failure_backoff_remaining=$(_comment_failure_backoff_remaining)
+		if [ "$comment_failure_backoff_remaining" -gt 0 ]; then
+			return 0
+		fi
+	fi
+
 	# 個別コメント行の重複フィルタ（ack-batch失敗で残留した行を除外）
 	local twitch_comments_original="$twitch_comments"
 	twitch_comments=$(_filter_already_processed_comment_lines "$twitch_comments")
@@ -2873,6 +2923,7 @@ RETRYCOMMENT
 				[ "${#_ov_reply}" -gt 90 ] && _ov_reply="${_ov_reply:0:90}…"
 				timeout "${COMMENT_OVERLAY_NOTIFY_TIMEOUT_SEC:-3}" ./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} attempt=${attempt}/${comment_retry_max} batch=${comment_batch_hash:-none}${_ov_reply:+ | 返信:${_ov_reply}}" "info" >/dev/null 2>&1 || true
 			fi
+			_comment_failure_backoff_clear
 			generation_ok=true
 			break
 		done
@@ -2880,7 +2931,13 @@ RETRYCOMMENT
 		rm -f "$comment_prompt_file"
 
 		if [ "$generation_ok" != "true" ]; then
-			log "[COMMENT] コメント返し生成失敗（pending維持・次回再試行）"
+			local comment_failure_backoff_sec="${COMMENT_FAILURE_BACKOFF_SEC:-${AI_AGENT_BACKOFF_SEC:-600}}"
+			case "$comment_failure_backoff_sec" in
+			'' | *[!0-9]*) comment_failure_backoff_sec=600 ;;
+			esac
+			[ "$comment_failure_backoff_sec" -lt 1 ] && comment_failure_backoff_sec=1
+			_comment_failure_backoff_set "$comment_failure_backoff_sec"
+			log "[COMMENT] コメント返し生成失敗（pending維持・${comment_failure_backoff_sec}秒後に再試行）"
 		fi
 	) &
 	local comment_pid=$!
