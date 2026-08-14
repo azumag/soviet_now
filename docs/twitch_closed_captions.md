@@ -33,15 +33,20 @@ X11 video ───────────────────────�
 - FFmpeg `n6.1.1`: `e38092ef9395d7049f871ef4d5411eb410e283e0`
 - libcaption `v0.8`: `e8b6261090eb3f2012427cc6b151c923f82453db`（MIT）
 
-Ubuntuでは少なくともC/C++ toolchain、Git、CMake、pkg-config、x264/PulseAudio/GnuTLSの開発packageを先に用意します。package導入はホスト変更なので、配信停止・再起動とは分けて承認してから行います。
+Ubuntuでは少なくともC/C++ toolchain、Git、CMake、pkg-config、x264/PulseAudio/GnuTLSに加え、`x11grab` 用のXCB（core、SHM、XFixes、Shape）開発packageを先に用意します。Ubuntu 22.04/24.04では `libx264-dev libpulse-dev libgnutls28-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libxcb-shape0-dev` が対象です。package導入はホスト変更なので、配信停止・再起動とは分けて承認してから行います。
+
+配布用binaryは本番と同じOS世代・CPU architectureでビルドします。`uname -m` と `/etc/os-release` を先に記録し、別architectureの検証binary（例: `x86_64`）をARM64本番（`aarch64`）へ配置しません。`DOCICH_FFMPEG_EXPECT_ARCH` を指定すると、ビルド環境が対象architectureと違う場合に開始前で停止します。
 
 ```bash
+DOCICH_FFMPEG_EXPECT_ARCH="$(uname -m)" \
 DOCICH_FFMPEG_CONFIGURE_ARGS="--enable-libpulse --enable-gnutls" \
   ./native/ffmpeg/build.sh /home/ubuntu/build/docich-cc
 
 /home/ubuntu/build/docich-cc/ffmpeg-install/bin/ffmpeg -hide_banner -filters | grep ' docichcc '
 /home/ubuntu/build/docich-cc/ffmpeg-install/bin/ffmpeg -hide_banner -h encoder=libx264 | grep a53cc
 ```
+
+`build.sh` 自身も終了前に `docichcc`、`x11grab`、PulseAudio input、libx264、`a53cc`、RTMP protocolを検査します。字幕PoCだけ通るが本番のX11/PulseAudio入力を持たない不完全なbinaryは成功扱いにしません。
 
 ビルドスクリプトは上記commitと一致しないsource treeを拒否し、libcaptionのMIT noticeをFFmpegのdocument directoryへ配置します。ローカルの固定英文PoCは外部配信せず、5秒のtest patternだけを作ります。
 

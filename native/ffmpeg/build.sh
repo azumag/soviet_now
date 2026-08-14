@@ -11,6 +11,13 @@ ffmpeg_prefix="$build_root/ffmpeg-install"
 ffmpeg_commit="e38092ef9395d7049f871ef4d5411eb410e283e0"
 caption_commit="e8b6261090eb3f2012427cc6b151c923f82453db"
 
+build_arch="$(uname -m)"
+if [[ -n "${DOCICH_FFMPEG_EXPECT_ARCH:-}" &&
+      "$build_arch" != "$DOCICH_FFMPEG_EXPECT_ARCH" ]]; then
+  echo "build architecture is $build_arch; expected $DOCICH_FFMPEG_EXPECT_ARCH" >&2
+  exit 2
+fi
+
 if [[ "$build_root" != /* || "$build_root" == "/" ]]; then
   echo "build root must be an absolute, non-root path" >&2
   exit 2
@@ -95,5 +102,11 @@ install -m 0644 \
   "$ffmpeg_prefix/share/doc/docich-ffmpeg/THIRD_PARTY_NOTICES.md"
 
 "$ffmpeg_prefix/bin/ffmpeg" -hide_banner -filters | grep ' docichcc '
+"$ffmpeg_prefix/bin/ffmpeg" -hide_banner -devices | grep -E '^ D.* x11grab[[:space:]]'
+"$ffmpeg_prefix/bin/ffmpeg" -hide_banner -devices | grep -E '^ D.* pulse[[:space:]]'
+"$ffmpeg_prefix/bin/ffmpeg" -hide_banner -encoders | grep -E '^ V.* libx264[[:space:]]'
+"$ffmpeg_prefix/bin/ffmpeg" -hide_banner -h encoder=libx264 | grep -E '(^|[[:space:]])-?a53cc([[:space:]]|$)'
+"$ffmpeg_prefix/bin/ffmpeg" -hide_banner -protocols | grep -x '  rtmp'
 test -x "$caption_prefix/bin/ts2srt"
+echo "architecture=$build_arch" >&2
 echo "$ffmpeg_prefix/bin/ffmpeg"
