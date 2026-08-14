@@ -58,6 +58,14 @@ class StartAllStreamBackendTests(unittest.TestCase):
         self.assertIn("soren_loop", config["workers"])
         self.assertIn("audio_worker", config["workers"])
 
+    def test_improvement_daemon_is_always_supervised_exactly_once(self) -> None:
+        for backend in ("obs", "ffmpeg"):
+            with self.subTest(backend=backend):
+                result = print_worker_config(backend)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                config = json.loads(result.stdout)
+                self.assertEqual(config["workers"].count("improve_daemon"), 1)
+
     def test_unknown_backend_fails_before_supervisor_mutation(self) -> None:
         result = print_worker_config("unknown")
         self.assertEqual(result.returncode, 2)
