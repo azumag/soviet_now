@@ -155,13 +155,17 @@ def wrap_caption_pages(
 
 
 def _translation_prompt(chunks: Sequence[str], max_chars: int) -> str:
+    target_chars = min(max_chars, 40)
     numbered = "\n".join(
         f"{index}: {json.dumps(chunk, ensure_ascii=False)}"
         for index, chunk in enumerate(chunks)
     )
-    return f"""You are a Japanese-to-English broadcast caption translator.
+    return f"""You are a real-time Japanese-to-English broadcast caption compressor.
+No analysis is needed.
 Translate every numbered Japanese speech chunk into concise, natural English.
-Each translation must preserve the meaning and be at most {max_chars} ASCII characters.
+TARGET {target_chars} CHARACTERS: every English string should be at most {target_chars} ASCII characters total, including spaces and punctuation.
+The absolute transport limit is {max_chars} characters. Preserve the core meaning only; omit secondary detail and use short words.
+Example: 通常読み上げの字幕が音声と同じタイミングで表示されることを確認しています。 -> Checking captions stay synced.
 Do not add explanations, notes, markdown, speaker labels, or facts.
 Return exactly one JSON object in this schema and nothing else:
 {{"translations":["translation 0","translation 1"]}}
@@ -246,11 +250,17 @@ class TranslationRuntimeClient:
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                     "max_tokens": max(256, len(chunks) * 96),
-                    # The local OpenAI-compatible runtime supports JSON mode.
-                    # This suppresses model reasoning/prose at generation time;
-                    # the strict parser below remains the trust boundary.
+                    # Ask compatible runtimes for JSON mode. Provider support
+                    # varies, so the strict parser below remains the trust boundary.
                     "response_format": {"type": "json_object"},
                 }
+                # MiniMax M3 can spend the whole completion budget in hidden
+                # reasoning for this simple formatting task.  The production
+                # LiteLLM route exposes the OpenAI-compatible control only when
+                # it is explicitly allowlisted per request.
+                if model.rsplit("/", 1)[-1].lower() == "minimax-m3":
+                    payload["reasoning_effort"] = "none"
+                    payload["allowed_openai_params"] = ["reasoning_effort"]
                 request = urllib.request.Request(
                     self.endpoint,
                     data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -288,6 +298,11 @@ class TranslationRuntimeClient:
                         )
                     if not all(isinstance(item, str) for item in translations):
                         raise CaptionPlanError("translation array contains a non-string value")
+                    normalized = [normalize_caption_text(item) for item in translations]
+                    if any(len(item) > max_chars for item in normalized):
+                        raise CaptionPlanError(
+                            f"translation exceeds {max_chars} ASCII characters"
+                        )
                     return list(translations)
                 except (OSError, urllib.error.URLError) as exc:
                     # Transport failures can consume the full request timeout. Do not

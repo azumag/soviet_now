@@ -88,6 +88,53 @@ class ClosedCaptionPlanTests(unittest.TestCase):
         )
         self.assertEqual(client.translate(["こんにちは。"]), ["Hello."])
         self.assertEqual(requests[0]["response_format"], {"type": "json_object"})
+        self.assertEqual(requests[0]["reasoning_effort"], "none")
+        self.assertEqual(
+            requests[0]["allowed_openai_params"], ["reasoning_effort"]
+        )
+
+    def test_translation_client_disables_reasoning_only_for_minimax_m3(self) -> None:
+        response = {
+            "choices": [{"message": {"content": '{"translations":["Hello."]}'}}]
+        }
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(json.loads(request.data.decode("utf-8")))
+            return _Response(response)
+
+        client = closed_captions.TranslationRuntimeClient(
+            models=("deepseek-v4-flash",), opener=opener
+        )
+        self.assertEqual(client.translate(["こんにちは。"]), ["Hello."])
+        self.assertNotIn("reasoning_effort", requests[0])
+        self.assertNotIn("allowed_openai_params", requests[0])
+
+    def test_translation_client_retries_overlong_translation(self) -> None:
+        overlong = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps({"translations": ["x" * 65]})
+                    }
+                }
+            ]
+        }
+        valid = {
+            "choices": [{"message": {"content": '{"translations":["Short."]}'}}]
+        }
+        responses = iter((_Response(overlong), _Response(valid)))
+        calls = []
+
+        def opener(*_args, **_kwargs):
+            calls.append(1)
+            return next(responses)
+
+        client = closed_captions.TranslationRuntimeClient(
+            attempts_per_model=2, opener=opener
+        )
+        self.assertEqual(client.translate(["長い字幕です。"]), ["Short."])
+        self.assertEqual(len(calls), 2)
 
     def test_translation_client_rejects_thinking_around_json(self) -> None:
         response = {
