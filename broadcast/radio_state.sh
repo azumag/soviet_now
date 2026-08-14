@@ -95,7 +95,12 @@ _play_priority_audio_file() {
 	_play_detail=$(_radio_generation_debug_summary "$audio_file" 2>/dev/null || true)
 	_radio_set_state "playing" "$corner_name" "$_play_detail"
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
-	SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
+	# ラジオ読み上げ中はコメントが割り込まない（読み上げ終了後にコメント再生へ）。
+	# コメント返信の生成（chat_worker）は別プロセスで並行進行するため、再生順序だけ
+	# ラジオ優先にしてもコメントの作成は遅れない。
+	SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" \
+		SAY_DISABLE_COMMENT_YIELD=1 \
+		SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
 
 _cancel_russia_celebration_worker() {
@@ -329,15 +334,77 @@ _radio_ready_wav_path() {
 	printf '%s.ready.wav' "$(_radio_audio_base_path "$1")"
 }
 
+_radio_ready_bundle_path() {
+	printf '%s.bundle' "$(_radio_ready_wav_path "$1")"
+}
+
 _radio_render_marker_path() {
 	printf '%s.rendering' "$(_radio_audio_base_path "$1")"
 }
 
+_radio_render_retry_path() {
+	printf '%s.render_retry' "$(_radio_audio_base_path "$1")"
+}
+
+_radio_render_retry_waiting() {
+	local target="$1" retry_file retry_count="" retry_at="" now
+	retry_file=$(_radio_render_retry_path "$target")
+	[ -f "$retry_file" ] || return 1
+	read -r retry_count retry_at <"$retry_file" || true
+	case "$retry_count" in '' | *[!0-9]*) retry_count="" ;; esac
+	case "$retry_at" in '' | *[!0-9]*) retry_at="" ;; esac
+	if [ -z "$retry_count" ] || [ -z "$retry_at" ]; then
+		rm -f "$retry_file" 2>/dev/null || true
+		return 1
+	fi
+	now=$(date +%s)
+	[ "$retry_at" -gt "$now" ]
+}
+
+_radio_schedule_deferred_render_retry() {
+	local target="$1" retry_file retry_count="" _old_retry_at=""
+	local retry_base="${RADIO_RENDER_RETRY_BASE_SEC:-30}"
+	local retry_max="${RADIO_RENDER_RETRY_MAX_SEC:-300}"
+	local retry_delay retry_at retry_step retry_tmp
+	retry_file=$(_radio_render_retry_path "$target")
+	if [ -f "$retry_file" ]; then
+		read -r retry_count _old_retry_at <"$retry_file" || true
+	fi
+	case "$retry_count" in '' | *[!0-9]*) retry_count=0 ;; esac
+	case "$retry_base" in '' | *[!0-9]*) retry_base=30 ;; esac
+	case "$retry_max" in '' | *[!0-9]*) retry_max=300 ;; esac
+	[ "$retry_base" -gt 0 ] || retry_base=1
+	[ "$retry_max" -ge "$retry_base" ] || retry_max="$retry_base"
+	retry_count=$((retry_count + 1))
+	retry_delay="$retry_base"
+	retry_step=1
+	while [ "$retry_step" -lt "$retry_count" ] && [ "$retry_delay" -lt "$retry_max" ]; do
+		retry_delay=$((retry_delay * 2))
+		[ "$retry_delay" -le "$retry_max" ] || retry_delay="$retry_max"
+		retry_step=$((retry_step + 1))
+	done
+	retry_at=$(($(date +%s) + retry_delay))
+	retry_tmp="${retry_file}.tmp.${BASHPID:-$$}"
+	printf '%s %s\n' "$retry_count" "$retry_at" >"$retry_tmp" 2>/dev/null \
+		&& mv "$retry_tmp" "$retry_file" 2>/dev/null \
+		|| rm -f "$retry_tmp" 2>/dev/null
+	printf '%s %s %s\n' "$retry_count" "$retry_delay" "$retry_at"
+}
+
+_radio_clear_deferred_render_retry() {
+	rm -f "$(_radio_render_retry_path "$1")" 2>/dev/null || true
+}
+
 _radio_start_deferred_render_if_needed() {
 	local qf="$1" deferred_corner="$2" deferred_cc_text="$3" radio_vo_speaker="$4"
-	local ready_wav marker tmp_wav marker_pid marker_ts marker_age
+	local ready_wav ready_bundle marker tmp_wav tmp_bundle marker_pid marker_ts marker_age
 	ready_wav=$(_radio_ready_wav_path "$qf")
-	[ -s "$ready_wav" ] && return 0
+	ready_bundle="${ready_wav}.bundle"
+	if [ -s "$ready_wav" ]; then
+		_radio_clear_deferred_render_retry "$qf"
+		return 0
+	fi
+	_radio_render_retry_waiting "$qf" && return 0
 	marker=$(_radio_render_marker_path "$qf")
 	if [ -f "$marker" ]; then
 		read -r marker_pid marker_ts <"$marker" || true
@@ -351,18 +418,36 @@ _radio_start_deferred_render_if_needed() {
 	fi
 
 	tmp_wav="${ready_wav}.tmp"
+	tmp_bundle="${tmp_wav}.bundle"
+	rm -rf "$tmp_bundle" 2>/dev/null || true
 	(
+		local render_rc=0 retry_count=0 retry_delay=0 retry_at=0
 		if SAY_CC_TEXT="$deferred_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio_render:${deferred_corner:-deferred}" \
 			./say_enqueue.sh --render-only "$tmp_wav" "$qf" "$RADIO_SAY_RATE" 0; then
-			if mv "$tmp_wav" "$ready_wav" 2>/dev/null && [ -s "$ready_wav" ]; then
-				log "[RADIO:deferred] 事前音声生成完了: $(basename "$ready_wav")"
+			if [ -s "$tmp_bundle/playlist.txt" ] && [ -s "$tmp_bundle/captions.txt" ]; then
+				rm -rf "$ready_bundle" 2>/dev/null || true
+			fi
+			if [ -s "$tmp_bundle/playlist.txt" ] && [ -s "$tmp_bundle/captions.txt" ] \
+				&& mv "$tmp_bundle" "$ready_bundle" 2>/dev/null \
+				&& mv "$tmp_wav" "$ready_wav" 2>/dev/null && [ -s "$ready_wav" ]; then
+				_radio_clear_deferred_render_retry "$qf"
+				log "[RADIO:deferred] 事前音声生成完了: $(basename "$ready_wav") (字幕同期bundle付き)"
 			else
 				rm -f "$tmp_wav" "$ready_wav" 2>/dev/null || true
-				log "[RADIO:deferred] 事前音声生成保存失敗: $(basename "$qf")"
+				rm -rf "$tmp_bundle" "$ready_bundle" 2>/dev/null || true
+				read -r retry_count retry_delay retry_at <<<"$(_radio_schedule_deferred_render_retry "$qf")"
+				log "[RADIO:deferred] 事前音声生成保存を再試行予約: $(basename "$qf") retry=${retry_count} in=${retry_delay}s"
 			fi
 		else
+			render_rc=$?
 			rm -f "$tmp_wav" 2>/dev/null || true
-			log "[RADIO:deferred] 事前音声生成失敗: $(basename "$qf")"
+			rm -rf "$tmp_bundle" 2>/dev/null || true
+			read -r retry_count retry_delay retry_at <<<"$(_radio_schedule_deferred_render_retry "$qf")"
+			if [ "$render_rc" -eq 75 ]; then
+				log "[RADIO:deferred] 優先音声へ順番を譲り、ラジオ合成を一時保留: $(basename "$qf") retry=${retry_count} in=${retry_delay}s"
+			else
+				log "[RADIO:deferred] 事前音声生成を再試行予約: $(basename "$qf") rc=${render_rc} retry=${retry_count} in=${retry_delay}s"
+			fi
 		fi
 		rm -f "$marker" 2>/dev/null || true
 	) >>logs/audio_worker.log 2>&1 &
@@ -432,18 +517,6 @@ _play_deferred_radio_queue_once() {
 	[ -n "$qf" ] || return 0
 	[ -f "$qf" ] || return 0
 
-	local deferred_expected_mode="" deferred_current_mode=""
-	deferred_expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
-	deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-	if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-		log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-		_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
-		_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
-		_radio_clear_generation_meta "$qf" 2>/dev/null || true
-		rm -f "$qf" "$(_radio_ready_wav_path "$qf")" "$(_radio_ready_wav_path "$qf").tmp" "$(_radio_render_marker_path "$qf")" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
-		return 0
-	fi
-
 	local deferred_corner=""
 	deferred_corner=$(basename "$qf" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/')
 	local news_title_file="${qf%.txt}.news_title"
@@ -464,41 +537,52 @@ _play_deferred_radio_queue_once() {
 	fi
 	local ready_wav=""
 	ready_wav=$(_radio_ready_wav_path "$qf")
+	local ready_bundle="${ready_wav}.bundle"
 	if [ ! -s "$ready_wav" ]; then
 		_radio_start_deferred_render_if_needed "$qf" "$deferred_corner" "$deferred_cc_text" "$radio_vo_speaker"
 		return 0
 	fi
+	_radio_clear_deferred_render_retry "$qf"
 
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
-		deferred_expected_mode=$(_broadcast_read_expected_mode "$playing_file" 2>/dev/null || true)
-		deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-			log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-			_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
-			_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-			rm -f "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-			return 0
-		fi
 		_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 		local radio_meta_summary=""
 		radio_meta_summary=$(_radio_generation_debug_summary "$playing_file" 2>/dev/null || true)
 		log "[RADIO:deferred] 再生開始: $(basename "$playing_file")${radio_meta_summary:+ ($radio_meta_summary)} ready=$(basename "$ready_wav")"
 		# deferred radio is executed by the comment player itself, so it must not
 		# yield to comments queued after this point or playback deadlocks.
-		if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt --wav "$ready_wav" "$RADIO_SAY_RATE" 0; then
+		local radio_play_rc=1
+		if [ -s "$ready_bundle/playlist.txt" ] && [ -s "$ready_bundle/captions.txt" ]; then
+			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_CHUNK_GAP_SEC=0 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" \
+				./say_enqueue.sh --no-preempt --wav-playlist "$ready_bundle/playlist.txt" --caption-chunks "$ready_bundle/captions.txt" "$playing_file" "$RADIO_SAY_RATE" 0; then
+				radio_play_rc=0
+			else
+				radio_play_rc=$?
+			fi
+		else
+			# 更新前に生成済みのWAVは従来経路で安全に再生する。
+			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" \
+				./say_enqueue.sh --no-preempt --wav "$ready_wav" "$RADIO_SAY_RATE" 0; then
+				radio_play_rc=0
+			else
+				radio_play_rc=$?
+			fi
+		fi
+		if [ "$radio_play_rc" -eq 0 ]; then
 			_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
 			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 			_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-			rm -f "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+			rm -f "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "$(_radio_render_retry_path "$playing_file")" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+			rm -rf "$ready_bundle" 2>/dev/null || true
 			log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
 			if [ -f "tmp/.say_queue/kill_flag" ]; then
 				_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
 				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 				_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
-				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "${playing_file%.playing}.voice"
+				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "$(_radio_render_retry_path "$playing_file")" "${playing_file%.playing}.voice"
+				rm -rf "$ready_bundle" 2>/dev/null || true
 				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else
 				local retry_file="${playing_file%.playing}.txt"

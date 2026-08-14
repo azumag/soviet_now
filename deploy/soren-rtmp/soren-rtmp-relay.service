@@ -1,0 +1,32 @@
+[Unit]
+Description=Soren loopback-only RTMP relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=soren-relay
+Group=soren-relay
+RuntimeDirectory=soren-rtmp-relay
+RuntimeDirectoryMode=0750
+ExecStartPre=/usr/sbin/nginx -t -c /etc/soren-rtmp/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/soren-rtmp/nginx.conf -g "daemon off;"
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGQUIT
+TimeoutStopSec=5
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

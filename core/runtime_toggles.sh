@@ -69,11 +69,14 @@ EOF
 _RUNTIME_TOGGLES_MIN_INTERVAL=${RUNTIME_TOGGLES_MIN_INTERVAL:-10}
 
 _runtime_toggle_stat_mtime() {
-	local path="$1"
-	if stat -f %m "$path" 2>/dev/null; then
-		return 0
-	fi
-	stat -c %Y "$path" 2>/dev/null
+	local path="$1" mtime
+	mtime=$(stat -f %m "$path" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$path" 2>/dev/null) \
+		|| mtime=0
+	case "$mtime" in
+	'' | *[!0-9]*) mtime=0 ;;
+	esac
+	printf '%s\n' "$mtime"
 }
 
 reload_runtime_toggles() {

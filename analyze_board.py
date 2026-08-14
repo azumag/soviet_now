@@ -214,6 +214,121 @@ def estimate_explosion_displacement(merge_x, merge_y, pieces, exclude_ids=None):
     return displacements, new_merges
 
 
+def calc_soviet_progress(pieces):
+    """ソ連(type16)までの高tier在庫と、2本目のRussia連鎖を要約する。
+
+    type15を1個作った後は、通常の「盤面上の最大type」だけでは残った
+    type10-14の連鎖がどこにあり、あとどれだけの材料があるか分からない。
+    戦略側が生のpiecesを何度も独自集計しなくて済むよう、幾何と在庫を
+    reactorの安定した信号として返す。
+    """
+    valid = [p for p in pieces if isinstance(p, dict)]
+    type_count = {}
+    for piece in valid:
+        try:
+            piece_type = int(piece.get("type", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        type_count[piece_type] = type_count.get(piece_type, 0) + 1
+
+    russia_pieces = [p for p in valid if int(p.get("type", 0) or 0) == 15]
+    soviet_count = type_count.get(16, 0)
+    russia_count = len(russia_pieces)
+    precursor_pieces = [
+        p for p in valid if 10 <= int(p.get("type", 0) or 0) <= 14
+    ]
+    precursor_equivalent = sum(
+        2.0 ** (int(piece.get("type", 0) or 0) - 15)
+        for piece in precursor_pieces
+    )
+    total_equivalent = (
+        precursor_equivalent + float(russia_count) + float(soviet_count * 2)
+    )
+
+    if soviet_count:
+        stage = "soviet"
+    elif russia_count >= 2:
+        stage = "double_russia"
+    elif russia_count == 1:
+        stage = "second_russia"
+    elif type_count.get(14, 0):
+        stage = "russia_approach"
+    elif any(type_count.get(piece_type, 0) for piece_type in (12, 13)):
+        stage = "high_tier_build"
+    else:
+        stage = "foundation"
+
+    # type12-14を2本目の主幹とみなす。まだ無ければtype11を種として使う。
+    lane_pieces = [
+        p for p in precursor_pieces if int(p.get("type", 0) or 0) >= 12
+    ]
+    if not lane_pieces:
+        lane_pieces = [
+            p for p in precursor_pieces if int(p.get("type", 0) or 0) == 11
+        ]
+    lane_x = None
+    lane_type = None
+    if lane_pieces:
+        lane_weight = sum(
+            2.0 ** (int(piece.get("type", 0) or 0) - 10)
+            for piece in lane_pieces
+        )
+        lane_x = sum(
+            float(piece.get("x", 0.0) or 0.0)
+            * 2.0 ** (int(piece.get("type", 0) or 0) - 10)
+            for piece in lane_pieces
+        ) / lane_weight
+        lane_type = max(int(piece.get("type", 0) or 0) for piece in lane_pieces)
+
+    t15_gap = None
+    t15_mid_x = None
+    t15_merge_ready = False
+    if len(russia_pieces) >= 2:
+        closest = None
+        for index, left in enumerate(russia_pieces):
+            for right in russia_pieces[index + 1 :]:
+                distance = math.hypot(
+                    float(left.get("x", 0.0) or 0.0)
+                    - float(right.get("x", 0.0) or 0.0),
+                    float(left.get("y", 0.0) or 0.0)
+                    - float(right.get("y", 0.0) or 0.0),
+                )
+                gap = distance - (
+                    float(left.get("r", 0.0) or 0.0)
+                    + float(right.get("r", 0.0) or 0.0)
+                )
+                if closest is None or gap < closest[0]:
+                    closest = (gap, left, right)
+        if closest is not None:
+            t15_gap = round(closest[0], 3)
+            t15_mid_x = round(
+                (
+                    float(closest[1].get("x", 0.0) or 0.0)
+                    + float(closest[2].get("x", 0.0) or 0.0)
+                )
+                / 2.0,
+                3,
+            )
+            t15_merge_ready = closest[0] <= 0.04
+
+    return {
+        "stage": stage,
+        "russia_count": russia_count,
+        "soviet_count": soviet_count,
+        "high_type_count": {
+            piece_type: type_count.get(piece_type, 0)
+            for piece_type in range(10, 16)
+        },
+        "remaining_russia_equivalent": round(precursor_equivalent, 4),
+        "soviet_progress": round(min(1.0, total_equivalent / 2.0), 4),
+        "second_russia_lane_x": round(lane_x, 3) if lane_x is not None else None,
+        "second_russia_lane_type": lane_type,
+        "t15_gap": t15_gap,
+        "t15_mid_x": t15_mid_x,
+        "t15_merge_ready": t15_merge_ready,
+    }
+
+
 def calc_reactor_state(pieces, shapes=None):
     """人工化学としての反応器状態を解析。
     - 分子種ごとの濃度（個数）
@@ -294,6 +409,7 @@ def calc_reactor_state(pieces, shapes=None):
 
     return {
         "type_count": type_count,
+        "soviet": calc_soviet_progress(pieces),
         "reactive_pairs": reactive_pairs,
         "near_pairs": near_pairs,
         "pipeline": pipeline,
@@ -1109,6 +1225,27 @@ def format_report(state, results, same_type, pieces, reactor=None):
             for t1, t2, d in pl:
                 status = "OK" if d < 3.0 else "WARN" if d < 5.0 else "BROKEN"
                 out.append(f"  type{t1}→{t2}: 距離{d:.1f} [{status}]")
+
+        soviet = reactor.get("soviet", {})
+        if soviet:
+            out.append(
+                "ソ連進捗: "
+                f"stage={soviet.get('stage')} "
+                f"Russia={soviet.get('russia_count', 0)} "
+                f"残存Russia換算={soviet.get('remaining_russia_equivalent', 0):.3f} "
+                f"全体={soviet.get('soviet_progress', 0) * 100:.1f}%"
+            )
+            lane_x = soviet.get("second_russia_lane_x")
+            if lane_x is not None:
+                out.append(
+                    f"2本目レーン: x={lane_x:+.2f} "
+                    f"(主幹type{soviet.get('second_russia_lane_type')})"
+                )
+            if soviet.get("t15_gap") is not None:
+                status = "MERGE READY" if soviet.get("t15_merge_ready") else "SEPARATED"
+                out.append(
+                    f"Russia間隔: gap={soviet.get('t15_gap'):.2f} [{status}]"
+                )
 
         # 左右バランス
         lt = reactor.get("left_types", {})

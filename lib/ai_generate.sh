@@ -7,6 +7,11 @@
 #   ai_generate "RADIO" "$prompt_file" "$primary_agent" "$fallback_agent"
 #   output は stdout に返る。呼び出し元がファイルに書くかキューに積むか判断する。
 
+_ai_guard_model_output() {
+	local guard_root="${ELOOP_LIB_DIR:-.}"
+	python3 "$guard_root/lib/model_output_guard.py"
+}
+
 # === 統一バックエンド ===
 
 AI_GENERATION_QUEUE_LAST_TOKEN=""
@@ -88,7 +93,9 @@ _ai_generation_queue_enter() {
 
 	while ! mkdir "$lock_dir" 2>/dev/null; do
 		now=$(date +%s)
-		mt=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$lock_dir" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$lock_dir" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		if [ "$age" -gt "$stale_sec" ]; then
 			log "[AIQ:${label}] stale generation lock cleared (age=${age}s)" >&2
@@ -221,7 +228,9 @@ _opencode_cleanup_internal_locks() {
 	now=$(date +%s)
 	while IFS= read -r lock; do
 		[ -n "$lock" ] || continue
-		mt=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$lock" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$lock" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		if [ "$age" -gt "$stale_sec" ]; then
 			rm -rf "$lock" 2>/dev/null || true
@@ -258,7 +267,9 @@ _opencode_run_lock_enter() {
 
 	while ! mkdir "$lock_dir" 2>/dev/null; do
 		now=$(date +%s)
-		mt=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo "$now")
+		mt=$(stat -f %m "$lock_dir" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$lock_dir" 2>/dev/null) \
+			|| mt="$now"
 		age=$((now - mt))
 		owner_pid=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
 		owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')
@@ -522,21 +533,7 @@ _ai_call_opencode_unqueued() {
 	fi
 	raw_text=$(cat "$raw_file")
 	_notify_webfetch_failure "$label" "$agent" "$raw_text" "dispatch" || true
-	cleaned=$(printf '%s' "$raw_text" |
-		_strip_ansi |
-		grep -v '^>' |
-		grep -v '^\^D' |
-		grep -v '^Script started on ' |
-		grep -v '^Script done on ' |
-		grep -v '^/[^ ]*$' |
-		grep -v '^[[:space:]]*/Users/' |
-		grep -v '^[[:space:]]*⚙' |
-		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
-		grep -Eiv '(WebFetch|WebSearch)' |
-		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
-		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
-		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d')
+	cleaned=$(printf '%s' "$raw_text" | _ai_guard_model_output)
 	rm -f "$raw_file"
 	if _contains_provider_error_text "$cleaned"; then
 		log "[${label}] opencode provider error (agent=$agent)" >&2

@@ -11,6 +11,27 @@ DEFAULT_VOICE="${GOOGLE_TTS_VOICE:-ja-JP-Standard-B}"
 GOOGLE_TTS_MAX_CHARS="${GOOGLE_TTS_MAX_CHARS:-500}"
 OUT="/tmp/tts.mp3"
 
+IS_LINUX=0
+case "${SOREN_OBS_PLATFORM:-$(uname -s 2>/dev/null || echo Darwin)}" in
+linux | Linux | linux-gnu) IS_LINUX=1 ;;
+esac
+
+_play_tts() {
+	local file="$1"
+	if [ "$IS_LINUX" = "1" ]; then
+		if command -v paplay >/dev/null 2>&1; then
+			paplay --device="${SAY_AUDIO_DEVICE:-default}" "$file" >/dev/null 2>&1
+			return $?
+		elif command -v ffplay >/dev/null 2>&1; then
+			ffplay -nodisp -autoexit -loglevel error "$file" >/dev/null 2>&1
+			return $?
+		fi
+		echo "[google_tts] Linux 再生プレイヤーがありません (paplay/ffplay 未導入)" >&2
+		return 1
+	fi
+	afplay "$file"
+}
+
 if [[ "$1" == "--demo" ]]; then
   TEXT="${2:-こんにちは、私の声を聞いてください}"
   TOKEN=$(gcloud auth print-access-token)
@@ -46,7 +67,7 @@ if 'error' in data:
     print('  Error:', data['error']['message']); sys.exit(1)
 audio = base64.b64decode(data['audioContent'])
 open('$OUT', 'wb').write(audio)
-" && afplay "$OUT"
+" && _play_tts "$OUT"
   done
   exit 0
 fi
@@ -223,4 +244,4 @@ else
   _cleanup_chunks
 fi
 
-[[ "$PLAY_AFTER" = "true" ]] && afplay "$OUTPUT"
+[[ "$PLAY_AFTER" = "true" ]] && _play_tts "$OUTPUT"

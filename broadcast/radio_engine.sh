@@ -42,21 +42,7 @@ _run_opencode_radio_unqueued() {
 	fi
 	raw_text=$(cat "$raw_file")
 	_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio" || true
-	cleaned=$(printf '%s' "$raw_text" |
-		_strip_ansi |
-		grep -v '^>' |
-		grep -v '^\^D' |
-		grep -v '^Script started on ' |
-		grep -v '^Script done on ' |
-		grep -v '^/[^ ]*$' |
-		grep -v '^[[:space:]]*/Users/' |
-		grep -v '^[[:space:]]*⚙' |
-		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
-		grep -Eiv '(WebFetch|WebSearch)' |
-		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
-		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
-		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d')
+	cleaned=$(printf '%s' "$raw_text" | _ai_guard_model_output)
 	rm -f "$raw_file"
 	if _contains_provider_error_text "$cleaned"; then
 		log "[RADIO] opencode provider error treated as failure (agent=$agent)" >&2
@@ -129,19 +115,7 @@ _run_opencode_comment_unqueued() {
 	fi
 	raw_text=$(cat "$raw_file")
 	_notify_webfetch_failure "COMMENT" "$agent" "$raw_text" "comment" || true
-	printf '%s' "$raw_text" |
-		_strip_ansi |
-		grep -v '^>' |
-		grep -v '^\^D' |
-		grep -v '^Script started on ' |
-		grep -v '^Script done on ' |
-		grep -v '^/[^ ]*$' |
-		grep -v '^[[:space:]]*/Users/' |
-		grep -Eiv '(WebFetch|WebSearch)' |
-		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
-		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
-		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d'
+	printf '%s' "$raw_text" | _ai_guard_model_output
 	rm -f "$raw_file"
 }
 
@@ -1471,7 +1445,8 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
 	local radio_prepass_agent="" radio_agents_list=""
-	local radio_allow_claude_fallback=true
+	# claude は不使用方針（codex ハーネス統一）のためフォールバック無効。
+	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
 		radio_primary_agent="${RADIO_SOREN91_AGENT:-haiku}"
@@ -1548,6 +1523,8 @@ PREPASS_APPEND
 			_radio_gen_list="${radio_agents_list}"
 		fi
 		talk=$(ai_generate_list "RADIO:${corner_name}" "$_current_prompt_file" "$_radio_gen_list")
+		# Providerを問わず、完成文として分離できた部分だけを後段へ渡す。
+		talk=$(printf '%s' "$talk" | _ai_guard_model_output)
 		if [ -n "$talk" ]; then
 			provider_used="$AI_GENERATE_LAST_AGENT"
 			log "[RADIO:${corner_name}] ${provider_used} OK"
@@ -1556,6 +1533,7 @@ PREPASS_APPEND
 		if [ -z "$talk" ] && [ "$radio_allow_claude_fallback" = "true" ]; then
 			log "[RADIO:${corner_name}] all agents fail -> claude:${RADIO_CLAUDE_MODEL}"
 			talk=$(_run_claude_radio "$_current_prompt_file")
+			talk=$(printf '%s' "$talk" | _ai_guard_model_output)
 			[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}" && log "[RADIO:${corner_name}] claude:${RADIO_CLAUDE_MODEL} OK"
 			_radio_fallback_source="claude:${RADIO_CLAUDE_MODEL}"
 		fi
@@ -1809,13 +1787,9 @@ PREPASS_APPEND
 	local host_mode_now=""
 	host_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_now" != "$host_mode_generated" ]; then
-		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> discard"
-		_write_radio_corner_status "stale_mode_discarded" "$corner_name" "$game_num" "$score" "$topic" "mode_changed" "$selected_news" "{\"expected_mode\": \"${host_mode_generated}\", \"current_mode\": \"${host_mode_now}\"}"
-		_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
-		rm -f "$talk_file"
-		_radio_clear_state "$corner_name" "stale_mode_discarded"
-		rmdir "$inflight_dir" 2>/dev/null || true
-		return 0
+		# 生成完了までにモードが変わっても破棄せず、キュー投入を継続する。
+		# 再生側も mode 不一致では破棄しないため、生成されたラジオは必ず順番に再生される。
+		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> 破棄せずキューへ投入"
 	fi
 
 	# 再生は常に deferred キューへ積み、audio_worker に委譲する
@@ -1829,6 +1803,7 @@ PREPASS_APPEND
 		[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" >"${deferred_file%.txt}.cc_text"
 	fi
 	if [ -n "$deferred_file" ]; then
+		_radio_mark_done "$done_marker"
 		_radio_set_state "queued" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "$provider_used")"
 		_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "deferred" "$selected_news" "{\"deferred_file\": \"$(basename "$deferred_file")\"}"
 		log "[RADIO:${corner_name}] deferred queue投入: $(basename "$deferred_file")"

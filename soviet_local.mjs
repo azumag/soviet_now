@@ -5,6 +5,17 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
+import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
+import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
+import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
+import { buildDirectBroadcastOverlayState } from './lib/direct_broadcast_overlay.mjs';
+import {
+  directOverlayIdleHtml,
+  directOverlaySurfaceVisible,
+  installDirectOverlay,
+  loadDirectOverlayConfig,
+} from './lib/direct_overlay.mjs';
+import { startTwicaOverlayProxy } from './lib/twica_overlay_proxy.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +62,7 @@ const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 const STRAY_TAB_GUARD_INTERVAL_MS = 2000;
 const STRAY_BLANK_REAP_AFTER_MS = 4000;
 const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
+const GAME_RENDER_HEALTH_FILE = 'tmp/state/game_render_health.json';
 // Persisted BlackHole (CHROME_AUDIO_OUTPUT_LABEL) audiooutput deviceId. Chrome's
 // mediaDevices deviceId is stable per (origin, persistent profile), so caching the
 // last-resolved id lets us seed __sorenSinkId BEFORE Unity creates its AudioContext.
@@ -61,11 +73,42 @@ const AUDIO_HEALTH_FILE = 'tmp/state/local_audio_health.json';
 // silence ("ゲーム音でてない"). A stale id just throws at construction and falls
 // back to default (no crash), and the async resolve refreshes it next launch.
 const AUDIO_SINK_CACHE_FILE = 'tmp/state/chrome_audio_sink_id.txt';
+// Linux の音声欠落 WebGL build向け外部BGM/SE。通常BGM→ソ連成立BGMの
+// 切替と4種類のSEタイミングは external_game_audio.mjs に集約する。
+const EXTERNAL_GAME_AUDIO_CONFIG = loadExternalGameAudioConfig();
 const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
 const CHROME_HEADLESS = ['1', 'true', 'yes', 'on'].includes(String(process.env.SOREN_CHROME_HEADLESS || '').toLowerCase());
+// ゲームウィンドウのサイズ (WxH)。Xvfb を 1920x1080 で運用する Linux 配信では
+// SOREN_CHROME_WINDOW_SIZE=1920,1080 を .env で指定する。macOS 既定は従来どおり。
+const CHROME_WINDOW_SIZE = process.env.SOREN_CHROME_WINDOW_SIZE || '1300,800';
+// Unity buildのcanvas描画バッファ。CSS表示サイズとは独立しており、元HTMLの
+// 320x180を1280x720へ引き伸ばすだけでは配信が粗くなる。Linux A1では
+// 576x324が画質とCPUの中間点。未指定ならbuildの元設定をそのまま使う。
+const GAME_INTERNAL_SIZE = parseUnityCanvasSize(process.env.SOREN_GAME_INTERNAL_SIZE);
+// Linux の headed 運用では XSHM が画面全体をキャプチャするため、ブラウザの
+// タブバー/アドレスバー/自動テスト帯が配信に映り込む。--kiosk で Chrome UI を
+// 消してゲームキャンバスだけを画面いっぱいに表示する。macOS の OBS window
+// capture はウィンドウ内だけを撮るので kiosk は使わない (従来動作を維持)。
+// SOREN_CHROME_KIOSK=0 で無効化できる。
+const CHROME_KIOSK = process.platform === 'linux' && !CHROME_HEADLESS
+  && String(process.env.SOREN_CHROME_KIOSK || '1') !== '0';
+// OBS出力は30fpsなので、A1 LinuxではUnity描画も30fpsに上限を揃える。
+// --disable-frame-rate-limit はXvfbで1fps化する不具合を避けるため維持しつつ、
+// WebGLの重い描画だけを30fpsへ整流し、OBS encoderとPulseAudioへCPUを残す。
+// 0で無効化。macOSは従来挙動を保つため既定0。
+const GAME_RENDER_FPS_LIMIT = (() => {
+  const fallback = process.platform === 'linux' ? 30 : 0;
+  const parsed = Number(process.env.SOREN_GAME_RENDER_FPS ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(60, Math.max(15, Math.round(parsed)));
+})();
+const GAME_RENDER_HEALTH_INTERVAL_MS = 10000;
+// kiosk では Playwright の viewport エミュレーションを無効化し、ページビューポートを
+// 実ウィンドウ(1920x1080)に追従させる。通常(macOS/非kiosk)は従来どおり 1280x720。
+const CHROME_VIEWPORT = CHROME_KIOSK ? null : { width: 1280, height: 720 };
 // Unity WebGL can crash Chrome when AudioContext.setSinkId() is applied to its
 // context on some macOS audio graphs. Keep per-context routing opt-in; OBS
 // application-audio capture is safer for the live game.
@@ -81,11 +124,27 @@ const UNITY_VOLUME_REAPPLY_MS = parseInt(process.env.SOREN_UNITY_VOLUME_REAPPLY_
 const UNITY_AUDIO_WATCHDOG_MS = parseInt(process.env.SOREN_UNITY_AUDIO_WATCHDOG_MS || '10000', 10);
 const UNITY_AUDIO_RECOVER_COOLDOWN_MS = parseInt(process.env.SOREN_UNITY_AUDIO_RECOVER_COOLDOWN_MS || '30000', 10);
 const OBS_GAME_SOURCE_NAME = process.env.SOREN_OBS_GAME_SOURCE_NAME || 'sorengame';
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig();
 
 function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(data));
   fs.renameSync(tmpPath, filePath);
+}
+
+// canvas の CSS 表示領域の中央をクリックする。Unity キャンバスがウィンドウ/画面
+// サイズに追従して拡大縮小しても、クリック位置がゲーム中央に一致するようにする
+// (1280x720 固定の頃はハードコード (640,360) だった)。
+async function clickGameCenter(page) {
+  const rect = await page.evaluate(() => {
+    const c = document.querySelector('canvas');
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const cx = rect && rect.w > 0 ? rect.x + rect.w / 2 : 960;
+  const cy = rect && rect.h > 0 ? rect.y + rect.h / 2 : 540;
+  await page.mouse.click(cx, cy);
 }
 
 function seedChromeTranslatePreferences(userDataDir) {
@@ -848,6 +907,42 @@ async function installUnityVolumeReapply(page) {
 function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
+      const requestPath = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      if (DIRECT_OVERLAY_CONFIG.enabled
+        && DIRECT_OVERLAY_CONFIG.broadcast?.stateRoute === requestPath) {
+        const noCache = {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        };
+        try {
+          const payload = buildDirectBroadcastOverlayState(DIRECT_OVERLAY_CONFIG.broadcast);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
+          res.end(JSON.stringify(payload));
+        } catch {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
+          res.end(JSON.stringify({ version: 1, error: 'broadcast overlay state unavailable' }));
+        }
+        return;
+      }
+      const directOverlaySurface = DIRECT_OVERLAY_CONFIG.enabled
+        ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.route === requestPath)
+        : null;
+      if (directOverlaySurface) {
+        const noCache = {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        };
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noCache });
+        if (directOverlaySurfaceVisible(directOverlaySurface)
+          && fs.existsSync(directOverlaySurface.htmlFile)) {
+          fs.createReadStream(directOverlaySurface.htmlFile).pipe(res);
+        } else {
+          res.end(directOverlayIdleHtml());
+        }
+        return;
+      }
       let filePath = path.join(BUILD_DIR, req.url === '/' ? 'index.html' : req.url);
       filePath = decodeURIComponent(filePath);
 
@@ -877,6 +972,13 @@ function startServer() {
       } else {
         const contentType = MIME_TYPES[ext] || 'application/octet-stream';
         res.writeHead(200, { 'Content-Type': contentType, ...noCache });
+      }
+
+      if (GAME_INTERNAL_SIZE && path.basename(filePath) === 'index.html') {
+        const html = fs.readFileSync(filePath, 'utf8');
+        const body = rewriteUnityCanvasSize(html, GAME_INTERNAL_SIZE);
+        res.end(body);
+        return;
       }
 
       fs.createReadStream(filePath).pipe(res);
@@ -1028,7 +1130,7 @@ function unityAudioNeedsRecovery(health) {
 
 async function recoverUnityAudio(page, audioDiagLog, reason) {
   try {
-    await page.mouse.click(640, 360);
+    await clickGameCenter(page);
   } catch (e) {
     audioDiagLog(`[AUDIO-WATCHDOG-CLICK-ERROR] ${(e && e.message) || String(e)}`);
   }
@@ -1070,9 +1172,10 @@ function stateChanged(prev, curr) {
 }
 
 // Execute a command via JS Bridge
-async function executeCommand(page, command) {
+async function executeCommand(page, command, externalGameAudio = null) {
   if (command.action === 'retry') {
     console.log('Executing: RETRY');
+    externalGameAudio?.resetForNewGame();
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
     await page.waitForTimeout(2000);
     // Re-inject best score after scene reload
@@ -1090,6 +1193,7 @@ async function executeCommand(page, command) {
     await page.waitForTimeout(1000);
   } else if (command.action === 'drop') {
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
+    externalGameAudio?.playDrop();
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
     await page.waitForTimeout(500);
   } else if (command.action === 'mute') {
@@ -1111,6 +1215,7 @@ async function executeCommand(page, command) {
   // Update state after command
   const state = await getGameState(page);
   writeGameState(state);
+  externalGameAudio?.observeState(state);
   return state;
 }
 
@@ -1133,6 +1238,24 @@ async function runLocalController() {
     process.exit(1);
   }
 
+  // TwiCa 外部オーバーレイ用ローカルプロキシ（X-Frame-Options 回避・WebSocket 中継）。
+  // 有効時のみ起動する。.env の SOREN_DIRECT_TWICA_OVERLAY_URL が無ければ起動しない。
+  let twicaProxyServer = null;
+  const twicaSurface = DIRECT_OVERLAY_CONFIG.enabled
+    ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.key === 'twica')
+    : null;
+  if (twicaSurface?.srcUrl && twicaSurface.upstreamUrl) {
+    const twicaProxyPort = parseInt(process.env.SOREN_DIRECT_TWICA_PROXY_PORT || '18080', 10);
+    try {
+      twicaProxyServer = await startTwicaOverlayProxy({
+        port: twicaProxyPort,
+        upstream: twicaSurface.upstreamUrl,
+      });
+    } catch (e) {
+      console.error(`Failed to start TwiCa overlay proxy: ${e.message}`);
+    }
+  }
+
   // Cleanup on exit
   function removeCdpEndpoint() {
     try { fs.unlinkSync(CDP_ENDPOINT_FILE); } catch {}
@@ -1141,6 +1264,7 @@ async function runLocalController() {
     console.log('\nShutting down...');
     removeCdpEndpoint();
     server.close();
+    if (twicaProxyServer) twicaProxyServer.close();
     process.exit(0);
   });
   process.on('exit', removeCdpEndpoint);
@@ -1148,6 +1272,7 @@ async function runLocalController() {
   let browser;
   let context;
   let closeBrowserAfterContext = false;
+  const externalGameAudio = new ExternalGameAudio(EXTERNAL_GAME_AUDIO_CONFIG);
   async function closeBrowser() {
     if (context) {
       try {
@@ -1162,11 +1287,14 @@ async function runLocalController() {
     }
   }
 
+  externalGameAudio.start();
+  process.on('exit', () => externalGameAudio.shutdown());
+
   try {
     fs.mkdirSync(path.dirname(USER_DATA_DIR), { recursive: true });
     seedChromeTranslatePreferences(USER_DATA_DIR);
     const launchArgs = [
-      '--window-size=1300,800',
+      `--window-size=${CHROME_WINDOW_SIZE}`,
       `--remote-debugging-port=${CDP_PORT}`,
       // 復旧時の kill -9 でプロファイルが unclean になり「正しく終了しませんでした」
       // 復元バブルが配信画面隅に出続けるのを抑止
@@ -1193,7 +1321,19 @@ async function runLocalController() {
       // 自動操作ブラウザはユーザー操作が無く、autoplay ポリシーで AudioContext が
       // suspended のまま resume できず無音化する。bridge 再起動毎の無音を防ぐ。
       '--autoplay-policy=no-user-gesture-required',
+      // Linux kiosk 配信で「Chrome は自動テスト ソフトウェアによって制御されています」
+      // の帯(高さ約52px)が画面最上部に映り込む。--disable-infobars は Playwright が
+      // 追加する --enable-automation に打ち消されるため、--test-type で抑止する。
+      // 通常の kiosk 配信 (macOS window capture / Linux XSHM 全画面) には影響しない。
+      '--test-type',
     ];
+    if (CHROME_KIOSK) {
+      launchArgs.push('--kiosk');
+      // llvmpipe (ソフトウェア GL) 上で Unity WebGL の描画が vsync/フレームレート
+      // 制限で 1fps 級に落ちるため、制限を解除して描画ループを最大限回す。
+      // Xvfb には実 vsync が無いので実害はない。
+      launchArgs.push('--disable-frame-rate-limit', '--disable-gpu-vsync');
+    }
     const backgroundLaunch = CHROME_HEADLESS ? null : await launchPersistentContextWithoutFocus(USER_DATA_DIR, launchArgs).catch(err => {
       console.error(`[NO-FOCUS] background launch failed, falling back to Playwright launch: ${err.message}`);
       return null;
@@ -1207,8 +1347,13 @@ async function runLocalController() {
         context = await withBrowserLaunchEnv(USER_DATA_DIR, launchEnv => chromium.launchPersistentContext(USER_DATA_DIR, {
           executablePath: process.env.SOREN_CHROME_EXECUTABLE_PATH || undefined,
           headless: CHROME_HEADLESS,
-          viewport: { width: 1280, height: 720 },
-          deviceScaleFactor: 1,
+          viewport: CHROME_VIEWPORT,
+          // viewport: null (kiosk) のとき deviceScaleFactor は指定できない
+          deviceScaleFactor: CHROME_VIEWPORT ? 1 : undefined,
+          // kiosk 配信では Playwright が自動追加する --enable-automation を外して
+          // 「自動テスト ソフトウェアによって制御されています」帯(約52px)を消す。
+          // ゲーム操作 (evaluate/mouse) は CDP 経由なので自動化フラグは不要。
+          ignoreDefaultArgs: CHROME_KIOSK ? ['--enable-automation'] : undefined,
           env: launchEnv,
           args: launchArgs,
         }));
@@ -1345,6 +1490,8 @@ async function runLocalController() {
     if (await grantAudioPermissions()) console.log(`Granted speakerSelection for ${gameOrigin}`);
   } catch {}
 
+  await page.addInitScript(installAnimationFrameLimit, { renderFps: GAME_RENDER_FPS_LIMIT });
+
   // Hook AudioContext to track all instances for mute/unmute control and route
   // browser game audio to BlackHole without changing the macOS default output.
   await page.addInitScript((cfg) => {
@@ -1471,7 +1618,10 @@ async function runLocalController() {
         window.__sorenAudioHealBusy = false;
       }
     }, 5000);
-  }, { label: CHROME_AUDIO_OUTPUT_LABEL, cachedSinkId: readCachedSinkId() });
+  }, {
+    label: CHROME_AUDIO_OUTPUT_LABEL,
+    cachedSinkId: readCachedSinkId(),
+  });
 
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
 
@@ -1529,8 +1679,11 @@ async function runLocalController() {
     console.warn(`Failed to route Chrome audio: ${e.message}`);
   }
 
-  // Force canvas to fill viewport exactly — hide footer, reset margins, override container positioning
-  const canvasInfo = await page.evaluate(() => {
+  // Linux FFmpeg dashboardではUnityの内部描画bufferを変えず、CSS表示だけを
+  // 960x540へ縮める。残りの右320pxと上下90pxはoverlay専用stageにする。
+  // fullscreen/OBS/macOSは従来のviewport全面表示を維持する。
+  const canvasInfo = await page.evaluate(({ kiosk, stage }) => {
+    const staged = Boolean(kiosk && stage?.enabled);
     // Hide footer
     const footer = document.getElementById('unity-footer');
     if (footer) footer.style.display = 'none';
@@ -1541,20 +1694,74 @@ async function runLocalController() {
     document.body.style.margin = '0';
     document.body.style.padding = '0';
     document.body.style.overflow = 'hidden';
-    // Override container — remove centering transform, pin to top-left
+    document.body.style.background = staged ? '#050914' : '';
+    document.documentElement.style.background = staged ? '#050914' : '';
+
+    const oldStage = document.getElementById(stage?.elementId || 'soren-direct-stream-stage');
+    if (oldStage) oldStage.remove();
+    if (staged) {
+      const stageElement = document.createElement('div');
+      stageElement.id = stage.elementId;
+      stageElement.setAttribute('aria-hidden', 'true');
+      Object.assign(stageElement.style, {
+        position: 'fixed',
+        inset: '0',
+        width: `${stage.outputWidth}px`,
+        height: `${stage.outputHeight}px`,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        zIndex: '0',
+        background: '#050914',
+      });
+      const panel = (style) => {
+        const element = document.createElement('div');
+        Object.assign(element.style, { position: 'absolute', boxSizing: 'border-box', ...style });
+        stageElement.appendChild(element);
+      };
+      panel({
+        left: `${stage.sidebarLeft}px`, top: '0', width: `${stage.sidebarWidth}px`,
+        height: `${stage.outputHeight}px`,
+        background: 'linear-gradient(180deg, #07111f 0%, #030914 100%)',
+        borderLeft: '1px solid rgba(56,189,248,.28)',
+      });
+      panel({
+        left: '0', top: '0', width: `${stage.gameWidth}px`, height: `${stage.topRailHeight}px`,
+        background: 'linear-gradient(180deg, #07111f 0%, #050b15 100%)',
+        borderBottom: '1px solid rgba(56,189,248,.22)',
+      });
+      panel({
+        left: '0', top: `${stage.bottomRailTop}px`, width: `${stage.gameWidth}px`,
+        height: `${stage.bottomRailHeight}px`,
+        background: 'linear-gradient(180deg, #050b15 0%, #07111f 100%)',
+        borderTop: '1px solid rgba(56,189,248,.22)',
+      });
+      document.body.appendChild(stageElement);
+    }
+
+    // Override container — remove centering transform and place it in the stage.
     const container = document.getElementById('unity-container');
     if (container) {
-      container.style.position = 'absolute';
-      container.style.left = '0';
-      container.style.top = '0';
+      container.style.position = staged ? 'fixed' : 'absolute';
+      container.style.left = staged ? `${stage.gameLeft}px` : '0';
+      container.style.top = staged ? `${stage.gameTop}px` : '0';
+      container.style.width = staged ? `${stage.gameWidth}px` : '';
+      container.style.height = staged ? `${stage.gameHeight}px` : '';
       container.style.transform = 'none';
+      container.style.overflow = 'hidden';
+      container.style.zIndex = staged ? '1' : '';
+      container.style.boxShadow = staged ? '0 0 0 1px rgba(148, 205, 255, .28)' : '';
     }
-    // Ensure canvas fills exactly
+    // Keep the Unity drawing buffer unchanged; only its CSS display box changes.
     const canvas = document.getElementById('unity-canvas');
     if (canvas) {
-      canvas.style.width = '1280px';
-      canvas.style.height = '720px';
+      canvas.style.width = staged
+        ? `${stage.gameWidth}px`
+        : (kiosk ? (window.innerWidth + 'px') : '1280px');
+      canvas.style.height = staged
+        ? `${stage.gameHeight}px`
+        : (kiosk ? (window.innerHeight + 'px') : '720px');
       canvas.style.display = 'block';
+      canvas.style.imageRendering = staged ? 'pixelated' : '';
     }
     return {
       canvasWidth: canvas?.width,
@@ -1563,9 +1770,19 @@ async function runLocalController() {
       cssHeight: canvas?.style.height,
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
+      stageMode: staged ? stage.mode : 'fullscreen',
+      stageSidebarWidth: staged ? stage.sidebarWidth : 0,
     };
-  });
+  }, { kiosk: CHROME_KIOSK, stage: DIRECT_OVERLAY_CONFIG.stage });
   console.log('Canvas layout:', JSON.stringify(canvasInfo));
+
+  try {
+    if (await installDirectOverlay(page, DIRECT_OVERLAY_CONFIG)) {
+      console.log(`Direct stream overlays installed: ${DIRECT_OVERLAY_CONFIG.surfaces.map((item) => item.key).join(',')}`);
+    }
+  } catch (e) {
+    console.warn(`Failed to install direct stream event overlay: ${e.message}`);
+  }
 
   // Capture browser console for debugging
   page.on('console', msg => {
@@ -1607,19 +1824,19 @@ async function runLocalController() {
   }
 
   // Click to start the game
-  await page.mouse.click(640, 360);
+  await clickGameCenter(page);
   await page.waitForTimeout(2000);
 
   // Initial state
   const initialState = await getGameState(page);
   writeGameState(initialState);
+  externalGameAudio.observeState(initialState);
   console.log('Initial game state saved');
   console.log(`Watching for commands in: ${COMMAND_FILE}`);
 
   // Main loop: poll commands and game state
   let processedCount = 0;
   let lastState = null;
-  const STATE_CHECK_INTERVAL = 3;
   const NULL_STATE_WARN_THRESHOLD = 10;
   const NULL_STATE_RELOAD_THRESHOLD = 30;
 
@@ -1630,6 +1847,7 @@ async function runLocalController() {
   let lastAudioWatchdogAt = 0;
   let lastUnityAudioRecoverAt = 0;
   let lastStrayTabGuardAt = 0;
+  let lastGameRenderHealthAt = 0;
   const strayBlankFirstSeen = new Map(); // Page -> ms first observed as about:blank
   while (true) {
     // Check mute flag file (independent of commands.txt to avoid race condition)
@@ -1641,6 +1859,7 @@ async function runLocalController() {
     };
     if (shouldMute && !isMuted) {
       audioDiagLog('MUTE flag detected, muting audio');
+      externalGameAudio.setMuted(true);
       await page.evaluate(() => {
         window.__sorenMuted = true;
         // Suspend all known AudioContexts
@@ -1655,6 +1874,7 @@ async function runLocalController() {
       isMuted = true;
     } else if (!shouldMute && isMuted) {
       audioDiagLog('MUTE flag removed, resuming audio');
+      externalGameAudio.setMuted(false);
       // Diagnosis (from [AUDIO-UNMUTE] logs): the tracked AudioContext stays
       // "suspended" after resume() even though the tab is visible. The local
       // game is driven via the window.__sorenCommand JS bridge, so after the
@@ -1760,6 +1980,35 @@ async function runLocalController() {
       }
     }
 
+    if (!shouldMute && !isMuted && Date.now() - lastGameRenderHealthAt > GAME_RENDER_HEALTH_INTERVAL_MS) {
+      lastGameRenderHealthAt = Date.now();
+      try {
+        const renderHealth = await withTimeout(page.evaluate(() => {
+          const canvas = document.querySelector('canvas');
+          const rect = canvas?.getBoundingClientRect();
+          return {
+            ...(window.__sorenRenderStats || {}),
+            visibility: document.visibilityState,
+            canvasWidth: canvas?.width || 0,
+            canvasHeight: canvas?.height || 0,
+            canvasCssWidth: rect ? Math.round(rect.width) : 0,
+            canvasCssHeight: rect ? Math.round(rect.height) : 0,
+            canvasLeft: rect ? Math.round(rect.left) : 0,
+            canvasTop: rect ? Math.round(rect.top) : 0,
+            stageMode: document.getElementById('soren-direct-stream-stage')
+              ? 'dashboard'
+              : 'fullscreen',
+          };
+        }), 2000, 'render health evaluate');
+        writeJsonAtomic(GAME_RENDER_HEALTH_FILE, {
+          ...renderHealth,
+          observedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn(`[RENDER-HEALTH] ${(e && e.message) || String(e)}`);
+      }
+    }
+
     // --- Stray-tab guard: keep the OBS-captured window showing the local game ---
     // soren91 runs as a GUEST tab in this same Chrome (SOREN91_SHARED_BROWSER) and
     // opens its tab via window.open('about:blank') → navigate. If soren91 is
@@ -1821,7 +2070,7 @@ async function runLocalController() {
 
     if (commands.length > processedCount) {
       for (let i = processedCount; i < commands.length; i++) {
-        const state = await executeCommand(page, commands[i]);
+        const state = await executeCommand(page, commands[i], externalGameAudio);
         lastState = state;
         if (state) nullStateCount = 0;
         processedCount++;
@@ -1833,63 +2082,62 @@ async function runLocalController() {
       }
     } else {
       checkCount++;
-      if (checkCount >= STATE_CHECK_INTERVAL) {
-        checkCount = 0;
-        const state = await getGameState(page);
+      const state = await getGameState(page);
 
-        if (!state) {
-          nullStateCount++;
-          if (nullStateCount === NULL_STATE_WARN_THRESHOLD) {
-            console.warn(`[BRIDGE] game state null ${nullStateCount} times in a row — JS Bridge may be broken`);
-          }
-          if (nullStateCount >= NULL_STATE_RELOAD_THRESHOLD) {
-            console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
-            try {
-              await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-              // Wait for Unity canvas + Bridge to re-init
-              for (let i = 0; i < 60; i++) {
-                const s = await getGameState(page);
-                if (s && s.state) {
-                  console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
-                  // Re-inject best score
-                  try {
-                    const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
-                    if (bestScore > 0) {
-                      await page.evaluate((sc) => { window.__sorenCommand = 'SET_RECORD:' + sc; }, bestScore);
-                      console.log(`[BRIDGE] Re-injected best score: ${bestScore}`);
-                      await page.waitForTimeout(500);
-                    }
-                  } catch (e2) { /* ignore */ }
-                  // Click to start game
-                  await page.mouse.click(640, 360);
-                  await page.waitForTimeout(2000);
-                  lastState = s;
-                  writeGameState(s);
-                  break;
-                }
-                await page.waitForTimeout(1000);
+      if (!state) {
+        nullStateCount++;
+        if (nullStateCount === NULL_STATE_WARN_THRESHOLD) {
+          console.warn(`[BRIDGE] game state null ${nullStateCount} times in a row — JS Bridge may be broken`);
+        }
+        if (nullStateCount >= NULL_STATE_RELOAD_THRESHOLD) {
+          console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
+          try {
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+            // Wait for Unity canvas + Bridge to re-init
+            for (let i = 0; i < 60; i++) {
+              const s = await getGameState(page);
+              if (s && s.state) {
+                console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
+                externalGameAudio.observeState(s);
+                // Re-inject best score
+                try {
+                  const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
+                  if (bestScore > 0) {
+                    await page.evaluate((sc) => { window.__sorenCommand = 'SET_RECORD:' + sc; }, bestScore);
+                    console.log(`[BRIDGE] Re-injected best score: ${bestScore}`);
+                    await page.waitForTimeout(500);
+                  }
+                } catch (e2) { /* ignore */ }
+                // Click to start game
+                await clickGameCenter(page);
+                await page.waitForTimeout(2000);
+                lastState = s;
+                writeGameState(s);
+                break;
               }
-            } catch (e) {
-              console.error(`[BRIDGE] Reload failed: ${e.message}`);
+              await page.waitForTimeout(1000);
             }
-            nullStateCount = 0;
-          }
-        } else {
-          if (nullStateCount >= NULL_STATE_WARN_THRESHOLD) {
-            console.log(`[BRIDGE] game state recovered after ${nullStateCount} null reads`);
+          } catch (e) {
+            console.error(`[BRIDGE] Reload failed: ${e.message}`);
           }
           nullStateCount = 0;
-
-          if (stateChanged(lastState, state)) {
-            writeGameState(state);
-            console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
-          }
-          lastState = state;
         }
+      } else {
+        if (nullStateCount >= NULL_STATE_WARN_THRESHOLD) {
+          console.log(`[BRIDGE] game state recovered after ${nullStateCount} null reads`);
+        }
+        nullStateCount = 0;
+
+        externalGameAudio.observeState(state);
+        if (stateChanged(lastState, state)) {
+          writeGameState(state);
+          console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
+        }
+        lastState = state;
       }
     }
 
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(100);
   }
 }
 

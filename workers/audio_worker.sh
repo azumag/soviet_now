@@ -50,6 +50,19 @@ _pid_alive() {
 	return 1
 }
 
+_count_consecutive_terminal_say_failures() {
+	local played_log="${1:-tmp/.say_queue/played.log}"
+	[ -f "$played_log" ] || {
+		printf '0\n'
+		return 0
+	}
+	tail -100 "$played_log" 2>/dev/null | awk '
+		$2 == "failed" { failures += 1; next }
+		$2 == "played" || $2 ~ /^skipped_/ { failures = 0 }
+		END { print failures + 0 }
+	'
+}
+
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
@@ -64,6 +77,10 @@ _cleanup() {
 		kill "$_HEARTBEAT_PID" 2>/dev/null || true
 	fi
 	rm -f "$PID_FILE"
+	if [ -n "${LOCK_DIR:-}" ] && [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ]; then
+		rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+		rmdir "$LOCK_DIR" 2>/dev/null || true
+	fi
 	_log "停止完了"
 }
 
@@ -118,16 +135,30 @@ trap '_handle_signal' INT TERM
 trap '_request_reload HUP' HUP
 trap '_request_reload USR1' USR1
 
-# --- 多重起動防止 ---
-if [ -f "$PID_FILE" ]; then
-	old_pid=$(cat "$PID_FILE" 2>/dev/null)
-	if _pid_alive "$old_pid"; then
-		_log "already running (PID=$old_pid) -> no-op"
+# --- 多重起動防止 (mkdir アトミックロック + PID検証) ---
+mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
+LOCK_DIR="${PID_FILE}.lock"
+if mkdir "$LOCK_DIR" 2>/dev/null; then
+	printf '%s\n' "$$" >"$LOCK_DIR/pid" 2>/dev/null || true
+else
+	# ロックが既にある: 所有者が生きていれば no-op、死んでいれば stale として奪取
+	lock_owner=""
+	[ -f "$LOCK_DIR/pid" ] && lock_owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+	case "$lock_owner" in '' | *[!0-9]*) lock_owner="" ;; esac
+	if [ -n "$lock_owner" ] && _pid_alive "$lock_owner"; then
+		_log "already running (PID=$lock_owner) -> no-op"
 		exit 0
 	fi
-	rm -f "$PID_FILE"
+	# stale ロックを回収して再取得
+	rm -rf "$LOCK_DIR" 2>/dev/null || true
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		printf '%s\n' "$$" >"$LOCK_DIR/pid" 2>/dev/null || true
+	else
+		_log "lock race lost -> no-op"
+		exit 0
+	fi
 fi
-mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
+# pidfile は既存互換のためロック所有者PIDを書き、heartbeat も同じPIDを維持する
 echo $$ > "$PID_FILE"
 _start_pid_heartbeat
 
@@ -176,15 +207,20 @@ while true; do
 
 	# === VOICEVOX failure check ===
 	_say_fail_count=0
-	_say_fail_count=$(grep -Ec 'VOICEVOX合成失敗|say起動失敗' tmp/.say_queue/debug.log 2>/dev/null | awk '{s+=$1}END{print s+0}')
-	if [ "${_say_fail_count:-0}" -gt 3 ]; then
+	_say_fail_count=$(_count_consecutive_terminal_say_failures "tmp/.say_queue/played.log")
+	_say_fail_threshold="${AUDIO_WORKER_FAILURE_WARNING_THRESHOLD:-3}"
+	case "$_say_fail_threshold" in '' | *[!0-9]*) _say_fail_threshold=3 ;; esac
+	[ "$_say_fail_threshold" -gt 0 ] || _say_fail_threshold=1
+	if [ "${_say_fail_count:-0}" -ge "$_say_fail_threshold" ]; then
 		_now_ts=$(date +%s)
 		case "$WARNING_INTERVAL" in ''|*[!0-9]*) WARNING_INTERVAL=900 ;; esac
 		if [ "$_say_fail_count" != "$_LAST_SAY_WARNING_COUNT" ] || [ $((_now_ts - _LAST_SAY_WARNING_TS)) -ge "${WARNING_INTERVAL:-900}" ]; then
 			_LAST_SAY_WARNING_TS="$_now_ts"
 			_LAST_SAY_WARNING_COUNT="$_say_fail_count"
-			_log "WARNING: say_enqueue ${_say_fail_count}件失敗中 — VOICEVOX(${VOICEVOX_HOST:-localhost:50021})への接続を確認してください"
+			_log "WARNING: say_enqueue が${_say_fail_count}件連続で最終失敗 — VOICEVOX(${VOICEVOX_HOST:-localhost:50021})と再生経路を確認してください"
 		fi
+	else
+		_LAST_SAY_WARNING_COUNT=0
 	fi
 
 	# 再生処理: コメント → external trigger → deferred radio

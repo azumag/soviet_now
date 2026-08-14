@@ -108,14 +108,13 @@ const requestTimeoutMs = Number(process.env.OBS_WEBSOCKET_TIMEOUT_MS || 8000);
 const url = `ws://${host}:${port}`;
 const enabled = visibility === 'show';
 const capturePlatform = String(process.env.SOREN_OBS_PLATFORM || process.platform).toLowerCase();
-const inputKind = process.env.OBS_WINDOW_CAPTURE_INPUT_KIND
-  || (capturePlatform === 'linux' ? 'xcomposite_input' : 'screen_capture');
 const captureFamilyOverride = String(process.env.OBS_WINDOW_CAPTURE_FAMILY || '').toLowerCase();
-const inferredCaptureFamily = /^xshm_input(?:_v\d+)?$/.test(inputKind)
+const explicitInputKind = process.env.OBS_WINDOW_CAPTURE_INPUT_KIND;
+const inferredCaptureFamily = /^xshm_input(?:_v\d+)?$/.test(explicitInputKind || '')
   ? 'xshm'
-  : /^xcomposite_input(?:_v\d+)?$/.test(inputKind)
+  : /^xcomposite_input(?:_v\d+)?$/.test(explicitInputKind || '')
     ? 'xcomposite'
-    : /^screen_capture(?:_v\d+)?$/.test(inputKind)
+    : /^screen_capture(?:_v\d+)?$/.test(explicitInputKind || '')
       ? 'screen_capture'
       : capturePlatform === 'linux'
         ? 'xcomposite'
@@ -123,6 +122,14 @@ const inferredCaptureFamily = /^xshm_input(?:_v\d+)?$/.test(inputKind)
 const captureFamily = ['xcomposite', 'xshm', 'screen_capture'].includes(captureFamilyOverride)
   ? captureFamilyOverride
   : inferredCaptureFamily;
+// A bare OBS_WINDOW_CAPTURE_FAMILY override (e.g. xshm) must also drive the
+// input kind used by CreateInput/GetInputSettings. Otherwise the override only
+// changes comparison/binding logic while the source is still created as the
+// platform default (xcomposite_input on Linux).
+const inputKind = explicitInputKind
+  || (captureFamily === 'xshm' ? 'xshm_input'
+      : captureFamily === 'screen_capture' ? 'screen_capture'
+      : capturePlatform === 'linux' ? 'xcomposite_input' : 'screen_capture');
 const isXComposite = captureFamily === 'xcomposite';
 const isXshm = captureFamily === 'xshm';
 const windowPropertyName = process.env.OBS_WINDOW_CAPTURE_WINDOW_PROPERTY

@@ -98,7 +98,9 @@ _notify_webfetch_failure() {
 	'' | *[!0-9]*) throttle=180 ;;
 	esac
 	if [ -f "$marker" ]; then
-		mt=$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)
+		mt=$(stat -f %m "$marker" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$marker" 2>/dev/null) \
+			|| mt=0
 		age=$((now - mt))
 		[ "$age" -lt "$throttle" ] && return 0
 	fi
