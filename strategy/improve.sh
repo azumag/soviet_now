@@ -877,7 +877,10 @@ check_and_harvest_improvement() {
 	# 孤立ロックファイル検出: idle状態でeloop_improveも動いていないのにロックが長時間残っている場合は削除
 	# ※ daemon poll間隔(デフォルト30s)より大幅に長い閾値にすること
 	#   (lock作成直後はstatus=idleのままdaemonが拾うまで最大poll間隔かかる)
-	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ]; then
+	# failed_no_apply の再試行ロックは rate-limit backoff と対になっている。
+	# backoff が有効な間に orphan 扱いすると、指数待機が長い回ほど
+	# retry 直前に入力バッチを失うため、通常の孤立ロックだけを回収する。
+	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
 		local _lock_age _lock_mtime _orphan_threshold
 		_orphan_threshold="${IMPROVE_STALE_WATCHDOG_SEC:-600}"
 		_lock_mtime=$(stat -f %m "$IMPROVE_LOCK_FILE" 2>/dev/null) \

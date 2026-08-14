@@ -1,0 +1,176 @@
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class ImproveRetryReliabilityTests(unittest.TestCase):
+    def run_bash(self, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-c", script, "bash", *args],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_active_backoff_preserves_retry_lock_but_orphan_cleanup_still_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+log() { :; }
+soren91_harvest_hung_improve() { :; }
+_sync_improve_state_with_live_process() { :; }
+_read_improve_state() { printf '%s\n' '{"status":"idle"}'; }
+
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+mkdir -p "$TMP_STATE_DIR"
+printf '{}\n' >"$IMPROVE_LOCK_FILE"
+printf '2\n0\n' >"$TMP_STATE_DIR/rate_limit_backoff"
+touch -t 202001010000 "$IMPROVE_LOCK_FILE"
+check_and_harvest_improvement
+[ -f "$IMPROVE_LOCK_FILE" ]
+
+rm -f "$TMP_STATE_DIR/rate_limit_backoff"
+check_and_harvest_improvement
+[ ! -f "$IMPROVE_LOCK_FILE" ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_daemon_always_delegates_backoff_expiry_to_trigger(self):
+        daemon = (REPO_ROOT / "improve_daemon.sh").read_text(encoding="utf-8")
+        loop = daemon[daemon.index("while true; do") :]
+        self.assertIn('trigger_adaptive_improvement', loop)
+        self.assertNotIn('daemon trigger をスキップ', loop)
+        self.assertNotIn('if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]', loop)
+
+    def test_fallback_retries_no_edit_and_accepts_second_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/ai.sh"
+test_root="$2"
+log() { printf '%s\n' "$*" >>"$test_root/log"; }
+RUN_AI_PRIMARY_RETRIES=1
+RUN_AI_FALLBACK_RETRIES=3
+RUN_CMD_TMP_DIR="$test_root"
+MODEL_LAST_RESORT=last
+fallback_calls=0
+run_cmd() {
+    printf '%s\n' "$1" >>"$test_root/calls"
+    case "$1" in
+        primary) return 79 ;;
+        fallback)
+            fallback_calls=$((fallback_calls + 1))
+            if [ "$fallback_calls" -eq 1 ]; then
+                return 1
+            fi
+            printf '# result\n' >"$3"
+            return 0
+            ;;
+        last) return 9 ;;
+    esac
+}
+printf 'prompt\n' >"$test_root/prompt.md"
+set +e
+run_ai TEST primary fallback "$test_root/prompt.md" "$test_root/result.md"
+run_rc=$?
+set -e
+[ "$run_rc" -eq 0 ]
+[ "$(cat "$test_root/result.md")" = '# result' ]
+[ "$(grep -c '^fallback$' "$test_root/calls")" -eq 2 ]
+! grep -q '^last$' "$test_root/calls"
+grep -q 'fallback OK' "$test_root/log"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_rate_limited_fallback_continues_to_last_resort(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/ai.sh"
+test_root="$2"
+log() { :; }
+RUN_AI_PRIMARY_RETRIES=1
+RUN_AI_FALLBACK_RETRIES=3
+RUN_CMD_TMP_DIR="$test_root"
+MODEL_LAST_RESORT=last
+run_cmd() {
+    printf '%s\n' "$1" >>"$test_root/calls"
+    case "$1" in
+        primary|fallback) return 79 ;;
+        last) printf '# recovered\n' >"$3"; return 0 ;;
+    esac
+}
+printf 'prompt\n' >"$test_root/prompt.md"
+set +e
+run_ai TEST primary fallback "$test_root/prompt.md" "$test_root/result.md"
+run_rc=$?
+set -e
+[ "$run_rc" -eq 0 ]
+[ "$(cat "$test_root/result.md")" = '# recovered' ]
+[ "$(tr '\n' ',' <"$test_root/calls")" = 'primary,fallback,last,' ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_new_expected_file_stops_looping_provider_after_stable_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/ai.sh"
+_stop_loop_descendants() { :; }
+RUN_CMD_EXPECT_STABLE_SEC=1
+sleep 30 &
+cmd_pid=$!
+_run_cmd_start_expected_file_watchdog "$cmd_pid" "$2/result.md" false "$2/watch.log" TEST
+( sleep 0.2; printf '# done\n' >"$2/result.md" ) &
+set +e
+wait "$cmd_pid" 2>/dev/null
+wait_rc=$?
+set -e
+_run_cmd_stop_expected_file_watchdog
+[ "$wait_rc" -ne 0 ]
+[ "$(cat "$2/result.md")" = '# done' ]
+grep -q 'EXPECT_READY' "$2/watch.log"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_minimax_timeout_is_capped_without_affecting_deepseek(self):
+        result = self.run_bash(
+            r'''
+set -e
+source "$1/strategy/ai.sh"
+[ "$(_run_cmd_limit_timeout_for_model 1800 minimax-m3)" = '300' ]
+[ "$(_run_cmd_limit_timeout_for_model 1800 deepseek-v4-pro)" = '1800' ]
+[ "$(_run_cmd_limit_timeout_for_model 120 minimax-m3)" = '120' ]
+CODEX_MINIMAX_RUN_TIMEOUT_SEC=600
+[ "$(_run_cmd_limit_timeout_for_model 1800 minimax-m3)" = '600' ]
+''',
+            str(REPO_ROOT),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

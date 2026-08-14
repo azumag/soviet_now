@@ -168,6 +168,76 @@ _run_minimax_claude_prompt_file() {
 	return 0
 }
 
+_run_cmd_limit_timeout_for_model() {
+	local requested="${1:-}" model="${2:-}" cap="${CODEX_MINIMAX_RUN_TIMEOUT_SEC:-300}"
+	case "$requested" in
+	'' | *[!0-9]*) printf '%s\n' "$requested"; return 0 ;;
+	esac
+	case "$cap" in
+	'' | *[!0-9]*) cap=300 ;;
+	esac
+	if [ "$cap" -gt 0 ] && [ "$requested" -gt "$cap" ]; then
+		case "$model" in
+		*minimax*) printf '%s\n' "$cap"; return 0 ;;
+		esac
+	fi
+	printf '%s\n' "$requested"
+}
+
+_run_cmd_start_expected_file_watchdog() {
+	local cmd_pid="$1" expect_file="$2" expect_was_present="$3" cmd_log_file="$4" cmd_log_tag="$5"
+	local stable_sec="${RUN_CMD_EXPECT_STABLE_SEC:-5}"
+	RUN_CMD_EXPECT_WATCHDOG_PID=0
+	[ "$expect_was_present" != "true" ] || return 0
+	[ -n "$expect_file" ] || return 0
+	case "$cmd_pid" in
+	'' | *[!0-9]*) return 0 ;;
+	esac
+	case "$stable_sec" in
+	'' | *[!0-9]*) stable_sec=5 ;;
+	esac
+	[ "$stable_sec" -gt 0 ] || stable_sec=1
+	(
+		local last_signature="" stable_since=0 signature now
+		while kill -0 "$cmd_pid" 2>/dev/null; do
+			if [ -s "$expect_file" ]; then
+				signature=$(cksum "$expect_file" 2>/dev/null || true)
+				now=$(date +%s)
+				if [ -n "$signature" ] && [ "$signature" = "$last_signature" ]; then
+					if [ "$stable_since" -gt 0 ] && [ $((now - stable_since)) -ge "$stable_sec" ]; then
+						if [ -n "$cmd_log_file" ]; then
+							printf '[%s] [AI:%s] EXPECT_READY file=%s stable=%ss; stopping provider after completed write\n' \
+								"$(date '+%H:%M:%S')" "$cmd_log_tag" "$expect_file" "$stable_sec" \
+								>>"$cmd_log_file" 2>/dev/null || true
+						fi
+						if command -v _stop_loop_descendants >/dev/null 2>&1; then
+							_stop_loop_descendants "$cmd_pid" 2>/dev/null || true
+						fi
+						kill -TERM "$cmd_pid" 2>/dev/null || true
+						break
+					fi
+				else
+					last_signature="$signature"
+					stable_since="$now"
+				fi
+			else
+				last_signature=""
+				stable_since=0
+			fi
+			sleep 1
+		done
+	) &
+	RUN_CMD_EXPECT_WATCHDOG_PID=$!
+}
+
+_run_cmd_stop_expected_file_watchdog() {
+	if [ "${RUN_CMD_EXPECT_WATCHDOG_PID:-0}" -ne 0 ]; then
+		kill "$RUN_CMD_EXPECT_WATCHDOG_PID" 2>/dev/null || true
+		wait "$RUN_CMD_EXPECT_WATCHDOG_PID" 2>/dev/null || true
+		RUN_CMD_EXPECT_WATCHDOG_PID=0
+	fi
+}
+
 #=== コマンド実行 ===
 
 _opencode_latest_session_id_for_dir() {
@@ -232,7 +302,7 @@ _run_cmd_store_resume_session() {
 }
 
 run_cmd() {
-	local spec="$1" prompt="$2"
+	local spec="$1" prompt="$2" expect_file="${3:-}" expect_snapshot="${4:-}" expect_was_present="${5:-false}"
 	local type="${spec%%:*}" agent="${spec#*:}"
 	[ "$type" = "$agent" ] && agent=""
 	local target="$type"
@@ -277,6 +347,13 @@ run_cmd() {
 		agent=""
 		target="codex"
 	fi
+	local codex_model="${agent:-${CODEX_MODEL:-deepseek-v4-flash}}"
+	local requested_timeout="$timeout_sec"
+	timeout_sec=$(_run_cmd_limit_timeout_for_model "$timeout_sec" "$codex_model")
+	if [ -n "$requested_timeout" ] && [ "$timeout_sec" != "$requested_timeout" ]; then
+		log "[CMD] MiniMax run timeout capped: ${requested_timeout}s → ${timeout_sec}s"
+	fi
+	if [ -n "$timeout_sec" ]; then timeout_label="${timeout_sec}s"; else timeout_label="none"; fi
 
 	local prompt_file
 	if [ -n "${RUN_CMD_TMP_DIR:-}" ]; then
@@ -325,7 +402,6 @@ run_cmd() {
 	fi
 
 	# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
-	local codex_model="${agent:-${CODEX_MODEL:-deepseek-v4-flash}}"
 	local codex_out_file
 	codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
 	local -a codex_args=(
@@ -367,22 +443,24 @@ run_cmd() {
 
 	start_spinner "$type thinking..."
 	_run_cmd_start_heartbeat "$cmd_pid" "$cmd_log_file" "$cmd_log_tag" >/dev/null 2>&1 || true
+	_run_cmd_start_expected_file_watchdog "$cmd_pid" "$expect_file" "$expect_was_present" "$cmd_log_file" "$cmd_log_tag"
 
 	local prev_int_trap interrupted
 	prev_int_trap=$(trap -p INT || true)
 	interrupted=0
-	trap 'interrupted=1; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; _opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"; opencode_lock_token=""; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
+	trap 'interrupted=1; _run_cmd_stop_expected_file_watchdog; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; _opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"; opencode_lock_token=""; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
+	_run_cmd_stop_expected_file_watchdog
 	# codex exec の最終メッセージをログへ追記（後段の判定抽出が読めるように）
 	if [ -n "${RUN_CMD_CODEX_OUT_FILE:-}" ] && [ -s "$RUN_CMD_CODEX_OUT_FILE" ]; then
 		if [ -n "$cmd_log_file" ]; then
 			printf '\n[%s] [AI:%s] FINAL_MESSAGE\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" >>"$cmd_log_file" 2>/dev/null || true
 			cat "$RUN_CMD_CODEX_OUT_FILE" >>"$cmd_log_file" 2>/dev/null || true
 		fi
-		rm -f "$RUN_CMD_CODEX_OUT_FILE"
 	fi
+	[ -n "${RUN_CMD_CODEX_OUT_FILE:-}" ] && rm -f "$RUN_CMD_CODEX_OUT_FILE" 2>/dev/null || true
 	RUN_CMD_CODEX_OUT_FILE=""
 	_run_cmd_stop_heartbeat
 	_opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"
@@ -482,6 +560,15 @@ EOF
 	fi
 }
 
+_run_ai_expect_changed() {
+	local expect="$1" snapshot="$2"
+	[ -n "$expect" ] && [ -s "$expect" ] || return 1
+	if [ -n "$snapshot" ] && [ -f "$snapshot" ] && cmp -s "$snapshot" "$expect" 2>/dev/null; then
+		return 1
+	fi
+	return 0
+}
+
 run_ai() {
 	local label="$1" primary="$2" fallback="$3" pf="$4" expect="$5"
 	shift 5
@@ -492,8 +579,9 @@ run_ai() {
 		return 1
 	fi
 
-	local expect_snapshot=""
+	local expect_snapshot="" expect_was_present=false
 	if [ -n "$expect" ] && [ -f "$expect" ]; then
+		expect_was_present=true
 		if [ -n "${RUN_CMD_TMP_DIR:-}" ]; then
 			mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 			expect_snapshot=$(mktemp "$RUN_CMD_TMP_DIR/eloop_expect_before.XXXXXX" 2>/dev/null || echo "")
@@ -525,7 +613,7 @@ run_ai() {
 		else
 			RUN_CMD_LOG_TAG="${label}:primary"
 		fi
-		run_cmd "$primary" "$attempt_prompt"
+		run_cmd "$primary" "$attempt_prompt" "$expect" "$expect_snapshot" "$expect_was_present"
 		primary_ret=$?
 		log "[$label] run_cmd returned rc=$primary_ret (attempt ${attempt}/${primary_attempts})"
 		# トークン超過 or 空応答: セッションが汚染されている → primary ループ打ち切り
@@ -570,66 +658,76 @@ run_ai() {
 		attempt=$((attempt + 1))
 	done
 
-	log "[$label] primary failed → fallback=$fallback"
-	RUN_CMD_LOG_TAG="${label}:fallback"
-	run_cmd "$fallback" "$prompt"
-	local fallback_ret=$?
-	if [ "$fallback_ret" -eq 77 ] || [ "$fallback_ret" -eq 78 ] || [ "$fallback_ret" -eq 79 ]; then
-		log "[$label] fallback session poisoned or rate-limited (rc=$fallback_ret) → skip last_resort"
-		rm -f "$expect_snapshot" 2>/dev/null || true
-		if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-		return 1
-	fi
-	if [ -n "$expect" ]; then
-		local expect_written_fb=false
-		if [ -s "$expect" ]; then
-			if [ -n "$expect_snapshot" ] && [ -f "$expect_snapshot" ]; then
-				if ! cmp -s "$expect_snapshot" "$expect" 2>/dev/null; then
-					expect_written_fb=true
-				fi
-			else
-				expect_written_fb=true
-			fi
+	local fallback_attempts="${RUN_AI_FALLBACK_RETRIES:-3}"
+	case "$fallback_attempts" in
+	'' | *[!0-9]*) fallback_attempts=3 ;;
+	esac
+	[ "$fallback_attempts" -lt 1 ] && fallback_attempts=1
+	log "[$label] primary failed → fallback=$fallback (attempts=$fallback_attempts)"
+	local fallback_ret=1 fallback_attempt=1 fallback_prompt="$prompt"
+	while [ "$fallback_attempt" -le "$fallback_attempts" ]; do
+		if [ "$fallback_attempts" -gt 1 ]; then
+			RUN_CMD_LOG_TAG="${label}:fallback#${fallback_attempt}"
+		else
+			RUN_CMD_LOG_TAG="${label}:fallback"
 		fi
-		if [ "$expect_written_fb" != true ]; then
-			# --- last resort ---
-			local last_resort="${MODEL_LAST_RESORT:-}"
-			if [ -n "$last_resort" ]; then
-				log "[$label] fallback failed → last_resort=$last_resort"
-				RUN_CMD_LOG_TAG="${label}:last_resort"
-				run_cmd "$last_resort" "$prompt"
-				local last_resort_ret=$?
-				if [ "$last_resort_ret" -eq 77 ] || [ "$last_resort_ret" -eq 78 ] || [ "$last_resort_ret" -eq 79 ]; then
-					log "[$label] last_resort session poisoned or rate-limited (rc=$last_resort_ret) → abort"
-					rm -f "$expect_snapshot" 2>/dev/null || true
-					if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-					return 1
-				fi
-				local expect_written_lr=false
-				if [ -s "$expect" ]; then
-					if [ -n "$expect_snapshot" ] && [ -f "$expect_snapshot" ]; then
-						if ! cmp -s "$expect_snapshot" "$expect" 2>/dev/null; then
-							expect_written_lr=true
-						fi
-					else
-						expect_written_lr=true
-					fi
-				fi
-				if [ "$expect_written_lr" = true ]; then
-					rm -f "$expect_snapshot" 2>/dev/null || true
-					if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-					log "[$label] last_resort OK ($expect written)"
-					return 0
-				fi
-			fi
+		run_cmd "$fallback" "$fallback_prompt" "$expect" "$expect_snapshot" "$expect_was_present"
+		fallback_ret=$?
+		log "[$label] fallback run_cmd returned rc=$fallback_ret (attempt ${fallback_attempt}/${fallback_attempts})"
+		if [ -n "$expect" ] && _run_ai_expect_changed "$expect" "$expect_snapshot"; then
 			rm -f "$expect_snapshot" 2>/dev/null || true
 			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-			log "[$label] all attempts failed ($expect not written)"
-			return 1
+			log "[$label] fallback OK ($expect written, attempt ${fallback_attempt}/${fallback_attempts})"
+			return 0
+		fi
+		if [ -z "$expect" ] && [ "$fallback_ret" -eq 0 ]; then
+			rm -f "$expect_snapshot" 2>/dev/null || true
+			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+			return 0
+		fi
+		if [ "$fallback_ret" -eq 77 ] || [ "$fallback_ret" -eq 78 ] || [ "$fallback_ret" -eq 79 ]; then
+			log "[$label] fallback session poisoned or rate-limited (rc=$fallback_ret) → last_resort"
+			break
+		fi
+		if [ "$fallback_attempt" -lt "$fallback_attempts" ]; then
+			if [ -n "$expect" ]; then
+				fallback_prompt=$(_build_no_edit_retry_prompt "$prompt" "$expect" "$fallback_attempt" "$fallback_attempts" "")
+			else
+				fallback_prompt="$prompt"
+			fi
+			log "[$label] fallback attempt ${fallback_attempt}/${fallback_attempts} failed → retry"
+		fi
+		fallback_attempt=$((fallback_attempt + 1))
+	done
+
+	# --- last resort ---
+	local last_resort="${MODEL_LAST_RESORT:-}"
+	if [ -n "$last_resort" ]; then
+		log "[$label] fallback failed → last_resort=$last_resort"
+		RUN_CMD_LOG_TAG="${label}:last_resort"
+		run_cmd "$last_resort" "$prompt" "$expect" "$expect_snapshot" "$expect_was_present"
+		local last_resort_ret=$?
+		if [ "$last_resort_ret" -eq 77 ] || [ "$last_resort_ret" -eq 78 ] || [ "$last_resort_ret" -eq 79 ]; then
+			log "[$label] last_resort session poisoned or rate-limited (rc=$last_resort_ret) → abort"
+		elif [ -n "$expect" ] && _run_ai_expect_changed "$expect" "$expect_snapshot"; then
+			rm -f "$expect_snapshot" 2>/dev/null || true
+			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+			log "[$label] last_resort OK ($expect written)"
+			return 0
+		elif [ -z "$expect" ] && [ "$last_resort_ret" -eq 0 ]; then
+			rm -f "$expect_snapshot" 2>/dev/null || true
+			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+			return 0
 		fi
 	fi
 	rm -f "$expect_snapshot" 2>/dev/null || true
 	if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+	if [ -n "$expect" ]; then
+		log "[$label] all attempts failed ($expect not written)"
+	else
+		log "[$label] all attempts failed"
+	fi
+	return 1
 }
 
 #=== strategy.py バリデーション ===
