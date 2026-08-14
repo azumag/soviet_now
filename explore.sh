@@ -112,7 +112,9 @@ _bridge_state_fresh() {
 	local age now
 	[ -f "$GAME_STATE_FILE" ] || return 1
 	now=$(date +%s)
-	age=$(stat -f %m "$GAME_STATE_FILE" 2>/dev/null || stat -c %Y "$GAME_STATE_FILE" 2>/dev/null || echo 0)
+	age=$(stat -f %m "$GAME_STATE_FILE" 2>/dev/null) \
+		|| age=$(stat -c %Y "$GAME_STATE_FILE" 2>/dev/null) \
+		|| age=0
 	case "$age" in '' | *[!0-9]*) return 1 ;; esac
 	[ $((now - age)) -lt 120 ]
 }

@@ -491,7 +491,9 @@ _play_deferred_radio_queue_once() {
 	for stale_playing in "$RADIO_DEFERRED_QUEUE_DIR"/radio_*.playing; do
 		[ -f "$stale_playing" ] || continue
 		local stale_mtime="" stale_age=0 retry_file=""
-		stale_mtime=$(stat -f '%m' "$stale_playing" 2>/dev/null || true)
+		stale_mtime=$(stat -f %m "$stale_playing" 2>/dev/null) \
+			|| stale_mtime=$(stat -c %Y "$stale_playing" 2>/dev/null) \
+			|| stale_mtime=""
 		case "$stale_mtime" in
 		'' | *[!0-9]*) continue ;;
 		esac

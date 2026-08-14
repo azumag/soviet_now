@@ -126,6 +126,12 @@ reload_runtime_toggles() {
 		*" $key "*) ;;
 		*) continue ;;
 		esac
+		# 探索モードでは改善サイクル長を explore.sh が固定する。
+		# .env の配信用設定で上書きすると、探索サイクルが止まるため再読込しない。
+		if { [ "${EXPLORE_MODE:-0}" = "1" ] || [ -f "${ELOOP_LIB_DIR:-.}/tmp/state/explore_mode" ]; } &&
+			{ [ "$key" = "MIN_GAMES_BEFORE_IMPROVE" ] || [ "$key" = "MIN_GAMES_BEFORE_REGRESSION" ]; }; then
+			continue
+		fi
 		# クォート剥がし
 		case "$val" in
 		\"*\") val="${val%\"}"; val="${val#\"}" ;;

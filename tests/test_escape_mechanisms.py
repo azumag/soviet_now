@@ -12869,6 +12869,7 @@ PY
 
     def test_active_branch_head_repair_runs_before_game_snapshot(self):
         eloop = (REPO_ROOT / "eloop.sh").read_text()
+        runtime = (REPO_ROOT / "core/strategy_runtime.sh").read_text()
 
         self.assertIn("repair_strategy_to_active_branch_head_if_needed()", eloop)
         self.assertIn('data.get("head_hash")', eloop)
@@ -12879,9 +12880,13 @@ PY
         self.assertIn("_clear_active_branch", eloop)
         self.assertIn('_seed_current_strategy_run_from_rolling "$actual_hash"', eloop)
         self.assertIn("_clear_accumulated_data", eloop)
+        snapshot_call = eloop.split(
+            "if ! strategy_runtime_create_game_snapshot", 1
+        )[1].split("; then", 1)[0]
+        self.assertIn('"repair_strategy_to_active_branch_head_if_needed"', snapshot_call)
         self.assertLess(
-            eloop.index("repair_strategy_to_active_branch_head_if_needed\n"),
-            eloop.index('cp "$STRATEGY_FILE" "${STRATEGY_FILE}.game_snapshot"'),
+            runtime.index('[ -z "$before_snapshot" ] || "$before_snapshot" || return 1'),
+            runtime.index('rm -rf "$runtime_dir"'),
         )
 
     def test_wildcard_parallel_obs_restores_after_nonzero_exit(self):

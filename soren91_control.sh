@@ -484,14 +484,18 @@ _soren91_read_alive_player_pid() {
 _soren91_observable_fresh() {
 	local now="" log_mtime="" log_age="" mode_mtime="" mode_age=""
 	now=$(date +%s)
-	log_mtime=$(stat -f '%m' "$SOREN91_DIR/tmp/soren91.log" 2>/dev/null || echo 0)
+	log_mtime=$(stat -f %m "$SOREN91_DIR/tmp/soren91.log" 2>/dev/null) \
+		|| log_mtime=$(stat -c %Y "$SOREN91_DIR/tmp/soren91.log" 2>/dev/null) \
+		|| log_mtime=0
 	case "$log_mtime" in ''|*[!0-9]*) log_mtime=0 ;; esac
 	log_age=$((now - log_mtime))
 	if [ "$log_mtime" -gt 0 ] && [ "$log_age" -le "${SOREN91_OBSERVABLE_FRESH_SEC:-120}" ] && [ -f "$SOREN91_DIR/tmp/in_game" ]; then
 		return 0
 	fi
 
-	mode_mtime=$(stat -f '%m' "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || echo 0)
+	mode_mtime=$(stat -f %m "$SOREN91_MODE_FLAG_FILE" 2>/dev/null) \
+		|| mode_mtime=$(stat -c %Y "$SOREN91_MODE_FLAG_FILE" 2>/dev/null) \
+		|| mode_mtime=0
 	case "$mode_mtime" in ''|*[!0-9]*) mode_mtime=0 ;; esac
 	mode_age=$((now - mode_mtime))
 	if [ "$log_mtime" -gt 0 ] && [ "$log_age" -le "${SOREN91_OBSERVABLE_FRESH_SEC:-120}" ] && [ "$mode_mtime" -gt 0 ] && [ "$mode_age" -le "${SOREN91_OBSERVABLE_FRESH_SEC:-120}" ]; then
@@ -811,7 +815,9 @@ soren91_harvest_hung_improve() {
 	local pid threshold now lock_mtime lock_age log_file log_mtime log_age eval_age eval_mtime cmd session_range
 	pid=$(cat "$SOREN91_IMPROVE_PID_FILE" 2>/dev/null || true)
 	now=$(date +%s)
-	lock_mtime=$(stat -f '%m' "$SOREN91_IMPROVE_LOCK" 2>/dev/null || echo 0)
+	lock_mtime=$(stat -f %m "$SOREN91_IMPROVE_LOCK" 2>/dev/null) \
+		|| lock_mtime=$(stat -c %Y "$SOREN91_IMPROVE_LOCK" 2>/dev/null) \
+		|| lock_mtime=0
 	lock_age=$((now - ${lock_mtime:-0}))
 	case "$pid" in
 	''|*[!0-9]*)
@@ -836,14 +842,18 @@ soren91_harvest_hung_improve() {
 	log_file="$SOREN91_DIR/tmp/soren91_improve.log"
 	log_age="$lock_age"
 	if [ -f "$log_file" ]; then
-		log_mtime=$(stat -f '%m' "$log_file" 2>/dev/null || echo 0)
+		log_mtime=$(stat -f %m "$log_file" 2>/dev/null) \
+			|| log_mtime=$(stat -c %Y "$log_file" 2>/dev/null) \
+			|| log_mtime=0
 		if [ "${log_mtime:-0}" -gt 0 ]; then
 			log_age=$((now - log_mtime))
 		fi
 	fi
 	eval_age="$lock_age"
 	if [ -f "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" ]; then
-		eval_mtime=$(stat -f '%m' "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null || echo 0)
+		eval_mtime=$(stat -f %m "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null) \
+			|| eval_mtime=$(stat -c %Y "${EVAL_SCORE_HISTORY_FILE:-eval_score_history.txt}" 2>/dev/null) \
+			|| eval_mtime=0
 		if [ "${eval_mtime:-0}" -gt 0 ]; then
 			eval_age=$((now - eval_mtime))
 		fi
