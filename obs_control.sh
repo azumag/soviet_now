@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では OBS 制御を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # obs_control.sh - OBS WebSocket v5 wrapper
 # Usage:
 #   ./obs_control.sh show <scene> <source> [<source>...]

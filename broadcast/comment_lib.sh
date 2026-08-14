@@ -10,7 +10,9 @@ _recover_orphan_comment_playing_files() {
 		[ -f "$orphan" ] || continue
 		local now mtime age
 		now=$(date +%s)
-		mtime=$(stat -f %m "$orphan" 2>/dev/null || echo "$now")
+		mtime=$(stat -f %m "$orphan" 2>/dev/null) \
+			|| mtime=$(stat -c %Y "$orphan" 2>/dev/null) \
+			|| mtime="$now"
 		age=$((now - mtime))
 		# 直近で生成された .playing はリネーム直後の可能性があるためスキップ
 		[ "$age" -lt 30 ] && continue
@@ -104,6 +106,74 @@ _comment_playback_overlay_title() {
 	comment)                   printf '%s' "コメント返信 playback" ;;
 	*)                         printf '%s' "${label} playback" ;;
 	esac
+}
+
+_comment_has_bilingual_speech() {
+	local target="$1" sidecar helper_root
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	[ -s "$sidecar" ] || return 1
+	helper_root="${ELOOP_LIB_DIR:-.}"
+	python3 "$helper_root/lib/comment_bilingual.py" has-speech "$sidecar" >/dev/null 2>&1
+}
+
+_comment_declares_bilingual_speech() {
+	local target="$1" sidecar
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	[ -s "$sidecar" ] || return 1
+	python3 - "$sidecar" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if data.get("bilingual") is True else 1)
+PY
+}
+
+_comment_play_japanese_translation_fallback() {
+	local target="$1" speaker="${2:-}" context_label="${3:-comment}"
+	local sidecar helper_root japanese_file
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	helper_root="${ELOOP_LIB_DIR:-.}"
+	japanese_file=$(mktemp "${TMPDIR:-/tmp}/soren_comment_ja_XXXXXXXX" 2>/dev/null || true)
+	[ -n "$japanese_file" ] || return 1
+	if ! python3 "$helper_root/lib/comment_bilingual.py" extract-language "$sidecar" ja >"$japanese_file" 2>/dev/null || [ ! -s "$japanese_file" ]; then
+		rm -f "$japanese_file"
+		return 1
+	fi
+	SAY_VOICEVOX_SPEAKER_OVERRIDE="${speaker:-}" \
+		SAY_CONTEXT_LABEL="${context_label}:ja-fallback" \
+		"$helper_root/say_enqueue.sh" --no-preempt "$japanese_file" "$RADIO_SAY_RATE" 0
+	local playback_rc=$?
+	rm -f "$japanese_file"
+	return "$playback_rc"
+}
+
+_comment_play_bilingual_speech() {
+	local target="$1" speaker="${2:-}" context_label="${3:-comment}"
+	local sidecar helper_root combined_wav
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	helper_root="${ELOOP_LIB_DIR:-.}"
+	combined_wav=$(mktemp "${TMPDIR:-/tmp}/soren_comment_bilingual_XXXXXXXX" 2>/dev/null || true)
+	[ -n "$combined_wav" ] || return 1
+
+	if ! SAY_VOICEVOX_SPEAKER_OVERRIDE="${speaker:-}" \
+		SAY_CONTEXT_LABEL="$context_label" \
+		"$helper_root/bilingual_comment_tts.sh" -o "$combined_wav" "$sidecar" "$RADIO_SAY_RATE"; then
+		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英日音声の事前合成失敗 → 日本語訳のみVOICEVOX fallback: $target" >>tmp/.say_queue/debug.log
+		rm -f "$combined_wav"
+		_comment_play_japanese_translation_fallback "$target" "$speaker" "$context_label" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	SAY_CONTEXT_LABEL="${context_label}:bilingual" \
+		"$helper_root/say_enqueue.sh" --no-preempt --wav "$combined_wav" "$RADIO_SAY_RATE" 0
+	local playback_rc=$?
+	rm -f "$combined_wav"
+	return "$playback_rc"
 }
 
 _comment_improve_progress_key() {
@@ -246,11 +316,24 @@ _play_comment_queue() {
 				_cw_vo_speaker=$(_comment_read_speaker_override "$playing_file" "$qf" 2>/dev/null || true)
 				local _cw_context_label=""
 				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
-				if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-						_remember_spoken_comment "$playing_file"
-						[ "$_cw_context_label" = "improve_progress" ] && _comment_mark_improve_progress_played
+				local _cw_playback_ok=0
+				if _comment_has_bilingual_speech "$playing_file"; then
+					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語返答 → 日本語訳の順で再生: $playing_file" >>tmp/.say_queue/debug.log
+					if _comment_play_bilingual_speech "$playing_file" "$_cw_vo_speaker" "$_cw_context_label"; then
+						_cw_playback_ok=1
 					fi
-					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
+				elif _comment_declares_bilingual_speech "$playing_file"; then
+					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英日メタデータ不正 → 通常VOICEVOX経路を抑止: $playing_file" >>tmp/.say_queue/debug.log
+				elif SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+					_cw_playback_ok=1
+				fi
+				if [ "$_cw_playback_ok" -eq 1 ]; then
+					_remember_spoken_comment "$playing_file"
+					[ "$_cw_context_label" = "improve_progress" ] && _comment_mark_improve_progress_played
+					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生完了: $playing_file" >>tmp/.say_queue/debug.log
+				else
+					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生失敗: $playing_file" >>tmp/.say_queue/debug.log
+				fi
 					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 					_comment_clear_generation_meta "$playing_file" 2>/dev/null || true
 					_comment_clear_speaker_sidecars "$playing_file" "$qf" 2>/dev/null || true

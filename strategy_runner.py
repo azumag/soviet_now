@@ -441,11 +441,28 @@ def wait_commands_done():
     return False
 
 
+def get_strategy_runtime_file():
+    """この試合で固定して使う strategy.py のパスを返す。"""
+    configured = os.environ.get("STRATEGY_RUNTIME_FILE", "").strip()
+    return os.path.abspath(configured or "strategy.py")
+
+
+def activate_strategy_runtime_root():
+    """固定スナップショット側の strategy_helpers を import の最優先にする。"""
+    configured = os.environ.get("STRATEGY_RUNTIME_ROOT", "").strip()
+    runtime_root = os.path.abspath(configured) if configured else os.path.dirname(get_strategy_runtime_file())
+    if runtime_root not in sys.path:
+        sys.path.insert(0, runtime_root)
+    return runtime_root
+
+
 def load_strategy_module():
-    """strategy.py を動的ロード (毎試合最新版を使用)"""
-    spec = importlib.util.spec_from_file_location("strategy", "strategy.py")
+    """設定された試合単位の strategy.py を動的ロードする。"""
+    strategy_file = get_strategy_runtime_file()
+    activate_strategy_runtime_root()
+    spec = importlib.util.spec_from_file_location("strategy", strategy_file)
     if spec is None or spec.loader is None:
-        raise ImportError("strategy.py not found")
+        raise ImportError(f"strategy.py not found: {strategy_file}")
     mod = importlib.util.module_from_spec(spec)
     # Match normal import semantics so strategy.py can safely use __name__ and
     # sys.modules["strategy"] during runtime reloads.
@@ -456,18 +473,19 @@ def load_strategy_module():
 
 def get_strategy_hash():
     """strategy.py の decide() ASTハッシュを返す（extract_decide_hash.py と同一方式）"""
+    strategy_file = get_strategy_runtime_file()
     try:
         from extract_decide_hash import compute_hash
-        h = compute_hash("strategy.py")
-        return h if h else hashlib.md5(open("strategy.py", "rb").read()).hexdigest()[:8]
+        h = compute_hash(strategy_file)
+        return h if h else hashlib.md5(open(strategy_file, "rb").read()).hexdigest()[:8]
     except Exception:
-        with open("strategy.py", "rb") as f:
+        with open(strategy_file, "rb") as f:
             return hashlib.md5(f.read()).hexdigest()[:8]
 
 
 def get_strategy_file_hash():
     """strategy.py 全体のハッシュ。AI調整パラメータだけの変更でも再ロードするために使う。"""
-    with open("strategy.py", "rb") as f:
+    with open(get_strategy_runtime_file(), "rb") as f:
         return hashlib.md5(f.read()).hexdigest()[:8]
 
 
@@ -2863,8 +2881,8 @@ def run_game():
             analysis = build_analysis(gs)
             enrich_game_state_deadline_fields(gs, analysis)
 
-            # strategy.py は手番ごとに再ロードする。これにより、ライブ改善で
-            # strategy.py だけを書き換えた場合もプロセス再起動なしで次手から反映する。
+            # 設定された strategy.py を手番ごとに監視する。通常運転では試合開始時の
+            # 固定スナップショットなので、改善結果は次の試合から一貫して反映される。
             try:
                 current_strategy_hash = get_strategy_hash()
                 current_strategy_file_hash = get_strategy_file_hash()

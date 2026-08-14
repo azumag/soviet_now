@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では OBS ブラウザソース操作を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # obs_browser_source.sh - ensure an OBS browser source points at a local HTML file or URL.
 #
 # Usage:

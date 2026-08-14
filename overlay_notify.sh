@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では OBS オーバーレイ通知を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # overlay_notify.sh - append a toast event and regenerate OBS overlay HTML.
 set -euo pipefail
 cd "$(dirname "$0")"

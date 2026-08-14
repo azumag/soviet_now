@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では YouTube チャット連携を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # youtube_chat.sh - YouTube Live Chat polling + pending queue
 #
 # 使い方:

@@ -217,7 +217,9 @@ _file_recent() {
 	''|*[!0-9]*) return 1 ;;
 	esac
 	[ -f "$file_path" ] || return 1
-	mtime=$(stat -f '%m' "$file_path" 2>/dev/null || stat -c '%Y' "$file_path" 2>/dev/null || echo 0)
+	mtime=$(stat -f %m "$file_path" 2>/dev/null) \
+		|| mtime=$(stat -c %Y "$file_path" 2>/dev/null) \
+		|| mtime=0
 	case "$mtime" in
 	''|*[!0-9]*) return 1 ;;
 	esac

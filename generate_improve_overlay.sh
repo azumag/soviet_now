@@ -1,4 +1,6 @@
 #!/bin/bash
+# 探索モード (EXPLORE_MODE=1) では改善オーバーレイ生成を行わない
+[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 set -euo pipefail
 
 ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

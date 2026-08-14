@@ -148,17 +148,9 @@ while true; do
 	# harvest → ロックファイルがあれば trigger
 	check_and_harvest_improvement
 	if [ -f "$IMPROVE_LOCK_FILE" ]; then
-		if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-			now=$(date +%s)
-			last_log=$(cat "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || echo 0)
-			case "$last_log" in '' | *[!0-9]*) last_log=0 ;; esac
-			if [ $((now - last_log)) -ge "${IMPROVE_DAEMON_BACKOFF_LOG_INTERVAL:-60}" ]; then
-				echo "[$(date '+%H:%M:%S')] [IMPROVE] rate-limit backoff中のため daemon trigger をスキップ"
-				printf '%s\n' "$now" >"$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
-			fi
-		else
-			trigger_adaptive_improvement
-		fi
+		# trigger 側が指数 backoff の期限判定・解除を所有する。
+		# daemon で先に弾くと期限切れを観測できず、retry lock が孤立する。
+		trigger_adaptive_improvement
 	fi
 
 	sleep "$POLL_INTERVAL"

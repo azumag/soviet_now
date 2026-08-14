@@ -27,6 +27,7 @@ WILDCARD_PARAM_COUNT_MAX
 WILDCARD_PERTURB_RATIO_MIN
 WILDCARD_PERTURB_RATIO_MAX
 WILDCARD_PATIENCE_GAMES
+IMPROVE_KEEP_MAIN_GAME_RUNNING
 WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE
 ARCHIVE_RESTART_MIN_RUSSIA_COUNT
 ARCHIVE_RESTART_MIN_RUSSIA_RATE
@@ -67,6 +68,12 @@ EOF
 
 # 過剰な stat 呼び出しを避けるため最低 10 秒間隔でチェック
 _RUNTIME_TOGGLES_MIN_INTERVAL=${RUNTIME_TOGGLES_MIN_INTERVAL:-10}
+
+# 改善中もメインゲームを継続する共通判定。既定値は従来互換の停止(0)とし、
+# 本番VMでは .env で明示的に有効化する。
+_improve_keep_main_game_running() {
+	[ "${IMPROVE_KEEP_MAIN_GAME_RUNNING:-0}" = "1" ]
+}
 
 _runtime_toggle_stat_mtime() {
 	local path="$1" mtime
@@ -119,6 +126,12 @@ reload_runtime_toggles() {
 		*" $key "*) ;;
 		*) continue ;;
 		esac
+		# 探索モードでは改善サイクル長を explore.sh が固定する。
+		# .env の配信用設定で上書きすると、探索サイクルが止まるため再読込しない。
+		if { [ "${EXPLORE_MODE:-0}" = "1" ] || [ -f "${ELOOP_LIB_DIR:-.}/tmp/state/explore_mode" ]; } &&
+			{ [ "$key" = "MIN_GAMES_BEFORE_IMPROVE" ] || [ "$key" = "MIN_GAMES_BEFORE_REGRESSION" ]; }; then
+			continue
+		fi
 		# クォート剥がし
 		case "$val" in
 		\"*\") val="${val%\"}"; val="${val#\"}" ;;

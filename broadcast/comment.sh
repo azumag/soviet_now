@@ -41,6 +41,46 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
+_comment_failure_backoff_remaining() {
+	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
+	local now backoff_until remaining
+	[ -f "$backoff_file" ] || {
+		printf '0\n'
+		return 0
+	}
+	now=$(date +%s)
+	backoff_until=$(cat "$backoff_file" 2>/dev/null || printf '0')
+	case "$backoff_until" in
+	'' | *[!0-9]*) backoff_until=0 ;;
+	esac
+	remaining=$((backoff_until - now))
+	if [ "$remaining" -le 0 ]; then
+		rm -f "$backoff_file" 2>/dev/null || true
+		printf '0\n'
+		return 0
+	fi
+	printf '%s\n' "$remaining"
+}
+
+_comment_failure_backoff_set() {
+	local backoff_sec="${1:-${COMMENT_FAILURE_BACKOFF_SEC:-${AI_AGENT_BACKOFF_SEC:-600}}}"
+	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
+	local backoff_tmp
+	case "$backoff_sec" in
+	'' | *[!0-9]*) backoff_sec=600 ;;
+	esac
+	[ "$backoff_sec" -lt 1 ] && backoff_sec=1
+	mkdir -p "$(dirname "$backoff_file")" 2>/dev/null || true
+	backoff_tmp="${backoff_file}.tmp.$$"
+	printf '%s\n' "$(( $(date +%s) + backoff_sec ))" >"$backoff_tmp" &&
+		mv -f "$backoff_tmp" "$backoff_file"
+}
+
+_comment_failure_backoff_clear() {
+	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
+	rm -f "$backoff_file" 2>/dev/null || true
+}
+
 _comment_meta_sidecar_path() {
 	local target="$1"
 	case "$target" in
@@ -91,18 +131,19 @@ PY
 
 _comment_store_generation_meta() {
 	local target="$1" mode="$2" model="$3" batch_hash="$4" attempt="$5" chars="$6" primary="$7" secondary="$8" tertiary="$9"
+	local speech_metadata_file="${10:-}"
 	[ -n "$target" ] || return 0
 	local sidecar
 	sidecar=$(_comment_meta_sidecar_path "$target")
 	mkdir -p "$(dirname "$COMMENT_GENERATION_HISTORY_FILE")" 2>/dev/null || true
-	python3 - "$sidecar" "$COMMENT_GENERATION_HISTORY_FILE" "$COMMENT_GENERATION_HISTORY_KEEP" "$target" "$mode" "$model" "$batch_hash" "$attempt" "$chars" "$primary" "$secondary" "$tertiary" <<'PY'
+	python3 - "$sidecar" "$COMMENT_GENERATION_HISTORY_FILE" "$COMMENT_GENERATION_HISTORY_KEEP" "$target" "$mode" "$model" "$batch_hash" "$attempt" "$chars" "$primary" "$secondary" "$tertiary" "$speech_metadata_file" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime, timezone
 from collections import deque
 
-sidecar, history_file, keep_raw, target, mode, model, batch_hash, attempt_raw, chars_raw, primary, secondary, tertiary = sys.argv[1:13]
+sidecar, history_file, keep_raw, target, mode, model, batch_hash, attempt_raw, chars_raw, primary, secondary, tertiary, speech_metadata_file = sys.argv[1:14]
 
 def to_int(raw: str) -> int:
     try:
@@ -129,6 +170,19 @@ payload = {
         "final": model or "unknown",
     },
 }
+
+if speech_metadata_file:
+    try:
+        with open(speech_metadata_file, "r", encoding="utf-8") as f:
+            speech_payload = json.load(f)
+        speech_segments = speech_payload.get("speech_segments")
+        if not speech_payload.get("bilingual") or not isinstance(speech_segments, list) or not speech_segments:
+            raise ValueError("invalid bilingual speech metadata")
+        payload["bilingual"] = True
+        payload["speech_segments"] = speech_segments
+    except Exception as exc:
+        print(f"invalid bilingual speech metadata: {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
 with open(sidecar, "w", encoding="utf-8") as f:
     json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -183,82 +237,6 @@ is_comment_backlog_high() {
 	[ "$value" -ge "$threshold" ]
 }
 
-_comment_has_manual_claude_trigger() {
-	local comments="$1"
-	[ -n "$comments" ] || return 1
-	python3 - "$comments" <<'PY'
-import re
-import sys
-import unicodedata
-
-raw_comments = sys.argv[1] if len(sys.argv) > 1 else ""
-
-OWNER_NAMES = {"azumagbanjo", "あずまぐ"}
-
-def normalize_author(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text or "").strip().lower()
-    return re.sub(r"\s+", "", text)
-
-def is_owner(author_raw: str) -> bool:
-    normed = normalize_author(author_raw)
-    return normed in OWNER_NAMES
-
-
-for raw in raw_comments.splitlines():
-    match = re.match(r'([^:]+):\s*(.*)$', raw)
-    if not match:
-        continue
-    author = match.group(1).strip()
-    body = match.group(2)
-    if not is_owner(author):
-        continue
-    if re.match(r'^\s*!claude(?:\s+|$)', body, re.I):
-        raise SystemExit(0)
-
-raise SystemExit(1)
-PY
-}
-
-_strip_comment_control_prefixes() {
-	local comments="$1"
-	python3 - "$comments" <<'PY'
-import re
-import sys
-import unicodedata
-
-raw_comments = sys.argv[1] if len(sys.argv) > 1 else ""
-
-OWNER_NAMES = {"azumagbanjo", "あずまぐ"}
-
-def normalize_author(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text or "").strip().lower()
-    return re.sub(r"\s+", "", text)
-
-def is_owner(author_raw: str) -> bool:
-    normed = normalize_author(author_raw)
-    return normed in OWNER_NAMES
-
-
-out = []
-for raw in raw_comments.splitlines():
-    match = re.match(r'([^:]+):\s*(.*)$', raw)
-    if not match:
-        out.append(raw)
-        continue
-    author = match.group(1).strip()
-    body = match.group(2)
-    if is_owner(author):
-        stripped = re.sub(r'^\s*!claude(?:\s+|$)', '', body, count=1, flags=re.I)
-        if stripped != body:
-            if stripped.strip():
-                out.append(f"{author}: {stripped}")
-            continue
-    out.append(raw)
-
-print("\n".join(out), end="")
-PY
-}
-
 _comment_needs_thumbnail_context() {
 	local comments="$1"
 	[ -n "$comments" ] || return 1
@@ -284,7 +262,6 @@ _is_improve_running() {
 	if command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active; then
 		return 0
 	fi
-	[ "${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}" = "1" ] || return 1
 
 	local state status pid
 	state=$(_read_improve_state 2>/dev/null || true)
@@ -1595,15 +1572,12 @@ _classify_comments_with_edit_contract() {
 - 書き込み後、追加の説明は不要"
 		local prev_timeout="${RUN_CMD_TIMEOUT_SEC:-}"
 		local prev_tag="${RUN_CMD_LOG_TAG:-}"
-		local prev_perm="${RUN_CMD_OPENCODE_PERMISSION:-}"
 		RUN_CMD_TIMEOUT_SEC="$timeout_sec"
 		RUN_CMD_LOG_TAG="COMMENT_CLASSIFIER:${agent}"
-		RUN_CMD_OPENCODE_PERMISSION="${COMMENT_CLASSIFIER_OPENCODE_PERMISSION:-}"
 		run_cmd "$agent" "$edit_prompt" >/dev/null 2>&1
 		candidate_rc=$?
 		if [ -n "$prev_timeout" ]; then RUN_CMD_TIMEOUT_SEC="$prev_timeout"; else unset RUN_CMD_TIMEOUT_SEC; fi
 		if [ -n "$prev_tag" ]; then RUN_CMD_LOG_TAG="$prev_tag"; else unset RUN_CMD_LOG_TAG; fi
-		if [ -n "$prev_perm" ]; then RUN_CMD_OPENCODE_PERMISSION="$prev_perm"; else unset RUN_CMD_OPENCODE_PERMISSION; fi
 		raw_json=$(cat "$output_file" 2>/dev/null)
 		classification=$(printf '%s' "$raw_json" | _extract_comment_classification_json 2>/dev/null || true)
 		if [ -n "$classification" ] && printf '%s' "$classification" | _validate_comment_classification_json 2>/dev/null; then
@@ -1614,6 +1588,14 @@ _classify_comments_with_edit_contract() {
 		log "[COMMENT] 分類器 edit契約失敗: agent=${agent} rc=${candidate_rc} output=${raw_json:0:120}" >&2
 	done
 	return 1
+}
+
+# stdout契約でも、非空というだけで採用せず、有効なJSON分類だけを成功扱いにする。
+_is_valid_comment_classification_output() {
+	local raw="$1" classification
+	classification=$(printf '%s' "$raw" | _extract_comment_classification_json 2>/dev/null || true)
+	[ -n "$classification" ] || return 1
+	printf '%s' "$classification" | _validate_comment_classification_json 2>/dev/null
 }
 
 _classify_comments() {
@@ -1640,11 +1622,11 @@ _classify_comments() {
 		fi
 		return 1
 	fi
-	local model="${COMMENT_CLASSIFIER_AGENT:-minimax}"
-	local fallback="${COMMENT_CLASSIFIER_FALLBACK:-opencode:qwen35pgo}"
+	local model="${COMMENT_CLASSIFIER_AGENT:-codex:minimax-m3}"
+	local fallback="${COMMENT_CLASSIFIER_FALLBACK:-codex:minimax-m3}"
 	local timeout_sec="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
-	local edit_model="${COMMENT_CLASSIFIER_EDIT_AGENT:-minimax}"
-	local edit_fallback="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-opencode:qwen35pgo}"
+	local edit_model="${COMMENT_CLASSIFIER_EDIT_AGENT:-codex:minimax-m3}"
+	local edit_fallback="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-codex:minimax-m3}"
 	local edit_timeout_sec="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 	local classification raw_classification classifier_output_file classifier_edit_file classifier_model_used edit_result
 	mkdir -p "$ELOOP_LIB_DIR/tmp/debug/comment_classifier" 2>/dev/null || true
@@ -1664,7 +1646,8 @@ _classify_comments() {
 	fi
 
 	classifier_output_file=$(mktemp /tmp/eloop_comment_classifier_output_XXXXXXXX)
-	if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" >"$classifier_output_file"; then
+	if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" \
+		"_is_valid_comment_classification_output" >"$classifier_output_file"; then
 		classifier_model_used="${AI_GENERATE_LAST_AGENT:-$model}"
 	else
 		classifier_model_used="${AI_GENERATE_LAST_AGENT:-}"
@@ -2020,6 +2003,18 @@ _append_soviet_theme_item() {
 	log "[COMMENT] ソ連テーマ自動追加: $theme_item"
 }
 
+# ラジオ生成と同じ ai_generate_list() から呼ばれる候補検証。
+# 非空でも、読み上げ本文へ整形した結果が無効なら次のCodexモデルへ進める。
+_comment_is_valid_generation_candidate() {
+	local raw="$1" cleaned
+	[ -n "$raw" ] || return 1
+	_contains_provider_error_text "$raw" && return 1
+	cleaned=$(_clean_comment_talk "$raw")
+	cleaned=$(printf '%s' "$cleaned" | _sanitize_onair_text)
+	[ -n "$cleaned" ] || return 1
+	_is_valid_comment_talk "$cleaned"
+}
+
 generate_comment_response() {
 	local viewer_chat_source="${1:-twitch}"
 	local viewer_chat_script="./twitch_chat.sh"
@@ -2053,6 +2048,13 @@ generate_comment_response() {
 		twitch_comments=$(cat "$viewer_chat_outfile")
 	fi
 	[ -z "$twitch_comments" ] && return
+
+	# Provider障害時はpendingを保持したまま待機し、短周期の再試行で429を長引かせない。
+	local comment_failure_backoff_remaining=0
+	comment_failure_backoff_remaining=$(_comment_failure_backoff_remaining)
+	if [ "$comment_failure_backoff_remaining" -gt 0 ]; then
+		return 0
+	fi
 
 	# 個別コメント行の重複フィルタ（ack-batch失敗で残留した行を除外）
 	local twitch_comments_original="$twitch_comments"
@@ -2109,16 +2111,10 @@ generate_comment_response() {
 		return
 	fi
 
-	local comment_force_claude_manual=false
 	local twitch_comments_for_prompt
 	twitch_comments_for_prompt=$(printf '%s' "$twitch_comments" | sed 's|https\?://[^ \t]*||g')
-	if _comment_has_manual_claude_trigger "$twitch_comments"; then
-		comment_force_claude_manual=true
-		twitch_comments_for_prompt=$(_strip_comment_control_prefixes "$twitch_comments")
-		log "[COMMENT] azumagbanjo の !claude トリガを検出 → claude ${RADIO_CLAUDE_MODEL} を優先"
-	fi
 	if [ -z "$twitch_comments_for_prompt" ]; then
-		log "[COMMENT] !claude 制御コメントのみのため返信生成をスキップ"
+		log "[COMMENT] 有効なコメント本文がないため返信生成をスキップ"
 		if "$viewer_chat_script" ack-batch "$comment_batch_file"; then
 			_record_processed_comment_lines "$twitch_comments"
 		else
@@ -2134,6 +2130,11 @@ generate_comment_response() {
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="${viewer_chat_dir}/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
 	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
+	local comment_bilingual_required=0 comment_bilingual_expected_pairs=0
+	if comment_bilingual_expected_pairs=$(python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" detect "$comment_prompt_batch_file" 2>/dev/null); then
+		comment_bilingual_required=1
+		log "[COMMENT] 英語コメント${comment_bilingual_expected_pairs}件検出 → 英語返答 + 日本語訳モード"
+	fi
 
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
@@ -2300,6 +2301,7 @@ else:
 
 	(
 		_cg_my_pid="${BASHPID:-$(_my_pid)}"
+		local comment_bilingual_meta_file=""
 		_cleanup_comment_gen_worker() {
 			local raw file_pid file_started_at
 			raw=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null || true)
@@ -2311,6 +2313,7 @@ else:
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 			[ -n "$comment_prompt_batch_file" ] && rm -f "$comment_prompt_batch_file"
+			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
@@ -2427,65 +2430,55 @@ PY
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
+		if [ "$comment_bilingual_required" = "1" ]; then
+			cat >>"$comment_prompt_file" <<'BILINGUALCOMMENT'
+
+【英語コメントへの必須出力形式】
+- 英語で書かれた各コメントには、まず自然な英語で直接返答し、その直後に同じ内容の自然な日本語訳をです・ます調で付けてください。
+- コメントの上から順番を維持し、英語コメント1件ごとに次の3マーカーを必ず各1行で出力してください。
+===ENGLISH===
+(English reply only)
+===JAPANESE===
+(上の英語返答の日本語訳のみ)
+===END_BILINGUAL===
+- 英語部分に日本語を混ぜず、日本語訳部分に英語の説明や「in Japanese that means」のような前置きを入れないでください。
+- 日本語コメントへの返答は従来どおり日本語で書き、3マーカーを使わないでください。英語コメントと日本語コメントが混在しても、元コメントの順番を変えないでください。
+- 英語返答を ===ENGLISH=== より前へ複製してはいけません。最初の対象が英語コメントなら、出力1行目を必ず ===ENGLISH=== にしてください。
+- マーカー以外の見出し、Markdown、補足説明は出力しないでください。
+BILINGUALCOMMENT
+		fi
+
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
 		case "$comment_retry_max" in
 		'' | *[!0-9]*) comment_retry_max=3 ;;
 		esac
 		[ "$comment_retry_max" -lt 1 ] && comment_retry_max=1
+		local comment_bilingual_retry_min="${COMMENT_BILINGUAL_RETRY_MIN:-2}"
+		case "$comment_bilingual_retry_min" in
+		'' | *[!0-9]*) comment_bilingual_retry_min=2 ;;
+		esac
+		[ "$comment_bilingual_retry_min" -lt 1 ] && comment_bilingual_retry_min=1
+		if [ "$comment_bilingual_required" = "1" ] && [ "$comment_retry_max" -lt "$comment_bilingual_retry_min" ]; then
+			comment_retry_max="$comment_bilingual_retry_min"
+		fi
 
 		local attempt=1 generation_ok=false
-		local comment_claude_only=false
-		local comment_ollama_improving_only=false
-		local comment_skip_claude=false
-		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
-		local comment_primary_agent="" comment_second_agent="" comment_third_agent=""
-		local comment_allow_claude_fallback=true
+		local comment_agent_list=""
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			comment_primary_agent="${COMMENT_SOREN91_AGENT:-haiku}"
-			comment_second_agent="${COMMENT_SOREN91_FALLBACK:-gemma4e}"
-			comment_third_agent=""
-			comment_allow_claude_fallback=false
-		else
-			# COMMENT_AGENTS が設定されていればリストから primary/second/third を展開
-			if [ -n "${COMMENT_AGENTS:-}" ]; then
-				local _ca_arr=()
-				local _IFS_save="$IFS"
-				IFS=',' read -ra _ca_arr <<< "$COMMENT_AGENTS"
-				IFS="$_IFS_save"
-				comment_primary_agent="${_ca_arr[0]:-}"
-				comment_primary_agent="${comment_primary_agent#"${comment_primary_agent%%[![:space:]]*}"}"
-				comment_primary_agent="${comment_primary_agent%"${comment_primary_agent##*[![:space:]]}"}"
-				comment_second_agent="${_ca_arr[1]:-}"
-				comment_second_agent="${comment_second_agent#"${comment_second_agent%%[![:space:]]*}"}"
-				comment_second_agent="${comment_second_agent%"${comment_second_agent##*[![:space:]]}"}"
-				comment_third_agent="${_ca_arr[2]:-}"
-				comment_third_agent="${comment_third_agent#"${comment_third_agent%%[![:space:]]*}"}"
-				comment_third_agent="${comment_third_agent%"${comment_third_agent##*[![:space:]]}"}"
-			else
-				comment_primary_agent="${COMMENT_MAIN_AGENT:-opencode:qwen35pgo}"
-				comment_second_agent="${COMMENT_MAIN_FALLBACK:-qwen35e}"
-				comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-haiku}"
+			comment_agent_list="${COMMENT_SOREN91_AGENT:-codex:minimax-m3}"
+			if [ -n "${COMMENT_SOREN91_FALLBACK:-}" ] && [ "$COMMENT_SOREN91_FALLBACK" != "$comment_agent_list" ]; then
+				comment_agent_list="${comment_agent_list},${COMMENT_SOREN91_FALLBACK}"
 			fi
-			case "${COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK:-0}" in
-			1 | true | TRUE | yes | YES) comment_allow_claude_fallback=true ;;
-			*) comment_allow_claude_fallback=false ;;
-			esac
+		else
+			comment_agent_list="${COMMENT_AGENTS:-codex:minimax-m3}"
 		fi
 		local comments_talk="" comment_model_used=""
-		if [ "$comment_force_claude_manual" = "true" ]; then
-			comment_claude_only=true
-			log "[COMMENT] !claude 指定のため claude ${RADIO_CLAUDE_MODEL} で生成"
-		elif [ "$_comment_mode_generated" != "soren91" ] && _is_improve_running; then
-			# wildcard_parallel中はollamaが常にリソース競合で失敗するのでスキップし通常パスへ
-			if ! (command -v _wildcard_parallel_active >/dev/null 2>&1 && _wildcard_parallel_active); then
-				comment_ollama_improving_only=true
-				log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
-			fi
-		fi
 		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
-		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, max_retry=${comment_retry_max})"
+		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, agents=${comment_agent_list}, max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
+			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+			comment_bilingual_meta_file=""
 			echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 			local prompt_for_attempt="$comment_prompt_file"
 			if [ "$attempt" -gt 1 ]; then
@@ -2508,93 +2501,20 @@ RETRYCOMMENT
 				fi
 			fi
 
-			local attempt_talk="" attempt_model=""
-			if [ "$comment_claude_only" = "true" ]; then
-				attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
-				attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+			local attempt_talk="" attempt_model="" attempt_rc=1
+			local comment_last_agent_file
+			comment_last_agent_file=$(mktemp /tmp/eloop_comment_last_agent_XXXXXXXX)
+			attempt_talk=$(ai_generate_list "COMMENT" "$prompt_for_attempt" "$comment_agent_list" \
+				"${COMMENT_CODEX_TIMEOUT:-90}" "_comment_is_valid_generation_candidate" "$comment_last_agent_file")
+			attempt_rc=$?
+			attempt_model=$(cat "$comment_last_agent_file" 2>/dev/null)
+			rm -f "$comment_last_agent_file"
+			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
 				attempt_talk=$(_clean_comment_talk "$attempt_talk")
 				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-					log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
-					attempt_talk=""
-					attempt_model=""
-				fi
-				if [ -z "$attempt_talk" ]; then
-					log "[COMMENT] claude専用モード失敗 -> opencode fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
-					comment_claude_only=false
-					comment_skip_claude=true
-				fi
-			elif [ "$comment_ollama_improving_only" = "true" ]; then
-				attempt_talk=$(_run_ollama_comment "$prompt_for_attempt" "$COMMENT_OLLAMA_MODEL_IMPROVING")
-				log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} improving call done (attempt ${attempt}/${comment_retry_max})"
-				attempt_model="ollama:${COMMENT_OLLAMA_MODEL_IMPROVING}"
-				attempt_talk=$(_clean_comment_talk "$attempt_talk")
-				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-					log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
-					attempt_talk=""
-					attempt_model=""
-				fi
-				if [ -z "$attempt_talk" ]; then
-					log "[COMMENT] ollama improving専用モード失敗 -> fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
-					comment_ollama_improving_only=false
-				fi
-			fi
-			if [ -z "$attempt_talk" ]; then
-				attempt_talk=$(_run_comment_agent "$comment_primary_agent" "$prompt_for_attempt")
-				attempt_model="$comment_primary_agent"
-				attempt_talk=$(_clean_comment_talk "$attempt_talk")
-				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-				if [ -z "$attempt_talk" ]; then
-					log "[COMMENT] ${comment_primary_agent} 空応答 → ${comment_second_agent} fallback (attempt ${attempt}/${comment_retry_max})"
-				fi
-				# minimax はcleanup済みなのでバリデーションスキップ（空応答チェックのみ）
-				if [ -z "$attempt_talk" ]; then
-					attempt_talk=$(_run_comment_agent "$comment_second_agent" "$prompt_for_attempt")
-					attempt_model="$comment_second_agent"
-					attempt_talk=$(_clean_comment_talk "$attempt_talk")
-					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						if [ "$comment_allow_claude_fallback" = "true" ]; then
-							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
-						elif [ -n "$comment_third_agent" ]; then
-							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
-						else
-							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → attempt失敗 (attempt ${attempt}/${comment_retry_max})"
-						fi
-						log "[COMMENT] 破棄された生成文 (${comment_second_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
-						attempt_talk=""
-						attempt_model=""
-					fi
-				fi
-				if [ -z "$attempt_talk" ] && [ "$comment_allow_claude_fallback" = "true" ]; then
-					attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
-					attempt_model="claude:${RADIO_CLAUDE_MODEL}"
-					attempt_talk=$(_clean_comment_talk "$attempt_talk")
-					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						if [ -n "$comment_third_agent" ]; then
-							log "[COMMENT] claude 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
-						else
-							log "[COMMENT] claude 出力が不正/短文のため破棄 → attempt失敗 (attempt ${attempt}/${comment_retry_max})"
-						fi
-						log "[COMMENT] 破棄された生成文 (claude): $(printf '%s' "$attempt_talk" | head -c 500)"
-						attempt_talk=""
-						attempt_model=""
-					fi
-				fi
-				if [ -z "$attempt_talk" ] && [ -n "$comment_third_agent" ]; then
-					attempt_talk=$(_run_comment_agent "$comment_third_agent" "$prompt_for_attempt")
-					attempt_model="$comment_third_agent"
-					attempt_talk=$(_clean_comment_talk "$attempt_talk")
-					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] ${comment_third_agent} 出力が不正/短文のため破棄 → attempt失敗 (attempt ${attempt}/${comment_retry_max})"
-						log "[COMMENT] 破棄された生成文 (${comment_third_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
-						attempt_talk=""
-						attempt_model=""
-					fi
-				fi
+			else
+				attempt_talk=""
+				attempt_model=""
 			fi
 			if [ "$prompt_for_attempt" != "$comment_prompt_file" ]; then
 				rm -f "$prompt_for_attempt"
@@ -2655,6 +2575,18 @@ RETRYCOMMENT
 			attempt_talk=$(_clean_comment_talk "$attempt_talk")
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
+			if [ "$comment_bilingual_required" = "1" ]; then
+				comment_bilingual_meta_file=$(mktemp /tmp/eloop_comment_bilingual_XXXXXXXX 2>/dev/null || true)
+				local parsed_bilingual_talk=""
+				if [ -z "$comment_bilingual_meta_file" ] || ! parsed_bilingual_talk=$(printf '%s' "$attempt_talk" | python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" parse --metadata "$comment_bilingual_meta_file" --expected-pairs "$comment_bilingual_expected_pairs"); then
+					log "[COMMENT] 英語返答または日本語訳の構造が不正なため再生成 (attempt ${attempt}/${comment_retry_max})"
+					[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+					comment_bilingual_meta_file=""
+					attempt=$((attempt + 1))
+					continue
+				fi
+				attempt_talk="$parsed_bilingual_talk"
+			fi
 			if ! _is_valid_comment_talk "$attempt_talk"; then
 				log "[COMMENT] 最終本文が不正/短文のため再生成 (attempt ${attempt}/${comment_retry_max})"
 				attempt=$((attempt + 1))
@@ -2717,16 +2649,31 @@ RETRYCOMMENT
 			echo "$attempt_talk" >"$queue_file"
 			_remember_comment_reply_text "$attempt_talk"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
-			_comment_store_generation_meta \
+			if ! _comment_store_generation_meta \
 				"$queue_file" \
 				"$_comment_mode_generated" \
 				"${attempt_model:-unknown}" \
 				"${comment_batch_hash:-}" \
 				"$attempt" \
 				"${#attempt_talk}" \
-				"$comment_primary_agent" \
-				"$comment_second_agent" \
-				"$comment_third_agent"
+				"$comment_agent_list" \
+				"" \
+				"" \
+				"$comment_bilingual_meta_file"; then
+				if [ "$comment_bilingual_required" = "1" ]; then
+					log "[COMMENT] 英日再生メタデータ保存失敗のため再生成 (attempt ${attempt}/${comment_retry_max})"
+					_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
+					_comment_clear_generation_meta "$queue_file"
+					rm -f "$queue_file"
+					[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+					comment_bilingual_meta_file=""
+					attempt=$((attempt + 1))
+					continue
+				fi
+				log "[COMMENT] 生成メタデータ保存失敗（通常コメント再生は継続）"
+			fi
+			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+			comment_bilingual_meta_file=""
 			local new_hash
 			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
@@ -2809,6 +2756,7 @@ RETRYCOMMENT
 				[ "${#_ov_reply}" -gt 90 ] && _ov_reply="${_ov_reply:0:90}…"
 				timeout "${COMMENT_OVERLAY_NOTIFY_TIMEOUT_SEC:-3}" ./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} attempt=${attempt}/${comment_retry_max} batch=${comment_batch_hash:-none}${_ov_reply:+ | 返信:${_ov_reply}}" "info" >/dev/null 2>&1 || true
 			fi
+			_comment_failure_backoff_clear
 			generation_ok=true
 			break
 		done
@@ -2816,7 +2764,13 @@ RETRYCOMMENT
 		rm -f "$comment_prompt_file"
 
 		if [ "$generation_ok" != "true" ]; then
-			log "[COMMENT] コメント返し生成失敗（pending維持・次回再試行）"
+			local comment_failure_backoff_sec="${COMMENT_FAILURE_BACKOFF_SEC:-${AI_AGENT_BACKOFF_SEC:-600}}"
+			case "$comment_failure_backoff_sec" in
+			'' | *[!0-9]*) comment_failure_backoff_sec=600 ;;
+			esac
+			[ "$comment_failure_backoff_sec" -lt 1 ] && comment_failure_backoff_sec=1
+			_comment_failure_backoff_set "$comment_failure_backoff_sec"
+			log "[COMMENT] コメント返し生成失敗（pending維持・${comment_failure_backoff_sec}秒後に再試行）"
 		fi
 	) &
 	local comment_pid=$!

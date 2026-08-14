@@ -156,28 +156,32 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 
 エスカレーション streak の保持: `consecutive_wildcards`（archive_restart / escape_ai へ昇格させるための脱出失敗カウント）は、**wildcard / archive_restart / escape_ai の origin が昇格した「脱出成功」時のみ** 0 にリセットする。素の incumbent（rolling_top）が PROMOTE しただけでは維持する。これは `regression_streak` が非 origin PROMOTE で 0 リセットせず減衰のみする扱いと対称。incumbent の PROMOTE でリセットしてしまうと、`no_candidate` に終わった機械的脱出の失敗が一度も蓄積されず、`WILDCARD_AI_ESCALATE_STREAK` / `ARCHIVE_RESTART_STREAK` に到達できないため、強い局所最適が勝ち続ける限り構造変異を生む `escape_ai` に永久に到達できなくなる。
 
+本番では `IMPROVE_KEEP_MAIN_GAME_RUNNING=1` を指定すると、改善ロック待ち・AI改善・WILDCARD候補評価の間もメインゲームを継続する。各試合は開始時に `strategy.py` と `strategy_helpers` を固定スナップショットへコピーし、その試合中は同じ組を使い続ける。改善結果は共通ロック下で原子的に反映され、次の試合から有効になる。このモードでは soren91 代打とメインゲームの commands 競合を避けるため、改善開始時に代打だけを止める。`0` または未指定なら従来どおり改善中は本線を一時停止する。
+
+改善AIが失敗した場合、`improve_daemon` は backoff の期限判定を trigger 側へ委譲して retry lock を孤立させない。primary 失敗後の fallback は既定3回まで再試行し、期待ファイルが安定して書かれた時点で長時間残るproviderを終了する。MiniMax系の1回の上限は `CODEX_MINIMAX_RUN_TIMEOUT_SEC`（既定300秒）で、最後の手段も含めて「ファイルが実際に更新されたこと」を成功条件にする。
+
 ステータス監視:
 
 - `show_status.sh --once` の `ArchiveNext` は最有力候補だけを短く表示する。
 - `show_status.sh --once` の `ROLLBACKS` は git の auto-revert commit 履歴だけでなく、ライブの `tmp/state/last_rollback_pair.json` も読む。直近 rollback がまだ commit 履歴に現れていない時も `last=` と `RB1` が現実の rollback 時刻/hash を示す。
 - `show_status.sh --once` の `Escape` 行は、停滞カウンタが閾値到達済みでも現行 `current_strategy_run.json` がロシア/ソ連/Type15以上を再現中なら `defer=R1,T15 11/12` のように延期理由と成熟度を併記する。これにより `stag=3/3` だけで WILDCARD 発火漏れと誤読せず、再評価完走を待つべき状態を確認できる。
 - `tmp/state/improve_state.json` は実行中の `improve_reason` を監視の一次情報として扱う。running state を更新する時に理由が空なら既存理由、なければ `normal` を保持し、archive_restart/escape_ai fallback 後の通常AI改善を理由不明にしない。
-- メインループの改善中判定は `tmp/improve.lock` だけに依存しない。lock が欠落しても `tmp/state/improve_state.json` が新鮮な `running` / `manual` を示す間はゲーム進行を止め、stale state は `IMPROVE_STATE_RUNNING_FRESH_SEC` 経過後に無視する。
+- メインループの改善中判定は `tmp/improve.lock` だけに依存しない。lock が欠落しても `tmp/state/improve_state.json` が新鮮な `running` / `manual` を示す間は改善中として扱う。`IMPROVE_KEEP_MAIN_GAME_RUNNING=0` ではゲーム進行を止め、`1` では改善監視を続けながら本線を進める。stale state は `IMPROVE_STATE_RUNNING_FRESH_SEC` 経過後に無視する。
 - `run_cmd` の長時間 heartbeat も `RUN_CMD_IMPROVE_REASON` を渡して `improve_state.json` を更新する。AI待機中に archive_restart/escape_ai 起点の通常改善が `normal` や空 reason へ戻り、完了時の fast-escape 判定だけ lock 復元に頼る状態を防ぐ。
 - `monitor_improve_runtime.sh` は改善 idle 復帰時に `improveOverlay` / `wildcardParallelOverlay` を必ず hide し、ゲーム中なら `dashboard` も hide して `sorengame` / `statsOverlay` / `opsOverlay` を再表示する。`soren91_is_running` が false になる stale soren91 player も回収し、メリケンAIや並列評価の表示が本線プレイ画面へ重なり続ける状態を残さない。
 - `wildcard_parallel.py` の隔離評価は各ゲームに `WILDCARD_PARALLEL_GAME_TIMEOUT` を適用する。status には `started_at` / `updated_at` を書き、`_is_improve_running` は `WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC` を超えた古い running status だけで本線ゲームを止め続けない。
 - `status_dashboard.py` / `generate_status_overlay.sh` のステータス overlay は、WILDCARD status の直後に `ArchiveRestart candidates` として上位10候補の `hash` / `comp` / `p25` / `n` / `ru` / `sv` / `t` / origin retry を表示する。
 - `WILDCARD origins` は現戦略が WILDCARD origin と一致している時だけ表示する。archive_restart origin の戦略では archive候補一覧を主表示にし、古い WILDCARD origin を誤って現状説明に混ぜない。
 - 候補がない場合は `threshold` や `R0` / `cool` / `reject` などの blocker を表示し、`escape_ai direct` へ落ちる条件を確認できるようにする。
-- `wildcard` / `archive_restart` の隔離改善中は soren91 を自動起動せず、非メリケン表示を保つ。通常改善だけが従来どおり meriken tab / soren91 presentation を復帰させる。
-- POST-IMPROVE param並列の検出ラグ封じ: `_post_improve_param_parallel_trial` は `wildcard_parallel.py` を起動する**前に** `_wildcard_parallel_prewrite_status` で status を `phase=generating` / `block_main_loop=true` で先置きする。python が status を書くまでの数秒間 `_wildcard_parallel_active` が false になり主ループが soren91 を代打起動 → 直後に launch する候補chrome群と共有Chromeの GUI登録(`NSApplication _RegisterApplication`)が競合して **chrome crash + soren91 attach失敗 rc=0 flapping** していたため。先置きで主ループの branch1 が即発火し代打を立てない。`WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC`(3600s)の age 上限で孤児 status は本線を永久ブロックしない。
+- `wildcard` / `archive_restart` の隔離改善中は soren91 を自動起動せず、非メリケン表示を保つ。通常改善も `IMPROVE_KEEP_MAIN_GAME_RUNNING=1` では soren91 を起動せず、本線ゲームをそのまま継続する。従来モードだけが meriken tab / soren91 presentation を使う。
+- POST-IMPROVE param並列の検出ラグ封じ: `_post_improve_param_parallel_trial` は `wildcard_parallel.py` を起動する**前に** `_wildcard_parallel_prewrite_status` で status を `phase=generating` として先置きする。`IMPROVE_KEEP_MAIN_GAME_RUNNING=1` なら `block_main_loop=false`、従来モードなら `true` を同時に書く。python が status を書くまでの数秒間に主ループが soren91 代打を起動し、直後の候補Chrome群とGUI登録を競合させる状態を防ぐ。`WILDCARD_PARALLEL_MAIN_BLOCK_MAX_SEC`(3600s)の age 上限で孤児 status は本線を永久ブロックしない。
 - `show_status.sh --html-obs show` / `show_status_g.sh --html-obs show` は、fresh な `tmp/state/wildcard_parallel_status.json` が `phase=generating|running` なら show 要求を hide にルーティングする。post-improve param並列中は `improve_state.json` が idle へ戻っても候補評価が続くため、status file の mtime が `WILDCARD_PARALLEL_STATUS_FRESH_SEC` 以内なら ops/stats overlay を再表示しない。これにより watcher の15秒周期 show と param並列 reconcile hide が競合して点滅する状態を避ける。status が古くなった場合は通常表示に戻す。
 - 候補 Chrome 起動の直列化 + stagger: `prelaunch_candidate_chrome` の起動 (`/usr/bin/open -g -n` および fallback `Popen`) を `_spawn_with_launch_stagger`(global `_CHROME_LAUNCH_LOCK` + `WILDCARD_PARALLEL_CHROME_LAUNCH_STAGGER_SEC`=1.2s)で囲む。6 スロットの `evaluate_real` が**同時に** Chrome を起動すると、macOS の app/window-server 登録 (`GetCurrentProcess → _RegisterApplication → NSApplication init`) を奪い合い、起動中の Chrome が `EXC_CRASH/SIGABRT` で落ちる(soren91 とは独立した、候補chrome同士の起動レース)。lock で spawn を直列化し stagger 分だけ登録を時間方向に分散する。遅い CDP 待ちは lock の外なので各スロットは並行して立ち上がる。prelaunch が成功すれば bridge は attach のみ(`SOREN_CHROME_ATTACH_ONLY=1`)になり余分な Chrome 起動も減る。
 - soren91 runner (`soren91/run_player_loop.sh`) の flap 抑制: node が `FAST_EXIT_THRESHOLD_SEC`(20s)未満で終了し続けたら指数バックオフ(`FAST_EXIT_BACKOFF_MAX_SEC`=60s 上限、実ゲーム完走で streak リセット)でリトライ間隔を伸ばし、tight flapping と about:blank タブ storm を防ぐ。さらに各ループ反復で `_runner_still_owner` が lock 所有権を再確認し、別の生存runnerが所有していれば退避 exit する(起動時のみ lock を見る旧実装では lock クリア後に旧runnerが走り続け多重runnerが累積=実測6並走)。
 - `wildcard` 並列評価の OBS overlay は、候補なし・winner欠落・validation失敗・SIGTERM でも trap で status/dashboard 表示へ復元する。SIGTERM/SIGINT 時も status に完走済み winner が残っていれば result file へ best-effort で保存し、外側の timeout だけで `parallel_no_candidate` に落とさない。`show_status.sh` の `WildParFail` は直近1時間の失敗診断であり、`improve_state.json` が idle なら脱出ロックが詰まっている状態ではない。
 - `workers/radio_worker.sh` は標準出力を自前で `tee >(...)` しない。`start_all.sh` が `logs/radio_worker.log` へ保存する前提にし、macOS/Codex sandbox の `/dev/fd` 制限で duplicate 起動時に `Operation not permitted` を出さない。
 - `wildcard` 並列評価は既定で 6 候補を隔離実行し、各候補は既定 6 ゲームで評価する。OBS では `wildcardParallelCand1..6` を 3列x2行に配置する。候補数を増やした時は overlay の show/hide 対象、候補 source transform、`WILDCARD_PARALLEL_JOBS` の既定値を同時に揃える。
-- 通常改善後の `post_improve_param_parallel` は `POST_IMPROVE_PARAM_PARALLEL_JOBS` で候補数を個別に調整する。WILDCARD 脱出本線の `WILDCARD_PARALLEL_JOBS` と分け、slot1 baseline を含む追加パラメータ試行だけを増減できるようにする。改善中は本線 game loop を止め、winner の即時適用で評価中 hash がずれないようにする。
+- 通常改善後の `post_improve_param_parallel` は `POST_IMPROVE_PARAM_PARALLEL_JOBS` で候補数を個別に調整する。WILDCARD 脱出本線の `WILDCARD_PARALLEL_JOBS` と分け、slot1 baseline を含む追加パラメータ試行だけを増減できるようにする。従来モードでは本線を止める。連続プレイモードでは試合単位スナップショットと原子的反映により、進行中の試合を旧hashのまま完走させ、winner は次試合から使う。
 - `_post_improve_param_parallel_trial` は候補ゲーム統計の取り込み (`_post_improve_import_result_stats` → `_import_wildcard_parallel_game_stats`) を **全 exit パス**で行う: winner 採用時だけでなく、no-candidate / 時間切れ / winner欠落 / validation失敗で early-return する時も、cleanup で候補archiveが消える**前に** import する。これをしないと、no-candidate(時間切れ)で終わった run の候補が建国したロシアが `russia_creation_history.tsv` に残らず、建国率集計や `no_russia_24h` 判定が過小になる(実測: 候補 cand-5-r5 が russia=1 だが no-candidate 終了で記録漏れ)。`russia`/`soviet` の建国は `final_types>=15/16` または `russia_created/soviet_created` で検出して `_append_celebration_history` に積む。
 - `wildcard` 並列評価のカリングは既定で1ゲームごとに有効で、候補を補充して広く探索する。比較基準(leader)は **baseline**(`--baseline-slot1` の slot-1 で現戦略を実走 = `baseline=True`、または非slot1 mode で履歴から作る `score_baseline=True`)で、候補は baseline の composite の `WILDCARD_PARALLEL_CULL_COMP_RATIO`(90%)未満なら cull する。1ゲームだけ上振れした候補を leader にして他候補を落としすぎないため、baseline が存在する限り leader は baseline に固定し、baseline 自身は**絶対に cull しない**(全ゲーム完走させて安定した基準にする)。`WILDCARD_PARALLEL_CULL_AFTER_GAMES=0` にした時だけカリングを無効化して全候補を指定ゲーム数まで走らせる。
 - winner 選定 (`choose_winner`) は baseline(`score_baseline` または `baseline`)を比較アンカーとして扱い、**winner は baseline を `rank_key`(ロシア>ソ連>composite>p25>max_type) で厳密に上回る場合のみ採用**する。baseline 自身は winner にならない。baseline が認識されないと、現戦略より低スコアの候補が無条件採用される (=過去バグ)。
@@ -251,20 +255,24 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE` | `15` | ロシア未再現でも frontier候補として扱う最小到達type |
 | `ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT` | `1` | archive_restart後にロシアを再現できず粛清された source を候補から外す |
 | `WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` | `14` | `escape_ai` seed として許す最小 frontier 到達type |
+| `IMPROVE_KEEP_MAIN_GAME_RUNNING` | `0` | `1` なら改善・backoff・候補評価中も本線ゲームを継続し、試合単位スナップショットで戦略世代を固定する |
+| `RUN_AI_FALLBACK_RETRIES` | `3` | primary失敗後にfallbackモデルを再試行する最大回数 |
+| `CODEX_MINIMAX_RUN_TIMEOUT_SEC` | `300` | MiniMax系の改善AIを1回だけ待つ最大秒数 |
 
 `EARLY_COMP_TOP_GAP_MIN_GAMES=4` は低スコア崩壊の短絡用であり、4試合でロシア(type15)未達というだけでは粛清しない。current が type14 以上の frontier に届いている間は、通常の `MIN_GAMES_BEFORE_REGRESSION` まで見てから回帰判定する。
 
 **ラジオDJ機能:**
 
-soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOS `say` で読み上げる。
+soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOSでは `say` / VOICEVOX、Linuxでは VOICEVOX + PulseAudio で読み上げる。
 
 - **トーク本文**: 試合結果・雑談・ソ連ネタを生成 → `say_enqueue.sh` で再生
-- **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）
+- **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）。英語コメントは英語返答と日本語訳を構造化し、Flite英語音声 → VOICEVOX日本語音声の順に1本のWAVへ結合して再生する
 - **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。従来どおり順次再生しつつ、`say` / `ffmpeg` 異常終了時は自動リトライ
 - コメント返しプロセスは `disown` で親プロセスから独立しており、次のゲーム開始時にトーク生成が kill されても再生が中断されない
 - `RADIO_SAY_RATE=180` で読み上げ速度を制御（macOS `say -r` に渡される）
 - `SAY_AUDIO_DEVICE` を設定すると `say` で生成したAIFFを `ffmpeg -f audiotoolbox` で指定デバイス（例: `BlackHole 2ch`）へ出力
 - VOICEVOX WAV 再生で `SAY_AUDIO_DEVICE` の CoreAudio index 解決に失敗した場合は、`chrome_audio_player.mjs` が既存 Chrome CDP に接続して Audio element の `setSinkId` で BlackHole/対象ラベルへ再生する。CDP 接続前に失敗しても finally は安全に抜けるため、音声 worker のリトライを壊さない。
+- Linuxの英語コメント読み上げには小型オフラインTTSのFliteが必要。Ubuntuでは `sudo apt-get install flite`。声は `ENGLISH_TTS_VOICE`（既定 `slt`）、正規化後のサンプルレートは `ENGLISH_TTS_SAMPLE_RATE`（既定 `24000`）で変更できる
 - USB機器（例: GoPro）の抜き差しでCoreAudio再列挙が起きた際の途中切断に備え、再生実時間が想定尺より短すぎる場合は失敗扱いで自動リトライ
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
@@ -286,6 +294,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - 検証モデルは `RADIO_FACT_CHECK_AGENT` / `RADIO_FACT_CHECK_FALLBACK` / `RADIO_FACT_CHECK_CLAUDE_MODEL` で調整できる
 - Web資料取得は `RADIO_WEB_GROUNDING_ENABLED=0` で無効化できる。キャッシュや量は `RADIO_WEB_GROUNDING_TTL_SEC` / `RADIO_WEB_GROUNDING_MAX_SOURCES` で調整できる
 - WebFetch / WebSearch の権限確認や失敗ログが読み上げ・overlay へ漏れていないかは `monitor_webfetch_failure.sh` で確認する。`tmp/debug`、`tmp/.radio_deferred_queue`、`tmp/.say_queue`、`tmp/state/overlay_events.jsonl` を対象にし、prompt や opencode raw log は監視対象から外す
+- 各モデルの出力は `lib/model_output_guard.py` で thinking、analysis、tool call/result、Web検索進捗を除去し、`lib/radio_parser.py` が明示的なオンエア本文だけを抽出する。本文として検証できない候補は成功扱いにせず、`ai_generate_list` が次モデルへ進む。
 - ニュース見出しや試合終了後のスコア進捗などの自動チャット投稿は `lib/outbound_queue.sh` の outbound queue を経由して Twitch へ送る。Twitch は `TWITCH_CLIENT_ID` / `TWITCH_BROADCASTER_ID` がある場合 `chat/messages` API を優先し、失敗時は `tmp/debug/outbound_chat_twitch.log` と `show_status.sh` の `OutboundErr` に残して pending へ戻す。Twitch OAuth が無効な場合は `tmp/.outbound_chat_queue/twitch_backoff_until` / `twitch_backoff_count` で指数的に再送間隔を伸ばし、同じ古い投稿でチャット worker を毎分詰まらせない。成功したら Twitch backoff state は消える。`YOUTUBE_CHAT_SEND_ENABLED=1` の時だけ YouTube へミラーする。YouTube の cached `live_chat_id` が 403 を返した場合や `YOUTUBE_VIDEO_ID` の配信が終了している場合は stale とみなし、保存済み/設定済みの channel ID から現在ライブ中の video ID を探して `activeLiveChatId` を再取得する。send 経路では OAuth access token を取得してから live chat ID を解決し、API key の `videos.list` / `search.list` が 403 の場合でも bearer 認証で送信先解決を試す。poll 経路も API key の `liveChatMessages.list` が 403 の時は OAuth bearer で live chat ID を再解決して読み取りを再試行し、API quota / 403 が続く時は `tmp/.youtube_chat/web_live_chat_continuation` を使う YouTube web live chat fallback で読み取りだけ継続する。再解決も web fallback も使えない場合は `tmp/.youtube_chat/api_backoff_until` で短期 backoff し、`show_status.sh` の YouTube 行を `DEGRADED` にして、送信停止を「接続中」に見せない。outbound mirror も同じ backoff を読んで、期限中は YouTube 送信だけをスキップするため、Twitch 側の自動投稿成功を YouTube quota 失敗ログで汚さない。
 - YouTube 送信 mirror は curl の stderr と API response の両方を `tmp/.youtube_chat/last_send_error.txt` に残す。403 の時は stale `live_chat_id` / page token を破棄し、channel live discovery で一度だけ再解決して再送する。これにより YouTube 側だけ止まっている状態を Twitch outbound 成功と混同しない。
 - `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
@@ -334,6 +343,33 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 | 23:30 | local_japan | 日本地域情報 |
 
 コメントキューがあるとラジオ再生は deferred queue に回し、コメント消化後に再生。
+
+### explore.sh — 探索モード（配信なし）
+
+配信系機能（ラジオ・コメント・TTS・Twitch・OBS・soren91）を一切使わず、実ゲームの連続プレイで戦略改善ループだけを回すモード。
+
+```bash
+# 起動（改善サイクル長は既定 12 試合）
+./explore.sh
+# 改善サイクル長を指定する場合
+EXPLORE_MIN_GAMES_BEFORE_IMPROVE=3 nohup ./explore.sh > logs/explore.log 2>&1 &
+
+# 停止（配信モードと同じ）
+./stop_soren.sh
+```
+
+**挙動:**
+
+- `EXPLORE_MODE=1` を export し、`tmp/state/explore_mode` マーカでモードを固定（soren_loop.sh が毎周回 `.env` を再読込しても剥がれない）
+- 配信系スクリプト（`obs_control.sh` 等 15 本）は先頭 guard で即時終了、配信系関数は `core/streaming_shim.sh` の no-op 定義で置換
+- 改善サイクル長は配信モードの `MIN_GAMES_BEFORE_IMPROVE`（.env の 100）を無視し `EXPLORE_MIN_GAMES_BEFORE_IMPROVE`（未指定なら 12）を使う
+- `generate_dashboard.sh`（HTMLダッシュボード）は探索モードでも動作
+- soren_loop.sh の多重起動ロックで配信モードと排他（同時起動は abort）
+
+**注意:**
+
+- `EXPLORE_MODE` / `STREAMING_ENABLED` は `.env` に書かない（explore.sh が export + マーカで固定）
+- 停止時は `stop_soren.sh` を使う（explore.pid 検出でブリッジ/daemon/watchdog までクリーンアップ）
 
 ### soren91 — 91人対戦版自動プレイヤー (メリケンAI)
 
@@ -631,9 +667,31 @@ bash sloop.sh
 - **Node.js**: v18+ (Playwright 依存)
 - **Python**: 3.10+ (`analyze_board.py`, `strategy.py` 用)
 - **LLM CLI ツール** (AI ループで使用):
-  - [opencode](https://github.com/opencode-ai/opencode) — GLM 系モデルをエージェントとして実行
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — Anthropic Claude を CLI から実行
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`) — Google Gemini を CLI から実行
+  - [Codex CLI](https://github.com/openai/codex) (`codex`) — 全AI生成を codex CLI に統一
+
+### ハーネス統一 (codex / opencode-go / deepseek-v4-flash)
+
+2026-08 以降、コメント応答・ラジオコーナー・AI改善ループの全AI生成は **codex CLI に統一**されている。
+opencode CLI / claude CLI / gemini CLI / minimax / ollama の個別呼び出しは行わず、
+`lib/ai_generate.sh` の `_ai_call_codex` と `strategy/ai.sh` の `run_cmd` が
+`codex exec -m "$CODEX_MODEL"` を実行する。
+
+モデルは **`opencode-go/deepseek-v4-flash` のみ** (環境変数 `CODEX_MODEL` で固定)。
+接続先は `~/.codex/config.toml` の `model_providers.opencode-go` で指定する:
+
+```toml
+model = "opencode-go/deepseek-v4-flash"
+model_provider = "opencode-go"
+
+[model_providers.opencode-go]
+name = "opencode-go"
+base_url = "https://opencode.ai/zen/go/v1"
+env_key = "OPENCODE_GO_API_KEY"
+```
+
+`OPENCODE_GO_API_KEY` は `.env` に設定する。この構成で
+`codex exec --skip-git-repo-check -m opencode-go/deepseek-v4-flash "..."` が
+opencode.ai の OpenAI 互換 `/v1/chat/completions` を叩く。
 
 ### LLM モデル設定
 
@@ -642,13 +700,14 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 #### モデル変数
 
 ```bash
-MODEL_PRIMARY="zai"              # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="haiku"
-MODEL_IMPROVE="zai"              # 改善primary
-MODEL_FALLBACK_IMPROVE="qwen36f" # 改善fallback
-MODEL_LAST_RESORT="opencode:glmflash"
-ROLLBACK_POSTMORTEM_MODEL="qwen36f"
-ROLLBACK_POSTMORTEM_FALLBACK="opencode:glmflash"
+MODEL_PRIMARY="codex:opencode-go/deepseek-v4-flash"      # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
+MODEL_FALLBACK="codex:opencode-go/deepseek-v4-flash"
+MODEL_IMPROVE="codex:opencode-go/deepseek-v4-flash"      # 改善primary
+MODEL_FALLBACK_IMPROVE="codex:opencode-go/deepseek-v4-flash" # 改善fallback
+MODEL_LAST_RESORT="codex:opencode-go/deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_MODEL="codex:opencode-go/deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_FALLBACK="codex:opencode-go/deepseek-v4-flash"
+CODEX_MODEL="opencode-go/deepseek-v4-flash"              # codex CLI のモデル指定
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
@@ -663,30 +722,27 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `zai` | `qwen36f` | `opencode:glmflash` | - |
-| **ラジオ生成** | `qwen36f` | `ollama` | `glmflash` | `haiku` |
-| **コメント返し** | `qwen36f` | `ollama` | `glmflash` | `haiku` |
-| **コメント(改善中)** | `ollama` (gemma4e) | →通常モードへ | - | - |
-| **コメント(!claude)** | `haiku` | →通常モードへ | - | - |
-| **粛清ポストモーテム** | `qwen36f` | `opencode:glmflash` | - | - |
-| **メリケンAI(全コメント)** | `ollama` (gemma4e) | `haiku` | - | - |
+| **改善** | `codex:...` | `codex:...` | - | - |
+| **ラジオ生成** | `codex:...` | - | - | - |
+| **コメント返し** | `codex:...` | - | - | - |
+| **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
+| **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |
+| **粛清ポストモーテム** | `codex:...` | - | - | - |
+| **メリケンAI(全コメント)** | `codex:...` | - | - | - |
+
+`codex:...` は `codex:opencode-go/deepseek-v4-flash` の略記。全チャンネル同一モデル。
 
 #### スペック別詳細
 
 | スペック | 実装 | 説明 |
 |---------|------|------|
-| `zai` | `claude -p --model=haiku` (z.ai経由) | z.ai API (GLM-5.1) via Claude Code |
-| `qwen36f` | `claude -p --model=qwen/qwen3.6-plus:free` (OpenRouter経由) | OpenRouter free tier. `OPENROUTER_API_KEY` が必要 |
-| `glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
-| `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash 同上 |
-| `ollama` | `claude -p --model=$RADIO_OLLAMA_MODEL` (OLLAMA_BASE_URL) | デフォルト `qwen3.5:9b`. ローカルOllama |
-| `gemma4e` | `claude -p --model=gemma4:latest` (OLLAMA_BASE_URL) | ローカルOllama Gemma4 |
-| `haiku` | `claude -p --model=haiku` | Claude Haiku 直実行 |
+| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `opencode-go/deepseek-v4-flash` |
+| 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧opencode/claude/gemini等もcodexへ正規化 |
 
 #### 必要なAPIキー
 
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-...  # qwen36f用 (.env)
+OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 ```
 
 #### モデルスペックと CLI マッピング
@@ -695,24 +751,15 @@ OPENROUTER_API_KEY=sk-or-v1-...  # qwen36f用 (.env)
 
 | スペック | CLI コマンド | 説明 |
 |---------|------------|------|
-| `zai` | `claude -p --model=haiku` (z.ai API経由) | z.ai エンドポイント (GLM-5.1)。`ANTHROPIC_BASE_URL` を差し替えて claude CLI で実行 |
-| `glm` | `opencode run --agent="zai"` | GLM-4.7 (zhipu) — opencode の **zai エージェント**として設定済み |
-| `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
-| `opencode:<agent>` | `opencode run --agent="<agent>"` | 任意の opencode エージェント |
-| `sonnet` | `claude -p --model=sonnet --permission-mode=acceptEdits` | Claude Sonnet |
-| `opus` | `claude -p --model=opus --permission-mode=acceptEdits` | Claude Opus |
-| `claude` | `claude -p --model=Haiku --permission-mode=acceptEdits` | Claude Haiku |
-| `gemini` | `gemini -p -y -s` | Gemini (デフォルトモデル) |
-| `gemini-flash` | `gemini -p -y -s --model=gemini-2.5-flash` | Gemini 2.5 Flash |
+| `codex:<model>` | `codex exec --skip-git-repo-check -m <model> --dangerously-bypass-approvals-and-sandbox` | 全AI呼び出し (改善ループはファイル編集のため bypass) |
+| `codex` | 同上 (`CODEX_MODEL` 使用) | ハーネス既定 |
 
-#### opencode のエージェント設定
+#### codex のエージェント設定
 
-opencode は `.opencode/agents/` ディレクトリにエージェント設定ファイルを配置して使用する。本プロジェクトでは:
-
-- **zai** — GLM-4.7 (zhipu/glm-4.7) を使用するメインエージェント。`MODEL_PRIMARY="glm"` で呼び出される
-- **glmflash** — GLM-4-Flash を使用する軽量エージェント。`MODEL_FALLBACK="opencode:glmflash"` で呼び出される
-
-`opencode run --agent="zai"` のように `--agent` フラグでエージェント名を指定すると、対応するモデル設定で LLM が実行される。
+codex CLI は `~/.codex/config.toml` と `model_providers` を使用する。プロジェクト側では
+`codex:<model>` スペックのみを使い、エージェント定義ファイルは不要。
+VM では `codex exec -m opencode-go/deepseek-v4-flash` が opencode.ai へ接続できるよう
+`~/.codex/config.toml` と `.env` の `OPENCODE_GO_API_KEY` を設定する。
 
 #### Claude Code の使い方
 
