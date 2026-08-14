@@ -247,33 +247,12 @@ PROMPT
 		fi
 	done
 
-	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL}, timeout=${factcheck_claude_timeout}s)" >&2
-	raw_output=$(RADIO_CLAUDE_TIMEOUT="$factcheck_claude_timeout" _run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
-	safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
-	issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
-	if _is_valid_radio_talk "$safe_script"; then
-		if ! _radio_fact_check_length_ok "$talk_body" "$safe_script"; then
-			last_candidate=""
-			log "[RADIO:${corner_name}] fact-check短文化しすぎ (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}) -> 元原稿へ" >&2
-		else
-			style_reason=$(_radio_fact_check_style_reason "$talk_body" "$safe_script" "$issues")
-			if [ -n "$style_reason" ]; then
-				last_candidate=""
-				log "[RADIO:${corner_name}] fact-check平板化しすぎ (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}) -> 元原稿へ (${style_reason})" >&2
-			else
-				last_candidate="$safe_script"
-				issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
-				if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
-					log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}" >&2
-				else
-					log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
-				fi
-				rm -rf "$factcheck_dir"
-				printf '%s' "$safe_script"
-				return 0
-			fi
-		fi
-	fi
+	# claude は不使用方針（codex ハーネス統一）のため、fact-check の claude フォールバックは
+	# スキップして元原稿で続行する。codex 系 agent の結果が有効なら上で採用済み。
+	log "[RADIO:${corner_name}] fact-check claude fallback skipped (codex ハーネス統一) -> 元原稿で続行" >&2
+	rm -rf "$factcheck_dir"
+	printf '%s' "$talk_body"
+	return 0
 
 	debug_dump="$TMP_DEBUG_DIR/radio_factcheck_failed_${corner_name}_$(date +%s).txt"
 	{

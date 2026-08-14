@@ -7,6 +7,11 @@
 #   ai_generate "RADIO" "$prompt_file" "$primary_agent" "$fallback_agent"
 #   output は stdout に返る。呼び出し元がファイルに書くかキューに積むか判断する。
 
+_ai_guard_model_output() {
+	local guard_root="${ELOOP_LIB_DIR:-.}"
+	python3 "$guard_root/lib/model_output_guard.py"
+}
+
 # === 統一バックエンド ===
 
 AI_GENERATION_QUEUE_LAST_TOKEN=""
@@ -528,21 +533,7 @@ _ai_call_opencode_unqueued() {
 	fi
 	raw_text=$(cat "$raw_file")
 	_notify_webfetch_failure "$label" "$agent" "$raw_text" "dispatch" || true
-	cleaned=$(printf '%s' "$raw_text" |
-		_strip_ansi |
-		grep -v '^>' |
-		grep -v '^\^D' |
-		grep -v '^Script started on ' |
-		grep -v '^Script done on ' |
-		grep -v '^/[^ ]*$' |
-		grep -v '^[[:space:]]*/Users/' |
-		grep -v '^[[:space:]]*⚙' |
-		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
-		grep -Eiv '(WebFetch|WebSearch)' |
-		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
-		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
-		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d')
+	cleaned=$(printf '%s' "$raw_text" | _ai_guard_model_output)
 	rm -f "$raw_file"
 	if _contains_provider_error_text "$cleaned"; then
 		log "[${label}] opencode provider error (agent=$agent)" >&2

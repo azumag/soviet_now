@@ -18,15 +18,25 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Mapping, Sequence
 from urllib.parse import urlsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Public Twitch web client ID used by the anonymous liveness probe.  It is not
+# a credential: no token, OAuth, or channel secret is sent or stored.
+TWITCH_GQL_URL = "https://gql.twitch.tv/gql"
+TWITCH_WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
+RECONNECT_STATE_FILE = "reconnect.json"
 
 
 class ConfigError(ValueError):
@@ -39,6 +49,48 @@ class RuntimeCheckError(RuntimeError):
 
 class AlreadyRunningError(RuntimeError):
     """Raised when the single-instance lock is already held."""
+
+
+@dataclass(frozen=True)
+class ReconnectConfig:
+    """Viewer-side reconnect policy for the live FFmpeg publish path.
+
+    The local relay/FFmpeg pipeline can stay green even after Twitch ends the
+    ingest session (observed after ~48h of continuous publishing).  OBS
+    reconnects on that cut; this policy restores the same behaviour by probing
+    the public Twitch channel state and restarting the publish on a confirmed
+    offline streak.
+    """
+
+    enabled: bool
+    twitch_channel: str
+    probe_interval_sec: int
+    offline_threshold: int
+    backoff_sec: int
+    max_consecutive_restarts: int
+    reload_relay: bool
+
+    def public_dict(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "twitch_channel": self.twitch_channel,
+            "probe_interval_sec": self.probe_interval_sec,
+            "offline_threshold": self.offline_threshold,
+            "backoff_sec": self.backoff_sec,
+            "max_consecutive_restarts": self.max_consecutive_restarts,
+            "reload_relay": self.reload_relay,
+        }
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """Result of one FFmpeg publish run."""
+
+    exit_code: int
+    state: str
+    started_at: int
+    reconnect_reason: str | None = None
+    ffmpeg_exit_code: int | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +108,8 @@ class DirectStreamConfig:
     pulse_channels: int
     local_rtmp_url: str
     ffmpeg_bin: str
+    closed_captions_enabled: bool
+    closed_captions_socket: Path
     state_dir: Path
     log_file: Path
 
@@ -68,6 +122,7 @@ class DirectStreamConfig:
         # loopback.  Status files remain safe if that rule changes later.
         data = asdict(self)
         data.pop("local_rtmp_url", None)
+        data["closed_captions_socket"] = str(self.closed_captions_socket)
         data["state_dir"] = str(self.state_dir)
         data["log_file"] = str(self.log_file)
         return data
@@ -81,6 +136,80 @@ def _strict_int(env: Mapping[str, str], key: str, default: int, minimum: int, ma
     if not minimum <= value <= maximum:
         raise ConfigError(f"{key} must be between {minimum} and {maximum}")
     return value
+
+
+def _strict_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = str(env.get(key, "1" if default else "0")).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{key} must be a boolean")
+
+
+def load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConfig:
+    source = os.environ if env is None else env
+    channel = str(
+        source.get("SOREN_DIRECT_STREAM_TWITCH_CHANNEL")
+        or source.get("TWITCH_CHANNEL")
+        or ""
+    ).strip()
+    if channel and not re.fullmatch(r"[A-Za-z0-9_]{1,32}", channel):
+        raise ConfigError("SOREN_DIRECT_STREAM_TWITCH_CHANNEL is invalid")
+    return ReconnectConfig(
+        enabled=_strict_bool(source, "SOREN_DIRECT_STREAM_RECONNECT_ENABLED", True),
+        twitch_channel=channel,
+        probe_interval_sec=_strict_int(
+            source, "SOREN_DIRECT_STREAM_RECONNECT_PROBE_SEC", 60, 10, 600
+        ),
+        offline_threshold=_strict_int(
+            source, "SOREN_DIRECT_STREAM_RECONNECT_OFFLINE_THRESHOLD", 2, 1, 10
+        ),
+        backoff_sec=_strict_int(
+            source, "SOREN_DIRECT_STREAM_RECONNECT_BACKOFF_SEC", 10, 1, 300
+        ),
+        max_consecutive_restarts=_strict_int(
+            source, "SOREN_DIRECT_STREAM_RECONNECT_MAX_CONSECUTIVE", 10, 1, 100
+        ),
+        reload_relay=_strict_bool(source, "SOREN_DIRECT_STREAM_RECONNECT_RELOAD_RELAY", True),
+    )
+
+
+def twitch_channel_is_live(channel: str, timeout: int = 10) -> bool | None:
+    """Probe the public Twitch channel state without any credentials.
+
+    Returns True when the channel is publishing, False when it is offline, and
+    None when the probe could not be completed (network/parse error).  None is
+    deliberately treated as "unknown" so a transient probe failure never turns
+    into an offline streak.
+    """
+    if not channel:
+        return None
+    # Channel names are validated to [A-Za-z0-9_] by load_reconnect_config, so
+    # direct interpolation is safe here; json.dumps would escape the quotes.
+    payload = {
+        "query": f"query {{ user(login: \"{channel}\") {{ stream {{ id }} }} }}"
+    }
+    request = urllib.request.Request(
+        TWITCH_GQL_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Client-ID": TWITCH_WEB_CLIENT_ID,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, ValueError, KeyError, TypeError):
+        return None
+    try:
+        stream = body["data"]["user"]["stream"]
+    except (KeyError, TypeError):
+        return None
+    return stream is not None
 
 
 def _resolve_repo_path(raw: str, default: str) -> Path:
@@ -104,6 +233,23 @@ def _validate_loopback_rtmp_url(raw: str) -> str:
     if parsed.query or parsed.fragment:
         raise ConfigError("SOREN_DIRECT_STREAM_LOCAL_URL must not include query or fragment data")
     return raw
+
+
+def _validate_caption_socket_path(raw: str) -> Path:
+    if not raw or any(character in raw for character in "\r\n\x00"):
+        raise ConfigError("DOCICH_CC_SOCKET is invalid")
+    if not re.fullmatch(r"/[A-Za-z0-9_./@+-]+", raw):
+        raise ConfigError("DOCICH_CC_SOCKET contains unsupported characters")
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.name in {"", ".", ".."}
+        or any(part in {".", ".."} for part in path.parts)
+    ):
+        raise ConfigError("DOCICH_CC_SOCKET must be an absolute Unix socket path")
+    if len(os.fsencode(path)) >= 104:
+        raise ConfigError("DOCICH_CC_SOCKET must be shorter than 104 bytes")
+    return path
 
 
 def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
@@ -140,6 +286,10 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
     if not ffmpeg_bin or any(ch in ffmpeg_bin for ch in "\r\n\x00"):
         raise ConfigError("SOREN_DIRECT_STREAM_FFMPEG_BIN is invalid")
 
+    runtime_dir = str(
+        source.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}"
+    ).rstrip("/")
+
     return DirectStreamConfig(
         backend=backend,
         display=display,
@@ -154,6 +304,15 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
         pulse_channels=_strict_int(source, "SOREN_DIRECT_STREAM_AUDIO_CHANNELS", 2, 1, 2),
         local_rtmp_url=local_url,
         ffmpeg_bin=ffmpeg_bin,
+        closed_captions_enabled=_strict_bool(source, "DOCICH_CC_ENABLED", False),
+        closed_captions_socket=_validate_caption_socket_path(
+            str(
+                source.get(
+                    "DOCICH_CC_SOCKET",
+                    f"{runtime_dir}/docich/ffmpeg-cc.sock",
+                )
+            ).strip()
+        ),
         state_dir=_resolve_repo_path(str(source.get("SOREN_DIRECT_STREAM_STATE_DIR", "")), "tmp/state/direct_stream"),
         log_file=_resolve_repo_path(str(source.get("SOREN_DIRECT_STREAM_LOG_FILE", "")), "logs/direct_stream.log"),
     )
@@ -165,6 +324,7 @@ def build_ffmpeg_command(
     mode: str,
     output_path: Path | None = None,
     duration_sec: int | None = None,
+    captions_active: bool | None = None,
 ) -> list[str]:
     if mode not in {"live", "record"}:
         raise ConfigError("mode must be live or record")
@@ -175,6 +335,8 @@ def build_ffmpeg_command(
 
     fps = str(config.fps)
     gop = str(config.fps * 2)
+    if captions_active is None:
+        captions_active = config.closed_captions_enabled
     command = [
         config.ffmpeg_bin,
         "-hide_banner",
@@ -248,6 +410,15 @@ def build_ffmpeg_command(
         "-progress",
         "pipe:1",
     ]
+    if captions_active:
+        # The socket path is restricted to a filter-safe character subset in
+        # load_config, so it cannot inject another filter or option here.
+        video_output_index = command.index("-c:v")
+        command[video_output_index:video_output_index] = [
+            "-vf",
+            f"docichcc=socket={config.closed_captions_socket}",
+        ]
+        command[command.index("-preset"):command.index("-preset")] = ["-a53cc", "1"]
     if duration_sec is not None:
         command.extend(["-t", str(duration_sec)])
     if mode == "live":
@@ -287,7 +458,61 @@ def validate_local_relay(config: DirectStreamConfig) -> None:
     connection.close()
 
 
-def validate_runtime(config: DirectStreamConfig, *, mode: str) -> None:
+def caption_capabilities_available(config: DirectStreamConfig) -> bool:
+    """Return whether this FFmpeg can inject and encode A/53 captions.
+
+    Caption support is additive and deliberately fail-open.  A stock FFmpeg
+    must never prevent the existing audio/video stream from starting.
+    """
+    if not config.closed_captions_enabled:
+        return False
+    try:
+        filters = _checked([config.ffmpeg_bin, "-hide_banner", "-filters"])
+        encoder_help = _checked(
+            [config.ffmpeg_bin, "-hide_banner", "-h", "encoder=libx264"]
+        )
+    except RuntimeCheckError as exc:
+        print(f"direct_stream: closed captions disabled ({exc})", file=sys.stderr)
+        return False
+    if not re.search(r"^\s*\.\S*\s+docichcc\s", filters, re.MULTILINE):
+        print(
+            "direct_stream: closed captions disabled (docichcc filter is unavailable)",
+            file=sys.stderr,
+        )
+        return False
+    if not re.search(r"(?:^|\s)-?a53cc(?:\s|$)", encoder_help):
+        print(
+            "direct_stream: closed captions disabled (libx264 a53cc is unavailable)",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def prepare_caption_runtime(config: DirectStreamConfig) -> bool:
+    """Create a private socket directory, or disable captions without failing."""
+    if not config.closed_captions_enabled:
+        return False
+    parent = config.closed_captions_socket.parent
+    try:
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        metadata = parent.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise OSError("socket parent is not a real directory")
+        if metadata.st_uid != os.geteuid():
+            raise OSError("socket parent is not owned by this user")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            parent.chmod(0o700)
+    except OSError as exc:
+        print(
+            f"direct_stream: closed captions disabled (socket directory: {exc})",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def validate_runtime(config: DirectStreamConfig, *, mode: str) -> bool:
     if sys.platform != "linux":
         raise RuntimeCheckError("FFmpeg direct streaming is Linux-only")
     if mode == "live" and config.backend != "ffmpeg":
@@ -329,6 +554,7 @@ def validate_runtime(config: DirectStreamConfig, *, mode: str) -> None:
     }
     if config.pulse_source not in source_names:
         raise RuntimeCheckError(f"PulseAudio source was not found: {config.pulse_source}")
+    return caption_capabilities_available(config)
 
 
 def parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
@@ -367,6 +593,54 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
             os.unlink(temporary)
         except FileNotFoundError:
             pass
+
+
+def _reload_relay(config: DirectStreamConfig) -> bool:
+    """Best-effort relay reload so nginx re-establishes its Twitch pushes."""
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "systemctl", "reload", "soren-rtmp-relay.service"],
+            cwd=REPO_ROOT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"direct_stream: relay reload skipped ({exc})", file=sys.stderr)
+        return False
+    if result.returncode != 0:
+        print(
+            f"direct_stream: relay reload failed rc={result.returncode} "
+            f"{result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _record_reconnect(
+    config: DirectStreamConfig,
+    *,
+    reason: str,
+    consecutive: int,
+    offline_streak: int,
+    backoff_sec: int,
+) -> None:
+    payload = {
+        "reason": reason,
+        "consecutive_restarts": consecutive,
+        "offline_streak": offline_streak,
+        "backoff_sec": backoff_sec,
+        "reconnected_at": int(time.time()),
+    }
+    _atomic_json(config.state_dir / RECONNECT_STATE_FILE, payload)
+    print(
+        f"direct_stream: reconnect reason={reason} consecutive={consecutive} "
+        f"backoff={backoff_sec}s",
+        file=sys.stderr,
+    )
 
 
 def _pid_alive(pid: object) -> bool:
@@ -412,19 +686,202 @@ def classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]
     return return_code, "completed" if return_code == 0 else "failed"
 
 
+def _start_reconnect_monitor(
+    config: DirectStreamConfig,
+    reconnect: ReconnectConfig,
+    child: subprocess.Popen[str],
+    monitor_state: dict[str, object],
+) -> threading.Thread:
+    """Probe the Twitch channel while FFmpeg runs and request a reconnect."""
+
+    def monitor() -> None:
+        while True:
+            time.sleep(reconnect.probe_interval_sec)
+            if monitor_state.get("stopping"):
+                return
+            if not _pid_alive(child.pid):
+                return
+            live = twitch_channel_is_live(reconnect.twitch_channel)
+            if live is None:
+                # Transient probe failure: never count toward an offline streak.
+                continue
+            monitor_state["last_live"] = live
+            if live is True:
+                monitor_state["offline_streak"] = 0
+                continue
+            streak = int(monitor_state.get("offline_streak", 0)) + 1
+            monitor_state["offline_streak"] = streak
+            print(
+                f"direct_stream: Twitch offline streak={streak}/"
+                f"{reconnect.offline_threshold}",
+                file=sys.stderr,
+            )
+            if streak >= reconnect.offline_threshold:
+                monitor_state["reconnect"] = True
+                monitor_state["reconnect_reason"] = "twitch_offline"
+                try:
+                    child.send_signal(signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+                return
+
+    thread = threading.Thread(
+        target=monitor,
+        name="direct-stream-reconnect-monitor",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _run_ffmpeg_once(
+    config: DirectStreamConfig,
+    command: Sequence[str],
+    *,
+    mode: str,
+    reconnect: ReconnectConfig | None,
+    captions_active: bool = False,
+) -> RunOutcome:
+    """Run FFmpeg once and return the outcome of this single publish session."""
+    started_at = int(time.time())
+    with config.log_file.open("a", encoding="utf-8") as log_stream:
+        child = subprocess.Popen(
+            list(command),
+            cwd=REPO_ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=log_stream,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
+        base_state: dict[str, object] = {
+            "backend": "ffmpeg",
+            "mode": mode,
+            "running": True,
+            "state": "running",
+            "pid": os.getpid(),
+            "ffmpeg_pid": child.pid,
+            "started_at": started_at,
+            "updated_at": started_at,
+            "config": config.public_dict(),
+            "closed_captions": {
+                "requested": config.closed_captions_enabled,
+                "active": captions_active,
+            },
+        }
+        if reconnect is not None:
+            base_state["reconnect"] = reconnect.public_dict()
+        _atomic_json(config.state_dir / "status.json", base_state)
+
+        stopping = False
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+            "offline_streak": 0,
+            "last_live": None,
+        }
+
+        def stop_child(signum: int, _frame: object) -> None:
+            nonlocal stopping
+            if stopping:
+                return
+            stopping = True
+            monitor_state["stopping"] = True
+            try:
+                child.send_signal(signal.SIGINT if signum == signal.SIGTERM else signum)
+            except ProcessLookupError:
+                pass
+
+        previous_term = signal.signal(signal.SIGTERM, stop_child)
+        previous_int = signal.signal(signal.SIGINT, stop_child)
+        monitor_thread: threading.Thread | None = None
+        if (
+            mode == "live"
+            and reconnect is not None
+            and reconnect.enabled
+            and reconnect.twitch_channel
+        ):
+            monitor_thread = _start_reconnect_monitor(
+                config, reconnect, child, monitor_state
+            )
+        batch: list[str] = []
+        latest: dict[str, object] = {}
+        try:
+            assert child.stdout is not None
+            for line in child.stdout:
+                batch.append(line)
+                if line.startswith("progress="):
+                    latest.update(parse_progress_lines(batch))
+                    batch.clear()
+                    payload = {
+                        **base_state,
+                        **latest,
+                        "updated_at": int(time.time()),
+                    }
+                    _atomic_json(config.state_dir / "status.json", payload)
+            return_code = child.wait()
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
+            signal.signal(signal.SIGINT, previous_int)
+            if monitor_thread is not None:
+                monitor_thread.join(timeout=5)
+
+        if monitor_state.get("reconnect"):
+            final_state = "reconnect"
+            runner_exit_code = 0
+        elif stopping:
+            runner_exit_code, final_state = classify_ffmpeg_exit(
+                return_code, stopping=True
+            )
+        else:
+            runner_exit_code, final_state = classify_ffmpeg_exit(
+                return_code, stopping=False
+            )
+        final_payload = {
+            **base_state,
+            **latest,
+            "running": False,
+            "state": final_state,
+            "exit_code": runner_exit_code,
+            "ended_at": int(time.time()),
+            "updated_at": int(time.time()),
+        }
+        if stopping or monitor_state.get("reconnect"):
+            final_payload["ffmpeg_exit_code"] = return_code
+        if monitor_state.get("reconnect_reason"):
+            final_payload["reconnect_reason"] = monitor_state["reconnect_reason"]
+        _atomic_json(config.state_dir / "status.json", final_payload)
+        return RunOutcome(
+            exit_code=runner_exit_code,
+            state=final_state,
+            started_at=started_at,
+            reconnect_reason=(
+                str(monitor_state["reconnect_reason"])
+                if monitor_state.get("reconnect_reason")
+                else None
+            ),
+            ffmpeg_exit_code=return_code,
+        )
+
+
 def _run_ffmpeg(
     config: DirectStreamConfig,
     *,
     mode: str,
     output_path: Path | None,
     duration_sec: int | None,
+    reconnect: ReconnectConfig | None = None,
 ) -> int:
-    validate_runtime(config, mode=mode)
+    captions_active = validate_runtime(config, mode=mode)
+    captions_active = captions_active and prepare_caption_runtime(config)
     command = build_ffmpeg_command(
         config,
         mode=mode,
         output_path=output_path,
         duration_sec=duration_sec,
+        captions_active=captions_active,
     )
 
     config.state_dir.mkdir(parents=True, exist_ok=True)
@@ -440,82 +897,71 @@ def _run_ffmpeg(
         except BlockingIOError as exc:
             raise AlreadyRunningError("direct stream is already running") from exc
 
-        started_at = int(time.time())
-        with config.log_file.open("a", encoding="utf-8") as log_stream:
-            child = subprocess.Popen(
+        if mode != "live" or reconnect is None or not reconnect.enabled:
+            return _run_ffmpeg_once(
+                config,
                 command,
-                cwd=REPO_ROOT,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=log_stream,
-                text=True,
-                bufsize=1,
-                start_new_session=True,
-            )
-            base_state: dict[str, object] = {
-                "backend": "ffmpeg",
-                "mode": mode,
-                "running": True,
-                "state": "running",
-                "pid": os.getpid(),
-                "ffmpeg_pid": child.pid,
-                "started_at": started_at,
-                "updated_at": started_at,
-                "config": config.public_dict(),
-            }
-            _atomic_json(config.state_dir / "status.json", base_state)
+                mode=mode,
+                reconnect=None,
+                captions_active=captions_active,
+            ).exit_code
 
-            stopping = False
+        # Live supervise loop: reconnect on Twitch-side cuts and unexpected
+        # FFmpeg exits, mirroring OBS's automatic reconnect behaviour.
+        consecutive = 0
+        stop_requested = False
 
-            def stop_child(signum: int, _frame: object) -> None:
-                nonlocal stopping
-                if stopping:
-                    return
-                stopping = True
-                try:
-                    child.send_signal(signal.SIGINT if signum == signal.SIGTERM else signum)
-                except ProcessLookupError:
-                    pass
+        def request_stop(_signum: int, _frame: object) -> None:
+            nonlocal stop_requested
+            stop_requested = True
 
-            previous_term = signal.signal(signal.SIGTERM, stop_child)
-            previous_int = signal.signal(signal.SIGINT, stop_child)
-            batch: list[str] = []
-            latest: dict[str, object] = {}
-            try:
-                assert child.stdout is not None
-                for line in child.stdout:
-                    batch.append(line)
-                    if line.startswith("progress="):
-                        latest.update(parse_progress_lines(batch))
-                        batch.clear()
-                        payload = {
-                            **base_state,
-                            **latest,
-                            "updated_at": int(time.time()),
-                        }
-                        _atomic_json(config.state_dir / "status.json", payload)
-                return_code = child.wait()
-            finally:
-                signal.signal(signal.SIGTERM, previous_term)
-                signal.signal(signal.SIGINT, previous_int)
+        previous_term = signal.signal(signal.SIGTERM, request_stop)
+        previous_int = signal.signal(signal.SIGINT, request_stop)
+        try:
+            while not stop_requested:
+                outcome = _run_ffmpeg_once(
+                    config,
+                    command,
+                    mode=mode,
+                    reconnect=reconnect,
+                    captions_active=captions_active,
+                )
+                if stop_requested or outcome.state == "stopped":
+                    return 0
+                if outcome.state == "completed":
+                    return outcome.exit_code
 
-            runner_exit_code, final_state = classify_ffmpeg_exit(
-                return_code,
-                stopping=stopping,
-            )
-            final_payload = {
-                **base_state,
-                **latest,
-                "running": False,
-                "state": final_state,
-                "exit_code": runner_exit_code,
-                "ended_at": int(time.time()),
-                "updated_at": int(time.time()),
-            }
-            if stopping:
-                final_payload["ffmpeg_exit_code"] = return_code
-            _atomic_json(config.state_dir / "status.json", final_payload)
-            return runner_exit_code
+                reason = outcome.reconnect_reason or "ffmpeg_exit"
+                consecutive += 1
+                if consecutive > reconnect.max_consecutive_restarts:
+                    _record_reconnect(
+                        config,
+                        reason=reason,
+                        consecutive=consecutive,
+                        offline_streak=0,
+                        backoff_sec=0,
+                    )
+                    raise RuntimeCheckError(
+                        f"direct stream reconnect limit reached "
+                        f"({reconnect.max_consecutive_restarts})"
+                    )
+                backoff = reconnect.backoff_sec * min(2 ** (consecutive - 1), 16)
+                _record_reconnect(
+                    config,
+                    reason=reason,
+                    consecutive=consecutive,
+                    offline_streak=0,
+                    backoff_sec=backoff,
+                )
+                if reconnect.reload_relay and reason == "twitch_offline":
+                    _reload_relay(config)
+                deadline = time.monotonic() + backoff
+                while not stop_requested and time.monotonic() < deadline:
+                    time.sleep(0.5)
+            return 0
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
+            signal.signal(signal.SIGINT, previous_int)
     finally:
         lock_stream.close()
 
@@ -588,11 +1034,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(command, ensure_ascii=False))
         return 0
     if args.action == "validate":
-        validate_runtime(config, mode=args.mode)
-        print(json.dumps({"ok": True, "mode": args.mode, "config": config.public_dict()}, ensure_ascii=False))
+        captions_active = validate_runtime(config, mode=args.mode)
+        if captions_active:
+            captions_active = prepare_caption_runtime(config)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "mode": args.mode,
+                    "config": config.public_dict(),
+                    "closed_captions_active": captions_active,
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
     if args.action == "run":
-        return _run_ffmpeg(config, mode="live", output_path=None, duration_sec=None)
+        reconnect_config = load_reconnect_config()
+        return _run_ffmpeg(
+            config,
+            mode="live",
+            output_path=None,
+            duration_sec=None,
+            reconnect=reconnect_config,
+        )
     if args.action == "record":
         return _run_ffmpeg(
             config,

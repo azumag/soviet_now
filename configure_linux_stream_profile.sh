@@ -60,6 +60,9 @@ required_code=(
 	set_game_internal_size.sh
 	cutover_direct_stream.sh
 	lib/direct_stream.py
+	lib/model_output_guard.py
+	lib/closed_captions.py
+	lib/closed_captions.sh
 	lib/direct_soak.py
 	lib/direct_av_sync.py
 	lib/direct_overlay.mjs
@@ -143,6 +146,10 @@ set_env_value SOREN_DIRECT_STREAM_PULSE_SOURCE soren_null.monitor
 set_env_value SOREN_DIRECT_STREAM_AUDIO_HZ 48000
 set_env_value SOREN_DIRECT_STREAM_AUDIO_CHANNELS 2
 set_env_value SOREN_DIRECT_STREAM_LOCAL_URL rtmp://127.0.0.1:1935/soren/live
+# Native captions require the separately built docichcc FFmpeg.  Keep the
+# feature disabled until the binary and Twitch-side acceptance gates pass.
+set_env_value DOCICH_CC_ENABLED 0
+set_env_value DOCICH_CC_SOCKET "/run/user/$(id -u)/docich/ffmpeg-cc.sock"
 set_env_value SOREN_DIRECT_CUTOVER_WARMUP_SEC 15
 set_env_value SOREN_DIRECT_SOAK_DURATION_SEC 86400
 set_env_value SOREN_DIRECT_SOAK_INTERVAL_SEC 60

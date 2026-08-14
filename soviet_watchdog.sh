@@ -176,9 +176,15 @@ relaunch() {
 		[ -n "$(port_held)" ] && { log "ERROR: port $PORT 解放できず → relaunch 中止"; return 1; }
 	fi
 	log "relaunch: node soviet_local.mjs (cwd=$SCRIPT_DIR)"
+	# クラッシュ原因調査用に直前ログを退避する（次回 relaunch で上書きされるため）
+	if [ -f "$GAME_LOG" ] && [ -s "$GAME_LOG" ]; then
+		local crash_log="$SCRIPT_DIR/tmp/debug/soviet_local.log.$(date +%Y%m%d_%H%M%S)"
+		cp "$GAME_LOG" "$crash_log" 2>/dev/null || true
+		ls -1t "$SCRIPT_DIR"/tmp/debug/soviet_local.log.* 2>/dev/null | tail -n +31 | xargs -r rm -f 2>/dev/null || true
+	fi
 	if command -v tmux >/dev/null 2>&1; then
 		tmux kill-session -t soren_bridge 2>/dev/null || true
-		tmux new-session -d -s soren_bridge "cd '$SCRIPT_DIR' && exec node soviet_local.mjs > '$GAME_LOG' 2>&1"
+		tmux new-session -d -s soren_bridge "cd '$SCRIPT_DIR' && set -a && . ./.env && set +a && exec node soviet_local.mjs > '$GAME_LOG' 2>&1"
 	else
 		nohup node soviet_local.mjs > "$GAME_LOG" 2>&1 &
 	fi

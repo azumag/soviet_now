@@ -485,6 +485,8 @@ SOREN_DIRECT_STREAM_PULSE_SOURCE=soren_null.monitor
 SOREN_DIRECT_STREAM_AUDIO_HZ=48000
 SOREN_DIRECT_STREAM_AUDIO_CHANNELS=2
 SOREN_DIRECT_STREAM_LOCAL_URL=rtmp://127.0.0.1:1935/soren/live
+DOCICH_CC_ENABLED=0
+DOCICH_CC_SOCKET=/run/user/1001/docich/ffmpeg-cc.sock
 SOREN_DIRECT_CUTOVER_WARMUP_SEC=15
 SOREN_DIRECT_SOAK_DURATION_SEC=86400
 SOREN_DIRECT_SOAK_INTERVAL_SEC=60
@@ -508,6 +510,9 @@ PoCの非配信録画と状態確認:
 ./direct_stream.sh record --output tmp/direct-poc.mkv --duration 60
 ./direct_stream_status.sh
 ```
+
+VOICEVOX日本語音声と同期したTwitch Closed Captionsは、既定では無効です。
+カスタムFFmpegのビルド、固定英文PoC、実配信のCC切替確認、音声無回帰を順に通した場合だけ有効化します。設計、導入、rollback、受入条件は [`docs/twitch_closed_captions.md`](docs/twitch_closed_captions.md) を参照してください。
 
 現行OBSの実測基準と直接録画を同条件で比較する場合は、明示確認付きbenchmarkを使う。OBSは計測区間だけ停止し、終了時はStartStream要求の受付だけで成功扱いせず、外部RTMPの一時拒否も考慮して実際の`streaming=on`まで再試行する。
 

@@ -16,8 +16,11 @@ not_ok() { echo "not ok - $1"; FAIL=1; }
 sed -n '/^_voicevox_synth_lock_wait_sec()/,/^}/p' "$SRC" > "$TMP/fn_wait.sh"
 sed -n '/^_voicevox_synth_timeout_sec()/,/^}/p' "$SRC" > "$TMP/fn_timeout.sh"
 sed -n '/^_has_pending_comment_queue()/,/^}/p' "$SRC" > "$TMP/fn_pending.sh"
+sed -n '/^_radio_should_yield_to_comment()/,/^}/p' "$SRC" > "$TMP/fn_radio_yield.sh"
 . "$TMP/fn_wait.sh"
 . "$TMP/fn_timeout.sh"
+. "$TMP/fn_pending.sh"
+. "$TMP/fn_radio_yield.sh"
 
 # --- ロック解放・再取得のコア挙動を再現 ---
 # 実際の _acquire/_release は mkdir ロックなので、そのまま source するには
@@ -45,8 +48,11 @@ timeout_comment=$(_voicevox_synth_timeout_sec)
 export SOURCE_LABEL=radio_render:news
 wait_radio=$(_voicevox_synth_lock_wait_sec)
 timeout_radio=$(_voicevox_synth_timeout_sec)
+export SOURCE_LABEL=improve_progress
+wait_progress=$(_voicevox_synth_lock_wait_sec)
 
 [ "$wait_comment" -gt "$wait_radio" ] && ok "comment waits longer than radio (comment=$wait_comment radio=$wait_radio)" || not_ok "comment should wait longer: comment=$wait_comment radio=$wait_radio"
+[ "$wait_progress" -gt "$wait_radio" ] && ok "foreground progress waits longer than radio (progress=$wait_progress radio=$wait_radio)" || not_ok "foreground progress should wait longer: progress=$wait_progress radio=$wait_radio"
 [ "$timeout_comment" -ge "$timeout_radio" ] && ok "comment timeout >= radio (comment=$timeout_comment radio=$timeout_radio)" || not_ok "comment timeout should be >= radio"
 
 # --- テスト2: ラジオ render のチャンク上限 ---
@@ -62,6 +68,25 @@ if [ "${SOURCE_LABEL#radio_render:}" != "$SOURCE_LABEL" ]; then
 	[ "$_max_pre_chunks" -gt "$_radio_chunk_cap" ] && _max_pre_chunks="$_radio_chunk_cap"
 fi
 [ "$_max_pre_chunks" -eq 12 ] && ok "radio chunk cap applied (16 -> 12)" || not_ok "radio cap: got $_max_pre_chunks want 12"
+
+# --- テスト5: ラジオ再生はコメントに譲らない（割り込み無効化） ---
+export SOURCE_LABEL=radio:news SAY_DISABLE_COMMENT_YIELD=1
+unset -f _has_pending_comment_queue 2>/dev/null || true
+_has_pending_comment_queue() { return 0; }  # pending コメントありを模擬
+if _radio_should_yield_to_comment; then
+	not_ok "radio with SAY_DISABLE_COMMENT_YIELD=1 should not yield"
+else
+	ok "radio with SAY_DISABLE_COMMENT_YIELD=1 does not yield to comments"
+fi
+
+# 明示的に譲る設定（0）では従来通り譲る
+export SAY_DISABLE_COMMENT_YIELD=0
+if _radio_should_yield_to_comment; then
+	ok "radio with SAY_DISABLE_COMMENT_YIELD=0 still yields when explicitly allowed"
+else
+	not_ok "radio with SAY_DISABLE_COMMENT_YIELD=0 should yield"
+fi
+unset SAY_DISABLE_COMMENT_YIELD
 
 # --- テスト3: コメントがロック保持中、ラジオはチャンク間で諦めてフォールバック ---
 export SOURCE_LABEL=radio_render:news

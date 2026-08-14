@@ -89,6 +89,11 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /data-soren-region="bottom"[^}]+#bottom-rail\s*\{\s*top:\s*0/s);
   assert.match(html, /id="feed-g"/);
   assert.match(html, /id="feed-s"/);
+  assert.match(html, /id="feed-i"/);
+  assert.match(html, /id="feed-i-status"/);
+  assert.match(html, /panel-i/);
+  assert.match(html, /data-improve-active="1"/);
+  assert.match(html, /badge-i/);
   assert.doesNotMatch(html, /FEED_PAGE_MS/);
   assert.doesNotMatch(html, /FEED_LINES_PER_PAGE/);
   assert.match(html, /feed-line /);
@@ -112,6 +117,66 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.doesNotMatch(html, /location[.]reload/);
   assert.doesNotMatch(html, /<iframe\b/i);
   assert.doesNotMatch(html, /innerHTML\s*=/);
+});
+
+
+test('broadcast state exposes an improve feed gated by wildcard activity', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-broadcast-improve-'));
+  const stats = path.join(temp, 'stats.html');
+  const ops = path.join(temp, 'ops.html');
+  const event = path.join(temp, 'event.html');
+  const improveState = path.join(temp, 'improve_state.json');
+  const improveLog = path.join(temp, 'improve_ai.log');
+  const wildcardState = path.join(temp, 'wildcard.json');
+  fs.writeFileSync(stats, '<pre>S</pre>');
+  fs.writeFileSync(ops, '<pre>O</pre>');
+  fs.writeFileSync(event, 'const EVENTS = [];\nconst WORK = {};\nconst GEN = [];\nconst VISIBLE_SEC = 18;\n');
+  fs.writeFileSync(improveState, JSON.stringify({
+    status: 'running',
+    phase: 'phase_c',
+    detail: 'バッチサマリ生成中',
+    progress: 40,
+    pid: 123,
+    started_at: 1780000000,
+    updated_at: 1780000010,
+  }));
+  const logLines = Array.from({ length: 30 }, (_, n) => `[02:44:0${n % 10}] [IMPROVE] line ${n}`);
+  logLines.push('\x1b[31m[WARN]\x1b[0m colored');
+  fs.writeFileSync(improveLog, logLines.join('\n') + '\n');
+  fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'idle' }));
+  const sources = {
+    statsHtmlFile: stats,
+    opsHtmlFile: ops,
+    eventHtmlFile: event,
+    improveStateFile: improveState,
+    improveLogFile: improveLog,
+    wildcardStateFile: wildcardState,
+  };
+
+  const running = buildDirectBroadcastOverlayState({ sources }, 1780000020000).feeds.improve;
+  assert.equal(running.active, true);
+  assert.equal(running.status, 'running');
+  assert.equal(running.phase, 'phase_c');
+  assert.equal(running.detail, 'バッチサマリ生成中');
+  assert.equal(running.progress, 40);
+  assert.equal(running.pid, 123);
+  assert.equal(running.startedAt, 1780000000);
+  assert.equal(running.updatedAt, 1780000010);
+  assert.ok(running.logUpdatedAt > 0, 'log mtime must drive the improve age display');
+  assert.equal(running.lineCount, 24);
+  assert.equal(running.logLines[0], '[02:44:07] [IMPROVE] line 7');
+  assert.ok(running.logLines.some((line) => line.includes('[WARN] colored') && !line.includes('\x1b')));
+
+  fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'running' }));
+  const gated = buildDirectBroadcastOverlayState({ sources }, 1780000020000).feeds.improve;
+  assert.equal(gated.active, false, 'wildcard evaluation must suppress the improve feed');
+
+  fs.writeFileSync(improveState, JSON.stringify({ status: 'idle' }));
+  fs.writeFileSync(wildcardState, JSON.stringify({ phase: 'idle' }));
+  const idle = buildDirectBroadcastOverlayState({ sources }, 1780000020000).feeds.improve;
+  assert.equal(idle.active, false);
+  assert.equal(idle.status, 'idle');
+  fs.rmSync(temp, { recursive: true, force: true });
 });
 
 
@@ -215,8 +280,11 @@ async function runBroadcastOverlayScript(initialState) {
     feed: new FakeElement('pre'),
     'feed-g': new FakeElement('div'),
     'feed-s': new FakeElement('div'),
+    'feed-i': new FakeElement('div'),
     'feed-g-lines': new FakeElement('span'),
     'feed-s-lines': new FakeElement('span'),
+    'feed-i-lines': new FakeElement('span'),
+    'feed-i-status': new FakeElement('span'),
     'feed-label': new FakeElement('span'),
     'feed-age': new FakeElement('span'),
     'feed-progress': new FakeElement('span'),
@@ -294,7 +362,10 @@ async function runBroadcastOverlayScript(initialState) {
     toastCards,
     feedG: byId['feed-g'],
     feedS: byId['feed-s'],
+    feedI: byId['feed-i'],
     summary: byId.summary,
+    feedProgress: byId['feed-progress'],
+    documentElement: document.documentElement,
     setState: (next) => { state = next; },
     fetchCount: () => fetchCount,
   };
@@ -436,4 +507,85 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   await overlay.tick(1);
   assert.equal(overlay.feedG.children.length, 5, 'feed update must re-render the merged panel');
   assert.equal(overlay.feedS.children.length, 3);
+});
+
+
+test('improve panel appears with colored log lines only while improve is running', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG\nRecent30: failed line stays styled',
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Loop        RUNNING',
+        updatedAt: 1780000080,
+        lineCount: 1,
+      },
+      improve: {
+        active: false,
+        status: 'idle',
+        phase: '',
+        detail: '',
+        logLines: [],
+        lineCount: 0,
+        updatedAt: 0,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  assert.equal(overlay.documentElement.dataset.improveActive, '');
+  assert.equal(overlay.feedI.children.length, 0, 'idle improve must not render the panel');
+  assert.equal(overlay.feedG.children.length, 2);
+  assert.equal(overlay.feedS.children.length, 1);
+  assert.match(overlay.feedProgress.textContent, /^3L$/, 'idle footer must count only GAME + OPS');
+
+  overlay.setState({
+    ...base,
+    feeds: {
+      ...base.feeds,
+        improve: {
+          active: true,
+          status: 'running',
+          phase: 'phase_c',
+          detail: 'バッチサマリ生成中',
+          logLines: ['[02:44:00] [IMPROVE] start', '[02:44:01] [BRANCH] pin', '✗ FAILED something'],
+          lineCount: 3,
+          updatedAt: 1780000080,
+          logUpdatedAt: 1780000090,
+        },
+      },
+  });
+  await overlay.tick(1);
+
+  assert.equal(overlay.documentElement.dataset.improveActive, '1');
+  assert.equal(overlay.feedI.children.length, 3, 'running improve must render its log tail');
+  assert.match(overlay.feedProgress.textContent, /^6L$/, 'running footer must include improve lines');
+  const iClasses = overlay.feedI.children.map((line) => line.className);
+  assert.ok(iClasses.some((cls) => cls.includes('teal')), '[IMPROVE] log line must be teal');
+  assert.ok(iClasses.some((cls) => cls.includes('purple')), '[BRANCH] log line must be purple');
+  assert.ok(iClasses.some((cls) => cls.includes('down')), 'FAILED log line must be red');
+  const gClasses = overlay.feedG.children.map((line) => line.className);
+  assert.ok(gClasses.some((cls) => cls.includes('g-head')), 'GAME header line keeps its own color');
+  assert.ok(gClasses.some((cls) => cls.includes('g-recent')),
+    'GAME line containing the word failed must not turn red while improve is active');
+
+  overlay.setState({
+    ...base,
+    feeds: {
+      ...base.feeds,
+      improve: { active: false, status: 'idle', phase: '', detail: '', logLines: [], lineCount: 0, updatedAt: 0 },
+    },
+  });
+  await overlay.tick(1);
+  assert.equal(overlay.documentElement.dataset.improveActive, '');
+  assert.equal(overlay.feedI.children.length, 0, 'idle improve must hide the panel again');
+  assert.match(overlay.feedProgress.textContent, /^3L$/, 'footer must drop improve lines when idle');
 });

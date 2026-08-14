@@ -13093,6 +13093,7 @@ PY
         config = (REPO_ROOT / "core/config.sh").read_text()
         radio_engine = (REPO_ROOT / "broadcast/radio_engine.sh").read_text()
         ai_generate = (REPO_ROOT / "lib/ai_generate.sh").read_text()
+        model_output_guard = (REPO_ROOT / "lib/model_output_guard.py").read_text()
         radio_corners = (REPO_ROOT / "broadcast/radio_corners.sh").read_text()
 
         self.assertIn('"webfetch":"allow"', config)
@@ -13104,10 +13105,16 @@ PY
         self.assertIn("取得できなかった", helpers)
         self.assertIn(r"[✗✕×]\s*(webfetch|websearch)\s+failed", radio_engine)
         self.assertIn(r"(WebFetch|WebSearch)", radio_engine)
-        self.assertIn("grep -Eiv '(WebFetch|WebSearch)'", radio_engine)
+        self.assertIn("_ai_guard_model_output", radio_engine)
+        self.assertIn(
+            'talk=$(printf \'%s\' "$talk" | _ai_guard_model_output)',
+            radio_engine,
+        )
         self.assertIn("talk_body=$(printf '%s' \"$talk_body\" | _sanitize_onair_text)", radio_engine)
         self.assertIn('_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio"', radio_engine)
-        self.assertIn("webfetch|websearch", ai_generate)
+        self.assertIn("model_output_guard.py", ai_generate)
+        self.assertIn("WORK_NOTE_RE", model_output_guard)
+        self.assertIn("UNSAFE_PROTOCOL_RE", model_output_guard)
         self.assertIn("webfetch|websearch", radio_corners)
 
     def test_webfetch_notification_does_not_fire_on_success_tool_marker(self):
