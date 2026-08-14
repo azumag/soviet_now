@@ -190,6 +190,7 @@ class TranslationRuntimeClient:
         endpoint: str = DEFAULT_TRANSLATION_URL,
         models: Sequence[str] = (DEFAULT_TRANSLATION_MODEL,),
         timeout: float = 30.0,
+        attempts_per_model: int = 3,
         opener: Callable[..., object] = urllib.request.urlopen,
     ) -> None:
         try:
@@ -213,9 +214,16 @@ class TranslationRuntimeClient:
             raise CaptionPlanError("at least one translation model is required")
         if not 0.1 <= timeout <= 120:
             raise CaptionPlanError("translation timeout must be between 0.1 and 120 seconds")
+        if not isinstance(attempts_per_model, int) or isinstance(
+            attempts_per_model, bool
+        ):
+            raise CaptionPlanError("translation attempts must be an integer")
+        if not 1 <= attempts_per_model <= 5:
+            raise CaptionPlanError("translation attempts must be between 1 and 5")
         self.endpoint = endpoint
         self.models = clean_models
         self.timeout = timeout
+        self.attempts_per_model = attempts_per_model
         self._opener = opener
 
     def translate(self, chunks: Sequence[str], *, max_chars: int = 64) -> list[str]:
@@ -232,50 +240,65 @@ class TranslationRuntimeClient:
         prompt = _translation_prompt(chunks, max_chars)
         errors: list[str] = []
         for model in self.models:
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-                "max_tokens": max(256, len(chunks) * 96),
-            }
-            request = urllib.request.Request(
-                self.endpoint,
-                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-                method="POST",
-            )
-            try:
-                with self._opener(request, timeout=self.timeout) as response:
-                    raw_response = response.read(MAX_TRANSLATION_RESPONSE_BYTES + 1)
-                if len(raw_response) > MAX_TRANSLATION_RESPONSE_BYTES:
-                    raise CaptionPlanError("translation response exceeds 64KiB")
-                result = json.loads(raw_response.decode("utf-8"))
-                content = result["choices"][0]["message"]["content"]
-                # Strict parsing is intentional: surrounding thinking/tool output
-                # must never become a spoken or displayed caption.
-                if not isinstance(content, str):
-                    raise CaptionPlanError("translation content must be a JSON string")
-                parsed = json.loads(
-                    content.strip(), object_pairs_hook=_strict_json_object
+            for attempt in range(1, self.attempts_per_model + 1):
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "max_tokens": max(256, len(chunks) * 96),
+                }
+                request = urllib.request.Request(
+                    self.endpoint,
+                    data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    method="POST",
                 )
-                if not isinstance(parsed, dict) or set(parsed) != {"translations"}:
-                    raise CaptionPlanError("translation content must match the exact schema")
-                translations = parsed["translations"]
-                if not isinstance(translations, list) or len(translations) != len(chunks):
-                    raise CaptionPlanError("translation array length does not match chunks")
-                if not all(isinstance(item, str) for item in translations):
-                    raise CaptionPlanError("translation array contains a non-string value")
-                return list(translations)
-            except (
-                CaptionPlanError,
-                KeyError,
-                IndexError,
-                TypeError,
-                ValueError,
-                OSError,
-                urllib.error.URLError,
-            ) as exc:
-                errors.append(f"{model}: {exc}")
+                try:
+                    with self._opener(request, timeout=self.timeout) as response:
+                        raw_response = response.read(MAX_TRANSLATION_RESPONSE_BYTES + 1)
+                    if len(raw_response) > MAX_TRANSLATION_RESPONSE_BYTES:
+                        raise CaptionPlanError("translation response exceeds 64KiB")
+                    result = json.loads(raw_response.decode("utf-8"))
+                    content = result["choices"][0]["message"]["content"]
+                    # Strict parsing is intentional: surrounding thinking/tool output
+                    # must never become a spoken or displayed caption. A fresh request
+                    # may recover, but malformed content is never extracted or reused.
+                    if not isinstance(content, str):
+                        raise CaptionPlanError("translation content must be a JSON string")
+                    parsed = json.loads(
+                        content.strip(), object_pairs_hook=_strict_json_object
+                    )
+                    if not isinstance(parsed, dict) or set(parsed) != {"translations"}:
+                        raise CaptionPlanError(
+                            "translation content must match the exact schema"
+                        )
+                    translations = parsed["translations"]
+                    if not isinstance(translations, list) or len(translations) != len(
+                        chunks
+                    ):
+                        raise CaptionPlanError(
+                            "translation array length does not match chunks"
+                        )
+                    if not all(isinstance(item, str) for item in translations):
+                        raise CaptionPlanError("translation array contains a non-string value")
+                    return list(translations)
+                except (OSError, urllib.error.URLError) as exc:
+                    # Transport failures can consume the full request timeout. Do not
+                    # multiply that delay by the malformed-output retry count; move to
+                    # the next configured model so the audio path remains fail-open.
+                    errors.append(f"{model} attempt {attempt}: {exc}")
+                    break
+                except (
+                    CaptionPlanError,
+                    KeyError,
+                    IndexError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
+                    errors.append(f"{model} attempt {attempt}: {exc}")
         raise CaptionPlanError("all translation models failed: " + "; ".join(errors))
 
 
@@ -516,8 +539,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if part.strip()
             )
             timeout = float(os.environ.get("DOCICH_CC_TRANSLATION_TIMEOUT_SEC", "30"))
+            attempts = int(os.environ.get("DOCICH_CC_TRANSLATION_ATTEMPTS", "3"))
             translations = TranslationRuntimeClient(
-                endpoint=endpoint, models=models, timeout=timeout
+                endpoint=endpoint,
+                models=models,
+                timeout=timeout,
+                attempts_per_model=attempts,
             ).translate(chunks, max_chars=args.max_columns * args.max_lines)
         payload = build_caption_plan(
             chunks,

@@ -64,4 +64,10 @@ else
 	not_ok "render-only could still publish a truncated radio WAV"
 fi
 
+if grep -Fq '_pre_chunk_wav="$(pwd)/$_stream_dir/chunk_${_pc_i}.wav"' "$SAY_SRC"; then
+	ok "locally synthesized playlists store absolute WAV paths"
+else
+	not_ok "local playlist paths can be resolved twice and break playback"
+fi
+
 exit "$FAIL"

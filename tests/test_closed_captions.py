@@ -98,6 +98,50 @@ class ClosedCaptionPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(closed_captions.CaptionPlanError, "all translation models failed"):
             client.translate(["こんにちは。"])
 
+    def test_translation_client_retries_without_accepting_malformed_output(self) -> None:
+        malformed = {
+            "choices": [
+                {
+                    "message": {
+                        "content": 'thinking\n{"translations":["Hidden."]}'
+                    }
+                }
+            ]
+        }
+        valid = {
+            "choices": [{"message": {"content": '{"translations":["Hello."]}'}}]
+        }
+        responses = iter((_Response(malformed), _Response(valid)))
+        calls = []
+
+        def opener(*_args, **_kwargs):
+            calls.append(1)
+            return next(responses)
+
+        client = closed_captions.TranslationRuntimeClient(
+            attempts_per_model=2,
+            opener=opener,
+        )
+        self.assertEqual(client.translate(["こんにちは。"]), ["Hello."])
+        self.assertEqual(len(calls), 2)
+
+    def test_translation_client_does_not_retry_transport_failure(self) -> None:
+        calls = []
+
+        def opener(*_args, **_kwargs):
+            calls.append(1)
+            raise TimeoutError("translation endpoint timed out")
+
+        client = closed_captions.TranslationRuntimeClient(
+            attempts_per_model=3,
+            opener=opener,
+        )
+        with self.assertRaisesRegex(
+            closed_captions.CaptionPlanError, "all translation models failed"
+        ):
+            client.translate(["こんにちは。"])
+        self.assertEqual(len(calls), 1)
+
     def test_translation_client_rejects_extra_schema_keys(self) -> None:
         response = {
             "choices": [

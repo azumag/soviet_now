@@ -1987,7 +1987,11 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 							break
 						fi
 					fi
-					_pre_chunk_wav="$_stream_dir/chunk_${_pc_i}.wav"
+					# The playback list may later be read from beside the content copy,
+					# while deferred bundles intentionally use paths relative to the
+					# bundle.  Store locally synthesized chunks as absolute paths so the
+					# two playlist formats cannot be confused.
+					_pre_chunk_wav="$(pwd)/$_stream_dir/chunk_${_pc_i}.wav"
 					_touch_voicevox_synth_lock_heartbeat
 					if _synthesize_chunk "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"; then
 						printf '%s\n' "$_pre_chunk_wav" >>"$PRE_SYNTH_PLAYLIST_FILE"
