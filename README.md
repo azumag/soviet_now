@@ -259,12 +259,13 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOS `say` で読み上げる。
 
 - **トーク本文**: 試合結果・雑談・ソ連ネタを生成 → `say_enqueue.sh` で再生
-- **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）
+- **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）。英語コメントは英語返答と日本語訳を構造化し、Flite英語音声 → VOICEVOX日本語音声の順に1本のWAVへ結合して再生する
 - **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。従来どおり順次再生しつつ、`say` / `ffmpeg` 異常終了時は自動リトライ
 - コメント返しプロセスは `disown` で親プロセスから独立しており、次のゲーム開始時にトーク生成が kill されても再生が中断されない
 - `RADIO_SAY_RATE=180` で読み上げ速度を制御（macOS `say -r` に渡される）
 - `SAY_AUDIO_DEVICE` を設定すると `say` で生成したAIFFを `ffmpeg -f audiotoolbox` で指定デバイス（例: `BlackHole 2ch`）へ出力
 - VOICEVOX WAV 再生で `SAY_AUDIO_DEVICE` の CoreAudio index 解決に失敗した場合は、`chrome_audio_player.mjs` が既存 Chrome CDP に接続して Audio element の `setSinkId` で BlackHole/対象ラベルへ再生する。CDP 接続前に失敗しても finally は安全に抜けるため、音声 worker のリトライを壊さない。
+- Linuxの英語コメント読み上げには小型オフラインTTSのFliteが必要。Ubuntuでは `sudo apt-get install flite`。声は `ENGLISH_TTS_VOICE`（既定 `slt`）、正規化後のサンプルレートは `ENGLISH_TTS_SAMPLE_RATE`（既定 `24000`）で変更できる
 - USB機器（例: GoPro）の抜き差しでCoreAudio再列挙が起きた際の途中切断に備え、再生実時間が想定尺より短すぎる場合は失敗扱いで自動リトライ
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能

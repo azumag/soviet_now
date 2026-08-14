@@ -91,18 +91,19 @@ PY
 
 _comment_store_generation_meta() {
 	local target="$1" mode="$2" model="$3" batch_hash="$4" attempt="$5" chars="$6" primary="$7" secondary="$8" tertiary="$9"
+	local speech_metadata_file="${10:-}"
 	[ -n "$target" ] || return 0
 	local sidecar
 	sidecar=$(_comment_meta_sidecar_path "$target")
 	mkdir -p "$(dirname "$COMMENT_GENERATION_HISTORY_FILE")" 2>/dev/null || true
-	python3 - "$sidecar" "$COMMENT_GENERATION_HISTORY_FILE" "$COMMENT_GENERATION_HISTORY_KEEP" "$target" "$mode" "$model" "$batch_hash" "$attempt" "$chars" "$primary" "$secondary" "$tertiary" <<'PY'
+	python3 - "$sidecar" "$COMMENT_GENERATION_HISTORY_FILE" "$COMMENT_GENERATION_HISTORY_KEEP" "$target" "$mode" "$model" "$batch_hash" "$attempt" "$chars" "$primary" "$secondary" "$tertiary" "$speech_metadata_file" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime, timezone
 from collections import deque
 
-sidecar, history_file, keep_raw, target, mode, model, batch_hash, attempt_raw, chars_raw, primary, secondary, tertiary = sys.argv[1:13]
+sidecar, history_file, keep_raw, target, mode, model, batch_hash, attempt_raw, chars_raw, primary, secondary, tertiary, speech_metadata_file = sys.argv[1:14]
 
 def to_int(raw: str) -> int:
     try:
@@ -129,6 +130,19 @@ payload = {
         "final": model or "unknown",
     },
 }
+
+if speech_metadata_file:
+    try:
+        with open(speech_metadata_file, "r", encoding="utf-8") as f:
+            speech_payload = json.load(f)
+        speech_segments = speech_payload.get("speech_segments")
+        if not speech_payload.get("bilingual") or not isinstance(speech_segments, list) or not speech_segments:
+            raise ValueError("invalid bilingual speech metadata")
+        payload["bilingual"] = True
+        payload["speech_segments"] = speech_segments
+    except Exception as exc:
+        print(f"invalid bilingual speech metadata: {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
 with open(sidecar, "w", encoding="utf-8") as f:
     json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -2134,6 +2148,11 @@ generate_comment_response() {
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="${viewer_chat_dir}/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
 	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
+	local comment_bilingual_required=0 comment_bilingual_expected_pairs=0
+	if comment_bilingual_expected_pairs=$(python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" detect "$comment_prompt_batch_file" 2>/dev/null); then
+		comment_bilingual_required=1
+		log "[COMMENT] 英語コメント${comment_bilingual_expected_pairs}件検出 → 英語返答 + 日本語訳モード"
+	fi
 
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
@@ -2300,6 +2319,7 @@ else:
 
 	(
 		_cg_my_pid="${BASHPID:-$(_my_pid)}"
+		local comment_bilingual_meta_file=""
 		_cleanup_comment_gen_worker() {
 			local raw file_pid file_started_at
 			raw=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null || true)
@@ -2311,6 +2331,7 @@ else:
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 			[ -n "$comment_prompt_batch_file" ] && rm -f "$comment_prompt_batch_file"
+			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
@@ -2427,6 +2448,23 @@ PY
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
+		if [ "$comment_bilingual_required" = "1" ]; then
+			cat >>"$comment_prompt_file" <<'BILINGUALCOMMENT'
+
+【英語コメントへの必須出力形式】
+- 英語で書かれた各コメントには、まず自然な英語で直接返答し、その直後に同じ内容の自然な日本語訳をです・ます調で付けてください。
+- コメントの上から順番を維持し、英語コメント1件ごとに次の3マーカーを必ず各1行で出力してください。
+===ENGLISH===
+(English reply only)
+===JAPANESE===
+(上の英語返答の日本語訳のみ)
+===END_BILINGUAL===
+- 英語部分に日本語を混ぜず、日本語訳部分に英語の説明や「in Japanese that means」のような前置きを入れないでください。
+- 日本語コメントへの返答は従来どおり日本語で書き、3マーカーを使わないでください。英語コメントと日本語コメントが混在しても、元コメントの順番を変えないでください。
+- マーカー以外の見出し、Markdown、補足説明は出力しないでください。
+BILINGUALCOMMENT
+		fi
+
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
 		case "$comment_retry_max" in
 		'' | *[!0-9]*) comment_retry_max=3 ;;
@@ -2483,6 +2521,8 @@ PY
 		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
+			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+			comment_bilingual_meta_file=""
 			echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 			local prompt_for_attempt="$comment_prompt_file"
 			if [ "$attempt" -gt 1 ]; then
@@ -2652,6 +2692,18 @@ RETRYCOMMENT
 			attempt_talk=$(_clean_comment_talk "$attempt_talk")
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
+			if [ "$comment_bilingual_required" = "1" ]; then
+				comment_bilingual_meta_file=$(mktemp /tmp/eloop_comment_bilingual_XXXXXXXX 2>/dev/null || true)
+				local parsed_bilingual_talk=""
+				if [ -z "$comment_bilingual_meta_file" ] || ! parsed_bilingual_talk=$(printf '%s' "$attempt_talk" | python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" parse --metadata "$comment_bilingual_meta_file" --expected-pairs "$comment_bilingual_expected_pairs"); then
+					log "[COMMENT] 英語返答または日本語訳の構造が不正なため再生成 (attempt ${attempt}/${comment_retry_max})"
+					[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+					comment_bilingual_meta_file=""
+					attempt=$((attempt + 1))
+					continue
+				fi
+				attempt_talk="$parsed_bilingual_talk"
+			fi
 			if ! _is_valid_comment_talk "$attempt_talk"; then
 				log "[COMMENT] 最終本文が不正/短文のため再生成 (attempt ${attempt}/${comment_retry_max})"
 				attempt=$((attempt + 1))
@@ -2714,7 +2766,7 @@ RETRYCOMMENT
 			echo "$attempt_talk" >"$queue_file"
 			_remember_comment_reply_text "$attempt_talk"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
-			_comment_store_generation_meta \
+			if ! _comment_store_generation_meta \
 				"$queue_file" \
 				"$_comment_mode_generated" \
 				"${attempt_model:-unknown}" \
@@ -2723,7 +2775,22 @@ RETRYCOMMENT
 				"${#attempt_talk}" \
 				"$comment_primary_agent" \
 				"$comment_second_agent" \
-				"$comment_third_agent"
+				"$comment_third_agent" \
+				"$comment_bilingual_meta_file"; then
+				if [ "$comment_bilingual_required" = "1" ]; then
+					log "[COMMENT] 英日再生メタデータ保存失敗のため再生成 (attempt ${attempt}/${comment_retry_max})"
+					_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
+					_comment_clear_generation_meta "$queue_file"
+					rm -f "$queue_file"
+					[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+					comment_bilingual_meta_file=""
+					attempt=$((attempt + 1))
+					continue
+				fi
+				log "[COMMENT] 生成メタデータ保存失敗（通常コメント再生は継続）"
+			fi
+			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+			comment_bilingual_meta_file=""
 			local new_hash
 			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
