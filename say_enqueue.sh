@@ -20,6 +20,18 @@ cd "$(dirname "$0")"
 # .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
 [ -f .env ] && . ./.env
 source lib/outbound_queue.sh 2>/dev/null || true
+if [ -f lib/closed_captions.sh ] && source lib/closed_captions.sh; then
+	:
+else
+	# Partial/rollback deployments must never break the existing audio path.
+	docich_cc_init() { :; }
+	docich_cc_is_enabled() { return 1; }
+	docich_cc_start_plan() { return 1; }
+	docich_cc_prepare() { return 1; }
+	docich_cc_commit() { return 1; }
+	docich_cc_clear() { return 0; }
+	docich_cc_cleanup() { :; }
+fi
 
 # Linux 判定: SOREN_OBS_PLATFORM=linux が最優先、無ければ uname。
 # Linux では BlackHole/afplay/audiotoolbox/say の代わりに
@@ -242,6 +254,7 @@ CHROME_AUDIO_USED=0
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
+docich_cc_init "$MY_TOKEN" "$MY_CONTENT"
 
 # 読み上げ修正: よくある誤読を事前に置換（WAVモード時はスキップ）
 if [ "$WAV_MODE" = "false" ]; then
@@ -612,10 +625,12 @@ _acquire_voicevox_synth_lock() {
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
+	docich_cc_cleanup
 	_clear_current_source_if_owner
 	_release_voicevox_synth_lock
 	_release_lock
 	rm -f "$MY_CONTENT"
+	rm -f "${MY_CONTENT%.txt}_pre.wav" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_chunks.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt.concat" 2>/dev/null
@@ -1014,6 +1029,11 @@ _play_prerendered_voicevox_chunks() {
 
 	local total=${#wavs[@]}
 	[ "$total" -gt 0 ] || return 1
+	local cc_available=0 cc_prepared=0 cc_clear_after_chunk=0
+	if docich_cc_prepare 0 0; then
+		cc_available=1
+		cc_prepared=1
+	fi
 	_set_current_source "playing"
 	_log "事前合成済みチャンク再生開始 (${total}チャンク)"
 
@@ -1035,6 +1055,13 @@ _play_prerendered_voicevox_chunks() {
 			play_failed=1
 			break
 		fi
+		if [ "$cc_prepared" -eq 1 ]; then
+			if ! docich_cc_commit "$i"; then
+				cc_available=0
+				cc_prepared=0
+				docich_cc_clear || true
+			fi
+		fi
 		CHROME_AUDIO_USED=0
 		if ! _launch_stream_wav "$chunk_wav"; then
 			_log "再生プレイヤー起動失敗: $chunk_wav"
@@ -1045,11 +1072,26 @@ _play_prerendered_voicevox_chunks() {
 		current_expected_sec=$(_estimate_audio_duration_sec "$chunk_wav")
 		echo "$play_pid" >"$PID_FILE"
 		LAST_SAY_PID="$play_pid"
+		cc_clear_after_chunk=0
+		if [ "$cc_available" -eq 1 ] && [ "$i" -lt $((total - 1)) ]; then
+			if docich_cc_prepare "$((i + 1))" "$((i + 1))"; then
+				cc_prepared=1
+			else
+				cc_available=0
+				cc_prepared=0
+				cc_clear_after_chunk=1
+			fi
+		else
+			cc_prepared=0
+		fi
 		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" 0; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
 			play_failed=1
 			rm -f "$chunk_wav" 2>/dev/null
 			break
+		fi
+		if [ "$cc_clear_after_chunk" -eq 1 ]; then
+			docich_cc_clear || true
 		fi
 		rm -f "$chunk_wav" 2>/dev/null
 		if [ "$i" -lt $((total - 1)) ] && [ -n "$SAY_CHUNK_GAP_SEC" ] && [ "$SAY_CHUNK_GAP_SEC" != "0" ]; then
@@ -1058,6 +1100,7 @@ _play_prerendered_voicevox_chunks() {
 			_touch_lock_heartbeat
 		fi
 	done
+	docich_cc_clear || true
 
 	[ "$play_failed" -eq 0 ] || return 1
 	_log "事前合成済みチャンク再生完了"
@@ -1417,6 +1460,10 @@ fi
 
 _play_with_retry() {
 	local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
+	local cc_for_retry=0 cc_prepared=0
+	if [ "${DOCICH_CC_PLAN_CHUNK_COUNT:-0}" -eq 1 ]; then
+		cc_for_retry=1
+	fi
 	LAST_SAY_PID=""
 	SAY_FORCE_DIRECT=0
 	GOOGLE_TTS_FAILED=0
@@ -1425,6 +1472,14 @@ _play_with_retry() {
 		_set_current_source "playing"
 		_log "say開始 (attempt=${attempt}, rate=${RATE})"
 		local say_pid
+		cc_prepared=0
+		if [ "$cc_for_retry" -eq 1 ]; then
+			if docich_cc_prepare 0 0; then
+				cc_prepared=1
+			else
+				cc_for_retry=0
+			fi
+		fi
 		LAUNCHED_SAY_PID=""
 		CHROME_AUDIO_USED=0
 		_launch_say
@@ -1432,6 +1487,10 @@ _play_with_retry() {
 		if [ -z "$say_pid" ]; then
 			_log "say起動失敗"
 		else
+			if [ "$cc_prepared" -eq 1 ] && ! docich_cc_commit 0; then
+				cc_for_retry=0
+				docich_cc_clear || true
+			fi
 			LAST_SAY_PID="$say_pid"
 			echo "$say_pid" >"$PID_FILE"
 			# 初回再生開始時にCC表記をTwitchチャットに投稿
@@ -1464,8 +1523,10 @@ _play_with_retry() {
 			_log "say途中切断の疑い (elapsed=${elapsed}s, expected=${expected_sec}s)"
 		fi
 		if [ "$say_rc" -eq 0 ]; then
+			docich_cc_clear || true
 			return 0
 		fi
+		docich_cc_clear || true
 		if [ "${CHROME_AUDIO_USED:-0}" = "1" ]; then
 			_stop_chrome_audio_players
 			if [ "${timed_out:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] && ! _is_truncated_playback "$elapsed" "$expected_sec"; then
@@ -1665,14 +1726,16 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			PRE_SYNTH_CHUNKS_FILE=""
 			PRE_SYNTH_PLAYLIST_FILE=""
 
-			# テキストを ~100文字チャンクに分割
+			# 既存のVOICEVOX分割を字幕計画にもそのまま使い、音声経路を変えない。
 			_pre_text=$(cat "$MY_CONTENT" 2>/dev/null)
+			_pre_chunk_chars=100
 			_pre_chunks=()
 			while IFS= read -r _pc_line; do
 				[ -n "$_pc_line" ] && _pre_chunks+=("$_pc_line")
-			done < <(_split_tts_text "$_pre_text" 100)
+			done < <(_split_tts_text "$_pre_text" "$_pre_chunk_chars")
 
 			if [ ${#_pre_chunks[@]} -le 1 ]; then
+				docich_cc_start_plan "${_pre_chunks[@]}" || true
 				# 短いテキスト: 従来通り全文を1回で合成
 				PRE_SINGLE_TIMEOUT=$(_voicevox_synth_timeout_sec)
 				if [ -n "$TIMEOUT_CMD" ]; then
@@ -1712,6 +1775,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 				else
 					_log "テキスト分割: ${#_pre_chunks[@]}チャンク → 全チャンク事前合成"
 				fi
+				docich_cc_start_plan "${_pre_chunks[@]:0:PRE_MAX_CHUNKS}" || true
 				_stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
 				mkdir -p "$_stream_dir"
 				PRE_SYNTH_PLAYLIST_FILE="${MY_CONTENT%.txt}_wav_playlist.txt"

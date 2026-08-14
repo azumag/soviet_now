@@ -18,6 +18,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -107,6 +108,8 @@ class DirectStreamConfig:
     pulse_channels: int
     local_rtmp_url: str
     ffmpeg_bin: str
+    closed_captions_enabled: bool
+    closed_captions_socket: Path
     state_dir: Path
     log_file: Path
 
@@ -119,6 +122,7 @@ class DirectStreamConfig:
         # loopback.  Status files remain safe if that rule changes later.
         data = asdict(self)
         data.pop("local_rtmp_url", None)
+        data["closed_captions_socket"] = str(self.closed_captions_socket)
         data["state_dir"] = str(self.state_dir)
         data["log_file"] = str(self.log_file)
         return data
@@ -231,6 +235,23 @@ def _validate_loopback_rtmp_url(raw: str) -> str:
     return raw
 
 
+def _validate_caption_socket_path(raw: str) -> Path:
+    if not raw or any(character in raw for character in "\r\n\x00"):
+        raise ConfigError("DOCICH_CC_SOCKET is invalid")
+    if not re.fullmatch(r"/[A-Za-z0-9_./@+-]+", raw):
+        raise ConfigError("DOCICH_CC_SOCKET contains unsupported characters")
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.name in {"", ".", ".."}
+        or any(part in {".", ".."} for part in path.parts)
+    ):
+        raise ConfigError("DOCICH_CC_SOCKET must be an absolute Unix socket path")
+    if len(os.fsencode(path)) >= 104:
+        raise ConfigError("DOCICH_CC_SOCKET must be shorter than 104 bytes")
+    return path
+
+
 def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
     source = os.environ if env is None else env
     backend = str(source.get("SOREN_STREAM_BACKEND", "obs")).strip().lower()
@@ -265,6 +286,10 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
     if not ffmpeg_bin or any(ch in ffmpeg_bin for ch in "\r\n\x00"):
         raise ConfigError("SOREN_DIRECT_STREAM_FFMPEG_BIN is invalid")
 
+    runtime_dir = str(
+        source.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}"
+    ).rstrip("/")
+
     return DirectStreamConfig(
         backend=backend,
         display=display,
@@ -279,6 +304,15 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
         pulse_channels=_strict_int(source, "SOREN_DIRECT_STREAM_AUDIO_CHANNELS", 2, 1, 2),
         local_rtmp_url=local_url,
         ffmpeg_bin=ffmpeg_bin,
+        closed_captions_enabled=_strict_bool(source, "DOCICH_CC_ENABLED", False),
+        closed_captions_socket=_validate_caption_socket_path(
+            str(
+                source.get(
+                    "DOCICH_CC_SOCKET",
+                    f"{runtime_dir}/docich/ffmpeg-cc.sock",
+                )
+            ).strip()
+        ),
         state_dir=_resolve_repo_path(str(source.get("SOREN_DIRECT_STREAM_STATE_DIR", "")), "tmp/state/direct_stream"),
         log_file=_resolve_repo_path(str(source.get("SOREN_DIRECT_STREAM_LOG_FILE", "")), "logs/direct_stream.log"),
     )
@@ -290,6 +324,7 @@ def build_ffmpeg_command(
     mode: str,
     output_path: Path | None = None,
     duration_sec: int | None = None,
+    captions_active: bool | None = None,
 ) -> list[str]:
     if mode not in {"live", "record"}:
         raise ConfigError("mode must be live or record")
@@ -300,6 +335,8 @@ def build_ffmpeg_command(
 
     fps = str(config.fps)
     gop = str(config.fps * 2)
+    if captions_active is None:
+        captions_active = config.closed_captions_enabled
     command = [
         config.ffmpeg_bin,
         "-hide_banner",
@@ -373,6 +410,15 @@ def build_ffmpeg_command(
         "-progress",
         "pipe:1",
     ]
+    if captions_active:
+        # The socket path is restricted to a filter-safe character subset in
+        # load_config, so it cannot inject another filter or option here.
+        video_output_index = command.index("-c:v")
+        command[video_output_index:video_output_index] = [
+            "-vf",
+            f"docichcc=socket={config.closed_captions_socket}",
+        ]
+        command[command.index("-preset"):command.index("-preset")] = ["-a53cc", "1"]
     if duration_sec is not None:
         command.extend(["-t", str(duration_sec)])
     if mode == "live":
@@ -412,7 +458,61 @@ def validate_local_relay(config: DirectStreamConfig) -> None:
     connection.close()
 
 
-def validate_runtime(config: DirectStreamConfig, *, mode: str) -> None:
+def caption_capabilities_available(config: DirectStreamConfig) -> bool:
+    """Return whether this FFmpeg can inject and encode A/53 captions.
+
+    Caption support is additive and deliberately fail-open.  A stock FFmpeg
+    must never prevent the existing audio/video stream from starting.
+    """
+    if not config.closed_captions_enabled:
+        return False
+    try:
+        filters = _checked([config.ffmpeg_bin, "-hide_banner", "-filters"])
+        encoder_help = _checked(
+            [config.ffmpeg_bin, "-hide_banner", "-h", "encoder=libx264"]
+        )
+    except RuntimeCheckError as exc:
+        print(f"direct_stream: closed captions disabled ({exc})", file=sys.stderr)
+        return False
+    if not re.search(r"^\s*\.\S*\s+docichcc\s", filters, re.MULTILINE):
+        print(
+            "direct_stream: closed captions disabled (docichcc filter is unavailable)",
+            file=sys.stderr,
+        )
+        return False
+    if not re.search(r"(?:^|\s)-?a53cc(?:\s|$)", encoder_help):
+        print(
+            "direct_stream: closed captions disabled (libx264 a53cc is unavailable)",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def prepare_caption_runtime(config: DirectStreamConfig) -> bool:
+    """Create a private socket directory, or disable captions without failing."""
+    if not config.closed_captions_enabled:
+        return False
+    parent = config.closed_captions_socket.parent
+    try:
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        metadata = parent.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise OSError("socket parent is not a real directory")
+        if metadata.st_uid != os.geteuid():
+            raise OSError("socket parent is not owned by this user")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            parent.chmod(0o700)
+    except OSError as exc:
+        print(
+            f"direct_stream: closed captions disabled (socket directory: {exc})",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def validate_runtime(config: DirectStreamConfig, *, mode: str) -> bool:
     if sys.platform != "linux":
         raise RuntimeCheckError("FFmpeg direct streaming is Linux-only")
     if mode == "live" and config.backend != "ffmpeg":
@@ -454,6 +554,7 @@ def validate_runtime(config: DirectStreamConfig, *, mode: str) -> None:
     }
     if config.pulse_source not in source_names:
         raise RuntimeCheckError(f"PulseAudio source was not found: {config.pulse_source}")
+    return caption_capabilities_available(config)
 
 
 def parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
@@ -639,6 +740,7 @@ def _run_ffmpeg_once(
     *,
     mode: str,
     reconnect: ReconnectConfig | None,
+    captions_active: bool = False,
 ) -> RunOutcome:
     """Run FFmpeg once and return the outcome of this single publish session."""
     started_at = int(time.time())
@@ -663,6 +765,10 @@ def _run_ffmpeg_once(
             "started_at": started_at,
             "updated_at": started_at,
             "config": config.public_dict(),
+            "closed_captions": {
+                "requested": config.closed_captions_enabled,
+                "active": captions_active,
+            },
         }
         if reconnect is not None:
             base_state["reconnect"] = reconnect.public_dict()
@@ -768,12 +874,14 @@ def _run_ffmpeg(
     duration_sec: int | None,
     reconnect: ReconnectConfig | None = None,
 ) -> int:
-    validate_runtime(config, mode=mode)
+    captions_active = validate_runtime(config, mode=mode)
+    captions_active = captions_active and prepare_caption_runtime(config)
     command = build_ffmpeg_command(
         config,
         mode=mode,
         output_path=output_path,
         duration_sec=duration_sec,
+        captions_active=captions_active,
     )
 
     config.state_dir.mkdir(parents=True, exist_ok=True)
@@ -795,6 +903,7 @@ def _run_ffmpeg(
                 command,
                 mode=mode,
                 reconnect=None,
+                captions_active=captions_active,
             ).exit_code
 
         # Live supervise loop: reconnect on Twitch-side cuts and unexpected
@@ -815,6 +924,7 @@ def _run_ffmpeg(
                     command,
                     mode=mode,
                     reconnect=reconnect,
+                    captions_active=captions_active,
                 )
                 if stop_requested or outcome.state == "stopped":
                     return 0
@@ -924,8 +1034,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(command, ensure_ascii=False))
         return 0
     if args.action == "validate":
-        validate_runtime(config, mode=args.mode)
-        print(json.dumps({"ok": True, "mode": args.mode, "config": config.public_dict()}, ensure_ascii=False))
+        captions_active = validate_runtime(config, mode=args.mode)
+        if captions_active:
+            captions_active = prepare_caption_runtime(config)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "mode": args.mode,
+                    "config": config.public_dict(),
+                    "closed_captions_active": captions_active,
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
     if args.action == "run":
         reconnect_config = load_reconnect_config()

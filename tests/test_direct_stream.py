@@ -52,6 +52,74 @@ class DirectStreamTests(unittest.TestCase):
         self.assertIn("yuv420p", command)
         self.assertIn("-g 60", joined)
         self.assertEqual(command[-1], "rtmp://127.0.0.1:1935/soren/live")
+        self.assertNotIn("-a53cc", command)
+        self.assertFalse(any("docichcc" in argument for argument in command))
+
+    def test_caption_command_is_feature_flagged_and_uses_validated_socket(self) -> None:
+        config = direct_stream.load_config(
+            base_env(
+                DOCICH_CC_ENABLED="1",
+                DOCICH_CC_SOCKET="/tmp/docich-private/cc.sock",
+            )
+        )
+        command = direct_stream.build_ffmpeg_command(config, mode="live")
+        self.assertIn("docichcc=socket=/tmp/docich-private/cc.sock", command)
+        self.assertIn("-a53cc", command)
+        self.assertEqual(command[command.index("-a53cc") + 1], "1")
+
+        fallback = direct_stream.build_ffmpeg_command(
+            config, mode="live", captions_active=False
+        )
+        self.assertNotIn("-a53cc", fallback)
+        self.assertFalse(any("docichcc" in argument for argument in fallback))
+
+    def test_caption_config_rejects_filter_injection_and_long_socket_paths(self) -> None:
+        for socket_path in (
+            "/tmp/cc.sock,drawtext=text=bad",
+            "/tmp/cc.sock:bad",
+            "/tmp/../cc.sock",
+            "/" + ("a" * 104),
+            "relative/cc.sock",
+        ):
+            with self.subTest(socket_path=socket_path):
+                with self.assertRaises(direct_stream.ConfigError):
+                    direct_stream.load_config(
+                        base_env(DOCICH_CC_SOCKET=socket_path)
+                    )
+
+    def test_caption_capability_check_fails_open(self) -> None:
+        config = direct_stream.load_config(base_env(DOCICH_CC_ENABLED="1"))
+        with mock.patch.object(
+            direct_stream,
+            "_checked",
+            side_effect=[" ... copy V->V\n", "  -a53cc <boolean>\n"],
+        ):
+            self.assertFalse(direct_stream.caption_capabilities_available(config))
+
+        with mock.patch.object(
+            direct_stream,
+            "_checked",
+            side_effect=[
+                " ... docichcc V->V\n",
+                "  -a53cc <boolean> use A53 closed captions\n",
+            ],
+        ):
+            self.assertTrue(direct_stream.caption_capabilities_available(config))
+
+    def test_caption_runtime_directory_is_private(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            socket_path = Path(temp_dir) / "private" / "cc.sock"
+            config = direct_stream.load_config(
+                base_env(
+                    DOCICH_CC_ENABLED="1",
+                    DOCICH_CC_SOCKET=str(socket_path),
+                )
+            )
+            self.assertTrue(direct_stream.prepare_caption_runtime(config))
+            self.assertEqual(
+                socket_path.parent.stat().st_mode & 0o777,
+                0o700,
+            )
 
     def test_record_command_is_bounded_mkv_without_relay_url(self) -> None:
         config = direct_stream.load_config(base_env())
@@ -357,7 +425,7 @@ class DirectStreamTests(unittest.TestCase):
         ]
         calls: list[direct_stream.RunOutcome] = []
 
-        def fake_once(config_, command, *, mode, reconnect):
+        def fake_once(config_, command, *, mode, reconnect, captions_active=False):
             calls.append(outcomes.pop(0))
             return calls[-1]
 
@@ -394,7 +462,7 @@ class DirectStreamTests(unittest.TestCase):
             }
         )
 
-        def fake_once(config_, command, *, mode, reconnect):
+        def fake_once(config_, command, *, mode, reconnect, captions_active=False):
             return direct_stream.RunOutcome(
                 exit_code=0,
                 state="reconnect",

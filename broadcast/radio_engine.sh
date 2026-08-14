@@ -42,21 +42,7 @@ _run_opencode_radio_unqueued() {
 	fi
 	raw_text=$(cat "$raw_file")
 	_notify_webfetch_failure "RADIO" "$agent" "$raw_text" "radio" || true
-	cleaned=$(printf '%s' "$raw_text" |
-		_strip_ansi |
-		grep -v '^>' |
-		grep -v '^\^D' |
-		grep -v '^Script started on ' |
-		grep -v '^Script done on ' |
-		grep -v '^/[^ ]*$' |
-		grep -v '^[[:space:]]*/Users/' |
-		grep -v '^[[:space:]]*⚙' |
-		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
-		grep -Eiv '(WebFetch|WebSearch)' |
-		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
-		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
-		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d')
+	cleaned=$(printf '%s' "$raw_text" | _ai_guard_model_output)
 	rm -f "$raw_file"
 	if _contains_provider_error_text "$cleaned"; then
 		log "[RADIO] opencode provider error treated as failure (agent=$agent)" >&2
@@ -129,19 +115,7 @@ _run_opencode_comment_unqueued() {
 	fi
 	raw_text=$(cat "$raw_file")
 	_notify_webfetch_failure "COMMENT" "$agent" "$raw_text" "comment" || true
-	printf '%s' "$raw_text" |
-		_strip_ansi |
-		grep -v '^>' |
-		grep -v '^\^D' |
-		grep -v '^Script started on ' |
-		grep -v '^Script done on ' |
-		grep -v '^/[^ ]*$' |
-		grep -v '^[[:space:]]*/Users/' |
-		grep -Eiv '(WebFetch|WebSearch)' |
-		grep -Eiv '^[[:space:]]*[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b' |
-		grep -Eiv '^[[:space:]]*[✱→►▸][[:space:]]*(Grep|Read|Glob|List|WebFetch|WebSearch)\b' |
-		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d'
+	printf '%s' "$raw_text" | _ai_guard_model_output
 	rm -f "$raw_file"
 }
 
@@ -1549,6 +1523,8 @@ PREPASS_APPEND
 			_radio_gen_list="${radio_agents_list}"
 		fi
 		talk=$(ai_generate_list "RADIO:${corner_name}" "$_current_prompt_file" "$_radio_gen_list")
+		# Providerを問わず、完成文として分離できた部分だけを後段へ渡す。
+		talk=$(printf '%s' "$talk" | _ai_guard_model_output)
 		if [ -n "$talk" ]; then
 			provider_used="$AI_GENERATE_LAST_AGENT"
 			log "[RADIO:${corner_name}] ${provider_used} OK"
@@ -1557,6 +1533,7 @@ PREPASS_APPEND
 		if [ -z "$talk" ] && [ "$radio_allow_claude_fallback" = "true" ]; then
 			log "[RADIO:${corner_name}] all agents fail -> claude:${RADIO_CLAUDE_MODEL}"
 			talk=$(_run_claude_radio "$_current_prompt_file")
+			talk=$(printf '%s' "$talk" | _ai_guard_model_output)
 			[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}" && log "[RADIO:${corner_name}] claude:${RADIO_CLAUDE_MODEL} OK"
 			_radio_fallback_source="claude:${RADIO_CLAUDE_MODEL}"
 		fi

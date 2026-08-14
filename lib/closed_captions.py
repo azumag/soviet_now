@@ -1,0 +1,562 @@
+#!/usr/bin/env python3
+"""Plan and control native Twitch closed captions for Soren speech.
+
+The module deliberately keeps model output and FFmpeg control traffic behind
+strict schemas.  Only a JSON array of translations is accepted from the model;
+reasoning, tool traces, markdown fences, and any other surrounding text make
+the caption plan fail closed while audio continues normally.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from dataclasses import asdict, dataclass
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import tempfile
+import textwrap
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Callable, Mapping, Sequence
+
+
+PROTOCOL_VERSION = 1
+MAX_MESSAGE_BYTES = 4096
+MAX_TRANSLATION_RESPONSE_BYTES = 65536
+DEFAULT_SOCKET_PATH = str(
+    Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}")
+    / "docich"
+    / "ffmpeg-cc.sock"
+)
+DEFAULT_TRANSLATION_URL = "http://127.0.0.1:4100/v1/chat/completions"
+DEFAULT_TRANSLATION_MODEL = "minimax-m3"
+EXECUTION_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+class CaptionError(RuntimeError):
+    """Base class for expected, fail-open caption errors."""
+
+
+class CaptionPlanError(CaptionError):
+    """The translation or normalized caption plan was invalid."""
+
+
+class CaptionProtocolError(CaptionError):
+    """The FFmpeg caption socket rejected or malformed a request."""
+
+
+@dataclass(frozen=True)
+class CaptionPage:
+    index: int
+    lines: tuple[str, ...]
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+@dataclass(frozen=True)
+class BilingualSpeechChunk:
+    index: int
+    jaText: str
+    enText: str
+    pages: tuple[CaptionPage, ...]
+
+
+_PUNCTUATION_MAP = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
+        "\u2026": "...",
+        "\u00a0": " ",
+    }
+)
+
+
+def validate_execution_id(value: str) -> str:
+    if not EXECUTION_ID_RE.fullmatch(value):
+        raise CaptionPlanError("executionId contains unsupported characters")
+    return value
+
+
+def validate_page(value: int) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 31:
+        raise CaptionProtocolError("caption page must be between 0 and 31")
+    return value
+
+
+def normalize_caption_text(value: str) -> str:
+    """Normalize model output to the conservative CEA-608 ASCII subset."""
+    if not isinstance(value, str):
+        raise CaptionPlanError("caption translation must be a string")
+    value = value.translate(_PUNCTUATION_MAP)
+    value = unicodedata.normalize("NFKD", value)
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = "".join(ch if 0x20 <= ord(ch) <= 0x7E else " " for ch in value)
+    value = re.sub(r"\s+", " ", value).strip()
+    if not value:
+        raise CaptionPlanError("caption translation became empty after normalization")
+    return value
+
+
+def wrap_caption_pages(
+    value: str,
+    *,
+    max_columns: int = 32,
+    max_lines: int = 2,
+    max_pages: int = 1,
+) -> tuple[CaptionPage, ...]:
+    if not 1 <= max_columns <= 32:
+        raise CaptionPlanError("maxColumns must be between 1 and 32")
+    if not 1 <= max_lines <= 15:
+        raise CaptionPlanError("maxLines must be between 1 and 15")
+    if not 1 <= max_pages <= 32:
+        raise CaptionPlanError("maxPages must be between 1 and 32")
+
+    normalized = normalize_caption_text(value)
+    wrapper = textwrap.TextWrapper(
+        width=max_columns,
+        break_long_words=True,
+        break_on_hyphens=False,
+        replace_whitespace=True,
+        drop_whitespace=True,
+    )
+    lines = wrapper.wrap(normalized)
+    if not lines:
+        raise CaptionPlanError("caption has no displayable lines")
+    page_count = (len(lines) + max_lines - 1) // max_lines
+    if page_count > max_pages:
+        raise CaptionPlanError(
+            f"caption requires {page_count} pages; maximum is {max_pages}"
+        )
+    return tuple(
+        CaptionPage(index=index, lines=tuple(lines[offset : offset + max_lines]))
+        for index, offset in enumerate(range(0, len(lines), max_lines))
+    )
+
+
+def _translation_prompt(chunks: Sequence[str], max_chars: int) -> str:
+    numbered = "\n".join(
+        f"{index}: {json.dumps(chunk, ensure_ascii=False)}"
+        for index, chunk in enumerate(chunks)
+    )
+    return f"""You are a Japanese-to-English broadcast caption translator.
+Translate every numbered Japanese speech chunk into concise, natural English.
+Each translation must preserve the meaning and be at most {max_chars} ASCII characters.
+Do not add explanations, notes, markdown, speaker labels, or facts.
+Return exactly one JSON object in this schema and nothing else:
+{{"translations":["translation 0","translation 1"]}}
+The array length and order must exactly match the input.
+
+INPUT:
+{numbered}
+"""
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CaptionPlanError(f"translation content repeats key: {key}")
+        result[key] = value
+    return result
+
+
+class TranslationRuntimeClient:
+    """Small OpenAI-compatible translation client for the local LiteLLM runtime."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str = DEFAULT_TRANSLATION_URL,
+        models: Sequence[str] = (DEFAULT_TRANSLATION_MODEL,),
+        timeout: float = 30.0,
+        opener: Callable[..., object] = urllib.request.urlopen,
+    ) -> None:
+        try:
+            parsed_endpoint = urllib.parse.urlsplit(endpoint)
+            endpoint_port = parsed_endpoint.port
+        except ValueError as exc:
+            raise CaptionPlanError("translation endpoint is invalid") from exc
+        if (
+            parsed_endpoint.scheme != "http"
+            or parsed_endpoint.hostname not in {"127.0.0.1", "::1", "localhost"}
+            or parsed_endpoint.username is not None
+            or parsed_endpoint.password is not None
+            or endpoint_port is None
+            or not parsed_endpoint.path
+            or parsed_endpoint.query
+            or parsed_endpoint.fragment
+        ):
+            raise CaptionPlanError("translation endpoint must be loopback HTTP")
+        clean_models = tuple(model.strip() for model in models if model.strip())
+        if not clean_models:
+            raise CaptionPlanError("at least one translation model is required")
+        if not 0.1 <= timeout <= 120:
+            raise CaptionPlanError("translation timeout must be between 0.1 and 120 seconds")
+        self.endpoint = endpoint
+        self.models = clean_models
+        self.timeout = timeout
+        self._opener = opener
+
+    def translate(self, chunks: Sequence[str], *, max_chars: int = 64) -> list[str]:
+        if not chunks:
+            raise CaptionPlanError("no speech chunks were provided")
+        if len(chunks) > 32:
+            raise CaptionPlanError("at most 32 speech chunks are supported")
+        if any(not isinstance(chunk, str) or not chunk.strip() for chunk in chunks):
+            raise CaptionPlanError("speech chunks must be non-empty strings")
+        if any(len(chunk) > 1000 for chunk in chunks):
+            raise CaptionPlanError("speech chunk exceeds 1000 characters")
+        if not 1 <= max_chars <= 64:
+            raise CaptionPlanError("translation max_chars must be between 1 and 64")
+        prompt = _translation_prompt(chunks, max_chars)
+        errors: list[str] = []
+        for model in self.models:
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": max(256, len(chunks) * 96),
+            }
+            request = urllib.request.Request(
+                self.endpoint,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                method="POST",
+            )
+            try:
+                with self._opener(request, timeout=self.timeout) as response:
+                    raw_response = response.read(MAX_TRANSLATION_RESPONSE_BYTES + 1)
+                if len(raw_response) > MAX_TRANSLATION_RESPONSE_BYTES:
+                    raise CaptionPlanError("translation response exceeds 64KiB")
+                result = json.loads(raw_response.decode("utf-8"))
+                content = result["choices"][0]["message"]["content"]
+                # Strict parsing is intentional: surrounding thinking/tool output
+                # must never become a spoken or displayed caption.
+                if not isinstance(content, str):
+                    raise CaptionPlanError("translation content must be a JSON string")
+                parsed = json.loads(
+                    content.strip(), object_pairs_hook=_strict_json_object
+                )
+                if not isinstance(parsed, dict) or set(parsed) != {"translations"}:
+                    raise CaptionPlanError("translation content must match the exact schema")
+                translations = parsed["translations"]
+                if not isinstance(translations, list) or len(translations) != len(chunks):
+                    raise CaptionPlanError("translation array length does not match chunks")
+                if not all(isinstance(item, str) for item in translations):
+                    raise CaptionPlanError("translation array contains a non-string value")
+                return list(translations)
+            except (
+                CaptionPlanError,
+                KeyError,
+                IndexError,
+                TypeError,
+                ValueError,
+                OSError,
+                urllib.error.URLError,
+            ) as exc:
+                errors.append(f"{model}: {exc}")
+        raise CaptionPlanError("all translation models failed: " + "; ".join(errors))
+
+
+def build_caption_plan(
+    chunks: Sequence[str],
+    translations: Sequence[str],
+    *,
+    execution_id: str,
+    max_columns: int = 32,
+    max_lines: int = 2,
+    max_pages: int = 1,
+) -> dict[str, object]:
+    validate_execution_id(execution_id)
+    if not chunks or len(chunks) != len(translations):
+        raise CaptionPlanError("speech chunks and translations must be non-empty and aligned")
+    if len(chunks) > 32:
+        raise CaptionPlanError("at most 32 speech chunks are supported")
+
+    planned: list[BilingualSpeechChunk] = []
+    for index, (japanese, english) in enumerate(zip(chunks, translations, strict=True)):
+        japanese = japanese.strip()
+        if not japanese:
+            raise CaptionPlanError(f"Japanese chunk {index} is empty")
+        normalized = normalize_caption_text(english)
+        pages = wrap_caption_pages(
+            normalized,
+            max_columns=max_columns,
+            max_lines=max_lines,
+            max_pages=max_pages,
+        )
+        planned.append(
+            BilingualSpeechChunk(
+                index=index,
+                jaText=japanese,
+                enText=normalized,
+                pages=pages,
+            )
+        )
+
+    return {
+        "v": PROTOCOL_VERSION,
+        "executionId": execution_id,
+        "language": "en",
+        "maxColumns": max_columns,
+        "maxLines": max_lines,
+        "chunks": [asdict(chunk) for chunk in planned],
+    }
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def load_plan(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CaptionPlanError(f"could not read caption plan: {path}") from exc
+    if payload.get("v") != PROTOCOL_VERSION:
+        raise CaptionPlanError("caption plan protocol version is unsupported")
+    validate_execution_id(str(payload.get("executionId", "")))
+    chunks = payload.get("chunks")
+    if not isinstance(chunks, list) or not chunks:
+        raise CaptionPlanError("caption plan has no chunks")
+    return payload
+
+
+class CaptionSocketClient:
+    def __init__(self, socket_path: str, *, timeout: float = 3.0) -> None:
+        path = Path(socket_path)
+        if not path.is_absolute() or len(os.fsencode(path)) >= 104:
+            raise CaptionProtocolError("caption socket path must be an absolute Unix path under 104 bytes")
+        if not 0.05 <= timeout <= 60:
+            raise CaptionProtocolError("caption socket timeout must be between 0.05 and 60 seconds")
+        self.socket_path = str(path)
+        self.timeout = timeout
+
+    def _request(self, payload: Mapping[str, object], expected_event: str) -> dict[str, object]:
+        wire = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
+        if len(wire) > MAX_MESSAGE_BYTES:
+            raise CaptionProtocolError("caption request exceeds 4KiB")
+        buffer = bytearray()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(self.timeout)
+            try:
+                connection.connect(self.socket_path)
+                connection.sendall(wire)
+                while len(buffer) <= MAX_MESSAGE_BYTES:
+                    block = connection.recv(1024)
+                    if not block:
+                        break
+                    buffer.extend(block)
+                    while b"\n" in buffer:
+                        raw, _, rest = buffer.partition(b"\n")
+                        buffer = bytearray(rest)
+                        response = json.loads(raw.decode("utf-8"))
+                        if not isinstance(response, dict):
+                            raise ValueError("caption response must be a JSON object")
+                        if response.get("event") == "error":
+                            raise CaptionProtocolError(
+                                f"{response.get('code', 'ERROR')}: {response.get('message', '')}"
+                            )
+                        if response.get("event") == expected_event:
+                            return response
+            except (OSError, ValueError, UnicodeError) as exc:
+                raise CaptionProtocolError(f"caption socket request failed: {exc}") from exc
+        raise CaptionProtocolError(f"caption socket closed before {expected_event} acknowledgement")
+
+    def prepare(self, execution_id: str, page: int, text: str) -> dict[str, object]:
+        validate_execution_id(execution_id)
+        validate_page(page)
+        normalized = "\n".join(normalize_caption_text(line) for line in text.splitlines())
+        encoded = base64.b64encode(normalized.encode("ascii")).decode("ascii")
+        return self._request(
+            {
+                "v": PROTOCOL_VERSION,
+                "op": "prepare",
+                "executionId": execution_id,
+                "page": page,
+                "textBase64": encoded,
+            },
+            "prepared",
+        )
+
+    def commit(self, execution_id: str, page: int) -> dict[str, object]:
+        validate_execution_id(execution_id)
+        validate_page(page)
+        return self._request(
+            {"v": PROTOCOL_VERSION, "op": "commit", "executionId": execution_id, "page": page},
+            "committed",
+        )
+
+    def clear(self, execution_id: str) -> dict[str, object]:
+        validate_execution_id(execution_id)
+        return self._request(
+            {"v": PROTOCOL_VERSION, "op": "clear", "executionId": execution_id},
+            "cleared",
+        )
+
+    def reset(self) -> dict[str, object]:
+        return self._request({"v": PROTOCOL_VERSION, "op": "reset"}, "reset")
+
+
+def _plan_page(plan: Mapping[str, object], chunk_index: int, page_index: int) -> tuple[str, str]:
+    chunks = plan["chunks"]
+    if not isinstance(chunks, list) or not 0 <= chunk_index < len(chunks):
+        raise CaptionPlanError("caption chunk index is out of range")
+    chunk = chunks[chunk_index]
+    if not isinstance(chunk, dict):
+        raise CaptionPlanError("caption chunk is malformed")
+    pages = chunk.get("pages")
+    if not isinstance(pages, list) or not 0 <= page_index < len(pages):
+        raise CaptionPlanError("caption page index is out of range")
+    page = pages[page_index]
+    if not isinstance(page, dict) or not isinstance(page.get("lines"), list):
+        raise CaptionPlanError("caption page is malformed")
+    lines = page["lines"]
+    if not lines or len(lines) > 2 or not all(isinstance(line, str) for line in lines):
+        raise CaptionPlanError("caption page lines are malformed")
+    text = "\n".join(lines)
+    return str(plan["executionId"]), text
+
+
+def _read_chunks(path: Path) -> list[str]:
+    try:
+        chunks = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError as exc:
+        raise CaptionPlanError(f"could not read speech chunks: {path}") from exc
+    if not chunks:
+        raise CaptionPlanError("speech chunk file is empty")
+    return chunks
+
+
+def _read_translation_fixture(path: Path) -> list[str]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CaptionPlanError(f"could not read translation fixture: {path}") from exc
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise CaptionPlanError("translation fixture must be a JSON string array")
+    return value
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Soren native closed-caption control")
+    subparsers = parser.add_subparsers(dest="action", required=True)
+
+    plan = subparsers.add_parser("plan", help="translate aligned Japanese speech chunks")
+    plan.add_argument("--chunks-file", type=Path, required=True)
+    plan.add_argument("--execution-id", required=True)
+    plan.add_argument("--output", type=Path, required=True)
+    plan.add_argument("--translations-file", type=Path)
+    plan.add_argument("--max-columns", type=int, default=32)
+    plan.add_argument("--max-lines", type=int, default=2)
+    plan.add_argument("--max-pages", type=int, default=1)
+
+    send = subparsers.add_parser("send", help="send one control operation to FFmpeg")
+    send.add_argument("op", choices=("prepare", "commit", "clear", "reset"))
+    send.add_argument("--socket", default=os.environ.get("DOCICH_CC_SOCKET", DEFAULT_SOCKET_PATH))
+    send.add_argument("--plan", type=Path)
+    send.add_argument("--chunk", type=int, default=0)
+    send.add_argument("--page", type=int, default=0)
+    send.add_argument(
+        "--sequence",
+        type=int,
+        help="protocol page identity; defaults to --page",
+    )
+    send.add_argument("--execution-id")
+    send.add_argument("--timeout", type=float, default=3.0)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.action == "plan":
+        chunks = _read_chunks(args.chunks_file)
+        if args.translations_file:
+            translations = _read_translation_fixture(args.translations_file)
+        else:
+            endpoint = os.environ.get("DOCICH_CC_TRANSLATION_URL", DEFAULT_TRANSLATION_URL)
+            models = tuple(
+                part.strip()
+                for part in os.environ.get(
+                    "DOCICH_CC_TRANSLATION_MODELS", DEFAULT_TRANSLATION_MODEL
+                ).split(",")
+                if part.strip()
+            )
+            timeout = float(os.environ.get("DOCICH_CC_TRANSLATION_TIMEOUT_SEC", "30"))
+            translations = TranslationRuntimeClient(
+                endpoint=endpoint, models=models, timeout=timeout
+            ).translate(chunks, max_chars=args.max_columns * args.max_lines)
+        payload = build_caption_plan(
+            chunks,
+            translations,
+            execution_id=args.execution_id,
+            max_columns=args.max_columns,
+            max_lines=args.max_lines,
+            max_pages=args.max_pages,
+        )
+        _atomic_write_json(args.output, payload)
+        return 0
+
+    client = CaptionSocketClient(args.socket, timeout=args.timeout)
+    protocol_page = args.page if args.sequence is None else args.sequence
+    if args.op == "reset":
+        response = client.reset()
+    else:
+        plan = load_plan(args.plan) if args.plan else None
+        execution_id = args.execution_id or (
+            str(plan["executionId"]) if plan is not None else ""
+        )
+        if args.op == "prepare":
+            if plan is None:
+                raise CaptionPlanError("prepare requires --plan")
+            execution_id, text = _plan_page(plan, args.chunk, args.page)
+            response = client.prepare(execution_id, protocol_page, text)
+        elif args.op == "commit":
+            response = client.commit(execution_id, protocol_page)
+        elif args.op == "clear":
+            response = client.clear(execution_id)
+        else:  # pragma: no cover - argparse enforces this
+            raise AssertionError(args.op)
+    print(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except CaptionError as exc:
+        print(f"closed_captions: {exc}", file=os.sys.stderr)
+        raise SystemExit(2)
