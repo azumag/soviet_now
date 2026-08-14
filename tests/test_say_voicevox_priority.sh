@@ -48,8 +48,11 @@ timeout_comment=$(_voicevox_synth_timeout_sec)
 export SOURCE_LABEL=radio_render:news
 wait_radio=$(_voicevox_synth_lock_wait_sec)
 timeout_radio=$(_voicevox_synth_timeout_sec)
+export SOURCE_LABEL=improve_progress
+wait_progress=$(_voicevox_synth_lock_wait_sec)
 
 [ "$wait_comment" -gt "$wait_radio" ] && ok "comment waits longer than radio (comment=$wait_comment radio=$wait_radio)" || not_ok "comment should wait longer: comment=$wait_comment radio=$wait_radio"
+[ "$wait_progress" -gt "$wait_radio" ] && ok "foreground progress waits longer than radio (progress=$wait_progress radio=$wait_radio)" || not_ok "foreground progress should wait longer: progress=$wait_progress radio=$wait_radio"
 [ "$timeout_comment" -ge "$timeout_radio" ] && ok "comment timeout >= radio (comment=$timeout_comment radio=$timeout_radio)" || not_ok "comment timeout should be >= radio"
 
 # --- テスト2: ラジオ render のチャンク上限 ---

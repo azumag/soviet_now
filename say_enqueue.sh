@@ -224,6 +224,10 @@ VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
 VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
 VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
 VOICEVOX_SYNTH_LOCK_STALE_SEC="${VOICEVOX_SYNTH_LOCK_STALE_SEC:-180}"
+VOICEVOX_SYNTH_PRIORITY_WAIT_DIR="$QUEUE_DIR/.voicevox_synth_priority_waiters"
+VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
+VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
+VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-180}"
 
 if [ ! -s "$CONTENT_FILE" ]; then
 	echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -531,19 +535,79 @@ _release_voicevox_synth_lock() {
 	VOICEVOX_SYNTH_LOCK_HELD=0
 }
 
+_voicevox_synth_is_background_render() {
+	case "${SOURCE_LABEL:-}" in
+	radio_render:*) return 0 ;;
+	esac
+	return 1
+}
+
+_voicevox_gc_priority_waiters() {
+	[ -d "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" ] || return 0
+	local waiter waiter_pid waiter_ts waiter_age now
+	now=$(date +%s)
+	for waiter in "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR"/*.wait; do
+		[ -f "$waiter" ] || continue
+		read -r waiter_pid waiter_ts <"$waiter" || true
+		case "$waiter_pid" in '' | *[!0-9]*) waiter_pid="" ;; esac
+		case "$waiter_ts" in
+		'' | *[!0-9]*) waiter_ts=$(_file_mtime_epoch "$waiter") ;;
+		esac
+		case "$waiter_ts" in '' | *[!0-9]* | 0) waiter_age=0 ;; *) waiter_age=$((now - waiter_ts)) ;; esac
+		if { [ -z "$waiter_pid" ] || ! kill -0 "$waiter_pid" 2>/dev/null; } \
+			&& [ "$waiter_age" -gt "$VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC" ]; then
+			rm -f "$waiter" 2>/dev/null || true
+		fi
+	done
+	rmdir "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || true
+}
+
+_voicevox_priority_waiter_exists() {
+	_voicevox_gc_priority_waiters
+	local waiter
+	for waiter in "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR"/*.wait; do
+		[ -f "$waiter" ] && return 0
+	done
+	return 1
+}
+
+_register_voicevox_priority_waiter() {
+	_voicevox_synth_is_background_render && return 0
+	mkdir -p "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || return 1
+	VOICEVOX_SYNTH_PRIORITY_WAIT_FILE="$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR/${MY_TOKEN}.wait"
+	printf '%s %s\n' "${BASHPID:-$$}" "$(date +%s)" >"$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" 2>/dev/null || return 1
+	VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=1
+	return 0
+}
+
+_touch_voicevox_priority_waiter() {
+	[ "$VOICEVOX_SYNTH_PRIORITY_WAIT_HELD" -eq 1 ] || return 0
+	[ -n "$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" ] || return 0
+	printf '%s %s\n' "${BASHPID:-$$}" "$(date +%s)" >"$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" 2>/dev/null || true
+}
+
+_unregister_voicevox_priority_waiter() {
+	[ "$VOICEVOX_SYNTH_PRIORITY_WAIT_HELD" -eq 1 ] || return 0
+	[ -n "$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" ] && rm -f "$VOICEVOX_SYNTH_PRIORITY_WAIT_FILE" 2>/dev/null || true
+	rmdir "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || true
+	VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
+	VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
+}
+
 # 合成ロック待ち時間をコンテキストで変える:
-#   - コメントは長く待つ（必ず合成・再生に到達させる）
+#   - コメント・改善進捗などの前景音声は長く待つ（必ず合成・再生に到達させる）
 #   - ラジオ render は短く諦めてコメントへ譲る
 _voicevox_synth_lock_wait_sec() {
 	case "${SOURCE_LABEL:-}" in
 	comment | comment:*)
 		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC:-180}"
 		;;
-	radio_render:* | radio | radio:*)
+	radio_render:*)
 		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_RADIO_SEC:-15}"
 		;;
 	*)
-		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_DEFAULT_SEC:-30}"
+		# 改善進捗など comment: 接頭辞を持たない前景音声も、背景ラジオより優先する。
+		printf '%s' "${VOICEVOX_SYNTH_LOCK_WAIT_FOREGROUND_SEC:-${VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC:-180}}"
 		;;
 	esac
 }
@@ -564,9 +628,21 @@ _voicevox_synth_timeout_sec() {
 }
 
 _acquire_voicevox_synth_lock() {
-	local timeout_sec="${1:-30}" waited=0 max_waits
+	local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
+	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
+	_voicevox_synth_is_background_render && background_render=1
+	if [ "$background_render" -eq 0 ]; then
+		_register_voicevox_priority_waiter || true
+	fi
 	max_waits=$((timeout_sec * 2))
-	while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
+	while true; do
+		if [ "$background_render" -eq 1 ] && _voicevox_priority_waiter_exists; then
+			VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
+			return 1
+		fi
+		if mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; then
+			break
+		fi
 		if [ -d "$VOICEVOX_SYNTH_LOCK" ]; then
 			local lock_owner_raw lock_owner_pid lock_hb now lock_age owner_alive=false
 			lock_owner_raw=$(cat "$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || true)
@@ -595,27 +671,35 @@ _acquire_voicevox_synth_lock() {
 				continue
 			fi
 		fi
+		_touch_voicevox_priority_waiter
 		sleep 0.5
 		waited=$((waited + 1))
 		if [ "$waited" -ge "$max_waits" ]; then
+			VOICEVOX_SYNTH_LOCK_BUSY_REASON="timeout"
+			_unregister_voicevox_priority_waiter
 			return 1
 		fi
 	done
 	echo "$MY_OWNER" >"$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || {
 		rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+		VOICEVOX_SYNTH_LOCK_BUSY_REASON="owner_write_failed"
+		_unregister_voicevox_priority_waiter
 		return 1
 	}
 	date +%s >"$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true
 	VOICEVOX_SYNTH_LOCK_HELD=1
+	_unregister_voicevox_priority_waiter
 	return 0
 }
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
+	_unregister_voicevox_priority_waiter
 	_clear_current_source_if_owner
 	_release_voicevox_synth_lock
 	_release_lock
 	rm -f "$MY_CONTENT"
+	rm -f "${MY_CONTENT%.txt}_pre.wav" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_chunks.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt.concat" 2>/dev/null
@@ -1591,7 +1675,11 @@ PRE_SYNTH_PLAYLIST_FILE=""
 if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
 			if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
-				_log "事前合成スキップ（別プロセスが合成中）"
+				if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+					_log "事前合成一時保留（優先音声待ち）"
+				else
+					_log "事前合成スキップ（別プロセスが合成中）"
+				fi
 	else
 		_log "事前合成開始"
 		_pre_synth_hb_pid=""
@@ -1724,7 +1812,11 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 					if [ "$_pc_i" -gt 0 ]; then
 						_release_voicevox_synth_lock
 						if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
-							_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
+							if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → ラジオは後で再試行"
+							else
+								_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
+							fi
 							_pre_synth_failed=1
 							break
 						fi
@@ -1769,6 +1861,10 @@ if [ "$RENDER_ONLY" = "true" ]; then
 			_log "render-only 完了: $RENDER_OUTPUT"
 			exit 0
 		fi
+	fi
+	if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+		_log "render-only 一時保留（優先音声待ち）"
+		exit 75
 	fi
 	_log "render-only 失敗"
 	exit 1
