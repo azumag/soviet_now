@@ -172,6 +172,9 @@ Thank you for the English comment.
             metadata.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
             fake_body = """#!/bin/bash
 out=""
+# Simulate Linux audio tools that probe their inherited stdin. The renderer
+# must not let a child consume the next line of the segment manifest.
+IFS= read -r -n 1 _discarded || true
 while [ "$#" -gt 0 ]; do
   case "$1" in -o|--render-only) out="$2"; shift 2 ;; *) shift ;; esac
 done

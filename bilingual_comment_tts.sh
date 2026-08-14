@@ -74,12 +74,12 @@ while IFS=$'\t' read -r language text_file; do
 	normalized_wav="$TEMP_DIR/normalized_${segment_count}.wav"
 	case "$language" in
 	en)
-		"$ENGLISH_TTS_SCRIPT" -o "$raw_wav" -f "$text_file"
+		"$ENGLISH_TTS_SCRIPT" -o "$raw_wav" -f "$text_file" </dev/null
 		;;
 	ja)
 		SAY_CONTEXT_LABEL="${SAY_CONTEXT_LABEL:-comment}:ja-render" \
 		SAY_DISABLE_COMMENT_YIELD=1 \
-		"$SAY_ENQUEUE_SCRIPT" --render-only "$raw_wav" "$text_file" "$RATE" 0
+		"$SAY_ENQUEUE_SCRIPT" --render-only "$raw_wav" "$text_file" "$RATE" 0 </dev/null
 		;;
 	*)
 		echo "[bilingual_tts] unsupported language: $language" >&2
@@ -90,7 +90,7 @@ while IFS=$'\t' read -r language text_file; do
 		echo "[bilingual_tts] synthesis produced no audio for segment $segment_count ($language)" >&2
 		exit 1
 	}
-	"$FFMPEG_BIN" -hide_banner -loglevel error -y \
+	"$FFMPEG_BIN" -nostdin -hide_banner -loglevel error -y \
 		-i "$raw_wav" -ar 24000 -ac 1 -c:a pcm_s16le -f wav "$normalized_wav"
 	[ -s "$normalized_wav" ] || {
 		echo "[bilingual_tts] normalization failed for segment $segment_count ($language)" >&2
@@ -110,7 +110,7 @@ if [ "$segment_count" -eq 1 ]; then
 	first_wav=$(sed -n "s/^file '\(.*\)'$/\1/p" "$PLAYLIST" | head -n1)
 	cp "$first_wav" "$OUTPUT"
 else
-	"$FFMPEG_BIN" -hide_banner -loglevel error -y \
+	"$FFMPEG_BIN" -nostdin -hide_banner -loglevel error -y \
 		-f concat -safe 0 -i "$PLAYLIST" -ar 24000 -ac 1 -c:a pcm_s16le -f wav "$OUTPUT"
 fi
 [ -s "$OUTPUT" ] || {

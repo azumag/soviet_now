@@ -72,7 +72,7 @@ fi
 }
 
 mkdir -p "$(dirname "$OUTPUT")"
-"$FFMPEG_BIN" -hide_banner -loglevel error -y \
+"$FFMPEG_BIN" -nostdin -hide_banner -loglevel error -y \
 	-i "$RAW_WAV" \
 	-ar "${ENGLISH_TTS_SAMPLE_RATE:-24000}" -ac 1 -c:a pcm_s16le -f wav "$OUTPUT"
 [ -s "$OUTPUT" ] || {
