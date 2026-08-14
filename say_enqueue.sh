@@ -3,7 +3,9 @@
 [ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # say_enqueue.sh - mkdirロックベースのsayキュー（FIFO順次再生）
 #
-# 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] <content_file> [rate] [pre_delay_sec]
+# 使い方: ./say_enqueue.sh [--no-preempt] [--render-only <wav_file>] [--wav]
+#           [--wav-playlist <playlist> --caption-chunks <chunks_file>]
+#           <content_file> [rate] [pre_delay_sec]
 #
 # --no-preempt: 後方互換のため受け付ける（現在は常に順次再生）
 #
@@ -46,6 +48,9 @@ NO_PREEMPT=false
 WAV_MODE=false
 RENDER_ONLY=false
 RENDER_OUTPUT=""
+WAV_PLAYLIST_MODE=false
+WAV_PLAYLIST_FILE=""
+CAPTION_CHUNKS_FILE=""
 while true; do
 	case "${1:-}" in
 	--no-preempt)
@@ -59,6 +64,15 @@ while true; do
 	--render-only)
 		RENDER_ONLY=true
 		RENDER_OUTPUT="${2:?Usage: say_enqueue.sh --render-only <wav_file> <content_file> [rate]}"
+		shift 2
+		;;
+	--wav-playlist)
+		WAV_PLAYLIST_MODE=true
+		WAV_PLAYLIST_FILE="${2:?Usage: say_enqueue.sh --wav-playlist <playlist> --caption-chunks <chunks_file> <content_file> [rate]}"
+		shift 2
+		;;
+	--caption-chunks)
+		CAPTION_CHUNKS_FILE="${2:?Usage: say_enqueue.sh --wav-playlist <playlist> --caption-chunks <chunks_file> <content_file> [rate]}"
 		shift 2
 		;;
 	*) break ;;
@@ -244,6 +258,19 @@ VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC
 if [ ! -s "$CONTENT_FILE" ]; then
 	echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
 	exit 1
+fi
+if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
+	if [ "$WAV_MODE" = "true" ] || [ "$RENDER_ONLY" = "true" ]; then
+		echo "[say_enqueue] --wav-playlist cannot be combined with --wav or --render-only" >&2
+		exit 2
+	fi
+	if [ ! -s "$WAV_PLAYLIST_FILE" ] || [ ! -s "$CAPTION_CHUNKS_FILE" ]; then
+		echo "[say_enqueue] wav playlist and caption chunks are required" >&2
+		exit 2
+	fi
+elif [ -n "$CAPTION_CHUNKS_FILE" ]; then
+	echo "[say_enqueue] --caption-chunks requires --wav-playlist" >&2
+	exit 2
 fi
 
 # ユニークトークン（PID + ランダム + 秒 で衝突回避）
@@ -717,6 +744,11 @@ _cleanup() {
 	rm -f "${MY_CONTENT%.txt}_chunks.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt" 2>/dev/null
 	rm -f "${MY_CONTENT%.txt}_wav_playlist.txt.concat" 2>/dev/null
+	rm -f "${MY_CONTENT%.txt}_render_chunks.txt" 2>/dev/null
+	rm -f "${MY_CONTENT%.txt}_render_playlist.txt" 2>/dev/null
+	if [ -n "${RENDER_OUTPUT:-}" ]; then
+		rm -rf "${RENDER_OUTPUT}.bundle.tmp.${MY_TOKEN}" 2>/dev/null
+	fi
 	rm -rf "$QUEUE_DIR/stream_${MY_TOKEN}" 2>/dev/null
 }
 trap '_cleanup' EXIT
@@ -1105,9 +1137,15 @@ _launch_stream_wav() {
 # 呼び出し時点で再生ロック(LOCK_DIR)を保持済みであること
 _play_prerendered_voicevox_chunks() {
 	local playlist_file="$1"
-	local wavs=()
+	local playlist_dir="" playlist_entry="" wavs=()
+	playlist_dir=$(cd "$(dirname "$playlist_file")" 2>/dev/null && pwd) || return 1
 	while IFS= read -r _pw_line; do
-		[ -n "$_pw_line" ] && wavs+=("$_pw_line")
+		[ -n "$_pw_line" ] || continue
+		case "$_pw_line" in
+		/*) playlist_entry="$_pw_line" ;;
+		*) playlist_entry="$playlist_dir/$_pw_line" ;;
+		esac
+		wavs+=("$playlist_entry")
 	done <"$playlist_file"
 
 	local total=${#wavs[@]}
@@ -1170,13 +1208,13 @@ _play_prerendered_voicevox_chunks() {
 		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" 0; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
 			play_failed=1
-			rm -f "$chunk_wav" 2>/dev/null
+			[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
 			break
 		fi
 		if [ "$cc_clear_after_chunk" -eq 1 ]; then
 			docich_cc_clear || true
 		fi
-		rm -f "$chunk_wav" 2>/dev/null
+		[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
 		if [ "$i" -lt $((total - 1)) ] && [ -n "$SAY_CHUNK_GAP_SEC" ] && [ "$SAY_CHUNK_GAP_SEC" != "0" ]; then
 			_touch_lock_heartbeat
 			sleep "$SAY_CHUNK_GAP_SEC"
@@ -1211,6 +1249,53 @@ _concat_prerendered_voicevox_chunks() {
 	else
 		ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_list" -c:a pcm_s16le -f wav "$output_file" >>"$DEBUG_LOG_FILE" 2>&1 && [ -s "$output_file" ]
 	fi
+}
+
+_export_prerendered_voicevox_bundle() {
+	local playlist_file="$1" captions_file="$2" bundle_dir="$3"
+	local bundle_tmp="${bundle_dir}.tmp.${MY_TOKEN}"
+	local playlist_dir="" entry="" source_wav="" target_name=""
+	local audio_count=0 caption_count=0
+	[ -s "$playlist_file" ] && [ -s "$captions_file" ] || return 1
+	[ ! -e "$bundle_dir" ] || return 1
+	playlist_dir=$(cd "$(dirname "$playlist_file")" 2>/dev/null && pwd) || return 1
+	rm -rf "$bundle_tmp" 2>/dev/null || true
+	mkdir -p "$bundle_tmp" || return 1
+	: >"$bundle_tmp/playlist.txt" || return 1
+	while IFS= read -r entry; do
+		[ -n "$entry" ] || continue
+		case "$entry" in
+		/*) source_wav="$entry" ;;
+		*) source_wav="$playlist_dir/$entry" ;;
+		esac
+		[ -s "$source_wav" ] || {
+			rm -rf "$bundle_tmp" 2>/dev/null || true
+			return 1
+		}
+		printf -v target_name 'chunk_%03d.wav' "$audio_count"
+		cp "$source_wav" "$bundle_tmp/$target_name" 2>/dev/null || {
+			rm -rf "$bundle_tmp" 2>/dev/null || true
+			return 1
+		}
+		printf '%s\n' "$target_name" >>"$bundle_tmp/playlist.txt"
+		audio_count=$((audio_count + 1))
+	done <"$playlist_file"
+	while IFS= read -r entry; do
+		[ -n "$entry" ] && caption_count=$((caption_count + 1))
+	done <"$captions_file"
+	if [ "$audio_count" -le 0 ] || [ "$audio_count" -ne "$caption_count" ]; then
+		rm -rf "$bundle_tmp" 2>/dev/null || true
+		return 1
+	fi
+	cp "$captions_file" "$bundle_tmp/captions.txt" 2>/dev/null || {
+		rm -rf "$bundle_tmp" 2>/dev/null || true
+		return 1
+	}
+	mv "$bundle_tmp" "$bundle_dir" 2>/dev/null || {
+		rm -rf "$bundle_tmp" 2>/dev/null || true
+		return 1
+	}
+	return 0
 }
 
 _launch_say() {
@@ -1732,7 +1817,22 @@ _prepare_playback_turn() {
 # --- VOICEVOX 事前合成（ロック取得前＝前の再生中に並行合成） ---
 PRE_SYNTH_WAV=""
 PRE_SYNTH_PLAYLIST_FILE=""
-if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
+_pre_chunks=()
+if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
+	_external_caption_chunks=()
+	_external_playlist_count=0
+	while IFS= read -r _external_line; do
+		[ -n "$_external_line" ] && _external_caption_chunks+=("$_external_line")
+	done <"$CAPTION_CHUNKS_FILE"
+	while IFS= read -r _external_line; do
+		[ -n "$_external_line" ] && _external_playlist_count=$((_external_playlist_count + 1))
+	done <"$WAV_PLAYLIST_FILE"
+	if [ "$_external_playlist_count" -le 0 ] || [ "$_external_playlist_count" -ne "${#_external_caption_chunks[@]}" ]; then
+		_log "WAV bundle不整合: audio=${_external_playlist_count} captions=${#_external_caption_chunks[@]}"
+		exit 2
+	fi
+	docich_cc_start_plan "${_external_caption_chunks[@]}" || true
+elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
 			if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 				if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
@@ -1845,17 +1945,20 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 				fi
 			else
 				# 複数チャンク: 再生ロック取得前に全チャンクを合成してから再生待ちへ入る。
-				# ラジオ render はチャンク上限を超えたら超過分を合成せず、再生時に
-				# フォールバックさせる（合成ロックの長時間占有でコメントを待たせない）。
+				# 通常再生には従来の上限を残す。render-only は途中で切れたWAVを
+				# 完成品にしないため全チャンクを対象にし、各チャンク境界で前景音声へ譲る。
 				PRE_MAX_CHUNKS="${#_pre_chunks[@]}"
-				if [ "${SOURCE_LABEL#radio_render:}" != "$SOURCE_LABEL" ] \
-					|| [ "$SOURCE_LABEL" = "radio" ] || [ "${SOURCE_LABEL#radio:}" != "$SOURCE_LABEL" ]; then
-					PRE_RADIO_CHUNK_CAP="${VOICEVOX_RADIO_MAX_CHUNKS:-12}"
-					case "$PRE_RADIO_CHUNK_CAP" in
-					'' | *[!0-9]*) PRE_RADIO_CHUNK_CAP=12 ;;
+				if [ "$RENDER_ONLY" != "true" ]; then
+					case "${SOURCE_LABEL:-}" in
+					radio_render:* | radio | radio:*)
+						PRE_RADIO_CHUNK_CAP="${VOICEVOX_RADIO_MAX_CHUNKS:-12}"
+						case "$PRE_RADIO_CHUNK_CAP" in
+						'' | *[!0-9]*) PRE_RADIO_CHUNK_CAP=12 ;;
+						esac
+						[ "$PRE_RADIO_CHUNK_CAP" -lt 1 ] && PRE_RADIO_CHUNK_CAP=1
+						[ "$PRE_MAX_CHUNKS" -gt "$PRE_RADIO_CHUNK_CAP" ] && PRE_MAX_CHUNKS="$PRE_RADIO_CHUNK_CAP"
+						;;
 					esac
-					[ "$PRE_RADIO_CHUNK_CAP" -lt 1 ] && PRE_RADIO_CHUNK_CAP=1
-					[ "$PRE_MAX_CHUNKS" -gt "$PRE_RADIO_CHUNK_CAP" ] && PRE_MAX_CHUNKS="$PRE_RADIO_CHUNK_CAP"
 				fi
 				if [ "$PRE_MAX_CHUNKS" -lt "${#_pre_chunks[@]}" ]; then
 					_log "テキスト分割: ${#_pre_chunks[@]}チャンク → ラジオ上限${PRE_MAX_CHUNKS}で事前合成（超過分は再生時フォールバック）"
@@ -1914,17 +2017,31 @@ fi
 
 if [ "$RENDER_ONLY" = "true" ]; then
 	mkdir -p "$(dirname "$RENDER_OUTPUT")" 2>/dev/null || true
-	if [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
-		if _concat_prerendered_voicevox_chunks "$PRE_SYNTH_PLAYLIST_FILE" "$RENDER_OUTPUT"; then
-			_log "render-only 完了: $RENDER_OUTPUT"
-			exit 0
+	_render_bundle="${RENDER_OUTPUT}.bundle"
+	_render_captions_file="${MY_CONTENT%.txt}_render_chunks.txt"
+	_render_playlist_file="${PRE_SYNTH_PLAYLIST_FILE:-}"
+	: >"$_render_captions_file"
+	for _render_chunk in "${_pre_chunks[@]}"; do
+		[ -n "$_render_chunk" ] && printf '%s\n' "$_render_chunk" >>"$_render_captions_file"
+	done
+	if [ -z "$_render_playlist_file" ] && [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
+		_render_playlist_file="${MY_CONTENT%.txt}_render_playlist.txt"
+		printf '%s\n' "$PRE_SYNTH_WAV" >"$_render_playlist_file"
+	fi
+	if [ -n "$_render_playlist_file" ] && [ -s "$_render_playlist_file" ] \
+		&& _export_prerendered_voicevox_bundle "$_render_playlist_file" "$_render_captions_file" "$_render_bundle"; then
+		if [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
+			_concat_prerendered_voicevox_chunks "$PRE_SYNTH_PLAYLIST_FILE" "$RENDER_OUTPUT" || true
+		elif [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
+			cp "$PRE_SYNTH_WAV" "$RENDER_OUTPUT" 2>/dev/null || true
 		fi
-	elif [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
-		if cp "$PRE_SYNTH_WAV" "$RENDER_OUTPUT" 2>/dev/null && [ -s "$RENDER_OUTPUT" ]; then
-			_log "render-only 完了: $RENDER_OUTPUT"
+		if [ -s "$RENDER_OUTPUT" ]; then
+			_log "render-only 完了: $RENDER_OUTPUT (bundle=${_render_bundle})"
 			exit 0
 		fi
 	fi
+	rm -f "$RENDER_OUTPUT" 2>/dev/null || true
+	rm -rf "$_render_bundle" 2>/dev/null || true
 	if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
 		_log "render-only 一時保留（優先音声待ち）"
 		exit 75
@@ -1940,7 +2057,12 @@ _prepare_playback_turn "$PRE_DELAY"
 # --- ロック内: say再生（単発 + 自動リトライ / 事前合成済みチャンク） ---
 PLAYBACK_FAILED=0
 LAST_SAY_PID=""
-if [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
+if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
+	# 外部bundleは再試行に再利用するため、個々のWAVをここでは削除しない。
+	if ! SAY_PRESERVE_PRERENDERED_CHUNKS=1 _play_prerendered_voicevox_chunks "$WAV_PLAYLIST_FILE"; then
+		PLAYBACK_FAILED=1
+	fi
+elif [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then
 	# 事前合成済みチャンク再生: ロック内では生成しない
 	# CC表記をTwitchチャットに投稿
 	if [ -n "${SAY_CC_TEXT:-}" ]; then

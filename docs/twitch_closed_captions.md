@@ -8,10 +8,10 @@ VOICEVOXで再生する日本語発話を短い英語へ翻訳し、OBSや字幕
 
 ## 構成
 
-1. `say_enqueue.sh` がVOICEVOX用の日本語チャンクを確定します。
+1. `say_enqueue.sh` がVOICEVOX用の日本語チャンクを確定します。Deferred radioの事前生成では、結合WAVだけでなく、同じ境界の個別WAV・日本語チャンクをprivate bundleとして保存します。
 2. `lib/closed_captions.py` がローカルのOpenAI互換endpointへ一括翻訳を依頼します。モデル応答は `{"translations":[...]}` だけを受理し、thinking、tool trace、Markdown、説明文が前後に付いた応答は字幕計画ごと破棄します。
 3. 英文を保守的なASCIIへ正規化し、1行32文字、最大2行、1チャンク1ページへ制限します。
-4. `lib/closed_captions.sh` が翻訳とVOICEVOX合成を並行させ、再生中に次チャンクを `prepare`、音声境界で `commit`、発話終了時に `clear` します。
+4. `lib/closed_captions.sh` が翻訳とVOICEVOX合成を並行させ、再生中に次チャンクを `prepare`、音声境界で `commit`、発話終了時に `clear` します。事前生成ラジオもbundleの個別WAVを同じ順で再生するため、結合WAVを一括再生して字幕境界を失うことはありません。
 5. FFmpegの `docichcc` filterが0600のUnix socketからNDJSONを受け、libcaptionでCC1 pop-on字幕へ変換します。`AV_FRAME_DATA_A53_CC` をFFmpegの `ccfifo` でフレームレートに合わせて配り、libx264の `-a53cc 1` がH.264 SEIへ格納します。
 
 ```text
@@ -25,6 +25,8 @@ X11 video ───────────────────────�
 ```
 
 `executionId` と0〜31の連番で発話を識別します。古い発話から遅れて届いた `clear` は `STALE_EXECUTION` で拒否され、新しい字幕を消しません。FFmpeg再起動時はsocketと字幕状態が初期化され、次の発話から自動的に復帰します。
+
+ラジオのrender-only処理は全チャンクが揃った場合だけready WAVとbundleを公開します。前景音声へ合成順を譲った場合や、音声数と字幕チャンク数が一致しない場合は一時成果を公開せず、backoff付きで再試行します。更新前に生成済みでbundleを持たないready WAVだけは、後方互換のため字幕なしの従来経路で再生します。
 
 ## 固定ソースとビルド
 
