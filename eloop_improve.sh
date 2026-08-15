@@ -3342,6 +3342,7 @@ EOF
 	# user_review.md は高優先の参照入力として扱うが、ログ/rollback分析を読む分析フェーズ自体は省略しない。
 	rm -f "$ANALYSIS_RESULT_FILE" 2>/dev/null || true
 	analysis_ok=false
+	IMPROVE_FAILURE_CODE=""
 	USER_REVIEW_FILE="data/user_review.md"
 	[ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ] && _improve_note "Stage1: user_review.md present; using as high-priority analysis input"
 	# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
@@ -3372,6 +3373,7 @@ EOF
 		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"
 		_improve_note "Stage1: analysis failed after ${ANALYSIS_MAX_RETRIES} retries → abort"
 		VALIDATE_ERROR="分析フェーズ失敗: analysis_result.md が生成されなかった"
+		IMPROVE_FAILURE_CODE="analysis_failed"
 		improve_ok=false
 	fi
 
@@ -3426,12 +3428,18 @@ EOF
 				_consecutive_empty=0
 			fi
 			if [ "$_consecutive_empty" -ge 2 ]; then
-				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → 全リトライ中止"
-				_improve_note "consecutive model failures ${_consecutive_empty} → abort"
-				break 2>/dev/null || {
-					fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
-					break
-				}
+				if [ "$fresh_retry" -lt "$IMPROVE_MAX_RETRIES" ]; then
+					log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → clean sandboxで次のfresh retryへ"
+					_improve_note "consecutive model failures ${_consecutive_empty} → advance to fresh retry $((fresh_retry + 1))/${IMPROVE_MAX_RETRIES}"
+					fresh_retry=$((fresh_retry + 1))
+					continue_retry=0
+					_consecutive_empty=0
+					continue
+				fi
+				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → fresh retry上限で終了"
+				_improve_note "consecutive model failures ${_consecutive_empty} → fresh retry budget exhausted"
+				IMPROVE_FAILURE_CODE="model_no_response"
+				break
 			fi
 			if [ "$_run_ai_rc" -eq 0 ] && _implementation_self_report_rejects_change "$RUN_CMD_LOG_FILE"; then
 				VALIDATE_ERROR="AI実装が冗長または挙動が変わらない変更と自己申告した。レビューへ進めず、実効性のある別変更に修正せよ。"
@@ -3476,9 +3484,17 @@ EOF
 				_consecutive_empty=0
 			fi
 			if [ "$_consecutive_empty" -ge 2 ]; then
-				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → 全リトライ中止"
-				_improve_note "consecutive model failures ${_consecutive_empty} → abort"
-				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+				if [ "$fresh_retry" -lt "$IMPROVE_MAX_RETRIES" ]; then
+					log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → clean sandboxで次のfresh retryへ"
+					_improve_note "consecutive model failures ${_consecutive_empty} → advance to fresh retry $((fresh_retry + 1))/${IMPROVE_MAX_RETRIES}"
+					fresh_retry=$((fresh_retry + 1))
+					continue_retry=0
+					_consecutive_empty=0
+					continue
+				fi
+				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → fresh retry上限で終了"
+				_improve_note "consecutive model failures ${_consecutive_empty} → fresh retry budget exhausted"
+				IMPROVE_FAILURE_CODE="model_no_response"
 				break
 			fi
 		fi
@@ -3964,5 +3980,5 @@ with open('tmp/state/pending_strategy_radio.json', 'w') as f:
 else
 	log "[IMPROVE] 改善失敗のため commit/radio をスキップ"
 	_improve_note "failed_no_apply: ${VALIDATE_ERROR:-unknown}"
-	_improve_progress "done" "100" "failed_no_apply"
+	_improve_progress "done" "100" "failed_no_apply:${IMPROVE_FAILURE_CODE:-validation_failed}"
 fi

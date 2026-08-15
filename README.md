@@ -160,6 +160,12 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 
 改善AIが失敗した場合、`improve_daemon` は backoff の期限判定を trigger 側へ委譲して retry lock を孤立させない。primary 失敗後の fallback は既定3回まで再試行し、期待ファイルが安定して書かれた時点で長時間残るproviderを終了する。MiniMax系の1回の上限は `CODEX_MINIMAX_RUN_TIMEOUT_SEC`（既定300秒）で、最後の手段も含めて「ファイルが実際に更新されたこと」を成功条件にする。
 
+改善jobの開始時には入力batchを `tmp/state/improve_retry_batch.json` へ原子的に退避する。`failed_no_apply` で通常lockが別の回収経路に消えていても、現行strategyと同一hashかつ通常しきい値を満たすbatchだけを復元し、backoff後に再試行する。hashが古いbatchと、通常しきい値未満のpartial batchは復元しない。戦略が実際に変わった場合は退避batchを消し、旧戦略の100試合を新戦略へ混ぜない。
+
+失敗回数はactiveなbackoffファイルだけでなく、保持中のlockとretry snapshotにも `retry_failure_count` として記録する。待機期限にactiveファイルを外しても回数は失われず、次の失敗は5分、10分、20分のように指数待機を進める。モデルが連続無応答でも同じfresh retryを即終了せず、設定済みのfresh retry上限までclean sandboxで試してから外側のbackoffへ戻る。
+
+`soren_loop` と `improve_daemon` はどちらも改善発火を補完できるため、入口のidle確認だけでは不十分である。両者がmetadata準備中に同じidle状態を読むraceを防ぐため、spawn mutexを取得した後にauthoritativeな `improve_state.json` を再確認する。先行するlive PIDまたはmanual待機があれば後発側は共有staging/resultへ触れず終了する。live PID判定とstale回収は、通常の `eloop_improve.sh` に加えて固定実行用 `eloop_improve_runtime.*.sh` も同じ改善jobとして扱う。
+
 ステータス監視:
 
 - `show_status.sh --once` の `ArchiveNext` は最有力候補だけを短く表示する。

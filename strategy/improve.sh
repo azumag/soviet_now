@@ -786,6 +786,65 @@ _clear_improve_retry_batch() {
 	rm -f "${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}" 2>/dev/null || true
 }
 
+_schedule_improve_retry_backoff() {
+	local lock_file="${1:-$IMPROVE_LOCK_FILE}"
+	local snapshot_file="${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}"
+	local backoff_file="$TMP_STATE_DIR/rate_limit_backoff"
+	python3 - "$lock_file" "$snapshot_file" "$backoff_file" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+lock_file, snapshot_file, backoff_file = sys.argv[1:4]
+
+def load(path):
+    try:
+        value = json.load(open(path, encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+def write_atomic(path, value):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(value, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+lock = load(lock_file)
+if not lock:
+    raise SystemExit(1)
+snapshot = load(snapshot_file)
+try:
+    previous = max(
+        int(lock.get("retry_failure_count", 0) or 0),
+        int(snapshot.get("retry_failure_count", 0) or 0),
+    )
+except Exception:
+    previous = 0
+count = previous + 1
+now = int(time.time())
+lock["retry_failure_count"] = count
+lock["retry_last_failed_at"] = now
+write_atomic(lock_file, lock)
+
+lock_hash = str(lock.get("hash") or lock.get("strategy_hash") or "")
+snapshot_hash = str(snapshot.get("hash") or snapshot.get("strategy_hash") or "")
+if snapshot and lock_hash and snapshot_hash == lock_hash:
+    snapshot["retry_failure_count"] = count
+    snapshot["retry_last_failed_at"] = now
+    write_atomic(snapshot_file, snapshot)
+
+os.makedirs(os.path.dirname(backoff_file) or ".", exist_ok=True)
+tmp = f"{backoff_file}.tmp.{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as f:
+    f.write(f"{count}\n{now}\n")
+os.replace(tmp, backoff_file)
+print(count)
+PY
+}
+
 _persist_improve_lock_reason() {
 	local reason="${1:-normal}"
 	case "$reason" in
@@ -1386,11 +1445,11 @@ PY
 					if [ -s "$IMPROVE_LOCK_FILE" ]; then
 						touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 						# バックオフを設定して即座にリトライしない (soren91 stop→start ループ防止)
-						local _backoff_count=1
-						if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-							_backoff_count=$(( $(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0) + 1 ))
+						local _backoff_count
+						if ! _backoff_count=$(_schedule_improve_retry_backoff "$IMPROVE_LOCK_FILE" 2>/dev/null); then
+							_backoff_count=1
+							printf '%d\n%d\n' "$_backoff_count" "$(date +%s)" > "$TMP_STATE_DIR/rate_limit_backoff"
 						fi
-						printf '%d\n%d\n' "$_backoff_count" "$(date +%s)" > "$TMP_STATE_DIR/rate_limit_backoff"
 						log "[IMPROVE] ロックファイル保持 → daemon再試行待ち (backoff count=${_backoff_count})"
 					else
 						log "[IMPROVE] failed_no_apply: valid lock absent → retry lock/backoff cleared"
