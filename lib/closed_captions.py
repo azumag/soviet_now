@@ -431,6 +431,8 @@ class CaptionSocketClient:
                         response = json.loads(raw.decode("utf-8"))
                         if not isinstance(response, dict):
                             raise ValueError("caption response must be a JSON object")
+                        if response.get("v") != PROTOCOL_VERSION:
+                            raise ValueError("caption response protocol version is unsupported")
                         if response.get("event") == "error":
                             raise CaptionProtocolError(
                                 f"{response.get('code', 'ERROR')}: {response.get('message', '')}"
