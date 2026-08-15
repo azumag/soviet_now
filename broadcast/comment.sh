@@ -81,6 +81,24 @@ _comment_failure_backoff_clear() {
 	rm -f "$backoff_file" 2>/dev/null || true
 }
 
+# コメント全体の待機は、明示的なレート制限が確認できた場合だけ設定する。
+# 形式不正・空出力・通常のCLI/provider失敗は次の監視周期で再試行する。
+_comment_handle_generation_failure() {
+	local generation_rate_limited="${1:-false}"
+	if [ "$generation_rate_limited" = "true" ]; then
+		local comment_failure_backoff_sec="${COMMENT_FAILURE_BACKOFF_SEC:-${AI_AGENT_BACKOFF_SEC:-600}}"
+		case "$comment_failure_backoff_sec" in
+		'' | *[!0-9]*) comment_failure_backoff_sec=600 ;;
+		esac
+		[ "$comment_failure_backoff_sec" -lt 1 ] && comment_failure_backoff_sec=1
+		_comment_failure_backoff_set "$comment_failure_backoff_sec"
+		log "[COMMENT] コメント返し生成失敗（明示的レート制限・pending維持・${comment_failure_backoff_sec}秒後に再試行）"
+	else
+		_comment_failure_backoff_clear
+		log "[COMMENT] コメント返し生成失敗（形式/通常失敗、バックオフなし・次周期に再試行）"
+	fi
+}
+
 _comment_meta_sidecar_path() {
 	local target="$1"
 	case "$target" in
@@ -2705,7 +2723,7 @@ JAPANESECOMMENT
 		else
 			comment_agent_list="${COMMENT_AGENTS:-codex:minimax-m3}"
 		fi
-		local comments_talk="" comment_model_used=""
+		local comments_talk="" comment_model_used="" generation_rate_limited=false
 		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, agents=${comment_agent_list}, max_retry=${comment_retry_max})"
 
@@ -2735,13 +2753,19 @@ RETRYCOMMENT
 			fi
 
 			local attempt_talk="" attempt_model="" attempt_rc=1
-			local comment_last_agent_file
+			local comment_last_agent_file comment_failure_kind_file attempt_failure_kind
 			comment_last_agent_file=$(mktemp /tmp/eloop_comment_last_agent_XXXXXXXX)
+			comment_failure_kind_file=$(mktemp /tmp/eloop_comment_failure_kind_XXXXXXXX)
 			attempt_talk=$(ai_generate_list "COMMENT" "$prompt_for_attempt" "$comment_agent_list" \
-				"${COMMENT_CODEX_TIMEOUT:-90}" "_comment_is_valid_generation_candidate" "$comment_last_agent_file")
+				"${COMMENT_CODEX_TIMEOUT:-90}" "_comment_is_valid_generation_candidate" "$comment_last_agent_file" "$comment_failure_kind_file")
 			attempt_rc=$?
 			attempt_model=$(cat "$comment_last_agent_file" 2>/dev/null)
+			attempt_failure_kind=$(cat "$comment_failure_kind_file" 2>/dev/null)
 			rm -f "$comment_last_agent_file"
+			rm -f "$comment_failure_kind_file"
+			if [ "$attempt_failure_kind" = "rate_limit" ]; then
+				generation_rate_limited=true
+			fi
 			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
 				attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
@@ -3024,13 +3048,7 @@ RETRYCOMMENT
 		rm -f "$comment_prompt_file"
 
 		if [ "$generation_ok" != "true" ]; then
-			local comment_failure_backoff_sec="${COMMENT_FAILURE_BACKOFF_SEC:-${AI_AGENT_BACKOFF_SEC:-600}}"
-			case "$comment_failure_backoff_sec" in
-			'' | *[!0-9]*) comment_failure_backoff_sec=600 ;;
-			esac
-			[ "$comment_failure_backoff_sec" -lt 1 ] && comment_failure_backoff_sec=1
-			_comment_failure_backoff_set "$comment_failure_backoff_sec"
-			log "[COMMENT] コメント返し生成失敗（pending維持・${comment_failure_backoff_sec}秒後に再試行）"
+			_comment_handle_generation_failure "$generation_rate_limited"
 		fi
 	) &
 	local comment_pid=$!

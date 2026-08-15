@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import textwrap
+import unittest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class AiGenerateBackoffTests(unittest.TestCase):
+    def test_radio_quality_failure_does_not_set_model_backoff(self) -> None:
+        source = (REPO_ROOT / "broadcast/radio_engine.sh").read_text(encoding="utf-8")
+        start = source.index("品質チェック失敗")
+        end = source.index("done # attempt loop end", start)
+        quality_retry = source[start:end]
+        self.assertNotIn("_ai_backoff_set", quality_retry)
+        self.assertIn("モデルbackoffなし", quality_retry)
+
+    def test_comment_global_backoff_is_only_set_for_rate_limit_outcome(self) -> None:
+        source = (REPO_ROOT / "broadcast/comment.sh").read_text(encoding="utf-8")
+        start = source.index("_comment_handle_generation_failure()")
+        end = source.index("\n}", start) + len("\n}")
+        policy = source[start:end]
+        self.assertIn("generation_rate_limited", policy)
+        self.assertIn("_comment_failure_backoff_set", policy)
+        self.assertIn("_comment_failure_backoff_clear", policy)
+        self.assertIn("形式/通常失敗、バックオフなし", policy)
+        self.assertIn('_comment_handle_generation_failure "$generation_rate_limited"', source)
+
+    def test_comment_global_backoff_runtime_only_tracks_rate_limit(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            backoff = root / "comment_generation_backoff_until"
+            script = textwrap.dedent(
+                f"""
+                set -u
+                source {REPO_ROOT / 'core/helpers.sh'!s}
+                source {REPO_ROOT / 'broadcast/comment.sh'!s}
+                log() {{ :; }}
+                COMMENT_FAILURE_BACKOFF_FILE={backoff!s}
+                COMMENT_FAILURE_BACKOFF_SEC=3600
+                _comment_handle_generation_failure false
+                [ ! -f {backoff!s} ] || exit 11
+                _comment_handle_generation_failure true
+                [ -f {backoff!s} ] || exit 12
+                [ "$(cat {backoff!s})" -gt "$(date +%s)" ] || exit 13
+                _comment_handle_generation_failure false
+                [ ! -f {backoff!s} ] || exit 14
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def _run_list(self, mode: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            prompt.write_text("test prompt\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                AI_GENERATION_QUEUE_ENABLED=0
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                log() {{ :; }}
+                validator() {{ [ "$1" = "VALID" ]; }}
+                _ai_dispatch() {{
+                    case "{mode}" in
+                    invalid) printf 'malformed output'; return 0 ;;
+                    invalid_rate_text) printf 'The rate limit exceeded in this example'; return 0 ;;
+                    failed) return 1 ;;
+                    rate_limited)
+                        if [ "$2" = "codex:deepseek-v4-flash" ]; then
+                            printf 'provider rejected request'
+                            return "$AI_RATE_LIMIT_RC"
+                        fi
+                        printf 'VALID'
+                        return 0
+                        ;;
+                    esac
+                }}
+                if ai_generate_list COMMENT {prompt!s} 'codex:deepseek-v4-flash,codex:minimax-m3' '' validator; then
+                    printf '\\nRESULT=success\\n'
+                else
+                    printf '\\nRESULT=failure\\n'
+                fi
+                if [ -f "$(_ai_backoff_dir)/codex_deepseek-v4-flash" ]; then
+                    echo DEEPSEEK_EXISTS=1
+                else
+                    echo DEEPSEEK_EXISTS=0
+                fi
+                if [ -f "$(_ai_backoff_dir)/codex_minimax-m3" ]; then
+                    echo MINIMAX_EXISTS=1
+                else
+                    echo MINIMAX_EXISTS=0
+                fi
+                """
+            )
+            return subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    def test_invalid_output_does_not_backoff_model(self) -> None:
+        result = self._run_list("invalid")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=failure", result.stdout)
+        self.assertIn("DEEPSEEK_EXISTS=0", result.stdout)
+        self.assertIn("MINIMAX_EXISTS=0", result.stdout)
+
+    def test_regular_failure_does_not_backoff_model(self) -> None:
+        result = self._run_list("failed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=failure", result.stdout)
+        self.assertIn("DEEPSEEK_EXISTS=0", result.stdout)
+        self.assertIn("MINIMAX_EXISTS=0", result.stdout)
+
+    def test_rate_limit_words_in_model_output_alone_do_not_backoff(self) -> None:
+        result = self._run_list("invalid_rate_text")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=failure", result.stdout)
+        self.assertIn("DEEPSEEK_EXISTS=0", result.stdout)
+        self.assertIn("MINIMAX_EXISTS=0", result.stdout)
+
+    def test_explicit_rate_limit_backoffs_only_that_model(self) -> None:
+        result = self._run_list("rate_limited")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=success", result.stdout)
+        self.assertIn("DEEPSEEK_EXISTS=1", result.stdout)
+        self.assertIn("MINIMAX_EXISTS=0", result.stdout)
+
+    def test_active_rate_limit_backoff_is_not_force_retried(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            calls = root / "calls.txt"
+            prompt.write_text("test prompt\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                AI_GENERATION_QUEUE_ENABLED=0
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                log() {{ :; }}
+                validator() {{ [ "$1" = "VALID" ]; }}
+                mkdir -p "$(_ai_backoff_dir)"
+                printf '%s\\n' "$(( $(date +%s) + 3600 ))" >"$(_ai_backoff_dir)/codex_minimax-m3"
+                _ai_dispatch() {{ echo called >>{calls!s}; printf VALID; return 0; }}
+                if ai_generate_list COMMENT {prompt!s} 'codex:minimax-m3' '' validator; then
+                    echo RESULT=success
+                else
+                    echo RESULT=failure
+                fi
+                if [ -f {calls!s} ]; then
+                    echo CALLS=$(wc -l <{calls!s} | tr -d ' ')
+                else
+                    echo CALLS=0
+                fi
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=failure", result.stdout)
+        self.assertIn("CALLS=0", result.stdout)
+
+    def test_codex_backend_returns_rate_limit_code_only_for_explicit_signal(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            prompt.write_text("test prompt\n", encoding="utf-8")
+            fake_codex = root / "codex"
+            fake_codex.write_text(
+                "#!/bin/sh\n"
+                "out=''\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  if [ \"$1\" = '-o' ]; then out=\"$2\"; shift 2; else shift; fi\n"
+                "done\n"
+                "printf '%s\\n' '429 Too Many Requests' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                source {REPO_ROOT / 'core/helpers.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                CODEX_BIN={fake_codex!s}
+                _ai_call_codex_unqueued RADIO codex:minimax-m3 {prompt!s} 3
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 79, result.stderr)
+
+    def test_codex_model_text_does_not_turn_a_regular_failure_into_rate_limit(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            prompt.write_text("test prompt\n", encoding="utf-8")
+            fake_codex = root / "codex"
+            fake_codex.write_text(
+                "#!/bin/sh\n"
+                "out=''\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  if [ \"$1\" = '-o' ]; then out=\"$2\"; shift 2; else shift; fi\n"
+                "done\n"
+                "printf '%s\\n' 'The rate limit exceeded in stdout narrative'\n"
+                "printf '%s\\n' 'The rate limit exceeded in this narrative' > \"$out\"\n"
+                "printf '%s\\n' 'ordinary provider failure' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                source {REPO_ROOT / 'core/helpers.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                CODEX_BIN={fake_codex!s}
+                _ai_call_codex_unqueued RADIO codex:minimax-m3 {prompt!s} 3
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 1, result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1512,8 +1512,9 @@ PREPASS_APPEND
 				log "[RADIO:${corner_name}] 品質チェック失敗 attempt=${_radio_attempt}/${_radio_max_attempts}: ${_qr}"
 				if [ "$_radio_attempt" -lt "$_radio_max_attempts" ]; then
 					if [ -n "$provider_used" ]; then
-						log "[RADIO:${corner_name}] ${provider_used} を品質失敗としてbackoffし、次モデルへfallback"
-						_ai_backoff_set "$provider_used" "${AI_AGENT_BACKOFF_SEC:-600}"
+						# 品質/形式不正はモデルのレート制限ではないため、モデル別
+						# backoffを設定せず、次の試行だけへフォールバックする。
+						log "[RADIO:${corner_name}] ${provider_used} は品質失敗（モデルbackoffなし）、次試行へfallback"
 					fi
 					_current_prompt_file=$(_radio_build_rewrite_prompt "$_saved_prompt" "${talk_body:0:200}" "$_qr")
 					continue
