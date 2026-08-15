@@ -311,6 +311,31 @@ class CaptionSocketClientTests(unittest.TestCase):
                 client.clear("speech-old")
             thread.join(2)
 
+    def test_response_protocol_version_must_match(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            path = Path(temp_dir) / "cc.sock"
+            ready = threading.Event()
+
+            def server() -> None:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(path))
+                    listener.listen(1)
+                    ready.set()
+                    connection, _ = listener.accept()
+                    with connection:
+                        connection.recv(4096)
+                        connection.sendall(b'{"v":2,"event":"reset"}\n')
+
+            thread = threading.Thread(target=server, daemon=True)
+            thread.start()
+            self.assertTrue(ready.wait(2))
+            client = closed_captions.CaptionSocketClient(str(path), timeout=2)
+            with self.assertRaisesRegex(
+                closed_captions.CaptionProtocolError, "protocol version"
+            ):
+                client.reset()
+            thread.join(2)
+
 
 if __name__ == "__main__":
     unittest.main()
