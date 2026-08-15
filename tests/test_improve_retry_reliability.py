@@ -53,6 +53,88 @@ check_and_harvest_improvement
         self.assertNotIn('daemon trigger をスキップ', loop)
         self.assertNotIn('if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]', loop)
 
+    def test_spawn_mutex_rechecks_live_state_before_starting_second_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+TMP_STATE_DIR="$2/state"
+test_root="$2"
+mkdir -p "$TMP_STATE_DIR"
+_acquire_spawn_lock() { printf 'acquired\n' >>"$test_root/events"; }
+_release_spawn_lock() { printf 'released\n' >>"$test_root/events"; }
+_read_improve_state() { printf '%s\n' '{"status":"running","pid":123}'; }
+_is_live_improve_pid() { [ "$1" = 123 ]; }
+log() { printf '%s\n' "$*" >>"$test_root/events"; }
+
+set +e
+_start_improvement_job "history" "1 2" false 100 normal
+rc=$?
+set -e
+[ "$rc" -eq 1 ]
+grep -qx 'acquired' "$2/events"
+grep -qx 'released' "$2/events"
+grep -q 'state再確認で既存running/manualを検出' "$2/events"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text(encoding="utf-8")
+        start = improve[improve.index("_start_improvement_job()") :]
+        acquire = start.index("_acquire_spawn_lock")
+        recheck = start.index("_improve_spawn_state_blocks_start", acquire)
+        stale_scan = start.index("stale_pids=", recheck)
+        self.assertLess(acquire, recheck)
+        self.assertLess(recheck, stale_scan)
+        self.assertIn('eloop_improve(_runtime\\.[^ ]+)?\\.sh', start)
+
+    def test_spawn_state_guard_allows_only_idle_or_dead_running_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+fake_status=idle
+fake_pid=0
+fake_live=0
+_read_improve_state() { printf '{"status":"%s","pid":%s}\n' "$fake_status" "$fake_pid"; }
+_is_live_improve_pid() { [ "$fake_live" -eq 1 ] && [ "$1" = "$fake_pid" ]; }
+
+! _improve_spawn_state_blocks_start
+fake_status=manual
+_improve_spawn_state_blocks_start
+fake_status=running
+fake_pid=321
+fake_live=1
+_improve_spawn_state_blocks_start
+fake_live=0
+! _improve_spawn_state_blocks_start
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_live_pid_detection_accepts_runtime_snapshot_name(self):
+        result = self.run_bash(
+            r'''
+set -e
+source "$1/strategy/improve.sh"
+kill() { return 0; }
+ps() { printf '%s\n' 'bash /srv/soren/tmp/state/eloop_improve_runtime.A1b2.sh history'; }
+_is_live_improve_pid 123
+ps() { printf '%s\n' 'bash /srv/soren/eloop_improve.sh history'; }
+_is_live_improve_pid 123
+ps() { printf '%s\n' 'bash /srv/soren/unrelated.sh'; }
+! _is_live_improve_pid 123
+''',
+            str(REPO_ROOT),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_failed_no_apply_restores_missing_full_retry_batch(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_bash(
