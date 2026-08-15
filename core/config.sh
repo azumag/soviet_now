@@ -182,6 +182,10 @@ CODEX_BUG_DISPATCH_LOG_DIR="$TMP_DEBUG_DIR/codex_bug_dispatch"
 
 IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
 IMPROVE_LOCK_FILE="$ELOOP_LIB_DIR/tmp/improve.lock"
+# 改善ジョブ開始時の入力バッチを別ファイルへ原子的に退避する。
+# failed_no_apply の harvest 時に improve.lock が失われていても、同一
+# strategy hash の有効なバッチだけを復元してバックオフ再試行できる。
+IMPROVE_RETRY_BATCH_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_retry_batch.json"
 # spawn 排他 mutex: dual-spawner (soren_loop 本流 + improve_daemon watchdog) の
 # 二重起動レースを mkdir atomic で防ぐ。owner ファイルで所有者検証付き。
 IMPROVE_SPAWN_LOCK_DIR="$ELOOP_LIB_DIR/$TMP_STATE_DIR/.improve_spawn.lock"
