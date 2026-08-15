@@ -279,6 +279,7 @@ MY_OWNER="${BASHPID:-$$}:${MY_TOKEN}"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
 LOCK_HELD=0
 VOICEVOX_SYNTH_LOCK_HELD=0
+VOICEVOX_STREAM_HB_PID=""
 LAUNCHED_SAY_PID=""
 LAUNCHED_EXPECTED_SEC=0
 CHROME_AUDIO_USED=0
@@ -667,6 +668,80 @@ _voicevox_synth_timeout_sec() {
 	esac
 }
 
+# 長文コメントだけは、全チャンクの合成完了を待たずに再生を開始する。
+# render-only やラジオの完成品生成は従来の全量事前合成を維持する。
+_is_streaming_comment_source() {
+	case "${SOURCE_LABEL:-}" in
+	comment | comment:* | improve_progress | system_progress | wildcard_progress | monitor_report | meriken_time | soren91:*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# ストリーミング経路で使う VOICEVOX の実行時設定を準備する。
+# 合成ロックはここでは取得しないため、再生ロックを待つ前にVOICEVOXを
+# 占有しない。短文・render-onlyの従来経路は既存の設定処理をそのまま使う。
+_prepare_voicevox_runtime_params() {
+	if [ -f "tmp/voicevox_oneshot_speaker.txt" ]; then
+		case "${SOURCE_LABEL:-}" in
+		comment | comment:*)
+			VOICEVOX_SPEAKER=$(cat "tmp/voicevox_oneshot_speaker.txt" 2>/dev/null)
+			VOICEVOX_RANDOM_VOICE_NAME=""
+			VOICEVOX_RANDOM_MODE=0
+			rm -f "tmp/voicevox_oneshot_speaker.txt"
+			_log "ワンショットスピーカー: $VOICEVOX_SPEAKER"
+			;;
+		esac
+	fi
+
+	if [ -f "tmp/voicevox_dousi.txt" ]; then
+		case "${SOURCE_LABEL:-}" in
+		comment | comment:*)
+			rm -f "tmp/voicevox_dousi.txt"
+			USE_VOICEVOX=0
+			USE_COEIROINK=0
+			_log "同志mode: macOS say (VOICEVOXストリーミングをスキップ)"
+			;;
+		esac
+	fi
+
+	if [ "${USE_VOICEVOX:-0}" = "1" ] && [ -f "tmp/voicevox_asmr.txt" ]; then
+		case "${SOURCE_LABEL:-}" in
+		comment | comment:*)
+			local _asmr_result=""
+			_asmr_result=$(_pick_asmr_voicevox_speaker 2>/dev/null || echo "")
+			VOICEVOX_SPEAKER="${_asmr_result%%|*}"
+			VOICEVOX_RANDOM_VOICE_NAME="${_asmr_result#*|}"
+			VOICEVOX_RANDOM_MODE=1
+			rm -f "tmp/voicevox_asmr.txt"
+			_log "ASMR mode: speaker=$VOICEVOX_SPEAKER ($VOICEVOX_RANDOM_VOICE_NAME)"
+			;;
+		esac
+	fi
+
+	[ "${USE_VOICEVOX:-0}" = "1" ] || return 0
+	if [ -f "config/voicevox_exclude_ids.txt" ] && grep -q "^${VOICEVOX_SPEAKER}\\b" "config/voicevox_exclude_ids.txt" 2>/dev/null; then
+		_log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
+		local _reroll=""
+		_reroll=$(_pick_random_voicevox_speaker)
+		VOICEVOX_SPEAKER="${_reroll%%|*}"
+		VOICEVOX_RANDOM_VOICE_NAME="${_reroll#*|}"
+	fi
+
+	PRE_SYNTH_PITCH=""
+	PRE_SYNTH_TEMPO=""
+	PRE_SYNTH_INTONATION=""
+	local vo_pitch="" vo_tempo="" vo_intonation=""
+	[ -f "config/voicevox_pitch_map.txt" ] && vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "config/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+	[ -f "config/voicevox_tempo_map.txt" ] && vo_tempo=$(grep "^${VOICEVOX_SPEAKER}|" "config/voicevox_tempo_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+	[ -f "config/voicevox_intonation_map.txt" ] && vo_intonation=$(grep "^${VOICEVOX_SPEAKER}|" "config/voicevox_intonation_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+	PRE_SYNTH_PITCH="$vo_pitch"
+	PRE_SYNTH_TEMPO="$vo_tempo"
+	PRE_SYNTH_INTONATION="$vo_intonation"
+	_log "VOICEVOX speaker=$VOICEVOX_SPEAKER${VOICEVOX_RANDOM_VOICE_NAME:+ ($VOICEVOX_RANDOM_VOICE_NAME)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
+}
+
 _acquire_voicevox_synth_lock() {
 	local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
 	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
@@ -734,6 +809,11 @@ _acquire_voicevox_synth_lock() {
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
+	if [ -n "${VOICEVOX_STREAM_HB_PID:-}" ]; then
+		kill "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
+		wait "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
+		VOICEVOX_STREAM_HB_PID=""
+	fi
 	docich_cc_cleanup
 	_unregister_voicevox_priority_waiter
 	_clear_current_source_if_owner
@@ -1050,38 +1130,70 @@ BEGIN {
 
 # テキストを句点・読点で ~N文字チャンクに分割
 _split_tts_text() {
-	local text="$1" max_chars="${2:-100}"
+	local text="$1" max_chars="${2:-100}" hard_split="${3:-0}"
 	python3 -c "
 import sys
 text = sys.argv[1]
 max_len = int(sys.argv[2])
+hard_split = sys.argv[3] == '1'
 chunks = []
+
+def append_piece(piece):
+    piece = piece.strip()
+    while len(piece) > max_len:
+        chunks.append(piece[:max_len])
+        piece = piece[max_len:]
+    if piece:
+        if chunks and len(chunks[-1]) + len(piece) <= max_len:
+            chunks[-1] += piece
+        else:
+            chunks.append(piece)
+
+def append_sentence(sentence):
+    if not hard_split:
+        if len(sentence) <= max_len:
+            if chunks and len(chunks[-1]) + len(sentence) <= max_len:
+                chunks[-1] += sentence
+            else:
+                chunks.append(sentence)
+            return
+        parts = sentence.split('\u3001')
+        buf = ''
+        for part in parts:
+            candidate = buf + ('\u3001' if buf else '') + part
+            if len(candidate) > max_len and buf:
+                chunks.append(buf)
+                buf = part
+            else:
+                buf = candidate
+        if buf:
+            chunks.append(buf)
+        return
+    if len(sentence) <= max_len:
+        append_piece(sentence)
+        return
+    parts = sentence.split('\u3001')
+    buf = ''
+    for part in parts:
+        candidate = buf + ('\u3001' if buf else '') + part
+        if buf and len(candidate) > max_len:
+            append_piece(buf)
+            buf = part
+        else:
+            buf = candidate
+    if buf:
+        append_piece(buf)
+
 for line in text.split('\n'):
     for sent in line.split('\u3002'):
         sent = sent.strip()
         if not sent:
             continue
         sent += '\u3002'
-        if chunks and len(chunks[-1]) + len(sent) <= max_len:
-            chunks[-1] += sent
-        else:
-            if len(sent) > max_len:
-                parts = sent.split('\u3001')
-                buf = ''
-                for p in parts:
-                    candidate = buf + ('\u3001' if buf else '') + p
-                    if len(candidate) > max_len and buf:
-                        chunks.append(buf)
-                        buf = p
-                    else:
-                        buf = candidate
-                if buf:
-                    chunks.append(buf)
-            else:
-                chunks.append(sent)
+        append_sentence(sent)
 for c in chunks:
     print(c)
-" "$text" "$max_chars"
+" "$text" "$max_chars" "$hard_split"
 }
 
 # 単一チャンクをVOICEVOXで合成（voicevox_tts.shの再分割を抑止）
@@ -1225,6 +1337,343 @@ _play_prerendered_voicevox_chunks() {
 
 	[ "$play_failed" -eq 0 ] || return 1
 	_log "事前合成済みチャンク再生完了"
+	return 0
+}
+
+# ストリーミング中の合成ロック・再生ロックを維持するheartbeat。
+# 親プロセスがSIGKILLされた場合も、所有者PIDが消えたことを検知して
+# 自身で終了する。これにより孤児heartbeatがstale判定を妨げない。
+_stream_start_heartbeat() {
+	local owner_pid="${MY_OWNER%%:*}"
+	if [ -n "${VOICEVOX_STREAM_HB_PID:-}" ]; then
+		kill "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
+		wait "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
+	fi
+	(
+		while kill -0 "$owner_pid" 2>/dev/null; do
+			_touch_lock_heartbeat
+			_touch_voicevox_synth_lock_heartbeat
+			sleep 2
+		done
+	) &
+	VOICEVOX_STREAM_HB_PID=$!
+}
+
+_stream_stop_heartbeat() {
+	if [ -n "${VOICEVOX_STREAM_HB_PID:-}" ]; then
+		kill "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
+		wait "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
+		VOICEVOX_STREAM_HB_PID=""
+	fi
+}
+
+# 翻訳計画がまだ生成中なら待たずに字幕を見送る。音声境界で最大数十秒
+# ブロックしてしまうと、ストリーミング再生の利点を失うためである。
+# 0=prepare成功、1=翻訳失敗、2=まだ生成中。
+_stream_prepare_caption_if_ready() {
+	local chunk_index="$1" sequence="$2" plan_pid="${DOCICH_CC_PLAN_PID:-}" plan_state=""
+	if [ "${DOCICH_CC_PLAN_READY:-0}" != "1" ]; then
+		if [ -n "$plan_pid" ] && kill -0 "$plan_pid" 2>/dev/null; then
+			plan_state=$(ps -o stat= -p "$plan_pid" 2>/dev/null | tr -d '[:space:]' || true)
+			case "$plan_state" in
+			Z*) : ;;
+			*) return 2 ;;
+			esac
+		fi
+		docich_cc_wait_plan || return 1
+	fi
+	docich_cc_prepare "$chunk_index" "$sequence"
+}
+
+# VOICEVOXの1チャンクを、既存のSAY_RETRY_MAX/backoff契約で合成する。
+_stream_synthesize_voicevox_chunk() {
+	local text="$1" output="$2" retry=0 backoff="$SAY_RETRY_SLEEP_SEC" synth_ok=0
+	while true; do
+		if _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
+			_stream_start_heartbeat
+			if _synthesize_chunk "$text" "$output"; then
+				synth_ok=1
+				_log "ストリーミング合成完了: $output"
+			else
+				_log "ストリーミング合成失敗: $output"
+				rm -f "$output" 2>/dev/null || true
+			fi
+			_stream_stop_heartbeat
+			_release_voicevox_synth_lock
+		else
+			_log "ストリーミング合成ロック取得失敗"
+		fi
+		[ "$synth_ok" -eq 1 ] && return 0
+		if [ "$retry" -ge "$SAY_RETRY_MAX" ]; then
+			return 1
+		fi
+		retry=$((retry + 1))
+		_log "ストリーミング合成を${backoff}秒後に再試行 ${retry}/${SAY_RETRY_MAX}"
+		_sleep_with_heartbeat "$backoff"
+		if [ "$backoff" -lt "$SAY_RETRY_MAX_SLEEP_SEC" ]; then
+			backoff=$((backoff * 2))
+			[ "$backoff" -gt "$SAY_RETRY_MAX_SLEEP_SEC" ] && backoff="$SAY_RETRY_MAX_SLEEP_SEC"
+		fi
+	done
+}
+
+_stream_launch_voicevox_chunk() {
+	local wav_file="$1" ready_dir="${SAY_STREAM_PLAYER_READY_DIR:-}" ready_file="" ready_wait=0
+	if [ -n "$ready_dir" ]; then
+		mkdir -p "$ready_dir" 2>/dev/null || true
+		ready_file="$ready_dir/$(basename "$wav_file").${RANDOM}.ready"
+		export SAY_STREAM_PLAYER_READY_FILE="$ready_file"
+	fi
+	CHROME_AUDIO_USED=0
+	if ! _launch_stream_wav "$wav_file"; then
+		unset SAY_STREAM_PLAYER_READY_FILE 2>/dev/null || true
+		STREAM_PLAY_PID=""
+		STREAM_EXPECTED_SEC=0
+		return 1
+	fi
+	STREAM_PLAY_PID="$!"
+	STREAM_EXPECTED_SEC=$(_estimate_audio_duration_sec "$wav_file")
+	echo "$STREAM_PLAY_PID" >"$PID_FILE"
+	LAST_SAY_PID="$STREAM_PLAY_PID"
+	# _launch_bg_exec はラッパーをforkして即時returnするため、次チャンクの
+	# 合成へ進む前に再生プロセスが起動する小さなsettle時間を設ける。
+	# 長文の待ち時間を増やさないよう既定は20ms、環境で調整可能とする。
+	local settle_sec="${SAY_STREAM_PLAY_START_SETTLE_SEC:-0.02}"
+	if [ "$settle_sec" != "0" ]; then
+		sleep "$settle_sec"
+	fi
+	if [ -n "$ready_file" ]; then
+		while [ ! -e "$ready_file" ] && [ "$ready_wait" -lt 200 ]; do
+			sleep 0.01
+			ready_wait=$((ready_wait + 1))
+		done
+		unset SAY_STREAM_PLAYER_READY_FILE 2>/dev/null || true
+		if [ ! -e "$ready_file" ]; then
+			_log "ストリーミング再生プロセスのready待ちタイムアウト: $wav_file"
+			_kill_player_pid "$STREAM_PLAY_PID"
+			rm -f "$ready_file" 2>/dev/null || true
+			return 1
+		fi
+		rm -f "$ready_file" 2>/dev/null || true
+	else
+		unset SAY_STREAM_PLAYER_READY_FILE 2>/dev/null || true
+	fi
+	if ! kill -0 "$STREAM_PLAY_PID" 2>/dev/null; then
+		_log "ストリーミング再生プロセスが即時終了: $wav_file"
+		return 1
+	fi
+	return 0
+}
+
+_stream_wait_voicevox_chunk() {
+	local play_pid="$1" expected_sec="${2:-0}"
+	if ! _wait_for_player_pid "$play_pid" "$expected_sec" 0; then
+		if [ "${CHROME_AUDIO_USED:-0}" = "1" ]; then
+			_stop_chrome_audio_players
+			if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
+				&& ! _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
+				_log "Chrome/BlackHole fallback異常終了だが終盤まで再生済み (rc=${PLAYER_WAIT_RC:-1}, elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s) → 重複防止のため完了扱い"
+				return 0
+			fi
+		fi
+		return "${PLAYER_WAIT_RC:-1}"
+	fi
+	if _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
+		_log "ストリーミングチャンク途中切断の疑い (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
+		return 98
+	fi
+	return 0
+}
+
+# 既に一度再生を試したチャンクの再試行。既読チャンクを先頭から
+# やり直さず、失敗したチャンクだけを再生する。
+_stream_retry_voicevox_playback() {
+	local wav_file="$1" retry=1 backoff="$SAY_RETRY_SLEEP_SEC" play_rc=1
+	if [ "$retry" -gt "$SAY_RETRY_MAX" ]; then
+		_log "ストリーミングチャンク異常終了 → 再試行上限"
+		return 1
+	fi
+	_log "ストリーミングチャンクを${backoff}秒後に再試行 ${retry}/${SAY_RETRY_MAX}"
+	_sleep_with_heartbeat "$backoff"
+	if [ "$backoff" -lt "$SAY_RETRY_MAX_SLEEP_SEC" ]; then
+		backoff=$((backoff * 2))
+		[ "$backoff" -gt "$SAY_RETRY_MAX_SLEEP_SEC" ] && backoff="$SAY_RETRY_MAX_SLEEP_SEC"
+	fi
+	while true; do
+		if _stream_launch_voicevox_chunk "$wav_file"; then
+			_stream_wait_voicevox_chunk "$STREAM_PLAY_PID" "$STREAM_EXPECTED_SEC"
+			play_rc=$?
+		else
+			play_rc=97
+		fi
+		[ "$play_rc" -eq 0 ] && return 0
+		[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+		if [ -f "$QUEUE_DIR/kill_flag" ]; then
+			rm -f "$QUEUE_DIR/kill_flag"
+			_log "外部killフラグ検出 → チャンク再試行中止"
+			return "$play_rc"
+		fi
+		if [ "$retry" -ge "$SAY_RETRY_MAX" ]; then
+			_log "ストリーミングチャンク異常終了 (rc=$play_rc) → 再試行上限"
+			return "$play_rc"
+		fi
+		retry=$((retry + 1))
+		_log "ストリーミングチャンク異常終了 (rc=$play_rc) → ${backoff}秒後に再試行 ${retry}/${SAY_RETRY_MAX}"
+		_sleep_with_heartbeat "$backoff"
+		if [ "$backoff" -lt "$SAY_RETRY_MAX_SLEEP_SEC" ]; then
+			backoff=$((backoff * 2))
+			[ "$backoff" -gt "$SAY_RETRY_MAX_SLEEP_SEC" ] && backoff="$SAY_RETRY_MAX_SLEEP_SEC"
+		fi
+	done
+}
+
+# コメント用ストリーミング再生。先頭チャンクの再生中に次チャンクを
+# 合成し、チャンク単位で失敗を再試行する。長さの上限は設けず、分割した
+# 全チャンクをFIFO順に処理する。
+_stream_voicevox_chunks() {
+	local text chunk_line total=0 stream_dir current_wav next_wav
+	local i=0 play_failed=0 next_synth_ok=1 play_rc=0 cc_available=0 cc_prepared=0 cc_prepared_for=-1 cc_clear_after_chunk=0 cc_rc=1
+	local chunks=()
+	text=$(cat "$MY_CONTENT" 2>/dev/null || true)
+	while IFS= read -r chunk_line; do
+		[ -n "$chunk_line" ] && chunks+=("$chunk_line")
+	done < <(_split_tts_text "$text" 100 1)
+	total=${#chunks[@]}
+	[ "$total" -gt 1 ] || return 1
+
+	stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
+	mkdir -p "$stream_dir" || return 1
+	if docich_cc_start_plan "${chunks[@]}"; then
+		cc_available=1
+	fi
+	_set_current_source "playing"
+	_log "ストリーミング再生開始 (${total}チャンク)"
+
+	local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
+	if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
+		local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
+		[ -n "${PRE_SYNTH_PITCH:-}" ] && _chat_msg="$_chat_msg pitch=$PRE_SYNTH_PITCH"
+		[ -n "${PRE_SYNTH_TEMPO:-}" ] && _chat_msg="$_chat_msg tempo=$PRE_SYNTH_TEMPO"
+		case "$vo_voice_name" in *もち子*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
+		enqueue_chat_message "$_chat_msg" "say_enqueue"
+	fi
+
+	current_wav="$stream_dir/chunk_0.wav"
+	if ! _stream_synthesize_voicevox_chunk "${chunks[0]}" "$current_wav"; then
+		return 1
+	fi
+
+	for ((i = 0; i < total; i++)); do
+		[ -s "$current_wav" ] || {
+			_log "ストリーミングWAVなし: $current_wav"
+			play_failed=1
+			break
+		}
+
+		cc_prepared=0
+		if [ "$cc_available" -eq 1 ]; then
+			if [ "$cc_prepared_for" -eq "$i" ]; then
+				# 現在の再生中に一度だけprepare済みのchunkをそのままcommitする。
+				cc_prepared=1
+				cc_prepared_for=-1
+			else
+				_stream_prepare_caption_if_ready "$i" "$i"
+				cc_rc=$?
+				case "$cc_rc" in
+				0) cc_prepared=1 ;;
+				2) : ;; # 翻訳中。音声を待たせずこのチャンクは字幕なし。
+				*) cc_available=0 ;;
+				esac
+			fi
+		fi
+
+		if ! _stream_launch_voicevox_chunk "$current_wav"; then
+			if [ "$cc_prepared" -eq 1 ]; then
+				cc_available=0
+				cc_prepared=0
+				cc_prepared_for=-1
+				docich_cc_clear || true
+			fi
+			if ! _stream_retry_voicevox_playback "$current_wav"; then
+				play_failed=1
+				break
+			fi
+			# 初回起動失敗時は再試行が完了しているため、次チャンクの
+			# 合成をここで行ってから次のループへ進む（重複再生はしない）。
+			next_synth_ok=1
+			if [ "$i" -lt $((total - 1)) ]; then
+				next_wav="$stream_dir/chunk_$((i + 1)).wav"
+				if ! _stream_synthesize_voicevox_chunk "${chunks[$((i + 1))]}" "$next_wav"; then
+					next_synth_ok=0
+				fi
+			fi
+		else
+			if [ "$cc_prepared" -eq 1 ] && ! docich_cc_commit "$i"; then
+				cc_available=0
+				cc_prepared=0
+				cc_prepared_for=-1
+				docich_cc_clear || true
+			fi
+
+			next_synth_ok=1
+			if [ "$i" -lt $((total - 1)) ]; then
+				next_wav="$stream_dir/chunk_$((i + 1)).wav"
+				# 現在の音声再生中に次chunkを一度だけprepareし、次ループで
+				# 再prepareせずcommitする。これで音声境界の待ち時間を抑えつつ、
+				# docichccのPAGE_ALREADY_PREPAREDも回避する。
+				if [ "$cc_available" -eq 1 ]; then
+					_stream_prepare_caption_if_ready "$((i + 1))" "$((i + 1))"
+					cc_rc=$?
+					case "$cc_rc" in
+					0) cc_prepared_for=$((i + 1)) ;;
+					2) : ;;
+					*)
+						cc_available=0
+						cc_prepared_for=-1
+						[ "${DOCICH_CC_DIRTY:-0}" = "1" ] && cc_clear_after_chunk=1
+						;;
+					esac
+				fi
+				if ! _stream_synthesize_voicevox_chunk "${chunks[$((i + 1))]}" "$next_wav"; then
+					next_synth_ok=0
+				fi
+				# 合成後にplanが完了していれば、次ループでprepareを再試行する。
+			fi
+
+			_stream_wait_voicevox_chunk "$STREAM_PLAY_PID" "$STREAM_EXPECTED_SEC"
+			play_rc=$?
+			if [ "$play_rc" -ne 0 ]; then
+				[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+				docich_cc_clear || true
+				cc_available=0
+				cc_prepared_for=-1
+				if ! _stream_retry_voicevox_playback "$current_wav"; then
+					play_failed=1
+				fi
+			fi
+		fi
+		if [ "$cc_clear_after_chunk" -eq 1 ]; then
+			docich_cc_clear || true
+			cc_clear_after_chunk=0
+		fi
+
+		rm -f "$current_wav" 2>/dev/null || true
+		[ "$play_failed" -eq 0 ] || break
+		if [ "$i" -lt $((total - 1)) ] && [ "$next_synth_ok" -eq 0 ]; then
+			play_failed=1
+			break
+		fi
+		if [ "$i" -lt $((total - 1)) ] && [ -n "$SAY_CHUNK_GAP_SEC" ] && [ "$SAY_CHUNK_GAP_SEC" != "0" ]; then
+			_touch_lock_heartbeat
+			sleep "$SAY_CHUNK_GAP_SEC"
+			_touch_lock_heartbeat
+		fi
+		current_wav="$stream_dir/chunk_$((i + 1)).wav"
+	done
+
+	docich_cc_clear || true
+	[ "$play_failed" -eq 0 ] || return 1
+	_log "ストリーミング再生完了"
 	return 0
 }
 
@@ -1818,6 +2267,26 @@ _prepare_playback_turn() {
 PRE_SYNTH_WAV=""
 PRE_SYNTH_PLAYLIST_FILE=""
 _pre_chunks=()
+STREAM_VOICEVOX_CHUNKS=0
+
+# コメントの長文だけは、再生ロック取得後にチャンクを順次合成する。
+# render-only と外部WAV bundleは完成品を必要とするため従来経路のままにする。
+if [ "$WAV_MODE" = "false" ] && [ "$RENDER_ONLY" != "true" ] \
+	&& [ "${USE_VOICEVOX:-0}" = "1" ] && _is_streaming_comment_source; then
+	_stream_probe_text=$(cat "$MY_CONTENT" 2>/dev/null || true)
+	_stream_probe_chunks=()
+	while IFS= read -r _stream_probe_line; do
+		[ -n "$_stream_probe_line" ] && _stream_probe_chunks+=("$_stream_probe_line")
+	done < <(_split_tts_text "$_stream_probe_text" 100 1)
+	if [ "${#_stream_probe_chunks[@]}" -gt 1 ]; then
+		_prepare_voicevox_runtime_params
+		if [ "${USE_VOICEVOX:-0}" = "1" ]; then
+			STREAM_VOICEVOX_CHUNKS=1
+			_log "コメント長文: 全チャンク事前合成を行わず、合成完了チャンクから順次再生"
+		fi
+	fi
+fi
+
 if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
 	_external_caption_chunks=()
 	_external_playlist_count=0
@@ -1832,7 +2301,8 @@ if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
 		exit 2
 	fi
 	docich_cc_start_plan "${_external_caption_chunks[@]}" || true
-elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
+elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
+	&& [ "$STREAM_VOICEVOX_CHUNKS" -eq 0 ]; then
 			# 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
 			if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 				if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
@@ -2064,6 +2534,14 @@ LAST_SAY_PID=""
 if [ "$WAV_PLAYLIST_MODE" = "true" ]; then
 	# 外部bundleは再試行に再利用するため、個々のWAVをここでは削除しない。
 	if ! SAY_PRESERVE_PRERENDERED_CHUNKS=1 _play_prerendered_voicevox_chunks "$WAV_PLAYLIST_FILE"; then
+		PLAYBACK_FAILED=1
+	fi
+elif [ "$STREAM_VOICEVOX_CHUNKS" -eq 1 ]; then
+	# コメント長文: 先頭チャンクの再生中に後続チャンクを合成する。
+	if [ -n "${SAY_CC_TEXT:-}" ]; then
+		enqueue_chat_message "$SAY_CC_TEXT" "say_enqueue"
+	fi
+	if ! _stream_voicevox_chunks; then
 		PLAYBACK_FAILED=1
 	fi
 elif [ -n "${PRE_SYNTH_PLAYLIST_FILE:-}" ] && [ -s "$PRE_SYNTH_PLAYLIST_FILE" ]; then

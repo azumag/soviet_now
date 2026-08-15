@@ -1,0 +1,206 @@
+import os
+import shutil
+import stat
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class TestSayStreaming(unittest.TestCase):
+    def _write_executable(self, path: Path, body: str) -> None:
+        path.write_text(body, encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+    def _run(
+        self,
+        content_text: str,
+        *,
+        fail_first_chunk: str | None = None,
+        retry_max: int = 1,
+        fail_caption_index: int | None = None,
+    ):
+        raw_dir = tempfile.TemporaryDirectory()
+        root = Path(raw_dir.name)
+        (root / "tmp").mkdir()
+        (root / "config").mkdir()
+        (root / "bin").mkdir()
+        (root / "lib").mkdir()
+        shutil.copy2(REPO_ROOT / "say_enqueue.sh", root / "say_enqueue.sh")
+        shutil.copy2(
+            REPO_ROOT / "lib" / "normalize_speech_text.py",
+            root / "lib" / "normalize_speech_text.py",
+        )
+
+        event_log = root / "events.log"
+        caption_log = root / "captions.log"
+        (root / "lib" / "closed_captions.sh").write_text(
+            """DOCICH_CC_PLAN_READY=0
+DOCICH_CC_DIRTY=0
+docich_cc_init() { DOCICH_CC_PLAN_READY=0; DOCICH_CC_DIRTY=0; }
+docich_cc_is_enabled() { return 0; }
+docich_cc_start_plan() { DOCICH_CC_PLAN_READY=1; printf 'start:%s\\n' "$#" >> "$TEST_CAPTION_LOG"; return 0; }
+docich_cc_wait_plan() { return 0; }
+docich_cc_prepare() { DOCICH_CC_DIRTY=1; printf 'prepare:%s\\n' "$1" >> "$TEST_CAPTION_LOG"; [ "${TEST_CAPTION_FAIL_PREPARE:-}" = "$1" ] && return 1; return 0; }
+docich_cc_commit() { printf 'commit:%s\\n' "$1" >> "$TEST_CAPTION_LOG"; return 0; }
+docich_cc_clear() { if [ "$DOCICH_CC_DIRTY" = "1" ]; then printf 'clear\\n' >> "$TEST_CAPTION_LOG"; fi; DOCICH_CC_DIRTY=0; return 0; }
+docich_cc_cleanup() { :; }
+""",
+            encoding="utf-8",
+        )
+        (root / "tmp" / "voicevox_voice.txt").write_text("1\n", encoding="utf-8")
+        content = root / "comment.txt"
+        content.write_text(content_text, encoding="utf-8")
+        fail_state = root / "fail_once.state"
+
+        self._write_executable(
+            root / "voicevox_tts.sh",
+            """#!/bin/sh
+set -eu
+out=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -f) shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf 'synth-start:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
+sleep 0.25
+printf 'wav' > "$out"
+printf 'synth-end:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
+""",
+        )
+        fail_name = fail_first_chunk or ""
+        self._write_executable(
+            root / "bin" / "pactl",
+            "#!/bin/sh\nprintf '1\\tsoren_null\\tmodule-null-sink\\n'\n",
+        )
+        self._write_executable(root / "bin" / "ffprobe", "#!/bin/sh\nprintf '0\\n'\n")
+        self._write_executable(
+            root / "bin" / "paplay",
+            f"""#!/bin/sh
+set -eu
+name=$(basename "$3")
+if [ -n "${{SAY_STREAM_PLAYER_READY_FILE:-}}" ]; then
+  : > "$SAY_STREAM_PLAYER_READY_FILE"
+fi
+printf 'play-start:%s\\n' "$name" >> "$TEST_EVENT_LOG"
+if [ "$name" = "{fail_name}" ] && [ ! -e "{fail_state}" ]; then
+  : > "{fail_state}"
+  exit 1
+fi
+sleep 0.80
+printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
+""",
+        )
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{root / 'bin'}:{env['PATH']}",
+                "SOREN_OBS_PLATFORM": "linux",
+                "SAY_AUDIO_DEVICE": "soren_null",
+                "SAY_CONTEXT_LABEL": "comment",
+                "SAY_CHUNK_GAP_SEC": "0",
+                "SAY_RETRY_MAX": str(retry_max),
+                "SAY_RETRY_SLEEP_SEC": "0",
+                "SAY_RETRY_MAX_SLEEP_SEC": "1",
+                "SAY_STREAM_PLAY_START_SETTLE_SEC": "0.1",
+                "SAY_STREAM_PLAYER_READY_DIR": str(root / "ready"),
+                "VOICEVOX_COMMENT_SYNTH_TIMEOUT_SEC": "5",
+                "VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC": "5",
+                "TEST_EVENT_LOG": str(event_log),
+                "TEST_CAPTION_LOG": str(caption_log),
+            }
+        )
+        if fail_caption_index is not None:
+            env["TEST_CAPTION_FAIL_PREPARE"] = str(fail_caption_index)
+        result = subprocess.run(
+            ["bash", "say_enqueue.sh", "--no-preempt", str(content), "150", "0"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        events = event_log.read_text(encoding="utf-8").splitlines()
+        caption_ops = caption_log.read_text(encoding="utf-8").splitlines()
+        raw_dir.cleanup()
+        return result, events, caption_ops
+
+    def test_playback_starts_while_next_chunk_is_synthesized(self):
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, caption_ops = self._run(text)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        play_start_0 = events.index("play-start:chunk_0.wav")
+        synth_start_1 = events.index("synth-start:chunk_1.wav")
+        synth_end_1 = events.index("synth-end:chunk_1.wav")
+        play_end_0 = events.index("play-end:chunk_0.wav")
+        self.assertLess(play_start_0, synth_start_1, events)
+        self.assertLess(synth_start_1, play_end_0, events)
+        self.assertLess(synth_end_1, play_end_0, events)
+        chunk_count = len([line for line in events if line.startswith("synth-start:chunk_")])
+        self.assertEqual(
+            [line for line in caption_ops if line.startswith("prepare:")],
+            [f"prepare:{i}" for i in range(chunk_count)],
+            caption_ops,
+        )
+        self.assertEqual(
+            [line for line in caption_ops if line.startswith("commit:")],
+            [f"commit:{i}" for i in range(chunk_count)],
+            caption_ops,
+        )
+
+    def test_unpunctuated_long_text_is_hard_split_without_truncation(self):
+        result, events, _ = self._run("a" * 350)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        synth = [line for line in events if line.startswith("synth-start:")]
+        plays = [line for line in events if line.startswith("play-start:")]
+        self.assertGreaterEqual(len(synth), 4, events)
+        self.assertEqual(len(synth), len(plays), events)
+
+    def test_short_comment_keeps_the_existing_single_wav_path(self):
+        result, events, _ = self._run("短いコメントです。")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(line.startswith("synth-start:") and "_pre.wav" in line for line in events), events)
+        self.assertFalse(any("chunk_" in line for line in events), events)
+
+    def test_failed_chunk_playback_retries_only_that_chunk(self):
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, _ = self._run(text, fail_first_chunk="chunk_1.wav")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        starts = [line.split(":", 1)[1] for line in events if line.startswith("play-start:")]
+        self.assertGreaterEqual(starts.count("chunk_1.wav"), 2, events)
+        first = starts.index("chunk_0.wav")
+        second = starts.index("chunk_1.wav")
+        third = starts.index("chunk_2.wav")
+        self.assertLess(first, second, starts)
+        self.assertLess(second, third, starts)
+        self.assertEqual(starts.count("chunk_0.wav"), 1, starts)
+        self.assertEqual(starts.count("chunk_2.wav"), 1, starts)
+
+    def test_retry_limit_zero_does_not_relaunch_failed_chunk(self):
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, _ = self._run(text, fail_first_chunk="chunk_1.wav", retry_max=0)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        starts = [line.split(":", 1)[1] for line in events if line.startswith("play-start:")]
+        self.assertEqual(starts.count("chunk_0.wav"), 1, starts)
+        self.assertEqual(starts.count("chunk_1.wav"), 1, starts)
+
+    def test_caption_prepare_failure_clears_previous_page_but_audio_continues(self):
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, caption_ops = self._run(text, fail_caption_index=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("prepare:0", caption_ops)
+        self.assertIn("commit:0", caption_ops)
+        self.assertIn("clear", caption_ops)
+        self.assertNotIn("commit:1", caption_ops)
+        self.assertGreaterEqual(sum(line.startswith("play-start:") for line in events), 3, events)
+
+
+if __name__ == "__main__":
+    unittest.main()
