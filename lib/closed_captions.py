@@ -172,7 +172,8 @@ Example: 通常読み上げの字幕が音声と同じタイミングで表示�
 Do not add explanations, notes, markdown, speaker labels, or facts.
 Return exactly one JSON object in this schema and nothing else:
 {{"translations":["translation 0","translation 1"]}}
-The array length and order must exactly match the input.
+Return translations in input order. If you cannot finish every item, return
+the available prefix; the caller will caption only the entries it received.
 
 INPUT:
 {numbered}
@@ -236,8 +237,10 @@ class TranslationRuntimeClient:
     def translate(self, chunks: Sequence[str], *, max_chars: int = 64) -> list[str]:
         if not chunks:
             raise CaptionPlanError("no speech chunks were provided")
-        if len(chunks) > 32:
-            raise CaptionPlanError("at most 32 speech chunks are supported")
+        # CEA-608 control pages support at most 32 chunks per execution. Keep
+        # the prefix that can be displayed; the shell will continue later
+        # audio chunks without captions once this plan is exhausted.
+        chunks = list(chunks)[:32]
         if any(not isinstance(chunk, str) or not chunk.strip() for chunk in chunks):
             raise CaptionPlanError("speech chunks must be non-empty strings")
         if any(len(chunk) > 1000 for chunk in chunks):
@@ -293,12 +296,12 @@ class TranslationRuntimeClient:
                             "translation content must match the exact schema"
                         )
                     translations = parsed["translations"]
-                    if not isinstance(translations, list) or len(translations) != len(
-                        chunks
-                    ):
-                        raise CaptionPlanError(
-                            "translation array length does not match chunks"
-                        )
+                    if not isinstance(translations, list):
+                        raise CaptionPlanError("translations must be a JSON array")
+                    if len(translations) > len(chunks):
+                        translations = translations[: len(chunks)]
+                    if not translations:
+                        raise CaptionPlanError("translation array is empty")
                     if not all(isinstance(item, str) for item in translations):
                         raise CaptionPlanError("translation array contains a non-string value")
                     normalized = [normalize_caption_text(item) for item in translations]
@@ -334,10 +337,21 @@ def build_caption_plan(
     max_pages: int = 1,
 ) -> dict[str, object]:
     validate_execution_id(execution_id)
-    if not chunks or len(chunks) != len(translations):
-        raise CaptionPlanError("speech chunks and translations must be non-empty and aligned")
-    if len(chunks) > 32:
-        raise CaptionPlanError("at most 32 speech chunks are supported")
+    chunks = list(chunks)
+    translations = list(translations)
+    if not chunks or not translations:
+        raise CaptionPlanError("speech chunks and translations must be non-empty")
+    # Keep the protocol-sized prefix. The caller may have more audio chunks;
+    # those are intentionally spoken without captions after this plan ends.
+    chunks = chunks[:32]
+
+    # Translation providers occasionally return a partial or overlong array.
+    # Preserve the aligned prefix instead of discarding the whole caption plan:
+    # missing tail chunks continue as audio-only, and extra model entries are
+    # ignored because there is no corresponding speech chunk.
+    aligned_count = min(len(chunks), len(translations))
+    chunks = chunks[:aligned_count]
+    translations = translations[:aligned_count]
 
     planned: list[BilingualSpeechChunk] = []
     for index, (japanese, english) in enumerate(zip(chunks, translations, strict=True)):

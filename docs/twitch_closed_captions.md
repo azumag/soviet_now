@@ -9,7 +9,7 @@ VOICEVOXで再生する日本語発話を短い英語へ翻訳し、OBSや字幕
 ## 構成
 
 1. `say_enqueue.sh` がVOICEVOX用の日本語チャンクを確定します。Deferred radioの事前生成では、結合WAVだけでなく、同じ境界の個別WAV・日本語チャンクをprivate bundleとして保存します。
-2. `lib/closed_captions.py` がローカルのOpenAI互換endpointへ一括翻訳を依頼します。モデル応答は `{"translations":[...]}` だけを受理し、thinking、tool trace、Markdown、説明文が前後に付いた応答は字幕計画ごと破棄します。
+2. `lib/closed_captions.py` がローカルのOpenAI互換endpointへ一括翻訳を依頼します。モデル応答は `{"translations":[...]}` のJSONだけを受理し、thinking、tool trace、Markdown、説明文が前後に付いた応答は字幕計画ごと破棄します。配列の件数が音声チャンクより少ない場合は利用できる先頭分だけ字幕化し、余分な翻訳は無視します。
 3. 英文を保守的なASCIIへ正規化し、1行32文字、最大2行、1チャンク1ページへ制限します。
 4. `lib/closed_captions.sh` が翻訳とVOICEVOX合成を並行させ、再生中に次チャンクを `prepare`、音声境界で `commit`、発話終了時に `clear` します。事前生成ラジオもbundleの個別WAVを同じ順で再生するため、結合WAVを一括再生して字幕境界を失うことはありません。
 5. FFmpegの `docichcc` filterが0600のUnix socketからNDJSONを受け、libcaptionでCC1 pop-on字幕へ変換します。`AV_FRAME_DATA_A53_CC` をFFmpegの `ccfifo` でフレームレートに合わせて配り、libx264の `-a53cc 1` がH.264 SEIへ格納します。
@@ -79,7 +79,7 @@ DOCICH_CC_TRANSLATION_ATTEMPTS=3
 DOCICH_CC_SOCKET_TIMEOUT_SEC=3
 ```
 
-翻訳APIにはJSON mode（`response_format: {"type":"json_object"}`）を指定します。`minimax-m3`ではローカルLiteLLM経路の`reasoning_effort=none`も明示し、字幕用途に不要なthinkingが完了トークンを使い切ることを防ぎます。英文は32文字を目標に圧縮し、複数チャンクのラジオでも64文字の絶対上限を超えにくい余裕を取ります。上限を超えた応答は不正応答として再試行します。そのうえで、応答にthinking、説明文、壊れたJSONが含まれる場合は抽出せず破棄します。同じモデルへ最大`DOCICH_CC_TRANSLATION_ATTEMPTS`回（1〜5、既定3）新規リクエストを行い、それでも厳密JSONにならなければ当該発話だけ字幕なしで音声を続行します。接続失敗やtimeoutはこの再試行対象にせず次のモデルへ移るため、1モデルの通信障害で音声開始待ちが試行回数倍に延びることはありません。
+翻訳APIにはJSON mode（`response_format: {"type":"json_object"}`）を指定します。`minimax-m3`ではローカルLiteLLM経路の`reasoning_effort=none`も明示し、字幕用途に不要なthinkingが完了トークンを使い切ることを防ぎます。英文は32文字を目標に圧縮し、複数チャンクのラジオでも64文字の絶対上限を超えにくい余裕を取ります。上限を超えた応答は不正応答として再試行します。そのうえで、応答にthinking、説明文、壊れたJSONが含まれる場合は抽出せず破棄します。翻訳配列の件数だけが不足・超過した場合は、順序付きの利用可能なprefixをそのまま採用し、不足した後半チャンクだけ字幕なしで音声を続行します。同じモデルへ最大`DOCICH_CC_TRANSLATION_ATTEMPTS`回（1〜5、既定3）新規リクエストを行い、配列が空またはその他の形式不正なら当該発話だけ字幕なしで音声を続行します。接続失敗やtimeoutはこの再試行対象にせず次のモデルへ移るため、1モデルの通信障害で音声開始待ちが試行回数倍に延びることはありません。
 
 `./direct_stream.sh validate --mode live` の `closed_captions_active` が `false` の場合も、映像・音声のpreflight自体は成功できます。これは意図したfail-openです。字幕を試すカナリアだけ `DOCICH_CC_ENABLED=1` にし、validate結果、FFmpeg statusの `closed_captions.active`、socket mode 0600を確認します。
 
