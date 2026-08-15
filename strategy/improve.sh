@@ -53,6 +53,22 @@ _release_spawn_lock() {
 	fi
 }
 
+# trigger_adaptive_improvement() の入口で idle を確認していても、別の
+# spawner が metadata 準備中に先行して job を起動できる。spawn mutex を
+# 取得した後に authoritative state をもう一度確認し、先行 job が live なら
+# mutex を引き継いだ後発側を必ず止める。
+_improve_spawn_state_blocks_start() {
+	local state status pid
+	state=$(_read_improve_state)
+	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null || echo idle)
+	if [ "$status" = "manual" ]; then
+		return 0
+	fi
+	[ "$status" = "running" ] || return 1
+	pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null || echo 0)
+	_is_live_improve_pid "$pid"
+}
+
 _improve_flow_notify() {
 	local step="${1:-flow}" title="${2:-改善フロー}" body="${3:-}" chat="${4:-}" level="${5:-info}"
 	local full_title="改善フロー: ${title}"
@@ -827,7 +843,7 @@ _is_live_improve_pid() {
 		_is_recorded_running_improve_pid "$pid"
 		return $?
 	fi
-	echo "$cmd" | grep -q "eloop_improve\.sh"
+	echo "$cmd" | grep -Eq "eloop_improve(_runtime\.[^ ]+)?\.sh"
 }
 
 _is_recorded_running_improve_pid() {
@@ -2336,11 +2352,21 @@ _start_improvement_job() {
 		log "[IMPROVE] spawn lock を別 spawner が保持中 → 二重起動回避でスキップ"
 		return 1
 	fi
+	# The pre-mutex status check is not sufficient: both soren_loop and
+	# improve_daemon can observe idle while one of them is still preparing the
+	# batch. Re-check under the mutex before touching an existing worker or any
+	# shared staging/result files.
+	if _improve_spawn_state_blocks_start; then
+		log "[IMPROVE] spawn lock 取得後のstate再確認で既存running/manualを検出 → 後発起動をスキップ"
+		_release_spawn_lock
+		return 1
+	fi
 
 	# 既存の eloop_improve プロセスが残っていないか確認
-	# -f exact match + 自プロセス除外 (grep -v $$) で誤殺防止
+	# 通常scriptだけでなく、実運用で固定実行する runtime snapshot も対象。
+	# 自プロセス除外 (grep -v $$) で誤殺防止。
 	local stale_pids
-	stale_pids=$(pgrep -f "eloop_improve\.sh" 2>/dev/null | grep -vw "$$" || true)
+	stale_pids=$(pgrep -f "eloop_improve(_runtime\.[^ ]+)?\.sh" 2>/dev/null | grep -vw "$$" || true)
 	if [ -n "$stale_pids" ]; then
 		log "[IMPROVE] WARNING: 既存の eloop_improve プロセス検出 (PIDs: $stale_pids) → kill"
 		echo "$stale_pids" | while read -r spid; do
