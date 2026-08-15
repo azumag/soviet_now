@@ -664,6 +664,112 @@ _strategy_decide_hash_or_md5() {
 	printf '%s\n' "$hash"
 }
 
+_snapshot_improve_retry_batch() {
+	local source="${1:-$IMPROVE_LOCK_FILE}"
+	local target="${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}"
+	[ -s "$source" ] || return 1
+	mkdir -p "$(dirname "$target")" 2>/dev/null || return 1
+	python3 - "$source" "$target" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+source, target = sys.argv[1:3]
+try:
+    with open(source, encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(data, dict):
+    raise SystemExit(1)
+try:
+    count = int(data.get("count", 0) or 0)
+except Exception:
+    count = 0
+batch_hash = str(data.get("hash") or data.get("strategy_hash") or "")
+if count <= 0 or not batch_hash:
+    raise SystemExit(1)
+data["retry_snapshot_at"] = int(time.time())
+tmp = f"{target}.tmp.{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, target)
+PY
+}
+
+_restore_improve_retry_batch_if_valid() {
+	local current_hash="${1:-}"
+	local source="${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}"
+	local target="${IMPROVE_LOCK_FILE}"
+	local min_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
+	local result=""
+	[ -n "$current_hash" ] || return 1
+	[ -s "$source" ] || return 1
+	result=$(python3 - "$source" "$target" "$current_hash" "$min_games" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+source, target, current_hash, min_games_raw = sys.argv[1:5]
+try:
+    min_games = max(1, int(min_games_raw))
+except Exception:
+    min_games = 12
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+existing = load(target)
+try:
+    existing_count = int(existing.get("count", 0) or 0)
+except Exception:
+    existing_count = 0
+if existing_count > 0:
+    print(f"existing:{existing_count}")
+    raise SystemExit(0)
+
+data = load(source)
+try:
+    count = int(data.get("count", 0) or 0)
+except Exception:
+    count = 0
+batch_hash = str(data.get("hash") or data.get("strategy_hash") or "")
+early = bool(data.get("early_escape_lock", False))
+if not batch_hash or batch_hash != current_hash or count <= 0:
+    raise SystemExit(1)
+if count < min_games and not early:
+    raise SystemExit(1)
+
+data["retry_restored_at"] = int(time.time())
+data["retry_restore_count"] = int(data.get("retry_restore_count", 0) or 0) + 1
+tmp = f"{target}.tmp.{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+os.replace(tmp, target)
+print(f"restored:{count}")
+PY
+	)
+	case "$result" in
+	restored:*)
+		log "[IMPROVE] failed_no_apply retry batch restored (${result#*:} games, hash=${current_hash:0:12})"
+		return 0
+		;;
+	existing:*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+_clear_improve_retry_batch() {
+	rm -f "${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}" 2>/dev/null || true
+}
+
 _persist_improve_lock_reason() {
 	local reason="${1:-normal}"
 	case "$reason" in
@@ -1223,8 +1329,13 @@ with open(rs_file, 'w') as f:
 				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
 				rm -f "$IMPROVE_LOCK_FILE"
+				_clear_improve_retry_batch
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
+				# improve.lock は本来ジョブ完了まで残るが、別の回収経路や
+				# 競合で消えると100試合分を失い、次の閾値まで再試行されない。
+				# 開始時スナップショットから同一hashの有効バッチだけを復元する。
+				_restore_improve_retry_batch_if_valid "$hash_now" || true
 				local _failed_lock_meta="" _failed_lock_rest=""
 				local _failed_lock_hash="" _failed_lock_count="" _failed_lock_early=""
 				if [ -s "$IMPROVE_LOCK_FILE" ]; then
@@ -1249,9 +1360,11 @@ PY
 				if [ -n "$_failed_lock_hash" ] && [ -n "$hash_now" ] && [ "$_failed_lock_hash" != "$hash_now" ]; then
 					log "[IMPROVE] failed_no_apply lock hash stale (${_failed_lock_hash:0:12} != current ${hash_now:0:12}) → stale lock/backoff cleared"
 					rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+					_clear_improve_retry_batch
 				elif [ -n "$_failed_lock_count" ] && [ "${_failed_lock_early:-0}" != "1" ] && [ "${_failed_lock_count:-0}" -lt "${MIN_GAMES_BEFORE_IMPROVE:-12}" ]; then
 					log "[IMPROVE] failed_no_apply partial lock cleared (count=${_failed_lock_count}/${MIN_GAMES_BEFORE_IMPROVE:-12})"
 					rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+					_clear_improve_retry_batch
 				else
 					# failed_no_apply: 有効なlockだけを残す。空lockはmain loopを止めるだけなので作らない。
 					if [ -s "$IMPROVE_LOCK_FILE" ]; then
@@ -1266,6 +1379,7 @@ PY
 					else
 						log "[IMPROVE] failed_no_apply: valid lock absent → retry lock/backoff cleared"
 						rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+						_clear_improve_retry_batch
 					fi
 				fi
 			fi
@@ -2248,6 +2362,9 @@ _start_improvement_job() {
 	mkdir -p "$(dirname "$improve_ai_log")" 2>/dev/null || true
 	: >"$improve_ai_log"
 	_persist_improve_lock_reason "$reason"
+	if ! _snapshot_improve_retry_batch "$IMPROVE_LOCK_FILE"; then
+		log "[IMPROVE] WARNING: retry batch snapshot failed; original improve.lock remains authoritative"
+	fi
 	printf '[%s] [IMPROVE] job start reason=%s game=%s scores=%s\n' \
 		"$(date '+%H:%M:%S')" "$reason" "${GAME_NUM:-?}" "${all_scores:-}" >>"$improve_ai_log" 2>/dev/null || true
 	_improve_overlay_generate_once

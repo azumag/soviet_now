@@ -53,6 +53,73 @@ check_and_harvest_improvement
         self.assertNotIn('daemon trigger をスキップ', loop)
         self.assertNotIn('if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]', loop)
 
+    def test_failed_no_apply_restores_missing_full_retry_batch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+test_root="$2"
+log() { printf '%s\n' "$*" >>"$test_root/events"; }
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+IMPROVE_RETRY_BATCH_FILE="$TMP_STATE_DIR/improve_retry_batch.json"
+MIN_GAMES_BEFORE_IMPROVE=100
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":100,"hash":"same-hash","scores":"1 2 3"}' >"$IMPROVE_LOCK_FILE"
+_snapshot_improve_retry_batch
+rm -f "$IMPROVE_LOCK_FILE"
+_restore_improve_retry_batch_if_valid same-hash
+python3 - "$IMPROVE_LOCK_FILE" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["count"] == 100
+assert data["hash"] == "same-hash"
+assert data["retry_restore_count"] == 1
+PY
+grep -q 'retry batch restored (100 games' "$2/events"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_retry_batch_rejects_stale_or_partial_normal_batch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+log() { :; }
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+IMPROVE_RETRY_BATCH_FILE="$TMP_STATE_DIR/improve_retry_batch.json"
+MIN_GAMES_BEFORE_IMPROVE=100
+mkdir -p "$TMP_STATE_DIR"
+
+printf '%s\n' '{"count":100,"hash":"old-hash"}' >"$IMPROVE_LOCK_FILE"
+_snapshot_improve_retry_batch
+rm -f "$IMPROVE_LOCK_FILE"
+! _restore_improve_retry_batch_if_valid new-hash
+[ ! -e "$IMPROVE_LOCK_FILE" ]
+
+printf '%s\n' '{"count":99,"hash":"new-hash"}' >"$IMPROVE_LOCK_FILE"
+_snapshot_improve_retry_batch
+rm -f "$IMPROVE_LOCK_FILE"
+! _restore_improve_retry_batch_if_valid new-hash
+[ ! -e "$IMPROVE_LOCK_FILE" ]
+
+printf '%s\n' '{"count":4,"hash":"new-hash","early_escape_lock":true}' >"$IMPROVE_LOCK_FILE"
+_snapshot_improve_retry_batch
+rm -f "$IMPROVE_LOCK_FILE"
+_restore_improve_retry_batch_if_valid new-hash
+[ -s "$IMPROVE_LOCK_FILE" ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fallback_retries_no_edit_and_accepts_second_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_bash(
