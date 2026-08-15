@@ -79,7 +79,7 @@ DOCICH_CC_TRANSLATION_ATTEMPTS=3
 DOCICH_CC_SOCKET_TIMEOUT_SEC=3
 ```
 
-翻訳APIにはJSON mode（`response_format: {"type":"json_object"}`）を指定します。`minimax-m3`ではローカルLiteLLM経路の`reasoning_effort=none`も明示し、字幕用途に不要なthinkingが完了トークンを使い切ることを防ぎます。英文は32文字を目標に圧縮し、複数チャンクのラジオでも64文字の絶対上限を超えにくい余裕を取ります。上限を超えた応答は不正応答として再試行します。そのうえで、応答にthinking、説明文、壊れたJSONが含まれる場合は抽出せず破棄します。翻訳配列の件数だけが不足・超過した場合は、順序付きの利用可能なprefixをそのまま採用し、不足した後半チャンクだけ字幕なしで音声を続行します。同じモデルへ最大`DOCICH_CC_TRANSLATION_ATTEMPTS`回（1〜5、既定3）新規リクエストを行い、配列が空またはその他の形式不正なら当該発話だけ字幕なしで音声を続行します。接続失敗やtimeoutはこの再試行対象にせず次のモデルへ移るため、1モデルの通信障害で音声開始待ちが試行回数倍に延びることはありません。
+翻訳APIにはJSON mode（`response_format: {"type":"json_object"}`）を指定します。`minimax-m3`ではローカルLiteLLM経路の`reasoning_effort=none`も明示し、字幕用途に不要なthinkingが完了トークンを使い切ることを防ぎます。英文は32文字を目標に圧縮し、複数チャンクのラジオでも64文字の絶対上限を超えにくい余裕を取ります。上限を超えた応答は不正応答として再試行します。そのうえで、応答にthinking、説明文、壊れたJSONが含まれる場合は抽出せず破棄します。音声チャンク数には固定上限を設けず、翻訳配列の件数だけが不足・超過した場合は順序付きの利用可能なprefixをそのまま採用し、不足した後半チャンクだけ字幕なしで音声を続行します。FFmpeg側の制御ページは0〜31の32スロットを使うため、32チャンクを超える音声ではsequenceをスロットへ循環割り当てし、各チャンクのcommit後に同じスロットを再利用します。同じモデルへ最大`DOCICH_CC_TRANSLATION_ATTEMPTS`回（1〜5、既定3）新規リクエストを行い、配列が空またはその他の形式不正なら当該発話だけ字幕なしで音声を続行します。接続失敗やtimeoutはこの再試行対象にせず次のモデルへ移るため、1モデルの通信障害で音声開始待ちが試行回数倍に延びることはありません。
 
 `./direct_stream.sh validate --mode live` の `closed_captions_active` が `false` の場合も、映像・音声のpreflight自体は成功できます。これは意図したfail-openです。字幕を試すカナリアだけ `DOCICH_CC_ENABLED=1` にし、validate結果、FFmpeg statusの `closed_captions.active`、socket mode 0600を確認します。
 

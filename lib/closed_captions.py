@@ -29,6 +29,7 @@ from typing import Callable, Mapping, Sequence
 PROTOCOL_VERSION = 1
 MAX_MESSAGE_BYTES = 4096
 MAX_TRANSLATION_RESPONSE_BYTES = 65536
+PROTOCOL_PAGE_SLOTS = 32
 DEFAULT_SOCKET_PATH = str(
     Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}")
     / "docich"
@@ -99,9 +100,20 @@ def validate_execution_id(value: str) -> str:
 
 
 def validate_page(value: int) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 31:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 0 <= value < PROTOCOL_PAGE_SLOTS
+    ):
         raise CaptionProtocolError("caption page must be between 0 and 31")
     return value
+
+
+def sequence_to_protocol_page(sequence: int) -> int:
+    """Map an unbounded speech sequence onto reusable FFmpeg page slots."""
+    if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0:
+        raise CaptionProtocolError("caption sequence must be a non-negative integer")
+    return sequence % PROTOCOL_PAGE_SLOTS
 
 
 def normalize_caption_text(value: str) -> str:
@@ -237,10 +249,10 @@ class TranslationRuntimeClient:
     def translate(self, chunks: Sequence[str], *, max_chars: int = 64) -> list[str]:
         if not chunks:
             raise CaptionPlanError("no speech chunks were provided")
-        # CEA-608 control pages support at most 32 chunks per execution. Keep
-        # the prefix that can be displayed; the shell will continue later
-        # audio chunks without captions once this plan is exhausted.
-        chunks = list(chunks)[:32]
+        # Do not impose a fixed number of speech chunks. Each chunk is sent
+        # through the same one-page CEA-608 operation, so long speech can keep
+        # advancing after the provider returns a complete translation array.
+        chunks = list(chunks)
         if any(not isinstance(chunk, str) or not chunk.strip() for chunk in chunks):
             raise CaptionPlanError("speech chunks must be non-empty strings")
         if any(len(chunk) > 1000 for chunk in chunks):
@@ -341,10 +353,6 @@ def build_caption_plan(
     translations = list(translations)
     if not chunks or not translations:
         raise CaptionPlanError("speech chunks and translations must be non-empty")
-    # Keep the protocol-sized prefix. The caller may have more audio chunks;
-    # those are intentionally spoken without captions after this plan ends.
-    chunks = chunks[:32]
-
     # Translation providers occasionally return a partial or overlong array.
     # Preserve the aligned prefix instead of discarding the whole caption plan:
     # missing tail chunks continue as audio-only, and extra model entries are
@@ -437,8 +445,8 @@ def load_plan(path: Path) -> dict[str, object]:
     ):
         raise CaptionPlanError("caption plan maxLines must be between 1 and 2")
     chunks = payload.get("chunks")
-    if not isinstance(chunks, list) or not 1 <= len(chunks) <= 32:
-        raise CaptionPlanError("caption plan must contain between 1 and 32 chunks")
+    if not isinstance(chunks, list) or not chunks:
+        raise CaptionPlanError("caption plan must contain at least one chunk")
     for chunk_index, chunk in enumerate(chunks):
         if not isinstance(chunk, dict) or set(chunk) != {
             "index",
@@ -618,7 +626,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Soren native closed-caption control")
     subparsers = parser.add_subparsers(dest="action", required=True)
 
-    plan = subparsers.add_parser("plan", help="translate aligned Japanese speech chunks")
+    plan = subparsers.add_parser("plan", help="translate ordered Japanese speech chunks")
     plan.add_argument("--chunks-file", type=Path, required=True)
     plan.add_argument("--execution-id", required=True)
     plan.add_argument("--output", type=Path, required=True)
@@ -636,7 +644,7 @@ def _build_parser() -> argparse.ArgumentParser:
     send.add_argument(
         "--sequence",
         type=int,
-        help="protocol page identity; defaults to --page",
+        help="unbounded speech sequence mapped to a reusable protocol page slot",
     )
     send.add_argument("--execution-id")
     send.add_argument("--timeout", type=float, default=3.0)
@@ -683,7 +691,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     client = CaptionSocketClient(args.socket, timeout=args.timeout)
-    protocol_page = args.page if args.sequence is None else args.sequence
+    protocol_page = (
+        args.page
+        if args.sequence is None
+        else sequence_to_protocol_page(args.sequence)
+    )
     if args.op == "reset":
         response = client.reset()
     else:

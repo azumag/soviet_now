@@ -79,6 +79,15 @@ class ClosedCaptionPlanTests(unittest.TestCase):
                 with self.assertRaises(closed_captions.CaptionProtocolError):
                     closed_captions.validate_page(value)
 
+    def test_unbounded_sequence_reuses_protocol_page_slots(self) -> None:
+        self.assertEqual(closed_captions.sequence_to_protocol_page(0), 0)
+        self.assertEqual(closed_captions.sequence_to_protocol_page(31), 31)
+        self.assertEqual(closed_captions.sequence_to_protocol_page(32), 0)
+        self.assertEqual(closed_captions.sequence_to_protocol_page(63), 31)
+        self.assertEqual(closed_captions.sequence_to_protocol_page(64), 0)
+        with self.assertRaises(closed_captions.CaptionProtocolError):
+            closed_captions.sequence_to_protocol_page(-1)
+
     def test_translation_client_accepts_strict_json_schema(self) -> None:
         response = {
             "choices": [{"message": {"content": '{"translations":["Hello."]}'}}]
@@ -128,13 +137,13 @@ class ClosedCaptionPlanTests(unittest.TestCase):
         )
         self.assertEqual(client.translate(["一つ目。"]), ["Only."])
 
-    def test_translation_client_caps_long_input_to_protocol_limit(self) -> None:
+    def test_translation_client_keeps_long_input_without_chunk_cap(self) -> None:
         response = {
             "choices": [
                 {
                     "message": {
                         "content": json.dumps(
-                            {"translations": [f"Caption {index}." for index in range(32)]}
+                            {"translations": [f"Caption {index}." for index in range(40)]}
                         )
                     }
                 }
@@ -148,8 +157,8 @@ class ClosedCaptionPlanTests(unittest.TestCase):
 
         client = closed_captions.TranslationRuntimeClient(opener=opener)
         result = client.translate([f"チャンク{index}。" for index in range(40)])
-        self.assertEqual(len(result), 32)
-        self.assertNotIn("32:", requests[0]["messages"][0]["content"])
+        self.assertEqual(len(result), 40)
+        self.assertIn("39:", requests[0]["messages"][0]["content"])
 
     def test_empty_translation_array_is_still_rejected(self) -> None:
         response = {"choices": [{"message": {"content": '{"translations":[]}'}}]}
@@ -169,13 +178,13 @@ class ClosedCaptionPlanTests(unittest.TestCase):
         )
         self.assertEqual([chunk["index"] for chunk in plan["chunks"]], [0, 1])
 
-    def test_plan_caps_long_chunk_list_to_protocol_limit(self) -> None:
+    def test_plan_keeps_long_chunk_list_without_chunk_cap(self) -> None:
         plan = closed_captions.build_caption_plan(
             [f"チャンク{index}。" for index in range(40)],
             [f"Caption {index}." for index in range(40)],
             execution_id="speech-long",
         )
-        self.assertEqual(len(plan["chunks"]), 32)
+        self.assertEqual(len(plan["chunks"]), 40)
 
     def test_translation_client_disables_reasoning_only_for_minimax_m3(self) -> None:
         response = {
