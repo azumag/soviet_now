@@ -202,6 +202,46 @@ _restore_improve_retry_batch_if_valid new-hash
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_failed_retry_count_survives_backoff_expiry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+IMPROVE_RETRY_BATCH_FILE="$TMP_STATE_DIR/improve_retry_batch.json"
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":100,"hash":"same-hash"}' >"$IMPROVE_LOCK_FILE"
+_snapshot_improve_retry_batch
+[ "$(_schedule_improve_retry_backoff)" -eq 1 ]
+[ "$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff")" -eq 1 ]
+rm -f "$TMP_STATE_DIR/rate_limit_backoff"
+[ "$(_schedule_improve_retry_backoff)" -eq 2 ]
+[ "$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff")" -eq 2 ]
+python3 - "$IMPROVE_LOCK_FILE" "$IMPROVE_RETRY_BATCH_FILE" <<'PY'
+import json, sys
+for path in sys.argv[1:]:
+    data = json.load(open(path, encoding="utf-8"))
+    assert data["retry_failure_count"] == 2
+    assert data["retry_last_failed_at"] > 0
+PY
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_model_nonresponse_advances_fresh_retry_before_final_failure(self):
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            eloop.count('advance to fresh retry $((fresh_retry + 1))'), 2
+        )
+        self.assertIn('IMPROVE_FAILURE_CODE="model_no_response"', eloop)
+        self.assertIn(
+            '"failed_no_apply:${IMPROVE_FAILURE_CODE:-validation_failed}"', eloop
+        )
+
     def test_fallback_retries_no_edit_and_accepts_second_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_bash(
