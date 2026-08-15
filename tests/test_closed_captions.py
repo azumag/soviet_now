@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 import socket
 import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +51,10 @@ class ClosedCaptionPlanTests(unittest.TestCase):
     def test_long_translation_is_rejected_in_single_page_mvp(self) -> None:
         with self.assertRaisesRegex(closed_captions.CaptionPlanError, "requires"):
             closed_captions.wrap_caption_pages("word " * 30, max_pages=1)
+
+    def test_plan_never_exceeds_two_lines_per_page(self) -> None:
+        with self.assertRaisesRegex(closed_captions.CaptionPlanError, "between 1 and 2"):
+            closed_captions.wrap_caption_pages("short caption", max_lines=3)
 
     def test_plan_preserves_chunk_alignment(self) -> None:
         plan = closed_captions.build_caption_plan(
@@ -240,6 +246,54 @@ class ClosedCaptionPlanTests(unittest.TestCase):
                 with self.assertRaises(closed_captions.CaptionPlanError):
                     closed_captions.TranslationRuntimeClient(endpoint=endpoint)
 
+    def test_load_plan_rejects_extra_keys_and_page_tampering(self) -> None:
+        plan = closed_captions.build_caption_plan(
+            ["テスト。"], ["Safe caption."], execution_id="speech-guard"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "plan.json"
+
+            extra = dict(plan)
+            extra["thinking"] = "do not display"
+            path.write_text(json.dumps(extra), encoding="utf-8")
+            with self.assertRaisesRegex(
+                closed_captions.CaptionPlanError, "exact schema"
+            ):
+                closed_captions.load_plan(path)
+
+            tampered = json.loads(json.dumps(plan))
+            tampered["chunks"][0]["pages"][0]["lines"] = ["x" * 33]
+            path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(
+                closed_captions.CaptionPlanError, "exceeds its bounds"
+            ):
+                closed_captions.load_plan(path)
+
+    def test_invalid_translation_runtime_env_is_caption_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            chunks = root / "chunks.txt"
+            output = root / "plan.json"
+            chunks.write_text("テスト。\n", encoding="utf-8")
+            with mock.patch.dict(
+                os.environ,
+                {"DOCICH_CC_TRANSLATION_TIMEOUT_SEC": "not-a-number"},
+            ):
+                with self.assertRaisesRegex(
+                    closed_captions.CaptionPlanError, "must be numeric"
+                ):
+                    closed_captions.main(
+                        [
+                            "plan",
+                            "--chunks-file",
+                            str(chunks),
+                            "--execution-id",
+                            "speech-env",
+                            "--output",
+                            str(output),
+                        ]
+                    )
+
 
 class CaptionSocketClientTests(unittest.TestCase):
     def _serve_once(self, socket_path: Path, requests: list[dict[str, object]]) -> threading.Thread:
@@ -285,6 +339,13 @@ class CaptionSocketClientTests(unittest.TestCase):
             self.assertEqual(requests[0]["executionId"], "speech-42")
             decoded = base64.b64decode(str(requests[0]["textBase64"])).decode("ascii")
             self.assertEqual(decoded, "Hello\nworld")
+
+    def test_prepare_rejects_text_outside_32_by_2_before_connecting(self) -> None:
+        client = closed_captions.CaptionSocketClient("/tmp/not-used.sock", timeout=2)
+        for text in ("x" * 33, "one\ntwo\nthree"):
+            with self.subTest(text=text):
+                with self.assertRaises(closed_captions.CaptionProtocolError):
+                    client.prepare("speech-bounds", 0, text)
 
     def test_server_error_is_fail_open_exception(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:

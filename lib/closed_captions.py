@@ -127,8 +127,8 @@ def wrap_caption_pages(
 ) -> tuple[CaptionPage, ...]:
     if not 1 <= max_columns <= 32:
         raise CaptionPlanError("maxColumns must be between 1 and 32")
-    if not 1 <= max_lines <= 15:
-        raise CaptionPlanError("maxLines must be between 1 and 15")
+    if not 1 <= max_lines <= 2:
+        raise CaptionPlanError("maxLines must be between 1 and 2")
     if not 1 <= max_pages <= 32:
         raise CaptionPlanError("maxPages must be between 1 and 32")
 
@@ -391,12 +391,88 @@ def load_plan(path: Path) -> dict[str, object]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise CaptionPlanError(f"could not read caption plan: {path}") from exc
+    if not isinstance(payload, dict):
+        raise CaptionPlanError("caption plan must be a JSON object")
+    expected_keys = {
+        "v",
+        "executionId",
+        "language",
+        "maxColumns",
+        "maxLines",
+        "chunks",
+    }
+    if set(payload) != expected_keys:
+        raise CaptionPlanError("caption plan must match the exact schema")
     if payload.get("v") != PROTOCOL_VERSION:
         raise CaptionPlanError("caption plan protocol version is unsupported")
     validate_execution_id(str(payload.get("executionId", "")))
+    if payload.get("language") != "en":
+        raise CaptionPlanError("caption plan language must be en")
+    max_columns = payload.get("maxColumns")
+    max_lines = payload.get("maxLines")
+    if (
+        not isinstance(max_columns, int)
+        or isinstance(max_columns, bool)
+        or not 1 <= max_columns <= 32
+    ):
+        raise CaptionPlanError("caption plan maxColumns must be between 1 and 32")
+    if (
+        not isinstance(max_lines, int)
+        or isinstance(max_lines, bool)
+        or not 1 <= max_lines <= 2
+    ):
+        raise CaptionPlanError("caption plan maxLines must be between 1 and 2")
     chunks = payload.get("chunks")
-    if not isinstance(chunks, list) or not chunks:
-        raise CaptionPlanError("caption plan has no chunks")
+    if not isinstance(chunks, list) or not 1 <= len(chunks) <= 32:
+        raise CaptionPlanError("caption plan must contain between 1 and 32 chunks")
+    for chunk_index, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict) or set(chunk) != {
+            "index",
+            "jaText",
+            "enText",
+            "pages",
+        }:
+            raise CaptionPlanError(f"caption chunk {chunk_index} is malformed")
+        if chunk.get("index") != chunk_index:
+            raise CaptionPlanError(f"caption chunk {chunk_index} index is malformed")
+        japanese = chunk.get("jaText")
+        english = chunk.get("enText")
+        if not isinstance(japanese, str) or not japanese.strip():
+            raise CaptionPlanError(f"caption chunk {chunk_index} Japanese text is empty")
+        if not isinstance(english, str) or normalize_caption_text(english) != english:
+            raise CaptionPlanError(f"caption chunk {chunk_index} English text is not normalized")
+        pages = chunk.get("pages")
+        if not isinstance(pages, list) or not 1 <= len(pages) <= 32:
+            raise CaptionPlanError(f"caption chunk {chunk_index} pages are malformed")
+        flattened: list[str] = []
+        for page_index, page in enumerate(pages):
+            if not isinstance(page, dict) or set(page) != {"index", "lines"}:
+                raise CaptionPlanError(
+                    f"caption chunk {chunk_index} page {page_index} is malformed"
+                )
+            if page.get("index") != page_index:
+                raise CaptionPlanError(
+                    f"caption chunk {chunk_index} page {page_index} index is malformed"
+                )
+            lines = page.get("lines")
+            if not isinstance(lines, list) or not 1 <= len(lines) <= max_lines:
+                raise CaptionPlanError(
+                    f"caption chunk {chunk_index} page {page_index} lines are malformed"
+                )
+            for line in lines:
+                if (
+                    not isinstance(line, str)
+                    or normalize_caption_text(line) != line
+                    or len(line) > max_columns
+                ):
+                    raise CaptionPlanError(
+                        f"caption chunk {chunk_index} page {page_index} exceeds its bounds"
+                    )
+                flattened.append(line)
+        if " ".join(flattened) != english:
+            raise CaptionPlanError(
+                f"caption chunk {chunk_index} pages do not match English text"
+            )
     return payload
 
 
@@ -446,7 +522,13 @@ class CaptionSocketClient:
     def prepare(self, execution_id: str, page: int, text: str) -> dict[str, object]:
         validate_execution_id(execution_id)
         validate_page(page)
-        normalized = "\n".join(normalize_caption_text(line) for line in text.splitlines())
+        lines = text.splitlines()
+        if not 1 <= len(lines) <= 2:
+            raise CaptionProtocolError("caption text must contain one or two lines")
+        normalized_lines = [normalize_caption_text(line) for line in lines]
+        if any(len(line) > 32 for line in normalized_lines):
+            raise CaptionProtocolError("caption line exceeds 32 ASCII characters")
+        normalized = "\n".join(normalized_lines)
         encoded = base64.b64encode(normalized.encode("ascii")).decode("ascii")
         return self._request(
             {
@@ -562,8 +644,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ).split(",")
                 if part.strip()
             )
-            timeout = float(os.environ.get("DOCICH_CC_TRANSLATION_TIMEOUT_SEC", "30"))
-            attempts = int(os.environ.get("DOCICH_CC_TRANSLATION_ATTEMPTS", "3"))
+            try:
+                timeout = float(os.environ.get("DOCICH_CC_TRANSLATION_TIMEOUT_SEC", "30"))
+                attempts = int(os.environ.get("DOCICH_CC_TRANSLATION_ATTEMPTS", "3"))
+            except ValueError as exc:
+                raise CaptionPlanError(
+                    "translation timeout and attempts must be numeric"
+                ) from exc
             translations = TranslationRuntimeClient(
                 endpoint=endpoint,
                 models=models,
