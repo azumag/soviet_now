@@ -163,7 +163,7 @@ _comment_play_bilingual_speech() {
 	if ! SAY_VOICEVOX_SPEAKER_OVERRIDE="${speaker:-}" \
 		SAY_CONTEXT_LABEL="$context_label" \
 		"$helper_root/bilingual_comment_tts.sh" -o "$combined_wav" "$sidecar" "$RADIO_SAY_RATE"; then
-		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英日音声の事前合成失敗 → 日本語訳のみVOICEVOX fallback: $target" >>tmp/.say_queue/debug.log
+		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語翻訳＋日本語返信の事前合成失敗 → 日本語返信のみVOICEVOX fallback: $target" >>tmp/.say_queue/debug.log
 		rm -f "$combined_wav"
 		_comment_play_japanese_translation_fallback "$target" "$speaker" "$context_label" >/dev/null 2>&1 || true
 		return 1
@@ -318,7 +318,7 @@ _play_comment_queue() {
 				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
 				local _cw_playback_ok=0
 				if _comment_has_bilingual_speech "$playing_file"; then
-					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語返答 → 日本語訳の順で再生: $playing_file" >>tmp/.say_queue/debug.log
+					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語翻訳 → 日本語返信の順で再生: $playing_file" >>tmp/.say_queue/debug.log
 					if _comment_play_bilingual_speech "$playing_file" "$_cw_vo_speaker" "$_cw_context_label"; then
 						_cw_playback_ok=1
 					fi

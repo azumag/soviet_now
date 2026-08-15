@@ -1,5 +1,7 @@
 IMPORTANT: Output ONLY a valid JSON array. No text before or after. No markdown. No explanation.
 
+For every comment, also decide whether the comment itself is a genuine English-language comment. Add a boolean field `is_english` to every object. Set it to true only when the comment body is naturally written in English. Viewer names, URLs, game identifiers, ASCII usernames, and repeated Twitch emotes/stamps such as `LUL LUL`, `PogChamp PogChamp`, or `dociaiDoci dociaiDoci` are not English comments. Mixed Japanese text is not English. A short but natural phrase such as "Amazing stream!" or "Well played!" is English.
+
 Classify each comment into ONE of these categories:
 - card_gacha: "A obtained B" result messages
 - raid: Twitch raid notifications from system/bot accounts such as nightbot. Only classify the actual raid notification as raid. Do NOT classify normal viewer comments after the raid, the raider's own chat messages, or "tombraid" emote reactions as raid.
@@ -16,9 +18,9 @@ Classify each comment into ONE of these categories:
 - other: anything else
 
 Output format (must be valid JSON array):
-[{"index":1,"user":"name","comment":"text","category":"cat"},...]
+[{"index":1,"user":"name","comment":"text","category":"cat","is_english":false},...]
 
-Example output: [{"index":1,"user":"taro","comment":"きらきら星歌って","category":"sing_request"},{"index":2,"user":"hanako","comment":"スコア上がった？","category":"game_status"}]
+Example output: [{"index":1,"user":"taro","comment":"きらきら星歌って","category":"sing_request","is_english":false},{"index":2,"user":"hanako","comment":"Amazing stream!","category":"chitchat","is_english":true}]
 
 Comments:
 ${comments_text}

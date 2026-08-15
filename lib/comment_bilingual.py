@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Detect English viewer comments and prepare ordered bilingual speech segments."""
+"""Classify English comments and build ordered bilingual speech metadata.
+
+The live comment path gets language decisions from the classifier and merges
+ordinary Japanese paragraphs with separately translated English paragraphs.
+The older marker parser remains only as a compatibility reader for existing
+metadata and generated responses; it is not used to infer language in the
+live generation path.
+"""
 
 from __future__ import annotations
 
@@ -21,15 +28,84 @@ CYRILLIC_RE = re.compile(r"[\u0400-\u04ff]")
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 LEADING_TAG_RE = re.compile(r"^(?:\[[^\]]+\]\s*)+")
 SHORT_ENGLISH_MESSAGES = {
-    "gg",
-    "gl",
-    "hf",
+    # A single natural-language greeting can still be useful, but Twitch
+    # emotes and short reaction tokens must not switch an entire batch into
+    # bilingual mode.
+    "hello",
     "hi",
-    "no",
-    "ok",
-    "ty",
-    "wp",
-    "yo",
+    "thanks",
+    "thank",
+    "sorry",
+    "welcome",
+}
+
+COMMON_ENGLISH_WORDS = {
+    "a",
+    "about",
+    "again",
+    "agree",
+    "all",
+    "amazing",
+    "and",
+    "absolutely",
+    "are",
+    "awesome",
+    "can",
+    "come",
+    "congrats",
+    "congratulations",
+    "cool",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "game",
+    "going",
+    "good",
+    "great",
+    "have",
+    "hello",
+    "help",
+    "how",
+    "i",
+    "interesting",
+    "is",
+    "it",
+    "just",
+    "like",
+    "love",
+    "me",
+    "more",
+    "my",
+    "nice",
+    "of",
+    "on",
+    "play",
+    "played",
+    "please",
+    "really",
+    "say",
+    "see",
+    "so",
+    "stream",
+    "that",
+    "the",
+    "this",
+    "to",
+    "today",
+    "victory",
+    "want",
+    "what",
+    "when",
+    "where",
+    "why",
+    "with",
+    "watching",
+    "well",
+    "awaits",
+    "you",
+    "your",
 }
 
 
@@ -49,17 +125,57 @@ def extract_comment_body(line: str) -> str:
 
 
 def looks_like_english(text: str) -> bool:
-    """Conservatively identify English without treating Latin usernames as text."""
+    """Identify natural English without treating Twitch emotes as text.
+
+    Latin characters alone are not evidence of English: usernames, game
+    identifiers, emotes, and repeated bot/test strings are common in Twitch
+    chat.  Requiring a small amount of word-level evidence keeps the detector
+    local and cheap while avoiding the previous ``latin_count >= 3`` trap.
+    """
     cleaned = URL_RE.sub("", text)
-    latin_count = len(LATIN_RE.findall(cleaned))
     japanese_count = len(JAPANESE_RE.findall(cleaned))
     cyrillic_count = len(CYRILLIC_RE.findall(cleaned))
     if japanese_count or cyrillic_count:
         return False
-    if latin_count >= 3:
-        return True
-    tokens = re.findall(r"[A-Za-z]+", cleaned.lower())
-    return len(tokens) == 1 and tokens[0] in SHORT_ENGLISH_MESSAGES
+
+    tokens = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", cleaned.lower())
+    if not tokens:
+        return False
+
+    # Repeated tokens are overwhelmingly emotes, chants, or bot/test noise
+    # rather than a sentence.  This specifically rejects strings such as
+    # ``dociaiDoci dociaiDoci dociaiDoci`` and ``LUL LUL LUL``.
+    unique_tokens = set(tokens)
+    if len(tokens) >= 2 and len(unique_tokens) == 1:
+        return False
+    if len(tokens) >= 3 and len(unique_tokens) / len(tokens) < 0.67:
+        return False
+
+    if len(tokens) == 1:
+        return tokens[0] in SHORT_ENGLISH_MESSAGES
+
+    # At least one common English word is required.  Unknown repeated ASCII
+    # identifiers should remain ordinary chat instead of forcing bilingual
+    # output for the whole batch.
+    return any(token in COMMON_ENGLISH_WORDS for token in tokens)
+
+
+def looks_like_english_output(text: str) -> bool:
+    """Detect an English model-output paragraph without Twitch-noise rules."""
+    cleaned = URL_RE.sub("", text)
+    if CYRILLIC_RE.search(cleaned):
+        return False
+    tokens = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", cleaned)
+    # Model output is not untrusted chat input: a natural phrase can contain
+    # uncommon words ("comrade", "victory", etc.), so script-level evidence is
+    # sufficient here.  The Twitch detector above remains deliberately stricter.
+    latin_count = len(LATIN_RE.findall(cleaned))
+    japanese_count = len(JAPANESE_RE.findall(cleaned))
+    if japanese_count and (latin_count < 8 or latin_count < japanese_count * 2):
+        # A Japanese sentence with an English proper name is still Japanese;
+        # a mostly-English sentence may retain a viewer name in Japanese.
+        return False
+    return bool(tokens) and latin_count >= 2
 
 
 def batch_has_english(lines: list[str]) -> bool:
@@ -82,6 +198,14 @@ def _validate_english_block(text: str) -> None:
         raise BilingualFormatError("English block does not contain English text")
     if JAPANESE_RE.search(text):
         raise BilingualFormatError("English block contains Japanese text")
+    for line in text.splitlines():
+        if re.match(
+            r"^\s*(?:target\s+\d+\b|viewer\s+comment\s*:|"
+            r"japanese\s+reply\s+to\s+translate\s*:)",
+            line,
+            flags=re.IGNORECASE,
+        ):
+            raise BilingualFormatError("English block contains a translation label")
 
 
 def _validate_japanese_block(text: str) -> None:
@@ -206,6 +330,260 @@ def parse_bilingual_response(
     }
 
 
+def _plain_response_blocks(text: str) -> list[str]:
+    """Normalize a marker-free model response into ordered speech blocks."""
+    blocks: list[str] = []
+    current: list[str] = []
+
+    def line_language(line: str) -> str | None:
+        if looks_like_english_output(line):
+            return "en"
+        if JAPANESE_RE.search(line) or CYRILLIC_RE.search(line):
+            return "ja"
+        return None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if current:
+                blocks.append("\n".join(current).strip())
+                current = []
+            continue
+        if line.startswith("```") or line == "^D":
+            continue
+        if line in MARKERS:
+            if current:
+                blocks.append("\n".join(current).strip())
+                current = []
+            continue
+        # Models sometimes add a human-readable label even when told not to.
+        # Remove only a leading label; never alter the body of a reply.
+        line = re.sub(
+            r"^(?:english(?:\s+reply)?|japanese(?:\s+translation)?|"
+            r"英語(?:返答)?|日本語(?:訳)?)\s*:\s*",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if line:
+            # ``_clean_comment_talk`` intentionally removes blank lines before
+            # this helper runs.  Preserve a language transition as a boundary
+            # so English -> Japanese pairs still work in the real shell path.
+            if current:
+                current_language = line_language(current[0])
+                next_language = line_language(line)
+                if current_language and next_language and current_language != next_language:
+                    blocks.append("\n".join(current).strip())
+                    current = []
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+    return [block for block in blocks if block]
+
+
+def _plain_block_language(block: str) -> str:
+    """Return a conservative language hint for one response block."""
+    if looks_like_english_output(block):
+        return "en"
+    return "ja"
+
+
+def _plain_response_result(
+    text: str, expected_pairs: int | None = None
+) -> dict[str, object]:
+    """Parse natural paragraphs without requiring control markers.
+
+    The parser is intentionally fail-open.  If an English paragraph cannot be
+    paired with a following Japanese paragraph, the whole response remains a
+    normal reply instead of blocking the comment queue.
+    """
+    blocks = _plain_response_blocks(text)
+    if not blocks:
+        raise BilingualFormatError("response is empty")
+
+    languages = [_plain_block_language(block) for block in blocks]
+    if "en" not in languages:
+        return {
+            "bilingual": False,
+            "english_reply_count": 0,
+            "speech_segments": [],
+            "display_text": "\n\n".join(blocks),
+        }
+
+    segments: list[dict[str, str]] = []
+    display_parts: list[str] = []
+    pair_count = 0
+    index = 0
+    while index < len(blocks):
+        block = blocks[index]
+        language = languages[index]
+        if language != "en":
+            segments.append({"language": "ja", "role": "reply", "text": block})
+            display_parts.append(block)
+            index += 1
+            continue
+
+        # A bilingual pair is represented by two adjacent natural paragraphs:
+        # English reply, then Japanese translation.  No marker is required.
+        if index + 1 >= len(blocks) or languages[index + 1] != "ja" or not JAPANESE_RE.search(blocks[index + 1]):
+            return {
+                "bilingual": False,
+                "english_reply_count": 0,
+                "speech_segments": [],
+                "display_text": "\n\n".join(blocks),
+            }
+        english = block
+        japanese = blocks[index + 1]
+        segments.append({"language": "en", "role": "reply", "text": english})
+        segments.append({"language": "ja", "role": "translation", "text": japanese})
+        display_parts.extend([english, f"日本語訳：\n{japanese}"])
+        pair_count += 1
+        index += 2
+
+    # A count mismatch means we cannot safely tell a translation from the next
+    # Japanese reply in a mixed batch.  Degrade the whole batch to ordinary
+    # playback rather than speaking the wrong text in English, but do not fail
+    # the generation or hold later comments in the queue.
+    if expected_pairs is not None and expected_pairs > 0 and pair_count != expected_pairs:
+        return {
+            "bilingual": False,
+            "english_reply_count": 0,
+            "speech_segments": [],
+            "display_text": "\n\n".join(blocks),
+        }
+    return {
+        "bilingual": pair_count > 0,
+        "english_reply_count": pair_count,
+        "speech_segments": segments if pair_count > 0 else [],
+        "display_text": "\n\n".join(display_parts or blocks).strip(),
+    }
+
+
+def parse_response(text: str, expected_pairs: int | None = None) -> dict[str, object]:
+    """Parse the live response contract with marker compatibility and fail-open."""
+    if any(line.strip() in MARKERS for line in text.splitlines()):
+        try:
+            return parse_bilingual_response(text, expected_pairs=expected_pairs)
+        except BilingualFormatError:
+            # A malformed legacy response should degrade to normal Japanese
+            # playback, never trigger the global comment backoff.
+            pass
+    return _plain_response_result(text, expected_pairs=expected_pairs)
+
+
+def split_plain_paragraphs(text: str) -> list[str]:
+    """Return natural-text paragraphs without guessing their language.
+
+    The live response path uses the classifier's row order as the contract.
+    Paragraph boundaries are therefore preserved exactly here instead of
+    being reconstructed from English/Japanese script transitions.  This is
+    deliberately a small, language-agnostic helper: it removes formatting
+    noise, but never merges adjacent paragraphs just because they happen to
+    use the same script.
+    """
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for raw_line in text.replace("\r\n", "\n").splitlines():
+        line = raw_line.strip()
+        if not line:
+            if current:
+                paragraphs.append("\n".join(current).strip())
+                current = []
+            continue
+        if line.startswith("```") or line == "^D" or line in MARKERS:
+            continue
+        line = re.sub(
+            r"^(?:english(?:\s+reply)?|japanese(?:\s+translation)?|"
+            r"英語(?:返答)?|日本語(?:訳)?)\s*:\s*",
+            "",
+            line,
+            flags=re.IGNORECASE,
+        ).strip()
+        if line:
+            current.append(line)
+    if current:
+        paragraphs.append("\n".join(current).strip())
+    return [paragraph for paragraph in paragraphs if paragraph]
+
+
+def build_ordered_speech_segments(
+    classification: list[dict[str, object]],
+    japanese_text: str,
+    translation_text: str,
+) -> dict[str, object]:
+    """Merge ordinary Japanese replies and selected English translations.
+
+    ``classification`` is the source of truth for which rows are English.
+    The Japanese model response and the translator both return ordinary
+    paragraphs; the number and order of those paragraphs are checked against
+    the classifier rows before any bilingual metadata is emitted.  A mismatch
+    raises ``BilingualFormatError`` so callers can keep the Japanese-only
+    reply without stopping the whole comment queue.
+    """
+    if not isinstance(classification, list) or not classification:
+        raise BilingualFormatError("classification is empty")
+    rows = list(classification)
+    indices: list[int] = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("is_english"), bool):
+            raise BilingualFormatError("classification row is invalid")
+        try:
+            indices.append(int(row.get("index")))
+        except (TypeError, ValueError):
+            raise BilingualFormatError("classification index is invalid")
+    if indices != list(range(1, len(rows) + 1)):
+        raise BilingualFormatError("classification indices are not contiguous and ordered")
+
+    japanese_paragraphs = split_plain_paragraphs(japanese_text)
+    if len(japanese_paragraphs) != len(rows):
+        raise BilingualFormatError(
+            f"expected {len(rows)} Japanese paragraph(s), found {len(japanese_paragraphs)}"
+        )
+    for paragraph in japanese_paragraphs:
+        if not JAPANESE_RE.search(paragraph):
+            raise BilingualFormatError("Japanese response paragraph has no Japanese text")
+
+    english_rows = [row for row in rows if bool(row.get("is_english"))]
+    if not english_rows:
+        return {
+            "bilingual": False,
+            "english_reply_count": 0,
+            "speech_segments": [],
+            "display_text": "\n\n".join(japanese_paragraphs),
+        }
+
+    translations = split_plain_paragraphs(translation_text)
+    if len(translations) != len(english_rows):
+        raise BilingualFormatError(
+            f"expected {len(english_rows)} English translation(s), found {len(translations)}"
+        )
+    for translation in translations:
+        _validate_english_block(translation)
+
+    segments: list[dict[str, str]] = []
+    display_parts: list[str] = []
+    translation_index = 0
+    for row, japanese in zip(rows, japanese_paragraphs):
+        if bool(row.get("is_english")):
+            english = translations[translation_index]
+            translation_index += 1
+            segments.append({"language": "en", "role": "translation", "text": english})
+            segments.append(
+                {"language": "ja", "role": "reply", "text": japanese}
+            )
+            display_parts.extend([english, f"日本語訳：\n{japanese}"])
+        else:
+            segments.append({"language": "ja", "role": "reply", "text": japanese})
+            display_parts.append(japanese)
+
+    return {
+        "bilingual": True,
+        "english_reply_count": len(english_rows),
+        "speech_segments": segments,
+        "display_text": "\n\n".join(display_parts).strip(),
+    }
+
+
 def load_speech_segments(metadata_path: Path) -> list[dict[str, str]]:
     try:
         payload = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -230,19 +608,15 @@ def load_speech_segments(metadata_path: Path) -> list[dict[str, str]]:
         raise BilingualFormatError("metadata has no English speech segment")
     for index, segment in enumerate(segments):
         if segment["language"] == "en":
-            if segment["role"] != "reply":
+            if segment["role"] not in {"reply", "translation"}:
                 raise BilingualFormatError("English segment has an invalid role")
             if index + 1 >= len(segments):
                 raise BilingualFormatError("English segment has no Japanese translation")
             following = segments[index + 1]
-            if following["language"] != "ja" or following["role"] != "translation":
+            if following["language"] != "ja" or following["role"] not in {"reply", "translation"}:
                 raise BilingualFormatError("English segment is not followed by Japanese")
         elif segment["role"] not in {"reply", "translation"}:
             raise BilingualFormatError("Japanese segment has an invalid role")
-        elif segment["role"] == "translation" and (
-            index == 0 or segments[index - 1]["language"] != "en"
-        ):
-            raise BilingualFormatError("Japanese translation has no English segment")
     return segments
 
 
@@ -268,6 +642,48 @@ def command_parse(metadata_path: Path, expected_pairs: int | None) -> int:
         print(f"comment_bilingual: {exc}", file=sys.stderr)
         return 1
     sys.stdout.write(str(parsed["display_text"]))
+    return 0
+
+
+def command_parse_response(metadata_path: Path, expected_pairs: int | None) -> int:
+    try:
+        parsed = parse_response(sys.stdin.read(), expected_pairs=expected_pairs)
+        metadata_path.write_text(
+            json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, BilingualFormatError) as exc:
+        print(f"comment_bilingual: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.write(str(parsed["display_text"]))
+    return 0
+
+
+def command_build_segments(
+    classification_path: Path,
+    japanese_path: Path,
+    translation_path: Path,
+    metadata_path: Path,
+) -> int:
+    try:
+        classification = json.loads(classification_path.read_text(encoding="utf-8"))
+        japanese_text = japanese_path.read_text(encoding="utf-8")
+        translation_text = translation_path.read_text(encoding="utf-8")
+        if not isinstance(classification, list):
+            raise BilingualFormatError("classification is not an array")
+        parsed = build_ordered_speech_segments(
+            classification, japanese_text, translation_text
+        )
+        if not parsed.get("bilingual"):
+            raise BilingualFormatError("no English translation was produced")
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(
+            json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, BilingualFormatError) as exc:
+        print(f"comment_bilingual: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -317,6 +733,16 @@ def build_parser() -> argparse.ArgumentParser:
     parse.add_argument("--metadata", required=True, type=Path)
     parse.add_argument("--expected-pairs", type=int)
 
+    parse_response_parser = subparsers.add_parser("parse-response")
+    parse_response_parser.add_argument("--metadata", required=True, type=Path)
+    parse_response_parser.add_argument("--expected-pairs", type=int)
+
+    build_segments = subparsers.add_parser("build-segments")
+    build_segments.add_argument("--classification", required=True, type=Path)
+    build_segments.add_argument("--japanese", required=True, type=Path)
+    build_segments.add_argument("--translation", required=True, type=Path)
+    build_segments.add_argument("--metadata", required=True, type=Path)
+
     emit = subparsers.add_parser("emit-segments")
     emit.add_argument("metadata", type=Path)
     emit.add_argument("output_dir", type=Path)
@@ -336,6 +762,12 @@ def main() -> int:
         return command_detect(args.path)
     if args.command == "parse":
         return command_parse(args.metadata, args.expected_pairs)
+    if args.command == "parse-response":
+        return command_parse_response(args.metadata, args.expected_pairs)
+    if args.command == "build-segments":
+        return command_build_segments(
+            args.classification, args.japanese, args.translation, args.metadata
+        )
     if args.command == "emit-segments":
         return command_emit_segments(args.metadata, args.output_dir)
     if args.command == "extract-language":

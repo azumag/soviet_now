@@ -625,16 +625,21 @@ PY
 }
 
 _clean_comment_talk() {
-	printf '%s\n' "$1" | python3 -c "$(
+	local preserve_paragraphs="${2:-0}"
+	printf '%s\n' "$1" | PRESERVE_COMMENT_PARAGRAPHS="$preserve_paragraphs" python3 -c "$(
 		cat <<'PY'
 import re
 import sys
+import os
 
 lines = sys.stdin.read().splitlines()
+preserve_paragraphs = os.environ.get("PRESERVE_COMMENT_PARAGRAPHS") == "1"
 clean = []
 for raw in lines:
     line = raw.strip()
     if not line:
+        if preserve_paragraphs and clean and clean[-1] != "":
+            clean.append("")
         continue
     if re.fullmatch(r'(assistant|analysis|final|tool_call|tool_result)', line, re.I):
         continue
@@ -656,6 +661,10 @@ for raw in lines:
         continue
     clean.append(raw.rstrip())
 
+if preserve_paragraphs:
+    while clean and clean[-1] == "":
+        clean.pop()
+
 while clean:
     head = clean[0].strip()
     if re.match(r'^同志[^。]{0,140}という(コメント|ご質問|ご報告|ご挨拶|ご相談|ご指摘|話)ですね。?$', head):
@@ -669,7 +678,10 @@ while clean:
         continue
     break
 
-text = "\n".join(line for line in clean if line.strip()).strip()
+if preserve_paragraphs:
+    text = "\n".join(clean).strip()
+else:
+    text = "\n".join(line for line in clean if line.strip()).strip()
 text = re.sub(r'\n{3,}', '\n\n', text)
 print(text, end='')
 PY

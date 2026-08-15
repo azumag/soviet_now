@@ -272,7 +272,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOSでは `say` / VOICEVOX、Linuxでは VOICEVOX + PulseAudio で読み上げる。
 
 - **トーク本文**: 試合結果・雑談・ソ連ネタを生成 → `say_enqueue.sh` で再生
-- **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）。英語コメントは英語返答と日本語訳を構造化し、Flite英語音声 → VOICEVOX日本語音声の順に1本のWAVへ結合して再生する
+- **コメント返し**: Twitchチャットを分類して返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）。分類器が英語と判定したコメントだけ、日本語返信を別呼出しで英訳し、分類順に Flite英語音声 → VOICEVOX日本語音声を1本のWAVへ結合して再生する。スタンプ連打や識別子は英語扱いしない
 - **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。従来どおり順次再生しつつ、`say` / `ffmpeg` 異常終了時は自動リトライ
 - コメント返しプロセスは `disown` で親プロセスから独立しており、次のゲーム開始時にトーク生成が kill されても再生が中断されない
 - `RADIO_SAY_RATE=180` で読み上げ速度を制御（macOS `say -r` に渡される）

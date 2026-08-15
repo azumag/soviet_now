@@ -1,5 +1,5 @@
 #!/bin/bash
-# Render ordered English (Flite) and Japanese (VOICEVOX) comment segments to one WAV.
+# Render ordered English translations (Flite) and Japanese replies (VOICEVOX) to one WAV.
 
 set -euo pipefail
 

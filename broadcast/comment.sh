@@ -1331,11 +1331,23 @@ except Exception:
     raise SystemExit(1)
 if not isinstance(data, list) or not data:
     raise SystemExit(1)
+indices = []
 for item in data:
     if not isinstance(item, dict):
         raise SystemExit(1)
     if not item.get("category"):
         raise SystemExit(1)
+    try:
+        index = int(item.get("index"))
+    except Exception:
+        raise SystemExit(1)
+    if index < 1:
+        raise SystemExit(1)
+    indices.append(index)
+    if "is_english" in item and not isinstance(item["is_english"], bool):
+        raise SystemExit(1)
+if sorted(indices) != list(range(1, len(data) + 1)):
+    raise SystemExit(1)
 '
 }
 
@@ -1353,19 +1365,120 @@ if not isinstance(data, list) or not data:
 for item in data:
     if isinstance(item, dict) and item.get("category") == "short_reaction":
         item["category"] = "chitchat"
+    if isinstance(item, dict):
+        # Keep old classifier responses usable while making the language
+        # decision explicit for the live generation path.
+        value = item.get("is_english", False)
+        if not isinstance(value, bool):
+            value = str(value).strip().lower() in {"1", "true", "yes", "y"}
+        item["is_english"] = value
 print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
 '
+}
+
+_comment_enforce_english_safety() {
+	local classification_json="$1" comments_file="$2"
+	python3 - "$classification_json" "$comments_file" <<'PY'
+import json
+import re
+import sys
+
+try:
+    rows = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+try:
+    source = [line.rstrip("\n") for line in open(sys.argv[2], encoding="utf-8", errors="ignore") if line.strip()]
+except OSError:
+    source = []
+
+if not isinstance(rows, list) or len(rows) != len(source):
+    raise SystemExit(1)
+indices = []
+for position, row in enumerate(rows, 1):
+    if not isinstance(row, dict):
+        raise SystemExit(1)
+    try:
+        index = int(row.get("index"))
+    except Exception:
+        raise SystemExit(1)
+    if index != position:
+        raise SystemExit(1)
+    indices.append(index)
+if indices != list(range(1, len(source) + 1)):
+    raise SystemExit(1)
+
+japanese_re = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+cyrillic_re = re.compile(r"[\u0400-\u04ff]")
+url_re = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+def row_comment(row):
+    text = str(row.get("comment") or "").strip()
+    if text:
+        return text
+    try:
+        idx = int(row.get("index", 0) or 0)
+    except Exception:
+        idx = 0
+    if 1 <= idx <= len(source):
+        raw = source[idx - 1]
+        return raw.split(": ", 1)[1] if ": " in raw else raw
+    return ""
+
+def obvious_non_english_noise(text):
+    text = url_re.sub(" ", text).strip()
+    if japanese_re.search(text) or cyrillic_re.search(text):
+        return True
+    tokens = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", text.lower())
+    if not tokens:
+        return True
+    if len(tokens) >= 2 and len(set(tokens)) == 1:
+        return True
+    if len(tokens) >= 3 and len(set(tokens)) / len(tokens) < 0.67:
+        return True
+    return False
+
+for position, row in enumerate(rows, 1):
+    raw = source[position - 1]
+    if ": " in raw:
+        user, comment = raw.split(": ", 1)
+    else:
+        user, comment = "", raw
+    # The source batch, not model-echoed fields, is authoritative for the
+    # translation mapping and protects against index/user/comment drift.
+    row["index"] = position
+    row["user"] = user
+    row["comment"] = comment
+    if row.get("is_english") is True and obvious_non_english_noise(comment):
+        row["is_english"] = False
+print(json.dumps(rows, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
+_comment_normalize_classification_for_comments() {
+	local classification_json="$1" comments_file="$2" normalized=""
+	normalized=$(printf '%s' "$classification_json" | _normalize_comment_classification_json 2>/dev/null || true)
+	[ -n "$normalized" ] || return 1
+	_comment_enforce_english_safety "$normalized" "$comments_file"
 }
 
 _classify_comments_heuristic() {
 	local comments_file="$1"
 	[ -f "$comments_file" ] || return 1
-	python3 - "$comments_file" <<'PY'
+	python3 - "$comments_file" "${ELOOP_LIB_DIR:-.}/lib/comment_bilingual.py" <<'PY'
 import json
 import re
 import sys
 
 path = sys.argv[1]
+helper_path = sys.argv[2] if len(sys.argv) > 2 else "lib/comment_bilingual.py"
+try:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("comment_bilingual", helper_path)
+    language_helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(language_helper)
+except Exception:
+    language_helper = None
 rows = []
 try:
     lines = [line.rstrip("\n") for line in open(path, encoding="utf-8", errors="ignore") if line.strip()]
@@ -1423,7 +1536,16 @@ for idx, raw in enumerate(lines, 1):
         user, comment = raw.split(": ", 1)
     else:
         user, comment = "", raw
-    rows.append({"index": idx, "user": user, "comment": comment, "category": classify(user, comment)})
+    is_english = bool(
+        language_helper and language_helper.looks_like_english(comment)
+    )
+    rows.append({
+        "index": idx,
+        "user": user,
+        "comment": comment,
+        "category": classify(user, comment),
+        "is_english": is_english,
+    })
 
 if not rows:
     raise SystemExit(1)
@@ -1615,7 +1737,10 @@ _classify_comments() {
 		classification=$(_classify_comments_heuristic "$comments_file" 2>/dev/null || true)
 		rm -f "$classifier_prompt_file"
 		if [ -n "$classification" ]; then
-			classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
+			if ! classification=$(_comment_normalize_classification_for_comments "$classification" "$comments_file" 2>/dev/null); then
+				log "[COMMENT] 分類器: heuristic分類の整合性検証失敗" >&2
+				return 1
+			fi
 			log "[COMMENT] 分類器: model=heuristic mode=local" >&2
 			printf '%s' "$classification"
 			return 0
@@ -1638,11 +1763,13 @@ _classify_comments() {
 	if [ -n "$edit_result" ]; then
 		classifier_model_used=$(printf '%s' "$edit_result" | sed -n '1p')
 		classification=$(printf '%s' "$edit_result" | sed '1d')
-		classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
-		rm -f "$classifier_prompt_file" "$classifier_edit_file"
-		log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=edit" >&2
-		printf '%s' "$classification"
-		return 0
+		if classification=$(_comment_normalize_classification_for_comments "$classification" "$comments_file" 2>/dev/null); then
+			rm -f "$classifier_prompt_file" "$classifier_edit_file"
+			log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=edit" >&2
+			printf '%s' "$classification"
+			return 0
+		fi
+		log "[COMMENT] 分類器: edit結果の整合性検証失敗 -> stdout契約へフォールバック" >&2
 	fi
 
 	classifier_output_file=$(mktemp /tmp/eloop_comment_classifier_output_XXXXXXXX)
@@ -1668,10 +1795,129 @@ _classify_comments() {
 		log "[COMMENT] 分類器: JSON不正 -> ${classification:0:200}" >&2
 		return 1
 	fi
-	classification=$(printf '%s' "$classification" | _normalize_comment_classification_json 2>/dev/null || printf '%s' "$classification")
+	if ! classification=$(_comment_normalize_classification_for_comments "$classification" "$comments_file" 2>/dev/null); then
+		log "[COMMENT] 分類器: 整合性検証失敗（元のAI分類は採用しない）" >&2
+		return 1
+	fi
 	log "[COMMENT] 分類器: model=${classifier_model_used:-$model} mode=stdout_fallback" >&2
 	printf '%s' "$classification"
 	return 0
+}
+
+_comment_classification_english_count() {
+	local classification_json="$1"
+	python3 - "$classification_json" <<'PY'
+import json
+import sys
+try:
+    rows = json.loads(sys.argv[1])
+except Exception:
+    rows = []
+print(sum(1 for row in rows if isinstance(row, dict) and row.get("is_english") is True))
+PY
+}
+
+_comment_build_translation_prompt() {
+	local classification_json="$1"
+	local helper_path="${ELOOP_LIB_DIR:-.}/lib/comment_bilingual.py"
+	local japanese_text_file=""
+	japanese_text_file=$(mktemp /tmp/eloop_comment_translation_source_XXXXXXXX 2>/dev/null || true)
+	[ -n "$japanese_text_file" ] || return 1
+	cat >"$japanese_text_file" || {
+		rm -f "$japanese_text_file"
+		return 1
+	}
+	python3 - "$classification_json" "$helper_path" "$japanese_text_file" <<'PY'
+import importlib.util
+import json
+import sys
+
+classification_raw, helper_path, japanese_text_path = sys.argv[1:4]
+try:
+    rows = json.loads(classification_raw)
+except Exception:
+    raise SystemExit(1)
+try:
+    spec = importlib.util.spec_from_file_location("comment_bilingual", helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+except Exception:
+    raise SystemExit(1)
+
+rows = [row for row in rows if isinstance(row, dict)]
+rows.sort(key=lambda row: int(row.get("index", 0) or 0))
+try:
+    with open(japanese_text_path, encoding="utf-8") as source:
+        paragraphs = helper.split_plain_paragraphs(source.read())
+except OSError:
+    raise SystemExit(1)
+if len(paragraphs) != len(rows):
+    raise SystemExit(1)
+targets = [(row, paragraph) for row, paragraph in zip(rows, paragraphs) if row.get("is_english") is True]
+if not targets:
+    raise SystemExit(1)
+
+print("You translate selected Japanese Twitch replies into natural spoken English.")
+print("Return exactly one English paragraph for each target, in the order shown below.")
+print("Separate paragraphs with one blank line. Output only the translations: no labels, markers, Markdown, explanations, or Japanese text.")
+print("Use polite, conversational English. If a Japanese display name is present, omit it or use an ASCII name only.")
+print()
+for row, paragraph in targets:
+    index = row.get("index", "?")
+    comment = str(row.get("comment") or "").replace("\n", " ").strip()
+    print(f"Target {index} (viewer comment: {comment})")
+    print("Japanese reply to translate:")
+    print(paragraph)
+    print()
+PY
+	local rc=$?
+	rm -f "$japanese_text_file"
+	return "$rc"
+}
+
+_comment_is_valid_translation_candidate() {
+	local raw="$1"
+	[ -n "$raw" ] || return 1
+	_contains_provider_error_text "$raw" && return 1
+	printf '%s' "$raw" | grep -Eiq 'tool_call|tool_result|assistant_response|^analysis$|^final$|^assistant$|^provider[[:space:]]*[:=]|^model[[:space:]]*[:=]|^agent[[:space:]]*[:=]' && return 1
+	return 0
+}
+
+# 翻訳は補助処理。翻訳プロバイダの失敗を通常コメント生成の agent
+# backoff ファイルへ波及させないため、ai_generate_list は使わず dispatch
+# だけを順番に呼ぶ。翻訳に失敗しても日本語返信を採用する。
+_comment_generate_translation() {
+	local prompt_file="$1" agent_list="$2" timeout_sec="$3" last_agent_file="${4:-}"
+	local agents=() agent output rc attempted=0
+	[ -n "$last_agent_file" ] && : >"$last_agent_file"
+	case "$timeout_sec" in
+	'' | *[!0-9]*) timeout_sec=20 ;;
+	esac
+	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
+	IFS=',' read -ra agents <<<"$agent_list"
+	for agent in "${agents[@]}"; do
+		agent="${agent#${agent%%[![:space:]]*}}"
+		agent="${agent%${agent##*[![:space:]]}}"
+		[ -n "$agent" ] || continue
+		if [ "$attempted" -ge 2 ]; then
+			log "[COMMENT_TRANSLATION] agent試行上限(2)に到達" >&2
+			break
+		fi
+		if declare -F _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then
+			log "[COMMENT_TRANSLATION] backoff skip: ${agent} (no force retry)" >&2
+			continue
+		fi
+		attempted=$((attempted + 1))
+		output=$(_ai_dispatch "COMMENT_TRANSLATION" "$agent" "$prompt_file" "$timeout_sec")
+		rc=$?
+		if [ "$rc" -eq 0 ] && [ -n "$output" ] && _comment_is_valid_translation_candidate "$output"; then
+			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
+			printf '%s' "$output"
+			return 0
+		fi
+		log "[COMMENT_TRANSLATION] ${agent} failed/invalid → next agent (no shared backoff)" >&2
+	done
+	return 1
 }
 
 # 分類結果をパースしてカテゴリ別にコメントをグループ化
@@ -2009,7 +2255,7 @@ _comment_is_valid_generation_candidate() {
 	local raw="$1" cleaned
 	[ -n "$raw" ] || return 1
 	_contains_provider_error_text "$raw" && return 1
-	cleaned=$(_clean_comment_talk "$raw")
+	cleaned=$(_clean_comment_talk "$raw" 1)
 	cleaned=$(printf '%s' "$cleaned" | _sanitize_onair_text)
 	[ -n "$cleaned" ] || return 1
 	_is_valid_comment_talk "$cleaned"
@@ -2130,11 +2376,7 @@ generate_comment_response() {
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="${viewer_chat_dir}/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
 	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
-	local comment_bilingual_required=0 comment_bilingual_expected_pairs=0
-	if comment_bilingual_expected_pairs=$(python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" detect "$comment_prompt_batch_file" 2>/dev/null); then
-		comment_bilingual_required=1
-		log "[COMMENT] 英語コメント${comment_bilingual_expected_pairs}件検出 → 英語返答 + 日本語訳モード"
-	fi
+	local english_comment_count=0
 
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
@@ -2233,6 +2475,15 @@ $advice_text"
 	# コメント分類器を実行
 	local classification_json=""
 	classification_json=$(_classify_comments "$comment_prompt_batch_file")
+	if [ -n "$classification_json" ]; then
+		english_comment_count=$(_comment_classification_english_count "$classification_json" 2>/dev/null || printf '0')
+		case "$english_comment_count" in
+		'' | *[!0-9]*) english_comment_count=0 ;;
+		esac
+		if [ "$english_comment_count" -gt 0 ]; then
+			log "[COMMENT] 分類器が英語コメント${english_comment_count}件を検出 → 日本語返信を生成後、対象だけ英訳"
+		fi
+	fi
 	local dominant_category=""
 	if [ -n "$classification_json" ]; then
 		dominant_category=$(python3 -c "
@@ -2301,7 +2552,7 @@ else:
 
 	(
 		_cg_my_pid="${BASHPID:-$(_my_pid)}"
-		local comment_bilingual_meta_file=""
+		local comment_speech_meta_file=""
 		_cleanup_comment_gen_worker() {
 			local raw file_pid file_started_at
 			raw=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null || true)
@@ -2313,7 +2564,7 @@ else:
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 			[ -n "$comment_prompt_batch_file" ] && rm -f "$comment_prompt_batch_file"
-			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
+			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
@@ -2399,8 +2650,9 @@ for item in data:
     else:
         user, comment = '', ''
     cat = item.get('category', 'chitchat')
+    english = 'english' if item.get('is_english') is True else 'japanese/other'
     if comment:
-        print(f'[{idx_num}] {user}: {comment} -> {cat}')
+        print(f'[{idx_num}] {user}: {comment} -> {cat} -> {english}')
 PY
 )
 				formatted_classifications=$(printf '%s' "$formatted_classifications" | _sanitize_comment_prompt_context)
@@ -2430,38 +2682,19 @@ PY
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
-		if [ "$comment_bilingual_required" = "1" ]; then
-			cat >>"$comment_prompt_file" <<'BILINGUALCOMMENT'
+		cat >>"$comment_prompt_file" <<'JAPANESECOMMENT'
 
-【英語コメントへの必須出力形式】
-- 英語で書かれた各コメントには、まず自然な英語で直接返答し、その直後に同じ内容の自然な日本語訳をです・ます調で付けてください。
-- コメントの上から順番を維持し、英語コメント1件ごとに次の3マーカーを必ず各1行で出力してください。
-===ENGLISH===
-(English reply only)
-===JAPANESE===
-(上の英語返答の日本語訳のみ)
-===END_BILINGUAL===
-- 英語部分に日本語を混ぜず、日本語訳部分に英語の説明や「in Japanese that means」のような前置きを入れないでください。
-- 日本語コメントへの返答は従来どおり日本語で書き、3マーカーを使わないでください。英語コメントと日本語コメントが混在しても、元コメントの順番を変えないでください。
-- 英語返答を ===ENGLISH=== より前へ複製してはいけません。最初の対象が英語コメントなら、出力1行目を必ず ===ENGLISH=== にしてください。
-- マーカー以外の見出し、Markdown、補足説明は出力しないでください。
-BILINGUALCOMMENT
-		fi
+【返信生成の出力契約】
+- すべてのコメントへ、元の順番どおりに日本語で返答してください。英語コメントにも、この段階では日本語の返答だけを書いてください。
+- 1コメントにつき1段落とし、コメントの間は空行1行で区切ってください。言語名の見出し、制御用マーカー、Markdown、補足説明は出力しないでください。
+- 英語コメントへの英語版は後段の翻訳処理で作るため、ここで英語文を混ぜたり、同じ返答を二重に書いたりしないでください。
+JAPANESECOMMENT
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
 		case "$comment_retry_max" in
 		'' | *[!0-9]*) comment_retry_max=3 ;;
 		esac
 		[ "$comment_retry_max" -lt 1 ] && comment_retry_max=1
-		local comment_bilingual_retry_min="${COMMENT_BILINGUAL_RETRY_MIN:-2}"
-		case "$comment_bilingual_retry_min" in
-		'' | *[!0-9]*) comment_bilingual_retry_min=2 ;;
-		esac
-		[ "$comment_bilingual_retry_min" -lt 1 ] && comment_bilingual_retry_min=1
-		if [ "$comment_bilingual_required" = "1" ] && [ "$comment_retry_max" -lt "$comment_bilingual_retry_min" ]; then
-			comment_retry_max="$comment_bilingual_retry_min"
-		fi
-
 		local attempt=1 generation_ok=false
 		local comment_agent_list=""
 		if [ "$_comment_mode_generated" = "soren91" ]; then
@@ -2477,8 +2710,8 @@ BILINGUALCOMMENT
 		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, agents=${comment_agent_list}, max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
-			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
-			comment_bilingual_meta_file=""
+			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
+			comment_speech_meta_file=""
 			echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
 			local prompt_for_attempt="$comment_prompt_file"
 			if [ "$attempt" -gt 1 ]; then
@@ -2510,7 +2743,7 @@ RETRYCOMMENT
 			attempt_model=$(cat "$comment_last_agent_file" 2>/dev/null)
 			rm -f "$comment_last_agent_file"
 			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
-				attempt_talk=$(_clean_comment_talk "$attempt_talk")
+				attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			else
 				attempt_talk=""
@@ -2572,25 +2805,62 @@ RETRYCOMMENT
 				attempt_talk=$(printf '%s' "$attempt_talk" | _remove_named_block "CODEX_ADVICE")
 			fi
 
-			attempt_talk=$(_clean_comment_talk "$attempt_talk")
+			attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
-			if [ "$comment_bilingual_required" = "1" ]; then
-				comment_bilingual_meta_file=$(mktemp /tmp/eloop_comment_bilingual_XXXXXXXX 2>/dev/null || true)
-				local parsed_bilingual_talk=""
-				if [ -z "$comment_bilingual_meta_file" ] || ! parsed_bilingual_talk=$(printf '%s' "$attempt_talk" | python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" parse --metadata "$comment_bilingual_meta_file" --expected-pairs "$comment_bilingual_expected_pairs"); then
-					log "[COMMENT] 英語返答または日本語訳の構造が不正なため再生成 (attempt ${attempt}/${comment_retry_max})"
-					[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
-					comment_bilingual_meta_file=""
-					attempt=$((attempt + 1))
-					continue
-				fi
-				attempt_talk="$parsed_bilingual_talk"
-			fi
+
+			# 日本語本文の検証は従来どおり行う。英語判定は分類器の結果だけを
+			# 使い、生成本文の言語推測や特殊マーカー解析は行わない。
 			if ! _is_valid_comment_talk "$attempt_talk"; then
 				log "[COMMENT] 最終本文が不正/短文のため再生成 (attempt ${attempt}/${comment_retry_max})"
 				attempt=$((attempt + 1))
 				continue
+			fi
+
+			# 英語コメントがある場合だけ、対応する日本語段落を別呼出しで英訳する。
+			# 翻訳の失敗・段落数不一致は日本語返信をそのまま採用し、コメント
+			# キュー全体のバックオフ原因にしない。
+			if [ "${english_comment_count:-0}" -gt 0 ]; then
+				local translation_prompt_file="" translation_text="" translation_model=""
+				translation_prompt_file=$(mktemp /tmp/eloop_comment_translation_prompt_XXXXXXXX 2>/dev/null || true)
+				if [ -n "$translation_prompt_file" ] && printf '%s' "$attempt_talk" | _comment_build_translation_prompt "$classification_json" >"$translation_prompt_file" 2>/dev/null; then
+					local translation_agents="${COMMENT_TRANSLATION_AGENTS:-$comment_agent_list}"
+					local translation_last_agent_file=""
+					translation_last_agent_file=$(mktemp /tmp/eloop_comment_translation_agent_XXXXXXXX 2>/dev/null || true)
+					translation_text=$(_comment_generate_translation "$translation_prompt_file" "$translation_agents" \
+						"${COMMENT_TRANSLATION_TIMEOUT:-20}" "$translation_last_agent_file" || true)
+					translation_model=$(cat "$translation_last_agent_file" 2>/dev/null || true)
+					rm -f "$translation_last_agent_file"
+					if [ -n "$translation_text" ]; then
+						local classification_file="" japanese_file="" translation_file=""
+						classification_file=$(mktemp /tmp/eloop_comment_classification_XXXXXXXX 2>/dev/null || true)
+						japanese_file=$(mktemp /tmp/eloop_comment_japanese_XXXXXXXX 2>/dev/null || true)
+						translation_file=$(mktemp /tmp/eloop_comment_translation_XXXXXXXX 2>/dev/null || true)
+						comment_speech_meta_file=$(mktemp /tmp/eloop_comment_speech_XXXXXXXX.json 2>/dev/null || true)
+						if [ -n "$classification_file" ] && [ -n "$japanese_file" ] && [ -n "$translation_file" ] && [ -n "$comment_speech_meta_file" ]; then
+							printf '%s' "$classification_json" >"$classification_file"
+							printf '%s' "$attempt_talk" >"$japanese_file"
+							printf '%s' "$translation_text" >"$translation_file"
+							if python3 "$ELOOP_LIB_DIR/lib/comment_bilingual.py" build-segments \
+								--classification "$classification_file" \
+								--japanese "$japanese_file" \
+								--translation "$translation_file" \
+								--metadata "$comment_speech_meta_file" >/dev/null 2>&1; then
+								log "[COMMENT] 英語対象${english_comment_count}件を翻訳して日本語返信と順序付きマージ (model=${translation_model:-unknown})"
+							else
+								rm -f "$comment_speech_meta_file"
+								comment_speech_meta_file=""
+								log "[COMMENT] 英語翻訳の段落検証失敗 → 日本語返信のみ継続"
+							fi
+						fi
+						rm -f "$classification_file" "$japanese_file" "$translation_file"
+					else
+						log "[COMMENT] 英語翻訳呼出し失敗 → 日本語返信のみ継続"
+					fi
+				else
+					log "[COMMENT] 日本語返信の段落境界を確定できない → 日本語返信のみ継続"
+				fi
+				rm -f "$translation_prompt_file"
 			fi
 
 			# 歌声合成: 楽譜JSONが有効なら非同期で合成→キューに投入
@@ -2659,21 +2929,11 @@ RETRYCOMMENT
 				"$comment_agent_list" \
 				"" \
 				"" \
-				"$comment_bilingual_meta_file"; then
-				if [ "$comment_bilingual_required" = "1" ]; then
-					log "[COMMENT] 英日再生メタデータ保存失敗のため再生成 (attempt ${attempt}/${comment_retry_max})"
-					_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
-					_comment_clear_generation_meta "$queue_file"
-					rm -f "$queue_file"
-					[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
-					comment_bilingual_meta_file=""
-					attempt=$((attempt + 1))
-					continue
-				fi
+				"$comment_speech_meta_file"; then
 				log "[COMMENT] 生成メタデータ保存失敗（通常コメント再生は継続）"
 			fi
-			[ -n "$comment_bilingual_meta_file" ] && rm -f "$comment_bilingual_meta_file"
-			comment_bilingual_meta_file=""
+			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
+			comment_speech_meta_file=""
 			local new_hash
 			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
