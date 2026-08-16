@@ -835,7 +835,9 @@ ai_generate() {
 # === バックオフ付きエージェントリスト ===
 
 _ai_backoff_dir() {
-	if [ -n "${ELOOP_LIB_DIR:-}" ]; then
+	if [ -n "${AI_BACKOFF_DIR:-}" ]; then
+		printf '%s\n' "$AI_BACKOFF_DIR"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
 		printf '%s/tmp/state/ai_backoff\n' "$ELOOP_LIB_DIR"
 	else
 		printf 'tmp/state/ai_backoff\n'

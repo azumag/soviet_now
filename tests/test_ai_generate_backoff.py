@@ -44,6 +44,47 @@ class AiGenerateBackoffTests(unittest.TestCase):
         self.assertIn("main=deepseek-v4-flash", result.stdout)
         self.assertIn("fb=minimax-m3", result.stdout)
 
+    def test_rate_limit_writer_and_status_share_override_directory(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "backoff"
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                AI_BACKOFF_DIR={state_dir!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                _ai_backoff_set codex:deepseek-v4-flash 3600
+                test -f {state_dir / 'codex_deepseek-v4-flash'!s}
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AI_BACKOFF_DIR": str(state_dir),
+                    "COMMENT_AGENTS": "codex:deepseek-v4-flash,codex:minimax-m3",
+                }
+            )
+            status = subprocess.run(
+                ["python3", "lib/ai_backoff_status.py", "--lines"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn("main=deepseek-v4-flash", status.stdout)
+
     def test_status_dashboard_header_shows_both_rate_limited_roles(self) -> None:
         import status_dashboard
 
