@@ -540,8 +540,11 @@ test('rate-limit status is promoted to the top rail with main and fallback model
   const overlay = await runBroadcastOverlayScript(base);
   const aiLine = overlay.summary.children.find((line) => line.className.includes('sum-ai'));
   assert.ok(aiLine, 'rate-limit line must be visible in the top rail');
-  assert.match(aiLine.textContent, /main=deepseek-v4-flash/);
-  assert.match(aiLine.textContent, /fb=minimax-m3/);
+  assert.match(aiLine.textContent, /AI使用量上限/);
+  assert.match(aiLine.textContent, /AI使用量上限 復旧まで:/);
+  assert.match(aiLine.textContent, /主 DeepSeek Flash 3h59m/);
+  assert.match(aiLine.textContent, /予備 MiniMax 4h59m/);
+  assert.doesNotMatch(aiLine.textContent, /429/);
 });
 
 
