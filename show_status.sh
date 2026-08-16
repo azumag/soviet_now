@@ -228,6 +228,13 @@ _file_recent() {
 	(( age >= 0 && age <= max_age ))
 }
 
+_ai_backoff_status_lines() {
+	# ai_generate.sh writes these files only for explicit provider rate limits.
+	# Keep status rendering read-only; expiry cleanup remains the dispatcher's job.
+	AI_BACKOFF_DIR="${AI_BACKOFF_DIR:-$TMP_STATE_DIR/ai_backoff}" \
+		python3 lib/ai_backoff_status.py --lines 2>/dev/null || true
+}
+
 _obs_status_line() {
 	python3 - <<'PY' 2>/dev/null || printf 'unknown|status unavailable'
 import os
@@ -864,6 +871,8 @@ show_status() {
 	# --- 改善プロセス状態 ---
 	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0 imp_updated_at=0
 	local imp_monitor_status="" imp_monitor_action="" imp_monitor_stale_sec=0
+	local ai_backoff_lines=""
+	ai_backoff_lines=$(_ai_backoff_status_lines)
 	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
 		eval $(python3 -c "
 import json, shlex
@@ -2674,6 +2683,18 @@ PY
 	queue_bar=$(_bar_meter "$queue_total" 30 12)
 	printf "    ${C_BLUE}▸${C_RESET} QueueMeter  ${C_DIM}[%s]${C_RESET}  ${C_DIM}A=%d C=%d T=%d${C_RESET}\n" \
 		"$queue_bar" "$acc_count" "$comment_queue_count" "$twitch_pending"
+	if [[ -n "$ai_backoff_lines" ]]; then
+		local ai_backoff_line ai_backoff_index=0
+		while IFS= read -r ai_backoff_line; do
+			[ -n "$ai_backoff_line" ] || continue
+			if (( ai_backoff_index == 0 )); then
+				printf "    ${C_RED}!${C_RESET} AI 429      ${C_RED}%s${C_RESET}\n" "$ai_backoff_line"
+			else
+				printf "      ${C_RED}↳${C_RESET}            ${C_RED}%s${C_RESET}\n" "$ai_backoff_line"
+			fi
+			ai_backoff_index=$((ai_backoff_index + 1))
+		done <<< "$ai_backoff_lines"
+	fi
 
 	local max_drop=$(( W - 18 ))
 	latest_drop=$(_truncate_display_width "$latest_drop" "$max_drop")

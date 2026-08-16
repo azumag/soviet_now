@@ -19,6 +19,8 @@ from collections import Counter
 from glob import glob
 from pathlib import Path
 
+from lib.ai_backoff_status import load_status as load_ai_backoff_status
+
 W = 57
 RANK_LCB_Z = 1.28
 RANK_WEIGHT_P50 = 0.55
@@ -1648,6 +1650,20 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     r4_display = f" Live: {state_color}{state}{RST}  score={gscore}  pieces={gpieces}{live_extra}"
     pad4 = inner - len(r4_raw_nocolor)
     lines.append(f"{C_CYAN}│{RST}{r4_display}{' ' * max(pad4, 0)} {C_CYAN}│{RST}")
+
+    ai_backoff = load_ai_backoff_status()
+    if ai_backoff:
+        for index, row in enumerate(ai_backoff["roles"]):
+            role = "main" if row["role"] == "main" else "fb"
+            detail = f"{role}={row['model']}({row['remaining_text']})" if row["active"] else f"{role}=ready"
+            prefix = " AI 429 " if index == 0 else "        "
+            ai_raw = f"{prefix}{detail}"
+            ai_display = f" {C_RED}AI 429{RST} {detail}" if index == 0 else f"        {detail}"
+            ai_display = truncate_ansi_display(ai_display, inner)
+            lines.append(
+                f"{C_CYAN}│{RST}{ai_display}"
+                f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
+            )
 
     if latest_drop:
         label = " LastDrop: "

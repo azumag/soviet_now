@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 
 
@@ -14,6 +15,71 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class AiGenerateBackoffTests(unittest.TestCase):
+    def test_rate_limit_status_reports_main_and_fallback(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            state_dir = Path(temp_dir)
+            now = int(time.time())
+            (state_dir / "codex_deepseek-v4-flash").write_text(
+                f"{now + 3600}\n", encoding="utf-8"
+            )
+            (state_dir / "codex_minimax-m3").write_text(
+                f"{now + 7200}\n", encoding="utf-8"
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AI_BACKOFF_DIR": str(state_dir),
+                    "COMMENT_AGENTS": "codex:deepseek-v4-flash,codex:minimax-m3",
+                }
+            )
+            result = subprocess.run(
+                ["python3", "lib/ai_backoff_status.py", "--lines"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("main=deepseek-v4-flash", result.stdout)
+        self.assertIn("fb=minimax-m3", result.stdout)
+
+    def test_status_dashboard_header_shows_both_rate_limited_roles(self) -> None:
+        import status_dashboard
+
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            state_dir = Path(temp_dir)
+            now = int(time.time())
+            (state_dir / "codex_deepseek-v4-flash").write_text(
+                f"{now + 3600}\n", encoding="utf-8"
+            )
+            (state_dir / "codex_minimax-m3").write_text(
+                f"{now + 7200}\n", encoding="utf-8"
+            )
+            old_env = os.environ.copy()
+            try:
+                os.environ["AI_BACKOFF_DIR"] = str(state_dir)
+                os.environ["COMMENT_AGENTS"] = "codex:deepseek-v4-flash,codex:minimax-m3"
+                lines = status_dashboard.render_header(
+                    [],
+                    {"state": "STOP", "score": 0, "pieces": []},
+                    "",
+                    "?",
+                    "?",
+                    0,
+                    0,
+                    0,
+                    {},
+                    {},
+                )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_env)
+        rendered = "\n".join(lines)
+        self.assertIn("AI 429", rendered)
+        self.assertIn("main=deepseek-v4-flash", rendered)
+        self.assertIn("fb=minimax-m3", rendered)
+
     def test_radio_quality_failure_does_not_set_model_backoff(self) -> None:
         source = (REPO_ROOT / "broadcast/radio_engine.sh").read_text(encoding="utf-8")
         start = source.index("品質チェック失敗")
