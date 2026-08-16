@@ -154,25 +154,41 @@ _comment_play_japanese_translation_fallback() {
 
 _comment_play_bilingual_speech() {
 	local target="$1" speaker="${2:-}" context_label="${3:-comment}"
-	local sidecar helper_root combined_wav
+	local sidecar helper_root combined_wav bundle_dir
 	sidecar=$(_comment_meta_sidecar_path "$target")
 	helper_root="${ELOOP_LIB_DIR:-.}"
 	combined_wav=$(mktemp "${TMPDIR:-/tmp}/soren_comment_bilingual_XXXXXXXX" 2>/dev/null || true)
 	[ -n "$combined_wav" ] || return 1
+	bundle_dir="${combined_wav}.bundle"
 
 	if ! SAY_VOICEVOX_SPEAKER_OVERRIDE="${speaker:-}" \
 		SAY_CONTEXT_LABEL="$context_label" \
-		"$helper_root/bilingual_comment_tts.sh" -o "$combined_wav" "$sidecar" "$RADIO_SAY_RATE"; then
+		"$helper_root/bilingual_comment_tts.sh" -o "$combined_wav" --bundle-dir "$bundle_dir" "$sidecar" "$RADIO_SAY_RATE"; then
 		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語翻訳＋日本語返信の事前合成失敗 → 日本語返信のみVOICEVOX fallback: $target" >>tmp/.say_queue/debug.log
 		rm -f "$combined_wav"
+		rm -rf "$bundle_dir" 2>/dev/null || true
 		_comment_play_japanese_translation_fallback "$target" "$speaker" "$context_label" >/dev/null 2>&1 || true
 		return 1
 	fi
 
-	SAY_CONTEXT_LABEL="${context_label}:bilingual" \
-		"$helper_root/say_enqueue.sh" --no-preempt --wav "$combined_wav" "$RADIO_SAY_RATE" 0
-	local playback_rc=$?
+	local playback_rc=1
+	if [ -s "$bundle_dir/playlist.txt" ] && [ -s "$bundle_dir/captions.txt" ] \
+		&& [ -s "$bundle_dir/translations.json" ]; then
+		# ラジオの deferred と同じバンドル再生: セグメント境界ごとにキャプションを同期する。
+		# バイリンガル返信は英語テキストが既にあるため、翻訳 API を呼ばず表示テキストを直接渡す。
+		DOCICH_CC_TRANSLATIONS_FILE="$bundle_dir/translations.json" \
+		SAY_CONTEXT_LABEL="${context_label}:bilingual" SAY_CHUNK_GAP_SEC=0 \
+			"$helper_root/say_enqueue.sh" --no-preempt --wav-playlist "$bundle_dir/playlist.txt" \
+			--caption-chunks "$bundle_dir/captions.txt" "$target" "$RADIO_SAY_RATE" 0
+		playback_rc=$?
+	else
+		# 古い runtime との互換: バンドルが作れない場合は結合 WAV をそのまま再生する。
+		SAY_CONTEXT_LABEL="${context_label}:bilingual" \
+			"$helper_root/say_enqueue.sh" --no-preempt --wav "$combined_wav" "$RADIO_SAY_RATE" 0
+		playback_rc=$?
+	fi
 	rm -f "$combined_wav"
+	rm -rf "$bundle_dir" 2>/dev/null || true
 	return "$playback_rc"
 }
 

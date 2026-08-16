@@ -766,7 +766,23 @@ _comment_enforce_english_safety "$1" "$2"
         self.assertIn('_comment_declares_bilingual_speech "$playing_file"', script)
         self.assertIn("通常VOICEVOX経路を抑止", script)
 
-    def test_comment_prompts_generate_japanese_before_separate_translation(self):
+    def test_bilingual_playback_uses_synchronized_caption_bundle(self):
+        comment_lib = (REPO_ROOT / "broadcast/comment_lib.sh").read_text(encoding="utf-8")
+        tts = (REPO_ROOT / "bilingual_comment_tts.sh").read_text(encoding="utf-8")
+        # バイリンガル返信はセグメント単位のバンドル（WAV + captions）で再生し、
+        # 翻訳済み英語テキストを translations として渡す。
+        self.assertIn('--bundle-dir "$bundle_dir"', comment_lib)
+        self.assertIn('--wav-playlist "$bundle_dir/playlist.txt"', comment_lib)
+        self.assertIn('--caption-chunks "$bundle_dir/captions.txt"', comment_lib)
+        self.assertIn("DOCICH_CC_TRANSLATIONS_FILE", comment_lib)
+        self.assertIn('--bundle-dir)', tts)
+        self.assertIn('"$BUNDLE_DIR/captions.txt"', tts)
+        self.assertIn('"$BUNDLE_DIR/playlist.txt"', tts)
+        self.assertIn("translations.json", tts)
+        # バンドルが作れない古い runtime 向けに結合 WAV 再生も残す。
+        self.assertIn('--wav "$combined_wav"', comment_lib)
+
+    def test_comment_prompts_allow_english_then_japanese_translation(self):
         prompt_paths = [
             "prompts/comment_response.md",
             "prompts/comment_response_default.md",

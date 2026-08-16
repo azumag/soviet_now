@@ -1,5 +1,6 @@
 #!/bin/bash
-# Render ordered English translations (Flite) and Japanese replies (VOICEVOX) to one WAV.
+# Render ordered English translations (Flite) and Japanese replies (VOICEVOX) to one WAV,
+# optionally keeping the per-segment WAVs and caption texts for synchronized CC.
 
 set -euo pipefail
 
@@ -7,10 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 OUTPUT=""
+BUNDLE_DIR=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	-o)
 		OUTPUT="${2:?bilingual_comment_tts.sh: -o requires a WAV path}"
+		shift 2
+		;;
+	--bundle-dir)
+		BUNDLE_DIR="${2:?bilingual_comment_tts.sh: --bundle-dir requires a directory}"
 		shift 2
 		;;
 	*) break ;;
@@ -52,6 +58,9 @@ done
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/soren-bilingual-tts.XXXXXX")
 MANIFEST="$TEMP_DIR/segments.tsv"
 PLAYLIST="$TEMP_DIR/playlist.txt"
+if [ -n "$BUNDLE_DIR" ]; then
+	mkdir -p "$BUNDLE_DIR"
+fi
 cleanup() {
 	local cleanup_file
 	for cleanup_file in "$TEMP_DIR"/*; do
@@ -64,12 +73,18 @@ trap cleanup EXIT
 
 "$PYTHON_BIN" "$COMMENT_BILINGUAL_SCRIPT" emit-segments "$METADATA_FILE" "$TEMP_DIR" >"$MANIFEST"
 : >"$PLAYLIST"
+if [ -n "$BUNDLE_DIR" ]; then
+	: >"$BUNDLE_DIR/playlist.txt"
+	: >"$BUNDLE_DIR/captions.txt"
+fi
 
 segment_count=0
+current_english=""
 while IFS=$'\t' read -r language text_file; do
 	if [ -z "$language" ] || [ ! -s "$text_file" ]; then
 		continue
 	fi
+	segment_text=$(cat "$text_file" 2>/dev/null || true)
 	raw_wav="$TEMP_DIR/raw_${segment_count}.wav"
 	normalized_wav="$TEMP_DIR/normalized_${segment_count}.wav"
 	case "$language" in
@@ -97,6 +112,15 @@ while IFS=$'\t' read -r language text_file; do
 		exit 1
 	}
 	printf "file '%s'\n" "$normalized_wav" >>"$PLAYLIST"
+	if [ -n "$BUNDLE_DIR" ]; then
+		chunk_name=$(printf 'chunk_%03d.wav' "$segment_count")
+		cp "$normalized_wav" "$BUNDLE_DIR/$chunk_name"
+		printf '%s\n' "$chunk_name" >>"$BUNDLE_DIR/playlist.txt"
+		if [ "$language" = "en" ]; then
+			current_english="$segment_text"
+		fi
+		printf '%s\n' "${current_english:-$segment_text}" >>"$BUNDLE_DIR/captions.txt"
+	fi
 	segment_count=$((segment_count + 1))
 done <"$MANIFEST"
 
@@ -104,6 +128,17 @@ done <"$MANIFEST"
 	echo "[bilingual_tts] no speech segments found" >&2
 	exit 1
 }
+
+if [ -n "$BUNDLE_DIR" ]; then
+	"$PYTHON_BIN" -c '
+import json
+import sys
+
+lines = [line.strip() for line in sys.stdin if line.strip()]
+json.dump(lines, sys.stdout, ensure_ascii=False)
+print()
+' <"$BUNDLE_DIR/captions.txt" >"$BUNDLE_DIR/translations.json"
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 if [ "$segment_count" -eq 1 ]; then
