@@ -22,6 +22,10 @@ class TestSayStreaming(unittest.TestCase):
         fail_first_chunk: str | None = None,
         retry_max: int = 1,
         fail_caption_index: int | None = None,
+        synth_sleep: str = "0.25",
+        play_sleep: str = "0.80",
+        ffprobe_duration: str = "0",
+        truncate_min: str | None = None,
     ):
         raw_dir = tempfile.TemporaryDirectory()
         root = Path(raw_dir.name)
@@ -69,17 +73,20 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 printf 'synth-start:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
-sleep 0.25
+sleep SYNC_SLEEP_SEC
 printf 'wav' > "$out"
 printf 'synth-end:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
-""",
+""".replace("SYNC_SLEEP_SEC", synth_sleep),
         )
         fail_name = fail_first_chunk or ""
         self._write_executable(
             root / "bin" / "pactl",
             "#!/bin/sh\nprintf '1\\tsoren_null\\tmodule-null-sink\\n'\n",
         )
-        self._write_executable(root / "bin" / "ffprobe", "#!/bin/sh\nprintf '0\\n'\n")
+        self._write_executable(
+            root / "bin" / "ffprobe",
+            f"#!/bin/sh\nprintf '{ffprobe_duration}\\n'\n",
+        )
         self._write_executable(
             root / "bin" / "paplay",
             f"""#!/bin/sh
@@ -93,9 +100,9 @@ if [ "$name" = "{fail_name}" ] && [ ! -e "{fail_state}" ]; then
   : > "{fail_state}"
   exit 1
 fi
-sleep 0.80
+sleep SYNC_SLEEP_SEC
 printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
-""",
+""".replace("SYNC_SLEEP_SEC", play_sleep),
         )
 
         env = os.environ.copy()
@@ -119,6 +126,8 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
         )
         if fail_caption_index is not None:
             env["TEST_CAPTION_FAIL_PREPARE"] = str(fail_caption_index)
+        if truncate_min is not None:
+            env["SAY_TRUNCATE_MIN_EXPECTED_SEC"] = truncate_min
         result = subprocess.run(
             ["bash", "say_enqueue.sh", "--no-preempt", str(content), "150", "0"],
             cwd=root,
@@ -200,6 +209,24 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
         self.assertIn("clear", caption_ops)
         self.assertNotIn("commit:1", caption_ops)
         self.assertGreaterEqual(sum(line.startswith("play-start:") for line in events), 3, events)
+
+    def test_synthesis_slower_than_playback_does_not_duplicate_chunks(self):
+        # VM では次チャンク合成（数十秒）が再生より長く、待機開始時点で既に
+        # 再生が終わっている。この場合も各チャンクは一度だけ再生されるべき。
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, _ = self._run(
+            text,
+            synth_sleep="0.60",
+            play_sleep="0.30",
+            ffprobe_duration="3.5",
+            truncate_min="2",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        starts = [line.split(":", 1)[1] for line in events if line.startswith("play-start:")]
+        chunk_names = sorted({name for name in starts if name.startswith("chunk_")})
+        for name in chunk_names:
+            self.assertEqual(starts.count(name), 1, f"{name} duplicated: {starts}")
+        self.assertIn("合成待ち中に完了", result.stderr)
 
 
 if __name__ == "__main__":

@@ -1479,6 +1479,14 @@ _stream_wait_voicevox_chunk() {
 		return "${PLAYER_WAIT_RC:-1}"
 	fi
 	if _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
+		if [ "${PLAYER_WAIT_ELAPSED:-0}" -le 1 ]; then
+			# 次チャンク合成の方が再生より長いと、待機開始時点（または観測開始
+			# 直後）で既に再生が終わっている。elapsed=0/1 は途中切断の証拠では
+			# なく、合成待ち中に完走しただけなので、再試行すると同じチャンクが
+			# 二重に聞こえる。ここでは正常完了として扱う。
+			_log "ストリーミングチャンクは合成待ち中に完了 (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
+			return 0
+		fi
 		_log "ストリーミングチャンク途中切断の疑い (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
 		return 98
 	fi
@@ -2500,7 +2508,12 @@ if [ "$RENDER_ONLY" = "true" ]; then
 	done
 	if [ -z "$_render_playlist_file" ] && [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
 		_render_playlist_file="${MY_CONTENT%.txt}_render_playlist.txt"
-		printf '%s\n' "$PRE_SYNTH_WAV" >"$_render_playlist_file"
+		# bundle はプレイリストのディレクトリ基準で WAV を解決するため、
+		# 相対パス（tmp/.say_queue/...）のまま書くと二重にパスが付いて失敗する。
+		case "$PRE_SYNTH_WAV" in
+		/*) printf '%s\n' "$PRE_SYNTH_WAV" >"$_render_playlist_file" ;;
+		*) printf '%s\n' "$(pwd)/$PRE_SYNTH_WAV" >"$_render_playlist_file" ;;
+		esac
 	fi
 	if [ -n "$_render_playlist_file" ] && [ -s "$_render_playlist_file" ] \
 		&& _export_prerendered_voicevox_bundle "$_render_playlist_file" "$_render_captions_file" "$_render_bundle"; then
