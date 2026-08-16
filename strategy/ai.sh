@@ -658,6 +658,41 @@ run_ai() {
 		attempt=$((attempt + 1))
 	done
 
+	# Improvement fallback is intentionally fail-closed. Keep this scoped to the
+	# improvement worker: rollback/postmortem and other non-improvement callers
+	# retain their existing fallback behavior.
+	local improvement_mode="${RUN_AI_IMPROVEMENT_MODE:-0}"
+	case "$improvement_mode" in
+	1|true|TRUE|yes|YES) improvement_mode=1 ;;
+	*) improvement_mode=0 ;;
+	esac
+	local fallback_disabled=false
+	local fallback_lc
+	if [ "$improvement_mode" -eq 1 ]; then
+		case "$fallback" in
+		'' | none | disabled | off | false | 0)
+			fallback_disabled=true
+			;;
+		esac
+		fallback_lc=$(printf '%s' "$fallback" | tr '[:upper:]' '[:lower:]')
+		case "$fallback_lc" in
+		*minimax*)
+			fallback_disabled=true
+			log "[$label] MiniMax fallback is disabled for improvement"
+			;;
+		esac
+	fi
+	if [ "$improvement_mode" -eq 1 ] && { [ "$primary_ret" -eq 79 ] || [ "$fallback_disabled" = true ]; }; then
+		if [ "$primary_ret" -eq 79 ]; then
+			log "[$label] primary rate-limited (rc=79) → no fallback/last_resort; caller must back off"
+		else
+			log "[$label] fallback disabled → no last_resort"
+		fi
+		rm -f "$expect_snapshot" 2>/dev/null || true
+		if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+		return "$primary_ret"
+	fi
+
 	local fallback_attempts="${RUN_AI_FALLBACK_RETRIES:-3}"
 	case "$fallback_attempts" in
 	'' | *[!0-9]*) fallback_attempts=3 ;;

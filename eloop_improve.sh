@@ -19,6 +19,9 @@ CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 source ./eloop_lib.sh
 
+# Scope MiniMax/fallback suppression to this improvement worker only.
+export RUN_AI_IMPROVEMENT_MODE=1
+
 # #93: close the apply->pin race. Every site that writes a new strategy.py must
 # archive it and advance active_branch.head_hash in the SAME step — otherwise the
 # per-game repair (eloop.sh repair_strategy_to_active_branch_head_if_needed) sees
@@ -3359,6 +3362,14 @@ EOF
 		run_ai "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
 			"${improve_ref_files[@]}"
+		_analysis_rc=$?
+		if [ "${_analysis_rc:-1}" -eq 79 ]; then
+			IMPROVE_FAILURE_CODE="rate_limited"
+			VALIDATE_ERROR="改善primary modelの利用上限に達したため、fallbackなしでバックオフ"
+			_improve_note "Stage1: primary rate-limited (rc=79) → stop retries and back off"
+			analysis_ok=false
+			break
+		fi
 		if [ -s "$ANALYSIS_RESULT_FILE" ]; then
 			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
 			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
@@ -3372,8 +3383,10 @@ EOF
 	if [ "$analysis_ok" != true ]; then
 		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"
 		_improve_note "Stage1: analysis failed after ${ANALYSIS_MAX_RETRIES} retries → abort"
-		VALIDATE_ERROR="分析フェーズ失敗: analysis_result.md が生成されなかった"
-		IMPROVE_FAILURE_CODE="analysis_failed"
+		if [ "${IMPROVE_FAILURE_CODE:-}" != "rate_limited" ]; then
+			VALIDATE_ERROR="分析フェーズ失敗: analysis_result.md が生成されなかった"
+		fi
+		[ -n "${IMPROVE_FAILURE_CODE:-}" ] || IMPROVE_FAILURE_CODE="analysis_failed"
 		improve_ok=false
 	fi
 
@@ -3413,6 +3426,14 @@ EOF
 				"$ANALYSIS_RESULT_FILE" "${improve_ref_files[@]}"
 			_run_ai_rc=$?
 			_improve_note "run_ai returned rc=${_run_ai_rc} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES})"
+			if [ "$_run_ai_rc" -eq 79 ]; then
+				IMPROVE_FAILURE_CODE="rate_limited"
+				VALIDATE_ERROR="改善primary modelの利用上限に達したため、fallbackなしでバックオフ"
+				_improve_note "implementation: primary rate-limited (rc=79) → stop retries and back off"
+				improve_ok=false
+				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+				break
+			fi
 			if [ "$_run_ai_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
 				# レートリミット検出: 全プロバイダーが rc=79 → バックオフファイルを記録
@@ -3478,6 +3499,14 @@ EOF
 			RUN_CMD_TIMEOUT_SEC="$_prev_run_cmd_timeout"
 			export RUN_CMD_TIMEOUT_SEC
 			rm -f "$fix_prompt_file"
+			if [ "$_fix_rc" -eq 79 ]; then
+				IMPROVE_FAILURE_CODE="rate_limited"
+				VALIDATE_ERROR="改善primary modelの利用上限に達したため、fallbackなしでバックオフ"
+				_improve_note "continue fix: primary rate-limited (rc=79) → stop retries and back off"
+				improve_ok=false
+				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+				break
+			fi
 			if [ "$_fix_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
 			else
@@ -3661,6 +3690,7 @@ ${helpers_diff}"
 		run_ai "REVIEW" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 			"prompts/review_strategy.md" "$REVIEW_RESULT_FILE" \
 			"$ANALYSIS_RESULT_FILE" "$STAGING_FILE" "${improve_ref_files[@]}"
+		_review_rc=$?
 		if [ -n "$_review_prev_timeout" ]; then
 			RUN_CMD_TIMEOUT_SEC="$_review_prev_timeout"
 			export RUN_CMD_TIMEOUT_SEC
@@ -3747,6 +3777,12 @@ ${helpers_diff}"
 		if $improve_ok && ! _validate_review_verdict "$REVIEW_RESULT_FILE" "data/user_review.md"; then
 			log "[IMPROVE] Stage 3 レビュー判定: FAIL (起動検証OKのため適用は継続)"
 			_improve_note "Stage3: review verdict advisory failure; apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
+		fi
+		if [ "${_review_rc:-0}" -eq 79 ]; then
+			IMPROVE_FAILURE_CODE="rate_limited"
+			VALIDATE_ERROR="改善primary modelの利用上限に達したため、レビューもfallbackなしでバックオフ"
+			_improve_note "Stage3: primary rate-limited (rc=79) → do not apply; back off"
+			improve_ok=false
 		fi
 		rm -f "$_pre_review_snapshot" 2>/dev/null || true
 	fi
