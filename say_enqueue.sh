@@ -2500,7 +2500,12 @@ if [ "$RENDER_ONLY" = "true" ]; then
 	done
 	if [ -z "$_render_playlist_file" ] && [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
 		_render_playlist_file="${MY_CONTENT%.txt}_render_playlist.txt"
-		printf '%s\n' "$PRE_SYNTH_WAV" >"$_render_playlist_file"
+		# bundle はプレイリストのディレクトリ基準で WAV を解決するため、
+		# 相対パス（tmp/.say_queue/...）のまま書くと二重にパスが付いて失敗する。
+		case "$PRE_SYNTH_WAV" in
+		/*) printf '%s\n' "$PRE_SYNTH_WAV" >"$_render_playlist_file" ;;
+		*) printf '%s\n' "$(pwd)/$PRE_SYNTH_WAV" >"$_render_playlist_file" ;;
+		esac
 	fi
 	if [ -n "$_render_playlist_file" ] && [ -s "$_render_playlist_file" ] \
 		&& _export_prerendered_voicevox_bundle "$_render_playlist_file" "$_render_captions_file" "$_render_bundle"; then

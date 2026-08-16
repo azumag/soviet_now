@@ -70,4 +70,10 @@ else
 	not_ok "local playlist paths can be resolved twice and break playback"
 fi
 
+if grep -Fq 'printf '"'"'%s\n'"'"' "$(pwd)/$PRE_SYNTH_WAV"' "$SAY_SRC"; then
+	ok "single-chunk render playlists store absolute WAV paths"
+else
+	not_ok "single-chunk render playlists can double the relative path"
+fi
+
 exit "$FAIL"
