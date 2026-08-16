@@ -308,6 +308,14 @@ _radio_commit_spoken_history_for_file() {
 	[ -n "$history_line" ] && _radio_append_spoken_history_line "$history_line"
 }
 
+# deferred radio queue に滞留している未再生の radio_*.txt 本文数を返す。
+# サイドカー (.mode / .ready.wav / .history など) は本文ではないため数えない。
+_radio_deferred_queue_count() {
+	local queue_dir="${RADIO_DEFERRED_QUEUE_DIR:-tmp/.radio_deferred_queue}"
+	[ -d "$queue_dir" ] || { printf '0'; return 0; }
+	find "$queue_dir" -maxdepth 1 -name 'radio_*.txt' -type f 2>/dev/null | wc -l | tr -d ' '
+}
+
 _enqueue_deferred_radio_talk() {
 	local talk_file="$1" game_num="$2" corner_name="$3" expected_mode="${4:-}" history_line="${5:-}"
 	[ -s "$talk_file" ] || return 1

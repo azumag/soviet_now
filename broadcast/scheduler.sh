@@ -480,6 +480,12 @@ schedule_nonessential_audio_jobs() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
+	# issue #5: deferred radio queue が MAX 件超で滞留中は新規ラジオ生成を開始しない。
+	# 5 件以下に戻るまで自動生成を抑制し、再開時にマーカーを解除して 1 回だけログする。
+	if _radio_generation_blocked_by_backpressure; then
+		return 0
+	fi
+
 	# ラジオスケジュール: 時刻ベースのみ
 	# hh:00,30 = news / hh:05 = theme / hh:15,45 = jiji
 	# コメント優先の判定は維持しつつ、生成は止めない。
@@ -678,6 +684,25 @@ schedule_nonessential_audio_jobs() {
 	elif _try_timed_corner "jiji_${recurring_hour}_45" "$recurring_hour" 45; then
 		_run_timed_corner "jiji_${recurring_hour}_45" _run_jiji_corner_guarded "$game_num" "$score" &
 	fi
+}
+
+# deferred キュー滞留による自動ラジオ生成の抑止判定。
+# 0 を返す = 生成をブロック, 1 を返す = 生成を許可。
+_radio_generation_blocked_by_backpressure() {
+	local count=0
+	count=$(_radio_deferred_queue_count)
+	if [ "$count" -gt "${RADIO_DEFERRED_QUEUE_MAX:-5}" ]; then
+		if [ ! -f "$TMP_MARKERS_DIR/.radio_queue_backpressure_active" ]; then
+			touch "$TMP_MARKERS_DIR/.radio_queue_backpressure_active" 2>/dev/null || true
+			log "[RADIO] deferred queue 滞留 ${count} 件 (> ${RADIO_DEFERRED_QUEUE_MAX:-5}) → 新規ラジオ生成を抑制"
+		fi
+		return 0
+	fi
+	if [ -f "$TMP_MARKERS_DIR/.radio_queue_backpressure_active" ]; then
+		rm -f "$TMP_MARKERS_DIR/.radio_queue_backpressure_active" 2>/dev/null || true
+		log "[RADIO] deferred queue ${count} 件 (≤ ${RADIO_DEFERRED_QUEUE_MAX:-5}) → ラジオ生成を再開"
+	fi
+	return 1
 }
 
 #=== lib/eloop_radio.sh から移行した関数 ===
