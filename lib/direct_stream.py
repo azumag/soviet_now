@@ -340,7 +340,6 @@ def build_ffmpeg_command(
     command = [
         config.ffmpeg_bin,
         "-hide_banner",
-        "-nostdin",
         "-loglevel",
         "warning",
         "-stats_period",
@@ -686,6 +685,53 @@ def classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]
     return return_code, "completed" if return_code == 0 else "failed"
 
 
+def _wait_poll(child: subprocess.Popen[bytes], timeout: float, step: float = 0.25) -> bool:
+    """Poll until the child exits or the timeout elapses."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if child.poll() is not None:
+            return True
+        time.sleep(step)
+    return False
+
+
+def _graceful_stop_ffmpeg(
+    child: subprocess.Popen[str],
+    *,
+    q_timeout_sec: float = 15.0,
+    sigint_timeout_sec: float = 15.0,
+) -> None:
+    """Ask FFmpeg to stop normally via stdin q, falling back to SIGINT/SIGKILL.
+
+    The default FFmpeg console handler treats a single ``q`` as a request to
+    finish encoding, close all muxers, and tear the RTMP session down cleanly
+    (FCUnpublish / deleteStream).  Signals are only used when the process does
+    not exit after q, and SIGKILL is reserved as the final fallback so an
+    operator-requested end never skips the RTMP close path without a timeout.
+    """
+    def stop() -> None:
+        try:
+            if child.stdin is not None:
+                child.stdin.write("q\n")
+                child.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        if _wait_poll(child, q_timeout_sec):
+            return
+        try:
+            child.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            return
+        if _wait_poll(child, sigint_timeout_sec):
+            return
+        try:
+            child.kill()
+        except ProcessLookupError:
+            pass
+
+    threading.Thread(target=stop, name="direct-stream-graceful-stop", daemon=True).start()
+
+
 def _start_reconnect_monitor(
     config: DirectStreamConfig,
     reconnect: ReconnectConfig,
@@ -748,7 +794,7 @@ def _run_ffmpeg_once(
         child = subprocess.Popen(
             list(command),
             cwd=REPO_ROOT,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=log_stream,
             text=True,
@@ -789,10 +835,10 @@ def _run_ffmpeg_once(
                 return
             stopping = True
             monitor_state["stopping"] = True
-            try:
-                child.send_signal(signal.SIGINT if signum == signal.SIGTERM else signum)
-            except ProcessLookupError:
-                pass
+            # q on stdin is the primary graceful end: FFmpeg closes the RTMP
+            # session (FCUnpublish / deleteStream) instead of dropping the
+            # socket. Signals are a timeout fallback inside _graceful_stop_ffmpeg.
+            _graceful_stop_ffmpeg(child)
 
         previous_term = signal.signal(signal.SIGTERM, stop_child)
         previous_int = signal.signal(signal.SIGINT, stop_child)

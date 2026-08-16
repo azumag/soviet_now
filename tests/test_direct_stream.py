@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -41,6 +42,7 @@ class DirectStreamTests(unittest.TestCase):
         config = direct_stream.load_config(base_env())
         command = direct_stream.build_ffmpeg_command(config, mode="live")
         joined = " ".join(command)
+        self.assertNotIn("-nostdin", joined)
         self.assertIn("-f x11grab", joined)
         self.assertIn("-draw_mouse 0", joined)
         self.assertIn("-framerate 30", joined)
@@ -54,6 +56,14 @@ class DirectStreamTests(unittest.TestCase):
         self.assertEqual(command[-1], "rtmp://127.0.0.1:1935/soren/live")
         self.assertNotIn("-a53cc", command)
         self.assertFalse(any("docichcc" in argument for argument in command))
+
+    def test_live_command_keeps_stdin_available_for_operator_stop(self) -> None:
+        """The FFmpeg argv must not disable stdin so stop can send q first."""
+        config = direct_stream.load_config(base_env())
+        command = direct_stream.build_ffmpeg_command(config, mode="live")
+        joined = " ".join(command)
+        self.assertNotIn("-nostdin", joined)
+        self.assertNotIn("-stdin", joined)
 
     def test_caption_command_is_feature_flagged_and_uses_validated_socket(self) -> None:
         config = direct_stream.load_config(
@@ -205,6 +215,94 @@ class DirectStreamTests(unittest.TestCase):
 
         runner_exit, state = direct_stream.classify_ffmpeg_exit(255, stopping=False)
         self.assertEqual((runner_exit, state), (255, "failed"))
+
+    def test_graceful_stop_sends_q_then_sigint_then_sigkill(self) -> None:
+        """Operator stop must prefer stdin q and only escalate on timeout."""
+        child = mock.Mock()
+        child.stdin = mock.Mock()
+        poll_results = iter([0])
+        child.poll.side_effect = lambda: next(poll_results, None)
+
+        calls: list[tuple[str, object]] = []
+
+        def fake_write(data: object) -> None:
+            calls.append(("write", data))
+
+        child.stdin.write.side_effect = fake_write
+
+        def fake_send_signal(sig: object) -> None:
+            calls.append(("signal", sig))
+
+        child.send_signal.side_effect = fake_send_signal
+        child.kill.side_effect = lambda: calls.append(("kill", None))
+
+        direct_stream._graceful_stop_ffmpeg(
+            child,
+            q_timeout_sec=0.2,
+            sigint_timeout_sec=0.2,
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(calls) < 1:
+            time.sleep(0.05)
+        time.sleep(0.4)
+
+        self.assertEqual(
+            calls,
+            [("write", "q\n")],
+        )
+        child.send_signal.assert_not_called()
+        child.kill.assert_not_called()
+
+    def test_graceful_stop_escalates_to_sigint_and_sigkill_on_timeout(self) -> None:
+        child = mock.Mock()
+        child.stdin = mock.Mock()
+        child.poll.return_value = None
+
+        calls: list[tuple[str, object]] = []
+        child.stdin.write.side_effect = lambda data: calls.append(("write", data))
+
+        def fake_send_signal(sig: object) -> None:
+            calls.append(("signal", sig))
+
+        child.send_signal.side_effect = fake_send_signal
+        child.kill.side_effect = lambda: calls.append(("kill", None))
+
+        direct_stream._graceful_stop_ffmpeg(
+            child,
+            q_timeout_sec=0.1,
+            sigint_timeout_sec=0.1,
+        )
+        time.sleep(1.0)
+
+        self.assertIn(("write", "q\n"), calls)
+        self.assertIn(("signal", signal.SIGINT), calls)
+        self.assertIn(("kill", None), calls)
+        self.assertEqual(
+            calls.index(("write", "q\n")),
+            0,
+        )
+        self.assertLess(
+            calls.index(("signal", signal.SIGINT)),
+            calls.index(("kill", None)),
+        )
+
+    def test_graceful_stop_skips_signals_when_child_exits_after_q(self) -> None:
+        child = mock.Mock()
+        child.stdin = mock.Mock()
+        child.poll.return_value = 0
+        child.send_signal = mock.Mock()
+        child.kill = mock.Mock()
+
+        direct_stream._graceful_stop_ffmpeg(
+            child,
+            q_timeout_sec=0.2,
+            sigint_timeout_sec=0.2,
+        )
+        time.sleep(0.5)
+
+        child.stdin.write.assert_called_once_with("q\n")
+        child.send_signal.assert_not_called()
+        child.kill.assert_not_called()
 
     def test_live_relay_check_uses_only_the_validated_loopback_endpoint(self) -> None:
         config = direct_stream.load_config(
