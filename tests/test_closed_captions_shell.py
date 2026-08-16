@@ -161,6 +161,52 @@ class ClosedCaptionShellTests(unittest.TestCase):
                 "1",
             )
 
+    def test_wav_playlist_plan_uses_translations_fixture(self) -> None:
+        """Bilingual bundles must reuse pre-translated English text, not re-translate."""
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            controller, call_log, debug_log = self._fixture(root)
+            source = (REPO_ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
+            self.assertIn("--wav-playlist", source)
+            self.assertIn("--caption-chunks", source)
+            self.assertIn("docich_cc_start_plan", source)
+            caption_chunks = root / "captions.txt"
+            caption_chunks.write_text(
+                "Good luck with the run!\nGood luck with the run!\n",
+                encoding="utf-8",
+            )
+            translations = root / "translations.json"
+            translations.write_text(
+                '["Good luck with the run!", "Good luck with the run!"]\n',
+                encoding="utf-8",
+            )
+            result = self._run_shell(
+                f"""
+                set -uo pipefail
+                source lib/closed_captions.sh
+                IS_LINUX=1 USE_VOICEVOX=1 WAV_MODE=false RENDER_ONLY=false
+                DOCICH_CC_TRANSLATIONS_FILE={translations!s}
+                docich_cc_init token_fixture {caption_chunks!s}
+                docich_cc_start_plan 'Good luck with the run!' 'Good luck with the run!'
+                docich_cc_wait_plan
+                printf 'ready=%s\\n' "$DOCICH_CC_PLAN_READY"
+                docich_cc_cleanup
+                """,
+                root=root,
+                controller=controller,
+                call_log=call_log,
+                debug_log=debug_log,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ready=1", result.stdout)
+            calls = [json.loads(line) for line in call_log.read_text().splitlines()]
+            self.assertEqual(calls[0]["args"][0], "plan")
+            self.assertIn("--translations-file", calls[0]["args"])
+            self.assertEqual(
+                calls[0]["args"][calls[0]["args"].index("--translations-file") + 1],
+                str(translations),
+            )
+
     def test_translation_failure_is_fail_open(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
             root = Path(temp_dir)
