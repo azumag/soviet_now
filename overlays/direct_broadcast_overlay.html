@@ -264,6 +264,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
 .summary-line.sum-strategy { color: #c4b5fd; border-left-color: #8b5cf6; background: rgba(46, 23, 80, .72); }
 .summary-line.sum-live { color: #86efac; border-left-color: #22c55e; background: rgba(10, 55, 34, .72); }
 .summary-line.sum-backend { color: #7dd3fc; border-left-color: #38bdf8; background: rgba(9, 47, 73, .72); }
+.summary-line.sum-ai { color: #fca5a5; border-left-color: #ef4444; background: rgba(76, 17, 17, .78); }
 .summary-line.sum-queue { color: #fde047; border-left-color: #eab308; background: rgba(56, 47, 4, .72); }
 .summary-line.sum-drop { color: #fdba74; border-left-color: #f97316; background: rgba(61, 27, 5, .72); }
 .summary-line.sum-av { color: #f9a8d4; border-left-color: #ec4899; background: rgba(63, 12, 44, .72); }
@@ -493,6 +494,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     if (/Strategy/.test(text)) return 'sum-strategy';
     if (/^Live:/.test(text)) return 'sum-live';
     if (/Backend/.test(text)) return 'sum-backend';
+    if (/AI 429/.test(text)) return 'sum-ai';
     if (/Queued/.test(text)) return 'sum-queue';
     if (/LastDrop/.test(text)) return 'sum-drop';
     if (/AVSync/.test(text)) return 'sum-av';
@@ -503,6 +505,17 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
     const patterns = [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
     const selected = patterns.map((pattern) => stats.find((line) => pattern.test(line))).filter(Boolean);
+    const aiMain = stats.find((line) => /AI 429/.test(line)) || ops.find((line) => /AI 429/.test(line));
+    const aiFallback = stats.find((line) => /\bfb=/.test(line)) || ops.find((line) => /\bfb=/.test(line));
+    if (aiMain) {
+      const aiLine = [aiMain, aiFallback].filter(Boolean)
+        .map((line) => line.replace(/[│┌┐└┘─━]/g, '').trim())
+        .join(' · ');
+      const headerIndex = selected.findIndex((line) => /SOREN[/]OBS|FFMPEG/.test(line));
+      if (headerIndex >= 0) selected[headerIndex] = aiLine;
+      else if (selected.length >= 4) selected[selected.length - 1] = aiLine;
+      else selected.push(aiLine);
+    }
     if (selected.length < 4) {
       for (const pattern of [/Backend/, /Queued/, /LastDrop/, /AVSync/]) {
         const line = ops.find((candidate) => pattern.test(candidate));

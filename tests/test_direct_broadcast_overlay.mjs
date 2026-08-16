@@ -104,6 +104,7 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /badge-s/);
   assert.match(html, /summary-line\.sum-head/);
   assert.match(html, /summary-line\.sum-live/);
+  assert.match(html, /summary-line\.sum-ai/);
   assert.match(html, /const TOASTS_PER_PAGE = 3/);
   assert.match(html, /feeds[?][.]showStatusG/);
   assert.match(html, /feeds[?][.]showStatus/);
@@ -507,6 +508,40 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   await overlay.tick(1);
   assert.equal(overlay.feedG.children.length, 5, 'feed update must re-render the merged panel');
   assert.equal(overlay.feedS.children.length, 3);
+});
+
+
+test('rate-limit status is promoted to the top rail with main and fallback models', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: '┌──────────────────────────────┐\n'
+          + '│ SOREN/FFMPEG #10 games        │\n'
+          + '│ Recent30: 1097                │\n'
+          + '│ Strategy: 32b5edcf            │\n'
+          + '│ Live: MOVE score=875          │\n'
+          + '│ AI 429 main=deepseek-v4-flash(3h59m) │\n'
+          + '│        fb=minimax-m3(4h59m)          │',
+        updatedAt: 1780000080,
+        lineCount: 7,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Backend     FFMPEG LIVE',
+        updatedAt: 1780000080,
+        lineCount: 1,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+  const aiLine = overlay.summary.children.find((line) => line.className.includes('sum-ai'));
+  assert.ok(aiLine, 'rate-limit line must be visible in the top rail');
+  assert.match(aiLine.textContent, /main=deepseek-v4-flash/);
+  assert.match(aiLine.textContent, /fb=minimax-m3/);
 });
 
 
