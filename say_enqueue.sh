@@ -1479,6 +1479,14 @@ _stream_wait_voicevox_chunk() {
 		return "${PLAYER_WAIT_RC:-1}"
 	fi
 	if _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
+		if [ "${PLAYER_WAIT_ELAPSED:-0}" -le 1 ]; then
+			# 次チャンク合成の方が再生より長いと、待機開始時点（または観測開始
+			# 直後）で既に再生が終わっている。elapsed=0/1 は途中切断の証拠では
+			# なく、合成待ち中に完走しただけなので、再試行すると同じチャンクが
+			# 二重に聞こえる。ここでは正常完了として扱う。
+			_log "ストリーミングチャンクは合成待ち中に完了 (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
+			return 0
+		fi
 		_log "ストリーミングチャンク途中切断の疑い (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
 		return 98
 	fi
