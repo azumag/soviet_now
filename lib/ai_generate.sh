@@ -9,6 +9,17 @@
 
 _ai_guard_model_output() {
 	local guard_root="${ELOOP_LIB_DIR:-.}"
+	# C4 (common_parts_chat_c4.md C-S2): 出力ガードの正典は docich 側。
+	# DOCICH_BIN が利用可能なら docich ai-guard へ委譲し、無い環境 (CI・探索モード等)
+	# では従来どおりローカルの model_output_guard.py を使う (互換維持・fail-open)。
+	local _docich_bin="${DOCICH_BIN:-}"
+	if [ -z "$_docich_bin" ]; then
+		_docich_bin="$(command -v docich 2>/dev/null || true)"
+	fi
+	if [ -n "$_docich_bin" ] && [ -x "$_docich_bin" ]; then
+		"$_docich_bin" ai-guard
+		return $?
+	fi
 	python3 "$guard_root/lib/model_output_guard.py"
 }
 
