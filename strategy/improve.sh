@@ -127,6 +127,10 @@ _peak_defer_clear() {
 	waited=$(( $(date +%s) - started ))
 	log "[IMPROVE] peak-hour defer解除 (待機${waited}s, reason=${reason})"
 	rm -f "$marker" "$TMP_STATE_DIR/peak_hour_defer_last_log" 2>/dev/null || true
+	# 解除直後に check_and_harvest_improvement の孤立ロックGCが走ると、defer中
+	# ずっと更新されなかった古いmtimeのせいで即座に削除されうる (improve.sh の
+	# failed_no_apply retry保持と同じ precedent: touch でmtimeを更新し安全に猶予)。
+	[ -f "$IMPROVE_LOCK_FILE" ] && touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
 }
 
 _peak_defer_note_waiting() {
@@ -259,23 +263,23 @@ _improve_peak_gate_should_defer() {
 # ループ側の独立期限切れ判定 (rate_limit_backoff の _expire_rate_limit_backoff_if_elapsed
 # と同パターン)。soren_loop.sh の他のガード付き呼び出し箇所が peak_hour_defer 中に
 # trigger_adaptive_improvement を呼ばなくなっても、ここを毎ループ無条件で呼べば
-# ピーク終了・最大待機・強制バイパス条件でマーカを解除できる。孤立を防ぐ安全弁。
+# デーモン不在時でも改善ロックが孤立しない。
+#
+# 解除判定 (disabled/peak_window_ended/max_wait/urgent_lock/acc_pct) はここで
+# 個別に再実装せず trigger_adaptive_improvement 内のゲートに一元化する。
+# ここで先にマーカだけ消してから改めて trigger を呼ぶと、次のゲート再評価時に
+# マーカ不在で最大待機の経過時間を見失い待機クロックが再スタートしてしまい、
+# バイパスしてもロックが実際に消費される保証がなくなる。マーカが在るまま
+# trigger_adaptive_improvement に判定・消費まで一括して委ねることで防ぐ。
 _expire_peak_hour_defer_if_stale() {
 	local marker="$TMP_STATE_DIR/peak_hour_defer"
 	[ -f "$marker" ] || return 0
-	if [ "${IMPROVE_PEAK_HOUR_DEFER_ENABLED:-1}" != "1" ]; then
-		_peak_defer_clear "disabled"
+	if [ ! -f "$IMPROVE_LOCK_FILE" ]; then
+		# ロック不在でマーカだけ残るのは異常系 (孤立マーカ)。個別に掃除する。
+		_peak_defer_clear "lock_missing"
 		return 0
 	fi
-	if ! _is_peak_hour_utc; then
-		_peak_defer_clear "peak_window_ended"
-		return 0
-	fi
-	local bypass
-	bypass=$(_peak_defer_bypass_reason)
-	if [ -n "$bypass" ]; then
-		_peak_defer_clear "force:${bypass}"
-	fi
+	IMPROVE_DAEMON_MODE=0 trigger_adaptive_improvement || true
 }
 
 # trigger_adaptive_improvement() の入口で idle を確認していても、別の

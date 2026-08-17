@@ -262,11 +262,103 @@ date() {
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_expire_peak_hour_defer_if_stale_clears_without_going_through_trigger(self):
-        # Simulates the "daemon down" scenario: nothing calls
-        # trigger_adaptive_improvement (and thus never reaches
-        # _improve_peak_gate_should_defer) yet the marker must still clear
-        # once the peak window ends, via the independent loop-side expiry.
+    def test_expire_peak_hour_defer_if_stale_delegates_to_trigger_when_lock_present(self):
+        # The loop-side expiry must NOT decide disabled/window-ended/bypass
+        # itself and clear the marker in isolation: doing so would let the
+        # very next gate re-evaluation lose the elapsed-wait evidence (the
+        # marker) and silently restart the defer clock, defeating max_wait
+        # as a hard backstop. It must hand off atomically to
+        # trigger_adaptive_improvement, which owns the gate and, on a
+        # "proceed" decision, immediately continues into lock consumption
+        # (refreshing the lock's mtime via enrich_accumulated_game_metadata)
+        # in the very same call.
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+log() { :; }
+test_root="$2"
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":3,"hash":"h"}' >"$IMPROVE_LOCK_FILE"
+printf '%s\n' "$(date +%s)" >"$TMP_STATE_DIR/peak_hour_defer"
+
+trigger_adaptive_improvement() { printf 'called\n' >>"$test_root/trigger_calls"; }
+
+_expire_peak_hour_defer_if_stale
+[ -f "$test_root/trigger_calls" ]
+[ "$(cat "$test_root/trigger_calls")" = "called" ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_expire_peak_hour_defer_if_stale_uses_background_daemon_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+log() { :; }
+test_root="$2"
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":3,"hash":"h"}' >"$IMPROVE_LOCK_FILE"
+printf '%s\n' "$(date +%s)" >"$TMP_STATE_DIR/peak_hour_defer"
+
+trigger_adaptive_improvement() { printf '%s\n' "${IMPROVE_DAEMON_MODE:-unset}" >"$test_root/mode"; }
+
+_expire_peak_hour_defer_if_stale
+[ "$(cat "$test_root/mode")" = "0" ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_expire_peak_hour_defer_if_stale_clears_orphan_marker_without_lock(self):
+        # Anomalous state: marker present but lock already gone. Must clean
+        # up the marker directly rather than calling trigger (which would
+        # itself just no-op on a missing lock, leaving the marker stuck).
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+log() { :; }
+test_root="$2"
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' "$(date +%s)" >"$TMP_STATE_DIR/peak_hour_defer"
+
+trigger_adaptive_improvement() { printf 'should-not-be-called\n' >>"$test_root/trigger_calls"; }
+
+_expire_peak_hour_defer_if_stale
+[ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]
+[ ! -f "$test_root/trigger_calls" ]
+
+# no-op when no marker present at all
+_expire_peak_hour_defer_if_stale
+[ ! -f "$test_root/trigger_calls" ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_peak_defer_clear_touches_lock_mtime_to_survive_immediate_orphan_gc(self):
+        # Regression guard: soren_loop.sh runs check_and_harvest_improvement
+        # (whose orphan-lock GC now also respects the peak_hour_defer
+        # marker) immediately after the loop-side expiry clears the marker.
+        # If the lock's mtime were left stale from hours of deferral, that
+        # very next GC pass would delete the still-pending accumulated
+        # batch. _peak_defer_clear must refresh the mtime so the lock
+        # survives long enough to actually be consumed.
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_bash(
                 r'''
@@ -276,21 +368,19 @@ log() { :; }
 TMP_STATE_DIR="$2/state"
 IMPROVE_LOCK_FILE="$2/improve.lock"
 mkdir -p "$TMP_STATE_DIR"
+printf '{}\n' >"$IMPROVE_LOCK_FILE"
+# simulate a lock that has been sitting for hours (well past the orphan
+# GC's default 600s staleness threshold), as would happen after a long
+# peak-hour defer.
+touch -t 202001010000 "$IMPROVE_LOCK_FILE"
 printf '%s\n' "$(date +%s)" >"$TMP_STATE_DIR/peak_hour_defer"
 
-date() {
-    if [ "$1" = "-u" ] && [ "$2" = "+%H%M" ]; then
-        printf '%s\n' "1200"
-    else
-        command date "$@"
-    fi
-}
+_peak_defer_clear "peak_window_ended"
 
-_expire_peak_hour_defer_if_stale
-[ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]
-
-# no-op when no marker present
-_expire_peak_hour_defer_if_stale
+old_epoch=$(date -j -f "%Y%m%d%H%M" "202001010000" +%s 2>/dev/null || echo 0)
+new_mtime=$(stat -f %m "$IMPROVE_LOCK_FILE" 2>/dev/null || stat -c %Y "$IMPROVE_LOCK_FILE" 2>/dev/null)
+[ "$new_mtime" -gt "$old_epoch" ]
+[ $(( $(date +%s) - new_mtime )) -lt 5 ]
 ''',
                 str(REPO_ROOT),
                 tmp,
