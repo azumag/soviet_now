@@ -816,6 +816,7 @@ while true; do
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
 	_expire_rate_limit_backoff_if_elapsed
+	_expire_peak_hour_defer_if_stale
 	_exit_if_lock_owner_changed "before_game"
 
 	# ゲーム番号を毎試合読み直す
@@ -850,7 +851,7 @@ while true; do
 	_improve_running_now=0
 	_is_improve_running && _improve_running_now=1
 	if _improve_keep_main_game_running && [ "$_improve_running_now" -eq 0 ] &&
-		[ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+		[ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		log_pause_throttled "continuous_improve_spawn" "[IMPROVE] 改善ロックをゲーム境界で非同期起動（メインゲーム継続）"
 		IMPROVE_DAEMON_MODE=0 trigger_adaptive_improvement || true
 		_is_improve_running && _improve_running_now=1
@@ -943,12 +944,12 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		! { command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; }; then
 		rm -f "$_post_improve_marker" 2>/dev/null || true
 		log "[CYCLE] 改善完了→次改善前にメインゲームを1回実行 (代打無限化防止)"
-	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && ! _improve_keep_main_game_running; then
+	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ] && ! _improve_keep_main_game_running; then
 		log_pause_throttled "improve_lock_wait" "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
 		_run_improve_runtime_monitor
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
-	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		log_pause_throttled "improve_lock_main_continues" "[IMPROVE] 改善ロック待ちでもメインゲームを継続"
 	fi
 	if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
@@ -1305,7 +1306,7 @@ json.dump(d,open(f,'w'))
 		sleep 2
 		continue
 	fi
-	if ! _improve_keep_main_game_running && [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+	if ! _improve_keep_main_game_running && [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		log_pause_throttled "cycle_improve_lock_wait" "[CYCLE] 改善ロック待ち → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2

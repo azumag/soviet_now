@@ -53,6 +53,231 @@ _release_spawn_lock() {
 	fi
 }
 
+#=== ピーク時間帯回避ゲート (deepseek-v4-flash 2倍課金帯の改善ロック消費を遅延) ===
+
+# "HH:MM" or "HHMM" → 0時からの分。不正なら -1 を出力し rc=1
+_improve_hhmm_to_min() {
+	local hhmm="${1//:/}"
+	case "$hhmm" in
+	[0-9][0-9][0-9][0-9]) ;;
+	*) printf '%s\n' -1; return 1 ;;
+	esac
+	printf '%s\n' "$(( 10#${hhmm:0:2} * 60 + 10#${hhmm:2:2} ))"   # 10# で 08/09 の8進解釈を防ぐ
+}
+
+# ピーク帯判定 (純関数)。$1=HHMM (省略時 date -u +%H%M)、$2=ranges (省略時 env)
+# 各レンジは半開区間 [start, end)。start>end は日跨ぎ。不正エントリはスキップ。
+# 仕様: "01:00-04:00" は 01:00:00 <= t < 04:00:00。00:59は非ピーク、01:00はピーク、
+# 03:59はピーク、04:00は非ピーク。
+_is_peak_hour_utc() {
+	local now_hhmm="${1:-$(date -u +%H%M)}"
+	local ranges="${2:-${IMPROVE_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-10:00}}"
+	local now_min start_min end_min range
+	now_min=$(_improve_hhmm_to_min "$now_hhmm") || return 1
+	ranges="${ranges// /}"          # 空白混入を許容
+	local IFS=','
+	for range in $ranges; do
+		start_min=$(_improve_hhmm_to_min "${range%-*}") || continue
+		end_min=$(_improve_hhmm_to_min "${range#*-}") || continue
+		if [ "$start_min" -le "$end_min" ]; then
+			[ "$now_min" -ge "$start_min" ] && [ "$now_min" -lt "$end_min" ] && return 0
+		else
+			{ [ "$now_min" -ge "$start_min" ] || [ "$now_min" -lt "$end_min" ]; } && return 0
+		fi
+	done
+	return 1
+}
+
+# ログ用: ピーク中なら現レンジ終了までの残分を出力 (非ピークなら空文字)
+_peak_remaining_min() {
+	local now_hhmm="${1:-$(date -u +%H%M)}"
+	local ranges="${2:-${IMPROVE_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-10:00}}"
+	local now_min start_min end_min range
+	now_min=$(_improve_hhmm_to_min "$now_hhmm") || { printf ''; return; }
+	ranges="${ranges// /}"
+	local IFS=','
+	for range in $ranges; do
+		start_min=$(_improve_hhmm_to_min "${range%-*}") || continue
+		end_min=$(_improve_hhmm_to_min "${range#*-}") || continue
+		if [ "$start_min" -le "$end_min" ]; then
+			if [ "$now_min" -ge "$start_min" ] && [ "$now_min" -lt "$end_min" ]; then
+				printf '%s' "$(( end_min - now_min ))"
+				return
+			fi
+		else
+			if [ "$now_min" -ge "$start_min" ]; then
+				printf '%s' "$(( (1440 - now_min) + end_min ))"
+				return
+			elif [ "$now_min" -lt "$end_min" ]; then
+				printf '%s' "$(( end_min - now_min ))"
+				return
+			fi
+		fi
+	done
+	printf ''
+}
+
+_peak_defer_clear() {
+	local reason="$1"
+	local marker="$TMP_STATE_DIR/peak_hour_defer"
+	[ -f "$marker" ] || return 0
+	local started waited
+	started=$(sed -n '1p' "$marker" 2>/dev/null || echo 0)
+	case "$started" in ''|*[!0-9]*) started=0 ;; esac
+	waited=$(( $(date +%s) - started ))
+	log "[IMPROVE] peak-hour defer解除 (待機${waited}s, reason=${reason})"
+	rm -f "$marker" "$TMP_STATE_DIR/peak_hour_defer_last_log" 2>/dev/null || true
+}
+
+_peak_defer_note_waiting() {
+	local marker="$TMP_STATE_DIR/peak_hour_defer"
+	local last_log_file="$TMP_STATE_DIR/peak_hour_defer_last_log"
+	local now started
+	now=$(date +%s)
+	if [ ! -f "$marker" ]; then
+		printf '%s\n' "$now" >"$marker" 2>/dev/null || true
+		local _rem
+		_rem=$(_peak_remaining_min)
+		log "[IMPROVE] peak-hour defer開始 (UTC $(date -u +%H:%M), ranges=${IMPROVE_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-10:00}, 現ウィンドウ残り約${_rem}分)"
+		printf '%s\n' "$now" >"$last_log_file" 2>/dev/null || true
+		return
+	fi
+	started=$(sed -n '1p' "$marker" 2>/dev/null || echo "$now")
+	case "$started" in ''|*[!0-9]*) started="$now" ;; esac
+	local last_log interval
+	last_log=$(cat "$last_log_file" 2>/dev/null || echo 0)
+	case "$last_log" in ''|*[!0-9]*) last_log=0 ;; esac
+	interval="${IMPROVE_PEAK_DEFER_LOG_INTERVAL_SEC:-${IMPROVE_BACKOFF_LOG_INTERVAL_SEC:-900}}"
+	case "$interval" in ''|*[!0-9]*) interval=900 ;; esac
+	if [ "$last_log" -le 0 ] || [ $(( now - last_log )) -ge "$interval" ]; then
+		local _rem
+		_rem=$(_peak_remaining_min)
+		log "[IMPROVE] peak-hour defer中 (経過$(( now - started ))s, 現ウィンドウ残り約${_rem}分)"
+		printf '%s\n' "$now" >"$last_log_file" 2>/dev/null || true
+	fi
+}
+
+# 安全弁: バイパスすべき理由があれば非空文字列を返す (stdout)。無ければ空文字。
+_peak_defer_bypass_reason() {
+	# (1) 緊急ロックはピーク回避の対象外
+	if [ -f "$IMPROVE_LOCK_FILE" ]; then
+		local _urgent
+		_urgent=$(python3 -c "
+import json, sys
+try:
+    with open('$IMPROVE_LOCK_FILE') as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(0)
+if d.get('early_escape_lock') is True:
+    print('early_escape_lock')
+    sys.exit(0)
+reason = d.get('improve_reason', '')
+if reason and reason not in ('normal', ''):
+    print(f'improve_reason:{reason}')
+" 2>/dev/null)
+		if [ -n "$_urgent" ]; then
+			printf 'urgent_lock:%s' "$_urgent"
+			return
+		fi
+	fi
+
+	# (2) 最大待機時間
+	local marker="$TMP_STATE_DIR/peak_hour_defer"
+	if [ -f "$marker" ]; then
+		local started waited max_wait
+		started=$(sed -n '1p' "$marker" 2>/dev/null || echo 0)
+		case "$started" in ''|*[!0-9]*) started=0 ;; esac
+		waited=$(( $(date +%s) - started ))
+		max_wait="${IMPROVE_PEAK_DEFER_MAX_WAIT_SEC:-16200}"
+		case "$max_wait" in ''|*[!0-9]*) max_wait=16200 ;; esac
+		if [ "$waited" -ge "$max_wait" ]; then
+			printf 'max_wait:%ss' "$waited"
+			return
+		fi
+	fi
+
+	# (3) 蓄積強制実行: ロック内count(固定) + 現在のACCUMULATED_GAMES_FILEのcount
+	if [ -f "$IMPROVE_LOCK_FILE" ]; then
+		local _lock_count _acc_count _combined _threshold _pct
+		_lock_count=$(python3 -c "
+import json
+try:
+    with open('$IMPROVE_LOCK_FILE') as f:
+        d = json.load(f)
+    print(int(d.get('count', 0)))
+except Exception:
+    print(0)
+" 2>/dev/null)
+		case "$_lock_count" in ''|*[!0-9]*) _lock_count=0 ;; esac
+		_acc_count=0
+		if [ -f "${ACCUMULATED_GAMES_FILE:-}" ]; then
+			_acc_count=$(python3 -c "
+import json
+try:
+    with open('${ACCUMULATED_GAMES_FILE}') as f:
+        d = json.load(f)
+    print(len(d) if isinstance(d, list) else int(d.get('count', 0)))
+except Exception:
+    print(0)
+" 2>/dev/null)
+			case "$_acc_count" in ''|*[!0-9]*) _acc_count=0 ;; esac
+		fi
+		_combined=$(( _lock_count + _acc_count ))
+		_pct="${IMPROVE_PEAK_DEFER_FORCE_ACC_PCT:-200}"
+		case "$_pct" in ''|*[!0-9]*) _pct=200 ;; esac
+		_threshold=$(( (${MIN_GAMES_BEFORE_IMPROVE:-12} * _pct) / 100 ))
+		if [ "$_combined" -ge "$_threshold" ]; then
+			printf 'acc_pct:%s/%s' "$_combined" "$_threshold"
+			return
+		fi
+	fi
+
+	printf ''
+}
+
+# rc=0: 今サイクルは改善を見送る (defer) / rc=1: 進行してよい
+_improve_peak_gate_should_defer() {
+	if [ "${IMPROVE_PEAK_HOUR_DEFER_ENABLED:-1}" != "1" ]; then
+		_peak_defer_clear "disabled"
+		return 1
+	fi
+	if ! _is_peak_hour_utc; then
+		_peak_defer_clear "peak_window_ended"
+		return 1
+	fi
+	local bypass
+	bypass=$(_peak_defer_bypass_reason)
+	if [ -n "$bypass" ]; then
+		_peak_defer_clear "force:${bypass}"
+		return 1
+	fi
+	_peak_defer_note_waiting
+	return 0
+}
+
+# ループ側の独立期限切れ判定 (rate_limit_backoff の _expire_rate_limit_backoff_if_elapsed
+# と同パターン)。soren_loop.sh の他のガード付き呼び出し箇所が peak_hour_defer 中に
+# trigger_adaptive_improvement を呼ばなくなっても、ここを毎ループ無条件で呼べば
+# ピーク終了・最大待機・強制バイパス条件でマーカを解除できる。孤立を防ぐ安全弁。
+_expire_peak_hour_defer_if_stale() {
+	local marker="$TMP_STATE_DIR/peak_hour_defer"
+	[ -f "$marker" ] || return 0
+	if [ "${IMPROVE_PEAK_HOUR_DEFER_ENABLED:-1}" != "1" ]; then
+		_peak_defer_clear "disabled"
+		return 0
+	fi
+	if ! _is_peak_hour_utc; then
+		_peak_defer_clear "peak_window_ended"
+		return 0
+	fi
+	local bypass
+	bypass=$(_peak_defer_bypass_reason)
+	if [ -n "$bypass" ]; then
+		_peak_defer_clear "force:${bypass}"
+	fi
+}
+
 # trigger_adaptive_improvement() の入口で idle を確認していても、別の
 # spawner が metadata 準備中に先行して job を起動できる。spawn mutex を
 # 取得した後に authoritative state をもう一度確認し、先行 job が live なら
@@ -1061,7 +1286,7 @@ check_and_harvest_improvement() {
 	# failed_no_apply の再試行ロックは rate-limit backoff と対になっている。
 	# backoff が有効な間に orphan 扱いすると、指数待機が長い回ほど
 	# retry 直前に入力バッチを失うため、通常の孤立ロックだけを回収する。
-	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		local _lock_age _lock_mtime _orphan_threshold
 		_orphan_threshold="${IMPROVE_STALE_WATCHDOG_SEC:-600}"
 		_lock_mtime=$(stat -f %m "$IMPROVE_LOCK_FILE" 2>/dev/null) \
@@ -2601,6 +2826,12 @@ trigger_adaptive_improvement() {
 			log "[IMPROVE] rate-limit backoff終了 → リトライ許可"
 			rm -f "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log"
 		fi
+	fi
+
+	# ピーク時間帯回避ゲート: deepseek-v4-flash はピーク帯(UTC 01-04, 06-10)で2倍課金。
+	# 早期returnしてもロック・蓄積データは失われない (rate_limit_backoff と同パターン)。
+	if _improve_peak_gate_should_defer; then
+		return 0
 	fi
 
 	# ロックファイルから蓄積データを読む
