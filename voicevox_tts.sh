@@ -1,348 +1,102 @@
 #!/bin/bash
-# VOICEVOX TTS wrapper
-# Usage:
+# voicevox_tts.sh - docich 正典への薄いブリッジ (C4 / docs/common_parts_tts_c4.md)
+#
+# 合成の正典は docich 側 src/docich/speech.py (CLI: docich voicevox synth)。
+# 本スクリプトは既存の呼び出し契約 (argv/env/rc) を維持したまま docich へ委譲する。
+# docich が無い環境では明確なエラーで停止する (二重管理を避けるため旧実装は保持しない。
+# 旧実装は git 履歴に残る)。
+#
+# Usage (docich 委譲前と同一):
 #   ./voicevox_tts.sh --speakers          # 話者一覧表示
 #   ./voicevox_tts.sh --test              # テスト音声生成+再生
 #   ./voicevox_tts.sh "テキスト"          # テキストを音声合成+再生
 #   ./voicevox_tts.sh -o out.wav "テキスト"  # ファイル出力
+#   ./voicevox_tts.sh -o out.wav -f file     # ファイルから読み込み
+#   ./voicevox_tts.sh -f file                # 合成+再生 (出力 /tmp/voicevox_$$.wav)
+#
+# 環境変数: VOICEVOX_URL / VOICEVOX_SPEAKER / VOICEVOX_PITCH / VOICEVOX_TEMPO /
+#   VOICEVOX_INTONATION / VOICEVOX_MAX_CHARS / VOICEVOX_TIMEOUT は docich 側
+#   SpeechConfig.from_env が同じ名前で読む。読み替え辞書は
+#   config/voicevox_word_replace.txt を既定で渡す (VOICEVOX_WORD_REPLACE_FILE で上書き可)。
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ヘルプは docich なしで表示できる (旧実装と同一動作)
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] || [ -z "${1:-}" ]; then
+	echo "Usage:"
+	echo "  $0 --speakers           話者一覧表示"
+	echo "  $0 --test               テスト音声生成+再生"
+	echo "  $0 \"テキスト\"            音声合成+再生"
+	echo "  $0 -o out.wav \"テキスト\"  ファイル出力"
+	echo "  $0 -o out.wav -f file    ファイルから読み込み"
+	echo "  $0 -f file               合成+再生"
+	echo ""
+	echo "Environment variables:"
+	echo "  VOICEVOX_URL      (default: http://127.0.0.1:50021)"
+	echo "  VOICEVOX_SPEAKER  (default: 3 = ずんだもん ノーマル)"
+	echo "  DOCICH_BIN        docich 実行ファイルのパス (既定: PATH から探索)"
+	exit 0
+fi
+
+# 旧実装と同様に .env 由来の VOICEVOX 設定を読む
 [ -z "${VOICEVOX_URL:-}" ] && [ -f "$SCRIPT_DIR/.env" ] && . "$SCRIPT_DIR/.env"
-VOICEVOX_URL_LOCAL="${VOICEVOX_URL_LOCAL:-http://127.0.0.1:50021}"
-VOICEVOX_URL_PRIMARY="${VOICEVOX_URL_PRIMARY:-${VOICEVOX_URL_REMOTE:-}}"
-VOICEVOX_URL_FALLBACK="${VOICEVOX_URL_FALLBACK:-$VOICEVOX_URL_LOCAL}"
-VOICEVOX_URL="${VOICEVOX_URL:-${VOICEVOX_URL_PRIMARY:-$VOICEVOX_URL_LOCAL}}"
-VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-3}"  # デフォルト: ずんだもん ノーマル
-VOICEVOX_TIMEOUT="${VOICEVOX_TIMEOUT:-30}"
-VOICEVOX_HEALTH_TIMEOUT="${VOICEVOX_HEALTH_TIMEOUT:-0.7}"
-VOICEVOX_MAX_CHARS="${VOICEVOX_MAX_CHARS:-200}"
-VOICEVOX_NY_PAUSE_FIX="${VOICEVOX_NY_PAUSE_FIX:-1}"     # i母音直後「ニュ」の鼻音欠落対策 (0で無効)
-VOICEVOX_NY_PAUSE_LEN="${VOICEVOX_NY_PAUSE_LEN:-0.20}"  # 対策で挿入するポーズ長 (秒)
 
-_voicevox_candidate_urls() {
-    printf '%s\n' "$VOICEVOX_URL_PRIMARY" "$VOICEVOX_URL" "$VOICEVOX_URL_FALLBACK" "$VOICEVOX_URL_LOCAL" \
-        | awk 'NF && !seen[$0]++'
+DOCICH_BIN="${DOCICH_BIN:-}"
+if [ -z "$DOCICH_BIN" ]; then
+	DOCICH_BIN="$(command -v docich 2>/dev/null || true)"
+fi
+if [ -z "$DOCICH_BIN" ]; then
+	echo "ERROR: docich が見つかりません (C4 ラッパ)。DOCICH_BIN を設定するか PATH に docich を入れてください" >&2
+	exit 1
+fi
+
+export VOICEVOX_WORD_REPLACE_FILE="${VOICEVOX_WORD_REPLACE_FILE:-${SCRIPT_DIR}/config/voicevox_word_replace.txt}"
+
+_play_and_cleanup() {
+	local output="$1"
+	afplay -d "${SAY_AUDIO_DEVICE:-}" "$output"
+	rm -f "$output"
 }
-
-_voicevox_synthesis_urls() {
-    printf '%s\n' "${VOICEVOX_ACTIVE_URL:-}"
-    _voicevox_candidate_urls
-}
-
-check_server() {
-    local url
-    while IFS= read -r url; do
-        if curl -s --max-time "$VOICEVOX_HEALTH_TIMEOUT" "$url/speakers" > /dev/null 2>&1; then
-            VOICEVOX_ACTIVE_URL="$url"
-            return 0
-        fi
-    done < <(_voicevox_candidate_urls)
-    echo "ERROR: VOICEVOX engine is not running at any configured URL" >&2
-    return 1
-}
-
-show_speakers() {
-    check_server || return 1
-    curl -s "$VOICEVOX_ACTIVE_URL/speakers" | python3 -c "
-import json, sys
-speakers = json.load(sys.stdin)
-for s in speakers:
-    print(f\"{s['name']}\")
-    for st in s.get('styles', []):
-        print(f\"  [{st['id']}] {st['name']}\")
-"
-}
-
-# 単一チャンクを指定URLで合成
-_synthesize_one_at_url() {
-    local url="$1"
-    shift
-    local text="$1"
-    local output="$2"
-
-    # VOICEVOXクラッシュ防止: 推論を壊す文字を除去
-    # (GNU tr はバイト単位で '＃' が 0xEF/0xBC/0x83 の各バイト削除になり
-    #  ニ・ュ・ー等の多バイト文字を破壊するため bash 置換を使う)
-    text=${text//"#"/}
-    text=${text//"＃"/}
-
-    # 読み替え辞書: VOICEVOXが誤読する単語を修正
-    if [ -f "$SCRIPT_DIR/config/voicevox_word_replace.txt" ]; then
-        while IFS=$'\t' read -r from to; do
-            [ -n "$from" ] && [ "${from#\#}" = "$from" ] && text=$(printf '%s' "$text" | sed "s|${from}|${to}|g")
-        done < "$SCRIPT_DIR/config/voicevox_word_replace.txt"
-    fi
-
-    # Step 1: audio_query
-    local query_json http_code
-    query_json=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \
-        -X POST "$url/audio_query" \
-        --get --data-urlencode "text=$text" \
-        --data-urlencode "speaker=$VOICEVOX_SPEAKER" \
-        -H "Content-Type: application/json")
-
-    if [ -z "$query_json" ] || echo "$query_json" | grep -q '"detail"'; then
-        echo "ERROR: audio_query failed" >&2
-        return 1
-    fi
-
-    # ピッチ・テンポ・抑揚適用 (VOICEVOX_PITCH / VOICEVOX_TEMPO / VOICEVOX_INTONATION 環境変数)
-    if [ -n "${VOICEVOX_PITCH:-}" ] || [ -n "${VOICEVOX_TEMPO:-}" ] || [ -n "${VOICEVOX_INTONATION:-}" ]; then
-        query_json=$(echo "$query_json" | python3 -c "
-import json,sys,os
-d=json.load(sys.stdin)
-p=os.environ.get('VOICEVOX_PITCH','')
-t=os.environ.get('VOICEVOX_TEMPO','')
-i=os.environ.get('VOICEVOX_INTONATION','')
-if p: d['pitchScale']=d.get('pitchScale',0)+float(p)
-if t: d['speedScale']=float(t)
-if i: d['intonationScale']=float(i)
-json.dump(d,sys.stdout)
-" 2>/dev/null) || true
-    fi
-
-    # i母音直後の「ニュ」(ny) はモデルが鼻音を生成せず「ュ」に聞こえるため、
-    # ny モーラ直前にポーズを挿入して回避 (VOICEVOX_NY_PAUSE_FIX=0 で無効)
-    if [ "$VOICEVOX_NY_PAUSE_FIX" != "0" ]; then
-        local fixed_json
-        fixed_json=$(echo "$query_json" | python3 -c "
-import json, sys
-
-def pause_mora(length):
-    return {'text': '、', 'consonant': None, 'consonant_length': None,
-            'vowel': 'pau', 'vowel_length': length, 'pitch': 0.0}
-
-def is_i_ny(prev, cur):
-    return cur.get('consonant') == 'ny' and str(prev.get('vowel') or '').lower() == 'i'
-
-pause_len = float(sys.argv[1])
-if not (0.0 < pause_len <= 1.0):
-    raise SystemExit(1)
-q = json.load(sys.stdin)
-out = []
-for ap in q.get('accent_phrases', []):
-    cur = ap
-    while True:
-        moras = cur['moras']
-        idx = None
-        for i in range(1, len(moras)):
-            if is_i_ny(moras[i - 1], moras[i]):
-                idx = i
-                break
-        if idx is None:
-            out.append(cur)
-            break
-        out.append({'moras': moras[:idx], 'accent': min(cur['accent'], idx),
-                    'pause_mora': pause_mora(pause_len), 'is_interrogative': False})
-        cur = {'moras': moras[idx:],
-               'accent': max(1, min(cur['accent'] - idx, len(moras) - idx)),
-               'pause_mora': cur.get('pause_mora'),
-               'is_interrogative': cur.get('is_interrogative', False)}
-for i in range(len(out) - 1):
-    cur, nxt = out[i], out[i + 1]
-    if (cur.get('pause_mora') is None and cur['moras'] and nxt['moras']
-            and is_i_ny(cur['moras'][-1], nxt['moras'][0])):
-        cur['pause_mora'] = pause_mora(pause_len)
-q['accent_phrases'] = out
-json.dump(q, sys.stdout)
-" "$VOICEVOX_NY_PAUSE_LEN" 2>/dev/null) || fixed_json=""
-        if [ -n "$fixed_json" ]; then
-            query_json="$fixed_json"
-        else
-            echo "WARN: ny pause fix skipped, using original query" >&2
-        fi
-    fi
-
-    # Step 2: synthesis
-    http_code=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \
-        -X POST "$url/synthesis?speaker=$VOICEVOX_SPEAKER" \
-        -H "Content-Type: application/json" \
-        -d "$query_json" \
-        --output "$output" \
-        -w '%{http_code}')
-
-    if [ "$http_code" != "200" ] || [ ! -s "$output" ]; then
-        echo "ERROR: synthesis failed (HTTP $http_code)" >&2
-        rm -f "$output" 2>/dev/null
-        return 1
-    fi
-}
-
-# 単一チャンクを合成。primary が落ちていたら local fallback へ切り替える。
-_synthesize_one() {
-    local text="$1"
-    local output="$2"
-    local url
-    while IFS= read -r url; do
-        [ -n "$url" ] || continue
-        if _synthesize_one_at_url "$url" "$text" "$output"; then
-            VOICEVOX_ACTIVE_URL="$url"
-            return 0
-        fi
-        rm -f "$output" 2>/dev/null
-        echo "WARN: VOICEVOX synthesis failed at $url, trying fallback" >&2
-    done < <(_voicevox_synthesis_urls | awk 'NF && !seen[$0]++')
-    return 1
-}
-
-# テキストを句点・改行で分割（Python に委譲）
-_split_text() {
-    local text="$1"
-    python3 -c "
-import sys
-text = sys.argv[1]
-max_len = int(sys.argv[2])
-chunks = []
-for line in text.split('\n'):
-    for sent in line.split('\u3002'):
-        sent = sent.strip()
-        if not sent:
-            continue
-        sent += '\u3002'
-        if chunks and len(chunks[-1]) + len(sent) <= max_len:
-            chunks[-1] += sent
-        else:
-            # 読点で再分割
-            if len(sent) > max_len:
-                parts = sent.split('\u3001')
-                buf = ''
-                for p in parts:
-                    candidate = buf + ('\u3001' if buf else '') + p
-                    if len(candidate) > max_len and buf:
-                        chunks.append(buf)
-                        buf = p
-                    else:
-                        buf = candidate
-                if buf:
-                    chunks.append(buf)
-            else:
-                chunks.append(sent)
-for c in chunks:
-    print(c)
-" "$text" "$VOICEVOX_MAX_CHARS"
-}
-
-# wav ファイルを Python wave モジュールで結合
-_concat_wavs() {
-    local output="$1"
-    shift
-    python3 -c "
-import wave, sys
-output = sys.argv[1]
-files = sys.argv[2:]
-with wave.open(output, 'wb') as out:
-    params_set = False
-    for f in files:
-        with wave.open(f, 'rb') as inp:
-            if not params_set:
-                out.setparams(inp.getparams())
-                params_set = True
-            out.writeframes(inp.readframes(inp.getnframes()))
-" "$output" "$@"
-}
-
-# チャンク一時ファイルを削除
-_cleanup_chunks() {
-    rm -f /tmp/voicevox_chunk_${$}_*.wav 2>/dev/null
-}
-
-synthesize() {
-    local text="$1"
-    local output="$2"
-
-    check_server || return 1
-
-    # テキストを分割
-    local chunks=()
-    while IFS= read -r line; do
-        [ -n "$line" ] && chunks+=("$line")
-    done < <(_split_text "$text")
-
-    if [ ${#chunks[@]} -le 1 ]; then
-        # 短いテキスト: 従来どおり1回で合成
-        _synthesize_one "$text" "$output"
-        return $?
-    fi
-
-    echo "Splitting into ${#chunks[@]} chunks..." >&2
-
-    # チャンクごとに合成
-    local chunk_files=() i=0
-    for chunk in "${chunks[@]}"; do
-        local chunk_wav="/tmp/voicevox_chunk_${$}_${i}.wav"
-        _synthesize_one "$chunk" "$chunk_wav" || { _cleanup_chunks; return 1; }
-        chunk_files+=("$chunk_wav")
-        i=$((i + 1))
-    done
-
-    # Python wave モジュールで結合
-    _concat_wavs "$output" "${chunk_files[@]}"
-    local rc=$?
-    _cleanup_chunks
-    return $rc
-}
-
-# --- main ---
-OUTPUT=""
-TEXT=""
 
 case "${1:-}" in
-    --speakers)
-        show_speakers
-        exit $?
-        ;;
-    --test)
-        OUTPUT="/tmp/voicevox_test.wav"
-        TEXT="テスト音声です。VOICEVOXが正常に動作しています。"
-        synthesize "$TEXT" "$OUTPUT" || exit 1
-        echo "Playing: $OUTPUT"
-        afplay -d "${SAY_AUDIO_DEVICE:-}" "$OUTPUT"
-        exit 0
-        ;;
-    -o)
-        OUTPUT="$2"
-        shift 2
-        if [ "$1" = "-f" ]; then
-            TEXT=$(cat "$2")
-            shift 2
-        else
-            TEXT="$*"
-        fi
-        ;;
-    -f)
-        TEXT=$(cat "$2")
-        shift 2
-        OUTPUT="/tmp/voicevox_$$.wav"
-        ;;
-    ""|--help|-h)
-        echo "Usage:"
-        echo "  $0 --speakers           話者一覧表示"
-        echo "  $0 --test               テスト音声生成+再生"
-        echo "  $0 \"テキスト\"            音声合成+再生"
-        echo "  $0 -o out.wav \"テキスト\"  ファイル出力"
-        echo "  $0 -o out.wav -f file    ファイルから読み込み"
-        echo ""
-        echo "Environment variables:"
-        echo "  VOICEVOX_URL      (default: http://127.0.0.1:50021)"
-        echo "  VOICEVOX_SPEAKER  (default: 3 = ずんだもん ノーマル)"
-        exit 0
-        ;;
-    *)
-        TEXT="$*"
-        OUTPUT="/tmp/voicevox_$$.wav"
-        ;;
+	--speakers)
+		exec "$DOCICH_BIN" voicevox speakers
+		;;
+	--test)
+		tmp_file="$(mktemp)"
+		printf 'テスト音声です。VOICEVOXが正常に動作しています。\n' >"$tmp_file"
+		output="/tmp/voicevox_test.wav"
+		"$DOCICH_BIN" voicevox synth -f "$tmp_file" -o "$output"
+		rm -f "$tmp_file"
+		echo "Playing: $output"
+		_play_and_cleanup "$output"
+		;;
+	-o)
+		output="$2"
+		shift 2
+		if [ "${1:-}" = "-f" ]; then
+			"$DOCICH_BIN" voicevox synth -f "$2" -o "$output"
+		else
+			tmp_file="$(mktemp)"
+			printf '%s\n' "$*" >"$tmp_file"
+			"$DOCICH_BIN" voicevox synth -f "$tmp_file" -o "$output"
+			rm -f "$tmp_file"
+		fi
+		echo "Saved: $output"
+		;;
+	-f)
+		output="/tmp/voicevox_$$.wav"
+		"$DOCICH_BIN" voicevox synth -f "$2" -o "$output"
+		_play_and_cleanup "$output"
+		;;
+	*)
+		tmp_file="$(mktemp)"
+		printf '%s\n' "$*" >"$tmp_file"
+		output="/tmp/voicevox_$$.wav"
+		"$DOCICH_BIN" voicevox synth -f "$tmp_file" -o "$output"
+		rm -f "$tmp_file"
+		_play_and_cleanup "$output"
+		;;
 esac
-
-if [ -z "$TEXT" ]; then
-    echo "ERROR: no text specified" >&2
-    exit 1
-fi
-
-synthesize "$TEXT" "$OUTPUT" || exit 1
-
-if [ "$OUTPUT" = "/tmp/voicevox_$$.wav" ]; then
-    afplay -d "${SAY_AUDIO_DEVICE:-}" "$OUTPUT"
-    rm -f "$OUTPUT"
-else
-    echo "Saved: $OUTPUT"
-fi
