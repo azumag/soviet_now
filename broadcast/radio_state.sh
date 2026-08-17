@@ -148,6 +148,28 @@ _radio_meta_sidecar_path() {
 	esac
 }
 
+# 再生完了したラジオ原稿を backups/radio_scripts/<date>/ へ退避する。
+# 再生後は .playing と .ready.wav が削除されるため、原稿 .txt はこの時点で
+# コピーしておかないと失われる。.history (要約) と .meta.json も一緒に保存する。
+_radio_backup_script() {
+	local target="$1" backup_dir date_dir base played_txt orig_name
+	[ -n "$target" ] && [ -f "$target" ] || return 0
+	base=$(basename "$target")
+	date_dir="backups/radio_scripts/$(date +%Y%m%d)"
+	mkdir -p "$date_dir" 2>/dev/null || return 0
+	played_txt="${target%.playing}.txt"
+	# 元の .txt 名 (radio_*.txt) で保存する
+	orig_name="${base%.playing}.txt"
+	# .playing は元の .txt が rename されたものなので、中身を .txt として保存する
+	if [ -f "$played_txt" ]; then
+		cp -p "$played_txt" "$date_dir/$orig_name" 2>/dev/null || true
+	elif [ -f "$target" ]; then
+		cp -p "$target" "$date_dir/$orig_name" 2>/dev/null || true
+	fi
+	[ -f "${target%.playing}.history" ] && cp -p "${target%.playing}.history" "$date_dir/${orig_name%.txt}.history" 2>/dev/null || true
+	[ -f "${target%.playing}.meta.json" ] && cp -p "${target%.playing}.meta.json" "$date_dir/${orig_name%.txt}.meta.json" 2>/dev/null || true
+}
+
 _radio_clear_generation_meta() {
 	local target="$1"
 	[ -n "$target" ] || return 0
@@ -583,6 +605,7 @@ _play_deferred_radio_queue_once() {
 			_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
 			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 			_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
+			_radio_backup_script "$playing_file" 2>/dev/null || true
 			rm -f "$playing_file" "$ready_wav" "${ready_wav}.tmp" "$(_radio_render_marker_path "$playing_file")" "$(_radio_render_retry_path "$playing_file")" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 			rm -rf "$ready_bundle" 2>/dev/null || true
 			log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
