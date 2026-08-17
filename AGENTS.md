@@ -28,3 +28,7 @@ Before changing this project, check `data/codex_advice.md` if it exists and cont
 - VM は git 管理外（直接編集 + バックアップ運用）のため、リポジトリが唯一の変更履歴。VM にだけ存在する変更を作業途中で放置しない。
 - リポジトリと VM でファイルが乖離している場合、どちらが新しいかを確認し、新しい側へ同期してから作業を進める（例: `strategy/ai.sh` は VM が codex ハーネス版で新しい）。
 - 調査用の一時ファイル・音声・worktree はリポジトリに含めず、VM の `tmp/` や別の調査ディレクトリに置く。
+
+## GitHub とサンドボックス
+
+サンドボックス内では `gh`（`pr view` / `pr create` / `pr diff` / `issue view` 等）はネットワーク（`api.github.com`）へ到達できないため、必ず昇格（`require_escalated`）して実行する。プライベートリモート（`azumag/soviet_now` 等）への `git push` などの外部送信も昇格が必要で、承認ゲートの対象になる。サンドボックスのままで実行せず、昇格して対象・内容を明確に示すこと。
