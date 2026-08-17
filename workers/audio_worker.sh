@@ -141,14 +141,33 @@ LOCK_DIR="${PID_FILE}.lock"
 if mkdir "$LOCK_DIR" 2>/dev/null; then
 	printf '%s\n' "$$" >"$LOCK_DIR/pid" 2>/dev/null || true
 else
-	# ロックが既にある: 所有者が生きていれば no-op、死んでいれば stale として奪取
-	lock_owner=""
-	[ -f "$LOCK_DIR/pid" ] && lock_owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
-	case "$lock_owner" in '' | *[!0-9]*) lock_owner="" ;; esac
-	if [ -n "$lock_owner" ] && _pid_alive "$lock_owner"; then
-		_log "already running (PID=$lock_owner) -> no-op"
-		exit 0
-	fi
+	# ロックが既にある: 所有者が生きていれば no-op、死んでいれば stale として奪取。
+	# 起動競合時、勝者が mkdir 直後に pid を書くまでの短い間は pid が空になり得る。
+	# 空/無効な pid を「stale」と誤判定して奪取すると、双方が exit して worker が
+	# ゼロになる (2026-08-17 本番障害)。そのため短い待機 + 再検証を行い、
+	# 真に stale (所有者プロセスが存在しない) 場合のみ奪取する。
+	local _lock_check_ts=0 _lock_deadline=0
+	_lock_deadline=$(( $(date +%s) + 3 ))
+	while :; do
+		lock_owner=""
+		[ -f "$LOCK_DIR/pid" ] && lock_owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+		case "$lock_owner" in '' | *[!0-9]*) lock_owner="" ;; esac
+		if [ -n "$lock_owner" ]; then
+			if _pid_alive "$lock_owner"; then
+				_log "already running (PID=$lock_owner) -> no-op"
+				exit 0
+			fi
+			# 所有者が存在しない: 真の stale。
+			break
+		fi
+		# pid がまだ空。勝者が書き込むのを待つ (最大 3 秒)。
+		_lock_check_ts=$(date +%s)
+		if [ "$_lock_check_ts" -ge "$_lock_deadline" ]; then
+			_log "WARNING: lock owner pid empty for 3s; treating as stale"
+			break
+		fi
+		sleep 0.2
+	done
 	# stale ロックを回収して再取得
 	rm -rf "$LOCK_DIR" 2>/dev/null || true
 	if mkdir "$LOCK_DIR" 2>/dev/null; then

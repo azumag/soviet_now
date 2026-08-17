@@ -12976,14 +12976,20 @@ PY
         audio_worker = (REPO_ROOT / "workers/audio_worker.sh").read_text()
         radio_worker = (REPO_ROOT / "workers/radio_worker.sh").read_text()
 
-        for worker in (chat_worker, youtube_worker, audio_worker, radio_worker):
+        for worker in (chat_worker, youtube_worker, radio_worker):
             self.assertIn('already running (PID=$old_pid) -> no-op', worker)
             self.assertIn("exit 0", worker)
             self.assertIn("cleanup skipped: pidfile owner is", worker)
+        # audio_worker は mkdir アトミックロックのため owner 表記 (lock_owner) を使う
+        self.assertIn('already running (PID=$lock_owner) -> no-op', audio_worker)
+        self.assertIn("exit 0", audio_worker)
+        self.assertIn("cleanup skipped: pidfile owner is", audio_worker)
         self.assertIn('if _pid_alive "$old_pid"; then', chat_worker)
         self.assertIn('if _pid_alive "$old_pid"; then', youtube_worker)
-        self.assertIn('if _pid_alive "$old_pid"; then', audio_worker)
         self.assertIn('if _pid_alive "$old_pid"; then', radio_worker)
+        self.assertIn('if _pid_alive "$lock_owner"; then', audio_worker)
+        self.assertIn("sleep 0.2", audio_worker)
+        self.assertIn("lock owner pid empty for 3s", audio_worker)
 
     def test_chat_ingest_notifies_event_overlay(self):
         twitch = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
