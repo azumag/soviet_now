@@ -5,6 +5,13 @@
 CHAT_DIR="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
 RAW_LOG="$CHAT_DIR/raw.log"
 CHANNEL="${1:-azumagbanjo}"
+# read がこの秒数、IRC から 1 行も受信できなかったら接続がハング(CLOSE-WAIT等)したと
+# みなして再接続する。Twitch は約5分ごとに PING を送るため、通常はそれより長い値にし、
+# 正常時には誤再接続しない。0 なら無効。
+IRC_READ_TIMEOUT_SEC="${TWITCH_IRC_READ_TIMEOUT_SEC:-600}"
+case "$IRC_READ_TIMEOUT_SEC" in
+    ''|*[!0-9]*) IRC_READ_TIMEOUT_SEC=600 ;;
+esac
 RECENT_MSG_IDS_FILE="$CHAT_DIR/recent_msg_ids.log"
 RECENT_LINE_HASHES_FILE="$CHAT_DIR/recent_line_hashes.log"
 RECENT_MSG_ID_TTL_SEC="${TWITCH_RECENT_DEDUP_TTL_SEC:-900}"
@@ -141,7 +148,25 @@ while true; do
         sleep 5
         continue
     }
-    while IFS= read -r line <&"${TWITCH_IRC[0]}"; do
+    # セッション開始時に毎回リセットし、前回セッションの値が誤って
+    # ストール判定に効かないようにする。
+    _irc_read_rc=0
+    while :; do
+        if [ "${IRC_READ_TIMEOUT_SEC:-0}" -gt 0 ]; then
+            if IFS= read -r -t "$IRC_READ_TIMEOUT_SEC" line <&"${TWITCH_IRC[0]}"; then
+                :
+            else
+                _irc_read_rc=$?
+                break
+            fi
+        else
+            if IFS= read -r line <&"${TWITCH_IRC[0]}"; then
+                :
+            else
+                _irc_read_rc=$?
+                break
+            fi
+        fi
         # IRCv3 タグ付き行: @tag1=v1;tag2=v2 :user!user@... PRIVMSG #ch :message
         tags=""
         payload="$line"
@@ -421,8 +446,16 @@ while true; do
             fi
         fi
     done
+    if [ "${IRC_READ_TIMEOUT_SEC:-0}" -gt 0 ] && [ "${_irc_read_rc:-0}" -gt 128 ]; then
+        echo "[$(date '+%H:%M:%S')] IRC heartbeat stall: no data for ${IRC_READ_TIMEOUT_SEC}s (rc=${_irc_read_rc}) → reconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
+    fi
     exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
     exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
+    # read タイムアウト等で nc が CLOSE-WAIT のまま残らないよう、ソケットを確実に破棄する
+    case "${TWITCH_IRC_PID:-}" in
+        ''|*[!0-9]*) ;;
+        *) kill -TERM "$TWITCH_IRC_PID" 2>/dev/null || true ;;
+    esac
     wait "$TWITCH_IRC_PID" 2>/dev/null || true
     echo "[$(date '+%H:%M:%S')] IRC session ended; reconnecting in 5s" >> "$CHAT_DIR/daemon_reconnect.log"
     # --- Outbound chat queue consumer ---
