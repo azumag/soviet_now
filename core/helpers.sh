@@ -69,6 +69,139 @@ _trim_log_file() {
 	tail -n "$keep" "$f" >"$tmpf" 2>/dev/null && mv "$tmpf" "$f" 2>/dev/null || true
 }
 
+#=== ピーク時間帯判定 & エージェント優先順位入替え ===
+
+# "HH" / "HHMM" / "HH:MM" を 0-1440 の「分」に変換して stdout に出す。
+# 解釈できない場合は何も出力せず rc=1 を返す。
+_peak_hours_to_minutes() {
+	local token="${1:-}" hh="" mm=""
+	token="${token#"${token%%[![:space:]]*}"}"
+	token="${token%"${token##*[![:space:]]}"}"
+	[ -n "$token" ] || return 1
+	case "$token" in
+	*:*)
+		hh="${token%%:*}"
+		mm="${token#*:}"
+		;;
+	????)
+		hh="${token%??}"
+		mm="${token#??}"
+		;;
+	???)
+		hh="${token%??}"
+		mm="${token#?}"
+		;;
+	*)
+		hh="$token"
+		mm="0"
+		;;
+	esac
+	case "$hh" in '' | *[!0-9]*) return 1 ;; esac
+	case "$mm" in '' | *[!0-9]*) return 1 ;; esac
+	hh=$((10#$hh))
+	mm=$((10#$mm))
+	[ "$mm" -le 59 ] || return 1
+	if [ "$hh" -eq 24 ] && [ "$mm" -eq 0 ]; then
+		printf '%s' 1440
+		return 0
+	fi
+	[ "$hh" -le 23 ] || return 1
+	printf '%s' $((hh * 60 + mm))
+}
+
+# ピーク時間帯かどうかを判定する。ピークなら rc=0。
+# 使い方: _is_peak_hours [HHMM]
+#   now の決定順: 第1引数 > $PEAK_HOURS_TEST_NOW（テスト専用フック、本番envに置かない） > 実時刻 (TZ=$PEAK_HOURS_TZ)
+#   ウィンドウ: $PEAK_HOURS_WINDOWS = "開始-終了[,開始-終了...]" (開始含む・終了含まない)
+#   未設定なら既定 "10-13,15-19"。空文字を明示指定した場合はウィンドウなし＝常に非ピーク
+#   （ピーク切替そのものを無効にしたいときは PEAK_HOURS_AGENT_SWAP_ENABLED=0 を使う）
+#   開始==終了のウィンドウは幅ゼロとして無視する（「常時ピーク」にはならない）
+_is_peak_hours() {
+	local now="${1:-}" rest win start_tok end_tok now_min start_min end_min
+	[ -n "$now" ] || now="${PEAK_HOURS_TEST_NOW:-}"
+	[ -n "$now" ] || now=$(TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}" date '+%H%M' 2>/dev/null)
+	now_min=$(_peak_hours_to_minutes "$now") || return 1
+	rest="${PEAK_HOURS_WINDOWS-10-13,15-19}"
+	while [ -n "$rest" ]; do
+		case "$rest" in
+		*,*)
+			win="${rest%%,*}"
+			rest="${rest#*,}"
+			;;
+		*)
+			win="$rest"
+			rest=""
+			;;
+		esac
+		case "$win" in
+		*-*) ;;
+		*) continue ;;
+		esac
+		start_tok="${win%%-*}"
+		end_tok="${win#*-}"
+		start_min=$(_peak_hours_to_minutes "$start_tok") || continue
+		end_min=$(_peak_hours_to_minutes "$end_tok") || continue
+		[ "$start_min" -eq "$end_min" ] && continue
+		if [ "$start_min" -lt "$end_min" ]; then
+			if [ "$now_min" -ge "$start_min" ] && [ "$now_min" -lt "$end_min" ]; then
+				return 0
+			fi
+		else
+			if [ "$now_min" -ge "$start_min" ] || [ "$now_min" -lt "$end_min" ]; then
+				return 0
+			fi
+		fi
+	done
+	return 1
+}
+
+# ピーク時のみ、カンマ区切りエージェントリスト内の優先エージェントを先頭へ寄せる。
+# 他候補は元の相対順序を保つ。候補の削除・追加は一切しない（フォールバックは温存）。
+# 使い方: NEW_LIST=$(_peak_priority_agent_list "$LIST" [PREFERRED])
+# 注意: 呼び出し側が $( ) で受けるため、この関数は stdout に結果以外を出力しない。
+_peak_priority_agent_list() {
+	local list_raw="${1:-}" preferred="${2:-}"
+	[ -n "$preferred" ] || preferred="${PEAK_HOURS_PRIORITY_AGENT:-codex:minimax-m3}"
+	if [ -z "$list_raw" ] || [ -z "$preferred" ] || [ "${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}" != "1" ]; then
+		printf '%s' "$list_raw"
+		return 0
+	fi
+	if ! _is_peak_hours; then
+		printf '%s' "$list_raw"
+		return 0
+	fi
+	local rest="$list_raw" item matched="" others=""
+	while [ -n "$rest" ]; do
+		case "$rest" in
+		*,*)
+			item="${rest%%,*}"
+			rest="${rest#*,}"
+			;;
+		*)
+			item="$rest"
+			rest=""
+			;;
+		esac
+		item="${item#"${item%%[![:space:]]*}"}"
+		item="${item%"${item##*[![:space:]]}"}"
+		[ -n "$item" ] || continue
+		if [ "$item" = "$preferred" ]; then
+			if [ -n "$matched" ]; then matched="${matched},${item}"; else matched="$item"; fi
+		else
+			if [ -n "$others" ]; then others="${others},${item}"; else others="$item"; fi
+		fi
+	done
+	if [ -z "$matched" ]; then
+		printf '%s' "$list_raw"
+		return 0
+	fi
+	if [ -n "$others" ]; then
+		printf '%s' "${matched},${others}"
+	else
+		printf '%s' "$matched"
+	fi
+}
+
 #=== ANSIエスケープ除去 ===
 
 _strip_ansi() {

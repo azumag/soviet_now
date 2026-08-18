@@ -2723,9 +2723,16 @@ JAPANESECOMMENT
 		else
 			comment_agent_list="${COMMENT_AGENTS:-codex:minimax-m3}"
 		fi
+		# ピーク時間帯は候補順序のみ入替え（MiniMax優先 / DeepSeekはフォールバックに温存）
+		local comment_agent_list_before="$comment_agent_list"
+		local comment_peak_note=""
+		comment_agent_list=$(_peak_priority_agent_list "$comment_agent_list")
+		if [ "$comment_agent_list" != "$comment_agent_list_before" ]; then
+			comment_peak_note=" peak=1"
+		fi
 		local comments_talk="" comment_model_used="" generation_rate_limited=false
 		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
-		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, agents=${comment_agent_list}, max_retry=${comment_retry_max})"
+		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, agents=${comment_agent_list}${comment_peak_note}, max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
@@ -2848,7 +2855,8 @@ RETRYCOMMENT
 				local translation_prompt_file="" translation_text="" translation_model=""
 				translation_prompt_file=$(mktemp /tmp/eloop_comment_translation_prompt_XXXXXXXX 2>/dev/null || true)
 				if [ -n "$translation_prompt_file" ] && printf '%s' "$attempt_talk" | _comment_build_translation_prompt "$classification_json" >"$translation_prompt_file" 2>/dev/null; then
-					local translation_agents="${COMMENT_TRANSLATION_AGENTS:-$comment_agent_list}"
+					local translation_agents
+					translation_agents=$(_peak_priority_agent_list "${COMMENT_TRANSLATION_AGENTS:-$comment_agent_list}")
 					local translation_last_agent_file=""
 					translation_last_agent_file=$(mktemp /tmp/eloop_comment_translation_agent_XXXXXXXX 2>/dev/null || true)
 					translation_text=$(_comment_generate_translation "$translation_prompt_file" "$translation_agents" \

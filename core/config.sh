@@ -74,6 +74,22 @@ COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-codex:deepseek-v4-flash}"
 COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-codex:minimax-m3}"
 RADIO_SOREN91_AGENT="${RADIO_SOREN91_AGENT:-codex:deepseek-v4-flash}"
 RADIO_SOREN91_FALLBACK="${RADIO_SOREN91_FALLBACK:-codex:minimax-m3}"
+# --- ピーク時間帯のエージェント優先順位入替え ---
+# ピーク時は RADIO_AGENTS / COMMENT_AGENTS の「候補順序」だけを入替え、
+# PEAK_HOURS_PRIORITY_AGENT を先頭へ寄せる。候補の削除はしない（DeepSeek はフォールバックに残る）。
+PEAK_HOURS_AGENT_SWAP_ENABLED="${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}"
+# "開始-終了" をカンマ区切りで複数指定。開始は含み、終了は含まない。
+# 各端点は HH / HHMM / HH:MM 形式。開始>終了なら日跨ぎ (例 22-02) として扱う。
+# 明示的に空文字にするとウィンドウなし＝常に非ピーク扱い（`-` 展開なので unset 時のみ既定値を使う）。
+# 切替機能自体を止めたいだけなら PEAK_HOURS_AGENT_SWAP_ENABLED=0 を使う。
+PEAK_HOURS_WINDOWS="${PEAK_HOURS_WINDOWS-10-13,15-19}"
+PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
+PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-codex:minimax-m3}"
+# ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
+# 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
+# コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成されることがある。
+# ピーク外はこのゲート自体が無効（常に issue #5 の MAX=5 のみが効く）。
+PEAK_HOURS_QUEUE_GATE_ENABLED="${PEAK_HOURS_QUEUE_GATE_ENABLED:-1}"
 COMMENT_GENERATION_HISTORY_FILE="${TMP_HISTORY_DIR:-tmp/history}/comment_generation_history.jsonl"
 RADIO_GENERATION_HISTORY_FILE="${TMP_HISTORY_DIR:-tmp/history}/radio_generation_history.jsonl"
 COMMENT_GENERATION_HISTORY_KEEP="${COMMENT_GENERATION_HISTORY_KEEP:-500}"
@@ -248,12 +264,9 @@ IMPROVE_PEAK_HOUR_UTC_RANGES="${IMPROVE_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-
 IMPROVE_PEAK_DEFER_MAX_WAIT_SEC="${IMPROVE_PEAK_DEFER_MAX_WAIT_SEC:-16200}"     # 4.5h バックストップ
 IMPROVE_PEAK_DEFER_FORCE_ACC_PCT="${IMPROVE_PEAK_DEFER_FORCE_ACC_PCT:-200}"     # 合算蓄積が閾値の200%で強制実行
 IMPROVE_PEAK_DEFER_LOG_INTERVAL_SEC="${IMPROVE_PEAK_DEFER_LOG_INTERVAL_SEC:-${IMPROVE_BACKOFF_LOG_INTERVAL_SEC:-900}}"
-# ピーク時間帯回避 (ラジオ生成, issue #14): 既定のラジオ生成エージェントは deepseek
-# (RADIO_AGENTS 先頭) のため、ピーク帯 (UTC 01:00-04:00, 06:00-10:00 = JST 10-13時, 15-19時)
-# は新規生成を defer して deferred ラジオを消化する。.env で
-# RADIO_PEAK_HOUR_DEFER_ENABLED=0 とすれば即無効化。
-RADIO_PEAK_HOUR_DEFER_ENABLED="${RADIO_PEAK_HOUR_DEFER_ENABLED:-1}"
-RADIO_PEAK_HOUR_UTC_RANGES="${RADIO_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-10:00}"
+# ラジオ生成のピーク時間帯回避 (旧 issue #14: RADIO_PEAK_HOUR_DEFER_ENABLED で新規生成を
+# 丸ごと止める方式) は撤去済み。代わりに上記 PEAK_HOURS_* (RADIO_AGENTS/COMMENT_AGENTS の
+# 候補順序入替え、および下記 PEAK_HOURS_QUEUE_GATE_ENABLED によるキュー0件までの抑止) を使う。
 IMPROVE_RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"
 IMPROVE_REVIEW_CMD_TIMEOUT_SEC="${IMPROVE_REVIEW_CMD_TIMEOUT_SEC:-600}"
 IMPROVE_REVIEW_PRIMARY_RETRIES="${IMPROVE_REVIEW_PRIMARY_RETRIES:-1}"

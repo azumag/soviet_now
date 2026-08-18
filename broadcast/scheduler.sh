@@ -486,6 +486,13 @@ schedule_nonessential_audio_jobs() {
 		return 0
 	fi
 
+	# ピーク時間帯限定: キューに 1 件でも残っている間は新規ラジオ生成を開始しない
+	# （issue #5 の MAX=5 より厳しい「空になるまで待つ」方式。同一tick内で複数コーナーの
+	# 時刻窓が重なった場合はまとめて生成されうる）。ピーク外は無効。
+	if _radio_generation_blocked_by_peak_hour_queue; then
+		return 0
+	fi
+
 	# ラジオスケジュール: 時刻ベースのみ
 	# hh:00,30 = news / hh:05 = theme / hh:15,45 = jiji
 	# コメント優先の判定は維持しつつ、生成は止めない。
@@ -701,6 +708,39 @@ _radio_generation_blocked_by_backpressure() {
 	if [ -f "$TMP_MARKERS_DIR/.radio_queue_backpressure_active" ]; then
 		rm -f "$TMP_MARKERS_DIR/.radio_queue_backpressure_active" 2>/dev/null || true
 		log "[RADIO] deferred queue ${count} 件 (≤ ${RADIO_DEFERRED_QUEUE_MAX:-5}) → ラジオ生成を再開"
+	fi
+	return 1
+}
+
+# ピーク時間帯限定の抑止判定。issue #5 のバックプレッシャー(MAX=5)とは独立の追加ゲートで、
+# ピーク中はキューが完全に空(0件)になるまで新規生成をブロックする（issue #5より厳しい）。
+# 同一tick内で複数コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成される
+# ことがある（開放直後の1件ずつの厳密な直列化までは保証しない）。
+# ピーク外・無効時は常に許可(1を返す)。PEAK_HOURS_QUEUE_GATE_ENABLED=0 で即無効化。
+# 0 を返す = 生成をブロック, 1 を返す = 生成を許可。
+_radio_generation_blocked_by_peak_hour_queue() {
+	# 無効時・ピーク外はマーカーを掃除してから抜ける。マーカーを残したまま
+	# 早期returnすると、次にピークへ再突入した際 "既にアクティブ" 扱いになり
+	# 抑制開始ログが出ない（サイレントに止まって見える）ため。
+	if [ "${PEAK_HOURS_QUEUE_GATE_ENABLED:-1}" != "1" ] || ! _is_peak_hours; then
+		if [ -f "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" ]; then
+			rm -f "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" 2>/dev/null || true
+			log "[RADIO] ピーク時間帯終了/ゲート無効化 → キューゲートを解除"
+		fi
+		return 1
+	fi
+	local count=0
+	count=$(_radio_deferred_queue_count)
+	if [ "$count" -gt 0 ]; then
+		if [ ! -f "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" ]; then
+			touch "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" 2>/dev/null || true
+			log "[RADIO] ピーク時間帯: deferred queue ${count} 件残存 → 空になるまで新規生成を抑制"
+		fi
+		return 0
+	fi
+	if [ -f "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" ]; then
+		rm -f "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" 2>/dev/null || true
+		log "[RADIO] ピーク時間帯: deferred queue 0件 → 新規生成を再開"
 	fi
 	return 1
 }

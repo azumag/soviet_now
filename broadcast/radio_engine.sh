@@ -1388,6 +1388,13 @@ PREPASS_APPEND
 		else
 			_radio_gen_list="${radio_agents_list}"
 		fi
+		# ピーク時間帯は候補順序のみ入替え（MiniMax優先 / DeepSeekはフォールバックに温存）。
+		# 実際に並びが変わった時だけログする（swap無効時・優先エージェント不在時は無音）。
+		local _radio_gen_list_before="$_radio_gen_list"
+		_radio_gen_list=$(_peak_priority_agent_list "$_radio_gen_list")
+		if [ "$_radio_gen_list" != "$_radio_gen_list_before" ]; then
+			log "[RADIO:${corner_name}] peak hours → agents=${_radio_gen_list}"
+		fi
 		local _radio_last_agent_file
 		_radio_last_agent_file=$(mktemp /tmp/eloop_radio_last_agent_XXXXXXXX)
 		talk=$(ai_generate_list "RADIO:${corner_name}" "$_current_prompt_file" "$_radio_gen_list" "" \

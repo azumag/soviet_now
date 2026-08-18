@@ -235,6 +235,9 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - ニュースAIスパムフィルタ: `_news_ai_spam_check` が `opencode run --agent=glm` でタイトル+本文冒頭を判定し、広告・PR記事を除外
 - Webグラウンディング: `RADIO_WEB_GROUNDING_ENABLED=1` でテーマ関連の補足情報をWeb検索で取得（TTL 6時間）
 - ファクトチェック: `RADIO_FACT_CHECK_ENABLED=1` で生成テキストのファクトチェック・修正を実施
+- ピーク時間帯のモデル優先順位入替え: ピーク時間帯（既定 `PEAK_HOURS_WINDOWS=10-13,15-19`、JST）は `RADIO_AGENTS`/`COMMENT_AGENTS` の候補順序だけを入替え、`PEAK_HOURS_PRIORITY_AGENT`（既定 MiniMax）を先頭に。DeepSeekは削除されずフォールバックに残る。`PEAK_HOURS_AGENT_SWAP_ENABLED=0` で無効化。issue #5 のキュー滞留時ラジオ生成抑止（常時有効、MAX=5）とは独立
+- ピーク時間帯限定のキューゲート: ピーク中はキューが完全に空（0件）になるまで新規ラジオ生成を開始しない追加ゲート（issue #5のMAX=5より厳しい）。同一tick内で複数コーナーの時刻窓が重なった場合はゲート開放時にまとめて生成されうる（厳密な1件ずつの直列化は未保証）。`PEAK_HOURS_QUEUE_GATE_ENABLED=0` で無効化。ピーク外はこのゲート自体が働かない
+- 旧 issue #14（`RADIO_PEAK_HOUR_DEFER_ENABLED`: ピーク中は新規生成を丸ごと止めてdeferred再生のみで凌ぐ方式）は撤去済み。IMPROVE側の同種機構（`IMPROVE_PEAK_HOUR_DEFER_ENABLED`）は対象外で維持
 
 ## 配信画面構成
 
