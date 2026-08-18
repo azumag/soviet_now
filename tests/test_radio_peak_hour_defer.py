@@ -25,8 +25,10 @@ class RadioPeakHourDeferTests(unittest.TestCase):
             r'''
 set -e
 source "$1/strategy/improve.sh"
-sed -n '/^_radio_peak_hour_should_defer()/,/^}/p' "$1/broadcast/radio_engine.sh" > "$TMPDIR/defer_fn.sh"
-. "$TMPDIR/defer_fn.sh"
+defer_fn="$(mktemp)"
+sed -n '/^_radio_peak_hour_should_defer()/,/^}/p' "$1/broadcast/radio_engine.sh" > "$defer_fn"
+. "$defer_fn"
+rm -f "$defer_fn"
 
 # ピーク判定スタブ (外部 io / 現在時刻に依存させない)
 _is_peak_hour_utc() { return 0; }
