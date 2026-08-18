@@ -40,7 +40,7 @@
 - [ ] availability / flags / grade 判定で `dict.get(...) != "NO"` のように欠損キーを真扱いしていないか。`merge_available` や `merge_grade` などは、入力サンプルでキー存在・許容値・欠損時の扱いまで確認し、欠損を「利用可能」と解釈する実装は FAIL にすること
 - [ ] `height_mult` / `merge_mult` / penalty係数などを増減する変更は、コメントや分析文の「強化/緩和」と実際の計算方向が一致しているか。必ず周辺の最終式（例: `height_penalty = landing_y * ... * height_mult`）まで追って、乗算値が増えると penalty が増えるのか減るのかを検算すること
 - [ ] 比較閾値を変更する diff は、比較演算子まで含めて効果方向を検算すること。例: `margin < 0.5` を `margin < 0.3` に下げる変更は発火範囲を狭めるため、「より多く捕まえる」「強化」と説明しているなら FAIL にすること。`x > threshold` / `x < threshold` / `<=` / `>=` のいずれも、閾値増減が発火条件を広げるのか狭めるのかを具体値で確認すること
-- [ ] 「低配置を好む」「高積みを避ける」「盤面圧縮を促す」など位置・高さ・piece_count の単調方向を主張する新規 bonus / penalty は、最終式でその方向に効いているか。例: 低配置を好む bonus が `+ max_y * 100` のように高い盤面ほど加点していないか、piece_count を減らしたい bonus が piece_count 増加で報酬増になっていないかを検算し、説明と逆向きなら FAIL にすること
+- [ ] 「低配置を好む」「高積みを避ける」「盤面圧縮を促す」など位置・高さ・piece_count の単調方向を主張する新規 bonus / penalty は、最終式でその方向に効いているか。説明と逆向きなら FAIL にすること
 - [ ] `lowest-y` / `低配置` / `lowest available position` / `高積み回避` を主張する新規 bonus は、`landing_y` / `risk_top_y_after_drop` / `decision_top_y_after_drop` など候補ごとの高さ値に依存し、同じ発火条件内で低い候補ほど相対的に有利になる式か。条件成立候補すべてに `+500` のような定数 bonus を足すだけなら低配置を選好していないため FAIL にすること。最低2候補（低い候補・高い候補）で score 差が低い候補側に増えることを確認すること
 - [ ] 新規 axis / reason / bonus / penalty は、対象にした worst/best game log または `tmp/batch_summary.txt` の実データで発火条件が到達可能か確認すること。新 reason が一度も発火しない条件、または根拠ログの値と条件が食い違う場合は FAIL にすること
 - [ ] `v369 congestion-aware proximity` 周辺を変更した場合、`rp_guidance_suppressed` が true になる混雑・deadline 危険局面で `proximity_bonus = 0.0` に落ちるか。既に計算した proximity bonus を残したまま倍率追加だけを止める実装は FAIL にすること
@@ -57,7 +57,7 @@
 
 ### E. Hard Constraint — 絶対遵守テーマ（mandatory_themes.txt）
 - [ ] `data/mandatory_themes.txt` の全テーマを遵守する実装になっているか
-- [ ] mandatory_themes のテーマに反するロジックがないか（違反がある場合，`strategy.py.staging` を修正すること）
+- [ ] mandatory_themes のテーマに反するロジックがないか（違反がある場合、`strategy.py.staging` を修正すること）
 
 ### F. Hard Constraint — ユーザーレビュー（user_review.md）
 - [ ] `data/user_review.md` が存在して非空の場合、レビュー内の「必須修正」「合格条件」を全て満たしているか
@@ -70,14 +70,12 @@
 
 ## 出力指示（必須）
 - 作業ディレクトリは sandbox ルートです。**`tmp/review_result.md` は存在しない場合があります**。
-- レビュー結果を **`tmp/review_result.md`** に必ず書くこと。存在しない場合は `Write` で新規作成すること。
-- `Read tmp/review_result.md` が `File not found` になった場合、それは正常な初回状態です。ユーザーに質問せず、直ちに下記テンプレートを `Write tmp/review_result.md` で新規作成すること。
-- レビュー本文や JSON を会話に表示しただけでは失敗です。最終応答の前に `tmp/review_result.md` が作成・更新済みであることを確認すること。
+- レビュー結果を **`tmp/review_result.md`** に必ず書くこと。存在しない場合は `Write` で新規作成すること。`Read tmp/review_result.md` が `File not found` になったら正常な初回状態。ユーザーに質問せず、下記テンプレートで `Write` すること。
+- レビュー本文や JSON を会話に表示しただけでは失敗。最終応答の前に `tmp/review_result.md` が作成・更新済みであることを確認すること。
 - `tmp/review_result.md` が既に存在する場合は、`Read` してから `Edit` / `MultiEdit` で更新してもよい。
 - `Write` / `Edit` / `MultiEdit` のうち使える手段でよい。権限エラーや read-before-write エラーが出た場合は、エラー文を読んで同じ `tmp/review_result.md` への作成または更新をやり直すこと。
 - `tmp/review_result.md` 以外の場所にレビュー結果を書いてはいけない
-- ファイル本文には必ず `## VERDICT: PASS` または `## VERDICT: FAIL` の行を含めること
-- ファイル本文には必ず `review_verdict` JSON ブロックを含めること
+- ファイル本文には必ず `## VERDICT: PASS` または `## VERDICT: FAIL` の行と `review_verdict` JSON ブロックを含めること
 - 以下の構造で書くこと:
 
 # Strategy Review Result
@@ -95,7 +93,7 @@
 
 ## Checklist Results
 ### A. 分析方針との整合性
-- [x/✗] 採用仮説の実装: ...（具体的に確認した内容）
+- [x/✗] 採用仮説の実装: ...
 - [x/✗] Implementation Plan との一致: ...
 - [x/✗] 棄却仮説の不採用: ...
 - [x/✗] 変更予算: ...
@@ -111,14 +109,14 @@
 - [x/✗] 既存ロジック: ...
 - [x/✗] partial edit: ...
 - [x/✗] rollback制約: ...
-- [x/✗] runtime構造の型・shape確認: ...（新しく読むキー/添字を、既存コードや入力サンプルと照合した内容）
-- [x/✗] 欠損キーの真扱い防止: ...（availability / flags / grade 判定で欠損を利用可能扱いしていないこと）
-- [x/✗] 係数方向の検算: ...（変更した係数が最終式でどちらに効くか）
-- [x/✗] 比較閾値の効果方向: ...（`<` / `>` などの演算子込みで、閾値増減が発火範囲を広げるか狭めるか）
-- [x/✗] 単調方向の検算: ...（低配置・高積み回避・盤面圧縮などの説明と、bonus / penalty の実際の増減方向が一致していること）
-- [x/✗] 低配置 bonus の候補間差分: ...（低い候補と高い候補の2例で、定数加点ではなく低い候補が相対的に有利になること）
-- [x/✗] 新規 axis / reason の発火証拠: ...（対象ログや batch summary の値が、新規条件に到達すること）
-- [x/✗] proximity 混雑抑制: ...（`rp_guidance_suppressed` true 時に proximity bonus が0へ落ちること）
+- [x/✗] runtime構造の型・shape確認: ...
+- [x/✗] 欠損キーの真扱い防止: ...
+- [x/✗] 係数方向の検算: ...
+- [x/✗] 比較閾値の効果方向: ...
+- [x/✗] 単調方向の検算: ...
+- [x/✗] 低配置 bonus の候補間差分: ...
+- [x/✗] 新規 axis / reason の実データで発火証拠: ...
+- [x/✗] proximity 混雑抑制: ...
 
 ### D. 追加品質
 - [x/✗] 固定ターン数ゲート: ...
@@ -140,7 +138,7 @@
 
 ## 修正ルール（FAILの場合のみ）
 - FAILの場合のみ `strategy.py.staging` を修正してよい
-- PASSの場合は `strategy.py.staging` に一切触れないこと
+- PASS の場合は `strategy.py.staging` に一切触れない
 - 修正は最小限に。問題のある箇所だけを直す
 - 修正後も上記のハード制約を全て満たすこと
 - `strategy.py` (変更前) の状態に戻す修正より、問題部分だけの局所修正を優先する

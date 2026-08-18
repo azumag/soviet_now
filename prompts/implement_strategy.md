@@ -33,7 +33,6 @@
 - これらのテーマに反する実装は禁止。既存コードがテーマに違反している場合は修正すること
 - **これらは改善テーマではなく hard constraint である**。実装段階では mandatory_themes の違反がないことを確認しつつ、ロシア建国後フェーズ・盤面圧縮・高type成長パイプライン等の改善目標も並行して実装すること
 
-
 ## ハード制約（破ったら失敗）
 - 変更対象は `strategy.py.staging` と `strategy_helpers/` のみ。他ファイル変更禁止
 - `strategy_helpers/` を使う場合は `strategy_helpers/__init__.py` を維持すること
@@ -47,13 +46,12 @@
 - `strategy.py.staging` は既存ファイルとしてその場で編集すること。新規 `Write` / 全面再生成より、既存コードへの `Edit` を優先すること
 - `Edit` / `Write` の失敗時は、新規ファイル作成へ逃げず、同一ファイルへの差分編集を続ける
 - 編集コンテキストは常に `strategy.py.staging` を基準にすること。`strategy.py` を読んでも、その内容を patch の oldString 根拠にしてはいけない
-- 新規トップレベル Python ファイル作成禁止
-- 編集対象の本体は `strategy.py.staging` のみ。補助コードが必要なら `strategy_helpers/` 配下に置くこと
+- 新規トップレベル Python ファイル作成禁止。編集対象の本体は `strategy.py.staging` のみ。補助コードが必要なら `strategy_helpers/` 配下に置くこと
 
 ## 変更予算（小さく鋭く）
 - 変更対象は原則 `decide()` 本体 + 補助ヘルパー1個まで
 - 新規ロジック追加と大規模削除を同時に行わない
-- 既存バグ修正を含める場合も、1回の改善で扱うバグは原則1件に絞る
+- 既存バグ修正を含める場合も、1回の改善で扱うバグは原則1件
 - 分析の `Implementation Plan` に書かれた変更範囲を超えないこと
 
 ## 不確実なときの方針
@@ -65,25 +63,22 @@
 - 特に `deadline_y`, `top_edge_y`, `deadline_margin`, `danger_piece_count`, `min_redline_time`, `crosses_deadline`, `danger_merge_available`, `danger_direct_merge_available` を読むこと
 - 連鎖狙いより、いま取れる併合機会の確保と盤面圧迫の回避を優先すること
 - **【不可侵の安全不変条件】** `crosses_deadline == True` の選択肢は、`crosses_deadline == False` の安全な選択肢が存在する限り、`merge_grade`(DIRECT/NEAR/FAR)・merge-drought・HIGH_LAYER 抑制等**原則として選んではならない**。デッドライン超過は即ゲームオーバー。新しい併合・タワー・drought 対策ロジックを足すときは、必ず「安全な非超過候補があるなら超過候補を選ばない」判定をそれらより前段に通すこと。sandbox の `deadline-(far|near|direct)-guard` テストはこの不変条件を検証しており、緩和不可
-- 例外として、sandbox の `active-filter` は危険ピースへの DIRECT merge を要求する。`deadline_crossed==True` かつ `danger_piece_count>0` で、`crosses_deadline==True` の `merge_grade=="DIRECT"` 候補が `danger_direct_merge_available==True` または `merges[].target_is_danger==True` の場合だけ、非超過 `NO` 候補より危険ピース DIRECT merge を優先すること。通常の DIRECT/NEAR/FAR merge にはこの例外を広げないこと。
+- 例外として、sandbox の `active-filter` は危険ピースへの DIRECT merge を要求する。`deadline_crossed==True` かつ `danger_piece_count>0` で、`crosses_deadline==True` の `merge_grade=="DIRECT"` 候補が `danger_direct_merge_available==True` または `merges[].target_is_danger==True` の場合だけ、非超過 `NO` 候補より危険ピース DIRECT merge を優先すること。通常の DIRECT/NEAR/FAR merge にはこの例外を広げないこと
 - `v369 congestion-aware proximity` 周辺を変更する場合、`rp_guidance_suppressed` が true の混雑・deadline 危険局面では必ず `proximity_bonus = 0.0` に落とし、既に計算済みの近接 bonus を後から加算してはいけない。`reactive_pair_count >= 5 && max_y >= 2.5` などの抑制条件は「追加倍率を止める」だけでは不十分
 - 「終盤8ターン」は固定ターン数ではなく、dead line 接近、`max_y>=2.0`, 反応可能ペア滞留などの局面条件に読み替えること
 - `random` や時刻依存など非決定的要素は導入しない
 - `strategy_helpers/` へ分離する場合、`strategy.py.staging` から import できる最小構成にすること
 
 ## Refactoring and Bug Fixes
-- **Refactoring**: If you encounter structural problems or obvious bugs in existing code during implementation, you may fix them on the spot without returning to the analysis phase. However, refactoring alone does not warrant a change log entry — pair it with a feature change when recording.
-- **Bug fixes**: You may fix existing bugs unrelated to the hypothesis identified in the analysis phase. Record each bug fix as a single line in the change log. Limit to one bug per improvement pass.
-- **Constraint**: Refactoring and bug fixes must not change the external contract of `decide()` (return value structure).
+- **Refactoring**: 実装中に既存コードの構造上の問題や明確なバグに出会った場合、分析フェーズに戻らずその場で修正してよい。ただし、リファクタリングだけでは change log 追記対象にしない — 機能変更と合わせて記録すること
+- **Bug fixes**: 分析で特定した仮説とは無関係のバグも修正してよい。各バグ修正は change log に1行記録すること。1回の改善パスで扱うバグは1件に限定
+- **Constraint**: リファクタリング・バグ修正とも、`decide()` の外部契約（戻り値の構造）を変えてはならない
 
 ## 事前セルフチェック（書き込み前）
 - 分析の `Implementation Plan` と実装が一致しているか
 - 数値変更だけの場合、その変更量を支持するログ根拠があるか
-- `decide` の戻り値契約を全分岐で満たすか
-- `__main__` を壊していないか
-- 既存の有効ロジックを誤って消していないか
-- 触った周辺に明確な既存バグや partial edit 崩れを残していないか
-- 触ったコードに明らかなバグが残っていないか
+- `decide` の戻り値契約を全分岐で満たすか。`__main__` を壊していないか
+- 既存の有効ロジックを誤って消していないか。触った周辺に既存バグや partial edit 崩れがないか。触ったコードに明らかなバグが残っていないか
 - リファクタリングした箇所が以前と同じ動作をするか
 - 例外時にも `{"x": float, "reason": str}` を返せるか
 
@@ -92,7 +87,7 @@
 - `strategy.py.staging` は既存ファイルなので、可能な限り `Edit` で差分適用すること。新規 `Write` での全文置換は避けること
 - `strategy.py.staging` 以外のトップレベル `.py` は作成しないこと
 - 冒頭の変更履歴は簡潔に追記（2〜4行以内）。リファクタリングやバグ修正を含める場合は機能変更と別の行として記録すること
-- 変更履歴内に，本次つぶす rollback failure mode を1行で明記すること（analysis_result.md の仮説から引用）
+- 変更履歴内に、今回潰す rollback failure mode を1行で明記すること（analysis_result.md の仮説から引用）
 - 変更履歴内に `refs:` 行を1行入れ、参照した主要ファイル名を列挙する（analysis_result.md を必ず含める）
 - コードにはなぜそうするに至ったかコメントを記載する
 - `Edit` が2回連続で失敗したら、`strategy.py.staging` の該当箇所だけを狭い範囲で再読込し、より小さい patch へ分割してやり直す
