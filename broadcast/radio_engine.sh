@@ -13,6 +13,14 @@ _radio_opencode_should_defer_for_improve() {
 	return 1
 }
 
+# ピーク時間帯なら true (issue #14)。既定のラジオ生成エージェントは deepseek
+# (RADIO_AGENTS 先頭) のため、IMPROVE と同じピーク帯 (UTC 01:00-04:00, 06:00-10:00)
+# でラジオ生成を defer する。_is_peak_hour_utc は strategy/improve.sh 由来 (source 順序で利用可)。
+_radio_peak_hour_should_defer() {
+	[ "${RADIO_PEAK_HOUR_DEFER_ENABLED:-1}" = "1" ] || return 1
+	_is_peak_hour_utc "" "${RADIO_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-10:00}"
+}
+
 _run_opencode_radio_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file raw_text cleaned
@@ -1280,6 +1288,19 @@ _radio_generate_and_play() {
 			log "[RADIO:${corner_name}] duplicate skip: in-flight without game_num"
 		fi
 		_write_radio_corner_status "duplicate_inflight" "$corner_name" "$game_num" "$score" "$topic" "already_inflight" "$selected_news"
+		return 0
+	fi
+
+	# ピーク時間帯回避 (issue #14): deepseek (ラジオ生成の既定) はピーク帯
+	# (UTC 01:00-04:00, 06:00-10:00 = JST 10-13時, 15-19時) で入出力とも2倍課金のため、
+	# ピーク中は新規AI生成を止め、既に積まれた deferred ラジオを消化する。
+	# RADIO_PEAK_HOUR_DEFER_ENABLED=0 で即無効化。
+	if _radio_peak_hour_should_defer; then
+		_radio_set_state "peak_hour_deferred" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "")"
+		_write_radio_corner_status "peak_hour_deferred" "$corner_name" "$game_num" "$score" "$topic" "peak_hour" "$selected_news"
+		log "[RADIO:${corner_name}] ピーク時間帯のため新規生成を defer し、deferred キューを消化します"
+		rmdir "$inflight_dir" 2>/dev/null || true
+		_play_deferred_radio_queue_once 2>/dev/null || true
 		return 0
 	fi
 
