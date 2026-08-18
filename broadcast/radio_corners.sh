@@ -54,11 +54,11 @@ _news_self_search_fallback() {
 	past_topics=$(_radio_past_topics_block)
 	local past_news_titles=""
 	if [ -f "$PAST_NEWS_READ" ]; then
-		past_news_titles=$(tail -20 "$PAST_NEWS_READ" 2>/dev/null | sed 's/^/  - /')
+		past_news_titles=$(tail -10 "$PAST_NEWS_READ" 2>/dev/null | sed 's/^/  - /')
 	fi
 	local past_news_topics=""
 	if [ -f "$PAST_NEWS_TOPIC_KEYS" ]; then
-		past_news_topics=$(tail -30 "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null | sed 's/^/  - /')
+		past_news_topics=$(tail -15 "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null | sed 's/^/  - /')
 	fi
 
 	local prompt_file

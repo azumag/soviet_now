@@ -305,18 +305,6 @@ _run_minimax_comment() {
 
 _run_comment_agent() {
 	local agent="$1" prompt_file="$2"
-	if [[ "$agent" == opencode:* || "$agent" != *:* && "$agent" != ollama && "$agent" != qwen35e && "$agent" != gemma4e && "$agent" != haiku && "$agent" != claude && "$agent" != minimax && "$agent" != ccmm && "$agent" != qwencode ]]; then
-		local _comment_opencode_lock=""
-		if [[ "$agent" == opencode:* ]]; then
-			_comment_opencode_lock=$(_opencode_run_lock_dir "${agent#opencode:}" 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
-		else
-			_comment_opencode_lock=$(_opencode_run_lock_dir "$agent" 2>/dev/null || printf '%s' "tmp/state/.opencode_run_lock")
-		fi
-		if [ -d "$_comment_opencode_lock" ]; then
-			log "[COMMENT] opencode busy -> skip agent=${agent} for low-latency comment fallback" >&2
-			return 1
-		fi
-	fi
 	_ai_dispatch "COMMENT" "$agent" "$prompt_file"
 }
 

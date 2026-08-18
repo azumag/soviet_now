@@ -493,128 +493,6 @@ _ai_call_ollama_unqueued() {
 	printf '%s' "$output"
 }
 
-# _ai_call_qwencode LABEL PROMPT_FILE [TIMEOUT]
-_ai_call_qwencode_unqueued() {
-	local label="$1" prompt_file="$2"
-	local timeout_sec="${3:-${RADIO_QWENCODE_TIMEOUT:-120}}"
-	local output rc stderr_file stderr_preview rate_limited=false
-
-	[ -s "$prompt_file" ] || return 1
-	log "[${label}] qwencode call (prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
-	stderr_file=$(mktemp /tmp/ai_qwencode_stderr_XXXXXXXX)
-	output=$(timeout "$timeout_sec" qwen -p "$(cat "$prompt_file")" -y 2>"$stderr_file")
-	local rc=$?
-	stderr_preview=$(head -c 500 "$stderr_file" 2>/dev/null || true)
-	if [ $rc -ne 0 ] && [ -n "$stderr_preview" ]; then
-		_ai_rate_limit_text_detected "$stderr_preview" && rate_limited=true
-	fi
-	if [ $rc -eq 124 ]; then
-		log "[${label}] qwencode timeout (${timeout_sec}s)" >&2
-		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	if [ $rc -ne 0 ]; then
-		log "[${label}] qwencode failed (rc=$rc)" >&2
-		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	if [ -z "$output" ]; then
-		log "[${label}] qwencode empty output" >&2
-		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	rm -f "$stderr_file"
-	printf '%s' "$output"
-}
-
-
-# _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT] [PERMISSION]
-_ai_call_opencode_unqueued() {
-	local label="$1" agent="$2" prompt_file="$3"
-	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
-	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
-	local raw_file stderr_file raw_text cleaned lock_token="" lock_rc rate_limited=false
-	local old_lock_wait="${OPENCODE_RUN_LOCK_WAIT_SEC-}"
-	local old_lock_max_wait="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC-}"
-	local had_lock_wait=0
-	local had_lock_max_wait=0
-	[ "${OPENCODE_RUN_LOCK_WAIT_SEC+x}" = "x" ] && had_lock_wait=1
-	[ "${OPENCODE_RUN_LOCK_MAX_WAIT_SEC+x}" = "x" ] && had_lock_max_wait=1
-
-	[ -s "$prompt_file" ] || return 1
-	if [[ "$label" == COMMENT* ]] && [ -z "${OPENCODE_RUN_LOCK_MAX_WAIT_SEC:-}" ]; then
-		OPENCODE_RUN_LOCK_WAIT_SEC="${COMMENT_OPENCODE_LOCK_POLL_SEC:-1}"
-		OPENCODE_RUN_LOCK_MAX_WAIT_SEC="${COMMENT_OPENCODE_LOCK_MAX_WAIT_SEC:-4}"
-	fi
-	_opencode_run_lock_enter "${label}:opencode:${agent}" "$agent"
-	lock_rc=$?
-	if [ "$had_lock_wait" -eq 1 ]; then
-		OPENCODE_RUN_LOCK_WAIT_SEC="$old_lock_wait"
-	else
-		unset OPENCODE_RUN_LOCK_WAIT_SEC
-	fi
-	if [ "$had_lock_max_wait" -eq 1 ]; then
-		OPENCODE_RUN_LOCK_MAX_WAIT_SEC="$old_lock_max_wait"
-	else
-		unset OPENCODE_RUN_LOCK_MAX_WAIT_SEC
-	fi
-	if [ "$lock_rc" -ne 0 ]; then
-		log "[${label}] opencode slot unavailable quickly; fallback preferred for live comment (agent=$agent)" >&2
-		return 1
-	fi
-	lock_token="$OPENCODE_RUN_LOCK_LAST_TOKEN"
-	mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
-	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
-	_opencode_sync_auth_to_xdg
-	_opencode_cleanup_internal_locks
-	raw_file=$(mktemp /tmp/ai_opencode_raw_XXXXXXXX)
-	stderr_file=$(mktemp /tmp/ai_opencode_stderr_XXXXXXXX)
-	# opencode 1.3.x 以降は非 TTY でも動くため、旧 script(1) pty ラッパは廃止
-	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
-		timeout --kill-after=10s "$timeout_sec" opencode run --agent "$agent" "$(cat "$prompt_file")" \
-		>"$raw_file" 2>"$stderr_file"
-	local rc=$?
-	_opencode_run_lock_leave "$lock_token" "${label}:opencode:${agent}" "$agent"
-	if [ $rc -ne 0 ] && [ -s "$stderr_file" ]; then
-		_ai_rate_limit_text_detected "$(head -c 4000 "$stderr_file" 2>/dev/null)" && rate_limited=true
-	fi
-	if [ $rc -eq 124 ]; then
-		log "[${label}] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
-		rm -f "$raw_file"
-		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	if [ "$rate_limited" = "true" ]; then
-		log "[${label}] opencode explicit rate limit (agent=$agent)" >&2
-		rm -f "$raw_file" "$stderr_file"
-		return "$AI_RATE_LIMIT_RC"
-	fi
-	# script コマンドの rc は子プロセスの終了コードと一致しないことがある。
-	# raw_file に出力があれば成功とみなし、rc != 0 でも続行する。
-	if [ $rc -ne 0 ] && [ ! -s "$raw_file" ]; then
-		log "[${label}] opencode failed (rc=$rc, no output, agent=$agent)" >&2
-		rm -f "$raw_file"
-		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	raw_text=$(cat "$raw_file")
-	_notify_webfetch_failure "$label" "$agent" "$raw_text" "dispatch" || true
-	cleaned=$(printf '%s' "$raw_text" | _ai_guard_model_output)
-	rm -f "$raw_file"
-	rm -f "$stderr_file"
-	if _contains_provider_error_text "$cleaned"; then
-		log "[${label}] opencode provider error (agent=$agent)" >&2
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	printf '%s' "$cleaned"
-}
-
 _ai_call_claude() {
 	local label="${1:-AI}" model="${3:-$RADIO_CLAUDE_MODEL}"
 	_ai_generation_queue_run "$(_ai_queue_label "$label" "claude" "$model")" _ai_call_claude_unqueued "$@"
@@ -630,14 +508,86 @@ _ai_call_ollama() {
 	_ai_generation_queue_run "$(_ai_queue_label "$label" "ollama" "$model")" _ai_call_ollama_unqueued "$@"
 }
 
-_ai_call_qwencode() {
-	local label="${1:-AI}"
-	_ai_generation_queue_run "$(_ai_queue_label "$label" "qwencode" "qwencode")" _ai_call_qwencode_unqueued "$@"
+# === ローカル LLM (Tailscale 経由・無料) ===
+
+# _ai_call_local_llm LABEL PROMPT_FILE [MODEL] [TIMEOUT]
+_ai_call_local_llm_unqueued() {
+	local label="$1" prompt_file="$2"
+	local model="${3:-${LOCAL_LLM_MODEL:-gemma4:12b}}"
+	local timeout_sec="${4:-${LOCAL_LLM_TIMEOUT:-180}}"
+	local base_url="${LOCAL_LLM_BASE_URL:-http://100.112.104.102:11434}"
+	local output rc stderr_file stderr_preview body_file rate_limited=false
+
+	[ -s "$prompt_file" ] || return 1
+	log "[${label}] local LLM call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	stderr_file=$(mktemp /tmp/ai_local_llm_stderr_XXXXXXXX)
+	body_file=$(mktemp /tmp/ai_local_llm_body_XXXXXXXX)
+	python3 - "$prompt_file" "$body_file" "$model" <<'PY'
+import json
+import sys
+
+prompt_file, body_file, model = sys.argv[1:4]
+with open(prompt_file, encoding="utf-8") as f:
+    prompt = f.read()
+body = {
+    "model": model,
+    "messages": [{"role": "user", "content": prompt}],
+    "stream": False,
+    "temperature": 0.7,
+    "num_predict": 1600,
+}
+with open(body_file, "w", encoding="utf-8") as f:
+    json.dump(body, f, ensure_ascii=False)
+PY
+	output=$(timeout "$timeout_sec" curl -sS --max-time "$timeout_sec" \
+		"$base_url/v1/chat/completions" \
+		-H 'Content-Type: application/json' \
+		--data-binary @"$body_file" 2>"$stderr_file")
+	rc=$?
+	rm -f "$body_file"
+	stderr_preview=$(head -c 500 "$stderr_file" 2>/dev/null || true)
+	if [ $rc -ne 0 ] && [ -n "$stderr_preview" ]; then
+		_ai_rate_limit_text_detected "$stderr_preview" && rate_limited=true
+	fi
+	if [ $rc -eq 124 ]; then
+		log "[${label}] local LLM timeout (${timeout_sec}s, model=$model)" >&2
+		rm -f "$stderr_file"
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] local LLM failed (rc=$rc, model=$model)" >&2
+		rm -f "$stderr_file"
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	local content
+	content=$(printf '%s' "$output" | python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+    print(data["choices"][0]["message"].get("content") or "")
+except Exception:
+    print("")
+' 2>/dev/null)
+	rm -f "$stderr_file"
+	if [ -z "$content" ]; then
+		log "[${label}] local LLM empty output (model=$model)" >&2
+		return 1
+	fi
+	if _contains_provider_error_text "$content"; then
+		log "[${label}] local LLM provider error (model=$model)" >&2
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	printf '%s' "$content"
 }
 
-_ai_call_opencode() {
-	local label="${1:-AI}" agent="${2:-opencode}"
-	_ai_generation_queue_run "$(_ai_queue_label "$label" "opencode" "$agent")" _ai_call_opencode_unqueued "$@"
+_ai_call_local_llm() {
+	local label="${1:-AI}" model="${3:-${LOCAL_LLM_MODEL:-gemma4:12b}}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "local" "$model")" _ai_call_local_llm_unqueued "$@"
 }
 
 # === Codex (統一ハーネス) ===
@@ -774,10 +724,16 @@ _ai_dispatch() {
 
 	# ハーネスは codex CLI に統一。codex:<model> はそのモデルを選択し、
 	# 従来形式のエージェント識別子は CODEX_MODEL を使う。
+	# local[:<model>] は Tailscale 経由の無料ローカル LLM へ直接送る。
 	local _codex_timeout="$timeout_override"
 	case "$agent" in
 	'' )
 		return 1
+		;;
+	local:* | local)
+		local _local_model=""
+		[ "$agent" = "local" ] || _local_model="${agent#local:}"
+		_ai_call_local_llm "$label" "$prompt_file" "$_local_model" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	*)
 		if [[ "$label" == COMMENT* ]] && [ -z "$_codex_timeout" ]; then
