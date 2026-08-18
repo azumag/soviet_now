@@ -42,3 +42,30 @@ def has_near_for_type(near_pairs, piece_type):
         for np in near_pairs
         if isinstance(np, (list, tuple)) and len(np) >= 2
     )
+
+
+def pieces_of_type_at_least(pieces, min_type):
+    """type>=min_type のピースを (type, x, y, r) の一覧で返す（機械的集計）。
+
+    閾値 min_type は呼び出し側が渡す（数値リテラルを decide() 側に残し、
+    hash 追跡・wildcard 摂動の対象に保つため）。
+    """
+    pieces = pieces if isinstance(pieces, list) else []
+    out = []
+    for p in pieces:
+        if not isinstance(p, dict):
+            continue
+        t = p.get("type")
+        if not isinstance(t, (int, float)) or isinstance(t, bool):
+            continue
+        if t < min_type:
+            continue
+        out.append(
+            (
+                t,
+                float(p.get("x", 0.0) or 0.0),
+                float(p.get("y", 0.0) or 0.0),
+                float(p.get("r", 0.5) or 0.5),
+            )
+        )
+    return out

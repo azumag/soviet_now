@@ -62,10 +62,6 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 # v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
 # Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
 # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
-# v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE/BLOCK 追加。近接 T12/T13 同typeペアの併合レーンを保護し、
-# 前駆typeを +140 誘導・非前駆typeのレーン内低配置を -200 抑止（対象段階: ウクライナ T13）
-# Fixes rollback failure mode: T12/T13 ペアが接触圏内でもギャップに別typeが挟まり高さ隔離のまま放置され T13/T14 未達になる
-# refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt
 
 def decide(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
@@ -416,30 +412,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _px2, _py2 = float(_low[_i + 1].get("x", 0.0) or 0.0), float(_low[_i + 1].get("y", 0.0) or 0.0)
                 t12_low_pairs.append((_ptype, min(_px1, _px2), max(_px1, _px2), max(_py1, _py2)))
 
-    # --- v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE / BLOCK pre-computation ---
-    # 採用仮説（T13 未達の構造敗因）: T12/T13 同typeペアが接触圏内でも、ギャップに別typeが
-    # 挟まったり高さが隔離されたりして 20〜45 ターン放置される。前駆type（T12ペアへは T11、
-    # T13ペアへは T12）を併合レーン内の低い帯へ誘導し、非前駆typeのレーン内低配置を抑止する。
-    # T13 ペアは盤上に実在する時のみレーンになる（T13 が無ければ T12 レーンで誘導）。
-    frontier_merge_lanes = []
-    if isinstance(pieces, list):
-        _frontier = [p for p in pieces if p.get("type") in (12, 13)]
-        _frontier.sort(key=lambda p: float(p.get("x", 0.0) or 0.0))
-        for _i in range(len(_frontier) - 1):
-            _f1 = _frontier[_i]
-            _f2 = _frontier[_i + 1]
-            if _f1.get("type") != _f2.get("type"):
-                continue  # 同typeペアのみが併合レーンになる
-            _ftype = _f1.get("type")
-            _fx1, _fy1 = float(_f1.get("x", 0.0) or 0.0), float(_f1.get("y", 0.0) or 0.0)
-            _fx2, _fy2 = float(_f2.get("x", 0.0) or 0.0), float(_f2.get("y", 0.0) or 0.0)
-            _fr1 = float(_f1.get("r", 0.5) or 0.5)
-            _fr2 = float(_f2.get("r", 0.5) or 0.5)
-            if abs(_fx1 - _fx2) > 4.5 or abs(_fy1 - _fy2) > _fr1 + _fr2 + 2.0:
+    # --- HIGH_TYPE_COVER_AVOID pre-computation ---
+    # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
+    # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
+    # その「上が空いている」状態を壊した原因の大半は自分が落としたピースだった。
+    # 既に被覆済みのピースを再度覆っても失う併合レーンは無いので、
+    # 抑止対象は「上が空いている高type」だけに限定する。
+    # next_type と同type（上置き＝併合レーンそのもの）と、その1つ下の type
+    # （N の上に N-1 を置くのは次に N-1 が来れば N を作れる中間素材になる。
+    #  improve_strategy.md「typeNの上にtypeN-1をのせるのはいい」）はここで除外する。
+    next_r = float(next_piece.get("r", 0.5) or 0.5)
+    high_cover_free = []
+    for _hc_t, _hc_x, _hc_y, _hc_r in board_stats.pieces_of_type_at_least(pieces, 10):
+        if _hc_t == next_type or _hc_t - 1 == next_type:
+            continue
+        _hc_open = True
+        for _op in pieces:
+            _op_y = float(_op.get("y", 0.0) or 0.0)
+            if _op_y < _hc_y + 0.2:
                 continue
-            frontier_merge_lanes.append(
-                (_ftype, min(_fx1, _fx2), max(_fx1, _fx2), max(_fy1, _fy2), min(_fy1, _fy2), (_fx1 + _fx2) / 2.0)
-            )
+            if abs(float(_op.get("x", 0.0) or 0.0) - _hc_x) <= (
+                _hc_r + float(_op.get("r", 0.5) or 0.5)
+            ) * 0.9:
+                _hc_open = False
+                break
+        if _hc_open:
+            high_cover_free.append((_hc_x, (_hc_r + next_r) * 0.9, _hc_y + 0.2))
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -911,39 +909,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= min(80.0 + (_zptype - 11) * 8.0, 200.0)
                     reasons.append("REACTIVE_PAIR_GAP_BLOCK")
 
-        # ----- v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE / BLOCK (T12/T13併合レーン保護) -----
-        # 採用仮説: 近接 T12/T13 同typeペアの併合レーン（2ピース間の横span・低いy帯）を守り、
-        # 前駆typeの低位置ドロップをレーン内へ誘導（+140）する。非前駆typeのレーン内低配置は
-        # -200 で抑止し、000258 型の「ギャップに T5 等を挟む」配置をドロップ前に防ぐ。
-        # next_type==pair_type は上置き=併合レーンなので既存 same-type 軸に委譲し加点しない。
-        # 安全不変条件: 非crossing・非 deadline_crossed・margin>=1.0・T15不在の安全域のみ。
+        # ----- HIGH_TYPE_COVER_AVOID (高type併合レーンの被覆抑止) -----
+        # mandatory_themes #4「既存同typeペアの上・間・接触経路を塞ぐな」を高type単体へ一般化する。
+        # 非併合ドロップのときだけ、上が空いている type>=10 の真上に載る候補を抑止する。
+        # 抑止量は既存の被覆抑止軸 T12_PAIR_COVER_AVOID と同じ 200.0。ただし同じ候補で
+        # T12_PAIR_COVER_AVOID が既に付いている場合は合算で -400 になりうる（意図的な二重減点ではない）。
+        # 安全不変条件: 非crossing・非 deadline_crossed・margin>=1.0・death_spiral 時は不発火。
+        # ロシア(type15)在盤時は対象データが実質ゼロで未検証のため、v701 と同様に不発火とする。
         if (
             merge_grade == "NO"
-            and max_y < 2.0
             and not deadline_crossed
             and reactor_margin >= 1.0
             and not result.get("crosses_deadline")
+            and not death_spiral
             and type15_count == 0
-            and frontier_merge_lanes
+            and high_cover_free
         ):
-            _fp_score = 0.0
-            _fp_reason = None
-            for _ftype, _fmin_x, _fmax_x, _ftop_y, _fbot_y, _fmid_x in frontier_merge_lanes:
-                if not (
-                    _fmin_x - 0.3 <= x <= _fmax_x + 0.3
-                    and _ftop_y - 2.0 <= landing_y <= _ftop_y + 1.2
-                ):
-                    continue
-                if next_type == _ftype - 1:
-                    if _fp_score < 140.0:
-                        _fp_score = 140.0
-                        _fp_reason = "FRONTIER_PAIR_MERGE_ZONE_GUIDANCE"
-                elif next_type != _ftype and _fp_score > -200.0:
-                    _fp_score = -200.0
-                    _fp_reason = "FRONTIER_PAIR_MERGE_ZONE_BLOCK"
-            if _fp_reason:
-                score += _fp_score
-                reasons.append(_fp_reason)
+            for _hc_x, _hc_tol, _hc_min_y in high_cover_free:
+                if abs(x - _hc_x) <= _hc_tol and landing_y >= _hc_min_y:
+                    score -= 200.0
+                    reasons.append("HIGH_TYPE_COVER_AVOID")
+                    break
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
@@ -1405,7 +1391,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-3.0, min(3.0, best_x))
+    best_x = max(-0.991, min(4.362, best_x))
     best_x = round(best_x, 4)
 
     return {"x": best_x, "reason": best_reason}
