@@ -1315,16 +1315,16 @@ _radio_generate_and_play() {
 	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
-		radio_primary_agent="${RADIO_SOREN91_AGENT:-haiku}"
-		radio_second_agent="${RADIO_SOREN91_FALLBACK:-gemma4e}"
+		radio_primary_agent="${RADIO_SOREN91_AGENT:-codex:deepseek-v4-flash}"
+		radio_second_agent="${RADIO_SOREN91_FALLBACK:-codex:minimax-m3}"
 		radio_third_agent=""
 		radio_allow_claude_fallback=false
 	else
-		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-opencode:minimax-m3}"
-		radio_agents_list="${RADIO_AGENTS:-opencode:minimax-m3,opencode:qwen35pgo,qwen35e,haiku}"
+		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-codex:deepseek-v4-flash}"
+		radio_agents_list="${RADIO_AGENTS:-codex:deepseek-v4-flash,codex:minimax-m3}"
 		# 後方互換 (soren91モード向け)
-		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode:qwen35pgo}"
-		radio_second_agent="${RADIO_MAIN_FALLBACK:-qwen35e}"
+		radio_primary_agent="${RADIO_MAIN_AGENT:-codex:deepseek-v4-flash}"
+		radio_second_agent="${RADIO_MAIN_FALLBACK:-codex:minimax-m3}"
 	fi
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
