@@ -58,6 +58,15 @@ from strategy_helpers import board_stats
 FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+# Change History
+# v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
+# Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
+# refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
+# v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE/BLOCK 追加。近接 T12/T13 同typeペアの併合レーンを保護し、
+# 前駆typeを +140 誘導・非前駆typeのレーン内低配置を -200 抑止（対象段階: ウクライナ T13）
+# Fixes rollback failure mode: T12/T13 ペアが接触圏内でもギャップに別typeが挟まり高さ隔離のまま放置され T13/T14 未達になる
+# refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt
+
 def decide(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
 
@@ -289,6 +298,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     russia_phase_count = sum(1 for p in pieces if p.get("type") in (14, 15))  # T14=Kazakhstan precursor, T15=Russia
     russia_phase = russia_phase_count >= 1
 
+    # T14 が1個できただけで russia_phase が発火すると v701 の素材組み立て誘導が止まり、
+    # 2個目の T13/T14 が作れず T14→T15 へ進めない（2020型ログで T14 後 laneA=0）。
+    # 実在の T15（ロシア）がある場合のみ現行のロシアフェーズ安全着地へ移行する。
+    type15_count = sum(1 for p in pieces if p.get("type") == 15)
+
     double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1
 
     # --- phase judgment (v42 thresholds) ---
@@ -380,15 +394,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             reactive_zone_pairs.append((_ptype, _zmid, _zspan, _ztop, _zmin_y, _zr, _zblocked))
     t12_on_board = isinstance(pieces, list) and any(p.get("type") == 12 for p in pieces)
+    # T14 存在時は T13 もレーンアンカー・被覆抑止ペアに含め、既存 T13/T14 クラスタ側へ素材を集約する
+    # （T13+T13→2個目 T14→T14+T14→T15 の盤面組み立て経路を維持）。
+    t14_on_board = isinstance(pieces, list) and any(p.get("type") == 14 for p in pieces)
     t12_lane_xs = []
     t12_lane_top = -10.0
     t12_low_pairs = []
     if isinstance(pieces, list):
-        _t11t12 = [p for p in pieces if p.get("type") in (11, 12)]
+        _t11t12 = [p for p in pieces if p.get("type") in (11, 12) or (t14_on_board and p.get("type") == 13)]
         t12_lane_xs = [float(p.get("x", 0.0) or 0.0) for p in _t11t12]
         t12_lane_top = max([float(p.get("y", 0.0) or 0.0) for p in _t11t12], default=-10.0)
         # 低い（y<=0.8）同typeピースをx順に隣接ペア化し、被覆抑止帯（span・top）を一度計算。
-        for _ptype in (11, 12):
+        for _ptype in ((11, 12, 13) if t14_on_board else (11, 12)):
             _low = [
                 p for p in _t11t12
                 if p.get("type") == _ptype and float(p.get("y", 99.0) or 99.0) <= 0.8
@@ -398,6 +415,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _px1, _py1 = float(_low[_i].get("x", 0.0) or 0.0), float(_low[_i].get("y", 0.0) or 0.0)
                 _px2, _py2 = float(_low[_i + 1].get("x", 0.0) or 0.0), float(_low[_i + 1].get("y", 0.0) or 0.0)
                 t12_low_pairs.append((_ptype, min(_px1, _px2), max(_px1, _px2), max(_py1, _py2)))
+
+    # --- v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE / BLOCK pre-computation ---
+    # 採用仮説（T13 未達の構造敗因）: T12/T13 同typeペアが接触圏内でも、ギャップに別typeが
+    # 挟まったり高さが隔離されたりして 20〜45 ターン放置される。前駆type（T12ペアへは T11、
+    # T13ペアへは T12）を併合レーン内の低い帯へ誘導し、非前駆typeのレーン内低配置を抑止する。
+    # T13 ペアは盤上に実在する時のみレーンになる（T13 が無ければ T12 レーンで誘導）。
+    frontier_merge_lanes = []
+    if isinstance(pieces, list):
+        _frontier = [p for p in pieces if p.get("type") in (12, 13)]
+        _frontier.sort(key=lambda p: float(p.get("x", 0.0) or 0.0))
+        for _i in range(len(_frontier) - 1):
+            _f1 = _frontier[_i]
+            _f2 = _frontier[_i + 1]
+            if _f1.get("type") != _f2.get("type"):
+                continue  # 同typeペアのみが併合レーンになる
+            _ftype = _f1.get("type")
+            _fx1, _fy1 = float(_f1.get("x", 0.0) or 0.0), float(_f1.get("y", 0.0) or 0.0)
+            _fx2, _fy2 = float(_f2.get("x", 0.0) or 0.0), float(_f2.get("y", 0.0) or 0.0)
+            _fr1 = float(_f1.get("r", 0.5) or 0.5)
+            _fr2 = float(_f2.get("r", 0.5) or 0.5)
+            if abs(_fx1 - _fx2) > 4.5 or abs(_fy1 - _fy2) > _fr1 + _fr2 + 2.0:
+                continue
+            frontier_merge_lanes.append(
+                (_ftype, min(_fx1, _fx2), max(_fx1, _fx2), max(_fy1, _fy2), min(_fy1, _fy2), (_fx1 + _fx2) / 2.0)
+            )
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -821,7 +863,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 連鎖発火を狙えるよう、クラスタ内（+2.5）では横距離のみの減衰、+4.5 まで半減で継続する。
         # 低い 11/11・12/12 ペアの真上へ別typeを積む候補は -200 で抑止（被覆防止）。
         # next_type==ペアtype は上置き=併合レーンなので対象外（テーマ#4の次手レーン保護も満たす）。
-        # 安全不変条件: 非crossing・非 deadline_crossed・margin>=1.0 限定。russia_phase では不発火。
+        # 安全不変条件: 非crossing・非 deadline_crossed・margin>=1.0 限定。実在 T15 がある時のみ不発火。
         # v699 の REACTIVE_PAIR_GAP_BLOCK は (c) として維持。
         if (
             merge_grade == "NO"
@@ -830,10 +872,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and reactor_margin >= 1.0
             and not result.get("crosses_deadline")
             and not death_spiral
-            and not russia_phase
+            and type15_count == 0
             and t12_on_board
         ):
-            # (a) 横レーン誘導: 最寄りの T11/T12 x へ dx<=2.0 で最大140、dx=2.0 で0。
+            # (a) 横レーン誘導: 最寄りの T11/T12（T14存在時はT13含む）x へ dx<=2.0 で最大140、dx=2.0 で0。
             if t12_lane_xs:
                 _t12_dx = min(abs(x - _tx) for _tx in t12_lane_xs)
                 if _t12_dx <= 2.0:
@@ -868,6 +910,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ):
                     score -= min(80.0 + (_zptype - 11) * 8.0, 200.0)
                     reasons.append("REACTIVE_PAIR_GAP_BLOCK")
+
+        # ----- v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE / BLOCK (T12/T13併合レーン保護) -----
+        # 採用仮説: 近接 T12/T13 同typeペアの併合レーン（2ピース間の横span・低いy帯）を守り、
+        # 前駆typeの低位置ドロップをレーン内へ誘導（+140）する。非前駆typeのレーン内低配置は
+        # -200 で抑止し、000258 型の「ギャップに T5 等を挟む」配置をドロップ前に防ぐ。
+        # next_type==pair_type は上置き=併合レーンなので既存 same-type 軸に委譲し加点しない。
+        # 安全不変条件: 非crossing・非 deadline_crossed・margin>=1.0・T15不在の安全域のみ。
+        if (
+            merge_grade == "NO"
+            and max_y < 2.0
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and type15_count == 0
+            and frontier_merge_lanes
+        ):
+            _fp_score = 0.0
+            _fp_reason = None
+            for _ftype, _fmin_x, _fmax_x, _ftop_y, _fbot_y, _fmid_x in frontier_merge_lanes:
+                if not (
+                    _fmin_x - 0.3 <= x <= _fmax_x + 0.3
+                    and _ftop_y - 2.0 <= landing_y <= _ftop_y + 1.2
+                ):
+                    continue
+                if next_type == _ftype - 1:
+                    if _fp_score < 140.0:
+                        _fp_score = 140.0
+                        _fp_reason = "FRONTIER_PAIR_MERGE_ZONE_GUIDANCE"
+                elif next_type != _ftype and _fp_score > -200.0:
+                    _fp_score = -200.0
+                    _fp_reason = "FRONTIER_PAIR_MERGE_ZONE_BLOCK"
+            if _fp_reason:
+                score += _fp_score
+                reasons.append(_fp_reason)
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
@@ -1329,7 +1405,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-0.991, min(4.362, best_x))
+    best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 4)
 
     return {"x": best_x, "reason": best_reason}
