@@ -236,8 +236,10 @@ class AiGenerateBackoffTests(unittest.TestCase):
         result = self._run_list("failed")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("RESULT=failure", result.stdout)
-        self.assertIn("DEEPSEEK_EXISTS=0", result.stdout)
-        self.assertIn("MINIMAX_EXISTS=0", result.stdout)
+        # プロバイダ/CLI 失敗 (rc!=0) はモデル別バックオフを設定する。
+        # 両エージェントとも失敗するため、両方にバックオフが付く。
+        self.assertIn("DEEPSEEK_EXISTS=1", result.stdout)
+        self.assertIn("MINIMAX_EXISTS=1", result.stdout)
 
     def test_rate_limit_words_in_model_output_alone_do_not_backoff(self) -> None:
         result = self._run_list("invalid_rate_text")
