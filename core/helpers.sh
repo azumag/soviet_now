@@ -155,14 +155,22 @@ _is_peak_hours() {
 	return 1
 }
 
-# ピーク時のみ、カンマ区切りエージェントリスト内の優先エージェントを先頭へ寄せる。
-# 他候補は元の相対順序を保つ。候補の削除・追加は一切しない（フォールバックは温存）。
-# 使い方: NEW_LIST=$(_peak_priority_agent_list "$LIST" [PREFERRED])
+# ピーク時のみ、カンマ区切りエージェントリストを PEAK_HOURS_AGENT_PREFERENCE の
+# 優先順序で並べ直す。最上位の該当候補を先頭へ、以降も優先順に並べ、残りは元の
+# 相対順序を保つ。候補の削除・追加は一切しない（フォールバックは温存）。
+# 使い方: NEW_LIST=$(_peak_priority_agent_list "$LIST")
 # 注意: 呼び出し側が $( ) で受けるため、この関数は stdout に結果以外を出力しない。
 _peak_priority_agent_list() {
-	local list_raw="${1:-}" preferred="${2:-}"
-	[ -n "$preferred" ] || preferred="${PEAK_HOURS_PRIORITY_AGENT:-codex:minimax-m3}"
-	if [ -z "$list_raw" ] || [ -z "$preferred" ] || [ "${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}" != "1" ]; then
+	local list_raw="${1:-}"
+	local preferences="${2:-}"
+	if [ -z "$preferences" ]; then
+		preferences="${PEAK_HOURS_AGENT_PREFERENCE:-}"
+	fi
+	if [ -z "$preferences" ]; then
+		# 後方互換: 単一優先エージェント指定のみの場合は従来どおり 1 件で扱う。
+		preferences="${PEAK_HOURS_PRIORITY_AGENT:-codex:minimax-m3}"
+	fi
+	if [ -z "$list_raw" ] || [ -z "$preferences" ] || [ "${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}" != "1" ]; then
 		printf '%s' "$list_raw"
 		return 0
 	fi
@@ -170,7 +178,8 @@ _peak_priority_agent_list() {
 		printf '%s' "$list_raw"
 		return 0
 	fi
-	local rest="$list_raw" item matched="" others=""
+	# 元リストを配列へ
+	local all_items=() rest="$list_raw" item
 	while [ -n "$rest" ]; do
 		case "$rest" in
 		*,*)
@@ -185,21 +194,68 @@ _peak_priority_agent_list() {
 		item="${item#"${item%%[![:space:]]*}"}"
 		item="${item%"${item##*[![:space:]]}"}"
 		[ -n "$item" ] || continue
-		if [ "$item" = "$preferred" ]; then
-			if [ -n "$matched" ]; then matched="${matched},${item}"; else matched="$item"; fi
-		else
-			if [ -n "$others" ]; then others="${others},${item}"; else others="$item"; fi
-		fi
+		all_items+=("$item")
 	done
-	if [ -z "$matched" ]; then
+
+	local pref_list=() pref_rest="$preferences" pref_item
+	while [ "$pref_rest" ]; do
+		case "$pref_rest" in
+		*,*)
+			pref_item="${pref_rest%%,*}"
+			pref_rest="${pref_rest#*,}"
+			;;
+		*)
+			pref_item="$pref_rest"
+			pref_rest=""
+			;;
+		esac
+		pref_item="${pref_item#"${pref_item%%[![:space:]]*}"}"
+		pref_item="${pref_item%"${pref_item##*[![:space:]]}"}"
+		[ -n "$pref_item" ] && pref_list+=("$pref_item")
+	done
+
+	# 優先順に一致候補を抽出（重複防止）
+	local ordered=() seen="" p
+	for p in "${pref_list[@]}"; do
+		local j=0
+		for item in "${all_items[@]}"; do
+			j=$((j + 1))
+			case ",${seen}," in
+			*",${j},"*) continue ;;
+			esac
+			if [ "$item" = "$p" ]; then
+				ordered+=("$item")
+				seen="${seen},${j}"
+				break
+			fi
+		done
+	done
+	# 全候補が先頭へ移動済みか判定（移動が無ければ元のまま）
+	local moved_count=${#ordered[@]}
+	if [ "$moved_count" -eq 0 ]; then
 		printf '%s' "$list_raw"
 		return 0
 	fi
-	if [ -n "$others" ]; then
-		printf '%s' "${matched},${others}"
-	else
-		printf '%s' "$matched"
-	fi
+	# 残りを元の相対順で追加
+	local idx=0
+	for item in "${all_items[@]}"; do
+		idx=$((idx + 1))
+		case ",${seen}," in
+			*",${idx},"*) continue ;;
+		esac
+		ordered+=("$item")
+	done
+	local out_list="" oi
+	oi=0
+	for item in "${ordered[@]}"; do
+		if [ "$oi" -eq 0 ]; then
+			out_list="$item"
+		else
+			out_list="${out_list},${item}"
+		fi
+		oi=$((oi + 1))
+	done
+	printf '%s' "$out_list"
 }
 
 #=== ANSIエスケープ除去 ===

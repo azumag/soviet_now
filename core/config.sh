@@ -27,22 +27,26 @@ REGRESSION_DISABLED=0
 MERIKEN_SCHEDULED_TIME_ENABLED=0 # 20-21時メリケンAIタイムを無効化
 MODEL_FALLBACK_IMPROVE="${MODEL_FALLBACK_IMPROVE:-codex:deepseek-v4-flash}"
 MODEL_LAST_RESORT="codex:deepseek-v4-flash"
-# MODEL_IMPROVE_LIST: 改善ループのモデルフォールバックリスト（カンマ区切り、優先度順）。
-# 本文生成と同じラダーから local を除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
+# ===== 共通モデルチェーン =====
+# 全 AI 生成系の単一の順序原典。低コスト/無料枠を先頭、確実な有償枠を末尾に置く。
+# 各用途はこのリストを基底に、local を含めるか・特定枠を外すかだけを変える。
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-codex:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3}"
+
+# MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
+# 除いたもの。run_ai_list() が順に試行する。
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-codex:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
 
 GAME_COUNT_FILE="game_count.txt"
 
 RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-codex:deepseek-v4-flash}"
 RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-codex:deepseek-v4-flash}"
 RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-codex:minimax-m3}"
-RADIO_MAIN_OLLAMA_FALLBACK="${RADIO_MAIN_OLLAMA_FALLBACK:-codex:minimax-m3}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
-RADIO_AGENTS="${RADIO_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
-# RADIO_PREPASS_AGENTS: 事前調査 (prepass) のモデルフォールバックリスト。
-# 本文生成と同じラダーから local を除いたもの。ai_generate_list() が順に試行する。
-RADIO_PREPASS_AGENTS="${RADIO_PREPASS_AGENTS:-codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
+RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
+# RADIO_PREPASS_AGENTS: 事前調査 (prepass) のモデルフォールバックリスト。共通チェーンを
+# そのまま使う。ai_generate_list() が順に試行する。
+RADIO_PREPASS_AGENTS="${RADIO_PREPASS_AGENTS:-$AI_COMMON_AGENTS}"
 AI_AGENT_BACKOFF_SEC="${AI_AGENT_BACKOFF_SEC:-600}"
 RADIO_OPENCODE_DEFER_DURING_IMPROVE="${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}"
 RADIO_OPENCODE_TIMEOUT=240
@@ -56,7 +60,6 @@ RADIO_OLLAMA_TIMEOUT="${RADIO_OLLAMA_TIMEOUT:-300}"
 COMMENT_OLLAMA_MODEL="${COMMENT_OLLAMA_MODEL:-qwen3.5:9b}"
 COMMENT_OLLAMA_MODEL_IMPROVING="${COMMENT_OLLAMA_MODEL_IMPROVING:-gemma4:latest}"
 COMMENT_OLLAMA_TIMEOUT="${COMMENT_OLLAMA_TIMEOUT:-20}"
-COMMENT_MAIN_AGENT="${COMMENT_MAIN_AGENT:-codex:deepseek-v4-flash}"
 COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-codex:deepseek-v4-flash}"
 COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-codex:minimax-m3}"
 COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-codex:deepseek-v4-flash}"
@@ -70,13 +73,9 @@ CODEX_BUG_DISPATCH_ENABLED="${CODEX_BUG_DISPATCH_ENABLED:-1}"
 CODEX_BUG_DISPATCH_MIN_INTERVAL_SEC="${CODEX_BUG_DISPATCH_MIN_INTERVAL_SEC:-900}"
 CODEX_BUG_DISPATCH_CODEX_CMD="${CODEX_BUG_DISPATCH_CODEX_CMD:-codex}"
 CODEX_BUG_DISPATCH_MODEL="${CODEX_BUG_DISPATCH_MODEL:-}"
-COMMENT_MAIN_FALLBACK="${COMMENT_MAIN_FALLBACK:-codex:minimax-m3}"
-COMMENT_MAIN_OLLAMA_FALLBACK="${COMMENT_MAIN_OLLAMA_FALLBACK:-codex:minimax-m3}"
-COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK="${COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK:-0}"
 # COMMENT_AGENTS: コメント返し生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
-# 設定するとCOMMENT_MAIN_AGENT/FALLBACK/OLLAMA_FALLBACKより優先される
-COMMENT_AGENTS="${COMMENT_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
-COMMENT_AGENT_BACKOFF_SEC="${COMMENT_AGENT_BACKOFF_SEC:-18000}"
+# 共通チェーン（AI_COMMON_AGENTS）を基底に使う。ai_generate_list() が順に試行する。
+COMMENT_AGENTS="${COMMENT_AGENTS:-$AI_COMMON_AGENTS}"
 COMMENT_TRANSLATION_AGENTS="${COMMENT_TRANSLATION_AGENTS:-$COMMENT_AGENTS}"
 COMMENT_TRANSLATION_TIMEOUT="${COMMENT_TRANSLATION_TIMEOUT:-20}"
 COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-codex:deepseek-v4-flash}"
@@ -94,6 +93,15 @@ PEAK_HOURS_AGENT_SWAP_ENABLED="${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}"
 PEAK_HOURS_WINDOWS="${PEAK_HOURS_WINDOWS-10-13,15-19}"
 PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
 PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-codex:minimax-m3}"
+# ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
+# minimax > openrouter/free > local > deepseek系。
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-codex:minimax-m3,codex:openrouter/free,local}"
+
+# ===== モデル別バックオフ時間（秒） =====
+# ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
+# `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
+# 既定（該当なし）は AI_AGENT_BACKOFF_SEC。
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000"
 # ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
 # 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
 # コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成されることがある。
