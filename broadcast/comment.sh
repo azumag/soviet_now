@@ -2900,7 +2900,7 @@ RETRYCOMMENT
 			fi
 			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
 				attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
-				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				# _sanitize_onair_text は SING JSON 行を除去するため抽出前に実行しない（抽出後にまとめて sanitizing する）
 			else
 				attempt_talk=""
 				attempt_model=""
@@ -2917,6 +2917,7 @@ RETRYCOMMENT
 			# 楽譜JSONを抽出（===ADVICE=== より先に処理）。
 			# ===SING=== マーカーあり・なし両方の楽譜JSONを扱い、
 			# 本文から必ず除去してJSONが読み上げられないようにする。
+			# sanitize 前に抽出することで、==SING== 内の JSON が sanitize で誤って除去されるのを防ぐ。
 			local sing_score=""
 			if echo "$attempt_talk" | grep -Eq '^[[:space:]]*===SING===|"notes"[[:space:]]*:'; then
 				sing_score=$(printf '%s' "$attempt_talk" | _extract_sing_score || true)
@@ -3021,44 +3022,7 @@ RETRYCOMMENT
 				rm -f "$translation_prompt_file"
 			fi
 
-			# 歌声合成: 楽譜JSONが有効なら非同期で合成→キューに投入
-			if [ -n "$sing_score" ]; then
-				if echo "$sing_score" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'notes' in d" 2>/dev/null; then
-					local score_file="/tmp/sing_score_$(date +%s)_$$.json"
-					echo "$sing_score" >"$score_file"
-					(
-						local sing_wav="/tmp/sing_wav_$(date +%s)_$$.wav"
-						local _sing_lock="tmp/.say_queue/.voicevox_synth_lock"
-						local _sing_lock_held=0 _sing_lock_wait=0
-						while ! mkdir "$_sing_lock" 2>/dev/null; do
-							sleep 0.5
-							_sing_lock_wait=$((_sing_lock_wait + 1))
-							if [ "$_sing_lock_wait" -ge 120 ]; then break; fi # 60s timeout
-						done
-						[ "$_sing_lock_wait" -lt 120 ] && _sing_lock_held=1
-						if [ "$_sing_lock_held" -eq 1 ]; then
-							if VOICEVOX_SING_HOST_MODE="$_comment_mode_generated" "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
-								rmdir "$_sing_lock" 2>/dev/null
-								_sing_lock_held=0
-								SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
-								rm -f "$sing_wav"
-							else
-								rmdir "$_sing_lock" 2>/dev/null
-								_sing_lock_held=0
-								log "[COMMENT] 歌声合成失敗: $score_file"
-							fi
-						else
-							log "[COMMENT] VOICEVOX合成ロック取得タイムアウト → 歌声合成スキップ: $score_file"
-						fi
-						[ "$_sing_lock_held" -eq 1 ] && rmdir "$_sing_lock" 2>/dev/null
-						rm -f "$score_file"
-					) &
-					disown $!
-					log "[COMMENT] 歌声合成開始 (score=$score_file)"
-				else
-					log "[COMMENT] 楽譜JSONが不正のため歌声合成スキップ"
-				fi
-			fi
+			# 歌声合成はコメントキュー投入後に実行（順序保証のため移動）
 
 			local _comment_mode_now=""
 			_comment_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
@@ -3111,6 +3075,56 @@ RETRYCOMMENT
 				log "[COMMENT] ack-batch 失敗 → 個別行ハッシュ記録で次回重複除外"
 				_record_processed_comment_lines "$twitch_comments"
 				_mark_comment_batch_processed "$comment_batch_hash"
+			fi
+
+			# 歌声合成: 楽譜JSONが有効なら非同期で合成→キューに投入（コメント発話の後に再生されるよう順序保証）
+			# コメントキュー投入後に実行し、コメントの再生順序を保証するため少し待機してから合成を開始する
+			if [ -n "$sing_score" ]; then
+				if echo "$sing_score" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'notes' in d" 2>/dev/null; then
+					local score_file="/tmp/sing_score_$(date +%s)_$$.json"
+					echo "$sing_score" >"$score_file"
+					# queue_file はこの時点で既に作成済み。コメントの音声が先に再生されるよう、キュー消費を少し待つ
+					local _sing_queue_file="$queue_file"
+					(
+						# コメントのキューが消化されるまで待機（最大60秒）。これにより「歌わせていただきます」発話の後に歌が流れる
+						local _wait=0
+						while [ -f "$_sing_queue_file" ] && [ "$_wait" -lt 60 ]; do
+							sleep 1
+							_wait=$((_wait+1))
+						done
+						# さらにコメントのTTS合成がlockを握っている可能性を考慮して少し待機
+						sleep 2
+						local sing_wav="/tmp/sing_wav_$(date +%s)_$$.wav"
+						local _sing_lock="tmp/.say_queue/.voicevox_synth_lock"
+						local _sing_lock_held=0 _sing_lock_wait=0
+						while ! mkdir "$_sing_lock" 2>/dev/null; do
+							sleep 0.5
+							_sing_lock_wait=$((_sing_lock_wait + 1))
+							if [ "$_sing_lock_wait" -ge 120 ]; then break; fi # 60s timeout
+						done
+						[ "$_sing_lock_wait" -lt 120 ] && _sing_lock_held=1
+						if [ "$_sing_lock_held" -eq 1 ]; then
+							if VOICEVOX_SING_HOST_MODE="$_comment_mode_generated" "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
+								rmdir "$_sing_lock" 2>/dev/null
+								_sing_lock_held=0
+								SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
+								rm -f "$sing_wav"
+							else
+								rmdir "$_sing_lock" 2>/dev/null
+								_sing_lock_held=0
+								log "[COMMENT] 歌声合成失敗: $score_file"
+							fi
+						else
+							log "[COMMENT] VOICEVOX合成ロック取得タイムアウト → 歌声合成スキップ: $score_file"
+						fi
+						[ "$_sing_lock_held" -eq 1 ] && rmdir "$_sing_lock" 2>/dev/null
+						rm -f "$score_file"
+					) &
+					disown $!
+					log "[COMMENT] 歌声合成開始 (score=$score_file)"
+				else
+					log "[COMMENT] 楽譜JSONが不正のため歌声合成スキップ"
+				fi
 			fi
 
 			# 本文が有効で、元コメントが助言カテゴリのときだけアドバイスを追記する。
