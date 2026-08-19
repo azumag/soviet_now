@@ -433,6 +433,51 @@ class AiGenerateBackoffTests(unittest.TestCase):
             self.assertIn('"event":"winner"', lines[1])
             self.assertIn('"agent":"codex:minimax-m3"', lines[1])
 
+    def test_rate_limit_uses_long_backoff_but_generic_failure_uses_short(self) -> None:
+        # _ai_backoff_set に渡る秒数を記録するモックで、種別による差を検証する。
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            state = root / "backoff"
+            calls = root / "backoff_calls.txt"
+            prompt = root / "prompt.txt"
+            prompt.write_text("test\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                AI_BACKOFF_DIR={state!s}
+                AI_GENERATION_QUEUE_ENABLED=0
+                AI_BACKOFF_FAILURE_SEC=300
+                source {REPO_ROOT / 'core/config.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                log() {{ :; }}
+                _ai_backoff_set() {{
+                    printf '%s\\n' "$2" >>{calls!s}
+                }}
+                validator() {{ [ "$1" = "VALID" ]; }}
+                _ai_dispatch() {{
+                    if [ "$2" = "codex:deepseek-v4-flash" ]; then
+                        return "$AI_RATE_LIMIT_RC"
+                    fi
+                    return 1
+                }}
+                ai_generate_list COMMENT {prompt!s} 'codex:deepseek-v4-flash,codex:minimax-m3' '' validator || true
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = [int(line) for line in calls.read_text(encoding="utf-8").split() if line]
+            # deepseek-v4-flash（rate limit）はモデル別の 5h=18000、minimax（一般失敗）は短い 300。
+            self.assertIn(18000, values)
+            self.assertIn(300, values)
+
 
 if __name__ == "__main__":
     unittest.main()

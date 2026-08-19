@@ -102,6 +102,10 @@ PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-codex:minimax-m3,cod
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
 # 既定（該当なし）は AI_AGENT_BACKOFF_SEC。
 AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000"
+# レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
+# 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
+# 無料枠を早期に復帰させる。
+AI_BACKOFF_FAILURE_SEC="${AI_BACKOFF_FAILURE_SEC:-300}"
 # ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
 # 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
 # コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成されることがある。
