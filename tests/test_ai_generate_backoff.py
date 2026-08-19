@@ -370,6 +370,67 @@ class AiGenerateBackoffTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 1, result.stderr)
 
+    def test_per_model_backoff_seconds_resolve_from_items(self) -> None:
+        script = textwrap.dedent(
+            f"""
+            set -u
+            ELOOP_LIB_DIR={REPO_ROOT!s}
+            source {REPO_ROOT / 'core/config.sh'!s}
+            source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash-free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:amd-token-factory-deepseek-v4-flash RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:openrouter/free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent local RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:minimax-m3 RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-pro RADIO)"
+            """
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=REPO_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = [line for line in result.stdout.splitlines() if line]
+        self.assertEqual(
+            lines,
+            ["86400", "86400", "86400", "1800", "18000", "18000", "18000"],
+        )
+
+    def test_ai_stats_record_writes_jsonl_without_stdout(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            stats_dir = Path(temp_dir) / "ai_stats"
+            script = textwrap.dedent(
+                f"""
+                set -u
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                AI_STATS_DIR={stats_dir!s}
+                _ai_stats_record attempt RADIO codex:deepseek-v4-flash ""
+                _ai_stats_record winner RADIO codex:minimax-m3 0
+                _ai_stats_record all_failed RADIO "" ""
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "", "stats must not leak to stdout")
+            files = list(stats_dir.glob("*.jsonl"))
+            self.assertEqual(len(files), 1)
+            lines = files[0].read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 3)
+            self.assertIn('"event":"winner"', lines[1])
+            self.assertIn('"agent":"codex:minimax-m3"', lines[1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -193,6 +193,18 @@ got=$(_peak_priority_agent_list "a,b,c")
 [ "$got" = "c,a,b" ] && ok "PEAK_HOURS_PRIORITY_AGENT env overrides default" || not_ok "PEAK_HOURS_PRIORITY_AGENT env overrides default (got '$got')"
 unset PEAK_HOURS_PRIORITY_AGENT
 
+# 複数優先順位（PEAK_HOURS_AGENT_PREFERENCE）: minimax > openrouter/free > local > 残り
+PEAK_HOURS_AGENT_PREFERENCE="codex:minimax-m3,codex:openrouter/free,local"
+got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash-free,codex:minimax-m3")
+[ "$got" = "codex:minimax-m3,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:deepseek-v4-flash-free" ] \
+	&& ok "peak multi-preference: minimax>openrouter>local then rest original order" \
+	|| not_ok "peak multi-preference order (got '$got')"
+got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:deepseek-v4-flash-free")
+[ "$got" = "codex:deepseek-v4-flash,codex:deepseek-v4-flash-free" ] \
+	&& ok "peak multi-preference: no preferred -> unchanged" \
+	|| not_ok "peak multi-preference no preferred (got '$got')"
+unset PEAK_HOURS_AGENT_PREFERENCE
+
 before_log_lines=$(wc -l <"$TMP/log.txt" 2>/dev/null || echo 0)
 _peak_priority_agent_list "codex:deepseek-v4-flash,codex:minimax-m3" >/dev/null
 after_log_lines=$(wc -l <"$TMP/log.txt" 2>/dev/null || echo 0)
@@ -215,7 +227,7 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|codex:minimax-m3|1|local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3|local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3"
+config_expect="10-13,15-19|codex:minimax-m3|1|codex:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3|codex:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
 
 # ============================================================

@@ -708,6 +708,7 @@ _ai_call_codex() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
+	_ai_stats_record "attempt" "$label" "$agent" ""
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -746,6 +747,11 @@ _ai_dispatch() {
 		;;
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}
+	if [ "$_dispatch_rc" -eq 0 ]; then
+		_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc"
+	else
+		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc"
+	fi
 	# 空出力ならログファイル削除
 	[ -s "$_dispatch_output_file" ] || rm -f "$_dispatch_output_file" 2>/dev/null
 	return "$_dispatch_rc"
@@ -799,6 +805,34 @@ ai_generate() {
 	return 1
 }
 
+# === AI 利用統計 ===
+
+# _ai_stats_record EVENT LABEL AGENT RC
+#   モデル呼び出しを 1 日 1 ファイルの JSONL へ記録する。stdout には一切出さない
+#   (生成テキストへ混入を避ける)。events: attempt / ok / fail。RC は呼び出し元の
+#   return code (空文字可)。フォールバックの最終結果は ai_generate_list 側で
+#   "winner"/"all_failed" として記録する。
+_ai_stats_record() {
+	local event="$1" label="$2" agent="$3" rc="${4:-}"
+	[ -n "$event" ] || return 0
+	local stats_dir="_ai_stats_dir"
+	if [ -n "${AI_STATS_DIR:-}" ]; then
+		stats_dir="$AI_STATS_DIR"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		stats_dir="$ELOOP_LIB_DIR/tmp/state/ai_stats"
+	else
+		stats_dir="tmp/state/ai_stats"
+	fi
+	mkdir -p "$stats_dir" 2>/dev/null || true
+	local ts day
+	ts=$(date +%s)
+	day=$(date +%Y%m%d)
+	local line
+	line=$(printf '{"ts":%s,"day":"%s","event":"%s","label":"%s","agent":"%s","rc":"%s"}' \
+		"$ts" "$day" "$event" "$label" "${agent:-}" "${rc:-}")
+	printf '%s\n' "$line" >>"$stats_dir/${day}.jsonl" 2>/dev/null || true
+}
+
 # === バックオフ付きエージェントリスト ===
 
 _ai_backoff_dir() {
@@ -826,6 +860,34 @@ _ai_backoff_sec_for_label() {
 	esac
 	[ "$value" -lt 1 ] && value="$default_value"
 	printf '%s\n' "$value"
+}
+
+# _ai_backoff_sec_for_agent AGENT [LABEL] → モデル別バックオフ秒数
+#  agent は "codex:<model>" または "local[:<model>]" の形。モデル名をキーに
+#  AI_BACKOFF_SEC_ITEMS ("name:sec name:sec ...") から引く。該当なしはラベル既定
+#  (COMMENT/RADIO=18000, その他=600) へフォールバック。
+_ai_backoff_sec_for_agent() {
+	local agent="$1" label="${2:-AI}" model="" item name sec
+	case "$agent" in
+	local:* | local)
+		model="local"
+		;;
+	codex:*)
+		model="${agent#codex:}"
+		;;
+	*)
+		model="$agent"
+		;;
+	esac
+	for item in ${AI_BACKOFF_SEC_ITEMS:-}; do
+		name="${item%%:*}"
+		sec="${item#*:}"
+		if [ "$name" = "$model" ]; then
+			printf '%s\n' "$sec"
+			return 0
+		fi
+	done
+	_ai_backoff_sec_for_label "$label"
 }
 
 # _ai_backoff_check AGENT  → 0: 使用可 / 1: バックオフ中
@@ -887,9 +949,7 @@ ai_generate_list() {
 	local validator="${5:-}"
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
-	local backoff_sec
 	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
-	backoff_sec=$(_ai_backoff_sec_for_label "$label")
 
 	AI_GENERATE_LAST_AGENT=""
 	AI_GENERATE_LIST_LAST_AGENT=""
@@ -928,6 +988,7 @@ ai_generate_list() {
 			AI_GENERATE_LAST_AGENT="$agent"
 			AI_GENERATE_LIST_LAST_AGENT="$agent"
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
+			_ai_stats_record "winner" "$label" "$agent" "0"
 			printf '%s' "$output"
 			return 0
 		fi
@@ -938,8 +999,10 @@ ai_generate_list() {
 		fi
 		if [ "$rc" -eq "$AI_RATE_LIMIT_RC" ]; then
 			saw_rate_limit=1
-			log "[${label}] ${agent} explicit rate limit → backoff ${backoff_sec}s" >&2
-			_ai_backoff_set "$agent" "$backoff_sec"
+			local agent_backoff_sec
+			agent_backoff_sec=$(_ai_backoff_sec_for_agent "$agent" "$label")
+			log "[${label}] ${agent} explicit rate limit → backoff ${agent_backoff_sec}s" >&2
+			_ai_backoff_set "$agent" "$agent_backoff_sec"
 		else
 			log "[${label}] ${agent} no model backoff (outcome=${rc})" >&2
 		fi
@@ -954,6 +1017,7 @@ ai_generate_list() {
 	fi
 
 	log "[${label}] all agents failed (list=${agent_list_raw})" >&2
+	_ai_stats_record "all_failed" "$label" "" ""
 	if [ -n "$failure_kind_file" ]; then
 		if [ "$saw_rate_limit" -eq 1 ]; then
 			printf 'rate_limit\n' >"$failure_kind_file"
