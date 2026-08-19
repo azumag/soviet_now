@@ -27,7 +27,25 @@ def piece_positions(pieces):
 
 
 def has_reactive_for_type(reactive_pairs, piece_type):
-    """指定 type が reactive pair の片側に含まれるか（機械的判定）。"""
+    """指定 type が reactive pair の片側に含まれるか（機械的判定）。
+
+    警告(2026-08-19実測): reactive_pairs の実データ形式は (id1, id2, type) の
+    3要素タプルだが、ここの len(rp) >= 6 ガードは常に不成立で、4007ターン中
+    0回もTrueを返さない。「バグに見える」が単純に直さないこと:
+    (1) 本関数は decide hash 追跡対象外（strategy_helpers配下）のため、直すと
+        hashが変わらないまま挙動だけ変わり、自律改善ループのregression/rollback
+        安全機構が検知できなくなる（additive-onlyの原則: 直す場合は新規関数を
+        追加し、decide()側の呼び出しを新関数に差し替えること）。
+    (2) 判定式は元々 rp[2]==type, len>=3 で正しく、意図的な抑制装置(v360:
+        「同typeにreactive/nearペアがある時のみstacking axisを発火」)だった。
+        2.5ヶ月分のwildcard摂動でrp[1]/len>=6へ中立浮動した結果、抑制側に
+        固定されている。正しい判定式に戻して axis 9.6 を素直に起動すると、
+        実測(4007ターン)で13.2%のターンが分岐反転・追加併合0件・同typeから
+        59-60%で逆方向に動く・T13ゲート専用のCLUSTER_SETUP_FOR_NEXT_MERGEを
+        23%破壊、という結果になりNO-GO判定済み（congestion_scaleが
+        piece_count<=46で符号反転しているのが原因）。機能修正する場合は
+        congestion_scaleの符号反転も含めて再設計し、単独サイクルで扱うこと。
+    """
     return any(
         rp[1] == piece_type
         for rp in reactive_pairs
@@ -36,7 +54,14 @@ def has_reactive_for_type(reactive_pairs, piece_type):
 
 
 def has_near_for_type(near_pairs, piece_type):
-    """指定 type が near pair の末尾に含まれるか（機械的判定）。"""
+    """指定 type が near pair の末尾に含まれるか（機械的判定）。
+
+    警告(2026-08-19実測): near_pairs の実データ形式は (id1, id2, type, gap) の
+    4要素タプルで、type は index 2 だが、ここは np[-1]（=gap、距離のfloat）を
+    見ており type とはまず一致しない（4007ターン中0回True）。has_reactive_for_type
+    と同じ理由（additive-only原則・v360抑制の中立浮動・NO-GO判定済み）で
+    単純に直さないこと。詳細は has_reactive_for_type のdocstring参照。
+    """
     return any(
         np[-1] == piece_type
         for np in near_pairs

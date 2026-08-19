@@ -18,10 +18,28 @@ Decision Logic:
     箇所が複数ある（コード側が正）。数値を「意図に合わせて」書き換えるのは危険。
   - 既知の乖離・デッド化した軸（今回は意図的に温存。個別に単独サイクルで扱うこと）:
     - phase 判定（下記）: HIGH 分岐が構造的に到達不能
-    - axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): 長さガードの前提が実データと合わず、
-      内側ロジックは実質no-op（reason ラベルのみ常時付与）
     - axis 9.6 (REACTIVE_PAIRS_STACKING) 系のヘルパー判定はほぼ常に不成立
+      （2026-08-19 実測: 4007ターン中 has_reactive_for_type/has_near_for_type は
+      0回もTrueを返さない。ただしこれは単純なバグではなく、元は正しかった判定式
+      [rp[2]==type, len>=3]（意図的抑制装置 v360）が2.5ヶ月の wildcard 摂動で
+      rp[1]/len>=6 へ中立浮動した結果。additive-only な新helperで機能修正すると
+      13.2%のターンで分岐が反転するが、追加併合0件・同typeから59-60%で逆方向に
+      動く・T13ゲート専用のCLUSTER_SETUP_FOR_NEXT_MERGEを23%破壊、という実測結果
+      からNO-GO判定済み（congestion_scaleがpiece_count<=46で符号反転しているのが
+      原因）。has_reactive_for_type/has_near_for_type 自体を素直に「直す」のは
+      危険なので絶対にしないこと。機能修正する場合はcongestion_scaleの符号反転も
+      含めて再設計し、単独サイクルで扱うこと）
     詳細は logs/change_log.txt および過去 rollback postmortem を参照。
+  - 2026-08-19 に削除済みの軸（温存リストとは別、削除確定済み）:
+    - axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): 実測(4007ターン)で内側ロジック(位置比較)
+      が0回発火するゴースト軸だった（`len(rp)>=6`ガードが実データの3要素タプルと
+      矛盾）。ただし完全なno-opではなく、`merge_grade=="NO"`かつ非congested・非
+      death_spiralの全候補に定数`+0.0798`を一律加算しつつ`AVOID_BLOCK_REACTIVE_PAIR`
+      ラベルをdecision_reasonの66.0%に付与していた（同一ターンのNO候補間では
+      一様に加算されるためスコア順位への影響はなし。replay実測でも決定x差分0件）。
+      正しく動作させる案(len>=3 + rp[0]/rp[1]修正)も検証したが、9.3%のターンで
+      決定が変わるのに追加併合0件・盤端側へ5:1で偏る（archiveの edge scatter 失敗
+      パターンと一致）ためNO-GO。詳細は logs/change_log.txt 該当コミット参照
   - 2026-08-18 リファクタで、旧 Change History ブロックおよび各軸の v番号付き失敗事例
     コメント（"Fixes rollback failure mode: ..." 等）をコード本体から削除した。
     全文は docs/strategy_decide_history_archive_20260818.txt に保存してある。
@@ -62,6 +80,9 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 # v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
 # Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
 # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
+# v705: HIGH_TYPE_COVER_AVOID の open 判定を真上遮蔽のみへ修正し、抑止を -400 に強化（対象段階: ウクライナ T13）
+# Fixes rollback failure mode: 同typeペアは作れてもそのペアを次の手で併合できず、末盤の deadline guard が延命だけして点数を止める
+# refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
 
 def decide(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
@@ -348,10 +369,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Used by axis 9.7 for placement guidance when no same-type on board
     pipeline = reactor.get("pipeline", [])
 
-    # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
-    # Used by axis 9.3 to check if landing position is between reactive pair pieces.
-    # Computed once before the candidate loop since pieces don't change between candidates.
-    piece_pos_by_id = board_stats.piece_positions(pieces)
+    # 警告(2026-08-19実測): 以下2関数は現行データ形式(reactive_pairs=3要素タプル,
+    # near_pairs=4要素タプル)に対して常にFalseを返す(4007ターン中0回True)。
+    # 「バグに見える」が単純に直すと危険(理由はモジュールdocstring axis 9.6の項参照、
+    # NO-GO判定済み)。has_reactive_for_type/has_near_for_type 自体は変更しないこと。
     current_type_has_reactive = board_stats.has_reactive_for_type(reactive_pairs, next_type)
     current_type_has_near = board_stats.has_near_for_type(near_pairs, next_type)
 
@@ -421,23 +442,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # next_type と同type（上置き＝併合レーンそのもの）と、その1つ下の type
     # （N の上に N-1 を置くのは次に N-1 が来れば N を作れる中間素材になる。
     #  improve_strategy.md「typeNの上にtypeN-1をのせるのはいい」）はここで除外する。
-    next_r = float(next_piece.get("r", 0.5) or 0.5)
     high_cover_free = []
     for _hc_t, _hc_x, _hc_y, _hc_r in board_stats.pieces_of_type_at_least(pieces, 10):
         if _hc_t == next_type or _hc_t - 1 == next_type:
             continue
+        # 横隣接（worst T33 の T10 が開いた T11 の上と誤判定）では open を失効させない。
+        # 真上遮蔽のみで閉鎖し、保護帯は高typeの天端（x±_hc_r、y>=top-0.25）に置く。
         _hc_open = True
+        _hc_top = _hc_y + _hc_r
         for _op in pieces:
-            _op_y = float(_op.get("y", 0.0) or 0.0)
-            if _op_y < _hc_y + 0.2:
+            _op_r = float(_op.get("r", 0.5) or 0.5)
+            _op_bottom = float(_op.get("y", 0.0) or 0.0) - _op_r
+            if _op_bottom < _hc_top - 0.25:
                 continue
-            if abs(float(_op.get("x", 0.0) or 0.0) - _hc_x) <= (
-                _hc_r + float(_op.get("r", 0.5) or 0.5)
-            ) * 0.9:
+            if abs(float(_op.get("x", 0.0) or 0.0) - _hc_x) <= _hc_r:
                 _hc_open = False
                 break
         if _hc_open:
-            high_cover_free.append((_hc_x, (_hc_r + next_r) * 0.9, _hc_y + 0.2))
+            high_cover_free.append((_hc_x, _hc_r * 0.9, _hc_top - 0.25))
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -818,42 +840,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     score += cluster_setup_bonus
                                     reasons.append("CLUSTER_SETUP_FOR_NEXT_MERGE")
 
-        # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
-        # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
-        # Placing a piece between reactive pairs of different types can physically block
-        # their future merge, leading to piece_count accumulation and game over.
-        # pairs, no merges for 11 turns, piece_count grows 30→40.
-        # Penalty per blocked pair: 200, capped at 500 total. Small enough to not override
-        # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
-        # Only fires when merge_grade=="NO" (no immediate merge to suppress).
-        # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
-        if merge_grade == "NO" and reactive_pair_count >= -4:
-            board_congested = (
-                (max_y >= 2.033 and deadline_crossed)
-                or (reactive_pair_count >= 5 and max_y >= 1.475)
-            )
-            if not board_congested and not death_spiral:
-                blocking_penalty = -0.0798
-                for rp in reactive_pairs:
-                    if isinstance(rp, (list, tuple)) and len(rp) >= 6:
-                        rp_type = rp[2]
-                        if rp_type != next_type:
-                            pos1 = piece_pos_by_id.get(rp[1])
-                            pos2 = piece_pos_by_id.get(rp[1])
-                            if pos1 and pos2:
-                                x1, y1 = pos1
-                                x2, y2 = pos2
-                                # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.3211
-                                span_max = max(x1, x2) + 0.2526
-                                if span_min <= x <= span_max:
-                                    # Penalize if landing at or above the reactive pair level
-                                    pair_min_y = min(y1, y2)
-                                    if landing_y >= pair_min_y:
-                                        blocking_penalty += 88.8
-                if blocking_penalty > -1:
-                    score -= min(blocking_penalty, 810.9)
-                    reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+        # axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR, v384) は2026-08-19に削除済み。
+        # 実測(4007ターン)で内側ロジックが0回発火するゴースト軸だった。詳細はモジュール
+        # docstring冒頭・logs/change_log.txt該当コミット参照。
 
         # ----- v701: T12_CHAIN_LANE_GUIDANCE / T12_PAIR_COVER_AVOID (T13連鎖アセンブリ誘導) -----
         # 採用仮説: 中盤 NO_MERGE で T11/T12 クラスタの横レーンへ誘導し、T11 ペアを T12 近傍に
@@ -912,8 +901,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- HIGH_TYPE_COVER_AVOID (高type併合レーンの被覆抑止) -----
         # mandatory_themes #4「既存同typeペアの上・間・接触経路を塞ぐな」を高type単体へ一般化する。
         # 非併合ドロップのときだけ、上が空いている type>=10 の真上に載る候補を抑止する。
-        # 抑止量は既存の被覆抑止軸 T12_PAIR_COVER_AVOID と同じ 200.0。ただし同じ候補で
-        # T12_PAIR_COVER_AVOID が既に付いている場合は合算で -400 になりうる（意図的な二重減点ではない）。
+        # 抑止は -400。感度確認（analysis_result.md）では -200 だと worst T33 の選択Xが
+        # 保護帯内（T11 天端の真上）に留まり、候補を実際に動かせないことが確認済み。
         # 安全不変条件: 非crossing・非 deadline_crossed・margin>=1.0・death_spiral 時は不発火。
         # ロシア(type15)在盤時は対象データが実質ゼロで未検証のため、v701 と同様に不発火とする。
         if (
@@ -927,7 +916,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ):
             for _hc_x, _hc_tol, _hc_min_y in high_cover_free:
                 if abs(x - _hc_x) <= _hc_tol and landing_y >= _hc_min_y:
-                    score -= 200.0
+                    score -= 400.0
                     reasons.append("HIGH_TYPE_COVER_AVOID")
                     break
 
@@ -1386,11 +1375,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         safest = min(results, key=lambda r: r.get("landing_y", 0))
         best_x = safest["x"]
         best_reason = "FALLBACK_ALL_SUPPRESSED"
-        best_x = max(-1.612, min(0.862, best_x))
+        # 盤面のdrop範囲は[-3.0, +3.0]（analyze_board.DROP_X_MIN/MAX）。旧値[-1.612, 0.862]は
+        # wildcard摂動由来のバグで、この経路（deadline非超過候補が1本だけ残った危険局面、
+        # 実測0.05%のターンで発火）が選んだ唯一の安全列を最大2.1単位ずらしていた
+        # （2026-08-19実測: 発火2回とも別系統のRUNTIME_DEADLINE_SAFETY_OVERRIDEが事後救済していたが、
+        # decide()自体の出力は発火のたび誤っていた）。
+        best_x = max(-3.0, min(3.0, best_x))
         best_x = round(best_x, 1)
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
+    # 注意: このクリップ範囲[-0.991, 4.362]は本来のdrop範囲[-3.0,+3.0]と一致しない。
+    # 2026-08-19に一度[-3.0,3.0]へ修正・VM反映(commit 4e664ce)したが、VM自律ループの
+    # 実ゲーム評価でobjective_regression+lost_ukraine_gateを理由にrollbackされ、
+    # 現在はこの値に戻っている（詳細: logs/change_log.txt 2026-08-19 03:58/04:11,
+    # handoff.md §12「重要な訂正」）。一見自明なバグに見えるが、直すと実ゲーム成績が
+    # 悪化した実績があるため、再挑戦する場合は単独サイクルで慎重に扱うこと。
     best_x = max(-0.991, min(4.362, best_x))
     best_x = round(best_x, 4)
 
