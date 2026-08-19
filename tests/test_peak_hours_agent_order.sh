@@ -215,7 +215,7 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|codex:minimax-m3|1|codex:deepseek-v4-flash,codex:minimax-m3|codex:deepseek-v4-flash,codex:minimax-m3"
+config_expect="10-13,15-19|codex:minimax-m3|1|local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3|local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
 
 # ============================================================
