@@ -2096,67 +2096,192 @@ _build_category_prompt() {
 }
 
 _extract_sing_score() {
-	python3 - <<'PY'
+	python3 -c "$(cat <<'PY'
 import json
 import re
 import sys
 
+def iter_json_objects(s):
+    """文字列中のトップレベル JSON オブジェクトを順に返す (ネスト対応)。"""
+    i = 0
+    n = len(s)
+    while True:
+        start = s.find("{", i)
+        if start < 0:
+            return
+        depth = 0
+        in_str = False
+        esc = False
+        j = start
+        while j < n:
+            c = s[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            else:
+                if c == '"':
+                    in_str = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield s[start:j + 1]
+                        i = j + 1
+                        break
+            j += 1
+        else:
+            return
+
+
+def is_score(payload):
+    return isinstance(payload, dict) and isinstance(payload.get("notes"), list)
+
+
 text = sys.stdin.read()
 lines = text.splitlines(keepends=True)
-marker_re = re.compile(r'^[ \t]*===SING===[ \t]*$')
+marker_re = re.compile(r"^[ \t]*===SING===[ \t]*$")
 
+# 1) ===SING=== マーカーで囲われたブロックを優先して抽出
 for start_idx, line in enumerate(lines):
-    if not marker_re.match(line.rstrip('\n')):
+    if not marker_re.match(line.rstrip("\n")):
         continue
     for end_idx in range(start_idx + 1, len(lines) + 1):
-        candidate = ''.join(lines[start_idx + 1:end_idx]).strip()
+        candidate = "".join(lines[start_idx + 1:end_idx]).strip()
         if not candidate:
             continue
         try:
             payload = json.loads(candidate)
         except Exception:
             continue
-        if isinstance(payload, dict) and "notes" in payload:
+        if is_score(payload):
             sys.stdout.write(candidate)
             raise SystemExit(0)
     raise SystemExit(1)
 
+# 2) マーカー無しでも本文中の楽譜 JSON ("notes" を含む) を拾う
+for obj in iter_json_objects(text):
+    try:
+        payload = json.loads(obj)
+    except Exception:
+        continue
+    if is_score(payload):
+        sys.stdout.write(obj)
+        raise SystemExit(0)
+
 raise SystemExit(1)
 PY
+)"
 }
 
 _remove_sing_score_block() {
-	python3 - <<'PY'
+	python3 -c "$(cat <<'PY'
 import json
 import re
 import sys
 
+def iter_json_objects(s):
+    i = 0
+    n = len(s)
+    while True:
+        start = s.find("{", i)
+        if start < 0:
+            return
+        depth = 0
+        in_str = False
+        esc = False
+        j = start
+        while j < n:
+            c = s[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            else:
+                if c == '"':
+                    in_str = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield s[start:j + 1]
+                        i = j + 1
+                        break
+            j += 1
+        else:
+            return
+
+
+def is_score(payload):
+    return isinstance(payload, dict) and isinstance(payload.get("notes"), list)
+
+
 text = sys.stdin.read()
 lines = text.splitlines(keepends=True)
-marker_re = re.compile(r'^[ \t]*===SING===[ \t]*$')
+marker_re = re.compile(r"^[ \t]*===SING===[ \t]*$")
 
-for start_idx, line in enumerate(lines):
-    if not marker_re.match(line.rstrip('\n')):
-        continue
-    for end_idx in range(start_idx + 1, len(lines) + 1):
-        candidate = ''.join(lines[start_idx + 1:end_idx]).strip()
+# 1) ===SING=== マーカーで囲われた楽譜ブロックを全て除去
+out_lines = []
+i = 0
+n = len(lines)
+while i < n:
+    if marker_re.match(lines[i].rstrip("\n")):
+        buf = []
+        j = i + 1
+        while j < n and not marker_re.match(lines[j].rstrip("\n")):
+            buf.append(lines[j])
+            j += 1
+        has_close = j < n and marker_re.match(lines[j].rstrip("\n"))
+        candidate = "".join(buf).strip()
+        is_sc = False
+        if candidate:
+            try:
+                is_sc = is_score(json.loads(candidate))
+            except Exception:
+                pass
+        if is_sc:
+            i = j + 1 if has_close else j
+            continue
+        # 楽譜でない ===SING=== 行はマーカー行を残さず除去 (行そのものを落とす)
         if not candidate:
+            i = j + 1 if has_close else j
             continue
-        try:
-            payload = json.loads(candidate)
-        except Exception:
-            continue
-        if isinstance(payload, dict) and "notes" in payload:
-            remove_until = end_idx
-            if remove_until < len(lines) and marker_re.match(lines[remove_until].rstrip('\n')):
-                remove_until += 1
-            updated = ''.join(lines[:start_idx] + lines[remove_until:])
-            sys.stdout.write(updated)
-            raise SystemExit(0)
-    raise SystemExit(1)
+        out_lines.append(lines[i])
+        i += 1
+        continue
+    out_lines.append(lines[i])
+    i += 1
+text = "".join(out_lines)
 
+# 2) 残ったインライン楽譜 JSON ("notes" を含む) を本文から除去
+out = []
+last_end = 0
+dropped = False
+for obj in iter_json_objects(text):
+    try:
+        if not is_score(json.loads(obj)):
+            continue
+    except Exception:
+        continue
+    out.append(text[last_end:text.find(obj, last_end)])
+    last_end = text.find(obj, last_end) + len(obj)
+    dropped = True
+out.append(text[last_end:])
+text = "".join(out)
+
+if dropped and not text.strip():
+    text = ""
 sys.stdout.write(text)
 PY
+)"
 }
 
 _resolve_strategy_advice_file() {
@@ -2789,19 +2914,20 @@ RETRYCOMMENT
 				continue
 			fi
 
-			# ===SING=== セクションを抽出（===ADVICE=== より先に処理）
+			# 楽譜JSONを抽出（===ADVICE=== より先に処理）。
+			# ===SING=== マーカーあり・なし両方の楽譜JSONを扱い、
+			# 本文から必ず除去してJSONが読み上げられないようにする。
 			local sing_score=""
-			if echo "$attempt_talk" | grep -q '^===SING==='; then
+			if echo "$attempt_talk" | grep -Eq '^[[:space:]]*===SING===|"notes"[[:space:]]*:'; then
 				sing_score=$(printf '%s' "$attempt_talk" | _extract_sing_score || true)
+				attempt_talk=$(printf '%s' "$attempt_talk" | _remove_sing_score_block)
 				if [ -n "$sing_score" ]; then
-					attempt_talk=$(printf '%s' "$attempt_talk" | _remove_sing_score_block)
-				else
-					log "[COMMENT] malformed ===SING=== block ignored"
-					attempt_talk=$(printf '%s' "$attempt_talk" | sed '/^[[:space:]]*===SING===[[:space:]]*$/d')
+					log "[COMMENT] 楽譜JSON抽出 (${#sing_score} chars)"
 				fi
 			fi
 			# 歌唱宣言ありだが ===SING=== なし → デフォルト楽譜（きらきら星）で補完
-			if [ -z "$sing_score" ] && echo "$attempt_talk" | grep -Eq '歌います|歌ってみます|歌いましょう|歌をお届け|歌声をお届け|をどうぞ。$|うたいます'; then
+			# 「歌わせていただきます」を含む敬体バリエーションも拾う。sing_request分類なら宣言句が無くても補完する。
+			if [ -z "$sing_score" ] && { echo "$attempt_talk" | grep -Eq '歌わせて|歌います|歌ってみます|歌いましょう|歌をお届け|歌声をお届け|お歌|うたいます|をどうぞ' || [ "${dominant_category:-}" = "sing_request" ]; }; then
 				log "[COMMENT] 歌唱宣言あり but ===SING=== なし → デフォルト楽譜で補完"
 				sing_score='{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
 			fi

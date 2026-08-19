@@ -1060,6 +1060,7 @@ drop_line_patterns = [
     r'読み上げられません',
     r'^\s*⚙\s*\w',
     r'^\s*\{\s*"query"\s*:',
+    r'^\s*\{.*"(notes|lyric|frame_length|f0)\s*".*\}\s*$',
 ]
 patterns = [
     (r'^\s*%?\s*(?:WebFetch|WebSearch)\b\s*', ''),

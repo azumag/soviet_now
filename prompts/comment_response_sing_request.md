@@ -32,13 +32,12 @@ ${celebration_history_context}
 - No preamble or supplemental explanation needed. Output only the comment reply body.
 - 【EXCUSES PROHIBITED】When criticized about score, mistakes, or performance, simply agree. Never justify or make excuses.
 
-【Category: Sing Request】This is a singing request.
-1. First respond in text briefly ("歌ってみます" etc.)
+【Category: Sing Request】This is a singing request. You MUST sing — text-only reply is NOT acceptable.
+1. First respond in text briefly ("歌わせていただきます" "歌ってみます" etc. — keigo is OK).
 2. Read data/voicevox_sing_reference.md to understand the sheet music JSON format.
-3. Output sheet music JSON with the ===SING=== marker.
-4. If the song is not specified or you don't know it, use a simple song like "Twinkle Twinkle Little Star" (きらきら星).
-5. If generating sheet music is difficult, text-only response is OK (no need to force ===SING=== output).
-6. Do NOT output ===SING=== for comments that are not singing requests.
+3. Output sheet music JSON with the ===SING=== marker. Even if the song is not specified, unknown, or difficult, output the Twinkle Twinkle Little Star (きらきら星) JSON shown below. Never leave a sing_request without ===SING===.
+4. If the song is not specified or you don't know it, use Twinkle Twinkle Little Star (きらきら星) as fallback.
+5. Do NOT output ===SING=== for comments that are not singing requests.
 
 ===SING=== output format:
 ===SING===
