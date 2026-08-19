@@ -1004,7 +1004,19 @@ ai_generate_list() {
 			log "[${label}] ${agent} explicit rate limit → backoff ${agent_backoff_sec}s" >&2
 			_ai_backoff_set "$agent" "$agent_backoff_sec"
 		else
-			log "[${label}] ${agent} no model backoff (outcome=${rc})" >&2
+			# プロバイダ/CLI 失敗 (rc!=0) はモデル不在・認証・枠枯渇など
+			# モデル単位の要因の可能性が高い。毎サイクル再試行して無料枠を
+			# 浪費しないよう、モデル別バックオフを設定する。形式不正・空出力
+			# (rc=0) は「モデルは動くが品質が悪い」ためバックオフしない
+			# （呼び出し元のリトライに委ねる）。
+			if [ "$rc" -ne 0 ] && [ -n "$agent" ]; then
+				local agent_backoff_sec
+				agent_backoff_sec=$(_ai_backoff_sec_for_agent "$agent" "$label")
+				log "[${label}] ${agent} provider failure → backoff ${agent_backoff_sec}s (outcome=${rc})" >&2
+				_ai_backoff_set "$agent" "$agent_backoff_sec"
+			else
+				log "[${label}] ${agent} no model backoff (outcome=${rc})" >&2
+			fi
 		fi
 	done
 
