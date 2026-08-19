@@ -29,6 +29,23 @@ Before changing this project, check `data/codex_advice.md` if it exists and cont
 - リポジトリと VM でファイルが乖離している場合、どちらが新しいかを確認し、新しい側へ同期してから作業を進める（例: `strategy/ai.sh` は VM が codex ハーネス版で新しい）。
 - 調査用の一時ファイル・音声・worktree はリポジトリに含めず、VM の `tmp/` や別の調査ディレクトリに置く。
 
+## config.sh 既定値の変更は worker 完全再起動で反映する
+
+worker の reload（USR1/HUP）は `.env` とモジュールを再 source するが、`config.sh` の
+`VAR="${VAR:-default}"` 形式の既定値は**シェル環境に既に設定済みの値があれば上書きしない**。
+そのため **config.sh の既定値を変更した場合は必ず worker を完全再起動する**（reload では
+反映されない）。
+
+- 対象: `radio_worker` / `chat_worker` / `improve_daemon`（supervisor `start_all.sh` が
+  自動 respawn する）。再起動は `kill -TERM <pid>` → supervisor の新プロセス（PID・起動時刻）
+  を確認する。
+- 実例（2026-08-20）: `RADIO_PREPASS_AGENTS` の既定値を共通チェーンへ変更した後、USR1 reload
+  では旧リスト（amd/local 欠落）が残り、prepass が amd/local をスキップして
+  deepseek-v4-flash に直行した。完全再起動で解消。
+- 反映確認はログの実測で行う（例: `logs/radio_worker.log` の `prepass agents=` に新チェーンが
+  出ること、`prepass provider=` が amd 等を獲得すること）。
+- `.env` に明示設定されている値は reload でも更新されるため、この制約の対象外。
+
 ## GitHub とサンドボックス
 
 サンドボックス内では `gh`（`pr view` / `pr create` / `pr diff` / `issue view` 等）はネットワーク（`api.github.com`）へ到達できないため、必ず昇格（`require_escalated`）して実行する。プライベートリモート（`azumag/soviet_now` 等）への `git push` などの外部送信も昇格が必要で、承認ゲートの対象になる。サンドボックスのままで実行せず、昇格して対象・内容を明確に示すこと。
