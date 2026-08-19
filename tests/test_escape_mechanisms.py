@@ -13097,7 +13097,9 @@ PY
 
         self.assertIn("_sanitize_radio_research_memo()", radio_engine)
         self.assertIn("webfetch|websearch", radio_engine)
-        self.assertIn("_run_radio_agent \"$radio_prepass_agent\" \"$_prepass_prompt_file\" 2>/dev/null | _sanitize_radio_research_memo", radio_engine)
+        self.assertIn("ai_generate_list \"RADIO:${corner_name}:prepass\"", radio_engine)
+        self.assertIn("| _sanitize_radio_research_memo", radio_engine)
+        self.assertIn("radio_prepass_agents", radio_engine)
 
     def test_radio_tool_failure_lines_are_filtered_before_tts(self):
         helpers = (REPO_ROOT / "core/helpers.sh").read_text()

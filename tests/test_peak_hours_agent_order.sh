@@ -222,7 +222,8 @@ config_expect="10-13,15-19|codex:minimax-m3|1|codex:deepseek-v4-flash,codex:mini
 # G. 呼び出し箇所の結線（静的アサーション）
 # ============================================================
 radio_call_line=$(grep -n '_peak_priority_agent_list' "$RADIO_SRC" | head -1 | cut -d: -f1)
-radio_gen_line=$(grep -n 'ai_generate_list "RADIO:' "$RADIO_SRC" | head -1 | cut -d: -f1)
+# 本文生成の ai_generate_list 呼び出しのみを対象にする（prepass は :prepass ラベルで別系統）。
+radio_gen_line=$(grep -n 'ai_generate_list "RADIO:' "$RADIO_SRC" | grep -v ':prepass' | head -1 | cut -d: -f1)
 if [ -n "$radio_call_line" ] && [ -n "$radio_gen_line" ] && [ "$radio_call_line" -lt "$radio_gen_line" ]; then
 	ok "radio_engine.sh: peak reorder wired before ai_generate_list call"
 else

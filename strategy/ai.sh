@@ -765,6 +765,56 @@ run_ai() {
 	return 1
 }
 
+#=== run_ai_list: 改善ループ向けの多段モデルフォールバック ===
+
+# run_ai_list LABEL AGENT_LIST PF EXPECT [REF ...]
+#   AGENT_LIST: カンマ区切りのモデル識別子（優先度順）。本文生成と同じリストから
+#   local を除いたものを想定 (例: codex:deepseek-v4-flash-free,codex:openrouter/free,
+#   codex:deepseek-v4-flash,codex:minimax-m3)。
+#
+#   各モデルを単一 primary（fallback なし）の run_ai として順に試行する。expect は
+#   run_ai の sandbox 編集検知（ファイル変化）をそのまま使うため、改善ループの
+#   セマンティクスを保つ。1 モデルでも成功 (rc=0) なら即成功。
+#
+#   戻り値:
+#     0  いずれかのモデルで成功
+#     79 全モデルがレートリミット等で失敗（呼び出し元でバックオフさせる）
+#     1  それ以外の失敗
+run_ai_list() {
+	local label="$1" agent_list_raw="$2"
+	shift 2
+	local agents=() _IFS_save="$IFS" agent rc saw_rate_limit=0 final_rc=1
+	IFS=',' read -ra agents <<< "$agent_list_raw"
+	IFS="$_IFS_save"
+
+	for agent in "${agents[@]}"; do
+		agent=$(printf '%s' "$agent" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		[ -n "$agent" ] || continue
+		log "[$label] run_ai_list: try ${agent}"
+		run_ai "$label" "$agent" "" "$@"
+		rc=$?
+		if [ "$rc" -eq 0 ]; then
+			log "[$label] run_ai_list: ${agent} OK"
+			return 0
+		fi
+		if [ "$rc" -eq 79 ]; then
+			saw_rate_limit=1
+			log "[$label] ${agent} rate-limited → next model"
+			continue
+		fi
+		log "[$label] ${agent} failed (rc=$rc) → next model"
+	done
+
+	if [ "$saw_rate_limit" -eq 1 ]; then
+		log "[$label] run_ai_list: all models rate-limited → caller back off"
+		final_rc=79
+	else
+		log "[$label] run_ai_list: all models failed (list=${agent_list_raw})"
+		final_rc=1
+	fi
+	return "$final_rc"
+}
+
 #=== strategy.py バリデーション ===
 
 VALIDATE_ERROR=""

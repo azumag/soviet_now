@@ -27,6 +27,9 @@ REGRESSION_DISABLED=0
 MERIKEN_SCHEDULED_TIME_ENABLED=0 # 20-21時メリケンAIタイムを無効化
 MODEL_FALLBACK_IMPROVE="${MODEL_FALLBACK_IMPROVE:-codex:deepseek-v4-flash}"
 MODEL_LAST_RESORT="codex:deepseek-v4-flash"
+# MODEL_IMPROVE_LIST: 改善ループのモデルフォールバックリスト（カンマ区切り、優先度順）。
+# 本文生成と同じラダーから local を除いたもの。run_ai_list() が順に試行する。
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
 
 GAME_COUNT_FILE="game_count.txt"
 
@@ -37,6 +40,9 @@ RADIO_MAIN_OLLAMA_FALLBACK="${RADIO_MAIN_OLLAMA_FALLBACK:-codex:minimax-m3}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
 RADIO_AGENTS="${RADIO_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
+# RADIO_PREPASS_AGENTS: 事前調査 (prepass) のモデルフォールバックリスト。
+# 本文生成と同じラダーから local を除いたもの。ai_generate_list() が順に試行する。
+RADIO_PREPASS_AGENTS="${RADIO_PREPASS_AGENTS:-codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
 AI_AGENT_BACKOFF_SEC="${AI_AGENT_BACKOFF_SEC:-600}"
 RADIO_OPENCODE_DEFER_DURING_IMPROVE="${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}"
 RADIO_OPENCODE_TIMEOUT=240

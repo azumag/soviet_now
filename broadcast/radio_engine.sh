@@ -1298,7 +1298,7 @@ _radio_generate_and_play() {
 	local talk="" prompt_snapshot debug_dump="" provider_used=""
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
-	local radio_prepass_agent="" radio_agents_list=""
+	local radio_prepass_agent="" radio_prepass_agents="" radio_agents_list=""
 	# claude は不使用方針（codex ハーネス統一）のためフォールバック無効。
 	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
@@ -1309,6 +1309,7 @@ _radio_generate_and_play() {
 		radio_allow_claude_fallback=false
 	else
 		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-codex:deepseek-v4-flash}"
+		radio_prepass_agents="${RADIO_PREPASS_AGENTS:-codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
 		radio_agents_list="${RADIO_AGENTS:-codex:deepseek-v4-flash,codex:minimax-m3}"
 		# 後方互換 (soren91モード向け)
 		radio_primary_agent="${RADIO_MAIN_AGENT:-codex:deepseek-v4-flash}"
@@ -1328,8 +1329,8 @@ _radio_generate_and_play() {
 	_quality_fail_reason=""
 	local talk_body="" talk_summary=""
 
-	if [ -n "$radio_prepass_agent" ] && [ "$radio_prepass_agent" != "$radio_primary_agent" ]; then
-		local _prepass_prompt_file _prepass_output _prepass_enhanced_prompt
+	if [ -n "$radio_prepass_agent" ]; then
+		local _prepass_prompt_file _prepass_output _prepass_enhanced_prompt _prepass_last_file _prepass_provider
 		_prepass_prompt_file=$(mktemp /tmp/eloop_radio_prepass_prompt_XXXXXXXX)
 		cat >"$_prepass_prompt_file" <<PREPASS
 以下はラジオ本文生成用の元プロンプトです。
@@ -1344,8 +1345,14 @@ _radio_generate_and_play() {
 【元プロンプト】
 ${prompt_snapshot}
 PREPASS
-		log "[RADIO:${corner_name}] prepass: ${radio_prepass_agent} -> ${radio_primary_agent}"
-		_prepass_output=$(_run_radio_agent "$radio_prepass_agent" "$_prepass_prompt_file" 2>/dev/null | _sanitize_radio_research_memo || true)
+		log "[RADIO:${corner_name}] prepass agents=${radio_prepass_agents}"
+		_prepass_last_file=$(mktemp /tmp/eloop_radio_prepass_last_XXXXXXXX)
+		_prepass_output=$(ai_generate_list "RADIO:${corner_name}:prepass" "$_prepass_prompt_file" "$radio_prepass_agents" "" "" "$_prepass_last_file" 2>/dev/null | _sanitize_radio_research_memo || true)
+		_prepass_provider=$(cat "$_prepass_last_file" 2>/dev/null)
+		rm -f "$_prepass_last_file" 2>/dev/null || true
+		if [ -n "$_prepass_provider" ]; then
+			log "[RADIO:${corner_name}] prepass provider=${_prepass_provider}"
+		fi
 		rm -f "$_prepass_prompt_file" 2>/dev/null || true
 		if [ -n "$_prepass_output" ] && ! _contains_provider_error_text "$_prepass_output"; then
 			_prepass_enhanced_prompt=$(mktemp /tmp/eloop_radio_prepass_enhanced_XXXXXXXX)
