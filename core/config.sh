@@ -39,7 +39,7 @@ RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-codex:minimax-m3}"
 RADIO_MAIN_OLLAMA_FALLBACK="${RADIO_MAIN_OLLAMA_FALLBACK:-codex:minimax-m3}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
-RADIO_AGENTS="${RADIO_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
+RADIO_AGENTS="${RADIO_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
 # RADIO_PREPASS_AGENTS: 事前調査 (prepass) のモデルフォールバックリスト。
 # 本文生成と同じラダーから local を除いたもの。ai_generate_list() が順に試行する。
 RADIO_PREPASS_AGENTS="${RADIO_PREPASS_AGENTS:-codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
@@ -75,7 +75,7 @@ COMMENT_MAIN_OLLAMA_FALLBACK="${COMMENT_MAIN_OLLAMA_FALLBACK:-codex:minimax-m3}"
 COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK="${COMMENT_MAIN_ALLOW_CLAUDE_FALLBACK:-0}"
 # COMMENT_AGENTS: コメント返し生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # 設定するとCOMMENT_MAIN_AGENT/FALLBACK/OLLAMA_FALLBACKより優先される
-COMMENT_AGENTS="${COMMENT_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:deepseek-v4-flash,codex:minimax-m3}"
+COMMENT_AGENTS="${COMMENT_AGENTS:-local,codex:deepseek-v4-flash-free,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
 COMMENT_AGENT_BACKOFF_SEC="${COMMENT_AGENT_BACKOFF_SEC:-18000}"
 COMMENT_TRANSLATION_AGENTS="${COMMENT_TRANSLATION_AGENTS:-$COMMENT_AGENTS}"
 COMMENT_TRANSLATION_TIMEOUT="${COMMENT_TRANSLATION_TIMEOUT:-20}"
