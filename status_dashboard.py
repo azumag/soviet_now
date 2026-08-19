@@ -71,6 +71,9 @@ STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_HASH_PERMANENT_ARCHIVE_DIR = "strategy_versions_archive/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
+RUSSIA_CREATION_HISTORY_FILE = "tmp/history/russia_creation_history.tsv"
+GAME_COUNT_FILE = "game_count.txt"
+RUSSIA_RATE_WINDOW = int(os.getenv("STATUS_RUSSIA_RATE_WINDOW", "100"))
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -259,6 +262,59 @@ def load_rolling():
         return {}
 
 
+def load_russia_founding_games():
+    """建国(type15到達)が起きたゲーム番号のソート済みリスト。
+
+    tmp/history/russia_creation_history.tsv は core/helpers.sh の
+    _append_celebration_history() が 1建国=1行 で追記する
+    (iso_ts, local_ts, game_num, score, turns)。dashboard_data.py の
+    parse_russia_history() と同形式だが、両パイプラインを独立に保つため
+    ここで最小実装する(相互 import はしない)。
+
+    履歴ファイル自体が無い場合は None を返し、「ファイルはあるが建国0件」
+    を意味する [] と区別する。
+    """
+    p = Path(RUSSIA_CREATION_HISTORY_FILE)
+    if not p.exists():
+        return None
+    try:
+        raw_lines = p.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return None
+    games = set()
+    for line in raw_lines:
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        try:
+            game = int(parts[2])
+        except ValueError:
+            continue
+        if game > 0:
+            games.add(game)
+    return sorted(games)
+
+
+def load_game_counter(fallback=0):
+    """通算ゲーム番号。建国履歴の game_num は通常このファイル由来
+    (eloop.sh:614 の game_num_display) のため、率の分母側も len(score_history)
+    ではなく game_count.txt を優先して揃える。
+
+    既知の制約: wildcard-parallel 経由の取り込み (eloop_improve.sh:236) は
+    game_count.txt ではなく score_history.txt の行数を game_num として使うため、
+    両ファイルの増分にズレが生じている間は極少数の建国履歴行が
+    game_num > game_total になりうる。calc_russia_founding_rate() 側の
+    範囲フィルタ (recent_lo <= g <= game_total) がそれらを黙って除外するため
+    クラッシュや異常値表示はしないが、その分だけ直近の率が僅かに過小に出る
+    (本変更では書き込み側 eloop_improve.sh を触らないため未修正)。
+    """
+    try:
+        count = int(Path(GAME_COUNT_FILE).read_text(encoding="utf-8").strip() or "0")
+    except Exception:
+        count = 0
+    return count if count > 0 else fallback
+
+
 def load_best_anchor():
     p = Path(BEST_STRATEGY_ANCHOR_FILE)
     if not p.exists():
@@ -427,6 +483,40 @@ def calc_strategy_metrics(scores):
     }
 
 
+def calc_russia_founding_rate(founding_games, game_total, window=RUSSIA_RATE_WINDOW):
+    """hash非依存の全体建国率(直近window試合)と、1つ前のwindowとの比較。
+
+    founding_games: load_russia_founding_games() の戻り値 (None = 履歴ファイルなし)
+    game_total:     通算ゲーム番号 (load_game_counter())
+
+    戻り値 None = 表示に足るデータがない。
+    delta は「直近window の率 - 1つ前のwindow の率」(パーセントポイント)。
+    game_total が window*2 未満なら prev_* / delta は None (矢印は出さない)。
+    """
+    if founding_games is None:
+        return None
+    if window <= 0 or game_total < window:
+        return None
+    recent_lo = game_total - window + 1
+    count = sum(1 for g in founding_games if recent_lo <= g <= game_total)
+    rate = count / window * 100.0
+    prev_count = prev_rate = delta = None
+    if game_total >= window * 2:
+        prior_hi = recent_lo - 1
+        prior_lo = prior_hi - window + 1
+        prev_count = sum(1 for g in founding_games if prior_lo <= g <= prior_hi)
+        prev_rate = prev_count / window * 100.0
+        delta = rate - prev_rate
+    return {
+        "window": window,
+        "count": count,
+        "rate": rate,
+        "prev_count": prev_count,
+        "prev_rate": prev_rate,
+        "delta": delta,
+    }
+
+
 def is_blocked_reverse_rollback_pair(current_hash, candidate_hash, last_pair):
     if not current_hash or not candidate_hash or not isinstance(last_pair, dict):
         return False
@@ -493,6 +583,15 @@ def get_current_strategy_run_entry(current_hash):
         games_total = int(games_total)
     except Exception:
         games_total = len(scores)
+    # 現行 hash の建国回数。strategy/improve.sh:2438 が run["scores"] と同じ窓
+    # (= n_roll) の game_history アーカイブから数え、単調 max で保持する。
+    # 既知の制約: infra/cleanup.sh は実アーカイブを直近13件しか残さないため、
+    # 窓が13件より長い場合は過去の建国を取りこぼして下振れしうる
+    # (アーカイブ保持側の既存課題。本変更では修正しない)。
+    try:
+        russia_count = max(0, int(data.get("russia_count", 0) or 0))
+    except Exception:
+        russia_count = 0
     if metrics:
         return {
             "hash": current_hash,
@@ -503,6 +602,7 @@ def get_current_strategy_run_entry(current_hash):
             "p50": metrics["p50"],
             "p25": metrics["p25"],
             "lcb": metrics["lcb"],
+            "russia_count": russia_count,
         }
     return {
         "hash": current_hash,
@@ -513,6 +613,7 @@ def get_current_strategy_run_entry(current_hash):
         "p50": 0.0,
         "p25": 0.0,
         "lcb": 0.0,
+        "russia_count": russia_count,
     }
 
 
@@ -1560,7 +1661,8 @@ def load_archive_restart_candidate():
 # ── Panel renderers ───────────────────────────────────────────
 
 def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
-                  strat_lines, rejected, accumulated, improve, rolling):
+                  strat_lines, rejected, accumulated, improve, rolling,
+                  russia_rate=None):
     game_count = len(scores)
     best = max(scores) if scores else 0
     avg_all = int(sum(scores) / len(scores)) if scores else 0
@@ -1569,11 +1671,14 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     avg_recent = int(sum(recent30) / len(recent30)) if recent30 else 0
 
     trend_pct = ""
+    trend_raw = ""
     if avg_all > 0 and len(scores) >= 30:
         diff = (avg_recent - avg_all) / avg_all * 100
         arrow = "▲" if diff >= 0 else "▼"
+        arrow_raw = "^" if diff >= 0 else "v"
         trend_color = C_GREEN if diff >= 0 else C_RED
         trend_pct = f"{trend_color}{arrow}{diff:+.0f}%{RST}"
+        trend_raw = f"{arrow_raw}{diff:+.0f}%"
 
     state = game_state.get("state", "?")
     gscore = game_state.get("score", 0)
@@ -1599,23 +1704,42 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     row1 = f" SOREN/{stream_backend.upper()}  #{game_count} games   Best:{best}   Avg:{avg_all}"
     lines.append(f"{C_CYAN}│{RST}{BOLD}{row1:<{inner}}{RST} {C_CYAN}│{RST}")
 
-    # Row 2: Recent30, Trend, Rejected
-    r2_parts = [f" Recent30:{avg_recent}"]
+    # 全体(hash非依存)の建国率と、直近window vs 1つ前windowのトレンド
+    rus_raw = ""
+    rus_disp = ""
+    if russia_rate:
+        rus_delta = russia_rate["delta"]
+        if rus_delta is None:
+            rus_arrow_raw, rus_arrow, rus_color = "", "", C_WHITE
+        elif rus_delta > 0:
+            rus_arrow_raw, rus_arrow, rus_color = "^", "▲", C_GREEN
+        elif rus_delta < 0:
+            rus_arrow_raw, rus_arrow, rus_color = "v", "▼", C_RED
+        else:
+            rus_arrow_raw, rus_arrow, rus_color = "=", "=", C_YELLOW
+        rus_raw = f"  Rus:{russia_rate['rate']:.0f}%{rus_arrow_raw}"
+        rus_disp = f"  Rus:{rus_color}{russia_rate['rate']:.0f}%{rus_arrow}{RST}"
+
+    # Row 2: Recent30, Trend, Rus(全体建国率), Rejected
+    # (幅計算用 raw, 表示用 display) のペアで組み、幅は必ず raw 側で測る
+    r2_chunks = [(f" Recent30:{avg_recent}", f" Recent30:{avg_recent}")]
     if trend_pct:
-        r2_parts.append(f"  Trend:{trend_pct}")
+        r2_chunks.append((f"  Trend:{trend_raw}", f"  Trend:{trend_pct}"))
+    if rus_raw:
+        r2_chunks.append((rus_raw, rus_disp))
     if rejected > 0:
-        r2_parts.append(f"  Rejected:{rejected}")
-    # For ANSI-safe padding, build raw text separately
-    r2_raw = f" Recent30:{avg_recent}"
-    if avg_all > 0 and len(scores) >= 30:
-        diff = (avg_recent - avg_all) / avg_all * 100
-        arrow_raw = "^" if diff >= 0 else "v"
-        r2_raw += f"  Trend:{arrow_raw}{diff:+.0f}%"
-    if rejected > 0:
-        r2_raw += f"  Rejected:{rejected}"
-    r2_display = "".join(r2_parts)
+        r2_chunks.append((f"  Rejected:{rejected}", f"  Rejected:{rejected}"))
+    r2_raw = ""
+    r2_display = ""
+    for chunk_raw, chunk_disp in r2_chunks:
+        if len(r2_raw) + len(chunk_raw) > inner:
+            continue
+        r2_raw += chunk_raw
+        r2_display += chunk_disp
     pad2 = inner - len(r2_raw)
     lines.append(f"{C_CYAN}│{RST}{r2_display}{' ' * max(pad2, 0)} {C_CYAN}│{RST}")
+
+    current_entry = get_current_strategy_run_entry(strat_hash)
 
     hash_short = strat_hash[:8] if strat_hash else "?"
     ver_num = ""
@@ -1623,6 +1747,24 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
         ver_num = strat_ver.split("_")[0]  # e.g. "v775"
     r3_raw = f" Strategy: {hash_short}  {ver_num}  {strat_lines}L"
     r3_display = f"{DIM}{r3_raw}{RST}"
+
+    # 現行 hash の建国回数 (current_strategy_run.json の russia_count)。
+    # 分数/割合ではなく件数のみを表示する: russia_count は strategy/improve.sh:2438 が
+    # 単調 max で積み上げる値で、系統継承 (regression.sh:1032-1043 の origin merge) 経由で
+    # 祖先の russia_count をそのまま引き継ぐことがある一方、n_roll (= len(scores)) は
+    # ブランチごとの直近ウィンドウでしかない。分子と分母が異なる母集団を指しうるため
+    # 「R:count/n_roll」という率表示は誤解を招く (例: 継承直後は count > n_roll になり得る)。
+    # show_status.sh:1170-1174 の既存 "R{n}" 表記と同じ、件数のみの表示に揃える。
+    run_rus_raw = ""
+    run_rus_disp = ""
+    if current_entry:
+        run_rc = current_entry["russia_count"]
+        if run_rc > 0:
+            run_rus_raw = f"  R:{run_rc}"
+            run_rus_disp = f"  {C_GREEN}R:{run_rc}{RST}"
+
+    imp_raw = ""
+    imp_disp = ""
     if improve.get("status") == "running":
         phase = (improve.get("phase") or "running").replace("_", "-")
         if len(phase) > 10:
@@ -1636,8 +1778,15 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
         else:
             imp_raw = f"  Imp:stale {phase}"
             imp_disp = f"  {C_RED}Imp:stale {phase}{RST}"
-        r3_raw += imp_raw
-        r3_display += imp_disp
+
+    # 幅優先度: Strategy本体 > Imp表示 > R(建国率)。
+    # inner=54 / base=33 / R最大=17 → 改善が走っていなければ必ず収まる。
+    # Imp 表示中は base+Imp だけで幅上限に達するため、その間は R を落とす。
+    if run_rus_raw and len(r3_raw) + len(imp_raw) + len(run_rus_raw) <= inner:
+        r3_raw += run_rus_raw
+        r3_display += run_rus_disp
+    r3_raw += imp_raw
+    r3_display += imp_disp
     pad3 = inner - len(r3_raw)
     lines.append(f"{C_CYAN}│{RST}{r3_display}{' ' * max(pad3, 0)} {C_CYAN}│{RST}")
 
@@ -1684,7 +1833,6 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
             continue
         row = (metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics)
         ranked.append(row)
-    current_entry = get_current_strategy_run_entry(strat_hash)
     if current_entry and current_entry["n_roll"] > 0:
         current_metrics = {
             "n": current_entry["n_roll"],
@@ -2283,11 +2431,16 @@ def main():
     accumulated = get_accumulated_count(strat_hash)
     improve = load_improve_state()
     reasons = load_decision_reasons(50)
+    russia_rate = calc_russia_founding_rate(
+        load_russia_founding_games(),
+        load_game_counter(len(scores)),
+    )
 
     output = []
 
     output += render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
-                            strat_lines, rejected, accumulated, improve, rolling)
+                            strat_lines, rejected, accumulated, improve, rolling,
+                            russia_rate=russia_rate)
     output.append("")
     output += render_score_timeline(scores)
     output.append("")
