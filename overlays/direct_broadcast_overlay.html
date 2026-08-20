@@ -548,7 +548,14 @@ html[data-improve-active="1"] .feed-panel.panel-i {
       work.querySelector('.work-body').textContent = workState.body || '確認・修正・検証を進めています';
       work.querySelector('.work-elapsed').textContent = elapsedLabel(workState.ts);
     } else {
-      const lines = selectedSummaryLines();
+      const topO = state?.topOverride;
+      if (topO && topO.enabled === false) {
+        summary.style.display = 'none';
+        return;
+      }
+      const lines = (topO && topO.enabled === true && Array.isArray(topO.lines) && topO.lines.length)
+        ? topO.lines.slice(0, 4).map((s) => String(s).trim()).filter(Boolean)
+        : selectedSummaryLines();
       const key = JSON.stringify(lines);
       if (key !== lastSummaryKey) {
         summary.replaceChildren(...lines.map((text) => {
