@@ -30,7 +30,8 @@ MODEL_LAST_RESORT="codex:deepseek-v4-flash"
 # ===== 共通モデルチェーン =====
 # 全 AI 生成系の単一の順序原典。低コスト/無料枠を先頭、確実な有償枠を末尾に置く。
 # 各用途はこのリストを基底に、local を含めるか・特定枠を外すかだけを変える。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-codex:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3}"
+# deepseek-v4-flash-free は opencode 直呼びで成功する（litellm の zen/v1 は 429）。opencode: で呼ぶ.
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。

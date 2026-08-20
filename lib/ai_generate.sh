@@ -590,6 +590,76 @@ _ai_call_local_llm() {
 	_ai_generation_queue_run "$(_ai_queue_label "$label" "local" "$model")" _ai_call_local_llm_unqueued "$@"
 }
 
+# === Opencode (free tier via opencode CLI) ===
+
+# _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT]
+# opencode:deepseek-v4-flash-free などは opencode CLI で直接呼ぶ。
+# 検証済み: /snap/bin/opencode run --model opencode/deepseek-v4-flash-free は litellm の zen/v1 429 と異なり成功する。
+_ai_call_opencode_unqueued() {
+	local label="$1" agent="$2" prompt_file="$3"
+	local timeout_sec="${4:-90}"
+	local model="opencode/${agent#opencode:}"
+	case "$agent" in
+	opencode/*) model="$agent" ;;
+	opencode:*) model="opencode/${agent#opencode:}" ;;
+	*/*) model="$agent" ;;
+	esac
+	# opencode binary: prefer /snap/bin/opencode, fallback to opencode
+	local opencode_bin="/snap/bin/opencode"
+	[ -x "$opencode_bin" ] || opencode_bin="opencode"
+	[ -s "$prompt_file" ] || return 1
+	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
+	out_file=$(mktemp /tmp/ai_opencode_out_XXXXXXXX)
+	stderr_file=$(mktemp /tmp/ai_opencode_stderr_XXXXXXXX)
+	case "$timeout_sec" in
+	'' | *[!0-9]*) timeout_sec=90 ;;
+	esac
+	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
+	log "[${label}] opencode call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	# opencode run --model は prompt を引数として渡す。timeout でラップする。
+	timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+	rc=$?
+	stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
+	if [ $rc -ne 0 ] || [ ! -s "$out_file" ]; then
+		_ai_rate_limit_text_detected "$stderr_preview" && rate_limited=true
+		# opencode の stderr にも rate limit が出ることがある
+		if [ -n "$stderr_preview" ] && _ai_rate_limit_text_detected "$stderr_preview"; then
+			rate_limited=true
+		fi
+	fi
+	if [ $rc -eq 124 ]; then
+		log "[${label}] opencode timeout (${timeout_sec}s, model=$model)" >&2
+		rm -f "$out_file" "$stderr_file"
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] opencode failed (rc=$rc, model=$model)" >&2
+		[ -n "$stderr_preview" ] && log "[${label}] opencode stderr: $stderr_preview" >&2
+		rm -f "$out_file" "$stderr_file"
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	cleaned=$(cat "$out_file" 2>/dev/null | _ai_strip_reasoning_blocks)
+	rm -f "$out_file" "$stderr_file"
+	if [ -z "$cleaned" ]; then
+		log "[${label}] opencode empty after cleanup (model=$model)" >&2
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	if _contains_provider_error_text "$cleaned"; then
+		log "[${label}] opencode provider error (model=$model)" >&2
+		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		return 1
+	fi
+	printf '%s' "$cleaned"
+}
+
+_ai_call_opencode() {
+	local label="${1:-AI}" agent="${2:-opencode}"
+	_ai_generation_queue_run "$(_ai_queue_label "$label" "opencode" "$agent")" _ai_call_opencode_unqueued "$@"
+}
+
 # === Codex (統一ハーネス) ===
 
 # codex:<model> は指定モデルを使い、codex または従来形式の agent 名は
@@ -736,6 +806,16 @@ _ai_dispatch() {
 		[ "$agent" = "local" ] || _local_model="${agent#local:}"
 		_ai_call_local_llm "$label" "$prompt_file" "$_local_model" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
+	opencode:*)
+		local _opencode_timeout="$timeout_override"
+		if [[ "$label" == COMMENT* ]] && [ -z "$_opencode_timeout" ]; then
+			_opencode_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
+		fi
+		if [[ "$label" == RADIO* ]] && [ -z "$_opencode_timeout" ]; then
+			_opencode_timeout="${RADIO_CODEX_TIMEOUT:-240}"
+		fi
+		_ai_call_opencode "$label" "$agent" "$prompt_file" "$_opencode_timeout" | tee "$_dispatch_output_file"
+		;;
 	*)
 		if [[ "$label" == COMMENT* ]] && [ -z "$_codex_timeout" ]; then
 			_codex_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
@@ -874,6 +954,9 @@ _ai_backoff_sec_for_agent() {
 		;;
 	codex:*)
 		model="${agent#codex:}"
+		;;
+	opencode:*)
+		model="${agent#opencode:}"
 		;;
 	*)
 		model="$agent"
