@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """status_dashboard.py — CUI Graphical Statistics Dashboard for Soren AI
 
-Renders 4 panels: Header, Score Timeline (braille), Score Distribution,
+Renders 4 panels: Header, Score Timeline (compact sparkline), Score Distribution,
 Strategy Comparison.
 Decision Patterns logic remains available but is hidden from the dashboard layout.
 """
@@ -146,79 +146,6 @@ def gradient_color(val, lo, hi):
     ratio = min(max((val - lo) / (hi - lo), 0), 1)
     idx = int(ratio * (len(SCORE_GRADIENT) - 1))
     return fg256(SCORE_GRADIENT[idx])
-
-
-# ── BrailleCanvas ─────────────────────────────────────────────
-# Each braille char = 2 dot-columns × 4 dot-rows
-# Dot encoding: col0 bits=[0,1,2,6], col1 bits=[3,4,5,7]
-
-BRAILLE_BASE = 0x2800
-DOT_MAP = [
-    [0x01, 0x08],  # row 0
-    [0x02, 0x10],  # row 1
-    [0x04, 0x20],  # row 2
-    [0x40, 0x80],  # row 3
-]
-
-
-class BrailleCanvas:
-    def __init__(self, char_w, char_h):
-        self.cw = char_w
-        self.ch = char_h
-        self.dot_w = char_w * 2
-        self.dot_h = char_h * 4
-        self.buf = [[0] * char_w for _ in range(char_h)]
-        self.colors = [[None] * char_w for _ in range(char_h)]
-
-    def set(self, dx, dy, color=None):
-        if dx < 0 or dx >= self.dot_w or dy < 0 or dy >= self.dot_h:
-            return
-        cy = dy // 4
-        cx = dx // 2
-        ry = dy % 4
-        rx = dx % 2
-        self.buf[cy][cx] |= DOT_MAP[ry][rx]
-        if color:
-            self.colors[cy][cx] = color
-
-    def render_lines(self):
-        lines = []
-        for r in range(self.ch):
-            s = ""
-            for c in range(self.cw):
-                ch = chr(BRAILLE_BASE + self.buf[r][c])
-                col = self.colors[r][c]
-                if col:
-                    s += col + ch + RST
-                else:
-                    s += ch
-            lines.append(s)
-        return lines
-
-
-def draw_braille_segment(canvas, x0, y0, x1, y1, color=None):
-    """Draw a continuous line segment on a BrailleCanvas.
-
-    The timeline is rendered at dot resolution, so connecting adjacent samples
-    avoids turning every sample into a separate full-height bar.
-    """
-    dx = abs(x1 - x0)
-    sx = 1 if x0 < x1 else -1
-    dy = -abs(y1 - y0)
-    sy = 1 if y0 < y1 else -1
-    error = dx + dy
-
-    while True:
-        canvas.set(x0, y0, color)
-        if x0 == x1 and y0 == y1:
-            break
-        twice_error = 2 * error
-        if twice_error >= dy:
-            error += dy
-            x0 += sx
-        if twice_error <= dx:
-            error += dx
-            y0 += sy
 
 
 # ── Block bar rendering ───────────────────────────────────────
@@ -1927,50 +1854,63 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     return lines
 
 
+# ASCII-only levels stay legible in the small OBS/browser monospace feed.
+SPARKLINE_CHARS = ".:-=+*#@"
+
+
+def _bucket_score_window(scores, bucket_count):
+    """Reduce a score window to stable, left-to-right sparkline samples."""
+    if not scores or bucket_count <= 0:
+        return []
+    bucket_count = min(bucket_count, len(scores))
+    values = []
+    for index in range(bucket_count):
+        start = index * len(scores) // bucket_count
+        end = (index + 1) * len(scores) // bucket_count
+        if end <= start:
+            end = start + 1
+        bucket = scores[start:end]
+        values.append(sum(bucket) / len(bucket))
+    return values
+
+
 def render_score_timeline(scores, chart_w=42, chart_h=7):
+    """Render the score history as a browser-safe, one-line sparkline.
+
+    The previous Braille grid was compact in a terminal but became a dense
+    block of cells in the tiny OBS/browser feed.  A single row of standard
+    height glyphs keeps the trend visible without implying a stack of bars.
+    ``chart_h`` remains accepted for callers that used the old signature.
+    """
+    del chart_h  # Kept for backwards-compatible callers; the chart is one row.
     label_w = 5  # "XXXXX"
+    width = max(int(chart_w), 1)
     sep = "│"
-    # Braille glyphs render a little wider in OBS/browser than in terminals.
-    # Keep this below the old 50-wide graph so it fills the frame without spilling.
+    heading = f"  {BOLD}Score Timeline{RST}"
 
     if len(scores) < 3:
-        lines = [f"{'':>{label_w}}{sep} {'(not enough data)':^{chart_w}}"]
-        lines += [f"{'':>{label_w}}{sep}{' ' * chart_w}"] * (chart_h - 1)
-        return [f"  {DIM}Score Timeline{RST}"] + lines
+        placeholder = f"{'':>{label_w}}{sep} {'(not enough data)':^{width}}"
+        return [heading, placeholder, f"{'':>{label_w}}{sep}{' ' * width}"]
 
     window = scores[-100:]
     lo = min(window)
     hi = max(window)
     rng = max(hi - lo, 1)
-
-    canvas = BrailleCanvas(chart_w, chart_h)
-    dot_w = chart_w * 2
-    dot_h = chart_h * 4
-
+    samples = _bucket_score_window(window, width)
+    levels = [
+        min(
+            len(SPARKLINE_CHARS) - 1,
+            max(0, int(round((value - lo) / rng * (len(SPARKLINE_CHARS) - 1)))),
+        )
+        for value in samples
+    ]
+    sparkline = "".join(SPARKLINE_CHARS[level] for level in levels)
     n = len(window)
-    points = []
-    for i, s in enumerate(window):
-        dx = int(i * (dot_w - 1) / max(n - 1, 1))
-        norm = (s - lo) / rng
-        dy = dot_h - 1 - int(norm * (dot_h - 1))
-        points.append((dx, dy))
-
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
-        draw_braille_segment(canvas, x0, y0, x1, y1, C_CYAN)
-    if points:
-        canvas.set(*points[0], C_CYAN)
-        canvas.set(*points[-1], C_CYAN)
-
-    braille_lines = canvas.render_lines()
-    lines = [f"  {BOLD}Score Timeline{RST} {DIM}(last {n} games){RST}"]
-    for i, bl in enumerate(braille_lines):
-        if i == 0:
-            lbl = f"{hi:>5}"
-        elif i == chart_h - 1:
-            lbl = f"{lo:>5}"
-        else:
-            lbl = ""
-        lines.append(f"{C_GREY}{lbl:>5}{RST}{sep}{bl}")
+    lines = [
+        f"{heading} {DIM}(last {n} games){RST}",
+        f"{C_GREY}{hi:>{label_w}}{RST}{sep}{C_CYAN}{sparkline}{RST}",
+        f"{C_GREY}{lo:>{label_w}}{RST}└{C_CYAN}{'─' * width}{RST}",
+    ]
     return lines
 
 

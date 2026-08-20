@@ -10,19 +10,17 @@ import status_dashboard as sd
 
 
 class ScoreTimelineTest(unittest.TestCase):
-    def test_timeline_connects_samples_instead_of_filling_every_column(self):
+    def test_timeline_uses_a_compact_browser_safe_sparkline(self):
         rows = sd.render_score_timeline(list(range(100)), chart_w=20, chart_h=7)
         plain = [sd.ANSI_RE.sub("", row) for row in rows]
 
-        # The bottom row is the low-score baseline. A connected rising line
-        # should leave most columns empty; the old area-fill renderer occupied
-        # every column because each sample painted down to the baseline.
-        glyphs = plain[-1][-20:]
-        occupied = sum(
-            bool((ord(glyph) - sd.BRAILLE_BASE) & 0xC0)
-            for glyph in glyphs
-        )
-        self.assertLess(occupied, len(glyphs))
+        self.assertEqual(len(plain), 3)
+        self.assertFalse(any("\u2800" <= ch <= "\u28ff" for ch in "\n".join(plain)))
+        sparkline = plain[1].split("│", 1)[1]
+        self.assertEqual(len(sparkline), 20)
+        levels = [sd.SPARKLINE_CHARS.index(glyph) for glyph in sparkline]
+        self.assertEqual(levels, sorted(levels))
+        self.assertLess(levels[0], levels[-1])
 
     def test_timeline_keeps_extreme_labels(self):
         rows = sd.render_score_timeline([100, 250, 400], chart_w=12, chart_h=4)
