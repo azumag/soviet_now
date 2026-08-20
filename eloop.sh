@@ -674,6 +674,9 @@ print(d.get('score', 0) + bonus)
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	export LAST_RAW_SCORE="$LAST_SCORE"
+	# 即死判別(soren-stat-gate-design.md B-4 判別器#4: turns==0/極小 は raw==0 と
+	# 並ぶハーネス起因のサイン)用。Phase 1 まではどこからも読まれない。
+	export LAST_TURNS="$LAST_TURNS"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
 		if [ -x ./monitor_improve_runtime.sh ]; then
 			(

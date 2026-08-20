@@ -2250,12 +2250,21 @@ _seed_current_strategy_run_from_rolling() {
 	local strategy_hash="$1"
 	[ -n "$strategy_hash" ] || return 1
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
-	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" <<'PY' >/dev/null 2>&1
+	# keep はここで初めて出てくる訳ではなく、update_rolling_scores()/
+	# _update_current_strategy_run() が使う CURRENT_RUN_SCORE_KEEP と揃える。
+	# 揃えないと rollback で current_run に戻る度に scores が20件にしぼられ、
+	# rolling 側(100件)との n 非対称で lcb が anchor 側に偏るバイアスが再発する
+	# (handoff.md §13 既知負債)。
+	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "${CURRENT_RUN_SCORE_KEEP:-20}" <<'PY' >/dev/null 2>&1
 import json
 import os
 import sys
 
-rolling_file, out_file, strategy_hash = sys.argv[1], sys.argv[2], sys.argv[3]
+rolling_file, out_file, strategy_hash, keep_raw = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+try:
+    keep = max(1, int(keep_raw))
+except Exception:
+    keep = 20
 if not os.path.exists(rolling_file):
     raise SystemExit(1)
 try:
@@ -2274,7 +2283,7 @@ for x in entry.get("scores", []) or []:
 recent_archives = entry.get("_recent_archives", []) or []
 if not isinstance(recent_archives, list):
     recent_archives = []
-seed_scores = scores[-20:]
+seed_scores = scores[-keep:]
 payload = {
     "hash": strategy_hash,
     "scores": seed_scores,
@@ -2283,14 +2292,14 @@ payload = {
     "_fresh_score_count": 0,
     "_fresh_games_total": 0,
     "_recent_archives": recent_archives[-50:],
-    "max_types": (entry.get("max_types", []) or [])[-20:],
+    "max_types": (entry.get("max_types", []) or [])[-keep:],
     "russia_count": int(entry.get("russia_count", 0) or 0),
     "soviet_count": int(entry.get("soviet_count", 0) or 0),
     "best_max_type": int(entry.get("best_max_type", 0) or 0),
-    "frontier_hints": (entry.get("frontier_hints", []) or [])[-20:],
-    "peak_high_type_counts": (entry.get("peak_high_type_counts", []) or [])[-20:],
-    "deadline_guard_counts": (entry.get("deadline_guard_counts", []) or [])[-20:],
-    "deadline_guard_reason_tops": (entry.get("deadline_guard_reason_tops", []) or [])[-20:],
+    "frontier_hints": (entry.get("frontier_hints", []) or [])[-keep:],
+    "peak_high_type_counts": (entry.get("peak_high_type_counts", []) or [])[-keep:],
+    "deadline_guard_counts": (entry.get("deadline_guard_counts", []) or [])[-keep:],
+    "deadline_guard_reason_tops": (entry.get("deadline_guard_reason_tops", []) or [])[-keep:],
 }
 if payload["best_max_type"] >= 15 and payload["russia_count"] <= 0:
     payload["russia_count"] = 1

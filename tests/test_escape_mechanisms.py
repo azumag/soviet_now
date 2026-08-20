@@ -12436,6 +12436,108 @@ PY
             )
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
+    def test_seed_current_strategy_run_honors_current_run_score_keep_override(self):
+        """_seed_current_strategy_run_from_rolling は CURRENT_RUN_SCORE_KEEP を
+        尊重する（2026-08-20修正前は [-20:] にハードコードされ、rollback で
+        current_run に戻る度に scores が20件へ切り詰められ、rolling側(100件)
+        との n 非対称バイアスが再発していた。handoff.md §13 既知負債）。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            run_file = td / "current_strategy_run.json"
+            rolling_file = td / "rolling_scores.json"
+            scores_60 = list(range(1000, 1060))  # 60 games of history
+            rolling_file.write_text(json.dumps({
+                "seedhash": {
+                    "scores": scores_60,
+                    "games_total": 60,
+                    "_recent_archives": [],
+                    "frontier_hints": [],
+                    "peak_high_type_counts": [],
+                    "deadline_guard_counts": [],
+                    "deadline_guard_reason_tops": [],
+                    "max_types": [12] * 60,
+                    "russia_count": 0,
+                    "soviet_count": 0,
+                    "best_max_type": 12,
+                }
+            }))
+            script = textwrap.dedent(f"""\
+                source ./core/config.sh
+                CURRENT_STRATEGY_RUN_FILE='{run_file}'
+                ROLLING_SCORES_FILE='{rolling_file}'
+                CURRENT_RUN_SCORE_KEEP=100
+                source ./strategy/improve.sh
+                _seed_current_strategy_run_from_rolling seedhash
+                python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('{run_file}')
+d = json.load(open(p))
+# all 60 scores kept (well under the 100 keep window), not truncated to 20
+assert len(d['scores']) == 60, d['scores']
+assert d['scores'][0] == 1000
+assert d['scores'][-1] == 1059
+assert d['_seeded_score_count'] == 60
+assert len(d['max_types']) == 60
+PY
+            """)
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+
+    def test_seed_current_strategy_run_defaults_to_20_when_unset(self):
+        """CURRENT_RUN_SCORE_KEEP が未設定なら従来どおり直近20件のみ(後方互換)。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            run_file = td / "current_strategy_run.json"
+            rolling_file = td / "rolling_scores.json"
+            scores_60 = list(range(1000, 1060))
+            rolling_file.write_text(json.dumps({
+                "seedhash": {
+                    "scores": scores_60,
+                    "games_total": 60,
+                    "_recent_archives": [],
+                    "frontier_hints": [],
+                    "peak_high_type_counts": [],
+                    "deadline_guard_counts": [],
+                    "deadline_guard_reason_tops": [],
+                    "max_types": [12] * 60,
+                    "russia_count": 0,
+                    "soviet_count": 0,
+                    "best_max_type": 12,
+                }
+            }))
+            script = textwrap.dedent(f"""\
+                source ./core/config.sh
+                CURRENT_STRATEGY_RUN_FILE='{run_file}'
+                ROLLING_SCORES_FILE='{rolling_file}'
+                unset CURRENT_RUN_SCORE_KEEP
+                source ./strategy/improve.sh
+                _seed_current_strategy_run_from_rolling seedhash
+                python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('{run_file}')
+d = json.load(open(p))
+assert len(d['scores']) == 20, d['scores']
+assert d['scores'][0] == 1040  # last 20 of 1000..1059
+assert d['scores'][-1] == 1059
+PY
+            """)
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+
     def test_improve_state_idle_zero_progress_clears_stale_runtime_phase(self):
         """idle + progress=0 は古い runtime_recovery/detail を監視面へ残さない。"""
         with tempfile.TemporaryDirectory() as td:
