@@ -402,6 +402,20 @@ for label, entry in (("rolling", rs), ("current_run", run)):
     assert entry["scores"][-5:] == [9000] * 5, (label, entry["scores"])
     # accounting: total games seen = 4 landed-dead + 4 diverted + 5 alive = 13
     assert entry["games_total"] == 13, (label, entry["games_total"])
+    # B2 regression guard: none of the 4 diverted games' archives may have
+    # entered _recent_archives -- if they had, they would have pushed real
+    # (alive) archives out of the recent_archives[-len(scores):] slice that
+    # feeds max_types/frontier_hints/etc, corrupting those for games that
+    # were never diverted at all.
+    # (list literals here, not set literals -- this whole block is embedded
+    # inside an f-string in the outer test file, and a bare {{}} would be
+    # parsed as an f-string substitution before it ever reaches this script.)
+    recent = entry.get("_recent_archives") or []
+    diverted_archives = ["dead4.jsonl", "stilldead0.jsonl", "stilldead1.jsonl", "stilldead2.jsonl"]
+    for da in diverted_archives:
+        assert da not in recent, (label, da, recent)
+    for alive_archive in ["alive0.jsonl", "alive1.jsonl", "alive2.jsonl", "alive3.jsonl", "alive4.jsonl"]:
+        assert alive_archive in recent, (label, alive_archive, recent)
 PY
                 """)
             result = _run(script, timeout=60)
@@ -461,6 +475,61 @@ PY
                 """)
             result = _run(script)
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+
+
+class InstadeathObserveDeadFlagTests(unittest.TestCase):
+    """Targeted regression coverage for blocking issue B1 (2026-08-20 Phase 1
+    review): _instadeath_observe's `dead` field must reflect the current
+    game, not whatever the monitor's JSON reply happened to echo back on
+    the dedup/error paths (0 on dedup, absent on error). Also guards
+    against the follow-up bug the fix for B1 itself introduced and this
+    same test suite caught: a bash prefix-env assignment on the first
+    command of a pipeline (`FOO=x cmd1 | cmd2`) is silently NOT inherited
+    by cmd2, so passing the authoritative `dead` value that way to the
+    second stage of _instadeath_observe's parser pipeline always read back
+    as unset/0."""
+
+    def test_observe_reports_dead_correctly_on_first_call_and_on_dedup(self):
+        with tempfile.TemporaryDirectory() as td:
+            script = _preamble(td, "INSTADEATH_SPLIT_ENABLED=1\nDEAD_QUARANTINE_WINDOW=5") + \
+                textwrap.dedent(f"""\
+                first=$(_instadeath_observe h1 0 0 0 'dead.jsonl')
+                echo "first=$first"
+                second=$(_instadeath_observe h1 0 0 0 'dead.jsonl')
+                echo "second=$second"
+                """)
+            result = _run(script)
+            self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+            first_line = next(l for l in result.stdout.splitlines() if l.startswith("first="))
+            second_line = next(l for l in result.stdout.splitlines() if l.startswith("second="))
+            first_fields = first_line[len("first="):].split("|")
+            second_fields = second_line[len("second="):].split("|")
+            # fields: status|dead|divert|verdict|transition|alert_transition
+            self.assertEqual(first_fields[0], "updated")
+            self.assertEqual(first_fields[1], "1", msg=f"first call dead flag: {first_fields}")
+            self.assertEqual(second_fields[0], "dedup")
+            # This is the crux of B1: the monitor's dedup-path JSON reply
+            # has "dead": 0 baked in (it does not re-derive it for a
+            # duplicate), but the bash function's own `dead` field must
+            # still be 1 for this call, because it is passed through
+            # unconditionally from the caller's own authoritative
+            # _instadeath_score_is_dead computation, not sourced from the
+            # monitor's reply.
+            self.assertEqual(second_fields[1], "1", msg=f"dedup call dead flag: {second_fields}")
+
+    def test_observe_reports_dead_correctly_for_alive_score(self):
+        with tempfile.TemporaryDirectory() as td:
+            script = _preamble(td, "INSTADEATH_SPLIT_ENABLED=1\nDEAD_QUARANTINE_WINDOW=5") + \
+                textwrap.dedent("""\
+                result=$(_instadeath_observe h1 9000 900 150 'alive.jsonl')
+                echo "result=$result"
+                """)
+            result = _run(script)
+            self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+            line = next(l for l in result.stdout.splitlines() if l.startswith("result="))
+            fields = line[len("result="):].split("|")
+            self.assertEqual(fields[1], "0", msg=f"alive-score dead flag: {fields}")
+            self.assertEqual(fields[2], "0", msg=f"alive-score divert flag: {fields}")
 
 
 if __name__ == "__main__":

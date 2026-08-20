@@ -161,26 +161,50 @@ class MonitorBasicsTests(unittest.TestCase):
                 self.path, _rec(s=0, raw=None, turns=None, d=True, archive=f"a{i}"), cfg)
         self.assertEqual(result["status"], "updated")
         self.assertEqual(result["evaluated"], True)
-        # No exception, and with both raw/turns unknown, only burst_ratio +
-        # near_total_rate can vote (hard_ratio/median_turns detectors are
-        # None -> no vote) -- still enough to reach HARNESS for a full
-        # 20/20 outage, but must not have thrown getting there.
+        # No exception, and this is fully deterministic despite raw/turns
+        # being unknown throughout: burst_ratio hits its p>=1.0 maximal case
+        # (one run spanning the whole 20-window -> ratio 20.0, past
+        # dead_burst_ratio's 3.0) for 1 vote, near_total_rate (rate=1.0 >=
+        # 0.90) for a 2nd vote -- hard_ratio/median_turns stay None (no
+        # vote, since raw/turns are None) but 2 votes alone reaches HARNESS.
+        # This was previously asserted as `in ("HARNESS", "UNKNOWN")`, which
+        # would have passed either way and caught nothing.
         data = json.load(open(self.path))
-        self.assertIn(data["quarantine"]["verdict"], ("HARNESS", "UNKNOWN"))
+        self.assertEqual(data["quarantine"]["verdict"], "HARNESS")
+        self.assertIsNone(data["quarantine"]["detail"].get("hard_ratio"))
+        self.assertIsNone(data["quarantine"]["detail"].get("median_death_turns"))
 
-    def test_13_no_double_transition_in_a_single_tick(self):
-        # Build up to just-cleared state, then immediately feed another dead
-        # game that alone wouldn't yet re-trigger (window still mostly
-        # alive) -- must not start+clear inconsistently in one call.
+    def test_13_clear_transition_never_falls_through_to_a_set_check(self):
+        # _apply_quarantine_transition checks "should we clear?" and returns
+        # immediately either way when quarantine is already active -- it
+        # never falls through to the "should we start?" branch below in the
+        # same call. That branch is only reachable when quarantine was NOT
+        # already active at the start of the call, so a single observation
+        # can never both start and clear. (Previous version of this test's
+        # docstring claimed to feed "another dead game" post-clear but the
+        # code fed an alive one, and doubled as an assertion that could not
+        # actually distinguish "checked, no transition" from "code path
+        # unreachable, so trivially no transition.")
         cfg = {"dead_quarantine_window": 5, "dead_quarantine_clear_window": 5,
                "dead_quarantine_clear_rate": 0.05}
         for i in range(5):
             im.observe(self.path, _rec(s=0, raw=0, turns=0, d=True, archive=f"a{i}"), cfg)
+        data = json.load(open(self.path))
+        self.assertTrue(data["quarantine"]["active"])  # confirm it actually started
+
+        results = []
         for i in range(5):
-            im.observe(self.path, _rec(d=False, archive=f"b{i}"), cfg)
+            results.append(im.observe(self.path, _rec(d=False, archive=f"b{i}"), cfg))
+        # exactly one "clear" transition, on the observation whose trailing
+        # 5-window first drops below dead_quarantine_clear_rate
+        transitions = [r["transition"] for r in results]
+        self.assertEqual(transitions.count("clear"), 1, msg=transitions)
+        self.assertEqual(transitions.count("start"), 0, msg=transitions)
         data = json.load(open(self.path))
         self.assertFalse(data["quarantine"]["active"])
-        # one more alive game: no transition, no exception
+        self.assertEqual(data["quarantine"]["verdict"], "NORMAL")  # re-classified fresh, not stale HARNESS
+
+        # one more alive game while already cleared: still no transition
         result = im.observe(self.path, _rec(d=False, archive="c0"), cfg)
         self.assertEqual(result["transition"], "")
 
@@ -206,12 +230,29 @@ class MonitorStateTests(unittest.TestCase):
         self.assertEqual(result["quarantine_active"], 1)
         self.assertEqual(result["verdict"], "HARNESS")
 
-    def test_note_diverted_increments_counter(self):
-        im.observe(self.path, _rec(archive="a0"))
-        im.note_diverted(self.path)
-        im.note_diverted(self.path)
+    def test_diverted_total_tracks_dead_games_observed_while_active(self):
+        # observe() self-tracks diverted_total for every dead game seen
+        # while quarantine.active is (post-transition) true -- this is
+        # exactly the set of games the bash caller will actually divert,
+        # since its own divert decision is "_dead and quarantine_active"
+        # read from observe()'s own return value (2026-08-20 Phase 1
+        # review, next-best item #1: the standalone note_diverted() API
+        # this replaced was never called by anything and always read 0).
+        cfg = {"dead_quarantine_window": 5}
+        for i in range(5):
+            im.observe(self.path, _rec(s=0, raw=0, turns=0, d=True, archive=f"a{i}"), cfg)
         data = json.load(open(self.path))
-        self.assertEqual(data["quarantine"]["diverted_total"], 2)
+        # the 5th observation is the one that flips active=True, and it is
+        # itself counted (dead=True at the moment active becomes True).
+        self.assertEqual(data["quarantine"]["diverted_total"], 1)
+        for i in range(2):
+            im.observe(self.path, _rec(s=0, raw=0, turns=0, d=True, archive=f"b{i}"), cfg)
+        data = json.load(open(self.path))
+        self.assertEqual(data["quarantine"]["diverted_total"], 3)
+        # an alive game while still active must not increment it
+        im.observe(self.path, _rec(d=False, archive="c0"), cfg)
+        data = json.load(open(self.path))
+        self.assertEqual(data["quarantine"]["diverted_total"], 3)
 
 
 if __name__ == "__main__":

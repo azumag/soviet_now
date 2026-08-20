@@ -2895,12 +2895,15 @@ if isinstance(stale.get("progress"), list) or isinstance(actual.get("progress"),
     if len(merged_progress) != len(merged_scores):
         merged_progress = [None] * len(merged_scores)
     merged["progress"] = merged_progress
-# quarantine state belongs to the strategy identity that earned it, not the
-# hash being merged away; a differently-hashed strategy's quarantine
-# history is not meaningful once merged.
-merged.pop("quarantined_scores", None)
-merged.pop("quarantined_progress", None)
-merged.pop("quarantine_meta", None)
+# NOTE: `merged = dict(actual)` above already carries actual_hash's own
+# quarantined_scores/quarantined_progress/quarantine_meta forward as-is
+# (they describe recent real-time environmental state, not something tied
+# to stale_hash's identity) -- do NOT pop them here. An earlier version of
+# this function did `merged.pop("quarantined_scores", ...)` intending to
+# drop STALE's quarantine data, but `dict(actual)` never copied stale's
+# keys into `merged` in the first place, so the pop was silently deleting
+# actual_hash's own real, current quarantine state instead (2026-08-20
+# Phase 1 review, next-best item #4).
 
 rs[actual_hash] = merged
 rs.pop(stale_hash, None)
@@ -2938,9 +2941,9 @@ _instadeath_score_is_dead() {
 	fi
 }
 
-# monitor に1件記録し、"status|dead|divert|verdict|transition" を返す。
-# monitor 側が失敗しても rolling_scores.json の書き込みを絶対に壊さないよう、
-# 例外・空出力は "error|<dead>|0|UNKNOWN|" にフォールバックする。
+# monitor に1件記録し、"status|dead|divert|verdict|transition|alert_transition"
+# を返す。monitor 側が失敗しても rolling_scores.json の書き込みを絶対に壊さない
+# よう、例外・空出力は "error|<dead>|0|UNKNOWN||" にフォールバックする。
 _instadeath_observe() {
 	local strategy_hash="$1" score="$2" raw="$3" turns="$4" archive_file="$5"
 	local dead
@@ -2955,12 +2958,18 @@ try:
     d = json.loads(sys.stdin.read())
 except Exception:
     d = {}
-_dead = 1 if d.get("dead") else 0
+# _dead comes from sys.argv (the authoritative bash-computed value passed
+# below), NOT the "dead" field echoed back in the monitor JSON: that field
+# is 0 on the dedup path and absent entirely on the error path, so trusting
+# it desyncs rolling vs current_run for the exact same game (2026-08-20
+# Phase 1 review, blocking issue B1 -- the same "flag meaning mix-up" shape
+# as the AND-omission bug caught by tests before this commit). A prefix env
+# assignment on the FIRST command of a pipeline is not inherited by later
+# commands in that pipeline, which is why this is passed as argv instead
+# (caught by this same commit re-running its own test suite: with the
+# prefix-env version, this parser always saw _dead=0).
+_dead = 1 if (len(sys.argv) > 1 and sys.argv[1] == "1") else 0
 _active = 1 if d.get("quarantine_active") else 0
-# divert = dead AND active -- quarantine_active alone is NOT the divert
-# decision; an alive game must never be diverted regardless of quarantine
-# state (2026-08-20 Phase 1 test run caught this: alive games were being
-# diverted while quarantine was active, corrupting scores/games_total).
 _divert = 1 if (_dead and _active) else 0
 print("|".join([
     str(d.get("status", "error")),
@@ -2968,9 +2977,10 @@ print("|".join([
     str(_divert),
     str(d.get("verdict", "UNKNOWN")),
     str(d.get("transition", "")),
+    str(d.get("alert_transition", "")),
 ]))
-' 2>/dev/null) || parsed=""
-	[ -n "$parsed" ] || parsed="error|${dead}|0|UNKNOWN|"
+' "$dead" 2>/dev/null) || parsed=""
+	[ -n "$parsed" ] || parsed="error|${dead}|0|UNKNOWN||"
 	echo "$parsed"
 }
 
@@ -3018,9 +3028,9 @@ update_rolling_scores() {
 		_id_raw="${INSTADEATH_RECORD_RAW-${LAST_RAW_SCORE:-}}"
 		_id_turns="${INSTADEATH_RECORD_TURNS-${LAST_TURNS:-}}"
 		if [ "${INSTADEATH_MONITOR_UPDATE:-0}" = "1" ]; then
-			local _id_result="" _id_status="" _id_verdict="" _id_transition=""
+			local _id_result="" _id_status="" _id_verdict="" _id_transition="" _id_alert_transition=""
 			_id_result=$(_instadeath_observe "$strategy_hash" "$score" "$_id_raw" "$_id_turns" "$archive_file")
-			IFS='|' read -r _id_status _id_dead _id_divert _id_verdict _id_transition <<<"$_id_result"
+			IFS='|' read -r _id_status _id_dead _id_divert _id_verdict _id_transition _id_alert_transition <<<"$_id_result"
 			case "$_id_transition" in
 			start)
 				log "[INSTADEATH] QUARANTINE START verdict=${_id_verdict} hash=${strategy_hash} score=${score}"
@@ -3034,6 +3044,12 @@ update_rolling_scores() {
 					timeout 3 ./overlay_notify.sh worker "配信ハーネス復旧" "quarantine解除" "info" >/dev/null 2>&1 || true
 				fi
 				;;
+			esac
+			# WARN レベルのアラート(quarantine未満の即死率上昇)もログには残す。
+			# 頻繁な通知でオーバーレイを埋めないよう、overlay_notify は送らない。
+			case "$_id_alert_transition" in
+			start) log "[INSTADEATH] ALERT rate above threshold hash=${strategy_hash}" ;;
+			clear) log "[INSTADEATH] ALERT cleared hash=${strategy_hash}" ;;
 			esac
 		else
 			local _id_state=""
@@ -3170,7 +3186,15 @@ if not _ID_DIV:
     rs[h]["scores"].append(score)
     rs[h]["scores"] = rs[h]["scores"][-keep:]
 rs[h]["games_total"] += 1
-if archive_file:
+# A diverted game's archive must NOT enter _recent_archives: this list is
+# sliced as recent_archives[-len(scores):] just below, so appending an
+# archive whose score never landed in `scores` pushes a REAL (alive) game's
+# archive out of that window one slot early, corrupting max_types/
+# frontier_hints/russia_count/etc for games that were never diverted
+# (2026-08-20 Phase 1 review, blocking issue B2 -- measured: 6 diverted
+# games shifted 6 alive archives out, replacing real max_types entries with
+# stale/zero data in current_strategy_run.json).
+if archive_file and not _ID_DIV:
     recent_archives.append(archive_file)
     recent_archives = recent_archives[-25:]
 rs[h]["_recent_archives"] = recent_archives

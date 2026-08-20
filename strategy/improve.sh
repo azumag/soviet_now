@@ -2321,6 +2321,18 @@ if isinstance(_rolling_progress, list):
     payload["progress"] = _rolling_progress[-keep:]
     if len(payload["progress"]) != len(payload["scores"]):
         payload["progress"] = [None] * len(payload["scores"])
+# Same reasoning for quarantine state: carry rolling's forward so a
+# rollback-triggered reseed doesn't silently reset an in-progress
+# quarantine back to inactive (2026-08-20 Phase 1 review, next-best item
+# #4). No length-invariant to preserve here (quarantined_scores/progress
+# are independent of `scores`/`progress`'s own keep window), just copy
+# through as-is if present.
+if isinstance(entry.get("quarantined_scores"), list):
+    payload["quarantined_scores"] = list(entry["quarantined_scores"])[-keep:]
+if isinstance(entry.get("quarantined_progress"), list):
+    payload["quarantined_progress"] = list(entry["quarantined_progress"])[-keep:]
+if isinstance(entry.get("quarantine_meta"), dict):
+    payload["quarantine_meta"] = dict(entry["quarantine_meta"])
 with open(out_file, "w") as f:
     json.dump(payload, f)
 PY
@@ -2496,7 +2508,13 @@ def nation_progress(path):
     guard_top = ", ".join(f"{name}x{count}" for name, count in sorted(deadline_guard_reasons.items(), key=lambda item: item[1], reverse=True)[:3]) or "none"
     return max_type, russia, soviet, frontier_hint, peak_counts, deadline_guard_count, guard_top
 
-if archive_file:
+# A diverted game's archive must NOT enter _recent_archives (same reasoning
+# as strategy/regression.sh's update_rolling_scores(): this list is sliced
+# as recent_archives[-len(scores):] just below, and current_strategy_run.json
+# has no known_progress filter, so a corrupted slice here directly zeroes
+# out real max_types/frontier_hints/etc entries -- worse than the rolling
+# side. 2026-08-20 Phase 1 review, blocking issue B2.
+if archive_file and not _ID_DIV:
     recent_archives.append(archive_file)
     recent_archives = recent_archives[-50:]
 run["_recent_archives"] = recent_archives

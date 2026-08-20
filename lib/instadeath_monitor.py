@@ -187,6 +187,18 @@ def _classify(window, cfg):
     if len(tail) < n:
         return ("INSUFFICIENT_WINDOW", {"rate": None}, False)
 
+    rate = sum(1 for r in tail if r.get("d")) / len(tail)
+    if rate < cfg["dead_quarantine_rate"]:
+        # Below the design's own quarantine floor (soren-stat-gate-design.md
+        # B-3: "直近20件の即死率 > 0.30"). Without this gate,
+        # eval_stats.classify_instadeath()'s internal dead_alert_rate check
+        # (0.10 by default) is the only floor actually enforced -- 3x more
+        # sensitive than intended, and DEAD_QUARANTINE_RATE ends up read but
+        # never used for anything (2026-08-20 Phase 1 review, blocking issue
+        # B3; measured: 2/20 dead = rate 0.10 triggered HARNESS/quarantine
+        # under the shipped defaults before this fix).
+        return ("NORMAL", {"rate": rate}, True)
+
     cur_flags = [bool(r.get("d")) for r in tail]
     deads_with_raw = [r for r in tail if r.get("d") and r.get("raw") is not None]
     hard_ratio = None
@@ -259,6 +271,14 @@ def _apply_quarantine_transition(monitor, cfg, now, cur_hash):
                 q["cleared_at"] = now
                 q["clear_rate"] = crate
                 _push_history(q, "clear", now, "CLEARED", crate, {})
+                # Re-classify immediately so verdict/detail reflect the
+                # just-cleared reality instead of the stale HARNESS reading
+                # that triggered quarantine in the first place (2026-08-20
+                # Phase 1 review, next-best item #5).
+                verdict, detail, evaluated = _classify(window, cfg)
+                q["evaluated"] = evaluated
+                q["verdict"] = verdict
+                q["detail"] = detail
                 return "clear"
         # Still active (didn't clear this tick); fall through without
         # re-evaluating "set" logic below in the same call.
@@ -298,9 +318,16 @@ def observe(path, record, cfg=None):
 
     Returns a dict: {"status": "updated"|"dedup", "dead": 0|1,
     "quarantine_active": 0|1, "verdict": str, "evaluated": bool,
-    "transition": ""|"start"|"clear", "rate": float|None}. Never raises --
-    catches everything and returns {"status": "error", "error": "..."} so a
-    monitor failure can never take down the caller's own bookkeeping.
+    "transition": ""|"start"|"clear", "rate": float|None,
+    "alert_transition": ""|"start"|"clear"}. `alert_transition` mirrors
+    `transition` but for the (softer) WARN-level alert threshold
+    (DEAD_ALERT_WINDOW/RATE) rather than the quarantine threshold --
+    logged on the bash side so a rising instadeath rate that hasn't yet
+    crossed the quarantine bar is still visible (2026-08-20 Phase 1 review,
+    next-best item #2: alert state was computed and persisted but never
+    surfaced anywhere). Never raises -- catches everything and returns
+    {"status": "error", "error": "..."} so a monitor failure can never take
+    down the caller's own bookkeeping.
     """
     try:
         cfg = _merged_cfg(cfg)
@@ -316,9 +343,10 @@ def observe(path, record, cfg=None):
                 "quarantine_active": 1 if monitor["quarantine"]["active"] else 0,
                 "verdict": monitor["quarantine"]["verdict"],
                 "evaluated": monitor["quarantine"]["evaluated"],
-                "transition": "", "rate": None,
+                "transition": "", "alert_transition": "", "rate": None,
             }
 
+        was_alert_active = bool(monitor["alert"].get("active"))
         now = int(time.time())
         dead = 1 if record.get("d") else 0
         entry = {
@@ -331,9 +359,24 @@ def observe(path, record, cfg=None):
         monitor["window"] = window[-keep:] if keep > 0 else window
         _recompute(monitor, cfg)
         transition = _apply_quarantine_transition(monitor, cfg, now, record.get("h") or "")
-        if transition == "start":
+        # A dead game observed while quarantine is (now, post-transition)
+        # active is exactly the set of games the bash caller will divert
+        # (its own divert decision is `_dead and quarantine_active` from
+        # this function's return value) -- count it here so diverted_total
+        # is self-consistent with the caller's actual behavior, instead of
+        # relying on a separate note-diverted call that nothing ever made
+        # (2026-08-20 Phase 1 review, next-best item #1: the previous code
+        # here was a no-op self-assignment).
+        if dead and monitor["quarantine"]["active"]:
             monitor["quarantine"]["diverted_total"] = int(
-                monitor["quarantine"].get("diverted_total", 0))
+                monitor["quarantine"].get("diverted_total", 0)) + 1
+        is_alert_active = bool(monitor["alert"].get("active"))
+        alert_transition = ""
+        if is_alert_active and not was_alert_active:
+            alert_transition = "start"
+        elif was_alert_active and not is_alert_active:
+            alert_transition = "clear"
+
         monitor["updated_at"] = now
         _atomic_write(path, monitor)
 
@@ -342,26 +385,9 @@ def observe(path, record, cfg=None):
             "status": "updated", "dead": dead,
             "quarantine_active": 1 if q["active"] else 0,
             "verdict": q["verdict"], "evaluated": q["evaluated"],
-            "transition": transition,
+            "transition": transition, "alert_transition": alert_transition,
             "rate": q["detail"].get("rate") if isinstance(q.get("detail"), dict) else None,
         }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-def note_diverted(path, cfg=None):
-    """Increment quarantine.diverted_total by 1. Called once per game that
-    the caller actually redirected into quarantined_scores (kept separate
-    from observe() since the divert decision is made by the caller after
-    seeing observe()'s quarantine_active in its result)."""
-    try:
-        cfg = _merged_cfg(cfg)
-        monitor = load(path)
-        monitor["quarantine"]["diverted_total"] = int(
-            monitor["quarantine"].get("diverted_total", 0)) + 1
-        monitor["updated_at"] = int(time.time())
-        _atomic_write(path, monitor)
-        return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -434,9 +460,6 @@ def _cli():
     p_state = sub.add_parser("state")
     p_state.add_argument("--file", required=True)
 
-    p_diverted = sub.add_parser("note-diverted")
-    p_diverted.add_argument("--file", required=True)
-
     args = parser.parse_args()
 
     if args.cmd == "observe":
@@ -458,9 +481,6 @@ def _cli():
         print(json.dumps(observe(args.file, record, cfg)))
     elif args.cmd == "state":
         print(json.dumps(state(args.file)))
-    elif args.cmd == "note-diverted":
-        cfg = _cfg_from_env()
-        print(json.dumps(note_diverted(args.file, cfg)))
 
 
 if __name__ == "__main__":
