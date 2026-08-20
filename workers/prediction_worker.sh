@@ -147,6 +147,22 @@ _get_best_outcome() {
 	_read_json_field "$TMP_STATE_DIR/current_prediction.json" "best_outcome" "0"
 }
 
+_prediction_retry_active_for() {
+	local operation="$1" file="$TMP_STATE_DIR/prediction_retry/${1}.json" now next
+	[ -f "$file" ] || return 1
+	now=$(date +%s)
+	next=$(python3 - "$file" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(int((json.load(open(sys.argv[1], encoding="utf-8")) or {}).get("next_retry_at", 0) or 0))
+except Exception:
+    print(0)
+PY
+)
+	case "$next" in ''|*[!0-9]*) next=0 ;; esac
+	[ "$next" -gt "$now" ]
+}
+
 HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
 
 # --- 初期状態 ---
@@ -182,7 +198,7 @@ while true; do
 	fi
 
 	# --- 粛清 resolve: regression_pending フラグ (最優先) ---
-	if _has_prediction && [ -f "$TMP_STATE_DIR/regression_pending" ]; then
+	if _has_prediction && [ -f "$TMP_STATE_DIR/regression_pending" ] && ! _prediction_retry_active_for resolve; then
 		_log "粛清検知 → resolve outcome=3"
 		./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
 		_resolved_this_tick=1
@@ -190,7 +206,7 @@ while true; do
 	fi
 
 	# --- ソ連建国 resolve: best_outcome=2 かつ予想が active ---
-	if [ "$_resolved_this_tick" -eq 0 ] && _has_prediction; then
+	if [ "$_resolved_this_tick" -eq 0 ] && _has_prediction && ! _prediction_retry_active_for resolve; then
 		best=$(_get_best_outcome)
 		if [ "${best:-0}" -eq 2 ]; then
 			_log "ソ連建国検知 → resolve outcome=2"
@@ -204,6 +220,7 @@ while true; do
 	# この区間で resolve すると、粛清判定前に best_outcome=0 (建国なし) で確定してしまう。
 	if [ "$_resolved_this_tick" -eq 0 ] &&
 		_has_prediction &&
+		! _prediction_retry_active_for resolve &&
 		[ "${current_acc_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ] &&
 		[ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
 		if [ "${HOT_STREAK_EXTEND_ENABLED:-1}" = "1" ] && _is_rank1_hot_streak; then
@@ -237,7 +254,8 @@ while true; do
 	if [ "$_resolved_this_tick" -eq 0 ] &&
 		[ "${current_acc_count:-0}" -eq 0 ] &&
 		[ "${_LAST_ACC_COUNT:-0}" -ne 0 ] &&
-		_has_prediction; then
+		_has_prediction &&
+		! _prediction_retry_active_for resolve; then
 		best=$(_get_best_outcome)
 		_log "サイクル先頭: 前サイクルの予想を resolve (outcome=${best})"
 		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
@@ -245,7 +263,7 @@ while true; do
 	fi
 
 	# --- 予想作成: サイクル開始 (acc_count=0, 改善完了後, 予想なし) ---
-	if [ "${current_acc_count:-0}" -eq 0 ] && ! _has_prediction; then
+	if [ "${current_acc_count:-0}" -eq 0 ] && ! _has_prediction && ! _prediction_retry_active_for create; then
 		if [ "$improve_status" != "running" ] && [ ! -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
 			_log "予想作成: game=${current_game_num}, acc=0, improve=${improve_status}"
 			./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true

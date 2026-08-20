@@ -678,6 +678,26 @@ print(d.get('score', 0) + bonus)
 	# 並ぶハーネス起因のサイン)用。Phase 1 まではどこからも読まれない。
 	export LAST_TURNS="$LAST_TURNS"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
+		# 試合ごとの結果はチャットへ投稿せず、改善サイクルの閾値で一度だけ
+		# 実測サマリー→AI解説→audio_workerキューを起動する。
+		if [ "${BATCH_COMMENTARY_ENABLED:-1}" = "1" ] && [ -x ./batch_commentary.sh ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+			local _batch_commentary_count=0
+			_batch_commentary_count=$(python3 - "$ACCUMULATED_GAMES_FILE" <<'PY'
+import json, sys
+try:
+    print(int((json.load(open(sys.argv[1], encoding="utf-8")) or {}).get("count", 0) or 0))
+except Exception:
+    print(0)
+PY
+)
+			if [ "${_batch_commentary_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ]; then
+				(
+					./batch_commentary.sh "$ACCUMULATED_GAMES_FILE" "${MIN_GAMES_BEFORE_IMPROVE:-12}" \
+						>>"${TMP_DEBUG_DIR:-tmp/debug}/batch_commentary.log" 2>&1 || true
+				) &
+				log "[BATCH_COMMENTARY] queued generation trigger (${_batch_commentary_count}/${MIN_GAMES_BEFORE_IMPROVE:-12})"
+			fi
+		fi
 		if [ -x ./monitor_improve_runtime.sh ]; then
 			(
 				./monitor_improve_runtime.sh >/dev/null 2>&1 ||
@@ -721,8 +741,9 @@ PY
 
 	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する
 
-	# サイクル進捗をチャットに投稿
-	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+	# 試合単位の成績投稿は停止。互換用の旧フォーマットは明示的に
+	# GAME_RESULT_CHAT_ENABLED=1 とした場合だけ有効にする。
+	if [ "${GAME_RESULT_CHAT_ENABLED:-0}" = "1" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress
 		pred_progress=$(
 			python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" "$MIN_GAMES_BEFORE_IMPROVE" \

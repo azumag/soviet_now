@@ -55,6 +55,142 @@ PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$((_cfg_min_games * 40))}
 # 必要なら明示的に max age を設定して最終的な掃除だけ行う。
 PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
 AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
+PREDICTION_RETRY_DIR="${TMP_STATE_DIR}/prediction_retry"
+PREDICTION_CREATE_RETRY_FILE="$PREDICTION_RETRY_DIR/create.json"
+PREDICTION_RESOLVE_RETRY_FILE="$PREDICTION_RETRY_DIR/resolve.json"
+mkdir -p "$PREDICTION_RETRY_DIR" 2>/dev/null || true
+
+_prediction_retry_file() {
+	local operation="$1"
+	case "$operation" in
+	create) printf '%s\n' "$PREDICTION_CREATE_RETRY_FILE" ;;
+	resolve) printf '%s\n' "$PREDICTION_RESOLVE_RETRY_FILE" ;;
+	*) return 1 ;;
+	esac
+}
+
+_prediction_retry_remaining() {
+	local operation="$1" file now next
+	file=$(_prediction_retry_file "$operation") || { echo 0; return; }
+	[ -f "$file" ] || { echo 0; return; }
+	now=$(date +%s)
+	next=$(python3 - "$file" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(int((json.load(open(sys.argv[1], encoding="utf-8")) or {}).get("next_retry_at", 0) or 0))
+except Exception:
+    print(0)
+PY
+)
+	case "$next" in ''|*[!0-9]*) next=0 ;; esac
+	if [ "$next" -le "$now" ]; then
+		rm -f "$file" 2>/dev/null || true
+		echo 0
+	else
+		echo $((next - now))
+	fi
+}
+
+_prediction_retry_active() {
+	local remaining
+	remaining=$(_prediction_retry_remaining "$1")
+	case "$remaining" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$remaining" -gt 0 ]
+}
+
+_prediction_retry_record() {
+	local operation="$1" http_code="${2:-000}" message="${3:-unknown}" file attempt base max delay now
+	file=$(_prediction_retry_file "$operation") || return 0
+	base="${PREDICTION_RETRY_BASE_SEC:-300}"
+	max="${PREDICTION_RETRY_MAX_SEC:-3600}"
+	case "$base" in ''|*[!0-9]*) base=300 ;; esac
+	case "$max" in ''|*[!0-9]*) max=3600 ;; esac
+	[ "$max" -ge "$base" ] || max="$base"
+	attempt=$(python3 - "$file" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(int((json.load(open(sys.argv[1], encoding="utf-8")) or {}).get("attempt", 0) or 0) + 1)
+except Exception:
+    print(1)
+PY
+)
+	case "$attempt" in ''|*[!0-9]*) attempt=1 ;; esac
+	[ "$attempt" -le 6 ] || attempt=6
+	delay=$((base * (1 << (attempt - 1))))
+	case "$http_code" in
+	401|403) [ "$delay" -lt 900 ] && delay=900 ;;
+	esac
+	[ "$delay" -le "$max" ] || delay="$max"
+	now=$(date +%s)
+	python3 - "$file" "$operation" "$attempt" "$((now + delay))" "$http_code" "$message" <<'PY' 2>/dev/null || true
+import json, os, sys
+path, operation, attempt, next_retry, http_code, message = sys.argv[1:7]
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump({"operation": operation, "attempt": int(attempt),
+               "next_retry_at": int(next_retry), "http_code": http_code,
+               "message": message[:240]}, handle, ensure_ascii=False)
+os.replace(tmp, path)
+PY
+	printf '%s\n' "$delay"
+}
+
+_prediction_retry_clear() {
+	local file
+	file=$(_prediction_retry_file "$1") || return 0
+	rm -f "$file" 2>/dev/null || true
+}
+
+_prediction_api_error_message() {
+	python3 - "${1:-}" <<'PY' 2>/dev/null
+import json, sys
+try:
+    raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+    data = json.loads(raw)
+    print(str(data.get("message") or data.get("error") or "unknown")[:240])
+except Exception:
+    print("unknown")
+PY
+}
+
+_recover_remote_active_prediction() {
+	local response_file response_code remote_json prediction_id
+	response_file=$(mktemp "$PREDICTION_RETRY_DIR/remote.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/remote.$$")
+	response_code=$(curl -sS --max-time 15 -o "$response_file" -w '%{http_code}' -G \
+		"https://api.twitch.tv/helix/predictions" \
+		-H "Authorization: Bearer ${TOKEN}" \
+		-H "Client-Id: ${CLIENT_ID}" \
+		--data-urlencode "broadcaster_id=${BROADCASTER_ID}" \
+		--data-urlencode "first=20" 2>/dev/null || echo 000)
+	if [ "$response_code" != "200" ]; then
+		rm -f "$response_file"
+		return 1
+	fi
+	remote_json=$(cat "$response_file" 2>/dev/null || true)
+	rm -f "$response_file"
+	prediction_id=$(python3 - "$remote_json" <<'PY' 2>/dev/null
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+for pred in data.get("data", []):
+    if pred.get("status") not in {"ACTIVE", "LOCKED"}:
+        continue
+    outcomes = [str(item.get("id", "")) for item in pred.get("outcomes", []) if item.get("id")]
+    if len(outcomes) < 2 or not pred.get("id"):
+        continue
+    print(json.dumps({"prediction_id": pred["id"], "outcome_ids": outcomes,
+                      "game_num": 0, "created_at": 0, "recovered": True}, ensure_ascii=False))
+    break
+PY
+)
+	[ -n "$prediction_id" ] || return 1
+	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
+	printf '%s\n' "$prediction_id" >"$PREDICTION_STATE_FILE"
+	_log "RECOVER: adopted active remote prediction"
+	return 0
+}
 
 _prediction_state_stale_reason() {
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
@@ -135,12 +271,24 @@ print(json.dumps({
 }))
 " 2>/dev/null)
 
-	curl -sf --max-time 15 -X PATCH \
+	local response_file response_code api_message
+	response_file=$(mktemp "$PREDICTION_RETRY_DIR/resolve.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/resolve.$$")
+	response_code=$(curl -sS --max-time 15 -o "$response_file" -w '%{http_code}' -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$payload" >/dev/null 2>&1
+		-d "$payload" 2>/dev/null || echo 000)
+	if [ "$response_code" -lt 200 ] 2>/dev/null || [ "$response_code" -ge 300 ] 2>/dev/null; then
+		api_message=$(_prediction_api_error_message "$response_file")
+		_prediction_retry_record resolve "$response_code" "$api_message" >/dev/null
+		_log "WARN: stale prediction resolve failed (http=${response_code:-000}, message=${api_message:-unknown})"
+		rm -f "$response_file"
+		return 1
+	fi
+	rm -f "$response_file"
+	_prediction_retry_clear resolve
+	return 0
 }
 
 _clear_stale_prediction_state_if_any() {
@@ -188,6 +336,10 @@ PY
 		fi
 	else
 		_log "STALE: resolve failed, prediction may need manual cleanup"
+		# 認証失敗や一時的なAPI障害で remote の状態を確認できない場合は
+		# ローカル state を消さない。消すと Twitch 側に ACTIVE/LOCKED が
+		# 残ったまま新しい予想を作り、二重予想や未解決を招く。
+		return 1
 	fi
 	rm -f "$PREDICTION_STATE_FILE"
 	return 0
@@ -363,11 +515,21 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 case "${1:-}" in
 create)
 	GAME_NUM="${2:-0}"
+	if _prediction_retry_active create; then
+		_log "SKIP: prediction create retry backoff active ($(_prediction_retry_remaining create)s)"
+		exit 0
+	fi
 	_sync_prediction_state_with_remote || true
 
 	# 既存の予想が残っていたらスキップ
 	if [ -f "$PREDICTION_STATE_FILE" ]; then
 		_log "SKIP: prediction already active"
+		cat "$PREDICTION_STATE_FILE"
+		exit 0
+	fi
+	# ローカル state を失った再起動でも、Twitch 側の ACTIVE/LOCKED 予想を
+	# 先に取り込み、同じサイクルで二重作成しない。
+	if _recover_remote_active_prediction; then
 		cat "$PREDICTION_STATE_FILE"
 		exit 0
 	fi
@@ -391,17 +553,22 @@ print(json.dumps({
 PY
 	)
 
-	response=$(curl -sf --max-time 15 -X POST \
+	response_file=$(mktemp "$PREDICTION_RETRY_DIR/create.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/create.$$")
+	response_code=$(curl -sS --max-time 15 -o "$response_file" -w '%{http_code}' -X POST \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$payload" 2>/dev/null)
-
-	if [ $? -ne 0 ] || [ -z "$response" ]; then
-		_log "WARN: prediction create failed"
+		-d "$payload" 2>/dev/null || echo 000)
+	response=$(cat "$response_file" 2>/dev/null || true)
+	if [ "$response_code" -lt 200 ] 2>/dev/null || [ "$response_code" -ge 300 ] 2>/dev/null || [ -z "$response" ]; then
+		api_message=$(_prediction_api_error_message "$response_file")
+		delay=$(_prediction_retry_record create "$response_code" "$api_message")
+		_log "WARN: prediction create failed (http=${response_code:-000}, message=${api_message:-unknown}, retry=${delay}s)"
+		rm -f "$response_file"
 		exit 1
 	fi
+	rm -f "$response_file"
 
 	# レスポンスから prediction_id と outcome_ids を抽出
 	result=$(
@@ -426,9 +593,11 @@ PY
 	)
 
 	if [ $? -ne 0 ] || [ -z "$result" ]; then
-		_log "WARN: failed to parse prediction response"
+		delay=$(_prediction_retry_record create "$response_code" "invalid prediction response")
+		_log "WARN: failed to parse prediction response (retry=${delay}s)"
 		exit 1
 	fi
+	_prediction_retry_clear create
 
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
 	echo "$result" >"$PREDICTION_STATE_FILE"
@@ -451,6 +620,10 @@ PY
 
 resolve)
 	OUTCOME_INDEX="${2:-0}"
+	if _prediction_retry_active resolve; then
+		_log "SKIP: prediction resolve retry backoff active ($(_prediction_retry_remaining resolve)s)"
+		exit 0
+	fi
 
 	if [ ! -f "$PREDICTION_STATE_FILE" ]; then
 		_log "SKIP: no active prediction"
@@ -486,25 +659,35 @@ print(json.dumps({
 PY
 	)
 
-	response=$(curl -sf --max-time 15 -X PATCH \
+	response_file=$(mktemp "$PREDICTION_RETRY_DIR/resolve.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/resolve.$$")
+	response_code=$(curl -sS --max-time 15 -o "$response_file" -w '%{http_code}' -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$payload" 2>/dev/null)
+		-d "$payload" 2>/dev/null || echo 000)
 
-	if [ $? -ne 0 ]; then
+	if [ "$response_code" -lt 200 ] 2>/dev/null || [ "$response_code" -ge 300 ] 2>/dev/null; then
+		api_message=$(_prediction_api_error_message "$response_file")
+		delay=$(_prediction_retry_record resolve "$response_code" "$api_message")
 		if _sync_prediction_state_with_remote; then
 			_log "WARN: prediction resolve failed, but remote sync cleared local state"
+			_prediction_retry_clear resolve
+			rm -f "$response_file"
 			exit 0
 		fi
 		if _clear_stale_prediction_state_if_any; then
 			_log "WARN: prediction resolve failed, but stale local state was cleared"
+			_prediction_retry_clear resolve
+			rm -f "$response_file"
 			exit 0
 		fi
-		_log "WARN: prediction resolve failed"
+		_log "WARN: prediction resolve failed (http=${response_code:-000}, message=${api_message:-unknown}, retry=${delay}s)"
+		rm -f "$response_file"
 		exit 1
 	fi
+	rm -f "$response_file"
+	_prediction_retry_clear resolve
 
 	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清")
 	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
