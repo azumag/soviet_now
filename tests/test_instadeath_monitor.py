@@ -146,10 +146,14 @@ class MonitorBasicsTests(unittest.TestCase):
 
     def test_dead_quarantine_rate_boundary_is_strictly_greater_than(self):
         # soren-stat-gate-design.md B-3: "直近20件の即死率 > 0.30" is a
-        # strict inequality -- exactly rate==0.30 (6/20) must NOT proceed to
-        # classification (2026-08-20 Phase 1 review round 3, next-best #2:
-        # the original gate used `<` instead of `<=`, making rate==0.30
-        # proceed when it should not have).
+        # strict inequality for QUARANTINE ACTIVATION. Exactly rate==0.30
+        # (6/20) must NOT activate quarantine -- this is the behavior that
+        # must survive the Phase 2 B-3 fix. Note: the Phase 2 fix lowered
+        # _classify's *verdict* gate to dead_alert_rate (0.10) so STRATEGY/
+        # Fisher detection can run below 0.30; at rate==0.30 the window now
+        # classifies (yielding HARNESS here because it WOULD vote) but
+        # _apply_quarantine_transition still refuses to activate because its
+        # own gate is `rate > dead_quarantine_rate` (0.30 is not > 0.30).
         cfg = {"dead_quarantine_window": 20, "dead_quarantine_rate": 0.30}
         result = None
         for i in range(20):
@@ -160,7 +164,10 @@ class MonitorBasicsTests(unittest.TestCase):
                 _rec(s=(0 if dead else 10000), raw=(0 if dead else 1000),
                      turns=(0 if dead else 200), d=dead, archive=f"a{i}"),
                 cfg)
-        self.assertEqual(result["verdict"], "NORMAL")
+        # Verdict may now be HARNESS (classification ran) -- that is the
+        # corrected Phase 2 behavior, NOT a regression. The invariant under
+        # test is quarantine non-activation at the strict boundary.
+        self.assertIn(result["verdict"], ("HARNESS", "UNKNOWN", "NORMAL"))
         self.assertEqual(result["quarantine_active"], 0)
 
     def test_dead_quarantine_rate_boundary_just_above_proceeds(self):
@@ -285,6 +292,79 @@ class MonitorStateTests(unittest.TestCase):
         im.observe(self.path, _rec(d=False, archive="c0"), cfg)
         data = json.load(open(self.path))
         self.assertEqual(data["quarantine"]["diverted_total"], 3)
+
+
+class ClassifyB3SeparationTests(unittest.TestCase):
+    """Phase 2 B-3 proof: the _classify rate gate must NOT suppress the
+    STRATEGY/Fisher verdict for windows whose rate is between dead_alert_rate
+    and dead_quarantine_rate. Before the fix, `rate <= dead_quarantine_rate`
+    short-circuited to NORMAL and silently dropped STRATEGY detection -- the
+    same shape of trap as the Phase 0 R3 export-leak. Reverting the fix
+    (raising the gate back toward 0.30) must make these assertions fail."""
+
+    def _window(self, n_dead, n_total=20, h="cur"):
+        # Scatter the deaths (no clustering) and give them non-zero raw/turns
+        # so no HARNESS vote can accrue -- we want a pure STRATEGY (Fisher)
+        # outcome, not a HARNESS verdict.
+        recs = []
+        deaths = set(range(0, n_total, max(1, n_total // max(1, n_dead))))
+        for i in range(n_total):
+            dead = i in deaths
+            recs.append(_rec(h=h, s=(0 if dead else 10000),
+                             raw=(500 if dead else 1000),
+                             turns=(150 if dead else 200), d=dead,
+                             archive=f"a{i}"))
+        return recs
+
+    def _ref_flags(self, n_dead, n_total=100):
+        flags = [False] * n_total
+        for i in range(n_dead):
+            flags[i] = True
+        return flags
+
+    def test_rate_020_with_anchor_001_is_strategy_not_normal(self):
+        # current 4/20 (rate 0.20), anchor 1/100 (rate 0.01) -> Fisher
+        # p is tiny (< 0.01) -> STRATEGY. With the fix, _classify proceeds to
+        # classify_instadeath because rate(0.20) > dead_alert_rate(0.10).
+        cfg = {"dead_quarantine_window": 20, "dead_alert_rate": 0.10,
+               "dead_quarantine_rate": 0.30, "dead_burst_ratio": 3.0,
+               "dead_hard_ratio": 0.5, "dead_max_turns": 3,
+               "dead_near_total_rate": 0.90, "dead_alpha": 0.01}
+        window = self._window(4, 20)
+        ref_flags = self._ref_flags(1, 100)
+        verdict, detail, _e = im._classify(window, cfg, ref_flags=ref_flags)
+        self.assertEqual(verdict, "STRATEGY")
+        self.assertLess(detail.get("fisher_p", 1.0), 0.01)
+        # And critically: quarantine must NOT be active (rate 0.20 is not
+        # strictly > 0.30) -- the fix is behavior-preserving for Phase 1.
+        self.assertNotIn("active", detail)  # detail has no activation; gating
+        # is in _apply_quarantine_transition. The verdict alone proves the
+        # STRATEGY path now runs instead of being short-circuited to NORMAL.
+
+    def test_same_window_without_ref_flags_is_unknown(self):
+        # Without anchor flags there is no Fisher comparison, so the same
+        # 0.20 window (no HARNESS votes) must be UNKNOWN, not STRATEGY.
+        cfg = {"dead_quarantine_window": 20, "dead_alert_rate": 0.10,
+               "dead_quarantine_rate": 0.30, "dead_burst_ratio": 3.0,
+               "dead_hard_ratio": 0.5, "dead_max_turns": 3,
+               "dead_near_total_rate": 0.90, "dead_alpha": 0.01}
+        window = self._window(4, 20)
+        verdict, detail, _e = im._classify(window, cfg, ref_flags=None)
+        self.assertEqual(verdict, "UNKNOWN")
+
+    def test_reverting_gate_to_030_suppresses_strategy(self):
+        # Proof the fix matters: with the gate pushed back up to 0.30 (the
+        # pre-fix value), the same 0.20 window short-circuits to NORMAL and
+        # the Fisher/STRATEGY verdict is never computed (fisher_p absent).
+        cfg = {"dead_quarantine_window": 20, "dead_alert_rate": 0.30,
+               "dead_quarantine_rate": 0.30, "dead_burst_ratio": 3.0,
+               "dead_hard_ratio": 0.5, "dead_max_turns": 3,
+               "dead_near_total_rate": 0.90, "dead_alpha": 0.01}
+        window = self._window(4, 20)
+        ref_flags = self._ref_flags(1, 100)
+        verdict, detail, _e = im._classify(window, cfg, ref_flags=ref_flags)
+        self.assertEqual(verdict, "NORMAL")
+        self.assertNotIn("fisher_p", detail)
 
 
 if __name__ == "__main__":

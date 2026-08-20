@@ -3370,6 +3370,101 @@ import os
 import sys
 import time
 
+# --- Phase 2 (2026-08-20): statistical-significance gate (shadow/enforce) ---
+# Import the shared stat module so check_regression can compute a stat verdict
+# alongside the legacy regression verdict WITHOUT altering legacy behavior.
+import os as _os
+_lib_root = _os.environ.get("ELOOP_LIB_DIR", _os.getcwd())
+_lib_dir = _lib_root
+if os.path.isdir(os.path.join(_lib_root, "lib")):
+    _lib_dir = os.path.join(_lib_root, "lib")
+if _lib_dir and _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+try:
+    import eval_stats
+except Exception:
+    eval_stats = None
+
+# STATGATE emission: every print() in this heredoc is the single terminal
+# verdict, so we wrap print to emit exactly one STATGATE: line after it. The
+# legacy verdict (and thus rollback) is unchanged -- the STATGATE line is
+# purely observational and is parsed out by the bash side via `grep ^STATGATE:`.
+# Emission is gated on STAT_GATE_MODE so off-mode stays completely untouched.
+_stat = None
+_id_verdict = "NORMAL"
+_id_p = 1.0
+_statgate_done = {"v": False}
+_statgate_enabled = _os.environ.get("STAT_GATE_MODE", "off") in ("shadow", "enforce")
+_orig_print = print
+
+
+def _emit_statgate(legacy_label):
+    """Print a single STATGATE: key=value line (observational). Never raises.
+
+    The format uses `legacy= stat= agree=` key=value pairs (not JSON) so the
+    design's shadow aggregation one-liner works verbatim:
+        grep '\[STATGATE\]' <log> | sed 's/.*legacy=\([A-Z]*\).*stat=\([A-Z_]*\).*/\\1 \\2/' | sort | uniq -c
+    """
+    if not _statgate_enabled:
+        return
+    try:
+        stat = _stat["verdict"] if isinstance(_stat, dict) else "UNTESTED"
+        is_stat_regr = stat in ("REGRESSION_HARD", "REGRESSION_SOFT")
+        agree = "YES" if (legacy_label == "REGRESSION") == is_stat_regr else "NO"
+
+        def _fmt(v):
+            if v is None:
+                return "null"
+            if isinstance(v, float):
+                return "%.4f" % v
+            return str(v)
+
+        if isinstance(_stat, dict):
+            delta = _fmt(_stat.get("delta"))
+            se = _fmt(_stat.get("se"))
+            lcb = _fmt(_stat.get("lcb"))
+            ucb = _fmt(_stat.get("ucb"))
+            nac = _fmt(_stat.get("n_alive_cur"))
+            nar = _fmt(_stat.get("n_alive_ref"))
+            drc = _fmt(_stat.get("dead_rate_cur"))
+            drr = _fmt(_stat.get("dead_rate_ref"))
+        else:
+            delta = se = lcb = ucb = nac = nar = drc = drr = "null"
+        parts = [
+            "legacy=%s" % legacy_label,
+            "stat=%s" % stat,
+            "agree=%s" % agree,
+            "delta=%s" % delta,
+            "se=%s" % se,
+            "lcb=%s" % lcb,
+            "ucb=%s" % ucb,
+            "n_alive_cur=%s" % nac,
+            "n_alive_ref=%s" % nar,
+            "dead_rate_cur=%s" % drc,
+            "dead_rate_ref=%s" % drr,
+            "instadeath=%s" % _id_verdict,
+            "fisher_p=%s" % _fmt(round(_id_p, 4) if _id_p is not None else None),
+        ]
+        _orig_print("STATGATE:" + " ".join(parts))
+    except Exception:
+        pass
+
+
+def print(*args, **kwargs):
+    _orig_print(*args, **kwargs)
+    if not _statgate_done["v"]:
+        _statgate_done["v"] = True
+        label = "OK"
+        if args and isinstance(args[0], str):
+            if args[0].startswith("REGRESSION:"):
+                label = "REGRESSION"
+            elif args[0].startswith("RESET:"):
+                label = "RESET"
+            elif args[0].startswith("PROMOTE:"):
+                label = "PROMOTE"
+        _emit_statgate(label)
+
+
 rs_file, current_run_file, active_branch_file, anchor_file, current_hash = sys.argv[1:6]
 min_games_current = int(sys.argv[6])
 archive_dir = sys.argv[7]
@@ -3963,6 +4058,66 @@ anchor = {
     "n": int(anchor_payload.get("n", 0) or 0),
 }
 
+# --- Phase 2: statistical-significance gate verdict (soren-stat-gate-design.md A/C-1) ---
+# In shadow mode this is purely observational; the legacy verdict below still
+# governs rollback. decide() filters instadeaths itself, so raw scores are
+# passed. DEAD_REGRESSION_ENABLED stays 0 in Phase 2 (STRATEGY verdict is
+# observed only, not acted on until Phase 3).
+_stat = None
+_id_verdict = "NORMAL"
+_id_p = 1.0
+if eval_stats is not None and _os.environ.get("STAT_GATE_MODE", "off") in ("shadow", "enforce"):
+    try:
+        _stat_cfg = {
+            "stat_anchor_min_n": int(_os.environ.get("STAT_ANCHOR_MIN_N", 100)),
+            "stat_looks": tuple(int(x) for x in _os.environ.get("STAT_LOOKS", "24,48,72,100").split(",") if x.strip()),
+            "alpha_soft": float(_os.environ.get("STAT_ALPHA_SOFT", 0.05)),
+            "delta_soft": float(_os.environ.get("STAT_DELTA_SOFT", 500)),
+            "alpha_hard": float(_os.environ.get("STAT_ALPHA_HARD", 0.01)),
+            "delta_hard": float(_os.environ.get("STAT_DELTA_HARD", 2000)),
+            "stat_hard_min_n": int(_os.environ.get("STAT_HARD_MIN_N", 16)),
+            "stat_hard_look_stride": int(_os.environ.get("STAT_HARD_LOOK_STRIDE", 8)),
+            "stat_hard_look_k": int(_os.environ.get("STAT_HARD_LOOK_K", 11)),
+            "alpha_promote": float(_os.environ.get("STAT_ALPHA_PROMOTE", 0.01)),
+            "delta_promote": float(_os.environ.get("STAT_DELTA_PROMOTE", 500)),
+            "alpha_noninf": float(_os.environ.get("STAT_ALPHA_NONINF", 0.05)),
+            "delta_harmless": float(_os.environ.get("STAT_DELTA_HARMLESS", 1500)),
+            "winsor_lo_q": float(_os.environ.get("STAT_WINSOR_LO_Q", 0.05)),
+            "winsor_hi_q": float(_os.environ.get("STAT_WINSOR_HI_Q", 0.95)),
+            "dead_eval_threshold": int(_os.environ.get("DEAD_EVAL_THRESHOLD", 3000)),
+        }
+        _ref_scores = [int(x) for x in (rolling.get(anchor_hash, {}) or {}).get("scores", []) or []]
+        if _ref_scores and current_scores:
+            try:
+                _stat = eval_stats.decide(current_scores, _ref_scores, _stat_cfg)
+            except Exception:
+                _stat = None
+        # Instadeath STRATEGY observation: current window death flags vs anchor
+        # window death flags, via Fisher exact test (classify_instadeath).
+        try:
+            _id_win = int(_os.environ.get("DEAD_QUARANTINE_WINDOW", 20))
+            _cur_flags = [bool(r.get("d")) for r in ((current_data.get("progress") or [])[-_id_win:]) if isinstance(r, dict)]
+            _ref_flags = [bool(r.get("d")) for r in ((rolling.get(anchor_hash, {}) or {}).get("progress", [])[-_id_win:]) if isinstance(r, dict)]
+            if _cur_flags:
+                _iv = eval_stats.classify_instadeath(
+                    _cur_flags,
+                    _ref_flags if _ref_flags else None,
+                    {
+                        "dead_alert_rate": float(_os.environ.get("DEAD_ALERT_RATE", 0.10)),
+                        "dead_burst_ratio": float(_os.environ.get("DEAD_BURST_RATIO", 3.0)),
+                        "dead_hard_ratio": float(_os.environ.get("DEAD_HARD_RATIO", 0.5)),
+                        "dead_max_turns": int(_os.environ.get("DEAD_MAX_TURNS", 3)),
+                        "dead_near_total_rate": float(_os.environ.get("DEAD_NEAR_TOTAL_RATE", 0.90)),
+                        "dead_alpha": float(_os.environ.get("DEAD_ALPHA", 0.01)),
+                    },
+                )
+                _id_verdict, _id_detail = _iv
+                _id_p = _id_detail.get("fisher_p", 1.0)
+        except Exception:
+            pass
+    except Exception:
+        _stat = None
+
 trend_grace = rollback_trend_grace()
 
 def trend_grace_reason():
@@ -4554,6 +4709,14 @@ print("OK")
 PY
 		2>/dev/null
 	)
+
+	# Phase 2: surface the observational STATGATE verdict, then strip it from
+	# $result so downstream legacy logging/dispatch stays unchanged.
+	_statgate_line=$(echo "$result" | grep '^STATGATE:' || true)
+	result=$(echo "$result" | grep -v '^STATGATE:')
+	if [ -n "$_statgate_line" ]; then
+		log "[STATGATE] ${_statgate_line#STATGATE:}"
+	fi
 
 	if echo "$result" | grep -q '^PROMOTE:'; then
 		log "[BRANCH] anchor昇格: $result"

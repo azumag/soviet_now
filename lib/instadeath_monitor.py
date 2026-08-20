@@ -174,33 +174,40 @@ def _recompute_alert(window, cfg):
     }
 
 
-def _classify(window, cfg):
+def _classify(window, cfg, ref_flags=None):
     """Returns (verdict, detail, evaluated). evaluated=False (with
     verdict="INSUFFICIENT_WINDOW") until the quarantine window has enough
     history -- this is the cold-start guard (2026-08-20 Phase 1 review,
     risk R6): without it, the very first dead game observed after this
     monitor starts existing would see n=1, rate=1.0, and could rack up 3
     votes (near_total_rate + hard_ratio + median_turns) on a single data
-    point, quarantining on n=1."""
+    point, quarantining on n=1.
+
+    `ref_flags` (list[bool] of the anchor's recent instadeath flags) is
+    forwarded to eval_stats.classify_instadeath() so the Fisher exact test
+    (STRATEGY verdict) runs when the current window's rate is elevated but
+    below the quarantine floor. This is the Phase 2 B-3 separation
+    (soren-stat-gate-design.md C-1 / handoff §34): the rate gate below must
+    NOT suppress verdict computation (STRATEGY/Fisher), it must only gate
+    quarantine ACTIVATION, which _apply_quarantine_transition still keys
+    solely on `verdict == "HARNESS" and rate > dead_quarantine_rate`.
+    """
     n = cfg["dead_quarantine_window"]
     tail = window[-n:] if n > 0 else []
     if len(tail) < n:
         return ("INSUFFICIENT_WINDOW", {"rate": None}, False)
 
     rate = sum(1 for r in tail if r.get("d")) / len(tail)
-    if rate <= cfg["dead_quarantine_rate"]:
-        # At or below the design's own quarantine floor
-        # (soren-stat-gate-design.md B-3: "直近20件の即死率 > 0.30", strictly
-        # greater-than -- rate==0.30 itself must NOT proceed to
-        # classification; 2026-08-20 Phase 1 review round 3, next-best #2
-        # caught this as an off-by-one against `<` instead of `<=`).
-        # Without this gate at all,
-        # eval_stats.classify_instadeath()'s internal dead_alert_rate check
-        # (0.10 by default) is the only floor actually enforced -- 3x more
-        # sensitive than intended, and DEAD_QUARANTINE_RATE ends up read but
-        # never used for anything (2026-08-20 Phase 1 review, blocking issue
-        # B3; measured: 2/20 dead = rate 0.10 triggered HARNESS/quarantine
-        # under the shipped defaults before this fix).
+    if rate <= cfg["dead_alert_rate"]:
+        # Below the alert floor the window isn't worth classifying at all
+        # (eval_stats.classify_instadeath() applies the same 0.10 gate
+        # internally). The quarantine floor (dead_quarantine_rate=0.30) is
+        # deliberately NOT a verdict gate here: that was the B-3 trap -- it
+        # silently dropped STRATEGY/Fisher detection for 0.10-0.30 windows.
+        # Quarantine activation for the 0.10-0.30 band is instead refused in
+        # _apply_quarantine_transition (rate > dead_quarantine_rate), so this
+        # change is behavior-preserving for Phase 1's harness quarantine while
+        # unblocking Phase 2's STRATEGY observation.
         return ("NORMAL", {"rate": rate}, True)
 
     cur_flags = [bool(r.get("d")) for r in tail]
@@ -227,7 +234,7 @@ def _classify(window, cfg):
         run_hashes.add(r.get("h") or "")
     spans_hash_change = len(run_hashes) > 1
 
-    verdict, detail = eval_stats.classify_instadeath(cur_flags, None, {
+    verdict, detail = eval_stats.classify_instadeath(cur_flags, ref_flags, {
         "dead_alert_rate": cfg["dead_alert_rate"],
         "dead_burst_ratio": cfg["dead_burst_ratio"],
         "dead_hard_ratio": cfg["dead_hard_ratio"],
@@ -298,7 +305,16 @@ def _apply_quarantine_transition(monitor, cfg, now, cur_hash):
     q["detail"] = detail
     if not evaluated:
         return ""
-    if cfg["dead_quarantine_enabled"] and verdict == "HARNESS":
+    # Quarantine activation is gated on the design's quarantine floor
+    # (dead_quarantine_rate=0.30), NOT merely on the HARNESS verdict. This
+    # keeps the Phase 1 harness-quarantine behavior exactly intact now that
+    # _classify's verdict gate was lowered to dead_alert_rate (0.10) for the
+    # Phase 2 B-3 STRATEGY/Fisher fix: a 0.10-0.30 window can now classify as
+    # HARNESS (and surface STRATEGY) without actually quarantining (2026-08-20
+    # Phase 2, behavior-preserving).
+    _q_rate = q.get("detail", {}).get("rate") if isinstance(q.get("detail"), dict) else None
+    if cfg["dead_quarantine_enabled"] and verdict == "HARNESS" and (
+            _q_rate is not None and _q_rate > cfg["dead_quarantine_rate"]):
         q["active"] = True
         q["started_at"] = now
         q["started_hash"] = cur_hash or ""
