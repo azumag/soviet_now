@@ -1871,7 +1871,7 @@ def _bucket_score_window(scores, bucket_count):
 
 
 def _draw_timeline_segment(grid, x0, y0, x1, y1):
-    """Draw one ASCII line segment into a small chart grid."""
+    """Draw one plain-text line segment into a small chart grid."""
     steps = max(abs(x1 - x0), abs(y1 - y0), 1)
     if y1 == y0:
         segment_char = "-"
@@ -1896,7 +1896,7 @@ def _draw_timeline_segment(grid, x0, y0, x1, y1):
 
 
 def _render_timeline_grid(samples, width, height, lo, hi):
-    """Render ordered samples as a readable ASCII polyline."""
+    """Render ordered samples as a readable text polyline."""
     grid = [[" "] * width for _ in range(height)]
     if not samples or width <= 0 or height <= 0:
         return [" " * max(width, 0) for _ in range(max(height, 0))]
@@ -1921,7 +1921,7 @@ def _render_timeline_grid(samples, width, height, lo, hi):
 
 
 def render_score_timeline(scores, chart_w=42, chart_h=7):
-    """Render the score history as a browser-safe ASCII timeline.
+    """Render the score history as a browser-safe text timeline.
 
     The graph keeps a y-scale and an explicit left-to-right ``old -> now``
     direction while avoiding Braille glyphs, which become dense blocks in the
