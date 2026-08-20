@@ -33,11 +33,11 @@ MODEL_LAST_RESORT="codex:deepseek-v4-flash"
 # deepseek-v4-flash-free は opencode 直呼びで成功する（litellm の zen/v1 は 429）。opencode: で呼ぶ.
 # muse-spark-1.2-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:deepseek-v4-flash-free,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:deepseek-v4-flash-free,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -154,8 +154,9 @@ SOREN_BRIDGE_DESYNC_LIMIT="${SOREN_BRIDGE_DESYNC_LIMIT:-3}"
 POST_IMPROVE_MAINPLAY_ENABLED="${POST_IMPROVE_MAINPLAY_ENABLED:-1}"
 # TMP_STATE_DIR は後方で定義されるためリテラル指定 (= tmp/state)
 POST_IMPROVE_MAINPLAY_MARKER="tmp/state/.post_improve_mainplay"
-RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-codex:deepseek-v4-flash}"
-RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:minimax-m3}"
+RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode-go:muse-spark-1.2-contributor}"
+RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:deepseek-v4-flash}"
+RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-codex:minimax-m3}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
 RADIO_FACT_CHECK_MIN_CHARS=100
 RADIO_FACT_CHECK_SKIP_CORNERS="${RADIO_FACT_CHECK_SKIP_CORNERS:-strategy}"

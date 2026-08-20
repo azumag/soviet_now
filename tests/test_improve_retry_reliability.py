@@ -370,6 +370,91 @@ CODEX_MINIMAX_RUN_TIMEOUT_SEC=600
             "LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health}", run_cmd
         )
 
+    def test_run_cmd_preserves_opencode_models_and_records_resolved_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/lib/ai_generate.sh"
+source "$1/strategy/ai.sh"
+test_root="$2"
+log() { :; }
+_trim_log_file() { :; }
+_opencode_run_lock_enter() { OPENCODE_RUN_LOCK_LAST_TOKEN=""; return 0; }
+_opencode_run_lock_leave() { :; }
+_opencode_sync_auth_to_xdg() { :; }
+_opencode_cleanup_internal_locks() { :; }
+_opencode_xdg_state_home() { printf '%s/state' "$test_root"; }
+_opencode_xdg_data_home() { printf '%s/data' "$test_root"; }
+_run_cmd_start_heartbeat() { :; }
+_run_cmd_stop_heartbeat() { :; }
+_run_cmd_start_expected_file_watchdog() { :; }
+_run_cmd_stop_expected_file_watchdog() { :; }
+_stop_loop_descendants() { :; }
+start_spinner() { :; }
+stop_spinner() { :; }
+curl() { return 1; }
+opencode() {
+    printf '%s\n' "$*" >>"$test_root/opencode.calls"
+    printf '%*s\n' 220 x
+}
+codex() {
+    out=""
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "-o" ]; then shift; out="$1"; fi
+        shift
+    done
+    printf '%*s\n' 220 x
+    [ -n "$out" ] && printf 'codex output\n' >"$out"
+}
+AI_STATS_DIR="$test_root/stats"
+LITELLM_HEALTH_URL=http://127.0.0.1:4100/health/liveliness
+RUN_CMD_LOG_FILE="$test_root/run.log"
+OPENCODE_RUN_LOCK_ENABLED=0
+run_cmd opencode-go:muse-spark-1.2-contributor 'muse prompt'
+run_cmd opencode:deepseek-v4-flash-free 'free prompt'
+set +e
+run_cmd codex:deepseek-v4-flash 'paid prompt'
+codex_rc=$?
+set -e
+[ "$codex_rc" -eq 79 ]
+grep -qx 'run --model opencode-go/muse-spark-1.2-contributor muse prompt' "$test_root/opencode.calls"
+grep -qx 'run --model opencode/deepseek-v4-flash-free free prompt' "$test_root/opencode.calls"
+grep -q 'START spec=opencode-go:muse-spark-1.2-contributor .*model=opencode-go/muse-spark-1.2-contributor' "$test_root/run.log"
+grep -q 'START spec=opencode:deepseek-v4-flash-free .*model=opencode/deepseek-v4-flash-free' "$test_root/run.log"
+python3 - "$test_root/stats"/* <<'PY'
+import json
+import sys
+
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+resolved = {row["agent"]: row["resolved_model"] for row in rows if row["event"] == "attempt"}
+assert resolved["opencode-go:muse-spark-1.2-contributor"] == "opencode-go/muse-spark-1.2-contributor"
+assert resolved["opencode:deepseek-v4-flash-free"] == "opencode/deepseek-v4-flash-free"
+assert all(row["agent"] != "codex:deepseek-v4-flash" for row in rows)
+PY
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fact_check_defaults_put_muse_before_paid_fallback(self):
+        config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
+        factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode-go:muse-spark-1.2-contributor}"',
+            config,
+        )
+        self.assertIn(
+            'RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:deepseek-v4-flash}"',
+            config,
+        )
+        self.assertIn('"${RADIO_FACT_CHECK_TERTIARY:-}"', factcheck)
+        self.assertLess(
+            factcheck.index('"${RADIO_FACT_CHECK_AGENT:-}"'),
+            factcheck.index('"${RADIO_FACT_CHECK_FALLBACK:-}"'),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

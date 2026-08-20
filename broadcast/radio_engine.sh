@@ -23,7 +23,24 @@ _radio_peak_hour_should_defer() {
 
 _run_opencode_radio_unqueued() {
 	local agent="$1" prompt_file="$2"
-	local raw_file raw_text cleaned
+	local raw_file raw_text cleaned model="$agent"
+	local -a model_args=()
+	case "$agent" in
+	opencode-go:*)
+		model="opencode-go/${agent#opencode-go:}"
+		model_args=(--model "$model")
+		;;
+	opencode-go/* | opencode/* | */*)
+		model_args=(--model "$model")
+		;;
+	opencode:*)
+		model="opencode/${agent#opencode:}"
+		model_args=(--model "$model")
+		;;
+	*)
+		model_args=(--agent "$agent")
+		;;
+	esac
 	if _radio_opencode_should_defer_for_improve; then
 		log "[RADIO] opencode deferred after slot acquire during improve/backoff (agent=$agent)" >&2
 		return 1
@@ -35,7 +52,7 @@ _run_opencode_radio_unqueued() {
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		opencode run "${model_args[@]}" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
@@ -71,7 +88,25 @@ _run_opencode_radio() {
 		log "[RADIO] opencode deferred during improve/backoff (agent=$agent)" >&2
 		return 1
 	fi
+	local resolved_model="$agent"
+	case "$agent" in
+	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
+	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
+	esac
+	if command -v _ai_stats_record >/dev/null 2>&1; then
+		_ai_stats_record "attempt" "RADIO" "$agent" "" "$resolved_model"
+	fi
+	local rc
 	_ai_generation_queue_run "RADIO:opencode:${agent}" _run_opencode_radio_unqueued "$@"
+	rc=$?
+	if command -v _ai_stats_record >/dev/null 2>&1; then
+		if [ "$rc" -eq 0 ]; then
+			_ai_stats_record "ok" "RADIO" "$agent" "$rc" "$resolved_model"
+		else
+			_ai_stats_record "fail" "RADIO" "$agent" "$rc" "$resolved_model"
+		fi
+	fi
+	return "$rc"
 }
 
 _run_opencode_comment_unqueued() {

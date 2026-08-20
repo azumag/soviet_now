@@ -216,7 +216,7 @@ ${talk_body}
 PROMPT
 
 	local model
-	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}"; do
+	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}"; do
 		[ -n "$model" ] || continue
 		log "[RADIO:${corner_name}] fact-check中... (${model}, timeout=${factcheck_timeout}s)" >&2
 		raw_output=$(RADIO_OPENCODE_TIMEOUT="$factcheck_timeout" _run_opencode_radio "$model" "$prompt_file")
@@ -240,6 +240,15 @@ PROMPT
 				log "[RADIO:${corner_name}] fact-check通過 (${model}): ${issue_preview}" >&2
 			else
 				log "[RADIO:${corner_name}] fact-check通過 (${model})" >&2
+			fi
+			if command -v _ai_stats_record >/dev/null 2>&1; then
+				local resolved_model="$model"
+				case "$model" in
+				opencode-go:*) resolved_model="opencode-go/${model#opencode-go:}" ;;
+				opencode:*) resolved_model="opencode/${model#opencode:}" ;;
+				codex:*) resolved_model="${model#codex:}" ;;
+				esac
+				_ai_stats_record "winner" "RADIO" "$model" "0" "$resolved_model"
 			fi
 			rm -rf "$factcheck_dir"
 			printf '%s' "$safe_script"

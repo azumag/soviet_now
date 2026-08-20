@@ -780,7 +780,16 @@ _ai_call_codex() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
-	_ai_stats_record "attempt" "$label" "$agent" ""
+	local resolved_model="$agent"
+	case "$agent" in
+	codex:*) resolved_model="${agent#codex:}" ;;
+	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
+	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
+	local:*) resolved_model="${agent#local:}" ;;
+	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
+	*) resolved_model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
+	esac
+	_ai_stats_record "attempt" "$label" "$agent" "" "$resolved_model"
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -795,8 +804,8 @@ _ai_dispatch() {
 
 	local _dispatch_output_file="$_dispatch_log_dir/${_dispatch_tag}_output.txt"
 
-	# ハーネスは codex CLI に統一。codex:<model> はそのモデルを選択し、
-	# 従来形式のエージェント識別子は CODEX_MODEL を使う。
+	# codex:<model> は Codex CLI、opencode:<model> / opencode-go:<model> は
+	# OpenCode CLIへ渡す。従来形式のエージェント識別子は CODEX_MODEL を使う。
 	# local[:<model>] は Tailscale 経由の無料ローカル LLM へ直接送る。
 	local _codex_timeout="$timeout_override"
 	case "$agent" in
@@ -830,9 +839,9 @@ _ai_dispatch() {
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}
 	if [ "$_dispatch_rc" -eq 0 ]; then
-		_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc"
+		_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
 	else
-		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc"
+		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
 	fi
 	# 空出力ならログファイル削除
 	[ -s "$_dispatch_output_file" ] || rm -f "$_dispatch_output_file" 2>/dev/null
@@ -889,13 +898,13 @@ ai_generate() {
 
 # === AI 利用統計 ===
 
-# _ai_stats_record EVENT LABEL AGENT RC
+# _ai_stats_record EVENT LABEL AGENT RC [RESOLVED_MODEL]
 #   モデル呼び出しを 1 日 1 ファイルの JSONL へ記録する。stdout には一切出さない
 #   (生成テキストへ混入を避ける)。events: attempt / ok / fail。RC は呼び出し元の
-#   return code (空文字可)。フォールバックの最終結果は ai_generate_list 側で
-#   "winner"/"all_failed" として記録する。
+#   return code (空文字可)。resolved_model は実際に CLI へ渡したモデル名。
+#   フォールバックの最終結果は ai_generate_list 側で "winner"/"all_failed" として記録する。
 _ai_stats_record() {
-	local event="$1" label="$2" agent="$3" rc="${4:-}"
+	local event="$1" label="$2" agent="$3" rc="${4:-}" resolved_model="${5:-}"
 	[ -n "$event" ] || return 0
 	local stats_dir="_ai_stats_dir"
 	if [ -n "${AI_STATS_DIR:-}" ]; then
@@ -910,8 +919,8 @@ _ai_stats_record() {
 	ts=$(date +%s)
 	day=$(date +%Y%m%d)
 	local line
-	line=$(printf '{"ts":%s,"day":"%s","event":"%s","label":"%s","agent":"%s","rc":"%s"}' \
-		"$ts" "$day" "$event" "$label" "${agent:-}" "${rc:-}")
+	line=$(printf '{"ts":%s,"day":"%s","event":"%s","label":"%s","agent":"%s","rc":"%s","resolved_model":"%s"}' \
+		"$ts" "$day" "$event" "$label" "${agent:-}" "${rc:-}" "${resolved_model:-}")
 	printf '%s\n' "$line" >>"$stats_dir/${day}.jsonl" 2>/dev/null || true
 }
 

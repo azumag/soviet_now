@@ -673,17 +673,20 @@ bash sloop.sh
 - **Node.js**: v18+ (Playwright 依存)
 - **Python**: 3.10+ (`analyze_board.py`, `strategy.py` 用)
 - **LLM CLI ツール** (AI ループで使用):
-  - [Codex CLI](https://github.com/openai/codex) (`codex`) — 全AI生成を codex CLI に統一
+  - [Codex CLI](https://github.com/openai/codex) (`codex`) — `codex:<model>` の実行
+  - OpenCode CLI (`opencode`) — `opencode:<model>` / `opencode-go:<model>` の直接実行
 
-### ハーネス統一 (codex / opencode-go / deepseek-v4-flash)
+### ハーネス統一 (codex と opencode 系の明示的な分岐)
 
-2026-08 以降、コメント応答・ラジオコーナー・AI改善ループの全AI生成は **codex CLI に統一**されている。
-opencode CLI / claude CLI / gemini CLI / minimax / ollama の個別呼び出しは行わず、
-`lib/ai_generate.sh` の `_ai_call_codex` と `strategy/ai.sh` の `run_cmd` が
-`codex exec -m "$CODEX_MODEL"` を実行する。
+`codex:<model>` は Codex CLI、`opencode:<model>` と `opencode-go:<model>` は
+OpenCode CLIへ明示的に振り分ける。これにより、free枠や
+`opencode-go:muse-spark-1.2-contributor` を `CODEX_MODEL` の有料モデルへ
+暗黙に変換しない。接頭辞のない旧スペックだけは後方互換のため `CODEX_MODEL` へ正規化する。
 
-モデルは **`opencode-go/deepseek-v4-flash` のみ** (環境変数 `CODEX_MODEL` で固定)。
-接続先は `~/.codex/config.toml` の `model_providers.opencode-go` で指定する:
+Codex側の既定モデルは `CODEX_MODEL` で指定する。OpenCode CLIのモデルは
+スペックから `opencode/<model>` または `opencode-go/<model>` として解決する。
+Codex側でopencode-goを使う場合の接続先は `~/.codex/config.toml` の
+`model_providers.opencode-go` で指定する:
 
 ```toml
 model = "opencode-go/deepseek-v4-flash"
@@ -706,14 +709,14 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 #### モデル変数
 
 ```bash
-MODEL_PRIMARY="codex:opencode-go/deepseek-v4-flash"      # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="codex:opencode-go/deepseek-v4-flash"
-MODEL_IMPROVE="codex:opencode-go/deepseek-v4-flash"      # 改善primary
-MODEL_FALLBACK_IMPROVE="codex:opencode-go/deepseek-v4-flash" # 改善fallback
-MODEL_LAST_RESORT="codex:opencode-go/deepseek-v4-flash"
-ROLLBACK_POSTMORTEM_MODEL="codex:opencode-go/deepseek-v4-flash"
-ROLLBACK_POSTMORTEM_FALLBACK="codex:opencode-go/deepseek-v4-flash"
-CODEX_MODEL="opencode-go/deepseek-v4-flash"              # codex CLI のモデル指定
+MODEL_PRIMARY="codex:deepseek-v4-flash"                  # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
+MODEL_FALLBACK="codex:minimax-m3"
+MODEL_IMPROVE="codex:deepseek-v4-flash"                 # 改善primary
+MODEL_FALLBACK_IMPROVE="codex:minimax-m3"               # 改善fallback
+MODEL_LAST_RESORT="codex:deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_MODEL="codex:deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_FALLBACK="codex:minimax-m3"
+CODEX_MODEL="deepseek-v4-flash"                         # codex CLI のモデル指定
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
@@ -728,22 +731,25 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `codex:...` | `codex:...` | - | - |
-| **ラジオ生成** | `codex:...` | - | - | - |
+| **改善** | `opencode:deepseek-v4-flash-free` | `opencode-go:muse-spark-1.2-contributor` | `codex:deepseek-v4-flash` | `codex:minimax-m3` |
+| **ラジオ生成** | 共通チェーン（muse先行） | - | - | - |
+| **ラジオ fact-check** | `opencode-go:muse-spark-1.2-contributor` | `codex:deepseek-v4-flash` | `codex:minimax-m3` | 元原稿 |
 | **コメント返し** | `codex:...` | - | - | - |
 | **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
 | **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |
 | **粛清ポストモーテム** | `codex:...` | - | - | - |
 | **メリケンAI(全コメント)** | `codex:...` | - | - | - |
 
-`codex:...` は `codex:opencode-go/deepseek-v4-flash` の略記。全チャンネル同一モデル。
+`codex:<model>` は Codex CLIへ、`opencode-go:<model>` は OpenCode CLIへ渡す。
 
 #### スペック別詳細
 
 | スペック | 実装 | 説明 |
 |---------|------|------|
-| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `opencode-go/deepseek-v4-flash` |
-| 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧opencode/claude/gemini等もcodexへ正規化 |
+| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `deepseek-v4-flash` |
+| `opencode:<model>` | `opencode run --model opencode/<model>` | OpenCode CLIのZen系モデル |
+| `opencode-go:<model>` | `opencode run --model opencode-go/<model>` | OpenCode CLIのGo系モデル（muse等） |
+| 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧スペックの後方互換正規化 |
 
 #### 必要なAPIキー
 
@@ -759,6 +765,7 @@ OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 |---------|------------|------|
 | `codex:<model>` | `codex exec --skip-git-repo-check -m <model> --dangerously-bypass-approvals-and-sandbox` | 全AI呼び出し (改善ループはファイル編集のため bypass) |
 | `codex` | 同上 (`CODEX_MODEL` 使用) | ハーネス既定 |
+| `opencode:<model>` / `opencode-go:<model>` | `opencode run --model <resolved_model>` | 直接モデルを維持。改善ループは編集権限を `IMPROVE_OPENCODE_PERMISSION` で付与 |
 
 #### codex のエージェント設定
 
