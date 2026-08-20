@@ -31,11 +31,12 @@ MODEL_LAST_RESORT="codex:deepseek-v4-flash"
 # 全 AI 生成系の単一の順序原典。低コスト/無料枠を先頭、確実な有償枠を末尾に置く。
 # 各用途はこのリストを基底に、local を含めるか・特定枠を外すかだけを変える。
 # deepseek-v4-flash-free は opencode 直呼びで成功する（litellm の zen/v1 は 429）。opencode: で呼ぶ.
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3}"
+# muse-spark-1.2-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3,opencode:muse-spark-1.2-contributor}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-codex:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
 
 GAME_COUNT_FILE="game_count.txt"
 
@@ -101,8 +102,9 @@ PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-codex:minimax-m3,cod
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
-# 既定（該当なし）は AI_AGENT_BACKOFF_SEC。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000"
+# 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark-1.2-contributor は opencode-go 契約の
+# クォータ制枠のため 1 日バックオフ。
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
