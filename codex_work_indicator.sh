@@ -103,16 +103,40 @@ _enqueue_work_audio() {
 			esac
 		fi
 	fi
+	# 定型文に固定せず、呼び出しごとに自然な表現を変えて読ませる（す・です調・へりくだりすぎない）
+	# 内容ハッシュに時刻を加えてシード化し、毎回少し異なるテンプレートを決定的でなく選ぶ。
+	local _seed
+	_seed=$(printf '%s|%s' "$_w_title" "$_w_body" \
+		| python3 -c "import sys,time; s=sys.stdin.buffer.read(); print((sum(s) + time.time_ns()//10**8) % 100000)" 2>/dev/null || echo 0)
+	case "$_seed" in ''|*[!0-9]*) _seed=0 ;; esac
 	if [ "$_w_is_stop" -eq 1 ]; then
-		# 完了時は簡潔なです・ます調で
-		_w_text="${_w_body:-$_w_title}の作業が完了しました。ご確認ください。"
+		local _stop_tmpl=(
+			"%sの作業が完了しました。ご確認ください。"
+			"%sが完了しました。ご確認ください。"
+			"%sの対応が完了しました。ご確認ください。"
+			"%sの作業を終えました。ご確認ください。"
+		)
+		_w_text=$(printf "${_stop_tmpl[$(( _seed % ${#_stop_tmpl[@]} ))]}" "${_w_body:-$_w_title}")
 	else
-		# 開始・更新時は簡潔なです・ます調で（へりくだりすぎない）
-		_w_text="現在、${_w_title}の作業を進めています。"
+		local _start_tmpl=(
+			"現在、%sの作業を進めています。"
+			"ただいま%sを進めています。"
+			"%sに取りかかっています。"
+			"%sの作業に着手しました。"
+			"%sを進めています。"
+		)
+		_w_text=$(printf "${_start_tmpl[$(( _seed % ${#_start_tmpl[@]} ))]}" "$_w_title")
 		if [ -n "$_w_body" ]; then
-			_w_text="${_w_text} 詳細：${_w_body}。"
+			local _detail_tmpl=(
+				" 詳細は「%s」です。"
+				" 具体的には「%s」です。"
+				" 内容は「%s」です。"
+				" 進めているのは「%s」です。"
+			)
+			_w_text="${_w_text}$(printf "${_detail_tmpl[$(( (_seed / 7) % ${#_detail_tmpl[@]} ))]}" "$_w_body")"
+		else
+			_w_text="${_w_text} 進捗があり次第お知らせします。"
 		fi
-		_w_text="${_w_text} 進捗があり次第お知らせします。"
 	fi
 	# TTS 用に 240字に丸め
 	_w_text=$(printf '%s' "$_w_text" | cut -c1-240)
