@@ -90,6 +90,12 @@ SAY_RETRY_MAX_SLEEP_SEC="${SAY_RETRY_MAX_SLEEP_SEC:-20}"
 SAY_TRUNCATE_RATIO="${SAY_TRUNCATE_RATIO:-0.85}"
 SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
+# 音声が一定時間流れた後の異常終了は、同じ WAV を先頭から再試行すると
+# 既に聞こえた部分が二重になる。短い起動失敗だけは従来どおり再試行する。
+SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC="${SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC:-2}"
+case "$SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC" in
+''|*[!0-9]*) SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC=2 ;;
+esac
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 SAY_CHUNK_GAP_SEC="${SAY_CHUNK_GAP_SEC:-0.5}"
 
@@ -1195,6 +1201,12 @@ BEGIN {
 }'
 }
 
+_partial_playback_already_heard() {
+	local elapsed="${1:-0}"
+	[ "${SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC:-0}" -gt 0 ] || return 1
+	[ "$elapsed" -ge "$SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC" ]
+}
+
 # --- VOICEVOX ストリーミングTTS用ヘルパー ---
 
 # テキストを句点・読点で ~N文字チャンクに分割
@@ -1537,6 +1549,12 @@ _stream_launch_voicevox_chunk() {
 _stream_wait_voicevox_chunk() {
 	local play_pid="$1" expected_sec="${2:-0}"
 	if ! _wait_for_player_pid "$play_pid" "$expected_sec" 0; then
+		if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
+			&& _partial_playback_already_heard "${PLAYER_WAIT_ELAPSED:-0}"; then
+			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			_log "ストリーミングチャンクは既に${PLAYER_WAIT_ELAPSED:-0}秒再生済み (rc=${PLAYER_WAIT_RC:-1}, expected=${expected_sec}s) → 重複防止のため再試行せず完了扱い"
+			return 0
+		fi
 		if [ "${CHROME_AUDIO_USED:-0}" = "1" ]; then
 			_stop_chrome_audio_players
 			if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
@@ -1557,6 +1575,12 @@ _stream_wait_voicevox_chunk() {
 			return 0
 		fi
 		_log "ストリーミングチャンク途中切断の疑い (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
+		if _partial_playback_already_heard "${PLAYER_WAIT_ELAPSED:-0}"; then
+			# resume API がない現状では、同じ WAV を先頭から再試行するより
+			# 既に聞こえた部分を二重にしない at-most-once を優先する。
+			_log "ストリーミングチャンクは既に${PLAYER_WAIT_ELAPSED:-0}秒再生済み → 重複防止のため再試行せず完了扱い"
+			return 0
+		fi
 		return 98
 	fi
 	return 0
@@ -2211,6 +2235,13 @@ _play_with_retry() {
 			fi
 			say_rc="$PLAYER_WAIT_RC"
 			elapsed="$PLAYER_WAIT_ELAPSED"
+		fi
+		if [ "$timed_out" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
+			&& _partial_playback_already_heard "$elapsed" \
+			&& { [ "$say_rc" -ne 0 ] || _is_truncated_playback "$elapsed" "$expected_sec"; }; then
+			_log "sayは既に${elapsed}秒再生済み (rc=$say_rc, expected=${expected_sec}s) → 重複防止のため再試行せず完了扱い"
+			docich_cc_clear || true
+			return 0
 		fi
 		if [ "$say_rc" -eq 0 ] && _is_truncated_playback "$elapsed" "$expected_sec"; then
 			say_rc=98

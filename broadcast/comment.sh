@@ -41,6 +41,37 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
+# macOS の md5 と Linux の md5sum の差を吸収する。VM では md5 が存在しない
+# ため、md5 -q の失敗を空文字として扱うとコメントの重複抑止が全て無効になる。
+_comment_hash_text() {
+	local text="${1:-}"
+	if declare -F _outbound_chat_hash >/dev/null 2>&1; then
+		_outbound_chat_hash "$text"
+		return $?
+	fi
+	if command -v md5 >/dev/null 2>&1; then
+		printf '%s' "$text" | md5 -q 2>/dev/null && return 0
+	fi
+	if command -v md5sum >/dev/null 2>&1; then
+		printf '%s' "$text" | md5sum 2>/dev/null | awk '{print $1}'
+		return $?
+	fi
+	return 1
+}
+
+_comment_hash_file() {
+	local file="${1:-}"
+	[ -f "$file" ] || return 1
+	if command -v md5 >/dev/null 2>&1; then
+		md5 -q "$file" 2>/dev/null && return 0
+	fi
+	if command -v md5sum >/dev/null 2>&1; then
+		md5sum "$file" 2>/dev/null | awk '{print $1}'
+		return $?
+	fi
+	return 1
+}
+
 _comment_failure_backoff_remaining() {
 	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
 	local now backoff_until remaining
@@ -396,7 +427,7 @@ _filter_already_processed_comment_lines() {
 		[ -n "$line" ] || continue
 		total_count=$((total_count + 1))
 		local line_hash
-		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+		line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
 		[ -n "$line_hash" ] || {
 			result="${result:+${result}
 }${line}"
@@ -428,7 +459,7 @@ _has_processed_comment_line() {
 	now=$(date +%s)
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
-		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+		line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
 		[ -n "$line_hash" ] || continue
 		if awk -F'|' -v h="$line_hash" -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
 			'$2 == h && (now - $1) <= ttl { found=1 } END { exit(found ? 0 : 1) }' \
@@ -457,7 +488,7 @@ _record_processed_comment_lines() {
 		while IFS= read -r line; do
 			[ -n "$line" ] || continue
 			local line_hash
-			line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+			line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
 			[ -n "$line_hash" ] && echo "${now}|${line_hash}"
 		done <<<"$comments"
 	} | tail -n "$COMMENT_PROCESSED_LINES_MAX" >"$tmpf"
@@ -494,7 +525,7 @@ _remember_comment_reply_text() {
 	[ -n "$remembered_text" ] || return 0
 	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
 	local history_file prune_from old_files text_hash hash_file
-	text_hash=$(printf '%s' "$remembered_text" | md5 -q 2>/dev/null || true)
+	text_hash=$(_comment_hash_text "$remembered_text" 2>/dev/null || true)
 	hash_file="$COMMENT_SPOKEN_HISTORY_DIR/.reply_hashes"
 	if [ -n "$text_hash" ] && grep -qF "$text_hash" "$hash_file" 2>/dev/null; then
 		return 0
@@ -2487,7 +2518,7 @@ generate_comment_response() {
 	printf '%s\n' "$twitch_comments_original" >"$comment_batch_file"
 
 	local comment_batch_hash=""
-	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
+	comment_batch_hash=$(_comment_hash_text "$twitch_comments" 2>/dev/null || echo "")
 	if _is_recent_comment_batch_processed "$comment_batch_hash"; then
 		log "[COMMENT] 同一コメントバッチを直近で処理済みのためスキップ (batch=$comment_batch_hash)"
 		"$viewer_chat_script" ack-batch "$comment_batch_file"
@@ -3057,7 +3088,7 @@ RETRYCOMMENT
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 			comment_speech_meta_file=""
 			local new_hash
-			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
+			new_hash=$(_comment_hash_file "$queue_file" 2>/dev/null || true)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
 				log "[COMMENT] 重複コメント返し検出 → 再生成 (hash=$new_hash, attempt ${attempt}/${comment_retry_max})"
 				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
@@ -3065,6 +3096,28 @@ RETRYCOMMENT
 				rm -f "$queue_file"
 				attempt=$((attempt + 1))
 				continue
+			fi
+
+			# 生成経路は enqueue_audio_text を通らず直接ファイルを作るため、
+			# ここで本文単位の原子的な投入権を取得する。別の生成プロセスが
+			# 同じ返信を先にキューへ積んだ場合は、現在のバッチだけ消化して
+			# 2本目の音声を作らない。
+			if declare -F _comment_audio_claim_enqueue_key >/dev/null 2>&1 &&
+				! _comment_audio_claim_enqueue_key "$attempt_talk"; then
+				log "[COMMENT] 同一本文が音声キューへ投入済みのため重複返信を破棄"
+				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
+				_comment_clear_generation_meta "$queue_file"
+				rm -f "$queue_file"
+				if "$viewer_chat_script" ack-batch "$comment_batch_file"; then
+					_mark_comment_batch_processed "$comment_batch_hash"
+					_record_processed_comment_lines "$twitch_comments"
+				else
+					log "[COMMENT] 重複返信破棄後の ack-batch 失敗 → 個別行ハッシュ記録"
+					_record_processed_comment_lines "$twitch_comments"
+					_mark_comment_batch_processed "$comment_batch_hash"
+				fi
+				generation_ok=true
+				break
 			fi
 
 			# kill耐性: キュー追加直後にack→処理済みマークし、再生成を防ぐ

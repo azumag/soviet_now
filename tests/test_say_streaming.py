@@ -20,6 +20,7 @@ class TestSayStreaming(unittest.TestCase):
         content_text: str,
         *,
         fail_first_chunk: str | None = None,
+        partial_fail_after_sleep: str | None = None,
         retry_max: int = 1,
         fail_caption_index: int | None = None,
         synth_sleep: str = "0.25",
@@ -59,6 +60,7 @@ docich_cc_cleanup() { :; }
         content = root / "comment.txt"
         content.write_text(content_text, encoding="utf-8")
         fail_state = root / "fail_once.state"
+        partial_fail_state = root / "partial_fail_once.state"
 
         self._write_executable(
             root / "voicevox_tts.sh",
@@ -79,6 +81,7 @@ printf 'synth-end:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
 """.replace("SYNC_SLEEP_SEC", synth_sleep),
         )
         fail_name = fail_first_chunk or ""
+        partial_fail_name = partial_fail_after_sleep or ""
         self._write_executable(
             root / "bin" / "pactl",
             "#!/bin/sh\nprintf '1\\tsoren_null\\tmodule-null-sink\\n'\n",
@@ -100,6 +103,11 @@ if [ "$name" = "{fail_name}" ] && [ ! -e "{fail_state}" ]; then
   : > "{fail_state}"
   exit 1
 fi
+if [ "$name" = "{partial_fail_name}" ] && [ ! -e "{partial_fail_state}" ]; then
+  : > "{partial_fail_state}"
+  sleep SYNC_SLEEP_SEC
+  exit 1
+fi
 sleep SYNC_SLEEP_SEC
 printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
 """.replace("SYNC_SLEEP_SEC", play_sleep),
@@ -118,6 +126,8 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
                 "SAY_RETRY_MAX_SLEEP_SEC": "1",
                 "SAY_STREAM_PLAY_START_SETTLE_SEC": "0.1",
                 "SAY_STREAM_PLAYER_READY_DIR": str(root / "ready"),
+                "TWITCH_SNOOZE_POLL_SEC": "0",
+                "SPEAKING_GRACE_SEC": "0",
                 "VOICEVOX_COMMENT_SYNTH_TIMEOUT_SEC": "5",
                 "VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC": "5",
                 "TEST_EVENT_LOG": str(event_log),
@@ -227,6 +237,23 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
         for name in chunk_names:
             self.assertEqual(starts.count(name), 1, f"{name} duplicated: {starts}")
         self.assertIn("合成待ち中に完了", result.stderr)
+
+    def test_partially_played_chunk_is_not_retried_from_the_beginning(self):
+        # プレイヤーが数秒再生してから異常終了した場合、同じ WAV を先頭から
+        # 再試行すると、既に聞こえた部分が二重になる。
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, _ = self._run(
+            text,
+            partial_fail_after_sleep="chunk_1.wav",
+            retry_max=1,
+            play_sleep="2.2",
+            ffprobe_duration="10",
+            truncate_min="2",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        starts = [line.split(":", 1)[1] for line in events if line.startswith("play-start:")]
+        self.assertEqual(starts.count("chunk_1.wav"), 1, events)
+        self.assertIn("再試行せず完了扱い", result.stderr)
 
 
 if __name__ == "__main__":
