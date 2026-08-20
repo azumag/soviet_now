@@ -23,7 +23,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # The real repo strategy.py's decide() hash, so extract_decide_hash.py
 # resolves a real current_hash (matching the synthetic rolling entry below).
-CURRENT_HASH = "0890dbefd73e"
+# Compute dynamically so the test stays green when strategy.py evolves
+# (VM's strategy.py is at e5b671c8d352, local is at 0890dbefd73e, hard-coded would mismatch).
+try:
+    import subprocess as _sub
+
+    CURRENT_HASH = _sub.check_output(
+        ["python3", str(REPO_ROOT / "extract_decide_hash.py"), str(REPO_ROOT / "strategy.py")],
+        text=True,
+    ).strip().split()[0]
+    if not CURRENT_HASH:
+        raise ValueError("empty hash")
+except Exception:
+    CURRENT_HASH = "0890dbefd73e"
 ANCHOR_HASH = "anchor00000000000000000000000000000000"
 
 
