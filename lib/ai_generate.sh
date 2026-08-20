@@ -600,6 +600,8 @@ _ai_call_opencode_unqueued() {
 	local timeout_sec="${4:-90}"
 	local model="opencode/${agent#opencode:}"
 	case "$agent" in
+	opencode-go/*) model="$agent" ;;
+	opencode-go:*) model="opencode-go/${agent#opencode-go:}" ;;
 	opencode/*) model="$agent" ;;
 	opencode:*) model="opencode/${agent#opencode:}" ;;
 	*/*) model="$agent" ;;
@@ -806,7 +808,7 @@ _ai_dispatch() {
 		[ "$agent" = "local" ] || _local_model="${agent#local:}"
 		_ai_call_local_llm "$label" "$prompt_file" "$_local_model" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
-	opencode:*)
+	opencode-go:*|opencode:*)
 		local _opencode_timeout="$timeout_override"
 		if [[ "$label" == COMMENT* ]] && [ -z "$_opencode_timeout" ]; then
 			_opencode_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
@@ -954,6 +956,9 @@ _ai_backoff_sec_for_agent() {
 		;;
 	codex:*)
 		model="${agent#codex:}"
+		;;
+	opencode-go:*)
+		model="${agent#opencode-go:}"
 		;;
 	opencode:*)
 		model="${agent#opencode:}"
