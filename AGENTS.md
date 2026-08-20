@@ -2,19 +2,21 @@
 
 ## OBS Working Indicator
 
-When Codex itself is actively inspecting, editing, testing, or otherwise changing this project, turn on the persistent Codex work indicator in `eventOverlay`:
+When Codex itself is actively inspecting, editing, testing, or otherwise changing this project, turn on the persistent Codex work indicator in `eventOverlay` with fine granularity:
 
 ```bash
-./codex_work_indicator.sh start
+./codex_work_indicator.sh start "タイトル" "本文"
+# 例: 解析中 → 実装中 → 検証中 → デプロイ中 とフェーズが変わるたびに再実行してタイトル/本文を更新
+./codex_work_indicator.sh start "実装中" "core/config.sh の peak 改善チェーンを追加"
 ```
 
-Keep it visible until the Codex work is fully finished, including verification and any live restart/check steps. Before sending the final response, pausing the work, or handing control back to the user, clear it:
+Keep it visible until the Codex work is fully finished, including verification and any live restart/check steps. Do not leave it on coarsely with a single `start`; update the title/body at each phase change so viewers can follow progress. Before sending the final response, pausing the work, or handing control back to the user, clear it:
 
 ```bash
 ./codex_work_indicator.sh stop
 ```
 
-This indicator is for human/Codex project work, not for the automatic in-game strategy improvement loop. It should update the `eventOverlay` HTML only; do not show/hide the OBS `systemMsg` source for Codex work.
+This indicator is for human/Codex project work, not for the automatic in-game strategy improvement loop. It should update the `eventOverlay` HTML only; do not show/hide the OBS `systemMsg` source for Codex work. The same state can also be controlled via docich webui `Overlay→作業中バナー` (`PUT /api/overlay/work_banner`).
 
 ## Viewer Feedback
 
