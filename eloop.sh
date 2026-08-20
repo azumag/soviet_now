@@ -315,6 +315,31 @@ play_one_game() {
 	}
 	strategy_runtime_file="$strategy_runtime_root/strategy.py"
 
+	# 実プレイ用スナップショットの準備が完了した時点を試合開始とする。
+	# ブリッジ復旧やスナップショット失敗で延期した試合は開始通知を出さない。
+	local _start_cycle_progress
+	_start_cycle_progress=$(python3 - "${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    cycle = int(sys.argv[2])
+except (IndexError, ValueError):
+    cycle = 12
+try:
+    with open(path, encoding="utf-8") as f:
+        count = int((json.load(f) or {}).get("count", 0) or 0)
+except Exception:
+    count = 0
+if cycle > 0:
+    print(f"[{count + 1}/{cycle}]")
+PY
+)
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh game "Game #${game_num_display} 開始${_start_cycle_progress:+ ${_start_cycle_progress}}" "サイクル${_start_cycle_progress:-?}の試合を開始しました。" "info" >/dev/null 2>&1 || true
+	fi
+
 	# strategy_runner.py で1試合プレイ
 	# パイプラインを使わない: bash はパイプライン中 INT trap を遅延するため Ctrl-C が効かない。
 	# 代わりに python3 をバックグラウンド実行 + tail -f でリアルタイム表示。

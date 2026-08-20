@@ -495,7 +495,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     if (/^Live:/.test(text)) return 'sum-live';
     if (/Backend/.test(text)) return 'sum-backend';
     if (/AI(?: 429|使用量上限)/.test(text)) return 'sum-ai';
-    if (/Queued/.test(text)) return 'sum-queue';
+    if (/Game|Queued/.test(text)) return 'sum-queue';
     if (/LastDrop/.test(text)) return 'sum-drop';
     if (/AVSync/.test(text)) return 'sum-av';
     return 'sum-muted';
@@ -530,7 +530,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
       else selected.push(aiLine);
     }
     if (selected.length < 4) {
-      for (const pattern of [/Backend/, /Queued/, /LastDrop/, /AVSync/]) {
+      for (const pattern of [/Backend/, /Game|Queued/, /LastDrop/, /AVSync/]) {
         const line = ops.find((candidate) => pattern.test(candidate));
         if (line && !selected.includes(line)) selected.push(line);
         if (selected.length >= 4) break;
@@ -583,7 +583,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     const displayItems = [...generatorEvents, ...events];
     if (!displayItems.length) {
       const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
-      return [/Backend/, /Queued/, /LastDrop/].map((pattern) => ops.find((line) => pattern.test(line)))
+      return [/Backend/, /Game|Queued/, /LastDrop/].map((pattern) => ops.find((line) => pattern.test(line)))
         .filter(Boolean).map((line) => ({
           category: 'system',
           title: 'LIVE STATUS',

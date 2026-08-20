@@ -386,7 +386,7 @@ test('live-status toasts stay stable and never re-animate while idle', async () 
       },
       showStatus: {
         label: 'SHOW-STATUS',
-        text: '● Backend     FFMPEG LIVE\n◆ Queued      34/100 games\n▾ LastDrop   T36',
+        text: '● Backend     FFMPEG LIVE\n◆ Game        34試合目 (games)\n▾ LastDrop   T36',
         updatedAt: 1780000080,
         lineCount: 3,
       },
@@ -470,7 +470,7 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
       },
       showStatus: {
         label: 'SHOW-STATUS',
-        text: '● Loop        RUNNING\n○ ImproveD    STOPPED\n◆ Queued      49/100 games',
+        text: '● Loop        RUNNING\n○ ImproveD    STOPPED\n◆ Game        49試合目 (games)',
         updatedAt: 1780000080,
         lineCount: 3,
       },
@@ -487,7 +487,7 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   const sClasses = overlay.feedS.children.map((line) => line.className);
   assert.ok(sClasses.some((cls) => cls.includes('run')), 'RUNNING line must be green');
   assert.ok(sClasses.some((cls) => cls.includes('down')), 'STOPPED line must be red');
-  assert.ok(sClasses.some((cls) => cls.includes('yellow')), 'Queued line must be yellow');
+  assert.ok(sClasses.some((cls) => cls.includes('yellow')), 'Game count line must be yellow');
 
   const summaryClasses = overlay.summary.children.map((line) => line.className);
   assert.ok(summaryClasses.some((cls) => cls.includes('sum-head')), 'summary SOREN/OBS line must be colored');

@@ -1692,7 +1692,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
 
     live_extra = ""
     if accumulated > 0:
-        live_extra = f"  {C_YELLOW}♦ {accumulated} queued{RST}"
+        live_extra = f"  {C_YELLOW}♦ {accumulated}試合目 (games){RST}"
 
     lines = []
     inner = W - 3  # │ + content(inner) + space + │ = W
@@ -1793,7 +1793,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     # Row 4: live game state
     r4_raw = f" Live: {state}  score={gscore}  pieces={gpieces}"
     if accumulated > 0:
-        r4_raw_nocolor = r4_raw + f"  ♦ {accumulated} queued"
+        r4_raw_nocolor = r4_raw + f"  ♦ {accumulated}試合目 (games)"
     else:
         r4_raw_nocolor = r4_raw
     r4_display = f" Live: {state_color}{state}{RST}  score={gscore}  pieces={gpieces}{live_extra}"

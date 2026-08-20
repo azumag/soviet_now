@@ -2667,14 +2667,14 @@ PY
 		if (( acc_count > 0 )); then
 			local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"
-		local count_label="${acc_count}/${min_games} games"
+		local count_label="${acc_count}試合目 (games)"
 		local nation_label="R${acc_russia_count:-0}"
 		$acc_soviet && nation_label="${nation_label} S=1"
 		local max_scores=$(( W - 26 - ${#count_label} - ${#nation_label} ))
 		(( max_scores < 8 )) && max_scores=8
 		local scores_display="${acc_scores}"
 		scores_display=$(_truncate_display_width_keep_tail "$scores_display" "$max_scores")
-		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}%s${C_RESET}  ${C_DIM}%s [%s]${C_RESET}\n" "${count_label}" "$nation_label" "${scores_display}"
+		printf "    ${gate_color}◆${C_RESET} Game        ${gate_color}%s${C_RESET}  ${C_DIM}%s [%s]${C_RESET}\n" "${count_label}" "$nation_label" "${scores_display}"
 	fi
 
 	# キュー負荷メーター（show_status_g にはない運用系指標）

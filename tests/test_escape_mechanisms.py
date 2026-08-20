@@ -8355,6 +8355,20 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn('print(f"[{count}/{cycle}]")', eloop)
         self.assertIn('Game #${game_num_display} 終了${_cycle_progress:+ ${_cycle_progress}}', eloop)
 
+    def test_game_start_overlay_title_includes_cycle_progress(self):
+        eloop = (REPO_ROOT / "eloop.sh").read_text()
+
+        self.assertIn('_start_cycle_progress=$(python3 - "${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" "${MIN_GAMES_BEFORE_IMPROVE:-12}"', eloop)
+        self.assertIn('Game #${game_num_display} 開始${_start_cycle_progress:+ ${_start_cycle_progress}}', eloop)
+        self.assertIn('サイクル${_start_cycle_progress:-?}の試合を開始しました。', eloop)
+
+    def test_live_count_uses_game_number_label(self):
+        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn('♦ {accumulated}試合目 (games)', dashboard)
+        self.assertIn('local count_label="${acc_count}試合目 (games)"', status)
+
     def test_improve_overlay_is_file_based_and_replaces_console_capture(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
