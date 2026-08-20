@@ -327,8 +327,10 @@ run_cmd() {
 	fi
 	[ -n "$timeout_sec" ] && timeout_label="${timeout_sec}s"
 	# litellm プロキシ経由運用時は、codex 起動前にプロキシ生存を確認する。
-	# 死亡時に無駄な codex 起動を避け、run_ai のフォールバック判定 (rc=79) へ乗せる。
-	local litellm_health_url="${LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health}"
+	# /health は設定済みモデルへの能動的な疎通確認を行うため、1モデルの
+	# 429/遅延だけでプロキシ全体を停止扱いにしてしまう。プロセスの生存だけを
+	# 判定する /health/liveliness を使い、他モデルまで呼び出し前に遮断しない。
+	local litellm_health_url="${LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health/liveliness}"
 	if [ -n "$litellm_health_url" ]; then
 		if ! curl -fsS --max-time 5 "$litellm_health_url" >/dev/null 2>&1; then
 			log "[CMD] litellm proxy unreachable ($litellm_health_url) → rc=79 fallback"

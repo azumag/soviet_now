@@ -360,6 +360,16 @@ CODEX_MINIMAX_RUN_TIMEOUT_SEC=600
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_run_cmd_uses_liveliness_not_model_health_as_proxy_gate(self):
+        source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
+        run_cmd = source[source.index("run_cmd()") : source.index("#=== AIステップ ===")]
+        self.assertIn(
+            "http://127.0.0.1:4100/health/liveliness", run_cmd
+        )
+        self.assertNotIn(
+            "LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health}", run_cmd
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
