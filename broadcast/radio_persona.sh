@@ -4,20 +4,36 @@
 #=== ラジオトーク: 共通ヘルパー ===
 
 _radio_time_context() {
-	_rc_hour=$(date '+%H')
-	_rc_time=$(date '+%H:%M')
-	local _rc_hour_num _rc_min_num
-	_rc_hour_num=$((10#$(date '+%H')))
-	_rc_min_num=$((10#$(date '+%M')))
+	# 1回の日時スナップショットから時・分を作る。date を複数回呼ぶと
+	# 分境界で _rc_hour と _rc_time が別の分を指すため、時報本文と
+	# プロンプトの時刻が食い違う。
+	local _rc_snapshot _rc_hour_raw _rc_min_raw
+	_rc_snapshot=$(date '+%H %M' 2>/dev/null || printf '%s' '00 00')
+	_rc_hour_raw="${_rc_snapshot%% *}"
+	_rc_min_raw="${_rc_snapshot##* }"
+	case "$_rc_hour_raw" in ''|*[!0-9]*) _rc_hour_raw=00 ;; esac
+	case "$_rc_min_raw" in ''|*[!0-9]*) _rc_min_raw=00 ;; esac
+	_rc_hour=$(printf '%02d' "$((10#$_rc_hour_raw))")
+	_rc_min_num=$((10#$_rc_min_raw))
+	_rc_time=$(printf '%s:%02d' "$_rc_hour" "$_rc_min_num")
+	local _rc_hour_num
+	_rc_hour_num=$((10#$_rc_hour))
 	if [ "$_rc_min_num" -eq 0 ]; then
 		_rc_time_spoken="${_rc_hour_num}時"
 	else
 		_rc_time_spoken="${_rc_hour_num}時${_rc_min_num}分"
 	fi
+	# deferred ラジオは生成から再生まで長く空くため、既定では時間単位で
+	# 告知する。分まで言う設定は RADIO_TIME_ANNOUNCE_MINUTES=1 で opt-in。
+	if [ "${RADIO_TIME_ANNOUNCE_MINUTES:-0}" = "1" ]; then
+		_rc_time_announce_spoken="$_rc_time_spoken"
+	else
+		_rc_time_announce_spoken="${_rc_hour_num}時"
+	fi
 }
 
 _refresh_radio_intro_for_playback_file() {
-	local target_file="$1" corner_name="${2:-}"
+	local target_file="$1" corner_name="${2:-}" time_precision="${3:-minute}"
 	[ -f "$target_file" ] || return 0
 
 	_radio_time_context
@@ -30,7 +46,14 @@ _refresh_radio_intro_for_playback_file() {
 		greet="こんにちは"
 	fi
 
-	python3 - "$target_file" "$corner_name" "$greet" "$_rc_time_spoken" <<'PY'
+	local time_text="$_rc_time_spoken"
+	if [ "$time_precision" = "hour" ]; then
+		local _rc_hour_num_for_announce
+		_rc_hour_num_for_announce=$((10#$_rc_hour))
+		time_text="${_rc_hour_num_for_announce}時"
+	fi
+
+	python3 - "$target_file" "$corner_name" "$greet" "$time_text" <<'PY'
 from pathlib import Path
 import re
 import sys
