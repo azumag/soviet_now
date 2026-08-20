@@ -306,7 +306,9 @@ _run_cmd_store_resume_session() {
 #   opencode 系を CODEX_MODEL に正規化すると、free/muse 指定が有料の
 #   deepseek へすり替わるため、明示した opencode モデルはそのまま残す。
 _run_cmd_resolved_model() {
-	local spec="${1:-}" type="${spec%%:*}" agent="${spec#*:}"
+	local spec="${1:-}" type agent
+	type="${spec%%:*}"
+	agent="${spec#*:}"
 	[ "$type" = "$agent" ] && agent=""
 	case "$spec" in
 	opencode-go/* | opencode/*)
@@ -332,7 +334,9 @@ _run_cmd_resolved_model() {
 
 run_cmd() {
 	local spec="$1" prompt="$2" expect_file="${3:-}" expect_snapshot="${4:-}" expect_was_present="${5:-false}"
-	local type="${spec%%:*}" agent="${spec#*:}"
+	local type agent
+	type="${spec%%:*}"
+	agent="${spec#*:}"
 	[ "$type" = "$agent" ] && agent=""
 	local bypass_litellm_health=0
 	case "$spec" in

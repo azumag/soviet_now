@@ -378,6 +378,10 @@ set -e
 source "$1/lib/ai_generate.sh"
 source "$1/strategy/ai.sh"
 test_root="$2"
+CODEX_MODEL=deepseek-v4-flash
+[ "$(_run_cmd_resolved_model opencode-go:muse-spark-1.2-contributor)" = "opencode-go/muse-spark-1.2-contributor" ]
+[ "$(_run_cmd_resolved_model opencode:deepseek-v4-flash-free)" = "opencode/deepseek-v4-flash-free" ]
+[ "$(_run_cmd_resolved_model codex:deepseek-v4-flash)" = "deepseek-v4-flash" ]
 log() { :; }
 _trim_log_file() { :; }
 _opencode_run_lock_enter() { OPENCODE_RUN_LOCK_LAST_TOKEN=""; return 0; }
