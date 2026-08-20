@@ -196,6 +196,31 @@ class BrailleCanvas:
         return lines
 
 
+def draw_braille_segment(canvas, x0, y0, x1, y1, color=None):
+    """Draw a continuous line segment on a BrailleCanvas.
+
+    The timeline is rendered at dot resolution, so connecting adjacent samples
+    avoids turning every sample into a separate full-height bar.
+    """
+    dx = abs(x1 - x0)
+    sx = 1 if x0 < x1 else -1
+    dy = -abs(y1 - y0)
+    sy = 1 if y0 < y1 else -1
+    error = dx + dy
+
+    while True:
+        canvas.set(x0, y0, color)
+        if x0 == x1 and y0 == y1:
+            break
+        twice_error = 2 * error
+        if twice_error >= dy:
+            error += dy
+            x0 += sx
+        if twice_error <= dx:
+            error += dx
+            y0 += sy
+
+
 # ── Block bar rendering ───────────────────────────────────────
 
 BAR_CHARS = " ▏▎▍▌▋▊▉█"
@@ -1923,12 +1948,18 @@ def render_score_timeline(scores, chart_w=42, chart_h=7):
     dot_h = chart_h * 4
 
     n = len(window)
+    points = []
     for i, s in enumerate(window):
         dx = int(i * (dot_w - 1) / max(n - 1, 1))
         norm = (s - lo) / rng
-        top_dot = int(norm * (dot_h - 1))
-        for dy in range(0, top_dot + 1):
-            canvas.set(dx, dot_h - 1 - dy, C_CYAN)
+        dy = dot_h - 1 - int(norm * (dot_h - 1))
+        points.append((dx, dy))
+
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        draw_braille_segment(canvas, x0, y0, x1, y1, C_CYAN)
+    if points:
+        canvas.set(*points[0], C_CYAN)
+        canvas.set(*points[-1], C_CYAN)
 
     braille_lines = canvas.render_lines()
     lines = [f"  {BOLD}Score Timeline{RST} {DIM}(last {n} games){RST}"]
