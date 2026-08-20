@@ -1,15 +1,17 @@
 #!/bin/bash
-# 探索モード (EXPLORE_MODE=1) では Twitch 予想を行わない
-[ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # twitch_predictions.sh - Twitch チャネルポイント予想 (Predictions) API wrapper
 # Usage:
 #   ./twitch_predictions.sh create              → prediction_id と outcome_ids を stdout に JSON 出力
 #   ./twitch_predictions.sh resolve <outcome_index>  → 勝者 outcome で解決 (0-3)
 #   ./twitch_predictions.sh cancel              → キャンセル
+#   ./twitch_predictions.sh status              → リモート予想の状態を秘密情報なしで JSON 出力
+#   ./twitch_predictions.sh sync                → リモート ACTIVE/LOCKED 予想をローカルへ同期
 #
 # 状態ファイル: tmp/state/current_prediction.json
 cd "$(dirname "$0")"
 source lib/outbound_queue.sh 2>/dev/null || true
+
+PREDICTIONS_COMMAND="${1:-}"
 
 # 予想系は毎回の実行で最新の .env を読む。
 # 長寿命の親プロセスから古い exported env を引き継いでも、
@@ -22,6 +24,10 @@ TMP_STATE_DIR="${TMP_STATE_DIR:-tmp/state}"
 
 # --- 環境変数チェック ---
 if [ "${TWITCH_PREDICTIONS_ENABLED:-0}" != "1" ]; then
+	if [ "$PREDICTIONS_COMMAND" = "status" ]; then
+		printf '%s\n' '{"ok":true,"enabled":false,"configured":false,"explore_mode":false,"http_code":null,"data":[],"error":"disabled"}'
+		exit 0
+	fi
 	_log "SKIP: TWITCH_PREDICTIONS_ENABLED is not 1"
 	exit 0
 fi
@@ -30,16 +36,34 @@ fi
 # チャット投稿用の TWITCH_BOT_TOKEN とは別
 TOKEN="${TWITCH_PREDICTIONS_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
+	if [ "$PREDICTIONS_COMMAND" = "status" ]; then
+		printf '%s\n' '{"ok":false,"enabled":true,"configured":false,"explore_mode":false,"http_code":null,"data":[],"error":"missing_token"}'
+		exit 0
+	fi
 	_log "SKIP: TWITCH_PREDICTIONS_TOKEN not set"
 	exit 0
 fi
 CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
 if [ -z "$CLIENT_ID" ] || [ -z "$BROADCASTER_ID" ]; then
+	if [ "$PREDICTIONS_COMMAND" = "status" ]; then
+		printf '%s\n' '{"ok":false,"enabled":true,"configured":false,"explore_mode":false,"http_code":null,"data":[],"error":"missing_client_or_broadcaster"}'
+		exit 0
+	fi
 	_log "SKIP: missing env vars (TWITCH_CLIENT_ID, TWITCH_BROADCASTER_ID)"
 	exit 0
 fi
 TOKEN="${TOKEN#oauth:}"
+
+# 探索モード (EXPLORE_MODE=1) では Twitch 予想を操作しない。ただし status は
+# 管理画面で現在状態を確認できるように API へ到達させる。
+EXPLORE_MODE_ACTIVE="false"
+if [ "${EXPLORE_MODE:-0}" = "1" ]; then
+	EXPLORE_MODE_ACTIVE="true"
+	if [ "$PREDICTIONS_COMMAND" != "status" ]; then
+		exit 0
+	fi
+fi
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 # MIN_GAMES_BEFORE_IMPROVE 解決: 環境変数 (soren_loop の hot-reload export) を
@@ -418,6 +442,45 @@ _sync_prediction_state_with_remote() {
 	esac
 }
 
+_prediction_status() {
+	local response_file response_code api_message
+	response_file=$(mktemp "$PREDICTION_RETRY_DIR/status.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/status.$$")
+	response_code=$(curl -sS --max-time 15 -o "$response_file" -w '%{http_code}' -G \
+		"https://api.twitch.tv/helix/predictions" \
+		-H "Authorization: Bearer ${TOKEN}" \
+		-H "Client-Id: ${CLIENT_ID}" \
+		--data-urlencode "broadcaster_id=${BROADCASTER_ID}" \
+		--data-urlencode "first=20" 2>/dev/null || echo 000)
+	case "$response_code" in ''|*[!0-9]*) response_code=000 ;; esac
+	if [ "$response_code" -lt 200 ] 2>/dev/null || [ "$response_code" -ge 300 ] 2>/dev/null; then
+		api_message=$(_prediction_api_error_message "$response_file")
+		python3 - "$response_code" "$api_message" "$EXPLORE_MODE_ACTIVE" <<'PY'
+import json, sys
+code, message, explore = sys.argv[1:4]
+print(json.dumps({"ok": False, "enabled": True, "configured": True,
+                  "explore_mode": explore == "true", "http_code": int(code),
+                  "data": [], "error": message[:240] or "prediction_api_error"}, ensure_ascii=False))
+PY
+		rm -f "$response_file"
+		return 0
+	fi
+	python3 - "$response_file" "$EXPLORE_MODE_ACTIVE" <<'PY'
+import json, sys
+path, explore = sys.argv[1:3]
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except Exception:
+    payload = {}
+data = payload.get("data", []) if isinstance(payload, dict) else []
+pagination = payload.get("pagination", {}) if isinstance(payload, dict) else {}
+print(json.dumps({"ok": True, "enabled": True, "configured": True,
+                  "explore_mode": explore == "true", "http_code": 200,
+                  "data": data if isinstance(data, list) else [],
+                  "pagination": pagination if isinstance(pagination, dict) else {}}, ensure_ascii=False))
+PY
+	rm -f "$response_file"
+}
+
 # --- azumagdev 自動投票 (Twitch GQL API) ---
 _auto_vote_prediction() {
 	local state_json="$1"
@@ -717,6 +780,7 @@ PY
 		enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
 	fi
 	rm -f "$PREDICTION_STATE_FILE"
+	printf '{"ok":true,"status":"resolved","outcome_index":%s,"outcome_label":"%s"}\n' "$OUTCOME_INDEX" "$OUTCOME_LABEL"
 	;;
 
 cancel)
@@ -768,6 +832,7 @@ PY
 
 	_log "prediction canceled"
 	rm -f "$PREDICTION_STATE_FILE"
+	printf '%s\n' '{"ok":true,"status":"canceled"}'
 	;;
 
 autovote)
@@ -785,8 +850,27 @@ cleanup)
 	_sync_prediction_state_with_remote || true
 	;;
 
+status)
+	_prediction_status
+	;;
+
+sync)
+	if _recover_remote_active_prediction; then
+		python3 - "$PREDICTION_STATE_FILE" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    data = {}
+print(json.dumps({"ok": True, "adopted": True, "state": data}, ensure_ascii=False))
+PY
+	else
+		printf '%s\n' '{"ok":true,"adopted":false,"message":"no_active_remote_prediction"}'
+	fi
+	;;
+
 *)
-	echo "Usage: $0 {create|resolve <outcome_index>|cancel|autovote [state_file]|cleanup [game_num]}" >&2
+	echo "Usage: $0 {create|resolve <outcome_index>|cancel|status|sync|autovote [state_file]|cleanup [game_num]}" >&2
 	echo "  outcome_index: 0=建国なし, 1=ロシア建国, 2=ソ連建国, 3=粛清" >&2
 	exit 1
 	;;
