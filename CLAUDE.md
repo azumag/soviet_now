@@ -134,7 +134,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `generate_dashboard.sh` | score_history.txt → score_dashboard.html 生成 |
 | `show_status.sh` | eloop 全体のCUIステータス表示 (watchモード) |
 | `show_status_g.sh` | CUI グラフィカル統計ダッシュボード (watchモード) |
-| `status_dashboard.py` | CUI統計ダッシュボード描画 (ブラウザ対応のスコアスパークライン等) |
+| `status_dashboard.py` | CUI統計ダッシュボード描画 (ブラウザ対応のスコアタイムライン等) |
 | `score_history.txt` | スコア履歴 (TSV: timestamp, score) |
 | `score_dashboard.html` | OBS等向けHTMLダッシュボード (generate_dashboard.sh で生成) |
 

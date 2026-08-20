@@ -1854,10 +1854,6 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     return lines
 
 
-# ASCII-only levels stay legible in the small OBS/browser monospace feed.
-SPARKLINE_CHARS = ".:-=+*#@"
-
-
 def _bucket_score_window(scores, bucket_count):
     """Reduce a score window to stable, left-to-right sparkline samples."""
     if not scores or bucket_count <= 0:
@@ -1874,17 +1870,66 @@ def _bucket_score_window(scores, bucket_count):
     return values
 
 
-def render_score_timeline(scores, chart_w=42, chart_h=7):
-    """Render the score history as a browser-safe, one-line sparkline.
+def _draw_timeline_segment(grid, x0, y0, x1, y1):
+    """Draw one ASCII line segment into a small chart grid."""
+    steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+    if y1 == y0:
+        segment_char = "-"
+    elif x1 == x0:
+        segment_char = "|"
+    elif y1 < y0:
+        segment_char = "/"
+    else:
+        segment_char = "\\"
 
-    The previous multi-row dot grid was compact in a terminal but became a
-    dense block of cells in the tiny OBS/browser feed.  A single row of standard
-    height glyphs keeps the trend visible without implying a stack of bars.
-    ``chart_h`` remains accepted for callers that used the old signature.
+    height = len(grid)
+    width = len(grid[0]) if height else 0
+    for step in range(steps + 1):
+        ratio = step / steps
+        x = round(x0 + (x1 - x0) * ratio)
+        y = round(y0 + (y1 - y0) * ratio)
+        if not (0 <= x < width and 0 <= y < height):
+            continue
+        existing = grid[y][x]
+        if existing != "*":
+            grid[y][x] = segment_char
+
+
+def _render_timeline_grid(samples, width, height, lo, hi):
+    """Render ordered samples as a readable ASCII polyline."""
+    grid = [[" "] * width for _ in range(height)]
+    if not samples or width <= 0 or height <= 0:
+        return [" " * max(width, 0) for _ in range(max(height, 0))]
+
+    score_range = max(hi - lo, 1)
+    points = []
+    for index, value in enumerate(samples):
+        x = round(index * (width - 1) / max(len(samples) - 1, 1))
+        normalized = min(max((value - lo) / score_range, 0), 1)
+        y = height - 1 - round(normalized * (height - 1))
+        points.append((x, y))
+
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        _draw_timeline_segment(grid, x0, y0, x1, y1)
+    marker_step = max(len(points) // 8, 1)
+    for index, (x, y) in enumerate(points):
+        if index % marker_step != 0 and index not in (0, len(points) - 1):
+            continue
+        if 0 <= y < height and 0 <= x < width:
+            grid[y][x] = "*"
+    return ["".join(row) for row in grid]
+
+
+def render_score_timeline(scores, chart_w=42, chart_h=7):
+    """Render the score history as a browser-safe ASCII timeline.
+
+    The graph keeps a y-scale and an explicit left-to-right ``old -> now``
+    direction while avoiding Braille glyphs, which become dense blocks in the
+    tiny OBS/browser feed.
     """
-    del chart_h  # Kept for backwards-compatible callers; the chart is one row.
     label_w = 5  # "XXXXX"
     width = max(int(chart_w), 1)
+    height = max(int(chart_h), 3)
     sep = "│"
     heading = f"  {BOLD}Score Timeline{RST}"
 
@@ -1895,22 +1940,24 @@ def render_score_timeline(scores, chart_w=42, chart_h=7):
     window = scores[-100:]
     lo = min(window)
     hi = max(window)
-    rng = max(hi - lo, 1)
     samples = _bucket_score_window(window, width)
-    levels = [
-        min(
-            len(SPARKLINE_CHARS) - 1,
-            max(0, int(round((value - lo) / rng * (len(SPARKLINE_CHARS) - 1)))),
-        )
-        for value in samples
-    ]
-    sparkline = "".join(SPARKLINE_CHARS[level] for level in levels)
+    plot = _render_timeline_grid(samples, width, height, lo, hi)
     n = len(window)
-    lines = [
-        f"{heading} {DIM}(last {n} games){RST}",
-        f"{C_GREY}{hi:>{label_w}}{RST}{sep}{C_CYAN}{sparkline}{RST}",
-        f"{C_GREY}{lo:>{label_w}}{RST}└{C_CYAN}{'─' * width}{RST}",
-    ]
+    lines = [f"{heading} {DIM}(last {n} games; old -> now){RST}"]
+    for row, plot_row in enumerate(plot):
+        if row == 0:
+            label = f"{hi:>{label_w}}"
+        elif row == height - 1:
+            label = f"{lo:>{label_w}}"
+        else:
+            label = " " * label_w
+        lines.append(f"{C_GREY}{label}{RST}{sep}{C_CYAN}{plot_row}{RST}")
+    lines.append(f"{'':>{label_w}}└{C_CYAN}{'-' * max(width - 1, 0)}>{RST}")
+    if width >= 6:
+        timeline_labels = "old" + (" " * (width - 6)) + "now"
+    else:
+        timeline_labels = "old"[:width]
+    lines.append(f"{'':>{label_w}}{sep}{DIM}{timeline_labels}{RST}")
     return lines
 
 
