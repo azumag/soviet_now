@@ -144,6 +144,38 @@ class MonitorBasicsTests(unittest.TestCase):
         self.assertIn(result["verdict"], ("UNKNOWN", "NORMAL"))
         self.assertEqual(result["quarantine_active"], 0)
 
+    def test_dead_quarantine_rate_boundary_is_strictly_greater_than(self):
+        # soren-stat-gate-design.md B-3: "直近20件の即死率 > 0.30" is a
+        # strict inequality -- exactly rate==0.30 (6/20) must NOT proceed to
+        # classification (2026-08-20 Phase 1 review round 3, next-best #2:
+        # the original gate used `<` instead of `<=`, making rate==0.30
+        # proceed when it should not have).
+        cfg = {"dead_quarantine_window": 20, "dead_quarantine_rate": 0.30}
+        result = None
+        for i in range(20):
+            dead = i < 6  # exactly 6/20 = 0.30, clustered so it WOULD vote
+            #                                    HARNESS if classification ran
+            result = im.observe(
+                self.path,
+                _rec(s=(0 if dead else 10000), raw=(0 if dead else 1000),
+                     turns=(0 if dead else 200), d=dead, archive=f"a{i}"),
+                cfg)
+        self.assertEqual(result["verdict"], "NORMAL")
+        self.assertEqual(result["quarantine_active"], 0)
+
+    def test_dead_quarantine_rate_boundary_just_above_proceeds(self):
+        cfg = {"dead_quarantine_window": 20, "dead_quarantine_rate": 0.30}
+        result = None
+        for i in range(20):
+            dead = i < 7  # 7/20 = 0.35 > 0.30, clustered -> should reach HARNESS
+            result = im.observe(
+                self.path,
+                _rec(s=(0 if dead else 10000), raw=(0 if dead else 1000),
+                     turns=(0 if dead else 200), d=dead, archive=f"b{i}"),
+                cfg)
+        self.assertEqual(result["verdict"], "HARNESS")
+        self.assertEqual(result["quarantine_active"], 1)
+
     def test_11_corrupt_json_self_heals(self):
         with open(self.path, "w") as f:
             f.write("{not valid json")

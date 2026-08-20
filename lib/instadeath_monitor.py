@@ -188,9 +188,13 @@ def _classify(window, cfg):
         return ("INSUFFICIENT_WINDOW", {"rate": None}, False)
 
     rate = sum(1 for r in tail if r.get("d")) / len(tail)
-    if rate < cfg["dead_quarantine_rate"]:
-        # Below the design's own quarantine floor (soren-stat-gate-design.md
-        # B-3: "直近20件の即死率 > 0.30"). Without this gate,
+    if rate <= cfg["dead_quarantine_rate"]:
+        # At or below the design's own quarantine floor
+        # (soren-stat-gate-design.md B-3: "直近20件の即死率 > 0.30", strictly
+        # greater-than -- rate==0.30 itself must NOT proceed to
+        # classification; 2026-08-20 Phase 1 review round 3, next-best #2
+        # caught this as an off-by-one against `<` instead of `<=`).
+        # Without this gate at all,
         # eval_stats.classify_instadeath()'s internal dead_alert_rate check
         # (0.10 by default) is the only floor actually enforced -- 3x more
         # sensitive than intended, and DEAD_QUARANTINE_RATE ends up read but
