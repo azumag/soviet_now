@@ -74,7 +74,16 @@ _cfg_min_games=$(sed -n 's/^[[:space:]]*MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1
 _cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-$_cfg_min_games}"
 # 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
-PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$((_cfg_min_games * 40))}"
+# Twitch Predictions API の上限は1800秒。改善サイクルが45試合を超える場合も、
+# 受付時間だけはAPIの上限内へ丸め、予想の解決stateはサイクル完了まで保持する。
+PREDICTION_WINDOW_MAX_SEC=1800
+_prediction_window_default=$((_cfg_min_games * 40))
+PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$_prediction_window_default}"
+case "$PREDICTION_WINDOW_SEC" in
+''|*[!0-9]*) PREDICTION_WINDOW_SEC="$_prediction_window_default" ;;
+esac
+[ "$PREDICTION_WINDOW_SEC" -ge 1 ] 2>/dev/null || PREDICTION_WINDOW_SEC=1
+[ "$PREDICTION_WINDOW_SEC" -le "$PREDICTION_WINDOW_MAX_SEC" ] 2>/dev/null || PREDICTION_WINDOW_SEC="$PREDICTION_WINDOW_MAX_SEC"
 # 投票受付時間を過ぎても、サイクル完了までは resolve 用 state を保持する。
 # 必要なら明示的に max age を設定して最終的な掃除だけ行う。
 PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
