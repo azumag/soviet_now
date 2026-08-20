@@ -1284,6 +1284,22 @@ check_and_harvest_improvement() {
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 
+	# 旧ランタイムやプロセス回収競合で、failed_no_apply の状態だけが残り
+	# improve.lock が失われることがある。保存済みバッチが現行戦略と一致し、
+	# レート制限バックオフ中でなければ、次の trigger に渡せるよう復元する。
+	# _start_improvement_job() 側には排他再確認があるため、loop/daemon の
+	# 同時回収でも二重起動にはならない。
+	if [ "$status" = "idle" ] && [ ! -f "$IMPROVE_LOCK_FILE" ] &&
+		[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ -s "${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}" ]; then
+		local retry_phase
+		retry_phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null || true)
+		if [ "$retry_phase" = "failed_no_apply" ]; then
+			local retry_hash
+			retry_hash=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
+			_restore_improve_retry_batch_if_valid "$retry_hash" || true
+		fi
+	fi
+
 	# 孤立ロックファイル検出: idle状態でeloop_improveも動いていないのにロックが長時間残っている場合は削除
 	# ※ daemon poll間隔(デフォルト30s)より大幅に長い閾値にすること
 	#   (lock作成直後はstatus=idleのままdaemonが拾うまで最大poll間隔かかる)

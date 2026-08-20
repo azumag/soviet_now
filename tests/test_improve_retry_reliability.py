@@ -166,6 +166,39 @@ grep -q 'retry batch restored (100 games' "$2/events"
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_harvest_restores_failed_retry_batch_when_lock_was_lost(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+test_root="$2"
+log() { printf '%s\n' "$*" >>"$test_root/events"; }
+soren91_harvest_hung_improve() { :; }
+_sync_improve_state_with_live_process() { :; }
+_read_improve_state() { printf '%s\n' '{"status":"idle","phase":"failed_no_apply"}'; }
+_strategy_decide_hash_or_md5() { printf '%s\n' 'same-hash'; }
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+IMPROVE_RETRY_BATCH_FILE="$TMP_STATE_DIR/improve_retry_batch.json"
+MIN_GAMES_BEFORE_IMPROVE=48
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":95,"hash":"same-hash","scores":"1 2 3"}' >"$IMPROVE_RETRY_BATCH_FILE"
+check_and_harvest_improvement
+[ -s "$IMPROVE_LOCK_FILE" ]
+python3 - "$IMPROVE_LOCK_FILE" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["count"] == 95
+assert data["hash"] == "same-hash"
+PY
+grep -q 'retry batch restored (95 games' "$2/events"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_retry_batch_rejects_stale_or_partial_normal_batch(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_bash(
