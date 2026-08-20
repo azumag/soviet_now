@@ -93,6 +93,74 @@ SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 SAY_CHUNK_GAP_SEC="${SAY_CHUNK_GAP_SEC:-0.5}"
 
+# --- speaking状態管理（Twitch広告スヌーズ用） ---
+SPEAKING_STATE_FILE="${SPEAKING_STATE_FILE:-tmp/state/speaking.json}"
+SPEAKING_GRACE_SEC="${SPEAKING_GRACE_SEC:-3}"
+_speaking_enter() {
+	local _reason="${1:-tts}"
+	mkdir -p "$(dirname "$SPEAKING_STATE_FILE")" 2>/dev/null || true
+	python3 - "$SPEAKING_STATE_FILE" "$_reason" <<'PY' 2>/dev/null || true
+import json, sys, time, os
+from pathlib import Path
+path, reason = sys.argv[1], sys.argv[2] if len(sys.argv)>2 else "tts"
+state={"speaking": True, "since": int(time.time()), "reason": reason, "pid": os.getpid()}
+# atomic write
+tmp = str(path) + ".tmp"
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(state, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+	# Twitch広告スヌーズを非同期で試行（失敗してもTTSは継続）
+	if [ -f "lib/twitch_ads.sh" ]; then
+		# shellcheck source=/dev/null
+		source "lib/twitch_ads.sh" 2>/dev/null || true
+		if type twitch_ads_maybe_snooze >/dev/null 2>&1; then
+			twitch_ads_maybe_snooze "$_reason" >/dev/null 2>&1 &
+		fi
+	fi
+	# 長時間再生中は 240s ごとに再スヌーズ（5分効果をつなぐ）
+	(
+		local _poll="${TWITCH_SNOOZE_POLL_SEC:-240}"
+		case "$_poll" in ''|*[!0-9]*) _poll=240 ;; esac
+		while [ -f "$SPEAKING_STATE_FILE" ] && [ "$_poll" -gt 0 ]; do
+			sleep "$_poll" 2>/dev/null || break
+			[ -f "$SPEAKING_STATE_FILE" ] || break
+			if [ -f "lib/twitch_ads.sh" ]; then
+				source "lib/twitch_ads.sh" 2>/dev/null || true
+				if type twitch_ads_maybe_snooze >/dev/null 2>&1; then
+					twitch_ads_maybe_snooze "speaking_poll" >/dev/null 2>&1 || true
+				fi
+			fi
+		done
+	) &
+	SPEAKING_POLL_PID=$!
+}
+_speaking_leave() {
+	# grace期間後にキュー残を確認し、残があれば speaking を維持
+	local _grace="${SPEAKING_GRACE_SEC:-3}"
+	case "$_grace" in ''|*[!0-9]*) _grace=3 ;; esac
+	[ -n "${SPEAKING_POLL_PID:-}" ] && kill "$SPEAKING_POLL_PID" 2>/dev/null || true
+	wait "${SPEAKING_POLL_PID:-}" 2>/dev/null || true
+	SPEAKING_POLL_PID=""
+	# 連続キュー対策: tmp/.comment_queue と tmp/.say_queue の残をチェック
+	if [ "$_grace" -gt 0 ]; then
+		sleep "$_grace" 2>/dev/null || true
+	fi
+	local _cq="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
+	local _sq="tmp/.say_queue"
+	if ls "$_cq"/comment_*.txt 2>/dev/null | grep -q .; then
+		return 0
+	fi
+	if ls "$_sq"/*.txt 2>/dev/null | grep -q .; then
+		return 0
+	fi
+	rm -f "$SPEAKING_STATE_FILE" 2>/dev/null || true
+}
+# speaking状態は _cleanup でクリア（既存 trap と統合）
+# _speaking_leave は _cleanup 内で呼ばれる
+
 # timeout コマンド解決 (macOS coreutils vs GNU) — 原因調査中は無効化
 TIMEOUT_CMD=""
 # for _tc in timeout gtimeout; do
@@ -809,6 +877,7 @@ _acquire_voicevox_synth_lock() {
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
+	_speaking_leave 2>/dev/null || true
 	if [ -n "${VOICEVOX_STREAM_HB_PID:-}" ]; then
 		kill "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
 		wait "$VOICEVOX_STREAM_HB_PID" 2>/dev/null || true
@@ -2541,6 +2610,10 @@ fi
 PRE_DELAY="${3:-60}"
 _prepare_playback_turn "$PRE_DELAY"
 
+# speaking状態に入る（Twitch広告スヌーズ用、render-only では発火しない）
+if [ "${RENDER_ONLY:-false}" != "true" ]; then
+	_speaking_enter "tts:$(basename "$MY_CONTENT" 2>/dev/null | cut -c1-20)" 2>/dev/null || true
+fi
 # --- ロック内: say再生（単発 + 自動リトライ / 事前合成済みチャンク） ---
 PLAYBACK_FAILED=0
 LAST_SAY_PID=""
