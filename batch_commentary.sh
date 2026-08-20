@@ -213,7 +213,7 @@ import sys
 
 lines = sys.stdin.read().replace("\\r", "").splitlines()
 while len(lines) > 1 and lines and re.search(
-    r"^(?:解説文|以下|ここでは).*(?:作成|確認|まとめ|紹介)(?:します|しました|します。)?[。.!！]?$",
+    r"^(?:解説文|以下|ここでは).*(?:作成|確認|まとめ|紹介|調整).*",
     lines[0].strip(),
     re.IGNORECASE,
 ):
