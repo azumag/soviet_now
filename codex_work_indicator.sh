@@ -76,77 +76,65 @@ case "$ELOOP_LIB_DIR" in
 esac
 
 # --- VM 読み上げキュー連携（リポジトリルール §8） ---
-# 作業中は適宜 VM 側の audio-worker に適切な丁寧さ（です・ます調で簡潔、へりくだりすぎない）で読み上げさせる。
-# バナーは粒度細かく更新するが、音声は大くくり（5分以上間隔または大きな区切り）で抑止。
+# 作業中は VM 側の audio-worker に、body をそのまま自然な一文として読み上げさせる。
+# バナーはフェーズごとに更新するが、音声は作業セッションの開始時だけに抑える。
 _enqueue_work_audio() {
-	local _w_title="$1" _w_body="$2" _w_text="" _w_is_stop=0
-	[ -n "$_w_title" ] || return 0
-	# stop 時の特別扱い
-	case "$_w_title" in
-		作業完了*) _w_is_stop=1 ;;
+	local _w_action="$1" _w_title="$2" _w_body="$3" _w_text=""
+	local _last_file="$ELOOP_LIB_DIR/tmp/state/work_audio_last.json"
+	local _now _active _announced _start_ts _last_audio_ts _session_title
+	_now=$(date +%s)
+	_active=$(python3 -c "import json,sys; print(1 if json.load(open(sys.argv[1])).get('active') else 0)" "$_last_file" 2>/dev/null || echo 0)
+	_announced=$(python3 -c "import json,sys; print(1 if json.load(open(sys.argv[1])).get('announced') else 0)" "$_last_file" 2>/dev/null || echo 0)
+	_start_ts=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('start_ts',0))" "$_last_file" 2>/dev/null || echo 0)
+	_last_audio_ts=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('last_audio_ts',0))" "$_last_file" 2>/dev/null || echo 0)
+	_session_title=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('title',''))" "$_last_file" 2>/dev/null || echo "")
+	case "$_start_ts" in ''|*[!0-9]*) _start_ts=0 ;; esac
+	case "$_last_audio_ts" in ''|*[!0-9]*) _last_audio_ts=0 ;; esac
+
+	case "$_w_action" in
+		start)
+			# フェーズ更新はバナーだけ。既に作業中なら音声を追加しない。
+			[ "$_active" = "1" ] && return 0
+			# 短い作業が連続する場合も、開始音声は15分に1回まで。
+			if [ $(( _now - _last_audio_ts )) -ge "${WORK_AUDIO_MIN_INTERVAL_SEC:-900}" ]; then
+				_announced=1
+				_w_text="${_w_body:-$_w_title}"
+				case "$_w_text" in *[。！？!?]) ;; *) _w_text="${_w_text}。" ;; esac
+				_last_audio_ts="$_now"
+			else
+				_announced=0
+			fi
+			_active=1
+			_start_ts="$_now"
+			_session_title="$_w_title"
+			;;
+		stop)
+			# 重複 stop や、開始音声を省略した短いセッションでは完了音声も流さない。
+			[ "$_active" = "1" ] || return 0
+			_active=0
+			if [ "$_announced" = "1" ] && [ $(( _now - _start_ts )) -ge "${WORK_AUDIO_COMPLETION_MIN_SEC:-180}" ]; then
+				_w_text="${_w_body:-${_session_title}はここまでです。}"
+				case "$_w_text" in *[。！？!?]) ;; *) _w_text="${_w_text}。" ;; esac
+				_last_audio_ts="$_now"
+			fi
+			;;
+		*) return 0 ;;
 	esac
-	# 大くくり判定: 直近の音声から 300s 以内かつ軽微な更新ならスキップ（stop は常に読む）
-	if [ "$_w_is_stop" -eq 0 ]; then
-		local _last_file="$ELOOP_LIB_DIR/tmp/state/work_audio_last.json"
-		local _now _last_ts _last_title
-		_now=$(date +%s)
-		_last_ts=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('ts',0))" "$_last_file" 2>/dev/null || echo 0)
-		_last_title=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('title',''))" "$_last_file" 2>/dev/null || echo "")
-		case "$_last_ts" in ''|*[!0-9]*) _last_ts=0 ;; esac
-		if [ -n "$_last_title" ] && [ "$_w_title" = "$_last_title" ] && [ $(( _now - _last_ts )) -lt 300 ]; then
-			return 0
-		fi
-		if [ $(( _now - _last_ts )) -lt 180 ] && [ -n "$_last_title" ]; then
-			# 3分以内でタイトルが似ている（包含）ならスキップ
-			case "$_w_title" in
-				*"$_last_title"*|"$_last_title"*) return 0 ;;
-			esac
-		fi
-	fi
-	# 定型文に固定せず、呼び出しごとに自然な表現を変えて読ませる（す・です調・へりくだりすぎない）
-	# 内容ハッシュに時刻を加えてシード化し、毎回少し異なるテンプレートを決定的でなく選ぶ。
-	local _seed
-	_seed=$(printf '%s|%s' "$_w_title" "$_w_body" \
-		| python3 -c "import sys,time; s=sys.stdin.buffer.read(); print((sum(s) + time.time_ns()//10**8) % 100000)" 2>/dev/null || echo 0)
-	case "$_seed" in ''|*[!0-9]*) _seed=0 ;; esac
-	if [ "$_w_is_stop" -eq 1 ]; then
-		local _stop_tmpl=(
-			"%sの作業が完了しました。ご確認ください。"
-			"%sが完了しました。ご確認ください。"
-			"%sの対応が完了しました。ご確認ください。"
-			"%sの作業を終えました。ご確認ください。"
-		)
-		_w_text=$(printf "${_stop_tmpl[$(( _seed % ${#_stop_tmpl[@]} ))]}" "${_w_body:-$_w_title}")
-	else
-		local _start_tmpl=(
-			"現在、%sの作業を進めています。"
-			"ただいま%sを進めています。"
-			"%sに取りかかっています。"
-			"%sの作業に着手しました。"
-			"%sを進めています。"
-		)
-		_w_text=$(printf "${_start_tmpl[$(( _seed % ${#_start_tmpl[@]} ))]}" "$_w_title")
-		if [ -n "$_w_body" ]; then
-			local _detail_tmpl=(
-				" 詳細は「%s」です。"
-				" 具体的には「%s」です。"
-				" 内容は「%s」です。"
-				" 進めているのは「%s」です。"
-			)
-			_w_text="${_w_text}$(printf "${_detail_tmpl[$(( (_seed / 7) % ${#_detail_tmpl[@]} ))]}" "$_w_body")"
-		else
-			_w_text="${_w_text} 進捗があり次第お知らせします。"
-		fi
-	fi
 	# TTS 用に 240字に丸め
 	_w_text=$(printf '%s' "$_w_text" | cut -c1-240)
-	# 最終送信記録を更新（次の大くくり判定用）
+	# セッション状態を更新（フェーズ名が変わっても同じ作業として扱う）
 	mkdir -p "$(dirname "$ELOOP_LIB_DIR/tmp/state/work_audio_last.json")" 2>/dev/null || true
-	python3 - "$ELOOP_LIB_DIR/tmp/state/work_audio_last.json" "$_w_title" "$_w_body" <<'PY' 2>/dev/null || true
+	python3 - "$_last_file" "$_active" "$_announced" "$_start_ts" "$_last_audio_ts" "$_session_title" <<'PY' 2>/dev/null || true
 import json, sys, time
 from pathlib import Path
-path, title, body = sys.argv[1], sys.argv[2], sys.argv[3]
-data={"ts": int(time.time()), "title": title, "body": body}
+path, active, announced, start_ts, last_audio_ts, title = sys.argv[1:]
+data={
+    "active": active == "1",
+    "announced": announced == "1",
+    "start_ts": int(start_ts),
+    "last_audio_ts": int(last_audio_ts),
+    "title": title,
+}
 tmp=str(path)+".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(data, f, ensure_ascii=False)
@@ -154,6 +142,7 @@ with open(tmp, "w", encoding="utf-8") as f:
 import os
 os.replace(tmp, path)
 PY
+	[ -n "$_w_text" ] || return 0
 	# ローカル（VM 上なら VM キュー、ローカルならローカルキュー）へ enqueue（workは300s dedupで大くくり）
 	if [ -f "$ELOOP_LIB_DIR/lib/outbound_queue.sh" ]; then
 		# shellcheck source=/dev/null
@@ -173,8 +162,8 @@ PY
 	esac
 }
 case "$action" in
-	start|show|on) _enqueue_work_audio "$title" "$body" ;;
-	stop|hide|off|clear) _enqueue_work_audio "作業完了: $title" "$title" ;;
+	start|show|on) _enqueue_work_audio start "$title" "$body" ;;
+	stop|hide|off|clear) _enqueue_work_audio stop "$title" "$body" ;;
 esac
 
 ./obs_control.sh stack "${OBS_DASHBOARD_SCENE:-soren}" >/dev/null 2>&1 || true

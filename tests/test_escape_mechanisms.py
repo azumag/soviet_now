@@ -8340,6 +8340,11 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("eventOverlay", agents)
         self.assertIn("./codex_work_indicator.sh start", agents)
         self.assertIn("./codex_work_indicator.sh stop", agents)
+        self.assertIn('WORK_AUDIO_MIN_INTERVAL_SEC:-900', indicator)
+        self.assertIn('WORK_AUDIO_COMPLETION_MIN_SEC:-180', indicator)
+        self.assertIn('_w_text="${_w_body:-$_w_title}"', indicator)
+        self.assertNotIn('現在、%sの作業を進めています', indicator)
+        self.assertNotIn('詳細は「%s」です', indicator)
         self.assertNotIn("./obs_control.sh show soren systemMsg", agents)
         self.assertNotIn("./obs_control.sh hide soren systemMsg", agents)
 
