@@ -711,7 +711,8 @@ _unregister_voicevox_priority_waiter() {
 
 # 合成ロック待ち時間をコンテキストで変える:
 #   - コメント・改善進捗などの前景音声は長く待つ（必ず合成・再生に到達させる）
-#   - ラジオ render は短く諦めてコメントへ譲る
+#   - ラジオ render は前景音声へ順番を譲るが、ラジオ自身は終了せず待って
+#     同じ事前合成世代を継続する（途中チャンクを捨てて先頭からやり直さない）
 _voicevox_synth_lock_wait_sec() {
 	case "${SOURCE_LABEL:-}" in
 	comment | comment:*)
@@ -818,17 +819,51 @@ _prepare_voicevox_runtime_params() {
 
 _acquire_voicevox_synth_lock() {
 	local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
+	local priority_waited=0 priority_wait_limit=0 lock_wait_limit="${timeout_sec}"
 	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
 	_voicevox_synth_is_background_render && background_render=1
+	if [ "$background_render" -eq 1 ]; then
+		# 背景ラジオの合成は、前景音声が到着してもそのプロセスを終了しない。
+		# 0 は無期限待機。priority waiter 側が音声を完了するか、stale GCで
+		# 回収されれば同じレンダー世代の次チャンクへ進める。
+		priority_wait_limit="${VOICEVOX_RADIO_PRIORITY_WAIT_SEC:-0}"
+		case "$priority_wait_limit" in
+		'' | *[!0-9]*) priority_wait_limit=0 ;;
+		esac
+		# 前景音声が予約を外した直後も、そのプロセスが保持する合成ロックを
+		# 短い15秒制限で諦めない。0はstale lock回収まで無期限待機する。
+		lock_wait_limit="${VOICEVOX_RADIO_LOCK_WAIT_SEC:-0}"
+		case "$lock_wait_limit" in
+		'' | *[!0-9]*) lock_wait_limit=0 ;;
+		esac
+	fi
 	if [ "$background_render" -eq 0 ]; then
 		_register_voicevox_priority_waiter || true
 	fi
-	max_waits=$((timeout_sec * 2))
+	if [ "$lock_wait_limit" -gt 0 ]; then
+		max_waits=$((lock_wait_limit * 2))
+	else
+		max_waits=0
+	fi
 	while true; do
 		if [ "$background_render" -eq 1 ] && _voicevox_priority_waiter_exists; then
-			VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
-			return 1
+			# 旧実装はここで rc=75 を返して一時ファイルを全削除していた。
+			# コメントが一定間隔で入るとラジオは毎回チャンク0から再開し、
+			# ready.wavに到達できない。背景プロセスはaudio worker本体とは
+			# 別のため、前景音声が終わるまで待つ方が安全である。
+			if [ "$priority_waited" -eq 0 ] || [ $((priority_waited % 60)) -eq 0 ]; then
+				_log "優先音声の合成完了待ち (background radio)"
+			fi
+			priority_waited=$((priority_waited + 1))
+			if [ "$priority_wait_limit" -gt 0 ] && [ "$priority_waited" -ge $((priority_wait_limit * 2)) ]; then
+				VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
+				return 1
+			fi
+			_touch_voicevox_priority_waiter
+			sleep 0.5
+			continue
 		fi
+		priority_waited=0
 		if mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; then
 			break
 		fi
@@ -863,7 +898,7 @@ _acquire_voicevox_synth_lock() {
 		_touch_voicevox_priority_waiter
 		sleep 0.5
 		waited=$((waited + 1))
-		if [ "$waited" -ge "$max_waits" ]; then
+		if [ "$max_waits" -gt 0 ] && [ "$waited" -ge "$max_waits" ]; then
 			VOICEVOX_SYNTH_LOCK_BUSY_REASON="timeout"
 			_unregister_voicevox_priority_waiter
 			return 1
@@ -2551,13 +2586,13 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 				_pre_synth_failed=0
 				for ((_pc_i = 0; _pc_i < PRE_MAX_CHUNKS; _pc_i++)); do
 					# チャンク間で合成ロックを一時解放し、コメント（長め待ち）が
-					# 割り込めるようにする。ラジオ render は短い待ちで再取得を諦め、
-					# 残りは再生時フォールバックへ回す。
+					# 割り込めるようにする。ラジオ render は前景音声の完了を待ち、
+					# 同じプロセス・同じレンダー世代で残りのチャンクを継続する。
 					if [ "$_pc_i" -gt 0 ]; then
 						_release_voicevox_synth_lock
 						if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 							if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
-								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → ラジオは後で再試行"
+								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → 再生時フォールバック"
 							else
 								_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
 							fi

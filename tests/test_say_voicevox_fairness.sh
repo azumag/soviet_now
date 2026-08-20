@@ -42,24 +42,29 @@ MY_OWNER="${$}:${MY_TOKEN}"
 VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
 _log() { :; }
 
-# 生きている前景 waiter がいる間、背景ラジオは即座に順番を譲る。
+# 生きている前景 waiter がいる間、背景ラジオは同じレンダー世代を保持した
+# まま待ち、前景音声の完了後にロックを取得する。
 mkdir -p "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR"
 sleep 10 &
 waiter_pid=$!
 printf '%s %s\n' "$waiter_pid" "$(date +%s)" >"$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR/foreground.wait"
 SOURCE_LABEL=radio_render:news
 SECONDS=0
-if _acquire_voicevox_synth_lock 2; then
-	not_ok "background radio should not acquire ahead of foreground waiter"
+(
+	sleep 1
+	rm -f "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR/foreground.wait"
+	rmdir "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR" 2>/dev/null || true
+) &
+release_pid=$!
+if _acquire_voicevox_synth_lock 5; then
+	[ "$SECONDS" -ge 1 ] \
+		&& ok "background radio waits for foreground waiter and then acquires" \
+		|| not_ok "background radio should wait before acquiring"
 	_release_voicevox_synth_lock
 else
-	[ "$VOICEVOX_SYNTH_LOCK_BUSY_REASON" = "priority_waiter" ] \
-		&& ok "background radio reports priority waiter" \
-		|| not_ok "background radio should report priority_waiter"
-	[ "$SECONDS" -lt 2 ] \
-		&& ok "background radio yields without busy retry loop" \
-		|| not_ok "background radio yield took too long"
+	not_ok "background radio should acquire after foreground waiter completes"
 fi
+wait "$release_pid" 2>/dev/null || true
 kill "$waiter_pid" 2>/dev/null || true
 wait "$waiter_pid" 2>/dev/null || true
 rm -f "$VOICEVOX_SYNTH_PRIORITY_WAIT_DIR/foreground.wait"
