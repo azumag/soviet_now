@@ -17,7 +17,7 @@ STATE_DIR="${BATCH_COMMENTARY_STATE_DIR:-tmp/state/batch_commentary}"
 DEBUG_DIR="${BATCH_COMMENTARY_DEBUG_DIR:-tmp/debug/batch_commentary}"
 LOCK_DIR="$STATE_DIR/.lock"
 RETRY_FILE="$STATE_DIR/retry.json"
-AGENTS="${BATCH_COMMENTARY_AGENTS:-${RADIO_AGENTS:-${AI_COMMON_AGENTS:-}}}"
+AGENT_SOURCE="${BATCH_COMMENTARY_AGENTS:-}"
 TIMEOUT_SEC="${BATCH_COMMENTARY_TIMEOUT_SEC:-120}"
 MAX_CHARS="${BATCH_COMMENTARY_MAX_CHARS:-420}"
 CONTEXT_MAX_CHARS="${BATCH_COMMENTARY_CONTEXT_MAX_CHARS:-2400}"
@@ -28,6 +28,35 @@ _log() { echo "[batch_commentary $(date '+%H:%M:%S')] $*" >&2; }
 _num() {
   case "${1:-}" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac
 }
+
+# 設定ファイルや環境変数に一時的な sentinel/typo が残っていても、
+# バッチ解説だけが止まらないように有効な候補だけを残す。
+_valid_agent_list() {
+  local raw="${1:-}" item out=""
+  local old_ifs="$IFS"
+  IFS=',' read -ra _agent_items <<< "$raw"
+  IFS="$old_ifs"
+  for item in "${_agent_items[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ -n "$item" ] || continue
+    if _ai_agent_spec_valid "$item"; then
+      [ -n "$out" ] && out+=","
+      out+="$item"
+    else
+      _log "invalid AI agent skipped: $item"
+    fi
+  done
+  printf '%s' "$out"
+}
+
+AGENTS="$(_valid_agent_list "$AGENT_SOURCE")"
+if [ -z "$AGENTS" ]; then
+  AGENTS="$(_valid_agent_list "${RADIO_AGENTS:-}")"
+fi
+if [ -z "$AGENTS" ]; then
+  AGENTS="$(_valid_agent_list "${AI_COMMON_AGENTS:-}")"
+fi
 CYCLE_SIZE=$(_num "$CYCLE_SIZE" 12)
 TIMEOUT_SEC=$(_num "$TIMEOUT_SEC" 120)
 MAX_CHARS=$(_num "$MAX_CHARS" 420)

@@ -774,6 +774,37 @@ _ai_call_codex() {
 
 # === 統一ディスパッチャ ===
 
+# 許可するエージェント指定を一箇所で検証する。
+# 未知の値を Codex の既定モデルへ黙って流すと、設定 typo や一時的な
+# sentinel が別モデルの呼び出しに化けるため、生成前に明示的に拒否する。
+_ai_agent_spec_valid() {
+	local agent="${1:-}" model=""
+	case "$agent" in
+	codex)
+		return 0
+		;;
+	codex:*)
+		model="${agent#codex:}"
+		;;
+	opencode:*)
+		model="${agent#opencode:}"
+		;;
+	opencode-go:*)
+		model="${agent#opencode-go:}"
+		;;
+	local)
+		return 0
+		;;
+	local:*)
+		model="${agent#local:}"
+		;;
+	*)
+		return 1
+		;;
+	esac
+	[ -n "$model" ]
+}
+
 # _ai_dispatch LABEL AGENT PROMPT_FILE [TIMEOUT]
 #   agent 識別子に基づいて適切なバックエンドを呼ぶ。
 #   stdout: 生成テキスト
@@ -781,6 +812,10 @@ _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
 	local resolved_model="$agent"
+	if ! _ai_agent_spec_valid "$agent"; then
+		log "[${label}] invalid agent spec ignored: ${agent:-<empty>}" >&2
+		return 2
+	fi
 	case "$agent" in
 	codex:*) resolved_model="${agent#codex:}" ;;
 	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
@@ -809,8 +844,7 @@ _ai_dispatch() {
 	# local[:<model>] は Tailscale 経由の無料ローカル LLM へ直接送る。
 	local _codex_timeout="$timeout_override"
 	case "$agent" in
-	'' )
-		return 1
+	codex|codex:*)
 		;;
 	local:* | local)
 		local _local_model=""
@@ -1070,6 +1104,10 @@ ai_generate_list() {
 		agent="${agent#"${agent%%[![:space:]]*}"}"
 		agent="${agent%"${agent##*[![:space:]]}"}"
 		[ -z "$agent" ] && continue
+		if ! _ai_agent_spec_valid "$agent"; then
+			log "[${label}] invalid agent spec skipped: ${agent}" >&2
+			continue
+		fi
 
 		if ! _ai_backoff_check "$agent"; then
 			_rem=$(_ai_backoff_remaining "$agent")
