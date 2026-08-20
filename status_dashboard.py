@@ -1877,8 +1877,8 @@ def _bucket_score_window(scores, bucket_count):
 def render_score_timeline(scores, chart_w=42, chart_h=7):
     """Render the score history as a browser-safe, one-line sparkline.
 
-    The previous Braille grid was compact in a terminal but became a dense
-    block of cells in the tiny OBS/browser feed.  A single row of standard
+    The previous multi-row dot grid was compact in a terminal but became a
+    dense block of cells in the tiny OBS/browser feed.  A single row of standard
     height glyphs keeps the trend visible without implying a stack of bars.
     ``chart_h`` remains accepted for callers that used the old signature.
     """
