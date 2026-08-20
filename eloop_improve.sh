@@ -3367,7 +3367,9 @@ EOF
 		_improve_progress "analyze_retry${_analysis_retry}" "$((5 + (_analysis_retry - 1) * 5))" "analysis_phase"
 		log "[IMPROVE] Stage 1 分析フェーズ (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES})..."
 		_improve_note "Stage1: analyze retry ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}"
-		run_ai_list "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE_LIST" \
+		_improve_effective_agents="$(_get_improve_agents)"
+		log "[IMPROVE] effective agents: $IMPROVE_PEAK_CHAIN_ENABLED peak=$(_is_peak_hours && echo yes || echo no) agents=${_improve_effective_agents}" >&2
+		run_ai_list "ANALYZE(${_analysis_retry})" "$_improve_effective_agents" \
 			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
 			"${improve_ref_files[@]}"
 		_analysis_rc=$?
@@ -3429,7 +3431,9 @@ EOF
 				_improve_clear_retry_sessions
 			fi
 			_improve_reset_sandbox_targets
-			run_ai_list "IMPLEMENT(${fresh_retry})" "$MODEL_IMPROVE_LIST" \
+			_improve_effective_agents="$(_get_improve_agents)"
+			log "[IMPROVE] effective agents: $IMPROVE_PEAK_CHAIN_ENABLED peak=$(_is_peak_hours && echo yes || echo no) agents=${_improve_effective_agents}" >&2
+			run_ai_list "IMPLEMENT(${fresh_retry})" "$_improve_effective_agents" \
 				"prompts/implement_strategy.md" "$STAGING_FILE" \
 				"$ANALYSIS_RESULT_FILE" "${improve_ref_files[@]}"
 			_run_ai_rc=$?
@@ -3500,7 +3504,9 @@ EOF
 			_prev_run_cmd_timeout="$RUN_CMD_TIMEOUT_SEC"
 			RUN_CMD_TIMEOUT_SEC="${IMPROVE_FIX_CMD_TIMEOUT_SEC:-600}"
 			export RUN_CMD_TIMEOUT_SEC
-			run_ai_list "FIX(${fresh_retry}.${continue_retry})" "$MODEL_IMPROVE_LIST" \
+			_improve_effective_agents="$(_get_improve_agents)"
+			log "[IMPROVE] effective agents: $IMPROVE_PEAK_CHAIN_ENABLED peak=$(_is_peak_hours && echo yes || echo no) agents=${_improve_effective_agents}" >&2
+			run_ai_list "FIX(${fresh_retry}.${continue_retry})" "$_improve_effective_agents" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 			_fix_rc=$?
@@ -3695,7 +3701,9 @@ ${helpers_diff}"
 		RUN_AI_PRIMARY_RETRIES="${IMPROVE_REVIEW_PRIMARY_RETRIES:-1}"
 		export RUN_CMD_TIMEOUT_SEC
 		export RUN_AI_PRIMARY_RETRIES
-		run_ai_list "REVIEW" "$MODEL_IMPROVE_LIST" \
+		_improve_effective_agents="$(_get_improve_agents)"
+		log "[IMPROVE] effective agents: $IMPROVE_PEAK_CHAIN_ENABLED peak=$(_is_peak_hours && echo yes || echo no) agents=${_improve_effective_agents}" >&2
+		run_ai_list "REVIEW" "$_improve_effective_agents" \
 			"prompts/review_strategy.md" "$REVIEW_RESULT_FILE" \
 			"$ANALYSIS_RESULT_FILE" "$STAGING_FILE" "${improve_ref_files[@]}"
 		_review_rc=$?

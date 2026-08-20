@@ -38,6 +38,10 @@ AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:deepseek-v4-flash-free,codex:amd-
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
 MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash,codex:minimax-m3}"
+# ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
+MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
+# ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
+IMPROVE_PEAK_CHAIN_ENABLED="${IMPROVE_PEAK_CHAIN_ENABLED:-0}"
 
 GAME_COUNT_FILE="game_count.txt"
 
@@ -286,7 +290,8 @@ IMPROVE_BACKOFF_LOG_INTERVAL_SEC="${IMPROVE_BACKOFF_LOG_INTERVAL_SEC:-900}"
 # ピーク時間帯回避: deepseek-v4-flash はピーク帯 (UTC 01:00-04:00, 06:00-10:00 =
 # JST 10:00-13:00, 15:00-19:00) で入出力とも2倍課金のため、通常改善ロックの消費を
 # オフピークまで遅延する。.env で IMPROVE_PEAK_HOUR_DEFER_ENABLED=0 とすれば即無効化。
-IMPROVE_PEAK_HOUR_DEFER_ENABLED="${IMPROVE_PEAK_HOUR_DEFER_ENABLED:-1}"
+# 現在は既定で無効化し、代わりに IMPROVE_PEAK_CHAIN (ピーク専用チェーン) を使用する。
+IMPROVE_PEAK_HOUR_DEFER_ENABLED="${IMPROVE_PEAK_HOUR_DEFER_ENABLED:-0}"
 IMPROVE_PEAK_HOUR_UTC_RANGES="${IMPROVE_PEAK_HOUR_UTC_RANGES:-01:00-04:00,06:00-10:00}"
 IMPROVE_PEAK_DEFER_MAX_WAIT_SEC="${IMPROVE_PEAK_DEFER_MAX_WAIT_SEC:-16200}"     # 4.5h バックストップ
 IMPROVE_PEAK_DEFER_FORCE_ACC_PCT="${IMPROVE_PEAK_DEFER_FORCE_ACC_PCT:-200}"     # 合算蓄積が閾値の200%で強制実行

@@ -258,6 +258,25 @@ _peak_priority_agent_list() {
 	printf '%s' "$out_list"
 }
 
+# 改善用のピーク時チェーン選択。PEAK_HOURS_WINDOWS の JST 判定で切り替え、
+# IMPROVE_PEAK_CHAIN_ENABLED=1 かつ MODEL_IMPROVE_PEAK_LIST が非空の時のみ peak 側を使う。
+_get_improve_agents() {
+	local peak_list="${MODEL_IMPROVE_PEAK_LIST:-}"
+	if [ "${IMPROVE_PEAK_CHAIN_ENABLED:-0}" != "1" ]; then
+		printf '%s' "${MODEL_IMPROVE_LIST:-}"
+		return 0
+	fi
+	if [ -z "$peak_list" ]; then
+		printf '%s' "${MODEL_IMPROVE_LIST:-}"
+		return 0
+	fi
+	if _is_peak_hours; then
+		printf '%s' "$peak_list"
+	else
+		printf '%s' "${MODEL_IMPROVE_LIST:-}"
+	fi
+}
+
 #=== ANSIエスケープ除去 ===
 
 _strip_ansi() {
