@@ -293,6 +293,12 @@ _comment_audio_claim_enqueue_key() {
 #
 # ファイル名: {epoch_ns}_{source}_{priority}.msg
 # 内容: メッセージ本文のみ
+# chat worker を pause 中（tmp/state/chat_worker.paused）はキューに積まず no-op にする。
+# これにより投稿停止中に outbound queue が蓄積しない（40箇所以上の呼び出し元を
+# 個別に触らず、enqueue 側で一括抑止）。再開（マーカー削除）で自動的に積み直される。
+_outbound_chat_paused() {
+	[ -f "${OUTBOUND_CHAT_PAUSE_MARKER:-tmp/state/chat_worker.paused}" ]
+}
 enqueue_chat_message() {
 	local message="${1:-}"
 	local source="${2:-unknown}"
@@ -300,6 +306,11 @@ enqueue_chat_message() {
 
 	if [ -z "$message" ]; then
 		return 1
+	fi
+
+	# chat pause 中は投稿を止めるだけでなく、キューに積まない（蓄積防止）
+	if _outbound_chat_paused; then
+		return 0
 	fi
 
 	if ! _outbound_chat_claim_enqueue_key "$message" "$source" "$priority"; then
