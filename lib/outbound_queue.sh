@@ -236,6 +236,56 @@ _outbound_chat_claim_enqueue_key() {
 	return 0
 }
 
+_comment_audio_cleanup_dedup_markers() {
+	local ttl="${1:-120}"
+	local now marker mt age
+	local dedup_dir="${COMMENT_AUDIO_DEDUP_DIR:-${COMMENT_QUEUE_DIR:-tmp/.comment_queue}/audio_dedup}"
+	case "$ttl" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	now=$(date +%s)
+	for marker in "$dedup_dir"/*; do
+		[ -d "$marker" ] || continue
+		mt=$(stat -f %m "$marker" 2>/dev/null) \
+			|| mt=$(stat -c %Y "$marker" 2>/dev/null) \
+			|| mt="$now"
+		age=$((now - mt))
+		[ "$age" -gt "$ttl" ] && rm -rf "$marker" 2>/dev/null || true
+	done
+}
+
+_comment_audio_claim_enqueue_key() {
+	local text="$1"
+	local ttl="${COMMENT_AUDIO_DEDUP_TTL_SEC:-120}"
+	case "$ttl" in
+	''|*[!0-9]*) ttl=120 ;;
+	esac
+	[ "$ttl" -gt 0 ] || return 0
+	local dedup_dir="${COMMENT_AUDIO_DEDUP_DIR:-${COMMENT_QUEUE_DIR:-tmp/.comment_queue}/audio_dedup}"
+	mkdir -p "$dedup_dir" 2>/dev/null || true
+	local key marker now mt age
+	key=$(_outbound_chat_hash "$text")
+	[ -n "$key" ] || return 0
+	marker="$dedup_dir/$key"
+	now=$(date +%s)
+	if mkdir "$marker" 2>/dev/null; then
+		printf '%s\n' "$now" > "$marker/ts" 2>/dev/null || true
+		return 0
+	fi
+	mt=$(stat -f %m "$marker" 2>/dev/null) \
+		|| mt=$(stat -c %Y "$marker" 2>/dev/null) \
+		|| mt="$now"
+	age=$((now - mt))
+	if [ "$age" -le "$ttl" ]; then
+		return 1
+	fi
+	rm -rf "$marker" 2>/dev/null || true
+	mkdir "$marker" 2>/dev/null || return 1
+	printf '%s\n' "$now" > "$marker/ts" 2>/dev/null || true
+	_comment_audio_cleanup_dedup_markers "$ttl" 2>/dev/null || true
+	return 0
+}
+
 # enqueue_chat_message MESSAGE [SOURCE] [PRIORITY]
 #   MESSAGE  : 投稿する本文 (1行)
 #   SOURCE   : 呼び出し元の識別子 (default: "unknown")
@@ -330,6 +380,9 @@ enqueue_audio_text() {
 	local source="${2:-unknown}"
 	local speaker_override="${3:-}"
 	[ -n "$text" ] || return 1
+	if ! _comment_audio_claim_enqueue_key "$text"; then
+		return 0
+	fi
 
 	local queue_dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
 	mkdir -p "$queue_dir" 2>/dev/null || true
@@ -357,6 +410,25 @@ enqueue_audio_file() {
 	local source="${2:-unknown}"
 	local speaker_override="${3:-}"
 	[ -f "$file" ] && [ -s "$file" ] || return 1
+	# dedup by file content hash (same text file should not be enqueued twice within TTL)
+	local _audio_file_hash=""
+	if command -v md5 >/dev/null 2>&1; then
+		_audio_file_hash=$(md5 -q "$file" 2>/dev/null || cat "$file" 2>/dev/null | md5 -q 2>/dev/null || echo "")
+	else
+		_audio_file_hash=$(md5sum "$file" 2>/dev/null | awk '{print $1}')
+	fi
+	if [ -n "$_audio_file_hash" ]; then
+		if ! _comment_audio_claim_enqueue_key "$_audio_file_hash"; then
+			return 0
+		fi
+	else
+		# fallback: hash file content via _outbound_chat_hash
+		local _content
+		_content=$(cat "$file" 2>/dev/null || echo "")
+		if [ -n "$_content" ] && ! _comment_audio_claim_enqueue_key "$_content"; then
+			return 0
+		fi
+	fi
 
 	local queue_dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
 	mkdir -p "$queue_dir" 2>/dev/null || true

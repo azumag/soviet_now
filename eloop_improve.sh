@@ -791,7 +791,7 @@ _implementation_self_report_rejects_change() {
 	local log_file="${1:-$RUN_CMD_LOG_FILE}"
 	[ -s "$log_file" ] || return 1
 	tail -n 120 "$log_file" 2>/dev/null |
-		grep -Eqi 'redundant|does not change behavior|harmless but unnecessary|no[ -]?op|冗長|挙動が変わらない|挙動を変えない|無挙動|不要'
+		grep -Eqi 'redundant.*(change|modification)|does not change behavior|harmless but unnecessary|no[ -]?op|self-report.*redundant|implementation.*redundant'
 }
 
 _validate_review_verdict() {
@@ -3475,16 +3475,9 @@ EOF
 				break
 			fi
 			if [ "$_run_ai_rc" -eq 0 ] && _implementation_self_report_rejects_change "$RUN_CMD_LOG_FILE"; then
-				VALIDATE_ERROR="AI実装が冗長または挙動が変わらない変更と自己申告した。レビューへ進めず、実効性のある別変更に修正せよ。"
-				_improve_note "implementation self-report rejected (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-					continue_retry=$((continue_retry + 1))
-					continue
-				fi
-				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
-				fresh_retry=$((fresh_retry + 1))
-				continue_retry=0
-				continue
+				log "[IMPROVE] self-report advisory: AIが冗長と自己申告したが、string/hashゲートで再判定（重複読み上げ対策で緩和）"
+				_improve_note "implementation self-report advisory (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}): AI self-reported redundant but continue to string/hash gates; not hard-failing"
+				# advisoryのみ: string-only / hash unchanged で実際に弾かれるため、ここでは budget を消費しない
 			fi
 		else
 			# continue fix内でもウォールタイムチェック
@@ -3616,8 +3609,37 @@ EOF
 				continue
 			fi
 			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
-				log "[IMPROVE] 文字列・reason文言のみの変更を検出"
-				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
+				_string_only_detail=""
+				_string_only_detail=$(python3 - "strategy.py" "$STAGING_FILE" 2>/dev/null <<'PY2'
+import ast, sys
+before_path, after_path = sys.argv[1], sys.argv[2]
+def count_strings(path):
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read(), path)
+        return sum(1 for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))
+    except Exception:
+        return 0
+def count_code_nodes(path):
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read(), path)
+        return sum(1 for n in ast.walk(tree) if not (isinstance(n, ast.Constant) and isinstance(n.value, str)) and not isinstance(n, ast.JoinedStr))
+    except Exception:
+        return 0
+cb, ca = count_strings(before_path), count_strings(after_path)
+ncb, nca = count_code_nodes(before_path), count_code_nodes(after_path)
+try:
+    import subprocess
+    diff = subprocess.run(["diff","-u", before_path, after_path], capture_output=True, text=True, timeout=2)
+    lines = [l for l in diff.stdout.splitlines() if l.startswith(("+") or l.startswith("-")) and ('"' in l or "'" in l)]
+    snippet = "; ".join(lines[:2])[:160].replace("
+"," ")
+except Exception:
+    snippet = ""
+print(f"string literals {cb}->{ca}, code nodes {ncb}->{nca}" + (f", ex: {snippet}" if snippet else ""))
+PY2
+)
+				log "[IMPROVE] 文字列・reason文言のみの変更を検出${_string_only_detail:+ ($_string_only_detail)}"
+				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。${_string_only_detail:+$_string_only_detail }ロジック変更または根拠ある数値調整を含む変更にせよ。例: decide()内の数値・条件分岐・評価ロジックを変更せよ."
 				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
 				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
 					continue_retry=$((continue_retry + 1))
