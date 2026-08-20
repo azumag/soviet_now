@@ -197,8 +197,9 @@ def classify_instadeath(cur_flags, ref_flags=None, cfg=None):
     `cfg` (all optional, see soren-stat-gate-design.md section D for the
     matching DEAD_* config defaults):
       dead_alert_rate (0.10), dead_burst_ratio (3.0), dead_hard_ratio (0.5),
-      dead_max_turns (3), dead_alpha (0.01), plus caller-supplied evidence
-      that this module cannot derive from flags alone:
+      dead_max_turns (3), dead_alpha (0.01), dead_near_total_rate (0.90),
+      plus caller-supplied evidence that this module cannot derive from
+      flags alone:
       cur_dead_hard_ratio (float|None) - fraction of this window's deaths
         that were raw==0 (no piece placed at all),
       spans_hash_change (bool) - whether the current death-run started
@@ -236,6 +237,17 @@ def classify_instadeath(cur_flags, ref_flags=None, cfg=None):
         detail["median_death_turns"] = median_death_turns
         if median_death_turns <= cfg.get("dead_max_turns", 3):
             votes += 1
+
+    # burst_ratio is blind in the p=0.85..0.99 band: 1/(1-p) diverges at
+    # roughly the same rate the observed run length does, so the ratio stays
+    # near 1 even for a near-total outage (2026-08-20 review round 2, issue
+    # 6 -- a 19/20-dead window scored burst_ratio=0.95 and needed a second
+    # vote to reach HARNESS). A strategy alone plausibly cannot make ~90%+ of
+    # games die instantly regardless of clustering, so treat a near-total
+    # rate as independent evidence rather than relying on burst_ratio to
+    # catch it.
+    if rate >= cfg.get("dead_near_total_rate", 0.90):
+        votes += 1
 
     detail["votes_harness"] = votes
     if votes >= 2:
@@ -347,7 +359,7 @@ def decide(cur_scores, ref_scores, cfg=None):
 
     Returns a dict with at least a "verdict" key, one of:
       REGRESSION_HARD | REGRESSION_SOFT | PROMOTE | NONINFERIOR |
-      INCONCLUSIVE | INSUFFICIENT_REFERENCE | NOT_A_LOOK
+      INCONCLUSIVE | INSUFFICIENT_REFERENCE | INSUFFICIENT_CURRENT | NOT_A_LOOK
     plus delta/se/lcb/ucb/alpha_used/z_used/look_index/n_*/dead_rate_* for
     logging (see the [STATGATE] log line format in the design doc).
 
@@ -409,8 +421,15 @@ def decide(cur_scores, ref_scores, cfg=None):
         return dict(base, verdict="INSUFFICIENT_REFERENCE",
                     reason="reference arm has no alive scores after dead-game filtering")
     if nc == 0:
-        return dict(base, verdict="INSUFFICIENT_REFERENCE",
-                    reason="current arm has no alive scores")
+        # Distinct verdict from INSUFFICIENT_REFERENCE: a current strategy
+        # with zero alive scores (100% instadeath in its window) is the most
+        # severe signal this function can see, and a caller branching only
+        # on verdict name must not treat it the same as "reference isn't
+        # ready yet" -- that reads as "skip the gate, nothing to compare
+        # against" when the right response is closer to B-4's quarantine
+        # path (2026-08-20 review round 2, issue 5).
+        return dict(base, verdict="INSUFFICIENT_CURRENT",
+                    reason="current arm has no alive scores (100% instadeath in window)")
 
     lo, hi = winsor_limits(alive_a + alive_c, merged["winsor_lo_q"], merged["winsor_hi_q"])
     mc, vc, _ = wstats(alive_c, lo, hi)
@@ -466,17 +485,40 @@ def decide(cur_scores, ref_scores, cfg=None):
         # A-3 ("PROMOTE はここだけ厳格に") -- reusing alpha_soft here would
         # silently promote on a looser bar than the design specifies, right on
         # the winner's-curse path the whole gate exists to guard (2026-08-20
-        # review, issue 3).
-        _, _, promote_lcb, _ = welch_bounds(mc, vc, nc, ma, va, na, alpha_promote)
+        # review, issue 3). Report ALL four bounds recomputed at alpha_promote
+        # (not just lcb) so alpha_used/z_used match delta/se/lcb/ucb together
+        # -- reporting a mix of soft-layer and promote-layer numbers would
+        # make the [STATGATE] log internally inconsistent (2026-08-20 review
+        # round 2, issue 1).
+        p_delta, p_se, promote_lcb, promote_ucb = welch_bounds(mc, vc, nc, ma, va, na, alpha_promote)
         if promote_lcb > merged["delta_promote"]:
-            return dict(result, verdict="PROMOTE", lcb=promote_lcb,
+            return dict(base, verdict="PROMOTE", delta=p_delta, se=p_se,
+                        lcb=promote_lcb, ucb=promote_ucb,
                         alpha_used=alpha_promote, z_used=NormalDist().inv_cdf(1 - alpha_promote),
+                        look_index=look_index,
                         reason="soft-layer lcb above delta_promote (at alpha_promote)")
-        # Non-inferiority uses its own alpha; recompute lcb at that alpha.
-        _, _, ni_lcb, _ = welch_bounds(mc, vc, nc, ma, va, na, alpha_noninf)
+        # Non-inferiority uses its own alpha; same reasoning as PROMOTE above
+        # -- report the alpha_noninf-based bounds this verdict is actually
+        # computed from, not the alpha_soft ones (2026-08-20 review round 2,
+        # issue 3: this had the same silent-mismatch shape as issue 1/3).
+        ni_delta, ni_se, ni_lcb, ni_ucb = welch_bounds(mc, vc, nc, ma, va, na, alpha_noninf)
         if ni_lcb > -merged["delta_harmless"]:
-            return dict(result, verdict="NONINFERIOR", reason="lcb above -delta_harmless at alpha_noninf")
+            return dict(base, verdict="NONINFERIOR", delta=ni_delta, se=ni_se,
+                        lcb=ni_lcb, ucb=ni_ucb,
+                        alpha_used=alpha_noninf, z_used=NormalDist().inv_cdf(1 - alpha_noninf),
+                        look_index=look_index,
+                        reason="lcb above -delta_harmless at alpha_noninf")
         return dict(result, verdict="INCONCLUSIVE", reason="no look threshold crossed")
 
-    return dict(last_computed, verdict="NOT_A_LOOK",
+    if last_computed is not base:
+        # A HARD look ran (nc past stat_hard_min_n, on-stride) and didn't
+        # cross -delta_hard, but nc also isn't a SOFT look point -- the
+        # statistics are real and worth logging, "NOT_A_LOOK" only means "no
+        # SOFT-layer verdict was possible here" (2026-08-20 review round 2,
+        # issue 2: the old single reason string implied nc wasn't a look of
+        # ANY kind, which was false whenever this branch carries HARD stats).
+        return dict(last_computed, verdict="NOT_A_LOOK",
+                    reason="hard-layer look taken and crossed no threshold; "
+                           "n_alive_cur is not a SOFT look point")
+    return dict(base, verdict="NOT_A_LOOK",
                 reason="n_alive_cur is not a HARD or SOFT look point")

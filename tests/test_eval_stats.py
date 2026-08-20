@@ -24,10 +24,10 @@ import eval_stats  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Reference implementations transcribed verbatim from strategy/regression.sh
-# as of commit 7b3842965 (soviet_now submodule), for cross-checking. If
-# these ever drift from the real file, `test_reference_quantile_matches_...`
-# below is meant to catch it manually — grep the four line numbers cited and
-# diff.
+# as of commit 7b3842965 (soviet_now submodule), for cross-checking. If these
+# ever drift from the real file, QuantileCompatibilityTests and
+# MetricsCompatibilityTests below are meant to catch it manually — grep the
+# five line numbers cited in each _ref_* docstring and diff.
 # ---------------------------------------------------------------------------
 
 def _ref_quantile(vals, p):
@@ -332,6 +332,31 @@ class InstadeathHelperTests(unittest.TestCase):
         self.assertEqual(verdict, "HARNESS")
         self.assertGreaterEqual(detail["votes_harness"], 2)
 
+    def test_classify_instadeath_harness_for_near_total_outage(self):
+        # 2026-08-20 review round 2, issue 6: burst_ratio alone is blind in
+        # the p=0.85..0.99 band (1/(1-p) diverges about as fast as the
+        # observed run length does), so a 19/20-dead window with one death
+        # detector already voting (hard_ratio) used to stay at votes=1 and
+        # classify UNKNOWN instead of HARNESS. The new near-total-rate
+        # detector (rate >= 0.90) supplies the second vote here.
+        flags = [True] * 19 + [False]
+        verdict, detail = eval_stats.classify_instadeath(
+            flags, cfg={"cur_dead_hard_ratio": 0.6})
+        self.assertEqual(verdict, "HARNESS")
+        self.assertGreaterEqual(detail["votes_harness"], 2)
+
+    def test_classify_instadeath_below_near_total_rate_threshold_unchanged(self):
+        # Below the 0.90 threshold, behavior is unchanged by the issue-6 fix:
+        # a 17/20 (85%) window with only the hard_ratio vote still can't
+        # reach HARNESS on its own. This isn't claimed to be ideal detection
+        # -- just pinning that the new detector doesn't overreach past its
+        # documented threshold.
+        flags = [True] * 17 + [False] * 3
+        verdict, detail = eval_stats.classify_instadeath(
+            flags, cfg={"cur_dead_hard_ratio": 0.6})
+        self.assertEqual(verdict, "UNKNOWN")
+        self.assertEqual(detail["votes_harness"], 1)
+
     def test_classify_instadeath_harness_for_total_outage_window(self):
         # The scenario DEAD_QUARANTINE_WINDOW/RATE exist for: every game in
         # the most recent 20-game window died (shape of the 2026-08-06,
@@ -483,12 +508,27 @@ class DecideTests(unittest.TestCase):
         # Distinct failure mode from the above: 100 total games but ZERO
         # alive after filtering. This must still be INSUFFICIENT_REFERENCE
         # (there is nothing to compare against), just for a different,
-        # explicitly-labeled reason than "not enough games yet".
+        # explicitly-labeled reason than "not enough games yet". Pin the
+        # reason with a "reference"-specific substring, not just "alive" --
+        # that word appears in BOTH the reference-side and current-side
+        # reason strings, so it can't tell the two branches apart
+        # (2026-08-20 review round 2, issue 5's test-tightening note).
         ref_all_dead = [0] * 100
         cur = [9000] * 24
         result = eval_stats.decide(cur, ref_all_dead, cfg={"stat_hard_min_n": 9999})
         self.assertEqual(result["verdict"], "INSUFFICIENT_REFERENCE")
-        self.assertIn("alive", result["reason"])
+        self.assertIn("reference arm has no alive scores", result["reason"])
+
+    def test_current_arm_totally_dead_is_a_distinct_verdict(self):
+        # 2026-08-20 review round 2, issue 5: the current-arm-all-dead case
+        # used to share the INSUFFICIENT_REFERENCE verdict with genuine
+        # reference-eligibility failures, even though it's a different (and
+        # more severe) situation a caller should handle differently.
+        ref = [9000] * 100
+        cur_all_dead = [0] * 24
+        result = eval_stats.decide(cur_all_dead, ref, cfg={"stat_hard_min_n": 9999})
+        self.assertEqual(result["verdict"], "INSUFFICIENT_CURRENT")
+        self.assertIn("current arm has no alive scores", result["reason"])
 
     def test_regression_soft_fires_on_moderate_gap(self):
         # A gap large enough to be significant at the SOFT layer's alpha but
@@ -513,6 +553,10 @@ class DecideTests(unittest.TestCase):
         cur = [rng.gauss(11650, 1500) for _ in range(24)]
         result = eval_stats.decide(cur, ref, cfg={"stat_hard_min_n": 9999})
         self.assertNotEqual(result["verdict"], "PROMOTE")
+        # 2026-08-20 review round 2, issue 8: pin the actual verdict (not
+        # just "not PROMOTE") so a future winsorize/SE change that pushed
+        # this scenario to e.g. REGRESSION_SOFT wouldn't silently pass.
+        self.assertEqual(result["verdict"], "NONINFERIOR")
 
         alive_c = eval_stats.alive(cur)
         alive_a = eval_stats.alive(ref)
@@ -520,10 +564,19 @@ class DecideTests(unittest.TestCase):
         mc, vc, nc = eval_stats.wstats(alive_c, lo, hi)
         ma, va, na = eval_stats.wstats(alive_a, lo, hi)
         alpha_soft_at_k4 = eval_stats.group_sequential_alpha(0.05, 4)
+        alpha_promote_at_k4 = eval_stats.group_sequential_alpha(0.01, 4)
         _, _, loose_lcb, _ = eval_stats.welch_bounds(mc, vc, nc, ma, va, na, alpha_soft_at_k4)
+        _, _, strict_lcb, _ = eval_stats.welch_bounds(mc, vc, nc, ma, va, na, alpha_promote_at_k4)
         # Confirms the scenario actually exercises the bug this test guards:
-        # the pre-fix (alpha_soft) bar would have called this PROMOTE.
+        # the pre-fix (alpha_soft) bar would have called this PROMOTE, the
+        # correct (alpha_promote) bar does not -- both sides of the bug,
+        # not just "loose would have promoted" (2026-08-20 review round 2,
+        # issue 8: the margin between these two was thin enough at the
+        # original scenario that a silent regression could slip through;
+        # asserting both bounds directly, not just the resulting verdict,
+        # narrows that gap).
         self.assertGreater(loose_lcb, 500)
+        self.assertLess(strict_lcb, 500)
 
     def test_not_a_look_still_reports_hard_layer_stats(self):
         # 2026-08-20 review, issue 5: a HARD-layer look (nc a multiple of the
@@ -572,11 +625,16 @@ class DecideTests(unittest.TestCase):
 
     def test_false_positive_rate_near_nominal_at_delta_soft_zero(self):
         # Coarse calibration smoke test (design doc's suggested validity
-        # check, corrected 2026-08-20: with Bonferroni over 4 correlated
-        # nested looks the actual FP rate lands near alpha_soft/K (~0.0125),
-        # not the naive alpha_soft (0.05) the design doc originally quoted --
-        # reviewer measured ~0.011. This asserts a loose upper bound so the
-        # test isn't flaky, not a tight calibration proof.
+        # check, corrected 2026-08-20 across two review passes: with
+        # Bonferroni over 4 correlated nested looks the actual FP rate lands
+        # below the naive alpha_soft (0.05) the design doc originally
+        # quoted, in the ballpark of alpha_soft/K (~0.0125) but not exactly
+        # -- a larger 9000-trial measurement (3000 x 3 seeds) converged on
+        # ~0.017. 300 trials alone is too few to pin a ~1-2% rate precisely
+        # (+/-0.008ish at 1 sigma), which is why this asserts a loose upper
+        # bound (well above either estimate) rather than a tight calibration
+        # proof -- see soren-stat-gate-design.md's FP-number correction note
+        # for the full measurement history.
         rng = random.Random(20260820)
         false_positives = 0
         trials = 300
