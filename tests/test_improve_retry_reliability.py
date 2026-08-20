@@ -446,13 +446,18 @@ PY
             config,
         )
         self.assertIn(
-            'RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:deepseek-v4-flash}"',
+            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-codex:deepseek-v4-flash}"',
             config,
         )
+        self.assertIn(
+            'RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:minimax-m3}"',
+            config,
+        )
+        self.assertIn('"${RADIO_FACT_CHECK_SECONDARY:-}"', factcheck)
         self.assertIn('"${RADIO_FACT_CHECK_TERTIARY:-}"', factcheck)
         self.assertLess(
             factcheck.index('"${RADIO_FACT_CHECK_AGENT:-}"'),
-            factcheck.index('"${RADIO_FACT_CHECK_FALLBACK:-}"'),
+            factcheck.index('"${RADIO_FACT_CHECK_SECONDARY:-}"'),
         )
 
 

@@ -216,8 +216,13 @@ ${talk_body}
 PROMPT
 
 	local model
-	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}"; do
+	local seen_models=" "
+	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}"; do
 		[ -n "$model" ] || continue
+		case "$seen_models" in
+		*" $model "*) continue ;;
+		esac
+		seen_models="${seen_models}${model} "
 		log "[RADIO:${corner_name}] fact-check中... (${model}, timeout=${factcheck_timeout}s)" >&2
 		raw_output=$(RADIO_OPENCODE_TIMEOUT="$factcheck_timeout" _run_opencode_radio "$model" "$prompt_file")
 		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
