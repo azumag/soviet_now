@@ -413,7 +413,7 @@ if (WORK && WORK.active) {{
   workIndicator.classList.add('active');
   workIndicator.querySelector('.work-title').textContent = WORK.title || 'システム自動分析・修正作業中';
   workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(WORK.ts);
-  workIndicator.querySelector('.work-body').textContent = WORK.body || 'メリケンAI が確認・修正・検証を進めています';
+  workIndicator.querySelector('.work-body').textContent = WORK.body || '';
 }}
 for (const g of (GEN || [])) {{
   const row = document.createElement('div');

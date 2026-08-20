@@ -545,7 +545,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     summary.style.display = active ? 'none' : 'grid';
     if (active) {
       work.querySelector('.work-title').textContent = workState.title || 'システム作業中';
-      work.querySelector('.work-body').textContent = workState.body || '確認・修正・検証を進めています';
+      work.querySelector('.work-body').textContent = workState.body || '';
       work.querySelector('.work-elapsed').textContent = elapsedLabel(workState.ts);
     } else {
       const topO = state?.topOverride;

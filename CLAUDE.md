@@ -280,7 +280,6 @@ cd /Users/azumag/azumag/work/soren
 
 これにより eventOverlay に以下のような表示が出ます:
 - システム自動分析・修正作業中
-- メリケンAI が確認・修正・検証を進めています
 
 作業中はこの表示を消さず、修正・テスト・検証・必要な live restart/check がすべて終わるまで表示し続けてください。
 

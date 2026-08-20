@@ -10,7 +10,7 @@ source "$ELOOP_LIB_DIR/core/config.sh"
 
 action="${1:-start}"
 title="${2:-システム自動分析・修正作業中}"
-body="${3:-メリケンAI が確認・修正・検証を進めています}"
+body="${3:-}"
 
 mkdir -p "$(dirname "$CODEX_WORK_OVERLAY_STATE_FILE")" "$(dirname "$EVENT_OVERLAY_HTML_FILE")"
 

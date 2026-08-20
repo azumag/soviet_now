@@ -8330,7 +8330,6 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("read_work_indicator", generator)
         self.assertIn("work-indicator", generator)
         self.assertIn("システム自動分析・修正作業中", generator)
-        self.assertIn("メリケンAI が確認・修正・検証を進めています", generator)
         self.assertIn(".toast.chat .title", generator)
         self.assertIn(".toast.chat .body", generator)
         self.assertIn("font-size: 22px", generator)
