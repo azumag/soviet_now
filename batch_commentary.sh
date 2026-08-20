@@ -85,16 +85,30 @@ except Exception:
 if expression == "count":
     print(int(value.get("count", 0) or 0))
 elif expression == "batch_id":
+    try:
+        start = max(0, int(sys.argv[3]))
+        end = max(start, int(sys.argv[4]))
+    except (IndexError, TypeError, ValueError):
+        start, end = 0, None
+    files = [str(x) for x in value.get("files", []) or [] if x]
+    selected_files = files[start:end]
+    scores = str(value.get("scores", "") or "").split()
+    raw_scores = str(value.get("raw_scores", "") or "").split()
     payload = json.dumps({
-        "count": int(value.get("count", 0) or 0),
-        "files": [str(x) for x in value.get("files", []) or [] if x],
-        "scores": str(value.get("scores", "") or ""),
-        "raw_scores": str(value.get("raw_scores", "") or ""),
+        "count": len(selected_files),
+        "files": selected_files,
+        "scores": " ".join(scores[start:end]),
+        "raw_scores": " ".join(raw_scores[start:end]),
         "hash": str(value.get("hash", "") or ""),
     }, ensure_ascii=False, sort_keys=True).encode("utf-8")
     print(hashlib.sha256(payload).hexdigest()[:24])
 elif expression == "files":
-    for item in value.get("files", []) or []:
+    try:
+        start = max(0, int(sys.argv[3]))
+        end = max(start, int(sys.argv[4]))
+    except (IndexError, TypeError, ValueError):
+        start, end = 0, None
+    for item in (value.get("files", []) or [])[start:end]:
         if item:
             print(str(item))
 PY
@@ -102,8 +116,10 @@ PY
 
 count=$(_json_value "$ACC_FILE" count 2>/dev/null || echo 0)
 case "$count" in ''|*[!0-9]*) count=0 ;; esac
-[ "$count" -ge "$CYCLE_SIZE" ] || exit 0
-batch_id=$(_json_value "$ACC_FILE" batch_id 2>/dev/null || true)
+batch_end=$((count / CYCLE_SIZE * CYCLE_SIZE))
+[ "$batch_end" -ge "$CYCLE_SIZE" ] || exit 0
+batch_start=$((batch_end - CYCLE_SIZE))
+batch_id=$(_json_value "$ACC_FILE" batch_id "$batch_start" "$batch_end" 2>/dev/null || true)
 [ -n "$batch_id" ] || exit 1
 
 done_file="$STATE_DIR/${batch_id}.done.json"
@@ -135,8 +151,9 @@ files=()
 while IFS= read -r history_file; do
   [ -n "$history_file" ] && [ -f "$history_file" ] || continue
   files+=("$history_file")
-done < <(_json_value "$ACC_FILE" files 2>/dev/null || true)
+done < <(_json_value "$ACC_FILE" files "$batch_start" "$batch_end" 2>/dev/null || true)
 [ "${#files[@]}" -gt 0 ] || { _log "no readable history files: batch=$batch_id"; exit 1; }
+batch_count="${#files[@]}"
 
 python3 batch_summary.py "${files[@]}" >"$summary_file" 2>/dev/null || {
   _log "summary generation failed: batch=$batch_id"
@@ -161,7 +178,7 @@ PY
 )
 
 cat >"$prompt_file" <<PROMPT
-あなたはソ連ゲーム配信の成績解説者です。以下は改善ループ1バッチ（${count}試合）の実測サマリーです。この情報だけを根拠に、音声ワーカーがそのまま読める日本語の解説を1本作ってください。
+あなたはソ連ゲーム配信の成績解説者です。以下は改善ループ1バッチ（${batch_count}試合）の実測サマリーです。この情報だけを根拠に、音声ワーカーがそのまま読める日本語の解説を1本作ってください。
 
 条件:
 - 150〜${MAX_CHARS}字程度、です・ます調。
@@ -206,7 +223,7 @@ print("\\n".join(lines).strip(), end="")
 }
 
 [ -n "$AGENTS" ] || { _log "AI agents unavailable: batch=$batch_id"; exit 1; }
-_log "AI commentary generation: batch=$batch_id games=$count agents=$AGENTS"
+_log "AI commentary generation: batch=$batch_id games=$batch_count (source=${batch_start}-${batch_end}) agents=$AGENTS"
 raw_text=$(ai_generate_list "RADIO:batch_commentary" "$prompt_file" "$AGENTS" "$TIMEOUT_SEC" "_batch_commentary_valid" 2>/dev/null || true)
 text=$(printf '%s' "$raw_text" | _batch_commentary_strip_work_note | _ai_guard_model_output 2>/dev/null || true)
 text=$(printf '%s' "$text" | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//')
@@ -249,7 +266,7 @@ COMMENT_AUDIO_DEDUP_TTL_SEC="${BATCH_COMMENTARY_AUDIO_DEDUP_TTL_SEC:-86400}" \
     exit 1
   }
 
-python3 - "$done_file" "$batch_id" "$count" "$summary_file" "$explanation_file" <<'PY'
+python3 - "$done_file" "$batch_id" "$batch_count" "$summary_file" "$explanation_file" <<'PY'
 import json, os, sys, time
 path, batch_id, count, summary_file, explanation_file = sys.argv[1:]
 tmp = path + ".tmp"
@@ -261,5 +278,5 @@ with open(tmp, "w", encoding="utf-8") as handle:
 os.replace(tmp, path)
 PY
 rm -f "$RETRY_FILE" 2>/dev/null || true
-_log "queued: batch=$batch_id games=$count"
+_log "queued: batch=$batch_id games=$batch_count (source=${batch_start}-${batch_end})"
 exit 0
