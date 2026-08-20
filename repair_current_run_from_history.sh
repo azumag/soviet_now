@@ -11,6 +11,14 @@ source ./eloop_lib.sh
 # Existing library helpers are not all nounset-clean when reused outside the main loop.
 set +u
 
+# このスクリプトは record_completed_game_for_adaptive_improvement() と
+# soren_loop.sh から子プロセスとして起動されるため、eloop.sh で export された
+# LAST_RAW_SCORE/LAST_TURNS をそのまま継承する。過去アーカイブの再生に
+#「いま終わった試合」の raw/turns を刻印すると、即死判別器(#3 raw==0比率・
+# #4 turns中央値)が汚染される (2026-08-20 Phase 1 レビュー R1)。
+unset LAST_RAW_SCORE LAST_TURNS 2>/dev/null || true
+export INSTADEATH_MONITOR_UPDATE=0
+
 limit="${1:-12}"
 case "$limit" in
 	''|*[!0-9]*) limit=12 ;;

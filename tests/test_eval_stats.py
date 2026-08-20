@@ -268,6 +268,21 @@ class InstadeathHelperTests(unittest.TestCase):
         self.assertEqual(eval_stats.dead_count([0, 0, 5000, 6000]), 2)
         self.assertEqual(eval_stats.dead_count([]), 0)
 
+    def test_alive_is_identity_when_nothing_below_threshold(self):
+        # Phase 1's acceptance criterion (soren-stat-gate-design.md B):
+        # in the current clean-period regime (0 instadeaths observed), the
+        # instadeath split must be a pure no-op for metrics() -- comp/p50/
+        # p25/lcb/n computed on the raw scores and on alive(scores) must be
+        # bit-identical, since alive() should filter nothing. Fixture shaped
+        # like the VM's real rolling_scores.json (n=100, values in the
+        # thousands, none below DEAD_EVAL_THRESHOLD).
+        rng = random.Random(20260820)
+        scores = [rng.randint(5000, 25000) for _ in range(100)]
+        self.assertEqual(eval_stats.alive(scores), scores)
+        m_raw = eval_stats.metrics(scores)
+        m_alive = eval_stats.metrics(eval_stats.alive(scores))
+        self.assertEqual(m_raw, m_alive)
+
     def test_run_lengths(self):
         self.assertEqual(eval_stats.run_lengths([]), [])
         self.assertEqual(eval_stats.run_lengths([False, False]), [])
@@ -331,6 +346,25 @@ class InstadeathHelperTests(unittest.TestCase):
             flags, cfg={"cur_dead_hard_ratio": 0.6})
         self.assertEqual(verdict, "HARNESS")
         self.assertGreaterEqual(detail["votes_harness"], 2)
+
+    def test_classify_instadeath_fisher_p_present_even_when_harness(self):
+        # Phase 0 review follow-up item #1 (carried into Phase 1's monitor,
+        # which persists `detail`): fisher_p must be computed whenever
+        # ref_flags is given, even on the HARNESS early-return, not only in
+        # the UNKNOWN fallthrough. The verdict itself is unaffected.
+        flags = [True] * 60 + [False] * 40
+        ref = [False] * 100
+        verdict, detail = eval_stats.classify_instadeath(
+            flags, ref_flags=ref, cfg={"cur_dead_hard_ratio": 0.6})
+        self.assertEqual(verdict, "HARNESS")
+        self.assertIn("fisher_p", detail)
+        self.assertLess(detail["fisher_p"], 0.01)
+
+    def test_classify_instadeath_no_fisher_p_without_ref_flags(self):
+        flags = [True] * 60 + [False] * 40
+        verdict, detail = eval_stats.classify_instadeath(
+            flags, cfg={"cur_dead_hard_ratio": 0.6})
+        self.assertNotIn("fisher_p", detail)
 
     def test_classify_instadeath_harness_for_near_total_outage(self):
         # 2026-08-20 review round 2, issue 6: burst_ratio alone is blind in

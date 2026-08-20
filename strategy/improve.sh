@@ -2305,6 +2305,22 @@ if payload["best_max_type"] >= 15 and payload["russia_count"] <= 0:
     payload["russia_count"] = 1
 if payload["best_max_type"] >= 16 and payload["soviet_count"] <= 0:
     payload["soviet_count"] = 1
+# Phase 1 (2026-08-20 review, risk R8): seed `progress` in lockstep with
+# `scores`, or not at all. Without this, every rollback that re-seeds
+# current_run from rolling would silently drop `progress` even though
+# `scores` carries over -- the very next game would then pad `progress`
+# to [None]*100 and the seeded history is gone for good (same shape as the
+# handoff.md §13 n-asymmetry incident this function already exists to
+# prevent). Guarded on isinstance(...) so with INSTADEATH_SPLIT_ENABLED
+# permanently off (no rolling entry ever has "progress"), this never fires.
+_rolling_progress = entry.get("progress")
+if isinstance(_rolling_progress, list):
+    _rolling_progress = (
+        _rolling_progress if len(_rolling_progress) == len(scores) else [None] * len(scores)
+    )
+    payload["progress"] = _rolling_progress[-keep:]
+    if len(payload["progress"]) != len(payload["scores"]):
+        payload["progress"] = [None] * len(payload["scores"])
 with open(out_file, "w") as f:
     json.dump(payload, f)
 PY
@@ -2313,12 +2329,48 @@ PY
 _update_current_strategy_run() {
 	local strategy_hash="$1" score="$2" archive_file="${3:-}"
 	[ -n "$strategy_hash" ] || return 1
+
+	# --- Phase 1: 即死観測 (read-only参照のみ。window の書き込みは
+	# update_rolling_scores() 側だけが行う = 単一書き手。R5対応) ---
+	local _id_dead=0 _id_divert=0 _id_raw="" _id_turns=""
+	if [ "${INSTADEATH_SPLIT_ENABLED:-0}" = "1" ]; then
+		_id_raw="${INSTADEATH_RECORD_RAW-${LAST_RAW_SCORE:-}}"
+		_id_turns="${INSTADEATH_RECORD_TURNS-${LAST_TURNS:-}}"
+		local _id_state=""
+		_id_state=$(_instadeath_read_state "$score")
+		IFS='|' read -r _id_dead _id_divert <<<"$_id_state"
+	fi
+
 	local run_result="" run_err=""
 	run_err="${TMP_STATE_DIR:-tmp/state}/current_run_update.err"
-	run_result=$(python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" "${CURRENT_RUN_SCORE_KEEP:-20}" "${HOT_STREAK_CURRENT_RUN_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$run_err" <<'PY'
+	run_result=$(
+		INSTADEATH_SPLIT_ENABLED="${INSTADEATH_SPLIT_ENABLED:-0}" \
+		ID_DEAD="$_id_dead" ID_DIVERT="$_id_divert" ID_RAW="$_id_raw" ID_TURNS="$_id_turns" \
+		python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" "${CURRENT_RUN_SCORE_KEEP:-20}" "${HOT_STREAK_CURRENT_RUN_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$run_err" <<'PY'
 import json
 import os
 import sys
+import time
+
+_ID_ON = os.environ.get("INSTADEATH_SPLIT_ENABLED") == "1"
+_ID_DEAD = os.environ.get("ID_DEAD") == "1"
+_ID_DIV = _ID_ON and os.environ.get("ID_DIVERT") == "1"
+
+
+def _optint(name):
+    v = (os.environ.get(name) or "").strip()
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+def _prog_or_pad(entry, key, scores_len):
+    p = entry.get(key)
+    if isinstance(p, list) and len(p) == scores_len:
+        return list(p)
+    return [None] * scores_len
+
 
 run_file, strategy_hash, score, archive_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 try:
@@ -2363,19 +2415,27 @@ if archive_file and archive_file in recent_archives:
     print(f"{strategy_hash}|{len(run.get('scores', []))}|{int(run.get('games_total', 0) or 0)}|dedup")
     raise SystemExit
 
-scores = [int(x) for x in run.get("scores", [])]
+prev_scores = [int(x) for x in run.get("scores", [])]
+scores = list(prev_scores)
 try:
     seeded_score_count = max(0, int(run.get("_seeded_score_count", 0) or 0))
 except Exception:
     seeded_score_count = 0
 seeded_score_count = min(seeded_score_count, len(scores))
 prev_best = max(scores) if scores else None
-scores.append(score)
 keep = hot_keep if hot_enabled and prev_best is not None and score > prev_best else normal_keep
-dropped_scores = max(0, len(scores) - keep)
-run["scores"] = scores[-keep:]
-run["_seeded_score_count"] = max(0, min(len(run["scores"]), seeded_score_count - dropped_scores))
-run["_fresh_score_count"] = max(0, len(run["scores"]) - int(run.get("_seeded_score_count", 0) or 0))
+if not _ID_DIV:
+    scores.append(score)
+    dropped_scores = max(0, len(scores) - keep)
+    run["scores"] = scores[-keep:]
+    run["_seeded_score_count"] = max(0, min(len(run["scores"]), seeded_score_count - dropped_scores))
+    run["_fresh_score_count"] = max(0, len(run["scores"]) - int(run.get("_seeded_score_count", 0) or 0))
+else:
+    # 退避: scores は伸ばさない。seeded/fresh の会計もそのまま据え置き
+    # (この試合は起きたが scores には反映されない -- regression.sh 側と対称)。
+    run["scores"] = scores
+    run["_seeded_score_count"] = seeded_score_count
+    run["_fresh_score_count"] = max(0, len(run["scores"]) - seeded_score_count)
 run["_fresh_games_total"] = int(run.get("_fresh_games_total", 0) or 0) + 1
 run["games_total"] = int(run.get("games_total", 0) or 0) + 1
 
@@ -2454,6 +2514,46 @@ run["frontier_hints"] = [item[3] for item in progress]
 run["peak_high_type_counts"] = [item[4] for item in progress]
 run["deadline_guard_counts"] = [item[5] for item in progress]
 run["deadline_guard_reason_tops"] = [item[6] for item in progress]
+
+# Phase 1: progress レコード。strategy/regression.sh の update_rolling_scores()
+# と対称(handoff §13: 非対称にすると n 不整合バイアスが再発する)。ここでも
+# nation_progress/max_types 等の既存派生ロジックには一切手を入れない。
+if _ID_ON:
+    if archive_file and progress_archives and progress_archives[-1] == archive_file:
+        _this = progress[-1]
+    else:
+        _this = nation_progress(archive_file)
+    _now_ts = int(time.time())
+    _new_record = {
+        "s": score, "raw": _optint("ID_RAW"), "turns": _optint("ID_TURNS"),
+        "d": 1 if _ID_DEAD else 0, "ts": _now_ts,
+        "t": (_this[0] or None), "r": 1 if _this[1] else 0, "v": 1 if _this[2] else 0,
+    }
+    if _ID_DIV:
+        prev_qscores = [int(x) for x in (run.get("quarantined_scores") or [])]
+        qprog_records = _prog_or_pad(run, "quarantined_progress", len(prev_qscores))
+        prev_qscores.append(score)
+        qprog_records.append(_new_record)
+        run["quarantined_scores"] = prev_qscores[-keep:]
+        run["quarantined_progress"] = qprog_records[-keep:]
+        if len(run["quarantined_progress"]) != len(run["quarantined_scores"]):
+            run["quarantined_progress"] = [None] * len(run["quarantined_scores"])
+        meta = run.get("quarantine_meta") or {}
+        meta["first_ts"] = meta.get("first_ts") or _now_ts
+        meta["last_ts"] = _now_ts
+        meta["count"] = int(meta.get("count", 0) or 0) + 1
+        run["quarantine_meta"] = meta
+    else:
+        prog_records = _prog_or_pad(run, "progress", len(prev_scores))
+        prog_records.append(_new_record)
+        prog_records = prog_records[-keep:]
+        run["progress"] = prog_records
+        expected_len = len(run["scores"])
+        if len(run["progress"]) != expected_len:
+            run["progress"] = [None] * expected_len
+            sys.stderr.write(
+                "[INSTADEATH] progress realign (current_run): hash=%s expected=%d got=%d\n"
+                % (strategy_hash, expected_len, len(prog_records)))
 
 with open(run_file, "w") as f:
     json.dump(run, f)
@@ -2610,9 +2710,21 @@ record_completed_game_for_adaptive_improvement() {
 		_clear_accumulated_data
 		_reset_current_strategy_run "$current_hash"
 	else
-		update_rolling_scores "$score" "$archive_file"
+		# ライブ本戦経路のみ instadeath monitor の window を更新する
+		# (INSTADEATH_MONITOR_UPDATE=1)。wildcard-parallel (eloop_improve.sh)
+		# と repair (repair_current_run_from_history.sh) は明示的に 0 を渡し
+		# window には書かない -- 前者は別サンドボックスの並列試合を一括
+		# インポートするため人工的な「連」を作って burst_ratio を壊し、
+		# 後者は過去アーカイブの再生で時系列が壊れる (2026-08-20 Phase 1
+		# レビュー, R1)。raw/turns もこの2箇所は自前の値を明示的に渡す。
+		INSTADEATH_MONITOR_UPDATE=1 \
+		INSTADEATH_RECORD_RAW="${LAST_RAW_SCORE:-}" \
+		INSTADEATH_RECORD_TURNS="${LAST_TURNS:-}" \
+			update_rolling_scores "$score" "$archive_file"
 		if [ -n "$current_hash" ]; then
-			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
+			INSTADEATH_RECORD_RAW="${LAST_RAW_SCORE:-}" \
+			INSTADEATH_RECORD_TURNS="${LAST_TURNS:-}" \
+				_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
 		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
 		queue_fresh_objective_same_hash_lock_if_needed || true

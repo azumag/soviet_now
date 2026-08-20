@@ -249,17 +249,23 @@ def classify_instadeath(cur_flags, ref_flags=None, cfg=None):
     if rate >= cfg.get("dead_near_total_rate", 0.90):
         votes += 1
 
+    # Compute the Fisher p-value before the HARNESS early-return (not just in
+    # the UNKNOWN fallthrough) so callers get it regardless of verdict. A
+    # caller persisting `detail` (e.g. instadeath_monitor.json) loses this
+    # diagnostic on every HARNESS classification otherwise -- the verdict
+    # itself is unchanged either way (2026-08-20 Phase 0 review, follow-up
+    # item #1; carried into Phase 1's monitor).
+    if ref_flags is not None:
+        dead_cur = sum(1 for f in cur_flags if f)
+        dead_ref = sum(1 for f in ref_flags if f)
+        detail["fisher_p"] = fisher_one_sided(dead_cur, len(cur_flags), dead_ref, len(ref_flags))
+
     detail["votes_harness"] = votes
     if votes >= 2:
         return ("HARNESS", detail)
 
-    if ref_flags is not None:
-        dead_cur = sum(1 for f in cur_flags if f)
-        dead_ref = sum(1 for f in ref_flags if f)
-        p = fisher_one_sided(dead_cur, len(cur_flags), dead_ref, len(ref_flags))
-        detail["fisher_p"] = p
-        if p < cfg.get("dead_alpha", 0.01):
-            return ("STRATEGY", detail)
+    if ref_flags is not None and detail["fisher_p"] < cfg.get("dead_alpha", 0.01):
+        return ("STRATEGY", detail)
 
     return ("UNKNOWN", detail)
 

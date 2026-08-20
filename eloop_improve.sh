@@ -242,9 +242,17 @@ PY
 		if [ "$soviet_created" = "true" ]; then
 			_append_celebration_history "soviet" "$raw_score" "$turns" "$score_game_num" || true
 		fi
-		ROLLING_SCORE_STRATEGY_HASH="$candidate_hash" ROLLING_SCORE_STRATEGY_SOURCE="${candidate_strategy_path:-$STRATEGY_FILE}" update_rolling_scores "$eval_score" "$archive_dst"
+		# wildcard-parallel は別サンドボックスの並列試合を一括インポートするため
+		# instadeath monitor の時系列 window には入れない (人工的な「連」を作り
+		# burst_ratio を破壊する。2026-08-20 Phase 1 レビュー R1)。raw/turns は
+		# このループが持つ実値を使う(LAST_RAW_SCORE/LAST_TURNS は直前のライブ
+		# 試合のもので、ここでは誤り)。
+		ROLLING_SCORE_STRATEGY_HASH="$candidate_hash" ROLLING_SCORE_STRATEGY_SOURCE="${candidate_strategy_path:-$STRATEGY_FILE}" \
+		INSTADEATH_MONITOR_UPDATE=0 INSTADEATH_RECORD_RAW="$raw_score" INSTADEATH_RECORD_TURNS="$turns" \
+			update_rolling_scores "$eval_score" "$archive_dst"
 		if [ -n "$adopted_hash" ] && [ "$candidate_hash" = "$adopted_hash" ]; then
-			_update_current_strategy_run "$adopted_hash" "$eval_score" "$archive_dst"
+			INSTADEATH_RECORD_RAW="$raw_score" INSTADEATH_RECORD_TURNS="$turns" \
+				_update_current_strategy_run "$adopted_hash" "$eval_score" "$archive_dst"
 		fi
 		printf '%s\n' "$import_key" >>"$import_seen_file" 2>/dev/null || true
 		imported=$((imported + 1))

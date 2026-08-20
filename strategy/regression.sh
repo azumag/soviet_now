@@ -2876,6 +2876,32 @@ if merged["best_max_type"] >= 15 and merged["russia_count"] <= 0:
 if merged["best_max_type"] >= 16 and merged["soviet_count"] <= 0:
     merged["soviet_count"] = 1
 
+# Phase 1 (2026-08-20 review, risk R2): merge `progress` in lockstep with
+# `scores`, or drop it entirely -- leaving `merged["progress"]` at
+# `actual`'s stale copy (via dict(actual) above) while `scores` grows by
+# `stale_scores` would desync the two arrays. Only touches anything when at
+# least one side already has a `progress` list (i.e. INSTADEATH_SPLIT_
+# ENABLED was on for at least one side at some point); with the flag
+# permanently off this block never executes.
+def _aligned(entry, scores_list):
+    p = entry.get("progress")
+    if isinstance(p, list) and len(p) == len(scores_list):
+        return list(p)
+    return [None] * len(scores_list)
+
+
+if isinstance(stale.get("progress"), list) or isinstance(actual.get("progress"), list):
+    merged_progress = (_aligned(stale, stale_scores) + _aligned(actual, actual_scores))[-hot_keep:]
+    if len(merged_progress) != len(merged_scores):
+        merged_progress = [None] * len(merged_scores)
+    merged["progress"] = merged_progress
+# quarantine state belongs to the strategy identity that earned it, not the
+# hash being merged away; a differently-hashed strategy's quarantine
+# history is not meaningful once merged.
+merged.pop("quarantined_scores", None)
+merged.pop("quarantined_progress", None)
+merged.pop("quarantine_meta", None)
+
 rs[actual_hash] = merged
 rs.pop(stale_hash, None)
 
@@ -2892,6 +2918,87 @@ PY
 	fi
 }
 
+# --- Phase 1: 即死観測ヘルパー (soren-stat-gate-design.md B / handoff §33) ---
+# INSTADEATH_SPLIT_ENABLED=0 (既定) の間は _instadeath_* は一切呼ばれない
+# (呼び出し側で必ず if [ "${INSTADEATH_SPLIT_ENABLED:-0}" = "1" ] の内側に置く)。
+
+_instadeath_score_is_dead() {
+	# args: score (eval空間)。1/0 を echo。異常入力は 0 (fail-safe)。
+	local score="$1"
+	case "$score" in
+	'' | *[!0-9-]*)
+		echo 0
+		return 0
+		;;
+	esac
+	if [ "$score" -lt "${DEAD_EVAL_THRESHOLD:-3000}" ]; then
+		echo 1
+	else
+		echo 0
+	fi
+}
+
+# monitor に1件記録し、"status|dead|divert|verdict|transition" を返す。
+# monitor 側が失敗しても rolling_scores.json の書き込みを絶対に壊さないよう、
+# 例外・空出力は "error|<dead>|0|UNKNOWN|" にフォールバックする。
+_instadeath_observe() {
+	local strategy_hash="$1" score="$2" raw="$3" turns="$4" archive_file="$5"
+	local dead
+	dead=$(_instadeath_score_is_dead "$score")
+	local parsed=""
+	parsed=$(python3 "${ELOOP_LIB_DIR:-.}/lib/instadeath_monitor.py" observe \
+		--file "${DEAD_MONITOR_FILE:-tmp/state/instadeath_monitor.json}" \
+		--hash "$strategy_hash" --score "$score" --raw "${raw:-}" --turns "${turns:-}" \
+		--archive "$archive_file" --dead "$dead" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    d = {}
+_dead = 1 if d.get("dead") else 0
+_active = 1 if d.get("quarantine_active") else 0
+# divert = dead AND active -- quarantine_active alone is NOT the divert
+# decision; an alive game must never be diverted regardless of quarantine
+# state (2026-08-20 Phase 1 test run caught this: alive games were being
+# diverted while quarantine was active, corrupting scores/games_total).
+_divert = 1 if (_dead and _active) else 0
+print("|".join([
+    str(d.get("status", "error")),
+    str(_dead),
+    str(_divert),
+    str(d.get("verdict", "UNKNOWN")),
+    str(d.get("transition", "")),
+]))
+' 2>/dev/null) || parsed=""
+	[ -n "$parsed" ] || parsed="error|${dead}|0|UNKNOWN|"
+	echo "$parsed"
+}
+
+# 非ライブ経路 (wildcard-parallel / repair) 用の read-only 参照。
+# window は書かない。現在の quarantine active 状態だけを返す ("dead|divert")。
+_instadeath_read_state() {
+	local score="$1"
+	local dead
+	dead=$(_instadeath_score_is_dead "$score")
+	local active=0
+	local state_json=""
+	state_json=$(python3 "${ELOOP_LIB_DIR:-.}/lib/instadeath_monitor.py" state \
+		--file "${DEAD_MONITOR_FILE:-tmp/state/instadeath_monitor.json}" 2>/dev/null) || state_json=""
+	if [ -n "$state_json" ]; then
+		active=$(printf '%s' "$state_json" | python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    d = {}
+print(1 if d.get("quarantine_active") else 0)
+' 2>/dev/null) || active=0
+	fi
+	local divert=0
+	[ "$active" = "1" ] && [ "$dead" = "1" ] && divert=1
+	echo "${dead}|${divert}"
+}
+
 update_rolling_scores() {
 	local score="$1" archive_file="${2:-}"
 	local strategy_source="${ROLLING_SCORE_STRATEGY_SOURCE:-${STRATEGY_FILE}.game_snapshot}"
@@ -2900,13 +3007,74 @@ update_rolling_scores() {
 	strategy_hash="${ROLLING_SCORE_STRATEGY_HASH:-}"
 	[ -n "$strategy_hash" ] || strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
+
+	# --- Phase 1: 即死観測 (INSTADEATH_SPLIT_ENABLED=1 のときのみ) ---
+	# monitor の read-modify-write は rolling_scores.json を書く python
+	# heredoc の外側・別プロセスで完結させる。monitor 側が壊れても rolling
+	# 側の書き込みは絶対に止めない (以下の値は全て env 経由で heredoc に渡し、
+	# argv は1つも変えない = flag=0 のときの bit 同一性を保証する土台)。
+	local _id_dead=0 _id_divert=0 _id_raw="" _id_turns=""
+	if [ "${INSTADEATH_SPLIT_ENABLED:-0}" = "1" ]; then
+		_id_raw="${INSTADEATH_RECORD_RAW-${LAST_RAW_SCORE:-}}"
+		_id_turns="${INSTADEATH_RECORD_TURNS-${LAST_TURNS:-}}"
+		if [ "${INSTADEATH_MONITOR_UPDATE:-0}" = "1" ]; then
+			local _id_result="" _id_status="" _id_verdict="" _id_transition=""
+			_id_result=$(_instadeath_observe "$strategy_hash" "$score" "$_id_raw" "$_id_turns" "$archive_file")
+			IFS='|' read -r _id_status _id_dead _id_divert _id_verdict _id_transition <<<"$_id_result"
+			case "$_id_transition" in
+			start)
+				log "[INSTADEATH] QUARANTINE START verdict=${_id_verdict} hash=${strategy_hash} score=${score}"
+				if [ -x ./overlay_notify.sh ]; then
+					timeout 3 ./overlay_notify.sh worker "配信ハーネス異常検知" "即死連続を検知しquarantine開始 (verdict=${_id_verdict})" "warn" >/dev/null 2>&1 || true
+				fi
+				;;
+			clear)
+				log "[INSTADEATH] QUARANTINE CLEAR hash=${strategy_hash}"
+				if [ -x ./overlay_notify.sh ]; then
+					timeout 3 ./overlay_notify.sh worker "配信ハーネス復旧" "quarantine解除" "info" >/dev/null 2>&1 || true
+				fi
+				;;
+			esac
+		else
+			local _id_state=""
+			_id_state=$(_instadeath_read_state "$score")
+			IFS='|' read -r _id_dead _id_divert <<<"$_id_state"
+		fi
+	fi
+
 	local rolling_result="" rolling_err=""
 	rolling_err="${TMP_STATE_DIR:-tmp/state}/rolling_scores_update.err"
 	rolling_result=$(
+		INSTADEATH_SPLIT_ENABLED="${INSTADEATH_SPLIT_ENABLED:-0}" \
+		ID_DEAD="$_id_dead" ID_DIVERT="$_id_divert" ID_RAW="$_id_raw" ID_TURNS="$_id_turns" \
 		python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" "${ROLLING_SCORE_KEEP:-20}" "${HOT_STREAK_ROLLING_KEEP:-200}" "${HOT_STREAK_EXTEND_ENABLED:-1}" 2>"$rolling_err" <<'PY'
 import json
 import os
 import sys
+import time
+
+# Phase 1 (soren-stat-gate-design.md B): all values env-only, argv unchanged
+# from before Phase 1 existed -- this is what guarantees INSTADEATH_SPLIT_
+# ENABLED=0 is bit-for-bit identical to the pre-Phase-1 behavior.
+_ID_ON = os.environ.get("INSTADEATH_SPLIT_ENABLED") == "1"
+_ID_DEAD = os.environ.get("ID_DEAD") == "1"
+_ID_DIV = _ID_ON and os.environ.get("ID_DIVERT") == "1"
+
+
+def _optint(name):
+    v = (os.environ.get(name) or "").strip()
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+def _prog_or_pad(entry, key, scores_len):
+    p = entry.get(key)
+    if isinstance(p, list) and len(p) == scores_len:
+        return list(p)
+    return [None] * scores_len
+
 
 rs_file, h, score, archive_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 try:
@@ -2997,10 +3165,11 @@ def nation_progress(path):
 
 prev_scores = [int(x) for x in rs[h].get("scores", [])]
 prev_best = max(prev_scores) if prev_scores else None
-rs[h]["scores"].append(score)
-rs[h]["games_total"] += 1
 keep = hot_keep if hot_enabled and prev_best is not None and score > prev_best else normal_keep
-rs[h]["scores"] = rs[h]["scores"][-keep:]
+if not _ID_DIV:
+    rs[h]["scores"].append(score)
+    rs[h]["scores"] = rs[h]["scores"][-keep:]
+rs[h]["games_total"] += 1
 if archive_file:
     recent_archives.append(archive_file)
     recent_archives = recent_archives[-25:]
@@ -3021,6 +3190,53 @@ rs[h]["frontier_hints"] = [item[3] for item in known_progress]
 rs[h]["peak_high_type_counts"] = [item[4] for item in known_progress]
 rs[h]["deadline_guard_counts"] = [item[5] for item in known_progress]
 rs[h]["deadline_guard_reason_tops"] = [item[6] for item in known_progress]
+
+# Phase 1 (soren-stat-gate-design.md B, C-1(a)): a `progress` record per
+# game, parallel to `scores`/`quarantined_scores`, len-invariant with its
+# sibling array at all times. Deliberately does NOT touch max_types/
+# best_max_type/russia_count/soviet_count/frontier_hints/etc above -- those
+# feed anchor selection and objective gates directly, so changing their
+# derivation is a separate, carefully-reviewed change, not Phase 1's
+# "observation only" scope (2026-08-20 Phase 1 review, section 1-1).
+# Python-local name `prog_records`/`qprog_records` deliberately does not
+# reuse `progress` (the nation_progress()-tuple list above) to avoid a
+# silent variable-shadowing bug.
+if _ID_ON:
+    if archive_file and progress_archives and progress_archives[-1] == archive_file:
+        _this = progress[-1]
+    else:
+        _this = nation_progress(archive_file)
+    _now_ts = int(time.time())
+    _new_record = {
+        "s": score, "raw": _optint("ID_RAW"), "turns": _optint("ID_TURNS"),
+        "d": 1 if _ID_DEAD else 0, "ts": _now_ts,
+        "t": (_this[0] or None), "r": 1 if _this[1] else 0, "v": 1 if _this[2] else 0,
+    }
+    if _ID_DIV:
+        prev_qscores = [int(x) for x in (rs[h].get("quarantined_scores") or [])]
+        qprog_records = _prog_or_pad(rs[h], "quarantined_progress", len(prev_qscores))
+        prev_qscores.append(score)
+        qprog_records.append(_new_record)
+        rs[h]["quarantined_scores"] = prev_qscores[-keep:]
+        rs[h]["quarantined_progress"] = qprog_records[-keep:]
+        if len(rs[h]["quarantined_progress"]) != len(rs[h]["quarantined_scores"]):
+            rs[h]["quarantined_progress"] = [None] * len(rs[h]["quarantined_scores"])
+        meta = rs[h].get("quarantine_meta") or {}
+        meta["first_ts"] = meta.get("first_ts") or _now_ts
+        meta["last_ts"] = _now_ts
+        meta["count"] = int(meta.get("count", 0) or 0) + 1
+        rs[h]["quarantine_meta"] = meta
+    else:
+        prog_records = _prog_or_pad(rs[h], "progress", len(prev_scores))
+        prog_records.append(_new_record)
+        prog_records = prog_records[-keep:]
+        rs[h]["progress"] = prog_records
+        expected_len = len(rs[h]["scores"])
+        if len(rs[h]["progress"]) != expected_len:
+            rs[h]["progress"] = [None] * expected_len
+            sys.stderr.write(
+                "[INSTADEATH] progress realign: hash=%s expected=%d got=%d\n"
+                % (h, expected_len, len(prog_records)))
 
 with open(rs_file, "w") as f:
     json.dump(rs, f)
