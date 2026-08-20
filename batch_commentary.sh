@@ -186,10 +186,29 @@ _batch_commentary_valid() {
   return 0
 }
 
+# 一部のモデルは本文の前に「解説文を作成します」のような作業メモを
+# 1行だけ出す。共通ガードはそのような前置きを全体拒否する設計なので、
+# バッチ解説では明確な前置き行だけを取り除き、本文の安全検証を維持する。
+_batch_commentary_strip_work_note() {
+  python3 -c '
+import re
+import sys
+
+lines = sys.stdin.read().replace("\\r", "").splitlines()
+while len(lines) > 1 and lines and re.search(
+    r"^(?:解説文|以下|ここでは).*(?:作成|確認|まとめ|紹介)(?:します|しました|します。)?[。.!！]?$",
+    lines[0].strip(),
+    re.IGNORECASE,
+):
+    lines.pop(0)
+print("\\n".join(lines).strip(), end="")
+'
+}
+
 [ -n "$AGENTS" ] || { _log "AI agents unavailable: batch=$batch_id"; exit 1; }
 _log "AI commentary generation: batch=$batch_id games=$count agents=$AGENTS"
 raw_text=$(ai_generate_list "RADIO:batch_commentary" "$prompt_file" "$AGENTS" "$TIMEOUT_SEC" "_batch_commentary_valid" 2>/dev/null || true)
-text=$(printf '%s' "$raw_text" | _ai_guard_model_output 2>/dev/null || true)
+text=$(printf '%s' "$raw_text" | _batch_commentary_strip_work_note | _ai_guard_model_output 2>/dev/null || true)
 text=$(printf '%s' "$text" | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//')
 
 if ! _batch_commentary_valid "$text"; then
