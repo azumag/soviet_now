@@ -306,11 +306,16 @@ PY
     def test_analyze_phase_uses_shorter_timeout_than_implementation(self):
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
         self.assertIn(
-            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-900}"', eloop
+            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-1100}"', eloop
         )
+        # Stage1 の primary リトライは 2 回に限定され (wall 予算保護)、Stage2 前に戻る
+        self.assertIn(
+            'RUN_AI_PRIMARY_RETRIES="${IMPROVE_ANALYZE_PRIMARY_RETRIES:-2}"', eloop
+        )
+        self.assertIn("_analyze_prev_primary_retries", eloop)
         stage1_pos = eloop.index("Stage 1: 分析フェーズ")
         analyze_timeout_pos = eloop.index(
-            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-900}"'
+            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-1100}"'
         )
         restore_pos = eloop.index(
             'RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"\n\t\texport RUN_CMD_TIMEOUT_SEC',
@@ -504,6 +509,9 @@ codex() {
 }
 AI_STATS_DIR="$test_root/stats"
 LITELLM_HEALTH_URL=http://127.0.0.1:4100/health/liveliness
+# VM では /snap/bin/opencode の実バイナリ解決が優先され関数スタブが効かないため、
+# CODEX_BIN と同じ規約の上書きでスタブへ向ける。
+OPENCODE_BIN=opencode
 RUN_CMD_LOG_FILE="$test_root/run.log"
 OPENCODE_RUN_LOCK_ENABLED=0
 run_cmd opencode-go:muse-spark-1.2-contributor 'muse prompt'

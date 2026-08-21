@@ -3356,8 +3356,14 @@ EOF
 	# wall timeout (IMPROVE_WALL_TIMEOUT) を Stage2 実装に残す。
 	# 実測: 分析が遅い候補が1800s上限まで食い、ai_retry1 中に wall timeout 死亡する例が
 	# 複数回観測された (2026-08-22 elapsed=3704s phase=ai_retry1)。
-	RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-900}"
+	# 実測 (2026-08-22, ai_stats n=10): 分析成功は 48-1298s で 900s 超えが 30%。
+	# 900s では成功裾を切断するため 1100s へ引き上げ (成功の90%をカバー)、
+	# 一方で primary リトライを2回に限定し worst 2200s に抑えて Stage2 予算を守る。
+	RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-1100}"
 	export RUN_CMD_TIMEOUT_SEC
+	_analyze_prev_primary_retries="${RUN_AI_PRIMARY_RETRIES-}"
+	RUN_AI_PRIMARY_RETRIES="${IMPROVE_ANALYZE_PRIMARY_RETRIES:-2}"
+	export RUN_AI_PRIMARY_RETRIES
 	analysis_ok=false
 	IMPROVE_FAILURE_CODE=""
 	USER_REVIEW_FILE="data/user_review.md"
@@ -3395,6 +3401,14 @@ EOF
 		log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
 		_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
 	done
+
+	# 分析用に絞った primary リトライ数を既定へ戻す (Stage2 以降へ漏出させない)
+	if [ -n "${_analyze_prev_primary_retries:-}" ]; then
+		RUN_AI_PRIMARY_RETRIES="$_analyze_prev_primary_retries"
+	else
+		unset RUN_AI_PRIMARY_RETRIES
+	fi
+	export RUN_AI_PRIMARY_RETRIES
 
 	if [ "$analysis_ok" != true ]; then
 		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"

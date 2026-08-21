@@ -456,8 +456,12 @@ run_cmd() {
 	local codex_out_file=""
 	local cmd_pid
 	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
-		local opencode_bin="/snap/bin/opencode"
-		[ -x "$opencode_bin" ] || opencode_bin="opencode"
+		# テストから関数スタブで差し替えられるよう上書きを許す (CODEX_BIN と同じ規約)。
+		local opencode_bin="${OPENCODE_BIN:-}"
+		if [ -z "$opencode_bin" ]; then
+			opencode_bin="/snap/bin/opencode"
+			[ -x "$opencode_bin" ] || opencode_bin="opencode"
+		fi
 		# Keep the prompt out of argv.  Review prompts include several large reference
 		# files and can exceed ARG_MAX when passed as one positional argument.
 		# In headless mode opencode reads stdin when no message positional is given.
