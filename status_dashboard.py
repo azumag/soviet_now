@@ -1870,7 +1870,7 @@ def _bucket_score_window(scores, bucket_count):
     return values
 
 
-def _draw_timeline_segment(grid, x0, y0, x1, y1):
+def _draw_timeline_segment(grid, x0, y0, x1, y1, color=None, color_grid=None):
     """Draw one plain-text line segment into a small chart grid."""
     steps = max(abs(x1 - x0), abs(y1 - y0), 1)
     if y1 == y0:
@@ -1893,13 +1893,48 @@ def _draw_timeline_segment(grid, x0, y0, x1, y1):
         existing = grid[y][x]
         if existing != "*":
             grid[y][x] = segment_char
+            if color_grid is not None:
+                color_grid[y][x] = color
+
+
+def _colorize_plot_row(chars, colors):
+    """Wrap plot cells in per-run ANSI colors; visible text stays identical."""
+    out = []
+    buf = []
+    current = None
+
+    def flush():
+        nonlocal buf
+        if buf:
+            if current:
+                out.append(current + "".join(buf) + RST)
+            else:
+                out.append("".join(buf))
+            buf = []
+
+    for ch, col in zip(chars, colors):
+        if ch == " ":
+            flush()
+            current = None
+            buf.append(" ")
+            continue
+        if col != current:
+            flush()
+            current = col
+        buf.append(ch)
+    flush()
+    return "".join(out)
 
 
 def _render_timeline_grid(samples, width, height, lo, hi):
-    """Render ordered samples as a readable text polyline."""
+    """Render ordered samples as a readable polyline colored by score value."""
     grid = [[" "] * width for _ in range(height)]
+    color_grid = [[None] * width for _ in range(height)]
     if not samples or width <= 0 or height <= 0:
-        return [" " * max(width, 0) for _ in range(max(height, 0))]
+        return (
+            [" " * max(width, 0) for _ in range(max(height, 0))],
+            [[None] * max(width, 0) for _ in range(max(height, 0))],
+        )
 
     score_range = max(hi - lo, 1)
     points = []
@@ -1909,15 +1944,18 @@ def _render_timeline_grid(samples, width, height, lo, hi):
         y = height - 1 - round(normalized * (height - 1))
         points.append((x, y))
 
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
-        _draw_timeline_segment(grid, x0, y0, x1, y1)
+    for index, ((x0, y0), (x1, y1)) in enumerate(zip(points, points[1:])):
+        seg_val = (samples[index] + samples[index + 1]) / 2
+        seg_color = gradient_color(seg_val, lo, hi)
+        _draw_timeline_segment(grid, x0, y0, x1, y1, seg_color, color_grid)
     marker_step = max(len(points) // 8, 1)
     for index, (x, y) in enumerate(points):
         if index % marker_step != 0 and index not in (0, len(points) - 1):
             continue
         if 0 <= y < height and 0 <= x < width:
             grid[y][x] = "*"
-    return ["".join(row) for row in grid]
+            color_grid[y][x] = gradient_color(samples[index], lo, hi)
+    return ["".join(row) for row in grid], color_grid
 
 
 def render_score_timeline(scores, chart_w=42, chart_h=7):
@@ -1941,17 +1979,17 @@ def render_score_timeline(scores, chart_w=42, chart_h=7):
     lo = min(window)
     hi = max(window)
     samples = _bucket_score_window(window, width)
-    plot = _render_timeline_grid(samples, width, height, lo, hi)
+    plot, color_rows = _render_timeline_grid(samples, width, height, lo, hi)
     n = len(window)
     lines = [f"{heading} {DIM}(last {n} games; old -> now){RST}"]
-    for row, plot_row in enumerate(plot):
+    for row, (plot_row, color_row) in enumerate(zip(plot, color_rows)):
         if row == 0:
             label = f"{hi:>{label_w}}"
         elif row == height - 1:
             label = f"{lo:>{label_w}}"
         else:
             label = " " * label_w
-        lines.append(f"{C_GREY}{label}{RST}{sep}{C_CYAN}{plot_row}{RST}")
+        lines.append(f"{C_GREY}{label}{RST}{sep}{_colorize_plot_row(plot_row, color_row)}")
     lines.append(f"{'':>{label_w}}└{C_CYAN}{'-' * max(width - 1, 0)}>{RST}")
     if width >= 6:
         timeline_labels = "old" + (" " * (width - 6)) + "now"
@@ -2061,6 +2099,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             e["display_rank"] = idx
 
     max_comp = max(e["comp"] for e in entries) if entries else 1
+    min_comp = min(e["comp"] for e in entries) if entries else 0
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
@@ -2071,7 +2110,14 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
 
     def render_entry(e, is_current=False, rank_override=None):
         is_rollback = e["hash"] in rollback_candidates
-        color = C_GREEN if is_current else (C_YELLOW if is_rollback else C_BLUE)
+        if is_current:
+            color = C_GREEN
+        elif is_rollback:
+            color = C_YELLOW
+        else:
+            # 中立行は comp 値を赤→緑のグラデーションで塗り、
+            # ランキング内での相対位置を色でも読めるようにする。
+            color = gradient_color(e["comp"], min_comp, max_comp)
         marker = "►" if is_current else " "
         bar = block_bar(e["comp"], max_comp, bar_w, color)
         n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"

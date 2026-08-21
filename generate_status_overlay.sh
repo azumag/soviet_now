@@ -79,6 +79,7 @@ palette = {
     "38;5;214": "color:#f59e0b",
     "38;5;220": "color:#facc15",
     "38;5;226": "color:#fde047",
+    "38;5;190": "color:#bef264",
     "38;5;245": "color:#94a3b8",
     "38;5;255": "color:#f8fafc",
 }
