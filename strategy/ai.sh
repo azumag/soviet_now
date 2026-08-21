@@ -615,7 +615,15 @@ run_cmd() {
 		fi
 	fi
 	if [ "$stats_recorded" -eq 1 ]; then
-		if [ "$ret" -eq 0 ]; then
+		# expect watchdog が結果ファイル書き込み完了後に意図的に provider を
+		# SIGTERM した case は rc=143 になるが、呼び出し元は expect_check で
+		# 成功扱いにする。stats だけが fail 記録になっていたため、同一ランの
+		# ログに完了マーカーがある場合は ok として記録する。
+		local _expect_completed=0
+		if [ -n "$cmd_log_file" ] && tail -40 "$cmd_log_file" 2>/dev/null | grep -q 'stopping provider after completed write'; then
+			_expect_completed=1
+		fi
+		if [ "$ret" -eq 0 ] || [ "$_expect_completed" -eq 1 ]; then
 			_ai_stats_record "ok" "$cmd_log_tag" "$spec" "$ret" "$resolved_model"
 		else
 			_ai_stats_record "fail" "$cmd_log_tag" "$spec" "$ret" "$resolved_model"
