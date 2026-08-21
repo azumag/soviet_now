@@ -1723,6 +1723,10 @@ _run_opencode_jiji_research() {
 
 start_radio_corner_jiji() {
 	local game_num="$1" score="$2"
+	# JIJIは調査AI呼出が _radio_generate_and_play より先行するため、ここでも
+	# 生成開始時刻を記録する (改善ジョブ開始前の生成はキャンセル対象にしない)。
+	export RADIO_GEN_STARTED_AT
+	RADIO_GEN_STARTED_AT="$(date +%s)"
 	_radio_time_context
 	local past_topics
 	past_topics=$(_radio_past_topics_block)

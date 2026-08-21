@@ -5,9 +5,11 @@
 _radio_opencode_should_defer_for_improve() {
 	[ "${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}" = "1" ] || return 1
 	local _state_dir="${TMP_STATE_DIR:-tmp/state}"
-	if [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] ||
-		[ -f "$_state_dir/rate_limit_backoff" ] ||
-		grep -q '"status"[[:space:]]*:[[:space:]]*"running"' "$_state_dir/improve_state.json" 2>/dev/null; then
+	# 改善ジョブとの同時実行制御は _ai_generation_queue_run 側のレーンゲート
+	# (_ai_radio_improve_gate) へ移行済み。improve.lock はゲーム履歴のデータ
+	# ファイルで常時存在するためここでは見ない。rate_limit_backoff 中の
+	# 即時失敗だけ残す。
+	if [ -f "$_state_dir/rate_limit_backoff" ]; then
 		return 0
 	fi
 	return 1
@@ -42,7 +44,7 @@ _run_opencode_radio_unqueued() {
 		;;
 	esac
 	if _radio_opencode_should_defer_for_improve; then
-		log "[RADIO] opencode deferred after slot acquire during improve/backoff (agent=$agent)" >&2
+		log "[RADIO] opencode deferred during rate_limit_backoff (agent=$agent)" >&2
 		return 1
 	fi
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
@@ -85,7 +87,7 @@ _run_opencode_radio() {
 		;;
 	esac
 	if _radio_opencode_should_defer_for_improve; then
-		log "[RADIO] opencode deferred during improve/backoff (agent=$agent)" >&2
+		log "[RADIO] opencode deferred during rate_limit_backoff (agent=$agent)" >&2
 		return 1
 	fi
 	local resolved_model="$agent"
@@ -1287,6 +1289,11 @@ _radio_generate_and_play() {
 	done
 
 	# 同一 game_num + corner の二重生成/二重再生を防止
+	# 改善ジョブとの同時実行制御用に、このコーナーの生成開始時刻を記録する。
+	# 改善開始より前に生成を始めたコーナーはキャンセルせず完走させる
+	# (_ai_radio_improve_gate が RADIO_GEN_STARTED_AT を参照)。
+	export RADIO_GEN_STARTED_AT
+	RADIO_GEN_STARTED_AT="$(date +%s)"
 	local marker_game_num=""
 	case "$game_num" in
 	'' | *[!0-9]* | 0) marker_game_num="" ;;

@@ -57,6 +57,26 @@ _ai_model_is_local() {
 
 _ai_queue_lock_scope() {
 	local label="${1:-AI}" rest scope
+	# レーン制御: 放送系 (RADIO/NEWS/JIJI/CELEBRATION) はモデル・provider差に関わらず
+	# 単一の "radio" ロックへ畳んで直列化する。モデル別に並行すると放送系が
+	# 複数同時に走るため (2026-08-21 実測: prepass 2重起動)。AI_RADIO_LANE_LOCK=0
+	# で従来のモデル別スコープへ戻せる。
+	case "$label" in
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		if [ "${AI_RADIO_LANE_LOCK:-1}" = "1" ]; then
+			printf '%s' "radio"
+			return 0
+		fi
+		;;
+	COMMENT*)
+		# コメント返しもレーン化して直列化する (同一モデル内は元々 _opencode_run_lock
+		# 等で直列だが、モデルが違うと並行し得た)。
+		if [ "${AI_COMMENT_LANE_LOCK:-1}" = "1" ]; then
+			printf '%s' "comment"
+			return 0
+		fi
+		;;
+	esac
 	case "$label" in
 	*:local:*) printf '%s' "local"; return 0 ;;
 	*:remote:*)
@@ -67,6 +87,50 @@ _ai_queue_lock_scope() {
 		;;
 	esac
 	printf '%s' "$(_ai_lock_sanitize_key "$label")"
+}
+
+# 改善ジョブ (eloop_improve runtime) が現在稼働中かどうか。
+# improve_state.json の status=="running" と PID 生存を両方見る。
+# improve.lock はデータファイル (ゲーム履歴) で常時存在するため信号に使えない。
+_improve_job_active() {
+	local state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/improve_state.json}"
+	[ -f "$state_file" ] || return 1
+	local probe
+	probe=$(python3 - "$state_file" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+except Exception:
+    print("inactive"); raise SystemExit
+if str(d.get("status", "")) != "running":
+    print("inactive"); raise SystemExit
+try:
+    pid = int(d.get("pid") or 0)
+except Exception:
+    pid = 0
+started = d.get("started_at") or 0
+try:
+    started = int(started)
+except Exception:
+    started = 0
+import os, time
+alive = False
+if pid > 0:
+    try:
+        os.kill(pid, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    except PermissionError:
+        alive = True
+stale = 7200
+if started > 0 and (time.time() - started) > stale:
+    alive = False
+print("active" if alive else "inactive")
+PY
+) 
+	[ "$probe" = "active" ]
 }
 
 _ai_generation_queue_lock_dir() {
@@ -157,6 +221,47 @@ _ai_generation_queue_leave() {
 	fi
 }
 
+# 改善ジョブ稼働中、新規の放送系AI生成を待機させるゲート。
+# - RADIO_GEN_STARTED_AT (コーナー生成開始時刻) が改善ジョブの started_at より前なら
+#   待たせない (= 生成開始済みの放送はキャンセルせず完走させる)。
+# - 待機は AI_RADIO_IMPROVE_WAIT_MAX_SEC で打ち切り、超過時は rc=1 (この生成だけ諦める)。
+# - 読み上げ・TTS はここを通らないため影響を受けない。
+_ai_radio_improve_gate() {
+	local label="${1:-RADIO}"
+	[ "${AI_RADIO_IMPROVE_GATE:-1}" = "1" ] || return 0
+	_improve_job_active || return 0
+	local state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/improve_state.json}"
+	local improve_started gen_started waited=0
+	improve_started=$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1])).get("started_at") or 0))' "$state_file" 2>/dev/null || echo 0)
+	gen_started="${RADIO_GEN_STARTED_AT:-}"
+	case "$gen_started" in '' | *[!0-9]*) gen_started="" ;;
+	esac
+	if [ -n "$gen_started" ] && [ "$improve_started" -gt 0 ] && [ "$gen_started" -lt "$improve_started" ]; then
+		log "[AIQ:${label}] improve active but this generation started earlier -> proceed without cancel" >&2
+		return 0
+	fi
+	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
+	local max_wait="${AI_RADIO_IMPROVE_WAIT_MAX_SEC:-1200}"
+	case "$wait_sec" in '' | *[!0-9]*) wait_sec=2 ;;
+	esac
+	case "$max_wait" in '' | *[!0-9]*) max_wait=1200 ;;
+	esac
+	log "[AIQ:${label}] improve cycle active -> radio generation waits (max=${max_wait}s)" >&2
+	while _improve_job_active; do
+		if [ "$waited" -ge "$max_wait" ]; then
+			log "[AIQ:${label}] improve still active after ${waited}s -> give up this generation" >&2
+			return 1
+		fi
+		sleep "$wait_sec"
+		waited=$((waited + wait_sec))
+		if [ $((waited % 30)) -lt "$wait_sec" ]; then
+			log "[AIQ:${label}] improve active -> still waiting (${waited}s/${max_wait}s)" >&2
+		fi
+	done
+	log "[AIQ:${label}] improve finished -> proceed after ${waited}s wait" >&2
+	return 0
+}
+
 _ai_generation_queue_run() {
 	local label="${1:-AI}"
 	shift
@@ -166,7 +271,11 @@ _ai_generation_queue_run() {
 		return $?
 	fi
 	case "$label" in
-	RADIO* | NEWS* | JIJI* | CELEBRATION*) ;;
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		# 改善中は新規放送生成を待機 (開始済み生成はキャンセルしない)
+		_ai_radio_improve_gate "$label" || return 1
+		;;
+	COMMENT*) ;;
 	*)
 		"$@"
 		return $?
