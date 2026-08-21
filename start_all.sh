@@ -97,8 +97,8 @@ obs)
 	WORKER_CMDS+=("./obs_capture_watchdog.sh")
 	;;
 ffmpeg)
-	WORKER_NAMES+=("direct_stream")
-	WORKER_CMDS+=("./direct_stream.sh run")
+	WORKER_NAMES+=("direct_stream" "stream_noon_audit")
+	WORKER_CMDS+=("./direct_stream.sh run" "./workers/stream_noon_audit.sh")
 	;;
 *)
 	echo "SOREN_STREAM_BACKEND must be obs or ffmpeg" >&2
@@ -217,6 +217,7 @@ _pidfile_for_worker() {
 	status_overlay_watch) echo "tmp/state/status_overlay_watch.pid" ;;
 	show_status_overlay_watch) echo "tmp/state/show_status_overlay_watch.pid" ;;
 	direct_stream) echo "tmp/state/direct_stream.pid" ;;
+	stream_noon_audit) echo "tmp/state/stream_noon_audit.pid" ;;
 	*) echo "" ;;
 	esac
 }
@@ -236,6 +237,7 @@ _pattern_for_worker() {
 	status_overlay_watch) echo '[/ ]generate_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	show_status_overlay_watch) echo '[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	direct_stream) echo '[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
+	stream_noon_audit) echo '[/ ]workers/stream_noon_audit[.]sh([[:space:]]|$)' ;;
 	*) echo "" ;;
 	esac
 }
@@ -416,6 +418,7 @@ patterns = {
     "status_overlay_watch": r"[/ ]generate_status_overlay[.]sh[ \t]+watch([ \t]|$)",
     "show_status_overlay_watch": r"[/ ]generate_show_status_overlay[.]sh[ \t]+watch([ \t]|$)",
     "direct_stream": r"[/ ]lib/direct_stream[.]py[ \t]+run([ \t]|$)",
+    "stream_noon_audit": r"[/ ]workers/stream_noon_audit[.]sh([ \t]|$)",
 }
 
 try:
@@ -563,6 +566,12 @@ _start_worker() {
 		return 0
 	fi
 	if [ "$name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+		_log "スキップ: ${name} disabled"
+		WORKER_PIDS[$idx]=""
+		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
+	if [ "$name" = "stream_noon_audit" ] && [ "${STREAM_NOON_AUDIT_ENABLED:-1}" != "1" ]; then
 		_log "スキップ: ${name} disabled"
 		WORKER_PIDS[$idx]=""
 		WORKER_LAST_START[$idx]=$(date +%s)
@@ -717,6 +726,9 @@ while true; do
 			continue
 		fi
 		if [ "$_w_name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+			continue
+		fi
+		if [ "$_w_name" = "stream_noon_audit" ] && [ "${STREAM_NOON_AUDIT_ENABLED:-1}" != "1" ]; then
 			continue
 		fi
 		if [ "$_w_name" = "soren_loop" ] && [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then
