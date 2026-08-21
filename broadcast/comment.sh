@@ -522,6 +522,11 @@ for i, (user, msg, raw) in enumerate(items, start=1):
 
 _remember_comment_reply_text() {
 	local remembered_text="$1"
+	local remember_mode="${2:-}"
+	case "$remember_mode" in
+	soren91) ;;
+	*) remember_mode="main" ;;
+	esac
 	[ -n "$remembered_text" ] || return 0
 	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
 	local history_file prune_from old_files text_hash hash_file
@@ -530,7 +535,7 @@ _remember_comment_reply_text() {
 	if [ -n "$text_hash" ] && grep -qF "$text_hash" "$hash_file" 2>/dev/null; then
 		return 0
 	fi
-	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}.txt"
+	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}_${remember_mode}.txt"
 	printf '%s\n' "$remembered_text" >"$history_file" 2>/dev/null || return 0
 	if [ -n "$text_hash" ]; then
 		printf '%s\n' "$text_hash" >>"$hash_file" 2>/dev/null || true
@@ -547,10 +552,21 @@ _remember_comment_reply_text() {
 _remember_spoken_comment() {
 	local spoken_file="$1"
 	[ -s "$spoken_file" ] || return 0
+	local spoken_mode=""
+	if command -v _broadcast_read_expected_mode >/dev/null 2>&1; then
+		spoken_mode=$(_broadcast_read_expected_mode "$spoken_file" 2>/dev/null || true)
+	fi
+	if [ -z "$spoken_mode" ] && command -v _broadcast_host_mode >/dev/null 2>&1; then
+		spoken_mode=$(_broadcast_host_mode 2>/dev/null || true)
+	fi
+	case "$spoken_mode" in
+	soren91) ;;
+	*) spoken_mode="main" ;;
+	esac
 	local remembered_text
 	remembered_text=$(cat "$spoken_file" 2>/dev/null | _clean_comment_talk | _sanitize_onair_text)
 	[ -n "$remembered_text" ] || return 0
-	_remember_comment_reply_text "$remembered_text"
+	_remember_comment_reply_text "$remembered_text" "$spoken_mode"
 }
 
 _current_playing_comment_file() {
@@ -570,10 +586,44 @@ _current_playing_comment_file() {
 	return 1
 }
 
+_spoken_history_mode_arg() {
+	local spoken_mode="${1:-}"
+	case "$spoken_mode" in
+	soren91) printf '%s' "soren91" ;;
+	*) printf '%s' "main" ;;
+	esac
+}
+
+_current_playing_file_matches_mode() {
+	local current_file="$1" ctx_mode="$2"
+	[ -n "$current_file" ] || return 1
+	local current_mode="" sidecar=""
+	if command -v _broadcast_read_expected_mode >/dev/null 2>&1; then
+		current_mode=$(_broadcast_read_expected_mode "$current_file" 2>/dev/null || true)
+	fi
+	if [ -z "$current_mode" ]; then
+		case "$current_file" in
+		*.playing) sidecar="${current_file%.playing}.mode" ;;
+		*.txt)     sidecar="${current_file%.txt}.mode" ;;
+		esac
+		if [ -n "$sidecar" ] && [ -f "$sidecar" ]; then
+			current_mode=$(cat "$sidecar" 2>/dev/null)
+		fi
+	fi
+	[ -n "$current_mode" ] || current_mode="main"
+	[ "$current_mode" = "$ctx_mode" ]
+}
+
 _build_recent_spoken_comment_context() {
+	local ctx_mode=""
+	ctx_mode=$(_spoken_history_mode_arg "${1:-}")
 	local current_file=""
 	current_file=$(_current_playing_comment_file || true)
-	python3 - "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$COMMENT_SPOKEN_PROMPT_MAX_CHARS" "$COMMENT_SPOKEN_ITEM_MAX_CHARS" "$current_file" <<'PY'
+	local include_current=0
+	if _current_playing_file_matches_mode "$current_file" "$ctx_mode"; then
+		include_current=1
+	fi
+	python3 - "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$COMMENT_SPOKEN_PROMPT_MAX_CHARS" "$COMMENT_SPOKEN_ITEM_MAX_CHARS" "$current_file" "$ctx_mode" "$include_current" <<'PY'
 import glob
 import os
 import re
@@ -585,6 +635,19 @@ history_limit = max(0, int(sys.argv[2]))
 total_limit = max(200, int(sys.argv[3]))
 item_limit = max(80, int(sys.argv[4]))
 current_file = sys.argv[5] if len(sys.argv) > 5 else ""
+ctx_mode = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] in ("main", "soren91") else "main"
+include_current = len(sys.argv) > 7 and sys.argv[7] == "1"
+
+main_suffix = "_main.txt"
+soren91_suffix = "_soren91.txt"
+mode_suffix = f"_{ctx_mode}.txt"
+
+
+def matches_mode(path: str) -> bool:
+    name = os.path.basename(path)
+    if name.endswith(main_suffix) or name.endswith(soren91_suffix):
+        return name.endswith(mode_suffix)
+    return ctx_mode == "main"
 
 
 def collapse(text: str) -> str:
@@ -621,11 +684,13 @@ def excerpt(path: str) -> str:
 
 entries = []
 seen = set()
-if current_file and os.path.isfile(current_file):
+if include_current and current_file and os.path.isfile(current_file):
     entries.append(("再生中", os.path.getmtime(current_file), current_file))
     seen.add(os.path.realpath(current_file))
 
-history_files = sorted(glob.glob(os.path.join(history_dir, "*.txt")))
+history_files = sorted(
+    p for p in glob.glob(os.path.join(history_dir, "*.txt")) if matches_mode(p)
+)
 if history_limit > 0:
     history_files = history_files[-history_limit:]
 for path in reversed(history_files):
@@ -656,15 +721,35 @@ PY
 
 _build_comment_followup_hints() {
 	local batch_file="$1"
+	local ctx_mode=""
+	ctx_mode=$(_spoken_history_mode_arg "${2:-}")
 	local current_file=""
 	current_file=$(_current_playing_comment_file || true)
-	python3 - "$batch_file" "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$current_file" <<'PY'
+	local include_current=0
+	if _current_playing_file_matches_mode "$current_file" "$ctx_mode"; then
+		include_current=1
+	fi
+	python3 - "$batch_file" "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$current_file" "$ctx_mode" "$include_current" <<'PY'
 import glob
 import os
 import re
 import sys
 
 batch_file, history_dir, history_limit, current_file = sys.argv[1:5]
+ctx_mode = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] in ("main", "soren91") else "main"
+include_current = len(sys.argv) > 6 and sys.argv[6] == "1"
+
+main_suffix = "_main.txt"
+soren91_suffix = "_soren91.txt"
+mode_suffix = f"_{ctx_mode}.txt"
+
+
+def matches_mode(path: str) -> bool:
+    name = os.path.basename(path)
+    if name.endswith(main_suffix) or name.endswith(soren91_suffix):
+        return name.endswith(mode_suffix)
+    return ctx_mode == "main"
+
 try:
     history_limit = int(history_limit)
 except Exception:
@@ -752,13 +837,15 @@ def extract_terms(text: str):
 
 recent_texts = []
 seen_paths = set()
-if current_file and os.path.isfile(current_file):
+if include_current and current_file and os.path.isfile(current_file):
     seen_paths.add(os.path.realpath(current_file))
     text = sanitize_text(current_file)
     if text:
         recent_texts.append(text)
 
-history_files = sorted(glob.glob(os.path.join(history_dir, "*.txt")))
+history_files = sorted(
+    p for p in glob.glob(os.path.join(history_dir, "*.txt")) if matches_mode(p)
+)
 if history_limit > 0:
     history_files = history_files[-history_limit:]
 for path in reversed(history_files):
@@ -2581,9 +2668,11 @@ generate_comment_response() {
 	local comment_batch_context=""
 	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context | _sanitize_comment_prompt_context)
 	local recent_spoken_comment_context=""
-	recent_spoken_comment_context=$(_build_recent_spoken_comment_context | _sanitize_comment_prompt_context)
+	local _spoken_ctx_mode=""
+	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	recent_spoken_comment_context=$(_build_recent_spoken_comment_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_followup_hints=""
-	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" | _sanitize_comment_prompt_context)
+	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_mode_for_advice=""
 	comment_mode_for_advice=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	local structured_advice_candidates=""
@@ -3077,7 +3166,7 @@ RETRYCOMMENT
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$attempt_talk" >"$queue_file"
-			_remember_comment_reply_text "$attempt_talk"
+			_remember_comment_reply_text "$attempt_talk" "$_comment_mode_generated"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
 			if ! _comment_store_generation_meta \
 				"$queue_file" \
