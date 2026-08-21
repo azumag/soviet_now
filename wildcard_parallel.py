@@ -1889,6 +1889,7 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path, pr
         "extract_decide_hash.py",
         "strategy_runner.py",
         "soviet_local.mjs",
+        "external_game_audio.mjs",
         "package.json",
         "package-lock.json",
     ]:
@@ -1905,6 +1906,14 @@ def prepare_candidate_dir(base_dir: Path, job_id: str, strategy_source: Path, pr
     else:
         (workdir / "strategy_helpers").mkdir(exist_ok=True)
         (workdir / "strategy_helpers" / "__init__.py").touch()
+    # lib/*.mjs と browser_frame_limiter.mjs は soviet_local.mjs が実行時に import するため必須
+    for rel in ["lib", "browser_frame_limiter.mjs"]:
+        src = REPO_ROOT / rel
+        if src.exists():
+            if src.is_dir():
+                shutil.copytree(src, workdir / rel, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, workdir / rel)
     strategy_dst = workdir / "strategy.py"
     if strategy_source.resolve() != strategy_dst.resolve():
         shutil.copy2(strategy_source, strategy_dst)
