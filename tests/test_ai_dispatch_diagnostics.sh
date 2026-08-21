@@ -46,6 +46,13 @@ deepseek_error='Error: {
 check '_contains_provider_error_text "$deepseek_error"' 'UnknownError JSON が provider error 判定に一致する'
 check '! _contains_provider_error_text "こんにちは、今日もいい天気ですね。"' '通常文は provider error 判定に一致しない'
 
+# 長文stderrは先頭(バナー)と末尾(エラー本体)を両方残す
+long_banner="Reading additional input from stdin... OpenAI Codex v0.147.0 -------- workdir: /home/ubuntu/soren model: amd-token-factory-deepseek-v4-flash provider: soren-litellm session id: 01a023c3 -------- stream error: provider returned 500 upstream failure"
+preview=$(_ai_error_preview_from_text "$long_banner")
+check 'printf %s "$preview" | grep -q "Reading additional input"' '長文previewにバナー先頭が残る'
+check 'printf %s "$preview" | grep -q "500 upstream failure"' '長文previewに末尾のエラー本体が残る'
+check '[ ${#preview} -le 220 ]' 'previewは概ね200字以内に収まる'
+
 # --- 2. opencode 一過性失敗の1回再試行 ---
 FAKE_BIN="$TMP/fakebin"
 mkdir -p "$FAKE_BIN"
@@ -145,14 +152,15 @@ now=$(date +%s)
 rem=$((bf_until - now))
 check '[ "$rem" -gt 300 ] && [ "$rem" -le 3600 ]' 'streak>1でバックオフが300秒より延長され上限内に収まる'
 
-# 成功で streak 解除
+# 成功で streak 解除（streak>=3 の解除は復旧ログを出す）
 cat >"$FAKE_BIN/opencode" <<'EOF'
 #!/usr/bin/env bash
 printf '復旧済みの出力です。'
 EOF
 chmod +x "$FAKE_BIN/opencode"
-_ai_dispatch "TEST:streak" "opencode:x-preview-f-free" "$prompt_file" 30 >/dev/null 2>&1
+recovery_log=$(_ai_dispatch "TEST:streak" "opencode:x-preview-f-free" "$prompt_file" 30 2>&1 >/dev/null)
 check '[ ! -f "$AI_FAIL_STREAK_DIR/opencode_x-preview-f-free" ]' '成功時にstreakが解除される'
+check 'printf %s "$recovery_log" | grep -q "recovered after 4 consecutive failures"' 'streak>=3の解除で復旧ログが出る'
 
 # --- 4. バックオフ中は chain がスキップし、stats attempt を増やさない ---
 mkdir -p "$AI_BACKOFF_DIR"

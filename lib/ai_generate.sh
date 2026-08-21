@@ -758,9 +758,12 @@ _ai_call_codex_unqueued() {
 	esac
 	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
 	log "[${label}] codex call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	# stdin を /dev/null へ固定する。codex exec は stdin がパイプだとプロンプト
+	# 引数ありでも `<stdin>` ブロックとして読み込むため、呼び出し元の stdin
+	# 状態に応じて出力が汚れたりブロックしたりするのを防ぐ。
 	timeout --kill-after=10s "$timeout_sec" "$codex_bin" exec \
 		--skip-git-repo-check -m "$model" -o "$out_file" "$(cat "$prompt_file")" \
-		>/dev/null 2>"$stderr_file"
+		</dev/null >/dev/null 2>"$stderr_file"
 	rc=$?
 	stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
 	raw_failure="$stderr_preview"
@@ -1042,9 +1045,17 @@ _ai_error_preview_set() {
 
 _ai_error_preview_from_text() {
 	local text="$1"
-	# -CSD で文字単位扱いにし、マルチバイト文字を壊さず160字へ切り詰める
-	text=$(printf '%s' "$text" | perl -CSD -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x09\x0b-\x1f\x7f]/ /g; s/\s+/ /g; $_=substr($_,0,160)')
-	printf '%s' "$text"
+	# -CSD で文字単位扱いにし、マルチバイト文字を壊さず処理する。
+	# codex CLI は stderr 冒頭にセッションバナーを出すため、長い場合は
+	# 先頭(バナー)と末尾(実際のエラー)を両方残す。
+	printf '%s' "$text" | perl -CSD -pe '
+		s/\e\[[0-9;]*[a-zA-Z]//g;
+		s/[\x00-\x09\x0b-\x1f\x7f]/ /g;
+		s/\s+/ /g;
+		if (length($_) > 200) {
+			$_ = substr($_, 0, 70) . " …" . length($_) . "ch… " . substr($_, -90);
+		}
+	'
 }
 
 # === 連続失敗サーキットブレーカ ===
@@ -1079,10 +1090,18 @@ _ai_fail_streak_record() {
 }
 
 _ai_fail_streak_clear() {
-	local f
+	local f n
 	f=$(_ai_fail_streak_file "$1")
 	if [ -f "$f" ]; then
+		n=$(cat "$f" 2>/dev/null || echo 0)
+		case "$n" in
+		'' | *[!0-9]*) n=0 ;;
+		esac
 		rm -f "$f" 2>/dev/null || true
+		# 連続失敗が積み上がっていたモデルの復旧は運用上の重要シグナルなので記録する
+		if [ "$n" -ge 3 ]; then
+			log "[AI] ${1} recovered after ${n} consecutive failures (streak cleared)" >&2
+		fi
 	fi
 	return 0
 }
