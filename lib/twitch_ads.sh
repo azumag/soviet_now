@@ -150,12 +150,22 @@ twitch_ads_maybe_snooze() {
 	# check threshold: next_ad_at - now < threshold
 	local now_sec next_sec diff
 	now_sec=$(date +%s)
-	# parse next_ad_at RFC3339 to epoch
+	# parse next_ad_at: epoch int または RFC3339
 	next_sec=$(python3 - "$next_ad_at" <<'PY' 2>/dev/null
 import sys, datetime
-s=sys.argv[1]
+s=str(sys.argv[1]).strip()
+# epoch 整数を優先
 try:
-    # handle Z and offset
+    # 浮動小数も許容しつつ整数秒へ
+    if s.lstrip("-").replace(".", "", 1).isdigit():
+        # 10桁前後の epoch のみを整数とみなす (RFC3339 の年は4桁)
+        v = float(s)
+        if 1e9 <= v <= 4e9:
+            print(int(v))
+            raise SystemExit(0)
+except Exception:
+    pass
+try:
     if s.endswith("Z"):
         s=s[:-1]+"+00:00"
     dt=datetime.datetime.fromisoformat(s)
