@@ -2957,11 +2957,18 @@ RETRYCOMMENT
 					log "[COMMENT] 楽譜JSON抽出 (${#sing_score} chars)"
 				fi
 			fi
-			# 歌唱宣言ありだが ===SING=== なし → デフォルト楽譜（きらきら星）で補完
+			# 歌唱宣言ありだが ===SING=== なし → 既知曲のデフォルト楽譜で補完（きらきら星/ちょうちょう/メリーさんの羊から選択）
 			# 「歌わせていただきます」を含む敬体バリエーションも拾う。sing_request分類なら宣言句が無くても補完する。
 			if [ -z "$sing_score" ] && { echo "$attempt_talk" | grep -Eq '歌わせて|歌います|歌ってみます|歌いましょう|歌をお届け|歌声をお届け|お歌|うたいます|をどうぞ' || [ "${dominant_category:-}" = "sing_request" ]; }; then
-				log "[COMMENT] 歌唱宣言あり but ===SING=== なし → デフォルト楽譜で補完"
-				sing_score='{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
+				local _default_sing_scores=(
+					'{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
+					'{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":67,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":60,"frame_length":45,"lyric":"な"},{"key":62,"frame_length":45,"lyric":"の"},{"key":64,"frame_length":45,"lyric":"ば"},{"key":65,"frame_length":45,"lyric":"に"},{"key":null,"frame_length":10,"lyric":""},{"key":67,"frame_length":45,"lyric":"と"},{"key":67,"frame_length":45,"lyric":"ん"},{"key":67,"frame_length":90,"lyric":"ぼ"},{"key":null,"frame_length":15,"lyric":""}]}'
+					'{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":62,"frame_length":45,"lyric":"り"},{"key":60,"frame_length":45,"lyric":"い"},{"key":62,"frame_length":45,"lyric":"さ"},{"key":64,"frame_length":45,"lyric":"ん"},{"key":64,"frame_length":90,"lyric":"の"},{"key":null,"frame_length":10,"lyric":""},{"key":62,"frame_length":45,"lyric":"ひ"},{"key":62,"frame_length":45,"lyric":"つ"},{"key":62,"frame_length":90,"lyric":"じ"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":67,"frame_length":45,"lyric":"ぐ"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":62,"frame_length":45,"lyric":"り"},{"key":60,"frame_length":45,"lyric":"い"},{"key":62,"frame_length":45,"lyric":"さ"},{"key":64,"frame_length":45,"lyric":"ん"},{"key":64,"frame_length":90,"lyric":"の"},{"key":null,"frame_length":15,"lyric":""}]}'
+				)
+				local _default_sing_names=("きらきら星" "ちょうちょう" "メリーさんの羊")
+				local _default_sing_idx=$((RANDOM % ${#_default_sing_scores[@]}))
+				sing_score="${_default_sing_scores[$_default_sing_idx]}"
+				log "[COMMENT] 歌唱宣言あり but ===SING=== なし → デフォルト楽譜で補完 (song=${_default_sing_names[$_default_sing_idx]})"
 			fi
 
 			# ソ連テーマを抽出

@@ -58,4 +58,27 @@ else
 	not_ok "normal comment text was altered"
 fi
 
+# 4) デフォルト楽譜（===SING=== なし補完用）は複数曲あり、全て有効なJSON
+DEFAULT_SCORES=$(awk '/local _default_sing_scores=\(/,/^				\)$/' "$SRC")
+DEFAULT_NAMES=$(awk '/local _default_sing_names=/,/\)/' "$SRC" | head -1)
+if [ -z "$DEFAULT_SCORES" ]; then
+	not_ok "default sing score array not found in comment.sh"
+else
+	eval "$(printf '%s\n' "$DEFAULT_SCORES" | sed 's/^[[:space:]]*local //')"
+	eval "$(printf '%s\n' "$DEFAULT_NAMES" | sed 's/^[[:space:]]*local //')"
+	if [ "${#_default_sing_scores[@]}" -ge 2 ]; then
+		ok "default sing scores offer ${#_default_sing_scores[@]} songs (not only Twinkle)"
+	else
+		not_ok "default sing scores has only ${#_default_sing_scores[@]} song(s)"
+	fi
+	for i in "${!_default_sing_scores[@]}"; do
+		if echo "${_default_sing_scores[$i]}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'notes' in d and len(d['notes']) > 10" 2>/dev/null; then
+			ok "default sing score [$i] (${_default_sing_names[$i]:-unnamed}) is valid JSON"
+		else
+			not_ok "default sing score [$i] is invalid JSON"
+		fi
+	done
+	unset _default_sing_scores _default_sing_names
+fi
+
 exit "$FAIL"

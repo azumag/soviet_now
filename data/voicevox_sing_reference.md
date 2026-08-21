@@ -50,41 +50,65 @@
 4. 長く伸ばす音は frame_length を大きくする（二分音符=90、全音符=180）
 5. ノート数が多すぎると合成に時間がかかるため、1曲50〜80ノート程度を目安に
 
-## よく知られた曲のメロディパターン
+## 収録曲の完全な楽譜例（そのまま使ってよい）
+
+リクエストされた曲が下記にあれば、対応する楽譜JSONをそのまま（または前後の挨拶文だけ変えて）出力します。
 
 ### きらきら星（ド ド ソ ソ ラ ラ ソー）
 ```
 C4 C4 G4 G4 A4 A4 G4(長) | F4 F4 E4 E4 D4 D4 C4(長)
 ```
-→ key: 60,60,67,67,69,69,67(90) | 65,65,64,64,62,62,60(90)
+```json
+{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}
+```
+
+### ちょうちょう（ソ ミ ミー ファ レ レー）
+```
+G4 E4 E4(長) | F4 D4 D4(長) | C4 D4 E4 F4 | G4 G4 G4(長)
+```
+```json
+{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":67,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":60,"frame_length":45,"lyric":"な"},{"key":62,"frame_length":45,"lyric":"の"},{"key":64,"frame_length":45,"lyric":"ば"},{"key":65,"frame_length":45,"lyric":"に"},{"key":null,"frame_length":10,"lyric":""},{"key":67,"frame_length":45,"lyric":"と"},{"key":67,"frame_length":45,"lyric":"ん"},{"key":67,"frame_length":90,"lyric":"ぼ"},{"key":null,"frame_length":15,"lyric":""}]}
+```
+
+### メリーさんの羊（ミ レ ド レ ミ ミー）
+```
+E4 D4 C4 D4 E4 E4(長) | D4 D4 D4(長) | E4 G4 G4(長) | E4 D4 C4 D4 E4 E4(長)
+```
+```json
+{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":62,"frame_length":45,"lyric":"り"},{"key":60,"frame_length":45,"lyric":"い"},{"key":62,"frame_length":45,"lyric":"さ"},{"key":64,"frame_length":45,"lyric":"ん"},{"key":64,"frame_length":90,"lyric":"の"},{"key":null,"frame_length":10,"lyric":""},{"key":62,"frame_length":45,"lyric":"ひ"},{"key":62,"frame_length":45,"lyric":"つ"},{"key":62,"frame_length":90,"lyric":"じ"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":67,"frame_length":45,"lyric":"ぐ"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":62,"frame_length":45,"lyric":"り"},{"key":60,"frame_length":45,"lyric":"い"},{"key":62,"frame_length":45,"lyric":"さ"},{"key":64,"frame_length":45,"lyric":"ん"},{"key":64,"frame_length":90,"lyric":"の"},{"key":null,"frame_length":15,"lyric":""}]}
+```
 
 ### かえるのうた（ド レ ミ ファ ミ レ ドー）
 ```
 C4 D4 E4 F4 E4 D4 C4(長) | E4 F4 G4 A4 G4 F4 E4(長)
 ```
-→ key: 60,62,64,65,64,62,60(90) | 64,65,67,69,67,65,64(90)
-
-### ちょうちょう（ソ ミ ミー ファ レ レー）
+```json
+{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"け"},{"key":62,"frame_length":45,"lyric":"ろ"},{"key":64,"frame_length":45,"lyric":"け"},{"key":65,"frame_length":45,"lyric":"ろ"},{"key":64,"frame_length":45,"lyric":"け"},{"key":62,"frame_length":45,"lyric":"ろ"},{"key":60,"frame_length":90,"lyric":"け"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"あ"},{"key":65,"frame_length":45,"lyric":"わ"},{"key":67,"frame_length":45,"lyric":"せ"},{"key":69,"frame_length":45,"lyric":"て"},{"key":67,"frame_length":45,"lyric":"か"},{"key":65,"frame_length":45,"lyric":"え"},{"key":64,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":15,"lyric":""}]}
 ```
-G4 E4 E4(長) F4 D4 D4(長) | C4 D4 E4 F4 G4 G4 G4(長)
-```
-→ key: 67,64,64(90) 65,62,62(90) | 60,62,64,65,67,67,67(90)
 
 ### ハッピーバースデー（ソ ソ ラ ソ ド シー）
 ```
-G4 G4 A4 G4 C5 B4(長)
+G4 G4 A4 G4 C5 B4(長) | G4 G4 A4 G4 D5 C5(長)
 ```
-→ key: 67,67,69,67,72,71(90)
+```json
+{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":67,"frame_length":45,"lyric":"お"},{"key":67,"frame_length":45,"lyric":"め"},{"key":69,"frame_length":45,"lyric":"で"},{"key":67,"frame_length":45,"lyric":"と"},{"key":72,"frame_length":45,"lyric":"う"},{"key":71,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":67,"frame_length":45,"lyric":"あ"},{"key":67,"frame_length":45,"lyric":"り"},{"key":69,"frame_length":45,"lyric":"が"},{"key":67,"frame_length":45,"lyric":"と"},{"key":74,"frame_length":45,"lyric":"う"},{"key":72,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":15,"lyric":""}]}
+```
+
+## リクエストへの応え方
+
+1. リクエストされた曲が上記にあれば、その楽譜JSONを使って歌う
+2. 上記にない曲でも単純なメロディなら自作してよい（音域は C4 〜 D5、ノート数は上記例程度〜80以内）
+3. 曲の指定がない・知らない・難しい場合は、上記の中から好きな曲を選ぶ。**毎回同じ曲（きらきら星など）にせず、曲を変えること**
 
 ## 出力例
 
 「歌って」と言われたら、トーク本文の後に以下の形式で楽譜JSONを出力してください:
 
 ```
-歌ってみます。きらきら星をどうぞ。
+歌ってみます。ちょうちょうをどうぞ。
 ===SING===
-{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":15,"lyric":""}]}
+{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":67,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":60,"frame_length":45,"lyric":"な"},{"key":62,"frame_length":45,"lyric":"の"},{"key":64,"frame_length":45,"lyric":"ば"},{"key":65,"frame_length":45,"lyric":"に"},{"key":null,"frame_length":10,"lyric":""},{"key":67,"frame_length":45,"lyric":"と"},{"key":67,"frame_length":45,"lyric":"ん"},{"key":67,"frame_length":90,"lyric":"ぼ"},{"key":null,"frame_length":15,"lyric":""}]}
 ===SING===
 ```
 
-楽譜生成が難しい場合は、テキスト応答のみでも構いません（無理に ===SING=== を出力しなくてよい）。
+歌唱リクエストには必ず ===SING=== を出力すること（テキストのみの返事は不可）。

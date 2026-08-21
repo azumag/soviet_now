@@ -34,9 +34,9 @@ ${celebration_history_context}
 
 【Category: Sing Request】This is a singing request. You MUST sing — text-only reply is NOT acceptable.
 1. First respond in text briefly ("歌わせていただきます" "歌ってみます" etc. — keigo is OK).
-2. Read data/voicevox_sing_reference.md to understand the sheet music JSON format.
-3. Output sheet music JSON with the ===SING=== marker. Even if the song is not specified, unknown, or difficult, output the Twinkle Twinkle Little Star (きらきら星) JSON shown below. Never leave a sing_request without ===SING===.
-4. If the song is not specified or you don't know it, use Twinkle Twinkle Little Star (きらきら星) as fallback.
+2. Read data/voicevox_sing_reference.md to understand the sheet music JSON format and the available song melodies.
+3. If the requested song appears in data/voicevox_sing_reference.md, output that song's sheet music JSON (melody + lyrics) with the ===SING=== marker. Never leave a sing_request without ===SING===.
+4. If the requested song is not listed, unknown, or too difficult, pick ANY simple song from the reference list — vary your choice and do NOT always default to Twinkle Twinkle Little Star (きらきら星).
 5. Do NOT output ===SING=== for comments that are not singing requests.
 
 ===SING=== output format (MUST be valid JSON, do NOT include "..." literally):
