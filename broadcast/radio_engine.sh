@@ -1383,7 +1383,7 @@ ${prompt_snapshot}
 PREPASS
 		log "[RADIO:${corner_name}] prepass agents=${radio_prepass_agents}"
 		_prepass_last_file=$(mktemp /tmp/eloop_radio_prepass_last_XXXXXXXX)
-		_prepass_output=$(ai_generate_list "RADIO:${corner_name}:prepass" "$_prepass_prompt_file" "$radio_prepass_agents" "" "" "$_prepass_last_file" 2>/dev/null | _sanitize_radio_research_memo || true)
+		_prepass_output=$(ai_generate_list "RADIO:${corner_name}:prepass" "$_prepass_prompt_file" "$radio_prepass_agents" "" "" "$_prepass_last_file" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" | _sanitize_radio_research_memo || true)
 		_prepass_provider=$(cat "$_prepass_last_file" 2>/dev/null)
 		rm -f "$_prepass_last_file" 2>/dev/null || true
 		if [ -n "$_prepass_provider" ]; then

@@ -454,7 +454,8 @@ _fetch_nolock() {
         _log "fetch: pending ${pending_count}件を出力"
     else
         rm -f "$OUTFILE"
-        _log "fetch: 未読コメントなし"
+        # 高頻度ポーリングの定期状態であり、stderr 収集ログのノイズになるため無音
+        :
     fi
 }
 

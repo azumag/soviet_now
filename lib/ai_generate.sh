@@ -607,9 +607,10 @@ _ai_call_opencode_unqueued() {
 	*/*) model="$agent" ;;
 	esac
 	# opencode binary: prefer /snap/bin/opencode, fallback to opencode
-	local opencode_bin="/snap/bin/opencode"
+	# (OPENCODE_BIN はテスト時のスタブ差し替え用。本番では未設定でよい)
+	local opencode_bin="${OPENCODE_BIN:-/snap/bin/opencode}"
 	[ -x "$opencode_bin" ] || opencode_bin="opencode"
-	[ -s "$prompt_file" ] || return 1
+	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
 	out_file=$(mktemp /tmp/ai_opencode_out_XXXXXXXX)
 	stderr_file=$(mktemp /tmp/ai_opencode_stderr_XXXXXXXX)
@@ -619,8 +620,36 @@ _ai_call_opencode_unqueued() {
 	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
 	log "[${label}] opencode call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
 	# opencode run --model は prompt を引数として渡す。timeout でラップする。
-	timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
-	rc=$?
+	# free枠の上流ではストリームが reasoning 途中で切れて rc!=0・空出力に
+	# なる一過性の障害が多いため、タイムアウトとレート制限以外は1回だけ
+	# 同一モデルで再試行する（OPENCODE_ABORT_RETRY=0 で無効化）。
+	local _oc_attempts=1 _oc_try=1 _oc_start _oc_elapsed
+	if [ "${OPENCODE_ABORT_RETRY:-1}" = "1" ]; then
+		_oc_attempts=2
+	fi
+	while :; do
+		_oc_start=$(date +%s)
+		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		rc=$?
+		_oc_elapsed=$(( $(date +%s) - _oc_start ))
+		if [ "$rc" -eq 124 ]; then
+			break
+		fi
+		if [ "$rc" -eq 0 ] && [ -s "$out_file" ]; then
+			break
+		fi
+		stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
+		if _ai_rate_limit_text_detected "$stderr_preview"; then
+			break
+		fi
+		if [ "$_oc_try" -ge "$_oc_attempts" ]; then
+			break
+		fi
+		_oc_try=$((_oc_try + 1))
+		log "[${label}] opencode transient failure (rc=$rc, elapsed=${_oc_elapsed}s, model=$model) → retry once" >&2
+		sleep "${OPENCODE_ABORT_RETRY_WAIT_SEC:-2}"
+	done
+	_oc_elapsed=$(( $(date +%s) - _oc_start ))
 	stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
 	if [ $rc -ne 0 ] || [ ! -s "$out_file" ]; then
 		_ai_rate_limit_text_detected "$stderr_preview" && rate_limited=true
@@ -631,6 +660,7 @@ _ai_call_opencode_unqueued() {
 	fi
 	if [ $rc -eq 124 ]; then
 		log "[${label}] opencode timeout (${timeout_sec}s, model=$model)" >&2
+		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file" "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
@@ -638,6 +668,7 @@ _ai_call_opencode_unqueued() {
 	if [ $rc -ne 0 ]; then
 		log "[${label}] opencode failed (rc=$rc, model=$model)" >&2
 		[ -n "$stderr_preview" ] && log "[${label}] opencode stderr: $stderr_preview" >&2
+		_ai_error_preview_set "rc=$rc (${_oc_elapsed}s): $(_ai_error_preview_from_text "$stderr_preview")"
 		rm -f "$out_file" "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
@@ -646,11 +677,13 @@ _ai_call_opencode_unqueued() {
 	rm -f "$out_file" "$stderr_file"
 	if [ -z "$cleaned" ]; then
 		log "[${label}] opencode empty after cleanup (model=$model)" >&2
+		_ai_error_preview_set "empty output (${_oc_elapsed}s)"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
 	if _contains_provider_error_text "$cleaned"; then
 		log "[${label}] opencode provider error (model=$model)" >&2
+		_ai_error_preview_set "provider error: $(_ai_error_preview_from_text "$cleaned")"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
@@ -717,7 +750,7 @@ _ai_call_codex_unqueued() {
 	model=$(_ai_codex_model_from_agent "$agent")
 	local codex_bin="${CODEX_BIN:-codex}"
 	local out_file stderr_file stderr_preview raw_failure rc cleaned rate_limited=false
-	[ -s "$prompt_file" ] || return 1
+	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	out_file=$(mktemp /tmp/ai_codex_out_XXXXXXXX)
 	stderr_file=$(mktemp /tmp/ai_codex_stderr_XXXXXXXX)
 	case "$timeout_sec" in
@@ -739,6 +772,7 @@ _ai_call_codex_unqueued() {
 	fi
 	if [ $rc -eq 124 ]; then
 		log "[${label}] codex timeout (${timeout_sec}s, model=$model)" >&2
+		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file"
 		rm -f "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
@@ -746,6 +780,7 @@ _ai_call_codex_unqueued() {
 	fi
 	if [ $rc -ne 0 ]; then
 		log "[${label}] codex failed (rc=$rc, model=$model)" >&2
+		_ai_error_preview_set "rc=$rc: $(_ai_error_preview_from_text "$stderr_preview")"
 		rm -f "$out_file"
 		rm -f "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
@@ -756,11 +791,13 @@ _ai_call_codex_unqueued() {
 	rm -f "$stderr_file"
 	if [ -z "$cleaned" ]; then
 		log "[${label}] codex empty after cleanup (model=$model)" >&2
+		_ai_error_preview_set "empty output"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
 	if _contains_provider_error_text "$cleaned"; then
 		log "[${label}] codex provider error (model=$model)" >&2
+		_ai_error_preview_set "provider error: $(_ai_error_preview_from_text "$cleaned")"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
@@ -825,6 +862,11 @@ _ai_dispatch() {
 	*) resolved_model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
 	esac
 	_ai_stats_record "attempt" "$label" "$agent" "" "$resolved_model"
+	AI_DISPATCH_ERROR_PREVIEW=""
+	local _dispatch_err_file
+	_dispatch_err_file=$(mktemp /tmp/ai_err_preview_XXXXXXXX)
+	: >"$_dispatch_err_file"
+	AI_DISPATCH_ERROR_PREVIEW_FILE="$_dispatch_err_file"
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -879,10 +921,17 @@ _ai_dispatch() {
 		;;
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}
+	AI_DISPATCH_ERROR_PREVIEW_FILE=""
+	local _dispatch_error_preview
+	# 書き手側 (_ai_error_preview_from_text) で160字へ切り詰め済みのため
+	# ここでバイト切断するとマルチバイト文字を壊す。行単位で読む。
+	_dispatch_error_preview=$(head -n 1 "$_dispatch_err_file" 2>/dev/null || true)
+	rm -f "$_dispatch_err_file"
 	if [ "$_dispatch_rc" -eq 0 ]; then
 		_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
+		_ai_fail_streak_clear "$agent"
 	else
-		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
+		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "${_dispatch_error_preview:-${AI_DISPATCH_ERROR_PREVIEW:-}}"
 	fi
 	# 空出力ならログファイル削除
 	[ -s "$_dispatch_output_file" ] || rm -f "$_dispatch_output_file" 2>/dev/null
@@ -945,7 +994,7 @@ ai_generate() {
 #   return code (空文字可)。resolved_model は実際に CLI へ渡したモデル名。
 #   フォールバックの最終結果は ai_generate_list 側で "winner"/"all_failed" として記録する。
 _ai_stats_record() {
-	local event="$1" label="$2" agent="$3" rc="${4:-}" resolved_model="${5:-}"
+	local event="$1" label="$2" agent="$3" rc="${4:-}" resolved_model="${5:-}" error_preview="${6:-}"
 	[ -n "$event" ] || return 0
 	local stats_dir="_ai_stats_dir"
 	if [ -n "${AI_STATS_DIR:-}" ]; then
@@ -956,13 +1005,85 @@ _ai_stats_record() {
 		stats_dir="tmp/state/ai_stats"
 	fi
 	mkdir -p "$stats_dir" 2>/dev/null || true
-	local ts day
+	local ts day line
 	ts=$(date +%s)
 	day=$(date +%Y%m%d)
-	local line
 	line=$(printf '{"ts":%s,"day":"%s","event":"%s","label":"%s","agent":"%s","rc":"%s","resolved_model":"%s"}' \
 		"$ts" "$day" "$event" "$label" "${agent:-}" "${rc:-}" "${resolved_model:-}")
+	if [ -n "$error_preview" ]; then
+		# JSON文字列として安全な形へエスケープしてから付与する
+		error_preview=${error_preview//\\/\\\\}
+		error_preview=${error_preview//\"/\\\"}
+		error_preview=${error_preview//$'\n'/ }
+		error_preview=${error_preview//$'\r'/ }
+		error_preview=${error_preview//$'\t'/ }
+		line="${line%,},\"error\":\"${error_preview}\"}"
+	fi
 	printf '%s\n' "$line" >>"$stats_dir/${day}.jsonl" 2>/dev/null || true
+}
+
+# === 失敗理由の観測 (ai_stats への error フィールド供給) ===
+
+# 直近の _ai_dispatch 呼び出し内での失敗概要。低レベル呼び出し関数が設定し、
+# _ai_dispatch が fail 記録時に読む。stderr が worker の外で廃棄されても
+# 失敗理由が ai_stats JSONL に残るようにするための経路。
+# 低レベル呼び出しは tee パイプラインの左辺（サブシェル）で走るため、
+# 変数だけでなくファイル (_ai_error_preview_set) 経由でも受け渡す。
+AI_DISPATCH_ERROR_PREVIEW=""
+AI_DISPATCH_ERROR_PREVIEW_FILE=""
+
+_ai_error_preview_set() {
+	AI_DISPATCH_ERROR_PREVIEW="$1"
+	if [ -n "${AI_DISPATCH_ERROR_PREVIEW_FILE:-}" ]; then
+		printf '%s\n' "$1" >"$AI_DISPATCH_ERROR_PREVIEW_FILE" 2>/dev/null || true
+	fi
+}
+
+_ai_error_preview_from_text() {
+	local text="$1"
+	# -CSD で文字単位扱いにし、マルチバイト文字を壊さず160字へ切り詰める
+	text=$(printf '%s' "$text" | perl -CSD -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x09\x0b-\x1f\x7f]/ /g; s/\s+/ /g; $_=substr($_,0,160)')
+	printf '%s' "$text"
+}
+
+# === 連続失敗サーキットブレーカ ===
+
+# provider/CLI 失敗 (rc!=0) が連続した回数を agent 単位で記録する。
+# ai_generate_list はこの回数で短いバックオフを段階的に延長し、ダウン中の
+# モデルへ短周期で再試行し続ける無駄を防ぐ。成功時 (_ai_dispatch ok) に解除。
+_ai_fail_streak_dir() {
+	if [ -n "${AI_FAIL_STREAK_DIR:-}" ]; then
+		printf '%s\n' "$AI_FAIL_STREAK_DIR"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/ai_fail_streak\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/ai_fail_streak\n'
+	fi
+}
+
+_ai_fail_streak_file() {
+	local agent="$1"
+	printf '%s/%s\n' "$(_ai_fail_streak_dir)" "$(_ai_lock_sanitize_key "$agent")"
+}
+
+_ai_fail_streak_record() {
+	local agent="$1" f n
+	f=$(_ai_fail_streak_file "$agent")
+	mkdir -p "$(_ai_fail_streak_dir)" 2>/dev/null || true
+	n=$(cat "$f" 2>/dev/null || echo 0)
+	case "$n" in '' | *[!0-9]*) n=0 ;; esac
+	n=$((n + 1))
+	printf '%s\n' "$n" >"$f" 2>/dev/null || true
+	printf '%s\n' "$n"
+}
+
+_ai_fail_streak_clear() {
+	local f
+	f=$(_ai_fail_streak_file "$1")
+	if [ -f "$f" ]; then
+		rm -f "$f" 2>/dev/null || true
+	fi
+	return 0
 }
 
 # === バックオフ付きエージェントリスト ===
@@ -1156,7 +1277,21 @@ ai_generate_list() {
 				'' | *[!0-9]*) failure_backoff_sec=300 ;;
 				esac
 				[ "$failure_backoff_sec" -lt 1 ] && failure_backoff_sec=300
-				log "[${label}] ${agent} provider failure → short backoff ${failure_backoff_sec}s (outcome=${rc})" >&2
+				# 連続失敗サーキットブレーカ: 短いバックオフの再試行が
+				# 失敗し続ける場合、base×2→×4→×8（既定300なら最大2400秒、
+				# AI_FAILURE_STREAK_MAX_BACKOFF_SEC 既定3600が上限）へ段階延長する。
+				local _streak _shift _streak_max="${AI_FAILURE_STREAK_MAX_BACKOFF_SEC:-3600}"
+				case "$_streak_max" in
+				'' | *[!0-9]*) _streak_max=3600 ;;
+				esac
+				_streak=$(_ai_fail_streak_record "$agent")
+				if [ "$_streak" -gt 1 ]; then
+					_shift=$((_streak - 1))
+					[ "$_shift" -gt 3 ] && _shift=3
+					failure_backoff_sec=$((failure_backoff_sec * (1 << _shift)))
+					[ "$failure_backoff_sec" -gt "$_streak_max" ] && failure_backoff_sec="$_streak_max"
+				fi
+				log "[${label}] ${agent} provider failure → short backoff ${failure_backoff_sec}s (outcome=${rc}, streak=${_streak})" >&2
 				_ai_backoff_set "$agent" "$failure_backoff_sec"
 			else
 				log "[${label}] ${agent} no model backoff (outcome=${rc})" >&2

@@ -186,7 +186,7 @@ _run_iteration() {
 		_log "新試合検知: ${_LAST_GAME_NUM} → ${current_game_num}"
 		_LAST_GAME_NUM="$current_game_num"
 		score=$(_last_score 2>/dev/null || echo 0)
-		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
+		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" || true
 		_scheduler_ran_this_tick=1
 	fi
 
@@ -199,7 +199,7 @@ _run_iteration() {
 		echo "$_now_ts" >"$_LAST_SCHEDULER_RUN_FILE"
 		current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 		score=$(_last_score 2>/dev/null || echo 0)
-		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
+		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" || true
 	fi
 
 	# 手動トリガー消化
