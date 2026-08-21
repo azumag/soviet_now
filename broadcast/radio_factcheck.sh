@@ -152,7 +152,10 @@ _radio_fact_check_body() {
 
 	local web_grounding="" prompt_context_trimmed
 	local factcheck_timeout factcheck_claude_timeout
-	factcheck_timeout="${RADIO_FACT_CHECK_OPENCODE_TIMEOUT_SEC:-45}"
+	# 45s では deepseek/minimax が生成途中で kill され、全候補失敗 ->
+	# 生成済み原稿ごと破棄される実害が出たため、実測応答時間(33-70s)に
+	# 余裕を持たせた上限へ引き上げる。
+	factcheck_timeout="${RADIO_FACT_CHECK_OPENCODE_TIMEOUT_SEC:-120}"
 	factcheck_claude_timeout="${RADIO_FACT_CHECK_CLAUDE_TIMEOUT_SEC:-60}"
 	web_grounding=$(_radio_fetch_web_grounding "$corner_name" "$prompt_context" "$selected_news")
 	prompt_context_trimmed=$(_radio_compact_fact_check_context "$corner_name" "$prompt_context")
