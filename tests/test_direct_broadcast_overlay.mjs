@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import {
   DIRECT_BROADCAST_STATE_ROUTE,
   buildDirectBroadcastOverlayState,
+  extractLegacyOverlayLineSegments,
   extractLegacyOverlayText,
   parseLegacyEventOverlayDocument,
 } from '../lib/direct_broadcast_overlay.mjs';
@@ -25,6 +26,32 @@ test('legacy status HTML is consumed as read-only plain text without presentatio
     + '</pre>';
   assert.equal(extractLegacyOverlayText(html), '● RUNNING <safe> & ready\n次の行');
   assert.equal(extractLegacyOverlayText('<main>no pre</main>'), '');
+});
+
+
+test('legacy overlay color spans become allowlisted text segments without markup', () => {
+  const html = '<pre>'
+    + '<span style="color:#94a3b8"> 3801</span>│<span style="color:#facc15">\\</span>\n'
+    + '<span style="color:#22d3ee">│</span><span style="font-weight:700"> SOREN/FFMPEG </span>'
+    + '<span style="opacity:.68">dim note</span>\n'
+    + '<span style="color:red;behavior:url(x.htc)">evil</span><script>alert(1)</script>\n'
+    + 'plain &lt;tag&gt; line\n'
+    + '</pre>';
+  assert.deepEqual(extractLegacyOverlayLineSegments(html), [
+    [
+      { t: ' 3801', c: '#94a3b8' },
+      { t: '│' },
+      { t: '\\', c: '#facc15' },
+    ],
+    [
+      { t: '│', c: '#22d3ee' },
+      { t: ' SOREN/FFMPEG ', b: 1 },
+      { t: 'dim note', o: '.68' },
+    ],
+    [{ t: 'evil' }, { t: 'alert(1)' }],
+    [{ t: 'plain <tag> line' }],
+  ]);
+  assert.deepEqual(extractLegacyOverlayLineSegments('<main>no pre</main>'), []);
 });
 
 
@@ -50,7 +77,7 @@ test('broadcast state carries every legacy line and no source paths', () => {
   const ops = path.join(temp, 'ops.html');
   const event = path.join(temp, 'event.html');
   fs.writeFileSync(stats, '<pre>STAT 1\nSTAT 2\nSTAT 3</pre>');
-  fs.writeFileSync(ops, '<pre>OPS 1\nOPS 2</pre>');
+  fs.writeFileSync(ops, '<pre><span style="color:#22c55e">OPS 1</span>\nOPS 2</pre>');
   fs.writeFileSync(event, `
 const EVENTS = [];
 const WORK = {};
@@ -63,8 +90,10 @@ const VISIBLE_SEC = 18;
   assert.equal(state.version, 1);
   assert.equal(state.updatedAt, 1780000000);
   assert.equal(state.feeds.showStatusG.text, 'STAT 1\nSTAT 2\nSTAT 3');
+  assert.deepEqual(state.feeds.showStatusG.segments, [[{ t: 'STAT 1' }], [{ t: 'STAT 2' }], [{ t: 'STAT 3' }]]);
   assert.equal(state.feeds.showStatusG.lineCount, 3);
   assert.equal(state.feeds.showStatus.text, 'OPS 1\nOPS 2');
+  assert.equal(state.feeds.showStatus.segments, undefined, 'ops feed stays plain text to keep the state payload lean');
   assert.equal(state.feeds.showStatus.lineCount, 2);
   assert.equal(state.notifications.visibleSec, 18);
   assert.doesNotMatch(JSON.stringify(state), new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -113,6 +142,8 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /notifications[?][.]generators/);
   assert.match(html, new RegExp(DIRECT_BROADCAST_STATE_ROUTE.replaceAll('/', '\\/')));
   assert.match(html, /renderFeedLines/);
+  assert.match(html, /segmentLines/);
+  assert.match(html, /appendFeedLineContent/);
   assert.match(html, /STATUS MERGE/);
   assert.doesNotMatch(html, /http-equiv=["']refresh/i);
   assert.doesNotMatch(html, /location[.]reload/);
@@ -508,6 +539,56 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   await overlay.tick(1);
   assert.equal(overlay.feedG.children.length, 5, 'feed update must re-render the merged panel');
   assert.equal(overlay.feedS.children.length, 3);
+});
+
+
+test('game feed renders allowlisted color segments as styled spans without innerHTML', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'Score Timeline\n     │  \\',
+        segments: [
+          [{ t: 'Score ', b: 1 }, { t: 'Timeline', c: '#67e8f9' }],
+          [{ t: '     │  ' }, { t: '\\', c: '#facc15' }],
+        ],
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: { label: 'SHOW-STATUS', text: '● Backend FFMPEG LIVE', updatedAt: 1780000080, lineCount: 1 },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+  const rows = overlay.feedG.children;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].children.length, 2, 'segmented line must build one span per segment');
+  assert.equal(rows[0].children[0].textContent, 'Score ');
+  assert.equal(rows[0].children[0].style.fontWeight, '700');
+  assert.equal(rows[0].children[1].textContent, 'Timeline');
+  assert.equal(rows[0].children[1].style.color, '#67e8f9');
+  assert.equal(rows[1].children.length, 2);
+  assert.equal(rows[1].children[1].textContent, '\\');
+  assert.equal(rows[1].children[1].style.color, '#facc15');
+
+  const opsRow = overlay.feedS.children[0];
+  assert.equal(opsRow.children.length, 0, 'feeds without segments keep the plain text path');
+  assert.match(opsRow.textContent, /Backend/);
+
+  overlay.setState({
+    ...base,
+    feeds: {
+      ...base.feeds,
+      showStatusG: { ...base.feeds.showStatusG, segments: undefined, updatedAt: 1780000085 },
+    },
+  });
+  await overlay.tick(1);
+  const fallbackRows = overlay.feedG.children;
+  assert.equal(fallbackRows.length, 2);
+  assert.equal(fallbackRows[0].children.length, 0, 'missing segments must fall back to textContent');
+  assert.match(fallbackRows[0].textContent, /Score Timeline/);
 });
 
 

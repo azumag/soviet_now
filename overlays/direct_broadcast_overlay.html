@@ -435,12 +435,27 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     if (/PASSED|none/.test(text)) return 'ok';
     return 'dim';
   }
+  function appendFeedLineContent(row, line, segments) {
+    if (!Array.isArray(segments) || !segments.length) {
+      row.textContent = line === '' ? ' ' : line;
+      return;
+    }
+    for (const segment of segments) {
+      const span = document.createElement('span');
+      span.textContent = String(segment?.t ?? '');
+      if (segment?.c) span.style.color = String(segment.c);
+      if (segment?.b) span.style.fontWeight = '700';
+      if (segment?.o) span.style.opacity = String(segment.o);
+      row.appendChild(span);
+    }
+  }
   function renderFeedLines(container, text, opts = {}) {
+    const segmentLines = Array.isArray(opts.segmentLines) ? opts.segmentLines : [];
     const lines = String(text || 'データを待っています…').split('\n');
-    container.replaceChildren(...lines.map((line) => {
+    container.replaceChildren(...lines.map((line, index) => {
       const row = document.createElement('div');
       row.className = `feed-line ${feedLineClass(line, opts)}`;
-      row.textContent = line === '' ? ' ' : line;
+      appendFeedLineContent(row, line, segmentLines[index]);
       return row;
     }));
   }
@@ -453,7 +468,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
     const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
-      renderFeedLines(feedG, g?.text);
+      renderFeedLines(feedG, g?.text, { segmentLines: Array.isArray(g?.segments) ? g.segments : [] });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
