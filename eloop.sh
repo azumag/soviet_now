@@ -280,8 +280,8 @@ play_one_game() {
 
 	# 前試合のダッシュボードを非表示
 	./generate_dashboard.sh MOVE || true
-	# OBS 側でも dashboard ソースを hide (meriken AI と同じ visibility 制御)
-	if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ]; then
+	# OBS 側でも dashboard ソースを hide (ffmpeg配信時はOBS不在が正常なためスキップ)
+	if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${SOREN_STREAM_BACKEND:-obs}" = "obs" ]; then
 		./obs_control.sh hide "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1 &
 	fi
 
@@ -652,7 +652,8 @@ json.dump(d,open(f,'w'))
 		# OBS 側の表示切り替えとブラウザソースの再読込時間を確保する。
 		local _dashboard_shown=0
 		# ソ連建国後はdashboardを表示しない（opsOverlay/statsOverlayに被るため）
-		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 0 ]; then
+		# ffmpeg配信時はOBS不在が正常なため表示をスキップしWARNも出さない
+		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 0 ] && [ "${SOREN_STREAM_BACKEND:-obs}" = "obs" ]; then
 			if ./obs_control.sh show "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1; then
 				_dashboard_shown=1
 			else

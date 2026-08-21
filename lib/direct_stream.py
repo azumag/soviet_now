@@ -453,6 +453,20 @@ def validate_local_relay(config: DirectStreamConfig) -> None:
     try:
         connection = socket.create_connection((host, port), timeout=2)
     except OSError as exc:
+        # nginx master may be running outside systemd (manual `nginx -c /etc/soren-rtmp/nginx.conf`).
+        # Treat that as healthy to avoid false `not reachable` during boot.
+        try:
+            probe = subprocess.run(
+                ["pgrep", "-f", r"nginx: master.*soren-rtmp"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if probe.returncode == 0 and probe.stdout.strip():
+                return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
         raise RuntimeCheckError("loopback RTMP relay is not reachable") from exc
     connection.close()
 
@@ -596,27 +610,32 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
 
 def _reload_relay(config: DirectStreamConfig) -> bool:
     """Best-effort relay reload so nginx re-establishes its Twitch pushes."""
-    try:
-        result = subprocess.run(
-            ["sudo", "-n", "systemctl", "reload", "soren-rtmp-relay.service"],
-            cwd=REPO_ROOT,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        print(f"direct_stream: relay reload skipped ({exc})", file=sys.stderr)
-        return False
-    if result.returncode != 0:
+    for command in (
+        ["sudo", "-n", "systemctl", "reload", "soren-rtmp-relay.service"],
+        ["sudo", "-n", "nginx", "-s", "reload", "-c", "/etc/soren-rtmp/nginx.conf"],
+        ["nginx", "-s", "reload", "-c", "/etc/soren-rtmp/nginx.conf"],
+    ):
+        try:
+            result = subprocess.run(
+                command,
+                cwd=REPO_ROOT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"direct_stream: relay reload skipped ({exc})", file=sys.stderr)
+            continue
+        if result.returncode == 0:
+            return True
         print(
             f"direct_stream: relay reload failed rc={result.returncode} "
-            f"{result.stderr.strip()}",
+            f"{result.stderr.strip()} cmd={' '.join(command)}",
             file=sys.stderr,
         )
-        return False
-    return True
+    return False
 
 
 def _record_reconnect(

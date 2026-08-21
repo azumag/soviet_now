@@ -635,6 +635,17 @@ PY
 	response=$(cat "$response_file" 2>/dev/null || true)
 	if [ "$response_code" -lt 200 ] 2>/dev/null || [ "$response_code" -ge 300 ] 2>/dev/null || [ -z "$response" ]; then
 		api_message=$(_prediction_api_error_message "$response_file")
+		# 同一チャンネルに既にACTIVE/LOCKED予想がある場合はTwitchが400を返す。
+		# これは正常な競合なのでWARNではなくINFOに留め、リモートを同期してローカルを復元する。
+		if printf '%s' "$api_message" | grep -qi "already" || { [ "$response_code" = "400" ] && printf '%s' "$response" | grep -qi "already"; }; then
+			_log "INFO: prediction already active on Twitch, syncing remote state"
+			if _recover_remote_active_prediction; then
+				rm -f "$response_file"
+				_prediction_retry_clear create
+				cat "$PREDICTION_STATE_FILE"
+				exit 0
+			fi
+		fi
 		delay=$(_prediction_retry_record create "$response_code" "$api_message")
 		_log "WARN: prediction create failed (http=${response_code:-000}, message=${api_message:-unknown}, retry=${delay}s)"
 		rm -f "$response_file"
