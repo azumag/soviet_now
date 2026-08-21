@@ -844,7 +844,14 @@ _ai_dispatch() {
 	# local[:<model>] は Tailscale 経由の無料ローカル LLM へ直接送る。
 	local _codex_timeout="$timeout_override"
 	case "$agent" in
-	codex|codex:*)
+	codex | codex:*)
+		if [[ "$label" == COMMENT* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
+		fi
+		if [[ "$label" == RADIO* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${RADIO_CODEX_TIMEOUT:-240}"
+		fi
+		_ai_call_codex "$label" "$agent" "$prompt_file" "$_codex_timeout" | tee "$_dispatch_output_file"
 		;;
 	local:* | local)
 		local _local_model=""
