@@ -1068,10 +1068,34 @@ if snapshot and lock_hash and snapshot_hash == lock_hash:
 os.makedirs(os.path.dirname(backoff_file) or ".", exist_ok=True)
 tmp = f"{backoff_file}.tmp.{os.getpid()}"
 with open(tmp, "w", encoding="utf-8") as f:
-    f.write(f"{count}\n{now}\n")
+    # 行3に種別タグを記録する。この関数は failed_no_apply 収穫時専用であり、
+    # rate limit とは無関係な失敗（wall timeout / validation failure 等）でも
+    # 指数バックオフで罰すると改善頻度が激減するため、daemon 側で上限を
+    # 別途適用できるように区別する（真の rate limit 記録は eloop_improve.sh 側）。
+    f.write(f"{count}\n{now}\nno_apply\n")
 os.replace(tmp, backoff_file)
 print(count)
 PY
+}
+
+# no_apply 系バックオフ（failed_no_apply 由来）は指数で伸ばさず上限を短く抑える。
+# rate limit 由来（3行目タグなし=旧形式 or 明示タグ）は従来どおり指数バックオフ。
+_improve_backoff_wait_sec() {
+	local _count="${1:-1}"
+	local _kind="${2:-}"
+	case "$_count" in ''|*[!0-9]*) _count=1 ;; esac
+	[ "$_count" -ge 1 ] || _count=1
+	if [ "$_kind" = "no_apply" ]; then
+		local _max="${IMPROVE_NO_APPLY_BACKOFF_MAX_SEC:-600}"
+		case "$_max" in ''|*[!0-9]*) _max=600 ;; esac
+		[ "$_max" -ge 60 ] || _max=60
+		local _wait=$((300 * (1 << (_count - 1))))
+		[ "$_wait" -gt "$_max" ] && _wait=$_max
+		printf '%s' "$_wait"
+	else
+		local _exp=$((_count - 1 > 5 ? 5 : _count - 1))
+		printf '%s' "$((300 * (1 << _exp)))"
+	fi
 }
 
 _persist_improve_lock_reason() {
@@ -2964,12 +2988,12 @@ trigger_adaptive_improvement() {
 
 	# レートリミット指数バックオフ
 	if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-		local _rl_count _rl_ts _rl_now _rl_wait _rl_exp _rl_last_log_file _rl_last_log _rl_log_interval
+		local _rl_count _rl_ts _rl_now _rl_wait _rl_kind _rl_last_log_file _rl_last_log _rl_log_interval
 		_rl_count=$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 1)
 		_rl_ts=$(sed -n '2p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0)
+		_rl_kind=$(sed -n '3p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo "")
 		_rl_now=$(date +%s)
-		_rl_exp=$((_rl_count - 1 > 5 ? 5 : _rl_count - 1))
-		_rl_wait=$((300 * (1 << _rl_exp)))
+		_rl_wait=$(_improve_backoff_wait_sec "$_rl_count" "$_rl_kind")
 		if [ $((_rl_now - _rl_ts)) -lt "$_rl_wait" ]; then
 			_rl_last_log_file="$TMP_STATE_DIR/rate_limit_backoff_last_log"
 			_rl_last_log=$(cat "$_rl_last_log_file" 2>/dev/null || echo 0)

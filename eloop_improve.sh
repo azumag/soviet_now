@@ -3352,6 +3352,12 @@ EOF
 	# --- Stage 1: 分析フェーズ ---
 	# user_review.md は高優先の参照入力として扱うが、ログ/rollback分析を読む分析フェーズ自体は省略しない。
 	rm -f "$ANALYSIS_RESULT_FILE" 2>/dev/null || true
+	# 分析フェーズは実装より軽いので、モデルあたりタイムアウトを短めにして
+	# wall timeout (IMPROVE_WALL_TIMEOUT) を Stage2 実装に残す。
+	# 実測: 分析が遅い候補が1800s上限まで食い、ai_retry1 中に wall timeout 死亡する例が
+	# 複数回観測された (2026-08-22 elapsed=3704s phase=ai_retry1)。
+	RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-900}"
+	export RUN_CMD_TIMEOUT_SEC
 	analysis_ok=false
 	IMPROVE_FAILURE_CODE=""
 	USER_REVIEW_FILE="data/user_review.md"
@@ -3404,6 +3410,9 @@ EOF
 	# 分析結果に基づいて strategy.py.staging を編集する
 	# Stage 1 失敗時はこのループをスキップする
 	while [ "$analysis_ok" = true ] && [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
+		# Stage1 で分析用に短縮していたタイムアウトを実装用へ戻す
+		RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"
+		export RUN_CMD_TIMEOUT_SEC
 		# ウォールタイム制限（デフォルト40分）
 		_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
 		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then

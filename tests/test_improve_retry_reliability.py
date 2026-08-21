@@ -265,6 +265,62 @@ PY
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_failed_no_apply_backoff_is_capped_and_tagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+IMPROVE_RETRY_BATCH_FILE="$TMP_STATE_DIR/improve_retry_batch.json"
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":100,"hash":"same-hash"}' >"$IMPROVE_LOCK_FILE"
+
+# no_apply 由来の記録は3行目にタグが付き、上限 IMPROVE_NO_APPLY_BACKOFF_MAX_SEC で止まる
+[ "$(_schedule_improve_retry_backoff)" -eq 1 ]
+[ "$(sed -n '3p' "$TMP_STATE_DIR/rate_limit_backoff")" = "no_apply" ]
+[ "$(_improve_backoff_wait_sec 6 no_apply)" -eq 600 ]
+[ "$(_improve_backoff_wait_sec 99 no_apply)" -eq 600 ]
+IMPROVE_NO_APPLY_BACKOFF_MAX_SEC=1200
+[ "$(_improve_backoff_wait_sec 6 no_apply)" -eq 1200 ]
+unset IMPROVE_NO_APPLY_BACKOFF_MAX_SEC
+
+# rate limit 由来（旧形式・タグ無し）は従来どおり指数 (300×2^5 上限)
+[ "$(_improve_backoff_wait_sec 1)" -eq 300 ]
+[ "$(_improve_backoff_wait_sec 6)" -eq 9600 ]
+[ "$(_improve_backoff_wait_sec 99)" -eq 9600 ]
+
+# count は従来互換で lock/snapshot へ書かれる
+python3 - "$IMPROVE_LOCK_FILE" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["retry_failure_count"] == 1
+PY
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_analyze_phase_uses_shorter_timeout_than_implementation(self):
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-900}"', eloop
+        )
+        stage1_pos = eloop.index("Stage 1: 分析フェーズ")
+        analyze_timeout_pos = eloop.index(
+            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_ANALYZE_CMD_TIMEOUT_SEC:-900}"'
+        )
+        restore_pos = eloop.index(
+            'RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"\n\t\texport RUN_CMD_TIMEOUT_SEC',
+            stage1_pos,
+        )
+        stage2_pos = eloop.index("Stage 2: 実装フェーズ")
+        # 分析タイムアウト設定 → Stage2宣言 の間に復元があること（Stage1のみ短縮）
+        self.assertLess(analyze_timeout_pos, stage2_pos)
+        self.assertLess(stage2_pos, restore_pos)
+
     def test_model_nonresponse_advances_fresh_retry_before_final_failure(self):
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
         self.assertGreaterEqual(
