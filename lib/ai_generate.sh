@@ -1017,7 +1017,8 @@ _ai_stats_record() {
 		error_preview=${error_preview//$'\n'/ }
 		error_preview=${error_preview//$'\r'/ }
 		error_preview=${error_preview//$'\t'/ }
-		line="${line%,},\"error\":\"${error_preview}\"}"
+		local base="${line%\}}"
+		line="${base},\"error\":\"${error_preview}\"}"
 	fi
 	printf '%s\n' "$line" >>"$stats_dir/${day}.jsonl" 2>/dev/null || true
 }

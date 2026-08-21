@@ -128,6 +128,7 @@ ai_generate_list "TEST:streak" "$prompt_file" "opencode:x-preview-f-free" "" "" 
 line=$(grep '"event":"fail"' "$AI_STATS_DIR/$(date +%Y%m%d).jsonl" | tail -n 1)
 check 'printf %s "$line" | grep -q "\"event\":\"fail\""' 'dispatch失敗がstatsへ記録される'
 check 'printf %s "$line" | grep -q "simulated upstream outage"' 'statsのerrorフィールドにstderr概要が入る'
+check 'printf %s "$line" | python3 -c "import json,sys; json.loads(sys.stdin.read()); print(1)" | grep -q 1' 'error付きfailレコードは妥当なJSONである'
 check '[ -f "$AI_FAIL_STREAK_DIR/opencode_x-preview-f-free" ]' '失敗streakファイルが作られる'
 check '[ "$(cat "$AI_FAIL_STREAK_DIR/opencode_x-preview-f-free")" = "1" ]' '1回目の失敗でstreak=1'
 
