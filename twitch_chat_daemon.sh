@@ -428,7 +428,7 @@ while true; do
                 continue
             fi
 
-            line_hash=$(printf '%s' "$clean_line" | md5 -q 2>/dev/null || printf '%s' "$clean_line" | md5sum | awk '{print $1}')
+            line_hash=$(printf '%s' "$clean_line" | md5sum 2>/dev/null | awk '{print $1}' || printf '%s' "$clean_line" | md5 -q 2>/dev/null)
             if [ -n "$line_hash" ] && _recent_key_seen "$RECENT_LINE_HASHES_FILE" "$line_hash" "$RECENT_LINE_HASH_TTL_SEC"; then
                 continue
             fi
