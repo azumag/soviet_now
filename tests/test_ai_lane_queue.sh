@@ -139,7 +139,7 @@ unset RADIO_GEN_STARTED_AT
 write_improve_state "running" "$$" "$(date +%s)"
 out=$( (export AI_RADIO_IMPROVE_WAIT_MAX_SEC=2; _ai_radio_improve_gate "RADIO:test" 2>&1) )
 gate_rc=$?
-check '[ "$gate_rc" -eq 1 ]' '待機上限超過時はその生成だけ諦める (rc=1)'
+check '[ "$gate_rc" -eq "$AI_GATE_GIVEUP_RC" ]' '待機上限超過時は専用コード AI_GATE_GIVEUP_RC で諦める'
 check 'printf %s "$out" | grep -q "give up"' '打ち切りがログに残る'
 rm -f "$IMPROVE_STATE_FILE"
 
@@ -148,6 +148,72 @@ write_improve_state "running" "$$" "$(date +%s)"
 gate_bypass_rc=$( (export AI_RADIO_IMPROVE_GATE=0; _ai_radio_improve_gate "RADIO:test" >/dev/null 2>&1; echo $?) )
 check '[ "$gate_bypass_rc" = "0" ]' 'AI_RADIO_IMPROVE_GATE=0 でゲートを無効化できる'
 rm -f "$IMPROVE_STATE_FILE"
+
+# dispatch スコープの二重待機防止フラグ
+write_improve_state "running" "$$" "$(date +%s)"
+flag_pass_rc=$( (export AI_GATE_PASSED_FOR_DISPATCH=1; _ai_radio_improve_gate "RADIO:test" >/dev/null 2>&1; echo $?) )
+check '[ "$flag_pass_rc" = "0" ]' 'AI_GATE_PASSED_FOR_DISPATCH=1 なら改善稼働中でも即通過する (二重待機防止)'
+rm -f "$IMPROVE_STATE_FILE"
+
+# --- 4b. ゲート打ち切りは attempt/fail 統計に計上されない (gate_giveup 分離) ---
+if command -v timeout >/dev/null 2>&1; then
+	unset RADIO_GEN_STARTED_AT
+	mkdir -p "$TMP/bin"
+	# codex スタブ: -o <file> へ出力する (実 CLI と同じ契約)
+	cat >"$TMP/bin/codex" <<'EOF'
+#!/bin/sh
+out=/dev/stdout
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-o) shift; out="$1" ;;
+	esac
+	shift
+done
+printf STUBBED > "$out"
+EOF
+	chmod +x "$TMP/bin/codex"
+	printf 'テスト用プロンプトです。\n' >"$WORK/prompt.txt"
+	# 改善稼働中 → 打ち切り。attempt/fail を記録せず gate_giveup のみ。
+	write_improve_state "running" "$$" "$(date +%s)"
+	(
+		cd "$WORK" || exit 1
+		PATH="$TMP/bin:$PATH"
+		export PATH
+		export AI_RADIO_IMPROVE_WAIT_MAX_SEC=2 AI_GENERATION_QUEUE_WAIT_SEC=1
+		_ai_dispatch "RADIO:test:gated" "codex:stub-model" "$WORK/prompt.txt" >/dev/null 2>&1
+	)
+	giveup_dispatch_rc=$?
+	check '[ "$giveup_dispatch_rc" -eq "$AI_GATE_GIVEUP_RC" ]' 'ゲート打ち切り時の _ai_dispatch は AI_GATE_GIVEUP_RC を返す'
+	stats_file=$(ls "$TMP/ai_stats/"*.jsonl 2>/dev/null | head -1)
+	if [ -n "$stats_file" ]; then
+		check 'grep -q "\"event\":\"gate_giveup\"" "$stats_file"' '打ち切りは gate_giveup イベントとして記録される'
+		check '! grep -q "\"event\":\"attempt\"" "$stats_file"' '打ち切り時に attempt を記録しない'
+		check '! grep -q "\"event\":\"fail\"" "$stats_file"' '打ち切り時に fail を記録しない'
+	else
+		check 'false' '統計ファイルが作成されている'
+	fi
+	rm -f "$stats_file"
+	# 改善なし → 通常どおり attempt/ok を記録する
+	rm -f "$IMPROVE_STATE_FILE"
+	stub_out=$(
+		cd "$WORK" || exit 1
+		PATH="$TMP/bin:$PATH"
+		export PATH
+		_ai_dispatch "RADIO:test:normal" "codex:stub-model" "$WORK/prompt.txt" 2>/dev/null
+	)
+	stub_rc=$?
+	check '[ "$stub_rc" -eq 0 ]' '改善が無ければゲートを通過してモデル呼び出しまで進む'
+	check '[ "$stub_out" = "STUBBED" ]' 'スタブ出力が透過する'
+	stats_file=$(ls "$TMP/ai_stats/"*.jsonl 2>/dev/null | head -1)
+	if [ -n "$stats_file" ]; then
+		check 'grep -q "\"event\":\"attempt\"" "$stats_file"' '通常呼び出しは attempt を記録する'
+		check 'grep -q "\"event\":\"ok\"" "$stats_file"' '通常呼び出しは ok を記録する'
+	else
+		check 'false' '通常呼び出しでも統計ファイルが作成される'
+	fi
+else
+	printf 'skip - timeout コマンド不在のため gate_giveup 分離のe2e検証をスキップ\n'
+fi
 
 # --- 5. キュー無効化で全部バイパス ---
 out5=$( (export AI_GENERATION_QUEUE_ENABLED=0; _ai_generation_queue_run "RADIO:bypass" printf bypassed) )

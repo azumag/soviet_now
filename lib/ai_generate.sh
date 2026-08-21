@@ -28,6 +28,11 @@ _ai_guard_model_output() {
 # 次の候補へフォールバックするが、モデル自体は止めない。
 AI_RATE_LIMIT_RC=79
 
+# 改善ゲート打ち切りを通常のモデル失敗(rc=1)と区別する専用リターンコード。
+# ゲート放棄はモデル呼び出し自体が発生しないため、attempt/fail 統計に
+# 計上せず gate_giveup イベントとして分離する (2026-08-22 ユーザー指摘)。
+AI_GATE_GIVEUP_RC=91
+
 _ai_rate_limit_text_detected() {
 	printf '%s' "${1:-}" | grep -Eiq \
 		'(^|[^[:alnum:]])429([^[:alnum:]]|$)|too[[:space:]_-]*many[[:space:]_-]*requests|rate[[:space:]_-]*limit([[:space:]_-]*(ed|exceeded))?|quota[[:space:]_-]*(exceeded|exhausted|limit)|resource[[:space:]_-]*exhausted|usage[[:space:]_-]*limit'
@@ -224,11 +229,13 @@ _ai_generation_queue_leave() {
 # 改善ジョブ稼働中、新規の放送系AI生成を待機させるゲート。
 # - RADIO_GEN_STARTED_AT (コーナー生成開始時刻) が改善ジョブの started_at より前なら
 #   待たせない (= 生成開始済みの放送はキャンセルせず完走させる)。
-# - 待機は AI_RADIO_IMPROVE_WAIT_MAX_SEC で打ち切り、超過時は rc=1 (この生成だけ諦める)。
+# - 待機は AI_RADIO_IMPROVE_WAIT_MAX_SEC で打ち切り、超過時は rc=AI_GATE_GIVEUP_RC (この生成だけ諦める)。
 # - 読み上げ・TTS はここを通らないため影響を受けない。
 _ai_radio_improve_gate() {
 	local label="${1:-RADIO}"
 	[ "${AI_RADIO_IMPROVE_GATE:-1}" = "1" ] || return 0
+	# 同一 dispatch 内の二重待機防止 (_ai_dispatch がゲート通過後に立てる)。
+	[ "${AI_GATE_PASSED_FOR_DISPATCH:-0}" = "1" ] && return 0
 	_improve_job_active || return 0
 	local state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/improve_state.json}"
 	local improve_started gen_started waited=0
@@ -250,7 +257,7 @@ _ai_radio_improve_gate() {
 	while _improve_job_active; do
 		if [ "$waited" -ge "$max_wait" ]; then
 			log "[AIQ:${label}] improve still active after ${waited}s -> give up this generation" >&2
-			return 1
+			return "$AI_GATE_GIVEUP_RC"
 		fi
 		sleep "$wait_sec"
 		waited=$((waited + wait_sec))
@@ -272,8 +279,11 @@ _ai_generation_queue_run() {
 	fi
 	case "$label" in
 	RADIO* | NEWS* | JIJI* | CELEBRATION*)
-		# 改善中は新規放送生成を待機 (開始済み生成はキャンセルしない)
-		_ai_radio_improve_gate "$label" || return 1
+		# 改善中は新規放送生成を待機 (開始済み生成はキャンセルしない)。
+		# 打ち切りコード (AI_GATE_GIVEUP_RC) をそのまま伝播させる。
+		_ai_radio_improve_gate "$label"
+		local _qgate_rc=$?
+		[ "$_qgate_rc" -eq 0 ] || return "$_qgate_rc"
 		;;
 	COMMENT*) ;;
 	*)
@@ -973,6 +983,24 @@ _ai_dispatch() {
 	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
 	*) resolved_model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
 	esac
+	# 改善ゲートをモデル呼び出しと attempt 記録の前に判定する。
+	# 打ち切り時は gate_giveup イベントだけを記録し、モデル呼び出しが無いにも
+	# 関わらず attempt/fail 統計が膨らむのを防ぐ (2026-08-22 ユーザー指摘)。
+	# 通過後は AI_GATE_PASSED_FOR_DISPATCH を立てて内側キューゲートの二重待機を防ぐ。
+	local _ai_gate_scoped=0
+	case "$label" in
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		_ai_radio_improve_gate "$label"
+		local _gate_rc=$?
+		if [ "$_gate_rc" -eq "$AI_GATE_GIVEUP_RC" ]; then
+			_ai_stats_record "gate_giveup" "$label" "$agent" "" "$resolved_model"
+			log "[${label}] improve gate gave up before model call (agent=$agent)" >&2
+			return "$AI_GATE_GIVEUP_RC"
+		fi
+		AI_GATE_PASSED_FOR_DISPATCH=1
+		_ai_gate_scoped=1
+		;;
+	esac
 	_ai_stats_record "attempt" "$label" "$agent" "" "$resolved_model"
 	AI_DISPATCH_ERROR_PREVIEW=""
 	local _dispatch_err_file
@@ -1033,6 +1061,11 @@ _ai_dispatch() {
 		;;
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}
+	# dispatch スコープのゲート通過フラグはここで必ず解除する
+	# (同一シェル内の次の候補・次の生成に漏出させない)。
+	if [ "$_ai_gate_scoped" -eq 1 ]; then
+		AI_GATE_PASSED_FOR_DISPATCH=0
+	fi
 	AI_DISPATCH_ERROR_PREVIEW_FILE=""
 	local _dispatch_error_preview
 	# 書き手側 (_ai_error_preview_from_text) で160字へ切り詰め済みのため
