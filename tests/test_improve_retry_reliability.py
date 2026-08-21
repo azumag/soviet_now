@@ -433,6 +433,7 @@ stop_spinner() { :; }
 curl() { return 1; }
 opencode() {
     printf '%s\n' "$*" >>"$test_root/opencode.calls"
+    cat >"$test_root/opencode.stdin"
     printf '%*s\n' 220 x
 }
 codex() {
@@ -441,6 +442,7 @@ codex() {
         if [ "$1" = "-o" ]; then shift; out="$1"; fi
         shift
     done
+    cat >"$test_root/codex.stdin"
     printf '%*s\n' 220 x
     [ -n "$out" ] && printf 'codex output\n' >"$out"
 }
@@ -455,8 +457,9 @@ run_cmd codex:deepseek-v4-flash 'paid prompt'
 codex_rc=$?
 set -e
 [ "$codex_rc" -eq 79 ]
-grep -qx 'run --model opencode-go/muse-spark-1.2-contributor muse prompt' "$test_root/opencode.calls"
-grep -qx 'run --model opencode/deepseek-v4-flash-free free prompt' "$test_root/opencode.calls"
+grep -qx 'run --model opencode-go/muse-spark-1.2-contributor' "$test_root/opencode.calls"
+grep -qx 'run --model opencode/deepseek-v4-flash-free' "$test_root/opencode.calls"
+[ "$(cat "$test_root/opencode.stdin")" = 'free prompt' ]
 grep -q 'START spec=opencode-go:muse-spark-1.2-contributor .*model=opencode-go/muse-spark-1.2-contributor' "$test_root/run.log"
 grep -q 'START spec=opencode:deepseek-v4-flash-free .*model=opencode/deepseek-v4-flash-free' "$test_root/run.log"
 python3 - "$test_root/stats"/* <<'PY'
@@ -474,6 +477,16 @@ PY
                 tmp,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_run_cmd_streams_prompt_instead_of_passing_it_in_argv(self):
+        source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
+        run_cmd = source[source.index("run_cmd()") : source.index("#=== AIステップ ===")]
+        self.assertIn('local -a opencode_args=(run --model "$resolved_model")', run_cmd)
+        self.assertIn('-o "$codex_out_file" -', run_cmd)
+        self.assertIn('"${opencode_args[@]}" <"$prompt_file"', run_cmd)
+        self.assertIn('codex "${codex_args[@]}" <"$prompt_file"', run_cmd)
+        self.assertNotIn('"${opencode_args[@]}" >>', run_cmd)
+        self.assertNotIn('"$prompt_body")', run_cmd)
 
     def test_fact_check_defaults_put_muse_before_paid_fallback(self):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")

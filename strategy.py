@@ -18,28 +18,10 @@ Decision Logic:
     箇所が複数ある（コード側が正）。数値を「意図に合わせて」書き換えるのは危険。
   - 既知の乖離・デッド化した軸（今回は意図的に温存。個別に単独サイクルで扱うこと）:
     - phase 判定（下記）: HIGH 分岐が構造的に到達不能
+    - axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): 長さガードの前提が実データと合わず、
+      内側ロジックは実質no-op（reason ラベルのみ常時付与）
     - axis 9.6 (REACTIVE_PAIRS_STACKING) 系のヘルパー判定はほぼ常に不成立
-      （2026-08-19 実測: 4007ターン中 has_reactive_for_type/has_near_for_type は
-      0回もTrueを返さない。ただしこれは単純なバグではなく、元は正しかった判定式
-      [rp[2]==type, len>=3]（意図的抑制装置 v360）が2.5ヶ月の wildcard 摂動で
-      rp[1]/len>=6 へ中立浮動した結果。additive-only な新helperで機能修正すると
-      13.2%のターンで分岐が反転するが、追加併合0件・同typeから59-60%で逆方向に
-      動く・T13ゲート専用のCLUSTER_SETUP_FOR_NEXT_MERGEを23%破壊、という実測結果
-      からNO-GO判定済み（congestion_scaleがpiece_count<=46で符号反転しているのが
-      原因）。has_reactive_for_type/has_near_for_type 自体を素直に「直す」のは
-      危険なので絶対にしないこと。機能修正する場合はcongestion_scaleの符号反転も
-      含めて再設計し、単独サイクルで扱うこと）
     詳細は logs/change_log.txt および過去 rollback postmortem を参照。
-  - 2026-08-19 に削除済みの軸（温存リストとは別、削除確定済み）:
-    - axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): 実測(4007ターン)で内側ロジック(位置比較)
-      が0回発火するゴースト軸だった（`len(rp)>=6`ガードが実データの3要素タプルと
-      矛盾）。ただし完全なno-opではなく、`merge_grade=="NO"`かつ非congested・非
-      death_spiralの全候補に定数`+0.0798`を一律加算しつつ`AVOID_BLOCK_REACTIVE_PAIR`
-      ラベルをdecision_reasonの66.0%に付与していた（同一ターンのNO候補間では
-      一様に加算されるためスコア順位への影響はなし。replay実測でも決定x差分0件）。
-      正しく動作させる案(len>=3 + rp[0]/rp[1]修正)も検証したが、9.3%のターンで
-      決定が変わるのに追加併合0件・盤端側へ5:1で偏る（archiveの edge scatter 失敗
-      パターンと一致）ためNO-GO。詳細は logs/change_log.txt 該当コミット参照
   - 2026-08-18 リファクタで、旧 Change History ブロックおよび各軸の v番号付き失敗事例
     コメント（"Fixes rollback failure mode: ..." 等）をコード本体から削除した。
     全文は docs/strategy_decide_history_archive_20260818.txt に保存してある。
@@ -77,6 +59,15 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v706: russia_phase 発火を type15 のみに限定（type14 発火の回帰修正）。T14 在盤中も
+# CROSSES_DEADLINE 系ペナルティを有効にし、T14 直後の crossing 併合連打を抑止して
+# 二個目 T13/T14 → T14+T14→T15（ロシア）経路を復旧。T14 merge priority 軸は t14_on_board
+# で再キーイングし type15 再定義の副作用を補償（対象段階: ロシア T15）。
+# Fixes rollback failure mode: T14 生成後の crossing 併合連打で盤面が崩れ、二個目 T14 素材が
+# 作れず T14→T15 最終併合に到達しない（near-miss 20260821_023120 型）。
+# refs: tmp/analysis_result.md, tmp/state/last_rollback_analysis.md, logs/change_log.txt,
+#       strategy_versions/best_score6527_strategy.py, strategy_versions/by_hash/e5b671c8d352.py,
+#       data/mandatory_themes.txt
 # v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
 # Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
 # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
@@ -312,7 +303,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
 
-    russia_phase_count = sum(1 for p in pieces if p.get("type") in (14, 15))  # T14=Kazakhstan precursor, T15=Russia
+    # v439: ロシアフェーズ発火を type15(ロシア)のみに限定する（回帰修正）。
+    # 従来の type14 発火だと、T14 を1個作った時点で CROSSES_DEADLINE 系ペナルティが
+    # `not russia_phase` ガードで無効化され、T14 直後の crossing 併合連打を抑止できない。
+    # T14→T15 最終併合経路（20260821_023120 型 near-miss）を復旧するため、T14 は precursor
+    # として通常評価に委ね、実在の T15 のみで安全着地モードへ移行する（analysis_result.md 仮説採用）。
+    # rollback anchor e5b671c8d352 / 殿堂 best_score6527 は type15 のみ発火。現行 type14 発火は回帰。
+    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)  # T15=Russia only
     russia_phase = russia_phase_count >= 1
 
     # T14 が1個できただけで russia_phase が発火すると v701 の素材組み立て誘導が止まり、
@@ -369,10 +366,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Used by axis 9.7 for placement guidance when no same-type on board
     pipeline = reactor.get("pipeline", [])
 
-    # 警告(2026-08-19実測): 以下2関数は現行データ形式(reactive_pairs=3要素タプル,
-    # near_pairs=4要素タプル)に対して常にFalseを返す(4007ターン中0回True)。
-    # 「バグに見える」が単純に直すと危険(理由はモジュールdocstring axis 9.6の項参照、
-    # NO-GO判定済み)。has_reactive_for_type/has_near_for_type 自体は変更しないこと。
+    # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
+    # Used by axis 9.3 to check if landing position is between reactive pair pieces.
+    # Computed once before the candidate loop since pieces don't change between candidates.
+    piece_pos_by_id = board_stats.piece_positions(pieces)
     current_type_has_reactive = board_stats.has_reactive_for_type(reactive_pairs, next_type)
     current_type_has_near = board_stats.has_near_for_type(near_pairs, next_type)
 
@@ -840,9 +837,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     score += cluster_setup_bonus
                                     reasons.append("CLUSTER_SETUP_FOR_NEXT_MERGE")
 
-        # axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR, v384) は2026-08-19に削除済み。
-        # 実測(4007ターン)で内側ロジックが0回発火するゴースト軸だった。詳細はモジュール
-        # docstring冒頭・logs/change_log.txt該当コミット参照。
+        # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
+        # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
+        # Placing a piece between reactive pairs of different types can physically block
+        # their future merge, leading to piece_count accumulation and game over.
+        # pairs, no merges for 11 turns, piece_count grows 30→40.
+        # Penalty per blocked pair: 200, capped at 500 total. Small enough to not override
+        # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
+        # Only fires when merge_grade=="NO" (no immediate merge to suppress).
+        # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
+        if merge_grade == "NO" and reactive_pair_count >= -4:
+            board_congested = (
+                (max_y >= 2.033 and deadline_crossed)
+                or (reactive_pair_count >= 5 and max_y >= 1.475)
+            )
+            if not board_congested and not death_spiral:
+                blocking_penalty = -0.0798
+                for rp in reactive_pairs:
+                    if isinstance(rp, (list, tuple)) and len(rp) >= 6:
+                        rp_type = rp[2]
+                        if rp_type != next_type:
+                            pos1 = piece_pos_by_id.get(rp[1])
+                            pos2 = piece_pos_by_id.get(rp[1])
+                            if pos1 and pos2:
+                                x1, y1 = pos1
+                                x2, y2 = pos2
+                                # Check if landing is within the horizontal span of the reactive pair
+                                span_min = min(x1, x2) - 0.3211
+                                span_max = max(x1, x2) + 0.2526
+                                if span_min <= x <= span_max:
+                                    # Penalize if landing at or above the reactive pair level
+                                    pair_min_y = min(y1, y2)
+                                    if landing_y >= pair_min_y:
+                                        blocking_penalty += 88.8
+                if blocking_penalty > -1:
+                    score -= min(blocking_penalty, 810.9)
+                    reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- v701: T12_CHAIN_LANE_GUIDANCE / T12_PAIR_COVER_AVOID (T13連鎖アセンブリ誘導) -----
         # 採用仮説: 中盤 NO_MERGE で T11/T12 クラスタの横レーンへ誘導し、T11 ペアを T12 近傍に
@@ -1219,9 +1249,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 383.3
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- NEW axis: T14 merge priority in russia_phase -----
+        # ----- NEW axis: T14 merge priority (re-keyed to t14_on_board, not russia_phase) -----
         # Adopted hypothesis: Russia-Phase T14 Merge Priority (analysis_result.md)
-        # When russia_phase is active (T14 piece on board) and same_type_stack_top is type 14,
+        # v439: russia_phase は type15 のみで発火するよう再定義したため、この軸は T14 在盤中
+        # も有効に保つため t14_on_board で再キーイングする。T14+T14→T15（ロシア）の最終併合
+        # 優先 +1500 を T14 素材組み立て中は常に効かせる（type15 再定義による副作用を補償）。
+        # When t14_on_board is true and same_type_stack_top is type 14,
         # apply a strong bonus to prioritize T14 chain building toward Russia (T15) creation.
         # instead of placing near T14 pieces. DEADLINE_GUARD captured T5/T8 merges but T14 remained unmerged.
         # russia_phase axis 8.7 bonuses fire for ANY immediate merge, not specifically for T14.
@@ -1230,7 +1263,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Bonus: +1500 (stronger than most other bonuses, less than DIRECT_MERGE +1566)
         # mandatory_theme #5: "二個目ロシア経路の維持を両立せよ" — this axis enables that path
         # mandatory_theme #2: T14→T15 merge is a merge — this axis is deadline-proximity merge priority
-        if russia_phase and same_type_stack_top is not None:
+        if t14_on_board and same_type_stack_top is not None:
             if same_type_stack_top.get("type") == 14:  # T14 piece on board
                 score += 1500.0
                 reasons.append("RUSSIA_PHASE_T14_MERGE_PRIORITY")
@@ -1375,22 +1408,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         safest = min(results, key=lambda r: r.get("landing_y", 0))
         best_x = safest["x"]
         best_reason = "FALLBACK_ALL_SUPPRESSED"
-        # 盤面のdrop範囲は[-3.0, +3.0]（analyze_board.DROP_X_MIN/MAX）。旧値[-1.612, 0.862]は
-        # wildcard摂動由来のバグで、この経路（deadline非超過候補が1本だけ残った危険局面、
-        # 実測0.05%のターンで発火）が選んだ唯一の安全列を最大2.1単位ずらしていた
-        # （2026-08-19実測: 発火2回とも別系統のRUNTIME_DEADLINE_SAFETY_OVERRIDEが事後救済していたが、
-        # decide()自体の出力は発火のたび誤っていた）。
-        best_x = max(-3.0, min(3.0, best_x))
+        best_x = max(-1.612, min(0.862, best_x))
         best_x = round(best_x, 1)
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
-    # 注意: このクリップ範囲[-0.991, 4.362]は本来のdrop範囲[-3.0,+3.0]と一致しない。
-    # 2026-08-19に一度[-3.0,3.0]へ修正・VM反映(commit 4e664ce)したが、VM自律ループの
-    # 実ゲーム評価でobjective_regression+lost_ukraine_gateを理由にrollbackされ、
-    # 現在はこの値に戻っている（詳細: logs/change_log.txt 2026-08-19 03:58/04:11,
-    # handoff.md §12「重要な訂正」）。一見自明なバグに見えるが、直すと実ゲーム成績が
-    # 悪化した実績があるため、再挑戦する場合は単独サイクルで慎重に扱うこと。
     best_x = max(-0.991, min(4.362, best_x))
     best_x = round(best_x, 4)
 

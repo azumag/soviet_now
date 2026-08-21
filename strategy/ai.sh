@@ -458,33 +458,37 @@ run_cmd() {
 	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		local opencode_bin="/snap/bin/opencode"
 		[ -x "$opencode_bin" ] || opencode_bin="opencode"
-		local -a opencode_args=(run --model "$resolved_model" "$prompt_body")
+		# Keep the prompt out of argv.  Review prompts include several large reference
+		# files and can exceed ARG_MAX when passed as one positional argument.
+		# In headless mode opencode reads stdin when no message positional is given.
+		# Do not pass a literal '-' because older releases treat it as the message text.
+		local -a opencode_args=(run --model "$resolved_model")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
 				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
 				else
-					"$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+					"$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
 				fi
 			else
 				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$opencode_bin" "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
 				else
-					"$opencode_bin" "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+					"$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
 				fi
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
 				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" &
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
 				else
-					"$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" &
+					"$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
 				fi
 			else
 				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$opencode_bin" "${opencode_args[@]}" &
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
 				else
-					"$opencode_bin" "${opencode_args[@]}" &
+					"$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
 				fi
 			fi
 		fi
@@ -494,19 +498,19 @@ run_cmd() {
 		local -a codex_args=(
 			exec --skip-git-repo-check -m "$codex_model"
 			--dangerously-bypass-approvals-and-sandbox
-			-o "$codex_out_file" "$prompt_body"
+			-o "$codex_out_file" -
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" >>"$cmd_log_file" 2>&1 &
+				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
 			else
-				codex "${codex_args[@]}" >>"$cmd_log_file" 2>&1 &
+				codex "${codex_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" &
+				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" <"$prompt_file" &
 			else
-				codex "${codex_args[@]}" &
+				codex "${codex_args[@]}" <"$prompt_file" &
 			fi
 		fi
 	fi
