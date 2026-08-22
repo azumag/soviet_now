@@ -36,6 +36,11 @@ TOLERANCE_SEC="${STREAM_NOON_AUDIT_TOLERANCE_SEC:-600}"
 RESPAWN_WAIT_SEC="${STREAM_NOON_AUDIT_RESPAWN_WAIT_SEC:-90}"
 STOP_TIMEOUT_SEC="${STREAM_NOON_AUDIT_STOP_TIMEOUT_SEC:-45}"
 STATE_DIR="${STREAM_NOON_AUDIT_STATE_DIR:-tmp/state/stream_noon_audit}"
+TWITCH_LOGIN="${STREAM_NOON_AUDIT_TWITCH_LOGIN:-dociai}"
+GQL_URL="${STREAM_NOON_AUDIT_GQL_URL:-https://gql.twitch.tv/gql}"
+GQL_CLIENT_ID="${STREAM_NOON_AUDIT_GQL_CLIENT_ID:-kimne78kx3ncx6brgo4mv6wki5h1ko}"
+GQL_TIMEOUT_SEC="${STREAM_NOON_AUDIT_GQL_TIMEOUT_SEC:-10}"
+GQL_CMD="${STREAM_NOON_AUDIT_GQL_CMD:-}"
 
 NOW_CMD="${STREAM_NOON_AUDIT_NOW_CMD:-date +%s}"
 STATUS_CMD="${STREAM_NOON_AUDIT_STATUS_CMD:-python3 lib/direct_stream.py status}"
@@ -157,6 +162,29 @@ _status_int() {
 	esac
 }
 
+_twitch_stream_id() {
+	local payload="" stream_id=""
+	if [ -n "$GQL_CMD" ]; then
+		payload=$($GQL_CMD 2>/dev/null) || payload=""
+	else
+		payload=$(curl -fsS --connect-timeout 5 --max-time "$GQL_TIMEOUT_SEC" \
+			-H "Client-ID: $GQL_CLIENT_ID" \
+			-H 'Content-Type: application/json' \
+			--data "{\"query\":\"{ user(login: \\\"$TWITCH_LOGIN\\\") { stream { id } } }\"}" \
+			"$GQL_URL" 2>/dev/null) || payload=""
+	fi
+	[ -n "$payload" ] || { echo ""; return 0; }
+	stream_id=$(printf '%s' "$payload" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    stream = ((d.get("data") or {}).get("user") or {}).get("stream") or {}
+    value = stream.get("id")
+    print(value if value not in (None, "") else "")
+except Exception:
+    print("")') || stream_id=""
+	printf '%s' "$stream_id"
+}
+
 _write_marker_json() {
 	local day="$1" path="$2" tmpf="$3"; shift 3
 	{
@@ -192,9 +220,9 @@ except Exception:
     pass' "$path" "$key" "$val" 2>/dev/null || true
 }
 
-_wait_running_with_new_start() {
-	# 新しい started_at の配信が立ち上がるまで待つ。見つかれば started_at を返す。
-	local old_started="$1" wait_sec="$2" deadline now cand
+_wait_running_with_new_session() {
+	# VM側の新規起動に加え、可能なら Twitch上のセッション交代も確認する。
+	local old_started="$1" old_stream_id="$2" wait_sec="$3" deadline now cand new_stream_id
 	deadline=$(date +%s)
 	deadline=$((deadline + wait_sec))
 	while :; do
@@ -203,8 +231,15 @@ _wait_running_with_new_start() {
 		if [ "$(_status_flag running)" = "1" ]; then
 			cand=$(_status_int started_at)
 			if [ -n "$cand" ] && [ "$cand" != "$old_started" ]; then
-				echo "$cand"
-				return 0
+				if [ -z "$old_stream_id" ]; then
+					echo "$cand"
+					return 0
+				fi
+				new_stream_id=$(_twitch_stream_id)
+				if [ -n "$new_stream_id" ] && [ "$new_stream_id" != "$old_stream_id" ]; then
+					echo "$cand"
+					return 0
+				fi
 			fi
 		fi
 		sleep 2
@@ -214,8 +249,8 @@ _wait_running_with_new_start() {
 }
 
 _restart_stream() {
-	local old_started="$1" new_started="" stop_rc=0 deadline
-	_log "位相ずれ検出 → 配信を正午へ張り直します (old_started=${old_started})"
+	local old_started="$1" old_stream_id="${2:-}" new_started="" stop_rc=0 deadline
+	_log "位相ずれ検出 → 配信を正午へ張り直します (old_started=${old_started} old_stream_id=${old_stream_id:-unknown})"
 	touch "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=1
 	if $STOP_CMD >>"$LOG_FILE" 2>&1; then
@@ -227,20 +262,23 @@ _restart_stream() {
 	deadline=$(date +%s)
 	deadline=$((deadline + STOP_TIMEOUT_SEC))
 	while :; do
+		if [ -n "$old_stream_id" ] && [ -z "$(_twitch_stream_id)" ]; then
+			break
+		fi
 		[ "$(_status_flag running)" != "1" ] && break
 		[ "$(date +%s)" -ge "$deadline" ] && break
 		sleep 1
 	done
 	rm -f "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=0
-	new_started=$(_wait_running_with_new_start "$old_started" "$RESPAWN_WAIT_SEC")
+	new_started=$(_wait_running_with_new_session "$old_started" "$old_stream_id" "$RESPAWN_WAIT_SEC")
 	if [ -z "$new_started" ]; then
 		_log "WARN: supervisor respawn 未検出 (${RESPAWN_WAIT_SEC}s) → 自前起動を試行"
 		( nohup $RUN_CMD >>"$LOG_FILE" 2>&1 & ) || true
-		new_started=$(_wait_running_with_new_start "$old_started" 30)
+		new_started=$(_wait_running_with_new_session "$old_started" "$old_stream_id" 30)
 	fi
 	if [ -n "$new_started" ]; then
-		_log "配信を再開しました (new_started=${new_started})"
+		_log "配信を再開しました (new_started=${new_started} stream_id_rotated=1)"
 		echo "$new_started"
 		return 0
 	fi
@@ -252,6 +290,7 @@ _audit_once() {
 	local jst_day="$1"
 	local marker="$STATE_DIR/${jst_day}.json"
 	local decision="" detail="" old_started="" new_started="" outcome=""
+	local old_stream_id="" new_stream_id=""
 	local noon_epoch sod diff circ_diff
 
 	noon_epoch=$(( jst_day * DAY_SEC + NOON_SOD_SEC - JST_OFFSET_SEC ))
@@ -293,13 +332,17 @@ _audit_once() {
 		return 0
 	fi
 
-	if new_started=$(_restart_stream "$old_started"); then
+	old_stream_id=$(_twitch_stream_id)
+	if new_started=$(_restart_stream "$old_started" "$old_stream_id"); then
 		outcome="restarted"
 	else
 		outcome="restart_failed"
 	fi
+	new_stream_id=$(_twitch_stream_id)
 	_marker_update_field "$marker" "outcome" "$outcome"
 	_marker_update_field "$marker" "started_after" "$new_started"
+	_marker_update_field "$marker" "session_before" "$old_stream_id"
+	_marker_update_field "$marker" "session_after" "$new_stream_id"
 	return 0
 }
 

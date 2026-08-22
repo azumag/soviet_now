@@ -44,6 +44,11 @@ emit_status() {
 	fi
 }
 
+emit_twitch_id() {
+	local dir="$1" stream_id="$2"
+	printf '"%s"\n' "$stream_id" >"$dir/twitch_id.txt"
+}
+
 make_stubs() {
 	local dir="$1"
 	mkdir -p "$dir/bin" "$dir/state" "$dir/logs"
@@ -67,8 +72,17 @@ EOF
 echo "run" >> "$dir/calls.log"
 if [ ! -f "$dir/run_no_flip" ]; then
 	printf '{"backend":"ffmpeg","running":true,"state":"running","pid":222,"started_at":%s}\n' "\${STREAM_NOON_TEST_NEW_STARTED:-9999999999}" > "$dir/status.json"
+	printf '"%s"\n' "\${STREAM_NOON_TEST_NEW_TWITCH_ID:-rotated}" > "$dir/twitch_id.txt"
 fi
 exit 0
+EOF
+	cat >"$dir/bin/twitch.sh" <<EOF
+#!/usr/bin/env bash
+if [ -f "$dir/twitch_id.txt" ]; then
+	printf '{"data":{"user":{"stream":{"id":%s}}}}\n' "\$(cat "$dir/twitch_id.txt")"
+else
+	printf '{"data":{"user":null}}\n'
+fi
 EOF
 	chmod +x "$dir/bin/"*.sh
 	: >"$dir/calls.log"
@@ -91,6 +105,7 @@ launch_worker() {
 		export STREAM_NOON_AUDIT_STATUS_CMD="bash $dir/bin/status.sh"
 		export STREAM_NOON_AUDIT_STOP_CMD="bash $dir/bin/stop.sh"
 		export STREAM_NOON_AUDIT_RUN_CMD="bash $dir/bin/run.sh"
+		export STREAM_NOON_AUDIT_GQL_CMD="bash $dir/bin/twitch.sh"
 		if [ -n "$extra_env" ]; then
 			eval "export $extra_env"
 		fi
@@ -157,6 +172,7 @@ stop_worker "$D1"
 D2="$TMP/case_drift_supervisor"
 make_stubs "$D2"
 emit_status "$D2/status.json" 1 "$((NOON + 100 - 10800))"
+emit_twitch_id "$D2" "old-session"
 launch_worker "$D2" ""
 M2="$D2/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json"
 # supervisor 相当: stop 後2秒で新しい started_at の配信を立ち上げる
@@ -167,6 +183,7 @@ M2="$D2/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json
 	done
 	sleep 1
 	emit_status "$D2/status.json" 1 "$((NOON + 130))"
+	emit_twitch_id "$D2" "new-session"
 ) &
 sup_pid=$!
 check 'wait_for_marker_field "$M2" "\"outcome\": \"restarted\""' 'drift: 張り直しが完了する'
@@ -175,6 +192,8 @@ check '[ "$(grep -c "^stop$" "$D2/calls.log")" = "1" ]' 'drift: stop は正規�
 check '[ ! -f "$D2/state/direct_stream.paused" ]' 'drift: pause marker は最終的に解除される'
 check '[ "$(grep -c "^run$" "$D2/calls.log")" = "0" ]' 'drift: supervisor respawn 検出時は run を呼ばない'
 check 'wait_for_marker_field "$M2" "\"started_after\": \"$((NOON + 130))\""' 'drift: marker に新しい started_at を記録'
+check 'wait_for_marker_field "$M2" "\"session_before\": \"old-session\""' 'drift: marker に旧Twitch配信IDを記録'
+check 'wait_for_marker_field "$M2" "\"session_after\": \"new-session\""' 'drift: marker に新Twitch配信IDを記録'
 stop_worker "$D2"
 
 # --- 4. ずれ → respawn しない場合の自前起動フォールバック ---
@@ -215,6 +234,30 @@ check 'wait_for_marker_field "$M4" "skipped_paused"' 'paused: skipped_paused を
 check '[ -f "$D4/state/direct_stream.paused" ]' 'paused: マーカーを消さない'
 check '[ "$(calls_count "$D4")" = "0" ]' 'paused: stop/run を呼ばない'
 stop_worker "$D4"
+
+# --- 5b. TwitchセッションID不変ならVM再起動だけでは成功扱いにしない ---
+D4B="$TMP/case_session_not_rotated"
+make_stubs "$D4B"
+touch "$D4B/run_no_flip"
+emit_status "$D4B/status.json" 1 "$((NOON + 100 - 18000))"
+emit_twitch_id "$D4B" "same-session"
+RESPAWN_WAIT_SEC=2 launch_worker "$D4B" ""
+M4B="$D4B/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json"
+# supervisor相当がローカル配信だけ張り直し、Twitch上のIDは旧ままのケース。
+(
+	for _ in $(seq 1 20); do
+		grep -q '^stop$' "$D4B/calls.log" 2>/dev/null && break
+		sleep 0.2
+	done
+	sleep 0.5
+	emit_status "$D4B/status.json" 1 "$((NOON + 180))"
+) &
+session_sup_pid=$!
+check 'wait_for_marker_field "$M4B" "restart_failed" 120' 'session_same: Twitch ID不変は失敗として記録'
+check 'wait_for_marker_field "$M4B" "\"session_before\": \"same-session\""' 'session_same: 旧IDを記録'
+check 'wait_for_marker_field "$M4B" "\"session_after\": \"same-session\""' 'session_same: 変更なしの後IDを記録'
+kill "$session_sup_pid" 2>/dev/null || true
+stop_worker "$D4B"
 
 # --- 6. 配信が止まっている場合は任せる ---
 D5="$TMP/case_not_running"
