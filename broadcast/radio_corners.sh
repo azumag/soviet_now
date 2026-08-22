@@ -1714,8 +1714,12 @@ _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
 	case "$agent" in
 	codex | codex:*)
+		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
-		return $?
+		local _jiji_research_rc=$?
+		AI_DISPATCH_RECORD_WINNER="$_saved_record_winner"
+		return "$_jiji_research_rc"
 		;;
 	esac
 	_ai_generation_queue_run "JIJI:research:${agent}" _run_opencode_jiji_research_unqueued "$@"
