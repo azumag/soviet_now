@@ -59,15 +59,15 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
-# v706: russia_phase 発火を type15 のみに限定（type14 発火の回帰修正）。T14 在盤中も
-# CROSSES_DEADLINE 系ペナルティを有効にし、T14 直後の crossing 併合連打を抑止して
-# 二個目 T13/T14 → T14+T14→T15（ロシア）経路を復旧。T14 merge priority 軸は t14_on_board
-# で再キーイングし type15 再定義の副作用を補償（対象段階: ロシア T15）。
-# Fixes rollback failure mode: T14 生成後の crossing 併合連打で盤面が崩れ、二個目 T14 素材が
-# 作れず T14→T15 最終併合に到達しない（near-miss 20260821_023120 型）。
-# refs: tmp/analysis_result.md, tmp/state/last_rollback_analysis.md, logs/change_log.txt,
-#       strategy_versions/best_score6527_strategy.py, strategy_versions/by_hash/e5b671c8d352.py,
-#       data/mandatory_themes.txt
+# v708: t14_count>=2時に生存最大化モード（低配置強化・盤面圧縮）＋next=T14時の併合優先を追加（対象段階: ロシア T15）
+# Fixes rollback failure mode: T14×2を作った後、次のT14が来るまで48ターン生存できずdeadline超過で死亡（20260822_060733型）
+# refs: tmp/t14x2.jsonl analysis, game_history/20260822_060733_score3200.jsonl
+# v707: T13単独在盤・next=T13時のDIRECT/NEAR候補にT13+T13→T14経路ボーナスを追加（対象段階: カザフスタン T14）
+# Fixes rollback failure mode: T13_peak=3→final T13x1 の散逸で2個目T14素材が欠落し、T14+T14→15経路が途絶
+# refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, data/mandatory_themes.txt
+# v706: T13を常時アンカー化しT12_CHAIN_LANE_GUIDANCE/COVERをT14前から有効化（対象段階: カザフスタン T14）
+# Fixes rollback failure mode: 1個目T14前のT13集約未支援でT13分散→T14peak=1頭打ち、T14+T14→15経路未復旧
+# refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt, advice.md, prompts/game_theory.md
 # v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
 # Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
 # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
@@ -303,13 +303,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
 
-    # v439: ロシアフェーズ発火を type15(ロシア)のみに限定する（回帰修正）。
-    # 従来の type14 発火だと、T14 を1個作った時点で CROSSES_DEADLINE 系ペナルティが
-    # `not russia_phase` ガードで無効化され、T14 直後の crossing 併合連打を抑止できない。
-    # T14→T15 最終併合経路（20260821_023120 型 near-miss）を復旧するため、T14 は precursor
-    # として通常評価に委ね、実在の T15 のみで安全着地モードへ移行する（analysis_result.md 仮説採用）。
-    # rollback anchor e5b671c8d352 / 殿堂 best_score6527 は type15 のみ発火。現行 type14 発火は回帰。
-    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)  # T15=Russia only
+    russia_phase_count = sum(1 for p in pieces if p.get("type") in (14, 15))  # T14=Kazakhstan precursor, T15=Russia
     russia_phase = russia_phase_count >= 1
 
     # T14 が1個できただけで russia_phase が発火すると v701 の素材組み立て誘導が止まり、
@@ -408,18 +402,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             reactive_zone_pairs.append((_ptype, _zmid, _zspan, _ztop, _zmin_y, _zr, _zblocked))
     t12_on_board = isinstance(pieces, list) and any(p.get("type") == 12 for p in pieces)
-    # T14 存在時は T13 もレーンアンカー・被覆抑止ペアに含め、既存 T13/T14 クラスタ側へ素材を集約する
-    # （T13+T13→2個目 T14→T14+T14→T15 の盤面組み立て経路を維持）。
+    t13_on_board = isinstance(pieces, list) and any(p.get("type") == 13 for p in pieces)
+    # v707: T13単体カウント（T13+T13→T14 経路の対象段階判定用。ループ外で一度だけ集計）
+    t13_count = sum(1 for p in pieces if p.get("type") == 13)
+    t14_count = sum(1 for p in pieces if p.get("type") == 14)
+    # T13常時アンカー: 1個目T14生成前からT13クラスタへ誘導し、T13+T13→T14経路を復旧（対象段階: Kazakhstan T14）
+    # 旧v704のt14_on_board条件は冗長のため削除し、t12/t13/t14いずれか在盤で有効化
     t14_on_board = isinstance(pieces, list) and any(p.get("type") == 14 for p in pieces)
     t12_lane_xs = []
     t12_lane_top = -10.0
     t12_low_pairs = []
-    if isinstance(pieces, list):
-        _t11t12 = [p for p in pieces if p.get("type") in (11, 12) or (t14_on_board and p.get("type") == 13)]
+    if isinstance(pieces, list) and (t12_on_board or t13_on_board or t14_on_board):
+        _t11t12 = [p for p in pieces if p.get("type") in (11, 12, 13)]
         t12_lane_xs = [float(p.get("x", 0.0) or 0.0) for p in _t11t12]
         t12_lane_top = max([float(p.get("y", 0.0) or 0.0) for p in _t11t12], default=-10.0)
-        # 低い（y<=0.8）同typeピースをx順に隣接ペア化し、被覆抑止帯（span・top）を一度計算。
-        for _ptype in ((11, 12, 13) if t14_on_board else (11, 12)):
+        # 低い（y<=0.8）同typeピースをx順に隣接ペア化し、被覆抑止帯（span・top）を一度計算。T13も常時対象
+        for _ptype in (11, 12, 13):
             _low = [
                 p for p in _t11t12
                 if p.get("type") == _ptype and float(p.get("y", 99.0) or 99.0) <= 0.8
@@ -890,7 +888,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not result.get("crosses_deadline")
             and not death_spiral
             and type15_count == 0
-            and t12_on_board
+            and (t12_on_board or t13_on_board)
         ):
             # (a) 横レーン誘導: 最寄りの T11/T12（T14存在時はT13含む）x へ dx<=2.0 で最大140、dx=2.0 で0。
             if t12_lane_xs:
@@ -945,6 +943,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and high_cover_free
         ):
             for _hc_x, _hc_tol, _hc_min_y in high_cover_free:
+                # T13がlow_pairとして既に-200抑止されている場合はHIGH_COVER側の二重カウントを避ける
+                if "T12_PAIR_COVER_AVOID" in reasons:
+                    break
                 if abs(x - _hc_x) <= _hc_tol and landing_y >= _hc_min_y:
                     score -= 400.0
                     reasons.append("HIGH_TYPE_COVER_AVOID")
@@ -1249,12 +1250,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 383.3
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- NEW axis: T14 merge priority (re-keyed to t14_on_board, not russia_phase) -----
+        # ----- NEW axis: T14 merge priority in russia_phase -----
         # Adopted hypothesis: Russia-Phase T14 Merge Priority (analysis_result.md)
-        # v439: russia_phase は type15 のみで発火するよう再定義したため、この軸は T14 在盤中
-        # も有効に保つため t14_on_board で再キーイングする。T14+T14→T15（ロシア）の最終併合
-        # 優先 +1500 を T14 素材組み立て中は常に効かせる（type15 再定義による副作用を補償）。
-        # When t14_on_board is true and same_type_stack_top is type 14,
+        # When russia_phase is active (T14 piece on board) and same_type_stack_top is type 14,
         # apply a strong bonus to prioritize T14 chain building toward Russia (T15) creation.
         # instead of placing near T14 pieces. DEADLINE_GUARD captured T5/T8 merges but T14 remained unmerged.
         # russia_phase axis 8.7 bonuses fire for ANY immediate merge, not specifically for T14.
@@ -1263,10 +1261,58 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Bonus: +1500 (stronger than most other bonuses, less than DIRECT_MERGE +1566)
         # mandatory_theme #5: "二個目ロシア経路の維持を両立せよ" — this axis enables that path
         # mandatory_theme #2: T14→T15 merge is a merge — this axis is deadline-proximity merge priority
-        if t14_on_board and same_type_stack_top is not None:
+        if russia_phase and same_type_stack_top is not None:
             if same_type_stack_top.get("type") == 14:  # T14 piece on board
                 score += 1500.0
                 reasons.append("RUSSIA_PHASE_T14_MERGE_PRIORITY")
+
+        # ----- NEW axis: T13 pair completion priority (v707) -----
+        # 採用仮説: 直近バッチの near-miss サンプルで T13_peak=3 → final T13x1 の散逸が共通し、
+        # 2個目の T14（T14+T14→T15 の素材）が作れる局面で作られていない。
+        # T13 が盤面に1個だけあり next が T13 のとき、DIRECT/NEAR 候補は T13+T13→T14 を
+        # 確定させる唯一の経路。base DIRECT/NEAR ボーナスのみでは他軸に負けて散逸するため、
+        # 加算ボーナスで経路を保護する。russia_phase（T14/T15在盤）には依存させず、
+        # T14 生成前の素材段階から発火させる点が axis 8.7 / +1500 軸との差分。
+        # 加算のみで既存軸・ガードは変更しない（単独サイクルで効果検証する）。
+        # mandatory_themes: 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+        #   → 併合候補だが merge_result 自体が deadline を超えるものは対象外とする。
+        if (
+            t13_count == 1
+            and next_type == 13
+            and merge_grade in ["DIRECT", "NEAR"]
+            and not death_spiral
+            and not result.get("merge_result_crosses_deadline", False)
+        ):
+            score += 480.0
+            reasons.append("T13_PAIR_T14_ROUTE_PRIORITY")
+
+        # ----- NEW axis: T14 pair survival mode (v708) -----
+        # 採用仮説: T14×2が盤面にあるとき、次のT14が来るまでの生存期間を最大化する。
+        # 実測(20260822_060733): T14×2を保持してから48ターン後にdeadline超過で死亡。
+        # その間next=T14は一度も出現せず。T14×2の状態では「いつT14が来るか」は確率的事象であり、
+        # 戦略で制御できるのは「どれだけ長く生き残れるか」のみ。
+        # (a) next≠14の場合: 低配置を強力に優先し、盤面上昇を最小化して生存時間を延ばす。
+        # (b) next==14の場合: 既存RUSSIA_PHASE_T14_MERGE_PRIORITY(+1500)に加え、
+        #     T14×2間の中間位置への誘導ボーナスを追加し、併合成功率を最大化する。
+
+        if t14_count >= 2 and not death_spiral:
+            if merge_grade == "NO" and next_type != 14:
+                # (a) 生存モード: T14×2があるがnext≠14 → 低配置を強く優先
+                score -= max(1.0, float(landing_y) + 3.0) * 800.0
+                reasons.append("T14_PAIR_SURVIVAL_LOW_PLACEMENT")
+
+                # 盤面中央寄りへの誘導（両T14間の中間エリアを開放状態に保つ）
+                t14_xs = [p.get("x", 0) for p in pieces if p.get("type") == 14]
+                t14_center = sum(t14_xs) / len(t14_xs)
+                dist_from_t14_gap = abs(x - t14_center)
+                if dist_from_t14_gap < 1.5:
+                    score -= 300.0
+                    reasons.append("T14_PAIR_GAP_PROTECTION")
+
+            elif merge_grade in ("DIRECT", "NEAR") and next_type == 14:
+                # (b) 確定モード: next==14 && T14×2在盤 → ソ連建国直前
+                score += 3000.0
+                reasons.append("T14_PAIR_SOVIET_IMMINENT")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
