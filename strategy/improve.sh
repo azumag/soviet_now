@@ -2970,6 +2970,13 @@ trigger_adaptive_improvement() {
 		return
 	fi
 
+	# v710: improve_daemon.paused は supervisor の respawn 抑止だけでなく、
+	# soren_loop 経由の直接改善スポーンも含めてすべての改善実行を停止する。
+	if [ -f "$TMP_STATE_DIR/improve_daemon.paused" ]; then
+		log "[IMPROVE] paused marker exists → trigger_adaptive_improvement skipped"
+		return 0
+	fi
+
 	# ロックファイルが存在しない場合は何もしない（メインループが作成する）
 	[ -f "$IMPROVE_LOCK_FILE" ] || return 0
 	if _main_strategy_runner_active_for_improve; then

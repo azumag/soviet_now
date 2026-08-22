@@ -176,6 +176,7 @@ queue_early_escape_lock_if_needed() {
 	# post-game 経路と next-game-preflight の両方から呼び、取りこぼしを防ぐ。
 	[ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] || return 1
 	[ "${WILDCARD_ENABLED:-0}" = "1" ] || return 1
+	[ ! -f "$TMP_STATE_DIR/improve_daemon.paused" ] || return 1
 	[ -f "$ACCUMULATED_GAMES_FILE" ] || return 1
 	[ ! -f "$IMPROVE_LOCK_FILE" ] || return 1
 	[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] || return 1
@@ -850,7 +851,8 @@ while true; do
 	# daemon の30秒poll待ちで次ゲームが先に始まり、改善ロックが飢餓するのを防ぐ。
 	_improve_running_now=0
 	_is_improve_running && _improve_running_now=1
-	if _improve_keep_main_game_running && [ "$_improve_running_now" -eq 0 ] &&
+	if [ ! -f "$TMP_STATE_DIR/improve_daemon.paused" ] &&
+		_improve_keep_main_game_running && [ "$_improve_running_now" -eq 0 ] &&
 		[ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		log_pause_throttled "continuous_improve_spawn" "[IMPROVE] 改善ロックをゲーム境界で非同期起動（メインゲーム継続）"
 		IMPROVE_DAEMON_MODE=0 trigger_adaptive_improvement || true
