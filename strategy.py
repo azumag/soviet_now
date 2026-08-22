@@ -59,9 +59,10 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
-# v708: t14_count>=2時に生存最大化モード（低配置強化・盤面圧縮）＋next=T14時の併合優先を追加（対象段階: ロシア T15）
+# v709: next_type制約(1-11のみ)に基づきデッドコード修正＋T13ペア衝突誘導・高type集約を追加
 # Fixes rollback failure mode: T14×2を作った後、次のT14が来るまで48ターン生存できずdeadline超過で死亡（20260822_060733型）
-# refs: tmp/t14x2.jsonl analysis, game_history/20260822_060733_score3200.jsonl
+# 実測発見: ゲームは type 1-11 のみ配給（3437サンプル中type>=12は0回）。T12+は連鎖併合でのみ生成。
+# refs: game_history/20260822_060733_score3200.jsonl, VM accumulated_games.json v708分析
 # v707: T13単独在盤・next=T13時のDIRECT/NEAR候補にT13+T13→T14経路ボーナスを追加（対象段階: カザフスタン T14）
 # Fixes rollback failure mode: T13_peak=3→final T13x1 の散逸で2個目T14素材が欠落し、T14+T14→15経路が途絶
 # refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, data/mandatory_themes.txt
@@ -406,6 +407,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # v707: T13単体カウント（T13+T13→T14 経路の対象段階判定用。ループ外で一度だけ集計）
     t13_count = sum(1 for p in pieces if p.get("type") == 13)
     t14_count = sum(1 for p in pieces if p.get("type") == 14)
+    # v709: 高type集約用の中心座標を事前計算（ループ外で一度だけ）
+    high_pieces = [p for p in pieces if p.get("type", 0) >= 11]
+    high_cluster_x = (
+        sum(p.get("x", 0.0) for p in high_pieces) / len(high_pieces)
+        if high_pieces else None
+    )
+    # v709: T13ペア中心座標（衝突誘導用）
+    t13_pair_center_x = None
+    t13_xs_all = [float(p.get("x", 0.0)) for p in pieces if p.get("type") == 13]
+    if len(t13_xs_all) >= 2:
+        t13_pair_center_x = sum(t13_xs_all) / len(t13_xs_all)
     # T13常時アンカー: 1個目T14生成前からT13クラスタへ誘導し、T13+T13→T14経路を復旧（対象段階: Kazakhstan T14）
     # 旧v704のt14_on_board条件は冗長のため削除し、t12/t13/t14いずれか在盤で有効化
     t14_on_board = isinstance(pieces, list) and any(p.get("type") == 14 for p in pieces)
@@ -1250,69 +1262,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 383.3
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- NEW axis: T14 merge priority in russia_phase -----
-        # Adopted hypothesis: Russia-Phase T14 Merge Priority (analysis_result.md)
-        # When russia_phase is active (T14 piece on board) and same_type_stack_top is type 14,
-        # apply a strong bonus to prioritize T14 chain building toward Russia (T15) creation.
-        # instead of placing near T14 pieces. DEADLINE_GUARD captured T5/T8 merges but T14 remained unmerged.
-        # russia_phase axis 8.7 bonuses fire for ANY immediate merge, not specifically for T14.
-        # T14 pieces are extremely rare; when they exist, they must be merged immediately.
-        # This axis specifically targets the rare T14+T14→T15 (Russia) creation opportunity.
-        # Bonus: +1500 (stronger than most other bonuses, less than DIRECT_MERGE +1566)
-        # mandatory_theme #5: "二個目ロシア経路の維持を両立せよ" — this axis enables that path
-        # mandatory_theme #2: T14→T15 merge is a merge — this axis is deadline-proximity merge priority
-        if russia_phase and same_type_stack_top is not None:
-            if same_type_stack_top.get("type") == 14:  # T14 piece on board
-                score += 1500.0
-                reasons.append("RUSSIA_PHASE_T14_MERGE_PRIORITY")
+        # ----- v709: HIGH_TYPE_CLUSTER_GUIDE（高type集約・衝突確率最大化） -----
+        # 実測発見: ゲームはnext_typeとして type 1〜11 のみ配給する（3437サンプル中 type>=12 は0回）。
+        # T12以上は連鎖併合でのみ生成される。既存のRUSSIA_PHASE_T14_MERGE_PRIORITY(v439)と
+        # T13_PAIR_T14_ROUTE_PRIORITY(v707)は next_type>=12 を要求するため永遠に発火しないデッドコードだった。
+        #
+        # 新アプローチ: 高typeピース(type>=11)が存在するとき、すべてのドロップをその近傍へ誘導することで
+        # 物理衝突による連鎖併合の確率を最大化する。またT13ペア存在時は中間点への配置で衝突を促進する。
 
-        # ----- NEW axis: T13 pair completion priority (v707) -----
-        # 採用仮説: 直近バッチの near-miss サンプルで T13_peak=3 → final T13x1 の散逸が共通し、
-        # 2個目の T14（T14+T14→T15 の素材）が作れる局面で作られていない。
-        # T13 が盤面に1個だけあり next が T13 のとき、DIRECT/NEAR 候補は T13+T13→T14 を
-        # 確定させる唯一の経路。base DIRECT/NEAR ボーナスのみでは他軸に負けて散逸するため、
-        # 加算ボーナスで経路を保護する。russia_phase（T14/T15在盤）には依存させず、
-        # T14 生成前の素材段階から発火させる点が axis 8.7 / +1500 軸との差分。
-        # 加算のみで既存軸・ガードは変更しない（単独サイクルで効果検証する）。
-        # mandatory_themes: 「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-        #   → 併合候補だが merge_result 自体が deadline を超えるものは対象外とする。
-        if (
-            t13_count == 1
-            and next_type == 13
-            and merge_grade in ["DIRECT", "NEAR"]
-            and not death_spiral
-            and not result.get("merge_result_crosses_deadline", False)
-        ):
-            score += 480.0
-            reasons.append("T13_PAIR_T14_ROUTE_PRIORITY")
+        # (1) 高type集約ガイド: type>=11が在盤する場合、その中心への近接ボーナス
+        if high_cluster_x is not None and not death_spiral:
+            _hc_dist = abs(x - high_cluster_x)
+            if _hc_dist <= 3.0:
+                _hc_bonus = max(0.0, 400.0 - _hc_dist * 150.0)
+                score += _hc_bonus
+                reasons.append("HIGH_TYPE_CLUSTER_GUIDE")
 
-        # ----- NEW axis: T14 pair survival mode (v708) -----
-        # 採用仮説: T14×2が盤面にあるとき、次のT14が来るまでの生存期間を最大化する。
-        # 実測(20260822_060733): T14×2を保持してから48ターン後にdeadline超過で死亡。
-        # その間next=T14は一度も出現せず。T14×2の状態では「いつT14が来るか」は確率的事象であり、
-        # 戦略で制御できるのは「どれだけ長く生き残れるか」のみ。
-        # (a) next≠14の場合: 低配置を強力に優先し、盤面上昇を最小化して生存時間を延ばす。
-        # (b) next==14の場合: 既存RUSSIA_PHASE_T14_MERGE_PRIORITY(+1500)に加え、
-        #     T14×2間の中間位置への誘導ボーナスを追加し、併合成功率を最大化する。
+        # (2) T13ペア衝突誘導: T13x2以上が存在するとき、中間点への配置で物理衝突を促す
+        if t13_pair_center_x is not None and not death_spiral:
+            _t13_gap_dist = abs(x - t13_pair_center_x)
+            if _t13_gap_dist <= 1.5:
+                score += max(0.0, 600.0 - _t13_gap_dist * 400.0)
+                reasons.append("T13_PAIR_COLLISION_GUIDE")
+            # T13自体を覆う配置を強力に抑止（上からの被覆は衝突を妨げる）
+            for _t13p in pieces:
+                if _t13p.get("type") != 13:
+                    continue
+                _t13x = float(_t13p.get("x", 0.0))
+                _t13y = float(_t13p.get("y", -5.0))
+                if abs(x - _t13x) < 0.5 and landing_y > _t13y:
+                    score -= 1500.0
+                    reasons.append("T13_COVER_AVOID")
+                    break
 
-        if t14_count >= 2 and not death_spiral:
-            if merge_grade == "NO" and next_type != 14:
-                # (a) 生存モード: T14×2があるがnext≠14 → 低配置を強く優先
-                score -= max(1.0, float(landing_y) + 3.0) * 800.0
-                reasons.append("T14_PAIR_SURVIVAL_LOW_PLACEMENT")
-
-                # 盤面中央寄りへの誘導（両T14間の中間エリアを開放状態に保つ）
-                t14_xs = [p.get("x", 0) for p in pieces if p.get("type") == 14]
-                t14_center = sum(t14_xs) / len(t14_xs)
-                dist_from_t14_gap = abs(x - t14_center)
-                if dist_from_t14_gap < 1.5:
-                    score -= 300.0
-                    reasons.append("T14_PAIR_GAP_PROTECTION")
-
-            elif merge_grade in ("DIRECT", "NEAR") and next_type == 14:
-                # (b) 確定モード: next==14 && T14×2在盤 → ソ連建国直前
-                score += 3000.0
-                reasons.append("T14_PAIR_SOVIET_IMMINENT")
+        # (3) 拡張生存モード: T13x2以上またはT14x1以上が存在するとき発火
+        # （旧v708はT14x2限定だったため、実際のゲームではほぼ不発だった）
+        _high_pair_exists = t13_count >= 2 or t14_count >= 1 or type15_count >= 1
+        if _high_pair_exists and not death_spiral and merge_grade == "NO":
+            score -= max(1.0, float(landing_y) + 3.0) * 500.0
+            reasons.append("HIGH_PAIR_SURVIVAL_MODE")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
