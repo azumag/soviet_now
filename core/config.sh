@@ -33,7 +33,7 @@ MODEL_LAST_RESORT="codex:deepseek-v4-flash"
 # deepseek-v4-flash-free は opencode 直呼びで成功する（litellm の zen/v1 は 429）。opencode: で呼ぶ.
 # muse-spark-1.2-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.2-contributor-free,opencode:x-preview-f-free,opencode:deepseek-v4-flash-free,opencode-go:muse-spark-1.2-contributor,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,local,codex:deepseek-v4-flash,codex:minimax-m3}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:x-preview-f-free,opencode:muse-spark-1.2-contributor-free,opencode-go:muse-spark-1.2-contributor,codex:openrouter/free,codex:amd-token-factory-deepseek-v4-flash,local,codex:deepseek-v4-flash,codex:minimax-m3}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
@@ -67,7 +67,7 @@ AI_RADIO_IMPROVE_GATE="${AI_RADIO_IMPROVE_GATE:-1}"
 # 改善中に放送系生成が待機する上限秒。超過したらその生成だけ諦める
 # (改善サイクル実測 439-828秒のため余裕を見て1200秒)。
 AI_RADIO_IMPROVE_WAIT_MAX_SEC="${AI_RADIO_IMPROVE_WAIT_MAX_SEC:-1200}"
-RADIO_OPENCODE_TIMEOUT=240
+RADIO_OPENCODE_TIMEOUT=180
 OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://192.168.11.13:11434}"
 LOCAL_LLM_BASE_URL="${LOCAL_LLM_BASE_URL:-http://100.112.104.102:11434}"
 LOCAL_LLM_MODEL="${LOCAL_LLM_MODEL:-gemma4:12b}"
@@ -95,7 +95,7 @@ CODEX_BUG_DISPATCH_MODEL="${CODEX_BUG_DISPATCH_MODEL:-}"
 # 共通チェーン（AI_COMMON_AGENTS）を基底に使う。ai_generate_list() が順に試行する。
 COMMENT_AGENTS="${COMMENT_AGENTS:-$AI_COMMON_AGENTS}"
 COMMENT_TRANSLATION_AGENTS="${COMMENT_TRANSLATION_AGENTS:-$COMMENT_AGENTS}"
-COMMENT_TRANSLATION_TIMEOUT="${COMMENT_TRANSLATION_TIMEOUT:-20}"
+COMMENT_TRANSLATION_TIMEOUT="${COMMENT_TRANSLATION_TIMEOUT:-60}"
 COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-codex:deepseek-v4-flash}"
 COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-codex:minimax-m3}"
 RADIO_SOREN91_AGENT="${RADIO_SOREN91_AGENT:-codex:deepseek-v4-flash}"
