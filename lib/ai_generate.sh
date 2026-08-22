@@ -989,6 +989,7 @@ _ai_resolved_model_from_agent() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
+	local validator="${AI_DISPATCH_VALIDATOR:-}"
 	if ! _ai_agent_spec_valid "$agent"; then
 		log "[${label}] invalid agent spec ignored: ${agent:-<empty>}" >&2
 		return 2
@@ -1084,8 +1085,21 @@ _ai_dispatch() {
 	_dispatch_error_preview=$(head -n 1 "$_dispatch_err_file" 2>/dev/null || true)
 	rm -f "$_dispatch_err_file"
 	if [ "$_dispatch_rc" -eq 0 ]; then
-		_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
-		_ai_fail_streak_clear "$agent"
+		local _dispatch_output
+		_dispatch_output=$(cat "$_dispatch_output_file" 2>/dev/null || true)
+		if [ -n "$_dispatch_output" ] && { [ -z "$validator" ] || "$validator" "$_dispatch_output"; }; then
+			if [ "${AI_DISPATCH_RECORD_WINNER:-0}" = "1" ]; then
+				_ai_stats_record "winner" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
+			fi
+			_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
+			_ai_fail_streak_clear "$agent"
+		elif [ -n "$_dispatch_output" ] && [ -n "$validator" ]; then
+			log "[${label}] ${agent} returned invalid output" >&2
+			_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "invalid output rejected by validator"
+		else
+			log "[${label}] ${agent} returned empty output" >&2
+			_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "empty output"
+		fi
 	else
 		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "${_dispatch_error_preview:-${AI_DISPATCH_ERROR_PREVIEW:-}}"
 	fi
@@ -1383,6 +1397,9 @@ ai_generate_list() {
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
 	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
+	local saved_validator="${AI_DISPATCH_VALIDATOR:-}"
+
+	AI_DISPATCH_VALIDATOR="$validator"
 
 	AI_GENERATE_LAST_AGENT=""
 	AI_GENERATE_LIST_LAST_AGENT=""
@@ -1421,12 +1438,14 @@ ai_generate_list() {
 		attempted_count=$((attempted_count + 1))
 		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 		rc=$?
+		AI_DISPATCH_VALIDATOR=""
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 			AI_GENERATE_LAST_AGENT="$agent"
 			AI_GENERATE_LIST_LAST_AGENT="$agent"
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 			_ai_stats_record "winner" "$label" "$agent" "0" "$(_ai_resolved_model_from_agent "$agent")"
 			printf '%s' "$output"
+			AI_DISPATCH_VALIDATOR="$saved_validator"
 			return 0
 		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && [ -n "$validator" ]; then
@@ -1501,5 +1520,6 @@ ai_generate_list() {
 			printf 'failed\n' >"$failure_kind_file"
 		fi
 	fi
+	AI_DISPATCH_VALIDATOR="$saved_validator"
 	return 1
 }

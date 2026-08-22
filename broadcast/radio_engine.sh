@@ -96,12 +96,15 @@ _run_opencode_radio() {
 	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
 	esac
 	if command -v _ai_stats_record >/dev/null 2>&1; then
+		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		_ai_stats_record "attempt" "RADIO" "$agent" "" "$resolved_model"
 	fi
 	local rc
 	_ai_generation_queue_run "RADIO:opencode:${agent}" _run_opencode_radio_unqueued "$@"
 	rc=$?
 	if command -v _ai_stats_record >/dev/null 2>&1; then
+		AI_DISPATCH_RECORD_WINNER="$_saved_record_winner"
 		if [ "$rc" -eq 0 ]; then
 			_ai_stats_record "ok" "RADIO" "$agent" "$rc" "$resolved_model"
 		else

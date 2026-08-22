@@ -1830,10 +1830,13 @@ _classify_comments_with_edit_contract() {
 - 書き込み後、追加の説明は不要"
 		local prev_timeout="${RUN_CMD_TIMEOUT_SEC:-}"
 		local prev_tag="${RUN_CMD_LOG_TAG:-}"
+		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		RUN_CMD_TIMEOUT_SEC="$timeout_sec"
 		RUN_CMD_LOG_TAG="COMMENT_CLASSIFIER:${agent}"
 		run_cmd "$agent" "$edit_prompt" >/dev/null 2>&1
 		candidate_rc=$?
+		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
 		if [ -n "$prev_timeout" ]; then RUN_CMD_TIMEOUT_SEC="$prev_timeout"; else unset RUN_CMD_TIMEOUT_SEC; fi
 		if [ -n "$prev_tag" ]; then RUN_CMD_LOG_TAG="$prev_tag"; else unset RUN_CMD_LOG_TAG; fi
 		raw_json=$(cat "$output_file" 2>/dev/null)
@@ -2044,8 +2047,11 @@ _comment_generate_translation() {
 			continue
 		fi
 		attempted=$((attempted + 1))
+		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		output=$(_ai_dispatch "COMMENT_TRANSLATION" "$agent" "$prompt_file" "$timeout_sec")
 		rc=$?
+		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && _comment_is_valid_translation_candidate "$output"; then
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 			printf '%s' "$output"
