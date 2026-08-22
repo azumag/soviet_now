@@ -185,7 +185,7 @@ _is_card_gacha_result_line() {
 
 _is_ignored_comment_author_line() {
     local line="$1"
-    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev azumagbanjo あずまぐ}"
     local item
     for item in $ignored; do
         printf '%s\n' "$line" | grep -Fqi -- "${item}: " && return 0

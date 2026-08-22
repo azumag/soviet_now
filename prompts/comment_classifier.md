@@ -3,7 +3,7 @@ IMPORTANT: Output ONLY a valid JSON array. No text before or after. No markdown.
 For every comment, also decide whether the comment itself is a genuine English-language comment. Add a boolean field `is_english` to every object. Set it to true only when the comment body is naturally written in English. Viewer names, URLs, game identifiers, ASCII usernames, and repeated Twitch emotes/stamps such as `LUL LUL`, `PogChamp PogChamp`, or `dociaiDoci dociaiDoci` are not English comments. Mixed Japanese text is not English. A short but natural phrase such as "Amazing stream!" or "Well played!" is English.
 
 Classify each comment into ONE of these categories:
-- card_gacha: "A obtained B" result messages
+- card_gacha: "A obtained B" result messages sent by this streamer's own account `dociai` (or another known self-account such as `azumagbanjo`, `azumagdev`, or display name "あずまぐ"). The sender is not the viewer who obtained the card; it is an automated gacha notification.
 - raid: Twitch raid notifications from system/bot accounts such as nightbot. Only classify the actual raid notification as raid. Do NOT classify normal viewer comments after the raid, the raider's own chat messages, or "tombraid" emote reactions as raid.
 - subscription: channel subscription messages
 - bits: cheer/bits messages

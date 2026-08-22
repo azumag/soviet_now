@@ -1647,7 +1647,7 @@ def classify(user: str, comment: str) -> str:
         return "other"
     if stream_bug_hint and stream_bug_failure and not strategy_hint:
         return "stream_bug_report"
-    if re.search(r"が【.+?】.+?を獲得しました", text):
+    if re.search(r"が\s*(?:【|\[).+?(?:】|\]).+?を獲得しました", text):
         return "card_gacha"
     if "bits" in lower or "cheer" in lower:
         return "bits"
@@ -2850,7 +2850,7 @@ else:
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・補足・軽い問いかけのどれかを足して、会話として少し深く広げること\n- メリケンAIらしく、各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れること。ただし質問の答えや真面目な話題を冗談で置き換えないこと\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
+			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・補足・軽い問いかけのどれかを足して、会話として少し深く広げること\n- メリケンAIらしく、各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れること。ただし質問の答えや真面目な話題を冗談で置き換えないこと\n- ただし dociai、azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果通知だけは例外。dociaiは自分のアカウントであり、通知はガチャ結果である。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
 			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。短い反応コメントでも短い返答で済ませず、会話として厚めに返してください。各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れてください。ただしカードガチャ結果コメントだけは例外で、反応1文 + 本題2-3文を目安にしてください。'
 		fi
 		if [ -z "$_comment_persona" ]; then

@@ -95,7 +95,7 @@ _is_stream_start_request() {
 
 _is_ignored_author() {
     local login="${1:-}" display="${2:-}"
-    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev azumagbanjo あずまぐ}"
     local item
     for item in $ignored; do
         [ "$login" = "$item" ] && return 0

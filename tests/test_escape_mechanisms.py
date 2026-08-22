@@ -3620,6 +3620,47 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             discard_idx,
         )
 
+    def test_dociai_gacha_notification_is_not_a_viewer_comment(self):
+        chat = (REPO_ROOT / "twitch_chat.sh").read_text()
+        daemon = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()
+        comment = (REPO_ROOT / "broadcast/comment.sh").read_text()
+        classifier = (REPO_ROOT / "prompts/comment_classifier.md").read_text()
+        generic_prompt = (REPO_ROOT / "prompts/comment_template.md").read_text()
+        card_prompt = (REPO_ROOT / "prompts/comment_response_card_gacha.md").read_text()
+
+        self.assertIn("TWITCH_IGNORE_AUTHORS:-dociai azumagdev", chat)
+        self.assertIn("TWITCH_IGNORE_AUTHORS:-dociai azumagdev", daemon)
+        self.assertIn("dociaiは自分のアカウント", comment)
+        self.assertIn("own account `dociai`", classifier)
+        self.assertIn("dociaiは自分のアカウント", generic_prompt)
+        self.assertIn("`dociai` is your own account", card_prompt)
+
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            comments = td / "comments.txt"
+            comments.write_text(
+                "dociai: @viewer が [コモン] テストカード を獲得しました. 83 種類中 1 種類所持\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    "source broadcast/comment.sh; _classify_comments_heuristic \"$1\"",
+                    "gacha-classification",
+                    str(comments),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        rows = json.loads(result.stdout)
+        self.assertEqual(rows[0]["user"], "dociai")
+        self.assertEqual(rows[0]["category"], "card_gacha")
+
     def test_stream_bug_reports_are_queued_for_codex_dispatch(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         classifier = (REPO_ROOT / "prompts/comment_classifier.md").read_text()
