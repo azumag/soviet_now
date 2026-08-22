@@ -2415,6 +2415,16 @@ _strip_strategy_advice_mode_prefix() {
 	printf '%s' "$1" | sed -E 's/^\[(main|soren|soren91)\][[:space:]]*//I'
 }
 
+_strategy_advice_core_matches_existing() {
+	local advice_file="$1"
+	local advice_item="$2"
+	[ -s "$advice_file" ] || return 1
+	sed -E \
+		-e 's/^[[:space:]]*-[[:space:]]*//' \
+		-e 's/[[:space:]]*\[source=[^]]+\][[:space:]]*$//' \
+		"$advice_file" | grep -Fqx -- "$advice_item"
+}
+
 _detect_strategy_advice_target_mode() {
 	local advice_item="$1"
 	local fallback_mode="${2:-main}"
@@ -2463,12 +2473,22 @@ _append_advice_item_to_file() {
 _append_strategy_advice_item() {
 	local advice_item="$1"
 	local fallback_mode="${2:-main}"
+	local source="${3:-comment_reply}"
+	local received_epoch="${4:-}"
 	advice_item=$(_strip_strategy_advice_mode_prefix "$advice_item")
 	local target_mode=""
 	target_mode=$(_detect_strategy_advice_target_mode "$advice_item" "$fallback_mode")
+	case "${received_epoch:-}" in
+	'' | *[!0-9]*) received_epoch="" ;;
+	esac
 	local advice_file=""
 	advice_file=$(_resolve_strategy_advice_file "$target_mode")
-	_append_advice_item_to_file "$advice_file" "$advice_item" "戦略アドバイス(${target_mode})"
+	if _strategy_advice_core_matches_existing "$advice_file" "$advice_item"; then
+		return 0
+	fi
+	_append_advice_item_to_file "$advice_file" \
+		"$advice_item [source=${source} received=${received_epoch:-unknown}]" \
+		"戦略アドバイス(${target_mode})"
 }
 
 _append_comment_advice_item() {
@@ -2479,6 +2499,20 @@ _append_comment_advice_item() {
 _append_codex_advice_item() {
 	local advice_item="$1"
 	_append_advice_item_to_file "$CODEX_ADVICE_FILE" "$advice_item" "Codex改善アドバイス"
+}
+
+_append_structured_strategy_advice_at_intake() {
+	local candidates="$1"
+	local fallback_mode="${2:-main}"
+	[ -n "$candidates" ] || return 0
+	while IFS= read -r candidate; do
+		[ -n "$candidate" ] || continue
+		case "$fallback_mode" in
+		soren91) _append_strategy_advice_item "$candidate" "soren91" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
+		*) _append_strategy_advice_item "$candidate" "main" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
+		esac
+	done <<<"$candidates"
+	log "[COMMENT] 機械抽出した戦略指示を受付時に保存 (${fallback_mode})"
 }
 
 _append_soviet_theme_item() {
@@ -2787,6 +2821,10 @@ else:
 		comment_advice_candidates=""
 		codex_advice_candidates=""
 		log "[COMMENT] 非助言カテゴリのためアドバイス保存を抑制: ${dominant_category}"
+	else
+		COMMENT_ADVICE_INTAKE_EPOCH="$(date +%s)"
+		_append_structured_strategy_advice_at_intake "$strategy_advice_candidates_main" "main"
+		_append_structured_strategy_advice_at_intake "$strategy_advice_candidates_soren91" "soren91"
 	fi
 
 	local current_time current_hour time_period

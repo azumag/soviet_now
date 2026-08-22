@@ -3659,6 +3659,25 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("./codex_bug_dispatcher.sh kick", chat_worker)
         self.assertIn("./codex_bug_dispatcher.sh kick", youtube_worker)
 
+    def test_comment_intake_preserves_strategy_directives_and_improve_brief_prioritizes_them(self):
+        comment = (REPO_ROOT / "broadcast/comment.sh").read_text()
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+        prompt = (REPO_ROOT / "prompts/improve_strategy.md").read_text()
+
+        self.assertIn("_append_structured_strategy_advice_at_intake()", comment)
+        self.assertIn("_strategy_advice_core_matches_existing()", comment)
+        self.assertIn('COMMENT_ADVICE_INTAKE_EPOCH="$(date +%s)"', comment)
+        self.assertIn('"comment_intake"', comment)
+        intake_idx = comment.index('_append_structured_strategy_advice_at_intake "$strategy_advice_candidates_main" "main"')
+        generation_idx = comment.index("コメント返し生成中...")
+        self.assertLess(intake_idx, generation_idx)
+
+        self.assertIn("intake_advice_lines", improve)
+        self.assertIn('if "source=comment_intake" in candidate:', improve)
+        self.assertIn("advice_lines = intake_advice_lines[:4] + other_advice_lines[:4]", improve)
+        self.assertIn("source=comment_intake の項目は受付時保存である。", improve)
+        self.assertIn("`source=comment_intake` の項目は返信生成の成否に依存しない受付時保存である。", prompt)
+
     def test_frontier_proximity_guidance_keeps_congestion_suppression(self):
         strategy = (REPO_ROOT / "strategy.py").read_text()
         readme = (REPO_ROOT / "README.md").read_text()
