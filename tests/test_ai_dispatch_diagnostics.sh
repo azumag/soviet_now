@@ -53,6 +53,12 @@ check 'printf %s "$preview" | grep -q "Reading additional input"' '長文preview
 check 'printf %s "$preview" | grep -q "500 upstream failure"' '長文previewに末尾のエラー本体が残る'
 check '[ ${#preview} -le 220 ]' 'previewは概ね200字以内に収まる'
 
+# CLIのstderrは切断位置で不正なUTF-8を含むことがある。診断欠落を防ぐ。
+malformed_stderr=$(printf 'prefix \xff\xe3 suffix')
+preview=$(_ai_error_preview_from_text "$malformed_stderr")
+check '[ -n "$preview" ]' '不正UTF-8を含むstderrでもerror概要を生成する'
+check '[ ${#preview} -le 220 ]' '不正UTF-8を含むerror概要も上限内に収める'
+
 # --- 2. opencode 一過性失敗の1回再試行 ---
 FAKE_BIN="$TMP/fakebin"
 mkdir -p "$FAKE_BIN"
@@ -83,6 +89,27 @@ rc=$?
 check '[ "$rc" -eq 0 ]' '一過性失敗からの再試行で成功する'
 check '[ "$out" = "再試行後の正常応答です。" ]' '再試行の出力が透過する'
 check '[ "$(cat "$OC_CALL_COUNT")" = "2" ]' 'CLI呼び出しが2回(初回+再試行1回)にとどまる'
+
+# rc=0でもreasoning-only等はcleanup後に本文空になるため成功扱いしない。
+cat >"$FAKE_BIN/opencode" <<'EOF'
+#!/usr/bin/env bash
+COUNT_FILE="${OC_CALL_COUNT:-/tmp/oc_call_count}"
+n=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+n=$((n + 1))
+printf '%s\n' "$n" >"$COUNT_FILE"
+if [ "$n" -eq 1 ]; then
+	printf '<think>reasoning only</think>'
+	exit 0
+fi
+printf '本文のみの応答です。'
+EOF
+chmod +x "$FAKE_BIN/opencode"
+rm -f "$OC_CALL_COUNT"
+out=$(_ai_call_opencode_unqueued "TEST:empty_cleanup" "opencode:x-preview-f-free" "$prompt_file" 30)
+rc=$?
+check '[ "$rc" -eq 0 ]' '本文空出力を検出して再試行する'
+check '[ "$out" = "本文のみの応答です。" ]' 'cleanup後に有効な本文だけを返す'
+check '[ "$(cat "$OC_CALL_COUNT")" = "2" ]' '本文空出力の再試行は1回にとどまる'
 
 # 再試行無効化フラグ
 cat >"$FAKE_BIN/opencode" <<'EOF'

@@ -751,11 +751,17 @@ _ai_call_opencode_unqueued() {
 		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 		rc=$?
 		_oc_elapsed=$(( $(date +%s) - _oc_start ))
+		cleaned=""
 		if [ "$rc" -eq 124 ]; then
 			break
 		fi
 		if [ "$rc" -eq 0 ] && [ -s "$out_file" ]; then
-			break
+			# reasoning-only応答はraw出力としては非空でも本文が空になる。
+			# ここで本文を検査し、空なら一過性失敗と同じ再試行経路へ戻す。
+			cleaned=$(_ai_strip_reasoning_blocks <"$out_file")
+			if [ -n "$cleaned" ] && ! _contains_provider_error_text "$cleaned"; then
+				break
+			fi
 		fi
 		stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
 		if _ai_rate_limit_text_detected "$stderr_preview"; then
@@ -967,14 +973,8 @@ _ai_agent_spec_valid() {
 # _ai_dispatch LABEL AGENT PROMPT_FILE [TIMEOUT]
 #   agent 識別子に基づいて適切なバックエンドを呼ぶ。
 #   stdout: 生成テキスト
-_ai_dispatch() {
-	local label="$1" agent="$2" prompt_file="$3"
-	local timeout_override="${4:-}"
-	local resolved_model="$agent"
-	if ! _ai_agent_spec_valid "$agent"; then
-		log "[${label}] invalid agent spec ignored: ${agent:-<empty>}" >&2
-		return 2
-	fi
+_ai_resolved_model_from_agent() {
+	local agent="${1:-}" resolved_model="$agent"
 	case "$agent" in
 	codex:*) resolved_model="${agent#codex:}" ;;
 	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
@@ -983,6 +983,17 @@ _ai_dispatch() {
 	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
 	*) resolved_model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
 	esac
+	printf '%s' "$resolved_model"
+}
+
+_ai_dispatch() {
+	local label="$1" agent="$2" prompt_file="$3"
+	local timeout_override="${4:-}"
+	if ! _ai_agent_spec_valid "$agent"; then
+		log "[${label}] invalid agent spec ignored: ${agent:-<empty>}" >&2
+		return 2
+	fi
+	local resolved_model="$(_ai_resolved_model_from_agent "$agent")"
 	# 改善ゲートをモデル呼び出しと attempt 記録の前に判定する。
 	# 打ち切り時は gate_giveup イベントだけを記録し、モデル呼び出しが無いにも
 	# 関わらず attempt/fail 統計が膨らむのを防ぐ (2026-08-22 ユーザー指摘)。
@@ -1187,17 +1198,18 @@ _ai_error_preview_set() {
 
 _ai_error_preview_from_text() {
 	local text="$1"
-	# -CSD で文字単位扱いにし、マルチバイト文字を壊さず処理する。
-	# codex CLI は stderr 冒頭にセッションバナーを出すため、長い場合は
-	# 先頭(バナー)と末尾(実際のエラー)を両方残す。
-	printf '%s' "$text" | perl -CSD -pe '
+	# CLIのstderrは切断位置によって不正なUTF-8を含むことがある。perl -CSD
+	# はそこで致命終了し、errorフィールドが欠落していたため、バイト列として
+	# 制御文字だけを除去してからUTF-8として解釈する。
+	text=$(printf '%s' "$text" | perl -pe '
 		s/\e\[[0-9;]*[a-zA-Z]//g;
 		s/[\x00-\x09\x0b-\x1f\x7f]/ /g;
-		s/\s+/ /g;
-		if (length($_) > 200) {
-			$_ = substr($_, 0, 70) . " …" . length($_) . "ch… " . substr($_, -90);
-		}
-	'
+	')
+	if [ ${#text} -gt 200 ]; then
+		printf '%s' "${text:0:70} …${#text}ch… ${text: -90}"
+	else
+		printf '%s' "$text" | tr '\n' ' ' | tr -s ' '
+	fi
 }
 
 # === 連続失敗サーキットブレーカ ===
@@ -1413,7 +1425,7 @@ ai_generate_list() {
 			AI_GENERATE_LAST_AGENT="$agent"
 			AI_GENERATE_LIST_LAST_AGENT="$agent"
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
-			_ai_stats_record "winner" "$label" "$agent" "0"
+			_ai_stats_record "winner" "$label" "$agent" "0" "$(_ai_resolved_model_from_agent "$agent")"
 			printf '%s' "$output"
 			return 0
 		fi
