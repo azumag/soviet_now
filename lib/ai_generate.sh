@@ -1482,7 +1482,18 @@ ai_generate_list() {
 	fi
 
 	log "[${label}] all agents failed (list=${agent_list_raw})" >&2
-	_ai_stats_record "all_failed" "$label" "" ""
+	local resolved_models=""
+	for agent in "${agents[@]}"; do
+		agent="${agent#"${agent%%[![:space:]]*}"}"
+		agent="${agent%"${agent##*[![:space:]]}"}"
+		[ -n "$agent" ] || continue
+		if [ -n "$resolved_models" ]; then
+			resolved_models="${resolved_models},$(_ai_resolved_model_from_agent "$agent")"
+		else
+			resolved_models="$(_ai_resolved_model_from_agent "$agent")"
+		fi
+	done
+	_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
 	if [ -n "$failure_kind_file" ]; then
 		if [ "$saw_rate_limit" -eq 1 ]; then
 			printf 'rate_limit\n' >"$failure_kind_file"

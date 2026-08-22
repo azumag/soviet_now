@@ -911,6 +911,9 @@ run_ai_list() {
 		rc=$?
 		if [ "$rc" -eq 0 ]; then
 			log "[$label] run_ai_list: ${agent} OK"
+			if command -v _ai_stats_record >/dev/null 2>&1; then
+				_ai_stats_record "winner" "$label" "$agent" "0" "$(_run_cmd_resolved_model "$agent")"
+			fi
 			return 0
 		fi
 		if [ "$rc" -eq 79 ]; then
@@ -927,6 +930,19 @@ run_ai_list() {
 	else
 		log "[$label] run_ai_list: all models failed (list=${agent_list_raw})"
 		final_rc=1
+	fi
+	if [ "$final_rc" -eq 1 ] && command -v _ai_stats_record >/dev/null 2>&1; then
+		local resolved_models="" candidate
+		for candidate in "${agents[@]}"; do
+			candidate=$(printf '%s' "$candidate" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+			[ -n "$candidate" ] || continue
+			if [ -n "$resolved_models" ]; then
+				resolved_models="${resolved_models},$(_run_cmd_resolved_model "$candidate")"
+			else
+				resolved_models="$(_run_cmd_resolved_model "$candidate")"
+			fi
+		done
+		_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
 	fi
 	return "$final_rc"
 }

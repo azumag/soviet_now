@@ -552,6 +552,68 @@ PY
         self.assertNotIn('"${opencode_args[@]}" >>', run_cmd)
         self.assertNotIn('"$prompt_body")', run_cmd)
 
+    def test_run_ai_list_records_winner_and_candidate_models(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+export AI_STATS_DIR="$2/stats"
+export AI_BACKOFF_DIR="$2/backoff"
+export AI_FAIL_STREAK_DIR="$2/streak"
+export AI_GENERATION_QUEUE_ENABLED=0
+source "$1/lib/ai_generate.sh"
+source "$1/strategy/ai.sh"
+log() { :; }
+printf 'prompt\n' >"$2/prompt.md"
+test_root="$2"
+run_ai() {
+    printf '%s\n' "$2" >>"$test_root/calls"
+    if [ "${RUN_AI_RC:-0}" -eq 0 ]; then
+        return 0
+    fi
+    return 1
+}
+set +e
+run_ai_list TEST:improve_winner opencode:x-preview-f-free,opencode:muse-spark-1.2-contributor-free "$2/prompt.md"
+winner_rc=$?
+set -e
+[ "$winner_rc" -eq 0 ]
+python3 - "$AI_STATS_DIR"/$(date +%Y%m%d).jsonl <<'PY'
+import json
+import sys
+
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+winners = [row for row in rows if row["event"] == "winner"]
+assert len(winners) == 1, rows
+assert winners[0]["agent"] == "opencode:x-preview-f-free", winners[0]
+assert winners[0]["resolved_model"] == "opencode/x-preview-f-free", winners[0]
+PY
+
+: >"$AI_STATS_DIR"/$(date +%Y%m%d).jsonl
+RUN_AI_RC=1
+set +e
+run_ai_list TEST:improve_all_failed opencode:x-preview-f-free,opencode:muse-spark-1.2-contributor-free "$2/prompt.md"
+failed_rc=$?
+set -e
+[ "$failed_rc" -eq 1 ]
+python3 - "$AI_STATS_DIR"/$(date +%Y%m%d).jsonl <<'PY'
+import json
+import sys
+
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+failed = [row for row in rows if row["event"] == "all_failed"]
+assert len(failed) == 1, rows
+assert (
+    failed[0]["resolved_model"]
+    == "opencode/x-preview-f-free,opencode/muse-spark-1.2-contributor-free"
+), failed[0]
+PY
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fact_check_defaults_put_muse_before_paid_fallback(self):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
