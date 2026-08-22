@@ -1606,6 +1606,8 @@ import json
 import re
 import sys
 
+CARD_GACHA_RE = re.compile(r"が\s*(?:【|\[).+?(?:】|\]).+?を獲得しました")
+
 path = sys.argv[1]
 helper_path = sys.argv[2] if len(sys.argv) > 2 else "lib/comment_bilingual.py"
 try:
@@ -1647,7 +1649,7 @@ def classify(user: str, comment: str) -> str:
         return "other"
     if stream_bug_hint and stream_bug_failure and not strategy_hint:
         return "stream_bug_report"
-    if re.search(r"が\s*(?:【|\[).+?(?:】|\]).+?を獲得しました", text):
+    if CARD_GACHA_RE.search(text):
         return "card_gacha"
     if "bits" in lower or "cheer" in lower:
         return "bits"
@@ -1672,6 +1674,12 @@ for idx, raw in enumerate(lines, 1):
         user, comment = raw.split(": ", 1)
     else:
         user, comment = "", raw
+    # The IRC daemon removes the self-account prefix from card gacha notices.
+    # Those notices still contain colons in source credits, so parse them as one
+    # message before the generic "author: comment" split.
+    if CARD_GACHA_RE.search(raw) and not raw.startswith("dociai: "):
+        user = "dociai"
+        comment = raw
     is_english = bool(
         language_helper and language_helper.looks_like_english(comment)
     )

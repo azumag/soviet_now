@@ -3661,6 +3661,33 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertEqual(rows[0]["user"], "dociai")
         self.assertEqual(rows[0]["category"], "card_gacha")
 
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            comments = td / "comments.txt"
+            comments.write_text(
+                "@viewer が [コモン] テストカード を獲得しました. 素材: Test Author / CC0\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    "source broadcast/comment.sh; _classify_comments_heuristic \"$1\"",
+                    "bare-gacha-classification",
+                    str(comments),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        rows = json.loads(result.stdout)
+        self.assertEqual(rows[0]["user"], "dociai")
+        self.assertIn("@viewer が [コモン]", rows[0]["comment"])
+        self.assertEqual(rows[0]["category"], "card_gacha")
+
     def test_stream_bug_reports_are_queued_for_codex_dispatch(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         classifier = (REPO_ROOT / "prompts/comment_classifier.md").read_text()
