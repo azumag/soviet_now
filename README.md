@@ -297,7 +297,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - ファクトチェックの判定範囲は「事実誤認・嘘・でっちあげ」のみ。政治・戦争・軍事の話題は事実に基づく限り通す。ブロック対象は性的コンテンツのみ
 - ファクトチェック出力の書式が崩れても、本文抽出をやり直して極力再生する。最終的に検証出力が使えない場合でも、無音スキップせず元原稿で続行する
 - `theme` / `soviet` / `news` はファクトチェック前に Web 由来の資料も取得して検証AIへ渡す。既定では `fetch_radio_grounding.py` が Wikipedia と Google News RSS を引く
-- 検証モデルは `RADIO_FACT_CHECK_AGENT` → `RADIO_FACT_CHECK_SECONDARY` → `RADIO_FACT_CHECK_FALLBACK` → `RADIO_FACT_CHECK_TERTIARY` の順（既定は muse → DeepSeek → MiniMax）で、`RADIO_FACT_CHECK_CLAUDE_MODEL` も調整できる
+- 検証モデルは `RADIO_FACT_CHECK_AGENT` → `RADIO_FACT_CHECK_SECONDARY` → `RADIO_FACT_CHECK_FALLBACK` → `RADIO_FACT_CHECK_TERTIARY` → `RADIO_FACT_CHECK_QUINARY` の順（既定は muse → DeepSeek → MiniMax）で、`RADIO_FACT_CHECK_CLAUDE_MODEL` も調整できる
 - Web資料取得は `RADIO_WEB_GROUNDING_ENABLED=0` で無効化できる。キャッシュや量は `RADIO_WEB_GROUNDING_TTL_SEC` / `RADIO_WEB_GROUNDING_MAX_SOURCES` で調整できる
 - WebFetch / WebSearch の権限確認や失敗ログが読み上げ・overlay へ漏れていないかは `monitor_webfetch_failure.sh` で確認する。`tmp/debug`、`tmp/.radio_deferred_queue`、`tmp/.say_queue`、`tmp/state/overlay_events.jsonl` を対象にし、prompt や opencode raw log は監視対象から外す
 - 各モデルの出力は `lib/model_output_guard.py` で thinking、analysis、tool call/result、Web検索進捗を除去し、`lib/radio_parser.py` が明示的なオンエア本文だけを抽出する。本文として検証できない候補は成功扱いにせず、`ai_generate_list` が次モデルへ進む。

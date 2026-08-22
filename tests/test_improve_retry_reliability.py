@@ -631,9 +631,14 @@ PY
         )
         self.assertIn('"${RADIO_FACT_CHECK_SECONDARY:-}"', factcheck)
         self.assertIn('"${RADIO_FACT_CHECK_TERTIARY:-}"', factcheck)
+        self.assertIn('"${RADIO_FACT_CHECK_QUINARY:-}"', factcheck)
         self.assertLess(
             factcheck.index('"${RADIO_FACT_CHECK_AGENT:-}"'),
             factcheck.index('"${RADIO_FACT_CHECK_SECONDARY:-}"'),
+        )
+        self.assertLess(
+            factcheck.index('"${RADIO_FACT_CHECK_TERTIARY:-}"'),
+            factcheck.index('"${RADIO_FACT_CHECK_QUINARY:-}"'),
         )
 
 

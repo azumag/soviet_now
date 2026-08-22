@@ -220,7 +220,7 @@ PROMPT
 
 	local model
 	local seen_models=" "
-	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}"; do
+	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}" "${RADIO_FACT_CHECK_QUINARY:-}"; do
 		[ -n "$model" ] || continue
 		case "$seen_models" in
 		*" $model "*) continue ;;
