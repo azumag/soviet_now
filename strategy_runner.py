@@ -1327,6 +1327,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         # v716: a singleton T13 plus two live T12s is the birth state for the
         # second T13. Use the anchor-relative lane here too, so deadline fallback
         # cannot steer the birth away from the only T13 that can become T14.
+        if "ANCHOR_SECOND_T13_CONTACT_SHOT" not in reason_text:
+            return None
         _second_birth_counts = {}
         for _birth_piece in pieces:
             try:
@@ -2166,24 +2168,6 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             or "UKRAINE_PAIR" in reason_text
         )
     )
-    # v716: the second-T13 birth point is a hard geometric lane, but it must
-    # never bypass deadline safety. Run it only after urgent merge handling;
-    # the state-aware hook still applies its own risk and crossing filters.
-    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
-        _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
-        if _birth_replacement is not None:
-            _birth_x = float(_birth_replacement.get("x", chosen_x) or 0.0)
-            _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, _birth_x))
-            _birth_old_grade = chosen.get("merge_grade", "NO")
-            _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
-            _birth_suffix = (
-                f"RUNTIME_DEADLINE_SAFETY_OVERRIDE_{_birth_old_grade}_TO_{_birth_new_grade}"
-                "_pre_russia_t13_pair_lane"
-            )
-            return {
-                "x": _birth_x,
-                "reason": f"{reason_text}_{_birth_suffix}",
-            }
     if (
         country_route_reason
         and "ANCHOR_SECOND_T13_CONTACT_SHOT" not in reason_text
@@ -2201,25 +2185,19 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         return decision
 
     replacement_source = "generic"
-    _birth_replacement = (
-        pre_russia_t13_pair_replacement_for(decision)
-        if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
-        else None
-    )
-    if _birth_replacement is not None:
-        _birth_x = max(
-            GAME_X_MIN,
-            min(GAME_X_MAX, float(_birth_replacement.get("x", chosen_x) or 0.0)),
-        )
-        _birth_old_grade = chosen.get("merge_grade", "NO")
-        _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
-        return {
-            "x": _birth_x,
-            "reason": (
-                f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_"
-                f"{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane"
-            ),
-        }
+    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
+        _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
+        if _birth_replacement is not None:
+            _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, float(_birth_replacement.get("x", chosen_x) or 0.0)))
+            _birth_old_grade = chosen.get("merge_grade", "NO")
+            _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
+            return {
+                "x": _birth_x,
+                "reason": f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane",
+            }
+    # Keep this local definitely assigned on every branch; the static validator
+    # treats the conditional above as a branch that can skip its first binding.
+    _birth_replacement = None
     chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
     chosen_geometry_replacement = geometry_underestimate_replacement_for(chosen)
 
