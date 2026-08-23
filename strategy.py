@@ -59,6 +59,8 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v719: POST_RUSSIA_SYMMETRIC_LANES — unlock the full [-3,+3] board only
+# after T15, and keep deadline fallbacks on real safe/minimum-risk candidates.
 # v718: POST_RUSSIA_HIGH_PAIR_CONTACT_SHOT — preserve the production e5b
 # pre-Russia policy, then use safe outer-side impacts to close the highest
 # separated T12/T13/T14 pair after the first real T15.  When two T15s remain
@@ -77,6 +79,18 @@ def _as_float(value, default):
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _clip_final_drop_x(value, has_russia, fallback=False):
+    """Clip a scored lane without changing the proven pre-Russia bounds."""
+    value = _as_float(value, 0.0)
+    if has_russia:
+        lower, upper = -3.0, 3.0
+    elif fallback:
+        lower, upper = -1.612, 0.862
+    else:
+        lower, upper = -0.991, 4.362
+    return round(max(lower, min(upper, value)), 1 if fallback else 4)
 
 
 def _select_post_russia_contact_candidate(pieces, results, next_type, next_radius):
@@ -239,6 +253,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
+    __dlg_has_russia = any(
+        isinstance(piece, dict) and piece.get("type") == 15
+        for piece in (__dlg_game_state.get("pieces", []) or [])
+    )
     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
 
     __dlg_merge_available = any(
@@ -321,7 +339,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict)
             and not c.get("crosses_deadline")
             and not c.get("merge_result_crosses_deadline")
-            and not (c.get("merge_grade") == "NO")  # Exclude NO_MERGE + deadline cross
+            and __dlg_has_russia
+            and c.get("merge_grade") == "NO"
         ]
         if __dlg_safe_no_merge:
             __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 166.3) or 35.68))
@@ -348,7 +367,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 144.09) or 116.24))
                 return {"x": float(__dlg_best.get("x", -0.5452) or -0.2302), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
         else:
-            return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
+            if not __dlg_has_russia:
+                return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
+            # No placement can avoid crossing.  Do not invent x=0; retain the
+            # candidate with the smallest predicted board top so the runtime
+            # safety layer receives the least-dangerous real option.
+            __dlg_crossing = [
+                c for c in __dlg_cands
+                if isinstance(c, dict) and c.get("crosses_deadline")
+            ]
+            if __dlg_crossing:
+                __dlg_best = min(
+                    __dlg_crossing,
+                    key=lambda c: float(
+                        c.get("risk_top_y_after_drop", c.get("top_y_after_drop", 999.0))
+                        or 999.0
+                    ),
+                )
+                return {
+                    "x": float(__dlg_best.get("x", 0.0) or 0.0),
+                    "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS",
+                }
     # --- END DEADLINE GUARD ---
 
     results = __dlg_cands
@@ -1559,13 +1598,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         safest = min(results, key=lambda r: r.get("landing_y", 0))
         best_x = safest["x"]
         best_reason = "FALLBACK_ALL_SUPPRESSED"
-        best_x = max(-1.612, min(0.862, best_x))
-        best_x = round(best_x, 1)
+        # Preserve the measured production clamp before Russia.  Once a real
+        # T15 exists, however, the second chain may legitimately live on
+        # either outer lane; clipping only the left lane destroys the
+        # analyzer's mirror-symmetric guidance.
+        best_x = _clip_final_drop_x(best_x, type15_count >= 1, fallback=True)
         return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
-    best_x = max(-0.991, min(4.362, best_x))
-    best_x = round(best_x, 4)
+    best_x = _clip_final_drop_x(best_x, type15_count >= 1)
 
     return {"x": best_x, "reason": best_reason}
 

@@ -168,6 +168,134 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(decision["x"], 2.0)
         self.assertIn("SECOND_RUSSIA_CHAIN_LANE", decision["reason"])
 
+    def test_decide_preserves_mirrored_left_second_russia_lane(self):
+        pieces = [
+            piece("russia", 15, 2.0, -2.7, 1.35),
+            piece("t12-seed", 12, -2.0, -1.8, 0.9),
+        ]
+        results = [candidate(-2.0), candidate(2.0)]
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+        analysis = {
+            "results": results,
+            "reactor": {
+                "deadline_margin": 1.5,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+                "soviet": {"second_russia_lane_x": -2.0},
+            },
+        }
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(decision["x"], -2.0)
+        self.assertIn("SECOND_RUSSIA_CHAIN_LANE", decision["reason"])
+        final_decision = strategy_runner.enforce_deadline_safety(
+            copy.deepcopy(decision), copy.deepcopy(analysis), copy.deepcopy(game_state)
+        )
+        self.assertEqual(final_decision, decision)
+
+    def test_deadline_guard_selects_safe_no_merge_instead_of_default_x(self):
+        pieces = [piece("russia", 15, 2.0, -2.7, 1.35)]
+        safe = candidate(-2.0, landing_y=-2.0)
+        crossing = candidate(0.0, crosses=True, landing_y=2.8)
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+        analysis = {
+            "results": [safe, crossing],
+            "reactor": {
+                "deadline_margin": 0.5,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(decision, {"x": -2.0, "reason": "DEADLINE_GUARD_SAFE_LANDING"})
+
+    def test_deadline_guard_keeps_pre_russia_default_boundary(self):
+        game_state = {
+            "pieces": [piece("t12", 12, 2.0, -2.7, 0.9)],
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+        analysis = {
+            "results": [
+                candidate(-2.0, landing_y=-2.0),
+                candidate(0.0, crosses=True, landing_y=2.8),
+            ],
+            "reactor": {
+                "deadline_margin": 0.5,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(
+            decision,
+            {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"},
+        )
+
+    def test_deadline_guard_uses_lowest_risk_real_candidate_when_all_cross(self):
+        pieces = [piece("russia", 15, 2.0, -2.7, 1.35)]
+        lower_risk = candidate(-2.0, crosses=True, landing_y=2.7)
+        lower_risk["risk_top_y_after_drop"] = 3.6
+        higher_risk = candidate(0.0, crosses=True, landing_y=2.8)
+        higher_risk["risk_top_y_after_drop"] = 4.2
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+        analysis = {
+            "results": [higher_risk, lower_risk],
+            "reactor": {
+                "deadline_margin": 0.5,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(
+            decision,
+            {"x": -2.0, "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS"},
+        )
+
+    def test_final_clip_preserves_old_bounds_until_russia_exists(self):
+        self.assertEqual(strategy._clip_final_drop_x(-3.0, False), -0.991)
+        self.assertEqual(strategy._clip_final_drop_x(5.0, False), 4.362)
+        self.assertEqual(strategy._clip_final_drop_x(-3.0, False, fallback=True), -1.6)
+        self.assertEqual(strategy._clip_final_drop_x(3.0, False, fallback=True), 0.9)
+
+    def test_final_clip_unlocks_both_outer_lanes_after_russia(self):
+        self.assertEqual(strategy._clip_final_drop_x(-3.0, True), -3.0)
+        self.assertEqual(strategy._clip_final_drop_x(3.0, True), 3.0)
+        self.assertEqual(strategy._clip_final_drop_x(-3.0, True, fallback=True), -3.0)
+        self.assertEqual(strategy._clip_final_drop_x(3.0, True, fallback=True), 3.0)
+
     def test_shape_aware_hit_must_match_contact_target(self):
         results = [
             candidate(-2.0, landing_hit_id="russia"),
