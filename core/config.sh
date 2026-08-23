@@ -34,11 +34,11 @@ MODEL_LAST_RESORT="codex:minimax-m3"
 # deepseek-v4-flash-free は opencode 直呼びで成功する（litellm の zen/v1 は 429）。opencode: で呼ぶ.
 # muse-spark-1.2-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:x-preview-f-free,codex:openrouter/free,local,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,codex:deepseek-v4-flash}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:x-preview-f-free,opencode-go:muse-spark-1.2-contributor,codex:minimax-m3,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:x-preview-f-free,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,codex:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:x-preview-f-free,opencode-go:muse-spark-1.2-contributor,codex:minimax-m3,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -113,8 +113,8 @@ PEAK_HOURS_WINDOWS="${PEAK_HOURS_WINDOWS-10-13,15-19}"
 PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
 PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:x-preview-f-free}"
 # ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
-# x-preview > openrouter/free > local > muse > 残り（DeepSeek/MiniMax等）。
-PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:x-preview-f-free,codex:openrouter/free,local,opencode-go:muse-spark-1.2-contributor}"
+# x-preview > muse > MiniMax > 残り（DeepSeek系）。
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:x-preview-f-free,opencode-go:muse-spark-1.2-contributor,codex:minimax-m3}"
 
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
