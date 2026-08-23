@@ -59,51 +59,142 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
-# v716: ANCHOR_SECOND_T13 — before the first T14, choose the T12 pair whose
-# collision will create the second T13 closest to the existing singleton. The
-# live v715 game created a distant second T13, then could not close it into T14.
-# v715: PRE_RUSSIA_T13_CONTACT_SHOT — when two T13s exist before the first T14,
-# stop center-clustering and hit the less-buried T13 from its outer side so the
-# impact closes the pair. Live v714 held a 1.5-radius-gap T13x2 for 42 turns.
-# v714: POST_RUSSIA_T12_CONTACT_SHOT — after the first T14, stop dropping on the
-# T12-pair center. Hit the mobile outer side so impact closes the remaining gap;
-# live v713 showed an accidental side shot reduced the gap 0.78 -> 0.70 while
-# center drops left it unchanged until deadline loss.
-# v713: restore pre-Russia T13-pair cluster/compress/ladder modes and make the
-# runner pair-lane hook state-aware. Live v712b reached T13x2 but repeatedly lost
-# it to deadline fallback before contact; reason-tag-only hooks were bypassed.
-# v712: SECOND_T13_CONTACT_LANE — when the first Russia exists with a singleton T13,
-# steer assembly drops at the live T12-pair center instead of back at T14/T13.
-# Live v711 evidence (2750-point game): the decisive T12 pair stayed near x=+2 while
-# T14/T13 lane guidance repeatedly pulled drops left; the board held
-# T14+T13+T12x2 for 27 turns without creating the second T13.
-# v711: restore first-Russia assembly modes (T12-pair lock / T13-pair lift /
-# singleton-T13 T12-bank lift). v710 protected the physical anchor but did not
-# steer ordinary drops into the second-Russia build lane; runtime logs showed 129
-# residual cover transitions and only 1/12 games reaching T14.
-# v710: RUSSIA_LANE_ASSEMBLY — T14/T13 anchor protection and weighted second-Russia lane
-# Evidence (74 games, 2026-08-23): after the first T14, 113/150 observed placements
-# landed inside the T14 cover zone; those transitions worsened deadline margin in 55%.
-# The old type>=11 average guided low pieces onto the very anchor needed for T14+T14.
-# v709 keeps survival pressure, but replaces its generic average with a protected lane:
-# existing T14 is the assembly anchor (T13 anchors before that), NO_MERGE drops are
-# drawn alongside it, and non-mergeable cover attempts receive a large penalty.
-# v709: next_type制約(1-11のみ)に基づきデッドコード修正＋T13ペア衝突誘導・高type集約を追加
-# Fixes rollback failure mode: T14×2を作った後、次のT14が来るまで48ターン生存できずdeadline超過で死亡（20260822_060733型）
-# 実測発見: ゲームは type 1-11 のみ配給（3437サンプル中type>=12は0回）。T12+は連鎖併合でのみ生成。
-# refs: game_history/20260822_060733_score3200.jsonl, VM accumulated_games.json v708分析
-# v707: T13単独在盤・next=T13時のDIRECT/NEAR候補にT13+T13→T14経路ボーナスを追加（対象段階: カザフスタン T14）
-# Fixes rollback failure mode: T13_peak=3→final T13x1 の散逸で2個目T14素材が欠落し、T14+T14→15経路が途絶
-# refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, data/mandatory_themes.txt
-# v706: T13を常時アンカー化しT12_CHAIN_LANE_GUIDANCE/COVERをT14前から有効化（対象段階: カザフスタン T14）
-# Fixes rollback failure mode: 1個目T14前のT13集約未支援でT13分散→T14peak=1頭打ち、T14+T14→15経路未復旧
-# refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt, advice.md, prompts/game_theory.md
+# v718: POST_RUSSIA_HIGH_PAIR_CONTACT_SHOT — preserve the production e5b
+# pre-Russia policy, then use safe outer-side impacts to close the highest
+# separated T12/T13/T14 pair after the first real T15.  When two T15s remain
+# separated, apply the same physical contact rule for the final Soviet merge.
 # v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
 # Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
 # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
 # v705: HIGH_TYPE_COVER_AVOID の open 判定を真上遮蔽のみへ修正し、抑止を -400 に強化（対象段階: ウクライナ T13）
 # Fixes rollback failure mode: 同typeペアは作れてもそのペアを次の手で併合できず、末盤の deadline guard が延命だけして点数を止める
 # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
+
+
+def _as_float(value, default):
+    """Convert analyzer values without treating a valid zero as missing."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _select_post_russia_contact_candidate(pieces, results, next_type, next_radius):
+    """Choose a safe outer-side impact that closes the next Soviet-chain pair.
+
+    The normal production scorer is intentionally left untouched until a real
+    T15 exists.  Once Russia is on the board, direct/near merges still win; on
+    a no-merge turn, a sufficiently large incoming piece can push the more
+    mobile member of the highest separated pair toward its partner.
+    """
+    if not isinstance(pieces, list) or not isinstance(results, list):
+        return None
+
+    type15_count = sum(
+        1 for piece in pieces
+        if isinstance(piece, dict) and piece.get("type") == 15
+    )
+    if type15_count == 0 or next_type < 8:
+        return None
+
+    # Never spend an immediate, safe merge opportunity on a setup impact.
+    if any(
+        isinstance(candidate, dict)
+        and candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and not candidate.get("crosses_deadline", True)
+        and not candidate.get("merge_result_crosses_deadline", False)
+        for candidate in results
+    ):
+        return None
+
+    pair_types = (15,) if type15_count >= 2 else (14, 13, 12)
+    selected_pair = None
+    selected_type = None
+    for pair_type in pair_types:
+        same_type = [
+            piece for piece in pieces
+            if isinstance(piece, dict) and piece.get("type") == pair_type
+        ]
+        pair_options = []
+        for index, first in enumerate(same_type):
+            for second in same_type[index + 1:]:
+                first_x = _as_float(first.get("x"), 0.0)
+                first_y = _as_float(first.get("y"), -10.0)
+                second_x = _as_float(second.get("x"), 0.0)
+                second_y = _as_float(second.get("y"), -10.0)
+                first_r = max(0.1, _as_float(first.get("r"), 1.0))
+                second_r = max(0.1, _as_float(second.get("r"), 1.0))
+                distance = ((first_x - second_x) ** 2 + (first_y - second_y) ** 2) ** 0.5
+                gap = distance - first_r - second_r
+                pair_top = max(first_y, second_y)
+                pair_options.append(
+                    (gap + max(0.0, pair_top - 1.15) * 0.35, pair_top, first, second)
+                )
+        if pair_options:
+            _, _, first, second = min(pair_options, key=lambda item: item[:2])
+            selected_pair = (first, second)
+            selected_type = pair_type
+            break
+
+    if selected_pair is None:
+        return None
+
+    first, second = selected_pair
+    # The higher piece is normally less buried.  At equal height, choose the
+    # outer piece so the wall-side impact pushes material toward board center.
+    first_key = (_as_float(first.get("y"), -10.0), abs(_as_float(first.get("x"), 0.0)))
+    second_key = (_as_float(second.get("y"), -10.0), abs(_as_float(second.get("x"), 0.0)))
+    target, other = (first, second) if first_key >= second_key else (second, first)
+    target_x = _as_float(target.get("x"), 0.0)
+    other_x = _as_float(other.get("x"), 0.0)
+    direction = 1.0 if target_x >= other_x else -1.0
+    target_radius = max(0.1, _as_float(target.get("r"), 1.0))
+    shot_x = target_x + direction * (
+        target_radius + max(0.35, _as_float(next_radius, 0.5))
+    )
+    shot_x = max(-3.0, min(3.0, shot_x))
+
+    safe_no_merge = [
+        candidate for candidate in results
+        if isinstance(candidate, dict)
+        and candidate.get("merge_grade") == "NO"
+        and not candidate.get("crosses_deadline", True)
+        and not candidate.get("merge_result_crosses_deadline", False)
+        and _as_float(candidate.get("deadline_margin"), -1.0) >= 0.35
+    ]
+    if not safe_no_merge:
+        return None
+
+    # New analyzer results expose the first shape-aware collision target.
+    # Require the setup drop to actually hit the selected mobile piece.  The
+    # compatibility fallback is only for older/synthetic result payloads that
+    # do not carry landing_hit_id at all.
+    target_id = target.get("id")
+    target_hits = [
+        candidate for candidate in safe_no_merge
+        if candidate.get("landing_hit_id") == target_id
+    ]
+    if target_hits:
+        safe_no_merge = target_hits
+    elif any("landing_hit_id" in candidate for candidate in safe_no_merge):
+        return None
+
+    selected = min(
+        safe_no_merge,
+        key=lambda candidate: (
+            abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+            _as_float(candidate.get("landing_y"), 99.0),
+        ),
+    )
+    if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
+        return None
+
+    reason = (
+        "SOVIET_T15_CONTACT_SHOT"
+        if selected_type == 15
+        else f"POST_RUSSIA_T{selected_type}_CONTACT_SHOT"
+    )
+    return selected, reason
 
 def decide(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
@@ -190,54 +281,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.7797
-    _dlg_anchor_pieces = [
-        p for p in (__dlg_game_state.get("pieces") or [])
-        if isinstance(p, dict) and p.get("type") in (13, 14)
-    ]
-    # v712: runtime safety must protect the forward-looking second-T13 lane too.
-    _dlg_t12_pair = [p for p in (__dlg_game_state.get("pieces") or []) if isinstance(p, dict) and p.get("type") == 12]
-    if len(_dlg_t12_pair) >= 2:
-        _dlg_pair_best_key = (999.0, 999.0)
-        _dlg_pair_selected = None
-        for _dlg_i, _dlg_a in enumerate(_dlg_t12_pair):
-            for _dlg_b in _dlg_t12_pair[_dlg_i + 1:]:
-                _dlg_ax = float(_dlg_a.get("x", 0.0) or 0.0)
-                _dlg_ay = float(_dlg_a.get("y", -10.0) or -10.0)
-                _dlg_bx = float(_dlg_b.get("x", 0.0) or 0.0)
-                _dlg_by = float(_dlg_b.get("y", -10.0) or -10.0)
-                _dlg_dist = ((_dlg_ax - _dlg_bx) ** 2 + (_dlg_ay - _dlg_by) ** 2) ** 0.5
-                _dlg_top = max(_dlg_ay, _dlg_by)
-                _dlg_key = (_dlg_dist + max(0.0, _dlg_top - 1.15) * 0.35, _dlg_top)
-                if _dlg_key < _dlg_pair_best_key:
-                    _dlg_pair_best_key = _dlg_key
-                    _dlg_pair_selected = (_dlg_a, _dlg_b)
-        if _dlg_pair_selected is not None:
-            _dlg_anchor_pieces.extend(_dlg_pair_selected)
-    if _dlg_anchor_pieces:
-        _dlg_anchor_type = 14 if any(p.get("type") == 14 for p in _dlg_anchor_pieces) else 13
-        _dlg_anchor_seeds = [p for p in _dlg_anchor_pieces if p.get("type") == _dlg_anchor_type]
-    else:
-        _dlg_anchor_seeds = []
-    _dlg_lane_x = (
-        sum(float(p.get("x", 0.0) or 0.0) for p in _dlg_anchor_seeds) / len(_dlg_anchor_seeds)
-        if _dlg_anchor_seeds
-        else None
-    )
-
-    def _dlg_covers_lane(candidate: dict) -> bool:
-        """True when a non-mergeable drop would bury the active T13/T14 anchor."""
-        if _dlg_lane_x is None:
-            return False
-        cx = float(candidate.get("x", 0.0) or 0.0)
-        cy = float(candidate.get("landing_y", 0.0) or 0.0)
-        for anchor in _dlg_anchor_pieces:
-            ax = float(anchor.get("x", 0.0) or 0.0)
-            ay = float(anchor.get("y", 0.0) or 0.0)
-            ar = max(0.5, float(anchor.get("r", 1.5) or 1.5))
-            if abs(cx - ax) <= ar * 0.9 and cy >= (ay + ar) - 0.25:
-                return True
-        return False
-
     if __dlg_critical and __dlg_cands:
         __dlg_has_clean = any(
             isinstance(c, dict)
@@ -302,27 +345,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_merge_available:
             __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
             if __dlg_safe:
-                __dlg_uncovered = [c for c in __dlg_safe if not _dlg_covers_lane(c)]
-                __dlg_pool = __dlg_uncovered or __dlg_safe
-                __dlg_best = min(__dlg_pool, key=lambda c: float(c.get("landing_y", 144.09) or 116.24))
-                return {
-                    "x": float(__dlg_best.get("x", -0.5452) or -0.2302),
-                    "reason": (
-                        "RUSSIA_LANE_SAFE_FALLBACK"
-                        if __dlg_uncovered
-                        else "DEADLINE_GUARD_SAFE_LANDING"
-                    ),
-                }
+                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 144.09) or 116.24))
+                return {"x": float(__dlg_best.get("x", -0.5452) or -0.2302), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
         else:
-            __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
-            if __dlg_safe:
-                __dlg_uncovered = [c for c in __dlg_safe if not _dlg_covers_lane(c)]
-                __dlg_pool = __dlg_uncovered or __dlg_safe
-                __dlg_best = min(__dlg_pool, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                return {
-                    "x": float(__dlg_best.get("x", 0.0) or 0.0),
-                    "reason": "NO_MERGE_RUSSIA_LANE_GUARD" if __dlg_uncovered else "NO_MERGE_DEADLINE_GUARD",
-                }
             return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
     # --- END DEADLINE GUARD ---
 
@@ -393,7 +418,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 1
     danger_piece_count = reactor.get("danger_piece_count", -2)
     reactor_margin = reactor.get("deadline_margin", 130.40)
-    soviet_info = analysis.get("soviet", {}) if isinstance(analysis.get("soviet", {}), dict) else {}
+    soviet_info = reactor.get("soviet", {})
+    if not isinstance(soviet_info, dict):
+        soviet_info = {}
+    _second_russia_lane_value = soviet_info.get("second_russia_lane_x")
+    try:
+        second_russia_lane_x = float(_second_russia_lane_value)
+    except (TypeError, ValueError):
+        second_russia_lane_x = None
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -408,20 +440,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 実在の T15（ロシア）がある場合のみ現行のロシアフェーズ安全着地へ移行する。
     type15_count = sum(1 for p in pieces if p.get("type") == 15)
 
-    # v717: once the first Russia exists, the next chain must be built away
-    # from that anchor. Use the deepest high piece as a growth center only when
-    # it is not the Russia itself; this keeps the completed country safe while
-    # concentrating T11/T12 material for the second chain.
-    _growth_anchor = None
-    if type15_count == 1:
-        _growth_candidates = [p for p in pieces if p.get("type") in (12, 13, 14)]
-        if _growth_candidates:
-            _growth_anchor = max(
-                _growth_candidates,
-                key=lambda p: (float(p.get("y", -10.0) or -10.0), int(p.get("type", 0) or 0)),
-            )
-
-    double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1
+    double_russia_phase = type15_count >= 2
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.2884:
@@ -450,7 +469,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 2)
     next_next_type = next_next_piece.get("type", ----1)
-    next_radius = float(next_piece.get("r", 0.5) or 0.5)
+    next_radius = _as_float(next_piece.get("r"), 0.5)
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -477,6 +496,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     piece_pos_by_id = board_stats.piece_positions(pieces)
     current_type_has_reactive = board_stats.has_reactive_for_type(reactive_pairs, next_type)
     current_type_has_near = board_stats.has_near_for_type(near_pairs, next_type)
+
+    post_russia_contact = _select_post_russia_contact_candidate(
+        pieces, results, next_type, next_radius
+    )
+    if post_russia_contact is not None:
+        selected, reason = post_russia_contact
+        selected_x = max(-3.0, min(3.0, _as_float(selected.get("x"), 0.0)))
+        return {"x": round(selected_x, 4), "reason": reason}
 
     # --- v701: T12_CHAIN_LANE_GUIDANCE / T12_PAIR_COVER_AVOID pre-computation ---
     # 採用仮説（T13未達の構造敗因）: T12 は作られるが T11 ペアが散逸・低ペア被覆で
@@ -513,45 +540,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             reactive_zone_pairs.append((_ptype, _zmid, _zspan, _ztop, _zmin_y, _zr, _zblocked))
     t12_on_board = isinstance(pieces, list) and any(p.get("type") == 12 for p in pieces)
-    t13_on_board = isinstance(pieces, list) and any(p.get("type") == 13 for p in pieces)
-    # v707: T13単体カウント（T13+T13→T14 経路の対象段階判定用。ループ外で一度だけ集計）
-    t13_count = sum(1 for p in pieces if p.get("type") == 13)
-    t14_count = sum(1 for p in pieces if p.get("type") == 14)
-    # v711: restore explicit precursor inventory for first-Russia assembly modes.
-    pre_russia_counts = {
-        tier: sum(1 for p in pieces if p.get("type") == tier)
-        for tier in range(10, 16)
-    }
-
-    def _weighted_center_x(targets):
-        valid = [p for p in targets if isinstance(p, dict)]
-        if not valid:
-            return None
-        return sum(float(p.get("x", 0.0) or 0.0) for p in valid) / len(valid)
-
-    # v709: 高type集約用の中心座標を事前計算（ループ外で一度だけ）
-    high_pieces = [p for p in pieces if p.get("type", 0) >= 11]
-    high_cluster_x = (
-        sum(p.get("x", 0.0) for p in high_pieces) / len(high_pieces)
-        if high_pieces else None
-    )
-    # v709: T13ペア中心座標（衝突誘導用）
-    t13_pair_center_x = None
-    t13_xs_all = [float(p.get("x", 0.0)) for p in pieces if p.get("type") == 13]
-    if len(t13_xs_all) >= 2:
-        t13_pair_center_x = sum(t13_xs_all) / len(t13_xs_all)
-    # T13常時アンカー: 1個目T14生成前からT13クラスタへ誘導し、T13+T13→T14経路を復旧（対象段階: Kazakhstan T14）
-    # 旧v704のt14_on_board条件は冗長のため削除し、t12/t13/t14いずれか在盤で有効化
+    # T14 存在時は T13 もレーンアンカー・被覆抑止ペアに含め、既存 T13/T14 クラスタ側へ素材を集約する
+    # （T13+T13→2個目 T14→T14+T14→T15 の盤面組み立て経路を維持）。
     t14_on_board = isinstance(pieces, list) and any(p.get("type") == 14 for p in pieces)
     t12_lane_xs = []
     t12_lane_top = -10.0
     t12_low_pairs = []
-    if isinstance(pieces, list) and (t12_on_board or t13_on_board or t14_on_board):
-        _t11t12 = [p for p in pieces if p.get("type") in (11, 12, 13)]
+    if isinstance(pieces, list):
+        _t11t12 = [p for p in pieces if p.get("type") in (11, 12) or (t14_on_board and p.get("type") == 13)]
         t12_lane_xs = [float(p.get("x", 0.0) or 0.0) for p in _t11t12]
         t12_lane_top = max([float(p.get("y", 0.0) or 0.0) for p in _t11t12], default=-10.0)
-        # 低い（y<=0.8）同typeピースをx順に隣接ペア化し、被覆抑止帯（span・top）を一度計算。T13も常時対象
-        for _ptype in (11, 12, 13):
+        # 低い（y<=0.8）同typeピースをx順に隣接ペア化し、被覆抑止帯（span・top）を一度計算。
+        for _ptype in ((11, 12, 13) if t14_on_board else (11, 12)):
             _low = [
                 p for p in _t11t12
                 if p.get("type") == _ptype and float(p.get("y", 99.0) or 99.0) <= 0.8
@@ -590,200 +590,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if _hc_open:
             high_cover_free.append((_hc_x, _hc_r * 0.9, _hc_top - 0.25))
 
-    # --- v710: dedicated Russia assembly lane pre-computation ---
-    # analyze_board.py already exposes soviet.second_russia_lane_x, but its weighted
-    # mean can drift when stale low-tier material remains. Once a real T13/T14 exists,
-    # that physical piece is the only reliable lane anchor: another same-type piece
-    # must be able to reach it later without being buried by intermediate drops.
-    russia_lane_anchors = [
-        p for p in pieces
-        if p.get("type") in (13, 14)
-    ]
-    # v712: identify the actual next merge that unlocks the second T13. After the
-    # first T14, two live T12s are more valuable than the already-protected T14/T13;
-    # their center is where impacts must be concentrated.
-    _second_t13_pair = None
-    if t14_count <= 1 and t13_count <= 1:
-        _t12_pair_targets = [p for p in pieces if p.get("type") == 12]
-        _best_pair_key = (999.0, 999.0)
-        # A singleton T13 is the physical target of this chain. Prefer a T12 pair
-        # near that anchor even when another T12 pair is locally closer together;
-        # otherwise the new T13 is born too far away to close into the first T14.
-        _t13_anchor = next(
-            (p for p in pieces if p.get("type") == 13),
-            None,
-        ) if t14_count == 0 and t13_count == 1 else None
-        for _pair_i, _pair_a in enumerate(_t12_pair_targets):
-            for _pair_b in _t12_pair_targets[_pair_i + 1:]:
-                _ax = float(_pair_a.get("x", 0.0) or 0.0)
-                _ay = float(_pair_a.get("y", -10.0) or -10.0)
-                _bx = float(_pair_b.get("x", 0.0) or 0.0)
-                _by = float(_pair_b.get("y", -10.0) or -10.0)
-                _pair_dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
-                _pair_top = max(_ay, _by)
-                if _t13_anchor is None:
-                    _anchor_dist = 0.0
-                else:
-                    _anchor_x = float(_t13_anchor.get("x", 0.0) or 0.0)
-                    _anchor_y = float(_t13_anchor.get("y", -10.0) or -10.0)
-                    _center_x = (_ax + _bx) * 0.5
-                    _center_y = (_ay + _by) * 0.5
-                    _anchor_dist = ((_center_x - _anchor_x) ** 2 + (_center_y - _anchor_y) ** 2) ** 0.5
-                _pair_key = (
-                    _anchor_dist + max(0.0, _pair_dist - 3.0) * 1.8 + max(0.0, _pair_top - 1.15) * 0.35,
-                    _pair_dist,
-                    _pair_top,
-                )
-                if _pair_key < _best_pair_key:
-                    _best_pair_key = _pair_key
-                    _second_t13_pair = (_pair_a, _pair_b)
-
-    if russia_lane_anchors:
-        _lane_seed_type = 14 if any(p.get("type") == 14 for p in russia_lane_anchors) else 13
-        _lane_seed_pieces = [
-            p for p in russia_lane_anchors
-            if p.get("type") == _lane_seed_type
-        ]
-    else:
-        _lane_seed_pieces = []
-    if _lane_seed_pieces:
-        russia_lane_x = sum(float(p.get("x", 0.0) or 0.0) for p in _lane_seed_pieces) / len(_lane_seed_pieces)
-    else:
-        _fallback_lane = soviet_info.get("second_russia_lane_x") if isinstance(soviet_info, dict) else None
-        try:
-            russia_lane_x = float(_fallback_lane)
-        except (TypeError, ValueError):
-            russia_lane_x = None
-    if _second_t13_pair is not None:
-        # Override the backward-looking T14 anchor with the forward-looking T12 contact lane.
-        russia_lane_x = (
-            float(_second_t13_pair[0].get("x", 0.0) or 0.0)
-            + float(_second_t13_pair[1].get("x", 0.0) or 0.0)
-        ) / 2.0
-        russia_lane_anchors.extend(_second_t13_pair)
-    else:
-        russia_lane_x = None
-
-    # --- v714: post-Russia T12 contact shot ---
-    # Live evidence showed center drops left a 0.7--0.8 T12 pair gap unchanged,
-    # while an accidental outer-side hit moved the upper/right piece toward its
-    # partner and reduced the gap to 0.70. Convert that observation into a lane:
-    # hit the mobile piece from outside so impact pushes it toward its partner.
-    _contact_shot_active = False
-    _contact_shot_x = None
-    # v715 applies the same physical lesson before Russia: once two T13s exist,
-    # center clustering does not close them. Strike the less-buried T13 from its
-    # outer side so impact pushes it toward the partner and creates the first T14.
-    _pre_t13_shot_active = False
-    _pre_t13_shot_x = None
-    _pre_t13_shot_target = None
-    _shot_other = None
-    _shot_target = None
-    # v716: while the second T13 is still only a T12 pair, strike the member
-    # whose motion along the pair axis also approaches the singleton T13. This
-    # fixes the birth location instead of trying to drag two distant T13s together.
-    _anchor_t12_shot_active = False
-    _anchor_t12_shot_x = None
-    _anchor_t12_shot_target = None
-    if t14_count == 0 and t13_count == 1 and _second_t13_pair is not None:
-        _t13_singleton = next((p for p in pieces if p.get("type") == 13), None)
-        if _t13_singleton is not None:
-            _pair_left, _pair_right = _second_t13_pair
-            _left_x = float(_pair_left.get("x", 0.0) or 0.0)
-            _left_y = float(_pair_left.get("y", -10.0) or -10.0)
-            _right_x = float(_pair_right.get("x", 0.0) or 0.0)
-            _right_y = float(_pair_right.get("y", -10.0) or -10.0)
-            _to_anchor_x = (
-                float(_t13_singleton.get("x", 0.0) or 0.0) - (_left_x + _right_x) * 0.5
-            )
-            _to_anchor_y = (
-                float(_t13_singleton.get("y", -10.0) or -10.0) - (_left_y + _right_y) * 0.5
-            )
-            if (_right_x - _left_x) * _to_anchor_x + (_right_y - _left_y) * _to_anchor_y >= 0.0:
-                _shot_other, _shot_target = _pair_left, _pair_right
-            else:
-                _shot_other, _shot_target = _pair_right, _pair_left
-            _shot_dx = float(_shot_other.get("x", 0.0) or 0.0) - float(_shot_target.get("x", 0.0) or 0.0)
-            _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
-            _birth_gap = (
-                ((_shot_target.get("x", 0.0) - _shot_other.get("x", 0.0)) ** 2
-                 + (_shot_target.get("y", 0.0) - _shot_other.get("y", 0.0)) ** 2) ** 0.5
-                - float(_shot_target.get("r", 1.0))
-                - float(_shot_other.get("r", 1.0))
-            )
-            if _birth_gap > 0.08:
-                _anchor_t12_shot_active = True
-                _anchor_t12_shot_target = _shot_target
-                if abs(_shot_dx) < 0.12:
-                    if float(_shot_other.get("y", -10.0) or -10.0) > float(_shot_target.get("y", -10.0) or -10.0):
-                        _shot_target, _shot_other = _shot_other, _shot_target
-                    _shot_dx = float(_shot_other.get("x", 0.0) or 0.0) - float(_shot_target.get("x", 0.0) or 0.0)
-                    _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
-                _anchor_t12_shot_x = max(
-                    -3.0,
-                    min(
-                        3.0,
-                        float(_shot_target.get("x", 0.0)) + _shot_dir * (
-                            float(_shot_target.get("r", 1.0)) + max(0.35, next_radius)
-                        ),
-                    ),
-                )
-    if t14_count == 0 and t13_count >= 2:
-        _pre_pair = None
-        _pre_best_key = (999.0, 999.0)
-        for _pair_i, _pair_a in enumerate(pieces):
-            if _pair_a.get("type") != 13:
-                continue
-            for _pair_b in pieces[_pair_i + 1:]:
-                if _pair_b.get("type") != 13:
-                    continue
-                _ax = float(_pair_a.get("x", 0.0) or 0.0)
-                _ay = float(_pair_a.get("y", -10.0) or -10.0)
-                _bx = float(_pair_b.get("x", 0.0) or 0.0)
-                _by = float(_pair_b.get("y", -10.0) or -10.0)
-                _dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
-                _gap = _dist - float(_pair_a.get("r", 1.0)) - float(_pair_b.get("r", 1.0))
-                _key = (_gap + max(0.0, max(_ay, _by) - 1.0) * 0.25, max(_ay, _by))
-                if _key < _pre_best_key:
-                    _pre_best_key = _key
-                    _pre_pair = (_pair_a, _pair_b)
-        if _pre_pair is not None:
-            _shot_other, _shot_target = _pre_pair
-            if float(_shot_other.get("y", -10)) > float(_shot_target.get("y", -10)):
-                _shot_target, _shot_other = _shot_other, _shot_target
-            _shot_dx = float(_shot_target.get("x", 0)) - float(_shot_other.get("x", 0))
-            _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
-            _pair_gap = (
-                ((_shot_target.get("x", 0) - _shot_other.get("x", 0)) ** 2
-                 + (_shot_target.get("y", 0) - _shot_other.get("y", 0)) ** 2) ** 0.5
-                - float(_shot_target.get("r", 1.0))
-                - float(_shot_other.get("r", 1.0))
-            )
-            if _pair_gap > 0.08:
-                _pre_t13_shot_active = True
-                _pre_t13_shot_target = _shot_target
-                _pre_t13_shot_x = float(_shot_target.get("x", 0)) + _shot_dir * (
-                    float(_shot_target.get("r", 1.0)) + max(0.35, next_radius)
-                )
-    if t14_count == 1 and t13_count <= 1 and _second_t13_pair is not None:
-        _shot_other, _shot_target = _second_t13_pair
-        # Prefer the higher piece: it is less buried and more responsive to impact.
-        if float(_shot_other.get("y", -10)) > float(_shot_target.get("y", -10)):
-            _shot_target, _shot_other = _shot_other, _shot_target
-        _shot_dx = float(_shot_target.get("x", 0)) - float(_shot_other.get("x", 0))
-        _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
-        _pair_gap = (
-            ((_shot_target.get("x", 0) - _shot_other.get("x", 0)) ** 2
-             + (_shot_target.get("y", 0) - _shot_other.get("y", 0)) ** 2) ** 0.5
-            - float(_shot_target.get("r", 1.0))
-            - float(_shot_other.get("r", 1.0))
-        )
-        if _pair_gap > 0.08:
-            _contact_shot_active = True
-            _contact_shot_x = float(_shot_target.get("x", 0)) + _shot_dir * (
-                float(_shot_target.get("r", 1.0)) + max(0.35, next_radius)
-            )
-
+    # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     suppressed = 1
@@ -981,6 +788,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and deadline_crossed
         )
         stacking_danger_suppressed = death_spiral
+
+        # ----- v718: SECOND_RUSSIA_CHAIN_LANE -----
+        # The analyzer intentionally excludes the first T15 from this lane and
+        # weights the remaining T12-T14 inventory.  Guide only large setup
+        # pieces on safe NO_MERGE turns; direct/near merges and deadline safety
+        # retain priority, and the pre-Russia policy remains byte-for-byte in
+        # the normal scorer.
+        if (
+            type15_count == 1
+            and second_russia_lane_x is not None
+            and 8 <= next_type <= 11
+            and merge_grade == "NO"
+            and not result.get("crosses_deadline", True)
+            and not result.get("merge_result_crosses_deadline", False)
+            and _as_float(result.get("deadline_margin"), -1.0) >= 0.35
+            and not death_spiral
+        ):
+            second_chain_distance = abs(x - second_russia_lane_x)
+            second_chain_bonus = max(0.0, 900.0 - second_chain_distance * 240.0)
+            if second_chain_bonus > 0.0:
+                score += second_chain_bonus
+                reasons.append("SECOND_RUSSIA_CHAIN_LANE")
 
         stacking_pc_suppressed = piece_count >= 3 and merge_grade == "NO" and same_type_stack_top is None
         if reactive_pair_count >= -3 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
@@ -1215,7 +1044,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not result.get("crosses_deadline")
             and not death_spiral
             and type15_count == 0
-            and (t12_on_board or t13_on_board)
+            and t12_on_board
         ):
             # (a) 横レーン誘導: 最寄りの T11/T12（T14存在時はT13含む）x へ dx<=2.0 で最大140、dx=2.0 で0。
             if t12_lane_xs:
@@ -1270,9 +1099,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and high_cover_free
         ):
             for _hc_x, _hc_tol, _hc_min_y in high_cover_free:
-                # T13がlow_pairとして既に-200抑止されている場合はHIGH_COVER側の二重カウントを避ける
-                if "T12_PAIR_COVER_AVOID" in reasons:
-                    break
                 if abs(x - _hc_x) <= _hc_tol and landing_y >= _hc_min_y:
                     score -= 400.0
                     reasons.append("HIGH_TYPE_COVER_AVOID")
@@ -1434,7 +1260,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #    At pc=28: 100. At pc=35: ~198. At pc=40: ~268. Safe vs axis 8.8 (-3000 to -7000).
         # 4. Changed decay: gc_y > 0 now uses 0.4 decay (from 0.5) — slightly less aggressive decay.
         max_type_on_board = max((p.get("type", -1) for p in pieces), default=-1)
-        if type15_count == 0 and max_type_on_board >= 8 and not death_spiral:
+        if max_type_on_board >= 8 and not death_spiral:
+            # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
                 key=lambda p: p.get("y", 12),
@@ -1455,257 +1282,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity *= min(congestion_scale, 1.421)
                     if proximity > -2:
                         score += proximity
-                        reasons.append("GROWTH_CENTER")
 
-        # v717: post-Russia second-chain center. A gentle, broad guide is enough
-        # to break the old "one T15 plus scattered material" pattern without
-        # overriding deadline safety or the dedicated merge-pair hooks.
-        if (
-            type15_count >= 1
-            and _growth_anchor is not None
-            and merge_grade == "NO"
-            and not death_spiral
-            and not result.get("crosses_deadline", False)
-        ):
-            _growth_dist = abs(x - float(_growth_anchor.get("x", 0.0) or 0.0))
-            if _growth_dist <= 3.2:
-                score += max(0.0, 900.0 - _growth_dist * 240.0)
-                reasons.append("SECOND_CHAIN_GROWTH_CENTER")
-
-        # ----- v713: restore pre-Russia T13 pair clustering -----
-        # Live v712b reached T13x2 but the two pieces stayed separated until
-        # deadline triage. Cluster incoming high material on the existing pair lane.
-        pre_russia_t13_pair_cluster_ready = (
-            not russia_phase
-            and max_type_on_board == 13
-            and pre_russia_counts.get(13, 0) >= 2
-            and pre_russia_counts.get(14, 0) == 0
-            and (pre_russia_counts.get(12, 0) >= 1 or pre_russia_counts.get(11, 0) >= 2)
-            and next_type >= 8
-        )
-        if (
-            merge_grade == "NO"
-            and pre_russia_t13_pair_cluster_ready
-            and not death_spiral
-            and max_y < 3.1
-            and piece_count >= 24
-        ):
-            t13_pair_targets = [p for p in pieces if p.get("type") == 13]
-            t13_pair_center = _weighted_center_x(t13_pair_targets)
-            if t13_pair_center is not None:
-                pair_dist = abs(x - t13_pair_center)
-                pair_bonus = max(0.0, 2600.0 - pair_dist * 900.0)
-                if piece_count >= 30:
-                    pair_bonus *= min(1.6, 1.0 + (piece_count - 30) * 0.08)
-                if landing_y > 2.2:
-                    pair_bonus *= 0.45
-                if max((p.get("y", -10) for p in t13_pair_targets), default=-10) > 1.5:
-                    pair_bonus *= 0.7
-                if abs(x) >= 2.5 and pair_dist >= 1.7:
-                    score -= 1100.0
-                if not result.get("crosses_deadline", False):
-                    score -= pair_dist * 2600.0
-                if pair_bonus > 0:
-                    score += pair_bonus
-                    reasons.append("PRE_RUSSIA_T13_PAIR_CLUSTER")
-
-        pre_russia_t13_pair_compress_ready = (
-            not russia_phase
-            and max_type_on_board == 13
-            and pre_russia_counts.get(13, 0) >= 2
-            and pre_russia_counts.get(14, 0) == 0
-            and pre_russia_counts.get(12, 0) >= 2
-            and next_type in (10, 11, 12, 13)
-        )
-        if (
-            merge_grade == "NO"
-            and pre_russia_t13_pair_compress_ready
-            and not death_spiral
-            and max_y < 3.35
-            and piece_count >= 30
-        ):
-            t12_targets = [p for p in pieces if p.get("type") == 12]
-            compress_target = None
-            if len(t12_targets) >= 2:
-                best_pair = None
-                best_pair_key = (999.0, 999.0)
-                for pair_i, pair_a in enumerate(t12_targets):
-                    for pair_b in t12_targets[pair_i + 1:]:
-                        ax = float(pair_a.get("x", 0))
-                        ay = float(pair_a.get("y", -10))
-                        bx = float(pair_b.get("x", 0))
-                        by = float(pair_b.get("y", -10))
-                        pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-                        pair_top = max(ay, by)
-                        pair_key = (pair_dist + max(0.0, pair_top - 1.2) * 0.5, pair_top)
-                        if pair_key < best_pair_key:
-                            best_pair_key = pair_key
-                            best_pair = (pair_a, pair_b)
-                if best_pair is not None:
-                    compress_target = {
-                        "x": (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0,
-                        "y": max(float(best_pair[0].get("y", -10)), float(best_pair[1].get("y", -10))),
-                        "type": 12,
-                    }
-            if compress_target is None:
-                t13_targets = [p for p in pieces if p.get("type") == 13]
-                t13_pair_center = _weighted_center_x(t13_targets)
-                if t13_pair_center is not None:
-                    compress_target = {"x": t13_pair_center, "y": -0.8, "type": 13}
-            if compress_target is not None:
-                compress_dist = abs(x - float(compress_target.get("x", 0)))
-                compress_bonus = max(0.0, 3600.0 - compress_dist * 900.0)
-                if piece_count >= 36:
-                    compress_bonus *= min(1.8, 1.0 + (piece_count - 36) * 0.09)
-                if landing_y > 1.8:
-                    compress_bonus *= 0.58
-                if landing_y > 2.45:
-                    compress_bonus *= 0.45
-                if float(compress_target.get("y", -10)) > 1.2:
-                    compress_bonus *= 0.78
-                if abs(x) >= 2.4 and compress_dist >= 1.3:
-                    score -= 1700.0
-                if landing_y > 2.4 and compress_dist >= 0.9:
-                    score -= 1100.0
-                if not result.get("crosses_deadline", False):
-                    score -= compress_dist * 2400.0
-                if compress_bonus > 0:
-                    score += compress_bonus
-                    reasons.append("PRE_RUSSIA_T13_PAIR_COMPRESS")
-
-        pre_russia_t13_pair_single_t12_tether_ready = (
-            not russia_phase
-            and max_type_on_board == 13
-            and pre_russia_counts.get(13, 0) >= 2
-            and pre_russia_counts.get(14, 0) == 0
-            and pre_russia_counts.get(12, 0) == 1
-            and next_type in (10, 11, 12, 13)
-        )
-        if (
-            merge_grade == "NO"
-            and pre_russia_t13_pair_single_t12_tether_ready
-            and not death_spiral
-            and max_y < 3.35
-            and piece_count >= 24
-        ):
-            t13_targets = [p for p in pieces if p.get("type") == 13]
-            t12_targets = [p for p in pieces if p.get("type") == 12]
-            t13_center = _weighted_center_x(t13_targets)
-            tether_target = None
-            if t13_center is not None and t12_targets:
-                t12_anchor = min(
-                    t12_targets,
-                    key=lambda tp: (
-                        max(0.0, float(tp.get("y", -10)) - 1.0) * 1.2,
-                        abs(float(tp.get("x", 0)) - t13_center),
-                        float(tp.get("y", -10)),
-                    ),
-                )
-                t12_x = float(t12_anchor.get("x", 0))
-                t12_y = float(t12_anchor.get("y", -10))
-                if next_type == 13:
-                    tether_target = {"x": t13_center, "y": -0.8, "type": 13}
-                elif next_type == 12:
-                    tether_target = {"x": (t13_center * 0.55) + (t12_x * 0.45), "y": max(t12_y, -0.8), "type": 12}
-                else:
-                    same_targets = [p for p in pieces if p.get("type") == next_type]
-                    if same_targets:
-                        def _tether_key(tp):
-                            tp_x = float(tp.get("x", 0))
-                            tp_y = float(tp.get("y", -10))
-                            lane_x = (t13_center * 0.62) + (t12_x * 0.38)
-                            return (abs(tp_x - lane_x) + abs(tp_x - t12_x) * 0.18 + max(0.0, tp_y - 0.6) * 0.9, tp_y)
-                        tether_target = min(same_targets, key=_tether_key)
-                    else:
-                        tether_target = {"x": (t13_center * 0.62) + (t12_x * 0.38), "y": max(t12_y, -0.8), "type": next_type + 1}
-            if tether_target is not None:
-                tether_dist = abs(x - float(tether_target.get("x", 0)))
-                tether_bonus = max(0.0, 3000.0 - tether_dist * 800.0)
-                if piece_count >= 32:
-                    tether_bonus *= min(1.75, 1.0 + (piece_count - 32) * 0.08)
-                if landing_y > 2.1:
-                    tether_bonus *= 0.55
-                if landing_y > 2.75:
-                    tether_bonus *= 0.42
-                if float(tether_target.get("y", -10)) > 1.2:
-                    tether_bonus *= 0.7
-                if abs(x) >= 2.55 and tether_dist >= 1.55:
-                    score -= 1350.0
-                if landing_y > 2.35 and tether_dist >= 1.0:
-                    score -= 1050.0
-                if not result.get("crosses_deadline", False):
-                    score -= tether_dist * 2200.0
-                if tether_bonus > 0:
-                    score += tether_bonus
-                    reasons.append("PRE_RUSSIA_T13_PAIR_T12_TETHER")
-
-        pre_russia_t13_pair_ladder_ready = (
-            not russia_phase
-            and max_type_on_board == 13
-            and pre_russia_counts.get(13, 0) >= 2
-            and pre_russia_counts.get(14, 0) == 0
-            and pre_russia_counts.get(12, 0) <= 1
-            and (pre_russia_counts.get(11, 0) >= 2 or pre_russia_counts.get(10, 0) >= 2)
-            and next_type in (10, 11, 12)
-        )
-        if (
-            merge_grade == "NO"
-            and pre_russia_t13_pair_ladder_ready
-            and not death_spiral
-            and max_y < 3.35
-            and piece_count >= 28
-        ):
-            t13_targets = [p for p in pieces if p.get("type") == 13]
-            t13_pair_center = _weighted_center_x(t13_targets)
-            ladder_target = None
-            if next_type == 12 and t13_pair_center is not None:
-                same_targets = [p for p in pieces if p.get("type") == 12]
-                ladder_target = min(
-                    same_targets,
-                    key=lambda tp: (abs(float(tp.get("x", 0)) - t13_pair_center), float(tp.get("y", -10))),
-                ) if same_targets else {"x": t13_pair_center, "y": -0.8, "type": 13}
-            elif t13_pair_center is not None:
-                same_targets = [p for p in pieces if p.get("type") == next_type]
-                if same_targets:
-                    def _pair_ladder_key(tp):
-                        tp_x = float(tp.get("x", 0))
-                        tp_y = float(tp.get("y", -10))
-                        return (abs(tp_x - t13_pair_center) + max(0.0, tp_y + 0.1) * 0.95, tp_y)
-                    ladder_target = min(same_targets, key=_pair_ladder_key)
-                else:
-                    ladder_target = {"x": t13_pair_center, "y": -0.8, "type": next_type + 1}
-            if ladder_target is not None:
-                ladder_dist = abs(x - float(ladder_target.get("x", 0)))
-                ladder_bonus = max(0.0, 2800.0 - ladder_dist * 750.0)
-                if piece_count >= 34:
-                    ladder_bonus *= min(1.75, 1.0 + (piece_count - 34) * 0.08)
-                if landing_y > 2.7:
-                    ladder_bonus *= 0.55
-                if float(ladder_target.get("y", -10)) > 1.5:
-                    ladder_bonus *= 0.72
-                if abs(x) >= 2.5 and ladder_dist >= 1.7:
-                    score -= 1500.0
-                if not result.get("crosses_deadline", False):
-                    score -= ladder_dist * 2200.0
-                if ladder_bonus > 0:
-                    score += ladder_bonus
-                    reasons.append("PRE_RUSSIA_T13_PAIR_LADDER")
-
-        # The restored pair modes must outrank generic lane/survival axes when
-        # they fire; otherwise deadline fallback repeats the live far-pair loss.
-        if any(
-            marker in reasons
-            for marker in (
-                "PRE_RUSSIA_T13_PAIR_CLUSTER",
-                "PRE_RUSSIA_T13_PAIR_COMPRESS",
-                "PRE_RUSSIA_T13_PAIR_T12_TETHER",
-                "PRE_RUSSIA_T13_PAIR_LADDER",
-            )
-        ):
-            score += 2600.0
-            reasons.append("PRE_RUSSIA_T13_PAIR_PRIORITY")
-
-        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # v195のchain_bonus_multiplier動的設定では初期段階(landing_y=-3.0)でchain_bonus_multiplier=45.0,ほぼゼロ。
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
@@ -1825,330 +1403,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 383.3
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- v709: HIGH_TYPE_CLUSTER_GUIDE（高type集約・衝突確率最大化） -----
-        # 実測発見: ゲームはnext_typeとして type 1〜11 のみ配給する（3437サンプル中 type>=12 は0回）。
-        # T12以上は連鎖併合でのみ生成される。既存のRUSSIA_PHASE_T14_MERGE_PRIORITY(v439)と
-        # T13_PAIR_T14_ROUTE_PRIORITY(v707)は next_type>=12 を要求するため永遠に発火しないデッドコードだった。
-        #
-        # 新アプローチ: 高typeピース(type>=11)が存在するとき、すべてのドロップをその近傍へ誘導することで
-        # 物理衝突による連鎖併合の確率を最大化する。またT13ペア存在時は中間点への配置で衝突を促進する。
-
-        # (1) 高type集約ガイド: type>=11が在盤する場合、その中心への近接ボーナス
-        if high_cluster_x is not None and not death_spiral and russia_lane_x is None:
-            _hc_dist = abs(x - high_cluster_x)
-            _hc_bonus = max(0.0, 400.0 - _hc_dist * 150.0)
-            score += _hc_bonus
-            if _hc_dist <= 3.0:
-                reasons.append("HIGH_TYPE_CLUSTER_GUIDE")
-
-        # ----- v710: RUSSIA_LANE_ASSEMBLY -----
-        # A T14 is not merely "the highest piece"; it is one half of the next merge.
-        # Draw non-merge drops alongside the anchor, but refuse to bury its open top.
-        # This intentionally replaces the v709 type>=11 average whenever a T13/T14 lane exists.
-        if russia_lane_x is not None and not death_spiral:
-            _lane_dx = abs(x - float(russia_lane_x))
-            _lane_safe = (
-                merge_grade == "NO"
-                and not result.get("crosses_deadline", False)
-                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
-            )
-            if _lane_safe:
-                if _lane_dx <= 2.6:
-                    _lane_bonus = max(0.0, 2200.0 - _lane_dx * 650.0)
-                    _headroom = max(0.25, min(1.0, float(result.get("deadline_margin", 0.0) or 0.0) / 1.2))
-                    _lane_bonus *= _headroom
-                    if _lane_bonus > 0.0:
-                        score += _lane_bonus
-                        reasons.append("RUSSIA_LANE_GUIDE")
-                elif _lane_dx >= 3.4:
-                    score -= min(1800.0, (_lane_dx - 3.4) * 480.0 + 240.0)
-                    reasons.append("FAR_FROM_RUSSIA_LANE")
-
-            # next_type never reaches 13 in the observed feed, so a drop over these
-            # anchors cannot be a direct same-type merge. Protect both T14 and T13.
-            for _lane_anchor in russia_lane_anchors:
-                # The mobile contact-shot target is the one piece we intentionally
-                # strike from the outside; treating its side lane as "cover" would
-                # cancel the only mechanism that closes the pair.
-                if (_contact_shot_active and _lane_anchor is _shot_target) or (
-                    _pre_t13_shot_active and _lane_anchor is _pre_t13_shot_target
-                ) or (
-                    _anchor_t12_shot_active and _lane_anchor is _anchor_t12_shot_target
-                ):
-                    continue
-                _ax = float(_lane_anchor.get("x", 0.0) or 0.0)
-                _ay = float(_lane_anchor.get("y", 0.0) or 0.0)
-                _ar = max(0.5, float(_lane_anchor.get("r", 1.5) or 1.5))
-                if abs(x - _ax) <= _ar * 0.9 and landing_y >= (_ay + _ar) - 0.25:
-                    score -= 5600.0
-                    reasons.append("RUSSIA_LANE_COVER_AVOID")
-                    break
-
-        # ----- v714: POST_RUSSIA_T12_CONTACT_SHOT -----
-        # A center drop cannot close two separated circles. Reward the outer-side
-        # lane whose horizontal impact pushes the mobile T12 toward its partner.
-        if _contact_shot_active and merge_grade == "NO" and not death_spiral:
-            _shot_safe = (
-                not result.get("crosses_deadline", False)
-                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
-            )
-            _shot_dist = abs(x - float(_contact_shot_x))
-            if _shot_safe:
-                score += max(0.0, 12000.0 - _shot_dist * 3000.0)
-                reasons.append("POST_RUSSIA_T12_CONTACT_SHOT")
-            elif _shot_dist <= 0.7:
-                score -= 1800.0
-                reasons.append("POST_RUSSIA_CONTACT_SHOT_UNSAFE")
-
-        if _pre_t13_shot_active and merge_grade == "NO" and not death_spiral:
-            _pre_shot_safe = (
-                not result.get("crosses_deadline", False)
-                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
-            )
-            _pre_shot_dist = abs(x - float(_pre_t13_shot_x))
-            if _pre_shot_safe:
-                score += max(0.0, 12000.0 - _pre_shot_dist * 3000.0)
-                reasons.append("PRE_RUSSIA_T13_CONTACT_SHOT")
-            elif _pre_shot_dist <= 0.7:
-                score -= 1800.0
-                reasons.append("PRE_RUSSIA_CONTACT_SHOT_UNSAFE")
-
-        if _anchor_t12_shot_active and merge_grade == "NO" and not death_spiral:
-            _birth_shot_safe = (
-                not result.get("crosses_deadline", False)
-                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
-            )
-            _birth_shot_dist = abs(x - float(_anchor_t12_shot_x))
-            if _birth_shot_safe:
-                score += max(0.0, 26000.0 - _birth_shot_dist * 5000.0)
-                reasons.append("ANCHOR_SECOND_T13_CONTACT_SHOT")
-            elif _birth_shot_dist <= 0.7:
-                score -= 1800.0
-                reasons.append("ANCHOR_SECOND_T13_SHOT_UNSAFE")
-
-        # (2) T13ペア衝突誘導: T13x2以上が存在するとき、中間点への配置で物理衝突を促す
-        if t13_pair_center_x is not None and not death_spiral:
-            _t13_gap_dist = abs(x - t13_pair_center_x)
-            if _t13_gap_dist <= 1.5:
-                score += max(0.0, 600.0 - _t13_gap_dist * 400.0)
-                reasons.append("T13_PAIR_COLLISION_GUIDE")
-            # T13自体を覆う配置を強力に抑止（上からの被覆は衝突を妨げる）
-            for _t13p in pieces:
-                if _t13p.get("type") != 13:
-                    continue
-                _t13x = float(_t13p.get("x", 0.0))
-                _t13y = float(_t13p.get("y", -5.0))
-                if abs(x - _t13x) < 0.5 and landing_y > _t13y:
-                    score -= 1500.0
-                    reasons.append("T13_COVER_AVOID")
-                    break
-
-        # (3) 拡張生存モード: T13x2以上またはT14x1以上が存在するとき発火
-        # （旧v708はT14x2限定だったため、実際のゲームではほぼ不発だった）
-        _high_pair_exists = t13_count >= 2 or t14_count >= 1 or type15_count >= 1
-        if _high_pair_exists and not death_spiral and merge_grade == "NO":
-            score -= max(1.0, float(landing_y) + 3.0) * 500.0
-            reasons.append("HIGH_PAIR_SURVIVAL_MODE")
-
-        # ----- v711: restore first-Russia assembly modes -----
-        # v710 made the anchor safe but did not tell ordinary drops where to build
-        # the second T13/T14. Restore three focused, previously proven modes:
-        # close an existing T13 pair, rebuild a singleton T13 from a T12 bank, or
-        # lock two T12s together before that T13 exists.
-
-        second_russia_t12_pair_lock_ready = (
-            t14_count >= 1
-            and type15_count == 0
-            and pre_russia_counts.get(13, 0) == 0
-            and pre_russia_counts.get(12, 0) >= 2
-            and next_type in (10, 11, 12, 13)
-        )
-        if (
-            merge_grade == "NO"
-            and second_russia_t12_pair_lock_ready
-            and not result.get("crosses_deadline", False)
-            and not death_spiral
-            and max_y < 3.35
-            and piece_count >= 30
-        ):
-            t12_targets = [p for p in pieces if p.get("type") == 12]
-            best_pair = None
-            best_pair_key = (999.0, 999.0)
-            for pair_i, pair_a in enumerate(t12_targets):
-                for pair_b in t12_targets[pair_i + 1:]:
-                    ax = float(pair_a.get("x", 0) or 0)
-                    ay = float(pair_a.get("y", -10) or -10)
-                    bx = float(pair_b.get("x", 0) or 0)
-                    by = float(pair_b.get("y", -10) or -10)
-                    pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-                    pair_top = max(ay, by)
-                    pair_center = (ax + bx) / 2.0
-                    pair_key = (
-                        pair_dist + max(0.0, pair_top - 1.15) * 1.15 + abs(pair_center) * 0.18,
-                        pair_top,
-                    )
-                    if pair_key < best_pair_key:
-                        best_pair_key = pair_key
-                        best_pair = (pair_a, pair_b)
-            if best_pair is not None:
-                pair_lock_x = (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0
-                pair_lock_dist = abs(x - pair_lock_x)
-                pair_lock_bonus = max(0.0, 3400.0 - pair_lock_dist * 760.0)
-                if landing_y > 2.35:
-                    pair_lock_bonus *= 0.55
-                if landing_y > 2.9:
-                    pair_lock_bonus *= 0.35
-                if pair_lock_dist >= 1.2:
-                    score -= 2600.0
-                if abs(x) >= 2.45 and pair_lock_dist >= 1.25:
-                    score -= 2200.0
-                if pair_lock_bonus > 0:
-                    score += pair_lock_bonus
-                    reasons.append("SECOND_RUSSIA_T12_PAIR_LOCK")
-
-        first_russia_t13_pair_lift_ready = (
-            t14_count >= 1
-            and type15_count == 0
-            and pre_russia_counts.get(13, 0) >= 2
-            and next_type in (10, 11, 12, 13)
-        )
-        if (
-            merge_grade == "NO"
-            and first_russia_t13_pair_lift_ready
-            and not death_spiral
-            and max_y < 3.4
-            and piece_count >= 24
-        ):
-            t13_targets = [p for p in pieces if p.get("type") == 13]
-            best_pair = None
-            best_pair_key = (999.0, 999.0)
-            for pair_i, pair_a in enumerate(t13_targets):
-                for pair_b in t13_targets[pair_i + 1:]:
-                    ax = float(pair_a.get("x", 0) or 0)
-                    ay = float(pair_a.get("y", -10) or -10)
-                    bx = float(pair_b.get("x", 0) or 0)
-                    by = float(pair_b.get("y", -10) or -10)
-                    pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-                    pair_top = max(ay, by)
-                    pair_center = (ax + bx) / 2.0
-                    _lane_penalty = abs(pair_center - float(russia_lane_x)) * 0.15 if russia_lane_x is not None else 0.0
-                    pair_key = (
-                        pair_dist + max(0.0, pair_top - 1.1) * 0.55 + _lane_penalty,
-                        pair_top,
-                    )
-                    if pair_key < best_pair_key:
-                        best_pair_key = pair_key
-                        best_pair = (pair_a, pair_b)
-            if best_pair is not None:
-                pair_center_x = (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0
-                pair_lift_dist = abs(x - pair_center_x)
-                pair_lift_bonus = max(0.0, 2400.0 - pair_lift_dist * 560.0)
-                if landing_y > 2.8:
-                    pair_lift_bonus *= 0.55
-                if pair_lift_dist >= 1.2:
-                    score -= 950.0
-                if abs(x) >= 2.5 and pair_lift_dist >= 1.7:
-                    score -= 1800.0
-                if pair_lift_bonus > 0:
-                    score += pair_lift_bonus
-                    reasons.append("FIRST_RUSSIA_T13_PAIR_LIFT")
-
-        first_russia_single_t13_t12_bank_ready = (
-            t14_count >= 1
-            and type15_count == 0
-            and pre_russia_counts.get(13, 0) == 1
-            and pre_russia_counts.get(12, 0) >= 1
-            and (
-                pre_russia_counts.get(12, 0) >= 2
-                or pre_russia_counts.get(11, 0) >= 1
-                or pre_russia_counts.get(10, 0) >= 2
-            )
-            and next_type in (10, 11, 12, 13)
-        )
-        if (
-            merge_grade == "NO"
-            and first_russia_single_t13_t12_bank_ready
-            and not result.get("crosses_deadline", False)
-            and not death_spiral
-            and max_y < 3.2
-            and piece_count >= 20
-        ):
-            t13_targets = [p for p in pieces if p.get("type") == 13]
-            t12_targets = [p for p in pieces if p.get("type") == 12]
-            t11_targets = [p for p in pieces if p.get("type") == 11]
-            t10_targets = [p for p in pieces if p.get("type") == 10]
-            t13_center = _weighted_center_x(t13_targets)
-            bank_target = None
-            if next_type == 12 and t12_targets:
-                if len(t12_targets) >= 2:
-                    best_pair = None
-                    best_pair_key = (999.0, 999.0)
-                    for pair_i, pair_a in enumerate(t12_targets):
-                        for pair_b in t12_targets[pair_i + 1:]:
-                            ax = float(pair_a.get("x", 0) or 0)
-                            ay = float(pair_a.get("y", -10) or -10)
-                            bx = float(pair_b.get("x", 0) or 0)
-                            by = float(pair_b.get("y", -10) or -10)
-                            pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-                            pair_top = max(ay, by)
-                            pair_center = (ax + bx) / 2.0
-                            t13_dist = abs(pair_center - t13_center) if t13_center is not None else 0.0
-                            pair_key = (
-                                pair_dist + t13_dist * 0.35 + max(0.0, pair_top - 1.1) * 1.4,
-                                pair_top,
-                            )
-                            if pair_key < best_pair_key:
-                                best_pair_key = pair_key
-                                best_pair = (pair_a, pair_b)
-                    if best_pair is not None:
-                        bank_target = {
-                            "x": (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0,
-                            "y": max(float(best_pair[0].get("y", -10)), float(best_pair[1].get("y", -10))),
-                        }
-                if bank_target is None:
-                    bank_target = min(
-                        t12_targets,
-                        key=lambda tp: (
-                            abs(float(tp.get("x", 0) or 0) - (t13_center if t13_center is not None else float(tp.get("x", 0) or 0))),
-                            max(0.0, float(tp.get("y", -10) or -10) - 1.0),
-                        ),
-                    )
-            elif next_type == 11 and t11_targets:
-                up_targets = t12_targets + t13_targets
-                bank_target = min(
-                    t11_targets,
-                    key=lambda tp: (
-                        min(
-                            ((up.get("x", 0) - tp.get("x", 0)) ** 2 + (up.get("y", -10) - tp.get("y", -10)) ** 2) ** 0.5
-                            for up in up_targets
-                        ) if up_targets else 999.0,
-                        max(0.0, float(tp.get("y", -10) or -10) - 1.0),
-                    ),
-                )
-            elif next_type == 10 and t10_targets:
-                up_targets = t11_targets + t12_targets
-                bank_target = min(
-                    t10_targets,
-                    key=lambda tp: (
-                        min(
-                            ((up.get("x", 0) - tp.get("x", 0)) ** 2 + (up.get("y", -10) - tp.get("y", -10)) ** 2) ** 0.5
-                            for up in up_targets
-                        ) if up_targets else 999.0,
-                        max(0.0, float(tp.get("y", -10) or -10) - 0.9),
-                    ),
-                )
-            if bank_target is not None:
-                bank_dist = abs(x - float(bank_target.get("x", 0) or 0))
-                bank_bonus = max(0.0, 2550.0 - bank_dist * 590.0)
-                if piece_count >= 34:
-                    bank_bonus *= min(1.85, 1.0 + (piece_count - 34) * 0.08)
-                if landing_y > 2.35:
-                    bank_bonus *= 0.52
-                if abs(x) >= 2.5 and bank_dist >= 1.45:
-                    score -= 1750.0
-                if bank_bonus > 0:
-                    score += bank_bonus
-                    reasons.append("FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT")
+        # ----- NEW axis: T14 merge priority in russia_phase -----
+        # Adopted hypothesis: Russia-Phase T14 Merge Priority (analysis_result.md)
+        # When russia_phase is active (T14 piece on board) and same_type_stack_top is type 14,
+        # apply a strong bonus to prioritize T14 chain building toward Russia (T15) creation.
+        # instead of placing near T14 pieces. DEADLINE_GUARD captured T5/T8 merges but T14 remained unmerged.
+        # russia_phase axis 8.7 bonuses fire for ANY immediate merge, not specifically for T14.
+        # T14 pieces are extremely rare; when they exist, they must be merged immediately.
+        # This axis specifically targets the rare T14+T14→T15 (Russia) creation opportunity.
+        # Bonus: +1500 (stronger than most other bonuses, less than DIRECT_MERGE +1566)
+        # mandatory_theme #5: "二個目ロシア経路の維持を両立せよ" — this axis enables that path
+        # mandatory_theme #2: T14→T15 merge is a merge — this axis is deadline-proximity merge priority
+        if russia_phase and same_type_stack_top is not None:
+            if same_type_stack_top.get("type") == 14:  # T14 piece on board
+                score += 1500.0
+                reasons.append("RUSSIA_PHASE_T14_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善

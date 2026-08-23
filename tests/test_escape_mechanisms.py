@@ -14448,38 +14448,84 @@ class TestCandidateChromeLaunchStagger(unittest.TestCase):
 
 
 class TestStrategyRussiaPhaseBoundary(unittest.TestCase):
-    """T14 is still the pre-Russia gate; only T15 should switch to Russia phase."""
+    """Lock the measured e5b boundary while fixing the double-Russia state."""
 
-    def test_russia_phase_uses_type15_not_type14(self):
+    @staticmethod
+    def _no_merge_candidate(x):
+        return {
+            "x": x,
+            "landing_y": -1.0,
+            "drift_x": 0.0,
+            "drift_unc": 0.0,
+            "merge_grade": "NO",
+            "crosses_deadline": False,
+            "merge_result_crosses_deadline": False,
+            "deadline_margin": 2.0,
+            "merges": [],
+        }
+
+    @classmethod
+    def _analysis(cls):
+        return {
+            "results": [cls._no_merge_candidate(x) for x in (-2.0, 0.0, 2.0)],
+            "reactor": {
+                "deadline_margin": 2.0,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+    def test_e5b_t14_phase_is_explicitly_preserved(self):
         strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        self.assertIn('russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)', strategy)
-        self.assertIn("double_russia_phase = russia_phase_count >= 2", strategy)
-        self.assertNotIn('p.get("type") in [14, 15]', strategy)
-        self.assertIn("type 14（カザフ）はロシア前段", strategy)
+        self.assertIn(
+            'russia_phase_count = sum(1 for p in pieces if p.get("type") in (14, 15))',
+            strategy,
+        )
+        self.assertIn("preserve the production e5b", strategy)
 
-
-    def test_deadline_guard_prefers_t13_pair_compress_before_pair_center(self):
+    def test_double_russia_requires_two_type15_pieces(self):
         strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        mode_chain = strategy.split("__dlg_mode = None", 1)[1].split("if __dlg_mode is None:", 1)[0]
-        self.assertLess(
-            mode_chain.index('__dlg_mode = "t13_pair_compress"'),
-            mode_chain.index('__dlg_mode = "first_russia_pair"'),
+        self.assertIn("double_russia_phase = type15_count >= 2", strategy)
+        self.assertNotIn(
+            'double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1',
+            strategy,
         )
 
-    def test_deadline_guard_t14_pair_gets_cluster_priority(self):
-        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        self.assertIn('if __dlg_mode == "russia_pair"', strategy)
-        self.assertIn('"t12_consolidate", "russia_pair"', strategy)
-        self.assertIn('DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER', strategy)
+    def test_t14_only_keeps_production_e5b_decision_fixture(self):
+        import strategy
 
-    def test_t11_cloud_without_t12_gets_pre_russia_rescue(self):
-        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        self.assertIn("pre_russia_t11_cloud_to_t12_ready", strategy)
-        self.assertIn("PRE_RUSSIA_T11_CLOUD_TO_T12", strategy)
-        self.assertIn("max_type_on_board == 11", strategy)
-        self.assertIn("pre_russia_counts.get(12, 0) == 0", strategy)
-        self.assertIn('"t11_cloud_to_t12"', strategy)
-        self.assertIn("DEADLINE_GUARD_PRE_RUSSIA_T11_CLOUD_TO_T12", strategy)
+        game_state = {
+            "pieces": [
+                {"id": "t14", "type": 14, "x": -1.5, "y": -2.4, "r": 1.385}
+            ],
+            "next": {"type": 10, "r": 0.846},
+            "nextNext": {"type": 4, "r": 0.38},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._analysis())
+
+        self.assertEqual(decision["x"], 0.0)
+        self.assertIn("RUSSIA_PHASE_BOARD_COMPRESSION", decision["reason"])
+        self.assertNotIn("POST_RUSSIA", decision["reason"])
+
+    def test_single_type15_never_uses_double_russia_reason(self):
+        import strategy
+
+        game_state = {
+            "pieces": [
+                {"id": "t15", "type": 15, "x": -1.5, "y": -2.4, "r": 1.6}
+            ],
+            "next": {"type": 7, "r": 0.559},
+            "nextNext": {"type": 4, "r": 0.38},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._analysis())
+
+        self.assertNotIn("DOUBLE_RUSSIA", decision["reason"])
 
 
 class TestSovietBoardAnalysis(unittest.TestCase):

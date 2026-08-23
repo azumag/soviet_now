@@ -947,6 +947,10 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             {
                 "x": round(x, 2),
                 "landing_y": round(ly, 3),
+                    # The first shape-aware collision target is also useful to
+                    # post-Russia impact planning.  Keeping it in the analyzer
+                    # result avoids re-deriving polygon contact from sprite r.
+                    "landing_hit_id": hit_id,
                     "top_y_after_drop": round(top_after_drop, 3),
                     "edge_vertical_top_y": round(edge_vertical_top_y, 3)
                     if edge_vertical_top_y is not None

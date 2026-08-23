@@ -9,7 +9,6 @@ result is a DAG rather than a strict tree.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import math
 import os
@@ -18,6 +17,8 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from extract_decide_hash import compute_hash_from_source as _compute_policy_hash_from_source
 
 
 ROOT = Path(__file__).resolve().parent
@@ -68,43 +69,8 @@ def run_git(args: list[str]) -> str:
         return ""
 
 
-def stable_ast_dump(node: ast.AST | list | object) -> str:
-    if isinstance(node, ast.AST):
-        fields: list[str] = []
-        for field in getattr(node, "_fields", ()):
-            value = getattr(node, field)
-            if value == [] or value is None:
-                continue
-            fields.append(f"{field}={stable_ast_dump(value)}")
-        if fields:
-            return f"{node.__class__.__name__}({', '.join(fields)})"
-        return f"{node.__class__.__name__}()"
-    if isinstance(node, list):
-        return "[" + ", ".join(stable_ast_dump(item) for item in node) + "]"
-    return repr(node)
-
-
 def compute_hash_from_source(source: str) -> str:
-    try:
-        tree = ast.parse(source)
-    except Exception:
-        return ""
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "decide":
-            body = node.body
-            if (
-                body
-                and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant)
-                and isinstance(body[0].value.value, str)
-            ):
-                body = body[1:]
-            normalized = stable_ast_dump(ast.Module(body=body, type_ignores=[]))
-            import hashlib
-
-            return hashlib.md5(normalized.encode("utf-8")).hexdigest()[:12]
-    return ""
+    return _compute_policy_hash_from_source(source)
 
 
 def compute_hash_from_file(path: Path) -> str:
