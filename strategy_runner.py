@@ -2201,20 +2201,25 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         return decision
 
     replacement_source = "generic"
-    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
-        _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
-        if _birth_replacement is not None:
-            _birth_x = float(_birth_replacement.get("x", chosen_x) or 0.0)
-            _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, _birth_x))
-            _birth_old_grade = chosen.get("merge_grade", "NO")
-            _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
-            return {
-                "x": _birth_x,
-                "reason": (
-                    f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_"
-                    f"{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane"
-                ),
-            }
+    _birth_replacement = (
+        pre_russia_t13_pair_replacement_for(decision)
+        if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
+        else None
+    )
+    if _birth_replacement is not None:
+        _birth_x = max(
+            GAME_X_MIN,
+            min(GAME_X_MAX, float(_birth_replacement.get("x", chosen_x) or 0.0)),
+        )
+        _birth_old_grade = chosen.get("merge_grade", "NO")
+        _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
+        return {
+            "x": _birth_x,
+            "reason": (
+                f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_"
+                f"{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane"
+            ),
+        }
     chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
     chosen_geometry_replacement = geometry_underestimate_replacement_for(chosen)
 

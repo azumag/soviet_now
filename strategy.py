@@ -648,6 +648,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             + float(_second_t13_pair[1].get("x", 0.0) or 0.0)
         ) / 2.0
         russia_lane_anchors.extend(_second_t13_pair)
+    else:
+        russia_lane_x = None
 
     # --- v714: post-Russia T12 contact shot ---
     # Live evidence showed center drops left a 0.7--0.8 T12 pair gap unchanged,
@@ -662,6 +664,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     _pre_t13_shot_active = False
     _pre_t13_shot_x = None
     _pre_t13_shot_target = None
+    _shot_other = None
+    _shot_target = None
     # v716: while the second T13 is still only a T12 pair, strike the member
     # whose motion along the pair axis also approaches the singleton T13. This
     # fixes the birth location instead of trying to drag two distant T13s together.
@@ -1804,9 +1808,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (1) 高type集約ガイド: type>=11が在盤する場合、その中心への近接ボーナス
         if high_cluster_x is not None and not death_spiral and russia_lane_x is None:
             _hc_dist = abs(x - high_cluster_x)
+            _hc_bonus = max(0.0, 400.0 - _hc_dist * 150.0)
+            score += _hc_bonus
             if _hc_dist <= 3.0:
-                _hc_bonus = max(0.0, 400.0 - _hc_dist * 150.0)
-                score += _hc_bonus
                 reasons.append("HIGH_TYPE_CLUSTER_GUIDE")
 
         # ----- v710: RUSSIA_LANE_ASSEMBLY -----
