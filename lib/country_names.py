@@ -45,6 +45,25 @@ def country_name(piece_type: object, default: str = "不明な国") -> str:
     return COUNTRY_NAMES.get(normalized, default)
 
 
+def last_drop_turn_country_label(record: object) -> str:
+    """Format the turn and dropped country without exposing an internal ID.
+
+    Historical records may predate ``next_type``; those keep the turn label
+    alone.  If the field exists but is invalid, surface ``不明な国`` so corrupt
+    data is distinguishable from an older record.
+    """
+    if not isinstance(record, dict):
+        return "?手目"
+    turn = str(record.get("turn", "?"))
+    danger = bool(
+        record.get("deadline_crossed") or record.get("decision_crosses_deadline")
+    )
+    turn_label = f"{turn}手目{'!' if danger else ''}"
+    if "next_type" not in record:
+        return turn_label
+    return f"{turn_label} {country_name(record.get('next_type'))}"
+
+
 def country_named_reason(reason: object, default: str = "?") -> str:
     """Replace stage tokens embedded in strategy reason identifiers.
 

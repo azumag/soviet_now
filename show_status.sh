@@ -4,6 +4,7 @@
 # Usage: ./show_status.sh        # 10秒間隔で常時表示
 #        ./show_status.sh 3      # 3秒間隔で常時表示
 #        ./show_status.sh --once # 1回だけ表示して終了（確認・自動監視用）
+#        ./show_status.sh --latest-drop-summary # 直前手の要約だけ表示
 #        ./show_status.sh --html-once
 #        ./show_status.sh --html-watch [sec]
 #        ./show_status.sh --html-start [sec]
@@ -89,9 +90,14 @@ case "${1:-}" in
 esac
 
 SHOW_STATUS_ONCE=0
+SHOW_STATUS_LATEST_DROP_ONLY=0
 case "${1:-}" in
 --once|once)
 	SHOW_STATUS_ONCE=1
+	WATCH_INTERVAL=10
+	;;
+--latest-drop-summary)
+	SHOW_STATUS_LATEST_DROP_ONLY=1
 	WATCH_INTERVAL=10
 	;;
 *)
@@ -111,7 +117,7 @@ TMP_STATE_DIR="tmp/state"
 TMP_MARKERS_DIR="tmp/markers"
 TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
-LATEST_DROP_LOG="game_history/latest.jsonl"
+LATEST_DROP_LOG="${SHOW_STATUS_LATEST_DROP_LOG:-game_history/latest.jsonl}"
 CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
@@ -738,7 +744,7 @@ import json
 import re
 import sys
 
-from lib.country_names import country_named_reason
+from lib.country_names import country_named_reason, last_drop_turn_country_label
 
 path = sys.argv[1]
 
@@ -769,13 +775,10 @@ def number(value, digits=2, signed=False):
     sign = "+" if signed else ""
     return f"{x:{sign}.{digits}f}"
 
-turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
-turn = f"{d.get('turn', '?')}{turn_flag}"
 x = number(d.get("decision_x"), 2, signed=True)
 score = number(d.get("score"), 0)
 delta = number(d.get("score_delta"), 0, signed=True)
 pieces = number(d.get("piece_count"), 0)
-next_type = d.get("next_type", "?")
 reason = re.sub(r"\s+", "_", str(d.get("decision_reason", "") or "")).strip("_")
 labels = []
 try:
@@ -794,12 +797,12 @@ if not decision:
 decision = country_named_reason(decision)
 
 parts = [
-    f"T{turn}",
+    last_drop_turn_country_label(d),
     f"x={x}",
     f"D={decision}",
 ]
 
-print(" ".join(parts))
+print(" ".join(part for part in parts if part))
 PY
 }
 
@@ -3107,6 +3110,10 @@ _wait_for_status_update() {
 }
 
 #=== 実行 ===
+if [[ "$SHOW_STATUS_LATEST_DROP_ONLY" == "1" ]]; then
+	_latest_drop_summary
+	exit 0
+fi
 printf '\033[?25l'          # カーソル非表示
 trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア

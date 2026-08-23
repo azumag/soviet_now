@@ -20,7 +20,11 @@ from glob import glob
 from pathlib import Path
 
 from lib.ai_backoff_status import load_status as load_ai_backoff_status
-from lib.country_names import country_name, country_named_reason
+from lib.country_names import (
+    country_name,
+    country_named_reason,
+    last_drop_turn_country_label,
+)
 
 W = 57
 RANK_LCB_Z = 1.28
@@ -1027,13 +1031,23 @@ def load_latest_drop():
     if not decision:
         decision = matches[0] if matches else (reason or "?")
     decision = country_named_reason(decision)
-    turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
     parts = [
-        f"T{d.get('turn', '?')}{turn_flag}",
+        last_drop_turn_country_label(d),
         f"x={number(d.get('decision_x'), 2, signed=True)}",
         f"D={decision}",
     ]
-    return " ".join(parts)
+    return " ".join(part for part in parts if part)
+
+
+def render_last_drop_line(latest_drop, inner):
+    """Render a LastDrop row while preserving the right border at CJK width."""
+    label = " LastDrop: "
+    available = max(0, inner - ansi_display_width(label))
+    drop_text = truncate_ansi_display(str(latest_drop), available)
+    drop_raw = f"{label}{drop_text}"
+    drop_display = f"{label}{DIM}{drop_text}{RST}"
+    pad_drop = inner - ansi_display_width(drop_raw)
+    return f"{C_CYAN}│{RST}{drop_display}{' ' * max(pad_drop, 0)} {C_CYAN}│{RST}"
 
 
 def get_strategy_hash():
@@ -1769,12 +1783,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
             )
 
     if latest_drop:
-        label = " LastDrop: "
-        drop_text = compact_regpreview_text(str(latest_drop), inner - len(label))
-        drop_raw = f"{label}{drop_text}"
-        drop_display = f"{label}{DIM}{drop_text}{RST}"
-        pad_drop = inner - len(drop_raw)
-        lines.append(f"{C_CYAN}│{RST}{drop_display}{' ' * max(pad_drop, 0)} {C_CYAN}│{RST}")
+        lines.append(render_last_drop_line(latest_drop, inner))
 
     anchor = load_best_anchor()
     ranked = []

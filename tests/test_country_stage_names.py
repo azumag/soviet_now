@@ -18,7 +18,11 @@ import dashboard_data
 import status_dashboard
 from lib import normalize_speech_text
 from lib.country_names import COUNTRY_NAMES as AUTHORITATIVE_COUNTRY_NAMES
-from lib.country_names import country_name, country_named_reason
+from lib.country_names import (
+    country_name,
+    country_named_reason,
+    last_drop_turn_country_label,
+)
 
 
 EXPECTED_COUNTRY_NAMES = {
@@ -148,6 +152,7 @@ class CountryStageNamesTest(unittest.TestCase):
                 json.dumps(
                     {
                         "turn": 67,
+                        "next_type": 11,
                         "decision_x": 0.35,
                         "decision_reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
                     }
@@ -163,8 +168,97 @@ class CountryStageNamesTest(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+            self.assertIn("67手目", latest)
             self.assertIn("ウズベキスタン", latest)
+            self.assertNotIn("T67", latest)
             self.assertNotIn("T11", latest)
+
+    def test_last_drop_turn_country_label_distinguishes_old_and_invalid_data(self):
+        self.assertEqual(last_drop_turn_country_label({"turn": 67}), "67手目")
+        self.assertEqual(
+            last_drop_turn_country_label({"turn": 67, "next_type": "11"}),
+            "67手目 ウズベキスタン",
+        )
+        self.assertEqual(
+            last_drop_turn_country_label(
+                {"turn": 67, "next_type": 11, "decision_crosses_deadline": True}
+            ),
+            "67手目! ウズベキスタン",
+        )
+        for invalid in (0, 17, True, "broken"):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(
+                    last_drop_turn_country_label(
+                        {"turn": 67, "next_type": invalid}
+                    ),
+                    "67手目 不明な国",
+                )
+        for piece_type, expected in EXPECTED_COUNTRY_NAMES.items():
+            with self.subTest(piece_type=piece_type):
+                self.assertEqual(
+                    last_drop_turn_country_label(
+                        {"turn": 1, "next_type": piece_type}
+                    ),
+                    f"1手目 {expected}",
+                )
+
+    def test_show_status_latest_drop_summary_executes_country_formatter(self):
+        cases = (
+            ({"turn": 67}, "67手目 x=+0.35"),
+            (
+                {"turn": 67, "next_type": 11},
+                "67手目 ウズベキスタン x=+0.35",
+            ),
+            (
+                {"turn": 67, "next_type": 11, "deadline_crossed": True},
+                "67手目! ウズベキスタン x=+0.35",
+            ),
+            (
+                {"turn": 67, "next_type": 17},
+                "67手目 不明な国 x=+0.35",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as raw_dir:
+            history = Path(raw_dir) / "latest.jsonl"
+            for fields, expected_prefix in cases:
+                with self.subTest(fields=fields):
+                    payload = {
+                        "decision_x": 0.35,
+                        "decision_reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
+                        **fields,
+                    }
+                    history.write_text(
+                        json.dumps(payload, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    env = os.environ.copy()
+                    env["SHOW_STATUS_LATEST_DROP_LOG"] = str(history)
+                    result = subprocess.run(
+                        ["./show_status.sh", "--latest-drop-summary"],
+                        cwd=REPO_ROOT,
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                        timeout=20,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue(
+                        result.stdout.strip().startswith(expected_prefix),
+                        result.stdout,
+                    )
+
+    def test_last_drop_dashboard_row_preserves_border_with_country_width(self):
+        inner = status_dashboard.W - 3
+        for reason in ("D=?", "D=" + "非常に長い判断理由" * 12):
+            with self.subTest(reason=reason):
+                row = status_dashboard.render_last_drop_line(
+                    f"7手目 アゼルバイジャン x=+3 {reason}", inner
+                )
+                self.assertEqual(
+                    status_dashboard.ansi_display_width(row), status_dashboard.W
+                )
+                plain = status_dashboard.ANSI_RE.sub("", row)
+                self.assertTrue(plain.endswith(" │"), plain)
 
     def test_dashboard_returns_authoritative_name_for_every_country(self):
         self.assertEqual(AUTHORITATIVE_COUNTRY_NAMES, EXPECTED_COUNTRY_NAMES)
@@ -339,6 +433,10 @@ console.log(JSON.stringify({
         self.assertIn("country_name(cand.get('best_type', 0), '-')", status_dashboard)
         self.assertIn("decision = country_named_reason(decision)", show_status)
         self.assertIn("decision = country_named_reason(decision)", status_dashboard)
+        self.assertIn("last_drop_turn_country_label(d)", show_status)
+        self.assertNotIn('f"T{turn}"', show_status)
+        self.assertIn("last_drop_turn_country_label(d)", status_dashboard)
+        self.assertNotIn("f\"T{d.get('turn', '?')}{turn_flag}\"", status_dashboard)
         self.assertEqual(
             strategy_runner.count(
                 'reason = country_named_reason(decision.get("reason"), default="")'
