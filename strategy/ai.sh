@@ -332,6 +332,17 @@ _run_cmd_resolved_model() {
 	esac
 }
 
+_run_cmd_record_winner() {
+	command -v _ai_stats_record >/dev/null 2>&1 || return 0
+	local label="${RUN_CMD_STATS_LABEL:-}"
+	[ -n "$label" ] || return 0
+	local spec="${RUN_CMD_STATS_SPEC:-}"
+	[ -n "$spec" ] || return 0
+	local resolved_model
+	resolved_model=$(_run_cmd_resolved_model "$spec")
+	_ai_stats_record "winner" "$label" "$spec" "0" "$resolved_model"
+}
+
 run_cmd() {
 	local spec="$1" prompt="$2" expect_file="${3:-}" expect_snapshot="${4:-}" expect_was_present="${5:-false}"
 	local type agent
@@ -534,9 +545,13 @@ run_cmd() {
 		fi
 	fi
 	local stats_recorded=0
+	local saved_run_cmd_stats_label="${RUN_CMD_STATS_LABEL:-}"
+	local saved_run_cmd_stats_spec="${RUN_CMD_STATS_SPEC:-}"
 	if command -v _ai_stats_record >/dev/null 2>&1; then
 		_ai_stats_record "attempt" "$cmd_log_tag" "$spec" "" "$resolved_model"
 		stats_recorded=1
+		RUN_CMD_STATS_LABEL="${cmd_log_tag%%:*}"
+		RUN_CMD_STATS_SPEC="$spec"
 	fi
 	RUN_CMD_ACTIVE_PID=$cmd_pid
 	local _cmd_start_epoch
@@ -629,6 +644,7 @@ run_cmd() {
 		fi
 		if [ "$ret" -eq 0 ] || [ "$_expect_completed" -eq 1 ]; then
 			_ai_stats_record "ok" "$cmd_log_tag" "$spec" "$ret" "$resolved_model"
+			_run_cmd_record_winner
 		else
 			_ai_stats_record "fail" "$cmd_log_tag" "$spec" "$ret" "$resolved_model"
 		fi
@@ -637,6 +653,8 @@ run_cmd() {
 		printf '[%s] [AI:%s] END rc=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$ret" >>"$cmd_log_file" 2>/dev/null || true
 		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
 	fi
+	RUN_CMD_STATS_LABEL="$saved_run_cmd_stats_label"
+	RUN_CMD_STATS_SPEC="$saved_run_cmd_stats_spec"
 
 	stop_spinner
 	if [ -n "$prev_int_trap" ]; then
