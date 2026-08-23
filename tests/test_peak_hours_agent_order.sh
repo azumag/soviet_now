@@ -227,15 +227,19 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|opencode:x-preview-f-free|1|opencode:x-preview-f-free,opencode-go:muse-spark-1.2-contributor,codex:minimax-m3,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash|opencode:x-preview-f-free,opencode-go:muse-spark-1.2-contributor,codex:minimax-m3,codex:amd-token-factory-deepseek-v4-flash,codex:deepseek-v4-flash"
+config_expect="10-13,15-19|opencode:x-preview-f-free|1|opencode:x-preview-f-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,codex:deepseek-v4-flash|opencode:x-preview-f-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,codex:deepseek-v4-flash"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
 
 common_order=$(printf '%s' "$config_got" | cut -d'|' -f4)
 muse_pos=${common_order%%opencode-go:muse-spark-1.2-contributor*}
 amd_pos=${common_order%%codex:amd-token-factory-deepseek-v4-flash*}
-[ "${#muse_pos}" -lt "${#amd_pos}" ] \
-	&& ok "paid chain: cheap muse precedes DeepSeek" \
+minimax_pos=${common_order%%codex:minimax-m3*}
+[ "${#amd_pos}" -lt "${#muse_pos}" ] \
+	&& ok "paid chain: AMD DeepSeek precedes muse" \
 	|| not_ok "paid chain order (got '$common_order')"
+[ "${#minimax_pos}" -lt "${#muse_pos}" ] \
+	&& ok "paid chain: MiniMax precedes muse" \
+	|| not_ok "paid MiniMax order (got '$common_order')"
 
 # ============================================================
 # G. 呼び出し箇所の結線（静的アサーション）

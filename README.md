@@ -712,10 +712,10 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 MODEL_PRIMARY="codex:deepseek-v4-flash"                  # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
 MODEL_FALLBACK="codex:minimax-m3"
 MODEL_IMPROVE="opencode:x-preview-f-free"                # 改善primary
-MODEL_FALLBACK_IMPROVE="opencode-go:muse-spark-1.2-contributor" # 改善fallback
-MODEL_LAST_RESORT="codex:minimax-m3"
+MODEL_FALLBACK_IMPROVE="codex:amd-token-factory-deepseek-v4-flash" # 改善fallback
+MODEL_LAST_RESORT="codex:deepseek-v4-flash"
 ROLLBACK_POSTMORTEM_MODEL="opencode:x-preview-f-free"
-ROLLBACK_POSTMORTEM_FALLBACK="opencode-go:muse-spark-1.2-contributor"
+ROLLBACK_POSTMORTEM_FALLBACK="codex:amd-token-factory-deepseek-v4-flash"
 CODEX_MODEL="deepseek-v4-flash"                         # codex CLI のモデル指定
 ```
 
