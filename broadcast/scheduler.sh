@@ -587,7 +587,7 @@ schedule_nonessential_audio_jobs() {
 	}
 
 	# stale inflight marker クリーンアップ (前日以前を一掃)
-	local _yesterday_marker_inf=$TMP_MARKERS_DIR/.timed_corner_inflight_$(date -v-1d +%Y%m%d)_*
+	local _yesterday_marker_inf=$TMP_MARKERS_DIR/.timed_corner_inflight_$(date -d yesterday +%Y%m%d)_*
 	rm -f $_yesterday_marker_inf 2>/dev/null
 	# 無日付の legacy marker のみ削除 (日付付き marker は保護)
 	for _f in "$TMP_MARKERS_DIR"/.timed_corner_inflight_*; do
