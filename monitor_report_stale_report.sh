@@ -29,6 +29,8 @@ import shlex
 import sys
 import time
 
+from lib.country_names import country_name
+
 report_file, state_file, stale_raw, old_raw, interval_raw, current_run_file, anchor_file, origin_file, status_file = sys.argv[1:10]
 
 def as_int(value, default):
@@ -152,7 +154,7 @@ def live_summary():
         try:
             source_best_type = int(origin.get("source_best_max_type", 0) or 0)
             if source_best_type:
-                source_bits.append(f"T{source_best_type}")
+                source_bits.append(country_name(source_best_type))
         except Exception:
             pass
         if source_bits:

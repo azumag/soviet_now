@@ -48,6 +48,14 @@ _BEST_TYPE_KEY_RE = re.compile(
 _HIGH_TYPE_COUNTS_LABEL_RE = re.compile(
     r'(?<![A-Za-z])high_type_counts\s*[:=]\s*', re.IGNORECASE
 )
+_REASON_TYPE_TOKEN_RE = re.compile(
+    r'(?<![A-Za-z0-9])[Tt](1[0-6]|[1-9])(?=_|$)'
+)
+_STAGE_TARGET_KEY_RE = re.compile(
+    r'(?<![A-Za-z])(?:stage_target|target_type)\s*[:=]\s*'
+    r'(\d{1,2})(?!\d|[A-Za-z_])',
+    re.IGNORECASE,
+)
 
 
 def _replace_type(m):
@@ -71,14 +79,25 @@ def _replace_best_type_key(m):
     return f"最高国={name}" if name else m.group(0)
 
 
+def _replace_stage_target_key(m):
+    name = TYPE_COUNTRY.get(int(m.group(1)))
+    return f"対象国={name}" if name else m.group(0)
+
+
+def _replace_reason_type_token(m):
+    return TYPE_COUNTRY.get(int(m.group(1)), m.group(0))
+
+
 def replace_country_references(text):
     """Replace internal country-stage references without changing other text."""
     text = str(text or "")
     text = _BEST_TYPE_KEY_RE.sub(_replace_best_type_key, text)
+    text = _STAGE_TARGET_KEY_RE.sub(_replace_stage_target_key, text)
     text = _HIGH_TYPE_COUNTS_LABEL_RE.sub("終盤の国別個数=", text)
     text = _TYPE_PAIR_RE.sub(_replace_type_pair, text)
     text = _TYPE_COUNT_RE.sub(_replace_type_count, text)
-    return _TYPE_RE.sub(_replace_type, text)
+    text = _TYPE_RE.sub(_replace_type, text)
+    return _REASON_TYPE_TOKEN_RE.sub(_replace_reason_type_token, text)
 
 
 def normalize(text, *, replace_countries=False):

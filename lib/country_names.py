@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 
 COUNTRY_NAMES = {
@@ -25,6 +26,11 @@ COUNTRY_NAMES = {
 }
 
 
+_REASON_COUNTRY_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])[Tt](1[0-6]|[1-9])(?=_|$)"
+)
+
+
 def country_name(piece_type: object, default: str = "不明な国") -> str:
     """Return a user-facing country name without exposing an internal stage ID."""
     if isinstance(piece_type, bool):
@@ -37,3 +43,21 @@ def country_name(piece_type: object, default: str = "不明な国") -> str:
     except (TypeError, ValueError):
         return default
     return COUNTRY_NAMES.get(normalized, default)
+
+
+def country_named_reason(reason: object, default: str = "?") -> str:
+    """Replace stage tokens embedded in strategy reason identifiers.
+
+    Strategy history intentionally keeps stable machine-facing identifiers such
+    as ``FIRST_RUSSIA_T11_LANE_COVER_AVOID``.  User-facing dashboards and
+    overlays must not expose that internal stage number, so only standalone
+    identifier tokens are replaced here.  Unknown tokens remain unchanged.
+    """
+    text = str(reason or "").strip()
+    if not text:
+        return default
+
+    def replace(match: re.Match[str]) -> str:
+        return COUNTRY_NAMES.get(int(match.group(1)), match.group(0))
+
+    return _REASON_COUNTRY_TOKEN_RE.sub(replace, text)

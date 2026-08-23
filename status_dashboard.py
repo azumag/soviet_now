@@ -20,7 +20,7 @@ from glob import glob
 from pathlib import Path
 
 from lib.ai_backoff_status import load_status as load_ai_backoff_status
-from lib.country_names import country_name
+from lib.country_names import country_name, country_named_reason
 
 W = 57
 RANK_LCB_Z = 1.28
@@ -1026,6 +1026,7 @@ def load_latest_drop():
     decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
     if not decision:
         decision = matches[0] if matches else (reason or "?")
+    decision = country_named_reason(decision)
     turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
     parts = [
         f"T{d.get('turn', '?')}{turn_flag}",

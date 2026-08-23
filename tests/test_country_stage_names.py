@@ -18,7 +18,7 @@ import dashboard_data
 import status_dashboard
 from lib import normalize_speech_text
 from lib.country_names import COUNTRY_NAMES as AUTHORITATIVE_COUNTRY_NAMES
-from lib.country_names import country_name
+from lib.country_names import country_name, country_named_reason
 
 
 EXPECTED_COUNTRY_NAMES = {
@@ -87,11 +87,17 @@ class CountryStageNamesTest(unittest.TestCase):
             normalize_speech_text.normalize("prototype15 Prototype16"),
             "prototype15 prototype16",
         )
-        for source in ("T2.5", "type 11.5", "T15abc", "T15_suffix"):
+        for source in ("T2.5", "type 11.5", "T15abc"):
             with self.subTest(source=source):
                 self.assertEqual(
                     normalize_speech_text.replace_country_references(source), source
                 )
+        self.assertEqual(
+            normalize_speech_text.replace_country_references(
+                "FIRST_RUSSIA_T11_LANE T15_suffix"
+            ),
+            "FIRST_RUSSIA_ウズベキスタン_LANE ロシア_suffix",
+        )
         self.assertEqual(
             normalize_speech_text.replace_country_references("T2が来た"),
             "モルドバが来た",
@@ -111,11 +117,54 @@ class CountryStageNamesTest(unittest.TestCase):
         )
         self.assertEqual(
             normalize_speech_text.replace_country_references(
-                "max_piece_type=14 high_type_counts=T14x2 type15/16 T17"
+                "max_piece_type=14 high_type_counts=T14x2 type15/16 T17 "
+                "stage_target=13 target_type=12"
             ),
             "最高国=カザフスタン 終盤の国別個数=カザフスタン2個 "
-            "ロシア・ソ連 T17",
+            "ロシア・ソ連 T17 対象国=ウクライナ 対象国=トルクメニスタン",
         )
+
+    def test_strategy_reason_tokens_use_country_names_on_user_surfaces(self):
+        self.assertEqual(
+            country_named_reason("FIRST_RUSSIA_T11_LANE_COVER_AVOID"),
+            "FIRST_RUSSIA_ウズベキスタン_LANE_COVER_AVOID",
+        )
+        self.assertEqual(
+            country_named_reason("POST_RUSSIA_T12_CONTACT_SHOT"),
+            "POST_RUSSIA_トルクメニスタン_CONTACT_SHOT",
+        )
+        self.assertEqual(country_named_reason("UNKNOWN_T17_REASON"), "UNKNOWN_T17_REASON")
+
+    def test_status_dashboard_last_drop_humanizes_reason_identifier(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            history_dir = root / "game_history"
+            history_dir.mkdir()
+            (root / "strategy.py").write_text(
+                'reasons.append("FIRST_RUSSIA_T11_LANE_COVER_AVOID")\n',
+                encoding="utf-8",
+            )
+            (history_dir / "latest.jsonl").write_text(
+                json.dumps(
+                    {
+                        "turn": 67,
+                        "decision_x": 0.35,
+                        "decision_reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(root)
+                latest = status_dashboard.load_latest_drop()
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertIn("ウズベキスタン", latest)
+            self.assertNotIn("T11", latest)
 
     def test_dashboard_returns_authoritative_name_for_every_country(self):
         self.assertEqual(AUTHORITATIVE_COUNTRY_NAMES, EXPECTED_COUNTRY_NAMES)
@@ -169,6 +218,8 @@ import { COUNTRY_NAMES, normalizeCountryReferences } from './soren91/country_nam
 console.log(JSON.stringify({
   names: COUNTRY_NAMES,
   normalized: normalizeCountryReferences('T11 Type-15 type 17'),
+  reason: normalizeCountryReferences('判断理由はFIRST_RUSSIA_T11_LANE_COVER_AVOIDです。 stage_target=13'),
+  military: normalizeCountryReferences('T-34 T-72 type 17'),
 }));
 """
         result = subprocess.run(
@@ -195,6 +246,11 @@ console.log(JSON.stringify({
             payload["normalized"],
             "ウズベキスタン ロシア type 17",
         )
+        self.assertEqual(
+            payload["reason"],
+            "判断理由はFIRST_RUSSIA_ウズベキスタン_LANE_COVER_AVOIDです。 対象国=ウクライナ",
+        )
+        self.assertEqual(payload["military"], "T-34 T-72 type 17")
         self.assertEqual(
             payload["names"],
             {str(piece_type): name for piece_type, name in EXPECTED_COUNTRY_NAMES.items()},
@@ -243,6 +299,21 @@ console.log(JSON.stringify({
         status_dashboard = (REPO_ROOT / "status_dashboard.py").read_text(
             encoding="utf-8"
         )
+        strategy_runner = (REPO_ROOT / "strategy_runner.py").read_text(
+            encoding="utf-8"
+        )
+        batch_summary = (REPO_ROOT / "batch_summary.py").read_text(
+            encoding="utf-8"
+        )
+        monitor_report = (REPO_ROOT / "monitor_report_stale_report.sh").read_text(
+            encoding="utf-8"
+        )
+        soren91_control = (REPO_ROOT / "soren91_control.sh").read_text(
+            encoding="utf-8"
+        )
+        soren91_prompt = (
+            REPO_ROOT / "soren91" / "prompts" / "explain_strategy.md"
+        ).read_text(encoding="utf-8")
         comment_response = (REPO_ROOT / "prompts/comment_response.md").read_text(
             encoding="utf-8"
         )
@@ -266,6 +337,19 @@ console.log(JSON.stringify({
         self.assertNotIn('T{best_type}', show_status)
         self.assertNotIn("ru sv  t origin", status_dashboard)
         self.assertIn("country_name(cand.get('best_type', 0), '-')", status_dashboard)
+        self.assertIn("decision = country_named_reason(decision)", show_status)
+        self.assertIn("decision = country_named_reason(decision)", status_dashboard)
+        self.assertEqual(
+            strategy_runner.count(
+                'reason = country_named_reason(decision.get("reason"), default="")'
+            ),
+            2,
+        )
+        self.assertIn("country_named_reason(reason)", batch_summary)
+        self.assertIn("source_bits.append(country_name(source_best_type))", monitor_report)
+        self.assertNotIn('source_bits.append(f"T{source_best_type}")', monitor_report)
+        self.assertIn("SAY_REPLACE_COUNTRY_REFERENCES=1", soren91_control)
+        self.assertIn("T1〜T16、type番号、タイプ番号は出力せず", soren91_prompt)
         for prompt in (comment_response, comment_response_game):
             self.assertNotIn("15 piece types", prompt)
             self.assertNotIn("Type 15 is the maximum", prompt)

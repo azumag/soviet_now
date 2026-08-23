@@ -12216,7 +12216,10 @@ _prune_expired_rejected_hashes
         self.assertIn("russia_path_loss = (", loop)
         self.assertIn("or (stage_target >= 15)", loop)
         self.assertIn("elif objective_loss and russia_path_loss and rstreak >= threshold:", loop)
-        self.assertIn('detail = f"rstreak={rstreak}_stage_target={stage_target}_objective_loss={int(objective_loss)}"', loop)
+        self.assertIn(
+            'detail = f"連続回帰={rstreak}_対象国={country_name(stage_target)}_目的進捗喪失={int(objective_loss)}"',
+            loop,
+        )
         self.assertIn("post_regression_direct_escape", loop)
         self.assertIn("ロシア建国ルート喪失の粛清連鎖", loop)
         self.assertIn("復帰先にロシア進捗あり", loop)

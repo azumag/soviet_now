@@ -2080,11 +2080,12 @@ PY
 )
 	archive_restart_ok=$(echo "$archive_restart_json" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('ok') else '0')" 2>/dev/null || echo 0)
 	if [ "$archive_restart_ok" != "1" ]; then
+		archive_restart_display=$(printf '%s' "$archive_restart_json" | python3 -c 'import json,sys; from lib.country_names import country_name; d=json.load(sys.stdin); print("候補なし | 最低到達国={} | 基準評価={:.1f}".format(country_name(d.get("min_best_type", 0)), float(d.get("anchor_comp", 0) or 0)))' 2>/dev/null || printf '%s' '候補なし')
 		log "[ARCHIVE-RESTART] candidate not found: ${archive_restart_json:-empty}"
 		_improve_flow_notify \
 			"archive_restart_candidate_no" \
 			"archive_restart candidate? no" \
-			"archive_restart_json=${archive_restart_json:-empty}" \
+			"${archive_restart_display}" \
 			"改善フロー: archive_restart candidate? no。次の脱出手段へ進みます。" \
 			"warn"
 		no_candidate_marker="${ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE:-tmp/state/.archive_restart_no_candidate}"

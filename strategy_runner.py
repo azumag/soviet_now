@@ -23,6 +23,8 @@ import subprocess
 import sys
 import time
 
+from lib.country_names import country_named_reason
+
 # --- 定数 ---
 GAME_STATE = "game_state.json"
 COMMANDS = "commands.txt"
@@ -94,7 +96,7 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
         or r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
     ]
     merge_grade = str(chosen.get("merge_grade") or "NO")
-    reason = str(decision.get("reason") or "")
+    reason = country_named_reason(decision.get("reason"), default="")
     body = (
         f"turn={turn} score={score} x={decision_x:+.2f} "
         f"merge={merge_grade} safe={len(safe)}/{len(results)} "
@@ -170,7 +172,7 @@ def _actual_deadline_contact_overlay_payload(turn, score, decision, before_analy
         decision_x = float(decision.get("x", 0.0) or 0.0)
     except Exception:
         decision_x = 0.0
-    reason = str(decision.get("reason") or "")
+    reason = country_named_reason(decision.get("reason"), default="")
     before_top = _float_or_none(before_deadline.get("top_edge_y"))
     before_text = f"before_top={before_top:.2f} " if before_top is not None else ""
     body = (

@@ -492,6 +492,8 @@ import os
 import re
 import sys
 
+from lib.country_names import country_name
+
 result, rollback_hash, current_file, rolling_file, stagnation_file, threshold_raw = sys.argv[1:7]
 
 def load(path):
@@ -566,16 +568,16 @@ objective_loss = (
 
 if target_has_progress:
     mode = "revalidate"
-    detail = f"target_progress_russia={target_russia}_best={target_best}"
+    detail = f"ロシア到達={target_russia}_最高国={country_name(target_best)}"
 elif objective_loss and russia_path_loss and rstreak >= threshold:
     mode = "direct_escape"
-    detail = f"objective_loss_rstreak={rstreak}_target_russia={target_russia}_best={target_best}"
+    detail = f"目的進捗喪失_連続回帰={rstreak}_ロシア到達={target_russia}_最高国={country_name(target_best)}"
 else:
     mode = "post_regression"
     if stage_objective_loss and stage_target > 0:
-        detail = f"rstreak={rstreak}_stage_target={stage_target}_objective_loss={int(objective_loss)}"
+        detail = f"連続回帰={rstreak}_対象国={country_name(stage_target)}_目的進捗喪失={int(objective_loss)}"
     else:
-        detail = f"rstreak={rstreak}_objective_loss={int(objective_loss)}"
+        detail = f"連続回帰={rstreak}_目的進捗喪失={int(objective_loss)}"
 
 print(f"{mode}|{detail}|{rstreak}|{int(objective_loss)}|{int(target_has_progress)}")
 PY

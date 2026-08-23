@@ -738,6 +738,8 @@ import json
 import re
 import sys
 
+from lib.country_names import country_named_reason
+
 path = sys.argv[1]
 
 last = ""
@@ -789,6 +791,7 @@ noise_words = ("PENALTY", "CROSSES_DEADLINE_NO_MERGE")
 decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
 if not decision:
     decision = matches[0] if matches else (reason or "?")
+decision = country_named_reason(decision)
 
 parts = [
     f"T{turn}",

@@ -1234,7 +1234,7 @@ soren91_start() {
 						local explain_file
 						explain_file=$(mktemp /tmp/eloop_soren91_strategy.XXXXXX)
 						printf '%s\n' "$strategy_explain" > "$explain_file"
-					SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:strategy" ./say_enqueue.sh "$explain_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+					SAY_REPLACE_COUNTRY_REFERENCES=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:strategy" ./say_enqueue.sh "$explain_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 					rm -f "$explain_file"
 					log "[SOREN91] 戦略解説を読み上げ"
 				fi
