@@ -1321,18 +1321,25 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         """Keep no-T14 / multi-T13 boards on the closest first-Russia pair lane."""
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
-                "PRE_RUSSIA_T13_PAIR_CLUSTER",
-                "PRE_RUSSIA_T13_PAIR_COMPRESS",
-                "PRE_RUSSIA_T13_PAIR_LADDER",
-                "DEADLINE_GUARD_FIRST_RUSSIA_PAIR",
-            )
-        ):
-            return None
         pieces = (game_state or {}).get("pieces") or []
         if not pieces or next_type < 6:
+            return None
+        # v713: the pair-lane hook is valid from board state alone.  The old
+        # reason-marker gate let deadline guard bypass the only route to the first
+        # Russia whenever strategy scoring could not emit a tag before returning.
+        _state_high_counts = {}
+        for _piece in pieces:
+            try:
+                _piece_type = int(_piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            if _piece_type >= 10:
+                _state_high_counts[_piece_type] = _state_high_counts.get(_piece_type, 0) + 1
+        if not (
+            _state_high_counts.get(14, 0) == 0
+            and _state_high_counts.get(15, 0) == 0
+            and _state_high_counts.get(13, 0) >= 2
+        ):
             return None
         high_counts = {}
         for piece in pieces:
