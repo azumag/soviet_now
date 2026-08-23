@@ -61,6 +61,10 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v721: VISIBLE_SAME_COUNTRY_CONTACT_SHOT — replay the manually verified
+# shape-aware false negative where an exposed Kyrgyzstan merged even though
+# the analyzer labelled every contact NO.  The exception requires generous
+# deadline headroom, a real collision target and strict measured geometry.
 # v720: FIRST_RUSSIA_T11_LANE_COVER_AVOID — at the measured T14 near-miss,
 # keep a low incoming country from landing on the lone exposed Uzbekistan when
 # an equally safe real lane exists.  This preserves the only T11→T12 rebuild
@@ -353,6 +357,218 @@ def _select_first_russia_t11_lane_avoidance(
         return None
 
     return min(alternatives, key=lambda item: item[:4])[-1]
+
+
+def _select_visible_same_country_contact(
+    pieces, results, next_type, reactor, chosen_x
+):
+    """Recover a visually exposed same-country merge missed by the analyzer.
+
+    A manually played production game proved that shape-aware analysis can
+    label a real contact as ``NO`` even when a drop aligned with the exposed
+    country merges immediately.  This is intentionally a narrow exception:
+    it only runs on a calm pre-Russia board, requires a real analyzer collision
+    and accepts only the empirically measured contact-ratio envelope.
+    Malformed or incomplete geometry always falls back to the normal scorer.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if not isinstance(reactor, dict):
+        return None
+    if type(next_type) is not int or not 1 <= next_type <= 14:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_r = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_r is None
+            or piece_r <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = {
+            "id": piece_id,
+            "type": piece_type,
+            "x": piece_x,
+            "y": piece_y,
+            "r": piece_r,
+        }
+
+    # The post-Russia contact policy owns every board from the first Russia on.
+    if any(piece["type"] in (15, 16) for piece in piece_by_id.values()):
+        return None
+
+    chosen_x_number = finite_number(chosen_x)
+    deadline_margin = finite_number(reactor.get("deadline_margin"))
+    board_top = finite_number(reactor.get("top_edge_y"))
+    danger_piece_count = reactor.get("danger_piece_count")
+    if (
+        chosen_x_number is None
+        or not -3.0 <= chosen_x_number <= 3.0
+        or deadline_margin is None
+        or deadline_margin < 1.0
+        or board_top is None
+        or type(danger_piece_count) is not int
+        or danger_piece_count != 0
+        or reactor.get("deadline_crossed") is not False
+    ):
+        return None
+
+    validated_results = []
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        merge_grade = candidate.get("merge_grade")
+        merges = candidate.get("merges")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_margin is None
+            or candidate_risk is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or type(candidate.get("crosses_deadline")) is not bool
+            or type(candidate.get("merge_result_crosses_deadline")) is not bool
+            or not isinstance(merges, list)
+        ):
+            return None
+        validated_results.append(
+            (candidate, candidate_x, candidate_margin, candidate_risk, merges)
+        )
+
+    # Never replace an analyzer-confirmed safe merge with this recovery path.
+    if any(
+        candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and candidate.get("crosses_deadline") is False
+        and candidate.get("merge_result_crosses_deadline") is False
+        for candidate, _, _, _, _ in validated_results
+    ):
+        return None
+
+    contact_options = []
+    for candidate, candidate_x, candidate_margin, candidate_risk, merges in validated_results:
+        if (
+            candidate.get("merge_grade") != "NO"
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or candidate_margin < 0.75
+        ):
+            continue
+
+        hit_id = candidate.get("landing_hit_id")
+        if not valid_piece_id(hit_id) or hit_id not in piece_by_id:
+            continue
+        hit_piece = piece_by_id[hit_id]
+
+        for merge in merges:
+            if not isinstance(merge, dict):
+                return None
+            target_id = merge.get("id")
+            if not valid_piece_id(target_id) or target_id not in piece_by_id:
+                continue
+            target = piece_by_id[target_id]
+            if target["type"] != next_type or merge.get("grade") != "NO":
+                continue
+            if (
+                merge.get("target_crosses_deadline") is not False
+                or merge.get("target_is_danger") is not False
+            ):
+                continue
+
+            reported_target_x = finite_number(merge.get("x"))
+            distance = finite_number(merge.get("dist"))
+            contact_radius = finite_number(merge.get("contact_r"))
+            target_top = finite_number(merge.get("target_top_y"))
+            if (
+                reported_target_x is None
+                or abs(reported_target_x - target["x"]) > 0.02
+                or distance is None
+                or distance < 0.0
+                or contact_radius is None
+                or contact_radius <= 0.0
+                or target_top is None
+            ):
+                continue
+
+            target_drop_x = max(-3.0, min(3.0, target["x"]))
+            target_dx = abs(candidate_x - target_drop_x)
+            if target_dx > 0.06 + 1e-9:
+                continue
+            if abs(chosen_x_number - target_drop_x) <= 0.20 + 1e-9:
+                continue
+
+            at_wall = abs(target["x"]) >= 2.70
+            if not at_wall and target_top < board_top - 1.25:
+                continue
+            contact_ratio = distance / contact_radius
+            ratio_limit = 1.00 if at_wall else 0.93
+            if contact_ratio > ratio_limit + 1e-9:
+                continue
+
+            # The strongest proof is that analysis predicts first collision
+            # with the same country itself.  Manual successes also covered two
+            # support cases: a deeply nested country squeezed against the wall,
+            # and an exposed country touching a much larger central support.
+            # Keep the central-support branch substantially tighter; the wall
+            # branch is already bounded by wall exposure and the 1.00 ratio.
+            support_collision = hit_id != target_id
+            if support_collision:
+                if hit_piece["type"] < next_type + 2:
+                    continue
+                if not at_wall and (
+                    board_top - target_top > 0.20 + 1e-9
+                    or contact_ratio > 0.85 + 1e-9
+                ):
+                    continue
+
+            contact_options.append(
+                (
+                    1 if support_collision else 0,
+                    target_dx,
+                    contact_ratio,
+                    -target_top,
+                    candidate_risk,
+                    abs(candidate_x),
+                    candidate_x,
+                    candidate,
+                )
+            )
+
+    if not contact_options:
+        return None
+    return min(contact_options, key=lambda option: option[:-1])[-1]
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
@@ -1757,6 +1973,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # clip to drop range [-3.0, +3.0]
     best_x = _clip_final_drop_x(best_x, type15_count >= 1)
+
+    visible_same_country_contact = _select_visible_same_country_contact(
+        pieces, results, next_type, reactor, best_x
+    )
+    if visible_same_country_contact is not None:
+        return {
+            "x": round(float(visible_same_country_contact["x"]), 4),
+            "reason": "VISIBLE_SAME_COUNTRY_CONTACT_SHOT",
+        }
 
     first_russia_lane = _select_first_russia_t11_lane_avoidance(
         pieces, results, next_type, best_result, best_x
