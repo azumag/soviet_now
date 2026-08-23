@@ -383,7 +383,7 @@ cat >"$__DASH_TMP" <<HTMLEOF
   <div class="mini-stat"><div class="mini-label">Raw Recent</div><div class="metric-row"><div class="mini-value recent" id="recent100Avg">-</div><div class="trend-badge" id="recent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-lines"><div>r10 <b id="recent10Avg">-</b> / r50 <b id="recent50Avg">-</b></div><div>best <b id="recentBest">-</b> / med <b id="recentMedian">-</b></div></div></div>
   <div class="mini-stat"><div class="mini-label">Raw Band</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-lines"><div>3000+ <b id="recent3000">-</b> <span id="recent3000Sub"></span></div><div>2000+ <b id="recent2000">-</b> <span id="recent2000Sub"></span></div></div></div>
   <div class="mini-stat"><div class="mini-label">Purge Target</div><div class="metric-row"><div class="mini-value hot" id="gateFocus">-</div><div class="donut" id="gateFocusDonut"><span>-</span></div></div><div class="mini-sub" id="gateFocusSub">-</div></div>
-  <div class="mini-stat"><div class="mini-label">Founding r100</div><div class="metric-row"><div class="mini-value cool" id="gateRussia">-</div><div class="donut" id="gateRussiaDonut"><span>-</span></div></div><div class="mini-lines"><div>T15 <b id="gateRussiaInline">-</b> / T14 <b id="gateKazakhstan">-</b></div><div>T13 <b id="gateUkraineInline">-</b> / <span id="gateFocusCountry">-</span></div></div><div style="display:none"><span id="gateTurkmenistan"></span><span id="gateTurkmenistanSub"></span><span id="gateUkraine"></span><span id="gateUkraineSub"></span><span id="gateKazakhstanSub"></span><span id="gateRussiaSub"></span></div></div>
+  <div class="mini-stat"><div class="mini-label">Founding r100</div><div class="metric-row"><div class="mini-value cool" id="gateRussia">-</div><div class="donut" id="gateRussiaDonut"><span>-</span></div></div><div class="mini-lines"><div>ロシア <b id="gateRussiaInline">-</b> / カザフスタン <b id="gateKazakhstan">-</b></div><div>ウクライナ <b id="gateUkraineInline">-</b> / <span id="gateFocusCountry">-</span></div></div><div style="display:none"><span id="gateTurkmenistan"></span><span id="gateTurkmenistanSub"></span><span id="gateUkraine"></span><span id="gateUkraineSub"></span><span id="gateKazakhstanSub"></span><span id="gateRussiaSub"></span></div></div>
   <div class="mini-stat"><div class="mini-label">Russia Now</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-lines"><div>today <b id="russiaToday">-</b> / 24h <b id="russiaLast24h">-</b></div><div id="russiaRecent100Sub">-</div></div><div style="display:none"><span id="russiaTodaySub"></span></div></div>
   <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
   <div class="mini-stat"><div class="mini-label">Recent Trend</div><div class="metric-row"><div class="mini-value trend" id="trend">-</div><div class="trend-badge" id="chartTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub" id="trendSub">chart window</div></div>
@@ -394,7 +394,7 @@ cat >"$__DASH_TMP" <<HTMLEOF
 </div>
 <div class="chart-container chart-rate">
   <div class="rate-chart-header">
-    <span class="rate-chart-title">ろシア建国率 rolling 100</span>
+    <span class="rate-chart-title">ロシア建国率 rolling 100</span>
     <span class="rate-chart-current" id="rateChartCurrent">-</span>
   </div>
   <canvas id="rateChart"></canvas>
@@ -414,6 +414,7 @@ const RUSSIA_RATE_SERIES = DASHBOARD_DATA.russiaRateSeries || { window: 100, ste
 const STAGE_GATE_STATS = DASHBOARD_DATA.stageGateStats || { window: 0, stages: [], focus: null };
 const PURGE_TARGET_STATS = DASHBOARD_DATA.purgeTargetStats || {};
 const CURRENT_GAME = SCORE_STATS.currentGame;
+const COUNTRY_NAMES = DASHBOARD_DATA.countryNames || {};
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
 const rateCanvas = document.getElementById('rateChart');
@@ -422,6 +423,10 @@ const rateCtx = rateCanvas ? rateCanvas.getContext('2d') : null;
 function clampPct(value, max) {
   if (!isFinite(value) || !isFinite(max) || max <= 0) return 0;
   return Math.max(0, Math.min(100, (value / max) * 100));
+}
+
+function countryName(pieceType) {
+  return COUNTRY_NAMES[Number(pieceType)] || '不明な国';
 }
 
 function setDonut(id, value, max, color, label) {
@@ -497,10 +502,10 @@ function updateExtraStats(scores) {
   const targetStatus = purgeCurrent.targetReached ? 'OK' : (purgeCurrent.purgeZone ? '粛清圏' : '未達');
   document.getElementById('gateFocus').textContent = purgeTarget ? purgeTarget.name : 'Inactive';
   document.getElementById('gateFocusSub').textContent = purgeTarget
-    ? ('anchor ' + purgeTarget.rate.toFixed(1) + '% >= ' + thresholdPct.toFixed(0) + '% / current ' + targetStatus + ' best T' + (purgeCurrent.bestMaxType || 0))
+    ? ('anchor ' + purgeTarget.rate.toFixed(1) + '% >= ' + thresholdPct.toFixed(0) + '% / current ' + targetStatus + ' best ' + countryName(purgeCurrent.bestMaxType || 0))
     : ('anchor targetなし / threshold ' + thresholdPct.toFixed(0) + '%');
   document.getElementById('gateFocusCountry').textContent = purgeTarget
-    ? ('target ' + purgeTarget.name + '(T' + purgeTarget.type + ') ' + targetStatus)
+    ? ('target ' + purgeTarget.name + ' ' + targetStatus)
     : 'target none';
   document.getElementById('gateTurkmenistan').textContent = '-';
   document.getElementById('gateTurkmenistanSub').textContent = currentTargetRate ? (currentTargetRate.reached + ' / ' + currentTargetRate.total) : 'inactive';

@@ -25,6 +25,8 @@ import shlex
 import sys
 import time
 
+from lib.country_names import country_name
+
 origin_file, run_file, anchor_file, state_file, milestones_raw, min_delta_raw, parallel_status_file = sys.argv[1:8]
 
 def load(path):
@@ -179,8 +181,9 @@ if origin_type == "archive_restart":
     try:
         source_best_type = int(origin.get("source_best_max_type", 0) or 0)
         if source_best_type:
-            source_bits.append(f"最大T{source_best_type}")
-            detail_bits.append(f"source_best_type={source_best_type}")
+            source_best_country = country_name(source_best_type)
+            source_bits.append(f"最高国{source_best_country}")
+            detail_bits.append(f"source_best_country={source_best_country}")
     except Exception:
         pass
     if source_bits:

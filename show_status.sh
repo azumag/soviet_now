@@ -1108,6 +1108,8 @@ import json
 import os
 import sys
 
+from lib.country_names import country_name
+
 acc_path, current_path, current_hash, mature_s, trigger_s, count_s, early_min_s = sys.argv[1:8]
 try:
     mature_n = max(1, int(mature_s or 12))
@@ -1168,11 +1170,11 @@ if not soviet and bool(data.get("soviet", False)):
 best_type = int(data.get("best_max_type", 0) or 0)
 bits = []
 if russia > 0:
-    bits.append(f"R{russia}")
+    bits.append(f"ロシア{russia}")
 if soviet > 0:
-    bits.append(f"S{soviet}")
+    bits.append(f"ソ連{soviet}")
 if best_type >= 15:
-    bits.append(f"T{best_type}")
+    bits.append(country_name(best_type))
 if bits:
     print(f"defer={','.join(bits)}{games}/{mature_n}")
 elif source == "accumulated" and games < early_min:
@@ -1184,6 +1186,8 @@ PY
 			fresh_objective_label=$(python3 - tmp/improve.lock <<'PY' 2>/dev/null || echo "none"
 import json
 import sys
+
+from lib.country_names import country_name
 
 try:
     data = json.load(open(sys.argv[1], encoding="utf-8")) or {}
@@ -1199,7 +1203,7 @@ fresh_best = int(data.get("fresh_objective_fresh_best_max_type", 0) or 0)
 t14_peak = int(data.get("fresh_objective_t14_peak", 0) or 0)
 reference = str(data.get("fresh_objective_reference") or "none")
 route = str(data.get("improve_reason") or "normal")
-print(f"locked {trigger} {sample_n}/{count} T{fresh_best} T14p{t14_peak} ref={reference} route={route}")
+print(f"locked {trigger} {sample_n}/{count} 最高{country_name(fresh_best)} カザフスタンpeak{t14_peak} ref={reference} route={route}")
 PY
 )
 		fi
@@ -1208,6 +1212,8 @@ PY
 import json
 import os
 import sys
+
+from lib.country_names import country_name
 
 acc_file, current_file, anchor_file, min_best_raw, low_stage_min_raw, low_stage_max_raw = sys.argv[1:7]
 
@@ -1263,10 +1269,10 @@ if fresh_russia > 0:
     print("none")
 elif 0 < fresh_best <= low_stage_max:
     state = "ready low_stage_miss" if acc_count >= low_stage_min else "wait low_stage_miss"
-    print(f"{state} {acc_count}/{low_stage_min} T{fresh_best} ref={reference}")
+    print(f"{state} {acc_count}/{low_stage_min} 最高{country_name(fresh_best)} ref={reference}")
 elif fresh_best >= min_best:
     state = "ready high_frontier_miss" if acc_count >= low_stage_min else "wait high_frontier_miss"
-    print(f"{state} {acc_count}/{low_stage_min} T{fresh_best} ref={reference}")
+    print(f"{state} {acc_count}/{low_stage_min} 最高{country_name(fresh_best)} ref={reference}")
 else:
     print("none")
 PY
@@ -1300,6 +1306,8 @@ import json
 import os
 import shlex
 import sys
+
+from lib.country_names import country_name
 
 origin_file, current_file, outcome_file, mature_raw, anchor_file = sys.argv[1:6]
 try:
@@ -1392,13 +1400,13 @@ if h and isinstance(origins, dict) and h in origins:
         try:
             source_russia = int(origin.get("source_russia_count", 0) or 0)
             if source_russia:
-                source_bits.append(f"R{source_russia}")
+                source_bits.append(f"ロシア{source_russia}")
         except Exception:
             pass
         try:
             source_best_type = int(origin.get("source_best_max_type", 0) or 0)
             if source_best_type:
-                source_bits.append(f"T{source_best_type}")
+                source_bits.append(country_name(source_best_type))
         except Exception:
             pass
         if source_bits:
@@ -1476,6 +1484,8 @@ import os
 import shlex
 import sys
 import time
+
+from lib.country_names import country_name
 
 rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir, permanent_archive_dir = sys.argv[1:9]
 
@@ -1711,7 +1721,7 @@ if not rows:
 else:
     _, h, m, russia, soviet, best_type, origin_type = rows[0]
     retry = " retry" if origin_type else ""
-    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} R{russia} S{soviet} T{best_type} pool{len(rows)}{retry}"
+    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} ロシア{russia} ソ連{soviet} 最高{country_name(best_type)} pool{len(rows)}{retry}"
 print("archive_next_label=" + shlex.quote(label))
 PY
 )

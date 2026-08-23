@@ -28,6 +28,9 @@ _log() { echo "[batch_commentary $(date '+%H:%M:%S')] $*" >&2; }
 _num() {
   case "${1:-}" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac
 }
+_batch_commentary_country_names() {
+  python3 -c 'import sys; from lib.normalize_speech_text import replace_country_references; sys.stdout.write(replace_country_references(sys.stdin.read()))'
+}
 
 # 設定ファイルや環境変数に一時的な sentinel/typo が残っていても、
 # バッチ解説だけが止まらないように有効な候補だけを残す。
@@ -185,6 +188,8 @@ cat >"$prompt_file" <<PROMPT
 - 一人称は「私」を使い、「僕」「俺」「自分」は使わない。
 - 平均・最高・最低スコア、建国到達率、併合率や主な判断傾向など、実測値を2〜4個入れる。
 - 良かった点、今回の課題、次の改善で見る点を自然な文章で短くまとめる。
+- 国は必ずアルメニア、モルドバ、エストニア、ラトビア、リトアニア、ジョージア、アゼルバイジャン、タジキスタン、キルギス、ベラルーシ、ウズベキスタン、トルクメニスタン、ウクライナ、カザフスタン、ロシア、ソ連の国名で呼ぶ。
+- 内部の type、T、タイプ番号、max_piece_type、high_type_counts は本文へ一切出さない。
 - 見出し、箇条書き、JSON、コード、Markdown、英語、AI自身の作業説明は出さない。
 - 数値や到達状況が不足する場合は、推測で補わず「今回の記録では確認できません」と述べる。
 
@@ -228,6 +233,11 @@ _log "AI commentary generation: batch=$batch_id games=$batch_count (source=${bat
 raw_text=$(ai_generate_list "RADIO:batch_commentary" "$prompt_file" "$AGENTS" "$TIMEOUT_SEC" "_batch_commentary_valid" 2>/dev/null || true)
 text=$(printf '%s' "$raw_text" | _batch_commentary_strip_work_note | _ai_guard_model_output 2>/dev/null || true)
 text=$(printf '%s' "$text" | tr '\r\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//')
+country_named_text=$(printf '%s' "$text" | _batch_commentary_country_names 2>/dev/null) || {
+  _log "country-name normalization failed: batch=$batch_id"
+  exit 1
+}
+text="$country_named_text"
 
 if ! _batch_commentary_valid "$text"; then
   attempt=1

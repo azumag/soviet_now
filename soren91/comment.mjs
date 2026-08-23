@@ -12,6 +12,7 @@ import { execFile } from 'child_process';
 import { join } from 'path';
 import { analyzeGameplayScreenshotText, analyzeResultScreen } from './result_screen_ocr.mjs';
 import { generateTextWithFallbacks, stripAnsi, resolveTextAiConfig } from './text_ai.mjs';
+import { COUNTRY_NAMES, normalizeCountryReferences } from './country_names.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
 
@@ -37,17 +38,8 @@ const SOREN91_COMMENT_MAX_SPEAK_CHARS = parsePositiveInt(process.env.SOREN91_COM
 const CURRENT_STRATEGY_RUN_PATH = join('tmp', 'state', 'current_strategy_run.json');
 const HISTORY_DIR = 'game_history';
 const STAGE_STATS_MAX_GAMES = parsePositiveInt(process.env.SOREN91_STAGE_STATS_MAX_GAMES, 120);
-const STAGE_RATE_TYPES = [
-  { type: 15, name: 'ロシア' },
-  { type: 14, name: 'カザフスタン' },
-  { type: 13, name: 'ウクライナ' },
-];
-const PURGE_GATE_TYPES = [
-  { type: 11, name: 'トルクメニスタン' },
-  { type: 13, name: 'ウクライナ' },
-  { type: 14, name: 'カザフスタン' },
-  { type: 15, name: 'ロシア' },
-];
+const STAGE_RATE_TYPES = [15, 14, 13].map(type => ({ type, name: COUNTRY_NAMES[type] }));
+const PURGE_GATE_TYPES = [11, 13, 14, 15].map(type => ({ type, name: COUNTRY_NAMES[type] }));
 
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -166,7 +158,7 @@ function stageByType(stats, type) {
 
 function formatStageRate(stage) {
   if (!stage) return '-';
-  return `${stage.name}(type${stage.type}) ${stage.rate.toFixed(1)}%(${stage.reached}/${stage.total})`;
+  return `${stage.name} ${stage.rate.toFixed(1)}%(${stage.reached}/${stage.total})`;
 }
 
 function formatStageStatsForPrompt(stats) {
@@ -429,7 +421,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     if (!comment) {
       comment = fallbackRankingComment(effectiveRank, gameNumber);
     }
-    comment = appendStageStatsToComment(comment, stageInfo);
+    comment = normalizeCountryReferences(appendStageStatsToComment(comment, stageInfo));
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
       return null;
@@ -559,7 +551,7 @@ async function buildMidgameScreenshotTextInfo(screenshotPath) {
   return '（OCR補助メモなし）';
 }
 
-async function buildRankingTextPrompt(rankingImagePath, myRank) {
+export async function buildRankingTextPrompt(rankingImagePath, myRank) {
   let ocrInfo = '- ランキング画面の文字情報はありません。';
   let effectiveRank = myRank != null ? Number(myRank) : null;
   let hasOcrContext = false;
@@ -617,7 +609,7 @@ function speakComment(comment, contextLabel = 'soren91:comment') {
   try {
     mkdirSync(queueDir, { recursive: true });
     const ts = Date.now();
-    const spokenComment = compactForSpeech(comment);
+    const spokenComment = compactForSpeech(normalizeCountryReferences(comment));
     const filename = `comment_soren91_${ts}_${contextLabel.replace(/[^a-zA-Z0-9_]/g, '_')}.txt`;
     const tmpFile = join(queueDir, `.${filename}.tmp`);
     const metaFile = join(queueDir, filename.replace(/\.txt$/u, '.meta.json'));
@@ -725,6 +717,7 @@ export async function generateMidgameComment(gameNumber, turn, boardState, scree
       console.log('[midgame_comment] Ungrounded generated comment, using fallback');
       finalComment = fallbackMidgameComment(boardState, turn);
     }
+    finalComment = normalizeCountryReferences(finalComment);
 
     console.log(`[midgame_comment] Generated: ${finalComment}`);
 

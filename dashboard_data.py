@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from lib.country_names import COUNTRY_NAMES, country_name
+
 
 SCORE_HISTORY = Path("score_history.txt")
 EVAL_SCORE_HISTORY = Path("eval_score_history.txt")
@@ -23,13 +25,7 @@ ROLLING_SCORES = Path("tmp/state/rolling_scores.json")
 BEST_STRATEGY_ANCHOR = Path("tmp/state/best_strategy_anchor.json")
 CORE_CONFIG = Path("core/config.sh")
 DEFAULT_CHART_GAMES = 1200
-STAGE_TYPES = [
-    (11, "トルクメニスタン"),
-    (12, "ベラルーシ"),
-    (13, "ウクライナ"),
-    (14, "カザフスタン"),
-    (15, "ロシア"),
-]
+STAGE_TYPES = [(piece_type, COUNTRY_NAMES[piece_type]) for piece_type in range(11, 16)]
 FOUNDING_RATE_TYPES = [
     (13, "ウクライナ"),
     (14, "カザフスタン"),
@@ -437,10 +433,6 @@ def stage_gate_stats_for_hash(
     return stats
 
 
-def country_name(piece_type: int) -> str:
-    return dict(STAGE_TYPES).get(piece_type, f"Type{piece_type}")
-
-
 def archive_max_type(path_value: str) -> int | None:
     if not path_value or path_value.startswith("git:"):
         return None
@@ -662,6 +654,7 @@ def build_dashboard_data(chart_games: int) -> dict[str, Any]:
 
     return {
         "chartLimit": chart_games,
+        "countryNames": COUNTRY_NAMES,
         "chartScores": chart_scores,
         "chartEvalScores": chart_eval_scores,
         "scoreStats": score_stats(scores, current_game),

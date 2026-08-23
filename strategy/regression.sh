@@ -173,7 +173,9 @@ def explain_reasons(reason_text):
         "anchor_promoted": "現戦略が anchor を上回ったため anchor を更新した。",
         "objective_regression": "建国目標の進捗が anchor より後退した。",
         "stage_achievement_regression": "直近ゲームの段階到達率が粛清閾値以下だった。",
-        "lost_turkmenistan_gate": "anchor よりトルクメニスタン段階の到達率が後退した。",
+        # Historical reason key retained for stored-result compatibility; the
+        # measured gate is piece type 11, which is Uzbekistan.
+        "lost_turkmenistan_gate": "anchor よりウズベキスタン段階の到達率が後退した。",
         "lost_ukraine_gate": "anchor よりウクライナ段階の到達率が後退した。",
         "lost_kazakhstan_gate": "anchor よりカザフスタン段階の到達率が後退した。",
         "lost_soviet_path": "anchor はソ連到達済みだが current はソ連未到達だった。",

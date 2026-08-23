@@ -3,6 +3,10 @@
 
 #=== ソ連祝賀トーク ===
 
+_celebration_country_names() {
+	python3 -c 'import sys; from lib.normalize_speech_text import replace_country_references; sys.stdout.write(replace_country_references(sys.stdin.read()))'
+}
+
 generate_russia_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 	local current_time
@@ -15,7 +19,7 @@ generate_russia_celebration() {
 
 【速報】ロシアが建国されました！
 
-ゲーム「ソ連ゲーム」で、レベル14の「ロシア」ピースが誕生しました。
+ゲーム「ソ連ゲーム」で、「ロシア」ピースが誕生しました。
 これはソ連完成の一歩手前まで国家併合が進んだことを意味します。
 ゲーム${game_num}回目、スコア${score}点、${turns}ターン、現在時刻: ${current_time}。
 
@@ -25,6 +29,8 @@ generate_russia_celebration() {
 - ここまでの積み上げと、次はソ連完成を狙う段階だと伝える
 - 話し言葉で、少し高揚感を出す
 - 大げさすぎる勝利宣言にしない。中間到達点として祝う
+- 国は必ずアルメニア、モルドバ、エストニア、ラトビア、リトアニア、ジョージア、アゼルバイジャン、タジキスタン、キルギス、ベラルーシ、ウズベキスタン、トルクメニスタン、ウクライナ、カザフスタン、ロシア、ソ連の国名で呼ぶ
+- 内部の type、T、タイプ番号は本文へ一切出さない
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ます」「〜でしょう」「〜ですけど」で統一
 - 「ね」で終わる文末は禁止。「〜ですね」「〜ますね」「〜ですけどね」「〜でしょうね」は使わない
@@ -61,6 +67,13 @@ CELEBPROMPT
 				return 1
 			}
 		fi
+		local country_named_talk
+		country_named_talk=$(printf '%s' "$celebration_talk" | _celebration_country_names 2>/dev/null) || {
+			_radio_clear_state "russia_celebration" "country_name_normalization_failed"
+			log "[RUSSIA] 国名正規化失敗"
+			return 1
+		}
+		celebration_talk="$country_named_talk"
 		if ! _is_valid_radio_talk "$celebration_talk"; then
 			_radio_clear_state "russia_celebration" "invalid_after_fact_check"
 			log "[RUSSIA] fact-check後の本文が不正/短文"
@@ -88,8 +101,8 @@ generate_soviet_celebration() {
 
 【緊急ニュース】ソ連が建国されました！
 
-ゲーム「ソ連ゲーム」で、ついにレベル15の「ソ連」ピースが誕生しました！
-アルメニアから始まりロシアまで14段階の併合を経てようやく到達する究極のゴールです。
+ゲーム「ソ連ゲーム」で、ついに「ソ連」ピースが誕生しました！
+アルメニアから国を育て、二つのロシアを併合してようやく到達する究極のゴールです。
 ゲーム${game_num}回目、スコア${score}点、${turns}ターンでの偉業。現在時刻: ${current_time}。
 
 【ルール】
@@ -100,6 +113,8 @@ generate_soviet_celebration() {
 - 戦略の巧妙さを称えること
 - 大げさな宣言調も交えて
 - 話し言葉で、感情豊かに
+- 国は必ずアルメニア、モルドバ、エストニア、ラトビア、リトアニア、ジョージア、アゼルバイジャン、タジキスタン、キルギス、ベラルーシ、ウズベキスタン、トルクメニスタン、ウクライナ、カザフスタン、ロシア、ソ連の国名で呼ぶ
+- 内部の type、T、タイプ番号は本文へ一切出さない
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ます」「〜でしょう」「〜ですけど」で統一
 - 「ね」で終わる文末は禁止。「〜ですね」「〜ますね」「〜ですけどね」「〜でしょうね」は使わない
@@ -136,6 +151,13 @@ CELEBPROMPT
 				return 1
 			}
 		fi
+		local country_named_talk
+		country_named_talk=$(printf '%s' "$celebration_talk" | _celebration_country_names 2>/dev/null) || {
+			_radio_clear_state "celebration" "country_name_normalization_failed"
+			log "[CELEBRATION] 国名正規化失敗"
+			return 1
+		}
+		celebration_talk="$country_named_talk"
 		if ! _is_valid_radio_talk "$celebration_talk"; then
 			_radio_clear_state "celebration" "invalid_after_fact_check"
 			log "[CELEBRATION] fact-check後の本文が不正/短文"

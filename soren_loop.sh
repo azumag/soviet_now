@@ -427,6 +427,7 @@ json.dump(d,open(f,'w'))
 _format_regression_reason() {
 	python3 - "${REGRESSION_ROLLBACK_RESULT:-}" <<'PY'
 import sys
+from lib.country_names import country_name
 reason_map = {
     "early_comp_top_gap": "comp比率低下",
     "curr_comp_below_top_ratio": "top対比comp不足",
@@ -436,7 +437,8 @@ reason_map = {
     "lost_russia_path": "ロシア経路喪失",
     "lost_soviet_path": "ソ連経路喪失",
     "archive_restart_objective_floor": "archive再起動目的未達",
-    "lost_turkmenistan_gate": "トゥルクメニスタン段階未達",
+    # Historical reason key retained for stored-result compatibility.
+    "lost_turkmenistan_gate": "ウズベキスタン段階未達",
     "lost_kazakhstan_gate": "カザフスタン段階未達",
 }
 result = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -453,7 +455,7 @@ for r in reason_raw.split("+"):
     key = r.split("=")[0] if "=" in r else r
     if key.startswith("stage_type") and key.endswith("_achievement_gate"):
         stage = key[len("stage_type"):-len("_achievement_gate")]
-        labels.append(f"Type{stage}到達ゲート未達")
+        labels.append(f"{country_name(stage, '対象国')}到達ゲート未達")
     else:
         labels.append(reason_map.get(key, key))
 print("理由: " + " / ".join(labels))
@@ -1058,6 +1060,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 			# 粛清理由も保存 (twitch投稿用に、後で人が読みやすい形式に変換)
 			python3 - "$TMP_STATE_DIR/current_prediction.json" "${REGRESSION_ROLLBACK_RESULT:-}" <<'PY' 2>/dev/null || true
 import json, sys
+from lib.country_names import country_name
 state_file = sys.argv[1]
 regression_result = sys.argv[2] if len(sys.argv) > 2 else ""
 d = json.load(open(state_file))
@@ -1086,7 +1089,8 @@ reason_map = {
     "lost_soviet_path": "ソ連建国ルートを見失った",
     "lost_russia_path": "ロシア建国ルートを見失った",
     "lost_ukraine_gate": "ウクライナ段階まで届かなくなった",
-    "lost_turkmenistan_gate": "トルクメニスタン段階まで届かなくなった",
+    # Historical reason key retained for stored-result compatibility.
+    "lost_turkmenistan_gate": "ウズベキスタン段階まで届かなくなった",
     "lost_kazakhstan_gate": "カザフスタン段階まで届かなくなった",
     # 判定の経緯系
     "budget_exhausted": "改良を試し切っても成績が戻らなかった",
@@ -1106,7 +1110,7 @@ for r in reason_raw.split("+"):
         continue
     if key.startswith("stage_type") and key.endswith("_achievement_gate"):
         stage = key[len("stage_type"):-len("_achievement_gate")]
-        label = f"国をType{stage}まで育てられる回数が減った"
+        label = f"{country_name(stage, '対象国')}まで育てられる回数が減った"
     elif key.startswith("rank") and key[4:].isdigit():
         label = f"成熟度ランキングで上位{key[4:]}位圏から落ちた"
     else:

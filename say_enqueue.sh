@@ -397,8 +397,16 @@ if [ "$WAV_MODE" = "false" ]; then
 			-e 's/Made in China/メイドインチャイナ/g' \
 			"$MY_CONTENT"
 	fi
-	# type表記の国名置換 + アルファベット小文字化（上の大文字辞書の後に実行）
-	python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
+	# 国名置換はゲーム由来の本文だけが明示的に有効化する。汎用TTSでは
+	# T-34やType 2 diabetesを国名と誤認せず、従来の小文字化だけを行う。
+	if [ "${SAY_REPLACE_COUNTRY_REFERENCES:-0}" = "1" ]; then
+		if ! python3 lib/normalize_speech_text.py --country-names "$MY_CONTENT" 2>/dev/null; then
+			echo "[say_enqueue] ゲーム国名の正規化に失敗したため再生を中止します" >&2
+			exit 1
+		fi
+	else
+		python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
+	fi
 fi
 
 _infer_source_label() {

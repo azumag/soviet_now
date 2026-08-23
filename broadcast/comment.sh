@@ -72,6 +72,25 @@ _comment_hash_file() {
 	return 1
 }
 
+_comment_replace_country_references() {
+	python3 -c 'import sys; from lib.normalize_speech_text import replace_country_references; sys.stdout.write(replace_country_references(sys.stdin.read()))'
+}
+
+_comment_write_country_named_queue_file() {
+	local text="${1:-}" target="${2:-}" normalized tmp
+	[ -n "$target" ] || return 1
+	normalized=$(printf '%s' "$text" | _comment_replace_country_references 2>/dev/null) || return 1
+	tmp="${target}.country.$$.${RANDOM}.tmp"
+	printf '%s\n' "$normalized" >"$tmp" 2>/dev/null || {
+		rm -f "$tmp" 2>/dev/null || true
+		return 1
+	}
+	mv "$tmp" "$target" 2>/dev/null || {
+		rm -f "$tmp" 2>/dev/null || true
+		return 1
+	}
+}
+
 _comment_failure_backoff_remaining() {
 	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
 	local now backoff_until remaining
@@ -2995,6 +3014,7 @@ PY
 - すべてのコメントへ、元の順番どおりに日本語で返答してください。英語コメントにも、この段階では日本語の返答だけを書いてください。
 - 1コメントにつき1段落とし、コメントの間は空行1行で区切ってください。言語名の見出し、制御用マーカー、Markdown、補足説明は出力しないでください。
 - 英語コメントへの英語版は後段の翻訳処理で作るため、ここで英語文を混ぜたり、同じ返答を二重に書いたりしないでください。
+- ゲーム内の国は、アルメニア、モルドバ、エストニア、ラトビア、リトアニア、ジョージア、アゼルバイジャン、タジキスタン、キルギス、ベラルーシ、ウズベキスタン、トルクメニスタン、ウクライナ、カザフスタン、ロシア、ソ連の正しい国名だけで呼んでください。内部の type・T・タイプ番号は返答本文へ一切出力しないでください。
 JAPANESECOMMENT
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
@@ -3137,6 +3157,13 @@ RETRYCOMMENT
 			attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
+			local _country_named_attempt_talk=""
+			if ! _country_named_attempt_talk=$(printf '%s' "$attempt_talk" | _comment_replace_country_references 2>/dev/null); then
+				log "[COMMENT] 国名正規化失敗のため未変換本文を破棄して再生成 (attempt ${attempt}/${comment_retry_max})"
+				attempt=$((attempt + 1))
+				continue
+			fi
+			attempt_talk="$_country_named_attempt_talk"
 
 			# 日本語本文の検証は従来どおり行う。英語判定は分類器の結果だけを
 			# 使い、生成本文の言語推測や特殊マーカー解析は行わない。
@@ -3209,7 +3236,13 @@ RETRYCOMMENT
 			fi
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
-			echo "$attempt_talk" >"$queue_file"
+			if ! _comment_write_country_named_queue_file "$attempt_talk" "$queue_file"; then
+				log "[COMMENT] queue直前の国名正規化失敗のため未変換本文を破棄して再生成 (attempt ${attempt}/${comment_retry_max})"
+				[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
+				comment_speech_meta_file=""
+				attempt=$((attempt + 1))
+				continue
+			fi
 			_remember_comment_reply_text "$attempt_talk" "$_comment_mode_generated"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
 			if ! _comment_store_generation_meta \

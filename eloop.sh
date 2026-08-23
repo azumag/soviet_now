@@ -737,7 +737,7 @@ PY
 import json, sys
 d = json.load(sys.stdin)
 types = [int(x) for x in d.get('final_types', []) if str(x).lstrip('-').isdigit()]
-print('ウクライナ=%d カザフ=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
+print('ウクライナ=%d カザフスタン=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
 " 2>/dev/null || echo "")
 		_cycle_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$MIN_GAMES_BEFORE_IMPROVE" <<'PY'
 import json
@@ -779,20 +779,12 @@ PY
 				"${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.80}" \
 				"${STAGE_ACHIEVEMENT_GATE_TYPES:-12,13,14,15}" <<'PY'
 import json, sys
-
-COUNTRY_NAMES = {
-    11: "トルクメン",
-    12: "ベラルーシ",
-    13: "ウクライナ",
-    14: "カザフ",
-    15: "ロシア",
-    16: "ソ連",
-}
+from lib.country_names import country_name
 
 STAGE_GATE_SEQUENCE = (
-    (11, "トルクメン"),
+    (11, "ウズベキスタン"),
     (13, "ウクライナ"),
-    (14, "カザフ"),
+    (14, "カザフスタン"),
 )
 
 def read_json(path, fallback):
@@ -832,7 +824,7 @@ def rate_line(max_types):
     parts = []
     for stage in (13, 14, 15):
         reached = sum(1 for value in max_types if value >= stage)
-        parts.append(f"{COUNTRY_NAMES.get(stage, 'Type'+str(stage))}={round(reached / total * 100):.0f}%")
+        parts.append(f"{country_name(stage)}={round(reached / total * 100):.0f}%")
     return "建国率 " + " ".join(parts)
 
 def target_from_anchor(anchor_data, threshold, gate_types):
@@ -931,7 +923,7 @@ if regression_target:
     max_possible_rate = (reached + remaining_games) / final_total
     status = "粛清圏" if max_possible_rate < anchor_rate else "未達"
     target_text = (
-        f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {status}"
+        f"target={country_name(stage)} {status}"
         f" curr={round(current_rate * 100):.0f}% anchor={round(anchor_rate * 100):.0f}%"
     )
     if status == "粛清圏":
@@ -940,7 +932,7 @@ elif target:
     stage, anchor_rate, _, _ = target
     current_best = max([int((current_progress or {}).get("best_max_type", 0) or 0)] + current_max_types) if current_max_types or (current_progress or {}).get("best_max_type") else 0
     target_ok = current_best >= stage
-    target_text = f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {'OK' if target_ok else '未達'}"
+    target_text = f"target={country_name(stage)} {'OK' if target_ok else '未達'}"
 extra = " | ".join(part for part in (founding, target_text) if part)
 extra = f" | {extra}" if extra else ""
 print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str}{soviet_str}{extra} (あと{remain}試合)")

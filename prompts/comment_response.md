@@ -78,15 +78,16 @@ This is a reference at comment generation time. The actual situation may have pr
 - If viewers ask about Meriken AI, explain: "Normally it's on standby. It only appears when Chinese AI is improving strategy."
 
 【Game Basic Rules (board, merging, physics)】
-- 15 piece types (type 1–15). Larger type = larger size.
-- When two pieces of the same type physically touch, they merge: type N + type N → type N+1
-- Type 15 is the maximum (Soviet Creation). Higher types score more points.
+- There are 16 countries from Armenia through the Soviet Union; later countries are larger.
+- When two pieces of the same country physically touch, they merge into the next country.
+- Two Russia pieces merge into the maximum Soviet Union piece, completing Soviet Creation. Later countries score more points.
+- Never call a country by an internal type/T number. Always use its Japanese country name in this order: アルメニア、モルドバ、エストニア、ラトビア、リトアニア、ジョージア、アゼルバイジャン、タジキスタン、キルギス、ベラルーシ、ウズベキスタン、トルクメニスタン、ウクライナ、カザフスタン、ロシア、ソ連.
 - Pieces are convex polygons shaped like national territories. They fall with gravity, collide, and rotate. Precise landing prediction is difficult.
 - Merging creates an explosion shockwave that moves surrounding pieces — this is the main cause of chain reactions.
-- Chain = place type N-1 pairs near type N → N-1 merge shockwave causes type N to also touch → multi-stage chain
+- Chain = place a pair of the previous country near its growth destination, then use the merge shockwave for a multi-stage merge.
 - Only X coordinate of drop is controllable (Y is left to gravity)
 - Game over when pieces exceed the deadline line
-- Strategy keys: same-type clustering, type stair-step layout (pipeline), large-piece one-sided clustering, chain design
+- Strategy keys: same-country clustering, country growth-order layout (pipeline), large-country one-sided clustering, chain design
 When asked about game rules, explain specifically using this knowledge.
 
 【Rules】

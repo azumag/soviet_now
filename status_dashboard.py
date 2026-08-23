@@ -20,6 +20,7 @@ from glob import glob
 from pathlib import Path
 
 from lib.ai_backoff_status import load_status as load_ai_backoff_status
+from lib.country_names import country_name
 
 W = 57
 RANK_LCB_Z = 1.28
@@ -2249,15 +2250,21 @@ def render_archive_restart_candidates():
             f"  {C_GREEN}ArchiveRestart candidates{RST} "
             f"{DIM}top={min(10, total)} total={total}{RST}"
         )
-        lines.append(f"{DIM}    hash       comp     p25   n    ru sv  t origin{RST}")
+        lines.append(
+            f"{DIM}    hash             comp     p25   n ロシア ソ連{RST}"
+        )
         for idx, cand in enumerate(candidates, start=1):
-            origin = "Y" if cand.get("origin_retry") else "-"
+            candidate_hash = str(cand.get("hash", ""))[:12]
+            origin = "あり" if cand.get("origin_retry") else "なし"
             lines.append(
-                f"  {idx:>1}. {C_BLUE}{cand.get('hash', '')}{RST} "
+                f"  {idx:>1}. {C_BLUE}{candidate_hash:<12}{RST} "
                 f"{int(cand.get('comp', 0)):>8} {int(cand.get('p25', 0)):>7} "
                 f"{int(cand.get('n', 0)):>3} "
-                f"{int(cand.get('russia', 0)):>3} {int(cand.get('soviet', 0)):>2} "
-                f"{int(cand.get('best_type', 0)):>2}   {origin}"
+                f"{int(cand.get('russia', 0)):>3} {int(cand.get('soviet', 0)):>2}"
+            )
+            lines.append(
+                f"{DIM}     最高国={country_name(cand.get('best_type', 0), '-')} "
+                f"再試行={origin}{RST}"
             )
     return lines
 

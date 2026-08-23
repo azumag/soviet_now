@@ -106,6 +106,8 @@ import re
 import sys
 from pathlib import Path
 
+from lib.country_names import country_name
+
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8", errors="ignore")
 
@@ -142,7 +144,7 @@ if "stage_achievement_regression" in trigger:
         sample_n = m.group(1)
     parts = []
     if target:
-        parts.append(f"Type{target}到達ゲート未達")
+        parts.append(f"{country_name(target, '対象国')}到達ゲート未達")
     else:
         parts.append("段階到達ゲート未達")
     if target_rate:

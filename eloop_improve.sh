@@ -2634,7 +2634,7 @@ def summarize_deadline(path: str):
 
 def summarize_nation_progress(paths):
     stage_gates = [
-        (11, "Turkmenistan"),
+        (11, "Uzbekistan"),
         (13, "Ukraine"),
         (14, "Kazakhstan"),
         (15, "Russia"),

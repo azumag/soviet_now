@@ -2133,13 +2133,23 @@ PY
 	# ここでは視聴者に伝わる文言にする。
 	local _fresh_country
 	case "${_fresh_best:-0}" in
-		16) _fresh_country="ソ連" ;;
-		15) _fresh_country="ロシア" ;;
-		14) _fresh_country="カザフ" ;;
+		1) _fresh_country="アルメニア" ;;
+		2) _fresh_country="モルドバ" ;;
+		3) _fresh_country="エストニア" ;;
+		4) _fresh_country="ラトビア" ;;
+		5) _fresh_country="リトアニア" ;;
+		6) _fresh_country="ジョージア" ;;
+		7) _fresh_country="アゼルバイジャン" ;;
+		8) _fresh_country="タジキスタン" ;;
+		9) _fresh_country="キルギス" ;;
+		10) _fresh_country="ベラルーシ" ;;
+		11) _fresh_country="ウズベキスタン" ;;
+		12) _fresh_country="トルクメニスタン" ;;
 		13) _fresh_country="ウクライナ" ;;
-		12) _fresh_country="ベラルーシ" ;;
-		11) _fresh_country="トルクメン" ;;
-		*) _fresh_country="最高T${_fresh_best:-0}" ;;
+		14) _fresh_country="カザフスタン" ;;
+		15) _fresh_country="ロシア" ;;
+		16) _fresh_country="ソ連" ;;
+		*) _fresh_country="不明な国" ;;
 	esac
 	if [ -x ./overlay_notify.sh ]; then
 		./overlay_notify.sh worker "中華AI 早期改善を決断 (game ${GAME_NUM:-?})" "直近${_fresh_n}試合は最高${_fresh_country}でロシア建国0。建国実績のある安定版に追いつけていないため、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たず戦略を練り直します。" "warn" >/dev/null 2>&1 || true
