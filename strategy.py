@@ -59,6 +59,9 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v715: PRE_RUSSIA_T13_CONTACT_SHOT — when two T13s exist before the first T14,
+# stop center-clustering and hit the less-buried T13 from its outer side so the
+# impact closes the pair. Live v714 held a 1.5-radius-gap T13x2 for 42 turns.
 # v714: POST_RUSSIA_T12_CONTACT_SHOT — after the first T14, stop dropping on the
 # T12-pair center. Hit the mobile outer side so impact closes the remaining gap;
 # live v713 showed an accidental side shot reduced the gap 0.78 -> 0.70 while
@@ -631,6 +634,49 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # hit the mobile piece from outside so impact pushes it toward its partner.
     _contact_shot_active = False
     _contact_shot_x = None
+    # v715 applies the same physical lesson before Russia: once two T13s exist,
+    # center clustering does not close them. Strike the less-buried T13 from its
+    # outer side so impact pushes it toward the partner and creates the first T14.
+    _pre_t13_shot_active = False
+    _pre_t13_shot_x = None
+    _pre_t13_shot_target = None
+    if t14_count == 0 and t13_count >= 2:
+        _pre_pair = None
+        _pre_best_key = (999.0, 999.0)
+        for _pair_i, _pair_a in enumerate(pieces):
+            if _pair_a.get("type") != 13:
+                continue
+            for _pair_b in pieces[_pair_i + 1:]:
+                if _pair_b.get("type") != 13:
+                    continue
+                _ax = float(_pair_a.get("x", 0.0) or 0.0)
+                _ay = float(_pair_a.get("y", -10.0) or -10.0)
+                _bx = float(_pair_b.get("x", 0.0) or 0.0)
+                _by = float(_pair_b.get("y", -10.0) or -10.0)
+                _dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
+                _gap = _dist - float(_pair_a.get("r", 1.0)) - float(_pair_b.get("r", 1.0))
+                _key = (_gap + max(0.0, max(_ay, _by) - 1.0) * 0.25, max(_ay, _by))
+                if _key < _pre_best_key:
+                    _pre_best_key = _key
+                    _pre_pair = (_pair_a, _pair_b)
+        if _pre_pair is not None:
+            _shot_other, _shot_target = _pre_pair
+            if float(_shot_other.get("y", -10)) > float(_shot_target.get("y", -10)):
+                _shot_target, _shot_other = _shot_other, _shot_target
+            _shot_dx = float(_shot_target.get("x", 0)) - float(_shot_other.get("x", 0))
+            _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
+            _pair_gap = (
+                ((_shot_target.get("x", 0) - _shot_other.get("x", 0)) ** 2
+                 + (_shot_target.get("y", 0) - _shot_other.get("y", 0)) ** 2) ** 0.5
+                - float(_shot_target.get("r", 1.0))
+                - float(_shot_other.get("r", 1.0))
+            )
+            if _pair_gap > 0.08:
+                _pre_t13_shot_active = True
+                _pre_t13_shot_target = _shot_target
+                _pre_t13_shot_x = float(_shot_target.get("x", 0)) + _shot_dir * (
+                    float(_shot_target.get("r", 1.0)) + max(0.35, next_radius)
+                )
     if t14_count == 1 and t13_count <= 1 and _second_t13_pair is not None:
         _shot_other, _shot_target = _second_t13_pair
         # Prefer the higher piece: it is less buried and more responsive to impact.
@@ -1721,7 +1767,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # The mobile contact-shot target is the one piece we intentionally
                 # strike from the outside; treating its side lane as "cover" would
                 # cancel the only mechanism that closes the pair.
-                if _contact_shot_active and _lane_anchor is _shot_target:
+                if (_contact_shot_active and _lane_anchor is _shot_target) or (
+                    _pre_t13_shot_active and _lane_anchor is _pre_t13_shot_target
+                ):
                     continue
                 _ax = float(_lane_anchor.get("x", 0.0) or 0.0)
                 _ay = float(_lane_anchor.get("y", 0.0) or 0.0)
@@ -1746,6 +1794,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif _shot_dist <= 0.7:
                 score -= 1800.0
                 reasons.append("POST_RUSSIA_CONTACT_SHOT_UNSAFE")
+
+        if _pre_t13_shot_active and merge_grade == "NO" and not death_spiral:
+            _pre_shot_safe = (
+                not result.get("crosses_deadline", False)
+                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
+            )
+            _pre_shot_dist = abs(x - float(_pre_t13_shot_x))
+            if _pre_shot_safe:
+                score += max(0.0, 12000.0 - _pre_shot_dist * 3000.0)
+                reasons.append("PRE_RUSSIA_T13_CONTACT_SHOT")
+            elif _pre_shot_dist <= 0.7:
+                score -= 1800.0
+                reasons.append("PRE_RUSSIA_CONTACT_SHOT_UNSAFE")
 
         # (2) T13ペア衝突誘導: T13x2以上が存在するとき、中間点への配置で物理衝突を促す
         if t13_pair_center_x is not None and not death_spiral:

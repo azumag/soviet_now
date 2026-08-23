@@ -1382,34 +1382,30 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                     best_pair = (left, right)
         if best_pair is None:
             return None
-        target_x = (
-            _geom_num(best_pair[0].get("x"))
-            + _geom_num(best_pair[1].get("x"))
+        # v715: deadline safety must preserve the physical contact shot, not
+        # collapse back to the pair midpoint. Strike the less-buried T13 from
+        # its outer side so impact pushes it toward the other T13.
+        _contact_other, _contact_target = best_pair
+        if _geom_num(_contact_other.get("y"), -10.0) > _geom_num(_contact_target.get("y"), -10.0):
+            _contact_target, _contact_other = _contact_other, _contact_target
+        _contact_center_x = (
+            _geom_num(_contact_other.get("x")) + _geom_num(_contact_target.get("x"))
         ) / 2.0
-
-        if next_type in (6, 7, 8, 9, 10, 11, 12):
-            same_targets = [
-                p for p in pieces if int(p.get("type", 0) or 0) == next_type
-            ]
-            if same_targets:
-                def same_key(piece):
-                    px = _geom_num(piece.get("x"))
-                    py = _geom_num(piece.get("y"), -10.0)
-                    lane_dist = abs(px - target_x)
-                    return (
-                        lane_dist
-                        + max(0.0, lane_dist - 1.35) * 1.25
-                        + max(0.0, py - 0.8) * 1.05,
-                        py,
-                    )
-                same_target = min(same_targets, key=same_key)
-                same_dx = abs(_geom_num(same_target.get("x")) - target_x)
-                if not (
-                    next_type == 11
-                    and high_counts.get(12, 0) == 0
-                    and same_dx > 1.45
-                ):
-                    target_x = _geom_num(same_target.get("x"))
+        _contact_dir = 1.0 if _geom_num(_contact_target.get("x")) >= _contact_center_x else -1.0
+        _contact_gap = (
+            ((_geom_num(_contact_target.get("x")) - _geom_num(_contact_other.get("x"))) ** 2
+             + (_geom_num(_contact_target.get("y"), -10.0) - _geom_num(_contact_other.get("y"), -10.0)) ** 2) ** 0.5
+            - _geom_num(_contact_target.get("r"), 1.0)
+            - _geom_num(_contact_other.get("r"), 1.0)
+        )
+        if _contact_gap <= 0.08:
+            return None
+        target_x = _geom_num(_contact_target.get("x")) + _contact_dir * (
+            _geom_num(_contact_target.get("r"), 1.0) + max(0.35, geometry_next_r)
+        )
+        # The desired impact point can lie beyond the right wall. Clamp to the
+        # legal drop range: the outermost safe candidate still strikes the target.
+        target_x = max(-3.0, min(3.0, target_x))
 
         current_dx = abs(_geom_num(candidate.get("x")) - target_x)
         pool = results or safe
