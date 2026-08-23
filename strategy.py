@@ -408,6 +408,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 実在の T15（ロシア）がある場合のみ現行のロシアフェーズ安全着地へ移行する。
     type15_count = sum(1 for p in pieces if p.get("type") == 15)
 
+    # v717: once the first Russia exists, the next chain must be built away
+    # from that anchor. Use the deepest high piece as a growth center only when
+    # it is not the Russia itself; this keeps the completed country safe while
+    # concentrating T11/T12 material for the second chain.
+    _growth_anchor = None
+    if type15_count == 1:
+        _growth_candidates = [p for p in pieces if p.get("type") in (12, 13, 14)]
+        if _growth_candidates:
+            _growth_anchor = max(
+                _growth_candidates,
+                key=lambda p: (float(p.get("y", -10.0) or -10.0), int(p.get("type", 0) or 0)),
+            )
+
     double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1
 
     # --- phase judgment (v42 thresholds) ---
@@ -1421,8 +1434,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #    At pc=28: 100. At pc=35: ~198. At pc=40: ~268. Safe vs axis 8.8 (-3000 to -7000).
         # 4. Changed decay: gc_y > 0 now uses 0.4 decay (from 0.5) — slightly less aggressive decay.
         max_type_on_board = max((p.get("type", -1) for p in pieces), default=-1)
-        if max_type_on_board >= 8 and not death_spiral:
-            # Find the deepest (lowest y) highest-type piece as growth center
+        if type15_count == 0 and max_type_on_board >= 8 and not death_spiral:
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
                 key=lambda p: p.get("y", 12),
@@ -1443,6 +1455,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity *= min(congestion_scale, 1.421)
                     if proximity > -2:
                         score += proximity
+                        reasons.append("GROWTH_CENTER")
+
+        # v717: post-Russia second-chain center. A gentle, broad guide is enough
+        # to break the old "one T15 plus scattered material" pattern without
+        # overriding deadline safety or the dedicated merge-pair hooks.
+        if (
+            type15_count >= 1
+            and _growth_anchor is not None
+            and merge_grade == "NO"
+            and not death_spiral
+            and not result.get("crosses_deadline", False)
+        ):
+            _growth_dist = abs(x - float(_growth_anchor.get("x", 0.0) or 0.0))
+            if _growth_dist <= 3.2:
+                score += max(0.0, 900.0 - _growth_dist * 240.0)
+                reasons.append("SECOND_CHAIN_GROWTH_CENTER")
 
         # ----- v713: restore pre-Russia T13 pair clustering -----
         # Live v712b reached T13x2 but the two pieces stayed separated until
