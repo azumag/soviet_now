@@ -59,6 +59,10 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v714: POST_RUSSIA_T12_CONTACT_SHOT — after the first T14, stop dropping on the
+# T12-pair center. Hit the mobile outer side so impact closes the remaining gap;
+# live v713 showed an accidental side shot reduced the gap 0.78 -> 0.70 while
+# center drops left it unchanged until deadline loss.
 # v713: restore pre-Russia T13-pair cluster/compress/ladder modes and make the
 # runner pair-lane hook state-aware. Live v712b reached T13x2 but repeatedly lost
 # it to deadline fallback before contact; reason-tag-only hooks were bypassed.
@@ -427,6 +431,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 2)
     next_next_type = next_next_piece.get("type", ----1)
+    next_radius = float(next_piece.get("r", 0.5) or 0.5)
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -618,6 +623,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             + float(_second_t13_pair[1].get("x", 0.0) or 0.0)
         ) / 2.0
         russia_lane_anchors.extend(_second_t13_pair)
+
+    # --- v714: post-Russia T12 contact shot ---
+    # Live evidence showed center drops left a 0.7--0.8 T12 pair gap unchanged,
+    # while an accidental outer-side hit moved the upper/right piece toward its
+    # partner and reduced the gap to 0.70. Convert that observation into a lane:
+    # hit the mobile piece from outside so impact pushes it toward its partner.
+    _contact_shot_active = False
+    _contact_shot_x = None
+    if t14_count == 1 and t13_count <= 1 and _second_t13_pair is not None:
+        _shot_other, _shot_target = _second_t13_pair
+        # Prefer the higher piece: it is less buried and more responsive to impact.
+        if float(_shot_other.get("y", -10)) > float(_shot_target.get("y", -10)):
+            _shot_target, _shot_other = _shot_other, _shot_target
+        _shot_dx = float(_shot_target.get("x", 0)) - float(_shot_other.get("x", 0))
+        _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
+        _pair_gap = (
+            ((_shot_target.get("x", 0) - _shot_other.get("x", 0)) ** 2
+             + (_shot_target.get("y", 0) - _shot_other.get("y", 0)) ** 2) ** 0.5
+            - float(_shot_target.get("r", 1.0))
+            - float(_shot_other.get("r", 1.0))
+        )
+        if _pair_gap > 0.08:
+            _contact_shot_active = True
+            _contact_shot_x = float(_shot_target.get("x", 0)) + _shot_dir * (
+                float(_shot_target.get("r", 1.0)) + max(0.35, next_radius)
+            )
 
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1687,6 +1718,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # next_type never reaches 13 in the observed feed, so a drop over these
             # anchors cannot be a direct same-type merge. Protect both T14 and T13.
             for _lane_anchor in russia_lane_anchors:
+                # The mobile contact-shot target is the one piece we intentionally
+                # strike from the outside; treating its side lane as "cover" would
+                # cancel the only mechanism that closes the pair.
+                if _contact_shot_active and _lane_anchor is _shot_target:
+                    continue
                 _ax = float(_lane_anchor.get("x", 0.0) or 0.0)
                 _ay = float(_lane_anchor.get("y", 0.0) or 0.0)
                 _ar = max(0.5, float(_lane_anchor.get("r", 1.5) or 1.5))
@@ -1694,6 +1730,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= 5600.0
                     reasons.append("RUSSIA_LANE_COVER_AVOID")
                     break
+
+        # ----- v714: POST_RUSSIA_T12_CONTACT_SHOT -----
+        # A center drop cannot close two separated circles. Reward the outer-side
+        # lane whose horizontal impact pushes the mobile T12 toward its partner.
+        if _contact_shot_active and merge_grade == "NO" and not death_spiral:
+            _shot_safe = (
+                not result.get("crosses_deadline", False)
+                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
+            )
+            _shot_dist = abs(x - float(_contact_shot_x))
+            if _shot_safe:
+                score += max(0.0, 12000.0 - _shot_dist * 3000.0)
+                reasons.append("POST_RUSSIA_T12_CONTACT_SHOT")
+            elif _shot_dist <= 0.7:
+                score -= 1800.0
+                reasons.append("POST_RUSSIA_CONTACT_SHOT_UNSAFE")
 
         # (2) T13ペア衝突誘導: T13x2以上が存在するとき、中間点への配置で物理衝突を促す
         if t13_pair_center_x is not None and not death_spiral:
