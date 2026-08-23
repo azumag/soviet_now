@@ -59,6 +59,11 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v712: SECOND_T13_CONTACT_LANE — when the first Russia exists with a singleton T13,
+# steer assembly drops at the live T12-pair center instead of back at T14/T13.
+# Live v711 evidence (2750-point game): the decisive T12 pair stayed near x=+2 while
+# T14/T13 lane guidance repeatedly pulled drops left; the board held
+# T14+T13+T12x2 for 27 turns without creating the second T13.
 # v711: restore first-Russia assembly modes (T12-pair lock / T13-pair lift /
 # singleton-T13 T12-bank lift). v710 protected the physical anchor but did not
 # steer ordinary drops into the second-Russia build lane; runtime logs showed 129
@@ -176,6 +181,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         p for p in (__dlg_game_state.get("pieces") or [])
         if isinstance(p, dict) and p.get("type") in (13, 14)
     ]
+    # v712: runtime safety must protect the forward-looking second-T13 lane too.
+    _dlg_t12_pair = [p for p in (__dlg_game_state.get("pieces") or []) if isinstance(p, dict) and p.get("type") == 12]
+    if len(_dlg_t12_pair) >= 2:
+        _dlg_pair_best_key = (999.0, 999.0)
+        _dlg_pair_selected = None
+        for _dlg_i, _dlg_a in enumerate(_dlg_t12_pair):
+            for _dlg_b in _dlg_t12_pair[_dlg_i + 1:]:
+                _dlg_ax = float(_dlg_a.get("x", 0.0) or 0.0)
+                _dlg_ay = float(_dlg_a.get("y", -10.0) or -10.0)
+                _dlg_bx = float(_dlg_b.get("x", 0.0) or 0.0)
+                _dlg_by = float(_dlg_b.get("y", -10.0) or -10.0)
+                _dlg_dist = ((_dlg_ax - _dlg_bx) ** 2 + (_dlg_ay - _dlg_by) ** 2) ** 0.5
+                _dlg_top = max(_dlg_ay, _dlg_by)
+                _dlg_key = (_dlg_dist + max(0.0, _dlg_top - 1.15) * 0.35, _dlg_top)
+                if _dlg_key < _dlg_pair_best_key:
+                    _dlg_pair_best_key = _dlg_key
+                    _dlg_pair_selected = (_dlg_a, _dlg_b)
+        if _dlg_pair_selected is not None:
+            _dlg_anchor_pieces.extend(_dlg_pair_selected)
     if _dlg_anchor_pieces:
         _dlg_anchor_type = 14 if any(p.get("type") == 14 for p in _dlg_anchor_pieces) else 13
         _dlg_anchor_seeds = [p for p in _dlg_anchor_pieces if p.get("type") == _dlg_anchor_type]
@@ -548,6 +572,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         p for p in pieces
         if p.get("type") in (13, 14)
     ]
+    # v712: identify the actual next merge that unlocks the second T13. After the
+    # first T14, two live T12s are more valuable than the already-protected T14/T13;
+    # their center is where impacts must be concentrated.
+    _second_t13_pair = None
+    if t14_count == 1 and t13_count <= 1:
+        _t12_pair_targets = [p for p in pieces if p.get("type") == 12]
+        _best_pair_key = (999.0, 999.0)
+        for _pair_i, _pair_a in enumerate(_t12_pair_targets):
+            for _pair_b in _t12_pair_targets[_pair_i + 1:]:
+                _ax = float(_pair_a.get("x", 0.0) or 0.0)
+                _ay = float(_pair_a.get("y", -10.0) or -10.0)
+                _bx = float(_pair_b.get("x", 0.0) or 0.0)
+                _by = float(_pair_b.get("y", -10.0) or -10.0)
+                _pair_dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
+                _pair_top = max(_ay, _by)
+                _pair_key = (_pair_dist + max(0.0, _pair_top - 1.15) * 0.35, _pair_top)
+                if _pair_key < _best_pair_key:
+                    _best_pair_key = _pair_key
+                    _second_t13_pair = (_pair_a, _pair_b)
+
     if russia_lane_anchors:
         _lane_seed_type = 14 if any(p.get("type") == 14 for p in russia_lane_anchors) else 13
         _lane_seed_pieces = [
@@ -564,6 +608,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             russia_lane_x = float(_fallback_lane)
         except (TypeError, ValueError):
             russia_lane_x = None
+    if _second_t13_pair is not None:
+        # Override the backward-looking T14 anchor with the forward-looking T12 contact lane.
+        russia_lane_x = (
+            float(_second_t13_pair[0].get("x", 0.0) or 0.0)
+            + float(_second_t13_pair[1].get("x", 0.0) or 0.0)
+        ) / 2.0
+        russia_lane_anchors.extend(_second_t13_pair)
 
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
