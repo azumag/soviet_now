@@ -614,15 +614,15 @@ PY
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_fact_check_defaults_put_muse_before_paid_fallback(self):
+    def test_fact_check_defaults_put_stable_free_model_first(self):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
         self.assertIn(
-            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode-go:muse-spark-1.2-contributor}"',
+            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:x-preview-f-free}"',
             config,
         )
         self.assertIn(
-            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-codex:deepseek-v4-flash}"',
+            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.2-contributor}"',
             config,
         )
         self.assertIn(
