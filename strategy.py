@@ -59,6 +59,10 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v711: restore first-Russia assembly modes (T12-pair lock / T13-pair lift /
+# singleton-T13 T12-bank lift). v710 protected the physical anchor but did not
+# steer ordinary drops into the second-Russia build lane; runtime logs showed 129
+# residual cover transitions and only 1/12 games reaching T14.
 # v710: RUSSIA_LANE_ASSEMBLY — T14/T13 anchor protection and weighted second-Russia lane
 # Evidence (74 games, 2026-08-23): after the first T14, 113/150 observed placements
 # landed inside the T14 cover zone; those transitions worsened deadline margin in 55%.
@@ -462,6 +466,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # v707: T13単体カウント（T13+T13→T14 経路の対象段階判定用。ループ外で一度だけ集計）
     t13_count = sum(1 for p in pieces if p.get("type") == 13)
     t14_count = sum(1 for p in pieces if p.get("type") == 14)
+    # v711: restore explicit precursor inventory for first-Russia assembly modes.
+    pre_russia_counts = {
+        tier: sum(1 for p in pieces if p.get("type") == tier)
+        for tier in range(10, 16)
+    }
+
+    def _weighted_center_x(targets):
+        valid = [p for p in targets if isinstance(p, dict)]
+        if not valid:
+            return None
+        return sum(float(p.get("x", 0.0) or 0.0) for p in valid) / len(valid)
+
     # v709: 高type集約用の中心座標を事前計算（ループ外で一度だけ）
     high_pieces = [p for p in pieces if p.get("type", 0) >= 11]
     high_cluster_x = (
@@ -1415,6 +1431,206 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if _high_pair_exists and not death_spiral and merge_grade == "NO":
             score -= max(1.0, float(landing_y) + 3.0) * 500.0
             reasons.append("HIGH_PAIR_SURVIVAL_MODE")
+
+        # ----- v711: restore first-Russia assembly modes -----
+        # v710 made the anchor safe but did not tell ordinary drops where to build
+        # the second T13/T14. Restore three focused, previously proven modes:
+        # close an existing T13 pair, rebuild a singleton T13 from a T12 bank, or
+        # lock two T12s together before that T13 exists.
+
+        second_russia_t12_pair_lock_ready = (
+            t14_count >= 1
+            and type15_count == 0
+            and pre_russia_counts.get(13, 0) == 0
+            and pre_russia_counts.get(12, 0) >= 2
+            and next_type in (10, 11, 12, 13)
+        )
+        if (
+            merge_grade == "NO"
+            and second_russia_t12_pair_lock_ready
+            and not result.get("crosses_deadline", False)
+            and not death_spiral
+            and max_y < 3.35
+            and piece_count >= 30
+        ):
+            t12_targets = [p for p in pieces if p.get("type") == 12]
+            best_pair = None
+            best_pair_key = (999.0, 999.0)
+            for pair_i, pair_a in enumerate(t12_targets):
+                for pair_b in t12_targets[pair_i + 1:]:
+                    ax = float(pair_a.get("x", 0) or 0)
+                    ay = float(pair_a.get("y", -10) or -10)
+                    bx = float(pair_b.get("x", 0) or 0)
+                    by = float(pair_b.get("y", -10) or -10)
+                    pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                    pair_top = max(ay, by)
+                    pair_center = (ax + bx) / 2.0
+                    pair_key = (
+                        pair_dist + max(0.0, pair_top - 1.15) * 1.15 + abs(pair_center) * 0.18,
+                        pair_top,
+                    )
+                    if pair_key < best_pair_key:
+                        best_pair_key = pair_key
+                        best_pair = (pair_a, pair_b)
+            if best_pair is not None:
+                pair_lock_x = (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0
+                pair_lock_dist = abs(x - pair_lock_x)
+                pair_lock_bonus = max(0.0, 3400.0 - pair_lock_dist * 760.0)
+                if landing_y > 2.35:
+                    pair_lock_bonus *= 0.55
+                if landing_y > 2.9:
+                    pair_lock_bonus *= 0.35
+                if pair_lock_dist >= 1.2:
+                    score -= 2600.0
+                if abs(x) >= 2.45 and pair_lock_dist >= 1.25:
+                    score -= 2200.0
+                if pair_lock_bonus > 0:
+                    score += pair_lock_bonus
+                    reasons.append("SECOND_RUSSIA_T12_PAIR_LOCK")
+
+        first_russia_t13_pair_lift_ready = (
+            t14_count >= 1
+            and type15_count == 0
+            and pre_russia_counts.get(13, 0) >= 2
+            and next_type in (10, 11, 12, 13)
+        )
+        if (
+            merge_grade == "NO"
+            and first_russia_t13_pair_lift_ready
+            and not death_spiral
+            and max_y < 3.4
+            and piece_count >= 24
+        ):
+            t13_targets = [p for p in pieces if p.get("type") == 13]
+            best_pair = None
+            best_pair_key = (999.0, 999.0)
+            for pair_i, pair_a in enumerate(t13_targets):
+                for pair_b in t13_targets[pair_i + 1:]:
+                    ax = float(pair_a.get("x", 0) or 0)
+                    ay = float(pair_a.get("y", -10) or -10)
+                    bx = float(pair_b.get("x", 0) or 0)
+                    by = float(pair_b.get("y", -10) or -10)
+                    pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                    pair_top = max(ay, by)
+                    pair_center = (ax + bx) / 2.0
+                    _lane_penalty = abs(pair_center - float(russia_lane_x)) * 0.15 if russia_lane_x is not None else 0.0
+                    pair_key = (
+                        pair_dist + max(0.0, pair_top - 1.1) * 0.55 + _lane_penalty,
+                        pair_top,
+                    )
+                    if pair_key < best_pair_key:
+                        best_pair_key = pair_key
+                        best_pair = (pair_a, pair_b)
+            if best_pair is not None:
+                pair_center_x = (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0
+                pair_lift_dist = abs(x - pair_center_x)
+                pair_lift_bonus = max(0.0, 2400.0 - pair_lift_dist * 560.0)
+                if landing_y > 2.8:
+                    pair_lift_bonus *= 0.55
+                if pair_lift_dist >= 1.2:
+                    score -= 950.0
+                if abs(x) >= 2.5 and pair_lift_dist >= 1.7:
+                    score -= 1800.0
+                if pair_lift_bonus > 0:
+                    score += pair_lift_bonus
+                    reasons.append("FIRST_RUSSIA_T13_PAIR_LIFT")
+
+        first_russia_single_t13_t12_bank_ready = (
+            t14_count >= 1
+            and type15_count == 0
+            and pre_russia_counts.get(13, 0) == 1
+            and pre_russia_counts.get(12, 0) >= 1
+            and (
+                pre_russia_counts.get(12, 0) >= 2
+                or pre_russia_counts.get(11, 0) >= 1
+                or pre_russia_counts.get(10, 0) >= 2
+            )
+            and next_type in (10, 11, 12, 13)
+        )
+        if (
+            merge_grade == "NO"
+            and first_russia_single_t13_t12_bank_ready
+            and not result.get("crosses_deadline", False)
+            and not death_spiral
+            and max_y < 3.2
+            and piece_count >= 20
+        ):
+            t13_targets = [p for p in pieces if p.get("type") == 13]
+            t12_targets = [p for p in pieces if p.get("type") == 12]
+            t11_targets = [p for p in pieces if p.get("type") == 11]
+            t10_targets = [p for p in pieces if p.get("type") == 10]
+            t13_center = _weighted_center_x(t13_targets)
+            bank_target = None
+            if next_type == 12 and t12_targets:
+                if len(t12_targets) >= 2:
+                    best_pair = None
+                    best_pair_key = (999.0, 999.0)
+                    for pair_i, pair_a in enumerate(t12_targets):
+                        for pair_b in t12_targets[pair_i + 1:]:
+                            ax = float(pair_a.get("x", 0) or 0)
+                            ay = float(pair_a.get("y", -10) or -10)
+                            bx = float(pair_b.get("x", 0) or 0)
+                            by = float(pair_b.get("y", -10) or -10)
+                            pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                            pair_top = max(ay, by)
+                            pair_center = (ax + bx) / 2.0
+                            t13_dist = abs(pair_center - t13_center) if t13_center is not None else 0.0
+                            pair_key = (
+                                pair_dist + t13_dist * 0.35 + max(0.0, pair_top - 1.1) * 1.4,
+                                pair_top,
+                            )
+                            if pair_key < best_pair_key:
+                                best_pair_key = pair_key
+                                best_pair = (pair_a, pair_b)
+                    if best_pair is not None:
+                        bank_target = {
+                            "x": (float(best_pair[0].get("x", 0)) + float(best_pair[1].get("x", 0))) / 2.0,
+                            "y": max(float(best_pair[0].get("y", -10)), float(best_pair[1].get("y", -10))),
+                        }
+                if bank_target is None:
+                    bank_target = min(
+                        t12_targets,
+                        key=lambda tp: (
+                            abs(float(tp.get("x", 0) or 0) - (t13_center if t13_center is not None else float(tp.get("x", 0) or 0))),
+                            max(0.0, float(tp.get("y", -10) or -10) - 1.0),
+                        ),
+                    )
+            elif next_type == 11 and t11_targets:
+                up_targets = t12_targets + t13_targets
+                bank_target = min(
+                    t11_targets,
+                    key=lambda tp: (
+                        min(
+                            ((up.get("x", 0) - tp.get("x", 0)) ** 2 + (up.get("y", -10) - tp.get("y", -10)) ** 2) ** 0.5
+                            for up in up_targets
+                        ) if up_targets else 999.0,
+                        max(0.0, float(tp.get("y", -10) or -10) - 1.0),
+                    ),
+                )
+            elif next_type == 10 and t10_targets:
+                up_targets = t11_targets + t12_targets
+                bank_target = min(
+                    t10_targets,
+                    key=lambda tp: (
+                        min(
+                            ((up.get("x", 0) - tp.get("x", 0)) ** 2 + (up.get("y", -10) - tp.get("y", -10)) ** 2) ** 0.5
+                            for up in up_targets
+                        ) if up_targets else 999.0,
+                        max(0.0, float(tp.get("y", -10) or -10) - 0.9),
+                    ),
+                )
+            if bank_target is not None:
+                bank_dist = abs(x - float(bank_target.get("x", 0) or 0))
+                bank_bonus = max(0.0, 2550.0 - bank_dist * 590.0)
+                if piece_count >= 34:
+                    bank_bonus *= min(1.85, 1.0 + (piece_count - 34) * 0.08)
+                if landing_y > 2.35:
+                    bank_bonus *= 0.52
+                if abs(x) >= 2.5 and bank_dist >= 1.45:
+                    score -= 1750.0
+                if bank_bonus > 0:
+                    score += bank_bonus
+                    reasons.append("FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
