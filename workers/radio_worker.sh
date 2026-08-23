@@ -81,6 +81,17 @@ _dump_diag() {
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
+	# Corner generators are background jobs of this shell. Without this,
+	# a worker restart leaves them running and they can enqueue duplicate
+	# results after the replacement worker has started.
+	local job_pid
+	for job_pid in $(jobs -p); do
+		kill -TERM "$job_pid" 2>/dev/null || true
+	done
+	sleep 1
+	for job_pid in $(jobs -p); do
+		kill -KILL "$job_pid" 2>/dev/null || true
+	done
 	local active_pid=""
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
 	if [ "$active_pid" != "$$" ]; then
