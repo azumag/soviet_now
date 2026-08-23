@@ -576,7 +576,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # first T14, two live T12s are more valuable than the already-protected T14/T13;
     # their center is where impacts must be concentrated.
     _second_t13_pair = None
-    if t14_count == 1 and t13_count <= 1:
+    if t14_count <= 1 and t13_count <= 1:
         _t12_pair_targets = [p for p in pieces if p.get("type") == 12]
         _best_pair_key = (999.0, 999.0)
         for _pair_i, _pair_a in enumerate(_t12_pair_targets):
