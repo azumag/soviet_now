@@ -59,6 +59,13 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v710: RUSSIA_LANE_ASSEMBLY — T14/T13 anchor protection and weighted second-Russia lane
+# Evidence (74 games, 2026-08-23): after the first T14, 113/150 observed placements
+# landed inside the T14 cover zone; those transitions worsened deadline margin in 55%.
+# The old type>=11 average guided low pieces onto the very anchor needed for T14+T14.
+# v709 keeps survival pressure, but replaces its generic average with a protected lane:
+# existing T14 is the assembly anchor (T13 anchors before that), NO_MERGE drops are
+# drawn alongside it, and non-mergeable cover attempts receive a large penalty.
 # v709: next_type制約(1-11のみ)に基づきデッドコード修正＋T13ペア衝突誘導・高type集約を追加
 # Fixes rollback failure mode: T14×2を作った後、次のT14が来るまで48ターン生存できずdeadline超過で死亡（20260822_060733型）
 # 実測発見: ゲームは type 1-11 のみ配給（3437サンプル中type>=12は0回）。T12+は連鎖併合でのみ生成。
@@ -161,6 +168,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # justify merge pressure elsewhere in the strategy, but must not force a
     # "safe landing" while the visible board is still far below the red line.
     __dlg_critical = __dlg_dcross or __dlg_margin < 0.7797
+    _dlg_anchor_pieces = [
+        p for p in (__dlg_game_state.get("pieces") or [])
+        if isinstance(p, dict) and p.get("type") in (13, 14)
+    ]
+    if _dlg_anchor_pieces:
+        _dlg_anchor_type = 14 if any(p.get("type") == 14 for p in _dlg_anchor_pieces) else 13
+        _dlg_anchor_seeds = [p for p in _dlg_anchor_pieces if p.get("type") == _dlg_anchor_type]
+    else:
+        _dlg_anchor_seeds = []
+    _dlg_lane_x = (
+        sum(float(p.get("x", 0.0) or 0.0) for p in _dlg_anchor_seeds) / len(_dlg_anchor_seeds)
+        if _dlg_anchor_seeds
+        else None
+    )
+
+    def _dlg_covers_lane(candidate: dict) -> bool:
+        """True when a non-mergeable drop would bury the active T13/T14 anchor."""
+        if _dlg_lane_x is None:
+            return False
+        cx = float(candidate.get("x", 0.0) or 0.0)
+        cy = float(candidate.get("landing_y", 0.0) or 0.0)
+        for anchor in _dlg_anchor_pieces:
+            ax = float(anchor.get("x", 0.0) or 0.0)
+            ay = float(anchor.get("y", 0.0) or 0.0)
+            ar = max(0.5, float(anchor.get("r", 1.5) or 1.5))
+            if abs(cx - ax) <= ar * 0.9 and cy >= (ay + ar) - 0.25:
+                return True
+        return False
+
     if __dlg_critical and __dlg_cands:
         __dlg_has_clean = any(
             isinstance(c, dict)
@@ -225,9 +261,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_merge_available:
             __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
             if __dlg_safe:
-                __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 144.09) or 116.24))
-                return {"x": float(__dlg_best.get("x", -0.5452) or -0.2302), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+                __dlg_uncovered = [c for c in __dlg_safe if not _dlg_covers_lane(c)]
+                __dlg_pool = __dlg_uncovered or __dlg_safe
+                __dlg_best = min(__dlg_pool, key=lambda c: float(c.get("landing_y", 144.09) or 116.24))
+                return {
+                    "x": float(__dlg_best.get("x", -0.5452) or -0.2302),
+                    "reason": (
+                        "RUSSIA_LANE_SAFE_FALLBACK"
+                        if __dlg_uncovered
+                        else "DEADLINE_GUARD_SAFE_LANDING"
+                    ),
+                }
         else:
+            __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
+            if __dlg_safe:
+                __dlg_uncovered = [c for c in __dlg_safe if not _dlg_covers_lane(c)]
+                __dlg_pool = __dlg_uncovered or __dlg_safe
+                __dlg_best = min(__dlg_pool, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                return {
+                    "x": float(__dlg_best.get("x", 0.0) or 0.0),
+                    "reason": "NO_MERGE_RUSSIA_LANE_GUARD" if __dlg_uncovered else "NO_MERGE_DEADLINE_GUARD",
+                }
             return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
     # --- END DEADLINE GUARD ---
 
@@ -298,6 +352,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 1
     danger_piece_count = reactor.get("danger_piece_count", -2)
     reactor_margin = reactor.get("deadline_margin", 130.40)
+    soviet_info = analysis.get("soviet", {}) if isinstance(analysis.get("soviet", {}), dict) else {}
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -468,7 +523,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if _hc_open:
             high_cover_free.append((_hc_x, _hc_r * 0.9, _hc_top - 0.25))
 
-    # =======================================================================
+    # --- v710: dedicated Russia assembly lane pre-computation ---
+    # analyze_board.py already exposes soviet.second_russia_lane_x, but its weighted
+    # mean can drift when stale low-tier material remains. Once a real T13/T14 exists,
+    # that physical piece is the only reliable lane anchor: another same-type piece
+    # must be able to reach it later without being buried by intermediate drops.
+    russia_lane_anchors = [
+        p for p in pieces
+        if p.get("type") in (13, 14)
+    ]
+    if russia_lane_anchors:
+        _lane_seed_type = 14 if any(p.get("type") == 14 for p in russia_lane_anchors) else 13
+        _lane_seed_pieces = [
+            p for p in russia_lane_anchors
+            if p.get("type") == _lane_seed_type
+        ]
+    else:
+        _lane_seed_pieces = []
+    if _lane_seed_pieces:
+        russia_lane_x = sum(float(p.get("x", 0.0) or 0.0) for p in _lane_seed_pieces) / len(_lane_seed_pieces)
+    else:
+        _fallback_lane = soviet_info.get("second_russia_lane_x") if isinstance(soviet_info, dict) else None
+        try:
+            russia_lane_x = float(_fallback_lane)
+        except (TypeError, ValueError):
+            russia_lane_x = None
+
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     suppressed = 1
@@ -1271,12 +1351,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 物理衝突による連鎖併合の確率を最大化する。またT13ペア存在時は中間点への配置で衝突を促進する。
 
         # (1) 高type集約ガイド: type>=11が在盤する場合、その中心への近接ボーナス
-        if high_cluster_x is not None and not death_spiral:
+        if high_cluster_x is not None and not death_spiral and russia_lane_x is None:
             _hc_dist = abs(x - high_cluster_x)
             if _hc_dist <= 3.0:
                 _hc_bonus = max(0.0, 400.0 - _hc_dist * 150.0)
                 score += _hc_bonus
                 reasons.append("HIGH_TYPE_CLUSTER_GUIDE")
+
+        # ----- v710: RUSSIA_LANE_ASSEMBLY -----
+        # A T14 is not merely "the highest piece"; it is one half of the next merge.
+        # Draw non-merge drops alongside the anchor, but refuse to bury its open top.
+        # This intentionally replaces the v709 type>=11 average whenever a T13/T14 lane exists.
+        if russia_lane_x is not None and not death_spiral:
+            _lane_dx = abs(x - float(russia_lane_x))
+            _lane_safe = (
+                merge_grade == "NO"
+                and not result.get("crosses_deadline", False)
+                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
+            )
+            if _lane_safe:
+                if _lane_dx <= 2.6:
+                    _lane_bonus = max(0.0, 2200.0 - _lane_dx * 650.0)
+                    _headroom = max(0.25, min(1.0, float(result.get("deadline_margin", 0.0) or 0.0) / 1.2))
+                    _lane_bonus *= _headroom
+                    if _lane_bonus > 0.0:
+                        score += _lane_bonus
+                        reasons.append("RUSSIA_LANE_GUIDE")
+                elif _lane_dx >= 3.4:
+                    score -= min(1800.0, (_lane_dx - 3.4) * 480.0 + 240.0)
+                    reasons.append("FAR_FROM_RUSSIA_LANE")
+
+            # next_type never reaches 13 in the observed feed, so a drop over these
+            # anchors cannot be a direct same-type merge. Protect both T14 and T13.
+            for _lane_anchor in russia_lane_anchors:
+                _ax = float(_lane_anchor.get("x", 0.0) or 0.0)
+                _ay = float(_lane_anchor.get("y", 0.0) or 0.0)
+                _ar = max(0.5, float(_lane_anchor.get("r", 1.5) or 1.5))
+                if abs(x - _ax) <= _ar * 0.9 and landing_y >= (_ay + _ar) - 0.25:
+                    score -= 5600.0
+                    reasons.append("RUSSIA_LANE_COVER_AVOID")
+                    break
 
         # (2) T13ペア衝突誘導: T13x2以上が存在するとき、中間点への配置で物理衝突を促す
         if t13_pair_center_x is not None and not death_spiral:
