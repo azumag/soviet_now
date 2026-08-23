@@ -1,9 +1,14 @@
 import copy
+import subprocess
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import strategy
 import strategy_runner
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def piece(piece_id, piece_type, x, y, radius):
@@ -47,6 +52,24 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
             candidate(0.0),
             candidate(3.0, landing_hit_id="t12-right"),
         ]
+
+    def test_current_strategy_passes_production_sandbox_validation(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                "source ./eloop_lib.sh; validate_strategy_with_helpers strategy.py strategy_helpers",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout={result.stdout}\nstderr={result.stderr}",
+        )
 
     def test_selects_outer_side_of_highest_pair_after_first_russia(self):
         selected = strategy._select_post_russia_contact_candidate(
@@ -252,6 +275,60 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(
             decision,
             {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"},
+        )
+
+    def test_deadline_guard_preserves_e5_far_choice_before_russia(self):
+        far = candidate(-2.0, grade="FAR", landing_y=-1.0)
+        no_merge = candidate(2.0, grade="NO", landing_y=-2.0)
+        game_state = {
+            "pieces": [piece("uzbekistan", 11, 0.0, -2.7, 0.8)],
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+        analysis = {
+            "results": [far, no_merge],
+            "reactor": {
+                "deadline_margin": 0.5,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(
+            decision,
+            {"x": -2.0, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
+        )
+
+    def test_deadline_guard_uses_safe_no_merge_after_russia(self):
+        far = candidate(-2.0, grade="FAR", landing_y=-1.0)
+        no_merge = candidate(2.0, grade="NO", landing_y=-2.0)
+        game_state = {
+            "pieces": [piece("russia", 15, 0.0, -2.7, 1.35)],
+            "next": {"type": 7, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+        analysis = {
+            "results": [far, no_merge],
+            "reactor": {
+                "deadline_margin": 0.5,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(
+            decision,
+            {"x": 2.0, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
         )
 
     def test_deadline_guard_uses_lowest_risk_real_candidate_when_all_cross(self):

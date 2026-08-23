@@ -53,12 +53,18 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
+import math
+
 from strategy_helpers import board_stats
 
 FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v720: FIRST_RUSSIA_T11_LANE_COVER_AVOID — at the measured T14 near-miss,
+# keep a low incoming country from landing on the lone exposed Uzbekistan when
+# an equally safe real lane exists.  This preserves the only T11→T12 rebuild
+# route without changing ordinary pre-Russia play or any deadline early return.
 # v719: POST_RUSSIA_SYMMETRIC_LANES — unlock the full [-3,+3] board only
 # after T15, and keep deadline fallbacks on real safe/minimum-risk candidates.
 # v718: POST_RUSSIA_HIGH_PAIR_CONTACT_SHOT — preserve the production e5b
@@ -210,6 +216,145 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     )
     return selected, reason
 
+
+def _select_first_russia_t11_lane_avoidance(
+    pieces, results, next_type, selected_candidate, chosen_x
+):
+    """Protect the lone Uzbekistan in the measured first-Russia near-miss.
+
+    A historical T14 stall had exactly one Kazakhstan, one Turkmenistan and
+    one Uzbekistan, but the normal scorer put a small unrelated country on
+    top of that sole Uzbekistan.  Only replace the already-scored choice when
+    the analyzer explicitly proves both the collision and a comparably safe
+    real alternative.  Missing/invalid analyzer fields fail closed.
+    """
+    if not isinstance(pieces, list) or not isinstance(results, list):
+        return None
+    if not isinstance(selected_candidate, dict):
+        return None
+    if not any(candidate is selected_candidate for candidate in results):
+        return None
+    if any(not isinstance(piece, dict) for piece in pieces):
+        return None
+    if any(type(piece.get("type")) is not int for piece in pieces):
+        return None
+    if any(not 1 <= piece["type"] <= 16 for piece in pieces):
+        return None
+    if not isinstance(next_type, int) or isinstance(next_type, bool):
+        return None
+    if not 1 <= next_type <= 9:
+        return None
+
+    type_counts = {
+        piece_type: sum(1 for piece in pieces if piece.get("type") == piece_type)
+        for piece_type in (11, 12, 13, 14, 15, 16)
+    }
+    if type_counts != {11: 1, 12: 1, 13: 0, 14: 1, 15: 0, 16: 0}:
+        return None
+
+    lone_t11 = next(
+        (piece for piece in pieces if piece.get("type") == 11), None
+    )
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    if lone_t11 is None or not valid_piece_id(lone_t11.get("id")):
+        return None
+    chain_ids = set()
+    for piece in pieces:
+        if piece.get("type") >= 11:
+            piece_id = piece.get("id")
+            if not valid_piece_id(piece_id):
+                return None
+            chain_ids.add(piece_id)
+
+    try:
+        final_x = float(chosen_x)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(chosen_x, bool) or not math.isfinite(final_x):
+        return None
+    if not -3.0 <= final_x <= 3.0:
+        return None
+
+    def candidate_values(candidate):
+        if not isinstance(candidate, dict):
+            return None
+        if isinstance(candidate.get("x"), bool) or isinstance(
+            candidate.get("risk_top_y_after_drop"), bool
+        ):
+            return None
+        try:
+            candidate_x = float(candidate["x"])
+            risk = float(candidate["risk_top_y_after_drop"])
+            hit_id = candidate["landing_hit_id"]
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not math.isfinite(candidate_x) or not math.isfinite(risk):
+            return None
+        if not valid_piece_id(hit_id):
+            return None
+        if not -3.0 <= candidate_x <= 3.0:
+            return None
+        return candidate_x, risk, hit_id
+
+    # A safe immediate merge remains more important than this lane-preservation
+    # exception, even if a future scorer accidentally ranks a NO candidate first.
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            continue
+        if (
+            candidate.get("merge_grade") in ("DIRECT", "NEAR")
+            and candidate.get("crosses_deadline") is False
+            and candidate.get("merge_result_crosses_deadline") is False
+        ):
+            return None
+
+    selected_values = candidate_values(selected_candidate)
+    if selected_values is None:
+        return None
+    selected_x, selected_risk, selected_hit_id = selected_values
+    if (
+        abs(_clip_final_drop_x(selected_x, False) - final_x) > 1e-6
+        or abs(selected_x - final_x) > 0.011
+        or selected_candidate.get("merge_grade") != "NO"
+        or selected_candidate.get("crosses_deadline") is not False
+        or selected_candidate.get("merge_result_crosses_deadline") is not False
+        or selected_hit_id != lone_t11["id"]
+    ):
+        return None
+
+    alternatives = []
+    for candidate in results:
+        if candidate is selected_candidate:
+            continue
+        values = candidate_values(candidate)
+        if values is None:
+            continue
+        candidate_x, risk, hit_id = values
+        if (
+            candidate.get("merge_grade") != "NO"
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or abs(_clip_final_drop_x(candidate_x, False) - candidate_x) > 1e-6
+            or hit_id in chain_ids
+            or risk > selected_risk + 0.15 + 1e-9
+        ):
+            continue
+        alternatives.append(
+            (abs(candidate_x - final_x), risk, abs(candidate_x), candidate_x, candidate)
+        )
+    if not alternatives:
+        return None
+
+    return min(alternatives, key=lambda item: item[:4])[-1]
+
+
 def decide(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
 
@@ -339,8 +484,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict)
             and not c.get("crosses_deadline")
             and not c.get("merge_result_crosses_deadline")
-            and __dlg_has_russia
-            and c.get("merge_grade") == "NO"
+            and (
+                (__dlg_has_russia and c.get("merge_grade") == "NO")
+                or (not __dlg_has_russia and c.get("merge_grade") != "NO")
+            )
         ]
         if __dlg_safe_no_merge:
             __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 166.3) or 35.68))
@@ -445,6 +592,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = 0.0905
     best_score = -float("inf")
     best_reason = ""
+    best_result = None
 
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
@@ -461,10 +609,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     if not isinstance(soviet_info, dict):
         soviet_info = {}
     _second_russia_lane_value = soviet_info.get("second_russia_lane_x")
+    second_russia_lane_x = None
     try:
         second_russia_lane_x = float(_second_russia_lane_value)
     except (TypeError, ValueError):
-        second_russia_lane_x = None
+        pass
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -1589,6 +1738,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            best_result = result
 
     # ----- FALLBACK: if all non-suppressed candidates were suppressed, pick lowest landing_y -----
     # Bug fix: HARD SUPPRESS can skip all candidates in extreme danger, returning best_x=0.0 with empty reason.
@@ -1607,6 +1757,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # clip to drop range [-3.0, +3.0]
     best_x = _clip_final_drop_x(best_x, type15_count >= 1)
+
+    first_russia_lane = _select_first_russia_t11_lane_avoidance(
+        pieces, results, next_type, best_result, best_x
+    )
+    if first_russia_lane is not None:
+        return {
+            "x": round(float(first_russia_lane["x"]), 4),
+            "reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
+        }
 
     return {"x": best_x, "reason": best_reason}
 
