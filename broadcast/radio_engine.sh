@@ -1433,7 +1433,8 @@ PREPASS_APPEND
 		else
 			_radio_gen_list="${radio_agents_list}"
 		fi
-		# ピーク時間帯は候補順序のみ入替え（MiniMax優先 / DeepSeekはフォールバックに温存）。
+		# ピーク時間帯も候補順序のみ入替え。既定は無料/local/muse優先のため、
+		# 有償枠は元リストの後半へ温存される。
 		# 実際に並びが変わった時だけログする（swap無効時・優先エージェント不在時は無音）。
 		local _radio_gen_list_before="$_radio_gen_list"
 		_radio_gen_list=$(_peak_priority_agent_list "$_radio_gen_list")
