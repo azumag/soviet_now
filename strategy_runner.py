@@ -1324,6 +1324,125 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         pieces = (game_state or {}).get("pieces") or []
         if not pieces or next_type < 6:
             return None
+        # v716: a singleton T13 plus two live T12s is the birth state for the
+        # second T13. Use the anchor-relative lane here too, so deadline fallback
+        # cannot steer the birth away from the only T13 that can become T14.
+        _second_birth_counts = {}
+        for _birth_piece in pieces:
+            try:
+                _birth_type = int(_birth_piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            _second_birth_counts[_birth_type] = _second_birth_counts.get(_birth_type, 0) + 1
+        if (
+            _second_birth_counts.get(14, 0) == 0
+            and _second_birth_counts.get(15, 0) == 0
+            and _second_birth_counts.get(13, 0) == 1
+            and _second_birth_counts.get(12, 0) >= 2
+        ):
+            _t13_anchor = next(
+                (_piece for _piece in pieces if int(_piece.get("type", 0) or 0) == 13),
+                None,
+            )
+            _birth_targets = [
+                _piece for _piece in pieces
+                if int(_piece.get("type", 0) or 0) == 12
+            ]
+            _birth_pair = None
+            _birth_best_key = (999.0, 999.0, 999.0)
+            for _pair_i, _pair_a in enumerate(_birth_targets):
+                for _pair_b in _birth_targets[_pair_i + 1:]:
+                    _ax = _geom_num(_pair_a.get("x"))
+                    _ay = _geom_num(_pair_a.get("y"), -10.0)
+                    _bx = _geom_num(_pair_b.get("x"))
+                    _by = _geom_num(_pair_b.get("y"), -10.0)
+                    _pair_dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
+                    _center_x = (_ax + _bx) * 0.5
+                    _center_y = (_ay + _by) * 0.5
+                    _anchor_x = _geom_num(_t13_anchor.get("x"))
+                    _anchor_y = _geom_num(_t13_anchor.get("y"), -10.0)
+                    _anchor_dist = ((_center_x - _anchor_x) ** 2 + (_center_y - _anchor_y) ** 2) ** 0.5
+                    _birth_key = (
+                        _anchor_dist + max(0.0, _pair_dist - 3.0) * 1.8,
+                        _pair_dist,
+                        max(_ay, _by),
+                    )
+                    if _birth_key < _birth_best_key:
+                        _birth_best_key = _birth_key
+                        _birth_pair = (_pair_a, _pair_b)
+            if _birth_pair is not None and _t13_anchor is not None:
+                _left, _right = _birth_pair
+                _left_x = _geom_num(_left.get("x"))
+                _left_y = _geom_num(_left.get("y"), -10.0)
+                _right_x = _geom_num(_right.get("x"))
+                _right_y = _geom_num(_right.get("y"), -10.0)
+                _move_x = _right_x - _left_x
+                _move_y = _right_y - _left_y
+                _center_x = (_left_x + _right_x) * 0.5
+                _center_y = (_left_y + _right_y) * 0.5
+                _to_anchor_x = _anchor_x - _center_x
+                _to_anchor_y = _anchor_y - _center_y
+                # Push whichever piece's natural motion along the pair line also
+                # carries the newborn T13 toward the singleton T13.
+                if _move_x * _to_anchor_x + _move_y * _to_anchor_y >= 0.0:
+                    _contact_target, _contact_other = _left, _right
+                else:
+                    _contact_target, _contact_other = _right, _left
+                # A near-vertical pair gives no useful horizontal impact lane.
+                # Fall back to the higher member so the strike still moves the
+                # less-buried piece instead of dropping through the stack gap.
+                if abs(_move_x) < 0.12:
+                    if _geom_num(_right.get("y"), -10.0) > _geom_num(_left.get("y"), -10.0):
+                        _contact_target, _contact_other = _right, _left
+                    else:
+                        _contact_target, _contact_other = _left, _right
+                _contact_gap = (
+                    ((_geom_num(_contact_target.get("x")) - _geom_num(_contact_other.get("x"))) ** 2
+                     + (_geom_num(_contact_target.get("y"), -10.0) - _geom_num(_contact_other.get("y"), -10.0)) ** 2) ** 0.5
+                    - _geom_num(_contact_target.get("r"), 1.0)
+                    - _geom_num(_contact_other.get("r"), 1.0)
+                )
+                if _contact_gap > 0.08:
+                    target_x = _geom_num(_contact_target.get("x"))
+                    _direction = 1.0 if _geom_num(_contact_other.get("x")) >= target_x else -1.0
+                    target_x += _direction * (
+                        _geom_num(_contact_target.get("r"), 1.0) + max(0.35, geometry_next_r)
+                    )
+                    target_x = max(-3.0, min(3.0, target_x))
+
+                    current_dx = abs(_geom_num(candidate.get("x")) - target_x)
+                    pool = results or safe
+                    # The birth lane is positional, not merely directional. Keep
+                    # the fallback tighter than the older pair-closing hooks.
+                    if pool and current_dx > 0.45:
+                        hard_deadline_birth_pressure = (
+                            deadline_crossed
+                            or danger_piece_count > 0
+                            or current_top_edge_y >= deadline_y - 0.15
+                        )
+                        birth_risk_limit = max(risk_top(candidate) + 1.10, min_risk_top + 2.00)
+                        if hard_deadline_birth_pressure:
+                            birth_risk_limit = min(birth_risk_limit, min_risk_top + 0.45)
+                        birth_lane = [
+                            r for r in pool
+                            if abs(_geom_num(r.get("x")) - target_x) < current_dx
+                            and abs(_geom_num(r.get("x")) - target_x) <= 1.45
+                            and not (
+                                hard_deadline_birth_pressure
+                                and r.get("crosses_deadline", False)
+                                and r.get("merge_grade", "NO") == "NO"
+                            )
+                            and risk_top(r) <= birth_risk_limit
+                        ]
+                        if birth_lane:
+                            return min(
+                                birth_lane,
+                                key=lambda r: (
+                                    abs(_geom_num(r.get("x")) - target_x),
+                                    bool(r.get("crosses_deadline", False)),
+                                    risk_top(r),
+                                ),
+                            )
         # v713: the pair-lane hook is valid from board state alone.  The old
         # reason-marker gate let deadline guard bypass the only route to the first
         # Russia whenever strategy scoring could not emit a tag before returning.
@@ -2047,8 +2166,27 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
             or "UKRAINE_PAIR" in reason_text
         )
     )
+    # v716: the second-T13 birth point is a hard geometric lane, but it must
+    # never bypass deadline safety. Run it only after urgent merge handling;
+    # the state-aware hook still applies its own risk and crossing filters.
+    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
+        _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
+        if _birth_replacement is not None:
+            _birth_x = float(_birth_replacement.get("x", chosen_x) or 0.0)
+            _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, _birth_x))
+            _birth_old_grade = chosen.get("merge_grade", "NO")
+            _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
+            _birth_suffix = (
+                f"RUNTIME_DEADLINE_SAFETY_OVERRIDE_{_birth_old_grade}_TO_{_birth_new_grade}"
+                "_pre_russia_t13_pair_lane"
+            )
+            return {
+                "x": _birth_x,
+                "reason": f"{reason_text}_{_birth_suffix}",
+            }
     if (
         country_route_reason
+        and "ANCHOR_SECOND_T13_CONTACT_SHOT" not in reason_text
         and not urgent_direct_pressure
         and not urgent_merge_pressure
         and not risky_merge_result_deadline(chosen)
@@ -2063,6 +2201,20 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         return decision
 
     replacement_source = "generic"
+    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
+        _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
+        if _birth_replacement is not None:
+            _birth_x = float(_birth_replacement.get("x", chosen_x) or 0.0)
+            _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, _birth_x))
+            _birth_old_grade = chosen.get("merge_grade", "NO")
+            _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
+            return {
+                "x": _birth_x,
+                "reason": (
+                    f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_"
+                    f"{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane"
+                ),
+            }
     chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
     chosen_geometry_replacement = geometry_underestimate_replacement_for(chosen)
 

@@ -59,6 +59,9 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v716: ANCHOR_SECOND_T13 — before the first T14, choose the T12 pair whose
+# collision will create the second T13 closest to the existing singleton. The
+# live v715 game created a distant second T13, then could not close it into T14.
 # v715: PRE_RUSSIA_T13_CONTACT_SHOT — when two T13s exist before the first T14,
 # stop center-clustering and hit the less-buried T13 from its outer side so the
 # impact closes the pair. Live v714 held a 1.5-radius-gap T13x2 for 42 turns.
@@ -590,6 +593,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     if t14_count <= 1 and t13_count <= 1:
         _t12_pair_targets = [p for p in pieces if p.get("type") == 12]
         _best_pair_key = (999.0, 999.0)
+        # A singleton T13 is the physical target of this chain. Prefer a T12 pair
+        # near that anchor even when another T12 pair is locally closer together;
+        # otherwise the new T13 is born too far away to close into the first T14.
+        _t13_anchor = next(
+            (p for p in pieces if p.get("type") == 13),
+            None,
+        ) if t14_count == 0 and t13_count == 1 else None
         for _pair_i, _pair_a in enumerate(_t12_pair_targets):
             for _pair_b in _t12_pair_targets[_pair_i + 1:]:
                 _ax = float(_pair_a.get("x", 0.0) or 0.0)
@@ -598,7 +608,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _by = float(_pair_b.get("y", -10.0) or -10.0)
                 _pair_dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
                 _pair_top = max(_ay, _by)
-                _pair_key = (_pair_dist + max(0.0, _pair_top - 1.15) * 0.35, _pair_top)
+                if _t13_anchor is None:
+                    _anchor_dist = 0.0
+                else:
+                    _anchor_x = float(_t13_anchor.get("x", 0.0) or 0.0)
+                    _anchor_y = float(_t13_anchor.get("y", -10.0) or -10.0)
+                    _center_x = (_ax + _bx) * 0.5
+                    _center_y = (_ay + _by) * 0.5
+                    _anchor_dist = ((_center_x - _anchor_x) ** 2 + (_center_y - _anchor_y) ** 2) ** 0.5
+                _pair_key = (
+                    _anchor_dist + max(0.0, _pair_dist - 3.0) * 1.8 + max(0.0, _pair_top - 1.15) * 0.35,
+                    _pair_dist,
+                    _pair_top,
+                )
                 if _pair_key < _best_pair_key:
                     _best_pair_key = _pair_key
                     _second_t13_pair = (_pair_a, _pair_b)
@@ -640,6 +662,55 @@ def decide(game_state: dict, analysis: dict) -> dict:
     _pre_t13_shot_active = False
     _pre_t13_shot_x = None
     _pre_t13_shot_target = None
+    # v716: while the second T13 is still only a T12 pair, strike the member
+    # whose motion along the pair axis also approaches the singleton T13. This
+    # fixes the birth location instead of trying to drag two distant T13s together.
+    _anchor_t12_shot_active = False
+    _anchor_t12_shot_x = None
+    _anchor_t12_shot_target = None
+    if t14_count == 0 and t13_count == 1 and _second_t13_pair is not None:
+        _t13_singleton = next((p for p in pieces if p.get("type") == 13), None)
+        if _t13_singleton is not None:
+            _pair_left, _pair_right = _second_t13_pair
+            _left_x = float(_pair_left.get("x", 0.0) or 0.0)
+            _left_y = float(_pair_left.get("y", -10.0) or -10.0)
+            _right_x = float(_pair_right.get("x", 0.0) or 0.0)
+            _right_y = float(_pair_right.get("y", -10.0) or -10.0)
+            _to_anchor_x = (
+                float(_t13_singleton.get("x", 0.0) or 0.0) - (_left_x + _right_x) * 0.5
+            )
+            _to_anchor_y = (
+                float(_t13_singleton.get("y", -10.0) or -10.0) - (_left_y + _right_y) * 0.5
+            )
+            if (_right_x - _left_x) * _to_anchor_x + (_right_y - _left_y) * _to_anchor_y >= 0.0:
+                _shot_other, _shot_target = _pair_left, _pair_right
+            else:
+                _shot_other, _shot_target = _pair_right, _pair_left
+            _shot_dx = float(_shot_other.get("x", 0.0) or 0.0) - float(_shot_target.get("x", 0.0) or 0.0)
+            _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
+            _birth_gap = (
+                ((_shot_target.get("x", 0.0) - _shot_other.get("x", 0.0)) ** 2
+                 + (_shot_target.get("y", 0.0) - _shot_other.get("y", 0.0)) ** 2) ** 0.5
+                - float(_shot_target.get("r", 1.0))
+                - float(_shot_other.get("r", 1.0))
+            )
+            if _birth_gap > 0.08:
+                _anchor_t12_shot_active = True
+                _anchor_t12_shot_target = _shot_target
+                if abs(_shot_dx) < 0.12:
+                    if float(_shot_other.get("y", -10.0) or -10.0) > float(_shot_target.get("y", -10.0) or -10.0):
+                        _shot_target, _shot_other = _shot_other, _shot_target
+                    _shot_dx = float(_shot_other.get("x", 0.0) or 0.0) - float(_shot_target.get("x", 0.0) or 0.0)
+                    _shot_dir = 1.0 if _shot_dx >= 0.0 else -1.0
+                _anchor_t12_shot_x = max(
+                    -3.0,
+                    min(
+                        3.0,
+                        float(_shot_target.get("x", 0.0)) + _shot_dir * (
+                            float(_shot_target.get("r", 1.0)) + max(0.35, next_radius)
+                        ),
+                    ),
+                )
     if t14_count == 0 and t13_count >= 2:
         _pre_pair = None
         _pre_best_key = (999.0, 999.0)
@@ -1769,6 +1840,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # cancel the only mechanism that closes the pair.
                 if (_contact_shot_active and _lane_anchor is _shot_target) or (
                     _pre_t13_shot_active and _lane_anchor is _pre_t13_shot_target
+                ) or (
+                    _anchor_t12_shot_active and _lane_anchor is _anchor_t12_shot_target
                 ):
                     continue
                 _ax = float(_lane_anchor.get("x", 0.0) or 0.0)
@@ -1807,6 +1880,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif _pre_shot_dist <= 0.7:
                 score -= 1800.0
                 reasons.append("PRE_RUSSIA_CONTACT_SHOT_UNSAFE")
+
+        if _anchor_t12_shot_active and merge_grade == "NO" and not death_spiral:
+            _birth_shot_safe = (
+                not result.get("crosses_deadline", False)
+                and float(result.get("deadline_margin", 99.0) or 99.0) >= 0.35
+            )
+            _birth_shot_dist = abs(x - float(_anchor_t12_shot_x))
+            if _birth_shot_safe:
+                score += max(0.0, 26000.0 - _birth_shot_dist * 5000.0)
+                reasons.append("ANCHOR_SECOND_T13_CONTACT_SHOT")
+            elif _birth_shot_dist <= 0.7:
+                score -= 1800.0
+                reasons.append("ANCHOR_SECOND_T13_SHOT_UNSAFE")
 
         # (2) T13ペア衝突誘導: T13x2以上が存在するとき、中間点への配置で物理衝突を促す
         if t13_pair_center_x is not None and not death_spiral:
