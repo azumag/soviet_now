@@ -241,6 +241,21 @@ minimax_pos=${common_order%%codex:minimax-m3*}
 	&& ok "paid chain: MiniMax precedes muse" \
 	|| not_ok "paid MiniMax order (got '$common_order')"
 
+(
+	set +u
+	unset RADIO_JIJI_RESEARCH_TIMEOUT
+	ELOOP_LIB_DIR="$TMP"
+	# shellcheck disable=SC1090
+	. "$CONFIG_SRC" >/dev/null 2>&1
+	printf '%s' "$RADIO_JIJI_RESEARCH_TIMEOUT" >"$TMP/jiji_timeout.out"
+) 2>/dev/null
+jiji_timeout=$(cat "$TMP/jiji_timeout.out" 2>/dev/null)
+[ "$jiji_timeout" = "300" ] && ok "JIJI research timeout defaults to 300s" \
+	|| not_ok "JIJI research timeout default (got '$jiji_timeout')"
+jiji_wiring=$(grep -c 'RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}' "$ROOT/broadcast/radio_corners.sh")
+[ "$jiji_wiring" -ge 2 ] && ok "radio_corners.sh: JIJI research timeout wired separately" \
+	|| not_ok "radio_corners.sh: JIJI research timeout wiring (count=$jiji_wiring)"
+
 # ============================================================
 # G. 呼び出し箇所の結線（静的アサーション）
 # ============================================================

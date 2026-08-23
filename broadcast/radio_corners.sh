@@ -1673,12 +1673,12 @@ _run_opencode_jiji_research_unqueued() {
 	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","webfetch":"allow","web":"allow","web-search":"allow"}'
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
-		timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		timeout "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}}" \
 		opencode run --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
-		log "[JIJI] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		log "[JIJI] research timeout (${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -1716,7 +1716,7 @@ _run_opencode_jiji_research() {
 	codex | codex:*)
 		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
 		AI_DISPATCH_RECORD_WINNER=1
-		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
+		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT:-240}}"
 		local _jiji_research_rc=$?
 		AI_DISPATCH_RECORD_WINNER="$_saved_record_winner"
 		return "$_jiji_research_rc"
