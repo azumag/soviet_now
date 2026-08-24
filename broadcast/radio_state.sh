@@ -533,6 +533,21 @@ _radio_start_deferred_render_if_needed() {
 		return 0
 	fi
 	_radio_render_retry_waiting "$qf" && return 0
+	# ファイル単位のレンダーロック（重複起動抑止）。marker 作成前のレースで
+	# 同一 qf に複数レンダーが並走するのを防ぐ（2026-08-24 デッドロックで4並列発生）。
+	local _render_file_lock="${qf}.render_lock"
+	if ! mkdir "$_render_file_lock" 2>/dev/null; then
+		local _lock_age=0 _lock_mtime=0
+		_lock_mtime=$(stat -f %m "$_render_file_lock" 2>/dev/null || stat -c %Y "$_render_file_lock" 2>/dev/null || echo 0)
+		case "$_lock_mtime" in ''|*[!0-9]*) _lock_mtime=0;; esac
+		_lock_age=$(($(date +%s) - _lock_mtime))
+		if [ "$_lock_age" -gt "$RADIO_STATE_STALE_SEC" ]; then
+			rmdir "$_render_file_lock" 2>/dev/null || true
+			mkdir "$_render_file_lock" 2>/dev/null || return 0
+		else
+			return 0
+		fi
+	fi
 	marker=$(_radio_render_marker_path "$qf")
 	if [ -f "$marker" ]; then
 		read -r marker_pid marker_ts <"$marker" || true
@@ -540,6 +555,7 @@ _radio_start_deferred_render_if_needed() {
 		case "$marker_ts" in ''|*[!0-9]*) marker_ts=0 ;; esac
 		marker_age=$(($(date +%s) - marker_ts))
 		if [ -n "$marker_pid" ] && kill -0 "$marker_pid" 2>/dev/null && [ "$marker_age" -le "$RADIO_STATE_STALE_SEC" ]; then
+			rmdir "$_render_file_lock" 2>/dev/null || true
 			return 0
 		fi
 		rm -f "$marker" 2>/dev/null || true
@@ -550,6 +566,7 @@ _radio_start_deferred_render_if_needed() {
 	render_source_hash=$(_radio_text_hash "$qf" 2>/dev/null || true)
 	rm -rf "$tmp_bundle" 2>/dev/null || true
 	(
+		trap 'rm -f "$marker" 2>/dev/null || true; rmdir "$_render_file_lock" 2>/dev/null || true' EXIT TERM INT
 		local render_rc=0 retry_count=0 retry_delay=0 retry_at=0
 		if SAY_CC_TEXT="$deferred_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio_render:${deferred_corner:-deferred}" \
 			./say_enqueue.sh --render-only "$tmp_wav" "$qf" "$RADIO_SAY_RATE" 0; then
@@ -580,6 +597,7 @@ _radio_start_deferred_render_if_needed() {
 			fi
 		fi
 		rm -f "$marker" 2>/dev/null || true
+		rmdir "$_render_file_lock" 2>/dev/null || true
 	) >>logs/audio_worker.log 2>&1 &
 	printf '%s %s\n' "$!" "$(date +%s)" >"$marker"
 	log "[RADIO:deferred] 事前音声生成開始: $(basename "$qf")"

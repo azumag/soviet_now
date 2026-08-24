@@ -324,10 +324,12 @@ VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
 VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
 VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
 VOICEVOX_SYNTH_LOCK_STALE_SEC="${VOICEVOX_SYNTH_LOCK_STALE_SEC:-180}"
+VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC="${VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC:-10}"
+VOICEVOX_SYNTH_LOCK_HUNG_SEC="${VOICEVOX_SYNTH_LOCK_HUNG_SEC:-60}"
 VOICEVOX_SYNTH_PRIORITY_WAIT_DIR="$QUEUE_DIR/.voicevox_synth_priority_waiters"
 VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
 VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
-VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-180}"
+VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-60}"
 
 if [ ! -s "$CONTENT_FILE" ]; then
 	echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -831,18 +833,16 @@ _acquire_voicevox_synth_lock() {
 	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
 	_voicevox_synth_is_background_render && background_render=1
 	if [ "$background_render" -eq 1 ]; then
-		# 背景ラジオの合成は、前景音声が到着してもそのプロセスを終了しない。
-		# 0 は無期限待機。priority waiter 側が音声を完了するか、stale GCで
-		# 回収されれば同じレンダー世代の次チャンクへ進める。
-		priority_wait_limit="${VOICEVOX_RADIO_PRIORITY_WAIT_SEC:-0}"
+		# 背景ラジオは前景（コメント等）を優先するが、無期限待ちはデッドロックする。
+		# 2026-08-24の実測で comment 180s 待ち vs radio 無期限待ちが循環デッドロックした。
+		# 有限化し、タイムアウト後は現世代を一時保留して後で再試行する（進捗は捨てない）。
+		priority_wait_limit="${VOICEVOX_RADIO_PRIORITY_WAIT_SEC:-90}"
 		case "$priority_wait_limit" in
-		'' | *[!0-9]*) priority_wait_limit=0 ;;
+		'' | *[!0-9]*) priority_wait_limit=90 ;;
 		esac
-		# 前景音声が予約を外した直後も、そのプロセスが保持する合成ロックを
-		# 短い15秒制限で諦めない。0はstale lock回収まで無期限待機する。
-		lock_wait_limit="${VOICEVOX_RADIO_LOCK_WAIT_SEC:-0}"
+		lock_wait_limit="${VOICEVOX_RADIO_LOCK_WAIT_SEC:-60}"
 		case "$lock_wait_limit" in
-		'' | *[!0-9]*) lock_wait_limit=0 ;;
+		'' | *[!0-9]*) lock_wait_limit=60 ;;
 		esac
 	fi
 	if [ "$background_render" -eq 0 ]; then
@@ -896,8 +896,14 @@ _acquire_voicevox_synth_lock() {
 			'' | *[!0-9]* | 0) lock_age=0 ;;
 			*) lock_age=$((now - lock_hb)) ;;
 			esac
-			if [ "$owner_alive" = false ] && [ "$lock_age" -gt "$VOICEVOX_SYNTH_LOCK_STALE_SEC" ]; then
-				_log "VOICEVOX合成 stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
+			if [ "$owner_alive" = false ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC:-10}" ]; then
+				_log "VOICEVOX合成 stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒, dead) → 強制解除"
+				rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
+				rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+				continue
+			fi
+			if [ "$owner_alive" = true ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_HUNG_SEC:-60}" ]; then
+				_log "VOICEVOX合成 hung lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒, heartbeat停止) → 強制解除"
 				rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
 				rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
 				continue
