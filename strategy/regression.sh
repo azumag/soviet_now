@@ -747,7 +747,7 @@ except Exception:
 #=== ローリングスコア & リグレッション検知 ===
 
 _archive_strategy_snapshot_by_hash() {
-	local source_file="$1" hash_value="$2"
+	local source_file="$1" hash_value="${2:-}"
 	[ -f "$source_file" ] || return 0
 	if [ -z "$hash_value" ] || [ "$hash_value" = "unknown" ]; then
 		hash_value=$(python3 extract_decide_hash.py "$source_file" 2>/dev/null || echo "")
