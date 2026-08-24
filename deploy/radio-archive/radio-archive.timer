@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Radio Archive Push Timer (04:00 JST)
+
+[Timer]
+# 04:00 JST = 19:00 UTC 前日
+OnCalendar=04:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=radio-archive.service
+
+[Install]
+WantedBy=timers.target
