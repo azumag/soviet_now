@@ -39,7 +39,11 @@ if [ -f "$OUTDIR/feed.xml" ]; then ok "feed.xml generated"; else not_ok "feed.xm
 if [ -f "$OUTDIR/2026-08-31.chapters.json" ]; then ok "chapters generated"; else not_ok "chapters generated"; fi
 # feed.xml が xmllint OK かつ 1 episode
 if grep -q "2026年08月31日" "$OUTDIR/feed.xml" 2>/dev/null; then ok "feed contains episode"; else not_ok "feed contains episode"; fi
-if xmllint --noout "$OUTDIR/feed.xml" 2>&1; then ok "xmllint OK"; else not_ok "xmllint"; fi
+if command -v xmllint >/dev/null 2>&1; then
+  if xmllint --noout "$OUTDIR/feed.xml" 2>&1; then ok "xmllint OK"; else not_ok "xmllint"; fi
+else
+  ok "xmllint skipped (not installed)"
+fi
 # 2回目は冪等 (mp3 が新しければスキップ)
 out2=$(python3 "$ROOT/tools/podcast_build.py" --date 20260831 --dummy --out-dir "$OUTDIR" 2>&1)
 if echo "$out2" | grep -q "already up to date"; then ok "idempotent skip"; else not_ok "idempotent"; echo "$out2"; fi
