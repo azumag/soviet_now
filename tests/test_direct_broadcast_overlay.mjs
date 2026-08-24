@@ -442,6 +442,84 @@ test('live-status toasts stay stable and never re-animate while idle', async () 
 });
 
 
+test('ai thinking banner takes the first bottom slot while generators are active', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG\nRecent30: 30.0',
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Backend     FFMPEG LIVE\n◆ Game        34試合目 (games)\n▾ LastDrop   T36',
+        updatedAt: 1780000080,
+        lineCount: 3,
+      },
+    },
+    notifications: {
+      visibleSec: 18,
+      events: [],
+      work: { active: false },
+      generators: [{ key: 'radio', icon: '📻', label: 'ラジオ生成中 (jiji)', ts: 1779999970 }],
+    },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const cards = overlay.toastCards();
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].title, 'AI思考中');
+  assert.match(cards[0].className, /ai-thinking/);
+  assert.equal(cards[0].body, 'ラジオ生成中 (jiji)');
+  assert.equal(cards[0].liveStatus, '1');
+  assert.doesNotMatch(cards[0].className, /fresh/);
+  assert.equal(cards[1].title, 'LIVE STATUS');
+  assert.equal(cards[2].title, 'LIVE STATUS');
+
+  await overlay.tick(2);
+  assert.equal(overlay.calls.toastRebuilds, 1, 'thinking banner must not rebuild every second');
+
+  // 思考が終われば従来の LIVE STATUS 3枚へ戻る。
+  overlay.setState({
+    ...base,
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  });
+  await overlay.tick(1);
+  const idle = overlay.toastCards();
+  assert.equal(idle.length, 3);
+  for (const card of idle) {
+    assert.equal(card.title, 'LIVE STATUS');
+    assert.doesNotMatch(card.className, /ai-thinking/);
+  }
+});
+
+
+test('generator toasts keep their paging role while transient events are visible', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: { label: 'SHOW-STATUS-G', text: 'SOREN/OBS FFMPEG\nRecent30: 30.0', updatedAt: 1780000080, lineCount: 2 },
+      showStatus: { label: 'SHOW-STATUS', text: '● Backend     FFMPEG LIVE', updatedAt: 1780000080, lineCount: 1 },
+    },
+    notifications: {
+      visibleSec: 18,
+      events: [{ ts: Math.floor(1780001000000 / 1000) - 5, category: 'chat', title: 'viewer', body: 'hello' }],
+      work: { active: false },
+      generators: [{ key: 'radio', icon: '📻', label: 'ラジオ生成中', ts: Math.floor(1780001000000 / 1000) - 10 }],
+    },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const cards = overlay.toastCards();
+  assert.ok(cards.some((card) => card.title === '📻 ラジオ生成中'), 'generator toast must remain during events');
+  assert.ok(!cards.some((card) => card.title === 'AI思考中'), 'thinking banner is only for the idle bottom row');
+});
+
+
 test('only genuine events within three seconds get the fresh enter animation', async () => {
   const base = {
     version: 1,
