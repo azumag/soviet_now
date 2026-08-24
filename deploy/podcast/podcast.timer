@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Podcast Build Timer (05:30 JST, after archive 04:00)
+
+[Timer]
+# 05:30 JST = 20:30 UTC 前日
+OnCalendar=05:30
+Persistent=true
+RandomizedDelaySec=300
+Unit=podcast.service
+
+[Install]
+WantedBy=timers.target
