@@ -248,6 +248,84 @@ class PreRussiaUkrainePairLaneTest(unittest.TestCase):
         )
         self.assertNotIn("pre_russia_t13_pair_lane", missing_lane["reason"])
 
+    def test_real_turn_70_does_not_trade_a_safe_drop_for_crossing_pair_lane(self):
+        fixture_dir = REPO_ROOT / "tests" / "fixtures"
+        fixture = json.loads(
+            (fixture_dir / "pre_russia_ukraine_pair_crossing_turn70.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        shape_donor = json.loads(
+            (fixture_dir / "pre_russia_chain_cover_turn57.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        game_state = {
+            "source": fixture["source"],
+            "state": "MOVE",
+            "score": fixture["score"],
+            "next": {
+                "type": fixture["next"]["type"],
+                "r": analyze_board.TYPE_RADII[fixture["next"]["type"]],
+                "x": 0,
+            },
+            "nextNext": {
+                "type": fixture["nextNext"]["type"],
+                "r": analyze_board.TYPE_RADII[fixture["nextNext"]["type"]],
+            },
+            "pieces": fixture["pieces"],
+            "shapes": shape_donor["shapes"],
+        }
+
+        analysis = strategy_runner.build_analysis(copy.deepcopy(game_state))
+        strategy_runner.enrich_game_state_deadline_fields(game_state, analysis)
+        initial = strategy.decide(
+            copy.deepcopy(game_state), copy.deepcopy(analysis)
+        )
+        unsafe_lane = min(
+            analysis["results"], key=lambda result: abs(result["x"] + 3.0)
+        )
+        observed_safe = min(
+            analysis["results"],
+            key=lambda result: abs(result["x"] - fixture["observedDecision"]["x"]),
+        )
+        self.assertTrue(unsafe_lane["crosses_deadline"])
+        self.assertEqual(unsafe_lane["merge_grade"], "NO")
+        self.assertFalse(observed_safe["crosses_deadline"])
+        self.assertAlmostEqual(
+            observed_safe["risk_top_y_after_drop"],
+            fixture["observedDecision"]["riskTopYAfterDrop"],
+            delta=0.01,
+        )
+
+        enforced = strategy_runner.enforce_deadline_safety(
+            copy.deepcopy(initial),
+            copy.deepcopy(analysis),
+            copy.deepcopy(game_state),
+            strategy,
+        )
+        selected = min(
+            analysis["results"],
+            key=lambda result: abs(result["x"] - enforced["x"]),
+        )
+        self.assertFalse(selected["crosses_deadline"])
+        self.assertNotIn("pre_russia_t13_pair_lane", enforced["reason"])
+
+        enforced_twice = strategy_runner.apply_strategy_final_decision(
+            strategy,
+            copy.deepcopy(enforced),
+            copy.deepcopy(analysis),
+            copy.deepcopy(game_state),
+        )
+        selected_twice = min(
+            analysis["results"],
+            key=lambda result: abs(result["x"] - enforced_twice["x"]),
+        )
+        self.assertFalse(selected_twice["crosses_deadline"])
+        self.assertNotIn(
+            "pre_russia_t13_pair_lane", enforced_twice["reason"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
