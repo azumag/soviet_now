@@ -16,6 +16,8 @@ tools/short_video_build.py - 単発ニュースをショート動画化 (docich#
 依存: python3, doci (azumag/doci), ffmpeg (doci側で利用)
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import glob
@@ -27,7 +29,33 @@ import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
-BACKUP_ROOT = SCRIPT_DIR / "backups" / "radio_scripts"
+# バックアップの探索: 環境変数 > Macのクローン > VMローカル
+def _backup_root() -> Path:
+    for env in ("SOREN_RADIO_ARCHIVE", "RADIO_ARCHIVE_DIR", "RADIO_ARCHIVE_GIT_DIR"):
+        v = os.environ.get(env)
+        if v:
+            # RADIO_ARCHIVE_GIT_DIR は tmp/radio_archive_mirror を指すことがあるので、backups へ正規化
+            p = Path(v)
+            if p.name == "radio_archive_mirror":
+                p = p.parent / "backups" / "radio_scripts"
+            elif (p / "backups" / "radio_scripts").exists():
+                p = p / "backups" / "radio_scripts"
+            elif p.name == "soren-radio-archive":
+                p = p / "backups" / "radio_scripts"
+            if p.exists():
+                return p
+            # 環境変数が直接 backups/radio_scripts を指している場合
+            if (p / "20260817").exists() or p.name == "radio_scripts":
+                return p
+    # Macのクローン
+    for cand in [Path.home() / "soren-radio-archive" / "backups" / "radio_scripts",
+                 Path("/Users/azumag/soren-radio-archive/backups/radio_scripts"),
+                 SCRIPT_DIR / "backups" / "radio_scripts"]:
+        if cand.exists():
+            return cand
+    return SCRIPT_DIR / "backups" / "radio_scripts"
+
+BACKUP_ROOT = _backup_root()
 
 # doci の探索: 環境変数 > 相対パス > 絶対パス
 def find_doci() -> Path | None:
@@ -58,10 +86,15 @@ def parse_date(arg: str) -> datetime.date:
     raise ValueError(f"invalid date: {arg}")
 
 def collect_news(date: datetime.date) -> list[Path]:
+    root = _backup_root()
     yyyymmdd = date.strftime("%Y%m%d")
-    pattern = str(BACKUP_ROOT / yyyymmdd / "radio_*_news_*.txt")
+    pattern = str(root / yyyymmdd / "radio_*_news_*.txt")
     files = [Path(p) for p in glob.glob(pattern)]
     files.sort()
+    # デバッグ用に root をログ (最初の1回だけ)
+    if not hasattr(collect_news, "_logged"):
+        log(f"backup_root: {root} (exists={root.exists()})")
+        collect_news._logged = True
     return files
 
 def pick_one(files: list[Path], doci_dir: Path | None) -> Path | None:

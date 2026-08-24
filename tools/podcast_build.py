@@ -17,6 +17,8 @@ tools/podcast_build.py - 日次ポッドキャスト生成 (docich#10 / soviet_n
 RSSは RSS 2.0 + iTunes 拡張。feed.xml は冪等に更新 (最新50件)。
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import glob

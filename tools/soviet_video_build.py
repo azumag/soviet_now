@@ -14,6 +14,8 @@ doci の ideology チャンネルは既に communism コーナーでソ連ネタ
 MVPでは ideology を再利用する。将来 soren_news へ統合する場合は --channel soren_news --corner news_short を使う。
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import glob
