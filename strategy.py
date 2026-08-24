@@ -61,6 +61,13 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v727: manual-game feedback (docs/manual_challenge_20260825_insights.md).
+# POST_FIRST_RUSSIA_LANE_COVER_AVOID: stop aborting the whole selector when an
+# ineligible-but-normal candidate (deadline crossing, true floor landing)
+# exists; only malformed analyzer data fails the lane closed.  Safe floor
+# landings still feed the risk quality floor, replacements must respect the
+# pre-Russia drop clamp, and an unsafe or crossing selected decision is never
+# replaced.  The v725/v726 form aborted on real Kazakhstan-phase boards.
 # v725: POST_FIRST_RUSSIA_LANE_COVER_AVOID — after the first Kazakhstan exists,
 # keep the second-Russia material lane alive from board state alone.  The older
 # ladder hooks depended on reason markers that runtime safety could rewrite, so
@@ -823,6 +830,15 @@ def _select_post_first_russia_lane_cover_avoidance(
     seen_candidate_x = set()
     risks = []
     for candidate in results:
+        # v727: fail closed only on malformed analyzer data.  A candidate that
+        # is merely ineligible as a REPLACEMENT — deadline crossing, or a true
+        # floor landing (landing_hit_id is None) — is a NORMAL board condition;
+        # v725 aborted the whole selector on the first such candidate, so this
+        # lane protection was frequently unreachable on real Kazakhstan-phase
+        # boards.  A safe floor landing still counts toward the quality floor
+        # (risks) so a replacement may never be riskier than the safest lane
+        # the board actually offers.  Any other broken landing_hit_id (wrong
+        # type, unknown piece) is malformed data and fails the lane closed.
         if not isinstance(candidate, dict):
             return None
         candidate_x = finite_number(candidate.get("x"))
@@ -839,21 +855,33 @@ def _select_post_first_russia_lane_cover_avoidance(
             or candidate_margin is None
             or candidate_risk is None
             or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
-            or crosses_deadline is not False
-            or merge_crosses_deadline is not False
-            or not valid_piece_id(hit_id)
-            or hit_id not in piece_by_id
+            or type(crosses_deadline) is not bool
+            or type(merge_crosses_deadline) is not bool
+        ):
+            return None
+        if hit_id is not None and (
+            not valid_piece_id(hit_id) or hit_id not in piece_by_id
         ):
             return None
         seen_candidate_x.add(candidate_x)
+        if crosses_deadline is not False or merge_crosses_deadline is not False:
+            continue
         risks.append(candidate_risk)
+        if hit_id is None:
+            continue
+        if abs(_clip_final_drop_x(candidate_x, False) - candidate_x) > 1e-6:
+            continue
         validated_results.append((candidate, candidate_x, candidate_risk, candidate_margin, hit_id))
 
+    if not risks or not validated_results:
+        return None
     min_risk_top = min(risks)
     selected_risk = finite_number(selected.get("risk_top_y_after_drop"))
     selected_margin = finite_number(selected.get("deadline_margin"))
     if (
         selected.get("merge_grade") == "DIRECT"
+        or selected.get("crosses_deadline") is not False
+        or selected.get("merge_result_crosses_deadline") is not False
         or selected_margin < 0.35
         or selected_margin > 1.20
         or piece_by_id[selected_hit_id]["type"] not in (11, 12, 13, 14)
@@ -1075,6 +1103,11 @@ def _select_visible_same_country_contact(
         }
 
     # The post-Russia contact policy owns every board from the first Russia on.
+    # (v727 note: that policy — _select_post_russia_contact_candidate — only
+    # covers next_type >= 8 pair strikes.  Replaying the 2026-08-25 manual game
+    # showed simply opening this gate would be a no-op anyway: every recorded
+    # Russia board fails the margin/dx envelope below.  Extending contact
+    # recovery to the second-Russia phase needs its own measured envelope.)
     if any(piece["type"] in (15, 16) for piece in piece_by_id.values()):
         return None
 
