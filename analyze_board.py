@@ -70,6 +70,19 @@ UNITY_PREFAB_DEADLINE_RADII = {
 # 落下経路のポリゴン間ギャップをより正確に反映する。
 COLLISION_POLY_FACTOR = 0.55
 
+# v728 (2026-08-25): 垂直開放レーンへの自由落下直撃を DIRECT に昇格する際のゲート。
+# 手動チャレンジ (docs/manual_challenge_20260825_insights.md §1) で 3/3 併合した「頭上が完全に
+# 開いた相方への垂直落下」が、has_obstruction (レーン外ピースの ±(drop+p)*1.05 帯) と
+# has_horizontal_obstruction (ターゲット自身の土台) で NO に誤降格されていた。実履歴 8 試合の
+# 実着手 x での再評価では昇格 22/22 が実際に併合 (旧 DIRECT の精度 94.8%)。
+VERTICAL_LANE_MAX_GAP = 0.02          # G1: 接触ギャップ (着地予測がターゲット上と一致していること)
+VERTICAL_LANE_OVERLAP_FRAC = 1.0      # G2: |x - target.x| <= frac * min(drop_horiz, target_horiz)
+VERTICAL_LANE_LANDING_TOL = 0.02      # G3: ly が「ターゲット上端 + 落下駒の下半径」と一致
+VERTICAL_LANE_CLEARANCE_MARGIN = 1.0  # G4: 落下柱と重なる全ピースの上端 <= ターゲット上端
+VERTICAL_LANE_MIN_PROMINENCE = 0.05   # 柱内の他ピース上端はターゲット上端より 0.05 以上低い (パーチ保険。実測 67/1708 除外・真陽性損失 0)
+# 実効条件の注記: hit_id == target が成立している時点で G1/G3/G4(上端条件) は着地モデルから自動的に
+# 満たされる (実 707 局面で棄却 0)。実質の追加条件は G2 (横重なり >= 50%) と MIN_PROMINENCE。
+
 # 物理定数（Unity 2D Physics準拠）
 GRAVITY = 9.81
 EXPLOSION_FORCE = 450.0
@@ -662,6 +675,62 @@ def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
     return landing_y
 
 
+def _vertical_lane_mode():
+    """ANALYZE_BOARD_VERTICAL_LANE_DIRECT: 1=DIRECT 昇格 (既定), 2=NEAR 昇格, 0=旧挙動。毎回 env を読む
+    (strategy_runner はゲーム毎の新プロセスなので .env 変更は次ゲームから効く)。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1") or "").strip().lower()
+    if raw in ("0", "false", "off", "no"):
+        return 0
+    if raw == "2":
+        return 2
+    return 1
+
+
+def _vertical_lane_direct(x, ly, drop_ext, target, pieces, eff_radii=None, contact_gap=None):
+    """v728: 落下駒が開放された垂直レーンをターゲット上端まで自由落下して直撃する形かを判定する。
+    呼び出し側で hit_id == target (get_landing_info の最初の衝突相手がターゲット) が成立している
+    前提で、has_obstruction / has_horizontal_obstruction による降格を無効化するためだけに使う。
+    get_landing_info と同じ eff_radii で判定し、欠損・非有限・例外・各ゲート不成立は False
+    (= 旧挙動) に倒す。"""
+    try:
+        if _vertical_lane_mode() == 0:
+            return False
+        if contact_gap is None:
+            return False
+        tx = float(target["x"])
+        ty = float(target["y"])
+        xf = float(x)
+        lyf = float(ly)
+        gap = float(contact_gap)
+        if not all(math.isfinite(v) for v in (tx, ty, xf, lyf, gap)):
+            return False
+        drop_horiz = float(drop_ext.get("horiz", 0.0) or 0.0)
+        drop_bottom = float(drop_ext.get("bottom", 0.0) or 0.0)
+        target_horiz = float(piece_deadline_horiz_radius(target, eff_radii) or 0.0)
+        if drop_horiz <= 0.0 or target_horiz <= 0.0:
+            return False
+        if gap > VERTICAL_LANE_MAX_GAP:  # G1
+            return False
+        if abs(xf - tx) > VERTICAL_LANE_OVERLAP_FRAC * min(drop_horiz, target_horiz):  # G2
+            return False
+        target_top_y = ty + float(piece_deadline_top_radius(target, eff_radii) or 0.0)
+        if abs(lyf - (target_top_y + drop_bottom)) > VERTICAL_LANE_LANDING_TOL:  # G3
+            return False
+        for p in pieces:  # G4: 落下柱に重なるピースはターゲット上端より MIN_PROMINENCE 以上低い
+            if p.get("id") == target.get("id"):
+                continue
+            px = float(p["x"])
+            p_horiz = float(piece_deadline_horiz_radius(p, eff_radii) or 0.0)
+            if abs(xf - px) >= (drop_horiz + p_horiz) * VERTICAL_LANE_CLEARANCE_MARGIN:
+                continue
+            p_top_y = float(piece_deadline_top_y(p, eff_radii))
+            if target_top_y - p_top_y < VERTICAL_LANE_MIN_PROMINENCE:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def has_obstruction(drop_x, drop_r, target, pieces, deadline_radii=None, drop_type=0):
     """DIRECT判定時に、ターゲットの上方にドロップ経路を妨害するピースがないか確認。
     ポリゴン形状を考慮した実効半径で判定し、5%の安全マージンを加算。
@@ -787,9 +856,19 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
             if hit_id == t["id"]:
                 # 最初の衝突相手がターゲット → 妨害チェック
-                if has_obstruction(x, next_r, t, pieces, deadline_eff_radii, next_type):
+                # v728: 垂直開放レーンの自由落下直撃は has_obstruction/has_horizontal_obstruction の
+                # 誤降格 (レーン外ピース / ターゲット自身の土台) を受けない。
+                # ANALYZE_BOARD_VERTICAL_LANE_DIRECT=0 で完全に旧挙動。
+                # mode 2 (NEAR 昇格) は旧 DIRECT を降格させない: has_obstruction が False なら従来どおり DIRECT。
+                _vl_mode = _vertical_lane_mode()
+                _vl_ok = bool(_vl_mode) and _vertical_lane_direct(x, ly, drop_ext, t, pieces, eff_radii, contact_gap)
+                if _vl_ok and _vl_mode == 1:
+                    grade = "DIRECT"
+                elif has_obstruction(x, next_r, t, pieces, deadline_eff_radii, next_type):
                     # 経路上に妨害ピースあり → 降格、さらに水平障害があればNO
-                    if contact_gap <= 0.20:
+                    if _vl_ok:
+                        grade = "NEAR"
+                    elif contact_gap <= 0.20:
                         grade = (
                             "NO"
                             if has_horizontal_obstruction(x, ly, next_r, t, pieces, deadline_eff_radii, next_type)
