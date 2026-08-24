@@ -95,6 +95,23 @@ class StrategyHashTest(unittest.TestCase):
         self.assertNotEqual(first, without_finalizer)
         self.assertNotEqual(first, second)
 
+    def test_runtime_policy_capability_changes_strategy_identity(self):
+        template = (
+            "def pre_russia_ukraine_pair_policy_id():\n"
+            "    return '{policy_id}'\n\n"
+            "def finalize_decision(game_state, analysis, decision):\n"
+            "    if not pre_russia_ukraine_pair_policy_id():\n"
+            "        return {{'x': 0.0, 'reason': 'fallback'}}\n"
+            "    return decision\n\n"
+            "def decide(game_state, analysis):\n"
+            "    return {{'x': 0.0, 'reason': 'stable'}}\n"
+        )
+
+        first = self._hash(template.format(policy_id="ukraine-pair-v1"))
+        second = self._hash(template.format(policy_id="ukraine-pair-v2"))
+
+        self.assertNotEqual(first, second)
+
     def test_all_hash_consumers_agree_for_legacy_and_helper_policies(self):
         sources = [
             (
@@ -127,6 +144,16 @@ class StrategyHashTest(unittest.TestCase):
                 "def finalize_decision(game_state, analysis, decision):\n"
                 "    if analysis['risk'] > final_limit():\n"
                 "        return {'x': 1.0, 'reason': 'final'}\n"
+                "    return decision\n\n"
+                "def decide(game_state, analysis):\n"
+                "    return {'x': 0.0, 'reason': 'stable'}\n"
+            ),
+            (
+                "def pre_russia_ukraine_pair_policy_id():\n"
+                "    return 'ukraine-pair-v1'\n\n"
+                "def finalize_decision(game_state, analysis, decision):\n"
+                "    if not pre_russia_ukraine_pair_policy_id():\n"
+                "        return {'x': 0.0, 'reason': 'fallback'}\n"
                 "    return decision\n\n"
                 "def decide(game_state, analysis):\n"
                 "    return {'x': 0.0, 'reason': 'stable'}\n"

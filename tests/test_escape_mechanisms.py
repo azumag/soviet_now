@@ -10691,7 +10691,8 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], -0.6)
         self.assertIn("pre_russia_t12_lane", decision["reason"])
 
-    def test_deadline_safety_keeps_pre_russia_t13_pair_lane_under_pressure(self):
+    def test_deadline_safety_skips_ukraine_lane_when_pair_already_touches(self):
+        import strategy
         import strategy_runner
 
         pieces = [
@@ -10745,10 +10746,11 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
                 ],
             },
             {"pieces": pieces, "next": {"type": 10, "r": 0.846}},
+            strategy,
         )
 
-        self.assertEqual(decision["x"], -1.6)
-        self.assertIn("pre_russia_t13_pair_lane", decision["reason"])
+        self.assertEqual(decision["x"], 3.0)
+        self.assertNotIn("pre_russia_t13_pair_lane", decision["reason"])
 
     def test_deadline_safety_rejects_pre_russia_t13_pair_lane_at_hard_deadline(self):
         import strategy_runner

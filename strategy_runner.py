@@ -35,6 +35,7 @@ RUSSIA_CELEBRATION_ENABLED = os.environ.get("RUSSIA_CELEBRATION_ENABLED", "0") !
 # Runtime の game_state / history 上では type15 までしか観測されていない。
 # ロシアは type15 の新規出現、ソ連は makeSorenCount の増加で検知する。
 RUSSIA_TYPE = 15
+PRE_RUSSIA_UKRAINE_PAIR_POLICY_ID = "pre_russia_ukraine_pair_lane_v1"
 
 # 座標変換
 GAME_X_MIN = -3.0
@@ -743,7 +744,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     # still recorded for strategy/audit use, but is too noisy for OBS alerts.
 
 
-def enforce_deadline_safety(decision, analysis, game_state=None):
+def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module=None):
     """送信直前の最終安全弁: deadline越えと余白消費を差し替える。"""
     results = analysis.get("results", []) if isinstance(analysis, dict) else []
     if not results or not isinstance(decision, dict):
@@ -1329,8 +1330,6 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         # v716: a singleton T13 plus two live T12s is the birth state for the
         # second T13. Use the anchor-relative lane here too, so deadline fallback
         # cannot steer the birth away from the only T13 that can become T14.
-        if "ANCHOR_SECOND_T13_CONTACT_SHOT" not in reason_text:
-            return None
         _second_birth_counts = {}
         for _birth_piece in pieces:
             try:
@@ -1339,7 +1338,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                 continue
             _second_birth_counts[_birth_type] = _second_birth_counts.get(_birth_type, 0) + 1
         if (
-            _second_birth_counts.get(14, 0) == 0
+            "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
+            and _second_birth_counts.get(14, 0) == 0
             and _second_birth_counts.get(15, 0) == 0
             and _second_birth_counts.get(13, 0) == 1
             and _second_birth_counts.get(12, 0) >= 2
@@ -1447,6 +1447,16 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                                     risk_top(r),
                                 ),
                             )
+        policy_id = getattr(
+            strategy_module, "pre_russia_ukraine_pair_policy_id", None
+        )
+        if not callable(policy_id):
+            return None
+        try:
+            if policy_id() != PRE_RUSSIA_UKRAINE_PAIR_POLICY_ID:
+                return None
+        except Exception:
+            return None
         # v713: the pair-lane hook is valid from board state alone.  The old
         # reason-marker gate let deadline guard bypass the only route to the first
         # Russia whenever strategy scoring could not emit a tag before returning.
@@ -2851,7 +2861,9 @@ def apply_strategy_final_decision(strategy_module, decision, analysis, game_stat
     # become a way around the runtime's deadline and shape invariants.  Re-run
     # the complete safety pass because an analyzer-safe lane can still be
     # rejected by the independent geometry check.
-    return enforce_deadline_safety(finalized, analysis, game_state)
+    return enforce_deadline_safety(
+        finalized, analysis, game_state, strategy_module
+    )
 
 
 def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT):
@@ -3102,7 +3114,7 @@ def run_game():
             # ドロップX をクランプ
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
-            decision = enforce_deadline_safety(decision, analysis, gs)
+            decision = enforce_deadline_safety(decision, analysis, gs, strategy)
             decision = apply_strategy_final_decision(strategy, decision, analysis, gs)
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x

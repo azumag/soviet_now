@@ -61,6 +61,10 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v724: PRE_RUSSIA_UKRAINE_PAIR_LANE_V1 — restore the runner's state-only
+# Ukraine-pair contact lane before Russia while preserving the reason-gated
+# second-Ukraine birth lane and all hard-deadline exits.  The capability ID is
+# part of this strategy's archive hash and gates the matching runner behavior.
 # v723: PRE_RUSSIA_CHAIN_COVER_AVOID — after the final runtime safety pass,
 # keep low incoming countries off paired Uzbekistan/Turkmenistan/Ukraine
 # material while exactly one Kazakhstan is waiting for the second chain.
@@ -704,6 +708,11 @@ def _select_pre_russia_chain_cover_avoidance(
     return min(alternatives, key=lambda item: item[:4])[-1]
 
 
+def pre_russia_ukraine_pair_policy_id() -> str:
+    """Declare the compatible runner lane and carry it into the policy hash."""
+    return "pre_russia_ukraine_pair_lane_v1"
+
+
 def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
     """Apply optional strategic postconditions after runtime safety enforcement."""
     if not isinstance(game_state, dict):
@@ -711,6 +720,8 @@ def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
     if not isinstance(analysis, dict):
         return decision
     if not isinstance(decision, dict):
+        return decision
+    if not pre_russia_ukraine_pair_policy_id():
         return decision
 
     selected = _select_pre_russia_chain_cover_avoidance(
