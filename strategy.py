@@ -61,6 +61,13 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v725: POST_FIRST_RUSSIA_LANE_COVER_AVOID — after the first Kazakhstan exists,
+# keep the second-Russia material lane alive from board state alone.  The older
+# ladder hooks depended on reason markers that runtime safety could rewrite, so
+# the measured game covered lone Turkmenistan with a low incoming country and
+# spent its remaining drops without a second Kazakhstan.  This finalizer only
+# accepts a materially safe real collision with a lower country, never another
+# high-country cover of the live rebuild lane.
 # v724: PRE_RUSSIA_UKRAINE_PAIR_LANE_V1 — restore the runner's state-only
 # Ukraine-pair contact lane before Russia while preserving the reason-gated
 # second-Ukraine birth lane and all hard-deadline exits.  The capability ID is
@@ -713,6 +720,165 @@ def pre_russia_ukraine_pair_policy_id() -> str:
     return "pre_russia_ukraine_pair_lane_v1"
 
 
+def post_first_russia_lane_policy_id() -> str:
+    """Declare the state-only second-Russia finalizer capability."""
+    return "post_first_russia_lane_keep_v1"
+
+
+def _select_post_first_russia_lane_cover_avoidance(
+    pieces, results, next_type, decision
+):
+    """Keep one-Kazakhstan boards from covering the second-Russia rebuild lane.
+
+    The first observed v724 near-miss reached Kazakhstan and then placed low
+    incoming countries on the lone Uzbekistan/Turkmenistan material.  This is
+    deliberately state-only because the runtime safety suffix had already made
+    the old reason-gated ladder unreachable.  A malformed board or an unsafe
+    alternative always keeps the enforced decision unchanged.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if not isinstance(decision, dict) or type(next_type) is not int:
+        return None
+    if isinstance(next_type, bool) or not 3 <= next_type <= 11:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    type_counts = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_radius = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_radius is None
+            or piece_radius <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = piece
+        type_counts[piece_type] = type_counts.get(piece_type, 0) + 1
+
+    # One Kazakhstan is the exact post-first-Russia state.  Ukraine means the
+    # first-Russia pair path is already active; Turkmenistan is the material
+    # this selector protects until it can pair into Ukraine.  Russia/Soviet are
+    # out of scope here.
+    if (
+        type_counts.get(14, 0) != 1
+        or type_counts.get(15, 0) != 0
+        or type_counts.get(16, 0) != 0
+        or type_counts.get(13, 0) != 0
+        or type_counts.get(12, 0) < 1
+    ):
+        return None
+
+    selected_x = finite_number(decision.get("x"))
+    if (
+        selected_x is None
+        or not -3.0 <= selected_x <= 3.0
+        or abs(_clip_final_drop_x(selected_x, True) - selected_x) > 1e-6
+    ):
+        return None
+
+    selected_matches = [
+        candidate for candidate in results
+        if isinstance(candidate, dict)
+        and finite_number(candidate.get("x")) is not None
+        and abs(finite_number(candidate.get("x")) - selected_x) <= 0.011
+    ]
+    if len(selected_matches) != 1:
+        return None
+    selected = selected_matches[0]
+    selected_hit_id = selected.get("landing_hit_id")
+    if not valid_piece_id(selected_hit_id) or selected_hit_id not in piece_by_id:
+        return None
+
+    validated_results = []
+    seen_candidate_x = set()
+    risks = []
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        merge_grade = candidate.get("merge_grade")
+        crosses_deadline = candidate.get("crosses_deadline")
+        merge_crosses_deadline = candidate.get("merge_result_crosses_deadline")
+        hit_id = candidate.get("landing_hit_id")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_x in seen_candidate_x
+            or candidate_margin is None
+            or candidate_risk is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or crosses_deadline is not False
+            or merge_crosses_deadline is not False
+            or not valid_piece_id(hit_id)
+            or hit_id not in piece_by_id
+        ):
+            return None
+        seen_candidate_x.add(candidate_x)
+        risks.append(candidate_risk)
+        validated_results.append((candidate, candidate_x, candidate_risk, candidate_margin, hit_id))
+
+    min_risk_top = min(risks)
+    selected_risk = finite_number(selected.get("risk_top_y_after_drop"))
+    selected_margin = finite_number(selected.get("deadline_margin"))
+    if (
+        selected.get("merge_grade") == "DIRECT"
+        or selected_margin < 0.35
+        or selected_margin > 1.20
+        or piece_by_id[selected_hit_id]["type"] not in (11, 12, 13, 14)
+    ):
+        return None
+
+    alternatives = []
+    for candidate, candidate_x, risk, margin, hit_id in validated_results:
+        if candidate is selected:
+            continue
+        hit_type = piece_by_id[hit_id]["type"]
+        if (
+            candidate.get("merge_grade") not in ("NEAR", "NO")
+            or margin < 0.45
+            or hit_type >= 11
+            or risk > min(selected_risk - 0.05, min_risk_top + 0.50)
+        ):
+            continue
+        alternatives.append((risk, -margin, abs(candidate_x), candidate_x, candidate))
+
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:2])[-1]
+
+
 def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
     """Apply optional strategic postconditions after runtime safety enforcement."""
     if not isinstance(game_state, dict):
@@ -723,6 +889,21 @@ def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
         return decision
     if not pre_russia_ukraine_pair_policy_id():
         return decision
+
+    if post_first_russia_lane_policy_id():
+        selected = _select_post_first_russia_lane_cover_avoidance(
+            game_state.get("pieces"),
+            analysis.get("results"),
+            game_state.get("next", {}).get("type")
+            if isinstance(game_state.get("next"), dict)
+            else None,
+            decision,
+        )
+        if selected is not None:
+            return {
+                "x": round(float(selected["x"]), 4),
+                "reason": "POST_FIRST_RUSSIA_LANE_COVER_AVOID",
+            }
 
     selected = _select_pre_russia_chain_cover_avoidance(
         game_state.get("pieces"),
