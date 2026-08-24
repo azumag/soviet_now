@@ -181,14 +181,14 @@ Automated archive from $(hostname) at $(date -u +%Y-%m-%dT%H:%M:%SZ)
 Source: backups/radio_scripts/${TARGET_DATE:-all}
 Pushed by tools/radio_archive_push.sh
 "
-      if ! git -C "$GIT_DIR_TMP" -c user.name="soren-archive" -c user.email="archive@soren.local" commit -m "$COMMIT_MSG" 2>&1 | head -n 20; then
+      if ! git -C "$GIT_DIR_TMP" -c user.name="soren-archive" -c user.email="archive@soren.local" commit -m "$COMMIT_MSG" 2>&1 | cat; then
         log "[RADIO_ARCHIVE][git] commit failed" >&2
         OVERALL_RC=2
       else
         # push (リトライ3回)
         PUSHED=0
         for attempt in 1 2 3; do
-          if git -C "$GIT_DIR_TMP" push origin "$GIT_BRANCH" 2>&1 | head -n 20; then
+          if git -C "$GIT_DIR_TMP" push origin "$GIT_BRANCH" 2>&1 | cat; then
             PUSHED=1
             log "[RADIO_ARCHIVE][git] push succeeded (attempt $attempt)"
             break
@@ -230,7 +230,7 @@ if [ "$RCLONE_ENABLED" -eq 1 ]; then
         log "[RADIO_ARCHIVE][rclone] rclone copy $BACKUP_ROOT $RCLONE_REMOTE:$RCLONE_BUCKET/radio_scripts/ --dry-run"
       else
         log "[RADIO_ARCHIVE][rclone] copying to $RCLONE_REMOTE:$RCLONE_BUCKET/radio_scripts/"
-        if ! rclone copy "$BACKUP_ROOT" "$RCLONE_REMOTE:$RCLONE_BUCKET/radio_scripts/" --progress 2>&1 | head -n 100; then
+        if ! rclone copy "$BACKUP_ROOT" "$RCLONE_REMOTE:$RCLONE_BUCKET/radio_scripts/" --progress 2>&1 | cat; then
           log "[RADIO_ARCHIVE][rclone] copy failed" >&2
           OVERALL_RC=2
         else
@@ -243,7 +243,7 @@ if [ "$RCLONE_ENABLED" -eq 1 ]; then
         log "[RADIO_ARCHIVE][oci] dry-run: would bulk-upload $BACKUP_ROOT to $RCLONE_BUCKET"
       else
         log "[RADIO_ARCHIVE][oci] bulk-upload to $RCLONE_BUCKET"
-        if ! oci os object bulk-upload --bucket-name "$RCLONE_BUCKET" --src-dir "$BACKUP_ROOT" --object-prefix "radio_scripts/" 2>&1 | head -n 100; then
+        if ! oci os object bulk-upload --bucket-name "$RCLONE_BUCKET" --src-dir "$BACKUP_ROOT" --object-prefix "radio_scripts/" 2>&1 | cat; then
           log "[RADIO_ARCHIVE][oci] bulk-upload failed" >&2
           OVERALL_RC=2
         else
