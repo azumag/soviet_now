@@ -265,7 +265,12 @@ PYEOF
 
 	if [ -f "$GAME_STATE" ]; then
 		local test_out
-		test_out=$(python3 "$target_file" "$GAME_STATE" 2>&1)
+		# 2026-08-25 fix: target_file が tmp/state/ 等リポジトリ外にコピーされている場合
+		# (rollback 復元 validation)、python3 直接実行では script dir が sys.path[0] になり
+		# リポジトリ直下の strategy_helpers が import できず必ず失敗していた
+		# (ModuleNotFoundError → "accepted by policy" で validation が事実上無効化)。
+		# リポジトリルートを PYTHONPATH に足して本来の実行文脈に揃える。
+		test_out=$(PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" python3 "$target_file" "$GAME_STATE" 2>&1)
 		if [ $? -ne 0 ]; then
 			VALIDATE_ERROR="テスト実行失敗: $test_out"
 			log "[VALIDATE] $VALIDATE_ERROR"

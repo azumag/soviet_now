@@ -4412,6 +4412,26 @@ russia_advantage_grace = (
     and _curr_russia_adv > _anch_russia_adv
 )
 
+# 2026-08-25 fix: stage_gate_noninferior_grace — 2026-08-24 19:34-19:46 に、スコア全指標で
+# 非劣後 (breach_count=0)・ロシア数 anchor 以上・best_max_type anchor 以上の戦略が、段階到達率
+# (lost_kazakhstan/turkmenistan_gate) だけを理由に4連続でロールバックされ、comp 10017→9208 /
+# russia 3→0 まで12分で転落するカスケードが実際に起きた。段階到達率ゲートは「建国進捗でも
+# スコアでも劣っていない」戦略に対しては発火させない。真の劣化は comp/p50/p25 gap の
+# breach (>=1) で従来どおり検知される。STAGE_GATE_NONINFERIOR_GRACE=0 で旧挙動へ戻せる。
+# 判定不能時は grace=False (旧挙動 = rollback 側) に倒す。
+try:
+    stage_gate_noninferior_grace = (
+        str(os.environ.get("STAGE_GATE_NONINFERIOR_GRACE", "1") or "1") != "0"
+        and curr_breach == 0
+        and int(current_objective.get("russia_count", 0) or 0)
+        >= int((anchor_objective or {}).get("russia_count", 0) or 0)
+        and int(current_objective.get("best_max_type", 0) or 0)
+        >= int((anchor_objective or {}).get("best_max_type", 0) or 0)
+        and float(current.get("comp", 0.0) or 0.0) >= float(anchor.get("comp", 0.0) or 0.0)
+    )
+except Exception:
+    stage_gate_noninferior_grace = False
+
 objective_reasons = []
 if (
     early_objective_enabled == "1"
@@ -4449,6 +4469,7 @@ stage_achievement_reason, stage_achievement_detail = stage_achievement_regressio
 if (
     current_hash != anchor_hash
     and stage_achievement_reason
+    and not stage_gate_noninferior_grace
 ):
     # trend_grace は score-only rollback dampener。段階到達率不足は免除しない。
     print(
@@ -4506,7 +4527,7 @@ if current["n"] < min_games_current:
 objective_reasons = []
 if current_hash != anchor_hash:
     stage_gate_reason = stage_gate_regression_reason(anchor_objective, current_objective, current)
-    if stage_gate_reason:
+    if stage_gate_reason and not stage_gate_noninferior_grace:
         objective_reasons.append(stage_gate_reason)
     if (
         int(anchor_objective.get("soviet_count", 0) or 0) > 0
