@@ -879,6 +879,79 @@ def _select_post_first_russia_lane_cover_avoidance(
     return min(alternatives, key=lambda item: item[:2])[-1]
 
 
+def _select_post_first_russia_pair_tether(
+    pieces, results, next_type, decision
+):
+    """Move Kazakhstan and Ukraine together before deadline pressure."""
+    if not isinstance(pieces, list) or not isinstance(results, list) or not isinstance(decision, dict):
+        return None
+    if type(next_type) is not int or isinstance(next_type, bool) or not 1 <= next_type <= 12:
+        return None
+
+    def finite(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    counts = {}
+    targets = []
+    for piece in pieces:
+        if not isinstance(piece, dict) or type(piece.get("type")) is not int or piece["type"] < 13:
+            continue
+        x = finite(piece.get("x"))
+        if x is None:
+            return None
+        counts[piece["type"]] = counts.get(piece["type"], 0) + 1
+        if piece["type"] in (13, 14):
+            targets.append(x)
+    if counts.get(13) != 1 or counts.get(14) != 1 or counts.get(15, 0) or counts.get(16, 0) or len(targets) != 2:
+        return None
+
+    selected_x = finite(decision.get("x"))
+    selected = next(
+        (result for result in results if isinstance(result, dict) and finite(result.get("x")) is not None and abs(finite(result.get("x")) - selected_x) <= 0.011),
+        None,
+    )
+    if selected_x is None or selected is None:
+        return None
+    target_x = sum(targets) / 2.0
+    current_distance = abs(selected_x - target_x)
+    selected_margin = finite(selected.get("deadline_margin"))
+    if current_distance <= 0.80 or selected.get("merge_grade") == "DIRECT" or selected_margin is None or selected_margin < 0.50:
+        return None
+
+    risks = [finite(result.get("risk_top_y_after_drop")) for result in results if isinstance(result, dict)]
+    if any(value is None for value in risks):
+        return None
+    selected_risk = finite(selected.get("risk_top_y_after_drop"))
+    alternatives = []
+    for result in results:
+        x = finite(result.get("x"))
+        margin = finite(result.get("deadline_margin"))
+        risk = finite(result.get("risk_top_y_after_drop"))
+        distance = abs(x - target_x) if x is not None else 999.0
+        if (
+            result is selected
+            or margin is None
+            or margin < 0.55
+            or risk is None
+            or result.get("merge_grade") == "DIRECT"
+            or result.get("crosses_deadline") is not False
+            or result.get("merge_result_crosses_deadline") is not False
+            or risk > max(selected_risk, min(risks) + 0.35)
+            or distance + 0.75 >= current_distance
+        ):
+            continue
+        alternatives.append((distance, risk, -margin, result))
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:2])[-1]
+
+
 def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
     """Apply optional strategic postconditions after runtime safety enforcement."""
     if not isinstance(game_state, dict):
@@ -889,6 +962,20 @@ def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
         return decision
     if not pre_russia_ukraine_pair_policy_id():
         return decision
+
+    tether = _select_post_first_russia_pair_tether(
+        game_state.get("pieces"),
+        analysis.get("results"),
+        game_state.get("next", {}).get("type")
+        if isinstance(game_state.get("next"), dict)
+        else None,
+        decision,
+    )
+    if tether is not None:
+        return {
+            "x": round(float(tether["x"]), 4),
+            "reason": "POST_FIRST_RUSSIA_PAIR_TETHER",
+        }
 
     if post_first_russia_lane_policy_id():
         selected = _select_post_first_russia_lane_cover_avoidance(
