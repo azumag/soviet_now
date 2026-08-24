@@ -345,25 +345,25 @@ def calc_reactor_state(pieces, shapes=None):
     for p in pieces:
         type_count[p["type"]] = type_count.get(p["type"], 0) + 1
 
-        # 反応可能ペア数（同typeで接触圏内 ×1.5）
-        reactive_pairs = []
-        near_pairs = []
-        for i, p1 in enumerate(pieces):
-            for p2 in pieces[i + 1 :]:
-                if p1["type"] != p2["type"]:
-                    continue
-                dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
-                contact_r = p1["r"] + p2["r"]
-                if dist < contact_r * 1.1:
-                    reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
-                elif dist < contact_r * 2.0:
-                    # 間に別タイプのピースが挟まっている場合は除外
-                    if not has_horizontal_obstruction(
-                        p1["x"], p1["y"], p1["r"], p2, pieces
-                    ):
-                        near_pairs.append(
-                            (p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2))
-                        )
+    # 反応可能ペア数（同typeで接触圏内 ×1.5）
+    reactive_pairs = []
+    near_pairs = []
+    for i, p1 in enumerate(pieces):
+        for p2 in pieces[i + 1 :]:
+            if p1["type"] != p2["type"]:
+                continue
+            dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
+            contact_r = p1["r"] + p2["r"]
+            if dist < contact_r * 1.1:
+                reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
+            elif dist < contact_r * 2.0:
+                # 間に別タイプのピースが挟まっている場合は除外
+                if not has_horizontal_obstruction(
+                    p1["x"], p1["y"], p1["r"], p2, pieces
+                ):
+                    near_pairs.append(
+                        (p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2))
+                    )
 
     # パイプライン健全性: 連続するtype間の距離
     types_present = sorted(type_count.keys())
