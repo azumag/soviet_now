@@ -2815,6 +2815,45 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     return new_decision
 
 
+def apply_strategy_final_decision(strategy_module, decision, analysis, game_state=None):
+    """Run an optional strategy-owned postcondition after deadline enforcement.
+
+    The runtime safety function has several intentional early-return paths, so
+    a strategic invariant that must inspect the *actual final* candidate cannot
+    live reliably inside ``decide`` or at the tail of that function.  Invalid
+    or failing optional hooks keep the already-enforced decision unchanged.
+    """
+    finalizer = getattr(strategy_module, "finalize_decision", None)
+    if not callable(finalizer):
+        return decision
+    try:
+        finalized = finalizer(game_state, analysis, decision)
+    except Exception as err:
+        log(f"WARN: strategy finalize_decision failed, keeping safe decision: {err}")
+        return decision
+    if not isinstance(finalized, dict) or "x" not in finalized:
+        log("WARN: strategy finalize_decision returned invalid result, keeping safe decision")
+        return decision
+    if isinstance(finalized["x"], bool):
+        log("WARN: strategy finalize_decision returned invalid x, keeping safe decision")
+        return decision
+    try:
+        final_x = float(finalized["x"])
+    except (TypeError, ValueError):
+        log("WARN: strategy finalize_decision returned invalid x, keeping safe decision")
+        return decision
+    if not math.isfinite(final_x) or not GAME_X_MIN <= final_x <= GAME_X_MAX:
+        log("WARN: strategy finalize_decision returned out-of-range x, keeping safe decision")
+        return decision
+    finalized = dict(finalized)
+    finalized["x"] = final_x
+    # Strategy postconditions may only refine a safe decision; they must never
+    # become a way around the runtime's deadline and shape invariants.  Re-run
+    # the complete safety pass because an analyzer-safe lane can still be
+    # rejected by the independent geometry check.
+    return enforce_deadline_safety(finalized, analysis, game_state)
+
+
 def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT):
     """MOVE状態になるまで待つ。GAMEOVER/STOPならFalseを返す。"""
     settle_count = 0
@@ -3064,6 +3103,7 @@ def run_game():
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
             decision = enforce_deadline_safety(decision, analysis, gs)
+            decision = apply_strategy_final_decision(strategy, decision, analysis, gs)
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
 

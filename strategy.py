@@ -61,6 +61,11 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v723: PRE_RUSSIA_CHAIN_COVER_AVOID — after the final runtime safety pass,
+# keep low incoming countries off paired Uzbekistan/Turkmenistan/Ukraine
+# material while exactly one Kazakhstan is waiting for the second chain.
+# Only a real lower-country contact that improves both predicted top risk and
+# deadline margin can replace the already-safe no-merge decision.
 # v722: POST_RUSSIA_CHAIN_COVER_AVOID — after Russia is founded, do not
 # cover a paired Uzbekistan/Turkmenistan/Ukraine/Kazakhstan chain with a low
 # incoming country when the analyzer proves a materially safer real contact.
@@ -525,6 +530,204 @@ def _select_post_russia_chain_cover_avoidance(
     if not alternatives:
         return None
     return min(alternatives, key=lambda item: item[:4])[-1]
+
+
+def _select_pre_russia_chain_cover_avoidance(
+    pieces, results, next_type, chosen_x
+):
+    """Keep the second-Russia chain open after the final runtime safety pass.
+
+    Four measured Kazakhstan stalls placed a low incoming country directly on
+    paired Uzbekistan, Turkmenistan or Ukraine material even though the
+    analyzer exposed a materially safer contact with a lower country.  This
+    selector runs from ``finalize_decision`` so it sees the decision *after*
+    runtime deadline enforcement.  Every incomplete or ambiguous value keeps
+    the already-safe decision unchanged.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if type(next_type) is not int or not 1 <= next_type <= 10:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    type_counts = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_radius = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_radius is None
+            or piece_radius <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = piece
+        type_counts[piece_type] = type_counts.get(piece_type, 0) + 1
+
+    if (
+        type_counts.get(14, 0) != 1
+        or type_counts.get(15, 0) != 0
+        or type_counts.get(16, 0) != 0
+    ):
+        return None
+    paired_chain_types = {
+        country_type
+        for country_type in (11, 12, 13)
+        if type_counts.get(country_type, 0) >= 2
+    }
+    if not paired_chain_types:
+        return None
+
+    final_x = finite_number(chosen_x)
+    if (
+        final_x is None
+        or not -3.0 <= final_x <= 3.0
+        or abs(_clip_final_drop_x(final_x, False) - final_x) > 1e-6
+    ):
+        return None
+
+    validated_results = []
+    seen_candidate_x = set()
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_landing_y = finite_number(candidate.get("landing_y"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        merge_grade = candidate.get("merge_grade")
+        crosses_deadline = candidate.get("crosses_deadline")
+        merge_crosses_deadline = candidate.get("merge_result_crosses_deadline")
+        hit_id = candidate.get("landing_hit_id")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_x in seen_candidate_x
+            or candidate_landing_y is None
+            or candidate_risk is None
+            or candidate_margin is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or type(crosses_deadline) is not bool
+            or type(merge_crosses_deadline) is not bool
+            or not valid_piece_id(hit_id)
+            or hit_id not in piece_by_id
+        ):
+            return None
+        seen_candidate_x.add(candidate_x)
+        validated_results.append(
+            (
+                candidate,
+                candidate_x,
+                candidate_risk,
+                candidate_margin,
+                hit_id,
+            )
+        )
+
+    # An analyzer-confirmed immediate merge always remains ahead of lane
+    # preservation, even if an earlier scorer or runtime guard did not choose it.
+    if any(
+        candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and candidate.get("crosses_deadline") is False
+        and candidate.get("merge_result_crosses_deadline") is False
+        for candidate, _, _, _, _ in validated_results
+    ):
+        return None
+
+    selected_matches = [
+        values
+        for values in validated_results
+        if abs(values[1] - final_x) <= 0.011
+    ]
+    if len(selected_matches) != 1:
+        return None
+    selected_candidate, _, selected_risk, selected_margin, selected_hit_id = (
+        selected_matches[0]
+    )
+    if (
+        selected_candidate.get("merge_grade") != "NO"
+        or abs(_clip_final_drop_x(final_x, False) - final_x) > 1e-6
+        or selected_candidate.get("crosses_deadline") is not False
+        or selected_candidate.get("merge_result_crosses_deadline") is not False
+        or selected_margin < 0.0
+        or piece_by_id[selected_hit_id]["type"] not in paired_chain_types
+    ):
+        return None
+
+    alternatives = []
+    for candidate, candidate_x, risk, margin, hit_id in validated_results:
+        if candidate is selected_candidate:
+            continue
+        hit_type = piece_by_id[hit_id]["type"]
+        if (
+            candidate.get("merge_grade") != "NO"
+            or abs(_clip_final_drop_x(candidate_x, False) - candidate_x) > 1e-6
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or not 1 <= hit_type <= 10
+            or margin + 1e-9 < 0.50
+            or selected_risk - risk + 1e-9 < 0.20
+            or margin - selected_margin + 1e-9 < 0.20
+        ):
+            continue
+        alternatives.append((risk, -margin, abs(candidate_x), candidate_x, candidate))
+
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:4])[-1]
+
+
+def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
+    """Apply optional strategic postconditions after runtime safety enforcement."""
+    if not isinstance(game_state, dict):
+        return decision
+    if not isinstance(analysis, dict):
+        return decision
+    if not isinstance(decision, dict):
+        return decision
+
+    selected = _select_pre_russia_chain_cover_avoidance(
+        game_state.get("pieces"),
+        analysis.get("results"),
+        game_state.get("next", {}).get("type")
+        if isinstance(game_state.get("next"), dict)
+        else None,
+        decision.get("x"),
+    )
+    if selected is None:
+        return decision
+
+    return {
+        "x": round(float(selected["x"]), 4),
+        "reason": "PRE_RUSSIA_CHAIN_COVER_AVOID",
+    }
 
 
 def _select_visible_same_country_contact(

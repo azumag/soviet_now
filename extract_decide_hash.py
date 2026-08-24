@@ -4,10 +4,12 @@
 Usage: python3 extract_decide_hash.py [strategy.py]
 Output: MD5ハッシュ文字列 (stdout)
 
-Top-level helper functions called by decide() are included recursively.  A
-helper-only behavior change must not be mixed into the same rolling-score or
-rollback identity.  Strategies whose decide() calls no local helper retain the
-legacy decide-body hash, so existing archives keep their historical IDs.
+Top-level helper functions called by decide() are included recursively.  When
+present, the optional post-safety ``finalize_decision()`` policy and its helpers
+are included too.  A helper-only behavior change must not be mixed into the
+same rolling-score or rollback identity.  Strategies without the optional
+finalizer retain the legacy decide-policy normalization, so existing archives
+keep their historical IDs.
 """
 
 import ast
@@ -75,7 +77,7 @@ def _normalized_function(node):
 
 
 def extract_decide_body_from_source(source):
-    """Extract normalized decide policy from source text."""
+    """Extract normalized strategy policy from source text."""
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError, TypeError):
@@ -102,19 +104,37 @@ def extract_decide_body_from_source(source):
             reachable.add(name)
             queue.extend(sorted(_called_local_function_names(top_functions[name])))
 
+        finalizer = top_functions.get("finalize_decision")
+        if finalizer is not None:
+            queue = sorted(_called_local_function_names(finalizer))
+            while queue:
+                name = queue.pop(0)
+                if (
+                    name in ("decide", "finalize_decision")
+                    or name in reachable
+                    or name not in top_functions
+                ):
+                    continue
+                reachable.add(name)
+                queue.extend(
+                    sorted(_called_local_function_names(top_functions[name]))
+                )
+
         if reachable:
             helper_policy = "|".join(
                 _normalized_function(top_functions[name])
                 for name in sorted(reachable)
             )
             normalized += "|local_helpers=" + helper_policy
+        if finalizer is not None:
+            normalized += "|finalize_decision=" + _normalized_function(finalizer)
         return normalized
 
     return ""
 
 
 def extract_decide_body(filepath):
-    """Extract normalized decide policy, including reachable local helpers."""
+    """Extract normalized strategy policy, including reachable local helpers."""
     with open(filepath, "r", encoding="utf-8") as f:
         return extract_decide_body_from_source(f.read())
 

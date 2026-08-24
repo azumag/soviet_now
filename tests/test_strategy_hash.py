@@ -73,6 +73,28 @@ class StrategyHashTest(unittest.TestCase):
 
         self.assertEqual(first, second)
 
+    def test_optional_finalizer_and_its_helpers_change_strategy_identity(self):
+        template = (
+            "def final_limit():\n"
+            "    return {threshold}\n\n"
+            "def finalize_decision(game_state, analysis, decision):\n"
+            "    if analysis['risk'] > final_limit():\n"
+            "        return {{'x': 1.0, 'reason': 'final'}}\n"
+            "    return decision\n\n"
+            "def decide(game_state, analysis):\n"
+            "    return {{'x': 0.0, 'reason': 'stable'}}\n"
+        )
+
+        without_finalizer = self._hash(
+            "def decide(game_state, analysis):\n"
+            "    return {'x': 0.0, 'reason': 'stable'}\n"
+        )
+        first = self._hash(template.format(threshold="0.20"))
+        second = self._hash(template.format(threshold="0.21"))
+
+        self.assertNotEqual(first, without_finalizer)
+        self.assertNotEqual(first, second)
+
     def test_all_hash_consumers_agree_for_legacy_and_helper_policies(self):
         sources = [
             (
@@ -98,6 +120,16 @@ class StrategyHashTest(unittest.TestCase):
                 "    return 99\n\n"
                 "def decide(game_state, analysis):\n"
                 "    return {'x': 0.0, 'reason': 'unused'}\n"
+            ),
+            (
+                "def final_limit():\n"
+                "    return 0.20\n\n"
+                "def finalize_decision(game_state, analysis, decision):\n"
+                "    if analysis['risk'] > final_limit():\n"
+                "        return {'x': 1.0, 'reason': 'final'}\n"
+                "    return decision\n\n"
+                "def decide(game_state, analysis):\n"
+                "    return {'x': 0.0, 'reason': 'stable'}\n"
             ),
         ]
 
