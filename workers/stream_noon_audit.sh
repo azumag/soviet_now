@@ -35,6 +35,7 @@ POLL_INTERVAL="${STREAM_NOON_AUDIT_POLL_SEC:-30}"
 TOLERANCE_SEC="${STREAM_NOON_AUDIT_TOLERANCE_SEC:-600}"
 RESPAWN_WAIT_SEC="${STREAM_NOON_AUDIT_RESPAWN_WAIT_SEC:-90}"
 STOP_TIMEOUT_SEC="${STREAM_NOON_AUDIT_STOP_TIMEOUT_SEC:-45}"
+OFFLINE_HOLD_SEC="${STREAM_NOON_AUDIT_OFFLINE_HOLD_SEC:-30}"
 STATE_DIR="${STREAM_NOON_AUDIT_STATE_DIR:-tmp/state/stream_noon_audit}"
 TWITCH_LOGIN="${STREAM_NOON_AUDIT_TWITCH_LOGIN:-dociai}"
 GQL_URL="${STREAM_NOON_AUDIT_GQL_URL:-https://gql.twitch.tv/gql}"
@@ -248,8 +249,52 @@ _wait_running_with_new_session() {
 	return 1
 }
 
+_wait_offline_hold() {
+	# Disconnect Protection に吸収されないよう、外部配信が消えた状態を維持する。
+	local old_stream_id="${1:-}" deadline hold_deadline now external_id local_running
+	deadline=$(date +%s)
+	deadline=$((deadline + STOP_TIMEOUT_SEC + OFFLINE_HOLD_SEC + 5))
+	hold_deadline=""
+	while :; do
+		now=$(date +%s)
+		if [ "$now" -ge "$deadline" ]; then
+			return 1
+		fi
+
+		local_running=$(_status_flag running)
+		external_id=""
+		if [ -n "$old_stream_id" ]; then
+			external_id=$(_twitch_stream_id)
+		fi
+
+		if [ -n "$old_stream_id" ] && [ -z "$external_id" ]; then
+			if [ "$local_running" = "0" ]; then
+				case "$hold_deadline" in
+					''|0) hold_deadline=$((now + OFFLINE_HOLD_SEC)) ;;
+				esac
+				if [ "$now" -ge "$hold_deadline" ]; then
+					return 0
+				fi
+			else
+				hold_deadline=0
+			fi
+		elif [ "$local_running" != "1" ]; then
+			case "$hold_deadline" in
+				''|0) hold_deadline=$((now + OFFLINE_HOLD_SEC)) ;;
+			esac
+			if [ "$now" -ge "$hold_deadline" ]; then
+				return 0
+			fi
+		else
+			hold_deadline=0
+		fi
+
+		sleep 1
+	done
+}
+
 _restart_stream() {
-	local old_started="$1" old_stream_id="${2:-}" new_started="" stop_rc=0 deadline
+	local old_started="$1" old_stream_id="${2:-}" new_started="" stop_rc=0
 	_log "位相ずれ検出 → 配信を正午へ張り直します (old_started=${old_started} old_stream_id=${old_stream_id:-unknown})"
 	touch "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=1
@@ -259,16 +304,11 @@ _restart_stream() {
 		stop_rc=$?
 		_log "WARN: stop コマンド rc=${stop_rc} (停止確認へ継続)"
 	fi
-	deadline=$(date +%s)
-	deadline=$((deadline + STOP_TIMEOUT_SEC))
-	while :; do
-		if [ -n "$old_stream_id" ] && [ -z "$(_twitch_stream_id)" ]; then
-			break
-		fi
-		[ "$(_status_flag running)" != "1" ] && break
-		[ "$(date +%s)" -ge "$deadline" ] && break
-		sleep 1
-	done
+	if _wait_offline_hold "$old_stream_id"; then
+		_log "Twitch offline confirmed (${OFFLINE_HOLD_SEC}s)"
+	else
+		_log "WARN: Twitch offline 未確認 (${STOP_TIMEOUT_SEC}s+) → 復帰を優先します"
+	fi
 	rm -f "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=0
 	new_started=$(_wait_running_with_new_session "$old_started" "$old_stream_id" "$RESPAWN_WAIT_SEC")

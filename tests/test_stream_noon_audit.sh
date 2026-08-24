@@ -101,6 +101,7 @@ launch_worker() {
 		export STREAM_NOON_AUDIT_TOLERANCE_SEC="${TOLERANCE_SEC:-600}"
 		export STREAM_NOON_AUDIT_RESPAWN_WAIT_SEC="${RESPAWN_WAIT_SEC:-6}"
 		export STREAM_NOON_AUDIT_STOP_TIMEOUT_SEC=3
+		export STREAM_NOON_AUDIT_OFFLINE_HOLD_SEC="${OFFLINE_HOLD_SEC:-0}"
 		export STREAM_NOON_AUDIT_NOW_CMD="bash $dir/bin/now.sh"
 		export STREAM_NOON_AUDIT_STATUS_CMD="bash $dir/bin/status.sh"
 		export STREAM_NOON_AUDIT_STOP_CMD="bash $dir/bin/stop.sh"
@@ -258,6 +259,38 @@ check 'wait_for_marker_field "$M4B" "\"session_before\": \"same-session\""' 'ses
 check 'wait_for_marker_field "$M4B" "\"session_after\": \"same-session\""' 'session_same: 変更なしの後IDを記録'
 kill "$session_sup_pid" 2>/dev/null || true
 stop_worker "$D4B"
+
+# --- 5c. Twitch OFFLINE 確認中は supervisor を抑止し、30秒相当の保持後に復帰 ---
+D4C="$TMP/case_offline_hold"
+make_stubs "$D4C"
+emit_status "$D4C/status.json" 1 "$((NOON + 100 - 18000))"
+emit_twitch_id "$D4C" "old-session"
+(
+	for _ in $(seq 1 40); do
+		grep -q '^stop$' "$D4C/calls.log" 2>/dev/null && break
+		sleep 0.2
+	done
+	rm -f "$D4C/twitch_id.txt"
+	python3 -c 'import time; print(time.time())' >"$D4C/offline_started_at"
+	for _ in $(seq 1 60); do
+		[ ! -f "$D4C/state/direct_stream.paused" ] && break
+		sleep 0.2
+	done
+	python3 -c 'import time; print(time.time())' >"$D4C/marker_removed_at"
+	emit_status "$D4C/status.json" 1 "$((NOON + 190))"
+	emit_twitch_id "$D4C" "held-new-session"
+) &
+offline_hold_sup_pid=$!
+RESPAWN_WAIT_SEC=6 OFFLINE_HOLD_SEC=1 launch_worker "$D4C" ""
+M4C="$D4C/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json"
+check 'wait_for_marker_field "$M4C" "\"outcome\": \"restarted\""' 'offline_hold: 保持後に張り直す'
+check '[ "$(grep -c "^stop$" "$D4C/calls.log")" = "1" ]' 'offline_hold: stop は1回'
+check '[ ! -f "$D4C/state/direct_stream.paused" ]' 'offline_hold: pause marker は解除される'
+check '[ "$(grep -c "^run$" "$D4C/calls.log")" = "0" ]' 'offline_hold: 保持後は respawn を待つ'
+check 'awk "BEGIN { getline removed < ARGV[1]; getline started < ARGV[2]; exit ((removed-started)>=1.05)?0:1 }" "$D4C/marker_removed_at" "$D4C/offline_started_at"' 'offline_hold: Twitch OFFLINE 後に marker を保持する'
+check 'wait_for_marker_field "$M4C" "\"session_after\": \"held-new-session\""' 'offline_hold: 新Twitch ID を記録'
+kill "$offline_hold_sup_pid" 2>/dev/null || true
+stop_worker "$D4C"
 
 # --- 6. 配信が止まっている場合は任せる ---
 D5="$TMP/case_not_running"
