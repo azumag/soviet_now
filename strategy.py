@@ -120,14 +120,23 @@ def _as_float(value, default):
 
 
 def _clip_final_drop_x(value, has_russia, fallback=False):
-    """Clip a scored lane without changing the proven pre-Russia bounds."""
+    """Clip a scored lane to the board.
+
+    v733 (2026-08-25): ロシア建国前の下限 -0.991 を撤廃し [-3.0, 3.0] に統一。実測 (v731/v732 38 試合
+    3201 手) で全決定の 16.9% が x=-0.991 に丸められて実行され、その 48% で盤面が高くなり併合は 27%
+    だけだった。decide() が左側の締切安全な DIRECT を選んだのに非併合着地にされた手が 117 (3.7%)。
+    フルパイプライン A/B (7243 手): 実行 DIRECT 1630→1919 (+18%)、併合喪失 0、非交差→交差 0。
+    08-19 の 4e664ce も同じ範囲へ戻したが、v704/v705 の T12/T13 レーン軸など 3 変更と同梱で
+    lost_ukraine_gate (T13 段階) により rollback された。rollback をクランプに帰する根拠は無く、
+    そのゲート自体も 2026-08-25 に統計化済み。fallback 経路の範囲は据え置き。
+    """
     value = _as_float(value, 0.0)
     if has_russia:
         lower, upper = -3.0, 3.0
     elif fallback:
         lower, upper = -1.612, 0.862
     else:
-        lower, upper = -0.991, 4.362
+        lower, upper = -3.0, 3.0
     return round(max(lower, min(upper, value)), 1 if fallback else 4)
 
 

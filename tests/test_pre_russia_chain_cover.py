@@ -307,15 +307,16 @@ class PreRussiaChainCoverAvoidanceTest(unittest.TestCase):
         self.assertEqual(forward["x"], 1.6)
         self.assertEqual(reverse["x"], 1.6)
 
-    def test_keeps_the_proven_pre_russia_left_boundary(self):
+    def test_keeps_the_board_left_boundary(self):
+        # v733: the pre-Russia left bound is the board wall (-3.0); a candidate
+        # even slightly outside it is rejected (board range guard).
         boundary = candidate(
-            -0.991,
+            -3.0,
             hit_id="lithuania",
             risk=1.7,
             margin=1.0,
         )
-        outside = dict(boundary, x=-0.9911)
-
+        outside = dict(boundary, x=-3.0002)
         self.assertIs(
             self.select(results=[self.selected, boundary]),
             boundary,
@@ -323,8 +324,8 @@ class PreRussiaChainCoverAvoidanceTest(unittest.TestCase):
         self.assertIsNone(self.select(results=[self.selected, outside]))
         self.assertIsNone(
             self.select(
-                results=[dict(self.selected, x=-0.9911), self.alternative],
-                chosen_x=-0.9911,
+                results=[dict(self.selected, x=-3.0002), self.alternative],
+                chosen_x=-3.0002,
             )
         )
 

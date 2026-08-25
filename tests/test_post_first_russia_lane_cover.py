@@ -108,11 +108,12 @@ class PostFirstRussiaLaneCoverTest(unittest.TestCase):
         self.assertNotIn("POST_FIRST_RUSSIA_LANE_COVER_AVOID", finalized.get("reason", ""))
 
     def test_replacement_respects_pre_russia_drop_clamp(self):
-        # This selector only runs pre-Russia; a replacement outside the proven
-        # pre-Russia drop clamp (-0.991 left bound) must not be emitted.
+        # This selector only runs pre-Russia; a replacement outside the board
+        # ([-3.0, 3.0]; since v733 the range guard, not the old -0.991 clip, is
+        # what rejects it) must not be emitted.
         results = [
             self.cand(-0.09, 2.713, 0.667, hit=12),
-            self.cand(-1.65, 2.0, 1.2, hit=10),
+            self.cand(-3.5, 2.0, 1.2, hit=10),
         ]
         finalized = self.finalize(results)
         self.assertNotIn("POST_FIRST_RUSSIA_LANE_COVER_AVOID", finalized.get("reason", ""))

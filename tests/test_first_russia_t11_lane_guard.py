@@ -63,7 +63,7 @@ class FirstRussiaUzbekistanLaneGuardTest(unittest.TestCase):
         results=None,
         next_type=1,
         selected=None,
-        chosen_x=-0.991,
+        chosen_x=-1.0,
     ):
         candidates = [self.selected, self.alternative] if results is None else results
         return strategy._select_first_russia_t11_lane_avoidance(
@@ -241,13 +241,13 @@ class FirstRussiaUzbekistanLaneGuardTest(unittest.TestCase):
 
         self.assertIs(
             self.select(
-                results=[selected, at_boundary], selected=selected, chosen_x=-0.991
+                results=[selected, at_boundary], selected=selected, chosen_x=-1.0
             ),
             at_boundary,
         )
         self.assertIsNone(
             self.select(
-                results=[selected, over_boundary], selected=selected, chosen_x=-0.991
+                results=[selected, over_boundary], selected=selected, chosen_x=-1.0
             )
         )
 
@@ -257,9 +257,13 @@ class FirstRussiaUzbekistanLaneGuardTest(unittest.TestCase):
                 alternative = candidate(0.35, risk=2.564, hit_id=hit_id)
                 self.assertIsNone(self.select(results=[self.selected, alternative]))
 
-    def test_alternative_cannot_widen_the_pre_russia_lane(self):
-        outside = candidate(-0.992, risk=2.0, hit_id="low")
-        self.assertIsNone(self.select(results=[self.selected, outside]))
+    def test_alternative_may_use_the_left_board_but_not_beyond_the_wall(self):
+        # v733: the pre-Russia drop range is the whole board; a left-side
+        # alternative is a legal replacement, anything past the wall is not.
+        left = candidate(-0.992, risk=2.0, hit_id="low")
+        self.assertIs(self.select(results=[self.selected, left]), left)
+        beyond = candidate(-3.0002, risk=2.0, hit_id="low")
+        self.assertIsNone(self.select(results=[self.selected, beyond]))
 
     def test_selected_analysis_must_remain_close_to_the_clipped_drop(self):
         far_selected = candidate(-1.05, risk=2.647, hit_id="uzbekistan")

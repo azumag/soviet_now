@@ -361,9 +361,13 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
             {"x": -2.0, "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS"},
         )
 
-    def test_final_clip_preserves_old_bounds_until_russia_exists(self):
-        self.assertEqual(strategy._clip_final_drop_x(-3.0, False), -0.991)
-        self.assertEqual(strategy._clip_final_drop_x(5.0, False), 4.362)
+    def test_final_clip_uses_the_full_board_before_russia(self):
+        # v733: the pre-Russia range is the board itself; only the fallback
+        # (FALLBACK_ALL_SUPPRESSED) path keeps its narrow evolved window.
+        self.assertEqual(strategy._clip_final_drop_x(-3.0, False), -3.0)
+        self.assertEqual(strategy._clip_final_drop_x(-3.4, False), -3.0)
+        self.assertEqual(strategy._clip_final_drop_x(5.0, False), 3.0)
+        self.assertEqual(strategy._clip_final_drop_x(-0.991, False), -0.991)
         self.assertEqual(strategy._clip_final_drop_x(-3.0, False, fallback=True), -1.6)
         self.assertEqual(strategy._clip_final_drop_x(3.0, False, fallback=True), 0.9)
 
