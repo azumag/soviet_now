@@ -106,7 +106,7 @@ BASE_XS = [round(-3.0 + i * 0.2, 1) for i in range(31)]  # -3.0 to 3.0
 
 
 def estimate_polygon_drift(
-    drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type
+    drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type, eff_radii=None
 ):
     """ポリゴン形状を考慮した着地後のドリフト推定。
     凸ポリゴンは着地後に回転・転がりを起こし、最終位置がdrop_xからずれる。
@@ -145,12 +145,13 @@ def estimate_polygon_drift(
     # ドリフト推定: 斜面方向 × 非円形度 × 半径
     drift_x = slope * eccentricity * next_r * 2.0
 
-    # 壁際での反射
+    # 壁際での反射 (ANALYZE_BOARD_WALL_CLAMP=1: 当たり判定半幅 + WALL_CLAMP_PAD、0: 旧式スプライト半径)
+    wall_half = _wall_half_width(next_r, next_type, eff_radii)
     estimated_x = drop_x + drift_x
-    if estimated_x < WALL_LEFT + next_r:
-        drift_x = (WALL_LEFT + next_r) - drop_x
-    elif estimated_x > WALL_RIGHT - next_r:
-        drift_x = (WALL_RIGHT - next_r) - drop_x
+    if estimated_x < WALL_LEFT + wall_half:
+        drift_x = (WALL_LEFT + wall_half) - drop_x
+    elif estimated_x > WALL_RIGHT - wall_half:
+        drift_x = (WALL_RIGHT - wall_half) - drop_x
 
     # 不確実性: 非円形度と着地高さに比例
     uncertainty = eccentricity * next_r * 1.5
@@ -684,6 +685,32 @@ def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
     return landing_y
 
 
+WALL_CLAMP_PAD = 0.30
+
+
+def _wall_clamp_mode():
+    """ANALYZE_BOARD_WALL_CLAMP: 1=壁反射に当たり判定半幅+0.30 を使う, 0=旧式 (スプライト半径, 既定)。毎回 env を
+    読む (runner はゲーム毎プロセス → .env 変更は次ゲームから)。実測 (2026-08-26, 直近 77 試合の壁際 798 手):
+    旧式は壁側へ +0.27/-0.25 の系統誤差 (T11 は壁からの実着地 1.89 vs 予測 0.98)。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_WALL_CLAMP", "0") or "").strip().lower()
+    if raw == "1":
+        return 1
+    return 0
+
+
+def _wall_half_width(next_r, next_type, eff_radii):
+    """壁反射に使う半幅。mode 1 は `_type_deadline_extents(...)["horiz"] + WALL_CLAMP_PAD`、判定不能は旧式へ倒す。"""
+    if _wall_clamp_mode() != 1:
+        return next_r
+    try:
+        half = float(_type_deadline_extents(next_type, next_r, eff_radii)["horiz"]) + WALL_CLAMP_PAD
+    except Exception:
+        return next_r
+    if not math.isfinite(half) or half <= 0:
+        return next_r
+    return half
+
+
 def _vertical_lane_mode():
     """ANALYZE_BOARD_VERTICAL_LANE_DIRECT: 1=DIRECT 昇格 (既定), 2=NEAR 昇格, 0=旧挙動。毎回 env を読む
     (strategy_runner はゲーム毎の新プロセスなので .env 変更は次ゲームから効く)。"""
@@ -891,7 +918,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
         # ポリゴン形状によるドリフト推定
         drift_x, drift_unc = estimate_polygon_drift(
-            x, ly, hit_id, next_r, pieces, shapes, next_type
+            x, ly, hit_id, next_r, pieces, shapes, next_type, eff_radii
         )
         # ドリフト後の推定最終X
         settled_x = x + drift_x

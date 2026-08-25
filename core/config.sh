@@ -463,6 +463,10 @@ export ANALYZE_BOARD_VERTICAL_LANE_DIRECT
 # ./set_toggle.sh ANALYZE_BOARD_MERGE_TOP_MODEL=0 (次ゲームから)。
 ANALYZE_BOARD_MERGE_TOP_MODEL="${ANALYZE_BOARD_MERGE_TOP_MODEL:-2}"
 export ANALYZE_BOARD_MERGE_TOP_MODEL
+# 解析器の壁反射半幅: 1=当たり判定半幅+0.30 (実測較正), 0=旧式スプライト半径 (既定)。
+# ./set_toggle.sh ANALYZE_BOARD_WALL_CLAMP=1 (次ゲームから)。decide hash には映らない (analyzer_modes に記録)。
+ANALYZE_BOARD_WALL_CLAMP="${ANALYZE_BOARD_WALL_CLAMP:-0}"
+export ANALYZE_BOARD_WALL_CLAMP
 # 2026-08-25: strategy_runner の静止判定 (実測: 従来は振動の一瞬の凪を静止と誤認し、新駒出現時に中央値 27 駒が
 # awake)。SOREN_SETTLE_REQUIRED=連続静止観測回数 (POLL_INTERVAL 0.15s 間隔、既定 1=従来)、
 # SOREN_SETTLE_MAX_SPEED2=静止とみなす速度^2 上限 (既定 0.1)、SOREN_SETTLE_MAX_AWAKE=awake 駒数上限 (-1=無視)。

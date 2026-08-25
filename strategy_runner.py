@@ -600,9 +600,13 @@ def trigger_soviet_clip_now(score, turn):
 def _analyzer_modes_for_record():
     """解析器トグルの実効値を試合記録に残す (decide hash に映らない解析器変更の事後帰属用)。失敗時は None。"""
     try:
-        from analyze_board import _merge_top_model_mode, _vertical_lane_mode
+        from analyze_board import _merge_top_model_mode, _vertical_lane_mode, _wall_clamp_mode
 
-        return {"vertical_lane_direct": int(_vertical_lane_mode()), "merge_top_model": int(_merge_top_model_mode())}
+        return {
+            "vertical_lane_direct": int(_vertical_lane_mode()),
+            "merge_top_model": int(_merge_top_model_mode()),
+            "wall_clamp": int(_wall_clamp_mode()),
+        }
     except Exception:
         return None
 
