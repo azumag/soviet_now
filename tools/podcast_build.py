@@ -4,7 +4,8 @@ tools/podcast_build.py - 日次ポッドキャスト生成 (docich#10 / soviet_n
 
 入力: backups/radio_scripts/<YYYYMMDD>/*.txt のうち news/jiji のみ
 処理: その日の原稿群を LLM で 1 本の番組台本へ「編成し直し」てから合成する。
-      素材をそのまま連結すると 50 本 70 分の朗読になり、番組として成立しないため。
+      素材をそのまま連結すると 3〜5 時間の朗読になり、番組として成立しないため
+      (実測 08-19〜08-25: 2h43m〜5h24m、平均 4h。VOICEVOX 実測 306 字/分)。
 出力: output/podcast/<YYYY-MM-DD>.mp3 + feed.xml + chapters.json + meta.json
 
 使い方:
@@ -22,6 +23,7 @@ RSSは RSS 2.0 + iTunes 拡張。feed.xml は冪等に更新 (最新50件)。
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime
 import glob
 import json
@@ -139,147 +141,138 @@ def clean_script(text: str) -> str:
     return text2
 
 # 編成 (compose) の設定
-# 1日分の原稿をそのまま連結すると 50 本 70 分の朗読になってしまうため、
-# LLM で「その日の話題を 1 本の番組へ編成し直す」段を挟む (docich#10)。
-PODCAST_TARGET_CHARS = int(os.environ.get("PODCAST_TARGET_CHARS", "6000"))
-PODCAST_SOURCE_CHAR_BUDGET = int(os.environ.get("PODCAST_SOURCE_CHAR_BUDGET", "60000"))
-PODCAST_COMPOSE_TIMEOUT = int(os.environ.get("PODCAST_COMPOSE_TIMEOUT", "900"))
+# 素材の原稿は「配信中のラジオ」として書かれているため、そのまま読み上げても
+# ポッドキャスト番組にならない。配信・ゲームの文脈を落として番組へ書き直す
+# 「編成」段を挟む (docich#10)。
+#
+# 長さは PODCAST_TARGET_CHARS で決める (0 = 自動: その日の話題を全部拾う)。
+# VOICEVOX 実測 306 字/分 なので、3500 字 ≒ 11 分、55000 字 ≒ 3 時間。
+PODCAST_TARGET_CHARS = int(os.environ.get("PODCAST_TARGET_CHARS", "0"))
+PODCAST_SECTION_CHARS = int(os.environ.get("PODCAST_SECTION_CHARS", "1800"))
+PODCAST_TOPICS_PER_SECTION = int(os.environ.get("PODCAST_TOPICS_PER_SECTION", "5"))
+PODCAST_SOURCE_CHAR_BUDGET = int(os.environ.get("PODCAST_SOURCE_CHAR_BUDGET", "200000"))
+# 生成は codex CLI 経由 (ユーザー指定: codex + gpt luna)。
+PODCAST_LLM_BIN = os.environ.get("PODCAST_LLM_BIN", "codex")
+PODCAST_LLM_MODEL = os.environ.get("PODCAST_LLM_MODEL", "gpt-5.6-luna")
+PODCAST_LLM_TIMEOUT = int(os.environ.get("PODCAST_LLM_TIMEOUT", "900"))
+# 要約 (map) 段: 素材をまとめて 1 発で投げると API の時間上限に達するため小分けにする
+# (実測 2026-08-26: 59,909 字 1 発は 15 分でタイムアウト)。
+PODCAST_DIGEST_BATCH = int(os.environ.get("PODCAST_DIGEST_BATCH", "8"))
+PODCAST_DIGEST_TIMEOUT = int(os.environ.get("PODCAST_DIGEST_TIMEOUT", "600"))
+PODCAST_LLM_WORKERS = int(os.environ.get("PODCAST_LLM_WORKERS", "3"))
 
-COMPOSE_PROMPT = """あなたはポッドキャスト番組の構成作家です。
-以下は、同じ日にライブ配信の中で自動生成された時事ニュース原稿・考察原稿の集まりです。
-これを素材として、1 本のポッドキャスト番組の台本に編成し直してください。
+# 素材は配信のラジオ原稿なので、番組化にあたって落とすものを明示する
+EXCLUDE_RULES = """- 配信とゲームに関する言及は全て落とす。次のものは書かない:
+  ・時刻の挨拶や時報 (「こんばんは、現在時刻は23時です」「夜の10時を回りました」など)
+  ・ゲームの試合数・スコア・盤面・獲得した国・戦略の話 (「45576回目のゲーム」「991点」など)
+  ・配信のコーナー進行や番組内の移動 (「今夜のニュースコーナーに行きましょう」など)
+  ・視聴者・リスナー・コメント・チャットへの呼びかけ、放送中であることの言及
+  ・「それでは、また次回お会いしましょう」のような各原稿末尾の締め
+- 素材が配信の文脈で書かれていても、ポッドキャスト単体で聞いて意味が通る文章に書き直す。"""
+
+DIGEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer"},
+                    "topic": {"type": "string"},
+                    "points": {"type": "string"},
+                },
+                "required": ["n", "topic", "points"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["items"],
+    "additionalProperties": False,
+}
+
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "sections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "heading": {"type": "string"},
+                    "topics": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["heading", "topics"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["title", "summary", "sections"],
+    "additionalProperties": False,
+}
+
+WRITE_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
+DIGEST_PROMPT = """次に示すのは、ある1日にライブ配信の中で読み上げられたラジオ原稿です。
+それぞれについて、扱っている話題を1件ずつ短く要約してください。
 
 要件:
-- 同じ話題が複数の原稿に散っている場合は 1 つにまとめる。素材の並び順や言い回しに引きずられない。
-- 関連する話題をまとめ、{min_sections}〜{max_sections} 個のコーナーに再構成する。
-- 本文の合計は日本語でおよそ {target} 字。1 コーナーあたり 800〜1200 字程度。
-- 音声で読み上げるため、箇条書き・記号・URL・絵文字・見出し記号は本文に使わない。地の文で書く。
-- 素材に無い事実を足さない。固有名詞・数値・日付は素材のとおりに書く。
-- 本文の冒頭でコーナー名を読み上げない (コーナー名は heading フィールドで返す)。
-- 番組名は「{title}」。挨拶や次回予告は書かない (別途付ける)。
+- 原稿ごとに1件。原稿番号 (n) は入力のとおりに返す。
+- topic は話題を25字以内で。points は要点を150字以内で、固有名詞・数値・日付を落とさずに。
+- 配信やゲームの話しか無い原稿は topic を「対象外」とし points を空にする。
+- 原稿に無い事実を足さない。感想や評価を足さない。
 
-出力は次の JSON オブジェクトのみ。コードフェンス・前置き・説明は禁止。
-{{"title": "エピソードのタイトル(30字以内)", "summary": "番組概要(120字以内)", "sections": [{{"heading": "コーナー名(15字以内)", "text": "読み上げ本文"}}]}}
+原稿:
+{sources}
+"""
+
+PLAN_PROMPT = """あなたはポッドキャスト番組の構成作家です。
+以下は、ある1日に扱われた時事ニュース・考察の話題一覧です。
+これを1本のポッドキャスト番組として成立させるための構成案を作ってください。
+
+要件:
+- 関連する話題をまとめて {n_sections} 個前後のコーナーに配分する。
+- 各コーナーには topics として話題番号を並べる。1つの話題は1つのコーナーにだけ入れる。
+- {coverage}
+- 「対象外」とされた話題は使わない。
+- heading はコーナー名 (15字以内)。番組の流れとして自然な順に並べる。
+- title はエピソードのタイトル (30字以内)、summary は番組概要 (120字以内)。
+- 番組名は「{title}」。配信やゲームを想起させる語をタイトル・コーナー名に使わない。
+
+話題一覧:
+{topics}
+"""
+
+WRITE_PROMPT = """あなたはポッドキャスト番組の構成作家です。
+以下の素材から、番組の1コーナー「{heading}」の読み上げ本文を書いてください。
+
+要件:
+- 日本語でおよそ {target} 字。
+{exclude}
+- 素材にある話題を落とさずに扱う。ただし同じ話題が重複していれば1つにまとめる。
+- 素材に無い事実を足さない。固有名詞・数値・日付は素材のとおりに書く。
+- 音声で読み上げるため、箇条書き・記号・URL・絵文字・見出し記号は使わない。地の文で書く。
+- 冒頭でコーナー名を読み上げない。番組の挨拶や締めも書かない (別途付ける)。
+- 一つのコーナーとして筋の通った流れにする。話題から話題への繋ぎを書く。
 
 素材:
 {sources}
 """
 
 
-def find_doci() -> Path | None:
-    """doci (azumag/doci) を探す。テキスト生成のバックエンドとして借りる。"""
-    cands = []
-    if os.environ.get("DOCI_DIR"):
-        cands.append(Path(os.environ["DOCI_DIR"]))
-    cands += [
-        Path("/Users/azumag/azumag/work/doci/repo"),
-        Path.home() / "azumag" / "work" / "doci" / "repo",
-        Path("/home/ubuntu/doci"),
-    ]
-    for c in cands:
-        if (c / "doci" / "ai_text.py").exists():
-            return c.resolve()
-    return None
-
-
-def llm_generate(prompt: str, timeout: int = PODCAST_COMPOSE_TIMEOUT) -> str | None:
-    """doci の TEXT_BACKEND を借りて 1 回だけテキスト生成する。
-
-    doci は進捗行を stdout にも出すため、結果はファイル経由で受け取る。
-    doci が無い / 失敗した場合は None を返し、呼び出し側で中止する
-    (素材の丸ごと連結へフォールバックしない。それは作りたい成果物ではない)。
-    """
-    doci_dir = find_doci()
-    if not doci_dir:
-        log("doci が見つからないため編成できない (DOCI_DIR を設定してください)")
-        return None
-    py = doci_dir / ".venv" / "bin" / "python"
-    if not py.exists():
-        py = Path(sys.executable)
-    runner = (
-        "import sys\n"
-        "from pathlib import Path\n"
-        "from doci import ai_text\n"
-        "src = Path(sys.argv[1]).read_text(encoding='utf-8')\n"
-        "out = ai_text._dispatch(src, timeout=float(sys.argv[3]))\n"
-        "Path(sys.argv[2]).write_text(out or '', encoding='utf-8')\n"
-    )
-    with tempfile.TemporaryDirectory(prefix="podcast_compose_") as td:
-        pf = Path(td) / "prompt.txt"
-        of = Path(td) / "out.txt"
-        pf.write_text(prompt, encoding="utf-8")
-        try:
-            r = subprocess.run(
-                [str(py), "-c", runner, str(pf), str(of), str(timeout)],
-                cwd=str(doci_dir), capture_output=True, text=True, timeout=timeout + 120,
-            )
-        except subprocess.TimeoutExpired:
-            log(f"compose timeout ({timeout}s)")
-            return None
-        if r.returncode != 0:
-            err = (r.stderr or "").strip()
-            log(f"compose failed (rc={r.returncode}): {err[-600:]}")
-            return None
-        if not of.exists():
-            log("compose failed: 出力ファイルが作られなかった")
-            return None
-        return of.read_text(encoding="utf-8").strip()
-
-
-def _salvage_sections(text: str) -> list[dict]:
-    """出力が途中で切れていても、完結しているセクションだけを拾う。
-
-    LLM の出力上限で JSON が閉じないことが実際に起きるため、
-    「使える分だけ番組にする」方向で救済する。
-    """
-    i = text.find('"sections"')
-    if i < 0:
-        return []
-    j = text.find("[", i)
-    if j < 0:
-        return []
-    out: list[dict] = []
-    k, n = j + 1, len(text)
-    while k < n:
-        if text[k] == "]":
-            break
-        if text[k] != "{":
-            k += 1
-            continue
-        start, depth, in_str, esc, closed = k, 0, False, False, False
-        while k < n:
-            c = text[k]
-            if in_str:
-                if esc:
-                    esc = False
-                elif c == "\\":
-                    esc = True
-                elif c == '"':
-                    in_str = False
-            elif c == '"':
-                in_str = True
-            elif c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    k += 1
-                    closed = True
-                    break
-            k += 1
-        if not closed:
-            break  # ここから先は切れている
-        try:
-            obj = json.loads(text[start:k])
-        except (ValueError, TypeError):
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
-    return out
-
-
 def _extract_json(text: str) -> dict | None:
-    """コードフェンスや前置きが混じっていても JSON オブジェクトを取り出す。"""
+    """JSON オブジェクトを取り出す。
+
+    --output-schema を付けているので通常は素の JSON が返るが、
+    コードフェンスや前置きが混じった場合も拾えるようにしておく。
+    """
     t = text.strip()
     fence = re.search(r"```(?:json)?\s*(.+?)```", t, re.S)
     if fence:
@@ -287,7 +280,6 @@ def _extract_json(text: str) -> dict | None:
     start = t.find("{")
     if start < 0:
         return None
-    # 末尾から順に探して最初に解釈できたものを採用する
     for end in range(len(t), start, -1):
         if t[end - 1] != "}":
             continue
@@ -300,86 +292,237 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
-def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False) -> dict | None:
-    """その日の原稿群を 1 本の番組台本へ編成し直す。失敗したら None。
+def llm_generate(prompt: str, timeout: int = PODCAST_LLM_TIMEOUT, schema: dict | None = None):
+    """codex CLI で 1 回生成する。schema を渡すと JSON を強制し dict で返す。
 
-    dummy=True (テスト用) では LLM を呼ばず、原稿 1 本をそのまま 1 コーナーに割り当てる。
+    失敗したら None を返し、呼び出し側で扱う。
     """
-    parts = []
+    bin_path = shutil.which(PODCAST_LLM_BIN) or PODCAST_LLM_BIN
+    with tempfile.TemporaryDirectory(prefix="podcast_llm_") as td:
+        tdp = Path(td)
+        out_file = tdp / "out.txt"
+        cmd = [bin_path, "exec", "-m", PODCAST_LLM_MODEL, "--skip-git-repo-check",
+               "-C", str(tdp), "-o", str(out_file), "--color", "never"]
+        if schema is not None:
+            sf = tdp / "schema.json"
+            sf.write_text(json.dumps(schema, ensure_ascii=False), encoding="utf-8")
+            cmd += ["--output-schema", str(sf)]
+        cmd.append(prompt)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            log(f"llm timeout ({timeout}s)")
+            return None
+        except OSError as e:
+            log(f"llm 起動失敗 ({bin_path}): {e}")
+            return None
+        if not out_file.exists():
+            err = (r.stderr or r.stdout or "").strip()
+            log(f"llm failed (rc={r.returncode}): {err[-600:]}")
+            return None
+        raw = out_file.read_text(encoding="utf-8").strip()
+        if not raw:
+            log("llm の出力が空")
+            return None
+        if schema is None:
+            return raw
+        obj = _extract_json(raw)
+        if obj is None:
+            log(f"llm の JSON を解釈できなかった: {raw[:300]}")
+        return obj
+
+
+def _clean_body(src: Path) -> str:
+    return clean_script(src.read_text(encoding="utf-8", errors="ignore"))
+
+
+def _digest_batch(idx: int, batch: list[tuple[int, str]]) -> list[dict]:
+    """原稿を数本ずつ要約する。失敗したらそのバッチだけ諦める。"""
+    sources = "\n\n".join(f"--- 原稿{n} ---\n{body}" for n, body in batch)
+    obj = llm_generate(DIGEST_PROMPT.format(sources=sources),
+                       timeout=PODCAST_DIGEST_TIMEOUT, schema=DIGEST_SCHEMA)
+    if not obj:
+        log(f"要約バッチ {idx} 失敗 (原稿 {batch[0][0]}〜{batch[-1][0]})")
+        return []
+    out = []
+    for it in obj.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        topic = str(it.get("topic") or "").strip()
+        points = str(it.get("points") or "").strip()
+        try:
+            n = int(it.get("n"))
+        except (TypeError, ValueError):
+            continue
+        if not topic or topic == "対象外":
+            continue
+        out.append({"n": n, "topic": topic, "points": points})
+    return out
+
+
+def _run_parallel(jobs: list, worker, label: str) -> list:
+    """jobs を並列実行し、入力順の結果リストを返す。例外はその要素だけ空にする。"""
+    results = [None] * len(jobs)
+    workers = max(1, min(PODCAST_LLM_WORKERS, len(jobs)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(worker, i, j): i for i, j in enumerate(jobs)}
+        done = 0
+        for fut in concurrent.futures.as_completed(futs):
+            i = futs[fut]
+            try:
+                results[i] = fut.result()
+            except Exception as e:
+                log(f"{label} {i + 1} で例外: {e}")
+                results[i] = None
+            done += 1
+            log(f"{label} {done}/{len(jobs)} 完了")
+    return results
+
+
+def digest_sources(files: list[Path]) -> tuple[list[dict], dict[int, str]]:
+    """その日の原稿を小分けに要約し、話題一覧と本文の対応表を作る (map 段)。"""
+    bodies: list[tuple[int, str]] = []
     used = 0
-    # 新しい原稿を優先して字数予算に収める
-    for src in reversed(files):
-        body = clean_script(src.read_text(encoding="utf-8", errors="ignore"))
+    for n, src in enumerate(files, 1):
+        body = _clean_body(src)
         if not body:
             continue
         if used + len(body) > PODCAST_SOURCE_CHAR_BUDGET:
             log(f"素材の字数予算 {PODCAST_SOURCE_CHAR_BUDGET} に達したため以降の原稿は使わない "
-                f"(採用 {len(parts)}/{len(files)} 本)")
+                f"(採用 {len(bodies)}/{len(files)} 本)")
             break
         used += len(body)
-        parts.append(body)
-    if not parts:
-        log("編成できる本文が無い")
-        return None
-    parts.reverse()
-    if dummy:
-        sections = [{"heading": f"トピック{i + 1}", "text": t} for i, t in enumerate(parts)]
-        return {
-            "title": f"{date.strftime('%Y年%m月%d日')} 時事まとめ",
-            "summary": "テスト用のダミー編成",
-            "sections": sections,
-            "source_count": len(files),
-            "used_count": len(parts),
-        }
-    sources = "\n\n".join(f"--- 原稿{i + 1} ---\n{t}" for i, t in enumerate(parts))
-    prompt = COMPOSE_PROMPT.format(
-        min_sections=5, max_sections=7, target=PODCAST_TARGET_CHARS,
-        title=PODCAST_TITLE, sources=sources,
-    )
-    log(f"編成: 素材 {len(parts)} 本 / {used} 字 -> 目標 {PODCAST_TARGET_CHARS} 字")
-    raw = llm_generate(prompt)
-    if not raw:
-        return None
-    obj = _extract_json(raw)
+        bodies.append((n, body))
+    if not bodies:
+        return [], {}
+
+    by_n = {n: body for n, body in bodies}
+    batches = [bodies[i:i + PODCAST_DIGEST_BATCH]
+               for i in range(0, len(bodies), PODCAST_DIGEST_BATCH)]
+    log(f"要約: {len(bodies)} 本 / {used} 字 を {len(batches)} バッチ "
+        f"(1 バッチ {PODCAST_DIGEST_BATCH} 本, 並列 {PODCAST_LLM_WORKERS}, model={PODCAST_LLM_MODEL})")
+    groups = _run_parallel(batches, lambda i, b: _digest_batch(i + 1, b), "要約")
+    digests = [d for g in groups if g for d in g]
+    if len(digests) < len(bodies):
+        log(f"要約できたのは {len(digests)}/{len(bodies)} 件 (配信・ゲームのみの原稿は除外される)")
+    return digests, by_n
+
+
+def plan_sections(digests: list[dict], date: datetime.date) -> dict | None:
+    """話題一覧から番組の構成案を作る。"""
+    if PODCAST_TARGET_CHARS > 0:
+        n_sections = max(1, round(PODCAST_TARGET_CHARS / PODCAST_SECTION_CHARS))
+        coverage = ("話題は取捨選択してよい。その日の主要な話題を優先し、"
+                    "収まらないものは落とす。")
+    else:
+        n_sections = max(1, -(-len(digests) // PODCAST_TOPICS_PER_SECTION))
+        coverage = "一覧の話題は原則すべてどれかのコーナーに入れる。"
+    topics = "\n".join(f"{d['n']}. {d['topic']}: {d['points']}" for d in digests)
+    log(f"構成: 話題 {len(digests)} 件 -> {n_sections} コーナー前後 "
+        f"(1 コーナー {PODCAST_SECTION_CHARS} 字目標)")
+    obj = llm_generate(
+        PLAN_PROMPT.format(n_sections=n_sections, coverage=coverage,
+                           title=PODCAST_TITLE, topics=topics),
+        schema=PLAN_SCHEMA)
     if not obj:
-        dump = SCRIPT_DIR / "output" / f"podcast_compose_raw_{date.isoformat()}.txt"
-        try:
-            dump.parent.mkdir(parents=True, exist_ok=True)
-            dump.write_text(raw, encoding="utf-8")
-            log(f"編成結果を JSON として解釈できなかった。生出力を保存: {dump} ({len(raw)} 字)")
-        except OSError as e:
-            log(f"編成結果を JSON として解釈できず、生出力の保存にも失敗: {e}")
-        salvaged = _salvage_sections(raw)
-        if not salvaged:
-            return None
-        log(f"出力が途中で切れているが、完結した {len(salvaged)} コーナーを救済して続行する")
-        m_title = re.search(r'"title"\s*:\s*"([^"]{1,120})"', raw)
-        m_summary = re.search(r'"summary"\s*:\s*"([^"]{1,400})"', raw)
-        obj = {
-            "title": m_title.group(1) if m_title else "",
-            "summary": m_summary.group(1) if m_summary else "",
-            "sections": salvaged,
-        }
+        return None
     sections = []
+    seen: set[int] = set()
+    valid = {d["n"] for d in digests}
     for sec in obj.get("sections") or []:
         if not isinstance(sec, dict):
             continue
-        text = str(sec.get("text") or "").strip()
-        if not text:
-            continue
-        sections.append({"heading": str(sec.get("heading") or "").strip() or "トピック", "text": text})
+        heading = str(sec.get("heading") or "").strip()
+        nums = []
+        for t in sec.get("topics") or []:
+            try:
+                t = int(t)
+            except (TypeError, ValueError):
+                continue
+            if t in valid and t not in seen:
+                seen.add(t)
+                nums.append(t)
+        if heading and nums:
+            sections.append({"heading": heading, "topics": nums})
     if not sections:
-        log("編成結果にセクションが無い")
+        log("構成案にコーナーが無い")
         return None
-    episode = {
+    unused = valid - seen
+    if unused:
+        log(f"構成に入らなかった話題 {len(unused)} 件")
+    return {
         "title": str(obj.get("title") or "").strip() or f"{date.strftime('%Y年%m月%d日')} 時事まとめ",
         "summary": str(obj.get("summary") or "").strip(),
         "sections": sections,
+    }
+
+
+def write_section(sec: dict, by_n: dict[int, str]) -> str | None:
+    """1 コーナーの読み上げ本文を書く。素材は元の原稿そのもの。"""
+    sources = "\n\n".join(f"--- 素材{n} ---\n{by_n[n]}" for n in sec["topics"] if n in by_n)
+    if not sources:
+        return None
+    obj = llm_generate(
+        WRITE_PROMPT.format(heading=sec["heading"], target=PODCAST_SECTION_CHARS,
+                            exclude=EXCLUDE_RULES, sources=sources),
+        schema=WRITE_SCHEMA)
+    if not obj:
+        return None
+    text = str(obj.get("text") or "").strip()
+    return text or None
+
+
+def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False) -> dict | None:
+    """その日の原稿群を 1 本の番組へ編成し直す。失敗したら None。
+
+    要約 (map) -> 構成案 -> コーナーごとに執筆 の三段。
+    1 回の生成が小さく収まるので、長さを伸ばしても API の時間上限に当たらない。
+    dummy=True (テスト用) では LLM を呼ばず、原稿 1 本をそのまま 1 コーナーに割り当てる。
+    """
+    if dummy:
+        parts = [b for b in (_clean_body(f) for f in files) if b]
+        if not parts:
+            log("編成できる本文が無い")
+            return None
+        return {
+            "title": f"{date.strftime('%Y年%m月%d日')} 時事まとめ",
+            "summary": "テスト用のダミー編成",
+            "sections": [{"heading": f"トピック{i + 1}", "text": t} for i, t in enumerate(parts)],
+            "source_count": len(files),
+            "used_count": len(parts),
+        }
+
+    digests, by_n = digest_sources(files)
+    if not digests:
+        log("要約が 1 件も取れなかったため編成できない")
+        return None
+
+    plan = plan_sections(digests, date)
+    if not plan:
+        return None
+
+    log(f"執筆: {len(plan['sections'])} コーナー (並列 {PODCAST_LLM_WORKERS})")
+    texts = _run_parallel(plan["sections"], lambda i, s: write_section(s, by_n), "執筆")
+    sections = []
+    for sec, text in zip(plan["sections"], texts):
+        if not text:
+            log(f"コーナー「{sec['heading']}」の執筆に失敗、飛ばす")
+            continue
+        sections.append({"heading": sec["heading"], "text": text})
+    if not sections:
+        log("執筆できたコーナーが無い")
+        return None
+
+    episode = {
+        "title": plan["title"],
+        "summary": plan["summary"],
+        "sections": sections,
         "source_count": len(files),
-        "used_count": len(parts),
+        "used_count": len(digests),
     }
     total = sum(len(x["text"]) for x in sections)
-    log(f"編成完了: 「{episode['title']}」 {len(sections)} コーナー / 本文 {total} 字")
+    log(f"編成完了: 「{episode['title']}」 {len(sections)} コーナー / 本文 {total} 字 "
+        f"(読み上げ見込み {total / 306:.1f} 分)")
     return episode
 
 
@@ -525,7 +668,7 @@ def main():
         # 編成: その日の原稿群を 1 本の番組台本へ再構成する
         episode = compose_episode(files, date, dummy=args.dummy)
         if not episode:
-            # 素材の丸ごと連結 (50本70分) は作りたい成果物ではないのでフォールバックしない
+            # 素材の丸ごと連結 (3〜5時間) は作りたい成果物ではないのでフォールバックしない
             log("編成に失敗したため中止する")
             return 3
 
@@ -623,6 +766,14 @@ def main():
 
     # 編成結果のタイトル/概要を保存する (過去回の feed 再生成でも使う)
     if episode and not args.dry_run:
+        # 台本そのものも残す。音声だけだと内容を後から確認・レビューできないため。
+        script_path = out_dir / f"{iso}.script.txt"
+        body = [f"# {episode['title']}", "", episode.get("summary", ""), ""]
+        for i, sec in enumerate(episode["sections"], 1):
+            body += [f"## {i}. {sec['heading']}", "", sec["text"], ""]
+        script_path.write_text("\n".join(body), encoding="utf-8")
+        log(f"script written: {script_path} ({sum(len(x['text']) for x in episode['sections'])} 字)")
+
         meta_path = out_dir / f"{iso}.meta.json"
         meta_path.write_text(json.dumps({
             "title": episode["title"],
