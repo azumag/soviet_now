@@ -45,7 +45,30 @@ CANVAS_X_MAX = 830
 
 # タイミング
 POLL_INTERVAL = 0.15      # ポーリング間隔(秒)
-SETTLE_REQUIRED = 1       # 静止確認回数
+
+
+def _env_int(name, default):
+    try:
+        v = float(os.environ.get(name, "") or default)
+        return int(v) if math.isfinite(v) else int(default)
+    except Exception:  # ValueError/TypeError/OverflowError — 設定ミスで import を落とさない
+        return int(default)
+
+
+def _env_float(name, default):
+    try:
+        v = float(os.environ.get(name, "") or default)
+        return v if math.isfinite(v) else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# 静止判定 (2026-08-25 実測: 従来の「速度^2<0.1 を 1 サンプル」は振動の一瞬の凪を静止と誤認し、
+# 新駒出現時に中央値 27 駒が awake・完全静止後のドロップは 1% だった)。.env で調整可 (runner は
+# ゲーム毎の新プロセスなので次ゲームから有効)。既定値は従来挙動。
+SETTLE_REQUIRED = max(1, _env_int("SOREN_SETTLE_REQUIRED", 1))        # 連続静止観測回数 (POLL_INTERVAL 間隔)
+SETTLE_MAX_SPEED2 = max(0.0, _env_float("SOREN_SETTLE_MAX_SPEED2", 0.1))  # 静止とみなす速度^2 上限
+SETTLE_MAX_AWAKE = _env_int("SOREN_SETTLE_MAX_AWAKE", -1)           # awake 駒数の上限 (-1=無視)
 COMMAND_TIMEOUT = 20      # commands.txt 消化待ちタイムアウト(秒)
 MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
 DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
@@ -405,7 +428,24 @@ def is_board_settled(gs, force_after: float = 0.0):
     if not settled_pieces:
         return True
     max_v = max(abs(p.get("vx", 0))**2 + abs(p.get("vy", 0))**2 for p in settled_pieces)
-    return max_v < 0.1
+    if SETTLE_MAX_AWAKE >= 0:
+        awake = sum(1 for p in settled_pieces if p.get("awake"))
+        if awake > SETTLE_MAX_AWAKE:
+            return False
+    return max_v < SETTLE_MAX_SPEED2
+
+
+_LAST_SETTLE = {}  # 直近の wait_for_move_state の観測 (記録用)
+
+
+def _board_motion(gs):
+    try:
+        ps = [p for p in (gs or {}).get("pieces", []) if abs(p.get("vy", 0)) < 100 and abs(p.get("vx", 0)) < 100]
+        awake = sum(1 for p in ps if p.get("awake"))
+        max_speed = max([math.sqrt(abs(p.get("vx", 0)) ** 2 + abs(p.get("vy", 0)) ** 2) for p in ps] + [0.0])
+        return awake, round(max_speed, 3)
+    except Exception:
+        return None, None
 
 
 def commands_empty():
@@ -740,6 +780,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "danger_direct_merge_available": bool(chosen_result.get("danger_direct_merge_available", False)) if chosen_result else False,
         "strategy_hash": strategy_hash,
         "analyzer_modes": _analyzer_modes_for_record(),
+        "settle": dict(_LAST_SETTLE) if _LAST_SETTLE else None,
         "state_snapshot": {"pieces": piece_snapshot},
     }
 
@@ -2882,6 +2923,8 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
     settle_count = 0
     start = time.time()
     settle_force_at = 0.0  # MOVE確認後に初めてセット
+    move_seen_at = 0.0
+    _LAST_SETTLE.clear()
 
     while time.time() - start < MOVE_TIMEOUT:
         if os.path.exists(STOP_FILE):
@@ -2906,17 +2949,23 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
         # MOVE状態に入った瞬間にタイムアウト時刻をセット
         if settle_force_at == 0.0:
             settle_force_at = time.time() + SETTLE_FORCE_TIMEOUT
+            move_seen_at = time.time()
 
         if deadline_fast_drop_enabled and has_deadline_contact(gs):
             log("FAST_DROP_DEADLINE_CONTACT: skipping settle wait")
+            _aw, _mv = _board_motion(gs)
+            _LAST_SETTLE.update({"wait_sec": round(time.time() - move_seen_at, 2), "awake": _aw, "max_speed": _mv, "fast_drop": True, "forced": False, "required": SETTLE_REQUIRED})
             return gs, True
 
         # 静止確認（force_after を渡してグリッチ時も突破できるようにする）
         if is_board_settled(gs, force_after=settle_force_at):
-            if time.time() >= settle_force_at:
+            forced = time.time() >= settle_force_at
+            if forced:
                 log(f"WARN: board not settled after {SETTLE_FORCE_TIMEOUT}s, forcing drop")
             settle_count += 1
-            if settle_count >= SETTLE_REQUIRED:
+            if settle_count >= SETTLE_REQUIRED or forced:
+                _aw, _mv = _board_motion(gs)
+                _LAST_SETTLE.update({"wait_sec": round(time.time() - move_seen_at, 2), "awake": _aw, "max_speed": _mv, "fast_drop": False, "forced": forced, "required": SETTLE_REQUIRED})
                 return gs, True
         else:
             settle_count = 0
