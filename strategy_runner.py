@@ -557,6 +557,16 @@ def trigger_soviet_clip_now(score, turn):
         return False
 
 
+def _analyzer_modes_for_record():
+    """解析器トグルの実効値を試合記録に残す (decide hash に映らない解析器変更の事後帰属用)。失敗時は None。"""
+    try:
+        from analyze_board import _merge_top_model_mode, _vertical_lane_mode
+
+        return {"vertical_lane_direct": int(_vertical_lane_mode()), "merge_top_model": int(_merge_top_model_mode())}
+    except Exception:
+        return None
+
+
 def build_analysis(game_state):
     """analyze_board の関数を呼んで analysis dict を構築"""
     try:
@@ -729,6 +739,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
         "danger_direct_merge_available": bool(chosen_result.get("danger_direct_merge_available", False)) if chosen_result else False,
         "strategy_hash": strategy_hash,
+        "analyzer_modes": _analyzer_modes_for_record(),
         "state_snapshot": {"pieces": piece_snapshot},
     }
 

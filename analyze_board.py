@@ -79,6 +79,15 @@ VERTICAL_LANE_MAX_GAP = 0.02          # G1: 接触ギャップ (着地予測が�
 VERTICAL_LANE_OVERLAP_FRAC = 1.0      # G2: |x - target.x| <= frac * min(drop_horiz, target_horiz)
 VERTICAL_LANE_LANDING_TOL = 0.02      # G3: ly が「ターゲット上端 + 落下駒の下半径」と一致
 VERTICAL_LANE_CLEARANCE_MARGIN = 1.0  # G4: 落下柱と重なる全ピースの上端 <= ターゲット上端
+# v729 (2026-08-25): 併合後ピース上端 (merge_result_top_y) の較正。旧式 max(ly_poly, target.y)+R は
+# 実測 466 併合で平均 +1.05 (中央値 +0.96) 過大 (dy=ly_poly-target.y は併合位置と無相関)。
+# 較正式 est = min(legacy, max(Lw, blend)): Lw=ターゲット列で相方を除いて併合後ピースを落とした着地上端
+# (±X_WINDOW で広げる)、blend=target.y + F*max(0, ly_poly-target.y) + R + MARGIN。legacy を上限に
+# するため値は決して旧式を上回らない (299,798 候補で 0 件) → 締切安全プールは縮まない。
+# 実測: bias +1.05→+0.79、過小 (< -0.2) 0/466、閾値 3.38 での誤警報 49→36 (真の越境 10/10 維持)。
+MERGE_TOP_MODEL_BLEND_F = 0.25
+MERGE_TOP_MODEL_MARGIN = 0.20
+MERGE_TOP_MODEL_X_WINDOW = 0.35
 VERTICAL_LANE_MIN_PROMINENCE = 0.05   # 柱内の他ピース上端はターゲット上端より 0.05 以上低い (パーチ保険。実測 67/1708 除外・真陽性損失 0)
 # 実効条件の注記: hit_id == target が成立している時点で G1/G3/G4(上端条件) は着地モデルから自動的に
 # 満たされる (実 707 局面で棄却 0)。実質の追加条件は G2 (横重なり >= 50%) と MIN_PROMINENCE。
@@ -686,6 +695,56 @@ def _vertical_lane_mode():
     return 1
 
 
+def _merge_top_model_mode():
+    """ANALYZE_BOARD_MERGE_TOP_MODEL: 2=併合拒否判定のみ較正 (既定), 1=risk_top_after_drop にも適用,
+    0=旧式。毎回 env を読む (runner はゲーム毎プロセス → .env 変更は次ゲームから)。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_MERGE_TOP_MODEL", "2") or "").strip().lower()
+    if raw in ("0", "false", "off", "no"):
+        return 0
+    if raw == "1":
+        return 1
+    return 2
+
+
+def _merged_piece_landing_top(target, pieces, eff_radii, merged_type, merged_top_r):
+    """Lw: ターゲット列 (±X_WINDOW) に、ターゲットを除いた盤面へ併合後ピースを落とした着地上端の最大値。
+    merged_type が eff_radii に無い (例: T16 ソ連) / 非有限 / 例外 → None (呼び出し側で旧式に倒す)。"""
+    try:
+        if not eff_radii or merged_type not in eff_radii:
+            return None
+        tx = float(target["x"])
+        if not math.isfinite(tx):
+            return None
+        others = [p for p in pieces if p.get("id") != target.get("id")]
+        # merged_type は eff_radii に必ずある (上で確認済み) ので drop_r は形式上のフォールバックのみ
+        drop_r = float(TYPE_RADII.get(merged_type, 0.5))
+        tops = []
+        for d in (-MERGE_TOP_MODEL_X_WINDOW, 0.0, MERGE_TOP_MODEL_X_WINDOW):
+            ly = get_deadline_landing_y(tx + d, drop_r, others, eff_radii, merged_type)
+            tops.append(float(ly) + float(merged_top_r))
+        top = max(tops)
+        return top if math.isfinite(top) else None
+    except Exception:
+        return None
+
+
+def _calibrated_merge_top(legacy_top, target, ly_poly, merged_top_r, lw_top):
+    """est = min(legacy, max(Lw, blend))。判定不能時は legacy をそのまま返す (fail-closed)。"""
+    try:
+        if lw_top is None:
+            return legacy_top
+        ty = float(target["y"])
+        lyp = float(ly_poly)
+        r = float(merged_top_r)
+        if not all(math.isfinite(v) for v in (ty, lyp, r, float(lw_top), float(legacy_top))):
+            return legacy_top
+        blend = ty + MERGE_TOP_MODEL_BLEND_F * max(0.0, lyp - ty) + r + MERGE_TOP_MODEL_MARGIN
+        est = min(float(legacy_top), max(float(lw_top), blend))
+        return est if math.isfinite(est) else legacy_top
+    except Exception:
+        return legacy_top
+
+
 def _vertical_lane_direct(x, ly, drop_ext, target, pieces, eff_radii=None, contact_gap=None):
     """v728: 落下駒が開放された垂直レーンをターゲット上端まで自由落下して直撃する形かを判定する。
     呼び出し側で hit_id == target (get_landing_info の最初の衝突相手がターゲット) が成立している
@@ -817,6 +876,9 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         next_top_r = next_r
         next_wall_top_r = next_r
     results = []
+    # v729: 併合後ピースの列内着地上端 (Lw) は x に依らないのでターゲット id ごとに遅延計算して使い回す
+    _merge_top_mode = _merge_top_model_mode()
+    _merged_lw_cache = {}
 
     for x in sample_xs:
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
@@ -942,6 +1004,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             ly_poly + next_wall_top_r if wall_rotation_risk else None
         )
         merge_top_candidates = []
+        legacy_merge_top_candidates = []
         merge_result_top_r = get_type_top_radius(next_type + 1, shapes, eff_radii)
         for m in merges:
             if m["grade"] not in ("DIRECT", "NEAR"):
@@ -950,13 +1013,33 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             # T87のtype10->type11のように、落下上端は許容に見えても
             # 生成ピースの上端がデッドラインを超えることがある。
             merge_center_y = max(ly_poly, float(m.get("y", ly_poly) or ly_poly))
-            merge_top_candidates.append(merge_center_y + merge_result_top_r)
+            legacy_top = merge_center_y + merge_result_top_r
+            legacy_merge_top_candidates.append(legacy_top)
+            if _merge_top_mode == 0:
+                merge_top_candidates.append(legacy_top)
+                continue
+            # v729: 較正値 (旧式を上限とするので旧式より高くはならない)
+            if m["id"] not in _merged_lw_cache:
+                _merged_lw_cache[m["id"]] = _merged_piece_landing_top(
+                    m, pieces, eff_radii, next_type + 1, merge_result_top_r
+                )
+            merge_top_candidates.append(
+                _calibrated_merge_top(legacy_top, m, ly_poly, merge_result_top_r, _merged_lw_cache[m["id"]])
+            )
         merge_result_top_y = min(merge_top_candidates) if merge_top_candidates else None
+        # mode 2 では候補自身の crosses_deadline/deadline_margin は旧式の併合上端で計算する (併合拒否判定のみ較正)
+        _risk_merge_top = (
+            merge_result_top_y
+            if _merge_top_mode == 1
+            else (min(legacy_merge_top_candidates) if legacy_merge_top_candidates else None)
+        )
         risk_top_after_drop = max(
             top_after_drop,
             edge_vertical_top_y if edge_vertical_top_y is not None else top_after_drop,
-            merge_result_top_y if merge_result_top_y is not None else top_after_drop,
+            _risk_merge_top if _risk_merge_top is not None else top_after_drop,
         )
+        # v729 NOTE: 較正値は min(legacy, ·) で旧式を上限とするため、旧式より高い値は決して出ない
+        # (299,798 候補で 0 件)。下の「過剰フラグ化 → DEADLINE_FALLBACK 嵐」は構造的に再発しない。
         # NOTE: 以前ここで max(ly, ly_poly)+next_top_r による「保守化」を試したが、
         # 実盤面でほぼ全候補を crosses_deadline=True に過剰フラグ化し、
         # decide() のガードが全候補を skip → L2189 フォールバックが約25%の

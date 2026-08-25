@@ -456,6 +456,13 @@ export STAGE_GATE_GRACE_COMP_GAP_RATIO
 # analyze_board.py が毎回 os.environ を読む (runner はゲーム毎プロセス → 次ゲームから有効)。
 ANALYZE_BOARD_VERTICAL_LANE_DIRECT="${ANALYZE_BOARD_VERTICAL_LANE_DIRECT:-1}"
 export ANALYZE_BOARD_VERTICAL_LANE_DIRECT
+# 2026-08-25 v729: 併合後ピース上端の較正 (2=併合拒否判定のみ較正[既定], 1=候補自身の crosses_deadline にも適用,
+# 0=旧式)。mode 2 は「merge_result_crosses ⇒ crosses_deadline」の不変条件により締切安全プールが縮まないことが
+# 構造的に保証される (311,232 候補で違反 0)。mode 1 はその保証が無い (800 盤面で実害 0 だが未保証) ので既定にしない。
+# 実効果: 「交差しない非併合配置」→「自身は交差するが併合結果は線下の DIRECT」への置換が約 0.6% のターンで起きる。旧式は実測より平均 +1.05 過大で、直撃併合を締切理由で誤拒否していた。切替は
+# ./set_toggle.sh ANALYZE_BOARD_MERGE_TOP_MODEL=0 (次ゲームから)。
+ANALYZE_BOARD_MERGE_TOP_MODEL="${ANALYZE_BOARD_MERGE_TOP_MODEL:-2}"
+export ANALYZE_BOARD_MERGE_TOP_MODEL
 STAGE_GATE_NONINFERIOR_GRACE="${STAGE_GATE_NONINFERIOR_GRACE:-1}"
 export STAGE_GATE_NONINFERIOR_GRACE
 STAGE_ACHIEVEMENT_REGRESSION_ENABLED="${STAGE_ACHIEVEMENT_REGRESSION_ENABLED:-1}"
