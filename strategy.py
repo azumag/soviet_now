@@ -1750,6 +1750,49 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if _gopen:
                 _v732_guard_tops.append((_gx, _gh, _gtop))
 
+    # --- v734 LOW_DROP_HIGH_LANE_COVER_AVOID pre-computation ---
+    # 実測 (2026-08-25, 101 試合 8270 手): 小駒 (T1〜T8) の非併合ドロップの 16.6% が「上端の開いた
+    # T9〜T11」の上に落ち、埋もれた T9〜T11 は 20 手以内の併合率が 21〜28% (開いていれば 55〜62%)。
+    # 死亡盤面では各型の 72〜93% が埋没。HIGH_TYPE_COVER_AVOID は T10 以上のみ・帯域 r*0.9 (T11 で 0.88、
+    # Unity 水平半径 1.39 より狭い) のため T9 は無保護、T10/T11 も帯域外や +90〜+600 の他軸に負けていた。
+    # 手動ゲームは小駒で開いた T9〜T11 を覆ったのが 8% (auto 15〜17%)。ここでは軸別 Unity 半径で
+    # 「上端が開いた T9〜T11」を列挙し、小駒がその上に乗る候補に -300 を課す (併合候補がある手では不発)。
+    # 実測 (レビュー): 発火候補の 80% は HIGH_TYPE_COVER_AVOID (-400) とも重なり合計 -700、純増の保護は
+    # 発火の約 20% で大半が T9。実行決定で両タグ併記は 21%。A/B (8270 手): 小駒手で開いた T9〜T11 を
+    # 覆う率 31%→13%、開いた T12+ を覆う率は 8.2%→9.8% に微増 (次候補: 範囲を T14 まで拡張)。
+    _v734_nan = float("nan")
+    _v734_rn_b = board_stats.seed_bottom_radius(next_type)
+    _v734_open_tops = []  # (x, horiz, top_y)
+    if next_type <= 8 and isinstance(pieces, list):
+        for _lp in pieces:
+            if not isinstance(_lp, dict):
+                continue
+            _lt = _lp.get("type")
+            if not isinstance(_lt, int) or _lt < 9 or _lt > 11:
+                continue
+            if _lt - 1 == next_type:  # next=T8 で開いた T9 は「乗せて縦積み」候補なので罰しない
+                continue
+            _lx = _as_float(_lp.get("x"), _v734_nan)
+            _ly2 = _as_float(_lp.get("y"), _v734_nan)
+            if not (math.isfinite(_lx) and math.isfinite(_ly2)):
+                continue
+            _lh = board_stats.seed_horiz_radius(_lt)
+            _ltop = _ly2 + board_stats.seed_top_radius(_lt)
+            _lopen = True  # 判定不能な駒があれば「埋もれている」側 (罰則なし = fail-closed)
+            for _op in pieces:
+                if _op is _lp or not isinstance(_op, dict):
+                    continue
+                _lox = _as_float(_op.get("x"), _v734_nan)
+                _loy = _as_float(_op.get("y"), _v734_nan)
+                if not (math.isfinite(_lox) and math.isfinite(_loy)):
+                    _lopen = False
+                    break
+                if abs(_lox - _lx) <= _lh and _loy - board_stats.seed_bottom_radius(_op.get("type")) >= _ltop - 0.25:
+                    _lopen = False
+                    break
+            if _lopen:
+                _v734_open_tops.append((_lx, _lh, _ltop))
+
     # --- HIGH_TYPE_COVER_AVOID pre-computation ---
     # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
     # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
@@ -2373,6 +2416,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if _v732_hit:
                 score += 120.0
                 reasons.append("ANCHOR_LANE_SEED_CONTACT")
+
+        # ----- v734: LOW_DROP_HIGH_LANE_COVER_AVOID (小駒で開いた T9〜T11 を覆わない) -----
+        # v731/v732 と同じ安全条件 (非併合手・盤上に併合候補なし・締切安全・ロシア不在) で、T1〜T8 の
+        # 候補が開いた T9〜T11 の上端に乗るなら -300。減点のみ (安全な候補が他に無ければ結果は変わらない)。
+        # v731 (next>=9) / v732 (9<=next<=11) とは next_type の領域が排反で相殺しない。
+        if (
+            merge_grade == "NO"
+            and next_type <= 8
+            and not _v731_any_merge
+            and _v734_open_tops
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and isinstance(landing_y, (int, float))
+            and math.isfinite(landing_y)
+        ):
+            _v734_sx = x + (
+                drift_x if isinstance(drift_x, (int, float)) and math.isfinite(drift_x) else 0.0
+            )
+            _v734_bot = landing_y - _v734_rn_b
+            for _v734_lx, _v734_lh, _v734_ltop in _v734_open_tops:
+                if abs(_v734_sx - _v734_lx) <= _v734_lh and _v734_bot >= _v734_ltop - 0.25:
+                    score -= 300.0
+                    reasons.append("LOW_DROP_HIGH_LANE_COVER_AVOID")
+                    break
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
