@@ -190,9 +190,15 @@ def main():
 
     # doci 呼出し: python -m doci.run_daily --channel soren_news --corner news_short --date <iso> --no-upload
     # 環境変数 PUBLISH_DRY_RUN=1 は doci 側で安全弁として優先されるが、--no-upload で十分
-    do_upload = args.do_upload and not args.no_upload
+    # doci の venv (3.11+, tomllib) を明示的に使う
+    doci_py = doci_dir / ".venv" / "bin" / "python"
+    if not doci_py.exists():
+        doci_py = Path(sys.executable)
+    # --no-upload は default=True の安全弁なので、これと AND を取ると --do-upload が
+    # 永久に効かない (docich#10 Phase2 で発覚)。実投稿は --do-upload の明示だけを条件にする。
+    do_upload = bool(args.do_upload)
     cmd = [
-        sys.executable, "-m", "doci.run_daily",
+        str(doci_py), "-m", "doci.run_daily",
         "--channel", args.channel,
         "--corner", args.corner,
         "--date", date.isoformat(),

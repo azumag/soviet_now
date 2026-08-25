@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  docich#10 Phase1: 日次ポッドキャスト生成 (Mac)
+  VM の podcast.timer (05:30 JST) は配信本体と VOICEVOX を奪い合って
+  39本中37本が timeout 失敗していたため disable し、生成を Mac へ移設した。
+  04:30 開始: VM の radio-archive.timer (04:00) が原稿を push した後、
+  かつ com.azumag.soren-news.generate (06:00, Short動画) の前に終わらせる。
+  (51本で実測およそ60分)
+  導入: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.azumag.soren-podcast.build.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.azumag.soren-podcast.build</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/azumag/work/docich/games/soviet_now/tools/podcast_build.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/azumag/Library/Logs/soren-podcast.build.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/azumag/Library/Logs/soren-podcast.build.err.log</string>
+</dict>
+</plist>

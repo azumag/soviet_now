@@ -60,16 +60,36 @@ if [ -d "$DOCI_DIR" ]; then
   fi
 fi
 
-PY="$PROJ/../doci/repo/.venv-cron/bin/python"
-if [ ! -x "$PY" ]; then
-  # doci の venv が無い場合はシステム python でフォールバック (soviet_now の .venv)
-  PY="$PROJ/.venv/bin/python"
-  [ -x "$PY" ] || PY="$(command -v python3)"
-fi
+# Python 選択: doci の venv (tomllib は 3.11+) を最優先
+PY=""
+for cand in "/Users/azumag/azumag/work/doci/repo/.venv/bin/python" "$HOME/.venv/bin/python" "$PROJ/.venv/bin/python"; do
+  if [ -x "$cand" ]; then PY="$cand"; break; fi
+done
+[ -n "$PY" ] || PY="$(command -v python3)"
+# デバッグ用に選択した PY をログ
+echo "[$(ts)] PY=$PY ($($PY --version 2>&1))" >> "$LOG"
 
 cd "$PROJ" || exit 1
+
+# 投稿の可否は「YouTube の token が用意されているか」で決める (fail-closed)。
+# token が無い間は生成のみ (--no-upload)、`python -m doci.youtube --auth --channel soren_news`
+# で token が出来た翌日から自動的に実投稿へ切り替わる。plist の再登録は不要。
+# 明示フラグが渡されている場合は尊重する。
+UPLOAD_ARGS=()
+case " $* " in
+  *" --do-upload "*|*" --no-upload "*|*" --dry-run "*) ;;
+  *)
+    if [ -f "$DOCI_DIR/secrets/soren_news/youtube_token.json" ]; then
+      echo "[$(ts)] youtube token あり: 実投稿モード (--do-upload)" >> "$LOG"
+      UPLOAD_ARGS=(--do-upload)
+    else
+      echo "[$(ts)] youtube token 無し: 生成のみ (投稿するには doci.youtube --auth が必要)" >> "$LOG"
+    fi
+    ;;
+esac
+
 # 既定は --pick-one (当日1本)
-"$PY" ./tools/short_video_build.py "$@" >> "$LOG" 2>&1
+"$PY" ./tools/short_video_build.py "$@" "${UPLOAD_ARGS[@]}" >> "$LOG" 2>&1
 rc=$?
 echo "[$(ts)] ===== soren-news cron end rc=$rc =====" >> "$LOG"
 exit $rc

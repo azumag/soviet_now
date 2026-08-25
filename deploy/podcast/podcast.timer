@@ -1,5 +1,10 @@
+# 【2026-08-26 以降 未使用】VM 上での生成は VOICEVOX を配信本体と奪い合い、
+# 2026-08-25 05:30 の実行 (2026-08-24 分) は 37 本が voicevox timeout で失敗し、
+# 成功 2 本・所要 1h47m・service exit 1 だったため disable した。
+# 現在の生成は Mac の launchd (deploy/podcast/com.azumag.soren-podcast.build.plist) が担当する。
+# VM を増やす / Functions 等へ移す判断をする場合の参考としてファイルは残す。
 [Unit]
-Description=Daily Podcast Build Timer (05:30 JST, after archive 04:00)
+Description=Daily Podcast Build Timer (05:30 JST, after archive 04:00) [DISABLED: moved to Mac]
 
 [Timer]
 # 05:30 JST = 20:30 UTC 前日
