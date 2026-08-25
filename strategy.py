@@ -1793,6 +1793,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if _lopen:
                 _v734_open_tops.append((_lx, _lh, _ltop))
 
+    # --- v736 PROBABLE_MERGE_CONTACT pre-computation ---
+    # 実測 (2026-08-25, 132 試合 10,891 手): 盤上に DIRECT/NEAR が無い手でも、解析器の軸別 contact_gap
+    # (analyze_board.polygon_contact_gap: 回転込み AABB) が小さい着地は高確率で併合する。相方の上端が
+    # 開いているときのみ: gap<=0.05 82.6% / <=0.20 73.8% / <=0.50 61.3% / <=1.00 32.1% (埋もれた相方は
+    # 25/33/18/13%、NO 盤面の平均 11.7%)。安全な gap<=0.20 候補があった手の 75% で選ばれておらず、
+    # 見送った候補は選択より低く (着地 -0.90) 安全 (margin +0.86) だった = 高さ・締切の理由ではない。
+    # 人間は NO 盤面で 21.9% 併合 (自動 10.9%)。判定不能は fail-closed (加点なし)。
+    _v736_nanv = float("nan")
+    _v736_rn_h = board_stats.seed_horiz_radius(next_type)
+    _v736_rn_t = board_stats.seed_top_radius(next_type)
+    _v736_open_partner_ids = set()
+    if isinstance(pieces, list):
+        for _v736_sp in same_type_pieces:
+            if not isinstance(_v736_sp, dict) or _v736_sp.get("id") is None:
+                continue
+            _v736_spx = _as_float(_v736_sp.get("x"), _v736_nanv)
+            _v736_spy = _as_float(_v736_sp.get("y"), _v736_nanv)
+            if not (math.isfinite(_v736_spx) and math.isfinite(_v736_spy)):
+                continue
+            _v736_sptop = _v736_spy + _v736_rn_t
+            _v736_spopen = True
+            for _v736_op in pieces:
+                if _v736_op is _v736_sp or not isinstance(_v736_op, dict):
+                    continue
+                _v736_opx = _as_float(_v736_op.get("x"), _v736_nanv)
+                _v736_opy = _as_float(_v736_op.get("y"), _v736_nanv)
+                if not (math.isfinite(_v736_opx) and math.isfinite(_v736_opy)):
+                    _v736_spopen = False
+                    break
+                if abs(_v736_opx - _v736_spx) <= _v736_rn_h and (
+                    _v736_opy - board_stats.seed_bottom_radius(_v736_op.get("type")) >= _v736_sptop - 0.25
+                ):
+                    _v736_spopen = False
+                    break
+            if _v736_spopen:
+                _v736_open_partner_ids.add(_v736_sp.get("id"))
+
     # --- HIGH_TYPE_COVER_AVOID pre-computation ---
     # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
     # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
@@ -2444,6 +2481,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= 300.0
                     reasons.append("LOW_DROP_HIGH_LANE_COVER_AVOID")
                     break
+
+        # ----- v736: PROBABLE_MERGE_CONTACT (NO 盤面で「たぶん併合する」接触着地を選ぶ) -----
+        # 非併合手 (盤上に DIRECT/NEAR 候補なし)・非 death_spiral・ロシア不在で、上端の開いた同型相方への
+        # 軸別 contact_gap が小さい候補へ加点する (gap<=0.20 で満額 +800、1.00 で 0)。壁際回転リスクのある
+        # 着地は 0.6 倍 (実測 43.9% vs 61.9%、n 小)。
+        # 締切安全の実効ガードは reactor_margin>=1.0 (盤面上端 <= 2.38)。NO 盤面では analyze_board が併合後
+        # 上端を crosses_deadline / merge_result_crosses_deadline に算入しない (DIRECT/NEAR のみ) ため、下の
+        # deadline_crossed / crosses_deadline / merge_result_crosses_deadline 条件は decide() 冒頭の早期
+        # return (deadline_crossed かつ非併合) と NO+crossing 候補の事前除外に対する多重防御で、単独では
+        # 到達しない。A/B 発火 840 手の併合後上端 (legacy 推定) は最大 3.32 < 3.38 (中央値 -0.35)。
+        # 被覆タグ (HIGH_TYPE_COVER_AVOID / LOW_DROP_HIGH_LANE_COVER_AVOID) が付いた候補には加点しない
+        # (v705/v734 の「開いた高型レーンを覆わない」不変条件は維持)。一方 AVOID_BLOCK_NEXTNEXT (-311.7) /
+        # T12_PAIR_COVER_AVOID (-200) / REACTIVE_PAIR_GAP_BLOCK は除外せず +800 が上回りうる (A/B 変更手
+        # 358 のうち新規付与 63 / 17 / 8)。減点は無いので併合喪失は構造的に起きない。
+        # A/B (132 試合 11,023 手): 発火 7.6%、変更 3.25%、変更手の risk_top 平均 -0.55 (着地は低くなる)。
+        if (
+            merge_grade == "NO"
+            and not _v731_any_merge
+            and _v736_open_partner_ids
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and "LOW_DROP_HIGH_LANE_COVER_AVOID" not in reasons
+            and "HIGH_TYPE_COVER_AVOID" not in reasons
+        ):
+            _v736_cg = min(
+                (
+                    _as_float(_v736_m.get("contact_gap"), 9.9)
+                    for _v736_m in (result.get("merges") or [])
+                    if isinstance(_v736_m, dict) and _v736_m.get("id") in _v736_open_partner_ids
+                ),
+                default=9.9,
+            )
+            if math.isfinite(_v736_cg) and _v736_cg <= 1.00:
+                score += 800.0 * min(1.0, max(0.0, (1.00 - max(0.0, _v736_cg)) / 0.80)) * (
+                    0.6 if result.get("wall_rotation_risk") else 1.0
+                )
+                reasons.append("PROBABLE_MERGE_CONTACT")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.

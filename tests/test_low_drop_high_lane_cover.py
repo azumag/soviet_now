@@ -146,7 +146,7 @@ class LowDropHighLaneCoverTest(unittest.TestCase):
         self.assertNotIn(TAG, str(strategy.decide(gs, an).get("reason", "")))
 
     def test_no_bonus_interaction_with_seed_axes(self):
-        fx = _load("seed_contact_t11_turn48.json")  # next=T11: v734 は不発、v731 は従来どおり
+        fx = _load("seed_contact_t11_turn15.json")  # next=T11: v734 は不発、v731 は従来どおり
         x, reason, chosen, an = _pipeline(_gs(fx))
         self.assertNotIn(TAG, reason)
         self.assertIn("SAME_TYPE_SEED_CONTACT", reason)
