@@ -1839,51 +1839,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # next_type と同type（上置き＝併合レーンそのもの）と、その1つ下の type
     # （N の上に N-1 を置くのは次に N-1 が来れば N を作れる中間素材になる。
     #  improve_strategy.md「typeNの上にtypeN-1をのせるのはいい」）はここで除外する。
-    # --- v738 STAIRCASE_ADJ pre-computation ---
-    # 実測 (2026-08-26, 162 試合 13,905 手, 序盤 <=22 駒・同型相方なし・NO 盤面): t+1 型の開いた駒の横に置いた駒は
-    # その後 15 手以内の併合が複数併合になる率 31.9% (遠い置き方 26.5%)、t-1 型の横は 36.1% (25.6%)。到着した
-    # 相方との併合産物が隣の t+1 / t-1 と同ターン連鎖する配置 (v732 の一般化: T1–T8 にも正の配置軸を与える)。
-    # 解析器予測の横隣接率は域内 3.0% (実着地 13.6%)、A2 で予測 14.8% (実着地換算 +5.7pt 見込み)。
-    _v738_nanv = float("nan")
-    _v738_rn_h = board_stats.seed_horiz_radius(next_type)
-    _v738_rn_t = board_stats.seed_top_radius(next_type)
-    _v738_rn_b = board_stats.seed_bottom_radius(next_type)
-    _v738_targets = []
-    _v738_phase = 0.0
-    if piece_count <= 22:
-        _v738_phase = 1.0
-    elif piece_count < 34:
-        _v738_phase = (34.0 - piece_count) / 12.0
-    _v738_silent = not _v736_open_partner_ids
-    if _v738_phase > 0.0 and _v738_silent and 1 <= next_type <= 8 and isinstance(pieces, list):
-        for _v738_p in pieces:
-            if not isinstance(_v738_p, dict) or _v738_p.get("type") not in (next_type + 1, next_type - 1):
-                continue
-            _v738_ah = board_stats.seed_horiz_radius(_v738_p.get("type"))
-            _v738_at = board_stats.seed_top_radius(_v738_p.get("type"))
-            _v738_ab = board_stats.seed_bottom_radius(_v738_p.get("type"))
-            _v738_px = _as_float(_v738_p.get("x"), _v738_nanv)
-            _v738_py = _as_float(_v738_p.get("y"), _v738_nanv)
-            if not (math.isfinite(_v738_px) and math.isfinite(_v738_py)):
-                continue
-            _v738_ptop = _v738_py + _v738_at
-            _v738_popen = True
-            for _v738_o in pieces:
-                if _v738_o is _v738_p or not isinstance(_v738_o, dict):
-                    continue
-                _v738_ox = _as_float(_v738_o.get("x"), _v738_nanv)
-                _v738_oy = _as_float(_v738_o.get("y"), _v738_nanv)
-                if not (math.isfinite(_v738_ox) and math.isfinite(_v738_oy)):
-                    _v738_popen = False
-                    break
-                if abs(_v738_ox - _v738_px) <= _v738_ah and (
-                    _v738_oy - board_stats.seed_bottom_radius(_v738_o.get("type")) >= _v738_ptop - 0.25
-                ):
-                    _v738_popen = False
-                    break
-            if _v738_popen:
-                _v738_targets.append((_v738_px, _v738_ah, _v738_ptop, _v738_py - _v738_ab))
-
     high_cover_free = []
     for _hc_t, _hc_x, _hc_y, _hc_r in board_stats.pieces_of_type_at_least(pieces, 10):
         if _hc_t == next_type or _hc_t - 1 == next_type:
@@ -2567,44 +2522,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     0.6 if result.get("wall_rotation_risk") else 1.0
                 )
                 reasons.append("PROBABLE_MERGE_CONTACT")
-
-        # ----- v738: STAIRCASE_ADJ (同型相方が無い序盤の NO 盤面で t+1 型の開いた駒の「横」に置く) -----
-        # 被覆タグ付き候補・DIRECT/NEAR 存在時・crossing・margin<1.0・death_spiral・ロシア在盤では不発。
-        # 縦は重なり (beside) が必要で「上に乗る」は対象外。deadline_crossed / crossing 条件は多重防御 (NO 盤面
-        # では上流で除外済み)。加点は v731 (+400) / v736 (+800) 未満、高さ軸 (~90–140) より上。
-        if (
-            merge_grade == "NO"
-            and _v738_targets
-            and not _v731_any_merge
-            and not deadline_crossed
-            and reactor_margin >= 1.0
-            and not result.get("crosses_deadline")
-            and not result.get("merge_result_crosses_deadline")
-            and not death_spiral
-            and type15_count == 0
-            and "LOW_DROP_HIGH_LANE_COVER_AVOID" not in reasons
-            and "HIGH_TYPE_COVER_AVOID" not in reasons
-            and "T12_PAIR_COVER_AVOID" not in reasons
-        ):
-            _v738_ly = _as_float(landing_y, _v738_nanv)
-            _v738_sx = _as_float(x, _v738_nanv) + _as_float(drift_x, 0.0)
-            _v738_best = 9.9
-            if math.isfinite(_v738_ly) and math.isfinite(_v738_sx):
-                _v738_cb = _v738_ly - _v738_rn_b
-                _v738_ct = _v738_ly + _v738_rn_t
-                for _v738_tx, _v738_th, _v738_ttop, _v738_tbot in _v738_targets:
-                    if min(_v738_ct, _v738_ttop) - max(_v738_cb, _v738_tbot) < 0.15:
-                        continue
-                    _v738_g = abs(_v738_sx - _v738_tx) - (_v738_rn_h + _v738_th)
-                    if _v738_g < -0.20:
-                        continue
-                    if _v738_g < _v738_best:
-                        _v738_best = _v738_g
-            if math.isfinite(_v738_best) and _v738_best <= 0.45:
-                score += 300.0 * min(1.0, max(0.0, (0.45 - max(0.0, _v738_best)) / 0.35)) * _v738_phase * (
-                    0.6 if result.get("wall_rotation_risk") else 1.0
-                )
-                reasons.append("STAIRCASE_ADJ")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
