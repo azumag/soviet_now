@@ -77,7 +77,7 @@ class SameTypeSeedContactTest(unittest.TestCase):
         self.assertLessEqual(g1, 0.3)
 
     def test_t11_real_turn_seeds_closer(self):
-        self._assert_seeds("seed_contact_t11_turn33.json")
+        self._assert_seeds("seed_contact_t11_turn48.json")
 
     def test_never_competes_with_available_merge(self):
         fx = _load("seed_contact_direct_available.json")

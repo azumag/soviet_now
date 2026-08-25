@@ -1670,6 +1670,77 @@ def decide(game_state: dict, analysis: dict) -> dict:
             continue
     _v731_rn = board_stats.seed_horiz_radius(next_type)
 
+    # --- v732 ANCHOR_LANE_SEED_CONTACT pre-computation ---
+    # 実測 (2026-08-25, 62 試合 5048 手): T9〜T11 の併合地点が「T(N+1) アンカーの横 (水平ギャップ<=0.15)」
+    # または「上端が開いたアンカーの真上」だと同ターン連鎖 48% (横 46.6% / 開いた真上 66.7%)、
+    # 「遠い」「埋もれたアンカーの上」だと 6% (Fisher p=1e-12)。T12 併合の 72% は T11 併合からの
+    # 同ターン連鎖なので、T11 ペアをアンカー近傍に組むことが T12 ボトルネックへの唯一の decide 側レバー。
+    # 手動ゲームの縦積みラダーも「開いた下位アンカーの真上」に組む形だった。
+    # 軸ごとの Unity 半径 (horiz/top/bottom) で判定する (v731 の等方指標では縦積みと横並びを区別できない)。
+    _v732_rn_h = board_stats.seed_horiz_radius(next_type)
+    _v732_rn_b = board_stats.seed_bottom_radius(next_type)
+    _v732_rn_t = board_stats.seed_top_radius(next_type)
+    _v732_nan = float("nan")
+    _v732_anchors = []  # (x, horiz, top_y, bottom_y, top_is_open)
+    if 9 <= next_type <= 11 and isinstance(pieces, list):
+        _v732_ah = board_stats.seed_horiz_radius(next_type + 1)
+        _v732_atr = board_stats.seed_top_radius(next_type + 1)
+        _v732_abr = board_stats.seed_bottom_radius(next_type + 1)
+        for _ap in pieces:
+            if not isinstance(_ap, dict) or _ap.get("type") != next_type + 1:
+                continue
+            _v732_ax = _as_float(_ap.get("x"), _v732_nan)
+            _v732_ay = _as_float(_ap.get("y"), _v732_nan)
+            if not (math.isfinite(_v732_ax) and math.isfinite(_v732_ay)):
+                continue
+            _v732_atop = _v732_ay + _v732_atr
+            _v732_open = True  # 判定不能な駒があれば「埋もれている」側 (fail-closed)
+            for _op in pieces:
+                if _op is _ap or not isinstance(_op, dict):
+                    continue
+                _v732_ox = _as_float(_op.get("x"), _v732_nan)
+                _v732_oy = _as_float(_op.get("y"), _v732_nan)
+                if not (math.isfinite(_v732_ox) and math.isfinite(_v732_oy)):
+                    _v732_open = False
+                    break
+                if abs(_v732_ox - _v732_ax) <= _v732_ah and (
+                    _v732_oy - board_stats.seed_bottom_radius(_op.get("type")) >= _v732_atop - 0.25
+                ):
+                    _v732_open = False
+                    break
+            _v732_anchors.append((_v732_ax, _v732_ah, _v732_atop, _v732_ay - _v732_abr, _v732_open))
+    # 上端が開いている他の高型 (type>=10、アンカー型を除く) の上には加点しない (併合レーン被覆の抑止)
+    _v732_guard_tops = []
+    if _v732_anchors and isinstance(pieces, list):
+        for _gp in pieces:
+            if not isinstance(_gp, dict):
+                continue
+            _gt = _gp.get("type")
+            if not isinstance(_gt, int) or _gt < 10 or _gt == next_type + 1:
+                continue
+            _gx = _as_float(_gp.get("x"), _v732_nan)
+            _gy = _as_float(_gp.get("y"), _v732_nan)
+            if not (math.isfinite(_gx) and math.isfinite(_gy)):
+                continue
+            _gh = board_stats.seed_horiz_radius(_gt)
+            _gtop = _gy + board_stats.seed_top_radius(_gt)
+            _gopen = True
+            for _op in pieces:
+                if _op is _gp or not isinstance(_op, dict):
+                    continue
+                _gox = _as_float(_op.get("x"), _v732_nan)
+                _goy = _as_float(_op.get("y"), _v732_nan)
+                if not (math.isfinite(_gox) and math.isfinite(_goy)):
+                    _gopen = False
+                    break
+                if abs(_gox - _gx) <= _gh and (
+                    _goy - board_stats.seed_bottom_radius(_op.get("type")) >= _gtop - 0.25
+                ):
+                    _gopen = False
+                    break
+            if _gopen:
+                _v732_guard_tops.append((_gx, _gh, _gtop))
+
     # --- HIGH_TYPE_COVER_AVOID pre-computation ---
     # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
     # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
@@ -2243,6 +2314,56 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if math.isfinite(_v731_gap) and _v731_gap <= 1.3:
                 score += 400.0 * (1.0 - max(0.0, _v731_gap) / 1.3)
                 reasons.append("SAME_TYPE_SEED_CONTACT")
+
+        # ----- v732: ANCHOR_LANE_SEED_CONTACT (T(N+1) アンカー近傍への播種) -----
+        # v731 と同じ安全条件 (非併合手・盤上に併合候補なし・締切安全・ロシア不在) で、着地が
+        # 「開いたアンカーの真上 (上端+0.25 以内に乗る)」または「アンカーの横 (水平ギャップ<=0.15 かつ縦 AABB
+        # ギャップ<=0.5)」なら +120。埋もれたアンカーの上・アンカーから離れた高さの着地は対象外。他の開いた高型上端 (type>=10) を覆う着地には加点しない。
+        # +120 は HIGH_TYPE_COVER_AVOID (-400) を覆せず、v731 (+400 勾配) の窓内でのみ順位を決める
+        # (同型指標 0.03 差 ≈ 9 点)。減点は一切しないので併合喪失・交差の新規発生はない。
+        if (
+            merge_grade == "NO"
+            and 9 <= next_type <= 11
+            and not _v731_any_merge
+            and _v732_anchors
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and isinstance(landing_y, (int, float))
+            and math.isfinite(landing_y)
+        ):
+            _v732_sx = x + (
+                drift_x if isinstance(drift_x, (int, float)) and math.isfinite(drift_x) else 0.0
+            )
+            _v732_hit = False
+            _v732_cbot = landing_y - _v732_rn_b
+            _v732_ctop = landing_y + _v732_rn_t
+            for _v732_ax, _v732_ah, _v732_atop, _v732_abot, _v732_open in _v732_anchors:
+                _v732_dx = abs(_v732_sx - _v732_ax)
+                if _v732_dx <= _v732_ah and _v732_cbot >= _v732_atop - 0.25:
+                    # アンカーの真上: 実際にアンカー上端に乗る (上端+0.25 以内) かつ上端が開いているときだけ
+                    # (縦積みラダー)。離れた高さの着地や埋もれたアンカーの上は対象外。
+                    if _v732_open and _v732_cbot <= _v732_atop + 0.25:
+                        _v732_hit = True
+                        break
+                    continue
+                if _v732_dx - (_v732_rn_h + _v732_ah) <= 0.15:
+                    # アンカーの横: 縦方向の AABB ギャップ <= 0.5 (実測: 接触 63% vs 隙間あり 21% の連鎖率)
+                    _v732_vgap = max(_v732_cbot - _v732_atop, _v732_abot - _v732_ctop, 0.0)
+                    if _v732_vgap <= 0.5:
+                        _v732_hit = True
+                        break
+            if _v732_hit and _v732_guard_tops:
+                for _gx, _gh, _gtop in _v732_guard_tops:
+                    if abs(_v732_sx - _gx) <= _gh and landing_y - _v732_rn_b >= _gtop - 0.25:
+                        _v732_hit = False
+                        break
+            if _v732_hit:
+                score += 120.0
+                reasons.append("ANCHOR_LANE_SEED_CONTACT")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.

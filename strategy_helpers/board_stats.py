@@ -110,3 +110,31 @@ def seed_horiz_radius(piece_type):
         return float(TYPE_RADII.get(piece_type, 0.5))
     except Exception:
         return 0.5
+
+
+def seed_top_radius(piece_type):
+    """type の Unity ポリゴン上端半径 (UNITY_PREFAB_DEADLINE_RADII の top)。無ければ TYPE_RADII、それも無ければ 0.5。
+    v732 ANCHOR_LANE_SEED_CONTACT の縦方向判定用 (係数・閾値は持たない、additive-only、analyze_board 結合は hash 外)。"""
+    try:
+        from analyze_board import TYPE_RADII, UNITY_PREFAB_DEADLINE_RADII
+
+        info = UNITY_PREFAB_DEADLINE_RADII.get(piece_type)
+        if isinstance(info, dict) and "top" in info:
+            return float(info["top"])
+        return float(TYPE_RADII.get(piece_type, 0.5))
+    except Exception:
+        return 0.5
+
+
+def seed_bottom_radius(piece_type):
+    """type の Unity ポリゴン下端半径 (UNITY_PREFAB_DEADLINE_RADII の bottom)。無ければ TYPE_RADII、それも無ければ 0.5。
+    v732 ANCHOR_LANE_SEED_CONTACT の縦方向判定用 (係数・閾値は持たない、additive-only、analyze_board 結合は hash 外)。"""
+    try:
+        from analyze_board import TYPE_RADII, UNITY_PREFAB_DEADLINE_RADII
+
+        info = UNITY_PREFAB_DEADLINE_RADII.get(piece_type)
+        if isinstance(info, dict) and "bottom" in info:
+            return float(info["bottom"])
+        return float(TYPE_RADII.get(piece_type, 0.5))
+    except Exception:
+        return 0.5
