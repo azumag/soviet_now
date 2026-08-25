@@ -1649,6 +1649,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _px2, _py2 = float(_low[_i + 1].get("x", 0.0) or 0.0), float(_low[_i + 1].get("y", 0.0) or 0.0)
                 t12_low_pairs.append((_ptype, min(_px1, _px2), max(_px1, _px2), max(_py1, _py2)))
 
+    # --- v731 SAME_TYPE_SEED_CONTACT pre-computation ---
+    # 実測 (2026-08-25, 50 試合 4004 手 = v727 26 + 42c79aab 24): 同型ペアは形成時の「距離指標」
+    # (中心間ユークリッド距離 − 両者の Unity 水平半径。物理接触ではなく相対指標) が 0.3 以下だと 78%
+    # (T12: 91%) 併合まで到達し、1.5 超だと 47% (T12: 25%)。T12 ペアは中央値 0.93 で形成され 31% が
+    # 1.5 超。盤上に届かない同型相方がある手 (全手の 49%) で、締切安全な候補なら指標 1.13 まで
+    # 寄せられるのに 1.86 に置いていた。非併合手のときだけ、同指標で相方に近い候補へ加点する
+    # (最大 +400、指標 1.3 で 0)。併合候補が盤上に 1 つでもある手では発火しない。next は T11 までしか
+    # 出現しないため、この軸が直接動かすのは T9〜T11 ペアの密度 (T12/T13 ペアの供給側) である。
+    _v731_any_merge = any(
+        isinstance(_r, dict) and _r.get("merge_grade") in ("DIRECT", "NEAR") for _r in results
+    )
+    _v731_partners = []
+    for _p in same_type_pieces:
+        try:
+            _v731_partners.append(
+                (float(_p.get("x")), float(_p.get("y")), board_stats.seed_horiz_radius(_p.get("type")))
+            )
+        except (TypeError, ValueError):
+            continue
+    _v731_rn = board_stats.seed_horiz_radius(next_type)
+
     # --- HIGH_TYPE_COVER_AVOID pre-computation ---
     # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
     # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
@@ -2190,6 +2211,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= 400.0
                     reasons.append("HIGH_TYPE_COVER_AVOID")
                     break
+
+        # ----- v731: SAME_TYPE_SEED_CONTACT (同型ペアの密な播種) -----
+        # 非併合手 (盤上に DIRECT/NEAR 候補が無い) で、届かない同型相方 (T9 以上) の近く
+        # (上記の距離指標) へ着地する候補に加点する。締切安全 (非 crossing・併合結果非 crossing・
+        # margin>=1.0・非 death_spiral・ロシア不在) のときだけ。指標が負の着地は相方の上に載る形
+        # (縦積み) を含む — 実測では形成時指標 0.3 以下のペアが最も併合まで到達する。最大 +400 は
+        # HIGH_TYPE_COVER_AVOID (-400) と同額で相殺止まり (上回らない)。実測 A/B では 78 変更手中
+        # 2 手で上端の空いた同型相方を被覆した (監視項目)。
+        if (
+            merge_grade == "NO"
+            and next_type >= 9
+            and not _v731_any_merge
+            and _v731_partners
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and isinstance(landing_y, (int, float))
+            and math.isfinite(landing_y)
+        ):
+            _v731_sx = x + (
+                drift_x if isinstance(drift_x, (int, float)) and math.isfinite(drift_x) else 0.0
+            )
+            _v731_gap = min(
+                math.hypot(_v731_sx - _px, landing_y - _py) - (_v731_rn + _pr)
+                for _px, _py, _pr in _v731_partners
+            )
+            if math.isfinite(_v731_gap) and _v731_gap <= 1.3:
+                score += 400.0 * (1.0 - max(0.0, _v731_gap) / 1.3)
+                reasons.append("SAME_TYPE_SEED_CONTACT")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.

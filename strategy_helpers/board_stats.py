@@ -94,3 +94,19 @@ def pieces_of_type_at_least(pieces, min_type):
             )
         )
     return out
+
+
+def seed_horiz_radius(piece_type):
+    """type の Unity ポリゴン水平半径 (analyze_board.UNITY_PREFAB_DEADLINE_RADII)。無ければ TYPE_RADII、
+    それも無ければ 0.5。v731 SAME_TYPE_SEED_CONTACT 用の機械的参照 (係数・閾値は持たない、additive-only)。
+    注意: analyze_board.py は decide hash にも試合毎 snapshot にも含まれないため、その定数表を変えると
+    decide() の挙動が hash 不変のまま変わる (has_reactive_for_type の警告と同じ種類の結合)。"""
+    try:
+        from analyze_board import TYPE_RADII, UNITY_PREFAB_DEADLINE_RADII
+
+        info = UNITY_PREFAB_DEADLINE_RADII.get(piece_type)
+        if isinstance(info, dict) and "horiz" in info:
+            return float(info["horiz"])
+        return float(TYPE_RADII.get(piece_type, 0.5))
+    except Exception:
+        return 0.5
