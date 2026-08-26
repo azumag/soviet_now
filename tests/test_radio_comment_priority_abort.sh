@@ -89,8 +89,10 @@ fi
 # --- 3: 合成中にコメントが入ったら即座に打ち切る (rc=9, 中途WAVは残さない) ---
 _synthesize_chunk() {
 	# 実際の VOICEVOX の代わりに、時間のかかる合成を模擬する。
+	# voicevox_tts.sh は timeout -> env -> bash -> docich と多段になるため、
+	# 直下の PID を kill しても止まらない構造をここで再現する。
 	printf 'partial' >"$2"
-	sleep 30
+	bash -c 'printf "%s\n" "$$" >"'"$TMP"'/synth_grandchild.pid"; exec sleep 30'
 	printf 'done' >"$2"
 }
 export RADIO_RENDER_COMMENT_ABORT_POLL_SEC=1
@@ -109,11 +111,16 @@ wait "$watcher" 2>/dev/null || true
 [ "$rc" -eq 9 ] && ok "mid-synthesis abort returns rc=9" || not_ok "mid-synthesis abort should return rc=9 (got $rc)"
 [ "$elapsed" -lt 15 ] && ok "abort happens promptly (${elapsed}s < 15s, synth would take 30s)" || not_ok "abort took too long: ${elapsed}s"
 [ ! -e "$out" ] && ok "partial WAV is removed on abort" || not_ok "partial WAV should be removed on abort"
-if pgrep -f 'sleep 30' >/dev/null 2>&1; then
-	not_ok "synthesis child process should be killed"
+grandchild=$(cat "$TMP/synth_grandchild.pid" 2>/dev/null || true)
+if [ -n "$grandchild" ] && kill -0 "$grandchild" 2>/dev/null; then
+	kill -KILL "$grandchild" 2>/dev/null || true
+	not_ok "descendant synthesis process (pid=$grandchild) should be killed"
+elif [ -z "$grandchild" ]; then
+	not_ok "mock synthesis did not record its descendant pid"
 else
-	ok "synthesis child process is killed"
+	ok "descendant synthesis process is killed (pid=$grandchild)"
 fi
+rm -f "$TMP/synth_grandchild.pid"
 rm -f "$COMMENT_QUEUE_DIR"/comment_*
 
 # --- 4: コメントが無ければ通常どおり合成する ---
