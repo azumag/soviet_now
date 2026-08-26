@@ -6,7 +6,7 @@
 #   finish <A|B> [reason]         勝者を root に確定し、gate を元に戻す (B なら root を差し替え)。improve pause は触らない
 #   simulate <games.jsonl>        逐次判定の推移を再生 (tools/ab_decide.py --trail)
 # 途中の手動デプロイは manual_meriken_mode の境界 pause を使う (A/B 状態は触らない)。
-set -u
+set +u  # eloop の関数は未定義変数を参照しうるので -u は使わない (2026-08-26: validate_strategy_with_helpers が中断した)
 cd "$(dirname "$0")/.." || exit 1
 source ./eloop_lib.sh >/dev/null 2>&1 || { echo "eloop_lib.sh を読めません"; exit 1; }
 STATE="${AB_STATE_FILE:-$TMP_STATE_DIR/ab_state.json}"
