@@ -69,6 +69,9 @@ done
 # デバッグ用に選択した PY をログ
 echo "[$(ts)] PY=$PY ($($PY --version 2>&1))" >> "$LOG"
 
+# Google の増分認可で要求より多いスコープが返り、oauthlib が例外にするのを防ぐ
+export OAUTHLIB_RELAX_TOKEN_SCOPE=1
+
 cd "$PROJ" || exit 1
 
 # 投稿の可否は「YouTube の token が用意されているか」で決める (fail-closed)。

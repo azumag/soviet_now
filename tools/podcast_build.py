@@ -69,11 +69,60 @@ def _backup_root() -> Path:
 BACKUP_ROOT = _backup_root()
 OUTPUT_ROOT_DEFAULT = SCRIPT_DIR / "output" / "podcast"
 VOICEVOX_TTS = SCRIPT_DIR / "voicevox_tts.sh"
+TEMPO_MAP = SCRIPT_DIR / "config" / "voicevox_tempo_map.txt"
+
+
+def voice_tempo(speaker: str) -> str:
+    """話速を返す。ポッドキャストは 1.2 (ユーザー指定)。
+
+    PODCAST_VOICE_TEMPO を空にすると VM と同じ config/voicevox_tempo_map.txt に
+    追従する (話者 109 は VM では 1.15)。配信側の話速はここでは変えない。
+    """
+    override = os.environ.get("PODCAST_VOICE_TEMPO", "1.2").strip()
+    if override:
+        return override
+    try:
+        for line in TEMPO_MAP.read_text(encoding="utf-8").splitlines():
+            key, _, val = line.partition("|")
+            if key.strip() == str(speaker) and val.strip():
+                return val.strip()
+    except OSError:
+        pass
+    return "1.0"
+
+
+# BGM: インターナショナルを地の下に薄く流す。見つからなければ BGM 無しで続行する。
+# コーナーの区切り。無音だけだと BGM が鳴り続けるぶん切れ目が埋もれるため、
+# 「続いては、〇〇。」と見出しを読み上げて区切る (聴き比べて決定)。
+PODCAST_GAP_SEC = float(os.environ.get("PODCAST_GAP_SEC", "2.6"))
+PODCAST_GAP_AFTER_HEAD_SEC = float(os.environ.get("PODCAST_GAP_AFTER_HEAD_SEC", "0.5"))
+PODCAST_ANNOUNCE_HEADING = os.environ.get("PODCAST_ANNOUNCE_HEADING", "1") != "0"
+
+PODCAST_BGM_FILE = os.environ.get("PODCAST_BGM_FILE", "")
+# 実測: 0.10 で BGM 単体 -39.5dB (語り -16.4dB より 23dB 下、ほぼ聞こえない)、
+# 0.18 で -34.4dB。0.15 は約 20dB 下で、一般的な bed music の水準。
+PODCAST_BGM_VOLUME = os.environ.get("PODCAST_BGM_VOLUME", "0.15")
+
+
+def find_bgm() -> Path | None:
+    cands = []
+    if PODCAST_BGM_FILE:
+        cands.append(Path(PODCAST_BGM_FILE))
+    cands += [
+        SCRIPT_DIR / "assets" / "bgm" / "internationale_piano.mp3",
+        Path("/Users/azumag/azumag/work/doci/repo/channels/ideology/bgm/internationale_piano.mp3"),
+        Path.home() / "azumag" / "work" / "doci" / "repo" / "channels" / "ideology" / "bgm" / "internationale_piano.mp3",
+        Path.home() / "work" / "doci" / "channels" / "ideology" / "bgm" / "internationale_piano.mp3",
+    ]
+    for c in cands:
+        if c.exists():
+            return c
+    return None
 
 # 設定 (環境変数で上書き可)
-PODCAST_TITLE = os.environ.get("PODCAST_TITLE", "ソ連ゲーム時事ラジオ")
+PODCAST_TITLE = os.environ.get("PODCAST_TITLE", "同志のための時事ニュース")
 PODCAST_LINK = os.environ.get("PODCAST_LINK", "https://github.com/azumag/soren-radio-archive")
-PODCAST_DESCRIPTION = os.environ.get("PODCAST_DESCRIPTION", "ソ連ゲーム配信の時事ニュース・考察を1日1本にまとめたポッドキャスト。VOICEVOX:東北イタコ")
+PODCAST_DESCRIPTION = os.environ.get("PODCAST_DESCRIPTION", "その日の時事ニュースと考察を1日1本にまとめてお届けします。VOICEVOX:東北イタコ")
 PODCAST_AUTHOR = os.environ.get("PODCAST_AUTHOR", "Soren Radio")
 PODCAST_EMAIL = os.environ.get("PODCAST_EMAIL", "archive@soren.local")
 PODCAST_IMAGE = os.environ.get("PODCAST_IMAGE", "https://example.com/podcast/cover.jpg")
@@ -244,7 +293,9 @@ PLAN_PROMPT = """あなたはポッドキャスト番組の構成作家です。
 - 「対象外」とされた話題は使わない。
 - heading はコーナー名 (15字以内)。番組の流れとして自然な順に並べる。
 - title はエピソードのタイトル (30字以内)、summary は番組概要 (120字以内)。
-- 番組名は「{title}」。配信やゲームを想起させる語をタイトル・コーナー名に使わない。
+- 番組名は「{title}」。title には番組名を含めない (冒頭で別に読み上げるため二重になる)。
+  title に「:」「：」「-」などの記号を使わず、そのまま読める一続きの言葉にする。
+- 配信やゲームを想起させる語をタイトル・コーナー名に使わない。
 
 話題一覧:
 {topics}
@@ -408,6 +459,17 @@ def digest_sources(files: list[Path]) -> tuple[list[dict], dict[int, str]]:
     return digests, by_n
 
 
+def _strip_show_name(title: str) -> str:
+    """エピソード題の先頭に番組名が入っていたら落とす。
+
+    冒頭で番組名を読み上げた直後に題名を読むので、含まれていると二重になる。
+    """
+    t = title.strip()
+    if t.startswith(PODCAST_TITLE):
+        t = t[len(PODCAST_TITLE):]
+    return t.lstrip(" 　:：-—–〜~・|｜")
+
+
 def plan_sections(digests: list[dict], date: datetime.date) -> dict | None:
     """話題一覧から番組の構成案を作る。"""
     if PODCAST_TARGET_CHARS > 0:
@@ -451,7 +513,8 @@ def plan_sections(digests: list[dict], date: datetime.date) -> dict | None:
     if unused:
         log(f"構成に入らなかった話題 {len(unused)} 件")
     return {
-        "title": str(obj.get("title") or "").strip() or f"{date.strftime('%Y年%m月%d日')} 時事まとめ",
+        "title": _strip_show_name(str(obj.get("title") or "").strip())
+                 or f"{date.strftime('%Y年%m月%d日')} 時事まとめ",
         "summary": str(obj.get("summary") or "").strip(),
         "sections": sections,
     }
@@ -470,6 +533,53 @@ def write_section(sec: dict, by_n: dict[int, str]) -> str | None:
         return None
     text = str(obj.get("text") or "").strip()
     return text or None
+
+
+def load_script(path: Path) -> dict | None:
+    """保存済みの台本 (<date>.script.txt) を読み戻す。
+
+    音声設定 (話速・ピッチ・BGM) だけを変えて作り直したいときに、
+    LLM の編成をやり直さずに同じ内容で再合成するために使う。
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        log(f"台本を読めない ({path}): {e}")
+        return None
+    title, summary = "", ""
+    sections: list[dict] = []
+    cur: dict | None = None
+    buf: list[str] = []
+
+    def flush():
+        if cur is not None:
+            cur["text"] = "\n".join(buf).strip()
+            if cur["text"]:
+                sections.append(cur)
+
+    for line in lines:
+        if line.startswith("# ") and not line.startswith("## "):
+            title = line[2:].strip()
+            continue
+        if line.startswith("## "):
+            flush()
+            head = line[3:].strip()
+            head = re.sub(r"^\d+\.\s*", "", head)
+            cur, buf = {"heading": head or "トピック", "text": ""}, []
+            continue
+        if cur is None:
+            if line.strip() and not summary:
+                summary = line.strip()
+        else:
+            buf.append(line)
+    flush()
+    if not sections:
+        log(f"台本からコーナーを読み取れなかった: {path}")
+        return None
+    total = sum(len(x["text"]) for x in sections)
+    log(f"台本を読み込み: 「{title}」 {len(sections)} コーナー / 本文 {total} 字")
+    return {"title": title, "summary": summary, "sections": sections,
+            "source_count": None, "used_count": None}
 
 
 def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False) -> dict | None:
@@ -521,8 +631,9 @@ def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False)
         "used_count": len(digests),
     }
     total = sum(len(x["text"]) for x in sections)
+    rate = 306.0 * float(voice_tempo(os.environ.get("PODCAST_VOICE", "109")) or 1.0)
     log(f"編成完了: 「{episode['title']}」 {len(sections)} コーナー / 本文 {total} 字 "
-        f"(読み上げ見込み {total / 306:.1f} 分)")
+        f"(読み上げ見込み {total / rate:.1f} 分 @ {rate:.0f}字/分)")
     return episode
 
 
@@ -539,6 +650,16 @@ def synthesize_wav(text: str, wav_path: Path, voice: str, dummy: bool = False) -
     # 本番: voicevox_tts.sh 経由
     env = os.environ.copy()
     env["VOICEVOX_SPEAKER"] = voice
+    # 話速は voice_tempo() が決める (ポッドキャストは 1.2)
+    env["VOICEVOX_TEMPO"] = voice_tempo(voice)
+    # docich の apply_ny_pause_fix は i 母音の直後の「ニュ」の前に 0.20 秒のポーズを入れる。
+    # 番組名「同志のための時事ニュース」がジジ‖ニュウスに割れて聞こえるため、
+    # ポッドキャストでは無効にする (聴き比べて決定)。配信側の設定には影響しない。
+    env["VOICEVOX_NY_PAUSE_FIX"] = os.environ.get("PODCAST_NY_PAUSE_FIX", "0")
+    # ピッチ (docich 側で pitchScale に加算される)
+    pitch = os.environ.get("PODCAST_VOICE_PITCH", "-0.02").strip()
+    if pitch:
+        env["VOICEVOX_PITCH"] = pitch
     # docich が無い環境でもエラーで明確に
     if not VOICEVOX_TTS.exists():
         log(f"voicevox_tts.sh not found: {VOICEVOX_TTS}")
@@ -567,6 +688,38 @@ def synthesize_wav(text: str, wav_path: Path, voice: str, dummy: bool = False) -
             os.unlink(tf_path)
         except:
             pass
+
+def split_sentences(text: str) -> list[str]:
+    """字幕用に文へ分ける。合成の区切りも文に合わせるので、タイミングが正確に取れる。
+
+    docich 側の split_chunks も「。」で切って 200 字までまとめる作りなので、
+    文単位にしても音の切れ方は変わらない (境界は同じ「。」の位置)。
+    """
+    out: list[str] = []
+    for line in text.replace("\r", "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        for part in re.split(r"(?<=。)|(?<=！)|(?<=？)", line):
+            part = part.strip()
+            if not part:
+                continue
+            # 極端に長い文は読点で割る (字幕が2行に収まらないため)
+            if len(part) > 90:
+                buf = ""
+                for piece in part.split("、"):
+                    cand = buf + ("、" if buf else "") + piece
+                    if len(cand) > 90 and buf:
+                        out.append(buf)
+                        buf = piece
+                    else:
+                        buf = cand
+                if buf:
+                    out.append(buf)
+            else:
+                out.append(part)
+    return out
+
 
 def get_duration(path: Path) -> float:
     try:
@@ -615,6 +768,8 @@ def main():
     ap.add_argument("--date", help="YYYYMMDD or YYYY-MM-DD (default: yesterday)")
     ap.add_argument("--dry-run", action="store_true", help="skip synth and mp3")
     ap.add_argument("--dummy", action="store_true", help="use silent wav instead of VOICEVOX (for test)")
+    ap.add_argument("--from-script", action="store_true",
+                    help="編成をやり直さず、保存済みの <date>.script.txt から音声を作り直す")
     ap.add_argument("--out-dir", default=str(OUTPUT_ROOT_DEFAULT), help="output dir")
     ap.add_argument("--voice", default="109", help="VOICEVOX speaker id")
     ap.add_argument("--base-url", default=PODCAST_BASE_URL, help="podcast base URL for enclosure")
@@ -641,7 +796,7 @@ def main():
         log(f"  {f.name}")
 
     # 既存MP3の新しさチェック
-    if mp3_path.exists() and not args.dry_run:
+    if mp3_path.exists() and not args.dry_run and not args.from_script:
         mtime = mp3_path.stat().st_mtime
         newest_src = max(p.stat().st_mtime for p in files)
         if mtime >= newest_src:
@@ -666,7 +821,10 @@ def main():
         length = mp3_path.stat().st_size
     else:
         # 編成: その日の原稿群を 1 本の番組台本へ再構成する
-        episode = compose_episode(files, date, dummy=args.dummy)
+        if args.from_script:
+            episode = load_script(out_dir / f"{iso}.script.txt")
+        else:
+            episode = compose_episode(files, date, dummy=args.dummy)
         if not episode:
             # 素材の丸ごと連結 (3〜5時間) は作りたい成果物ではないのでフォールバックしない
             log("編成に失敗したため中止する")
@@ -681,7 +839,7 @@ def main():
                 wavs.append(wav)
                 return True
 
-            def _silence(name: str, secs: float = 0.8) -> None:
+            def _silence(name: str, secs: float) -> None:
                 sp = tmpdir / name
                 subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
                                 "-t", str(secs), "-q:a", "9", "-acodec", "pcm_s16le", str(sp)],
@@ -690,40 +848,78 @@ def main():
 
             # 累積秒からチャプターを作るので、各 wav の実測 duration を足していく
             elapsed = 0.0
+            segments: list[dict] = []
 
             def _elapsed_add(wav: Path) -> None:
                 nonlocal elapsed
                 elapsed += get_duration(wav)
 
-            intro_text = (f"{PODCAST_TITLE}、{date.month}月{date.day}日のまとめです。"
-                          f"{episode['title']}。")
+            wd = "月火水木金土日"[date.weekday()]
+            intro_text = (f"{PODCAST_TITLE}。{date.year}年{date.month}月{date.day}日、"
+                          f"{wd}曜日のまとめです。{episode['title']}。")
             intro_wav = tmpdir / "intro.wav"
             log(f"synth intro ({len(intro_text)} chars)")
             if synthesize_wav(intro_text, intro_wav, args.voice, dummy=args.dummy) and _add(intro_wav):
                 chapters.append({"startTime": 0, "title": "イントロ"})
                 _elapsed_add(intro_wav)
-                _silence("silence_intro.wav")
-                _elapsed_add(tmpdir / "silence_intro.wav")
+                segments.append({"text": intro_text, "start": 0.0,
+                                 "end": round(elapsed, 3), "section": "イントロ"})
 
             failed = 0
             for idx, sec in enumerate(episode["sections"]):
-                wav = tmpdir / f"{idx:03d}.wav"
-                log(f"synth section {idx + 1}/{len(episode['sections'])} 「{sec['heading']}」 ({len(sec['text'])} chars)")
-                if not synthesize_wav(sec["text"], wav, args.voice, dummy=args.dummy) or not _add(wav):
+                # 区切りの無音 -> チャプター位置 -> 見出し読み上げ -> 短い無音 -> 本文
+                gap_name = f"gap_{idx}.wav"
+                _silence(gap_name, PODCAST_GAP_SEC)
+                _elapsed_add(tmpdir / gap_name)
+                chapters.append({"startTime": int(elapsed), "title": sec["heading"]})
+
+                if PODCAST_ANNOUNCE_HEADING:
+                    lead = ("まずは、" if idx == 0 else "続いては、") + f"{sec['heading']}。"
+                    head_wav = tmpdir / f"head_{idx:03d}.wav"
+                    if synthesize_wav(lead, head_wav, args.voice, dummy=args.dummy) and _add(head_wav):
+                        head_start = elapsed
+                        _elapsed_add(head_wav)
+                        segments.append({"text": lead, "start": round(head_start, 3),
+                                         "end": round(elapsed, 3), "section": sec["heading"]})
+                        after_name = f"after_{idx}.wav"
+                        _silence(after_name, PODCAST_GAP_AFTER_HEAD_SEC)
+                        _elapsed_add(tmpdir / after_name)
+                    else:
+                        log(f"見出し「{sec['heading']}」の合成に失敗、読み上げを省く")
+
+                # 本文は文単位で合成する。字幕 (動画化) に必要な文ごとの
+                # start/end が正確に取れ、音の切れ方は docich の chunk 分割
+                # (「。」区切り) と変わらない。
+                sentences = split_sentences(sec["text"])
+                log(f"synth section {idx + 1}/{len(episode['sections'])} 「{sec['heading']}」 "
+                    f"({len(sec['text'])} chars / {len(sentences)} 文)")
+                sec_ok = 0
+                for si, sent in enumerate(sentences):
+                    wav = tmpdir / f"{idx:03d}_{si:03d}.wav"
+                    if not synthesize_wav(sent, wav, args.voice, dummy=args.dummy) or not _add(wav):
+                        log(f"  文 {si + 1}/{len(sentences)} の合成に失敗、飛ばす: {sent[:30]}")
+                        continue
+                    start = elapsed
+                    _elapsed_add(wav)
+                    segments.append({"text": sent, "start": round(start, 3),
+                                     "end": round(elapsed, 3), "section": sec["heading"]})
+                    sec_ok += 1
+                if sec_ok == 0:
                     log(f"synth failed for section 「{sec['heading']}」, skipping")
                     failed += 1
                     continue
-                chapters.append({"startTime": int(elapsed), "title": sec["heading"]})
-                _elapsed_add(wav)
-                if idx < len(episode["sections"]) - 1:
-                    sp_name = f"silence_{idx}.wav"
-                    _silence(sp_name)
-                    _elapsed_add(tmpdir / sp_name)
 
             outro_text = f"以上、{PODCAST_TITLE}でした。"
             outro_wav = tmpdir / "outro.wav"
+            _silence("gap_outro.wav", PODCAST_GAP_SEC)
+            _elapsed_add(tmpdir / "gap_outro.wav")
             if synthesize_wav(outro_text, outro_wav, args.voice, dummy=args.dummy) and _add(outro_wav):
                 chapters.append({"startTime": int(elapsed), "title": "エンディング"})
+                outro_start = elapsed
+                _elapsed_add(outro_wav)
+                segments.append({"text": outro_text, "start": round(outro_start, 3),
+                                 "end": round(elapsed, 3), "section": "エンディング"})
+            episode["segments"] = segments
 
             if failed:
                 log(f"warning: {failed}/{len(episode['sections'])} セクションの合成に失敗した")
@@ -748,10 +944,31 @@ def main():
                 log(f"concat failed: {r1.stderr[:1000]}")
                 return 2
 
-            # loudnorm + resample + mp3
+            # loudnorm + resample + (BGM ミックス) + mp3
             # 2-pass loudnorm は手間なので 1-pass で I=-16
-            cmd2 = ["ffmpeg", "-y", "-i", str(concat_wav), "-filter_complex", "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100", "-c:a", "libmp3lame", "-q:a", "2", "-id3v2_version", "3", "-write_id3v1", "1", str(mp3_path)]
-            log(f"encode mp3 -> {mp3_path}")
+            bgm = find_bgm()
+            speech_dur = get_duration(concat_wav)
+            if bgm:
+                # インターナショナルを地の下に薄く敷く。素材が短いのでループし、
+                # 語りの長さで切り、冒頭と末尾はフェードする。
+                # amix の normalize=0 を外すと語りの音量が半分になるので必ず付ける。
+                fade_out_at = max(0.0, speech_dur - 4.0)
+                filt = (
+                    "[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100[v];"
+                    f"[1:a]aresample=44100,volume={PODCAST_BGM_VOLUME},"
+                    f"afade=t=in:st=0:d=3,afade=t=out:st={fade_out_at:.2f}:d=4[b];"
+                    "[v][b]amix=inputs=2:duration=first:normalize=0[out]"
+                )
+                cmd2 = ["ffmpeg", "-y", "-i", str(concat_wav),
+                        "-stream_loop", "-1", "-i", str(bgm),
+                        "-filter_complex", filt, "-map", "[out]",
+                        "-c:a", "libmp3lame", "-q:a", "2",
+                        "-id3v2_version", "3", "-write_id3v1", "1", str(mp3_path)]
+                log(f"encode mp3 (BGM: {bgm.name} vol={PODCAST_BGM_VOLUME}) -> {mp3_path}")
+            else:
+                log("BGM が見つからないため BGM 無しで書き出す (PODCAST_BGM_FILE で指定可)")
+                cmd2 = ["ffmpeg", "-y", "-i", str(concat_wav), "-filter_complex", "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100", "-c:a", "libmp3lame", "-q:a", "2", "-id3v2_version", "3", "-write_id3v1", "1", str(mp3_path)]
+                log(f"encode mp3 -> {mp3_path}")
             r2 = subprocess.run(cmd2, capture_output=True, text=True)
             if r2.returncode != 0:
                 log(f"mp3 encode failed: {r2.stderr[:1000]}")
@@ -773,6 +990,13 @@ def main():
             body += [f"## {i}. {sec['heading']}", "", sec["text"], ""]
         script_path.write_text("\n".join(body), encoding="utf-8")
         log(f"script written: {script_path} ({sum(len(x['text']) for x in episode['sections'])} 字)")
+
+        # 字幕付き動画 (doci compose) 用に文ごとのタイミングを残す
+        segs = episode.get("segments") or []
+        if segs:
+            seg_path = out_dir / f"{iso}.segments.json"
+            seg_path.write_text(json.dumps(segs, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+            log(f"segments written: {seg_path} ({len(segs)} 文)")
 
         meta_path = out_dir / f"{iso}.meta.json"
         meta_path.write_text(json.dumps({
