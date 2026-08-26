@@ -70,6 +70,8 @@ const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
 const DEFAULT_STANDALONE_CDP_PORT = 9223;
 const DEFAULT_CHROME_AUDIO_OUTPUT_LABEL = 'BlackHole 2ch';
+const DEFAULT_VIEWPORT_WIDTH = 1280;
+const DEFAULT_VIEWPORT_HEIGHT = 720;
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_DIR = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +89,29 @@ let shutdownTimer = null;
 let cleanupPromise = null;
 const rankingCommentQueuedGames = new Set();
 const rankingCommentInFlightGames = new Set();
+
+function positiveIntEnv(name, fallback) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const VIEWPORT_WIDTH = positiveIntEnv('SOREN91_VIEWPORT_WIDTH', DEFAULT_VIEWPORT_WIDTH);
+const VIEWPORT_HEIGHT = positiveIntEnv('SOREN91_VIEWPORT_HEIGHT', DEFAULT_VIEWPORT_HEIGHT);
+
+async function fullscreenBrowserWindow(page) {
+  if (process.env.SOREN91_FULLSCREEN_WINDOW !== '1') return;
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    await session.send('Browser.setWindowBounds', {
+      windowId,
+      bounds: { windowState: 'fullscreen' },
+    });
+    console.log(`[main] Soren91 browser window fullscreen (${VIEWPORT_WIDTH}x${VIEWPORT_HEIGHT} render viewport)`);
+  } finally {
+    await session.detach().catch(() => {});
+  }
+}
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots', COMMENT_QUEUE_DIR].forEach(dir => {
@@ -147,7 +172,7 @@ function clearSoren91ModeFlag() {
 
 function standaloneBrowserLaunchArgs(windowPosition) {
   return [
-    '--window-size=1280,720',
+    `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
     `--window-position=${windowPosition}`,
     '--hide-crash-restore-bubble',
     '--disable-session-crashed-bubble',
@@ -891,7 +916,7 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
     const retryPage = await openSharedBrowserTab(context, retryAnchorPage);
     activeGamePage = retryPage;
     try {
-      await retryPage.setViewportSize({ width: 1280, height: 720 });
+      await retryPage.setViewportSize({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
     } catch {}
     await installAudioGainLimiter(retryPage, audioGainMultiplier);
     await grantSpeakerSelection(retryPage, gameUrl);
@@ -976,7 +1001,7 @@ async function main() {
     } else {
       console.log('[main] Creating isolated context in shared browser (separate cookies/storage)');
       context = await browser.newContext({
-        viewport: { width: 1280, height: 720 },
+        viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
         locale: 'ja-JP',
         timezoneId: 'Asia/Tokyo',
       });
@@ -984,7 +1009,7 @@ async function main() {
     }
   } else {
     context = await browser.newContext({
-      viewport: { width: 1280, height: 720 },
+      viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
       locale: 'ja-JP',
       timezoneId: 'Asia/Tokyo',
     });
@@ -1015,7 +1040,7 @@ async function main() {
       : await context.newPage();
     if (isSharedMode) {
       try {
-        await gamePage.setViewportSize({ width: 1280, height: 720 });
+        await gamePage.setViewportSize({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
       } catch {}
     }
     activeGamePage = gamePage;
@@ -1050,6 +1075,7 @@ async function main() {
       await gamePage.bringToFront();
       console.log('[main] Soren91 page brought to front for VM game switch');
     }
+    await fullscreenBrowserWindow(gamePage);
     // bringToFront はOS窓を前面に raise しユーザーのフォーカスを奪う。
     // タブ作成後は page.goto だけで十分なので、起動直後も含めて前面化しない。
 
@@ -1084,9 +1110,9 @@ async function main() {
     if (!calibration) {
       // 仮キャリブレーション: 全画面をボードとして扱う
       calibration = {
-        screen: { width: 1280, height: 720 },
-        board: { left: 0, right: 1279, top: 0, bottom: 719, width: 1279, height: 719 },
-        dropArea: { pixelLeft: 91, pixelRight: 1188 },
+        screen: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
+        board: { left: 0, right: VIEWPORT_WIDTH - 1, top: 0, bottom: VIEWPORT_HEIGHT - 1, width: VIEWPORT_WIDTH - 1, height: VIEWPORT_HEIGHT - 1 },
+        dropArea: { pixelLeft: Math.round(VIEWPORT_WIDTH * 91 / 1280), pixelRight: Math.round(VIEWPORT_WIDTH * 1188 / 1280) },
         timestamp: new Date().toISOString(),
         provisional: true,
       };
@@ -1122,8 +1148,8 @@ async function handleTitleScreen(page) {
   await page.screenshot({ path: join(SCREENSHOT_DIR, 'title.png') });
 
   // 名前入力欄をクリック (canvas座標 x=630, y=560 付近)
-  const nameFieldX = box.x + 630;
-  const nameFieldY = box.y + 560;
+  const nameFieldX = box.x + box.width * (630 / 1280);
+  const nameFieldY = box.y + box.height * (560 / 720);
 
   console.log(`[main] Clicking name field at (${nameFieldX.toFixed(0)}, ${nameFieldY.toFixed(0)})`);
   await clickCanvasPoint(page, nameFieldX, nameFieldY, 'name field');
@@ -1159,8 +1185,8 @@ async function handleTitleScreen(page) {
   await page.screenshot({ path: join(SCREENSHOT_DIR, 'title_named.png') });
 
   // PLAYボタンをクリック (入力欄の下)
-  const playButtonX = box.x + 630;
-  const playButtonY = box.y + 645;
+  const playButtonX = box.x + box.width * (630 / 1280);
+  const playButtonY = box.y + box.height * (645 / 720);
 
   console.log(`[main] Clicking PLAY button at (${playButtonX.toFixed(0)}, ${playButtonY.toFixed(0)})`);
   await clickCanvasPoint(page, playButtonX, playButtonY, 'PLAY button');

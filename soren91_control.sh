@@ -257,6 +257,28 @@ _soren91_pid_is_alive() {
 	return 0
 }
 
+# PID files and runner locks survive crashes. A recycled PID must never be
+# allowed to stop the normal soviet_local bridge or soren_loop. Require both a
+# Soren91 player command and the Soren91 working directory before acting on it.
+_soren91_pid_is_owned_player() {
+	local pid="${1:-}" cmd="" cwd=""
+	_soren91_pid_is_alive "$pid" || return 1
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+	printf '%s' "$cmd" | grep -Eq '(^|[ /])(node[[:space:]]+([^[:space:]]*/)?main\.mjs|([^[:space:]]*/)?run_player_loop\.sh)([[:space:]]|$)' || return 1
+	if [ -e "/proc/$pid/cwd" ]; then
+		cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+		[ "$cwd" = "$SOREN91_DIR" ] || return 1
+	else
+		cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)
+		if [ -n "$cwd" ]; then
+			[ "$cwd" = "$SOREN91_DIR" ] || return 1
+		else
+			printf '%s' "$cmd" | grep -F "$SOREN91_DIR" >/dev/null 2>&1 || return 1
+		fi
+	fi
+	return 0
+}
+
 _soren91_kill_runner_session() {
 	command -v tmux >/dev/null 2>&1 || return 0
 	tmux has-session -t soren91_runner 2>/dev/null || return 0
@@ -280,13 +302,14 @@ _soren91_sweep_orphan_runners() {
 	[ -n "$pids" ] || return 0
 	for p in $pids; do
 		[ "$p" = "$self" ] && continue
+		_soren91_pid_is_owned_player "$p" || continue
 		pkill -TERM -P "$p" 2>/dev/null || true   # 子 main.mjs を先に
 		kill -TERM "$p" 2>/dev/null || true
 	done
 	sleep 2
 	for p in $pids; do
 		[ "$p" = "$self" ] && continue
-		if _soren91_pid_is_alive "$p"; then
+		if _soren91_pid_is_owned_player "$p"; then
 			pkill -KILL -P "$p" 2>/dev/null || true
 			kill -KILL "$p" 2>/dev/null || true
 			log "[SOREN91] swept orphan runner PID=$p"
@@ -296,6 +319,7 @@ _soren91_sweep_orphan_runners() {
 	local mp
 	for mp in $(_soren91_scan_alive_main_pids 2>/dev/null | grep -E '^[0-9]+$'); do
 		[ "$mp" = "$self" ] && continue
+		_soren91_pid_is_owned_player "$mp" || continue
 		kill -TERM "$mp" 2>/dev/null || true
 	done
 }
@@ -364,7 +388,7 @@ _soren91_scan_alive_runner_pids() {
 	case "$pid" in
 	''|*[!0-9]*) ;;
 	*)
-		if _soren91_pid_is_alive "$pid"; then
+		if _soren91_pid_is_owned_player "$pid"; then
 			printf '%s\n' "$pid"
 		fi
 		;;
@@ -373,7 +397,7 @@ _soren91_scan_alive_runner_pids() {
 	case "$pid" in
 	''|*[!0-9]*) ;;
 	*)
-		if _soren91_pid_is_alive "$pid"; then
+		if _soren91_pid_is_owned_player "$pid"; then
 			printf '%s\n' "$pid"
 		fi
 		;;
@@ -410,7 +434,7 @@ _soren91_clear_stale_runner_lock() {
 	case "$owner" in
 	''|*[!0-9]*) ;;
 	*)
-		_soren91_pid_is_alive "$owner" && return 0
+		_soren91_pid_is_owned_player "$owner" && return 0
 		;;
 	esac
 	rm -rf "$lock_dir" 2>/dev/null || true
@@ -441,7 +465,7 @@ _soren91_read_alive_player_pid() {
 		pid=$(cat "$f" 2>/dev/null)
 		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
 		[ -n "$pid" ] || continue
-		_soren91_pid_is_alive "$pid" || continue
+		_soren91_pid_is_owned_player "$pid" || continue
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
 		if [ -z "$cmd" ]; then
 			printf '%s' "$pid"
@@ -458,28 +482,22 @@ _soren91_read_alive_player_pid() {
 
 	pid=$(sed -n 's/^pid=//p' "$SOREN91_DIR/tmp/.runner.lock/owner" 2>/dev/null | head -n 1)
 	case "$pid" in ''|*[!0-9]*) pid="" ;; esac
-	if [ -n "$pid" ] && _soren91_pid_is_alive "$pid"; then
+	if [ -n "$pid" ] && _soren91_pid_is_owned_player "$pid"; then
 		printf '%s' "$pid"
 		return 0
 	fi
 
 	# PIDファイルは停止処理の途中で消えることがある。実プロセスが残っていると
 	# "Not running" と誤判定して stop file を出せないため、実プレイヤーをプロセス表から復旧する。
-	pid=$(_soren91_scan_alive_main_pids | head -n 1)
-	if [ -n "$pid" ]; then
-		printf '%s' "$pid"
-		return 0
-	fi
-	pid=$(_soren91_scan_log_writer_pids | head -n 1)
-	if [ -n "$pid" ]; then
-		printf '%s' "$pid"
-		return 0
-	fi
-	pid=$(_soren91_scan_alive_runner_pids | head -n 1)
-	if [ -n "$pid" ]; then
-		printf '%s' "$pid"
-		return 0
-	fi
+	for pid in $(_soren91_scan_alive_main_pids 2>/dev/null); do
+		if _soren91_pid_is_owned_player "$pid"; then printf '%s' "$pid"; return 0; fi
+	done
+	for pid in $(_soren91_scan_log_writer_pids 2>/dev/null); do
+		if _soren91_pid_is_owned_player "$pid"; then printf '%s' "$pid"; return 0; fi
+	done
+	for pid in $(_soren91_scan_alive_runner_pids 2>/dev/null); do
+		if _soren91_pid_is_owned_player "$pid"; then printf '%s' "$pid"; return 0; fi
+	done
 	return 1
 }
 
@@ -535,7 +553,7 @@ _soren91_force_stop_recovered_player() {
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
-		_soren91_pid_is_alive "$pid" || continue
+		_soren91_pid_is_owned_player "$pid" || continue
 		log "[SOREN91] Force stopping stale recovered player PID=$pid"
 		_stop_loop_descendants "$pid"
 		_stop_pid_with_fallback "$pid" "soren91_stale_recovered"
@@ -1321,7 +1339,7 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN91_FULLSCREEN_WINDOW='${SOREN91_FULLSCREEN_WINDOW:-0}' SOREN91_VIEWPORT_WIDTH='${SOREN91_VIEWPORT_WIDTH:-1280}' SOREN91_VIEWPORT_HEIGHT='${SOREN91_VIEWPORT_HEIGHT:-720}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
@@ -1330,6 +1348,9 @@ soren91_start() {
 			SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-1}" \
 			SOREN91_SHARED_ISOLATED_CONTEXT="${SOREN91_SHARED_ISOLATED_CONTEXT:-0}" \
 			SOREN91_BRING_TO_FRONT="${SOREN91_BRING_TO_FRONT:-0}" \
+			SOREN91_FULLSCREEN_WINDOW="${SOREN91_FULLSCREEN_WINDOW:-0}" \
+			SOREN91_VIEWPORT_WIDTH="${SOREN91_VIEWPORT_WIDTH:-1280}" \
+			SOREN91_VIEWPORT_HEIGHT="${SOREN91_VIEWPORT_HEIGHT:-720}" \
 			SOREN_CDP_PORT="${SOREN_CDP_PORT:-9222}" \
 			SOREN_CHROME_AUDIO_OUTPUT_LABEL="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
