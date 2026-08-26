@@ -67,6 +67,12 @@ Prioritize the embedded excerpts above; only read these files when context is in
 ${game_state_context}
 This is a reference at comment generation time. The actual situation may have progressed by the time of reading.
 
+【Current Ops / Behind-the-Scenes Memo】
+${comment_ops_context}
+- Use this only when a viewer asks what is going on right now (the on-screen work banner, whether strategy improvement is running, what the American AI is doing, what you have been fixing lately).
+- Never bring it up unprompted. Never say hashes, file names, commit ids, or other internal identifiers.
+- Do not invent anything that is not listed here.
+
 【Stream UI Description Memo】
 - Left graph window: show_status_g.sh (internally runs status_dashboard.py)
   Contents: Header, Score Timeline, Score Distribution, Strategy Comparison, Decision Patterns

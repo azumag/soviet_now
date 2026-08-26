@@ -1102,6 +1102,103 @@ print("返答ルール: スコア進捗・建国回数・状態を聞かれた�
 PY
 }
 
+# 【いまの配信・運用状況メモ】用の短い文脈を作る。
+# 視聴者は画面の作業中バナーや改善モードを見て「今なにしてるの」と聞いてくるが、コメント返し
+# プロンプトには VM の運用状態も裏側の作業内容も一切入っていなかった。ライブ状態ファイルと
+# 運用ブリーフ (prompts/ops_brief.md) から短い箇条書きを組み立てる。
+# プロンプト肥大を避けるため、行数・1行長・全体文字数を必ず上限で切る。
+_build_comment_ops_context() {
+	local host_mode="${1:-main}"
+	local brief_file="${COMMENT_OPS_BRIEF_FILE:-$ELOOP_LIB_DIR/prompts/ops_brief.md}"
+	local ab_state_file="${AB_STATE_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/ab_state.json}"
+	python3 - \
+		"${CODEX_WORK_OVERLAY_STATE_FILE:-}" \
+		"${IMPROVE_STATE_FILE:-}" \
+		"$ab_state_file" \
+		"$brief_file" \
+		"$host_mode" \
+		"${COMMENT_OPS_CONTEXT_MAX_CHARS:-900}" \
+		"${COMMENT_OPS_BRIEF_ITEMS:-3}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+work_file, improve_file, ab_file, brief_file, host_mode = sys.argv[1:6]
+
+def as_int(raw, fallback):
+    try:
+        return int(raw)
+    except Exception:
+        return fallback
+
+max_chars = max(200, as_int(sys.argv[6], 900))
+brief_items = max(0, as_int(sys.argv[7], 3))
+
+def load_json(path):
+    if not path:
+        return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+lines = []
+
+work = load_json(work_file)
+if work.get("active"):
+    title = str(work.get("title") or "").strip()
+    body = str(work.get("body") or "").strip()
+    text = " / ".join(part for part in (title, body) if part)[:140]
+    if text:
+        lines.append("- 画面右上の作業中バナー(視聴者にも見えている): " + text)
+else:
+    lines.append("- 画面右上の作業中バナー: 出ていない(いま人手の作業はしていない)")
+
+improve = load_json(improve_file)
+improve_status = str(improve.get("status") or "").strip().lower()
+if improve_status and improve_status not in ("idle", "done", "finished"):
+    phase = str(improve.get("phase") or "").strip()[:40]
+    lines.append("- 中華AIの戦略改善: 実行中" + (f"({phase})" if phase else ""))
+else:
+    lines.append("- 中華AIの戦略改善: 待機中(いまは改善に入っていない)")
+
+if host_mode == "soren91":
+    lines.append("- いまメイン画面はメリケンAIのソ連ゲーム91(対戦版)")
+else:
+    lines.append("- メリケンAIは待機中。メイン画面は私(中華AI)のソ連ゲーム本編")
+
+ab = load_json(ab_file)
+ab_games = ab.get("games_recorded")
+if isinstance(ab_games, int) and ab_games >= 0:
+    lines.append(f"- 戦略のA/B比較を実施中: 2つの戦略を1試合ずつ交互に走らせて比較している(記録済み{ab_games}試合)")
+
+brief = []
+try:
+    for raw in Path(brief_file).read_text(encoding="utf-8", errors="ignore").splitlines():
+        item = raw.strip()
+        if not item or item.startswith("#"):
+            continue
+        item = item.lstrip("-*・ ").strip()
+        if not item:
+            continue
+        brief.append(item[:70])
+        if len(brief) >= brief_items:
+            break
+except Exception:
+    brief = []
+if brief and brief_items:
+    lines.append("- 直近の裏側の改修(聞かれたときだけ噛み砕いて話す): " + " / ".join(brief))
+
+out = "\n".join(lines).strip()
+if not out:
+    out = "(運用状況メモなし)"
+if len(out) > max_chars:
+    out = out[:max_chars].rstrip() + "…"
+print(out)
+PY
+}
+
 _build_comment_celebration_history_context() {
 	python3 - "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "$COMMENT_CELEBRATION_HISTORY_ITEMS" <<'PY'
 import sys
@@ -2235,7 +2332,7 @@ _build_category_prompt() {
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -2737,6 +2834,8 @@ generate_comment_response() {
 	local _spoken_ctx_mode=""
 	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
+	local comment_ops_context=""
+	comment_ops_context=$(_build_comment_ops_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_followup_hints=""
 	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_mode_for_advice=""
@@ -2940,6 +3039,7 @@ else:
 		celebration_history_context="${celebration_history_context:-（なし）}"
 		comment_thumbnail_ocr_context=$(printf '%s' "${comment_thumbnail_ocr_context:-（なし）}" | _sanitize_comment_prompt_context)
 		game_state_context=$(printf '%s' "${game_state_context:-（取得失敗）}" | _sanitize_comment_prompt_context)
+		comment_ops_context=$(printf '%s' "${comment_ops_context:-（取得失敗）}" | _sanitize_comment_prompt_context)
 
 		# Export all template variables (safe: inside subshell)
 		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
@@ -2948,7 +3048,7 @@ else:
 			recent_spoken_comment_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
-			game_state_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
+			game_state_context comment_ops_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
 			_prediction_cycle_games
 
 		# 分類結果に基づきプロンプトを選択
@@ -3001,7 +3101,7 @@ PY
 					rm -f "$comment_prompt_file"
 					return 1
 				fi
-				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 					<"$_comment_template" >"$comment_prompt_file"
 			fi
 		else
@@ -3011,7 +3111,7 @@ PY
 				rm -f "$comment_prompt_file"
 				return 1
 			fi
-			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
