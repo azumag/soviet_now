@@ -90,7 +90,7 @@ def slot_worker(slot, args, session, arms, hashes, env_base, results):
         log("slot %d bridge up (cdp %d serve %d)" % (slot, cdp_port, serve_port))
         pattern = args.pattern
         for g in range(args.games):
-            arm = pattern[(slot * args.games + g) % len(pattern)] if args.stagger else pattern[g % len(pattern)]
+            arm = pattern[(slot + g) % len(pattern)] if args.stagger else pattern[g % len(pattern)]
             shutil.copy2(arms[arm], workdir / "strategy.py")
             (workdir / "commands.txt").write_text("", encoding="utf-8")
             try:
@@ -128,7 +128,8 @@ def slot_worker(slot, args, session, arms, hashes, env_base, results):
             rec["tainted"] = bool(rec.get("history_hash") and rec["history_hash"] != hashes[arm]) or bool(rec["error"])
             with LOCK:
                 results.append(rec)
-                rec["idx"] = len(results) - 1
+                rec["order"] = len(results) - 1
+                rec["idx"] = slot * args.games + g  # スロット内で連番 → ab_report のブロックがスロット内 ABBA になる
                 with open(session / "ab_games.jsonl", "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             log("slot %d game %d arm %s score %s eval %s turns %s merges/turn %s %.0fs%s" % (slot, g, arm, rec.get("score"), rec.get("eval"), rec.get("turns"), rec.get("merges_per_turn"), dt, (" ERR " + rec["error"]) if rec["error"] else ""))

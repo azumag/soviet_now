@@ -1830,6 +1830,86 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if _v736_spopen:
                 _v736_open_partner_ids.add(_v736_sp.get("id"))
 
+    # --- v741 JUNK_CONSOLIDATION pre-computation ---
+    # 実測 (2026-08-27, 人間の手動 123 手 vs 自動 188 試合): 人間は序盤の T1–3 を右壁 (x≈+2.7, 5/5) に寄せ、40 手時点の
+    # 駒数 9 (自動 22)。自動の T1–3 の置き場は x 平均 0・sd 1.15 で無秩序 (|x|>=2 は 13%)。壁際に置いた序盤ジャンクは
+    # 転がり 7% (中央 32%)・5 手後の埋没 43% (60%)。方針: T1–3 で併合手が無い手は「ジャンク隅」(x=±2.8、床か T<=4 の上に
+    # しか落ちない側、既にジャンクの多い側を優先) へ、隅が高型で塞がれていれば開いたジャンクの塊 (|dx|<=1.0 の T<=4 が
+    # 最多の開いた T<=4、上端 <=1.0) へ寄せる。ロシア在盤・DIRECT/NEAR 存在時は無効。
+    _v741_nanv = float("nan")
+    _v741_types_by_id = {}
+    _v741_lane_x = None
+    _v741_tier = 0
+    if next_type <= 3 and isinstance(pieces, list) and not _v731_any_merge and type15_count == 0:
+        _v741_junk = []
+        for _v741_p in pieces:
+            if not isinstance(_v741_p, dict):
+                continue
+            _v741_types_by_id[_v741_p.get("id")] = _v741_p.get("type")
+            _v741_px = _as_float(_v741_p.get("x"), _v741_nanv)
+            _v741_py = _as_float(_v741_p.get("y"), _v741_nanv)
+            if _v741_p.get("type") in (1, 2, 3, 4) and math.isfinite(_v741_px) and math.isfinite(_v741_py):
+                _v741_junk.append((_v741_p.get("id"), _v741_px, _v741_py))
+        _v741_right = sum(1 for _v741_j in _v741_junk if _v741_j[1] >= 1.8)
+        _v741_left = sum(1 for _v741_j in _v741_junk if _v741_j[1] <= -1.8)
+        _v741_side_ok = {}
+        for _v741_side in (2.8, -2.8):
+            _v741_near = None
+            for _v741_r in results:
+                if not isinstance(_v741_r, dict):
+                    continue
+                _v741_rx = _as_float(_v741_r.get("x"), _v741_nanv)
+                if math.isfinite(_v741_rx) and abs(_v741_rx - _v741_side) <= 0.25:
+                    if _v741_near is None or abs(_v741_rx - _v741_side) < abs(_as_float(_v741_near.get("x"), 9.9) - _v741_side):
+                        _v741_near = _v741_r
+            _v741_ok = False
+            if _v741_near is not None and not _v741_near.get("crosses_deadline"):
+                _v741_hit = _v741_near.get("landing_hit_id")
+                if _v741_hit is None or _v741_types_by_id.get(_v741_hit, 99) <= 4:
+                    _v741_ok = True
+            _v741_side_ok[_v741_side] = _v741_ok
+        if _v741_right > _v741_left and _v741_side_ok[2.8]:
+            _v741_lane_x = 2.8
+        elif _v741_left > _v741_right and _v741_side_ok[-2.8]:
+            _v741_lane_x = -2.8
+        elif _v741_side_ok[2.8]:
+            _v741_lane_x = 2.8
+        elif _v741_side_ok[-2.8]:
+            _v741_lane_x = -2.8
+        if _v741_lane_x is not None:
+            _v741_tier = 1
+        else:
+            _v741_best_n = 0
+            _v741_best_x = None
+            for _v741_jid, _v741_jx, _v741_jy in _v741_junk:
+                _v741_jt = _v741_types_by_id.get(_v741_jid)
+                _v741_jtop = _v741_jy + board_stats.seed_top_radius(_v741_jt)
+                if _v741_jtop > 1.0:
+                    continue
+                _v741_jopen = True
+                _v741_jh = board_stats.seed_horiz_radius(_v741_jt)
+                for _v741_o in pieces:
+                    if not isinstance(_v741_o, dict) or _v741_o.get("id") == _v741_jid:
+                        continue
+                    _v741_ox = _as_float(_v741_o.get("x"), _v741_nanv)
+                    _v741_oy = _as_float(_v741_o.get("y"), _v741_nanv)
+                    if not (math.isfinite(_v741_ox) and math.isfinite(_v741_oy)):
+                        _v741_jopen = False
+                        break
+                    if abs(_v741_ox - _v741_jx) <= _v741_jh and _v741_oy - board_stats.seed_bottom_radius(_v741_o.get("type")) >= _v741_jtop - 0.25:
+                        _v741_jopen = False
+                        break
+                if not _v741_jopen:
+                    continue
+                _v741_n = sum(1 for _v741_k in _v741_junk if abs(_v741_k[1] - _v741_jx) <= 1.0)
+                if _v741_n > _v741_best_n or (_v741_n == _v741_best_n and _v741_best_x is not None and abs(_v741_jx) > abs(_v741_best_x)):
+                    _v741_best_n = _v741_n
+                    _v741_best_x = _v741_jx
+            if _v741_best_n >= 1 and _v741_best_x is not None:
+                # 壁際回転リスク (clearance<=0.35) を避けるため目標は ±2.8 に丸める
+                _v741_lane_x = max(-2.8, min(2.8, _v741_best_x))
+                _v741_tier = 2
+
     # --- HIGH_TYPE_COVER_AVOID pre-computation ---
     # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
     # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
@@ -2522,6 +2602,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     0.6 if result.get("wall_rotation_risk") else 1.0
                 )
                 reasons.append("PROBABLE_MERGE_CONTACT")
+
+        # ----- v741: JUNK_CONSOLIDATION (T1–3 を隅/ジャンク塊へ寄せる。序盤限定 margin>=2.0、被覆タグ候補は対象外) -----
+        if (
+            merge_grade == "NO"
+            and _v741_lane_x is not None
+            and next_type <= 3
+            and not _v731_any_merge
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not result.get("wall_rotation_risk")
+            and not death_spiral
+            and type15_count == 0
+            and "LOW_DROP_HIGH_LANE_COVER_AVOID" not in reasons
+            and "HIGH_TYPE_COVER_AVOID" not in reasons
+            and _as_float(result.get("deadline_margin"), -1.0) >= 2.0
+        ):
+            _v741_hit_id = result.get("landing_hit_id")
+            _v741_hit_t = 0 if _v741_hit_id is None else _v741_types_by_id.get(_v741_hit_id, 99)
+            _v741_dx = abs(_as_float(x, _v741_nanv) - _v741_lane_x)
+            if _v741_hit_t <= 4 and math.isfinite(_v741_dx) and _v741_dx <= 1.0:
+                score += 350.0 * (1.0 - _v741_dx / 1.0)
+                reasons.append("JUNK_CORNER_CONSOLIDATION" if _v741_tier == 1 else "JUNK_CLUSTER_CONSOLIDATION")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
