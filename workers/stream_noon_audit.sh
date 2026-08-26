@@ -469,7 +469,7 @@ _audit_once() {
 	return 0
 }
 
-_log "起動 (PID=$$, poll=${POLL_INTERVAL}s tolerance=${TOLERANCE_SEC}s enabled=${ENABLED})"
+_log "起動 (PID=$$, poll=${POLL_INTERVAL}s tolerance=${TOLERANCE_SEC}s offline_hold=${OFFLINE_HOLD_SEC}s session_rotate_wait=${SESSION_ROTATE_WAIT_SEC}s enabled=${ENABLED})"
 
 while true; do
 	_reload_runtime
