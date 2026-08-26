@@ -95,7 +95,9 @@ _is_stream_start_request() {
 
 _is_ignored_author() {
     local login="${1:-}" display="${2:-}"
-    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    # dociai=配信チャンネル兼 outbound bot(自分の投稿), azumagdev=旧 bot アカウント。
+    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので無視しない(2026-08-26 ユーザー指示)。
+    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}"
     local item
     for item in $ignored; do
         [ "$login" = "$item" ] && return 0

@@ -185,7 +185,9 @@ _is_card_gacha_result_line() {
 
 _is_ignored_comment_author_line() {
     local line="$1"
-    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    # dociai=配信チャンネル兼 outbound bot(自分の投稿), azumagdev=旧 bot アカウント。
+    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので無視しない(2026-08-26 ユーザー指示)。
+    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}"
     local item
     for item in $ignored; do
         printf '%s\n' "$line" | grep -Fqi -- "${item}: " && return 0
