@@ -840,7 +840,13 @@ PODCAST_RCLONE_PREFIX="${PODCAST_RCLONE_PREFIX:-podcast}"
 # VM の podcast.timer は VOICEVOX を配信本体と奪い合って失敗し続けたため 2026-08-26 に disable 済み。
 # 本値はドキュメント用でスケジューラからは読まれない (変更に worker 再起動は不要)。
 PODCAST_BUILD_HOUR_JST="${PODCAST_BUILD_HOUR_JST:-04:30}"
-export PODCAST_ENABLED PODCAST_OUTPUT_DIR PODCAST_VOICE PODCAST_BASE_URL
+# 生成物の保持日数。動画 1 本が 300MB 前後 (2026-08-25 分の実測 299MB) あり毎日積むと月 9GB に
+# なるため、tools/podcast_gc.sh が日次パイプラインの先頭で古い mp4 を消す。
+# 未公開 (publish.json 無し) の回は PODCAST_GC_UNPUBLISHED_DAYS (既定 7) まで残す。
+# 対象拡張子は PODCAST_GC_SUFFIXES (既定 ".mp4"; mp3 も消すなら ".mp4 .mp3")。
+# 本値は Mac 側スクリプトが環境変数として読む (VM の worker からは参照されない)。
+PODCAST_RETENTION_DAYS="${PODCAST_RETENTION_DAYS:-3}"
+export PODCAST_ENABLED PODCAST_OUTPUT_DIR PODCAST_VOICE PODCAST_BASE_URL PODCAST_RETENTION_DAYS
 # 編成 (compose): 1日分の原稿をそのまま連結すると 3〜5 時間の朗読になるため
 # (実測: 08-19〜08-25 の 7 日で 2h43m〜5h24m、平均 4h。1 本平均 1264 字 = 約 4 分)、
 # LLM で「その日の話題を 1 本の番組へ編成し直す」段を挟む (docich#10)。

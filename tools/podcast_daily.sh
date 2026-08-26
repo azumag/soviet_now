@@ -2,6 +2,7 @@
 # tools/podcast_daily.sh - ポッドキャストの日次パイプライン (Mac用 launchd から呼ぶ / docich#10)
 #
 #   前日分の原稿 (VM が 04:00 に push したミラー)
+#     -> 0. 掃除      podcast_gc.sh           3日を過ぎた mp4 を削除 (1本 約300MB)
 #     -> 1. 音声      podcast_build.sh        編成 + 合成 + BGM  (約13分)
 #     -> 2. 動画      podcast_video_build.py  素材 + 字幕 + 波形  (約6分)
 #     -> 3. 公開      podcast_publish.py      YouTube + 再生リスト (約1分)
@@ -13,6 +14,7 @@
 #   ./tools/podcast_daily.sh                 # 前日分を通しで
 #   ./tools/podcast_daily.sh --date 20260825 # 日付を指定
 #   PODCAST_AUTO_PUBLISH=0 ./tools/podcast_daily.sh   # 公開せず動画まで
+#   PODCAST_SKIP_GC=1 ./tools/podcast_daily.sh        # 古い動画を消さない
 
 export HOME="/Users/azumag"
 PROJ="${0:A:h:h}"
@@ -62,6 +64,13 @@ ISO="$(date -j -f "%Y%m%d" "$TARGET" "+%Y-%m-%d" 2>/dev/null || echo "$TARGET")"
 say "===== podcast daily start ($TARGET) ====="
 START_ALL=$(date +%s)
 cd "$PROJ" || exit 1
+
+# --- 0. 古い生成物の掃除 (動画 1 本が約 300MB) ---
+if [ "${PODCAST_SKIP_GC:-0}" = "1" ]; then
+  say "[0/3] 掃除: スキップ (PODCAST_SKIP_GC=1)"
+else
+  ./tools/podcast_gc.sh 2>&1 | tee -a "$LOG"
+fi
 
 # --- 1. 音声 ---
 if [ "${PODCAST_SKIP_AUDIO:-0}" = "1" ]; then
