@@ -82,7 +82,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `soren91_control.sh` | soren91の起動・停止・改善キック・手動メリケンモード・OBS連携 |
 
 - `soren91` の既定は standalone `Google Chrome for Testing` です。`soren91_stop` / `soren91_cleanup` / `soren91_start` は共有タブの close だけでなく、`soren91/tmp/standalone_chromium_profile` または `SOREN91_STANDALONE_CDP_PORT` に紐づく stale standalone Chromium も掃除する。改善終了後に `新しいタブ` の残骸ウィンドウが積み上がるのを防ぐため。
-- VMの日次コーナーは `SOREN91_DAILY_ENABLED=1` で有効化する。毎日 `SOREN91_DAILY_EARLIEST_HOUR`〜`SOREN91_DAILY_LATEST_START_HOUR` の間にランダムな開始予定を `tmp/state/soren91_daily.json` へ一度だけ保存し、通常ゲームの試合終了境界で約 `SOREN91_DAILY_DURATION_SEC` 秒だけ切り替える。`SOREN91_SHARED_ISOLATED_CONTEXT=1` では通常ゲームとcookies/localStorageを共有しない別コンテキストを使い、終了後にそのコンテキストだけを閉じる。VMでは `SOREN91_VIEWPORT_WIDTH=854`、`SOREN91_VIEWPORT_HEIGHT=480` の低解像度描画を `SOREN91_FULLSCREEN_WINDOW=1` で全画面表示し、ブラウザUIを隠しながら描画負荷を抑える。
+- VMの日次コーナーは `SOREN91_DAILY_ENABLED=1` で有効化する。毎日 `SOREN91_DAILY_EARLIEST_HOUR`〜`SOREN91_DAILY_LATEST_START_HOUR` の間にランダムな開始予定を `tmp/state/soren91_daily.json` へ一度だけ保存し、通常ゲームの試合終了境界で約 `SOREN91_DAILY_DURATION_SEC` 秒だけ切り替える。`SOREN91_SHARED_ISOLATED_CONTEXT=1` では通常ゲームとcookies/localStorageを共有しない別コンテキストを使い、終了後にそのコンテキストだけを閉じる。VMではSoren91を通常ゲームと同じ960×540の共通ゲームエリアへ配置し、右320px・上下90pxの配信ステータスを維持する。Soren91中は通常ゲームページを凍結し、終了時に再開するため、背後で二重描画しない。
 - `soren91/main.mjs` の standalone 起動引数は `soviet_local.mjs` と揃え、`--password-store=basic` と `--use-mock-keychain` を常に付ける。macOS の "Chromium Safe Storage" キーチェーン許可ダイアログを毎回出さないため。
 
 soren_loop の多重起動ロック:

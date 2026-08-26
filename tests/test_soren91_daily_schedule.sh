@@ -74,6 +74,8 @@ assert "VMの実CDPポートをrunnerへ渡す" grep -q "SOREN_CDP_PORT='\${SORE
 assert "低解像度viewportをrunnerへ渡す" grep -q 'SOREN91_VIEWPORT_WIDTH' "$ROOT_DIR/soren91_control.sh"
 assert "Soren91窓をCDPで全画面化する" grep -q "Browser.setWindowBounds" "$ROOT_DIR/soren91/main.mjs"
 assert "古いPIDはSoren91所有確認後だけ停止する" grep -q '_soren91_pid_is_owned_player' "$ROOT_DIR/soren91_control.sh"
+assert "Soren91を共通ゲームエリアへ配置する" grep -q 'installDirectGameStage' "$ROOT_DIR/soren91/main.mjs"
+assert "Soren91中は通常ゲーム描画を凍結する" grep -q "setNormalGameLifecycle(browser, 'frozen')" "$ROOT_DIR/soren91/main.mjs"
 assert "日次枠はゲーム画面readyを待つ" grep -q 'soren91_wait_ready' "$ROOT_DIR/soren_loop.sh"
 assert "Soren91本体がready markerを書く" grep -q 'Soren91 ready marker written' "$ROOT_DIR/soren91/main.mjs"
 assert "隔離コンテキスト終了時は共有ゲーム全体を掃除しない" python3 - "$ROOT_DIR/soren91/main.mjs" <<'PY'

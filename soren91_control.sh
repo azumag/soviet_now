@@ -1339,7 +1339,7 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN91_FULLSCREEN_WINDOW='${SOREN91_FULLSCREEN_WINDOW:-0}' SOREN91_VIEWPORT_WIDTH='${SOREN91_VIEWPORT_WIDTH:-1280}' SOREN91_VIEWPORT_HEIGHT='${SOREN91_VIEWPORT_HEIGHT:-720}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN91_FULLSCREEN_WINDOW='${SOREN91_FULLSCREEN_WINDOW:-0}' SOREN91_VIEWPORT_WIDTH='${SOREN91_VIEWPORT_WIDTH:-960}' SOREN91_VIEWPORT_HEIGHT='${SOREN91_VIEWPORT_HEIGHT:-540}' SOREN_STREAM_BACKEND='${SOREN_STREAM_BACKEND:-obs}' SOREN_DIRECT_OVERLAY_ENABLED='${SOREN_DIRECT_OVERLAY_ENABLED:-1}' SOREN_DIRECT_STAGE_LAYOUT='${SOREN_DIRECT_STAGE_LAYOUT:-dashboard}' SOREN_DIRECT_STREAM_SIZE='${SOREN_DIRECT_STREAM_SIZE:-1280x720}' SOREN_DIRECT_GAME_DISPLAY_SIZE='${SOREN_DIRECT_GAME_DISPLAY_SIZE:-960x540}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
@@ -1349,8 +1349,13 @@ soren91_start() {
 			SOREN91_SHARED_ISOLATED_CONTEXT="${SOREN91_SHARED_ISOLATED_CONTEXT:-0}" \
 			SOREN91_BRING_TO_FRONT="${SOREN91_BRING_TO_FRONT:-0}" \
 			SOREN91_FULLSCREEN_WINDOW="${SOREN91_FULLSCREEN_WINDOW:-0}" \
-			SOREN91_VIEWPORT_WIDTH="${SOREN91_VIEWPORT_WIDTH:-1280}" \
-			SOREN91_VIEWPORT_HEIGHT="${SOREN91_VIEWPORT_HEIGHT:-720}" \
+			SOREN91_VIEWPORT_WIDTH="${SOREN91_VIEWPORT_WIDTH:-960}" \
+			SOREN91_VIEWPORT_HEIGHT="${SOREN91_VIEWPORT_HEIGHT:-540}" \
+			SOREN_STREAM_BACKEND="${SOREN_STREAM_BACKEND:-obs}" \
+			SOREN_DIRECT_OVERLAY_ENABLED="${SOREN_DIRECT_OVERLAY_ENABLED:-1}" \
+			SOREN_DIRECT_STAGE_LAYOUT="${SOREN_DIRECT_STAGE_LAYOUT:-dashboard}" \
+			SOREN_DIRECT_STREAM_SIZE="${SOREN_DIRECT_STREAM_SIZE:-1280x720}" \
+			SOREN_DIRECT_GAME_DISPLAY_SIZE="${SOREN_DIRECT_GAME_DISPLAY_SIZE:-960x540}" \
 			SOREN_CDP_PORT="${SOREN_CDP_PORT:-9222}" \
 			SOREN_CHROME_AUDIO_OUTPUT_LABEL="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
@@ -1706,16 +1711,12 @@ soren91_cleanup() {
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
-		if _soren91_pid_is_alive "$pid"; then
-			local cmd
-			cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-			if [ -z "$cmd" ] || echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
-				log "[SOREN91] Cleanup: stopping player (PID=$pid)"
-				_stop_loop_descendants "$pid"
-				_stop_pid_with_fallback "$pid" "soren91_player"
-			else
-				log "[SOREN91] Cleanup: PID=$pid is not soren91 player ($cmd), skipping"
-			fi
+		if _soren91_pid_is_owned_player "$pid"; then
+			log "[SOREN91] Cleanup: stopping player (PID=$pid)"
+			_stop_loop_descendants "$pid"
+			_stop_pid_with_fallback "$pid" "soren91_player"
+		elif _soren91_pid_is_alive "$pid"; then
+			log "[SOREN91] Cleanup: PID=$pid is not an owned Soren91 player, skipping"
 		fi
 	done
 	_soren91_kill_runner_session

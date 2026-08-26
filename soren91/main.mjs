@@ -18,6 +18,11 @@ import {
   recordCompletedGame,
   snapshotCurrentStrategyForGame,
 } from './lineage.mjs';
+import {
+  installDirectGameStage,
+  installDirectOverlay,
+  loadDirectOverlayConfig,
+} from '../lib/direct_overlay.mjs';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
@@ -97,6 +102,29 @@ function positiveIntEnv(name, fallback) {
 
 const VIEWPORT_WIDTH = positiveIntEnv('SOREN91_VIEWPORT_WIDTH', DEFAULT_VIEWPORT_WIDTH);
 const VIEWPORT_HEIGHT = positiveIntEnv('SOREN91_VIEWPORT_HEIGHT', DEFAULT_VIEWPORT_HEIGHT);
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(process.env, process.platform);
+const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
+const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
+
+async function captureGameScreenshot(page, path) {
+  const canvas = page.locator('canvas').first();
+  await canvas.screenshot({ path });
+}
+
+async function setNormalGameLifecycle(browser, state) {
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) {
+      if (!/^https?:\/\/(localhost|127\.0\.0\.1):8080\b/.test(page.url())) continue;
+      const session = await context.newCDPSession(page);
+      try {
+        await session.send('Page.setWebLifecycleState', { state });
+        console.log(`[main] Normal sorengame lifecycle=${state}`);
+      } finally {
+        await session.detach().catch(() => {});
+      }
+    }
+  }
+}
 
 async function fullscreenBrowserWindow(page) {
   if (process.env.SOREN91_FULLSCREEN_WINDOW !== '1') return;
@@ -172,7 +200,7 @@ function clearSoren91ModeFlag() {
 
 function standaloneBrowserLaunchArgs(windowPosition) {
   return [
-    `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
+    `--window-size=${OUTPUT_WIDTH},${OUTPUT_HEIGHT}`,
     `--window-position=${windowPosition}`,
     '--hide-crash-restore-bubble',
     '--disable-session-crashed-bubble',
@@ -265,6 +293,9 @@ async function cleanupRuntime(reason = 'normal') {
 
     try {
       if (isSharedMode) {
+        await setNormalGameLifecycle(browser, 'active').catch((err) => {
+          console.log(`[main] Normal sorengame resume failed during ${reason}: ${err.message}`);
+        });
         if (!ownsContext && gamePage && !gamePage.isClosed()) {
           try {
             await gamePage.close();
@@ -494,7 +525,7 @@ async function captureRankingTransitionBurst(page, gameNumber) {
   for (let i = 0; i < frames; i++) {
     const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
     try {
-      await page.screenshot({ path: framePath });
+      await captureGameScreenshot(page, framePath);
       const rankResult = await detectRankingScreen(framePath);
       const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult ?? 'null'}.png`);
       try { renameSync(framePath, taggedPath); } catch {}
@@ -535,7 +566,7 @@ async function probeRankingImmediatelyAfterDrop(page, gameNumber, turn) {
   for (let i = 0; i < frames; i++) {
     const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
     try {
-      await page.screenshot({ path: framePath });
+      await captureGameScreenshot(page, framePath);
       const rankResult = await detectRankingScreen(framePath);
       if (rankResult != null && rankResult > 0) {
         const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult}.png`);
@@ -916,7 +947,7 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
     const retryPage = await openSharedBrowserTab(context, retryAnchorPage);
     activeGamePage = retryPage;
     try {
-      await retryPage.setViewportSize({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
+      await retryPage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
     } catch {}
     await installAudioGainLimiter(retryPage, audioGainMultiplier);
     await grantSpeakerSelection(retryPage, gameUrl);
@@ -1001,7 +1032,7 @@ async function main() {
     } else {
       console.log('[main] Creating isolated context in shared browser (separate cookies/storage)');
       context = await browser.newContext({
-        viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
+        viewport: { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT },
         locale: 'ja-JP',
         timezoneId: 'Asia/Tokyo',
       });
@@ -1009,7 +1040,7 @@ async function main() {
     }
   } else {
     context = await browser.newContext({
-      viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
+      viewport: { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT },
       locale: 'ja-JP',
       timezoneId: 'Asia/Tokyo',
     });
@@ -1023,6 +1054,12 @@ async function main() {
   activeContext = context;
   activeIsSharedMode = isSharedMode;
   activeOwnsContext = ownsContext;
+
+  if (isSharedMode) {
+    await setNormalGameLifecycle(browser, 'frozen').catch((err) => {
+      console.log(`[main] Normal sorengame freeze failed: ${err.message}`);
+    });
+  }
 
   let gamePage = null;
   try {
@@ -1040,7 +1077,7 @@ async function main() {
       : await context.newPage();
     if (isSharedMode) {
       try {
-        await gamePage.setViewportSize({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
+        await gamePage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
       } catch {}
     }
     activeGamePage = gamePage;
@@ -1098,6 +1135,13 @@ async function main() {
     }
     await sleep(3000); // 追加バッファ
 
+    const stageInfo = await installDirectGameStage(gamePage, DIRECT_OVERLAY_CONFIG, {
+      drawBufferWidth: VIEWPORT_WIDTH,
+      drawBufferHeight: VIEWPORT_HEIGHT,
+    });
+    await installDirectOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+    console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
+
     // タイトル画面: 名前入力 + PLAY
     await handleTitleScreen(gamePage);
     writeFileSync(SOREN91_READY_FILE, new Date().toISOString() + '\n');
@@ -1145,7 +1189,7 @@ async function handleTitleScreen(page) {
   if (!box) throw new Error('Canvas bounding box not available');
 
   // スクリーンショットで状態確認
-  await page.screenshot({ path: join(SCREENSHOT_DIR, 'title.png') });
+  await captureGameScreenshot(page, join(SCREENSHOT_DIR, 'title.png'));
 
   // 名前入力欄をクリック (canvas座標 x=630, y=560 付近)
   const nameFieldX = box.x + box.width * (630 / 1280);
@@ -1182,7 +1226,7 @@ async function handleTitleScreen(page) {
   await sleep(500);
 
   // スクリーンショットで入力確認
-  await page.screenshot({ path: join(SCREENSHOT_DIR, 'title_named.png') });
+  await captureGameScreenshot(page, join(SCREENSHOT_DIR, 'title_named.png'));
 
   // PLAYボタンをクリック (入力欄の下)
   const playButtonX = box.x + box.width * (630 / 1280);
@@ -1320,7 +1364,7 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // スクリーンショット取得
       const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.png`);
-      await page.screenshot({ path: screenshotPath });
+      await captureGameScreenshot(page, screenshotPath);
 
       // 盤面解析
       const { analyzeScreenshot } = await loadModule('./screenshot_analyzer.mjs');
@@ -1595,7 +1639,7 @@ async function gameLoop(page, calibration, gameNumber) {
         if (moveCount >= 3) { // 十分な信頼度と盤面密度で3回連続MOVEなら安定と判断
           console.log('[game] Game board stable, running calibration...');
           const calScreenshot = join(SCREENSHOT_DIR, 'calibration.png');
-          await page.screenshot({ path: calScreenshot });
+          await captureGameScreenshot(page, calScreenshot);
           const { calibrate } = await loadModule('./calibration.mjs');
           calibration = await calibrate(calScreenshot);
           calibrated = true;
@@ -1697,8 +1741,10 @@ async function executeHold(page, calibration) {
   if (!canvas) throw new Error('Canvas not found');
 
   // ボード中央で右クリック
-  const clickX = board.left + Math.floor(board.width / 2);
-  const clickY = board.top + Math.floor(board.height * 0.3);
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('Canvas bounding box not available');
+  const clickX = box.x + board.left + Math.floor(board.width / 2);
+  const clickY = box.y + board.top + Math.floor(board.height * 0.3);
   await page.mouse.click(clickX, clickY, { button: 'right' });
   await sleep(300);
 }
@@ -1726,8 +1772,8 @@ async function executeDrop(page, gameX, calibration) {
     throw new Error('Canvas bounding box not available');
   }
 
-  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, pixelX));
-  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, pixelY));
+  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, box.x + pixelX));
+  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, box.y + pixelY));
   if (process.env.SOREN91_DEBUG_DROP === '1') {
     console.log(`[game] Drop click: gameX=${gameX.toFixed(2)} pixel=(${clickX.toFixed(0)},${clickY.toFixed(0)}) cal=${calibration.method || 'provisional'}${calibration.provisional ? ':provisional' : ''}`);
   }
