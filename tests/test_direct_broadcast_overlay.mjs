@@ -155,7 +155,8 @@ test('inline alternate-game rails can use the neutral non-blue theme', () => {
   const html = fs.readFileSync(BROADCAST_HTML, 'utf8');
   assert.match(html, /dataset[.]sorenNeutral/);
   assert.match(html, /data-soren-neutral="1"/);
-  assert.match(html, /background: rgba\(5, 5, 5, [.]92\)/);
+  assert.match(html, /background: rgb\(5, 5, 5\)/);
+  assert.match(html, /filter: grayscale\(1\)/);
 });
 
 
