@@ -11,8 +11,10 @@
 
 foreground = yes
 syslog = no
-output = /dev/stderr
-debug = notice
+# `output` is deliberately unset: under systemd stderr is the journal socket and
+# stunnel's open() of /dev/stderr fails, which killed the service at startup.
+# Unset means stderr, which systemd captures into the journal.
+debug = 5
 pid =
 
 [__BRIDGE_NAME__]
