@@ -122,6 +122,7 @@ async function setNormalGameLifecycle(browser, state) {
         if (state === 'frozen') {
           await page.evaluate(() => {
             const canvas = document.querySelector('canvas');
+            globalThis.__sorenRenderPaused = true;
             if (canvas && !globalThis.__soren91NormalCanvasStyle) {
               globalThis.__soren91NormalCanvasStyle = {
                 visibility: canvas.style.visibility,
@@ -147,6 +148,7 @@ async function setNormalGameLifecycle(browser, state) {
               canvas.style.visibility = saved.visibility;
               canvas.style.pointerEvents = saved.pointerEvents;
             }
+            globalThis.__sorenRenderPaused = false;
             delete globalThis.__soren91NormalCanvasStyle;
           });
           console.log('[main] Normal sorengame lifecycle=active canvas=restored cpuThrottle=1x');

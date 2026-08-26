@@ -1600,9 +1600,15 @@ soren91_stop() {
 		game_waited=$((game_waited + 5))
 	done
 
-	# Phase 2: 試合終了後、graceful exit を短時間待つ
+	# Phase 2: 試合終了後はTERMで main.mjs の cleanupRuntime を直ちに起動する。
+	# stop fileだけでは次のゲーム境界処理が長引き、外側のKILLが先に到達して
+	# 通常ページのlifecycle復帰を飛ばすことがある。
+	if _soren91_pid_is_alive "$pid"; then
+		log "[SOREN91] Round ended, requesting runtime cleanup with TERM"
+		kill -TERM "$pid" 2>/dev/null || true
+	fi
 	local waited=0
-	local post_game_timeout=30
+	local post_game_timeout=15
 	while [ "$waited" -lt "$post_game_timeout" ]; do
 		if ! _soren91_pid_is_alive "$pid"; then
 			log "[SOREN91] Stopped gracefully after game ended"

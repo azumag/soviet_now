@@ -19,6 +19,16 @@ export function installAnimationFrameLimit(cfg) {
   const pump = (timestamp) => {
     nativeHandle = 0;
     if (!Number.isFinite(nextRenderAt)) nextRenderAt = timestamp;
+    if (window.__sorenRenderPaused) {
+      // Keep Unity's pending callback queued while an alternate game owns the
+      // shared stream stage. Lifecycle freeze alone does not stop WebGL work
+      // under Xvfb/SwiftShader.
+      nextRenderAt = timestamp + intervalMs;
+      if (callbacks.size > 0 && !nativeHandle) {
+        nativeHandle = nativeRequestAnimationFrame(pump);
+      }
+      return;
+    }
     if (timestamp + 0.5 >= nextRenderAt) {
       // Advance the accumulated deadline instead of restarting the interval at
       // the native frame timestamp.  On Xvfb the native RAF cadence can be

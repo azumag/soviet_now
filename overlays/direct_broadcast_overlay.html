@@ -6,6 +6,7 @@
 <title>Soren direct broadcast overlay</title>
 <script>
 document.documentElement.dataset.sorenRegion = window.frameElement?.dataset.sorenOverlayRegion || 'full';
+document.documentElement.dataset.sorenNeutral = window.frameElement?.dataset.sorenNeutralTheme || '';
 </script>
 <style>
 :root {
@@ -237,6 +238,17 @@ html[data-improve-active="1"] .feed-panel.panel-i {
   padding: 8px 9px;
   border-top: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(3, 10, 21, .92), rgba(4, 13, 28, .95));
+}
+html[data-soren-neutral="1"] {
+  --cyan: #e5e7eb;
+  --blue: #d1d5db;
+  --muted: #9ca3af;
+  --line: rgba(255, 255, 255, .16);
+}
+html[data-soren-neutral="1"] #broadcast-sidebar,
+html[data-soren-neutral="1"] #top-rail,
+html[data-soren-neutral="1"] #bottom-rail {
+  background: rgba(5, 5, 5, .92);
 }
 #summary {
   height: 73px;

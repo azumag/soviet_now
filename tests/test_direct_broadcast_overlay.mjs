@@ -151,6 +151,13 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.doesNotMatch(html, /innerHTML\s*=/);
 });
 
+test('inline alternate-game rails can use the neutral non-blue theme', () => {
+  const html = fs.readFileSync(BROADCAST_HTML, 'utf8');
+  assert.match(html, /dataset[.]sorenNeutral/);
+  assert.match(html, /data-soren-neutral="1"/);
+  assert.match(html, /background: rgba\(5, 5, 5, [.]92\)/);
+});
+
 
 test('broadcast state exposes an improve feed gated by wildcard activity', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-broadcast-improve-'));

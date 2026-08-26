@@ -101,3 +101,24 @@ test('cancelling the last callback cancels the native frame too', () => {
     else globalThis.window = savedWindow;
   }
 });
+
+test('alternate-game pause retains the Unity callback without dispatching it', () => {
+  const savedWindow = globalThis.window;
+  const browser = fakeBrowserWindow();
+  globalThis.window = browser.fakeWindow;
+  try {
+    installAnimationFrameLimit({ renderFps: 30 });
+    let calls = 0;
+    window.__sorenRenderPaused = true;
+    window.requestAnimationFrame(() => { calls += 1; });
+    browser.runNativeFrame(100);
+    browser.runNativeFrame(140);
+    assert.equal(calls, 0);
+    window.__sorenRenderPaused = false;
+    browser.runNativeFrame(180);
+    assert.equal(calls, 1);
+  } finally {
+    if (savedWindow === undefined) delete globalThis.window;
+    else globalThis.window = savedWindow;
+  }
+});
