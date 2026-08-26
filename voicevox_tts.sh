@@ -14,7 +14,7 @@
 #   ./voicevox_tts.sh -o out.wav -f file     # ファイルから読み込み
 #   ./voicevox_tts.sh -f file                # 合成+再生 (出力 /tmp/voicevox_$$.wav)
 #
-# 環境変数: VOICEVOX_URL / VOICEVOX_SPEAKER / VOICEVOX_PITCH / VOICEVOX_TEMPO /
+# 環境変数: VOICEVOX_URLS (優先順の連鎖, 2026-08-27〜) / VOICEVOX_URL / VOICEVOX_SPEAKER / VOICEVOX_PITCH / VOICEVOX_TEMPO /
 #   VOICEVOX_INTONATION / VOICEVOX_MAX_CHARS / VOICEVOX_TIMEOUT は docich 側
 #   SpeechConfig.from_env が同じ名前で読む。読み替え辞書は
 #   config/voicevox_word_replace.txt を既定で渡す (VOICEVOX_WORD_REPLACE_FILE で上書き可)。
@@ -34,7 +34,9 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] || [ -z "${1:-}" ]; then
 	echo "  $0 -f file               合成+再生"
 	echo ""
 	echo "Environment variables:"
-	echo "  VOICEVOX_URL      (default: http://127.0.0.1:50021)"
+	echo "  VOICEVOX_URLS     優先順のエンドポイント連鎖 (例: http://azmacminim4:50021,http://127.0.0.1:50021)"
+	echo "                    失敗は乗数バックオフで休ませ最後まで順に試す。状態: docich voicevox endpoints / WebUI Audio タブ"
+	echo "  VOICEVOX_URL      (default: http://127.0.0.1:50021; VOICEVOX_URLS があればそちらが優先)"
 	echo "  VOICEVOX_SPEAKER  (default: 3 = ずんだもん ノーマル)"
 	echo "  DOCICH_BIN        docich 実行ファイルのパス (既定: PATH から探索)"
 	exit 0
