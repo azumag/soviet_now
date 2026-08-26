@@ -750,6 +750,48 @@ _run_scheduled_meriken_time_window() {
 	return 0
 }
 
+_run_daily_soren91_window() {
+	local end_epoch=""
+	end_epoch=$(soren91_daily_active_end_epoch 2>/dev/null || true)
+	if [ -z "$end_epoch" ]; then
+		end_epoch=$(soren91_daily_begin 2>/dev/null || true)
+	fi
+	case "$end_epoch" in
+	'' | *[!0-9]*)
+		log "[SOREN91:DAILY] 日次枠の開始状態を確保できません"
+		return 1
+		;;
+	esac
+	if [ "$end_epoch" -le "$(date +%s)" ]; then
+		log "[SOREN91:DAILY] 再起動中に日次枠が終了済み。残存Soren91を停止して通常ゲームへ復帰"
+		soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+		soren91_daily_mark_completed
+		return 0
+	fi
+	log "[SOREN91:DAILY] 通常ゲームを試合境界で一時停止し、日次Soren91枠を開始 (until=$(scheduled_meriken_time_end_label "$end_epoch" 2>/dev/null || echo "$end_epoch"))"
+	if ! soren91_start; then
+		log "[SOREN91:DAILY] 起動失敗。通常ゲームへ戻し、再試行を予約"
+		soren91_cleanup 2>/dev/null || true
+		soren91_daily_mark_failed
+		return 1
+	fi
+	if ! soren91_wait_ready "${SOREN91_DAILY_READY_TIMEOUT_SEC:-120}"; then
+		log "[SOREN91:DAILY] ゲーム画面の準備を確認できません。通常ゲームへ戻し、再試行を予約"
+		SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+		soren91_daily_mark_failed
+		return 1
+	fi
+	log "[SOREN91:DAILY] Soren91ゲーム画面の準備完了を確認"
+	while [ "$(date +%s)" -lt "$end_epoch" ]; do
+		[ -f tmp/stop ] && break
+		sleep 15
+	done
+	log "[SOREN91:DAILY] 約1時間の枠を終了し、通常ゲームへ復帰"
+	soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+	soren91_daily_mark_completed
+	return 0
+}
+
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
 log "strategy.py → 1game → adaptive improve → repeat"
@@ -837,6 +879,13 @@ while true; do
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] strategy停止中: コメント返し/読み上げのみ継続"
 		sleep 5
+		continue
+	fi
+
+	# 再起動で日次枠の途中へ戻った場合は、その枠だけを再開する。
+	_daily_active_end=$(soren91_daily_active_end_epoch 2>/dev/null || true)
+	if [ -n "$_daily_active_end" ]; then
+		_run_daily_soren91_window
 		continue
 	fi
 
@@ -1287,6 +1336,12 @@ json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 			_clear_accumulated_data
 		fi
+	fi
+
+	# 日次ランダム枠は通常ゲームの試合終了境界でだけ開始する。
+	# これにより進行中の通常ゲームを破棄せず、Soren91終了後に次ゲームから復帰する。
+	if command -v soren91_daily_should_start >/dev/null 2>&1 && soren91_daily_should_start; then
+		_run_daily_soren91_window || true
 	fi
 
 	# 20時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で定時枠終了までメリケンモード

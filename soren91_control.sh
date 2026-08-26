@@ -26,6 +26,7 @@ SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
 SOREN91_STOPPING_FILE="$SOREN91_DIR/tmp/stopping"
+SOREN91_READY_FILE="$SOREN91_DIR/tmp/ready"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
 SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
@@ -39,6 +40,7 @@ SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
 MERIKEN_TIME_START_HOUR="${MERIKEN_TIME_START_HOUR:-20}"
 MERIKEN_TIME_END_HOUR="${MERIKEN_TIME_END_HOUR:-21}"
 MERIKEN_TIME_STATE_FILE="${MERIKEN_TIME_STATE_FILE:-$TMP_STATE_DIR/meriken_time_state.json}"
+SOREN91_DAILY_STATE_FILE="${SOREN91_DAILY_STATE_FILE:-$TMP_STATE_DIR/soren91_daily.json}"
 SOREN91_MODE_FLAG_FILE="${SOREN91_MODE_FLAG_FILE:-$ELOOP_LIB_DIR/tmp/.soren91_mode_active}"
 SOREN91_LAST_ACTIVATE_MODE=""
 SOREN91_LAST_ACTIVATE_STATE_FILE="${SOREN91_LAST_ACTIVATE_STATE_FILE:-$ELOOP_LIB_DIR/tmp/.soren91_last_activate_mode}"
@@ -718,6 +720,174 @@ print(datetime.fromtimestamp(end_epoch).astimezone().strftime('%H:%M %Z'))
 PY
 }
 
+# 1日1回のランダムな Soren91 枠。予定はファイルへ永続化し、supervisor や
+# soren_loop が再起動しても同じ日に二重発火しない。開始は caller が選ぶ
+# 通常ゲームの試合境界に限定し、実際に開始した時刻から duration 秒だけ走る。
+_soren91_daily_ensure_plan() {
+	[ "${SOREN91_DAILY_ENABLED:-0}" = "1" ] || return 1
+	mkdir -p "$(dirname "$SOREN91_DAILY_STATE_FILE")" 2>/dev/null || true
+	python3 - "$SOREN91_DAILY_STATE_FILE" \
+		"${SOREN91_DAILY_TIMEZONE:-Asia/Tokyo}" \
+		"${SOREN91_DAILY_EARLIEST_HOUR:-8}" \
+		"${SOREN91_DAILY_LATEST_START_HOUR:-22}" <<'PY' 2>/dev/null
+import json
+import os
+import secrets
+import sys
+import tempfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+path, tz_name, earliest_raw, latest_raw = sys.argv[1:5]
+tz = ZoneInfo(tz_name)
+now = datetime.now(tz)
+day = now.date().isoformat()
+try:
+    earliest = int(earliest_raw)
+    latest = int(latest_raw)
+except Exception:
+    raise SystemExit(2)
+if not (0 <= earliest <= latest <= 23):
+    raise SystemExit(2)
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+if data.get("local_day") == day:
+    print(int(data.get("due_epoch", 0) or 0))
+    raise SystemExit(0)
+start = now.replace(hour=earliest, minute=0, second=0, microsecond=0)
+end = now.replace(hour=latest, minute=0, second=0, microsecond=0)
+lo = int(start.timestamp())
+hi = int(end.timestamp())
+due = lo + secrets.randbelow(max(1, hi - lo + 1))
+data = {
+    "local_day": day,
+    "timezone": tz_name,
+    "status": "planned",
+    "due_epoch": due,
+    "attempts": 0,
+    "planned_at": now.isoformat(),
+}
+directory = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+finally:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+print(due)
+PY
+}
+
+soren91_daily_should_start() {
+	_soren91_enabled || return 1
+	_soren91_daily_ensure_plan >/dev/null || return 1
+	python3 - "$SOREN91_DAILY_STATE_FILE" "${SOREN91_DAILY_MAX_ATTEMPTS:-3}" <<'PY' >/dev/null 2>&1
+import json, sys, time
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+raise SystemExit(0 if (
+    data.get("status") == "planned"
+    and int(data.get("due_epoch", 0) or 0) <= int(time.time())
+    and int(data.get("attempts", 0) or 0) < int(sys.argv[2])
+) else 1)
+PY
+}
+
+soren91_daily_active_end_epoch() {
+	[ "${SOREN91_DAILY_ENABLED:-0}" = "1" ] || return 1
+	[ -f "$SOREN91_DAILY_STATE_FILE" ] || return 1
+	python3 - "$SOREN91_DAILY_STATE_FILE" <<'PY' 2>/dev/null
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+end = int(data.get("end_epoch", 0) or 0)
+if data.get("status") != "running" or end <= 0:
+    raise SystemExit(1)
+print(end)
+PY
+}
+
+soren91_daily_begin() {
+	soren91_daily_should_start || return 1
+	python3 - "$SOREN91_DAILY_STATE_FILE" "${SOREN91_DAILY_DURATION_SEC:-3600}" <<'PY' 2>/dev/null
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+duration = max(60, int(sys.argv[2]))
+data = json.load(open(path, encoding="utf-8"))
+now = int(time.time())
+data.update({
+    "status": "running",
+    "attempts": int(data.get("attempts", 0) or 0) + 1,
+    "started_epoch": now,
+    "end_epoch": now + duration,
+})
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=os.path.dirname(path) or ".", text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+print(data["end_epoch"])
+PY
+}
+
+soren91_daily_mark_completed() {
+	[ -f "$SOREN91_DAILY_STATE_FILE" ] || return 0
+	python3 - "$SOREN91_DAILY_STATE_FILE" <<'PY' >/dev/null 2>&1
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data.update({"status": "completed", "ended_epoch": int(time.time())})
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=os.path.dirname(path) or ".", text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+soren91_daily_mark_failed() {
+	[ -f "$SOREN91_DAILY_STATE_FILE" ] || return 0
+	python3 - "$SOREN91_DAILY_STATE_FILE" "${SOREN91_DAILY_RETRY_SEC:-600}" "${SOREN91_DAILY_MAX_ATTEMPTS:-3}" <<'PY' >/dev/null 2>&1
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+retry = max(60, int(sys.argv[2]))
+maximum = max(1, int(sys.argv[3]))
+data = json.load(open(path, encoding="utf-8"))
+attempts = int(data.get("attempts", 0) or 0)
+data["status"] = "failed" if attempts >= maximum else "planned"
+data["failed_epoch"] = int(time.time())
+if attempts < maximum:
+    data["due_epoch"] = int(time.time()) + retry
+data.pop("end_epoch", None)
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=os.path.dirname(path) or ".", text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+soren91_wait_ready() {
+	local timeout="${1:-${SOREN91_DAILY_READY_TIMEOUT_SEC:-120}}"
+	case "$timeout" in '' | *[!0-9]*) timeout=120 ;; esac
+	local waited=0 pid=""
+	while [ "$waited" -lt "$timeout" ]; do
+		pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
+		if [ -f "$SOREN91_READY_FILE" ] && [ -n "$pid" ] && _soren91_pid_is_alive "$pid"; then
+			return 0
+		fi
+		sleep 2
+		waited=$((waited + 2))
+	done
+	return 1
+}
+
 soren91_is_running() {
 	_soren91_enabled || return 1
 	local pid=""
@@ -1079,7 +1249,7 @@ soren91_start() {
 
 	log "[SOREN91] Starting soren91 (メリケンAI)..."
 	rm -f "$SOREN91_LAST_ACTIVATE_STATE_FILE"
-	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE" "$TMP_STATE_DIR/.soren91_bye_sent"
+	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$TMP_STATE_DIR/.soren91_bye_sent"
 	mkdir -p "$SOREN91_DIR/tmp" 2>/dev/null || true
 	_soren91_stop_standalone_browser
 
@@ -1104,6 +1274,8 @@ soren91_start() {
 	# メリケンモードでは内部改善を有効化 (12ゲームごと、env override可)
 	local _meriken_mode=0
 	if manual_meriken_mode_is_enabled; then
+		_meriken_mode=1
+	elif soren91_daily_active_end_epoch >/dev/null 2>&1; then
 		_meriken_mode=1
 	elif scheduled_meriken_time_is_active; then
 		_meriken_mode=1
@@ -1149,13 +1321,17 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
 		pid=$(
 			cd "$SOREN91_DIR" || exit 1
 			SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-1}" \
+			SOREN91_SHARED_ISOLATED_CONTEXT="${SOREN91_SHARED_ISOLATED_CONTEXT:-0}" \
+			SOREN91_BRING_TO_FRONT="${SOREN91_BRING_TO_FRONT:-0}" \
+			SOREN_CDP_PORT="${SOREN_CDP_PORT:-9222}" \
+			SOREN_CHROME_AUDIO_OUTPUT_LABEL="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
 			SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
 			IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
@@ -1186,7 +1362,11 @@ soren91_start() {
 		{
 			local announce_file
 			announce_file=$(mktemp /tmp/eloop_soren91_announce.XXXXXX)
-			printf '%s\n' "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" > "$announce_file"
+			if soren91_daily_active_end_epoch >/dev/null 2>&1; then
+				printf '%s\n' "本日のメリケンAIコーナーです。これから約一時間、ソ連ゲーム91で同志を迎え撃ちます。" > "$announce_file"
+			else
+				printf '%s\n' "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" > "$announce_file"
+			fi
 			SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 			rm -f "$announce_file"
 
@@ -1325,7 +1505,7 @@ soren91_stop() {
 		_soren91_sweep_orphan_runners
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
-		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 		_soren91_clear_stale_runner_lock
 		local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
@@ -1399,7 +1579,7 @@ soren91_stop() {
 	local eg
 	eg=$(_soren91_record_end_game)
 
-	rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+	rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 	rm -f "$SOREN91_LAST_ACTIVATE_STATE_FILE"
 	_soren91_clear_stale_runner_lock
 	_clear_meriken_time_state
@@ -1545,6 +1725,7 @@ soren91_cleanup() {
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_IMPROVE_PID_FILE" \
 		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \
 		"$SOREN91_MAIN_PID_FILE" \
+		"$SOREN91_READY_FILE" \
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_clear_stale_runner_lock

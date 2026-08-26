@@ -75,6 +75,7 @@ const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_DIR = dirname(fileURLToPath(import.meta.url));
 const SOREN91_MODE_FLAG_FILE = join(SOREN91_DIR, '..', 'tmp', '.soren91_mode_active');
 const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
+const SOREN91_READY_FILE = 'tmp/ready';
 const COMMENT_QUEUE_DIR = join('..', 'tmp', '.comment_queue');
 const SOREN91_LAST_COMMENTED_GAME_FILE = join(COMMENT_QUEUE_DIR, 'soren91_last_commented_game');
 let activeBrowser = null;
@@ -232,6 +233,7 @@ async function cleanupRuntime(reason = 'normal') {
 
     try { unlinkSync('tmp/in_game'); } catch {}
     try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
+    try { unlinkSync(SOREN91_READY_FILE); } catch {}
     clearSoren91ModeFlag();
 
     if (!browser) return;
@@ -245,13 +247,14 @@ async function cleanupRuntime(reason = 'normal') {
             console.log(`[main] Preferred game tab close failed during ${reason}: ${err.message}`);
           }
         }
-        await closeSharedSoren91Pages(browser, gamePage);
         if (ownsContext && context) {
           try {
             await context.close();
           } catch (err) {
             console.log(`[main] Shared context close failed during ${reason}: ${err.message}`);
           }
+        } else {
+          await closeSharedSoren91Pages(browser, gamePage);
         }
         // soren91 is a GUEST on soviet_local's shared Chrome (connected via
         // connectOverCDP). browser.close() on a CDP-connected browser closes
@@ -944,6 +947,7 @@ async function main() {
   // 共有ブラウザ接続を試行、失敗なら従来の単独起動
   const sharedBrowser = await connectToSharedBrowser();
   const isSharedMode = sharedBrowser != null;
+  const isolateSharedContext = isSharedMode && process.env.SOREN91_SHARED_ISOLATED_CONTEXT === '1';
   const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
   const launchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
   // Standalone (non-shared) = a 2nd Chrome-for-Testing instance. Launch it via
@@ -966,11 +970,11 @@ async function main() {
   let context = null;
   let ownsContext = false;
   if (isSharedMode) {
-    context = chooseSharedBrowserContext(browser);
+    context = isolateSharedContext ? null : chooseSharedBrowserContext(browser);
     if (context) {
       console.log('[main] Running in shared browser mode (existing context/new tab)');
     } else {
-      console.log('[main] Shared browser has no reusable context; creating isolated context');
+      console.log('[main] Creating isolated context in shared browser (separate cookies/storage)');
       context = await browser.newContext({
         viewport: { width: 1280, height: 720 },
         locale: 'ja-JP',
@@ -1042,6 +1046,10 @@ async function main() {
       audioOutputLabel,
       anchorPage,
     });
+    if (process.env.SOREN91_BRING_TO_FRONT === '1') {
+      await gamePage.bringToFront();
+      console.log('[main] Soren91 page brought to front for VM game switch');
+    }
     // bringToFront はOS窓を前面に raise しユーザーのフォーカスを奪う。
     // タブ作成後は page.goto だけで十分なので、起動直後も含めて前面化しない。
 
@@ -1066,6 +1074,8 @@ async function main() {
 
     // タイトル画面: 名前入力 + PLAY
     await handleTitleScreen(gamePage);
+    writeFileSync(SOREN91_READY_FILE, new Date().toISOString() + '\n');
+    console.log('[main] Soren91 ready marker written');
 
     // ゲームボード表示を待ってからキャリブレーション
     // 最初は仮キャリブレーション (全画面) で待機→ボード検出後に再キャリブレーション
