@@ -56,6 +56,7 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 import math
 
 from strategy_helpers import board_stats
+from strategy_helpers import lookahead
 
 FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -1862,6 +1863,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     suppressed = 1
+    # v739 LOOKAHEAD: 1 手評価の候補を集めて、ループ後に nextNext の見込みで再順位付けする
+    _la_cands = []
     for result in results:
         # 前候補での条件付き変更（height_mult *= 1.4621 等）を次候補へ持ち越さない。
         height_mult = phase_height_mult
@@ -2964,6 +2967,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= max(2, (1.533 - margin)) * 2456
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
+        _la_cands.append((x, score, result, list(reasons)))
+
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
@@ -2985,6 +2990,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # analyzer's mirror-symmetric guidance.
         best_x = _clip_final_drop_x(best_x, type15_count >= 1, fallback=True)
         return {"x": best_x, "reason": best_reason}
+
+    # ----- v739 LOOKAHEAD (strategy_helpers/lookahead.py): next の 1 手先 (nextNext) を粗く評価して上位候補を
+    # 再順位付けする。締切余裕 >=1.0・危険駒なし・ロシア不在・非 deadline_crossed のときだけ。ヘルパは例外を全て
+    # 握って None を返す (1 手評価にフォールバック)。post-selector / runtime の締切安全層はこの後で従来どおり働く。
+    _la_pick = None
+    _la_danger = _as_float(danger_piece_count, 0.0)
+    if (
+        not deadline_crossed
+        and reactor_margin >= 1.0
+        and _la_danger <= 0.0
+        and type15_count == 0
+        and not russia_phase
+        and len(_la_cands) >= 2
+    ):
+        try:
+            _la_pick = lookahead.rerank(
+                pieces,
+                game_state.get("shapes", {}),
+                next_type,
+                next_next_type,
+                _la_cands,
+                {"k": 8, "lam": 600.0, "margin": 900.0, "e2_min": 0.05, "max_calls": 16},
+            )
+        except Exception:
+            _la_pick = None
+    if _la_pick is not None:
+        best_x = _la_pick[0]
+        best_result = _la_pick[2]
+        best_reason = "_".join(list(_la_pick[3]) + ["LOOKAHEAD_NEXT"])
 
     # clip to drop range [-3.0, +3.0]
     best_x = _clip_final_drop_x(best_x, type15_count >= 1)
