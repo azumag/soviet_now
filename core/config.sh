@@ -467,6 +467,11 @@ export ANALYZE_BOARD_MERGE_TOP_MODEL
 # ./set_toggle.sh ANALYZE_BOARD_WALL_CLAMP=1 (次ゲームから)。decide hash には映らない (analyzer_modes に記録)。
 ANALYZE_BOARD_WALL_CLAMP="${ANALYZE_BOARD_WALL_CLAMP:-0}"
 export ANALYZE_BOARD_WALL_CLAMP
+# インターリーブ A/B (strategy/ab_interleave.sh): 代替戦略ファイルを指定すると試合ごとに root(A)/代替(B) を
+# SOREN_AB_PATTERN (既定 ABBA) で交互実行する。開始/終了は tools/ab_ctl.sh。空 = 無効 (既定)。
+SOREN_AB_ALT_STRATEGY="${SOREN_AB_ALT_STRATEGY:-}"
+SOREN_AB_PATTERN="${SOREN_AB_PATTERN:-ABBA}"
+export SOREN_AB_ALT_STRATEGY SOREN_AB_PATTERN
 # 2026-08-25: strategy_runner の静止判定 (実測: 従来は振動の一瞬の凪を静止と誤認し、新駒出現時に中央値 27 駒が
 # awake)。SOREN_SETTLE_REQUIRED=連続静止観測回数 (POLL_INTERVAL 0.15s 間隔、既定 1=従来)、
 # SOREN_SETTLE_MAX_SPEED2=静止とみなす速度^2 上限 (既定 0.1)、SOREN_SETTLE_MAX_AWAKE=awake 駒数上限 (-1=無視)。

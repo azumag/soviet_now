@@ -2773,6 +2773,11 @@ record_completed_game_for_adaptive_improvement() {
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
 
+	# インターリーブ A/B 中は B 腕の試合も正規の試合として、その腕の hash に帳簿を付ける (root と異なる hash でも
+	# 「別戦略の混入」扱いにしない)。
+	if [ -n "$played_hash" ] && command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1 && _ab_is_arm_hash "$played_hash"; then
+		current_hash="$played_hash"
+	fi
 	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
 		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
 		_clear_accumulated_data
@@ -2795,7 +2800,11 @@ record_completed_game_for_adaptive_improvement() {
 				_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
 		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
-		queue_fresh_objective_same_hash_lock_if_needed || true
+		if command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
+			: # A/B 中は同 hash ロックの更新を止める (腕が交互に変わるため)
+		else
+			queue_fresh_objective_same_hash_lock_if_needed || true
+		fi
 	fi
 	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
 		./repair_current_run_from_history.sh "${CURRENT_RUN_AUTO_REPAIR_LIMIT:-12}" >/dev/null 2>&1 ||

@@ -24,6 +24,7 @@ source "$ELOOP_LIB_DIR/strategy/ai.sh"
 source "$ELOOP_LIB_DIR/strategy/sandbox.sh"
 source "$ELOOP_LIB_DIR/core/version.sh"
 source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
+source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
 source "$ELOOP_LIB_DIR/strategy/regression.sh"
 # Layer 3: 放送系（配信モードのみ。探索モードでは source しない）

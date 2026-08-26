@@ -294,8 +294,19 @@ play_one_game() {
 	# 改善結果が試合中に反映されても、進行中の試合はこの不変スナップショットを使い続ける。
 	local strategy_runtime_dir strategy_runtime_root strategy_runtime_file
 	strategy_runtime_dir="${MAIN_GAME_STRATEGY_RUNTIME_DIR:-${TMP_STATE_DIR:-tmp/state}/main_game_strategy_runtime}"
+	# インターリーブ A/B (strategy/ab_interleave.sh): 有効なら B 腕の試合はスナップショットの元を代替ファイルにする。
+	# root strategy.py は触らない。無効/条件未達なら従来どおり root。
+	local ab_snapshot_source="$STRATEGY_FILE"
+	AB_ARM=""
+	AB_HASH=""
+	AB_SOURCE=""
+	AB_IDX=""
+	if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
+		_ab_select_arm
+		ab_snapshot_source="$AB_SOURCE"
+	fi
 	if ! strategy_runtime_create_game_snapshot \
-		"$STRATEGY_FILE" \
+		"$ab_snapshot_source" \
 		"$strategy_runtime_dir" \
 		"${STRATEGY_FILE}.game_snapshot" \
 		"strategy_helpers" \
@@ -469,6 +480,19 @@ PY
 	fi
 
 	if [ "$runner_error" = "decide_exception" ]; then
+		if [ -n "${AB_ARM:-}" ] && command -v _ab_abort >/dev/null 2>&1; then
+			# A/B 中の decide 例外: 実験を中断 (以後 root のみ)。B 腕の例外は root の自動復旧を起動しない。
+			_ab_abort "decide_exception arm=${AB_ARM} hash=${AB_HASH:0:12} turns=${LAST_TURNS}"
+			if [ "$AB_ARM" = "B" ]; then
+				LAST_SCORE=0
+				LAST_TURNS=0
+				LAST_RUSSIA="false"
+				LAST_RUSSIA_ANNOUNCED="false"
+				LAST_SOVIET="false"
+				send_retry
+				return "$PLAY_RECOVERED_RETRY_RC"
+			fi
+		fi
 		_handle_decide_exception_recovery "$runner_error_msg" "$LAST_TURNS" "$LAST_SCORE"
 		LAST_SCORE=0
 		LAST_TURNS=0
@@ -704,6 +728,9 @@ print(d.get('score', 0) + bonus)
 	# 並ぶハーネス起因のサイン)用。Phase 1 まではどこからも読まれない。
 	export LAST_TURNS="$LAST_TURNS"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
+		if [ -n "${AB_ARM:-}" ] && command -v _ab_record_game >/dev/null 2>&1; then
+			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE"
+		fi
 		# 試合ごとの結果はチャットへ投稿せず、改善サイクルの閾値で一度だけ
 		# 実測サマリー→AI解説→audio_workerキューを起動する。
 		if [ "${BATCH_COMMENTARY_ENABLED:-1}" = "1" ] && [ -x ./batch_commentary.sh ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
