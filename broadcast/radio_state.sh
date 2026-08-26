@@ -519,6 +519,28 @@ _radio_schedule_deferred_render_retry() {
 	printf '%s %s %s\n' "$retry_count" "$retry_delay" "$retry_at"
 }
 
+# コメント優先で合成を中断した場合の再試行予約。
+# これは「失敗」ではなく意図的な譲りなので、指数バックオフを進めずに
+# 短い固定間隔で再開する。実際の再開は _play_deferred_radio_queue_once の
+# コメント残数ゲートでさらに抑えられるため、短くても暴走しない。
+_radio_schedule_deferred_render_yield_retry() {
+	local target="$1" retry_file retry_count="" _old_retry_at="" retry_at retry_tmp
+	local retry_delay="${RADIO_RENDER_COMMENT_YIELD_RETRY_SEC:-20}"
+	case "$retry_delay" in '' | *[!0-9]*) retry_delay=20 ;; esac
+	[ "$retry_delay" -gt 0 ] || retry_delay=1
+	retry_file=$(_radio_render_retry_path "$target")
+	if [ -f "$retry_file" ]; then
+		read -r retry_count _old_retry_at <"$retry_file" || true
+	fi
+	case "$retry_count" in '' | *[!0-9]*) retry_count=0 ;; esac
+	retry_at=$(($(date +%s) + retry_delay))
+	retry_tmp="${retry_file}.tmp.${BASHPID:-$$}"
+	printf '%s %s\n' "$retry_count" "$retry_at" >"$retry_tmp" 2>/dev/null \
+		&& mv "$retry_tmp" "$retry_file" 2>/dev/null \
+		|| rm -f "$retry_tmp" 2>/dev/null
+	printf '%s %s %s\n' "$retry_count" "$retry_delay" "$retry_at"
+}
+
 _radio_clear_deferred_render_retry() {
 	rm -f "$(_radio_render_retry_path "$1")" 2>/dev/null || true
 }
@@ -589,10 +611,11 @@ _radio_start_deferred_render_if_needed() {
 			render_rc=$?
 			rm -f "$tmp_wav" 2>/dev/null || true
 			rm -rf "$tmp_bundle" 2>/dev/null || true
-			read -r retry_count retry_delay retry_at <<<"$(_radio_schedule_deferred_render_retry "$qf")"
 			if [ "$render_rc" -eq 75 ]; then
-				log "[RADIO:deferred] 優先音声へ順番を譲り、ラジオ合成を一時保留: $(basename "$qf") retry=${retry_count} in=${retry_delay}s"
+				read -r retry_count retry_delay retry_at <<<"$(_radio_schedule_deferred_render_yield_retry "$qf")"
+				log "[RADIO:deferred] コメント優先で合成を中断・保留（合成済みチャンクは保持）: $(basename "$qf") retry=${retry_count} in=${retry_delay}s"
 			else
+				read -r retry_count retry_delay retry_at <<<"$(_radio_schedule_deferred_render_retry "$qf")"
 				log "[RADIO:deferred] 事前音声生成を再試行予約: $(basename "$qf") rc=${render_rc} retry=${retry_count} in=${retry_delay}s"
 			fi
 		fi

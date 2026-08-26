@@ -529,6 +529,45 @@ _has_pending_comment_queue() {
 	ls tmp/.comment_queue/comment_*.txt >/dev/null 2>&1
 }
 
+# テキストの世代判定用ハッシュ。md5/md5sum が無い環境ではサイズで代用する
+# (再開の可否判定にしか使わないため、衝突耐性より可搬性を優先する)。
+_hash_content_file() {
+	local f="${1:-}"
+	[ -s "$f" ] || {
+		printf 'empty\n'
+		return 0
+	}
+	if command -v md5sum >/dev/null 2>&1; then
+		md5sum "$f" 2>/dev/null | awk '{print $1}'
+	elif command -v md5 >/dev/null 2>&1; then
+		md5 -q "$f" 2>/dev/null
+	else
+		printf 'size%s\n' "$(wc -c <"$f" 2>/dev/null | tr -d ' ')"
+	fi
+}
+
+# コメントの滞留を検出する。未再生 (.txt) だけでなく、既に取り出されて
+# 合成・再生中の (.playing) も「コメント消化中」として扱う。
+_comment_backlog_pending() {
+	local dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
+	ls "$dir"/comment_*.txt >/dev/null 2>&1 && return 0
+	ls "$dir"/comment_*.playing >/dev/null 2>&1 && return 0
+	return 1
+}
+
+# 背景ラジオ (ニュース等) の事前合成は、コメントが1件でも溜まっていたら
+# 合成の途中でも即座に打ち切って VOICEVOX を明け渡す (ユーザー指示 2026-08-26)。
+# 順番待ちで粘るとチャンク単位の ping-pong になり、コメント側の合成時間が
+# 実測で約2倍になっていた (2026-08-26 17:34-17:42 の audio_worker.log)。
+# 打ち切っても合成済みチャンクは捨てず、コメントが捌けたら続きから再開する。
+_radio_render_should_abort_for_comment() {
+	case "${RADIO_RENDER_COMMENT_ABORT:-1}" in
+	0 | false | no | off) return 1 ;;
+	esac
+	_voicevox_synth_is_background_render || return 1
+	_comment_backlog_pending
+}
+
 _radio_should_yield_to_comment() {
 	# deferred radio is launched from the comment player itself.
 	# If it keeps yielding to newly queued comments, the comment player blocks
@@ -1356,6 +1395,55 @@ _synthesize_chunk() {
 			VOICEVOX_MAX_CHARS=99999 \
 			./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	fi
+}
+
+# 子孫プロセスまで含めて終了させる。voicevox_tts.sh は
+# timeout -> env -> bash -> docich と多段になるため、直下の PID を
+# kill しても実際の合成リクエストが残る。
+_kill_process_tree() {
+	local pid="${1:-}" child
+	case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+	for child in $(pgrep -P "$pid" 2>/dev/null); do
+		_kill_process_tree "$child"
+	done
+	kill -TERM "$pid" 2>/dev/null || true
+}
+
+# 背景ラジオの事前合成をコメント滞留で即座に打ち切れるようにしたラッパ。
+# rc: 0=成功 / 1=失敗 / 9=コメント優先で中断
+_synthesize_chunk_yielding() {
+	local text="$1" output="$2"
+	case "${RADIO_RENDER_COMMENT_ABORT:-1}" in
+	0 | false | no | off)
+		_synthesize_chunk "$text" "$output"
+		return $?
+		;;
+	esac
+	if ! _voicevox_synth_is_background_render; then
+		_synthesize_chunk "$text" "$output"
+		return $?
+	fi
+	local poll="${RADIO_RENDER_COMMENT_ABORT_POLL_SEC:-1}"
+	case "$poll" in '' | *[!0-9]*) poll=1 ;; esac
+	[ "$poll" -gt 0 ] || poll=1
+	local synth_pid="" rc=0
+	_synthesize_chunk "$text" "$output" &
+	synth_pid=$!
+	while kill -0 "$synth_pid" 2>/dev/null; do
+		if _comment_backlog_pending; then
+			_kill_process_tree "$synth_pid"
+			wait "$synth_pid" 2>/dev/null
+			rm -f "$output" 2>/dev/null || true
+			return 9
+		fi
+		_touch_voicevox_synth_lock_heartbeat
+		sleep "$poll"
+	done
+	wait "$synth_pid"
+	rc=$?
+	[ "$rc" -eq 0 ] && [ -s "$output" ] && return 0
+	rm -f "$output" 2>/dev/null || true
+	return 1
 }
 
 _launch_stream_wav() {
@@ -2594,11 +2682,43 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 				fi
 				docich_cc_start_plan "${_pre_chunks[@]:0:PRE_MAX_CHUNKS}" || true
 				_stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
+				RENDER_PARTS_DIR=""
+				if [ "$RENDER_ONLY" = "true" ] && _voicevox_synth_is_background_render; then
+					# コメント優先で中断しても合成済みチャンクを捨てないため、
+					# ラジオ render のチャンクは render 出力に紐づく固定パスへ置く。
+					# 本文・チャンク数が変わったら世代不一致として作り直す。
+					_render_parts_key=$(basename "$RENDER_OUTPUT")
+					_render_parts_key="${_render_parts_key%%.*}"
+					case "$_render_parts_key" in
+					'' | *[!A-Za-z0-9_-]*) _render_parts_key="" ;;
+					esac
+					if [ -n "$_render_parts_key" ]; then
+						RENDER_PARTS_DIR="$QUEUE_DIR/render_${_render_parts_key}"
+						_stream_dir="$RENDER_PARTS_DIR"
+						_render_parts_stamp="$(_hash_content_file "$MY_CONTENT") ${PRE_MAX_CHUNKS}"
+						if [ -d "$RENDER_PARTS_DIR" ] \
+							&& [ "$(cat "$RENDER_PARTS_DIR/source_stamp" 2>/dev/null || true)" != "$_render_parts_stamp" ]; then
+							_log "部分レンダーの世代不一致 → 破棄して作り直し: $RENDER_PARTS_DIR"
+							rm -rf "$RENDER_PARTS_DIR" 2>/dev/null || true
+						fi
+						mkdir -p "$RENDER_PARTS_DIR" 2>/dev/null || true
+						printf '%s\n' "$_render_parts_stamp" >"$RENDER_PARTS_DIR/source_stamp" 2>/dev/null || true
+					fi
+				fi
 				mkdir -p "$_stream_dir"
 				PRE_SYNTH_PLAYLIST_FILE="${MY_CONTENT%.txt}_wav_playlist.txt"
 				: >"$PRE_SYNTH_PLAYLIST_FILE"
 				_pre_synth_failed=0
+				_pre_synth_yielded=0
+				_pre_chunk_rc=0
 				for ((_pc_i = 0; _pc_i < PRE_MAX_CHUNKS; _pc_i++)); do
+					# コメントが溜まっていたら、次のチャンクへ進まずここで打ち切る。
+					if _radio_render_should_abort_for_comment; then
+						_log "コメント優先: ラジオ事前合成を中断 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]} 開始前)"
+						_pre_synth_failed=1
+						_pre_synth_yielded=1
+						break
+					fi
 					# チャンク間で合成ロックを一時解放し、コメント（長め待ち）が
 					# 割り込めるようにする。ラジオ render は前景音声の完了を待ち、
 					# 同じプロセス・同じレンダー世代で残りのチャンクを継続する。
@@ -2607,6 +2727,7 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 						if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 							if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
 								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → 再生時フォールバック"
+								_pre_synth_yielded=1
 							else
 								_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
 							fi
@@ -2619,12 +2740,27 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 					# bundle.  Store locally synthesized chunks as absolute paths so the
 					# two playlist formats cannot be confused.
 					_pre_chunk_wav="$(pwd)/$_stream_dir/chunk_${_pc_i}.wav"
+					# 前回の中断までに合成できていたチャンクはそのまま使う
+					# （毎回チャンク0からやり直すと ready.wav に到達できない）。
+					if [ -n "${RENDER_PARTS_DIR:-}" ] && [ -s "$_pre_chunk_wav" ]; then
+						printf '%s\n' "$_pre_chunk_wav" >>"$PRE_SYNTH_PLAYLIST_FILE"
+						_log "事前合成を再利用 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]}): $_pre_chunk_wav"
+						continue
+					fi
 					_touch_voicevox_synth_lock_heartbeat
-					if _synthesize_chunk "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"; then
+					_synthesize_chunk_yielding "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"
+					_pre_chunk_rc=$?
+					if [ "$_pre_chunk_rc" -eq 0 ]; then
 						printf '%s\n' "$_pre_chunk_wav" >>"$PRE_SYNTH_PLAYLIST_FILE"
 						_log "事前合成完了 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]}): $_pre_chunk_wav"
+					elif [ "$_pre_chunk_rc" -eq 9 ]; then
+						_log "コメント優先: ラジオ事前合成を合成中に中断 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]})"
+						_pre_synth_failed=1
+						_pre_synth_yielded=1
+						break
 					else
 						_log "事前合成失敗 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]}) → 再生時にフォールバック"
+						rm -f "$_pre_chunk_wav" 2>/dev/null || true
 						_pre_synth_failed=1
 						break
 					fi
@@ -2634,7 +2770,12 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 					_log "全チャンク事前合成完了: $PRE_SYNTH_PLAYLIST_FILE"
 				else
 					rm -f "$PRE_SYNTH_PLAYLIST_FILE" 2>/dev/null
-					rm -rf "$_stream_dir" 2>/dev/null
+					if [ -n "${RENDER_PARTS_DIR:-}" ] && [ "$_stream_dir" = "${RENDER_PARTS_DIR:-}" ]; then
+						# 中断・失敗しても合成済みチャンクは残し、次回の再開に使う。
+						_log "合成済みチャンクを保持（次回再開用）: $RENDER_PARTS_DIR"
+					else
+						rm -rf "$_stream_dir" 2>/dev/null
+					fi
 					PRE_SYNTH_WAV=""
 					PRE_SYNTH_PLAYLIST_FILE=""
 				fi
@@ -2673,13 +2814,14 @@ if [ "$RENDER_ONLY" = "true" ]; then
 		fi
 		if [ -s "$RENDER_OUTPUT" ]; then
 			_log "render-only 完了: $RENDER_OUTPUT (bundle=${_render_bundle})"
+			[ -n "${RENDER_PARTS_DIR:-}" ] && rm -rf "$RENDER_PARTS_DIR" 2>/dev/null
 			exit 0
 		fi
 	fi
 	rm -f "$RENDER_OUTPUT" 2>/dev/null || true
 	rm -rf "$_render_bundle" 2>/dev/null || true
-	if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
-		_log "render-only 一時保留（優先音声待ち）"
+	if [ "${_pre_synth_yielded:-0}" -eq 1 ] || [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+		_log "render-only 一時保留（コメント優先）"
 		exit 75
 	fi
 	_log "render-only 失敗"

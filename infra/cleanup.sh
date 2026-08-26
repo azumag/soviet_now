@@ -36,6 +36,9 @@ cleanup_tmp_files() {
 	find tmp/.say_queue -maxdepth 1 -name '*_pre.wav' -mmin +60 -delete 2>/dev/null
 	# stream_*: EXIT trapでrm -rfするが、強制終了時に残骸が残る → 1時間以上古いものを削除
 	find tmp/.say_queue -maxdepth 1 -name 'stream_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+	# render_*: コメント優先中断のためにラジオ事前合成の途中経過を残す置き場。
+	# 通常は render 完了時に削除されるが、キュー自体が消えた場合の残骸を掃除する。
+	find tmp/.say_queue -maxdepth 1 -name 'render_*' -type d -mmin +180 -exec rm -rf {} + 2>/dev/null
 
 	# --- gameover_screens: 直近100枚を保持 ---
 	local gameover_count
