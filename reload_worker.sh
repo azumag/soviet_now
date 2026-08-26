@@ -13,10 +13,10 @@ cd "$SCRIPT_DIR"
 target="${1:-}"
 signal="${RELOAD_SIGNAL:-HUP}"
 
-workers=(chat_worker youtube_worker audio_worker radio_worker prediction_worker)
+workers=(chat_worker youtube_worker kick_worker audio_worker radio_worker prediction_worker)
 
 usage() {
-	echo "Usage: $0 {all|chat_worker|youtube_worker|audio_worker|radio_worker|prediction_worker}" >&2
+	echo "Usage: $0 {all|chat_worker|youtube_worker|kick_worker|audio_worker|radio_worker|prediction_worker}" >&2
 }
 
 reload_one() {
@@ -61,7 +61,7 @@ all)
 	done
 	exit "$rc"
 	;;
-chat_worker|youtube_worker|audio_worker|radio_worker|prediction_worker)
+chat_worker|youtube_worker|kick_worker|audio_worker|radio_worker|prediction_worker)
 	reload_one "$target"
 	;;
 *)

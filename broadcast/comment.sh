@@ -2595,6 +2595,13 @@ generate_comment_response() {
 		viewer_chat_dir="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}"
 		viewer_chat_label="YouTube"
 		;;
+	kick|Kick)
+		viewer_chat_source="kick"
+		viewer_chat_script="./kick_chat.sh"
+		viewer_chat_outfile="${KICK_CHAT_OUTFILE:-tmp/kick_comments.txt}"
+		viewer_chat_dir="${KICK_CHAT_DIR:-tmp/.kick_chat}"
+		viewer_chat_label="Kick"
+		;;
 	twitch|Twitch|"")
 		viewer_chat_source="twitch"
 		;;

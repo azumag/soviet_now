@@ -438,6 +438,7 @@ patterns = {
     "soren_loop": r"[/ ]soren_loop[.]sh([ \t]|$)",
     "chat_worker": r"[/ ]workers/chat_worker[.]sh([ \t]|$)",
     "youtube_worker": r"[/ ]workers/youtube_worker[.]sh([ \t]|$)",
+    "kick_worker": r"[/ ]workers/kick_worker[.]sh([ \t]|$)",
     "audio_worker": r"[/ ]workers/audio_worker[.]sh([ \t]|$)",
     "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
@@ -2360,6 +2361,26 @@ PY
 		youtube_worker_running=true
 		youtube_worker_pid=$(_activity_label "tmp/state/youtube_worker.pid" "heartbeat")
 	fi
+	local kick_worker_running=false kick_worker_pid="" kick_worker_enabled=false
+	case "${KICK_CHAT_ENABLED:-0}" in
+	1 | true | TRUE | yes | YES) kick_worker_enabled=true ;;
+	esac
+	if [[ -f tmp/state/kick_worker.pid ]]; then
+		kick_worker_pid=$(cat tmp/state/kick_worker.pid 2>/dev/null)
+		if [[ -n "$kick_worker_pid" ]] && _pid_exists "$kick_worker_pid"; then
+			kick_worker_running=true
+		fi
+	fi
+	if ! $kick_worker_running; then
+		kick_worker_pid=$(_find_process_pid '[/ ]workers/kick_worker[.]sh([[:space:]]|$)')
+		if [[ -n "$kick_worker_pid" ]] && _pid_exists "$kick_worker_pid"; then
+			kick_worker_running=true
+		fi
+	fi
+	if ! $kick_worker_running && [[ -f tmp/state/kick_worker.pid ]] && _recent_file_active "tmp/state/kick_worker.pid" 90; then
+		kick_worker_running=true
+		kick_worker_pid=$(_activity_label "tmp/state/kick_worker.pid" "heartbeat")
+	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
 		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
@@ -2395,9 +2416,10 @@ PY
 		radio_worker_pid=$(_activity_label "tmp/state/radio_worker.pid" "heartbeat")
 	fi
 	# durable pause markers (tmp/state/<name>.paused): worker stays alive but idle (park)
-	local chat_worker_paused=false youtube_worker_paused=false audio_worker_paused=false radio_worker_paused=false
+	local chat_worker_paused=false youtube_worker_paused=false kick_worker_paused=false audio_worker_paused=false radio_worker_paused=false
 	[[ -f tmp/state/chat_worker.paused ]] && chat_worker_paused=true
 	[[ -f tmp/state/youtube_worker.paused ]] && youtube_worker_paused=true
+	[[ -f tmp/state/kick_worker.paused ]] && kick_worker_paused=true
 	[[ -f tmp/state/audio_worker.paused ]] && audio_worker_paused=true
 	[[ -f tmp/state/radio_worker.paused ]] && radio_worker_paused=true
 	local prediction_worker_running=false prediction_worker_pid="" prediction_worker_paused=false
@@ -2551,6 +2573,7 @@ PY
 	local _worker_rows=(
 		"ChatW" "$chat_worker_running" "$chat_worker_pid"
 		"YouTubeW" "$youtube_worker_running" "$youtube_worker_pid"
+		"KickW" "$kick_worker_running" "$kick_worker_pid"
 		"AudioW" "$audio_worker_running" "$audio_worker_pid"
 		"RadioW" "$radio_worker_running" "$radio_worker_pid"
 		"PredW" "$prediction_worker_running" "$prediction_worker_pid"
@@ -2565,6 +2588,7 @@ PY
 		case "$_w_name" in
 		ChatW) _w_paused=$chat_worker_paused ;;
 		YouTubeW) _w_paused=$youtube_worker_paused ;;
+		KickW) _w_paused=$kick_worker_paused ;;
 		AudioW) _w_paused=$audio_worker_paused ;;
 		RadioW) _w_paused=$radio_worker_paused ;;
 		PredW) _w_paused=$prediction_worker_paused ;;
@@ -2579,6 +2603,8 @@ PY
 			fi
 		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
 			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
+		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}KICK_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
 		else
 			printf "    ${C_RED}○${C_RESET} %-11s ${C_DIM}STOPPED${C_RESET}\n" "$_w_name"
 		fi
@@ -2593,9 +2619,12 @@ PY
 	$radio_worker_paused && workers_expected=$((workers_expected - 1))
 	$youtube_worker_enabled && workers_expected=$((workers_expected + 1))
 	{ $youtube_worker_enabled && $youtube_worker_paused; } && workers_expected=$((workers_expected - 1))
+	$kick_worker_enabled && workers_expected=$((workers_expected + 1))
+	{ $kick_worker_enabled && $kick_worker_paused; } && workers_expected=$((workers_expected - 1))
 	$loop_running && workers_online=$((workers_online + 1))
 	{ $chat_worker_running && ! $chat_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $youtube_worker_running && ! $youtube_worker_paused; } && workers_online=$((workers_online + 1))
+	{ $kick_worker_running && ! $kick_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $audio_worker_running && ! $audio_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $radio_worker_running && ! $radio_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $prediction_worker_running && ! $prediction_worker_paused; } && workers_online=$((workers_online + 1))

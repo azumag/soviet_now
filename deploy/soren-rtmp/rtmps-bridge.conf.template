@@ -1,0 +1,30 @@
+; Soren RTMPS egress bridge (stunnel client mode).
+;
+; nginx-rtmp can only `push` plain RTMP. Kick (and any other Amazon IVS based
+; ingest) accepts RTMPS on 443 only and rejects plain RTMP on 1935, so the
+; relay pushes to a loopback port that this tunnel wraps in TLS.
+;
+; This file holds NO credentials. The destination stream key stays in
+; /etc/soren-rtmp/push.conf and travels inside the tunnelled RTMP session.
+; install_rtmps_bridge.sh renders it; edit the rendered copy in
+; /etc/soren-rtmp/ (or re-run the installer), never this template.
+
+foreground = yes
+syslog = no
+output = /dev/stderr
+debug = notice
+pid =
+
+[__BRIDGE_NAME__]
+client = yes
+accept = 127.0.0.1:__LOCAL_PORT__
+connect = __REMOTE_HOST__:__REMOTE_PORT__
+sni = __REMOTE_HOST__
+checkHost = __REMOTE_HOST__
+verifyChain = yes
+CApath = /etc/ssl/certs
+; A live publish is one long TCP session; never let the tunnel time it out.
+TIMEOUTclose = 0
+TIMEOUTidle = 86400
+socket = l:TCP_NODELAY=1
+socket = r:TCP_NODELAY=1

@@ -41,6 +41,7 @@ declare -a WORKER_NAMES=(
 	"improve_daemon"
 	"chat_worker"
 	"youtube_worker"
+	"kick_worker"
 	"audio_worker"
 	"deadline_monitor"
 	"radio_worker"
@@ -51,6 +52,7 @@ declare -a WORKER_CMDS=(
 	"./improve_daemon.sh"
 	"./workers/chat_worker.sh ${TWITCH_CHANNEL:-azumagbanjo}"
 	"./workers/youtube_worker.sh"
+	"./workers/kick_worker.sh ${KICK_CHANNEL:-dociai}"
 	"./workers/audio_worker.sh"
 	"./workers/deadline_monitor.sh"
 	"./workers/radio_worker.sh"
@@ -207,6 +209,7 @@ _pidfile_for_worker() {
 	soren_loop) echo "tmp/.soren_loop.lock/pid" ;;
 	chat_worker) echo "tmp/state/chat_worker.pid" ;;
 	youtube_worker) echo "tmp/state/youtube_worker.pid" ;;
+	kick_worker) echo "tmp/state/kick_worker.pid" ;;
 	audio_worker) echo "tmp/state/audio_worker.pid" ;;
 	deadline_monitor) echo "tmp/state/deadline_monitor.pid" ;;
 	radio_worker) echo "tmp/state/radio_worker.pid" ;;
@@ -227,6 +230,7 @@ _pattern_for_worker() {
 	soren_loop) echo '[/ ]soren_loop[.]sh([[:space:]]|$)' ;;
 	chat_worker) echo '[/ ]workers/chat_worker[.]sh([[:space:]]|$)' ;;
 	youtube_worker) echo '[/ ]workers/youtube_worker[.]sh([[:space:]]|$)' ;;
+	kick_worker) echo '[/ ]workers/kick_worker[.]sh([[:space:]]|$)' ;;
 	audio_worker) echo '[/ ]workers/audio_worker[.]sh([[:space:]]|$)' ;;
 	deadline_monitor) echo '[/ ]workers/deadline_monitor[.]sh([[:space:]]|$)|[/ ]deadline_misplacement_monitor[.]py([[:space:]]|$)' ;;
 	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
@@ -409,6 +413,7 @@ patterns = {
     "soren_loop": r"[/ ]soren_loop[.]sh([ \t]|$)",
     "chat_worker": r"[/ ]workers/chat_worker[.]sh([ \t]|$)",
     "youtube_worker": r"[/ ]workers/youtube_worker[.]sh([ \t]|$)",
+    "kick_worker": r"[/ ]workers/kick_worker[.]sh([ \t]|$)",
     "audio_worker": r"[/ ]workers/audio_worker[.]sh([ \t]|$)",
     "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
@@ -571,6 +576,12 @@ _start_worker() {
 		WORKER_LAST_START[$idx]=$(date +%s)
 		return 0
 	fi
+	if [ "$name" = "kick_worker" ] && [ "${KICK_CHAT_ENABLED:-0}" != "1" ]; then
+		_log "スキップ: ${name} disabled"
+		WORKER_PIDS[$idx]=""
+		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
 	if [ "$name" = "stream_noon_audit" ] && [ "${STREAM_NOON_AUDIT_ENABLED:-1}" != "1" ]; then
 		_log "スキップ: ${name} disabled"
 		WORKER_PIDS[$idx]=""
@@ -726,6 +737,9 @@ while true; do
 			continue
 		fi
 		if [ "$_w_name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+			continue
+		fi
+		if [ "$_w_name" = "kick_worker" ] && [ "${KICK_CHAT_ENABLED:-0}" != "1" ]; then
 			continue
 		fi
 		if [ "$_w_name" = "stream_noon_audit" ] && [ "${STREAM_NOON_AUDIT_ENABLED:-1}" != "1" ]; then

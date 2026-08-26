@@ -883,7 +883,7 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$STRATEGY_HASH_P
 	"$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" \
 	"$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" \
 	"$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_SENT_DIR" \
-	"tmp/.twitch_chat" "tmp/.youtube_chat" "tmp/.viewer_chat"
+	"tmp/.twitch_chat" "tmp/.youtube_chat" "tmp/.kick_chat" "tmp/.viewer_chat"
 
 if [ -f "tmp/advice.md" ] && [ ! -f "$MAIN_STRATEGY_ADVICE_FILE" ]; then
 	mv "tmp/advice.md" "$MAIN_STRATEGY_ADVICE_FILE" 2>/dev/null || cp "tmp/advice.md" "$MAIN_STRATEGY_ADVICE_FILE" 2>/dev/null || true

@@ -303,6 +303,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - 各モデルの出力は `lib/model_output_guard.py` で thinking、analysis、tool call/result、Web検索進捗を除去し、`lib/radio_parser.py` が明示的なオンエア本文だけを抽出する。本文として検証できない候補は成功扱いにせず、`ai_generate_list` が次モデルへ進む。
 - ニュース見出しや試合終了後のスコア進捗などの自動チャット投稿は `lib/outbound_queue.sh` の outbound queue を経由して Twitch へ送る。Twitch は `TWITCH_CLIENT_ID` / `TWITCH_BROADCASTER_ID` がある場合 `chat/messages` API を優先し、失敗時は `tmp/debug/outbound_chat_twitch.log` と `show_status.sh` の `OutboundErr` に残して pending へ戻す。Twitch OAuth が無効な場合は `tmp/.outbound_chat_queue/twitch_backoff_until` / `twitch_backoff_count` で指数的に再送間隔を伸ばし、同じ古い投稿でチャット worker を毎分詰まらせない。成功したら Twitch backoff state は消える。`YOUTUBE_CHAT_SEND_ENABLED=1` の時だけ YouTube へミラーする。YouTube の cached `live_chat_id` が 403 を返した場合や `YOUTUBE_VIDEO_ID` の配信が終了している場合は stale とみなし、保存済み/設定済みの channel ID から現在ライブ中の video ID を探して `activeLiveChatId` を再取得する。send 経路では OAuth access token を取得してから live chat ID を解決し、API key の `videos.list` / `search.list` が 403 の場合でも bearer 認証で送信先解決を試す。poll 経路も API key の `liveChatMessages.list` が 403 の時は OAuth bearer で live chat ID を再解決して読み取りを再試行し、API quota / 403 が続く時は `tmp/.youtube_chat/web_live_chat_continuation` を使う YouTube web live chat fallback で読み取りだけ継続する。再解決も web fallback も使えない場合は `tmp/.youtube_chat/api_backoff_until` で短期 backoff し、`show_status.sh` の YouTube 行を `DEGRADED` にして、送信停止を「接続中」に見せない。outbound mirror も同じ backoff を読んで、期限中は YouTube 送信だけをスキップするため、Twitch 側の自動投稿成功を YouTube quota 失敗ログで汚さない。
 - YouTube 送信 mirror は curl の stderr と API response の両方を `tmp/.youtube_chat/last_send_error.txt` に残す。403 の時は stale `live_chat_id` / page token を破棄し、channel live discovery で一度だけ再解決して再送する。これにより YouTube 側だけ止まっている状態を Twitch outbound 成功と混同しない。
+- Kick のコメントは `kick_chat_daemon.mjs` が Kick web クライアントと同じ公開 Pusher チャンネル (`chatrooms.<chatroom_id>.v2`) を**読み取り専用・認証なし**で購読し、`tmp/.kick_chat/raw.log` へ `id=<msg-id>\t<user>: <本文>` 形式で追記する。`chatroom_id` は `KICK_CHATROOM_ID` 未設定なら `https://kick.com/api/v2/channels/<slug>` から解決する。`kick_chat.sh fetch` / `ack-batch` の契約は `twitch_chat.sh` と同じで、`workers/kick_worker.sh` が daemon の死活監視と `generate_comment_response kick` を回す。有効化は `KICK_CHAT_ENABLED=1`、対象は `KICK_CHANNEL`（既定 `dociai`）。Kick のエモートは `[emote:ID:NAME]` で届くので `NAME` だけに正規化して Twitch と同じ見え方に揃える。自チャンネル (`KICK_IGNORE_AUTHORS`、既定 `dociai DoCiAI`) の投稿は outbound のエコーなので取り込まない。Kick への**送信**は別途 Kick 側の認証が要るため未対応で、返答は Twitch / YouTube にだけ出る
 - `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
 - 便利スクリプト [`enqueue_audio_trigger.sh`](enqueue_audio_trigger.sh) で `./enqueue_audio_trigger.sh news` のようにキュー投入できる
 - メリケンAIを手動固定したいときは [`manual_meriken_mode.sh`](manual_meriken_mode.sh) を使う。`./manual_meriken_mode.sh on` で `soren91` を維持し、`off` で通常運用へ戻す
@@ -589,6 +590,28 @@ Linuxのops overlayは既存の `show_status.sh` がZshスクリプトである�
 ```
 
 配信先は `/etc/soren-rtmp/push.conf` に1行1つの `push ...;` として置けるので、同じH.264/AACを再エンコードせず複数サービスへ送れる。このファイルは `root:soren-relay`、0640とし、リポジトリ、`.env`、FFmpegのargv/statusには配信キーを入れない。空のままならローカル疎通試験専用relayとして動作する。配信先追加後は `sudo nginx -t -c /etc/soren-rtmp/nginx.conf` 相当の検証を通してから `soren-rtmp-relay.service` をreloadする。
+
+### Kick など RTMPS のみ受け付ける配信先 (`install_rtmps_bridge.sh`)
+
+nginx-rtmp の `push` は平文RTMPしか話せない。Kick の ingest (Amazon IVS) は **443 の RTMPS のみ受理し、1935 の平文RTMPは拒否する**（2026-08-26 に ffmpeg で実測。平文は `Error opening output ... Input/output error`、RTMPS は成功）。そこで relay からはループバックへ push し、stunnel が TLS を被せて実際の ingest へ中継する。
+
+```
+FFmpeg → 127.0.0.1:1935 (nginx-rtmp)
+           ├─ push rtmp://<twitch ingest>/app/<KEY>      (平文RTMPで可)
+           ├─ push rtmp://<youtube ingest>/live2/<KEY>   (平文RTMPで可)
+           └─ push rtmp://127.0.0.1:19351/app/<KEY>      → stunnel → RTMPS 443
+```
+
+配信キーは従来どおり `/etc/soren-rtmp/push.conf`（`root:soren-relay` 0640）だけに置く。ブリッジ設定 `/etc/soren-rtmp/rtmps-bridge.conf` にはホスト名とポートしか入らず、キーはトンネルの中を通るだけなので、プロセスのargvにも `.env` にも出ない。ingest ホスト名はチャンネル固有なのでリポジトリには置かず、インストール時に `--host` で渡す。
+
+```bash
+./install_rtmps_bridge.sh --install --host <ingest-host> --local-port 19351 --confirm-package-install
+./install_rtmps_bridge.sh --status
+sudoedit /etc/soren-rtmp/push.conf   # push rtmp://127.0.0.1:19351/app/<STREAM_KEY>; を追記
+sudo nginx -t -c /etc/soren-rtmp/nginx.conf && sudo systemctl reload soren-rtmp-relay.service
+```
+
+**reload だけでは新しい push 先は有効にならない。** nginx は reload 時に旧workerが既存の publish 接続を持ち続けるため、追加した `push` は次の publish セッションから効く。反映には publisher（`direct_stream`）の再起動が必要で、その間 Twitch/YouTube も数秒途切れる。
 
 relayへの実配信スモーク試験では、OBSとFFmpegを同時に動かすと短時間でもdropが発生した。したがって本番切替では、relayとpush先を先に検証した後、OBS配信を停止してからFFmpeg workerを起動する。OBSと直接配信を同一VM上で並行稼働させる方式は、同時配信の手段にはしない。同時配信はrelayの複数 `push` で1回のエンコードを共有する。
 
