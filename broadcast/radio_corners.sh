@@ -1699,6 +1699,22 @@ _filter_unread_jiji_blocks() {
 	rm -f "$jiji_tmp"
 }
 
+# jiji 既読台帳への追記。自主探索モードでも「何を読んだか」を残すために使う。
+_append_jiji_read_title() {
+	local title="$1" title_key
+	[ -n "$title" ] || return 1
+	title_key=$(_news_title_key "$title")
+	[ -n "$title_key" ] || return 1
+	touch "$TMP_HISTORY_DIR/.past_jiji_titles.txt" "$TMP_HISTORY_DIR/.past_jiji_keys.txt" 2>/dev/null || true
+	echo "$title" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+	echo "$title_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+	tail -100 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" &&
+		mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+	tail -200 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" &&
+		mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+	return 0
+}
+
 _run_opencode_jiji_research_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file raw_text permission cleaned
@@ -1799,6 +1815,18 @@ start_radio_corner_jiji() {
 
 	if [ "$jiji_self_search" = true ]; then
 		headline="最近の注目ニュースやトレンドを自分で探して1つ選んでください"
+		# 自主探索は題材を自由に選べるため、コーナー名へ丸めた重複回避メモだけでは
+		# 同じ事件を何度でも選び直せてしまう。実際に扱った話題をそのまま渡す。
+		local jiji_recent_topics=""
+		jiji_recent_topics=$(_recent_news_corner_topics_block)
+		if [ -n "$jiji_recent_topics" ]; then
+			past_topics="${past_topics}
+
+【この番組で既に扱ったニュース話題（絶対に再度選ばないこと）】
+以下は直近のニュース／時事コーナーで実際に読み上げた話題です。同じ出来事は、
+媒体や見出しや切り口を変えたとしても再度取り上げてはいけません。
+${jiji_recent_topics}"
+		fi
 	fi
 
 	# 3. AIにWeb検索で調査させる（bash許可）
@@ -1858,6 +1886,27 @@ start_radio_corner_jiji() {
 	envsubst <"$ELOOP_LIB_DIR/prompts/radio_jiji.md" >"$prompt_file"
 	unset persona_block output_rules _rc_time past_topics grounding_context
 
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji" --selected-news "$headline"
+	local jiji_result_dir="" jiji_rc=0
+	if [ "$jiji_self_search" = true ]; then
+		jiji_result_dir=$(mktemp -d /tmp/eloop_jiji_self_XXXXXXXX)
+		export RADIO_GEN_RESULT_DIR="$jiji_result_dir"
+	fi
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji" --selected-news "$headline" || jiji_rc=$?
+	[ -n "$jiji_result_dir" ] && unset RADIO_GEN_RESULT_DIR
+
+	if [ "$jiji_rc" -eq 0 ] && [ -n "$jiji_result_dir" ]; then
+		local jiji_self_title=""
+		jiji_self_title=$(head -n 1 "$jiji_result_dir/selected_news.txt" 2>/dev/null | tr -d '\r')
+		if [ -z "$jiji_self_title" ]; then
+			jiji_self_title=$(head -n 1 "$jiji_result_dir/summary.txt" 2>/dev/null | tr -d '\r')
+		fi
+		if [ -n "$jiji_self_title" ] && _append_jiji_read_title "$jiji_self_title"; then
+			log "[JIJI] 自主探索の既読記録: ${jiji_self_title}"
+		else
+			log "[JIJI] 自主探索の既読記録に失敗（見出し・要約とも取得できず）"
+		fi
+	fi
+	[ -n "$jiji_result_dir" ] && rm -rf "$jiji_result_dir" 2>/dev/null
 	unset headline
+	return "$jiji_rc"
 }
