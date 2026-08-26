@@ -443,6 +443,7 @@ patterns = {
     "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
     "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
+    "poll_worker": r"[/ ]workers/poll_worker[.]sh([ \t]|$)",
     "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
 }
 rows = []
@@ -2438,6 +2439,22 @@ PY
 			prediction_worker_running=true
 		fi
 	fi
+	local poll_worker_running=false poll_worker_pid="" poll_worker_paused=false
+	if [[ -f tmp/state/poll_worker.paused ]]; then
+		poll_worker_paused=true
+	fi
+	if [[ -f tmp/state/poll_worker.pid ]]; then
+		poll_worker_pid=$(cat tmp/state/poll_worker.pid 2>/dev/null)
+		if [[ -n "$poll_worker_pid" ]] && _pid_exists "$poll_worker_pid"; then
+			poll_worker_running=true
+		fi
+	fi
+	if ! $poll_worker_running; then
+		poll_worker_pid=$(_find_process_pid '[/ ]workers/poll_worker[.]sh([[:space:]]|$)')
+		if [[ -n "$poll_worker_pid" ]] && _pid_exists "$poll_worker_pid"; then
+			poll_worker_running=true
+		fi
+	fi
 	local improve_daemon_running=false improve_daemon_pid=""
 	if [[ -f tmp/state/improve_daemon.pid ]]; then
 		improve_daemon_pid=$(cat tmp/state/improve_daemon.pid 2>/dev/null)
@@ -2577,6 +2594,7 @@ PY
 		"AudioW" "$audio_worker_running" "$audio_worker_pid"
 		"RadioW" "$radio_worker_running" "$radio_worker_pid"
 		"PredW" "$prediction_worker_running" "$prediction_worker_pid"
+		"PollW" "$poll_worker_running" "$poll_worker_pid"
 		"ImproveD" "$improve_daemon_running" "$improve_daemon_pid"
 	)
 	local _w_i _w_name _w_running _w_pid
@@ -2592,6 +2610,7 @@ PY
 		AudioW) _w_paused=$audio_worker_paused ;;
 		RadioW) _w_paused=$radio_worker_paused ;;
 		PredW) _w_paused=$prediction_worker_paused ;;
+		PollW) _w_paused=$poll_worker_paused ;;
 		esac
 		if [[ "$_w_paused" == "true" ]]; then
 			printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}idle — rm tmp/state/*.paused to resume${C_RESET}\n" "$_w_name"
@@ -2611,9 +2630,10 @@ PY
 	done
 
 	# ワーカー稼働メーター
-	local workers_online=0 workers_total=6 workers_expected=6
+	local workers_online=0 workers_total=7 workers_expected=7
 	# paused workers (tmp/state/<name>.paused) are intentionally idle → drop from expected & online
 	$prediction_worker_paused && workers_expected=$((workers_expected - 1))
+	$poll_worker_paused && workers_expected=$((workers_expected - 1))
 	$chat_worker_paused && workers_expected=$((workers_expected - 1))
 	$audio_worker_paused && workers_expected=$((workers_expected - 1))
 	$radio_worker_paused && workers_expected=$((workers_expected - 1))
@@ -2628,6 +2648,7 @@ PY
 	{ $audio_worker_running && ! $audio_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $radio_worker_running && ! $radio_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $prediction_worker_running && ! $prediction_worker_paused; } && workers_online=$((workers_online + 1))
+	{ $poll_worker_running && ! $poll_worker_paused; } && workers_online=$((workers_online + 1))
 	$improve_daemon_running && workers_online=$((workers_online + 1))
 	local workers_bar
 	workers_bar=$(_bar_meter "$workers_online" "$workers_expected" 12)
