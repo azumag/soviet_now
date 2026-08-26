@@ -20,9 +20,10 @@ import {
 } from './lineage.mjs';
 import {
   installDirectGameStage,
-  installDirectOverlay,
+  installInlineDirectBroadcastOverlay,
   loadDirectOverlayConfig,
 } from '../lib/direct_overlay.mjs';
+import { buildDirectBroadcastOverlayState } from '../lib/direct_broadcast_overlay.mjs';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
@@ -92,6 +93,7 @@ let activeIsSharedMode = false;
 let activeOwnsContext = false;
 let shutdownTimer = null;
 let cleanupPromise = null;
+let broadcastStateTimer = null;
 const rankingCommentQueuedGames = new Set();
 const rankingCommentInFlightGames = new Set();
 
@@ -124,6 +126,19 @@ async function setNormalGameLifecycle(browser, state) {
       }
     }
   }
+}
+
+async function startInlineBroadcastState(page) {
+  if (!DIRECT_OVERLAY_CONFIG.broadcast) return;
+  const publish = async () => {
+    const state = buildDirectBroadcastOverlayState(DIRECT_OVERLAY_CONFIG.broadcast);
+    await page.evaluate((nextState) => { globalThis.__sorenBroadcastState = nextState; }, state);
+  };
+  await publish();
+  broadcastStateTimer = setInterval(() => {
+    if (!page.isClosed()) publish().catch(() => {});
+  }, 1000);
+  broadcastStateTimer.unref?.();
 }
 
 async function fullscreenBrowserWindow(page) {
@@ -270,6 +285,10 @@ async function cleanupRuntime(reason = 'normal') {
     if (shutdownTimer) {
       clearTimeout(shutdownTimer);
       shutdownTimer = null;
+    }
+    if (broadcastStateTimer) {
+      clearInterval(broadcastStateTimer);
+      broadcastStateTimer = null;
     }
 
     const browser = activeBrowser;
@@ -950,7 +969,7 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
       await retryPage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
     } catch {}
     await installAudioGainLimiter(retryPage, audioGainMultiplier);
-    await grantSpeakerSelection(retryPage, gameUrl);
+    if (audioOutputLabel) await grantSpeakerSelection(retryPage, gameUrl);
     await installAudioOutputRouter(retryPage, audioOutputLabel);
     await retryPage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
@@ -975,7 +994,9 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
 async function main() {
   console.log('[main] 同志AI 起動...');
   const audioGainMultiplier = loadAudioGainMultiplier();
-  const audioOutputLabel = loadChromeAudioOutputLabel();
+  const audioOutputLabel = process.platform === 'linux' && process.env.SOREN_STREAM_BACKEND === 'ffmpeg'
+    ? ''
+    : loadChromeAudioOutputLabel();
   console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
   console.log(`[main] soren91 Chrome audio output label=${audioOutputLabel}`);
   try {
@@ -1082,7 +1103,7 @@ async function main() {
     }
     activeGamePage = gamePage;
     await installAudioGainLimiter(gamePage, audioGainMultiplier);
-    await grantSpeakerSelection(gamePage, gameUrl);
+    if (audioOutputLabel) await grantSpeakerSelection(gamePage, gameUrl);
     await installAudioOutputRouter(gamePage, audioOutputLabel);
     await gamePage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
@@ -1139,7 +1160,8 @@ async function main() {
       drawBufferWidth: VIEWPORT_WIDTH,
       drawBufferHeight: VIEWPORT_HEIGHT,
     });
-    await installDirectOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+    await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+    await startInlineBroadcastState(gamePage);
     console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
 
     // タイトル画面: 名前入力 + PLAY

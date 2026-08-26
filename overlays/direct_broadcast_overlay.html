@@ -703,6 +703,11 @@ html[data-improve-active="1"] .feed-panel.panel-i {
   }
   async function refresh() {
     try {
+      if (window.parent !== window && window.parent?.__sorenBroadcastState) {
+        state = window.parent.__sorenBroadcastState;
+        render();
+        return;
+      }
       const response = await fetch(STATE_ROUTE, { cache: 'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       state = await response.json();
