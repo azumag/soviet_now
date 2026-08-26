@@ -51,6 +51,13 @@ case "$out" in *"メイン画面はメリケンAI"*) ok "soren91 モードが反
 case "$out" in *"記録済み88試合"*) ok "A/B の記録試合数が入る" ;; *) not_ok "A/B 試合数欠落: $out" ;; esac
 case "$out" in *aaaa*|*bbbb*) not_ok "戦略 hash がプロンプトへ漏れている: $out" ;; *) ok "戦略 hash は出力しない" ;; esac
 
+# --- 2b. 停止中のチャネルポイント予想は「停止中」と明示され、稼働中は行自体が出ない ---
+case "$out" in *"チャネルポイント予想"*) not_ok "予想が動いているのに停止中の行が出た: $out" ;; *) ok "予想稼働中は行を出さない" ;; esac
+: >"$TMP/tmp/state/prediction_worker.paused"
+out=$(_build_comment_ops_context main)
+case "$out" in *"チャネルポイント予想(サナエトークン): いまは停止中"*) ok "予想停止中は明示する" ;; *) not_ok "予想停止中の文言: $out" ;; esac
+rm -f "$TMP/tmp/state/prediction_worker.paused"
+
 # --- 3. ops_brief.md の見出しが「直近の裏側の改修」として入り、件数上限で切られる ---
 cat >"$TMP/prompts/ops_brief.md" <<'BRIEF'
 # 自動生成 (このコメント行は読み飛ばす)
@@ -80,7 +87,7 @@ len=$(printf '%s' "$out" | python3 -c 'import sys;print(len(sys.stdin.read()))')
 [ "$len" -le 901 ] && ok "既定上限 900 以内 (len=$len)" || not_ok "既定上限を超えた (len=$len)"
 
 # --- 5. テンプレート側に ${comment_ops_context} が埋め込まれている ---
-for t in comment_template.md comment_response.md comment_response_default.md comment_response_game.md comment_response_chitchat.md; do
+for t in comment_template.md comment_response.md comment_response_default.md comment_response_game.md comment_response_chitchat.md comment_response_raid.md; do
 	if grep -q '\${comment_ops_context}' "$ROOT/prompts/$t"; then
 		ok "prompts/$t に comment_ops_context がある"
 	else
@@ -92,6 +99,20 @@ done
 subst_lines=$(grep -c 'envsubst .*\${comment_ops_context}' "$SRC")
 [ "$subst_lines" -eq 3 ] && ok "envsubst 3箇所すべてに登録済み" || not_ok "envsubst の登録数が $subst_lines (期待 3)"
 grep -q 'game_state_context comment_ops_context ' "$SRC" && ok "export 済み" || not_ok "comment_ops_context が export されていない"
+
+# --- 7. レイドの自配信紹介がテンプレ直書きではなくメモ由来になっている ---
+raid="$ROOT/prompts/comment_response_raid.md"
+grep -q '\${_comment_channel_intro}' "$raid" && ok "レイドテンプレに紹介メモがある" || not_ok "レイドテンプレに紹介メモが無い"
+grep -q "we stream various content from speedruns" "$raid" && not_ok "レイドテンプレに古い自配信紹介の直書きが残っている" || ok "古い自配信紹介の直書きが消えている"
+grep -q "only plays the sequel" "$raid" && not_ok "レイドテンプレに古いメリケンAI条件の直書きが残っている" || ok "古いメリケンAI条件の直書きが消えている"
+grep -q "戦略改善モードの時だけ続編" "$ROOT/prompts/comment_template.md" && not_ok "comment_template に古いメリケンAI条件が残っている" || ok "comment_template の古いメリケンAI条件が消えている"
+for f in comment_channel_intro_main.md comment_channel_intro_soren91.md; do
+	if grep -q "Twitch・YouTube・Kick" "$ROOT/prompts/$f"; then
+		ok "prompts/$f が3プラットフォーム同時配信を伝える"
+	else
+		not_ok "prompts/$f に同時配信の記載が無い"
+	fi
+done
 
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"
 exit "$FAIL"

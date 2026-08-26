@@ -1111,6 +1111,7 @@ _build_comment_ops_context() {
 	local host_mode="${1:-main}"
 	local brief_file="${COMMENT_OPS_BRIEF_FILE:-$ELOOP_LIB_DIR/prompts/ops_brief.md}"
 	local ab_state_file="${AB_STATE_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/ab_state.json}"
+	local prediction_paused_file="${PREDICTION_WORKER_PAUSED_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/prediction_worker.paused}"
 	python3 - \
 		"${CODEX_WORK_OVERLAY_STATE_FILE:-}" \
 		"${IMPROVE_STATE_FILE:-}" \
@@ -1118,7 +1119,8 @@ _build_comment_ops_context() {
 		"$brief_file" \
 		"$host_mode" \
 		"${COMMENT_OPS_CONTEXT_MAX_CHARS:-900}" \
-		"${COMMENT_OPS_BRIEF_ITEMS:-3}" <<'PY'
+		"${COMMENT_OPS_BRIEF_ITEMS:-3}" \
+		"$prediction_paused_file" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1133,6 +1135,7 @@ def as_int(raw, fallback):
 
 max_chars = max(200, as_int(sys.argv[6], 900))
 brief_items = max(0, as_int(sys.argv[7], 3))
+prediction_paused_file = sys.argv[8] if len(sys.argv) > 8 else ""
 
 def load_json(path):
     if not path:
@@ -1172,6 +1175,11 @@ ab = load_json(ab_file)
 ab_games = ab.get("games_recorded")
 if isinstance(ab_games, int) and ab_games >= 0:
     lines.append(f"- 戦略のA/B比較を実施中: 2つの戦略を1試合ずつ交互に走らせて比較している(記録済み{ab_games}試合)")
+
+# チャネルポイント予想は webui から止められる。止まっているのに
+# 「トークンを賭けて参加できます」と案内すると視聴者が困るので、停止時だけ明示する。
+if prediction_paused_file and Path(prediction_paused_file).exists():
+    lines.append("- チャネルポイント予想(サナエトークン): いまは停止中。動いている前提で案内しない")
 
 brief = []
 try:
