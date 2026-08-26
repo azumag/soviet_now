@@ -119,8 +119,38 @@ async function setNormalGameLifecycle(browser, state) {
       if (!/^https?:\/\/(localhost|127\.0\.0\.1):8080\b/.test(page.url())) continue;
       const session = await context.newCDPSession(page);
       try {
-        await session.send('Page.setWebLifecycleState', { state });
-        console.log(`[main] Normal sorengame lifecycle=${state}`);
+        if (state === 'frozen') {
+          await page.evaluate(() => {
+            const canvas = document.querySelector('canvas');
+            if (canvas && !globalThis.__soren91NormalCanvasStyle) {
+              globalThis.__soren91NormalCanvasStyle = {
+                visibility: canvas.style.visibility,
+                pointerEvents: canvas.style.pointerEvents,
+              };
+            }
+            if (canvas) {
+              canvas.style.visibility = 'hidden';
+              canvas.style.pointerEvents = 'none';
+            }
+          });
+          const rate = Math.max(1, positiveIntEnv('SOREN91_NORMAL_GAME_CPU_THROTTLE', 8));
+          await session.send('Emulation.setCPUThrottlingRate', { rate });
+          await session.send('Page.setWebLifecycleState', { state: 'frozen' });
+          console.log(`[main] Normal sorengame lifecycle=frozen canvas=hidden cpuThrottle=${rate}x`);
+        } else {
+          await session.send('Page.setWebLifecycleState', { state: 'active' });
+          await session.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+          await page.evaluate(() => {
+            const canvas = document.querySelector('canvas');
+            const saved = globalThis.__soren91NormalCanvasStyle;
+            if (canvas && saved) {
+              canvas.style.visibility = saved.visibility;
+              canvas.style.pointerEvents = saved.pointerEvents;
+            }
+            delete globalThis.__soren91NormalCanvasStyle;
+          });
+          console.log('[main] Normal sorengame lifecycle=active canvas=restored cpuThrottle=1x');
+        }
       } finally {
         await session.detach().catch(() => {});
       }

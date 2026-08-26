@@ -1483,16 +1483,49 @@ with open('$SOREN91_SESSION_FILE', 'w') as f:
 	echo "$end_game"
 }
 
-# 戦略改善から復帰した直後 (soren91_stop の unmute 後) に soviet_local を
-# 再起動する。改善 PAUSE 中に suspend した Unity AudioContext は、復帰時の
-# in-page resume() が Chrome の autoplay/visibility gating で安定して効かず
-# (実測: unmute 後も state=suspended のまま → ゲーム音が BlackHole に乗らない)。
-# sink-at-construction により bridge を作り直せば AudioContext は生成時点で
-# running かつ BlackHole バインドになる (実証済) ため、復帰のたびに確実に
-# 音声を回復させる。ユーザー指示 (#90 関連) による恒久対応。
+# Soren91 から復帰した直後は、まず既存ページの trusted gesture + resume
+# watchdog が AudioContext を running + BlackHole へ戻すのを待つ。復帰を
+# 実測できた場合は枠ごとの再読込を避け、失敗時だけ従来どおり再起動する。
 # 引数 $1=1 のとき (=直前まで改善mute中だった) のみ実行。
 _soren91_restart_bridge_after_improve() {
 	[ "${1:-0}" = "1" ] || return 0
+	local grace="${SOREN91_AUDIO_RESUME_GRACE_SEC:-15}"
+	case "$grace" in ''|*[!0-9]*) grace=15 ;; esac
+	local health_file="${BRIDGE_AUDIO_HEALTH_FILE:-$ELOOP_LIB_DIR/tmp/state/local_audio_health.json}"
+	local unmute_epoch="${SOREN91_UNMUTE_EPOCH:-$(date +%s)}"
+	local waited=0
+	while [ "$waited" -lt "$grace" ]; do
+		if python3 - "$health_file" "$unmute_epoch" <<'PY' 2>/dev/null
+import json, sys
+from datetime import datetime
+
+path, minimum_raw = sys.argv[1:3]
+with open(path, encoding="utf-8") as handle:
+    health = json.load(handle)
+stamp = health.get("updatedAt") or ""
+updated = datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+if updated < int(minimum_raw):
+    raise SystemExit(1)
+view = health.get("after") if isinstance(health.get("after"), dict) else health
+if health.get("muted") or view.get("muted") or view.get("routeError"):
+    raise SystemExit(1)
+states = [view.get("unityState")]
+states += [item.get("state") for item in view.get("tracked") or [] if isinstance(item, dict)]
+states = [state for state in states if state]
+if not states or any(state != "running" for state in states):
+    raise SystemExit(1)
+routed = str(view.get("routedDeviceId") or "")
+tracked = [item for item in view.get("tracked") or [] if isinstance(item, dict)]
+if routed and tracked and not any(str(item.get("sinkId") or "") == routed for item in tracked):
+    raise SystemExit(1)
+PY
+		then
+			log "[SOREN91] 改善復帰: AudioContext running+BlackHole を実測、bridge再起動を省略 (${waited}s)"
+			return 0
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
 	if ! command -v _br_relaunch >/dev/null 2>&1; then
 		log "[SOREN91] bridge再起動スキップ (_br_relaunch 未ロード)"
 		return 0
@@ -1542,7 +1575,7 @@ soren91_stop() {
 		_soren91_stop_standalone_browser
 		_soren91_switch_obs_layout china || true
 		log "[SOREN91] Unmuted local game BGM (flag file removed)"
-		_soren91_restart_bridge_after_improve "$_had_mute"
+		SOREN91_UNMUTE_EPOCH=$(date +%s) _soren91_restart_bridge_after_improve "$_had_mute"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -1620,7 +1653,7 @@ soren91_stop() {
 	_soren91_stop_standalone_browser
 	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM (flag file removed)"
-	_soren91_restart_bridge_after_improve "$_had_mute"
+	SOREN91_UNMUTE_EPOCH=$(date +%s) _soren91_restart_bridge_after_improve "$_had_mute"
 
 	# メリケンAI終了あいさつ (TTS + Twitch) — 重複防止
 	local _bye_guard="$TMP_STATE_DIR/.soren91_bye_sent"

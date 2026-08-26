@@ -193,6 +193,21 @@ test('stage changes only canvas CSS size, never the Unity drawing buffer', () =>
 });
 
 
+test('alternate game stage stays above the public page while rails stay above its canvas', () => {
+  const source = fs.readFileSync(path.join(TEST_DIR, '..', 'lib', 'direct_overlay.mjs'), 'utf8');
+  const start = source.indexOf('export async function installDirectGameStage');
+  const end = source.indexOf('// Public game pages must not fetch', start);
+  const installer = source.slice(start, end);
+  assert.match(installer, /zIndex: '2147483620'/);
+  assert.match(installer, /zIndex: '2147483621'/);
+  const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+    const rail = config.surfaces.find((item) => item.key === key);
+    assert.ok(Number(rail.style.zIndex) > 2147483621);
+  }
+});
+
+
 test('state-driven surfaces match normal, improvement, and wildcard layouts', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-direct-overlay-'));
   const wildcardState = path.join(temp, 'wildcard.json');
