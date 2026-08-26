@@ -388,7 +388,7 @@ _append_news_read_entry() {
 # _radio_past_topics_block はコーナー名だけの定型文へ丸めるため、
 # 「同じニュースをもう一度選ばない」判断には使えない。
 _recent_news_corner_topics_block() {
-	local limit="${NEWS_SELF_SEARCH_TOPIC_LIMIT:-20}"
+	local limit="${NEWS_SELF_SEARCH_TOPIC_LIMIT:-30}"
 	[ -f "$PAST_RADIO_TOPICS" ] || return 0
 	grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+( [^ ]+)? \[(news|jiji)\]:' "$PAST_RADIO_TOPICS" 2>/dev/null \
 		| tail -"$limit" | sed 's/^/  - /'
