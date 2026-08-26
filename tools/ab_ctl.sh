@@ -21,8 +21,15 @@ start)
 	pattern="${3:-ABBA}"
 	[ -n "$src" ] || { echo "usage: $0 start <path|hash> [pattern]"; exit 1; }
 	if [ ! -f "$src" ]; then
-		found=$(_find_strategy_archive_for_hash "$src" 2>/dev/null || true)
-		[ -n "$found" ] && [ -f "$found" ] || { echo "代替戦略が見つかりません: $src"; exit 1; }
+		# hash 指定: by_hash / 永久アーカイブから解決 (eloop.sh の _find_strategy_archive_for_hash は eloop_lib では読めない)
+		found=""
+		for cand in "${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${src}.py" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${src}.py"; do
+			[ -f "$cand" ] || continue
+			[ "$(hash_of "$cand")" = "$src" ] || continue
+			found="$cand"
+			break
+		done
+		[ -n "$found" ] || { echo "代替戦略が見つかりません (パスでも hash でも解決不可): $src"; exit 1; }
 		src="$found"
 	fi
 	[ -f "$STATE" ] && { echo "既に A/B 状態があります ($STATE)。finish/stop してから。"; exit 1; }
@@ -41,10 +48,15 @@ start)
 	touch "$TMP_STATE_DIR/improve_daemon.paused"
 	rm -f "$ABORT"
 	: > "$GAMES"
-	python3 - "$STATE" "$a" "$b" "$pattern" "$src" <<'PY'
+	python3 - "$STATE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" <<'PY'
 import json, sys, time, os
+def _count(p):
+    try:
+        return int(open(p).read().strip())
+    except Exception:
+        return None
 st = {"a_hash": sys.argv[2], "b_hash": sys.argv[3], "pattern": sys.argv[4], "alt_source": sys.argv[5], "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-      "games_recorded": 0, "game_num_start": int(open("tmp/game_count.txt").read().strip()) if os.path.exists("tmp/game_count.txt") else None}
+      "games_recorded": 0, "game_num_start": _count(sys.argv[6])}
 json.dump(st, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print(json.dumps(st, ensure_ascii=False))
 PY
