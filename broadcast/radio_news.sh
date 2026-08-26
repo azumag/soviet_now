@@ -362,6 +362,38 @@ _append_news_read_url_hash() {
 		mv "${PAST_NEWS_URL_HASHES}.tmp" "$PAST_NEWS_URL_HASHES"
 }
 
+# 既読ニュース台帳への追記。RSS 記事も AI 自主探索の題材も同じ台帳に入れる。
+# title だけは必須、source_key / url_hash は分かる場合のみ渡す。
+_append_news_read_entry() {
+	local title="$1" source_key="${2:-}" url_hash="${3:-}"
+	local title_key topic_key
+	[ -n "$title" ] || return 1
+	title_key=$(_news_title_key "$title")
+	[ -n "$title_key" ] || return 1
+	topic_key=$(_news_topic_key "$title")
+
+	touch "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null || true
+	echo "$title" >>"$PAST_NEWS_READ"
+	echo "$title_key" >>"$PAST_NEWS_READ_KEYS"
+	[ -n "$topic_key" ] && echo "$topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
+	_append_news_read_source "$source_key"
+	_append_news_read_url_hash "$url_hash"
+	tail -300 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+	tail -300 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+	tail -300 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+	return 0
+}
+
+# 自主探索コーナー用: 直近の news / jiji コーナーで実際に扱った話題を生の形で返す。
+# _radio_past_topics_block はコーナー名だけの定型文へ丸めるため、
+# 「同じニュースをもう一度選ばない」判断には使えない。
+_recent_news_corner_topics_block() {
+	local limit="${NEWS_SELF_SEARCH_TOPIC_LIMIT:-20}"
+	[ -f "$PAST_RADIO_TOPICS" ] || return 0
+	grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+( [^ ]+)? \[(news|jiji)\]:' "$PAST_RADIO_TOPICS" 2>/dev/null \
+		| tail -"$limit" | sed 's/^/  - /'
+}
+
 _prepare_news_prompt_blocks() {
 	local blocks_text="$1"
 	python3 - "$PAST_NEWS_READ_SOURCES" "$blocks_text" <<'PY'

@@ -1489,6 +1489,12 @@ PREPASS_APPEND
 		printf '%s' "$talk" | _radio_parse_output_to_files "$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"
 		talk_body=$(cat "$parse_dir/body.txt" 2>/dev/null)
 		talk_summary=$(cat "$parse_dir/summary.txt" 2>/dev/null)
+		# 呼び出し側が RADIO_GEN_RESULT_DIR を指定していれば、解析結果を渡す。
+		# ニュース自主探索コーナーが「何を読んだか」を既読台帳へ記録するために使う。
+		if [ -n "${RADIO_GEN_RESULT_DIR:-}" ] && [ -d "${RADIO_GEN_RESULT_DIR}" ]; then
+			cp "$parse_dir/selected_news.txt" "${RADIO_GEN_RESULT_DIR}/selected_news.txt" 2>/dev/null || true
+			cp "$parse_dir/summary.txt" "${RADIO_GEN_RESULT_DIR}/summary.txt" 2>/dev/null || true
+		fi
 		rm -rf "$parse_dir"
 		[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 

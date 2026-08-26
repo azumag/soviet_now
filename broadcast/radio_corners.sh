@@ -60,6 +60,8 @@ _news_self_search_fallback() {
 	if [ -f "$PAST_NEWS_TOPIC_KEYS" ]; then
 		past_news_topics=$(tail -15 "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null | sed 's/^/  - /')
 	fi
+	local past_news_corner_topics=""
+	past_news_corner_topics=$(_recent_news_corner_topics_block)
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -84,6 +86,11 @@ ${past_news_titles:-  （直近の既読ニュース記録なし）}
 【直近ニュースの固有名詞・キーワード（これらに言及する話題も避けること）】
 ${past_news_topics:-  （記録なし）}
 
+【この番組で既に扱ったニュース話題（絶対に再度選ばないこと）】
+以下は直近のニュースコーナーで実際に読み上げた話題です。同じ出来事・同じ人物の訃報や事件を、
+切り口を変えたとしても再度取り上げてはいけません。1件でも一致するなら別のニュースを選ぶこと。
+${past_news_corner_topics:-  （記録なし）}
+
 【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
 
 【トーク構成】
@@ -102,8 +109,35 @@ ${past_news_topics:-  （記録なし）}
 - 感情的な煽りや、特定の集団を嘲笑・敵視するトーンは使わないこと
 
 $(_radio_output_rules 1000 2000)
+
+最後に以下の形式で、今回選んだニュースの見出しを日本語1行で出力すること:
+===SELECTED_NEWS===
+（選んだニュースの見出し1行）
 PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
+
+	# 自主探索は「何を読んだか」が既読台帳に残らないと、次回も同じ大ニュースを選ぶ。
+	# 生成結果の見出しを受け取って RSS 記事と同じ台帳へ記録する。
+	local result_dir rc=0
+	result_dir=$(mktemp -d /tmp/eloop_news_self_XXXXXXXX)
+	export RADIO_GEN_RESULT_DIR="$result_dir"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news" || rc=$?
+	unset RADIO_GEN_RESULT_DIR
+
+	if [ "$rc" -eq 0 ] && { [ -s "$result_dir/selected_news.txt" ] || [ -s "$result_dir/summary.txt" ]; }; then
+		local self_title=""
+		self_title=$(head -n 1 "$result_dir/selected_news.txt" 2>/dev/null | tr -d '\r')
+		if [ -z "$self_title" ]; then
+			# 見出し行が無い場合は要約行（キーワード列 / 要約）で代替する
+			self_title=$(head -n 1 "$result_dir/summary.txt" 2>/dev/null | tr -d '\r')
+		fi
+		if [ -n "$self_title" ] && _append_news_read_entry "$self_title"; then
+			log "[NEWS] 自主探索の既読記録: ${self_title}"
+		else
+			log "[NEWS] 自主探索の既読記録に失敗（見出し・要約とも取得できず）"
+		fi
+	fi
+	rm -rf "$result_dir" 2>/dev/null || true
+	return "$rc"
 }
 
 start_radio_corner_news() {
