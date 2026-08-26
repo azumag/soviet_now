@@ -106,8 +106,9 @@ _with_chat_lock() {
 
 _is_ignored_comment_author_line() {
     local line="$1"
-    # dociai = 配信チャンネル本体 (outbound bot の投稿)。視聴者コメントではない。
-    local ignored="${KICK_IGNORE_AUTHORS:-dociai DoCiAI}"
+    # 既定は空。Kick へは何も送信していないため、自チャンネル (dociai) の投稿も
+    # エコーではなく配信者本人のコメント。Kick 送信を実装したら送信元を設定する。
+    local ignored="${KICK_IGNORE_AUTHORS-}"
     local item
     for item in $ignored; do
         printf '%s\n' "$line" | grep -Fqi -- "${item}: " && return 0

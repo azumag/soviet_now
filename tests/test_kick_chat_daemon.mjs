@@ -107,20 +107,21 @@ try {
   await sleep(300);
 
   socket.write(chat('m1', 'viewer1', 'viewer1', 'hello [emote:37226:KEKW] world'));
-  socket.write(chat('m2', 'dociai', 'dociai', 'bot echo'));
-  socket.write(chat('m3', 'DoCiAI', 'dociai', 'bot echo 2'));
+  // Nothing is sent to Kick, so the channel's own account is the broadcaster
+  // commenting, not an echo. Dropping it lost real comments on 2026-08-26.
+  socket.write(chat('m2', 'DoCiAI', 'dociai', 'broadcaster comment'));
   socket.write(chat('m1', 'viewer1', 'viewer1', 'hello [emote:37226:KEKW] world'));
   socket.write(chat('m4', 'viewer2', 'viewer2', 'back`tick $(x) ;rm  spaced'));
 
-  assert.ok(await waitFor(() => rawLines().length >= 2), 'daemon should append viewer comments');
+  assert.ok(await waitFor(() => rawLines().length >= 3), 'daemon should append viewer comments');
   await sleep(500);
   const lines = rawLines();
 
-  assert.equal(lines.length, 2, `expected exactly 2 kept lines, got ${lines.length}: ${JSON.stringify(lines)}`);
+  assert.equal(lines.length, 3, `expected exactly 3 kept lines, got ${lines.length}: ${JSON.stringify(lines)}`);
   assert.equal(lines[0], 'id=m1\tviewer1: hello KEKW world', 'emote markup becomes its bare name');
-  assert.ok(!lines.some((l) => /bot echo/.test(l)), 'own-channel posts are dropped as outbound echoes');
+  assert.equal(lines[1], 'id=m2\tDoCiAI: broadcaster comment', "the channel's own account is kept by default");
   assert.equal(
-    lines[1],
+    lines[2],
     'id=m4\tviewer2: backtick (x) rm spaced',
     'shell metacharacters are stripped and whitespace collapsed',
   );

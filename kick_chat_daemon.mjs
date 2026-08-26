@@ -35,8 +35,10 @@ const MAX_MESSAGE_CHARS = intEnv('KICK_CHAT_MAX_MESSAGE_CHARS', 400);
 // fetch が来ないまま raw.log が無限に伸びるのを防ぐ上限 (fetch 側でも切り詰める)。
 const RAW_LOG_MAX_LINES = intEnv('KICK_RAW_LOG_MAX_LINES', 2000);
 const OVERLAY_NOTIFY = (process.env.CHAT_INGEST_OVERLAY_NOTIFY ?? '1') === '1';
-// 自チャンネルの outbound bot 投稿はエコーなので既定で無視する。
-const IGNORE_AUTHORS = (process.env.KICK_IGNORE_AUTHORS ?? 'dociai DoCiAI')
+// 既定は空。Twitch/YouTube と違い Kick へは何も送信していないので、自チャンネル
+// (dociai) の投稿もエコーではなく配信者本人のコメントである。Kick 送信を実装したら
+// そのアカウント名をここに入れないと自分の返答を読み返す。
+const IGNORE_AUTHORS = (process.env.KICK_IGNORE_AUTHORS ?? '')
   .split(/\s+/)
   .filter(Boolean)
   .map((s) => s.toLowerCase());
