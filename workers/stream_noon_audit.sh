@@ -7,10 +7,12 @@
 #
 # 動作:
 #   - 毎日 JST 正午に1回だけ監査する (tmp/state/stream_noon_audit/<jst_day>.json)
-#   - 現在の配信の started_at の JST 时刻が正午から
-#     STREAM_NOON_AUDIT_TOLERANCE_SEC 以内なら何もしない
+#   - 位相の基準は Twitch 上の配信セッション createdAt (外部の真値)。
+#     取得できないときだけローカル ffmpeg の started_at にフォールバックする
+#   - その JST 时刻が正午から STREAM_NOON_AUDIT_TOLERANCE_SEC 以内なら何もしない
 #     (Twitch カット直後の再接続開始 ≒ 正午、はこれで通過する)
 #   - ずれていれば wiki 正規手順 (lib/direct_stream.py stop) で停止し、
+#     Twitch のセッション継続猶予を越える時間 OFFLINE を保持してから
 #     supervisor 自動 respawn を待って張り直す (新しい開始 ≒ JST 12:00)
 #
 # 設計メモ:
@@ -19,6 +21,13 @@
 #     (2026-08-22 解析)。本監査は開始時刻の位相そのものを見る。
 #   - 是正の過渡期だけは配信が短縮されることがある (任意の乱れ後に開始時刻と
 #     ラン長48hの両立は物理的に不可能。定常状態では両立する)。
+#   - 位相基準にローカル started_at を使うと、張り直しが Twitch 側に届かず
+#     (短い断は同一セッションへマージされる) ローカルだけ正午に揃った状態で
+#     翌日以降 no_action になり、失敗が恒久的にマスクされる (2026-08-26 実測)。
+#     このため既定の位相基準は Twitch createdAt とする。
+#   - OFFLINE_HOLD が短いと Twitch は再接続を同一セッション (同一 VOD) として
+#     継続する。実測: 約35秒の断は継続 / 1〜2分の断では新セッション。
+#     既定 180 秒はこの実測値に余裕を持たせた値。
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,7 +44,8 @@ POLL_INTERVAL="${STREAM_NOON_AUDIT_POLL_SEC:-30}"
 TOLERANCE_SEC="${STREAM_NOON_AUDIT_TOLERANCE_SEC:-600}"
 RESPAWN_WAIT_SEC="${STREAM_NOON_AUDIT_RESPAWN_WAIT_SEC:-90}"
 STOP_TIMEOUT_SEC="${STREAM_NOON_AUDIT_STOP_TIMEOUT_SEC:-45}"
-OFFLINE_HOLD_SEC="${STREAM_NOON_AUDIT_OFFLINE_HOLD_SEC:-30}"
+OFFLINE_HOLD_SEC="${STREAM_NOON_AUDIT_OFFLINE_HOLD_SEC:-180}"
+SESSION_ROTATE_WAIT_SEC="${STREAM_NOON_AUDIT_SESSION_ROTATE_WAIT_SEC:-60}"
 STATE_DIR="${STREAM_NOON_AUDIT_STATE_DIR:-tmp/state/stream_noon_audit}"
 TWITCH_LOGIN="${STREAM_NOON_AUDIT_TWITCH_LOGIN:-dociai}"
 GQL_URL="${STREAM_NOON_AUDIT_GQL_URL:-https://gql.twitch.tv/gql}"
@@ -163,27 +173,43 @@ _status_int() {
 	esac
 }
 
-_twitch_stream_id() {
-	local payload="" stream_id=""
+_twitch_stream_info() {
+	# "<stream_id> <created_epoch>" を返す (取得できない要素は空)。
+	# created_epoch は Twitch 上の配信セッション開始時刻 = 位相判定の真値。
+	local payload="" info=""
 	if [ -n "$GQL_CMD" ]; then
 		payload=$($GQL_CMD 2>/dev/null) || payload=""
 	else
 		payload=$(curl -fsS --connect-timeout 5 --max-time "$GQL_TIMEOUT_SEC" \
 			-H "Client-ID: $GQL_CLIENT_ID" \
 			-H 'Content-Type: application/json' \
-			--data "{\"query\":\"{ user(login: \\\"$TWITCH_LOGIN\\\") { stream { id } } }\"}" \
+			--data "{\"query\":\"{ user(login: \\\"$TWITCH_LOGIN\\\") { stream { id createdAt } } }\"}" \
 			"$GQL_URL" 2>/dev/null) || payload=""
 	fi
-	[ -n "$payload" ] || { echo ""; return 0; }
-	stream_id=$(printf '%s' "$payload" | python3 -c 'import json,sys
+	[ -n "$payload" ] || { echo " "; return 0; }
+	info=$(printf '%s' "$payload" | python3 -c 'import calendar,json,sys,time
 try:
     d = json.load(sys.stdin)
     stream = ((d.get("data") or {}).get("user") or {}).get("stream") or {}
-    value = stream.get("id")
-    print(value if value not in (None, "") else "")
+    sid = stream.get("id")
+    sid = "" if sid in (None, "") else str(sid)
+    created = stream.get("createdAt") or ""
+    epoch = ""
+    if created:
+        try:
+            epoch = str(calendar.timegm(time.strptime(created.replace("Z", "GMT"), "%Y-%m-%dT%H:%M:%S%Z")))
+        except Exception:
+            epoch = ""
+    print(sid, epoch)
 except Exception:
-    print("")') || stream_id=""
-	printf '%s' "$stream_id"
+    print("", "")') || info=" "
+	printf '%s' "$info"
+}
+
+_twitch_stream_id() {
+	local info=""
+	info=$(_twitch_stream_info)
+	printf '%s' "${info%% *}"
 }
 
 _write_marker_json() {
@@ -221,9 +247,9 @@ except Exception:
     pass' "$path" "$key" "$val" 2>/dev/null || true
 }
 
-_wait_running_with_new_session() {
-	# VM側の新規起動に加え、可能なら Twitch上のセッション交代も確認する。
-	local old_started="$1" old_stream_id="$2" wait_sec="$3" deadline now cand new_stream_id
+_wait_local_respawn() {
+	# VM 側 (ffmpeg) が新しい started_at で立ち上がるのを待つ。
+	local old_started="$1" wait_sec="$2" deadline now cand
 	deadline=$(date +%s)
 	deadline=$((deadline + wait_sec))
 	while :; do
@@ -232,18 +258,30 @@ _wait_running_with_new_session() {
 		if [ "$(_status_flag running)" = "1" ]; then
 			cand=$(_status_int started_at)
 			if [ -n "$cand" ] && [ "$cand" != "$old_started" ]; then
-				if [ -z "$old_stream_id" ]; then
-					echo "$cand"
-					return 0
-				fi
-				new_stream_id=$(_twitch_stream_id)
-				if [ -n "$new_stream_id" ] && [ "$new_stream_id" != "$old_stream_id" ]; then
-					echo "$cand"
-					return 0
-				fi
+				echo "$cand"
+				return 0
 			fi
 		fi
 		sleep 2
+	done
+	echo ""
+	return 1
+}
+
+_wait_session_rotated() {
+	# Twitch 上の配信セッションが別 ID へ切り替わるのを待つ (= 貼り直しが外から見える)。
+	local old_stream_id="$1" wait_sec="$2" deadline now new_stream_id
+	deadline=$(date +%s)
+	deadline=$((deadline + wait_sec))
+	while :; do
+		new_stream_id=$(_twitch_stream_id)
+		if [ -n "$new_stream_id" ] && [ "$new_stream_id" != "$old_stream_id" ]; then
+			echo "$new_stream_id"
+			return 0
+		fi
+		now=$(date +%s)
+		[ "$now" -ge "$deadline" ] && break
+		sleep 3
 	done
 	echo ""
 	return 1
@@ -253,7 +291,9 @@ _wait_offline_hold() {
 	# Disconnect Protection に吸収されないよう、外部配信が消えた状態を維持する。
 	local old_stream_id="${1:-}" deadline hold_deadline now external_id local_running
 	deadline=$(date +%s)
-	deadline=$((deadline + STOP_TIMEOUT_SEC + OFFLINE_HOLD_SEC + 5))
+	# stop 反映 (STOP_TIMEOUT_SEC) + OFFLINE 保持 (OFFLINE_HOLD_SEC) + 余裕。
+	# 余裕が小さいと Twitch の offline 反映待ちで保持を打ち切ってしまう。
+	deadline=$((deadline + STOP_TIMEOUT_SEC + OFFLINE_HOLD_SEC + 30))
 	hold_deadline=""
 	while :; do
 		now=$(date +%s)
@@ -294,7 +334,7 @@ _wait_offline_hold() {
 }
 
 _restart_stream() {
-	local old_started="$1" old_stream_id="${2:-}" new_started="" stop_rc=0
+	local old_started="$1" old_stream_id="${2:-}" new_started="" stop_rc=0 rotated_id=""
 	_log "位相ずれ検出 → 配信を正午へ張り直します (old_started=${old_started} old_stream_id=${old_stream_id:-unknown})"
 	touch "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=1
@@ -311,26 +351,37 @@ _restart_stream() {
 	fi
 	rm -f "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=0
-	new_started=$(_wait_running_with_new_session "$old_started" "$old_stream_id" "$RESPAWN_WAIT_SEC")
+	new_started=$(_wait_local_respawn "$old_started" "$RESPAWN_WAIT_SEC")
 	if [ -z "$new_started" ]; then
 		_log "WARN: supervisor respawn 未検出 (${RESPAWN_WAIT_SEC}s) → 自前起動を試行"
 		( nohup $RUN_CMD >>"$LOG_FILE" 2>&1 & ) || true
-		new_started=$(_wait_running_with_new_session "$old_started" "$old_stream_id" 30)
+		new_started=$(_wait_local_respawn "$old_started" 30)
 	fi
-	if [ -n "$new_started" ]; then
-		_log "配信を再開しました (new_started=${new_started} stream_id_rotated=1)"
-		echo "$new_started"
+	if [ -z "$new_started" ]; then
+		_log "ERROR: 再開を確認できませんでした (supervisor/ffmpeg の状態を確認すること)"
+		return 1
+	fi
+	# stdout は new_started の受け渡し。以降の判定結果は終了コードで返す。
+	echo "$new_started"
+	if [ -z "$old_stream_id" ]; then
+		_log "配信を再開しました (new_started=${new_started} 旧セッションID不明のため回転は未検証)"
 		return 0
 	fi
-	_log "ERROR: 再開を確認できませんでした (supervisor/ffmpeg の状態を確認すること)"
-	return 1
+	if rotated_id=$(_wait_session_rotated "$old_stream_id" "$SESSION_ROTATE_WAIT_SEC"); then
+		_log "配信を再開しました (new_started=${new_started} stream_id ${old_stream_id} → ${rotated_id})"
+		return 0
+	fi
+	_log "WARN: ローカル配信は復帰したが Twitch セッションが切り替わっていない (id=${old_stream_id})。"
+	_log "WARN: OFFLINE 保持 ${OFFLINE_HOLD_SEC}s が Twitch のセッション継続猶予を越えていない可能性 → STREAM_NOON_AUDIT_OFFLINE_HOLD_SEC を延ばすこと"
+	return 2
 }
 
 _audit_once() {
 	local jst_day="$1"
 	local marker="$STATE_DIR/${jst_day}.json"
 	local decision="" detail="" old_started="" new_started="" outcome=""
-	local old_stream_id="" new_stream_id=""
+	local old_stream_id="" new_stream_id="" old_created="" stream_info=""
+	local phase_source="" phase_epoch="" restart_rc=0
 	local noon_epoch sod diff circ_diff
 
 	noon_epoch=$(( jst_day * DAY_SEC + NOON_SOD_SEC - JST_OFFSET_SEC ))
@@ -347,15 +398,39 @@ _audit_once() {
 			decision="skipped_bad_status"
 			detail="started_at を解釈できず安全側でスキップ"
 		else
-			sod=$(( (old_started % DAY_SEC + JST_OFFSET_SEC) % DAY_SEC ))
+			# 位相の基準は Twitch セッションの createdAt。取得できないときだけ
+			# ローカル started_at にフォールバックする (ローカル基準のみだと、
+			# Twitch へ届かなかった張り直しを「揃った」と誤認して失敗が固定化する)。
+			stream_info=$(_twitch_stream_info)
+			case "$stream_info" in
+			*' '*)
+				old_stream_id="${stream_info%% *}"
+				old_created="${stream_info##* }"
+				;;
+			*)
+				old_stream_id="$stream_info"
+				old_created=""
+				;;
+			esac
+			case "$old_created" in
+			''|*[!0-9]*) old_created="" ;;
+			esac
+			if [ -n "$old_created" ]; then
+				phase_source="twitch"
+				phase_epoch="$old_created"
+			else
+				phase_source="local"
+				phase_epoch="$old_started"
+			fi
+			sod=$(( (phase_epoch % DAY_SEC + JST_OFFSET_SEC) % DAY_SEC ))
 			diff=$(( sod - NOON_SOD_SEC ))
 			circ_diff=$(( (diff + NOON_SOD_SEC) % DAY_SEC - NOON_SOD_SEC ))
 			if [ "${circ_diff#-}" -le "$TOLERANCE_SEC" ]; then
 				decision="no_action"
-				detail="offset_diff=${circ_diff}s tolerance=${TOLERANCE_SEC}s 以内"
+				detail="phase=${phase_source} offset_diff=${circ_diff}s tolerance=${TOLERANCE_SEC}s 以内"
 			else
 				decision="restart_required"
-				detail="offset_diff=${circ_diff}s > tolerance=${TOLERANCE_SEC}s"
+				detail="phase=${phase_source} offset_diff=${circ_diff}s > tolerance=${TOLERANCE_SEC}s"
 			fi
 		fi
 	fi
@@ -366,17 +441,25 @@ _audit_once() {
 		"decided_at" "$(date +%s)" \
 		"decision" "$decision" \
 		"detail" "$detail" \
+		"phase_source" "$phase_source" \
+		"session_created_before" "$old_created" \
 		"started_before" "$old_started"
 
 	if [ "$decision" != "restart_required" ]; then
 		return 0
 	fi
 
-	old_stream_id=$(_twitch_stream_id)
 	if new_started=$(_restart_stream "$old_started" "$old_stream_id"); then
 		outcome="restarted"
 	else
-		outcome="restart_failed"
+		restart_rc=$?
+		if [ "$restart_rc" = "2" ]; then
+			# ローカルは復帰済み。Twitch が同一セッションへマージしたので外からは
+			# 貼り直しに見えていない。位相基準が Twitch なので翌日また再試行される。
+			outcome="restart_session_merged"
+		else
+			outcome="restart_failed"
+		fi
 	fi
 	new_stream_id=$(_twitch_stream_id)
 	_marker_update_field "$marker" "outcome" "$outcome"

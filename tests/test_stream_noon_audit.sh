@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # stream_noon_audit ワーカーの回帰テスト。
 # - JST 正午を過ぎた日に1回だけ監査が走る (日次マーカー)
-# - started_at の JST 时刻が許容誤差以内なら何もしない
+# - 位相は Twitch セッション createdAt 基準 (取れないときだけ started_at)
+# - その JST 时刻が許容誤差以内なら何もしない
 # - ずれていれば正規手順 stop → respawn 待機 → (必要なら) 自前起動で張り直す
 # - 意図的 pause 中 / 非稼働 / started_at 不正は触れない
 # - supervisor 側 respawn を検出できれば自前起動しない
@@ -49,6 +50,14 @@ emit_twitch_id() {
 	printf '"%s"\n' "$stream_id" >"$dir/twitch_id.txt"
 }
 
+# createdAt 付き (= 位相基準が Twitch になるケース)
+emit_twitch_session() {
+	local dir="$1" stream_id="$2" created_epoch="$3"
+	printf '"%s"\n' "$stream_id" >"$dir/twitch_id.txt"
+	python3 -c 'import sys,time;print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(sys.argv[1]))))' \
+		"$created_epoch" >"$dir/twitch_created.txt"
+}
+
 make_stubs() {
 	local dir="$1"
 	mkdir -p "$dir/bin" "$dir/state" "$dir/logs"
@@ -79,7 +88,12 @@ EOF
 	cat >"$dir/bin/twitch.sh" <<EOF
 #!/usr/bin/env bash
 if [ -f "$dir/twitch_id.txt" ]; then
-	printf '{"data":{"user":{"stream":{"id":%s}}}}\n' "\$(cat "$dir/twitch_id.txt")"
+	if [ -f "$dir/twitch_created.txt" ]; then
+		printf '{"data":{"user":{"stream":{"id":%s,"createdAt":"%s"}}}}\n' \
+			"\$(cat "$dir/twitch_id.txt")" "\$(cat "$dir/twitch_created.txt")"
+	else
+		printf '{"data":{"user":{"stream":{"id":%s}}}}\n' "\$(cat "$dir/twitch_id.txt")"
+	fi
 else
 	printf '{"data":{"user":null}}\n'
 fi
@@ -102,6 +116,7 @@ launch_worker() {
 		export STREAM_NOON_AUDIT_RESPAWN_WAIT_SEC="${RESPAWN_WAIT_SEC:-6}"
 		export STREAM_NOON_AUDIT_STOP_TIMEOUT_SEC=3
 		export STREAM_NOON_AUDIT_OFFLINE_HOLD_SEC="${OFFLINE_HOLD_SEC:-0}"
+		export STREAM_NOON_AUDIT_SESSION_ROTATE_WAIT_SEC="${SESSION_ROTATE_WAIT_SEC:-4}"
 		export STREAM_NOON_AUDIT_NOW_CMD="bash $dir/bin/now.sh"
 		export STREAM_NOON_AUDIT_STATUS_CMD="bash $dir/bin/status.sh"
 		export STREAM_NOON_AUDIT_STOP_CMD="bash $dir/bin/stop.sh"
@@ -168,6 +183,32 @@ launch_worker "$D1" ""
 sleep 3
 check '[ "$(calls_count "$D1")" = "0" ]' '同日の2回目 tick では再監査しない'
 stop_worker "$D1"
+
+# --- 2b. ローカルは正午でも Twitch セッションがずれていれば張り直す ---
+# 2026-08-26 実障害: ローカル ffmpeg だけ正午に張り直され Twitch は旧セッション
+# 継続 (03:56 開始) だったのに no_action となり、失敗が恒久的にマスクされた。
+D1B="$TMP/case_twitch_phase_drift"
+make_stubs "$D1B"
+emit_status "$D1B/status.json" 1 "$((NOON + 56))"
+emit_twitch_session "$D1B" "old-session" "$((NOON - 29000))"
+RESPAWN_WAIT_SEC=2 launch_worker "$D1B" ""
+M1B="$D1B/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json"
+check 'wait_for_marker_field "$M1B" "restart_required"' 'twitch_phase: ローカルが正午でも Twitch がずれていれば張り直す'
+check 'wait_for_marker_field "$M1B" "\"phase_source\": \"twitch\""' 'twitch_phase: 位相基準として twitch を記録'
+check 'wait_for_marker_field "$M1B" "\"outcome\": \"restarted\"" 120' 'twitch_phase: セッション回転を確認して restarted'
+stop_worker "$D1B"
+
+# --- 2c. Twitch セッションが正午ならローカル started_at がずれていても触らない ---
+D1C="$TMP/case_twitch_phase_ok"
+make_stubs "$D1C"
+emit_status "$D1C/status.json" 1 "$((NOON - 18000))"
+emit_twitch_session "$D1C" "noon-session" "$((NOON + 120))"
+launch_worker "$D1C" ""
+M1C="$D1C/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json"
+check 'wait_for_marker_field "$M1C" "no_action"' 'twitch_phase_ok: Twitch が正午なら no_action'
+sleep 1
+check '[ "$(calls_count "$D1C")" = "0" ]' 'twitch_phase_ok: stop/run を呼ばない'
+stop_worker "$D1C"
 
 # --- 3. ずれ → supervisor respawn 検出で自前起動なしに張り直し ---
 D2="$TMP/case_drift_supervisor"
@@ -242,7 +283,7 @@ make_stubs "$D4B"
 touch "$D4B/run_no_flip"
 emit_status "$D4B/status.json" 1 "$((NOON + 100 - 18000))"
 emit_twitch_id "$D4B" "same-session"
-RESPAWN_WAIT_SEC=2 launch_worker "$D4B" ""
+RESPAWN_WAIT_SEC=8 launch_worker "$D4B" ""
 M4B="$D4B/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").json"
 # supervisor相当がローカル配信だけ張り直し、Twitch上のIDは旧ままのケース。
 (
@@ -254,9 +295,10 @@ M4B="$D4B/state/stream_noon_audit/$(python3 -c "print(($NOON+32400)//86400)").js
 	emit_status "$D4B/status.json" 1 "$((NOON + 180))"
 ) &
 session_sup_pid=$!
-check 'wait_for_marker_field "$M4B" "restart_failed" 120' 'session_same: Twitch ID不変は失敗として記録'
+check 'wait_for_marker_field "$M4B" "restart_session_merged" 120' 'session_same: Twitch ID不変はマージ失敗として記録'
 check 'wait_for_marker_field "$M4B" "\"session_before\": \"same-session\""' 'session_same: 旧IDを記録'
 check 'wait_for_marker_field "$M4B" "\"session_after\": \"same-session\""' 'session_same: 変更なしの後IDを記録'
+check '[ "$(grep -c "^run$" "$D4B/calls.log")" = "0" ]' 'session_same: ローカル復帰済みなら自前起動しない'
 kill "$session_sup_pid" 2>/dev/null || true
 stop_worker "$D4B"
 
