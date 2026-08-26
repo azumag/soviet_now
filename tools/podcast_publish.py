@@ -16,6 +16,10 @@ YouTube では Podcast = 「Podcast 指定された再生リスト」、Episode 
 使い方:
   ./tools/podcast_publish.py --date 20260825 [--dry-run] [--privacy unlisted]
   --dry-run: 何も送信せず、送る内容だけ表示する
+  --force:   既に <日付>.publish.json がある回でも再アップロードする
+
+同じ日付を二度上げると YouTube に重複動画ができるため、publish.json がある回は
+既定でスキップする (2026-08-26 に検証実行で実際に重複アップロードを起こした)。
 
 必要な認証 (再生リスト操作に force-ssl が要るので --manage 付きで取ること):
   cd <doci> && ./.venv/bin/python -m doci.youtube --auth --channel soren_news --manage
@@ -123,6 +127,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="送信せず内容だけ表示")
     ap.add_argument("--privacy", default=VIDEO_PRIVACY, help="public/unlisted/private")
     ap.add_argument("--no-playlist", action="store_true", help="再生リストへ入れない")
+    ap.add_argument("--force", action="store_true",
+                    help="公開済み (publish.json がある) でも再アップロードする")
     args = ap.parse_args()
 
     date = parse_date(args.date) if args.date else datetime.date.today() - datetime.timedelta(days=1)
@@ -132,6 +138,15 @@ def main() -> int:
     mp4 = out_dir / f"{iso}.mp4"
     meta_file = out_dir / f"{iso}.meta.json"
     desc_file = out_dir / f"{iso}.description.txt"
+
+    # 二重アップロード防止: 同じ日付を上げ直すと YouTube に重複動画ができる。
+    publish_file = out_dir / f"{iso}.publish.json"
+    if publish_file.exists() and not args.force and not args.dry_run:
+        prev = json.loads(publish_file.read_text(encoding="utf-8"))
+        log(f"公開済みなのでスキップ: {prev.get('url')} (--force で再アップロード)")
+        print(prev.get("url", ""))
+        return 0
+
     if not mp4.exists():
         log(f"動画が無い: {mp4} (先に podcast_video_build.py を実行してください)")
         return 2
@@ -212,9 +227,9 @@ def main() -> int:
 
     result = {"date": iso, "video_id": video_id, "url": url,
               "playlist_id": playlist_id, "title": title, "privacy": args.privacy}
-    (out_dir / f"{iso}.publish.json").write_text(
+    publish_file.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    log(f"公開情報を記録: {out_dir / f'{iso}.publish.json'}")
+    log(f"公開情報を記録: {publish_file}")
     print(url)
     return 0
 

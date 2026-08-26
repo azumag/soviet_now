@@ -846,7 +846,14 @@ PODCAST_BUILD_HOUR_JST="${PODCAST_BUILD_HOUR_JST:-04:30}"
 # 対象拡張子は PODCAST_GC_SUFFIXES (既定 ".mp4"; mp3 も消すなら ".mp4 .mp3")。
 # 本値は Mac 側スクリプトが環境変数として読む (VM の worker からは参照されない)。
 PODCAST_RETENTION_DAYS="${PODCAST_RETENTION_DAYS:-3}"
+# YouTube 公開後に Bluesky へ告知する (tools/bluesky_post.py)。
+# 認証は ~/.config/soren/bluesky.json か BLUESKY_HANDLE/BLUESKY_APP_PASSWORD。
+# 認証情報が無ければ日次パイプラインは黙って [4/4] を飛ばす (fail-open)。
+# 鍵はリポジトリにも .env にも書かない (AGENTS.md)。
+PODCAST_BLUESKY_ENABLED="${PODCAST_BLUESKY_ENABLED:-1}"
+PODCAST_BLUESKY_TAGS="${PODCAST_BLUESKY_TAGS:-}"   # 例: "ニュース,ポッドキャスト"
 export PODCAST_ENABLED PODCAST_OUTPUT_DIR PODCAST_VOICE PODCAST_BASE_URL PODCAST_RETENTION_DAYS
+export PODCAST_BLUESKY_ENABLED PODCAST_BLUESKY_TAGS
 # 編成 (compose): 1日分の原稿をそのまま連結すると 3〜5 時間の朗読になるため
 # (実測: 08-19〜08-25 の 7 日で 2h43m〜5h24m、平均 4h。1 本平均 1264 字 = 約 4 分)、
 # LLM で「その日の話題を 1 本の番組へ編成し直す」段を挟む (docich#10)。
