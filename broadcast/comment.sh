@@ -1112,6 +1112,14 @@ _build_comment_ops_context() {
 	local brief_file="${COMMENT_OPS_BRIEF_FILE:-$ELOOP_LIB_DIR/prompts/ops_brief.md}"
 	local ab_state_file="${AB_STATE_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/ab_state.json}"
 	local prediction_paused_file="${PREDICTION_WORKER_PAUSED_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/prediction_worker.paused}"
+	# soren91(メリケンAI) の有効/無効は .env を直に見る。worker のシェル環境は
+	# 起動時スナップショットで、無効化後も SOREN91_*=1 が残ることがあるため
+	# （2026-08-27 の issue-23 で実測）。読むのはこの 2 つのトグルだけ。
+	local soren91_enabled="" soren91_daily_enabled=""
+	if [ -r "$ELOOP_LIB_DIR/.env" ]; then
+		soren91_enabled=$(sed -n 's/^SOREN91_ENABLED=\([01]\)[[:space:]]*$/\1/p' "$ELOOP_LIB_DIR/.env" | tail -1)
+		soren91_daily_enabled=$(sed -n 's/^SOREN91_DAILY_ENABLED=\([01]\)[[:space:]]*$/\1/p' "$ELOOP_LIB_DIR/.env" | tail -1)
+	fi
 	python3 - \
 		"${CODEX_WORK_OVERLAY_STATE_FILE:-}" \
 		"${IMPROVE_STATE_FILE:-}" \
@@ -1120,7 +1128,9 @@ _build_comment_ops_context() {
 		"$host_mode" \
 		"${COMMENT_OPS_CONTEXT_MAX_CHARS:-900}" \
 		"${COMMENT_OPS_BRIEF_ITEMS:-3}" \
-		"$prediction_paused_file" <<'PY'
+		"$prediction_paused_file" \
+		"$soren91_enabled" \
+		"$soren91_daily_enabled" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1136,6 +1146,8 @@ def as_int(raw, fallback):
 max_chars = max(200, as_int(sys.argv[6], 900))
 brief_items = max(0, as_int(sys.argv[7], 3))
 prediction_paused_file = sys.argv[8] if len(sys.argv) > 8 else ""
+soren91_enabled = sys.argv[9] if len(sys.argv) > 9 else ""
+soren91_daily_enabled = sys.argv[10] if len(sys.argv) > 10 else ""
 
 def load_json(path):
     if not path:
@@ -1168,8 +1180,13 @@ else:
 
 if host_mode == "soren91":
     lines.append("- いまメイン画面はメリケンAIのソ連ゲーム91(対戦版)")
+elif soren91_enabled == "0":
+    # 2026-08-27: 描画コストが足りず soren91 は無効化された。登場する前提で話させない。
+    lines.append("- メリケンAI(ソ連ゲーム91)はいま停止中で登場しない。メイン画面は私(中華AI)のソ連ゲーム本編")
+elif soren91_daily_enabled == "1":
+    lines.append("- メリケンAIは待機中(戦略改善中の代打と1日1回の枠で登場)。メイン画面は私(中華AI)のソ連ゲーム本編")
 else:
-    lines.append("- メリケンAIは待機中。メイン画面は私(中華AI)のソ連ゲーム本編")
+    lines.append("- メリケンAIは待機中(戦略改善に入った時だけ登場)。メイン画面は私(中華AI)のソ連ゲーム本編")
 
 ab = load_json(ab_file)
 ab_games = ab.get("games_recorded")

@@ -51,6 +51,20 @@ case "$out" in *"メイン画面はメリケンAI"*) ok "soren91 モードが反
 case "$out" in *"記録済み88試合"*) ok "A/B の記録試合数が入る" ;; *) not_ok "A/B 試合数欠落: $out" ;; esac
 case "$out" in *aaaa*|*bbbb*) not_ok "戦略 hash がプロンプトへ漏れている: $out" ;; *) ok "戦略 hash は出力しない" ;; esac
 
+# --- 2a. メリケンAI(soren91) の在否は .env のトグルから決まる（worker の環境変数は当てにしない） ---
+printf 'SOREN91_ENABLED=0\nSOREN91_DAILY_ENABLED=0\n' >"$TMP/.env"
+out=$(_build_comment_ops_context main)
+case "$out" in *"メリケンAI(ソ連ゲーム91)はいま停止中で登場しない"*) ok "soren91 無効時は停止中と言う" ;; *) not_ok "soren91 無効時の文言: $out" ;; esac
+printf 'SOREN91_ENABLED=1\nSOREN91_DAILY_ENABLED=1\n' >"$TMP/.env"
+out=$(_build_comment_ops_context main)
+case "$out" in *"戦略改善中の代打と1日1回の枠で登場"*) ok "日次枠 有効時はその旨を言う" ;; *) not_ok "日次枠有効時の文言: $out" ;; esac
+printf 'SOREN91_ENABLED=1\nSOREN91_DAILY_ENABLED=0\n' >"$TMP/.env"
+out=$(_build_comment_ops_context main)
+case "$out" in *"戦略改善に入った時だけ登場"*) ok "日次枠 無効時は改善時のみと言う" ;; *) not_ok "日次枠無効時の文言: $out" ;; esac
+out=$(_build_comment_ops_context soren91)
+case "$out" in *"メイン画面はメリケンAI"*) ok "soren91 稼働中は .env より実モードを優先" ;; *) not_ok "soren91 モード優先の文言: $out" ;; esac
+rm -f "$TMP/.env"
+
 # --- 2b. 停止中のチャネルポイント予想は「停止中」と明示され、稼働中は行自体が出ない ---
 case "$out" in *"チャネルポイント予想"*) not_ok "予想が動いているのに停止中の行が出た: $out" ;; *) ok "予想稼働中は行を出さない" ;; esac
 : >"$TMP/tmp/state/prediction_worker.paused"
@@ -106,6 +120,7 @@ grep -q '\${_comment_channel_intro}' "$raid" && ok "レイドテンプレに紹�
 grep -q "we stream various content from speedruns" "$raid" && not_ok "レイドテンプレに古い自配信紹介の直書きが残っている" || ok "古い自配信紹介の直書きが消えている"
 grep -q "only plays the sequel" "$raid" && not_ok "レイドテンプレに古いメリケンAI条件の直書きが残っている" || ok "古いメリケンAI条件の直書きが消えている"
 grep -q "戦略改善モードの時だけ続編" "$ROOT/prompts/comment_template.md" && not_ok "comment_template に古いメリケンAI条件が残っている" || ok "comment_template の古いメリケンAI条件が消えている"
+grep -q "1日1回の短い枠だけソ連ゲーム91" "$ROOT/prompts/comment_channel_intro_main.md" && not_ok "紹介メモがメリケンAIの登場条件を直書きしている" || ok "紹介メモは登場条件を直書きせず運用状況メモへ委ねる"
 for f in comment_channel_intro_main.md comment_channel_intro_soren91.md; do
 	if grep -q "Twitch・YouTube・Kick" "$ROOT/prompts/$f"; then
 		ok "prompts/$f が3プラットフォーム同時配信を伝える"

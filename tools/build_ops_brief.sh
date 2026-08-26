@@ -56,6 +56,11 @@ for raw in src.read_text(encoding="utf-8", errors="ignore").splitlines():
         stripped = LEAD_PLAIN.sub("", topic).strip()
     topic = stripped
     topic = re.sub(r"\s+", " ", topic)
+    # 課題番号 (Issue #23 / docich#10 / issue-23) は視聴者向けメモに要らない内部識別子。
+    # 読み上げに出ないよう、見出しの段階で落とす。
+    topic = re.sub(r"(?i)\b(?:issue|docich)\s*#?\s*-?\d+\b", "", topic)
+    topic = re.sub(r"^[\s:：,、。\-–—]+", "", topic)
+    topic = re.sub(r"\s+", " ", topic).strip()
     if not topic:
         continue
     if len(topic) > 70:
