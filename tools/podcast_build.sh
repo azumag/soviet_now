@@ -18,14 +18,6 @@ nvm_node_bins=(/Users/azumag/.nvm/versions/node/*/bin(N/n[-1]))
 NVM_NODE_BIN="${nvm_node_bins[1]}"
 export PATH="$PROJ/tools/ffbin:${NVM_NODE_BIN:-/Users/azumag/.nvm/versions/node/v24.18.0/bin}:/Users/azumag/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
-# docich (config.py) は tomllib を使うので Python 3.11+ が必須。
-# bin/docich は PATH の python3 を exec するため、tomllib を持つ python を PATH 先頭に置く。
-# ここを誤ると全 synth が ModuleNotFoundError で落ちる (2026-08-26 に /usr/bin/python3=3.9 で発生)。
-PY311=""
-for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3)"; do
-  if [ -x "$cand" ] && "$cand" -c "import tomllib" >/dev/null 2>&1; then PY311="$cand"; break; fi
-done
-
 # voicevox_tts.sh は docich CLI へ委譲する薄いブリッジなので、その実体を明示する
 export DOCICH_BIN="${DOCICH_BIN:-$DOCICH_ROOT/bin/docich}"
 # 原稿は VM ではなく Mac のミラーから読む
@@ -49,6 +41,49 @@ fi
 echo $$ > "$LOCK"
 trap 'rm -f "$LOCK"' EXIT
 
+# docich (config.py) は tomllib を使うので Python 3.11+ が必須。
+# bin/docich は PATH の python3 を exec するため、tomllib を持つ python を PATH 先頭に置く。
+# ここを誤ると全 synth が ModuleNotFoundError で落ちる (2026-08-26 に /usr/bin/python3=3.9 で発生)。
+#
+# /opt/homebrew は外付けボリュームを指すことがあり、ボリューム不調時は Python の起動自体が
+# 固まる。候補ごとに期限を設け、内蔵ディスク上の doci/uv Python を先に試す。
+PY311=""
+PYTHON_PROBE_TIMEOUT_SEC="${PODCAST_PYTHON_PROBE_TIMEOUT_SEC:-5}"
+if [[ "$PYTHON_PROBE_TIMEOUT_SEC" != <-> ]] || [ "$PYTHON_PROBE_TIMEOUT_SEC" -le 0 ]; then
+  PYTHON_PROBE_TIMEOUT_SEC=5
+fi
+python_candidates=(
+  "${PODCAST_PYTHON:-}"
+  "/Users/azumag/azumag/work/doci/repo/.venv/bin/python"
+  "$HOME/.local/bin/python3.11"
+  "/opt/homebrew/bin/python3"
+  "/usr/local/bin/python3"
+  "$(command -v python3)"
+)
+for cand in "${python_candidates[@]}"; do
+  [ -n "$cand" ] && [ -x "$cand" ] || continue
+  if /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV' \
+      "$PYTHON_PROBE_TIMEOUT_SEC" "$cand" -c "import tomllib" >/dev/null 2>&1; then
+    PY311="$cand"
+    break
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 142 ]; then
+    echo "[$(ts)] Python候補の確認が ${PYTHON_PROBE_TIMEOUT_SEC}s でタイムアウト: $cand" >> "$LOG"
+  else
+    echo "[$(ts)] tomllib を使えない Python候補をスキップ: $cand (rc=$rc)" >> "$LOG"
+  fi
+done
+
+if [ -z "$PY311" ]; then
+  echo "[$(ts)] tomllib を持つ python3 (3.11+) が見つからない。docich が起動できないため中止。" >> "$LOG"
+  exit 1
+fi
+export PATH="${PY311:h}:$PATH"
+PY="$PY311"
+echo "[$(ts)] PY=$PY ($($PY --version 2>&1)) DOCICH_BIN=$DOCICH_BIN" >> "$LOG"
+
 # VOICEVOX 起動待ち
 if [ -x /usr/local/bin/orb ]; then
   /usr/local/bin/orb start >> "$LOG" 2>&1
@@ -70,14 +105,6 @@ if [ -d "$SOREN_RADIO_ARCHIVE/.git" ]; then
 else
   echo "[$(ts)] warning: $SOREN_RADIO_ARCHIVE が無い。VM ローカルの backups へフォールバックする" >> "$LOG"
 fi
-
-if [ -z "$PY311" ]; then
-  echo "[$(ts)] tomllib を持つ python3 (3.11+) が見つからない。docich が起動できないため中止。" >> "$LOG"
-  exit 1
-fi
-export PATH="${PY311:h}:$PATH"
-PY="$PY311"
-echo "[$(ts)] PY=$PY ($($PY --version 2>&1)) DOCICH_BIN=$DOCICH_BIN" >> "$LOG"
 
 cd "$PROJ" || exit 1
 "$PY" ./tools/podcast_build.py "$@" >> "$LOG" 2>&1
