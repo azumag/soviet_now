@@ -472,6 +472,14 @@ export ANALYZE_BOARD_WALL_CLAMP
 SOREN_AB_ALT_STRATEGY="${SOREN_AB_ALT_STRATEGY:-}"
 SOREN_AB_PATTERN="${SOREN_AB_PATTERN:-ABBA}"
 export SOREN_AB_ALT_STRATEGY SOREN_AB_PATTERN
+# A/B ゲート (strategy/ab_gate.sh): 改善候補を root に適用せず A/B で採否判定。1=有効 (既定 0)。
+# AB_GATE_DRY_RUN=1 (既定) は判定をログするだけ。看板は .env を直接読む (_ab_env_value) ので set_toggle で即時。
+AB_GATE_ENABLED="${AB_GATE_ENABLED:-0}"
+AB_GATE_DRY_RUN="${AB_GATE_DRY_RUN:-1}"
+AB_GATE_LOOKS="${AB_GATE_LOOKS:-19,37}"
+AB_GATE_MAX_BLOCKS="${AB_GATE_MAX_BLOCKS:-37}"
+AB_GATE_FUTILITY_UCB_DELTA="${AB_GATE_FUTILITY_UCB_DELTA:-150}"
+export AB_GATE_ENABLED AB_GATE_DRY_RUN AB_GATE_LOOKS AB_GATE_MAX_BLOCKS AB_GATE_FUTILITY_UCB_DELTA
 # 2026-08-25: strategy_runner の静止判定 (実測: 従来は振動の一瞬の凪を静止と誤認し、新駒出現時に中央値 27 駒が
 # awake)。SOREN_SETTLE_REQUIRED=連続静止観測回数 (POLL_INTERVAL 0.15s 間隔、既定 1=従来)、
 # SOREN_SETTLE_MAX_SPEED2=静止とみなす速度^2 上限 (既定 0.1)、SOREN_SETTLE_MAX_AWAKE=awake 駒数上限 (-1=無視)。

@@ -301,6 +301,11 @@ play_one_game() {
 	AB_HASH=""
 	AB_SOURCE=""
 	AB_IDX=""
+	AB_HELPERS=""
+	# A/B ゲート (strategy/ab_gate.sh): 改善候補が待機していれば境界で A/B を開始する (既定オフ)
+	if command -v _ab_gate_before_game >/dev/null 2>&1; then
+		_ab_gate_before_game || true
+	fi
 	if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
 		_ab_select_arm
 		ab_snapshot_source="$AB_SOURCE"
@@ -309,7 +314,7 @@ play_one_game() {
 		"$ab_snapshot_source" \
 		"$strategy_runtime_dir" \
 		"${STRATEGY_FILE}.game_snapshot" \
-		"strategy_helpers" \
+		"${AB_HELPERS:-strategy_helpers}" \
 		"repair_strategy_to_active_branch_head_if_needed"; then
 		log "[STRATEGY-SNAPSHOT] 作成失敗 → 試合開始を次周回へ延期"
 		LAST_SCORE=0
@@ -730,6 +735,9 @@ print(d.get('score', 0) + bonus)
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
 		if [ -n "${AB_ARM:-}" ] && command -v _ab_record_game >/dev/null 2>&1; then
 			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE"
+		fi
+		if command -v _ab_gate_after_game >/dev/null 2>&1; then
+			_ab_gate_after_game || true
 		fi
 		# 試合ごとの結果はチャットへ投稿せず、改善サイクルの閾値で一度だけ
 		# 実測サマリー→AI解説→audio_workerキューを起動する。

@@ -18,6 +18,7 @@ AB_ARM=""
 AB_HASH=""
 AB_SOURCE=""
 AB_IDX=""
+AB_HELPERS=""
 
 _ab_hash() {
 	python3 extract_decide_hash.py "$1" 2>/dev/null || echo ""
@@ -56,10 +57,10 @@ _ab_active() {
 		reason="no state file"
 	elif [ "$(_ab_env_value REGRESSION_DISABLED)" != "1" ]; then
 		reason="REGRESSION_DISABLED!=1 in .env"
-	elif [ ! -f "${TMP_STATE_DIR:-tmp/state}/improve_daemon.paused" ]; then
-		reason="improve daemon not paused"
-	elif [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then
-		reason="improve lock present"
+	elif [ ! -f "${TMP_STATE_DIR:-tmp/state}/improve_daemon.paused" ] && ! { command -v _ab_gate_enabled >/dev/null 2>&1 && _ab_gate_enabled; }; then
+		reason="improve daemon not paused (and AB gate off)"
+	elif [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] && ! { command -v _ab_gate_enabled >/dev/null 2>&1 && _ab_gate_enabled; }; then
+		reason="improve lock present (and AB gate off)"
 	elif [ ! -f "$AB_ALT_FILE" ]; then
 		reason="alt strategy file missing"
 	else
@@ -90,15 +91,17 @@ _ab_select_arm() {
 	esac
 	AB_IDX="$n"
 	AB_ARM="${pattern:$((n % ${#pattern})):1}"
+	AB_HELPERS=""
 	if [ "$AB_ARM" = "B" ]; then
 		AB_SOURCE="$AB_ALT_FILE"
 		AB_HASH=$(_ab_state_get b_hash)
+		[ -d "${AB_ALT_HELPERS_DIR:-${TMP_STATE_DIR:-tmp/state}/ab_alt_helpers}" ] && AB_HELPERS="${AB_ALT_HELPERS_DIR:-${TMP_STATE_DIR:-tmp/state}/ab_alt_helpers}"
 	else
 		AB_ARM="A"
 		AB_SOURCE="${STRATEGY_FILE:-strategy.py}"
 		AB_HASH=$(_ab_state_get a_hash)
 	fi
-	log "[AB] idx=$AB_IDX arm=$AB_ARM hash=${AB_HASH:0:12} src=$AB_SOURCE"
+	log "[AB] idx=$AB_IDX arm=$AB_ARM hash=${AB_HASH:0:12} src=$AB_SOURCE${AB_HELPERS:+ helpers=$AB_HELPERS}"
 }
 
 # 腕・hash・スコアを ab_games.jsonl に追記し games_recorded を進める。
@@ -135,6 +138,34 @@ tainted = bool((played and played != h) or (hist and hist != h))
 rec = {"idx": int(idx or 0), "arm": arm, "hash": h, "played_hash": played, "history_hash": hist, "score": num(score),
        "eval": num(ev), "turns": num(turns), "archive": os.path.basename(archive) if archive else "", "game_num": game_num,
        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "tainted": tainted}
+# 試合ごとの指標 (game_history は直近しか残らないので記録時に取り出す)
+try:
+    rs = []
+    with open(archive, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                rs.append(json.loads(line))
+            except Exception:
+                pass
+    if rs:
+        merges = 0
+        multi = 0
+        for i in range(1, len(rs)):
+            m = 1 - ((rs[i].get("piece_count") or 0) - (rs[i - 1].get("piece_count") or 0))
+            if m >= 1:
+                merges += m
+            if m >= 2:
+                multi += 1
+        mx = 0
+        for r in rs:
+            for p in (r.get("state_snapshot") or {}).get("pieces") or []:
+                mx = max(mx, p.get("type", 0) or 0)
+        pc = {r.get("turn"): r.get("piece_count") for r in rs}
+        rec.update({"merges_per_turn": round(merges / max(1, len(rs)), 4), "multi_merge_turns": multi,
+                    "pieces_at_20": pc.get(20), "pieces_at_40": pc.get(40), "max_type": mx, "t14": int(mx >= 14), "t15": int(mx >= 15),
+                    "crossings": sum(1 for r in rs if r.get("decision_crosses_deadline"))})
+except Exception:
+    pass
 with open(games_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 try:

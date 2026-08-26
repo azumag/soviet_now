@@ -1668,7 +1668,17 @@ with open(rs_file, 'w') as f:
 				fi
 			fi
 
-			if [ "$hash_before" != "$hash_now" ]; then
+			local _ab_gate_started_at
+			_ab_gate_started_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('started_at',0) or 0))" 2>/dev/null || echo 0)
+			if [ "$hash_before" = "$hash_now" ] && command -v _ab_gate_candidate_ready_since >/dev/null 2>&1 && _ab_gate_candidate_ready_since "$_ab_gate_started_at" "$hash_now"; then
+				# A/B ゲート: 候補は root に適用されず tmp/state/ab_candidate/ に出力されている → 成功扱い
+				log "[IMPROVE] AB gate: candidate_ready (root 不変) → 成功として回収"
+				_write_improve_state "idle" "0" "" "candidate_ready" "100" ""
+				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
+				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
+				rm -f "$IMPROVE_LOCK_FILE"
+				_clear_improve_retry_batch
+			elif [ "$hash_before" != "$hash_now" ]; then
 				_write_improve_state "idle" "0" "" "" "0" ""
 				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
@@ -2799,10 +2809,13 @@ record_completed_game_for_adaptive_improvement() {
 			INSTADEATH_RECORD_TURNS="${LAST_TURNS:-}" \
 				_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
-		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
 		if command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
-			: # A/B 中は同 hash ロックの更新を止める (腕が交互に変わるため)
+			# A/B 中: 改善用の蓄積は A 腕 (root) の試合だけ。同 hash ロックの更新も止める (腕が交互に変わるため)
+			if [ "${AB_ARM:-A}" = "A" ]; then
+				accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
+			fi
 		else
+			accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
 			queue_fresh_objective_same_hash_lock_if_needed || true
 		fi
 	fi

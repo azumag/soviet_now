@@ -3894,9 +3894,20 @@ if $improve_ok; then
 	fi
 fi
 
+AB_GATE_EMITTED=false
 if $improve_ok; then
 	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
-		if ! strategy_runtime_atomic_apply_bundle_then \
+		if command -v _ab_gate_enabled >/dev/null 2>&1 && _ab_gate_enabled; then
+			# A/B ゲート: root には適用せず候補として出力 (境界で root vs 候補の A/B が始まる)
+			if _ab_gate_emit_candidate "$HARVEST_DIR" "$IMPROVE_BASE_HASH" "$GAME_NUM_SNAPSHOT" "$SCORES"; then
+				AB_GATE_EMITTED=true
+				log "[IMPROVE] AB gate: candidate emitted (root untouched)"
+			else
+				VALIDATE_ERROR="AB gate: candidate emission failed"
+				log "[IMPROVE] $VALIDATE_ERROR"
+				improve_ok=false
+			fi
+		elif ! strategy_runtime_atomic_apply_bundle_then \
 			"$HARVEST_DIR/strategy.py.staging" \
 			"$STRATEGY_FILE" \
 			"$HARVEST_DIR/strategy_helpers" \
@@ -3908,7 +3919,7 @@ if $improve_ok; then
 			log "[IMPROVE] $VALIDATE_ERROR"
 			improve_ok=false
 		fi
-		if $improve_ok; then
+		if $improve_ok && [ "$AB_GATE_EMITTED" != "true" ]; then
 			if [ -f "$HARVEST_DIR/logs/change_log.txt" ] && [ -s "$HARVEST_DIR/logs/change_log.txt" ]; then
 				cat "$HARVEST_DIR/logs/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
 				log "[IMPROVE] change_log harvested and appended"
@@ -3924,7 +3935,7 @@ if $improve_ok; then
 	if $improve_ok; then
 		# ユーザーレビューは改善適用後に消去（1回限りの指示）
 		: >"data/user_review.md" 2>/dev/null || true
-		_post_improve_param_parallel_trial || true
+		[ "$AB_GATE_EMITTED" = "true" ] || _post_improve_param_parallel_trial || true
 	fi
 fi
 [ -n "$HOST_INTEGRITY_BEFORE_FILE" ] && rm -f "$HOST_INTEGRITY_BEFORE_FILE" 2>/dev/null || true
@@ -3944,7 +3955,10 @@ fi
 _improve_progress "post_validate" "85" "finalizing"
 [ -n "$HARVEST_DIR" ] && rm -rf "$HARVEST_DIR" 2>/dev/null || true
 
-if $improve_ok; then
+if $improve_ok && [ "${AB_GATE_EMITTED:-false}" = "true" ]; then
+	# A/B ゲート: 候補出力のみ。commit/系統樹/ラジオは採用時 (_ab_finish B) に行う。
+	_improve_progress "done" "100" "candidate_ready"
+elif $improve_ok; then
 	# git commit
 	# ゲーム範囲を算出してコミットメッセージに含める
 	first_score=$(echo "$SCORES" | awk '{print $1}')
