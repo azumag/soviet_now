@@ -2176,6 +2176,11 @@ _comment_generate_translation() {
 		output=$(_ai_dispatch "COMMENT_TRANSLATION" "$agent" "$prompt_file" "$timeout_sec")
 		rc=$?
 		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
+		# 翻訳モデルも推論ブロックを漏らしうる。日本語本文と同じガードを通す
+		# (_comment_is_valid_translation_candidate は <think> を見ていない)。
+		if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+			output=$(_comment_guard_model_text "$output")
+		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && _comment_is_valid_translation_candidate "$output"; then
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 			printf '%s' "$output"
@@ -2674,13 +2679,28 @@ _append_soviet_theme_item() {
 	log "[COMMENT] ソ連テーマ自動追加: $theme_item"
 }
 
+# コメント生成AIの生出力から推論ブロック等のメタ出力を落として本文だけにする。
+# ラジオ側 (_radio_is_valid_generation_candidate / radio_engine.sh:1451 等) は以前から
+# _ai_guard_model_output を通していたが、コメント側だけ通していなかった。そのため
+# deepseek 系が英語の思考を "</think>" 付きで漏らした出力がそのまま VOICEVOX に
+# 読み上げられた (2026-08-27 00:42 実発生: GeForce NOW へのコメント返し)。
+# ガードが空を返す = 内部プロトコル漏れ等で本文を救えない、という意味なので空を返し、
+# 呼び出し側の再生成/次モデルへのフォールバックに任せる。生テキストへは戻さない。
+_comment_guard_model_text() {
+	local raw="$1"
+	[ -n "$raw" ] || return 0
+	printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null || true
+}
+
 # ラジオ生成と同じ ai_generate_list() から呼ばれる候補検証。
 # 非空でも、読み上げ本文へ整形した結果が無効なら次のCodexモデルへ進める。
 _comment_is_valid_generation_candidate() {
-	local raw="$1" cleaned
+	local raw="$1" cleaned guarded
 	[ -n "$raw" ] || return 1
 	_contains_provider_error_text "$raw" && return 1
-	cleaned=$(_clean_comment_talk "$raw" 1)
+	guarded=$(_comment_guard_model_text "$raw")
+	[ -n "$guarded" ] || return 1
+	cleaned=$(_clean_comment_talk "$guarded" 1)
 	cleaned=$(printf '%s' "$cleaned" | _sanitize_onair_text)
 	[ -n "$cleaned" ] || return 1
 	_is_valid_comment_talk "$cleaned"
@@ -3198,6 +3218,8 @@ RETRYCOMMENT
 				generation_rate_limited=true
 			fi
 			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
+				# 本文へ触る前に推論ブロック等のメタ出力を落とす（SING/ADVICE 抽出より前）。
+				attempt_talk=$(_comment_guard_model_text "$attempt_talk")
 				attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 				# _sanitize_onair_text は SING JSON 行を除去するため抽出前に実行しない（抽出後にまとめて sanitizing する）
 			else
