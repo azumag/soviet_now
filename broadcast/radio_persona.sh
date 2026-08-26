@@ -158,10 +158,14 @@ _broadcast_expected_mode_matches() {
 
 _radio_voicevox_speaker_override() {
 	local corner="${1:-}"
-	# ラジオコーナーの読み上げは常にメイン話者（tmp/voicevox_voice.txt=東北イタコ 109）を使う。
-	# soren91(メリケンAI) 稼働中でも SOREN91_VOICEVOX_SPEAKER へ上書きしない
-	# （soren91 自身のアナウンス声は soren91_control.sh 側で別途指定される）。
-	return 0
+	# capitalism は台本どおりメリケンAIの話者を使う。
+	# その他のラジオは空を返し、従来どおりメイン話者
+	# （tmp/voicevox_voice.txt=東北イタコ 109）へ委ねる。
+	case "$corner" in
+	capitalism)
+		printf '%s' "${RADIO_CAPITALISM_VOICEVOX_SPEAKER:-${SOREN91_VOICEVOX_SPEAKER:-46}}"
+		;;
+	esac
 }
 
 _radio_persona_block() {
