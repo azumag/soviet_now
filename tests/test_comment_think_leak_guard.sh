@@ -20,6 +20,11 @@ not_ok() { echo "not ok - $1"; FAIL=1; }
 # --- 実関数を抽出して source ---
 sed -n '/^_comment_guard_model_text()/,/^}/p' "$SRC" >"$TMP/fn_guard.sh"
 [ -s "$TMP/fn_guard.sh" ] || { not_ok "extract _comment_guard_model_text"; exit 1; }
+# _comment_guard_model_text が呼ぶので先に読み込む
+sed -n '/^_comment_strip_worknote_head()/,/^}/p' "$SRC" >"$TMP/fn_worknote.sh"
+[ -s "$TMP/fn_worknote.sh" ] || { not_ok "extract _comment_strip_worknote_head"; exit 1; }
+# shellcheck source=/dev/null
+. "$TMP/fn_worknote.sh"
 # shellcheck source=/dev/null
 . "$TMP/fn_guard.sh"
 
@@ -79,6 +84,61 @@ if [ -n "$guard_line" ] && [ -n "$clean_line" ] && [ "$guard_line" -lt "$clean_l
 else
 	not_ok "ガードの位置が不正 (guard=$guard_line clean=$clean_line)"
 fi
+
+
+# ==== 作業メモ + --- 区切りの漏れ (ユーザー選択 B: コメント側だけで判定) ====
+# --- 7. 実発生の形: 作業メモ + --- + 本文 → 本文だけ残る ---
+leak_ja=$(printf '%s\n' \
+	'インジケーターのスクリプトはこのサンドボックス環境ではネットワーク制約で実行できないようですが、コメント返しの生成自体は完了しています。' \
+	'' \
+	'以下、2件のコメント返しです。' \
+	'' \
+	'---' \
+	'' \
+	'あずまぐさん、めっちゃいい感じと言ってもらえて嬉しいです。' \
+	'' \
+	'あずまぐさん、そうなんです、ロシアで国々が分断されてしまったんです。')
+out=$(printf '%s' "$leak_ja" | _comment_strip_worknote_head)
+case "$out" in *"インジケーター"*|*"以下、2件"*) not_ok "作業メモが残っている: $out" ;; *) ok "作業メモの前置きが落ちる" ;; esac
+case "$out" in *"めっちゃいい感じ"*) ok "1件目の本文が残る" ;; *) not_ok "1件目が消えた: $out" ;; esac
+case "$out" in *"ロシアで国々が分断"*) ok "2件目の本文が残る" ;; *) not_ok "2件目が消えた: $out" ;; esac
+case "$out" in *"---"*) not_ok "罫線が残っている: $out" ;; *) ok "罫線が落ちる" ;; esac
+
+# --- 8. 誤爆しない: 先頭が視聴者への呼びかけなら前置きを落とさない ---
+legit=$(printf '%s\n' 'あずまぐさん、スクリプトが実行できないという話、興味深いです。' '' '---' '' 'つづきの話です。')
+out=$(printf '%s' "$legit" | _comment_strip_worknote_head)
+case "$out" in *"あずまぐさん、スクリプトが実行できない"*) ok "呼びかけ付きの前置きは落とさない" ;; *) not_ok "本物の返答が削られた: $out" ;; esac
+
+# --- 9. 誤爆しない: 作業メモ語彙が無ければ落とさない ---
+legit2=$(printf '%s\n' '今日はここまでの戦績をまとめてみます。' '' '---' '' 'ロシアは2回できました。')
+out=$(printf '%s' "$legit2" | _comment_strip_worknote_head)
+case "$out" in *"今日はここまでの戦績"*) ok "作業メモ語彙が無ければ落とさない" ;; *) not_ok "無関係な前置きが削られた: $out" ;; esac
+
+# --- 10. 区切りの後ろが空なら落とさない ---
+tail_empty=$(printf '%s\n' '以下、2件のコメント返しです。' '---' '')
+out=$(printf '%s' "$tail_empty" | _comment_strip_worknote_head)
+[ -n "$out" ] && ok "区切りの後ろが空なら元テキストを返す" || not_ok "全部消えた"
+
+# --- 11. 区切りが無い通常の返答は素通し ---
+plain2='nimdavirusさん、コメントありがとうございます。いまの盤面はロシアが2つ並んでいます。'
+out=$(printf '%s' "$plain2" | _comment_strip_worknote_head)
+[ "$out" = "$plain2" ] && ok "区切りが無ければ素通し" || not_ok "通常の返答が変化した: $out"
+
+# --- 12. ===SING=== を罫線と誤認しない ---
+out=$(printf '%s' "$sing" | _comment_strip_worknote_head)
+case "$out" in *'===SING==='*) ok "SINGマーカーを罫線と誤認しない" ;; *) not_ok "SINGマーカーが消えた: $out" ;; esac
+case "$out" in *'"notes"'*) ok "楽譜JSONが残る(worknote段)" ;; *) not_ok "楽譜JSONが消えた: $out" ;; esac
+
+# --- 13. 空入力で落ちない ---
+out=$(printf '%s' "" | _comment_strip_worknote_head)
+[ -z "$out" ] && ok "空入力は空のまま" || not_ok "空入力で何か返した: $out"
+
+# --- 14. 配線: ガード本体が worknote 判定を通している ---
+grep -q '_ai_guard_model_output 2>/dev/null | _comment_strip_worknote_head' "$SRC" \
+	&& ok "ガードが worknote 判定を通す" || not_ok "worknote 判定が配線されていない"
+# 共通ガード(ラジオ共用)は変更していないこと
+grep -q "インジケーター" "$ROOT/lib/model_output_guard.py" \
+	&& not_ok "共通ガードにコメント固有の語彙が混ざっている" || ok "共通ガード(ラジオ共用)は無変更"
 
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"
 exit "$FAIL"

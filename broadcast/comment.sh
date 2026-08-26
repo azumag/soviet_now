@@ -2696,6 +2696,71 @@ _append_soviet_theme_item() {
 	log "[COMMENT] ソ連テーマ自動追加: $theme_item"
 }
 
+# 「作業メモ + --- 区切り + 本物の本文」という形の漏れを落とす（コメント経路専用）。
+#
+# 実発生 (2026-08-27 00:51, spoken_history/20260827_005123_14629_main.txt):
+#   インジケーターのスクリプトはこのサンドボックス環境では…実行できないようですが、
+#   コメント返しの生成自体は完了しています。
+#   以下、2件のコメント返しです。
+#   ---
+#   あずまぐさん、…（本物の返答）
+# これは <think> を使っていないため lib/model_output_guard.py では落ちない。
+# 共通ガードを広げるとラジオにも影響するので、コメント側だけで判定する（ユーザー選択 2026-08-27）。
+#
+# 安全側の条件: (1) 罫線だけの行がある (2) その後ろに本文が残る (3) 前置きが作業メモ語彙に
+# マッチする (4) 前置きが視聴者への呼びかけ("〜さん、")を含まない (5) 前置きが長すぎない。
+# 1つでも欠けたら前置きは落とさない。
+_comment_strip_worknote_head() {
+	python3 -c "$(
+		cat <<'WORKNOTEPY'
+import re
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+SEPARATOR_LINE_RE = re.compile(r"^[ 	]*[-‐-―]{3,}[ 	]*$")
+# 視聴者への呼びかけがあれば、そこはもう本物の返答なので前置き扱いしない。
+VIEWER_ADDRESS_RE = re.compile(r"さん[、,：:]")
+WORK_NOTE_RE = re.compile(
+    r"(?:以下|下記)[、,]?\s*\d*\s*(?:件|通り)?\s*(?:の)?\s*(?:コメント返し|返信|返答|回答)"
+    r"|(?:コメント返し|返信|返答|生成|出力)(?:自体)?は?\s*(?:完了|できました|終わりました)"
+    r"|サンドボックス|ネットワーク制約|実行できません|実行できない"
+    r"|(?:スクリプト|ツール|コマンド|環境|インジケーター)[^\n]{0,24}"
+    r"(?:失敗|エラー|制約|できません|できない|見当たりません)"
+    r"|(?:^|\n)\s*(?:I need to|We need to|Let's|Let me|I will|I'll|Analyzing|First,)\b"
+    r"|WebFetch|WebSearch|exec_command|sandbox",
+    re.IGNORECASE,
+)
+MAX_HEAD_CHARS = 600
+
+lines = text.splitlines()
+sep_indexes = [i for i, line in enumerate(lines) if SEPARATOR_LINE_RE.match(line)]
+
+result_lines = lines
+if sep_indexes:
+    first = sep_indexes[0]
+    head = "\n".join(lines[:first]).strip()
+    body = "\n".join(lines[first + 1:]).strip()
+    if (
+        body
+        and head
+        and len(head) <= MAX_HEAD_CHARS
+        and not VIEWER_ADDRESS_RE.search(head)
+        and WORK_NOTE_RE.search(head)
+    ):
+        result_lines = lines[first + 1:]
+
+# 罫線だけの行は読み上げても意味が無いので本文中からも落とす。
+result_lines = [line for line in result_lines if not SEPARATOR_LINE_RE.match(line)]
+out = "\n".join(result_lines).strip()
+sys.stdout.write(out if out else text)
+WORKNOTEPY
+	)"
+}
+
 # コメント生成AIの生出力から推論ブロック等のメタ出力を落として本文だけにする。
 # ラジオ側 (_radio_is_valid_generation_candidate / radio_engine.sh:1451 等) は以前から
 # _ai_guard_model_output を通していたが、コメント側だけ通していなかった。そのため
@@ -2706,7 +2771,7 @@ _append_soviet_theme_item() {
 _comment_guard_model_text() {
 	local raw="$1"
 	[ -n "$raw" ] || return 0
-	printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null || true
+	printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null | _comment_strip_worknote_head || true
 }
 
 # ラジオ生成と同じ ai_generate_list() から呼ばれる候補検証。
