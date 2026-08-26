@@ -69,6 +69,28 @@ def parse_date(arg: str) -> datetime.date:
     raise ValueError(f"invalid date: {arg}")
 
 
+# クレジット。VOICEVOX は音声ライブラリごとに表記が必須
+# (東北イタコの規約: 動画内または概要欄に「VOICEVOX:東北イタコ」)。
+VOICE_CREDIT = os.environ.get("PODCAST_VOICE_CREDIT", "VOICEVOX:東北イタコ")
+VOICE_TERMS_URL = os.environ.get(
+    "PODCAST_VOICE_TERMS_URL", "https://zunko.jp/con_ongen_kiyaku.html")
+BGM_CREDIT = os.environ.get("PODCAST_BGM_CREDIT", "")
+EXTRA_CREDIT = os.environ.get("PODCAST_EXTRA_CREDIT", "")
+
+
+def credit_lines() -> list[str]:
+    """概要欄に入れるクレジット。VOICEVOX の表記は規約上必須なので必ず入れる。"""
+    out = ["----", "使用素材・クレジット", f"音声合成: {VOICE_CREDIT}"]
+    if VOICE_TERMS_URL:
+        out.append(f"  利用規約: {VOICE_TERMS_URL}")
+    if BGM_CREDIT:
+        out.append(f"BGM: {BGM_CREDIT}")
+    out.append("画像: Pexels")
+    if EXTRA_CREDIT:
+        out += [x for x in EXTRA_CREDIT.split("|") if x.strip()]
+    return out
+
+
 def find_doci() -> Path | None:
     cands = []
     if os.environ.get("DOCI_DIR"):
@@ -399,13 +421,15 @@ def main() -> int:
     if len(scenes) > 5:
         log(f"  ... 他 {len(scenes) - 5} 枚")
 
-    # 説明欄 (チャプター付き)
+    # 説明欄 (チャプター + クレジット)
     desc = [meta.get("summary", ""), ""]
     if chap_file.exists():
         desc.append("チャプター")
         for c in json.loads(chap_file.read_text(encoding="utf-8"))["chapters"]:
             s = int(c["startTime"])
             desc.append(f"{s // 60}:{s % 60:02d} {c['title']}")
+        desc.append("")
+    desc += credit_lines()
     desc_path = out_dir / f"{iso}.description.txt"
 
     if args.dry_run:
