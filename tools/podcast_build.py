@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import datetime
+import difflib
 import glob
 import json
 import os
@@ -295,7 +296,11 @@ PLAN_PROMPT = """あなたはポッドキャスト番組の構成作家です。
 - title はエピソードのタイトル (30字以内)、summary は番組概要 (120字以内)。
 - 番組名は「{title}」。title には番組名を含めない (冒頭で別に読み上げるため二重になる)。
   title に「:」「：」「-」などの記号を使わず、そのまま読める一続きの言葉にする。
+- 過去回と同じ書き出し、中心語、文型を繰り返さない。特に抽象語だけを並べた
+  「〜世界で問われる○○と○○」のような型を使い回さず、その日に固有の話題が伝わる題にする。
 - 配信やゲームを想起させる語をタイトル・コーナー名に使わない。
+
+{title_history}
 
 話題一覧:
 {topics}
@@ -470,8 +475,82 @@ def _strip_show_name(title: str) -> str:
     return t.lstrip(" 　:：-—–〜~・|｜")
 
 
-def plan_sections(digests: list[dict], date: datetime.date) -> dict | None:
+def _normalize_episode_title(title: str) -> str:
+    """比較用に空白・記号を落とす。日本語の文字は残す。"""
+    return re.sub(r"[^\w]+", "", title, flags=re.UNICODE).lower()
+
+
+def _title_similarity(left: str, right: str) -> float:
+    a = _normalize_episode_title(left)
+    b = _normalize_episode_title(right)
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _most_similar_title(title: str, recent_titles: list[str]) -> tuple[str, float]:
+    scored = [(old, _title_similarity(title, old)) for old in recent_titles]
+    return max(scored, key=lambda item: item[1], default=("", 0.0))
+
+
+def _title_too_similar(title: str, recent_titles: list[str], threshold: float = 0.55) -> bool:
+    return _most_similar_title(title, recent_titles)[1] >= threshold
+
+
+def recent_episode_titles(out_dir: Path, date: datetime.date, limit: int = 7) -> list[str]:
+    """対象日より前の meta.json から新しい順に題名を返す。"""
+    found: list[tuple[datetime.date, str]] = []
+    for path in out_dir.glob("*.meta.json"):
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.meta\.json", path.name)
+        if not m:
+            continue
+        try:
+            ep_date = datetime.date.fromisoformat(m.group(1))
+            if ep_date >= date:
+                continue
+            obj = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(obj, dict):
+                continue
+            title = str(obj.get("title") or "").strip()
+        except (OSError, ValueError, TypeError):
+            continue
+        if title:
+            found.append((ep_date, title))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [title for _, title in found[:max(0, limit)]]
+
+
+def _title_history_prompt(recent_titles: list[str], rejected: list[str]) -> str:
+    if not recent_titles and not rejected:
+        return "過去回のタイトル: なし"
+    lines = ["過去回のタイトル（これらと似せない）:"]
+    lines.extend(f"- {title}" for title in recent_titles)
+    if rejected:
+        lines.append("今回すでに類似として却下した案（これらも使わない）:")
+        lines.extend(f"- {title}" for title in rejected)
+    return "\n".join(lines)
+
+
+def _fallback_episode_title(sections: list[dict], date: datetime.date,
+                            recent_titles: list[str]) -> str:
+    """LLMが類似案を繰り返した場合、具体的なコーナー名から題を作る。"""
+    headings = [str(sec.get("heading") or "").strip() for sec in sections]
+    headings = [h for h in headings if h]
+    if len(headings) >= 2:
+        candidate = f"{headings[0][:12]}から読む{headings[1][:12]}"
+    elif headings:
+        candidate = f"{headings[0]}をめぐる今日の論点"[:30]
+    else:
+        candidate = f"{date.month}月{date.day}日の時事焦点"
+    if _title_too_similar(candidate, recent_titles):
+        return f"{date.month}月{date.day}日の時事焦点"
+    return candidate
+
+
+def plan_sections(digests: list[dict], date: datetime.date,
+                  recent_titles: list[str] | None = None) -> dict | None:
     """話題一覧から番組の構成案を作る。"""
+    recent_titles = recent_titles or []
     if PODCAST_TARGET_CHARS > 0:
         n_sections = max(1, round(PODCAST_TARGET_CHARS / PODCAST_SECTION_CHARS))
         coverage = ("話題は取捨選択してよい。その日の主要な話題を優先し、"
@@ -482,42 +561,57 @@ def plan_sections(digests: list[dict], date: datetime.date) -> dict | None:
     topics = "\n".join(f"{d['n']}. {d['topic']}: {d['points']}" for d in digests)
     log(f"構成: 話題 {len(digests)} 件 -> {n_sections} コーナー前後 "
         f"(1 コーナー {PODCAST_SECTION_CHARS} 字目標)")
-    obj = llm_generate(
-        PLAN_PROMPT.format(n_sections=n_sections, coverage=coverage,
-                           title=PODCAST_TITLE, topics=topics),
-        schema=PLAN_SCHEMA)
-    if not obj:
-        return None
-    sections = []
-    seen: set[int] = set()
-    valid = {d["n"] for d in digests}
-    for sec in obj.get("sections") or []:
-        if not isinstance(sec, dict):
-            continue
-        heading = str(sec.get("heading") or "").strip()
-        nums = []
-        for t in sec.get("topics") or []:
-            try:
-                t = int(t)
-            except (TypeError, ValueError):
+    rejected: list[str] = []
+    for attempt in range(3):
+        obj = llm_generate(
+            PLAN_PROMPT.format(
+                n_sections=n_sections, coverage=coverage, title=PODCAST_TITLE,
+                title_history=_title_history_prompt(recent_titles, rejected), topics=topics),
+            schema=PLAN_SCHEMA)
+        if not obj:
+            return None
+        sections = []
+        seen: set[int] = set()
+        valid = {d["n"] for d in digests}
+        for sec in obj.get("sections") or []:
+            if not isinstance(sec, dict):
                 continue
-            if t in valid and t not in seen:
-                seen.add(t)
-                nums.append(t)
-        if heading and nums:
-            sections.append({"heading": heading, "topics": nums})
-    if not sections:
-        log("構成案にコーナーが無い")
-        return None
-    unused = valid - seen
-    if unused:
-        log(f"構成に入らなかった話題 {len(unused)} 件")
-    return {
-        "title": _strip_show_name(str(obj.get("title") or "").strip())
-                 or f"{date.strftime('%Y年%m月%d日')} 時事まとめ",
-        "summary": str(obj.get("summary") or "").strip(),
-        "sections": sections,
-    }
+            heading = str(sec.get("heading") or "").strip()
+            nums = []
+            for t in sec.get("topics") or []:
+                try:
+                    t = int(t)
+                except (TypeError, ValueError):
+                    continue
+                if t in valid and t not in seen:
+                    seen.add(t)
+                    nums.append(t)
+            if heading and nums:
+                sections.append({"heading": heading, "topics": nums})
+        if not sections:
+            log("構成案にコーナーが無い")
+            return None
+
+        candidate = (_strip_show_name(str(obj.get("title") or "").strip())
+                     or f"{date.strftime('%Y年%m月%d日')} 時事まとめ")
+        old, score = _most_similar_title(candidate, recent_titles)
+        if old and score >= 0.55:
+            log(f"タイトル案「{candidate}」は過去回「{old}」と類似度 {score:.2f} のため却下")
+            rejected.append(candidate)
+            if attempt < 2:
+                continue
+            candidate = _fallback_episode_title(sections, date, recent_titles)
+            log(f"類似案が続いたため具体的なコーナー名からタイトルを作成: 「{candidate}」")
+
+        unused = valid - seen
+        if unused:
+            log(f"構成に入らなかった話題 {len(unused)} 件")
+        return {
+            "title": candidate,
+            "summary": str(obj.get("summary") or "").strip(),
+            "sections": sections,
+        }
+    return None
 
 
 def write_section(sec: dict, by_n: dict[int, str]) -> str | None:
@@ -582,7 +676,8 @@ def load_script(path: Path) -> dict | None:
             "source_count": None, "used_count": None}
 
 
-def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False) -> dict | None:
+def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False,
+                    recent_titles: list[str] | None = None) -> dict | None:
     """その日の原稿群を 1 本の番組へ編成し直す。失敗したら None。
 
     要約 (map) -> 構成案 -> コーナーごとに執筆 の三段。
@@ -607,7 +702,7 @@ def compose_episode(files: list[Path], date: datetime.date, dummy: bool = False)
         log("要約が 1 件も取れなかったため編成できない")
         return None
 
-    plan = plan_sections(digests, date)
+    plan = plan_sections(digests, date, recent_titles=recent_titles)
     if not plan:
         return None
 
@@ -824,7 +919,12 @@ def main():
         if args.from_script:
             episode = load_script(out_dir / f"{iso}.script.txt")
         else:
-            episode = compose_episode(files, date, dummy=args.dummy)
+            title_history = recent_episode_titles(out_dir, date)
+            if title_history:
+                log(f"直近タイトル {len(title_history)} 件を類似回避に使用: "
+                    + " / ".join(f"「{title}」" for title in title_history))
+            episode = compose_episode(files, date, dummy=args.dummy,
+                                      recent_titles=title_history)
         if not episode:
             # 素材の丸ごと連結 (3〜5時間) は作りたい成果物ではないのでフォールバックしない
             log("編成に失敗したため中止する")
