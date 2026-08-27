@@ -2761,6 +2761,49 @@ WORKNOTEPY
 	)"
 }
 
+# 推論タグ (<think>/<thinking>/<analysis>) をコメント側で自前に落とす。
+#
+# なぜ自前でやるか (2026-08-28 実測):
+#   _ai_guard_model_output は .env の DOCICH_BIN 経由で `docich ai-guard` へ委譲される。
+#   VM の正典 (src/docich/model_output_guard.py, 127 行) には REASONING_* の実装が無く、
+#   soviet_now 側 (lib/model_output_guard.py, 236 行) にだけある。つまり **VM では推論タグ
+#   除去が効いていなかった**（`docich ai-guard` に 02:14 の漏れを流すと 1830 バイトが素通り）。
+#   かといって soviet_now 版をそのまま通すと、WORK_NOTE_RE が「徹底調査します」「すぐ確認します」
+#   のような自然な日本語に誤爆して**実出力 116 本中 2 本の正当な返答を全体棄却**した。
+#   そこで、誤爆しようのないタグ除去だけをコメント側で行う（全体棄却はしない）。
+_comment_strip_reasoning_tags() {
+	python3 -c "$(
+		cat <<'REASONPY'
+import re
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+TAGS = r"analysis|thinking|think"
+BLOCK_RE = re.compile(rf"<(?P<tag>{TAGS})\b[^>]*>.*?</(?P=tag)\s*>", re.IGNORECASE | re.DOTALL)
+# 開始タグの無い閉じタグ = 開始タグが別チャネルへ出た。手前を全部捨てる。
+CLOSE_HEAD_RE = re.compile(rf"\A.*</(?:{TAGS})\s*>", re.IGNORECASE | re.DOTALL)
+# 閉じタグの無い開始タグ = 推論の途中で切れた。以降を全部捨てる。
+OPEN_TAIL_RE = re.compile(rf"<(?:{TAGS})\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
+
+value = text
+previous = None
+while previous != value:
+    previous = value
+    value = BLOCK_RE.sub("", value)
+value = CLOSE_HEAD_RE.sub("", value)
+value = OPEN_TAIL_RE.sub("", value)
+value = value.strip()
+
+# 何も残らないなら触らない（呼び出し側の判定へ委ねる）
+sys.stdout.write(value if value else text)
+REASONPY
+	)"
+}
+
 # コメント生成AIの生出力から推論ブロック等のメタ出力を落として本文だけにする。
 # ラジオ側 (_radio_is_valid_generation_candidate / radio_engine.sh:1451 等) は以前から
 # _ai_guard_model_output を通していたが、コメント側だけ通していなかった。そのため
@@ -2771,8 +2814,87 @@ WORKNOTEPY
 _comment_guard_model_text() {
 	local raw="$1"
 	[ -n "$raw" ] || return 0
-	printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null | _comment_strip_worknote_head || true
+	printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null |
+		_comment_strip_reasoning_tags | _comment_strip_worknote_head || true
 }
+
+# 日本語本文の前に付いた「日本語を一切含まない段落」（＝英語の作業メモ）を落とす。
+#
+# 実発生 (2026-08-28 02:14, spoken_history/20260828_021437_1490_main.txt):
+#   The work indicator script is failing due to sandbox network restrictions...
+#   The current comment is from esu303 who got a rare ... Let me craft a reply...
+#   （英語 5 段落）→ esu303さん、[レア]読め、そして学べの獲得、おめでとうございます。…
+# <think> も --- 区切りも無いため、既存の 2 段のガードでは落ちなかった。
+#
+# この生成段階の契約は「返答は全て日本語（です・ます）。英語訳は後段で作る」なので、
+# 本文の**先頭**にある日本語比率の極端に低い段落は本文ではありえない。ただし安全側に倒し、
+#   - 先頭から連続する段落だけを見る（日本語を含む段落に当たったら即停止）
+#   - ===SING=== 等のマーカーを含む段落に当たったら停止（楽譜JSONを守る）
+#   - 落とした結果に日本語が残らないなら、何もせず元テキストを返す
+# を満たすときだけ落とす。英訳生成の出力には**適用しない**（呼び出し側で分けている）。
+_comment_strip_nonjapanese_head() {
+	python3 -c "$(
+		cat <<'NONJPPY'
+import os
+import re
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+JP_RE = re.compile(r"[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\u3001\u3002]")
+MARKER_RE = re.compile(r"===[A-Z_]+===")
+
+# 段落の日本語比率でメタ段落を見分ける。実出力 116 本の実測では、正当な返答の先頭段落は
+# 最低 0.838 (中央値 0.946)、作業メモ段落は最大 0.19 と大きく離れていた。0.5 はその谷間。
+# COMMENT_MIN_JP_RATIO で調整可。
+try:
+    threshold = float(os.environ.get("COMMENT_MIN_JP_RATIO", "0.5"))
+except Exception:
+    threshold = 0.5
+
+
+def jp_ratio(para):
+    body = re.sub(r"\s+", "", para)
+    if not body:
+        return 1.0
+    return len(JP_RE.findall(body)) / len(body)
+
+
+paragraphs = re.split(r"\n[ 	]*\n", text)
+start = 0
+for para in paragraphs:
+    if not para.strip():
+        start += 1
+        continue
+    if MARKER_RE.search(para) or jp_ratio(para) >= threshold:
+        break
+    start += 1
+
+if start == 0 or start >= len(paragraphs):
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+rest = "\n\n".join(p for p in paragraphs[start:]).strip()
+if not rest or not JP_RE.search(rest):
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+sys.stdout.write(rest)
+NONJPPY
+	)"
+}
+
+# 日本語本文用のガード。英訳生成には使わない（英訳は日本語ゼロが正しいため）。
+_comment_guard_japanese_text() {
+	local guarded
+	guarded=$(_comment_guard_model_text "$1")
+	[ -n "$guarded" ] || return 0
+	printf '%s' "$guarded" | _comment_strip_nonjapanese_head
+}
+
 
 # ラジオ生成と同じ ai_generate_list() から呼ばれる候補検証。
 # 非空でも、読み上げ本文へ整形した結果が無効なら次のCodexモデルへ進める。
@@ -2780,7 +2902,7 @@ _comment_is_valid_generation_candidate() {
 	local raw="$1" cleaned guarded
 	[ -n "$raw" ] || return 1
 	_contains_provider_error_text "$raw" && return 1
-	guarded=$(_comment_guard_model_text "$raw")
+	guarded=$(_comment_guard_japanese_text "$raw")
 	[ -n "$guarded" ] || return 1
 	cleaned=$(_clean_comment_talk "$guarded" 1)
 	cleaned=$(printf '%s' "$cleaned" | _sanitize_onair_text)
@@ -3301,7 +3423,7 @@ RETRYCOMMENT
 			fi
 			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
 				# 本文へ触る前に推論ブロック等のメタ出力を落とす（SING/ADVICE 抽出より前）。
-				attempt_talk=$(_comment_guard_model_text "$attempt_talk")
+				attempt_talk=$(_comment_guard_japanese_text "$attempt_talk")
 				attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 				# _sanitize_onair_text は SING JSON 行を除去するため抽出前に実行しない（抽出後にまとめて sanitizing する）
 			else

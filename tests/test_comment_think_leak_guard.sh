@@ -25,6 +25,14 @@ sed -n '/^_comment_strip_worknote_head()/,/^}/p' "$SRC" >"$TMP/fn_worknote.sh"
 [ -s "$TMP/fn_worknote.sh" ] || { not_ok "extract _comment_strip_worknote_head"; exit 1; }
 # shellcheck source=/dev/null
 . "$TMP/fn_worknote.sh"
+sed -n '/^_comment_strip_reasoning_tags()/,/^}/p' "$SRC" >"$TMP/fn_reason.sh"
+[ -s "$TMP/fn_reason.sh" ] || { not_ok "extract _comment_strip_reasoning_tags"; exit 1; }
+sed -n '/^_comment_strip_nonjapanese_head()/,/^}/p' "$SRC" >"$TMP/fn_nonjp.sh"
+[ -s "$TMP/fn_nonjp.sh" ] || { not_ok "extract _comment_strip_nonjapanese_head"; exit 1; }
+# shellcheck source=/dev/null
+. "$TMP/fn_reason.sh"
+# shellcheck source=/dev/null
+. "$TMP/fn_nonjp.sh"
 # shellcheck source=/dev/null
 . "$TMP/fn_guard.sh"
 
@@ -73,11 +81,11 @@ out=$(_comment_guard_model_text "")
 [ -z "$out" ] && ok "空入力は空を返す" || not_ok "空入力で何か返した: $out"
 
 # --- 6. 配線: 候補検証・本文生成・翻訳の3経路でガードを通している ---
-grep -q 'guarded=$(_comment_guard_model_text "$raw")' "$SRC" && ok "候補検証でガードを通す" || not_ok "候補検証がガードを通していない"
-grep -q 'attempt_talk=$(_comment_guard_model_text "$attempt_talk")' "$SRC" && ok "本文生成でガードを通す" || not_ok "本文生成がガードを通していない"
+grep -q 'guarded=$(_comment_guard_japanese_text "$raw")' "$SRC" && ok "候補検証でガードを通す" || not_ok "候補検証がガードを通していない"
+grep -q 'attempt_talk=$(_comment_guard_japanese_text "$attempt_talk")' "$SRC" && ok "本文生成でガードを通す" || not_ok "本文生成がガードを通していない"
 grep -q 'output=$(_comment_guard_model_text "$output")' "$SRC" && ok "翻訳でガードを通す" || not_ok "翻訳がガードを通していない"
 # ガードは _clean_comment_talk より前に通す（SING/ADVICE 抽出前）
-guard_line=$(grep -n 'attempt_talk=$(_comment_guard_model_text' "$SRC" | head -1 | cut -d: -f1)
+guard_line=$(grep -n 'attempt_talk=$(_comment_guard_japanese_text' "$SRC" | head -1 | cut -d: -f1)
 clean_line=$(grep -n 'attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)' "$SRC" | head -1 | cut -d: -f1)
 if [ -n "$guard_line" ] && [ -n "$clean_line" ] && [ "$guard_line" -lt "$clean_line" ]; then
 	ok "ガードは _clean_comment_talk より前"
@@ -134,11 +142,65 @@ out=$(printf '%s' "" | _comment_strip_worknote_head)
 [ -z "$out" ] && ok "空入力は空のまま" || not_ok "空入力で何か返した: $out"
 
 # --- 14. 配線: ガード本体が worknote 判定を通している ---
-grep -q '_ai_guard_model_output 2>/dev/null | _comment_strip_worknote_head' "$SRC" \
+grep -q '_comment_strip_reasoning_tags | _comment_strip_worknote_head' "$SRC" \
 	&& ok "ガードが worknote 判定を通す" || not_ok "worknote 判定が配線されていない"
 # 共通ガード(ラジオ共用)は変更していないこと
 grep -q "インジケーター" "$ROOT/lib/model_output_guard.py" \
 	&& not_ok "共通ガードにコメント固有の語彙が混ざっている" || ok "共通ガード(ラジオ共用)は無変更"
+
+
+# ==== 英語の作業メモが先頭に並ぶ漏れ (タグも --- も無い形) ====
+# 実発生 2026-08-28 02:14。VM は DOCICH_BIN 経由で docich ai-guard へ委譲され、
+# 正典側に推論タグ除去が無いため素通りしていた（実測: 1830 バイトそのまま）。
+en_head=$(printf '%s\n' \
+	'The work indicator script is failing due to sandbox network restrictions. This is a limitation of the current environment.' \
+	'' \
+	'The current comment is from esu303 who got a rare "読め、そして学べ" card in the 同志の心得 series. Let me craft a reply.' \
+	'' \
+	'esu303さん、レア「読め、そして学べ」の獲得、おめでとうございます。識字教育が社会政策の最前線を切り取った一枚です。')
+out=$(printf '%s' "$en_head" | _comment_strip_nonjapanese_head)
+case "$out" in *"work indicator script"*|*"Let me craft"*) not_ok "英語の作業メモが残っている: $out" ;; *) ok "英語の作業メモ段落が落ちる" ;; esac
+case "$out" in *"esu303さん、レア"*) ok "日本語本文が残る" ;; *) not_ok "日本語本文が消えた: $out" ;; esac
+
+# 日本語混じりでも比率が低ければメタ段落として落とす (実測: メタ最大 0.19 / 正当最小 0.838)
+mixed=$(printf '%s\n' 'This is a chitchat category about the 同志の心得 series. Let me write a reply.' '' 'あずまぐさん、こんばんは。今日の盤面は落ち着いています。')
+out=$(printf '%s' "$mixed" | _comment_strip_nonjapanese_head)
+case "$out" in *"Let me write a reply"*) not_ok "低比率の混在段落が残っている: $out" ;; *) ok "日本語混じりでも低比率ならメタ扱い" ;; esac
+
+# 日本語の本文は当然落とさない
+jp_only='あずまぐさん、GeForce NOW というサービスの話、面白いですね。CPU の話とあわせて考えると納得です。'
+out=$(printf '%s' "$jp_only" | _comment_strip_nonjapanese_head)
+[ "$out" = "$jp_only" ] && ok "日本語本文は素通し" || not_ok "日本語本文が変化した: $out"
+
+# 全段落が低比率なら何もしない (英訳出力などを壊さないため)
+all_en='Thank you for the comment. I will keep playing carefully tonight.'
+out=$(printf '%s' "$all_en" | _comment_strip_nonjapanese_head)
+[ "$out" = "$all_en" ] && ok "日本語が残らない場合は元テキストを返す" || not_ok "全英語テキストが壊れた: $out"
+
+# ===SING=== マーカー段落で停止する
+sing_head=$(printf '%s\n' 'Let me write the song.' '' '===SING===' '{"notes": [{"key": 60, "frame_length": 15, "lyric": "き"}]}' '===SING===' '' 'いかがでしたか。')
+out=$(printf '%s' "$sing_head" | _comment_strip_nonjapanese_head)
+case "$out" in *'"notes"'*) ok "SINGブロックは保持される" ;; *) not_ok "SINGブロックが消えた: $out" ;; esac
+
+# ==== 推論タグのローカル除去 (docich 委譲に依存しない) ====
+out=$(printf '%s' 'reasoning here</think>あずまぐさん、こんばんは。' | _comment_strip_reasoning_tags)
+case "$out" in *"reasoning here"*) not_ok "孤立閉じタグ手前が残っている: $out" ;; *) ok "孤立した </think> の手前を落とす" ;; esac
+case "$out" in *"あずまぐさん、こんばんは。"*) ok "本文は残る(reasoning段)" ;; *) not_ok "本文が消えた: $out" ;; esac
+out=$(printf '%s' '<think>internal</think>あずまぐさん、どうも。' | _comment_strip_reasoning_tags)
+case "$out" in *internal*) not_ok "対応ペアが残っている: $out" ;; *) ok "対応ペアを中身ごと落とす" ;; esac
+plain3='あずまぐさん、今日はよく積めています。'
+out=$(printf '%s' "$plain3" | _comment_strip_reasoning_tags)
+[ "$out" = "$plain3" ] && ok "通常本文は reasoning 段で不変" || not_ok "通常本文が変化した: $out"
+
+# ==== 配線 ====
+grep -q '_comment_strip_reasoning_tags | _comment_strip_worknote_head' "$SRC" \
+	&& ok "ガードが reasoning 除去を通す" || not_ok "reasoning 除去が配線されていない"
+grep -q 'guarded=$(_comment_guard_japanese_text "$raw")' "$SRC" \
+	&& ok "候補検証は日本語用ガードを使う" || not_ok "候補検証が日本語用ガードを使っていない"
+grep -q 'attempt_talk=$(_comment_guard_japanese_text "$attempt_talk")' "$SRC" \
+	&& ok "本文生成は日本語用ガードを使う" || not_ok "本文生成が日本語用ガードを使っていない"
+grep -q 'output=$(_comment_guard_model_text "$output")' "$SRC" \
+	&& ok "英訳は日本語用ガードを使わない" || not_ok "英訳の配線が変わっている"
 
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"
 exit "$FAIL"
