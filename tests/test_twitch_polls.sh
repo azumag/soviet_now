@@ -68,6 +68,9 @@ disabled=$(cd "$TMP" && TWITCH_POLLS_ENABLED=0 ./twitch_polls.sh status)
 assert_json "$disabled" 'not d["ok"] and d["error"] == "disabled"' "無効時はAPI操作しない"
 
 worker="$ROOT/workers/poll_worker.sh"
+config="$ROOT/core/config.sh"
+if grep -Fq 'TWITCH_POLL_INTERVAL_SEC="${TWITCH_POLL_INTERVAL_SEC:-43200}"' "$config" && grep -Fq 'TWITCH_POLL_INTERVAL_SEC:-43200' "$worker"; then
+  ok "既定間隔は12時間"; else not_ok "既定間隔は12時間"; fi
 for needle in 'ai_generate_list "RADIO_POLL_QUESTION"' 'ai_generate_list "RADIO_POLL_RESULT"' 'enqueue_chat_message "アンケート結果：${commentary}"' 'enqueue_audio_text "$commentary" "polls"' '手動または別プロセスのアンケートが進行中'; do
   if grep -Fq "$needle" "$worker"; then ok "worker wiring: $needle"; else not_ok "worker wiring: $needle"; fi
 done
