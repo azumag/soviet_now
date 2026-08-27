@@ -1206,7 +1206,7 @@ _ensure_corner_announce() {
 	survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
 	jiji) announce="時事ニュースコーナーです。" ;;
 	rollback) announce="粛清ラジオです。" ;;
-	rakugo) announce="深夜の落語創作コーナーです。" ;;
+	rakugo) announce="創作落語コーナーです。" ;;
 	finance) announce="金融の仕組みコーナーです。" ;;
 	music_knowledge) announce="音楽知識コーナーです。" ;;
 	ai_knowledge) announce="AI知識・最新AIツール紹介コーナーです。" ;;
