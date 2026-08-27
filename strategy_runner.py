@@ -808,6 +808,18 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
 
     chosen_x = float(decision.get("x", 0.0) or 0.0)
     chosen = min(results, key=lambda r: abs(float(r.get("x", 0.0) or 0.0) - chosen_x))
+    # v747 ENDGAME_MERGE_FIRST: 戦略が DEADLINE_ALLOW_DIRECT_CROSS=True を宣言し、かつ理由に
+    # DEADLINE_GUARD_DIRECT_MERGE_CROSSING を付けた DIRECT 併合手は、超過フラグを理由に差し戻さない
+    # （併合成立率 97% で落下ピースは消える。宣言の無い戦略には完全に不活性）。
+    if (
+        strategy_module is not None
+        and bool(getattr(strategy_module, "DEADLINE_ALLOW_DIRECT_CROSS", False))
+        and (
+            ("DEADLINE_GUARD_DIRECT_MERGE_CROSSING" in str(decision.get("reason", "")) and chosen.get("merge_grade", "NO") == "DIRECT")
+            or ("OPEN_TWIN_MERGE_DESPERATE" in str(decision.get("reason", "")))
+        )
+    ):
+        return decision
     deadline_y = float(chosen.get("deadline_y", 3.38) or 3.38)
     deadline_buffer_y = deadline_y - 0.75
     deadline = analysis.get("deadline", {}) if isinstance(analysis, dict) else {}
