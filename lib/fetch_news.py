@@ -70,6 +70,28 @@ def should_exclude_wikinews_author(author: str, source_key: str) -> bool:
     return normalized in {"トモモ", "背後のトモモ"}
 
 SOURCES = [
+    # --- 日本の政治系ソース (国内政治の比率を上げるため) ---
+    {
+        "url": "https://www.nhk.or.jp/rss/news/cat4.xml",
+        "key": "nhk_politics",
+        "name": "NHK 政治",
+        "license": "NHK",
+        "lang": "ja",
+    },
+    {
+        "url": "https://www.asahi.com/rss/asahi/newsheadlines.rdf",
+        "key": "asahi",
+        "name": "朝日新聞",
+        "license": "朝日新聞社",
+        "lang": "ja",
+    },
+    {
+        "url": "https://mainichi.jp/rss/etc/mainichi-flash.rss",
+        "key": "mainichi_flash",
+        "name": "毎日新聞 速報",
+        "license": "毎日新聞社",
+        "lang": "ja",
+    },
     # NOTE: Wikinews (ja/en/fr/ru/de/ar/cs/eo/fi/he/pl/uk/zh) は 2026-08-26 に削除した。
     # Special:NewPages の RSS も API (list=recentchanges&rctype=new) も全言語で 0 件を返し、
     # 上流が事実上休止していたため。13 ソース分の無駄な HTTP 取得も止まる。
