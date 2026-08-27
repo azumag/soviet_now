@@ -22,25 +22,27 @@ test('fixed search query keeps the PoC inside price and reliability limits', () 
   assert.match(query, /compute_cap>=610/);
   assert.match(query, /reliability>=0\.98/);
   assert.match(query, /inet_down>=100/);
+  assert.match(query, /inet_down_cost<=0\.02/);
   assert.match(query, /inet_up_cost<=0\.02/);
-  assert.match(query, /dph<=0\.02/);
+  assert.match(query, /dph<=0\.08/);
   assert.match(query, /verified=True/);
 });
 
 test('offer selection uses complete five-minute session cost', () => {
-  const cheapComputeExpensiveNetwork = { id: 1, dph: 0.01, inet_up_cost: 0.02, storage_cost: 0.01, reliability: 0.99, verified: true, rentable: true, rented: false };
-  const selected = { id: 2, dph: 0.012, inet_up_cost: 0, storage_cost: 0.01, reliability: 0.99, verified: true, rentable: true, rented: false };
+  const cheapComputeExpensiveNetwork = { id: 1, dph: 0.01, inet_down_cost: 0.02, inet_up_cost: 0.02, storage_cost: 0.01, reliability: 0.99, verified: true, rentable: true, rented: false };
+  const selected = { id: 2, dph: 0.012, inet_down_cost: 0, inet_up_cost: 0, storage_cost: 0.01, reliability: 0.99, verified: true, rentable: true, rented: false };
   assert.equal(selectOffer([cheapComputeExpensiveNetwork, selected], options).id, 2);
   const cost = estimateSessionCost(selected, options);
   assert.equal(cost.dph, 0.012);
   assert.ok(cost.total > 0 && cost.total < 0.01);
   assert.ok(cost.egressGb > 0.08 && cost.egressGb < 0.1);
+  assert.equal(cost.imageDownloadGb, 1.2);
 });
 
 test('offer selection rejects price and reliability violations', () => {
   assert.equal(selectOffer([
-    { id: 1, dph: 0.021, inet_up_cost: 0, reliability: 1 },
-    { id: 2, dph: 0.01, inet_up_cost: 0, reliability: 0.97 },
+    { id: 1, dph: 0.081, inet_down_cost: 0, inet_up_cost: 0, reliability: 1 },
+    { id: 2, dph: 0.01, inet_down_cost: 0, inet_up_cost: 0, reliability: 0.97 },
   ], options), null);
 });
 
@@ -60,7 +62,8 @@ test('result and instance id parsers accept Vast and runner output', () => {
 });
 
 test('hard safety caps cannot be raised from command options', () => {
-  assert.throws(() => validateOptions({ ...options, maxDph: 0.021 }), /maxDph/);
+  assert.throws(() => validateOptions({ ...options, maxDph: 0.081 }), /maxDph/);
+  assert.throws(() => validateOptions({ ...options, maxInetDownCost: 0.021 }), /maxInetDownCost/);
   assert.throws(() => validateOptions({ ...options, sessionSec: 301 }), /sessionSec/);
   assert.throws(() => validateOptions({ ...options, instanceMaxAgeSec: 601 }), /instanceMaxAgeSec/);
   assert.throws(() => validateOptions({ ...options, market: 'bid' }), /on-demand/);
@@ -72,7 +75,7 @@ test('default controller run is a side-effect-free offer-file dry-run', async ()
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soren91-vast-test-'));
   const fixture = path.join(directory, 'offers.json');
   fs.writeFileSync(fixture, JSON.stringify([
-    { id: 77, gpu_name: 'GTX 1050 Ti', dph: 0.015, inet_up_cost: 0.01, reliability: 0.99, verified: true, rentable: true, rented: false },
+    { id: 77, gpu_name: 'GTX 1050 Ti', dph: 0.06, inet_down_cost: 0.01, inet_up_cost: 0.01, reliability: 0.99, verified: true, rentable: true, rented: false },
   ]));
   try {
     const plan = await main(['--offer-json', fixture]);
