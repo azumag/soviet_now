@@ -159,11 +159,25 @@ _store_commentary() {
 	python3 - "$STATE_FILE" "$commentary" "$result_json" <<'PY'
 import json, os, sys
 path, commentary, result_raw = sys.argv[1:4]
+# sanitize surrogates from AI output
+try:
+    commentary = commentary.encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+except Exception:
+    commentary = commentary.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
 try: state = json.load(open(path, encoding="utf-8"))
 except Exception: state = {}
 state["phase"] = "commentary_ready"
 state["commentary"] = commentary
-state["final_poll"] = json.loads(result_raw).get("poll")
+try:
+    poll = json.loads(result_raw).get("poll")
+    if isinstance(poll, dict):
+        poll["title"] = poll.get("title","").encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+        for c in poll.get("choices", []):
+            if isinstance(c, dict) and "title" in c:
+                c["title"] = c["title"].encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+    state["final_poll"] = poll
+except Exception:
+    state["final_poll"] = None
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f: json.dump(state, f, ensure_ascii=False)
 os.replace(tmp, path)
@@ -206,8 +220,21 @@ _deliver_ready_commentary() {
 	python3 - "$HISTORY_FILE" "$final_poll" "$commentary" <<'PY'
 import json, sys, time
 path, poll_raw, commentary = sys.argv[1:4]
+try:
+    commentary = commentary.encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+except Exception:
+    commentary = commentary.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+try:
+    poll = json.loads(poll_raw)
+    if isinstance(poll, dict):
+        poll['title'] = poll.get('title','').encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+        for c in poll.get('choices', []):
+            if isinstance(c, dict) and 'title' in c:
+                c['title'] = c['title'].encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+except Exception:
+    poll = None
 with open(path, "a", encoding="utf-8") as f:
-    f.write(json.dumps({"recorded_at": int(time.time()), "poll": json.loads(poll_raw),
+    f.write(json.dumps({"recorded_at": int(time.time()), "poll": poll,
                         "commentary": commentary}, ensure_ascii=False) + "\n")
 PY
 	rm -f "$STATE_FILE"

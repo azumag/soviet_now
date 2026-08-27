@@ -232,13 +232,14 @@ class YouTubeAPI:
             f"{API_ROOT}/{path}?{query}", method=method, body=body
         )
 
-    def broadcasts(self, broadcast_status: str) -> list[dict[str, Any]]:
+    def broadcasts(self, broadcast_status: str = "all") -> list[dict[str, Any]]:
+        # YouTube API: mine=true is incompatible with broadcastStatus per 400 error
+        # "Incompatible parameters specified in the request: mine, broadcastStatus".
+        # Fetch all mine broadcasts and filter by lifecycle status in caller.
         data = self._api(
             "liveBroadcasts",
             params={
                 "part": "id,snippet,status,contentDetails",
-                "broadcastStatus": broadcast_status,
-                "broadcastType": "all",
                 "mine": "true",
                 "maxResults": "50",
             },
