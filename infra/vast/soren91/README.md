@@ -23,6 +23,9 @@ SRT受信、日次スケジュールには接続しません。
 docker build -f infra/vast/soren91/Dockerfile -t ghcr.io/azumag/soren91-gpu-runner:<commit> .
 ```
 
+専用GitHub Actionsは `codex/issue-23-vast-poc` へのpush時にlinux/amd64イメージをGHCRへ公開します。
+Actionは個人トークンを使わず、短命な `GITHUB_TOKEN` の `packages: write` だけを使用します。
+
 Vast APIキー、配信キー、OAuth tokenなどはイメージやリポジトリへ入れません。
 
 ## コントローラ
