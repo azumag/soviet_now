@@ -103,6 +103,17 @@ obs)
 ffmpeg)
 	WORKER_NAMES+=("direct_stream" "stream_noon_audit")
 	WORKER_CMDS+=("./direct_stream.sh run" "./workers/stream_noon_audit.sh")
+	case "${YOUTUBE_BROADCAST_GUARD_ENABLED:-0}" in
+	0) ;;
+	1)
+		WORKER_NAMES+=("youtube_broadcast_guard")
+		WORKER_CMDS+=("./workers/youtube_broadcast_guard.sh")
+		;;
+	*)
+		echo "YOUTUBE_BROADCAST_GUARD_ENABLED must be 0 or 1" >&2
+		exit 2
+		;;
+	esac
 	;;
 *)
 	echo "SOREN_STREAM_BACKEND must be obs or ffmpeg" >&2
@@ -224,6 +235,7 @@ _pidfile_for_worker() {
 	show_status_overlay_watch) echo "tmp/state/show_status_overlay_watch.pid" ;;
 	direct_stream) echo "tmp/state/direct_stream.pid" ;;
 	stream_noon_audit) echo "tmp/state/stream_noon_audit.pid" ;;
+	youtube_broadcast_guard) echo "${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}" ;;
 	*) echo "" ;;
 	esac
 }
@@ -246,6 +258,7 @@ _pattern_for_worker() {
 	show_status_overlay_watch) echo '[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	direct_stream) echo '[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
 	stream_noon_audit) echo '[/ ]workers/stream_noon_audit[.]sh([[:space:]]|$)' ;;
+	youtube_broadcast_guard) echo '[/ ]lib/youtube_broadcast_guard[.]py[[:space:]]+run([[:space:]]|$)' ;;
 	*) echo "" ;;
 	esac
 }
@@ -429,6 +442,7 @@ patterns = {
     "show_status_overlay_watch": r"[/ ]generate_show_status_overlay[.]sh[ \t]+watch([ \t]|$)",
     "direct_stream": r"[/ ]lib/direct_stream[.]py[ \t]+run([ \t]|$)",
     "stream_noon_audit": r"[/ ]workers/stream_noon_audit[.]sh([ \t]|$)",
+    "youtube_broadcast_guard": r"[/ ]lib/youtube_broadcast_guard[.]py[ \t]+run([ \t]|$)",
 }
 
 try:
