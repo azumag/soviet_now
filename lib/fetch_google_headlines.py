@@ -17,6 +17,16 @@ import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 
+# --- sports filter ---
+try:
+    _lib_dir = os.path.dirname(__file__)
+    if _lib_dir not in sys.path:
+        sys.path.insert(0, _lib_dir)
+    from sports_filter import is_sports_title  # type: ignore
+except Exception:  # fallback
+    def is_sports_title(title: str) -> bool:  # type: ignore
+        return False
+
 RSS_URLS = {
     "world":  "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
     "us":     "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRGxqTjNjd0VnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
@@ -82,7 +92,7 @@ def fetch_headlines() -> list[tuple[str, str]]:
             for item in root.findall("./channel/item"):
                 t = strip_tags(item.findtext("title", default=""))
                 link = (item.findtext("link", default="") or "").strip()
-                if t:
+                if t and not is_sports_title(t):
                     items.append((t, link))
                 if len(items) >= MAX_HEADLINES:
                     break
@@ -112,12 +122,15 @@ def main():
         if url:
             meta[t] = {"url": url}
         k = title_key(t)
+        # double-check sports filter (already filtered in fetch, but keep for safety)
+        if is_sports_title(t):
+            continue
         if k and k not in past_keys:
             lines.append(f"\u25a0 {t}")
 
-    # Even if all are read, output all titles (caller handles empty unread)
+    # Even if all are read, output all titles (caller handles empty unread) — still exclude sports
     if not lines:
-        lines = [f"\u25a0 {t}" for t, _url in items]
+        lines = [f"\u25a0 {t}" for t, _url in items if not is_sports_title(t)]
 
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:

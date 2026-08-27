@@ -37,6 +37,16 @@ SUMMARY_LIMIT = 4000
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
 
+# --- sports filter (shared logic) ---
+try:
+    sys_path_backup = os.path.dirname(__file__)
+    if sys_path_backup not in sys.path:
+        sys.path.insert(0, sys_path_backup)
+    from sports_filter import is_sports_title  # type: ignore
+except Exception:  # fallback: no filter if module missing
+    def is_sports_title(title: str) -> bool:  # type: ignore
+        return False
+
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 FILTER_REASON_KEYS = (
     "missing_identity",
@@ -46,6 +56,7 @@ FILTER_REASON_KEYS = (
     "duplicate_title",
     "duplicate_link",
     "duplicate_link_hash",
+    "sports",
     "passed",
 )
 FILTER_SAMPLE_LIMIT = 3
@@ -294,8 +305,12 @@ def filter_disabled_cached_outputs(news_text: str, meta: dict) -> tuple[str, dic
             (item or {}).get("author", ""),
             (item or {}).get("source_key", ""),
         )
+        and not is_sports_title(title)
     }
+    # quick exit only if no filtering happened (including sports)
     if len(filtered_meta) == len(meta):
+        # still need to check if any sports title would have been filtered
+        # (len equal means no disabled/sports found)
         return news_text, filtered_meta
 
     blocks = []
@@ -507,6 +522,8 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
             reason = "passed"
             if not item_title_key or not item_link:
                 reason = "missing_identity"
+            elif is_sports_title(item["title"]):
+                reason = "sports"
             elif item_title_key in past_title_keys:
                 reason = "past_title"
             elif item_link in past_links:

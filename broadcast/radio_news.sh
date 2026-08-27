@@ -110,6 +110,30 @@ import re
 import sys
 import unicodedata
 
+# sports filter (shared lib/sports_filter.py)
+try:
+    import importlib.util
+    _cand = None
+    for _p in [
+        os.path.join("lib", "sports_filter.py"),
+        os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib/sports_filter.py"),
+        "games/soviet_now/lib/sports_filter.py",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd(), "sports_filter.py"),
+    ]:
+        if _p and os.path.exists(_p):
+            _cand = _p
+            break
+    if _cand:
+        _spec = importlib.util.spec_from_file_location("sports_filter", _cand)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        is_sports_title = _mod.is_sports_title
+    else:
+        raise ImportError
+except Exception:
+    def is_sports_title(title: str) -> bool:
+        return False
+
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
 past_topic_key_file = sys.argv[3]
@@ -208,6 +232,8 @@ seen_url_hashes = set()
 out = []
 for b in blocks:
     title = b[0][2:].strip()
+    if is_sports_title(title):
+        continue
     k = key(title)
     tk = topic_key(title)
     uh = url_hash_for_title(title)

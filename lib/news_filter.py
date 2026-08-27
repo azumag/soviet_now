@@ -13,6 +13,16 @@ import re
 import sys
 import unicodedata
 
+# --- sports filter ---
+try:
+    _lib_dir = os.path.dirname(__file__)
+    if _lib_dir not in sys.path:
+        sys.path.insert(0, _lib_dir)
+    from sports_filter import is_sports_title  # type: ignore
+except Exception:  # fallback
+    def is_sports_title(title: str) -> bool:  # type: ignore
+        return False
+
 
 def key(s: str) -> str:
     """Normalize a news title to a dedup key."""
@@ -206,6 +216,9 @@ def cmd_filter_unread():
     out = []
     for b in blocks:
         title = b[0][2:].strip()
+        # sports filter: exclude baseball/sports topics per user request
+        if is_sports_title(title):
+            continue
         k = key(title)
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         uh = url_hash(item.get("url", ""))
