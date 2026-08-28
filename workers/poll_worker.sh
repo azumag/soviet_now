@@ -247,7 +247,7 @@ with open(path, "a", encoding="utf-8") as f:
                         "commentary": commentary}, ensure_ascii=False) + "\n")
 PY
 	rm -f "$STATE_FILE"
-	_schedule_after "${TWITCH_POLL_INTERVAL_SEC:-600}" completed
+	_schedule_after "${TWITCH_POLL_INTERVAL_SEC:-43200}" completed
 	_log "結果コメントをキューへ登録"
 	return 0
 }
