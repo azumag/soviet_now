@@ -16,7 +16,9 @@ segments.json のタイミングに一致する。
 
 使い方:
   ./tools/podcast_video_build.py --date 20260825 [--dry-run] [--scenes 50]
+  ./tools/podcast_video_build.py --date 20260825 --description-only
   --dry-run: 画像取得と動画書き出しをせず、シーン割りと字幕数だけ出す
+  --description-only: 動画を再生成せず、説明欄だけを書き直す
 
 依存: python3, ffmpeg, ffprobe, Pillow, doci
 """
@@ -67,6 +69,30 @@ def parse_date(arg: str) -> datetime.date:
         except ValueError:
             continue
     raise ValueError(f"invalid date: {arg}")
+
+
+def format_youtube_timestamp(total_seconds: int) -> str:
+    """YouTubeの説明欄用時刻。1時間以上は H:MM:SS で出す。"""
+    if total_seconds < 0:
+        raise ValueError("timestamp must be non-negative")
+    hours, remainder = divmod(int(total_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def build_description(meta: dict, chap_file: Path) -> str:
+    """メタデータとチャプターからYouTube説明欄全文を組み立てる。"""
+    lines = [meta.get("summary", ""), ""]
+    if chap_file.exists():
+        lines.append("チャプター")
+        for chapter in json.loads(chap_file.read_text(encoding="utf-8"))["chapters"]:
+            timestamp = format_youtube_timestamp(int(chapter["startTime"]))
+            lines.append(f"{timestamp} {chapter['title']}")
+        lines.append("")
+    lines += credit_lines()
+    return "\n".join(lines) + "\n"
 
 
 # クレジット。VOICEVOX は音声ライブラリごとに表記が必須
@@ -385,7 +411,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="YYYYMMDD or YYYY-MM-DD (default: yesterday)")
     ap.add_argument("--out-dir", default=str(OUTPUT_ROOT_DEFAULT))
-    ap.add_argument("--dry-run", action="store_true", help="シーン割りと字幕数だけ出す")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="シーン割りと字幕数だけ出す")
+    mode.add_argument("--description-only", action="store_true",
+                      help="動画を再生成せず説明欄だけを書き直す")
     ap.add_argument("--scenes", type=int, help="シーン数を明示する")
     ap.add_argument("--limit-sec", type=float, help="先頭 N 秒だけ書き出す (検証用)")
     args = ap.parse_args()
@@ -398,13 +427,23 @@ def main() -> int:
     seg_file = out_dir / f"{iso}.segments.json"
     meta_file = out_dir / f"{iso}.meta.json"
     chap_file = out_dir / f"{iso}.chapters.json"
+    desc_path = out_dir / f"{iso}.description.txt"
+    meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
+
+    if args.description_only:
+        if not chap_file.exists():
+            log(f"必要なファイルが無い: {chap_file} (先に podcast_build.py を実行してください)")
+            return 2
+        desc_path.write_text(build_description(meta, chap_file), encoding="utf-8")
+        log(f"description written: {desc_path}")
+        return 0
+
     for f in (mp3, seg_file):
         if not f.exists():
             log(f"必要なファイルが無い: {f} (先に podcast_build.py を実行してください)")
             return 2
 
     segments = json.loads(seg_file.read_text(encoding="utf-8"))
-    meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
     total = probe_dur(mp3)
     if args.limit_sec:
         total = min(total, args.limit_sec)
@@ -422,23 +461,15 @@ def main() -> int:
         log(f"  ... 他 {len(scenes) - 5} 枚")
 
     # 説明欄 (チャプター + クレジット)
-    desc = [meta.get("summary", ""), ""]
-    if chap_file.exists():
-        desc.append("チャプター")
-        for c in json.loads(chap_file.read_text(encoding="utf-8"))["chapters"]:
-            s = int(c["startTime"])
-            desc.append(f"{s // 60}:{s % 60:02d} {c['title']}")
-        desc.append("")
-    desc += credit_lines()
-    desc_path = out_dir / f"{iso}.description.txt"
+    description = build_description(meta, chap_file)
 
     if args.dry_run:
         log("dry-run: 素材取得と書き出しはしない")
         log("--- 説明欄 ---")
-        print("\n".join(desc))
+        print(description, end="")
         return 0
 
-    desc_path.write_text("\n".join(desc) + "\n", encoding="utf-8")
+    desc_path.write_text(description, encoding="utf-8")
     log(f"description written: {desc_path}")
 
     doci_dir = find_doci()
