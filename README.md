@@ -700,10 +700,10 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 ```bash
 MODEL_PRIMARY="codex:deepseek-v4-flash"                  # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
 MODEL_FALLBACK="codex:minimax-m3"
-MODEL_IMPROVE="opencode:x-preview-f-free"                # 改善primary
+MODEL_IMPROVE="opencode:muse-spark-1.2-contributor-free" # 改善primary
 MODEL_FALLBACK_IMPROVE="codex:amd-token-factory-deepseek-v4-flash" # 改善fallback
 MODEL_LAST_RESORT="codex:deepseek-v4-flash"
-ROLLBACK_POSTMORTEM_MODEL="opencode:x-preview-f-free"
+ROLLBACK_POSTMORTEM_MODEL="opencode:muse-spark-1.2-contributor-free"
 ROLLBACK_POSTMORTEM_FALLBACK="codex:amd-token-factory-deepseek-v4-flash"
 CODEX_MODEL="deepseek-v4-flash"                         # codex CLI のモデル指定
 ```
@@ -720,9 +720,9 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `opencode:deepseek-v4-flash-free` | `opencode-go:muse-spark-1.2-contributor` | `codex:deepseek-v4-flash` | `codex:minimax-m3` |
+| **改善** | `opencode:muse-spark-1.2-contributor-free` | `codex:amd-token-factory-deepseek-v4-flash` | `codex:minimax-m3` | `opencode-go:muse-spark-1.2-contributor` → `codex:deepseek-v4-flash` |
 | **ラジオ生成** | 共通チェーン（muse先行） | - | - | - |
-| **ラジオ fact-check** | `opencode-go:muse-spark-1.2-contributor` | `codex:deepseek-v4-flash` | `codex:minimax-m3` | 元原稿 |
+| **ラジオ fact-check** | `opencode:muse-spark-1.2-contributor-free` | `opencode-go:muse-spark-1.2-contributor` | `codex:minimax-m3` | 元原稿 |
 | **コメント返し** | `codex:...` | - | - | - |
 | **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
 | **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |

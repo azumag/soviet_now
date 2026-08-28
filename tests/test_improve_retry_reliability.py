@@ -618,7 +618,7 @@ PY
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
         self.assertIn(
-            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:x-preview-f-free}"',
+            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.2-contributor-free}"',
             config,
         )
         self.assertIn(

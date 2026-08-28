@@ -11,7 +11,7 @@ set -u
 cd "$(dirname "$0")" || exit 0
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
-MODELS="${FREE_PROBE_MODELS:-opencode:deepseek-v4-flash-free,opencode:x-preview-f-free}"
+MODELS="${FREE_PROBE_MODELS:-opencode:deepseek-v4-flash-free,opencode:muse-spark-1.2-contributor-free}"
 STATE_DIR="${FREE_PROBE_STATE_DIR:-tmp/state/free_slot_probe}"
 TIMEOUT_SEC="${FREE_PROBE_TIMEOUT:-45}"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
