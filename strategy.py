@@ -1263,7 +1263,7 @@ def _select_visible_same_country_contact(
     return min(contact_options, key=lambda option: option[:-1])[-1]
 
 
-def decide(game_state: dict, analysis: dict) -> dict:
+def _decide_base(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
 
     デッドラインガード（危険域での安全確保・即時併合優先）を最優先で通過させたあと、
@@ -1858,6 +1858,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if _hc_open:
             high_cover_free.append((_hc_x, _hc_r * 0.9, _hc_top - 0.25))
 
+    # --- v743 LAST_EXPOSED_COVER_AVOID pre-computation ---
+    # 実測（局所 60 試合）: 20 手以内で同型が盤上にあるのに併合不可の手が 20%、その半分は
+    # 「双子が覆われている」。覆った主因は自分の落下。type>=10 の被覆抑止を、
+    # 「その type の露出した唯一の個体」(type 3..9) にも弱く（-180）適用する。
+    # next_type（上置き＝併合）と next_type-1（中間素材）は除外。T1-2 のジャンクは対象外。
+    _v743_cover_free = []
+    _v743_exposed_by_type = {}
+    for _lc_t, _lc_x, _lc_y, _lc_r in board_stats.pieces_of_type_at_least(pieces, 3):
+        if _lc_t >= 10 or _lc_t == next_type or _lc_t - 1 == next_type:
+            continue
+        _lc_open = True
+        _lc_top = _lc_y + _lc_r
+        for _op in pieces:
+            _op_r = float(_op.get("r", 0.5) or 0.5)
+            _op_bottom = float(_op.get("y", 0.0) or 0.0) - _op_r
+            if _op_bottom < _lc_top - 0.25:
+                continue
+            if abs(float(_op.get("x", 0.0) or 0.0) - _lc_x) <= _lc_r:
+                _lc_open = False
+                break
+        if _lc_open:
+            _v743_exposed_by_type.setdefault(_lc_t, []).append((_lc_x, _lc_r * 0.9, _lc_top - 0.25))
+    for _lc_t, _lc_items in _v743_exposed_by_type.items():
+        if len(_lc_items) == 1:
+            _v743_cover_free.append(_lc_items[0])
+
+    # --- v748 SEAT_LANES pre-computation ---
+    # 人間型の整列: 高型 (type>=10) が寄っている側 S を求め、反対の壁から内側へ T1/T2, T3, ..., T8 の
+    # 定位置 (座席) を割り当てる。非併合手では次ピースの座席に近い着地に加点し、遠い着地を減点する。
+    # 目的: 同型が同じ座席に集まり露出したまま並ぶ (双子到達率↑)、ジャンクは壁際に固定 (v741 の一般化)。
+    _v748_hi = [(_as_float(p.get("x"), 0.0)) for p in pieces if isinstance(p, dict) and isinstance(p.get("type"), int) and p.get("type") >= 10]
+    _v748_S = -1.0
+    if _v748_hi:
+        _v748_S = 1.0 if (sum(_v748_hi) / len(_v748_hi)) > 0.0 else -1.0
+    _v748_seat_off = {1: 2.8, 2: 2.8, 3: 2.4, 4: 2.0, 5: 1.55, 6: 1.1, 7: 0.6, 8: 0.15}
+    _v748_seat_x = None
+    if next_type in _v748_seat_off:
+        _v748_seat_x = -_v748_S * _v748_seat_off[next_type]
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -2371,6 +2410,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= 400.0
                     reasons.append("HIGH_TYPE_COVER_AVOID")
                     break
+
+        # ----- v743: LAST_EXPOSED_COVER_AVOID (露出した唯一の同型 T3-9 の被覆抑止) -----
+        if (
+            merge_grade == "NO"
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and _v743_cover_free
+        ):
+            for _lc_x, _lc_tol, _lc_min_y in _v743_cover_free:
+                if abs(x - _lc_x) <= _lc_tol and landing_y >= _lc_min_y:
+                    score -= 180.0
+                    reasons.append("LAST_EXPOSED_COVER_AVOID")
+                    break
+
+        # ----- v748: SEAT_LANES (型別の定位置への誘導) -----
+        if (
+            merge_grade == "NO"
+            and _v748_seat_x is not None
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not result.get("wall_rotation_risk")
+            and not death_spiral
+            and type15_count == 0
+        ):
+            _v748_d = abs(_as_float(x, 9.0) - _v748_seat_x)
+            _v748_bonus = max(-220.0, min(220.0, 220.0 * (1.0 - _v748_d / 1.2)))
+            score += _v748_bonus
+            if _v748_bonus > 0.0:
+                reasons.append("SEAT_LANE")
 
         # ----- v731: SAME_TYPE_SEED_CONTACT (同型ペアの密な播種) -----
         # 非併合手 (盤上に DIRECT/NEAR 候補が無い) で、届かない同型相方 (T9 以上) の近く
@@ -3019,6 +3092,83 @@ def decide(game_state: dict, analysis: dict) -> dict:
     return {"x": best_x, "reason": best_reason}
 
 # --- AI modification prohibited zone ---
+
+def _v742_open_twin(pieces, ttype):
+    """Return open (top-exposed) pieces of type ttype: nothing rests above them within their horizontal radius."""
+    out = []
+    for p in pieces:
+        if p.get("type") != ttype:
+            continue
+        try:
+            px = float(p.get("x")); py = float(p.get("y")); pr = float(board_stats.seed_horiz_radius(ttype))
+            ptop = py + float(board_stats.seed_top_radius(ttype))
+        except Exception:
+            continue
+        blocked = False
+        for o in pieces:
+            if o is p or o.get("id") == p.get("id"):
+                continue
+            try:
+                ox = float(o.get("x")); oy = float(o.get("y")); ot = int(o.get("type"))
+                orad = float(board_stats.seed_horiz_radius(ot)); obot = oy - float(board_stats.seed_bottom_radius(ot))
+            except Exception:
+                continue
+            if abs(ox - px) <= pr + 0.6 * orad and obot >= ptop - 0.25 and oy > py:
+                blocked = True
+                break
+        if not blocked:
+            out.append(p)
+    return out
+
+
+def decide(game_state: dict, analysis: dict) -> dict:
+    base = _decide_base(game_state, analysis)
+    try:
+        reason = str(base.get("reason", ""))
+        if "DIRECT_MERGE" in reason or "CHAIN_MERGE" in reason or "DEADLINE_GUARD" in reason or "CLUSTER_SETUP" in reason:
+            return base
+        results = analysis.get("results") or []
+        if any(str(q.get("merge_grade", "NO")) in ("DIRECT", "NEAR") for q in results):
+            return base
+        pieces = list(game_state.get("pieces") or [])
+        ntype = int((game_state.get("next") or {}).get("type") or 0)
+        if ntype <= 0:
+            return base
+        reactor = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
+        if reactor.get("deadline_crossed") or float(reactor.get("deadline_margin", 99) or 99) < 2.0:
+            return base
+        if not results:
+            return base
+        twins = _v742_open_twin(pieces, ntype)
+        best = None
+        for tw in twins:
+            tx = max(-2.8, min(2.8, float(tw.get("x"))))
+            relief = 99.0
+            try:
+                ttop = float(tw.get("y")) + float(board_stats.seed_top_radius(ntype))
+                relief = max([float(o.get("y")) + float(board_stats.seed_top_radius(int(o.get("type"))))
+                              for o in pieces if o.get("id") != tw.get("id") and abs(float(o.get("x")) - float(tw.get("x"))) <= 1.2] or [ttop - 9.0]) - ttop
+            except Exception:
+                continue
+            if relief > 1.0:
+                continue
+            cand = min(results, key=lambda q: abs(float(q.get("x", 0.0)) - tx))
+            if cand.get("crosses_deadline") or cand.get("merge_result_crosses_deadline") or cand.get("wall_rotation_risk"):
+                continue
+            if abs(float(cand.get("x", 0.0)) - tx) > 0.35:
+                continue
+            key = (float(tw.get("y")), -abs(tx))
+            if best is None or key < best[0]:
+                best = (key, tx, tw)
+        if best is None:
+            return base
+        out = dict(base)
+        out["x"] = best[1]
+        out["reason"] = reason + "|OPEN_TWIN_MERGE"
+        return out
+    except Exception:
+        return base
+
 if __name__ == "__main__":
     import json
     import sys
