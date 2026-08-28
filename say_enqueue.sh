@@ -330,6 +330,109 @@ VOICEVOX_SYNTH_PRIORITY_WAIT_DIR="$QUEUE_DIR/.voicevox_synth_priority_waiters"
 VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
 VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
 VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-60}"
+VOICEVOX_SYNTH_LOCK_BASE="$VOICEVOX_SYNTH_LOCK"
+VOICEVOX_SYNTH_DISTRIBUTED="${VOICEVOX_SYNTH_DISTRIBUTED:-1}"
+VOICEVOX_SYNTH_ACTIVE_URL=""
+VOICEVOX_SYNTH_ACTIVE_LOCK=""
+
+# --- VOICEVOX分散合成ヘルパー (Tailscaleチェーン: windows→mac→vm local) ---
+# VOICEVOX_URLS="http://windows:50021,http://mac:50021,http://127.0.0.1:50021" を
+# speech.py と同じロジックで解釈し、キューされていたら次はmac→localへ分散する。
+# 空いているエンドポイントのロックだけを mkdir で非ブロック取得し、取得できたら
+# VOICEVOX_ACTIVE_URL / VOICEVOX_URLS をそのURL優先に書き換えて docich へ渡す。
+_voicevox_urls_chain() {
+	python3 - <<'PY' 2>/dev/null
+import os, re
+raw = os.environ.get("VOICEVOX_URLS", "")
+urls = []
+if raw and raw.strip():
+    for token in re.split(r"[,\s]+", raw):
+        token = token.strip().rstrip("/")
+        if token and token not in urls:
+            urls.append(token)
+else:
+    primary = os.environ.get("VOICEVOX_URL_PRIMARY", "") or os.environ.get("VOICEVOX_URL_REMOTE", "")
+    fallback = os.environ.get("VOICEVOX_URL_FALLBACK", "") or "http://127.0.0.1:50021"
+    direct = os.environ.get("VOICEVOX_URL", "") or (primary or "http://127.0.0.1:50021")
+    local = os.environ.get("VOICEVOX_URL_LOCAL", "") or "http://127.0.0.1:50021"
+    for cand in (primary, direct, fallback, local):
+        cand = cand.strip().rstrip("/")
+        if cand and cand not in urls:
+            urls.append(cand)
+for u in urls:
+    print(u)
+PY
+}
+
+_voicevox_url_hash() {
+	local url="$1" h=""
+	if command -v md5sum >/dev/null 2>&1; then
+		h=$(printf '%s' "$url" | md5sum 2>/dev/null | awk '{print $1}')
+	elif command -v md5 >/dev/null 2>&1; then
+		h=$(printf '%s' "$url" | md5 -q 2>/dev/null)
+	else
+		h=$(printf '%s' "$url" | cksum 2>/dev/null | awk '{print $1}')
+	fi
+	printf '%s' "${h:0:12}"
+}
+
+_voicevox_state_file() {
+	if [ -n "${VOICEVOX_STATE_FILE:-}" ]; then
+		printf '%s' "$VOICEVOX_STATE_FILE"
+	else
+		printf '%s' "tmp/state/voicevox_endpoints.json"
+	fi
+}
+
+_voicevox_endpoint_status() {
+	local url="$1" sf
+	sf=$(_voicevox_state_file)
+	python3 - "$url" "$sf" <<'PY' 2>/dev/null
+import json, time, sys
+url = sys.argv[1]
+sf = sys.argv[2]
+try:
+    data = json.loads(open(sf, encoding="utf-8").read())
+except Exception:
+    print("ready")
+    sys.exit(0)
+ep = data.get("endpoints", {}).get(url, {})
+if ep.get("disabled"):
+    print("disabled")
+elif ep.get("next_retry_at") and float(ep.get("next_retry_at", 0)) > time.time():
+    print("backoff")
+else:
+    print("ready")
+PY
+}
+
+_voicevox_reorder_urls() {
+	local selected="$1"
+	python3 - "$selected" <<'PY' 2>/dev/null
+import os, re, sys
+selected = sys.argv[1]
+raw = os.environ.get("VOICEVOX_URLS", "")
+urls = []
+if raw and raw.strip():
+    for token in re.split(r"[,\s]+", raw):
+        token = token.strip().rstrip("/")
+        if token and token not in urls:
+            urls.append(token)
+else:
+    primary = os.environ.get("VOICEVOX_URL_PRIMARY", "") or os.environ.get("VOICEVOX_URL_REMOTE", "")
+    fallback = os.environ.get("VOICEVOX_URL_FALLBACK", "") or "http://127.0.0.1:50021"
+    direct = os.environ.get("VOICEVOX_URL", "") or (primary or "http://127.0.0.1:50021")
+    local = os.environ.get("VOICEVOX_URL_LOCAL", "") or "http://127.0.0.1:50021"
+    for cand in (primary, direct, fallback, local):
+        cand = cand.strip().rstrip("/")
+        if cand and cand not in urls:
+            urls.append(cand)
+if selected in urls:
+    urls.remove(selected)
+    urls.insert(0, selected)
+print(",".join(urls))
+PY
+}
 
 if [ ! -s "$CONTENT_FILE" ]; then
 	echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -692,11 +795,23 @@ _release_voicevox_synth_lock() {
 	[ "$VOICEVOX_SYNTH_LOCK_HELD" -eq 1 ] || return 0
 	if ! _is_voicevox_synth_lock_owner; then
 		VOICEVOX_SYNTH_LOCK_HELD=0
+		VOICEVOX_SYNTH_LOCK="$VOICEVOX_SYNTH_LOCK_BASE"
+		VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
+		VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
+		VOICEVOX_SYNTH_ACTIVE_URL=""
+		VOICEVOX_SYNTH_ACTIVE_LOCK=""
+		unset VOICEVOX_ACTIVE_URL 2>/dev/null || true
 		return 0
 	fi
 	rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
 	rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
 	VOICEVOX_SYNTH_LOCK_HELD=0
+	VOICEVOX_SYNTH_LOCK="$VOICEVOX_SYNTH_LOCK_BASE"
+	VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
+	VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
+	VOICEVOX_SYNTH_ACTIVE_URL=""
+	VOICEVOX_SYNTH_ACTIVE_LOCK=""
+	unset VOICEVOX_ACTIVE_URL 2>/dev/null || true
 }
 
 _voicevox_synth_is_background_render() {
@@ -866,7 +981,7 @@ _prepare_voicevox_runtime_params() {
 	_log "VOICEVOX speaker=$VOICEVOX_SPEAKER${VOICEVOX_RANDOM_VOICE_NAME:+ ($VOICEVOX_RANDOM_VOICE_NAME)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
 }
 
-_acquire_voicevox_synth_lock() {
+_acquire_voicevox_synth_lock_legacy() {
 	local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
 	local priority_waited=0 priority_wait_limit=0 lock_wait_limit="${timeout_sec}"
 	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
@@ -967,6 +1082,156 @@ _acquire_voicevox_synth_lock() {
 	VOICEVOX_SYNTH_LOCK_HELD=1
 	_unregister_voicevox_priority_waiter
 	return 0
+}
+
+_acquire_voicevox_synth_lock() {
+	# 分散モード: VOICEVOX_URLS チェーンの空きエンドポイントへ分散。windowsでキューならmac→localへ回す。
+	if [ "${VOICEVOX_SYNTH_DISTRIBUTED:-1}" = "1" ]; then
+		local _chain_urls=()
+		while IFS= read -r _u; do [ -n "$_u" ] && _chain_urls+=("$_u"); done < <(_voicevox_urls_chain)
+		if [ ${#_chain_urls[@]} -gt 1 ]; then
+			local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
+			local priority_waited=0 priority_wait_limit=0 lock_wait_limit="${timeout_sec}"
+			VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
+			_voicevox_synth_is_background_render && background_render=1
+			if [ "$background_render" -eq 1 ]; then
+				priority_wait_limit="${VOICEVOX_RADIO_PRIORITY_WAIT_SEC:-90}"
+				case "$priority_wait_limit" in ''|*[!0-9]*) priority_wait_limit=90;; esac
+				lock_wait_limit="${VOICEVOX_RADIO_LOCK_WAIT_SEC:-60}"
+				case "$lock_wait_limit" in ''|*[!0-9]*) lock_wait_limit=60;; esac
+			fi
+			if [ "$background_render" -eq 0 ]; then
+				_register_voicevox_priority_waiter || true
+			fi
+			if [ "$lock_wait_limit" -gt 0 ]; then
+				max_waits=$((lock_wait_limit * 2))
+			else
+				max_waits=0
+			fi
+			while true; do
+				if [ "$background_render" -eq 1 ] && _voicevox_priority_waiter_exists; then
+					if [ "$priority_waited" -eq 0 ] || [ $((priority_waited % 60)) -eq 0 ]; then
+						_log "優先音声の合成完了待ち (background radio)"
+					fi
+					priority_waited=$((priority_waited + 1))
+					if [ "$priority_wait_limit" -gt 0 ] && [ "$priority_waited" -ge $((priority_wait_limit * 2)) ]; then
+						VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
+						return 1
+					fi
+					_touch_voicevox_priority_waiter
+					sleep 0.5
+					continue
+				fi
+				priority_waited=0
+				# ready → backoff の順で空きロックを探す（backoffは失敗直後の端点を避ける）
+				local _found=0 _selected_url="" _selected_hash="" _selected_lock=""
+				for _status in ready backoff; do
+					for _url in "${_chain_urls[@]}"; do
+						if [ "$(_voicevox_endpoint_status "$_url")" != "$_status" ]; then
+							continue
+						fi
+						local _hash _lock_dir _owner_file _hb_file
+						_hash=$(_voicevox_url_hash "$_url")
+						_lock_dir="${VOICEVOX_SYNTH_LOCK_BASE}.${_hash}"
+						_owner_file="${_lock_dir}/owner_pid"
+						_hb_file="${_lock_dir}/heartbeat"
+						if mkdir "$_lock_dir" 2>/dev/null; then
+							_selected_url="$_url"
+							_selected_hash="$_hash"
+							_selected_lock="$_lock_dir"
+							_found=1
+							break 2
+						fi
+						if [ -d "$_lock_dir" ]; then
+							local lock_owner_raw lock_owner_pid lock_hb now lock_age owner_alive=false
+							lock_owner_raw=$(cat "$_owner_file" 2>/dev/null || true)
+							lock_owner_pid="${lock_owner_raw%%:*}"
+							case "$lock_owner_pid" in ''|*[!0-9]*) lock_owner_pid="";; esac
+							if [ -n "$lock_owner_pid" ] && kill -0 "$lock_owner_pid" 2>/dev/null; then
+								owner_alive=true
+							fi
+							lock_hb=$(cat "$_hb_file" 2>/dev/null || true)
+							case "$lock_hb" in ''|*[!0-9]*) lock_hb=$(_file_mtime_epoch "$_lock_dir");; esac
+							now=$(date +%s)
+							case "$lock_hb" in ''|*[!0-9]*|0) lock_age=0;; *) lock_age=$((now - lock_hb));; esac
+							if [ "$owner_alive" = false ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC:-10}" ]; then
+								_log "VOICEVOX分散 stale lock検出 (url=$_url, owner=${lock_owner_pid:-?}, ${lock_age}秒, dead) → 強制解除"
+								rm -f "$_owner_file" "$_hb_file" 2>/dev/null
+								rmdir "$_lock_dir" 2>/dev/null
+								if mkdir "$_lock_dir" 2>/dev/null; then
+									_selected_url="$_url"
+									_selected_hash="$_hash"
+									_selected_lock="$_lock_dir"
+									_found=1
+									break 2
+								fi
+							fi
+							if [ "$owner_alive" = true ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_HUNG_SEC:-60}" ]; then
+								_log "VOICEVOX分散 hung lock検出 (url=$_url, owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
+								rm -f "$_owner_file" "$_hb_file" 2>/dev/null
+								rmdir "$_lock_dir" 2>/dev/null
+								if mkdir "$_lock_dir" 2>/dev/null; then
+									_selected_url="$_url"
+									_selected_hash="$_hash"
+									_selected_lock="$_lock_dir"
+									_found=1
+									break 2
+								fi
+							fi
+						fi
+					done
+				done
+				# disabled は最後の手段: 他にenabledが無い時だけ試す
+				if [ "$_found" -eq 0 ]; then
+					for _url in "${_chain_urls[@]}"; do
+						if [ "$(_voicevox_endpoint_status "$_url")" != "disabled" ]; then
+							continue
+						fi
+						local _hash _lock_dir
+						_hash=$(_voicevox_url_hash "$_url")
+						_lock_dir="${VOICEVOX_SYNTH_LOCK_BASE}.${_hash}"
+						if mkdir "$_lock_dir" 2>/dev/null; then
+							_selected_url="$_url"
+							_selected_hash="$_hash"
+							_selected_lock="$_lock_dir"
+							_found=1
+							break
+						fi
+					done
+				fi
+				if [ "$_found" -eq 1 ]; then
+					echo "$MY_OWNER" >"${_selected_lock}/owner_pid" 2>/dev/null || {
+						rmdir "${_selected_lock}" 2>/dev/null
+						VOICEVOX_SYNTH_LOCK_BUSY_REASON="owner_write_failed"
+						_unregister_voicevox_priority_waiter
+						return 1
+					}
+					date +%s >"${_selected_lock}/heartbeat" 2>/dev/null || true
+					VOICEVOX_SYNTH_LOCK="$_selected_lock"
+					VOICEVOX_SYNTH_OWNER_FILE="${_selected_lock}/owner_pid"
+					VOICEVOX_SYNTH_HEARTBEAT_FILE="${_selected_lock}/heartbeat"
+					VOICEVOX_SYNTH_LOCK_HELD=1
+					VOICEVOX_SYNTH_ACTIVE_URL="$_selected_url"
+					VOICEVOX_SYNTH_ACTIVE_LOCK="$_selected_lock"
+					export VOICEVOX_ACTIVE_URL="$_selected_url"
+					export VOICEVOX_URLS="$(_voicevox_reorder_urls "$_selected_url")"
+					_log "VOICEVOX分散ロック取得: $_selected_url (hash $_selected_hash)"
+					_unregister_voicevox_priority_waiter
+					return 0
+				fi
+				_touch_voicevox_priority_waiter
+				sleep 0.5
+				waited=$((waited + 1))
+				if [ "$max_waits" -gt 0 ] && [ "$waited" -ge "$max_waits" ]; then
+					VOICEVOX_SYNTH_LOCK_BUSY_REASON="timeout"
+					_unregister_voicevox_priority_waiter
+					return 1
+				fi
+			done
+		fi
+	fi
+	# フォールバック: 単一URLまたは分散無効時は従来のグローバルロック
+	_acquire_voicevox_synth_lock_legacy "$@"
 }
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
