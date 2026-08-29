@@ -284,6 +284,34 @@ print(" | ".join(parts))
 PY
 }
 
+_strip_non_globalvoices_attribution_file() {
+	local talk_file="$1" title="$2" source_name=""
+	[ -f "$talk_file" ] || return 1
+	source_name=$(_extract_news_source_name "$title")
+	[ -z "$source_name" ] || return 1
+	python3 - "$talk_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    original = path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(1)
+
+lines = original.splitlines(keepends=True)
+kept = [line for line in lines if not re.match(r"^\s*出典(?:は|[:：])", line)]
+updated = "".join(kept)
+if updated == original:
+    raise SystemExit(1)
+
+tmp = path.with_name(path.name + ".attribution-policy.tmp")
+tmp.write_text(updated, encoding="utf-8")
+tmp.replace(path)
+PY
+}
+
 _append_cc_post_log() {
 	local status="$1" detail="$2" cc_text="$3"
 	mkdir -p "$(dirname "$CC_POST_LOG_FILE")" 2>/dev/null || true

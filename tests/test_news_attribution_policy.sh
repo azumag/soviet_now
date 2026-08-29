@@ -80,6 +80,32 @@ else
 	not_ok 'caption and chat attribution remain for Global Voices news'
 fi
 
+non_gv_talk="$TMP/non_gv_talk.txt"
+cat >"$non_gv_talk" <<'EOF'
+国内政策ニュースです。
+出典はGoogle News 日本政治です。
+本文は再構成されています。
+EOF
+if _strip_non_globalvoices_attribution_file "$non_gv_talk" '国内政策ニュース' &&
+	! grep -q '^出典' "$non_gv_talk" && grep -q '本文は再構成されています。' "$non_gv_talk"; then
+	ok 'playback guard removes legacy non-Global Voices attribution only'
+else
+	not_ok 'playback guard removes legacy non-Global Voices attribution only'
+fi
+
+gv_talk="$TMP/gv_talk.txt"
+cat >"$gv_talk" <<'EOF'
+海外の市民社会ニュースです。
+出典はGlobal Voices(EN)です。
+本文です。
+EOF
+if ! _strip_non_globalvoices_attribution_file "$gv_talk" '海外の市民社会ニュース' &&
+	grep -q '^出典はGlobal Voices(EN)です。$' "$gv_talk"; then
+	ok 'playback guard preserves Global Voices attribution'
+else
+	not_ok 'playback guard preserves Global Voices attribution'
+fi
+
 if [ "$(grep -c '出典名を読み上げるのはGlobal Voicesの記事を扱う場合だけ' "$ROOT/broadcast/radio_corners.sh")" -ge 2 ]; then
 	ok 'generated and self-searched news prompts enforce the same policy'
 else

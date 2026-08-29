@@ -702,6 +702,19 @@ _play_deferred_radio_queue_once() {
 		deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
 		[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
 	fi
+	# 反映前に生成を始めた子プロセスが旧ルールの出典行を付けた場合も、
+	# 音声合成・字幕生成の直前で現行ポリシーを必ず適用する。
+	if [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
+		local deferred_news_title_for_policy
+		deferred_news_title_for_policy=$(cat "$news_title_file" 2>/dev/null)
+		if _strip_non_globalvoices_attribution_file "$qf" "$deferred_news_title_for_policy"; then
+			local stale_ready_wav
+			stale_ready_wav=$(_radio_ready_wav_path "$qf")
+			rm -f "$stale_ready_wav" "$(_radio_render_meta_path "$qf")" 2>/dev/null || true
+			rm -rf "${stale_ready_wav}.bundle" 2>/dev/null || true
+			log "[RADIO:deferred] 非Global Voicesニュースの旧出典行を再生前に除去: $(basename "$qf")"
+		fi
+	fi
 	local radio_vo_speaker=""
 	radio_vo_speaker=$(_radio_voicevox_speaker_override "$deferred_corner" 2>/dev/null || true)
 	if [ -z "$radio_vo_speaker" ]; then
