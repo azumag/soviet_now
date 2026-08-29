@@ -226,8 +226,9 @@ except Exception:
     raise SystemExit(0)
 
 item = meta.get(title, {})
-source = item.get("source", "")
-if source:
+source = (item.get("source") or "").strip()
+source_key = (item.get("source_key") or "").strip()
+if source_key.startswith("globalvoices") or source.startswith("Global Voices"):
     print(source)
 PY
 }
@@ -254,14 +255,17 @@ item = meta.get(title)
 if not item:
     raise SystemExit(0)
 
+source = (item.get("source") or "").strip()
+source_key = (item.get("source_key") or "").strip()
+if not (source_key.startswith("globalvoices") or source.startswith("Global Voices")):
+    raise SystemExit(0)
+
 license_name = item.get("license")
 if not license_name:
     raise SystemExit(0)
 
 parts = ["[NEWS] " + title]
 author = (item.get("author") or "").strip()
-source = (item.get("source") or "").strip()
-source_key = (item.get("source_key") or "").strip()
 normalized_author = unicodedata.normalize("NFKC", author or "")
 normalized_author = re.sub(r"\s+", "", normalized_author)
 if normalized_author in {"トモモ", "背後のトモモ"} and (

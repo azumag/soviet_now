@@ -511,6 +511,11 @@ def block_source_name(block):
     return (item.get("source") or "").strip()
 
 def block_source_key(block):
+    title = block_title(block)
+    item = meta.get(title, {})
+    source_key = (item.get("source_key") or "").strip()
+    if source_key:
+        return "globalvoices" if source_key.startswith("globalvoices") else source_key
     return _name_to_key(block_source_name(block))
 
 def block_published_ts(block):
@@ -535,13 +540,17 @@ for block in blocks:
     lang = item_meta.get("lang", "ja")
     published_at = (item_meta.get("published_at") or "").strip()
     lang_tag = lang_labels.get(lang, f" [{lang}]") if lang != "ja" else ""
-    if source_name:
+    source_key = block_source_key(block)
+    if source_key == "globalvoices":
         attribution = [block[0], f"出典: {source_name}{lang_tag}"]
         if published_at:
             attribution.append(f"公開日時: {published_at}")
         out_blocks.append("\n".join([*attribution, *block[1:]]).rstrip())
     else:
-        out_blocks.append("\n".join(block).rstrip())
+        context = [block[0]]
+        if published_at:
+            context.append(f"公開日時: {published_at}")
+        out_blocks.append("\n".join([*context, *block[1:]]).rstrip())
 
 print("\n\n".join(out_blocks))
 PY
