@@ -215,6 +215,13 @@ _radio_voicevox_speaker_override() {
 	esac
 }
 
+_radio_topic_needs_runtime_evidence() {
+	case "${1:-}" in
+	*AIエージェント*|*コード生成AI*|*AIワークフロー自動化*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 _radio_persona_block() {
 	if [ "$(_radio_host_mode)" = "soren91" ]; then
 		cat <<'PERSONA'

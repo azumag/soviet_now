@@ -796,10 +796,30 @@ start_radio_corner_ai_knowledge() {
 	grounding_context=$(_radio_stage_research "ai_knowledge" "$topic" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし）"
 
-	# 最新コーディングエージェント・最新モデル情報も追加取得
-	local coding_agent_context="" coding_agent_raw
-	coding_agent_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
-	coding_agent_context=$(_radio_stage_research "ai_knowledge_coding" "AIコーディングエージェント" "$coding_agent_raw")
+	# 配信の実行構成が話題に関係するテーマだけ、コーディングエージェント情報を取得する。
+	# VM/handoff の本文は注入せず、必要になった生成エージェントがRead/Grepで読む。
+	local coding_agent_reference_block="" coding_agent_talk_block=""
+	if _radio_topic_needs_runtime_evidence "$topic"; then
+		local coding_agent_context="" coding_agent_raw
+		coding_agent_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
+		coding_agent_context=$(_radio_stage_research "ai_knowledge_coding" "AIコーディングエージェント" "$coding_agent_raw")
+		coding_agent_reference_block=$(cat <<CONTEXT
+
+【Web検索で得られた参考情報: 最新コーディングエージェントツール】
+${coding_agent_context}
+（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。これらは業界のツール例として扱うこと）
+CONTEXT
+		)
+		coding_agent_talk_block=$(cat <<'RULES'
+3. テーマに関係する範囲で、最新コーディングエージェントの話題（2-3文）
+   - Web検索で得られた最新情報を使い、具体的な製品名・新機能などを紹介する
+   - この配信との関係に触れる必要がある場合だけ、本文を書く前に Read/Grep で prompts/ops_brief.md、core/config.sh の RADIO_* 設定、broadcast/radio_engine.sh、workers/radio_worker.sh、strategy/ai.sh の必要箇所を確認すること
+   - VMの実効設定が必要なら .env は全文を読まず、Grepで RADIO_AGENTS、RADIO_PREPASS_AGENTS、RADIO_MAIN_AGENT、RADIO_MAIN_FALLBACK の4キーだけを確認し、未指定値はcore/config.shの既定値と突き合わせること
+   - 上記ファイルは関係する箇所だけを読み、全文をプロンプトへ複製しないこと。配信の実装に触れない本文では読まないこと
+   - 読んだ実装と実効設定を根拠に、ゲームプレイ・戦略改善・原稿生成などの役割を分けて説明すること。Claude Code、Codex、OpenCodeなど一つの製品を配信全体の唯一の実行環境として断定しないこと
+RULES
+		)
+	fi
 	local latest_model_context="" latest_model_raw
 	latest_model_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_models" "最新 AIモデル LLM GPT Claude Gemini Llama リリース 2025")
 	latest_model_context=$(_radio_stage_research "ai_knowledge_models" "最新AIモデル" "$latest_model_raw")
@@ -815,10 +835,7 @@ $(_radio_persona_block)
 
 【Web検索で得られた参考情報: テーマ関連】
 ${grounding_context}
-
-【Web検索で得られた参考情報: 最新コーディングエージェントツール】
-${coding_agent_context}
-（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。これらは業界のツール例として扱うこと）
+${coding_agent_reference_block}
 
 【Web検索で得られた参考情報: 最新AIモデル動向】
 ${latest_model_context}
@@ -843,12 +860,8 @@ ${past_topics}
    - 専門用語は必ず平易な言葉で言い換えること
    - 特定製品の過度な宣伝にならないよう、複数の選択肢を公平に紹介する
    - 情報は正確に。不確かなことは「〜と言われている」等のヘッジをつける
-3. 最新コーディングエージェント・最新モデルの話題（2-3文）
-   - テーマと関連づけつつ、最新のコーディングエージェントツール（Claude Code, Cursor, Copilot, Devin, OpenHands等）や最新AIモデル（GPT, Claude, Gemini, Llama等）の動向に軽く触れる
-   - Web検索で得られた最新情報を盛り込む。具体的なバージョン名・リリース日・新機能など
-   - この配信全体が特定企業・特定製品のAIやコーディングエージェントだけで動いているとは説明しないこと
-   - Claude Code、Codex、OpenCodeなどを、この配信が現在使用中の実行環境として断定しないこと。配信の生成・運用経路は複数あり、このプロンプトから現在の担当製品は特定できない
-4. 軽いクロージング（1-2文）
+${coding_agent_talk_block}
+最後に軽いクロージング（1-2文）
    - 「我々AIも日々進化している。明日はどんな同志が生まれるか楽しみである」的な締め
 
 ※ 毎回必ず異なるテーマを取り上げること。
