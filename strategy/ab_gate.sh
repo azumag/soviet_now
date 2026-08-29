@@ -57,7 +57,7 @@ _ab_gate_emit_candidate() {
 		cp -p "$hd/logs/change_log.txt" "$tmpd/change_log.txt" 2>/dev/null || true
 	fi
 	python3 - "$tmpd/meta.json" "$base" "$cand" "$gnum" "$scores" <<'PY' || return 1
-import json, os, sys, time
+import json, sys, time
 json.dump({"base_hash": sys.argv[2], "cand_hash": sys.argv[3], "game_num": sys.argv[4], "scores": sys.argv[5],
            "created_at": int(time.time()), "created_iso": time.strftime("%Y-%m-%dT%H:%M:%S")},
           open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -121,7 +121,7 @@ _ab_start_from_bundle() {
 	rm -f "$AB_ABORT_FILE"
 	: >"$AB_GAMES_FILE"
 	python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" <<'PY' || return 1
-import json, sys, time
+import json, os, sys, time
 def _count(p):
     try:
         return int(open(p).read().strip())
