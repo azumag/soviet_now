@@ -21,6 +21,7 @@ class NewsTopicFilterTest(unittest.TestCase):
             "夏の夜空に1万5千発の花火",
             "前衛芸術家の回顧展を開催",
             "今年の24時間テレビの出演者を発表",
+            "SpaceXのStarshipが10回目の飛行試験に成功",
         ]
         for title in excluded:
             with self.subTest(title=title):

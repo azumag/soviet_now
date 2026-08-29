@@ -41,6 +41,11 @@ _DIRECT_PRODUCT_TERMS = (
     "hands-on review", "product review", "buying guide",
 )
 
+_OUTSIDE_SCOPE_SCIENCE_TERMS = (
+    "spacex", "starship", "宇宙探査", "宇宙望遠鏡", "探査機", "ロケット打ち上げ",
+    "ロケットの打ち上げ", "飛行試験", "天文学",
+)
+
 _CONSUMER_PRODUCTS = (
     "iphone", "ipad", "pixel", "galaxy", "xperia", "スマホ", "スマートフォン",
     "イヤホン", "ヘッドホン", "カメラ", "レンズ", "テレビ", "家電", "腕時計",
@@ -99,6 +104,8 @@ def is_low_value_news_title(title: str) -> bool:
     if any(term in norm for term in _LIFESTYLE_TERMS):
         return True
     if any(term in norm for term in _DIRECT_PRODUCT_TERMS):
+        return True
+    if any(term in norm for term in _OUTSIDE_SCOPE_SCIENCE_TERMS):
         return True
     if any(term in norm for term in _LOW_VALUE_OUTLETS):
         return True
