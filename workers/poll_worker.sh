@@ -189,6 +189,52 @@ os.replace(tmp, path)
 PY
 }
 
+_poll_result_comment_validator() {
+	python3 - "$1" <<'PY'
+import re, sys
+text = sys.argv[1].strip()
+if not text or len(text) > 60 or "\n" in text or "\r" in text:
+    raise SystemExit(1)
+if not re.search(r"[ぁ-んァ-ヶ一-龠]", text):
+    raise SystemExit(1)
+# 集計は後段で機械生成する。モデルに票数を再掲させると不一致の原因になる。
+if re.search(r"\d|票", text):
+    raise SystemExit(1)
+if re.search(r"[`*_#]|(^|\s)[-+•]\s|\[[^]]*\]\([^)]*\)", text):
+    raise SystemExit(1)
+lower = text.casefold()
+blocked = (
+    "the output", "required format", "let me", "i produced", "redo this",
+    "集計結果", "出力形式", "以下のとおり", "コメント:", "コメント：",
+)
+if any(x in lower for x in blocked):
+    raise SystemExit(1)
+PY
+}
+
+_format_poll_result_commentary() {
+	local result_json="$1" comment="${2:-}"
+	python3 - "$result_json" "$comment" <<'PY'
+import json, sys
+p = json.loads(sys.argv[1]).get("poll") or {}
+choices = p.get("choices") or []
+parts = []
+for choice in choices:
+    title = " ".join(str(choice.get("title", "")).split())
+    votes = int(choice.get("votes", 0) or 0)
+    if title:
+        parts.append(f"{title}{votes}票")
+summary = "、".join(parts) + "。" if parts else "アンケートを集計しました。"
+comment = " ".join(sys.argv[2].split())
+if not comment:
+    comment = "投票ありがとうございました。"
+text = summary + comment
+if len(text) > 200:
+    text = summary
+print(text[:200])
+PY
+}
+
 _generate_result_commentary() {
 	local result_json="$1" prompt raw total
 	total=$(printf '%s' "$result_json" | python3 -c 'import json,sys; p=json.load(sys.stdin).get("poll") or {}; print(sum(int(x.get("votes",0) or 0) for x in p.get("choices",[])))' 2>/dev/null || echo 0)
@@ -203,17 +249,17 @@ p = json.loads(sys.argv[1]).get("poll") or {}
 print("あなたはTwitch配信「ソ連ゲーム」のAIパーソナリティです。アンケート結果について、日本語でコメントしてください。")
 print("人格: 共産主義者でソ連を愛しつつ資本主義や西側への皮肉をウィットとして使う。斜に構えた語り口で、褒めるときも素直に褒めない、けなすときも愛がある。ボケ強めのツッコミ、ソ連・計画経済・資本主義・時事を絡めた比喩や言葉遊び、視点をずらすひねりを必ず入れる。淡白なだけは禁止。")
 print("出力形式:")
-print("- まず全選択肢の得票数を正確に書き出す。最多票・同率を正確に扱い、得票数を捏造・変更しない。例: 「春2票、秋3票、冬0票で秋が最多でした。」のように全選択肢を列挙する。票数が0の選択肢も省略しない。")
-print("- 続けてその結果へのボケ強めの一言コメント（1〜2文）。ソ連・資本主義・政治/時事ネタを絡めた皮肉や比喩で、視聴者を責めず説教にならないユーモアにする。")
-print("- 全体で日本語200文字以内。です・ます調で統一し、「だ・である」調は禁止。Markdownや箇条書き記号は使わない。")
+print("- 得票数の集計はシステムが別に付けるため、票数や選択肢を繰り返さず、結果への一言コメントだけを書く。")
+print("- 日本語60文字以内の1文。です・ます調で統一し、「だ・である」調は禁止。")
+print("- Markdown、見出し、箇条書き、説明、前置き、英語の作業メモを付けない。")
 print("質問: " + str(p.get("title", "")))
 for c in p.get("choices", []): print(f"- {c.get('title','')}: {int(c.get('votes',0) or 0)}票")
 PY
-	raw=$(ai_generate_list "RADIO_POLL_RESULT" "$prompt" "${TWITCH_POLL_AGENTS:-$RADIO_AGENTS}" "${TWITCH_POLL_AI_TIMEOUT:-120}") || true
+	raw=$(ai_generate_list "RADIO_POLL_RESULT" "$prompt" "${TWITCH_POLL_AGENTS:-$RADIO_AGENTS}" "${TWITCH_POLL_AI_TIMEOUT:-120}" _poll_result_comment_validator) || true
 	rm -f "$prompt"
-	raw=$(printf '%s' "$raw" | _ai_guard_model_output | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//' | cut -c1-220)
-	[ -n "$raw" ] || raw="投票ありがとうございました。全選択肢を集計すると、計画経済なら全員配給、資本主義なら最多が総取りの偏りでした。なかなか悩ましい結果でした。"
-	printf '%s\n' "$raw"
+	raw=$(printf '%s' "$raw" | _ai_guard_model_output | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')
+	_poll_result_comment_validator "$raw" || raw=""
+	_format_poll_result_commentary "$result_json" "$raw"
 }
 
 _deliver_ready_commentary() {
