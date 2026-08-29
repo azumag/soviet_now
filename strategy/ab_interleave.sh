@@ -124,7 +124,7 @@ _ab_select_arm() {
 # 腕・hash・スコアを ab_games.jsonl に追記し games_recorded を進める。
 # runner が実際にその腕を打ったかを snapshot 記録と archive の strategy_hash で突き合わせ、不一致は tainted。
 _ab_record_game() {
-	local score="$1" eval="$2" turns="$3" archive="$4" played="" hist=""
+	local score="$1" eval="$2" turns="$3" archive="$4" soviet="${5:-}" russia="${6:-}" played="" hist=""
 	[ -n "${AB_ARM:-}" ] || return 0
 	if [ -f "${STRATEGY_FILE:-strategy.py}.game_snapshot" ]; then
 		played=$(_ab_hash "${STRATEGY_FILE:-strategy.py}.game_snapshot")
@@ -143,9 +143,22 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 )
 	fi
-	python3 - "$AB_STATE_FILE" "$AB_GAMES_FILE" "$AB_IDX" "$AB_ARM" "$AB_HASH" "$played" "$hist" "$score" "$eval" "$turns" "$archive" "${GAME_NUM:-}" <<'PY' || log "[AB] record failed"
+	python3 - "$AB_STATE_FILE" "$AB_GAMES_FILE" "$AB_IDX" "$AB_ARM" "$AB_HASH" "$played" "$hist" "$score" "$eval" "$turns" "$archive" "${GAME_NUM:-}" "$soviet" "$russia" <<'PY' || log "[AB] record failed"
 import json, os, sys, time
 state_file, games_file, idx, arm, h, played, hist, score, ev, turns, archive, game_num = sys.argv[1:13]
+soviet_raw = sys.argv[13] if len(sys.argv) > 13 else ""
+russia_raw = sys.argv[14] if len(sys.argv) > 14 else ""
+
+
+def _flag(v):
+    """呼び出し元が渡さなかった場合は None (不明) を返す。空を False にすると
+    「建国しなかった」と断定してしまい、記録として誤りになる。"""
+    v = str(v or "").strip().lower()
+    if v in ("true", "1", "yes"):
+        return True
+    if v in ("false", "0", "no"):
+        return False
+    return None
 def num(v):
     try:
         return float(v)
@@ -154,7 +167,9 @@ def num(v):
 tainted = bool((played and played != h) or (hist and hist != h))
 rec = {"idx": int(idx or 0), "arm": arm, "hash": h, "played_hash": played, "history_hash": hist, "score": num(score),
        "eval": num(ev), "turns": num(turns), "archive": os.path.basename(archive) if archive else "", "game_num": game_num,
-       "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "tainted": tainted}
+       "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "tainted": tainted,
+       # issue #132 P0-1: 最終目標 (makeSorenCount>0) と段階到達を ledger に必ず残す
+       "soviet_created": _flag(soviet_raw), "russia_created": _flag(russia_raw)}
 # 試合ごとの指標 (game_history は直近しか残らないので記録時に取り出す)
 try:
     rs = []
@@ -184,6 +199,21 @@ try:
                     # 解析器トグルの実効値。腕別 env (a_env/b_env) の A/B を記録から事後検証するために残す。
                     # game_history は直近数十試合しか保持しないので、ここに写しておく必要がある。
                     "analyzer_modes": (rs[-1].get("analyzer_modes") or rs[0].get("analyzer_modes"))})
+        # 段階到達ターンと終了理由 (issue #132 P0-1)。game_history は剪定されるのでここで確定させる。
+        first = {}
+        for i, r in enumerate(rs):
+            for p in (r.get("state_snapshot") or {}).get("pieces") or []:
+                t = p.get("type")
+                if isinstance(t, int) and t >= 13 and t not in first:
+                    first[t] = r.get("turn", i + 1)
+        rec["first_turn_t13"] = first.get(13)
+        rec["first_turn_t14"] = first.get(14)
+        rec["first_turn_t15"] = first.get(15)
+        rec["first_turn_t16"] = first.get(16)
+        last = rs[-1]
+        rec["end_reason"] = ("soviet" if rec.get("soviet_created") else
+                             ("deadline_crossed" if last.get("deadline_crossed") else "board_full_or_other"))
+        rec["final_piece_count"] = last.get("piece_count")
 except Exception:
     pass
 with open(games_file, "a", encoding="utf-8") as fh:

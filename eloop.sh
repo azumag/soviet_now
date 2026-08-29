@@ -742,7 +742,9 @@ print(d.get('score', 0) + bonus)
 	export LAST_TURNS="$LAST_TURNS"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
 		if [ -n "${AB_ARM:-}" ] && command -v _ab_record_game >/dev/null 2>&1; then
-			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE"
+			# issue #132 P0-1: 建国 (makeSorenCount 由来) とロシア到達を A/B の永続記録にも残す。
+			# game_history は剪定されるため、実験の ledger 側に持たないと後から辿れない。
+			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE" "$_soviet_for_acc" "$_russia_for_acc"
 		fi
 		if command -v _ab_gate_after_game >/dev/null 2>&1; then
 			_ab_gate_after_game || true
