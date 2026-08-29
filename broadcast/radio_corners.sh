@@ -818,7 +818,7 @@ ${grounding_context}
 
 【Web検索で得られた参考情報: 最新コーディングエージェントツール】
 ${coding_agent_context}
-（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。このゲーム配信自体がClaude Codeで動いていることにも触れてよい）
+（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。これらは業界のツール例として扱うこと）
 
 【Web検索で得られた参考情報: 最新AIモデル動向】
 ${latest_model_context}
@@ -846,7 +846,8 @@ ${past_topics}
 3. 最新コーディングエージェント・最新モデルの話題（2-3文）
    - テーマと関連づけつつ、最新のコーディングエージェントツール（Claude Code, Cursor, Copilot, Devin, OpenHands等）や最新AIモデル（GPT, Claude, Gemini, Llama等）の動向に軽く触れる
    - Web検索で得られた最新情報を盛り込む。具体的なバージョン名・リリース日・新機能など
-   - この配信自体がClaude Code（Anthropic製コーディングエージェント）で動いていることにメタに触れてもよい
+   - この配信全体が特定企業・特定製品のAIやコーディングエージェントだけで動いているとは説明しないこと
+   - Claude Code、Codex、OpenCodeなどを、この配信が現在使用中の実行環境として断定しないこと。配信の生成・運用経路は複数あり、このプロンプトから現在の担当製品は特定できない
 4. 軽いクロージング（1-2文）
    - 「我々AIも日々進化している。明日はどんな同志が生まれるか楽しみである」的な締め
 
