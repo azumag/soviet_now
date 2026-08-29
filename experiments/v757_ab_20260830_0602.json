@@ -1,0 +1,52 @@
+{
+ "experiment": "v757_SURFACE_DIVERSITY_vs_v752",
+ "started_at": "2026-08-30T06:02:41",
+ "arms": {
+  "A": {
+   "role": "root",
+   "decide_hash": "a557db55896b",
+   "env": ""
+  },
+  "B": {
+   "role": "candidate",
+   "decide_hash": "351b06dae2bd",
+   "env": ""
+  }
+ },
+ "pattern": "ABBA",
+ "preregistration": {
+  "primary_report": "score(block diff) 90% CI lower > 0",
+  "secondary": "merges_per_turn (expected +0.038)",
+  "guardrail": "B の T15 到達率 >= A の半分",
+  "harm_stop": "k>=6 で score UCB90 < 0 なら finish A",
+  "futility": "適用しない",
+  "final": "k=50 (各100試合)",
+  "note": "進行中に規則を変更しない (issue #132 Phase 0)"
+ },
+ "env": {},
+ "toggles": {
+  "SOREN_GAME_RENDER_FPS": "'30'",
+  "ANALYZE_BOARD_WALL_CLAMP": "1",
+  "SOREN_SETTLE_REQUIRED": "3",
+  "AB_GATE_ENABLED": "1",
+  "AB_GATE_DRY_RUN": "1",
+  "REGRESSION_DISABLED": "1",
+  "SOREN_AB_PATTERN": "ABBA"
+ },
+ "sha256": {
+  "strategy.py": "9ceaf66cf33a6771477fae66908534d8ac680d48a32a1242efc4315846f7508c",
+  "tmp/manual_challenge/strategy_351b06dae2bd.py": "765869b25b5b22757afa01390677687007dbc538631d3c7d8c4627743fb2c1cd",
+  "analyze_board.py": "809a8ed551dc40ba7da7a1d48038cebf551ac591c5fef31f1fa5b5ed9db0cac7",
+  "strategy_runner.py": "4f9609f860b17f6619da9f5485803cab2b8b3546e5bee739bd3f7c4b4cacce1a",
+  "eloop.sh": "c517aff463c574b65ee17f10c63c0242aa13b66f199c477e119e683c90fbf622",
+  "eloop_improve.sh": "36b57c8e93e5a8478b9366f906ff2da7f14f2c9205e11eed8a68f76dd28075aa",
+  "strategy/ab_interleave.sh": "613f56c1c7303beac84277ade0c32bca44f70934260c11a0e8e95b4967ef6b6d",
+  "strategy/ab_gate.sh": "7c434fb5d103cf7bbcca4681f0a06a1686e1b3a6c91c89e5eb0e5481d1749a00",
+  "tools/ab_report.py": "f0c791b716aa005664a99bff565702b2c8cb5d5f46db497cef044e2117c80547",
+  "tools/ab_decide.py": "0bac1ca1c5c0a4926074dd46d551da1fd0f36264a890464c9f32a6f2a0206eca",
+  "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14",
+  "strategy_helpers/board_stats.py": "626f806cd161032ab44aa0b2b607a956678c13298ce3bfd79a6fd453e7ef3098",
+  "strategy_helpers/profile.py": null,
+  "strategy_helpers/future_ev.py": null
+ }
+}
