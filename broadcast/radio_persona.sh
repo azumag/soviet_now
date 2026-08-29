@@ -77,7 +77,36 @@ intro_like = re.compile(
     r"(現在時刻|[0-2]?\d[:時][0-5]\d(?:分)?|おはよう|こんにちは|こんばんは|朝|午前|昼|午後|夕方|夕暮れ|夜|深夜|未明)"
 )
 
+# 生成モデルが冒頭の時刻とは別に「21時を回りました」のような
+# 生成時点の時計をオープニングへ書くことがある。deferred 再生では
+# その一文だけ古いまま残るため、最初の実質的なオープニング文に限り
+# 現在時刻を述べる文を捨てる。ニュース本文中の「午前3時に発生」など
+# 出来事の時刻は対象にしない。
+current_time_claim = re.compile(
+    r"^\s*(?:もう\s*)?"
+    r"(?:(?:午前|午後|朝|昼|夜|深夜|未明|真夜中)\s*の?\s*)?"
+    r"(?:[0-2]?\d|[〇零一二三四五六七八九十]{1,3})時"
+    r"(?:[0-5]?\d分)?"
+    r"(?:"
+    r"です|でした"
+    r"|にな(?:りました(?:が|けど)?|ったところです|る時間です)"
+    r"|を(?:少し)?回(?:りました(?:が|けど)?|っています|ったところです|って)"
+    r"|を(?:少し)?過ぎ(?:ました|たところです)"
+    r"|過ぎです"
+    r"|というのは[^。！？!?]*(?:時間|朝|昼|夜|静か|空気)"
+    r")(?=$|[。！？!?、,\s])"
+    r"|^\s*(?:正午|真夜中)(?:です|を(?:少し)?過ぎ(?:ました|たところです))(?=$|[。！？!?、,\s])"
+    r"|^\s*日付が変わ(?:りました|ったところです)(?=$|[。！？!?、,\s])"
+)
+
+
+def remove_generated_clock_claim(line: str) -> str:
+    parts = re.split(r"(?<=[。！？!?])", line)
+    kept = [part for part in parts if part and not current_time_claim.search(part)]
+    return "".join(kept).strip()
+
 changed = False
+intro_idx = None
 for idx in (0, 1, 2):
     if idx >= len(lines):
         continue
@@ -87,10 +116,28 @@ for idx in (0, 1, 2):
     if intro_like.search(line):
         lines[idx] = intro
         changed = True
+        intro_idx = idx
         break
 
 if not changed:
     lines.insert(0, intro)
+    intro_idx = 0
+
+# canonical intro に続く冒頭だけを見る。コーナー名を挟んで複数行の
+# オープニングになる場合があるため、最初の1行で打ち切らない。
+remove_line_indexes = set()
+for idx in range((intro_idx or 0) + 1, min(len(lines), (intro_idx or 0) + 6)):
+    candidate = lines[idx].strip()
+    if not candidate:
+        continue
+    cleaned = remove_generated_clock_claim(candidate)
+    if cleaned != candidate:
+        lines[idx] = cleaned
+        if not cleaned:
+            remove_line_indexes.add(idx)
+
+if remove_line_indexes:
+    lines = [line for idx, line in enumerate(lines) if idx not in remove_line_indexes]
 
 updated = "\n".join(lines)
 if text.endswith("\n"):
@@ -308,6 +355,7 @@ _radio_output_rules() {
 - 「〜といわれます」「〜とされています」「〜とみられます」などの無責任な逃げ表現は禁止。断定できない細部は削るか、「ここで確認できるのは〜までです」のように言い換える
 - 「ここで面白いのは」という言い回しは禁止。価値判断を押しつけず、「ここで注目なのは」「ポイントになるのは」「見ておきたいのは」などに言い換える
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
+- 正確な現在時刻は再生直前にシステムが冒頭へ付けるため、トーク本文には「21時を回りました」「午後1時です」など数字を含む現在時刻を二重に書かない。ニュースや歴史上の出来事が起きた時刻は必要なら書いてよい
 - 出力は指定されたトーク本文、制御マーカー、要約のみ。思考過程、検索途中の説明、ツール呼び出し、前置き、補足説明は一切出力しない
 - 【最重要境界】最初の出力行は必ず「ON_AIR_SCRIPT_START」だけにする。この行より前には何も出力しない
 - 【出力構造】以下の順序で出力すること:
