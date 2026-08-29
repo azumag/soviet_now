@@ -631,12 +631,28 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
     drop_bottom = drop_ext["bottom"]
     landing_y = FLOOR_Y + drop_bottom  # 床
     hit_id = None  # None = 床に着地
+    arc = landing_arc_enabled()
 
     for p in pieces:
         p_horiz = piece_deadline_horiz_radius(p, eff_radii)
-        if abs(drop_x - p["x"]) >= drop_horiz + p_horiz:
+        dx = abs(drop_x - p["x"])
+        if dx >= drop_horiz + p_horiz:
             continue
-        collision_y = float(p.get("y", FLOOR_Y) or FLOOR_Y) + piece_deadline_top_radius(p, eff_radii) + drop_bottom
+        if arc:
+            # 円弧接触モデル: 落下ピースは相手の「真上」ではなく接触円弧に沿って停止する。
+            # 中心間距離が (drop_horiz + p_horiz) になる高さ = py + sqrt(R^2 - dx^2)（R は横方向の接触距離）。
+            # 実測（実戦 852 手）で従来の箱積みモデルは着地 y を平均 +0.69 高く予測していた（95% が過大）。
+            # 縦方向の接触距離は top/bottom で決まるので、円弧の縦成分をその比率でスケールする。
+            r_h = drop_horiz + p_horiz
+            r_v = piece_deadline_top_radius(p, eff_radii) + drop_bottom
+            if r_h <= 1e-9:
+                dy = r_v
+            else:
+                ratio = max(0.0, 1.0 - (dx * dx) / (r_h * r_h))
+                dy = r_v * math.sqrt(ratio)
+            collision_y = float(p.get("y", FLOOR_Y) or FLOOR_Y) + dy
+        else:
+            collision_y = float(p.get("y", FLOOR_Y) or FLOOR_Y) + piece_deadline_top_radius(p, eff_radii) + drop_bottom
         if collision_y > landing_y:
             landing_y = collision_y
             hit_id = p["id"]
@@ -663,6 +679,27 @@ def polygon_contact_gap(x, y, drop_ext, target, deadline_radii):
     return max(dx_gap, 0.0), max(dy_gap, 0.0)
 
 
+def landing_arc_mode():
+    """ANALYZE_BOARD_LANDING_ARC: 0=従来（箱積み）, 1=着地も円弧, 2=着地は従来のまま接触判定だけ沈み込み補正。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_LANDING_ARC", "0") or "").strip().lower()
+    if raw in ("", "0", "false", "no", "off"):
+        return 0
+    if raw in ("2", "contact"):
+        return 2
+    if raw in ("3", "deadline"):
+        return 3
+    return 1
+
+
+def landing_arc_enabled():
+    return landing_arc_mode() == 1
+
+
+# 実測（実戦 852 手）: 箱積みモデルは駒の上への着地 y を平均 +0.72 高く予測する。
+# 接触判定はこの分だけ沈めた位置で行うほうが実際の併合に一致する。
+LANDING_SINK_CALIB = 0.60
+
+
 def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
     """Deadline判定用の着地Y。
 
@@ -675,13 +712,21 @@ def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
     drop_horiz = drop_info.get("horiz", drop_r * COLLISION_POLY_FACTOR)
     drop_bottom = drop_info.get("bottom", drop_r)
     landing_y = FLOOR_Y + drop_bottom
+    _arc = landing_arc_mode() in (1, 3)
     for p in pieces:
         p_type = p.get("type", 0)
         p_horiz = piece_deadline_horiz_radius(p, deadline_radii)
-        if abs(drop_x - p["x"]) >= drop_horiz + p_horiz:
+        dx = abs(drop_x - p["x"])
+        if dx >= drop_horiz + p_horiz:
             continue
         p_top = piece_deadline_top_radius(p, deadline_radii)
-        landing_y = max(landing_y, float(p.get("y", FLOOR_Y) or FLOOR_Y) + p_top + drop_bottom)
+        if _arc:
+            r_h = drop_horiz + p_horiz
+            r_v = p_top + drop_bottom
+            dy = r_v * math.sqrt(max(0.0, 1.0 - (dx * dx) / (r_h * r_h))) if r_h > 1e-9 else r_v
+        else:
+            dy = p_top + drop_bottom
+        landing_y = max(landing_y, float(p.get("y", FLOOR_Y) or FLOOR_Y) + dy)
     return landing_y
 
 
@@ -939,9 +984,18 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             dist_drifted = math.sqrt((settled_x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
             # 併合判定は両方の距離を考慮（どちらかで接触すれば併合可能）
             dist = min(dist_static, dist_drifted)
-            gap_x, gap_y = polygon_contact_gap(x, ly, drop_ext, t, deadline_eff_radii)
-            drift_gap_x, drift_gap_y = polygon_contact_gap(settled_x, ly, drop_ext, t, deadline_eff_radii)
-            contact_gap = min(math.hypot(gap_x, gap_y), math.hypot(drift_gap_x, drift_gap_y))
+            _cy = ly - LANDING_SINK_CALIB if (landing_arc_mode() == 2 and hit_id is not None) else ly
+            gap_x, gap_y = polygon_contact_gap(x, _cy, drop_ext, t, deadline_eff_radii)
+            drift_gap_x, drift_gap_y = polygon_contact_gap(settled_x, _cy, drop_ext, t, deadline_eff_radii)
+            if landing_arc_mode():
+                # 円弧着地モデルでは着地が低くなり縦方向が重なる（負のギャップ）ことがある。
+                # hypot は負値を正の距離に変えてしまい「遠い」と誤判定するので、重なりは 0 に丸める。
+                contact_gap = min(
+                    math.hypot(max(0.0, gap_x), max(0.0, gap_y)),
+                    math.hypot(max(0.0, drift_gap_x), max(0.0, drift_gap_y)),
+                )
+            else:
+                contact_gap = min(math.hypot(gap_x, gap_y), math.hypot(drift_gap_x, drift_gap_y))
 
             if hit_id == t["id"]:
                 # 最初の衝突相手がターゲット → 妨害チェック
@@ -967,6 +1021,9 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                         grade = "NO"
                 else:
                     grade = "DIRECT"
+            elif landing_arc_mode() == 2 and contact_gap <= 0.04 and not has_horizontal_obstruction(x, _cy, next_r, t, pieces, deadline_eff_radii, next_type):
+                # mode 2: 実際の沈み込み位置でターゲットに接触している → 一次衝突相手でなくても DIRECT
+                grade = "DIRECT"
             elif contact_gap <= 0.04:
                 # 着地後にターゲットとほぼ接触 → 水平障害チェック
                 if has_horizontal_obstruction(x, ly, next_r, t, pieces, deadline_eff_radii, next_type):
