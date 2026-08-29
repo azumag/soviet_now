@@ -602,11 +602,18 @@ def _analyzer_modes_for_record():
     try:
         from analyze_board import _merge_top_model_mode, _vertical_lane_mode, _wall_clamp_mode
 
-        return {
+        modes = {
             "vertical_lane_direct": int(_vertical_lane_mode()),
             "merge_top_model": int(_merge_top_model_mode()),
             "wall_clamp": int(_wall_clamp_mode()),
         }
+        try:  # 着地モデル (ANALYZE_BOARD_LANDING_ARC)。古い analyze_board には無い。
+            from analyze_board import landing_arc_mode
+
+            modes["landing_arc"] = int(landing_arc_mode())
+        except Exception:
+            pass
+        return modes
     except Exception:
         return None
 
