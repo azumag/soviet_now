@@ -719,7 +719,7 @@ import json, sys
 d = json.load(sys.stdin)
 types = d.get('final_types', [])
 soviet = d.get('soviet_created', False)
-TB = {1:0,2:0,3:1,4:3,5:7,6:15,7:32,8:67,9:141,10:296,11:622,12:1306,13:2743,14:5760,15:12096}
+TB = {1:0,2:0,3:1,4:3,5:7,6:15,7:32,8:67,9:141,10:296,11:622,12:1306,13:2743,14:5760,15:12096,16:25402}
 bonus = sum(TB.get(t, 0) for t in types)
 if soviet: bonus += 800
 print(d.get('score', 0) + bonus)
