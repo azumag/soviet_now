@@ -101,7 +101,24 @@ _ab_select_arm() {
 		AB_SOURCE="${STRATEGY_FILE:-strategy.py}"
 		AB_HASH=$(_ab_state_get a_hash)
 	fi
-	log "[AB] idx=$AB_IDX arm=$AB_ARM hash=${AB_HASH:0:12} src=$AB_SOURCE${AB_HELPERS:+ helpers=$AB_HELPERS}"
+	# 腕ごとの環境変数 (解析器モード等の A/B 用)。state の a_env / b_env に
+	# "KEY=VALUE KEY2=VALUE2" 形式で入れておくと、その腕の試合だけ runner に渡る。
+	# 未設定なら空文字 = 従来と完全に同じ挙動。
+	if [ "$AB_ARM" = "B" ]; then
+		AB_EXTRA_ENV=$(_ab_state_get b_env)
+	else
+		AB_EXTRA_ENV=$(_ab_state_get a_env)
+	fi
+	case "$AB_EXTRA_ENV" in
+		null | none) AB_EXTRA_ENV="" ;;
+	esac
+	# 安全: 期待する形式 (英大文字/数字/_ の KEY=VALUE を空白区切り) 以外は無視する。
+	if [ -n "$AB_EXTRA_ENV" ] && ! printf '%s' "$AB_EXTRA_ENV" | grep -Eq '^([A-Z][A-Z0-9_]*=[A-Za-z0-9_.,:/-]*)( [A-Z][A-Z0-9_]*=[A-Za-z0-9_.,:/-]*)*$'; then
+		log "[AB] a_env/b_env の形式が不正なため無視: $AB_EXTRA_ENV"
+		AB_EXTRA_ENV=""
+	fi
+	export AB_EXTRA_ENV
+	log "[AB] idx=$AB_IDX arm=$AB_ARM hash=${AB_HASH:0:12} src=$AB_SOURCE${AB_HELPERS:+ helpers=$AB_HELPERS}${AB_EXTRA_ENV:+ env=$AB_EXTRA_ENV}"
 }
 
 # 腕・hash・スコアを ab_games.jsonl に追記し games_recorded を進める。

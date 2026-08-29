@@ -57,7 +57,7 @@ _ab_gate_emit_candidate() {
 		cp -p "$hd/logs/change_log.txt" "$tmpd/change_log.txt" 2>/dev/null || true
 	fi
 	python3 - "$tmpd/meta.json" "$base" "$cand" "$gnum" "$scores" <<'PY' || return 1
-import json, sys, time
+import json, os, sys, time
 json.dump({"base_hash": sys.argv[2], "cand_hash": sys.argv[3], "game_num": sys.argv[4], "scores": sys.argv[5],
            "created_at": int(time.time()), "created_iso": time.strftime("%Y-%m-%dT%H:%M:%S")},
           open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -123,7 +123,9 @@ def _count(p):
         return None
 st = {"a_hash": sys.argv[2], "b_hash": sys.argv[3], "pattern": sys.argv[4], "alt_source": sys.argv[5],
       "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "games_recorded": 0, "game_num_start": _count(sys.argv[6]),
-      "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9])}
+      "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9]),
+      # 腕ごとの追加環境変数 ("KEY=VALUE KEY2=VALUE2"、既定は空)。解析器モード等の A/B に使う。
+      "a_env": os.environ.get("AB_A_ENV", ""), "b_env": os.environ.get("AB_B_ENV", "")}
 json.dump(st, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 PY
 	./set_toggle.sh REGRESSION_DISABLED=1 >/dev/null 2>&1 &&

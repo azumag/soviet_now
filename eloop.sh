@@ -369,9 +369,17 @@ PY
 
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
-	STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
-		STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
-		python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	# A/B の腕ごと環境変数 (解析器モード等)。AB_EXTRA_ENV が空なら従来と同一。
+	if [ -n "${AB_EXTRA_ENV:-}" ]; then
+		env $AB_EXTRA_ENV \
+			STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
+			STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
+			python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	else
+		STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
+			STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
+			python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	fi
 	local py_pid=$!
 	local runner_active_file="${MAIN_STRATEGY_RUNNER_ACTIVE_FILE:-${TMP_STATE_DIR:-tmp/state}/main_strategy_runner_active.json}"
 	python3 - "$runner_active_file" "$py_pid" "$game_num_display" <<'PY' 2>/dev/null || true
