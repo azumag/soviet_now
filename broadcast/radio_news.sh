@@ -134,6 +134,30 @@ except Exception:
     def is_sports_title(title: str) -> bool:
         return False
 
+try:
+    import importlib.util
+    _topic_cand = None
+    for _p in [
+        os.path.join("lib", "news_topic_filter.py"),
+        os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib/news_topic_filter.py"),
+        "games/soviet_now/lib/news_topic_filter.py",
+    ]:
+        if _p and os.path.exists(_p):
+            _topic_cand = _p
+            break
+    if not _topic_cand:
+        raise ImportError
+    _topic_spec = importlib.util.spec_from_file_location("news_topic_filter", _topic_cand)
+    _topic_mod = importlib.util.module_from_spec(_topic_spec)
+    _topic_spec.loader.exec_module(_topic_mod)
+    is_low_value_news_title = _topic_mod.is_low_value_news_title
+    is_public_interest_news_title = _topic_mod.is_public_interest_news_title
+except Exception:
+    def is_low_value_news_title(title: str) -> bool:
+        return False
+    def is_public_interest_news_title(title: str) -> bool:
+        return True
+
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
 past_topic_key_file = sys.argv[3]
@@ -233,6 +257,12 @@ out = []
 for b in blocks:
     title = b[0][2:].strip()
     if is_sports_title(title):
+        continue
+    if is_low_value_news_title(title):
+        continue
+    item = meta.get(title, {}) if isinstance(meta, dict) else {}
+    source_key = (item.get("source_key") or "").strip()
+    if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
         continue
     k = key(title)
     tk = topic_key(title)

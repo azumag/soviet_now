@@ -23,6 +23,14 @@ except Exception:  # fallback
     def is_sports_title(title: str) -> bool:  # type: ignore
         return False
 
+try:
+    from news_topic_filter import is_low_value_news_title, is_public_interest_news_title  # type: ignore
+except Exception:  # fallback
+    def is_low_value_news_title(title: str) -> bool:  # type: ignore
+        return False
+    def is_public_interest_news_title(title: str) -> bool:  # type: ignore
+        return True
+
 
 def key(s: str) -> str:
     """Normalize a news title to a dedup key."""
@@ -219,8 +227,13 @@ def cmd_filter_unread():
         # sports filter: exclude baseball/sports topics per user request
         if is_sports_title(title):
             continue
-        k = key(title)
+        if is_low_value_news_title(title):
+            continue
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
+        source_key = (item.get("source_key") or "").strip()
+        if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
+            continue
+        k = key(title)
         uh = url_hash(item.get("url", ""))
         if not k:
             continue

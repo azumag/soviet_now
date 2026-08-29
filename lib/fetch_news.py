@@ -52,6 +52,14 @@ except Exception:  # fallback: no filter if module missing
     def is_sports_title(title: str) -> bool:  # type: ignore
         return False
 
+try:
+    from news_topic_filter import is_low_value_news_title, is_public_interest_news_title  # type: ignore
+except Exception:  # fallback: keep fetching if the optional filter cannot load
+    def is_low_value_news_title(title: str) -> bool:  # type: ignore
+        return False
+    def is_public_interest_news_title(title: str) -> bool:  # type: ignore
+        return True
+
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 FILTER_REASON_KEYS = (
     "missing_identity",
@@ -64,6 +72,8 @@ FILTER_REASON_KEYS = (
     "duplicate_link",
     "duplicate_link_hash",
     "sports",
+    "low_value_topic",
+    "outside_public_affairs",
     "passed",
 )
 FILTER_SAMPLE_LIMIT = 3
@@ -77,12 +87,13 @@ def should_exclude_wikinews_author(author: str, source_key: str) -> bool:
     return normalized in {"トモモ", "背後のトモモ"}
 
 SOURCES = [
-    # 直接RSSが止まってもニュース枠が枯れないよう、公開日時付きのGoogle News RSSを使う。
+    # 社会・政治・国際情勢・経済/ビジネスに限定したGoogle News RSSを使う。
+    # 総合トップと科学カテゴリは、芸能・スポーツ・製品紹介の混入が多いため使わない。
     # AIの記憶による自主選定は行わず、この実在見出し・URL・pubDateを後段へ渡す。
     {
-        "url": "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja",
-        "key": "google_news_jp",
-        "name": "Google News 日本",
+        "url": "https://news.google.com/rss/search?q=%E7%A4%BE%E4%BC%9A+OR+%E5%8F%B8%E6%B3%95+OR+%E4%BA%8B%E4%BB%B6+OR+%E7%81%BD%E5%AE%B3+OR+%E5%8A%B4%E5%83%8D+OR+%E7%A6%8F%E7%A5%89&hl=ja&gl=JP&ceid=JP:ja",
+        "key": "google_news_jp_society",
+        "name": "Google News 日本社会",
         "license": "各配信元",
         "lang": "ja",
     },
@@ -107,33 +118,12 @@ SOURCES = [
         "license": "各配信元",
         "lang": "ja",
     },
-    {
-        "url": "https://news.google.com/rss/topics/CAAqKAgKIiJDQkFTRXdvSkwyMHZNR1ptZHpWbUVnSnFZUm9DU2xBb0FBUAE?hl=ja&gl=JP&ceid=JP%3Aja",
-        "key": "google_news_jp_science",
-        "name": "Google News 科学",
-        "license": "各配信元",
-        "lang": "ja",
-    },
     # --- 日本の政治系ソース (国内政治の比率を上げるため) ---
     {
         "url": "https://www.nhk.or.jp/rss/news/cat4.xml",
         "key": "nhk_politics",
         "name": "NHK 政治",
         "license": "NHK",
-        "lang": "ja",
-    },
-    {
-        "url": "https://www.asahi.com/rss/asahi/newsheadlines.rdf",
-        "key": "asahi",
-        "name": "朝日新聞",
-        "license": "朝日新聞社",
-        "lang": "ja",
-    },
-    {
-        "url": "https://mainichi.jp/rss/etc/mainichi-flash.rss",
-        "key": "mainichi_flash",
-        "name": "毎日新聞 速報",
-        "license": "毎日新聞社",
         "lang": "ja",
     },
     # NOTE: Wikinews (ja/en/fr/ru/de/ar/cs/eo/fi/he/pl/uk/zh) は 2026-08-26 に削除した。
@@ -374,6 +364,11 @@ def filter_disabled_cached_outputs(news_text: str, meta: dict) -> tuple[str, dic
             (item or {}).get("source_key", ""),
         )
         and not is_sports_title(title)
+        and not is_low_value_news_title(title)
+        and (
+            not (item or {}).get("source_key", "").startswith("google_news_")
+            or is_public_interest_news_title(title)
+        )
     }
     # quick exit only if no filtering happened (including sports)
     if len(filtered_meta) == len(meta):
@@ -600,6 +595,10 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
                 reason = "stale_published_at"
             elif is_sports_title(item["title"]):
                 reason = "sports"
+            elif is_low_value_news_title(item["title"]):
+                reason = "low_value_topic"
+            elif key.startswith("google_news_") and not is_public_interest_news_title(item["title"]):
+                reason = "outside_public_affairs"
             elif item_title_key in past_title_keys:
                 reason = "past_title"
             elif item_link_hash and item_link_hash in past_link_hashes:

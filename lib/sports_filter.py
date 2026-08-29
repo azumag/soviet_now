@@ -211,6 +211,15 @@ _EN_KEYWORDS = [
     r"fifa",
 ]
 
+# Frequent non-English sports phrases seen in Global Voices feeds.
+_OTHER_LANGUAGE_KEYWORDS = [
+    "كأس العالم",       # Arabic: World Cup
+    "copa do mundo",    # Portuguese
+    "copa mundial",     # Spanish
+    "coupe du monde",   # French
+    "чемпионат мира",   # Russian
+]
+
 # Build regex: each keyword already may contain \b, but wrap overall
 _EN_PATTERN = re.compile(
     r"(?:%s)" % "|".join(_EN_KEYWORDS),
@@ -224,6 +233,9 @@ def is_sports_title(title: str) -> bool:
     if not title or not title.strip():
         return False
     norm = _norm(title)
+
+    if any(keyword in norm for keyword in _OTHER_LANGUAGE_KEYWORDS):
+        return True
 
     # Japanese substring check
     for kw in _JA_KEYWORDS:
