@@ -87,8 +87,14 @@ _ab_start_from_bundle() {
 	[ -f "$AB_STATE_FILE" ] && { log "[AB] 既に A/B 状態がある ($AB_STATE_FILE)"; return 1; }
 	a=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 	b=$(_ab_hash "$src")
-	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ]; then
+	# 同一 hash は原則禁止（差が無い A/B）。ただし腕別 env が異なる場合だけは
+	# 「同じ戦略・解析器モードだけ違う」実験として許可する。
+	if [ -z "$a" ] || [ -z "$b" ]; then
 		log "[AB] hash 不正 (a=${a:0:12} b=${b:0:12})"
+		return 1
+	fi
+	if [ "$a" = "$b" ] && [ "${AB_A_ENV:-}" = "${AB_B_ENV:-}" ]; then
+		log "[AB] hash 不正 (a=${a:0:12} b=${b:0:12}, 腕別 env も同一)"
 		return 1
 	fi
 	[ -d "$dir/strategy_helpers" ] && helpers_src="$dir/strategy_helpers"
