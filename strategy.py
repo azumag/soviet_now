@@ -57,6 +57,9 @@ import math
 
 from strategy_helpers import board_stats
 
+# v747/v752: 終盤の DIRECT 併合は落下ピースの超過フラグでは差し戻さない（strategy_runner.enforce_deadline_safety が参照）
+DEADLINE_ALLOW_DIRECT_CROSS = True
+
 FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
@@ -1329,6 +1332,8 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
             for c in __dlg_cands
         )
         if __dlg_has_safe:
+            # v747: DIRECT 併合候補は落下ピースの超過フラグでは捨てない（併合成立率 97% で落下ピースは消える。
+            # 実測: 超過フラグ付き DIRECT を捨てて安全着地した 180 件は併合ゼロ・生存中央値 9 手・3 手以内死亡 17%）。
             __dlg_cands = [
                 c for c in __dlg_cands
                 if (
@@ -1337,15 +1342,6 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 or (
                     isinstance(c, dict)
                     and c.get("merge_grade") == "DIRECT"
-                    and __dlg_dcross
-                    and __dlg_danger_count > 0
-                    and (
-                        c.get("danger_direct_merge_available", False)
-                        or any(
-                            isinstance(m, dict) and m.get("target_is_danger")
-                            for m in (c.get("merges") or [])
-                        )
-                    )
                 )
             ]
     # This guard is specifically a deadline guard. Reactive pairs alone can
@@ -1386,6 +1382,20 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 136.6) or 41.00))
             return {"x": float(__dlg_best.get("x", 1.5323) or 4.093), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+        # v747 ENDGAME_MERGE_FIRST: 結果がデッドラインを越えると予測される DIRECT でも、安全着地（非併合）より優先する。
+        # 実測（495 試合）: 余裕僅少で DIRECT があるのに SAFE_LANDING を選んだ 385 件のうち 180 件は併合せず
+        # （生存中央値 9 手、3 手以内死亡 17%）。DIRECT を取った 694 件は 97% 併合・生存中央値 13 手・死亡 8%。
+        # 見送りは盤面を +1 するだけで生存を延ばしていない。失敗率 3% の交差リスクは受け入れる。
+        __dlg_direct_any = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_available
+        ]
+        if __dlg_direct_any:
+            __dlg_best = min(
+                __dlg_direct_any,
+                key=lambda c: (0 if c.get("danger_direct_merge_available") else 1, float(c.get("risk_top_y_after_drop", 99.0) or 99.0), float(c.get("landing_y", 99.0) or 99.0)),
+            )
+            return {"x": float(__dlg_best.get("x", -1.7617) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE_CROSSING"}
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
         __dlg_safe_no_merge = [
             c for c in __dlg_cands
@@ -1883,6 +1893,50 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     for _lc_t, _lc_items in _v743_exposed_by_type.items():
         if len(_lc_items) == 1:
             _v743_cover_free.append(_lc_items[0])
+
+    # --- v745 NEXTNEXT_TWIN_COVER_AVOID pre-computation ---
+    # 実測（実戦 14 試合）: 次々ピース (nextNext) の双子が露出 (relief<=1.0) している手が 26 回/試合あり、
+    # その 23% で今のピースをその双子の真上に非併合で置いて次の併合機会を潰していた。
+    # 既存の AVOID_BLOCK_NEXTNEXT は next_next_type == next_type のときだけ働く。
+    # ここでは「盤上の next_next_type の露出双子（隣接の相対高さ relief<=1.0）」の真上を非併合手で覆う候補を抑止する。
+    _v745_nn_lanes = []
+    try:
+        _v745_nnt = int(next_next_type)
+    except Exception:
+        _v745_nnt = -1
+    if _v745_nnt >= 1 and _v745_nnt != next_type:
+        for _nn_p in pieces:
+            if not isinstance(_nn_p, dict) or _nn_p.get("type") != _v745_nnt:
+                continue
+            try:
+                _nn_x = float(_nn_p.get("x", 0.0) or 0.0)
+                _nn_y = float(_nn_p.get("y", 0.0) or 0.0)
+                _nn_r = float(board_stats.seed_horiz_radius(_v745_nnt))
+                _nn_top = _nn_y + float(board_stats.seed_top_radius(_v745_nnt))
+            except Exception:
+                continue
+            _nn_open = True
+            _nn_relief = -9.0
+            for _op in pieces:
+                if _op is _nn_p or _op.get("id") == _nn_p.get("id"):
+                    continue
+                try:
+                    _op_x = float(_op.get("x", 0.0) or 0.0)
+                    _op_y = float(_op.get("y", 0.0) or 0.0)
+                    _op_t = int(_op.get("type", 1) or 1)
+                    _op_r = float(board_stats.seed_horiz_radius(_op_t))
+                    _op_top = _op_y + float(board_stats.seed_top_radius(_op_t))
+                    _op_bottom = _op_y - float(board_stats.seed_bottom_radius(_op_t))
+                except Exception:
+                    continue
+                if abs(_op_x - _nn_x) <= _nn_r + 0.6 * _op_r and _op_bottom >= _nn_top - 0.25 and _op_y > _nn_y:
+                    _nn_open = False
+                    break
+                if abs(_op_x - _nn_x) <= 1.2:
+                    _nn_relief = max(_nn_relief, _op_top - _nn_top)
+            if _nn_open and _nn_relief <= 1.0:
+                _v745_nn_lanes.append((_nn_x, _nn_r * 0.9, _nn_top - 0.25))
+    _v745_nn_penalty = 350.0 if len(_v745_nn_lanes) == 1 else (150.0 if _v745_nn_lanes else 0.0)
 
     # --- v748 SEAT_LANES pre-computation ---
     # 人間型の整列: 高型 (type>=10) が寄っている側 S を求め、反対の壁から内側へ T1/T2, T3, ..., T8 の
@@ -2425,6 +2479,22 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 if abs(x - _lc_x) <= _lc_tol and landing_y >= _lc_min_y:
                     score -= 180.0
                     reasons.append("LAST_EXPOSED_COVER_AVOID")
+                    break
+
+        # ----- v745: NEXTNEXT_TWIN_COVER_AVOID (次々ピースの露出双子を覆わない) -----
+        if (
+            merge_grade == "NO"
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and _v745_nn_lanes
+        ):
+            for _nn_lx, _nn_tol, _nn_min_y in _v745_nn_lanes:
+                if abs(x - _nn_lx) <= _nn_tol and landing_y >= _nn_min_y:
+                    score -= _v745_nn_penalty
+                    reasons.append("NEXTNEXT_TWIN_COVER_AVOID")
                     break
 
         # ----- v748: SEAT_LANES (型別の定位置への誘導) -----
@@ -3125,7 +3195,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     base = _decide_base(game_state, analysis)
     try:
         reason = str(base.get("reason", ""))
-        if "DIRECT_MERGE" in reason or "CHAIN_MERGE" in reason or "DEADLINE_GUARD" in reason or "CLUSTER_SETUP" in reason:
+        _reactor0 = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
+        _desperate0 = ("DEADLINE_GUARD_NO_VALID" in reason) or bool(_reactor0.get("deadline_crossed"))
+        if "DIRECT_MERGE" in reason or "CHAIN_MERGE" in reason or "CLUSTER_SETUP" in reason:
+            return base
+        if "DEADLINE_GUARD" in reason and not _desperate0:
             return base
         results = analysis.get("results") or []
         if any(str(q.get("merge_grade", "NO")) in ("DIRECT", "NEAR") for q in results):
@@ -3135,7 +3209,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if ntype <= 0:
             return base
         reactor = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
-        if reactor.get("deadline_crossed") or float(reactor.get("deadline_margin", 99) or 99) < 2.0:
+        # v747: 「有効な非超過候補が無い」(NO_VALID) か既に超過状態のときは、どうせ超過するので
+        # 露出同型の真上（併合率 60%+）を優先する（desperate モード: margin/超過/壁回転フィルタを外す）。
+        _desperate = ("DEADLINE_GUARD_NO_VALID" in reason) or bool(reactor.get("deadline_crossed"))
+        if not _desperate and float(reactor.get("deadline_margin", 99) or 99) < 2.0:
             return base
         if not results:
             return base
@@ -3153,18 +3230,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if relief > 1.0:
                 continue
             cand = min(results, key=lambda q: abs(float(q.get("x", 0.0)) - tx))
-            if cand.get("crosses_deadline") or cand.get("merge_result_crosses_deadline") or cand.get("wall_rotation_risk"):
+            if (not _desperate) and (cand.get("crosses_deadline") or cand.get("merge_result_crosses_deadline") or cand.get("wall_rotation_risk")):
                 continue
             if abs(float(cand.get("x", 0.0)) - tx) > 0.35:
                 continue
-            key = (float(tw.get("y")), -abs(tx))
+            key = (relief, float(tw.get("y")), -abs(tx)) if _desperate else (float(tw.get("y")), -abs(tx))
             if best is None or key < best[0]:
                 best = (key, tx, tw)
         if best is None:
             return base
         out = dict(base)
         out["x"] = best[1]
-        out["reason"] = reason + "|OPEN_TWIN_MERGE"
+        out["reason"] = reason + ("|OPEN_TWIN_MERGE_DESPERATE" if _desperate else "|OPEN_TWIN_MERGE")
         return out
     except Exception:
         return base
