@@ -200,7 +200,7 @@ def _exclude_news_source_from_podcast(path: Path) -> bool:
         text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return False
-    opening = clean_script(text)[:1200]
+    opening = clean_script(text)[:700]
     return is_sports_title(opening) or is_low_value_news_title(opening)
 
 def clean_script(text: str) -> str:

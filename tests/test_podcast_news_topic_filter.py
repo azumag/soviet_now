@@ -36,6 +36,18 @@ class PodcastNewsTopicFilterTest(unittest.TestCase):
             )
             self.assertFalse(podcast_build._exclude_news_source_from_podcast(path))
 
+    def test_ignores_late_entertainment_analogy_in_public_affairs_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "radio_1_news_refugees.txt"
+            path.write_text(
+                "現在時刻は9時です。\n本日のニュースです。\n"
+                "ハイチ難民が旅行詐欺の被害に遭っています。"
+                + "移民政策と詐欺被害の背景を説明します。" * 60
+                + "広告には芸人も起用されました。",
+                encoding="utf-8",
+            )
+            self.assertFalse(podcast_build._exclude_news_source_from_podcast(path))
+
 
 if __name__ == "__main__":
     unittest.main()
