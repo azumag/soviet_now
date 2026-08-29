@@ -26,6 +26,8 @@ PID_FILE="$CHAT_DIR/daemon.pid"
 OFFSET_FILE="$CHAT_DIR/last_offset" # 前回fetchした行数
 PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
 OUTFILE="${TWITCH_CHAT_OUTFILE:-tmp/twitch_comments.txt}"
+OUTFILE_METADATA="${OUTFILE}.viewer_meta.jsonl"
+VIEWER_MEMORY_HELPER="lib/comment_viewer_memory.py"
 SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log" # 直近に処理済みのTwitch msg-id
 SEEN_ID_MAX=4000
 SEEN_LINE_HASH_FILE="$CHAT_DIR/seen_line_hashes.log" # 直近に処理済みのコメント行ハッシュ
@@ -357,8 +359,8 @@ _fetch_nolock() {
             while IFS= read -r raw_line; do
                 [ -n "$raw_line" ] || continue
 
-                local msg_id="" comment_line="$raw_line"
-                # 新形式: id=<twitch-msg-id>\t<display>: <message>
+                local msg_id="" stable_user_id="" author_login="" author_display="" metadata_flags="" comment_line="$raw_line"
+                # 新形式: ID群と本文を同じ行に保持する。
                 if [[ "$raw_line" == id=*"$TAB"* ]]; then
                     msg_id="${raw_line%%"$TAB"*}"
                     msg_id="${msg_id#id=}"
@@ -368,7 +370,31 @@ _fetch_nolock() {
                         msg_id=""
                         ;;
                     esac
+                    if [[ "$comment_line" == user-id=*"$TAB"* ]]; then
+                        stable_user_id="${comment_line%%"$TAB"*}"
+                        stable_user_id="${stable_user_id#user-id=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == login=*"$TAB"* ]]; then
+                        author_login="${comment_line%%"$TAB"*}"
+                        author_login="${author_login#login=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == display=*"$TAB"* ]]; then
+                        author_display="${comment_line%%"$TAB"*}"
+                        author_display="${author_display#display=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == flags=*"$TAB"* ]]; then
+                        metadata_flags="${comment_line%%"$TAB"*}"
+                        metadata_flags="${metadata_flags#flags=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
                 fi
+				stable_user_id=$(printf '%s' "$stable_user_id" | tr -cd '[:alnum:]_.:@-')
+				author_login=$(printf '%s' "$author_login" | tr -cd '[:alnum:]_.:@-')
+				author_display=$(printf '%s' "$author_display" | tr -d '\t\r\n')
+				metadata_flags=$(printf '%s' "$metadata_flags" | tr -cd '[:alnum:]_.,:@-')
 
                 local clean_line=""
                 clean_line=$(_sanitize_comment_line "$comment_line")
@@ -396,7 +422,8 @@ _fetch_nolock() {
                     echo "$line_hash" >> "$seen_line_batch_tmp"
                 fi
 
-                echo "$clean_line" >> "$scan_tmp"
+                printf 'id=%s\tuser-id=%s\tlogin=%s\tdisplay=%s\tflags=%s\t%s\n' \
+                    "$msg_id" "$stable_user_id" "$author_login" "$author_display" "$metadata_flags" "$clean_line" >>"$scan_tmp"
             done <<<"$(printf '%s\n' "$new_comments")"
 
             # 同一行の重複を除去（多重接続/再送対策）
@@ -449,13 +476,19 @@ _fetch_nolock() {
             _log "fetch: pending重複を$((before_count - after_count))件除去"
         fi
 
-        # pending は FIFO で先頭から処理する
-        head -10 "$PENDING_LOG" > "$OUTFILE"
+        # pending は内部メタデータ付き。モデルへ渡す平文とID sidecarを同時生成する。
+        if [ -f "$VIEWER_MEMORY_HELPER" ]; then
+            python3 "$VIEWER_MEMORY_HELPER" emit-batch \
+                --pending "$PENDING_LOG" --out "$OUTFILE" --source twitch --limit 10 >/dev/null
+        else
+            awk -F'\t' '{print $NF}' "$PENDING_LOG" | head -10 >"$OUTFILE"
+            rm -f "$OUTFILE_METADATA"
+        fi
         local pending_count
         pending_count=$(wc -l < "$OUTFILE" | tr -d ' ')
         _log "fetch: pending ${pending_count}件を出力"
     else
-        rm -f "$OUTFILE"
+        rm -f "$OUTFILE" "$OUTFILE_METADATA"
         # 高頻度ポーリングの定期状態であり、stderr 収集ログのノイズになるため無音
         :
     fi
@@ -471,6 +504,7 @@ _ack_nolock() {
         local count
         count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
         > "$PENDING_LOG"
+		rm -f "$OUTFILE_METADATA"
         _log "ack: ${count}件の読み上げ完了を確認、pending.logクリア"
     else
         _log "ack: pending.logは空"
@@ -504,7 +538,8 @@ _ack_batch_nolock() {
     fi
 
     before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
-    grep -vxF -f "$batch_tmp" "$PENDING_LOG" > "$out_tmp" || true
+	awk -F'\t' 'NR==FNR { if (NF) target[$0]=1; next } !($NF in target)' \
+		"$batch_tmp" "$PENDING_LOG" >"$out_tmp"
     cat "$out_tmp" > "$PENDING_LOG"
     after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
     removed_count=$((before_count - after_count))

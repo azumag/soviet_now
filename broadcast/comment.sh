@@ -158,10 +158,101 @@ _comment_meta_sidecar_path() {
 	esac
 }
 
+_comment_viewer_memory_sidecar_path() {
+	local target="$1"
+	case "$target" in
+	*.playing) printf '%s.viewer_memory.json' "${target%.playing}" ;;
+	*.txt) printf '%s.viewer_memory.json' "${target%.txt}" ;;
+	*) printf '%s.viewer_memory.json' "$target" ;;
+	esac
+}
+
+_comment_batch_metadata_path() {
+	printf '%s.viewer_meta.jsonl' "$1"
+}
+
 _comment_clear_generation_meta() {
 	local target="$1"
 	[ -n "$target" ] || return 0
-	rm -f "$(_comment_meta_sidecar_path "$target")" 2>/dev/null || true
+	rm -f \
+		"$(_comment_meta_sidecar_path "$target")" \
+		"$(_comment_viewer_memory_sidecar_path "$target")" \
+		2>/dev/null || true
+}
+
+_build_comment_viewer_memory_context() {
+	local batch_file="$1" source="$2" mode="$3"
+	if [ "${COMMENT_VIEWER_MEMORY_ENABLED:-1}" != "1" ]; then
+		printf '%s\n' "（投稿者別メモは無効）"
+		return 0
+	fi
+	local helper="$ELOOP_LIB_DIR/lib/comment_viewer_memory.py"
+	[ -f "$helper" ] || {
+		printf '%s\n' "（該当する投稿者別メモなし）"
+		return 0
+	}
+	python3 "$helper" context \
+		--state "${COMMENT_VIEWER_MEMORY_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_viewer_memory.json}" \
+		--batch "$batch_file" \
+		--source "$source" \
+		--mode "$mode" \
+		--exclude "${COMMENT_VIEWER_MEMORY_EXCLUDED_USERS:-dociai dociaich}" \
+		--metadata "$(_comment_batch_metadata_path "$batch_file")" \
+		--items "${COMMENT_VIEWER_MEMORY_PROMPT_ITEMS:-4}" \
+		--max-chars "${COMMENT_VIEWER_MEMORY_PROMPT_MAX_CHARS:-2200}" \
+		--comment-max-chars "${COMMENT_VIEWER_MEMORY_COMMENT_MAX_CHARS:-240}" \
+		--reply-max-chars "${COMMENT_VIEWER_MEMORY_REPLY_MAX_CHARS:-320}" \
+		--ttl-days "${COMMENT_VIEWER_MEMORY_TTL_DAYS:-365}" \
+		2>/dev/null || printf '%s\n' "（該当する投稿者別メモなし）"
+}
+
+_stage_comment_viewer_memory() {
+	local target="$1" batch_file="$2" reply_file="$3" source="$4" mode="$5" batch_hash="${6:-}"
+	[ "${COMMENT_VIEWER_MEMORY_ENABLED:-1}" = "1" ] || return 0
+	local helper="$ELOOP_LIB_DIR/lib/comment_viewer_memory.py"
+	[ -f "$helper" ] || return 0
+	local sidecar staged_count
+	sidecar=$(_comment_viewer_memory_sidecar_path "$target")
+	staged_count=$(python3 "$helper" stage \
+		--sidecar "$sidecar" \
+		--batch "$batch_file" \
+		--reply "$reply_file" \
+		--source "$source" \
+		--mode "$mode" \
+		--exclude "${COMMENT_VIEWER_MEMORY_EXCLUDED_USERS:-dociai dociaich}" \
+		--metadata "$(_comment_batch_metadata_path "$batch_file")" \
+		--batch-hash "$batch_hash" \
+		2>/dev/null) || {
+		rm -f "$sidecar" 2>/dev/null || true
+		return 1
+	}
+	case "$staged_count" in
+	'' | 0 | *[!0-9]*) rm -f "$sidecar" 2>/dev/null || true ;;
+	esac
+}
+
+_commit_comment_viewer_memory() {
+	local target="$1"
+	[ "${COMMENT_VIEWER_MEMORY_ENABLED:-1}" = "1" ] || return 0
+	local helper="$ELOOP_LIB_DIR/lib/comment_viewer_memory.py"
+	local sidecar committed
+	[ -f "$helper" ] || return 0
+	sidecar=$(_comment_viewer_memory_sidecar_path "$target")
+	[ -f "$sidecar" ] || return 0
+	committed=$(python3 "$helper" commit \
+		--state "${COMMENT_VIEWER_MEMORY_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_viewer_memory.json}" \
+		--sidecar "$sidecar" \
+		--max-users "${COMMENT_VIEWER_MEMORY_MAX_USERS:-500}" \
+		--max-exchanges "${COMMENT_VIEWER_MEMORY_MAX_EXCHANGES:-24}" \
+		--ttl-days "${COMMENT_VIEWER_MEMORY_TTL_DAYS:-365}" \
+		2>/dev/null) || {
+		log "[COMMENT] 投稿者別メモの保存失敗（返信再生は継続）"
+		return 1
+	}
+	case "$committed" in
+	'' | 0 | *[!0-9]*) ;;
+	*) log "[COMMENT] 投稿者別メモを更新: ${committed}件" ;;
+	esac
 }
 
 _comment_generation_debug_summary() {
@@ -586,6 +677,8 @@ _remember_spoken_comment() {
 	remembered_text=$(cat "$spoken_file" 2>/dev/null | _clean_comment_talk | _sanitize_onair_text)
 	[ -n "$remembered_text" ] || return 0
 	_remember_comment_reply_text "$remembered_text" "$spoken_mode"
+	# 投稿者別メモは、生成・キュー投入時ではなく実際の再生成功後だけ確定する。
+	_commit_comment_viewer_memory "$spoken_file" || true
 }
 
 _current_playing_comment_file() {
@@ -2362,7 +2455,7 @@ _build_category_prompt() {
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -2914,6 +3007,7 @@ generate_comment_response() {
 	local viewer_chat_source="${1:-twitch}"
 	local viewer_chat_script="./twitch_chat.sh"
 	local viewer_chat_outfile="tmp/twitch_comments.txt"
+	local viewer_chat_metadata_file="tmp/twitch_comments.txt.viewer_meta.jsonl"
 	local viewer_chat_dir="tmp/.twitch_chat"
 	local viewer_chat_label="Twitch"
 	case "$viewer_chat_source" in
@@ -2921,6 +3015,7 @@ generate_comment_response() {
 		viewer_chat_source="youtube"
 		viewer_chat_script="./youtube_chat.sh"
 		viewer_chat_outfile="${YOUTUBE_CHAT_OUTFILE:-tmp/youtube_comments.txt}"
+		viewer_chat_metadata_file="${viewer_chat_outfile}.viewer_meta.jsonl"
 		viewer_chat_dir="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}"
 		viewer_chat_label="YouTube"
 		;;
@@ -2928,11 +3023,13 @@ generate_comment_response() {
 		viewer_chat_source="kick"
 		viewer_chat_script="./kick_chat.sh"
 		viewer_chat_outfile="${KICK_CHAT_OUTFILE:-tmp/kick_comments.txt}"
+		viewer_chat_metadata_file="${viewer_chat_outfile}.viewer_meta.jsonl"
 		viewer_chat_dir="${KICK_CHAT_DIR:-tmp/.kick_chat}"
 		viewer_chat_label="Kick"
 		;;
 	twitch|Twitch|"")
 		viewer_chat_source="twitch"
+		viewer_chat_metadata_file="${viewer_chat_outfile}.viewer_meta.jsonl"
 		;;
 	*)
 		log "[COMMENT] unknown viewer chat source: $viewer_chat_source"
@@ -3032,6 +3129,19 @@ generate_comment_response() {
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="${viewer_chat_dir}/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
 	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
+	# fetch時にコメント行と同じ物理レコードで受け取った安定IDだけを、
+	# フィルタ後バッチへ順序どおり移す。表示名の最新値から逆引きしない。
+	local comment_filtered_batch_file=""
+	comment_filtered_batch_file=$(mktemp /tmp/eloop_comment_identity_batch_XXXXXXXX 2>/dev/null || true)
+	if [ -n "$comment_filtered_batch_file" ]; then
+		printf '%s\n' "$twitch_comments" >"$comment_filtered_batch_file"
+		python3 "$ELOOP_LIB_DIR/lib/comment_viewer_memory.py" select-metadata \
+			--metadata "$viewer_chat_metadata_file" \
+			--batch "$comment_filtered_batch_file" \
+			--out "$(_comment_batch_metadata_path "$comment_prompt_batch_file")" \
+			>/dev/null 2>&1 || rm -f "$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
+		rm -f "$comment_filtered_batch_file"
+	fi
 	local english_comment_count=0
 
 	local past_topics=""
@@ -3066,6 +3176,8 @@ generate_comment_response() {
 	local _spoken_ctx_mode=""
 	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
+	local viewer_memory_context=""
+	viewer_memory_context=$(_build_comment_viewer_memory_context "$comment_prompt_batch_file" "$viewer_chat_source" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_ops_context=""
 	comment_ops_context=$(_build_comment_ops_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_followup_hints=""
@@ -3227,7 +3339,9 @@ else:
 			rm -f $COMMENT_GEN_STATE_FILE
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
-			[ -n "$comment_prompt_batch_file" ] && rm -f "$comment_prompt_batch_file"
+			if [ -n "$comment_prompt_batch_file" ]; then
+				rm -f "$comment_prompt_batch_file" "$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
+			fi
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
@@ -3267,6 +3381,7 @@ else:
 		comment_advice_context="${comment_advice_context:-（なし）}"
 		previous_comments_context=$(printf '%s' "${previous_comments_context:-（なし）}" | _sanitize_comment_prompt_context)
 		recent_spoken_comment_context=$(printf '%s' "${recent_spoken_comment_context:-（なし）}" | _sanitize_comment_prompt_context)
+		viewer_memory_context=$(printf '%s' "${viewer_memory_context:-（該当する投稿者別メモなし）}" | _sanitize_comment_prompt_context)
 		comment_followup_hints=$(printf '%s' "${comment_followup_hints:-（なし）}" | _sanitize_comment_prompt_context)
 		celebration_history_context="${celebration_history_context:-（なし）}"
 		comment_thumbnail_ocr_context=$(printf '%s' "${comment_thumbnail_ocr_context:-（なし）}" | _sanitize_comment_prompt_context)
@@ -3277,7 +3392,7 @@ else:
 		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
 		export _comment_persona current_time time_period twitch_comments_for_prompt \
 			comment_batch_context strategy_advice_candidates comment_advice_candidates codex_advice_candidates comment_advice_context previous_comments_context \
-			recent_spoken_comment_context comment_followup_hints past_topics \
+			recent_spoken_comment_context viewer_memory_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
 			game_state_context comment_ops_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
@@ -3333,7 +3448,7 @@ PY
 					rm -f "$comment_prompt_file"
 					return 1
 				fi
-				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 					<"$_comment_template" >"$comment_prompt_file"
 			fi
 		else
@@ -3343,7 +3458,7 @@ PY
 				rm -f "$comment_prompt_file"
 				return 1
 			fi
-			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
@@ -3577,8 +3692,24 @@ RETRYCOMMENT
 			fi
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
+			local viewer_memory_reply_file=""
+			viewer_memory_reply_file=$(mktemp /tmp/eloop_comment_viewer_memory_reply_XXXXXXXX 2>/dev/null || true)
+			if [ -n "$viewer_memory_reply_file" ]; then
+				printf '%s\n' "$attempt_talk" >"$viewer_memory_reply_file"
+				if ! _stage_comment_viewer_memory \
+					"$queue_file" \
+					"$comment_prompt_batch_file" \
+					"$viewer_memory_reply_file" \
+					"$viewer_chat_source" \
+					"$_comment_mode_generated" \
+					"${comment_batch_hash:-}"; then
+					log "[COMMENT] 投稿者別メモの一時保存失敗（返信生成は継続）"
+				fi
+				rm -f "$viewer_memory_reply_file"
+			fi
 			if ! _comment_write_country_named_queue_file "$attempt_talk" "$queue_file"; then
 				log "[COMMENT] queue直前の国名正規化失敗のため未変換本文を破棄して再生成 (attempt ${attempt}/${comment_retry_max})"
+				_comment_clear_generation_meta "$queue_file"
 				[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 				comment_speech_meta_file=""
 				attempt=$((attempt + 1))

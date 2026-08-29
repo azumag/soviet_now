@@ -21,6 +21,8 @@ mkdir -p "$CHAT_DIR"
 RAW_LOG="$CHAT_DIR/raw.log"
 PENDING_LOG="$CHAT_DIR/pending.log"
 OUTFILE="${YOUTUBE_CHAT_OUTFILE:-tmp/youtube_comments.txt}"
+OUTFILE_METADATA="${OUTFILE}.viewer_meta.jsonl"
+VIEWER_MEMORY_HELPER="lib/comment_viewer_memory.py"
 SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log"
 SEEN_LINE_HASH_FILE="$CHAT_DIR/seen_line_hashes.log"
 PAGE_TOKEN_FILE="$CHAT_DIR/page_token"
@@ -476,7 +478,9 @@ for item in data.get("items") or []:
 		continue
 	if not msg_id:
 		msg_id = f"{display}:{text}"
-	lines.append(f"id={msg_id}\t{display}: {text}")
+	stable_id = clean(str(author.get("channelId") or ""))
+	stable_id = re.sub(r"[^0-9A-Za-z_.:@-]", "", stable_id)[:160]
+	lines.append(f"id={msg_id}\tuser-id={stable_id}\tlogin={stable_id}\tdisplay={display}\tflags=\t{display}: {text}")
 
 if lines:
 	os.makedirs(os.path.dirname(raw_log) or ".", exist_ok=True)
@@ -624,12 +628,13 @@ for action in live.get("actions") or []:
         continue
     msg_id = clean(renderer.get("id") or "")
     author = clean(text_runs(renderer.get("authorName")) or "YouTube")
+    stable_id = re.sub(r"[^0-9A-Za-z_.:@-]", "", clean(renderer.get("authorExternalChannelId") or ""))[:160]
     text = clean(text_runs(renderer.get("message")))
     if not text:
         continue
     if not msg_id:
         msg_id = "%s:%s" % (author, text)
-    lines.append("id=%s\t%s: %s" % (msg_id, author, text))
+    lines.append("id=%s\tuser-id=%s\tlogin=%s\tdisplay=%s\tflags=\t%s: %s" % (msg_id, stable_id, stable_id, author, author, text))
 
 if lines:
     os.makedirs(os.path.dirname(raw_log) or ".", exist_ok=True)
@@ -653,7 +658,7 @@ _handle_web_poll_success() {
 	printf '%s\n' "$web_out" | tail -n +2 | while IFS= read -r notify_line; do
 		[ -n "$notify_line" ] || continue
 		case "$notify_line" in
-			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+			id=*"${TAB}"*) notify_line="${notify_line##*"${TAB}"}" ;;
 		esac
 		_notify_chat_overlay "YouTube" "$notify_line"
 	done
@@ -767,7 +772,7 @@ _poll_nolock() {
 	printf '%s\n' "$append_out" | tail -n +2 | while IFS= read -r notify_line; do
 		[ -n "$notify_line" ] || continue
 		case "$notify_line" in
-			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+			id=*"${TAB}"*) notify_line="${notify_line##*"${TAB}"}" ;;
 		esac
 		_notify_chat_overlay "YouTube" "$notify_line"
 	done
@@ -793,7 +798,7 @@ _ingest_fixture_nolock() {
 	printf '%s\n' "$append_out" | tail -n +2 | while IFS= read -r notify_line; do
 		[ -n "$notify_line" ] || continue
 		case "$notify_line" in
-			id=*"${TAB}"*) notify_line="${notify_line#*"${TAB}"}" ;;
+			id=*"${TAB}"*) notify_line="${notify_line##*"${TAB}"}" ;;
 		esac
 		_notify_chat_overlay "YouTube" "[TEST/DUMMY] $notify_line" "YouTube TEST/DUMMY コメント受信"
 	done
@@ -821,7 +826,7 @@ _fetch_nolock() {
 
 		while IFS= read -r raw_line; do
 			[ -n "$raw_line" ] || continue
-			local msg_id="" comment_line="$raw_line"
+			local msg_id="" stable_user_id="" author_login="" author_display="" metadata_flags="" comment_line="$raw_line"
 			if [[ "$raw_line" == id=*"$TAB"* ]]; then
 				msg_id="${raw_line%%"$TAB"*}"
 				msg_id="${msg_id#id=}"
@@ -829,7 +834,31 @@ _fetch_nolock() {
 				case "$msg_id" in
 				''|*[!0-9A-Za-z._:-]*) msg_id="" ;;
 				esac
+				if [[ "$comment_line" == user-id=*"$TAB"* ]]; then
+					stable_user_id="${comment_line%%"$TAB"*}"
+					stable_user_id="${stable_user_id#user-id=}"
+					comment_line="${comment_line#*"$TAB"}"
+				fi
+				if [[ "$comment_line" == login=*"$TAB"* ]]; then
+					author_login="${comment_line%%"$TAB"*}"
+					author_login="${author_login#login=}"
+					comment_line="${comment_line#*"$TAB"}"
+				fi
+				if [[ "$comment_line" == display=*"$TAB"* ]]; then
+					author_display="${comment_line%%"$TAB"*}"
+					author_display="${author_display#display=}"
+					comment_line="${comment_line#*"$TAB"}"
+				fi
+				if [[ "$comment_line" == flags=*"$TAB"* ]]; then
+					metadata_flags="${comment_line%%"$TAB"*}"
+					metadata_flags="${metadata_flags#flags=}"
+					comment_line="${comment_line#*"$TAB"}"
+				fi
 			fi
+			stable_user_id=$(printf '%s' "$stable_user_id" | tr -cd '[:alnum:]_.:@-')
+			author_login=$(printf '%s' "$author_login" | tr -cd '[:alnum:]_.:@-')
+			author_display=$(printf '%s' "$author_display" | tr -d '\t\r\n')
+			metadata_flags=$(printf '%s' "$metadata_flags" | tr -cd '[:alnum:]_.,:@-')
 
 			local clean_line=""
 			clean_line=$(_sanitize_comment_line "$comment_line")
@@ -854,7 +883,8 @@ _fetch_nolock() {
 				fi
 				echo "$line_hash" >>"$seen_line_batch_tmp"
 			fi
-			echo "$clean_line" >>"$scan_tmp"
+			printf 'id=%s\tuser-id=%s\tlogin=%s\tdisplay=%s\tflags=%s\t%s\n' \
+				"$msg_id" "$stable_user_id" "$author_login" "$author_display" "$metadata_flags" "$clean_line" >>"$scan_tmp"
 		done <"$RAW_LOG"
 		: >"$RAW_LOG"
 
@@ -899,10 +929,16 @@ _fetch_nolock() {
 		if [ "${after_count:-0}" -lt "${before_count:-0}" ]; then
 			_log "fetch: pending重複を$((before_count - after_count))件除去"
 		fi
-		head -10 "$PENDING_LOG" >"$OUTFILE"
+		if [ -f "$VIEWER_MEMORY_HELPER" ]; then
+			python3 "$VIEWER_MEMORY_HELPER" emit-batch \
+				--pending "$PENDING_LOG" --out "$OUTFILE" --source youtube --limit 10 >/dev/null
+		else
+			awk -F'\t' '{print $NF}' "$PENDING_LOG" | head -10 >"$OUTFILE"
+			rm -f "$OUTFILE_METADATA"
+		fi
 		_log "fetch: pending $(wc -l <"$OUTFILE" | tr -d ' ')件を出力"
 	else
-		rm -f "$OUTFILE"
+		rm -f "$OUTFILE" "$OUTFILE_METADATA"
 		_log "fetch: 未読コメントなし"
 	fi
 }
@@ -931,7 +967,8 @@ _ack_batch_nolock() {
 		return 0
 	fi
 	before_count=$(wc -l <"$PENDING_LOG" | tr -d ' ')
-	grep -vxF -f "$batch_tmp" "$PENDING_LOG" >"$out_tmp" || true
+	awk -F'\t' 'NR==FNR { if (NF) target[$0]=1; next } !($NF in target)' \
+		"$batch_tmp" "$PENDING_LOG" >"$out_tmp"
 	cat "$out_tmp" >"$PENDING_LOG"
 	after_count=$(wc -l <"$PENDING_LOG" | tr -d ' ')
 	removed_count=$((before_count - after_count))

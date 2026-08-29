@@ -22,10 +22,10 @@ _fail() {
 	FAILURES=$((FAILURES + 1))
 }
 _assert_contains() {
-	if grep -qxF "$2" "$1" 2>/dev/null; then _pass "$3"; else _fail "$3"; fi
+	if awk -F'\t' -v target="$2" '$NF == target { found=1 } END { exit(found ? 0 : 1) }' "$1" 2>/dev/null; then _pass "$3"; else _fail "$3"; fi
 }
 _assert_missing() {
-	if grep -qxF "$2" "$1" 2>/dev/null; then _fail "$3"; else _pass "$3"; fi
+	if awk -F'\t' -v target="$2" '$NF == target { found=1 } END { exit(found ? 0 : 1) }' "$1" 2>/dev/null; then _fail "$3"; else _pass "$3"; fi
 }
 
 _reset_state() {

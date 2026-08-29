@@ -4,7 +4,7 @@
 // Kick は Twitch の IRC に相当する公開エンドポイントを持たないが、web クライアントが
 // 使う Pusher チャンネル (chatrooms.<chatroom_id>.v2) は匿名で購読できる。ここでは
 // 読み取り専用で購読し、受信したコメントを raw.log へ 1 行ずつ追記する。
-// 行形式は twitch_chat_daemon.sh と同じ `id=<msg-id>\t<user>: <message>`。
+// message/user ID と本文は同じ物理行に保存し、表示名だけで本人判定しない。
 //
 // 使い方: node kick_chat_daemon.mjs <slug>
 // 環境変数: KICK_CHATROOM_ID / KICK_CHAT_DIR / KICK_IGNORE_AUTHORS ほか
@@ -137,6 +137,12 @@ function sanitizeUser(name) {
     .trim();
 }
 
+function sanitizeMetadataToken(value, max = 160) {
+  return String(value ?? '')
+    .replace(/[^0-9A-Za-z_.:@-]/g, '')
+    .slice(0, max);
+}
+
 function isIgnoredAuthor(username, slug) {
   const candidates = [username, slug].filter(Boolean).map((s) => String(s).toLowerCase());
   return candidates.some((c) => IGNORE_AUTHORS.includes(c));
@@ -160,8 +166,11 @@ function trimRawLog() {
   }
 }
 
-function appendComment(msgId, line) {
-  fs.appendFileSync(RAW_LOG, `id=${msgId}\t${line}\n`);
+function appendComment(msgId, stableId, login, displayName, line) {
+  fs.appendFileSync(
+    RAW_LOG,
+    `id=${sanitizeMetadataToken(msgId)}\tuser-id=${sanitizeMetadataToken(stableId)}\tlogin=${sanitizeMetadataToken(login, 80)}\tdisplay=${String(displayName ?? '').replace(/[\t\r\n]/g, ' ').trim()}\tflags=\t${line}\n`,
+  );
   trimRawLog();
 }
 
@@ -296,6 +305,7 @@ function connectOnce(chatroomId) {
       const msgId = String(payload?.id ?? '').replace(/[^A-Za-z0-9-]/g, '');
       const username = sanitizeUser(payload?.sender?.username);
       const senderSlug = String(payload?.sender?.slug ?? '');
+      const stableUserId = payload?.sender?.id ?? payload?.sender?.user_id ?? '';
       const message = sanitizeMessage(payload?.content);
       if (!message || !username) return;
       if (isIgnoredAuthor(payload?.sender?.username, senderSlug)) return;
@@ -305,7 +315,7 @@ function connectOnce(chatroomId) {
 
       const line = `${username}: ${message}`;
       try {
-        appendComment(msgId || `nid-${Date.now()}`, line);
+        appendComment(msgId || `nid-${Date.now()}`, stableUserId, senderSlug, username, line);
       } catch (err) {
         log(`raw.log 追記に失敗: ${err?.message || err}`);
         return;

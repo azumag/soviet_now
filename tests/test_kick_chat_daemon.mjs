@@ -63,7 +63,7 @@ function chat(id, username, slug, content) {
     JSON.stringify({
       event: 'App\\Events\\ChatMessageEvent',
       channel: 'chatrooms.999.v2',
-      data: JSON.stringify({ id, content, sender: { username, slug } }),
+      data: JSON.stringify({ id, content, sender: { id: `uid-${slug}`, username, slug } }),
     }),
   );
 }
@@ -118,11 +118,19 @@ try {
   const lines = rawLines();
 
   assert.equal(lines.length, 3, `expected exactly 3 kept lines, got ${lines.length}: ${JSON.stringify(lines)}`);
-  assert.equal(lines[0], 'id=m1\tviewer1: hello KEKW world', 'emote markup becomes its bare name');
-  assert.equal(lines[1], 'id=m2\tDoCiAI: broadcaster comment', "the channel's own account is kept by default");
+  assert.equal(
+    lines[0],
+    'id=m1\tuser-id=uid-viewer1\tlogin=viewer1\tdisplay=viewer1\tflags=\tviewer1: hello KEKW world',
+    'emote markup becomes its bare name and stable identity stays on the same row',
+  );
+  assert.equal(
+    lines[1],
+    'id=m2\tuser-id=uid-dociai\tlogin=dociai\tdisplay=DoCiAI\tflags=\tDoCiAI: broadcaster comment',
+    "the channel's own account is kept by default",
+  );
   assert.equal(
     lines[2],
-    'id=m4\tviewer2: backtick (x) rm spaced',
+    'id=m4\tuser-id=uid-viewer2\tlogin=viewer2\tdisplay=viewer2\tflags=\tviewer2: backtick (x) rm spaced',
     'shell metacharacters are stripped and whitespace collapsed',
   );
 

@@ -237,9 +237,11 @@ while true; do
             login_user=$(echo "$payload" | sed -n 's/^:\([^!]*\)!.*/\1/p')
             display_name=""
             msg_id=""
+            user_id=""
             if [ -n "$tags" ]; then
                 display_name=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^display-name=//p' | head -n1)
                 msg_id=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^id=//p' | head -n1)
+                user_id=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^user-id=//p' | head -n1)
                 # IRCv3の最低限デコード（\s=space, \:=;, \\=\）
                 display_name=$(printf '%s' "$display_name" | sed -e 's/\\s/ /g' -e 's/\\:/;/g' -e 's/\\\\/\\/g')
             fi
@@ -278,8 +280,10 @@ while true; do
                 esac
             fi
             clean_line="${bits_tag}${user}: ${msg}"
+            metadata_flags=""
             if _is_ignored_author "$login_user" "$user" && _is_card_gacha_result_message "$msg"; then
                 clean_line="${bits_tag}${msg}"
+                metadata_flags="trusted-card"
             fi
 
             # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）
@@ -435,9 +439,12 @@ while true; do
                 continue
             fi
 
-            # msg-id を先頭に保持しておくと、再接続時の同一コメント重複を抑止しやすい
-            if [ -n "$msg_id" ]; then
-                echo "id=${msg_id}"$'\t'"${clean_line}" >> "$RAW_LOG"
+            # message/user ID と本文を同じ物理行に保持し、同名視聴者へ誤帰属させない。
+            safe_user_id=$(printf '%s' "$user_id" | tr -cd '[:alnum:]_.:@-')
+            safe_login=$(printf '%s' "$login_user" | tr -cd '[:alnum:]_.:@-')
+            if [ -n "$msg_id" ] || [ -n "$safe_user_id" ]; then
+                printf 'id=%s\tuser-id=%s\tlogin=%s\tdisplay=%s\tflags=%s\t%s\n' \
+                    "$msg_id" "$safe_user_id" "$safe_login" "$user" "$metadata_flags" "$clean_line" >>"$RAW_LOG"
                 _mark_recent_key "$RECENT_MSG_IDS_FILE" "$msg_id"
             else
                 echo "${clean_line}" >> "$RAW_LOG"

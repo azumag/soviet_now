@@ -13891,12 +13891,12 @@ class TestYouTubeChatQueue(unittest.TestCase):
                             {
                                 "id": "msg-1",
                                 "snippet": {"displayMessage": "こんにちは"},
-                                "authorDetails": {"displayName": "Alice"},
+                                "authorDetails": {"displayName": "Alice", "channelId": "UC-alice"},
                             },
                             {
                                 "id": "msg-1",
                                 "snippet": {"displayMessage": "こんにちは"},
-                                "authorDetails": {"displayName": "Alice"},
+                                "authorDetails": {"displayName": "Alice", "channelId": "UC-alice"},
                             },
                             {
                                 "id": "msg-2",
@@ -13906,7 +13906,7 @@ class TestYouTubeChatQueue(unittest.TestCase):
                             {
                                 "id": "msg-3",
                                 "snippet": {"displayMessage": "やった $HOME <ok>"},
-                                "authorDetails": {"displayName": "Carol"},
+                                "authorDetails": {"displayName": "Carol", "channelId": "UC-carol"},
                             },
                             {
                                 "id": "msg-4",
@@ -13935,6 +13935,11 @@ class TestYouTubeChatQueue(unittest.TestCase):
             self.assertTrue(outfile.exists())
             lines = outfile.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines, ["Alice: こんにちは", "Carol: やった HOME ok"])
+            metadata = [
+                json.loads(line)
+                for line in Path(f"{outfile}.viewer_meta.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([entry["stable_id"] for entry in metadata], ["UC-alice", "UC-carol"])
             self.assertEqual((tmpdir / "chat" / "page_token").read_text(), "NEXT")
             self.assertEqual((tmpdir / "chat" / "poll_interval_sec").read_text(), "4")
 

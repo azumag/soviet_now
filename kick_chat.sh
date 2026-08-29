@@ -26,6 +26,8 @@ PID_FILE="$CHAT_DIR/daemon.pid"
 OFFSET_FILE="$CHAT_DIR/last_offset"  # 前回fetchした行数
 PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
 OUTFILE="${KICK_CHAT_OUTFILE:-tmp/kick_comments.txt}"
+OUTFILE_METADATA="${OUTFILE}.viewer_meta.jsonl"
+VIEWER_MEMORY_HELPER="lib/comment_viewer_memory.py"
 SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log"
 SEEN_ID_MAX=4000
 SEEN_LINE_HASH_FILE="$CHAT_DIR/seen_line_hashes.log"
@@ -276,8 +278,8 @@ _fetch_nolock() {
             while IFS= read -r raw_line; do
                 [ -n "$raw_line" ] || continue
 
-                local msg_id="" comment_line="$raw_line"
-                # 行形式: id=<kick-msg-id>\t<user>: <message>
+                local msg_id="" stable_user_id="" author_login="" author_display="" metadata_flags="" comment_line="$raw_line"
+                # ID群と本文は同じ物理行で運ぶ。
                 if [[ "$raw_line" == id=*"$TAB"* ]]; then
                     msg_id="${raw_line%%"$TAB"*}"
                     msg_id="${msg_id#id=}"
@@ -287,7 +289,31 @@ _fetch_nolock() {
                         msg_id=""
                         ;;
                     esac
+                    if [[ "$comment_line" == user-id=*"$TAB"* ]]; then
+                        stable_user_id="${comment_line%%"$TAB"*}"
+                        stable_user_id="${stable_user_id#user-id=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == login=*"$TAB"* ]]; then
+                        author_login="${comment_line%%"$TAB"*}"
+                        author_login="${author_login#login=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == display=*"$TAB"* ]]; then
+                        author_display="${comment_line%%"$TAB"*}"
+                        author_display="${author_display#display=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == flags=*"$TAB"* ]]; then
+                        metadata_flags="${comment_line%%"$TAB"*}"
+                        metadata_flags="${metadata_flags#flags=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
                 fi
+                stable_user_id=$(printf '%s' "$stable_user_id" | tr -cd '[:alnum:]_.:@-')
+                author_login=$(printf '%s' "$author_login" | tr -cd '[:alnum:]_.:@-')
+                author_display=$(printf '%s' "$author_display" | tr -d '\t\r\n')
+                metadata_flags=$(printf '%s' "$metadata_flags" | tr -cd '[:alnum:]_.,:@-')
 
                 local clean_line=""
                 clean_line=$(_sanitize_comment_line "$comment_line")
@@ -318,7 +344,8 @@ _fetch_nolock() {
                     echo "$line_hash" >> "$seen_line_batch_tmp"
                 fi
 
-                echo "$clean_line" >> "$scan_tmp"
+                printf 'id=%s\tuser-id=%s\tlogin=%s\tdisplay=%s\tflags=%s\t%s\n' \
+                    "$msg_id" "$stable_user_id" "$author_login" "$author_display" "$metadata_flags" "$clean_line" >>"$scan_tmp"
             done <<<"$(printf '%s\n' "$new_comments")"
 
             if [ -s "$scan_tmp" ]; then
@@ -367,12 +394,18 @@ _fetch_nolock() {
             _log "fetch: pending重複を$((before_count - after_count))件除去"
         fi
 
-        head -10 "$PENDING_LOG" > "$OUTFILE"
+        if [ -f "$VIEWER_MEMORY_HELPER" ]; then
+            python3 "$VIEWER_MEMORY_HELPER" emit-batch \
+                --pending "$PENDING_LOG" --out "$OUTFILE" --source kick --limit 10 >/dev/null
+        else
+            awk -F'\t' '{print $NF}' "$PENDING_LOG" | head -10 >"$OUTFILE"
+            rm -f "$OUTFILE_METADATA"
+        fi
         local pending_count
         pending_count=$(wc -l < "$OUTFILE" | tr -d ' ')
         _log "fetch: pending ${pending_count}件を出力"
     else
-        rm -f "$OUTFILE"
+        rm -f "$OUTFILE" "$OUTFILE_METADATA"
         :
     fi
 }
@@ -387,11 +420,12 @@ _ack_nolock() {
         local count
         count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
         > "$PENDING_LOG"
+        rm -f "$OUTFILE_METADATA"
         _log "ack: ${count}件の読み上げ完了を確認、pending.logクリア"
     else
         _log "ack: pending.logは空"
     fi
-    rm -f "$OUTFILE"
+    rm -f "$OUTFILE" "$OUTFILE_METADATA"
 }
 
 _ack() {
@@ -415,12 +449,13 @@ _ack_batch_nolock() {
     out_tmp=$(mktemp "$CHAT_DIR/.pending_after_ack.XXXXXXXX")
     awk 'NF' "$batch_file" > "$batch_tmp"
     before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
-    grep -vxF -f "$batch_tmp" "$PENDING_LOG" > "$out_tmp" || true
+    awk -F'\t' 'NR==FNR { if (NF) target[$0]=1; next } !($NF in target)' \
+        "$batch_tmp" "$PENDING_LOG" >"$out_tmp"
     cat "$out_tmp" > "$PENDING_LOG"
     after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
     rm -f "$batch_tmp" "$out_tmp"
     _log "ack_batch: $((before_count - after_count))件を消化 (残り${after_count}件)"
-    rm -f "$OUTFILE"
+    rm -f "$OUTFILE" "$OUTFILE_METADATA"
     return 0
 }
 
