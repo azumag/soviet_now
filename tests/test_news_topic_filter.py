@@ -19,6 +19,8 @@ class NewsTopicFilterTest(unittest.TestCase):
             "Best new smartphone hands-on review",
             "映画の推し事 人気俳優が主演する話題作",
             "夏の夜空に1万5千発の花火",
+            "前衛芸術家の回顧展を開催",
+            "今年の24時間テレビの出演者を発表",
         ]
         for title in excluded:
             with self.subTest(title=title):
