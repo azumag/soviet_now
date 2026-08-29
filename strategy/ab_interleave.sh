@@ -180,7 +180,10 @@ try:
         pc = {r.get("turn"): r.get("piece_count") for r in rs}
         rec.update({"merges_per_turn": round(merges / max(1, len(rs)), 4), "multi_merge_turns": multi,
                     "pieces_at_20": pc.get(20), "pieces_at_40": pc.get(40), "max_type": mx, "t14": int(mx >= 14), "t15": int(mx >= 15),
-                    "crossings": sum(1 for r in rs if r.get("decision_crosses_deadline"))})
+                    "crossings": sum(1 for r in rs if r.get("decision_crosses_deadline")),
+                    # 解析器トグルの実効値。腕別 env (a_env/b_env) の A/B を記録から事後検証するために残す。
+                    # game_history は直近数十試合しか保持しないので、ここに写しておく必要がある。
+                    "analyzer_modes": (rs[-1].get("analyzer_modes") or rs[0].get("analyzer_modes"))})
 except Exception:
     pass
 with open(games_file, "a", encoding="utf-8") as fh:
