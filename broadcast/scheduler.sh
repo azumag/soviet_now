@@ -21,6 +21,8 @@ filter_breakdown = data.get("filter_breakdown") or {}
 
 labels = {
     "missing_identity": "無効",
+    "missing_published_at": "公開日時なし",
+    "stale_published_at": "期限切れ",
     "past_title": "既読タイトル",
     "past_link": "既読URL",
     "past_link_hash": "既読URLハッシュ",
@@ -29,6 +31,8 @@ labels = {
     "duplicate_link_hash": "今回URLハッシュ重複",
 }
 reason_order = [
+    "stale_published_at",
+    "missing_published_at",
     "past_title",
     "past_link",
     "past_link_hash",

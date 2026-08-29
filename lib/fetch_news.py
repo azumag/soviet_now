@@ -9,6 +9,7 @@ import json
 import os
 import random
 import re
+import sys
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -31,6 +32,10 @@ LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
 LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
 FETCH_STATUS_FILE = os.path.join(TMP_STATE_DIR, ".news_fetch_status.json")
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
+try:
+    NEWS_MAX_AGE_HOURS = max(1, int(os.environ.get("NEWS_MAX_AGE_HOURS", "72")))
+except ValueError:
+    NEWS_MAX_AGE_HOURS = 72
 
 PER_SOURCE_LIMIT = 30
 SUMMARY_LIMIT = 4000
@@ -50,6 +55,8 @@ except Exception:  # fallback: no filter if module missing
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 FILTER_REASON_KEYS = (
     "missing_identity",
+    "missing_published_at",
+    "stale_published_at",
     "past_title",
     "past_link",
     "past_link_hash",
@@ -533,6 +540,7 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
     seen_link_hashes: set[str] = set()
     filtered: dict[str, list[dict]] = {}
     filter_stats = new_filter_stats()
+    freshness_cutoff = int(datetime.now(timezone.utc).timestamp()) - NEWS_MAX_AGE_HOURS * 3600
 
     for source in SOURCES:
         key = source["key"]
@@ -541,9 +549,17 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
             item_title_key = title_key(item["title"])
             item_link = item["url"]
             item_link_hash = link_hash(item_link)
+            try:
+                published_ts = int(item.get("published_ts", 0) or 0)
+            except (TypeError, ValueError):
+                published_ts = 0
             reason = "passed"
             if not item_title_key or not item_link:
                 reason = "missing_identity"
+            elif published_ts <= 0:
+                reason = "missing_published_at"
+            elif published_ts < freshness_cutoff:
+                reason = "stale_published_at"
             elif is_sports_title(item["title"]):
                 reason = "sports"
             elif item_title_key in past_title_keys:

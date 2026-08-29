@@ -47,6 +47,10 @@ start_radio_corner_theme() {
 
 _news_self_search_fallback() {
 	local game_num="$1" score="$2" reason="$3"
+	if [ "${NEWS_SELF_SEARCH_FALLBACK:-0}" != "1" ]; then
+		log "[NEWS] ${reason} → 未確認の自主探索は行わずスキップ"
+		return 0
+	fi
 	log "[NEWS] ${reason} → AIによる自主ニュース探索モード"
 
 	_radio_time_context

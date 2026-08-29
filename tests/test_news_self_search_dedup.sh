@@ -69,6 +69,20 @@ _radio_generate_and_play() {
 	return "$MOCK_RC"
 }
 
+# === 0) 既定では未確認の自主探索を行わない ===
+NEWS_SELF_SEARCH_FALLBACK=0
+MOCK_SELECTED="読まれてはいけない自主探索ニュース"
+MOCK_SUMMARY="自主探索 / 読まれてはいけません"
+MOCK_RC=0
+_news_self_search_fallback 45820 1000 "テスト: 未読候補なし"
+[ ! -e "$LAST_PROMPT" ] && ok "self-search fallback is disabled by default" \
+	|| not_ok "self-search fallback is disabled by default"
+grep -qF "未確認の自主探索は行わずスキップ" "$LOG_FILE" \
+	&& ok "disabled fallback logs a skip" || not_ok "disabled fallback logs a skip"
+
+# 以降は、明示的に旧フォールバックを有効化した場合の互換挙動を検証する。
+NEWS_SELF_SEARCH_FALLBACK=1
+
 # === 1) 見出しが出た場合は既読台帳へ記録される ===
 MOCK_SELECTED="ドリー・パートンさん死去、80歳"
 MOCK_SUMMARY="ドリー・パートン,ナッシュビル / 訃報を語りました"
