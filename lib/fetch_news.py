@@ -25,8 +25,8 @@ TMP_STATE_DIR = os.path.join(TMP_DIR, "state")
 
 OUTFILE = os.path.join(TMP_DIR, "news.txt")
 META_OUTFILE = os.path.join(TMP_DIR, "news_meta.json")
-PAST_NEWS = os.path.join(TMP_HISTORY_DIR, ".past_news_titles.txt")
-PAST_NEWS_LINKS = os.path.join(TMP_HISTORY_DIR, ".past_news_links.txt")
+# 取得しただけの記事ではなく、radio_news.sh が実際に選定した記事だけを既読にする。
+PAST_NEWS = os.path.join(TMP_HISTORY_DIR, "past_news_read.txt")
 PAST_NEWS_LINK_HASHES = os.path.join(TMP_HISTORY_DIR, "past_news_url_hashes.txt")
 LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
 LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
@@ -572,7 +572,6 @@ def fetch_source_items(source: dict) -> list[dict]:
 
 def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str, list[dict]], dict]:
     past_title_keys = {title_key(title) for title in load_lines(PAST_NEWS)}
-    past_links = set(load_lines(PAST_NEWS_LINKS))
     past_link_hashes = set(load_lines(PAST_NEWS_LINK_HASHES))
     seen_title_keys: set[str] = set()
     seen_links: set[str] = set()
@@ -603,8 +602,6 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
                 reason = "sports"
             elif item_title_key in past_title_keys:
                 reason = "past_title"
-            elif item_link in past_links:
-                reason = "past_link"
             elif item_link_hash and item_link_hash in past_link_hashes:
                 reason = "past_link_hash"
             elif item_title_key in seen_title_keys:
@@ -793,8 +790,6 @@ def main() -> int:
         }
     )
 
-    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 300)
-    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 300)
     return 0
 
 
