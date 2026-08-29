@@ -285,7 +285,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
 - Unity ブラウザ音声は `soviet_local.mjs` が `tmp/state/local_audio_health.json` に WebAudio 状態を書き出す。`suspended` / `interrupted` を検出した場合はゲームページだけを前面化して AudioContext resume を試み、macOS の既定音声出力は変更しない。
-- ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。公開日時が確認でき、`NEWS_MAX_AGE_HOURS`（既定72時間）以内の記事だけを候補にする。未読がない場合やRSS取得失敗時は、モデルの記憶による自主探索をせずスキップする（自主探索を明示的に戻す場合のみ `NEWS_SELF_SEARCH_FALLBACK=1`、取得失敗時の前回キャッシュ再利用は `NEWS_ALLOW_STALE_CACHE=1`）。
+- ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。NHK・新聞社・Global Voicesに加えてGoogle Newsの日本・政治・経済・国際・科学RSSを使い、公開日時が確認できる`NEWS_MAX_AGE_HOURS`（既定48時間）以内の記事だけを候補にする。全RSSで未読がない場合や取得失敗時だけスキップし、モデルの記憶による自主探索は行わない（自主探索を明示的に戻す場合のみ `NEWS_SELF_SEARCH_FALLBACK=1`、取得失敗時の前回キャッシュ再利用は `NEWS_ALLOW_STALE_CACHE=1`）。
 - コメントキュー（`tmp/.comment_queue`）が混雑している間もラジオ生成は継続し、再生のみ `tmp/.radio_deferred_queue` に退避してコメント再生の後ろに並べる（コメント消化後に順次再生）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
 - コメント返しの生成中に別プロセスが同じコメント行を先に処理済みにした場合は、古い返答をキューへ入れずに破棄する。これにより pending 再試行や mode 切替後の遅延生成が、同じ視聴者コメントへ二重返答する事故を防ぐ。

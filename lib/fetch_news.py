@@ -33,9 +33,9 @@ LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json
 FETCH_STATUS_FILE = os.path.join(TMP_STATE_DIR, ".news_fetch_status.json")
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
 try:
-    NEWS_MAX_AGE_HOURS = max(1, int(os.environ.get("NEWS_MAX_AGE_HOURS", "72")))
+    NEWS_MAX_AGE_HOURS = max(1, int(os.environ.get("NEWS_MAX_AGE_HOURS", "48")))
 except ValueError:
-    NEWS_MAX_AGE_HOURS = 72
+    NEWS_MAX_AGE_HOURS = 48
 
 PER_SOURCE_LIMIT = 30
 SUMMARY_LIMIT = 4000
@@ -77,6 +77,43 @@ def should_exclude_wikinews_author(author: str, source_key: str) -> bool:
     return normalized in {"トモモ", "背後のトモモ"}
 
 SOURCES = [
+    # 直接RSSが止まってもニュース枠が枯れないよう、公開日時付きのGoogle News RSSを使う。
+    # AIの記憶による自主選定は行わず、この実在見出し・URL・pubDateを後段へ渡す。
+    {
+        "url": "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja",
+        "key": "google_news_jp",
+        "name": "Google News 日本",
+        "license": "各配信元",
+        "lang": "ja",
+    },
+    {
+        "url": "https://news.google.com/rss/search?q=%E6%94%BF%E6%B2%BB+OR+%E5%9B%BD%E4%BC%9A+OR+%E9%A6%96%E7%9B%B8+OR+%E6%94%BF%E5%BA%9C+OR+%E9%81%B8%E6%8C%99&hl=ja&gl=JP&ceid=JP:ja",
+        "key": "google_news_jp_politics",
+        "name": "Google News 日本政治",
+        "license": "各配信元",
+        "lang": "ja",
+    },
+    {
+        "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+        "key": "google_news_jp_business",
+        "name": "Google News 日本経済",
+        "license": "各配信元",
+        "lang": "ja",
+    },
+    {
+        "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+        "key": "google_news_jp_world",
+        "name": "Google News 国際",
+        "license": "各配信元",
+        "lang": "ja",
+    },
+    {
+        "url": "https://news.google.com/rss/topics/CAAqKAgKIiJDQkFTRXdvSkwyMHZNR1ptZHpWbUVnSnFZUm9DU2xBb0FBUAE?hl=ja&gl=JP&ceid=JP%3Aja",
+        "key": "google_news_jp_science",
+        "name": "Google News 科学",
+        "license": "各配信元",
+        "lang": "ja",
+    },
     # --- 日本の政治系ソース (国内政治の比率を上げるため) ---
     {
         "url": "https://www.nhk.or.jp/rss/news/cat4.xml",
@@ -174,6 +211,8 @@ def source_family(key: str) -> str:
         return "wikinews"
     if key.startswith("globalvoices"):
         return "globalvoices"
+    if key.startswith("google_news"):
+        return "google_news"
     return key
 
 

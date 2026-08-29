@@ -369,6 +369,7 @@ _news_source_key_from_name() {
 		Wikinews\(*) echo "wikinews" ;;
 		wikinews_*) echo "wikinews" ;;
 		"Global Voices"|globalvoices|GlobalVoices) echo "globalvoices" ;;
+		Google\ News*) echo "google_news" ;;
 		*) echo "" ;;
 	esac
 }
@@ -437,10 +438,12 @@ try:
 except Exception:
     meta = {}
 
-pref_order = {"wikinews": 0, "globalvoices": 1}
+pref_order = {"google_news": 0, "globalvoices": 1, "wikinews": 2}
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
+    if name.startswith("Google News"):
+        return "google_news"
     return {"Global Voices": "globalvoices"}.get(name, "")
 display = {"wikinews": "ウィキニュース", "globalvoices": "Global Voices"}
 lang_labels = {
@@ -500,9 +503,13 @@ for block in blocks:
     source_name = block_source_name(block)
     item_meta = meta.get(title, {})
     lang = item_meta.get("lang", "ja")
+    published_at = (item_meta.get("published_at") or "").strip()
     lang_tag = lang_labels.get(lang, f" [{lang}]") if lang != "ja" else ""
     if source_name:
-        out_blocks.append("\n".join([block[0], f"出典: {source_name}{lang_tag}", *block[1:]]).rstrip())
+        attribution = [block[0], f"出典: {source_name}{lang_tag}"]
+        if published_at:
+            attribution.append(f"公開日時: {published_at}")
+        out_blocks.append("\n".join([*attribution, *block[1:]]).rstrip())
     else:
         out_blocks.append("\n".join(block).rstrip())
 
@@ -531,6 +538,8 @@ except Exception:
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
+    if name.startswith("Google News"):
+        return "google_news"
     return {"Global Voices": "globalvoices"}.get(name, "")
 
 # Parse blocks

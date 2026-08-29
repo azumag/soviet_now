@@ -26,7 +26,7 @@ class NewsFreshnessTest(unittest.TestCase):
         fetch_news.PAST_NEWS = "/dev/null"
         fetch_news.PAST_NEWS_LINKS = "/dev/null"
         fetch_news.PAST_NEWS_LINK_HASHES = "/dev/null"
-        fetch_news.NEWS_MAX_AGE_HOURS = 72
+        fetch_news.NEWS_MAX_AGE_HOURS = 48
 
     def tearDown(self):
         fetch_news.PAST_NEWS, fetch_news.PAST_NEWS_LINKS, fetch_news.PAST_NEWS_LINK_HASHES = self.old_paths
@@ -46,6 +46,11 @@ class NewsFreshnessTest(unittest.TestCase):
         self.assertEqual(stats["overall"]["passed"], 1)
         self.assertEqual(stats["overall"]["stale_published_at"], 1)
         self.assertEqual(stats["overall"]["missing_published_at"], 1)
+
+    def test_google_news_sources_are_available_as_verified_fallback(self):
+        google_sources = [source for source in fetch_news.SOURCES if source["key"].startswith("google_news_")]
+        self.assertGreaterEqual(len(google_sources), 5)
+        self.assertTrue(all("news.google.com/rss" in source["url"] for source in google_sources))
 
 
 if __name__ == "__main__":
