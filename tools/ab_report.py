@@ -41,7 +41,29 @@ def _q(vals, q):
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
+def dedupe_valid(rows):
+    """idx 重複を除き、tainted を落とす。記録の統合ミスや再記録で同じ idx が
+    2 度入ることがある (2026-08-29 の ab_20260829_144145 で idx 200 が重複)。
+    同じ idx が複数あるときは最初の 1 件だけを採用する。"""
+    seen = set()
+    out = []
+    for r in rows:
+        if r.get("tainted"):
+            continue
+        try:
+            i = int(r.get("idx"))
+        except (TypeError, ValueError):
+            continue
+        if i in seen:
+            continue
+        seen.add(i)
+        out.append(r)
+    return out
+
+
 def arm_summary(rows, key="eval"):
+    """腕ごとの要約。ブロック統計と母集団をそろえるため tainted と idx 重複を同じ規則で除く。"""
+    rows = dedupe_valid(rows)
     out = {}
     for arm in ("A", "B"):
         v = [r[key] for r in rows if r.get("arm") == arm and isinstance(r.get(key), (int, float))]
@@ -58,12 +80,22 @@ def arm_summary(rows, key="eval"):
 
 
 def blocks(rows, pattern, key="eval"):
-    """完全 (全腕そろい・非 tainted) なブロックごとの mean_B − mean_A。"""
+    """完全なブロックごとの mean_B − mean_A。
+
+    ブロックを「完全」と認めるのは次をすべて満たすときだけ (issue #132 P0-5):
+      * tainted・idx 重複を除いたうえで、ちょうど pattern 長ぶんの記録がある
+      * idx が連続 (欠番なし) で一意
+      * 腕の構成が pattern の構成と一致する (ABBA なら A2 件・B2 件)
+      * 指標が数値である
+    以前は「pattern 長ぶんあり、A と B が 1 件以上」だけを見ていたため、AAAB のような
+    偏った並びや欠番を含むブロックも採用され得た。
+    """
     L = max(1, len(pattern))
+    want = {}
+    for ch in pattern:
+        want[ch] = want.get(ch, 0) + 1
     by = {}
-    for r in rows:
-        if r.get("tainted"):
-            continue
+    for r in dedupe_valid(rows):
         if not isinstance(r.get(key), (int, float)):
             continue
         by.setdefault(int(r.get("idx", 0)) // L, []).append(r)
@@ -72,10 +104,16 @@ def blocks(rows, pattern, key="eval"):
         g = by[k]
         if len(g) != L:
             continue
+        idxs = sorted(int(r.get("idx", 0)) for r in g)
+        if idxs != list(range(idxs[0], idxs[0] + L)):
+            continue
+        got = {}
+        for r in g:
+            got[r.get("arm")] = got.get(r.get("arm"), 0) + 1
+        if got != want:
+            continue
         a = [r[key] for r in g if r.get("arm") == "A"]
         b = [r[key] for r in g if r.get("arm") == "B"]
-        if not a or not b:
-            continue
         diffs.append(st.mean(b) - st.mean(a))
     return diffs
 
