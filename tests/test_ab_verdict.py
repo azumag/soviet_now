@@ -130,8 +130,15 @@ class HarmStopCalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(ab_verdict.rule(m)["harm_z"], 3.09, places=4)
 
     def test_stricter_z_stops_less(self):
-        """同じデータでも z を上げれば止まりにくい。"""
-        data = rows(6, 400, 100, jitter=30)
+        """境界域のデータでは z を上げると止まらなくなる。
+
+        ブロック差を [-380, +20] × 3 にすると平均 -180 / SE 81.6 なので
+        UCB90 = -75 (止まる) だが UCB99.9 = +72 (止まらない)。
+        """
+        data = []
+        for i in range(6):
+            a, b = (400, 20) if i % 2 == 0 else (100, 120)
+            data += block(i, a, b)
         loose = {"pattern": "ABBA", "preregistration": {"rule": {
             "harm_min_blocks": 3, "harm_z": 1.2816, "final_blocks": 99, "final_games_per_arm": 999}}}
         strict = json.loads(json.dumps(loose))
