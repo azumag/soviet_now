@@ -1,18 +1,19 @@
 {
-  "experiment": "v760_CEILING_RAISE_env_split",
-  "status": "DRAFT — v757 A/B の判定後に開始時点で確定させる (started_at / decide_hash / sha256)",
+  "experiment": "v760_CEILING_RAISE_vs_v752",
   "hypothesis": "盤面の天井 (列別天端の最大値) を押し上げる手を罰すると、デッドライン到達が遅れて試合が伸びる。実測で終了理由の 99.2% が deadline_crossed であり、終局時に両端は 1.2〜1.5 の余白を残している。",
-  "design_note": "両腕とも同一の候補ファイルを使い、腕別 env のみを変える。A 腕 (W=0) は実戦 3000 手で root と決定が 100% 一致することを確認済み。天井より下へ着地する候補はすべて 0 点で並ぶため、既存の height_penalty (landing_y 比例) とは順位付けが異なる。",
+  "design_note": "A 腕は root、B 腕は候補ファイル (W=1.0)。候補は W=0 で root と完全同一であることを コード上 (追加行はすべて `if _v760_w > 0.0` の内側、削除ゼロ) と実戦 3000 手の replay (決定差 0.00%) の両方で確認済みなので、腕間の差は W=1.0 の効果そのものになる。",
   "arms": {
     "A": {
-      "role": "control",
-      "decide_hash": "bda6d8c5901d",
-      "env": "V760_CEILING_RAISE_W=0"
+      "role": "root",
+      "decide_hash": "a557db55896b",
+      "env": "V760_CEILING_RAISE_W=0",
+      "policy_bundle": "53cbc69c9f5c8ae5"
     },
     "B": {
       "role": "candidate",
       "decide_hash": "bda6d8c5901d",
-      "env": "V760_CEILING_RAISE_W=1.0"
+      "env": "V760_CEILING_RAISE_W=1.0",
+      "policy_bundle": "02c1bb2bb0740512"
     }
   },
   "pattern": "ABBA",
@@ -67,5 +68,29 @@
       "reading": "回避可能な事例は中盤 (余裕 2〜4) に集中し、死の直前 (余裕 0〜1) では 6.4% しか選択肢が無い。つまり v760 は主に中盤で表面を平らに保ち、終盤の余裕を作る方向に効く。"
     }
   },
-  "why_first": "v759 (被覆 tier 段階化) より先に流す。理由: (1) 実測された死因そのものを直接狙う、(2) 機構の効き幅が大きい (天井 -16% 対 被覆 -6.4%)、(3) 決定変化が 12.3% と 3.5% で、3.5% では 100 試合/腕でも検出できない恐れがある、(4) 併合回帰ゼロを両者とも確認済みで安全性に差はない。"
+  "why_first": "v759 (被覆 tier 段階化) より先に流す。理由: (1) 実測された死因そのものを直接狙う、(2) 機構の効き幅が大きい (天井 -16% 対 被覆 -6.4%)、(3) 決定変化が 12.3% と 3.5% で、3.5% では 100 試合/腕でも検出できない恐れがある、(4) 併合回帰ゼロを両者とも確認済みで安全性に差はない。",
+  "started_at": "2026-08-30T21:33:36",
+  "toggles": {
+    "AB_GATE_ENABLED": "1",
+    "AB_GATE_DRY_RUN": "1",
+    "SOREN_AB_PATTERN": "ABBA",
+    "REGRESSION_DISABLED": "1"
+  },
+  "game_num_start": 47161,
+  "sha256": {
+    "strategy.py": "9ceaf66cf33a6771477fae66908534d8ac680d48a32a1242efc4315846f7508c",
+    "tmp/manual_challenge/strategy_bda6d8c5901d.py": "4b5ec70fb75651b3e667c2303a24a967f3082c802ec8e7de8462a9971bb2d47b",
+    "analyze_board.py": "809a8ed551dc40ba7da7a1d48038cebf551ac591c5fef31f1fa5b5ed9db0cac7",
+    "strategy_runner.py": "4f9609f860b17f6619da9f5485803cab2b8b3546e5bee739bd3f7c4b4cacce1a",
+    "strategy_helpers/board_stats.py": "626f806cd161032ab44aa0b2b607a956678c13298ce3bfd79a6fd453e7ef3098",
+    "eloop.sh": "38a11cac7a4f22ce2e4afcb38910db94104a7327c487c5ba5226ca2c33004d42",
+    "eloop_lib.sh": "3bfb36aedb8c28746fb51f2f21f240abf4aa496aedb7bdd6c29975a21ed338cf",
+    "strategy/ab_interleave.sh": "1860eb5dfe402187ea5e2ef97cc5d4d8ac980e416deefd8abf1d2aede51bc4a7",
+    "strategy/ab_gate.sh": "7d2630b78a21b48e88338dcd728804b4196e42388a54650da806a375c1d17dbe",
+    "tools/ab_ctl.sh": "243d6ad2a8bc8a9125a60ebc8af56adab8286ded7d3145992497dfb888b2c1bc",
+    "tools/ab_verdict.py": "00962cda6212397498101214ac967ca459acf5d37d1cef0dc108e99b2c188602",
+    "tools/ab_report.py": "b3387fedd379d779319ae740ba668a9473fa55c1ce275ac461d85adaae943aa3",
+    "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
+    "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  }
 }
