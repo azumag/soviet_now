@@ -214,6 +214,29 @@ try:
         rec["end_reason"] = ("soviet" if rec.get("soviet_created") else
                              ("deadline_crossed" if last.get("deadline_crossed") else "board_full_or_other"))
         rec["final_piece_count"] = last.get("piece_count")
+        # 終局盤面の構成 (issue #132 P1: 容量モデルを試合ごとに検算できるようにする)。
+        # 併合は価値 2^(t-11) を保存して面積だけを圧縮する操作で、盤面は総面積 49.3 前後で死ぬ。
+        # merges_per_turn は tier を区別しないが、解放面積は 1->2 の 0.058 と 11->12 の 2.476 で
+        # 42 倍違うため、これを残さないと候補の効き方を後から分解できない。
+        # 面積は物理半径 (analyze_board.TYPE_RADII) から出す。snapshot の r は視覚スプライト由来で
+        # 型に対して単調でないため使えない。
+        radii = {1: 0.207, 2: 0.259, 3: 0.316, 4: 0.380, 5: 0.414, 6: 0.470, 7: 0.559, 8: 0.660,
+                 9: 0.746, 10: 0.846, 11: 0.982, 12: 1.068, 13: 1.207, 14: 1.385, 15: 1.600}
+        end_types = {}
+        for p in (last.get("state_snapshot") or {}).get("pieces") or []:
+            t = p.get("type")
+            if isinstance(t, int):
+                end_types[t] = end_types.get(t, 0) + 1
+        if end_types:
+            area = sum(n * 3.141592653589793 * radii[t] ** 2 for t, n in end_types.items() if t in radii)
+            value = sum(n * 2.0 ** (t - 11) for t, n in end_types.items())
+            rec["end_types"] = {str(t): n for t, n in sorted(end_types.items())}
+            rec["end_area"] = round(area, 3)
+            rec["end_value_t11eq"] = round(value, 4)
+            # 1 手あたりに解放した面積 = 供給 (平均 1.0656/手) - 盤面に残った面積
+            nturns = rec.get("turns") or len(rs)
+            if nturns:
+                rec["area_relief_per_turn"] = round((1.0656 * nturns - area) / nturns, 4)
 except Exception:
     pass
 with open(games_file, "a", encoding="utf-8") as fh:

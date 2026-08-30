@@ -57,4 +57,22 @@ read -r line < "$AB_GAMES_FILE"
 t "旧シグネチャ互換 (soviet は None)" "$(get soviet_created)" "None"
 t "旧シグネチャでも段階到達は入る" "$(get first_turn_t15)" "3"
 
+# 終局盤面の構成 (issue #132 P1: 容量モデルの検算用)
+# 終局 (turn 5) の盤面は type 3 / 15 / 16 が 1 個ずつ。
+#   面積 = pi * (0.316^2 + 1.600^2) = 8.356  … type 16 は TYPE_RADII に半径が無いので面積から除く
+#          (建国した時点で試合は終わるので、容量の検算に T16 の面積は要らない)
+#   価値 = 2^-8 + 2^4 + 2^5 = 48.0039 (T11 相当)
+#   解放/手 = (1.0656 * 5 - 8.356) / 5 = -0.6056  … 5 手では供給より残留が多く負になる
+END_TYPES_EXPECT="3:1,15:1,16:1"
+END_AREA_EXPECT="8.356"
+END_VALUE_EXPECT="48.0039"
+: > "$AB_GAMES_FILE"
+AB_IDX=4
+_ab_record_game 100 200 5 "$arc" "false" "false"
+read -r line < "$AB_GAMES_FILE"
+t "終局の型ヒストグラム" "$(printf '%s' "$line" | python3 -c "import json,sys;d=json.load(sys.stdin)['end_types'];print(','.join('%s:%s'%(k,v) for k,v in sorted(d.items(), key=lambda kv:int(kv[0]))))")" "$END_TYPES_EXPECT"
+t "終局の面積 (物理半径 TYPE_RADII 由来)" "$(printf '%s' "$line" | python3 -c "import json,sys;print('%.3f'%json.load(sys.stdin)['end_area'])")" "$END_AREA_EXPECT"
+t "終局の価値 (T11 相当)" "$(printf '%s' "$line" | python3 -c "import json,sys;print('%.4f'%json.load(sys.stdin)['end_value_t11eq'])")" "$END_VALUE_EXPECT"
+t "1 手あたり解放面積が入る" "$(printf '%s' "$line" | python3 -c "import json,sys;print('area_relief_per_turn' in json.load(sys.stdin))")" "True"
+
 exit $fail
