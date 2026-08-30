@@ -276,8 +276,75 @@ fd, tmp = tempfile.mkstemp(prefix=".soren_overlay.", suffix=".html", dir=os.path
 with os.fdopen(fd, "w", encoding="utf-8") as f:
     f.write(doc)
 os.replace(tmp, out_file)
+
+# ── 旧2ファイルもフィルタ済みで更新して broadcast 経由の配信にも反映する ──
+# show_status_overlay.html (OPS) はフィルタ済みOPS、status_overlay.html (STATS) はフィルタ済みSTATS
+try:
+    ops_legacy_file = os.environ.get("SHOW_STATUS_OVERLAY_HTML_FILE", "tmp/state/show_status_overlay.html")
+    stats_legacy_file = os.environ.get("STATUS_OVERLAY_HTML_FILE", "tmp/state/status_overlay.html")
+    # OPS legacy: 520x680, title SOREN OPS
+    ops_body = ansi_to_html(filtered_ops.rstrip() or "show_status.sh returned no output")
+    ops_doc = f"""<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="{refresh}">
+<style>
+html, body {{ margin: 0; width: 520px; height: 680px; overflow: hidden; background: rgba(0, 0, 0, 0); }}
+.frame {{ box-sizing: border-box; width: 520px; height: 680px; padding: 14px 14px 12px; color: #e5f7ff; background: linear-gradient(180deg, rgba(2, 8, 23, .92), rgba(3, 7, 18, .88)); border: 1px solid rgba(125, 211, 252, .30); border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); }}
+.meta {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font: 700 14px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #bae6fd; }}
+.meta span:last-child {{ color: #94a3b8; font-weight: 600; }}
+pre {{ margin: 0; white-space: pre; font: 12.8px/1.17 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; color: #dbeafe; }}
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="meta"><span>SOREN OPS</span><span>{html.escape(generated)}</span></div>
+  <pre>{ops_body}</pre>
+</div>
+</body>
+</html>
+"""
+    os.makedirs(os.path.dirname(ops_legacy_file) or ".", exist_ok=True)
+    fd2, tmp2 = tempfile.mkstemp(prefix=".show_status_overlay.", suffix=".html", dir=os.path.dirname(ops_legacy_file) or ".")
+    with os.fdopen(fd2, "w", encoding="utf-8") as f:
+        f.write(ops_doc)
+    os.replace(tmp2, ops_legacy_file)
+
+    stats_body = ansi_to_html(filtered_stats.rstrip() or "status_dashboard.py returned no output")
+    stats_doc = f"""<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="{refresh}">
+<style>
+html, body {{ margin: 0; width: 560px; height: 820px; overflow: hidden; background: rgba(0, 0, 0, 0); }}
+.frame {{ box-sizing: border-box; width: 560px; height: 820px; padding: 10px 10px 8px; color: #e5f7ff; background: linear-gradient(180deg, rgba(2, 8, 23, .92), rgba(3, 7, 18, .88)); border: 1px solid rgba(56, 189, 248, .28); border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); }}
+.meta {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font: 700 13px/1.15 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #bae6fd; }}
+.meta span:last-child {{ color: #94a3b8; font-weight: 600; }}
+pre {{ margin: 0; white-space: pre; font: 15.5px/1.13 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; color: #dbeafe; }}
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="meta"><span>SOREN STATS</span><span>{html.escape(generated)}</span></div>
+  <pre>{stats_body}</pre>
+</div>
+</body>
+</html>
+"""
+    os.makedirs(os.path.dirname(stats_legacy_file) or ".", exist_ok=True)
+    fd3, tmp3 = tempfile.mkstemp(prefix=".status_overlay.", suffix=".html", dir=os.path.dirname(stats_legacy_file) or ".")
+    with os.fdopen(fd3, "w", encoding="utf-8") as f:
+        f.write(stats_doc)
+    os.replace(tmp3, stats_legacy_file)
+except Exception as e:
+    # legacy更新失敗は致命ではない、soren本体は成功しているので握りつぶす
+    pass
 PY
 	chmod 644 "$out_file" 2>/dev/null || true
+	chmod 644 "${SHOW_STATUS_OVERLAY_HTML_FILE:-tmp/state/show_status_overlay.html}" 2>/dev/null || true
+	chmod 644 "${STATUS_OVERLAY_HTML_FILE:-tmp/state/status_overlay.html}" 2>/dev/null || true
 	# eventOverlay 指標も更新 (旧 generate_show_status_overlay と同挙動)
 	if [ -f "$ELOOP_LIB_DIR/generate_event_overlay.py" ]; then
 		EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
