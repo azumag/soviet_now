@@ -333,6 +333,19 @@ html, body {{
   overflow: hidden;
 }}
 #work-indicator.active {{ display: grid; }}
+#work-indicator.comment {{
+  background: rgba(32, 18, 78, 0.96);
+  border-color: rgba(167, 139, 250, 0.82);
+}}
+#work-indicator.comment .work-bar {{
+  background: linear-gradient(180deg, #7c3aed, #a78bfa);
+}}
+#work-indicator.comment .work-elapsed {{
+  color: #ddd6fe;
+}}
+#work-indicator.comment .work-body {{
+  color: #ede9fe;
+}}
 .work-bar {{
   background: linear-gradient(180deg, #f97316, #facc15);
 }}
@@ -545,13 +558,25 @@ function elapsedLabel(startedAt) {{
   const secs = elapsed % 60;
   return `${{mins}}:${{pad(secs)}}`;
 }}
+const commentGen = (GEN || []).find(g => String(g.key||'') === 'comment');
 if (WORK && WORK.active) {{
   workIndicator.classList.add('active');
   workIndicator.querySelector('.work-title').textContent = WORK.title || 'システム自動分析・修正作業中';
   workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(WORK.ts);
-  workIndicator.querySelector('.work-body').textContent = WORK.body || '';
+  let body = WORK.body || '';
+  if (commentGen) {{
+    body = body ? `${{body}}  |  ${{commentGen.icon||'💬'}} ${{commentGen.label||'コメント生成中'}} ${{elapsedLabel(commentGen.ts)}}` : `${{commentGen.icon||'💬'}} ${{commentGen.label||'コメント生成中'}} ${{elapsedLabel(commentGen.ts)}}`;
+  }}
+  workIndicator.querySelector('.work-body').textContent = body;
+}} else if (commentGen) {{
+  workIndicator.classList.add('active');
+  workIndicator.classList.add('comment');
+  workIndicator.querySelector('.work-title').textContent = `${{commentGen.icon||'💬'}} ${{commentGen.label||'コメント生成中'}}`;
+  workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(commentGen.ts);
+  workIndicator.querySelector('.work-body').textContent = 'AIがコメントを生成しています…';
 }}
 for (const g of (GEN || [])) {{
+  if (String(g.key||'') === 'comment') continue;
   const row = document.createElement('div');
   row.className = `gen-loader ${{g.key || ''}}`;
   row.innerHTML = `<span class="gen-spinner"></span><span class="gen-icon"></span><span class="gen-label"></span><span class="gen-elapsed"></span>`;

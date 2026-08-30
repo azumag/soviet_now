@@ -302,6 +302,59 @@ html[data-soren-neutral="1"] .toast {
   border-radius: 6px;
 }
 #work.active { display: grid; }
+#gen-top {
+  height: 73px;
+  display: none;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  column-gap: 13px;
+  align-items: center;
+  padding-right: 14px;
+  color: #ede9fe;
+  background: rgba(32, 18, 78, 0.96);
+  border: 1px solid rgba(167, 139, 250, 0.75);
+  border-radius: 6px;
+}
+#gen-top.active { display: grid; }
+#gen-top .gen-top-bar {
+  align-self: stretch;
+  background: linear-gradient(180deg, #7c3aed, #a78bfa);
+  border-radius: 5px 0 0 5px;
+}
+#gen-top .gen-top-spinner {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(255,255,255,.28);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: genSpin 0.8s linear infinite;
+}
+#gen-top .gen-top-copy { min-width: 0; }
+#gen-top .gen-top-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 950;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#gen-top .gen-top-body {
+  margin-top: 4px;
+  color: #ddd6fe;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#gen-top .gen-top-elapsed {
+  color: #c4b5fd;
+  font: 900 14px/1 "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes genSpin { to { transform: rotate(360deg); } }
 .work-bar { align-self: stretch; background: linear-gradient(180deg, #f97316, #facc15); border-radius: 5px 0 0 5px; }
 .work-copy { min-width: 0; }
 .work-title { font-size: 20px; font-weight: 950; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -354,6 +407,11 @@ html[data-soren-neutral="1"] .toast {
       <div class="work-bar"></div>
       <div class="work-copy"><div class="work-title"></div><div class="work-body"></div></div>
       <div class="work-elapsed"></div>
+    </div>
+    <div id="gen-top" aria-live="polite">
+      <div class="gen-top-bar"></div>
+      <div class="gen-top-copy"><div class="gen-top-title"><span class="gen-top-spinner"></span><span class="gen-top-label">💬 コメント生成中</span></div><div class="gen-top-body">AIがコメントを生成しています…</div></div>
+      <div class="gen-top-elapsed"></div>
     </div>
   </section>
   <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
@@ -580,14 +638,40 @@ html[data-soren-neutral="1"] .toast {
   }
   function renderTopRail() {
     const workState = state?.notifications?.work || {};
-    const active = Boolean(workState.active);
-    work.classList.toggle('active', active);
-    summary.style.display = active ? 'none' : 'grid';
-    if (active) {
+    const workActive = Boolean(workState.active);
+    const genTop = document.getElementById('gen-top');
+    let commentActive = false;
+    let cg = null;
+    try {
+      const gens = Array.isArray(state?.notifications?.generators) ? state.notifications.generators : [];
+      cg = gens.find((g) => String(g.key||'') === 'comment') || null;
+      commentActive = Boolean(cg);
+    } catch { commentActive = false; cg = null; }
+    // 作業インジケーター領域にコメント生成中を表示: work優先、次にcomment、最後にサマリ
+    if (workActive) {
+      work.classList.add('active');
+      genTop.classList.remove('active');
+      summary.style.display = 'none';
       work.querySelector('.work-title').textContent = workState.title || 'システム作業中';
       work.querySelector('.work-body').textContent = workState.body || '';
       work.querySelector('.work-elapsed').textContent = elapsedLabel(workState.ts);
+      // work中でもコメント生成中なら work の body に追記で示す
+      if (commentActive) {
+        const bodyEl = work.querySelector('.work-body');
+        if (bodyEl && cg) bodyEl.textContent = `${workState.body || ''}  |  ${cg.icon || '💬'} ${cg.label || 'コメント生成中'} ${elapsedLabel(cg.ts)}`.trim();
+      }
+    } else if (commentActive) {
+      work.classList.remove('active');
+      summary.style.display = 'none';
+      genTop.classList.add('active');
+      const labelEl = genTop.querySelector('.gen-top-label');
+      if (labelEl) labelEl.textContent = `${cg.icon || '💬'} ${cg.label || 'コメント生成中'}`;
+      const elapsedEl = genTop.querySelector('.gen-top-elapsed');
+      if (elapsedEl) elapsedEl.textContent = elapsedLabel(cg.ts);
     } else {
+      work.classList.remove('active');
+      genTop.classList.remove('active');
+      summary.style.display = 'grid';
       const topO = state?.topOverride;
       if (topO && topO.enabled === false) {
         summary.style.display = 'none';
