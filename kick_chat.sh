@@ -444,17 +444,70 @@ _ack_batch_nolock() {
         return 0
     fi
 
-    local batch_tmp out_tmp before_count after_count
+    local batch_tmp out_tmp before_count after_count removed_count
     batch_tmp=$(mktemp "$CHAT_DIR/.ack_batch.XXXXXXXX")
-    out_tmp=$(mktemp "$CHAT_DIR/.pending_after_ack.XXXXXXXX")
-    awk 'NF' "$batch_file" > "$batch_tmp"
+    out_tmp=$(mktemp "$CHAT_DIR/.ack_out.XXXXXXXX")
+    awk 'NF && !seen[$0]++' "$batch_file" > "$batch_tmp"
+    if [ ! -s "$batch_tmp" ]; then
+        rm -f "$batch_tmp" "$out_tmp"
+        _log "ack_batch: バッチファイルが空"
+        return 0
+    fi
+
     before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
-    awk -F'\t' 'NR==FNR { if (NF) target[$0]=1; next } !($NF in target)' \
-        "$batch_tmp" "$PENDING_LOG" >"$out_tmp"
+    # New batches carry the provider message ID and remove only that exact row.
+    # Legacy/plain batches use NFKC-normalized text as a compatibility fallback;
+    # model-facing lines are normalized while pending envelopes retain the original
+    # full-width punctuation.
+    if ! python3 - "$batch_tmp" "$PENDING_LOG" "$out_tmp" <<'PY'
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+batch_path, pending_path, out_path = map(Path, sys.argv[1:4])
+id_re = re.compile(r"^[0-9A-Za-z-]+$")
+
+
+def normalized_line(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).split())
+
+
+target_ids: set[str] = set()
+target_lines: set[str] = set()
+for raw in batch_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    fields = raw.split("\t")
+    message_id = fields[0][3:] if fields and fields[0].startswith("id=") else ""
+    if message_id and id_re.fullmatch(message_id):
+        target_ids.add(message_id)
+    elif fields:
+        text = normalized_line(fields[-1])
+        if text:
+            target_lines.add(text)
+
+kept: list[str] = []
+for raw in pending_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    fields = raw.split("\t")
+    message_id = fields[0][3:] if fields and fields[0].startswith("id=") else ""
+    if message_id and message_id in target_ids:
+        continue
+    text = normalized_line(fields[-1]) if fields else ""
+    if text and text in target_lines:
+        continue
+    kept.append(raw)
+
+Path(out_path).write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+PY
+    then
+        rm -f "$batch_tmp" "$out_tmp"
+        _log "ack_batch: message-id/textの除去に失敗"
+        return 1
+    fi
     cat "$out_tmp" > "$PENDING_LOG"
     after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
+    removed_count=$((before_count - after_count))
+    _log "ack_batch: ${removed_count}件を消化 (残り${after_count}件)"
     rm -f "$batch_tmp" "$out_tmp"
-    _log "ack_batch: $((before_count - after_count))件を消化 (残り${after_count}件)"
     rm -f "$OUTFILE" "$OUTFILE_METADATA"
     return 0
 }
