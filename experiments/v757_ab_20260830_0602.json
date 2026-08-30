@@ -21,7 +21,19 @@
   "harm_stop": "k>=6 で score UCB90 < 0 なら finish A",
   "futility": "適用しない",
   "final": "k=50 (各100試合)",
-  "note": "進行中に規則を変更しない (issue #132 Phase 0)"
+  "note": "進行中に規則を変更しない (issue #132 Phase 0)",
+  "rule": {
+   "primary": "score",
+   "primary_kind": "block_diff",
+   "adopt_ci_lower_gt": 0.0,
+   "harm_min_blocks": 6,
+   "harm_ucb_lt": 0.0,
+   "futility": false,
+   "final_blocks": 50,
+   "final_games_per_arm": 100,
+   "guardrail_t15_ratio": 0.5,
+   "note": "2026-08-30 06:02 の開始時に handoff と manifest で宣言した内容を、tools/ab_verdict.py が読める形に書き写しただけ。閾値・指標は一切変更していない。"
+  }
  },
  "env": {},
  "toggles": {
@@ -48,5 +60,11 @@
   "strategy_helpers/board_stats.py": "626f806cd161032ab44aa0b2b607a956678c13298ce3bfd79a6fd453e7ef3098",
   "strategy_helpers/profile.py": null,
   "strategy_helpers/future_ev.py": null
- }
+ },
+ "secondary": [
+  "merges_per_turn",
+  "t15_rate",
+  "soviet_created",
+  "turns"
+ ]
 }
