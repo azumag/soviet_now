@@ -32,7 +32,9 @@
    "final_blocks": 50,
    "final_games_per_arm": 100,
    "guardrail_t15_ratio": 0.5,
-   "note": "2026-08-30 06:02 の開始時に handoff と manifest で宣言した内容を、tools/ab_verdict.py が読める形に書き写しただけ。閾値・指標は一切変更していない。"
+   "note": "2026-08-30 06:02 の開始時に handoff と manifest で宣言した内容を、tools/ab_verdict.py が読める形に書き写しただけ。閾値・指標は一切変更していない。",
+   "harm_z": 1.2816,
+   "harm_z_note": "開始時に宣言した UCB90 をそのまま凍結する。2026-08-30 の A/A 較正でこの逐次規則の誤発火率が 32% と判明したが、進行中の実験の規則は変更しない。新しい実験は harm_min_blocks=10 / harm_z=2.3263 (誤発火 6.2%) を使う。"
   }
  },
  "env": {},

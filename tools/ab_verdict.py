@@ -20,7 +20,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ab_report import blocks, dedupe_valid  # noqa: E402
 
-Z90 = 1.2816  # 片側 90%
+Z90 = 1.2816   # 片側 90%
+Z99 = 2.3263   # 片側 99%
+
+# 逐次害停止の既定値は実測較正による (issue #132)。
+# 実 A/A (v736 両腕、21 ブロック) で腕ラベルをブロック内で入れ替えた帰無分布に対し、
+# 「k>=6 から毎ブロック UCB90<0 を確認する」旧規則は 32.2% で誤発火した。
+# k>=10 かつ UCB99 なら 6.2%、真に -400 の害に対する検出力は 58%。
+# 既存 manifest は rule に harm_z を持たないので、その実験では従来どおり Z90 を使う
+# (凍結した事前登録を後から変えないため)。新しい実験は harm_z を明示すること。
+HARM_MIN_BLOCKS_DEFAULT = 10
+HARM_Z_DEFAULT = Z99
 
 
 def _sha256(path):
@@ -54,8 +64,10 @@ def rule(manifest):
         "primary": r.get("primary", "score"),
         "primary_kind": r.get("primary_kind", "block_diff"),
         "adopt_ci_lower_gt": float(r.get("adopt_ci_lower_gt", 0.0)),
-        "harm_min_blocks": int(r.get("harm_min_blocks", 6)),
+        "harm_min_blocks": int(r.get("harm_min_blocks", HARM_MIN_BLOCKS_DEFAULT)),
         "harm_ucb_lt": float(r.get("harm_ucb_lt", 0.0)),
+        # 片側信頼水準。旧 manifest には無いので、その場合は当時の Z90 を使う。
+        "harm_z": float(r.get("harm_z", Z90 if "harm_min_blocks" in r else HARM_Z_DEFAULT)),
         "futility": bool(r.get("futility", False)),
         "final_blocks": int(r.get("final_blocks", 50)),
         "final_games_per_arm": int(r.get("final_games_per_arm", 100)),
@@ -79,7 +91,7 @@ def evaluate(manifest, rows):
     mean = st.mean(diffs) if diffs else None
     se = (st.pstdev(diffs) / math.sqrt(k)) if k > 1 else None
     ci_lo = mean - Z90 * se if (mean is not None and se) else None
-    ucb = mean + Z90 * se if (mean is not None and se) else None
+    ucb = mean + R["harm_z"] * se if (mean is not None and se) else None
 
     def t15(a):
         return sum(1 for r in arms[a] if (r.get("first_turn_t15") is not None) or ((r.get("max_type") or 0) >= 15))
@@ -90,7 +102,8 @@ def evaluate(manifest, rows):
 
     verdict, why = "CONTINUE", "k=%d < final_blocks=%d" % (k, R["final_blocks"])
     if k >= R["harm_min_blocks"] and ucb is not None and ucb < R["harm_ucb_lt"]:
-        verdict, why = "HARM_STOP", "k=%d >= %d and UCB90 %.1f < %.1f" % (k, R["harm_min_blocks"], ucb, R["harm_ucb_lt"])
+        verdict, why = "HARM_STOP", "k=%d >= %d and UCB(z=%.2f) %.1f < %.1f" % (
+            k, R["harm_min_blocks"], R["harm_z"], ucb, R["harm_ucb_lt"])
     # 最終判定の起動条件は「計画した標本サイズに達したか」。事前登録では "k=50 (各 100 試合)" と
     # 同じ節目を 2 通りで書いているが、末尾に端数ブロックが出ると k=49 / n=100 のように片方だけ
     # 満たす状態が起こる (実際に v748 vs v752 がそうだった)。どちらかを満たせば判定に入る。

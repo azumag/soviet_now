@@ -105,3 +105,36 @@ class AbVerdictTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarmStopCalibrationTests(unittest.TestCase):
+    """issue #132: 逐次害停止の較正。
+
+    実 A/A (v736 両腕、21 ブロック) で腕ラベルをブロック内で入れ替えた帰無分布に対し
+    旧規則 (k>=6 から毎ブロック UCB90<0) は 32.2% で誤発火した。既定は k>=10 / UCB99
+    (誤発火 6.2%) に改めたが、既存 manifest の凍結した規則は変えない。
+    """
+
+    def test_default_is_the_calibrated_rule(self):
+        r = ab_verdict.rule({})
+        self.assertEqual(r["harm_min_blocks"], ab_verdict.HARM_MIN_BLOCKS_DEFAULT)
+        self.assertAlmostEqual(r["harm_z"], ab_verdict.Z99, places=4)
+
+    def test_legacy_manifest_keeps_z90(self):
+        """harm_min_blocks を明示していた旧 manifest は当時の UCB90 のまま評価する。"""
+        m = {"preregistration": {"rule": {"harm_min_blocks": 6}}}
+        self.assertAlmostEqual(ab_verdict.rule(m)["harm_z"], ab_verdict.Z90, places=4)
+
+    def test_explicit_harm_z_wins(self):
+        m = {"preregistration": {"rule": {"harm_min_blocks": 6, "harm_z": 3.09}}}
+        self.assertAlmostEqual(ab_verdict.rule(m)["harm_z"], 3.09, places=4)
+
+    def test_stricter_z_stops_less(self):
+        """同じデータでも z を上げれば止まりにくい。"""
+        data = rows(6, 400, 100, jitter=30)
+        loose = {"pattern": "ABBA", "preregistration": {"rule": {
+            "harm_min_blocks": 3, "harm_z": 1.2816, "final_blocks": 99, "final_games_per_arm": 999}}}
+        strict = json.loads(json.dumps(loose))
+        strict["preregistration"]["rule"]["harm_z"] = 3.09
+        self.assertEqual(ab_verdict.evaluate(loose, data)["verdict"], "HARM_STOP")
+        self.assertEqual(ab_verdict.evaluate(strict, data)["verdict"], "CONTINUE")
