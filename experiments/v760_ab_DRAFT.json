@@ -4,14 +4,22 @@
   "hypothesis": "盤面の天井 (列別天端の最大値) を押し上げる手を罰すると、デッドライン到達が遅れて試合が伸びる。実測で終了理由の 99.2% が deadline_crossed であり、終局時に両端は 1.2〜1.5 の余白を残している。",
   "design_note": "両腕とも同一の候補ファイルを使い、腕別 env のみを変える。A 腕 (W=0) は実戦 3000 手で root と決定が 100% 一致することを確認済み。天井より下へ着地する候補はすべて 0 点で並ぶため、既存の height_penalty (landing_y 比例) とは順位付けが異なる。",
   "arms": {
-    "A": {"role": "control", "decide_hash": "bda6d8c5901d", "env": "V760_CEILING_RAISE_W=0"},
-    "B": {"role": "candidate", "decide_hash": "bda6d8c5901d", "env": "V760_CEILING_RAISE_W=1.0"}
+    "A": {
+      "role": "control",
+      "decide_hash": "bda6d8c5901d",
+      "env": "V760_CEILING_RAISE_W=0"
+    },
+    "B": {
+      "role": "candidate",
+      "decide_hash": "bda6d8c5901d",
+      "env": "V760_CEILING_RAISE_W=1.0"
+    }
   },
   "pattern": "ABBA",
   "preregistration": {
     "primary_report": "merges_per_turn (block diff) 90% CI lower > 0",
     "primary_rationale": "実測の block-sd: merges_per_turn 0.089 (相対 16%) < turns 18.6 (19%) < score 647 (26%)。score は最も鈍い。",
-    "secondary": "turns, score, T15 到達率, area_relief_per_turn, end_area, 終局の列別天端",
+    "secondary": "turns, score, T15 到達率, area_relief_per_turn, end_area, 終局の列別天端, 回避可能だった天井押し上げの割合",
     "guardrail": [
       "score の block diff 90% CI 下限 > -300 (非劣性 margin)",
       "併合回帰の禁止: B 腕の merge_grade 選択率が A 腕を 10% 以上下回らないこと。実戦 3000 手の shadow では DIRECT 788 / NEAR 14 が両腕で完全一致し、失った併合は 0 だった"
@@ -34,10 +42,30 @@
     }
   },
   "expected_effect": {
-    "shadow_decision_change_at_W1": 0.1230,
-    "ceiling_raise_mean": {"root": 0.550, "candidate": 0.461, "reduction": -0.16},
-    "share_of_drops_raising_the_ceiling": {"root": 0.688, "candidate": 0.631},
-    "merge_grade_regression": "なし (3000 手で 0 件)"
+    "shadow_decision_change_at_W1": 0.123,
+    "ceiling_raise_mean": {
+      "root": 0.55,
+      "candidate": 0.461,
+      "reduction": -0.16
+    },
+    "share_of_drops_raising_the_ceiling": {
+      "root": 0.688,
+      "candidate": 0.631
+    },
+    "merge_grade_regression": "なし (3000 手で 0 件)",
+    "headroom": {
+      "note": "実戦 3000 手で候補集合を数えた上界。天井を上げた手のうち、上げない安全候補が存在したのは 25.6%。",
+      "chose_a_move_that_does_not_raise_the_ceiling": 0.312,
+      "raised_it_although_a_safe_flat_candidate_existed": 0.256,
+      "raised_it_with_no_safe_flat_candidate": 0.432,
+      "avoidable_rate_by_deadline_margin": {
+        "0-1": 0.064,
+        "1-2": 0.234,
+        "2-3": 0.329,
+        "3-4": 0.325
+      },
+      "reading": "回避可能な事例は中盤 (余裕 2〜4) に集中し、死の直前 (余裕 0〜1) では 6.4% しか選択肢が無い。つまり v760 は主に中盤で表面を平らに保ち、終盤の余裕を作る方向に効く。"
+    }
   },
   "why_first": "v759 (被覆 tier 段階化) より先に流す。理由: (1) 実測された死因そのものを直接狙う、(2) 機構の効き幅が大きい (天井 -16% 対 被覆 -6.4%)、(3) 決定変化が 12.3% と 3.5% で、3.5% では 100 試合/腕でも検出できない恐れがある、(4) 併合回帰ゼロを両者とも確認済みで安全性に差はない。"
 }
