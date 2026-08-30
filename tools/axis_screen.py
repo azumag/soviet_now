@@ -13,15 +13,30 @@ issue #132 P0-2 / Phase 3「到達不能・実質 no-op の軸を特定して整
     python3 tools/axis_screen.py --corpus <dir of *.jsonl> [--limit 700]
 """
 import argparse
+import ast
+import glob
 import importlib.util
 import os
 import re
 import sys
 
+sys.dont_write_bytecode = True
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 AXIS_RE = re.compile(r"^(\s+)score (?:\+|-)= ([0-9]+\.?[0-9]*)(\s*\*\s*[A-Za-z_][A-Za-z0-9_]*)?\s*$")
+# 係数が変数の行 (score += bonus, score -= height_penalty ...) も同じ手順で潰す
+VAR_RE = re.compile(r"^(\s+)score (\+|-)= (.+?)\s*(#.*)?$")
+
+
+def _disable(line):
+    """その行の寄与だけを 0 にした行を返す。"""
+    m = AXIS_RE.match(line)
+    if m:
+        return m.group(1) + "score += 0.0" + (m.group(3) or "")
+    m = VAR_RE.match(line)
+    return "%sscore %s= 0.0 * (%s)" % (m.group(1), m.group(2), m.group(3))
 
 
 def axis_label(lines, idx):
@@ -33,7 +48,10 @@ def axis_label(lines, idx):
 
 
 def _load(text, name):
-    path = os.path.join(REPO, "candidates", "_axis_screen_tmp.py")
+    # 同じパスへ書き続けると、サイズが同じ変異どうしで .pyc が再利用され、
+    # 前の変異の結果を引き継いでしまう（実際に踏んだ: 別軸が同じ数値になる）。
+    # 変異ごとに別名で書き、bytecode も書かせない。
+    path = os.path.join(REPO, "candidates", "_axis_screen_%s.py" % name)
     open(path, "w", encoding="utf-8").write(text)
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -64,7 +82,17 @@ def main():
 
     src = open(os.path.join(REPO, args.strategy), encoding="utf-8").read()
     lines = src.split("\n")
-    targets = [(i, AXIS_RE.match(l)) for i, l in enumerate(lines) if AXIS_RE.match(l)]
+    def _single_statement(line):
+        """行の途中で式が続くもの (末尾が開き括弧など) は対象外にする。"""
+        try:
+            ast.parse(line.strip())
+            return True
+        except SyntaxError:
+            return False
+
+    targets = [(i, AXIS_RE.match(l) or VAR_RE.match(l)) for i, l in enumerate(lines)
+               if (AXIS_RE.match(l) or VAR_RE.match(l))
+               and not l.strip().startswith("#") and _single_statement(l)]
     anchor = next(j for j, l in enumerate(lines) if l.startswith("from strategy_helpers"))
 
     # 1) 発火回数を 1 度の計装で数える
@@ -86,7 +114,7 @@ def main():
     rows = []
     for n, (i, m) in enumerate(targets):
         mut = list(lines)
-        mut[i] = AXIS_RE.sub(lambda mm: mm.group(1) + "score += 0.0" + (mm.group(3) or ""), lines[i])
+        mut[i] = _disable(lines[i])
         try:
             cand, _ = _load("\n".join(mut), "axis_%d" % n)
         except Exception:
@@ -99,9 +127,10 @@ def main():
                 x = base[k]
             if abs(x - base[k]) > 1e-9:
                 changed += 1
-        rows.append((axis_label(lines, i), m.group(2), i + 1, hits[n], 100.0 * changed / len(cache)))
-    if os.path.exists(tmp):
-        os.remove(tmp)
+        lit = m.group(2) if AXIS_RE.match(lines[i]) else lines[i].split("= ", 1)[1].strip()[:28]
+        rows.append((axis_label(lines, i), lit, i + 1, hits[n], 100.0 * changed / len(cache)))
+    for stale in glob.glob(os.path.join(REPO, "candidates", "_axis_screen_*.py")):
+        os.remove(stale)
 
     rows.sort(key=lambda r: (-r[4], -r[3]))
     print("\n%-38s %8s %6s %9s %9s" % ("axis", "literal", "line", "発火", "決定変化"))
