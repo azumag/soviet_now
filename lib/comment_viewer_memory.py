@@ -293,6 +293,40 @@ def select_metadata(*, metadata_path: str, batch_path: str, out_path: str) -> in
     return len(selected)
 
 
+def emit_ack_batch(*, metadata_path: str, batch_path: str, out_path: str) -> int:
+    """Encode a plain Twitch batch with message IDs for precise acknowledgement.
+
+    The model-facing batch is NFKC-normalized, while the pending envelope retains
+    the provider's original punctuation.  A text-only acknowledgement can
+    therefore miss the pending row.  Preserve positional identity from the
+    sidecar and let ``twitch_chat.sh ack-batch`` remove the exact provider
+    message.  Lines without trustworthy metadata remain plain-text fallbacks.
+    """
+    entries = load_batch_metadata(metadata_path)
+    try:
+        lines = Path(batch_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        lines = []
+
+    encoded: list[str] = []
+    identified = 0
+    for index, raw_line in enumerate(lines):
+        line = _collapse(raw_line, 800)
+        if not line:
+            continue
+        message_id = ""
+        if index < len(entries) and entries[index].get("line") == line:
+            message_id = _clean_metadata_token(entries[index].get("message_id"))
+        if message_id:
+            encoded.append(f"id={message_id}\t{line}")
+            identified += 1
+        else:
+            encoded.append(line)
+
+    _atomic_text_write(Path(out_path), "\n".join(encoded) + ("\n" if encoded else ""))
+    return identified
+
+
 def parse_batch(
     path: str,
     source: str,
@@ -829,6 +863,11 @@ def _parser() -> argparse.ArgumentParser:
     select.add_argument("--metadata", required=True)
     select.add_argument("--batch", required=True)
     select.add_argument("--out", required=True)
+
+    ack = commands.add_parser("emit-ack-batch")
+    ack.add_argument("--metadata", required=True)
+    ack.add_argument("--batch", required=True)
+    ack.add_argument("--out", required=True)
     return parser
 
 
@@ -880,6 +919,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "select-metadata":
         print(select_metadata(metadata_path=args.metadata, batch_path=args.batch, out_path=args.out))
+        return 0
+    if args.command == "emit-ack-batch":
+        print(emit_ack_batch(metadata_path=args.metadata, batch_path=args.batch, out_path=args.out))
         return 0
     return 2
 

@@ -3095,6 +3095,17 @@ generate_comment_response() {
 	[ -z "$comment_batch_file" ] && comment_batch_file="${viewer_chat_dir}/comment_batch_$(date +%s)_${RANDOM}.txt"
 	# ack-batch用にオリジナル全行を書き込む（フィルタ済み行も pending から確実に消化するため）
 	printf '%s\n' "$twitch_comments_original" >"$comment_batch_file"
+	# Twitch の pending はプロバイダ由来の原文を保持する一方、モデル用の
+	# OUTFILE は NFKC 正規化される。本文だけで ack すると「～！」と「~!」
+	# のような表記差で削除に失敗するため、sidecar の message_id を付けて
+	# 同じプロバイダメッセージを厳密に消化する。
+	if [ "$viewer_chat_source" = "twitch" ] && [ -f "$viewer_chat_metadata_file" ]; then
+		python3 "$ELOOP_LIB_DIR/lib/comment_viewer_memory.py" emit-ack-batch \
+			--metadata "$viewer_chat_metadata_file" \
+			--batch "$comment_batch_file" \
+			--out "$comment_batch_file" \
+			>/dev/null 2>&1 || true
+	fi
 
 	local comment_batch_hash=""
 	comment_batch_hash=$(_comment_hash_text "$twitch_comments" 2>/dev/null || echo "")
