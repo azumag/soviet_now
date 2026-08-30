@@ -78,21 +78,36 @@ case "$BRIDGE_WATCHDOG_ENABLED" in
 	;;
 esac
 
-# OBS' two HTML status surfaces used to live in detached tmux panes. On the
+# OBS HTML status surfaces used to live in detached tmux panes. On the
 # boot-persistent Linux runtime, supervise their watch loops directly so every
 # process belongs to the unit lifecycle and is recreated after a restart.
+# 統合 1 画面 (SOREN_UNIFIED_OVERLAY_ENABLED=1) では旧2枚を統合 soren_overlay 1枚に置換する。
 OVERLAY_WATCHERS_ENABLED="${SOREN_STATUS_OVERLAY_WATCHERS_ENABLED:-0}"
+UNIFIED_OVERLAY_ENABLED="${SOREN_UNIFIED_OVERLAY_ENABLED:-0}"
 case "$OVERLAY_WATCHERS_ENABLED" in
 0) ;;
 1)
-	WORKER_NAMES+=("status_overlay_watch" "show_status_overlay_watch")
-	WORKER_CMDS+=("./generate_status_overlay.sh watch 2" "./generate_show_status_overlay.sh watch 2")
+	if [ "$UNIFIED_OVERLAY_ENABLED" = "1" ]; then
+		WORKER_NAMES+=("soren_overlay_watch")
+		WORKER_CMDS+=("./generate_soren_overlay.sh watch 2")
+	else
+		WORKER_NAMES+=("status_overlay_watch" "show_status_overlay_watch")
+		WORKER_CMDS+=("./generate_status_overlay.sh watch 2" "./generate_show_status_overlay.sh watch 2")
+	fi
 	;;
 *)
 	echo "SOREN_STATUS_OVERLAY_WATCHERS_ENABLED must be 0 or 1" >&2
 	exit 2
 	;;
 esac
+case "$UNIFIED_OVERLAY_ENABLED" in
+0|1) ;;
+*)
+	echo "SOREN_UNIFIED_OVERLAY_ENABLED must be 0 or 1" >&2
+	exit 2
+	;;
+esac
+# 統合が有効でも旧2枚を裏で回す必要がある場合は別途 watch 起動するが supervisor 経由では管理しない
 
 STREAM_BACKEND="${SOREN_STREAM_BACKEND:-obs}"
 case "$STREAM_BACKEND" in
@@ -233,6 +248,7 @@ _pidfile_for_worker() {
 	soviet_watchdog) echo "tmp/state/.soviet_watchdog.lock/owner" ;;
 	status_overlay_watch) echo "tmp/state/status_overlay_watch.pid" ;;
 	show_status_overlay_watch) echo "tmp/state/show_status_overlay_watch.pid" ;;
+	soren_overlay_watch) echo "tmp/state/soren_overlay_watch.pid" ;;
 	direct_stream) echo "tmp/state/direct_stream.pid" ;;
 	stream_noon_audit) echo "tmp/state/stream_noon_audit.pid" ;;
 	youtube_broadcast_guard) echo "${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}" ;;
@@ -256,6 +272,7 @@ _pattern_for_worker() {
 	soviet_watchdog) echo '[/ ]soviet_watchdog[.]sh([[:space:]]|$)' ;;
 	status_overlay_watch) echo '[/ ]generate_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	show_status_overlay_watch) echo '[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	soren_overlay_watch) echo '[/ ]generate_soren_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	direct_stream) echo '[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
 	stream_noon_audit) echo '[/ ]workers/stream_noon_audit[.]sh([[:space:]]|$)' ;;
 	youtube_broadcast_guard) echo '[/ ]lib/youtube_broadcast_guard[.]py[[:space:]]+run([[:space:]]|$)' ;;
@@ -368,7 +385,7 @@ _find_existing_worker_pid() {
 	# arguments merely mention soviet_watchdog.sh can otherwise be mistaken for
 	# the worker and adopted until that short-lived shell exits.
 	case "$name" in
-	soviet_watchdog|status_overlay_watch|show_status_overlay_watch)
+	soviet_watchdog|status_overlay_watch|show_status_overlay_watch|soren_overlay_watch)
 		return 1
 		;;
 	esac
@@ -440,6 +457,7 @@ patterns = {
     "soviet_watchdog": r"[/ ]soviet_watchdog[.]sh([ \t]|$)",
     "status_overlay_watch": r"[/ ]generate_status_overlay[.]sh[ \t]+watch([ \t]|$)",
     "show_status_overlay_watch": r"[/ ]generate_show_status_overlay[.]sh[ \t]+watch([ \t]|$)",
+    "soren_overlay_watch": r"[/ ]generate_soren_overlay[.]sh[ \t]+watch([ \t]|$)",
     "direct_stream": r"[/ ]lib/direct_stream[.]py[ \t]+run([ \t]|$)",
     "stream_noon_audit": r"[/ ]workers/stream_noon_audit[.]sh([ \t]|$)",
     "youtube_broadcast_guard": r"[/ ]lib/youtube_broadcast_guard[.]py[ \t]+run([ \t]|$)",
