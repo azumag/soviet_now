@@ -57,6 +57,16 @@ class PublishGuardTest(unittest.TestCase):
         rc, _ = self.run_main("--date", "20260824", "--out-dir", str(self.out))
         self.assertEqual(rc, 2)
 
+    def test_thumbnail_only_requires_published_video_id(self):
+        (self.out / "2026-08-25.publish.json").write_text(
+            json.dumps({"url": "https://www.youtube.com/watch?v=orig"}), encoding="utf-8"
+        )
+        pp.find_doci = self.orig_find
+        rc, _ = self.run_main(
+            "--date", "20260825", "--out-dir", str(self.out), "--thumbnail-only"
+        )
+        self.assertEqual(rc, 2)
+
 
 class ThumbnailRenderTest(unittest.TestCase):
     def test_renders_directly_as_normal_landscape_thumbnail(self):

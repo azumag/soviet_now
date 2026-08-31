@@ -258,6 +258,8 @@ def main() -> int:
     ap.add_argument("--no-playlist", action="store_true", help="再生リストへ入れない")
     ap.add_argument("--force", action="store_true",
                     help="公開済み (publish.json がある) でも再アップロードする")
+    ap.add_argument("--thumbnail-only", action="store_true",
+                    help="publish.json の既存動画へサムネイルだけを再生成・設定する")
     args = ap.parse_args()
 
     date = parse_date(args.date) if args.date else datetime.date.today() - datetime.timedelta(days=1)
@@ -270,13 +272,19 @@ def main() -> int:
 
     # 二重アップロード防止: 同じ日付を上げ直すと YouTube に重複動画ができる。
     publish_file = out_dir / f"{iso}.publish.json"
-    if publish_file.exists() and not args.force and not args.dry_run:
-        prev = json.loads(publish_file.read_text(encoding="utf-8"))
-        log(f"公開済みなのでスキップ: {prev.get('url')} (--force で再アップロード)")
-        print(prev.get("url", ""))
+    published = None
+    if publish_file.exists():
+        published = json.loads(publish_file.read_text(encoding="utf-8"))
+    if published and not args.force and not args.dry_run and not args.thumbnail_only:
+        log(f"公開済みなのでスキップ: {published.get('url')} (--force で再アップロード)")
+        print(published.get("url", ""))
         return 0
 
-    if not mp4.exists():
+    if args.thumbnail_only and not (published or {}).get("video_id"):
+        log(f"既存動画IDが無い: {publish_file}")
+        return 2
+
+    if not args.thumbnail_only and not mp4.exists():
         log(f"動画が無い: {mp4} (先に podcast_video_build.py を実行してください)")
         return 2
 
@@ -287,7 +295,10 @@ def main() -> int:
 
     log(f"タイトル: {title}")
     log(f"公開設定: {args.privacy} / 再生リスト: {PLAYLIST_TITLE} ({PLAYLIST_PRIVACY})")
-    log(f"動画: {mp4} ({mp4.stat().st_size / 1048576:.1f} MB)")
+    if args.thumbnail_only:
+        log(f"サムネイルのみ更新: {published.get('url')}")
+    else:
+        log(f"動画: {mp4} ({mp4.stat().st_size / 1048576:.1f} MB)")
 
     doci_dir = find_doci()
     if not doci_dir:
@@ -362,6 +373,20 @@ def main() -> int:
     except Exception as e:
         log(f"サムネイル生成に失敗、サムネ無しで続行: {e}")
         thumb = None
+
+    if args.thumbnail_only:
+        if not thumb or not thumb.exists():
+            log("サムネイルを生成できなかったため既存動画は変更しない")
+            return 2
+        video_id = str(published["video_id"])
+        try:
+            yt.set_thumbnail(video_id, thumb, token_file=token, client_secret_file=secret)
+        except Exception as e:
+            log(f"既存動画のサムネイル設定に失敗: {e}")
+            return 2
+        log(f"既存動画のサムネイルを更新した: {published.get('url')}")
+        print(published.get("url", f"https://www.youtube.com/watch?v={video_id}"))
+        return 0
 
     # 2. アップロード
     log("アップロード開始")
