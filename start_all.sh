@@ -47,6 +47,7 @@ declare -a WORKER_NAMES=(
 	"radio_worker"
 	"prediction_worker"
 	"poll_worker"
+	"goal_worker"
 )
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
@@ -59,6 +60,7 @@ declare -a WORKER_CMDS=(
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
 	"./workers/poll_worker.sh"
+	"./workers/goal_worker.sh"
 )
 
 # The Linux broadcast VM historically launched soviet_local.mjs from a
@@ -243,6 +245,7 @@ _pidfile_for_worker() {
 	radio_worker) echo "tmp/state/radio_worker.pid" ;;
 	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
 	poll_worker) echo "tmp/state/poll_worker.pid" ;;
+	goal_worker) echo "tmp/state/goal_worker.pid" ;;
 	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
 	obs_capture_watchdog) echo "tmp/state/obs_capture_watchdog.pid" ;;
 	soviet_watchdog) echo "tmp/state/.soviet_watchdog.lock/owner" ;;
@@ -267,6 +270,7 @@ _pattern_for_worker() {
 	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
 	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
 	poll_worker) echo '[/ ]workers/poll_worker[.]sh([[:space:]]|$)' ;;
+	goal_worker) echo '[/ ]workers/goal_worker[.]sh([[:space:]]|$)' ;;
 	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
 	obs_capture_watchdog) echo '[/ ]obs_capture_watchdog[.]sh([[:space:]]|$)' ;;
 	soviet_watchdog) echo '[/ ]soviet_watchdog[.]sh([[:space:]]|$)' ;;
@@ -453,6 +457,7 @@ patterns = {
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
     "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
     "poll_worker": r"[/ ]workers/poll_worker[.]sh([ \t]|$)",
+    "goal_worker": r"[/ ]workers/goal_worker[.]sh([ \t]|$)",
     "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
     "soviet_watchdog": r"[/ ]soviet_watchdog[.]sh([ \t]|$)",
     "status_overlay_watch": r"[/ ]generate_status_overlay[.]sh[ \t]+watch([ \t]|$)",
