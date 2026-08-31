@@ -18,6 +18,8 @@ import re
 import sys
 from collections import Counter, defaultdict
 
+from lib.country_names import country_name, country_named_reason
+
 
 def load_game(filepath):
     """JSONLファイルを読み込み、ターンのリストを返す"""
@@ -209,24 +211,24 @@ def main():
     print(f"  min={turns_stats['min']}  max={turns_stats['max']}  avg={turns_stats['avg']}  median={turns_stats['median']}")
 
     print(f"\n## 建国進捗")
-    print(f"  russia_created={russia_count}/{len(games)}  soviet_created={soviet_count}/{len(games)}  max_piece_type={max_piece_type}")
+    print(f"  ロシア建国={russia_count}/{len(games)}  ソ連建国={soviet_count}/{len(games)}  最高国={country_name(max_piece_type)}")
     if russia_count == 0:
-        print("  WARNING: この改善バッチではロシア未到達。スコアだけでなく type15/16 到達経路を失敗シグナルとして扱うこと。")
-    print("  high_type_counts は最終盤面の type10+ 個数。type14 が2個以上あるのに type15 未到達なら、終盤併合逃しを最優先で疑うこと。")
+        print("  WARNING: この改善バッチではロシア未到達。スコアだけでなくロシア・ソ連への到達経路を失敗シグナルとして扱うこと。")
+    print("  終盤の国別個数は最終盤面のベラルーシ以上の個数。カザフスタンが2個以上あるのにロシア未到達なら、終盤併合逃しを最優先で疑うこと。")
 
     print(f"\n## 全試合スコア一覧")
     for g in sorted_games:
         russia_mark = " [RUSSIA]" if g["russia_created"] else ""
         soviet_mark = " [SOVIET!]" if g["soviet_created"] else ""
-        high_counts = " ".join(f"T{t}x{c}" for t, c in g["high_type_counts"].items()) or "none"
-        print(f"  {g['file']}: score={g['score']}, turns={g['turns']}, merge_rate={g['merge_rate']}%, max_type={g['max_piece_type']}, high_type_counts={high_counts}{russia_mark}{soviet_mark}")
+        high_counts = " ".join(f"{country_name(t)}x{c}" for t, c in g["high_type_counts"].items()) or "none"
+        print(f"  {g['file']}: score={g['score']}, turns={g['turns']}, merge_rate={g['merge_rate']}%, 最高国={country_name(g['max_piece_type'])}, 終盤の国別個数={high_counts}{russia_mark}{soviet_mark}")
 
     print(f"\n## decision_reason 全体分布 (上位10)")
     total_decisions = sum(all_reason_counter.values())
     for reason, count in all_reason_counter.most_common(10):
         pct = round(count / total_decisions * 100, 1)
         avg_delta = round(sum(all_reason_deltas[reason]) / len(all_reason_deltas[reason]), 1) if all_reason_deltas[reason] else 0
-        print(f"  {reason}: {count}回 ({pct}%), avg_score_delta={avg_delta}")
+        print(f"  {country_named_reason(reason)}: {count}回 ({pct}%), avg_score_delta={avg_delta}")
 
     if show_high_low_comparison:
         print(f"\n## 高スコア群 vs 低スコア群の比較")
@@ -236,12 +238,12 @@ def main():
         print(f"\n  高スコア群の reason 上位5:")
         high_total = sum(high_reasons.values())
         for reason, count in high_reasons.most_common(5):
-            print(f"    {reason}: {round(count / high_total * 100, 1)}%")
+            print(f"    {country_named_reason(reason)}: {round(count / high_total * 100, 1)}%")
 
         print(f"  低スコア群の reason 上位5:")
         low_total = sum(low_reasons.values())
         for reason, count in low_reasons.most_common(5):
-            print(f"    {reason}: {round(count / low_total * 100, 1)}%")
+            print(f"    {country_named_reason(reason)}: {round(count / low_total * 100, 1)}%")
 
         print(f"\n## max_y 推移 (盤面の高さ)")
         print(f"  高スコア群: 序盤avg={round(sum(g['early_avg_max_y'] for g in high_half) / len(high_half), 2)}, 終盤avg={round(sum(g['late_avg_max_y'] for g in high_half) / len(high_half), 2)}")

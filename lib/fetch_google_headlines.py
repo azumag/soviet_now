@@ -17,17 +17,29 @@ import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 
+# --- sports filter ---
+try:
+    _lib_dir = os.path.dirname(__file__)
+    if _lib_dir not in sys.path:
+        sys.path.insert(0, _lib_dir)
+    from sports_filter import is_sports_title  # type: ignore
+except Exception:  # fallback
+    def is_sports_title(title: str) -> bool:  # type: ignore
+        return False
+
 RSS_URLS = {
-    "world":  "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
-    "us":     "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRGxqTjNjd0VnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
-    "biz":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
-    "sci":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RjU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
-    "health": "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US%3Aen",
-    "jp":     "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNRE5mTTJRU0FtcGhLQUFQAQ?hl=ja&gl=JP&ceid=JP%3Aja",
-    "jp_biz": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
-    "jp_wrld":"https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
-    "jp_sci": "https://news.google.com/rss/topics/CAAqKAgKIiJDQkFTRXdvSkwyMHZNR1ptZHpWbUVnSnFZUm9DU2xBb0FBUAE?hl=ja&gl=JP&ceid=JP%3Aja",
-    "china":  "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    # 日本政治を優先: Google News は MAX_HEADLINES まで逐次取得なので JP を先頭に
+    "jp":         "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNRE5mTTJRU0FtcGhLQUFQAQ?hl=ja&gl=JP&ceid=JP%3Aja",
+    "jp_politics":"https://news.google.com/rss/search?q=%E6%94%BF%E6%B2%BB+OR+%E5%9B%BD%E4%BC%9A+OR+%E9%A6%96%E7%9B%B8+OR+%E6%94%BF%E5%BA%9C+OR+%E9%81%B8%E6%8C%99&hl=ja&gl=JP&ceid=JP:ja",
+    "jp_biz":     "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+    "jp_wrld":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+    "jp_sci":     "https://news.google.com/rss/topics/CAAqKAgKIiJDQkFTRXdvSkwyMHZNR1ptZHpWbUVnSnFZUm9DU2xBb0FBUAE?hl=ja&gl=JP&ceid=JP%3Aja",
+    "world":      "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+    "us":         "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRGxqTjNjd0VnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
+    "biz":        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
+    "sci":        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RjU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
+    "health":     "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US%3Aen",
+    "china":      "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
 }
 DEFAULT_RSS = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
 OUTPUT_FILE = "tmp/google_headlines.txt"
@@ -82,7 +94,7 @@ def fetch_headlines() -> list[tuple[str, str]]:
             for item in root.findall("./channel/item"):
                 t = strip_tags(item.findtext("title", default=""))
                 link = (item.findtext("link", default="") or "").strip()
-                if t:
+                if t and not is_sports_title(t):
                     items.append((t, link))
                 if len(items) >= MAX_HEADLINES:
                     break
@@ -112,12 +124,15 @@ def main():
         if url:
             meta[t] = {"url": url}
         k = title_key(t)
+        # double-check sports filter (already filtered in fetch, but keep for safety)
+        if is_sports_title(t):
+            continue
         if k and k not in past_keys:
             lines.append(f"\u25a0 {t}")
 
-    # Even if all are read, output all titles (caller handles empty unread)
+    # Even if all are read, output all titles (caller handles empty unread) — still exclude sports
     if not lines:
-        lines = [f"\u25a0 {t}" for t, _url in items]
+        lines = [f"\u25a0 {t}" for t, _url in items if not is_sports_title(t)]
 
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:

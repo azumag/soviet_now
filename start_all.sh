@@ -41,20 +41,24 @@ declare -a WORKER_NAMES=(
 	"improve_daemon"
 	"chat_worker"
 	"youtube_worker"
+	"kick_worker"
 	"audio_worker"
 	"deadline_monitor"
 	"radio_worker"
 	"prediction_worker"
+	"poll_worker"
 )
 declare -a WORKER_CMDS=(
 	"./soren_loop.sh"
 	"./improve_daemon.sh"
 	"./workers/chat_worker.sh ${TWITCH_CHANNEL:-azumagbanjo}"
 	"./workers/youtube_worker.sh"
+	"./workers/kick_worker.sh ${KICK_CHANNEL:-dociai}"
 	"./workers/audio_worker.sh"
 	"./workers/deadline_monitor.sh"
 	"./workers/radio_worker.sh"
 	"./workers/prediction_worker.sh"
+	"./workers/poll_worker.sh"
 )
 
 # The Linux broadcast VM historically launched soviet_local.mjs from a
@@ -74,21 +78,36 @@ case "$BRIDGE_WATCHDOG_ENABLED" in
 	;;
 esac
 
-# OBS' two HTML status surfaces used to live in detached tmux panes. On the
+# OBS HTML status surfaces used to live in detached tmux panes. On the
 # boot-persistent Linux runtime, supervise their watch loops directly so every
 # process belongs to the unit lifecycle and is recreated after a restart.
+# 統合 1 画面 (SOREN_UNIFIED_OVERLAY_ENABLED=1) では旧2枚を統合 soren_overlay 1枚に置換する。
 OVERLAY_WATCHERS_ENABLED="${SOREN_STATUS_OVERLAY_WATCHERS_ENABLED:-0}"
+UNIFIED_OVERLAY_ENABLED="${SOREN_UNIFIED_OVERLAY_ENABLED:-0}"
 case "$OVERLAY_WATCHERS_ENABLED" in
 0) ;;
 1)
-	WORKER_NAMES+=("status_overlay_watch" "show_status_overlay_watch")
-	WORKER_CMDS+=("./generate_status_overlay.sh watch 2" "./generate_show_status_overlay.sh watch 2")
+	if [ "$UNIFIED_OVERLAY_ENABLED" = "1" ]; then
+		WORKER_NAMES+=("soren_overlay_watch")
+		WORKER_CMDS+=("./generate_soren_overlay.sh watch 2")
+	else
+		WORKER_NAMES+=("status_overlay_watch" "show_status_overlay_watch")
+		WORKER_CMDS+=("./generate_status_overlay.sh watch 2" "./generate_show_status_overlay.sh watch 2")
+	fi
 	;;
 *)
 	echo "SOREN_STATUS_OVERLAY_WATCHERS_ENABLED must be 0 or 1" >&2
 	exit 2
 	;;
 esac
+case "$UNIFIED_OVERLAY_ENABLED" in
+0|1) ;;
+*)
+	echo "SOREN_UNIFIED_OVERLAY_ENABLED must be 0 or 1" >&2
+	exit 2
+	;;
+esac
+# 統合が有効でも旧2枚を裏で回す必要がある場合は別途 watch 起動するが supervisor 経由では管理しない
 
 STREAM_BACKEND="${SOREN_STREAM_BACKEND:-obs}"
 case "$STREAM_BACKEND" in
@@ -97,8 +116,19 @@ obs)
 	WORKER_CMDS+=("./obs_capture_watchdog.sh")
 	;;
 ffmpeg)
-	WORKER_NAMES+=("direct_stream")
-	WORKER_CMDS+=("./direct_stream.sh run")
+	WORKER_NAMES+=("direct_stream" "stream_noon_audit")
+	WORKER_CMDS+=("./direct_stream.sh run" "./workers/stream_noon_audit.sh")
+	case "${YOUTUBE_BROADCAST_GUARD_ENABLED:-0}" in
+	0) ;;
+	1)
+		WORKER_NAMES+=("youtube_broadcast_guard")
+		WORKER_CMDS+=("./workers/youtube_broadcast_guard.sh")
+		;;
+	*)
+		echo "YOUTUBE_BROADCAST_GUARD_ENABLED must be 0 or 1" >&2
+		exit 2
+		;;
+	esac
 	;;
 *)
 	echo "SOREN_STREAM_BACKEND must be obs or ffmpeg" >&2
@@ -207,16 +237,21 @@ _pidfile_for_worker() {
 	soren_loop) echo "tmp/.soren_loop.lock/pid" ;;
 	chat_worker) echo "tmp/state/chat_worker.pid" ;;
 	youtube_worker) echo "tmp/state/youtube_worker.pid" ;;
+	kick_worker) echo "tmp/state/kick_worker.pid" ;;
 	audio_worker) echo "tmp/state/audio_worker.pid" ;;
 	deadline_monitor) echo "tmp/state/deadline_monitor.pid" ;;
 	radio_worker) echo "tmp/state/radio_worker.pid" ;;
 	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
+	poll_worker) echo "tmp/state/poll_worker.pid" ;;
 	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
 	obs_capture_watchdog) echo "tmp/state/obs_capture_watchdog.pid" ;;
 	soviet_watchdog) echo "tmp/state/.soviet_watchdog.lock/owner" ;;
 	status_overlay_watch) echo "tmp/state/status_overlay_watch.pid" ;;
 	show_status_overlay_watch) echo "tmp/state/show_status_overlay_watch.pid" ;;
+	soren_overlay_watch) echo "tmp/state/soren_overlay_watch.pid" ;;
 	direct_stream) echo "tmp/state/direct_stream.pid" ;;
+	stream_noon_audit) echo "tmp/state/stream_noon_audit.pid" ;;
+	youtube_broadcast_guard) echo "${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}" ;;
 	*) echo "" ;;
 	esac
 }
@@ -226,16 +261,21 @@ _pattern_for_worker() {
 	soren_loop) echo '[/ ]soren_loop[.]sh([[:space:]]|$)' ;;
 	chat_worker) echo '[/ ]workers/chat_worker[.]sh([[:space:]]|$)' ;;
 	youtube_worker) echo '[/ ]workers/youtube_worker[.]sh([[:space:]]|$)' ;;
+	kick_worker) echo '[/ ]workers/kick_worker[.]sh([[:space:]]|$)' ;;
 	audio_worker) echo '[/ ]workers/audio_worker[.]sh([[:space:]]|$)' ;;
 	deadline_monitor) echo '[/ ]workers/deadline_monitor[.]sh([[:space:]]|$)|[/ ]deadline_misplacement_monitor[.]py([[:space:]]|$)' ;;
 	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
 	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
+	poll_worker) echo '[/ ]workers/poll_worker[.]sh([[:space:]]|$)' ;;
 	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
 	obs_capture_watchdog) echo '[/ ]obs_capture_watchdog[.]sh([[:space:]]|$)' ;;
 	soviet_watchdog) echo '[/ ]soviet_watchdog[.]sh([[:space:]]|$)' ;;
 	status_overlay_watch) echo '[/ ]generate_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	show_status_overlay_watch) echo '[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	soren_overlay_watch) echo '[/ ]generate_soren_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
 	direct_stream) echo '[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
+	stream_noon_audit) echo '[/ ]workers/stream_noon_audit[.]sh([[:space:]]|$)' ;;
+	youtube_broadcast_guard) echo '[/ ]lib/youtube_broadcast_guard[.]py[[:space:]]+run([[:space:]]|$)' ;;
 	*) echo "" ;;
 	esac
 }
@@ -345,7 +385,7 @@ _find_existing_worker_pid() {
 	# arguments merely mention soviet_watchdog.sh can otherwise be mistaken for
 	# the worker and adopted until that short-lived shell exits.
 	case "$name" in
-	soviet_watchdog|status_overlay_watch|show_status_overlay_watch)
+	soviet_watchdog|status_overlay_watch|show_status_overlay_watch|soren_overlay_watch)
 		return 1
 		;;
 	esac
@@ -407,15 +447,20 @@ patterns = {
     "soren_loop": r"[/ ]soren_loop[.]sh([ \t]|$)",
     "chat_worker": r"[/ ]workers/chat_worker[.]sh([ \t]|$)",
     "youtube_worker": r"[/ ]workers/youtube_worker[.]sh([ \t]|$)",
+    "kick_worker": r"[/ ]workers/kick_worker[.]sh([ \t]|$)",
     "audio_worker": r"[/ ]workers/audio_worker[.]sh([ \t]|$)",
     "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
     "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
+    "poll_worker": r"[/ ]workers/poll_worker[.]sh([ \t]|$)",
     "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
     "soviet_watchdog": r"[/ ]soviet_watchdog[.]sh([ \t]|$)",
     "status_overlay_watch": r"[/ ]generate_status_overlay[.]sh[ \t]+watch([ \t]|$)",
     "show_status_overlay_watch": r"[/ ]generate_show_status_overlay[.]sh[ \t]+watch([ \t]|$)",
+    "soren_overlay_watch": r"[/ ]generate_soren_overlay[.]sh[ \t]+watch([ \t]|$)",
     "direct_stream": r"[/ ]lib/direct_stream[.]py[ \t]+run([ \t]|$)",
+    "stream_noon_audit": r"[/ ]workers/stream_noon_audit[.]sh([ \t]|$)",
+    "youtube_broadcast_guard": r"[/ ]lib/youtube_broadcast_guard[.]py[ \t]+run([ \t]|$)",
 }
 
 try:
@@ -563,6 +608,18 @@ _start_worker() {
 		return 0
 	fi
 	if [ "$name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+		_log "スキップ: ${name} disabled"
+		WORKER_PIDS[$idx]=""
+		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
+	if [ "$name" = "kick_worker" ] && [ "${KICK_CHAT_ENABLED:-0}" != "1" ]; then
+		_log "スキップ: ${name} disabled"
+		WORKER_PIDS[$idx]=""
+		WORKER_LAST_START[$idx]=$(date +%s)
+		return 0
+	fi
+	if [ "$name" = "stream_noon_audit" ] && [ "${STREAM_NOON_AUDIT_ENABLED:-1}" != "1" ]; then
 		_log "スキップ: ${name} disabled"
 		WORKER_PIDS[$idx]=""
 		WORKER_LAST_START[$idx]=$(date +%s)
@@ -717,6 +774,12 @@ while true; do
 			continue
 		fi
 		if [ "$_w_name" = "youtube_worker" ] && [ "${YOUTUBE_CHAT_ENABLED:-0}" != "1" ]; then
+			continue
+		fi
+		if [ "$_w_name" = "kick_worker" ] && [ "${KICK_CHAT_ENABLED:-0}" != "1" ]; then
+			continue
+		fi
+		if [ "$_w_name" = "stream_noon_audit" ] && [ "${STREAM_NOON_AUDIT_ENABLED:-1}" != "1" ]; then
 			continue
 		fi
 		if [ "$_w_name" = "soren_loop" ] && [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then

@@ -26,6 +26,8 @@ PID_FILE="$CHAT_DIR/daemon.pid"
 OFFSET_FILE="$CHAT_DIR/last_offset" # 前回fetchした行数
 PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
 OUTFILE="${TWITCH_CHAT_OUTFILE:-tmp/twitch_comments.txt}"
+OUTFILE_METADATA="${OUTFILE}.viewer_meta.jsonl"
+VIEWER_MEMORY_HELPER="lib/comment_viewer_memory.py"
 SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log" # 直近に処理済みのTwitch msg-id
 SEEN_ID_MAX=4000
 SEEN_LINE_HASH_FILE="$CHAT_DIR/seen_line_hashes.log" # 直近に処理済みのコメント行ハッシュ
@@ -185,7 +187,9 @@ _is_card_gacha_result_line() {
 
 _is_ignored_comment_author_line() {
     local line="$1"
-    local ignored="${TWITCH_IGNORE_AUTHORS:-azumagdev azumagbanjo あずまぐ}"
+    # dociai=配信チャンネル兼 outbound bot(自分の投稿), azumagdev=旧 bot アカウント。
+    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので無視しない(2026-08-26 ユーザー指示)。
+    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}"
     local item
     for item in $ignored; do
         printf '%s\n' "$line" | grep -Fqi -- "${item}: " && return 0
@@ -355,8 +359,8 @@ _fetch_nolock() {
             while IFS= read -r raw_line; do
                 [ -n "$raw_line" ] || continue
 
-                local msg_id="" comment_line="$raw_line"
-                # 新形式: id=<twitch-msg-id>\t<display>: <message>
+                local msg_id="" stable_user_id="" author_login="" author_display="" metadata_flags="" comment_line="$raw_line"
+                # 新形式: ID群と本文を同じ行に保持する。
                 if [[ "$raw_line" == id=*"$TAB"* ]]; then
                     msg_id="${raw_line%%"$TAB"*}"
                     msg_id="${msg_id#id=}"
@@ -366,7 +370,31 @@ _fetch_nolock() {
                         msg_id=""
                         ;;
                     esac
+                    if [[ "$comment_line" == user-id=*"$TAB"* ]]; then
+                        stable_user_id="${comment_line%%"$TAB"*}"
+                        stable_user_id="${stable_user_id#user-id=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == login=*"$TAB"* ]]; then
+                        author_login="${comment_line%%"$TAB"*}"
+                        author_login="${author_login#login=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == display=*"$TAB"* ]]; then
+                        author_display="${comment_line%%"$TAB"*}"
+                        author_display="${author_display#display=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
+                    if [[ "$comment_line" == flags=*"$TAB"* ]]; then
+                        metadata_flags="${comment_line%%"$TAB"*}"
+                        metadata_flags="${metadata_flags#flags=}"
+                        comment_line="${comment_line#*"$TAB"}"
+                    fi
                 fi
+				stable_user_id=$(printf '%s' "$stable_user_id" | tr -cd '[:alnum:]_.:@-')
+				author_login=$(printf '%s' "$author_login" | tr -cd '[:alnum:]_.:@-')
+				author_display=$(printf '%s' "$author_display" | tr -d '\t\r\n')
+				metadata_flags=$(printf '%s' "$metadata_flags" | tr -cd '[:alnum:]_.,:@-')
 
                 local clean_line=""
                 clean_line=$(_sanitize_comment_line "$comment_line")
@@ -394,7 +422,8 @@ _fetch_nolock() {
                     echo "$line_hash" >> "$seen_line_batch_tmp"
                 fi
 
-                echo "$clean_line" >> "$scan_tmp"
+                printf 'id=%s\tuser-id=%s\tlogin=%s\tdisplay=%s\tflags=%s\t%s\n' \
+                    "$msg_id" "$stable_user_id" "$author_login" "$author_display" "$metadata_flags" "$clean_line" >>"$scan_tmp"
             done <<<"$(printf '%s\n' "$new_comments")"
 
             # 同一行の重複を除去（多重接続/再送対策）
@@ -447,14 +476,21 @@ _fetch_nolock() {
             _log "fetch: pending重複を$((before_count - after_count))件除去"
         fi
 
-        # pending は FIFO で先頭から処理する
-        head -10 "$PENDING_LOG" > "$OUTFILE"
+        # pending は内部メタデータ付き。モデルへ渡す平文とID sidecarを同時生成する。
+        if [ -f "$VIEWER_MEMORY_HELPER" ]; then
+            python3 "$VIEWER_MEMORY_HELPER" emit-batch \
+                --pending "$PENDING_LOG" --out "$OUTFILE" --source twitch --limit 10 >/dev/null
+        else
+            awk -F'\t' '{print $NF}' "$PENDING_LOG" | head -10 >"$OUTFILE"
+            rm -f "$OUTFILE_METADATA"
+        fi
         local pending_count
         pending_count=$(wc -l < "$OUTFILE" | tr -d ' ')
         _log "fetch: pending ${pending_count}件を出力"
     else
-        rm -f "$OUTFILE"
-        _log "fetch: 未読コメントなし"
+        rm -f "$OUTFILE" "$OUTFILE_METADATA"
+        # 高頻度ポーリングの定期状態であり、stderr 収集ログのノイズになるため無音
+        :
     fi
 }
 
@@ -468,6 +504,7 @@ _ack_nolock() {
         local count
         count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
         > "$PENDING_LOG"
+		rm -f "$OUTFILE_METADATA"
         _log "ack: ${count}件の読み上げ完了を確認、pending.logクリア"
     else
         _log "ack: pending.logは空"
@@ -501,7 +538,54 @@ _ack_batch_nolock() {
     fi
 
     before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
-    grep -vxF -f "$batch_tmp" "$PENDING_LOG" > "$out_tmp" || true
+	# New batches carry the provider message ID and remove only that exact row.
+	# Legacy/plain batches use NFKC-normalized text as a compatibility fallback;
+	# model-facing lines are normalized while pending envelopes retain the original
+	# full-width punctuation.
+	if ! python3 - "$batch_tmp" "$PENDING_LOG" "$out_tmp" <<'PY'
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+batch_path, pending_path, out_path = map(Path, sys.argv[1:4])
+id_re = re.compile(r"^[0-9A-Za-z-]+$")
+
+
+def normalized_line(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).split())
+
+
+target_ids: set[str] = set()
+target_lines: set[str] = set()
+for raw in batch_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    fields = raw.split("\t")
+    message_id = fields[0][3:] if fields and fields[0].startswith("id=") else ""
+    if message_id and id_re.fullmatch(message_id):
+        target_ids.add(message_id)
+    elif fields:
+        text = normalized_line(fields[-1])
+        if text:
+            target_lines.add(text)
+
+kept: list[str] = []
+for raw in pending_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    fields = raw.split("\t")
+    message_id = fields[0][3:] if fields and fields[0].startswith("id=") else ""
+    if message_id and message_id in target_ids:
+        continue
+    text = normalized_line(fields[-1]) if fields else ""
+    if text and text in target_lines:
+        continue
+    kept.append(raw)
+
+Path(out_path).write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+PY
+	then
+		rm -f "$batch_tmp" "$out_tmp"
+		_log "ack_batch: message-id照合に失敗したためpendingを維持"
+		return 1
+	fi
     cat "$out_tmp" > "$PENDING_LOG"
     after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
     removed_count=$((before_count - after_count))

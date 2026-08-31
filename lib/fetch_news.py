@@ -9,6 +9,7 @@ import json
 import os
 import random
 import re
+import sys
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -24,28 +25,55 @@ TMP_STATE_DIR = os.path.join(TMP_DIR, "state")
 
 OUTFILE = os.path.join(TMP_DIR, "news.txt")
 META_OUTFILE = os.path.join(TMP_DIR, "news_meta.json")
-PAST_NEWS = os.path.join(TMP_HISTORY_DIR, ".past_news_titles.txt")
-PAST_NEWS_LINKS = os.path.join(TMP_HISTORY_DIR, ".past_news_links.txt")
+# 取得しただけの記事ではなく、radio_news.sh が実際に選定した記事だけを既読にする。
+PAST_NEWS = os.path.join(TMP_HISTORY_DIR, "past_news_read.txt")
 PAST_NEWS_LINK_HASHES = os.path.join(TMP_HISTORY_DIR, "past_news_url_hashes.txt")
 LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
 LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
 FETCH_STATUS_FILE = os.path.join(TMP_STATE_DIR, ".news_fetch_status.json")
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
+try:
+    NEWS_MAX_AGE_HOURS = max(1, int(os.environ.get("NEWS_MAX_AGE_HOURS", "48")))
+except ValueError:
+    NEWS_MAX_AGE_HOURS = 48
 
 PER_SOURCE_LIMIT = 30
 SUMMARY_LIMIT = 4000
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
 
+# --- sports filter (shared logic) ---
+try:
+    sys_path_backup = os.path.dirname(__file__)
+    if sys_path_backup not in sys.path:
+        sys.path.insert(0, sys_path_backup)
+    from sports_filter import is_sports_title  # type: ignore
+except Exception:  # fallback: no filter if module missing
+    def is_sports_title(title: str) -> bool:  # type: ignore
+        return False
+
+try:
+    from news_topic_filter import is_low_value_news_title, is_public_interest_news_title  # type: ignore
+except Exception:  # fallback: keep fetching if the optional filter cannot load
+    def is_low_value_news_title(title: str) -> bool:  # type: ignore
+        return False
+    def is_public_interest_news_title(title: str) -> bool:  # type: ignore
+        return True
+
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 FILTER_REASON_KEYS = (
     "missing_identity",
+    "missing_published_at",
+    "stale_published_at",
     "past_title",
     "past_link",
     "past_link_hash",
     "duplicate_title",
     "duplicate_link",
     "duplicate_link_hash",
+    "sports",
+    "low_value_topic",
+    "outside_public_affairs",
     "passed",
 )
 FILTER_SAMPLE_LIMIT = 3
@@ -59,97 +87,48 @@ def should_exclude_wikinews_author(author: str, source_key: str) -> bool:
     return normalized in {"トモモ", "背後のトモモ"}
 
 SOURCES = [
+    # 社会・政治・国際情勢・経済/ビジネスに限定したGoogle News RSSを使う。
+    # 総合トップと科学カテゴリは、芸能・スポーツ・製品紹介の混入が多いため使わない。
+    # AIの記憶による自主選定は行わず、この実在見出し・URL・pubDateを後段へ渡す。
     {
-        "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
-        "key": "wikinews",
-        "name": "ウィキニュース",
-        "license": "CC BY 4.0",
+        "url": "https://news.google.com/rss/search?q=%E7%A4%BE%E4%BC%9A+OR+%E5%8F%B8%E6%B3%95+OR+%E4%BA%8B%E4%BB%B6+OR+%E7%81%BD%E5%AE%B3+OR+%E5%8A%B4%E5%83%8D+OR+%E7%A6%8F%E7%A5%89&hl=ja&gl=JP&ceid=JP:ja",
+        "key": "google_news_jp_society",
+        "name": "Google News 日本社会",
+        "license": "各配信元",
         "lang": "ja",
     },
     {
-        "url": "https://en.wikinews.org/w/index.php?title=Special:NewPages&feed=rss",
-        "key": "wikinews_en",
-        "name": "Wikinews(EN)",
-        "license": "CC BY 4.0",
-        "lang": "en",
+        "url": "https://news.google.com/rss/search?q=%E6%94%BF%E6%B2%BB+OR+%E5%9B%BD%E4%BC%9A+OR+%E9%A6%96%E7%9B%B8+OR+%E6%94%BF%E5%BA%9C+OR+%E9%81%B8%E6%8C%99&hl=ja&gl=JP&ceid=JP:ja",
+        "key": "google_news_jp_politics",
+        "name": "Google News 日本政治",
+        "license": "各配信元",
+        "lang": "ja",
     },
     {
-        "url": "https://fr.wikinews.org/w/index.php?title=Spécial:Nouvelles_pages&feed=rss",
-        "key": "wikinews_fr",
-        "name": "Wikinews(FR)",
-        "license": "CC BY 4.0",
-        "lang": "fr",
+        "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+        "key": "google_news_jp_business",
+        "name": "Google News 日本経済",
+        "license": "各配信元",
+        "lang": "ja",
     },
     {
-        "url": "https://ru.wikinews.org/w/index.php?title=Служебная:Новые_страницы&feed=rss",
-        "key": "wikinews_ru",
-        "name": "Wikinews(RU)",
-        "license": "CC BY 4.0",
-        "lang": "ru",
+        "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+        "key": "google_news_jp_world",
+        "name": "Google News 国際",
+        "license": "各配信元",
+        "lang": "ja",
     },
+    # --- 日本の政治系ソース (国内政治の比率を上げるため) ---
     {
-        "url": "https://de.wikinews.org/w/index.php?title=Spezial:Neue_Seiten&feed=rss",
-        "key": "wikinews_de",
-        "name": "Wikinews(DE)",
-        "license": "CC BY 4.0",
-        "lang": "de",
+        "url": "https://www.nhk.or.jp/rss/news/cat4.xml",
+        "key": "nhk_politics",
+        "name": "NHK 政治",
+        "license": "NHK",
+        "lang": "ja",
     },
-    {
-        "url": "https://ar.wikinews.org/w/index.php?title=خاص:صفحات_جديدة&feed=rss",
-        "key": "wikinews_ar",
-        "name": "Wikinews(AR)",
-        "license": "CC BY 4.0",
-        "lang": "ar",
-    },
-    {
-        "url": "https://cs.wikinews.org/w/index.php?title=Speciální:Nové_stránky&feed=rss",
-        "key": "wikinews_cs",
-        "name": "Wikinews(CS)",
-        "license": "CC BY 4.0",
-        "lang": "cs",
-    },
-    {
-        "url": "https://eo.wikinews.org/w/index.php?title=Specialaĵo:Novaj_paĝoj&feed=rss",
-        "key": "wikinews_eo",
-        "name": "Wikinews(EO)",
-        "license": "CC BY 4.0",
-        "lang": "eo",
-    },
-    {
-        "url": "https://fi.wikinews.org/w/index.php?title=Toiminnot:Uudet_sivut&feed=rss",
-        "key": "wikinews_fi",
-        "name": "Wikinews(FI)",
-        "license": "CC BY 4.0",
-        "lang": "fi",
-    },
-    {
-        "url": "https://he.wikinews.org/w/index.php?title=מיוחד:דפים_חדשים&feed=rss",
-        "key": "wikinews_he",
-        "name": "Wikinews(HE)",
-        "license": "CC BY 4.0",
-        "lang": "he",
-    },
-    {
-        "url": "https://pl.wikinews.org/w/index.php?title=Specjalna:Nowe_strony&feed=rss",
-        "key": "wikinews_pl",
-        "name": "Wikinews(PL)",
-        "license": "CC BY 4.0",
-        "lang": "pl",
-    },
-    {
-        "url": "https://uk.wikinews.org/w/index.php?title=Спеціальна:Нові_сторінки&feed=rss",
-        "key": "wikinews_uk",
-        "name": "Wikinews(UK)",
-        "license": "CC BY 4.0",
-        "lang": "uk",
-    },
-    {
-        "url": "https://zh.wikinews.org/w/index.php?title=Special:新页面&feed=rss",
-        "key": "wikinews_zh",
-        "name": "Wikinews(ZH)",
-        "license": "CC BY 4.0",
-        "lang": "zh",
-    },
+    # NOTE: Wikinews (ja/en/fr/ru/de/ar/cs/eo/fi/he/pl/uk/zh) は 2026-08-26 に削除した。
+    # Special:NewPages の RSS も API (list=recentchanges&rctype=new) も全言語で 0 件を返し、
+    # 上流が事実上休止していたため。13 ソース分の無駄な HTTP 取得も止まる。
     {
         "url": "https://jp.globalvoices.org/feed/",
         "key": "globalvoices",
@@ -222,6 +201,8 @@ def source_family(key: str) -> str:
         return "wikinews"
     if key.startswith("globalvoices"):
         return "globalvoices"
+    if key.startswith("google_news"):
+        return "google_news"
     return key
 
 
@@ -382,8 +363,17 @@ def filter_disabled_cached_outputs(news_text: str, meta: dict) -> tuple[str, dic
             (item or {}).get("author", ""),
             (item or {}).get("source_key", ""),
         )
+        and not is_sports_title(title)
+        and not is_low_value_news_title(title)
+        and (
+            not (item or {}).get("source_key", "").startswith("google_news_")
+            or is_public_interest_news_title(title)
+        )
     }
+    # quick exit only if no filtering happened (including sports)
     if len(filtered_meta) == len(meta):
+        # still need to check if any sports title would have been filtered
+        # (len equal means no disabled/sports found)
         return news_text, filtered_meta
 
     blocks = []
@@ -577,13 +567,13 @@ def fetch_source_items(source: dict) -> list[dict]:
 
 def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str, list[dict]], dict]:
     past_title_keys = {title_key(title) for title in load_lines(PAST_NEWS)}
-    past_links = set(load_lines(PAST_NEWS_LINKS))
     past_link_hashes = set(load_lines(PAST_NEWS_LINK_HASHES))
     seen_title_keys: set[str] = set()
     seen_links: set[str] = set()
     seen_link_hashes: set[str] = set()
     filtered: dict[str, list[dict]] = {}
     filter_stats = new_filter_stats()
+    freshness_cutoff = int(datetime.now(timezone.utc).timestamp()) - NEWS_MAX_AGE_HOURS * 3600
 
     for source in SOURCES:
         key = source["key"]
@@ -592,13 +582,25 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
             item_title_key = title_key(item["title"])
             item_link = item["url"]
             item_link_hash = link_hash(item_link)
+            try:
+                published_ts = int(item.get("published_ts", 0) or 0)
+            except (TypeError, ValueError):
+                published_ts = 0
             reason = "passed"
             if not item_title_key or not item_link:
                 reason = "missing_identity"
+            elif published_ts <= 0:
+                reason = "missing_published_at"
+            elif published_ts < freshness_cutoff:
+                reason = "stale_published_at"
+            elif is_sports_title(item["title"]):
+                reason = "sports"
+            elif is_low_value_news_title(item["title"]):
+                reason = "low_value_topic"
+            elif key.startswith("google_news_") and not is_public_interest_news_title(item["title"]):
+                reason = "outside_public_affairs"
             elif item_title_key in past_title_keys:
                 reason = "past_title"
-            elif item_link in past_links:
-                reason = "past_link"
             elif item_link_hash and item_link_hash in past_link_hashes:
                 reason = "past_link_hash"
             elif item_title_key in seen_title_keys:
@@ -787,8 +789,6 @@ def main() -> int:
         }
     )
 
-    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 300)
-    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 300)
     return 0
 
 

@@ -176,6 +176,7 @@ queue_early_escape_lock_if_needed() {
 	# post-game 経路と next-game-preflight の両方から呼び、取りこぼしを防ぐ。
 	[ "${WILDCARD_EARLY_ESCAPE_LOCK_ENABLED:-1}" = "1" ] || return 1
 	[ "${WILDCARD_ENABLED:-0}" = "1" ] || return 1
+	[ ! -f "$TMP_STATE_DIR/improve_daemon.paused" ] || return 1
 	[ -f "$ACCUMULATED_GAMES_FILE" ] || return 1
 	[ ! -f "$IMPROVE_LOCK_FILE" ] || return 1
 	[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] || return 1
@@ -426,6 +427,7 @@ json.dump(d,open(f,'w'))
 _format_regression_reason() {
 	python3 - "${REGRESSION_ROLLBACK_RESULT:-}" <<'PY'
 import sys
+from lib.country_names import country_name
 reason_map = {
     "early_comp_top_gap": "comp比率低下",
     "curr_comp_below_top_ratio": "top対比comp不足",
@@ -435,7 +437,8 @@ reason_map = {
     "lost_russia_path": "ロシア経路喪失",
     "lost_soviet_path": "ソ連経路喪失",
     "archive_restart_objective_floor": "archive再起動目的未達",
-    "lost_turkmenistan_gate": "トゥルクメニスタン段階未達",
+    # Historical reason key retained for stored-result compatibility.
+    "lost_turkmenistan_gate": "ウズベキスタン段階未達",
     "lost_kazakhstan_gate": "カザフスタン段階未達",
 }
 result = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -452,7 +455,7 @@ for r in reason_raw.split("+"):
     key = r.split("=")[0] if "=" in r else r
     if key.startswith("stage_type") and key.endswith("_achievement_gate"):
         stage = key[len("stage_type"):-len("_achievement_gate")]
-        labels.append(f"Type{stage}到達ゲート未達")
+        labels.append(f"{country_name(stage, '対象国')}到達ゲート未達")
     else:
         labels.append(reason_map.get(key, key))
 print("理由: " + " / ".join(labels))
@@ -488,6 +491,8 @@ import json
 import os
 import re
 import sys
+
+from lib.country_names import country_name
 
 result, rollback_hash, current_file, rolling_file, stagnation_file, threshold_raw = sys.argv[1:7]
 
@@ -563,16 +568,16 @@ objective_loss = (
 
 if target_has_progress:
     mode = "revalidate"
-    detail = f"target_progress_russia={target_russia}_best={target_best}"
+    detail = f"ロシア到達={target_russia}_最高国={country_name(target_best)}"
 elif objective_loss and russia_path_loss and rstreak >= threshold:
     mode = "direct_escape"
-    detail = f"objective_loss_rstreak={rstreak}_target_russia={target_russia}_best={target_best}"
+    detail = f"目的進捗喪失_連続回帰={rstreak}_ロシア到達={target_russia}_最高国={country_name(target_best)}"
 else:
     mode = "post_regression"
     if stage_objective_loss and stage_target > 0:
-        detail = f"rstreak={rstreak}_stage_target={stage_target}_objective_loss={int(objective_loss)}"
+        detail = f"連続回帰={rstreak}_対象国={country_name(stage_target)}_目的進捗喪失={int(objective_loss)}"
     else:
-        detail = f"rstreak={rstreak}_objective_loss={int(objective_loss)}"
+        detail = f"連続回帰={rstreak}_目的進捗喪失={int(objective_loss)}"
 
 print(f"{mode}|{detail}|{rstreak}|{int(objective_loss)}|{int(target_has_progress)}")
 PY
@@ -745,6 +750,48 @@ _run_scheduled_meriken_time_window() {
 	return 0
 }
 
+_run_daily_soren91_window() {
+	local end_epoch=""
+	end_epoch=$(soren91_daily_active_end_epoch 2>/dev/null || true)
+	if [ -z "$end_epoch" ]; then
+		end_epoch=$(soren91_daily_begin 2>/dev/null || true)
+	fi
+	case "$end_epoch" in
+	'' | *[!0-9]*)
+		log "[SOREN91:DAILY] 日次枠の開始状態を確保できません"
+		return 1
+		;;
+	esac
+	if [ "$end_epoch" -le "$(date +%s)" ]; then
+		log "[SOREN91:DAILY] 再起動中に日次枠が終了済み。残存Soren91を停止して通常ゲームへ復帰"
+		soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+		soren91_daily_mark_completed
+		return 0
+	fi
+	log "[SOREN91:DAILY] 通常ゲームを試合境界で一時停止し、日次Soren91枠を開始 (until=$(scheduled_meriken_time_end_label "$end_epoch" 2>/dev/null || echo "$end_epoch"))"
+	if ! soren91_start; then
+		log "[SOREN91:DAILY] 起動失敗。通常ゲームへ戻し、再試行を予約"
+		soren91_cleanup 2>/dev/null || true
+		soren91_daily_mark_failed
+		return 1
+	fi
+	if ! soren91_wait_ready "${SOREN91_DAILY_READY_TIMEOUT_SEC:-120}"; then
+		log "[SOREN91:DAILY] ゲーム画面の準備を確認できません。通常ゲームへ戻し、再試行を予約"
+		SOREN91_STOP_TIMEOUT=0 soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+		soren91_daily_mark_failed
+		return 1
+	fi
+	log "[SOREN91:DAILY] Soren91ゲーム画面の準備完了を確認"
+	while [ "$(date +%s)" -lt "$end_epoch" ]; do
+		[ -f tmp/stop ] && break
+		sleep 15
+	done
+	log "[SOREN91:DAILY] 約1時間の枠を終了し、通常ゲームへ復帰"
+	soren91_stop 2>/dev/null || soren91_cleanup 2>/dev/null || true
+	soren91_daily_mark_completed
+	return 0
+}
+
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
 log "strategy.py → 1game → adaptive improve → repeat"
@@ -835,6 +882,13 @@ while true; do
 		continue
 	fi
 
+	# 再起動で日次枠の途中へ戻った場合は、その枠だけを再開する。
+	_daily_active_end=$(soren91_daily_active_end_epoch 2>/dev/null || true)
+	if [ -n "$_daily_active_end" ]; then
+		_run_daily_soren91_window
+		continue
+	fi
+
 	# 手動メリケンモードは従来どおり専用ゲームへ切り替える。
 	if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
@@ -850,7 +904,8 @@ while true; do
 	# daemon の30秒poll待ちで次ゲームが先に始まり、改善ロックが飢餓するのを防ぐ。
 	_improve_running_now=0
 	_is_improve_running && _improve_running_now=1
-	if _improve_keep_main_game_running && [ "$_improve_running_now" -eq 0 ] &&
+	if [ ! -f "$TMP_STATE_DIR/improve_daemon.paused" ] &&
+		_improve_keep_main_game_running && [ "$_improve_running_now" -eq 0 ] &&
 		[ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		log_pause_throttled "continuous_improve_spawn" "[IMPROVE] 改善ロックをゲーム境界で非同期起動（メインゲーム継続）"
 		IMPROVE_DAEMON_MODE=0 trigger_adaptive_improvement || true
@@ -1056,6 +1111,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 			# 粛清理由も保存 (twitch投稿用に、後で人が読みやすい形式に変換)
 			python3 - "$TMP_STATE_DIR/current_prediction.json" "${REGRESSION_ROLLBACK_RESULT:-}" <<'PY' 2>/dev/null || true
 import json, sys
+from lib.country_names import country_name
 state_file = sys.argv[1]
 regression_result = sys.argv[2] if len(sys.argv) > 2 else ""
 d = json.load(open(state_file))
@@ -1084,7 +1140,8 @@ reason_map = {
     "lost_soviet_path": "ソ連建国ルートを見失った",
     "lost_russia_path": "ロシア建国ルートを見失った",
     "lost_ukraine_gate": "ウクライナ段階まで届かなくなった",
-    "lost_turkmenistan_gate": "トルクメニスタン段階まで届かなくなった",
+    # Historical reason key retained for stored-result compatibility.
+    "lost_turkmenistan_gate": "ウズベキスタン段階まで届かなくなった",
     "lost_kazakhstan_gate": "カザフスタン段階まで届かなくなった",
     # 判定の経緯系
     "budget_exhausted": "改良を試し切っても成績が戻らなかった",
@@ -1104,7 +1161,7 @@ for r in reason_raw.split("+"):
         continue
     if key.startswith("stage_type") and key.endswith("_achievement_gate"):
         stage = key[len("stage_type"):-len("_achievement_gate")]
-        label = f"国をType{stage}まで育てられる回数が減った"
+        label = f"{country_name(stage, '対象国')}まで育てられる回数が減った"
     elif key.startswith("rank") and key[4:].isdigit():
         label = f"成熟度ランキングで上位{key[4:]}位圏から落ちた"
     else:
@@ -1279,6 +1336,12 @@ json.dump(d,open(f,'w'))
 " 2>/dev/null || true
 			_clear_accumulated_data
 		fi
+	fi
+
+	# 日次ランダム枠は通常ゲームの試合終了境界でだけ開始する。
+	# これにより進行中の通常ゲームを破棄せず、Soren91終了後に次ゲームから復帰する。
+	if command -v soren91_daily_should_start >/dev/null 2>&1 && soren91_daily_should_start; then
+		_run_daily_soren91_window || true
 	fi
 
 	# 20時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で定時枠終了までメリケンモード

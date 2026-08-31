@@ -26,6 +26,7 @@ SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
 SOREN91_STOPPING_FILE="$SOREN91_DIR/tmp/stopping"
+SOREN91_READY_FILE="$SOREN91_DIR/tmp/ready"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
 SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
@@ -39,6 +40,7 @@ SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
 MERIKEN_TIME_START_HOUR="${MERIKEN_TIME_START_HOUR:-20}"
 MERIKEN_TIME_END_HOUR="${MERIKEN_TIME_END_HOUR:-21}"
 MERIKEN_TIME_STATE_FILE="${MERIKEN_TIME_STATE_FILE:-$TMP_STATE_DIR/meriken_time_state.json}"
+SOREN91_DAILY_STATE_FILE="${SOREN91_DAILY_STATE_FILE:-$TMP_STATE_DIR/soren91_daily.json}"
 SOREN91_MODE_FLAG_FILE="${SOREN91_MODE_FLAG_FILE:-$ELOOP_LIB_DIR/tmp/.soren91_mode_active}"
 SOREN91_LAST_ACTIVATE_MODE=""
 SOREN91_LAST_ACTIVATE_STATE_FILE="${SOREN91_LAST_ACTIVATE_STATE_FILE:-$ELOOP_LIB_DIR/tmp/.soren91_last_activate_mode}"
@@ -255,6 +257,28 @@ _soren91_pid_is_alive() {
 	return 0
 }
 
+# PID files and runner locks survive crashes. A recycled PID must never be
+# allowed to stop the normal soviet_local bridge or soren_loop. Require both a
+# Soren91 player command and the Soren91 working directory before acting on it.
+_soren91_pid_is_owned_player() {
+	local pid="${1:-}" cmd="" cwd=""
+	_soren91_pid_is_alive "$pid" || return 1
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+	printf '%s' "$cmd" | grep -Eq '(^|[ /])(node[[:space:]]+([^[:space:]]*/)?main\.mjs|([^[:space:]]*/)?run_player_loop\.sh)([[:space:]]|$)' || return 1
+	if [ -e "/proc/$pid/cwd" ]; then
+		cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+		[ "$cwd" = "$SOREN91_DIR" ] || return 1
+	else
+		cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)
+		if [ -n "$cwd" ]; then
+			[ "$cwd" = "$SOREN91_DIR" ] || return 1
+		else
+			printf '%s' "$cmd" | grep -F "$SOREN91_DIR" >/dev/null 2>&1 || return 1
+		fi
+	fi
+	return 0
+}
+
 _soren91_kill_runner_session() {
 	command -v tmux >/dev/null 2>&1 || return 0
 	tmux has-session -t soren91_runner 2>/dev/null || return 0
@@ -278,13 +302,14 @@ _soren91_sweep_orphan_runners() {
 	[ -n "$pids" ] || return 0
 	for p in $pids; do
 		[ "$p" = "$self" ] && continue
+		_soren91_pid_is_owned_player "$p" || continue
 		pkill -TERM -P "$p" 2>/dev/null || true   # 子 main.mjs を先に
 		kill -TERM "$p" 2>/dev/null || true
 	done
 	sleep 2
 	for p in $pids; do
 		[ "$p" = "$self" ] && continue
-		if _soren91_pid_is_alive "$p"; then
+		if _soren91_pid_is_owned_player "$p"; then
 			pkill -KILL -P "$p" 2>/dev/null || true
 			kill -KILL "$p" 2>/dev/null || true
 			log "[SOREN91] swept orphan runner PID=$p"
@@ -294,6 +319,7 @@ _soren91_sweep_orphan_runners() {
 	local mp
 	for mp in $(_soren91_scan_alive_main_pids 2>/dev/null | grep -E '^[0-9]+$'); do
 		[ "$mp" = "$self" ] && continue
+		_soren91_pid_is_owned_player "$mp" || continue
 		kill -TERM "$mp" 2>/dev/null || true
 	done
 }
@@ -362,7 +388,7 @@ _soren91_scan_alive_runner_pids() {
 	case "$pid" in
 	''|*[!0-9]*) ;;
 	*)
-		if _soren91_pid_is_alive "$pid"; then
+		if _soren91_pid_is_owned_player "$pid"; then
 			printf '%s\n' "$pid"
 		fi
 		;;
@@ -371,7 +397,7 @@ _soren91_scan_alive_runner_pids() {
 	case "$pid" in
 	''|*[!0-9]*) ;;
 	*)
-		if _soren91_pid_is_alive "$pid"; then
+		if _soren91_pid_is_owned_player "$pid"; then
 			printf '%s\n' "$pid"
 		fi
 		;;
@@ -408,7 +434,7 @@ _soren91_clear_stale_runner_lock() {
 	case "$owner" in
 	''|*[!0-9]*) ;;
 	*)
-		_soren91_pid_is_alive "$owner" && return 0
+		_soren91_pid_is_owned_player "$owner" && return 0
 		;;
 	esac
 	rm -rf "$lock_dir" 2>/dev/null || true
@@ -439,7 +465,7 @@ _soren91_read_alive_player_pid() {
 		pid=$(cat "$f" 2>/dev/null)
 		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
 		[ -n "$pid" ] || continue
-		_soren91_pid_is_alive "$pid" || continue
+		_soren91_pid_is_owned_player "$pid" || continue
 		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
 		if [ -z "$cmd" ]; then
 			printf '%s' "$pid"
@@ -456,28 +482,22 @@ _soren91_read_alive_player_pid() {
 
 	pid=$(sed -n 's/^pid=//p' "$SOREN91_DIR/tmp/.runner.lock/owner" 2>/dev/null | head -n 1)
 	case "$pid" in ''|*[!0-9]*) pid="" ;; esac
-	if [ -n "$pid" ] && _soren91_pid_is_alive "$pid"; then
+	if [ -n "$pid" ] && _soren91_pid_is_owned_player "$pid"; then
 		printf '%s' "$pid"
 		return 0
 	fi
 
 	# PIDファイルは停止処理の途中で消えることがある。実プロセスが残っていると
 	# "Not running" と誤判定して stop file を出せないため、実プレイヤーをプロセス表から復旧する。
-	pid=$(_soren91_scan_alive_main_pids | head -n 1)
-	if [ -n "$pid" ]; then
-		printf '%s' "$pid"
-		return 0
-	fi
-	pid=$(_soren91_scan_log_writer_pids | head -n 1)
-	if [ -n "$pid" ]; then
-		printf '%s' "$pid"
-		return 0
-	fi
-	pid=$(_soren91_scan_alive_runner_pids | head -n 1)
-	if [ -n "$pid" ]; then
-		printf '%s' "$pid"
-		return 0
-	fi
+	for pid in $(_soren91_scan_alive_main_pids 2>/dev/null); do
+		if _soren91_pid_is_owned_player "$pid"; then printf '%s' "$pid"; return 0; fi
+	done
+	for pid in $(_soren91_scan_log_writer_pids 2>/dev/null); do
+		if _soren91_pid_is_owned_player "$pid"; then printf '%s' "$pid"; return 0; fi
+	done
+	for pid in $(_soren91_scan_alive_runner_pids 2>/dev/null); do
+		if _soren91_pid_is_owned_player "$pid"; then printf '%s' "$pid"; return 0; fi
+	done
 	return 1
 }
 
@@ -533,7 +553,7 @@ _soren91_force_stop_recovered_player() {
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
-		_soren91_pid_is_alive "$pid" || continue
+		_soren91_pid_is_owned_player "$pid" || continue
 		log "[SOREN91] Force stopping stale recovered player PID=$pid"
 		_stop_loop_descendants "$pid"
 		_stop_pid_with_fallback "$pid" "soren91_stale_recovered"
@@ -716,6 +736,174 @@ except Exception:
     raise SystemExit(1)
 print(datetime.fromtimestamp(end_epoch).astimezone().strftime('%H:%M %Z'))
 PY
+}
+
+# 1日1回のランダムな Soren91 枠。予定はファイルへ永続化し、supervisor や
+# soren_loop が再起動しても同じ日に二重発火しない。開始は caller が選ぶ
+# 通常ゲームの試合境界に限定し、実際に開始した時刻から duration 秒だけ走る。
+_soren91_daily_ensure_plan() {
+	[ "${SOREN91_DAILY_ENABLED:-0}" = "1" ] || return 1
+	mkdir -p "$(dirname "$SOREN91_DAILY_STATE_FILE")" 2>/dev/null || true
+	python3 - "$SOREN91_DAILY_STATE_FILE" \
+		"${SOREN91_DAILY_TIMEZONE:-Asia/Tokyo}" \
+		"${SOREN91_DAILY_EARLIEST_HOUR:-8}" \
+		"${SOREN91_DAILY_LATEST_START_HOUR:-22}" <<'PY' 2>/dev/null
+import json
+import os
+import secrets
+import sys
+import tempfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+path, tz_name, earliest_raw, latest_raw = sys.argv[1:5]
+tz = ZoneInfo(tz_name)
+now = datetime.now(tz)
+day = now.date().isoformat()
+try:
+    earliest = int(earliest_raw)
+    latest = int(latest_raw)
+except Exception:
+    raise SystemExit(2)
+if not (0 <= earliest <= latest <= 23):
+    raise SystemExit(2)
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+if data.get("local_day") == day:
+    print(int(data.get("due_epoch", 0) or 0))
+    raise SystemExit(0)
+start = now.replace(hour=earliest, minute=0, second=0, microsecond=0)
+end = now.replace(hour=latest, minute=0, second=0, microsecond=0)
+lo = int(start.timestamp())
+hi = int(end.timestamp())
+due = lo + secrets.randbelow(max(1, hi - lo + 1))
+data = {
+    "local_day": day,
+    "timezone": tz_name,
+    "status": "planned",
+    "due_epoch": due,
+    "attempts": 0,
+    "planned_at": now.isoformat(),
+}
+directory = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+finally:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+print(due)
+PY
+}
+
+soren91_daily_should_start() {
+	_soren91_enabled || return 1
+	_soren91_daily_ensure_plan >/dev/null || return 1
+	python3 - "$SOREN91_DAILY_STATE_FILE" "${SOREN91_DAILY_MAX_ATTEMPTS:-3}" <<'PY' >/dev/null 2>&1
+import json, sys, time
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+raise SystemExit(0 if (
+    data.get("status") == "planned"
+    and int(data.get("due_epoch", 0) or 0) <= int(time.time())
+    and int(data.get("attempts", 0) or 0) < int(sys.argv[2])
+) else 1)
+PY
+}
+
+soren91_daily_active_end_epoch() {
+	[ "${SOREN91_DAILY_ENABLED:-0}" = "1" ] || return 1
+	[ -f "$SOREN91_DAILY_STATE_FILE" ] || return 1
+	python3 - "$SOREN91_DAILY_STATE_FILE" <<'PY' 2>/dev/null
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+end = int(data.get("end_epoch", 0) or 0)
+if data.get("status") != "running" or end <= 0:
+    raise SystemExit(1)
+print(end)
+PY
+}
+
+soren91_daily_begin() {
+	soren91_daily_should_start || return 1
+	python3 - "$SOREN91_DAILY_STATE_FILE" "${SOREN91_DAILY_DURATION_SEC:-3600}" <<'PY' 2>/dev/null
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+duration = max(60, int(sys.argv[2]))
+data = json.load(open(path, encoding="utf-8"))
+now = int(time.time())
+data.update({
+    "status": "running",
+    "attempts": int(data.get("attempts", 0) or 0) + 1,
+    "started_epoch": now,
+    "end_epoch": now + duration,
+})
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=os.path.dirname(path) or ".", text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+print(data["end_epoch"])
+PY
+}
+
+soren91_daily_mark_completed() {
+	[ -f "$SOREN91_DAILY_STATE_FILE" ] || return 0
+	python3 - "$SOREN91_DAILY_STATE_FILE" <<'PY' >/dev/null 2>&1
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data.update({"status": "completed", "ended_epoch": int(time.time())})
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=os.path.dirname(path) or ".", text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+soren91_daily_mark_failed() {
+	[ -f "$SOREN91_DAILY_STATE_FILE" ] || return 0
+	python3 - "$SOREN91_DAILY_STATE_FILE" "${SOREN91_DAILY_RETRY_SEC:-600}" "${SOREN91_DAILY_MAX_ATTEMPTS:-3}" <<'PY' >/dev/null 2>&1
+import json, os, sys, tempfile, time
+path = sys.argv[1]
+retry = max(60, int(sys.argv[2]))
+maximum = max(1, int(sys.argv[3]))
+data = json.load(open(path, encoding="utf-8"))
+attempts = int(data.get("attempts", 0) or 0)
+data["status"] = "failed" if attempts >= maximum else "planned"
+data["failed_epoch"] = int(time.time())
+if attempts < maximum:
+    data["due_epoch"] = int(time.time()) + retry
+data.pop("end_epoch", None)
+fd, tmp = tempfile.mkstemp(prefix=".soren91_daily.", dir=os.path.dirname(path) or ".", text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+soren91_wait_ready() {
+	local timeout="${1:-${SOREN91_DAILY_READY_TIMEOUT_SEC:-120}}"
+	case "$timeout" in '' | *[!0-9]*) timeout=120 ;; esac
+	local waited=0 pid=""
+	while [ "$waited" -lt "$timeout" ]; do
+		pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
+		if [ -f "$SOREN91_READY_FILE" ] && [ -n "$pid" ] && _soren91_pid_is_alive "$pid"; then
+			return 0
+		fi
+		sleep 2
+		waited=$((waited + 2))
+	done
+	return 1
 }
 
 soren91_is_running() {
@@ -1079,7 +1267,7 @@ soren91_start() {
 
 	log "[SOREN91] Starting soren91 (メリケンAI)..."
 	rm -f "$SOREN91_LAST_ACTIVATE_STATE_FILE"
-	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE" "$TMP_STATE_DIR/.soren91_bye_sent"
+	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$TMP_STATE_DIR/.soren91_bye_sent"
 	mkdir -p "$SOREN91_DIR/tmp" 2>/dev/null || true
 	_soren91_stop_standalone_browser
 
@@ -1094,6 +1282,9 @@ soren91_start() {
 
 	# セッション開始時のゲーム番号を記録
 	local start_game=0
+	local _viewport_width _viewport_height
+	_viewport_width=$(_soren91_env_get SOREN91_VIEWPORT_WIDTH 2>/dev/null || printf '%s' "${SOREN91_VIEWPORT_WIDTH:-960}")
+	_viewport_height=$(_soren91_env_get SOREN91_VIEWPORT_HEIGHT 2>/dev/null || printf '%s' "${SOREN91_VIEWPORT_HEIGHT:-540}")
 	if [ -d "$SOREN91_DIR/game_history" ]; then
 		start_game=$(ls -1 "$SOREN91_DIR/game_history"/game_*.jsonl 2>/dev/null | wc -l | tr -d ' ')
 	fi
@@ -1104,6 +1295,8 @@ soren91_start() {
 	# メリケンモードでは内部改善を有効化 (12ゲームごと、env override可)
 	local _meriken_mode=0
 	if manual_meriken_mode_is_enabled; then
+		_meriken_mode=1
+	elif soren91_daily_active_end_epoch >/dev/null 2>&1; then
 		_meriken_mode=1
 	elif scheduled_meriken_time_is_active; then
 		_meriken_mode=1
@@ -1149,13 +1342,25 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN91_FULLSCREEN_WINDOW='${SOREN91_FULLSCREEN_WINDOW:-0}' SOREN91_VIEWPORT_WIDTH='$_viewport_width' SOREN91_VIEWPORT_HEIGHT='$_viewport_height' SOREN_STREAM_BACKEND='${SOREN_STREAM_BACKEND:-obs}' SOREN_DIRECT_OVERLAY_ENABLED='${SOREN_DIRECT_OVERLAY_ENABLED:-1}' SOREN_DIRECT_STAGE_LAYOUT='${SOREN_DIRECT_STAGE_LAYOUT:-dashboard}' SOREN_DIRECT_STREAM_SIZE='${SOREN_DIRECT_STREAM_SIZE:-1280x720}' SOREN_DIRECT_GAME_DISPLAY_SIZE='${SOREN_DIRECT_GAME_DISPLAY_SIZE:-960x540}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_EXTERNAL_IMPROVE='$_ext_improve' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
 		pid=$(
 			cd "$SOREN91_DIR" || exit 1
 			SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-1}" \
+			SOREN91_SHARED_ISOLATED_CONTEXT="${SOREN91_SHARED_ISOLATED_CONTEXT:-0}" \
+			SOREN91_BRING_TO_FRONT="${SOREN91_BRING_TO_FRONT:-0}" \
+			SOREN91_FULLSCREEN_WINDOW="${SOREN91_FULLSCREEN_WINDOW:-0}" \
+			SOREN91_VIEWPORT_WIDTH="$_viewport_width" \
+			SOREN91_VIEWPORT_HEIGHT="$_viewport_height" \
+			SOREN_STREAM_BACKEND="${SOREN_STREAM_BACKEND:-obs}" \
+			SOREN_DIRECT_OVERLAY_ENABLED="${SOREN_DIRECT_OVERLAY_ENABLED:-1}" \
+			SOREN_DIRECT_STAGE_LAYOUT="${SOREN_DIRECT_STAGE_LAYOUT:-dashboard}" \
+			SOREN_DIRECT_STREAM_SIZE="${SOREN_DIRECT_STREAM_SIZE:-1280x720}" \
+			SOREN_DIRECT_GAME_DISPLAY_SIZE="${SOREN_DIRECT_GAME_DISPLAY_SIZE:-960x540}" \
+			SOREN_CDP_PORT="${SOREN_CDP_PORT:-9222}" \
+			SOREN_CHROME_AUDIO_OUTPUT_LABEL="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
 			SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
 			IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
@@ -1186,7 +1391,11 @@ soren91_start() {
 		{
 			local announce_file
 			announce_file=$(mktemp /tmp/eloop_soren91_announce.XXXXXX)
-			printf '%s\n' "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" > "$announce_file"
+			if soren91_daily_active_end_epoch >/dev/null 2>&1; then
+				printf '%s\n' "本日のメリケンAIコーナーです。これから約一時間、ソ連ゲーム91で同志を迎え撃ちます。" > "$announce_file"
+			else
+				printf '%s\n' "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" > "$announce_file"
+			fi
 			SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 			rm -f "$announce_file"
 
@@ -1234,7 +1443,7 @@ soren91_start() {
 						local explain_file
 						explain_file=$(mktemp /tmp/eloop_soren91_strategy.XXXXXX)
 						printf '%s\n' "$strategy_explain" > "$explain_file"
-					SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:strategy" ./say_enqueue.sh "$explain_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+					SAY_REPLACE_COUNTRY_REFERENCES=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:strategy" ./say_enqueue.sh "$explain_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 					rm -f "$explain_file"
 					log "[SOREN91] 戦略解説を読み上げ"
 				fi
@@ -1274,16 +1483,49 @@ with open('$SOREN91_SESSION_FILE', 'w') as f:
 	echo "$end_game"
 }
 
-# 戦略改善から復帰した直後 (soren91_stop の unmute 後) に soviet_local を
-# 再起動する。改善 PAUSE 中に suspend した Unity AudioContext は、復帰時の
-# in-page resume() が Chrome の autoplay/visibility gating で安定して効かず
-# (実測: unmute 後も state=suspended のまま → ゲーム音が BlackHole に乗らない)。
-# sink-at-construction により bridge を作り直せば AudioContext は生成時点で
-# running かつ BlackHole バインドになる (実証済) ため、復帰のたびに確実に
-# 音声を回復させる。ユーザー指示 (#90 関連) による恒久対応。
+# Soren91 から復帰した直後は、まず既存ページの trusted gesture + resume
+# watchdog が AudioContext を running + BlackHole へ戻すのを待つ。復帰を
+# 実測できた場合は枠ごとの再読込を避け、失敗時だけ従来どおり再起動する。
 # 引数 $1=1 のとき (=直前まで改善mute中だった) のみ実行。
 _soren91_restart_bridge_after_improve() {
 	[ "${1:-0}" = "1" ] || return 0
+	local grace="${SOREN91_AUDIO_RESUME_GRACE_SEC:-15}"
+	case "$grace" in ''|*[!0-9]*) grace=15 ;; esac
+	local health_file="${BRIDGE_AUDIO_HEALTH_FILE:-$ELOOP_LIB_DIR/tmp/state/local_audio_health.json}"
+	local unmute_epoch="${SOREN91_UNMUTE_EPOCH:-$(date +%s)}"
+	local waited=0
+	while [ "$waited" -lt "$grace" ]; do
+		if python3 - "$health_file" "$unmute_epoch" <<'PY' 2>/dev/null
+import json, sys
+from datetime import datetime
+
+path, minimum_raw = sys.argv[1:3]
+with open(path, encoding="utf-8") as handle:
+    health = json.load(handle)
+stamp = health.get("updatedAt") or ""
+updated = datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+if updated < int(minimum_raw):
+    raise SystemExit(1)
+view = health.get("after") if isinstance(health.get("after"), dict) else health
+if health.get("muted") or view.get("muted") or view.get("routeError"):
+    raise SystemExit(1)
+states = [view.get("unityState")]
+states += [item.get("state") for item in view.get("tracked") or [] if isinstance(item, dict)]
+states = [state for state in states if state]
+if not states or any(state != "running" for state in states):
+    raise SystemExit(1)
+routed = str(view.get("routedDeviceId") or "")
+tracked = [item for item in view.get("tracked") or [] if isinstance(item, dict)]
+if routed and tracked and not any(str(item.get("sinkId") or "") == routed for item in tracked):
+    raise SystemExit(1)
+PY
+		then
+			log "[SOREN91] 改善復帰: AudioContext running+BlackHole を実測、bridge再起動を省略 (${waited}s)"
+			return 0
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
 	if ! command -v _br_relaunch >/dev/null 2>&1; then
 		log "[SOREN91] bridge再起動スキップ (_br_relaunch 未ロード)"
 		return 0
@@ -1325,7 +1567,7 @@ soren91_stop() {
 		_soren91_sweep_orphan_runners
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
-		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 		_soren91_clear_stale_runner_lock
 		local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
 		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
@@ -1333,7 +1575,7 @@ soren91_stop() {
 		_soren91_stop_standalone_browser
 		_soren91_switch_obs_layout china || true
 		log "[SOREN91] Unmuted local game BGM (flag file removed)"
-		_soren91_restart_bridge_after_improve "$_had_mute"
+		SOREN91_UNMUTE_EPOCH=$(date +%s) _soren91_restart_bridge_after_improve "$_had_mute"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -1358,9 +1600,15 @@ soren91_stop() {
 		game_waited=$((game_waited + 5))
 	done
 
-	# Phase 2: 試合終了後、graceful exit を短時間待つ
+	# Phase 2: 試合終了後はTERMで main.mjs の cleanupRuntime を直ちに起動する。
+	# stop fileだけでは次のゲーム境界処理が長引き、外側のKILLが先に到達して
+	# 通常ページのlifecycle復帰を飛ばすことがある。
+	if _soren91_pid_is_alive "$pid"; then
+		log "[SOREN91] Round ended, requesting runtime cleanup with TERM"
+		kill -TERM "$pid" 2>/dev/null || true
+	fi
 	local waited=0
-	local post_game_timeout=30
+	local post_game_timeout=15
 	while [ "$waited" -lt "$post_game_timeout" ]; do
 		if ! _soren91_pid_is_alive "$pid"; then
 			log "[SOREN91] Stopped gracefully after game ended"
@@ -1399,7 +1647,7 @@ soren91_stop() {
 	local eg
 	eg=$(_soren91_record_end_game)
 
-	rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+	rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 	rm -f "$SOREN91_LAST_ACTIVATE_STATE_FILE"
 	_soren91_clear_stale_runner_lock
 	_clear_meriken_time_state
@@ -1411,7 +1659,7 @@ soren91_stop() {
 	_soren91_stop_standalone_browser
 	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM (flag file removed)"
-	_soren91_restart_bridge_after_improve "$_had_mute"
+	SOREN91_UNMUTE_EPOCH=$(date +%s) _soren91_restart_bridge_after_improve "$_had_mute"
 
 	# メリケンAI終了あいさつ (TTS + Twitch) — 重複防止
 	local _bye_guard="$TMP_STATE_DIR/.soren91_bye_sent"
@@ -1505,16 +1753,12 @@ soren91_cleanup() {
 		case "$pid" in
 		''|*[!0-9]*) continue ;;
 		esac
-		if _soren91_pid_is_alive "$pid"; then
-			local cmd
-			cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-			if [ -z "$cmd" ] || echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
-				log "[SOREN91] Cleanup: stopping player (PID=$pid)"
-				_stop_loop_descendants "$pid"
-				_stop_pid_with_fallback "$pid" "soren91_player"
-			else
-				log "[SOREN91] Cleanup: PID=$pid is not soren91 player ($cmd), skipping"
-			fi
+		if _soren91_pid_is_owned_player "$pid"; then
+			log "[SOREN91] Cleanup: stopping player (PID=$pid)"
+			_stop_loop_descendants "$pid"
+			_stop_pid_with_fallback "$pid" "soren91_player"
+		elif _soren91_pid_is_alive "$pid"; then
+			log "[SOREN91] Cleanup: PID=$pid is not an owned Soren91 player, skipping"
 		fi
 	done
 	_soren91_kill_runner_session
@@ -1545,6 +1789,7 @@ soren91_cleanup() {
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_IMPROVE_PID_FILE" \
 		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \
 		"$SOREN91_MAIN_PID_FILE" \
+		"$SOREN91_READY_FILE" \
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_clear_stale_runner_lock

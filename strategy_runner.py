@@ -23,6 +23,8 @@ import subprocess
 import sys
 import time
 
+from lib.country_names import country_named_reason
+
 # --- 定数 ---
 GAME_STATE = "game_state.json"
 COMMANDS = "commands.txt"
@@ -33,6 +35,7 @@ RUSSIA_CELEBRATION_ENABLED = os.environ.get("RUSSIA_CELEBRATION_ENABLED", "0") !
 # Runtime の game_state / history 上では type15 までしか観測されていない。
 # ロシアは type15 の新規出現、ソ連は makeSorenCount の増加で検知する。
 RUSSIA_TYPE = 15
+PRE_RUSSIA_UKRAINE_PAIR_POLICY_ID = "pre_russia_ukraine_pair_lane_v1"
 
 # 座標変換
 GAME_X_MIN = -3.0
@@ -42,7 +45,30 @@ CANVAS_X_MAX = 830
 
 # タイミング
 POLL_INTERVAL = 0.15      # ポーリング間隔(秒)
-SETTLE_REQUIRED = 1       # 静止確認回数
+
+
+def _env_int(name, default):
+    try:
+        v = float(os.environ.get(name, "") or default)
+        return int(v) if math.isfinite(v) else int(default)
+    except Exception:  # ValueError/TypeError/OverflowError — 設定ミスで import を落とさない
+        return int(default)
+
+
+def _env_float(name, default):
+    try:
+        v = float(os.environ.get(name, "") or default)
+        return v if math.isfinite(v) else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# 静止判定 (2026-08-25 実測: 従来の「速度^2<0.1 を 1 サンプル」は振動の一瞬の凪を静止と誤認し、
+# 新駒出現時に中央値 27 駒が awake・完全静止後のドロップは 1% だった)。.env で調整可 (runner は
+# ゲーム毎の新プロセスなので次ゲームから有効)。既定値は従来挙動。
+SETTLE_REQUIRED = max(1, _env_int("SOREN_SETTLE_REQUIRED", 1))        # 連続静止観測回数 (POLL_INTERVAL 間隔)
+SETTLE_MAX_SPEED2 = max(0.0, _env_float("SOREN_SETTLE_MAX_SPEED2", 0.1))  # 静止とみなす速度^2 上限
+SETTLE_MAX_AWAKE = _env_int("SOREN_SETTLE_MAX_AWAKE", -1)           # awake 駒数の上限 (-1=無視)
 COMMAND_TIMEOUT = 20      # commands.txt 消化待ちタイムアウト(秒)
 MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
 DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
@@ -94,7 +120,7 @@ def _deadline_crossing_overlay_payload(turn, score, decision, analysis):
         or r.get("merge_grade", "NO") in ("DIRECT", "NEAR")
     ]
     merge_grade = str(chosen.get("merge_grade") or "NO")
-    reason = str(decision.get("reason") or "")
+    reason = country_named_reason(decision.get("reason"), default="")
     body = (
         f"turn={turn} score={score} x={decision_x:+.2f} "
         f"merge={merge_grade} safe={len(safe)}/{len(results)} "
@@ -170,7 +196,7 @@ def _actual_deadline_contact_overlay_payload(turn, score, decision, before_analy
         decision_x = float(decision.get("x", 0.0) or 0.0)
     except Exception:
         decision_x = 0.0
-    reason = str(decision.get("reason") or "")
+    reason = country_named_reason(decision.get("reason"), default="")
     before_top = _float_or_none(before_deadline.get("top_edge_y"))
     before_text = f"before_top={before_top:.2f} " if before_top is not None else ""
     body = (
@@ -402,7 +428,24 @@ def is_board_settled(gs, force_after: float = 0.0):
     if not settled_pieces:
         return True
     max_v = max(abs(p.get("vx", 0))**2 + abs(p.get("vy", 0))**2 for p in settled_pieces)
-    return max_v < 0.1
+    if SETTLE_MAX_AWAKE >= 0:
+        awake = sum(1 for p in settled_pieces if p.get("awake"))
+        if awake > SETTLE_MAX_AWAKE:
+            return False
+    return max_v < SETTLE_MAX_SPEED2
+
+
+_LAST_SETTLE = {}  # 直近の wait_for_move_state の観測 (記録用)
+
+
+def _board_motion(gs):
+    try:
+        ps = [p for p in (gs or {}).get("pieces", []) if abs(p.get("vy", 0)) < 100 and abs(p.get("vx", 0)) < 100]
+        awake = sum(1 for p in ps if p.get("awake"))
+        max_speed = max([math.sqrt(abs(p.get("vx", 0)) ** 2 + abs(p.get("vy", 0)) ** 2) for p in ps] + [0.0])
+        return awake, round(max_speed, 3)
+    except Exception:
+        return None, None
 
 
 def commands_empty():
@@ -552,6 +595,20 @@ def trigger_soviet_clip_now(score, turn):
     except Exception as e:
         log(f"WARNING: failed to trigger soviet clip: {e}")
         return False
+
+
+def _analyzer_modes_for_record():
+    """解析器トグルの実効値を試合記録に残す (decide hash に映らない解析器変更の事後帰属用)。失敗時は None。"""
+    try:
+        from analyze_board import _merge_top_model_mode, _vertical_lane_mode, _wall_clamp_mode
+
+        return {
+            "vertical_lane_direct": int(_vertical_lane_mode()),
+            "merge_top_model": int(_merge_top_model_mode()),
+            "wall_clamp": int(_wall_clamp_mode()),
+        }
+    except Exception:
+        return None
 
 
 def build_analysis(game_state):
@@ -726,6 +783,8 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
         "danger_direct_merge_available": bool(chosen_result.get("danger_direct_merge_available", False)) if chosen_result else False,
         "strategy_hash": strategy_hash,
+        "analyzer_modes": _analyzer_modes_for_record(),
+        "settle": dict(_LAST_SETTLE) if _LAST_SETTLE else None,
         "state_snapshot": {"pieces": piece_snapshot},
     }
 
@@ -741,7 +800,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     # still recorded for strategy/audit use, but is too noisy for OBS alerts.
 
 
-def enforce_deadline_safety(decision, analysis, game_state=None):
+def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module=None):
     """送信直前の最終安全弁: deadline越えと余白消費を差し替える。"""
     results = analysis.get("results", []) if isinstance(analysis, dict) else []
     if not results or not isinstance(decision, dict):
@@ -1321,18 +1380,155 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         """Keep no-T14 / multi-T13 boards on the closest first-Russia pair lane."""
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
-                "PRE_RUSSIA_T13_PAIR_CLUSTER",
-                "PRE_RUSSIA_T13_PAIR_COMPRESS",
-                "PRE_RUSSIA_T13_PAIR_LADDER",
-                "DEADLINE_GUARD_FIRST_RUSSIA_PAIR",
-            )
-        ):
-            return None
         pieces = (game_state or {}).get("pieces") or []
         if not pieces or next_type < 6:
+            return None
+        # v716: a singleton T13 plus two live T12s is the birth state for the
+        # second T13. Use the anchor-relative lane here too, so deadline fallback
+        # cannot steer the birth away from the only T13 that can become T14.
+        _second_birth_counts = {}
+        for _birth_piece in pieces:
+            try:
+                _birth_type = int(_birth_piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            _second_birth_counts[_birth_type] = _second_birth_counts.get(_birth_type, 0) + 1
+        if (
+            "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
+            and _second_birth_counts.get(14, 0) == 0
+            and _second_birth_counts.get(15, 0) == 0
+            and _second_birth_counts.get(13, 0) == 1
+            and _second_birth_counts.get(12, 0) >= 2
+        ):
+            _t13_anchor = next(
+                (_piece for _piece in pieces if int(_piece.get("type", 0) or 0) == 13),
+                None,
+            )
+            _birth_targets = [
+                _piece for _piece in pieces
+                if int(_piece.get("type", 0) or 0) == 12
+            ]
+            _birth_pair = None
+            _birth_best_key = (999.0, 999.0, 999.0)
+            for _pair_i, _pair_a in enumerate(_birth_targets):
+                for _pair_b in _birth_targets[_pair_i + 1:]:
+                    _ax = _geom_num(_pair_a.get("x"))
+                    _ay = _geom_num(_pair_a.get("y"), -10.0)
+                    _bx = _geom_num(_pair_b.get("x"))
+                    _by = _geom_num(_pair_b.get("y"), -10.0)
+                    _pair_dist = ((_ax - _bx) ** 2 + (_ay - _by) ** 2) ** 0.5
+                    _center_x = (_ax + _bx) * 0.5
+                    _center_y = (_ay + _by) * 0.5
+                    _anchor_x = _geom_num(_t13_anchor.get("x"))
+                    _anchor_y = _geom_num(_t13_anchor.get("y"), -10.0)
+                    _anchor_dist = ((_center_x - _anchor_x) ** 2 + (_center_y - _anchor_y) ** 2) ** 0.5
+                    _birth_key = (
+                        _anchor_dist + max(0.0, _pair_dist - 3.0) * 1.8,
+                        _pair_dist,
+                        max(_ay, _by),
+                    )
+                    if _birth_key < _birth_best_key:
+                        _birth_best_key = _birth_key
+                        _birth_pair = (_pair_a, _pair_b)
+            if _birth_pair is not None and _t13_anchor is not None:
+                _left, _right = _birth_pair
+                _left_x = _geom_num(_left.get("x"))
+                _left_y = _geom_num(_left.get("y"), -10.0)
+                _right_x = _geom_num(_right.get("x"))
+                _right_y = _geom_num(_right.get("y"), -10.0)
+                _move_x = _right_x - _left_x
+                _move_y = _right_y - _left_y
+                _center_x = (_left_x + _right_x) * 0.5
+                _center_y = (_left_y + _right_y) * 0.5
+                _to_anchor_x = _anchor_x - _center_x
+                _to_anchor_y = _anchor_y - _center_y
+                # Push whichever piece's natural motion along the pair line also
+                # carries the newborn T13 toward the singleton T13.
+                if _move_x * _to_anchor_x + _move_y * _to_anchor_y >= 0.0:
+                    _contact_target, _contact_other = _left, _right
+                else:
+                    _contact_target, _contact_other = _right, _left
+                # A near-vertical pair gives no useful horizontal impact lane.
+                # Fall back to the higher member so the strike still moves the
+                # less-buried piece instead of dropping through the stack gap.
+                if abs(_move_x) < 0.12:
+                    if _geom_num(_right.get("y"), -10.0) > _geom_num(_left.get("y"), -10.0):
+                        _contact_target, _contact_other = _right, _left
+                    else:
+                        _contact_target, _contact_other = _left, _right
+                _contact_gap = (
+                    ((_geom_num(_contact_target.get("x")) - _geom_num(_contact_other.get("x"))) ** 2
+                     + (_geom_num(_contact_target.get("y"), -10.0) - _geom_num(_contact_other.get("y"), -10.0)) ** 2) ** 0.5
+                    - _geom_num(_contact_target.get("r"), 1.0)
+                    - _geom_num(_contact_other.get("r"), 1.0)
+                )
+                if _contact_gap > 0.08:
+                    target_x = _geom_num(_contact_target.get("x"))
+                    _direction = 1.0 if _geom_num(_contact_other.get("x")) >= target_x else -1.0
+                    target_x += _direction * (
+                        _geom_num(_contact_target.get("r"), 1.0) + max(0.35, geometry_next_r)
+                    )
+                    target_x = max(-3.0, min(3.0, target_x))
+
+                    current_dx = abs(_geom_num(candidate.get("x")) - target_x)
+                    pool = results or safe
+                    # The birth lane is positional, not merely directional. Keep
+                    # the fallback tighter than the older pair-closing hooks.
+                    if pool and current_dx > 0.45:
+                        hard_deadline_birth_pressure = (
+                            deadline_crossed
+                            or danger_piece_count > 0
+                            or current_top_edge_y >= deadline_y - 0.15
+                        )
+                        birth_risk_limit = max(risk_top(candidate) + 1.10, min_risk_top + 2.00)
+                        if hard_deadline_birth_pressure:
+                            birth_risk_limit = min(birth_risk_limit, min_risk_top + 0.45)
+                        birth_lane = [
+                            r for r in pool
+                            if abs(_geom_num(r.get("x")) - target_x) < current_dx
+                            and abs(_geom_num(r.get("x")) - target_x) <= 1.45
+                            and not (
+                                hard_deadline_birth_pressure
+                                and r.get("crosses_deadline", False)
+                                and r.get("merge_grade", "NO") == "NO"
+                            )
+                            and risk_top(r) <= birth_risk_limit
+                        ]
+                        if birth_lane:
+                            return min(
+                                birth_lane,
+                                key=lambda r: (
+                                    abs(_geom_num(r.get("x")) - target_x),
+                                    bool(r.get("crosses_deadline", False)),
+                                    risk_top(r),
+                                ),
+                            )
+        policy_id = getattr(
+            strategy_module, "pre_russia_ukraine_pair_policy_id", None
+        )
+        if not callable(policy_id):
+            return None
+        try:
+            if policy_id() != PRE_RUSSIA_UKRAINE_PAIR_POLICY_ID:
+                return None
+        except Exception:
+            return None
+        # v713: the pair-lane hook is valid from board state alone.  The old
+        # reason-marker gate let deadline guard bypass the only route to the first
+        # Russia whenever strategy scoring could not emit a tag before returning.
+        _state_high_counts = {}
+        for _piece in pieces:
+            try:
+                _piece_type = int(_piece.get("type", 0) or 0)
+            except Exception:
+                continue
+            if _piece_type >= 10:
+                _state_high_counts[_piece_type] = _state_high_counts.get(_piece_type, 0) + 1
+        if not (
+            _state_high_counts.get(14, 0) == 0
+            and _state_high_counts.get(15, 0) == 0
+            and _state_high_counts.get(13, 0) >= 2
+        ):
             return None
         high_counts = {}
         for piece in pieces:
@@ -1375,34 +1571,30 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
                     best_pair = (left, right)
         if best_pair is None:
             return None
-        target_x = (
-            _geom_num(best_pair[0].get("x"))
-            + _geom_num(best_pair[1].get("x"))
+        # v715: deadline safety must preserve the physical contact shot, not
+        # collapse back to the pair midpoint. Strike the less-buried T13 from
+        # its outer side so impact pushes it toward the other T13.
+        _contact_other, _contact_target = best_pair
+        if _geom_num(_contact_other.get("y"), -10.0) > _geom_num(_contact_target.get("y"), -10.0):
+            _contact_target, _contact_other = _contact_other, _contact_target
+        _contact_center_x = (
+            _geom_num(_contact_other.get("x")) + _geom_num(_contact_target.get("x"))
         ) / 2.0
-
-        if next_type in (6, 7, 8, 9, 10, 11, 12):
-            same_targets = [
-                p for p in pieces if int(p.get("type", 0) or 0) == next_type
-            ]
-            if same_targets:
-                def same_key(piece):
-                    px = _geom_num(piece.get("x"))
-                    py = _geom_num(piece.get("y"), -10.0)
-                    lane_dist = abs(px - target_x)
-                    return (
-                        lane_dist
-                        + max(0.0, lane_dist - 1.35) * 1.25
-                        + max(0.0, py - 0.8) * 1.05,
-                        py,
-                    )
-                same_target = min(same_targets, key=same_key)
-                same_dx = abs(_geom_num(same_target.get("x")) - target_x)
-                if not (
-                    next_type == 11
-                    and high_counts.get(12, 0) == 0
-                    and same_dx > 1.45
-                ):
-                    target_x = _geom_num(same_target.get("x"))
+        _contact_dir = 1.0 if _geom_num(_contact_target.get("x")) >= _contact_center_x else -1.0
+        _contact_gap = (
+            ((_geom_num(_contact_target.get("x")) - _geom_num(_contact_other.get("x"))) ** 2
+             + (_geom_num(_contact_target.get("y"), -10.0) - _geom_num(_contact_other.get("y"), -10.0)) ** 2) ** 0.5
+            - _geom_num(_contact_target.get("r"), 1.0)
+            - _geom_num(_contact_other.get("r"), 1.0)
+        )
+        if _contact_gap <= 0.08:
+            return None
+        target_x = _geom_num(_contact_target.get("x")) + _contact_dir * (
+            _geom_num(_contact_target.get("r"), 1.0) + max(0.35, geometry_next_r)
+        )
+        # The desired impact point can lie beyond the right wall. Clamp to the
+        # legal drop range: the outermost safe candidate still strikes the target.
+        target_x = max(-3.0, min(3.0, target_x))
 
         current_dx = abs(_geom_num(candidate.get("x")) - target_x)
         pool = results or safe
@@ -2046,6 +2238,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     )
     if (
         country_route_reason
+        and "ANCHOR_SECOND_T13_CONTACT_SHOT" not in reason_text
         and not urgent_direct_pressure
         and not urgent_merge_pressure
         and not risky_merge_result_deadline(chosen)
@@ -2060,6 +2253,19 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
         return decision
 
     replacement_source = "generic"
+    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
+        _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
+        if _birth_replacement is not None:
+            _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, float(_birth_replacement.get("x", chosen_x) or 0.0)))
+            _birth_old_grade = chosen.get("merge_grade", "NO")
+            _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
+            return {
+                "x": _birth_x,
+                "reason": f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane",
+            }
+    # Keep this local definitely assigned on every branch; the static validator
+    # treats the conditional above as a branch that can skip its first binding.
+    _birth_replacement = None
     chosen_headroom_replacement = deadline_headroom_replacement_for(chosen)
     chosen_geometry_replacement = geometry_underestimate_replacement_for(chosen)
 
@@ -2675,11 +2881,54 @@ def enforce_deadline_safety(decision, analysis, game_state=None):
     return new_decision
 
 
+def apply_strategy_final_decision(strategy_module, decision, analysis, game_state=None):
+    """Run an optional strategy-owned postcondition after deadline enforcement.
+
+    The runtime safety function has several intentional early-return paths, so
+    a strategic invariant that must inspect the *actual final* candidate cannot
+    live reliably inside ``decide`` or at the tail of that function.  Invalid
+    or failing optional hooks keep the already-enforced decision unchanged.
+    """
+    finalizer = getattr(strategy_module, "finalize_decision", None)
+    if not callable(finalizer):
+        return decision
+    try:
+        finalized = finalizer(game_state, analysis, decision)
+    except Exception as err:
+        log(f"WARN: strategy finalize_decision failed, keeping safe decision: {err}")
+        return decision
+    if not isinstance(finalized, dict) or "x" not in finalized:
+        log("WARN: strategy finalize_decision returned invalid result, keeping safe decision")
+        return decision
+    if isinstance(finalized["x"], bool):
+        log("WARN: strategy finalize_decision returned invalid x, keeping safe decision")
+        return decision
+    try:
+        final_x = float(finalized["x"])
+    except (TypeError, ValueError):
+        log("WARN: strategy finalize_decision returned invalid x, keeping safe decision")
+        return decision
+    if not math.isfinite(final_x) or not GAME_X_MIN <= final_x <= GAME_X_MAX:
+        log("WARN: strategy finalize_decision returned out-of-range x, keeping safe decision")
+        return decision
+    finalized = dict(finalized)
+    finalized["x"] = final_x
+    # Strategy postconditions may only refine a safe decision; they must never
+    # become a way around the runtime's deadline and shape invariants.  Re-run
+    # the complete safety pass because an analyzer-safe lane can still be
+    # rejected by the independent geometry check.
+    return enforce_deadline_safety(
+        finalized, analysis, game_state, strategy_module
+    )
+
+
 def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT):
     """MOVE状態になるまで待つ。GAMEOVER/STOPならFalseを返す。"""
     settle_count = 0
     start = time.time()
     settle_force_at = 0.0  # MOVE確認後に初めてセット
+    move_seen_at = 0.0
+    _LAST_SETTLE.clear()
 
     while time.time() - start < MOVE_TIMEOUT:
         if os.path.exists(STOP_FILE):
@@ -2704,17 +2953,23 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
         # MOVE状態に入った瞬間にタイムアウト時刻をセット
         if settle_force_at == 0.0:
             settle_force_at = time.time() + SETTLE_FORCE_TIMEOUT
+            move_seen_at = time.time()
 
         if deadline_fast_drop_enabled and has_deadline_contact(gs):
             log("FAST_DROP_DEADLINE_CONTACT: skipping settle wait")
+            _aw, _mv = _board_motion(gs)
+            _LAST_SETTLE.update({"wait_sec": round(time.time() - move_seen_at, 2), "awake": _aw, "max_speed": _mv, "fast_drop": True, "forced": False, "required": SETTLE_REQUIRED})
             return gs, True
 
         # 静止確認（force_after を渡してグリッチ時も突破できるようにする）
         if is_board_settled(gs, force_after=settle_force_at):
-            if time.time() >= settle_force_at:
+            forced = time.time() >= settle_force_at
+            if forced:
                 log(f"WARN: board not settled after {SETTLE_FORCE_TIMEOUT}s, forcing drop")
             settle_count += 1
-            if settle_count >= SETTLE_REQUIRED:
+            if settle_count >= SETTLE_REQUIRED or forced:
+                _aw, _mv = _board_motion(gs)
+                _LAST_SETTLE.update({"wait_sec": round(time.time() - move_seen_at, 2), "awake": _aw, "max_speed": _mv, "fast_drop": False, "forced": forced, "required": SETTLE_REQUIRED})
                 return gs, True
         else:
             settle_count = 0
@@ -2923,7 +3178,8 @@ def run_game():
             # ドロップX をクランプ
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
-            decision = enforce_deadline_safety(decision, analysis, gs)
+            decision = enforce_deadline_safety(decision, analysis, gs, strategy)
+            decision = apply_strategy_final_decision(strategy, decision, analysis, gs)
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
 

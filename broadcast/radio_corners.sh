@@ -47,6 +47,10 @@ start_radio_corner_theme() {
 
 _news_self_search_fallback() {
 	local game_num="$1" score="$2" reason="$3"
+	if [ "${NEWS_SELF_SEARCH_FALLBACK:-0}" != "1" ]; then
+		log "[NEWS] ${reason} → 未確認の自主探索は行わずスキップ"
+		return 0
+	fi
 	log "[NEWS] ${reason} → AIによる自主ニュース探索モード"
 
 	_radio_time_context
@@ -60,6 +64,8 @@ _news_self_search_fallback() {
 	if [ -f "$PAST_NEWS_TOPIC_KEYS" ]; then
 		past_news_topics=$(tail -15 "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null | sed 's/^/  - /')
 	fi
+	local past_news_corner_topics=""
+	past_news_corner_topics=$(_recent_news_corner_topics_block)
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -68,12 +74,14 @@ $(_radio_persona_block)
 
 【現在時刻】${_rc_time_spoken}
 
-【重要】ニュースフィードからの記事取得に失敗しました。
-あなた自身の知識から、最近（ここ数日〜1週間以内）の注目ニュースや話題を1つ選び、ニュースコーナーとして紹介してください。
-- 政治、経済、テクノロジー、科学、文化、スポーツなど分野は問わない
-- 日本国内のニュースでも海外のニュースでもよい
+ 【重要】ニュースフィードからの記事取得に失敗しました。
+ あなた自身の知識から、最近（ここ数日〜1週間以内）の注目ニュースや話題を1つ選び、ニュースコーナーとして紹介してください。
+- 社会、政治、外交・国際情勢、経済・ビジネスのいずれかに限ること
+- 日本国内のニュースでも海外のニュースでもよいが、海外ニュースばかりにならないよう日本の政治（国会・選挙・首相・政府・与野党・知事選・自治体）も積極的に選ぶこと
 - 自分が確信を持てる事実に基づいて話すこと（曖昧な記憶で断定しないこと）
 - 「本日のRSS取得に失敗した」等のメタ情報はリスナーに伝えないこと。普通のニュースコーナーとして振る舞うこと
+- 野球・サッカー・相撲・ゴルフ・テニス・バスケ・オリンピック等のスポーツニュースは選ばないこと
+- 芸能、映画・アニメ、音楽、著名人の私生活、グルメ、ファッション、旅行案内、新製品・新商品・端末レビュー・セール情報は選ばないこと
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -83,6 +91,11 @@ ${past_news_titles:-  （直近の既読ニュース記録なし）}
 
 【直近ニュースの固有名詞・キーワード（これらに言及する話題も避けること）】
 ${past_news_topics:-  （記録なし）}
+
+【この番組で既に扱ったニュース話題（絶対に再度選ばないこと）】
+以下は直近のニュースコーナーで実際に読み上げた話題です。同じ出来事・同じ人物の訃報や事件を、
+切り口を変えたとしても再度取り上げてはいけません。1件でも一致するなら別のニュースを選ぶこと。
+${past_news_corner_topics:-  （記録なし）}
 
 【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
 
@@ -98,12 +111,40 @@ ${past_news_topics:-  （記録なし）}
 【事実と意見の切り分け（必須）】
 - 確認できる事実、そこから言える推測、自分の意見を切り分けて話すこと
 - 作り話、誤情報の上乗せは禁止
+- 出典名を読み上げるのはGlobal Voicesの記事を扱う場合だけにする。それ以外の媒体名、配信元、URLは本文で示さない
 - 賛否や立場の違いがある話題では、少なくとも別の見え方があることを示すこと
 - 感情的な煽りや、特定の集団を嘲笑・敵視するトーンは使わないこと
 
 $(_radio_output_rules 1000 2000)
+
+最後に以下の形式で、今回選んだニュースの見出しを日本語1行で出力すること:
+===SELECTED_NEWS===
+（選んだニュースの見出し1行）
 PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
+
+	# 自主探索は「何を読んだか」が既読台帳に残らないと、次回も同じ大ニュースを選ぶ。
+	# 生成結果の見出しを受け取って RSS 記事と同じ台帳へ記録する。
+	local result_dir rc=0
+	result_dir=$(mktemp -d /tmp/eloop_news_self_XXXXXXXX)
+	export RADIO_GEN_RESULT_DIR="$result_dir"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news" || rc=$?
+	unset RADIO_GEN_RESULT_DIR
+
+	if [ "$rc" -eq 0 ] && { [ -s "$result_dir/selected_news.txt" ] || [ -s "$result_dir/summary.txt" ]; }; then
+		local self_title=""
+		self_title=$(head -n 1 "$result_dir/selected_news.txt" 2>/dev/null | tr -d '\r')
+		if [ -z "$self_title" ]; then
+			# 見出し行が無い場合は要約行（キーワード列 / 要約）で代替する
+			self_title=$(head -n 1 "$result_dir/summary.txt" 2>/dev/null | tr -d '\r')
+		fi
+		if [ -n "$self_title" ] && _append_news_read_entry "$self_title"; then
+			log "[NEWS] 自主探索の既読記録: ${self_title}"
+		else
+			log "[NEWS] 自主探索の既読記録に失敗（見出し・要約とも取得できず）"
+		fi
+	fi
+	rm -rf "$result_dir" 2>/dev/null || true
+	return "$rc"
 }
 
 start_radio_corner_news() {
@@ -178,6 +219,7 @@ $(_radio_persona_block)
 
 【本日のニュース】
 以下のニュースについて、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
+このコーナーは社会、政治、外交・国際情勢、経済・ビジネスに限定する。芸能、スポーツ、娯楽、商品紹介へ話を広げないこと。
 外国語のニュースの場合は、内容を日本語に翻訳した上で語ること。タイトルも意味が伝わる自然な日本語に訳して扱うこと。原題をそのまま読み上げないこと。読み上げは必ず日本語で行うこと。
 ---
 ${selected_block}
@@ -203,6 +245,7 @@ ${past_topics}
 - ニュース記事の内容自体は捻じ曲げず素直に紹介すること。ただし記事の主張をそのまま自分の意見として丸写ししないこと
 - 確認できる事実、そこから言える推測、自分の意見を切り分けて話すこと
 - 検索結果や記事にない断定、作り話、誤情報の上乗せは禁止
+- 出典名を読み上げるのはGlobal Voicesの記事を扱う場合だけにする。それ以外の媒体名、配信元、URLは本文で示さない
 - 賛否や立場の違いがある話題では、少なくとも別の見え方があることを示すこと
 - 感情的な煽りや、特定の集団を嘲笑・敵視するトーンは使わないこと
 
@@ -612,9 +655,9 @@ ${past_topics}
 
 【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
 
-【トーク構成】深夜の落語創作コーナー
-1. 深夜の静かな雰囲気に合わせたオープニング（2-3文）
-   - 「こんな深夜に聞いてくださっている同志に、一席お付き合いいただきましょう」のような導入
+【トーク構成】創作落語コーナー
+1. 現在の時間帯に合うオープニング（2-3文）
+   - 時間帯を決めつけず、「同志の皆さん、一席お付き合いいただきましょう」のように自然に導入する
 2. オリジナル落語を1つ創作して語る
    - 演目名（オリジナルのタイトルをつける）
    - 古典落語の形式を踏襲した新作: まくら→本題→サゲ（オチ）の構成
@@ -622,7 +665,7 @@ ${past_topics}
    - 噺家の語り口調で演じる（地の文と台詞を使い分ける）
    - サゲ（オチ）をきちんとつける
 3. 軽いクロージング（1-2文）
-   - 深夜のリスナーへの一言
+   - 聞いている同志への一言
 
 ※ 毎回異なる題材・オチにすること。過去トークの内容は絶対に繰り返さない。
 ※ 落語の雰囲気を活かし、語り口調も噺家風にしてよい（ただしですます調は維持）。
@@ -755,10 +798,30 @@ start_radio_corner_ai_knowledge() {
 	grounding_context=$(_radio_stage_research "ai_knowledge" "$topic" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし）"
 
-	# 最新コーディングエージェント・最新モデル情報も追加取得
-	local coding_agent_context="" coding_agent_raw
-	coding_agent_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
-	coding_agent_context=$(_radio_stage_research "ai_knowledge_coding" "AIコーディングエージェント" "$coding_agent_raw")
+	# 配信の実行構成が話題に関係するテーマだけ、コーディングエージェント情報を取得する。
+	# VM/handoff の本文は注入せず、必要になった生成エージェントがRead/Grepで読む。
+	local coding_agent_reference_block="" coding_agent_talk_block=""
+	if _radio_topic_needs_runtime_evidence "$topic"; then
+		local coding_agent_context="" coding_agent_raw
+		coding_agent_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
+		coding_agent_context=$(_radio_stage_research "ai_knowledge_coding" "AIコーディングエージェント" "$coding_agent_raw")
+		coding_agent_reference_block=$(cat <<CONTEXT
+
+【Web検索で得られた参考情報: 最新コーディングエージェントツール】
+${coding_agent_context}
+（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。これらは業界のツール例として扱うこと）
+CONTEXT
+		)
+		coding_agent_talk_block=$(cat <<'RULES'
+3. テーマに関係する範囲で、最新コーディングエージェントの話題（2-3文）
+   - Web検索で得られた最新情報を使い、具体的な製品名・新機能などを紹介する
+   - この配信との関係に触れる必要がある場合だけ、本文を書く前に Read/Grep で prompts/ops_brief.md、core/config.sh の RADIO_* 設定、broadcast/radio_engine.sh、workers/radio_worker.sh、strategy/ai.sh の必要箇所を確認すること
+   - VMの実効設定が必要なら .env は全文を読まず、Grepで RADIO_AGENTS、RADIO_PREPASS_AGENTS、RADIO_MAIN_AGENT、RADIO_MAIN_FALLBACK の4キーだけを確認し、未指定値はcore/config.shの既定値と突き合わせること
+   - 上記ファイルは関係する箇所だけを読み、全文をプロンプトへ複製しないこと。配信の実装に触れない本文では読まないこと
+   - 読んだ実装と実効設定を根拠に、ゲームプレイ・戦略改善・原稿生成などの役割を分けて説明すること。Claude Code、Codex、OpenCodeなど一つの製品を配信全体の唯一の実行環境として断定しないこと
+RULES
+		)
+	fi
 	local latest_model_context="" latest_model_raw
 	latest_model_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_models" "最新 AIモデル LLM GPT Claude Gemini Llama リリース 2025")
 	latest_model_context=$(_radio_stage_research "ai_knowledge_models" "最新AIモデル" "$latest_model_raw")
@@ -774,10 +837,7 @@ $(_radio_persona_block)
 
 【Web検索で得られた参考情報: テーマ関連】
 ${grounding_context}
-
-【Web検索で得られた参考情報: 最新コーディングエージェントツール】
-${coding_agent_context}
-（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。このゲーム配信自体がClaude Codeで動いていることにも触れてよい）
+${coding_agent_reference_block}
 
 【Web検索で得られた参考情報: 最新AIモデル動向】
 ${latest_model_context}
@@ -802,11 +862,8 @@ ${past_topics}
    - 専門用語は必ず平易な言葉で言い換えること
    - 特定製品の過度な宣伝にならないよう、複数の選択肢を公平に紹介する
    - 情報は正確に。不確かなことは「〜と言われている」等のヘッジをつける
-3. 最新コーディングエージェント・最新モデルの話題（2-3文）
-   - テーマと関連づけつつ、最新のコーディングエージェントツール（Claude Code, Cursor, Copilot, Devin, OpenHands等）や最新AIモデル（GPT, Claude, Gemini, Llama等）の動向に軽く触れる
-   - Web検索で得られた最新情報を盛り込む。具体的なバージョン名・リリース日・新機能など
-   - この配信自体がClaude Code（Anthropic製コーディングエージェント）で動いていることにメタに触れてもよい
-4. 軽いクロージング（1-2文）
+${coding_agent_talk_block}
+最後に軽いクロージング（1-2文）
    - 「我々AIも日々進化している。明日はどんな同志が生まれるか楽しみである」的な締め
 
 ※ 毎回必ず異なるテーマを取り上げること。
@@ -1665,6 +1722,22 @@ _filter_unread_jiji_blocks() {
 	rm -f "$jiji_tmp"
 }
 
+# jiji 既読台帳への追記。自主探索モードでも「何を読んだか」を残すために使う。
+_append_jiji_read_title() {
+	local title="$1" title_key
+	[ -n "$title" ] || return 1
+	title_key=$(_news_title_key "$title")
+	[ -n "$title_key" ] || return 1
+	touch "$TMP_HISTORY_DIR/.past_jiji_titles.txt" "$TMP_HISTORY_DIR/.past_jiji_keys.txt" 2>/dev/null || true
+	echo "$title" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+	echo "$title_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+	tail -100 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" &&
+		mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+	tail -200 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" &&
+		mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+	return 0
+}
+
 _run_opencode_jiji_research_unqueued() {
 	local agent="$1" prompt_file="$2"
 	local raw_file raw_text permission cleaned
@@ -1673,12 +1746,12 @@ _run_opencode_jiji_research_unqueued() {
 	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","webfetch":"allow","web":"allow","web-search":"allow"}'
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
-		timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		timeout "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}}" \
 		opencode run --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
-		log "[JIJI] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		log "[JIJI] research timeout (${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -1714,8 +1787,12 @@ _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
 	case "$agent" in
 	codex | codex:*)
-		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
-		return $?
+		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
+		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT:-240}}"
+		local _jiji_research_rc=$?
+		AI_DISPATCH_RECORD_WINNER="$_saved_record_winner"
+		return "$_jiji_research_rc"
 		;;
 	esac
 	_ai_generation_queue_run "JIJI:research:${agent}" _run_opencode_jiji_research_unqueued "$@"
@@ -1723,6 +1800,10 @@ _run_opencode_jiji_research() {
 
 start_radio_corner_jiji() {
 	local game_num="$1" score="$2"
+	# JIJIは調査AI呼出が _radio_generate_and_play より先行するため、ここでも
+	# 生成開始時刻を記録する (改善ジョブ開始前の生成はキャンセル対象にしない)。
+	export RADIO_GEN_STARTED_AT
+	RADIO_GEN_STARTED_AT="$(date +%s)"
 	_radio_time_context
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
@@ -1756,7 +1837,23 @@ start_radio_corner_jiji() {
 	fi
 
 	if [ "$jiji_self_search" = true ]; then
-		headline="最近の注目ニュースやトレンドを自分で探して1つ選んでください"
+		headline="最近の注目ニュースやトレンドを自分で探して1つ選んでください。ただし野球・スポーツ関連の話題は除外すること。"
+		# 自主探索は題材を自由に選べるため、コーナー名へ丸めた重複回避メモだけでは
+		# 同じ事件を何度でも選び直せてしまう。実際に扱った話題をそのまま渡す。
+		local jiji_recent_topics=""
+		jiji_recent_topics=$(_recent_news_corner_topics_block)
+		if [ -n "$jiji_recent_topics" ]; then
+			past_topics="${past_topics}
+
+【この番組で既に扱ったニュース話題（絶対に再度選ばないこと）】
+以下は直近のニュース／時事コーナーで実際に読み上げた話題です。同じ出来事は、
+媒体や見出しや切り口を変えたとしても再度取り上げてはいけません。
+${jiji_recent_topics}"
+		fi
+		# スポーツ除外を past_topics にも明記
+		past_topics="${past_topics}
+
+【除外ジャンル: 野球・サッカー・相撲・ゴルフ・テニス・バスケ・オリンピック等のスポーツニュースは選ばないこと】"
 	fi
 
 	# 3. AIにWeb検索で調査させる（bash許可）
@@ -1816,6 +1913,27 @@ start_radio_corner_jiji() {
 	envsubst <"$ELOOP_LIB_DIR/prompts/radio_jiji.md" >"$prompt_file"
 	unset persona_block output_rules _rc_time past_topics grounding_context
 
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji" --selected-news "$headline"
+	local jiji_result_dir="" jiji_rc=0
+	if [ "$jiji_self_search" = true ]; then
+		jiji_result_dir=$(mktemp -d /tmp/eloop_jiji_self_XXXXXXXX)
+		export RADIO_GEN_RESULT_DIR="$jiji_result_dir"
+	fi
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji" --selected-news "$headline" || jiji_rc=$?
+	[ -n "$jiji_result_dir" ] && unset RADIO_GEN_RESULT_DIR
+
+	if [ "$jiji_rc" -eq 0 ] && [ -n "$jiji_result_dir" ]; then
+		local jiji_self_title=""
+		jiji_self_title=$(head -n 1 "$jiji_result_dir/selected_news.txt" 2>/dev/null | tr -d '\r')
+		if [ -z "$jiji_self_title" ]; then
+			jiji_self_title=$(head -n 1 "$jiji_result_dir/summary.txt" 2>/dev/null | tr -d '\r')
+		fi
+		if [ -n "$jiji_self_title" ] && _append_jiji_read_title "$jiji_self_title"; then
+			log "[JIJI] 自主探索の既読記録: ${jiji_self_title}"
+		else
+			log "[JIJI] 自主探索の既読記録に失敗（見出し・要約とも取得できず）"
+		fi
+	fi
+	[ -n "$jiji_result_dir" ] && rm -rf "$jiji_result_dir" 2>/dev/null
 	unset headline
+	return "$jiji_rc"
 }

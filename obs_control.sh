@@ -63,6 +63,11 @@ stream-status|stream-start|stream-stop)
 	;;
 esac
 
+# ffmpeg直接配信時はOBS不在が正常なため静かにスキップ
+if [ "${SOREN_STREAM_BACKEND:-obs}" != "obs" ]; then
+	exit 0
+fi
+
 if [ -z "${OBS_WEBSOCKET_PORT:-}" ]; then
 	_log "ERROR: OBS_WEBSOCKET_PORT not set"
 	exit 1

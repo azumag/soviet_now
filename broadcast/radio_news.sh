@@ -110,6 +110,54 @@ import re
 import sys
 import unicodedata
 
+# sports filter (shared lib/sports_filter.py)
+try:
+    import importlib.util
+    _cand = None
+    for _p in [
+        os.path.join("lib", "sports_filter.py"),
+        os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib/sports_filter.py"),
+        "games/soviet_now/lib/sports_filter.py",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd(), "sports_filter.py"),
+    ]:
+        if _p and os.path.exists(_p):
+            _cand = _p
+            break
+    if _cand:
+        _spec = importlib.util.spec_from_file_location("sports_filter", _cand)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        is_sports_title = _mod.is_sports_title
+    else:
+        raise ImportError
+except Exception:
+    def is_sports_title(title: str) -> bool:
+        return False
+
+try:
+    import importlib.util
+    _topic_cand = None
+    for _p in [
+        os.path.join("lib", "news_topic_filter.py"),
+        os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib/news_topic_filter.py"),
+        "games/soviet_now/lib/news_topic_filter.py",
+    ]:
+        if _p and os.path.exists(_p):
+            _topic_cand = _p
+            break
+    if not _topic_cand:
+        raise ImportError
+    _topic_spec = importlib.util.spec_from_file_location("news_topic_filter", _topic_cand)
+    _topic_mod = importlib.util.module_from_spec(_topic_spec)
+    _topic_spec.loader.exec_module(_topic_mod)
+    is_low_value_news_title = _topic_mod.is_low_value_news_title
+    is_public_interest_news_title = _topic_mod.is_public_interest_news_title
+except Exception:
+    def is_low_value_news_title(title: str) -> bool:
+        return False
+    def is_public_interest_news_title(title: str) -> bool:
+        return True
+
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
 past_topic_key_file = sys.argv[3]
@@ -208,6 +256,14 @@ seen_url_hashes = set()
 out = []
 for b in blocks:
     title = b[0][2:].strip()
+    if is_sports_title(title):
+        continue
+    if is_low_value_news_title(title):
+        continue
+    item = meta.get(title, {}) if isinstance(meta, dict) else {}
+    source_key = (item.get("source_key") or "").strip()
+    if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
+        continue
     k = key(title)
     tk = topic_key(title)
     uh = url_hash_for_title(title)
@@ -343,6 +399,7 @@ _news_source_key_from_name() {
 		Wikinews\(*) echo "wikinews" ;;
 		wikinews_*) echo "wikinews" ;;
 		"Global Voices"|globalvoices|GlobalVoices) echo "globalvoices" ;;
+		Google\ News*) echo "google_news" ;;
 		*) echo "" ;;
 	esac
 }
@@ -362,6 +419,38 @@ _append_news_read_url_hash() {
 		mv "${PAST_NEWS_URL_HASHES}.tmp" "$PAST_NEWS_URL_HASHES"
 }
 
+# 既読ニュース台帳への追記。RSS 記事も AI 自主探索の題材も同じ台帳に入れる。
+# title だけは必須、source_key / url_hash は分かる場合のみ渡す。
+_append_news_read_entry() {
+	local title="$1" source_key="${2:-}" url_hash="${3:-}"
+	local title_key topic_key
+	[ -n "$title" ] || return 1
+	title_key=$(_news_title_key "$title")
+	[ -n "$title_key" ] || return 1
+	topic_key=$(_news_topic_key "$title")
+
+	touch "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null || true
+	echo "$title" >>"$PAST_NEWS_READ"
+	echo "$title_key" >>"$PAST_NEWS_READ_KEYS"
+	[ -n "$topic_key" ] && echo "$topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
+	_append_news_read_source "$source_key"
+	_append_news_read_url_hash "$url_hash"
+	tail -300 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+	tail -300 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+	tail -300 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+	return 0
+}
+
+# 自主探索コーナー用: 直近の news / jiji コーナーで実際に扱った話題を生の形で返す。
+# _radio_past_topics_block はコーナー名だけの定型文へ丸めるため、
+# 「同じニュースをもう一度選ばない」判断には使えない。
+_recent_news_corner_topics_block() {
+	local limit="${NEWS_SELF_SEARCH_TOPIC_LIMIT:-30}"
+	[ -f "$PAST_RADIO_TOPICS" ] || return 0
+	grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+( [^ ]+)? \[(news|jiji)\]:' "$PAST_RADIO_TOPICS" 2>/dev/null \
+		| tail -"$limit" | sed 's/^/  - /'
+}
+
 _prepare_news_prompt_blocks() {
 	local blocks_text="$1"
 	python3 - "$PAST_NEWS_READ_SOURCES" "$blocks_text" <<'PY'
@@ -379,10 +468,12 @@ try:
 except Exception:
     meta = {}
 
-pref_order = {"wikinews": 0, "globalvoices": 1}
+pref_order = {"google_news": 0, "globalvoices": 1, "wikinews": 2}
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
+    if name.startswith("Google News"):
+        return "google_news"
     return {"Global Voices": "globalvoices"}.get(name, "")
 display = {"wikinews": "ウィキニュース", "globalvoices": "Global Voices"}
 lang_labels = {
@@ -420,6 +511,11 @@ def block_source_name(block):
     return (item.get("source") or "").strip()
 
 def block_source_key(block):
+    title = block_title(block)
+    item = meta.get(title, {})
+    source_key = (item.get("source_key") or "").strip()
+    if source_key:
+        return "globalvoices" if source_key.startswith("globalvoices") else source_key
     return _name_to_key(block_source_name(block))
 
 def block_published_ts(block):
@@ -442,11 +538,19 @@ for block in blocks:
     source_name = block_source_name(block)
     item_meta = meta.get(title, {})
     lang = item_meta.get("lang", "ja")
+    published_at = (item_meta.get("published_at") or "").strip()
     lang_tag = lang_labels.get(lang, f" [{lang}]") if lang != "ja" else ""
-    if source_name:
-        out_blocks.append("\n".join([block[0], f"出典: {source_name}{lang_tag}", *block[1:]]).rstrip())
+    source_key = block_source_key(block)
+    if source_key == "globalvoices":
+        attribution = [block[0], f"出典: {source_name}{lang_tag}"]
+        if published_at:
+            attribution.append(f"公開日時: {published_at}")
+        out_blocks.append("\n".join([*attribution, *block[1:]]).rstrip())
     else:
-        out_blocks.append("\n".join(block).rstrip())
+        context = [block[0]]
+        if published_at:
+            context.append(f"公開日時: {published_at}")
+        out_blocks.append("\n".join([*context, *block[1:]]).rstrip())
 
 print("\n\n".join(out_blocks))
 PY
@@ -473,6 +577,8 @@ except Exception:
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
+    if name.startswith("Google News"):
+        return "google_news"
     return {"Global Voices": "globalvoices"}.get(name, "")
 
 # Parse blocks

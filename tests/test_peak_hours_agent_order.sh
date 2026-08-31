@@ -227,8 +227,34 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|codex:minimax-m3|1|opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor|opencode:deepseek-v4-flash-free,codex:amd-token-factory-deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor"
+config_expect="10-13,15-19|opencode:muse-spark-1.2-contributor-free|1|opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,codex:deepseek-v4-flash|opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,codex:deepseek-v4-flash"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
+
+common_order=$(printf '%s' "$config_got" | cut -d'|' -f4)
+muse_pos=${common_order%%opencode-go:muse-spark-1.2-contributor*}
+amd_pos=${common_order%%codex:amd-token-factory-deepseek-v4-flash*}
+minimax_pos=${common_order%%codex:minimax-m3*}
+[ "${#amd_pos}" -lt "${#muse_pos}" ] \
+	&& ok "paid chain: AMD DeepSeek precedes muse" \
+	|| not_ok "paid chain order (got '$common_order')"
+[ "${#minimax_pos}" -lt "${#muse_pos}" ] \
+	&& ok "paid chain: MiniMax precedes muse" \
+	|| not_ok "paid MiniMax order (got '$common_order')"
+
+(
+	set +u
+	unset RADIO_JIJI_RESEARCH_TIMEOUT
+	ELOOP_LIB_DIR="$TMP"
+	# shellcheck disable=SC1090
+	. "$CONFIG_SRC" >/dev/null 2>&1
+	printf '%s' "$RADIO_JIJI_RESEARCH_TIMEOUT" >"$TMP/jiji_timeout.out"
+) 2>/dev/null
+jiji_timeout=$(cat "$TMP/jiji_timeout.out" 2>/dev/null)
+[ "$jiji_timeout" = "300" ] && ok "JIJI research timeout defaults to 300s" \
+	|| not_ok "JIJI research timeout default (got '$jiji_timeout')"
+jiji_wiring=$(grep -c 'RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}' "$ROOT/broadcast/radio_corners.sh")
+[ "$jiji_wiring" -ge 2 ] && ok "radio_corners.sh: JIJI research timeout wired separately" \
+	|| not_ok "radio_corners.sh: JIJI research timeout wiring (count=$jiji_wiring)"
 
 # ============================================================
 # G. 呼び出し箇所の結線（静的アサーション）

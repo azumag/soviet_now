@@ -134,7 +134,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `generate_dashboard.sh` | score_history.txt → score_dashboard.html 生成 |
 | `show_status.sh` | eloop 全体のCUIステータス表示 (watchモード) |
 | `show_status_g.sh` | CUI グラフィカル統計ダッシュボード (watchモード) |
-| `status_dashboard.py` | CUI統計ダッシュボード描画 (brailleスコアタイムライン等) |
+| `status_dashboard.py` | CUI統計ダッシュボード描画 (ブラウザ対応のスコアタイムライン等) |
 | `score_history.txt` | スコア履歴 (TSV: timestamp, score) |
 | `score_dashboard.html` | OBS等向けHTMLダッシュボード (generate_dashboard.sh で生成) |
 
@@ -183,44 +183,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 ### スケジュール
 
-12ゲーム1サイクル（`MIN_GAMES_BEFORE_IMPROVE`）でスケジューリング。`broadcast/scheduler.sh` が管理。
-
-#### サイクルベース（改善サイクル内の蓄積ゲーム数）
-
-| サイクル位置 | コーナー | 備考 |
-|---|---|---|
-| Game 2 | 雑談テーマ | 1/3でソ連テーマ。時刻コーナー発火時はスキップ |
-| Game 5 | ニュース読み上げ | `fetch_and_play_news()` |
-| Game 8 | 時事ニュース（jiji） | AI Web検索でトレンド紹介。改善タイミング付近はスキップ |
-
-#### 時刻ベース（±15分ウィンドウ、1日1回のみ）
-
-| 時刻 | コーナー | 内容 |
-|---|---|---|
-| 01:00 | rakugo | 深夜の落語創作 |
-| 05:00 | danger_zone | 世界危険地域 |
-| 06:00 | health | 健康情報 |
-| 07:00 | breakfast | 世界の朝食 |
-| 08:00 | weather | ソ連天気予報 |
-| 09:00 | wiki | きょうのWikipedia |
-| 10:00 | sightseeing | おすすめ観光地 |
-| 11:30 | lunch | 世界の昼食 |
-| 12:00 | fortune | ソ連占い |
-| 13:00 | devil_dict | 悪魔の辞典 |
-| 14:00 | soviet_quiz | ソ連クイズ |
-| 15:30 | market | 株価・経済 |
-| 16:00 | bluegrass | ブルーグラス音楽紹介 |
-| 17:00 | dinner | 今日の献立 |
-| 17:30 | redefine | 概念の再定義 |
-| 18:00 | soviet_lifehack | ソビエト式生活改善 |
-| 19:00 | world_dinner | 世界の夕食 |
-| 20:00 | whatday | 今日は何の日？ |
-| 20:30 | zaitech | 財テクコーナー |
-| 21:00 | deals | お得情報 |
-| 21:30 | fudosan | 不動産情報コーナー |
-| 22:00 | survival | サバイバル知識 |
-| 22:30 | night_snack | 世界の夜食 |
-| 23:30 | local_japan | 日本地域情報 |
+`broadcast/scheduler.sh` が時刻ベースで管理する。毎時00分・30分にニュース、15分・45分に時事ニュース、5分に雑談テーマとランダムコーナーを生成する（いずれも±15分の発火ウィンドウ）。落語を含む各コーナーは、毎時5分の候補プールからランダムに1つ選ばれる。
 
 #### 再生制御
 - コメント優先: コメントキューがあるとラジオ再生は deferred queue に回し、コメント消化後に再生

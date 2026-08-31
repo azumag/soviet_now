@@ -271,7 +271,13 @@ _play_comment_queue() {
 
 			# 重複チェック: 同じ内容を再度再生しない
 			local file_hash
-			file_hash=$(md5 -q "$qf" 2>/dev/null)
+			if declare -F _comment_hash_file >/dev/null 2>&1; then
+				file_hash=$(_comment_hash_file "$qf" 2>/dev/null || true)
+			elif command -v md5 >/dev/null 2>&1; then
+				file_hash=$(md5 -q "$qf" 2>/dev/null || true)
+			else
+				file_hash=$(md5sum "$qf" 2>/dev/null | awk '{print $1}' || true)
+			fi
 			local _comment_context_label_for_dedupe=""
 			_comment_context_label_for_dedupe=$(_comment_playback_context_label "$qf" 2>/dev/null || printf '%s' "comment")
 			local _skip_duplicate_check=0

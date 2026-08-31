@@ -1,0 +1,19 @@
+[Unit]
+Description=Soren Radio Archive Push (soviet_now#113 / docich#10)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/soren
+EnvironmentFile=-/home/ubuntu/soren/.env
+ExecStart=/bin/bash -lc 'exec ./tools/radio_archive_push.sh'
+# ログは journal と logs/radio_archive.log の両方へ
+StandardOutput=append:/home/ubuntu/soren/logs/radio_archive.log
+StandardError=append:/home/ubuntu/soren/logs/radio_archive.log
+# リトライは timer 側の OnFailure ではなく、スクリプト内で 3 回リトライする
+
+[Install]
+WantedBy=multi-user.target

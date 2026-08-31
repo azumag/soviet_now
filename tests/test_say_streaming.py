@@ -20,12 +20,15 @@ class TestSayStreaming(unittest.TestCase):
         content_text: str,
         *,
         fail_first_chunk: str | None = None,
+        partial_fail_after_sleep: str | None = None,
         retry_max: int = 1,
         fail_caption_index: int | None = None,
         synth_sleep: str = "0.25",
         play_sleep: str = "0.80",
         ffprobe_duration: str = "0",
         truncate_min: str | None = None,
+        country_names: bool = False,
+        copy_country_names: bool = True,
     ):
         raw_dir = tempfile.TemporaryDirectory()
         root = Path(raw_dir.name)
@@ -38,6 +41,11 @@ class TestSayStreaming(unittest.TestCase):
             REPO_ROOT / "lib" / "normalize_speech_text.py",
             root / "lib" / "normalize_speech_text.py",
         )
+        if copy_country_names:
+            shutil.copy2(
+                REPO_ROOT / "lib" / "country_names.py",
+                root / "lib" / "country_names.py",
+            )
 
         event_log = root / "events.log"
         caption_log = root / "captions.log"
@@ -59,26 +67,33 @@ docich_cc_cleanup() { :; }
         content = root / "comment.txt"
         content.write_text(content_text, encoding="utf-8")
         fail_state = root / "fail_once.state"
+        partial_fail_state = root / "partial_fail_once.state"
 
         self._write_executable(
             root / "voicevox_tts.sh",
             """#!/bin/sh
 set -eu
 out=''
+input=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
-    -f) shift 2 ;;
+    -f) input="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 printf 'synth-start:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
+if [ -n "$input" ]; then
+  normalized=$(tr '\\n' ' ' < "$input")
+  printf 'synth-text:%s\\n' "$normalized" >> "$TEST_EVENT_LOG"
+fi
 sleep SYNC_SLEEP_SEC
 printf 'wav' > "$out"
 printf 'synth-end:%s\\n' "$(basename "$out")" >> "$TEST_EVENT_LOG"
 """.replace("SYNC_SLEEP_SEC", synth_sleep),
         )
         fail_name = fail_first_chunk or ""
+        partial_fail_name = partial_fail_after_sleep or ""
         self._write_executable(
             root / "bin" / "pactl",
             "#!/bin/sh\nprintf '1\\tsoren_null\\tmodule-null-sink\\n'\n",
@@ -100,6 +115,11 @@ if [ "$name" = "{fail_name}" ] && [ ! -e "{fail_state}" ]; then
   : > "{fail_state}"
   exit 1
 fi
+if [ "$name" = "{partial_fail_name}" ] && [ ! -e "{partial_fail_state}" ]; then
+  : > "{partial_fail_state}"
+  sleep SYNC_SLEEP_SEC
+  exit 1
+fi
 sleep SYNC_SLEEP_SEC
 printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
 """.replace("SYNC_SLEEP_SEC", play_sleep),
@@ -118,6 +138,8 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
                 "SAY_RETRY_MAX_SLEEP_SEC": "1",
                 "SAY_STREAM_PLAY_START_SETTLE_SEC": "0.1",
                 "SAY_STREAM_PLAYER_READY_DIR": str(root / "ready"),
+                "TWITCH_SNOOZE_POLL_SEC": "0",
+                "SPEAKING_GRACE_SEC": "0",
                 "VOICEVOX_COMMENT_SYNTH_TIMEOUT_SEC": "5",
                 "VOICEVOX_SYNTH_LOCK_WAIT_COMMENT_SEC": "5",
                 "TEST_EVENT_LOG": str(event_log),
@@ -128,6 +150,8 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
             env["TEST_CAPTION_FAIL_PREPARE"] = str(fail_caption_index)
         if truncate_min is not None:
             env["SAY_TRUNCATE_MIN_EXPECTED_SEC"] = truncate_min
+        if country_names:
+            env["SAY_REPLACE_COUNTRY_REFERENCES"] = "1"
         result = subprocess.run(
             ["bash", "say_enqueue.sh", "--no-preempt", str(content), "150", "0"],
             cwd=root,
@@ -136,10 +160,67 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
             text=True,
             timeout=30,
         )
-        events = event_log.read_text(encoding="utf-8").splitlines()
-        caption_ops = caption_log.read_text(encoding="utf-8").splitlines()
+        events = (
+            event_log.read_text(encoding="utf-8").splitlines()
+            if event_log.exists()
+            else []
+        )
+        caption_ops = (
+            caption_log.read_text(encoding="utf-8").splitlines()
+            if caption_log.exists()
+            else []
+        )
         raw_dir.cleanup()
         return result, events, caption_ops
+
+    def test_generic_audio_does_not_treat_external_type_terms_as_countries(self):
+        result, events, _ = self._run(
+            "ソ連のT-34戦車、T-72戦車、Type 2 diabetesです。",
+            synth_sleep="0.01",
+            play_sleep="0.01",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "synth-text:ソ連のt-34戦車、t-72戦車、type 2 diabetesです。",
+            events,
+        )
+        self.assertFalse(
+            any("モルドバ" in line or "不明な国" in line for line in events),
+            events,
+        )
+
+    def test_game_audio_explicitly_replaces_all_country_stage_numbers(self):
+        source = " ".join(f"T{piece_type}" for piece_type in range(1, 17))
+        expected = (
+            "アルメニア モルドバ エストニア ラトビア リトアニア "
+            "ジョージア アゼルバイジャン タジキスタン キルギス "
+            "ベラルーシ ウズベキスタン トルクメニスタン ウクライナ "
+            "カザフスタン ロシア ソ連"
+        )
+
+        result, events, _ = self._run(
+            source,
+            synth_sleep="0.01",
+            play_sleep="0.01",
+            country_names=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"synth-text:{expected}", events)
+
+    def test_game_audio_fails_closed_when_country_normalizer_is_missing(self):
+        result, events, _ = self._run(
+            "T14を読み上げます。",
+            synth_sleep="0.01",
+            play_sleep="0.01",
+            country_names=True,
+            copy_country_names=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ゲーム国名の正規化に失敗", result.stderr)
+        self.assertFalse(any(line.startswith("synth-") for line in events), events)
 
     def test_playback_starts_while_next_chunk_is_synthesized(self):
         text = "".join(f"第{i}文です。" for i in range(1, 41))
@@ -227,6 +308,23 @@ printf 'play-end:%s\\n' "$name" >> "$TEST_EVENT_LOG"
         for name in chunk_names:
             self.assertEqual(starts.count(name), 1, f"{name} duplicated: {starts}")
         self.assertIn("合成待ち中に完了", result.stderr)
+
+    def test_partially_played_chunk_is_not_retried_from_the_beginning(self):
+        # プレイヤーが数秒再生してから異常終了した場合、同じ WAV を先頭から
+        # 再試行すると、既に聞こえた部分が二重になる。
+        text = "".join(f"第{i}文です。" for i in range(1, 41))
+        result, events, _ = self._run(
+            text,
+            partial_fail_after_sleep="chunk_1.wav",
+            retry_max=1,
+            play_sleep="2.2",
+            ffprobe_duration="10",
+            truncate_min="2",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        starts = [line.split(":", 1)[1] for line in events if line.startswith("play-start:")]
+        self.assertEqual(starts.count("chunk_1.wav"), 1, events)
+        self.assertIn("再試行せず完了扱い", result.stderr)
 
 
 if __name__ == "__main__":

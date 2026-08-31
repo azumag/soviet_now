@@ -173,7 +173,9 @@ def explain_reasons(reason_text):
         "anchor_promoted": "現戦略が anchor を上回ったため anchor を更新した。",
         "objective_regression": "建国目標の進捗が anchor より後退した。",
         "stage_achievement_regression": "直近ゲームの段階到達率が粛清閾値以下だった。",
-        "lost_turkmenistan_gate": "anchor よりトルクメニスタン段階の到達率が後退した。",
+        # Historical reason key retained for stored-result compatibility; the
+        # measured gate is piece type 11, which is Uzbekistan.
+        "lost_turkmenistan_gate": "anchor よりウズベキスタン段階の到達率が後退した。",
         "lost_ukraine_gate": "anchor よりウクライナ段階の到達率が後退した。",
         "lost_kazakhstan_gate": "anchor よりカザフスタン段階の到達率が後退した。",
         "lost_soviet_path": "anchor はソ連到達済みだが current はソ連未到達だった。",
@@ -638,6 +640,8 @@ _generate_rollback_postmortem_with_ai() {
 		RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
 		RUN_AI_PRIMARY_RETRIES="${ROLLBACK_POSTMORTEM_PRIMARY_RETRIES:-3}"
 		RUN_CMD_TIMEOUT_SEC="${ROLLBACK_POSTMORTEM_TIMEOUT_SEC:-300}"
+		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		export RUN_CMD_LOG_FILE RUN_CMD_SESSION_DIR RUN_CMD_TMP_DIR RUN_CMD_OPENCODE_PERMISSION RUN_AI_PRIMARY_RETRIES RUN_CMD_TIMEOUT_SEC
 		mkdir -p "$RUN_CMD_SESSION_DIR" "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 
@@ -645,6 +649,7 @@ _generate_rollback_postmortem_with_ai() {
 			"prompts/rollback_postmortem.md" "$ROLLBACK_POSTMORTEM_FILE" \
 			"$ROLLBACK_ANALYSIS_FILE" "$ROLLBACK_POSTMORTEM_CONTEXT_FILE"
 		rc=$?
+		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
 		if [ "$rc" -eq 0 ] && [ -s "$ROLLBACK_POSTMORTEM_FILE" ]; then
 			mkdir -p "$(dirname "$ELOOP_LIB_DIR/$ROLLBACK_POSTMORTEM_FILE")" 2>/dev/null || true
 			cp "$ROLLBACK_POSTMORTEM_FILE" "$ELOOP_LIB_DIR/$ROLLBACK_POSTMORTEM_FILE" 2>/dev/null || rc=1
@@ -742,7 +747,7 @@ except Exception:
 #=== ローリングスコア & リグレッション検知 ===
 
 _archive_strategy_snapshot_by_hash() {
-	local source_file="$1" hash_value="$2"
+	local source_file="$1" hash_value="${2:-}"
 	[ -f "$source_file" ] || return 0
 	if [ -z "$hash_value" ] || [ "$hash_value" = "unknown" ]; then
 		hash_value=$(python3 extract_decide_hash.py "$source_file" 2>/dev/null || echo "")
@@ -4250,7 +4255,38 @@ STAGE_GATE_SEQUENCE = [
     (14, "lost_kazakhstan_gate"),
 ]
 
-def stage_gate_rate(progress, threshold):
+# 2026-08-25 fix: 段階到達率ゲートの統計化 (STAGE_GATE_STAT_*)。
+# 02:26 に v727 (n=13, comp 優位, breach 0) が T14 1/13 vs anchor 6/25 (Fisher p=0.22) だけで
+# lost_kazakhstan_gate 粛清され、05:06 には rollback 先 (n=100, russia 2 vs 1, comp -57=0.6%,
+# breach 0) が T11 41/43 vs 25/25 (p=0.40, gap 0.047) で lost_turkmenistan_gate 粛清された。
+# 到達率の差は「率差 >= STAGE_GATE_MIN_RATE_GAP かつ 片側 Fisher p <= STAGE_GATE_STAT_ALPHA」の
+# ときだけ後退とみなす。STAGE_GATE_STAT_ENABLED=0 で旧挙動 (差があれば即発火)。
+# 判定不能 (例外) 時は旧挙動 (= 発火/rollback 側) に倒す。
+try:
+    stage_gate_stat_enabled = str(os.environ.get("STAGE_GATE_STAT_ENABLED", "1") or "1") != "0"
+except Exception:
+    stage_gate_stat_enabled = False
+try:
+    stage_gate_stat_alpha = float(os.environ.get("STAGE_GATE_STAT_ALPHA", "0.05") or 0.05)
+except Exception:
+    stage_gate_stat_alpha = 0.05
+try:
+    stage_gate_min_rate_gap = float(os.environ.get("STAGE_GATE_MIN_RATE_GAP", "0.10") or 0.10)
+except Exception:
+    stage_gate_min_rate_gap = 0.10
+try:
+    stage_gate_russia_min_expected = float(os.environ.get("STAGE_GATE_RUSSIA_MIN_EXPECTED", "1.0") or 1.0)
+except Exception:
+    stage_gate_russia_min_expected = 1.0
+try:
+    stage_gate_grace_comp_gap_ratio = float(os.environ.get("STAGE_GATE_GRACE_COMP_GAP_RATIO", "0.25") or 0.25)
+except Exception:
+    stage_gate_grace_comp_gap_ratio = 0.0
+_STAGE_GATE_OBS = []
+
+def stage_gate_counts(progress, threshold):
+    """(hits, n) for reach-rate of `threshold`. Falls back to best_max_type as a 1-sample
+    observation (旧 stage_gate_rate の 1.0/0.0 と同じ率、分母付き)."""
     max_types = []
     for raw in (progress or {}).get("max_types", []) or []:
         try:
@@ -4259,24 +4295,105 @@ def stage_gate_rate(progress, threshold):
             pass
     if not max_types:
         best = int((progress or {}).get("best_max_type", 0) or 0)
-        return 1.0 if best >= threshold else 0.0
-    hits = sum(1 for value in max_types if value >= threshold)
-    return hits / len(max_types)
+        return (1, 1) if best >= threshold else (0, 1)
+    return sum(1 for value in max_types if value >= threshold), len(max_types)
+
+def _stage_hypergeom_pmf(k, K, n, N):
+    try:
+        return math.comb(K, k) * math.comb(N - K, n - k) / math.comb(N, n)
+    except ValueError:
+        return 0.0
+
+def stage_fisher_p_shortfall(hits_cur, n_cur, hits_ref, n_ref):
+    """One-sided Fisher exact p for H1: current reach-rate < reference reach-rate.
+    lib/eval_stats.fisher_one_sided と同じ 2x2 (悪事象 = 未到達) を使い、eval_stats が
+    import できない場合だけ同一実装のローカル fallback を使う。"""
+    miss_cur = int(n_cur) - int(hits_cur)
+    miss_ref = int(n_ref) - int(hits_ref)
+    if eval_stats is not None:
+        try:
+            return float(eval_stats.fisher_one_sided(miss_cur, n_cur, miss_ref, n_ref))
+        except Exception:
+            pass
+    N = int(n_cur) + int(n_ref)
+    K = miss_cur + miss_ref
+    n = int(n_cur)
+    if N <= 0 or n <= 0 or K <= 0 or K == N:
+        return 1.0
+    p = sum(_stage_hypergeom_pmf(k, K, n, N) for k in range(miss_cur, min(K, n) + 1))
+    return min(1.0, max(0.0, p))
+
+def stage_gate_shortfall_significant(hits_cur, n_cur, hits_ref, n_ref):
+    """(fires, p, gap). 例外時は (True, 1.0, 0.0) = 旧挙動 (発火側) に倒す。"""
+    try:
+        if n_cur <= 0 or n_ref <= 0:
+            return True, 1.0, 0.0
+        gap = (hits_ref / float(n_ref)) - (hits_cur / float(n_cur))
+        # p は観測ログ用に常に計算する (math.comb, N<=150 で数十 µs)。発火は率差床と p の AND。
+        p = stage_fisher_p_shortfall(hits_cur, n_cur, hits_ref, n_ref)
+        return (gap >= stage_gate_min_rate_gap and p <= stage_gate_stat_alpha), p, gap
+    except Exception:
+        return True, 1.0, 0.0
+
+def russia_noninferior(cur_r, cur_n, anc_r, anc_n):
+    """ロシア到達数の非劣後判定 (標本数を考慮)。n=13 で 0 回は n=100 で 1 回に劣っていない。
+    分母は score 標本数 (russia_count は生涯最大値 sticky なので max_types 窓では過大評価)。
+    例外時は False (旧挙動 = rollback 側)。"""
+    try:
+        cur_r = int(cur_r or 0)
+        anc_r = int(anc_r or 0)
+        cur_n = int(cur_n or 0)
+        anc_n = int(anc_n or 0)
+        if cur_r >= anc_r:
+            return True
+        if cur_n <= 0 or anc_n <= 0:
+            return False
+        # 不整合データ (count > n) で負の miss になり Fisher が p=1.0 (fail-open) に退化するのを防ぐ
+        cur_r = max(0, min(cur_r, cur_n))
+        anc_r = max(0, min(anc_r, anc_n))
+        anc_rate = min(1.0, anc_r / float(anc_n))
+        if anc_rate * cur_n < stage_gate_russia_min_expected:
+            return True
+        return stage_fisher_p_shortfall(cur_r, cur_n, anc_r, anc_n) > stage_gate_stat_alpha
+    except Exception:
+        return False
 
 def stage_gate_regression_reason(anchor_progress, current_progress, current_metrics):
+    """Returns (reason, detail). detail は reasons= に '+' 連結で付く観測値 (',' を含まない)。"""
     rank = current_rolling_rank(current_metrics)
     if rank is None or rank <= rolling_score_russia_grace_rank:
-        return ""
+        _STAGE_GATE_OBS.append("skipped=rank_grace rank=%s" % rank)
+        return "", ""
+    _STAGE_GATE_OBS.append("rank=%d" % rank)
     for threshold, reason in STAGE_GATE_SEQUENCE:
-        current_rate = stage_gate_rate(current_progress, threshold)
-        anchor_rate = stage_gate_rate(anchor_progress, threshold)
+        cur_hits, cur_n = stage_gate_counts(current_progress, threshold)
+        anc_hits, anc_n = stage_gate_counts(anchor_progress, threshold)
+        current_rate = (cur_hits / cur_n) if cur_n else 0.0
+        anchor_rate = (anc_hits / anc_n) if anc_n else 0.0
         current_best = int((current_progress or {}).get("best_max_type", 0) or 0)
         anchor_best = int((anchor_progress or {}).get("best_max_type", 0) or 0)
         current_unmet = current_rate < 1.0
-        regressed = anchor_rate > current_rate or (anchor_best >= threshold and current_best < threshold)
-        if current_unmet and regressed:
-            return reason
-    return ""
+        regressed_by_rate = anchor_rate > current_rate
+        # best_max_type は生涯最大値 (sticky, 分母なし)。統計モードでは「評価のトリガー」にはなるが、
+        # 窓内到達率の差が有意でなければ単独では発火しない (意図的な仕様: n=13 の新戦略が anchor の
+        # 過去1回の到達だけで粛清される ratchet を止める)。STAGE_GATE_STAT_ENABLED=0 では旧どおり発火。
+        regressed_by_best = anchor_best >= threshold and current_best < threshold
+        if not (current_unmet and (regressed_by_rate or regressed_by_best)):
+            continue
+        if not stage_gate_stat_enabled:
+            _STAGE_GATE_OBS.append("t%d=%d/%d vs %d/%d stat=off fired=1" % (threshold, cur_hits, cur_n, anc_hits, anc_n))
+            return reason, ""
+        fires, p, gap = stage_gate_shortfall_significant(cur_hits, cur_n, anc_hits, anc_n)
+        _STAGE_GATE_OBS.append(
+            "t%d=%d/%d vs %d/%d p=%.4f gap=%.3f fired=%d"
+            % (threshold, cur_hits, cur_n, anc_hits, anc_n, p, gap, 1 if fires else 0)
+        )
+        if fires:
+            detail = "stagestat=type%d/cur%dof%d/anc%dof%d/p%.4f/alpha%.4f/gap%.3f/mingap%.3f" % (
+                threshold, cur_hits, cur_n, anc_hits, anc_n, p, stage_gate_stat_alpha, gap, stage_gate_min_rate_gap
+            )
+            return reason, detail
+    return "", ""
 
 def parse_stage_achievement_gate_types(raw):
     stages = []
@@ -4407,6 +4524,37 @@ russia_advantage_grace = (
     and _curr_russia_adv > _anch_russia_adv
 )
 
+# 2026-08-25 fix: stage_gate_noninferior_grace — 2026-08-24 19:34-19:46 に、スコア全指標で
+# 非劣後 (breach_count=0)・ロシア数 anchor 以上・best_max_type anchor 以上の戦略が、段階到達率
+# (lost_kazakhstan/turkmenistan_gate) だけを理由に4連続でロールバックされ、comp 10017→9208 /
+# russia 3→0 まで12分で転落するカスケードが実際に起きた。段階到達率ゲートは「建国進捗でも
+# スコアでも劣っていない」戦略に対しては発火させない。真の劣化は comp/p50/p25 gap の
+# breach (>=1) で従来どおり検知される。STAGE_GATE_NONINFERIOR_GRACE=0 で旧挙動へ戻せる。
+# 判定不能時は grace=False (旧挙動 = rollback 側) に倒す。
+# 2026-08-25 05:06 追記: 「comp >= anchor comp」条件は撤去。rollback 先 e5b671c8d352 (russia 2 vs 1,
+# breach 0) が comp 差 57 (0.6%, REGRESSION_MIN_COMP_GAP=1000 に対しノイズ) だけで grace を外れ
+# lost_turkmenistan_gate 粛清された。スコア非劣後は breach_count==0 かつ comp 差 <= 
+# STAGE_GATE_GRACE_COMP_GAP_RATIO x REGRESSION_MIN_COMP_GAP (既定 250) とし、ロシア数は
+# 標本数を考慮した russia_noninferior で比較する。
+try:
+    stage_gate_noninferior_grace = (
+        str(os.environ.get("STAGE_GATE_NONINFERIOR_GRACE", "1") or "1") != "0"
+        and curr_breach == 0
+        # comp は anchor 比で min_comp_gap の一定割合 (既定 25% = 250) まで許容 (05:06 の実例は 57)
+        and float(curr_comp_gap) <= stage_gate_grace_comp_gap_ratio * float(min_comp_gap)
+        # russia_count は max_types 窓 (rolling 25件 / current_run 50件) 上の計数なので分母もその窓長
+        and russia_noninferior(
+            int(current_objective.get("russia_count", 0) or 0),
+            len((current_objective or {}).get("max_types", []) or []) or int(current.get("n", 0) or 0),
+            int((anchor_objective or {}).get("russia_count", 0) or 0),
+            len((anchor_objective or {}).get("max_types", []) or []) or int(anchor.get("n", 0) or 0),
+        )
+        and int(current_objective.get("best_max_type", 0) or 0)
+        >= int((anchor_objective or {}).get("best_max_type", 0) or 0)
+    )
+except Exception:
+    stage_gate_noninferior_grace = False
+
 objective_reasons = []
 if (
     early_objective_enabled == "1"
@@ -4444,6 +4592,7 @@ stage_achievement_reason, stage_achievement_detail = stage_achievement_regressio
 if (
     current_hash != anchor_hash
     and stage_achievement_reason
+    and not stage_gate_noninferior_grace
 ):
     # trend_grace は score-only rollback dampener。段階到達率不足は免除しない。
     print(
@@ -4500,15 +4649,23 @@ if current["n"] < min_games_current:
 
 objective_reasons = []
 if current_hash != anchor_hash:
-    stage_gate_reason = stage_gate_regression_reason(anchor_objective, current_objective, current)
-    if stage_gate_reason:
+    stage_gate_reason, stage_gate_detail = stage_gate_regression_reason(anchor_objective, current_objective, current)
+    if stage_gate_reason and not stage_gate_noninferior_grace:
         objective_reasons.append(stage_gate_reason)
+        if stage_gate_detail:
+            objective_reasons.append(stage_gate_detail)
     if (
         int(anchor_objective.get("soviet_count", 0) or 0) > 0
         and int(current_objective.get("soviet_count", 0) or 0) <= 0
         and "lost_soviet_path" not in objective_reasons
     ):
         objective_reasons.append("lost_soviet_path")
+if _STAGE_GATE_OBS:
+    # 観測行 (bash 側で [STAGEGATE] として log し $result からは除去する)
+    try:
+        _orig_print("STAGEGATE:graced=%d %s" % (1 if stage_gate_noninferior_grace else 0, " ".join(_STAGE_GATE_OBS)))
+    except Exception:
+        pass
 if objective_reasons:
     # trend_grace は score-only rollback dampener。目的退行は免除しない。
     print(
@@ -4716,6 +4873,13 @@ PY
 	result=$(echo "$result" | grep -v '^STATGATE:')
 	if [ -n "$_statgate_line" ]; then
 		log "[STATGATE] ${_statgate_line#STATGATE:}"
+	fi
+	# 段階到達率ゲートの観測行 (2026-08-25 統計化)。parse_regression が $result 全体を ',' 分割するため必ず除去する。
+	local _stagegate_line
+	_stagegate_line=$(echo "$result" | grep '^STAGEGATE:' || true)
+	result=$(echo "$result" | grep -v '^STAGEGATE:' || true)
+	if [ -n "$_stagegate_line" ]; then
+		log "[STAGEGATE] ${_stagegate_line#STAGEGATE:}"
 	fi
 
 	if echo "$result" | grep -q '^PROMOTE:'; then

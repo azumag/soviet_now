@@ -81,6 +81,17 @@ _dump_diag() {
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
+	# Corner generators are background jobs of this shell. Without this,
+	# a worker restart leaves them running and they can enqueue duplicate
+	# results after the replacement worker has started.
+	local job_pid
+	for job_pid in $(jobs -p); do
+		kill -TERM "$job_pid" 2>/dev/null || true
+	done
+	sleep 1
+	for job_pid in $(jobs -p); do
+		kill -KILL "$job_pid" 2>/dev/null || true
+	done
 	local active_pid=""
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
 	if [ "$active_pid" != "$$" ]; then
@@ -186,7 +197,7 @@ _run_iteration() {
 		_log "新試合検知: ${_LAST_GAME_NUM} → ${current_game_num}"
 		_LAST_GAME_NUM="$current_game_num"
 		score=$(_last_score 2>/dev/null || echo 0)
-		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
+		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" || true
 		_scheduler_ran_this_tick=1
 	fi
 
@@ -199,7 +210,7 @@ _run_iteration() {
 		echo "$_now_ts" >"$_LAST_SCHEDULER_RUN_FILE"
 		current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 		score=$(_last_score 2>/dev/null || echo 0)
-		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
+		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" || true
 	fi
 
 	# 手動トリガー消化

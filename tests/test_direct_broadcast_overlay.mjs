@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import {
   DIRECT_BROADCAST_STATE_ROUTE,
   buildDirectBroadcastOverlayState,
+  extractLegacyOverlayLineSegments,
   extractLegacyOverlayText,
   parseLegacyEventOverlayDocument,
 } from '../lib/direct_broadcast_overlay.mjs';
@@ -25,6 +26,32 @@ test('legacy status HTML is consumed as read-only plain text without presentatio
     + '</pre>';
   assert.equal(extractLegacyOverlayText(html), '● RUNNING <safe> & ready\n次の行');
   assert.equal(extractLegacyOverlayText('<main>no pre</main>'), '');
+});
+
+
+test('legacy overlay color spans become allowlisted text segments without markup', () => {
+  const html = '<pre>'
+    + '<span style="color:#94a3b8"> 3801</span>│<span style="color:#facc15">\\</span>\n'
+    + '<span style="color:#22d3ee">│</span><span style="font-weight:700"> SOREN/FFMPEG </span>'
+    + '<span style="opacity:.68">dim note</span>\n'
+    + '<span style="color:red;behavior:url(x.htc)">evil</span><script>alert(1)</script>\n'
+    + 'plain &lt;tag&gt; line\n'
+    + '</pre>';
+  assert.deepEqual(extractLegacyOverlayLineSegments(html), [
+    [
+      { t: ' 3801', c: '#94a3b8' },
+      { t: '│' },
+      { t: '\\', c: '#facc15' },
+    ],
+    [
+      { t: '│', c: '#22d3ee' },
+      { t: ' SOREN/FFMPEG ', b: 1 },
+      { t: 'dim note', o: '.68' },
+    ],
+    [{ t: 'evil' }, { t: 'alert(1)' }],
+    [{ t: 'plain <tag> line' }],
+  ]);
+  assert.deepEqual(extractLegacyOverlayLineSegments('<main>no pre</main>'), []);
 });
 
 
@@ -50,7 +77,7 @@ test('broadcast state carries every legacy line and no source paths', () => {
   const ops = path.join(temp, 'ops.html');
   const event = path.join(temp, 'event.html');
   fs.writeFileSync(stats, '<pre>STAT 1\nSTAT 2\nSTAT 3</pre>');
-  fs.writeFileSync(ops, '<pre>OPS 1\nOPS 2</pre>');
+  fs.writeFileSync(ops, '<pre><span style="color:#22c55e">OPS 1</span>\nOPS 2</pre>');
   fs.writeFileSync(event, `
 const EVENTS = [];
 const WORK = {};
@@ -63,8 +90,10 @@ const VISIBLE_SEC = 18;
   assert.equal(state.version, 1);
   assert.equal(state.updatedAt, 1780000000);
   assert.equal(state.feeds.showStatusG.text, 'STAT 1\nSTAT 2\nSTAT 3');
+  assert.deepEqual(state.feeds.showStatusG.segments, [[{ t: 'STAT 1' }], [{ t: 'STAT 2' }], [{ t: 'STAT 3' }]]);
   assert.equal(state.feeds.showStatusG.lineCount, 3);
   assert.equal(state.feeds.showStatus.text, 'OPS 1\nOPS 2');
+  assert.equal(state.feeds.showStatus.segments, undefined, 'ops feed stays plain text to keep the state payload lean');
   assert.equal(state.feeds.showStatus.lineCount, 2);
   assert.equal(state.notifications.visibleSec, 18);
   assert.doesNotMatch(JSON.stringify(state), new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -113,11 +142,21 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /notifications[?][.]generators/);
   assert.match(html, new RegExp(DIRECT_BROADCAST_STATE_ROUTE.replaceAll('/', '\\/')));
   assert.match(html, /renderFeedLines/);
+  assert.match(html, /segmentLines/);
+  assert.match(html, /appendFeedLineContent/);
   assert.match(html, /STATUS MERGE/);
   assert.doesNotMatch(html, /http-equiv=["']refresh/i);
   assert.doesNotMatch(html, /location[.]reload/);
   assert.doesNotMatch(html, /<iframe\b/i);
   assert.doesNotMatch(html, /innerHTML\s*=/);
+});
+
+test('inline alternate-game rails can use the neutral non-blue theme', () => {
+  const html = fs.readFileSync(BROADCAST_HTML, 'utf8');
+  assert.match(html, /dataset[.]sorenNeutral/);
+  assert.match(html, /data-soren-neutral="1"/);
+  assert.match(html, /background: rgb\(5, 5, 5\)/);
+  assert.match(html, /filter: grayscale\(1\)/);
 });
 
 
@@ -386,7 +425,7 @@ test('live-status toasts stay stable and never re-animate while idle', async () 
       },
       showStatus: {
         label: 'SHOW-STATUS',
-        text: '● Backend     FFMPEG LIVE\n◆ Queued      34/100 games\n▾ LastDrop   T36',
+        text: '● Backend     FFMPEG LIVE\n◆ Game        34試合目 (games)\n▾ LastDrop   T36',
         updatedAt: 1780000080,
         lineCount: 3,
       },
@@ -408,6 +447,84 @@ test('live-status toasts stay stable and never re-animate while idle', async () 
   await overlay.tick(1);
   await overlay.tick(2);
   assert.equal(overlay.calls.toastRebuilds, 1, 'idle live-status cards must not rebuild every second');
+});
+
+
+test('ai thinking banner takes the first bottom slot while generators are active', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG\nRecent30: 30.0',
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Backend     FFMPEG LIVE\n◆ Game        34試合目 (games)\n▾ LastDrop   T36',
+        updatedAt: 1780000080,
+        lineCount: 3,
+      },
+    },
+    notifications: {
+      visibleSec: 18,
+      events: [],
+      work: { active: false },
+      generators: [{ key: 'radio', icon: '📻', label: 'ラジオ生成中 (jiji)', ts: 1779999970 }],
+    },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const cards = overlay.toastCards();
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].title, 'AI思考中');
+  assert.match(cards[0].className, /ai-thinking/);
+  assert.equal(cards[0].body, 'ラジオ生成中 (jiji)');
+  assert.equal(cards[0].liveStatus, '1');
+  assert.doesNotMatch(cards[0].className, /fresh/);
+  assert.equal(cards[1].title, 'LIVE STATUS');
+  assert.equal(cards[2].title, 'LIVE STATUS');
+
+  await overlay.tick(2);
+  assert.equal(overlay.calls.toastRebuilds, 1, 'thinking banner must not rebuild every second');
+
+  // 思考が終われば従来の LIVE STATUS 3枚へ戻る。
+  overlay.setState({
+    ...base,
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  });
+  await overlay.tick(1);
+  const idle = overlay.toastCards();
+  assert.equal(idle.length, 3);
+  for (const card of idle) {
+    assert.equal(card.title, 'LIVE STATUS');
+    assert.doesNotMatch(card.className, /ai-thinking/);
+  }
+});
+
+
+test('generator toasts keep their paging role while transient events are visible', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: { label: 'SHOW-STATUS-G', text: 'SOREN/OBS FFMPEG\nRecent30: 30.0', updatedAt: 1780000080, lineCount: 2 },
+      showStatus: { label: 'SHOW-STATUS', text: '● Backend     FFMPEG LIVE', updatedAt: 1780000080, lineCount: 1 },
+    },
+    notifications: {
+      visibleSec: 18,
+      events: [{ ts: Math.floor(1780001000000 / 1000) - 5, category: 'chat', title: 'viewer', body: 'hello' }],
+      work: { active: false },
+      generators: [{ key: 'radio', icon: '📻', label: 'ラジオ生成中', ts: Math.floor(1780001000000 / 1000) - 10 }],
+    },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const cards = overlay.toastCards();
+  assert.ok(cards.some((card) => card.title === '📻 ラジオ生成中'), 'generator toast must remain during events');
+  assert.ok(!cards.some((card) => card.title === 'AI思考中'), 'thinking banner is only for the idle bottom row');
 });
 
 
@@ -470,7 +587,7 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
       },
       showStatus: {
         label: 'SHOW-STATUS',
-        text: '● Loop        RUNNING\n○ ImproveD    STOPPED\n◆ Queued      49/100 games',
+        text: '● Loop        RUNNING\n○ ImproveD    STOPPED\n◆ Game        49試合目 (games)',
         updatedAt: 1780000080,
         lineCount: 3,
       },
@@ -487,7 +604,7 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   const sClasses = overlay.feedS.children.map((line) => line.className);
   assert.ok(sClasses.some((cls) => cls.includes('run')), 'RUNNING line must be green');
   assert.ok(sClasses.some((cls) => cls.includes('down')), 'STOPPED line must be red');
-  assert.ok(sClasses.some((cls) => cls.includes('yellow')), 'Queued line must be yellow');
+  assert.ok(sClasses.some((cls) => cls.includes('yellow')), 'Game count line must be yellow');
 
   const summaryClasses = overlay.summary.children.map((line) => line.className);
   assert.ok(summaryClasses.some((cls) => cls.includes('sum-head')), 'summary SOREN/OBS line must be colored');
@@ -508,6 +625,56 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   await overlay.tick(1);
   assert.equal(overlay.feedG.children.length, 5, 'feed update must re-render the merged panel');
   assert.equal(overlay.feedS.children.length, 3);
+});
+
+
+test('game feed renders allowlisted color segments as styled spans without innerHTML', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'Score Timeline\n     │  \\',
+        segments: [
+          [{ t: 'Score ', b: 1 }, { t: 'Timeline', c: '#67e8f9' }],
+          [{ t: '     │  ' }, { t: '\\', c: '#facc15' }],
+        ],
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: { label: 'SHOW-STATUS', text: '● Backend FFMPEG LIVE', updatedAt: 1780000080, lineCount: 1 },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+  const rows = overlay.feedG.children;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].children.length, 2, 'segmented line must build one span per segment');
+  assert.equal(rows[0].children[0].textContent, 'Score ');
+  assert.equal(rows[0].children[0].style.fontWeight, '700');
+  assert.equal(rows[0].children[1].textContent, 'Timeline');
+  assert.equal(rows[0].children[1].style.color, '#67e8f9');
+  assert.equal(rows[1].children.length, 2);
+  assert.equal(rows[1].children[1].textContent, '\\');
+  assert.equal(rows[1].children[1].style.color, '#facc15');
+
+  const opsRow = overlay.feedS.children[0];
+  assert.equal(opsRow.children.length, 0, 'feeds without segments keep the plain text path');
+  assert.match(opsRow.textContent, /Backend/);
+
+  overlay.setState({
+    ...base,
+    feeds: {
+      ...base.feeds,
+      showStatusG: { ...base.feeds.showStatusG, segments: undefined, updatedAt: 1780000085 },
+    },
+  });
+  await overlay.tick(1);
+  const fallbackRows = overlay.feedG.children;
+  assert.equal(fallbackRows.length, 2);
+  assert.equal(fallbackRows[0].children.length, 0, 'missing segments must fall back to textContent');
+  assert.match(fallbackRows[0].textContent, /Score Timeline/);
 });
 
 

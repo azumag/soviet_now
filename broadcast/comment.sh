@@ -41,6 +41,56 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
+# macOS の md5 と Linux の md5sum の差を吸収する。VM では md5 が存在しない
+# ため、md5 -q の失敗を空文字として扱うとコメントの重複抑止が全て無効になる。
+_comment_hash_text() {
+	local text="${1:-}"
+	if declare -F _outbound_chat_hash >/dev/null 2>&1; then
+		_outbound_chat_hash "$text"
+		return $?
+	fi
+	if command -v md5 >/dev/null 2>&1; then
+		printf '%s' "$text" | md5 -q 2>/dev/null && return 0
+	fi
+	if command -v md5sum >/dev/null 2>&1; then
+		printf '%s' "$text" | md5sum 2>/dev/null | awk '{print $1}'
+		return $?
+	fi
+	return 1
+}
+
+_comment_hash_file() {
+	local file="${1:-}"
+	[ -f "$file" ] || return 1
+	if command -v md5 >/dev/null 2>&1; then
+		md5 -q "$file" 2>/dev/null && return 0
+	fi
+	if command -v md5sum >/dev/null 2>&1; then
+		md5sum "$file" 2>/dev/null | awk '{print $1}'
+		return $?
+	fi
+	return 1
+}
+
+_comment_replace_country_references() {
+	python3 -c 'import sys; from lib.normalize_speech_text import replace_country_references; sys.stdout.write(replace_country_references(sys.stdin.read()))'
+}
+
+_comment_write_country_named_queue_file() {
+	local text="${1:-}" target="${2:-}" normalized tmp
+	[ -n "$target" ] || return 1
+	normalized=$(printf '%s' "$text" | _comment_replace_country_references 2>/dev/null) || return 1
+	tmp="${target}.country.$$.${RANDOM}.tmp"
+	printf '%s\n' "$normalized" >"$tmp" 2>/dev/null || {
+		rm -f "$tmp" 2>/dev/null || true
+		return 1
+	}
+	mv "$tmp" "$target" 2>/dev/null || {
+		rm -f "$tmp" 2>/dev/null || true
+		return 1
+	}
+}
+
 _comment_failure_backoff_remaining() {
 	local backoff_file="${COMMENT_FAILURE_BACKOFF_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_generation_backoff_until}"
 	local now backoff_until remaining
@@ -108,10 +158,101 @@ _comment_meta_sidecar_path() {
 	esac
 }
 
+_comment_viewer_memory_sidecar_path() {
+	local target="$1"
+	case "$target" in
+	*.playing) printf '%s.viewer_memory.json' "${target%.playing}" ;;
+	*.txt) printf '%s.viewer_memory.json' "${target%.txt}" ;;
+	*) printf '%s.viewer_memory.json' "$target" ;;
+	esac
+}
+
+_comment_batch_metadata_path() {
+	printf '%s.viewer_meta.jsonl' "$1"
+}
+
 _comment_clear_generation_meta() {
 	local target="$1"
 	[ -n "$target" ] || return 0
-	rm -f "$(_comment_meta_sidecar_path "$target")" 2>/dev/null || true
+	rm -f \
+		"$(_comment_meta_sidecar_path "$target")" \
+		"$(_comment_viewer_memory_sidecar_path "$target")" \
+		2>/dev/null || true
+}
+
+_build_comment_viewer_memory_context() {
+	local batch_file="$1" source="$2" mode="$3"
+	if [ "${COMMENT_VIEWER_MEMORY_ENABLED:-1}" != "1" ]; then
+		printf '%s\n' "（投稿者別メモは無効）"
+		return 0
+	fi
+	local helper="$ELOOP_LIB_DIR/lib/comment_viewer_memory.py"
+	[ -f "$helper" ] || {
+		printf '%s\n' "（該当する投稿者別メモなし）"
+		return 0
+	}
+	python3 "$helper" context \
+		--state "${COMMENT_VIEWER_MEMORY_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_viewer_memory.json}" \
+		--batch "$batch_file" \
+		--source "$source" \
+		--mode "$mode" \
+		--exclude "${COMMENT_VIEWER_MEMORY_EXCLUDED_USERS:-dociai dociaich}" \
+		--metadata "$(_comment_batch_metadata_path "$batch_file")" \
+		--items "${COMMENT_VIEWER_MEMORY_PROMPT_ITEMS:-4}" \
+		--max-chars "${COMMENT_VIEWER_MEMORY_PROMPT_MAX_CHARS:-2200}" \
+		--comment-max-chars "${COMMENT_VIEWER_MEMORY_COMMENT_MAX_CHARS:-240}" \
+		--reply-max-chars "${COMMENT_VIEWER_MEMORY_REPLY_MAX_CHARS:-320}" \
+		--ttl-days "${COMMENT_VIEWER_MEMORY_TTL_DAYS:-365}" \
+		2>/dev/null || printf '%s\n' "（該当する投稿者別メモなし）"
+}
+
+_stage_comment_viewer_memory() {
+	local target="$1" batch_file="$2" reply_file="$3" source="$4" mode="$5" batch_hash="${6:-}"
+	[ "${COMMENT_VIEWER_MEMORY_ENABLED:-1}" = "1" ] || return 0
+	local helper="$ELOOP_LIB_DIR/lib/comment_viewer_memory.py"
+	[ -f "$helper" ] || return 0
+	local sidecar staged_count
+	sidecar=$(_comment_viewer_memory_sidecar_path "$target")
+	staged_count=$(python3 "$helper" stage \
+		--sidecar "$sidecar" \
+		--batch "$batch_file" \
+		--reply "$reply_file" \
+		--source "$source" \
+		--mode "$mode" \
+		--exclude "${COMMENT_VIEWER_MEMORY_EXCLUDED_USERS:-dociai dociaich}" \
+		--metadata "$(_comment_batch_metadata_path "$batch_file")" \
+		--batch-hash "$batch_hash" \
+		2>/dev/null) || {
+		rm -f "$sidecar" 2>/dev/null || true
+		return 1
+	}
+	case "$staged_count" in
+	'' | 0 | *[!0-9]*) rm -f "$sidecar" 2>/dev/null || true ;;
+	esac
+}
+
+_commit_comment_viewer_memory() {
+	local target="$1"
+	[ "${COMMENT_VIEWER_MEMORY_ENABLED:-1}" = "1" ] || return 0
+	local helper="$ELOOP_LIB_DIR/lib/comment_viewer_memory.py"
+	local sidecar committed
+	[ -f "$helper" ] || return 0
+	sidecar=$(_comment_viewer_memory_sidecar_path "$target")
+	[ -f "$sidecar" ] || return 0
+	committed=$(python3 "$helper" commit \
+		--state "${COMMENT_VIEWER_MEMORY_FILE:-${TMP_STATE_DIR:-tmp/state}/comment_viewer_memory.json}" \
+		--sidecar "$sidecar" \
+		--max-users "${COMMENT_VIEWER_MEMORY_MAX_USERS:-500}" \
+		--max-exchanges "${COMMENT_VIEWER_MEMORY_MAX_EXCHANGES:-24}" \
+		--ttl-days "${COMMENT_VIEWER_MEMORY_TTL_DAYS:-365}" \
+		2>/dev/null) || {
+		log "[COMMENT] 投稿者別メモの保存失敗（返信再生は継続）"
+		return 1
+	}
+	case "$committed" in
+	'' | 0 | *[!0-9]*) ;;
+	*) log "[COMMENT] 投稿者別メモを更新: ${committed}件" ;;
+	esac
 }
 
 _comment_generation_debug_summary() {
@@ -396,7 +537,7 @@ _filter_already_processed_comment_lines() {
 		[ -n "$line" ] || continue
 		total_count=$((total_count + 1))
 		local line_hash
-		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+		line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
 		[ -n "$line_hash" ] || {
 			result="${result:+${result}
 }${line}"
@@ -428,7 +569,7 @@ _has_processed_comment_line() {
 	now=$(date +%s)
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
-		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+		line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
 		[ -n "$line_hash" ] || continue
 		if awk -F'|' -v h="$line_hash" -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
 			'$2 == h && (now - $1) <= ttl { found=1 } END { exit(found ? 0 : 1) }' \
@@ -457,7 +598,7 @@ _record_processed_comment_lines() {
 		while IFS= read -r line; do
 			[ -n "$line" ] || continue
 			local line_hash
-			line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+			line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
 			[ -n "$line_hash" ] && echo "${now}|${line_hash}"
 		done <<<"$comments"
 	} | tail -n "$COMMENT_PROCESSED_LINES_MAX" >"$tmpf"
@@ -491,15 +632,20 @@ for i, (user, msg, raw) in enumerate(items, start=1):
 
 _remember_comment_reply_text() {
 	local remembered_text="$1"
+	local remember_mode="${2:-}"
+	case "$remember_mode" in
+	soren91) ;;
+	*) remember_mode="main" ;;
+	esac
 	[ -n "$remembered_text" ] || return 0
 	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
 	local history_file prune_from old_files text_hash hash_file
-	text_hash=$(printf '%s' "$remembered_text" | md5 -q 2>/dev/null || true)
+	text_hash=$(_comment_hash_text "$remembered_text" 2>/dev/null || true)
 	hash_file="$COMMENT_SPOKEN_HISTORY_DIR/.reply_hashes"
 	if [ -n "$text_hash" ] && grep -qF "$text_hash" "$hash_file" 2>/dev/null; then
 		return 0
 	fi
-	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}.txt"
+	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}_${remember_mode}.txt"
 	printf '%s\n' "$remembered_text" >"$history_file" 2>/dev/null || return 0
 	if [ -n "$text_hash" ]; then
 		printf '%s\n' "$text_hash" >>"$hash_file" 2>/dev/null || true
@@ -516,10 +662,23 @@ _remember_comment_reply_text() {
 _remember_spoken_comment() {
 	local spoken_file="$1"
 	[ -s "$spoken_file" ] || return 0
+	local spoken_mode=""
+	if command -v _broadcast_read_expected_mode >/dev/null 2>&1; then
+		spoken_mode=$(_broadcast_read_expected_mode "$spoken_file" 2>/dev/null || true)
+	fi
+	if [ -z "$spoken_mode" ] && command -v _broadcast_host_mode >/dev/null 2>&1; then
+		spoken_mode=$(_broadcast_host_mode 2>/dev/null || true)
+	fi
+	case "$spoken_mode" in
+	soren91) ;;
+	*) spoken_mode="main" ;;
+	esac
 	local remembered_text
 	remembered_text=$(cat "$spoken_file" 2>/dev/null | _clean_comment_talk | _sanitize_onair_text)
 	[ -n "$remembered_text" ] || return 0
-	_remember_comment_reply_text "$remembered_text"
+	_remember_comment_reply_text "$remembered_text" "$spoken_mode"
+	# 投稿者別メモは、生成・キュー投入時ではなく実際の再生成功後だけ確定する。
+	_commit_comment_viewer_memory "$spoken_file" || true
 }
 
 _current_playing_comment_file() {
@@ -539,10 +698,44 @@ _current_playing_comment_file() {
 	return 1
 }
 
+_spoken_history_mode_arg() {
+	local spoken_mode="${1:-}"
+	case "$spoken_mode" in
+	soren91) printf '%s' "soren91" ;;
+	*) printf '%s' "main" ;;
+	esac
+}
+
+_current_playing_file_matches_mode() {
+	local current_file="$1" ctx_mode="$2"
+	[ -n "$current_file" ] || return 1
+	local current_mode="" sidecar=""
+	if command -v _broadcast_read_expected_mode >/dev/null 2>&1; then
+		current_mode=$(_broadcast_read_expected_mode "$current_file" 2>/dev/null || true)
+	fi
+	if [ -z "$current_mode" ]; then
+		case "$current_file" in
+		*.playing) sidecar="${current_file%.playing}.mode" ;;
+		*.txt)     sidecar="${current_file%.txt}.mode" ;;
+		esac
+		if [ -n "$sidecar" ] && [ -f "$sidecar" ]; then
+			current_mode=$(cat "$sidecar" 2>/dev/null)
+		fi
+	fi
+	[ -n "$current_mode" ] || current_mode="main"
+	[ "$current_mode" = "$ctx_mode" ]
+}
+
 _build_recent_spoken_comment_context() {
+	local ctx_mode=""
+	ctx_mode=$(_spoken_history_mode_arg "${1:-}")
 	local current_file=""
 	current_file=$(_current_playing_comment_file || true)
-	python3 - "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$COMMENT_SPOKEN_PROMPT_MAX_CHARS" "$COMMENT_SPOKEN_ITEM_MAX_CHARS" "$current_file" <<'PY'
+	local include_current=0
+	if _current_playing_file_matches_mode "$current_file" "$ctx_mode"; then
+		include_current=1
+	fi
+	python3 - "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$COMMENT_SPOKEN_PROMPT_MAX_CHARS" "$COMMENT_SPOKEN_ITEM_MAX_CHARS" "$current_file" "$ctx_mode" "$include_current" <<'PY'
 import glob
 import os
 import re
@@ -554,6 +747,19 @@ history_limit = max(0, int(sys.argv[2]))
 total_limit = max(200, int(sys.argv[3]))
 item_limit = max(80, int(sys.argv[4]))
 current_file = sys.argv[5] if len(sys.argv) > 5 else ""
+ctx_mode = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] in ("main", "soren91") else "main"
+include_current = len(sys.argv) > 7 and sys.argv[7] == "1"
+
+main_suffix = "_main.txt"
+soren91_suffix = "_soren91.txt"
+mode_suffix = f"_{ctx_mode}.txt"
+
+
+def matches_mode(path: str) -> bool:
+    name = os.path.basename(path)
+    if name.endswith(main_suffix) or name.endswith(soren91_suffix):
+        return name.endswith(mode_suffix)
+    return ctx_mode == "main"
 
 
 def collapse(text: str) -> str:
@@ -590,11 +796,13 @@ def excerpt(path: str) -> str:
 
 entries = []
 seen = set()
-if current_file and os.path.isfile(current_file):
+if include_current and current_file and os.path.isfile(current_file):
     entries.append(("再生中", os.path.getmtime(current_file), current_file))
     seen.add(os.path.realpath(current_file))
 
-history_files = sorted(glob.glob(os.path.join(history_dir, "*.txt")))
+history_files = sorted(
+    p for p in glob.glob(os.path.join(history_dir, "*.txt")) if matches_mode(p)
+)
 if history_limit > 0:
     history_files = history_files[-history_limit:]
 for path in reversed(history_files):
@@ -625,15 +833,35 @@ PY
 
 _build_comment_followup_hints() {
 	local batch_file="$1"
+	local ctx_mode=""
+	ctx_mode=$(_spoken_history_mode_arg "${2:-}")
 	local current_file=""
 	current_file=$(_current_playing_comment_file || true)
-	python3 - "$batch_file" "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$current_file" <<'PY'
+	local include_current=0
+	if _current_playing_file_matches_mode "$current_file" "$ctx_mode"; then
+		include_current=1
+	fi
+	python3 - "$batch_file" "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$current_file" "$ctx_mode" "$include_current" <<'PY'
 import glob
 import os
 import re
 import sys
 
 batch_file, history_dir, history_limit, current_file = sys.argv[1:5]
+ctx_mode = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] in ("main", "soren91") else "main"
+include_current = len(sys.argv) > 6 and sys.argv[6] == "1"
+
+main_suffix = "_main.txt"
+soren91_suffix = "_soren91.txt"
+mode_suffix = f"_{ctx_mode}.txt"
+
+
+def matches_mode(path: str) -> bool:
+    name = os.path.basename(path)
+    if name.endswith(main_suffix) or name.endswith(soren91_suffix):
+        return name.endswith(mode_suffix)
+    return ctx_mode == "main"
+
 try:
     history_limit = int(history_limit)
 except Exception:
@@ -721,13 +949,15 @@ def extract_terms(text: str):
 
 recent_texts = []
 seen_paths = set()
-if current_file and os.path.isfile(current_file):
+if include_current and current_file and os.path.isfile(current_file):
     seen_paths.add(os.path.realpath(current_file))
     text = sanitize_text(current_file)
     if text:
         recent_texts.append(text)
 
-history_files = sorted(glob.glob(os.path.join(history_dir, "*.txt")))
+history_files = sorted(
+    p for p in glob.glob(os.path.join(history_dir, "*.txt")) if matches_mode(p)
+)
 if history_limit > 0:
     history_files = history_files[-history_limit:]
 for path in reversed(history_files):
@@ -962,6 +1192,128 @@ if cycle_position is not None:
 print("全体建国統計: " + summarize_creation("ロシア建国", russia_entries, total_games))
 print("全体建国統計: " + summarize_creation("ソ連建国", soviet_entries, total_games))
 print("返答ルール: スコア進捗・建国回数・状態を聞かれたら、まず全体統計と直近ウィンドウ統計を使う。ライブ局面の snapshot_score や盤面補助は、今この瞬間の断定ではなく補足としてだけ扱う。数字が無い時だけ不明と言い、推測で回数やスコアを作らない。")
+PY
+}
+
+# 【いまの配信・運用状況メモ】用の短い文脈を作る。
+# 視聴者は画面の作業中バナーや改善モードを見て「今なにしてるの」と聞いてくるが、コメント返し
+# プロンプトには VM の運用状態も裏側の作業内容も一切入っていなかった。ライブ状態ファイルと
+# 運用ブリーフ (prompts/ops_brief.md) から短い箇条書きを組み立てる。
+# プロンプト肥大を避けるため、行数・1行長・全体文字数を必ず上限で切る。
+_build_comment_ops_context() {
+	local host_mode="${1:-main}"
+	local brief_file="${COMMENT_OPS_BRIEF_FILE:-$ELOOP_LIB_DIR/prompts/ops_brief.md}"
+	local ab_state_file="${AB_STATE_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/ab_state.json}"
+	local prediction_paused_file="${PREDICTION_WORKER_PAUSED_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/prediction_worker.paused}"
+	# soren91(メリケンAI) の有効/無効は .env を直に見る。worker のシェル環境は
+	# 起動時スナップショットで、無効化後も SOREN91_*=1 が残ることがあるため
+	# （2026-08-27 の issue-23 で実測）。読むのはこの 2 つのトグルだけ。
+	local soren91_enabled="" soren91_daily_enabled=""
+	if [ -r "$ELOOP_LIB_DIR/.env" ]; then
+		soren91_enabled=$(sed -n 's/^SOREN91_ENABLED=\([01]\)[[:space:]]*$/\1/p' "$ELOOP_LIB_DIR/.env" | tail -1)
+		soren91_daily_enabled=$(sed -n 's/^SOREN91_DAILY_ENABLED=\([01]\)[[:space:]]*$/\1/p' "$ELOOP_LIB_DIR/.env" | tail -1)
+	fi
+	python3 - \
+		"${CODEX_WORK_OVERLAY_STATE_FILE:-}" \
+		"${IMPROVE_STATE_FILE:-}" \
+		"$ab_state_file" \
+		"$brief_file" \
+		"$host_mode" \
+		"${COMMENT_OPS_CONTEXT_MAX_CHARS:-900}" \
+		"${COMMENT_OPS_BRIEF_ITEMS:-3}" \
+		"$prediction_paused_file" \
+		"$soren91_enabled" \
+		"$soren91_daily_enabled" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+work_file, improve_file, ab_file, brief_file, host_mode = sys.argv[1:6]
+
+def as_int(raw, fallback):
+    try:
+        return int(raw)
+    except Exception:
+        return fallback
+
+max_chars = max(200, as_int(sys.argv[6], 900))
+brief_items = max(0, as_int(sys.argv[7], 3))
+prediction_paused_file = sys.argv[8] if len(sys.argv) > 8 else ""
+soren91_enabled = sys.argv[9] if len(sys.argv) > 9 else ""
+soren91_daily_enabled = sys.argv[10] if len(sys.argv) > 10 else ""
+
+def load_json(path):
+    if not path:
+        return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+lines = []
+
+work = load_json(work_file)
+if work.get("active"):
+    title = str(work.get("title") or "").strip()
+    body = str(work.get("body") or "").strip()
+    text = " / ".join(part for part in (title, body) if part)[:140]
+    if text:
+        lines.append("- 画面右上の作業中バナー(視聴者にも見えている): " + text)
+else:
+    lines.append("- 画面右上の作業中バナー: 出ていない(いま人手の作業はしていない)")
+
+improve = load_json(improve_file)
+improve_status = str(improve.get("status") or "").strip().lower()
+if improve_status and improve_status not in ("idle", "done", "finished"):
+    phase = str(improve.get("phase") or "").strip()[:40]
+    lines.append("- 中華AIの戦略改善: 実行中" + (f"({phase})" if phase else ""))
+else:
+    lines.append("- 中華AIの戦略改善: 待機中(いまは改善に入っていない)")
+
+if host_mode == "soren91":
+    lines.append("- いまメイン画面はメリケンAIのソ連ゲーム91(対戦版)")
+elif soren91_enabled == "0":
+    # 2026-08-27: 描画コストが足りず soren91 は無効化された。登場する前提で話させない。
+    lines.append("- メリケンAI(ソ連ゲーム91)はいま停止中で登場しない。メイン画面は私(中華AI)のソ連ゲーム本編")
+elif soren91_daily_enabled == "1":
+    lines.append("- メリケンAIは待機中(戦略改善中の代打と1日1回の枠で登場)。メイン画面は私(中華AI)のソ連ゲーム本編")
+else:
+    lines.append("- メリケンAIは待機中(戦略改善に入った時だけ登場)。メイン画面は私(中華AI)のソ連ゲーム本編")
+
+ab = load_json(ab_file)
+ab_games = ab.get("games_recorded")
+if isinstance(ab_games, int) and ab_games >= 0:
+    lines.append(f"- 戦略のA/B比較を実施中: 2つの戦略を1試合ずつ交互に走らせて比較している(記録済み{ab_games}試合)")
+
+# チャネルポイント予想は webui から止められる。止まっているのに
+# 「トークンを賭けて参加できます」と案内すると視聴者が困るので、停止時だけ明示する。
+if prediction_paused_file and Path(prediction_paused_file).exists():
+    lines.append("- チャネルポイント予想(サナエトークン): いまは停止中。動いている前提で案内しない")
+
+brief = []
+try:
+    for raw in Path(brief_file).read_text(encoding="utf-8", errors="ignore").splitlines():
+        item = raw.strip()
+        if not item or item.startswith("#"):
+            continue
+        item = item.lstrip("-*・ ").strip()
+        if not item:
+            continue
+        brief.append(item[:70])
+        if len(brief) >= brief_items:
+            break
+except Exception:
+    brief = []
+if brief and brief_items:
+    lines.append("- 直近の裏側の改修(聞かれたときだけ噛み砕いて話す): " + " / ".join(brief))
+
+out = "\n".join(lines).strip()
+if not out:
+    out = "(運用状況メモなし)"
+if len(out) > max_chars:
+    out = out[:max_chars].rstrip() + "…"
+print(out)
 PY
 }
 
@@ -1712,10 +2064,13 @@ _classify_comments_with_edit_contract() {
 - 書き込み後、追加の説明は不要"
 		local prev_timeout="${RUN_CMD_TIMEOUT_SEC:-}"
 		local prev_tag="${RUN_CMD_LOG_TAG:-}"
+		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		RUN_CMD_TIMEOUT_SEC="$timeout_sec"
 		RUN_CMD_LOG_TAG="COMMENT_CLASSIFIER:${agent}"
 		run_cmd "$agent" "$edit_prompt" >/dev/null 2>&1
 		candidate_rc=$?
+		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
 		if [ -n "$prev_timeout" ]; then RUN_CMD_TIMEOUT_SEC="$prev_timeout"; else unset RUN_CMD_TIMEOUT_SEC; fi
 		if [ -n "$prev_tag" ]; then RUN_CMD_LOG_TAG="$prev_tag"; else unset RUN_CMD_LOG_TAG; fi
 		raw_json=$(cat "$output_file" 2>/dev/null)
@@ -1926,8 +2281,16 @@ _comment_generate_translation() {
 			continue
 		fi
 		attempted=$((attempted + 1))
+		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
 		output=$(_ai_dispatch "COMMENT_TRANSLATION" "$agent" "$prompt_file" "$timeout_sec")
 		rc=$?
+		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
+		# 翻訳モデルも推論ブロックを漏らしうる。日本語本文と同じガードを通す
+		# (_comment_is_valid_translation_candidate は <think> を見ていない)。
+		if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+			output=$(_comment_guard_model_text "$output")
+		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && _comment_is_valid_translation_candidate "$output"; then
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 			printf '%s' "$output"
@@ -2092,7 +2455,7 @@ _build_category_prompt() {
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -2297,6 +2660,16 @@ _strip_strategy_advice_mode_prefix() {
 	printf '%s' "$1" | sed -E 's/^\[(main|soren|soren91)\][[:space:]]*//I'
 }
 
+_strategy_advice_core_matches_existing() {
+	local advice_file="$1"
+	local advice_item="$2"
+	[ -s "$advice_file" ] || return 1
+	sed -E \
+		-e 's/^[[:space:]]*-[[:space:]]*//' \
+		-e 's/[[:space:]]*\[source=[^]]+\][[:space:]]*$//' \
+		"$advice_file" | grep -Fqx -- "$advice_item"
+}
+
 _detect_strategy_advice_target_mode() {
 	local advice_item="$1"
 	local fallback_mode="${2:-main}"
@@ -2345,12 +2718,22 @@ _append_advice_item_to_file() {
 _append_strategy_advice_item() {
 	local advice_item="$1"
 	local fallback_mode="${2:-main}"
+	local source="${3:-comment_reply}"
+	local received_epoch="${4:-}"
 	advice_item=$(_strip_strategy_advice_mode_prefix "$advice_item")
 	local target_mode=""
 	target_mode=$(_detect_strategy_advice_target_mode "$advice_item" "$fallback_mode")
+	case "${received_epoch:-}" in
+	'' | *[!0-9]*) received_epoch="" ;;
+	esac
 	local advice_file=""
 	advice_file=$(_resolve_strategy_advice_file "$target_mode")
-	_append_advice_item_to_file "$advice_file" "$advice_item" "戦略アドバイス(${target_mode})"
+	if _strategy_advice_core_matches_existing "$advice_file" "$advice_item"; then
+		return 0
+	fi
+	_append_advice_item_to_file "$advice_file" \
+		"$advice_item [source=${source} received=${received_epoch:-unknown}]" \
+		"戦略アドバイス(${target_mode})"
 }
 
 _append_comment_advice_item() {
@@ -2361,6 +2744,20 @@ _append_comment_advice_item() {
 _append_codex_advice_item() {
 	local advice_item="$1"
 	_append_advice_item_to_file "$CODEX_ADVICE_FILE" "$advice_item" "Codex改善アドバイス"
+}
+
+_append_structured_strategy_advice_at_intake() {
+	local candidates="$1"
+	local fallback_mode="${2:-main}"
+	[ -n "$candidates" ] || return 0
+	while IFS= read -r candidate; do
+		[ -n "$candidate" ] || continue
+		case "$fallback_mode" in
+		soren91) _append_strategy_advice_item "$candidate" "soren91" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
+		*) _append_strategy_advice_item "$candidate" "main" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
+		esac
+	done <<<"$candidates"
+	log "[COMMENT] 機械抽出した戦略指示を受付時に保存 (${fallback_mode})"
 }
 
 _append_soviet_theme_item() {
@@ -2392,13 +2789,215 @@ _append_soviet_theme_item() {
 	log "[COMMENT] ソ連テーマ自動追加: $theme_item"
 }
 
+# 「作業メモ + --- 区切り + 本物の本文」という形の漏れを落とす（コメント経路専用）。
+#
+# 実発生 (2026-08-27 00:51, spoken_history/20260827_005123_14629_main.txt):
+#   インジケーターのスクリプトはこのサンドボックス環境では…実行できないようですが、
+#   コメント返しの生成自体は完了しています。
+#   以下、2件のコメント返しです。
+#   ---
+#   あずまぐさん、…（本物の返答）
+# これは <think> を使っていないため lib/model_output_guard.py では落ちない。
+# 共通ガードを広げるとラジオにも影響するので、コメント側だけで判定する（ユーザー選択 2026-08-27）。
+#
+# 安全側の条件: (1) 罫線だけの行がある (2) その後ろに本文が残る (3) 前置きが作業メモ語彙に
+# マッチする (4) 前置きが視聴者への呼びかけ("〜さん、")を含まない (5) 前置きが長すぎない。
+# 1つでも欠けたら前置きは落とさない。
+_comment_strip_worknote_head() {
+	python3 -c "$(
+		cat <<'WORKNOTEPY'
+import re
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+SEPARATOR_LINE_RE = re.compile(r"^[ 	]*[-‐-―]{3,}[ 	]*$")
+# 視聴者への呼びかけがあれば、そこはもう本物の返答なので前置き扱いしない。
+VIEWER_ADDRESS_RE = re.compile(r"さん[、,：:]")
+WORK_NOTE_RE = re.compile(
+    r"(?:以下|下記)[、,]?\s*\d*\s*(?:件|通り)?\s*(?:の)?\s*(?:コメント返し|返信|返答|回答)"
+    r"|(?:コメント返し|返信|返答|生成|出力)(?:自体)?は?\s*(?:完了|できました|終わりました)"
+    r"|サンドボックス|ネットワーク制約|実行できません|実行できない"
+    r"|(?:スクリプト|ツール|コマンド|環境|インジケーター)[^\n]{0,24}"
+    r"(?:失敗|エラー|制約|できません|できない|見当たりません)"
+    r"|(?:^|\n)\s*(?:I need to|We need to|Let's|Let me|I will|I'll|Analyzing|First,)\b"
+    r"|WebFetch|WebSearch|exec_command|sandbox",
+    re.IGNORECASE,
+)
+MAX_HEAD_CHARS = 600
+
+lines = text.splitlines()
+sep_indexes = [i for i, line in enumerate(lines) if SEPARATOR_LINE_RE.match(line)]
+
+result_lines = lines
+if sep_indexes:
+    first = sep_indexes[0]
+    head = "\n".join(lines[:first]).strip()
+    body = "\n".join(lines[first + 1:]).strip()
+    if (
+        body
+        and head
+        and len(head) <= MAX_HEAD_CHARS
+        and not VIEWER_ADDRESS_RE.search(head)
+        and WORK_NOTE_RE.search(head)
+    ):
+        result_lines = lines[first + 1:]
+
+# 罫線だけの行は読み上げても意味が無いので本文中からも落とす。
+result_lines = [line for line in result_lines if not SEPARATOR_LINE_RE.match(line)]
+out = "\n".join(result_lines).strip()
+sys.stdout.write(out if out else text)
+WORKNOTEPY
+	)"
+}
+
+# 推論タグ (<think>/<thinking>/<analysis>) をコメント側で自前に落とす。
+#
+# なぜ自前でやるか (2026-08-28 実測):
+#   _ai_guard_model_output は .env の DOCICH_BIN 経由で `docich ai-guard` へ委譲される。
+#   VM の正典 (src/docich/model_output_guard.py, 127 行) には REASONING_* の実装が無く、
+#   soviet_now 側 (lib/model_output_guard.py, 236 行) にだけある。つまり **VM では推論タグ
+#   除去が効いていなかった**（`docich ai-guard` に 02:14 の漏れを流すと 1830 バイトが素通り）。
+#   かといって soviet_now 版をそのまま通すと、WORK_NOTE_RE が「徹底調査します」「すぐ確認します」
+#   のような自然な日本語に誤爆して**実出力 116 本中 2 本の正当な返答を全体棄却**した。
+#   そこで、誤爆しようのないタグ除去だけをコメント側で行う（全体棄却はしない）。
+_comment_strip_reasoning_tags() {
+	python3 -c "$(
+		cat <<'REASONPY'
+import re
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+TAGS = r"analysis|thinking|think"
+BLOCK_RE = re.compile(rf"<(?P<tag>{TAGS})\b[^>]*>.*?</(?P=tag)\s*>", re.IGNORECASE | re.DOTALL)
+# 開始タグの無い閉じタグ = 開始タグが別チャネルへ出た。手前を全部捨てる。
+CLOSE_HEAD_RE = re.compile(rf"\A.*</(?:{TAGS})\s*>", re.IGNORECASE | re.DOTALL)
+# 閉じタグの無い開始タグ = 推論の途中で切れた。以降を全部捨てる。
+OPEN_TAIL_RE = re.compile(rf"<(?:{TAGS})\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
+
+value = text
+previous = None
+while previous != value:
+    previous = value
+    value = BLOCK_RE.sub("", value)
+value = CLOSE_HEAD_RE.sub("", value)
+value = OPEN_TAIL_RE.sub("", value)
+value = value.strip()
+
+# 何も残らないなら触らない（呼び出し側の判定へ委ねる）
+sys.stdout.write(value if value else text)
+REASONPY
+	)"
+}
+
+# コメント生成AIの生出力から推論ブロック等のメタ出力を落として本文だけにする。
+# ラジオ側 (_radio_is_valid_generation_candidate / radio_engine.sh:1451 等) は以前から
+# _ai_guard_model_output を通していたが、コメント側だけ通していなかった。そのため
+# deepseek 系が英語の思考を "</think>" 付きで漏らした出力がそのまま VOICEVOX に
+# 読み上げられた (2026-08-27 00:42 実発生: GeForce NOW へのコメント返し)。
+# ガードが空を返す = 内部プロトコル漏れ等で本文を救えない、という意味なので空を返し、
+# 呼び出し側の再生成/次モデルへのフォールバックに任せる。生テキストへは戻さない。
+_comment_guard_model_text() {
+	local raw="$1"
+	[ -n "$raw" ] || return 0
+	printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null |
+		_comment_strip_reasoning_tags | _comment_strip_worknote_head || true
+}
+
+# 日本語本文の前に付いた「日本語を一切含まない段落」（＝英語の作業メモ）を落とす。
+#
+# 実発生 (2026-08-28 02:14, spoken_history/20260828_021437_1490_main.txt):
+#   The work indicator script is failing due to sandbox network restrictions...
+#   The current comment is from esu303 who got a rare ... Let me craft a reply...
+#   （英語 5 段落）→ esu303さん、[レア]読め、そして学べの獲得、おめでとうございます。…
+# <think> も --- 区切りも無いため、既存の 2 段のガードでは落ちなかった。
+#
+# この生成段階の契約は「返答は全て日本語（です・ます）。英語訳は後段で作る」なので、
+# 本文の**先頭**にある日本語比率の極端に低い段落は本文ではありえない。ただし安全側に倒し、
+#   - 先頭から連続する段落だけを見る（日本語を含む段落に当たったら即停止）
+#   - ===SING=== 等のマーカーを含む段落に当たったら停止（楽譜JSONを守る）
+#   - 落とした結果に日本語が残らないなら、何もせず元テキストを返す
+# を満たすときだけ落とす。英訳生成の出力には**適用しない**（呼び出し側で分けている）。
+_comment_strip_nonjapanese_head() {
+	python3 -c "$(
+		cat <<'NONJPPY'
+import os
+import re
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+JP_RE = re.compile(r"[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff\u3001\u3002]")
+MARKER_RE = re.compile(r"===[A-Z_]+===")
+
+# 段落の日本語比率でメタ段落を見分ける。実出力 116 本の実測では、正当な返答の先頭段落は
+# 最低 0.838 (中央値 0.946)、作業メモ段落は最大 0.19 と大きく離れていた。0.5 はその谷間。
+# COMMENT_MIN_JP_RATIO で調整可。
+try:
+    threshold = float(os.environ.get("COMMENT_MIN_JP_RATIO", "0.5"))
+except Exception:
+    threshold = 0.5
+
+
+def jp_ratio(para):
+    body = re.sub(r"\s+", "", para)
+    if not body:
+        return 1.0
+    return len(JP_RE.findall(body)) / len(body)
+
+
+paragraphs = re.split(r"\n[ 	]*\n", text)
+start = 0
+for para in paragraphs:
+    if not para.strip():
+        start += 1
+        continue
+    if MARKER_RE.search(para) or jp_ratio(para) >= threshold:
+        break
+    start += 1
+
+if start == 0 or start >= len(paragraphs):
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+rest = "\n\n".join(p for p in paragraphs[start:]).strip()
+if not rest or not JP_RE.search(rest):
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+sys.stdout.write(rest)
+NONJPPY
+	)"
+}
+
+# 日本語本文用のガード。英訳生成には使わない（英訳は日本語ゼロが正しいため）。
+_comment_guard_japanese_text() {
+	local guarded
+	guarded=$(_comment_guard_model_text "$1")
+	[ -n "$guarded" ] || return 0
+	printf '%s' "$guarded" | _comment_strip_nonjapanese_head
+}
+
+
 # ラジオ生成と同じ ai_generate_list() から呼ばれる候補検証。
 # 非空でも、読み上げ本文へ整形した結果が無効なら次のCodexモデルへ進める。
 _comment_is_valid_generation_candidate() {
-	local raw="$1" cleaned
+	local raw="$1" cleaned guarded
 	[ -n "$raw" ] || return 1
 	_contains_provider_error_text "$raw" && return 1
-	cleaned=$(_clean_comment_talk "$raw" 1)
+	guarded=$(_comment_guard_japanese_text "$raw")
+	[ -n "$guarded" ] || return 1
+	cleaned=$(_clean_comment_talk "$guarded" 1)
 	cleaned=$(printf '%s' "$cleaned" | _sanitize_onair_text)
 	[ -n "$cleaned" ] || return 1
 	_is_valid_comment_talk "$cleaned"
@@ -2408,6 +3007,7 @@ generate_comment_response() {
 	local viewer_chat_source="${1:-twitch}"
 	local viewer_chat_script="./twitch_chat.sh"
 	local viewer_chat_outfile="tmp/twitch_comments.txt"
+	local viewer_chat_metadata_file="tmp/twitch_comments.txt.viewer_meta.jsonl"
 	local viewer_chat_dir="tmp/.twitch_chat"
 	local viewer_chat_label="Twitch"
 	case "$viewer_chat_source" in
@@ -2415,11 +3015,21 @@ generate_comment_response() {
 		viewer_chat_source="youtube"
 		viewer_chat_script="./youtube_chat.sh"
 		viewer_chat_outfile="${YOUTUBE_CHAT_OUTFILE:-tmp/youtube_comments.txt}"
+		viewer_chat_metadata_file="${viewer_chat_outfile}.viewer_meta.jsonl"
 		viewer_chat_dir="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}"
 		viewer_chat_label="YouTube"
 		;;
+	kick|Kick)
+		viewer_chat_source="kick"
+		viewer_chat_script="./kick_chat.sh"
+		viewer_chat_outfile="${KICK_CHAT_OUTFILE:-tmp/kick_comments.txt}"
+		viewer_chat_metadata_file="${viewer_chat_outfile}.viewer_meta.jsonl"
+		viewer_chat_dir="${KICK_CHAT_DIR:-tmp/.kick_chat}"
+		viewer_chat_label="Kick"
+		;;
 	twitch|Twitch|"")
 		viewer_chat_source="twitch"
+		viewer_chat_metadata_file="${viewer_chat_outfile}.viewer_meta.jsonl"
 		;;
 	*)
 		log "[COMMENT] unknown viewer chat source: $viewer_chat_source"
@@ -2485,9 +3095,20 @@ generate_comment_response() {
 	[ -z "$comment_batch_file" ] && comment_batch_file="${viewer_chat_dir}/comment_batch_$(date +%s)_${RANDOM}.txt"
 	# ack-batch用にオリジナル全行を書き込む（フィルタ済み行も pending から確実に消化するため）
 	printf '%s\n' "$twitch_comments_original" >"$comment_batch_file"
+	# Twitch の pending はプロバイダ由来の原文を保持する一方、モデル用の
+	# OUTFILE は NFKC 正規化される。本文だけで ack すると「～！」と「~!」
+	# のような表記差で削除に失敗するため、sidecar の message_id を付けて
+	# 同じプロバイダメッセージを厳密に消化する。
+	if [ "$viewer_chat_source" = "twitch" ] && [ -f "$viewer_chat_metadata_file" ]; then
+		python3 "$ELOOP_LIB_DIR/lib/comment_viewer_memory.py" emit-ack-batch \
+			--metadata "$viewer_chat_metadata_file" \
+			--batch "$comment_batch_file" \
+			--out "$comment_batch_file" \
+			>/dev/null 2>&1 || true
+	fi
 
 	local comment_batch_hash=""
-	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
+	comment_batch_hash=$(_comment_hash_text "$twitch_comments" 2>/dev/null || echo "")
 	if _is_recent_comment_batch_processed "$comment_batch_hash"; then
 		log "[COMMENT] 同一コメントバッチを直近で処理済みのためスキップ (batch=$comment_batch_hash)"
 		"$viewer_chat_script" ack-batch "$comment_batch_file"
@@ -2519,6 +3140,19 @@ generate_comment_response() {
 	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="${viewer_chat_dir}/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
 	printf '%s\n' "$twitch_comments_for_prompt" >"$comment_prompt_batch_file"
+	# fetch時にコメント行と同じ物理レコードで受け取った安定IDだけを、
+	# フィルタ後バッチへ順序どおり移す。表示名の最新値から逆引きしない。
+	local comment_filtered_batch_file=""
+	comment_filtered_batch_file=$(mktemp /tmp/eloop_comment_identity_batch_XXXXXXXX 2>/dev/null || true)
+	if [ -n "$comment_filtered_batch_file" ]; then
+		printf '%s\n' "$twitch_comments" >"$comment_filtered_batch_file"
+		python3 "$ELOOP_LIB_DIR/lib/comment_viewer_memory.py" select-metadata \
+			--metadata "$viewer_chat_metadata_file" \
+			--batch "$comment_filtered_batch_file" \
+			--out "$(_comment_batch_metadata_path "$comment_prompt_batch_file")" \
+			>/dev/null 2>&1 || rm -f "$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
+		rm -f "$comment_filtered_batch_file"
+	fi
 	local english_comment_count=0
 
 	local past_topics=""
@@ -2550,9 +3184,15 @@ generate_comment_response() {
 	local comment_batch_context=""
 	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context | _sanitize_comment_prompt_context)
 	local recent_spoken_comment_context=""
-	recent_spoken_comment_context=$(_build_recent_spoken_comment_context | _sanitize_comment_prompt_context)
+	local _spoken_ctx_mode=""
+	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	recent_spoken_comment_context=$(_build_recent_spoken_comment_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
+	local viewer_memory_context=""
+	viewer_memory_context=$(_build_comment_viewer_memory_context "$comment_prompt_batch_file" "$viewer_chat_source" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
+	local comment_ops_context=""
+	comment_ops_context=$(_build_comment_ops_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_followup_hints=""
-	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" | _sanitize_comment_prompt_context)
+	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_mode_for_advice=""
 	comment_mode_for_advice=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	local structured_advice_candidates=""
@@ -2667,6 +3307,10 @@ else:
 		comment_advice_candidates=""
 		codex_advice_candidates=""
 		log "[COMMENT] 非助言カテゴリのためアドバイス保存を抑制: ${dominant_category}"
+	else
+		COMMENT_ADVICE_INTAKE_EPOCH="$(date +%s)"
+		_append_structured_strategy_advice_at_intake "$strategy_advice_candidates_main" "main"
+		_append_structured_strategy_advice_at_intake "$strategy_advice_candidates_soren91" "soren91"
 	fi
 
 	local current_time current_hour time_period
@@ -2706,7 +3350,9 @@ else:
 			rm -f $COMMENT_GEN_STATE_FILE
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
-			[ -n "$comment_prompt_batch_file" ] && rm -f "$comment_prompt_batch_file"
+			if [ -n "$comment_prompt_batch_file" ]; then
+				rm -f "$comment_prompt_batch_file" "$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
+			fi
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
@@ -2746,19 +3392,21 @@ else:
 		comment_advice_context="${comment_advice_context:-（なし）}"
 		previous_comments_context=$(printf '%s' "${previous_comments_context:-（なし）}" | _sanitize_comment_prompt_context)
 		recent_spoken_comment_context=$(printf '%s' "${recent_spoken_comment_context:-（なし）}" | _sanitize_comment_prompt_context)
+		viewer_memory_context=$(printf '%s' "${viewer_memory_context:-（該当する投稿者別メモなし）}" | _sanitize_comment_prompt_context)
 		comment_followup_hints=$(printf '%s' "${comment_followup_hints:-（なし）}" | _sanitize_comment_prompt_context)
 		celebration_history_context="${celebration_history_context:-（なし）}"
 		comment_thumbnail_ocr_context=$(printf '%s' "${comment_thumbnail_ocr_context:-（なし）}" | _sanitize_comment_prompt_context)
 		game_state_context=$(printf '%s' "${game_state_context:-（取得失敗）}" | _sanitize_comment_prompt_context)
+		comment_ops_context=$(printf '%s' "${comment_ops_context:-（取得失敗）}" | _sanitize_comment_prompt_context)
 
 		# Export all template variables (safe: inside subshell)
 		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
 		export _comment_persona current_time time_period twitch_comments_for_prompt \
 			comment_batch_context strategy_advice_candidates comment_advice_candidates codex_advice_candidates comment_advice_context previous_comments_context \
-			recent_spoken_comment_context comment_followup_hints past_topics \
+			recent_spoken_comment_context viewer_memory_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
-			game_state_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
+			game_state_context comment_ops_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
 			_prediction_cycle_games
 
 		# 分類結果に基づきプロンプトを選択
@@ -2811,7 +3459,7 @@ PY
 					rm -f "$comment_prompt_file"
 					return 1
 				fi
-				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 					<"$_comment_template" >"$comment_prompt_file"
 			fi
 		else
@@ -2821,7 +3469,7 @@ PY
 				rm -f "$comment_prompt_file"
 				return 1
 			fi
-			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
@@ -2831,6 +3479,7 @@ PY
 - すべてのコメントへ、元の順番どおりに日本語で返答してください。英語コメントにも、この段階では日本語の返答だけを書いてください。
 - 1コメントにつき1段落とし、コメントの間は空行1行で区切ってください。言語名の見出し、制御用マーカー、Markdown、補足説明は出力しないでください。
 - 英語コメントへの英語版は後段の翻訳処理で作るため、ここで英語文を混ぜたり、同じ返答を二重に書いたりしないでください。
+- ゲーム内の国は、アルメニア、モルドバ、エストニア、ラトビア、リトアニア、ジョージア、アゼルバイジャン、タジキスタン、キルギス、ベラルーシ、ウズベキスタン、トルクメニスタン、ウクライナ、カザフスタン、ロシア、ソ連の正しい国名だけで呼んでください。内部の type・T・タイプ番号は返答本文へ一切出力しないでください。
 JAPANESECOMMENT
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
@@ -2899,6 +3548,8 @@ RETRYCOMMENT
 				generation_rate_limited=true
 			fi
 			if [ "$attempt_rc" -eq 0 ] && [ -n "$attempt_talk" ]; then
+				# 本文へ触る前に推論ブロック等のメタ出力を落とす（SING/ADVICE 抽出より前）。
+				attempt_talk=$(_comment_guard_japanese_text "$attempt_talk")
 				attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 				# _sanitize_onair_text は SING JSON 行を除去するため抽出前に実行しない（抽出後にまとめて sanitizing する）
 			else
@@ -2926,11 +3577,18 @@ RETRYCOMMENT
 					log "[COMMENT] 楽譜JSON抽出 (${#sing_score} chars)"
 				fi
 			fi
-			# 歌唱宣言ありだが ===SING=== なし → デフォルト楽譜（きらきら星）で補完
+			# 歌唱宣言ありだが ===SING=== なし → 既知曲のデフォルト楽譜で補完（きらきら星/ちょうちょう/メリーさんの羊から選択）
 			# 「歌わせていただきます」を含む敬体バリエーションも拾う。sing_request分類なら宣言句が無くても補完する。
 			if [ -z "$sing_score" ] && { echo "$attempt_talk" | grep -Eq '歌わせて|歌います|歌ってみます|歌いましょう|歌をお届け|歌声をお届け|お歌|うたいます|をどうぞ' || [ "${dominant_category:-}" = "sing_request" ]; }; then
-				log "[COMMENT] 歌唱宣言あり but ===SING=== なし → デフォルト楽譜で補完"
-				sing_score='{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
+				local _default_sing_scores=(
+					'{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
+					'{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":67,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":45,"lyric":"ちょ"},{"key":64,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":45,"lyric":"ちょ"},{"key":62,"frame_length":90,"lyric":"う"},{"key":null,"frame_length":10,"lyric":""},{"key":60,"frame_length":45,"lyric":"な"},{"key":62,"frame_length":45,"lyric":"の"},{"key":64,"frame_length":45,"lyric":"ば"},{"key":65,"frame_length":45,"lyric":"に"},{"key":null,"frame_length":10,"lyric":""},{"key":67,"frame_length":45,"lyric":"と"},{"key":67,"frame_length":45,"lyric":"ん"},{"key":67,"frame_length":90,"lyric":"ぼ"},{"key":null,"frame_length":15,"lyric":""}]}'
+					'{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":62,"frame_length":45,"lyric":"り"},{"key":60,"frame_length":45,"lyric":"い"},{"key":62,"frame_length":45,"lyric":"さ"},{"key":64,"frame_length":45,"lyric":"ん"},{"key":64,"frame_length":90,"lyric":"の"},{"key":null,"frame_length":10,"lyric":""},{"key":62,"frame_length":45,"lyric":"ひ"},{"key":62,"frame_length":45,"lyric":"つ"},{"key":62,"frame_length":90,"lyric":"じ"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":67,"frame_length":45,"lyric":"ぐ"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":64,"frame_length":45,"lyric":"め"},{"key":62,"frame_length":45,"lyric":"り"},{"key":60,"frame_length":45,"lyric":"い"},{"key":62,"frame_length":45,"lyric":"さ"},{"key":64,"frame_length":45,"lyric":"ん"},{"key":64,"frame_length":90,"lyric":"の"},{"key":null,"frame_length":15,"lyric":""}]}'
+				)
+				local _default_sing_names=("きらきら星" "ちょうちょう" "メリーさんの羊")
+				local _default_sing_idx=$((RANDOM % ${#_default_sing_scores[@]}))
+				sing_score="${_default_sing_scores[$_default_sing_idx]}"
+				log "[COMMENT] 歌唱宣言あり but ===SING=== なし → デフォルト楽譜で補完 (song=${_default_sing_names[$_default_sing_idx]})"
 			fi
 
 			# ソ連テーマを抽出
@@ -2966,6 +3624,13 @@ RETRYCOMMENT
 			attempt_talk=$(_clean_comment_talk "$attempt_talk" 1)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
+			local _country_named_attempt_talk=""
+			if ! _country_named_attempt_talk=$(printf '%s' "$attempt_talk" | _comment_replace_country_references 2>/dev/null); then
+				log "[COMMENT] 国名正規化失敗のため未変換本文を破棄して再生成 (attempt ${attempt}/${comment_retry_max})"
+				attempt=$((attempt + 1))
+				continue
+			fi
+			attempt_talk="$_country_named_attempt_talk"
 
 			# 日本語本文の検証は従来どおり行う。英語判定は分類器の結果だけを
 			# 使い、生成本文の言語推測や特殊マーカー解析は行わない。
@@ -3038,8 +3703,30 @@ RETRYCOMMENT
 			fi
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
-			echo "$attempt_talk" >"$queue_file"
-			_remember_comment_reply_text "$attempt_talk"
+			local viewer_memory_reply_file=""
+			viewer_memory_reply_file=$(mktemp /tmp/eloop_comment_viewer_memory_reply_XXXXXXXX 2>/dev/null || true)
+			if [ -n "$viewer_memory_reply_file" ]; then
+				printf '%s\n' "$attempt_talk" >"$viewer_memory_reply_file"
+				if ! _stage_comment_viewer_memory \
+					"$queue_file" \
+					"$comment_prompt_batch_file" \
+					"$viewer_memory_reply_file" \
+					"$viewer_chat_source" \
+					"$_comment_mode_generated" \
+					"${comment_batch_hash:-}"; then
+					log "[COMMENT] 投稿者別メモの一時保存失敗（返信生成は継続）"
+				fi
+				rm -f "$viewer_memory_reply_file"
+			fi
+			if ! _comment_write_country_named_queue_file "$attempt_talk" "$queue_file"; then
+				log "[COMMENT] queue直前の国名正規化失敗のため未変換本文を破棄して再生成 (attempt ${attempt}/${comment_retry_max})"
+				_comment_clear_generation_meta "$queue_file"
+				[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
+				comment_speech_meta_file=""
+				attempt=$((attempt + 1))
+				continue
+			fi
+			_remember_comment_reply_text "$attempt_talk" "$_comment_mode_generated"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
 			if ! _comment_store_generation_meta \
 				"$queue_file" \
@@ -3057,7 +3744,7 @@ RETRYCOMMENT
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 			comment_speech_meta_file=""
 			local new_hash
-			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
+			new_hash=$(_comment_hash_file "$queue_file" 2>/dev/null || true)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
 				log "[COMMENT] 重複コメント返し検出 → 再生成 (hash=$new_hash, attempt ${attempt}/${comment_retry_max})"
 				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
@@ -3065,6 +3752,28 @@ RETRYCOMMENT
 				rm -f "$queue_file"
 				attempt=$((attempt + 1))
 				continue
+			fi
+
+			# 生成経路は enqueue_audio_text を通らず直接ファイルを作るため、
+			# ここで本文単位の原子的な投入権を取得する。別の生成プロセスが
+			# 同じ返信を先にキューへ積んだ場合は、現在のバッチだけ消化して
+			# 2本目の音声を作らない。
+			if declare -F _comment_audio_claim_enqueue_key >/dev/null 2>&1 &&
+				! _comment_audio_claim_enqueue_key "$attempt_talk"; then
+				log "[COMMENT] 同一本文が音声キューへ投入済みのため重複返信を破棄"
+				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
+				_comment_clear_generation_meta "$queue_file"
+				rm -f "$queue_file"
+				if "$viewer_chat_script" ack-batch "$comment_batch_file"; then
+					_mark_comment_batch_processed "$comment_batch_hash"
+					_record_processed_comment_lines "$twitch_comments"
+				else
+					log "[COMMENT] 重複返信破棄後の ack-batch 失敗 → 個別行ハッシュ記録"
+					_record_processed_comment_lines "$twitch_comments"
+					_mark_comment_batch_processed "$comment_batch_hash"
+				fi
+				generation_ok=true
+				break
 			fi
 
 			# kill耐性: キュー追加直後にack→処理済みマークし、再生成を防ぐ

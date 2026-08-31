@@ -41,7 +41,7 @@ _release_voicevox_synth_lock() {
 	return 0
 }
 
-# --- テスト1: コメントは長く待ち、ラジオは短く諦める ---
+# --- テスト1: コメントの待機優先度はラジオより高い ---
 export SOURCE_LABEL=comment
 wait_comment=$(_voicevox_synth_lock_wait_sec)
 timeout_comment=$(_voicevox_synth_timeout_sec)
@@ -88,7 +88,7 @@ else
 fi
 unset SAY_DISABLE_COMMENT_YIELD
 
-# --- テスト3: コメントがロック保持中、ラジオはチャンク間で諦めてフォールバック ---
+# --- テスト3: コメントがロック保持中、ラジオは盗まず解放後に再取得する ---
 export SOURCE_LABEL=radio_render:news
 _acquire_voicevox_synth_lock 1  # ラジオが最初のチャンクのロックを取得
 # コメントが割り込んでロックを保持（ラジオは解放済み）
@@ -97,13 +97,21 @@ _release_voicevox_synth_lock
 _acquire_voicevox_synth_lock 1
 _lock_held_by_comment=1
 
-# ラジオが再取得を試みる（radio の短い待ち15秒を0.05刻みで短縮するため、短い待ちで失敗することを確認）
-export VOICEVOX_SYNTH_LOCK_WAIT_RADIO_SEC=1
-if ! _acquire_voicevox_synth_lock 1; then
-	ok "radio yields to comment-held lock (re-acquire fails)"
+# コメントがロックを解放した後は、ラジオが同じレンダー世代で取得を継続する。
+(
+	sleep 1
+	_release_voicevox_synth_lock
+) &
+_comment_release_pid=$!
+SECONDS=0
+if _acquire_voicevox_synth_lock 3; then
+	[ "$SECONDS" -ge 1 ] \
+		&& ok "radio waits for comment-held lock and re-acquires" \
+		|| not_ok "radio should wait for the comment before re-acquiring"
 else
-	not_ok "radio should not steal lock from comment"
+	not_ok "radio should re-acquire after the comment releases the lock"
 fi
+wait "$_comment_release_pid" 2>/dev/null || true
 _release_voicevox_synth_lock
 
 # --- テスト4: コメントは長く待って取得できる ---

@@ -280,8 +280,8 @@ play_one_game() {
 
 	# 前試合のダッシュボードを非表示
 	./generate_dashboard.sh MOVE || true
-	# OBS 側でも dashboard ソースを hide (meriken AI と同じ visibility 制御)
-	if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ]; then
+	# OBS 側でも dashboard ソースを hide (ffmpeg配信時はOBS不在が正常なためスキップ)
+	if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${SOREN_STREAM_BACKEND:-obs}" = "obs" ]; then
 		./obs_control.sh hide "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1 &
 	fi
 
@@ -294,11 +294,27 @@ play_one_game() {
 	# 改善結果が試合中に反映されても、進行中の試合はこの不変スナップショットを使い続ける。
 	local strategy_runtime_dir strategy_runtime_root strategy_runtime_file
 	strategy_runtime_dir="${MAIN_GAME_STRATEGY_RUNTIME_DIR:-${TMP_STATE_DIR:-tmp/state}/main_game_strategy_runtime}"
+	# インターリーブ A/B (strategy/ab_interleave.sh): 有効なら B 腕の試合はスナップショットの元を代替ファイルにする。
+	# root strategy.py は触らない。無効/条件未達なら従来どおり root。
+	local ab_snapshot_source="$STRATEGY_FILE"
+	AB_ARM=""
+	AB_HASH=""
+	AB_SOURCE=""
+	AB_IDX=""
+	AB_HELPERS=""
+	# A/B ゲート (strategy/ab_gate.sh): 改善候補が待機していれば境界で A/B を開始する (既定オフ)
+	if command -v _ab_gate_before_game >/dev/null 2>&1; then
+		_ab_gate_before_game || true
+	fi
+	if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
+		_ab_select_arm
+		ab_snapshot_source="$AB_SOURCE"
+	fi
 	if ! strategy_runtime_create_game_snapshot \
-		"$STRATEGY_FILE" \
+		"$ab_snapshot_source" \
 		"$strategy_runtime_dir" \
 		"${STRATEGY_FILE}.game_snapshot" \
-		"strategy_helpers" \
+		"${AB_HELPERS:-strategy_helpers}" \
 		"repair_strategy_to_active_branch_head_if_needed"; then
 		log "[STRATEGY-SNAPSHOT] 作成失敗 → 試合開始を次周回へ延期"
 		LAST_SCORE=0
@@ -314,6 +330,31 @@ play_one_game() {
 		return "${PLAY_RECOVERED_RETRY_RC:-75}"
 	}
 	strategy_runtime_file="$strategy_runtime_root/strategy.py"
+
+	# 実プレイ用スナップショットの準備が完了した時点を試合開始とする。
+	# ブリッジ復旧やスナップショット失敗で延期した試合は開始通知を出さない。
+	local _start_cycle_progress
+	_start_cycle_progress=$(python3 - "${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    cycle = int(sys.argv[2])
+except (IndexError, ValueError):
+    cycle = 12
+try:
+    with open(path, encoding="utf-8") as f:
+        count = int((json.load(f) or {}).get("count", 0) or 0)
+except Exception:
+    count = 0
+if cycle > 0:
+    print(f"[{count + 1}/{cycle}]")
+PY
+)
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh game "Game #${game_num_display} 開始${_start_cycle_progress:+ ${_start_cycle_progress}}" "サイクル${_start_cycle_progress:-?}の試合を開始しました。" "info" >/dev/null 2>&1 || true
+	fi
 
 	# strategy_runner.py で1試合プレイ
 	# パイプラインを使わない: bash はパイプライン中 INT trap を遅延するため Ctrl-C が効かない。
@@ -444,6 +485,19 @@ PY
 	fi
 
 	if [ "$runner_error" = "decide_exception" ]; then
+		if [ -n "${AB_ARM:-}" ] && command -v _ab_abort >/dev/null 2>&1; then
+			# A/B 中の decide 例外: 実験を中断 (以後 root のみ)。B 腕の例外は root の自動復旧を起動しない。
+			_ab_abort "decide_exception arm=${AB_ARM} hash=${AB_HASH:0:12} turns=${LAST_TURNS}"
+			if [ "$AB_ARM" = "B" ]; then
+				LAST_SCORE=0
+				LAST_TURNS=0
+				LAST_RUSSIA="false"
+				LAST_RUSSIA_ANNOUNCED="false"
+				LAST_SOVIET="false"
+				send_retry
+				return "$PLAY_RECOVERED_RETRY_RC"
+			fi
+		fi
 		_handle_decide_exception_recovery "$runner_error_msg" "$LAST_TURNS" "$LAST_SCORE"
 		LAST_SCORE=0
 		LAST_TURNS=0
@@ -627,7 +681,8 @@ json.dump(d,open(f,'w'))
 		# OBS 側の表示切り替えとブラウザソースの再読込時間を確保する。
 		local _dashboard_shown=0
 		# ソ連建国後はdashboardを表示しない（opsOverlay/statsOverlayに被るため）
-		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 0 ]; then
+		# ffmpeg配信時はOBS不在が正常なため表示をスキップしWARNも出さない
+		if [ "${OBS_DASHBOARD_VISIBILITY_ENABLED:-1}" = "1" ] && [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 0 ] && [ "${SOREN_STREAM_BACKEND:-obs}" = "obs" ]; then
 			if ./obs_control.sh show "${OBS_DASHBOARD_SCENE:-soren}" "${OBS_DASHBOARD_SOURCE:-dashboard}" >/dev/null 2>&1; then
 				_dashboard_shown=1
 			else
@@ -678,6 +733,32 @@ print(d.get('score', 0) + bonus)
 	# 並ぶハーネス起因のサイン)用。Phase 1 まではどこからも読まれない。
 	export LAST_TURNS="$LAST_TURNS"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
+		if [ -n "${AB_ARM:-}" ] && command -v _ab_record_game >/dev/null 2>&1; then
+			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE"
+		fi
+		if command -v _ab_gate_after_game >/dev/null 2>&1; then
+			_ab_gate_after_game || true
+		fi
+		# 試合ごとの結果はチャットへ投稿せず、改善サイクルの閾値で一度だけ
+		# 実測サマリー→AI解説→audio_workerキューを起動する。
+		if [ "${BATCH_COMMENTARY_ENABLED:-1}" = "1" ] && [ -x ./batch_commentary.sh ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+			local _batch_commentary_count=0
+			_batch_commentary_count=$(python3 - "$ACCUMULATED_GAMES_FILE" <<'PY'
+import json, sys
+try:
+    print(int((json.load(open(sys.argv[1], encoding="utf-8")) or {}).get("count", 0) or 0))
+except Exception:
+    print(0)
+PY
+)
+			if [ "${_batch_commentary_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ]; then
+				(
+					./batch_commentary.sh "$ACCUMULATED_GAMES_FILE" "${MIN_GAMES_BEFORE_IMPROVE:-12}" \
+						>>"${TMP_DEBUG_DIR:-tmp/debug}/batch_commentary.log" 2>&1 || true
+				) &
+				log "[BATCH_COMMENTARY] queued generation trigger (${_batch_commentary_count}/${MIN_GAMES_BEFORE_IMPROVE:-12})"
+			fi
+		fi
 		if [ -x ./monitor_improve_runtime.sh ]; then
 			(
 				./monitor_improve_runtime.sh >/dev/null 2>&1 ||
@@ -691,7 +772,7 @@ print(d.get('score', 0) + bonus)
 import json, sys
 d = json.load(sys.stdin)
 types = [int(x) for x in d.get('final_types', []) if str(x).lstrip('-').isdigit()]
-print('ウクライナ=%d カザフ=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
+print('ウクライナ=%d カザフスタン=%d ロシア=%d ソ連=%d' % (types.count(13), types.count(14), types.count(15), 1 if d.get('soviet_created') else 0))
 " 2>/dev/null || echo "")
 		_cycle_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$MIN_GAMES_BEFORE_IMPROVE" <<'PY'
 import json
@@ -721,8 +802,9 @@ PY
 
 	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する
 
-	# サイクル進捗をチャットに投稿
-	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+	# 試合単位の成績投稿は停止。互換用の旧フォーマットは明示的に
+	# GAME_RESULT_CHAT_ENABLED=1 とした場合だけ有効にする。
+	if [ "${GAME_RESULT_CHAT_ENABLED:-0}" = "1" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress
 		pred_progress=$(
 			python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" "$MIN_GAMES_BEFORE_IMPROVE" \
@@ -732,20 +814,12 @@ PY
 				"${STAGE_ACHIEVEMENT_GATE_MIN_RATE:-0.80}" \
 				"${STAGE_ACHIEVEMENT_GATE_TYPES:-12,13,14,15}" <<'PY'
 import json, sys
-
-COUNTRY_NAMES = {
-    11: "トルクメン",
-    12: "ベラルーシ",
-    13: "ウクライナ",
-    14: "カザフ",
-    15: "ロシア",
-    16: "ソ連",
-}
+from lib.country_names import country_name
 
 STAGE_GATE_SEQUENCE = (
-    (11, "トルクメン"),
+    (11, "ウズベキスタン"),
     (13, "ウクライナ"),
-    (14, "カザフ"),
+    (14, "カザフスタン"),
 )
 
 def read_json(path, fallback):
@@ -785,7 +859,7 @@ def rate_line(max_types):
     parts = []
     for stage in (13, 14, 15):
         reached = sum(1 for value in max_types if value >= stage)
-        parts.append(f"{COUNTRY_NAMES.get(stage, 'Type'+str(stage))}={round(reached / total * 100):.0f}%")
+        parts.append(f"{country_name(stage)}={round(reached / total * 100):.0f}%")
     return "建国率 " + " ".join(parts)
 
 def target_from_anchor(anchor_data, threshold, gate_types):
@@ -884,7 +958,7 @@ if regression_target:
     max_possible_rate = (reached + remaining_games) / final_total
     status = "粛清圏" if max_possible_rate < anchor_rate else "未達"
     target_text = (
-        f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {status}"
+        f"target={country_name(stage)} {status}"
         f" curr={round(current_rate * 100):.0f}% anchor={round(anchor_rate * 100):.0f}%"
     )
     if status == "粛清圏":
@@ -893,7 +967,7 @@ elif target:
     stage, anchor_rate, _, _ = target
     current_best = max([int((current_progress or {}).get("best_max_type", 0) or 0)] + current_max_types) if current_max_types or (current_progress or {}).get("best_max_type") else 0
     target_ok = current_best >= stage
-    target_text = f"target={COUNTRY_NAMES.get(stage, 'Type'+str(stage))}(T{stage}) {'OK' if target_ok else '未達'}"
+    target_text = f"target={country_name(stage)} {'OK' if target_ok else '未達'}"
 extra = " | ".join(part for part in (founding, target_text) if part)
 extra = f" | {extra}" if extra else ""
 print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str}{soviet_str}{extra} (あと{remain}試合)")

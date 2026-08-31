@@ -18,6 +18,12 @@ import {
   recordCompletedGame,
   snapshotCurrentStrategyForGame,
 } from './lineage.mjs';
+import {
+  installDirectGameStage,
+  installInlineDirectBroadcastOverlay,
+  loadDirectOverlayConfig,
+} from '../lib/direct_overlay.mjs';
+import { buildDirectBroadcastOverlayState } from '../lib/direct_broadcast_overlay.mjs';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
@@ -70,11 +76,14 @@ const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
 const DEFAULT_STANDALONE_CDP_PORT = 9223;
 const DEFAULT_CHROME_AUDIO_OUTPUT_LABEL = 'BlackHole 2ch';
+const DEFAULT_VIEWPORT_WIDTH = 1280;
+const DEFAULT_VIEWPORT_HEIGHT = 720;
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_DIR = dirname(fileURLToPath(import.meta.url));
 const SOREN91_MODE_FLAG_FILE = join(SOREN91_DIR, '..', 'tmp', '.soren91_mode_active');
 const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
+const SOREN91_READY_FILE = 'tmp/ready';
 const COMMENT_QUEUE_DIR = join('..', 'tmp', '.comment_queue');
 const SOREN91_LAST_COMMENTED_GAME_FILE = join(COMMENT_QUEUE_DIR, 'soren91_last_commented_game');
 let activeBrowser = null;
@@ -84,8 +93,100 @@ let activeIsSharedMode = false;
 let activeOwnsContext = false;
 let shutdownTimer = null;
 let cleanupPromise = null;
+let broadcastStateTimer = null;
 const rankingCommentQueuedGames = new Set();
 const rankingCommentInFlightGames = new Set();
+
+function positiveIntEnv(name, fallback) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const VIEWPORT_WIDTH = positiveIntEnv('SOREN91_VIEWPORT_WIDTH', DEFAULT_VIEWPORT_WIDTH);
+const VIEWPORT_HEIGHT = positiveIntEnv('SOREN91_VIEWPORT_HEIGHT', DEFAULT_VIEWPORT_HEIGHT);
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(process.env, process.platform);
+const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
+const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
+
+async function captureGameScreenshot(page, path) {
+  const canvas = page.locator('canvas').first();
+  await canvas.screenshot({ path });
+}
+
+async function setNormalGameLifecycle(browser, state) {
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) {
+      if (!/^https?:\/\/(localhost|127\.0\.0\.1):8080\b/.test(page.url())) continue;
+      const session = await context.newCDPSession(page);
+      try {
+        if (state === 'frozen') {
+          await page.evaluate(() => {
+            const canvas = document.querySelector('canvas');
+            globalThis.__sorenRenderPaused = true;
+            if (canvas && !globalThis.__soren91NormalCanvasStyle) {
+              globalThis.__soren91NormalCanvasStyle = {
+                visibility: canvas.style.visibility,
+                pointerEvents: canvas.style.pointerEvents,
+              };
+            }
+            if (canvas) {
+              canvas.style.visibility = 'hidden';
+              canvas.style.pointerEvents = 'none';
+            }
+          });
+          const rate = Math.max(1, positiveIntEnv('SOREN91_NORMAL_GAME_CPU_THROTTLE', 8));
+          await session.send('Emulation.setCPUThrottlingRate', { rate });
+          await session.send('Page.setWebLifecycleState', { state: 'frozen' });
+          console.log(`[main] Normal sorengame lifecycle=frozen canvas=hidden cpuThrottle=${rate}x`);
+        } else {
+          await session.send('Page.setWebLifecycleState', { state: 'active' });
+          await session.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+          await page.evaluate(() => {
+            const canvas = document.querySelector('canvas');
+            const saved = globalThis.__soren91NormalCanvasStyle;
+            if (canvas && saved) {
+              canvas.style.visibility = saved.visibility;
+              canvas.style.pointerEvents = saved.pointerEvents;
+            }
+            globalThis.__sorenRenderPaused = false;
+            delete globalThis.__soren91NormalCanvasStyle;
+          });
+          console.log('[main] Normal sorengame lifecycle=active canvas=restored cpuThrottle=1x');
+        }
+      } finally {
+        await session.detach().catch(() => {});
+      }
+    }
+  }
+}
+
+async function startInlineBroadcastState(page) {
+  if (!DIRECT_OVERLAY_CONFIG.broadcast) return;
+  const publish = async () => {
+    const state = buildDirectBroadcastOverlayState(DIRECT_OVERLAY_CONFIG.broadcast);
+    await page.evaluate((nextState) => { globalThis.__sorenBroadcastState = nextState; }, state);
+  };
+  await publish();
+  broadcastStateTimer = setInterval(() => {
+    if (!page.isClosed()) publish().catch(() => {});
+  }, 1000);
+  broadcastStateTimer.unref?.();
+}
+
+async function fullscreenBrowserWindow(page) {
+  if (process.env.SOREN91_FULLSCREEN_WINDOW !== '1') return;
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    await session.send('Browser.setWindowBounds', {
+      windowId,
+      bounds: { windowState: 'fullscreen' },
+    });
+    console.log(`[main] Soren91 browser window fullscreen (${VIEWPORT_WIDTH}x${VIEWPORT_HEIGHT} render viewport)`);
+  } finally {
+    await session.detach().catch(() => {});
+  }
+}
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots', COMMENT_QUEUE_DIR].forEach(dir => {
@@ -146,7 +247,7 @@ function clearSoren91ModeFlag() {
 
 function standaloneBrowserLaunchArgs(windowPosition) {
   return [
-    '--window-size=1280,720',
+    `--window-size=${OUTPUT_WIDTH},${OUTPUT_HEIGHT}`,
     `--window-position=${windowPosition}`,
     '--hide-crash-restore-bubble',
     '--disable-session-crashed-bubble',
@@ -217,6 +318,10 @@ async function cleanupRuntime(reason = 'normal') {
       clearTimeout(shutdownTimer);
       shutdownTimer = null;
     }
+    if (broadcastStateTimer) {
+      clearInterval(broadcastStateTimer);
+      broadcastStateTimer = null;
+    }
 
     const browser = activeBrowser;
     const context = activeContext;
@@ -232,12 +337,16 @@ async function cleanupRuntime(reason = 'normal') {
 
     try { unlinkSync('tmp/in_game'); } catch {}
     try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
+    try { unlinkSync(SOREN91_READY_FILE); } catch {}
     clearSoren91ModeFlag();
 
     if (!browser) return;
 
     try {
       if (isSharedMode) {
+        await setNormalGameLifecycle(browser, 'active').catch((err) => {
+          console.log(`[main] Normal sorengame resume failed during ${reason}: ${err.message}`);
+        });
         if (!ownsContext && gamePage && !gamePage.isClosed()) {
           try {
             await gamePage.close();
@@ -245,13 +354,14 @@ async function cleanupRuntime(reason = 'normal') {
             console.log(`[main] Preferred game tab close failed during ${reason}: ${err.message}`);
           }
         }
-        await closeSharedSoren91Pages(browser, gamePage);
         if (ownsContext && context) {
           try {
             await context.close();
           } catch (err) {
             console.log(`[main] Shared context close failed during ${reason}: ${err.message}`);
           }
+        } else {
+          await closeSharedSoren91Pages(browser, gamePage);
         }
         // soren91 is a GUEST on soviet_local's shared Chrome (connected via
         // connectOverCDP). browser.close() on a CDP-connected browser closes
@@ -466,7 +576,7 @@ async function captureRankingTransitionBurst(page, gameNumber) {
   for (let i = 0; i < frames; i++) {
     const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
     try {
-      await page.screenshot({ path: framePath });
+      await captureGameScreenshot(page, framePath);
       const rankResult = await detectRankingScreen(framePath);
       const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult ?? 'null'}.png`);
       try { renameSync(framePath, taggedPath); } catch {}
@@ -507,7 +617,7 @@ async function probeRankingImmediatelyAfterDrop(page, gameNumber, turn) {
   for (let i = 0; i < frames; i++) {
     const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
     try {
-      await page.screenshot({ path: framePath });
+      await captureGameScreenshot(page, framePath);
       const rankResult = await detectRankingScreen(framePath);
       if (rankResult != null && rankResult > 0) {
         const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult}.png`);
@@ -888,10 +998,10 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
     const retryPage = await openSharedBrowserTab(context, retryAnchorPage);
     activeGamePage = retryPage;
     try {
-      await retryPage.setViewportSize({ width: 1280, height: 720 });
+      await retryPage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
     } catch {}
     await installAudioGainLimiter(retryPage, audioGainMultiplier);
-    await grantSpeakerSelection(retryPage, gameUrl);
+    if (audioOutputLabel) await grantSpeakerSelection(retryPage, gameUrl);
     await installAudioOutputRouter(retryPage, audioOutputLabel);
     await retryPage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
@@ -916,7 +1026,9 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
 async function main() {
   console.log('[main] 同志AI 起動...');
   const audioGainMultiplier = loadAudioGainMultiplier();
-  const audioOutputLabel = loadChromeAudioOutputLabel();
+  const audioOutputLabel = process.platform === 'linux' && process.env.SOREN_STREAM_BACKEND === 'ffmpeg'
+    ? ''
+    : loadChromeAudioOutputLabel();
   console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
   console.log(`[main] soren91 Chrome audio output label=${audioOutputLabel}`);
   try {
@@ -944,6 +1056,7 @@ async function main() {
   // 共有ブラウザ接続を試行、失敗なら従来の単独起動
   const sharedBrowser = await connectToSharedBrowser();
   const isSharedMode = sharedBrowser != null;
+  const isolateSharedContext = isSharedMode && process.env.SOREN91_SHARED_ISOLATED_CONTEXT === '1';
   const standaloneWindowPosition = process.env.SOREN91_STANDALONE_WINDOW_POSITION || '2400,1200';
   const launchArgs = standaloneBrowserLaunchArgs(standaloneWindowPosition);
   // Standalone (non-shared) = a 2nd Chrome-for-Testing instance. Launch it via
@@ -966,13 +1079,13 @@ async function main() {
   let context = null;
   let ownsContext = false;
   if (isSharedMode) {
-    context = chooseSharedBrowserContext(browser);
+    context = isolateSharedContext ? null : chooseSharedBrowserContext(browser);
     if (context) {
       console.log('[main] Running in shared browser mode (existing context/new tab)');
     } else {
-      console.log('[main] Shared browser has no reusable context; creating isolated context');
+      console.log('[main] Creating isolated context in shared browser (separate cookies/storage)');
       context = await browser.newContext({
-        viewport: { width: 1280, height: 720 },
+        viewport: { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT },
         locale: 'ja-JP',
         timezoneId: 'Asia/Tokyo',
       });
@@ -980,7 +1093,7 @@ async function main() {
     }
   } else {
     context = await browser.newContext({
-      viewport: { width: 1280, height: 720 },
+      viewport: { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT },
       locale: 'ja-JP',
       timezoneId: 'Asia/Tokyo',
     });
@@ -994,6 +1107,12 @@ async function main() {
   activeContext = context;
   activeIsSharedMode = isSharedMode;
   activeOwnsContext = ownsContext;
+
+  if (isSharedMode) {
+    await setNormalGameLifecycle(browser, 'frozen').catch((err) => {
+      console.log(`[main] Normal sorengame freeze failed: ${err.message}`);
+    });
+  }
 
   let gamePage = null;
   try {
@@ -1011,12 +1130,12 @@ async function main() {
       : await context.newPage();
     if (isSharedMode) {
       try {
-        await gamePage.setViewportSize({ width: 1280, height: 720 });
+        await gamePage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
       } catch {}
     }
     activeGamePage = gamePage;
     await installAudioGainLimiter(gamePage, audioGainMultiplier);
-    await grantSpeakerSelection(gamePage, gameUrl);
+    if (audioOutputLabel) await grantSpeakerSelection(gamePage, gameUrl);
     await installAudioOutputRouter(gamePage, audioOutputLabel);
     await gamePage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
@@ -1042,6 +1161,11 @@ async function main() {
       audioOutputLabel,
       anchorPage,
     });
+    if (process.env.SOREN91_BRING_TO_FRONT === '1') {
+      await gamePage.bringToFront();
+      console.log('[main] Soren91 page brought to front for VM game switch');
+    }
+    await fullscreenBrowserWindow(gamePage);
     // bringToFront はOS窓を前面に raise しユーザーのフォーカスを奪う。
     // タブ作成後は page.goto だけで十分なので、起動直後も含めて前面化しない。
 
@@ -1064,8 +1188,18 @@ async function main() {
     }
     await sleep(3000); // 追加バッファ
 
+    const stageInfo = await installDirectGameStage(gamePage, DIRECT_OVERLAY_CONFIG, {
+      drawBufferWidth: VIEWPORT_WIDTH,
+      drawBufferHeight: VIEWPORT_HEIGHT,
+    });
+    await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+    await startInlineBroadcastState(gamePage);
+    console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
+
     // タイトル画面: 名前入力 + PLAY
     await handleTitleScreen(gamePage);
+    writeFileSync(SOREN91_READY_FILE, new Date().toISOString() + '\n');
+    console.log('[main] Soren91 ready marker written');
 
     // ゲームボード表示を待ってからキャリブレーション
     // 最初は仮キャリブレーション (全画面) で待機→ボード検出後に再キャリブレーション
@@ -1074,9 +1208,9 @@ async function main() {
     if (!calibration) {
       // 仮キャリブレーション: 全画面をボードとして扱う
       calibration = {
-        screen: { width: 1280, height: 720 },
-        board: { left: 0, right: 1279, top: 0, bottom: 719, width: 1279, height: 719 },
-        dropArea: { pixelLeft: 91, pixelRight: 1188 },
+        screen: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
+        board: { left: 0, right: VIEWPORT_WIDTH - 1, top: 0, bottom: VIEWPORT_HEIGHT - 1, width: VIEWPORT_WIDTH - 1, height: VIEWPORT_HEIGHT - 1 },
+        dropArea: { pixelLeft: Math.round(VIEWPORT_WIDTH * 91 / 1280), pixelRight: Math.round(VIEWPORT_WIDTH * 1188 / 1280) },
         timestamp: new Date().toISOString(),
         provisional: true,
       };
@@ -1109,11 +1243,11 @@ async function handleTitleScreen(page) {
   if (!box) throw new Error('Canvas bounding box not available');
 
   // スクリーンショットで状態確認
-  await page.screenshot({ path: join(SCREENSHOT_DIR, 'title.png') });
+  await captureGameScreenshot(page, join(SCREENSHOT_DIR, 'title.png'));
 
   // 名前入力欄をクリック (canvas座標 x=630, y=560 付近)
-  const nameFieldX = box.x + 630;
-  const nameFieldY = box.y + 560;
+  const nameFieldX = box.x + box.width * (630 / 1280);
+  const nameFieldY = box.y + box.height * (560 / 720);
 
   console.log(`[main] Clicking name field at (${nameFieldX.toFixed(0)}, ${nameFieldY.toFixed(0)})`);
   await clickCanvasPoint(page, nameFieldX, nameFieldY, 'name field');
@@ -1146,11 +1280,11 @@ async function handleTitleScreen(page) {
   await sleep(500);
 
   // スクリーンショットで入力確認
-  await page.screenshot({ path: join(SCREENSHOT_DIR, 'title_named.png') });
+  await captureGameScreenshot(page, join(SCREENSHOT_DIR, 'title_named.png'));
 
   // PLAYボタンをクリック (入力欄の下)
-  const playButtonX = box.x + 630;
-  const playButtonY = box.y + 645;
+  const playButtonX = box.x + box.width * (630 / 1280);
+  const playButtonY = box.y + box.height * (645 / 720);
 
   console.log(`[main] Clicking PLAY button at (${playButtonX.toFixed(0)}, ${playButtonY.toFixed(0)})`);
   await clickCanvasPoint(page, playButtonX, playButtonY, 'PLAY button');
@@ -1284,7 +1418,7 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // スクリーンショット取得
       const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.png`);
-      await page.screenshot({ path: screenshotPath });
+      await captureGameScreenshot(page, screenshotPath);
 
       // 盤面解析
       const { analyzeScreenshot } = await loadModule('./screenshot_analyzer.mjs');
@@ -1559,7 +1693,7 @@ async function gameLoop(page, calibration, gameNumber) {
         if (moveCount >= 3) { // 十分な信頼度と盤面密度で3回連続MOVEなら安定と判断
           console.log('[game] Game board stable, running calibration...');
           const calScreenshot = join(SCREENSHOT_DIR, 'calibration.png');
-          await page.screenshot({ path: calScreenshot });
+          await captureGameScreenshot(page, calScreenshot);
           const { calibrate } = await loadModule('./calibration.mjs');
           calibration = await calibrate(calScreenshot);
           calibrated = true;
@@ -1661,8 +1795,10 @@ async function executeHold(page, calibration) {
   if (!canvas) throw new Error('Canvas not found');
 
   // ボード中央で右クリック
-  const clickX = board.left + Math.floor(board.width / 2);
-  const clickY = board.top + Math.floor(board.height * 0.3);
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('Canvas bounding box not available');
+  const clickX = box.x + board.left + Math.floor(board.width / 2);
+  const clickY = box.y + board.top + Math.floor(board.height * 0.3);
   await page.mouse.click(clickX, clickY, { button: 'right' });
   await sleep(300);
 }
@@ -1690,8 +1826,8 @@ async function executeDrop(page, gameX, calibration) {
     throw new Error('Canvas bounding box not available');
   }
 
-  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, pixelX));
-  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, pixelY));
+  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, box.x + pixelX));
+  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, box.y + pixelY));
   if (process.env.SOREN91_DEBUG_DROP === '1') {
     console.log(`[game] Drop click: gameX=${gameX.toFixed(2)} pixel=(${clickX.toFixed(0)},${clickY.toFixed(0)}) cal=${calibration.method || 'provisional'}${calibration.provisional ? ':provisional' : ''}`);
   }

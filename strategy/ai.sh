@@ -301,10 +301,58 @@ _run_cmd_store_resume_session() {
 	printf '%s\n' "$session_id" >"$meta_file" 2>/dev/null || true
 }
 
+# _run_cmd_resolved_model SPEC
+#   改善ループのスペックを、実際に呼び出す CLI とモデル名へ解決する。
+#   opencode 系を CODEX_MODEL に正規化すると、free/muse 指定が有料の
+#   deepseek へすり替わるため、明示した opencode モデルはそのまま残す。
+_run_cmd_resolved_model() {
+	local spec="${1:-}" type agent
+	type="${spec%%:*}"
+	agent="${spec#*:}"
+	[ "$type" = "$agent" ] && agent=""
+	case "$spec" in
+	opencode-go/* | opencode/*)
+		printf '%s' "$spec"
+		return 0
+		;;
+	esac
+	case "$type" in
+	codex)
+		printf '%s' "${agent:-${CODEX_MODEL:-deepseek-v4-flash}}"
+		;;
+	opencode-go)
+		[ -n "$agent" ] && printf 'opencode-go/%s' "$agent"
+		;;
+	opencode)
+		[ -n "$agent" ] && printf 'opencode/%s' "$agent"
+		;;
+	*)
+		printf '%s' "${CODEX_MODEL:-deepseek-v4-flash}"
+		;;
+	esac
+}
+
+_run_cmd_record_winner() {
+	command -v _ai_stats_record >/dev/null 2>&1 || return 0
+	local label="${RUN_CMD_STATS_LABEL:-}"
+	[ -n "$label" ] || return 0
+	local spec="${RUN_CMD_STATS_SPEC:-}"
+	[ -n "$spec" ] || return 0
+	local resolved_model
+	resolved_model=$(_run_cmd_resolved_model "$spec")
+	_ai_stats_record "winner" "$label" "$spec" "0" "$resolved_model"
+}
+
 run_cmd() {
 	local spec="$1" prompt="$2" expect_file="${3:-}" expect_snapshot="${4:-}" expect_was_present="${5:-false}"
-	local type="${spec%%:*}" agent="${spec#*:}"
+	local type agent
+	type="${spec%%:*}"
+	agent="${spec#*:}"
 	[ "$type" = "$agent" ] && agent=""
+	local bypass_litellm_health=0
+	case "$spec" in
+	opencode:* | opencode-go:* | opencode/* | opencode-go/*) bypass_litellm_health=1 ;;
+	esac
 	local target="$type"
 	[ -n "$agent" ] && target="${type}:${agent}"
 	local cmd_log_file="${RUN_CMD_LOG_FILE:-}"
@@ -330,8 +378,9 @@ run_cmd() {
 	# /health は設定済みモデルへの能動的な疎通確認を行うため、1モデルの
 	# 429/遅延だけでプロキシ全体を停止扱いにしてしまう。プロセスの生存だけを
 	# 判定する /health/liveliness を使い、他モデルまで呼び出し前に遮断しない。
+	# opencode CLI の直接呼出しは LiteLLM を通らないため、このゲートを通さない。
 	local litellm_health_url="${LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health/liveliness}"
-	if [ -n "$litellm_health_url" ]; then
+	if [ "$bypass_litellm_health" -eq 0 ] && [ -n "$litellm_health_url" ]; then
 		if ! curl -fsS --max-time 5 "$litellm_health_url" >/dev/null 2>&1; then
 			log "[CMD] litellm proxy unreachable ($litellm_health_url) → rc=79 fallback"
 			if [ -n "$cmd_log_file" ]; then
@@ -340,18 +389,30 @@ run_cmd() {
 			return 79
 		fi
 	fi
-	# ハーネスは codex CLI に統一 (モデル: deepseek-v4-flash)。
-	# 旧 zai/minimax/glm/opencode/gemini/claude/ollama 指定はすべて codex へ正規化する。
+	# codex は codex CLI、opencode/opencode-go は opencode CLI を使う。
+	# それ以外の旧スペックだけは従来どおり CODEX_MODEL へ正規化する。
 	local original_type="$type"
-	if [ "$type" != "codex" ]; then
-		log "[CMD] ${type} → codex (ハーネス統一)"
+	local opencode_cli=0
+	local resolved_model=""
+	case "$type" in
+	opencode | opencode-go)
+		opencode_cli=1
+		resolved_model=$(_run_cmd_resolved_model "$spec")
+		;;
+	codex)
+		resolved_model=$(_run_cmd_resolved_model "$spec")
+		;;
+	*)
+		log "[CMD] ${type} → codex (legacy harness normalization)"
 		type="codex"
 		agent=""
 		target="codex"
-	fi
-	local codex_model="${agent:-${CODEX_MODEL:-deepseek-v4-flash}}"
+		resolved_model="${CODEX_MODEL:-deepseek-v4-flash}"
+		;;
+	esac
+	local codex_model="$resolved_model"
 	local requested_timeout="$timeout_sec"
-	timeout_sec=$(_run_cmd_limit_timeout_for_model "$timeout_sec" "$codex_model")
+	timeout_sec=$(_run_cmd_limit_timeout_for_model "$timeout_sec" "$resolved_model")
 	if [ -n "$requested_timeout" ] && [ "$timeout_sec" != "$requested_timeout" ]; then
 		log "[CMD] MiniMax run timeout capped: ${requested_timeout}s → ${timeout_sec}s"
 	fi
@@ -365,19 +426,19 @@ run_cmd() {
 		prompt_file=$(mktemp /tmp/eloop_prompt.XXXXXX)
 	fi
 	printf '%s' "$prompt" >"$prompt_file"
-	log "[CMD] $(wc -c <"$prompt_file" | tr -d ' ')B → $type"
+	log "[CMD] $(wc -c <"$prompt_file" | tr -d ' ')B → $type model=$resolved_model"
 	if [ -n "$cmd_log_file" ]; then
 		mkdir -p "$(dirname "$cmd_log_file")" 2>/dev/null || true
 		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
 		if [ -n "$resume_session" ]; then
-			printf '[%s] [AI:%s] START spec=%s target=%s timeout=%s continue_session=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$timeout_label" "$resume_session" >>"$cmd_log_file" 2>/dev/null || true
+			printf '[%s] [AI:%s] START spec=%s target=%s model=%s timeout=%s continue_session=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$resolved_model" "$timeout_label" "$resume_session" >>"$cmd_log_file" 2>/dev/null || true
 		else
-			printf '[%s] [AI:%s] START spec=%s target=%s timeout=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$timeout_label" >>"$cmd_log_file" 2>/dev/null || true
+			printf '[%s] [AI:%s] START spec=%s target=%s model=%s timeout=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$resolved_model" "$timeout_label" >>"$cmd_log_file" 2>/dev/null || true
 		fi
 	fi
 
-	if [ "$type" = "opencode" ] && [ -z "$agent" ]; then
-		log "[CMD] opencode spec requires explicit agent (e.g. opencode:glmflash)"
+	if [ "$opencode_cli" -eq 1 ] && [ -z "$agent" ]; then
+		log "[CMD] opencode spec requires explicit model (e.g. opencode-go:muse-spark-1.2-contributor)"
 		rm -f "$prompt_file"
 		return 2
 	fi
@@ -389,7 +450,7 @@ run_cmd() {
 	local opencode_had_xdg_data_home=0
 	[ "${XDG_STATE_HOME+x}" = "x" ] && opencode_had_xdg_state_home=1
 	[ "${XDG_DATA_HOME+x}" = "x" ] && opencode_had_xdg_data_home=1
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		_opencode_run_lock_enter "$cmd_log_tag:$target" || {
 			rm -f "$prompt_file"
 			return 1
@@ -403,31 +464,75 @@ run_cmd() {
 		export XDG_DATA_HOME="$(_opencode_xdg_data_home)"
 	fi
 
-	# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
-	local codex_out_file
-	codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
-	local -a codex_args=(
-		exec --skip-git-repo-check -m "$codex_model"
-		--dangerously-bypass-approvals-and-sandbox
-		-o "$codex_out_file" "$prompt_body"
-	)
-	if [ -n "$cmd_log_file" ]; then
-		if [ -n "$timeout_sec" ]; then
-			"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" >>"$cmd_log_file" 2>&1 &
+	local codex_out_file=""
+	local cmd_pid
+	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+		# テストから関数スタブで差し替えられるよう上書きを許す (CODEX_BIN と同じ規約)。
+		local opencode_bin="${OPENCODE_BIN:-}"
+		if [ -z "$opencode_bin" ]; then
+			opencode_bin="/snap/bin/opencode"
+			[ -x "$opencode_bin" ] || opencode_bin="opencode"
+		fi
+		# Keep the prompt out of argv.  Review prompts include several large reference
+		# files and can exceed ARG_MAX when passed as one positional argument.
+		# In headless mode opencode reads stdin when no message positional is given.
+		# Do not pass a literal '-' because older releases treat it as the message text.
+		local -a opencode_args=(run --model "$resolved_model")
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+				else
+					"$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+				fi
+			else
+				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+				else
+					"$opencode_bin" "${opencode_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+				fi
+			fi
 		else
-			codex "${codex_args[@]}" >>"$cmd_log_file" 2>&1 &
+			if [ -n "$timeout_sec" ]; then
+				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
+				else
+					"$timeout_bin" "$timeout_sec" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
+				fi
+			else
+				if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
+				else
+					"$opencode_bin" "${opencode_args[@]}" <"$prompt_file" &
+				fi
+			fi
 		fi
 	else
-		if [ -n "$timeout_sec" ]; then
-			"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" &
+		# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
+		codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
+		local -a codex_args=(
+			exec --skip-git-repo-check -m "$codex_model"
+			--dangerously-bypass-approvals-and-sandbox
+			-o "$codex_out_file" -
+		)
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+			else
+				codex "${codex_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			codex "${codex_args[@]}" &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" <"$prompt_file" &
+			else
+				codex "${codex_args[@]}" <"$prompt_file" &
+			fi
 		fi
 	fi
-	# 出力ファイルを後処理でログへ追記するため、一時ファイルパスを保存
+	# 出力ファイルを後処理でログへ追記するため一時ファイルパスを保存。
 	RUN_CMD_CODEX_OUT_FILE="$codex_out_file"
 	local cmd_pid=$!
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+	if [ "$opencode_cli" -eq 1 ]; then
 		if [ "$opencode_had_xdg_state_home" -eq 1 ]; then
 			export XDG_STATE_HOME="$opencode_prev_xdg_state_home"
 		else
@@ -438,6 +543,15 @@ run_cmd() {
 		else
 			unset XDG_DATA_HOME
 		fi
+	fi
+	local stats_recorded=0
+	local saved_run_cmd_stats_label="${RUN_CMD_STATS_LABEL:-}"
+	local saved_run_cmd_stats_spec="${RUN_CMD_STATS_SPEC:-}"
+	if command -v _ai_stats_record >/dev/null 2>&1; then
+		_ai_stats_record "attempt" "$cmd_log_tag" "$spec" "" "$resolved_model"
+		stats_recorded=1
+		RUN_CMD_STATS_LABEL="${cmd_log_tag%%:*}"
+		RUN_CMD_STATS_SPEC="$spec"
 	fi
 	RUN_CMD_ACTIVE_PID=$cmd_pid
 	local _cmd_start_epoch
@@ -509,7 +623,7 @@ run_cmd() {
 			ret=78
 		fi
 	fi
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ] || [ "$type" = "zai" ]; then
+	if [ "$opencode_cli" -eq 1 ] || [ "$original_type" = "glm" ] || [ "$original_type" = "zai" ]; then
 		if [ "$ret" -eq 77 ] || [ "$ret" -eq 78 ]; then
 			# トークン超過 or 空応答時はセッションを保存しない（次回は新規セッション）
 			local meta_file
@@ -519,10 +633,28 @@ run_cmd() {
 			_run_cmd_store_resume_session "$spec" "$PWD"
 		fi
 	fi
+	if [ "$stats_recorded" -eq 1 ]; then
+		# expect watchdog が結果ファイル書き込み完了後に意図的に provider を
+		# SIGTERM した case は rc=143 になるが、呼び出し元は expect_check で
+		# 成功扱いにする。stats だけが fail 記録になっていたため、同一ランの
+		# ログに完了マーカーがある場合は ok として記録する。
+		local _expect_completed=0
+		if [ -n "$cmd_log_file" ] && tail -40 "$cmd_log_file" 2>/dev/null | grep -q 'stopping provider after completed write'; then
+			_expect_completed=1
+		fi
+		if [ "$ret" -eq 0 ] || [ "$_expect_completed" -eq 1 ]; then
+			_ai_stats_record "ok" "$cmd_log_tag" "$spec" "$ret" "$resolved_model"
+			_run_cmd_record_winner
+		else
+			_ai_stats_record "fail" "$cmd_log_tag" "$spec" "$ret" "$resolved_model"
+		fi
+	fi
 	if [ -n "$cmd_log_file" ]; then
 		printf '[%s] [AI:%s] END rc=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$ret" >>"$cmd_log_file" 2>/dev/null || true
 		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
 	fi
+	RUN_CMD_STATS_LABEL="$saved_run_cmd_stats_label"
+	RUN_CMD_STATS_SPEC="$saved_run_cmd_stats_spec"
 
 	stop_spinner
 	if [ -n "$prev_int_trap" ]; then
@@ -797,6 +929,9 @@ run_ai_list() {
 		rc=$?
 		if [ "$rc" -eq 0 ]; then
 			log "[$label] run_ai_list: ${agent} OK"
+			if command -v _ai_stats_record >/dev/null 2>&1; then
+				_ai_stats_record "winner" "$label" "$agent" "0" "$(_run_cmd_resolved_model "$agent")"
+			fi
 			return 0
 		fi
 		if [ "$rc" -eq 79 ]; then
@@ -813,6 +948,19 @@ run_ai_list() {
 	else
 		log "[$label] run_ai_list: all models failed (list=${agent_list_raw})"
 		final_rc=1
+	fi
+	if [ "$final_rc" -eq 1 ] && command -v _ai_stats_record >/dev/null 2>&1; then
+		local resolved_models="" candidate
+		for candidate in "${agents[@]}"; do
+			candidate=$(printf '%s' "$candidate" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+			[ -n "$candidate" ] || continue
+			if [ -n "$resolved_models" ]; then
+				resolved_models="${resolved_models},$(_run_cmd_resolved_model "$candidate")"
+			else
+				resolved_models="$(_run_cmd_resolved_model "$candidate")"
+			fi
+		done
+		_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
 	fi
 	return "$final_rc"
 }

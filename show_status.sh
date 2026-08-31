@@ -4,6 +4,7 @@
 # Usage: ./show_status.sh        # 10秒間隔で常時表示
 #        ./show_status.sh 3      # 3秒間隔で常時表示
 #        ./show_status.sh --once # 1回だけ表示して終了（確認・自動監視用）
+#        ./show_status.sh --latest-drop-summary # 直前手の要約だけ表示
 #        ./show_status.sh --html-once
 #        ./show_status.sh --html-watch [sec]
 #        ./show_status.sh --html-start [sec]
@@ -89,9 +90,14 @@ case "${1:-}" in
 esac
 
 SHOW_STATUS_ONCE=0
+SHOW_STATUS_LATEST_DROP_ONLY=0
 case "${1:-}" in
 --once|once)
 	SHOW_STATUS_ONCE=1
+	WATCH_INTERVAL=10
+	;;
+--latest-drop-summary)
+	SHOW_STATUS_LATEST_DROP_ONLY=1
 	WATCH_INTERVAL=10
 	;;
 *)
@@ -111,7 +117,7 @@ TMP_STATE_DIR="tmp/state"
 TMP_MARKERS_DIR="tmp/markers"
 TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
-LATEST_DROP_LOG="game_history/latest.jsonl"
+LATEST_DROP_LOG="${SHOW_STATUS_LATEST_DROP_LOG:-game_history/latest.jsonl}"
 CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
@@ -432,10 +438,12 @@ patterns = {
     "soren_loop": r"[/ ]soren_loop[.]sh([ \t]|$)",
     "chat_worker": r"[/ ]workers/chat_worker[.]sh([ \t]|$)",
     "youtube_worker": r"[/ ]workers/youtube_worker[.]sh([ \t]|$)",
+    "kick_worker": r"[/ ]workers/kick_worker[.]sh([ \t]|$)",
     "audio_worker": r"[/ ]workers/audio_worker[.]sh([ \t]|$)",
     "deadline_monitor": r"[/ ]workers/deadline_monitor[.]sh([ \t]|$)|[/ ]deadline_misplacement_monitor[.]py([ \t]|$)",
     "radio_worker": r"[/ ]workers/radio_worker[.]sh([ \t]|$)",
     "prediction_worker": r"[/ ]workers/prediction_worker[.]sh([ \t]|$)",
+    "poll_worker": r"[/ ]workers/poll_worker[.]sh([ \t]|$)",
     "improve_daemon": r"[/ ]improve_daemon[.]sh([ \t]|$)",
 }
 rows = []
@@ -738,6 +746,8 @@ import json
 import re
 import sys
 
+from lib.country_names import country_named_reason, last_drop_turn_country_label
+
 path = sys.argv[1]
 
 last = ""
@@ -767,13 +777,10 @@ def number(value, digits=2, signed=False):
     sign = "+" if signed else ""
     return f"{x:{sign}.{digits}f}"
 
-turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
-turn = f"{d.get('turn', '?')}{turn_flag}"
 x = number(d.get("decision_x"), 2, signed=True)
 score = number(d.get("score"), 0)
 delta = number(d.get("score_delta"), 0, signed=True)
 pieces = number(d.get("piece_count"), 0)
-next_type = d.get("next_type", "?")
 reason = re.sub(r"\s+", "_", str(d.get("decision_reason", "") or "")).strip("_")
 labels = []
 try:
@@ -789,14 +796,15 @@ noise_words = ("PENALTY", "CROSSES_DEADLINE_NO_MERGE")
 decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
 if not decision:
     decision = matches[0] if matches else (reason or "?")
+decision = country_named_reason(decision)
 
 parts = [
-    f"T{turn}",
+    last_drop_turn_country_label(d),
     f"x={x}",
     f"D={decision}",
 ]
 
-print(" ".join(parts))
+print(" ".join(part for part in parts if part))
 PY
 }
 
@@ -1108,6 +1116,8 @@ import json
 import os
 import sys
 
+from lib.country_names import country_name
+
 acc_path, current_path, current_hash, mature_s, trigger_s, count_s, early_min_s = sys.argv[1:8]
 try:
     mature_n = max(1, int(mature_s or 12))
@@ -1168,11 +1178,11 @@ if not soviet and bool(data.get("soviet", False)):
 best_type = int(data.get("best_max_type", 0) or 0)
 bits = []
 if russia > 0:
-    bits.append(f"R{russia}")
+    bits.append(f"ロシア{russia}")
 if soviet > 0:
-    bits.append(f"S{soviet}")
+    bits.append(f"ソ連{soviet}")
 if best_type >= 15:
-    bits.append(f"T{best_type}")
+    bits.append(country_name(best_type))
 if bits:
     print(f"defer={','.join(bits)}{games}/{mature_n}")
 elif source == "accumulated" and games < early_min:
@@ -1184,6 +1194,8 @@ PY
 			fresh_objective_label=$(python3 - tmp/improve.lock <<'PY' 2>/dev/null || echo "none"
 import json
 import sys
+
+from lib.country_names import country_name
 
 try:
     data = json.load(open(sys.argv[1], encoding="utf-8")) or {}
@@ -1199,7 +1211,7 @@ fresh_best = int(data.get("fresh_objective_fresh_best_max_type", 0) or 0)
 t14_peak = int(data.get("fresh_objective_t14_peak", 0) or 0)
 reference = str(data.get("fresh_objective_reference") or "none")
 route = str(data.get("improve_reason") or "normal")
-print(f"locked {trigger} {sample_n}/{count} T{fresh_best} T14p{t14_peak} ref={reference} route={route}")
+print(f"locked {trigger} {sample_n}/{count} 最高{country_name(fresh_best)} カザフスタンpeak{t14_peak} ref={reference} route={route}")
 PY
 )
 		fi
@@ -1208,6 +1220,8 @@ PY
 import json
 import os
 import sys
+
+from lib.country_names import country_name
 
 acc_file, current_file, anchor_file, min_best_raw, low_stage_min_raw, low_stage_max_raw = sys.argv[1:7]
 
@@ -1263,10 +1277,10 @@ if fresh_russia > 0:
     print("none")
 elif 0 < fresh_best <= low_stage_max:
     state = "ready low_stage_miss" if acc_count >= low_stage_min else "wait low_stage_miss"
-    print(f"{state} {acc_count}/{low_stage_min} T{fresh_best} ref={reference}")
+    print(f"{state} {acc_count}/{low_stage_min} 最高{country_name(fresh_best)} ref={reference}")
 elif fresh_best >= min_best:
     state = "ready high_frontier_miss" if acc_count >= low_stage_min else "wait high_frontier_miss"
-    print(f"{state} {acc_count}/{low_stage_min} T{fresh_best} ref={reference}")
+    print(f"{state} {acc_count}/{low_stage_min} 最高{country_name(fresh_best)} ref={reference}")
 else:
     print("none")
 PY
@@ -1300,6 +1314,8 @@ import json
 import os
 import shlex
 import sys
+
+from lib.country_names import country_name
 
 origin_file, current_file, outcome_file, mature_raw, anchor_file = sys.argv[1:6]
 try:
@@ -1392,13 +1408,13 @@ if h and isinstance(origins, dict) and h in origins:
         try:
             source_russia = int(origin.get("source_russia_count", 0) or 0)
             if source_russia:
-                source_bits.append(f"R{source_russia}")
+                source_bits.append(f"ロシア{source_russia}")
         except Exception:
             pass
         try:
             source_best_type = int(origin.get("source_best_max_type", 0) or 0)
             if source_best_type:
-                source_bits.append(f"T{source_best_type}")
+                source_bits.append(country_name(source_best_type))
         except Exception:
             pass
         if source_bits:
@@ -1476,6 +1492,8 @@ import os
 import shlex
 import sys
 import time
+
+from lib.country_names import country_name
 
 rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir, permanent_archive_dir = sys.argv[1:9]
 
@@ -1711,7 +1729,7 @@ if not rows:
 else:
     _, h, m, russia, soviet, best_type, origin_type = rows[0]
     retry = " retry" if origin_type else ""
-    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} R{russia} S{soviet} T{best_type} pool{len(rows)}{retry}"
+    label = f"{h[:4]} c{int(round(m['comp']))} p25{int(round(m['p25']))} n{m['n']} ロシア{russia} ソ連{soviet} 最高{country_name(best_type)} pool{len(rows)}{retry}"
 print("archive_next_label=" + shlex.quote(label))
 PY
 )
@@ -2344,6 +2362,26 @@ PY
 		youtube_worker_running=true
 		youtube_worker_pid=$(_activity_label "tmp/state/youtube_worker.pid" "heartbeat")
 	fi
+	local kick_worker_running=false kick_worker_pid="" kick_worker_enabled=false
+	case "${KICK_CHAT_ENABLED:-0}" in
+	1 | true | TRUE | yes | YES) kick_worker_enabled=true ;;
+	esac
+	if [[ -f tmp/state/kick_worker.pid ]]; then
+		kick_worker_pid=$(cat tmp/state/kick_worker.pid 2>/dev/null)
+		if [[ -n "$kick_worker_pid" ]] && _pid_exists "$kick_worker_pid"; then
+			kick_worker_running=true
+		fi
+	fi
+	if ! $kick_worker_running; then
+		kick_worker_pid=$(_find_process_pid '[/ ]workers/kick_worker[.]sh([[:space:]]|$)')
+		if [[ -n "$kick_worker_pid" ]] && _pid_exists "$kick_worker_pid"; then
+			kick_worker_running=true
+		fi
+	fi
+	if ! $kick_worker_running && [[ -f tmp/state/kick_worker.pid ]] && _recent_file_active "tmp/state/kick_worker.pid" 90; then
+		kick_worker_running=true
+		kick_worker_pid=$(_activity_label "tmp/state/kick_worker.pid" "heartbeat")
+	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
 		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
@@ -2379,9 +2417,10 @@ PY
 		radio_worker_pid=$(_activity_label "tmp/state/radio_worker.pid" "heartbeat")
 	fi
 	# durable pause markers (tmp/state/<name>.paused): worker stays alive but idle (park)
-	local chat_worker_paused=false youtube_worker_paused=false audio_worker_paused=false radio_worker_paused=false
+	local chat_worker_paused=false youtube_worker_paused=false kick_worker_paused=false audio_worker_paused=false radio_worker_paused=false
 	[[ -f tmp/state/chat_worker.paused ]] && chat_worker_paused=true
 	[[ -f tmp/state/youtube_worker.paused ]] && youtube_worker_paused=true
+	[[ -f tmp/state/kick_worker.paused ]] && kick_worker_paused=true
 	[[ -f tmp/state/audio_worker.paused ]] && audio_worker_paused=true
 	[[ -f tmp/state/radio_worker.paused ]] && radio_worker_paused=true
 	local prediction_worker_running=false prediction_worker_pid="" prediction_worker_paused=false
@@ -2398,6 +2437,22 @@ PY
 		prediction_worker_pid=$(_find_process_pid '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)')
 		if [[ -n "$prediction_worker_pid" ]] && _pid_exists "$prediction_worker_pid"; then
 			prediction_worker_running=true
+		fi
+	fi
+	local poll_worker_running=false poll_worker_pid="" poll_worker_paused=false
+	if [[ -f tmp/state/poll_worker.paused ]]; then
+		poll_worker_paused=true
+	fi
+	if [[ -f tmp/state/poll_worker.pid ]]; then
+		poll_worker_pid=$(cat tmp/state/poll_worker.pid 2>/dev/null)
+		if [[ -n "$poll_worker_pid" ]] && _pid_exists "$poll_worker_pid"; then
+			poll_worker_running=true
+		fi
+	fi
+	if ! $poll_worker_running; then
+		poll_worker_pid=$(_find_process_pid '[/ ]workers/poll_worker[.]sh([[:space:]]|$)')
+		if [[ -n "$poll_worker_pid" ]] && _pid_exists "$poll_worker_pid"; then
+			poll_worker_running=true
 		fi
 	fi
 	local improve_daemon_running=false improve_daemon_pid=""
@@ -2535,9 +2590,11 @@ PY
 	local _worker_rows=(
 		"ChatW" "$chat_worker_running" "$chat_worker_pid"
 		"YouTubeW" "$youtube_worker_running" "$youtube_worker_pid"
+		"KickW" "$kick_worker_running" "$kick_worker_pid"
 		"AudioW" "$audio_worker_running" "$audio_worker_pid"
 		"RadioW" "$radio_worker_running" "$radio_worker_pid"
 		"PredW" "$prediction_worker_running" "$prediction_worker_pid"
+		"PollW" "$poll_worker_running" "$poll_worker_pid"
 		"ImproveD" "$improve_daemon_running" "$improve_daemon_pid"
 	)
 	local _w_i _w_name _w_running _w_pid
@@ -2549,9 +2606,11 @@ PY
 		case "$_w_name" in
 		ChatW) _w_paused=$chat_worker_paused ;;
 		YouTubeW) _w_paused=$youtube_worker_paused ;;
+		KickW) _w_paused=$kick_worker_paused ;;
 		AudioW) _w_paused=$audio_worker_paused ;;
 		RadioW) _w_paused=$radio_worker_paused ;;
 		PredW) _w_paused=$prediction_worker_paused ;;
+		PollW) _w_paused=$poll_worker_paused ;;
 		esac
 		if [[ "$_w_paused" == "true" ]]; then
 			printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}idle — rm tmp/state/*.paused to resume${C_RESET}\n" "$_w_name"
@@ -2563,26 +2622,33 @@ PY
 			fi
 		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
 			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
+		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}KICK_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
 		else
 			printf "    ${C_RED}○${C_RESET} %-11s ${C_DIM}STOPPED${C_RESET}\n" "$_w_name"
 		fi
 	done
 
 	# ワーカー稼働メーター
-	local workers_online=0 workers_total=6 workers_expected=6
+	local workers_online=0 workers_total=7 workers_expected=7
 	# paused workers (tmp/state/<name>.paused) are intentionally idle → drop from expected & online
 	$prediction_worker_paused && workers_expected=$((workers_expected - 1))
+	$poll_worker_paused && workers_expected=$((workers_expected - 1))
 	$chat_worker_paused && workers_expected=$((workers_expected - 1))
 	$audio_worker_paused && workers_expected=$((workers_expected - 1))
 	$radio_worker_paused && workers_expected=$((workers_expected - 1))
 	$youtube_worker_enabled && workers_expected=$((workers_expected + 1))
 	{ $youtube_worker_enabled && $youtube_worker_paused; } && workers_expected=$((workers_expected - 1))
+	$kick_worker_enabled && workers_expected=$((workers_expected + 1))
+	{ $kick_worker_enabled && $kick_worker_paused; } && workers_expected=$((workers_expected - 1))
 	$loop_running && workers_online=$((workers_online + 1))
 	{ $chat_worker_running && ! $chat_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $youtube_worker_running && ! $youtube_worker_paused; } && workers_online=$((workers_online + 1))
+	{ $kick_worker_running && ! $kick_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $audio_worker_running && ! $audio_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $radio_worker_running && ! $radio_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $prediction_worker_running && ! $prediction_worker_paused; } && workers_online=$((workers_online + 1))
+	{ $poll_worker_running && ! $poll_worker_paused; } && workers_online=$((workers_online + 1))
 	$improve_daemon_running && workers_online=$((workers_online + 1))
 	local workers_bar
 	workers_bar=$(_bar_meter "$workers_online" "$workers_expected" 12)
@@ -2667,14 +2733,14 @@ PY
 		if (( acc_count > 0 )); then
 			local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"
-		local count_label="${acc_count}/${min_games} games"
+		local count_label="${acc_count}試合目 (games)"
 		local nation_label="R${acc_russia_count:-0}"
 		$acc_soviet && nation_label="${nation_label} S=1"
 		local max_scores=$(( W - 26 - ${#count_label} - ${#nation_label} ))
 		(( max_scores < 8 )) && max_scores=8
 		local scores_display="${acc_scores}"
 		scores_display=$(_truncate_display_width_keep_tail "$scores_display" "$max_scores")
-		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}%s${C_RESET}  ${C_DIM}%s [%s]${C_RESET}\n" "${count_label}" "$nation_label" "${scores_display}"
+		printf "    ${gate_color}◆${C_RESET} Game        ${gate_color}%s${C_RESET}  ${C_DIM}%s [%s]${C_RESET}\n" "${count_label}" "$nation_label" "${scores_display}"
 	fi
 
 	# キュー負荷メーター（show_status_g にはない運用系指標）
@@ -3094,6 +3160,10 @@ _wait_for_status_update() {
 }
 
 #=== 実行 ===
+if [[ "$SHOW_STATUS_LATEST_DROP_ONLY" == "1" ]]; then
+	_latest_drop_summary
+	exit 0
+fi
 printf '\033[?25l'          # カーソル非表示
 trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア

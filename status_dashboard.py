@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """status_dashboard.py — CUI Graphical Statistics Dashboard for Soren AI
 
-Renders 4 panels: Header, Score Timeline (braille), Score Distribution,
+Renders 4 panels: Header, Score Timeline (compact sparkline), Score Distribution,
 Strategy Comparison.
 Decision Patterns logic remains available but is hidden from the dashboard layout.
 """
@@ -20,6 +20,11 @@ from glob import glob
 from pathlib import Path
 
 from lib.ai_backoff_status import load_status as load_ai_backoff_status
+from lib.country_names import (
+    country_name,
+    country_named_reason,
+    last_drop_turn_country_label,
+)
 
 W = 57
 RANK_LCB_Z = 1.28
@@ -146,54 +151,6 @@ def gradient_color(val, lo, hi):
     ratio = min(max((val - lo) / (hi - lo), 0), 1)
     idx = int(ratio * (len(SCORE_GRADIENT) - 1))
     return fg256(SCORE_GRADIENT[idx])
-
-
-# ── BrailleCanvas ─────────────────────────────────────────────
-# Each braille char = 2 dot-columns × 4 dot-rows
-# Dot encoding: col0 bits=[0,1,2,6], col1 bits=[3,4,5,7]
-
-BRAILLE_BASE = 0x2800
-DOT_MAP = [
-    [0x01, 0x08],  # row 0
-    [0x02, 0x10],  # row 1
-    [0x04, 0x20],  # row 2
-    [0x40, 0x80],  # row 3
-]
-
-
-class BrailleCanvas:
-    def __init__(self, char_w, char_h):
-        self.cw = char_w
-        self.ch = char_h
-        self.dot_w = char_w * 2
-        self.dot_h = char_h * 4
-        self.buf = [[0] * char_w for _ in range(char_h)]
-        self.colors = [[None] * char_w for _ in range(char_h)]
-
-    def set(self, dx, dy, color=None):
-        if dx < 0 or dx >= self.dot_w or dy < 0 or dy >= self.dot_h:
-            return
-        cy = dy // 4
-        cx = dx // 2
-        ry = dy % 4
-        rx = dx % 2
-        self.buf[cy][cx] |= DOT_MAP[ry][rx]
-        if color:
-            self.colors[cy][cx] = color
-
-    def render_lines(self):
-        lines = []
-        for r in range(self.ch):
-            s = ""
-            for c in range(self.cw):
-                ch = chr(BRAILLE_BASE + self.buf[r][c])
-                col = self.colors[r][c]
-                if col:
-                    s += col + ch + RST
-                else:
-                    s += ch
-            lines.append(s)
-        return lines
 
 
 # ── Block bar rendering ───────────────────────────────────────
@@ -1073,13 +1030,24 @@ def load_latest_drop():
     decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
     if not decision:
         decision = matches[0] if matches else (reason or "?")
-    turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
+    decision = country_named_reason(decision)
     parts = [
-        f"T{d.get('turn', '?')}{turn_flag}",
+        last_drop_turn_country_label(d),
         f"x={number(d.get('decision_x'), 2, signed=True)}",
         f"D={decision}",
     ]
-    return " ".join(parts)
+    return " ".join(part for part in parts if part)
+
+
+def render_last_drop_line(latest_drop, inner):
+    """Render a LastDrop row while preserving the right border at CJK width."""
+    label = " LastDrop: "
+    available = max(0, inner - ansi_display_width(label))
+    drop_text = truncate_ansi_display(str(latest_drop), available)
+    drop_raw = f"{label}{drop_text}"
+    drop_display = f"{label}{DIM}{drop_text}{RST}"
+    pad_drop = inner - ansi_display_width(drop_raw)
+    return f"{C_CYAN}│{RST}{drop_display}{' ' * max(pad_drop, 0)} {C_CYAN}│{RST}"
 
 
 def get_strategy_hash():
@@ -1692,7 +1660,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
 
     live_extra = ""
     if accumulated > 0:
-        live_extra = f"  {C_YELLOW}♦ {accumulated} queued{RST}"
+        live_extra = f"  {C_YELLOW}♦ {accumulated}試合目 (games){RST}"
 
     lines = []
     inner = W - 3  # │ + content(inner) + space + │ = W
@@ -1793,7 +1761,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     # Row 4: live game state
     r4_raw = f" Live: {state}  score={gscore}  pieces={gpieces}"
     if accumulated > 0:
-        r4_raw_nocolor = r4_raw + f"  ♦ {accumulated} queued"
+        r4_raw_nocolor = r4_raw + f"  ♦ {accumulated}試合目 (games)"
     else:
         r4_raw_nocolor = r4_raw
     r4_display = f" Live: {state_color}{state}{RST}  score={gscore}  pieces={gpieces}{live_extra}"
@@ -1815,12 +1783,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
             )
 
     if latest_drop:
-        label = " LastDrop: "
-        drop_text = compact_regpreview_text(str(latest_drop), inner - len(label))
-        drop_raw = f"{label}{drop_text}"
-        drop_display = f"{label}{DIM}{drop_text}{RST}"
-        pad_drop = inner - len(drop_raw)
-        lines.append(f"{C_CYAN}│{RST}{drop_display}{' ' * max(pad_drop, 0)} {C_CYAN}│{RST}")
+        lines.append(render_last_drop_line(latest_drop, inner))
 
     anchor = load_best_anchor()
     ranked = []
@@ -1902,44 +1865,148 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     return lines
 
 
+def _bucket_score_window(scores, bucket_count):
+    """Reduce a score window to stable, left-to-right sparkline samples."""
+    if not scores or bucket_count <= 0:
+        return []
+    bucket_count = min(bucket_count, len(scores))
+    values = []
+    for index in range(bucket_count):
+        start = index * len(scores) // bucket_count
+        end = (index + 1) * len(scores) // bucket_count
+        if end <= start:
+            end = start + 1
+        bucket = scores[start:end]
+        values.append(sum(bucket) / len(bucket))
+    return values
+
+
+def _draw_timeline_segment(grid, x0, y0, x1, y1, color=None, color_grid=None):
+    """Draw one plain-text line segment into a small chart grid."""
+    steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+    if y1 == y0:
+        segment_char = "-"
+    elif x1 == x0:
+        segment_char = "|"
+    elif y1 < y0:
+        segment_char = "/"
+    else:
+        segment_char = "\\"
+
+    height = len(grid)
+    width = len(grid[0]) if height else 0
+    for step in range(steps + 1):
+        ratio = step / steps
+        x = round(x0 + (x1 - x0) * ratio)
+        y = round(y0 + (y1 - y0) * ratio)
+        if not (0 <= x < width and 0 <= y < height):
+            continue
+        existing = grid[y][x]
+        if existing != "*":
+            grid[y][x] = segment_char
+            if color_grid is not None:
+                color_grid[y][x] = color
+
+
+def _colorize_plot_row(chars, colors):
+    """Wrap plot cells in per-run ANSI colors; visible text stays identical."""
+    out = []
+    buf = []
+    current = None
+
+    def flush():
+        nonlocal buf
+        if buf:
+            if current:
+                out.append(current + "".join(buf) + RST)
+            else:
+                out.append("".join(buf))
+            buf = []
+
+    for ch, col in zip(chars, colors):
+        if ch == " ":
+            flush()
+            current = None
+            buf.append(" ")
+            continue
+        if col != current:
+            flush()
+            current = col
+        buf.append(ch)
+    flush()
+    return "".join(out)
+
+
+def _render_timeline_grid(samples, width, height, lo, hi):
+    """Render ordered samples as a readable polyline colored by score value."""
+    grid = [[" "] * width for _ in range(height)]
+    color_grid = [[None] * width for _ in range(height)]
+    if not samples or width <= 0 or height <= 0:
+        return (
+            [" " * max(width, 0) for _ in range(max(height, 0))],
+            [[None] * max(width, 0) for _ in range(max(height, 0))],
+        )
+
+    score_range = max(hi - lo, 1)
+    points = []
+    for index, value in enumerate(samples):
+        x = round(index * (width - 1) / max(len(samples) - 1, 1))
+        normalized = min(max((value - lo) / score_range, 0), 1)
+        y = height - 1 - round(normalized * (height - 1))
+        points.append((x, y))
+
+    for index, ((x0, y0), (x1, y1)) in enumerate(zip(points, points[1:])):
+        seg_val = (samples[index] + samples[index + 1]) / 2
+        seg_color = gradient_color(seg_val, lo, hi)
+        _draw_timeline_segment(grid, x0, y0, x1, y1, seg_color, color_grid)
+    marker_step = max(len(points) // 8, 1)
+    for index, (x, y) in enumerate(points):
+        if index % marker_step != 0 and index not in (0, len(points) - 1):
+            continue
+        if 0 <= y < height and 0 <= x < width:
+            grid[y][x] = "*"
+            color_grid[y][x] = gradient_color(samples[index], lo, hi)
+    return ["".join(row) for row in grid], color_grid
+
+
 def render_score_timeline(scores, chart_w=42, chart_h=7):
+    """Render the score history as a browser-safe text timeline.
+
+    The graph keeps a y-scale and an explicit left-to-right ``old -> now``
+    direction while avoiding Braille glyphs, which become dense blocks in the
+    tiny OBS/browser feed.
+    """
     label_w = 5  # "XXXXX"
+    width = max(int(chart_w), 1)
+    height = max(int(chart_h), 3)
     sep = "│"
-    # Braille glyphs render a little wider in OBS/browser than in terminals.
-    # Keep this below the old 50-wide graph so it fills the frame without spilling.
+    heading = f"  {BOLD}Score Timeline{RST}"
 
     if len(scores) < 3:
-        lines = [f"{'':>{label_w}}{sep} {'(not enough data)':^{chart_w}}"]
-        lines += [f"{'':>{label_w}}{sep}{' ' * chart_w}"] * (chart_h - 1)
-        return [f"  {DIM}Score Timeline{RST}"] + lines
+        placeholder = f"{'':>{label_w}}{sep} {'(not enough data)':^{width}}"
+        return [heading, placeholder, f"{'':>{label_w}}{sep}{' ' * width}"]
 
     window = scores[-100:]
     lo = min(window)
     hi = max(window)
-    rng = max(hi - lo, 1)
-
-    canvas = BrailleCanvas(chart_w, chart_h)
-    dot_w = chart_w * 2
-    dot_h = chart_h * 4
-
+    samples = _bucket_score_window(window, width)
+    plot, color_rows = _render_timeline_grid(samples, width, height, lo, hi)
     n = len(window)
-    for i, s in enumerate(window):
-        dx = int(i * (dot_w - 1) / max(n - 1, 1))
-        norm = (s - lo) / rng
-        top_dot = int(norm * (dot_h - 1))
-        for dy in range(0, top_dot + 1):
-            canvas.set(dx, dot_h - 1 - dy, C_CYAN)
-
-    braille_lines = canvas.render_lines()
-    lines = [f"  {BOLD}Score Timeline{RST} {DIM}(last {n} games){RST}"]
-    for i, bl in enumerate(braille_lines):
-        if i == 0:
-            lbl = f"{hi:>5}"
-        elif i == chart_h - 1:
-            lbl = f"{lo:>5}"
+    lines = [f"{heading} {DIM}(last {n} games; old -> now){RST}"]
+    for row, (plot_row, color_row) in enumerate(zip(plot, color_rows)):
+        if row == 0:
+            label = f"{hi:>{label_w}}"
+        elif row == height - 1:
+            label = f"{lo:>{label_w}}"
         else:
-            lbl = ""
-        lines.append(f"{C_GREY}{lbl:>5}{RST}{sep}{bl}")
+            label = " " * label_w
+        lines.append(f"{C_GREY}{label}{RST}{sep}{_colorize_plot_row(plot_row, color_row)}")
+    lines.append(f"{'':>{label_w}}└{C_CYAN}{'-' * max(width - 1, 0)}>{RST}")
+    if width >= 6:
+        timeline_labels = "old" + (" " * (width - 6)) + "now"
+    else:
+        timeline_labels = "old"[:width]
+    lines.append(f"{'':>{label_w}}{sep}{DIM}{timeline_labels}{RST}")
     return lines
 
 
@@ -2043,6 +2110,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             e["display_rank"] = idx
 
     max_comp = max(e["comp"] for e in entries) if entries else 1
+    min_comp = min(e["comp"] for e in entries) if entries else 0
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
@@ -2053,7 +2121,14 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
 
     def render_entry(e, is_current=False, rank_override=None):
         is_rollback = e["hash"] in rollback_candidates
-        color = C_GREEN if is_current else (C_YELLOW if is_rollback else C_BLUE)
+        if is_current:
+            color = C_GREEN
+        elif is_rollback:
+            color = C_YELLOW
+        else:
+            # 中立行は comp 値を赤→緑のグラデーションで塗り、
+            # ランキング内での相対位置を色でも読めるようにする。
+            color = gradient_color(e["comp"], min_comp, max_comp)
         marker = "►" if is_current else " "
         bar = block_bar(e["comp"], max_comp, bar_w, color)
         n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"
@@ -2185,15 +2260,21 @@ def render_archive_restart_candidates():
             f"  {C_GREEN}ArchiveRestart candidates{RST} "
             f"{DIM}top={min(10, total)} total={total}{RST}"
         )
-        lines.append(f"{DIM}    hash       comp     p25   n    ru sv  t origin{RST}")
+        lines.append(
+            f"{DIM}    hash             comp     p25   n ロシア ソ連{RST}"
+        )
         for idx, cand in enumerate(candidates, start=1):
-            origin = "Y" if cand.get("origin_retry") else "-"
+            candidate_hash = str(cand.get("hash", ""))[:12]
+            origin = "あり" if cand.get("origin_retry") else "なし"
             lines.append(
-                f"  {idx:>1}. {C_BLUE}{cand.get('hash', '')}{RST} "
+                f"  {idx:>1}. {C_BLUE}{candidate_hash:<12}{RST} "
                 f"{int(cand.get('comp', 0)):>8} {int(cand.get('p25', 0)):>7} "
                 f"{int(cand.get('n', 0)):>3} "
-                f"{int(cand.get('russia', 0)):>3} {int(cand.get('soviet', 0)):>2} "
-                f"{int(cand.get('best_type', 0)):>2}   {origin}"
+                f"{int(cand.get('russia', 0)):>3} {int(cand.get('soviet', 0)):>2}"
+            )
+            lines.append(
+                f"{DIM}     最高国={country_name(cand.get('best_type', 0), '-')} "
+                f"再試行={origin}{RST}"
             )
     return lines
 

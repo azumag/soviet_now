@@ -1,0 +1,29 @@
+[Unit]
+Description=Soren loopback-only RTMPS egress bridge
+Documentation=file:///etc/soren-rtmp/rtmps-bridge.conf
+After=network-online.target
+Wants=network-online.target
+# The relay's push destination is this tunnel, so it must be listening first.
+Before=soren-rtmp-relay.service
+
+[Service]
+Type=simple
+User=soren-relay
+Group=soren-relay
+ExecStart=/usr/bin/stunnel /etc/soren-rtmp/rtmps-bridge.conf
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

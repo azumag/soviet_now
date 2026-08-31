@@ -152,7 +152,10 @@ _radio_fact_check_body() {
 
 	local web_grounding="" prompt_context_trimmed
 	local factcheck_timeout factcheck_claude_timeout
-	factcheck_timeout="${RADIO_FACT_CHECK_OPENCODE_TIMEOUT_SEC:-45}"
+	# 45s では deepseek/minimax が生成途中で kill され、全候補失敗 ->
+	# 生成済み原稿ごと破棄される実害が出たため、実測応答時間(33-70s)に
+	# 余裕を持たせた上限へ引き上げる。
+	factcheck_timeout="${RADIO_FACT_CHECK_OPENCODE_TIMEOUT_SEC:-120}"
 	factcheck_claude_timeout="${RADIO_FACT_CHECK_CLAUDE_TIMEOUT_SEC:-60}"
 	web_grounding=$(_radio_fetch_web_grounding "$corner_name" "$prompt_context" "$selected_news")
 	prompt_context_trimmed=$(_radio_compact_fact_check_context "$corner_name" "$prompt_context")
@@ -216,8 +219,13 @@ ${talk_body}
 PROMPT
 
 	local model
-	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}"; do
+	local seen_models=" "
+	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}" "${RADIO_FACT_CHECK_QUINARY:-}"; do
 		[ -n "$model" ] || continue
+		case "$seen_models" in
+		*" $model "*) continue ;;
+		esac
+		seen_models="${seen_models}${model} "
 		log "[RADIO:${corner_name}] fact-check中... (${model}, timeout=${factcheck_timeout}s)" >&2
 		raw_output=$(RADIO_OPENCODE_TIMEOUT="$factcheck_timeout" _run_opencode_radio "$model" "$prompt_file")
 		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
@@ -240,6 +248,15 @@ PROMPT
 				log "[RADIO:${corner_name}] fact-check通過 (${model}): ${issue_preview}" >&2
 			else
 				log "[RADIO:${corner_name}] fact-check通過 (${model})" >&2
+			fi
+			if command -v _ai_stats_record >/dev/null 2>&1; then
+				local resolved_model="$model"
+				case "$model" in
+				opencode-go:*) resolved_model="opencode-go/${model#opencode-go:}" ;;
+				opencode:*) resolved_model="opencode/${model#opencode:}" ;;
+				codex:*) resolved_model="${model#codex:}" ;;
+				esac
+				_ai_stats_record "winner" "RADIO" "$model" "0" "$resolved_model"
 			fi
 			rm -rf "$factcheck_dir"
 			printf '%s' "$safe_script"

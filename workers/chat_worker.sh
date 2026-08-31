@@ -311,7 +311,7 @@ while true; do
 		./twitch_chat.sh fetch 2>/dev/null
 	else
 		# idle時は pending から生成
-		generate_comment_response 2>/dev/null || true
+		generate_comment_response 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" || true
 	fi
 	[ -x ./codex_bug_dispatcher.sh ] && ./codex_bug_dispatcher.sh kick >/dev/null 2>&1 || true
 

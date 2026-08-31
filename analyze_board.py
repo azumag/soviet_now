@@ -70,6 +70,28 @@ UNITY_PREFAB_DEADLINE_RADII = {
 # 落下経路のポリゴン間ギャップをより正確に反映する。
 COLLISION_POLY_FACTOR = 0.55
 
+# v728 (2026-08-25): 垂直開放レーンへの自由落下直撃を DIRECT に昇格する際のゲート。
+# 手動チャレンジ (docs/manual_challenge_20260825_insights.md §1) で 3/3 併合した「頭上が完全に
+# 開いた相方への垂直落下」が、has_obstruction (レーン外ピースの ±(drop+p)*1.05 帯) と
+# has_horizontal_obstruction (ターゲット自身の土台) で NO に誤降格されていた。実履歴 8 試合の
+# 実着手 x での再評価では昇格 22/22 が実際に併合 (旧 DIRECT の精度 94.8%)。
+VERTICAL_LANE_MAX_GAP = 0.02          # G1: 接触ギャップ (着地予測がターゲット上と一致していること)
+VERTICAL_LANE_OVERLAP_FRAC = 1.0      # G2: |x - target.x| <= frac * min(drop_horiz, target_horiz)
+VERTICAL_LANE_LANDING_TOL = 0.02      # G3: ly が「ターゲット上端 + 落下駒の下半径」と一致
+VERTICAL_LANE_CLEARANCE_MARGIN = 1.0  # G4: 落下柱と重なる全ピースの上端 <= ターゲット上端
+# v729 (2026-08-25): 併合後ピース上端 (merge_result_top_y) の較正。旧式 max(ly_poly, target.y)+R は
+# 実測 466 併合で平均 +1.05 (中央値 +0.96) 過大 (dy=ly_poly-target.y は併合位置と無相関)。
+# 較正式 est = min(legacy, max(Lw, blend)): Lw=ターゲット列で相方を除いて併合後ピースを落とした着地上端
+# (±X_WINDOW で広げる)、blend=target.y + F*max(0, ly_poly-target.y) + R + MARGIN。legacy を上限に
+# するため値は決して旧式を上回らない (299,798 候補で 0 件) → 締切安全プールは縮まない。
+# 実測: bias +1.05→+0.79、過小 (< -0.2) 0/466、閾値 3.38 での誤警報 49→36 (真の越境 10/10 維持)。
+MERGE_TOP_MODEL_BLEND_F = 0.25
+MERGE_TOP_MODEL_MARGIN = 0.20
+MERGE_TOP_MODEL_X_WINDOW = 0.35
+VERTICAL_LANE_MIN_PROMINENCE = 0.05   # 柱内の他ピース上端はターゲット上端より 0.05 以上低い (パーチ保険。実測 67/1708 除外・真陽性損失 0)
+# 実効条件の注記: hit_id == target が成立している時点で G1/G3/G4(上端条件) は着地モデルから自動的に
+# 満たされる (実 707 局面で棄却 0)。実質の追加条件は G2 (横重なり >= 50%) と MIN_PROMINENCE。
+
 # 物理定数（Unity 2D Physics準拠）
 GRAVITY = 9.81
 EXPLOSION_FORCE = 450.0
@@ -84,7 +106,7 @@ BASE_XS = [round(-3.0 + i * 0.2, 1) for i in range(31)]  # -3.0 to 3.0
 
 
 def estimate_polygon_drift(
-    drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type
+    drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type, eff_radii=None
 ):
     """ポリゴン形状を考慮した着地後のドリフト推定。
     凸ポリゴンは着地後に回転・転がりを起こし、最終位置がdrop_xからずれる。
@@ -123,12 +145,13 @@ def estimate_polygon_drift(
     # ドリフト推定: 斜面方向 × 非円形度 × 半径
     drift_x = slope * eccentricity * next_r * 2.0
 
-    # 壁際での反射
+    # 壁際での反射 (ANALYZE_BOARD_WALL_CLAMP=1: 当たり判定半幅 + WALL_CLAMP_PAD、0: 旧式スプライト半径)
+    wall_half = _wall_half_width(next_r, next_type, eff_radii)
     estimated_x = drop_x + drift_x
-    if estimated_x < WALL_LEFT + next_r:
-        drift_x = (WALL_LEFT + next_r) - drop_x
-    elif estimated_x > WALL_RIGHT - next_r:
-        drift_x = (WALL_RIGHT - next_r) - drop_x
+    if estimated_x < WALL_LEFT + wall_half:
+        drift_x = (WALL_LEFT + wall_half) - drop_x
+    elif estimated_x > WALL_RIGHT - wall_half:
+        drift_x = (WALL_RIGHT - wall_half) - drop_x
 
     # 不確実性: 非円形度と着地高さに比例
     uncertainty = eccentricity * next_r * 1.5
@@ -345,25 +368,25 @@ def calc_reactor_state(pieces, shapes=None):
     for p in pieces:
         type_count[p["type"]] = type_count.get(p["type"], 0) + 1
 
-        # 反応可能ペア数（同typeで接触圏内 ×1.5）
-        reactive_pairs = []
-        near_pairs = []
-        for i, p1 in enumerate(pieces):
-            for p2 in pieces[i + 1 :]:
-                if p1["type"] != p2["type"]:
-                    continue
-                dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
-                contact_r = p1["r"] + p2["r"]
-                if dist < contact_r * 1.1:
-                    reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
-                elif dist < contact_r * 2.0:
-                    # 間に別タイプのピースが挟まっている場合は除外
-                    if not has_horizontal_obstruction(
-                        p1["x"], p1["y"], p1["r"], p2, pieces
-                    ):
-                        near_pairs.append(
-                            (p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2))
-                        )
+    # 反応可能ペア数（同typeで接触圏内 ×1.5）
+    reactive_pairs = []
+    near_pairs = []
+    for i, p1 in enumerate(pieces):
+        for p2 in pieces[i + 1 :]:
+            if p1["type"] != p2["type"]:
+                continue
+            dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
+            contact_r = p1["r"] + p2["r"]
+            if dist < contact_r * 1.1:
+                reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
+            elif dist < contact_r * 2.0:
+                # 間に別タイプのピースが挟まっている場合は除外
+                if not has_horizontal_obstruction(
+                    p1["x"], p1["y"], p1["r"], p2, pieces
+                ):
+                    near_pairs.append(
+                        (p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2))
+                    )
 
     # パイプライン健全性: 連続するtype間の距離
     types_present = sorted(type_count.keys())
@@ -662,6 +685,138 @@ def get_deadline_landing_y(drop_x, drop_r, pieces, deadline_radii, drop_type=0):
     return landing_y
 
 
+WALL_CLAMP_PAD = 0.30
+
+
+def _wall_clamp_mode():
+    """ANALYZE_BOARD_WALL_CLAMP: 1=壁反射に当たり判定半幅+0.30 を使う, 0=旧式 (スプライト半径, 既定)。毎回 env を
+    読む (runner はゲーム毎プロセス → .env 変更は次ゲームから)。実測 (2026-08-26, 直近 77 試合の壁際 798 手):
+    旧式は壁側へ +0.27/-0.25 の系統誤差 (T11 は壁からの実着地 1.89 vs 予測 0.98)。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_WALL_CLAMP", "0") or "").strip().lower()
+    if raw == "1":
+        return 1
+    return 0
+
+
+def _wall_half_width(next_r, next_type, eff_radii):
+    """壁反射に使う半幅。mode 1 は `_type_deadline_extents(...)["horiz"] + WALL_CLAMP_PAD`、判定不能は旧式へ倒す。"""
+    if _wall_clamp_mode() != 1:
+        return next_r
+    try:
+        half = float(_type_deadline_extents(next_type, next_r, eff_radii)["horiz"]) + WALL_CLAMP_PAD
+    except Exception:
+        return next_r
+    if not math.isfinite(half) or half <= 0:
+        return next_r
+    return half
+
+
+def _vertical_lane_mode():
+    """ANALYZE_BOARD_VERTICAL_LANE_DIRECT: 1=DIRECT 昇格 (既定), 2=NEAR 昇格, 0=旧挙動。毎回 env を読む
+    (strategy_runner はゲーム毎の新プロセスなので .env 変更は次ゲームから効く)。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1") or "").strip().lower()
+    if raw in ("0", "false", "off", "no"):
+        return 0
+    if raw == "2":
+        return 2
+    return 1
+
+
+def _merge_top_model_mode():
+    """ANALYZE_BOARD_MERGE_TOP_MODEL: 2=併合拒否判定のみ較正 (既定), 1=risk_top_after_drop にも適用,
+    0=旧式。毎回 env を読む (runner はゲーム毎プロセス → .env 変更は次ゲームから)。"""
+    raw = str(os.environ.get("ANALYZE_BOARD_MERGE_TOP_MODEL", "2") or "").strip().lower()
+    if raw in ("0", "false", "off", "no"):
+        return 0
+    if raw == "1":
+        return 1
+    return 2
+
+
+def _merged_piece_landing_top(target, pieces, eff_radii, merged_type, merged_top_r):
+    """Lw: ターゲット列 (±X_WINDOW) に、ターゲットを除いた盤面へ併合後ピースを落とした着地上端の最大値。
+    merged_type が eff_radii に無い (例: T16 ソ連) / 非有限 / 例外 → None (呼び出し側で旧式に倒す)。"""
+    try:
+        if not eff_radii or merged_type not in eff_radii:
+            return None
+        tx = float(target["x"])
+        if not math.isfinite(tx):
+            return None
+        others = [p for p in pieces if p.get("id") != target.get("id")]
+        # merged_type は eff_radii に必ずある (上で確認済み) ので drop_r は形式上のフォールバックのみ
+        drop_r = float(TYPE_RADII.get(merged_type, 0.5))
+        tops = []
+        for d in (-MERGE_TOP_MODEL_X_WINDOW, 0.0, MERGE_TOP_MODEL_X_WINDOW):
+            ly = get_deadline_landing_y(tx + d, drop_r, others, eff_radii, merged_type)
+            tops.append(float(ly) + float(merged_top_r))
+        top = max(tops)
+        return top if math.isfinite(top) else None
+    except Exception:
+        return None
+
+
+def _calibrated_merge_top(legacy_top, target, ly_poly, merged_top_r, lw_top):
+    """est = min(legacy, max(Lw, blend))。判定不能時は legacy をそのまま返す (fail-closed)。"""
+    try:
+        if lw_top is None:
+            return legacy_top
+        ty = float(target["y"])
+        lyp = float(ly_poly)
+        r = float(merged_top_r)
+        if not all(math.isfinite(v) for v in (ty, lyp, r, float(lw_top), float(legacy_top))):
+            return legacy_top
+        blend = ty + MERGE_TOP_MODEL_BLEND_F * max(0.0, lyp - ty) + r + MERGE_TOP_MODEL_MARGIN
+        est = min(float(legacy_top), max(float(lw_top), blend))
+        return est if math.isfinite(est) else legacy_top
+    except Exception:
+        return legacy_top
+
+
+def _vertical_lane_direct(x, ly, drop_ext, target, pieces, eff_radii=None, contact_gap=None):
+    """v728: 落下駒が開放された垂直レーンをターゲット上端まで自由落下して直撃する形かを判定する。
+    呼び出し側で hit_id == target (get_landing_info の最初の衝突相手がターゲット) が成立している
+    前提で、has_obstruction / has_horizontal_obstruction による降格を無効化するためだけに使う。
+    get_landing_info と同じ eff_radii で判定し、欠損・非有限・例外・各ゲート不成立は False
+    (= 旧挙動) に倒す。"""
+    try:
+        if _vertical_lane_mode() == 0:
+            return False
+        if contact_gap is None:
+            return False
+        tx = float(target["x"])
+        ty = float(target["y"])
+        xf = float(x)
+        lyf = float(ly)
+        gap = float(contact_gap)
+        if not all(math.isfinite(v) for v in (tx, ty, xf, lyf, gap)):
+            return False
+        drop_horiz = float(drop_ext.get("horiz", 0.0) or 0.0)
+        drop_bottom = float(drop_ext.get("bottom", 0.0) or 0.0)
+        target_horiz = float(piece_deadline_horiz_radius(target, eff_radii) or 0.0)
+        if drop_horiz <= 0.0 or target_horiz <= 0.0:
+            return False
+        if gap > VERTICAL_LANE_MAX_GAP:  # G1
+            return False
+        if abs(xf - tx) > VERTICAL_LANE_OVERLAP_FRAC * min(drop_horiz, target_horiz):  # G2
+            return False
+        target_top_y = ty + float(piece_deadline_top_radius(target, eff_radii) or 0.0)
+        if abs(lyf - (target_top_y + drop_bottom)) > VERTICAL_LANE_LANDING_TOL:  # G3
+            return False
+        for p in pieces:  # G4: 落下柱に重なるピースはターゲット上端より MIN_PROMINENCE 以上低い
+            if p.get("id") == target.get("id"):
+                continue
+            px = float(p["x"])
+            p_horiz = float(piece_deadline_horiz_radius(p, eff_radii) or 0.0)
+            if abs(xf - px) >= (drop_horiz + p_horiz) * VERTICAL_LANE_CLEARANCE_MARGIN:
+                continue
+            p_top_y = float(piece_deadline_top_y(p, eff_radii))
+            if target_top_y - p_top_y < VERTICAL_LANE_MIN_PROMINENCE:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def has_obstruction(drop_x, drop_r, target, pieces, deadline_radii=None, drop_type=0):
     """DIRECT判定時に、ターゲットの上方にドロップ経路を妨害するピースがないか確認。
     ポリゴン形状を考慮した実効半径で判定し、5%の安全マージンを加算。
@@ -748,6 +903,9 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         next_top_r = next_r
         next_wall_top_r = next_r
     results = []
+    # v729: 併合後ピースの列内着地上端 (Lw) は x に依らないのでターゲット id ごとに遅延計算して使い回す
+    _merge_top_mode = _merge_top_model_mode()
+    _merged_lw_cache = {}
 
     for x in sample_xs:
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
@@ -760,7 +918,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
         # ポリゴン形状によるドリフト推定
         drift_x, drift_unc = estimate_polygon_drift(
-            x, ly, hit_id, next_r, pieces, shapes, next_type
+            x, ly, hit_id, next_r, pieces, shapes, next_type, eff_radii
         )
         # ドリフト後の推定最終X
         settled_x = x + drift_x
@@ -787,9 +945,19 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
             if hit_id == t["id"]:
                 # 最初の衝突相手がターゲット → 妨害チェック
-                if has_obstruction(x, next_r, t, pieces, deadline_eff_radii, next_type):
+                # v728: 垂直開放レーンの自由落下直撃は has_obstruction/has_horizontal_obstruction の
+                # 誤降格 (レーン外ピース / ターゲット自身の土台) を受けない。
+                # ANALYZE_BOARD_VERTICAL_LANE_DIRECT=0 で完全に旧挙動。
+                # mode 2 (NEAR 昇格) は旧 DIRECT を降格させない: has_obstruction が False なら従来どおり DIRECT。
+                _vl_mode = _vertical_lane_mode()
+                _vl_ok = bool(_vl_mode) and _vertical_lane_direct(x, ly, drop_ext, t, pieces, eff_radii, contact_gap)
+                if _vl_ok and _vl_mode == 1:
+                    grade = "DIRECT"
+                elif has_obstruction(x, next_r, t, pieces, deadline_eff_radii, next_type):
                     # 経路上に妨害ピースあり → 降格、さらに水平障害があればNO
-                    if contact_gap <= 0.20:
+                    if _vl_ok:
+                        grade = "NEAR"
+                    elif contact_gap <= 0.20:
                         grade = (
                             "NO"
                             if has_horizontal_obstruction(x, ly, next_r, t, pieces, deadline_eff_radii, next_type)
@@ -863,6 +1031,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             ly_poly + next_wall_top_r if wall_rotation_risk else None
         )
         merge_top_candidates = []
+        legacy_merge_top_candidates = []
         merge_result_top_r = get_type_top_radius(next_type + 1, shapes, eff_radii)
         for m in merges:
             if m["grade"] not in ("DIRECT", "NEAR"):
@@ -871,13 +1040,33 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             # T87のtype10->type11のように、落下上端は許容に見えても
             # 生成ピースの上端がデッドラインを超えることがある。
             merge_center_y = max(ly_poly, float(m.get("y", ly_poly) or ly_poly))
-            merge_top_candidates.append(merge_center_y + merge_result_top_r)
+            legacy_top = merge_center_y + merge_result_top_r
+            legacy_merge_top_candidates.append(legacy_top)
+            if _merge_top_mode == 0:
+                merge_top_candidates.append(legacy_top)
+                continue
+            # v729: 較正値 (旧式を上限とするので旧式より高くはならない)
+            if m["id"] not in _merged_lw_cache:
+                _merged_lw_cache[m["id"]] = _merged_piece_landing_top(
+                    m, pieces, eff_radii, next_type + 1, merge_result_top_r
+                )
+            merge_top_candidates.append(
+                _calibrated_merge_top(legacy_top, m, ly_poly, merge_result_top_r, _merged_lw_cache[m["id"]])
+            )
         merge_result_top_y = min(merge_top_candidates) if merge_top_candidates else None
+        # mode 2 では候補自身の crosses_deadline/deadline_margin は旧式の併合上端で計算する (併合拒否判定のみ較正)
+        _risk_merge_top = (
+            merge_result_top_y
+            if _merge_top_mode == 1
+            else (min(legacy_merge_top_candidates) if legacy_merge_top_candidates else None)
+        )
         risk_top_after_drop = max(
             top_after_drop,
             edge_vertical_top_y if edge_vertical_top_y is not None else top_after_drop,
-            merge_result_top_y if merge_result_top_y is not None else top_after_drop,
+            _risk_merge_top if _risk_merge_top is not None else top_after_drop,
         )
+        # v729 NOTE: 較正値は min(legacy, ·) で旧式を上限とするため、旧式より高い値は決して出ない
+        # (299,798 候補で 0 件)。下の「過剰フラグ化 → DEADLINE_FALLBACK 嵐」は構造的に再発しない。
         # NOTE: 以前ここで max(ly, ly_poly)+next_top_r による「保守化」を試したが、
         # 実盤面でほぼ全候補を crosses_deadline=True に過剰フラグ化し、
         # decide() のガードが全候補を skip → L2189 フォールバックが約25%の
@@ -947,6 +1136,10 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             {
                 "x": round(x, 2),
                 "landing_y": round(ly, 3),
+                    # The first shape-aware collision target is also useful to
+                    # post-Russia impact planning.  Keeping it in the analyzer
+                    # result avoids re-deriving polygon contact from sprite r.
+                    "landing_hit_id": hit_id,
                     "top_y_after_drop": round(top_after_drop, 3),
                     "edge_vertical_top_y": round(edge_vertical_top_y, 3)
                     if edge_vertical_top_y is not None

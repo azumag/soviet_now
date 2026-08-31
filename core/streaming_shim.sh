@@ -95,6 +95,12 @@ if [ "${EXPLORE_MODE:-0}" = "1" ]; then
 		return 0
 	}
 	scheduled_meriken_time_end_label() { return 1; }
+	soren91_daily_should_start() { return 1; }
+	soren91_daily_active_end_epoch() { return 1; }
+	soren91_daily_begin() { return 1; }
+	soren91_daily_mark_completed() { return 0; }
+	soren91_daily_mark_failed() { return 0; }
+	soren91_wait_ready() { return 1; }
 
 	# --- オーバーレイ orchestration (obs/overlay スクリプト guard と二重防御) ---
 	# PID を返す関数は空文字を返し、caller の PID 生存チェックを false にする。

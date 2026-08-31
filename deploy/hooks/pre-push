@@ -1,0 +1,37 @@
+#!/bin/bash
+# deploy/hooks/pre-push - 誤って public リポジトリの main へ backups/ を push しないガード
+# 設置: cp deploy/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# 対象: azumag/soviet_now main / azumag/docich main への backups/radio_scripts push を拒否
+
+set -euo pipefail
+
+remote="$1"
+url="$2"
+
+# 送信 ref を読む (pre-push は stdin に <local ref> <local sha> <remote ref> <remote sha> が来る)
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # main への push のみガード
+  case "$remote_ref" in
+    refs/heads/main) ;;
+    *) continue ;;
+  esac
+  # origin が public リポジトリか
+  case "$url" in
+    *soviet_now*|*docich*) ;;
+    *) continue ;;
+  esac
+  # 今回 push する commit 範囲を取得
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  # backups/ が含まれていれば拒否
+  if git diff --name-only "$range" 2>/dev/null | grep -q "^backups/radio_scripts/"; then
+    echo "pre-push hook: refusing to push backups/radio_scripts/ to public $remote $remote_ref" >&2
+    echo "hint: use RADIO_ARCHIVE_GIT_REPO=git@github.com:azumag/soren-radio-archive.git and branch radio-archive" >&2
+    exit 1
+  fi
+done
+
+exit 0

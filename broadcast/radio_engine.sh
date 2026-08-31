@@ -5,9 +5,11 @@
 _radio_opencode_should_defer_for_improve() {
 	[ "${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}" = "1" ] || return 1
 	local _state_dir="${TMP_STATE_DIR:-tmp/state}"
-	if [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] ||
-		[ -f "$_state_dir/rate_limit_backoff" ] ||
-		grep -q '"status"[[:space:]]*:[[:space:]]*"running"' "$_state_dir/improve_state.json" 2>/dev/null; then
+	# 改善ジョブとの同時実行制御は _ai_generation_queue_run 側のレーンゲート
+	# (_ai_radio_improve_gate) へ移行済み。improve.lock はゲーム履歴のデータ
+	# ファイルで常時存在するためここでは見ない。rate_limit_backoff 中の
+	# 即時失敗だけ残す。
+	if [ -f "$_state_dir/rate_limit_backoff" ]; then
 		return 0
 	fi
 	return 1
@@ -23,9 +25,26 @@ _radio_peak_hour_should_defer() {
 
 _run_opencode_radio_unqueued() {
 	local agent="$1" prompt_file="$2"
-	local raw_file raw_text cleaned
+	local raw_file raw_text cleaned model="$agent"
+	local -a model_args=()
+	case "$agent" in
+	opencode-go:*)
+		model="opencode-go/${agent#opencode-go:}"
+		model_args=(--model "$model")
+		;;
+	opencode-go/* | opencode/* | */*)
+		model_args=(--model "$model")
+		;;
+	opencode:*)
+		model="opencode/${agent#opencode:}"
+		model_args=(--model "$model")
+		;;
+	*)
+		model_args=(--agent "$agent")
+		;;
+	esac
 	if _radio_opencode_should_defer_for_improve; then
-		log "[RADIO] opencode deferred after slot acquire during improve/backoff (agent=$agent)" >&2
+		log "[RADIO] opencode deferred during rate_limit_backoff (agent=$agent)" >&2
 		return 1
 	fi
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
@@ -35,7 +54,7 @@ _run_opencode_radio_unqueued() {
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		opencode run "${model_args[@]}" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
@@ -68,10 +87,31 @@ _run_opencode_radio() {
 		;;
 	esac
 	if _radio_opencode_should_defer_for_improve; then
-		log "[RADIO] opencode deferred during improve/backoff (agent=$agent)" >&2
+		log "[RADIO] opencode deferred during rate_limit_backoff (agent=$agent)" >&2
 		return 1
 	fi
+	local resolved_model="$agent"
+	case "$agent" in
+	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
+	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
+	esac
+	if command -v _ai_stats_record >/dev/null 2>&1; then
+		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
+		AI_DISPATCH_RECORD_WINNER=1
+		_ai_stats_record "attempt" "RADIO" "$agent" "" "$resolved_model"
+	fi
+	local rc
 	_ai_generation_queue_run "RADIO:opencode:${agent}" _run_opencode_radio_unqueued "$@"
+	rc=$?
+	if command -v _ai_stats_record >/dev/null 2>&1; then
+		AI_DISPATCH_RECORD_WINNER="$_saved_record_winner"
+		if [ "$rc" -eq 0 ]; then
+			_ai_stats_record "ok" "RADIO" "$agent" "$rc" "$resolved_model"
+		else
+			_ai_stats_record "fail" "RADIO" "$agent" "$rc" "$resolved_model"
+		fi
+	fi
+	return "$rc"
 }
 
 _run_opencode_comment_unqueued() {
@@ -1130,7 +1170,11 @@ text = sys.stdin.read()
 out = text
 
 rules = [
-    (r'なんですよね(?=\\s|$|[。！？、])', 'なんです'),
+    (r'でございまして', 'です'),
+    (r'でございました', 'でした'),
+    (r'でございます', 'です'),
+    (r'ております', 'ています'),
+    (r'なんですよね(?=\s|$|[。！？、])', 'なんです'),
     (r'なんですよ(?=\\s|$|[。！？、])', 'なんです'),
     (r'ですよね(?=\\s|$|[。！？、])', 'です'),
     (r'ですよ(?=\\s|$|[。！？、])', 'です'),
@@ -1162,7 +1206,7 @@ _ensure_corner_announce() {
 	survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
 	jiji) announce="時事ニュースコーナーです。" ;;
 	rollback) announce="粛清ラジオです。" ;;
-	rakugo) announce="深夜の落語創作コーナーです。" ;;
+	rakugo) announce="創作落語コーナーです。" ;;
 	finance) announce="金融の仕組みコーナーです。" ;;
 	music_knowledge) announce="音楽知識コーナーです。" ;;
 	ai_knowledge) announce="AI知識・最新AIツール紹介コーナーです。" ;;
@@ -1248,6 +1292,11 @@ _radio_generate_and_play() {
 	done
 
 	# 同一 game_num + corner の二重生成/二重再生を防止
+	# 改善ジョブとの同時実行制御用に、このコーナーの生成開始時刻を記録する。
+	# 改善開始より前に生成を始めたコーナーはキャンセルせず完走させる
+	# (_ai_radio_improve_gate が RADIO_GEN_STARTED_AT を参照)。
+	export RADIO_GEN_STARTED_AT
+	RADIO_GEN_STARTED_AT="$(date +%s)"
 	local marker_game_num=""
 	case "$game_num" in
 	'' | *[!0-9]* | 0) marker_game_num="" ;;
@@ -1348,7 +1397,7 @@ ${prompt_snapshot}
 PREPASS
 		log "[RADIO:${corner_name}] prepass agents=${radio_prepass_agents}"
 		_prepass_last_file=$(mktemp /tmp/eloop_radio_prepass_last_XXXXXXXX)
-		_prepass_output=$(ai_generate_list "RADIO:${corner_name}:prepass" "$_prepass_prompt_file" "$radio_prepass_agents" "" "" "$_prepass_last_file" 2>/dev/null | _sanitize_radio_research_memo || true)
+		_prepass_output=$(ai_generate_list "RADIO:${corner_name}:prepass" "$_prepass_prompt_file" "$radio_prepass_agents" "" "" "$_prepass_last_file" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" | _sanitize_radio_research_memo || true)
 		_prepass_provider=$(cat "$_prepass_last_file" 2>/dev/null)
 		rm -f "$_prepass_last_file" 2>/dev/null || true
 		if [ -n "$_prepass_provider" ]; then
@@ -1384,7 +1433,8 @@ PREPASS_APPEND
 		else
 			_radio_gen_list="${radio_agents_list}"
 		fi
-		# ピーク時間帯は候補順序のみ入替え（MiniMax優先 / DeepSeekはフォールバックに温存）。
+		# ピーク時間帯も候補順序のみ入替え。既定は無料/local/muse優先のため、
+		# 有償枠は元リストの後半へ温存される。
 		# 実際に並びが変わった時だけログする（swap無効時・優先エージェント不在時は無音）。
 		local _radio_gen_list_before="$_radio_gen_list"
 		_radio_gen_list=$(_peak_priority_agent_list "$_radio_gen_list")
@@ -1439,6 +1489,12 @@ PREPASS_APPEND
 		printf '%s' "$talk" | _radio_parse_output_to_files "$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"
 		talk_body=$(cat "$parse_dir/body.txt" 2>/dev/null)
 		talk_summary=$(cat "$parse_dir/summary.txt" 2>/dev/null)
+		# 呼び出し側が RADIO_GEN_RESULT_DIR を指定していれば、解析結果を渡す。
+		# ニュース自主探索コーナーが「何を読んだか」を既読台帳へ記録するために使う。
+		if [ -n "${RADIO_GEN_RESULT_DIR:-}" ] && [ -d "${RADIO_GEN_RESULT_DIR}" ]; then
+			cp "$parse_dir/selected_news.txt" "${RADIO_GEN_RESULT_DIR}/selected_news.txt" 2>/dev/null || true
+			cp "$parse_dir/summary.txt" "${RADIO_GEN_RESULT_DIR}/summary.txt" 2>/dev/null || true
+		fi
 		rm -rf "$parse_dir"
 		[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 

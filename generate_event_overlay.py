@@ -140,6 +140,140 @@ def read_gen_indicators(now: int) -> list[dict[str, Any]]:
                         "ts": ts,
                     })
 
+    # --- Say生成中: tmp/.say_queue/current_source または .voicevox_synth_lock ---
+    # VOICEVOX 合成・再生は say_enqueue.sh が tmp/.say_queue 以下で管理する。
+    # 合成は数秒〜十数秒、チャンク分割時は最大数十秒かかる。AI生成と同様に
+    # LIVE STATUS 枠で AI思考中と同じ扱いで表示する。
+    say_queue_raw = os.environ.get("EVENT_OVERLAY_SAY_QUEUE_DIR", "tmp/.say_queue")
+    say_alive_stale = int(os.environ.get("EVENT_OVERLAY_SAY_STALE_SEC", "40") or "40")
+    say_dead_stale = int(os.environ.get("EVENT_OVERLAY_SAY_DEAD_STALE_SEC", "10") or "10")
+    if say_queue_raw:
+        qdir = resolve(say_queue_raw)
+        say_ts = 0
+        say_owner_pid = 0
+        say_label_extra = ""
+        say_found = False
+        say_phase = ""
+        # 1) current_source – 再生ロック取得後の再生待ち/再生中/リトライ待ち
+        cs_path = qdir / "current_source"
+        try:
+            line = cs_path.read_text(encoding="utf-8", errors="replace").strip()
+            if line:
+                parts = line.split("|")
+                owner_raw = parts[0] if len(parts) > 0 else ""
+                say_phase = parts[1] if len(parts) > 1 else ""
+                ts_raw = parts[3] if len(parts) > 3 else ""
+                say_label_extra = parts[4] if len(parts) > 4 else ""
+                if ts_raw.isdigit():
+                    say_ts = int(ts_raw)
+                else:
+                    try:
+                        say_ts = int(cs_path.stat().st_mtime)
+                    except OSError:
+                        say_ts = now
+                owner_str = owner_raw.split(":")[0] if ":" in owner_raw else owner_raw
+                if owner_str.isdigit():
+                    say_owner_pid = int(owner_str)
+                age = now - say_ts
+                if say_phase in ("waiting", "playing", "retry_wait"):
+                    alive = bool(say_owner_pid) and _pid_alive(say_owner_pid)
+                    window = say_alive_stale if alive else say_dead_stale
+                    if 0 <= age <= window:
+                        say_found = True
+        except OSError:
+            pass
+        except Exception:
+            pass
+        # 2) voicevox 合成ロック – ロック取得前の事前合成（current_source 未作成）を拾う
+        if not say_found:
+            lock_dir = qdir / ".voicevox_synth_lock"
+            try:
+                if lock_dir.is_dir():
+                    heartbeat_file = lock_dir / "heartbeat"
+                    owner_file = lock_dir / "owner_pid"
+                    hb = 0
+                    owner_pid2 = 0
+                    try:
+                        hb_text = heartbeat_file.read_text(encoding="utf-8", errors="replace").strip()
+                        if hb_text.isdigit():
+                            hb = int(hb_text)
+                    except OSError:
+                        hb = 0
+                    if hb == 0:
+                        try:
+                            hb = int(lock_dir.stat().st_mtime)
+                        except OSError:
+                            hb = now
+                    try:
+                        owner_text = owner_file.read_text(encoding="utf-8", errors="replace").strip()
+                        owner_str2 = owner_text.split(":")[0] if ":" in owner_text else owner_text
+                        if owner_str2.isdigit():
+                            owner_pid2 = int(owner_str2)
+                    except OSError:
+                        owner_pid2 = 0
+                    say_ts = hb
+                    say_owner_pid = owner_pid2
+                    say_phase = "synthesis"
+                    age = now - hb
+                    alive = bool(owner_pid2) and _pid_alive(owner_pid2)
+                    window = say_alive_stale if alive else say_dead_stale
+                    if 0 <= age <= window and (alive or hb != 0):
+                        say_found = True
+                        say_label_extra = ""
+            except OSError:
+                pass
+            except Exception:
+                pass
+        # 3) pid ファイル – 直接再生フォールバック
+        if not say_found:
+            pid_path = qdir / "pid"
+            try:
+                if pid_path.is_file():
+                    pid_text = pid_path.read_text(encoding="utf-8", errors="replace").strip()
+                    if pid_text.isdigit():
+                        pid = int(pid_text)
+                        try:
+                            mtime = int(pid_path.stat().st_mtime)
+                        except OSError:
+                            mtime = now
+                        age = now - mtime
+                        alive = _pid_alive(pid)
+                        window = say_alive_stale if alive else say_dead_stale
+                        if 0 <= age <= window and alive:
+                            say_ts = mtime
+                            say_owner_pid = pid
+                            say_found = True
+            except OSError:
+                pass
+            except Exception:
+                pass
+        if say_found:
+            label = "Say生成中"
+            hint = say_label_extra.strip() if say_label_extra else ""
+            if hint:
+                hl = hint.lower()
+                if "comment" in hl:
+                    hint = "コメント"
+                elif "radio" in hl:
+                    if ":" in hint:
+                        corner = hint.split(":", 1)[1].strip()
+                        hint = f"ラジオ {corner}" if corner else "ラジオ"
+                    else:
+                        hint = "ラジオ"
+                elif "soren91" in hl:
+                    hint = "soren91"
+                else:
+                    hint = hint[:20]
+                if hint:
+                    label = f"Say生成中 ({hint})"
+            # owner が死んでいる古い ghost は弾く（上ですでに window で弾いている）
+            indicators.append({
+                "key": "say",
+                "icon": "🔊",
+                "label": label,
+                "ts": say_ts,
+            })
+
     return indicators
 
 
@@ -199,6 +333,19 @@ html, body {{
   overflow: hidden;
 }}
 #work-indicator.active {{ display: grid; }}
+#work-indicator.comment {{
+  background: rgba(32, 18, 78, 0.96);
+  border-color: rgba(167, 139, 250, 0.82);
+}}
+#work-indicator.comment .work-bar {{
+  background: linear-gradient(180deg, #7c3aed, #a78bfa);
+}}
+#work-indicator.comment .work-elapsed {{
+  color: #ddd6fe;
+}}
+#work-indicator.comment .work-body {{
+  color: #ede9fe;
+}}
 .work-bar {{
   background: linear-gradient(180deg, #f97316, #facc15);
 }}
@@ -331,6 +478,7 @@ html, body {{
 }}
 .gen-loader.comment {{ border-left-color: #a78bfa; border-color: rgba(167, 139, 250, 0.55); }}
 .gen-loader.radio {{ border-left-color: #22c55e; border-color: rgba(34, 197, 94, 0.55); }}
+.gen-loader.say {{ border-left-color: #f97316; border-color: rgba(249, 115, 22, 0.55); }}
 .gen-loader .gen-icon {{ font-size: 18px; line-height: 1; }}
 .gen-loader .gen-label {{
   flex: 1;
@@ -361,6 +509,7 @@ html, body {{
 }}
 .gen-loader.comment .gen-spinner {{ border-top-color: #a78bfa; }}
 .gen-loader.radio .gen-spinner {{ border-top-color: #22c55e; }}
+.gen-loader.say .gen-spinner {{ border-top-color: #f97316; }}
 @keyframes genSpin {{ to {{ transform: rotate(360deg); }} }}
 @keyframes genDots {{
   0% {{ content: ""; }}
@@ -409,13 +558,25 @@ function elapsedLabel(startedAt) {{
   const secs = elapsed % 60;
   return `${{mins}}:${{pad(secs)}}`;
 }}
+const commentGen = (GEN || []).find(g => String(g.key||'') === 'comment');
 if (WORK && WORK.active) {{
   workIndicator.classList.add('active');
   workIndicator.querySelector('.work-title').textContent = WORK.title || 'システム自動分析・修正作業中';
   workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(WORK.ts);
-  workIndicator.querySelector('.work-body').textContent = WORK.body || '';
+  let body = WORK.body || '';
+  if (commentGen) {{
+    body = body ? `${{body}}  |  ${{commentGen.icon||'💬'}} ${{commentGen.label||'コメント生成中'}} ${{elapsedLabel(commentGen.ts)}}` : `${{commentGen.icon||'💬'}} ${{commentGen.label||'コメント生成中'}} ${{elapsedLabel(commentGen.ts)}}`;
+  }}
+  workIndicator.querySelector('.work-body').textContent = body;
+}} else if (commentGen) {{
+  workIndicator.classList.add('active');
+  workIndicator.classList.add('comment');
+  workIndicator.querySelector('.work-title').textContent = `${{commentGen.icon||'💬'}} ${{commentGen.label||'コメント生成中'}}`;
+  workIndicator.querySelector('.work-elapsed').textContent = elapsedLabel(commentGen.ts);
+  workIndicator.querySelector('.work-body').textContent = 'AIがコメントを生成しています…';
 }}
 for (const g of (GEN || [])) {{
+  if (String(g.key||'') === 'comment') continue;
   const row = document.createElement('div');
   row.className = `gen-loader ${{g.key || ''}}`;
   row.innerHTML = `<span class="gen-spinner"></span><span class="gen-icon"></span><span class="gen-label"></span><span class="gen-elapsed"></span>`;

@@ -28,6 +28,11 @@ _ai_guard_model_output() {
 # 次の候補へフォールバックするが、モデル自体は止めない。
 AI_RATE_LIMIT_RC=79
 
+# 改善ゲート打ち切りを通常のモデル失敗(rc=1)と区別する専用リターンコード。
+# ゲート放棄はモデル呼び出し自体が発生しないため、attempt/fail 統計に
+# 計上せず gate_giveup イベントとして分離する (2026-08-22 ユーザー指摘)。
+AI_GATE_GIVEUP_RC=91
+
 _ai_rate_limit_text_detected() {
 	printf '%s' "${1:-}" | grep -Eiq \
 		'(^|[^[:alnum:]])429([^[:alnum:]]|$)|too[[:space:]_-]*many[[:space:]_-]*requests|rate[[:space:]_-]*limit([[:space:]_-]*(ed|exceeded))?|quota[[:space:]_-]*(exceeded|exhausted|limit)|resource[[:space:]_-]*exhausted|usage[[:space:]_-]*limit'
@@ -57,6 +62,26 @@ _ai_model_is_local() {
 
 _ai_queue_lock_scope() {
 	local label="${1:-AI}" rest scope
+	# レーン制御: 放送系 (RADIO/NEWS/JIJI/CELEBRATION) はモデル・provider差に関わらず
+	# 単一の "radio" ロックへ畳んで直列化する。モデル別に並行すると放送系が
+	# 複数同時に走るため (2026-08-21 実測: prepass 2重起動)。AI_RADIO_LANE_LOCK=0
+	# で従来のモデル別スコープへ戻せる。
+	case "$label" in
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		if [ "${AI_RADIO_LANE_LOCK:-1}" = "1" ]; then
+			printf '%s' "radio"
+			return 0
+		fi
+		;;
+	COMMENT*)
+		# コメント返しもレーン化して直列化する (同一モデル内は元々 _opencode_run_lock
+		# 等で直列だが、モデルが違うと並行し得た)。
+		if [ "${AI_COMMENT_LANE_LOCK:-1}" = "1" ]; then
+			printf '%s' "comment"
+			return 0
+		fi
+		;;
+	esac
 	case "$label" in
 	*:local:*) printf '%s' "local"; return 0 ;;
 	*:remote:*)
@@ -67,6 +92,50 @@ _ai_queue_lock_scope() {
 		;;
 	esac
 	printf '%s' "$(_ai_lock_sanitize_key "$label")"
+}
+
+# 改善ジョブ (eloop_improve runtime) が現在稼働中かどうか。
+# improve_state.json の status=="running" と PID 生存を両方見る。
+# improve.lock はデータファイル (ゲーム履歴) で常時存在するため信号に使えない。
+_improve_job_active() {
+	local state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/improve_state.json}"
+	[ -f "$state_file" ] || return 1
+	local probe
+	probe=$(python3 - "$state_file" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+except Exception:
+    print("inactive"); raise SystemExit
+if str(d.get("status", "")) != "running":
+    print("inactive"); raise SystemExit
+try:
+    pid = int(d.get("pid") or 0)
+except Exception:
+    pid = 0
+started = d.get("started_at") or 0
+try:
+    started = int(started)
+except Exception:
+    started = 0
+import os, time
+alive = False
+if pid > 0:
+    try:
+        os.kill(pid, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    except PermissionError:
+        alive = True
+stale = 7200
+if started > 0 and (time.time() - started) > stale:
+    alive = False
+print("active" if alive else "inactive")
+PY
+) 
+	[ "$probe" = "active" ]
 }
 
 _ai_generation_queue_lock_dir() {
@@ -157,6 +226,49 @@ _ai_generation_queue_leave() {
 	fi
 }
 
+# 改善ジョブ稼働中、新規の放送系AI生成を待機させるゲート。
+# - RADIO_GEN_STARTED_AT (コーナー生成開始時刻) が改善ジョブの started_at より前なら
+#   待たせない (= 生成開始済みの放送はキャンセルせず完走させる)。
+# - 待機は AI_RADIO_IMPROVE_WAIT_MAX_SEC で打ち切り、超過時は rc=AI_GATE_GIVEUP_RC (この生成だけ諦める)。
+# - 読み上げ・TTS はここを通らないため影響を受けない。
+_ai_radio_improve_gate() {
+	local label="${1:-RADIO}"
+	[ "${AI_RADIO_IMPROVE_GATE:-1}" = "1" ] || return 0
+	# 同一 dispatch 内の二重待機防止 (_ai_dispatch がゲート通過後に立てる)。
+	[ "${AI_GATE_PASSED_FOR_DISPATCH:-0}" = "1" ] && return 0
+	_improve_job_active || return 0
+	local state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/improve_state.json}"
+	local improve_started gen_started waited=0
+	improve_started=$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1])).get("started_at") or 0))' "$state_file" 2>/dev/null || echo 0)
+	gen_started="${RADIO_GEN_STARTED_AT:-}"
+	case "$gen_started" in '' | *[!0-9]*) gen_started="" ;;
+	esac
+	if [ -n "$gen_started" ] && [ "$improve_started" -gt 0 ] && [ "$gen_started" -lt "$improve_started" ]; then
+		log "[AIQ:${label}] improve active but this generation started earlier -> proceed without cancel" >&2
+		return 0
+	fi
+	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
+	local max_wait="${AI_RADIO_IMPROVE_WAIT_MAX_SEC:-1200}"
+	case "$wait_sec" in '' | *[!0-9]*) wait_sec=2 ;;
+	esac
+	case "$max_wait" in '' | *[!0-9]*) max_wait=1200 ;;
+	esac
+	log "[AIQ:${label}] improve cycle active -> radio generation waits (max=${max_wait}s)" >&2
+	while _improve_job_active; do
+		if [ "$waited" -ge "$max_wait" ]; then
+			log "[AIQ:${label}] improve still active after ${waited}s -> give up this generation" >&2
+			return "$AI_GATE_GIVEUP_RC"
+		fi
+		sleep "$wait_sec"
+		waited=$((waited + wait_sec))
+		if [ $((waited % 30)) -lt "$wait_sec" ]; then
+			log "[AIQ:${label}] improve active -> still waiting (${waited}s/${max_wait}s)" >&2
+		fi
+	done
+	log "[AIQ:${label}] improve finished -> proceed after ${waited}s wait" >&2
+	return 0
+}
+
 _ai_generation_queue_run() {
 	local label="${1:-AI}"
 	shift
@@ -166,7 +278,14 @@ _ai_generation_queue_run() {
 		return $?
 	fi
 	case "$label" in
-	RADIO* | NEWS* | JIJI* | CELEBRATION*) ;;
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		# 改善中は新規放送生成を待機 (開始済み生成はキャンセルしない)。
+		# 打ち切りコード (AI_GATE_GIVEUP_RC) をそのまま伝播させる。
+		_ai_radio_improve_gate "$label"
+		local _qgate_rc=$?
+		[ "$_qgate_rc" -eq 0 ] || return "$_qgate_rc"
+		;;
+	COMMENT*) ;;
 	*)
 		"$@"
 		return $?
@@ -607,9 +726,10 @@ _ai_call_opencode_unqueued() {
 	*/*) model="$agent" ;;
 	esac
 	# opencode binary: prefer /snap/bin/opencode, fallback to opencode
-	local opencode_bin="/snap/bin/opencode"
+	# (OPENCODE_BIN はテスト時のスタブ差し替え用。本番では未設定でよい)
+	local opencode_bin="${OPENCODE_BIN:-/snap/bin/opencode}"
 	[ -x "$opencode_bin" ] || opencode_bin="opencode"
-	[ -s "$prompt_file" ] || return 1
+	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
 	out_file=$(mktemp /tmp/ai_opencode_out_XXXXXXXX)
 	stderr_file=$(mktemp /tmp/ai_opencode_stderr_XXXXXXXX)
@@ -619,8 +739,42 @@ _ai_call_opencode_unqueued() {
 	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
 	log "[${label}] opencode call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
 	# opencode run --model は prompt を引数として渡す。timeout でラップする。
-	timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
-	rc=$?
+	# free枠の上流ではストリームが reasoning 途中で切れて rc!=0・空出力に
+	# なる一過性の障害が多いため、タイムアウトとレート制限以外は1回だけ
+	# 同一モデルで再試行する（OPENCODE_ABORT_RETRY=0 で無効化）。
+	local _oc_attempts=1 _oc_try=1 _oc_start _oc_elapsed
+	if [ "${OPENCODE_ABORT_RETRY:-1}" = "1" ]; then
+		_oc_attempts=2
+	fi
+	while :; do
+		_oc_start=$(date +%s)
+		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		rc=$?
+		_oc_elapsed=$(( $(date +%s) - _oc_start ))
+		cleaned=""
+		if [ "$rc" -eq 124 ]; then
+			break
+		fi
+		if [ "$rc" -eq 0 ] && [ -s "$out_file" ]; then
+			# reasoning-only応答はraw出力としては非空でも本文が空になる。
+			# ここで本文を検査し、空なら一過性失敗と同じ再試行経路へ戻す。
+			cleaned=$(_ai_strip_reasoning_blocks <"$out_file")
+			if [ -n "$cleaned" ] && ! _contains_provider_error_text "$cleaned"; then
+				break
+			fi
+		fi
+		stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
+		if _ai_rate_limit_text_detected "$stderr_preview"; then
+			break
+		fi
+		if [ "$_oc_try" -ge "$_oc_attempts" ]; then
+			break
+		fi
+		_oc_try=$((_oc_try + 1))
+		log "[${label}] opencode transient failure (rc=$rc, elapsed=${_oc_elapsed}s, model=$model) → retry once" >&2
+		sleep "${OPENCODE_ABORT_RETRY_WAIT_SEC:-2}"
+	done
+	_oc_elapsed=$(( $(date +%s) - _oc_start ))
 	stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
 	if [ $rc -ne 0 ] || [ ! -s "$out_file" ]; then
 		_ai_rate_limit_text_detected "$stderr_preview" && rate_limited=true
@@ -631,6 +785,7 @@ _ai_call_opencode_unqueued() {
 	fi
 	if [ $rc -eq 124 ]; then
 		log "[${label}] opencode timeout (${timeout_sec}s, model=$model)" >&2
+		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file" "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
@@ -638,6 +793,7 @@ _ai_call_opencode_unqueued() {
 	if [ $rc -ne 0 ]; then
 		log "[${label}] opencode failed (rc=$rc, model=$model)" >&2
 		[ -n "$stderr_preview" ] && log "[${label}] opencode stderr: $stderr_preview" >&2
+		_ai_error_preview_set "rc=$rc (${_oc_elapsed}s): $(_ai_error_preview_from_text "$stderr_preview")"
 		rm -f "$out_file" "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
@@ -646,11 +802,13 @@ _ai_call_opencode_unqueued() {
 	rm -f "$out_file" "$stderr_file"
 	if [ -z "$cleaned" ]; then
 		log "[${label}] opencode empty after cleanup (model=$model)" >&2
+		_ai_error_preview_set "empty output (${_oc_elapsed}s)"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
 	if _contains_provider_error_text "$cleaned"; then
 		log "[${label}] opencode provider error (model=$model)" >&2
+		_ai_error_preview_set "provider error: $(_ai_error_preview_from_text "$cleaned")"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
@@ -717,7 +875,7 @@ _ai_call_codex_unqueued() {
 	model=$(_ai_codex_model_from_agent "$agent")
 	local codex_bin="${CODEX_BIN:-codex}"
 	local out_file stderr_file stderr_preview raw_failure rc cleaned rate_limited=false
-	[ -s "$prompt_file" ] || return 1
+	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	out_file=$(mktemp /tmp/ai_codex_out_XXXXXXXX)
 	stderr_file=$(mktemp /tmp/ai_codex_stderr_XXXXXXXX)
 	case "$timeout_sec" in
@@ -725,9 +883,12 @@ _ai_call_codex_unqueued() {
 	esac
 	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
 	log "[${label}] codex call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	# stdin を /dev/null へ固定する。codex exec は stdin がパイプだとプロンプト
+	# 引数ありでも `<stdin>` ブロックとして読み込むため、呼び出し元の stdin
+	# 状態に応じて出力が汚れたりブロックしたりするのを防ぐ。
 	timeout --kill-after=10s "$timeout_sec" "$codex_bin" exec \
 		--skip-git-repo-check -m "$model" -o "$out_file" "$(cat "$prompt_file")" \
-		>/dev/null 2>"$stderr_file"
+		</dev/null >/dev/null 2>"$stderr_file"
 	rc=$?
 	stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
 	raw_failure="$stderr_preview"
@@ -739,6 +900,7 @@ _ai_call_codex_unqueued() {
 	fi
 	if [ $rc -eq 124 ]; then
 		log "[${label}] codex timeout (${timeout_sec}s, model=$model)" >&2
+		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file"
 		rm -f "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
@@ -746,6 +908,7 @@ _ai_call_codex_unqueued() {
 	fi
 	if [ $rc -ne 0 ]; then
 		log "[${label}] codex failed (rc=$rc, model=$model)" >&2
+		_ai_error_preview_set "rc=$rc: $(_ai_error_preview_from_text "$stderr_preview")"
 		rm -f "$out_file"
 		rm -f "$stderr_file"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
@@ -756,11 +919,13 @@ _ai_call_codex_unqueued() {
 	rm -f "$stderr_file"
 	if [ -z "$cleaned" ]; then
 		log "[${label}] codex empty after cleanup (model=$model)" >&2
+		_ai_error_preview_set "empty output"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
 	if _contains_provider_error_text "$cleaned"; then
 		log "[${label}] codex provider error (model=$model)" >&2
+		_ai_error_preview_set "provider error: $(_ai_error_preview_from_text "$cleaned")"
 		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
 		return 1
 	fi
@@ -774,13 +939,86 @@ _ai_call_codex() {
 
 # === 統一ディスパッチャ ===
 
+# 許可するエージェント指定を一箇所で検証する。
+# 未知の値を Codex の既定モデルへ黙って流すと、設定 typo や一時的な
+# sentinel が別モデルの呼び出しに化けるため、生成前に明示的に拒否する。
+_ai_agent_spec_valid() {
+	local agent="${1:-}" model=""
+	case "$agent" in
+	codex)
+		return 0
+		;;
+	codex:*)
+		model="${agent#codex:}"
+		;;
+	opencode:*)
+		model="${agent#opencode:}"
+		;;
+	opencode-go:*)
+		model="${agent#opencode-go:}"
+		;;
+	local)
+		return 0
+		;;
+	local:*)
+		model="${agent#local:}"
+		;;
+	*)
+		return 1
+		;;
+	esac
+	[ -n "$model" ]
+}
+
 # _ai_dispatch LABEL AGENT PROMPT_FILE [TIMEOUT]
 #   agent 識別子に基づいて適切なバックエンドを呼ぶ。
 #   stdout: 生成テキスト
+_ai_resolved_model_from_agent() {
+	local agent="${1:-}" resolved_model="$agent"
+	case "$agent" in
+	codex:*) resolved_model="${agent#codex:}" ;;
+	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
+	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
+	local:*) resolved_model="${agent#local:}" ;;
+	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
+	*) resolved_model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
+	esac
+	printf '%s' "$resolved_model"
+}
+
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
-	_ai_stats_record "attempt" "$label" "$agent" ""
+	local validator="${AI_DISPATCH_VALIDATOR:-}"
+	if ! _ai_agent_spec_valid "$agent"; then
+		log "[${label}] invalid agent spec ignored: ${agent:-<empty>}" >&2
+		return 2
+	fi
+	local resolved_model="$(_ai_resolved_model_from_agent "$agent")"
+	# 改善ゲートをモデル呼び出しと attempt 記録の前に判定する。
+	# 打ち切り時は gate_giveup イベントだけを記録し、モデル呼び出しが無いにも
+	# 関わらず attempt/fail 統計が膨らむのを防ぐ (2026-08-22 ユーザー指摘)。
+	# 通過後は AI_GATE_PASSED_FOR_DISPATCH を立てて内側キューゲートの二重待機を防ぐ。
+	local _ai_gate_scoped=0
+	case "$label" in
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		_ai_radio_improve_gate "$label"
+		local _gate_rc=$?
+		if [ "$_gate_rc" -eq "$AI_GATE_GIVEUP_RC" ]; then
+			_ai_stats_record "gate_giveup" "$label" "$agent" "" "$resolved_model"
+			log "[${label}] improve gate gave up before model call (agent=$agent)" >&2
+			return "$AI_GATE_GIVEUP_RC"
+		fi
+		AI_GATE_PASSED_FOR_DISPATCH=1
+		_ai_gate_scoped=1
+		;;
+	esac
+	_ai_stats_record "attempt" "$label" "$agent" "" "$resolved_model"
+	AI_DISPATCH_ERROR_PREVIEW=""
+	local _dispatch_err_file
+	_dispatch_err_file=$(mktemp /tmp/ai_err_preview_XXXXXXXX)
+	: >"$_dispatch_err_file"
+	AI_DISPATCH_ERROR_PREVIEW_FILE="$_dispatch_err_file"
 
 	# プロンプトと生成結果をログディレクトリに保存
 	local _dispatch_log_dir="tmp/debug/ai_dispatch"
@@ -795,13 +1033,19 @@ _ai_dispatch() {
 
 	local _dispatch_output_file="$_dispatch_log_dir/${_dispatch_tag}_output.txt"
 
-	# ハーネスは codex CLI に統一。codex:<model> はそのモデルを選択し、
-	# 従来形式のエージェント識別子は CODEX_MODEL を使う。
+	# codex:<model> は Codex CLI、opencode:<model> / opencode-go:<model> は
+	# OpenCode CLIへ渡す。従来形式のエージェント識別子は CODEX_MODEL を使う。
 	# local[:<model>] は Tailscale 経由の無料ローカル LLM へ直接送る。
 	local _codex_timeout="$timeout_override"
 	case "$agent" in
-	'' )
-		return 1
+	codex | codex:*)
+		if [[ "$label" == COMMENT* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
+		fi
+		if [[ "$label" == RADIO* ]] && [ -z "$_codex_timeout" ]; then
+			_codex_timeout="${RADIO_CODEX_TIMEOUT:-240}"
+		fi
+		_ai_call_codex "$label" "$agent" "$prompt_file" "$_codex_timeout" | tee "$_dispatch_output_file"
 		;;
 	local:* | local)
 		local _local_model=""
@@ -829,10 +1073,35 @@ _ai_dispatch() {
 		;;
 	esac
 	local _dispatch_rc=${PIPESTATUS[0]}
+	# dispatch スコープのゲート通過フラグはここで必ず解除する
+	# (同一シェル内の次の候補・次の生成に漏出させない)。
+	if [ "$_ai_gate_scoped" -eq 1 ]; then
+		AI_GATE_PASSED_FOR_DISPATCH=0
+	fi
+	AI_DISPATCH_ERROR_PREVIEW_FILE=""
+	local _dispatch_error_preview
+	# 書き手側 (_ai_error_preview_from_text) で160字へ切り詰め済みのため
+	# ここでバイト切断するとマルチバイト文字を壊す。行単位で読む。
+	_dispatch_error_preview=$(head -n 1 "$_dispatch_err_file" 2>/dev/null || true)
+	rm -f "$_dispatch_err_file"
 	if [ "$_dispatch_rc" -eq 0 ]; then
-		_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc"
+		local _dispatch_output
+		_dispatch_output=$(cat "$_dispatch_output_file" 2>/dev/null || true)
+		if [ -n "$_dispatch_output" ] && { [ -z "$validator" ] || "$validator" "$_dispatch_output"; }; then
+			if [ "${AI_DISPATCH_RECORD_WINNER:-0}" = "1" ]; then
+				_ai_stats_record "winner" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
+			fi
+			_ai_stats_record "ok" "$label" "$agent" "$_dispatch_rc" "$resolved_model"
+			_ai_fail_streak_clear "$agent"
+		elif [ -n "$_dispatch_output" ] && [ -n "$validator" ]; then
+			log "[${label}] ${agent} returned invalid output" >&2
+			_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "invalid output rejected by validator"
+		else
+			log "[${label}] ${agent} returned empty output" >&2
+			_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "empty output"
+		fi
 	else
-		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc"
+		_ai_stats_record "fail" "$label" "$agent" "$_dispatch_rc" "$resolved_model" "${_dispatch_error_preview:-${AI_DISPATCH_ERROR_PREVIEW:-}}"
 	fi
 	# 空出力ならログファイル削除
 	[ -s "$_dispatch_output_file" ] || rm -f "$_dispatch_output_file" 2>/dev/null
@@ -889,13 +1158,13 @@ ai_generate() {
 
 # === AI 利用統計 ===
 
-# _ai_stats_record EVENT LABEL AGENT RC
+# _ai_stats_record EVENT LABEL AGENT RC [RESOLVED_MODEL]
 #   モデル呼び出しを 1 日 1 ファイルの JSONL へ記録する。stdout には一切出さない
 #   (生成テキストへ混入を避ける)。events: attempt / ok / fail。RC は呼び出し元の
-#   return code (空文字可)。フォールバックの最終結果は ai_generate_list 側で
-#   "winner"/"all_failed" として記録する。
+#   return code (空文字可)。resolved_model は実際に CLI へ渡したモデル名。
+#   フォールバックの最終結果は ai_generate_list 側で "winner"/"all_failed" として記録する。
 _ai_stats_record() {
-	local event="$1" label="$2" agent="$3" rc="${4:-}"
+	local event="$1" label="$2" agent="$3" rc="${4:-}" resolved_model="${5:-}" error_preview="${6:-}"
 	[ -n "$event" ] || return 0
 	local stats_dir="_ai_stats_dir"
 	if [ -n "${AI_STATS_DIR:-}" ]; then
@@ -906,13 +1175,103 @@ _ai_stats_record() {
 		stats_dir="tmp/state/ai_stats"
 	fi
 	mkdir -p "$stats_dir" 2>/dev/null || true
-	local ts day
+	local ts day line
 	ts=$(date +%s)
 	day=$(date +%Y%m%d)
-	local line
-	line=$(printf '{"ts":%s,"day":"%s","event":"%s","label":"%s","agent":"%s","rc":"%s"}' \
-		"$ts" "$day" "$event" "$label" "${agent:-}" "${rc:-}")
+	line=$(printf '{"ts":%s,"day":"%s","event":"%s","label":"%s","agent":"%s","rc":"%s","resolved_model":"%s"}' \
+		"$ts" "$day" "$event" "$label" "${agent:-}" "${rc:-}" "${resolved_model:-}")
+	if [ -n "$error_preview" ]; then
+		# JSON文字列として安全な形へエスケープしてから付与する
+		error_preview=${error_preview//\\/\\\\}
+		error_preview=${error_preview//\"/\\\"}
+		error_preview=${error_preview//$'\n'/ }
+		error_preview=${error_preview//$'\r'/ }
+		error_preview=${error_preview//$'\t'/ }
+		local base="${line%\}}"
+		line="${base},\"error\":\"${error_preview}\"}"
+	fi
 	printf '%s\n' "$line" >>"$stats_dir/${day}.jsonl" 2>/dev/null || true
+}
+
+# === 失敗理由の観測 (ai_stats への error フィールド供給) ===
+
+# 直近の _ai_dispatch 呼び出し内での失敗概要。低レベル呼び出し関数が設定し、
+# _ai_dispatch が fail 記録時に読む。stderr が worker の外で廃棄されても
+# 失敗理由が ai_stats JSONL に残るようにするための経路。
+# 低レベル呼び出しは tee パイプラインの左辺（サブシェル）で走るため、
+# 変数だけでなくファイル (_ai_error_preview_set) 経由でも受け渡す。
+AI_DISPATCH_ERROR_PREVIEW=""
+AI_DISPATCH_ERROR_PREVIEW_FILE=""
+
+_ai_error_preview_set() {
+	AI_DISPATCH_ERROR_PREVIEW="$1"
+	if [ -n "${AI_DISPATCH_ERROR_PREVIEW_FILE:-}" ]; then
+		printf '%s\n' "$1" >"$AI_DISPATCH_ERROR_PREVIEW_FILE" 2>/dev/null || true
+	fi
+}
+
+_ai_error_preview_from_text() {
+	local text="$1"
+	# CLIのstderrは切断位置によって不正なUTF-8を含むことがある。perl -CSD
+	# はそこで致命終了し、errorフィールドが欠落していたため、バイト列として
+	# 制御文字だけを除去してからUTF-8として解釈する。
+	text=$(printf '%s' "$text" | perl -pe '
+		s/\e\[[0-9;]*[a-zA-Z]//g;
+		s/[\x00-\x09\x0b-\x1f\x7f]/ /g;
+	')
+	if [ ${#text} -gt 200 ]; then
+		printf '%s' "${text:0:70} …${#text}ch… ${text: -90}"
+	else
+		printf '%s' "$text" | tr '\n' ' ' | tr -s ' '
+	fi
+}
+
+# === 連続失敗サーキットブレーカ ===
+
+# provider/CLI 失敗 (rc!=0) が連続した回数を agent 単位で記録する。
+# ai_generate_list はこの回数で短いバックオフを段階的に延長し、ダウン中の
+# モデルへ短周期で再試行し続ける無駄を防ぐ。成功時 (_ai_dispatch ok) に解除。
+_ai_fail_streak_dir() {
+	if [ -n "${AI_FAIL_STREAK_DIR:-}" ]; then
+		printf '%s\n' "$AI_FAIL_STREAK_DIR"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/ai_fail_streak\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/ai_fail_streak\n'
+	fi
+}
+
+_ai_fail_streak_file() {
+	local agent="$1"
+	printf '%s/%s\n' "$(_ai_fail_streak_dir)" "$(_ai_lock_sanitize_key "$agent")"
+}
+
+_ai_fail_streak_record() {
+	local agent="$1" f n
+	f=$(_ai_fail_streak_file "$agent")
+	mkdir -p "$(_ai_fail_streak_dir)" 2>/dev/null || true
+	n=$(cat "$f" 2>/dev/null || echo 0)
+	case "$n" in '' | *[!0-9]*) n=0 ;; esac
+	n=$((n + 1))
+	printf '%s\n' "$n" >"$f" 2>/dev/null || true
+	printf '%s\n' "$n"
+}
+
+_ai_fail_streak_clear() {
+	local f n
+	f=$(_ai_fail_streak_file "$1")
+	if [ -f "$f" ]; then
+		n=$(cat "$f" 2>/dev/null || echo 0)
+		case "$n" in
+		'' | *[!0-9]*) n=0 ;;
+		esac
+		rm -f "$f" 2>/dev/null || true
+		# 連続失敗が積み上がっていたモデルの復旧は運用上の重要シグナルなので記録する
+		if [ "$n" -ge 3 ]; then
+			log "[AI] ${1} recovered after ${n} consecutive failures (streak cleared)" >&2
+		fi
+	fi
+	return 0
 }
 
 # === バックオフ付きエージェントリスト ===
@@ -1038,6 +1397,9 @@ ai_generate_list() {
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
 	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
+	local saved_validator="${AI_DISPATCH_VALIDATOR:-}"
+
+	AI_DISPATCH_VALIDATOR="$validator"
 
 	AI_GENERATE_LAST_AGENT=""
 	AI_GENERATE_LIST_LAST_AGENT=""
@@ -1061,6 +1423,10 @@ ai_generate_list() {
 		agent="${agent#"${agent%%[![:space:]]*}"}"
 		agent="${agent%"${agent##*[![:space:]]}"}"
 		[ -z "$agent" ] && continue
+		if ! _ai_agent_spec_valid "$agent"; then
+			log "[${label}] invalid agent spec skipped: ${agent}" >&2
+			continue
+		fi
 
 		if ! _ai_backoff_check "$agent"; then
 			_rem=$(_ai_backoff_remaining "$agent")
@@ -1072,12 +1438,14 @@ ai_generate_list() {
 		attempted_count=$((attempted_count + 1))
 		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 		rc=$?
+		AI_DISPATCH_VALIDATOR=""
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 			AI_GENERATE_LAST_AGENT="$agent"
 			AI_GENERATE_LIST_LAST_AGENT="$agent"
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
-			_ai_stats_record "winner" "$label" "$agent" "0"
+			_ai_stats_record "winner" "$label" "$agent" "0" "$(_ai_resolved_model_from_agent "$agent")"
 			printf '%s' "$output"
+			AI_DISPATCH_VALIDATOR="$saved_validator"
 			return 0
 		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && [ -n "$validator" ]; then
@@ -1102,7 +1470,21 @@ ai_generate_list() {
 				'' | *[!0-9]*) failure_backoff_sec=300 ;;
 				esac
 				[ "$failure_backoff_sec" -lt 1 ] && failure_backoff_sec=300
-				log "[${label}] ${agent} provider failure → short backoff ${failure_backoff_sec}s (outcome=${rc})" >&2
+				# 連続失敗サーキットブレーカ: 短いバックオフの再試行が
+				# 失敗し続ける場合、base×2→×4→×8（既定300なら最大2400秒、
+				# AI_FAILURE_STREAK_MAX_BACKOFF_SEC 既定3600が上限）へ段階延長する。
+				local _streak _shift _streak_max="${AI_FAILURE_STREAK_MAX_BACKOFF_SEC:-3600}"
+				case "$_streak_max" in
+				'' | *[!0-9]*) _streak_max=3600 ;;
+				esac
+				_streak=$(_ai_fail_streak_record "$agent")
+				if [ "$_streak" -gt 1 ]; then
+					_shift=$((_streak - 1))
+					[ "$_shift" -gt 3 ] && _shift=3
+					failure_backoff_sec=$((failure_backoff_sec * (1 << _shift)))
+					[ "$failure_backoff_sec" -gt "$_streak_max" ] && failure_backoff_sec="$_streak_max"
+				fi
+				log "[${label}] ${agent} provider failure → short backoff ${failure_backoff_sec}s (outcome=${rc}, streak=${_streak})" >&2
 				_ai_backoff_set "$agent" "$failure_backoff_sec"
 			else
 				log "[${label}] ${agent} no model backoff (outcome=${rc})" >&2
@@ -1119,7 +1501,18 @@ ai_generate_list() {
 	fi
 
 	log "[${label}] all agents failed (list=${agent_list_raw})" >&2
-	_ai_stats_record "all_failed" "$label" "" ""
+	local resolved_models=""
+	for agent in "${agents[@]}"; do
+		agent="${agent#"${agent%%[![:space:]]*}"}"
+		agent="${agent%"${agent##*[![:space:]]}"}"
+		[ -n "$agent" ] || continue
+		if [ -n "$resolved_models" ]; then
+			resolved_models="${resolved_models},$(_ai_resolved_model_from_agent "$agent")"
+		else
+			resolved_models="$(_ai_resolved_model_from_agent "$agent")"
+		fi
+	done
+	_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
 	if [ -n "$failure_kind_file" ]; then
 		if [ "$saw_rate_limit" -eq 1 ]; then
 			printf 'rate_limit\n' >"$failure_kind_file"
@@ -1127,5 +1520,6 @@ ai_generate_list() {
 			printf 'failed\n' >"$failure_kind_file"
 		fi
 	fi
+	AI_DISPATCH_VALIDATOR="$saved_validator"
 	return 1
 }

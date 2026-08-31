@@ -3659,6 +3659,25 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("./codex_bug_dispatcher.sh kick", chat_worker)
         self.assertIn("./codex_bug_dispatcher.sh kick", youtube_worker)
 
+    def test_comment_intake_preserves_strategy_directives_and_improve_brief_prioritizes_them(self):
+        comment = (REPO_ROOT / "broadcast/comment.sh").read_text()
+        improve = (REPO_ROOT / "eloop_improve.sh").read_text()
+        prompt = (REPO_ROOT / "prompts/improve_strategy.md").read_text()
+
+        self.assertIn("_append_structured_strategy_advice_at_intake()", comment)
+        self.assertIn("_strategy_advice_core_matches_existing()", comment)
+        self.assertIn('COMMENT_ADVICE_INTAKE_EPOCH="$(date +%s)"', comment)
+        self.assertIn('"comment_intake"', comment)
+        intake_idx = comment.index('_append_structured_strategy_advice_at_intake "$strategy_advice_candidates_main" "main"')
+        generation_idx = comment.index("コメント返し生成中...")
+        self.assertLess(intake_idx, generation_idx)
+
+        self.assertIn("intake_advice_lines", improve)
+        self.assertIn('if "source=comment_intake" in candidate:', improve)
+        self.assertIn("advice_lines = intake_advice_lines[:4] + other_advice_lines[:4]", improve)
+        self.assertIn("source=comment_intake の項目は受付時保存である。", improve)
+        self.assertIn("`source=comment_intake` の項目は返信生成の成否に依存しない受付時保存である。", prompt)
+
     def test_frontier_proximity_guidance_keeps_congestion_suppression(self):
         strategy = (REPO_ROOT / "strategy.py").read_text()
         readme = (REPO_ROOT / "README.md").read_text()
@@ -8355,6 +8374,20 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn('print(f"[{count}/{cycle}]")', eloop)
         self.assertIn('Game #${game_num_display} 終了${_cycle_progress:+ ${_cycle_progress}}', eloop)
 
+    def test_game_start_overlay_title_includes_cycle_progress(self):
+        eloop = (REPO_ROOT / "eloop.sh").read_text()
+
+        self.assertIn('_start_cycle_progress=$(python3 - "${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" "${MIN_GAMES_BEFORE_IMPROVE:-12}"', eloop)
+        self.assertIn('Game #${game_num_display} 開始${_start_cycle_progress:+ ${_start_cycle_progress}}', eloop)
+        self.assertIn('サイクル${_start_cycle_progress:-?}の試合を開始しました。', eloop)
+
+    def test_live_count_uses_game_number_label(self):
+        dashboard = (REPO_ROOT / "status_dashboard.py").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn('♦ {accumulated}試合目 (games)', dashboard)
+        self.assertIn('local count_label="${acc_count}試合目 (games)"', status)
+
     def test_improve_overlay_is_file_based_and_replaces_console_capture(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
@@ -8689,31 +8722,34 @@ class TestSoren91RunnerLaunch(unittest.TestCase):
         self.assertIn('NR > 1 && $1 == "node" && $2 ~ /^[0-9]+$/ { print $2 }', control)
         self.assertIn('rm -rf "$lock_dir"', control)
         self.assertIn("ps -Ao pid=,ppid=,command= 2>/dev/null", control)
-        self.assertIn("grep -Eq '(^|[ /])node([[:space:]].*)?main\\.mjs([[:space:]]|$)'", control)
+        self.assertIn("ps -Ao pid=,ppid=,command= 2>/dev/null | awk", control)
+        self.assertIn("if ($0 !~ /(^|[ \\/])node([ \\t].*)?main\\.mjs([ \\t]|$)/) next", control)
         self.assertIn('runner_pids="$(_soren91_scan_alive_runner_pids 2>/dev/null | tr \'\\n\' \' \')"', control)
-        self.assertIn('pid=$(_soren91_scan_alive_main_pids | head -n 1)', control)
+        self.assertIn('for pid in $(_soren91_scan_alive_main_pids 2>/dev/null)', control)
+        self.assertIn('_soren91_pid_is_owned_player "$pid"', control)
         self.assertIn('player_pids="$player_pids $(_soren91_scan_alive_main_pids 2>/dev/null | tr \'\\n\' \' \')"', control)
         self.assertIn('player_pids="$player_pids $(_soren91_scan_log_writer_pids 2>/dev/null | tr \'\\n\' \' \')"', control)
         self.assertIn("_soren91_kill_runner_session", control)
-        self.assertNotIn("pgrep -f", control)
+        self.assertNotIn("pgrep -f 'node.*main\\.mjs'", control)
 
     def test_soren91_browser_launch_does_not_raise_focus_on_macos(self):
         main = (REPO_ROOT / "soren91/main.mjs").read_text()
 
         self.assertIn("launchStandaloneBrowserWithoutFocus", main)
         self.assertIn("standaloneBrowserLaunchArgs", main)
-        self.assertIn("'/usr/bin/open'", main)
-        self.assertIn("'-g'", main)
-        self.assertIn("SOREN91_CHROME_NO_FOCUS_LAUNCH", main)
+        self.assertIn("ATTACH-ONLY", main)
+        self.assertIn("if (process.platform !== 'darwin') return null", main)
+        self.assertIn("chromium.connectOverCDP", main)
         self.assertIn("SOREN91_STANDALONE_WINDOW_POSITION", main)
         self.assertIn("'2400,1200'", main)
         self.assertIn("standaloneBrowserLaunchArgs(standaloneWindowPosition)", main)
-        self.assertIn("const playwrightLaunchArgs = launchArgs.filter(arg => !/^[a-z][a-z0-9+.-]*:/i.test(arg));", main)
-        self.assertIn("args: playwrightLaunchArgs", main)
+        self.assertNotIn("chromium.launch({", main)
         self.assertIn("'--password-store=basic'", main)
         self.assertIn("'--use-mock-keychain'", main)
         self.assertIn("'about:blank'", main)
-        self.assertNotIn(".bringToFront()", main)
+        self.assertIn("process.env.SOREN91_BRING_TO_FRONT === '1'", main)
+        self.assertIn("await gamePage.bringToFront()", main)
+        self.assertNotIn("await gamePage.bringToFront();\n    //", main)
 
     def test_soviet_local_browser_launch_does_not_raise_focus_on_macos(self):
         local = (REPO_ROOT / "soviet_local.mjs").read_text()
@@ -10658,7 +10694,8 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertEqual(decision["x"], -0.6)
         self.assertIn("pre_russia_t12_lane", decision["reason"])
 
-    def test_deadline_safety_keeps_pre_russia_t13_pair_lane_under_pressure(self):
+    def test_deadline_safety_skips_ukraine_lane_when_pair_already_touches(self):
+        import strategy
         import strategy_runner
 
         pieces = [
@@ -10712,10 +10749,11 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
                 ],
             },
             {"pieces": pieces, "next": {"type": 10, "r": 0.846}},
+            strategy,
         )
 
-        self.assertEqual(decision["x"], -1.6)
-        self.assertIn("pre_russia_t13_pair_lane", decision["reason"])
+        self.assertEqual(decision["x"], 3.0)
+        self.assertNotIn("pre_russia_t13_pair_lane", decision["reason"])
 
     def test_deadline_safety_rejects_pre_russia_t13_pair_lane_at_hard_deadline(self):
         import strategy_runner
@@ -12177,12 +12215,16 @@ _prune_expired_rejected_hashes
         self.assertIn("curr_russia_seen", loop)
         self.assertIn('"stage_achievement_regression": "段階到達ゲート未達"', loop)
         self.assertIn('key.startswith("stage_type") and key.endswith("_achievement_gate")', loop)
-        self.assertIn('labels.append(f"Type{stage}到達ゲート未達")', loop)
+        self.assertIn("from lib.country_names import country_name", loop)
+        self.assertIn("country_name(stage, '対象国')", loop)
         self.assertIn("stage_objective_loss = \"stage_achievement_regression\" in result or \"stage_type\" in result", loop)
         self.assertIn("russia_path_loss = (", loop)
         self.assertIn("or (stage_target >= 15)", loop)
         self.assertIn("elif objective_loss and russia_path_loss and rstreak >= threshold:", loop)
-        self.assertIn('detail = f"rstreak={rstreak}_stage_target={stage_target}_objective_loss={int(objective_loss)}"', loop)
+        self.assertIn(
+            'detail = f"連続回帰={rstreak}_対象国={country_name(stage_target)}_目的進捗喪失={int(objective_loss)}"',
+            loop,
+        )
         self.assertIn("post_regression_direct_escape", loop)
         self.assertIn("ロシア建国ルート喪失の粛清連鎖", loop)
         self.assertIn("復帰先にロシア進捗あり", loop)
@@ -13465,7 +13507,7 @@ PY
         self.assertIn('"stage_achievement_regression" in trigger', phylo)
         self.assertIn('r"target_type=(\\d+)"', phylo)
         self.assertIn('r"stage_type(\\d+)_achievement_gate"', phylo)
-        self.assertIn('parts.append(f"Type{target}到達ゲート未達")', phylo)
+        self.assertIn("country_name(target, '対象国')", phylo)
         self.assertIn('parts.append(f"直近到達率{target_rate}")', phylo)
         self.assertIn('parts.append(f"要求{min_rate}")', phylo)
         self.assertIn('parts.append(f"n={sample_n}")', phylo)
@@ -13849,12 +13891,12 @@ class TestYouTubeChatQueue(unittest.TestCase):
                             {
                                 "id": "msg-1",
                                 "snippet": {"displayMessage": "こんにちは"},
-                                "authorDetails": {"displayName": "Alice"},
+                                "authorDetails": {"displayName": "Alice", "channelId": "UC-alice"},
                             },
                             {
                                 "id": "msg-1",
                                 "snippet": {"displayMessage": "こんにちは"},
-                                "authorDetails": {"displayName": "Alice"},
+                                "authorDetails": {"displayName": "Alice", "channelId": "UC-alice"},
                             },
                             {
                                 "id": "msg-2",
@@ -13864,7 +13906,7 @@ class TestYouTubeChatQueue(unittest.TestCase):
                             {
                                 "id": "msg-3",
                                 "snippet": {"displayMessage": "やった $HOME <ok>"},
-                                "authorDetails": {"displayName": "Carol"},
+                                "authorDetails": {"displayName": "Carol", "channelId": "UC-carol"},
                             },
                             {
                                 "id": "msg-4",
@@ -13893,6 +13935,11 @@ class TestYouTubeChatQueue(unittest.TestCase):
             self.assertTrue(outfile.exists())
             lines = outfile.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines, ["Alice: こんにちは", "Carol: やった HOME ok"])
+            metadata = [
+                json.loads(line)
+                for line in Path(f"{outfile}.viewer_meta.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([entry["stable_id"] for entry in metadata], ["UC-alice", "UC-carol"])
             self.assertEqual((tmpdir / "chat" / "page_token").read_text(), "NEXT")
             self.assertEqual((tmpdir / "chat" / "poll_interval_sec").read_text(), "4")
 
@@ -14415,38 +14462,84 @@ class TestCandidateChromeLaunchStagger(unittest.TestCase):
 
 
 class TestStrategyRussiaPhaseBoundary(unittest.TestCase):
-    """T14 is still the pre-Russia gate; only T15 should switch to Russia phase."""
+    """Lock the measured e5b boundary while fixing the double-Russia state."""
 
-    def test_russia_phase_uses_type15_not_type14(self):
+    @staticmethod
+    def _no_merge_candidate(x):
+        return {
+            "x": x,
+            "landing_y": -1.0,
+            "drift_x": 0.0,
+            "drift_unc": 0.0,
+            "merge_grade": "NO",
+            "crosses_deadline": False,
+            "merge_result_crosses_deadline": False,
+            "deadline_margin": 2.0,
+            "merges": [],
+        }
+
+    @classmethod
+    def _analysis(cls):
+        return {
+            "results": [cls._no_merge_candidate(x) for x in (-2.0, 0.0, 2.0)],
+            "reactor": {
+                "deadline_margin": 2.0,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+
+    def test_e5b_t14_phase_is_explicitly_preserved(self):
         strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        self.assertIn('russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)', strategy)
-        self.assertIn("double_russia_phase = russia_phase_count >= 2", strategy)
-        self.assertNotIn('p.get("type") in [14, 15]', strategy)
-        self.assertIn("type 14（カザフ）はロシア前段", strategy)
+        self.assertIn(
+            'russia_phase_count = sum(1 for p in pieces if p.get("type") in (14, 15))',
+            strategy,
+        )
+        self.assertIn("preserve the production e5b", strategy)
 
-
-    def test_deadline_guard_prefers_t13_pair_compress_before_pair_center(self):
+    def test_double_russia_requires_two_type15_pieces(self):
         strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        mode_chain = strategy.split("__dlg_mode = None", 1)[1].split("if __dlg_mode is None:", 1)[0]
-        self.assertLess(
-            mode_chain.index('__dlg_mode = "t13_pair_compress"'),
-            mode_chain.index('__dlg_mode = "first_russia_pair"'),
+        self.assertIn("double_russia_phase = type15_count >= 2", strategy)
+        self.assertNotIn(
+            'double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1',
+            strategy,
         )
 
-    def test_deadline_guard_t14_pair_gets_cluster_priority(self):
-        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        self.assertIn('if __dlg_mode == "russia_pair"', strategy)
-        self.assertIn('"t12_consolidate", "russia_pair"', strategy)
-        self.assertIn('DEADLINE_GUARD_RUSSIA_PAIR_CLUSTER', strategy)
+    def test_t14_only_keeps_production_e5b_decision_fixture(self):
+        import strategy
 
-    def test_t11_cloud_without_t12_gets_pre_russia_rescue(self):
-        strategy = (REPO_ROOT / "strategy.py").read_text(encoding="utf-8")
-        self.assertIn("pre_russia_t11_cloud_to_t12_ready", strategy)
-        self.assertIn("PRE_RUSSIA_T11_CLOUD_TO_T12", strategy)
-        self.assertIn("max_type_on_board == 11", strategy)
-        self.assertIn("pre_russia_counts.get(12, 0) == 0", strategy)
-        self.assertIn('"t11_cloud_to_t12"', strategy)
-        self.assertIn("DEADLINE_GUARD_PRE_RUSSIA_T11_CLOUD_TO_T12", strategy)
+        game_state = {
+            "pieces": [
+                {"id": "t14", "type": 14, "x": -1.5, "y": -2.4, "r": 1.385}
+            ],
+            "next": {"type": 10, "r": 0.846},
+            "nextNext": {"type": 4, "r": 0.38},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._analysis())
+
+        self.assertEqual(decision["x"], 0.0)
+        self.assertIn("RUSSIA_PHASE_BOARD_COMPRESSION", decision["reason"])
+        self.assertNotIn("POST_RUSSIA", decision["reason"])
+
+    def test_single_type15_never_uses_double_russia_reason(self):
+        import strategy
+
+        game_state = {
+            "pieces": [
+                {"id": "t15", "type": 15, "x": -1.5, "y": -2.4, "r": 1.6}
+            ],
+            "next": {"type": 7, "r": 0.559},
+            "nextNext": {"type": 4, "r": 0.38},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._analysis())
+
+        self.assertNotIn("DOUBLE_RUSSIA", decision["reason"])
 
 
 class TestSovietBoardAnalysis(unittest.TestCase):

@@ -106,6 +106,8 @@ import re
 import sys
 from pathlib import Path
 
+from lib.country_names import country_name
+
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8", errors="ignore")
 
@@ -142,7 +144,7 @@ if "stage_achievement_regression" in trigger:
         sample_n = m.group(1)
     parts = []
     if target:
-        parts.append(f"Type{target}到達ゲート未達")
+        parts.append(f"{country_name(target, '対象国')}到達ゲート未達")
     else:
         parts.append("段階到達ゲート未達")
     if target_rate:
@@ -224,8 +226,9 @@ except Exception:
     raise SystemExit(0)
 
 item = meta.get(title, {})
-source = item.get("source", "")
-if source:
+source = (item.get("source") or "").strip()
+source_key = (item.get("source_key") or "").strip()
+if source_key.startswith("globalvoices") or source.startswith("Global Voices"):
     print(source)
 PY
 }
@@ -252,14 +255,17 @@ item = meta.get(title)
 if not item:
     raise SystemExit(0)
 
+source = (item.get("source") or "").strip()
+source_key = (item.get("source_key") or "").strip()
+if not (source_key.startswith("globalvoices") or source.startswith("Global Voices")):
+    raise SystemExit(0)
+
 license_name = item.get("license")
 if not license_name:
     raise SystemExit(0)
 
 parts = ["[NEWS] " + title]
 author = (item.get("author") or "").strip()
-source = (item.get("source") or "").strip()
-source_key = (item.get("source_key") or "").strip()
 normalized_author = unicodedata.normalize("NFKC", author or "")
 normalized_author = re.sub(r"\s+", "", normalized_author)
 if normalized_author in {"トモモ", "背後のトモモ"} and (
@@ -275,6 +281,34 @@ if url:
     parts.append(url)
 parts.append(f"({license_name})")
 print(" | ".join(parts))
+PY
+}
+
+_strip_non_globalvoices_attribution_file() {
+	local talk_file="$1" title="$2" source_name=""
+	[ -f "$talk_file" ] || return 1
+	source_name=$(_extract_news_source_name "$title")
+	[ -z "$source_name" ] || return 1
+	python3 - "$talk_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    original = path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(1)
+
+lines = original.splitlines(keepends=True)
+kept = [line for line in lines if not re.match(r"^\s*出典(?:は|[:：])", line)]
+updated = "".join(kept)
+if updated == original:
+    raise SystemExit(1)
+
+tmp = path.with_name(path.name + ".attribution-policy.tmp")
+tmp.write_text(updated, encoding="utf-8")
+tmp.replace(path)
 PY
 }
 

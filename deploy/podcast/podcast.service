@@ -1,0 +1,17 @@
+[Unit]
+Description=Soren Podcast Build (docich#10)
+After=network-online.target radio-archive.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/soren
+EnvironmentFile=-/home/ubuntu/soren/.env
+ExecStart=/bin/bash -lc 'exec ./tools/podcast_build.py 2>&1 | tee -a logs/podcast.log'
+StandardOutput=append:/home/ubuntu/soren/logs/podcast.log
+StandardError=append:/home/ubuntu/soren/logs/podcast.log
+
+[Install]
+WantedBy=multi-user.target

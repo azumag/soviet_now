@@ -18,28 +18,10 @@ Decision Logic:
     箇所が複数ある（コード側が正）。数値を「意図に合わせて」書き換えるのは危険。
   - 既知の乖離・デッド化した軸（今回は意図的に温存。個別に単独サイクルで扱うこと）:
     - phase 判定（下記）: HIGH 分岐が構造的に到達不能
+    - axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): 長さガードの前提が実データと合わず、
+      内側ロジックは実質no-op（reason ラベルのみ常時付与）
     - axis 9.6 (REACTIVE_PAIRS_STACKING) 系のヘルパー判定はほぼ常に不成立
-      （2026-08-19 実測: 4007ターン中 has_reactive_for_type/has_near_for_type は
-      0回もTrueを返さない。ただしこれは単純なバグではなく、元は正しかった判定式
-      [rp[2]==type, len>=3]（意図的抑制装置 v360）が2.5ヶ月の wildcard 摂動で
-      rp[1]/len>=6 へ中立浮動した結果。additive-only な新helperで機能修正すると
-      13.2%のターンで分岐が反転するが、追加併合0件・同typeから59-60%で逆方向に
-      動く・T13ゲート専用のCLUSTER_SETUP_FOR_NEXT_MERGEを23%破壊、という実測結果
-      からNO-GO判定済み（congestion_scaleがpiece_count<=46で符号反転しているのが
-      原因）。has_reactive_for_type/has_near_for_type 自体を素直に「直す」のは
-      危険なので絶対にしないこと。機能修正する場合はcongestion_scaleの符号反転も
-      含めて再設計し、単独サイクルで扱うこと）
     詳細は logs/change_log.txt および過去 rollback postmortem を参照。
-  - 2026-08-19 に削除済みの軸（温存リストとは別、削除確定済み）:
-    - axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): 実測(4007ターン)で内側ロジック(位置比較)
-      が0回発火するゴースト軸だった（`len(rp)>=6`ガードが実データの3要素タプルと
-      矛盾）。ただし完全なno-opではなく、`merge_grade=="NO"`かつ非congested・非
-      death_spiralの全候補に定数`+0.0798`を一律加算しつつ`AVOID_BLOCK_REACTIVE_PAIR`
-      ラベルをdecision_reasonの66.0%に付与していた（同一ターンのNO候補間では
-      一様に加算されるためスコア順位への影響はなし。replay実測でも決定x差分0件）。
-      正しく動作させる案(len>=3 + rp[0]/rp[1]修正)も検証したが、9.3%のターンで
-      決定が変わるのに追加併合0件・盤端側へ5:1で偏る（archiveの edge scatter 失敗
-      パターンと一致）ためNO-GO。詳細は logs/change_log.txt 該当コミット参照
   - 2026-08-18 リファクタで、旧 Change History ブロックおよび各軸の v番号付き失敗事例
     コメント（"Fixes rollback failure mode: ..." 等）をコード本体から削除した。
     全文は docs/strategy_decide_history_archive_20260818.txt に保存してある。
@@ -71,18 +53,1216 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # AI-tunable runtime parameter:
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
+import math
+
 from strategy_helpers import board_stats
+from strategy_helpers import lookahead
 
 FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v727: manual-game feedback (docs/manual_challenge_20260825_insights.md).
+# POST_FIRST_RUSSIA_LANE_COVER_AVOID: stop aborting the whole selector when an
+# ineligible-but-normal candidate (deadline crossing, true floor landing)
+# exists; only malformed analyzer data fails the lane closed.  Safe floor
+# landings still feed the risk quality floor, replacements must respect the
+# pre-Russia drop clamp, and an unsafe or crossing selected decision is never
+# replaced.  The v725/v726 form aborted on real Kazakhstan-phase boards.
+# v725: POST_FIRST_RUSSIA_LANE_COVER_AVOID — after the first Kazakhstan exists,
+# keep the second-Russia material lane alive from board state alone.  The older
+# ladder hooks depended on reason markers that runtime safety could rewrite, so
+# the measured game covered lone Turkmenistan with a low incoming country and
+# spent its remaining drops without a second Kazakhstan.  This finalizer only
+# accepts a materially safe real collision with a lower country, never another
+# high-country cover of the live rebuild lane.
+# v724: PRE_RUSSIA_UKRAINE_PAIR_LANE_V1 — restore the runner's state-only
+# Ukraine-pair contact lane before Russia while preserving the reason-gated
+# second-Ukraine birth lane and all hard-deadline exits.  The capability ID is
+# part of this strategy's archive hash and gates the matching runner behavior.
+# v723: PRE_RUSSIA_CHAIN_COVER_AVOID — after the final runtime safety pass,
+# keep low incoming countries off paired Uzbekistan/Turkmenistan/Ukraine
+# material while exactly one Kazakhstan is waiting for the second chain.
+# Only a real lower-country contact that improves both predicted top risk and
+# deadline margin can replace the already-safe no-merge decision.
+# v722: POST_RUSSIA_CHAIN_COVER_AVOID — after Russia is founded, do not
+# cover a paired Uzbekistan/Turkmenistan/Ukraine/Kazakhstan chain with a low
+# incoming country when the analyzer proves a materially safer real contact.
+# The measured recovery lane must improve both board-top risk and deadline
+# margin, while every malformed or ambiguous input fails back to v721.
+# v721: VISIBLE_SAME_COUNTRY_CONTACT_SHOT — replay the manually verified
+# shape-aware false negative where an exposed Kyrgyzstan merged even though
+# the analyzer labelled every contact NO.  The exception requires generous
+# deadline headroom, a real collision target and strict measured geometry.
+# v720: FIRST_RUSSIA_T11_LANE_COVER_AVOID — at the measured T14 near-miss,
+# keep a low incoming country from landing on the lone exposed Uzbekistan when
+# an equally safe real lane exists.  This preserves the only T11→T12 rebuild
+# route without changing ordinary pre-Russia play or any deadline early return.
+# v719: POST_RUSSIA_SYMMETRIC_LANES — unlock the full [-3,+3] board only
+# after T15, and keep deadline fallbacks on real safe/minimum-risk candidates.
+# v718: POST_RUSSIA_HIGH_PAIR_CONTACT_SHOT — preserve the production e5b
+# pre-Russia policy, then use safe outer-side impacts to close the highest
+# separated T12/T13/T14 pair after the first real T15.  When two T15s remain
+# separated, apply the same physical contact rule for the final Soviet merge.
 # v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
 # Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
 # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt, advice.md
 # v705: HIGH_TYPE_COVER_AVOID の open 判定を真上遮蔽のみへ修正し、抑止を -400 に強化（対象段階: ウクライナ T13）
 # Fixes rollback failure mode: 同typeペアは作れてもそのペアを次の手で併合できず、末盤の deadline guard が延命だけして点数を止める
 # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
+
+
+def _as_float(value, default):
+    """Convert analyzer values without treating a valid zero as missing."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _clip_final_drop_x(value, has_russia, fallback=False):
+    """Clip a scored lane to the board.
+
+    v733 (2026-08-25): ロシア建国前の下限 -0.991 を撤廃し [-3.0, 3.0] に統一。実測 (v731/v732 38 試合
+    3201 手) で全決定の 16.9% が x=-0.991 に丸められて実行され、その 48% で盤面が高くなり併合は 27%
+    だけだった。decide() が左側の締切安全な DIRECT を選んだのに非併合着地にされた手が 117 (3.7%)。
+    フルパイプライン A/B (7243 手): 実行 DIRECT 1630→1919 (+18%)、併合喪失 0、非交差→交差 0。
+    08-19 の 4e664ce も同じ範囲へ戻したが、v704/v705 の T12/T13 レーン軸など 3 変更と同梱で
+    lost_ukraine_gate (T13 段階) により rollback された。rollback をクランプに帰する根拠は無く、
+    そのゲート自体も 2026-08-25 に統計化済み。fallback 経路の範囲は据え置き。
+    """
+    value = _as_float(value, 0.0)
+    if has_russia:
+        lower, upper = -3.0, 3.0
+    elif fallback:
+        lower, upper = -1.612, 0.862
+    else:
+        lower, upper = -3.0, 3.0
+    return round(max(lower, min(upper, value)), 1 if fallback else 4)
+
+
+def _select_post_russia_contact_candidate(pieces, results, next_type, next_radius):
+    """Choose a safe outer-side impact that closes the next Soviet-chain pair.
+
+    The normal production scorer is intentionally left untouched until a real
+    T15 exists.  Once Russia is on the board, direct/near merges still win; on
+    a no-merge turn, a sufficiently large incoming piece can push the more
+    mobile member of the highest separated pair toward its partner.
+    """
+    if not isinstance(pieces, list) or not isinstance(results, list):
+        return None
+
+    type15_count = sum(
+        1 for piece in pieces
+        if isinstance(piece, dict) and piece.get("type") == 15
+    )
+    if type15_count == 0 or next_type < 8:
+        return None
+
+    # Never spend an immediate, safe merge opportunity on a setup impact.
+    if any(
+        isinstance(candidate, dict)
+        and candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and not candidate.get("crosses_deadline", True)
+        and not candidate.get("merge_result_crosses_deadline", False)
+        for candidate in results
+    ):
+        return None
+
+    pair_types = (15,) if type15_count >= 2 else (14, 13, 12)
+    selected_pair = None
+    selected_type = None
+    for pair_type in pair_types:
+        same_type = [
+            piece for piece in pieces
+            if isinstance(piece, dict) and piece.get("type") == pair_type
+        ]
+        pair_options = []
+        for index, first in enumerate(same_type):
+            for second in same_type[index + 1:]:
+                first_x = _as_float(first.get("x"), 0.0)
+                first_y = _as_float(first.get("y"), -10.0)
+                second_x = _as_float(second.get("x"), 0.0)
+                second_y = _as_float(second.get("y"), -10.0)
+                first_r = max(0.1, _as_float(first.get("r"), 1.0))
+                second_r = max(0.1, _as_float(second.get("r"), 1.0))
+                distance = ((first_x - second_x) ** 2 + (first_y - second_y) ** 2) ** 0.5
+                gap = distance - first_r - second_r
+                pair_top = max(first_y, second_y)
+                pair_options.append(
+                    (gap + max(0.0, pair_top - 1.15) * 0.35, pair_top, first, second)
+                )
+        if pair_options:
+            _, _, first, second = min(pair_options, key=lambda item: item[:2])
+            selected_pair = (first, second)
+            selected_type = pair_type
+            break
+
+    if selected_pair is None:
+        return None
+
+    first, second = selected_pair
+    # The higher piece is normally less buried.  At equal height, choose the
+    # outer piece so the wall-side impact pushes material toward board center.
+    first_key = (_as_float(first.get("y"), -10.0), abs(_as_float(first.get("x"), 0.0)))
+    second_key = (_as_float(second.get("y"), -10.0), abs(_as_float(second.get("x"), 0.0)))
+    target, other = (first, second) if first_key >= second_key else (second, first)
+    target_x = _as_float(target.get("x"), 0.0)
+    other_x = _as_float(other.get("x"), 0.0)
+    direction = 1.0 if target_x >= other_x else -1.0
+    target_radius = max(0.1, _as_float(target.get("r"), 1.0))
+    shot_x = target_x + direction * (
+        target_radius + max(0.35, _as_float(next_radius, 0.5))
+    )
+    shot_x = max(-3.0, min(3.0, shot_x))
+
+    safe_no_merge = [
+        candidate for candidate in results
+        if isinstance(candidate, dict)
+        and candidate.get("merge_grade") == "NO"
+        and not candidate.get("crosses_deadline", True)
+        and not candidate.get("merge_result_crosses_deadline", False)
+        and _as_float(candidate.get("deadline_margin"), -1.0) >= 0.35
+    ]
+    if not safe_no_merge:
+        return None
+
+    # New analyzer results expose the first shape-aware collision target.
+    # Require the setup drop to actually hit the selected mobile piece.  The
+    # compatibility fallback is only for older/synthetic result payloads that
+    # do not carry landing_hit_id at all.
+    target_id = target.get("id")
+    target_hits = [
+        candidate for candidate in safe_no_merge
+        if candidate.get("landing_hit_id") == target_id
+    ]
+    if target_hits:
+        safe_no_merge = target_hits
+    elif any("landing_hit_id" in candidate for candidate in safe_no_merge):
+        return None
+
+    selected = min(
+        safe_no_merge,
+        key=lambda candidate: (
+            abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+            _as_float(candidate.get("landing_y"), 99.0),
+        ),
+    )
+    if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
+        return None
+
+    reason = (
+        "SOVIET_T15_CONTACT_SHOT"
+        if selected_type == 15
+        else f"POST_RUSSIA_T{selected_type}_CONTACT_SHOT"
+    )
+    return selected, reason
+
+
+def _select_first_russia_t11_lane_avoidance(
+    pieces, results, next_type, selected_candidate, chosen_x
+):
+    """Protect the lone Uzbekistan in the measured first-Russia near-miss.
+
+    A historical T14 stall had exactly one Kazakhstan, one Turkmenistan and
+    one Uzbekistan, but the normal scorer put a small unrelated country on
+    top of that sole Uzbekistan.  Only replace the already-scored choice when
+    the analyzer explicitly proves both the collision and a comparably safe
+    real alternative.  Missing/invalid analyzer fields fail closed.
+    """
+    if not isinstance(pieces, list) or not isinstance(results, list):
+        return None
+    if not isinstance(selected_candidate, dict):
+        return None
+    if not any(candidate is selected_candidate for candidate in results):
+        return None
+    if any(not isinstance(piece, dict) for piece in pieces):
+        return None
+    if any(type(piece.get("type")) is not int for piece in pieces):
+        return None
+    if any(not 1 <= piece["type"] <= 16 for piece in pieces):
+        return None
+    if not isinstance(next_type, int) or isinstance(next_type, bool):
+        return None
+    if not 1 <= next_type <= 9:
+        return None
+
+    type_counts = {
+        piece_type: sum(1 for piece in pieces if piece.get("type") == piece_type)
+        for piece_type in (11, 12, 13, 14, 15, 16)
+    }
+    if type_counts != {11: 1, 12: 1, 13: 0, 14: 1, 15: 0, 16: 0}:
+        return None
+
+    lone_t11 = next(
+        (piece for piece in pieces if piece.get("type") == 11), None
+    )
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    if lone_t11 is None or not valid_piece_id(lone_t11.get("id")):
+        return None
+    chain_ids = set()
+    for piece in pieces:
+        if piece.get("type") >= 11:
+            piece_id = piece.get("id")
+            if not valid_piece_id(piece_id):
+                return None
+            chain_ids.add(piece_id)
+
+    try:
+        final_x = float(chosen_x)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(chosen_x, bool) or not math.isfinite(final_x):
+        return None
+    if not -3.0 <= final_x <= 3.0:
+        return None
+
+    def candidate_values(candidate):
+        if not isinstance(candidate, dict):
+            return None
+        if isinstance(candidate.get("x"), bool) or isinstance(
+            candidate.get("risk_top_y_after_drop"), bool
+        ):
+            return None
+        try:
+            candidate_x = float(candidate["x"])
+            risk = float(candidate["risk_top_y_after_drop"])
+            hit_id = candidate["landing_hit_id"]
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not math.isfinite(candidate_x) or not math.isfinite(risk):
+            return None
+        if not valid_piece_id(hit_id):
+            return None
+        if not -3.0 <= candidate_x <= 3.0:
+            return None
+        return candidate_x, risk, hit_id
+
+    # A safe immediate merge remains more important than this lane-preservation
+    # exception, even if a future scorer accidentally ranks a NO candidate first.
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            continue
+        if (
+            candidate.get("merge_grade") in ("DIRECT", "NEAR")
+            and candidate.get("crosses_deadline") is False
+            and candidate.get("merge_result_crosses_deadline") is False
+        ):
+            return None
+
+    selected_values = candidate_values(selected_candidate)
+    if selected_values is None:
+        return None
+    selected_x, selected_risk, selected_hit_id = selected_values
+    if (
+        abs(_clip_final_drop_x(selected_x, False) - final_x) > 1e-6
+        or abs(selected_x - final_x) > 0.011
+        or selected_candidate.get("merge_grade") != "NO"
+        or selected_candidate.get("crosses_deadline") is not False
+        or selected_candidate.get("merge_result_crosses_deadline") is not False
+        or selected_hit_id != lone_t11["id"]
+    ):
+        return None
+
+    alternatives = []
+    for candidate in results:
+        if candidate is selected_candidate:
+            continue
+        values = candidate_values(candidate)
+        if values is None:
+            continue
+        candidate_x, risk, hit_id = values
+        if (
+            candidate.get("merge_grade") != "NO"
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or abs(_clip_final_drop_x(candidate_x, False) - candidate_x) > 1e-6
+            or hit_id in chain_ids
+            or risk > selected_risk + 0.15 + 1e-9
+        ):
+            continue
+        alternatives.append(
+            (abs(candidate_x - final_x), risk, abs(candidate_x), candidate_x, candidate)
+        )
+    if not alternatives:
+        return None
+
+    return min(alternatives, key=lambda item: item[:4])[-1]
+
+
+def _select_post_russia_chain_cover_avoidance(
+    pieces, results, next_type, selected_candidate, chosen_x
+):
+    """Keep paired high-country material open after Russia is founded.
+
+    The first observed Russia game stalled after the normal scorer placed
+    Moldova on a paired Uzbekistan lane.  This exception only replaces that
+    already-selected safe no-merge candidate when a real collision lane is
+    also safe and improves both predicted board height and deadline headroom
+    by a measured margin.  Incomplete analyzer data always keeps v721.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if not isinstance(selected_candidate, dict):
+        return None
+    if not any(candidate is selected_candidate for candidate in results):
+        return None
+    if type(next_type) is not int or not 1 <= next_type <= 7:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    type_counts = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_radius = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_radius is None
+            or piece_radius <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = piece
+        type_counts[piece_type] = type_counts.get(piece_type, 0) + 1
+
+    if type_counts.get(15, 0) != 1 or type_counts.get(16, 0) != 0:
+        return None
+    paired_chain_types = {
+        country_type
+        for country_type in (11, 12, 13, 14)
+        if type_counts.get(country_type, 0) >= 2
+    }
+    if not paired_chain_types:
+        return None
+
+    final_x = finite_number(chosen_x)
+    if final_x is None or not -3.0 <= final_x <= 3.0:
+        return None
+
+    validated_results = []
+    seen_candidate_x = set()
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_landing_y = finite_number(candidate.get("landing_y"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        merge_grade = candidate.get("merge_grade")
+        crosses_deadline = candidate.get("crosses_deadline")
+        merge_crosses_deadline = candidate.get("merge_result_crosses_deadline")
+        hit_id = candidate.get("landing_hit_id")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_x in seen_candidate_x
+            or candidate_landing_y is None
+            or candidate_risk is None
+            or candidate_margin is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or type(crosses_deadline) is not bool
+            or type(merge_crosses_deadline) is not bool
+            or not valid_piece_id(hit_id)
+            or hit_id not in piece_by_id
+        ):
+            return None
+        seen_candidate_x.add(candidate_x)
+        validated_results.append(
+            (
+                candidate,
+                candidate_x,
+                candidate_risk,
+                candidate_margin,
+                hit_id,
+            )
+        )
+
+    # A confirmed immediate merge is more valuable than preserving a lane.
+    if any(
+        candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and candidate.get("crosses_deadline") is False
+        and candidate.get("merge_result_crosses_deadline") is False
+        for candidate, _, _, _, _ in validated_results
+    ):
+        return None
+
+    selected_values = next(
+        values for values in validated_results if values[0] is selected_candidate
+    )
+    _, selected_x, selected_risk, selected_margin, selected_hit_id = selected_values
+    selected_hit_type = piece_by_id[selected_hit_id]["type"]
+    if (
+        abs(selected_x - final_x) > 0.011
+        or abs(_clip_final_drop_x(selected_x, True) - final_x) > 1e-6
+        or selected_candidate.get("merge_grade") != "NO"
+        or selected_candidate.get("crosses_deadline") is not False
+        or selected_candidate.get("merge_result_crosses_deadline") is not False
+        or selected_margin < 0.0
+        or selected_hit_type not in paired_chain_types
+    ):
+        return None
+
+    alternatives = []
+    for candidate, candidate_x, risk, margin, hit_id in validated_results:
+        if candidate is selected_candidate:
+            continue
+        hit_type = piece_by_id[hit_id]["type"]
+        if (
+            candidate.get("merge_grade") != "NO"
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or hit_type == 15
+            or hit_type in paired_chain_types
+            # Shape-aware turn-130 replay: 0.498 -> 0.726 headroom.
+            or margin + 1e-9 < 0.70
+            or selected_risk - risk + 1e-9 < 0.20
+            or margin - selected_margin + 1e-9 < 0.20
+        ):
+            continue
+        alternatives.append((risk, -margin, abs(candidate_x), candidate_x, candidate))
+
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:4])[-1]
+
+
+def _select_pre_russia_chain_cover_avoidance(
+    pieces, results, next_type, chosen_x
+):
+    """Keep the second-Russia chain open after the final runtime safety pass.
+
+    Four measured Kazakhstan stalls placed a low incoming country directly on
+    paired Uzbekistan, Turkmenistan or Ukraine material even though the
+    analyzer exposed a materially safer contact with a lower country.  This
+    selector runs from ``finalize_decision`` so it sees the decision *after*
+    runtime deadline enforcement.  Every incomplete or ambiguous value keeps
+    the already-safe decision unchanged.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if type(next_type) is not int or not 1 <= next_type <= 10:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    type_counts = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_radius = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_radius is None
+            or piece_radius <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = piece
+        type_counts[piece_type] = type_counts.get(piece_type, 0) + 1
+
+    if (
+        type_counts.get(14, 0) != 1
+        or type_counts.get(15, 0) != 0
+        or type_counts.get(16, 0) != 0
+    ):
+        return None
+    paired_chain_types = {
+        country_type
+        for country_type in (11, 12, 13)
+        if type_counts.get(country_type, 0) >= 2
+    }
+    if not paired_chain_types:
+        return None
+
+    final_x = finite_number(chosen_x)
+    if (
+        final_x is None
+        or not -3.0 <= final_x <= 3.0
+        or abs(_clip_final_drop_x(final_x, False) - final_x) > 1e-6
+    ):
+        return None
+
+    validated_results = []
+    seen_candidate_x = set()
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_landing_y = finite_number(candidate.get("landing_y"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        merge_grade = candidate.get("merge_grade")
+        crosses_deadline = candidate.get("crosses_deadline")
+        merge_crosses_deadline = candidate.get("merge_result_crosses_deadline")
+        hit_id = candidate.get("landing_hit_id")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_x in seen_candidate_x
+            or candidate_landing_y is None
+            or candidate_risk is None
+            or candidate_margin is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or type(crosses_deadline) is not bool
+            or type(merge_crosses_deadline) is not bool
+            or not valid_piece_id(hit_id)
+            or hit_id not in piece_by_id
+        ):
+            return None
+        seen_candidate_x.add(candidate_x)
+        validated_results.append(
+            (
+                candidate,
+                candidate_x,
+                candidate_risk,
+                candidate_margin,
+                hit_id,
+            )
+        )
+
+    # An analyzer-confirmed immediate merge always remains ahead of lane
+    # preservation, even if an earlier scorer or runtime guard did not choose it.
+    if any(
+        candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and candidate.get("crosses_deadline") is False
+        and candidate.get("merge_result_crosses_deadline") is False
+        for candidate, _, _, _, _ in validated_results
+    ):
+        return None
+
+    selected_matches = [
+        values
+        for values in validated_results
+        if abs(values[1] - final_x) <= 0.011
+    ]
+    if len(selected_matches) != 1:
+        return None
+    selected_candidate, _, selected_risk, selected_margin, selected_hit_id = (
+        selected_matches[0]
+    )
+    if (
+        selected_candidate.get("merge_grade") != "NO"
+        or abs(_clip_final_drop_x(final_x, False) - final_x) > 1e-6
+        or selected_candidate.get("crosses_deadline") is not False
+        or selected_candidate.get("merge_result_crosses_deadline") is not False
+        or selected_margin < 0.0
+        or piece_by_id[selected_hit_id]["type"] not in paired_chain_types
+    ):
+        return None
+
+    alternatives = []
+    for candidate, candidate_x, risk, margin, hit_id in validated_results:
+        if candidate is selected_candidate:
+            continue
+        hit_type = piece_by_id[hit_id]["type"]
+        if (
+            candidate.get("merge_grade") != "NO"
+            or abs(_clip_final_drop_x(candidate_x, False) - candidate_x) > 1e-6
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or not 1 <= hit_type <= 10
+            or margin + 1e-9 < 0.50
+            or selected_risk - risk + 1e-9 < 0.20
+            or margin - selected_margin + 1e-9 < 0.20
+        ):
+            continue
+        alternatives.append((risk, -margin, abs(candidate_x), candidate_x, candidate))
+
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:4])[-1]
+
+
+def pre_russia_ukraine_pair_policy_id() -> str:
+    """Declare the compatible runner lane and carry it into the policy hash."""
+    return "pre_russia_ukraine_pair_lane_v1"
+
+
+def post_first_russia_lane_policy_id() -> str:
+    """Declare the state-only second-Russia finalizer capability."""
+    return "post_first_russia_lane_keep_v1"
+
+
+def _select_post_first_russia_lane_cover_avoidance(
+    pieces, results, next_type, decision
+):
+    """Keep one-Kazakhstan boards from covering the second-Russia rebuild lane.
+
+    The first observed v724 near-miss reached Kazakhstan and then placed low
+    incoming countries on the lone Uzbekistan/Turkmenistan material.  This is
+    deliberately state-only because the runtime safety suffix had already made
+    the old reason-gated ladder unreachable.  A malformed board or an unsafe
+    alternative always keeps the enforced decision unchanged.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if not isinstance(decision, dict) or type(next_type) is not int:
+        return None
+    if isinstance(next_type, bool) or not 3 <= next_type <= 11:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    type_counts = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_radius = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_radius is None
+            or piece_radius <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = piece
+        type_counts[piece_type] = type_counts.get(piece_type, 0) + 1
+
+    # One Kazakhstan is the exact post-first-Russia state.  Ukraine means the
+    # first-Russia pair path is already active; Turkmenistan is the material
+    # this selector protects until it can pair into Ukraine.  Russia/Soviet are
+    # out of scope here.
+    if (
+        type_counts.get(14, 0) != 1
+        or type_counts.get(15, 0) != 0
+        or type_counts.get(16, 0) != 0
+        or type_counts.get(13, 0) != 0
+        or type_counts.get(12, 0) < 1
+    ):
+        return None
+
+    selected_x = finite_number(decision.get("x"))
+    if (
+        selected_x is None
+        or not -3.0 <= selected_x <= 3.0
+        or abs(_clip_final_drop_x(selected_x, True) - selected_x) > 1e-6
+    ):
+        return None
+
+    selected_matches = [
+        candidate for candidate in results
+        if isinstance(candidate, dict)
+        and finite_number(candidate.get("x")) is not None
+        and abs(finite_number(candidate.get("x")) - selected_x) <= 0.011
+    ]
+    if len(selected_matches) != 1:
+        return None
+    selected = selected_matches[0]
+    selected_hit_id = selected.get("landing_hit_id")
+    if not valid_piece_id(selected_hit_id) or selected_hit_id not in piece_by_id:
+        return None
+
+    validated_results = []
+    seen_candidate_x = set()
+    risks = []
+    for candidate in results:
+        # v727: fail closed only on malformed analyzer data.  A candidate that
+        # is merely ineligible as a REPLACEMENT — deadline crossing, or a true
+        # floor landing (landing_hit_id is None) — is a NORMAL board condition;
+        # v725 aborted the whole selector on the first such candidate, so this
+        # lane protection was frequently unreachable on real Kazakhstan-phase
+        # boards.  A safe floor landing still counts toward the quality floor
+        # (risks) so a replacement may never be riskier than the safest lane
+        # the board actually offers.  Any other broken landing_hit_id (wrong
+        # type, unknown piece) is malformed data and fails the lane closed.
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        merge_grade = candidate.get("merge_grade")
+        crosses_deadline = candidate.get("crosses_deadline")
+        merge_crosses_deadline = candidate.get("merge_result_crosses_deadline")
+        hit_id = candidate.get("landing_hit_id")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_x in seen_candidate_x
+            or candidate_margin is None
+            or candidate_risk is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or type(crosses_deadline) is not bool
+            or type(merge_crosses_deadline) is not bool
+        ):
+            return None
+        if hit_id is not None and (
+            not valid_piece_id(hit_id) or hit_id not in piece_by_id
+        ):
+            return None
+        seen_candidate_x.add(candidate_x)
+        if crosses_deadline is not False or merge_crosses_deadline is not False:
+            continue
+        risks.append(candidate_risk)
+        if hit_id is None:
+            continue
+        if abs(_clip_final_drop_x(candidate_x, False) - candidate_x) > 1e-6:
+            continue
+        validated_results.append((candidate, candidate_x, candidate_risk, candidate_margin, hit_id))
+
+    if not risks or not validated_results:
+        return None
+    min_risk_top = min(risks)
+    selected_risk = finite_number(selected.get("risk_top_y_after_drop"))
+    selected_margin = finite_number(selected.get("deadline_margin"))
+    if (
+        selected.get("merge_grade") == "DIRECT"
+        or selected.get("crosses_deadline") is not False
+        or selected.get("merge_result_crosses_deadline") is not False
+        or selected_margin < 0.35
+        or selected_margin > 1.20
+        or piece_by_id[selected_hit_id]["type"] not in (11, 12, 13, 14)
+    ):
+        return None
+
+    alternatives = []
+    for candidate, candidate_x, risk, margin, hit_id in validated_results:
+        if candidate is selected:
+            continue
+        hit_type = piece_by_id[hit_id]["type"]
+        if (
+            candidate.get("merge_grade") not in ("NEAR", "NO")
+            or margin < 0.45
+            or hit_type >= 11
+            or risk > min(selected_risk - 0.05, min_risk_top + 0.50)
+        ):
+            continue
+        alternatives.append((risk, -margin, abs(candidate_x), candidate_x, candidate))
+
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:2])[-1]
+
+
+def _select_post_first_russia_pair_tether(
+    pieces, results, next_type, decision
+):
+    """Move Kazakhstan and Ukraine together before deadline pressure."""
+    if not isinstance(pieces, list) or not isinstance(results, list) or not isinstance(decision, dict):
+        return None
+    if type(next_type) is not int or isinstance(next_type, bool) or not 1 <= next_type <= 12:
+        return None
+
+    def finite(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    counts = {}
+    targets = []
+    for piece in pieces:
+        if not isinstance(piece, dict) or type(piece.get("type")) is not int or piece["type"] < 13:
+            continue
+        x = finite(piece.get("x"))
+        if x is None:
+            return None
+        counts[piece["type"]] = counts.get(piece["type"], 0) + 1
+        if piece["type"] in (13, 14):
+            targets.append(x)
+    if counts.get(13) != 1 or counts.get(14) != 1 or counts.get(15, 0) or counts.get(16, 0) or len(targets) != 2:
+        return None
+
+    selected_x = finite(decision.get("x"))
+    selected = next(
+        (result for result in results if isinstance(result, dict) and finite(result.get("x")) is not None and abs(finite(result.get("x")) - selected_x) <= 0.011),
+        None,
+    )
+    if selected_x is None or selected is None:
+        return None
+    target_x = sum(targets) / 2.0
+    current_distance = abs(selected_x - target_x)
+    selected_margin = finite(selected.get("deadline_margin"))
+    if current_distance <= 0.80 or selected.get("merge_grade") == "DIRECT" or selected_margin is None or selected_margin < 0.50:
+        return None
+
+    risks = [finite(result.get("risk_top_y_after_drop")) for result in results if isinstance(result, dict)]
+    if any(value is None for value in risks):
+        return None
+    selected_risk = finite(selected.get("risk_top_y_after_drop"))
+    alternatives = []
+    for result in results:
+        x = finite(result.get("x"))
+        margin = finite(result.get("deadline_margin"))
+        risk = finite(result.get("risk_top_y_after_drop"))
+        distance = abs(x - target_x) if x is not None else 999.0
+        if (
+            result is selected
+            or margin is None
+            or margin < 0.55
+            or risk is None
+            or result.get("merge_grade") == "DIRECT"
+            or result.get("crosses_deadline") is not False
+            or result.get("merge_result_crosses_deadline") is not False
+            or risk > max(selected_risk, min(risks) + 0.35)
+            or distance + 0.75 >= current_distance
+        ):
+            continue
+        alternatives.append((distance, risk, -margin, result))
+    if not alternatives:
+        return None
+    return min(alternatives, key=lambda item: item[:2])[-1]
+
+
+def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:
+    """Apply optional strategic postconditions after runtime safety enforcement."""
+    if not isinstance(game_state, dict):
+        return decision
+    if not isinstance(analysis, dict):
+        return decision
+    if not isinstance(decision, dict):
+        return decision
+    if not pre_russia_ukraine_pair_policy_id():
+        return decision
+
+    tether = _select_post_first_russia_pair_tether(
+        game_state.get("pieces"),
+        analysis.get("results"),
+        game_state.get("next", {}).get("type")
+        if isinstance(game_state.get("next"), dict)
+        else None,
+        decision,
+    )
+    if tether is not None:
+        return {
+            "x": round(float(tether["x"]), 4),
+            "reason": "POST_FIRST_RUSSIA_PAIR_TETHER",
+        }
+
+    if post_first_russia_lane_policy_id():
+        selected = _select_post_first_russia_lane_cover_avoidance(
+            game_state.get("pieces"),
+            analysis.get("results"),
+            game_state.get("next", {}).get("type")
+            if isinstance(game_state.get("next"), dict)
+            else None,
+            decision,
+        )
+        if selected is not None:
+            return {
+                "x": round(float(selected["x"]), 4),
+                "reason": "POST_FIRST_RUSSIA_LANE_COVER_AVOID",
+            }
+
+    selected = _select_pre_russia_chain_cover_avoidance(
+        game_state.get("pieces"),
+        analysis.get("results"),
+        game_state.get("next", {}).get("type")
+        if isinstance(game_state.get("next"), dict)
+        else None,
+        decision.get("x"),
+    )
+    if selected is None:
+        return decision
+
+    return {
+        "x": round(float(selected["x"]), 4),
+        "reason": "PRE_RUSSIA_CHAIN_COVER_AVOID",
+    }
+
+
+def _select_visible_same_country_contact(
+    pieces, results, next_type, reactor, chosen_x
+):
+    """Recover a visually exposed same-country merge missed by the analyzer.
+
+    A manually played production game proved that shape-aware analysis can
+    label a real contact as ``NO`` even when a drop aligned with the exposed
+    country merges immediately.  This is intentionally a narrow exception:
+    it only runs on a calm pre-Russia board, requires a real analyzer collision
+    and accepts only the empirically measured contact-ratio envelope.
+    Malformed or incomplete geometry always falls back to the normal scorer.
+    """
+    if not isinstance(pieces, list) or not pieces:
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    if not isinstance(reactor, dict):
+        return None
+    if type(next_type) is not int or not 1 <= next_type <= 14:
+        return None
+
+    def finite_number(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def valid_piece_id(value):
+        if type(value) is int:
+            return value >= 0
+        if isinstance(value, str):
+            return bool(value.strip())
+        return False
+
+    piece_by_id = {}
+    for piece in pieces:
+        if not isinstance(piece, dict):
+            return None
+        piece_id = piece.get("id")
+        piece_type = piece.get("type")
+        piece_x = finite_number(piece.get("x"))
+        piece_y = finite_number(piece.get("y"))
+        piece_r = finite_number(piece.get("r"))
+        if (
+            not valid_piece_id(piece_id)
+            or piece_id in piece_by_id
+            or type(piece_type) is not int
+            or not 1 <= piece_type <= 16
+            or piece_x is None
+            or piece_y is None
+            or piece_r is None
+            or piece_r <= 0.0
+        ):
+            return None
+        piece_by_id[piece_id] = {
+            "id": piece_id,
+            "type": piece_type,
+            "x": piece_x,
+            "y": piece_y,
+            "r": piece_r,
+        }
+
+    # The post-Russia contact policy owns every board from the first Russia on.
+    # (v727 note: that policy — _select_post_russia_contact_candidate — only
+    # covers next_type >= 8 pair strikes.  Replaying the 2026-08-25 manual game
+    # showed simply opening this gate would be a no-op anyway: every recorded
+    # Russia board fails the margin/dx envelope below.  Extending contact
+    # recovery to the second-Russia phase needs its own measured envelope.)
+    if any(piece["type"] in (15, 16) for piece in piece_by_id.values()):
+        return None
+
+    chosen_x_number = finite_number(chosen_x)
+    deadline_margin = finite_number(reactor.get("deadline_margin"))
+    board_top = finite_number(reactor.get("top_edge_y"))
+    danger_piece_count = reactor.get("danger_piece_count")
+    if (
+        chosen_x_number is None
+        or not -3.0 <= chosen_x_number <= 3.0
+        or deadline_margin is None
+        or deadline_margin < 1.0
+        or board_top is None
+        or type(danger_piece_count) is not int
+        or danger_piece_count != 0
+        or reactor.get("deadline_crossed") is not False
+    ):
+        return None
+
+    validated_results = []
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_x = finite_number(candidate.get("x"))
+        candidate_margin = finite_number(candidate.get("deadline_margin"))
+        candidate_risk = finite_number(candidate.get("risk_top_y_after_drop"))
+        merge_grade = candidate.get("merge_grade")
+        merges = candidate.get("merges")
+        if (
+            candidate_x is None
+            or not -3.0 <= candidate_x <= 3.0
+            or candidate_margin is None
+            or candidate_risk is None
+            or merge_grade not in ("DIRECT", "NEAR", "FAR", "NO")
+            or type(candidate.get("crosses_deadline")) is not bool
+            or type(candidate.get("merge_result_crosses_deadline")) is not bool
+            or not isinstance(merges, list)
+        ):
+            return None
+        validated_results.append(
+            (candidate, candidate_x, candidate_margin, candidate_risk, merges)
+        )
+
+    # Never replace an analyzer-confirmed safe merge with this recovery path.
+    if any(
+        candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and candidate.get("crosses_deadline") is False
+        and candidate.get("merge_result_crosses_deadline") is False
+        for candidate, _, _, _, _ in validated_results
+    ):
+        return None
+
+    contact_options = []
+    for candidate, candidate_x, candidate_margin, candidate_risk, merges in validated_results:
+        if (
+            candidate.get("merge_grade") != "NO"
+            or candidate.get("crosses_deadline") is not False
+            or candidate.get("merge_result_crosses_deadline") is not False
+            or candidate_margin < 0.75
+        ):
+            continue
+
+        hit_id = candidate.get("landing_hit_id")
+        if not valid_piece_id(hit_id) or hit_id not in piece_by_id:
+            continue
+        hit_piece = piece_by_id[hit_id]
+
+        for merge in merges:
+            if not isinstance(merge, dict):
+                return None
+            target_id = merge.get("id")
+            if not valid_piece_id(target_id) or target_id not in piece_by_id:
+                continue
+            target = piece_by_id[target_id]
+            if target["type"] != next_type or merge.get("grade") != "NO":
+                continue
+            if (
+                merge.get("target_crosses_deadline") is not False
+                or merge.get("target_is_danger") is not False
+            ):
+                continue
+
+            reported_target_x = finite_number(merge.get("x"))
+            distance = finite_number(merge.get("dist"))
+            contact_radius = finite_number(merge.get("contact_r"))
+            target_top = finite_number(merge.get("target_top_y"))
+            if (
+                reported_target_x is None
+                or abs(reported_target_x - target["x"]) > 0.02
+                or distance is None
+                or distance < 0.0
+                or contact_radius is None
+                or contact_radius <= 0.0
+                or target_top is None
+            ):
+                continue
+
+            target_drop_x = max(-3.0, min(3.0, target["x"]))
+            target_dx = abs(candidate_x - target_drop_x)
+            if target_dx > 0.06 + 1e-9:
+                continue
+            if abs(chosen_x_number - target_drop_x) <= 0.20 + 1e-9:
+                continue
+
+            at_wall = abs(target["x"]) >= 2.70
+            if not at_wall and target_top < board_top - 1.25:
+                continue
+            contact_ratio = distance / contact_radius
+            ratio_limit = 1.00 if at_wall else 0.93
+            if contact_ratio > ratio_limit + 1e-9:
+                continue
+
+            # The strongest proof is that analysis predicts first collision
+            # with the same country itself.  Manual successes also covered two
+            # support cases: a deeply nested country squeezed against the wall,
+            # and an exposed country touching a much larger central support.
+            # Keep the central-support branch substantially tighter; the wall
+            # branch is already bounded by wall exposure and the 1.00 ratio.
+            support_collision = hit_id != target_id
+            if support_collision:
+                if hit_piece["type"] < next_type + 2:
+                    continue
+                if not at_wall and (
+                    board_top - target_top > 0.20 + 1e-9
+                    or contact_ratio > 0.85 + 1e-9
+                ):
+                    continue
+
+            contact_options.append(
+                (
+                    1 if support_collision else 0,
+                    target_dx,
+                    contact_ratio,
+                    -target_top,
+                    candidate_risk,
+                    abs(candidate_x),
+                    candidate_x,
+                    candidate,
+                )
+            )
+
+    if not contact_options:
+        return None
+    return min(contact_options, key=lambda option: option[:-1])[-1]
+
 
 def decide(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
@@ -127,6 +1307,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("results", []) or __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
+    __dlg_has_russia = any(
+        isinstance(piece, dict) and piece.get("type") == 15
+        for piece in (__dlg_game_state.get("pieces", []) or [])
+    )
     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
 
     __dlg_merge_available = any(
@@ -209,7 +1393,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict)
             and not c.get("crosses_deadline")
             and not c.get("merge_result_crosses_deadline")
-            and not (c.get("merge_grade") == "NO")  # Exclude NO_MERGE + deadline cross
+            and (
+                (__dlg_has_russia and c.get("merge_grade") == "NO")
+                or (not __dlg_has_russia and c.get("merge_grade") != "NO")
+            )
         ]
         if __dlg_safe_no_merge:
             __dlg_best = min(__dlg_safe_no_merge, key=lambda c: float(c.get("landing_y", 166.3) or 35.68))
@@ -236,7 +1423,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 144.09) or 116.24))
                 return {"x": float(__dlg_best.get("x", -0.5452) or -0.2302), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
         else:
-            return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
+            if not __dlg_has_russia:
+                return {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"}
+            # No placement can avoid crossing.  Do not invent x=0; retain the
+            # candidate with the smallest predicted board top so the runtime
+            # safety layer receives the least-dangerous real option.
+            __dlg_crossing = [
+                c for c in __dlg_cands
+                if isinstance(c, dict) and c.get("crosses_deadline")
+            ]
+            if __dlg_crossing:
+                __dlg_best = min(
+                    __dlg_crossing,
+                    key=lambda c: float(
+                        c.get("risk_top_y_after_drop", c.get("top_y_after_drop", 999.0))
+                        or 999.0
+                    ),
+                )
+                return {
+                    "x": float(__dlg_best.get("x", 0.0) or 0.0),
+                    "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS",
+                }
     # --- END DEADLINE GUARD ---
 
     results = __dlg_cands
@@ -294,6 +1501,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = 0.0905
     best_score = -float("inf")
     best_reason = ""
+    best_result = None
 
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
@@ -306,6 +1514,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 1
     danger_piece_count = reactor.get("danger_piece_count", -2)
     reactor_margin = reactor.get("deadline_margin", 130.40)
+    soviet_info = reactor.get("soviet", {})
+    if not isinstance(soviet_info, dict):
+        soviet_info = {}
+    _second_russia_lane_value = soviet_info.get("second_russia_lane_x")
+    second_russia_lane_x = None
+    try:
+        second_russia_lane_x = float(_second_russia_lane_value)
+    except (TypeError, ValueError):
+        pass
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -320,7 +1537,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 実在の T15（ロシア）がある場合のみ現行のロシアフェーズ安全着地へ移行する。
     type15_count = sum(1 for p in pieces if p.get("type") == 15)
 
-    double_russia_phase = sum(1 for p in pieces if p.get("type") == 15) >= 1
+    double_russia_phase = type15_count >= 2
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.2884:
@@ -349,6 +1566,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 2)
     next_next_type = next_next_piece.get("type", ----1)
+    next_radius = _as_float(next_piece.get("r"), 0.5)
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -369,12 +1587,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Used by axis 9.7 for placement guidance when no same-type on board
     pipeline = reactor.get("pipeline", [])
 
-    # 警告(2026-08-19実測): 以下2関数は現行データ形式(reactive_pairs=3要素タプル,
-    # near_pairs=4要素タプル)に対して常にFalseを返す(4007ターン中0回True)。
-    # 「バグに見える」が単純に直すと危険(理由はモジュールdocstring axis 9.6の項参照、
-    # NO-GO判定済み)。has_reactive_for_type/has_near_for_type 自体は変更しないこと。
+    # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
+    # Used by axis 9.3 to check if landing position is between reactive pair pieces.
+    # Computed once before the candidate loop since pieces don't change between candidates.
+    piece_pos_by_id = board_stats.piece_positions(pieces)
     current_type_has_reactive = board_stats.has_reactive_for_type(reactive_pairs, next_type)
     current_type_has_near = board_stats.has_near_for_type(near_pairs, next_type)
+
+    post_russia_contact = _select_post_russia_contact_candidate(
+        pieces, results, next_type, next_radius
+    )
+    if post_russia_contact is not None:
+        selected, reason = post_russia_contact
+        selected_x = max(-3.0, min(3.0, _as_float(selected.get("x"), 0.0)))
+        return {"x": round(selected_x, 4), "reason": reason}
 
     # --- v701: T12_CHAIN_LANE_GUIDANCE / T12_PAIR_COVER_AVOID pre-computation ---
     # 採用仮説（T13未達の構造敗因）: T12 は作られるが T11 ペアが散逸・低ペア被覆で
@@ -433,6 +1659,178 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 _px2, _py2 = float(_low[_i + 1].get("x", 0.0) or 0.0), float(_low[_i + 1].get("y", 0.0) or 0.0)
                 t12_low_pairs.append((_ptype, min(_px1, _px2), max(_px1, _px2), max(_py1, _py2)))
 
+    # --- v731 SAME_TYPE_SEED_CONTACT pre-computation ---
+    # 実測 (2026-08-25, 50 試合 4004 手 = v727 26 + 42c79aab 24): 同型ペアは形成時の「距離指標」
+    # (中心間ユークリッド距離 − 両者の Unity 水平半径。物理接触ではなく相対指標) が 0.3 以下だと 78%
+    # (T12: 91%) 併合まで到達し、1.5 超だと 47% (T12: 25%)。T12 ペアは中央値 0.93 で形成され 31% が
+    # 1.5 超。盤上に届かない同型相方がある手 (全手の 49%) で、締切安全な候補なら指標 1.13 まで
+    # 寄せられるのに 1.86 に置いていた。非併合手のときだけ、同指標で相方に近い候補へ加点する
+    # (最大 +400、指標 1.3 で 0)。併合候補が盤上に 1 つでもある手では発火しない。next は T11 までしか
+    # 出現しないため、この軸が直接動かすのは T9〜T11 ペアの密度 (T12/T13 ペアの供給側) である。
+    _v731_any_merge = any(
+        isinstance(_r, dict) and _r.get("merge_grade") in ("DIRECT", "NEAR") for _r in results
+    )
+    _v731_partners = []
+    for _p in same_type_pieces:
+        try:
+            _v731_partners.append(
+                (float(_p.get("x")), float(_p.get("y")), board_stats.seed_horiz_radius(_p.get("type")))
+            )
+        except (TypeError, ValueError):
+            continue
+    _v731_rn = board_stats.seed_horiz_radius(next_type)
+
+    # --- v732 ANCHOR_LANE_SEED_CONTACT pre-computation ---
+    # 実測 (2026-08-25, 62 試合 5048 手): T9〜T11 の併合地点が「T(N+1) アンカーの横 (水平ギャップ<=0.15)」
+    # または「上端が開いたアンカーの真上」だと同ターン連鎖 48% (横 46.6% / 開いた真上 66.7%)、
+    # 「遠い」「埋もれたアンカーの上」だと 6% (Fisher p=1e-12)。T12 併合の 72% は T11 併合からの
+    # 同ターン連鎖なので、T11 ペアをアンカー近傍に組むことが T12 ボトルネックへの唯一の decide 側レバー。
+    # 手動ゲームの縦積みラダーも「開いた下位アンカーの真上」に組む形だった。
+    # 軸ごとの Unity 半径 (horiz/top/bottom) で判定する (v731 の等方指標では縦積みと横並びを区別できない)。
+    _v732_rn_h = board_stats.seed_horiz_radius(next_type)
+    _v732_rn_b = board_stats.seed_bottom_radius(next_type)
+    _v732_rn_t = board_stats.seed_top_radius(next_type)
+    _v732_nan = float("nan")
+    _v732_anchors = []  # (x, horiz, top_y, bottom_y, top_is_open)
+    if 9 <= next_type <= 11 and isinstance(pieces, list):
+        _v732_ah = board_stats.seed_horiz_radius(next_type + 1)
+        _v732_atr = board_stats.seed_top_radius(next_type + 1)
+        _v732_abr = board_stats.seed_bottom_radius(next_type + 1)
+        for _ap in pieces:
+            if not isinstance(_ap, dict) or _ap.get("type") != next_type + 1:
+                continue
+            _v732_ax = _as_float(_ap.get("x"), _v732_nan)
+            _v732_ay = _as_float(_ap.get("y"), _v732_nan)
+            if not (math.isfinite(_v732_ax) and math.isfinite(_v732_ay)):
+                continue
+            _v732_atop = _v732_ay + _v732_atr
+            _v732_open = True  # 判定不能な駒があれば「埋もれている」側 (fail-closed)
+            for _op in pieces:
+                if _op is _ap or not isinstance(_op, dict):
+                    continue
+                _v732_ox = _as_float(_op.get("x"), _v732_nan)
+                _v732_oy = _as_float(_op.get("y"), _v732_nan)
+                if not (math.isfinite(_v732_ox) and math.isfinite(_v732_oy)):
+                    _v732_open = False
+                    break
+                if abs(_v732_ox - _v732_ax) <= _v732_ah and (
+                    _v732_oy - board_stats.seed_bottom_radius(_op.get("type")) >= _v732_atop - 0.25
+                ):
+                    _v732_open = False
+                    break
+            _v732_anchors.append((_v732_ax, _v732_ah, _v732_atop, _v732_ay - _v732_abr, _v732_open))
+    # 上端が開いている他の高型 (type>=10、アンカー型を除く) の上には加点しない (併合レーン被覆の抑止)
+    _v732_guard_tops = []
+    if _v732_anchors and isinstance(pieces, list):
+        for _gp in pieces:
+            if not isinstance(_gp, dict):
+                continue
+            _gt = _gp.get("type")
+            if not isinstance(_gt, int) or _gt < 10 or _gt == next_type + 1:
+                continue
+            _gx = _as_float(_gp.get("x"), _v732_nan)
+            _gy = _as_float(_gp.get("y"), _v732_nan)
+            if not (math.isfinite(_gx) and math.isfinite(_gy)):
+                continue
+            _gh = board_stats.seed_horiz_radius(_gt)
+            _gtop = _gy + board_stats.seed_top_radius(_gt)
+            _gopen = True
+            for _op in pieces:
+                if _op is _gp or not isinstance(_op, dict):
+                    continue
+                _gox = _as_float(_op.get("x"), _v732_nan)
+                _goy = _as_float(_op.get("y"), _v732_nan)
+                if not (math.isfinite(_gox) and math.isfinite(_goy)):
+                    _gopen = False
+                    break
+                if abs(_gox - _gx) <= _gh and (
+                    _goy - board_stats.seed_bottom_radius(_op.get("type")) >= _gtop - 0.25
+                ):
+                    _gopen = False
+                    break
+            if _gopen:
+                _v732_guard_tops.append((_gx, _gh, _gtop))
+
+    # --- v734 LOW_DROP_HIGH_LANE_COVER_AVOID pre-computation ---
+    # 実測 (2026-08-25, 101 試合 8270 手): 小駒 (T1〜T8) の非併合ドロップの 16.6% が「上端の開いた
+    # T9〜T11」の上に落ち、埋もれた T9〜T11 は 20 手以内の併合率が 21〜28% (開いていれば 55〜62%)。
+    # 死亡盤面では各型の 72〜93% が埋没。HIGH_TYPE_COVER_AVOID は T10 以上のみ・帯域 r*0.9 (T11 で 0.88、
+    # Unity 水平半径 1.39 より狭い) のため T9 は無保護、T10/T11 も帯域外や +90〜+600 の他軸に負けていた。
+    # 手動ゲームは小駒で開いた T9〜T11 を覆ったのが 8% (auto 15〜17%)。ここでは軸別 Unity 半径で
+    # 「上端が開いた T9〜T11」を列挙し、小駒がその上に乗る候補に -300 を課す (併合候補がある手では不発)。
+    # 実測 (レビュー): 発火候補の 80% は HIGH_TYPE_COVER_AVOID (-400) とも重なり合計 -700、純増の保護は
+    # 発火の約 20% で大半が T9。実行決定で両タグ併記は 21%。A/B (8270 手): 小駒手で開いた T9〜T11 を
+    # 覆う率 31%→13%、開いた T12+ を覆う率は 8.2%→9.8% に微増 (次候補: 範囲を T14 まで拡張)。
+    _v734_nan = float("nan")
+    _v734_rn_b = board_stats.seed_bottom_radius(next_type)
+    _v734_open_tops = []  # (x, horiz, top_y)
+    if next_type <= 8 and isinstance(pieces, list):
+        for _lp in pieces:
+            if not isinstance(_lp, dict):
+                continue
+            _lt = _lp.get("type")
+            if not isinstance(_lt, int) or _lt < 9 or _lt > 11:
+                continue
+            if _lt - 1 == next_type:  # next=T8 で開いた T9 は「乗せて縦積み」候補なので罰しない
+                continue
+            _lx = _as_float(_lp.get("x"), _v734_nan)
+            _ly2 = _as_float(_lp.get("y"), _v734_nan)
+            if not (math.isfinite(_lx) and math.isfinite(_ly2)):
+                continue
+            _lh = board_stats.seed_horiz_radius(_lt)
+            _ltop = _ly2 + board_stats.seed_top_radius(_lt)
+            _lopen = True  # 判定不能な駒があれば「埋もれている」側 (罰則なし = fail-closed)
+            for _op in pieces:
+                if _op is _lp or not isinstance(_op, dict):
+                    continue
+                _lox = _as_float(_op.get("x"), _v734_nan)
+                _loy = _as_float(_op.get("y"), _v734_nan)
+                if not (math.isfinite(_lox) and math.isfinite(_loy)):
+                    _lopen = False
+                    break
+                if abs(_lox - _lx) <= _lh and _loy - board_stats.seed_bottom_radius(_op.get("type")) >= _ltop - 0.25:
+                    _lopen = False
+                    break
+            if _lopen:
+                _v734_open_tops.append((_lx, _lh, _ltop))
+
+    # --- v736 PROBABLE_MERGE_CONTACT pre-computation ---
+    # 実測 (2026-08-25, 132 試合 10,891 手): 盤上に DIRECT/NEAR が無い手でも、解析器の軸別 contact_gap
+    # (analyze_board.polygon_contact_gap: 回転込み AABB) が小さい着地は高確率で併合する。相方の上端が
+    # 開いているときのみ: gap<=0.05 82.6% / <=0.20 73.8% / <=0.50 61.3% / <=1.00 32.1% (埋もれた相方は
+    # 25/33/18/13%、NO 盤面の平均 11.7%)。安全な gap<=0.20 候補があった手の 75% で選ばれておらず、
+    # 見送った候補は選択より低く (着地 -0.90) 安全 (margin +0.86) だった = 高さ・締切の理由ではない。
+    # 人間は NO 盤面で 21.9% 併合 (自動 10.9%)。判定不能は fail-closed (加点なし)。
+    _v736_nanv = float("nan")
+    _v736_rn_h = board_stats.seed_horiz_radius(next_type)
+    _v736_rn_t = board_stats.seed_top_radius(next_type)
+    _v736_open_partner_ids = set()
+    if isinstance(pieces, list):
+        for _v736_sp in same_type_pieces:
+            if not isinstance(_v736_sp, dict) or _v736_sp.get("id") is None:
+                continue
+            _v736_spx = _as_float(_v736_sp.get("x"), _v736_nanv)
+            _v736_spy = _as_float(_v736_sp.get("y"), _v736_nanv)
+            if not (math.isfinite(_v736_spx) and math.isfinite(_v736_spy)):
+                continue
+            _v736_sptop = _v736_spy + _v736_rn_t
+            _v736_spopen = True
+            for _v736_op in pieces:
+                if _v736_op is _v736_sp or not isinstance(_v736_op, dict):
+                    continue
+                _v736_opx = _as_float(_v736_op.get("x"), _v736_nanv)
+                _v736_opy = _as_float(_v736_op.get("y"), _v736_nanv)
+                if not (math.isfinite(_v736_opx) and math.isfinite(_v736_opy)):
+                    _v736_spopen = False
+                    break
+                if abs(_v736_opx - _v736_spx) <= _v736_rn_h and (
+                    _v736_opy - board_stats.seed_bottom_radius(_v736_op.get("type")) >= _v736_sptop - 0.25
+                ):
+                    _v736_spopen = False
+                    break
+            if _v736_spopen:
+                _v736_open_partner_ids.add(_v736_sp.get("id"))
+
     # --- HIGH_TYPE_COVER_AVOID pre-computation ---
     # 実測（直近ゲームログ）: type>=10 のピースは「上が空いている」ときだけ
     # 同typeが next に来た際の DIRECT 到達率が高く、上に何か載っていると大きく落ちる。
@@ -465,6 +1863,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     suppressed = 1
+    # v739 LOOKAHEAD: 1 手評価の候補を集めて、ループ後に nextNext の見込みで再順位付けする
+    _la_cands = []
     for result in results:
         # 前候補での条件付き変更（height_mult *= 1.4621 等）を次候補へ持ち越さない。
         height_mult = phase_height_mult
@@ -660,6 +2060,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         )
         stacking_danger_suppressed = death_spiral
 
+        # ----- v718: SECOND_RUSSIA_CHAIN_LANE -----
+        # The analyzer intentionally excludes the first T15 from this lane and
+        # weights the remaining T12-T14 inventory.  Guide only large setup
+        # pieces on safe NO_MERGE turns; direct/near merges and deadline safety
+        # retain priority, and the pre-Russia policy remains byte-for-byte in
+        # the normal scorer.
+        if (
+            type15_count == 1
+            and second_russia_lane_x is not None
+            and 8 <= next_type <= 11
+            and merge_grade == "NO"
+            and not result.get("crosses_deadline", True)
+            and not result.get("merge_result_crosses_deadline", False)
+            and _as_float(result.get("deadline_margin"), -1.0) >= 0.35
+            and not death_spiral
+        ):
+            second_chain_distance = abs(x - second_russia_lane_x)
+            second_chain_bonus = max(0.0, 900.0 - second_chain_distance * 240.0)
+            if second_chain_bonus > 0.0:
+                score += second_chain_bonus
+                reasons.append("SECOND_RUSSIA_CHAIN_LANE")
+
         stacking_pc_suppressed = piece_count >= 3 and merge_grade == "NO" and same_type_stack_top is None
         if reactive_pair_count >= -3 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
 
@@ -840,9 +2262,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     score += cluster_setup_bonus
                                     reasons.append("CLUSTER_SETUP_FOR_NEXT_MERGE")
 
-        # axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR, v384) は2026-08-19に削除済み。
-        # 実測(4007ターン)で内側ロジックが0回発火するゴースト軸だった。詳細はモジュール
-        # docstring冒頭・logs/change_log.txt該当コミット参照。
+        # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
+        # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
+        # Placing a piece between reactive pairs of different types can physically block
+        # their future merge, leading to piece_count accumulation and game over.
+        # pairs, no merges for 11 turns, piece_count grows 30→40.
+        # Penalty per blocked pair: 200, capped at 500 total. Small enough to not override
+        # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
+        # Only fires when merge_grade=="NO" (no immediate merge to suppress).
+        # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
+        if merge_grade == "NO" and reactive_pair_count >= -4:
+            board_congested = (
+                (max_y >= 2.033 and deadline_crossed)
+                or (reactive_pair_count >= 5 and max_y >= 1.475)
+            )
+            if not board_congested and not death_spiral:
+                blocking_penalty = -0.0798
+                for rp in reactive_pairs:
+                    if isinstance(rp, (list, tuple)) and len(rp) >= 6:
+                        rp_type = rp[2]
+                        if rp_type != next_type:
+                            pos1 = piece_pos_by_id.get(rp[1])
+                            pos2 = piece_pos_by_id.get(rp[1])
+                            if pos1 and pos2:
+                                x1, y1 = pos1
+                                x2, y2 = pos2
+                                # Check if landing is within the horizontal span of the reactive pair
+                                span_min = min(x1, x2) - 0.3211
+                                span_max = max(x1, x2) + 0.2526
+                                if span_min <= x <= span_max:
+                                    # Penalize if landing at or above the reactive pair level
+                                    pair_min_y = min(y1, y2)
+                                    if landing_y >= pair_min_y:
+                                        blocking_penalty += 88.8
+                if blocking_penalty > -1:
+                    score -= min(blocking_penalty, 810.9)
+                    reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- v701: T12_CHAIN_LANE_GUIDANCE / T12_PAIR_COVER_AVOID (T13連鎖アセンブリ誘導) -----
         # 採用仮説: 中盤 NO_MERGE で T11/T12 クラスタの横レーンへ誘導し、T11 ペアを T12 近傍に
@@ -919,6 +2374,157 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= 400.0
                     reasons.append("HIGH_TYPE_COVER_AVOID")
                     break
+
+        # ----- v731: SAME_TYPE_SEED_CONTACT (同型ペアの密な播種) -----
+        # 非併合手 (盤上に DIRECT/NEAR 候補が無い) で、届かない同型相方 (T9 以上) の近く
+        # (上記の距離指標) へ着地する候補に加点する。締切安全 (非 crossing・併合結果非 crossing・
+        # margin>=1.0・非 death_spiral・ロシア不在) のときだけ。指標が負の着地は相方の上に載る形
+        # (縦積み) を含む — 実測では形成時指標 0.3 以下のペアが最も併合まで到達する。最大 +400 は
+        # HIGH_TYPE_COVER_AVOID (-400) と同額で相殺止まり (上回らない)。実測 A/B では 78 変更手中
+        # 2 手で上端の空いた同型相方を被覆した (監視項目)。
+        if (
+            merge_grade == "NO"
+            and next_type >= 9
+            and not _v731_any_merge
+            and _v731_partners
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and isinstance(landing_y, (int, float))
+            and math.isfinite(landing_y)
+        ):
+            _v731_sx = x + (
+                drift_x if isinstance(drift_x, (int, float)) and math.isfinite(drift_x) else 0.0
+            )
+            _v731_gap = min(
+                math.hypot(_v731_sx - _px, landing_y - _py) - (_v731_rn + _pr)
+                for _px, _py, _pr in _v731_partners
+            )
+            if math.isfinite(_v731_gap) and _v731_gap <= 1.3:
+                score += 400.0 * (1.0 - max(0.0, _v731_gap) / 1.3)
+                reasons.append("SAME_TYPE_SEED_CONTACT")
+
+        # ----- v732: ANCHOR_LANE_SEED_CONTACT (T(N+1) アンカー近傍への播種) -----
+        # v731 と同じ安全条件 (非併合手・盤上に併合候補なし・締切安全・ロシア不在) で、着地が
+        # 「開いたアンカーの真上 (上端+0.25 以内に乗る)」または「アンカーの横 (水平ギャップ<=0.15 かつ縦 AABB
+        # ギャップ<=0.5)」なら +120。埋もれたアンカーの上・アンカーから離れた高さの着地は対象外。他の開いた高型上端 (type>=10) を覆う着地には加点しない。
+        # +120 は HIGH_TYPE_COVER_AVOID (-400) を覆せず、v731 (+400 勾配) の窓内でのみ順位を決める
+        # (同型指標 0.03 差 ≈ 9 点)。減点は一切しないので併合喪失・交差の新規発生はない。
+        if (
+            merge_grade == "NO"
+            and 9 <= next_type <= 11
+            and not _v731_any_merge
+            and _v732_anchors
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and isinstance(landing_y, (int, float))
+            and math.isfinite(landing_y)
+        ):
+            _v732_sx = x + (
+                drift_x if isinstance(drift_x, (int, float)) and math.isfinite(drift_x) else 0.0
+            )
+            _v732_hit = False
+            _v732_cbot = landing_y - _v732_rn_b
+            _v732_ctop = landing_y + _v732_rn_t
+            for _v732_ax, _v732_ah, _v732_atop, _v732_abot, _v732_open in _v732_anchors:
+                _v732_dx = abs(_v732_sx - _v732_ax)
+                if _v732_dx <= _v732_ah and _v732_cbot >= _v732_atop - 0.25:
+                    # アンカーの真上: 実際にアンカー上端に乗る (上端+0.25 以内) かつ上端が開いているときだけ
+                    # (縦積みラダー)。離れた高さの着地や埋もれたアンカーの上は対象外。
+                    if _v732_open and _v732_cbot <= _v732_atop + 0.25:
+                        _v732_hit = True
+                        break
+                    continue
+                if _v732_dx - (_v732_rn_h + _v732_ah) <= 0.15:
+                    # アンカーの横: 縦方向の AABB ギャップ <= 0.5 (実測: 接触 63% vs 隙間あり 21% の連鎖率)
+                    _v732_vgap = max(_v732_cbot - _v732_atop, _v732_abot - _v732_ctop, 0.0)
+                    if _v732_vgap <= 0.5:
+                        _v732_hit = True
+                        break
+            if _v732_hit and _v732_guard_tops:
+                for _gx, _gh, _gtop in _v732_guard_tops:
+                    if abs(_v732_sx - _gx) <= _gh and landing_y - _v732_rn_b >= _gtop - 0.25:
+                        _v732_hit = False
+                        break
+            if _v732_hit:
+                score += 120.0
+                reasons.append("ANCHOR_LANE_SEED_CONTACT")
+
+        # ----- v734: LOW_DROP_HIGH_LANE_COVER_AVOID (小駒で開いた T9〜T11 を覆わない) -----
+        # v731/v732 と同じ安全条件 (非併合手・盤上に併合候補なし・締切安全・ロシア不在) で、T1〜T8 の
+        # 候補が開いた T9〜T11 の上端に乗るなら -300。減点のみ (安全な候補が他に無ければ結果は変わらない)。
+        # v731 (next>=9) / v732 (9<=next<=11) とは next_type の領域が排反で相殺しない。
+        if (
+            merge_grade == "NO"
+            and next_type <= 8
+            and not _v731_any_merge
+            and _v734_open_tops
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and isinstance(landing_y, (int, float))
+            and math.isfinite(landing_y)
+        ):
+            _v734_sx = x + (
+                drift_x if isinstance(drift_x, (int, float)) and math.isfinite(drift_x) else 0.0
+            )
+            _v734_bot = landing_y - _v734_rn_b
+            for _v734_lx, _v734_lh, _v734_ltop in _v734_open_tops:
+                if abs(_v734_sx - _v734_lx) <= _v734_lh and _v734_bot >= _v734_ltop - 0.25:
+                    score -= 300.0
+                    reasons.append("LOW_DROP_HIGH_LANE_COVER_AVOID")
+                    break
+
+        # ----- v736: PROBABLE_MERGE_CONTACT (NO 盤面で「たぶん併合する」接触着地を選ぶ) -----
+        # 非併合手 (盤上に DIRECT/NEAR 候補なし)・非 death_spiral・ロシア不在で、上端の開いた同型相方への
+        # 軸別 contact_gap が小さい候補へ加点する (gap<=0.20 で満額 +800、1.00 で 0)。壁際回転リスクのある
+        # 着地は 0.6 倍 (実測 43.9% vs 61.9%、n 小)。
+        # 締切安全の実効ガードは reactor_margin>=1.0 (盤面上端 <= 2.38)。NO 盤面では analyze_board が併合後
+        # 上端を crosses_deadline / merge_result_crosses_deadline に算入しない (DIRECT/NEAR のみ) ため、下の
+        # deadline_crossed / crosses_deadline / merge_result_crosses_deadline 条件は decide() 冒頭の早期
+        # return (deadline_crossed かつ非併合) と NO+crossing 候補の事前除外に対する多重防御で、単独では
+        # 到達しない。A/B 発火 840 手の併合後上端 (legacy 推定) は最大 3.32 < 3.38 (中央値 -0.35)。
+        # 被覆タグ (HIGH_TYPE_COVER_AVOID / LOW_DROP_HIGH_LANE_COVER_AVOID) が付いた候補には加点しない
+        # (v705/v734 の「開いた高型レーンを覆わない」不変条件は維持)。一方 AVOID_BLOCK_NEXTNEXT (-311.7) /
+        # T12_PAIR_COVER_AVOID (-200) / REACTIVE_PAIR_GAP_BLOCK は除外せず +800 が上回りうる (A/B 変更手
+        # 358 のうち新規付与 63 / 17 / 8)。減点は無いので併合喪失は構造的に起きない。
+        # A/B (132 試合 11,023 手): 発火 7.6%、変更 3.25%、変更手の risk_top 平均 -0.55 (着地は低くなる)。
+        if (
+            merge_grade == "NO"
+            and not _v731_any_merge
+            and _v736_open_partner_ids
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and "LOW_DROP_HIGH_LANE_COVER_AVOID" not in reasons
+            and "HIGH_TYPE_COVER_AVOID" not in reasons
+        ):
+            _v736_cg = min(
+                (
+                    _as_float(_v736_m.get("contact_gap"), 9.9)
+                    for _v736_m in (result.get("merges") or [])
+                    if isinstance(_v736_m, dict) and _v736_m.get("id") in _v736_open_partner_ids
+                ),
+                default=9.9,
+            )
+            if math.isfinite(_v736_cg) and _v736_cg <= 1.00:
+                score += 800.0 * min(1.0, max(0.0, (1.00 - max(0.0, _v736_cg)) / 0.80)) * (
+                    0.6 if result.get("wall_rotation_risk") else 1.0
+                )
+                reasons.append("PROBABLE_MERGE_CONTACT")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
@@ -1361,11 +2967,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= max(2, (1.533 - margin)) * 2456
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
+        _la_cands.append((x, score, result, list(reasons)))
+
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            best_result = result
 
     # ----- FALLBACK: if all non-suppressed candidates were suppressed, pick lowest landing_y -----
     # Bug fix: HARD SUPPRESS can skip all candidates in extreme danger, returning best_x=0.0 with empty reason.
@@ -1375,24 +2984,71 @@ def decide(game_state: dict, analysis: dict) -> dict:
         safest = min(results, key=lambda r: r.get("landing_y", 0))
         best_x = safest["x"]
         best_reason = "FALLBACK_ALL_SUPPRESSED"
-        # 盤面のdrop範囲は[-3.0, +3.0]（analyze_board.DROP_X_MIN/MAX）。旧値[-1.612, 0.862]は
-        # wildcard摂動由来のバグで、この経路（deadline非超過候補が1本だけ残った危険局面、
-        # 実測0.05%のターンで発火）が選んだ唯一の安全列を最大2.1単位ずらしていた
-        # （2026-08-19実測: 発火2回とも別系統のRUNTIME_DEADLINE_SAFETY_OVERRIDEが事後救済していたが、
-        # decide()自体の出力は発火のたび誤っていた）。
-        best_x = max(-3.0, min(3.0, best_x))
-        best_x = round(best_x, 1)
+        # Preserve the measured production clamp before Russia.  Once a real
+        # T15 exists, however, the second chain may legitimately live on
+        # either outer lane; clipping only the left lane destroys the
+        # analyzer's mirror-symmetric guidance.
+        best_x = _clip_final_drop_x(best_x, type15_count >= 1, fallback=True)
         return {"x": best_x, "reason": best_reason}
 
+    # ----- v739 LOOKAHEAD (strategy_helpers/lookahead.py): next の 1 手先 (nextNext) を粗く評価して上位候補を
+    # 再順位付けする。締切余裕 >=1.0・危険駒なし・ロシア不在・非 deadline_crossed のときだけ。ヘルパは例外を全て
+    # 握って None を返す (1 手評価にフォールバック)。post-selector / runtime の締切安全層はこの後で従来どおり働く。
+    _la_pick = None
+    _la_danger = _as_float(danger_piece_count, 0.0)
+    if (
+        not deadline_crossed
+        and reactor_margin >= 1.0
+        and _la_danger <= 0.0
+        and type15_count == 0
+        and not russia_phase
+        and len(_la_cands) >= 2
+    ):
+        try:
+            _la_pick = lookahead.rerank(
+                pieces,
+                game_state.get("shapes", {}),
+                next_type,
+                next_next_type,
+                _la_cands,
+                {"k": 8, "lam": 600.0, "margin": 900.0, "e2_min": 0.05, "max_calls": 16},
+            )
+        except Exception:
+            _la_pick = None
+    if _la_pick is not None:
+        best_x = _la_pick[0]
+        best_result = _la_pick[2]
+        best_reason = "_".join(list(_la_pick[3]) + ["LOOKAHEAD_NEXT"])
+
     # clip to drop range [-3.0, +3.0]
-    # 注意: このクリップ範囲[-0.991, 4.362]は本来のdrop範囲[-3.0,+3.0]と一致しない。
-    # 2026-08-19に一度[-3.0,3.0]へ修正・VM反映(commit 4e664ce)したが、VM自律ループの
-    # 実ゲーム評価でobjective_regression+lost_ukraine_gateを理由にrollbackされ、
-    # 現在はこの値に戻っている（詳細: logs/change_log.txt 2026-08-19 03:58/04:11,
-    # handoff.md §12「重要な訂正」）。一見自明なバグに見えるが、直すと実ゲーム成績が
-    # 悪化した実績があるため、再挑戦する場合は単独サイクルで慎重に扱うこと。
-    best_x = max(-0.991, min(4.362, best_x))
-    best_x = round(best_x, 4)
+    best_x = _clip_final_drop_x(best_x, type15_count >= 1)
+
+    visible_same_country_contact = _select_visible_same_country_contact(
+        pieces, results, next_type, reactor, best_x
+    )
+    if visible_same_country_contact is not None:
+        return {
+            "x": round(float(visible_same_country_contact["x"]), 4),
+            "reason": "VISIBLE_SAME_COUNTRY_CONTACT_SHOT",
+        }
+
+    first_russia_lane = _select_first_russia_t11_lane_avoidance(
+        pieces, results, next_type, best_result, best_x
+    )
+    if first_russia_lane is not None:
+        return {
+            "x": round(float(first_russia_lane["x"]), 4),
+            "reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
+        }
+
+    post_russia_open_lane = _select_post_russia_chain_cover_avoidance(
+        pieces, results, next_type, best_result, best_x
+    )
+    if post_russia_open_lane is not None:
+        return {
+            "x": round(float(post_russia_open_lane["x"]), 4),
+            "reason": "POST_RUSSIA_CHAIN_COVER_AVOID",
+        }
 
     return {"x": best_x, "reason": best_reason}
 

@@ -478,6 +478,74 @@ class AiGenerateBackoffTests(unittest.TestCase):
             self.assertIn(18000, values)
             self.assertIn(300, values)
 
+    def test_invalid_agent_spec_is_skipped_without_dispatch_or_stats(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            calls = root / "calls.txt"
+            stats = root / "stats"
+            prompt.write_text("test\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                ELOOP_LIB_DIR={root!s}
+                AI_STATS_DIR={stats!s}
+                AI_GENERATION_QUEUE_ENABLED=0
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                log() {{ :; }}
+                validator() {{ [ "$1" = "VALID" ]; }}
+                _ai_dispatch() {{
+                    printf '%s\\n' "$2" >>{calls!s}
+                    printf 'VALID'
+                    return 0
+                }}
+                ai_generate_list RADIO:batch_commentary {prompt!s} '__invalid_agent__,codex:usable' '' validator
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls.read_text(encoding="utf-8").splitlines(), ["codex:usable"])
+            stat_text = "\n".join(
+                path.read_text(encoding="utf-8") for path in stats.glob("*.jsonl")
+            )
+            self.assertNotIn("__invalid_agent__", stat_text)
+            self.assertIn('"agent":"codex:usable"', stat_text)
+
+    def test_dispatch_rejects_unknown_agent_before_recording_attempt(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            stats = root / "stats"
+            prompt.write_text("test\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                AI_STATS_DIR={stats!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                log() {{ :; }}
+                _ai_dispatch RADIO __invalid_agent__ {prompt!s}
+                rc=$?
+                test "$rc" -eq 2
+                test ! -e {stats!s}
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

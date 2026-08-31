@@ -14,6 +14,7 @@ def print_worker_config(
     *,
     bridge_watchdog: str | None = None,
     overlay_watchers: str | None = None,
+    youtube_guard: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["SOREN_ENV_FILE"] = str(REPO_ROOT / "tests" / "missing.env")
@@ -29,6 +30,10 @@ def print_worker_config(
         env.pop("SOREN_STATUS_OVERLAY_WATCHERS_ENABLED", None)
     else:
         env["SOREN_STATUS_OVERLAY_WATCHERS_ENABLED"] = overlay_watchers
+    if youtube_guard is None:
+        env.pop("YOUTUBE_BROADCAST_GUARD_ENABLED", None)
+    else:
+        env["YOUTUBE_BROADCAST_GUARD_ENABLED"] = youtube_guard
     return subprocess.run(
         ["bash", str(START_ALL), "--print-worker-config"],
         cwd=REPO_ROOT,
@@ -57,6 +62,24 @@ class StartAllStreamBackendTests(unittest.TestCase):
         self.assertNotIn("obs_capture_watchdog", config["workers"])
         self.assertIn("soren_loop", config["workers"])
         self.assertIn("audio_worker", config["workers"])
+        self.assertNotIn("youtube_broadcast_guard", config["workers"])
+
+    def test_ffmpeg_can_supervise_youtube_broadcast_guard(self) -> None:
+        result = print_worker_config("ffmpeg", youtube_guard="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        self.assertEqual(config["workers"].count("youtube_broadcast_guard"), 1)
+
+    def test_obs_never_starts_youtube_broadcast_guard(self) -> None:
+        result = print_worker_config("obs", youtube_guard="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads(result.stdout)
+        self.assertNotIn("youtube_broadcast_guard", config["workers"])
+
+    def test_invalid_youtube_guard_flag_fails_closed(self) -> None:
+        result = print_worker_config("ffmpeg", youtube_guard="yes")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("YOUTUBE_BROADCAST_GUARD_ENABLED must be 0 or 1", result.stderr)
 
     def test_improvement_daemon_is_always_supervised_exactly_once(self) -> None:
         for backend in ("obs", "ffmpeg"):

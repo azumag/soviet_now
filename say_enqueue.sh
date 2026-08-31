@@ -90,6 +90,12 @@ SAY_RETRY_MAX_SLEEP_SEC="${SAY_RETRY_MAX_SLEEP_SEC:-20}"
 SAY_TRUNCATE_RATIO="${SAY_TRUNCATE_RATIO:-0.85}"
 SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
+# 音声が一定時間流れた後の異常終了は、同じ WAV を先頭から再試行すると
+# 既に聞こえた部分が二重になる。短い起動失敗だけは従来どおり再試行する。
+SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC="${SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC:-2}"
+case "$SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC" in
+''|*[!0-9]*) SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC=2 ;;
+esac
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 SAY_CHUNK_GAP_SEC="${SAY_CHUNK_GAP_SEC:-0.5}"
 
@@ -318,10 +324,115 @@ VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
 VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
 VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
 VOICEVOX_SYNTH_LOCK_STALE_SEC="${VOICEVOX_SYNTH_LOCK_STALE_SEC:-180}"
+VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC="${VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC:-10}"
+VOICEVOX_SYNTH_LOCK_HUNG_SEC="${VOICEVOX_SYNTH_LOCK_HUNG_SEC:-60}"
 VOICEVOX_SYNTH_PRIORITY_WAIT_DIR="$QUEUE_DIR/.voicevox_synth_priority_waiters"
 VOICEVOX_SYNTH_PRIORITY_WAIT_FILE=""
 VOICEVOX_SYNTH_PRIORITY_WAIT_HELD=0
-VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-180}"
+VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC="${VOICEVOX_SYNTH_PRIORITY_WAIT_STALE_SEC:-60}"
+VOICEVOX_SYNTH_LOCK_BASE="$VOICEVOX_SYNTH_LOCK"
+VOICEVOX_SYNTH_DISTRIBUTED="${VOICEVOX_SYNTH_DISTRIBUTED:-1}"
+VOICEVOX_SYNTH_ACTIVE_URL=""
+VOICEVOX_SYNTH_ACTIVE_LOCK=""
+
+# --- VOICEVOX分散合成ヘルパー (Tailscaleチェーン: windows→mac→vm local) ---
+# VOICEVOX_URLS="http://windows:50021,http://mac:50021,http://127.0.0.1:50021" を
+# speech.py と同じロジックで解釈し、キューされていたら次はmac→localへ分散する。
+# 空いているエンドポイントのロックだけを mkdir で非ブロック取得し、取得できたら
+# VOICEVOX_ACTIVE_URL / VOICEVOX_URLS をそのURL優先に書き換えて docich へ渡す。
+_voicevox_urls_chain() {
+	python3 - <<'PY' 2>/dev/null
+import os, re
+raw = os.environ.get("VOICEVOX_URLS", "")
+urls = []
+if raw and raw.strip():
+    for token in re.split(r"[,\s]+", raw):
+        token = token.strip().rstrip("/")
+        if token and token not in urls:
+            urls.append(token)
+else:
+    primary = os.environ.get("VOICEVOX_URL_PRIMARY", "") or os.environ.get("VOICEVOX_URL_REMOTE", "")
+    fallback = os.environ.get("VOICEVOX_URL_FALLBACK", "") or "http://127.0.0.1:50021"
+    direct = os.environ.get("VOICEVOX_URL", "") or (primary or "http://127.0.0.1:50021")
+    local = os.environ.get("VOICEVOX_URL_LOCAL", "") or "http://127.0.0.1:50021"
+    for cand in (primary, direct, fallback, local):
+        cand = cand.strip().rstrip("/")
+        if cand and cand not in urls:
+            urls.append(cand)
+for u in urls:
+    print(u)
+PY
+}
+
+_voicevox_url_hash() {
+	local url="$1" h=""
+	if command -v md5sum >/dev/null 2>&1; then
+		h=$(printf '%s' "$url" | md5sum 2>/dev/null | awk '{print $1}')
+	elif command -v md5 >/dev/null 2>&1; then
+		h=$(printf '%s' "$url" | md5 -q 2>/dev/null)
+	else
+		h=$(printf '%s' "$url" | cksum 2>/dev/null | awk '{print $1}')
+	fi
+	printf '%s' "${h:0:12}"
+}
+
+_voicevox_state_file() {
+	if [ -n "${VOICEVOX_STATE_FILE:-}" ]; then
+		printf '%s' "$VOICEVOX_STATE_FILE"
+	else
+		printf '%s' "tmp/state/voicevox_endpoints.json"
+	fi
+}
+
+_voicevox_endpoint_status() {
+	local url="$1" sf
+	sf=$(_voicevox_state_file)
+	python3 - "$url" "$sf" <<'PY' 2>/dev/null
+import json, time, sys
+url = sys.argv[1]
+sf = sys.argv[2]
+try:
+    data = json.loads(open(sf, encoding="utf-8").read())
+except Exception:
+    print("ready")
+    sys.exit(0)
+ep = data.get("endpoints", {}).get(url, {})
+if ep.get("disabled"):
+    print("disabled")
+elif ep.get("next_retry_at") and float(ep.get("next_retry_at", 0)) > time.time():
+    print("backoff")
+else:
+    print("ready")
+PY
+}
+
+_voicevox_reorder_urls() {
+	local selected="$1"
+	python3 - "$selected" <<'PY' 2>/dev/null
+import os, re, sys
+selected = sys.argv[1]
+raw = os.environ.get("VOICEVOX_URLS", "")
+urls = []
+if raw and raw.strip():
+    for token in re.split(r"[,\s]+", raw):
+        token = token.strip().rstrip("/")
+        if token and token not in urls:
+            urls.append(token)
+else:
+    primary = os.environ.get("VOICEVOX_URL_PRIMARY", "") or os.environ.get("VOICEVOX_URL_REMOTE", "")
+    fallback = os.environ.get("VOICEVOX_URL_FALLBACK", "") or "http://127.0.0.1:50021"
+    direct = os.environ.get("VOICEVOX_URL", "") or (primary or "http://127.0.0.1:50021")
+    local = os.environ.get("VOICEVOX_URL_LOCAL", "") or "http://127.0.0.1:50021"
+    for cand in (primary, direct, fallback, local):
+        cand = cand.strip().rstrip("/")
+        if cand and cand not in urls:
+            urls.append(cand)
+if selected in urls:
+    urls.remove(selected)
+    urls.insert(0, selected)
+print(",".join(urls))
+PY
+}
 
 if [ ! -s "$CONTENT_FILE" ]; then
 	echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -391,8 +502,16 @@ if [ "$WAV_MODE" = "false" ]; then
 			-e 's/Made in China/メイドインチャイナ/g' \
 			"$MY_CONTENT"
 	fi
-	# type表記の国名置換 + アルファベット小文字化（上の大文字辞書の後に実行）
-	python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
+	# 国名置換はゲーム由来の本文だけが明示的に有効化する。汎用TTSでは
+	# T-34やType 2 diabetesを国名と誤認せず、従来の小文字化だけを行う。
+	if [ "${SAY_REPLACE_COUNTRY_REFERENCES:-0}" = "1" ]; then
+		if ! python3 lib/normalize_speech_text.py --country-names "$MY_CONTENT" 2>/dev/null; then
+			echo "[say_enqueue] ゲーム国名の正規化に失敗したため再生を中止します" >&2
+			exit 1
+		fi
+	else
+		python3 lib/normalize_speech_text.py "$MY_CONTENT" 2>/dev/null || true
+	fi
 fi
 
 _infer_source_label() {
@@ -511,6 +630,45 @@ _clear_current_source_if_owner() {
 
 _has_pending_comment_queue() {
 	ls tmp/.comment_queue/comment_*.txt >/dev/null 2>&1
+}
+
+# テキストの世代判定用ハッシュ。md5/md5sum が無い環境ではサイズで代用する
+# (再開の可否判定にしか使わないため、衝突耐性より可搬性を優先する)。
+_hash_content_file() {
+	local f="${1:-}"
+	[ -s "$f" ] || {
+		printf 'empty\n'
+		return 0
+	}
+	if command -v md5sum >/dev/null 2>&1; then
+		md5sum "$f" 2>/dev/null | awk '{print $1}'
+	elif command -v md5 >/dev/null 2>&1; then
+		md5 -q "$f" 2>/dev/null
+	else
+		printf 'size%s\n' "$(wc -c <"$f" 2>/dev/null | tr -d ' ')"
+	fi
+}
+
+# コメントの滞留を検出する。未再生 (.txt) だけでなく、既に取り出されて
+# 合成・再生中の (.playing) も「コメント消化中」として扱う。
+_comment_backlog_pending() {
+	local dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
+	ls "$dir"/comment_*.txt >/dev/null 2>&1 && return 0
+	ls "$dir"/comment_*.playing >/dev/null 2>&1 && return 0
+	return 1
+}
+
+# 背景ラジオ (ニュース等) の事前合成は、コメントが1件でも溜まっていたら
+# 合成の途中でも即座に打ち切って VOICEVOX を明け渡す (ユーザー指示 2026-08-26)。
+# 順番待ちで粘るとチャンク単位の ping-pong になり、コメント側の合成時間が
+# 実測で約2倍になっていた (2026-08-26 17:34-17:42 の audio_worker.log)。
+# 打ち切っても合成済みチャンクは捨てず、コメントが捌けたら続きから再開する。
+_radio_render_should_abort_for_comment() {
+	case "${RADIO_RENDER_COMMENT_ABORT:-1}" in
+	0 | false | no | off) return 1 ;;
+	esac
+	_voicevox_synth_is_background_render || return 1
+	_comment_backlog_pending
 }
 
 _radio_should_yield_to_comment() {
@@ -637,11 +795,23 @@ _release_voicevox_synth_lock() {
 	[ "$VOICEVOX_SYNTH_LOCK_HELD" -eq 1 ] || return 0
 	if ! _is_voicevox_synth_lock_owner; then
 		VOICEVOX_SYNTH_LOCK_HELD=0
+		VOICEVOX_SYNTH_LOCK="$VOICEVOX_SYNTH_LOCK_BASE"
+		VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
+		VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
+		VOICEVOX_SYNTH_ACTIVE_URL=""
+		VOICEVOX_SYNTH_ACTIVE_LOCK=""
+		unset VOICEVOX_ACTIVE_URL 2>/dev/null || true
 		return 0
 	fi
 	rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
 	rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
 	VOICEVOX_SYNTH_LOCK_HELD=0
+	VOICEVOX_SYNTH_LOCK="$VOICEVOX_SYNTH_LOCK_BASE"
+	VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
+	VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
+	VOICEVOX_SYNTH_ACTIVE_URL=""
+	VOICEVOX_SYNTH_ACTIVE_LOCK=""
+	unset VOICEVOX_ACTIVE_URL 2>/dev/null || true
 }
 
 _voicevox_synth_is_background_render() {
@@ -705,7 +875,8 @@ _unregister_voicevox_priority_waiter() {
 
 # 合成ロック待ち時間をコンテキストで変える:
 #   - コメント・改善進捗などの前景音声は長く待つ（必ず合成・再生に到達させる）
-#   - ラジオ render は短く諦めてコメントへ譲る
+#   - ラジオ render は前景音声へ順番を譲るが、ラジオ自身は終了せず待って
+#     同じ事前合成世代を継続する（途中チャンクを捨てて先頭からやり直さない）
 _voicevox_synth_lock_wait_sec() {
 	case "${SOURCE_LABEL:-}" in
 	comment | comment:*)
@@ -810,19 +981,51 @@ _prepare_voicevox_runtime_params() {
 	_log "VOICEVOX speaker=$VOICEVOX_SPEAKER${VOICEVOX_RANDOM_VOICE_NAME:+ ($VOICEVOX_RANDOM_VOICE_NAME)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
 }
 
-_acquire_voicevox_synth_lock() {
+_acquire_voicevox_synth_lock_legacy() {
 	local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
+	local priority_waited=0 priority_wait_limit=0 lock_wait_limit="${timeout_sec}"
 	VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
 	_voicevox_synth_is_background_render && background_render=1
+	if [ "$background_render" -eq 1 ]; then
+		# 背景ラジオは前景（コメント等）を優先するが、無期限待ちはデッドロックする。
+		# 2026-08-24の実測で comment 180s 待ち vs radio 無期限待ちが循環デッドロックした。
+		# 有限化し、タイムアウト後は現世代を一時保留して後で再試行する（進捗は捨てない）。
+		priority_wait_limit="${VOICEVOX_RADIO_PRIORITY_WAIT_SEC:-90}"
+		case "$priority_wait_limit" in
+		'' | *[!0-9]*) priority_wait_limit=90 ;;
+		esac
+		lock_wait_limit="${VOICEVOX_RADIO_LOCK_WAIT_SEC:-60}"
+		case "$lock_wait_limit" in
+		'' | *[!0-9]*) lock_wait_limit=60 ;;
+		esac
+	fi
 	if [ "$background_render" -eq 0 ]; then
 		_register_voicevox_priority_waiter || true
 	fi
-	max_waits=$((timeout_sec * 2))
+	if [ "$lock_wait_limit" -gt 0 ]; then
+		max_waits=$((lock_wait_limit * 2))
+	else
+		max_waits=0
+	fi
 	while true; do
 		if [ "$background_render" -eq 1 ] && _voicevox_priority_waiter_exists; then
-			VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
-			return 1
+			# 旧実装はここで rc=75 を返して一時ファイルを全削除していた。
+			# コメントが一定間隔で入るとラジオは毎回チャンク0から再開し、
+			# ready.wavに到達できない。背景プロセスはaudio worker本体とは
+			# 別のため、前景音声が終わるまで待つ方が安全である。
+			if [ "$priority_waited" -eq 0 ] || [ $((priority_waited % 60)) -eq 0 ]; then
+				_log "優先音声の合成完了待ち (background radio)"
+			fi
+			priority_waited=$((priority_waited + 1))
+			if [ "$priority_wait_limit" -gt 0 ] && [ "$priority_waited" -ge $((priority_wait_limit * 2)) ]; then
+				VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
+				return 1
+			fi
+			_touch_voicevox_priority_waiter
+			sleep 0.5
+			continue
 		fi
+		priority_waited=0
 		if mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; then
 			break
 		fi
@@ -847,8 +1050,14 @@ _acquire_voicevox_synth_lock() {
 			'' | *[!0-9]* | 0) lock_age=0 ;;
 			*) lock_age=$((now - lock_hb)) ;;
 			esac
-			if [ "$owner_alive" = false ] && [ "$lock_age" -gt "$VOICEVOX_SYNTH_LOCK_STALE_SEC" ]; then
-				_log "VOICEVOX合成 stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
+			if [ "$owner_alive" = false ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC:-10}" ]; then
+				_log "VOICEVOX合成 stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒, dead) → 強制解除"
+				rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
+				rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+				continue
+			fi
+			if [ "$owner_alive" = true ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_HUNG_SEC:-60}" ]; then
+				_log "VOICEVOX合成 hung lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒, heartbeat停止) → 強制解除"
 				rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
 				rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
 				continue
@@ -857,7 +1066,7 @@ _acquire_voicevox_synth_lock() {
 		_touch_voicevox_priority_waiter
 		sleep 0.5
 		waited=$((waited + 1))
-		if [ "$waited" -ge "$max_waits" ]; then
+		if [ "$max_waits" -gt 0 ] && [ "$waited" -ge "$max_waits" ]; then
 			VOICEVOX_SYNTH_LOCK_BUSY_REASON="timeout"
 			_unregister_voicevox_priority_waiter
 			return 1
@@ -873,6 +1082,156 @@ _acquire_voicevox_synth_lock() {
 	VOICEVOX_SYNTH_LOCK_HELD=1
 	_unregister_voicevox_priority_waiter
 	return 0
+}
+
+_acquire_voicevox_synth_lock() {
+	# 分散モード: VOICEVOX_URLS チェーンの空きエンドポイントへ分散。windowsでキューならmac→localへ回す。
+	if [ "${VOICEVOX_SYNTH_DISTRIBUTED:-1}" = "1" ]; then
+		local _chain_urls=()
+		while IFS= read -r _u; do [ -n "$_u" ] && _chain_urls+=("$_u"); done < <(_voicevox_urls_chain)
+		if [ ${#_chain_urls[@]} -gt 1 ]; then
+			local timeout_sec="${1:-30}" waited=0 max_waits background_render=0
+			local priority_waited=0 priority_wait_limit=0 lock_wait_limit="${timeout_sec}"
+			VOICEVOX_SYNTH_LOCK_BUSY_REASON=""
+			_voicevox_synth_is_background_render && background_render=1
+			if [ "$background_render" -eq 1 ]; then
+				priority_wait_limit="${VOICEVOX_RADIO_PRIORITY_WAIT_SEC:-90}"
+				case "$priority_wait_limit" in ''|*[!0-9]*) priority_wait_limit=90;; esac
+				lock_wait_limit="${VOICEVOX_RADIO_LOCK_WAIT_SEC:-60}"
+				case "$lock_wait_limit" in ''|*[!0-9]*) lock_wait_limit=60;; esac
+			fi
+			if [ "$background_render" -eq 0 ]; then
+				_register_voicevox_priority_waiter || true
+			fi
+			if [ "$lock_wait_limit" -gt 0 ]; then
+				max_waits=$((lock_wait_limit * 2))
+			else
+				max_waits=0
+			fi
+			while true; do
+				if [ "$background_render" -eq 1 ] && _voicevox_priority_waiter_exists; then
+					if [ "$priority_waited" -eq 0 ] || [ $((priority_waited % 60)) -eq 0 ]; then
+						_log "優先音声の合成完了待ち (background radio)"
+					fi
+					priority_waited=$((priority_waited + 1))
+					if [ "$priority_wait_limit" -gt 0 ] && [ "$priority_waited" -ge $((priority_wait_limit * 2)) ]; then
+						VOICEVOX_SYNTH_LOCK_BUSY_REASON="priority_waiter"
+						return 1
+					fi
+					_touch_voicevox_priority_waiter
+					sleep 0.5
+					continue
+				fi
+				priority_waited=0
+				# ready → backoff の順で空きロックを探す（backoffは失敗直後の端点を避ける）
+				local _found=0 _selected_url="" _selected_hash="" _selected_lock=""
+				for _status in ready backoff; do
+					for _url in "${_chain_urls[@]}"; do
+						if [ "$(_voicevox_endpoint_status "$_url")" != "$_status" ]; then
+							continue
+						fi
+						local _hash _lock_dir _owner_file _hb_file
+						_hash=$(_voicevox_url_hash "$_url")
+						_lock_dir="${VOICEVOX_SYNTH_LOCK_BASE}.${_hash}"
+						_owner_file="${_lock_dir}/owner_pid"
+						_hb_file="${_lock_dir}/heartbeat"
+						if mkdir "$_lock_dir" 2>/dev/null; then
+							_selected_url="$_url"
+							_selected_hash="$_hash"
+							_selected_lock="$_lock_dir"
+							_found=1
+							break 2
+						fi
+						if [ -d "$_lock_dir" ]; then
+							local lock_owner_raw lock_owner_pid lock_hb now lock_age owner_alive=false
+							lock_owner_raw=$(cat "$_owner_file" 2>/dev/null || true)
+							lock_owner_pid="${lock_owner_raw%%:*}"
+							case "$lock_owner_pid" in ''|*[!0-9]*) lock_owner_pid="";; esac
+							if [ -n "$lock_owner_pid" ] && kill -0 "$lock_owner_pid" 2>/dev/null; then
+								owner_alive=true
+							fi
+							lock_hb=$(cat "$_hb_file" 2>/dev/null || true)
+							case "$lock_hb" in ''|*[!0-9]*) lock_hb=$(_file_mtime_epoch "$_lock_dir");; esac
+							now=$(date +%s)
+							case "$lock_hb" in ''|*[!0-9]*|0) lock_age=0;; *) lock_age=$((now - lock_hb));; esac
+							if [ "$owner_alive" = false ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_DEAD_GRACE_SEC:-10}" ]; then
+								_log "VOICEVOX分散 stale lock検出 (url=$_url, owner=${lock_owner_pid:-?}, ${lock_age}秒, dead) → 強制解除"
+								rm -f "$_owner_file" "$_hb_file" 2>/dev/null
+								rmdir "$_lock_dir" 2>/dev/null
+								if mkdir "$_lock_dir" 2>/dev/null; then
+									_selected_url="$_url"
+									_selected_hash="$_hash"
+									_selected_lock="$_lock_dir"
+									_found=1
+									break 2
+								fi
+							fi
+							if [ "$owner_alive" = true ] && [ "$lock_age" -gt "${VOICEVOX_SYNTH_LOCK_HUNG_SEC:-60}" ]; then
+								_log "VOICEVOX分散 hung lock検出 (url=$_url, owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
+								rm -f "$_owner_file" "$_hb_file" 2>/dev/null
+								rmdir "$_lock_dir" 2>/dev/null
+								if mkdir "$_lock_dir" 2>/dev/null; then
+									_selected_url="$_url"
+									_selected_hash="$_hash"
+									_selected_lock="$_lock_dir"
+									_found=1
+									break 2
+								fi
+							fi
+						fi
+					done
+				done
+				# disabled は最後の手段: 他にenabledが無い時だけ試す
+				if [ "$_found" -eq 0 ]; then
+					for _url in "${_chain_urls[@]}"; do
+						if [ "$(_voicevox_endpoint_status "$_url")" != "disabled" ]; then
+							continue
+						fi
+						local _hash _lock_dir
+						_hash=$(_voicevox_url_hash "$_url")
+						_lock_dir="${VOICEVOX_SYNTH_LOCK_BASE}.${_hash}"
+						if mkdir "$_lock_dir" 2>/dev/null; then
+							_selected_url="$_url"
+							_selected_hash="$_hash"
+							_selected_lock="$_lock_dir"
+							_found=1
+							break
+						fi
+					done
+				fi
+				if [ "$_found" -eq 1 ]; then
+					echo "$MY_OWNER" >"${_selected_lock}/owner_pid" 2>/dev/null || {
+						rmdir "${_selected_lock}" 2>/dev/null
+						VOICEVOX_SYNTH_LOCK_BUSY_REASON="owner_write_failed"
+						_unregister_voicevox_priority_waiter
+						return 1
+					}
+					date +%s >"${_selected_lock}/heartbeat" 2>/dev/null || true
+					VOICEVOX_SYNTH_LOCK="$_selected_lock"
+					VOICEVOX_SYNTH_OWNER_FILE="${_selected_lock}/owner_pid"
+					VOICEVOX_SYNTH_HEARTBEAT_FILE="${_selected_lock}/heartbeat"
+					VOICEVOX_SYNTH_LOCK_HELD=1
+					VOICEVOX_SYNTH_ACTIVE_URL="$_selected_url"
+					VOICEVOX_SYNTH_ACTIVE_LOCK="$_selected_lock"
+					export VOICEVOX_ACTIVE_URL="$_selected_url"
+					export VOICEVOX_URLS="$(_voicevox_reorder_urls "$_selected_url")"
+					_log "VOICEVOX分散ロック取得: $_selected_url (hash $_selected_hash)"
+					_unregister_voicevox_priority_waiter
+					return 0
+				fi
+				_touch_voicevox_priority_waiter
+				sleep 0.5
+				waited=$((waited + 1))
+				if [ "$max_waits" -gt 0 ] && [ "$waited" -ge "$max_waits" ]; then
+					VOICEVOX_SYNTH_LOCK_BUSY_REASON="timeout"
+					_unregister_voicevox_priority_waiter
+					return 1
+				fi
+			done
+		fi
+	fi
+	# フォールバック: 単一URLまたは分散無効時は従来のグローバルロック
+	_acquire_voicevox_synth_lock_legacy "$@"
 }
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
@@ -1195,6 +1554,12 @@ BEGIN {
 }'
 }
 
+_partial_playback_already_heard() {
+	local elapsed="${1:-0}"
+	[ "${SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC:-0}" -gt 0 ] || return 1
+	[ "$elapsed" -ge "$SAY_PARTIAL_PLAYBACK_NO_RETRY_SEC" ]
+}
+
 # --- VOICEVOX ストリーミングTTS用ヘルパー ---
 
 # テキストを句点・読点で ~N文字チャンクに分割
@@ -1295,6 +1660,55 @@ _synthesize_chunk() {
 			VOICEVOX_MAX_CHARS=99999 \
 			./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 	fi
+}
+
+# 子孫プロセスまで含めて終了させる。voicevox_tts.sh は
+# timeout -> env -> bash -> docich と多段になるため、直下の PID を
+# kill しても実際の合成リクエストが残る。
+_kill_process_tree() {
+	local pid="${1:-}" child
+	case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+	for child in $(pgrep -P "$pid" 2>/dev/null); do
+		_kill_process_tree "$child"
+	done
+	kill -TERM "$pid" 2>/dev/null || true
+}
+
+# 背景ラジオの事前合成をコメント滞留で即座に打ち切れるようにしたラッパ。
+# rc: 0=成功 / 1=失敗 / 9=コメント優先で中断
+_synthesize_chunk_yielding() {
+	local text="$1" output="$2"
+	case "${RADIO_RENDER_COMMENT_ABORT:-1}" in
+	0 | false | no | off)
+		_synthesize_chunk "$text" "$output"
+		return $?
+		;;
+	esac
+	if ! _voicevox_synth_is_background_render; then
+		_synthesize_chunk "$text" "$output"
+		return $?
+	fi
+	local poll="${RADIO_RENDER_COMMENT_ABORT_POLL_SEC:-1}"
+	case "$poll" in '' | *[!0-9]*) poll=1 ;; esac
+	[ "$poll" -gt 0 ] || poll=1
+	local synth_pid="" rc=0
+	_synthesize_chunk "$text" "$output" &
+	synth_pid=$!
+	while kill -0 "$synth_pid" 2>/dev/null; do
+		if _comment_backlog_pending; then
+			_kill_process_tree "$synth_pid"
+			wait "$synth_pid" 2>/dev/null
+			rm -f "$output" 2>/dev/null || true
+			return 9
+		fi
+		_touch_voicevox_synth_lock_heartbeat
+		sleep "$poll"
+	done
+	wait "$synth_pid"
+	rc=$?
+	[ "$rc" -eq 0 ] && [ -s "$output" ] && return 0
+	rm -f "$output" 2>/dev/null || true
+	return 1
 }
 
 _launch_stream_wav() {
@@ -1537,6 +1951,12 @@ _stream_launch_voicevox_chunk() {
 _stream_wait_voicevox_chunk() {
 	local play_pid="$1" expected_sec="${2:-0}"
 	if ! _wait_for_player_pid "$play_pid" "$expected_sec" 0; then
+		if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
+			&& _partial_playback_already_heard "${PLAYER_WAIT_ELAPSED:-0}"; then
+			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			_log "ストリーミングチャンクは既に${PLAYER_WAIT_ELAPSED:-0}秒再生済み (rc=${PLAYER_WAIT_RC:-1}, expected=${expected_sec}s) → 重複防止のため再試行せず完了扱い"
+			return 0
+		fi
 		if [ "${CHROME_AUDIO_USED:-0}" = "1" ]; then
 			_stop_chrome_audio_players
 			if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
@@ -1557,6 +1977,12 @@ _stream_wait_voicevox_chunk() {
 			return 0
 		fi
 		_log "ストリーミングチャンク途中切断の疑い (elapsed=${PLAYER_WAIT_ELAPSED:-0}s, expected=${expected_sec}s)"
+		if _partial_playback_already_heard "${PLAYER_WAIT_ELAPSED:-0}"; then
+			# resume API がない現状では、同じ WAV を先頭から再試行するより
+			# 既に聞こえた部分を二重にしない at-most-once を優先する。
+			_log "ストリーミングチャンクは既に${PLAYER_WAIT_ELAPSED:-0}秒再生済み → 重複防止のため再試行せず完了扱い"
+			return 0
+		fi
 		return 98
 	fi
 	return 0
@@ -2212,6 +2638,13 @@ _play_with_retry() {
 			say_rc="$PLAYER_WAIT_RC"
 			elapsed="$PLAYER_WAIT_ELAPSED"
 		fi
+		if [ "$timed_out" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
+			&& _partial_playback_already_heard "$elapsed" \
+			&& { [ "$say_rc" -ne 0 ] || _is_truncated_playback "$elapsed" "$expected_sec"; }; then
+			_log "sayは既に${elapsed}秒再生済み (rc=$say_rc, expected=${expected_sec}s) → 重複防止のため再試行せず完了扱い"
+			docich_cc_clear || true
+			return 0
+		fi
 		if [ "$say_rc" -eq 0 ] && _is_truncated_playback "$elapsed" "$expected_sec"; then
 			say_rc=98
 			_log "say途中切断の疑い (elapsed=${elapsed}s, expected=${expected_sec}s)"
@@ -2514,19 +2947,52 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 				fi
 				docich_cc_start_plan "${_pre_chunks[@]:0:PRE_MAX_CHUNKS}" || true
 				_stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
+				RENDER_PARTS_DIR=""
+				if [ "$RENDER_ONLY" = "true" ] && _voicevox_synth_is_background_render; then
+					# コメント優先で中断しても合成済みチャンクを捨てないため、
+					# ラジオ render のチャンクは render 出力に紐づく固定パスへ置く。
+					# 本文・チャンク数が変わったら世代不一致として作り直す。
+					_render_parts_key=$(basename "$RENDER_OUTPUT")
+					_render_parts_key="${_render_parts_key%%.*}"
+					case "$_render_parts_key" in
+					'' | *[!A-Za-z0-9_-]*) _render_parts_key="" ;;
+					esac
+					if [ -n "$_render_parts_key" ]; then
+						RENDER_PARTS_DIR="$QUEUE_DIR/render_${_render_parts_key}"
+						_stream_dir="$RENDER_PARTS_DIR"
+						_render_parts_stamp="$(_hash_content_file "$MY_CONTENT") ${PRE_MAX_CHUNKS}"
+						if [ -d "$RENDER_PARTS_DIR" ] \
+							&& [ "$(cat "$RENDER_PARTS_DIR/source_stamp" 2>/dev/null || true)" != "$_render_parts_stamp" ]; then
+							_log "部分レンダーの世代不一致 → 破棄して作り直し: $RENDER_PARTS_DIR"
+							rm -rf "$RENDER_PARTS_DIR" 2>/dev/null || true
+						fi
+						mkdir -p "$RENDER_PARTS_DIR" 2>/dev/null || true
+						printf '%s\n' "$_render_parts_stamp" >"$RENDER_PARTS_DIR/source_stamp" 2>/dev/null || true
+					fi
+				fi
 				mkdir -p "$_stream_dir"
 				PRE_SYNTH_PLAYLIST_FILE="${MY_CONTENT%.txt}_wav_playlist.txt"
 				: >"$PRE_SYNTH_PLAYLIST_FILE"
 				_pre_synth_failed=0
+				_pre_synth_yielded=0
+				_pre_chunk_rc=0
 				for ((_pc_i = 0; _pc_i < PRE_MAX_CHUNKS; _pc_i++)); do
+					# コメントが溜まっていたら、次のチャンクへ進まずここで打ち切る。
+					if _radio_render_should_abort_for_comment; then
+						_log "コメント優先: ラジオ事前合成を中断 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]} 開始前)"
+						_pre_synth_failed=1
+						_pre_synth_yielded=1
+						break
+					fi
 					# チャンク間で合成ロックを一時解放し、コメント（長め待ち）が
-					# 割り込めるようにする。ラジオ render は短い待ちで再取得を諦め、
-					# 残りは再生時フォールバックへ回す。
+					# 割り込めるようにする。ラジオ render は前景音声の完了を待ち、
+					# 同じプロセス・同じレンダー世代で残りのチャンクを継続する。
 					if [ "$_pc_i" -gt 0 ]; then
 						_release_voicevox_synth_lock
 						if ! _acquire_voicevox_synth_lock "$(_voicevox_synth_lock_wait_sec)"; then
 							if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
-								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → ラジオは後で再試行"
+								_log "優先音声へ合成順を譲る (チャンク$((_pc_i + 1))) → 再生時フォールバック"
+								_pre_synth_yielded=1
 							else
 								_log "チャンク間ロック再取得失敗 (チャンク$((_pc_i + 1))) → 再生時にフォールバック"
 							fi
@@ -2539,12 +3005,27 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 					# bundle.  Store locally synthesized chunks as absolute paths so the
 					# two playlist formats cannot be confused.
 					_pre_chunk_wav="$(pwd)/$_stream_dir/chunk_${_pc_i}.wav"
+					# 前回の中断までに合成できていたチャンクはそのまま使う
+					# （毎回チャンク0からやり直すと ready.wav に到達できない）。
+					if [ -n "${RENDER_PARTS_DIR:-}" ] && [ -s "$_pre_chunk_wav" ]; then
+						printf '%s\n' "$_pre_chunk_wav" >>"$PRE_SYNTH_PLAYLIST_FILE"
+						_log "事前合成を再利用 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]}): $_pre_chunk_wav"
+						continue
+					fi
 					_touch_voicevox_synth_lock_heartbeat
-					if _synthesize_chunk "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"; then
+					_synthesize_chunk_yielding "${_pre_chunks[$_pc_i]}" "$_pre_chunk_wav"
+					_pre_chunk_rc=$?
+					if [ "$_pre_chunk_rc" -eq 0 ]; then
 						printf '%s\n' "$_pre_chunk_wav" >>"$PRE_SYNTH_PLAYLIST_FILE"
 						_log "事前合成完了 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]}): $_pre_chunk_wav"
+					elif [ "$_pre_chunk_rc" -eq 9 ]; then
+						_log "コメント優先: ラジオ事前合成を合成中に中断 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]})"
+						_pre_synth_failed=1
+						_pre_synth_yielded=1
+						break
 					else
 						_log "事前合成失敗 (チャンク$((_pc_i + 1))/${#_pre_chunks[@]}) → 再生時にフォールバック"
+						rm -f "$_pre_chunk_wav" 2>/dev/null || true
 						_pre_synth_failed=1
 						break
 					fi
@@ -2554,7 +3035,12 @@ elif [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ] \
 					_log "全チャンク事前合成完了: $PRE_SYNTH_PLAYLIST_FILE"
 				else
 					rm -f "$PRE_SYNTH_PLAYLIST_FILE" 2>/dev/null
-					rm -rf "$_stream_dir" 2>/dev/null
+					if [ -n "${RENDER_PARTS_DIR:-}" ] && [ "$_stream_dir" = "${RENDER_PARTS_DIR:-}" ]; then
+						# 中断・失敗しても合成済みチャンクは残し、次回の再開に使う。
+						_log "合成済みチャンクを保持（次回再開用）: $RENDER_PARTS_DIR"
+					else
+						rm -rf "$_stream_dir" 2>/dev/null
+					fi
 					PRE_SYNTH_WAV=""
 					PRE_SYNTH_PLAYLIST_FILE=""
 				fi
@@ -2593,13 +3079,14 @@ if [ "$RENDER_ONLY" = "true" ]; then
 		fi
 		if [ -s "$RENDER_OUTPUT" ]; then
 			_log "render-only 完了: $RENDER_OUTPUT (bundle=${_render_bundle})"
+			[ -n "${RENDER_PARTS_DIR:-}" ] && rm -rf "$RENDER_PARTS_DIR" 2>/dev/null
 			exit 0
 		fi
 	fi
 	rm -f "$RENDER_OUTPUT" 2>/dev/null || true
 	rm -rf "$_render_bundle" 2>/dev/null || true
-	if [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
-		_log "render-only 一時保留（優先音声待ち）"
+	if [ "${_pre_synth_yielded:-0}" -eq 1 ] || [ "${VOICEVOX_SYNTH_LOCK_BUSY_REASON:-}" = "priority_waiter" ]; then
+		_log "render-only 一時保留（コメント優先）"
 		exit 75
 	fi
 	_log "render-only 失敗"

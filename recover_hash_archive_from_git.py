@@ -8,12 +8,13 @@ Usage:
 
 from __future__ import annotations
 
-import ast
 import json
 import math
 import subprocess
 import sys
 from pathlib import Path
+
+from extract_decide_hash import compute_hash_from_source
 
 
 ROLLING_SCORES_FILE = Path("tmp/state/rolling_scores.json")
@@ -55,37 +56,7 @@ def calc_comp(scores: list[int]) -> float:
 
 
 def extract_decide_hash_from_source(source: str) -> str:
-    def stable_ast_dump(node):
-        if isinstance(node, ast.AST):
-            fields = []
-            for field in getattr(node, "_fields", ()):
-                value = getattr(node, field)
-                if value == [] or value is None:
-                    continue
-                fields.append(f"{field}={stable_ast_dump(value)}")
-            if fields:
-                return f"{node.__class__.__name__}({', '.join(fields)})"
-            return f"{node.__class__.__name__}()"
-        if isinstance(node, list):
-            return "[" + ", ".join(stable_ast_dump(item) for item in node) + "]"
-        return repr(node)
-
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "decide":
-            body = node.body
-            if (
-                body
-                and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant)
-                and isinstance(body[0].value.value, str)
-            ):
-                body = body[1:]
-            normalized = stable_ast_dump(ast.Module(body=body, type_ignores=[]))
-            import hashlib
-
-            return hashlib.md5(normalized.encode("utf-8")).hexdigest()[:12]
-    return ""
+    return compute_hash_from_source(source)
 
 
 def load_target_hashes(argv: list[str]) -> list[str]:

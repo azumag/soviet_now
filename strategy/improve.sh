@@ -1068,10 +1068,34 @@ if snapshot and lock_hash and snapshot_hash == lock_hash:
 os.makedirs(os.path.dirname(backoff_file) or ".", exist_ok=True)
 tmp = f"{backoff_file}.tmp.{os.getpid()}"
 with open(tmp, "w", encoding="utf-8") as f:
-    f.write(f"{count}\n{now}\n")
+    # 行3に種別タグを記録する。この関数は failed_no_apply 収穫時専用であり、
+    # rate limit とは無関係な失敗（wall timeout / validation failure 等）でも
+    # 指数バックオフで罰すると改善頻度が激減するため、daemon 側で上限を
+    # 別途適用できるように区別する（真の rate limit 記録は eloop_improve.sh 側）。
+    f.write(f"{count}\n{now}\nno_apply\n")
 os.replace(tmp, backoff_file)
 print(count)
 PY
+}
+
+# no_apply 系バックオフ（failed_no_apply 由来）は指数で伸ばさず上限を短く抑える。
+# rate limit 由来（3行目タグなし=旧形式 or 明示タグ）は従来どおり指数バックオフ。
+_improve_backoff_wait_sec() {
+	local _count="${1:-1}"
+	local _kind="${2:-}"
+	case "$_count" in ''|*[!0-9]*) _count=1 ;; esac
+	[ "$_count" -ge 1 ] || _count=1
+	if [ "$_kind" = "no_apply" ]; then
+		local _max="${IMPROVE_NO_APPLY_BACKOFF_MAX_SEC:-600}"
+		case "$_max" in ''|*[!0-9]*) _max=600 ;; esac
+		[ "$_max" -ge 60 ] || _max=60
+		local _wait=$((300 * (1 << (_count - 1))))
+		[ "$_wait" -gt "$_max" ] && _wait=$_max
+		printf '%s' "$_wait"
+	else
+		local _exp=$((_count - 1 > 5 ? 5 : _count - 1))
+		printf '%s' "$((300 * (1 << _exp)))"
+	fi
 }
 
 _persist_improve_lock_reason() {
@@ -1283,6 +1307,22 @@ check_and_harvest_improvement() {
 	state=$(_read_improve_state)
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+
+	# 旧ランタイムやプロセス回収競合で、failed_no_apply の状態だけが残り
+	# improve.lock が失われることがある。保存済みバッチが現行戦略と一致し、
+	# レート制限バックオフ中でなければ、次の trigger に渡せるよう復元する。
+	# _start_improvement_job() 側には排他再確認があるため、loop/daemon の
+	# 同時回収でも二重起動にはならない。
+	if [ "$status" = "idle" ] && [ ! -f "$IMPROVE_LOCK_FILE" ] &&
+		[ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ -s "${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}" ]; then
+		local retry_phase
+		retry_phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null || true)
+		if [ "$retry_phase" = "failed_no_apply" ]; then
+			local retry_hash
+			retry_hash=$(_strategy_decide_hash_or_md5 "$STRATEGY_FILE")
+			_restore_improve_retry_batch_if_valid "$retry_hash" || true
+		fi
+	fi
 
 	# 孤立ロックファイル検出: idle状態でeloop_improveも動いていないのにロックが長時間残っている場合は削除
 	# ※ daemon poll間隔(デフォルト30s)より大幅に長い閾値にすること
@@ -1628,7 +1668,17 @@ with open(rs_file, 'w') as f:
 				fi
 			fi
 
-			if [ "$hash_before" != "$hash_now" ]; then
+			local _ab_gate_started_at
+			_ab_gate_started_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('started_at',0) or 0))" 2>/dev/null || echo 0)
+			if [ "$hash_before" = "$hash_now" ] && command -v _ab_gate_candidate_ready_since >/dev/null 2>&1 && _ab_gate_candidate_ready_since "$_ab_gate_started_at" "$hash_now"; then
+				# A/B ゲート: 候補は root に適用されず tmp/state/ab_candidate/ に出力されている → 成功扱い
+				log "[IMPROVE] AB gate: candidate_ready (root 不変) → 成功として回収"
+				_write_improve_state "idle" "0" "" "candidate_ready" "100" ""
+				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
+				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
+				rm -f "$IMPROVE_LOCK_FILE"
+				_clear_improve_retry_batch
+			elif [ "$hash_before" != "$hash_now" ]; then
 				_write_improve_state "idle" "0" "" "" "0" ""
 				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
@@ -2093,13 +2143,23 @@ PY
 	# ここでは視聴者に伝わる文言にする。
 	local _fresh_country
 	case "${_fresh_best:-0}" in
-		16) _fresh_country="ソ連" ;;
-		15) _fresh_country="ロシア" ;;
-		14) _fresh_country="カザフ" ;;
+		1) _fresh_country="アルメニア" ;;
+		2) _fresh_country="モルドバ" ;;
+		3) _fresh_country="エストニア" ;;
+		4) _fresh_country="ラトビア" ;;
+		5) _fresh_country="リトアニア" ;;
+		6) _fresh_country="ジョージア" ;;
+		7) _fresh_country="アゼルバイジャン" ;;
+		8) _fresh_country="タジキスタン" ;;
+		9) _fresh_country="キルギス" ;;
+		10) _fresh_country="ベラルーシ" ;;
+		11) _fresh_country="ウズベキスタン" ;;
+		12) _fresh_country="トルクメニスタン" ;;
 		13) _fresh_country="ウクライナ" ;;
-		12) _fresh_country="ベラルーシ" ;;
-		11) _fresh_country="トルクメン" ;;
-		*) _fresh_country="最高T${_fresh_best:-0}" ;;
+		14) _fresh_country="カザフスタン" ;;
+		15) _fresh_country="ロシア" ;;
+		16) _fresh_country="ソ連" ;;
+		*) _fresh_country="不明な国" ;;
 	esac
 	if [ -x ./overlay_notify.sh ]; then
 		./overlay_notify.sh worker "中華AI 早期改善を決断 (game ${GAME_NUM:-?})" "直近${_fresh_n}試合は最高${_fresh_country}でロシア建国0。建国実績のある安定版に追いつけていないため、通常の${MIN_GAMES_BEFORE_IMPROVE:-12}試合を待たず戦略を練り直します。" "warn" >/dev/null 2>&1 || true
@@ -2723,6 +2783,11 @@ record_completed_game_for_adaptive_improvement() {
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
 
+	# インターリーブ A/B 中は B 腕の試合も正規の試合として、その腕の hash に帳簿を付ける (root と異なる hash でも
+	# 「別戦略の混入」扱いにしない)。
+	if [ -n "$played_hash" ] && command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1 && _ab_is_arm_hash "$played_hash"; then
+		current_hash="$played_hash"
+	fi
 	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
 		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
 		_clear_accumulated_data
@@ -2744,8 +2809,15 @@ record_completed_game_for_adaptive_improvement() {
 			INSTADEATH_RECORD_TURNS="${LAST_TURNS:-}" \
 				_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
-		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
-		queue_fresh_objective_same_hash_lock_if_needed || true
+		if command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
+			# A/B 中: 改善用の蓄積は A 腕 (root) の試合だけ。同 hash ロックの更新も止める (腕が交互に変わるため)
+			if [ "${AB_ARM:-A}" = "A" ]; then
+				accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
+			fi
+		else
+			accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
+			queue_fresh_objective_same_hash_lock_if_needed || true
+		fi
 	fi
 	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
 		./repair_current_run_from_history.sh "${CURRENT_RUN_AUTO_REPAIR_LIMIT:-12}" >/dev/null 2>&1 ||
@@ -2930,6 +3002,13 @@ trigger_adaptive_improvement() {
 		return
 	fi
 
+	# v710: improve_daemon.paused は supervisor の respawn 抑止だけでなく、
+	# soren_loop 経由の直接改善スポーンも含めてすべての改善実行を停止する。
+	if [ -f "$TMP_STATE_DIR/improve_daemon.paused" ]; then
+		log "[IMPROVE] paused marker exists → trigger_adaptive_improvement skipped"
+		return 0
+	fi
+
 	# ロックファイルが存在しない場合は何もしない（メインループが作成する）
 	[ -f "$IMPROVE_LOCK_FILE" ] || return 0
 	if _main_strategy_runner_active_for_improve; then
@@ -2948,12 +3027,12 @@ trigger_adaptive_improvement() {
 
 	# レートリミット指数バックオフ
 	if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
-		local _rl_count _rl_ts _rl_now _rl_wait _rl_exp _rl_last_log_file _rl_last_log _rl_log_interval
+		local _rl_count _rl_ts _rl_now _rl_wait _rl_kind _rl_last_log_file _rl_last_log _rl_log_interval
 		_rl_count=$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 1)
 		_rl_ts=$(sed -n '2p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0)
+		_rl_kind=$(sed -n '3p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo "")
 		_rl_now=$(date +%s)
-		_rl_exp=$((_rl_count - 1 > 5 ? 5 : _rl_count - 1))
-		_rl_wait=$((300 * (1 << _rl_exp)))
+		_rl_wait=$(_improve_backoff_wait_sec "$_rl_count" "$_rl_kind")
 		if [ $((_rl_now - _rl_ts)) -lt "$_rl_wait" ]; then
 			_rl_last_log_file="$TMP_STATE_DIR/rate_limit_backoff_last_log"
 			_rl_last_log=$(cat "$_rl_last_log_file" 2>/dev/null || echo 0)
