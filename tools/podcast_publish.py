@@ -33,7 +33,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
@@ -204,6 +203,18 @@ def _fetch_thumb_bg(doci_dir: Path, query: str, workdir: Path) -> Path | None:
     return None
 
 
+def _render_thumbnail(dthumb, title: str, out_path: Path, *, bg_image: Path | None, style) -> Path:
+    """通常の横動画と同じ16:9構図でサムネイルを直接描画する。"""
+    return dthumb.render(
+        title,
+        out_path,
+        bg_image=bg_image,
+        width=1280,
+        height=720,
+        style=style,
+    )
+
+
 def set_playlist_podcast(doci_dir: Path, playlist_id: str, title: str,
                          description: str, token: Path, secret: Path) -> bool:
     """再生リストを Podcast として指定する。
@@ -300,11 +311,10 @@ def main() -> int:
     from doci import youtube as yt
     from doci.channel import ThumbnailStyle
 
-    # 1. サムネイル (16:9) — 通常動画と同じ「タイトル+静止画」(doci/run_daily.py:696 準拠)
+    # 1. サムネイル (16:9) — 通常の横動画と同じ「タイトル+静止画」
     #    背景はPexelsから1枚取得し、thumbnail.renderのbg_imageとして渡す。
     #    取得失敗時は従来どおりタイトルのみのタイトルカードにフォールバックする。
-    #    縦1080x1920で描き→to_16x9でピラーボックス化して1280x720へ、
-    #    という通常動画と同じ2段階でYouTubeへ出す。
+    #    ポッドキャスト動画は横長なので、ショート用の縦構図を経由せず1280x720へ直接描く。
     thumb = out_dir / f"{iso}.thumbnail.png"
     thumb_bg: Path | None = None
     thumb_query = _thumb_query_from_meta(meta, ep_title)
@@ -347,12 +357,7 @@ def main() -> int:
                     thumb_bg = _bright
             except Exception as _e:
                 log(f"サムネ背景の明るさ補正をスキップ: {_e}")
-        # 通常動画と同じ: 縦で描いてから16:9へ
-        with tempfile.TemporaryDirectory(prefix="podcast_thumb_") as td:
-            td_path = Path(td)
-            vert = td_path / "thumb_vert.png"
-            dthumb.render(ep_title, vert, bg_image=thumb_bg, width=1080, height=1920, style=style)
-            dthumb.to_16x9(vert, thumb, target_w=1280, target_h=720)
+        _render_thumbnail(dthumb, ep_title, thumb, bg_image=thumb_bg, style=style)
         log(f"サムネイル: {thumb} ({thumb.stat().st_size} bytes) bg={'yes' if thumb_bg else 'no'} query={thumb_query!r} style=tech")
     except Exception as e:
         log(f"サムネイル生成に失敗、サムネ無しで続行: {e}")

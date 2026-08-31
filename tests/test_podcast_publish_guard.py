@@ -58,5 +58,36 @@ class PublishGuardTest(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+class ThumbnailRenderTest(unittest.TestCase):
+    def test_renders_directly_as_normal_landscape_thumbnail(self):
+        calls = []
+
+        class FakeThumbnail:
+            @staticmethod
+            def render(title, out_path, **kwargs):
+                calls.append((title, out_path, kwargs))
+                return out_path
+
+            @staticmethod
+            def to_16x9(*_args, **_kwargs):
+                raise AssertionError("ショート用の縦画像変換を呼んではいけない")
+
+        out = Path("episode.thumbnail.png")
+        bg = Path("background.jpg")
+        style = object()
+        result = pp._render_thumbnail(
+            FakeThumbnail, "時事ニュース", out, bg_image=bg, style=style
+        )
+
+        self.assertEqual(result, out)
+        self.assertEqual(len(calls), 1)
+        title, out_path, kwargs = calls[0]
+        self.assertEqual(title, "時事ニュース")
+        self.assertEqual(out_path, out)
+        self.assertEqual(kwargs["bg_image"], bg)
+        self.assertEqual((kwargs["width"], kwargs["height"]), (1280, 720))
+        self.assertIs(kwargs["style"], style)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
