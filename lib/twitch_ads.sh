@@ -113,9 +113,11 @@ _twitch_ads_snooze_once() {
 #   Dedupes on same next_ad_at.
 twitch_ads_maybe_snooze() {
 	local reason="${1:-speaking}"
+	# WebUI toggle must also take effect in an already-running long TTS poller.
+	# Reload .env before checking the flag; only then consider credentials/API work.
+	[ -f .env ] && set -a && . ./.env 2>/dev/null; set +a || true
 	[ "${TWITCH_ADS_ENABLED:-1}" = "1" ] || return 0
 	_twitch_ads_backoff_active && return 0
-	[ -f .env ] && set -a && . ./.env 2>/dev/null; set +a || true
 	local token="${TWITCH_BOT_TOKEN:-}"
 	local client_id="${TWITCH_CLIENT_ID:-}"
 	local broadcaster_id="${TWITCH_BROADCASTER_ID:-}"
