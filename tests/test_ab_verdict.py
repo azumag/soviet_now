@@ -110,9 +110,12 @@ if __name__ == "__main__":
 class HarmStopCalibrationTests(unittest.TestCase):
     """issue #132: 逐次害停止の較正。
 
-    実 A/A (v736 両腕、21 ブロック) で腕ラベルをブロック内で入れ替えた帰無分布に対し
-    旧規則 (k>=6 から毎ブロック UCB90<0) は 32.2% で誤発火した。既定は k>=10 / UCB99
-    (誤発火 6.2%) に改めたが、既存 manifest の凍結した規則は変えない。
+    2026-08-31 に測り直した。純粋な A/A の ledger は存在しないので (当初 A/A と誤認していた
+    2026-08-27 のものは実際には別戦略どうしの A/B)、root 370 試合を時系列に並べて 4 試合ごとに
+    腕ラベルを無作為配分した合成 A/A で測った。旧規則 (k>=6 から毎ブロック UCB90<0) の誤発火は
+    score 37.5% / merges_per_turn 41.2%、新既定 (k>=10 / UCB99) はどちらも 9.8%。
+    大きな害 (score -400 / merges_per_turn -0.08) への検出力はどちらも 100%。
+    既存 manifest の凍結した規則は変えない。
     """
 
     def test_default_is_the_calibrated_rule(self):
