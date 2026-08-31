@@ -326,14 +326,34 @@ def main() -> int:
             except Exception:
                 pass
     try:
-        style = ThumbnailStyle()
+        # 通常動画(soren_news)はtechテーマ(白900ゴシック+赤線+左寄せ)で生成。
+        # podcastも合わせるためtechを指定。classicの生成り700明朝+金線は暗い実写で潰れて地味に見える。
+        style = ThumbnailStyle(theme="tech")
+        # Pexels実写は夕景などで暗いことがあるため、サムネ用に少し明るくしてから渡す
+        # (動画背景の eq brightness=-0.14 とは逆)。失敗しても元画像で続行。
+        if thumb_bg and thumb_bg.exists():
+            try:
+                import subprocess as _sp
+                _bright = _thumb_work / "_bg_bright.jpg"
+                # 既に明るさ補正済みキャッシュがあれば再利用
+                if not _bright.exists() or _bright.stat().st_mtime < thumb_bg.stat().st_mtime:
+                    _sp.run([
+                        "ffmpeg", "-y", "-v", "error",
+                        "-i", str(thumb_bg),
+                        "-vf", "eq=brightness=0.08:saturation=1.18:contrast=1.05",
+                        "-q:v", "2", str(_bright)
+                    ], check=False, timeout=30)
+                if _bright.exists() and _bright.stat().st_size > 0:
+                    thumb_bg = _bright
+            except Exception as _e:
+                log(f"サムネ背景の明るさ補正をスキップ: {_e}")
         # 通常動画と同じ: 縦で描いてから16:9へ
         with tempfile.TemporaryDirectory(prefix="podcast_thumb_") as td:
             td_path = Path(td)
             vert = td_path / "thumb_vert.png"
             dthumb.render(ep_title, vert, bg_image=thumb_bg, width=1080, height=1920, style=style)
             dthumb.to_16x9(vert, thumb, target_w=1280, target_h=720)
-        log(f"サムネイル: {thumb} ({thumb.stat().st_size} bytes) bg={'yes' if thumb_bg else 'no'} query={thumb_query!r}")
+        log(f"サムネイル: {thumb} ({thumb.stat().st_size} bytes) bg={'yes' if thumb_bg else 'no'} query={thumb_query!r} style=tech")
     except Exception as e:
         log(f"サムネイル生成に失敗、サムネ無しで続行: {e}")
         thumb = None
