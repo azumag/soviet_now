@@ -6,6 +6,7 @@ Classify each comment into ONE of these categories:
 - card_gacha: "A obtained B" result messages
 - raid: Twitch raid notifications from system/bot accounts such as nightbot. Only classify the actual raid notification as raid. Do NOT classify normal viewer comments after the raid, the raider's own chat messages, or "tombraid" emote reactions as raid.
 - subscription: channel subscription messages
+- stream_goal: system notifications that start with `[配信目標達成]`, including follower and subscription goal completions
 - bits: cheer/bits messages
 - sing_request: requests to sing a song
 - game_question: questions about game rules, strategy, or state

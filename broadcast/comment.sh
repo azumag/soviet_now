@@ -1883,6 +1883,8 @@ def classify(user: str, comment: str) -> str:
         return "stream_bug_report"
     if re.search(r"が【.+?】.+?を獲得しました", text):
         return "card_gacha"
+    if "[配信目標達成]" in text:
+        return "stream_goal"
     if "bits" in lower or "cheer" in lower:
         return "bits"
     if "sub" in lower or "サブスク" in text:
@@ -1926,7 +1928,7 @@ PY
 _comment_category_allows_advice_append() {
 	local category="${1:-}"
 	case "$category" in
-	card_gacha | chitchat | bits | subscription | sing_request | raid | other | stream_bug_report)
+	card_gacha | chitchat | bits | subscription | stream_goal | sing_request | raid | other | stream_bug_report)
 		return 1
 		;;
 	*)
@@ -2435,7 +2437,7 @@ _build_category_prompt() {
 	case "$category" in
 	game_question | game_status) template_category="game" ;;
 	strategy_advice | comment_advice | general_question) template_category="default" ;;
-	subscription | bits | other) template_category="default" ;;
+	subscription | stream_goal | bits | other) template_category="default" ;;
 	esac
 	local template_file="$ELOOP_LIB_DIR/prompts/comment_response_${template_category}.md"
 	if [ ! -f "$template_file" ]; then

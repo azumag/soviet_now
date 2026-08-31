@@ -124,6 +124,13 @@ TWITCH_POLL_WORKER_INTERVAL="${TWITCH_POLL_WORKER_INTERVAL:-10}"
 TWITCH_POLL_RETRY_SEC="${TWITCH_POLL_RETRY_SEC:-600}"
 TWITCH_POLL_AGENTS="${TWITCH_POLL_AGENTS:-$RADIO_AGENTS}"
 TWITCH_POLL_AI_TIMEOUT="${TWITCH_POLL_AI_TIMEOUT:-120}"
+# --- Twitch Creator Goals 達成リアクション ---
+# Twitch上で作成したフォロワー/サブスク等の目標を監視し、未達→達成の
+# 境界を一度だけ既存のAIコメント返しへ流す。channel:read:goals が必要。
+TWITCH_GOALS_ENABLED="${TWITCH_GOALS_ENABLED:-0}"
+TWITCH_GOALS_TOKEN="${TWITCH_GOALS_TOKEN:-${TWITCH_PREDICTIONS_TOKEN:-}}"
+TWITCH_GOALS_POLL_SEC="${TWITCH_GOALS_POLL_SEC:-60}"
+TWITCH_GOALS_STATE_FILE="${TWITCH_GOALS_STATE_FILE:-tmp/state/twitch_goals.json}"
 # --- YouTube ライブ枠の自動復旧 ---
 # OAuth は youtube.force-ssl または youtube scope が必要。既定は完全無効で、
 # 有効化しても AUTO_CREATE=1 までは監視だけ。映像キーやtokenはstate/logへ書かない。
