@@ -51,6 +51,8 @@ _refresh_radio_intro_for_playback_file() {
 		local _rc_hour_num_for_announce
 		_rc_hour_num_for_announce=$((10#$_rc_hour))
 		time_text="${_rc_hour_num_for_announce}時"
+	elif [ "$time_precision" = "none" ]; then
+		time_text=""
 	fi
 
 	python3 - "$target_file" "$corner_name" "$greet" "$time_text" <<'PY'
@@ -72,7 +74,7 @@ lines = text.splitlines()
 if not lines:
     raise SystemExit(0)
 
-intro = f"{greet}、現在時刻は{time_text}です。"
+intro = f"{greet}、現在時刻は{time_text}です。" if time_text else f"{greet}。"
 intro_like = re.compile(
     r"(現在時刻|[0-2]?\d[:時][0-5]\d(?:分)?|おはよう|こんにちは|こんばんは|朝|午前|昼|午後|夕方|夕暮れ|夜|深夜|未明)"
 )

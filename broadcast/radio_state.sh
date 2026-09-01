@@ -436,6 +436,19 @@ _radio_deferred_render_in_progress() {
 	return 1
 }
 
+_radio_ready_wav_crosses_hour_boundary() {
+	local ready_wav="$1" duration="" remaining_sec
+	[ -s "$ready_wav" ] || return 1
+	command -v ffprobe >/dev/null 2>&1 || return 1
+	duration=$(ffprobe -v error -show_entries format=duration \
+		-of default=noprint_wrappers=1:nokey=1 "$ready_wav" 2>/dev/null || true)
+	case "$duration" in '' | *[!0-9.]*) return 1 ;; esac
+	_radio_time_context
+	remaining_sec=$(((60 - _rc_min_num) * 60))
+	awk -v duration="$duration" -v remaining="$remaining_sec" \
+		'BEGIN { exit !(duration >= remaining) }'
+}
+
 _radio_sync_deferred_time_before_render() {
 	local qf="$1" deferred_corner="$2"
 	[ -f "$qf" ] || return 0
@@ -451,6 +464,13 @@ _radio_sync_deferred_time_before_render() {
 	before_hash=$(_radio_text_hash "$qf" 2>/dev/null || true)
 	time_precision=hour
 	[ "${RADIO_TIME_ANNOUNCE_MINUTES:-0}" = "1" ] && time_precision=minute
+	# 再生開始時に正しい時報でも、長いトークが次の時間へまたがると
+	# 視聴者には古い時刻として聞こえる。レンダー済み音声の尺が時境界を
+	# 越える場合は、挨拶だけを残して時報を省く。本文変更により下の
+	# ハッシュ照合が旧WAVを無効化し、時報なしで再レンダーする。
+	if _radio_ready_wav_crosses_hour_boundary "$ready_wav"; then
+		time_precision=none
+	fi
 	_refresh_radio_intro_for_playback_file "$qf" "$deferred_corner" "$time_precision"
 	after_hash=$(_radio_text_hash "$qf" 2>/dev/null || true)
 
