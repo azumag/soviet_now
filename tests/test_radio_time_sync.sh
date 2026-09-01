@@ -158,6 +158,26 @@ else
 	not_ok 'matching render metadata keeps current ready audio'
 fi
 
+qf_boundary="$RADIO_DEFERRED_QUEUE_DIR/radio_7_8_soviet_9.txt"
+ready_boundary="$(_radio_ready_wav_path "$qf_boundary")"
+bundle_boundary="$(_radio_ready_bundle_path "$qf_boundary")"
+printf 'こんばんは、現在時刻は4時です。\n長い本文です。\n' >"$qf_boundary"
+printf 'RIFF-boundary\n' >"$ready_boundary"
+mkdir -p "$bundle_boundary"
+printf 'boundary\n' >"$bundle_boundary/playlist.txt"
+printf 'boundary\n' >"$bundle_boundary/captions.txt"
+_radio_write_render_meta "$qf_boundary" "$(_radio_text_hash "$qf_boundary")"
+_radio_ready_wav_crosses_hour_boundary() { return 0; }
+_radio_sync_deferred_time_before_render "$qf_boundary" soviet
+assert_eq 'おはようございます。' "$(head -n 1 "$qf_boundary")" 'hour-crossing audio omits clock while preserving greeting'
+if [ ! -e "$ready_boundary" ] && [ ! -e "$bundle_boundary" ]; then
+	ok 'hour-crossing rendered audio is invalidated for clock-free rerender'
+else
+	not_ok 'hour-crossing rendered audio is invalidated for clock-free rerender'
+fi
+unset -f _radio_ready_wav_crosses_hour_boundary
+. "$ROOT/broadcast/radio_state.sh"
+
 rm -f "$(_radio_render_meta_path "$qf")"
 printf 'RIFF-legacy\n' >"$ready"
 _radio_sync_deferred_time_before_render "$qf" news
