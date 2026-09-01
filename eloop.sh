@@ -370,6 +370,13 @@ PY
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
 	# A/B の腕ごと環境変数 (解析器モード等)。AB_EXTRA_ENV が空なら従来と同一。
+	# A/B が動いていない試合では必ず捨てる。ループのプロセスは長命で AB_EXTRA_ENV は
+	# export 済みのため、実験終了後もこれが残り .env の設定を上書きし続ける。
+	# (2026-09-01 に実発生: v763 採用直後、A 腕の V763_DIVERSITY_W=0 が残り採用した軸が
+	#  一切発火しなかった。eloop.sh は毎試合 source し直されるのでここが最も早く効く。)
+	if [ -z "${SOREN_AB_ALT_STRATEGY:-}" ]; then
+		AB_EXTRA_ENV=""
+	fi
 	if [ -n "${AB_EXTRA_ENV:-}" ]; then
 		env $AB_EXTRA_ENV \
 			STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \

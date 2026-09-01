@@ -54,8 +54,89 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 import math
+import os
 
 from strategy_helpers import board_stats
+
+
+# --- v763: 落下後に「露出したまま残る型の数」を評価する（v757 SURFACE_DIVERSITY の再設計） ---
+# 実測 (2026-08-31):
+#   * 併合の 61% は「露出同型の上に落とせた 26.8% の手」から出ており、その手は 1.291 併合/手。
+#     露出同型が無い 60.3% の手は 0.169 併合/手しか出ない。律速は機会の有無そのもの。
+#   * 機会率 = 露出型数 / 11（落下型は 1..11 の一様分布）。実測の露出型数は平均 4.37。
+#   * 駒数で層別した統制付き検証 (7504 手ペア、次 5 手の併合数) で
+#     露出型 +1 あたり +0.045〜+0.087 併合/手（全層で一貫、代表値 +0.06）。+1 型で 93 -> 110 手。
+#   * 選択の余地も実測: 落下前 4.38 型 -> 実際に選んだ手の後 3.85 型、最良候補なら 4.81 型。
+#     平均 0.961 型を取り逃しており、最良と最悪の幅は 2.105 型。
+# v757 からの修正点 (issue #132 P0-4):
+#   1. 落下型 1..11 に限定する（type 12 以上は直接降らないので機会にならない）
+#   2. 露出判定を _v742_open_twin と同一基準にする（素朴な真上判定は的中 13.8%、この基準は 86.5%）
+#   3. 落とした駒自身の露出を数える（drop_type は必ず露出型として残る）
+#   4. type15_count == 0 のゲートを撤去する
+# V763_DIVERSITY_W=0 (既定) で従来と完全一致する。
+_V763_BASE_BONUS = 260.0
+
+
+def _v763_weight():
+    """V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
+    raw = str(os.environ.get("V763_DIVERSITY_W", "0") or "").strip()
+    if raw in ("", "0", "false", "no", "off"):
+        return 0.0
+    try:
+        w = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if w != w or w < 0.0:
+        return 0.0
+    return min(w, 8.0)
+
+
+def _v763_open_by_type(pieces):
+    """落下しうる型 1..11 について、いま露出している駒を集める。判定は _v742_open_twin と同一。"""
+    out = {}
+    for ttype in range(1, 12):
+        opens = _v742_open_twin(pieces, ttype)
+        if opens:
+            out[ttype] = opens
+    return out
+
+
+def _v763_post_open_types(open_by_type, drop_type, drop_x, drop_y):
+    """その候補へ落とした後に、露出したまま残る型の数。
+
+    新しい駒は (drop_x, drop_y) に載るので、真上帯に入る既存の露出駒を塞ぐ
+    （_v742_open_twin と同じ帯・同じ 0.25 の余裕）。自分自身は上に何も無いので、
+    drop_type は必ず露出型として残る。
+    """
+    try:
+        drop_band = 0.6 * float(board_stats.seed_horiz_radius(drop_type))
+        drop_bottom = drop_y - float(board_stats.seed_bottom_radius(drop_type))
+    except (TypeError, ValueError):
+        return len(open_by_type)
+    kept = 0
+    drop_type_alive = False
+    for ttype, opens in open_by_type.items():
+        alive = False
+        for piece in opens:
+            try:
+                px = float(piece.get("x"))
+                py = float(piece.get("y"))
+                ptop = py + float(board_stats.seed_top_radius(ttype))
+                band = float(board_stats.seed_horiz_radius(ttype)) + drop_band
+            except (TypeError, ValueError):
+                alive = True
+                break
+            if abs(drop_x - px) <= band and drop_bottom >= ptop - 0.25 and drop_y > py:
+                continue
+            alive = True
+            break
+        if alive:
+            kept += 1
+            if ttype == drop_type:
+                drop_type_alive = True
+    if not drop_type_alive:
+        kept += 1
+    return kept
 
 # v747/v752: 終盤の DIRECT 併合は落下ピースの超過フラグでは差し戻さない（strategy_runner.enforce_deadline_safety が参照）
 DEADLINE_ALLOW_DIRECT_CROSS = True
@@ -1574,6 +1655,9 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 2)
+    _v763_w = _v763_weight()
+    _v763_open = _v763_open_by_type(pieces) if _v763_w > 0.0 else None
+    _v763_base = len(_v763_open) if _v763_open is not None else 0
     next_next_type = next_next_piece.get("type", ----1)
     next_radius = _as_float(next_piece.get("r"), 0.5)
 
@@ -2785,6 +2869,16 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
+
+        if _v763_w > 0.0 and _v763_open is not None and 1 <= int(next_type) <= 11:
+            try:
+                _v763_post = _v763_post_open_types(_v763_open, int(next_type), float(x), float(landing_y))
+                _v763_d = _v763_post - _v763_base
+            except (TypeError, ValueError):
+                _v763_d = 0
+            if _v763_d:
+                score += _v763_w * _V763_BASE_BONUS * _v763_d
+                reasons.append("SURFACE_DIVERSITY_V763")
 
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.

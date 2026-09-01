@@ -76,6 +76,12 @@ _ab_active() {
 	fi
 	if [ -n "$reason" ]; then
 		log "[AB] inactive: $reason"
+		# A/B が動いていない試合へ、前回の腕別 env が残らないようにする。
+		# ループのプロセスは長命で AB_EXTRA_ENV は export 済みのため、ここで消さないと
+		# 直前の実験の a_env/b_env が .env の設定を上書きし続ける (2026-09-01 に実発生:
+		# v763 採用直後、A 腕の V763_DIVERSITY_W=0 が残って採用した軸が発火しなかった)。
+		AB_EXTRA_ENV=""
+		export AB_EXTRA_ENV
 		return 1
 	fi
 	return 0
