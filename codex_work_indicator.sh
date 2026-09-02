@@ -90,6 +90,12 @@ _enqueue_work_audio() {
 	_session_title=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('title',''))" "$_last_file" 2>/dev/null || echo "")
 	case "$_start_ts" in ''|*[!0-9]*) _start_ts=0 ;; esac
 	case "$_last_audio_ts" in ''|*[!0-9]*) _last_audio_ts=0 ;; esac
+	# stop を実行できずセッション状態だけ残った場合も、表示と同じ期限で回収する。
+	if [ "$_active" = "1" ] && [ "$_start_ts" -gt 0 ] \
+		&& [ $(( _now - _start_ts )) -gt "${CODEX_WORK_OVERLAY_STALE_SEC:-3600}" ]; then
+		_active=0
+		_announced=0
+	fi
 
 	case "$_w_action" in
 		start)
