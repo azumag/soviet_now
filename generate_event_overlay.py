@@ -31,12 +31,27 @@ def read_events(path: Path, keep: int) -> list[dict[str, Any]]:
     return events[-keep:]
 
 
-def read_work_indicator(path: Path) -> dict[str, Any] | None:
+def read_work_indicator(path: Path, now: int | None = None) -> dict[str, Any] | None:
     try:
         item = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
     if not isinstance(item, dict) or not item.get("active"):
+        return None
+    if now is None:
+        now = int(time.time())
+    try:
+        stale_sec = max(1, int(os.environ.get("CODEX_WORK_OVERLAY_STALE_SEC", "3600")))
+        ts = int(item.get("ts", 0) or 0)
+    except (TypeError, ValueError):
+        stale_sec = 3600
+        ts = 0
+    if ts <= 0 or now - ts > stale_sec:
+        # 明示 stop まで到達できなかった異常終了も、次の定期描画で回収する。
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
     return item
 
@@ -284,8 +299,8 @@ def main() -> None:
     visible_sec = int(sys.argv[4]) if len(sys.argv) > 4 else 18
     work_state_path = Path(sys.argv[5]) if len(sys.argv) > 5 else None
     events = read_events(events_path, keep)
-    work = read_work_indicator(work_state_path) if work_state_path else None
     now = int(time.time())
+    work = read_work_indicator(work_state_path, now=now) if work_state_path else None
     recent = [e for e in events if now - int(e.get("ts", 0) or 0) <= max(visible_sec * 4, 60)]
     gen_indicators = read_gen_indicators(now)
 
