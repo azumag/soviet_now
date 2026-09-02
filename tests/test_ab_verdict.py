@@ -148,3 +148,68 @@ class HarmStopCalibrationTests(unittest.TestCase):
         strict["preregistration"]["rule"]["harm_z"] = 3.09
         self.assertEqual(ab_verdict.evaluate(loose, data)["verdict"], "HARM_STOP")
         self.assertEqual(ab_verdict.evaluate(strict, data)["verdict"], "CONTINUE")
+
+
+class FutilityStopTests(unittest.TestCase):
+    """無益停止 (条件付き検出力) を固定する。
+
+    2026-09-03 の合成 A/A 測定: 真に横ばいの候補は中央 k=22 (約 7 時間) で打ち切れる。
+    ただし設計が非力だと本物の候補も殺すので、必要な k を確保した実験でのみ有効化する。
+    既定は無効で、旧 manifest の挙動は変わらない。
+    """
+
+    def _manifest(self, **rule):
+        base = {"primary": "score", "primary_kind": "block_diff", "adopt_ci_lower_gt": 0.0,
+                "harm_min_blocks": 10, "harm_ucb_lt": 0.0, "harm_z": 2.3263,
+                "final_blocks": 200, "final_games_per_arm": 400}
+        base.update(rule)
+        return {"pattern": "ABBA", "preregistration": {"rule": base}}
+
+    def _flat(self, n):
+        # 期待値ゼロ・ばらつきありのブロック差を作る
+        out = []
+        for i in range(n):
+            a, b = (100, 120) if i % 2 == 0 else (120, 100)
+            out += block(i, a, b)
+        return out
+
+    def test_disabled_by_default_keeps_old_behaviour(self):
+        got = ab_verdict.evaluate(self._manifest(), self._flat(40))
+        self.assertEqual(got["verdict"], "CONTINUE")
+
+    def test_flat_candidate_is_stopped_for_futility(self):
+        got = ab_verdict.evaluate(
+            self._manifest(futility_cp_lt=0.10, futility_min_blocks=20), self._flat(40))
+        self.assertEqual(got["verdict"], "FUTILITY_STOP")
+        self.assertIn("conditional power", got["reason"])
+
+    def test_not_stopped_before_the_minimum_block_count(self):
+        got = ab_verdict.evaluate(
+            self._manifest(futility_cp_lt=0.10, futility_min_blocks=30), self._flat(24))
+        self.assertEqual(got["verdict"], "CONTINUE")
+
+    def test_a_clearly_winning_candidate_is_not_stopped(self):
+        out = []
+        for i in range(40):
+            a, b = (100, 900) if i % 2 == 0 else (120, 920)
+            out += block(i, a, b)
+        got = ab_verdict.evaluate(
+            self._manifest(futility_cp_lt=0.10, futility_min_blocks=20), out)
+        self.assertNotEqual(got["verdict"], "FUTILITY_STOP")
+
+    def test_harm_stop_takes_precedence_over_futility(self):
+        # ブロック差にばらつきを持たせる (差が一定だと sd=0 になり、
+        # 既存実装では se が偽になって害停止も無益停止も評価されない)。
+        out = []
+        for i in range(40):
+            a, b = (900, 100) if i % 2 == 0 else (700, 120)
+            out += block(i, a, b)
+        got = ab_verdict.evaluate(
+            self._manifest(futility_cp_lt=0.10, futility_min_blocks=20), out)
+        self.assertEqual(got["verdict"], "HARM_STOP")
+
+    def test_conditional_power_is_monotone_in_the_observed_mean(self):
+        low = ab_verdict.conditional_power(0.0, 1.0, 50, 200, 1.2816, 0.0)
+        high = ab_verdict.conditional_power(0.5, 1.0, 50, 200, 1.2816, 0.0)
+        self.assertLess(low, high)
+        self.assertIsNone(ab_verdict.conditional_power(0.0, 1.0, 200, 200, 1.2816, 0.0))

@@ -77,12 +77,35 @@ def rule(manifest):
         # 片側信頼水準。旧 manifest には無いので、その場合は当時の Z90 を使う。
         "harm_z": float(r.get("harm_z", Z90 if "harm_min_blocks" in r else HARM_Z_DEFAULT)),
         "futility": bool(r.get("futility", False)),
+        # 無益停止 (条件付き検出力)。None なら無効＝従来と同じ。
+        # 2026-09-03 の合成 A/A 測定: 真に横ばいの候補は中央 k=22 (約 7 時間) で打ち切れる。
+        # ただし設計が非力だと本物の候補も殺すので、必要な k を確保した実験でのみ使う。
+        "futility_cp_lt": (None if r.get("futility_cp_lt") is None
+                           else float(r.get("futility_cp_lt"))),
+        "futility_min_blocks": int(r.get("futility_min_blocks", 20)),
         "final_blocks": int(r.get("final_blocks", 50)),
         "final_games_per_arm": int(r.get("final_games_per_arm", 100)),
         "guardrail_t15_ratio": float(r.get("guardrail_t15_ratio", 0.5)),
         "pattern": manifest.get("pattern", "ABBA"),
     }
 
+
+
+def conditional_power(mean, sd, k, final_blocks, adopt_z, adopt_gt):
+    """今の推定のまま残りを消化したとき、最終的に採用条件を満たす確率。
+
+    最終 mean は N(mean, sd^2 * (K-k) / K^2) に従うとみなし、
+    採用ライン (adopt_gt + adopt_z * sd/sqrt(K)) を超える確率を返す。
+    k >= K なら判定済みなので None。
+    """
+    if mean is None or not sd or k >= final_blocks or final_blocks <= 0:
+        return None
+    need = adopt_gt + adopt_z * sd / math.sqrt(final_blocks)
+    sd_final = sd * math.sqrt(final_blocks - k) / final_blocks
+    if sd_final <= 0:
+        return 1.0 if mean > need else 0.0
+    z = (need - mean) / sd_final
+    return 0.5 * math.erfc(z / math.sqrt(2))
 
 def evaluate(manifest, rows):
     R = rule(manifest)
@@ -97,7 +120,8 @@ def evaluate(manifest, rows):
     diffs = blocks(clean, R["pattern"], key=R["primary"])
     k = len(diffs)
     mean = st.mean(diffs) if diffs else None
-    se = (st.pstdev(diffs) / math.sqrt(k)) if k > 1 else None
+    sd = st.pstdev(diffs) if k > 1 else None
+    se = (sd / math.sqrt(k)) if sd else None
     ci_lo = mean - Z90 * se if (mean is not None and se) else None
     ucb = mean + R["harm_z"] * se if (mean is not None and se) else None
 
@@ -115,6 +139,14 @@ def evaluate(manifest, rows):
     # 最終判定の起動条件は「計画した標本サイズに達したか」。事前登録では "k=50 (各 100 試合)" と
     # 同じ節目を 2 通りで書いているが、末尾に端数ブロックが出ると k=49 / n=100 のように片方だけ
     # 満たす状態が起こる (実際に v748 vs v752 がそうだった)。どちらかを満たせば判定に入る。
+    elif (R["futility_cp_lt"] is not None and k >= R["futility_min_blocks"]
+          and k < R["final_blocks"] and sd is not None
+          and (cp := conditional_power(mean, sd, k, R["final_blocks"], Z90,
+                                       R["adopt_ci_lower_gt"])) is not None
+          and cp < R["futility_cp_lt"]):
+        verdict = "FUTILITY_STOP"
+        why = "k=%d >= %d and conditional power %.3f < %.3f" % (
+            k, R["futility_min_blocks"], cp, R["futility_cp_lt"])
     elif k >= R["final_blocks"] or min(n.values()) >= R["final_games_per_arm"]:
         if ci_lo is not None and ci_lo > R["adopt_ci_lower_gt"] and guard:
             verdict, why = "ADOPT", "CI90 lower %.1f > %.1f and guardrail ok" % (ci_lo, R["adopt_ci_lower_gt"])
