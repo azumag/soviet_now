@@ -1318,13 +1318,14 @@ PY
 }
 
 _build_comment_celebration_history_context() {
-	python3 - "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "$COMMENT_CELEBRATION_HISTORY_ITEMS" <<'PY'
+	python3 - "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "$COMMENT_CELEBRATION_HISTORY_ITEMS" "${SOVIET_CREATION_ARCHIVE_FILE:-data/soviet_creation_history.tsv}" <<'PY'
 import sys
 from pathlib import Path
 
 russia_file = Path(sys.argv[1])
 soviet_file = Path(sys.argv[2])
 limit = max(1, int(sys.argv[3]))
+soviet_archive_file = Path(sys.argv[4])
 
 
 def read_entries(path: Path):
@@ -1336,32 +1337,48 @@ def read_entries(path: Path):
     except Exception:
         return items
     for raw in lines:
-        cols = raw.strip().split("\t")
+        cols = raw.rstrip("\r\n").split("\t")
         if len(cols) < 5:
             continue
         _iso_ts, local_ts, game_num, score, turns = cols[:5]
         items.append((local_ts.strip(), game_num.strip(), score.strip(), turns.strip()))
-    return items[-limit:]
+    return items
 
 
-def render_block(label: str, path: Path):
-    rows = read_entries(path)
+def merge_entries(*paths: Path):
+    rows = []
+    seen = set()
+    for path in paths:
+        for row in read_entries(path):
+            # A historical row restored from the archive and the same runtime
+            # event may differ only in the optional turns field.
+            key = row[:3]
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    return rows
+
+
+def render_block(label: str, rows):
     if not rows:
         return f"{label}:\n- まだ履歴なし"
-    lines = [f"{label}:"]
-    for local_ts, game_num, score, turns in reversed(rows):
+    lines = [f"{label}: 累計{len(rows)}回"]
+    for local_ts, game_num, score, turns in reversed(rows[-limit:]):
         parts = [local_ts]
         if game_num:
             parts.append(f"Game#{game_num}")
-        parts.append(f"score={score}")
-        parts.append(f"turns={turns}")
+        if score:
+            parts.append(f"score={score}")
+        if turns:
+            parts.append(f"turns={turns}")
         lines.append("- " + " / ".join(parts))
     return "\n".join(lines)
 
 
-print(render_block("ロシア建国", russia_file))
+print(render_block("ロシア建国", merge_entries(russia_file)))
 print("")
-print(render_block("ソ連建国", soviet_file))
+print(render_block("ソ連建国", merge_entries(soviet_archive_file, soviet_file)))
 PY
 }
 

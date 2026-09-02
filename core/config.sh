@@ -281,6 +281,7 @@ PAST_JIJI_URL_HASHES="$TMP_HISTORY_DIR/past_jiji_url_hashes.txt"
 PAST_NEWS_READ_SOURCES="$TMP_HISTORY_DIR/past_news_read_sources.txt"
 RUSSIA_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/russia_creation_history.tsv"
 SOVIET_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/soviet_creation_history.tsv"
+SOVIET_CREATION_ARCHIVE_FILE="${SOVIET_CREATION_ARCHIVE_FILE:-data/soviet_creation_history.tsv}"
 # カードガチャで全種コンプリート(N種中N種所持)を達成済みのユーザー一覧。
 # 一度祝福したユーザーは記録し、以後はコンプリートに毎回触れないようにする。
 GACHA_COMPLETED_USERS_FILE="$TMP_HISTORY_DIR/gacha_completed_users.txt"
