@@ -618,11 +618,11 @@ PY
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
         self.assertIn(
-            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.2-contributor-free}"',
+            'RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.3-contributor-free}"',
             config,
         )
         self.assertIn(
-            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.2-contributor}"',
+            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.3-contributor}"',
             config,
         )
         self.assertIn(

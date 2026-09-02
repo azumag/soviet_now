@@ -2,7 +2,7 @@
 # free枠モデルの上流復旧を1回だけ確認するプローブ。
 # cron 例: */30 * * * * /home/ubuntu/soren/probe_free_slot.sh >> logs/ai_stderr.log 2>&1
 #
-# - FREE_PROBE_MODELS (カンマ区切り。空なら既定の2モデル)
+# - FREE_PROBE_MODELS (カンマ区切り。空なら既定の3モデル)
 # - 各モデルへ短文を投げ、成功/失敗を tmp/state/free_slot_probe/<key> に記録
 # - 前回失敗→今回成功の遷移で overlay_notify し、ai_stderr.log へ復旧を記録
 # - 常に exit 0 (cron で安全)
@@ -11,7 +11,7 @@ set -u
 cd "$(dirname "$0")" || exit 0
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
-MODELS="${FREE_PROBE_MODELS:-opencode:deepseek-v4-flash-free,opencode:muse-spark-1.2-contributor-free}"
+MODELS="${FREE_PROBE_MODELS:-opencode:muse-spark-1.3-contributor-free,opencode:deepseek-v4-flash-free,opencode:muse-spark-1.2-contributor-free}"
 STATE_DIR="${FREE_PROBE_STATE_DIR:-tmp/state/free_slot_probe}"
 TIMEOUT_SEC="${FREE_PROBE_TIMEOUT:-45}"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
