@@ -1,0 +1,31 @@
+{
+  "experiment": "v767_BUNDLE_vs_v763",
+  "status": "DRAFT — 開始時に started_at / decide_hash / sha256 を確定させる",
+  "hypothesis": "単独では検出できない小さな改善を 3 つ束ねれば、検出可能な効果量になる。",
+  "components": [
+    {"name": "nextNext レーン維持 (旧 v764)", "layer": "_decide_base 加点", "measured": "レーン率 +0.9pt", "expect": "+0.007 併合/手"},
+    {"name": "壁際の中型駒回避", "layer": "_decide_base 減点", "measured": "型>=5 の壁際落下 62 -> 37 (-40%)", "expect": "+0.0025 併合/手"},
+    {"name": "runtime の headroom 置換を露出型数で選び直す (旧 v766)", "layer": "strategy_runner", "measured": "露出型数 -0.002 (効いていない)", "expect": "≈0"}
+  ],
+  "shadow": {"decision_change": 0.0438, "merge_grade_selection": "27.3% -> 27.3% (回帰なし)", "control_at_flag_0": "0.00% (完全同一)"},
+  "expected_effect_merges_per_turn": 0.010,
+  "power_note": "block-sd 0.100 なので k=200 で SE 0.0071、採用閾値 +0.0091。真の効果が +0.010 なら検出力はおよそ 55〜60% しかない。単独候補が枯れて実験枠が空いており、A/B を回す機会費用がほぼゼロなので、検出力が低いことを承知で回す。判定不能に終わる可能性が高いことを事前に明記しておく。",
+  "arms": {
+    "A": {"role": "control", "decide_hash": "TBD_same_as_B", "env": "V767_BUNDLE=0"},
+    "B": {"role": "candidate", "decide_hash": "TBD_same_as_A", "env": "V767_BUNDLE=1"}
+  },
+  "design_note": "両腕とも同一の候補ファイル + 同一の strategy_runner を使い、env のみを変える。runtime 側の変更も V767_BUNDLE で切り替わるので、A 腕は現 root と完全同一。shadow で確認済み。",
+  "pattern": "ABBA",
+  "preregistration": {
+    "primary_report": "merges_per_turn (block diff) 90% CI lower > 0",
+    "secondary": "turns, score, T15 到達率, 110 手以上に限った T15, 110 手以上の割合, area_relief_per_turn, end_area",
+    "guardrail": ["score の block diff 90% CI 下限 > -300", "併合回帰の禁止: B 腕の merge_grade 選択率が A 腕を 10% 以上下回らないこと"],
+    "harm_stop": "k>=10 で merges_per_turn UCB99 < 0 なら finish A",
+    "futility": "適用しない",
+    "final": "k=200 (各400試合、約61時間)",
+    "note": "開始後は規則を変更しない。判定点 k=200 を超えて走らせない（前回 v763 で k=50 を超過した反省）。",
+    "rule": {"primary": "merges_per_turn", "primary_kind": "block_diff", "adopt_ci_lower_gt": 0.0,
+             "harm_min_blocks": 10, "harm_ucb_lt": 0.0, "harm_z": 2.3263, "futility": false,
+             "final_blocks": 200, "final_games_per_arm": 400}
+  }
+}

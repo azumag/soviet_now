@@ -82,6 +82,50 @@ _fire_and_forget_processes = []
 
 STOP_FILE = "tmp/stop"
 
+
+def _v767_bundle_enabled():
+    """V767_BUNDLE: 1 で束ね候補 (runtime 側の選び直しを含む) を有効化。"""
+    raw = str(os.environ.get("V767_BUNDLE", "0") or "").strip().lower()
+    return raw not in ("", "0", "false", "no", "off")
+
+
+def _v767_best_by_diversity(safe, best_safe, risk_top, gs, strategy, tol=0.35):
+    """risk_top が最小から tol 以内の安全候補のうち、落下後の露出型数が最大のものを返す。
+
+    採用済みの v763 と同じ基準 (strategy 側の _v763_* ヘルパー) を使う。
+    戦略が古くてヘルパーが無い場合や情報が欠けている場合は None を返して従来動作に戻す。
+    """
+    open_by_type = getattr(strategy, "_v763_open_by_type", None)
+    post_open = getattr(strategy, "_v763_post_open_types", None)
+    if open_by_type is None or post_open is None or not isinstance(gs, dict):
+        return None
+    pieces = list(gs.get("pieces") or [])
+    try:
+        ntype = int((gs.get("next") or {}).get("type") or 0)
+        base_risk = float(risk_top(best_safe))
+    except (TypeError, ValueError):
+        return None
+    if not pieces or not (1 <= ntype <= 11):
+        return None
+    try:
+        opens = open_by_type(pieces)
+    except Exception:
+        return None
+    best = None
+    for cand in safe:
+        try:
+            if float(risk_top(cand)) > base_risk + tol:
+                continue
+            x = float(cand.get("x"))
+            landing = float(cand.get("landing_y"))
+            types = post_open(opens, ntype, x, landing)
+        except (TypeError, ValueError):
+            continue
+        key = (-types, float(risk_top(cand)), abs(x))
+        if best is None or key < best[0]:
+            best = (key, cand)
+    return best[1] if best else None
+
 def _handle_stop_signal(signum, _frame):
     """SIGINT/SIGTERMをKeyboardInterruptとして扱い、シグナル再送出で確実にbashに伝搬。"""
     global _received_signal
@@ -1048,6 +1092,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
                 abs(float(r.get("x", 0.0) or 0.0)),
             ),
         )
+        # v767: 同じくらい低い安全候補が複数あるとき、|x| (中央寄り) ではなく
+        # 「落下後に露出したまま残る型の数」で選ぶ。実測 (2026-09-02): NO_VALID 経由で
+        # ここが選んだ x は露出型数 4.084、同じ手の最良は 4.898 で 0.814 型を取り逃していた
+        # (最良を選べていたのは 37.2%)。露出型 +1 は統制付きで +0.045〜0.087 併合/手。
+        # V767_BUNDLE=0 (既定) で従来と完全に同じ。
+        if _v767_bundle_enabled():
+            _v767_pick = _v767_best_by_diversity(safe, best_safe, risk_top, game_state, strategy_module)
+            if _v767_pick is not None:
+                best_safe = _v767_pick
         candidate_geom_top = geometry_top_at_x(candidate.get("x"))
         if candidate_geom_top is not None:
             safe_geom_pairs = [
