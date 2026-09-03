@@ -213,3 +213,45 @@ class FutilityStopTests(unittest.TestCase):
         high = ab_verdict.conditional_power(0.5, 1.0, 50, 200, 1.2816, 0.0)
         self.assertLess(low, high)
         self.assertIsNone(ab_verdict.conditional_power(0.0, 1.0, 200, 200, 1.2816, 0.0))
+
+
+class T15GuardrailTests(unittest.TestCase):
+    """T15 比率ガードの既定と、無効化の手段を固定する。
+
+    T15 は 3〜6% の稀事象で、両腕とも真の到達率 5% でも各 100 試合で 12.5% の確率で
+    B < A/2 になる (2026-09-04 の実測)。過去 11 実験のうち 2 本が実際に FAIL していた。
+    issue #132 P0-1 の方針どおり、新しい manifest では 0 を指定して無効化する。
+    既定 0.5 は旧 manifest を当時と同じに評価するために残す。
+    """
+
+    def _rows(self, a_t15, b_t15, n=30):
+        out = []
+        for i in range(n):
+            kw_a = {"max_type": 15} if i < a_t15 else {"max_type": 13}
+            kw_b = {"max_type": 15} if i < b_t15 else {"max_type": 13}
+            base = i * 4
+            out += [dict({"idx": base, "arm": "A", "score": 100, "turns": 100}, **kw_a),
+                    dict({"idx": base + 1, "arm": "B", "score": 900, "turns": 100}, **kw_b),
+                    dict({"idx": base + 2, "arm": "B", "score": 900, "turns": 100}, **kw_b),
+                    dict({"idx": base + 3, "arm": "A", "score": 100, "turns": 100}, **kw_a)]
+        return out
+
+    def _manifest(self, **rule):
+        base = {"primary": "score", "primary_kind": "block_diff", "adopt_ci_lower_gt": 0.0,
+                "final_blocks": 30, "final_games_per_arm": 60}
+        base.update(rule)
+        return {"pattern": "ABBA", "preregistration": {"rule": base}}
+
+    def test_ratio_guard_is_on_by_default(self):
+        got = ab_verdict.evaluate(self._manifest(), self._rows(a_t15=4, b_t15=0))
+        self.assertFalse(got["guardrail_ok"])
+        self.assertEqual(got["verdict"], "REJECT")
+
+    def test_setting_the_ratio_to_zero_disables_it(self):
+        got = ab_verdict.evaluate(self._manifest(guardrail_t15_ratio=0.0),
+                                  self._rows(a_t15=4, b_t15=0))
+        self.assertTrue(got["guardrail_ok"])
+
+    def test_guard_passes_when_the_candidate_reaches_t15_as_often(self):
+        got = ab_verdict.evaluate(self._manifest(), self._rows(a_t15=4, b_t15=4))
+        self.assertTrue(got["guardrail_ok"])

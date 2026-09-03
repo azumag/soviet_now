@@ -85,6 +85,11 @@ def rule(manifest):
         "futility_min_blocks": int(r.get("futility_min_blocks", 20)),
         "final_blocks": int(r.get("final_blocks", 50)),
         "final_games_per_arm": int(r.get("final_games_per_arm", 100)),
+        # T15 の比率ガード (B >= A * ratio)。T15 は 3〜6% の稀事象なので、
+        # 効果ゼロの候補でも各 100 試合で 12.5% の確率で FAIL する (2026-09-04 に実測)。
+        # issue #132 P0-1 が「比率だけのガードを廃止し、明示した非劣性 margin と
+        # 区間推定を使う」としているとおり、新しい manifest では 0 を指定して無効化する。
+        # 既定 0.5 は旧 manifest の再現性のために残す。
         "guardrail_t15_ratio": float(r.get("guardrail_t15_ratio", 0.5)),
         "pattern": manifest.get("pattern", "ABBA"),
     }
