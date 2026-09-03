@@ -25,9 +25,12 @@ WAVE_LINK_REPAIR_SCRIPT="${WAVE_LINK_REPAIR_SCRIPT:-./repair_wave_link.sh}"
 case "$WAVE_LINK_REPAIR_COOLDOWN_SEC" in
     ''|*[!0-9]*) WAVE_LINK_REPAIR_COOLDOWN_SEC=3600 ;;
 esac
-# 「配信を開始できますか？」系コメントでOBS配信を開始する。既に配信中なら何もしない
-# (obs_control.sh stream-start 側で no-op になるため悪用リスクなし)。
-STREAM_START_ON_COMMENT_ENABLED="${STREAM_START_ON_COMMENT_ENABLED:-1}"
+# 「配信を開始できますか？」系コメントでOBS配信を開始する。
+# docich issue #37: この接続(irc.chat.twitch.tv:6667)は平文IRCでtags(role等)を
+# 認可根拠にできないため、既定OFFにした上で lib/twitch_command_registry.sh の
+# deny-by-default gate(role=operator, 認証済みtransport(#38)未完了の間は常にdeny)を
+# 必ず通す。STREAM_START_ON_COMMENT_ENABLED=1 にしても registry gate が別途deny する。
+STREAM_START_ON_COMMENT_ENABLED="${STREAM_START_ON_COMMENT_ENABLED:-0}"
 STREAM_START_COOLDOWN_FILE="$CHAT_DIR/stream_start_cooldown"
 STREAM_START_COOLDOWN_SEC="${STREAM_START_COOLDOWN_SEC:-60}"
 case "$STREAM_START_COOLDOWN_SEC" in
@@ -36,6 +39,9 @@ esac
 
 cd "$(dirname "$0")"
 mkdir -p "$CHAT_DIR"
+# docich issue #37: side effect(OBS配信開始/音声プロセス再起動/設定ファイル書換/クリップ作成等)は
+# 全てこのregistryのdeny-by-default authorize経由でのみ実行する。registryに無いcommandはdeny。
+source lib/twitch_command_registry.sh
 
 _compact_recent_file() {
     local src="$1" ttl="$2" max_keep="${3:-$RECENT_DEDUP_MAX}"
@@ -136,20 +142,31 @@ _pid_alive() {
 
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
-    coproc TWITCH_IRC { nc irc.chat.twitch.tv 6667 2>/dev/null; }
-    {
-        # display-name などのメタ情報タグを受け取る
-        printf 'PASS SCHMOOPIIE\r\n'
-        printf 'CAP REQ :twitch.tv/tags twitch.tv/commands\r\n'
-        printf 'NICK %s\r\n' "$nick"
-        printf 'JOIN #%s\r\n' "$CHANNEL"
-    } >&"${TWITCH_IRC[1]}" || {
-        exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
-        exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
-        wait "$TWITCH_IRC_PID" 2>/dev/null || true
-        sleep 5
-        continue
-    }
+    # テスト専用の入力差し替え口: TWITCH_CHAT_DAEMON_TEST_INPUT が設定されている時だけ
+    # nc(実IRC接続)の代わりにファイルを読む。本番経路(未設定時)は従来と完全に同一。
+    if [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ]; then
+        # coproc+cat だと子プロセスの即時終了をbashが検知した時点でfdを回収してしまい、
+        # pipeにまだ読んでいないデータが残っていても "Bad file descriptor" になることがある
+        # (bash coprocの既知の挙動)。テスト入力はプロセスを介さずファイルへ直接fdを張る。
+        exec {TWITCH_IRC[0]}<"$TWITCH_CHAT_DAEMON_TEST_INPUT"
+        exec {TWITCH_IRC[1]}>/dev/null
+        TWITCH_IRC_PID=""
+    else
+        coproc TWITCH_IRC { nc irc.chat.twitch.tv 6667 2>/dev/null; }
+        {
+            # display-name などのメタ情報タグを受け取る
+            printf 'PASS SCHMOOPIIE\r\n'
+            printf 'CAP REQ :twitch.tv/tags twitch.tv/commands\r\n'
+            printf 'NICK %s\r\n' "$nick"
+            printf 'JOIN #%s\r\n' "$CHANNEL"
+        } >&"${TWITCH_IRC[1]}" || {
+            exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
+            exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
+            wait "$TWITCH_IRC_PID" 2>/dev/null || true
+            sleep 5
+            continue
+        }
+    fi
     # セッション開始時に毎回リセットし、前回セッションの値が誤って
     # ストール判定に効かないようにする。
     _irc_read_rc=0
@@ -286,144 +303,156 @@ while true; do
                 metadata_flags="trusted-card"
             fi
 
-            # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）
+            # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）。
+            # role=viewer固定のcommandなので registry は常時許可し得るが、
+            # authorize を必ず通す(未登録commandをdenyする経路と統一するため)。
             if [ "${TWITCH_CLIP_CMD_ENABLED:-0}" = "1" ] && [[ "$msg" =~ ^[[:space:]]*!clip([[:space:]]|$) ]]; then
-                now_ts=0; last_clip_ts=0; clip_age=0
-                now_ts=$(date +%s)
-                last_clip_ts=$(cat "$CLIP_COOLDOWN_FILE" 2>/dev/null || echo 0)
-                clip_age=$((now_ts - last_clip_ts))
-                if [ "$clip_age" -ge "$CLIP_COOLDOWN_SEC" ]; then
-                    echo "$now_ts" > "$CLIP_COOLDOWN_FILE"
-                    ( ./twitch_clip.sh "📎 Clip by ${user}" 2>>"tmp/debug/twitch_clip.log" || true ) &
+                if twitch_cmd_authorize "clip" "$user_id" "$_is_mod_or_broadcaster"; then
+                    if ! twitch_cmd_rate_limited "$CLIP_COOLDOWN_FILE" "$CLIP_COOLDOWN_SEC"; then
+                        twitch_cmd_mark_rate_limit "$CLIP_COOLDOWN_FILE"
+                        ( ./twitch_clip.sh "📎 Clip by ${user}" 2>>"tmp/debug/twitch_clip.log" || true ) &
+                    fi
                 fi
             fi
 
-            # 「配信を開始できますか？」系コメント → OBS配信を開始（既に配信中なら no-op）
-            if [ "${STREAM_START_ON_COMMENT_ENABLED:-1}" = "1" ] && _is_stream_start_request "$msg"; then
-                now_ts=0; last_ss_ts=0; ss_age=0
-                now_ts=$(date +%s)
-                last_ss_ts=$(cat "$STREAM_START_COOLDOWN_FILE" 2>/dev/null || echo 0)
-                case "$last_ss_ts" in ''|*[!0-9]*) last_ss_ts=0 ;; esac
-                ss_age=$((now_ts - last_ss_ts))
-                if [ "$ss_age" -ge "$STREAM_START_COOLDOWN_SEC" ]; then
-                    echo "$now_ts" > "$STREAM_START_COOLDOWN_FILE"
-                    (
-                        mkdir -p tmp/debug 2>/dev/null || true
-                        ss_result=$(./obs_control.sh stream-start 2>>"tmp/debug/stream_start.log" || true)
-                        case "$ss_result" in
-                            *stream-start:started*)
-                                source lib/outbound_queue.sh 2>/dev/null || true
-                                enqueue_chat_message "同志、配信を開始しました！" "chat_daemon" 2>/dev/null || true
-                                ;;
-                        esac
-                    ) &
+            # 「配信を開始できますか？」系コメント → OBS配信を開始（既に配信中なら no-op）。
+            # docich issue #37: required_role=operator。認証済みtransport(#38)完了まで
+            # twitch_cmd_authorize が常にdenyする(平文IRC tagsを認可根拠にしないため)。
+            if [ "${STREAM_START_ON_COMMENT_ENABLED:-0}" = "1" ] && _is_stream_start_request "$msg"; then
+                if twitch_cmd_authorize "stream_start" "$user_id" "$_is_mod_or_broadcaster"; then
+                    if ! twitch_cmd_rate_limited "$STREAM_START_COOLDOWN_FILE" "$STREAM_START_COOLDOWN_SEC"; then
+                        twitch_cmd_mark_rate_limit "$STREAM_START_COOLDOWN_FILE"
+                        (
+                            mkdir -p tmp/debug 2>/dev/null || true
+                            ss_result=$(./obs_control.sh stream-start 2>>"tmp/debug/stream_start.log" || true)
+                            case "$ss_result" in
+                                *stream-start:started*)
+                                    source lib/outbound_queue.sh 2>/dev/null || true
+                                    enqueue_chat_message "同志、配信を開始しました！" "chat_daemon" 2>/dev/null || true
+                                    ;;
+                            esac
+                        ) &
+                    fi
                 fi
                 # continue しない: コメントとしても通常処理し、AIが反応できるようにする
             fi
 
-            # !音声修復 — Elgato Wave Link を通常終了→再起動（1時間クールダウン）
+            # !音声修復 — Elgato Wave Link を通常終了→再起動（1時間クールダウン）。
+            # docich issue #37: required_role=operator。認証済みtransport(#38)完了まで
+            # twitch_cmd_authorize が常にdenyする。deny時は無音(side effect/返信とも無し)。
             if [[ "$msg" =~ ^[[:space:]]*!音声修復([[:space:]]|$) ]]; then
-                now_ts=0; last_repair_ts=0; repair_age=0
-                now_ts=$(date +%s)
-                last_repair_ts=$(cat "$WAVE_LINK_REPAIR_COOLDOWN_FILE" 2>/dev/null || echo 0)
-                case "$last_repair_ts" in
-                    ''|*[!0-9]*) last_repair_ts=0 ;;
-                esac
-                repair_age=$((now_ts - last_repair_ts))
-                if [ "$repair_age" -ge "$WAVE_LINK_REPAIR_COOLDOWN_SEC" ]; then
+                if twitch_cmd_authorize "audio_repair" "$user_id" "$_is_mod_or_broadcaster"; then
                     if [ ! -x "$WAVE_LINK_REPAIR_SCRIPT" ]; then
                         source lib/outbound_queue.sh 2>/dev/null || true
                         enqueue_chat_message "音声修復スクリプトが見つからないため実行できませんでした。" "chat_daemon"
                         continue
                     fi
-                    echo "$now_ts" > "$WAVE_LINK_REPAIR_COOLDOWN_FILE"
-                    source lib/outbound_queue.sh 2>/dev/null || true
-                    enqueue_chat_message "音声修復を開始します。Elgato Wave Link を通常再起動します。" "chat_daemon"
-                    (
-                        if "$WAVE_LINK_REPAIR_SCRIPT" >>"tmp/debug/wave_link_repair.log" 2>&1; then
-                            source lib/outbound_queue.sh 2>/dev/null || true
-                            enqueue_chat_message "音声修復が完了しました。" "chat_daemon"
-                        else
-                            source lib/outbound_queue.sh 2>/dev/null || true
-                            enqueue_chat_message "音声修復に失敗しました。配信者側で確認します。" "chat_daemon"
-                        fi
-                    ) &
-                else
-                    remaining=$((WAVE_LINK_REPAIR_COOLDOWN_SEC - repair_age))
-                    remaining_min=$(((remaining + 59) / 60))
-                    source lib/outbound_queue.sh 2>/dev/null || true
-                    enqueue_chat_message "音声修復はクールダウン中です。あと約${remaining_min}分待ってください。" "chat_daemon"
+                    if twitch_cmd_rate_limited "$WAVE_LINK_REPAIR_COOLDOWN_FILE" "$WAVE_LINK_REPAIR_COOLDOWN_SEC"; then
+                        last_repair_ts=$(cat "$WAVE_LINK_REPAIR_COOLDOWN_FILE" 2>/dev/null || echo 0)
+                        case "$last_repair_ts" in ''|*[!0-9]*) last_repair_ts=0 ;; esac
+                        remaining=$((WAVE_LINK_REPAIR_COOLDOWN_SEC - ($(date +%s) - last_repair_ts)))
+                        remaining_min=$(((remaining + 59) / 60))
+                        source lib/outbound_queue.sh 2>/dev/null || true
+                        enqueue_chat_message "音声修復はクールダウン中です。あと約${remaining_min}分待ってください。" "chat_daemon"
+                    else
+                        twitch_cmd_mark_rate_limit "$WAVE_LINK_REPAIR_COOLDOWN_FILE"
+                        source lib/outbound_queue.sh 2>/dev/null || true
+                        enqueue_chat_message "音声修復を開始します。Elgato Wave Link を通常再起動します。" "chat_daemon"
+                        (
+                            if "$WAVE_LINK_REPAIR_SCRIPT" >>"tmp/debug/wave_link_repair.log" 2>&1; then
+                                source lib/outbound_queue.sh 2>/dev/null || true
+                                enqueue_chat_message "音声修復が完了しました。" "chat_daemon"
+                            else
+                                source lib/outbound_queue.sh 2>/dev/null || true
+                                enqueue_chat_message "音声修復に失敗しました。配信者側で確認します。" "chat_daemon"
+                            fi
+                        ) &
+                    fi
                 fi
                 continue
             fi
 
-            # !ASMR — このコメントへの応答をささやき系ボイスで再生
+            # !ASMR — このコメントへの応答をささやき系ボイスで再生 (role=viewer, 特権昇格なし)
             if [[ "$msg" =~ ^[[:space:]]*![Aa][Ss][Mm][Rr]([[:space:]]|$) ]]; then
-                # !ASMR プレフィックスを除去してコメント本文を残す
-                msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Aa][Ss][Mm][Rr][[:space:]]*//')
-                clean_line="${user}: ${msg}"
-                # ASMRフラグを立てる（次のコメント再生で使用）
-                echo "$(date +%s)" > tmp/voicevox_asmr.txt
+                if twitch_cmd_authorize "asmr" "$user_id" "$_is_mod_or_broadcaster"; then
+                    # !ASMR プレフィックスを除去してコメント本文を残す
+                    msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Aa][Ss][Mm][Rr][[:space:]]*//')
+                    clean_line="${user}: ${msg}"
+                    # ASMRフラグを立てる（次のコメント再生で使用）
+                    echo "$(date +%s)" > tmp/voicevox_asmr.txt
+                fi
                 # continue しない — コメントとして通常処理を続行
             fi
 
-            # !NTROB — このコメントへの応答を波音リツ/クイーン(65)で再生
+            # !NTROB — このコメントへの応答を波音リツ/クイーン(65)で再生 (role=viewer)
             if [[ "$msg" =~ ^[[:space:]]*![Nn][Tt][Rr][Oo][Bb]([[:space:]]|$) ]]; then
-                msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Nn][Tt][Rr][Oo][Bb][[:space:]]*//')
-                clean_line="${user}: ${msg}"
-                echo "65" > tmp/voicevox_oneshot_speaker.txt
+                if twitch_cmd_authorize "ntrob" "$user_id" "$_is_mod_or_broadcaster"; then
+                    msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Nn][Tt][Rr][Oo][Bb][[:space:]]*//')
+                    clean_line="${user}: ${msg}"
+                    echo "65" > tmp/voicevox_oneshot_speaker.txt
+                fi
             fi
 
-            # !doushi — このコメントへの応答を macOS say で再生
+            # !doushi — このコメントへの応答を macOS say で再生 (role=viewer)
             if [[ "$msg" =~ ^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii]([[:space:]]|$) ]]; then
-                msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii][[:space:]]*//')
-                clean_line="${user}: ${msg}"
-                echo "$(date +%s)" > tmp/voicevox_dousi.txt
+                if twitch_cmd_authorize "doushi" "$user_id" "$_is_mod_or_broadcaster"; then
+                    msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii][[:space:]]*//')
+                    clean_line="${user}: ${msg}"
+                    echo "$(date +%s)" > tmp/voicevox_dousi.txt
+                fi
             fi
 
 
-            # !pitch ID VALUE — スピーカーIDごとにピッチ設定 (mod/broadcaster専用)
+            # !pitch ID VALUE — スピーカーIDごとにピッチ設定
+            # docich issue #37: required_role=moderator。認証済みtransport(#38)完了まで
+            # twitch_cmd_authorize が常にdenyする(badgesタグを認可根拠にしないため)。
             if [[ "$msg" =~ ^[[:space:]]*!pitch[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
-                if [ "$_is_mod_or_broadcaster" != "true" ]; then continue; fi
-                _pitch_id="${BASH_REMATCH[1]}"
-                _pitch_val="${BASH_REMATCH[2]}"
-                _pitch_file="config/voicevox_pitch_map.txt"
-                # 既存エントリを除去して新しい値を追加
-                if [ -f "$_pitch_file" ]; then
-                    grep -v "^${_pitch_id}|" "$_pitch_file" > "${_pitch_file}.tmp" 2>/dev/null || true
-                    mv "${_pitch_file}.tmp" "$_pitch_file"
+                if twitch_cmd_authorize "pitch" "$user_id" "$_is_mod_or_broadcaster"; then
+                    _pitch_id="${BASH_REMATCH[1]}"
+                    _pitch_val="${BASH_REMATCH[2]}"
+                    _pitch_file="config/voicevox_pitch_map.txt"
+                    # 既存エントリを除去して新しい値を追加
+                    if [ -f "$_pitch_file" ]; then
+                        grep -v "^${_pitch_id}|" "$_pitch_file" > "${_pitch_file}.tmp" 2>/dev/null || true
+                        mv "${_pitch_file}.tmp" "$_pitch_file"
+                    fi
+                    echo "${_pitch_id}|${_pitch_val}" >> "$_pitch_file"
+                    source lib/outbound_queue.sh 2>/dev/null || true; enqueue_chat_message "pitch [${_pitch_id}] → ${_pitch_val}" "chat_daemon"
                 fi
-                echo "${_pitch_id}|${_pitch_val}" >> "$_pitch_file"
-                source lib/outbound_queue.sh 2>/dev/null || true; enqueue_chat_message "pitch [${_pitch_id}] → ${_pitch_val}" "chat_daemon"
                 continue
             fi
 
-            # !tempo ID VALUE — スピーカーIDごとにテンポ設定 (mod/broadcaster専用)
+            # !tempo ID VALUE — スピーカーIDごとにテンポ設定
+            # docich issue #37: required_role=moderator。認証済みtransport(#38)完了まで
+            # twitch_cmd_authorize が常にdenyする。
             if [[ "$msg" =~ ^[[:space:]]*!tempo[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
-                if [ "$_is_mod_or_broadcaster" != "true" ]; then continue; fi
-                _tempo_id="${BASH_REMATCH[1]}"
-                _tempo_val="${BASH_REMATCH[2]}"
-                _tempo_file="config/voicevox_tempo_map.txt"
-                if [ -f "$_tempo_file" ]; then
-                    grep -v "^${_tempo_id}|" "$_tempo_file" > "${_tempo_file}.tmp" 2>/dev/null || true
-                    mv "${_tempo_file}.tmp" "$_tempo_file"
+                if twitch_cmd_authorize "tempo" "$user_id" "$_is_mod_or_broadcaster"; then
+                    _tempo_id="${BASH_REMATCH[1]}"
+                    _tempo_val="${BASH_REMATCH[2]}"
+                    _tempo_file="config/voicevox_tempo_map.txt"
+                    if [ -f "$_tempo_file" ]; then
+                        grep -v "^${_tempo_id}|" "$_tempo_file" > "${_tempo_file}.tmp" 2>/dev/null || true
+                        mv "${_tempo_file}.tmp" "$_tempo_file"
+                    fi
+                    echo "${_tempo_id}|${_tempo_val}" >> "$_tempo_file"
+                    source lib/outbound_queue.sh 2>/dev/null || true; enqueue_chat_message "tempo [${_tempo_id}] → ${_tempo_val}" "chat_daemon"
                 fi
-                echo "${_tempo_id}|${_tempo_val}" >> "$_tempo_file"
-                source lib/outbound_queue.sh 2>/dev/null || true; enqueue_chat_message "tempo [${_tempo_id}] → ${_tempo_val}" "chat_daemon"
                 continue
             fi
 
-            # !wakana / !moko / !random / !vo / !vo_random / !say — コメント読み上げの声切替
+            # !wakana / !moko / !random / !vo / !vo_random / !say — コメント読み上げの声切替 (role=viewer)
             if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko|random|vo_random|vo|say)([[:space:]]|$) ]]; then
-                coe_cmd="${BASH_REMATCH[1]}"
-                case "$coe_cmd" in
-                    wakana)    echo "8e99d620-87d3-11ed-870a-0242ac1c000c|905192261" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
-                    moko)      echo "fb1a910e-208f-11ee-8dde-0242ac1c000c|981131762" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
-                    random)    echo "random" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
-                    vo)        echo "109" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
-                    vo_random) echo "random" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
-                    say)       rm -f tmp/coeiroink_voice.txt tmp/voicevox_voice.txt ;;
-                esac
+                if twitch_cmd_authorize "voice_style" "$user_id" "$_is_mod_or_broadcaster"; then
+                    coe_cmd="${BASH_REMATCH[1]}"
+                    case "$coe_cmd" in
+                        wakana)    echo "8e99d620-87d3-11ed-870a-0242ac1c000c|905192261" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
+                        moko)      echo "fb1a910e-208f-11ee-8dde-0242ac1c000c|981131762" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
+                        random)    echo "random" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
+                        vo)        echo "109" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
+                        vo_random) echo "random" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
+                        say)       rm -f tmp/coeiroink_voice.txt tmp/voicevox_voice.txt ;;
+                    esac
+                fi
                 continue
             fi
 
@@ -466,6 +495,9 @@ while true; do
         *) kill -TERM "$TWITCH_IRC_PID" 2>/dev/null || true ;;
     esac
     wait "$TWITCH_IRC_PID" 2>/dev/null || true
+    # テスト専用: 入力ファイルを読み切ったら再接続ループに入らず1回で終了する
+    # (outbound queueの実送信consumerも実行しない)。
+    [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ] && break
     echo "[$(date '+%H:%M:%S')] IRC session ended; reconnecting in 5s" >> "$CHAT_DIR/daemon_reconnect.log"
     # --- Outbound chat queue consumer ---
     # chat_worker 配下では親 worker が送信を一元管理する。standalone daemon の時だけ消化する。
