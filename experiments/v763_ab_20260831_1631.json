@@ -99,5 +99,30 @@
     "tools/ab_report.py": "b3387fedd379d779319ae740ba668a9473fa55c1ce275ac461d85adaae943aa3",
     "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
     "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  },
+  "outcome": {
+    "verdict": "ADOPT (事前登録の判定点 k=50)",
+    "stopped_at_blocks": 50,
+    "overran_to_blocks": 87,
+    "primary_merges_per_turn": {
+      "mean_at_k50": 0.0237,
+      "ci90_lower_at_k50": 0.0061,
+      "mean_at_k87": 0.0132,
+      "ci90_lower_at_k87": -0.0005
+    },
+    "secondary": {
+      "turns_at_k50": {
+        "mean": 5.41,
+        "ci90_lower": 1.35
+      },
+      "score_at_k50": {
+        "mean": 198.3,
+        "ci90_lower": 58.2
+      },
+      "t15": "A=9/176 B=13/176",
+      "long_games": "110手以上 22.2% vs 27.3%"
+    },
+    "note": "ループの cron 失効で無人化し、判定点 k=50 を超えて k=87 まで走った。事前登録の停止点を後から選び直さない方針に従い k=50 の判定で採用した。k=87 の数値も併記してあるので、後から再検討できる。",
+    "ledger": "experiments/ledgers/ab_20260901_190144_games.jsonl"
   }
 }
