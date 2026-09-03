@@ -675,22 +675,8 @@ OpenCode CLIへ明示的に振り分ける。これにより、free枠や
 
 Codex側の既定モデルは `CODEX_MODEL` で指定する。OpenCode CLIのモデルは
 スペックから `opencode/<model>` または `opencode-go/<model>` として解決する。
-Codex側でopencode-goを使う場合の接続先は `~/.codex/config.toml` の
-`model_providers.opencode-go` で指定する:
-
-```toml
-model = "opencode-go/deepseek-v4-flash"
-model_provider = "opencode-go"
-
-[model_providers.opencode-go]
-name = "opencode-go"
-base_url = "https://opencode.ai/zen/go/v1"
-env_key = "OPENCODE_GO_API_KEY"
-```
-
-`OPENCODE_GO_API_KEY` は `.env` に設定する。この構成で
-`codex exec --skip-git-repo-check -m opencode-go/deepseek-v4-flash "..."` が
-opencode.ai の OpenAI 互換 `/v1/chat/completions` を叩く。
+`deepseek-v4-flash` は `opencode-go:deepseek-v4-flash` と指定し、OpenCode CLIから
+直接呼ぶ。Codex CLIからLiteLLMのOpenCode Go互換エンドポイントへ転送しない。
 
 ### LLM モデル設定
 
@@ -699,14 +685,14 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 #### モデル変数
 
 ```bash
-MODEL_PRIMARY="codex:deepseek-v4-flash"                  # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
+MODEL_PRIMARY="opencode-go:deepseek-v4-flash"           # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
 MODEL_FALLBACK="codex:minimax-m3"
 MODEL_IMPROVE="opencode:muse-spark-1.3-contributor-free" # 改善primary
 MODEL_FALLBACK_IMPROVE="codex:amd-token-factory-deepseek-v4-flash" # 改善fallback
-MODEL_LAST_RESORT="codex:deepseek-v4-flash"
+MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 ROLLBACK_POSTMORTEM_MODEL="opencode:muse-spark-1.3-contributor-free"
 ROLLBACK_POSTMORTEM_FALLBACK="codex:amd-token-factory-deepseek-v4-flash"
-CODEX_MODEL="deepseek-v4-flash"                         # codex CLI のモデル指定
+CODEX_MODEL="amd-token-factory-deepseek-v4-flash"       # 接頭辞なし旧スペック用のCodex既定
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
@@ -721,7 +707,7 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `opencode:muse-spark-1.3-contributor-free` | `codex:amd-token-factory-deepseek-v4-flash` | `codex:minimax-m3` | `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` → `codex:deepseek-v4-flash` |
+| **改善** | `opencode:muse-spark-1.3-contributor-free` | `codex:amd-token-factory-deepseek-v4-flash` | `codex:minimax-m3` | `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` → `opencode-go:deepseek-v4-flash` |
 | **ラジオ生成** | 共通チェーン（muse 1.3先行） | - | - | - |
 | **ラジオ fact-check** | `opencode:muse-spark-1.3-contributor-free` | `opencode-go:muse-spark-1.3-contributor` | `codex:minimax-m3` | 元原稿 |
 | **コメント返し** | `codex:...` | - | - | - |
@@ -736,7 +722,7 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | スペック | 実装 | 説明 |
 |---------|------|------|
-| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `deepseek-v4-flash` |
+| `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `amd-token-factory-deepseek-v4-flash` |
 | `opencode:<model>` | `opencode run --model opencode/<model>` | OpenCode CLIのZen系モデル |
 | `opencode-go:<model>` | `opencode run --model opencode-go/<model>` | OpenCode CLIのGo系モデル（muse等） |
 | 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧スペックの後方互換正規化 |
@@ -761,8 +747,9 @@ OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 
 codex CLI は `~/.codex/config.toml` と `model_providers` を使用する。プロジェクト側では
 `codex:<model>` スペックのみを使い、エージェント定義ファイルは不要。
-VM では `codex exec -m opencode-go/deepseek-v4-flash` が opencode.ai へ接続できるよう
-`~/.codex/config.toml` と `.env` の `OPENCODE_GO_API_KEY` を設定する。
+VM のDeepSeek V4 Flashは `opencode run --model opencode-go/deepseek-v4-flash` で
+opencode.aiへ接続する。`codex:<model>` はAMD Token FactoryやMiniMaxなど、
+Codex CLIで使うモデルだけに指定する。
 
 #### Claude Code の使い方
 

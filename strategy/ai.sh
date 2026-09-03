@@ -318,7 +318,7 @@ _run_cmd_resolved_model() {
 	esac
 	case "$type" in
 	codex)
-		printf '%s' "${agent:-${CODEX_MODEL:-deepseek-v4-flash}}"
+		printf '%s' "${agent:-${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}}"
 		;;
 	opencode-go)
 		[ -n "$agent" ] && printf 'opencode-go/%s' "$agent"
@@ -327,7 +327,7 @@ _run_cmd_resolved_model() {
 		[ -n "$agent" ] && printf 'opencode/%s' "$agent"
 		;;
 	*)
-		printf '%s' "${CODEX_MODEL:-deepseek-v4-flash}"
+		printf '%s' "${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}"
 		;;
 	esac
 }
@@ -407,7 +407,7 @@ run_cmd() {
 		type="codex"
 		agent=""
 		target="codex"
-		resolved_model="${CODEX_MODEL:-deepseek-v4-flash}"
+		resolved_model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}"
 		;;
 	esac
 	local codex_model="$resolved_model"
@@ -903,8 +903,8 @@ run_ai() {
 
 # run_ai_list LABEL AGENT_LIST PF EXPECT [REF ...]
 #   AGENT_LIST: カンマ区切りのモデル識別子（優先度順）。本文生成と同じリストから
-#   local を除いたものを想定 (例: codex:deepseek-v4-flash-free,codex:openrouter/free,
-#   codex:deepseek-v4-flash,codex:minimax-m3)。
+#   local を除いたものを想定 (例: opencode:deepseek-v4-flash-free,codex:openrouter/free,
+#   opencode-go:deepseek-v4-flash,codex:minimax-m3)。
 #
 #   各モデルを単一 primary（fallback なし）の run_ai として順に試行する。expect は
 #   run_ai の sandbox 編集検知（ファイル変化）をそのまま使うため、改善ループの

@@ -472,8 +472,11 @@ set -e
 source "$1/lib/ai_generate.sh"
 source "$1/strategy/ai.sh"
 test_root="$2"
+unset CODEX_MODEL
+[ "$(_run_cmd_resolved_model codex)" = "amd-token-factory-deepseek-v4-flash" ]
 CODEX_MODEL=deepseek-v4-flash
 [ "$(_run_cmd_resolved_model opencode-go:muse-spark-1.2-contributor)" = "opencode-go/muse-spark-1.2-contributor" ]
+[ "$(_run_cmd_resolved_model opencode-go:deepseek-v4-flash)" = "opencode-go/deepseek-v4-flash" ]
 [ "$(_run_cmd_resolved_model opencode:deepseek-v4-flash-free)" = "opencode/deepseek-v4-flash-free" ]
 [ "$(_run_cmd_resolved_model codex:deepseek-v4-flash)" = "deepseek-v4-flash" ]
 log() { :; }
@@ -515,6 +518,7 @@ OPENCODE_BIN=opencode
 RUN_CMD_LOG_FILE="$test_root/run.log"
 OPENCODE_RUN_LOCK_ENABLED=0
 run_cmd opencode-go:muse-spark-1.2-contributor 'muse prompt'
+run_cmd opencode-go:deepseek-v4-flash 'paid direct prompt'
 run_cmd opencode:deepseek-v4-flash-free 'free prompt'
 set +e
 run_cmd codex:deepseek-v4-flash 'paid prompt'
@@ -522,6 +526,7 @@ codex_rc=$?
 set -e
 [ "$codex_rc" -eq 79 ]
 grep -qx 'run --model opencode-go/muse-spark-1.2-contributor' "$test_root/opencode.calls"
+grep -qx 'run --model opencode-go/deepseek-v4-flash' "$test_root/opencode.calls"
 grep -qx 'run --model opencode/deepseek-v4-flash-free' "$test_root/opencode.calls"
 [ "$(cat "$test_root/opencode.stdin")" = 'free prompt' ]
 grep -q 'START spec=opencode-go:muse-spark-1.2-contributor .*model=opencode-go/muse-spark-1.2-contributor' "$test_root/run.log"
@@ -533,6 +538,7 @@ import sys
 rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
 resolved = {row["agent"]: row["resolved_model"] for row in rows if row["event"] == "attempt"}
 assert resolved["opencode-go:muse-spark-1.2-contributor"] == "opencode-go/muse-spark-1.2-contributor"
+assert resolved["opencode-go:deepseek-v4-flash"] == "opencode-go/deepseek-v4-flash"
 assert resolved["opencode:deepseek-v4-flash-free"] == "opencode/deepseek-v4-flash-free"
 assert all(row["agent"] != "codex:deepseek-v4-flash" for row in rows)
 PY
