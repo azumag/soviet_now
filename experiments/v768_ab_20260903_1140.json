@@ -79,5 +79,31 @@
     "tools/ab_verdict.py": "00962cda6212397498101214ac967ca459acf5d37d1cef0dc108e99b2c188602",
     "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
     "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  },
+  "outcome": {
+    "verdict": "FUTILITY_STOP (事前登録の規則どおり)",
+    "stopped_at_blocks": 22,
+    "pre_registered_final_blocks": 271,
+    "conditional_power_at_stop": 0.033,
+    "futility_threshold": 0.1,
+    "primary_merges_per_turn": {
+      "mean": -0.0024,
+      "se": 0.0177,
+      "ci90_lower": -0.0251
+    },
+    "secondary": {
+      "turns": {
+        "mean": -1.23,
+        "ci90_lower": -6.58
+      },
+      "score": {
+        "mean": -3.64,
+        "ci90_lower": -174.09
+      },
+      "t15": "A=4/45 B=3/45"
+    },
+    "trajectory": "k=5 +0.0415 → k=12 +0.0210 → k=15 +0.0115 → k=19 -0.0094 → k=22 -0.0024。序盤の正値は雑音だった。",
+    "note": "無益停止を事前登録に持つ最初の実験で、規則どおり発火して停止した。ただし VM の tools/ab_verdict.py が古く無益停止を実装していなかったため、k=22 で自動判定が CONTINUE を返していた。デプロイ漏れに気づいて反映し、同じデータで FUTILITY_STOP が出ることを確認してから停止した。候補は採用しない (root は v763 3a9bd96b76a0 のまま)。",
+    "ledger": "experiments/ledgers/ab_20260903_182743_games.jsonl"
   }
 }
