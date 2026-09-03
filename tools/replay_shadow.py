@@ -57,8 +57,17 @@ def load_shapes():
 
 
 def iter_turns(corpus, shapes, ab, sr, hash_filter=None, limit=100000):
+    """corpus 直下と、その 1 階層下のディレクトリの両方から *.jsonl を読む。
+
+    直下だけを見ていると、アーカイブをサブディレクトリに分けた構成で黙って 0 手を返す
+    (2026-09-04 に scratchpad 側の harness で実際に発生し、n=0 の測定を正常な結果として
+    報告しかけた)。呼び出し側で必ず件数を確認すること。
+    """
     seen = 0
-    for path in sorted(glob.glob(os.path.join(corpus, "*.jsonl"))):
+    paths = sorted(glob.glob(os.path.join(corpus, "*.jsonl")))
+    if not paths:
+        paths = sorted(glob.glob(os.path.join(corpus, "*", "*.jsonl")))
+    for path in paths:
         if "latest" in path:
             continue
         try:
@@ -156,7 +165,8 @@ def main():
                 by_type[ntype] += 1
                 diffs.append(abs(xa - xb))
     if not n:
-        print("no replayable turns")
+        print("no replayable turns —— corpus のパスと中身を確認すること "
+              "(空の corpus を『差分なし』と読み違えない)")
         return 1
     if args.verify:
         print("再現率: n=%d exact %.1f%%  ±0.2 以内 %.1f%%" % (n, 100.0 * exact / n, 100.0 * near / n))
