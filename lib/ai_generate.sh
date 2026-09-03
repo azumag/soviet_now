@@ -829,9 +829,9 @@ _ai_codex_model_from_agent() {
 	local agent="${1:-}" model=""
 	case "$agent" in
 	codex:*) model="${agent#codex:}" ;;
-	*) model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
+	*) model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}" ;;
 	esac
-	[ -n "$model" ] || model="${CODEX_MODEL:-deepseek-v4-flash}"
+	[ -n "$model" ] || model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}"
 	printf '%s' "$model"
 }
 
@@ -981,7 +981,7 @@ _ai_resolved_model_from_agent() {
 	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
 	local:*) resolved_model="${agent#local:}" ;;
 	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
-	*) resolved_model="${CODEX_MODEL:-deepseek-v4-flash}" ;;
+	*) resolved_model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}" ;;
 	esac
 	printf '%s' "$resolved_model"
 }

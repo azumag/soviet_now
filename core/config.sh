@@ -39,7 +39,7 @@ SOREN91_FULLSCREEN_WINDOW="${SOREN91_FULLSCREEN_WINDOW:-1}"
 SOREN91_NORMAL_GAME_CPU_THROTTLE="${SOREN91_NORMAL_GAME_CPU_THROTTLE:-8}"
 SOREN91_AUDIO_RESUME_GRACE_SEC="${SOREN91_AUDIO_RESUME_GRACE_SEC:-15}"
 MODEL_FALLBACK_IMPROVE="${MODEL_FALLBACK_IMPROVE:-opencode-go:muse-spark-1.2-contributor}"
-MODEL_LAST_RESORT="codex:deepseek-v4-flash"
+MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 # ===== 共通モデルチェーン =====
 # 全 AI 生成系の単一の順序原典。低コスト/無料枠を先頭、有償枠を末尾に置く。
 # 有償枠内は muse-spark contributor を DeepSeek 系より先に使う。
@@ -47,11 +47,12 @@ MODEL_LAST_RESORT="codex:deepseek-v4-flash"
 # muse-spark-1.2-contributor-free は OpenCode の無料枠を直接使うため opencode: で呼ぶ。
 # muse-spark-1.2-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,codex:deepseek-v4-flash}"
+# deepseek-v4-flash もOpenCode CLIにセッションヘッダーを付けさせるため opencode-go: で呼ぶ。
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,codex:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
