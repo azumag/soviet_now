@@ -1957,7 +1957,8 @@ _comment_category_allows_advice_append() {
 _queue_stream_bug_reports_from_classification() {
 	local classification_json="$1" source="${2:-unknown}" batch_hash="${3:-}"
 	[ -n "$classification_json" ] || return 0
-	[ "${CODEX_BUG_DISPATCH_ENABLED:-1}" = "1" ] || return 0
+	# docich#32: 既定停止。operatorが明示的に有効化しない限りqueueへ積まない。
+	[ "${CODEX_BUG_DISPATCH_ENABLED:-0}" = "1" ] || return 0
 	python3 - "$classification_json" "$source" "$batch_hash" \
 		"${CODEX_BUG_QUEUE_DIR:-tmp/codex_bug_queue}" \
 		"${CODEX_BUG_DISPATCH_DEDUP_FILE:-tmp/state/codex_bug_dispatch_hashes.log}" <<'PY'
