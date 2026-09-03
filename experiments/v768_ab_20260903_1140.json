@@ -1,0 +1,83 @@
+{
+  "experiment": "v768_LEARNED_MERGE_P_vs_v763",
+  "hypothesis": "解析器が NO と呼ぶ候補には実際には 6%〜64% の幅で併合するものが混ざっている。学習した併合確率で順位付けすれば、その中から当たりを選べる。",
+  "evidence": {
+    "model": "実戦 14386 手で学習・3 割ホールドアウト。merge_grade のみ AUC 0.852 → 学習モデル 0.934、正答率 0.883 → 0.900。",
+    "independent_calibration": "解析器 NO に限ったホールドアウト (n=3135、基準 0.146) で、予測帯ごとの実測併合率が 0.059 / 0.117 / 0.170 / 0.368 / 0.643 と単調。モデルで評価した自己参照ではなく実際の結果による検証。",
+    "ceiling": "NO 領域の予測は AUC 0.79 前後が天井。NO 特化学習で +0.003、特徴量 9→15 で +0.005 しか伸びず、単一特徴『上方駒数』だけでも 0.766。残差は着地の転がり等、盤面情報から予測できない揺らぎ。",
+    "shadow": "W=0 で決定変化 0.00%。W=1.0 で 11.8% が変化し、選んだ手の予測併合確率 0.432 → 0.451、併合候補の選択率は 27.1% で不変（併合回帰なし）。"
+  },
+  "expected_effect_merges_per_turn": 0.012,
+  "expected_effect_note": "+0.018 はモデルが自分の選択を採点した自己参照値。計画には下限 +0.012 を使う。",
+  "arms": {
+    "A": {
+      "role": "root",
+      "decide_hash": "3a9bd96b76a0",
+      "env": "V768_LEARNED_W=0",
+      "policy_bundle": "209a2884e8e0a420"
+    },
+    "B": {
+      "role": "candidate",
+      "decide_hash": "79eb21ffe44e",
+      "env": "V768_LEARNED_W=1.0",
+      "policy_bundle": "df08689861d8677f"
+    }
+  },
+  "design_note": "両腕とも同一の候補ファイルで env のみを変える。W=0 は現 root と完全同一（VM 上で _decide_base の差分が追加 12 行・削除 0、すべて _v768_w > 0.0 の内側であることを確認）。",
+  "pattern": "ABBA",
+  "power": {
+    "block_sd_observed": 0.1164,
+    "note": "v767 で実測した block-sd は 0.1164 で、当初想定の 0.100 より大きい。必要 k は k=(2.12*sd/効果)^2 から算出する。予測 +0.012 なら k=423（約 129 時間）、+0.015 なら k=271（83 時間）、+0.018 なら k=188（57 時間）。",
+    "chosen_k": 271,
+    "chosen_k_reason": "下限 +0.012 で必要な 423 ブロック（5.4 日）は長すぎる。中間の +0.015 を狙って k=271（約 83 時間）とし、届かなければ無益停止で早期に枠を解放する。"
+  },
+  "preregistration": {
+    "primary_report": "merges_per_turn (block diff) 90% CI lower > 0",
+    "secondary": "turns, score, T15 到達率, 110 手以上に限った T15, 110 手以上の割合, area_relief_per_turn",
+    "guardrail": [
+      "score の block diff 90% CI 下限 > -300",
+      "併合回帰の禁止: B 腕の merge_grade 選択率が A 腕を 10% 以上下回らないこと"
+    ],
+    "harm_stop": "k>=10 で merges_per_turn UCB99 < 0 なら finish A",
+    "futility_stop": "k>=20 で条件付き検出力 < 10% なら finish A（今回から導入）",
+    "final": "k=271 (各542試合、約83時間)",
+    "note": "開始後は規則を変更しない。判定点 k=271 を超えて走らせない。",
+    "rule": {
+      "primary": "merges_per_turn",
+      "primary_kind": "block_diff",
+      "adopt_ci_lower_gt": 0.0,
+      "harm_min_blocks": 10,
+      "harm_ucb_lt": 0.0,
+      "harm_z": 2.3263,
+      "futility_cp_lt": 0.1,
+      "futility_min_blocks": 20,
+      "final_blocks": 271,
+      "final_games_per_arm": 542
+    }
+  },
+  "started_at": "2026-09-03T11:40:03",
+  "game_num_start": 48318,
+  "toggles": {
+    "AB_GATE_ENABLED": "1",
+    "AB_GATE_DRY_RUN": "1",
+    "SOREN_AB_PATTERN": "ABBA",
+    "REGRESSION_DISABLED": "1",
+    "V763_DIVERSITY_W": "1.0"
+  },
+  "sha256": {
+    "strategy.py": "e042b0e9789aa429986ce9499e397ba09c868e416b18e784563096b45d11a3bc",
+    "tmp/manual_challenge/strategy_79eb21ffe44e.py": "a50802b761e208ef4c5976aec0ef3efd3111aaabb863588aecd4989a68edd974",
+    "analyze_board.py": "809a8ed551dc40ba7da7a1d48038cebf551ac591c5fef31f1fa5b5ed9db0cac7",
+    "strategy_runner.py": "fa9ef7764ad78899ccfbf55b49bf7476faf8cc00504d9820e6d01e2702f96593",
+    "strategy_helpers/board_stats.py": "626f806cd161032ab44aa0b2b607a956678c13298ce3bfd79a6fd453e7ef3098",
+    "eloop.sh": "569074da13cb4f4a467982b58f989924291bc2c3148cebee998074ec72cd00ea",
+    "eloop_lib.sh": "3bfb36aedb8c28746fb51f2f21f240abf4aa496aedb7bdd6c29975a21ed338cf",
+    "soren_loop.sh": "8d869dadb3fb795c03b534324a1f91ecdd5b5e0677130ddf9662c58a3e4573a9",
+    "strategy/ab_interleave.sh": "81f46b514009dab6a2ab67e1433c1fd86c02c5d0e9f84c9a4609721cb0652725",
+    "strategy/ab_gate.sh": "7d2630b78a21b48e88338dcd728804b4196e42388a54650da806a375c1d17dbe",
+    "tools/ab_ctl.sh": "243d6ad2a8bc8a9125a60ebc8af56adab8286ded7d3145992497dfb888b2c1bc",
+    "tools/ab_verdict.py": "00962cda6212397498101214ac967ca459acf5d37d1cef0dc108e99b2c188602",
+    "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
+    "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  }
+}
