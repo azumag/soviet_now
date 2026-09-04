@@ -2058,6 +2058,107 @@ if queued:
 PY
 }
 
+# docich#33: read-only診断パイプラインへのingestion(記録のみ)。
+#
+# CODEX_BUG_DISPATCH_ENABLED(#32で既定停止済みのagent自動起動フラグ)とは
+# 完全に独立していて、常時(既定REDACTED_DIAG_INGEST_ENABLED=1)動く。ここで
+# 行うのは stream_bug_report に分類されたコメントについて
+# event(event_id/category/time/redacted_context_hash、恒久)を作り、生の
+# comment/userは短期TTLのrestricted spoolへ書くことだけ。診断runnerや
+# コーディングagentは一切起動しない。
+#
+# fail-open: このingestionはセキュリティゲートではなく記録経路なので、
+# python3が無い/lib importに失敗する/JSON parseに失敗する等いかなる理由で
+# 失敗してもコメント処理本体を止めない(常に0を返し、呼び出し元でも
+# `|| true`で受ける)。
+_ingest_stream_bug_reports_redacted() {
+	local classification_json="$1" source="${2:-unknown}"
+	[ -n "$classification_json" ] || return 0
+	[ "${REDACTED_DIAG_INGEST_ENABLED:-1}" = "1" ] || return 0
+	python3 - "$classification_json" "$source" \
+		"${ELOOP_LIB_DIR:-.}" \
+		"${REDACTED_DIAG_EVENTS_DIR:-tmp/diag_events}" \
+		"${REDACTED_DIAG_SPOOL_DIR:-tmp/diag_restricted_spool}" \
+		"${REDACTED_DIAG_SPOOL_TTL_SEC:-86400}" <<'PY' 2>/dev/null
+import json
+import sys
+
+classification_raw, source, lib_dir, events_dir, spool_dir, ttl_sec_raw = sys.argv[1:7]
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+
+try:
+    from lib import redacted_diag_ingest as ingest
+except Exception:
+    raise SystemExit(0)
+
+try:
+    ttl_sec = int(ttl_sec_raw)
+except Exception:
+    ttl_sec = 86400
+
+try:
+    rows = json.loads(classification_raw)
+except Exception:
+    raise SystemExit(0)
+if not isinstance(rows, list):
+    raise SystemExit(0)
+
+event_ids = []
+for item in rows:
+    if not isinstance(item, dict):
+        continue
+    if item.get("category") != "stream_bug_report":
+        continue
+    comment = str(item.get("comment") or "")
+    if not comment.strip():
+        continue
+    user = str(item.get("user") or "")
+    try:
+        event = ingest.ingest_report(
+            category="stream_bug_report",
+            user=user,
+            comment=comment,
+            source=source,
+            events_dir=events_dir,
+            spool_dir=spool_dir,
+            ttl_sec=ttl_sec,
+        )
+    except Exception:
+        # fail-open: never let one bad row (or a full-disk / permission
+        # error) abort ingestion of the rest, and never surface raw content.
+        continue
+    eid = event.get("event_id") if isinstance(event, dict) else None
+    if eid:
+        event_ids.append(eid)
+
+if event_ids:
+    print("\n".join(event_ids))
+PY
+}
+
+# docich#33: restricted spoolのTTL失効エントリを間引く。start_all.shに
+# 専用cronを追加する代わりに、ingestion呼び出しのたびに間隔判定して
+# opportunisticに実行する(REDACTED_DIAG_SPOOL_GC_INTERVAL_SEC間隔)。
+# fail-open: 失敗しても何もしない。
+_maybe_gc_redacted_diag_spool() {
+	[ "${REDACTED_DIAG_INGEST_ENABLED:-1}" = "1" ] || return 0
+	local last_file="${REDACTED_DIAG_SPOOL_GC_LAST_FILE:-tmp/state/redacted_diag_spool_gc_last.ts}"
+	local interval="${REDACTED_DIAG_SPOOL_GC_INTERVAL_SEC:-3600}"
+	local now last=0
+	now=$(date +%s)
+	if [ -f "$last_file" ]; then
+		last=$(cat "$last_file" 2>/dev/null || echo 0)
+		case "$last" in '' | *[!0-9]*) last=0 ;; esac
+	fi
+	[ $((now - last)) -ge "$interval" ] || return 0
+	mkdir -p "$(dirname "$last_file")" 2>/dev/null || true
+	printf '%s\n' "$now" >"$last_file" 2>/dev/null || true
+	python3 "${ELOOP_LIB_DIR:-.}/lib/redacted_diag_spool_gc.py" \
+		--spool-dir "${REDACTED_DIAG_SPOOL_DIR:-tmp/diag_restricted_spool}" \
+		>/dev/null 2>&1 || true
+}
+
 _classify_comments_with_edit_contract() {
 	local classifier_prompt_file="$1" output_file="$2" primary="$3" fallback="$4" timeout_sec="$5"
 	local base_prompt agent prev_agent edit_prompt candidate_rc raw_json classification
@@ -3318,6 +3419,16 @@ else:
 		queued_stream_bug_reports=$(_queue_stream_bug_reports_from_classification "$classification_json" "$viewer_chat_source" "$comment_batch_hash" 2>/dev/null || true)
 		if [ -n "$queued_stream_bug_reports" ]; then
 			log "[COMMENT] 配信不具合レポートをCodexキューへ追加: $(printf '%s' "$queued_stream_bug_reports" | tr '\n' ' ')"
+		fi
+		# docich#33: read-only診断パイプラインへのevent記録+restricted spool
+		# 分離。CODEX_BUG_DISPATCH_ENABLEDの値に関わらず既定で動く(診断runner/
+		# agentは起動しない、記録のみ)。fail-openなので失敗してもここでは
+		# 何もしない。
+		local ingested_diag_events=""
+		ingested_diag_events=$(_ingest_stream_bug_reports_redacted "$classification_json" "$viewer_chat_source" 2>/dev/null || true)
+		if [ -n "$ingested_diag_events" ]; then
+			log "[COMMENT] 不具合報告を診断eventとして記録(生comment本文・user名は含まない, event_id): $(printf '%s' "$ingested_diag_events" | tr '\n' ' ')"
+			_maybe_gc_redacted_diag_spool 2>/dev/null || true
 		fi
 	fi
 	if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
