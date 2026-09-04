@@ -9,6 +9,8 @@ set -o pipefail
 cd "$(dirname "$0")"
 
 [ -f .env ] && set -a && . ./.env && set +a
+# shellcheck source=/dev/null
+source ./lib/curl_secure.sh
 
 COMMAND="${1:-status}"
 STATE_DIR="${TMP_STATE_DIR:-tmp/state}"
@@ -17,6 +19,8 @@ TOKEN="${TWITCH_POLLS_TOKEN:-${TWITCH_PREDICTIONS_TOKEN:-}}"
 TOKEN="${TOKEN#oauth:}"
 CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
+# docich#39: テスト時にmockサーバへ差し替えるためのbase URL (既定は本番と同一)。
+TWITCH_API_BASE="${TWITCH_API_BASE:-https://api.twitch.tv/helix}"
 
 _json_error() {
 	python3 - "$1" "${2:-}" <<'PY'
@@ -40,18 +44,20 @@ fi
 
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
+# docich#39: Authorization/Client-Id を argv に載せない。
+# curl の `-K -` (config from stdin) でヘッダを渡す。stdin は argv とは別の
+# FD なので /proc/*/cmdline (macOSでは `ps` のcmdline相当) に出ない。
 _request() {
-	local method="$1" url="$2" output="$3" payload="${4:-}" code
+	local method="$1" url="$2" output="$3" payload="${4:-}" code cfg
+	cfg=$(_curl_cfg_build header "Authorization: Bearer ${TOKEN}" header "Client-Id: ${CLIENT_ID}")
 	if [ -n "$payload" ]; then
-		code=$(curl -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
-			-H "Authorization: Bearer ${TOKEN}" \
-			-H "Client-Id: ${CLIENT_ID}" \
+		code=$(printf '%s' "$cfg" | curl -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
 			-H "Content-Type: application/json" \
-			-d "$payload" 2>/dev/null || echo 000)
+			-d "$payload" \
+			-K - 2>/dev/null || echo 000)
 	else
-		code=$(curl -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
-			-H "Authorization: Bearer ${TOKEN}" \
-			-H "Client-Id: ${CLIENT_ID}" 2>/dev/null || echo 000)
+		code=$(printf '%s' "$cfg" | curl -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
+			-K - 2>/dev/null || echo 000)
 	fi
 	case "$code" in ''|*[!0-9]*) code=000 ;; esac
 	printf '%s\n' "$code"
@@ -73,7 +79,7 @@ PY
 case "$COMMAND" in
 live)
 	tmp=$(mktemp "$STATE_DIR/.poll_live.XXXXXXXX") || exit 1
-	code=$(_request GET "https://api.twitch.tv/helix/streams?user_id=${BROADCASTER_ID}" "$tmp")
+	code=$(_request GET "${TWITCH_API_BASE}/streams?user_id=${BROADCASTER_ID}" "$tmp")
 	if [ "$code" != "200" ]; then _api_error "$code" "$tmp"; rm -f "$tmp"; exit 0; fi
 	python3 - "$tmp" <<'PY'
 import json, sys
@@ -108,7 +114,7 @@ PY
 )
 	if [ -z "$payload" ]; then _json_error invalid_draft; exit 0; fi
 	tmp=$(mktemp "$STATE_DIR/.poll_create.XXXXXXXX") || exit 1
-	code=$(_request POST "https://api.twitch.tv/helix/polls" "$tmp" "$payload")
+	code=$(_request POST "${TWITCH_API_BASE}/polls" "$tmp" "$payload")
 	if [ "$code" != "200" ]; then _api_error "$code" "$tmp"; rm -f "$tmp"; exit 0; fi
 	python3 - "$tmp" "$STATE_FILE" <<'PY'
 import json, os, sys, time
@@ -128,7 +134,7 @@ status)
 	if [ -z "$poll_id" ] && [ -f "$STATE_FILE" ]; then
 		poll_id=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("poll") or {}).get("id", ""))' "$STATE_FILE" 2>/dev/null || true)
 	fi
-	url="https://api.twitch.tv/helix/polls?broadcaster_id=${BROADCASTER_ID}&first=20"
+	url="${TWITCH_API_BASE}/polls?broadcaster_id=${BROADCASTER_ID}&first=20"
 	[ -n "$poll_id" ] && url="${url}&id=${poll_id}"
 	tmp=$(mktemp "$STATE_DIR/.poll_status.XXXXXXXX") || exit 1
 	code=$(_request GET "$url" "$tmp")
