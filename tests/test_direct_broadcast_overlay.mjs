@@ -246,6 +246,14 @@ class FakeClassList {
     else this.tokens.delete(token);
     return on;
   }
+
+  add(...tokens) {
+    for (const token of tokens) this.toggle(token, true);
+  }
+
+  remove(...tokens) {
+    for (const token of tokens) this.toggle(token, false);
+  }
 }
 
 
@@ -330,10 +338,21 @@ async function runBroadcastOverlayScript(initialState) {
     'feed-progress': new FakeElement('span'),
     summary: new FakeElement('div'),
     work: new FakeElement('div'),
+    'gen-top': new FakeElement('div'),
     'toast-grid': new FakeElement('div'),
   };
   for (const [id, element] of Object.entries(byId)) {
     element.id = id;
+  }
+  for (const [id, classes] of Object.entries({
+    work: ['work-title', 'work-body', 'work-elapsed'],
+    'gen-top': ['gen-top-label', 'gen-top-elapsed'],
+  })) {
+    for (const className of classes) {
+      const child = new FakeElement('span');
+      child.className = className;
+      byId[id].appendChild(child);
+    }
   }
   document.getElementById = (id) => byId[id] || null;
 
