@@ -63,11 +63,11 @@ fi
 # 旧変数は一括上書きと緊急停止の互換口として残す。明示的な空文字は停止。
 VERCEL_FREE_AGENTS="${VERCEL_FREE_AGENTS-$_VERCEL_ELIGIBLE_AGENTS}"
 _VERCEL_FREE_CHAIN="${VERCEL_FREE_AGENTS:+${VERCEL_FREE_AGENTS},}"
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,opencode-go:deepseek-v4-flash}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,opencode-go:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -77,7 +77,7 @@ GAME_COUNT_FILE="game_count.txt"
 
 RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-codex:minimax-m3}"
+RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
 RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
@@ -111,9 +111,9 @@ COMMENT_OLLAMA_MODEL="${COMMENT_OLLAMA_MODEL:-qwen3.5:9b}"
 COMMENT_OLLAMA_MODEL_IMPROVING="${COMMENT_OLLAMA_MODEL_IMPROVING:-gemma4:latest}"
 COMMENT_OLLAMA_TIMEOUT="${COMMENT_OLLAMA_TIMEOUT:-20}"
 COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-codex:minimax-m3}"
+COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-codex:minimax-m3}"
+COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 COMMENT_CLASSIFIER_EDIT_TIMEOUT="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 COMMENT_CLASSIFIER_TIMEOUT="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
 COMMENT_CLASSIFIER_AI_ENABLED="${COMMENT_CLASSIFIER_AI_ENABLED:-0}"
@@ -162,9 +162,9 @@ YOUTUBE_BROADCAST_GUARD_TITLE="${YOUTUBE_BROADCAST_GUARD_TITLE:-中華AIと メ�
 YOUTUBE_BROADCAST_GUARD_STATE_FILE="${YOUTUBE_BROADCAST_GUARD_STATE_FILE:-tmp/state/youtube_broadcast_guard.json}"
 YOUTUBE_BROADCAST_GUARD_PID_FILE="${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}"
 COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-codex:minimax-m3}"
+COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 RADIO_SOREN91_AGENT="${RADIO_SOREN91_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-RADIO_SOREN91_FALLBACK="${RADIO_SOREN91_FALLBACK:-codex:minimax-m3}"
+RADIO_SOREN91_FALLBACK="${RADIO_SOREN91_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 # --- ピーク時間帯のエージェント優先順位入替え ---
 # ピーク時は RADIO_AGENTS / COMMENT_AGENTS の「候補順序」だけを入替え、
 # PEAK_HOURS_PRIORITY_AGENT を先頭へ寄せる。候補の削除はしない（DeepSeek はフォールバックに残る）。

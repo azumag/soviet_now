@@ -227,7 +227,7 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|opencode:muse-spark-1.3-contributor-free|1|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,opencode-go:deepseek-v4-flash|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,codex:amd-token-factory-deepseek-v4-flash,opencode-go:deepseek-v4-flash"
+config_expect="10-13,15-19|opencode:muse-spark-1.3-contributor-free|1|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
 
 empty_vercel_chain=$(
@@ -282,9 +282,13 @@ vercel_m3_pos=${common_order%%vercel:minimax/minimax-m3-free*}
 [ "${#minimax_pos}" -lt "${#muse_pos}" ] \
 	&& ok "paid chain: MiniMax precedes muse" \
 	|| not_ok "paid MiniMax order (got '$common_order')"
-[ "${#muse_pos}" -lt "${#amd_pos}" ] \
-	&& ok "paid chain: AMD DeepSeek follows non-DeepSeek providers" \
-	|| not_ok "AMD DeepSeek final-stage order (got '$common_order')"
+[ "${#amd_pos}" -lt "${#muse_pos}" ] \
+	&& ok "free-credit AMD DeepSeek precedes metered providers" \
+	|| not_ok "AMD DeepSeek free-credit order (got '$common_order')"
+metered_deepseek_pos=${common_order%%opencode-go:deepseek-v4-flash*}
+[ "${#metered_deepseek_pos}" -gt "${#muse_pos}" ] \
+	&& ok "metered DeepSeek is final-stage" \
+	|| not_ok "metered DeepSeek final-stage order (got '$common_order')"
 case "$common_order" in
 	*vercel:zai/*|*vercel:xiaomi/*|*vercel:alibaba/*) not_ok "category B is disabled by default (got '$common_order')" ;;
 	*) ok "category B is disabled by default" ;;
