@@ -739,7 +739,7 @@ OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 
 | スペック | CLI コマンド | 説明 |
 |---------|------------|------|
-| `codex:<model>` | `codex exec --skip-git-repo-check -m <model> --dangerously-bypass-approvals-and-sandbox` | 全AI呼び出し (改善ループはファイル編集のため bypass) |
+| `codex:<model>` | `codex exec --skip-git-repo-check -m <model>` | 全AI呼び出し。codex 既定の承認/サンドボックスポリシーで実行する (docich#34 で権限迂回オプションを削除済み) |
 | `codex` | 同上 (`CODEX_MODEL` 使用) | ハーネス既定 |
 | `opencode:<model>` / `opencode-go:<model>` | `opencode run --model <resolved_model>` | 直接モデルを維持。改善ループは編集権限を `IMPROVE_OPENCODE_PERMISSION` で付与 |
 
