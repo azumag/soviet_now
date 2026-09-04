@@ -736,6 +736,11 @@ AI_GATEWAY_API_KEY=...           # Vercel AI Gateway用。リポジトリ外の�
 ```
 
 VercelはOpenCodeの`vercel` providerへ登録し、`soren-lite` agentを`steps: 2`・全tool denyで使う。
+候補はA（入出力$0）とB（月$5 Free Tier対象の通常単価）へ分離し、A→Bの順で使う。
+2026-09-05確認のAはM3 Free、Laguna Free、Ling 3.0 Flash Fin。BはFree Tier表示があり
+APIが対象モデルとして認識した低単価のGLM 5.3 Flash、Mimo v2.5 / Pro、Qwen 3.8 Flashに限定する。
+Bのスモーク時点は全て429のため既定では無効。HTTP 200・費用計測・予算ガード確認後だけ
+`VERCEL_CATEGORY_B_AGENTS`で明示的に有効化する。C（Free Tier対象外）は登録しない。
 モデル上限はGateway catalogに合わせ、M3 Freeを`context: 1048576`、Laguna Freeを
 `context: 256000` / `output: 32768`として設定する。`limit`はモデル能力値であり利用量の
 上限ではないため、実行側でもVercelだけ20秒timeout・CLI外側retryなしにする。Lagunaは
