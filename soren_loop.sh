@@ -855,6 +855,13 @@ while true; do
 	# .env を毎試合再読込（再起動なしで設定変更を反映）
 	[ -f .env ] && set -a && . ./.env && set +a
 
+	# 直前の A/B の腕別 env を毎試合クリアする。ループのプロセスは長命で AB_EXTRA_ENV は
+	# export 済みのため、実験終了後もこれが残り、.env の設定を上書きし続ける。
+	# (2026-09-01 に実発生: v763 採用直後、A 腕の V763_DIVERSITY_W=0 が残って採用した軸が
+	#  一切発火しなかった。A/B 実行中は _ab_select_arm がこの直後に設定し直す。)
+	AB_EXTRA_ENV=""
+	export AB_EXTRA_ENV
+
 	# eloop_lib.sh は全モジュールをsourceするshim
 	if ! source ./eloop_lib.sh 2>/dev/null; then
 		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で継続)"
