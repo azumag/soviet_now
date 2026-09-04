@@ -1,0 +1,28 @@
+{
+  "analysis": {
+    "deadline": {},
+    "reactor": {},
+    "results": [],
+    "same_type": []
+  },
+  "fixture_id": "f00_empty_board",
+  "game_state": {
+    "next": {
+      "r": 0.207,
+      "type": 1
+    },
+    "nextNext": {
+      "r": 0.207,
+      "type": 1
+    },
+    "pieces": [],
+    "score": 0,
+    "shapes": {},
+    "state": "MOVE"
+  },
+  "provenance": {
+    "generated_by": "strategy/isolated_runner/fixtures/generate_fixtures.py",
+    "root_strategy_decide_hash_at_generation": "8fcb13b11d0c"
+  },
+  "source": "synthetic:empty_board"
+}
