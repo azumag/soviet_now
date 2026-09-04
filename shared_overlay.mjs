@@ -255,6 +255,15 @@ export async function runSharedOverlay(options = {}) {
   } catch (error) {
     stopping = true;
     await close();
+    // A normal termination signal may interrupt goto/newPage/readiness or
+    // another startup await when cleanup closes the page underneath it.  The
+    // signal handler already completed the requested cleanup; do not turn its
+    // expected interruption into a failed service exit.  Runtime browser
+    // failures set runtimeFailure and remain non-zero so a supervisor can
+    // restart the display owner.
+    if (signalReceived && !runtimeFailure) {
+      return { config, server, browser, page, close };
+    }
     throw runtimeFailure || error;
   } finally {
     process.off('SIGTERM', onSignal);

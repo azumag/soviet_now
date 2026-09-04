@@ -29,6 +29,7 @@ import {
 } from '../lib/shared_overlay.mjs';
 
 import { runSharedOverlay } from '../shared_overlay.mjs';
+import { installDirectOverlay } from '../lib/direct_overlay.mjs';
 
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -82,6 +83,148 @@ function fixtureConfig(temp, contextFile) {
     WILDCARD_PARALLEL_STATUS_FILE: wildcard,
     SOREN_ACTIVE_GAME_CONTEXT_FILE: contextFile,
   }, 'linux');
+}
+
+
+class FakeOverlayFrame {
+  constructor() {
+    this.id = '';
+    this.title = '';
+    this.dataset = {};
+    this.style = {};
+    this.listeners = new Map();
+    this.contentDocument = null;
+    this.contentWindow = null;
+  }
+
+  setAttribute() {}
+
+  addEventListener(type, callback, options) {
+    const listeners = this.listeners.get(type) || [];
+    listeners.push({ callback, once: Boolean(options?.once) });
+    this.listeners.set(type, listeners);
+  }
+
+  remove() {
+    this.ownerDocument?.elements.delete(this.id);
+  }
+
+  getBoundingClientRect() {
+    const number = (value) => Number.parseFloat(String(value || '0')) || 0;
+    return {
+      left: number(this.style.left),
+      top: number(this.style.top),
+      width: number(this.style.width),
+      height: number(this.style.height),
+    };
+  }
+
+  set srcdoc(value) {
+    const html = String(value || '');
+    const region = this.dataset.sorenOverlayRegion || 'full';
+    const rendered = html.includes('broadcast-overlay');
+    const width = region === 'sidebar' ? 320 : 960;
+    const height = region === 'sidebar' ? 720 : 90;
+    const overlay = rendered ? {
+      getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
+    } : null;
+    this.contentDocument = {
+      readyState: 'complete',
+      getElementById: (id) => id === 'broadcast-overlay' ? overlay : null,
+    };
+    this.contentWindow = rendered ? {
+      __sorenBroadcastOverlayHealth: {
+        version: 3,
+        updatedAt: 1,
+        error: '',
+        merged: true,
+        region,
+        layout: {
+          game: [0, 90, 960, 540],
+          sidebar: [960, 0, 320, 720],
+          rails: [90, 90],
+        },
+      },
+    } : {};
+    queueMicrotask(() => {
+      const listeners = this.listeners.get('load') || [];
+      this.listeners.delete('load');
+      for (const listener of listeners) {
+        listener.callback();
+        if (!listener.once) this.addEventListener('load', listener.callback);
+      }
+    });
+  }
+}
+
+
+class FakeOverlayDocument {
+  constructor() {
+    this.readyState = 'complete';
+    this.elements = new Map();
+    this.body = {
+      appendChild: (element) => {
+        element.ownerDocument = this;
+        this.elements.set(element.id, element);
+      },
+    };
+  }
+
+  createElement(tagName) {
+    assert.equal(tagName, 'iframe');
+    return new FakeOverlayFrame();
+  }
+
+  getElementById(id) {
+    return this.elements.get(id) || null;
+  }
+}
+
+
+class FakeInstallerPage {
+  constructor() {
+    this.document = new FakeOverlayDocument();
+    this.window = { top: null };
+    this.window.top = this.window;
+    this.originals = null;
+  }
+
+  async addInitScript() {}
+
+  async evaluate(callback, payload) {
+    this.originals = {
+      document: globalThis.document,
+      window: globalThis.window,
+      fetch: globalThis.fetch,
+      setInterval: globalThis.setInterval,
+    };
+    globalThis.document = this.document;
+    globalThis.window = this.window;
+    globalThis.fetch = async () => ({
+      ok: true,
+      text: async () => '<main id="broadcast-overlay"></main>',
+    });
+    globalThis.setInterval = () => 1;
+    try {
+      return await callback(payload);
+    } finally {
+      for (const [key, value] of Object.entries(this.originals)) {
+        if (value === undefined) delete globalThis[key];
+        else globalThis[key] = value;
+      }
+    }
+  }
+
+  async waitForFunction(callback, payload) {
+    const originalDocument = globalThis.document;
+    globalThis.document = this.document;
+    try {
+      assert.equal(callback(payload), true);
+    } finally {
+      if (originalDocument === undefined) delete globalThis.document;
+      else globalThis.document = originalDocument;
+    }
+  }
 }
 
 
@@ -350,6 +493,26 @@ test('blank stage installer never requires a game canvas', async () => {
 });
 
 
+test('required frame readiness follows the visible direct-overlay buffer after first swap', async () => {
+  const page = new FakeInstallerPage();
+  const config = loadSharedOverlayConfig({}, 'linux');
+  await installDirectOverlay(page, config.direct);
+  // The installer refreshes asynchronously, then swaps each loaded buffer
+  // into view.  Let those first load handlers run before checking readiness.
+  await new Promise((resolve) => setImmediate(resolve));
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+    const elementId = config.direct.surfaces.find((item) => item.key === key).elementId;
+    const primary = page.document.getElementById(elementId);
+    const buffer = page.document.getElementById(`${elementId}-buffer`);
+    assert.equal(primary.style.visibility, 'hidden');
+    assert.equal(buffer.style.visibility, 'visible');
+    assert.equal(buffer.style.opacity, '1');
+    assert.ok(buffer.contentDocument.getElementById('broadcast-overlay'));
+  }
+});
+
+
 test('required frame readiness rejects missing HTML and failed route loads', async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-frame-failure-'));
   const context = path.join(temp, 'game_switch.json');
@@ -450,6 +613,14 @@ class FakeSharedBrowser extends EventEmitter {
 }
 
 
+function signalTestConfig(prefix) {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const context = path.join(temp, 'game_switch.json');
+  fs.writeFileSync(context, JSON.stringify({ active: { game: 'robots', phase: 'running' } }));
+  return { temp, config: fixtureConfig(temp, context) };
+}
+
+
 class FakeOwnedProxy extends EventEmitter {
   constructor() {
     super();
@@ -540,6 +711,122 @@ test('SIGTERM during deferred browser launch closes the late browser assignment'
   assert.equal(browser.page.closed, false, 'no page was assigned before SIGTERM');
   assert.equal(result.server.listening, false);
   fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
+test('SIGTERM during deferred newPage startup exits cleanly', async () => {
+  const { temp, config } = signalTestConfig('shared-overlay-new-page-signal-');
+  let pageStarted;
+  let releasePage;
+  const pageCalled = new Promise((resolve) => { pageStarted = resolve; });
+  const pageResult = new Promise((resolve) => { releasePage = resolve; });
+  let browser;
+  const fakeChromium = {
+    async launch() {
+      browser = new FakeSharedBrowser();
+      browser.newPage = async () => {
+        pageStarted();
+        return pageResult;
+      };
+      return browser;
+    },
+  };
+  const run = runSharedOverlay({
+    config,
+    chromium: fakeChromium,
+    headless: true,
+    kiosk: false,
+    log: false,
+    port: 0,
+  });
+  await pageCalled;
+  const page = new FakeSharedPage();
+  process.emit('SIGTERM');
+  releasePage(page);
+  const result = await run;
+  assert.equal(result.server.listening, false);
+  assert.equal(browser.closed, true);
+  assert.equal(page.closed, true);
+  fs.rmSync(temp, { recursive: true, force: true });
+  assert.equal(result.browser, browser);
+});
+
+
+test('SIGTERM during page.goto interruption exits cleanly', async () => {
+  const { temp, config } = signalTestConfig('shared-overlay-goto-signal-');
+  let gotoStarted;
+  let releaseGoto;
+  const gotoCalled = new Promise((resolve) => { gotoStarted = resolve; });
+  const gotoResult = new Promise((resolve, reject) => { releaseGoto = (error) => error ? reject(error) : resolve(); });
+  let browser;
+  let page;
+  const fakeChromium = {
+    async launch() {
+      browser = new FakeSharedBrowser();
+      page = browser.page;
+      page.goto = async () => {
+        gotoStarted();
+        return gotoResult;
+      };
+      return browser;
+    },
+  };
+  const run = runSharedOverlay({
+    config,
+    chromium: fakeChromium,
+    headless: true,
+    kiosk: false,
+    log: false,
+    port: 0,
+  });
+  await gotoCalled;
+  process.emit('SIGTERM');
+  releaseGoto(new Error('page closed during goto'));
+  const result = await run;
+  assert.equal(result.server.listening, false);
+  assert.equal(browser.closed, true);
+  assert.equal(page.closed, true);
+  fs.rmSync(temp, { recursive: true, force: true });
+  assert.equal(result.page, page);
+});
+
+
+test('SIGTERM during frame readiness interruption exits cleanly', async () => {
+  const { temp, config } = signalTestConfig('shared-overlay-frame-signal-');
+  let frameWaitStarted;
+  let releaseFrameWait;
+  const frameWaitCalled = new Promise((resolve) => { frameWaitStarted = resolve; });
+  const frameWaitResult = new Promise((resolve, reject) => {
+    releaseFrameWait = (error) => error ? reject(error) : resolve();
+  });
+  let browser;
+  const fakeChromium = {
+    async launch() {
+      browser = new FakeSharedBrowser();
+      browser.page.waitForFunction = async () => {
+        frameWaitStarted();
+        return frameWaitResult;
+      };
+      return browser;
+    },
+  };
+  const run = runSharedOverlay({
+    config,
+    chromium: fakeChromium,
+    headless: true,
+    kiosk: false,
+    log: false,
+    port: 0,
+  });
+  await frameWaitCalled;
+  process.emit('SIGTERM');
+  releaseFrameWait(new Error('frame readiness interrupted'));
+  const result = await run;
+  assert.equal(result.server.listening, false);
+  assert.equal(browser.closed, true);
+  assert.equal(browser.page.closed, true);
+  fs.rmSync(temp, { recursive: true, force: true });
+  assert.equal(result.browser, browser);
 });
 
 
