@@ -79,5 +79,31 @@
     "tools/ab_verdict.py": "cfcde0d9222c3492b8ed57dd984f259d89696a9eb6c629698178d6f0d16f66be",
     "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
     "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  },
+  "outcome": {
+    "verdict": "FUTILITY_STOP (事前登録の規則どおり)",
+    "stopped_at_blocks": 50,
+    "pre_registered_final_blocks": 200,
+    "conditional_power_at_stop": 0.075,
+    "futility_threshold": 0.1,
+    "primary_merges_per_turn": {
+      "mean": 0.0003,
+      "se": 0.0146,
+      "ci90_lower": -0.0185
+    },
+    "secondary": {
+      "turns": {
+        "mean": -2.85,
+        "ci90_lower": -6.48
+      },
+      "score": {
+        "mean": -23.66,
+        "ci90_lower": -145.45
+      },
+      "t15": "A=3/101 B=1/100"
+    },
+    "guardrail_note": "guardrail_ok は False だったが、原因は manifest で無効化しなかった T15 比率ガード (既定 0.5)。この規則は帰無でも各100試合で 12.5% 落とすことを実測済みで、停止判断には使っていない (無益停止が先に発火した)。",
+    "conclusion": "露出型数ボーナスの重みを 1.0 から 4.0 に上げても効果は出なかった。shadow では決定変化 13.89%・露出型数 +0.139 だったが、merges_per_turn は +0.0003。v763 の重みは既に最適付近にあり、上げても機会率に変換されない。",
+    "ledger": "experiments/ledgers/ab_20260904_122701_games.jsonl"
   }
 }
