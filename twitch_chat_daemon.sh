@@ -178,6 +178,12 @@ while true; do
             exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
             exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
             wait "$TWITCH_IRC_PID" 2>/dev/null || true
+            echo "[$(date '+%H:%M:%S')] TLS handshake write failed (cert/hostname rejected or network error) -> reconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
+            # docich issue #38 テスト専用: TLS拒否がハンドシェイク書き込み時点で
+            # 即座に検出された場合、この経路は下部の1セッション終了チェックを
+            # 経由しない(continueがloop先頭へ直接戻るため)。e2eテストが
+            # 無限再接続ループに陥らないよう、ここでも同じフラグを見て終了する。
+            [ "${TWITCH_CHAT_DAEMON_TEST_SINGLE_SESSION:-0}" = "1" ] && break
             sleep 5
             continue
         }

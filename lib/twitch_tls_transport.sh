@@ -74,7 +74,10 @@ twitch_tls_room_id_from_tags() {
 
 # $1 = tags除去後のIRC行 (例: ":tmi.twitch.tv ROOMSTATE #channel")
 twitch_tls_channel_from_payload() {
-    printf '%s\n' "$1" | sed -n 's/^.*ROOMSTATE #\([^ \r]*\).*/\1/p'
+    # sedのbracket式内での\rの扱いはBSD/GNUで差があり移植性が無いため、まず
+    # 空白までを緩く切り出してから tr -d '\r' で明示的にCRを除去する
+    # (IRC回線は行末に\r\nを付けるため、readで読んだ行にCRが残る)。
+    printf '%s\n' "$1" | sed -n 's/^.*ROOMSTATE #\([^ ]*\).*/\1/p' | tr -d '\r'
 }
 
 # 期待するchannel名/room-idと、実際にROOMSTATEから得たchannel名/room-idを比較する。
