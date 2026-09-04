@@ -37,6 +37,59 @@ _ACTIVE_STATUS_FILE: Path | None = None
 _ACTIVE_HTML_FILE: Path | None = None
 _ACTIVE_ARGS: argparse.Namespace | None = None
 
+# docich#39: candidate Chrome (browser) は Twitch/YouTube/Discord等の
+# credentialを見る必要が無い。os.environ.copy()での全継承をやめ、
+# 実行に要るnon-secretな変数だけを明示的に許可(allowlist)する。
+#
+# DISPLAY / XDG_RUNTIME_DIR / PULSE_SERVER は本番の systemd unit
+# (deploy/soren-runtime/soren-runtime.service) が supervisor 全体へ
+# Environment= で渡している実行環境設定であり、Xvfb上でChromeを描画し
+# 音声出力するのに必須。credential(トークン・APIキー・パスワード等)は
+# 一切含めない。
+BROWSER_ENV_ALLOWLIST = (
+    "HOME",
+    "PATH",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "TERM",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "USER",
+    "LOGNAME",
+    "TZ",
+    "DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "PULSE_SERVER",
+    "PULSE_SINK",
+)
+
+
+def _browser_base_env() -> dict[str, str]:
+    """candidate Chrome / strategy_runner.py起動用のベース環境を返す
+    (env -i相当 + allowlist)。
+
+    呼び出し元(launch_env_for および evaluate_slot 内のcandidate env構築)
+    はこの後、HOME/XDG_*/TMPDIR/SOREN_CHROME_*等を候補ごとの
+    プロファイルディレクトリへ明示的に上書きする。ここで渡すのは
+    その上書きが起きるまでの間も含め、browser(候補Chrome)・AI生成の
+    WILDCARD候補strategy.pyを実行するstrategy_runner.pyいずれの
+    process environmentにもcredentialを一切乗せないためのベースライン。
+    """
+    return {
+        name: os.environ[name]
+        for name in BROWSER_ENV_ALLOWLIST
+        if name in os.environ
+    }
+
+
 # Cooperative stop: set by the signal handler so worker threads (evaluate_slot /
 # evaluate_real game loop) return promptly instead of letting the ThreadPoolExecutor
 # block forever joining infinite-regeneration workers. Also used to break out once the
@@ -687,7 +740,11 @@ def prelaunch_candidate_chrome(
         return bool(_run_with_launch_stagger(launch_and_wait))
 
     def launch_env_for(candidate_app_path: str, candidate_executable_path: str, launch_services: bool = False) -> dict[str, str]:
-        env = os.environ.copy()
+        # docich#39: 以前は os.environ.copy() で全環境(credential含む)を
+        # そのままcandidate Chromeへ渡していた。ここは候補Chromeの
+        # process environmentを構成する唯一の入口なので、allowlistベースの
+        # 空環境から必要な変数だけを積む方式へ変更する。
+        env = _browser_base_env()
         real_home = os.environ.get("SOREN_LAUNCHSERVICES_HOME") or str(Path.home())
         use_real_home = os.environ.get("SOREN_CHROME_USE_REAL_HOME", "0").strip().lower() in {"1", "true", "yes", "on"}
         cffixed_home_setting = os.environ.get("SOREN_CHROME_SET_CFFIXED_HOME", "").strip().lower()
@@ -2925,7 +2982,12 @@ def evaluate_real(
     chrome_fallback_executable_path_list = chrome_fallback_executable_paths(chrome_executable_path)
     if progress_callback:
         progress_callback(candidate)
-    env = os.environ.copy()
+    # docich#39: この env は strategy_runner.py (AI生成のWILDCARD候補
+    # strategy.pyを実行するプロセス)へそのまま渡る。以前は
+    # os.environ.copy()でTwitch/YouTube/Discord等のcredentialまで含む
+    # 全環境を継承していた。allowlistベースに変更し、以後の
+    # env.update()で明示設定する非secretな値だけを持たせる。
+    env = _browser_base_env()
     env.pop("OBS_WEBSOCKET_PORT", None)
     env.pop("OBS_WEBSOCKET_PASSWORD", None)
     base_path = env.get("PATH", "")
