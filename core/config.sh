@@ -22,7 +22,7 @@ PHYROGENETIC_TREE_FILE="phyrogenetic-tree.md"
 PHYROGENETIC_EVENTS_FILE="phyrogenetic-events.jsonl"
 PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet_now/blob/main/phyrogenetic-tree.md}"
 
-MODEL_IMPROVE="${MODEL_IMPROVE:-opencode:muse-spark-1.2-contributor-free}"
+MODEL_IMPROVE="${MODEL_IMPROVE:-opencode:muse-spark-1.3-contributor-free}"
 REGRESSION_DISABLED=0
 MERIKEN_SCHEDULED_TIME_ENABLED=0 # 旧20-21時メリケンAIタイムを無効化
 SOREN91_DAILY_ENABLED="${SOREN91_DAILY_ENABLED:-0}"
@@ -38,21 +38,21 @@ SOREN91_VIEWPORT_HEIGHT="${SOREN91_VIEWPORT_HEIGHT:-270}"
 SOREN91_FULLSCREEN_WINDOW="${SOREN91_FULLSCREEN_WINDOW:-1}"
 SOREN91_NORMAL_GAME_CPU_THROTTLE="${SOREN91_NORMAL_GAME_CPU_THROTTLE:-8}"
 SOREN91_AUDIO_RESUME_GRACE_SEC="${SOREN91_AUDIO_RESUME_GRACE_SEC:-15}"
-MODEL_FALLBACK_IMPROVE="${MODEL_FALLBACK_IMPROVE:-opencode-go:muse-spark-1.2-contributor}"
+MODEL_FALLBACK_IMPROVE="${MODEL_FALLBACK_IMPROVE:-opencode-go:muse-spark-1.3-contributor}"
 MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 # ===== 共通モデルチェーン =====
 # 全 AI 生成系の単一の順序原典。低コスト/無料枠を先頭、有償枠を末尾に置く。
 # 有償枠内は muse-spark contributor を DeepSeek 系より先に使う。
 # 各用途はこのリストを基底に、local を含めるか・特定枠を外すかだけを変える。
-# muse-spark-1.2-contributor-free は OpenCode の無料枠を直接使うため opencode: で呼ぶ。
-# muse-spark-1.2-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
+# muse-spark-1.3-contributor-free は OpenCode の無料枠を直接使うため opencode: で呼ぶ。
+# muse-spark-1.3-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
 # deepseek-v4-flash もOpenCode CLIにセッションヘッダーを付けさせるため opencode-go: で呼ぶ。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -60,8 +60,8 @@ IMPROVE_PEAK_CHAIN_ENABLED="${IMPROVE_PEAK_CHAIN_ENABLED:-0}"
 
 GAME_COUNT_FILE="game_count.txt"
 
-RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.2-contributor-free}"
-RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.3-contributor-free}"
+RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
@@ -95,9 +95,9 @@ RADIO_OLLAMA_TIMEOUT="${RADIO_OLLAMA_TIMEOUT:-300}"
 COMMENT_OLLAMA_MODEL="${COMMENT_OLLAMA_MODEL:-qwen3.5:9b}"
 COMMENT_OLLAMA_MODEL_IMPROVING="${COMMENT_OLLAMA_MODEL_IMPROVING:-gemma4:latest}"
 COMMENT_OLLAMA_TIMEOUT="${COMMENT_OLLAMA_TIMEOUT:-20}"
-COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
-COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 COMMENT_CLASSIFIER_EDIT_TIMEOUT="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 COMMENT_CLASSIFIER_TIMEOUT="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
@@ -146,9 +146,9 @@ YOUTUBE_BROADCAST_GUARD_PRIVACY="${YOUTUBE_BROADCAST_GUARD_PRIVACY:-public}"
 YOUTUBE_BROADCAST_GUARD_TITLE="${YOUTUBE_BROADCAST_GUARD_TITLE:-中華AIと メリケンAIによる自動ソ連建国チャレンジ [ソ連ゲーム]}"
 YOUTUBE_BROADCAST_GUARD_STATE_FILE="${YOUTUBE_BROADCAST_GUARD_STATE_FILE:-tmp/state/youtube_broadcast_guard.json}"
 YOUTUBE_BROADCAST_GUARD_PID_FILE="${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}"
-COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
-RADIO_SOREN91_AGENT="${RADIO_SOREN91_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+RADIO_SOREN91_AGENT="${RADIO_SOREN91_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_SOREN91_FALLBACK="${RADIO_SOREN91_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
 # --- ピーク時間帯のエージェント優先順位入替え ---
 # ピーク時は RADIO_AGENTS / COMMENT_AGENTS の「候補順序」だけを入替え、
@@ -160,17 +160,17 @@ PEAK_HOURS_AGENT_SWAP_ENABLED="${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}"
 # 切替機能自体を止めたいだけなら PEAK_HOURS_AGENT_SWAP_ENABLED=0 を使う。
 PEAK_HOURS_WINDOWS="${PEAK_HOURS_WINDOWS-10-13,15-19}"
 PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
-PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
-# muse free > MiniMax > muse contributor > 残り（DeepSeek系）。
-PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.2-contributor}"
+# muse free(1.3→1.2) > AMD DeepSeek > MiniMax > muse contributor(1.3→1.2)。
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
 
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
-# 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark-1.2-contributor は opencode-go 契約の
-# クォータ制枠のため 1 日バックオフ。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.2-contributor-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.2-contributor:86400"
+# 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark contributor 系は opencode-go 契約の
+# クォータ制枠のため 1 日バックオフ（free 枠も同様に 1 日）。
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
@@ -195,8 +195,8 @@ RADIO_QUALITY_MAX_REPETITIONS="${RADIO_QUALITY_MAX_REPETITIONS:-3}"
 RADIO_QUALITY_SKIP_CORNERS="${RADIO_QUALITY_SKIP_CORNERS:-}"
 RADIO_FACT_CHECK_ENABLED="${RADIO_FACT_CHECK_ENABLED:-1}"
 RUSSIA_CELEBRATION_ENABLED="${RUSSIA_CELEBRATION_ENABLED:-0}"
-ROLLBACK_POSTMORTEM_MODEL="${ROLLBACK_POSTMORTEM_MODEL:-opencode:muse-spark-1.2-contributor-free}"
-ROLLBACK_POSTMORTEM_FALLBACK="${ROLLBACK_POSTMORTEM_FALLBACK:-opencode-go:muse-spark-1.2-contributor}"
+ROLLBACK_POSTMORTEM_MODEL="${ROLLBACK_POSTMORTEM_MODEL:-opencode:muse-spark-1.3-contributor-free}"
+ROLLBACK_POSTMORTEM_FALLBACK="${ROLLBACK_POSTMORTEM_FALLBACK:-opencode-go:muse-spark-1.3-contributor}"
 ROLLBACK_POSTMORTEM_TIMEOUT_SEC="${ROLLBACK_POSTMORTEM_TIMEOUT_SEC:-300}"
 # 粛清カスケード中 (regression_streak >= 閾値) は AI postmortem をスキップし
 # opencode スロット競合を減らして改善サイクル長期化=代打無限化を防ぐ
@@ -215,10 +215,10 @@ SOREN_BRIDGE_DESYNC_LIMIT="${SOREN_BRIDGE_DESYNC_LIMIT:-3}"
 POST_IMPROVE_MAINPLAY_ENABLED="${POST_IMPROVE_MAINPLAY_ENABLED:-1}"
 # TMP_STATE_DIR は後方で定義されるためリテラル指定 (= tmp/state)
 POST_IMPROVE_MAINPLAY_MARKER="tmp/state/.post_improve_mainplay"
-RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.2-contributor-free}"
+RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # SECONDARY は旧来の FALLBACK 設定（VMでは MiniMax）より前に試す。
-# これで muse free → muse contributor → MiniMax の順を保証する。
-RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.2-contributor}"
+# これで muse free(1.3) → muse contributor(1.3) → MiniMax の順を保証する。
+RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.3-contributor}"
 RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:minimax-m3}"
 RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-}"
 RADIO_FACT_CHECK_QUINARY="${RADIO_FACT_CHECK_QUINARY:-}"
