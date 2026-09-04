@@ -290,5 +290,33 @@ daemon6_rc=$?
 order=$(grep -o 'SEQMARK-[0-9]' "$S6/.twitch_chat/raw.log" 2>/dev/null | tr '\n' ',' )
 [ "$order" = "SEQMARK-1,SEQMARK-2,SEQMARK-3," ] && ok || ng "scenario6: raw.log must preserve receive order, got: $order"
 
+# =====================================================================
+# シナリオ7: TWITCH_BROADCASTER_ID が未設定(運用者が未設定の既定状態)。
+#   TLS自体は正しく確立してROOMSTATEも受け取るが、channel identityを検証できない
+#   ("no-expected-broadcaster-id-configured")。この場合はセッションを切断せず、
+#   通常コメント取得は従来通り継続しつつ、elevated commandだけ引き続きdenyのまま
+#   にする(#38導入前の既定動作からの回帰を防ぐ回帰テスト)。
+# =====================================================================
+S7="$WORK/s7"
+setup_daemon_copy "$S7"
+cp "$S1/script.txt" "$S7/script.txt"
+PORT7=$(start_mock_server "$CERT1/cert.pem" "$CERT1/key.pem" "$S7/script.txt" "$WORK/ready7")
+: > "$WORK/spy7.log"
+run_daemon_once "$S7" \
+    TWITCH_CHAT_DIR="$S7/.twitch_chat" \
+    TWITCH_IRC_TLS_HOST=127.0.0.1 \
+    TWITCH_IRC_TLS_PORT="$PORT7" \
+    TWITCH_IRC_TLS_VERIFY_HOST=irc.chat.twitch.tv \
+    TWITCH_IRC_TLS_CAFILE="$CERT1/cert.pem" \
+    SPY_LOG="$WORK/spy7.log"
+daemon7_rc=$?
+[ "$daemon7_rc" -eq 0 ] && ok || ng "scenario7: daemon must exit 0, rc=$daemon7_rc"
+RAW7="$S7/.twitch_chat/raw.log"
+[ -f "$RAW7" ] && grep -q "こんにちは、今日も配信たのしみ" "$RAW7" && ok || ng "scenario7: normal comment capture must NOT regress when TWITCH_BROADCASTER_ID is unset (pre-#38 default state)"
+SPY_LOG="$WORK/spy7.log"
+sleep 0.5
+[ ! -s "$SPY_LOG" ] && ok || ng "scenario7: elevated command must still be denied without TWITCH_BROADCASTER_ID configured"
+grep -q "reject:no-expected-broadcaster-id-configured" "$S7/.twitch_chat/transport_identity.log" 2>/dev/null && ok || ng "scenario7: transport_identity.log must record the soft-reject reason"
+
 echo "test_twitch_chat_daemon_tls_e2e: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

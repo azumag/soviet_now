@@ -223,9 +223,15 @@ while true; do
         # docich issue #38: ROOMSTATE の room-id を「認証済みchannel identity」の
         # 根拠として使う。TWITCH_BROADCASTER_ID(既にPolls/Predictions/Clipで使って
         # いる既存設定値)と一致した時だけ TWITCH_TRANSPORT_AUTHENTICATED=1 にする。
-        # 不一致/未設定/欠落の場合は fail closed のまま(=1にしない)で、さらに
-        # このセッションを直ちに切断して再接続する(このセッションのデータを以後
-        # 一切信頼しない)。
+        # reject理由は2種類に区別する:
+        #   - ソフト(セッションは継続。通常コメント取得は従来通り維持する。elevated
+        #     commandだけ引き続きdenyのまま): TWITCH_BROADCASTER_ID が未設定/非数値。
+        #     これは運用者側の設定不足であって、接続相手が不正である証拠ではない。
+        #     ここでセッションを毎回切断すると、素のコメント取得(本機能の主目的)が
+        #     TWITCH_BROADCASTER_ID未設定の既定状態で丸ごと止まってしまう回帰になる。
+        #   - ハード(セッションを直ちに切断し、以後のデータを一切信頼しない):
+        #     実際にroom-id/channel名が期待値と食い違う、またはROOMSTATEのはずの行に
+        #     identityが載っていない。乗っ取り/誤接続の可能性があるため fail closed。
         if [[ "$payload" == *"ROOMSTATE"* ]]; then
             _rs_room_id=""
             _rs_channel=""
@@ -240,8 +246,16 @@ while true; do
                     TWITCH_TRANSPORT_AUTHENTICATED=1
                 else
                     TWITCH_TRANSPORT_AUTHENTICATED=0
-                    echo "[$(date '+%H:%M:%S')] transport identity rejected: $_identity_reason -> disconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
-                    break
+                    case "$_identity_reason" in
+                    reject:no-expected-broadcaster-id-configured*|reject:expected-broadcaster-id-not-numeric*)
+                        # ソフト: ローカル設定不足。通常コメント取得は継続する。
+                        ;;
+                    *)
+                        # ハード: identityの不一致/欠落。セッションを破棄する。
+                        echo "[$(date '+%H:%M:%S')] transport identity rejected: $_identity_reason -> disconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
+                        break
+                        ;;
+                    esac
                 fi
             fi
         fi
