@@ -255,7 +255,7 @@ export async function runSharedOverlay(options = {}) {
   } catch (error) {
     stopping = true;
     await close();
-    throw error;
+    throw runtimeFailure || error;
   } finally {
     process.off('SIGTERM', onSignal);
     process.off('SIGINT', onSignal);
