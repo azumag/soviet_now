@@ -48,11 +48,26 @@ MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 # muse-spark-1.3-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
 # deepseek-v4-flash もOpenCode CLIにセッションヘッダーを付けさせるため opencode-go: で呼ぶ。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+# Aは入出力単価$0かつHTTP 200/本文ありを確認したモデル。Bは月$5 Free Tier対象の
+# 通常単価モデルで、カタログ表示とAPIの対象認識（RestrictedModelsErrorではなく429）を確認。
+# Cは登録せず、A→Bの順で使う。
+VERCEL_CATEGORY_A_AGENTS="${VERCEL_CATEGORY_A_AGENTS-vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin}"
+# Bは月$5クレジットを消費するモデル。2026-09-05にGateway HTTP 200を確認し、
+# Aの後ろへ低単価順で置く。Free Tierの短期429時は300秒backoffして次候補へ進む。
+VERCEL_CATEGORY_B_AGENTS="${VERCEL_CATEGORY_B_AGENTS-vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro}"
+_VERCEL_ELIGIBLE_AGENTS="$VERCEL_CATEGORY_A_AGENTS"
+if [ -n "$VERCEL_CATEGORY_B_AGENTS" ]; then
+	[ -z "$_VERCEL_ELIGIBLE_AGENTS" ] || _VERCEL_ELIGIBLE_AGENTS="${_VERCEL_ELIGIBLE_AGENTS},"
+	_VERCEL_ELIGIBLE_AGENTS="${_VERCEL_ELIGIBLE_AGENTS}${VERCEL_CATEGORY_B_AGENTS}"
+fi
+# 旧変数は一括上書きと緊急停止の互換口として残す。明示的な空文字は停止。
+VERCEL_FREE_AGENTS="${VERCEL_FREE_AGENTS-$_VERCEL_ELIGIBLE_AGENTS}"
+_VERCEL_FREE_CHAIN="${VERCEL_FREE_AGENTS:+${VERCEL_FREE_AGENTS},}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -62,7 +77,7 @@ GAME_COUNT_FILE="game_count.txt"
 
 RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
+RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-amd:DeepSeek-V4-Flash}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
 RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
@@ -96,9 +111,9 @@ COMMENT_OLLAMA_MODEL="${COMMENT_OLLAMA_MODEL:-qwen3.5:9b}"
 COMMENT_OLLAMA_MODEL_IMPROVING="${COMMENT_OLLAMA_MODEL_IMPROVING:-gemma4:latest}"
 COMMENT_OLLAMA_TIMEOUT="${COMMENT_OLLAMA_TIMEOUT:-20}"
 COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
+COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-amd:DeepSeek-V4-Flash}"
 COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
+COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-amd:DeepSeek-V4-Flash}"
 COMMENT_CLASSIFIER_EDIT_TIMEOUT="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 COMMENT_CLASSIFIER_TIMEOUT="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
 COMMENT_CLASSIFIER_AI_ENABLED="${COMMENT_CLASSIFIER_AI_ENABLED:-0}"
@@ -147,9 +162,9 @@ YOUTUBE_BROADCAST_GUARD_TITLE="${YOUTUBE_BROADCAST_GUARD_TITLE:-中華AIと メ�
 YOUTUBE_BROADCAST_GUARD_STATE_FILE="${YOUTUBE_BROADCAST_GUARD_STATE_FILE:-tmp/state/youtube_broadcast_guard.json}"
 YOUTUBE_BROADCAST_GUARD_PID_FILE="${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}"
 COMMENT_SOREN91_AGENT="${COMMENT_SOREN91_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
+COMMENT_SOREN91_FALLBACK="${COMMENT_SOREN91_FALLBACK:-amd:DeepSeek-V4-Flash}"
 RADIO_SOREN91_AGENT="${RADIO_SOREN91_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-RADIO_SOREN91_FALLBACK="${RADIO_SOREN91_FALLBACK:-codex:amd-token-factory-deepseek-v4-flash}"
+RADIO_SOREN91_FALLBACK="${RADIO_SOREN91_FALLBACK:-amd:DeepSeek-V4-Flash}"
 # --- ピーク時間帯のエージェント優先順位入替え ---
 # ピーク時は RADIO_AGENTS / COMMENT_AGENTS の「候補順序」だけを入替え、
 # PEAK_HOURS_PRIORITY_AGENT を先頭へ寄せる。候補の削除はしない（DeepSeek はフォールバックに残る）。
@@ -162,19 +177,20 @@ PEAK_HOURS_WINDOWS="${PEAK_HOURS_WINDOWS-10-13,15-19}"
 PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
 PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
-# muse free(1.3→1.2) > AMD DeepSeek > MiniMax > muse contributor(1.3→1.2)。
-PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
+# muse free(1.3→1.2) > Vercel M3 Free > AMD DeepSeek > MiniMax > muse contributor(1.3→1.2)。
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
 
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
 # 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark contributor 系は opencode-go 契約の
 # クォータ制枠のため 1 日バックオフ（free 枠も同様に 1 日）。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/minimax/minimax-m3-free:300 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
 AI_BACKOFF_FAILURE_SEC="${AI_BACKOFF_FAILURE_SEC:-300}"
+VERCEL_OPENCODE_TIMEOUT="${VERCEL_OPENCODE_TIMEOUT:-20}"
 # ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
 # 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
 # コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成されることがある。
@@ -219,7 +235,7 @@ RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.3-contri
 # SECONDARY は旧来の FALLBACK 設定（VMでは MiniMax）より前に試す。
 # これで muse free(1.3) → muse contributor(1.3) → MiniMax の順を保証する。
 RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.3-contributor}"
-RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-codex:minimax-m3}"
+RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-minimax-api:MiniMax-M3}"
 RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-}"
 RADIO_FACT_CHECK_QUINARY="${RADIO_FACT_CHECK_QUINARY:-}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
