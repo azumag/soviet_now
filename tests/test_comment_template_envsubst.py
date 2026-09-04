@@ -59,6 +59,22 @@ class TestCommentTemplateEnvsubst(unittest.TestCase):
                 f"comment.sh:{lineno} の envsubst 許可リストに _comment_length_policy がありません",
             )
 
+    def test_category_prompt_list_also_allows_length_policy(self):
+        """カテゴリ別プロンプトの envsubst (comment.sh の gacha_completion_note 行)
+        も _comment_length_policy を許可していること。カテゴリテンプレートは現状
+        この変数を参照しないため no-op だが、参照側と許可側の整合を固定する。"""
+        lines = SRC.read_text(encoding="utf-8").split("\n")
+        category_lists = [
+            (i + 1, ln) for i, ln in enumerate(lines)
+            if "envsubst '" in ln and "${gacha_completion_note}" in ln
+        ]
+        self.assertTrue(category_lists, "カテゴリ別プロンプトの envsubst 行が見つかりません")
+        for lineno, ln in category_lists:
+            self.assertIn(
+                "${_comment_length_policy}", ln,
+                f"comment.sh:{lineno} の envsubst 許可リストに _comment_length_policy がありません",
+            )
+
     @unittest.skipIf(shutil.which("envsubst") is None, "envsubst not available")
     def test_generated_prompt_expands_policy_and_leaves_no_literal(self):
         """実際に envsubst を実行し、ポリシー本文が展開されリテラルが残らないこと。"""
