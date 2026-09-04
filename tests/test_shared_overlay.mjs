@@ -22,8 +22,10 @@ import {
   normalizeActiveGameContext,
   sharedOverlayAllowedRoutes,
   setSharedOverlayBrowserReady,
+  setSharedOverlayFramesReady,
   startSharedOverlayServer,
   trackOwnedServerSockets,
+  waitForSharedOverlayFrames,
 } from '../lib/shared_overlay.mjs';
 
 import { runSharedOverlay } from '../shared_overlay.mjs';
@@ -157,6 +159,43 @@ test('caller-supplied incompatible config fails closed before HTTP startup', () 
 });
 
 
+test('shared config rejects canonical stage and required-frame metadata drift', () => {
+  const valid = loadSharedOverlayConfig({}, 'linux');
+  const alter = (change) => ({
+    ...valid.direct,
+    ...change,
+  });
+  assert.throws(
+    () => assertSharedOverlayContract(alter({
+      stage: { ...valid.direct.stage, elementId: 'other-stage' },
+    })),
+    /stage\.elementId/,
+  );
+  assert.throws(
+    () => assertSharedOverlayContract(alter({
+      surfaces: valid.direct.surfaces.map((item) => item.key === 'broadcastTop'
+        ? { ...item, elementId: 'other-frame' }
+        : item),
+    })),
+    /surface\.broadcastTop/,
+  );
+  assert.throws(
+    () => assertSharedOverlayContract(alter({
+      surfaces: valid.direct.surfaces.map((item) => item.key === 'broadcastSidebar'
+        ? { ...item, style: { ...item.style, inset: '0' } }
+        : item),
+    })),
+    /surface\.broadcastSidebar\.style/,
+  );
+  assert.throws(
+    () => assertSharedOverlayContract(alter({
+      surfaces: [...valid.direct.surfaces, { ...valid.direct.surfaces[0] }],
+    })),
+    /surface-keys|surface-routes-duplicate/,
+  );
+});
+
+
 test('context normalization treats absent active game as waiting and only exposes game/phase', () => {
   assert.deepEqual(normalizeActiveGameContext({ phase: 'draining', secret: 'do-not-return' }, 11), {
     active: false,
@@ -228,6 +267,7 @@ test('HTTP service serves only health, blank root, and configured overlay routes
     assert.equal(initialHealth.ready, false);
     assert.equal(initialHealth.browserReady, false);
     assert.equal(initialHealth.layoutReady, false);
+    assert.equal(initialHealth.overlayReady, false);
 
     setSharedOverlayBrowserReady(server, true, { innerWidth: 1920, innerHeight: 1080 });
     const wrongViewportHealth = JSON.parse((await request(server, '/healthz')).body);
@@ -235,9 +275,16 @@ test('HTTP service serves only health, blank root, and configured overlay routes
     assert.equal(wrongViewportHealth.layoutReady, false);
     assert.equal(wrongViewportHealth.ready, false);
     setSharedOverlayBrowserReady(server, true, { innerWidth: 1280, innerHeight: 720 });
+    const framePendingHealth = JSON.parse((await request(server, '/healthz')).body);
+    assert.equal(framePendingHealth.browserReady, true);
+    assert.equal(framePendingHealth.layoutReady, true);
+    assert.equal(framePendingHealth.overlayReady, false);
+    assert.equal(framePendingHealth.ready, false);
+    setSharedOverlayFramesReady(server, true);
     const readyHealth = JSON.parse((await request(server, '/healthz')).body);
     assert.equal(readyHealth.browserReady, true);
     assert.equal(readyHealth.layoutReady, true);
+    assert.equal(readyHealth.overlayReady, true);
     assert.equal(readyHealth.ready, true);
 
     const root = await request(server, '/');
@@ -303,6 +350,39 @@ test('blank stage installer never requires a game canvas', async () => {
 });
 
 
+test('required frame readiness rejects missing HTML and failed route loads', async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-frame-failure-'));
+  const context = path.join(temp, 'game_switch.json');
+  fs.writeFileSync(context, JSON.stringify({ active: { game: 'robots', phase: 'running' } }));
+  const baseConfig = fixtureConfig(temp, context);
+  const missingHtmlConfig = {
+    ...baseConfig,
+    direct: {
+      ...baseConfig.direct,
+      surfaces: baseConfig.direct.surfaces.map((item) => item.key === 'broadcastSidebar'
+        ? { ...item, htmlFile: path.join(temp, 'missing-broadcast.html') }
+        : item),
+    },
+  };
+  const server = await startSharedOverlayServer(missingHtmlConfig, { port: 0 });
+  try {
+    const missing = await request(server, '/__soren_overlay/broadcast/sidebar');
+    assert.equal(missing.status, 200);
+    assert.doesNotMatch(missing.body, /id=["']broadcast-overlay["']/);
+  } finally {
+    await closeSharedOverlayServer(server);
+  }
+  const routeFailurePage = {
+    async evaluate() { return false; },
+  };
+  await assert.rejects(
+    waitForSharedOverlayFrames(routeFailurePage, baseConfig, { timeoutMs: 25 }),
+    /shared overlay required frames not ready/,
+  );
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
 test('owned proxy socket tracker destroys upgraded connections', () => {
   const proxy = new EventEmitter();
   const tracker = trackOwnedServerSockets(proxy);
@@ -332,6 +412,8 @@ class FakeSharedPage extends EventEmitter {
   async goto() {}
 
   async addInitScript() {}
+
+  async waitForFunction() {}
 
   async evaluate(fn) {
     if (fn.toString().includes('getBoundingClientRect')) {

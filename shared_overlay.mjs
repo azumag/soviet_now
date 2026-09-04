@@ -12,8 +12,10 @@ import {
   installSharedOverlay,
   loadSharedOverlayConfig,
   setSharedOverlayBrowserReady,
+  setSharedOverlayFramesReady,
   startSharedOverlayServer,
   trackOwnedServerSockets,
+  waitForSharedOverlayFrames,
 } from './lib/shared_overlay.mjs';
 import { startTwicaOverlayProxy } from './lib/twica_overlay_proxy.mjs';
 
@@ -229,6 +231,9 @@ export async function runSharedOverlay(options = {}) {
       host: server.sharedOverlayConfig?.host || config.host,
       port: server.sharedOverlayConfig?.port || config.port,
     });
+    const frameReadiness = await waitForSharedOverlayFrames(page, config, {
+      timeoutMs: options.overlayReadyTimeoutMs ?? 10000,
+    });
     const viewport = await measurePage(page);
     if (signalReceived) {
       await signalPromise;
@@ -236,10 +241,12 @@ export async function runSharedOverlay(options = {}) {
       return { config, server, browser, page, close };
     }
     setSharedOverlayBrowserReady(server, true, viewport);
+    setSharedOverlayFramesReady(server, frameReadiness.ready);
     if (options.log !== false) {
       console.log(`[SHARED-OVERLAY] listening ${serviceUrl(server, server.sharedOverlayConfig || config)}`);
       console.log(`[SHARED-OVERLAY] stage ${JSON.stringify(installed.stage)}`);
       console.log(`[SHARED-OVERLAY] viewport ${JSON.stringify(viewport)}`);
+      console.log(`[SHARED-OVERLAY] frames=${frameReadiness.frames.length}`);
       console.log(`[SHARED-OVERLAY] overlays=${installed.overlaysInstalled ? 'installed' : 'disabled'}`);
     }
 
