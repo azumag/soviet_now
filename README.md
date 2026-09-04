@@ -725,13 +725,21 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 | `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `amd-token-factory-deepseek-v4-flash` |
 | `opencode:<model>` | `opencode run --model opencode/<model>` | OpenCode CLIのZen系モデル |
 | `opencode-go:<model>` | `opencode run --model opencode-go/<model>` | OpenCode CLIのGo系モデル（muse等） |
+| `vercel:<gateway-model-id>` | `opencode run --agent soren-lite --model vercel/<gateway-model-id>` | Vercel AI Gateway。既定はM3 Free、429時300秒backoff、1回20秒で打ち切り |
 | 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧スペックの後方互換正規化 |
 
 #### 必要なAPIキー
 
 ```bash
 OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
+AI_GATEWAY_API_KEY=...           # Vercel AI Gateway用。リポジトリ外の保護済みenvに保存
 ```
+
+VercelはOpenCodeの`vercel` providerへ登録し、`soren-lite` agentを`steps: 2`・全tool denyで使う。
+モデル上限はGateway catalogに合わせ、M3 Freeを`context: 1048576`、Laguna Freeを
+`context: 256000` / `output: 32768`として設定する。`limit`はモデル能力値であり利用量の
+上限ではないため、実行側でもVercelだけ20秒timeout・CLI外側retryなしにする。Lagunaは
+実測で短時間429が続いたため、登録は残すが既定チェーンには含めない。
 
 #### モデルスペックと CLI マッピング
 

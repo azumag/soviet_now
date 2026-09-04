@@ -48,7 +48,12 @@ MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 # muse-spark-1.3-contributor は opencode-go 経由（要 opt-in https://opencode.ai/workspace/wrk_01M04NATCGAVB03SVAEZ4RBV1Y/go）で提供。
 # provider は opencode-go のため prefix は opencode-go:（opencode: だと zen 側の free 枠と衝突し Model not found になる）。
 # deepseek-v4-flash もOpenCode CLIにセッションヘッダーを付けさせるため opencode-go: で呼ぶ。
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+# Vercel free は公式対応のOpenCode経由で呼ぶ。OpenCode設定のmodel limitに
+# context/output上限を持たせ、Codex CLIの大きなsystem promptと多重retryを避ける。
+# 明示的な空文字は緊急停止として尊重する。
+VERCEL_FREE_AGENTS="${VERCEL_FREE_AGENTS-vercel:minimax/minimax-m3-free}"
+_VERCEL_FREE_CHAIN="${VERCEL_FREE_AGENTS:+${VERCEL_FREE_AGENTS},}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
@@ -162,19 +167,20 @@ PEAK_HOURS_WINDOWS="${PEAK_HOURS_WINDOWS-10-13,15-19}"
 PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
 PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
-# muse free(1.3→1.2) > AMD DeepSeek > MiniMax > muse contributor(1.3→1.2)。
-PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
+# muse free(1.3→1.2) > Vercel M3 Free > AMD DeepSeek > MiniMax > muse contributor(1.3→1.2)。
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}codex:amd-token-factory-deepseek-v4-flash,codex:minimax-m3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
 
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
 # 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark contributor 系は opencode-go 契約の
 # クォータ制枠のため 1 日バックオフ（free 枠も同様に 1 日）。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/minimax/minimax-m3-free:300 vercel/poolside/laguna-s-2.1-free:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
 AI_BACKOFF_FAILURE_SEC="${AI_BACKOFF_FAILURE_SEC:-300}"
+VERCEL_OPENCODE_TIMEOUT="${VERCEL_OPENCODE_TIMEOUT:-20}"
 # ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
 # 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
 # コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成されることがある。
