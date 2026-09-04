@@ -628,7 +628,11 @@ PY
             config,
         )
         self.assertIn(
-            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.3-contributor}"',
+            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:omen-alpha}"',
+            config,
+        )
+        self.assertIn(
+            'RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-opencode-go:muse-spark-1.3-contributor}"',
             config,
         )
         self.assertIn(
