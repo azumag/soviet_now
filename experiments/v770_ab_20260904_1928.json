@@ -77,5 +77,31 @@
     "tools/ab_verdict.py": "a9fd479e1245922b88345aba36948c760e0be81f1472fcf4e8a3b5448e2859ea",
     "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
     "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  },
+  "outcome": {
+    "verdict": "HARM_STOP (事前登録の規則どおり)",
+    "stopped_at_blocks": 26,
+    "pre_registered_final_blocks": 200,
+    "primary_merges_per_turn": {
+      "mean": -0.0457,
+      "se": 0.0185,
+      "ci90_lower": -0.0694,
+      "ucb99": "< 0"
+    },
+    "secondary": {
+      "turns": {
+        "mean": -12.6,
+        "ci90_lower": -18.73
+      },
+      "score": {
+        "mean": -471.1,
+        "ci90_lower": -666.5
+      },
+      "t15": "A=6/53 B=1/52"
+    },
+    "conditional_power_at_stop": 0.0,
+    "note": "これまでで最も明確に有害な候補。turns -12.6 手は他のどの実験より大きい負の効果。表面の凸凹を罰すると平らな盤面が保たれて機会が増える、という仮説は逆だった。shadow では決定変化 14.05% で併合候補の選択率も維持されていたが、実戦では手数を大きく縮めた。",
+    "interpretation": "凸凹を罰する = 谷を埋める方向に働くが、谷は『次に同型が来たときに落とす場所』でもある。平らにすると露出駒が互いに近づき、覆い合って機会を失う可能性がある。以前の測定でも『平坦さと露出型数』の関係は横断比較 4.84 vs 4.12 に対し統制付きでは -0.091 型と符号が逆転していた。今回それが実戦で確認された形。",
+    "ledger": "experiments/ledgers/ab_20260905_032704_games.jsonl"
   }
 }
