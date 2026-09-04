@@ -114,7 +114,7 @@ twitch_tls_identity_confirmed() {
     return 0
 }
 
-# --- 認証済みtransant経由で扱うidentityの最低限のschema検証 ---
+# --- 認証済みtransport経由で扱うidentityの最低限のschema検証 ---
 # (形式が壊れている値を、誤ってauthorizeへ渡さないための入口バリデーション)
 
 twitch_identity_valid_channel_id() {

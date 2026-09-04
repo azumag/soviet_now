@@ -322,6 +322,12 @@ while true; do
                 user_id=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^user-id=//p' | head -n1)
                 # IRCv3の最低限デコード（\s=space, \:=;, \\=\）
                 display_name=$(printf '%s' "$display_name" | sed -e 's/\\s/ /g' -e 's/\\:/;/g' -e 's/\\\\/\\/g')
+                # docich issue #38: identity schema検証。user-idは常に数字のみの
+                # stable idのはず。形式が壊れている値をそのままauthorizeへ渡さない
+                # よう、その場合は「stable user-idなし」として扱う(fail closed側)。
+                if [ -n "$user_id" ] && ! twitch_identity_valid_user_id "$user_id"; then
+                    user_id=""
+                fi
             fi
             user="$display_name"
             [ -z "$user" ] && user="$login_user"
@@ -353,6 +359,10 @@ while true; do
             _is_mod_or_broadcaster=false
             if [ -n "$tags" ]; then
                 _badges=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^badges=//p' | head -n1)
+                # docich issue #38: identity schema検証。badgesの形式が
+                # name/version,... の想定形式から外れている場合は、権限判定の
+                # 根拠として使わない(mod/broadcaster扱いにしない。fail closed側)。
+                twitch_identity_valid_badges "$_badges" || _badges=""
                 case ",${_badges}," in
                 *,broadcaster/*|*,moderator/*) _is_mod_or_broadcaster=true ;;
                 esac
