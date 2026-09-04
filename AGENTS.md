@@ -1,5 +1,15 @@
 # Codex Project Instructions
 
+## ゲームと共通配信基盤の分離
+
+- ゲーム本体・描画・操作AI・ゲーム専用音声/改善/監視はゲーム単位で管理する。通知枠・ステータス枠・共通読み上げ・配信エンコーダ・切替管理はゲーム停止に巻き込まない。
+- 切替では現在の試合と結果保存を終えて次の試合を保留し、その後の明示的な停止で資源を解放する。終了待ちの間はプレイ入力を維持し、タイムアウトを理由に試合を強制終了しない。
+- 停止・取消・復帰はrequest IDだけでなくgame/generation/期限を照合する。不可逆な終了操作後にフラグの解除だけで復帰成功と扱わない。
+- inactiveなゲームのwatchdog再起動と改善ジョブの子プロセスを含めて確認する。切替前からある手動休止は解除しない。
+- ゲームは標準のウィンドウ寸法・内部解像度で動かす。配信映像のみ縦横比維持のcontainと黒帯で960×540、位置(0,90)へ収め、1280×720の上下90px・右320pxの枠を変えない。
+- 共有表示は実際の描画完了とゲーム窓との重なり順まで検証する。待機画面、非表示iframe、プロセスの生存だけを表示成功の証拠にしない。
+- ゲーム切替のためにsoren-runtime.service全体を再起動しない。配信PIDの維持、旧ゲームの資源消滅、失敗時の安全な状態を個別に確認する。
+
 ## OBS Working Indicator
 
 When any agent (Codex, Claude Code, etc.) is actively inspecting, editing, testing, or otherwise changing this project, turn on the persistent work indicator in `eventOverlay` with fine granularity (regardless of agent type):
