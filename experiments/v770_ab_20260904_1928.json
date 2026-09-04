@@ -1,0 +1,81 @@
+{
+  "experiment": "v770_SURFACE_ROUGHNESS_vs_v763",
+  "hypothesis": "落下が表面の凸凹（列天端の標準偏差）を増やすことを罰すると、盤面が平らに保たれて露出型が増え、機会率が上がる。",
+  "design_note": "現 root に v762 の凸凹項を移植した候補。両腕とも同一ファイルで env の V762_ROUGHNESS_W のみ 0 と 2.0。W=0 は root と決定 100% 一致（実戦 306 手で確認）。",
+  "shadow": {
+    "decision_change_at_W2": 0.1405,
+    "merge_candidate_selection": "26.8% -> 27.1%",
+    "control_at_W0": "0.00%"
+  },
+  "no_effect_prediction": "効果量の事前予測は載せない。過去 4 候補の予実比は v763 0.95 / v767 0.14 / v768 -0.20 / v769 0.04 で、shadow は決定が変わることは示せても効果量を予測できないと実証された（2026-09-04）。k は「検出したい最小の効果」から決める。",
+  "arms": {
+    "A": {
+      "role": "control",
+      "decide_hash": "3a9bd96b76a0",
+      "env": "V762_ROUGHNESS_W=0"
+    },
+    "B": {
+      "role": "candidate",
+      "decide_hash": "e1e7fd1ed790",
+      "env": "V762_ROUGHNESS_W=2.0"
+    }
+  },
+  "pattern": "ABBA",
+  "power": {
+    "block_sd_observed": 0.1164,
+    "chosen_k": 200,
+    "adopt_line": 0.0105,
+    "note": "k=200 で採用ラインは +0.0105。これは v763 の実測効果 +0.0237 の半分弱にあたり、『v763 と同程度の当たりなら確実に、その半分でも五分五分で』検出できる設計。横ばいなら無益停止が約 7 時間で終わらせる。"
+  },
+  "preregistration": {
+    "primary_report": "merges_per_turn (block diff) 90% CI lower > 0",
+    "secondary": "turns, score, T15 到達率, 110 手以上に限った T15, 110 手以上の割合",
+    "guardrail": [
+      "score の block diff 90% CI 下限 > -300",
+      "併合回帰の禁止: B 腕の merge_grade 選択率が A 腕を 10% 以上下回らないこと"
+    ],
+    "guardrail_note": "T15 の比率ガードは無効化する（guardrail_t15_ratio: 0）。帰無でも各100試合で 12.5% 落とすことを実測済みで、稀事象の比率は候補の情報を持たない（issue #132 P0-1）。",
+    "harm_stop": "k>=10 で merges_per_turn UCB99 < 0 なら finish A",
+    "futility_stop": "k>=20 で条件付き検出力 < 10% なら finish A",
+    "final": "k=200 (各400試合、約61時間)",
+    "note": "開始後は規則を変更しない。判定点 k=200 を超えて走らせない。",
+    "rule": {
+      "primary": "merges_per_turn",
+      "primary_kind": "block_diff",
+      "adopt_ci_lower_gt": 0.0,
+      "harm_min_blocks": 10,
+      "harm_ucb_lt": 0.0,
+      "harm_z": 2.3263,
+      "futility_cp_lt": 0.1,
+      "futility_min_blocks": 20,
+      "guardrail_t15_ratio": 0.0,
+      "final_blocks": 200,
+      "final_games_per_arm": 400
+    }
+  },
+  "started_at": "2026-09-04T19:28:30",
+  "game_num_start": 48745,
+  "toggles": {
+    "AB_GATE_ENABLED": "1",
+    "AB_GATE_DRY_RUN": "1",
+    "SOREN_AB_PATTERN": "ABBA",
+    "REGRESSION_DISABLED": "1",
+    "V763_DIVERSITY_W": "1.0"
+  },
+  "sha256": {
+    "strategy.py": "e042b0e9789aa429986ce9499e397ba09c868e416b18e784563096b45d11a3bc",
+    "tmp/manual_challenge/strategy_e1e7fd1ed790.py": "3169035db8cdc759259532be6a2b7bc267cf331ede57f53cd4876e24fa34b6a2",
+    "analyze_board.py": "809a8ed551dc40ba7da7a1d48038cebf551ac591c5fef31f1fa5b5ed9db0cac7",
+    "strategy_runner.py": "fa9ef7764ad78899ccfbf55b49bf7476faf8cc00504d9820e6d01e2702f96593",
+    "strategy_helpers/board_stats.py": "626f806cd161032ab44aa0b2b607a956678c13298ce3bfd79a6fd453e7ef3098",
+    "eloop.sh": "569074da13cb4f4a467982b58f989924291bc2c3148cebee998074ec72cd00ea",
+    "eloop_lib.sh": "3bfb36aedb8c28746fb51f2f21f240abf4aa496aedb7bdd6c29975a21ed338cf",
+    "soren_loop.sh": "8d869dadb3fb795c03b534324a1f91ecdd5b5e0677130ddf9662c58a3e4573a9",
+    "strategy/ab_interleave.sh": "81f46b514009dab6a2ab67e1433c1fd86c02c5d0e9f84c9a4609721cb0652725",
+    "strategy/ab_gate.sh": "7d2630b78a21b48e88338dcd728804b4196e42388a54650da806a375c1d17dbe",
+    "tools/ab_ctl.sh": "243d6ad2a8bc8a9125a60ebc8af56adab8286ded7d3145992497dfb888b2c1bc",
+    "tools/ab_verdict.py": "a9fd479e1245922b88345aba36948c760e0be81f1472fcf4e8a3b5448e2859ea",
+    "tools/policy_bundle.py": "490144ea8226aac6ae4175ba52fe3f487c85e59f049d8ebffbb446f50380326c",
+    "wildcard_parallel.py": "54e53676fa8a4343ac5669f4af5bc273212f6e70abbc8462312d07595cab5e14"
+  }
+}
