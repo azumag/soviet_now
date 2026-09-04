@@ -42,6 +42,9 @@ mkdir -p "$CHAT_DIR"
 # docich issue #37: side effect(OBS配信開始/音声プロセス再起動/設定ファイル書換/クリップ作成等)は
 # 全てこのregistryのdeny-by-default authorize経由でのみ実行する。registryに無いcommandはdeny。
 source lib/twitch_command_registry.sh
+# docich issue #38: TWITCH_TRANSPORT_AUTHENTICATED を正当に1へ切り替えるための
+# TLS transport補助(openssl s_client引数構築 + channel identity検証)。
+source lib/twitch_tls_transport.sh
 
 _compact_recent_file() {
     local src="$1" ttl="$2" max_keep="${3:-$RECENT_DEDUP_MAX}"
@@ -142,6 +145,10 @@ _pid_alive() {
 
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
+    # docich issue #38: 新しい接続セッションは必ず未認証から始める(前回セッションの
+    # 認証状態を持ち越さない)。channel identity(ROOMSTATE room-id)を再確認できて
+    # 初めて1になる。
+    TWITCH_TRANSPORT_AUTHENTICATED=0
     # テスト専用の入力差し替え口: TWITCH_CHAT_DAEMON_TEST_INPUT が設定されている時だけ
     # nc(実IRC接続)の代わりにファイルを読む。本番経路(未設定時)は従来と完全に同一。
     if [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ]; then
@@ -152,7 +159,15 @@ while true; do
         exec {TWITCH_IRC[1]}>/dev/null
         TWITCH_IRC_PID=""
     else
-        coproc TWITCH_IRC { nc irc.chat.twitch.tv 6667 2>/dev/null; }
+        # docich issue #38: irc.chat.twitch.tv:6697 への TLS 接続(証明書 + hostname
+        # 検証必須)。openssl が無い、または証明書/hostname検証が失敗した場合は
+        # coproc の読み取り側が即座にEOFになり、下の再接続ロジックへ自然に合流する
+        # (=平文へフォールバックしない。fail closed)。
+        if ! command -v openssl >/dev/null 2>&1; then
+            echo "[$(date '+%H:%M:%S')] FATAL: openssl not found; cannot establish TLS transport (no plaintext fallback)" >> "$CHAT_DIR/daemon_reconnect.log"
+        fi
+        twitch_tls_build_args
+        coproc TWITCH_IRC { openssl s_client "${TWITCH_TLS_ARGS[@]}" 2>>"$CHAT_DIR/tls_handshake.log"; }
         {
             # display-name などのメタ情報タグを受け取る
             printf 'PASS SCHMOOPIIE\r\n'
@@ -197,6 +212,32 @@ while true; do
         if [[ "$payload" == PING* ]]; then
             printf 'PONG %s\r\n' "${payload#PING }" >&"${TWITCH_IRC[1]}" 2>/dev/null || break
             continue
+        fi
+
+        # docich issue #38: ROOMSTATE の room-id を「認証済みchannel identity」の
+        # 根拠として使う。TWITCH_BROADCASTER_ID(既にPolls/Predictions/Clipで使って
+        # いる既存設定値)と一致した時だけ TWITCH_TRANSPORT_AUTHENTICATED=1 にする。
+        # 不一致/未設定/欠落の場合は fail closed のまま(=1にしない)で、さらに
+        # このセッションを直ちに切断して再接続する(このセッションのデータを以後
+        # 一切信頼しない)。
+        if [[ "$payload" == *"ROOMSTATE"* ]]; then
+            _rs_room_id=""
+            _rs_channel=""
+            [ -n "$tags" ] && _rs_room_id=$(twitch_tls_room_id_from_tags "$tags" 2>/dev/null || true)
+            _rs_channel=$(twitch_tls_channel_from_payload "$payload" 2>/dev/null || true)
+            if [ -n "$_rs_room_id" ] || [ -n "$_rs_channel" ]; then
+                _identity_reason=$(twitch_tls_identity_confirmed "$CHANNEL" "${TWITCH_BROADCASTER_ID:-}" "$_rs_channel" "$_rs_room_id")
+                _identity_rc=$?
+                mkdir -p "$CHAT_DIR" 2>/dev/null || true
+                printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$_identity_reason" >> "$CHAT_DIR/transport_identity.log"
+                if [ "$_identity_rc" -eq 0 ]; then
+                    TWITCH_TRANSPORT_AUTHENTICATED=1
+                else
+                    TWITCH_TRANSPORT_AUTHENTICATED=0
+                    echo "[$(date '+%H:%M:%S')] transport identity rejected: $_identity_reason -> disconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
+                    break
+                fi
+            fi
         fi
 
         # サブスク/ギフトサブ検出 (USERNOTICE)
@@ -496,8 +537,10 @@ while true; do
     esac
     wait "$TWITCH_IRC_PID" 2>/dev/null || true
     # テスト専用: 入力ファイルを読み切ったら再接続ループに入らず1回で終了する
-    # (outbound queueの実送信consumerも実行しない)。
-    [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ] && break
+    # (outbound queueの実送信consumerも実行しない)。TWITCH_CHAT_DAEMON_TEST_SINGLE_SESSION
+    # は docich issue #38 のTLS e2eテスト用(ローカルmockサーバへ実際にTLS接続する
+    # テストは無限再接続ループを避けるため1セッションで終了させる必要がある)。
+    { [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ] || [ "${TWITCH_CHAT_DAEMON_TEST_SINGLE_SESSION:-0}" = "1" ]; } && break
     echo "[$(date '+%H:%M:%S')] IRC session ended; reconnecting in 5s" >> "$CHAT_DIR/daemon_reconnect.log"
     # --- Outbound chat queue consumer ---
     # chat_worker 配下では親 worker が送信を一元管理する。standalone daemon の時だけ消化する。
