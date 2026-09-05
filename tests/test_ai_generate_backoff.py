@@ -382,6 +382,8 @@ class AiGenerateBackoffTests(unittest.TestCase):
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:amd-token-factory-deepseek-v4-flash RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:openrouter/free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:minimax/minimax-m3-free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:poolside/laguna-s-2.1-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent local RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:minimax-m3 RADIO)"
@@ -400,8 +402,43 @@ class AiGenerateBackoffTests(unittest.TestCase):
         lines = [line for line in result.stdout.splitlines() if line]
         self.assertEqual(
             lines,
-            ["86400", "86400", "86400", "1800", "18000", "18000", "18000"],
+            [
+                "86400",
+                "86400",
+                "86400",
+                "300",
+                "300",
+                "1800",
+                "18000",
+                "18000",
+                "18000",
+            ],
         )
+
+    def test_vercel_category_b_agent_resolves_dedicated_backoff(self) -> None:
+        # 回帰: AI_BACKOFF_SEC_ITEMS の GLM 5.3 キーは slash 形式
+        # (vercel/zai/glm-5.3-flash:300) でなければ name 解決が
+        # "vercel" になって 300 秒が当たらない (#162 レビュー指摘)。
+        script = textwrap.dedent(
+            f"""
+            set -u
+            ELOOP_LIB_DIR={REPO_ROOT!s}
+            source {REPO_ROOT / 'core/config.sh'!s}
+            source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:zai/glm-5.3-flash COMMENT)"
+            """
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=REPO_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = [line for line in result.stdout.splitlines() if line]
+        self.assertEqual(lines, ["300"])
 
     def test_ai_stats_record_writes_jsonl_without_stdout(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
