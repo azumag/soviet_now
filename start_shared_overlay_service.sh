@@ -38,6 +38,13 @@ DISP="${SOREN_SHARED_OVERLAY_DISPLAY:-:98}"
 export HOME="${HOME:-/home/ubuntu}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 PIDFILE="tmp/shared_overlay_service.pids"
+XVFB_PID=""
+WM_PID=""
+
+# ATTACH=1: render on an already-running foreign display (e.g. the stream
+# display :99). Never starts Xvfb or a window manager there, and never
+# kills anything discovered by name/display — cleanup stays pidfile-scoped.
+ATTACH="${SOREN_SHARED_OVERLAY_ATTACH:-0}"
 
 # Restart cleanup: only the pids our previous instance recorded.
 if [ -f "$PIDFILE" ]; then
@@ -47,21 +54,28 @@ if [ -f "$PIDFILE" ]; then
 	done <"$PIDFILE"
 	rm -f "$PIDFILE"
 fi
-case "$DISP" in
-:98) rm -f "/tmp/.X98-lock" ;;
-:97) rm -f "/tmp/.X97-lock" ;;
-esac
 
-Xvfb "$DISP" -screen 0 1280x720x24 -nolisten tcp >tmp/shared_overlay_xvfb.log 2>&1 &
-XVFB_PID=$!
-sleep 1
-if ! kill -0 "$XVFB_PID" 2>/dev/null; then
-	echo "[SHARED-OVERLAY-SERVICE] Xvfb $DISP failed to start" >&2
-	exit 1
+if [ "$ATTACH" = "1" ]; then
+	if [ ! -e "/tmp/.X11-unix/X${DISP#:}" ]; then
+		echo "[SHARED-OVERLAY-SERVICE] attach: display $DISP does not exist" >&2
+		exit 1
+	fi
+else
+	case "$DISP" in
+	:98) rm -f "/tmp/.X98-lock" ;;
+	:97) rm -f "/tmp/.X97-lock" ;;
+	esac
+	Xvfb "$DISP" -screen 0 1280x720x24 -nolisten tcp >tmp/shared_overlay_xvfb.log 2>&1 &
+	XVFB_PID=$!
+	sleep 1
+	if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+		echo "[SHARED-OVERLAY-SERVICE] Xvfb $DISP failed to start" >&2
+		exit 1
+	fi
+	DISPLAY="$DISP" xfwm4 --replace >tmp/shared_overlay_wm.log 2>&1 &
+	WM_PID=$!
+	sleep 3
 fi
-DISPLAY="$DISP" xfwm4 --replace >tmp/shared_overlay_wm.log 2>&1 &
-WM_PID=$!
-sleep 3
 
 DISPLAY="$DISP" node shared_overlay.mjs >>tmp/shared_overlay.log 2>&1 &
 NODE_PID=$!
@@ -79,9 +93,15 @@ NODE_PID=$!
 KEEP_ABOVE_PID=$!
 printf '%s\n' "$XVFB_PID" "$WM_PID" "$NODE_PID" "$KEEP_ABOVE_PID" >"$PIDFILE"
 cleanup() {
-	kill -TERM "$NODE_PID" "$XVFB_PID" "$WM_PID" "$KEEP_ABOVE_PID" 2>/dev/null || true
+	for pid in "$NODE_PID" "${XVFB_PID:-}" "${WM_PID:-}" "$KEEP_ABOVE_PID"; do
+		case "$pid" in ''|*[!0-9]*) continue ;; esac
+		kill -TERM "$pid" 2>/dev/null || true
+	done
 	sleep 1
-	kill -9 "$NODE_PID" "$XVFB_PID" "$WM_PID" "$KEEP_ABOVE_PID" 2>/dev/null || true
+	for pid in "$NODE_PID" "${XVFB_PID:-}" "${WM_PID:-}" "$KEEP_ABOVE_PID"; do
+		case "$pid" in ''|*[!0-9]*) continue ;; esac
+		kill -9 "$pid" 2>/dev/null || true
+	done
 }
 trap cleanup TERM INT EXIT
 wait "$NODE_PID"

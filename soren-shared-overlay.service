@@ -6,6 +6,8 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/soren
+Environment=SOREN_SHARED_OVERLAY_DISPLAY=:99
+Environment=SOREN_SHARED_OVERLAY_ATTACH=1
 ExecStart=/home/ubuntu/soren/start_shared_overlay_service.sh
 Restart=always
 RestartSec=5
