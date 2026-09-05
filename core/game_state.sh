@@ -38,7 +38,50 @@ wait_for_move() {
 	return 1
 }
 
+#=== ソ連建国盤面の表示保持 ===
+# 建国検知時刻を tmp/state/.soviet_hold_since に記録し、SOVIET_HOLD_SEC 秒が経過するまで
+# retry/次ゲーム操作を抑止する。ファイルベースのため .env 再読込や loop 再起動を跨ぐ。
+
+_soviet_hold_file() {
+	printf '%s' "${TMP_STATE_DIR:-tmp/state}/.soviet_hold_since"
+}
+
+# 保持中なら 0、そうでなければ 1。期限切れファイルは掃除する。
+_soviet_hold_active() {
+	local hold_file since now hold_sec
+	hold_file=$(_soviet_hold_file)
+	[ -f "$hold_file" ] || return 1
+	since=$(cat "$hold_file" 2>/dev/null || echo 0)
+	case "$since" in ''|*[!0-9]*) rm -f "$hold_file" 2>/dev/null || true; return 1 ;; esac
+	now=$(date +%s)
+	hold_sec="${SOVIET_HOLD_SEC:-600}"
+	case "$hold_sec" in ''|*[!0-9]*) hold_sec=600 ;; esac
+	if [ "$hold_sec" -gt 0 ] && [ $((now - since)) -lt "$hold_sec" ]; then
+		return 0
+	fi
+	rm -f "$hold_file" 2>/dev/null || true
+	return 1
+}
+
+# 保持残り秒数を出力する (保持中でなければ 0)。
+_soviet_hold_remaining() {
+	local hold_file since now hold_sec rem
+	hold_file=$(_soviet_hold_file)
+	[ -f "$hold_file" ] || { echo 0; return 1; }
+	since=$(cat "$hold_file" 2>/dev/null || echo 0)
+	case "$since" in ''|*[!0-9]*) echo 0; return 1 ;; esac
+	now=$(date +%s)
+	hold_sec="${SOVIET_HOLD_SEC:-600}"
+	case "$hold_sec" in ''|*[!0-9]*) hold_sec=600 ;; esac
+	rem=$((hold_sec - (now - since)))
+	if [ "$rem" -gt 0 ]; then echo "$rem"; else echo 0; fi
+}
+
 send_retry() {
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		log "[SOVIET-HOLD] 建国盤面の表示保持中のため retry を抑止 (残り約$(_soviet_hold_remaining)s)"
+		return 0
+	fi
 	log "retry送信..."
 	_clear_stale_commands_if_any "before retry"
 	echo "retry" >"$COMMANDS"

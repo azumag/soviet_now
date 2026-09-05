@@ -260,6 +260,11 @@ play_one_game() {
 		LAST_SOVIET="false"
 		return 0
 	fi
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		log "[SOVIET-HOLD] play_one_gameをスキップ（建国盤面の表示保持中）"
+		LAST_SOVIET="false"
+		return 0
+	fi
 
 	# ブリッジ(soviet_local.mjs)生存監視＋自動復旧。play_one_game は soren_loop の
 	# 全 pause continue (改善中/Meriken/soren91/stop) の後でのみ呼ばれるため
@@ -575,6 +580,23 @@ handle_soviet_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
 	log "!!! SOVIET CREATED !!!"
+
+	# 建国盤面の表示保持タイマーを刻む。凍結盤面を毎周回 re-detect する間の重複呼び出しでは
+	# 履歴・クリップ・祝賀トークを再発行しない (初回だけ記録・生成する)。
+	local _hold_already=0
+	local _hold_file="${TMP_STATE_DIR:-tmp/state}/.soviet_hold_since"
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		_hold_already=1
+	fi
+	if command -v _soviet_hold_file >/dev/null 2>&1; then
+		_hold_file=$(_soviet_hold_file)
+	fi
+	date +%s >"$_hold_file" 2>/dev/null || true
+	if [ "$_hold_already" -eq 1 ]; then
+		log "[SOVIET-HOLD] 建国祝賀は発行済みのため重複スキップ (game #${game_num})"
+		rm -f "$TMP_MARKERS_DIR/.soviet_created"
+		return 0
+	fi
 	_append_celebration_history "soviet" "$score" "$turns" "$game_num"
 
 	# 祝賀読み上げ/クリップの有効・無効 (ロシア祝賀の RUSSIA_CELEBRATION_ENABLED と同パターン)。
@@ -985,6 +1007,10 @@ PY
 prepare_next_game() {
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] prepare_next_gameをスキップ（retryなし）"
+		return 0
+	fi
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		log "[SOVIET-HOLD] prepare_next_gameをスキップ（建国盤面の表示保持中・retryなし）"
 		return 0
 	fi
 

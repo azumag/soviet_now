@@ -876,6 +876,11 @@ MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
 export NEWS_MAX_AGE_HOURS NEWS_SELF_SEARCH_FALLBACK
 RUSSIA_CELEBRATION_CLIP_DELAY_SEC="${RUSSIA_CELEBRATION_CLIP_DELAY_SEC:-5}"
 SOVIET_CELEBRATION_CLIP_DELAY_SEC="${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
+# ソ連建国盤面の表示保持秒数。建国検知からこの秒数が経過するまで retry/次ゲーム操作を
+# 抑止し、建国盤面を視聴者に見せ続ける (祝賀トークの再生時間 + 余韻の想定で 600s)。
+# 保持判定は tmp/state/.soviet_hold_since のファイル時刻で行うため、.env 再読込や
+# loop 再起動を跨いでも維持される。0 以下なら保持しない。
+SOVIET_HOLD_SEC="${SOVIET_HOLD_SEC:-600}"
 # --- Twitch 広告スヌーズ（読み上げ中、GitHub #18） ---
 TWITCH_ADS_ENABLED="${TWITCH_ADS_ENABLED:-1}"
 TWITCH_SNOOZE_THRESHOLD_SEC="${TWITCH_SNOOZE_THRESHOLD_SEC:-600}"
