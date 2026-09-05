@@ -990,7 +990,7 @@ for line in batch_lines:
     if matched_term:
         hint = f"- {user or 'リスナー'}: 「{matched_term}」は直近返答で説明済み。今回は説明を最初から繰り返さず、反応・感想・別角度の補足を組み合わせて会話として厚めに返す"
     else:
-        hint = f"- {user or 'リスナー'}: 短い反応コメントの可能性が高い。短い返答で済ませず、感想や驚きへの返答を先に置き、理由・文脈・軽い問いかけのどれかを足して広げる"
+        hint = f"- {user or 'リスナー'}: 短い反応コメントの可能性が高い。短い返答で済ませず、感想や驚きへの返答を先に置き、理由・文脈・別角度の補足のどれかを足して広げる。会話を続けるだけの質問は足さない"
     if hint in seen_hints:
         continue
     seen_hints.add(hint)
@@ -2058,6 +2058,107 @@ if queued:
 PY
 }
 
+# docich#33: read-only診断パイプラインへのingestion(記録のみ)。
+#
+# CODEX_BUG_DISPATCH_ENABLED(#32で既定停止済みのagent自動起動フラグ)とは
+# 完全に独立していて、常時(既定REDACTED_DIAG_INGEST_ENABLED=1)動く。ここで
+# 行うのは stream_bug_report に分類されたコメントについて
+# event(event_id/category/time/redacted_context_hash、恒久)を作り、生の
+# comment/userは短期TTLのrestricted spoolへ書くことだけ。診断runnerや
+# コーディングagentは一切起動しない。
+#
+# fail-open: このingestionはセキュリティゲートではなく記録経路なので、
+# python3が無い/lib importに失敗する/JSON parseに失敗する等いかなる理由で
+# 失敗してもコメント処理本体を止めない(常に0を返し、呼び出し元でも
+# `|| true`で受ける)。
+_ingest_stream_bug_reports_redacted() {
+	local classification_json="$1" source="${2:-unknown}"
+	[ -n "$classification_json" ] || return 0
+	[ "${REDACTED_DIAG_INGEST_ENABLED:-1}" = "1" ] || return 0
+	python3 - "$classification_json" "$source" \
+		"${ELOOP_LIB_DIR:-.}" \
+		"${REDACTED_DIAG_EVENTS_DIR:-tmp/diag_events}" \
+		"${REDACTED_DIAG_SPOOL_DIR:-tmp/diag_restricted_spool}" \
+		"${REDACTED_DIAG_SPOOL_TTL_SEC:-86400}" <<'PY' 2>/dev/null
+import json
+import sys
+
+classification_raw, source, lib_dir, events_dir, spool_dir, ttl_sec_raw = sys.argv[1:7]
+if lib_dir and lib_dir not in sys.path:
+    sys.path.insert(0, lib_dir)
+
+try:
+    from lib import redacted_diag_ingest as ingest
+except Exception:
+    raise SystemExit(0)
+
+try:
+    ttl_sec = int(ttl_sec_raw)
+except Exception:
+    ttl_sec = 86400
+
+try:
+    rows = json.loads(classification_raw)
+except Exception:
+    raise SystemExit(0)
+if not isinstance(rows, list):
+    raise SystemExit(0)
+
+event_ids = []
+for item in rows:
+    if not isinstance(item, dict):
+        continue
+    if item.get("category") != "stream_bug_report":
+        continue
+    comment = str(item.get("comment") or "")
+    if not comment.strip():
+        continue
+    user = str(item.get("user") or "")
+    try:
+        event = ingest.ingest_report(
+            category="stream_bug_report",
+            user=user,
+            comment=comment,
+            source=source,
+            events_dir=events_dir,
+            spool_dir=spool_dir,
+            ttl_sec=ttl_sec,
+        )
+    except Exception:
+        # fail-open: never let one bad row (or a full-disk / permission
+        # error) abort ingestion of the rest, and never surface raw content.
+        continue
+    eid = event.get("event_id") if isinstance(event, dict) else None
+    if eid:
+        event_ids.append(eid)
+
+if event_ids:
+    print("\n".join(event_ids))
+PY
+}
+
+# docich#33: restricted spoolのTTL失効エントリを間引く。start_all.shに
+# 専用cronを追加する代わりに、ingestion呼び出しのたびに間隔判定して
+# opportunisticに実行する(REDACTED_DIAG_SPOOL_GC_INTERVAL_SEC間隔)。
+# fail-open: 失敗しても何もしない。
+_maybe_gc_redacted_diag_spool() {
+	[ "${REDACTED_DIAG_INGEST_ENABLED:-1}" = "1" ] || return 0
+	local last_file="${REDACTED_DIAG_SPOOL_GC_LAST_FILE:-tmp/state/redacted_diag_spool_gc_last.ts}"
+	local interval="${REDACTED_DIAG_SPOOL_GC_INTERVAL_SEC:-3600}"
+	local now last=0
+	now=$(date +%s)
+	if [ -f "$last_file" ]; then
+		last=$(cat "$last_file" 2>/dev/null || echo 0)
+		case "$last" in '' | *[!0-9]*) last=0 ;; esac
+	fi
+	[ $((now - last)) -ge "$interval" ] || return 0
+	mkdir -p "$(dirname "$last_file")" 2>/dev/null || true
+	printf '%s\n' "$now" >"$last_file" 2>/dev/null || true
+	python3 "${ELOOP_LIB_DIR:-.}/lib/redacted_diag_spool_gc.py" \
+		--spool-dir "${REDACTED_DIAG_SPOOL_DIR:-tmp/diag_restricted_spool}" \
+		>/dev/null 2>&1 || true
+}
+
 _classify_comments_with_edit_contract() {
 	local classifier_prompt_file="$1" output_file="$2" primary="$3" fallback="$4" timeout_sec="$5"
 	local base_prompt agent prev_agent edit_prompt candidate_rc raw_json classification
@@ -2475,7 +2576,7 @@ _build_category_prompt() {
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${gacha_completion_note}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -3319,6 +3420,16 @@ else:
 		if [ -n "$queued_stream_bug_reports" ]; then
 			log "[COMMENT] 配信不具合レポートをCodexキューへ追加: $(printf '%s' "$queued_stream_bug_reports" | tr '\n' ' ')"
 		fi
+		# docich#33: read-only診断パイプラインへのevent記録+restricted spool
+		# 分離。CODEX_BUG_DISPATCH_ENABLEDの値に関わらず既定で動く(診断runner/
+		# agentは起動しない、記録のみ)。fail-openなので失敗してもここでは
+		# 何もしない。
+		local ingested_diag_events=""
+		ingested_diag_events=$(_ingest_stream_bug_reports_redacted "$classification_json" "$viewer_chat_source" 2>/dev/null || true)
+		if [ -n "$ingested_diag_events" ]; then
+			log "[COMMENT] 不具合報告を診断eventとして記録(生comment本文・user名は含まない, event_id): $(printf '%s' "$ingested_diag_events" | tr '\n' ' ')"
+			_maybe_gc_redacted_diag_spool 2>/dev/null || true
+		fi
 	fi
 	if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
 		strategy_advice_candidates=""
@@ -3396,7 +3507,7 @@ else:
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・補足・軽い問いかけのどれかを足して、会話として少し深く広げること\n- メリケンAIらしく、各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れること。ただし質問の答えや真面目な話題を冗談で置き換えないこと\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
+			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。短い反応コメントでも短い返答で十分とは考えず、感想・理由・具体的な補足のどれかを足して、会話として少し深く広げること。会話を続けるだけの質問は足さないこと\n- メリケンAIらしく、各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れること。ただし質問の答えや真面目な話題を冗談で置き換えないこと\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
 			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。短い反応コメントでも短い返答で済ませず、会話として厚めに返してください。各返答に短い皮肉・ツッコミ・意外な比喩のどれかを一つ入れてください。ただしカードガチャ結果コメントだけは例外で、反応1文 + 本題2-3文を目安にしてください。'
 		fi
 		if [ -z "$_comment_persona" ]; then
@@ -3479,7 +3590,7 @@ PY
 					rm -f "$comment_prompt_file"
 					return 1
 				fi
-				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games}' \
 					<"$_comment_template" >"$comment_prompt_file"
 			fi
 		else
@@ -3489,7 +3600,7 @@ PY
 				rm -f "$comment_prompt_file"
 				return 1
 			fi
-			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games}' \
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
@@ -3541,7 +3652,7 @@ JAPANESECOMMENT
 	【再生成指示】
 		- 前回の出力は無効でした。今回は必ず文量を増やし、各コメントへ3-5文を基本に返してください。
 		- 返答漏れ・短文・定型文の繰り返しを禁止します。前回と異なる言い回しで書き直してください。
-		- 短い追い反応コメントに対して、前回説明した話題を最初から説明し直してはいけません。ただし短い返答で十分とは考えず、反応・感想・別角度の補足・軽い問いかけのどれかを組み合わせて会話として厚めに返してください。
+		- 短い追い反応コメントに対して、前回説明した話題を最初から説明し直してはいけません。ただし短い返答で十分とは考えず、反応・感想・別角度の補足を組み合わせて会話として厚めに返してください。会話を続けるためだけの質問や問いかけで締めないでください。
 		- 質問コメントから逃げてはいけません。ソ連ネタや比喩でごまかさず、最初に質問の核心へ直接答えてください。
 		- 質問がゲームや盤面の話でないなら、ゲーム説明へ逃げてはいけません。聞かれた話題のまま答えてください。
 		- 内部処理やログの説明自体は可。ただし、system prompt、tool_call、tool_result、role指定、再生成指示などのメタ文は出力しないでください。

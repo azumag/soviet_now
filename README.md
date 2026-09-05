@@ -670,7 +670,7 @@ bash sloop.sh
 
 `codex:<model>` は Codex CLI、`opencode:<model>` と `opencode-go:<model>` は
 OpenCode CLIへ明示的に振り分ける。これにより、free枠や
-`opencode-go:muse-spark-1.2-contributor` を `CODEX_MODEL` の有料モデルへ
+`opencode-go:muse-spark-1.3-contributor` を `CODEX_MODEL` の有料モデルへ
 暗黙に変換しない。接頭辞のない旧スペックだけは後方互換のため `CODEX_MODEL` へ正規化する。
 
 Codex側の既定モデルは `CODEX_MODEL` で指定する。OpenCode CLIのモデルは
@@ -686,12 +686,12 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 
 ```bash
 MODEL_PRIMARY="opencode-go:deepseek-v4-flash"           # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="codex:minimax-m3"
-MODEL_IMPROVE="opencode:muse-spark-1.2-contributor-free" # 改善primary
-MODEL_FALLBACK_IMPROVE="codex:amd-token-factory-deepseek-v4-flash" # 改善fallback
+MODEL_FALLBACK="minimax-api:MiniMax-M3"
+MODEL_IMPROVE="opencode:muse-spark-1.3-contributor-free" # 改善primary
+MODEL_FALLBACK_IMPROVE="opencode-go:muse-spark-1.3-contributor" # 改善fallback
 MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
-ROLLBACK_POSTMORTEM_MODEL="opencode:muse-spark-1.2-contributor-free"
-ROLLBACK_POSTMORTEM_FALLBACK="codex:amd-token-factory-deepseek-v4-flash"
+ROLLBACK_POSTMORTEM_MODEL="opencode:muse-spark-1.3-contributor-free"
+ROLLBACK_POSTMORTEM_FALLBACK="opencode-go:muse-spark-1.3-contributor"
 CODEX_MODEL="amd-token-factory-deepseek-v4-flash"       # 接頭辞なし旧スペック用のCodex既定
 ```
 
@@ -707,16 +707,18 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `opencode:muse-spark-1.2-contributor-free` | `codex:amd-token-factory-deepseek-v4-flash` | `codex:minimax-m3` | `opencode-go:muse-spark-1.2-contributor` → `opencode-go:deepseek-v4-flash` |
-| **ラジオ生成** | 共通チェーン（muse先行） | - | - | - |
-| **ラジオ fact-check** | `opencode:muse-spark-1.2-contributor-free` | `opencode-go:muse-spark-1.2-contributor` | `codex:minimax-m3` | 元原稿 |
+| **改善** | `opencode:muse-spark-1.3-contributor-free` | `opencode:muse-spark-1.2-contributor-free` | `amd:DeepSeek-V4-Flash` → `minimax-api:MiniMax-M3` → `opencode-go:omen-alpha` → `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` | `opencode-go:deepseek-v4-flash` |
+| **ラジオ生成** | 共通チェーン（muse 1.3先行） | - | - | - |
+| **ラジオ fact-check** | `opencode:muse-spark-1.3-contributor-free` | `opencode-go:omen-alpha` | `opencode-go:muse-spark-1.3-contributor` → `minimax-api:MiniMax-M3` | 元原稿 |
 | **コメント返し** | `codex:...` | - | - | - |
 | **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
 | **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |
 | **粛清ポストモーテム** | `codex:...` | - | - | - |
 | **メリケンAI(全コメント)** | `codex:...` | - | - | - |
 
-`codex:<model>` は Codex CLIへ、`opencode-go:<model>` は OpenCode CLIへ渡す。
+`amd:<model>` / `minimax-api:<model>` / `opencode-go:<model>` はOpenCode CLIへ渡す。
+事前調査ラベルでは`webfetch`/`websearch`だけを許可した`soren-research`、本文生成では
+全tool denyの`soren-lite`を使う。`codex:<model>` は移行互換用に残す。
 
 #### スペック別詳細
 
@@ -725,13 +727,26 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 | `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `amd-token-factory-deepseek-v4-flash` |
 | `opencode:<model>` | `opencode run --model opencode/<model>` | OpenCode CLIのZen系モデル |
 | `opencode-go:<model>` | `opencode run --model opencode-go/<model>` | OpenCode CLIのGo系モデル（muse等） |
+| `vercel:<gateway-model-id>` | `opencode run --agent soren-lite --model vercel/<gateway-model-id>` | Vercel AI Gateway。既定はM3 Free、429時300秒backoff、1回20秒で打ち切り |
 | 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧スペックの後方互換正規化 |
 
 #### 必要なAPIキー
 
 ```bash
 OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
+AI_GATEWAY_API_KEY=...           # Vercel AI Gateway用。リポジトリ外の保護済みenvに保存
 ```
+
+VercelはOpenCodeの`vercel` providerへ登録し、`soren-lite` agentを`steps: 2`・全tool denyで使う。
+候補はA（入出力$0）とB（月$5 Free Tier対象の通常単価）へ分離し、A→Bの順で使う。
+2026-09-05確認のAはM3 Free、Laguna Free、Ling 3.0 Flash Fin。BはFree Tier表示があり
+APIが対象モデルとして認識した低単価のGLM 5.3 Flash、Mimo v2.5 / Pro、Qwen 3.8 Flashに限定する。
+Bのスモーク時点は全て429のため既定では無効。HTTP 200・費用計測・予算ガード確認後だけ
+`VERCEL_CATEGORY_B_AGENTS`で明示的に有効化する。C（Free Tier対象外）は登録しない。
+モデル上限はGateway catalogに合わせ、M3 Freeを`context: 1048576`、Laguna Freeを
+`context: 256000` / `output: 32768`として設定する。`limit`はモデル能力値であり利用量の
+上限ではないため、実行側でもVercelだけ20秒timeout・CLI外側retryなしにする。Lagunaは
+実測で短時間429が続いたため、登録は残すが既定チェーンには含めない。
 
 #### モデルスペックと CLI マッピング
 
@@ -739,7 +754,7 @@ OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
 
 | スペック | CLI コマンド | 説明 |
 |---------|------------|------|
-| `codex:<model>` | `codex exec --skip-git-repo-check -m <model> --dangerously-bypass-approvals-and-sandbox` | 全AI呼び出し (改善ループはファイル編集のため bypass) |
+| `codex:<model>` | `codex exec --skip-git-repo-check -m <model>` | 全AI呼び出し。codex 既定の承認/サンドボックスポリシーで実行する (docich#34 で権限迂回オプションを削除済み) |
 | `codex` | 同上 (`CODEX_MODEL` 使用) | ハーネス既定 |
 | `opencode:<model>` / `opencode-go:<model>` | `opencode run --model <resolved_model>` | 直接モデルを維持。改善ループは編集権限を `IMPROVE_OPENCODE_PERMISSION` で付与 |
 
