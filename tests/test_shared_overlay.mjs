@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -23,12 +24,13 @@ import {
   sharedOverlayAllowedRoutes,
   setSharedOverlayBrowserReady,
   setSharedOverlayFramesReady,
+  sharedOverlayViewportReady,
   startSharedOverlayServer,
   trackOwnedServerSockets,
   waitForSharedOverlayFrames,
 } from '../lib/shared_overlay.mjs';
 
-import { runSharedOverlay } from '../shared_overlay.mjs';
+import { enforceVisibleWindow, runSharedOverlay } from '../shared_overlay.mjs';
 import { installDirectOverlay } from '../lib/direct_overlay.mjs';
 
 
@@ -44,6 +46,36 @@ function request(server, pathname, method = 'GET') {
       path: pathname,
       method,
     }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      const port = address && typeof address === 'object' ? address.port : null;
+      probe.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+
+function requestPort(port, pathname) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: pathname }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => resolve({
@@ -83,6 +115,27 @@ function fixtureConfig(temp, contextFile) {
     WILDCARD_PARALLEL_STATUS_FILE: wildcard,
     SOREN_ACTIVE_GAME_CONTEXT_FILE: contextFile,
   }, 'linux');
+}
+
+
+function visibleViewport(overrides = {}) {
+  return {
+    innerWidth: 1280,
+    innerHeight: 720,
+    outerWidth: 1280,
+    outerHeight: 720,
+    screenX: 0,
+    screenY: 0,
+    screenWidth: 1280,
+    screenHeight: 720,
+    screenAvailLeft: 0,
+    screenAvailTop: 0,
+    screenAvailWidth: 1280,
+    screenAvailHeight: 720,
+    devicePixelRatio: 1,
+    stage: { left: 0, top: 0, width: 1280, height: 720 },
+    ...overrides,
+  };
 }
 
 
@@ -339,6 +392,24 @@ test('shared config rejects canonical stage and required-frame metadata drift', 
 });
 
 
+test('visible viewport contract rejects inner-only or decorated headed windows', () => {
+  assert.equal(sharedOverlayViewportReady(visibleViewport()), true);
+  assert.equal(sharedOverlayViewportReady({
+    innerWidth: 1280,
+    innerHeight: 720,
+  }), false);
+  assert.equal(sharedOverlayViewportReady(visibleViewport({
+    outerWidth: 1288,
+    outerHeight: 805,
+    screenX: -4,
+  })), false);
+  assert.equal(sharedOverlayViewportReady(visibleViewport({
+    screenWidth: 1280,
+    screenHeight: 700,
+  })), false);
+});
+
+
 test('context normalization treats absent active game as waiting and only exposes game/phase', () => {
   assert.deepEqual(normalizeActiveGameContext({ phase: 'draining', secret: 'do-not-return' }, 11), {
     active: false,
@@ -409,23 +480,27 @@ test('HTTP service serves only health, blank root, and configured overlay routes
     assert.equal(initialHealth.ok, true);
     assert.equal(initialHealth.ready, false);
     assert.equal(initialHealth.browserReady, false);
+    assert.equal(initialHealth.windowReady, false);
     assert.equal(initialHealth.layoutReady, false);
     assert.equal(initialHealth.overlayReady, false);
 
-    setSharedOverlayBrowserReady(server, true, { innerWidth: 1920, innerHeight: 1080 });
+    setSharedOverlayBrowserReady(server, true, visibleViewport({ innerWidth: 1920, innerHeight: 1080 }));
     const wrongViewportHealth = JSON.parse((await request(server, '/healthz')).body);
     assert.equal(wrongViewportHealth.browserReady, true);
+    assert.equal(wrongViewportHealth.windowReady, false);
     assert.equal(wrongViewportHealth.layoutReady, false);
     assert.equal(wrongViewportHealth.ready, false);
-    setSharedOverlayBrowserReady(server, true, { innerWidth: 1280, innerHeight: 720 });
+    setSharedOverlayBrowserReady(server, true, visibleViewport());
     const framePendingHealth = JSON.parse((await request(server, '/healthz')).body);
     assert.equal(framePendingHealth.browserReady, true);
+    assert.equal(framePendingHealth.windowReady, true);
     assert.equal(framePendingHealth.layoutReady, true);
     assert.equal(framePendingHealth.overlayReady, false);
     assert.equal(framePendingHealth.ready, false);
     setSharedOverlayFramesReady(server, true);
     const readyHealth = JSON.parse((await request(server, '/healthz')).body);
     assert.equal(readyHealth.browserReady, true);
+    assert.equal(readyHealth.windowReady, true);
     assert.equal(readyHealth.layoutReady, true);
     assert.equal(readyHealth.overlayReady, true);
     assert.equal(readyHealth.ready, true);
@@ -567,9 +642,10 @@ test('owned proxy socket tracker destroys upgraded connections', () => {
 
 
 class FakeSharedPage extends EventEmitter {
-  constructor() {
+  constructor(viewport = null) {
     super();
     this.closed = false;
+    this.viewport = viewport || visibleViewport();
   }
 
   async goto() {}
@@ -580,14 +656,7 @@ class FakeSharedPage extends EventEmitter {
 
   async evaluate(fn) {
     if (fn.toString().includes('getBoundingClientRect')) {
-      return {
-        innerWidth: 1280,
-        innerHeight: 720,
-        screenX: 0,
-        screenY: 0,
-        devicePixelRatio: 1,
-        stage: { left: 0, top: 0, width: 1280, height: 720 },
-      };
+      return this.viewport;
     }
     return { stageMode: 'blank', gameTop: 90, gameWidth: 960 };
   }
@@ -598,10 +667,60 @@ class FakeSharedPage extends EventEmitter {
 }
 
 
+test('headed window setup requests an exact normal bound then fullscreen state', async () => {
+  const calls = [];
+  const page = {
+    context: () => ({
+      newCDPSession: async () => ({
+        send: async (method, params) => {
+          calls.push({ method, params });
+          if (method === 'Browser.getWindowForTarget') return { windowId: 17 };
+          return {};
+        },
+        detach: async () => {},
+      }),
+    }),
+  };
+  assert.equal(await enforceVisibleWindow(page), true);
+  assert.deepEqual(calls, [
+    { method: 'Browser.getWindowForTarget', params: undefined },
+    {
+      method: 'Browser.setWindowBounds',
+      params: {
+        windowId: 17,
+        bounds: { left: 0, top: 0, width: 1280, height: 720, windowState: 'normal' },
+      },
+    },
+    {
+      method: 'Browser.setWindowBounds',
+      params: { windowId: 17, bounds: { windowState: 'fullscreen' } },
+    },
+  ]);
+});
+
+
+test('headless rehearsal requires an explicit non-ready opt-in', async () => {
+  const { temp, config } = signalTestConfig('shared-overlay-headless-contract-');
+  const fakeChromium = { launch: async () => new FakeSharedBrowser() };
+  await assert.rejects(
+    runSharedOverlay({
+      config,
+      chromium: fakeChromium,
+      headless: true,
+      kiosk: false,
+      log: false,
+      port: 0,
+    }),
+    /requires headed Chromium/,
+  );
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
 class FakeSharedBrowser extends EventEmitter {
-  constructor() {
+  constructor(viewport = null) {
     super();
-    this.page = new FakeSharedPage();
+    this.page = new FakeSharedPage(viewport);
     this.closed = false;
   }
 
@@ -637,6 +756,73 @@ class FakeOwnedProxy extends EventEmitter {
 }
 
 
+test('explicit headless rehearsal stays non-ready while its HTTP health is live', async () => {
+  const { temp, config } = signalTestConfig('shared-overlay-headless-health-');
+  const port = await freePort();
+  const run = runSharedOverlay({
+    config,
+    chromium: { launch: async () => new FakeSharedBrowser() },
+    headless: true,
+    allowHeadless: true,
+    kiosk: false,
+    log: false,
+    port,
+  });
+  let health;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      health = await requestPort(port, '/healthz');
+      if (health.status === 200) break;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(health?.status, 200);
+  const payload = JSON.parse(health.body);
+  assert.equal(payload.browserReady, false);
+  assert.equal(payload.windowReady, false);
+  assert.equal(payload.layoutReady, false);
+  assert.equal(payload.overlayReady, false);
+  assert.equal(payload.ready, false);
+  process.emit('SIGTERM');
+  const result = await run;
+  assert.equal(result.server.listening, false);
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
+test('invalid headed window rejects and cleans page, browser, proxy, and server', async () => {
+  const { temp, config } = signalTestConfig('shared-overlay-window-failure-');
+  config.direct.surfaces.find((item) => item.key === 'twica').upstreamUrl = 'http://127.0.0.1:1';
+  const port = await freePort();
+  const invalidViewport = visibleViewport({ outerWidth: 1288, outerHeight: 805, screenX: -4 });
+  let browser;
+  let proxy;
+  await assert.rejects(
+    runSharedOverlay({
+      config,
+      chromium: { launch: async () => {
+        browser = new FakeSharedBrowser(invalidViewport);
+        return browser;
+      } },
+      startTwicaOverlayProxy: async () => {
+        proxy = new FakeOwnedProxy();
+        return proxy;
+      },
+      headless: false,
+      kiosk: true,
+      log: false,
+      port,
+    }),
+    /visible window contract failed/,
+  );
+  assert.equal(browser.closed, true);
+  assert.equal(browser.page.closed, true);
+  assert.equal(proxy.closed, true);
+  await assert.rejects(requestPort(port, '/healthz'));
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
 test('SIGTERM during deferred proxy startup closes the late proxy assignment', async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-proxy-race-'));
   const context = path.join(temp, 'game_switch.json');
@@ -663,6 +849,7 @@ test('SIGTERM during deferred proxy startup closes the late proxy assignment', a
       return proxyResult;
     },
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,
@@ -698,6 +885,7 @@ test('SIGTERM during deferred browser launch closes the late browser assignment'
     config,
     chromium: fakeChromium,
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,
@@ -735,6 +923,7 @@ test('SIGTERM during deferred newPage startup exits cleanly', async () => {
     config,
     chromium: fakeChromium,
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,
@@ -775,6 +964,7 @@ test('SIGTERM during page.goto interruption exits cleanly', async () => {
     config,
     chromium: fakeChromium,
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,
@@ -814,6 +1004,7 @@ test('SIGTERM during frame readiness interruption exits cleanly', async () => {
     config,
     chromium: fakeChromium,
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,
@@ -846,6 +1037,7 @@ test('browser disconnect fails the service and closes only owned resources', asy
     config,
     chromium: fakeChromium,
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,
@@ -876,6 +1068,7 @@ test('page crash fails the service and clears the ready state path', async () =>
     config,
     chromium: fakeChromium,
     headless: true,
+    allowHeadless: true,
     kiosk: false,
     log: false,
     port: 0,

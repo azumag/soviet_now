@@ -13,6 +13,7 @@ import {
   loadSharedOverlayConfig,
   setSharedOverlayBrowserReady,
   setSharedOverlayFramesReady,
+  sharedOverlayViewportReady,
   startSharedOverlayServer,
   trackOwnedServerSockets,
   waitForSharedOverlayFrames,
@@ -51,12 +52,24 @@ async function measurePage(page) {
   return page.evaluate(() => {
     const stage = document.getElementById('soren-direct-stream-stage');
     const rect = stage?.getBoundingClientRect?.();
+    const screen = window.screen || {};
+    const visual = window.visualViewport || {};
     return {
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
       screenX: window.screenX,
       screenY: window.screenY,
+      screenWidth: screen.width,
+      screenHeight: screen.height,
+      screenAvailLeft: screen.availLeft,
+      screenAvailTop: screen.availTop,
+      screenAvailWidth: screen.availWidth,
+      screenAvailHeight: screen.availHeight,
       devicePixelRatio: window.devicePixelRatio,
+      visualViewportWidth: visual.width,
+      visualViewportHeight: visual.height,
       stage: rect ? {
         left: Math.round(rect.left),
         top: Math.round(rect.top),
@@ -65,6 +78,39 @@ async function measurePage(page) {
       } : null,
     };
   });
+}
+
+
+/**
+ * Playwright's `--kiosk` launch flag applies to Chromium's startup window,
+ * while `browser.newPage()` can create a normal decorated window afterward.
+ * Force the actual target window into fullscreen before navigating so the X11
+ * outer bounds have no toolbar/decorations to consume the 720px display.
+ * Fake browsers used by route tests do not expose a CDP session, so they keep
+ * the previous side-effect-free path.
+ */
+export async function enforceVisibleWindow(page, { headless = false } = {}) {
+  if (headless) return false;
+  const context = typeof page?.context === 'function' ? page.context() : null;
+  if (!context || typeof context.newCDPSession !== 'function') return false;
+  const session = await context.newCDPSession(page);
+  try {
+    const target = await session.send('Browser.getWindowForTarget');
+    if (!target || !Number.isSafeInteger(target.windowId)) {
+      throw new Error('Chromium window id is unavailable');
+    }
+    await session.send('Browser.setWindowBounds', {
+      windowId: target.windowId,
+      bounds: { left: 0, top: 0, width: 1280, height: 720, windowState: 'normal' },
+    });
+    await session.send('Browser.setWindowBounds', {
+      windowId: target.windowId,
+      bounds: { windowState: 'fullscreen' },
+    });
+    return true;
+  } finally {
+    try { await session.detach?.(); } catch {}
+  }
 }
 
 
@@ -165,9 +211,13 @@ export async function runSharedOverlay(options = {}) {
       options.headless ?? process.env.SOREN_SHARED_OVERLAY_HEADLESS,
       false,
     );
+    if (headless && options.allowHeadless !== true) {
+      throw new Error('shared overlay requires headed Chromium; set allowHeadless only for non-ready tests');
+    }
     const args = [
       '--window-size=1280,720',
       '--window-position=0,0',
+      '--start-fullscreen',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-infobars',
@@ -217,6 +267,7 @@ export async function runSharedOverlay(options = {}) {
       viewport: { width: 1280, height: 720 },
       deviceScaleFactor: 1,
     });
+    await enforceVisibleWindow(page, { headless });
     page.on?.('close', () => onRuntimeFailure('page closed'));
     page.on?.('crash', () => onRuntimeFailure('page crashed'));
     if (signalReceived || cleanupRequested) {
@@ -240,8 +291,13 @@ export async function runSharedOverlay(options = {}) {
       if (runtimeFailure) throw runtimeFailure;
       return { config, server, browser, page, close };
     }
-    setSharedOverlayBrowserReady(server, true, viewport);
-    setSharedOverlayFramesReady(server, frameReadiness.ready);
+    if (!headless && !sharedOverlayViewportReady(viewport)) {
+      throw new Error(`shared overlay visible window contract failed: ${JSON.stringify(viewport)}`);
+    }
+    // Headless Chromium is allowed only for explicit non-ready rehearsal
+    // tests; it must never advertise a visible window contract.
+    setSharedOverlayBrowserReady(server, !headless, viewport);
+    setSharedOverlayFramesReady(server, !headless && frameReadiness.ready);
     if (options.log !== false) {
       console.log(`[SHARED-OVERLAY] listening ${serviceUrl(server, server.sharedOverlayConfig || config)}`);
       console.log(`[SHARED-OVERLAY] stage ${JSON.stringify(installed.stage)}`);
