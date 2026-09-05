@@ -1205,10 +1205,11 @@ _build_comment_ops_context() {
 	local brief_file="${COMMENT_OPS_BRIEF_FILE:-$ELOOP_LIB_DIR/prompts/ops_brief.md}"
 	local ab_state_file="${AB_STATE_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/ab_state.json}"
 	local prediction_paused_file="${PREDICTION_WORKER_PAUSED_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/prediction_worker.paused}"
-	# ゲーム切替の文脈。docich の canonical が「いま画面に出ているゲーム」を持ち、
+	# ゲーム切替の文脈。docich の canonical mirror (run-soren-live/game_switch.json、
+	# shared overlay も同じファイルを読む) が「いま画面に出ているゲーム」を持ち、
 	# Soren 側 lifecycle 状態が切替手続きの進行状況を持つ。コメント返しは
 	# メイン画面のゲームに合わせ、ソレンゲームの話は画面が変わってもソレン文脈で答える。
-	local docich_canonical_file="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run/game-switch/canonical.json}"
+	local docich_canonical_file="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
 	local soren_lifecycle_dir="${SOREN_GAME_LIFECYCLE_DIR:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/game_lifecycle}"
 	local soren_game_state_file="${SOREN_GAME_STATE_FILE:-$ELOOP_LIB_DIR/game_state.json}"
 	local soren_game_count_file="${SOREN_GAME_COUNT_FILE:-$ELOOP_LIB_DIR/game_count.txt}"
