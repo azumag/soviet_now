@@ -26,6 +26,19 @@ if [ -f "$ENV_FILE" ]; then
 	set +a
 fi
 
+# Game-only lifecycle state is shared with the bridge watchdog.  Loading this
+# small predicate here lets the supervisor hold that one worker during an
+# intentional game handover without pausing common overlay/audio/streaming
+# workers.
+if [ -f "$SCRIPT_DIR/lib/game_lifecycle.sh" ]; then
+	GAME_LIFECYCLE_ROOT="$SCRIPT_DIR"
+	GAME_LIFECYCLE_DIR="${SOREN_GAME_LIFECYCLE_DIR:-$SCRIPT_DIR/tmp/state/game_lifecycle}"
+	GAME_LIFECYCLE_PY="${GAME_LIFECYCLE_PY:-$SCRIPT_DIR/lib/game_lifecycle.py}"
+	GAME_LIFECYCLE_ENABLED="${GAME_LIFECYCLE_ENABLED:-1}"
+	# shellcheck disable=SC1091
+	source "$SCRIPT_DIR/lib/game_lifecycle.sh"
+fi
+
 # --- 設定 ---
 MAX_RESTARTS="${SUPERVISOR_MAX_RESTARTS:-10}"
 RESTART_BACKOFF_BASE="${SUPERVISOR_BACKOFF_BASE:-2}"
@@ -595,7 +608,13 @@ echo $$ > "$PID_FILE"
 # previous prediction_worker-specific pause so any worker can be held down.
 _worker_paused() {
 	local name="$1"
-	[ -n "$name" ] && [ -f "tmp/state/${name}.paused" ]
+	if [ -n "$name" ] && [ -f "tmp/state/${name}.paused" ]; then
+		return 0
+	fi
+	if [ "$name" = "soviet_watchdog" ] && command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked; then
+		return 0
+	fi
+	return 1
 }
 
 # --- Worker 起動 ---

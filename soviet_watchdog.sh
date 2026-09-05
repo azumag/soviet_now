@@ -20,6 +20,18 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 cd "$SCRIPT_DIR" || exit 1
 
+# A stopped/closing game bridge is an intentional game-only state.  Load the
+# shared predicate so this watchdog never respawns it or touches the common
+# overlay/audio/stream processes during a handover.
+if [ -f "$SCRIPT_DIR/lib/game_lifecycle.sh" ]; then
+	GAME_LIFECYCLE_ROOT="$SCRIPT_DIR"
+	GAME_LIFECYCLE_DIR="${SOREN_GAME_LIFECYCLE_DIR:-$SCRIPT_DIR/tmp/state/game_lifecycle}"
+	GAME_LIFECYCLE_PY="${GAME_LIFECYCLE_PY:-$SCRIPT_DIR/lib/game_lifecycle.py}"
+	GAME_LIFECYCLE_ENABLED="${GAME_LIFECYCLE_ENABLED:-1}"
+	# shellcheck disable=SC1091
+	source "$SCRIPT_DIR/lib/game_lifecycle.sh"
+fi
+
 INTERVAL="${SOVIET_WATCHDOG_INTERVAL:-60}"
 PORT="${SOVIET_WATCHDOG_PORT:-8080}"
 GAME_LOG="${SOVIET_WATCHDOG_LOG:-tmp/soviet_local.log}"
@@ -139,6 +151,10 @@ port_held() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1; }
 
 relaunch() {
 	local pids p
+	if command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked; then
+		log "game-only lifecycle handover中 → bridge relaunchを保留"
+		return 0
+	fi
 	# Fix0: 共有 lease 取得。他復旧アクター処理中なら今回は譲る (次 INTERVAL 再試行)。
 	if ! rr_acquire; then
 		log "recovery lease 他者保持中 → relaunch を譲る (次周期再試行)"
@@ -151,6 +167,10 @@ relaunch() {
 			log "kill -9 対象: PID=$p CMD=[$(_cmd_of "$p")]"
 			kill -9 "$p" 2>/dev/null || true
 		done
+	fi
+	if command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked; then
+		log "game-only lifecycle handoverへ遷移 → relaunchを中止"
+		return 0
 	fi
 	# port 解放待ち (最大15s)
 	local waited=0 holder
@@ -206,9 +226,19 @@ log "起動 (interval=${INTERVAL}s port=$PORT dir=$SCRIPT_DIR)"
 
 consecutive_fail=0
 last_attempt_epoch=0
+lifecycle_park_logged=0
 
 while :; do
 	heartbeat
+	if command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked; then
+		if [ "$lifecycle_park_logged" -eq 0 ]; then
+			log "game-only lifecycle handover中 → bridgeを自動再起動しません"
+			lifecycle_park_logged=1
+		fi
+		sleep "$INTERVAL"
+		continue
+	fi
+	lifecycle_park_logged=0
 	crash=""
 	if [ -z "$(target_pids)" ]; then
 		crash="プロセス消失"

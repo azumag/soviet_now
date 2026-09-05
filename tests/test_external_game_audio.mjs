@@ -17,6 +17,29 @@ class FakeChild extends EventEmitter {
   }
 }
 
+class ExitOnTerminateChild extends FakeChild {
+  kill(signal) {
+    super.kill(signal);
+    if (signal === 'SIGTERM') queueMicrotask(() => this.emit('exit', 0, signal));
+    return true;
+  }
+}
+
+class ExitOnSigkillChild extends FakeChild {
+  kill(signal) {
+    super.kill(signal);
+    if (signal === 'SIGKILL') queueMicrotask(() => this.emit('exit', 0, signal));
+    return true;
+  }
+}
+
+class NeverExitChild extends FakeChild {
+  kill(signal) {
+    super.kill(signal);
+    return true;
+  }
+}
+
 function fakeClock() {
   let now = 0;
   let sequence = 0;
@@ -231,6 +254,52 @@ test('intentional stop, mute, and shutdown never auto-restart BGM', () => {
   spawns[1].child.emit('exit', 0, null);
   clock.advance(30000);
   assert.equal(spawns.length, 2, 'shutdown must not schedule a restart');
+});
+
+
+test('shutdownAndWait proves game audio children exited before returning', async () => {
+  const { audio } = harness();
+  const child = new ExitOnTerminateChild();
+  audio.bgmChild = child;
+  audio.activeBgmMode = 'initial';
+
+  const result = await audio.shutdownAndWait(100, 100);
+  assert.deepEqual(result, { ok: true, child_count: 1, remaining: 0 });
+  assert.deepEqual(child.kills, ['SIGTERM']);
+});
+
+
+test('shutdownAndWait falls back to SIGKILL when child ignores SIGTERM', async () => {
+  const { audio } = harness();
+  // Timeout stages need real timers: the harness fake clock only fires on
+  // manual advance, which cannot interleave with the awaited shutdown.
+  audio.setTimeoutFn = setTimeout;
+  audio.clearTimeoutFn = clearTimeout;
+  const child = new ExitOnSigkillChild();
+  audio.bgmChild = child;
+  audio.activeBgmMode = 'initial';
+
+  const result = await audio.shutdownAndWait(20, 50);
+  assert.equal(result.ok, true);
+  assert.equal(result.child_count, 1);
+  assert.equal(result.remaining, 0);
+  assert.ok(child.kills.includes('SIGTERM'));
+  assert.ok(child.kills.includes('SIGKILL'), `expected SIGKILL fallback, got ${JSON.stringify(child.kills)}`);
+});
+
+
+test('shutdownAndWait reports failure when child never exits', async () => {
+  const { audio } = harness();
+  audio.setTimeoutFn = setTimeout;
+  audio.clearTimeoutFn = clearTimeout;
+  const child = new NeverExitChild();
+  audio.bgmChild = child;
+  audio.activeBgmMode = 'initial';
+
+  const result = await audio.shutdownAndWait(20, 20);
+  assert.deepEqual(result, { ok: false, child_count: 1, remaining: 1 });
+  assert.ok(child.kills.includes('SIGTERM'));
+  assert.ok(child.kills.includes('SIGKILL'), `expected SIGKILL attempt, got ${JSON.stringify(child.kills)}`);
 });
 
 

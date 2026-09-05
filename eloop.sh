@@ -979,6 +979,39 @@ PY
 	# 毎試合の git commit は廃止: 改善終了時 (eloop_improve.sh) と粛清時 (regression.sh) の
 	# 区切りでまとめてコミットする。ここでは pending 通知の処理のみ。
 	_post_pending_phyrogenetic_tree_link_to_chat_if_any
+
+		# 交換要求がある場合は、この試合の bookkeeping が終わった境界で
+		# 次ゲームだけを保留する。資源停止は coordinator の writer-side
+		# quiesce 後に明示 stop control が届いたときだけ実行する。
+		# eloop.sh は soren_loop から毎試合 source されるため、長命 loop
+		# shell へ hook を後付けしても次の境界で反映される。
+		if command -v game_lifecycle_after_game >/dev/null 2>&1; then
+		_game_lifecycle_rc=0
+		game_lifecycle_after_game || _game_lifecycle_rc=$?
+		case "$_game_lifecycle_rc" in
+		0)
+			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] 旧ゲーム停止完了 → 次ゲームを開始せず loop を終了"
+			exit 0
+			;;
+		3)
+			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] 試合境界をpark → 明示stop control待ちで loop を終了"
+			exit 75
+			;;
+		2)
+			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] handover を保留 → 次ゲームを開始せず loop を終了 (要復旧)"
+			exit 75
+			;;
+		esac
+	fi
 }
 
 #=== 次の試合準備 ===
@@ -986,6 +1019,34 @@ prepare_next_game() {
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] prepare_next_gameをスキップ（retryなし）"
 		return 0
+	fi
+
+	# Controller crash recovery: if the previous boundary was acknowledged but
+	# the game-only resource stop was not finalized, finish that exact request
+	# before any retry can start a new game.
+	if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
+		_game_lifecycle_resume_rc=0
+		game_lifecycle_resume_pending || _game_lifecycle_resume_rc=$?
+		case "$_game_lifecycle_resume_rc" in
+		0)
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] pending handover recovered → retryを送らず loop を終了"
+			exit 0
+			;;
+		3)
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] pending boundary park を維持 → retryを送らず loop を終了"
+			exit 75
+			;;
+		2)
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] pending handover recovery を保留 → loop を終了"
+			exit 75
+			;;
+		 esac
 	fi
 
 	# 試合時スナップショットのクリーンアップ

@@ -10,6 +10,17 @@ import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
 import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
 import { buildDirectBroadcastOverlayState } from './lib/direct_broadcast_overlay.mjs';
 import {
+  GAME_LIFECYCLE_DIR,
+  lifecycleAckMatches,
+  lifecycleControlMatches,
+  lifecycleRecordMatches,
+  readGameLifecycleAck,
+  readGameLifecycleControl,
+  readGameLifecycleRequest,
+  readGameLifecycleResource,
+  writeGameLifecycleResource,
+} from './lib/game_lifecycle.mjs';
+import {
   directOverlayIdleHtml,
   directOverlaySurfaceVisible,
   installDirectOverlay,
@@ -885,6 +896,7 @@ async function installUnityVolumeReapply(page) {
   await page.evaluate(({ bgmVolume: nextBgm, seVolume: nextSe, intervalMs }) => {
     const apply = () => {
       try {
+        if (window.__sorenGameLifecycleStopped) return;
         if (!window.unityInstance || typeof window.unityInstance.SendMessage !== 'function') return;
         if (nextBgm != null) {
           window.unityInstance.SendMessage('Audio Manager', 'SetBGMVolume', nextBgm);
@@ -1093,6 +1105,633 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+function lifecycleRequestIsCurrent(control) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  return lifecycleControlMatches(control, request);
+}
+
+function lifecycleDeadlineActive(record) {
+  const deadline = Number(record?.deadline_epoch);
+  return Number.isFinite(deadline) && deadline > Date.now() / 1000;
+}
+
+function lifecycleAckAllows(control, actions) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  if (!lifecycleControlMatches(control, request)) return false;
+  const ack = readGameLifecycleAck(GAME_LIFECYCLE_DIR);
+  return lifecycleAckMatches(control, ack, actions);
+}
+
+function lifecycleStopControlStillCurrent(control) {
+  return lifecycleStopRequestStillCurrent(control);
+}
+
+function lifecycleStopRequestStillCurrent(control) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  const current = readGameLifecycleControl(GAME_LIFECYCLE_DIR);
+  const ack = readGameLifecycleAck(GAME_LIFECYCLE_DIR);
+  return lifecycleControlMatches(control, request, 'stop')
+    && lifecycleControlMatches(current, request, 'stop')
+    && lifecycleRecordMatches(current, control)
+    && lifecycleAckMatches(current, ack, ['stop_requested'])
+    && lifecycleDeadlineActive(request);
+}
+
+// Once the broker has atomically changed the acknowledgement to `stopping`,
+// the bridge has crossed the no-restore fence.  A deadline expiring while
+// Unity/audio/browser teardown is in flight must not make us claim that the
+// already-Quit'ed page was restored, so this check intentionally omits the
+// deadline test while retaining the complete request identity.
+function lifecycleStopFenceStillCurrent(control) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  const current = readGameLifecycleControl(GAME_LIFECYCLE_DIR);
+  const ack = readGameLifecycleAck(GAME_LIFECYCLE_DIR);
+  return lifecycleControlMatches(control, request, 'stop')
+    && lifecycleControlMatches(current, request, 'stop')
+    && lifecycleRecordMatches(current, control)
+    && lifecycleAckMatches(current, ack, ['stopping']);
+}
+
+// Currency gate for every stop-path game_resource.json write (unsupported,
+// failed, stopped).  The bridge has no lock: without this re-check a stale
+// bridge overwrites a newer request's resource (last-writer-wins) after the
+// <=2s health fetch or the 2-3.5s audio wait.  Verifies the full identity
+// (request_id/game/generation/deadline_epoch/deadline_at, schema==1 via
+// lifecycle*Matches) still matches the control being processed AND the ack is
+// still stop_requested/stopping.  Intentionally omits the deadline-active
+// test: after the claim fence a deadline expiring mid-teardown must not cause
+// a stale overwrite or a false restore claim.
+function lifecycleStopWriteStillCurrent(control) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  const current = readGameLifecycleControl(GAME_LIFECYCLE_DIR);
+  const ack = readGameLifecycleAck(GAME_LIFECYCLE_DIR);
+  return lifecycleControlMatches(control, request, 'stop')
+    && lifecycleControlMatches(current, request, 'stop')
+    && lifecycleRecordMatches(current, control)
+    && lifecycleAckMatches(current, ack, ['stop_requested', 'stopping']);
+}
+
+// Bridge-vs-improve safety probe.  The bridge never touches improve/AI (no
+// PID kills here by design; the shell pauses improvements before broker
+// stop).  A direct control.json stop without the shell pause would leak
+// improve jobs, so when this returns active the caller logs loudly and tags
+// resource evidence with {improve_still_active:true} but still proceeds.
+function lifecycleImproveStillActive() {
+  try {
+    const markerPath = path.join(__dirname, 'tmp', 'state', 'main_strategy_runner_active.json');
+    if (fs.existsSync(markerPath)) {
+      try {
+        const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+        const pid = Number(marker?.pid);
+        if (Number.isInteger(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+            return { active: true, source: 'main_strategy_runner_active.json', pid };
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+  try {
+    const pidPath = path.join(__dirname, 'tmp', 'state', 'improve_daemon.pid');
+    if (fs.existsSync(pidPath)) {
+      const pid = Number(String(fs.readFileSync(pidPath, 'utf8')).trim());
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          return { active: true, source: 'improve_daemon.pid', pid };
+        } catch {}
+      }
+    }
+  } catch {}
+  return { active: false };
+}
+
+function lifecycleControlStillCurrent(control, action, statuses) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  const current = readGameLifecycleControl(GAME_LIFECYCLE_DIR);
+  const ack = readGameLifecycleAck(GAME_LIFECYCLE_DIR);
+  return lifecycleControlMatches(control, request, action)
+    && lifecycleControlMatches(current, request, action)
+    && lifecycleRecordMatches(current, control)
+    && lifecycleAckMatches(current, ack, statuses)
+    && lifecycleDeadlineActive(request);
+}
+
+function lifecycleResourceMatches(control, resource) {
+  const request = readGameLifecycleRequest(GAME_LIFECYCLE_DIR);
+  return lifecycleRecordMatches(resource, request)
+    && lifecycleRecordMatches(resource, control);
+}
+
+async function restoreGameOnlyRuntime(page, runtime = {}) {
+  if (runtime.isLifecycleIrreversible?.() === true || runtime.lifecycleIrreversible === true) {
+    return {
+      ok: false,
+      irreversible: true,
+      page_restored: false,
+      audio_restored: false,
+      reason: 'game-only runtime crossed the irreversible stop fence',
+    };
+  }
+  let pageRestored = false;
+  try {
+    await withTimeout(page.evaluate(() => {
+      window.__sorenGameLifecycleStopping = false;
+      window.__sorenGameLifecycleStopped = false;
+      return true;
+    }), 2000, 'restore game lifecycle flags');
+    pageRestored = true;
+  } catch (error) {
+    console.error(`[GAME-LIFECYCLE] game page restore failed: ${error.message}`);
+  }
+
+  let runtimeAlive = true;
+  if (runtime.browser && typeof runtime.browser.isConnected === 'function') {
+    runtimeAlive = runtime.browser.isConnected();
+  }
+  if (runtimeAlive && runtime.context && typeof runtime.context.pages === 'function') {
+    try { runtimeAlive = runtime.context.pages().length > 0; } catch { runtimeAlive = false; }
+  }
+  let audioRestored = true;
+  if (runtimeAlive && runtime.externalGameAudio && typeof runtime.externalGameAudio.start === 'function') {
+    try {
+      runtime.externalGameAudio.start(runtime.lastState || null);
+    } catch (error) {
+      audioRestored = false;
+      console.error(`[GAME-LIFECYCLE] game audio restore failed: ${error.message}`);
+    }
+  }
+  return { ok: pageRestored && audioRestored, page_restored: pageRestored, audio_restored: audioRestored };
+}
+
+function sharedOverlayLifecycleEnabled() {
+  const raw = process.env.SOREN_SHARED_OVERLAY_ENABLED || process.env.SOREN_GAME_LIFECYCLE_SHARED_OVERLAY || '';
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
+async function sharedOverlayReady() {
+  if (!sharedOverlayLifecycleEnabled()) {
+    return { ready: false, reason: 'shared overlay mode is not enabled' };
+  }
+  const healthUrl = process.env.SOREN_SHARED_OVERLAY_HEALTH_URL || 'http://127.0.0.1:8092/healthz';
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let request;
+    try {
+      request = http.get(healthUrl, { headers: { Accept: 'application/json' } }, (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => { body += chunk; });
+        response.on('end', () => {
+          try {
+            const value = JSON.parse(body);
+            const ready = response.statusCode === 200
+              && value?.ok === true
+              && value?.ready === true
+              && value?.browserReady === true
+              && value?.layoutReady === true
+              && value?.overlayReady === true;
+            finish({ ready, reason: ready ? '' : 'shared overlay health is not ready', health: value });
+          } catch {
+            finish({ ready: false, reason: 'shared overlay health response is invalid' });
+          }
+        });
+      });
+      request.on('error', (error) => finish({ ready: false, reason: `shared overlay health failed: ${error.message}` }));
+      request.setTimeout(2000, () => {
+        request.destroy();
+        finish({ ready: false, reason: 'shared overlay health timed out' });
+      });
+    } catch (error) {
+      finish({ ready: false, reason: `shared overlay health request failed: ${error.message}` });
+    }
+  });
+}
+
+async function closeGameOnlyRuntime(runtime = {}) {
+  runtime.beginIntentionalClose?.();
+  let closeError = '';
+  try {
+    if (typeof runtime.closeBrowser === 'function') await runtime.closeBrowser();
+  } catch (error) {
+    closeError = `browser close failed: ${error.message}`;
+  }
+  // Game-only close scope: runtime.server serves sorengame/build to this game
+  // page (SERVE_PORT) and runtime.twicaProxyServer is the game-page iframe
+  // proxy started from DIRECT_OVERLAY_CONFIG's twica surface (srcUrl rewrite
+  // for X-Frame-Options bypass, installed via installDirectOverlay into this
+  // game page only).  Neither serves the common path: the shared overlay owns
+  // a SEPARATE proxy instance on the same configured port inside the
+  // shared_overlay.mjs process (:8092 health gate), plus independent common
+  // audio/encoder workers.  Closing these two owned server objects therefore
+  // never closes the common overlay/audio/encoder.  Common-proxy/server close
+  // scope is unchanged: only the exact objects in `runtime` are closed, never
+  // discovered by port/PID/name.
+  for (const ownedServer of [runtime.twicaProxyServer, runtime.server]) {
+    if (!ownedServer) continue;
+    try { ownedServer.closeAllConnections?.(); } catch {}
+    try {
+      if (ownedServer.listening) {
+        await new Promise((resolve) => ownedServer.close((error) => {
+          if (error) closeError ||= `server close failed: ${error.message}`;
+          resolve();
+        }));
+      }
+    } catch (error) {
+      closeError ||= `server close failed: ${error.message}`;
+    }
+  }
+  // Closing the exact objects owned by this bridge is the completion proof;
+  // never discover or signal a browser process by name/PID here.
+  const browserClosed = runtime.browser == null
+    || typeof runtime.browser.isConnected !== 'function'
+    || runtime.browser.isConnected() === false;
+  let contextClosed = runtime.context == null;
+  if (runtime.context && typeof runtime.context.pages === 'function') {
+    try { contextClosed = runtime.context.pages().length === 0; } catch { contextClosed = true; }
+  }
+  const serverClosed = !runtime.server || runtime.server.listening === false;
+  const twicaProxyClosed = !runtime.twicaProxyServer || runtime.twicaProxyServer.listening === false;
+  let browserConnectedAfter = null;
+  try {
+    browserConnectedAfter = typeof runtime.browser?.isConnected === 'function'
+      ? runtime.browser.isConnected()
+      : null;
+  } catch { browserConnectedAfter = null; }
+  const evidence = {
+    ok: !closeError && browserClosed && contextClosed && serverClosed,
+    close_error: closeError,
+    browser_closed: browserClosed,
+    context_closed: contextClosed,
+    browser_connected_after: browserConnectedAfter,
+    server_closed: serverClosed,
+    twica_proxy_closed: twicaProxyClosed,
+  };
+  evidence.ok = evidence.ok && twicaProxyClosed;
+  if (!evidence.ok) runtime.endIntentionalClose?.();
+  return evidence;
+}
+
+async function acknowledgeLifecycleResume(requestId) {
+  const script = path.join(__dirname, 'lib', 'game_lifecycle.py');
+  return await new Promise((resolve) => {
+    execFile('python3', [script, '--root', __dirname, 'resume-complete', '--request-id', requestId], {
+      cwd: __dirname,
+      timeout: 3000,
+      maxBuffer: 256 * 1024,
+    }, (error, stdout, stderr) => {
+      let payload = null;
+      try { payload = JSON.parse(String(stdout || '').trim().split(/\n/).pop() || 'null'); } catch {}
+      resolve({ ok: !error, payload, error: error?.message || String(stderr || '').trim() });
+    });
+  });
+}
+
+async function claimLifecycleStop(requestId) {
+  const script = path.join(__dirname, 'lib', 'game_lifecycle.py');
+  return await new Promise((resolve) => {
+    execFile('python3', [script, '--root', __dirname, 'claim-stop', '--request-id', requestId], {
+      cwd: __dirname,
+      timeout: 3000,
+      maxBuffer: 256 * 1024,
+    }, (error, stdout, stderr) => {
+      let payload = null;
+      try { payload = JSON.parse(String(stdout || '').trim().split(/\n/).pop() || 'null'); } catch {}
+      resolve({ ok: !error, payload, error: error?.message || String(stderr || '').trim() });
+    });
+  });
+}
+
+// Handle only a broker control whose request, game, generation, and ack still
+// match.  This identity check is what prevents a delayed stop response from
+// affecting a later game after the original request expired or was replaced.
+async function processGameLifecycleControl(page, runtime = {}) {
+  const control = readGameLifecycleControl(GAME_LIFECYCLE_DIR);
+  if (!control || !control.request_id || !lifecycleRequestIsCurrent(control)) {
+    return { handled: false, status: 'none' };
+  }
+
+  if (control.action === 'cancel') {
+    if (!lifecycleAckAllows(control, ['cancelled'])) return { handled: false, status: 'stale' };
+    if (runtime.isLifecycleIrreversible?.() === true || runtime.lifecycleIrreversible === true) {
+      try {
+        writeGameLifecycleResource(control, 'failed', {
+          action: 'cancel',
+          resource_changed: false,
+          irreversible: true,
+          quit_called: true,
+          reason: 'cancel arrived after the irreversible game stop fence',
+        }, GAME_LIFECYCLE_DIR);
+      } catch {}
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+    const existing = readGameLifecycleResource(GAME_LIFECYCLE_DIR);
+    if (existing && !lifecycleResourceMatches(control, existing)) {
+      if (existing.status === 'stopped') return { handled: false, status: 'stale' };
+    }
+    if (lifecycleResourceMatches(control, existing) && existing.status === 'stopped') {
+      return { handled: true, terminal: true, status: 'stopped', requestId: control.request_id };
+    }
+    const restore = await restoreGameOnlyRuntime(page, runtime);
+    if (!lifecycleControlStillCurrent(control, 'cancel', ['cancelled'])) {
+      return { handled: false, status: 'stale' };
+    }
+    try {
+      writeGameLifecycleResource(control, 'cancelled', {
+        action: 'cancel',
+        resource_changed: false,
+        ...restore,
+      }, GAME_LIFECYCLE_DIR);
+    } catch (error) {
+      console.error(`[GAME-LIFECYCLE] cancel acknowledgement failed: ${error.message}`);
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+    if (!restore.ok) {
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+    return { handled: true, terminal: true, status: 'cancelled', requestId: control.request_id };
+  }
+
+  if (control.action === 'resume') {
+    if (!lifecycleAckAllows(control, ['resume_requested'])) return { handled: false, status: 'stale' };
+    const existing = readGameLifecycleResource(GAME_LIFECYCLE_DIR);
+    if (existing && !lifecycleResourceMatches(control, existing)) {
+      if (existing.status === 'stopped') return { handled: false, status: 'stale' };
+    }
+    if (lifecycleResourceMatches(control, existing) && existing.status === 'stopped') {
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+    if (runtime.isLifecycleIrreversible?.() === true || runtime.lifecycleIrreversible === true
+        || (lifecycleResourceMatches(control, existing)
+          && (existing.irreversible === true || existing.quit_called === true))) {
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+
+    const restore = await restoreGameOnlyRuntime(page, runtime);
+    if (!lifecycleControlStillCurrent(control, 'resume', ['resume_requested'])) {
+      return { handled: false, status: 'stale' };
+    }
+    if (!restore.ok) {
+      try {
+        writeGameLifecycleResource(control, 'failed', {
+          action: 'resume',
+          resource_changed: false,
+          reason: 'game page or audio could not be restored',
+          ...restore,
+        }, GAME_LIFECYCLE_DIR);
+      } catch {}
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+    try {
+      const resumed = writeGameLifecycleResource(control, 'resumed', {
+        action: 'resume',
+        resource_changed: false,
+        ...restore,
+      }, GAME_LIFECYCLE_DIR);
+      const completed = await (runtime.acknowledgeResume
+        ? runtime.acknowledgeResume(control.request_id)
+        : acknowledgeLifecycleResume(control.request_id));
+      if (!completed?.ok) {
+        console.error(`[GAME-LIFECYCLE] resume broker completion is pending: ${completed?.error || 'unknown error'}`);
+        return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+      }
+      return { handled: true, terminal: true, status: 'resumed', requestId: control.request_id, resource: resumed };
+    } catch (error) {
+      console.error(`[GAME-LIFECYCLE] resume acknowledgement failed: ${error.message}`);
+      return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+    }
+  }
+
+  if (control.action !== 'stop' || !lifecycleAckAllows(control, ['stop_requested', 'stopping'])) {
+    return { handled: false, status: 'stale' };
+  }
+
+  const existing = readGameLifecycleResource(GAME_LIFECYCLE_DIR);
+  if (lifecycleResourceMatches(control, existing) && existing.status === 'stopped') {
+    return { handled: true, terminal: true, status: 'stopped', requestId: control.request_id };
+  }
+  if (lifecycleResourceMatches(control, existing) && existing.status === 'failed') {
+    return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+  }
+
+  // Bridge-vs-improve probe (no kills here by design): the shell pauses
+  // improvements before broker stop, but a direct control.json stop could
+  // arrive with improve jobs still live.  Tag every stop resource write below
+  // instead of stopping AI from the bridge.
+  const improveProbe = lifecycleImproveStillActive();
+  if (improveProbe.active) {
+    console.error(`[GAME-LIFECYCLE] improve still active during stop claim (source=${improveProbe.source} pid=${improveProbe.pid}); shell is responsible, bridge proceeds with game stop only`);
+  }
+  const improveEvidence = improveProbe.active
+    ? { improve_still_active: true, improve_source: improveProbe.source, improve_pid: improveProbe.pid }
+    : {};
+
+  const overlay = await sharedOverlayReady();
+  if (!overlay.ready) {
+    // Health fetch took <=2s with no lock: re-verify currency before writing
+    // so a stale bridge never overwrites a newer request's game_resource.json.
+    if (!lifecycleStopWriteStillCurrent(control)) {
+      console.error('[GAME-LIFECYCLE] stop request superseded during overlay health check; skipping unsupported write');
+      return { handled: false, status: 'stale' };
+    }
+    try {
+      writeGameLifecycleResource(control, 'unsupported', {
+        action: 'stop',
+        resource_changed: false,
+        reason: overlay.reason,
+        shared_overlay_required: true,
+        ...improveEvidence,
+      }, GAME_LIFECYCLE_DIR);
+    } catch (error) {
+      console.error(`[GAME-LIFECYCLE] unsupported acknowledgement failed: ${error.message}`);
+    }
+    console.error(`[GAME-LIFECYCLE] shared overlay is not ready; refusing legacy game stop (${overlay.reason})`);
+    // This is before the irreversible claim.  Leave the bridge live so a
+    // coordinator can cancel the request and safely restore the old game.
+    return { handled: true, terminal: false, status: 'unsupported', requestId: control.request_id };
+  }
+
+  // The health request is intentionally asynchronous.  Re-read all durable
+  // records after it returns so a cancelled, replaced, or expired request can
+  // never reach the stop claim or Unity.Quit.
+  if (readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.status === 'stop_requested') {
+    if (!lifecycleStopRequestStillCurrent(control)) {
+      return { handled: false, status: 'stale' };
+    }
+    // This is the atomic no-restore fence.  Cancellation remains possible up
+    // to this point; after it succeeds, the bridge must finish or fail closed.
+    const claim = await claimLifecycleStop(control.request_id);
+    if (!claim.ok) return { handled: false, status: 'stale', claim };
+  }
+
+  if (!lifecycleStopFenceStillCurrent(control)) {
+    return { handled: false, status: 'stale' };
+  }
+
+  let evidence;
+  let quitInvocationUncertain = false;
+  runtime.markLifecycleIrreversible?.();
+  try {
+    evidence = await withTimeout(page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      const unity = window.unityInstance;
+      if (!unity || typeof unity.Quit !== 'function') {
+        return {
+          quit_supported: false,
+          canvas_present: Boolean(canvas),
+        };
+      }
+      window.__sorenGameLifecycleStopping = true;
+      try {
+        // Do not await Quit(): some Unity builds return a never-settling Promise
+        // even though the resource teardown has already been accepted.
+        const returned = unity.Quit();
+        return {
+          quit_supported: true,
+          quit_called: true,
+          quit_return_type: returned == null ? 'null' : typeof returned,
+          canvas_present: Boolean(canvas),
+        };
+      } catch (error) {
+        return {
+          quit_supported: true,
+          quit_called: false,
+          quit_error: String(error && error.message || error).slice(0, 240),
+          canvas_present: Boolean(canvas),
+        };
+      }
+    }), 3000, 'game-only Unity Quit');
+  } catch (error) {
+    // A context/page error can happen after the browser accepted Quit but
+    // before Playwright returned.  Keep the fence in that ambiguous case.
+    quitInvocationUncertain = true;
+    evidence = {
+      quit_supported: false,
+      quit_called: false,
+      quit_error: String(error && error.message || error).slice(0, 240),
+    };
+  }
+
+  if (!evidence?.quit_supported || !evidence?.quit_called) {
+    if (!quitInvocationUncertain) runtime.clearLifecycleIrreversible?.();
+    if (!quitInvocationUncertain) await restoreGameOnlyRuntime(page, runtime);
+    // Quit evaluation is async: re-verify currency before writing failed so a
+    // superseded request never overwrites the newer resource.
+    if (!lifecycleStopWriteStillCurrent(control)) {
+      console.error('[GAME-LIFECYCLE] stop request superseded during Unity Quit; skipping failed write');
+      return { handled: false, status: 'stale' };
+    }
+    try {
+      writeGameLifecycleResource(control, 'failed', {
+        action: 'stop',
+        resource_changed: false,
+        irreversible: quitInvocationUncertain,
+        quit_called: quitInvocationUncertain,
+        ...evidence,
+        ...improveEvidence,
+      }, GAME_LIFECYCLE_DIR);
+    } catch {}
+    return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+  }
+
+  if (!lifecycleStopFenceStillCurrent(control)) {
+    return { handled: false, status: 'stale' };
+  }
+
+  let audioEvidence = { ok: true, child_count: 0, remaining: 0, skipped: true };
+  if (runtime.externalGameAudio && typeof runtime.externalGameAudio.shutdownAndWait === 'function') {
+    try {
+      audioEvidence = await withTimeout(
+        runtime.externalGameAudio.shutdownAndWait(2000, 500),
+        3500,
+        'game-only audio shutdown',
+      );
+    } catch (error) {
+      audioEvidence = { ok: false, child_count: null, remaining: null, error: error.message };
+    }
+  }
+  if (!audioEvidence?.ok) {
+    // Audio shutdown waited 2-3.5s with no lock: re-verify currency before
+    // writing failed so a stale bridge never overwrites a newer request.
+    if (!lifecycleStopWriteStillCurrent(control)) {
+      console.error('[GAME-LIFECYCLE] stop request superseded during audio shutdown; skipping failed write');
+      return { handled: false, status: 'stale' };
+    }
+    try {
+      writeGameLifecycleResource(control, 'failed', {
+        action: 'stop',
+        resource_changed: false,
+        irreversible: true,
+        quit_called: true,
+        ...evidence,
+        audio_shutdown: audioEvidence,
+        ...improveEvidence,
+      }, GAME_LIFECYCLE_DIR);
+    } catch {}
+    return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+  }
+
+  if (!lifecycleStopFenceStillCurrent(control)) {
+    return { handled: false, status: 'stale' };
+  }
+
+  const closeEvidence = await closeGameOnlyRuntime(runtime);
+  // Post-Quit overlay re-check: the overlay can die between the pre-claim
+  // gate-pass and this irreversible Quit.  Re-probe the same shared health
+  // gate before writing stopped; if common is down, fail closed so the broker
+  // finish does not declare a clean handover.  Never restart overlay here.
+  let overlayDiedMidStop = false;
+  try {
+    const overlayAfter = await sharedOverlayReady();
+    overlayDiedMidStop = !overlayAfter?.ready;
+    if (overlayDiedMidStop) {
+      console.error(`[GAME-LIFECYCLE] shared overlay died mid-stop (${overlayAfter?.reason || 'not ready'}); failing closed, common restart is out of bridge scope`);
+    }
+  } catch (error) {
+    overlayDiedMidStop = true;
+    console.error(`[GAME-LIFECYCLE] shared overlay mid-stop re-probe failed (${error.message}); failing closed`);
+  }
+  // Teardown (Quit + audio + browser close) plus the re-probe took seconds
+  // with no lock: re-verify currency before the terminal write.
+  if (!lifecycleStopWriteStillCurrent(control)) {
+    console.error('[GAME-LIFECYCLE] stop request superseded during teardown; skipping terminal resource write');
+    return { handled: false, status: 'stale' };
+  }
+  const stopped = Boolean(audioEvidence?.ok && closeEvidence?.ok && !overlayDiedMidStop);
+  const terminalStatus = stopped ? 'stopped' : 'failed';
+  try {
+    writeGameLifecycleResource(control, terminalStatus, {
+      action: 'stop',
+      resource_changed: stopped,
+      irreversible: true,
+      quit_called: true,
+      ...evidence,
+      audio_shutdown: audioEvidence,
+      ...(closeEvidence || {}),
+      ...improveEvidence,
+      ...(overlayDiedMidStop ? { overlay_died_mid_stop: true } : {}),
+    }, GAME_LIFECYCLE_DIR);
+  } catch (error) {
+    console.error(`[GAME-LIFECYCLE] resource acknowledgement failed: ${error.message}`);
+    return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
+  }
+  if (!stopped) {
+    console.error('[GAME-LIFECYCLE] game-only resource close was not confirmed; common browser/overlay remains untouched');
+  }
+  return {
+    handled: true,
+    terminal: true,
+    status: terminalStatus,
+    requestId: control.request_id,
+  };
+}
+
 async function inspectUnityAudio(page) {
   try {
     return await withTimeout(page.evaluate(() => {
@@ -1271,20 +1910,40 @@ async function runLocalController() {
 
   let browser;
   let context;
+  // Retained only as launch-path bookkeeping (background open -g vs Playwright
+  // persistent context).  It no longer gates closeBrowser(): game-only stop
+  // always attempts both context.close() and browser.close() so the default
+  // path cannot leak the browser object.
   let closeBrowserAfterContext = false;
   const externalGameAudio = new ExternalGameAudio(EXTERNAL_GAME_AUDIO_CONFIG);
   async function closeBrowser() {
+    // Game-only stop must never leak the game Chrome: always attempt BOTH
+    // context.close() and browser.close() regardless of launch path.  The
+    // default persistent-context path previously returned after context.close()
+    // (closeBrowserAfterContext=false) and never closed the browser object.
+    // Only the exact objects owned by this bridge are closed here; never
+    // signal by PID/name so the common overlay browser is untouched.
+    let contextError = null;
+    let browserError = null;
     if (context) {
       try {
         await context.close();
       } catch (err) {
-        if (!closeBrowserAfterContext) throw err;
+        contextError = err;
       }
-      if (!closeBrowserAfterContext) return;
     }
     if (browser) {
-      await browser.close();
+      try {
+        const stillConnected = typeof browser.isConnected === 'function'
+          ? browser.isConnected()
+          : true;
+        if (stillConnected) await browser.close();
+      } catch (err) {
+        browserError = err;
+      }
     }
+    const fatal = browserError || contextError;
+    if (fatal) throw fatal;
   }
 
   externalGameAudio.start();
@@ -1433,6 +2092,9 @@ async function runLocalController() {
   // 復旧は soren_loop の inline _ensure_bridge_alive に委ねる2層設計。
   // ここはハングさせず port を解放して即終了することに専念する。
   let _brExiting = false;
+  let intentionalGameClose = false;
+  const beginIntentionalGameClose = () => { intentionalGameClose = true; };
+  const endIntentionalGameClose = () => { intentionalGameClose = false; };
   function fatalExit(reason, code = 1) {
     if (_brExiting) return;
     _brExiting = true;
@@ -1451,17 +2113,28 @@ async function runLocalController() {
     })();
   }
   try {
-    context.on('close', () => fatalExit('context closed'));
+    context.on('close', () => {
+      if (intentionalGameClose) return;
+      fatalExit('context closed');
+    });
     const _b = (context.browser && context.browser()) || browser;
-    if (_b && _b.on) _b.on('disconnected', () => fatalExit('browser disconnected'));
-    page.on('crash', () => fatalExit('page crashed'));
+    if (_b && _b.on) _b.on('disconnected', () => {
+      if (intentionalGameClose) return;
+      fatalExit('browser disconnected');
+    });
+    page.on('crash', () => {
+      if (intentionalGameClose) return;
+      fatalExit('page crashed');
+    });
   } catch (e) { console.warn(`Failed to attach death handlers: ${e && e.message}`); }
   // 分類による分岐はしない (Protocol error 等の誤判定回避)。常に fatalExit。
   process.on('unhandledRejection', (e) => {
+    if (intentionalGameClose) return;
     try { console.error((e && e.stack) || e); } catch {}
     fatalExit('unhandledRejection: ' + ((e && e.message) || e));
   });
   process.on('uncaughtException', (e) => {
+    if (intentionalGameClose) return;
     try { console.error((e && e.stack) || e); } catch {}
     fatalExit('uncaughtException: ' + ((e && e.message) || e));
   });
@@ -1587,7 +2260,7 @@ async function runLocalController() {
     window.__sorenAudioHealBusy = false;
     window.__sorenAudioLastRoute = 0;
     setInterval(() => {
-      if (window.__sorenAudioHealBusy || window.__sorenMuted) return;
+      if (window.__sorenGameLifecycleStopped || window.__sorenAudioHealBusy || window.__sorenMuted) return;
       window.__sorenAudioHealBusy = true;
       try {
         const list = [...(window.__sorenAudioContexts || [])];
@@ -1848,8 +2521,67 @@ async function runLocalController() {
   let lastUnityAudioRecoverAt = 0;
   let lastStrayTabGuardAt = 0;
   let lastGameRenderHealthAt = 0;
+  let gameLifecycleStopped = false;
+  let gameLifecycleBlocked = false;
+  let gameLifecycleRequestId = '';
+  // This state deliberately outlives one processGameLifecycleControl call.
+  // Unity.Quit is irreversible even if the broker deadline later expires.
+  let lifecycleIrreversible = false;
+  const markLifecycleIrreversible = () => { lifecycleIrreversible = true; };
+  const clearLifecycleIrreversible = () => { lifecycleIrreversible = false; };
+  const isLifecycleIrreversible = () => lifecycleIrreversible;
   const strayBlankFirstSeen = new Map(); // Page -> ms first observed as about:blank
   while (true) {
+    // The lifecycle broker is checked before mute/audio/command handling.  A
+    // stopped game must not receive a retry, input, reload, audio watchdog, or
+    // stray-tab mutation; those are game-side actions, while the common
+    // overlay/audio/stream processes continue independently.
+    if (!gameLifecycleStopped) {
+      const lifecycle = await processGameLifecycleControl(page, {
+        context,
+        browser,
+        server,
+        twicaProxyServer,
+        closeBrowser,
+        externalGameAudio,
+        lastState,
+        beginIntentionalClose: beginIntentionalGameClose,
+        endIntentionalClose: endIntentionalGameClose,
+        acknowledgeResume: acknowledgeLifecycleResume,
+        markLifecycleIrreversible,
+        clearLifecycleIrreversible,
+        isLifecycleIrreversible,
+      });
+      if (lifecycle.terminal && lifecycle.requestId) {
+        gameLifecycleRequestId = lifecycle.requestId;
+        if (lifecycle.status === 'stopped') {
+          gameLifecycleStopped = true;
+          console.log(`[GAME-LIFECYCLE] game resource stopped (request=${gameLifecycleRequestId})`);
+          // external game audio was synchronously drained and awaited by the
+          // lifecycle handler before it wrote the stopped resource record.
+          return;
+        } else if (lifecycle.status === 'failed') {
+          gameLifecycleBlocked = true;
+          console.error(`[GAME-LIFECYCLE] game resource stop failed (request=${gameLifecycleRequestId}); waiting for explicit recovery`);
+        }
+        if (lifecycle.status === 'cancelled') {
+          gameLifecycleBlocked = false;
+          console.log(`[GAME-LIFECYCLE] lifecycle request cancelled (request=${gameLifecycleRequestId})`);
+        } else if (lifecycle.status === 'resumed') {
+          gameLifecycleBlocked = false;
+          gameLifecycleStopped = false;
+          console.log(`[GAME-LIFECYCLE] lifecycle request resumed (request=${gameLifecycleRequestId})`);
+        }
+      }
+    }
+    if (gameLifecycleStopped || gameLifecycleBlocked) {
+      // Resume is an explicit future operation.  Until the broker and common
+      // overlay service have both acknowledged it, keep the old page quiescent
+      // instead of guessing that a reload is safe.
+      await page.waitForTimeout(250);
+      continue;
+    }
+
     // Check mute flag file (independent of commands.txt to avoid race condition)
     const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
     const audioDiagLog = (msg) => {
@@ -2141,9 +2873,21 @@ async function runLocalController() {
   }
 }
 
-runLocalController().catch((e) => {
-  try { console.error('[BRIDGE-FATAL] runLocalController rejected: ' + ((e && (e.stack || e.message)) || e)); } catch {}
-  const _f = setTimeout(() => process.exit(1), 3000);
-  if (_f.unref) _f.unref();
-  process.exit(1);
-});
+export {
+  closeGameOnlyRuntime,
+  lifecycleControlStillCurrent,
+  lifecycleImproveStillActive,
+  lifecycleStopControlStillCurrent,
+  lifecycleStopWriteStillCurrent,
+  processGameLifecycleControl,
+  restoreGameOnlyRuntime,
+};
+
+if (process.env.SOREN_LOCAL_CONTROLLER_IMPORT_ONLY !== '1') {
+  runLocalController().catch((e) => {
+    try { console.error('[BRIDGE-FATAL] runLocalController rejected: ' + ((e && (e.stack || e.message)) || e)); } catch {}
+    const _f = setTimeout(() => process.exit(1), 3000);
+    if (_f.unref) _f.unref();
+    process.exit(1);
+  });
+}
