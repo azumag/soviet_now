@@ -1,0 +1,14 @@
+[Unit]
+Description=soren BGM loop during CLI games (game-aware, independent of supervisor)
+After=default.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/soren
+ExecStart=/home/ubuntu/soren/bgm_worker.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
