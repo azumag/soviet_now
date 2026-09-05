@@ -42,6 +42,9 @@ mkdir -p "$CHAT_DIR"
 # docich issue #37: side effect(OBS配信開始/音声プロセス再起動/設定ファイル書換/クリップ作成等)は
 # 全てこのregistryのdeny-by-default authorize経由でのみ実行する。registryに無いcommandはdeny。
 source lib/twitch_command_registry.sh
+# docich issue #38: TWITCH_TRANSPORT_AUTHENTICATED を正当に1へ切り替えるための
+# TLS transport補助(openssl s_client引数構築 + channel identity検証)。
+source lib/twitch_tls_transport.sh
 
 _compact_recent_file() {
     local src="$1" ttl="$2" max_keep="${3:-$RECENT_DEDUP_MAX}"
@@ -142,6 +145,10 @@ _pid_alive() {
 
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
+    # docich issue #38: 新しい接続セッションは必ず未認証から始める(前回セッションの
+    # 認証状態を持ち越さない)。channel identity(ROOMSTATE room-id)を再確認できて
+    # 初めて1になる。
+    TWITCH_TRANSPORT_AUTHENTICATED=0
     # テスト専用の入力差し替え口: TWITCH_CHAT_DAEMON_TEST_INPUT が設定されている時だけ
     # nc(実IRC接続)の代わりにファイルを読む。本番経路(未設定時)は従来と完全に同一。
     if [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ]; then
@@ -152,7 +159,15 @@ while true; do
         exec {TWITCH_IRC[1]}>/dev/null
         TWITCH_IRC_PID=""
     else
-        coproc TWITCH_IRC { nc irc.chat.twitch.tv 6667 2>/dev/null; }
+        # docich issue #38: irc.chat.twitch.tv:6697 への TLS 接続(証明書 + hostname
+        # 検証必須)。openssl が無い、または証明書/hostname検証が失敗した場合は
+        # coproc の読み取り側が即座にEOFになり、下の再接続ロジックへ自然に合流する
+        # (=平文へフォールバックしない。fail closed)。
+        if ! command -v openssl >/dev/null 2>&1; then
+            echo "[$(date '+%H:%M:%S')] FATAL: openssl not found; cannot establish TLS transport (no plaintext fallback)" >> "$CHAT_DIR/daemon_reconnect.log"
+        fi
+        twitch_tls_build_args
+        coproc TWITCH_IRC { openssl s_client "${TWITCH_TLS_ARGS[@]}" 2>>"$CHAT_DIR/tls_handshake.log"; }
         {
             # display-name などのメタ情報タグを受け取る
             printf 'PASS SCHMOOPIIE\r\n'
@@ -163,6 +178,12 @@ while true; do
             exec {TWITCH_IRC[0]}>&- 2>/dev/null || true
             exec {TWITCH_IRC[1]}>&- 2>/dev/null || true
             wait "$TWITCH_IRC_PID" 2>/dev/null || true
+            echo "[$(date '+%H:%M:%S')] TLS handshake write failed (cert/hostname rejected or network error) -> reconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
+            # docich issue #38 テスト専用: TLS拒否がハンドシェイク書き込み時点で
+            # 即座に検出された場合、この経路は下部の1セッション終了チェックを
+            # 経由しない(continueがloop先頭へ直接戻るため)。e2eテストが
+            # 無限再接続ループに陥らないよう、ここでも同じフラグを見て終了する。
+            [ "${TWITCH_CHAT_DAEMON_TEST_SINGLE_SESSION:-0}" = "1" ] && break
             sleep 5
             continue
         }
@@ -197,6 +218,46 @@ while true; do
         if [[ "$payload" == PING* ]]; then
             printf 'PONG %s\r\n' "${payload#PING }" >&"${TWITCH_IRC[1]}" 2>/dev/null || break
             continue
+        fi
+
+        # docich issue #38: ROOMSTATE の room-id を「認証済みchannel identity」の
+        # 根拠として使う。TWITCH_BROADCASTER_ID(既にPolls/Predictions/Clipで使って
+        # いる既存設定値)と一致した時だけ TWITCH_TRANSPORT_AUTHENTICATED=1 にする。
+        # reject理由は2種類に区別する:
+        #   - ソフト(セッションは継続。通常コメント取得は従来通り維持する。elevated
+        #     commandだけ引き続きdenyのまま): TWITCH_BROADCASTER_ID が未設定/非数値。
+        #     これは運用者側の設定不足であって、接続相手が不正である証拠ではない。
+        #     ここでセッションを毎回切断すると、素のコメント取得(本機能の主目的)が
+        #     TWITCH_BROADCASTER_ID未設定の既定状態で丸ごと止まってしまう回帰になる。
+        #   - ハード(セッションを直ちに切断し、以後のデータを一切信頼しない):
+        #     実際にroom-id/channel名が期待値と食い違う、またはROOMSTATEのはずの行に
+        #     identityが載っていない。乗っ取り/誤接続の可能性があるため fail closed。
+        if [[ "$payload" == *"ROOMSTATE"* ]]; then
+            _rs_room_id=""
+            _rs_channel=""
+            [ -n "$tags" ] && _rs_room_id=$(twitch_tls_room_id_from_tags "$tags" 2>/dev/null || true)
+            _rs_channel=$(twitch_tls_channel_from_payload "$payload" 2>/dev/null || true)
+            if [ -n "$_rs_room_id" ] || [ -n "$_rs_channel" ]; then
+                _identity_reason=$(twitch_tls_identity_confirmed "$CHANNEL" "${TWITCH_BROADCASTER_ID:-}" "$_rs_channel" "$_rs_room_id")
+                _identity_rc=$?
+                mkdir -p "$CHAT_DIR" 2>/dev/null || true
+                printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$_identity_reason" >> "$CHAT_DIR/transport_identity.log"
+                if [ "$_identity_rc" -eq 0 ]; then
+                    TWITCH_TRANSPORT_AUTHENTICATED=1
+                else
+                    TWITCH_TRANSPORT_AUTHENTICATED=0
+                    case "$_identity_reason" in
+                    reject:no-expected-broadcaster-id-configured*|reject:expected-broadcaster-id-not-numeric*)
+                        # ソフト: ローカル設定不足。通常コメント取得は継続する。
+                        ;;
+                    *)
+                        # ハード: identityの不一致/欠落。セッションを破棄する。
+                        echo "[$(date '+%H:%M:%S')] transport identity rejected: $_identity_reason -> disconnecting" >> "$CHAT_DIR/daemon_reconnect.log"
+                        break
+                        ;;
+                    esac
+                fi
+            fi
         fi
 
         # サブスク/ギフトサブ検出 (USERNOTICE)
@@ -261,6 +322,12 @@ while true; do
                 user_id=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^user-id=//p' | head -n1)
                 # IRCv3の最低限デコード（\s=space, \:=;, \\=\）
                 display_name=$(printf '%s' "$display_name" | sed -e 's/\\s/ /g' -e 's/\\:/;/g' -e 's/\\\\/\\/g')
+                # docich issue #38: identity schema検証。user-idは常に数字のみの
+                # stable idのはず。形式が壊れている値をそのままauthorizeへ渡さない
+                # よう、その場合は「stable user-idなし」として扱う(fail closed側)。
+                if [ -n "$user_id" ] && ! twitch_identity_valid_user_id "$user_id"; then
+                    user_id=""
+                fi
             fi
             user="$display_name"
             [ -z "$user" ] && user="$login_user"
@@ -292,6 +359,10 @@ while true; do
             _is_mod_or_broadcaster=false
             if [ -n "$tags" ]; then
                 _badges=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^badges=//p' | head -n1)
+                # docich issue #38: identity schema検証。badgesの形式が
+                # name/version,... の想定形式から外れている場合は、権限判定の
+                # 根拠として使わない(mod/broadcaster扱いにしない。fail closed側)。
+                twitch_identity_valid_badges "$_badges" || _badges=""
                 case ",${_badges}," in
                 *,broadcaster/*|*,moderator/*) _is_mod_or_broadcaster=true ;;
                 esac
@@ -496,8 +567,10 @@ while true; do
     esac
     wait "$TWITCH_IRC_PID" 2>/dev/null || true
     # テスト専用: 入力ファイルを読み切ったら再接続ループに入らず1回で終了する
-    # (outbound queueの実送信consumerも実行しない)。
-    [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ] && break
+    # (outbound queueの実送信consumerも実行しない)。TWITCH_CHAT_DAEMON_TEST_SINGLE_SESSION
+    # は docich issue #38 のTLS e2eテスト用(ローカルmockサーバへ実際にTLS接続する
+    # テストは無限再接続ループを避けるため1セッションで終了させる必要がある)。
+    { [ -n "${TWITCH_CHAT_DAEMON_TEST_INPUT:-}" ] || [ "${TWITCH_CHAT_DAEMON_TEST_SINGLE_SESSION:-0}" = "1" ]; } && break
     echo "[$(date '+%H:%M:%S')] IRC session ended; reconnecting in 5s" >> "$CHAT_DIR/daemon_reconnect.log"
     # --- Outbound chat queue consumer ---
     # chat_worker 配下では親 worker が送信を一元管理する。standalone daemon の時だけ消化する。
