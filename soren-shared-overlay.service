@@ -1,0 +1,15 @@
+[Unit]
+Description=Soren shared overlay (independent common broadcast display)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/soren
+ExecStart=/home/ubuntu/soren/start_shared_overlay_service.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
