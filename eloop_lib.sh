@@ -27,6 +27,10 @@ source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_gate.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
+# Game-only handover broker.  It never owns the common overlay/audio/stream
+# processes; sourcing it here also makes a newly sourced eloop.sh observe a
+# pending request without restarting the long-lived loop shell.
+[ -f "$ELOOP_LIB_DIR/lib/game_lifecycle.sh" ] && source "$ELOOP_LIB_DIR/lib/game_lifecycle.sh"
 source "$ELOOP_LIB_DIR/strategy/regression.sh"
 # Layer 3: 放送系（配信モードのみ。探索モードでは source しない）
 # 探索モードでは配信系関数は core/streaming_shim.sh の no-op 定義で代替される。

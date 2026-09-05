@@ -330,4 +330,60 @@ export class ExternalGameAudio {
     }
     this.seChildren.clear();
   }
+
+  _waitForChildExit(child, timeoutMs) {
+    if (!child || child.exitCode != null || child.signalCode != null) {
+      return Promise.resolve(true);
+    }
+    const waitMs = Math.max(0, Number(timeoutMs) || 0);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+      const finish = (exited) => {
+        if (settled) return;
+        settled = true;
+        if (timer) this.clearTimeoutFn(timer);
+        for (const event of ['exit', 'close', 'error']) {
+          try { child.removeListener?.(event, onEvent); } catch {}
+        }
+        resolve(Boolean(exited));
+      };
+      const onEvent = () => finish(true);
+      for (const event of ['exit', 'close', 'error']) {
+        try { child.once?.(event, onEvent); } catch {}
+      }
+      timer = this.setTimeoutFn(() => finish(false), waitMs);
+    });
+  }
+
+  // Stop every game-owned audio child and wait for the OS child lifecycle
+  // event before the game resource is acknowledged as stopped.  The final
+  // SIGKILL is scoped to the exact child objects captured above; it never
+  // scans or signals unrelated audio workers.
+  async shutdownAndWait(timeoutMs = 2000, forceTimeoutMs = 500) {
+    const children = [...new Set([
+      this.bgmChild,
+      ...this.seChildren,
+    ].filter(Boolean))];
+    const firstWaits = children.map((child) => this._waitForChildExit(child, timeoutMs));
+    this.shutdown();
+    const firstResults = await Promise.all(firstWaits);
+    const remaining = children.filter((_child, index) => !firstResults[index]);
+    if (!remaining.length) {
+      return { ok: true, child_count: children.length, remaining: 0 };
+    }
+
+    const forceWaits = remaining.map((child) => {
+      const wait = this._waitForChildExit(child, forceTimeoutMs);
+      try { child.kill('SIGKILL'); } catch {}
+      return wait;
+    });
+    const forceResults = await Promise.all(forceWaits);
+    const stillAlive = forceResults.filter((exited) => !exited).length;
+    return {
+      ok: stillAlive === 0,
+      child_count: children.length,
+      remaining: stillAlive,
+    };
+  }
 }
