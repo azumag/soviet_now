@@ -279,6 +279,9 @@ vercel_m3_pos=${common_order%%vercel:minimax/minimax-m3-free*}
 [ "${#vercel_m3_pos}" -lt "${#amd_pos}" ] \
 	&& ok "Vercel free chain precedes paid providers" \
 	|| not_ok "Vercel free chain order (got '$common_order')"
+[ "${#amd_pos}" -lt "${#muse_pos}" ] \
+	&& ok "paid chain: AMD DeepSeek precedes muse" \
+	|| not_ok "paid chain order (got '$common_order')"
 [ "${#minimax_pos}" -lt "${#muse_pos}" ] \
 	&& ok "paid chain: MiniMax precedes muse" \
 	|| not_ok "paid MiniMax order (got '$common_order')"

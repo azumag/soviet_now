@@ -632,7 +632,7 @@ PY
             config,
         )
         self.assertIn(
-                'RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-minimax-api:MiniMax-M3}"',
+            'RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-minimax-api:MiniMax-M3}"',
             config,
         )
         self.assertIn('"${RADIO_FACT_CHECK_SECONDARY:-}"', factcheck)
