@@ -578,11 +578,84 @@ _write_host_integrity_snapshot() {
 	} >"$out_file"
 }
 
-# OS隔離runner (issue #35) が実装されるまでの暫定fail-closedゲート。
-# 常に「未導入」を返し、AI生成候補の自動適用を止める。他の関数からと違い、
-# 環境変数での上書きは意図的に提供しない — host execを許可する再有効化は
-# issue #35 実装によるコード変更でのみ行う。
+# OS隔離runner (issue #35: strategy/isolated_runner/run_isolated.py)。
+# bubblewrap優先・無ければunshare+setpriv+chrootのフォールバックで、非特権UID・
+# read-only root・tmpfs workdir・networkなし・env空のサンドボックスを実際に
+# 一往復させ (`run_isolated.py probe`)、uidが下がっている・networkが塞がれて
+# いる・read-only領域への書込みが拒否される・出力チャンネルにだけ書けることを
+# 実測確認して初めて真になる。バイナリの存在チェックだけでは真にしない。
+# Linux以外 (macOS等) や bwrap/unshare が無い環境では常に偽を返す —
+# これは意図した fail-closed の挙動でありバグではない。
+# 他の関数からと違い、環境変数での上書きは意図的に提供しない (この関数の本体で
+# ${...} 展開を使わないこと)。再有効化は「実際に隔離が機能する環境を用意する」
+# という運用行為でのみ行われ、コード上のトグルは提供しない。
 _strategy_isolated_runner_available() {
+	command -v python3 >/dev/null 2>&1 || return 1
+	[ -f "strategy/isolated_runner/run_isolated.py" ] || return 1
+	python3 strategy/isolated_runner/run_isolated.py probe >/dev/null 2>&1
+}
+
+# 候補ファイルを実際に隔離runnerへ通し、receiptをtmp/state配下に保存したうえで
+# 合否を返す。呼び出し元は _strategy_isolated_runner_available が真の場合のみ
+# ここへ到達する。
+#
+# rollout: SOREN_ISOLATED_RUNNER_MODE (未設定時は "shadow") で二段階にする。
+#   shadow  (既定) : 評価は必ず実行してreceiptを記録するが、自動適用ゲートには
+#                    反映しない (常にfail-closdedを維持)。旧runner
+#                    (strategy_runner.py 直接呼び出し) との score/decision
+#                    比較が十分に蓄積されるまでの既定状態。
+#   enforce : receiptのgateが"pass"の場合のみ適用を許可する。runner障害
+#             (timeout/OOM/crash/hash不一致/schema不一致など) の場合は
+#             host execへのfallbackはせず、fail-closedのまま既存の
+#             known-good strategyを維持する。
+# このモード切替は「host execの再有効化」ではなく「新しい隔離ゲートの
+# rollout段階」なので、issue #34で禁止された類の環境変数トグルとは性質が
+# 異なる (このモードがどちらでも、AI候補がhostでexec/importされることは無い)。
+_strategy_isolated_runner_evaluate() {
+	local target_file="$1"
+	local helpers_dir="${2:-strategy_helpers}"
+	local mode="${SOREN_ISOLATED_RUNNER_MODE:-shadow}"
+	local receipt_dir="${TMP_STATE_DIR:-tmp/state}/isolated_runner_receipts"
+	mkdir -p "$receipt_dir" 2>/dev/null || true
+	local receipt_out="$receipt_dir/receipt_$(date +%Y%m%d_%H%M%S)_$$.json"
+
+	python3 strategy/isolated_runner/run_isolated.py evaluate \
+		--target "$target_file" --helpers "$helpers_dir" \
+		--receipt-out "$receipt_out" --mode "$mode" >/dev/null 2>&1
+
+	local summary="(receipt読み取り失敗)"
+	local gate=""
+	if [ -f "$receipt_out" ]; then
+		summary=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception as e:
+    print(f"receipt parse error: {e}")
+    raise SystemExit(0)
+print(
+    f"gate={d.get(\"gate\")} backend={d.get(\"backend\")} "
+    f"reason={d.get(\"gate_reason\", \"\")[:300]}"
+)
+' "$receipt_out" 2>/dev/null)
+		gate=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(d.get("gate", ""))
+except Exception:
+    print("")
+' "$receipt_out" 2>/dev/null)
+	fi
+
+	log "[VALIDATE] isolated runner (mode=$mode) $summary (receipt: $receipt_out)"
+
+	if [ "$mode" = "enforce" ]; then
+		[ "$gate" = "pass" ] && return 0
+		return 1
+	fi
+
+	# shadow: 評価とreceipt記録のみ行い、自動適用ゲートは常にfail-closedのまま。
 	return 1
 }
 
@@ -640,6 +713,12 @@ PYEOF
 
 	if ! _strategy_isolated_runner_available; then
 		VALIDATE_ERROR="OS隔離runner未導入のため自動適用をfail-closedで停止 (issue #34/#35): 静的検証(構文/decide()存在/AST deny gate)は通過したが、host上でAI候補を実行しないため適用は保留し、既存のknown-good strategyを維持する"
+		log "[VALIDATE] $VALIDATE_ERROR"
+		return 1
+	fi
+
+	if ! _strategy_isolated_runner_evaluate "$target_file" "$helpers_dir"; then
+		VALIDATE_ERROR="OS隔離runner評価がpassにならなかったため適用を見送り、既存のknown-good strategyを維持する (mode=${SOREN_ISOLATED_RUNNER_MODE:-shadow}。詳細はtmp/state/isolated_runner_receipts/配下のreceiptとログ参照)"
 		log "[VALIDATE] $VALIDATE_ERROR"
 		return 1
 	fi
