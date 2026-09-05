@@ -382,6 +382,8 @@ class AiGenerateBackoffTests(unittest.TestCase):
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:amd-token-factory-deepseek-v4-flash RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:openrouter/free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:minimax/minimax-m3-free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:poolside/laguna-s-2.1-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent local RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:minimax-m3 RADIO)"
@@ -400,7 +402,17 @@ class AiGenerateBackoffTests(unittest.TestCase):
         lines = [line for line in result.stdout.splitlines() if line]
         self.assertEqual(
             lines,
-            ["86400", "86400", "86400", "1800", "18000", "18000", "18000"],
+            [
+                "86400",
+                "86400",
+                "86400",
+                "300",
+                "300",
+                "1800",
+                "18000",
+                "18000",
+                "18000",
+            ],
         )
 
     def test_ai_stats_record_writes_jsonl_without_stdout(self) -> None:
