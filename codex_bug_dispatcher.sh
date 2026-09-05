@@ -12,14 +12,15 @@ queue_dir="${CODEX_BUG_QUEUE_DIR:-tmp/codex_bug_queue}"
 lock_dir="${CODEX_BUG_DISPATCH_LOCK_DIR:-tmp/state/.codex_bug_dispatch.lock}"
 last_file="${CODEX_BUG_DISPATCH_LAST_FILE:-tmp/state/codex_bug_dispatch_last.ts}"
 log_dir="${CODEX_BUG_DISPATCH_LOG_DIR:-tmp/debug/codex_bug_dispatch}"
+# docich#32: 自動dispatch対象外になったqueueの隔離先。生本文は複製せず、
+# 元ファイルを移動するだけ(削除しない)。通知には件数/category/timeのみ書く。
+quarantine_dir="${CODEX_BUG_QUARANTINE_DIR:-$queue_dir/quarantined}"
+quarantine_notice_file="${CODEX_BUG_QUARANTINE_NOTICE_FILE:-$log_dir/quarantine_notice.log}"
 min_interval="${CODEX_BUG_DISPATCH_MIN_INTERVAL_SEC:-900}"
 codex_cmd="${CODEX_BUG_DISPATCH_CODEX_CMD:-codex}"
-# Claude fallback (used when codex hits a rate limit)
-claude_fallback_enabled="${CODEX_BUG_DISPATCH_CLAUDE_FALLBACK:-1}"
-claude_cmd="${CODEX_BUG_DISPATCH_CLAUDE_CMD:-claude}"
-claude_model="${CODEX_BUG_DISPATCH_CLAUDE_MODEL:-}"
-claude_permission_mode="${CODEX_BUG_DISPATCH_CLAUDE_PERMISSION_MODE:-bypassPermissions}"
-rate_limit_re="${CODEX_BUG_DISPATCH_RATE_LIMIT_REGEX:-rate.?limit|rate_limit|429|too many requests|usage limit|quota|resource_exhausted|overloaded|insufficient_quota}"
+# docich#32: 視聴者コメント発の権限迂回fallback(旧: codexレート制限時にclaudeの
+# permission-mode迂回オプションで自動フォールバック)はproduction codeから削除済み。
+# 環境変数での復活経路は用意しない。
 
 _pid_alive() {
 	local pid="${1:-}" err=""
@@ -74,8 +75,79 @@ _release_lock() {
 	[ "$owner" = "$$" ] && _clear_lock_dir >/dev/null 2>&1 || true
 }
 
+# docich#32: 自動実行対象外(既定)の未処理queueをquarantineへ退避する。
+# - 削除はしない(mv のみ)。
+# - 通知(quarantine_notice_file)には件数/category/timeだけを書き、
+#   viewerのコメント本文やuser名は一切複製しない。
+_quarantine_pending_reports() {
+	mkdir -p "$queue_dir" "$quarantine_dir" "$(dirname "$quarantine_notice_file")" 2>/dev/null || true
+	local -a reports=()
+	local f
+	while IFS= read -r f; do
+		[ -n "$f" ] && reports+=("$f")
+	done < <(find "$queue_dir" -maxdepth 1 -type f -name '*.json' ! -name '.*' -print 2>/dev/null | sort)
+	[ "${#reports[@]}" -gt 0 ] || return 0
+
+	local summary=""
+	summary=$(python3 - "$quarantine_dir" "${reports[@]}" <<'PY'
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+dest_dir = Path(sys.argv[1])
+dest_dir.mkdir(parents=True, exist_ok=True)
+paths = sys.argv[2:]
+
+counts = {}
+oldest = None
+newest = None
+moved = 0
+for raw_path in paths:
+    src = Path(raw_path)
+    category = "unknown"
+    created_at = None
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+        category = str(data.get("category") or "unknown")
+        created_at = data.get("created_at")
+    except Exception:
+        pass
+    counts[category] = counts.get(category, 0) + 1
+    if isinstance(created_at, (int, float)):
+        if oldest is None or created_at < oldest:
+            oldest = created_at
+        if newest is None or created_at > newest:
+            newest = created_at
+    dest = dest_dir / src.name
+    try:
+        os.replace(src, dest)
+        moved += 1
+    except Exception:
+        pass
+
+# Intentionally excludes comment body / user: operators get counts only.
+result = {
+    "quarantined_at": int(time.time()),
+    "count": moved,
+    "by_category": counts,
+    "oldest_created_at": oldest,
+    "newest_created_at": newest,
+}
+print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+PY
+	) || true
+	[ -n "$summary" ] || return 0
+	printf '%s\n' "$summary" >>"$quarantine_notice_file"
+	echo "[codex_bug_dispatcher] auto-dispatch disabled: quarantined pending reports: $summary" >&2
+}
+
 _kick() {
-	[ "${CODEX_BUG_DISPATCH_ENABLED:-1}" = "1" ] || exit 0
+	if [ "${CODEX_BUG_DISPATCH_ENABLED:-0}" != "1" ]; then
+		_quarantine_pending_reports
+		exit 0
+	fi
 	mkdir -p "$queue_dir" "$(dirname "$lock_dir")" "$log_dir"
 	if _lock_held; then
 		exit 0
@@ -103,17 +175,6 @@ _interval_allows_dispatch() {
 	'' | *[!0-9]*) return 0 ;;
 	esac
 	[ $((now - last)) -ge "$min_interval" ]
-}
-
-_output_indicates_rate_limit() {
-	local f
-	for f in "$@"; do
-		[ -f "$f" ] || continue
-		if grep -Eiq "$rate_limit_re" "$f" 2>/dev/null; then
-			return 0
-		fi
-	done
-	return 1
 }
 
 _build_prompt() {
@@ -197,7 +258,10 @@ PY
 }
 
 _run_once() {
-	[ "${CODEX_BUG_DISPATCH_ENABLED:-1}" = "1" ] || exit 0
+	if [ "${CODEX_BUG_DISPATCH_ENABLED:-0}" != "1" ]; then
+		_quarantine_pending_reports
+		exit 0
+	fi
 	local report_file=""
 	report_file=$(_oldest_report)
 	[ -n "$report_file" ] || exit 0
@@ -231,27 +295,7 @@ _run_once() {
 		"$codex_cmd" exec -C "$ELOOP_LIB_DIR" -o "$output_file" "$(cat "$prompt_file")" >>"$log_file" 2>&1 || rc=$?
 	fi
 	printf '%s\n' "$(date +%s)" >"$last_file"
-	# Fall back to Claude when codex is rate-limited.
-	if [ "$rc" -ne 0 ] && [ "$claude_fallback_enabled" = "1" ] && _output_indicates_rate_limit "$log_file" "$output_file"; then
-		if command -v "$claude_cmd" >/dev/null 2>&1; then
-			echo "[codex_bug_dispatcher] codex rate-limited (rc=$rc); falling back to claude" >>"$log_file"
-			local claude_output_file fallback_rc=0
-			local -a claude_args
-			claude_output_file="$log_dir/last_${ts}_$$_claude.txt"
-			claude_args=(--print -p "$(cat "$prompt_file")" --permission-mode="$claude_permission_mode" --no-session-persistence)
-			[ -n "$claude_model" ] && claude_args+=(--model="$claude_model")
-			(cd "$ELOOP_LIB_DIR" && "$claude_cmd" "${claude_args[@]}") >"$claude_output_file" 2>>"$log_file" || fallback_rc=$?
-			if [ "$fallback_rc" -eq 0 ]; then
-				echo "[codex_bug_dispatcher] claude fallback succeeded" >>"$log_file"
-				rc=0
-			else
-				echo "[codex_bug_dispatcher] claude fallback failed (rc=$fallback_rc)" >>"$log_file"
-				rc=$fallback_rc
-			fi
-		else
-			echo "[codex_bug_dispatcher] claude command not found: $claude_cmd (skipping fallback)" >>"$log_file"
-		fi
-	fi
+	# docich#32: codexレート制限時のclaude権限迂回fallbackは削除済み。復活させない。
 	if [ "$rc" -eq 0 ]; then
 		_mark_report "$report_file" "done" "$rc"
 	else
@@ -263,6 +307,7 @@ _run_once() {
 case "$mode" in
 kick) _kick ;;
 run | "") _run_once ;;
+quarantine) _quarantine_pending_reports ;;
 status)
 	if _lock_held; then
 		echo "running"
@@ -271,7 +316,7 @@ status)
 	fi
 	;;
 *)
-	echo "usage: $0 [kick|run|status]" >&2
+	echo "usage: $0 [kick|run|status|quarantine]" >&2
 	exit 2
 	;;
 esac
