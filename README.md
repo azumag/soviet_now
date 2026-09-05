@@ -686,7 +686,7 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 
 ```bash
 MODEL_PRIMARY="opencode-go:deepseek-v4-flash"           # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="codex:minimax-m3"
+MODEL_FALLBACK="minimax-api:MiniMax-M3"
 MODEL_IMPROVE="opencode:muse-spark-1.3-contributor-free" # 改善primary
 MODEL_FALLBACK_IMPROVE="opencode-go:muse-spark-1.3-contributor" # 改善fallback
 MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
@@ -716,7 +716,9 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 | **粛清ポストモーテム** | `codex:...` | - | - | - |
 | **メリケンAI(全コメント)** | `codex:...` | - | - | - |
 
-`codex:<model>` は Codex CLIへ、`opencode-go:<model>` は OpenCode CLIへ渡す。
+`amd:<model>` / `minimax-api:<model>` / `opencode-go:<model>` はOpenCode CLIへ渡す。
+事前調査ラベルでは`webfetch`/`websearch`だけを許可した`soren-research`、本文生成では
+全tool denyの`soren-lite`を使う。`codex:<model>` は移行互換用に残す。
 
 #### スペック別詳細
 
@@ -725,13 +727,26 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 | `codex:<model>` | `codex exec -m <model>` | codex CLI。`CODEX_MODEL` 既定 `amd-token-factory-deepseek-v4-flash` |
 | `opencode:<model>` | `opencode run --model opencode/<model>` | OpenCode CLIのZen系モデル |
 | `opencode-go:<model>` | `opencode run --model opencode-go/<model>` | OpenCode CLIのGo系モデル（muse等） |
+| `vercel:<gateway-model-id>` | `opencode run --agent soren-lite --model vercel/<gateway-model-id>` | Vercel AI Gateway。既定はM3 Free、429時300秒backoff、1回20秒で打ち切り |
 | 上記以外の任意スペック | `codex exec -m $CODEX_MODEL` | 旧スペックの後方互換正規化 |
 
 #### 必要なAPIキー
 
 ```bash
 OPENCODE_GO_API_KEY=sk-...       # opencode.ai (deepseek-v4-flash) 用 (.env)
+AI_GATEWAY_API_KEY=...           # Vercel AI Gateway用。リポジトリ外の保護済みenvに保存
 ```
+
+VercelはOpenCodeの`vercel` providerへ登録し、`soren-lite` agentを`steps: 2`・全tool denyで使う。
+候補はA（入出力$0）とB（月$5 Free Tier対象の通常単価）へ分離し、A→Bの順で使う。
+2026-09-05確認のAはM3 Free、Laguna Free、Ling 3.0 Flash Fin。BはFree Tier表示があり
+APIが対象モデルとして認識した低単価のGLM 5.3 Flash、Mimo v2.5 / Pro、Qwen 3.8 Flashに限定する。
+Bのスモーク時点は全て429のため既定では無効。HTTP 200・費用計測・予算ガード確認後だけ
+`VERCEL_CATEGORY_B_AGENTS`で明示的に有効化する。C（Free Tier対象外）は登録しない。
+モデル上限はGateway catalogに合わせ、M3 Freeを`context: 1048576`、Laguna Freeを
+`context: 256000` / `output: 32768`として設定する。`limit`はモデル能力値であり利用量の
+上限ではないため、実行側でもVercelだけ20秒timeout・CLI外側retryなしにする。Lagunaは
+実測で短時間429が続いたため、登録は残すが既定チェーンには含めない。
 
 #### モデルスペックと CLI マッピング
 
