@@ -293,4 +293,49 @@ set -e
 [ "$mixed_rc" -eq 1 ]
 [ ! -s "$events" ]
 
+# A durable stopping claim keeps the loop parked (never starts a next game)
+# and the startup crash-recovery path completes the exact claim: with the
+# bridge's stopped resource already written, resume_pending finishes the
+# request and returns 0 so the loop exits cleanly instead of retrying.
+write_lifecycle_pair stopping
+rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
+: >"$events"
+# The bridge already wrote its stopped resource in this scenario, so the
+# resource wait succeeds immediately (last definition above returns 1).
+_game_lifecycle_wait_resource() { printf '%s\n' stopped >"$resource_status_file"; return 0; }
+set +e
+game_lifecycle_after_game
+stopping_park_rc=$?
+set -e
+[ "$stopping_park_rc" -eq 3 ]
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+
+python3 - "$GAME_LIFECYCLE_DIR/control.json" "$request_id" <<'PY'
+import json
+import sys
+
+path, rid = sys.argv[1], sys.argv[2]
+request = json.load(open(path.replace("control.json", "request.json"), encoding="utf-8"))
+control = dict(request, action="stop")
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(control, stream, sort_keys=True, separators=(",", ":"))
+    stream.write("\n")
+PY
+node --input-type=module -e "
+import { readGameLifecycleControl, writeGameLifecycleResource } from './lib/game_lifecycle.mjs';
+const control = readGameLifecycleControl('$GAME_LIFECYCLE_DIR');
+const resource = writeGameLifecycleResource(control, 'stopped', { quit_called: true }, '$GAME_LIFECYCLE_DIR');
+if (!resource) process.exit(1);
+" >/dev/null 2>&1
+set +e
+game_lifecycle_resume_pending
+stopping_finish_rc=$?
+set -e
+[ "$stopping_finish_rc" -eq 0 ]
+grep -qx finish "$events"
+[ "$(game_lifecycle_ack_status)" = "stopped" ]
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+game_lifecycle_restore_loop
+[ ! -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+
 echo "game lifecycle shell tests passed"

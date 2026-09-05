@@ -431,7 +431,7 @@ _game_lifecycle_stop_from_boundary() {
 	local request_id="$1" ack_status="${2:-}"
 	[ -n "$request_id" ] || return 1
 	case "$ack_status" in
-	boundary|stop_requested|stopped) ;;
+	boundary|stop_requested|stopping|stopped) ;;
 	*) return 1 ;;
 	esac
 
@@ -564,15 +564,18 @@ game_lifecycle_after_game() {
 			;;
 		esac
 		;;
-	boundary|stop_requested|stopped) ;;
+	boundary|stop_requested|stopping|stopped) ;;
 	resume_requested|cancelled|failed|timeout|unsupported|"" ) return 1 ;;
 	*) return 1 ;;
 	esac
 	case "$ack_status" in
-	boundary|stop_requested|stopped)
+	boundary|stop_requested|stopping|stopped)
 		# Boundary acknowledgement only parks the loop.  An explicit stop
 		# control, issued by the coordinator/adapter after its writer-side
 		# quiesce decision, is required before any game resource is closed.
+		# A durable stopping claim (bridge is already crossing the
+		# irreversible fence) must also keep the loop parked: the next game
+		# waits until the claim is finished or explicitly recovered.
 		_game_lifecycle_pause_loop "$request_id" || return 2
 		_game_lifecycle_log "試合終了境界を確認し、次ゲームだけを保留 (request=$request_id)。資源停止は明示stop待ち"
 		return 3
@@ -594,7 +597,7 @@ game_lifecycle_stop_after_boundary() {
 	[ -n "$request_id" ] || return 1
 	[ -n "$ack_status" ] || return 1
 	case "$ack_status" in
-	boundary|stop_requested|stopped)
+	boundary|stop_requested|stopping|stopped)
 		_game_lifecycle_stop_from_boundary "$request_id" "$ack_status"
 		return $?
 		;;
@@ -637,7 +640,10 @@ game_lifecycle_resume_pending() {
 		_game_lifecycle_pause_loop "$request_id" || return 2
 		return 3
 		;;
-	stop_requested|stopped)
+	stop_requested|stopping|stopped)
+		# A controller crash between claim-stop and finish leaves a durable
+		# stopping claim.  The recovery path must complete that exact claim
+		# (finish) instead of letting the loop start a fresh game.
 		game_lifecycle_stop_after_boundary
 		return $?
 		;;
