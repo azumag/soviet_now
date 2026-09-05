@@ -63,11 +63,11 @@ fi
 # 旧変数は一括上書きと緊急停止の互換口として残す。明示的な空文字は停止。
 VERCEL_FREE_AGENTS="${VERCEL_FREE_AGENTS-$_VERCEL_ELIGIBLE_AGENTS}"
 _VERCEL_FREE_CHAIN="${VERCEL_FREE_AGENTS:+${VERCEL_FREE_AGENTS},}"
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
 # 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -178,14 +178,14 @@ PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
 PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
 # muse free(1.3→1.2) > Vercel M3 Free > AMD DeepSeek > MiniMax > muse contributor(1.3→1.2)。
-PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
 
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
 # 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark contributor 系は opencode-go 契約の
 # クォータ制枠のため 1 日バックオフ（free 枠も同様に 1 日）。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/minimax/minimax-m3-free:300 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/minimax/minimax-m3-free:300 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 minimax-m3:18000 omen-alpha:86400 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
@@ -234,9 +234,9 @@ POST_IMPROVE_MAINPLAY_MARKER="tmp/state/.post_improve_mainplay"
 RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # SECONDARY は旧来の FALLBACK 設定（VMでは MiniMax）より前に試す。
 # これで muse free(1.3) → muse contributor(1.3) → MiniMax の順を保証する。
-RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:muse-spark-1.3-contributor}"
+RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:omen-alpha}"
 RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-minimax-api:MiniMax-M3}"
-RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-}"
+RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-opencode-go:muse-spark-1.3-contributor}"
 RADIO_FACT_CHECK_QUINARY="${RADIO_FACT_CHECK_QUINARY:-}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
 RADIO_FACT_CHECK_MIN_CHARS=100
