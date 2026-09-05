@@ -53,17 +53,82 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
             candidate(3.0, landing_hit_id="t12-right"),
         ]
 
-    def test_current_strategy_passes_production_sandbox_validation(self):
+    def _isolated_runner_available(self):
+        """issue #35: _strategy_isolated_runner_available() の実測結果で分岐する。
+        OSがLinuxかどうかではなく、この関数自体の戻り値を見る (Linuxでも
+        bubblewrap/unshare未導入なら偽になるため)。
+        """
+        result = subprocess.run(
+            ["bash", "-lc", "source ./eloop_lib.sh; _strategy_isolated_runner_available"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return result.returncode == 0
+
+    def test_current_strategy_fails_closed_without_isolated_runner(self):
+        """issue #34/#35: 隔離runnerが利用不可な環境 (このリポジトリの開発機や
+        bubblewrap未導入のLinuxを含む) では、validate_strategy_with_helpers は
+        rc=1 で fail-closed するのが意図した正しい挙動である。旧テストは
+        #34のfail-closedゲート導入前の "常にrc=0" を期待しており、#34時点
+        (520896293) から既に赤かった (自動適用前提の期待値が古いままだった)。
+        """
+        if self._isolated_runner_available():
+            self.skipTest(
+                "この環境では _strategy_isolated_runner_available() が真 "
+                "(bubblewrap/unshareが実際に機能する) — fail-closed分岐は "
+                "test_current_strategy_passes_when_isolated_runner_available 側で検証する"
+            )
+
         result = subprocess.run(
             [
                 "bash",
                 "-lc",
-                "source ./eloop_lib.sh; validate_strategy_with_helpers strategy.py strategy_helpers",
+                "source ./eloop_lib.sh; validate_strategy_with_helpers strategy.py strategy_helpers; "
+                "rc=$?; echo \"VALIDATE_ERROR=$VALIDATE_ERROR\"; exit $rc",
             ],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             timeout=30,
+        )
+        self.assertEqual(
+            result.returncode,
+            1,
+            msg=f"stdout={result.stdout}\nstderr={result.stderr}",
+        )
+        self.assertIn(
+            "OS隔離runner未導入のため自動適用をfail-closedで停止",
+            result.stdout,
+            msg=f"stdout={result.stdout}\nstderr={result.stderr}",
+        )
+
+    def test_current_strategy_passes_when_isolated_runner_available(self):
+        """issue #35: bubblewrap/unshareが実際に機能する環境 (Linux本番相当) では、
+        現行strategy.pyが隔離runnerの評価を経て適用可能と判定されることを確認する。
+        macOSやbubblewrap未導入のLinuxではこのテスト自体をskipし、skipした事実が
+        テスト出力に残るようにする (嘘の合格/黙って通過を避けるため)。
+        """
+        if not self._isolated_runner_available():
+            self.skipTest(
+                "_strategy_isolated_runner_available() が偽 (この環境ではOS隔離が "
+                "機能しない: macOS、またはLinuxでもbubblewrap/unshare未導入)。"
+                "Linux本番相当環境かつbubblewrap導入後に strategy/isolated_runner/"
+                "verify_on_linux.sh で検証すること。"
+            )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                "source ./eloop_lib.sh; validate_strategy_with_helpers strategy.py strategy_helpers; "
+                "rc=$?; echo \"VALIDATE_ERROR=$VALIDATE_ERROR\"; exit $rc",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         self.assertEqual(
             result.returncode,
