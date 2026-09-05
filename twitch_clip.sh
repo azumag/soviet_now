@@ -30,12 +30,23 @@ _json_get() {
 }
 
 # --- クリップ作成 ---
-response=$(curl -sf -X POST \
+# HTTPステータスも記録する（offline と scope不足/認証失敗の切り分け用）
+clip_http_code=""
+response=$(curl -s -w '\n%{http_code}' -X POST \
     "https://api.twitch.tv/helix/clips?broadcaster_id=${BROADCASTER_ID}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Client-Id: ${CLIENT_ID}" 2>/dev/null)
-if [ $? -ne 0 ] || [ -z "$response" ]; then
-    _log "WARN: clip create failed (stream offline?)"
+clip_http_code=$(printf '%s' "$response" | tail -n 1)
+response=$(printf '%s' "$response" | sed '$d')
+case "$clip_http_code" in
+    2*) ;;
+    *)
+        _log "WARN: clip create failed (http=${clip_http_code:-conn-fail}; offline?/scope clips:edit?/token?)"
+        exit 0
+        ;;
+esac
+if [ -z "$response" ]; then
+    _log "WARN: clip create failed (http=${clip_http_code}, empty body)"
     exit 0
 fi
 
