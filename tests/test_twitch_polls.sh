@@ -4,8 +4,9 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin" "$TMP/tmp/state"
+mkdir -p "$TMP/bin" "$TMP/tmp/state" "$TMP/lib"
 cp "$ROOT/twitch_polls.sh" "$TMP/twitch_polls.sh"
+cp "$ROOT/lib/curl_secure.sh" "$TMP/lib/curl_secure.sh"
 chmod +x "$TMP/twitch_polls.sh"
 
 cat >"$TMP/bin/curl" <<'SH'

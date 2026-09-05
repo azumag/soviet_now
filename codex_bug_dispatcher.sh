@@ -22,6 +22,47 @@ codex_cmd="${CODEX_BUG_DISPATCH_CODEX_CMD:-codex}"
 # permission-mode迂回オプションで自動フォールバック)はproduction codeから削除済み。
 # 環境変数での復活経路は用意しない。
 
+# docich#39: Coding Agent (codex) はTwitch/YouTube/Discord等のcredentialを
+# 見る必要が無い。env -i で環境を空にした上で、agentの実行そのものに要る
+# non-secretな変数だけを明示的に許可(allowlist)する。ここに挙げるのは
+# ロケール/パス/ターミナル/一時ディレクトリ等の実行環境設定のみで、
+# credential(トークン・APIキー・パスワード等)は一切含めない。
+CODEX_AGENT_ENV_ALLOWLIST=(
+	HOME PATH SHELL
+	LANG LC_ALL LC_CTYPE LC_MESSAGES
+	TERM TMPDIR TEMP TMP
+	USER LOGNAME TZ
+	XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME
+)
+
+# _run_with_restricted_env CMD [ARGS...]
+# env -i で真っさらにした環境に、CODEX_AGENT_ENV_ALLOWLIST 記載かつ現在
+# 実際にsetされている変数だけを積んでCMDを実行する。CMD(codex)が内部で
+# 呼ぶ`./system_progress_report.sh`等の運用スクリプトは、それぞれ自前で
+# `.env`を再読込する設計になっているため、ここでagentのenvを絞っても
+# それらの機能自体は損なわれない(agent自身のprocess environmentに
+# credentialが乗らなくなるだけ)。
+_run_with_restricted_env() {
+	local -a env_args=()
+	local name
+	for name in "${CODEX_AGENT_ENV_ALLOWLIST[@]}"; do
+		if [ "${!name+set}" = "set" ]; then
+			env_args+=("${name}=${!name}")
+		fi
+	done
+	env -i "${env_args[@]}" "$@"
+}
+
+# docich#39: Coding Agentへ渡すprompt / agentが書くoutput・logは、保存前に
+# secret redactorへ通す。値そのものはredactor(lib/secret_redactor.py)が
+# 現在の環境変数から読むが、このdispatcher自身はredact後のテキストしか
+# ファイルへ書かない。
+_redact_secrets_file() {
+	local src_path="$1" dest_path="$2"
+	python3 "$ELOOP_LIB_DIR/lib/secret_redactor.py" <"$src_path" >"$dest_path" 2>/dev/null \
+		|| cp "$src_path" "$dest_path"
+}
+
 _pid_alive() {
 	local pid="${1:-}" err=""
 	case "$pid" in
@@ -282,18 +323,30 @@ _run_once() {
 	}
 
 	local ts prompt_file output_file log_file rc=0
+	local raw_prompt_file raw_output_file raw_log_file
 	ts=$(date +%Y%m%d_%H%M%S)
 	prompt_file="$log_dir/prompt_${ts}_$$.txt"
 	output_file="$log_dir/last_${ts}_$$.txt"
 	log_file="$log_dir/run_${ts}_$$.log"
-	_build_prompt "$report_file" >"$prompt_file"
-	echo "[codex_bug_dispatcher] dispatching $(basename "$report_file")" >>"$log_file"
+	# docich#39: 生の(redact前)成果物はagent実行が終わるまでlog_dir外の
+	# 一時ファイルに留め、redact後にのみ最終パス(prompt_file/output_file/
+	# log_file)へ書く。
+	raw_prompt_file=$(mktemp "${log_dir}/.raw_prompt.XXXXXXXX")
+	raw_output_file=$(mktemp "${log_dir}/.raw_output.XXXXXXXX")
+	raw_log_file=$(mktemp "${log_dir}/.raw_log.XXXXXXXX")
+	_build_prompt "$report_file" >"$raw_prompt_file"
+	echo "[codex_bug_dispatcher] dispatching $(basename "$report_file")" >>"$raw_log_file"
 	# Runs: codex exec -C /Users/azumag/azumag/work/soren "<prompt>"
+	# docich#39: codexはenv -i + non-secret allowlistだけを持つ環境で起動する。
 	if [ -n "${CODEX_BUG_DISPATCH_MODEL:-}" ]; then
-		"$codex_cmd" exec -C "$ELOOP_LIB_DIR" -m "$CODEX_BUG_DISPATCH_MODEL" -o "$output_file" "$(cat "$prompt_file")" >>"$log_file" 2>&1 || rc=$?
+		_run_with_restricted_env "$codex_cmd" exec -C "$ELOOP_LIB_DIR" -m "$CODEX_BUG_DISPATCH_MODEL" -o "$raw_output_file" "$(cat "$raw_prompt_file")" >>"$raw_log_file" 2>&1 || rc=$?
 	else
-		"$codex_cmd" exec -C "$ELOOP_LIB_DIR" -o "$output_file" "$(cat "$prompt_file")" >>"$log_file" 2>&1 || rc=$?
+		_run_with_restricted_env "$codex_cmd" exec -C "$ELOOP_LIB_DIR" -o "$raw_output_file" "$(cat "$raw_prompt_file")" >>"$raw_log_file" 2>&1 || rc=$?
 	fi
+	_redact_secrets_file "$raw_prompt_file" "$prompt_file"
+	_redact_secrets_file "$raw_output_file" "$output_file"
+	_redact_secrets_file "$raw_log_file" "$log_file"
+	rm -f "$raw_prompt_file" "$raw_output_file" "$raw_log_file"
 	printf '%s\n' "$(date +%s)" >"$last_file"
 	# docich#32: codexレート制限時のclaude権限迂回fallbackは削除済み。復活させない。
 	if [ "$rc" -eq 0 ]; then

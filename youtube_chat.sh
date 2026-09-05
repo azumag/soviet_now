@@ -14,6 +14,8 @@
 cd "$(dirname "$0")"
 
 [ -f .env ] && set -a && . ./.env && set +a
+# shellcheck source=/dev/null
+source ./lib/curl_secure.sh
 
 CHAT_DIR="${YOUTUBE_CHAT_DIR:-tmp/.youtube_chat}"
 mkdir -p "$CHAT_DIR"
@@ -247,16 +249,18 @@ print(quote(sys.argv[1], safe=""))
 PY
 }
 
+# docich#39: url ($YOUTUBE_API_KEY をクエリに含むことがある) と
+# Authorization ヘッダを argv に載せない。curl の `-K -` で標準入力から渡す。
 _api_get() {
 	local url="$1"
 	local access_token="${2:-}"
+	local cfg
 	if [ -n "$access_token" ]; then
-		curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
-			-H "Authorization: Bearer ${access_token}" \
-			"$url"
+		cfg=$(_curl_cfg_build url "$url" header "Authorization: Bearer ${access_token}")
 	else
-		curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "$url"
+		cfg=$(_curl_cfg_build url "$url")
 	fi
+	printf '%s' "$cfg" | curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" -K -
 }
 
 _youtube_json_value() {
@@ -982,7 +986,7 @@ _ack_batch() {
 
 _oauth_access_token() {
 	[ -n "${YOUTUBE_OAUTH_CLIENT_ID:-}" ] && [ -n "${YOUTUBE_OAUTH_CLIENT_SECRET:-}" ] && [ -n "${YOUTUBE_OAUTH_REFRESH_TOKEN:-}" ] || return 1
-	local resp_file err_file token rc attempts attempt http_code oauth_err
+	local resp_file err_file token rc attempts attempt http_code oauth_err oauth_cfg
 	attempts="${YOUTUBE_OAUTH_REFRESH_RETRIES:-2}"
 	case "$attempts" in
 	''|*[!0-9]*) attempts=2 ;;
@@ -997,13 +1001,18 @@ _oauth_access_token() {
 		# 注意: -f は付けない。HTTP/2 + 4xx だと curl が exit 56 を返し、実エラー
 		# (invalid_grant=トークン失効 等) がトランスポート障害(recv失敗)に誤認され、
 		# 無駄なリトライ＆誤った状態表示(「curl exit 56」)になるため。HTTP ステータスで判定する。
-		http_code=$(curl -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+		# docich#39: client_id/client_secret/refresh_token を argv に載せない。
+		# curl の `-K -` で標準入力から渡す (data-urlencode/data/url いずれも
+		# argv ではなく config directive として渡る)。
+		oauth_cfg=$(_curl_cfg_build \
+			url "https://oauth2.googleapis.com/token" \
+			data-urlencode "client_id=${YOUTUBE_OAUTH_CLIENT_ID}" \
+			data-urlencode "client_secret=${YOUTUBE_OAUTH_CLIENT_SECRET}" \
+			data-urlencode "refresh_token=${YOUTUBE_OAUTH_REFRESH_TOKEN}" \
+			data "grant_type=refresh_token")
+		http_code=$(printf '%s' "$oauth_cfg" | curl -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
 			-o "$resp_file" -w '%{http_code}' \
-			--data-urlencode "client_id=${YOUTUBE_OAUTH_CLIENT_ID}" \
-			--data-urlencode "client_secret=${YOUTUBE_OAUTH_CLIENT_SECRET}" \
-			--data-urlencode "refresh_token=${YOUTUBE_OAUTH_REFRESH_TOKEN}" \
-			-d "grant_type=refresh_token" \
-			"https://oauth2.googleapis.com/token" 2>"$err_file")
+			-K - 2>"$err_file")
 		rc=$?
 		# 2xx: 成功
 		case "$http_code" in
@@ -1070,17 +1079,23 @@ _maybe_oauth_access_token() {
 	_oauth_access_token 2>/dev/null || true
 }
 
+# docich#39: insert_url ($YOUTUBE_API_KEY をクエリに含むことがある) と
+# Authorization ヘッダを argv に載せない。curl の `-K -` で標準入力から渡す。
 _send_api() {
 	local insert_url="$1"
 	local access_token="$2"
 	local payload_file="$3"
 	local resp_file="$4"
 	local err_file="$5"
-	curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
-		-X POST "$insert_url" \
-		-H "Authorization: Bearer ${access_token}" \
-		-H "Content-Type: application/json; charset=UTF-8" \
-		--data-binary "@${payload_file}" >"$resp_file" 2>"$err_file"
+	local cfg
+	cfg=$(_curl_cfg_build \
+		url "$insert_url" \
+		header "Authorization: Bearer ${access_token}" \
+		header "Content-Type: application/json; charset=UTF-8")
+	printf '%s' "$cfg" | curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+		-X POST \
+		--data-binary "@${payload_file}" \
+		-K - >"$resp_file" 2>"$err_file"
 }
 
 _write_send_payload() {
