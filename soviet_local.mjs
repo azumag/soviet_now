@@ -1438,6 +1438,16 @@ async function processGameLifecycleControl(page, runtime = {}) {
     if (lifecycleResourceMatches(control, existing) && existing.status === 'stopped') {
       return { handled: true, terminal: true, status: 'stopped', requestId: control.request_id };
     }
+    // Idempotent short-circuit: the page/audio restore for THIS exact request
+    // already completed and was recorded.  control.json outlives the terminal
+    // cancelled acknowledgement (only finish deletes it), so without this
+    // guard the bridge re-ran restoreGameOnlyRuntime on every poll iteration,
+    // reloading the live game page forever (E2E: page reset loop, phantom
+    // matches, bridge restart cascade).
+    if (lifecycleResourceMatches(control, existing) && existing.status === 'cancelled'
+        && existing.page_restored === true) {
+      return { handled: true, terminal: true, status: 'cancelled', requestId: control.request_id };
+    }
     const restore = await restoreGameOnlyRuntime(page, runtime);
     if (!lifecycleControlStillCurrent(control, 'cancel', ['cancelled'])) {
       return { handled: false, status: 'stale' };
@@ -1473,7 +1483,21 @@ async function processGameLifecycleControl(page, runtime = {}) {
       return { handled: true, terminal: true, status: 'failed', requestId: control.request_id };
     }
 
-    const restore = await restoreGameOnlyRuntime(page, runtime);
+    // Idempotent resume: if THIS exact request already recorded a successful
+    // page restore (resume-complete may still be pending or may have failed
+    // transiently), do not reload the page again on later poll iterations.
+    let restore = { ok: false, page_restored: false, audio_restored: false };
+    if (lifecycleResourceMatches(control, existing) && existing.status === 'resumed'
+        && existing.page_restored === true) {
+      restore = {
+        ok: true,
+        page_restored: true,
+        audio_restored: existing.audio_restored === true,
+        idempotent_resume: true,
+      };
+    } else {
+      restore = await restoreGameOnlyRuntime(page, runtime);
+    }
     if (!lifecycleControlStillCurrent(control, 'resume', ['resume_requested'])) {
       return { handled: false, status: 'stale' };
     }
