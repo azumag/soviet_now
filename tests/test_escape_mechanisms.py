@@ -2826,9 +2826,15 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertNotIn("active-filter: expected danger DIRECT merge", sandbox)
         self.assertNotIn("risky-single-danger-merge", sandbox)
         self.assertIn("ERROR: decide() not found", sandbox)
-        self.assertIn("ERROR: {label}: missing x", sandbox)
-        self.assertIn("テスト実行失敗", sandbox)
-        self.assertIn("テスト出力契約違反", sandbox)
+        # 2026-09-04 (issue #34): host process上でのAI候補exec/importを撤去した。
+        # 以前はここで exec() したモジュールへ実データを渡して呼び出し、出力契約
+        # (x/reasonの型・範囲) を検証していた ("ERROR: {label}: missing x" /
+        # "テスト実行失敗" / "テスト出力契約違反" がその名残)。振る舞い検証は
+        # OS隔離runner (issue #35) 実装後にそちらで行う方針になったため、
+        # 現在の validate_strategy は構文/decide()存在/AST deny gateの静的検証のみ。
+        self.assertIn("ERROR: decide() needs 2+ params", sandbox)
+        self.assertIn("ast-deny-gate rejected candidate", sandbox)
+        self.assertIn("OS隔離runner未導入のため自動適用をfail-closedで停止", sandbox)
         self.assertIn("validation observation: repeated rejected hash", eloop)
         self.assertIn("validation observation: fixed-turn gate", eloop)
         self.assertIn("decide()関数の本体に実質的な変更がない", eloop)

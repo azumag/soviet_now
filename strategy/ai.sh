@@ -509,10 +509,13 @@ run_cmd() {
 		fi
 	else
 		# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
+		# 2026-09-04 (#34): 生成agentの権限迂回(--dangerously-bypass-approvals-and-sandbox)
+		# を撤去した。codex CLIの既定サンドボックス/承認ポリシーで実行する
+		# (lib/ai_generate.sh・tools/podcast_build.py の既存codex呼び出しと同じ方針)。
+		# 環境変数での再有効化経路は意図的に提供しない。
 		codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
 		local -a codex_args=(
 			exec --skip-git-repo-check -m "$codex_model"
-			--dangerously-bypass-approvals-and-sandbox
 			-o "$codex_out_file" -
 		)
 		if [ -n "$cmd_log_file" ]; then

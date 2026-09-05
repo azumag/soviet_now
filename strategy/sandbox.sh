@@ -10,23 +10,17 @@ validate_strategy() {
 	local sig_out
 	sig_out=$(
 		python3 - "$target_file" "$helpers_dir" <<'PYEOF' 2>&1
-import os
+import re
 import sys
 import ast
-import inspect
-import types
 
 target = sys.argv[1]
-helpers_dir = sys.argv[2] if len(sys.argv) > 2 else "strategy_helpers"
-root = os.getcwd()
-if root not in sys.path:
-    sys.path.insert(0, root)
-if helpers_dir and os.path.isdir(helpers_dir):
-    helper_parent = os.path.abspath(os.path.dirname(helpers_dir) or ".")
-    if helper_parent not in sys.path:
-        sys.path.insert(0, helper_parent)
+helpers_dir = sys.argv[2] if len(sys.argv) > 2 else "strategy_helpers"  # unused: no host import/exec happens here (issue #34)
 
-# .py.staging ファイルを扱うため、exec() でモジュールを作成
+# .py.staging ファイルを扱う。以前はここで exec() してモジュール化していたが、
+# 未信頼のAI生成候補をhost processでexec/importすること自体が issue #34 の脆弱性
+# だったため撤去した。以降このスクリプトは ast.parse のみを使う静的検証であり、
+# compile()/exec()/importlib で候補コードを実行することは一切しない。
 with open(target, 'r', encoding='utf-8') as f:
     source = f.read()
 
@@ -218,43 +212,135 @@ def check_suspicious_list_number_comparisons(source, filename):
 
 check_suspicious_list_number_comparisons(source, target)
 
-mod = types.ModuleType('strategy')
-exec(source, mod.__dict__)
 
-if not hasattr(mod, 'decide'):
-    print('ERROR: decide() not found')
-    sys.exit(1)
-sig = inspect.signature(mod.decide)
-params = list(sig.parameters.keys())
-if len(params) < 2:
-    print(f'ERROR: decide() needs 2+ params, got {len(params)}: {params}')
-    sys.exit(1)
+def _main_guard_descendant_ids(tree):
+    """`if __name__ == "__main__":` はCLIスモークテスト専用のブロックで、AI改変
+    禁止ゾーン (strategy.py 本体のコメント参照) かつ decide() dispatch では一切
+    実行されない。deny gate の対象から除外する (例: そこでの open()/sys 利用は
+    正当)。除外は静的な構造マッチのみで、実行はしない。
+    """
+    skip_ids = set()
 
-def assert_decision(label, game_state, analysis):
-    result = mod.decide(game_state, analysis)
-    if not isinstance(result, dict):
-        print(f"ERROR: {label}: result is not dict: {type(result).__name__}")
-        sys.exit(1)
-    if "x" not in result:
-        print(f"ERROR: {label}: missing x: {result!r}")
-        sys.exit(1)
-    if "reason" not in result:
-        print(f"ERROR: {label}: missing reason: {result!r}")
-        sys.exit(1)
-    x = result["x"]
-    if not isinstance(x, (int, float)) or isinstance(x, bool):
-        print(f"ERROR: {label}: x is not numeric: {x!r}")
-        sys.exit(1)
-    if not -3.2 <= float(x) <= 3.2:
-        print(f"ERROR: {label}: x out of range: {x!r}")
-        sys.exit(1)
-    if not isinstance(result["reason"], str) or not result["reason"].strip():
-        print(f"ERROR: {label}: reason is not non-empty string: {result!r}")
+    def is_main_guard(node):
+        if not isinstance(node, ast.If):
+            return False
+        test = node.test
+        if not isinstance(test, ast.Compare) or len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+            return False
+        operands = [test.left] + list(test.comparators)
+        names = [o for o in operands if isinstance(o, ast.Name)]
+        consts = [o for o in operands if isinstance(o, ast.Constant)]
+        if len(names) != 1 or len(consts) != 1:
+            return False
+        return names[0].id == "__name__" and consts[0].value == "__main__"
+
+    for node in tree.body:
+        if is_main_guard(node):
+            for child in ast.walk(node):
+                skip_ids.add(id(child))
+    return skip_ids
+
+
+# allowlist方式: strategy.py / strategy_helpers / strategy_versions の既存の
+# 正当な候補が実際に使っているものだけを許可する (2026-09-04 実測で確認)。
+_AST_GATE_ALLOWED_IMPORT_MODULES = {
+    "math", "random", "typing", "dataclasses", "itertools", "functools",
+    "collections", "statistics", "enum",
+    "json", "sys",  # __main__ ガード内のCLIスモークテストのみで使用
+    "strategy_helpers", "analyze_board",
+}
+
+_AST_GATE_DENIED_CALL_NAMES = {
+    "eval", "exec", "compile", "__import__",
+    "open", "input", "breakpoint",
+    "globals", "vars", "locals",
+    "getattr", "setattr", "delattr", "hasattr",
+}
+
+_AST_GATE_DENIED_BARE_NAMES = {
+    "os", "subprocess", "socket", "shutil", "pathlib", "urllib", "requests",
+    "importlib", "ctypes", "pickle", "marshal", "pty", "tempfile", "shelve",
+    "sqlite3", "http", "ftplib", "smtplib", "__builtins__",
+}
+
+_AST_GATE_DUNDER_RE = re.compile(r"^__.+__$")
+
+
+def check_ast_deny_gate(source, filename):
+    """暫定deny gate (issue #34): 動的import、dunder探索、file/process/network系
+    callを含む候補をrejectする。ast.parse のみを使い、compile()/exec()/import で
+    候補コードを実行することは絶対にしない。
+    """
+    tree = ast.parse(source, filename=filename)
+    skip_ids = _main_guard_descendant_ids(tree)
+
+    def walk_relevant(node):
+        for child in ast.iter_child_nodes(node):
+            if id(child) in skip_ids:
+                continue
+            yield child
+            yield from walk_relevant(child)
+
+    violations = []
+    for node in walk_relevant(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import):
+                mod_names = [a.name.split(".")[0] for a in node.names]
+            else:
+                mod_names = [(node.module or "").split(".")[0]]
+            for m in mod_names:
+                if m not in _AST_GATE_ALLOWED_IMPORT_MODULES:
+                    violations.append(f"line {node.lineno}: import not allowlisted: {m!r}")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _AST_GATE_DENIED_CALL_NAMES:
+                violations.append(f"line {node.lineno}: denied call: {node.func.id}()")
+        elif isinstance(node, ast.Attribute):
+            if _AST_GATE_DUNDER_RE.match(node.attr):
+                violations.append(f"line {node.lineno}: dunder attribute access: .{node.attr}")
+            elif isinstance(node.value, ast.Name) and node.value.id == "sys" and node.attr == "modules":
+                violations.append(f"line {node.lineno}: denied attribute: sys.modules")
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in _AST_GATE_DENIED_BARE_NAMES or _AST_GATE_DUNDER_RE.match(node.id):
+                violations.append(f"line {node.lineno}: denied identifier: {node.id}")
+
+    if violations:
+        print("ERROR: ast-deny-gate rejected candidate:")
+        for v in violations[:20]:
+            print(f"  - {v}")
         sys.exit(1)
 
-empty_analysis_state = {"pieces": [], "next": {"type": 1, "r": 0.25}, "nextNext": {"type": 1, "r": 0.25}, "score": 0}
-assert_decision("empty-analysis", empty_analysis_state, {"results": [], "same_type": [], "reactor": {}})
-print(f'OK: decide({", ".join(params)})')
+
+check_ast_deny_gate(source, target)
+
+
+def check_decide_exists_via_ast(source, filename):
+    """decide() の存在・引数個数のみを AST で静的確認する。以前はここで exec した
+    モジュールに実データを渡して呼び出し、出力契約(x/reasonの型・範囲)まで検証
+    していたが、それは未信頼候補のhost exec そのものだったため issue #34 で撤去。
+    振る舞い検証はOS隔離runner (issue #35) が実装され次第そちらで行う。
+    """
+    tree = ast.parse(source, filename=filename)
+    decide_node = None
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "decide":
+            decide_node = node
+            break
+    if decide_node is None:
+        print("ERROR: decide() not found")
+        sys.exit(1)
+    args = decide_node.args
+    params = [a.arg for a in args.posonlyargs + args.args + args.kwonlyargs]
+    if args.vararg:
+        params.append(args.vararg.arg)
+    if args.kwarg:
+        params.append(args.kwarg.arg)
+    if len(params) < 2:
+        print(f"ERROR: decide() needs 2+ params, got {len(params)}: {params}")
+        sys.exit(1)
+    print(f'OK: decide({", ".join(params)})')
+
+
+check_decide_exists_via_ast(source, target)
 PYEOF
 	)
 	if [ $? -ne 0 ]; then
@@ -263,30 +349,15 @@ PYEOF
 		return 1
 	fi
 
+	# 2026-09-04 (#34): 以前はここで $target_file を `python3 "$target_file" "$GAME_STATE"`
+	# として host process 上で直接実行し、decide() の実出力契約を検証していた。これは
+	# 未信頼のAI生成候補をhostでそのままexecする経路そのものであり、issue #34の脆弱性
+	# だったため撤去した。振る舞い検証(実際にdecide()を呼んで出力を見る)はOS隔離runner
+	# (issue #35) が実装され次第、その中でのみ行う。ここまでの静的検証(構文/decide()存在/
+	# AST deny gate)を通過した候補のみが次段(validate_strategy_with_helpers の隔離runner
+	# 可否チェック)へ進む。
 	if [ -f "$GAME_STATE" ]; then
-		local test_out
-		# 2026-08-25 fix: target_file が tmp/state/ 等リポジトリ外にコピーされている場合
-		# (rollback 復元 validation)、python3 直接実行では script dir が sys.path[0] になり
-		# リポジトリ直下の strategy_helpers が import できず必ず失敗していた
-		# (ModuleNotFoundError → "accepted by policy" で validation が事実上無効化)。
-		# リポジトリルートを PYTHONPATH に足して本来の実行文脈に揃える。
-		test_out=$(PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" python3 "$target_file" "$GAME_STATE" 2>&1)
-		if [ $? -ne 0 ]; then
-			VALIDATE_ERROR="テスト実行失敗: $test_out"
-			log "[VALIDATE] $VALIDATE_ERROR"
-			return 1
-		fi
-		if ! echo "$test_out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'x' in d" 2>/dev/null; then
-			VALIDATE_ERROR="テスト出力にxフィールドなし: $test_out"
-			log "[VALIDATE] $VALIDATE_ERROR"
-			return 1
-		fi
-		if ! echo "$test_out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert isinstance(d.get('reason'), str) and d.get('reason').strip(); x=d.get('x'); assert isinstance(x,(int,float)) and not isinstance(x,bool) and -3.2 <= float(x) <= 3.2" 2>/dev/null; then
-			VALIDATE_ERROR="テスト出力契約違反: $test_out"
-			log "[VALIDATE] $VALIDATE_ERROR"
-			return 1
-		fi
-		log "[VALIDATE] テスト実行OK"
+		log "[VALIDATE] ランタイムsmoke testはhost execのため撤去済み (issue #34/#35)。静的検証のみで判定。"
 	fi
 
 	return 0
@@ -507,6 +578,14 @@ _write_host_integrity_snapshot() {
 	} >"$out_file"
 }
 
+# OS隔離runner (issue #35) が実装されるまでの暫定fail-closedゲート。
+# 常に「未導入」を返し、AI生成候補の自動適用を止める。他の関数からと違い、
+# 環境変数での上書きは意図的に提供しない — host execを許可する再有効化は
+# issue #35 実装によるコード変更でのみ行う。
+_strategy_isolated_runner_available() {
+	return 1
+}
+
 validate_strategy_with_helpers() {
 	local target_file="$1"
 	local helpers_dir="${2:-strategy_helpers}"
@@ -557,6 +636,12 @@ PYEOF
 			return 1
 		fi
 		log "[VALIDATE] strategy_helpers 検証OK"
+	fi
+
+	if ! _strategy_isolated_runner_available; then
+		VALIDATE_ERROR="OS隔離runner未導入のため自動適用をfail-closedで停止 (issue #34/#35): 静的検証(構文/decide()存在/AST deny gate)は通過したが、host上でAI候補を実行しないため適用は保留し、既存のknown-good strategyを維持する"
+		log "[VALIDATE] $VALIDATE_ERROR"
+		return 1
 	fi
 
 	return 0
