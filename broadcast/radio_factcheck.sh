@@ -142,6 +142,24 @@ print("")
 			"${RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP:-2}"
 }
 
+# _radio_factcheck_timeout_for_model MODEL DEFAULT_TIMEOUT_SEC
+#   fact-check 候補ごとのタイムアウト。opencode-go:omen-alpha は reasoning が重く、
+#   共通上限 120s では本番 3/3 がタイムアウトした実測 (2026-09-05。隔離実測で
+#   全文書き直しが 22-95s、同条件の muse-spark-1.3-contributor は 35-50s) が
+#   あるため専用の上限を使う。タイムアウト中は generation slot を占有し他
+#   コーナーの生成待ちが増えるため、延長は omen のみに限定する。
+_radio_factcheck_timeout_for_model() {
+	local model="$1" default_timeout_sec="$2"
+	case "$model" in
+	opencode-go:omen-alpha)
+		printf '%s\n' "${RADIO_FACT_CHECK_OMEN_TIMEOUT_SEC:-240}"
+		;;
+	*)
+		printf '%s\n' "$default_timeout_sec"
+		;;
+	esac
+}
+
 _radio_fact_check_body() {
 	local corner_name="$1" prompt_context="$2" talk_body="$3" selected_news="${4:-}"
 	if ! _radio_should_fact_check "$corner_name"; then
@@ -226,8 +244,10 @@ PROMPT
 		*" $model "*) continue ;;
 		esac
 		seen_models="${seen_models}${model} "
-		log "[RADIO:${corner_name}] fact-check中... (${model}, timeout=${factcheck_timeout}s)" >&2
-		raw_output=$(RADIO_OPENCODE_TIMEOUT="$factcheck_timeout" _run_opencode_radio "$model" "$prompt_file")
+		local model_timeout
+		model_timeout=$(_radio_factcheck_timeout_for_model "$model" "$factcheck_timeout")
+		log "[RADIO:${corner_name}] fact-check中... (${model}, timeout=${model_timeout}s)" >&2
+		raw_output=$(RADIO_OPENCODE_TIMEOUT="$model_timeout" _run_opencode_radio "$model" "$prompt_file")
 		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 		issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
 		if _is_valid_radio_talk "$safe_script"; then
