@@ -1205,6 +1205,14 @@ _build_comment_ops_context() {
 	local brief_file="${COMMENT_OPS_BRIEF_FILE:-$ELOOP_LIB_DIR/prompts/ops_brief.md}"
 	local ab_state_file="${AB_STATE_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/ab_state.json}"
 	local prediction_paused_file="${PREDICTION_WORKER_PAUSED_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/prediction_worker.paused}"
+	# ゲーム切替の文脈。docich の canonical が「いま画面に出ているゲーム」を持ち、
+	# Soren 側 lifecycle 状態が切替手続きの進行状況を持つ。コメント返しは
+	# メイン画面のゲームに合わせ、ソレンゲームの話は画面が変わってもソレン文脈で答える。
+	local docich_canonical_file="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run/game-switch/canonical.json}"
+	local soren_lifecycle_dir="${SOREN_GAME_LIFECYCLE_DIR:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/game_lifecycle}"
+	local soren_game_state_file="${SOREN_GAME_STATE_FILE:-$ELOOP_LIB_DIR/game_state.json}"
+	local soren_game_count_file="${SOREN_GAME_COUNT_FILE:-$ELOOP_LIB_DIR/game_count.txt}"
+	local soren_improve_paused_file="${SOREN_IMPROVE_PAUSED_FILE:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_daemon.paused}"
 	# soren91(メリケンAI) の有効/無効は .env を直に見る。worker のシェル環境は
 	# 起動時スナップショットで、無効化後も SOREN91_*=1 が残ることがあるため
 	# （2026-08-27 の issue-23 で実測）。読むのはこの 2 つのトグルだけ。
@@ -1219,11 +1227,16 @@ _build_comment_ops_context() {
 		"$ab_state_file" \
 		"$brief_file" \
 		"$host_mode" \
-		"${COMMENT_OPS_CONTEXT_MAX_CHARS:-900}" \
+		"${COMMENT_OPS_CONTEXT_MAX_CHARS:-1200}" \
 		"${COMMENT_OPS_BRIEF_ITEMS:-3}" \
 		"$prediction_paused_file" \
 		"$soren91_enabled" \
-		"$soren91_daily_enabled" <<'PY'
+		"$soren91_daily_enabled" \
+		"$docich_canonical_file" \
+		"$soren_lifecycle_dir" \
+		"$soren_game_state_file" \
+		"$soren_game_count_file" \
+		"$soren_improve_paused_file" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1236,11 +1249,22 @@ def as_int(raw, fallback):
     except Exception:
         return fallback
 
-max_chars = max(200, as_int(sys.argv[6], 900))
+max_chars = max(200, as_int(sys.argv[6], 1200))
 brief_items = max(0, as_int(sys.argv[7], 3))
 prediction_paused_file = sys.argv[8] if len(sys.argv) > 8 else ""
 soren91_enabled = sys.argv[9] if len(sys.argv) > 9 else ""
 soren91_daily_enabled = sys.argv[10] if len(sys.argv) > 10 else ""
+docich_canonical_file = sys.argv[11] if len(sys.argv) > 11 else ""
+soren_lifecycle_dir = sys.argv[12] if len(sys.argv) > 12 else ""
+soren_game_state_file = sys.argv[13] if len(sys.argv) > 13 else ""
+soren_game_count_file = sys.argv[14] if len(sys.argv) > 14 else ""
+soren_improve_paused_file = sys.argv[15] if len(sys.argv) > 15 else ""
+
+GAME_BLURBS = {"sorengame": "ソ連ゲーム(Unity WebGL)。AIが戦略を改善しながらプレイし、ロシア建国・ソ連建国を目指す", "robots": "Robots(bsdgames)。ロボットの追跡を避けるターン制パズル(いまは手動操作)", "nethack": "NetHack(CLIローグライク)", "hanjuku-hero": "半熟英雄(SFCエミュレータ)"}
+ROUTING = (
+    "- 返答の話題はメイン画面のゲームに合わせる。コメントがソ連ゲームの話"
+    "(ソ連建国・スコア・戦略改善)なら、画面が違ってもソレンゲームの話として答える"
+)
 
 def load_json(path):
     if not path:
@@ -1253,6 +1277,56 @@ def load_json(path):
 
 lines = []
 
+# --- ゲーム/切替の文脈（メイン画面がどのゲームか、切替手続きの進行状況） ---
+current_game = ""
+canon = load_json(docich_canonical_file)
+active = canon.get("active")
+if isinstance(active, dict):
+    current_game = str(active.get("game") or "").strip()
+
+lifecycle_status = ""
+req = load_json(str(Path(soren_lifecycle_dir) / "request.json")) if soren_lifecycle_dir else {}
+ack = load_json(str(Path(soren_lifecycle_dir) / "ack.json")) if soren_lifecycle_dir else {}
+if isinstance(req, dict) and req.get("request_id") and isinstance(ack, dict):
+    lifecycle_status = str(ack.get("status") or "")
+
+if host_mode == "soren91":
+    lines.append("- いまメイン画面はメリケンAIのソ連ゲーム91(対戦版)")
+else:
+    if current_game:
+        blurb = GAME_BLURBS.get(current_game, "")
+        lines.append("- いまのメイン画面: " + current_game + (f" — {blurb}" if blurb else ""))
+    elif lifecycle_status == "stopped":
+        lines.append("- いまのメイン画面: ゲーム切替後の準備中(旧ソレンゲームは停止済み)")
+    elif lifecycle_status in ("boundary", "stopping"):
+        lines.append("- いまのメイン画面: ソレンゲーム(ただいま切替手続き中)")
+    else:
+        lines.append("- いまのメイン画面: ソレンゲーム(docich管理外で継続中)")
+    lines.append(ROUTING)
+    if lifecycle_status == "boundary":
+        lines.append("- 切替手続き: ソ連ゲームの試合境界を確認済み、資源停止は明示stop待ち")
+    elif lifecycle_status == "stopping":
+        lines.append("- 切替手続き: ソレンゲームの資源を停止している(間もなく次のゲームへ)")
+    elif lifecycle_status == "stopped":
+        gs = load_json(soren_game_state_file) if soren_game_state_file else {}
+        score = gs.get("score")
+        count = ""
+        if soren_game_count_file:
+            try:
+                count = Path(soren_game_count_file).read_text(encoding="utf-8", errors="ignore").strip()
+            except Exception:
+                count = ""
+        extra = ""
+        if isinstance(score, (int, float)):
+            extra = f" 最終試合score={int(score)}"
+            if count.isdigit():
+                extra += f" / 通算{count}試合"
+        lines.append("- 切替完了: ソレンゲームは停止済み(" + extra.strip() + ")。ソ連ゲームの話は過去形で答える")
+    elif lifecycle_status == "timeout":
+        lines.append("- 切替要求は期限切れ: ソレンゲームを継続")
+    elif lifecycle_status == "failed":
+        lines.append("- 切替手続きは失敗: 旧ゲームを継続(復旧待ち)")
+
 work = load_json(work_file)
 if work.get("active"):
     title = str(work.get("title") or "").strip()
@@ -1263,23 +1337,29 @@ if work.get("active"):
 else:
     lines.append("- 画面右上の作業中バナー: 出ていない(いま人手の作業はしていない)")
 
+soren_paused = bool(soren_improve_paused_file) and Path(soren_improve_paused_file).exists()
 improve = load_json(improve_file)
 improve_status = str(improve.get("status") or "").strip().lower()
-if improve_status and improve_status not in ("idle", "done", "finished"):
+if soren_paused:
+    lines.append("- ソ連ゲームの戦略改善: 手動休止中(オペレーターの指示で停止。再開までは動かない)")
+elif improve_status and improve_status not in ("idle", "done", "finished"):
     phase = str(improve.get("phase") or "").strip()[:40]
     lines.append("- 中華AIの戦略改善: 実行中" + (f"({phase})" if phase else ""))
 else:
     lines.append("- 中華AIの戦略改善: 待機中(いまは改善に入っていない)")
 
-if host_mode == "soren91":
-    lines.append("- いまメイン画面はメリケンAIのソ連ゲーム91(対戦版)")
-elif soren91_enabled == "0":
-    # 2026-08-27: 描画コストが足りず soren91 は無効化された。登場する前提で話させない。
-    lines.append("- メリケンAI(ソ連ゲーム91)はいま停止中で登場しない。メイン画面は私(中華AI)のソ連ゲーム本編")
-elif soren91_daily_enabled == "1":
-    lines.append("- メリケンAIは待機中(戦略改善中の代打と1日1回の枠で登場)。メイン画面は私(中華AI)のソ連ゲーム本編")
-else:
-    lines.append("- メリケンAIは待機中(戦略改善に入った時だけ登場)。メイン画面は私(中華AI)のソ連ゲーム本編")
+if host_mode != "soren91" and not (
+    current_game and current_game != "sorengame"
+):
+    # メイン画面がソレンゲーム本編(または未確定)のときだけ、ソ連ゲームの前提を補足する。
+    # 別ゲームが画面に出ているときは「メイン画面はソ連ゲーム本編」が誤りになるため抑える。
+    if soren91_enabled == "0":
+        # 2026-08-27: 描画コストが足りず soren91 は無効化された。登場する前提で話させない。
+        lines.append("- メリケンAI(ソ連ゲーム91)はいま停止中で登場しない")
+    elif soren91_daily_enabled == "1":
+        lines.append("- メリケンAIは待機中(戦略改善中の代打と1日1回の枠で登場)")
+    else:
+        lines.append("- メリケンAIは待機中(戦略改善に入った時だけ登場)")
 
 ab = load_json(ab_file)
 ab_games = ab.get("games_recorded")
