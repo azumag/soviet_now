@@ -158,7 +158,7 @@ if [ -n "$TOML" ] && [ -z "$CAT_ID_ARG" ] && [ ! -f "$TOML" ]; then
 	_log "ERROR: game toml not found: $TOML"; exit 1
 fi
 
-read -r CAT_ID CAT_NAME PREFIX <<EOF
+IFS=$'\t' read -r CAT_ID CAT_NAME PREFIX <<EOF
 $(python3 - "$TOML" "$CAT_ID_ARG" "$CAT_NAME_ARG" "$PREFIX_ARG" <<'PY'
 import sys, tomllib
 toml_path, id_arg, name_arg, prefix_arg = sys.argv[1:5]
@@ -179,7 +179,7 @@ if not cat_id and toml_path and toml_path != "":
         prefix = str(tw.get("title_prefix") or "")
 if cat_id and not cat_id.isdigit():
     print(f"ERR category_id must be numeric: {cat_id!r}", file=sys.stderr); raise SystemExit(1)
-print(cat_id, cat_name, prefix)
+print(f"{cat_id}\t{cat_name}\t{prefix}")
 PY
 )
 EOF
