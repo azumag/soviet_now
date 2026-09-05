@@ -317,6 +317,21 @@ CODEX_BUG_DISPATCH_DEDUP_FILE="$TMP_STATE_DIR/codex_bug_dispatch_hashes.log"
 CODEX_BUG_DISPATCH_LAST_FILE="$TMP_STATE_DIR/codex_bug_dispatch_last.ts"
 CODEX_BUG_DISPATCH_LOG_DIR="$TMP_DEBUG_DIR/codex_bug_dispatch"
 
+# docich#33: read-only診断パイプラインのingestion(event記録+restricted
+# spool分離)。CODEX_BUG_DISPATCH_ENABLED(#32で既定停止、agent自動起動用)
+# とは完全に独立。ここは診断runner/agentを一切起動しない「記録のみ」の
+# 経路なので既定で有効。生コメントはREDACTED_DIAG_SPOOL_DIRにのみ短期TTLで
+# 書かれ、REDACTED_DIAG_EVENTS_DIRにはevent_id/category/time/
+# redacted_context_hashのみが恒久保存される。
+REDACTED_DIAG_INGEST_ENABLED="${REDACTED_DIAG_INGEST_ENABLED:-1}"
+REDACTED_DIAG_EVENTS_DIR="${REDACTED_DIAG_EVENTS_DIR:-tmp/diag_events}"
+REDACTED_DIAG_SPOOL_DIR="${REDACTED_DIAG_SPOOL_DIR:-tmp/diag_restricted_spool}"
+REDACTED_DIAG_SPOOL_TTL_SEC="${REDACTED_DIAG_SPOOL_TTL_SEC:-86400}"
+# 生コメントspoolのTTL失効エントリを自動削除する間隔(opportunistic gc;
+# start_all.sh側にcronを追加せず、ingestion呼び出しのたびに間隔判定する)。
+REDACTED_DIAG_SPOOL_GC_INTERVAL_SEC="${REDACTED_DIAG_SPOOL_GC_INTERVAL_SEC:-3600}"
+REDACTED_DIAG_SPOOL_GC_LAST_FILE="$TMP_STATE_DIR/redacted_diag_spool_gc_last.ts"
+
 IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
 IMPROVE_LOCK_FILE="$ELOOP_LIB_DIR/tmp/improve.lock"
 # 改善ジョブ開始時の入力バッチを別ファイルへ原子的に退避する。
