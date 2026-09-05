@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fact-check 候補ごとのタイムアウト解決を検証する。
 # 2026-09-05 実測: opencode-go:omen-alpha は共通上限 120s で本番 3/3 タイムアウト
-# (隔離実測 22-95s、muse 同条件 35-50s)。omen 専用上限 (既定 240s) への解決と、
+# (隔離実測 22-95s、muse 同条件 35-50s)。omen 専用上限 (既定 360s) への解決と、
 # 他候補が共通上限をそのまま受けることをテスト対象にする。
 set -u
 
@@ -19,13 +19,13 @@ sed -n '/^_radio_factcheck_timeout_for_model()/,/^}/p' "$SRC" > "$TMP/fn_timeout
 [ -s "$TMP/fn_timeout.sh" ] || { echo "not ok - 関数が抽出できない"; exit 1; }
 . "$TMP/fn_timeout.sh"
 
-# --- omen は専用上限 (既定 240s) ---
+# --- omen は専用上限 (既定 360s) ---
 t=$(_radio_factcheck_timeout_for_model "opencode-go:omen-alpha" 120)
-[ "$t" = "240" ] && ok "omen default 240" || not_ok "omen default 240 (got $t)"
+[ "$t" = "360" ] && ok "omen default 360" || not_ok "omen default 360 (got $t)"
 
 # --- .env / 環境での上書き ---
-t=$(RADIO_FACT_CHECK_OMEN_TIMEOUT_SEC=300 _radio_factcheck_timeout_for_model "opencode-go:omen-alpha" 120)
-[ "$t" = "300" ] && ok "omen env override 300" || not_ok "omen env override 300 (got $t)"
+t=$(RADIO_FACT_CHECK_OMEN_TIMEOUT_SEC=420 _radio_factcheck_timeout_for_model "opencode-go:omen-alpha" 120)
+[ "$t" = "420" ] && ok "omen env override 420" || not_ok "omen env override 420 (got $t)"
 
 # --- 他候補は共通上限をそのまま使う ---
 for m in "opencode:muse-spark-1.3-contributor-free" "minimax-api:MiniMax-M3" "codex:minimax-m3" "opencode-go:muse-spark-1.3-contributor"; do

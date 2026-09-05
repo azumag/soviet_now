@@ -146,13 +146,15 @@ print("")
 #   fact-check 候補ごとのタイムアウト。opencode-go:omen-alpha は reasoning が重く、
 #   共通上限 120s では本番 3/3 がタイムアウトした実測 (2026-09-05。隔離実測で
 #   全文書き直しが 22-95s、同条件の muse-spark-1.3-contributor は 35-50s) が
-#   あるため専用の上限を使う。タイムアウト中は generation slot を占有し他
-#   コーナーの生成待ちが増えるため、延長は omen のみに限定する。
+#   あるため専用の上限を使う。さらに 240s でも本番 1/1 失敗 (step 0 で約100秒の
+#   reasoning 後に本文なしで step 終了、agent loop の step 1 再開を 240s で kill、
+#   tool 呼び出しなし) したため 360s へ延長。タイムアウト中は generation slot を
+#   占有し他コーナーの生成待ちが増えるため、延長は omen のみに限定する。
 _radio_factcheck_timeout_for_model() {
 	local model="$1" default_timeout_sec="$2"
 	case "$model" in
 	opencode-go:omen-alpha)
-		printf '%s\n' "${RADIO_FACT_CHECK_OMEN_TIMEOUT_SEC:-240}"
+		printf '%s\n' "${RADIO_FACT_CHECK_OMEN_TIMEOUT_SEC:-360}"
 		;;
 	*)
 		printf '%s\n' "$default_timeout_sec"
