@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-DEFAULT_COMMENT_MAIN = "codex:deepseek-v4-flash"
+DEFAULT_COMMENT_MAIN = "opencode-go:deepseek-v4-flash"
 DEFAULT_COMMENT_FALLBACK = "codex:minimax-m3"
 
 
