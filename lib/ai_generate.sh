@@ -719,6 +719,9 @@ _ai_call_opencode_unqueued() {
 	local timeout_sec="${4:-90}"
 	local model="opencode/${agent#opencode:}"
 	case "$agent" in
+	vercel:*) model="vercel/${agent#vercel:}" ;;
+	amd:*) model="amd-token-factory/${agent#amd:}" ;;
+	minimax-api:*) model="minimax-api/${agent#minimax-api:}" ;;
 	opencode-go/*) model="$agent" ;;
 	opencode-go:*) model="opencode-go/${agent#opencode-go:}" ;;
 	opencode/*) model="$agent" ;;
@@ -731,6 +734,15 @@ _ai_call_opencode_unqueued() {
 	[ -x "$opencode_bin" ] || opencode_bin="opencode"
 	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
+	local opencode_agent_args=()
+	case "$agent" in
+	vercel:*|amd:*|minimax-api:*)
+		case "$label" in
+		*prepass*|*PREPASS*|*RESEARCH*) opencode_agent_args=(--agent soren-research) ;;
+		*) opencode_agent_args=(--agent soren-lite) ;;
+		esac
+		;;
+	esac
 	out_file=$(mktemp /tmp/ai_opencode_out_XXXXXXXX)
 	stderr_file=$(mktemp /tmp/ai_opencode_stderr_XXXXXXXX)
 	case "$timeout_sec" in
@@ -743,12 +755,12 @@ _ai_call_opencode_unqueued() {
 	# なる一過性の障害が多いため、タイムアウトとレート制限以外は1回だけ
 	# 同一モデルで再試行する（OPENCODE_ABORT_RETRY=0 で無効化）。
 	local _oc_attempts=1 _oc_try=1 _oc_start _oc_elapsed
-	if [ "${OPENCODE_ABORT_RETRY:-1}" = "1" ]; then
+	if [ "${OPENCODE_ABORT_RETRY:-1}" = "1" ] && [[ "$agent" != vercel:* ]]; then
 		_oc_attempts=2
 	fi
 	while :; do
 		_oc_start=$(date +%s)
-		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 		rc=$?
 		_oc_elapsed=$(( $(date +%s) - _oc_start ))
 		cleaned=""
@@ -957,6 +969,16 @@ _ai_agent_spec_valid() {
 	opencode-go:*)
 		model="${agent#opencode-go:}"
 		;;
+	vercel:*)
+		[ -n "${VERCEL_FREE_AGENTS:-}" ] || return 1
+		model="${agent#vercel:}"
+		;;
+	amd:*)
+		model="${agent#amd:}"
+		;;
+	minimax-api:*)
+		model="${agent#minimax-api:}"
+		;;
 	local)
 		return 0
 		;;
@@ -974,11 +996,15 @@ _ai_agent_spec_valid() {
 #   agent 識別子に基づいて適切なバックエンドを呼ぶ。
 #   stdout: 生成テキスト
 _ai_resolved_model_from_agent() {
-	local agent="${1:-}" resolved_model="$agent"
+	local agent="${1:-}" resolved_model
+	resolved_model="$agent"
 	case "$agent" in
 	codex:*) resolved_model="${agent#codex:}" ;;
 	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
 	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
+	vercel:*) resolved_model="vercel/${agent#vercel:}" ;;
+	amd:*) resolved_model="amd-token-factory/${agent#amd:}" ;;
+	minimax-api:*) resolved_model="minimax-api/${agent#minimax-api:}" ;;
 	local:*) resolved_model="${agent#local:}" ;;
 	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
 	*) resolved_model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}" ;;
@@ -1052,8 +1078,11 @@ _ai_dispatch() {
 		[ "$agent" = "local" ] || _local_model="${agent#local:}"
 		_ai_call_local_llm "$label" "$prompt_file" "$_local_model" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
-	opencode-go:*|opencode:*)
+	opencode-go:*|opencode:*|vercel:*|amd:*|minimax-api:*)
 		local _opencode_timeout="$timeout_override"
+		if [[ "$agent" == vercel:* ]]; then
+			_opencode_timeout="${VERCEL_OPENCODE_TIMEOUT:-20}"
+		fi
 		if [[ "$label" == COMMENT* ]] && [ -z "$_opencode_timeout" ]; then
 			_opencode_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
 		fi
@@ -1321,6 +1350,15 @@ _ai_backoff_sec_for_agent() {
 		;;
 	opencode:*)
 		model="${agent#opencode:}"
+		;;
+	vercel:*)
+		model="vercel/${agent#vercel:}"
+		;;
+	amd:*)
+		model="${agent#amd:}"
+		;;
+	minimax-api:*)
+		model="${agent#minimax-api:}"
 		;;
 	*)
 		model="$agent"

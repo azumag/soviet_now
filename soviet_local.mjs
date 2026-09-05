@@ -16,6 +16,10 @@ import {
   loadDirectOverlayConfig,
 } from './lib/direct_overlay.mjs';
 import { startTwicaOverlayProxy } from './lib/twica_overlay_proxy.mjs';
+import {
+  createStaticFileServer,
+  resolveStaticBindAddress,
+} from './lib/static_file_server.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,6 +81,10 @@ const AUDIO_SINK_CACHE_FILE = 'tmp/state/chrome_audio_sink_id.txt';
 // 切替と4種類のSEタイミングは external_game_audio.mjs に集約する。
 const EXTERNAL_GAME_AUDIO_CONFIG = loadExternalGameAudioConfig();
 const SERVE_PORT = parseInt(process.env.SOREN_SERVE_PORT || '8080', 10);
+// Loopback by default: this server has no auth/TLS of its own, so it must not be
+// reachable off-host. A reverse proxy in front of it (out of scope here) is the
+// only supported way to expose the game beyond this machine.
+const STATIC_BIND_ADDRESS = resolveStaticBindAddress(process.env);
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 const USER_DATA_DIR = process.env.SOREN_LOCAL_USER_DATA_DIR || path.join(__dirname, 'tmp', 'soviet_local_chromium_profile');
@@ -844,18 +852,6 @@ async function updateObsGameSource() {
   }
 }
 
-// MIME types for Unity WebGL build
-const MIME_TYPES = {
-  '.html': 'text/html',
-  '.js': 'application/javascript',
-  '.css': 'text/css',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.data': 'application/octet-stream',
-  '.wasm': 'application/wasm',
-  '.gz': null, // handled specially
-};
-
 async function applyUnityVolume(page, label, objectName, methodName, volume, attempts = 10) {
   if (volume == null || !Number.isFinite(volume)) return { configured: false, applied: false };
 
@@ -903,11 +899,17 @@ async function installUnityVolumeReapply(page) {
   }, { bgmVolume, seVolume, intervalMs: UNITY_VOLUME_REAPPLY_MS });
 }
 
-// Custom static file server that handles .gz files with correct Content-Encoding
+// Hardened static file server (docich issue #36): binds to loopback only by
+// default, enforces GET/HEAD + an extension allowlist, and resolves every
+// request path through a canonical-path containment check (lib/static_file_server.mjs)
+// before touching the filesystem. This function only wires that generic
+// server to soviet_local's own overlay routes and the Unity canvas-size
+// rewrite; it does not itself decide what is safe to serve.
 function startServer() {
-  return new Promise((resolve) => {
-    const server = http.createServer((req, res) => {
-      const requestPath = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+  const { listen } = createStaticFileServer({
+    buildDir: BUILD_DIR,
+    bindAddress: STATIC_BIND_ADDRESS,
+    beforeStatic(req, res, requestPath) {
       if (DIRECT_OVERLAY_CONFIG.enabled
         && DIRECT_OVERLAY_CONFIG.broadcast?.stateRoute === requestPath) {
         const noCache = {
@@ -923,7 +925,7 @@ function startServer() {
           res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', ...noCache });
           res.end(JSON.stringify({ version: 1, error: 'broadcast overlay state unavailable' }));
         }
-        return;
+        return true;
       }
       const directOverlaySurface = DIRECT_OVERLAY_CONFIG.enabled
         ? DIRECT_OVERLAY_CONFIG.surfaces.find((item) => item.route === requestPath)
@@ -941,53 +943,22 @@ function startServer() {
         } else {
           res.end(directOverlayIdleHtml());
         }
-        return;
+        return true;
       }
-      let filePath = path.join(BUILD_DIR, req.url === '/' ? 'index.html' : req.url);
-      filePath = decodeURIComponent(filePath);
-
-      if (!fs.existsSync(filePath)) {
-        res.writeHead(404);
-        res.end('Not found');
-        return;
-      }
-
-      const ext = path.extname(filePath);
-
-      const noCache = {
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-      };
-
-      if (ext === '.gz') {
-        // Serve .gz files with Content-Encoding: gzip and correct Content-Type
-        const innerExt = path.extname(filePath.slice(0, -3)); // e.g. .js from .js.gz
-        const contentType = MIME_TYPES[innerExt] || 'application/octet-stream';
-        res.writeHead(200, {
-          'Content-Type': contentType,
-          'Content-Encoding': 'gzip',
-          ...noCache,
-        });
-      } else {
-        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-        res.writeHead(200, { 'Content-Type': contentType, ...noCache });
-      }
-
+      return false;
+    },
+    rewriteFile(filePath) {
       if (GAME_INTERNAL_SIZE && path.basename(filePath) === 'index.html') {
         const html = fs.readFileSync(filePath, 'utf8');
-        const body = rewriteUnityCanvasSize(html, GAME_INTERNAL_SIZE);
-        res.end(body);
-        return;
+        return rewriteUnityCanvasSize(html, GAME_INTERNAL_SIZE);
       }
-
-      fs.createReadStream(filePath).pipe(res);
-    });
-
-    server.listen(SERVE_PORT, () => {
-      resolve(server);
-    });
+      return null;
+    },
+    onStartupInfo(info) {
+      console.log(`Static server bound to ${info.boundAddress}:${info.boundPort} (family=${info.boundFamily}, document root hash=${info.documentRootHash})`);
+    },
   });
+  return listen(SERVE_PORT);
 }
 
 // Read commands from commands.txt (same format as soviet_game.mjs)
@@ -1468,6 +1439,12 @@ async function runLocalController() {
 
   console.log('=== Soren Local Game Controller ===');
 
+  // Keep the literal 'localhost' host here (not '127.0.0.1'/STATIC_BIND_ADDRESS):
+  // chrome_audio_player.mjs, main_audio_route_watchdog.mjs, screenshot_bridge.mjs
+  // and tools/soren91_iso_probe.mjs all locate this page by matching
+  // `page.url().startsWith('http://localhost:8080')`. Chromium's own
+  // happy-eyeballs handling of 'localhost' resolving to both loopback
+  // addresses is what makes navigation still reach STATIC_BIND_ADDRESS.
   const gameOrigin = `http://localhost:${SERVE_PORT}`;
   let speakerPermissionSession = null;
   const grantAudioPermissions = async () => {
