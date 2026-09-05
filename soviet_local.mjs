@@ -2578,7 +2578,11 @@ async function runLocalController() {
       // Resume is an explicit future operation.  Until the broker and common
       // overlay service have both acknowledged it, keep the old page quiescent
       // instead of guessing that a reload is safe.
-      await page.waitForTimeout(250);
+      // A failed stop may have closed the browser before entering this state
+      // (E2E: overlay died mid-stop).  page.waitForTimeout on the closed page
+      // throws and crashes the parked bridge with BRIDGE-FATAL, so the
+      // quiescent wait uses a plain timer that never touches the page.
+      await new Promise((resolve) => setTimeout(resolve, 250));
       continue;
     }
 
