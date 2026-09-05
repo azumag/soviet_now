@@ -37,6 +37,7 @@ POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 _STOPPED=0
 _RELOAD_REQUESTED=0
 _HEARTBEAT_PID=""
+_TERMINATED_BACKGROUND_JOB_COUNT=0
 _LAST_GAME_NUM=""
 _LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
 _SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
@@ -78,20 +79,48 @@ _dump_diag() {
 	} >>"$_DIAG_LOG" 2>&1 || true
 }
 
+# ラジオ生成は scheduler -> timed-corner wrapper -> AI command のように
+# 複数段のバックグラウンドプロセスを作る。直下の jobs だけを止めると孫以下が
+# 古いモデルチェーンを保持したまま残り、reload 後も旧providerを呼び続ける。
+_job_tree_pids() {
+	local parent_pid="${1:-}" child_pid
+	case "$parent_pid" in
+	'' | *[!0-9]*) return 0 ;;
+	esac
+	for child_pid in $(pgrep -P "$parent_pid" 2>/dev/null || true); do
+		_job_tree_pids "$child_pid"
+	done
+	printf '%s\n' "$parent_pid"
+}
+
+_terminate_background_jobs() {
+	local include_heartbeat="${1:-0}" root_pid pid pids="" count=0
+	_TERMINATED_BACKGROUND_JOB_COUNT=0
+	for root_pid in $(jobs -p); do
+		if [ "$include_heartbeat" != "1" ] && [ -n "$_HEARTBEAT_PID" ] && [ "$root_pid" = "$_HEARTBEAT_PID" ]; then
+			continue
+		fi
+		pids="$pids $(_job_tree_pids "$root_pid")"
+	done
+	for pid in $pids; do
+		kill -TERM "$pid" 2>/dev/null || true
+		count=$((count + 1))
+	done
+	_TERMINATED_BACKGROUND_JOB_COUNT="$count"
+	[ "$count" -gt 0 ] || return 0
+	sleep 1
+	for pid in $pids; do
+		kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+	done
+}
+
 _cleanup() {
 	[ "$_STOPPED" -eq 1 ] && return
 	_STOPPED=1
 	# Corner generators are background jobs of this shell. Without this,
 	# a worker restart leaves them running and they can enqueue duplicate
 	# results after the replacement worker has started.
-	local job_pid
-	for job_pid in $(jobs -p); do
-		kill -TERM "$job_pid" 2>/dev/null || true
-	done
-	sleep 1
-	for job_pid in $(jobs -p); do
-		kill -KILL "$job_pid" 2>/dev/null || true
-	done
+	_terminate_background_jobs 1 >/dev/null || true
 	local active_pid=""
 	active_pid=$(cat "$PID_FILE" 2>/dev/null || true)
 	if [ "$active_pid" != "$$" ]; then
@@ -119,6 +148,12 @@ _request_reload() {
 _reload_runtime() {
 	[ "$_RELOAD_REQUESTED" -eq 1 ] || return 0
 	_RELOAD_REQUESTED=0
+	local terminated=0
+	# jobs は現在の worker shell のジョブ表を見る必要があるため、
+	# command substitution の subshell 内では実行しない。
+	_terminate_background_jobs 0
+	terminated="${_TERMINATED_BACKGROUND_JOB_COUNT:-0}"
+	[ "${terminated:-0}" -gt 0 ] && _log "reload: stale background process tree stopped (${terminated} processes)"
 	if [ -f .env ]; then
 		set -a
 		. ./.env
