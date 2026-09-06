@@ -338,6 +338,38 @@ _radio_deferred_queue_count() {
 	find "$queue_dir" -maxdepth 1 -name 'radio_*.txt' -type f 2>/dev/null | wc -l | tr -d ' '
 }
 
+# 完了済み/中断済みの事前合成で本文が消えた後も ready.wav だけ残ると、
+# 数十MB級の音声キャッシュが無期限に蓄積する。queue本文(.txt)または再生中
+# (.playing)が存在する世代は必ず保持し、それ以外の古いrender artifactだけを
+# grace period後に回収する。
+_radio_cleanup_orphan_render_artifacts() {
+	local queue_dir="${RADIO_DEFERRED_QUEUE_DIR:-tmp/.radio_deferred_queue}"
+	local ttl="${RADIO_ORPHAN_RENDER_TTL_SEC:-86400}" now wav base mtime age removed=0
+	[ -d "$queue_dir" ] || return 0
+	case "$ttl" in '' | *[!0-9]*) ttl=86400 ;; esac
+	now=$(date +%s)
+	for wav in "$queue_dir"/radio_*.ready.wav; do
+		[ -f "$wav" ] || continue
+		base="${wav%.ready.wav}"
+		[ -f "${base}.txt" ] && continue
+		[ -f "${base}.playing" ] && continue
+		mtime=$(stat -f %m "$wav" 2>/dev/null) \
+			|| mtime=$(stat -c %Y "$wav" 2>/dev/null) \
+			|| mtime=""
+		case "$mtime" in '' | *[!0-9]*) continue ;; esac
+		age=$((now - mtime))
+		[ "$age" -lt 0 ] && age=0
+		[ "$age" -le "$ttl" ] && continue
+		rm -f "$wav" "${wav}.tmp" "${base}.render_meta" "${base}.render_retry" "${base}.rendering" 2>/dev/null || true
+		rm -rf "${wav}.bundle" 2>/dev/null || true
+		removed=$((removed + 1))
+	done
+	if [ "$removed" -gt 0 ]; then
+		log "[RADIO:deferred] orphan render cache cleanup: ${removed} item(s)"
+	fi
+	return 0
+}
+
 _enqueue_deferred_radio_talk() {
 	local talk_file="$1" game_num="$2" corner_name="$3" expected_mode="${4:-}" history_line="${5:-}"
 	[ -s "$talk_file" ] || return 1
@@ -662,6 +694,7 @@ _run_jiji_corner_guarded() {
 }
 
 _play_deferred_radio_queue_once() {
+	_radio_cleanup_orphan_render_artifacts
 	# コメント未消化がある間は deferred ラジオを再生しない
 	local comment_queued=0 comment_playing=0 comment_total=0
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
