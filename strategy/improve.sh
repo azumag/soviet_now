@@ -1,56 +1,18 @@
 # strategy/improve.sh - improve_state管理, accumulate, trigger_adaptive_improvement
 
 
-#=== spawn 排他 mutex (dual-spawner 二重起動レース防止) ===
-# mkdir は POSIX atomic。owner ファイルに PID を記録し、解放/stale 回収は
-# 所有者一致時のみ実行 (他 spawner の新規 lock を消さない)。
-
-# 取得試行。成功で 0、別 spawner が保持中で取得不可なら 1。
+#=== spawn 排他 mutex (kernel-lease-v1) ===
+# The directory preserves ordinary PID/TTL recovery. Every acquire/release also
+# holds the permanent adjacent .lease inode; a policy installer holds that same
+# kernel lock for its WHOLE transaction, so TTL cannot reclaim its directory.
 _acquire_spawn_lock() {
-	local d="$IMPROVE_SPAWN_LOCK_DIR"
-	if mkdir "$d" 2>/dev/null; then
-		echo "$$" >"$d/owner" 2>/dev/null || true
-		return 0
-	fi
-	# 取得失敗 → stale 判定 (owner 死亡 or TTL 超過時のみ steal)
-	local owner_pid lk_m now age
-	owner_pid=$(cat "$d/owner" 2>/dev/null || echo "")
-	lk_m=$(stat -f %m "$d" 2>/dev/null) \
-		|| lk_m=$(stat -c %Y "$d" 2>/dev/null) \
-		|| lk_m=0
-	now=$(date +%s)
-	age=$((now - lk_m))
-	local stale=0
-	if [ -n "$owner_pid" ] && ! kill -0 "$owner_pid" 2>/dev/null; then
-		stale=1
-	elif [ "$lk_m" -gt 0 ] && [ "$age" -ge "${IMPROVE_SPAWN_LOCK_TTL:-90}" ]; then
-		stale=1
-	fi
-	if [ "$stale" -eq 1 ]; then
-		# steal 前に owner を再確認 (別 contender が既に再取得していたら触らない)
-		local owner_recheck
-		owner_recheck=$(cat "$d/owner" 2>/dev/null || echo "")
-		if [ "$owner_recheck" = "$owner_pid" ]; then
-			rm -rf "$d" 2>/dev/null || true
-			if mkdir "$d" 2>/dev/null; then
-				echo "$$" >"$d/owner" 2>/dev/null || true
-				log "[IMPROVE] stale spawn lock 回収し再取得 (旧owner=${owner_pid:-?})"
-				return 0
-			fi
-		fi
-	fi
-	return 1
+	local root="${ELOOP_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+	python3 "$root/strategy/spawn_guard.py" acquire "$IMPROVE_SPAWN_LOCK_DIR" "$$" "${IMPROVE_SPAWN_LOCK_TTL:-90}"
 }
 
-# 解放: owner が自 PID のときのみ削除 (他 spawner の lock を消さない)
 _release_spawn_lock() {
-	local d="$IMPROVE_SPAWN_LOCK_DIR"
-	[ -d "$d" ] || return 0
-	local owner_pid
-	owner_pid=$(cat "$d/owner" 2>/dev/null || echo "")
-	if [ "$owner_pid" = "$$" ]; then
-		rm -rf "$d" 2>/dev/null || true
-	fi
+	local root="${ELOOP_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+	python3 "$root/strategy/spawn_guard.py" release "$IMPROVE_SPAWN_LOCK_DIR" "$$"
 }
 
 #=== ピーク時間帯回避ゲート (deepseek-v4-flash 2倍課金帯の改善ロック消費を遅延) ===
