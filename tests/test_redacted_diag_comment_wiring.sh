@@ -20,6 +20,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 
+# _file_perm PATH: ファイルのpermissionを8進3桁で返す。GNU stat (Linux) を優先し、
+# 無い環境ではBSD stat (macOS) へフォールバックする。BSD優先にするとLinuxの
+# `stat -f` (filesystem表示、exit 0) が誤って成功し、実パーミッションを見ない。
+_file_perm() {
+	if stat -c '%a' "$1" 2>/dev/null; then return 0; fi
+	stat -f '%Lp' "$1" 2>/dev/null
+}
+
 ok=0
 fail=0
 check() {
@@ -122,7 +130,7 @@ check "[ -n \"$spool_file_a\" ]" "spoolファイルが1件作られる"
 spool_blob_a=$(cat "$spool_file_a" 2>/dev/null)
 check "printf '%s' \"\$spool_blob_a\" | grep -q \"$SENTINEL\"" "(b) 生comment本文はspoolに入っている(恒久保存ではなく短期TTL)"
 check "printf '%s' \"\$spool_blob_a\" | grep -q \"$VIEWER_USER\"" "(b) user名もspoolに入っている"
-spool_perm_a=$(stat -f '%Lp' "$spool_file_a" 2>/dev/null || stat -c '%a' "$spool_file_a")
+spool_perm_a=$(_file_perm "$spool_file_a")
 check "[ \"$spool_perm_a\" = \"600\" ]" "(b) spoolファイルは0600 (実測: $spool_perm_a)"
 
 spawn_count_a=$(wc -l <"$SPY_LOG" | tr -d ' ')

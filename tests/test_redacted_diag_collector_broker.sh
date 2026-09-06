@@ -16,6 +16,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 
+# _file_perm PATH: ファイルのpermissionを8進3桁で返す。GNU stat (Linux) を優先し、
+# 無い環境ではBSD stat (macOS) へフォールバックする。BSD優先にするとLinuxの
+# `stat -f` (filesystem表示、exit 0) が誤って成功し、実パーミッションを見ない。
+_file_perm() {
+	if stat -c '%a' "$1" 2>/dev/null; then return 0; fi
+	stat -f '%Lp' "$1" 2>/dev/null
+}
+
 ok=0
 fail=0
 check() {
@@ -127,7 +135,7 @@ DEST="$TMP/dest"
 get_out=$(python3 "$BROKER" get --snapshot-dir "$SNAPSHOT_DIR" --event-id evt1 --evidence-ref chat_worker_log_tail --dest "$DEST")
 check "[ $? -eq 0 ]" "broker getが正常系で成功する"
 check "[ -f \"$DEST/chat_worker_log_tail.json\" ]" "broker getがdestにファイルをコピーする"
-dest_perm=$(stat -f '%Lp' "$DEST/chat_worker_log_tail.json" 2>/dev/null || stat -c '%a' "$DEST/chat_worker_log_tail.json")
+dest_perm=$(_file_perm "$DEST/chat_worker_log_tail.json")
 check "[ \"$dest_perm\" = \"400\" ]" "broker getのコピー先ファイルは0400(read-only) (実測: $dest_perm)"
 
 # 元のsnapshotが書き換わっていない(copyfileであり、move/linkでない)ことを確認
