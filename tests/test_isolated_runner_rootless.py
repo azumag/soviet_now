@@ -437,6 +437,13 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
         self.assertNotIn("fork bomb candidate が pass 判定になった", script)
         self.assertIn("fork bomb containment", script)
 
+    def test_linux_verify_scopes_leak_checks_to_its_own_tmp_root(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertIn('ISOLATED_RUNNER_TMP_BASE="$LOOP_DIR/runner-tmp"', script)
+        self.assertIn('grep -F "$LOOP_DIR"', script)
+        self.assertNotIn('ps -e | wc -l', script)
+        self.assertNotIn('find /tmp -maxdepth 1', script)
+
     @unittest.skipIf(_ISOLATION_WORKS_HERE, "この環境ではOS隔離が実際に機能する")
     def test_evaluate_fails_closed_and_receipt_has_no_secrets(self):
         with tempfile.TemporaryDirectory() as td:
