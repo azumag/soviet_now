@@ -22,7 +22,7 @@ class FoundingPolicyContract(unittest.TestCase):
                 self.assertIn("目的と対象段階の正本は `prompts/game_theory.md`", text)
                 self.assertIn("makeSorenCount", text)
                 self.assertIn("下位局面の回帰検証は省略しない", text)
-                self.assertIn("旧 EVAL_SCORE の建国時の逆転は未修正", text)
+                self.assertIn("旧 EVAL_SCORE の逆転と現在の評価器を区別", text)
 
     def test_common_priority_contract_is_identical(self):
         blocks = []
@@ -56,6 +56,21 @@ class FoundingPolicyContract(unittest.TestCase):
         self.assertIn("v743 / v750 と同じ変更を再提案しない", text)
         theory = (ROOT / "prompts/game_theory.md").read_text(encoding="utf-8")
         self.assertIn("過去メモの単一目的・普遍的禁止は採用しない", theory)
+
+    def test_evaluator_warning_distinguishes_history_from_current_disk(self):
+        theory = (ROOT / "prompts/game_theory.md").read_text(encoding="utf-8")
+        self.assertIn("T16ボーナス25,402", theory)
+        self.assertIn("最終盤面にT16が残る場合", theory)
+        self.assertIn("消えた場合や旧版履歴", theory)
+        for rel in ("prompts/game_theory.md", "data/user_review.md",
+                    *("prompts/" + name for name in STAGES)):
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            with self.subTest(path=rel):
+                self.assertNotIn("逆転は未修正", text)
+                self.assertNotIn("#132、未修正", text)
+        for name in ("analyze_strategy.md", "improve_strategy.md"):
+            text = (ROOT / "prompts" / name).read_text(encoding="utf-8")
+            self.assertIn("type16: 25402", text)
 
 if __name__ == "__main__":
     unittest.main()
