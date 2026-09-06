@@ -2,6 +2,8 @@ name: Spawn lease regression
 on:
   pull_request:
     paths:
+      - 'strategy/ai.sh'
+      - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
@@ -9,6 +11,8 @@ on:
   push:
     branches: [main]
     paths:
+      - 'strategy/ai.sh'
+      - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
