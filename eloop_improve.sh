@@ -3726,7 +3726,7 @@ ${helpers_diff}"
 		else
 			_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR:-unknown validation error}"
 			if _validation_error_is_nonretryable_infrastructure "${VALIDATE_ERROR:-}"; then
-				IMPROVE_FAILURE_CODE="isolated_runner_unavailable"
+				IMPROVE_FAILURE_CODE="${VALIDATION_RETRY_BLOCK_CODE:-isolated_runner_unavailable}"
 				_improve_note "non-retryable infrastructure validation failure → abort AI fix/fresh retries and return to outer backoff"
 				improve_ok=false
 				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))

@@ -381,7 +381,7 @@ _validation_error_is_nonretryable_infrastructure "OS隔離runner未導入のた�
             self.assertEqual(result.returncode, 0, result.stderr)
 
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
-        self.assertIn('IMPROVE_FAILURE_CODE="isolated_runner_unavailable"', eloop)
+        self.assertIn('IMPROVE_FAILURE_CODE="${VALIDATION_RETRY_BLOCK_CODE:-isolated_runner_unavailable}"', eloop)
         self.assertIn('_validation_error_is_nonretryable_infrastructure "${VALIDATE_ERROR:-}"', eloop)
 
     def test_model_nonresponse_advances_fresh_retry_before_final_failure(self):
@@ -521,6 +521,16 @@ CODEX_MINIMAX_RUN_TIMEOUT_SEC=600
         self.assertNotIn(
             "LITELLM_HEALTH_URL:-http://127.0.0.1:4100/health}", run_cmd
         )
+
+    def test_default_improve_chain_excludes_legacy_specs_that_run_cmd_misroutes(self):
+        config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
+        line = next(
+            line for line in config.splitlines()
+            if line.startswith('MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-')
+        )
+        self.assertNotIn("amd:", line)
+        self.assertNotIn("minimax-api:", line)
+        self.assertIn("opencode-go:deepseek-v4-flash", line)
 
     def test_run_cmd_preserves_opencode_models_and_records_resolved_model(self):
         with tempfile.TemporaryDirectory() as tmp:
