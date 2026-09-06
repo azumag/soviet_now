@@ -3,6 +3,49 @@
 
 #=== ソ連祝賀トーク ===
 
+# 配信史上のソ連建国イベント数 (過去分) を数える。
+# data/soviet_creation_history.tsv (恒久archive) と
+# $SOVIET_CREATION_HISTORY_FILE (runtime記録) の両方を見て、
+# 日付 (YYYY-MM-DD) のdistinct数を返す。同一日の複数行
+# (凍結盤面の再検出による重複記録) は1件に畳む。
+# 出力1行目: 件数 / 2行目: 日付カンマ列 (YYYY-MM-DD、古い順)。
+_soviet_founding_past_events() {
+	python3 - "${SOVIET_CREATION_ARCHIVE_FILE:-data/soviet_creation_history.tsv}" "${SOVIET_CREATION_HISTORY_FILE:-${TMP_HISTORY_DIR:-tmp/history}/soviet_creation_history.tsv}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+seen = []
+for raw_path in sys.argv[1:]:
+    try:
+        text = Path(raw_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        continue
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", line)
+        if not m:
+            continue
+        day = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        if day not in seen:
+            seen.append(day)
+seen.sort()
+print(len(seen))
+print(",".join(seen))
+PY
+}
+
+# 過去件数から今回の序数詞を作る (0→初めて、1→2度目、2→3度目、N→N+1度目)。
+_soviet_founding_ordinal() {
+	case "${1:-0}" in
+	0) printf '初めて' ;;
+	'') printf '初めて' ;;
+	*) printf '%s度目' "$(($1 + 1))" ;;
+	esac
+}
+
 _celebration_country_names() {
 	python3 -c 'import sys; from lib.normalize_speech_text import replace_country_references; sys.stdout.write(replace_country_references(sys.stdin.read()))'
 }
@@ -94,6 +137,20 @@ generate_soviet_celebration() {
 	local current_time
 	current_time=$(date '+%H:%M')
 
+	# 配信史上の建国回数を数え、今回の序数 (初めて/2度目/3度目…) を求める。
+	local _founding_past_info _founding_past_count _founding_past_days
+	_founding_past_info=$(_soviet_founding_past_events 2>/dev/null || printf '0\n\n')
+	_founding_past_count=$(printf '%s' "$_founding_past_info" | sed -n '1p' | tr -cd '0-9')
+	_founding_past_days=$(printf '%s' "$_founding_past_info" | sed -n '2p')
+	[ -n "$_founding_past_count" ] || _founding_past_count=0
+	local _founding_ordinal _founding_past_note
+	_founding_ordinal=$(_soviet_founding_ordinal "$_founding_past_count")
+	if [ -n "$_founding_past_days" ]; then
+		_founding_past_note="過去の建国: $(printf '%s' "$_founding_past_days" | tr ',' '・')。"
+	else
+		_founding_past_note="過去の建国記録はありません。"
+	fi
+
 	local celebration_prompt_file
 	celebration_prompt_file=$(mktemp /tmp/eloop_celebration_XXXXXXXX)
 	cat >"$celebration_prompt_file" <<CELEBPROMPT
@@ -104,10 +161,12 @@ generate_soviet_celebration() {
 ゲーム「ソ連ゲーム」で、ついに「ソ連」ピースが誕生しました！
 アルメニアから国を育て、二つのロシアを併合してようやく到達する究極のゴールです。
 ゲーム${game_num}回目、スコア${score}点、${turns}ターンでの偉業。現在時刻: ${current_time}。
+今回の建国は配信史上【${_founding_ordinal}】のソ連建国です。${_founding_past_note}
 
 【ルール】
 - 2000文字程度の祝賀トーク
 - ソ連建国の興奮と感動を全力で表現
+- 配信史上【${_founding_ordinal}】であることに必ず触れ、過去からの積み重ねとして祝うこと (初めての場合は「悲願の初建国」として祝うこと)
 - 歴史的な偉業を達成したことを強調
 - ソ連の偉大さを讃える表現をふんだんに盛り込むこと
 - 戦略の巧妙さを称えること
