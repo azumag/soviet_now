@@ -17,6 +17,10 @@ CLIP_POLL_INTERVAL_SEC="${TWITCH_CLIP_POLL_INTERVAL_SEC:-3}"
 # --- 環境変数チェック ---
 # クリップ作成は TWITCH_CLIP_TOKEN を優先する (clips:edit 付きトークン用。
 # 未設定時は従来どおり TWITCH_BOT_TOKEN を使う)。
+# 長命ワーカーの継承envが古い場合に備え、.env ファイルからも直接読む。
+if [ -z "${TWITCH_CLIP_TOKEN:-}" ] && [ -f .env ]; then
+    TWITCH_CLIP_TOKEN=$(grep -a '^TWITCH_CLIP_TOKEN=' .env 2>/dev/null | tail -n 1 | cut -d= -f2-)
+fi
 TOKEN="${TWITCH_CLIP_TOKEN:-${TWITCH_BOT_TOKEN:-}}"
 CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
