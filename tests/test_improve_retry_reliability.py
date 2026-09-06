@@ -688,6 +688,50 @@ PY
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_run_ai_list_skips_shared_backoff_agents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+export AI_BACKOFF_DIR="$2/backoff"
+export AI_FAIL_STREAK_DIR="$2/streak"
+export AI_GENERATION_QUEUE_ENABLED=0
+source "$1/lib/ai_generate.sh"
+source "$1/strategy/ai.sh"
+log() { :; }
+mkdir -p "$AI_BACKOFF_DIR"
+test_root="$2"
+run_ai() {
+    printf '%s\n' "$2" >>"$test_root/calls"
+    [ "$2" = "amd:DeepSeek-V4-Flash" ]
+}
+
+_ai_backoff_set "opencode:muse-spark-1.3-contributor-free" 3600
+set +e
+run_ai_list TEST:skip_backoff \
+    opencode:muse-spark-1.3-contributor-free,amd:DeepSeek-V4-Flash \
+    "$2/prompt.md"
+rc=$?
+set -e
+[ "$rc" -eq 0 ]
+[ "$(cat "$test_root/calls")" = "amd:DeepSeek-V4-Flash" ]
+
+: >"$test_root/calls"
+_ai_backoff_set "amd:DeepSeek-V4-Flash" 3600
+set +e
+run_ai_list TEST:all_backoff \
+    opencode:muse-spark-1.3-contributor-free,amd:DeepSeek-V4-Flash \
+    "$2/prompt.md"
+rc=$?
+set -e
+[ "$rc" -eq 79 ]
+[ ! -s "$test_root/calls" ]
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fact_check_defaults_put_stable_free_model_first(self):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
