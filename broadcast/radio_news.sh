@@ -1,21 +1,22 @@
 # broadcast/radio_news.sh - ニュース取得・フィルタ・再生
 
 
-# --- AIスパム判定 (opencode glm) ---
+# --- AIスパム判定 ---
+_news_spam_verdict_valid() {
+	local verdict="${1:-}"
+	verdict=$(printf '%s' "$verdict" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+	[ "$verdict" = "SPAM" ] || [ "$verdict" = "NEWS" ]
+}
+
 _news_ai_spam_check() {
 	local title="$1" block="$2"
 	local spam_timeout="${NEWS_SPAM_CHECK_TIMEOUT_SEC:-20}"
-	# この判定は任意の品質フィルタ。実行CLIが無い環境では従来どおり
-	# fail-openするが、共有radio AI laneを取得してからrc=127になる無駄を避ける。
-	if ! command -v claude >/dev/null 2>&1; then
-		log "[NEWS:SPAM] claude CLI unavailable → PASS: ${title}"
-		return 1
-	fi
-	# タイトル+本文冒頭をAIに判定させる
+	local primary_agent="${NEWS_SPAM_CHECK_PRIMARY_AGENT:-local}"
+	local fallback_agent="${NEWS_SPAM_CHECK_FALLBACK_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 	local body_excerpt
 	body_excerpt=$(printf '%s' "$block" | head -n 5 | tail -n +2 | head -c 300)
 
-	local verdict rc prompt_text
+	local verdict rc prompt_text prompt_file
 	prompt_text="以下の記事がニュースとして紹介する価値があるか判定してください。
 宣伝、広告、アフィリエイト、プロモーションコード紹介、商品レビュー偽装、SEOスパム、企業PR記事であれば SPAM と答えてください。
 正当な報道・ニュース・時事であれば NEWS と答えてください。
@@ -23,35 +24,26 @@ SPAM か NEWS の1単語だけ答えてください。
 
 タイトル: ${title}
 本文冒頭: ${body_excerpt}"
-	local queue_token=""
-	if [ "${AI_GENERATION_QUEUE_ENABLED:-1}" = "1" ]; then
-		_ai_generation_queue_enter "NEWS:spam_check"
-		queue_token="$AI_GENERATION_QUEUE_LAST_TOKEN"
-	fi
-	verdict=$(
-		ANTHROPIC_AUTH_TOKEN="ollama" \
-		ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL:-http://192.168.11.13:11434}" \
-		ANTHROPIC_API_KEY="" \
-		timeout "${spam_timeout}s" claude -p "$prompt_text" --model=qwen3.5:9b 2>/dev/null \
-			| tr -d '[:space:]'
-	)
+	prompt_file=$(mktemp /tmp/news_spam_prompt_XXXXXXXX)
+	printf '%s\n' "$prompt_text" >"$prompt_file"
+	verdict=$(ai_generate \
+		"NEWS:spam_check" "$prompt_file" \
+		"$primary_agent" "$fallback_agent" \
+		"$spam_timeout" _news_spam_verdict_valid)
 	rc=$?
-	[ -n "$queue_token" ] && _ai_generation_queue_leave "$queue_token" "NEWS:spam_check"
+	rm -f "$prompt_file"
+	verdict=$(printf '%s' "$verdict" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
 
-	if [ "$verdict" = "SPAM" ]; then
+	if [ "$rc" -eq 0 ] && [ "$verdict" = "SPAM" ]; then
 		log "[NEWS:SPAM] AI判定: SPAM → ${title}"
-		return 0  # spam detected
-	fi
-	if [ "$rc" -eq 124 ]; then
-		log "[NEWS:SPAM] AI判定タイムアウト(${spam_timeout}s) → PASS: ${title}"
-		return 1
+		return 0
 	fi
 	if [ "$rc" -ne 0 ]; then
 		log "[NEWS:SPAM] AI判定失敗 rc=${rc} verdict=${verdict:-EMPTY} → PASS: ${title}"
 		return 1
 	fi
 	log "[NEWS:SPAM] AI判定: ${verdict:-UNKNOWN}(PASS) → ${title}"
-	return 1  # not spam
+	return 1
 }
 
 _news_title_key() {
