@@ -27,7 +27,7 @@ SPAM か NEWS の1単語だけ答えてください。
 	prompt_file=$(mktemp /tmp/news_spam_prompt_XXXXXXXX)
 	printf '%s\n' "$prompt_text" >"$prompt_file"
 	verdict=$(ai_generate \
-		"SPAM_CHECK" "$prompt_file" \
+		"NEWS:spam_check" "$prompt_file" \
 		"$primary_agent" "$fallback_agent" \
 		"$spam_timeout" _news_spam_verdict_valid)
 	rc=$?

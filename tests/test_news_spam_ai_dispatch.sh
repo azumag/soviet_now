@@ -22,7 +22,7 @@ TEST_AI_OUTPUT=SPAM TEST_AI_RC=0
 if ! _news_ai_spam_check "広告記事" $'■ 広告記事\n商品の宣伝です'; then
   echo "spam verdict was not blocked" >&2; exit 1
 fi
-grep -q '^SPAM_CHECK|' "$CALLS"
+grep -q '^NEWS:spam_check|' "$CALLS"
 grep -q '|local|opencode:muse-spark-1.3-contributor-free|20|_news_spam_verdict_valid$' "$CALLS"
 
 : >"$CALLS"
