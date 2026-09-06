@@ -5,6 +5,12 @@
 _news_ai_spam_check() {
 	local title="$1" block="$2"
 	local spam_timeout="${NEWS_SPAM_CHECK_TIMEOUT_SEC:-20}"
+	# この判定は任意の品質フィルタ。実行CLIが無い環境では従来どおり
+	# fail-openするが、共有radio AI laneを取得してからrc=127になる無駄を避ける。
+	if ! command -v claude >/dev/null 2>&1; then
+		log "[NEWS:SPAM] claude CLI unavailable → PASS: ${title}"
+		return 1
+	fi
 	# タイトル+本文冒頭をAIに判定させる
 	local body_excerpt
 	body_excerpt=$(printf '%s' "$block" | head -n 5 | tail -n +2 | head -c 300)
