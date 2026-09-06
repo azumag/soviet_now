@@ -732,6 +732,47 @@ set -e
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_run_ai_list_timeout_backs_off_model_before_next_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+export AI_BACKOFF_DIR="$2/backoff"
+export AI_FAIL_STREAK_DIR="$2/streak"
+export AI_GENERATION_QUEUE_ENABLED=0
+export AI_BACKOFF_FAILURE_SEC=300
+export RUN_AI_PRIMARY_RETRIES=2
+export RUN_AI_IMPROVEMENT_MODE=1
+source "$1/lib/ai_generate.sh"
+source "$1/strategy/ai.sh"
+test_root="$2"
+log() { printf '%s\n' "$*" >>"$test_root/log"; }
+printf 'prompt\n' >"$2/prompt.md"
+run_cmd() {
+    printf '%s\n' "$1" >>"$test_root/calls"
+    case "$1" in
+    opencode:muse-spark-1.3-contributor-free) return 124 ;;
+    opencode-go:omen-alpha) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+set +e
+run_ai_list TEST:timeout_fallback \
+    opencode:muse-spark-1.3-contributor-free,opencode-go:omen-alpha \
+    "$2/prompt.md"
+rc=$?
+set -e
+[ "$rc" -eq 0 ]
+[ "$(grep -c '^opencode:muse-spark-1.3-contributor-free$' "$test_root/calls")" -eq 1 ]
+[ "$(grep -c '^opencode-go:omen-alpha$' "$test_root/calls")" -eq 1 ]
+[ "$(_ai_backoff_remaining 'opencode:muse-spark-1.3-contributor-free')" -gt 0 ]
+grep -q 'provider/CLI failure.*shared backoff' "$test_root/log"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fact_check_defaults_put_stable_free_model_first(self):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
