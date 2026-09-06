@@ -1,7 +1,44 @@
 # broadcast/radio_celebration.sh - ロシア/ソ連建国祝賀, クリップ, チャット投稿
 
 
-#=== ソ連祝賀トーク ===
+#=== 生成チェーン (通常コーナーと同一) ===
+
+# 祝賀トーク生成は通常のラジオコーナーと同じモデルチェーン設定 (RADIO_AGENTS) を
+# ai_generate_list で回す。claude へのフォールバックは通常方針どおり行わない。
+# 成功時は本文を stdout へ、失敗時は空を返す (呼び出し側で dump する)。
+_celebration_generate_talk() {
+	local tag="$1" prompt_file="$2"
+	local last_agent_file talk provider_used
+	last_agent_file=$(mktemp /tmp/eloop_celebration_agent_XXXXXXXX)
+	talk=$(ai_generate_list "RADIO:${tag}" "$prompt_file" "${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,codex:minimax-m3}" "" "_radio_is_valid_generation_candidate" "$last_agent_file" 2>/dev/null || true)
+	provider_used=$(cat "$last_agent_file" 2>/dev/null)
+	rm -f "$last_agent_file" 2>/dev/null || true
+	if command -v _ai_guard_model_output >/dev/null 2>&1; then
+		talk=$(printf '%s' "$talk" | _ai_guard_model_output 2>/dev/null || printf '%s' "$talk")
+	fi
+	if [ -n "$talk" ]; then
+		log "[${tag}] provider=${provider_used:-unknown}"
+	fi
+	printf '%s' "$talk"
+}
+
+# 生成失敗・検証落ち時の原文保存 (プロンプト+本文を残し、後から原因を追えるようにする)
+_celebration_dump_failure() {
+	local tag="$1" reason="$2" prompt_snapshot="$3" body="$4"
+	local dump
+	dump="${TMP_DEBUG_DIR:-tmp/debug}/radio_failed_${tag}_$(date +%s).txt"
+	{
+		echo "reason=${reason}"
+		echo "corner=${tag}"
+		echo
+		echo "===PROMPT==="
+		printf '%s\n' "$prompt_snapshot"
+		echo
+		echo "===RAW==="
+		printf '%s\n' "$body"
+	} >"$dump" 2>/dev/null || true
+	log "[${tag}] dump: $dump"
+}
 
 _celebration_country_names() {
 	python3 -c 'import sys; from lib.normalize_speech_text import replace_country_references; sys.stdout.write(replace_country_references(sys.stdin.read()))'
@@ -42,18 +79,13 @@ CELEBPROMPT
 	log "[RUSSIA] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
-	celebration_talk=$(_run_claude_radio "$celebration_prompt_file")
-	if [ -n "$celebration_talk" ]; then
-		log "[RUSSIA] provider=claude:${RADIO_CLAUDE_MODEL}"
-	else
-		log "[RUSSIA] claude fail -> ${RADIO_MAIN_AGENT}"
-		celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_AGENT" "$celebration_prompt_file")
-		if [ -n "$celebration_talk" ]; then log "[RUSSIA] provider=${RADIO_MAIN_AGENT}"; fi
-	fi
+	celebration_talk=$(_celebration_generate_talk "RUSSIA" "$celebration_prompt_file")
 	if [ -z "$celebration_talk" ]; then
-		log "[RUSSIA] ${RADIO_MAIN_AGENT} fail -> ${RADIO_MAIN_FALLBACK}"
-		celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_FALLBACK" "$celebration_prompt_file")
-		if [ -n "$celebration_talk" ]; then log "[RUSSIA] provider=${RADIO_MAIN_FALLBACK}"; fi
+		_celebration_dump_failure "russia_celebration" "generation_empty" "$celebration_prompt_snapshot" ""
+		_radio_clear_state "russia_celebration" "generation_failed"
+		log "[RUSSIA] 祝賀トーク生成失敗"
+		rm -f "$celebration_prompt_file"
+		return 1
 	fi
 	rm -f "$celebration_prompt_file"
 
@@ -75,6 +107,7 @@ CELEBPROMPT
 		}
 		celebration_talk="$country_named_talk"
 		if ! _is_valid_radio_talk "$celebration_talk"; then
+			_celebration_dump_failure "russia_celebration" "invalid_after_fact_check" "$celebration_prompt_snapshot" "$celebration_talk"
 			_radio_clear_state "russia_celebration" "invalid_after_fact_check"
 			log "[RUSSIA] fact-check後の本文が不正/短文"
 			return 1
@@ -82,10 +115,6 @@ CELEBPROMPT
 		echo "$celebration_talk" >$TMP_DEBUG_DIR/radio_russia_celebration.txt
 		_radio_set_state "playing" "russia_celebration"
 		log "[RUSSIA] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
-	else
-		_radio_clear_state "russia_celebration" "generation_failed"
-		log "[RUSSIA] 祝賀トーク生成失敗"
-		return 1
 	fi
 }
 
@@ -126,19 +155,14 @@ CELEBPROMPT
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
-		celebration_talk=$(_run_claude_radio "$celebration_prompt_file")
-		if [ -n "$celebration_talk" ]; then
-			log "[CELEBRATION] provider=claude:${RADIO_CLAUDE_MODEL}"
-		else
-			log "[CELEBRATION] claude fail -> ${RADIO_MAIN_AGENT}"
-			celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_AGENT" "$celebration_prompt_file")
-			if [ -n "$celebration_talk" ]; then log "[CELEBRATION] provider=${RADIO_MAIN_AGENT}"; fi
-		fi
-		if [ -z "$celebration_talk" ]; then
-			log "[CELEBRATION] ${RADIO_MAIN_AGENT} fail -> ${RADIO_MAIN_FALLBACK}"
-			celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_FALLBACK" "$celebration_prompt_file")
-			if [ -n "$celebration_talk" ]; then log "[CELEBRATION] provider=${RADIO_MAIN_FALLBACK}"; fi
-		fi
+	celebration_talk=$(_celebration_generate_talk "CELEBRATION" "$celebration_prompt_file")
+	if [ -z "$celebration_talk" ]; then
+		_celebration_dump_failure "celebration" "generation_empty" "$celebration_prompt_snapshot" ""
+		_radio_clear_state "celebration" "generation_failed"
+		log "[CELEBRATION] 祝賀トーク生成失敗"
+		rm -f "$celebration_prompt_file"
+		return 1
+	fi
 	rm -f "$celebration_prompt_file"
 
 	if [ -n "$celebration_talk" ]; then
@@ -159,6 +183,7 @@ CELEBPROMPT
 		}
 		celebration_talk="$country_named_talk"
 		if ! _is_valid_radio_talk "$celebration_talk"; then
+			_celebration_dump_failure "celebration" "invalid_after_fact_check" "$celebration_prompt_snapshot" "$celebration_talk"
 			_radio_clear_state "celebration" "invalid_after_fact_check"
 			log "[CELEBRATION] fact-check後の本文が不正/短文"
 			return 1
@@ -166,9 +191,5 @@ CELEBPROMPT
 		echo "$celebration_talk" >"$TMP_DEBUG_DIR/radio_soviet_celebration.txt"
 		_radio_set_state "playing" "celebration"
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
-	else
-		_radio_clear_state "celebration" "generation_failed"
-		log "[CELEBRATION] 祝賀トーク生成失敗"
-		return 1
 	fi
 }
