@@ -786,9 +786,16 @@ run_ai() {
 		primary_ret=$?
 		log "[$label] run_cmd returned rc=$primary_ret (attempt ${attempt}/${primary_attempts})"
 		if [ "${RUN_AI_SHARED_FAILURE_BACKOFF:-0}" = "1" ] && [ "$primary_ret" -ne 0 ]; then
-			_run_ai_mark_shared_failure_backoff "$primary" "$label" "$primary_ret"
-			log "[$label] provider/CLI failure entered shared backoff → skip remaining primary attempts"
-			break
+			# The expect watchdog deliberately terminates a provider after a completed
+			# write, which commonly surfaces as rc=143. Preserve the existing contract
+			# that a changed expected file is success instead of entering shared backoff.
+			if [ -n "$expect" ] && _run_ai_expect_changed "$expect" "$expect_snapshot"; then
+				log "[$label] non-zero provider rc=$primary_ret after completed expected write → keep success path"
+			else
+				_run_ai_mark_shared_failure_backoff "$primary" "$label" "$primary_ret"
+				log "[$label] provider/CLI failure entered shared backoff → skip remaining primary attempts"
+				break
+			fi
 		fi
 		# トークン超過 or 空応答: セッションが汚染されている → primary ループ打ち切り
 		# rc=79: レートリミット/残高不足 → 即フォールバック

@@ -773,6 +773,43 @@ grep -q 'provider/CLI failure.*shared backoff' "$test_root/log"
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_run_ai_list_watchdog_completed_write_is_not_backed_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+export AI_BACKOFF_DIR="$2/backoff"
+export AI_FAIL_STREAK_DIR="$2/streak"
+export AI_GENERATION_QUEUE_ENABLED=0
+export AI_BACKOFF_FAILURE_SEC=300
+export RUN_AI_PRIMARY_RETRIES=2
+source "$1/lib/ai_generate.sh"
+source "$1/strategy/ai.sh"
+test_root="$2"
+log() { printf '%s\n' "$*" >>"$test_root/log"; }
+printf 'prompt\n' >"$2/prompt.md"
+printf 'before\n' >"$2/expect.txt"
+run_cmd() {
+    printf '%s\n' "$1" >>"$test_root/calls"
+    printf 'after\n' >"$3"
+    return 143
+}
+set +e
+run_ai_list TEST:watchdog_success \
+    opencode:muse-spark-1.3-contributor-free \
+    "$2/prompt.md" "$2/expect.txt"
+rc=$?
+set -e
+[ "$rc" -eq 0 ]
+[ "$(grep -c '^opencode:muse-spark-1.3-contributor-free$' "$test_root/calls")" -eq 1 ]
+[ "$(_ai_backoff_remaining 'opencode:muse-spark-1.3-contributor-free')" -eq 0 ]
+! grep -q 'provider/CLI failure.*shared backoff' "$test_root/log"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fact_check_defaults_put_stable_free_model_first(self):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         factcheck = (REPO_ROOT / "broadcast/radio_factcheck.sh").read_text(encoding="utf-8")
