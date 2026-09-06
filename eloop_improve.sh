@@ -17,11 +17,26 @@ HOST_ROOT="$SCRIPT_DIR"
 CHANGE_LOG_FILE="logs/change_log.txt"
 CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
+# Explicit one-job limits are captured BEFORE .env is sourced. Persistent .env
+# model/retry settings remain unchanged; these overrides only reduce this job.
+_improve_job_override="${SOREN_IMPROVE_JOB_BUDGET_SEC-}"
+_improve_analysis_override="${SOREN_IMPROVE_ANALYSIS_BUDGET_SEC-}"
 source ./eloop_lib.sh
 source ./strategy/retry_policy.sh
 
 # Scope MiniMax/fallback suppression to this improvement worker only.
 export RUN_AI_IMPROVEMENT_MODE=1
+_budget_args=(init --seconds "${_improve_job_override:-${IMPROVE_WALL_TIMEOUT:-3600}}" --max-seconds "${IMPROVE_WALL_TIMEOUT:-3600}")
+[ -z "$_improve_analysis_override" ] || _budget_args+=(--analysis-seconds "$_improve_analysis_override")
+_improve_budget_pair=$(python3 "$HOST_ROOT/strategy/improve_command.py" "${_budget_args[@]}") || {
+    printf '[IMPROVE] invalid single-job time budget\n' >&2
+    exit 81
+}
+read -r IMPROVE_JOB_DEADLINE_MONOTONIC IMPROVE_ANALYSIS_DEADLINE_MONOTONIC <<<"$_improve_budget_pair"
+export IMPROVE_JOB_DEADLINE_MONOTONIC IMPROVE_ANALYSIS_DEADLINE_MONOTONIC
+IMPROVE_RUN_RECEIPT_DIR="$HOST_ROOT/tmp/state/improve_receipts/job-$$"
+mkdir -p -m 700 "$IMPROVE_RUN_RECEIPT_DIR" || exit 81
+export IMPROVE_RUN_RECEIPT_DIR
 
 # #93: close the apply->pin race. Every site that writes a new strategy.py must
 # archive it and advance active_branch.head_hash in the SAME step — otherwise the
@@ -3360,6 +3375,8 @@ EOF
 	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-3600}"
 	_improve_wall_start=$(date +%s)
 
+	IMPROVE_STAGE_DEADLINE_MONOTONIC="$IMPROVE_ANALYSIS_DEADLINE_MONOTONIC"
+	export IMPROVE_STAGE_DEADLINE_MONOTONIC
 	# --- Stage 1: 分析フェーズ ---
 	# user_review.md は高優先の参照入力として扱うが、ログ/rollback分析を読む分析フェーズ自体は省略しない。
 	rm -f "$ANALYSIS_RESULT_FILE" 2>/dev/null || true
@@ -3396,6 +3413,12 @@ EOF
 			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
 			"${improve_ref_files[@]}"
 		_analysis_rc=$?
+        if [ "$_analysis_rc" -eq 80 ] || [ "$_analysis_rc" -eq 81 ]; then
+            IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
+            VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+            _improve_note "Stage1: budget/control failure → no partial analysis accepted"
+            break
+        fi
 		if [ "${_analysis_rc:-1}" -eq 79 ]; then
 			IMPROVE_FAILURE_CODE="rate_limited"
 			VALIDATE_ERROR="改善primary modelの利用上限に達したため、fallbackなしでバックオフ"
@@ -3403,7 +3426,7 @@ EOF
 			analysis_ok=false
 			break
 		fi
-		if [ -s "$ANALYSIS_RESULT_FILE" ]; then
+		if [ "${_analysis_rc:-1}" -eq 0 ] && [ -s "$ANALYSIS_RESULT_FILE" ]; then
 			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
 			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
 			analysis_ok=true
@@ -3424,13 +3447,14 @@ EOF
 	if [ "$analysis_ok" != true ]; then
 		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"
 		_improve_note "Stage1: analysis failed after ${ANALYSIS_MAX_RETRIES} retries → abort"
-		if [ "${IMPROVE_FAILURE_CODE:-}" != "rate_limited" ]; then
+		if [ -z "${IMPROVE_FAILURE_CODE:-}" ]; then
 			VALIDATE_ERROR="分析フェーズ失敗: analysis_result.md が生成されなかった"
 		fi
 		[ -n "${IMPROVE_FAILURE_CODE:-}" ] || IMPROVE_FAILURE_CODE="analysis_failed"
 		improve_ok=false
 	fi
 
+	unset IMPROVE_STAGE_DEADLINE_MONOTONIC
 	# --- Stage 2: 実装フェーズ ---
 	# 分析結果に基づいて strategy.py.staging を編集する
 	# Stage 1 失敗時はこのループをスキップする
@@ -3472,6 +3496,12 @@ EOF
 				"$ANALYSIS_RESULT_FILE" "${improve_ref_files[@]}"
 			_run_ai_rc=$?
 			_improve_note "run_ai returned rc=${_run_ai_rc} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES})"
+            if [ "$_run_ai_rc" -eq 80 ] || [ "$_run_ai_rc" -eq 81 ]; then
+                IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
+                VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+                improve_ok=false
+                break
+            fi
 			if [ "$_run_ai_rc" -eq 79 ]; then
 				IMPROVE_FAILURE_CODE="rate_limited"
 				VALIDATE_ERROR="改善primary modelの利用上限に達したため、fallbackなしでバックオフ"
@@ -3483,7 +3513,7 @@ EOF
 			if [ "$_run_ai_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
 				# レートリミット検出: 全プロバイダーが rc=79 → バックオフファイルを記録
-				if grep -q "rate-limited (rc=79)" "${RUN_CMD_LOG_FILE:-/dev/null}" 2>/dev/null; then
+				if [ "${RUN_AI_LIST_FAILURE_KIND:-}" = "rate_limited" ]; then
 					local _rl_file="$TMP_STATE_DIR/rate_limit_backoff"
 					local _rl_count=0
 					[ -f "$_rl_file" ] && _rl_count=$(sed -n '1p' "$_rl_file" 2>/dev/null || echo 0)
@@ -3540,6 +3570,12 @@ EOF
 			RUN_CMD_TIMEOUT_SEC="$_prev_run_cmd_timeout"
 			export RUN_CMD_TIMEOUT_SEC
 			rm -f "$fix_prompt_file"
+            if [ "$_fix_rc" -eq 80 ] || [ "$_fix_rc" -eq 81 ]; then
+                IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
+                VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+                improve_ok=false
+                break
+            fi
 			if [ "$_fix_rc" -eq 79 ]; then
 				IMPROVE_FAILURE_CODE="rate_limited"
 				VALIDATE_ERROR="改善primary modelの利用上限に達したため、fallbackなしでバックオフ"
@@ -3857,6 +3893,11 @@ ${helpers_diff}"
 			log "[IMPROVE] Stage 3 レビュー判定: FAIL (起動検証OKのため適用は継続)"
 			_improve_note "Stage3: review verdict advisory failure; apply continues after runtime smoke: ${VALIDATE_ERROR:0:160}"
 		fi
+        if [ "${_review_rc:-0}" -eq 80 ] || [ "${_review_rc:-0}" -eq 81 ]; then
+            IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
+            VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+            improve_ok=false
+        fi
 		if [ "${_review_rc:-0}" -eq 79 ]; then
 			IMPROVE_FAILURE_CODE="rate_limited"
 			VALIDATE_ERROR="改善primary modelの利用上限に達したため、レビューもfallbackなしでバックオフ"
@@ -3866,6 +3907,12 @@ ${helpers_diff}"
 		rm -f "$_pre_review_snapshot" 2>/dev/null || true
 	fi
 
+    if $improve_ok && ! _improve_budget_check; then
+        IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
+        VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+        _improve_note "deadline before harvest → do not apply"
+        improve_ok=false
+    fi
 	if $improve_ok; then
 		HARVEST_DIR=$(harvest_sandbox "$SANDBOX_DIR")
 		if [ -z "$HARVEST_DIR" ] || [ ! -d "$HARVEST_DIR" ]; then
@@ -3903,6 +3950,12 @@ if $improve_ok; then
 fi
 
 AB_GATE_EMITTED=false
+if $improve_ok && ! _improve_budget_check; then
+    IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
+    VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+    _improve_note "deadline before candidate emission/apply → do not apply"
+    improve_ok=false
+fi
 if $improve_ok; then
 	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
 		if command -v _ab_gate_enabled >/dev/null 2>&1 && _ab_gate_enabled; then

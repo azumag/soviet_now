@@ -1,3 +1,19 @@
+# Guard source is host-owned; generated candidate code cannot select it.
+_IMPROVE_COMMAND_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/improve_command.py"
+
+_improve_budget_check() {
+    [ "${RUN_AI_IMPROVEMENT_MODE:-0}" = "1" ] || return 0
+    local outcome rc
+    outcome=$(python3 "$_IMPROVE_COMMAND_GUARD" check --job-deadline "${IMPROVE_JOB_DEADLINE_MONOTONIC:-none}" --stage-deadline "${IMPROVE_STAGE_DEADLINE_MONOTONIC:-none}")
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        RUN_AI_LIST_FAILURE_KIND="${outcome:-invalid_budget}"
+        [ "$rc" -eq 80 ] && return 80
+        return 81
+    fi
+    return 0
+}
+
 # strategy/ai.sh - spinner, build_prompt, run_cmd, run_ai
 
 start_spinner() {
@@ -344,6 +360,10 @@ _run_cmd_record_winner() {
 }
 
 run_cmd() {
+    local _budget_rc managed_improve=0
+    _improve_budget_check; _budget_rc=$?
+    [ "$_budget_rc" -eq 0 ] || return "$_budget_rc"
+    [ "${RUN_AI_IMPROVEMENT_MODE:-0}" = "1" ] && managed_improve=1
 	local spec="$1" prompt="$2" expect_file="${3:-}" expect_snapshot="${4:-}" expect_was_present="${5:-false}"
 	local type agent
 	type="${spec%%:*}"
@@ -368,7 +388,7 @@ run_cmd() {
 	esac
 	if [ -n "$timeout_sec" ] && [ "$timeout_sec" -gt 0 ]; then
 		timeout_bin=$(_run_cmd_timeout_bin 2>/dev/null || true)
-		if [ -z "$timeout_bin" ]; then
+		if [ -z "$timeout_bin" ] && [ "$managed_improve" -eq 0 ]; then
 			log "[CMD] timeout requested (${timeout_sec}s) but no timeout binary found"
 			timeout_sec=""
 		fi
@@ -443,6 +463,31 @@ run_cmd() {
 		return 2
 	fi
 
+    # Bound the existing queue before starting the CLI. Dynamic locals keep
+    # caller settings unchanged; use one-second polling and never round up.
+    if [ "$managed_improve" -eq 1 ]; then
+        local OPENCODE_RUN_LOCK_MAX_WAIT_SEC="${OPENCODE_RUN_LOCK_MAX_WAIT_SEC:-180}"
+        local OPENCODE_RUN_LOCK_WAIT_SEC="${OPENCODE_RUN_LOCK_WAIT_SEC:-2}"
+        local wait_cap wait_rc
+        wait_cap=$(python3 "$_IMPROVE_COMMAND_GUARD" queue-limit --job-deadline "${IMPROVE_JOB_DEADLINE_MONOTONIC:-none}" --stage-deadline "${IMPROVE_STAGE_DEADLINE_MONOTONIC:-none}" --limit "$OPENCODE_RUN_LOCK_MAX_WAIT_SEC")
+        wait_rc=$?
+        if [ "$wait_rc" -ne 0 ]; then
+            RUN_AI_LIST_FAILURE_KIND="${wait_cap:-invalid_budget}"
+            rm -f "$prompt_file"; return "$wait_rc"
+        fi
+        OPENCODE_RUN_LOCK_MAX_WAIT_SEC="$wait_cap"
+        OPENCODE_RUN_LOCK_WAIT_SEC=1
+    fi
+    # Allocate the receipt before acquiring the shared CLI slot, so setup
+    # failure cannot strand a slot or modified XDG environment.
+    if [ "$managed_improve" -eq 1 ]; then
+        local receipt_dir="${IMPROVE_RUN_RECEIPT_DIR:-${RUN_CMD_TMP_DIR:-/tmp}}" receipt
+        mkdir -p "$receipt_dir" || { rm -f "$prompt_file"; return 81; }
+        receipt=$(python3 -c 'import os,sys,tempfile; fd,p=tempfile.mkstemp(prefix="improve-call-",suffix=".json",dir=sys.argv[1]);os.close(fd);print(p)' "$receipt_dir") || { rm -f "$prompt_file"; return 81; }
+        local -a guard_args=(run --timeout "${timeout_sec:-${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}}" --receipt "$receipt" --model "$resolved_model" --label "$cmd_log_tag" --primary-limit "${RUN_AI_PRIMARY_RETRIES:-1}")
+        [ -n "${IMPROVE_JOB_DEADLINE_MONOTONIC:-}" ] && guard_args+=(--job-deadline "$IMPROVE_JOB_DEADLINE_MONOTONIC")
+        [ -n "${IMPROVE_STAGE_DEADLINE_MONOTONIC:-}" ] && guard_args+=(--stage-deadline "$IMPROVE_STAGE_DEADLINE_MONOTONIC")
+    fi
 	local opencode_lock_token=""
 	local opencode_prev_xdg_state_home="${XDG_STATE_HOME-}"
 	local opencode_prev_xdg_data_home="${XDG_DATA_HOME-}"
@@ -453,6 +498,12 @@ run_cmd() {
 	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		_opencode_run_lock_enter "$cmd_log_tag:$target" || {
 			rm -f "$prompt_file"
+            _improve_budget_check; _budget_rc=$?
+            [ "$_budget_rc" -eq 0 ] || return "$_budget_rc"
+            if [ "$managed_improve" -eq 1 ]; then
+                RUN_AI_LIST_FAILURE_KIND=queue_unavailable
+                return 81
+            fi
 			return 1
 		}
 		opencode_lock_token="$OPENCODE_RUN_LOCK_LAST_TOKEN"
@@ -466,7 +517,26 @@ run_cmd() {
 
 	local codex_out_file=""
 	local cmd_pid
-	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+    if [ "$managed_improve" -eq 1 ]; then
+        local -a bounded_command
+        if [ "$opencode_cli" -eq 1 ]; then
+            local opencode_bin="${OPENCODE_BIN:-}"
+            [ -n "$opencode_bin" ] || { if [ -x /snap/bin/opencode ]; then opencode_bin=/snap/bin/opencode; else opencode_bin=opencode; fi; }
+            guard_args+=(--opencode-events)
+            bounded_command=("$opencode_bin" run --model "$resolved_model" --format json --print-logs --log-level INFO)
+            if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+                bounded_command=(env "OPENCODE_PERMISSION=$RUN_CMD_OPENCODE_PERMISSION" "${bounded_command[@]}")
+            fi
+        else
+            codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
+            bounded_command=(codex exec --skip-git-repo-check -m "$codex_model" -o "$codex_out_file" -)
+        fi
+        if [ -n "$cmd_log_file" ]; then
+            python3 "$_IMPROVE_COMMAND_GUARD" "${guard_args[@]}" -- "${bounded_command[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
+        else
+            python3 "$_IMPROVE_COMMAND_GUARD" "${guard_args[@]}" -- "${bounded_command[@]}" <"$prompt_file" &
+        fi
+    elif [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		# テストから関数スタブで差し替えられるよう上書きを許す (CODEX_BIN と同じ規約)。
 		local opencode_bin="${OPENCODE_BIN:-}"
 		if [ -z "$opencode_bin" ]; then
@@ -562,7 +632,7 @@ run_cmd() {
 
 	start_spinner "$type thinking..."
 	_run_cmd_start_heartbeat "$cmd_pid" "$cmd_log_file" "$cmd_log_tag" >/dev/null 2>&1 || true
-	_run_cmd_start_expected_file_watchdog "$cmd_pid" "$expect_file" "$expect_was_present" "$cmd_log_file" "$cmd_log_tag"
+	[ "$managed_improve" -eq 1 ] || _run_cmd_start_expected_file_watchdog "$cmd_pid" "$expect_file" "$expect_was_present" "$cmd_log_file" "$cmd_log_tag"
 
 	local prev_int_trap interrupted
 	prev_int_trap=$(trap -p INT || true)
@@ -602,12 +672,12 @@ run_cmd() {
 		fi
 	fi
 	# コンテキスト上限/トークン超過エラー検出 → セッション継続しても無駄なので rc=77 で通知
-	if [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE "exceeds.*context length|exceeds.*maximum.*token|context window limit|context window exceeds|maximum context length|prompt is too long|too many tokens|invalid params, context window" 2>/dev/null; then
+	if [ "$managed_improve" -eq 0 ] && [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE "exceeds.*context length|exceeds.*maximum.*token|context window limit|context window exceeds|maximum context length|prompt is too long|too many tokens|invalid params, context window" 2>/dev/null; then
 		log "[CMD] コンテキスト上限検出 → セッションクリア"
 		ret=77
 	fi
 	# レートリミット/残高不足エラー検出 → 即フォールバック (rc=79)
-	if [ "$ret" -ne 77 ] && [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE '"code":"1113"|Insufficient balance|no resource package|HTTP 429|status: 429|rate.?limit' 2>/dev/null; then
+	if [ "$managed_improve" -eq 0 ] && [ "$ret" -ne 77 ] && [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE '"code":"1113"|Insufficient balance|no resource package|HTTP 429|status: 429|rate.?limit' 2>/dev/null; then
 		log "[CMD] レートリミット/残高不足検出 → 即フォールバック (rc=79)"
 		ret=79
 	fi
@@ -784,6 +854,11 @@ run_ai() {
 		fi
 		run_cmd "$primary" "$attempt_prompt" "$expect" "$expect_snapshot" "$expect_was_present"
 		primary_ret=$?
+        if [ "$primary_ret" -eq 80 ] || [ "$primary_ret" -eq 81 ]; then
+            rm -f "$expect_snapshot" 2>/dev/null || true
+            if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+            return "$primary_ret"
+        fi
 		log "[$label] run_cmd returned rc=$primary_ret (attempt ${attempt}/${primary_attempts})"
 		if [ "${RUN_AI_SHARED_FAILURE_BACKOFF:-0}" = "1" ] && [ "$primary_ret" -ne 0 ]; then
 			_run_ai_mark_shared_failure_backoff "$primary" "$label" "$primary_ret"
@@ -959,10 +1034,14 @@ run_ai_list() {
 	shift 2
 	local agents=() _IFS_save="$IFS" agent rc saw_rate_limit=0 final_rc=1
 	local attempted_count=0 skipped_backoff_count=0 backoff_remaining=""
+    local other_failures=0 budget_rc
+    RUN_AI_LIST_FAILURE_KIND=""
 	IFS=',' read -ra agents <<< "$agent_list_raw"
 	IFS="$_IFS_save"
 
 	for agent in "${agents[@]}"; do
+        _improve_budget_check; budget_rc=$?
+        [ "$budget_rc" -eq 0 ] || return "$budget_rc"
 		agent=$(printf '%s' "$agent" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 		[ -n "$agent" ] || continue
 		# lib/ai_generate.sh is sourced before strategy/ai.sh in eloop_lib.sh.
@@ -988,6 +1067,11 @@ run_ai_list() {
 		else
 			unset RUN_AI_SHARED_FAILURE_BACKOFF
 		fi
+        if [ "$rc" -eq 80 ] || [ "$rc" -eq 81 ]; then
+            _improve_budget_check || true
+            [ -n "$RUN_AI_LIST_FAILURE_KIND" ] || RUN_AI_LIST_FAILURE_KIND=deadline_or_guard_failure
+            return "$rc"
+        fi
 		if [ "$rc" -eq 0 ]; then
 			log "[$label] run_ai_list: ${agent} OK"
 			if command -v _ai_stats_record >/dev/null 2>&1; then
@@ -1000,16 +1084,21 @@ run_ai_list() {
 			log "[$label] ${agent} rate-limited → next model"
 			continue
 		fi
+		other_failures=$((other_failures + 1))
 		log "[$label] ${agent} failed (rc=$rc) → next model"
 	done
 
 	if [ "$attempted_count" -eq 0 ] && [ "$skipped_backoff_count" -gt 0 ]; then
 		log "[$label] run_ai_list: all models are in shared backoff → caller back off"
 		final_rc=79
-	elif [ "$saw_rate_limit" -eq 1 ]; then
+        RUN_AI_LIST_FAILURE_KIND=shared_backoff
+	elif [ "$saw_rate_limit" -eq 1 ] && [ "$other_failures" -eq 0 ]; then
 		log "[$label] run_ai_list: all models rate-limited → caller back off"
 		final_rc=79
+        RUN_AI_LIST_FAILURE_KIND=rate_limited
 	else
+        RUN_AI_LIST_FAILURE_KIND=model_failure
+        [ "$saw_rate_limit" -eq 0 ] || RUN_AI_LIST_FAILURE_KIND=mixed_model_failures
 		log "[$label] run_ai_list: all models failed (list=${agent_list_raw})"
 		final_rc=1
 	fi
