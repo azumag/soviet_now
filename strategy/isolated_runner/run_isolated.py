@@ -165,6 +165,9 @@ def _build_bwrap_argv(input_dir, output_dir, limits, python3_path, harness_rel_a
             argv += ["--symlink", a, b]
     argv += ["--ro-bind", input_dir, "/input"]
     argv += ["--bind", output_dir, "/output"]
+    # bwrapの空root自体もread-onlyにする。/tmpと/outputは別mountなので
+    # writableのまま維持される。
+    argv += ["--remount-ro", "/"]
     argv += ["--"]
     shell_cmd = _ulimit_prefix(limits) + "exec " + " ".join(
         _sh_quote(a) for a in ([python3_path] + harness_rel_argv)

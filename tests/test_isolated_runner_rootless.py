@@ -399,6 +399,26 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
         self.assertIn("userns,", text)
         self.assertNotIn("/usr/local/bin/bwrap", text)
 
+    def test_bwrap_argv_remounts_root_readonly(self):
+        argv = run_isolated._build_bwrap_argv(
+            "/tmp/input", "/tmp/output", dict(run_isolated.DEFAULT_LIMITS),
+            "/usr/bin/python3", ["/input/harness.py"],
+        )
+        idx = argv.index("--remount-ro")
+        self.assertEqual(argv[idx + 1], "/")
+        self.assertLess(idx, argv.index("--"))
+
+    def test_selftest_probe_persists_output_write_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "selftest.json"
+            proc = subprocess.run(
+                [sys.executable, str(ISOLATED_RUNNER_DIR / "selftest_probe.py"), str(out)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            payload = json.loads(out.read_text(encoding="utf-8"))
+            self.assertIs(payload.get("output_write_ok"), True)
+
     @unittest.skipIf(_ISOLATION_WORKS_HERE, "この環境ではOS隔離が実際に機能する")
     def test_evaluate_fails_closed_and_receipt_has_no_secrets(self):
         with tempfile.TemporaryDirectory() as td:
