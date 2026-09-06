@@ -32,6 +32,15 @@ FAIL=0
 _ok() { echo "[PASS] $*"; PASS=$((PASS + 1)); }
 _ng() { echo "[FAIL] $*"; FAIL=$((FAIL + 1)); }
 
+_run_test_file() {
+	local test_file="$1"
+	if python3 -c 'import pytest' >/dev/null 2>&1; then
+		python3 -m pytest "$test_file" -v
+	else
+		python3 "$test_file" -v
+	fi
+}
+
 echo "=== issue #35 rootless isolated runner: Linux実機検証 ==="
 echo "REPO_ROOT=$REPO_ROOT"
 uname -a
@@ -65,19 +74,19 @@ else
 fi
 echo
 
-# --- 2. pytest: OS非依存部分 + Linux限定部分 (probeが通ったのでskipされないはず) ---
-echo "--- 2. pytest tests/test_isolated_runner_rootless.py ---"
-if python3 -m pytest tests/test_isolated_runner_rootless.py -v; then
-	_ok "pytest tests/test_isolated_runner_rootless.py 全件成功 (Linux限定テストも実行されたはず。上のログでSKIPPEDが無いことを目視確認すること)"
+# --- 2. OS非依存部分 + Linux限定部分 ---
+echo "--- 2. tests/test_isolated_runner_rootless.py ---"
+if _run_test_file tests/test_isolated_runner_rootless.py; then
+	_ok "tests/test_isolated_runner_rootless.py 成功 (pytestが無ければunittest直実行)"
 else
-	_ng "pytest tests/test_isolated_runner_rootless.py に失敗あり"
+	_ng "tests/test_isolated_runner_rootless.py に失敗あり"
 fi
 echo
 
 # --- 3. #34 の既存回帰テストが今も通ること ---
-echo "--- 3. pytest tests/test_strategy_sandbox_no_host_exec.py (issue #34 回帰) ---"
-if python3 -m pytest tests/test_strategy_sandbox_no_host_exec.py -v; then
-	_ok "issue #34 の13件が今も成功"
+echo "--- 3. tests/test_strategy_sandbox_no_host_exec.py (issue #34 回帰) ---"
+if _run_test_file tests/test_strategy_sandbox_no_host_exec.py; then
+	_ok "issue #34 の回帰テスト成功"
 else
 	_ng "issue #34 の回帰テストが失敗した"
 fi
@@ -100,29 +109,29 @@ def decide(game_state, analysis):
     _bomb()
     return {"x": 0.0, "reason": "forkbomb-fixture"}
 PYEOF
-before_ps_count=$(ps -e | wc -l)
+mkdir -p "$FORKBOMB_DIR/runner-tmp"
 receipt_out="$FORKBOMB_DIR/receipt.json"
-timeout 60 python3 strategy/isolated_runner/run_isolated.py evaluate \
+ISOLATED_RUNNER_TMP_BASE="$FORKBOMB_DIR/runner-tmp" timeout 60 python3 strategy/isolated_runner/run_isolated.py evaluate \
 	--target "$FORKBOMB_DIR/strategy.py" --helpers "nonexistent_helpers" \
 	--receipt-out "$receipt_out" --mode shadow >"$FORKBOMB_DIR/stdout.log" 2>&1
 sleep 2
-after_ps_count=$(ps -e | wc -l)
-echo "process count before=$before_ps_count after=$after_ps_count (2秒後)"
+fork_process_refs=$(ps -eo args= | grep -F "$FORKBOMB_DIR" | grep -v grep | wc -l | tr -d ' ')
+fork_tmp_entries=$(find "$FORKBOMB_DIR/runner-tmp" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+echo "fork bomb containment residual processes=$fork_process_refs tmp_entries=$fork_tmp_entries"
 if [ -f "$receipt_out" ]; then
 	gate=$(python3 -c "import json; print(json.load(open('$receipt_out')).get('gate'))" 2>/dev/null)
 	echo "gate=$gate"
-	if [ "$gate" != "pass" ]; then
-		_ok "fork bomb candidate は自動適用されなかった (gate=$gate)"
-	else
-		_ng "fork bomb candidate が pass 判定になった (異常)"
-	fi
+	case "$gate" in
+	pass|fail) _ok "fork bomb containment produced a valid isolated receipt (gate=$gate; apply policy is tested separately)" ;;
+	*) _ng "fork bomb containment receipt has invalid gate: $gate" ;;
+	esac
 else
-	_ng "fork bomb評価でreceiptが生成されなかった"
+	_ng "fork bomb containment produced no receipt"
 fi
-if [ "$after_ps_count" -le $((before_ps_count + 5)) ]; then
-	_ok "fork bomb後もhostのprocess数が急増していない (孤児process無しの弱い確認。詳細は手順5参照)"
+if [ "$fork_process_refs" -eq 0 ] && [ "$fork_tmp_entries" -eq 0 ]; then
+	_ok "fork bomb containment left no runner-scoped process/tmp artifact"
 else
-	_ng "fork bomb後にhostのprocess数が明らかに増えている (孤児process疑い): before=$before_ps_count after=$after_ps_count"
+	_ng "fork bomb containment leaked runner-scoped state (processes=$fork_process_refs tmp=$fork_tmp_entries)"
 fi
 rm -rf "$FORKBOMB_DIR"
 echo
@@ -130,11 +139,11 @@ echo
 # --- 5. 100回実行して孤児process/mount/tmp artifactが残らないことを確認 ---
 echo "--- 5. 100回実行ループ (orphan process / mount / tmp artifact diff) ---"
 N=${VERIFY_ISOLATED_RUNNER_ITERATIONS:-100}
-mounts_before=$(mount | wc -l)
-procs_before=$(ps -e | wc -l)
-tmp_before=$(find /tmp -maxdepth 1 2>/dev/null | wc -l)
-
 LOOP_DIR=$(mktemp -d)
+mkdir -p "$LOOP_DIR/runner-tmp"
+mounts_before=$(mount | grep -F "$LOOP_DIR" | wc -l | tr -d ' ')
+procs_before=$(ps -eo args= | grep -F "$LOOP_DIR" | grep -v grep | wc -l | tr -d ' ')
+tmp_before=$(find "$LOOP_DIR/runner-tmp" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 cat >"$LOOP_DIR/strategy.py" <<'PYEOF'
 import math
 
@@ -144,52 +153,66 @@ def decide(game_state, analysis):
     return {"x": round(math.log(len(pieces) + 1), 4), "reason": "loop-iteration-fixture"}
 PYEOF
 
-loop_failures=0
+loop_passes=0
 for i in $(seq 1 "$N"); do
 	rc_out="$LOOP_DIR/receipt_$i.json"
-	if ! timeout 60 python3 strategy/isolated_runner/run_isolated.py evaluate \
+	ISOLATED_RUNNER_TMP_BASE="$LOOP_DIR/runner-tmp" timeout 60 python3 strategy/isolated_runner/run_isolated.py evaluate \
 		--target "$LOOP_DIR/strategy.py" --helpers "strategy_helpers" \
-		--receipt-out "$rc_out" --mode shadow >/dev/null 2>&1; then
-		: # shadow modeなのでgate自体はfailで正常。ここでの失敗はrcのUnix exit statusのみ見る
-	fi
+		--receipt-out "$rc_out" --mode shadow >/dev/null 2>&1 || true
 	gate=$(python3 -c "import json; print(json.load(open('$rc_out')).get('gate',''))" 2>/dev/null)
-	if [ "$gate" != "pass" ]; then
-		loop_failures=$((loop_failures + 1))
+	if [ "$gate" = "pass" ]; then
+		loop_passes=$((loop_passes + 1))
 	fi
 	rm -f "$rc_out"
 done
-rm -rf "$LOOP_DIR"
+
+# receipt の gate=pass は「隔離評価に成功」を表す。shadow rollout で自動applyを
+# 拒否する責務は一段上の shell wrapper にあるため、別々に検証する。
+if (
+	log() { :; }
+	source strategy/sandbox.sh
+	mkdir -p "$LOOP_DIR/state"
+	TMP_STATE_DIR="$LOOP_DIR/state"
+	ISOLATED_RUNNER_TMP_BASE="$LOOP_DIR/runner-tmp"
+	SOREN_ISOLATED_RUNNER_MODE=shadow
+	_strategy_isolated_runner_evaluate "$LOOP_DIR/strategy.py" "strategy_helpers"
+); then
+	_ng "shadow mode unexpectedly allowed automatic apply"
+else
+	_ok "shadow mode rejects automatic apply after successful isolated receipt"
+fi
 
 sleep 2
-mounts_after=$(mount | wc -l)
-procs_after=$(ps -e | wc -l)
-tmp_after=$(find /tmp -maxdepth 1 2>/dev/null | wc -l)
+mounts_after=$(mount | grep -F "$LOOP_DIR" | wc -l | tr -d ' ')
+procs_after=$(ps -eo args= | grep -F "$LOOP_DIR" | grep -v grep | wc -l | tr -d ' ')
+tmp_after=$(find "$LOOP_DIR/runner-tmp" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 
-echo "iterations=$N gate!=pass count=$loop_failures (shadow modeなので全件fail-closedのはず。$N と一致していれば正常)"
-echo "mounts before=$mounts_before after=$mounts_after"
-echo "processes before=$procs_before after=$procs_after"
-echo "tmp entries before=$tmp_before after=$tmp_after"
+echo "iterations=$N isolated gate=pass count=$loop_passes ($N と一致すれば全隔離評価成功)"
+echo "runner-scoped mounts before=$mounts_before after=$mounts_after"
+echo "runner-scoped processes before=$procs_before after=$procs_after"
+echo "runner-scoped tmp entries before=$tmp_before after=$tmp_after"
 
-if [ "$loop_failures" -eq "$N" ]; then
-	_ok "$N 回全てshadow modeでfail-closedのまま (期待通り。enforce切替前の既定挙動)"
+if [ "$loop_passes" -eq "$N" ]; then
+	_ok "$N 回全て隔離評価receiptがpass"
 else
-	_ng "shadow modeなのに一部が pass 扱いになった、またはreceipt読み取りに失敗した ($loop_failures/$N)"
+	_ng "隔離評価receiptがpassにならない反復あり ($loop_passes/$N)"
 fi
-if [ "$mounts_after" -le "$mounts_before" ]; then
-	_ok "mount leakなし (before=$mounts_before after=$mounts_after)"
+if [ "$mounts_after" -eq "$mounts_before" ]; then
+	_ok "runner-scoped mount leakなし (before=$mounts_before after=$mounts_after)"
 else
-	_ng "mount数が増加している可能性 (before=$mounts_before after=$mounts_after) — 手動で 'mount' の差分を確認すること"
+	_ng "runner-scoped mount leak疑い (before=$mounts_before after=$mounts_after)"
 fi
-if [ "$procs_after" -le $((procs_before + 5)) ]; then
-	_ok "orphan process無し (before=$procs_before after=$procs_after)"
+if [ "$procs_after" -eq "$procs_before" ]; then
+	_ok "runner-scoped orphan process無し (before=$procs_before after=$procs_after)"
 else
-	_ng "process数が増加している可能性 (before=$procs_before after=$procs_after) — 'ps -ef' で残存プロセスを確認すること"
+	_ng "runner-scoped orphan process疑い (before=$procs_before after=$procs_after)"
 fi
-if [ "$tmp_after" -le "$tmp_before" ]; then
-	_ok "/tmp 直下のエントリ数が増えていない (before=$tmp_before after=$tmp_after)"
+if [ "$tmp_after" -eq "$tmp_before" ]; then
+	_ok "runner-scoped tmp artifact leakなし (before=$tmp_before after=$tmp_after)"
 else
-	_ng "/tmp 直下のエントリが増えている可能性 (before=$tmp_before after=$tmp_after) — 手動で新規ファイルを確認すること"
+	_ng "runner-scoped tmp artifact leak疑い (before=$tmp_before after=$tmp_after)"
 fi
+rm -rf "$LOOP_DIR"
 echo
 
 echo "=== SUMMARY: PASS=$PASS FAIL=$FAIL ==="

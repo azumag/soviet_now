@@ -1,0 +1,12 @@
+# Ubuntu 24.04+ can restrict unprivileged user namespaces through AppArmor.
+# Give only /usr/bin/bwrap the userns permission needed to construct the
+# strategy isolated runner. The sandboxed child is separately started with
+# bwrap --disable-userns --assert-userns-disabled and no capabilities.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/usr.bin.bwrap>
+}

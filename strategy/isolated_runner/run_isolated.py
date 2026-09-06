@@ -136,6 +136,14 @@ def _build_bwrap_argv(input_dir, output_dir, limits, python3_path, harness_rel_a
     argv = [
         "bwrap",
         "--unshare-all",
+        # bubblewrap 0.9.0 は --disable-userns 利用時に明示的な
+        # --unshare-user を要求する (--unshare-all だけでは引数検証を通らない)。
+        "--unshare-user",
+        # AppArmorでbwrap自身にuserns作成を限定許可する環境でも、
+        # 未信頼candidateへnested user namespace作成権限を継承させない。
+        "--disable-userns",
+        "--assert-userns-disabled",
+        "--cap-drop", "ALL",
         "--die-with-parent",
         "--new-session",
         "--clearenv",
@@ -157,6 +165,9 @@ def _build_bwrap_argv(input_dir, output_dir, limits, python3_path, harness_rel_a
             argv += ["--symlink", a, b]
     argv += ["--ro-bind", input_dir, "/input"]
     argv += ["--bind", output_dir, "/output"]
+    # bwrapの空root自体もread-onlyにする。/tmpと/outputは別mountなので
+    # writableのまま維持される。
+    argv += ["--remount-ro", "/"]
     argv += ["--"]
     shell_cmd = _ulimit_prefix(limits) + "exec " + " ".join(
         _sh_quote(a) for a in ([python3_path] + harness_rel_argv)

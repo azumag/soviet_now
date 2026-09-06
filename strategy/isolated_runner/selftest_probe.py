@@ -59,12 +59,12 @@ def main():
             result["input_write_blocked"] = True
             result["input_write_error"] = f"{type(e).__name__}: {e}"
 
-    # /output は書込み可能であるはず。
+    # /output は書込み可能であるはず。成功フラグをJSONへ含めてから保存する。
     try:
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        result["output_write_ok"] = True
         with open(out_path, "w") as f:
             json.dump(result, f)
-        result["output_write_ok"] = True
     except Exception as e:
         result["output_write_ok"] = False
         result["output_write_error"] = f"{type(e).__name__}: {e}"

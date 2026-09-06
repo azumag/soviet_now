@@ -379,6 +379,71 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
         if backend is None:
             self.assertTrue(reason)
 
+    def test_bwrap_argv_disables_nested_user_namespaces(self):
+        argv = run_isolated._build_bwrap_argv(
+            "/tmp/input", "/tmp/output", dict(run_isolated.DEFAULT_LIMITS),
+            "/usr/bin/python3", ["/input/harness.py"],
+        )
+        self.assertIn("--unshare-user", argv)
+        self.assertLess(argv.index("--unshare-user"), argv.index("--disable-userns"))
+        self.assertIn("--disable-userns", argv)
+        self.assertIn("--assert-userns-disabled", argv)
+        self.assertIn("--cap-drop", argv)
+        self.assertIn("ALL", argv)
+
+    def test_deploy_has_scoped_bwrap_apparmor_userns_profile(self):
+        profile = REPO_ROOT / "deploy" / "soren-runtime" / "apparmor" / "usr.bin.bwrap"
+        self.assertTrue(profile.is_file(), msg=f"missing tracked AppArmor profile: {profile}")
+        text = profile.read_text(encoding="utf-8")
+        self.assertIn("profile bwrap /usr/bin/bwrap flags=(unconfined)", text)
+        self.assertIn("userns,", text)
+        self.assertNotIn("/usr/local/bin/bwrap", text)
+
+    def test_bwrap_argv_remounts_root_readonly(self):
+        argv = run_isolated._build_bwrap_argv(
+            "/tmp/input", "/tmp/output", dict(run_isolated.DEFAULT_LIMITS),
+            "/usr/bin/python3", ["/input/harness.py"],
+        )
+        idx = argv.index("--remount-ro")
+        self.assertEqual(argv[idx + 1], "/")
+        self.assertLess(idx, argv.index("--"))
+
+    def test_selftest_probe_persists_output_write_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "selftest.json"
+            proc = subprocess.run(
+                [sys.executable, str(ISOLATED_RUNNER_DIR / "selftest_probe.py"), str(out)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            payload = json.loads(out.read_text(encoding="utf-8"))
+            self.assertIs(payload.get("output_write_ok"), True)
+
+    def test_linux_verify_falls_back_to_unittest_without_pytest(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertIn("_run_test_file()", script)
+        self.assertIn("import pytest", script)
+        self.assertIn('python3 "$test_file" -v', script)
+
+    def test_linux_verify_distinguishes_receipt_pass_from_shadow_apply_gate(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertIn("loop_passes=0", script)
+        self.assertNotIn("loop_failures=0", script)
+        self.assertIn('_strategy_isolated_runner_evaluate "$LOOP_DIR/strategy.py"', script)
+        self.assertIn("shadow mode rejects automatic apply", script)
+
+    def test_linux_verify_does_not_treat_contained_forkbomb_receipt_pass_as_escape(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertNotIn("fork bomb candidate が pass 判定になった", script)
+        self.assertIn("fork bomb containment", script)
+
+    def test_linux_verify_scopes_leak_checks_to_its_own_tmp_root(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertIn('ISOLATED_RUNNER_TMP_BASE="$LOOP_DIR/runner-tmp"', script)
+        self.assertIn('grep -F "$LOOP_DIR"', script)
+        self.assertNotIn('ps -e | wc -l', script)
+        self.assertNotIn('find /tmp -maxdepth 1', script)
+
     @unittest.skipIf(_ISOLATION_WORKS_HERE, "この環境ではOS隔離が実際に機能する")
     def test_evaluate_fails_closed_and_receipt_has_no_secrets(self):
         with tempfile.TemporaryDirectory() as td:
