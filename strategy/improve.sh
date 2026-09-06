@@ -943,6 +943,36 @@ os.replace(tmp, target)
 PY
 }
 
+_improve_batch_history_files_intact() {
+	local source="${1:-$IMPROVE_LOCK_FILE}"
+	[ -s "$source" ] || return 1
+	python3 - "$source" <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(1)
+if not isinstance(data, dict):
+    raise SystemExit(1)
+files = data.get("files", [])
+# Old/synthetic lock formats did not always persist file paths. Keep those
+# compatible; when a concrete retry batch names histories, require the exact
+# evidence to still exist before spending another AI attempt on it.
+if not files:
+    raise SystemExit(0)
+if not isinstance(files, list):
+    raise SystemExit(1)
+for path in files:
+    if not isinstance(path, str) or not path or not os.path.isfile(path):
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
 _restore_improve_retry_batch_if_valid() {
 	local current_hash="${1:-}"
 	local source="${IMPROVE_RETRY_BATCH_FILE:-$TMP_STATE_DIR/improve_retry_batch.json}"
@@ -951,6 +981,7 @@ _restore_improve_retry_batch_if_valid() {
 	local result=""
 	[ -n "$current_hash" ] || return 1
 	[ -s "$source" ] || return 1
+	_improve_batch_history_files_intact "$source" || return 1
 	result=$(python3 - "$source" "$target" "$current_hash" "$min_games" <<'PY' 2>/dev/null || true
 import json
 import os
@@ -3068,6 +3099,12 @@ trigger_adaptive_improvement() {
 		log "[IMPROVE] ロックファイルが空または壊れているため削除"
 		rm -f "$IMPROVE_LOCK_FILE"
 		return 1
+	fi
+	if ! _improve_batch_history_files_intact "$IMPROVE_LOCK_FILE"; then
+		log "[IMPROVE] history files stale in retry batch → lock/backoff cleared; wait for fresh accumulation"
+		rm -f "$IMPROVE_LOCK_FILE" "$TMP_STATE_DIR/rate_limit_backoff" "$TMP_STATE_DIR/rate_limit_backoff_last_log" 2>/dev/null || true
+		_clear_improve_retry_batch
+		return 0
 	fi
 	acc_count=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0)
 	all_history_files=$(echo "$lock_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
