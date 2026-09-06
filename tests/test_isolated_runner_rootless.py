@@ -384,6 +384,8 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
             "/tmp/input", "/tmp/output", dict(run_isolated.DEFAULT_LIMITS),
             "/usr/bin/python3", ["/input/harness.py"],
         )
+        self.assertIn("--unshare-user", argv)
+        self.assertLess(argv.index("--unshare-user"), argv.index("--disable-userns"))
         self.assertIn("--disable-userns", argv)
         self.assertIn("--assert-userns-disabled", argv)
         self.assertIn("--cap-drop", argv)
