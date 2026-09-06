@@ -706,6 +706,38 @@ _run_ai_expect_changed() {
 	return 0
 }
 
+_run_ai_mark_shared_failure_backoff() {
+	local agent="${1:-}" label="${2:-AI}" rc="${3:-1}"
+	local backoff_sec streak shift streak_max
+	[ -n "$agent" ] || return 0
+	[ "$rc" -ne 0 ] 2>/dev/null || return 0
+	command -v _ai_backoff_set >/dev/null 2>&1 || return 0
+
+	if [ "$rc" -eq 79 ] && command -v _ai_backoff_sec_for_agent >/dev/null 2>&1; then
+		backoff_sec=$(_ai_backoff_sec_for_agent "$agent" "$label")
+	else
+		backoff_sec="${AI_BACKOFF_FAILURE_SEC:-300}"
+		case "$backoff_sec" in
+		'' | *[!0-9]*) backoff_sec=300 ;;
+		esac
+		[ "$backoff_sec" -lt 1 ] && backoff_sec=300
+		if command -v _ai_fail_streak_record >/dev/null 2>&1; then
+			streak=$(_ai_fail_streak_record "$agent")
+			case "$streak" in '' | *[!0-9]*) streak=1 ;; esac
+			streak_max="${AI_FAILURE_STREAK_MAX_BACKOFF_SEC:-3600}"
+			case "$streak_max" in '' | *[!0-9]*) streak_max=3600 ;; esac
+			if [ "$streak" -gt 1 ]; then
+				shift=$((streak - 1))
+				[ "$shift" -gt 3 ] && shift=3
+				backoff_sec=$((backoff_sec * (1 << shift)))
+				[ "$backoff_sec" -gt "$streak_max" ] && backoff_sec="$streak_max"
+			fi
+		fi
+	fi
+	_ai_backoff_set "$agent" "$backoff_sec"
+	log "[$label] ${agent} provider/CLI failure (rc=${rc}) → shared backoff ${backoff_sec}s"
+}
+
 run_ai() {
 	local label="$1" primary="$2" fallback="$3" pf="$4" expect="$5"
 	shift 5
@@ -753,6 +785,11 @@ run_ai() {
 		run_cmd "$primary" "$attempt_prompt" "$expect" "$expect_snapshot" "$expect_was_present"
 		primary_ret=$?
 		log "[$label] run_cmd returned rc=$primary_ret (attempt ${attempt}/${primary_attempts})"
+		if [ "${RUN_AI_SHARED_FAILURE_BACKOFF:-0}" = "1" ] && [ "$primary_ret" -ne 0 ]; then
+			_run_ai_mark_shared_failure_backoff "$primary" "$label" "$primary_ret"
+			log "[$label] provider/CLI failure entered shared backoff → skip remaining primary attempts"
+			break
+		fi
 		# トークン超過 or 空応答: セッションが汚染されている → primary ループ打ち切り
 		# rc=79: レートリミット/残高不足 → 即フォールバック
 		if [ "$primary_ret" -eq 77 ] || [ "$primary_ret" -eq 78 ] || [ "$primary_ret" -eq 79 ]; then
@@ -942,8 +979,15 @@ run_ai_list() {
 		fi
 		attempted_count=$((attempted_count + 1))
 		log "[$label] run_ai_list: try ${agent}"
+		local _prev_shared_failure_backoff="${RUN_AI_SHARED_FAILURE_BACKOFF-}"
+		RUN_AI_SHARED_FAILURE_BACKOFF=1
 		run_ai "$label" "$agent" "" "$@"
 		rc=$?
+		if [ -n "$_prev_shared_failure_backoff" ]; then
+			RUN_AI_SHARED_FAILURE_BACKOFF="$_prev_shared_failure_backoff"
+		else
+			unset RUN_AI_SHARED_FAILURE_BACKOFF
+		fi
 		if [ "$rc" -eq 0 ]; then
 			log "[$label] run_ai_list: ${agent} OK"
 			if command -v _ai_stats_record >/dev/null 2>&1; then
