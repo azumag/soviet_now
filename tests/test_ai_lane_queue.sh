@@ -82,6 +82,56 @@ fi
 wait "$dead_follower_pid" 2>/dev/null || true
 rm -rf "$LOCK_BASE"
 
+# --- 2b. dead-owner 回収は複数 follower でも新ownerを削除しない ---
+# follower B を dead-owner 観測後・削除直前で止め、A が旧lockを回収して
+# critical sectionへ入った後に B を再開する。check-then-delete 実装だと
+# B が A の新lockまで削除し、critical section が重複する。
+rm -rf "$LOCK_BASE"
+mkdir -p "$LOCK_BASE/radio"
+printf 'token=dead-holder\npid=999999999\nlabel=RADIO:dead-holder\n' >"$LOCK_BASE/radio/owner"
+rm() {
+	local last="${!#}"
+	if [[ "$last" == */.ai_generation_locks/radio || "$last" = "tmp/state/.ai_generation_locks/radio" ]] && [ "${RACE_ROLE:-}" = "B" ] && [ ! -f "$TMP/release_b_rm" ]; then
+		: >"$TMP/b_waiting_to_rm"
+		while [ ! -f "$TMP/release_b_rm" ]; do sleep 0.02; done
+	fi
+	command rm "$@"
+}
+race_critical() {
+	local role="$1"
+	if ! mkdir "$TMP/critical_active" 2>/dev/null; then
+		: >"$TMP/critical_overlap"
+	else
+		printf '%s\n' "$role" >"$TMP/critical_active/owner"
+	fi
+	sleep 1
+	if [ -d "$TMP/critical_active" ] && [ "$(cat "$TMP/critical_active/owner" 2>/dev/null)" = "$role" ]; then
+		command rm -rf "$TMP/critical_active"
+	fi
+}
+(
+	export RACE_ROLE=B
+	_ai_generation_queue_run "RADIO:race-b" race_critical B
+) &
+race_b_pid=$!
+for _ in $(seq 1 100); do
+	[ -f "$TMP/b_waiting_to_rm" ] && break
+	sleep 0.02
+done
+check '[ -f "$TMP/b_waiting_to_rm" ]' 'race follower B が dead-owner 削除直前まで到達する'
+(
+	export RACE_ROLE=A
+	_ai_generation_queue_run "RADIO:race-a" race_critical A
+) &
+race_a_pid=$!
+sleep 0.3
+: >"$TMP/release_b_rm"
+wait "$race_a_pid" 2>/dev/null || true
+wait "$race_b_pid" 2>/dev/null || true
+check '[ ! -f "$TMP/critical_overlap" ]' 'dead-owner回収中も generation critical section は重複しない'
+unset -f rm
+rm -rf "$LOCK_BASE"
+
 # --- 3. 放送系の直列化 (異なるモデルでも待ち合わせる) ---
 rm -rf "$LOCK_BASE"
 mkdir -p "$LOCK_BASE/radio"
