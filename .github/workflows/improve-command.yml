@@ -4,6 +4,9 @@ on:
     paths:
       - 'strategy/ai.sh'
       - 'strategy/improve_command.py'
+      - 'strategy/analysis_contract.py'
+      - 'prompts/analyze_strategy.md'
+      - 'tests/test_analysis*.py'
       - 'eloop_improve.sh'
       - 'tests/test_improve_*.py'
       - '.github/workflows/improve-command.yml'
@@ -12,6 +15,9 @@ on:
     paths:
       - 'strategy/ai.sh'
       - 'strategy/improve_command.py'
+      - 'strategy/analysis_contract.py'
+      - 'prompts/analyze_strategy.md'
+      - 'tests/test_analysis*.py'
       - 'eloop_improve.sh'
       - 'tests/test_improve_*.py'
       - '.github/workflows/improve-command.yml'
@@ -29,5 +35,6 @@ jobs:
           python3 -m unittest
           tests.test_improve_command_guard tests.test_improve_budget_integration
           tests.test_improve_stage_budget tests.test_improve_retry_reliability
+          tests.test_analysis_evidence_contract tests.test_analysis_gate_wiring tests.test_founding_policy_contract
           tests.test_shadow_validation_retry tests.test_spawn_guard_lease
       - run: bash -n strategy/ai.sh eloop_improve.sh

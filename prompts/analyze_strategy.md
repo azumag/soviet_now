@@ -105,7 +105,7 @@
 - コメント追加や命名変更だけ
 - `turns >= 77` のような固定ターン数で「終盤8ターン」を近似する仮説
 - height penalty の強化を「スコアアップ手段」として扱う仮説
-- **Null Hypothesis（変更なし）の採用は禁止**。過去の rollback 履歴で「全てブロックされている」と感じても、必ず1つの改善仮説を立案して Implementation Plan を書くこと。過去に rollback された方向と全く同じ変更は避けるべきだが、同じ問題領域への別アプローチは許可される。「変えられない」ではなく「別の角度から変える」を考えること
+- 裏づけられた改善仮説を1つ探すこと。根拠が足りない場合に架空の改善を強制しない。未観測や矛盾を解消できなければ `decision=hold` と不足する証拠を記録し、実装へ進めない。過去と同じ失敗案の再提案は避ける。
 
 ## 実行手順（必ずこの順）
 1. `tmp/improve_brief.md` を読み、今回の改善テーマと再発防止項目を把握する
@@ -165,3 +165,45 @@
 （参照したファイル一覧。最低5ファイル）
 - ...
 ```
+
+
+## 実装へ渡す前の機械検査（必須）
+
+`tmp/analysis_evidence.json` と `tmp/improve_brief.md` の `evidence_sha256` を読む。
+本文に加え、以下の `analysis_contract` JSONブロックを1つだけ出力する。
+サンプル値をコピーせず、今回の入力と照合して埋めること。
+
+- `founded_games` はhostの同フィールドと一致させる。未知なら **null** のままにし、0件や0/nと断定しない。
+- `game_count` と `evidence_sha256` はhost値をそのまま使う。
+- `hypotheses` と `changes` は実装に進む場合それぞれ **1件だけ**。独立した加点・減点を複数同梱しない。
+- 根拠は `games[].file` と実在する `turns` から引用する。ファイル名の捏造や別試合の行番号を使わない。
+- `required_next_types` はこの変更の発火に必要な直接供給type。観測済みかつ現行方針1～11内だけ。
+  type12以上は合成された盤面駒として区別し、`next_type==14` 等の直接供給条件と混同しない。
+  供給typeに依存しない変更は空配列としてよい。
+- `target` は `strategy.py.staging` または既存ルール内の `strategy_helpers/*.py` だけ。
+- 根拠不足の場合は `decision=hold`、`changes=[]`、必要な追加証拠を `reason` に書く。
+  建国カウンタが未知なだけで全ての改善が禁止されるわけではない。観測できる失敗局面から1件を選べる。
+
+```analysis_contract
+{
+  "version": 1,
+  "decision": "implement",
+  "evidence_sha256": "今回のhost提示SHA256",
+  "game_count": 13,
+  "founded_games": null,
+  "hypotheses": [{
+    "id": "H1",
+    "claim": "今回の観測から支持される仮説を1件",
+    "evidence": [{"file": "game_history/実在する入力.jsonl", "turn": 1}]
+  }],
+  "changes": [{
+    "hypothesis_id": "H1",
+    "target": "strategy.py.staging",
+    "mechanism": "既存のどの判定1件を、どう置き換えるか",
+    "required_next_types": []
+  }]
+}
+```
+
+この検査の通過は、自由記述の因果説明や候補コードの正しさ・性能を保証しない。
+後段の静的・隔離・レビュー・実ゲーム評価を省略しない。

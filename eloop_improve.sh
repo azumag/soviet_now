@@ -2547,6 +2547,18 @@ REVIEW_RESULT_FILE="tmp/review_result.md"
 SANDBOX_HELPERS_BASELINE_DIR=""
 HOST_INTEGRITY_BEFORE_FILE=""
 
+# Host-owned counter evidence is immutable input for the analysis gate. The
+# sandbox gets a copy, but validation always uses this host-side original.
+ANALYSIS_EVIDENCE_HOST="$IMPROVE_RUN_RECEIPT_DIR/analysis_evidence.json"
+ANALYSIS_EVIDENCE_SHA256=$(python3 "$HOST_ROOT/strategy/analysis_contract.py" evidence \
+    --root "$HOST_ROOT" --output "$ANALYSIS_EVIDENCE_HOST" $HISTORY_FILES) || {
+    _improve_note "analysis evidence invalid → no model call"
+    _improve_progress "done" "100" "failed_no_apply:analysis_evidence_invalid"
+    exit 81
+}
+export ANALYSIS_EVIDENCE_HOST ANALYSIS_EVIDENCE_SHA256
+cp "$ANALYSIS_EVIDENCE_HOST" tmp/analysis_evidence.json || exit 81
+
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
 python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "$STRATEGY_ADVICE_FILE" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" "$HISTORY_FILES" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
 import collections
@@ -2823,6 +2835,11 @@ rollback_analysis = read_text("tmp/state/last_rollback_analysis.md")
 rollback_postmortem = read_text("tmp/state/last_rollback_postmortem.md")
 history_paths = [p for p in history_files_raw.split() if p]
 nation_progress = summarize_nation_progress(history_paths)
+with open(os.environ["ANALYSIS_EVIDENCE_HOST"], encoding="utf-8") as evidence_file:
+    analysis_evidence = json.load(evidence_file)
+# Type16 on a board is not a counter; missing/reset/invalid counter is unknown.
+nation_progress["soviet_count"] = analysis_evidence["founded_games"]
+
 
 top_reasons = re.findall(r"^\s{2}([A-Z0-9_]+): .*avg_score_delta=([0-9.\-]+)", batch, re.M)
 high_low = re.search(r"高スコア群の reason 上位5:\n((?:\s+.+\n){1,8})\s+低スコア群の reason 上位5:\n((?:\s+.+\n){1,8})", batch)
@@ -2888,13 +2905,17 @@ summary_lines = []
 summary_lines.append("# Improve Brief")
 summary_lines.append("")
 summary_lines.append("## Goal")
+summary_lines.append("- analysis_evidence: tmp/analysis_evidence.json (host-verified input; not model-produced)")
+summary_lines.append(f"- evidence_sha256: {os.environ['ANALYSIS_EVIDENCE_SHA256']}")
+summary_lines.append("- Counter authority: missing, inherited, reset or incomplete zero counts remain unknown. Do not copy a legacy soviet=0/n claim.")
+
 summary_lines.append("最終目標は type16 のソ連建国。スコア改善は副指標であり、type15 ロシア到達と type16 ソ連到達を減らす変更は失敗として扱う。")
 summary_lines.append("今回の改善では、単発最高点よりも直近12試合の中央値・下振れ耐性を優先する。")
 summary_lines.append("ただし高スコアでもロシア/ソ連に近づいていない場合は、評価スコアだけに合わせず type14→15→16 の成長経路を復旧する。")
 summary_lines.append("特にゲームオーバー直前の立て直しと、dead line 付近での延命ではなく回復につながる判断を重視する。")
 summary_lines.append("- game rule: 連鎖ボーナスはない。CHAIN_MERGE 系 reason は相関ラベルであり、直接の強化対象ではない。")
 summary_lines.append("- avoid: 将来連鎖のために盤面を圧迫したり、直近の併合機会を見送る変更。")
-summary_lines.append("- eval scoring: 評価スコアにはゲーム終了時の盤面ピースtype別ボーナスが加算される（高typeほど高ボーナス、ソ連建国で+4000）。高typeを育てて盤面に残す戦略が評価上有利。")
+summary_lines.append("- eval scoring: prompts/game_theory.mdの版と観測範囲を確認する。固定の旧加点額や最終盤面だけで建国を判定せず、makeSorenCountの試合内証拠を優先する。")
 if os.environ.get("IMPROVE_REASON", "normal") == "escape_ai":
     summary_lines.append("- escape_ai: 直近WILDCARDが連続して成熟評価を越えられなかったため、今回だけAIによる小さな構造変異で大域脱出を狙う。")
     summary_lines.append("- escape_ai: 単なる数値定数の微調整よりも、type14→15→16の到達経路を阻害している判断条件・優先順位・例外処理を一箇所に絞って変更する。")
@@ -2921,9 +2942,12 @@ if scores:
 summary_lines.append(f"- best_game={basename(best_path)} worst_game={basename(worst_path)} batch_games={num_games_raw}")
 summary_lines.append("")
 summary_lines.append("## Soviet Objective Progress")
+founding_summary = (f"soviet={analysis_evidence['founded_games']}/{analysis_evidence['game_count']}"
+    if analysis_evidence['founded_games'] is not None else
+    f"soviet_counter=unknown unknown_games={analysis_evidence['unknown_counter_games']}/{analysis_evidence['game_count']}")
 summary_lines.append(
     f"- batch_progress: russia={nation_progress['russia_count']}/{len(nation_progress['games'])} "
-    f"soviet={nation_progress['soviet_count']}/{len(nation_progress['games'])} "
+    f"{founding_summary} "
     f"max_piece_type={nation_progress['max_type']} "
     f"deadline_guard={nation_progress['deadline_guard_count']} "
     f"deadline_guard_rate={nation_progress['deadline_guard_rate']:.1%} "
@@ -2950,7 +2974,7 @@ if nation_progress["stage_gates"]:
         summary_lines.append(
             f"- main_gate_target: {main_gate['name']}(T{main_gate['type']}) "
             f"{main_gate['reached']}/{main_gate['total']}({main_gate['rate']:.0%}). "
-            "通常はこの未達段階へ効く変更を優先する。"
+            "到達率は診断用の参考値。100%達成を上位改善の条件にせず、具体的な失敗ログで対象を選ぶ。"
         )
         if russia_recovery_active:
             summary_lines.append(
@@ -2961,7 +2985,7 @@ if nation_progress["stage_gates"]:
             )
     else:
         summary_lines.append(f"- stage_gate_rates: {gate_text}")
-        summary_lines.append("- main_gate_target: all configured gates are 100%; prioritize Russia→Soviet transition quality.")
+        summary_lines.append("- stage_gate_context: sampled reach rates are diagnostic, not a proof or a prerequisite for upper-stage work.")
 summary_lines.append("- high_type_counts is final-board type10+ inventory. If T14x2 appears without type15, prioritize the missed final merge route over generic score tuning.")
 summary_lines.append("- peak_high_type_counts/frontier_hint show whether the run created enough near-frontier pieces earlier, even if they were gone by gameover.")
 if nation_progress["games"]:
@@ -2970,7 +2994,7 @@ if nation_progress["games"]:
         if g["russia"]:
             marks.append(f"russia@T{g['russia_turn']}")
         if g["soviet"]:
-            marks.append(f"soviet@T{g['soviet_turn']}")
+            marks.append(f"type16_observed@T{g['soviet_turn']}")
         mark_text = " ".join(marks) if marks else "no-russia"
         summary_lines.append(f"- {g['file']}: score={g['score']} turns={g['turns']} max_type={g['max_type']} high_type_counts={g['high_type_counts']} peak_high_type_counts={g['peak_high_type_counts']} frontier_hint={g['frontier_hint']} deadline_guard={g['deadline_guard_count']} rate={g['deadline_guard_rate']:.1%} guard_reason_top={g['deadline_guard_reason_top']} {mark_text}")
 if nation_progress["max_type"] <= 13 and nation_progress["games"]:
@@ -3167,7 +3191,7 @@ PY
 USER_REVIEW_FILE_HOST="data/user_review.md"
 rm -f "tmp/user_review_checks.json" 2>/dev/null || true
 
-improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
+improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE" "tmp/analysis_evidence.json")
 [ -f "$STRATEGY_ADVICE_FILE" ] && [ -s "$STRATEGY_ADVICE_FILE" ] && improve_ref_files+=("$STRATEGY_ADVICE_FILE")
 [ -f "$ROLLBACK_POSTMORTEM_FILE" ] && [ -s "$ROLLBACK_POSTMORTEM_FILE" ] && improve_ref_files+=("$ROLLBACK_POSTMORTEM_FILE")
 [ -f "$ROLLBACK_ANALYSIS_FILE" ] && [ -s "$ROLLBACK_ANALYSIS_FILE" ] && improve_ref_files+=("$ROLLBACK_ANALYSIS_FILE")
@@ -3427,6 +3451,18 @@ EOF
 			break
 		fi
 		if [ "${_analysis_rc:-1}" -eq 0 ] && [ -s "$ANALYSIS_RESULT_FILE" ]; then
+            python3 "$HOST_ROOT/strategy/analysis_contract.py" validate \
+                --evidence "$ANALYSIS_EVIDENCE_HOST" --analysis "$ANALYSIS_RESULT_FILE" \
+                --result "$IMPROVE_RUN_RECEIPT_DIR/analysis-check-${_analysis_retry}.json" >>"$RUN_CMD_LOG_FILE" 2>&1
+            _analysis_contract_rc=$?
+            if [ "$_analysis_contract_rc" -ne 0 ]; then
+                IMPROVE_FAILURE_CODE=analysis_contract_invalid
+                [ "$_analysis_contract_rc" -ne 83 ] || IMPROVE_FAILURE_CODE=analysis_hold
+                VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
+                _improve_note "Stage1: $IMPROVE_FAILURE_CODE → stop before implementation"
+                analysis_ok=false
+                break
+            fi
 			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
 			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
 			analysis_ok=true
