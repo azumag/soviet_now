@@ -10,6 +10,7 @@ validate_strategy() {
 	local sig_out
 	sig_out=$(
 		python3 - "$target_file" "$helpers_dir" <<'PYEOF' 2>&1
+import os
 import re
 import sys
 import ast
@@ -266,7 +267,7 @@ _AST_GATE_DENIED_BARE_NAMES = {
 _AST_GATE_DUNDER_RE = re.compile(r"^__.+__$")
 
 
-def check_ast_deny_gate(source, filename):
+def check_ast_deny_gate(source, filename, subject="candidate"):
     """暫定deny gate (issue #34): 動的import、dunder探索、file/process/network系
     callを含む候補をrejectする。ast.parse のみを使い、compile()/exec()/import で
     候補コードを実行することは絶対にしない。
@@ -286,6 +287,11 @@ def check_ast_deny_gate(source, filename):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             if isinstance(node, ast.Import):
                 mod_names = [a.name.split(".")[0] for a in node.names]
+            elif node.level:
+                if subject == "helper" and node.level == 1:
+                    mod_names = []  # package-local import; dependency closure below scans the target helper too
+                else:
+                    mod_names = [f"relative-import-level-{node.level}"]
             else:
                 mod_names = [(node.module or "").split(".")[0]]
             for m in mod_names:
@@ -304,13 +310,86 @@ def check_ast_deny_gate(source, filename):
                 violations.append(f"line {node.lineno}: denied identifier: {node.id}")
 
     if violations:
-        print("ERROR: ast-deny-gate rejected candidate:")
+        print(f"ERROR: ast-deny-gate rejected {subject}: {filename}")
         for v in violations[:20]:
             print(f"  - {v}")
         sys.exit(1)
 
 
+def _helper_dependencies(tree, current_module=None):
+    deps = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("strategy_helpers."):
+                    deps.add(alias.name[len("strategy_helpers."):])
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level == 1:
+                if module:
+                    deps.add(module)
+                else:
+                    for alias in node.names:
+                        if alias.name != "*":
+                            deps.add(alias.name)
+            elif node.level == 0 and module == "strategy_helpers":
+                for alias in node.names:
+                    if alias.name != "*":
+                        deps.add(alias.name)
+            elif node.level == 0 and module.startswith("strategy_helpers."):
+                deps.add(module[len("strategy_helpers."):])
+    return deps
+
+
+def _helper_source_path(module_name):
+    if not module_name or any(part in ("", ".", "..") for part in module_name.split(".")):
+        return None
+    rel = module_name.replace(".", os.sep)
+    candidates = [
+        os.path.join(helpers_dir, rel + ".py"),
+        os.path.join(helpers_dir, rel, "__init__.py"),
+    ]
+    base = os.path.realpath(helpers_dir)
+    for path in candidates:
+        real = os.path.realpath(path)
+        if real != base and not real.startswith(base + os.sep):
+            continue
+        if os.path.isfile(real):
+            return real
+    return None
+
+
+def check_reachable_helpers(candidate_source):
+    if not os.path.isdir(helpers_dir):
+        return
+    queue = []
+    init_path = os.path.join(helpers_dir, "__init__.py")
+    if os.path.isfile(init_path):
+        queue.append(("__init__", os.path.realpath(init_path)))
+    candidate_tree = ast.parse(candidate_source, filename=target)
+    for dep in sorted(_helper_dependencies(candidate_tree)):
+        path = _helper_source_path(dep)
+        if path:
+            queue.append((dep, path))
+    seen = set()
+    while queue:
+        module_name, path = queue.pop(0)
+        path = os.path.realpath(path)
+        if path in seen:
+            continue
+        seen.add(path)
+        with open(path, "r", encoding="utf-8") as f:
+            helper_source = f.read()
+        check_ast_deny_gate(helper_source, path, subject="helper")
+        helper_tree = ast.parse(helper_source, filename=path)
+        for dep in sorted(_helper_dependencies(helper_tree, module_name)):
+            dep_path = _helper_source_path(dep)
+            if dep_path and os.path.realpath(dep_path) not in seen:
+                queue.append((dep, dep_path))
+
+
 check_ast_deny_gate(source, target)
+check_reachable_helpers(source)
 
 
 def check_decide_exists_via_ast(source, filename):

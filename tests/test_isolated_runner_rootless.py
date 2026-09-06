@@ -432,6 +432,11 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
         self.assertIn('_strategy_isolated_runner_evaluate "$LOOP_DIR/strategy.py"', script)
         self.assertIn("shadow mode rejects automatic apply", script)
 
+    def test_linux_verify_does_not_treat_contained_forkbomb_receipt_pass_as_escape(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertNotIn("fork bomb candidate が pass 判定になった", script)
+        self.assertIn("fork bomb containment", script)
+
     @unittest.skipIf(_ISOLATION_WORKS_HERE, "この環境ではOS隔離が実際に機能する")
     def test_evaluate_fails_closed_and_receipt_has_no_secrets(self):
         with tempfile.TemporaryDirectory() as td:

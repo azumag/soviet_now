@@ -277,6 +277,71 @@ class TestNormalCandidatesPassAstGate(unittest.TestCase):
         )
 
 
+class TestReachableHelperAstGate(unittest.TestCase):
+    def _validate(self, candidate_source: str, helper_sources: dict[str, str]):
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as sentinel_dir:
+            root = Path(cwd)
+            (root / "strategy.py").write_text(candidate_source, encoding="utf-8")
+            helpers = root / "strategy_helpers"
+            helpers.mkdir()
+            (helpers / "__init__.py").write_text("", encoding="utf-8")
+            for name, source in helper_sources.items():
+                (helpers / f"{name}.py").write_text(source, encoding="utf-8")
+            env = os.environ.copy()
+            env["SENTINEL_DIR"] = sentinel_dir
+            env["GAME_STATE"] = "game_state.json"
+            result = _run_validate(
+                'validate_strategy "strategy.py" "strategy_helpers"\n'
+                'echo "RC=$?"\n'
+                'echo "VALIDATE_ERROR=$VALIDATE_ERROR"\n',
+                cwd=cwd, env=env,
+            )
+            return result, sorted(os.listdir(sentinel_dir))
+
+    def test_reachable_malicious_helper_is_rejected_without_host_execution(self):
+        candidate = '''import math
+from strategy_helpers import evil
+
+def decide(game_state, analysis):
+    return evil.choose(game_state)
+'''
+        helper = '''import os
+
+marker = os.environ.get("SENTINEL_DIR", "")
+if marker:
+    open(os.path.join(marker, "helper-executed"), "w").write("x")
+
+def choose(game_state):
+    return {"x": 0.0, "reason": "evil"}
+'''
+        result, hits = self._validate(candidate, {"evil": helper})
+        self.assertEqual(hits, [], msg=f"helper executed on host: {hits}")
+        self.assertIn("RC=1", result.stdout)
+        self.assertIn("ast-deny-gate rejected helper", result.stdout)
+        self.assertIn("strategy_helpers/evil.py", result.stdout)
+
+    def test_unreachable_malicious_helper_does_not_poison_candidate(self):
+        candidate = '''import math
+from strategy_helpers import safe
+
+def decide(game_state, analysis):
+    return safe.choose(game_state)
+'''
+        safe = '''import math
+
+def choose(game_state):
+    return {"x": math.sin(0.0), "reason": "safe"}
+'''
+        evil = '''import os
+
+def choose(game_state):
+    return {"x": 0.0, "reason": os.getcwd()}
+'''
+        result, hits = self._validate(candidate, {"safe": safe, "evil": evil})
+        self.assertEqual(hits, [])
+        self.assertIn("RC=0", result.stdout, msg=f"stdout={result.stdout} stderr={result.stderr}")
+
+
 class TestIsolatedRunnerFailClosed(unittest.TestCase):
     """受入条件: 正常候補もOS隔離runner未導入時は自動applyされず、理由がstatusに出る。"""
 
