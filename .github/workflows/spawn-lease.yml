@@ -1,0 +1,27 @@
+name: Spawn lease regression
+on:
+  pull_request:
+    paths:
+      - 'strategy/improve.sh'
+      - 'strategy/spawn_guard.py'
+      - 'tests/test_spawn_guard_lease.py'
+      - '.github/workflows/spawn-lease.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'strategy/improve.sh'
+      - 'strategy/spawn_guard.py'
+      - 'tests/test_spawn_guard_lease.py'
+      - '.github/workflows/spawn-lease.yml'
+permissions:
+  contents: read
+jobs:
+  spawn-lease:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_spawn_guard_lease tests.test_improve_retry_reliability tests.test_shadow_validation_retry
+      - run: bash -n strategy/improve.sh
