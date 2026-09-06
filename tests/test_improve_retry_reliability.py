@@ -381,7 +381,7 @@ _validation_error_is_nonretryable_infrastructure "OS隔離runner未導入のた�
             self.assertEqual(result.returncode, 0, result.stderr)
 
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
-        self.assertIn('IMPROVE_FAILURE_CODE="isolated_runner_unavailable"', eloop)
+        self.assertIn('IMPROVE_FAILURE_CODE="${VALIDATION_RETRY_BLOCK_CODE:-isolated_runner_unavailable}"', eloop)
         self.assertIn('_validation_error_is_nonretryable_infrastructure "${VALIDATE_ERROR:-}"', eloop)
 
     def test_model_nonresponse_advances_fresh_retry_before_final_failure(self):
