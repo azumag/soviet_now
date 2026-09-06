@@ -136,6 +136,11 @@ def _build_bwrap_argv(input_dir, output_dir, limits, python3_path, harness_rel_a
     argv = [
         "bwrap",
         "--unshare-all",
+        # AppArmorでbwrap自身にuserns作成を限定許可する環境でも、
+        # 未信頼candidateへnested user namespace作成権限を継承させない。
+        "--disable-userns",
+        "--assert-userns-disabled",
+        "--cap-drop", "ALL",
         "--die-with-parent",
         "--new-session",
         "--clearenv",

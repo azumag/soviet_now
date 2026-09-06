@@ -379,6 +379,24 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
         if backend is None:
             self.assertTrue(reason)
 
+    def test_bwrap_argv_disables_nested_user_namespaces(self):
+        argv = run_isolated._build_bwrap_argv(
+            "/tmp/input", "/tmp/output", dict(run_isolated.DEFAULT_LIMITS),
+            "/usr/bin/python3", ["/input/harness.py"],
+        )
+        self.assertIn("--disable-userns", argv)
+        self.assertIn("--assert-userns-disabled", argv)
+        self.assertIn("--cap-drop", argv)
+        self.assertIn("ALL", argv)
+
+    def test_deploy_has_scoped_bwrap_apparmor_userns_profile(self):
+        profile = REPO_ROOT / "deploy" / "soren-runtime" / "apparmor" / "usr.bin.bwrap"
+        self.assertTrue(profile.is_file(), msg=f"missing tracked AppArmor profile: {profile}")
+        text = profile.read_text(encoding="utf-8")
+        self.assertIn("profile bwrap /usr/bin/bwrap flags=(unconfined)", text)
+        self.assertIn("userns,", text)
+        self.assertNotIn("/usr/local/bin/bwrap", text)
+
     @unittest.skipIf(_ISOLATION_WORKS_HERE, "この環境ではOS隔離が実際に機能する")
     def test_evaluate_fails_closed_and_receipt_has_no_secrets(self):
         with tempfile.TemporaryDirectory() as td:
