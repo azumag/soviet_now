@@ -419,6 +419,19 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
             payload = json.loads(out.read_text(encoding="utf-8"))
             self.assertIs(payload.get("output_write_ok"), True)
 
+    def test_linux_verify_falls_back_to_unittest_without_pytest(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertIn("_run_test_file()", script)
+        self.assertIn("import pytest", script)
+        self.assertIn('python3 "$test_file" -v', script)
+
+    def test_linux_verify_distinguishes_receipt_pass_from_shadow_apply_gate(self):
+        script = (ISOLATED_RUNNER_DIR / "verify_on_linux.sh").read_text(encoding="utf-8")
+        self.assertIn("loop_passes=0", script)
+        self.assertNotIn("loop_failures=0", script)
+        self.assertIn('_strategy_isolated_runner_evaluate "$LOOP_DIR/strategy.py"', script)
+        self.assertIn("shadow mode rejects automatic apply", script)
+
     @unittest.skipIf(_ISOLATION_WORKS_HERE, "この環境ではOS隔離が実際に機能する")
     def test_evaluate_fails_closed_and_receipt_has_no_secrets(self):
         with tempfile.TemporaryDirectory() as td:
