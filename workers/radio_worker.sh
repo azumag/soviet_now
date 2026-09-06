@@ -220,7 +220,7 @@ _log "起動 (PID=$$, interval=${POLL_INTERVAL}s, initial_game=${_LAST_GAME_NUM}
 
 _run_iteration() {
 	# 1 回分の処理。どこで失敗しても呼び出し元には影響させない (|| true で吸収)
-	if ! (source ./eloop_lib.sh) 2>/dev/null; then
+	if ! source ./eloop_lib.sh 2>/dev/null; then
 		_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
 	fi
 
