@@ -137,6 +137,17 @@ def decide(game_state, analysis
     return {"x": 0.0, "reason": "broken"}
 '''
 
+_ACTIVE_ENV_FIXTURE = r'''"""trusted active fixture matching production v763 env override."""
+import os
+
+# Deliberately raises if host-executed with the test env. Static validation must not execute it.
+DIVERSITY_W = float(os.environ.get("V763_DIVERSITY_W", "0"))
+
+def decide(game_state, analysis):
+    return {"x": DIVERSITY_W, "reason": "active-env-fixture"}
+'''
+
+
 _BENIGN_FIXTURE = '''"""benign fixture for issue #34 regression test."""
 import math
 
@@ -218,6 +229,47 @@ class TestSyntaxErrorFixtureRejectedSafely(unittest.TestCase):
             self.assertIn("RC=1", result.stdout)
             self.assertIn("SyntaxError", result.stdout,
                           msg=f"stdout={result.stdout}\nstderr={result.stderr}")
+
+
+class TestActiveStrategyStartupValidation(unittest.TestCase):
+    def test_active_env_override_passes_without_host_execution(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            candidate = Path(cwd) / "strategy.py"
+            candidate.write_text(_ACTIVE_ENV_FIXTURE, encoding="utf-8")
+            env = os.environ.copy()
+            env["V763_DIVERSITY_W"] = "would-crash-if-executed"
+            env["GAME_STATE"] = "game_state.json"
+            result = _run_validate(
+                'validate_active_strategy "strategy.py" "nonexistent_helpers"\n'
+                'echo "RC=$?"\n'
+                'echo "VALIDATE_ERROR=$VALIDATE_ERROR"\n',
+                cwd=cwd, env=env,
+            )
+            self.assertIn("RC=0", result.stdout, msg=f"stdout={result.stdout} stderr={result.stderr}")
+
+    def test_same_env_override_is_still_rejected_as_candidate(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            candidate = Path(cwd) / "strategy.py.staging"
+            candidate.write_text(_ACTIVE_ENV_FIXTURE, encoding="utf-8")
+            env = os.environ.copy()
+            env["V763_DIVERSITY_W"] = "would-crash-if-executed"
+            env["GAME_STATE"] = "game_state.json"
+            result = _run_validate(
+                'validate_strategy "strategy.py.staging" "nonexistent_helpers"\n'
+                'echo "RC=$?"\n'
+                'echo "VALIDATE_ERROR=$VALIDATE_ERROR"\n',
+                cwd=cwd, env=env,
+            )
+            self.assertIn("RC=1", result.stdout)
+            self.assertIn("ast-deny-gate rejected candidate", result.stdout + result.stderr)
+
+    def test_soren_loop_uses_active_validator_only_for_startup(self):
+        source = (REPO_ROOT / "soren_loop.sh").read_text(encoding="utf-8")
+        start = source.index("# 初期バリデーション")
+        end = source.index("# 前回中断した改善プロセス", start)
+        startup = source[start:end]
+        self.assertIn("if ! validate_active_strategy; then", startup)
+        self.assertNotIn("if ! validate_strategy; then", startup)
 
 
 class TestNormalCandidatesPassAstGate(unittest.TestCase):

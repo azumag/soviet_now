@@ -809,7 +809,7 @@ if [ ! -f "$STRATEGY_FILE" ]; then
 	log "ERROR: $STRATEGY_FILE が見つかりません"
 	exit 1
 fi
-if ! validate_strategy; then
+if ! validate_active_strategy; then
 	log "ERROR: 初期バリデーション失敗"
 	exit 1
 fi

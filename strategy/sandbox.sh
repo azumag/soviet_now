@@ -4,12 +4,13 @@ validate_strategy() {
 	# 引数でファイルパスを指定可能 (デフォルト: strategy.py)
 	local target_file="${1:-strategy.py}"
 	local helpers_dir="${2:-strategy_helpers}"
+	local validation_subject="${3:-candidate}"
 	log "[VALIDATE] checking $target_file..."
 	VALIDATE_ERROR=""
 
 	local sig_out
 	sig_out=$(
-		python3 - "$target_file" "$helpers_dir" <<'PYEOF' 2>&1
+		python3 - "$target_file" "$helpers_dir" "$validation_subject" <<'PYEOF' 2>&1
 import os
 import re
 import sys
@@ -17,6 +18,7 @@ import ast
 
 target = sys.argv[1]
 helpers_dir = sys.argv[2] if len(sys.argv) > 2 else "strategy_helpers"  # unused: no host import/exec happens here (issue #34)
+validation_subject = sys.argv[3] if len(sys.argv) > 3 else "candidate"
 
 # .py.staging ファイルを扱う。以前はここで exec() してモジュール化していたが、
 # 未信頼のAI生成候補をhost processでexec/importすること自体が issue #34 の脆弱性
@@ -388,7 +390,13 @@ def check_reachable_helpers(candidate_source):
                 queue.append((dep, dep_path))
 
 
-check_ast_deny_gate(source, target)
+# The already-active strategy is trusted runtime state. It may contain operational
+# read-only configuration (for example V763_DIVERSITY_W via os.environ) that the
+# candidate deny gate intentionally forbids. Startup still parses the file and
+# checks decide() below, but never executes/imports it on the host. AI-generated
+# candidates keep the full deny gate. Reachable helpers remain gated in both modes.
+if validation_subject != "active":
+    check_ast_deny_gate(source, target)
 check_reachable_helpers(source)
 
 
@@ -440,6 +448,15 @@ PYEOF
 	fi
 
 	return 0
+}
+
+# Startup validation for the already-active strategy. This deliberately skips
+# only the root candidate AST deny gate; syntax/decide checks and reachable-helper
+# deny checks remain static and no strategy code is host-executed.
+validate_active_strategy() {
+	local target_file="${1:-strategy.py}"
+	local helpers_dir="${2:-strategy_helpers}"
+	validate_strategy "$target_file" "$helpers_dir" active
 }
 
 _realpath_safe() {
