@@ -568,8 +568,10 @@ schedule_nonessential_audio_jobs() {
 		local target=$((10#$target_hh * 60 + 10#$target_mm))
 		local now=$((10#$current_hour * 60 + 10#$current_min))
 		local diff=$((now - target))
-		[ "$diff" -lt 0 ] && diff=$((-diff))
-		[ "$diff" -le 15 ] || {
+		# Polling delay is recoverable for 15 minutes, but future slots must not
+		# be pulled forward.  The old absolute-difference check made the 01:00
+		# tick start the 01:05 and 01:15 jobs too, creating an avoidable AI queue.
+		[ "$diff" -ge 0 ] && [ "$diff" -le 15 ] || {
 			rmdir "$inflight" 2>/dev/null
 			return 1
 		}
