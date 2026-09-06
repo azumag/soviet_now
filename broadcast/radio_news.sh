@@ -26,7 +26,11 @@ SPAM か NEWS の1単語だけ答えてください。
 本文冒頭: ${body_excerpt}"
 	prompt_file=$(mktemp /tmp/news_spam_prompt_XXXXXXXX)
 	printf '%s\n' "$prompt_text" >"$prompt_file"
-	verdict=$(ai_generate \
+	# スパム判定は補助フィルタであり、改善ジョブを最大20分待って
+	# ニュース枠そのものを遅延させてはいけない。provider timeout と同程度に
+	# improve gate 待ちも束縛し、打ち切り時は従来どおり fail-open とする。
+	local improve_wait_max="${NEWS_SPAM_CHECK_IMPROVE_WAIT_MAX_SEC:-$spam_timeout}"
+	verdict=$(AI_RADIO_IMPROVE_WAIT_MAX_SEC="$improve_wait_max" ai_generate \
 		"NEWS:spam_check" "$prompt_file" \
 		"$primary_agent" "$fallback_agent" \
 		"$spam_timeout" _news_spam_verdict_valid)
