@@ -2482,8 +2482,8 @@ if [ -n "$HISTORY_FILES" ]; then
 
 	best_game_file=$(grep '^===BEST_FILE===' "$batch_summary_file" | sed 's/===BEST_FILE===//')
 	worst_game_file=$(grep '^===WORST_FILE===' "$batch_summary_file" | sed 's/===WORST_FILE===//')
-	best_game_path="$HISTORY_DIR/$best_game_file"
-	worst_game_path="$HISTORY_DIR/$worst_game_file"
+	[ -n "$best_game_file" ] && best_game_path="$HISTORY_DIR/$best_game_file" || best_game_path=""
+	[ -n "$worst_game_file" ] && worst_game_path="$HISTORY_DIR/$worst_game_file" || worst_game_path=""
 else
 	echo "(no game data)" >"$batch_summary_file"
 	best_game_path=""
@@ -2559,7 +2559,7 @@ def basename(path: str) -> str:
 
 def read_jsonl(path: str):
     rows = []
-    if not path or not os.path.exists(path):
+    if not path or not os.path.isfile(path):
         return rows
     with open(path, encoding="utf-8", errors="ignore") as f:
         for raw in f:

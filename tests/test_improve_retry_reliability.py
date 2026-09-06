@@ -235,6 +235,45 @@ _restore_improve_retry_batch_if_valid new-hash
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_rotated_retry_history_is_rejected_and_stale_lock_is_cleared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+source "$1/strategy/improve.sh"
+test_root="$2"
+log() { printf '%s\n' "$*" >>"$test_root/events"; }
+TMP_STATE_DIR="$2/state"
+IMPROVE_LOCK_FILE="$2/improve.lock"
+IMPROVE_RETRY_BATCH_FILE="$TMP_STATE_DIR/improve_retry_batch.json"
+mkdir -p "$TMP_STATE_DIR"
+printf '%s\n' '{"count":48,"hash":"same-hash","files":["/definitely/missing/history.jsonl"]}' >"$IMPROVE_RETRY_BATCH_FILE"
+! _restore_improve_retry_batch_if_valid same-hash
+[ ! -e "$IMPROVE_LOCK_FILE" ]
+
+cp "$IMPROVE_RETRY_BATCH_FILE" "$IMPROVE_LOCK_FILE"
+printf '2\n0\nno_apply\n' >"$TMP_STATE_DIR/rate_limit_backoff"
+_main_strategy_runner_active_for_improve() { return 1; }
+_read_improve_state() { printf '%s\n' '{"status":"idle"}'; }
+_improve_peak_gate_should_defer() { return 1; }
+enrich_accumulated_game_metadata() { :; }
+trigger_adaptive_improvement
+[ ! -e "$IMPROVE_LOCK_FILE" ]
+[ ! -e "$IMPROVE_RETRY_BATCH_FILE" ]
+[ ! -e "$TMP_STATE_DIR/rate_limit_backoff" ]
+grep -q 'history files stale' "$2/events"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_improve_brief_skips_non_files_and_empty_best_worst_paths(self):
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        self.assertIn('if not path or not os.path.isfile(path):', eloop)
+        self.assertIn('[ -n "$best_game_file" ] && best_game_path="$HISTORY_DIR/$best_game_file" || best_game_path=""', eloop)
+        self.assertIn('[ -n "$worst_game_file" ] && worst_game_path="$HISTORY_DIR/$worst_game_file" || worst_game_path=""', eloop)
+
     def test_failed_retry_count_survives_backoff_expiry(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_bash(
