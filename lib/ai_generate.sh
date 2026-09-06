@@ -161,12 +161,68 @@ _ai_queue_label() {
 	printf '%s:%s:%s:%s' "$label" "$locality" "$provider" "$model"
 }
 
+AI_GENERATION_QUEUE_GUARD_FD=""
+AI_GENERATION_QUEUE_GUARD_DIR=""
+
+# Serialize lock-directory claim/reap/release.  The generation lock itself is
+# intentionally held for the whole AI call, while this guard is held only for
+# the few filesystem operations that change ownership.  Linux production uses
+# flock(2), which is released automatically if a contender dies.  Platforms
+# without flock use a fail-closed mkdir guard; it is never reaped by a second
+# contender, so safety is preserved even though a crashed guard owner may make
+# that single acquisition fail after the bounded wait.
+_ai_generation_queue_guard_enter() {
+	local lock_dir="$1" guard_file guard_dir fd waited=0
+	guard_file="${lock_dir}.owner_guard.lock"
+	guard_dir="${lock_dir}.owner_guard.d"
+	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || return 1
+	AI_GENERATION_QUEUE_GUARD_FD=""
+	AI_GENERATION_QUEUE_GUARD_DIR=""
+
+	if command -v flock >/dev/null 2>&1; then
+		exec {fd}>>"$guard_file" || return 1
+		if ! flock -x "$fd" 2>/dev/null; then
+			eval "exec ${fd}>&-" 2>/dev/null || true
+			return 1
+		fi
+		AI_GENERATION_QUEUE_GUARD_FD="$fd"
+		return 0
+	fi
+
+	while ! mkdir "$guard_dir" 2>/dev/null; do
+		if [ "$waited" -ge "${AI_GENERATION_QUEUE_GUARD_MAX_WAIT_SEC:-30}" ]; then
+			log "[AIQ] generation owner guard unavailable; fail closed (${guard_dir})" >&2
+			return 1
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	AI_GENERATION_QUEUE_GUARD_DIR="$guard_dir"
+	return 0
+}
+
+_ai_generation_queue_guard_leave() {
+	local fd="${AI_GENERATION_QUEUE_GUARD_FD:-}" guard_dir="${AI_GENERATION_QUEUE_GUARD_DIR:-}"
+	case "$fd" in
+	'' | *[!0-9]*) ;;
+	*)
+		flock -u "$fd" 2>/dev/null || true
+		eval "exec ${fd}>&-" 2>/dev/null || true
+		;;
+	esac
+	if [ -n "$guard_dir" ]; then
+		rmdir "$guard_dir" 2>/dev/null || true
+	fi
+	AI_GENERATION_QUEUE_GUARD_FD=""
+	AI_GENERATION_QUEUE_GUARD_DIR=""
+}
+
 _ai_generation_queue_enter() {
 	local label="${1:-AI}"
 	local lock_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
 	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
-	local waited=0 token now mt age owner_summary="" owner_pid=""
+	local waited=0 token now mt age owner_summary="" owner_pid="" reap_reason=""
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 
 	case "$wait_sec" in
@@ -181,60 +237,91 @@ _ai_generation_queue_enter() {
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
 
-	while ! mkdir "$lock_dir" 2>/dev/null; do
+	while :; do
+		_ai_generation_queue_guard_enter "$lock_dir" || {
+			AI_GENERATION_QUEUE_LAST_TOKEN=""
+			return 1
+		}
+		if mkdir "$lock_dir" 2>/dev/null; then
+			{
+				printf 'token=%s\n' "$token"
+				printf 'pid=%s\n' "${BASHPID:-$$}"
+				printf 'label=%s\n' "$label"
+				printf 'started_at=%s\n' "$(date '+%F %T')"
+			} >"$lock_dir/owner" 2>/dev/null || true
+			_ai_generation_queue_guard_leave
+			AI_GENERATION_QUEUE_LAST_TOKEN="$token"
+			[ "$waited" -gt 0 ] && log "[AIQ:${label}] generation slot acquired after ${waited}s" >&2
+			return 0
+		fi
+
 		owner_pid=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
-		case "$owner_pid" in
-		'' | *[!0-9]*) ;;
-		*)
-			if ! kill -0 "$owner_pid" 2>/dev/null; then
-				log "[AIQ:${label}] dead generation lock owner cleared (pid=${owner_pid})" >&2
-				rm -rf "$lock_dir" 2>/dev/null || true
-				continue
-			fi
-			;;
-		esac
+		owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')
 		now=$(date +%s)
 		mt=$(stat -f %m "$lock_dir" 2>/dev/null) \
 			|| mt=$(stat -c %Y "$lock_dir" 2>/dev/null) \
 			|| mt="$now"
 		age=$((now - mt))
-		if [ "$age" -gt "$stale_sec" ]; then
-			log "[AIQ:${label}] stale generation lock cleared (age=${age}s)" >&2
-			rm -rf "$lock_dir" 2>/dev/null || true
-			continue
+		reap_reason=""
+		case "$owner_pid" in
+		'' | *[!0-9]*) ;;
+		*)
+			if ! kill -0 "$owner_pid" 2>/dev/null; then
+				reap_reason="dead generation lock owner cleared (pid=${owner_pid})"
+			fi
+			;;
+		esac
+		if [ -z "$reap_reason" ] && [ "$age" -gt "$stale_sec" ]; then
+			reap_reason="stale generation lock cleared (age=${age}s)"
 		fi
+
+		if [ -n "$reap_reason" ]; then
+			# The guard covers both deletion and the replacement claim.  No follower
+			# can act on an observation of the old owner after a new owner appears.
+			rm -rf "$lock_dir" 2>/dev/null || true
+			if mkdir "$lock_dir" 2>/dev/null; then
+				{
+					printf 'token=%s\n' "$token"
+					printf 'pid=%s\n' "${BASHPID:-$$}"
+					printf 'label=%s\n' "$label"
+					printf 'started_at=%s\n' "$(date '+%F %T')"
+				} >"$lock_dir/owner" 2>/dev/null || true
+				_ai_generation_queue_guard_leave
+				log "[AIQ:${label}] ${reap_reason}" >&2
+				AI_GENERATION_QUEUE_LAST_TOKEN="$token"
+				[ "$waited" -gt 0 ] && log "[AIQ:${label}] generation slot acquired after ${waited}s" >&2
+				return 0
+			fi
+		fi
+
+		_ai_generation_queue_guard_leave
 		if [ "$waited" -eq 0 ] || [ $((waited % 30)) -eq 0 ]; then
-			owner_summary=$(tr '\n' ' ' <"$lock_dir/owner" 2>/dev/null | sed 's/[[:space:]]\+/ /g')
 			log "[AIQ:${label}] queued: waiting for generation slot${owner_summary:+ (${owner_summary})}" >&2
 		fi
 		sleep "$wait_sec"
 		waited=$((waited + wait_sec))
 	done
-
-	{
-		printf 'token=%s\n' "$token"
-		printf 'pid=%s\n' "${BASHPID:-$$}"
-		printf 'label=%s\n' "$label"
-		printf 'started_at=%s\n' "$(date '+%F %T')"
-	} >"$lock_dir/owner" 2>/dev/null || true
-	AI_GENERATION_QUEUE_LAST_TOKEN="$token"
-	[ "$waited" -gt 0 ] && log "[AIQ:${label}] generation slot acquired after ${waited}s" >&2
-	return 0
 }
 
 _ai_generation_queue_leave() {
 	local token="${1:-}" label="${2:-AI}"
-	local lock_dir
-	local current_token=""
+	local lock_dir current_token=""
 	[ -n "$token" ] || return 0
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
-	[ -d "$lock_dir" ] || return 0
-	current_token=$(sed -n 's/^token=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
-	if [ "$current_token" = "$token" ]; then
-		rm -rf "$lock_dir" 2>/dev/null || true
-	else
-		log "[AIQ:${label}] generation lock owner changed; skip release" >&2
+	_ai_generation_queue_guard_enter "$lock_dir" || {
+		log "[AIQ:${label}] generation owner guard unavailable; skip unsafe release" >&2
+		return 1
+	}
+	if [ -d "$lock_dir" ]; then
+		current_token=$(sed -n 's/^token=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+		if [ "$current_token" = "$token" ]; then
+			rm -rf "$lock_dir" 2>/dev/null || true
+		else
+			log "[AIQ:${label}] generation lock owner changed; skip release" >&2
+		fi
 	fi
+	_ai_generation_queue_guard_leave
+	return 0
 }
 
 # 改善ジョブ稼働中、新規の放送系AI生成を待機させるゲート。
