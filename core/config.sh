@@ -66,8 +66,9 @@ _VERCEL_FREE_CHAIN="${VERCEL_FREE_AGENTS:+${VERCEL_FREE_AGENTS},}"
 AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
-# 除いたもの。run_ai_list() が順に試行する。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
+# 除き、strategy/ai.sh の run_cmd() がモデル指定を保持できる opencode/opencode-go のみ。
+# amd:/minimax-api: は run_cmd() では legacy codex 正規化され指定モデルが保持されないため含めない。
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
