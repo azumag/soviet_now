@@ -65,7 +65,24 @@ check '[ "$scope_off" != "radio" ]' 'AI_RADIO_LANE_LOCK=0 で従来のモデル�
 scope_coff=$( (export AI_COMMENT_LANE_LOCK=0; _ai_queue_lock_scope "COMMENT:test:remote:codex:m") )
 check '[ "$scope_coff" != "comment" ]' 'AI_COMMENT_LANE_LOCK=0 で従来スコープに戻る'
 
-# --- 2. 放送系の直列化 (異なるモデルでも待ち合わせる) ---
+# --- 2. dead owner の generation lock は即時回収 ---
+rm -rf "$LOCK_BASE"
+mkdir -p "$LOCK_BASE/radio"
+printf 'token=dead-holder\npid=999999999\nlabel=RADIO:dead-holder\n' >"$LOCK_BASE/radio/owner"
+(
+	_ai_generation_queue_run "RADIO:after-dead-owner" true
+	echo done >"$TMP/dead_owner_done"
+) &
+dead_follower_pid=$!
+sleep 2
+check '[ -f "$TMP/dead_owner_done" ]' 'owner PIDが消滅したfresh generation lockはstale期限を待たず回収する'
+if kill -0 "$dead_follower_pid" 2>/dev/null; then
+	kill "$dead_follower_pid" 2>/dev/null || true
+fi
+wait "$dead_follower_pid" 2>/dev/null || true
+rm -rf "$LOCK_BASE"
+
+# --- 3. 放送系の直列化 (異なるモデルでも待ち合わせる) ---
 rm -rf "$LOCK_BASE"
 mkdir -p "$LOCK_BASE/radio"
 # 先行ホルダーを模擬: radio ロックを手動取得した状態で後続が待つこと
