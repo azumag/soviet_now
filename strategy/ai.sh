@@ -921,12 +921,26 @@ run_ai_list() {
 	local label="$1" agent_list_raw="$2"
 	shift 2
 	local agents=() _IFS_save="$IFS" agent rc saw_rate_limit=0 final_rc=1
+	local attempted_count=0 skipped_backoff_count=0 backoff_remaining=""
 	IFS=',' read -ra agents <<< "$agent_list_raw"
 	IFS="$_IFS_save"
 
 	for agent in "${agents[@]}"; do
 		agent=$(printf '%s' "$agent" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 		[ -n "$agent" ] || continue
+		# lib/ai_generate.sh is sourced before strategy/ai.sh in eloop_lib.sh.
+		# Reuse its agent-scoped backoff so improve does not spend its wall-time
+		# budget retrying a provider already parked by radio/comment generation.
+		if command -v _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then
+			backoff_remaining="unknown"
+			if command -v _ai_backoff_remaining >/dev/null 2>&1; then
+				backoff_remaining=$(_ai_backoff_remaining "$agent")
+			fi
+			log "[$label] ${agent} shared backoff skip (${backoff_remaining}s remaining)"
+			skipped_backoff_count=$((skipped_backoff_count + 1))
+			continue
+		fi
+		attempted_count=$((attempted_count + 1))
 		log "[$label] run_ai_list: try ${agent}"
 		run_ai "$label" "$agent" "" "$@"
 		rc=$?
@@ -945,7 +959,10 @@ run_ai_list() {
 		log "[$label] ${agent} failed (rc=$rc) → next model"
 	done
 
-	if [ "$saw_rate_limit" -eq 1 ]; then
+	if [ "$attempted_count" -eq 0 ] && [ "$skipped_backoff_count" -gt 0 ]; then
+		log "[$label] run_ai_list: all models are in shared backoff → caller back off"
+		final_rc=79
+	elif [ "$saw_rate_limit" -eq 1 ]; then
 		log "[$label] run_ai_list: all models rate-limited → caller back off"
 		final_rc=79
 	else
