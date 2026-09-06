@@ -18,6 +18,7 @@ CHANGE_LOG_FILE="logs/change_log.txt"
 CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 source ./eloop_lib.sh
+source ./strategy/retry_policy.sh
 
 # Scope MiniMax/fallback suppression to this improvement worker only.
 export RUN_AI_IMPROVEMENT_MODE=1
@@ -3724,6 +3725,13 @@ ${helpers_diff}"
 			break
 		else
 			_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR:-unknown validation error}"
+			if _validation_error_is_nonretryable_infrastructure "${VALIDATE_ERROR:-}"; then
+				IMPROVE_FAILURE_CODE="isolated_runner_unavailable"
+				_improve_note "non-retryable infrastructure validation failure → abort AI fix/fresh retries and return to outer backoff"
+				improve_ok=false
+				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+				break
+			fi
 			if _structural_error_should_restart_fresh "${VALIDATE_ERROR:-}" "$continue_retry"; then
 				_improve_note "structural validation breakage persisted through ${continue_retry} continue fixes; restart with clean sandbox"
 				fresh_retry=$((fresh_retry + 1))
