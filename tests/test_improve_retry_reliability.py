@@ -326,6 +326,25 @@ PY
         self.assertLess(analyze_timeout_pos, stage2_pos)
         self.assertLess(stage2_pos, restore_pos)
 
+    def test_isolated_runner_unavailable_is_nonretryable_validation_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_bash(
+                r'''
+set -e
+cd "$1"
+source ./strategy/retry_policy.sh
+_validation_error_is_nonretryable_infrastructure "OS隔離runner未導入のため自動適用をfail-closedで停止 (issue #34/#35): probe unavailable"
+! _validation_error_is_nonretryable_infrastructure "strategy validation failed: SyntaxError"
+''',
+                str(REPO_ROOT),
+                tmp,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+        self.assertIn('IMPROVE_FAILURE_CODE="isolated_runner_unavailable"', eloop)
+        self.assertIn('_validation_error_is_nonretryable_infrastructure "${VALIDATE_ERROR:-}"', eloop)
+
     def test_model_nonresponse_advances_fresh_retry_before_final_failure(self):
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
         self.assertGreaterEqual(
