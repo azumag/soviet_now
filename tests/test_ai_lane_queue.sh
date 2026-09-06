@@ -193,6 +193,23 @@ EOF
 		check 'false' '統計ファイルが作成されている'
 	fi
 	rm -f "$stats_file"
+
+	# ai_generate_list でもゲート打ち切りはモデル非依存のため即時伝播し、
+	# fallback候補の失敗streak/backoffを汚染しない。
+	rm -f "$AI_BACKOFF_DIR/codex_gate-a" "$AI_BACKOFF_DIR/codex_gate-b"
+	rm -f "$AI_FAIL_STREAK_DIR/codex_gate-a" "$AI_FAIL_STREAK_DIR/codex_gate-b"
+	write_improve_state "running" "$$" "$(date +%s)"
+	(
+		cd "$WORK" || exit 1
+		export AI_RADIO_IMPROVE_WAIT_MAX_SEC=1 AI_GENERATION_QUEUE_WAIT_SEC=1
+		ai_generate_list "RADIO:test:list-gated" "$WORK/prompt.txt" "codex:gate-a,codex:gate-b" >/dev/null 2>&1
+	)
+	giveup_list_rc=$?
+	check '[ "$giveup_list_rc" -eq "$AI_GATE_GIVEUP_RC" ]' 'ai_generate_list はゲート打ち切り専用コードをそのまま返す'
+	check '[ ! -e "$AI_BACKOFF_DIR/codex_gate-a" ] && [ ! -e "$AI_BACKOFF_DIR/codex_gate-b" ]' 'ゲート打ち切りで候補モデルにbackoffを設定しない'
+	check '[ ! -e "$AI_FAIL_STREAK_DIR/codex_gate-a" ] && [ ! -e "$AI_FAIL_STREAK_DIR/codex_gate-b" ]' 'ゲート打ち切りで候補モデルの失敗streakを増やさない'
+	rm -f "$IMPROVE_STATE_FILE"
+
 	# 改善なし → 通常どおり attempt/ok を記録する
 	rm -f "$IMPROVE_STATE_FILE"
 	stub_out=$(

@@ -1476,6 +1476,13 @@ ai_generate_list() {
 		attempted_count=$((attempted_count + 1))
 		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 		rc=$?
+		# 改善ゲートの打ち切りはモデル非依存で、実際のprovider呼び出しも発生していない。
+		# fallbackを続けると全候補へ偽のfail streak/backoffを付けるため、その場で伝播する。
+		if [ "$rc" -eq "$AI_GATE_GIVEUP_RC" ]; then
+			[ -n "$failure_kind_file" ] && printf 'gate_giveup\n' >"$failure_kind_file"
+			AI_DISPATCH_VALIDATOR="$saved_validator"
+			return "$AI_GATE_GIVEUP_RC"
+		fi
 		AI_DISPATCH_VALIDATOR=""
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 			AI_GENERATE_LAST_AGENT="$agent"
