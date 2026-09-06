@@ -557,14 +557,53 @@ schedule_nonessential_audio_jobs() {
 	current_min=$(date +%M)
 	today=$(date +%Y%m%d)
 
+	_timed_corner_release_inflight() {
+		local inflight="$1"
+		[ -d "$inflight" ] || return 0
+		rm -f "$inflight/owner" 2>/dev/null || return 1
+		rmdir "$inflight" 2>/dev/null
+	}
+
+	_timed_corner_write_owner() {
+		local inflight="$1"
+		printf '%s\n' "${BASHPID:-$$}" >"$inflight/owner" 2>/dev/null
+	}
+
+	_timed_corner_claim_inflight() {
+		local inflight="$1" owner_pid=""
+		if mkdir "$inflight" 2>/dev/null; then
+			_timed_corner_write_owner "$inflight" || {
+				_timed_corner_release_inflight "$inflight" 2>/dev/null || true
+				return 1
+			}
+			return 0
+		fi
+
+		# A reload/crash may terminate the background timed-corner before its
+		# normal rmdir runs.  Owner-aware markers let the next scheduler tick
+		# reclaim only a marker whose exact job process is no longer alive.
+		owner_pid=$(cat "$inflight/owner" 2>/dev/null || true)
+		case "$owner_pid" in
+		'' | *[!0-9]*) return 1 ;; # legacy/unknown marker: fail closed
+		esac
+		if kill -0 "$owner_pid" 2>/dev/null; then
+			return 1
+		fi
+		_timed_corner_release_inflight "$inflight" 2>/dev/null || return 1
+		mkdir "$inflight" 2>/dev/null || return 1
+		_timed_corner_write_owner "$inflight" || {
+			_timed_corner_release_inflight "$inflight" 2>/dev/null || true
+			return 1
+		}
+		return 0
+	}
+
 	_try_timed_corner() {
 		local marker_key="$1" target_hh="$2" target_mm="$3"
 		local marker="$TMP_MARKERS_DIR/.timed_corner_done_${today}_${marker_key}"
 		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${marker_key}"
 		[ -f "$marker" ] && return 1
-		if ! mkdir "$inflight" 2>/dev/null; then
-			return 1 # another scheduler beat us
-		fi
+		_timed_corner_claim_inflight "$inflight" || return 1
 		local target=$((10#$target_hh * 60 + 10#$target_mm))
 		local now=$((10#$current_hour * 60 + 10#$current_min))
 		local diff=$((now - target))
@@ -572,7 +611,7 @@ schedule_nonessential_audio_jobs() {
 		# be pulled forward.  The old absolute-difference check made the 01:00
 		# tick start the 01:05 and 01:15 jobs too, creating an avoidable AI queue.
 		[ "$diff" -ge 0 ] && [ "$diff" -le 15 ] || {
-			rmdir "$inflight" 2>/dev/null
+			_timed_corner_release_inflight "$inflight" 2>/dev/null || true
 			return 1
 		}
 		return 0
@@ -581,7 +620,15 @@ schedule_nonessential_audio_jobs() {
 	# 成功マーカーを作成するラッパー (バックグラウンドジョブ内で使用)
 	_run_timed_corner() {
 		local marker_key="$1" func="$2"
+		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${marker_key}"
 		shift 2
+		# Background functions have a distinct BASHPID while $$ remains the
+		# long-lived radio worker.  Persist BASHPID so reload-killed jobs are
+		# distinguishable from a still-running owner.
+		_timed_corner_write_owner "$inflight" || {
+			_timed_corner_release_inflight "$inflight" 2>/dev/null || true
+			return 1
+		}
 		"$func" "$@" &
 		local _bg_pid=$!
 		wait "$_bg_pid"
@@ -589,18 +636,26 @@ schedule_nonessential_audio_jobs() {
 		if [ "$_exit_code" -eq 0 ]; then
 			touch "$TMP_MARKERS_DIR/.timed_corner_done_${today}_${marker_key}"
 		fi
-		rmdir "$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${marker_key}" 2>/dev/null
+		_timed_corner_release_inflight "$inflight" 2>/dev/null || true
 	}
 
-	# stale inflight marker クリーンアップ (前日以前を一掃)
-	local _yesterday_marker_inf=$TMP_MARKERS_DIR/.timed_corner_inflight_$(date -d yesterday +%Y%m%d)_*
-	rm -f $_yesterday_marker_inf 2>/dev/null
-	# 無日付の legacy marker のみ削除 (日付付き marker は保護)
+	# 前日以前のdated markerは現在日のslotを排他しないため安全に除去できる。
+	# 旧実装はdirectoryに rm -f を使っていたため一度も消えず蓄積していた。
+	local _f _base _marker_date
 	for _f in "$TMP_MARKERS_DIR"/.timed_corner_inflight_*; do
 		[ -e "$_f" ] || continue
-		case "$(basename "$_f")" in
-		.timed_corner_inflight_[0-9]*) ;;
-		*) rm -f "$_f" ;;
+		_base=$(basename "$_f")
+		case "$_base" in
+		.timed_corner_inflight_[0-9]*)
+			_marker_date=${_base#.timed_corner_inflight_}
+			_marker_date=${_marker_date%%_*}
+			if [[ "$_marker_date" =~ ^[0-9]{8}$ ]] && [[ "$_marker_date" < "$today" ]]; then
+				_timed_corner_release_inflight "$_f" 2>/dev/null || true
+			fi
+			;;
+		*)
+			if [ -d "$_f" ]; then rmdir "$_f" 2>/dev/null || true; else rm -f "$_f" 2>/dev/null || true; fi
+			;;
 		esac
 	done
 
