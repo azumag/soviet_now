@@ -1,0 +1,33 @@
+name: Improvement command contracts
+on:
+  pull_request:
+    paths:
+      - 'strategy/ai.sh'
+      - 'strategy/improve_command.py'
+      - 'eloop_improve.sh'
+      - 'tests/test_improve_*.py'
+      - '.github/workflows/improve-command.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'strategy/ai.sh'
+      - 'strategy/improve_command.py'
+      - 'eloop_improve.sh'
+      - 'tests/test_improve_*.py'
+      - '.github/workflows/improve-command.yml'
+permissions:
+  contents: read
+jobs:
+  bounded-commands:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: >-
+          python3 -m unittest
+          tests.test_improve_command_guard tests.test_improve_budget_integration
+          tests.test_improve_stage_budget tests.test_improve_retry_reliability
+          tests.test_shadow_validation_retry tests.test_spawn_guard_lease
+      - run: bash -n strategy/ai.sh eloop_improve.sh
