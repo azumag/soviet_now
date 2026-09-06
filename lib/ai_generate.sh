@@ -166,7 +166,7 @@ _ai_generation_queue_enter() {
 	local lock_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
 	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
-	local waited=0 token now mt age owner_summary=""
+	local waited=0 token now mt age owner_summary="" owner_pid=""
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 
 	case "$wait_sec" in
@@ -182,6 +182,17 @@ _ai_generation_queue_enter() {
 	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
 
 	while ! mkdir "$lock_dir" 2>/dev/null; do
+		owner_pid=$(sed -n 's/^pid=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+		case "$owner_pid" in
+		'' | *[!0-9]*) ;;
+		*)
+			if ! kill -0 "$owner_pid" 2>/dev/null; then
+				log "[AIQ:${label}] dead generation lock owner cleared (pid=${owner_pid})" >&2
+				rm -rf "$lock_dir" 2>/dev/null || true
+				continue
+			fi
+			;;
+		esac
 		now=$(date +%s)
 		mt=$(stat -f %m "$lock_dir" 2>/dev/null) \
 			|| mt=$(stat -c %Y "$lock_dir" 2>/dev/null) \
