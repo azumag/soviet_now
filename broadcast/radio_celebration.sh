@@ -6,11 +6,31 @@
 # 祝賀トーク生成は通常のラジオコーナーと同じモデルチェーン設定 (RADIO_AGENTS) を
 # ai_generate_list で回す。claude へのフォールバックは通常方針どおり行わない。
 # 成功時は本文を stdout へ、失敗時は空を返す (呼び出し側で dump する)。
+# 祝賀用の候補判定。通常コーナーと違い、祝賀プロンプトはトーク本文のみを
+# 出力させる (ON_AIR_SCRIPT マーカー等の構造を要求しない) ため、パーサー必須の
+# _radio_is_valid_generation_candidate は使えない。最終段と同等の sanitize まで
+# 通して _is_valid_radio_talk で判定する。
+_celebration_is_valid_candidate() {
+	local raw="$1" guarded sanitized
+	[ -n "$raw" ] || return 1
+	if command -v _ai_guard_model_output >/dev/null 2>&1; then
+		guarded=$(printf '%s' "$raw" | _ai_guard_model_output 2>/dev/null || printf '%s' "$raw")
+	else
+		guarded="$raw"
+	fi
+	[ -n "$guarded" ] || return 1
+	if command -v _contains_provider_error_text >/dev/null 2>&1; then
+		_contains_provider_error_text "$guarded" && return 1
+	fi
+	sanitized=$(printf '%s' "$guarded" | _sanitize_onair_text | _normalize_radio_tone)
+	_is_valid_radio_talk "$sanitized"
+}
+
 _celebration_generate_talk() {
 	local tag="$1" prompt_file="$2"
 	local last_agent_file talk provider_used
 	last_agent_file=$(mktemp /tmp/eloop_celebration_agent_XXXXXXXX)
-	talk=$(ai_generate_list "RADIO:${tag}" "$prompt_file" "${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,codex:minimax-m3}" "" "_radio_is_valid_generation_candidate" "$last_agent_file" 2>/dev/null || true)
+	talk=$(ai_generate_list "RADIO:${tag}" "$prompt_file" "${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,codex:minimax-m3}" "" "_celebration_is_valid_candidate" "$last_agent_file" 2>/dev/null || true)
 	provider_used=$(cat "$last_agent_file" 2>/dev/null)
 	rm -f "$last_agent_file" 2>/dev/null || true
 	if command -v _ai_guard_model_output >/dev/null 2>&1; then

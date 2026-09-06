@@ -17,6 +17,7 @@ _radio_set_state() { :; }
 _radio_clear_state() { :; }
 _sanitize_onair_text() { cat; }
 _normalize_radio_tone() { cat; }
+_contains_provider_error_text() { return 1; }
 AI_TEXT=""
 ai_generate_list() { printf '%s' "$AI_TEXT"; }
 _ai_guard_model_output() { cat; }
@@ -57,5 +58,19 @@ generate_soviet_celebration 5312 175 49106
 [ -s "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" ]
 grep -q 'ダミー祝賀トーク' "$TMP_DEBUG_DIR/radio_soviet_celebration.txt"
 echo "happy path: OK"
+
+# 4. 祝賀候補判定は ON_AIR マーカー不要 (通常パーサー必須だと祝賀文が全棄却される)
+grep -q '"_celebration_is_valid_candidate"' broadcast/radio_celebration.sh
+VALIDATOR_INPUT="$tmp_dir/validator_input.txt"
+_is_valid_radio_talk() { printf '%s' "$1" >"$VALIDATOR_INPUT"; return 0; }
+PLAIN_TALK="ソ連が建国されました。みなさんと喜びを分かち合います。"
+if _celebration_is_valid_candidate "$PLAIN_TALK"; then
+  grep -q '喜びを分かち合います' "$VALIDATOR_INPUT"
+  echo "candidate without markers: OK"
+else
+  echo "FAIL: plain talk rejected"; exit 1
+fi
+if _celebration_is_valid_candidate ""; then echo "FAIL: empty accepted"; exit 1; fi
+echo "candidate validator: OK"
 
 echo "celebration chain tests: OK"
