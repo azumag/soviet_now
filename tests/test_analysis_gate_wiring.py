@@ -27,6 +27,7 @@ class AnalysisWiringTests(unittest.TestCase):
         self.assertTrue('evidence_sha256' in s)
         self.assertTrue('decision=hold' in s)
         self.assertTrue('analysis_contract` ブロックは必ず同じファイル内' in s)
+        self.assertTrue('Implementation Planには採用する実装だけを書く' in s)
         self.assertFalse('Null Hypothesis（変更なし）の採用は禁止' in s)
 
 if __name__=='__main__':unittest.main()
