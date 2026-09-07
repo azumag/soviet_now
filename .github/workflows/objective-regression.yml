@@ -1,0 +1,19 @@
+name: Objective regression
+on:
+  pull_request:
+    paths: ['strategy/regression.sh', 'tests/test_stage_gate_stat.sh', 'tests/test_objective_window.py', '.github/workflows/objective-regression.yml']
+  push:
+    branches: [main]
+    paths: ['strategy/regression.sh', 'tests/test_stage_gate_stat.sh', 'tests/test_objective_window.py', '.github/workflows/objective-regression.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: bash tests/test_stage_gate_stat.sh
+      - run: python3 tests/test_objective_window.py
+      - run: bash -n strategy/regression.sh

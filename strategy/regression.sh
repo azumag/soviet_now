@@ -3919,12 +3919,10 @@ def objective_progress(data, scores):
         soviet_count = sum(1 for _, _, soviet in progress if soviet)
     else:
         russia_count = int(data.get("russia_count", 0) or 0)
-        soviet_count = int(data.get("soviet_count", 0) or 0)
+        soviet_count = sum(1 for t in max_types if t >= 16)
     best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
     if best_max_type >= 15 and russia_count <= 0:
         russia_count = 1
-    if best_max_type >= 16 and soviet_count <= 0:
-        soviet_count = 1
     return {
         "best_max_type": best_max_type,
         "russia_count": russia_count,
@@ -4209,32 +4207,7 @@ for x in (anchor_data.get("scores", []) or []):
 current_objective = objective_progress(current_data, current_scores)
 anchor_objective = objective_progress(anchor_data, anchor_scores)
 
-origin_payload = _WILDCARD_ORIGIN.get(current_hash, {}) if current_hash in _WILDCARD_ORIGIN else {}
-if (
-    current_hash != anchor_hash
-    and str(origin_payload.get("origin_type") or "") == "archive_restart"
-    and int(anchor_objective.get("soviet_count", 0) or 0) > 0
-    and int(origin_payload.get("source_soviet_count", 0) or 0) <= 0
-):
-    current = current or {"comp": 0.0, "p50": 0.0, "p25": 0.0, "lcb": 0.0, "n": len(current_scores)}
-    reasons = ["archive_restart_objective_floor", "lost_soviet_path"]
-    # trend_grace は score-only rollback dampener。ソ連到達済み anchor の喪失は免除しない。
-    print(
-        "REGRESSION:"
-        f"mode=archive_objective_floor,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
-        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
-        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
-        "comp_gap=0.0,p50_gap=0.0,p25_gap=0.0,breach_count=0,min_breach_count=0,"
-        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
-        "best_comp_gap=0.0,best_p50_gap=0.0,best_p25_gap=0.0,best_breach_count=0,"
-        "branch_depth=0,branch_games=0,branch_patience=0,"
-        f"anchor_best_max_type={int(anchor_objective.get('best_max_type', 0) or 0)},curr_best_max_type={int(origin_payload.get('source_best_max_type', 0) or 0)},"
-        f"anchor_russia={int(anchor_objective.get('russia_count', 0) or 0)},curr_russia={int(origin_payload.get('source_russia_count', 0) or 0)},"
-        f"anchor_soviet={int(anchor_objective.get('soviet_count', 0) or 0)},curr_soviet={int(origin_payload.get('source_soviet_count', 0) or 0)},"
-        f"reasons={'+'.join(reasons)}"
-    )
-    _update_stagnation("REGRESSION")
-    raise SystemExit
+# Rare Soviet absence is not evidence of regression, including archive restarts.
 
 def objective_miss_against_anchor(anchor_progress, current_progress):
     if int(anchor_progress.get("soviet_count", 0) or 0) > 0 and int(current_progress.get("soviet_count", 0) or 0) <= 0:
@@ -4555,36 +4528,6 @@ try:
 except Exception:
     stage_gate_noninferior_grace = False
 
-objective_reasons = []
-if (
-    early_objective_enabled == "1"
-    and current_hash != anchor_hash
-    and current["n"] >= max(1, early_objective_min_games)
-    and int(anchor_objective.get("soviet_count", 0) or 0) > 0
-    and int(current_objective.get("soviet_count", 0) or 0) <= 0
-):
-    objective_reasons.append("lost_soviet_path")
-
-if objective_reasons:
-    # trend_grace は score-only rollback dampener。ソ連到達済み anchor の喪失は免除しない。
-    print(
-        "REGRESSION:"
-        f"mode=early_objective_regression,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
-        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
-        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
-        f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
-        f"breach_count={curr_breach},min_breach_count={min_breach_count},"
-        "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
-        f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
-        "branch_depth=0,branch_games=0,branch_patience=0,"
-        f"anchor_best_max_type={anchor_objective.get('best_max_type', 0)},curr_best_max_type={current_objective.get('best_max_type', 0)},"
-        f"anchor_russia={anchor_objective.get('russia_count', 0)},curr_russia={current_objective.get('russia_count', 0)},"
-        f"anchor_soviet={anchor_objective.get('soviet_count', 0)},curr_soviet={current_objective.get('soviet_count', 0)},"
-        f"reasons=early_objective_regression+{'+'.join(objective_reasons)}"
-    )
-    _update_stagnation("REGRESSION")
-    raise SystemExit
-
 # Direct Russia loss is not a rollback gate. Stage achievement rates below
 # remain the objective backslide signal before the Soviet completion target exists.
 
@@ -4654,12 +4597,6 @@ if current_hash != anchor_hash:
         objective_reasons.append(stage_gate_reason)
         if stage_gate_detail:
             objective_reasons.append(stage_gate_detail)
-    if (
-        int(anchor_objective.get("soviet_count", 0) or 0) > 0
-        and int(current_objective.get("soviet_count", 0) or 0) <= 0
-        and "lost_soviet_path" not in objective_reasons
-    ):
-        objective_reasons.append("lost_soviet_path")
 if _STAGE_GATE_OBS:
     # 観測行 (bash 側で [STAGEGATE] として log し $result からは除去する)
     try:

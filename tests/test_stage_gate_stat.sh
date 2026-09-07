@@ -4,7 +4,7 @@
 # - 2026-08-25 02:26 再現: v727 n=13, comp 優位, breach 0, T14 1/13 vs anchor 6/25, russia 0 vs 1 → 粛清しない
 # - 2026-08-25 05:06 再現: n=100, comp -57 (breach 0), T11 41/43 vs 25/25, russia 2 vs 1 → 粛清しない
 # - 真の劣化 (T14 0/40 vs 12/25, breach 0) → 従来どおり REGRESSION
-# - anchor ソ連到達済み・current 未到達 (lost_soviet_path) → grace 対象外で REGRESSION
+# - 過去のソ連到達とcurrent未到達だけではREGRESSIONにしない
 # - STAGE_GATE_STAT_ENABLED=0 / STAGE_GATE_NONINFERIOR_GRACE=0 で旧挙動 (粛清) が再現する
 # check_regression の python heredoc を抽出して fixture 上で直接実行する (VM 状態に依存しない)。
 set -u
@@ -145,10 +145,16 @@ outC=$(run_check "$C" $CUR)
 assert_contains "REGRESSION:mode=objective_regression" "$outC" "caseC(true stage regression T13 4/40 vs 16/25): purge"
 assert_contains "lost_ukraine_gate+stagestat=type13/cur4of40/anc16of25/p0.0000" "$outC" "caseC reason=lost_ukraine_gate with evidence"
 
-# --- case D: anchor ソ連到達済み, current 未到達 → lost_soviet_path (grace 対象外) ---
+# --- case D: rare Soviet absence alone does not trigger rollback ---
 D="$TMP/caseD"; mk_fixture "$D" $CUR $ANC anc_scores=8000,100,4400 anc_mt=14x6,13x10,12x7,11x2 anc_russia=2 anc_soviet=1 cur_scores=9400,13,4400 cur_mt=14x1,13x11,12x1 cur_russia=0 pad_top=8
 outD=$(run_check "$D" $CUR)
-assert_contains "lost_soviet_path" "$outD" "caseD(anchor soviet=1, current soviet=0): purge regardless of grace"
+assert_not_contains "REGRESSION:" "$outD" "caseD: rare Soviet absence is not regression"
+
+# A real Soviet observation also cannot make absence alone a regression.
+D2="$TMP/caseD2"; mk_fixture "$D2" $CUR $ANC anc_scores=8000,100,4400 anc_mt=16x1,14x5,13x10,12x7,11x2 anc_russia=2 anc_soviet=8 cur_scores=9400,13,4400 cur_mt=14x1,13x11,12x1 cur_russia=0 pad_top=8
+outD2=$(run_check "$D2" $CUR)
+assert_not_contains "lost_soviet_path" "$outD2" "caseD2: observed Soviet does not require a repeat in 13 games"
+assert_not_contains "REGRESSION:" "$outD2" "caseD2: retain candidate without other regression"
 
 # --- case H: rank 免除 (pad 2 → rank<=7) は従来どおり ---
 H="$TMP/caseH"; mk_fixture "$H" $CUR $ANC $ANC_ARGS cur_scores=8000,40,4400 cur_mt=13x4,12x30,11x6 cur_russia=0 pad_top=2
