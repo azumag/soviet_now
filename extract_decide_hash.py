@@ -5,8 +5,8 @@ Usage: python3 extract_decide_hash.py [strategy.py]
 Output: MD5ハッシュ文字列 (stdout)
 
 Top-level helper functions called by decide() are included recursively.  When
-present, the optional post-safety ``finalize_decision()`` policy and its helpers
-are included too.  A helper-only behavior change must not be mixed into the
+present, the optional post-safety ``finalize_decision()`` and
+``merge_opportunity_alternatives()`` policies and their helpers are included too.  A helper-only behavior change must not be mixed into the
 same rolling-score or rollback identity.  Strategies without the optional
 finalizer retain the legacy decide-policy normalization, so existing archives
 keep their historical IDs.
@@ -119,6 +119,16 @@ def extract_decide_body_from_source(source):
                 queue.extend(
                     sorted(_called_local_function_names(top_functions[name]))
                 )
+
+        opportunity_policy = top_functions.get("merge_opportunity_alternatives")
+        if opportunity_policy is not None:
+            queue = ["merge_opportunity_alternatives"]
+            while queue:
+                name = queue.pop(0)
+                if name in ("decide", "finalize_decision") or name in reachable or name not in top_functions:
+                    continue
+                reachable.add(name)
+                queue.extend(sorted(_called_local_function_names(top_functions[name])))
 
         if reachable:
             helper_policy = "|".join(

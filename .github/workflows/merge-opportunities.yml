@@ -1,0 +1,40 @@
+name: Merge opportunity regression
+on:
+  pull_request:
+    paths:
+      - 'strategy.py'
+      - 'strategy_runner.py'
+      - 'extract_decide_hash.py'
+      - 'analyze_board.py'
+      - 'strategy_helpers/**'
+      - 'tests/test_merge_opportunity_preservation.py'
+      - 'tests/fixtures/merge_opportunities/**'
+      - '.github/workflows/merge-opportunities.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'strategy.py'
+      - 'strategy_runner.py'
+      - 'extract_decide_hash.py'
+      - 'analyze_board.py'
+      - 'strategy_helpers/**'
+      - 'tests/test_merge_opportunity_preservation.py'
+      - 'tests/fixtures/merge_opportunities/**'
+      - '.github/workflows/merge-opportunities.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: >-
+          python3 -m unittest
+          tests.test_merge_opportunity_preservation tests.test_strategy_hash
+          tests.test_policy_bundle tests.test_v747_endgame_merge
+          tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
+          tests.test_post_first_russia_lane_cover tests.test_vertical_lane_direct
+          tests.test_strategy_semantic_lint
