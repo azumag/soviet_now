@@ -414,6 +414,21 @@ _try_game_corner() {
 	local done_marker="$TMP_MARKERS_DIR/.radio_done_${game_num}_${corner_name}"
 	local inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}"
 
+	# news/jiji は時事性が命: soren試合が進まない間 (CLIゲーム表示中等) も止めない。
+	# 同一game_numでも前回から一定時間を超えたら再発行を許可する (既定12分。
+	# timed枠自体が15分間隔のため、凍結中も設計どおりの刻みで流れる)。
+	case "$corner_name" in
+	news | jiji)
+		if [ -f "$done_marker" ]; then
+			local _done_age=0
+			_done_age=$(($(date +%s) - $(stat -c %Y "$done_marker" 2>/dev/null || stat -f %m "$done_marker" 2>/dev/null || echo 0)))
+			if [ "$_done_age" -ge "${NEWS_REPEAT_SEC:-720}" ]; then
+				rm -f "$done_marker"
+			fi
+		fi
+		;;
+	esac
+
 	# 既に生成済み (done marker は corner 関数が生成成功后作成する)
 	[ -f "$done_marker" ] && return 1
 
