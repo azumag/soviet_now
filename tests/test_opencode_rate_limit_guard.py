@@ -22,6 +22,16 @@ class GuardTests(unittest.TestCase):
         self.assertLess(time.monotonic()-start, 2)
         self.assertIn('rate limit', result.stderr)
 
+    def test_timeout_kills_owned_grandchild(self):
+        with tempfile.TemporaryDirectory() as d:
+            marker = pathlib.Path(d)/'escaped'
+            child = 'import time,pathlib; time.sleep(0.7); pathlib.Path(' + repr(str(marker)) + ').write_text("leaked")'
+            script = 'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c",' + repr(child) + ']); time.sleep(30)'
+            result = self.run_guard(script, '0.2')
+            self.assertEqual(result.returncode, 124)
+            time.sleep(0.8)
+            self.assertFalse(marker.exists(), 'CLI grandchild survived timeout')
+
     def test_success_preserves_only_answer(self):
         result = self.run_guard('import sys\nprint("timestamp=x level=INFO secret=DO_NOT_FORWARD",file=sys.stderr)\nprint("はい")')
         self.assertEqual(result.returncode, 0)
