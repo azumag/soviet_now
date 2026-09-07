@@ -16,6 +16,8 @@ cd "$(dirname "$0")"
 
 # shellcheck source=/dev/null
 source ./eloop_lib.sh
+source ./lib/background_priority.sh
+soren_background_priority
 
 mode="${1:-once}"
 interval="${2:-2}"
