@@ -16,6 +16,8 @@ GAME_LIFECYCLE_POLL_SEC="${GAME_LIFECYCLE_POLL_SEC:-1}"
 GAME_LIFECYCLE_IMPROVE_PAUSE_FILE="$GAME_LIFECYCLE_DIR/improvement_pause.json"
 GAME_LIFECYCLE_PREDICTION_PAUSE_FILE="$GAME_LIFECYCLE_DIR/prediction_pause.json"
 GAME_LIFECYCLE_PREDICTION_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/prediction_worker.paused"
+GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE="$GAME_LIFECYCLE_DIR/watchdog_pause.json"
+GAME_LIFECYCLE_WATCHDOG_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/soviet_watchdog.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$GAME_LIFECYCLE_ROOT/tmp/state/soren_loop.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE="$GAME_LIFECYCLE_DIR/loop_pause.json"
 
@@ -457,6 +459,47 @@ game_lifecycle_restore_predictions() {
 	return $rc
 }
 
+_game_lifecycle_is_watchdog_pid() {
+	local pid="$1" command_line
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	command_line=$(ps -p "$pid" -o command= 2>/dev/null || true)
+	echo "$command_line" | grep -Eq '(^|[[:space:]/])soviet_watchdog[.]sh([[:space:]]|$)'
+}
+
+_game_lifecycle_pause_watchdog() {
+	local request_id="${1:-}" marker_created=0 pid="" waited=0
+	[ -n "$request_id" ] || return 1
+	if [ -e "$GAME_LIFECYCLE_WATCHDOG_MARKER" ]; then
+		_game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$request_id" && marker_created=1
+	else
+		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id" || return 1
+		marker_created=1
+	fi
+	pid=$(_game_lifecycle_read_pid "$TMP_STATE_DIR/soviet_watchdog.pid" 2>/dev/null || true)
+	if [ -z "$pid" ]; then
+		pid=$(pgrep -f '[/]soviet_watchdog[.]sh([[:space:]]|$)' 2>/dev/null | head -n 1 || true)
+	fi
+	_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
+	if [ -n "$pid" ]; then
+		_game_lifecycle_is_watchdog_pid "$pid" || return 1
+		kill -TERM "$pid" 2>/dev/null || true
+		while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+		kill -0 "$pid" 2>/dev/null && return 1
+	fi
+}
+
+game_lifecycle_restore_watchdog() {
+	local record="$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" marker_created request_id
+	[ -f "$record" ] || return 0
+	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
+	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id"; then
+		rm -f "$GAME_LIFECYCLE_WATCHDOG_MARKER" 2>/dev/null || true
+	fi
+	rm -f "$record" 2>/dev/null || true
+}
+
 _game_lifecycle_pause_loop() {
 	local request_id="${1:-}" marker_created=0
 	[ -n "$request_id" ] || return 1
@@ -537,6 +580,7 @@ _game_lifecycle_stop_from_boundary() {
 		if ! _game_lifecycle_pause_improvements "$request_id"; then
 			_game_lifecycle_log "改善プロセスの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
+			game_lifecycle_restore_watchdog
 			game_lifecycle_restore_predictions
 			game_lifecycle_restore_improvements
 			game_lifecycle_restore_loop
@@ -545,10 +589,15 @@ _game_lifecycle_stop_from_boundary() {
 		if ! _game_lifecycle_pause_predictions "$request_id"; then
 			_game_lifecycle_log "予想ワーカーの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
+			game_lifecycle_restore_watchdog
 			game_lifecycle_restore_predictions
 			game_lifecycle_restore_improvements
 			game_lifecycle_restore_loop
 			return 1
+		fi
+		if ! _game_lifecycle_pause_watchdog "$request_id"; then
+			_game_lifecycle_log "ゲームwatchdogの停止確認に失敗。旧ゲームを保留 (request=$request_id)"
+			return 2
 		fi
 	fi
 
@@ -559,6 +608,7 @@ _game_lifecycle_stop_from_boundary() {
 	0) ;;
 	2)
 		_game_lifecycle_log "停止要求の期限切れ。旧ゲームを継続 (request=$request_id)"
+		game_lifecycle_restore_watchdog
 		game_lifecycle_restore_predictions
 		game_lifecycle_restore_improvements
 		game_lifecycle_restore_loop
@@ -582,7 +632,8 @@ _game_lifecycle_stop_from_boundary() {
 			# game alive.  Cancel this exact request and let normal play continue;
 			# do not turn an unsupported capability into a stop.
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_predictions
+			game_lifecycle_restore_watchdog
+		game_lifecycle_restore_predictions
 			game_lifecycle_restore_improvements
 			game_lifecycle_restore_loop
 			_game_lifecycle_log "共有表示未準備/legacy bridge のため handover をキャンセルし、旧ゲームを継続 (request=$request_id)"
@@ -730,6 +781,7 @@ game_lifecycle_resume_pending() {
 		# The request was explicitly rolled back (or the live bridge completed an
 		# in-process resume).  Remove only markers created by this handover; an
 		# operator's pre-existing pause remains untouched.
+		game_lifecycle_restore_watchdog
 		game_lifecycle_restore_predictions
 		game_lifecycle_restore_improvements
 		game_lifecycle_restore_loop
@@ -738,6 +790,7 @@ game_lifecycle_resume_pending() {
 	resume_requested)
 		# A live bridge may still be clearing its page/audio flags.  Restore the
 		# shell gates now, but never start a fresh game from this recovery path.
+		game_lifecycle_restore_watchdog
 		game_lifecycle_restore_predictions
 		game_lifecycle_restore_improvements
 		game_lifecycle_restore_loop
