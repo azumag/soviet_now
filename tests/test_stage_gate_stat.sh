@@ -164,13 +164,13 @@ assert_contains "skipped=rank_grace" "$outH" "caseH STAGEGATE says skipped=rank_
 
 # --- case I: russia_noninferior の標本数考慮 (stat off で grace だけを分離) ---
 # current 13件 russia 1 (best 15), anchor 25件 russia 2: 期待値 2/25*13=1.04 >= 1 → Fisher p(1/13 vs 2/25) > alpha → 非劣後 → grace
-I="$TMP/caseI"; mk_fixture "$I" $CUR $ANC anc_scores=8000,100,4400 anc_mt=14x6,13x10,12x7,11x2 anc_russia=2 cur_scores=9400,13,4400 cur_mt=15x1,13x10,12x1,10x1 cur_russia=1 pad_top=8
+I="$TMP/caseI"; mk_fixture "$I" $CUR $ANC anc_scores=8000,100,4400 anc_mt=15x2,14x4,13x10,12x7,11x2 anc_russia=2 cur_scores=9400,13,4400 cur_mt=15x1,13x10,12x1,10x1 cur_russia=1 pad_top=8
 outI=$(STAGE_GATE_STAT_ENABLED=0 run_check "$I" $CUR)
 assert_not_contains "REGRESSION:" "$outI" "caseI(stat off, russia 1/13 vs 2/100): grace via russia_noninferior"
 outI_strict=$(STAGE_GATE_STAT_ENABLED=0 STAGE_GATE_RUSSIA_MIN_EXPECTED=0 STAGE_GATE_STAT_ALPHA=1.0 run_check "$I" $CUR)
 assert_contains "REGRESSION:" "$outI_strict" "caseI with RUSSIA_MIN_EXPECTED=0 + alpha 1.0: grace withdrawn"
 # caseI2: 期待値 < 1 の経路 (anchor 窓 50件 russia 2 → 2/50*13=0.52) — RUSSIA_MIN_EXPECTED=0 でも Fisher で非劣後
-I2="$TMP/caseI2"; mk_fixture "$I2" $CUR $ANC anc_scores=8000,100,4400 anc_mt=14x12,13x20,12x14,11x4 anc_russia=2 cur_scores=9400,13,4400 cur_mt=15x1,13x10,12x1,10x1 cur_russia=1 pad_top=8
+I2="$TMP/caseI2"; mk_fixture "$I2" $CUR $ANC anc_scores=8000,100,4400 anc_mt=15x2,14x10,13x20,12x14,11x4 anc_russia=2 cur_scores=9400,13,4400 cur_mt=15x1,13x10,12x1,10x1 cur_russia=1 pad_top=8
 outI2=$(STAGE_GATE_STAT_ENABLED=0 run_check "$I2" $CUR)
 assert_not_contains "REGRESSION:" "$outI2" "caseI2(stat off, russia 1/13 vs 2/50, expected 0.52<1): grace"
 outI2_fisher=$(STAGE_GATE_STAT_ENABLED=0 STAGE_GATE_RUSSIA_MIN_EXPECTED=0 run_check "$I2" $CUR)

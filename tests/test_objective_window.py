@@ -13,6 +13,14 @@ class ObjectiveWindowTest(unittest.TestCase):
         self.assertEqual(result["soviet_count"], 0)
         self.assertEqual(result["best_max_type"], 16)
 
+    def test_historical_russia_is_not_window_count(self):
+        result = ns["objective_progress"]({"max_types": [13]*12, "russia_count": 9, "best_max_type": 16}, [1]*100)
+        self.assertEqual(result["russia_count"], 0)
+
+    def test_counts_only_russia_in_score_window(self):
+        result = ns["objective_progress"]({"max_types": [15, 13, 16], "russia_count": 9}, [1, 2])
+        self.assertEqual(result["russia_count"], 1)
+
     def test_counts_observed_soviet_games_within_score_window(self):
         result = ns["objective_progress"]({"max_types": [16, 16, 14], "soviet_count": 8}, [1, 2])
         self.assertEqual(result["soviet_count"], 1)

@@ -3918,11 +3918,9 @@ def objective_progress(data, scores):
         russia_count = sum(1 for _, russia, _ in progress if russia)
         soviet_count = sum(1 for _, _, soviet in progress if soviet)
     else:
-        russia_count = int(data.get("russia_count", 0) or 0)
+        russia_count = sum(1 for t in max_types if t >= 15)
         soviet_count = sum(1 for t in max_types if t >= 16)
     best_max_type = max([int(data.get("best_max_type", 0) or 0)] + max_types) if max_types or data.get("best_max_type") else 0
-    if best_max_type >= 15 and russia_count <= 0:
-        russia_count = 1
     return {
         "best_max_type": best_max_type,
         "russia_count": russia_count,
