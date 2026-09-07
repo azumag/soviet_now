@@ -23,8 +23,10 @@ cli_game_active() {
 	[ -f "$CANONICAL" ] || return 1
 	[ -f "$BGM_FILE" ] || return 1
 	local game=""
-	game=$(python3 -c "import json,sys; d=json.load(open('$CANONICAL')); a=d.get('active') or {}; print(a.get('game') or '')" 2>/dev/null)
-	[ -n "$game" ]
+	game=$(python3 -c "import json,sys; d=json.load(open('$CANONICAL')); a=d.get('active') or {}; print(a.get('game') or '' if d.get('phase') == 'ready' else '')" 2>/dev/null)
+	# Soren本編はbridge/Unity側が自身のBGMを出す。このworkerはCLI系の
+	# 代替BGM専用なので、sorengameを含めると同じ曲が二重再生になる。
+	[ -n "$game" ] && [ "$game" != "sorengame" ]
 }
 
 while :; do

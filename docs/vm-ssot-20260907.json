@@ -82,6 +82,11 @@
       "path": "strategy.py",
       "sha256": "e042b0e9789aa429986ce9499e397ba09c868e416b18e784563096b45d11a3bc",
       "category": "deployed_strategy_code"
+    },
+    {
+      "path": "bgm_worker.sh",
+      "sha256": "f70d90b0c71567774e3182b7002883b439b7d873ddd0f09588c50b3125534dd3",
+      "category": "existing_pr_and_live_safety_fix"
     }
   ]
 }
