@@ -33,6 +33,11 @@ AI_RATE_LIMIT_RC=79
 # 計上せず gate_giveup イベントとして分離する (2026-08-22 ユーザー指摘)。
 AI_GATE_GIVEUP_RC=91
 
+# 生成レーンの混雑打ち切りを provider 失敗と区別する専用コード。
+# AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 (既定) では従来どおり無期限待機。
+# 補助的な短時間処理だけが明示的に上限を指定できる。
+AI_QUEUE_GIVEUP_RC=92
+
 _ai_rate_limit_text_detected() {
 	printf '%s' "${1:-}" | grep -Eiq \
 		'(^|[^[:alnum:]])429([^[:alnum:]]|$)|too[[:space:]_-]*many[[:space:]_-]*requests|rate[[:space:]_-]*limit([[:space:]_-]*(ed|exceeded))?|quota[[:space:]_-]*(exceeded|exhausted|limit)|resource[[:space:]_-]*exhausted|usage[[:space:]_-]*limit'
@@ -222,6 +227,7 @@ _ai_generation_queue_enter() {
 	local lock_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
 	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
+	local max_wait_sec="${AI_GENERATION_QUEUE_MAX_WAIT_SEC:-0}"
 	local waited=0 token now mt age owner_summary="" owner_pid="" reap_reason=""
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 
@@ -233,6 +239,9 @@ _ai_generation_queue_enter() {
 	'' | *[!0-9]*) stale_sec=900 ;;
 	esac
 	[ "$stale_sec" -lt 60 ] && stale_sec=60
+	case "$max_wait_sec" in
+	'' | *[!0-9]*) max_wait_sec=0 ;;
+	esac
 
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
@@ -297,6 +306,11 @@ _ai_generation_queue_enter() {
 		_ai_generation_queue_guard_leave
 		if [ "$waited" -eq 0 ] || [ $((waited % 30)) -eq 0 ]; then
 			log "[AIQ:${label}] queued: waiting for generation slot${owner_summary:+ (${owner_summary})}" >&2
+		fi
+		if [ "$max_wait_sec" -gt 0 ] && [ "$waited" -ge "$max_wait_sec" ]; then
+			log "[AIQ:${label}] generation slot wait exceeded ${max_wait_sec}s${owner_summary:+ (${owner_summary})}" >&2
+			AI_GENERATION_QUEUE_LAST_TOKEN=""
+			return "$AI_QUEUE_GIVEUP_RC"
 		fi
 		sleep "$wait_sec"
 		waited=$((waited + wait_sec))
@@ -389,7 +403,9 @@ _ai_generation_queue_run() {
 		return $?
 		;;
 	esac
-	_ai_generation_queue_enter "$label" || return 1
+	_ai_generation_queue_enter "$label"
+	local _queue_rc=$?
+	[ "$_queue_rc" -eq 0 ] || return "$_queue_rc"
 	token="$AI_GENERATION_QUEUE_LAST_TOKEN"
 	"$@"
 	rc=$?
@@ -1211,6 +1227,12 @@ _ai_dispatch() {
 	# ここでバイト切断するとマルチバイト文字を壊す。行単位で読む。
 	_dispatch_error_preview=$(head -n 1 "$_dispatch_err_file" 2>/dev/null || true)
 	rm -f "$_dispatch_err_file"
+	if [ "$_dispatch_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]; then
+		_ai_stats_record "queue_giveup" "$label" "$agent" "" "$resolved_model"
+		log "[${label}] generation queue gave up before model call (agent=$agent)" >&2
+		[ -s "$_dispatch_output_file" ] || rm -f "$_dispatch_output_file" 2>/dev/null
+		return "$AI_QUEUE_GIVEUP_RC"
+	fi
 	if [ "$_dispatch_rc" -eq 0 ]; then
 		local _dispatch_output
 		_dispatch_output=$(cat "$_dispatch_output_file" 2>/dev/null || true)
@@ -1255,6 +1277,9 @@ ai_generate() {
 	# Primary
 	output=$(_ai_dispatch "$label" "$primary" "$prompt_file" "$timeout_override")
 	rc=$?
+	if [ "$rc" -eq "$AI_QUEUE_GIVEUP_RC" ]; then
+		return "$AI_QUEUE_GIVEUP_RC"
+	fi
 	if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 		AI_GENERATE_LAST_AGENT="$primary"
 		printf '%s' "$output"
@@ -1580,6 +1605,11 @@ ai_generate_list() {
 			[ -n "$failure_kind_file" ] && printf 'gate_giveup\n' >"$failure_kind_file"
 			AI_DISPATCH_VALIDATOR="$saved_validator"
 			return "$AI_GATE_GIVEUP_RC"
+		fi
+		if [ "$rc" -eq "$AI_QUEUE_GIVEUP_RC" ]; then
+			[ -n "$failure_kind_file" ] && printf 'queue_giveup\n' >"$failure_kind_file"
+			AI_DISPATCH_VALIDATOR="$saved_validator"
+			return "$AI_QUEUE_GIVEUP_RC"
 		fi
 		AI_DISPATCH_VALIDATOR=""
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then

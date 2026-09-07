@@ -299,7 +299,60 @@ else
 	printf 'skip - timeout コマンド不在のため gate_giveup 分離のe2e検証をスキップ\n'
 fi
 
-# --- 5. キュー無効化で全部バイパス ---
+# --- 5. 生成キュー待ち上限 ---
+rm -f "$IMPROVE_STATE_FILE"
+rm -rf "$LOCK_BASE/radio"
+mkdir -p "$LOCK_BASE/radio"
+printf 'token=busy-holder\npid=%s\nlabel=RADIO:busy-holder\n' "$$" >"$LOCK_BASE/radio/owner"
+rm -f "$TMP/queue_callback_ran"
+queue_out=$(
+	(
+		export AI_GENERATION_QUEUE_MAX_WAIT_SEC=1 AI_GENERATION_QUEUE_WAIT_SEC=1
+		_ai_generation_queue_run "NEWS:spam_check:remote:local:gemma4:12b" touch "$TMP/queue_callback_ran"
+	) 2>&1
+)
+queue_rc=$?
+check '[ "$queue_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' '生成レーン混雑は専用コード AI_QUEUE_GIVEUP_RC で打ち切れる'
+check '[ ! -e "$TMP/queue_callback_ran" ]' 'キュー打ち切り時はprovider本体を呼ばない'
+check 'printf %s "$queue_out" | grep -q "generation slot wait exceeded 1s"' 'キュー待ち上限がログに残る'
+check '[ -d "$LOCK_BASE/radio" ] && grep -q "token=busy-holder" "$LOCK_BASE/radio/owner"' 'キュー打ち切りで既存ownerを破壊しない'
+
+# _ai_dispatch / ai_generate は queue_giveup をprovider失敗に変換せず、
+# 同じ共有レーンへfallbackして待ち直すこともない。
+printf 'queue timeout test\n' >"$WORK/queue_prompt.txt"
+rm -f "$AI_STATS_DIR/"*.jsonl 2>/dev/null || true
+queue_ai_out=$(
+	(
+		cd "$WORK" || exit 1
+		export AI_GENERATION_QUEUE_MAX_WAIT_SEC=1 AI_GENERATION_QUEUE_WAIT_SEC=1
+		ai_generate "NEWS:spam_check" "$WORK/queue_prompt.txt" "codex:queue-primary" "codex:queue-fallback" 1
+	) 2>/dev/null
+)
+queue_ai_rc=$?
+check '[ "$queue_ai_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' 'ai_generate はqueue_giveupを即時伝播する'
+stats_file=$(ls "$AI_STATS_DIR/"*.jsonl 2>/dev/null | head -1)
+if [ -n "$stats_file" ]; then
+	check 'grep -q "\"event\":\"queue_giveup\"" "$stats_file"' 'キュー打ち切りを queue_giveup として記録する'
+	check '! grep -q "\"event\":\"fail\"" "$stats_file"' 'キュー打ち切りをprovider failとして記録しない'
+	check '! grep -q "queue-fallback" "$stats_file"' '共有レーン混雑時はfallback候補へ待ち直さない'
+else
+	check 'false' 'キュー打ち切り統計ファイルが作成される'
+fi
+
+rm -f "$AI_BACKOFF_DIR/codex_queue-a" "$AI_BACKOFF_DIR/codex_queue-b"
+rm -f "$AI_FAIL_STREAK_DIR/codex_queue-a" "$AI_FAIL_STREAK_DIR/codex_queue-b"
+(
+	cd "$WORK" || exit 1
+	export AI_GENERATION_QUEUE_MAX_WAIT_SEC=1 AI_GENERATION_QUEUE_WAIT_SEC=1
+	ai_generate_list "RADIO:test:list-queue" "$WORK/queue_prompt.txt" "codex:queue-a,codex:queue-b" >/dev/null 2>&1
+)
+queue_list_rc=$?
+check '[ "$queue_list_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' 'ai_generate_list もqueue_giveupを即時伝播する'
+check '[ ! -e "$AI_BACKOFF_DIR/codex_queue-a" ] && [ ! -e "$AI_BACKOFF_DIR/codex_queue-b" ]' 'キュー打ち切りで候補モデルにbackoffを設定しない'
+check '[ ! -e "$AI_FAIL_STREAK_DIR/codex_queue-a" ] && [ ! -e "$AI_FAIL_STREAK_DIR/codex_queue-b" ]' 'キュー打ち切りで候補モデルの失敗streakを増やさない'
+_ai_generation_queue_leave busy-holder "RADIO:busy-holder"
+
+# --- 6. キュー無効化で全部バイパス ---
 out5=$( (export AI_GENERATION_QUEUE_ENABLED=0; _ai_generation_queue_run "RADIO:bypass" printf bypassed) )
 check '[ "$out5" = "bypassed" ]' 'キュー無効時はロックせず素通しする'
 

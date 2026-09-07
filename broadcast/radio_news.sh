@@ -30,7 +30,11 @@ SPAM か NEWS の1単語だけ答えてください。
 	# ニュース枠そのものを遅延させてはいけない。provider timeout と同程度に
 	# improve gate 待ちも束縛し、打ち切り時は従来どおり fail-open とする。
 	local improve_wait_max="${NEWS_SPAM_CHECK_IMPROVE_WAIT_MAX_SEC:-$spam_timeout}"
-	verdict=$(AI_RADIO_IMPROVE_WAIT_MAX_SEC="$improve_wait_max" ai_generate \
+	# 補助フィルタが共有radio生成レーンの混雑だけで数分待つのを防ぐ。
+	# queue側の打ち切りはprovider失敗とは別扱いで、fallback/backoffを汚さずfail-open。
+	local queue_wait_max="${NEWS_SPAM_CHECK_QUEUE_WAIT_MAX_SEC:-$spam_timeout}"
+	verdict=$(AI_RADIO_IMPROVE_WAIT_MAX_SEC="$improve_wait_max" \
+		AI_GENERATION_QUEUE_MAX_WAIT_SEC="$queue_wait_max" ai_generate \
 		"NEWS:spam_check" "$prompt_file" \
 		"$primary_agent" "$fallback_agent" \
 		"$spam_timeout" _news_spam_verdict_valid)
@@ -41,6 +45,10 @@ SPAM か NEWS の1単語だけ答えてください。
 	if [ "$rc" -eq 0 ] && [ "$verdict" = "SPAM" ]; then
 		log "[NEWS:SPAM] AI判定: SPAM → ${title}"
 		return 0
+	fi
+	if [ "$rc" -eq "${AI_QUEUE_GIVEUP_RC:-92}" ]; then
+		log "[NEWS:SPAM] 生成キュー待ち上限(${queue_wait_max}s) → PASS: ${title}"
+		return 1
 	fi
 	if [ "$rc" -ne 0 ]; then
 		log "[NEWS:SPAM] AI判定失敗 rc=${rc} verdict=${verdict:-EMPTY} → PASS: ${title}"
