@@ -893,7 +893,15 @@ _ai_call_opencode_unqueued() {
 	fi
 	while :; do
 		_oc_start=$(date +%s)
+		case "$model" in
+		opencode/muse-spark-1.[23]-contributor-free)
+			python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
+				"$opencode_bin" run --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+			;;
+		*)
 		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+			;;
+		esac
 		rc=$?
 		_oc_elapsed=$(( $(date +%s) - _oc_start ))
 		cleaned=""
@@ -1482,7 +1490,13 @@ _ai_backoff_sec_for_label() {
 #  AI_BACKOFF_SEC_ITEMS ("name:sec name:sec ...") から引く。該当なしはラベル既定
 #  (COMMENT/RADIO=18000, その他=600) へフォールバック。
 _ai_backoff_sec_for_agent() {
-	local agent="$1" label="${2:-AI}" model="" item name sec
+	local agent="$1" label="${2:-AI}" model="" item name sec daily_cap=""
+	# Zen Muse free uses an IP daily bucket reset at UTC midnight, not a
+	# rolling 24-hour lockout. Keep paid Go and other provider limits unchanged.
+	case "$agent" in
+	opencode:muse-spark-1.[23]-contributor-free)
+		daily_cap=$((86400 - $(date +%s) % 86400)) ;;
+	esac
 	case "$agent" in
 	local:* | local)
 		model="local"
@@ -1513,11 +1527,17 @@ _ai_backoff_sec_for_agent() {
 		name="${item%%:*}"
 		sec="${item#*:}"
 		if [ "$name" = "$model" ]; then
+			if [ -n "$daily_cap" ]; then
+				case "$sec" in ''|*[!0-9]*) sec="$daily_cap" ;; esac
+				[ "$sec" -gt "$daily_cap" ] && sec="$daily_cap"
+			fi
 			printf '%s\n' "$sec"
 			return 0
 		fi
 	done
-	_ai_backoff_sec_for_label "$label"
+	sec=$(_ai_backoff_sec_for_label "$label")
+	if [ -n "$daily_cap" ] && [ "$sec" -gt "$daily_cap" ]; then sec="$daily_cap"; fi
+	printf '%s\n' "$sec"
 }
 
 # _ai_backoff_check AGENT  → 0: 使用可 / 1: バックオフ中
