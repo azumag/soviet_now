@@ -28,6 +28,9 @@ mkdir -p tmp 2>/dev/null || true
 [ -f .env ] && set -a && . ./.env && set +a
 
 # --- 共通ライブラリ ---
+source ./lib/background_priority.sh
+soren_background_priority
+
 source ./eloop_lib.sh
 
 WORKER_NAME="radio_worker"
