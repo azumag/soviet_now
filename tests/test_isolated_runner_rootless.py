@@ -86,6 +86,16 @@ _ISOLATION_WORKS_HERE = _isolation_actually_works()
 # ---------------------------------------------------------------------------
 
 class TestAvailabilityRealDetection(unittest.TestCase):
+    def test_runner_entrypoint_is_anchored_to_sourced_sandbox_library(self):
+        """改善用の最小sandboxへcwdが移ってもhost側runnerを見失わないこと。"""
+        source = (REPO_ROOT / "strategy/sandbox.sh").read_text(encoding="utf-8")
+        self.assertIn("readonly ISOLATED_RUNNER_ENTRYPOINT", source)
+        start = source.index("_strategy_isolated_runner_available()")
+        end = source.index("\n}\n", start)
+        body = source[start:end]
+        self.assertIn('"$ISOLATED_RUNNER_ENTRYPOINT" probe', body)
+        self.assertNotIn("python3 strategy/isolated_runner/run_isolated.py", body)
+
     def test_probe_and_bash_function_agree(self):
         """run_isolated.py probe の終了コードと、sandbox.sh の
         _strategy_isolated_runner_available() の戻り値が一致すること
