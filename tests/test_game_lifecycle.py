@@ -420,6 +420,24 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 3)
             self.assertEqual(payload["status"], "conflict")
 
+    def test_fresh_start_clears_matching_cancelled_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            cancelled, _ = self.run_broker(root, "cancel", "--request-id", request_id)
+            self.assertEqual(cancelled.returncode, 0)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            request = json.loads((lifecycle / "request.json").read_text())
+            (lifecycle / "game_resource.json").write_text(
+                json.dumps({**request, "status": "cancelled", "quit_called": False})
+            )
+
+            result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(payload["status"], "starting")
+            self.assertFalse((lifecycle / "request.json").exists())
+
     def test_fresh_start_resumes_after_starting_receipt_before_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

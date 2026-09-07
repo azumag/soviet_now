@@ -659,9 +659,20 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
         resource = store.resource()
         if request is None or request.get("request_id") != request_id:
             return _emit({"status": "conflict", "error": "request is not stopped"}, RC_CONFLICT)
-        if ack is not None and (not _record_matches_request(ack, request) or ack.get("status") != "stopped"):
-            return _emit({"status": "conflict", "error": "request acknowledgement is not stopped"}, RC_CONFLICT)
-        if not _record_matches_request(resource, request) or resource.get("status") != "stopped":
+        ack_status = ack.get("status") if ack is not None else None
+        if ack is not None and (
+            not _record_matches_request(ack, request)
+            or ack_status not in {"stopped", "cancelled"}
+        ):
+            return _emit({"status": "conflict", "error": "request acknowledgement is not stopped or cancelled"}, RC_CONFLICT)
+        if ack_status == "cancelled":
+            if resource is not None and (
+                not _record_matches_request(resource, request)
+                or resource.get("status") != "cancelled"
+                or _resource_is_irreversible(resource)
+            ):
+                return _emit({"status": "conflict", "error": "matching reversible cancelled resource is required"}, RC_CONFLICT)
+        elif not _record_matches_request(resource, request) or resource.get("status") != "stopped":
             return _emit({"status": "conflict", "error": "matching stopped resource is missing"}, RC_CONFLICT)
         pause_specs = (
             (store.directory / "improvement_pause.json", store.root / "tmp/state/improve_daemon.paused"),
