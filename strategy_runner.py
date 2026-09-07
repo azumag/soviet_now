@@ -2989,9 +2989,50 @@ def apply_strategy_final_decision(strategy_module, decision, analysis, game_stat
     # become a way around the runtime's deadline and shape invariants.  Re-run
     # the complete safety pass because an analyzer-safe lane can still be
     # rejected by the independent geometry check.
-    return enforce_deadline_safety(
+    safe_decision = enforce_deadline_safety(
         finalized, analysis, game_state, strategy_module
     )
+    return apply_merge_opportunity_policy(strategy_module, safe_decision, analysis, game_state)
+
+
+def apply_merge_opportunity_policy(strategy_module, decision, analysis, game_state):
+    """Accept a strategic alternative only if the full safety pass keeps its x.
+
+    Legacy strategies have no hook. A redirect is a rejection, not permission
+    to accept the redirected point (which may close the very route being kept).
+    """
+    policy = getattr(strategy_module, "merge_opportunity_alternatives", None)
+    if not callable(policy):
+        return decision
+    try:
+        alternatives = policy(game_state, analysis, decision)
+        if not isinstance(alternatives, list):
+            return decision
+        results = analysis.get("results") or []
+        candidates = {float(q["x"]) for q in results}
+        seen = set()
+        # Safety evaluation is expensive on tall boards. Bound retries so a
+        # policy with many near-identical rejected candidates cannot stall input.
+        for proposed in alternatives[:min(len(results), 8)]:
+            if not isinstance(proposed, dict) or isinstance(proposed.get("x"), bool):
+                continue
+            x = float(proposed["x"])
+            if not math.isfinite(x) or not GAME_X_MIN <= x <= GAME_X_MAX or x not in candidates or x in seen:
+                continue
+            seen.add(x)
+            # Do not propagate reason-based emergency exemptions into this path.
+            checked = enforce_deadline_safety(
+                {"x": x, "reason": "MERGE_OPPORTUNITY_CHECK"}, analysis, game_state, strategy_module
+            )
+            if abs(float(checked["x"]) - x) > 1e-6:
+                continue
+            out = dict(decision)
+            out["x"] = x
+            out["reason"] = str(proposed.get("reason") or "MERGE_OPPORTUNITY")
+            return out
+    except Exception as err:
+        log(f"WARN: merge opportunity policy invalid, keeping safe decision: {err}")
+    return decision
 
 
 def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT):
