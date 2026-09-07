@@ -839,6 +839,9 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "state_snapshot": {"pieces": piece_snapshot},
     }
 
+    if isinstance(decision.get("merge_opportunity_trace"), dict):
+        record["merge_opportunity_trace"] = decision["merge_opportunity_trace"]
+
     if russia_created:
         record["russia_created"] = True
     if soviet_created:
@@ -3006,8 +3009,15 @@ def apply_merge_opportunity_policy(strategy_module, decision, analysis, game_sta
         return decision
     try:
         alternatives = policy(game_state, analysis, decision)
-        if not isinstance(alternatives, list):
+        if not isinstance(alternatives, list) or not alternatives:
             return decision
+        trace = {
+            "from_x": float(decision["x"]),
+            "from_reason": str(decision.get("reason", ""))[:512],
+            "proposal_count": len(alternatives),
+            "outcome": "kept_original",
+            "attempts": [],
+        }
         results = analysis.get("results") or []
         candidates = {float(q["x"]) for q in results}
         seen = set()
@@ -3024,11 +3034,20 @@ def apply_merge_opportunity_policy(strategy_module, decision, analysis, game_sta
             checked = enforce_deadline_safety(
                 {"x": x, "reason": "MERGE_OPPORTUNITY_CHECK"}, analysis, game_state, strategy_module
             )
-            if abs(float(checked["x"]) - x) > 1e-6:
+            safe_x = float(checked["x"])
+            accepted = abs(safe_x - x) <= 1e-6
+            trace["attempts"].append({"x": x, "safe_x": safe_x, "accepted": accepted})
+            if not accepted:
                 continue
+            trace["outcome"] = "selected"
             out = dict(decision)
+            out["merge_opportunity_trace"] = trace
             out["x"] = x
             out["reason"] = str(proposed.get("reason") or "MERGE_OPPORTUNITY")
+            return out
+        if trace["attempts"]:
+            out = dict(decision)
+            out["merge_opportunity_trace"] = trace
             return out
     except Exception as err:
         log(f"WARN: merge opportunity policy invalid, keeping safe decision: {err}")
