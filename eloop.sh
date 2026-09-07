@@ -15,6 +15,19 @@
 
 PLAY_RECOVERED_RETRY_RC=75
 
+_follow_runner_output() {
+	local runner_pid="$1"
+	local runner_tmpfile="$2"
+	# GNU tail can bind the follower lifetime to strategy_runner. This is a
+	# secondary guard for supervisor/loop replacement: even if the parent shell
+	# exits before its explicit kill/wait cleanup, the follower stops as soon as
+	# the runner does instead of becoming a long-lived PPID=1 orphan.
+	if tail --help 2>&1 | grep -q -- '--pid'; then
+		exec tail --pid="$runner_pid" -n +1 -f "$runner_tmpfile"
+	fi
+	exec tail -n +1 -f "$runner_tmpfile"
+}
+
 _stop_improvement_for_runtime_recovery() {
 	local running_pid=0
 	running_pid=$(_find_live_improve_pid 2>/dev/null || echo 0)
@@ -405,7 +418,7 @@ os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 with open(path, "w", encoding="utf-8") as f:
     json.dump({"pid": int(pid), "game": int(game), "started_at": int(time.time())}, f, ensure_ascii=False)
 PY
-	tail -n +1 -f "$runner_tmpfile" &
+	_follow_runner_output "$py_pid" "$runner_tmpfile" &
 	local tail_pid=$!
 	wait "$py_pid"
 	local py_rc=$?

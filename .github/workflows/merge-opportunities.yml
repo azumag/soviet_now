@@ -4,6 +4,8 @@ on:
     paths:
       - 'strategy.py'
       - 'strategy_runner.py'
+      - 'eloop.sh'
+      - 'tests/test_eloop_runner_tail_cleanup.sh'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
@@ -16,6 +18,8 @@ on:
     paths:
       - 'strategy.py'
       - 'strategy_runner.py'
+      - 'eloop.sh'
+      - 'tests/test_eloop_runner_tail_cleanup.sh'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
@@ -33,6 +37,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - run: bash tests/test_eloop_runner_tail_cleanup.sh
       - run: >-
           python3 -m unittest
           tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_strategy_hash
