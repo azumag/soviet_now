@@ -290,8 +290,14 @@ _pid_matches_worker() {
 	_pid_alive "$pid" || return 1
 	[ -n "$pattern" ] || return 0
 	if matches=$(pgrep -f "$pattern" 2>/dev/null); then
-		printf '%s\n' "$matches" | grep -qx "$pid"
-		return $?
+		# Avoid `printf | grep -q` here. With pipefail enabled, grep can exit
+		# after the target PID while printf still has additional pgrep hits,
+		# turning a valid match into rc=141 (SIGPIPE) and a false stale-worker
+		# adoption. Iterate the captured lines in-process instead.
+		while IFS= read -r match; do
+			[ "$match" = "$pid" ] && return 0
+		done <<<"$matches"
+		return 1
 	fi
 	# macOS privacy/sandboxing can deny process-list access even when kill -0 works.
 	# In that case, trust the alive pidfile pid instead of triggering a restart storm.

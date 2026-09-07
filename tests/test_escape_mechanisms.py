@@ -11852,6 +11852,38 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
             supervisor.index('if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then'),
         )
 
+    def test_supervisor_pid_match_does_not_sigpipe_on_multiple_pgrep_hits(self):
+        supervisor = (REPO_ROOT / "start_all.sh").read_text()
+        start = supervisor.index("_pid_matches_worker() {")
+        end = supervisor.index("\n}\n\n_soren_loop_adoptable()", start) + 2
+        function_text = supervisor[start:end]
+        script = textwrap.dedent(
+            f"""
+            set -o pipefail
+            trap ':' PIPE
+            _pid_alive() {{ return 0; }}
+            pgrep() {{
+                printf '123\n'
+                i=0
+                while [ "$i" -lt 20000 ]; do
+                    printf '%s\n' "$((100000 + i))"
+                    i=$((i + 1))
+                done
+            }}
+            {function_text}
+            _pid_matches_worker 123 ignored
+            """
+        )
+        proc = subprocess.run(
+            ["bash", "-c", script],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Broken pipe", proc.stderr)
+
     def test_prediction_result_includes_regression_reason_for_purge(self):
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
         predictions = (REPO_ROOT / "twitch_predictions.sh").read_text()
