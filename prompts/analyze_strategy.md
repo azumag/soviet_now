@@ -125,6 +125,8 @@
 
 ## 出力指示（必須）
 - 分析結果を **`tmp/analysis_result.md`** に `Write` ツールで書くこと
+- 後述の `analysis_contract` ブロックは必ず同じファイル内に含めること。チャットの最終応答だけに書いても未提出として拒否される
+- 書き込み後に `tmp/analysis_result.md` を読み直し、同ブロックがちょうど1件あることを確認してから完了すること
 - `strategy.py.staging` や他のPythonファイルは一切編集しないこと
 - 以下の構造で書くこと:
 
@@ -170,7 +172,7 @@
 ## 実装へ渡す前の機械検査（必須）
 
 `tmp/analysis_evidence.json` と `tmp/improve_brief.md` の `evidence_sha256` を読む。
-本文に加え、以下の `analysis_contract` JSONブロックを1つだけ出力する。
+本文の末尾に、以下の `analysis_contract` JSONブロックを1つだけ同じファイルへ書く。
 サンプル値をコピーせず、今回の入力と照合して埋めること。
 
 - `founded_games` はhostの同フィールドと一致させる。未知なら **null** のままにし、0件や0/nと断定しない。
@@ -180,6 +182,8 @@
 - `required_next_types` はこの変更の発火に必要な直接供給type。観測済みかつ現行方針1～11内だけ。
   type12以上は合成された盤面駒として区別し、`next_type==14` 等の直接供給条件と混同しない。
   供給typeに依存しない変更は空配列としてよい。
+- Implementation Planには採用する実装だけを書く。過去案・棄却案・禁止例であっても、`next_type` と12以上を比較する式を書かない。
+  12以上へ言及する場合は「盤面上で合成されたtype 12以上の駒」と書き、直接供給条件ではないことを明確にする。
 - `target` は `strategy.py.staging` または既存ルール内の `strategy_helpers/*.py` だけ。
 - 根拠不足の場合は `decision=hold`、`changes=[]`、必要な追加証拠を `reason` に書く。
   建国カウンタが未知なだけで全ての改善が禁止されるわけではない。観測できる失敗局面から1件を選べる。
