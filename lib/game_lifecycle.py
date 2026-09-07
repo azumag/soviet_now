@@ -519,7 +519,8 @@ def command_cancel(store: LifecycleStore, args: argparse.Namespace) -> int:
             # Idempotent retry: report the existing acknowledgement without
             # rewriting the durable cancel control.
             return _emit({"request": request, "ack": ack, "control": store.control()}, RC_OK)
-        if ack.get("status") in TERMINAL_STATUSES or ack.get("status") == STOPPING_STATUS:
+        ack_status = ack.get("status")
+        if ack_status in TERMINAL_STATUSES - {"timeout"} or ack_status == STOPPING_STATUS:
             return _emit({"request": request, "ack": ack}, RC_CONFLICT)
         resource = store.resource()
         if resource:
@@ -649,30 +650,36 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
     with store.lock():
         receipt_path = store.root / "tmp/state/game_lifecycle_fresh_start.json"
         prior = _json_object(receipt_path)
-        if prior and prior.get("request_id") == request_id and prior.get("status") in {"starting", "started"}:
-            # If active state is already gone, the earlier invocation crossed
-            # the commit point.  Otherwise resume the idempotent cleanup below.
-            if store.request() is None:
-                return _emit(prior, RC_OK)
         request = store.request()
         ack = store.ack()
         resource = store.resource()
+        resuming = bool(
+            prior
+            and prior.get("request_id") == request_id
+            and prior.get("status") in {"starting", "started"}
+        )
+        if resuming:
+            identity = request or prior
+            for record in (request, ack, store.control(), resource):
+                if record is not None and not _record_matches_request(record, identity):
+                    return _emit({"status": "conflict", "error": "fresh-start residue identity mismatch"}, RC_CONFLICT)
+            request = request or identity
         if request is None or request.get("request_id") != request_id:
             return _emit({"status": "conflict", "error": "request is not stopped"}, RC_CONFLICT)
         ack_status = ack.get("status") if ack is not None else None
-        if ack is not None and (
+        if not resuming and ack is not None and (
             not _record_matches_request(ack, request)
             or ack_status not in {"stopped", "cancelled"}
         ):
             return _emit({"status": "conflict", "error": "request acknowledgement is not stopped or cancelled"}, RC_CONFLICT)
-        if ack_status == "cancelled":
+        if not resuming and ack_status == "cancelled":
             if resource is not None and (
                 not _record_matches_request(resource, request)
                 or resource.get("status") != "cancelled"
                 or _resource_is_irreversible(resource)
             ):
                 return _emit({"status": "conflict", "error": "matching reversible cancelled resource is required"}, RC_CONFLICT)
-        elif not _record_matches_request(resource, request) or resource.get("status") != "stopped":
+        elif not resuming and (not _record_matches_request(resource, request) or resource.get("status") != "stopped"):
             return _emit({"status": "conflict", "error": "matching stopped resource is missing"}, RC_CONFLICT)
         pause_specs = (
             (store.directory / "improvement_pause.json", store.root / "tmp/state/improve_daemon.paused"),
@@ -691,14 +698,29 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
                     pass
                 if owned and marker_value == f"lifecycle:{request_id}":
                     marker_path.unlink(missing_ok=True)
-        _atomic_json(receipt_path, {"schema": 1, "request_id": request_id, "status": "starting", "started_at": time.time()})
+        if not resuming:
+            prior = {
+                "schema": 1,
+                "request_id": request_id,
+                "game": request.get("game"),
+                "generation": request.get("generation"),
+                "deadline_epoch": request.get("deadline_epoch"),
+                "deadline_at": request.get("deadline_at"),
+                "status": "starting",
+                "started_at": time.time(),
+            }
+            _atomic_json(receipt_path, prior)
         store.archive_current()
         for path in (
-            store.request_path, store.ack_path, store.control_path, store.resource_path,
+            store.ack_path, store.control_path, store.resource_path,
             *(record for record, _marker in pause_specs),
+            # Delete request last.  The receipt remains a durable journal if
+            # any earlier unlink fails, and a retry validates and resumes all
+            # remaining cleanup before reporting success.
+            store.request_path,
         ):
             path.unlink(missing_ok=True)
-        return _emit({"schema": 1, "request_id": request_id, "status": "starting", "started_at": time.time()}, RC_OK)
+        return _emit(prior, RC_OK)
 
 
 def build_parser() -> argparse.ArgumentParser:

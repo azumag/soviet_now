@@ -438,6 +438,51 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(payload["status"], "starting")
             self.assertFalse((lifecycle / "request.json").exists())
 
+    def test_expired_request_can_be_cancelled_before_irreversible_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id, deadline=0.001)
+            time.sleep(0.02)
+            self.write_state(root, "MOVE")
+            expired, expired_payload = self.run_broker(
+                root, "boundary", "--request-id", request_id
+            )
+            self.assertEqual(expired.returncode, 2)
+            self.assertEqual(expired_payload["ack"]["status"], "timeout")
+            cancelled, cancelled_payload = self.run_broker(
+                root, "cancel", "--request-id", request_id
+            )
+            self.assertEqual(cancelled.returncode, 0)
+            self.assertEqual(cancelled_payload["ack"]["status"], "cancelled")
+
+    def test_fresh_start_retry_cleans_residue_after_request_was_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            request = json.loads((lifecycle / "request.json").read_text())
+            (lifecycle / "ack.json").write_text(json.dumps({**request, "status": "stopped"}))
+            (lifecycle / "game_resource.json").write_text(json.dumps({**request, "status": "stopped"}))
+            receipt = root / "tmp/state/game_lifecycle_fresh_start.json"
+            receipt.write_text(json.dumps({
+                "schema": 1, "request_id": request_id,
+                "game": request["game"], "generation": request["generation"],
+                "deadline_epoch": request["deadline_epoch"],
+                "deadline_at": request["deadline_at"],
+                "status": "starting", "started_at": time.time(),
+            }))
+            (lifecycle / "request.json").unlink()
+
+            retried, payload = self.run_broker(
+                root, "fresh-start", "--request-id", request_id
+            )
+            self.assertEqual(retried.returncode, 0)
+            self.assertEqual(payload["status"], "starting")
+            self.assertFalse((lifecycle / "ack.json").exists())
+            self.assertFalse((lifecycle / "game_resource.json").exists())
+
     def test_fresh_start_resumes_after_starting_receipt_before_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

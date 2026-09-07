@@ -478,7 +478,7 @@ _game_lifecycle_pause_watchdog() {
 		marker_created=1
 	fi
 	pid=$(_game_lifecycle_read_pid "$TMP_STATE_DIR/soviet_watchdog.pid" 2>/dev/null || true)
-	if [ -z "$pid" ]; then
+	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
 		pid=$(pgrep -f '[/]soviet_watchdog[.]sh([[:space:]]|$)' 2>/dev/null | head -n 1 || true)
 	fi
 	_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
@@ -501,6 +501,7 @@ _game_lifecycle_pause_watchdog() {
 		while _game_lifecycle_is_watchdog_pid "$pid" && [ "$waited" -lt "$wait_sec" ]; do sleep 1; waited=$((waited + 1)); done
 		_game_lifecycle_is_watchdog_pid "$pid" && return 1
 	fi
+	return 0
 }
 
 game_lifecycle_restore_watchdog() {
