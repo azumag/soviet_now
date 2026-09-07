@@ -1786,7 +1786,11 @@ _run_opencode_jiji_research_unqueued() {
 _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
 	case "$agent" in
-	codex | codex:*)
+	codex | codex:* | opencode:* | opencode-go:* | vercel:* | amd:* | minimax-api:* | local | local:*)
+		# Provider/model specs must go through the common dispatcher.  Passing
+		# them to `opencode run --agent` treats the model name as an agent name,
+		# which can fall back to an unrelated default model and leak its error
+		# text into the grounding memo.
 		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
 		AI_DISPATCH_RECORD_WINNER=1
 		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT:-240}}"
@@ -1864,7 +1868,7 @@ ${jiji_recent_topics}"
 	envsubst <"$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" >"$research_prompt_file"
 	# headline は後段の本番プロンプトと既読記録でも使うので保持する
 
-	grounding_context=$(_run_opencode_jiji_research "minimax" "$research_prompt_file")
+	grounding_context=$(_run_opencode_jiji_research "${RADIO_MAIN_PREPASS_AGENT}" "$research_prompt_file")
 	if [ -z "$grounding_context" ]; then
 		log "[JIJI] AI調査失敗、fallbackエージェントで再試行..."
 		grounding_context=$(_run_opencode_jiji_research "${RADIO_MAIN_FALLBACK}" "$research_prompt_file")

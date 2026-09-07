@@ -45,6 +45,23 @@ deepseek_error='Error: {
 }'
 check '_contains_provider_error_text "$deepseek_error"' 'UnknownError JSON が provider error 判定に一致する'
 check '! _contains_provider_error_text "こんにちは、今日もいい天気ですね。"' '通常文は provider error 判定に一致しない'
+legacy_agent_error='!  agent "minimax" not found. Falling back to default agent
+Error: Free tier users do not have access to this model. Upgrade to paid credits.'
+check '_contains_provider_error_text "$legacy_agent_error"' 'OpenCode agent欠落+free-tier拒否をprovider errorとして検出する'
+
+# JIJI research はモデルspecを共通dispatchへ渡す。legacy --agent 経路へ誤配送しない。
+printf '調査対象' >"$TMP/jiji_prompt.txt"
+jiji_route=$(
+	(
+		source "$ROOT/broadcast/radio_corners.sh"
+		_ai_dispatch() { printf 'dispatch:%s:%s' "$1" "$2"; }
+		_ai_generation_queue_run() { printf 'legacy:%s' "$1"; }
+		_run_opencode_jiji_research "opencode:muse-spark-test" "$TMP/jiji_prompt.txt"
+	)
+)
+check '[ "$jiji_route" = "dispatch:RADIO:JIJI_RESEARCH:opencode:muse-spark-test" ]' 'JIJI research のモデルspecは共通AI dispatchへ送る'
+jiji_primary_count=$(grep -F -c '_run_opencode_jiji_research "${RADIO_MAIN_PREPASS_AGENT}"' "$ROOT/broadcast/radio_corners.sh")
+check '[ "$jiji_primary_count" -ge 1 ]' 'JIJI research primaryは有効なprepassモデルspecを使う'
 
 # 長文stderrは先頭(バナー)と末尾(エラー本体)を両方残す
 long_banner="Reading additional input from stdin... OpenAI Codex v0.147.0 -------- workdir: /home/ubuntu/soren model: amd-token-factory-deepseek-v4-flash provider: soren-litellm session id: 01a023c3 -------- stream error: provider returned 500 upstream failure"
