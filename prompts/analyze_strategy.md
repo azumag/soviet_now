@@ -125,6 +125,8 @@
 
 ## 出力指示（必須）
 - 分析結果を **`tmp/analysis_result.md`** に `Write` ツールで書くこと
+- 後述の `analysis_contract` ブロックは必ず同じファイル内に含めること。チャットの最終応答だけに書いても未提出として拒否される
+- 書き込み後に `tmp/analysis_result.md` を読み直し、同ブロックがちょうど1件あることを確認してから完了すること
 - `strategy.py.staging` や他のPythonファイルは一切編集しないこと
 - 以下の構造で書くこと:
 
@@ -170,7 +172,7 @@
 ## 実装へ渡す前の機械検査（必須）
 
 `tmp/analysis_evidence.json` と `tmp/improve_brief.md` の `evidence_sha256` を読む。
-本文に加え、以下の `analysis_contract` JSONブロックを1つだけ出力する。
+本文の末尾に、以下の `analysis_contract` JSONブロックを1つだけ同じファイルへ書く。
 サンプル値をコピーせず、今回の入力と照合して埋めること。
 
 - `founded_games` はhostの同フィールドと一致させる。未知なら **null** のままにし、0件や0/nと断定しない。
