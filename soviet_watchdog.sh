@@ -108,6 +108,18 @@ acquire_singleton() {
 
 heartbeat() { [ -d "$LOCK_DIR" ] && touch "$LOCK_DIR" 2>/dev/null || true; }
 
+# Bash defers TERM traps while it waits for a foreground child.  Sleeping for
+# the full polling interval (60s by default) can therefore exceed the
+# lifecycle controller's 30s watchdog-stop deadline.  Keep each child wait
+# short so TERM is observed promptly without changing the polling cadence.
+wait_poll_interval() {
+	local remaining="$INTERVAL"
+	while [ "$remaining" -gt 0 ]; do
+		sleep 1
+		remaining=$((remaining - 1))
+	done
+}
+
 release_singleton() {
 	[ -d "$LOCK_DIR" ] || return 0
 	local o; o=$(cat "$LOCK_DIR/owner" 2>/dev/null || echo "")
@@ -235,7 +247,7 @@ while :; do
 			log "game-only lifecycle handover中 → bridgeを自動再起動しません"
 			lifecycle_park_logged=1
 		fi
-		sleep "$INTERVAL"
+		wait_poll_interval
 		continue
 	fi
 	lifecycle_park_logged=0
@@ -271,5 +283,5 @@ while :; do
 	else
 		[ "$consecutive_fail" -ne 0 ] && { log "ブリッジ正常化を確認 → fail カウンタ reset"; consecutive_fail=0; }
 	fi
-	sleep "$INTERVAL"
+	wait_poll_interval
 done

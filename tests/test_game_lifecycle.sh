@@ -4,6 +4,14 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/game-lifecycle-shell.XXXXXX")"
 cleanup() {
+	if [ -n "${watchdog_pid:-}" ]; then
+		kill -KILL "$watchdog_pid" 2>/dev/null || true
+		wait "$watchdog_pid" 2>/dev/null || true
+	fi
+	if [ -n "${watchdog_launcher_pid:-}" ]; then
+		kill -KILL "$watchdog_launcher_pid" 2>/dev/null || true
+		wait "$watchdog_launcher_pid" 2>/dev/null || true
+	fi
 	if [ -n "${unrelated_pid:-}" ]; then
 		kill "$unrelated_pid" 2>/dev/null || true
 	fi
@@ -362,5 +370,57 @@ grep -qx finish "$events"
 [ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
 game_lifecycle_restore_loop
 [ ! -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+
+# A lifecycle stop has only 30 seconds to confirm that the watchdog exited.
+# The watchdog's normal 60-second polling wait must therefore be interruptible:
+# bash defers a TERM trap while a foreground sleep is still running.
+watchdog_root="$test_root/watchdog"
+mkdir -p "$watchdog_root/lib" "$watchdog_root/tmp/state/game_lifecycle"
+cp "$repo_root/soviet_watchdog.sh" "$watchdog_root/"
+cp "$repo_root/lib/game_lifecycle.sh" "$repo_root/lib/game_lifecycle.py" "$watchdog_root/lib/"
+python3 - "$watchdog_root/tmp/state/game_lifecycle/request.json" "$watchdog_root/tmp/state/game_lifecycle/ack.json" <<'PY'
+import json
+import sys
+import time
+
+request = {
+    "schema": 1,
+    "request_id": "4e67742b-b543-4380-9202-27eca7d004ef",
+    "game": "sorengame",
+    "generation": 1,
+    "deadline_epoch": time.time() - 60,
+    "deadline_at": "2030-01-01T00:00:00.000Z",
+}
+ack = dict(request, status="stopped")
+for path, value in zip(sys.argv[1:], (request, ack)):
+    with open(path, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+        stream.write("\n")
+PY
+(
+	cd "$watchdog_root"
+	SOVIET_WATCHDOG_INTERVAL=60 ./soviet_watchdog.sh >watchdog.log 2>&1
+) &
+watchdog_launcher_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+	grep -q 'game-only lifecycle handover中' "$watchdog_root/watchdog.log" 2>/dev/null && break
+	sleep 0.1
+done
+[ -f "$watchdog_root/tmp/state/.soviet_watchdog.lock/owner" ]
+grep -q 'game-only lifecycle handover中' "$watchdog_root/watchdog.log"
+watchdog_pid=$(cat "$watchdog_root/tmp/state/.soviet_watchdog.lock/owner")
+kill -TERM "$watchdog_pid"
+watchdog_waited=0
+while kill -0 "$watchdog_pid" 2>/dev/null && [ "$watchdog_waited" -lt 50 ]; do
+	sleep 0.1
+	watchdog_waited=$((watchdog_waited + 1))
+done
+if kill -0 "$watchdog_pid" 2>/dev/null; then
+	echo "watchdog did not respond to TERM within 5 seconds" >&2
+	exit 1
+fi
+wait "$watchdog_launcher_pid" 2>/dev/null || true
+unset watchdog_pid
+unset watchdog_launcher_pid
 
 echo "game lifecycle shell tests passed"
