@@ -659,7 +659,11 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
             and prior.get("status") in {"starting", "started"}
         )
         if resuming:
-            identity = request or prior
+            # The durable receipt is the authority for a retried cleanup.  A
+            # request_id can be reused by a later generation, so using the
+            # current request as the identity would let a stale retry erase
+            # that newer generation.
+            identity = prior
             for record in (request, ack, store.control(), resource):
                 if record is not None and not _record_matches_request(record, identity):
                     return _emit({"status": "conflict", "error": "fresh-start residue identity mismatch"}, RC_CONFLICT)

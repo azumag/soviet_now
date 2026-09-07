@@ -493,11 +493,43 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             (lifecycle / "ack.json").write_text(json.dumps({**request, "status": "stopped"}))
             (lifecycle / "game_resource.json").write_text(json.dumps({**request, "status": "stopped"}))
             receipt = root / "tmp/state/game_lifecycle_fresh_start.json"
-            receipt.write_text(json.dumps({"schema": 1, "request_id": request_id, "status": "starting"}))
+            receipt.write_text(json.dumps({
+                "schema": 1, "request_id": request_id,
+                "game": request["game"], "generation": request["generation"],
+                "deadline_epoch": request["deadline_epoch"],
+                "deadline_at": request["deadline_at"],
+                "status": "starting", "started_at": time.time(),
+            }))
             result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
             self.assertEqual(result.returncode, 0)
             self.assertEqual(payload["status"], "starting")
             self.assertFalse((lifecycle / "request.json").exists())
+
+    def test_stale_fresh_start_retry_cannot_delete_reused_request_id_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            first = json.loads((lifecycle / "request.json").read_text())
+            (lifecycle / "ack.json").write_text(json.dumps({**first, "status": "stopped"}))
+            (lifecycle / "game_resource.json").write_text(json.dumps({**first, "status": "stopped"}))
+            completed, _ = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(completed.returncode, 0)
+
+            second, _ = self.run_broker(
+                root, "request", "--request-id", request_id,
+                "--game", "sorengame", "--generation", "2", "--deadline-sec", "60",
+            )
+            self.assertEqual(second.returncode, 0)
+            second_request = (lifecycle / "request.json").read_text()
+            second_ack = (lifecycle / "ack.json").read_text()
+
+            stale, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(stale.returncode, 3)
+            self.assertEqual(payload["status"], "conflict")
+            self.assertEqual((lifecycle / "request.json").read_text(), second_request)
+            self.assertEqual((lifecycle / "ack.json").read_text(), second_ack)
 
     def test_request_ignores_identity_mismatched_ack(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
