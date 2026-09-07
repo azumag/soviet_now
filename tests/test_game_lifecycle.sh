@@ -16,6 +16,8 @@ TMP_STATE_DIR="$test_root/state"
 GAME_LIFECYCLE_ROOT="$test_root"
 GAME_LIFECYCLE_DIR="$test_root/lifecycle"
 GAME_LIFECYCLE_IMPROVE_PAUSE_FILE="$GAME_LIFECYCLE_DIR/improvement_pause.json"
+GAME_LIFECYCLE_PREDICTION_PAUSE_FILE="$GAME_LIFECYCLE_DIR/prediction_pause.json"
+GAME_LIFECYCLE_PREDICTION_MARKER="$TMP_STATE_DIR/prediction_worker.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$TMP_STATE_DIR/soren_loop.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE="$GAME_LIFECYCLE_DIR/loop_pause.json"
 IMPROVE_DAEMON_PID_FILE="$test_root/improve_daemon.pid"
@@ -106,6 +108,20 @@ grep -qx finish "$events"
 game_lifecycle_restore_improvements
 [ ! -f "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" ]
 [ ! -f "$TMP_STATE_DIR/improve_daemon.paused" ]
+
+# Prediction ownership follows the same rule: lifecycle-created markers are
+# removed on restore, while an operator's pre-existing pause is preserved.
+_game_lifecycle_pause_predictions "$request_id"
+[ -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+[ -f "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" ]
+game_lifecycle_restore_predictions
+[ ! -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+[ ! -f "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" ]
+touch "$TMP_STATE_DIR/prediction_worker.paused"
+_game_lifecycle_pause_predictions "$request_id"
+game_lifecycle_restore_predictions
+[ -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+rm -f "$TMP_STATE_DIR/prediction_worker.paused"
 
 # Regression: a repeat pause of the SAME request keeps ownership of the marker
 # it created, so the later restore removes it instead of leaking the pause

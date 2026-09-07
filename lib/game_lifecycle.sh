@@ -14,6 +14,8 @@ GAME_LIFECYCLE_ENABLED="${GAME_LIFECYCLE_ENABLED:-1}"
 GAME_LIFECYCLE_RESOURCE_WAIT_SEC="${GAME_LIFECYCLE_RESOURCE_WAIT_SEC:-60}"
 GAME_LIFECYCLE_POLL_SEC="${GAME_LIFECYCLE_POLL_SEC:-1}"
 GAME_LIFECYCLE_IMPROVE_PAUSE_FILE="$GAME_LIFECYCLE_DIR/improvement_pause.json"
+GAME_LIFECYCLE_PREDICTION_PAUSE_FILE="$GAME_LIFECYCLE_DIR/prediction_pause.json"
+GAME_LIFECYCLE_PREDICTION_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/prediction_worker.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$GAME_LIFECYCLE_ROOT/tmp/state/soren_loop.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE="$GAME_LIFECYCLE_DIR/loop_pause.json"
 
@@ -360,6 +362,87 @@ game_lifecycle_restore_improvements() {
 	return 0
 }
 
+_game_lifecycle_is_prediction_worker_pid() {
+	local pid="$1" command_line
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	command_line=$(ps -p "$pid" -o command= 2>/dev/null || true)
+	[ -n "$command_line" ] || return 1
+	echo "$command_line" | grep -Eq '(^|[[:space:]/])workers/prediction_worker[.]sh([[:space:]]|$)'
+}
+
+_game_lifecycle_pause_predictions() {
+	local request_id="${1:-}"
+	[ -n "$request_id" ] || return 1
+	_game_lifecycle_lock_acquire "$GAME_LIFECYCLE_DIR/broker.lock" || return 1
+	_game_lifecycle_pause_predictions_locked "$request_id"
+	local rc=$?
+	_game_lifecycle_lock_release
+	return $rc
+}
+
+_game_lifecycle_pause_predictions_locked() {
+	local request_id="${1:-}" marker_created=0 pid="" pid_started="" pid_started_now=""
+	[ -n "$request_id" ] || return 1
+	mkdir -p "$GAME_LIFECYCLE_DIR" "$TMP_STATE_DIR" 2>/dev/null || return 1
+	if [ -e "$GAME_LIFECYCLE_PREDICTION_MARKER" ]; then
+		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" improvement_marker_created "$request_id"; then
+			marker_created=1
+		fi
+	else
+		# noclobber makes marker creation atomic.  A concurrent operator-created
+		# marker is never adopted by this request.
+		(umask 077; set -C; : >"$GAME_LIFECYCLE_PREDICTION_MARKER") 2>/dev/null || return 1
+		marker_created=1
+	fi
+	pid=$(_game_lifecycle_read_pid "$TMP_STATE_DIR/prediction_worker.pid" 2>/dev/null || true)
+	# Persist ownership before sending TERM.  A crash after this point can only
+	# remove a marker positively tied to this request.
+	_game_lifecycle_write_record "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || {
+		[ "$marker_created" -eq 1 ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
+		return 1
+	}
+	if [ -n "$pid" ]; then
+		if ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
+			if kill -0 "$pid" 2>/dev/null; then
+				_game_lifecycle_restore_predictions_locked
+				return 1
+			fi
+		else
+			pid_started=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
+			pid_started_now=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
+			if [ -z "$pid_started" ] || [ "$pid_started_now" != "$pid_started" ] || ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
+				_game_lifecycle_restore_predictions_locked
+				return 1
+			fi
+			kill -TERM "$pid" 2>/dev/null || true
+			local waited=0
+			while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+			if kill -0 "$pid" 2>/dev/null; then
+				_game_lifecycle_restore_predictions_locked
+				return 1
+			fi
+		fi
+	fi
+	return 0
+}
+
+_game_lifecycle_restore_predictions_locked() {
+	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created
+	[ -f "$record" ] || return 0
+	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
+	[ "$marker_created" = "true" ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
+	rm -f "$record" 2>/dev/null || true
+}
+
+game_lifecycle_restore_predictions() {
+	_game_lifecycle_lock_acquire "$GAME_LIFECYCLE_DIR/broker.lock" || return 1
+	_game_lifecycle_restore_predictions_locked
+	local rc=$?
+	_game_lifecycle_lock_release
+	return $rc
+}
+
 _game_lifecycle_pause_loop() {
 	local request_id="${1:-}" marker_created=0
 	[ -n "$request_id" ] || return 1
@@ -439,6 +522,15 @@ _game_lifecycle_stop_from_boundary() {
 		if ! _game_lifecycle_pause_improvements "$request_id"; then
 			_game_lifecycle_log "改善プロセスの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
+			game_lifecycle_restore_predictions
+			game_lifecycle_restore_improvements
+			game_lifecycle_restore_loop
+			return 1
+		fi
+		if ! _game_lifecycle_pause_predictions "$request_id"; then
+			_game_lifecycle_log "予想ワーカーの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
+			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
+			game_lifecycle_restore_predictions
 			game_lifecycle_restore_improvements
 			game_lifecycle_restore_loop
 			return 1
@@ -452,6 +544,7 @@ _game_lifecycle_stop_from_boundary() {
 	0) ;;
 	2)
 		_game_lifecycle_log "停止要求の期限切れ。旧ゲームを継続 (request=$request_id)"
+		game_lifecycle_restore_predictions
 		game_lifecycle_restore_improvements
 		game_lifecycle_restore_loop
 		return 1
@@ -474,6 +567,7 @@ _game_lifecycle_stop_from_boundary() {
 			# game alive.  Cancel this exact request and let normal play continue;
 			# do not turn an unsupported capability into a stop.
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
+			game_lifecycle_restore_predictions
 			game_lifecycle_restore_improvements
 			game_lifecycle_restore_loop
 			_game_lifecycle_log "共有表示未準備/legacy bridge のため handover をキャンセルし、旧ゲームを継続 (request=$request_id)"
@@ -621,6 +715,7 @@ game_lifecycle_resume_pending() {
 		# The request was explicitly rolled back (or the live bridge completed an
 		# in-process resume).  Remove only markers created by this handover; an
 		# operator's pre-existing pause remains untouched.
+		game_lifecycle_restore_predictions
 		game_lifecycle_restore_improvements
 		game_lifecycle_restore_loop
 		return 1
@@ -628,6 +723,7 @@ game_lifecycle_resume_pending() {
 	resume_requested)
 		# A live bridge may still be clearing its page/audio flags.  Restore the
 		# shell gates now, but never start a fresh game from this recovery path.
+		game_lifecycle_restore_predictions
 		game_lifecycle_restore_improvements
 		game_lifecycle_restore_loop
 		return 3
