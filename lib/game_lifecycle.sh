@@ -468,8 +468,9 @@ _game_lifecycle_is_watchdog_pid() {
 }
 
 _game_lifecycle_pause_watchdog() {
-	local request_id="${1:-}" marker_created=0 pid="" waited=0
+	local request_id="${1:-}" marker_created=0 pid="" waited=0 wait_sec="${GAME_LIFECYCLE_WATCHDOG_STOP_WAIT_SEC:-30}"
 	[ -n "$request_id" ] || return 1
+	case "$wait_sec" in ''|*[!0-9]*) wait_sec=30 ;; esac
 	if [ -e "$GAME_LIFECYCLE_WATCHDOG_MARKER" ]; then
 		_game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$request_id" && marker_created=1
 	else
@@ -484,7 +485,7 @@ _game_lifecycle_pause_watchdog() {
 	if [ -n "$pid" ]; then
 		_game_lifecycle_is_watchdog_pid "$pid" || return 1
 		kill -TERM "$pid" 2>/dev/null || true
-		while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+		while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$wait_sec" ]; do sleep 1; waited=$((waited + 1)); done
 		kill -0 "$pid" 2>/dev/null && return 1
 	fi
 }
