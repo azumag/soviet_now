@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-08-14 10:38:07 JST`
-- Nodes: `12`
-- Edges: `7`
-- Current: `182f9ad3954d`
-- Anchor: `83f5995eda15`
+- Updated: `2026-08-25 05:06:28 JST`
+- Nodes: `50`
+- Edges: `20`
+- Current: `42c79aab4a68`
+- Anchor: `0890dbefd73e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Git history backfill is bounded to the latest `80` `strategy.py` commits; rolling/archive state still supplies older known nodes.
@@ -12,17 +12,55 @@
 
 ## Overview
 
-- Contains tagged nodes and the latest `12` nodes.
+- Contains tagged nodes and the latest `50` nodes.
 ```mermaid
 flowchart TD
     h_32b5edcfea9b["32b5edcfea9b<br/>g=601 n=20<br/>comp=8941.8"]
     h_1e604817ce23["1e604817ce23<br/>g=67 n=20<br/>comp=8567.9"]
-    h_182f9ad3954d["182f9ad3954d<br/>CURRENT<br/>g=46 n=21<br/>comp=10242.9"]
+    h_182f9ad3954d["182f9ad3954d<br/>g=734 n=20<br/>comp=8171.2"]
     h_671db2f34b4c["671db2f34b4c<br/>g=100 n=20<br/>comp=9487.3"]
     h_66073f2fd01f["66073f2fd01f<br/>g=200 n=20<br/>comp=9240.4"]
-    h_91899879745f["91899879745f<br/>g=105 n=20<br/>comp=10119.5"]
-    h_4ef40a07369c["4ef40a07369c<br/>g=72 n=20<br/>comp=9709.8"]
-    h_83f5995eda15["83f5995eda15<br/>ANCHOR<br/>g=12 n=12<br/>comp=10206.8"]
+    h_91899879745f["91899879745f<br/>g=371 n=20<br/>comp=9195.1"]
+    h_4ef40a07369c["4ef40a07369c<br/>g=408 n=20<br/>comp=9226.3"]
+    h_83f5995eda15["83f5995eda15<br/>g=272 n=20<br/>comp=8905.3"]
+    h_6144b1d95d71["6144b1d95d71<br/>g=102 n=20<br/>comp=9049.7"]
+    h_ee127a60c4ac["ee127a60c4ac<br/>g=14 n=14<br/>comp=8837.9"]
+    h_84b85bbcbdcd["84b85bbcbdcd<br/>g=107 n=20<br/>comp=9450.0"]
+    h_060ecbc70dda["060ecbc70dda<br/>g=12 n=12<br/>comp=9490.0"]
+    h_b8623c74d16b["b8623c74d16b<br/>g=19 n=19<br/>comp=9189.5"]
+    h_a1196ec87527["a1196ec87527<br/>g=23 n=20<br/>comp=9086.0"]
+    h_95b4310bee23["95b4310bee23<br/>g=133 n=20<br/>comp=9808.5"]
+    h_80e1c297a82a["80e1c297a82a<br/>g=25 n=20<br/>comp=10008.7"]
+    h_77134db06ae2["77134db06ae2<br/>g=14 n=14<br/>comp=9150.6"]
+    h_1888e7d7ed65["1888e7d7ed65<br/>g=127 n=20<br/>comp=9558.3"]
+    h_e5b671c8d352["e5b671c8d352<br/>g=728 n=100<br/>comp=9650.5"]
+    h_0890dbefd73e["0890dbefd73e<br/>ANCHOR<br/>g=333 n=100<br/>comp=9707.7"]
+    h_2e1dc1a2acd7["2e1dc1a2acd7<br/>g=0"]
+    h_1a99aa3e5244["1a99aa3e5244<br/>g=12 n=12<br/>comp=8679.7"]
+    h_0b6d4deb8814["0b6d4deb8814<br/>g=53 n=53<br/>comp=10312.3"]
+    h_42c79aab4a68["42c79aab4a68<br/>CURRENT<br/>g=332 n=100<br/>comp=9854.2"]
+    h_96c6a1719420["96c6a1719420<br/>g=44 n=44<br/>comp=9462.6"]
+    h_cb3fc745833d["cb3fc745833d<br/>g=398 n=100<br/>comp=9598.6"]
+    h_16c7e5e65ba2["16c7e5e65ba2<br/>g=12 n=12<br/>comp=8710.9"]
+    h_859fabbf1252["859fabbf1252<br/>g=11 n=11<br/>comp=8663.7"]
+    h_91fd34ad01b8["91fd34ad01b8<br/>g=3 n=3<br/>comp=7367.7"]
+    h_e66e82e11279["e66e82e11279<br/>g=10 n=10<br/>comp=9890.7"]
+    h_bde7dacbc6b2["bde7dacbc6b2<br/>g=11 n=11<br/>comp=10360.3"]
+    h_b2d2fb807edc["b2d2fb807edc<br/>g=6 n=6<br/>comp=10297.0"]
+    h_a269216be3bc["a269216be3bc<br/>g=11 n=11<br/>comp=9117.1"]
+    h_163ec0d57822["163ec0d57822<br/>g=2 n=2<br/>comp=9979.0"]
+    h_bdb4f962b669["bdb4f962b669<br/>g=12 n=12<br/>comp=9421.9"]
+    h_5f3f17b903fe["5f3f17b903fe<br/>g=15 n=15<br/>comp=9444.0"]
+    h_ed0c63f847e0["ed0c63f847e0<br/>g=5 n=5<br/>comp=10159.3"]
+    h_f78957d3ab7e["f78957d3ab7e<br/>g=12 n=12<br/>comp=8581.8"]
+    h_505b0efbe974["505b0efbe974<br/>g=19 n=19<br/>comp=10183.9"]
+    h_2dfa9b77baf0["2dfa9b77baf0<br/>g=12 n=12<br/>comp=10274.9"]
+    h_87ae98e3dd2e["87ae98e3dd2e<br/>g=12 n=12<br/>comp=10094.8"]
+    h_ca80fa288f7a["ca80fa288f7a<br/>g=8 n=8<br/>comp=10776.2"]
+    h_922fb1f782dc["922fb1f782dc<br/>g=27 n=27<br/>comp=10282.6"]
+    h_244348f0f6ed["244348f0f6ed<br/>g=4 n=4<br/>comp=12804.3"]
+    h_aac603521570["aac603521570<br/>g=56 n=56<br/>comp=9907.2"]
+    h_5c9ab0ea6b6c["5c9ab0ea6b6c<br/>g=13 n=13<br/>comp=9923.7"]
     h_365cc261af05["365cc261af05"]
     h_844b084731e8["844b084731e8"]
     h_d88fc8bfd580["d88fc8bfd580"]
@@ -34,7 +72,20 @@ flowchart TD
     h_66073f2fd01f -->|improve| h_91899879745f
     h_91899879745f -->|improve| h_4ef40a07369c
     h_66073f2fd01f -->|improve| h_83f5995eda15
-    h_83f5995eda15 -. rollback .-> h_182f9ad3954d
+    h_83f5995eda15 -->|improve| h_6144b1d95d71
+    h_6144b1d95d71 -->|improve| h_ee127a60c4ac
+    h_4ef40a07369c -->|improve| h_84b85bbcbdcd
+    h_84b85bbcbdcd -->|improve| h_060ecbc70dda
+    h_4ef40a07369c -->|improve| h_b8623c74d16b
+    h_4ef40a07369c -->|improve| h_a1196ec87527
+    h_83f5995eda15 -->|improve| h_95b4310bee23
+    h_95b4310bee23 -->|improve| h_80e1c297a82a
+    h_1888e7d7ed65 -->|improve| h_e5b671c8d352
+    h_e5b671c8d352 -->|improve| h_2e1dc1a2acd7
+    h_e5b671c8d352 -->|improve| h_1a99aa3e5244
+    h_e5b671c8d352 -->|improve| h_0b6d4deb8814
+    h_0b6d4deb8814 -->|improve| h_42c79aab4a68
+    h_e5b671c8d352 -. rollback .-> h_42c79aab4a68
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -43,12 +94,50 @@ flowchart TD
 
     class h_32b5edcfea9b plain;
     class h_1e604817ce23 plain;
-    class h_182f9ad3954d current;
+    class h_182f9ad3954d plain;
     class h_671db2f34b4c plain;
     class h_66073f2fd01f plain;
     class h_91899879745f plain;
     class h_4ef40a07369c plain;
-    class h_83f5995eda15 anchor;
+    class h_83f5995eda15 plain;
+    class h_6144b1d95d71 plain;
+    class h_ee127a60c4ac plain;
+    class h_84b85bbcbdcd plain;
+    class h_060ecbc70dda plain;
+    class h_b8623c74d16b plain;
+    class h_a1196ec87527 plain;
+    class h_95b4310bee23 plain;
+    class h_80e1c297a82a plain;
+    class h_77134db06ae2 plain;
+    class h_1888e7d7ed65 plain;
+    class h_e5b671c8d352 plain;
+    class h_0890dbefd73e anchor;
+    class h_2e1dc1a2acd7 plain;
+    class h_1a99aa3e5244 plain;
+    class h_0b6d4deb8814 plain;
+    class h_42c79aab4a68 current;
+    class h_96c6a1719420 plain;
+    class h_cb3fc745833d plain;
+    class h_16c7e5e65ba2 plain;
+    class h_859fabbf1252 plain;
+    class h_91fd34ad01b8 plain;
+    class h_e66e82e11279 plain;
+    class h_bde7dacbc6b2 plain;
+    class h_b2d2fb807edc plain;
+    class h_a269216be3bc plain;
+    class h_163ec0d57822 plain;
+    class h_bdb4f962b669 plain;
+    class h_5f3f17b903fe plain;
+    class h_ed0c63f847e0 plain;
+    class h_f78957d3ab7e plain;
+    class h_505b0efbe974 plain;
+    class h_2dfa9b77baf0 plain;
+    class h_87ae98e3dd2e plain;
+    class h_ca80fa288f7a plain;
+    class h_922fb1f782dc plain;
+    class h_244348f0f6ed plain;
+    class h_aac603521570 plain;
+    class h_5c9ab0ea6b6c plain;
     class h_365cc261af05 plain;
     class h_844b084731e8 plain;
     class h_d88fc8bfd580 plain;
@@ -58,19 +147,57 @@ flowchart TD
 ## Detail 1/1
 
 - Range: `32b5edcfea9b` .. `e9e4bffa01ae`
-- Nodes in this diagram: `12`
-- Internal edges in this diagram: `7`
+- Nodes in this diagram: `50`
+- Internal edges in this diagram: `20`
 
 ```mermaid
 flowchart TD
     h_32b5edcfea9b["32b5edcfea9b<br/>g=601 n=20<br/>comp=8941.8"]
     h_1e604817ce23["1e604817ce23<br/>g=67 n=20<br/>comp=8567.9"]
-    h_182f9ad3954d["182f9ad3954d<br/>CURRENT<br/>g=46 n=21<br/>comp=10242.9"]
+    h_182f9ad3954d["182f9ad3954d<br/>g=734 n=20<br/>comp=8171.2"]
     h_671db2f34b4c["671db2f34b4c<br/>g=100 n=20<br/>comp=9487.3"]
     h_66073f2fd01f["66073f2fd01f<br/>g=200 n=20<br/>comp=9240.4"]
-    h_91899879745f["91899879745f<br/>g=105 n=20<br/>comp=10119.5"]
-    h_4ef40a07369c["4ef40a07369c<br/>g=72 n=20<br/>comp=9709.8"]
-    h_83f5995eda15["83f5995eda15<br/>ANCHOR<br/>g=12 n=12<br/>comp=10206.8"]
+    h_91899879745f["91899879745f<br/>g=371 n=20<br/>comp=9195.1"]
+    h_4ef40a07369c["4ef40a07369c<br/>g=408 n=20<br/>comp=9226.3"]
+    h_83f5995eda15["83f5995eda15<br/>g=272 n=20<br/>comp=8905.3"]
+    h_6144b1d95d71["6144b1d95d71<br/>g=102 n=20<br/>comp=9049.7"]
+    h_ee127a60c4ac["ee127a60c4ac<br/>g=14 n=14<br/>comp=8837.9"]
+    h_84b85bbcbdcd["84b85bbcbdcd<br/>g=107 n=20<br/>comp=9450.0"]
+    h_060ecbc70dda["060ecbc70dda<br/>g=12 n=12<br/>comp=9490.0"]
+    h_b8623c74d16b["b8623c74d16b<br/>g=19 n=19<br/>comp=9189.5"]
+    h_a1196ec87527["a1196ec87527<br/>g=23 n=20<br/>comp=9086.0"]
+    h_95b4310bee23["95b4310bee23<br/>g=133 n=20<br/>comp=9808.5"]
+    h_80e1c297a82a["80e1c297a82a<br/>g=25 n=20<br/>comp=10008.7"]
+    h_77134db06ae2["77134db06ae2<br/>g=14 n=14<br/>comp=9150.6"]
+    h_1888e7d7ed65["1888e7d7ed65<br/>g=127 n=20<br/>comp=9558.3"]
+    h_e5b671c8d352["e5b671c8d352<br/>g=728 n=100<br/>comp=9650.5"]
+    h_0890dbefd73e["0890dbefd73e<br/>ANCHOR<br/>g=333 n=100<br/>comp=9707.7"]
+    h_2e1dc1a2acd7["2e1dc1a2acd7<br/>g=0"]
+    h_1a99aa3e5244["1a99aa3e5244<br/>g=12 n=12<br/>comp=8679.7"]
+    h_0b6d4deb8814["0b6d4deb8814<br/>g=53 n=53<br/>comp=10312.3"]
+    h_42c79aab4a68["42c79aab4a68<br/>CURRENT<br/>g=332 n=100<br/>comp=9854.2"]
+    h_96c6a1719420["96c6a1719420<br/>g=44 n=44<br/>comp=9462.6"]
+    h_cb3fc745833d["cb3fc745833d<br/>g=398 n=100<br/>comp=9598.6"]
+    h_16c7e5e65ba2["16c7e5e65ba2<br/>g=12 n=12<br/>comp=8710.9"]
+    h_859fabbf1252["859fabbf1252<br/>g=11 n=11<br/>comp=8663.7"]
+    h_91fd34ad01b8["91fd34ad01b8<br/>g=3 n=3<br/>comp=7367.7"]
+    h_e66e82e11279["e66e82e11279<br/>g=10 n=10<br/>comp=9890.7"]
+    h_bde7dacbc6b2["bde7dacbc6b2<br/>g=11 n=11<br/>comp=10360.3"]
+    h_b2d2fb807edc["b2d2fb807edc<br/>g=6 n=6<br/>comp=10297.0"]
+    h_a269216be3bc["a269216be3bc<br/>g=11 n=11<br/>comp=9117.1"]
+    h_163ec0d57822["163ec0d57822<br/>g=2 n=2<br/>comp=9979.0"]
+    h_bdb4f962b669["bdb4f962b669<br/>g=12 n=12<br/>comp=9421.9"]
+    h_5f3f17b903fe["5f3f17b903fe<br/>g=15 n=15<br/>comp=9444.0"]
+    h_ed0c63f847e0["ed0c63f847e0<br/>g=5 n=5<br/>comp=10159.3"]
+    h_f78957d3ab7e["f78957d3ab7e<br/>g=12 n=12<br/>comp=8581.8"]
+    h_505b0efbe974["505b0efbe974<br/>g=19 n=19<br/>comp=10183.9"]
+    h_2dfa9b77baf0["2dfa9b77baf0<br/>g=12 n=12<br/>comp=10274.9"]
+    h_87ae98e3dd2e["87ae98e3dd2e<br/>g=12 n=12<br/>comp=10094.8"]
+    h_ca80fa288f7a["ca80fa288f7a<br/>g=8 n=8<br/>comp=10776.2"]
+    h_922fb1f782dc["922fb1f782dc<br/>g=27 n=27<br/>comp=10282.6"]
+    h_244348f0f6ed["244348f0f6ed<br/>g=4 n=4<br/>comp=12804.3"]
+    h_aac603521570["aac603521570<br/>g=56 n=56<br/>comp=9907.2"]
+    h_5c9ab0ea6b6c["5c9ab0ea6b6c<br/>g=13 n=13<br/>comp=9923.7"]
     h_365cc261af05["365cc261af05"]
     h_844b084731e8["844b084731e8"]
     h_d88fc8bfd580["d88fc8bfd580"]
@@ -82,7 +209,20 @@ flowchart TD
     h_66073f2fd01f -->|improve| h_91899879745f
     h_91899879745f -->|improve| h_4ef40a07369c
     h_66073f2fd01f -->|improve| h_83f5995eda15
-    h_83f5995eda15 -. rollback .-> h_182f9ad3954d
+    h_83f5995eda15 -->|improve| h_6144b1d95d71
+    h_6144b1d95d71 -->|improve| h_ee127a60c4ac
+    h_4ef40a07369c -->|improve| h_84b85bbcbdcd
+    h_84b85bbcbdcd -->|improve| h_060ecbc70dda
+    h_4ef40a07369c -->|improve| h_b8623c74d16b
+    h_4ef40a07369c -->|improve| h_a1196ec87527
+    h_83f5995eda15 -->|improve| h_95b4310bee23
+    h_95b4310bee23 -->|improve| h_80e1c297a82a
+    h_1888e7d7ed65 -->|improve| h_e5b671c8d352
+    h_e5b671c8d352 -->|improve| h_2e1dc1a2acd7
+    h_e5b671c8d352 -->|improve| h_1a99aa3e5244
+    h_e5b671c8d352 -->|improve| h_0b6d4deb8814
+    h_0b6d4deb8814 -->|improve| h_42c79aab4a68
+    h_e5b671c8d352 -. rollback .-> h_42c79aab4a68
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -91,12 +231,50 @@ flowchart TD
 
     class h_32b5edcfea9b plain;
     class h_1e604817ce23 plain;
-    class h_182f9ad3954d current;
+    class h_182f9ad3954d plain;
     class h_671db2f34b4c plain;
     class h_66073f2fd01f plain;
     class h_91899879745f plain;
     class h_4ef40a07369c plain;
-    class h_83f5995eda15 anchor;
+    class h_83f5995eda15 plain;
+    class h_6144b1d95d71 plain;
+    class h_ee127a60c4ac plain;
+    class h_84b85bbcbdcd plain;
+    class h_060ecbc70dda plain;
+    class h_b8623c74d16b plain;
+    class h_a1196ec87527 plain;
+    class h_95b4310bee23 plain;
+    class h_80e1c297a82a plain;
+    class h_77134db06ae2 plain;
+    class h_1888e7d7ed65 plain;
+    class h_e5b671c8d352 plain;
+    class h_0890dbefd73e anchor;
+    class h_2e1dc1a2acd7 plain;
+    class h_1a99aa3e5244 plain;
+    class h_0b6d4deb8814 plain;
+    class h_42c79aab4a68 current;
+    class h_96c6a1719420 plain;
+    class h_cb3fc745833d plain;
+    class h_16c7e5e65ba2 plain;
+    class h_859fabbf1252 plain;
+    class h_91fd34ad01b8 plain;
+    class h_e66e82e11279 plain;
+    class h_bde7dacbc6b2 plain;
+    class h_b2d2fb807edc plain;
+    class h_a269216be3bc plain;
+    class h_163ec0d57822 plain;
+    class h_bdb4f962b669 plain;
+    class h_5f3f17b903fe plain;
+    class h_ed0c63f847e0 plain;
+    class h_f78957d3ab7e plain;
+    class h_505b0efbe974 plain;
+    class h_2dfa9b77baf0 plain;
+    class h_87ae98e3dd2e plain;
+    class h_ca80fa288f7a plain;
+    class h_922fb1f782dc plain;
+    class h_244348f0f6ed plain;
+    class h_aac603521570 plain;
+    class h_5c9ab0ea6b6c plain;
     class h_365cc261af05 plain;
     class h_844b084731e8 plain;
     class h_d88fc8bfd580 plain;
@@ -104,6 +282,510 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#45330 `e5b671c8 -> 42c79aab`
+
+- - rollback from e5b671c8d352 to 42c79aab4a68 at game 45330
+- - reasons: objective_regression+lost_turkmenistan_gate
+- - current comp/p50/p25=9650.5/10034.5/8516.0 vs target 9707.7/10122.5/8550.5
+- - bad recent scores: 8310 7889 9432 10657 8231 9663 13901 8018
+- - soviet objective: current best_type=15 russia=2 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウズベキスタン段階の到達率が後退した。
+- current: comp=9650.5 p50=10034.5 p25=8516.0 mean=10952.5 n=100
+- rollback_target: comp=9707.7 p50=10122.5 p25=8550.5 mean=10941.5 n=100
+- metric_gap_vs_target: comp=-57.2 p50=-88.0 p25=-34.5 mean=11.0
+- recent12_avg: bad=10270.1 target=9548.7
+- recent12_floor: bad=7241 target=5000
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#45287 `5c9ab0ea -> e5b671c8`
+
+- - rollback from 5c9ab0ea6b6c to e5b671c8d352 at game 45287
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=9923.7/10318.0/9252.0 vs target 9707.7/10122.5/8550.5
+- - bad recent scores: 7317 15685 10318 14230 9252 9708 11101 10218
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=9923.7 p50=10318.0 p25=9252.0 mean=10666.8 n=13
+- rollback_target: comp=9707.7 p50=10122.5 p25=8550.5 mean=10941.5 n=100
+- metric_gap_vs_target: comp=216.0 p50=195.5 p25=701.5 mean=-274.6
+- recent12_avg: bad=10524.5 target=9548.7
+- recent12_floor: bad=6779 target=5000
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#45203 `cb3fc745 -> 0890dbef`
+
+- - rollback from cb3fc745833d to 0890dbefd73e at game 45203
+- - reasons: objective_regression+lost_turkmenistan_gate
+- - current comp/p50/p25=9598.6/10076.0/8479.0 vs target 9208.6/9481.0/8392.2
+- - bad recent scores: 6015 13961 11706 11154 5962 15326 9854 10862
+- - soviet objective: current best_type=15 russia=3 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウズベキスタン段階の到達率が後退した。
+- current: comp=9598.6 p50=10076.0 p25=8479.0 mean=10509.0 n=100
+- rollback_target: comp=9208.6 p50=9481.0 p25=8392.2 mean=10199.5 n=100
+- metric_gap_vs_target: comp=390.0 p50=595.0 p25=86.8 mean=309.6
+- recent12_avg: bad=9686.3 target=8896.9
+- recent12_floor: bad=5962 target=7213
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#45202 `42c79aab -> cb3fc745`
+
+- - rollback from 42c79aab4a68 to cb3fc745833d at game 45202
+- - reasons: objective_regression+lost_turkmenistan_gate
+- - current comp/p50/p25=9854.2/10444.5/8486.0 vs target 9602.8/10076.0/8479.0
+- - bad recent scores: 20139 16288 9499 7609 8495 13542 10686 14404
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウズベキスタン段階の到達率が後退した。
+- current: comp=9854.2 p50=10444.5 p25=8486.0 mean=10798.8 n=100
+- rollback_target: comp=9602.8 p50=10076.0 p25=8479.0 mean=10539.1 n=100
+- metric_gap_vs_target: comp=251.4 p50=368.5 p25=7.0 mean=259.8
+- recent12_avg: bad=11726.1 target=9589.8
+- recent12_floor: bad=7609 target=5962
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#45201 `e5b671c8 -> 42c79aab`
+
+- - rollback from e5b671c8d352 to 42c79aab4a68 at game 45201
+- - reasons: objective_regression+lost_turkmenistan_gate
+- - current comp/p50/p25=9953.5/10161.5/9220.0 vs target 9850.0/10444.5/8486.0
+- - bad recent scores: 8531 10132 11606 10144 11274 7941 10533 8471
+- - soviet objective: current best_type=15 russia=2 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウズベキスタン段階の到達率が後退した。
+- current: comp=9953.5 p50=10161.5 p25=9220.0 mean=11059.8 n=100
+- rollback_target: comp=9850.0 p50=10444.5 p25=8486.0 mean=10768.3 n=100
+- metric_gap_vs_target: comp=103.5 p50=-283.0 p25=734.0 mean=291.5
+- recent12_avg: bad=9362.6 target=11142.2
+- recent12_floor: bad=6070 target=7397
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#45200 `aac60352 -> e5b671c8`
+
+- - rollback from aac603521570 to e5b671c8d352 at game 45200
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=9968.8/10434.5/8948.2 vs target 9850.0/10444.5/8486.0
+- - bad recent scores: 6663 12555 7320 9962 7881 9343 10358 7094
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=9968.8 p50=10434.5 p25=8948.2 mean=10965.7 n=48
+- rollback_target: comp=9850.0 p50=10444.5 p25=8486.0 mean=10768.3 n=100
+- metric_gap_vs_target: comp=118.8 p50=-10.0 p25=462.2 mean=197.4
+- recent12_avg: bad=10463.9 target=11142.2
+- recent12_floor: bad=6663 target=7397
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#45070 `f78957d3 -> e5b671c8`
+
+- - rollback from f78957d3ab7e to e5b671c8d352 at game 45070
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=8581.8/8810.0/8084.5 vs target 9850.0/10444.5/8486.0
+- - bad recent scores: 9259 7800 8832 11799 6643 8139 10040 12247
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=8581.8 p50=8810.0 p25=8084.5 mean=9671.2 n=12
+- rollback_target: comp=9850.0 p50=10444.5 p25=8486.0 mean=10768.3 n=100
+- metric_gap_vs_target: comp=-1268.2 p50=-1634.5 p25=-401.5 mean=-1097.1
+- recent12_avg: bad=9671.2 target=11142.2
+- recent12_floor: bad=6643 target=7397
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#44993 `5f3f17b9 -> e5b671c8`
+
+- - rollback from 5f3f17b903fe to e5b671c8d352 at game 44993
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9444.0/10286.0/8007.5 vs target 10152.0/10479.5/9206.8
+- - bad recent scores: 9721 8032 10286 11553 10983 11564 7294 6627
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9444.0 p50=10286.0 p25=8007.5 mean=9896.7 n=15
+- rollback_target: comp=10152.0 p50=10479.5 p25=9206.8 mean=11292.0 n=100
+- metric_gap_vs_target: comp=-708.0 p50=-193.5 p25=-1199.2 mean=-1395.4
+- recent12_avg: bad=9519.3 target=11317.1
+- recent12_floor: bad=6627 target=7273
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#44884 `bdb4f962 -> e5b671c8`
+
+- - rollback from bdb4f962b669 to e5b671c8d352 at game 44884
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=9421.9/9651.5/9152.8 vs target 9850.0/10444.5/8486.0
+- - bad recent scores: 8939 10169 7868 9779 9331 9591 6779 9712
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=9421.9 p50=9651.5 p25=9152.8 mean=10057.8 n=12
+- rollback_target: comp=9850.0 p50=10444.5 p25=8486.0 mean=10768.3 n=100
+- metric_gap_vs_target: comp=-428.1 p50=-793.0 p25=666.8 mean=-710.5
+- recent12_avg: bad=10057.8 target=11142.2
+- recent12_floor: bad=6779 target=7397
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#44802 `16c7e5e6 -> e5b671c8`
+
+- - rollback from 16c7e5e65ba2 to e5b671c8d352 at game 44802
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=8710.9/8995.0/8083.5 vs target 10029.1/10527.0/8866.8
+- - bad recent scores: 8491 9397 19755 8968 8159 17675 6466 11563
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=8710.9 p50=8995.0 p25=8083.5 mean=10380.2 n=12
+- rollback_target: comp=10029.1 p50=10527.0 p25=8866.8 mean=10925.4 n=100
+- metric_gap_vs_target: comp=-1318.2 p50=-1532.0 p25=-783.2 mean=-545.1
+- recent12_avg: bad=10380.2 target=9828.3
+- recent12_floor: bad=6466 target=6507
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#44409 `cb3fc745 -> 0890dbef`
+
+- - rollback from cb3fc745833d to 0890dbefd73e at game 44409
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=9063.8/9237.5/8647.2 vs target 10029.1/10527.0/8866.8
+- - bad recent scores: 10686 13411 7484 8698 8828 8976 11131 11536
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=9063.8 p50=9237.5 p25=8647.2 mean=9991.2 n=12
+- rollback_target: comp=10029.1 p50=10527.0 p25=8866.8 mean=10925.4 n=100
+- metric_gap_vs_target: comp=-965.3 p50=-1289.5 p25=-219.5 mean=-934.1
+- recent12_avg: bad=9991.2 target=9828.3
+- recent12_floor: bad=7484 target=6507
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Rollback Game#44403 `cb3fc745 -> e5b671c8`
+
+- - rollback from cb3fc745833d to e5b671c8d352 at game 44403
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9411.6/9499.0/8954.0 vs target 9990.2/10448.5/8905.5
+- - bad recent scores: 9499 7609 8495 13542 10686 13411 7485 9079
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9411.6 p50=9499.0 p25=8954.0 mean=11287.5 n=13
+- rollback_target: comp=9990.2 p50=10448.5 p25=8905.5 mean=10875.8 n=100
+- metric_gap_vs_target: comp=-578.6 p50=-949.5 p25=48.5 mean=411.7
+- recent12_avg: bad=11183.8 target=10963.6
+- recent12_floor: bad=7485 target=6507
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#44398 `cb3fc745 -> 42c79aab`
+
+- - rollback from cb3fc745833d to 42c79aab4a68 at game 44398
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9176.8/9607.5/8273.5 vs target 9990.2/10448.5/8905.5
+- - bad recent scores: 9018 20761 16288 9880 7609 8495 13549 10693
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9176.8 p50=9607.5 p25=8273.5 mean=10918.6 n=12
+- rollback_target: comp=9990.2 p50=10448.5 p25=8905.5 mean=10875.8 n=100
+- metric_gap_vs_target: comp=-813.4 p50=-841.0 p25=-632.0 mean=42.8
+- recent12_avg: bad=10918.6 target=10963.6
+- recent12_floor: bad=5421 target=6507
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
+
+### Rollback Game#44385 `96c6a171 -> e5b671c8`
+
+- - rollback from 96c6a1719420 to e5b671c8d352 at game 44385
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9462.6/9918.5/8457.2 vs target 9990.2/10448.5/8905.5
+- - bad recent scores: 13074 7501 7370 10629 9813 6344 8195 8967
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9462.6 p50=9918.5 p25=8457.2 mean=10280.5 n=44
+- rollback_target: comp=9990.2 p50=10448.5 p25=8905.5 mean=10875.8 n=100
+- metric_gap_vs_target: comp=-527.6 p50=-530.0 p25=-448.2 mean=-595.3
+- recent12_avg: bad=9878.3 target=10963.6
+- recent12_floor: bad=6344 target=6507
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#44014 `0b6d4deb -> 42c79aab`
+
+- scores: `10730 10372 11409 15779 22491 14105 10313 10988 8383 8078 13256 13667 13424 7673 8967 16765 6602 9460 7516 9741 8840 7796 15065 11662 14027 10344 10092 16568 13564 13192 16219 11553 8241 8237 8799 13194 11359 8232 10283 7622 11313 9722 15458 12806 9203 10994 11509 7867`
+- v707: T13単独在盤・next=T13時のDIRECT/NEAR候補にT13+T13→T14経路ボーナスを追加（対象段階: カザフスタン T14）
+- Fixes rollback failure mode: T13_peak=3→final T13x1 の散逸で2個目T14素材が欠落し、T14+T14→15経路が途絶
+- v707: T13単体カウント（T13+T13→T14 経路の対象段階判定用。ループ外で一度だけ集計）
+- t13_count = sum(1 for p in pieces if p.get("type") == 13)
+- ----- NEW axis: T13 pair completion priority (v707) -----
+- 採用仮説: 直近バッチの near-miss サンプルで T13_peak=3 → final T13x1 の散逸が共通し、
+
+### Improve Game#43963 `e5b671c8 -> 0b6d4deb`
+
+- scores: `8556 16461 11915 9194 10372 6380 12051 11626 8911 11906 10681 17855 13578 6733 7624 5848 13962 8295 10529 9018 7005 10531 15790 11162 8663 12267 12885 9116 10733 8800 9132 8889 20087 9869 9577 5959 14460 12648 15254 10174 11459 9502 11526 13896 8442 10336 10134 10769`
+- v706: T13を常時アンカー化しT12_CHAIN_LANE_GUIDANCE/COVERをT14前から有効化（対象段階: カザフスタン T14）
+- Fixes rollback failure mode: 1個目T14前のT13集約未支援でT13分散→T14peak=1頭打ち、T14+T14→15経路未復旧
+- t13_on_board = isinstance(pieces, list) and any(p.get("type") == 13 for p in pieces)
+- T13常時アンカー: 1個目T14生成前からT13クラスタへ誘導し、T13+T13→T14経路を復旧（対象段階: Kazakhstan T14）
+- 旧v704のt14_on_board条件は冗長のため削除し、t12/t13/t14いずれか在盤で有効化
+- if isinstance(pieces, list) and (t12_on_board or t13_on_board or t14_on_board):
+
+### Rollback Game#43915 `1a99aa3e -> e5b671c8`
+
+- - rollback from 1a99aa3e5244 to e5b671c8d352 at game 43915
+- - reasons: objective_regression+lost_kazakhstan_gate
+- - current comp/p50/p25=8679.7/8995.5/7947.2 vs target 9983.5/10373.5/8959.5
+- - bad recent scores: 16003 9075 6943 12022 12206 12419 7528 8916
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりカザフスタン段階の到達率が後退した。
+- current: comp=8679.7 p50=8995.5 p25=7947.2 mean=9944.6 n=12
+- rollback_target: comp=9983.5 p50=10373.5 p25=8959.5 mean=10996.4 n=100
+- metric_gap_vs_target: comp=-1303.8 p50=-1378.0 p25=-1012.2 mean=-1051.8
+- recent12_avg: bad=9944.6 target=10347.5
+- recent12_floor: bad=6943 target=6846
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#43888 `e5b671c8 -> 1a99aa3e`
+
+- scores: `11196 11648 11662 11446 6222 8149 9963 22224 11478 9161 6136 11610 11539 12004 9669 10215 9041 13170 7878 9654 9477 15445 12080 15916 8797 13604 11056 17148 8315 17539 9655 11299 16131 9676 15587 8026 12467 10417 7403 19261 10291 7465 8191 11303 10696 8421 8113 12952 13109 9242 14761 14811 16771 5809 9712 10023 11408 7516 10520 12779 9045 9147 10105 12231 9100 6697 10581 11609 10860 12879 11359 21858 7970 13529 8530 12033 10433 9543 8059 15146 11439 7453 8326 7969 5320 19691 12627 17344 9085 8815 8614 9699 12252 10350 10633`
+- v706: russia_phase 発火を type15 のみに限定（type14 発火の回帰修正）。T14 在盤中も
+- CROSSES_DEADLINE 系ペナルティを有効にし、T14 直後の crossing 併合連打を抑止して
+- 二個目 T13/T14 → T14+T14→T15（ロシア）経路を復旧。T14 merge priority 軸は t14_on_board
+- で再キーイングし type15 再定義の副作用を補償（対象段階: ロシア T15）。
+- Fixes rollback failure mode: T14 生成後の crossing 併合連打で盤面が崩れ、二個目 T14 素材が
+- 作れず T14→T15 最終併合に到達しない（near-miss 20260821_023120 型）。
+
+### Rollback Game#43588 `0890dbef -> e5b671c8`
+
+- - rollback from 0890dbefd73e to e5b671c8d352 at game 43588
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9234.7/9516.5/8392.2 vs target 9487.3/10133.5/8356.5
+- - bad recent scores: 8556 10288 7985 7773 9166 10560 7213 8208
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9234.7 p50=9516.5 p25=8392.2 mean=10245.1 n=100
+- rollback_target: comp=9487.3 p50=10133.5 p25=8356.5 mean=10143.5 n=20
+- metric_gap_vs_target: comp=-252.6 p50=-617.0 p25=35.8 mean=101.6
+- recent12_avg: bad=8872.2 target=11371.4
+- recent12_floor: bad=7213 target=8544
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#43163 `1888e7d7 -> e5b671c8`
+
+- scores: `8929 8508 9957 7335 8624 10067 9981 9603 7593 11664 9872 23656 7771 12245 9905 6989 11304 16602 9901 9063 17521 8482 10645 9386 10120 10252 14818 15694 12820 11956 5309 6236 9083 20021 14129 10091 7074 13893 13490 7677 10740 7499 14639 10979 9761 9112 13976 8343 12125 17465 10169 5100 7216 12813 7633 11758 13895 10763 8874 9227 8476 8449 11344 9949 9623 8619 10942 9718 19740 6274 11882 8324 6967 7142 5370 11521 8646 9090 19873 10200 8590 14838 6809 16207 8660 11013 9495 9006 9002 9428 10255 7226 11222 12754 11233 11662 9067 17307 6867 9310`
+- v705: HIGH_TYPE_COVER_AVOID の open 判定を真上遮蔽のみへ修正し、抑止を -400 に強化（対象段階: ウクライナ T13）
+- Fixes rollback failure mode: 同typeペアは作れてもそのペアを次の手で併合できず、末盤の deadline guard が延命だけして点数を止める
+- 横隣接（worst T33 の T10 が開いた T11 の上と誤判定）では open を失効させない。
+- 真上遮蔽のみで閉鎖し、保護帯は高typeの天端（x±_hc_r、y>=top-0.25）に置く。
+- _hc_top = _hc_y + _hc_r
+- _op_r = float(_op.get("r", 0.5) or 0.5)
+
+### Rollback Game#43013 `80e1c297 -> 95b4310b`
+
+- - rollback from 80e1c297a82a to 95b4310bee23 at game 43013
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=10008.7/10524.0/9010.2 vs target 9102.1/9185.5/8406.5
+- - bad recent scores: 16555 8597 11516 12388 6791 10035 10398 6091
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=10008.7 p50=10524.0 p25=9010.2 mean=11232.6 n=20
+- rollback_target: comp=9102.1 p50=9185.5 p25=8406.5 mean=11484.5 n=20
+- metric_gap_vs_target: comp=906.6 p50=1338.5 p25=603.8 mean=-251.9
+- recent12_avg: bad=11013.6 target=10539.8
+- recent12_floor: bad=6091 target=7790
+- 参考: ソ連未達は観測されているが今回の粛清理由ではない。まず comp/p25/p50 悪化の直接原因を特定し、その範囲でロシア後の導線も壊していないか確認すること。
+
+### Rollback Game#43009 `77134db0 -> 80e1c297`
+
+- - rollback from 77134db06ae2 to 80e1c297a82a at game 43009
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9150.6/9473.0/8503.5 vs target 9102.1/9185.5/8406.5
+- - bad recent scores: 9489 10999 7892 12028 7941 8667 8449 6839
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9150.6 p50=9473.0 p25=8503.5 mean=10022.5 n=14
+- rollback_target: comp=9102.1 p50=9185.5 p25=8406.5 mean=11484.5 n=20
+- metric_gap_vs_target: comp=48.5 p50=287.5 p25=97.0 mean=-1462.0
+- recent12_avg: bad=9844.7 target=10539.8
+- recent12_floor: bad=6839 target=7790
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#42969 `95b4310b -> 80e1c297`
+
+- scores: `16349 17715 13523 9666 14193 9801 8193 12887 9568 20609 8706 15680 11456 13226 15533 9512 9027 10334 7589 10976 8868 11704 11793 8723 7506 9791 10041 11790 12308 11767 12746 12302 9665 14410 10138 10684 13362 11096 18213 8297 12316 16463 6496 8231 14773 9190 11329 9715 7363 9705 22204 7447 10523 13741 15071 15376 9056 10172 7726 17739 7261 7411 13146 6089 12488 13692 10146 13227 9527 12411 9525 16075 10007 17657 10550 9270 17882 8658 20043 9923 7666 9689 8553 9881 10833 10595 12207 10635 14142 12327 6813 12172 17753 23121 8412 8471 8855 17753 9264 8972`
+- v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE/BLOCK 追加。近接 T12/T13 同typeペアの併合レーンを保護し、
+- 前駆typeを +140 誘導・非前駆typeのレーン内低配置を -200 抑止（対象段階: ウクライナ T13）
+- Fixes rollback failure mode: T12/T13 ペアが接触圏内でもギャップに別typeが挟まり高さ隔離のまま放置され T13/T14 未達になる
+- --- v705: FRONTIER_PAIR_MERGE_ZONE_GUIDANCE / BLOCK pre-computation ---
+- 採用仮説（T13 未達の構造敗因）: T12/T13 同typeペアが接触圏内でも、ギャップに別typeが
+- 挟まったり高さが隔離されたりして 20〜45 ターン放置される。前駆type（T12ペアへは T11、
+
+### Improve Game#42861 `83f5995e -> 95b4310b`
+
+- scores: `9326 18917 13389 10658 11575 9294 8064 21528 11701 11393 10398 16294 13865 8617 16011 15425 8152 8449 9604 7246 23092 11955 9406 10001 11381 9301 9473 9709 9829 9814 10338 20295 13808 11981 12807 18943 6526 9412 8839 9141 12105 12472 13374 9643 9588 14735 11134 9986 7520 10039 6844 9447 9046 10242 7836 9773 11170 20600 8059 9981 11794 7108 8373 12426 8628 7140 12627 8487 6950 9464 8936 10771 10707 13451 7534 10104 9292 8053 16324 10500 8381 9458 11269 7581 10004 8929 9193 13664 10239 9242 10278 9430 5665 10694 9686 6919 12122 7204 9773 10755`
+- Change History
+- v704: T14 実在時も v701 の T11/T12 横レーン誘導を継続し、T13 をアンカーに追加（対象段階: ロシア T15）
+- Fixes rollback failure mode: T14 生成直後に v701 誘導が止まり、2個目 T13/T14 素材が作れず T14→T15 経路が途絶
+- T14 が1個できただけで russia_phase が発火すると v701 の素材組み立て誘導が止まり、
+- 2個目の T13/T14 が作れず T14→T15 へ進めない（2020型ログで T14 後 laneA=0）。
+- 実在の T15（ロシア）がある場合のみ現行のロシアフェーズ安全着地へ移行する。
+
+### Rollback Game#42720 `a1196ec8 -> 83f5995e`
+
+- - rollback from a1196ec87527 to 83f5995eda15 at game 42720
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9086.0/9436.5/8449.5 vs target 9226.3/9397.0/8683.8
+- - bad recent scores: 7965 6214 8876 8477 10137 9035 9683 8315
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9086.0 p50=9436.5 p25=8449.5 mean=9840.8 n=20
+- rollback_target: comp=9226.3 p50=9397.0 p25=8683.8 mean=10457.9 n=20
+- metric_gap_vs_target: comp=-140.3 p50=39.5 p25=-234.2 mean=-617.1
+- recent12_avg: bad=9734.5 target=9435.2
+- recent12_floor: bad=6214 target=6582
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#42692 `4ef40a07 -> a1196ec8`
+
+- scores: `12123 11538 8285 9960 8623 10498 14670 12947 8991 7943 10553 10357 12387 11998 5604 11104 9685 8904 19624 12822 7557 18656 9765 15392 12987 15000 11195 9774 10459 11363 12335 7486 10993 16512 9702 7132 6419 9180 10355 11710 13274 9657 6869 7276 18944 8180 8039 7861 8514 13402 8522 12769 10024 9783 14278 10492 17561 12509 9049 10225 10012 8003 7397 6844 8422 11194 18608 9857 10046 8462 9328 9269 11997 11916 8773 11178 7615 18784 9353 10073 10722 11373 9621 14889 14517 14441 9566 12395 13958 15220 9085 6752 9224 11530 8196 11170 8341 8900 13570 6741`
+- v703: FRONTIER_PAIR_COMPRESSION_GUIDANCE (adopted hypothesis) - pieces 直参照で type>=13 近接
+- 同typeペアを可視化し、NO_MERGE 中盤の corridor 塞ぎ抑止(-20)・中点/外側ドロップ誘導(+15/+25)で
+- T13 ペア圧縮を前倒し、2個目の T14→T15 経路を復旧。Stage: ロシア(T14→T15)。Fixes rollback failure mode: T14 出現後の T13 ペア放置（ロシア未到達の直接原因）
+- --- v703: FRONTIER_PAIR_COMPRESSION_GUIDANCE pre-computation ---
+- 採用仮説（analysis_result.md）: next 最大 type11 の環境では T13/T14 は盤面内併合でしか作れず、
+- near_pairs は水平妨害で除外されるため 081049/072939 の T13 ペアは戦略から不可視だった。
+
+### Rollback Game#42592 `b8623c74 -> 4ef40a07`
+
+- - rollback from b8623c74d16b to 4ef40a07369c at game 42592
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=9189.5/9794.0/8073.5 vs target 9566.3/9978.5/8733.2
+- - bad recent scores: 7890 15192 12945 7553 7153 8364 11559 7007
+- - soviet objective: current best_type=14 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=9189.5 p50=9794.0 p25=8073.5 mean=9889.9 n=19
+- rollback_target: comp=9566.3 p50=9978.5 p25=8733.2 mean=10479.0 n=20
+- metric_gap_vs_target: comp=-376.8 p50=-184.5 p25=-659.8 mean=-589.1
+- recent12_avg: bad=10270.6 target=11537.9
+- recent12_floor: bad=7007 target=7042
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#42569 `4ef40a07 -> b8623c74`
+
+- scores: `10446 9003 10227 12317 7824 6687 7587 7999 15881 8161 14134 12724 9150 7196 8570 8759 8953 10283 26855 8954 19514 12724 6782 12552 9494 11072 20045 10761 10707 13515 17715 5669 13914 12623 9164 11654 9478 11491 11331 12845 13645 11705 9598 8175 8596 11827 7880 9746 11770 11004 12680 17418 11955 9218 13837 10534 10703 7030 8942 8414 11829 10771 13527 9475 11174 8740 11926 6608 16585 8641 10998 8929 8444 12209 6792 8295 9788 11812 13010 18533 8910 5976 8632 8725 6088 9253 10399 8962 9947 6822 10929 12880 7042 14577 12421 16222 10010 9196 13464 11659`
+- v703: SEPARATED_HIGH_PAIR_GUIDANCE (adopted hypothesis) - pieces 直参照で type>=12 の
+- 分離同typeペアを可視化し、NO_MERGE 中盤でギャップ塞ぎ着地を罰し、空き時は中点/外側へ誘導（tie-break 級）。Stage: T14→T15。
+- fixes rollback failure mode: 分離した高type同typeペア放置（reactive/near 非検出）→ T13+T13→T14 転換と二個目 T14 素材途絶
+- --- v703: SEPARATED_HIGH_PAIR_GUIDANCE pre-computation ---
+- 採用仮説（analysis_result.md）: reactor の reactive/near に出ない分離した高type同typeペア
+- （type>=12、特に T13/T14）を pieces 直参照で可視化する。T13x2 放置は reactive_pairs=[] のため
+
+### Rollback Game#42469 `060ecbc7 -> 4ef40a07`
+
+- - rollback from 060ecbc70dda to 4ef40a07369c at game 42469
+- - reasons: early_branch_regression+curr_breach
+- - current comp/p50/p25=9490.0/10201.0/8250.5 vs target 9450.0/9875.5/8487.5
+- - bad recent scores: 9609 11964 7922 8360 7428 11821 11494 8446
+- - soviet objective: current best_type=13 russia=0 soviet=0
+- early_branch_regression が悪化要因だった。
+- curr_breach が悪化要因だった。
+- current: comp=9490.0 p50=10201.0 p25=8250.5 mean=10084.9 n=12
+- rollback_target: comp=9450.0 p50=9875.5 p25=8487.5 mean=10706.1 n=20
+- metric_gap_vs_target: comp=40.0 p50=325.5 p25=-237.0 mean=-621.2
+- recent12_avg: bad=10084.9 target=10613.3
+- recent12_floor: bad=7428 target=6659
+- 参考: ロシア未達は観測されているが今回の粛清理由ではない。まず comp/p25/p50 悪化の直接原因を特定し、その範囲で type14→15 の導線も壊していないか確認すること。
+
+### Improve Game#42454 `84b85bbc -> 060ecbc7`
+
+- scores: `17970 11694 10316 9900 10874 11032 5659 7040 10640 11151 12835 11523 16241 11104 8669 8480 12967 8326 6235 13766 8509 9566 8589 11013 9170 14059 10160 9936 9640 7408 11542 12854 14174 9698 11140 13437 10658 9189 6777 7763 8747 7478 8736 8016 9507 11839 9273 11435 12972 17149 8927 10500 12490 7702 7549 11587 9694 9551 9791 9068 10555 15873 13199 11742 8375 8601 10069 13591 11048 10735 9263 8806 10940 13119 11943 8273 6264 10664 16842 8079 8474 12930 15153 8183 13390 9646 7715 13540 8545 9332 9863 9217 6875 15115 14276 12554 6659 7401 18851 11618`
+- v704: DEADLINE_GUARD NO_MERGE fallback -> safe landing + frontier pair zone (adopted hypothesis) -
+- 危険域で非crossing NO 候補を type>=11 同typeペアゾーンへ近接誘導し、NO_MERGE_DEADLINE_GUARD_NO_VALID の x=0.0 端捨てを解消。
+- Stage: ロシア(T14->T15)。fixes rollback failure mode: ガード中の併合なし・高typeペア放置・端捨てによる充填死
+- v704: NO_MERGE deadline fallback -> safe landing + frontier pair zone proximity.
+- 危険域で DIRECT/NEAR が無い場合も、非crossing NO 候補を x=0.0 に潰さず、
+- type>=11 の停滞同typeペアゾーン（reactive+near 相当）へ近接させる（採用仮説）。
+
+### Improve Game#42346 `4ef40a07 -> 84b85bbc`
+
+- scores: `6917 8948 10108 9973 7776 7645 9474 13149 9037 8897 8428 16950 10948 16490 7385 11207 11738 11813 8181 7450 9940 19035 8244 12545 15877 13677 5636 7563 8952 6876 11391 13572 15907 10935 10505 11306 5509 21312 15868 9776 12901 9093 9510 9338 9447 11903 11573 12358 8969 16474 8883 9813 7524 10012 7470 14370 10314 8987 21361 11508 9065 13205 9944 10294 11239 7568 9474 10377 18714 10057 24500 14148 10067 11718 8665 8919 10948 10415 12623 9227 10046 9347 8444 9645 8328 9129 10087 8091 7124 11834 9152 14008 9899 9677 10763 8911 12398 16319 11727 5607`
+- --- Change History (compressed to 6 entries; full history in git) ---
+- v703: v699 T12 ペアゾーンボーナス強化 + v702 削除 (adopted hypothesis) - v699 の T12 分を最大約70点から
+- 320〜520点へ置換し、NO_MERGE 中盤の T12 reactive ペア放置を早期発火へ。v702(0/127) と未使用前計算を削除。
+- Stage: ウクライナ(T13)。fixes rollback failure mode: 中盤 T12 reactive ペア放置 → T13 未達
+- if _zptype == 12:
+- v703: T12 reactive ペア放置（44/37/7ターン）を早期発火へ。従来最大約70点では
+
+### Rollback Game#42220 `ee127a60 -> 4ef40a07`
+
+- - rollback from ee127a60c4ac to 4ef40a07369c at game 42220
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=8837.9/9561.5/7626.8 vs target 9534.6/9921.0/8784.2
+- - bad recent scores: 7172 9309 9694 7433 7353 11046 9443 4931
+- - soviet objective: current best_type=13 russia=0 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=8837.9 p50=9561.5 p25=7626.8 mean=9349.8 n=14
+- rollback_target: comp=9534.6 p50=9921.0 p25=8784.2 mean=10304.5 n=20
+- metric_gap_vs_target: comp=-696.7 p50=-359.5 p25=-1157.5 mean=-954.7
+- recent12_avg: bad=9417.4 target=10590.8
+- recent12_floor: bad=4931 target=6411
+- 建国目標未達: current は type15 未到達なので、type14 を安全に併合してロシアへ届かせる経路を最優先で分析すること。
+
+### Improve Game#42203 `6144b1d9 -> ee127a60`
+
+- scores: `20188 8285 11454 11290 12060 9030 11267 12276 12473 8509 6796 10311 8412 12053 7220 10280 8474 8941 17314 12950 6251 16387 13325 19630 8579 11532 12625 11849 12563 9559 12103 11474 11240 6674 10470 11426 11338 7244 10750 10792 10939 9559 15246 12684 5519 7208 7699 7996 9610 9983 7915 14854 9940 11291 10087 6636 11806 8009 10140 16254 10737 12362 7690 7365 12310 8966 11259 10601 9317 10935 10583 12278 10217 12152 9456 9885 12609 7784 9814 11191 16672 13486 7764 8754 10862 9324 9330 8562 11287 6267 11556 9535 7729 11704 9607 7369 8657 8113 10099 18594`
+- v703: RUSSIA_ANCHOR_PIPELINE_GUIDANCE 追加（Stage: カザフT14→ロシアT15）。
+- russia_phase の NO_MERGE 安全域で T11/T12/T13 を最下段 T14/T15 アンカー横へ誘導し、T14→T15 併合距離を確保する。
+- Fixes rollback failure mode: 終盤 NO_MERGE での piece_count 蓄積（フロンティア散逸→T14→T15経路喪失）
+- --- RUSSIA_ANCHOR_PIPELINE_GUIDANCE pre-computation (v703) ---
+- 採用仮説: russia_phase（T14/T15 在圏）で二個目ロシア素材を既存アンカー横へ組み立て、
+- T14+T14→T15 の併合距離（中心距離約2.8-3.2）を満たす配置を維持する。
+
+### Improve Game#42101 `83f5995e -> 6144b1d9`
+
+- scores: `14305 10052 5548 5718 10152 9156 8064 8859 13135 9524 11273 12792 8989 7913 8587 9286 6455 11139 8963 12562 12605 9348 8123 11001 7288 11893 9019 8888 8804 17425 6854 6726 6866 11311 7287 6284 7284 5178 8730 11930 10936 8795 5868 9428 14828 11925 9589 12534 12915 15720 10305 6594 8619 8964 11693 9929 8071 9585 11193 6626 14664 8727 9960 15246 12280 7624 8800 9936 14197 10457 6871 12573 14445 14363 13033 11529 6969 11559 6929 13985 8731 12622 13483 11870 9540 12611 8256 7644 11357 6887 9754 12471 10563 10633 9733 8124 8969 9351 7504 11331`
+- v702: v701 の T12 連鎖アセンブリ誘導を T14/T15 在圏でも発火させ、誘導・被覆抑止対象を T13 へ拡張（Stage: ウクライナT13/カザフT14→ロシアT15）。
+- T13 素材組み立てを継続して T13→T14→T15 経路と二個目ロシア素材導線（mandatory #5）を復旧する。
+- Fixes rollback failure mode: T13素材が作られた後、T13同士・T13隣接連鎖が誘導されない
+- T11+T11→12→13 の遅延連鎖が発火できない。中盤 NO_MERGE では T11/T12/T13 クラスタの
+- 横レーンへ誘導し、低い 11/11・12/12・13/13 ペア上へ別typeを積む配置を抑止する。
+- T13 を対象へ加えるのは、T13 素材が作られた後も T13 同士・T13 隣接連鎖を誘導して
+
+### Rollback Game#41986 `91899879 -> 83f5995e`
+
+- - rollback from 91899879745f to 83f5995eda15 at game 41986
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=9195.1/9506.0/8534.8 vs target 10206.8/11011.5/8837.0
+- - bad recent scores: 7340 9810 11283 11932 9173 9801 8024 7729
+- - soviet objective: current best_type=15 russia=1 soviet=0
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=9195.1 p50=9506.0 p25=8534.8 mean=10234.2 n=20
+- rollback_target: comp=10206.8 p50=11011.5 p25=8837.0 mean=10799.1 n=12
+- metric_gap_vs_target: comp=-1011.8 p50=-1505.5 p25=-302.2 mean=-564.9
+- recent12_avg: bad=9845.5 target=10799.1
+- recent12_floor: bad=6462 target=7628
+- 参考: ソ連未達は観測されているが今回の粛清理由ではない。まず comp/p25/p50 悪化の直接原因を特定し、その範囲でロシア後の導線も壊していないか確認すること。
+
+### Rollback Game#41720 `182f9ad3 -> 91899879`
+
+- - rollback from 182f9ad3954d to 91899879745f at game 41720
+- - reasons: objective_regression+lost_ukraine_gate
+- - current comp/p50/p25=8171.2/8356.5/7469.0 vs target 10119.5/10576.5/9003.8
+- - bad recent scores: 17420 7545 15449 8377 8336 13970 7598 10473
+- - soviet objective: current best_type=15 russia=2 soviet=0
+- 建国目標の進捗が anchor より後退した。
+- anchor よりウクライナ段階の到達率が後退した。
+- current: comp=8171.2 p50=8356.5 p25=7469.0 mean=9835.9 n=20
+- rollback_target: comp=10119.5 p50=10576.5 p25=9003.8 mean=11704.2 n=20
+- metric_gap_vs_target: comp=-1948.3 p50=-2220.0 p25=-1534.8 mean=-1868.4
+- recent12_avg: bad=10174.2 target=12070.7
+- recent12_floor: bad=6261 target=8291
+- 建国目標未達: ロシア到達後の保護と2個目のロシア育成を最優先で分析すること。
 
 ### Rollback Game#41032 `83f5995e -> 182f9ad3`
 

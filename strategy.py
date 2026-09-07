@@ -54,9 +54,92 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 import math
+import os
 
 from strategy_helpers import board_stats
-from strategy_helpers import lookahead
+
+
+# --- v763: 落下後に「露出したまま残る型の数」を評価する（v757 SURFACE_DIVERSITY の再設計） ---
+# 実測 (2026-08-31):
+#   * 併合の 61% は「露出同型の上に落とせた 26.8% の手」から出ており、その手は 1.291 併合/手。
+#     露出同型が無い 60.3% の手は 0.169 併合/手しか出ない。律速は機会の有無そのもの。
+#   * 機会率 = 露出型数 / 11（落下型は 1..11 の一様分布）。実測の露出型数は平均 4.37。
+#   * 駒数で層別した統制付き検証 (7504 手ペア、次 5 手の併合数) で
+#     露出型 +1 あたり +0.045〜+0.087 併合/手（全層で一貫、代表値 +0.06）。+1 型で 93 -> 110 手。
+#   * 選択の余地も実測: 落下前 4.38 型 -> 実際に選んだ手の後 3.85 型、最良候補なら 4.81 型。
+#     平均 0.961 型を取り逃しており、最良と最悪の幅は 2.105 型。
+# v757 からの修正点 (issue #132 P0-4):
+#   1. 落下型 1..11 に限定する（type 12 以上は直接降らないので機会にならない）
+#   2. 露出判定を _v742_open_twin と同一基準にする（素朴な真上判定は的中 13.8%、この基準は 86.5%）
+#   3. 落とした駒自身の露出を数える（drop_type は必ず露出型として残る）
+#   4. type15_count == 0 のゲートを撤去する
+# V763_DIVERSITY_W=0 (既定) で従来と完全一致する。
+_V763_BASE_BONUS = 260.0
+
+
+def _v763_weight():
+    """V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
+    raw = str(os.environ.get("V763_DIVERSITY_W", "0") or "").strip()
+    if raw in ("", "0", "false", "no", "off"):
+        return 0.0
+    try:
+        w = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if w != w or w < 0.0:
+        return 0.0
+    return min(w, 8.0)
+
+
+def _v763_open_by_type(pieces):
+    """落下しうる型 1..11 について、いま露出している駒を集める。判定は _v742_open_twin と同一。"""
+    out = {}
+    for ttype in range(1, 12):
+        opens = _v742_open_twin(pieces, ttype)
+        if opens:
+            out[ttype] = opens
+    return out
+
+
+def _v763_post_open_types(open_by_type, drop_type, drop_x, drop_y):
+    """その候補へ落とした後に、露出したまま残る型の数。
+
+    新しい駒は (drop_x, drop_y) に載るので、真上帯に入る既存の露出駒を塞ぐ
+    （_v742_open_twin と同じ帯・同じ 0.25 の余裕）。自分自身は上に何も無いので、
+    drop_type は必ず露出型として残る。
+    """
+    try:
+        drop_band = 0.6 * float(board_stats.seed_horiz_radius(drop_type))
+        drop_bottom = drop_y - float(board_stats.seed_bottom_radius(drop_type))
+    except (TypeError, ValueError):
+        return len(open_by_type)
+    kept = 0
+    drop_type_alive = False
+    for ttype, opens in open_by_type.items():
+        alive = False
+        for piece in opens:
+            try:
+                px = float(piece.get("x"))
+                py = float(piece.get("y"))
+                ptop = py + float(board_stats.seed_top_radius(ttype))
+                band = float(board_stats.seed_horiz_radius(ttype)) + drop_band
+            except (TypeError, ValueError):
+                alive = True
+                break
+            if abs(drop_x - px) <= band and drop_bottom >= ptop - 0.25 and drop_y > py:
+                continue
+            alive = True
+            break
+        if alive:
+            kept += 1
+            if ttype == drop_type:
+                drop_type_alive = True
+    if not drop_type_alive:
+        kept += 1
+    return kept
+
+# v747/v752: 終盤の DIRECT 併合は落下ピースの超過フラグでは差し戻さない（strategy_runner.enforce_deadline_safety が参照）
+DEADLINE_ALLOW_DIRECT_CROSS = True
 
 FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -1264,7 +1347,7 @@ def _select_visible_same_country_contact(
     return min(contact_options, key=lambda option: option[:-1])[-1]
 
 
-def decide(game_state: dict, analysis: dict) -> dict:
+def _decide_base(game_state: dict, analysis: dict) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
 
     デッドラインガード（危険域での安全確保・即時併合優先）を最優先で通過させたあと、
@@ -1330,6 +1413,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             for c in __dlg_cands
         )
         if __dlg_has_safe:
+            # v747: DIRECT 併合候補は落下ピースの超過フラグでは捨てない（併合成立率 97% で落下ピースは消える。
+            # 実測: 超過フラグ付き DIRECT を捨てて安全着地した 180 件は併合ゼロ・生存中央値 9 手・3 手以内死亡 17%）。
             __dlg_cands = [
                 c for c in __dlg_cands
                 if (
@@ -1338,15 +1423,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 or (
                     isinstance(c, dict)
                     and c.get("merge_grade") == "DIRECT"
-                    and __dlg_dcross
-                    and __dlg_danger_count > 0
-                    and (
-                        c.get("danger_direct_merge_available", False)
-                        or any(
-                            isinstance(m, dict) and m.get("target_is_danger")
-                            for m in (c.get("merges") or [])
-                        )
-                    )
                 )
             ]
     # This guard is specifically a deadline guard. Reactive pairs alone can
@@ -1387,6 +1463,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_near_safe:
             __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 136.6) or 41.00))
             return {"x": float(__dlg_best.get("x", 1.5323) or 4.093), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+        # v747 ENDGAME_MERGE_FIRST: 結果がデッドラインを越えると予測される DIRECT でも、安全着地（非併合）より優先する。
+        # 実測（495 試合）: 余裕僅少で DIRECT があるのに SAFE_LANDING を選んだ 385 件のうち 180 件は併合せず
+        # （生存中央値 9 手、3 手以内死亡 17%）。DIRECT を取った 694 件は 97% 併合・生存中央値 13 手・死亡 8%。
+        # 見送りは盤面を +1 するだけで生存を延ばしていない。失敗率 3% の交差リスクは受け入れる。
+        __dlg_direct_any = [
+            c for c in __dlg_cands
+            if isinstance(c, dict) and c.get("merge_grade") == "DIRECT" and __dlg_merge_available
+        ]
+        if __dlg_direct_any:
+            __dlg_best = min(
+                __dlg_direct_any,
+                key=lambda c: (0 if c.get("danger_direct_merge_available") else 1, float(c.get("risk_top_y_after_drop", 99.0) or 99.0), float(c.get("landing_y", 99.0) or 99.0)),
+            )
+            return {"x": float(__dlg_best.get("x", -1.7617) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE_CROSSING"}
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
         __dlg_safe_no_merge = [
             c for c in __dlg_cands
@@ -1565,6 +1655,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 2)
+    _v763_w = _v763_weight()
+    _v763_open = _v763_open_by_type(pieces) if _v763_w > 0.0 else None
+    _v763_base = len(_v763_open) if _v763_open is not None else 0
     next_next_type = next_next_piece.get("type", ----1)
     next_radius = _as_float(next_piece.get("r"), 0.5)
 
@@ -1859,12 +1952,93 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if _hc_open:
             high_cover_free.append((_hc_x, _hc_r * 0.9, _hc_top - 0.25))
 
+    # --- v743 LAST_EXPOSED_COVER_AVOID pre-computation ---
+    # 実測（局所 60 試合）: 20 手以内で同型が盤上にあるのに併合不可の手が 20%、その半分は
+    # 「双子が覆われている」。覆った主因は自分の落下。type>=10 の被覆抑止を、
+    # 「その type の露出した唯一の個体」(type 3..9) にも弱く（-180）適用する。
+    # next_type（上置き＝併合）と next_type-1（中間素材）は除外。T1-2 のジャンクは対象外。
+    _v743_cover_free = []
+    _v743_exposed_by_type = {}
+    for _lc_t, _lc_x, _lc_y, _lc_r in board_stats.pieces_of_type_at_least(pieces, 3):
+        if _lc_t >= 10 or _lc_t == next_type or _lc_t - 1 == next_type:
+            continue
+        _lc_open = True
+        _lc_top = _lc_y + _lc_r
+        for _op in pieces:
+            _op_r = float(_op.get("r", 0.5) or 0.5)
+            _op_bottom = float(_op.get("y", 0.0) or 0.0) - _op_r
+            if _op_bottom < _lc_top - 0.25:
+                continue
+            if abs(float(_op.get("x", 0.0) or 0.0) - _lc_x) <= _lc_r:
+                _lc_open = False
+                break
+        if _lc_open:
+            _v743_exposed_by_type.setdefault(_lc_t, []).append((_lc_x, _lc_r * 0.9, _lc_top - 0.25))
+    for _lc_t, _lc_items in _v743_exposed_by_type.items():
+        if len(_lc_items) == 1:
+            _v743_cover_free.append(_lc_items[0])
+
+    # --- v745 NEXTNEXT_TWIN_COVER_AVOID pre-computation ---
+    # 実測（実戦 14 試合）: 次々ピース (nextNext) の双子が露出 (relief<=1.0) している手が 26 回/試合あり、
+    # その 23% で今のピースをその双子の真上に非併合で置いて次の併合機会を潰していた。
+    # 既存の AVOID_BLOCK_NEXTNEXT は next_next_type == next_type のときだけ働く。
+    # ここでは「盤上の next_next_type の露出双子（隣接の相対高さ relief<=1.0）」の真上を非併合手で覆う候補を抑止する。
+    _v745_nn_lanes = []
+    try:
+        _v745_nnt = int(next_next_type)
+    except Exception:
+        _v745_nnt = -1
+    if _v745_nnt >= 1 and _v745_nnt != next_type:
+        for _nn_p in pieces:
+            if not isinstance(_nn_p, dict) or _nn_p.get("type") != _v745_nnt:
+                continue
+            try:
+                _nn_x = float(_nn_p.get("x", 0.0) or 0.0)
+                _nn_y = float(_nn_p.get("y", 0.0) or 0.0)
+                _nn_r = float(board_stats.seed_horiz_radius(_v745_nnt))
+                _nn_top = _nn_y + float(board_stats.seed_top_radius(_v745_nnt))
+            except Exception:
+                continue
+            _nn_open = True
+            _nn_relief = -9.0
+            for _op in pieces:
+                if _op is _nn_p or _op.get("id") == _nn_p.get("id"):
+                    continue
+                try:
+                    _op_x = float(_op.get("x", 0.0) or 0.0)
+                    _op_y = float(_op.get("y", 0.0) or 0.0)
+                    _op_t = int(_op.get("type", 1) or 1)
+                    _op_r = float(board_stats.seed_horiz_radius(_op_t))
+                    _op_top = _op_y + float(board_stats.seed_top_radius(_op_t))
+                    _op_bottom = _op_y - float(board_stats.seed_bottom_radius(_op_t))
+                except Exception:
+                    continue
+                if abs(_op_x - _nn_x) <= _nn_r + 0.6 * _op_r and _op_bottom >= _nn_top - 0.25 and _op_y > _nn_y:
+                    _nn_open = False
+                    break
+                if abs(_op_x - _nn_x) <= 1.2:
+                    _nn_relief = max(_nn_relief, _op_top - _nn_top)
+            if _nn_open and _nn_relief <= 1.0:
+                _v745_nn_lanes.append((_nn_x, _nn_r * 0.9, _nn_top - 0.25))
+    _v745_nn_penalty = 350.0 if len(_v745_nn_lanes) == 1 else (150.0 if _v745_nn_lanes else 0.0)
+
+    # --- v748 SEAT_LANES pre-computation ---
+    # 人間型の整列: 高型 (type>=10) が寄っている側 S を求め、反対の壁から内側へ T1/T2, T3, ..., T8 の
+    # 定位置 (座席) を割り当てる。非併合手では次ピースの座席に近い着地に加点し、遠い着地を減点する。
+    # 目的: 同型が同じ座席に集まり露出したまま並ぶ (双子到達率↑)、ジャンクは壁際に固定 (v741 の一般化)。
+    _v748_hi = [(_as_float(p.get("x"), 0.0)) for p in pieces if isinstance(p, dict) and isinstance(p.get("type"), int) and p.get("type") >= 10]
+    _v748_S = -1.0
+    if _v748_hi:
+        _v748_S = 1.0 if (sum(_v748_hi) / len(_v748_hi)) > 0.0 else -1.0
+    _v748_seat_off = {1: 2.8, 2: 2.8, 3: 2.4, 4: 2.0, 5: 1.55, 6: 1.1, 7: 0.6, 8: 0.15}
+    _v748_seat_x = None
+    if next_type in _v748_seat_off:
+        _v748_seat_x = -_v748_S * _v748_seat_off[next_type]
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     suppressed = 1
-    # v739 LOOKAHEAD: 1 手評価の候補を集めて、ループ後に nextNext の見込みで再順位付けする
-    _la_cands = []
     for result in results:
         # 前候補での条件付き変更（height_mult *= 1.4621 等）を次候補へ持ち越さない。
         height_mult = phase_height_mult
@@ -2375,6 +2549,56 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("HIGH_TYPE_COVER_AVOID")
                     break
 
+        # ----- v743: LAST_EXPOSED_COVER_AVOID (露出した唯一の同型 T3-9 の被覆抑止) -----
+        if (
+            merge_grade == "NO"
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and _v743_cover_free
+        ):
+            for _lc_x, _lc_tol, _lc_min_y in _v743_cover_free:
+                if abs(x - _lc_x) <= _lc_tol and landing_y >= _lc_min_y:
+                    score -= 180.0
+                    reasons.append("LAST_EXPOSED_COVER_AVOID")
+                    break
+
+        # ----- v745: NEXTNEXT_TWIN_COVER_AVOID (次々ピースの露出双子を覆わない) -----
+        if (
+            merge_grade == "NO"
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not death_spiral
+            and type15_count == 0
+            and _v745_nn_lanes
+        ):
+            for _nn_lx, _nn_tol, _nn_min_y in _v745_nn_lanes:
+                if abs(x - _nn_lx) <= _nn_tol and landing_y >= _nn_min_y:
+                    score -= _v745_nn_penalty
+                    reasons.append("NEXTNEXT_TWIN_COVER_AVOID")
+                    break
+
+        # ----- v748: SEAT_LANES (型別の定位置への誘導) -----
+        if (
+            merge_grade == "NO"
+            and _v748_seat_x is not None
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not result.get("crosses_deadline")
+            and not result.get("merge_result_crosses_deadline")
+            and not result.get("wall_rotation_risk")
+            and not death_spiral
+            and type15_count == 0
+        ):
+            _v748_d = abs(_as_float(x, 9.0) - _v748_seat_x)
+            _v748_bonus = max(-220.0, min(220.0, 220.0 * (1.0 - _v748_d / 1.2)))
+            score += _v748_bonus
+            if _v748_bonus > 0.0:
+                reasons.append("SEAT_LANE")
+
         # ----- v731: SAME_TYPE_SEED_CONTACT (同型ペアの密な播種) -----
         # 非併合手 (盤上に DIRECT/NEAR 候補が無い) で、届かない同型相方 (T9 以上) の近く
         # (上記の距離指標) へ着地する候補に加点する。締切安全 (非 crossing・併合結果非 crossing・
@@ -2645,6 +2869,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
+
+        if _v763_w > 0.0 and _v763_open is not None and 1 <= int(next_type) <= 11:
+            try:
+                _v763_post = _v763_post_open_types(_v763_open, int(next_type), float(x), float(landing_y))
+                _v763_d = _v763_post - _v763_base
+            except (TypeError, ValueError):
+                _v763_d = 0
+            if _v763_d:
+                score += _v763_w * _V763_BASE_BONUS * _v763_d
+                reasons.append("SURFACE_DIVERSITY_V763")
 
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
@@ -2967,8 +3201,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= max(2, (1.533 - margin)) * 2456
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
-        _la_cands.append((x, score, result, list(reasons)))
-
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
@@ -2990,35 +3222,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # analyzer's mirror-symmetric guidance.
         best_x = _clip_final_drop_x(best_x, type15_count >= 1, fallback=True)
         return {"x": best_x, "reason": best_reason}
-
-    # ----- v739 LOOKAHEAD (strategy_helpers/lookahead.py): next の 1 手先 (nextNext) を粗く評価して上位候補を
-    # 再順位付けする。締切余裕 >=1.0・危険駒なし・ロシア不在・非 deadline_crossed のときだけ。ヘルパは例外を全て
-    # 握って None を返す (1 手評価にフォールバック)。post-selector / runtime の締切安全層はこの後で従来どおり働く。
-    _la_pick = None
-    _la_danger = _as_float(danger_piece_count, 0.0)
-    if (
-        not deadline_crossed
-        and reactor_margin >= 1.0
-        and _la_danger <= 0.0
-        and type15_count == 0
-        and not russia_phase
-        and len(_la_cands) >= 2
-    ):
-        try:
-            _la_pick = lookahead.rerank(
-                pieces,
-                game_state.get("shapes", {}),
-                next_type,
-                next_next_type,
-                _la_cands,
-                {"k": 8, "lam": 600.0, "margin": 900.0, "e2_min": 0.05, "max_calls": 16},
-            )
-        except Exception:
-            _la_pick = None
-    if _la_pick is not None:
-        best_x = _la_pick[0]
-        best_result = _la_pick[2]
-        best_reason = "_".join(list(_la_pick[3]) + ["LOOKAHEAD_NEXT"])
 
     # clip to drop range [-3.0, +3.0]
     best_x = _clip_final_drop_x(best_x, type15_count >= 1)
@@ -3053,6 +3256,90 @@ def decide(game_state: dict, analysis: dict) -> dict:
     return {"x": best_x, "reason": best_reason}
 
 # --- AI modification prohibited zone ---
+
+def _v742_open_twin(pieces, ttype):
+    """Return open (top-exposed) pieces of type ttype: nothing rests above them within their horizontal radius."""
+    out = []
+    for p in pieces:
+        if p.get("type") != ttype:
+            continue
+        try:
+            px = float(p.get("x")); py = float(p.get("y")); pr = float(board_stats.seed_horiz_radius(ttype))
+            ptop = py + float(board_stats.seed_top_radius(ttype))
+        except Exception:
+            continue
+        blocked = False
+        for o in pieces:
+            if o is p or o.get("id") == p.get("id"):
+                continue
+            try:
+                ox = float(o.get("x")); oy = float(o.get("y")); ot = int(o.get("type"))
+                orad = float(board_stats.seed_horiz_radius(ot)); obot = oy - float(board_stats.seed_bottom_radius(ot))
+            except Exception:
+                continue
+            if abs(ox - px) <= pr + 0.6 * orad and obot >= ptop - 0.25 and oy > py:
+                blocked = True
+                break
+        if not blocked:
+            out.append(p)
+    return out
+
+
+def decide(game_state: dict, analysis: dict) -> dict:
+    base = _decide_base(game_state, analysis)
+    try:
+        reason = str(base.get("reason", ""))
+        _reactor0 = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
+        _desperate0 = ("DEADLINE_GUARD_NO_VALID" in reason) or bool(_reactor0.get("deadline_crossed"))
+        if "DIRECT_MERGE" in reason or "CHAIN_MERGE" in reason or "CLUSTER_SETUP" in reason:
+            return base
+        if "DEADLINE_GUARD" in reason and not _desperate0:
+            return base
+        results = analysis.get("results") or []
+        if any(str(q.get("merge_grade", "NO")) in ("DIRECT", "NEAR") for q in results):
+            return base
+        pieces = list(game_state.get("pieces") or [])
+        ntype = int((game_state.get("next") or {}).get("type") or 0)
+        if ntype <= 0:
+            return base
+        reactor = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
+        # v747: 「有効な非超過候補が無い」(NO_VALID) か既に超過状態のときは、どうせ超過するので
+        # 露出同型の真上（併合率 60%+）を優先する（desperate モード: margin/超過/壁回転フィルタを外す）。
+        _desperate = ("DEADLINE_GUARD_NO_VALID" in reason) or bool(reactor.get("deadline_crossed"))
+        if not _desperate and float(reactor.get("deadline_margin", 99) or 99) < 2.0:
+            return base
+        if not results:
+            return base
+        twins = _v742_open_twin(pieces, ntype)
+        best = None
+        for tw in twins:
+            tx = max(-2.8, min(2.8, float(tw.get("x"))))
+            relief = 99.0
+            try:
+                ttop = float(tw.get("y")) + float(board_stats.seed_top_radius(ntype))
+                relief = max([float(o.get("y")) + float(board_stats.seed_top_radius(int(o.get("type"))))
+                              for o in pieces if o.get("id") != tw.get("id") and abs(float(o.get("x")) - float(tw.get("x"))) <= 1.2] or [ttop - 9.0]) - ttop
+            except Exception:
+                continue
+            if relief > 1.0:
+                continue
+            cand = min(results, key=lambda q: abs(float(q.get("x", 0.0)) - tx))
+            if (not _desperate) and (cand.get("crosses_deadline") or cand.get("merge_result_crosses_deadline") or cand.get("wall_rotation_risk")):
+                continue
+            if abs(float(cand.get("x", 0.0)) - tx) > 0.35:
+                continue
+            key = (relief, float(tw.get("y")), -abs(tx)) if _desperate else (float(tw.get("y")), -abs(tx))
+            if best is None or key < best[0]:
+                best = (key, tx, tw)
+        if best is None:
+            return base
+        out = dict(base)
+        out["x"] = best[1]
+        out["reason"] = reason + ("|OPEN_TWIN_MERGE_DESPERATE" if _desperate else "|OPEN_TWIN_MERGE")
+        return out
+    except Exception:
+        return base
+
 if __name__ == "__main__":
     import json
     import sys

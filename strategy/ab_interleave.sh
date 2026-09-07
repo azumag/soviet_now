@@ -76,6 +76,12 @@ _ab_active() {
 	fi
 	if [ -n "$reason" ]; then
 		log "[AB] inactive: $reason"
+		# A/B が動いていない試合へ、前回の腕別 env が残らないようにする。
+		# ループのプロセスは長命で AB_EXTRA_ENV は export 済みのため、ここで消さないと
+		# 直前の実験の a_env/b_env が .env の設定を上書きし続ける (2026-09-01 に実発生:
+		# v763 採用直後、A 腕の V763_DIVERSITY_W=0 が残って採用した軸が発火しなかった)。
+		AB_EXTRA_ENV=""
+		export AB_EXTRA_ENV
 		return 1
 	fi
 	return 0
@@ -101,13 +107,30 @@ _ab_select_arm() {
 		AB_SOURCE="${STRATEGY_FILE:-strategy.py}"
 		AB_HASH=$(_ab_state_get a_hash)
 	fi
-	log "[AB] idx=$AB_IDX arm=$AB_ARM hash=${AB_HASH:0:12} src=$AB_SOURCE${AB_HELPERS:+ helpers=$AB_HELPERS}"
+	# 腕ごとの環境変数 (解析器モード等の A/B 用)。state の a_env / b_env に
+	# "KEY=VALUE KEY2=VALUE2" 形式で入れておくと、その腕の試合だけ runner に渡る。
+	# 未設定なら空文字 = 従来と完全に同じ挙動。
+	if [ "$AB_ARM" = "B" ]; then
+		AB_EXTRA_ENV=$(_ab_state_get b_env)
+	else
+		AB_EXTRA_ENV=$(_ab_state_get a_env)
+	fi
+	case "$AB_EXTRA_ENV" in
+		null | none) AB_EXTRA_ENV="" ;;
+	esac
+	# 安全: 期待する形式 (英大文字/数字/_ の KEY=VALUE を空白区切り) 以外は無視する。
+	if [ -n "$AB_EXTRA_ENV" ] && ! printf '%s' "$AB_EXTRA_ENV" | grep -Eq '^([A-Z][A-Z0-9_]*=[A-Za-z0-9_.,:/-]*)( [A-Z][A-Z0-9_]*=[A-Za-z0-9_.,:/-]*)*$'; then
+		log "[AB] a_env/b_env の形式が不正なため無視: $AB_EXTRA_ENV"
+		AB_EXTRA_ENV=""
+	fi
+	export AB_EXTRA_ENV
+	log "[AB] idx=$AB_IDX arm=$AB_ARM hash=${AB_HASH:0:12} src=$AB_SOURCE${AB_HELPERS:+ helpers=$AB_HELPERS}${AB_EXTRA_ENV:+ env=$AB_EXTRA_ENV}"
 }
 
 # 腕・hash・スコアを ab_games.jsonl に追記し games_recorded を進める。
 # runner が実際にその腕を打ったかを snapshot 記録と archive の strategy_hash で突き合わせ、不一致は tainted。
 _ab_record_game() {
-	local score="$1" eval="$2" turns="$3" archive="$4" played="" hist=""
+	local score="$1" eval="$2" turns="$3" archive="$4" soviet="${5:-}" russia="${6:-}" played="" hist=""
 	[ -n "${AB_ARM:-}" ] || return 0
 	if [ -f "${STRATEGY_FILE:-strategy.py}.game_snapshot" ]; then
 		played=$(_ab_hash "${STRATEGY_FILE:-strategy.py}.game_snapshot")
@@ -126,9 +149,22 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 )
 	fi
-	python3 - "$AB_STATE_FILE" "$AB_GAMES_FILE" "$AB_IDX" "$AB_ARM" "$AB_HASH" "$played" "$hist" "$score" "$eval" "$turns" "$archive" "${GAME_NUM:-}" <<'PY' || log "[AB] record failed"
+	python3 - "$AB_STATE_FILE" "$AB_GAMES_FILE" "$AB_IDX" "$AB_ARM" "$AB_HASH" "$played" "$hist" "$score" "$eval" "$turns" "$archive" "${GAME_NUM:-}" "$soviet" "$russia" <<'PY' || log "[AB] record failed"
 import json, os, sys, time
 state_file, games_file, idx, arm, h, played, hist, score, ev, turns, archive, game_num = sys.argv[1:13]
+soviet_raw = sys.argv[13] if len(sys.argv) > 13 else ""
+russia_raw = sys.argv[14] if len(sys.argv) > 14 else ""
+
+
+def _flag(v):
+    """呼び出し元が渡さなかった場合は None (不明) を返す。空を False にすると
+    「建国しなかった」と断定してしまい、記録として誤りになる。"""
+    v = str(v or "").strip().lower()
+    if v in ("true", "1", "yes"):
+        return True
+    if v in ("false", "0", "no"):
+        return False
+    return None
 def num(v):
     try:
         return float(v)
@@ -137,7 +173,9 @@ def num(v):
 tainted = bool((played and played != h) or (hist and hist != h))
 rec = {"idx": int(idx or 0), "arm": arm, "hash": h, "played_hash": played, "history_hash": hist, "score": num(score),
        "eval": num(ev), "turns": num(turns), "archive": os.path.basename(archive) if archive else "", "game_num": game_num,
-       "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "tainted": tainted}
+       "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "tainted": tainted,
+       # issue #132 P0-1: 最終目標 (makeSorenCount>0) と段階到達を ledger に必ず残す
+       "soviet_created": _flag(soviet_raw), "russia_created": _flag(russia_raw)}
 # 試合ごとの指標 (game_history は直近しか残らないので記録時に取り出す)
 try:
     rs = []
@@ -163,7 +201,48 @@ try:
         pc = {r.get("turn"): r.get("piece_count") for r in rs}
         rec.update({"merges_per_turn": round(merges / max(1, len(rs)), 4), "multi_merge_turns": multi,
                     "pieces_at_20": pc.get(20), "pieces_at_40": pc.get(40), "max_type": mx, "t14": int(mx >= 14), "t15": int(mx >= 15),
-                    "crossings": sum(1 for r in rs if r.get("decision_crosses_deadline"))})
+                    "crossings": sum(1 for r in rs if r.get("decision_crosses_deadline")),
+                    # 解析器トグルの実効値。腕別 env (a_env/b_env) の A/B を記録から事後検証するために残す。
+                    # game_history は直近数十試合しか保持しないので、ここに写しておく必要がある。
+                    "analyzer_modes": (rs[-1].get("analyzer_modes") or rs[0].get("analyzer_modes"))})
+        # 段階到達ターンと終了理由 (issue #132 P0-1)。game_history は剪定されるのでここで確定させる。
+        first = {}
+        for i, r in enumerate(rs):
+            for p in (r.get("state_snapshot") or {}).get("pieces") or []:
+                t = p.get("type")
+                if isinstance(t, int) and t >= 13 and t not in first:
+                    first[t] = r.get("turn", i + 1)
+        rec["first_turn_t13"] = first.get(13)
+        rec["first_turn_t14"] = first.get(14)
+        rec["first_turn_t15"] = first.get(15)
+        rec["first_turn_t16"] = first.get(16)
+        last = rs[-1]
+        rec["end_reason"] = ("soviet" if rec.get("soviet_created") else
+                             ("deadline_crossed" if last.get("deadline_crossed") else "board_full_or_other"))
+        rec["final_piece_count"] = last.get("piece_count")
+        # 終局盤面の構成 (issue #132 P1: 容量モデルを試合ごとに検算できるようにする)。
+        # 併合は価値 2^(t-11) を保存して面積だけを圧縮する操作で、盤面は総面積 49.3 前後で死ぬ。
+        # merges_per_turn は tier を区別しないが、解放面積は 1->2 の 0.058 と 11->12 の 2.476 で
+        # 42 倍違うため、これを残さないと候補の効き方を後から分解できない。
+        # 面積は物理半径 (analyze_board.TYPE_RADII) から出す。snapshot の r は視覚スプライト由来で
+        # 型に対して単調でないため使えない。
+        radii = {1: 0.207, 2: 0.259, 3: 0.316, 4: 0.380, 5: 0.414, 6: 0.470, 7: 0.559, 8: 0.660,
+                 9: 0.746, 10: 0.846, 11: 0.982, 12: 1.068, 13: 1.207, 14: 1.385, 15: 1.600}
+        end_types = {}
+        for p in (last.get("state_snapshot") or {}).get("pieces") or []:
+            t = p.get("type")
+            if isinstance(t, int):
+                end_types[t] = end_types.get(t, 0) + 1
+        if end_types:
+            area = sum(n * 3.141592653589793 * radii[t] ** 2 for t, n in end_types.items() if t in radii)
+            value = sum(n * 2.0 ** (t - 11) for t, n in end_types.items())
+            rec["end_types"] = {str(t): n for t, n in sorted(end_types.items())}
+            rec["end_area"] = round(area, 3)
+            rec["end_value_t11eq"] = round(value, 4)
+            # 1 手あたりに解放した面積 = 供給 (平均 1.0656/手) - 盤面に残った面積
+            nturns = rec.get("turns") or len(rs)
+            if nturns:
+                rec["area_relief_per_turn"] = round((1.0656 * nturns - area) / nturns, 4)
 except Exception:
     pass
 with open(games_file, "a", encoding="utf-8") as fh:
