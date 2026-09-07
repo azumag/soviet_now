@@ -1,0 +1,45 @@
+{
+  "experiment": "v759_TIER_WEIGHTED_COVER_AVOID_env_split",
+  "status": "DRAFT — v757 A/B の判定後に開始時点で確定させる (started_at / decide_hash / sha256)",
+  "hypothesis": "露出した高 type の被覆罰を tier 別の寿命損失で段階化すると、T11-T13 の残留が減り、盤面面積の解放が増えて試合が伸びる。容量モデル (tools/board_capacity.py) では残留 x0.84 で 120 手・建国 0.21/試合。",
+  "design_note": "両腕とも同一の候補ファイルを使い、腕別 env のみを変える。root と候補のファイル差による交絡がゼロになる。A 腕 (W=0) は shadow 差分で root と決定が 100% 一致することを実戦 3000 手で確認済み。",
+  "arms": {
+    "A": {"role": "control", "decide_hash": "TBD_same_as_B", "env": "V759_COVER_TIER_W=0"},
+    "B": {"role": "candidate", "decide_hash": "TBD_same_as_A", "env": "V759_COVER_TIER_W=1.0"}
+  },
+  "pattern": "ABBA",
+  "preregistration": {
+    "primary_report": "merges_per_turn (block diff) 90% CI lower > 0",
+    "primary_rationale": "実測の block-sd: merges_per_turn 0.089 (相対 16%) < turns 18.6 (19%) < score 647 (26%)。score は最も鈍い。issue #132 P0-1 の決定に従い主要指標を merges_per_turn とする。",
+    "secondary": "turns, score, T15 到達率, 終局駒数, 露出高 type の被覆率",
+    "guardrail": "score の block diff 90% CI 下限 > -300 (非劣性 margin)。T15 は比率ガードを使わない (issue #132 P0-1)。",
+    "harm_stop": "k>=10 で merges_per_turn UCB99 < 0 なら finish A",
+    "harm_rationale": "2026-08-30 の実 A/A 較正: 旧規則 (k>=6, UCB90) は誤発火 32.2%。k>=10 + UCB99 で 6.2% / 検出力 58%。",
+    "futility": "適用しない",
+    "final": "k=50 (各100試合)",
+    "note": "開始後は規則を変更しない (issue #132 Phase 0)",
+    "rule": {
+      "primary": "merges_per_turn",
+      "primary_kind": "block_diff",
+      "adopt_ci_lower_gt": 0.0,
+      "harm_min_blocks": 10,
+      "harm_ucb_lt": 0.0,
+      "harm_z": 2.3263,
+      "futility": false,
+      "final_blocks": 50,
+      "final_games_per_arm": 100
+    }
+  },
+  "expected_effect": {
+    "shadow_decision_change_at_W1": 0.0347,
+    "exposed_high_type_cover_reduction": {"T11": -0.05, "T12": -0.10, "T13": -0.20, "total": -0.064},
+    "capacity_model_turns": "94 -> 99 前後を見込む (残留 -6% 相当)。merges_per_turn では +0.02 程度で、50 ブロック時の SE 0.0126 に対し検出は際どい。"
+  },
+  "todo_before_start": [
+    "v757 の判定を finish してから開始する (実験の同時実行はしない)",
+    "採用された root へ candidates/apply_v759.py を当て直し、decide hash を再計算する",
+    "ab_interleave の ledger に終局 type ヒストグラム (面積・価値の再構成用) を追加する — 進行中の実験には触れない",
+    "tools/replay_shadow.py --verify で新 root の再現率を測り直す",
+    "A 腕 (W=0) が新 root と決定 100% 一致することを再確認する"
+  ]
+}
