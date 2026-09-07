@@ -254,6 +254,16 @@ _game_lifecycle_pause_record_claims_marker() {
 	return 0
 }
 
+_game_lifecycle_create_owned_marker() {
+	local path="$1" request_id="$2"
+	(umask 077; set -C; printf 'lifecycle:%s\n' "$request_id" >"$path") 2>/dev/null
+}
+
+_game_lifecycle_marker_owned_by() {
+	local path="$1" request_id="$2"
+	[ "$(cat "$path" 2>/dev/null || true)" = "lifecycle:$request_id" ]
+}
+
 _game_lifecycle_pause_improvements() {
 	local request_id="${1:-}"
 	[ -n "$request_id" ] || return 1
@@ -278,7 +288,7 @@ _game_lifecycle_pause_improvements_locked() {
 			marker_created=1
 		fi
 	else
-		(umask 077; : >"$TMP_STATE_DIR/improve_daemon.paused") || return 1
+		_game_lifecycle_create_owned_marker "$TMP_STATE_DIR/improve_daemon.paused" "$request_id" || return 1
 		marker_created=1
 	fi
 
@@ -353,9 +363,10 @@ _game_lifecycle_pause_improvements_locked() {
 game_lifecycle_restore_improvements() {
 	local record="$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE"
 	[ -f "$record" ] || return 0
-	local marker_created
+	local marker_created request_id
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	if [ "$marker_created" = "true" ]; then
+	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
 		rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
 	fi
 	rm -f "$record" 2>/dev/null || true
@@ -392,7 +403,7 @@ _game_lifecycle_pause_predictions_locked() {
 	else
 		# noclobber makes marker creation atomic.  A concurrent operator-created
 		# marker is never adopted by this request.
-		(umask 077; set -C; : >"$GAME_LIFECYCLE_PREDICTION_MARKER") 2>/dev/null || return 1
+		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_PREDICTION_MARKER" "$request_id" || return 1
 		marker_created=1
 	fi
 	pid=$(_game_lifecycle_read_pid "$TMP_STATE_DIR/prediction_worker.pid" 2>/dev/null || true)
@@ -428,10 +439,13 @@ _game_lifecycle_pause_predictions_locked() {
 }
 
 _game_lifecycle_restore_predictions_locked() {
-	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created
+	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created request_id
 	[ -f "$record" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	[ "$marker_created" = "true" ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
+	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_PREDICTION_MARKER" "$request_id"; then
+		rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
+	fi
 	rm -f "$record" 2>/dev/null || true
 }
 
@@ -455,7 +469,7 @@ _game_lifecycle_pause_loop() {
 			marker_created=1
 		fi
 	else
-		(umask 077; : >"$GAME_LIFECYCLE_LOOP_PAUSE_FILE") || return 1
+		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id" || return 1
 		marker_created=1
 	fi
 	_game_lifecycle_write_record "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" "$request_id" 0 "" "" "$marker_created"
@@ -464,9 +478,10 @@ _game_lifecycle_pause_loop() {
 game_lifecycle_restore_loop() {
 	local record="$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
 	[ -f "$record" ] || return 0
-	local marker_created
+	local marker_created request_id
 	marker_created=$(_game_lifecycle_json_field "$record" loop_marker_created 2>/dev/null || echo false)
-	if [ "$marker_created" = "true" ]; then
+	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" 2>/dev/null || true
 	fi
 	rm -f "$record" 2>/dev/null || true

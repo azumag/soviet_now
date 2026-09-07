@@ -123,6 +123,13 @@ game_lifecycle_restore_predictions
 [ -f "$TMP_STATE_DIR/prediction_worker.paused" ]
 rm -f "$TMP_STATE_DIR/prediction_worker.paused"
 
+# An operator replacement after lifecycle pause must not be deleted.
+_game_lifecycle_pause_predictions "$request_id"
+printf 'operator\n' >"$TMP_STATE_DIR/prediction_worker.paused"
+game_lifecycle_restore_predictions
+[ "$(cat "$TMP_STATE_DIR/prediction_worker.paused")" = "operator" ]
+rm -f "$TMP_STATE_DIR/prediction_worker.paused"
+
 # Regression: a repeat pause of the SAME request keeps ownership of the marker
 # it created, so the later restore removes it instead of leaking the pause
 # gate.  Rewriting the record with marker_created=false made

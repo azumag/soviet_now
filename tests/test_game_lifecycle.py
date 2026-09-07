@@ -384,6 +384,57 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(cancelled.returncode, 3)
             self.assertEqual(cancelled_payload["status"], "conflict")
 
+    def test_fresh_start_removes_only_request_owned_pause_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            state = root / "tmp/state"
+            request = json.loads((lifecycle / "request.json").read_text())
+            (lifecycle / "ack.json").write_text(json.dumps({**request, "status": "stopped"}))
+            (lifecycle / "game_resource.json").write_text(json.dumps({**request, "status": "stopped"}))
+            for name, owned in (("improvement_pause.json", True), ("prediction_pause.json", True), ("loop_pause.json", False)):
+                (lifecycle / name).write_text(json.dumps({"request_id": request_id, "improvement_marker_created": owned, "loop_marker_created": owned}))
+            for name in ("improve_daemon.paused", "prediction_worker.paused", "soren_loop.paused"):
+                (state / name).write_text(f"lifecycle:{request_id}\n")
+            (state / "soren_loop.paused").write_text("operator\n")
+            result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(payload["status"], "starting")
+            self.assertFalse((state / "improve_daemon.paused").exists())
+            self.assertFalse((state / "prediction_worker.paused").exists())
+            self.assertTrue((state / "soren_loop.paused").exists())
+            self.assertFalse((lifecycle / "request.json").exists())
+            again, again_payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(again.returncode, 0)
+            self.assertEqual(again_payload["status"], "starting")
+
+    def test_fresh_start_rejects_non_stopped_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(result.returncode, 3)
+            self.assertEqual(payload["status"], "conflict")
+
+    def test_fresh_start_resumes_after_starting_receipt_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            request = json.loads((lifecycle / "request.json").read_text())
+            (lifecycle / "ack.json").write_text(json.dumps({**request, "status": "stopped"}))
+            (lifecycle / "game_resource.json").write_text(json.dumps({**request, "status": "stopped"}))
+            receipt = root / "tmp/state/game_lifecycle_fresh_start.json"
+            receipt.write_text(json.dumps({"schema": 1, "request_id": request_id, "status": "starting"}))
+            result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(payload["status"], "starting")
+            self.assertFalse((lifecycle / "request.json").exists())
+
     def test_request_ignores_identity_mismatched_ack(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -643,6 +643,52 @@ def command_status(store: LifecycleStore, _args: argparse.Namespace) -> int:
         )
 
 
+def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
+    """Clear a completed stop and only the pause markers owned by its request."""
+    request_id = _check_request_id(args)
+    with store.lock():
+        receipt_path = store.root / "tmp/state/game_lifecycle_fresh_start.json"
+        prior = _json_object(receipt_path)
+        if prior and prior.get("request_id") == request_id and prior.get("status") in {"starting", "started"}:
+            # If active state is already gone, the earlier invocation crossed
+            # the commit point.  Otherwise resume the idempotent cleanup below.
+            if store.request() is None:
+                return _emit(prior, RC_OK)
+        request = store.request()
+        ack = store.ack()
+        resource = store.resource()
+        if request is None or request.get("request_id") != request_id:
+            return _emit({"status": "conflict", "error": "request is not stopped"}, RC_CONFLICT)
+        if ack is not None and (not _record_matches_request(ack, request) or ack.get("status") != "stopped"):
+            return _emit({"status": "conflict", "error": "request acknowledgement is not stopped"}, RC_CONFLICT)
+        if not _record_matches_request(resource, request) or resource.get("status") != "stopped":
+            return _emit({"status": "conflict", "error": "matching stopped resource is missing"}, RC_CONFLICT)
+        pause_specs = (
+            (store.directory / "improvement_pause.json", store.root / "tmp/state/improve_daemon.paused"),
+            (store.directory / "prediction_pause.json", store.root / "tmp/state/prediction_worker.paused"),
+            (store.directory / "loop_pause.json", store.root / "tmp/state/soren_loop.paused"),
+        )
+        for record_path, marker_path in pause_specs:
+            record = _json_object(record_path)
+            if record and record.get("request_id") == request_id:
+                owned = bool(record.get("improvement_marker_created") or record.get("loop_marker_created"))
+                marker_value = ""
+                try:
+                    marker_value = marker_path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    pass
+                if owned and marker_value == f"lifecycle:{request_id}":
+                    marker_path.unlink(missing_ok=True)
+        _atomic_json(receipt_path, {"schema": 1, "request_id": request_id, "status": "starting", "started_at": time.time()})
+        store.archive_current()
+        for path in (
+            store.request_path, store.ack_path, store.control_path, store.resource_path,
+            *(record for record, _marker in pause_specs),
+        ):
+            path.unlink(missing_ok=True)
+        return _emit({"schema": 1, "request_id": request_id, "status": "starting", "started_at": time.time()}, RC_OK)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="soren root directory")
@@ -654,7 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
     request.add_argument("--generation", type=int)
     request.add_argument("--deadline-sec", type=float, default=900.0)
 
-    for name in ("boundary", "stop", "claim-stop", "cancel", "finish", "restore", "resume-complete"):
+    for name in ("boundary", "stop", "claim-stop", "cancel", "finish", "restore", "resume-complete", "fresh-start"):
         item = sub.add_parser(name)
         item.add_argument("--request-id", required=True)
     sub.add_parser("status")
@@ -683,6 +729,8 @@ def main(argv: list[str] | None = None) -> int:
             return command_resume_complete(store, args)
         if args.command == "status":
             return command_status(store, args)
+        if args.command == "fresh-start":
+            return command_fresh_start(store, args)
     except LifecycleError as exc:
         return _emit({"status": "invalid", "error": str(exc)}, RC_INVALID)
     except (OSError, ValueError) as exc:
