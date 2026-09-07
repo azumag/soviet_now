@@ -137,12 +137,13 @@ _improve_progress() {{ :; }}
 _improve_note() {{ :; }}
 _get_improve_agents() {{ echo fake; }}
 _is_peak_hours() {{ return 1; }}
-run_ai_list() {{ echo 'soviet=0/1; no verified contract' > "$ANALYSIS_RESULT_FILE"; return 0; }}
+run_ai_list() {{ printf '%s' {q('soviet=0/1'+chr(10)+'```analysis_contract'+chr(10)+json.dumps(self.contract(e))+chr(10)+'```'+chr(10))} > "$ANALYSIS_RESULT_FILE"; return 0; }}
 """
         p=subprocess.run(['bash','-c',setup+block+'\nprintf "%s %s" "$analysis_ok" "$IMPROVE_FAILURE_CODE"'],text=True,capture_output=True,cwd=self.root)
         self.assertEqual(p.returncode,0,p.stderr)
         self.assertEqual(p.stdout,'false analysis_contract_invalid')
         record=json.loads((self.root/'receipts/analysis-check-1.json').read_text())
-        self.assertFalse(record['ok']);self.assertTrue((self.root/'receipts/analysis-check-1.md').exists())
+        self.assertFalse(record['ok']);self.assertIn('prose_founding_count_mismatch',record['errors'])
+        self.assertIn('soviet=0/1',(self.root/'receipts/analysis-check-1.md').read_text())
 
 if __name__=='__main__':unittest.main()
