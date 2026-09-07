@@ -21,7 +21,7 @@ class ProseCounterTests(unittest.TestCase):
             with self.subTest(text=text):self.assertEqual(self.check(text,2)['decision'],'reject')
 
     def test_markdown_unicode_spacing_and_labels(self):
-        for text in ('**SOVIET** = **0** / **13**','__soviet__=__0__/__13__','`soviet` : `0/13`','Ｓｏｖｉｅｔ＝０／１３',
+        for text in ('**SOVIET** = **0** / **13**','__soviet__=__0__/__13__','[soviet](https://example.invalid)=0/13','~~soviet~~=~~0/13~~','[soviet][counter]=0/13','`soviet` : `0/13`','Ｓｏｖｉｅｔ＝０／１３',
                      'soviet =\n0 / 13','founded_games=0/13','soviet_counter=0/13','ソ連建国数: 0/13'):
             with self.subTest(text=text):self.assertEqual(self.check(text)['decision'],'reject')
 
@@ -38,6 +38,10 @@ class ProseCounterTests(unittest.TestCase):
     def test_quotes_negation_and_previous_batch_are_not_exempt(self):
         for text in ('> soviet=0/13','not soviet=0/13','previous batch: soviet=0/13'):
             with self.subTest(text=text):self.assertEqual(self.check(text)['decision'],'reject')
+
+    def test_known_evidence_cannot_be_called_unknown(self):
+        for text in ('soviet=unknown/13','soviet=null/13'):
+            with self.subTest(text=text):self.assertEqual(self.check(text,2)['decision'],'reject')
 
     def test_unknown_and_other_metrics_are_allowed(self):
         for text in ('soviet=unknown','soviet=unknown/13','russia=0/13',

@@ -98,12 +98,15 @@ def prose_counter_errors(text, doc, evidence):
         r'\s*[=:]\s*(unknown|null|[0-9]+)(?:\s*/\s*([0-9]+))?(?![\w])')
     for string in strings:
         normalized=unicodedata.normalize('NFKC',string).casefold()
-        normalized=re.sub(r'[`*"\']','',normalized)
+        normalized=re.sub(r'\[([^]\n]+)\](?:\([^\n)]*\)|\[[^]\n]*\])',r'\1',normalized)
+        normalized=re.sub(r'[`*~"\']','',normalized)
         # Markdown emphasis at token edges; preserve identifier underscores.
         normalized=re.sub(r'(?<!\w)_+(?=\w)|(?<=\w)_+(?!\w)','',normalized)
         for match in pattern.finditer(normalized):
             count,denominator=match.groups()
             if count.isdecimal() and (evidence['founded_games'] is None or int(count)!=evidence['founded_games']):
+                errors.append('prose_founding_count_mismatch')
+            if count in ('unknown','null') and evidence['founded_games'] is not None:
                 errors.append('prose_founding_count_mismatch')
             if denominator is not None and int(denominator)!=evidence['game_count']:
                 errors.append('prose_game_count_mismatch')
