@@ -483,7 +483,16 @@ _game_lifecycle_pause_watchdog() {
 	fi
 	_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
 	if [ -n "$pid" ]; then
-		_game_lifecycle_is_watchdog_pid "$pid" || return 1
+		# A dead PID left in the pidfile is already a successful stopped state.
+		# Refuse only when that numeric PID is live but no longer belongs to the
+		# watchdog; never signal a reused unrelated process.
+		if ! kill -0 "$pid" 2>/dev/null; then
+			pid=""
+		elif ! _game_lifecycle_is_watchdog_pid "$pid"; then
+			return 1
+		fi
+	fi
+	if [ -n "$pid" ]; then
 		kill -TERM "$pid" 2>/dev/null || true
 		# A supervised shell can remain briefly as a zombie: kill -0 still
 		# succeeds for it even though it has released every game resource.  Test
