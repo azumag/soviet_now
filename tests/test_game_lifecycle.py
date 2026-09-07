@@ -394,9 +394,9 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             request = json.loads((lifecycle / "request.json").read_text())
             (lifecycle / "ack.json").write_text(json.dumps({**request, "status": "stopped"}))
             (lifecycle / "game_resource.json").write_text(json.dumps({**request, "status": "stopped"}))
-            for name, owned in (("improvement_pause.json", True), ("prediction_pause.json", True), ("loop_pause.json", False)):
+            for name, owned in (("improvement_pause.json", True), ("prediction_pause.json", True), ("loop_pause.json", False), ("watchdog_pause.json", True)):
                 (lifecycle / name).write_text(json.dumps({"request_id": request_id, "improvement_marker_created": owned, "loop_marker_created": owned}))
-            for name in ("improve_daemon.paused", "prediction_worker.paused", "soren_loop.paused"):
+            for name in ("improve_daemon.paused", "prediction_worker.paused", "soren_loop.paused", "soviet_watchdog.paused"):
                 (state / name).write_text(f"lifecycle:{request_id}\n")
             (state / "soren_loop.paused").write_text("operator\n")
             result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
@@ -404,6 +404,7 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(payload["status"], "starting")
             self.assertFalse((state / "improve_daemon.paused").exists())
             self.assertFalse((state / "prediction_worker.paused").exists())
+            self.assertFalse((state / "soviet_watchdog.paused").exists())
             self.assertTrue((state / "soren_loop.paused").exists())
             self.assertFalse((lifecycle / "request.json").exists())
             again, again_payload = self.run_broker(root, "fresh-start", "--request-id", request_id)

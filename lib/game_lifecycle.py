@@ -667,6 +667,7 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
             (store.directory / "improvement_pause.json", store.root / "tmp/state/improve_daemon.paused"),
             (store.directory / "prediction_pause.json", store.root / "tmp/state/prediction_worker.paused"),
             (store.directory / "loop_pause.json", store.root / "tmp/state/soren_loop.paused"),
+            (store.directory / "watchdog_pause.json", store.root / "tmp/state/soviet_watchdog.paused"),
         )
         for record_path, marker_path in pause_specs:
             record = _json_object(record_path)
