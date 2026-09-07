@@ -190,7 +190,11 @@ class TestValidateStrategyWithHelpersWiring(unittest.TestCase):
             for src in (REPO_ROOT / "strategy_helpers").glob("*.py"):
                 (helpers_dst / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
             candidate = Path(cwd) / "strategy.py"
-            candidate.write_text((REPO_ROOT / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+            candidate.write_text(
+                'def decide(game_state, analysis):\n'
+                '    return {"x": 0.0, "reason": "benign"}\n',
+                encoding="utf-8",
+            )
 
             result = _run_bash(
                 'validate_strategy_with_helpers "strategy.py" "strategy_helpers"\n'
