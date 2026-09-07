@@ -1,5 +1,12 @@
 # strategy/sandbox.sh - validate_strategy, create/harvest/destroy_sandbox
 
+# 改善処理は候補編集用の最小sandboxへcwdを移す。隔離runnerはそのsandboxへ
+# コピーせず、sourceした信頼済みライブラリ自身の場所へ固定する。
+ISOLATED_RUNNER_ENTRYPOINT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/isolated_runner/run_isolated.py"
+readonly ISOLATED_RUNNER_ENTRYPOINT
+ISOLATED_RUNNER_RECEIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tmp/state/isolated_runner_receipts"
+readonly ISOLATED_RUNNER_RECEIPT_DIR
+
 validate_strategy() {
 	# 引数でファイルパスを指定可能 (デフォルト: strategy.py)
 	local target_file="${1:-strategy.py}"
@@ -687,8 +694,8 @@ _write_host_integrity_snapshot() {
 # という運用行為でのみ行われ、コード上のトグルは提供しない。
 _strategy_isolated_runner_available() {
 	command -v python3 >/dev/null 2>&1 || return 1
-	[ -f "strategy/isolated_runner/run_isolated.py" ] || return 1
-	python3 strategy/isolated_runner/run_isolated.py probe >/dev/null 2>&1
+	[ -f "$ISOLATED_RUNNER_ENTRYPOINT" ] || return 1
+	python3 "$ISOLATED_RUNNER_ENTRYPOINT" probe >/dev/null 2>&1
 }
 
 # 候補ファイルを実際に隔離runnerへ通し、receiptをtmp/state配下に保存したうえで
@@ -711,11 +718,11 @@ _strategy_isolated_runner_evaluate() {
 	local target_file="$1"
 	local helpers_dir="${2:-strategy_helpers}"
 	local mode="${SOREN_ISOLATED_RUNNER_MODE:-shadow}"
-	local receipt_dir="${TMP_STATE_DIR:-tmp/state}/isolated_runner_receipts"
+	local receipt_dir="$ISOLATED_RUNNER_RECEIPT_DIR"
 	mkdir -p "$receipt_dir" 2>/dev/null || true
 	local receipt_out="$receipt_dir/receipt_$(date +%Y%m%d_%H%M%S)_$$.json"
 
-	python3 strategy/isolated_runner/run_isolated.py evaluate \
+	python3 "$ISOLATED_RUNNER_ENTRYPOINT" evaluate \
 		--target "$target_file" --helpers "$helpers_dir" \
 		--receipt-out "$receipt_out" --mode "$mode" >/dev/null 2>&1
 

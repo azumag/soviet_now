@@ -307,7 +307,15 @@ class TestNormalCandidatesPassAstGate(unittest.TestCase):
             self.assertIn("RC=0", result.stdout, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
     def test_active_root_strategy_py_passes(self):
-        result = self._validate_file(REPO_ROOT / "strategy.py")
+        with tempfile.TemporaryDirectory() as cwd:
+            candidate = Path(cwd) / "strategy.py"
+            candidate.write_text((REPO_ROOT / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+            result = _run_validate(
+                'validate_active_strategy "strategy.py" "nonexistent_helpers"\n'
+                'echo "RC=$?"\n',
+                cwd=cwd,
+                env=os.environ.copy(),
+            )
         self.assertIn("RC=0", result.stdout, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
     def test_strategy_versions_candidates_pass_or_have_preexisting_unrelated_failure(self):
@@ -404,7 +412,7 @@ class TestIsolatedRunnerFailClosed(unittest.TestCase):
             for src in (REPO_ROOT / "strategy_helpers").glob("*.py"):
                 (strategy_helpers_dst / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
             candidate = Path(cwd) / "strategy.py"
-            candidate.write_text((REPO_ROOT / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+            candidate.write_text(_BENIGN_FIXTURE, encoding="utf-8")
 
             env = os.environ.copy()
             env["GAME_STATE"] = "game_state.json"
@@ -478,7 +486,7 @@ class TestDecideHashUnaffected(unittest.TestCase):
         self.assertTrue(h1, "extract_decide_hash.py returned empty hash")
         self.assertEqual(h1, h2)
 
-        # soren_loop.sh / eloop.sh の起動時ゲートと同じ呼び出し形 (bare validate_strategy)
+        # soren_loop.sh の起動時ゲートと同じ active 専用呼び出し形
         # が、現行の active strategy.py に対して今も成功することを確認する。
         with tempfile.TemporaryDirectory() as cwd:
             candidate = Path(cwd) / "strategy.py"
@@ -486,7 +494,7 @@ class TestDecideHashUnaffected(unittest.TestCase):
             env = os.environ.copy()
             env["GAME_STATE"] = "game_state.json"  # ファイルは存在しない = 旧ランタイムsmokeテスト分岐は無効化済み
             result = _run_validate(
-                'validate_strategy\n'
+                'validate_active_strategy\n'
                 'echo "RC=$?"\n',
                 cwd=cwd,
                 env=env,

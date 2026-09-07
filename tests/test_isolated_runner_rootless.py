@@ -86,6 +86,59 @@ _ISOLATION_WORKS_HERE = _isolation_actually_works()
 # ---------------------------------------------------------------------------
 
 class TestAvailabilityRealDetection(unittest.TestCase):
+    def test_runner_entrypoint_is_anchored_to_sourced_sandbox_library(self):
+        """改善用の最小sandboxへcwdが移ってもhost側runnerを見失わないこと。"""
+        source = (REPO_ROOT / "strategy/sandbox.sh").read_text(encoding="utf-8")
+        self.assertIn("readonly ISOLATED_RUNNER_ENTRYPOINT", source)
+        self.assertIn("readonly ISOLATED_RUNNER_RECEIPT_DIR", source)
+        start = source.index("_strategy_isolated_runner_available()")
+        end = source.index("\n}\n", start)
+        body = source[start:end]
+        self.assertIn('"$ISOLATED_RUNNER_ENTRYPOINT" probe', body)
+        self.assertNotIn("python3 strategy/isolated_runner/run_isolated.py", body)
+
+    def test_changed_cwd_cannot_substitute_probe_or_evaluate_runner(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            trusted_strategy = root / "trusted" / "strategy"
+            trusted_runner = trusted_strategy / "isolated_runner" / "run_isolated.py"
+            trusted_runner.parent.mkdir(parents=True)
+            (root / "trusted" / "tmp" / "state").mkdir(parents=True)
+            (trusted_strategy / "sandbox.sh").write_text(
+                (REPO_ROOT / "strategy/sandbox.sh").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            trusted_runner.write_text(textwrap.dedent("""
+                import json, pathlib, sys
+                pathlib.Path(__file__).with_name("trusted-called").write_text(sys.argv[1])
+                if sys.argv[1] == "probe": raise SystemExit(0)
+                out = pathlib.Path(sys.argv[sys.argv.index("--receipt-out") + 1])
+                out.write_text(json.dumps({"gate": "pass", "backend": "fixture"}))
+            """), encoding="utf-8")
+
+            attacker = root / "attacker"
+            fake_runner = attacker / "strategy" / "isolated_runner" / "run_isolated.py"
+            fake_runner.parent.mkdir(parents=True)
+            fake_runner.write_text(
+                "import pathlib; pathlib.Path('attacker-called').write_text('bad')\n", encoding="utf-8"
+            )
+            (attacker / "strategy.py").write_text("def decide(game_state, analysis): return {'x': 0, 'reason': 'ok'}\n")
+            (attacker / "strategy_helpers").mkdir()
+            (attacker / "tmp" / "state").mkdir(parents=True)
+
+            script = textwrap.dedent(f"""
+                log() {{ :; }}
+                source {trusted_strategy / 'sandbox.sh'}
+                cd {attacker}
+                _strategy_isolated_runner_available || exit 91
+                SOREN_ISOLATED_RUNNER_MODE=shadow
+                _strategy_isolated_runner_evaluate strategy.py strategy_helpers && exit 92
+                test -f {root / 'trusted' / 'tmp' / 'state' / 'isolated_runner_receipts'}/receipt_*.json
+            """)
+            result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertTrue(trusted_runner.with_name("trusted-called").is_file())
+            self.assertFalse((attacker / "attacker-called").exists())
+
     def test_probe_and_bash_function_agree(self):
         """run_isolated.py probe の終了コードと、sandbox.sh の
         _strategy_isolated_runner_available() の戻り値が一致すること
@@ -137,7 +190,11 @@ class TestValidateStrategyWithHelpersWiring(unittest.TestCase):
             for src in (REPO_ROOT / "strategy_helpers").glob("*.py"):
                 (helpers_dst / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
             candidate = Path(cwd) / "strategy.py"
-            candidate.write_text((REPO_ROOT / "strategy.py").read_text(encoding="utf-8"), encoding="utf-8")
+            candidate.write_text(
+                'def decide(game_state, analysis):\n'
+                '    return {"x": 0.0, "reason": "benign"}\n',
+                encoding="utf-8",
+            )
 
             result = _run_bash(
                 'validate_strategy_with_helpers "strategy.py" "strategy_helpers"\n'
