@@ -1579,7 +1579,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
-    
+
     # ----- evaluation axis 9.5: current type stack merge priority (NEW: same type stacking) -----
     # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
     # 危険域（max_y >= 2.0）では、盤面圧縮より即時併合優先を優先するため、盤面圧縮ボーナスを抑制
@@ -2177,7 +2177,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         # axis 9.6を無効化し、axis 8.8のペナルティを優先させることで即時併合機会の取りこぼしを削減
         # reactive_pairs<3の場合は、盤面圧縮準備としてaxis 9.6のstacking bonusを維持
         # 未活用情報：deadline_crossed, reactive_pairs>=3, merge_grade, stack_y
-        
+
         # ----- evaluation axis 9.6: reactive pairs stacking bonus - v363: stacking extension to reactive>=3 -----
         # v339/v340 failure: vertical_bonus = (stack_y + 1.0) * 200.0 rewards high positions,
         #   causing high-tower stacking when reactive pairs exist for other types but not current type
@@ -2833,7 +2833,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
 
             score -= 3728.6
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
+
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
@@ -3136,7 +3136,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", -3)
             stack_top_y = same_type_stack_top.get("y", -11)
-            
+
             if russia_phase and reactive_pair_count < 2:
                 # ロシアフェーズでreactive_pairs<3の場合、axis 9.5のボーナスを完全に削除
                 # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
