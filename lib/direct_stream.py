@@ -358,6 +358,10 @@ def build_ffmpeg_command(
         f"{config.display}+0,0",
         "-thread_queue_size",
         "2048",
+        # Both devices use the host clock. Keep Pulse's later capture start
+        # relative to X11 instead of independently shifting both inputs to zero.
+        "-isync",
+        "0",
         "-f",
         "pulse",
         "-sample_rate",

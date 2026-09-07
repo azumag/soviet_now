@@ -57,6 +57,17 @@ class DirectStreamTests(unittest.TestCase):
         self.assertNotIn("-a53cc", command)
         self.assertFalse(any("docichcc" in argument for argument in command))
 
+    def test_audio_input_preserves_video_clock_origin(self) -> None:
+        # Device probing opens Pulse after X11; independent zero origins make
+        # newer audio play alongside older video. Bind input 1 to input 0.
+        config = direct_stream.load_config(base_env())
+        command = direct_stream.build_ffmpeg_command(config, mode="live")
+        inputs = [i for i, value in enumerate(command) if value == "-i"]
+        audio_options = command[inputs[0] + 2:inputs[1]]
+        self.assertIn("-isync", audio_options)
+        self.assertEqual(audio_options[audio_options.index("-isync") + 1], "0")
+        self.assertNotIn("-isync", command[:inputs[0]])
+
     def test_live_command_keeps_stdin_available_for_operator_stop(self) -> None:
         """The FFmpeg argv must not disable stdin so stop can send q first."""
         config = direct_stream.load_config(base_env())
