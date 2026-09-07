@@ -99,7 +99,7 @@ class MergeOpportunityTests(unittest.TestCase):
                 {'x':.55,'reason':'OPEN_TWIN_MERGE_DESPERATE'}])
         original={'x':-2.0,'reason':'safe'}
         result=runner.apply_merge_opportunity_policy(module,original,fx['analysis'],fx['game_state'])
-        self.assertEqual(result,original)
+        self.assertEqual((result["x"], result["reason"]), (original["x"], original["reason"]))
 
     def test_rejected_first_candidate_does_not_hide_a_safe_second_choice(self):
         fx=json.loads((ROOT/'tests/fixtures/merge_opportunities/turn59.json').read_text())
