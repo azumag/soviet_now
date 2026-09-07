@@ -15,7 +15,13 @@ CLIP_POLL_MAX="${TWITCH_CLIP_POLL_MAX:-12}"
 CLIP_POLL_INTERVAL_SEC="${TWITCH_CLIP_POLL_INTERVAL_SEC:-3}"
 
 # --- 環境変数チェック ---
-TOKEN="${TWITCH_BOT_TOKEN:-}"
+# クリップ作成は TWITCH_CLIP_TOKEN を優先する (clips:edit 付きトークン用。
+# 未設定時は従来どおり TWITCH_BOT_TOKEN を使う)。
+# 長命ワーカーの継承envが古い場合に備え、.env ファイルからも直接読む。
+if [ -z "${TWITCH_CLIP_TOKEN:-}" ] && [ -f .env ]; then
+    TWITCH_CLIP_TOKEN=$(grep -a '^TWITCH_CLIP_TOKEN=' .env 2>/dev/null | tail -n 1 | cut -d= -f2-)
+fi
+TOKEN="${TWITCH_CLIP_TOKEN:-${TWITCH_BOT_TOKEN:-}}"
 CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
 if [ -z "$TOKEN" ] || [ -z "$CLIENT_ID" ] || [ -z "$BROADCASTER_ID" ]; then
@@ -30,12 +36,23 @@ _json_get() {
 }
 
 # --- クリップ作成 ---
-response=$(curl -sf -X POST \
+# HTTPステータスも記録する（offline と scope不足/認証失敗の切り分け用）
+clip_http_code=""
+response=$(curl -s -w '\n%{http_code}' -X POST \
     "https://api.twitch.tv/helix/clips?broadcaster_id=${BROADCASTER_ID}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Client-Id: ${CLIENT_ID}" 2>/dev/null)
-if [ $? -ne 0 ] || [ -z "$response" ]; then
-    _log "WARN: clip create failed (stream offline?)"
+clip_http_code=$(printf '%s' "$response" | tail -n 1)
+response=$(printf '%s' "$response" | sed '$d')
+case "$clip_http_code" in
+    2*) ;;
+    *)
+        _log "WARN: clip create failed (http=${clip_http_code:-conn-fail}; offline?/scope clips:edit?/token?)"
+        exit 0
+        ;;
+esac
+if [ -z "$response" ]; then
+    _log "WARN: clip create failed (http=${clip_http_code}, empty body)"
     exit 0
 fi
 

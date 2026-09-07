@@ -129,5 +129,53 @@ for f in comment_channel_intro_main.md comment_channel_intro_soren91.md; do
 	fi
 done
 
+# --- 8. ゲーム/切替の文脈（メイン画面のゲーム・ソレン文脈への切返し） ---
+# docich canonical が「いま画面に出ているゲーム」を持ち、Soren lifecycle が切替の進行を
+# 持つ。コメント返しはメイン画面のゲームに合わせ、ソレンゲームの話は画面が変わっても
+# ソレン文脈で答えること。ゲームが別ゲームのときは「メイン画面はソ連ゲーム本編」前提の
+# メリケンAI補足を出さない。
+SOREN_LIFECYCLE_DIR="$TMP/tmp/state/game_lifecycle"
+SOREN_GAME_STATE_FILE="$TMP/game_state.json"
+SOREN_GAME_COUNT_FILE="$TMP/game_count.txt"
+SOREN_IMPROVE_PAUSED_FILE="$TMP/tmp/state/improve_daemon.paused"
+DOCICH_GAME_SWITCH_CANONICAL_FILE="$TMP/canonical.json"
+mkdir -p "$SOREN_LIFECYCLE_DIR"
+export SOREN_LIFECYCLE_DIR SOREN_GAME_STATE_FILE SOREN_GAME_COUNT_FILE SOREN_IMPROVE_PAUSED_FILE DOCICH_GAME_SWITCH_CANONICAL_FILE
+
+printf '%s' '{"active":{"game":"robots","generation":16},"phase":"ready"}' >"$DOCICH_GAME_SWITCH_CANONICAL_FILE"
+printf '%s' '{"request_id":"u1","schema":1}' >"$SOREN_LIFECYCLE_DIR/request.json"
+printf '%s' '{"request_id":"u1","schema":1,"status":"stopped"}' >"$SOREN_LIFECYCLE_DIR/ack.json"
+printf '%s' '{"state":"STOP","score":2125}' >"$SOREN_GAME_STATE_FILE"
+printf '%s' '49049' >"$SOREN_GAME_COUNT_FILE"
+touch "$SOREN_IMPROVE_PAUSED_FILE"
+out=$(_build_comment_ops_context main)
+case "$out" in *"いまのメイン画面: robots"*) ok "メイン画面が robots と出る" ;; *) not_ok "メイン画面行: $out" ;; esac
+case "$out" in *"画面が違ってもソレンゲームの話として答える"*) ok "ソレン文脈への切返しルールが入る" ;; *) not_ok "切返しルール欠落: $out" ;; esac
+case "$out" in *"切替完了"*"停止済み"*) ok "lifecycle stopped を切替完了として出す" ;; *) not_ok "stopped 文言: $out" ;; esac
+case "$out" in *"最終試合score=2125"*) ok "ソレン最終試合のスコアが入る" ;; *) not_ok "最終試合スコア欠落: $out" ;; esac
+case "$out" in *"通算49049試合"*) ok "通算試合数が入る" ;; *) not_ok "通算試合数欠落: $out" ;; esac
+case "$out" in *"戦略改善: 手動休止中"*) ok "operator pause を優先して出す" ;; *) not_ok "手動休止文言: $out" ;; esac
+case "$out" in *"メイン画面は私(中華AI)のソレンゲーム本編"*) not_ok "別ゲーム表示中にソレン本編前提が出た" ;; *) ok "別ゲーム表示中はソレン本編前提を出さない" ;; esac
+
+# boundary 進行中
+printf '%s' '{"request_id":"u2","schema":1}' >"$SOREN_LIFECYCLE_DIR/request.json"
+printf '%s' '{"request_id":"u2","schema":1,"status":"boundary"}' >"$SOREN_LIFECYCLE_DIR/ack.json"
+rm -f "$SOREN_IMPROVE_PAUSED_FILE"
+out=$(_build_comment_ops_context main)
+case "$out" in *"試合境界を確認済み"*) ok "boundary を切替手続き中として出す" ;; *) not_ok "boundary 文言: $out" ;; esac
+
+# docich idle + lifecycle 無し = ソレンゲーム継続中(従来前提)
+rm -f "$SOREN_LIFECYCLE_DIR/request.json" "$SOREN_LIFECYCLE_DIR/ack.json" "$DOCICH_GAME_SWITCH_CANONICAL_FILE"
+out=$(_build_comment_ops_context main)
+case "$out" in *"メイン画面: ソレンゲーム(docich管理外で継続中)"*) ok "lifecycle 無しはソレン継続中" ;; *) not_ok "ソレン継続中文言: $out" ;; esac
+case "$out" in *"メリケンAIは待機中"*) ok "ソレン画面ではメリケンAI補足を出す" ;; *) not_ok "メリケン補足欠落: $out" ;; esac
+
+# 別ゲーム表示中でも文字数上限は効く
+printf '%s' '{"active":{"game":"robots","generation":16},"phase":"ready"}' >"$DOCICH_GAME_SWITCH_CANONICAL_FILE"
+printf '%s' '{"request_id":"u1","schema":1}' >"$SOREN_LIFECYCLE_DIR/request.json"
+printf '%s' '{"request_id":"u1","schema":1,"status":"stopped"}' >"$SOREN_LIFECYCLE_DIR/ack.json"
+out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=300 _build_comment_ops_context main)
+[ "${#out}" -le 320 ] && ok "別ゲーム表示中も文字数上限で切る" || not_ok "文字数上限が効いていない (${#out})"
+
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"
 exit "$FAIL"

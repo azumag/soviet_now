@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import unicodedata
 
 MAX_BYTES=16*1024*1024
 ALLOWED_INPUT_TYPES=set(range(1,12))
@@ -78,6 +79,39 @@ def build_evidence(root,names):
 def nonempty(value):
     return isinstance(value,str) and bool(value.strip()) and len(value)<=2000
 
+def prose_counter_errors(text, doc, evidence):
+    """Check reserved batch counter literals, not arbitrary natural language.
+
+    Quoted/negated/historical literals are deliberately not exempt: downstream
+    stages consume the whole document. Decode JSON strings to catch escapes.
+    """
+    strings=[text]
+    pending=[doc]
+    while pending:
+        value=pending.pop()
+        if isinstance(value,str):strings.append(value)
+        elif isinstance(value,dict):pending.extend(value.values())
+        elif isinstance(value,list):pending.extend(value)
+    errors=[]
+    pattern=re.compile(
+        r'(?<![\w])(?:soviet_counter|soviet|founded_games|ソ連建国数|建国件数)'
+        r'\s*[=:]\s*(unknown|null|[0-9]+)(?:\s*/\s*([0-9]+))?(?![\w])')
+    for string in strings:
+        normalized=unicodedata.normalize('NFKC',string).casefold()
+        normalized=re.sub(r'\[([^]\n]+)\](?:\([^\n)]*\)|\[[^]\n]*\])',r'\1',normalized)
+        normalized=re.sub(r'[`*~"\']','',normalized)
+        # Markdown emphasis at token edges; preserve identifier underscores.
+        normalized=re.sub(r'(?<!\w)_+(?=\w)|(?<=\w)_+(?!\w)','',normalized)
+        for match in pattern.finditer(normalized):
+            count,denominator=match.groups()
+            if count.isdecimal() and (evidence['founded_games'] is None or int(count)!=evidence['founded_games']):
+                errors.append('prose_founding_count_mismatch')
+            if count in ('unknown','null') and evidence['founded_games'] is not None:
+                errors.append('prose_founding_count_mismatch')
+            if denominator is not None and int(denominator)!=evidence['game_count']:
+                errors.append('prose_game_count_mismatch')
+    return errors
+
 def validate(text,evidence):
     errors=[];decision='reject';doc={}
     blocks=re.findall(r'^```analysis_contract\s*\n(.*?)\n```\s*$',text,re.M|re.S)
@@ -86,6 +120,7 @@ def validate(text,evidence):
         doc=decode(blocks[0])
         if not isinstance(doc,dict):raise ValueError('not object')
     except (ValueError,TypeError):return {'ok':False,'decision':'reject','errors':['invalid_contract_json']}
+    errors.extend(prose_counter_errors(text,doc,evidence))
     if type(doc.get('version')) is not int or doc['version']!=1:errors.append('invalid_version')
     if doc.get('decision') not in ('implement','hold'):errors.append('invalid_decision')
     if doc.get('evidence_sha256')!=hashlib.sha256(encode(evidence)).hexdigest():errors.append('evidence_digest_mismatch')
