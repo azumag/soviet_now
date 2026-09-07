@@ -33,19 +33,28 @@ for agent in "${_models[@]}"; do
 	prev=""
 	[ -f "$state_file" ] && prev=$(cat "$state_file" 2>/dev/null)
 
+	case "$model" in
+	opencode/muse-spark-1.[23]-contributor-free)
+		out=$(python3 lib/opencode_rate_limit_guard.py "$TIMEOUT_SEC" "$opencode_bin" run --print-logs --model "$model" \
+			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
+		;;
+	*)
 	out=$(timeout --kill-after=5s "$TIMEOUT_SEC" "$opencode_bin" run --model "$model" \
 		'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
+		;;
+	esac
 	rc=$?
-	if [ "$rc" -eq 0 ] && [ -n "$out" ] && ! printf '%s' "$out" | grep -Eiq 'error|unexpected server'; then
+	if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qx 'はい' && ! printf '%s' "$out" | grep -Eiq 'error|unexpected server'; then
 		printf 'ok %s\n' "$(date +%s)" >"$state_file"
-		if [ "$prev" != "ok" ] && [ -n "$prev" ]; then
+		if [ "${prev%% *}" != "ok" ] && [ -n "$prev" ]; then
 			log "[FreeProbe] ${agent} RECOVERED (prev=${prev})"
 			if [ -x ./overlay_notify.sh ]; then
-				./overlay_notify.sh radio "free枠復旧" "${agent} が応答を返しました。チェーン再追加を検討してください。" "info" >/dev/null 2>&1 || true
+				./overlay_notify.sh radio "free枠復旧" "${agent} が応答を返しました。通常チェーンは休止期限後に再試行します。" "info" >/dev/null 2>&1 || true
 			fi
 		fi
 	else
 		reason="rc=$rc"
+		[ "$rc" -eq 79 ] && reason="rate_limited"
 		[ "$rc" -eq 124 ] && reason="timeout ${TIMEOUT_SEC}s"
 		printf '%s %s\n' "$(date +%s)" "$reason" >"$state_file"
 		log "[FreeProbe] ${agent} down (${reason})"
