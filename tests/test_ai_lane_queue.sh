@@ -300,10 +300,28 @@ else
 fi
 
 # --- 5. 生成キュー待ち上限 ---
+# 放送系はcall-site overrideが無くても既定のradio専用上限を持つ。
+check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "RADIO:test")" = "300" ]' 'RADIO系はradio専用キュー待ち上限を使う'
+check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "COMMENT:test")" = "0" ]' 'COMMENT系はradio専用上限の影響を受けない'
+check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=20 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "NEWS:test")" = "20" ]' 'call-siteの短い待ち上限はradio既定値より優先する'
+check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=0 _ai_generation_queue_max_wait_sec "RADIO:test")" = "0" ]' 'radio専用上限は0で明示的に無効化できる'
 rm -f "$IMPROVE_STATE_FILE"
 rm -rf "$LOCK_BASE/radio"
 mkdir -p "$LOCK_BASE/radio"
 printf 'token=busy-holder\npid=%s\nlabel=RADIO:busy-holder\n' "$$" >"$LOCK_BASE/radio/owner"
+rm -f "$TMP/radio_default_callback_ran"
+radio_default_out=$(
+	(
+		export AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=1 AI_GENERATION_QUEUE_WAIT_SEC=1
+		_ai_generation_queue_run "RADIO:timed-corner:remote:codex:modelX" touch "$TMP/radio_default_callback_ran"
+	) 2>&1
+)
+radio_default_rc=$?
+check '[ "$radio_default_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' '放送系はcall-site override無しでもradio専用上限で打ち切る'
+check '[ ! -e "$TMP/radio_default_callback_ran" ]' 'radio専用上限の打ち切り時はprovider本体を呼ばない'
+check 'printf %s "$radio_default_out" | grep -q "generation slot wait exceeded 1s"' 'radio専用待ち上限がログに残る'
+check '[ -d "$LOCK_BASE/radio" ] && grep -q "token=busy-holder" "$LOCK_BASE/radio/owner"' 'radio専用上限の打ち切りで既存ownerを破壊しない'
+
 rm -f "$TMP/queue_callback_ran"
 queue_out=$(
 	(
