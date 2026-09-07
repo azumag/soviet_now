@@ -485,8 +485,12 @@ _game_lifecycle_pause_watchdog() {
 	if [ -n "$pid" ]; then
 		_game_lifecycle_is_watchdog_pid "$pid" || return 1
 		kill -TERM "$pid" 2>/dev/null || true
-		while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$wait_sec" ]; do sleep 1; waited=$((waited + 1)); done
-		kill -0 "$pid" 2>/dev/null && return 1
+		# A supervised shell can remain briefly as a zombie: kill -0 still
+		# succeeds for it even though it has released every game resource.  Test
+		# the validated command identity on every poll instead, which also stops
+		# waiting if the PID is reused by an unrelated process.
+		while _game_lifecycle_is_watchdog_pid "$pid" && [ "$waited" -lt "$wait_sec" ]; do sleep 1; waited=$((waited + 1)); done
+		_game_lifecycle_is_watchdog_pid "$pid" && return 1
 	fi
 }
 
