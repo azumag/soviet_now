@@ -90,6 +90,7 @@ class TestAvailabilityRealDetection(unittest.TestCase):
         """改善用の最小sandboxへcwdが移ってもhost側runnerを見失わないこと。"""
         source = (REPO_ROOT / "strategy/sandbox.sh").read_text(encoding="utf-8")
         self.assertIn("readonly ISOLATED_RUNNER_ENTRYPOINT", source)
+        self.assertIn("readonly ISOLATED_RUNNER_RECEIPT_DIR", source)
         start = source.index("_strategy_isolated_runner_available()")
         end = source.index("\n}\n", start)
         body = source[start:end]
@@ -102,6 +103,7 @@ class TestAvailabilityRealDetection(unittest.TestCase):
             trusted_strategy = root / "trusted" / "strategy"
             trusted_runner = trusted_strategy / "isolated_runner" / "run_isolated.py"
             trusted_runner.parent.mkdir(parents=True)
+            (root / "trusted" / "tmp" / "state").mkdir(parents=True)
             (trusted_strategy / "sandbox.sh").write_text(
                 (REPO_ROOT / "strategy/sandbox.sh").read_text(encoding="utf-8"), encoding="utf-8"
             )
@@ -130,7 +132,7 @@ class TestAvailabilityRealDetection(unittest.TestCase):
                 _strategy_isolated_runner_available || exit 91
                 SOREN_ISOLATED_RUNNER_MODE=shadow
                 _strategy_isolated_runner_evaluate strategy.py strategy_helpers && exit 92
-                test -f tmp/state/isolated_runner_receipts/receipt_*.json
+                test -f {root / 'trusted' / 'tmp' / 'state' / 'isolated_runner_receipts'}/receipt_*.json
             """)
             result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, msg=result.stderr)

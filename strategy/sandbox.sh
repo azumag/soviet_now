@@ -4,6 +4,8 @@
 # コピーせず、sourceした信頼済みライブラリ自身の場所へ固定する。
 ISOLATED_RUNNER_ENTRYPOINT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/isolated_runner/run_isolated.py"
 readonly ISOLATED_RUNNER_ENTRYPOINT
+ISOLATED_RUNNER_RECEIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tmp/state/isolated_runner_receipts"
+readonly ISOLATED_RUNNER_RECEIPT_DIR
 
 validate_strategy() {
 	# 引数でファイルパスを指定可能 (デフォルト: strategy.py)
@@ -716,7 +718,7 @@ _strategy_isolated_runner_evaluate() {
 	local target_file="$1"
 	local helpers_dir="${2:-strategy_helpers}"
 	local mode="${SOREN_ISOLATED_RUNNER_MODE:-shadow}"
-	local receipt_dir="${TMP_STATE_DIR:-tmp/state}/isolated_runner_receipts"
+	local receipt_dir="$ISOLATED_RUNNER_RECEIPT_DIR"
 	mkdir -p "$receipt_dir" 2>/dev/null || true
 	local receipt_out="$receipt_dir/receipt_$(date +%Y%m%d_%H%M%S)_$$.json"
 
