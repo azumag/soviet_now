@@ -673,8 +673,8 @@ RADIO_MAIN_FALLBACK=test
 _radio_set_state() { :; }
 _radio_clear_state() { :; }
 log() { :; }
-_run_claude_radio() { printf '%s' "$TEST_AI_TEXT"; }
-_run_opencode_radio() { return 1; }
+ai_generate_list() { printf '%s' "$TEST_AI_TEXT"; }
+_ai_guard_model_output() { cat; }
 _sanitize_onair_text() { cat; }
 _normalize_radio_tone() { cat; }
 _is_valid_radio_talk() { return 0; }

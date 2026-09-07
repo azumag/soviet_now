@@ -260,6 +260,11 @@ play_one_game() {
 		LAST_SOVIET="false"
 		return 0
 	fi
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		log "[SOVIET-HOLD] play_one_gameをスキップ（建国盤面の表示保持中）"
+		LAST_SOVIET="false"
+		return 0
+	fi
 
 	# ブリッジ(soviet_local.mjs)生存監視＋自動復旧。play_one_game は soren_loop の
 	# 全 pause continue (改善中/Meriken/soren91/stop) の後でのみ呼ばれるため
@@ -369,9 +374,24 @@ PY
 
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
-	STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
-		STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
-		python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	# A/B の腕ごと環境変数 (解析器モード等)。AB_EXTRA_ENV が空なら従来と同一。
+	# A/B が動いていない試合では必ず捨てる。ループのプロセスは長命で AB_EXTRA_ENV は
+	# export 済みのため、実験終了後もこれが残り .env の設定を上書きし続ける。
+	# (2026-09-01 に実発生: v763 採用直後、A 腕の V763_DIVERSITY_W=0 が残り採用した軸が
+	#  一切発火しなかった。eloop.sh は毎試合 source し直されるのでここが最も早く効く。)
+	if [ -z "${SOREN_AB_ALT_STRATEGY:-}" ]; then
+		AB_EXTRA_ENV=""
+	fi
+	if [ -n "${AB_EXTRA_ENV:-}" ]; then
+		env $AB_EXTRA_ENV \
+			STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
+			STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
+			python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	else
+		STRATEGY_RUNTIME_FILE="$strategy_runtime_file" \
+			STRATEGY_RUNTIME_ROOT="$strategy_runtime_root" \
+			python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
+	fi
 	local py_pid=$!
 	local runner_active_file="${MAIN_STRATEGY_RUNNER_ACTIVE_FILE:-${TMP_STATE_DIR:-tmp/state}/main_strategy_runner_active.json}"
 	python3 - "$runner_active_file" "$py_pid" "$game_num_display" <<'PY' 2>/dev/null || true
@@ -575,6 +595,23 @@ handle_soviet_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
 	log "!!! SOVIET CREATED !!!"
+
+	# 建国盤面の表示保持タイマーを刻む。凍結盤面を毎周回 re-detect する間の重複呼び出しでは
+	# 履歴・クリップ・祝賀トークを再発行しない (初回だけ記録・生成する)。
+	local _hold_already=0
+	local _hold_file="${TMP_STATE_DIR:-tmp/state}/.soviet_hold_since"
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		_hold_already=1
+	fi
+	if command -v _soviet_hold_file >/dev/null 2>&1; then
+		_hold_file=$(_soviet_hold_file)
+	fi
+	date +%s >"$_hold_file" 2>/dev/null || true
+	if [ "$_hold_already" -eq 1 ]; then
+		log "[SOVIET-HOLD] 建国祝賀は発行済みのため重複スキップ (game #${game_num})"
+		rm -f "$TMP_MARKERS_DIR/.soviet_created"
+		return 0
+	fi
 	_append_celebration_history "soviet" "$score" "$turns" "$game_num"
 
 	# 祝賀読み上げ/クリップの有効・無効 (ロシア祝賀の RUSSIA_CELEBRATION_ENABLED と同パターン)。
@@ -711,7 +748,7 @@ import json, sys
 d = json.load(sys.stdin)
 types = d.get('final_types', [])
 soviet = d.get('soviet_created', False)
-TB = {1:0,2:0,3:1,4:3,5:7,6:15,7:32,8:67,9:141,10:296,11:622,12:1306,13:2743,14:5760,15:12096}
+TB = {1:0,2:0,3:1,4:3,5:7,6:15,7:32,8:67,9:141,10:296,11:622,12:1306,13:2743,14:5760,15:12096,16:25402}
 bonus = sum(TB.get(t, 0) for t in types)
 if soviet: bonus += 800
 print(d.get('score', 0) + bonus)
@@ -734,7 +771,9 @@ print(d.get('score', 0) + bonus)
 	export LAST_TURNS="$LAST_TURNS"
 		record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$_soviet_for_acc" "$_russia_for_acc"
 		if [ -n "${AB_ARM:-}" ] && command -v _ab_record_game >/dev/null 2>&1; then
-			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE"
+			# issue #132 P0-1: 建国 (makeSorenCount 由来) とロシア到達を A/B の永続記録にも残す。
+			# game_history は剪定されるため、実験の ledger 側に持たないと後から辿れない。
+			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE" "$_soviet_for_acc" "$_russia_for_acc"
 		fi
 		if command -v _ab_gate_after_game >/dev/null 2>&1; then
 			_ab_gate_after_game || true
@@ -979,6 +1018,39 @@ PY
 	# 毎試合の git commit は廃止: 改善終了時 (eloop_improve.sh) と粛清時 (regression.sh) の
 	# 区切りでまとめてコミットする。ここでは pending 通知の処理のみ。
 	_post_pending_phyrogenetic_tree_link_to_chat_if_any
+
+		# 交換要求がある場合は、この試合の bookkeeping が終わった境界で
+		# 次ゲームだけを保留する。資源停止は coordinator の writer-side
+		# quiesce 後に明示 stop control が届いたときだけ実行する。
+		# eloop.sh は soren_loop から毎試合 source されるため、長命 loop
+		# shell へ hook を後付けしても次の境界で反映される。
+		if command -v game_lifecycle_after_game >/dev/null 2>&1; then
+		_game_lifecycle_rc=0
+		game_lifecycle_after_game || _game_lifecycle_rc=$?
+		case "$_game_lifecycle_rc" in
+		0)
+			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] 旧ゲーム停止完了 → 次ゲームを開始せず loop を終了"
+			exit 0
+			;;
+		3)
+			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] 試合境界をpark → 明示stop control待ちで loop を終了"
+			exit 75
+			;;
+		2)
+			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] handover を保留 → 次ゲームを開始せず loop を終了 (要復旧)"
+			exit 75
+			;;
+		esac
+	fi
 }
 
 #=== 次の試合準備 ===
@@ -986,6 +1058,38 @@ prepare_next_game() {
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] prepare_next_gameをスキップ（retryなし）"
 		return 0
+	fi
+	if command -v _soviet_hold_active >/dev/null 2>&1 && _soviet_hold_active; then
+		log "[SOVIET-HOLD] prepare_next_gameをスキップ（建国盤面の表示保持中・retryなし）"
+		return 0
+	fi
+
+	# Controller crash recovery: if the previous boundary was acknowledged but
+	# the game-only resource stop was not finalized, finish that exact request
+	# before any retry can start a new game.
+	if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
+		_game_lifecycle_resume_rc=0
+		game_lifecycle_resume_pending || _game_lifecycle_resume_rc=$?
+		case "$_game_lifecycle_resume_rc" in
+		0)
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] pending handover recovered → retryを送らず loop を終了"
+			exit 0
+			;;
+		3)
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] pending boundary park を維持 → retryを送らず loop を終了"
+			exit 75
+			;;
+		2)
+			STOP_REQUESTED=1
+			trap - EXIT
+			log "[GAME-LIFECYCLE] pending handover recovery を保留 → loop を終了"
+			exit 75
+			;;
+		 esac
 	fi
 
 	# 試合時スナップショットのクリーンアップ

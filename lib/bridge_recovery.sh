@@ -16,6 +16,11 @@ _BR_GAME_STATE="${_BR_GAME_STATE:-game_state.json}"
 _BR_PORT="${SOVIET_BRIDGE_PORT:-8080}"
 _BR_CDP_PORT="${SOREN_CDP_PORT:-9222}"
 _BR_PROFILE="${SOREN_LOCAL_USER_DATA_DIR:-$_BR_ROOT/tmp/soviet_local_chromium_profile}"
+# The tmux session hosting the bridge. Isolated rehearsals (isolated game
+# state dir, isolated ports) must override this, otherwise a rehearsal-side
+# bridge recovery kills the production soren_bridge session by name while
+# every other recovery target (port/CDP/profile) is already env-scoped.
+_BR_TMUX_SESSION="${SOREN_BRIDGE_TMUX_SESSION:-soren_bridge}"
 _BR_STALE_SEC="${BRIDGE_STALE_SEC:-240}"
 _BR_BASE_GAP="${BRIDGE_RELAUNCH_BASE_GAP:-90}"
 _BR_MAX_GAP="${BRIDGE_RELAUNCH_MAX_GAP:-600}"
@@ -271,7 +276,7 @@ _br_relaunch() {
 	# Stop the session before the port-free wait; otherwise the old pane keeps
 	# 8080 bound and the relaunch path fails before it reaches the tmux reset below.
 	if command -v tmux >/dev/null 2>&1; then
-		tmux kill-session -t soren_bridge 2>/dev/null || true
+		tmux kill-session -t "$_BR_TMUX_SESSION" 2>/dev/null || true
 	fi
 	# SERVE/CDP 両ポート解放待ち最大15s
 	local w=0
@@ -316,8 +321,8 @@ _br_relaunch() {
 		ls -1t "$_BR_ROOT"/tmp/debug/soviet_local.log.* 2>/dev/null | tail -n +31 | xargs -r rm -f 2>/dev/null || true
 	fi
 	if command -v tmux >/dev/null 2>&1; then
-		tmux kill-session -t soren_bridge 2>/dev/null || true
-		tmux new-session -d -s soren_bridge "cd '$_BR_ROOT' && exec node soviet_local.mjs > '$_BR_GAME_LOG' 2>&1"
+		tmux kill-session -t "$_BR_TMUX_SESSION" 2>/dev/null || true
+		tmux new-session -d -s "$_BR_TMUX_SESSION" "cd '$_BR_ROOT' && exec node soviet_local.mjs > '$_BR_GAME_LOG' 2>&1"
 	else
 		( cd "$_BR_ROOT" && nohup node soviet_local.mjs > "$_BR_GAME_LOG" 2>&1 < /dev/null & )
 	fi

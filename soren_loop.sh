@@ -817,6 +817,34 @@ fi
 # 前回中断した改善プロセスの状態復元
 check_and_harvest_improvement
 
+# Controller crash recovery must run before the historical GAMEOVER startup
+# retry.  A durable boundary/stop acknowledgement belongs to the old game and
+# must never be turned into a fresh game by this startup path.
+if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
+	_game_lifecycle_startup_rc=0
+	game_lifecycle_resume_pending || _game_lifecycle_startup_rc=$?
+	case "$_game_lifecycle_startup_rc" in
+	0)
+		STOP_REQUESTED=1
+		trap - EXIT
+		log "[GAME-LIFECYCLE] startup pending handover recovered → retryを送らず loop を終了"
+		exit 0
+		;;
+	3)
+		STOP_REQUESTED=1
+		trap - EXIT
+		log "[GAME-LIFECYCLE] startup boundary park を維持 → 次ゲームを開始せず loop を終了"
+		exit 75
+		;;
+	2)
+		STOP_REQUESTED=1
+		trap - EXIT
+		log "[GAME-LIFECYCLE] startup pending handover recovery を保留 → loop を終了"
+		exit 75
+		;;
+	esac
+fi
+
 # MOVE状態待ち
 # 起動直後に前回試合の STOP/GAMEOVER が残っている場合は、ただ MOVE を待つと
 # retry が送られず停止したように見えるため、明示的に次ゲームへ進める。
@@ -854,6 +882,10 @@ while true; do
 
 	# .env を毎試合再読込（再起動なしで設定変更を反映）
 	[ -f .env ] && set -a && . ./.env && set +a
+
+	# 直前の A/B の腕別 env を毎試合クリアする（詳細は eloop.sh の同名の注記）。
+	AB_EXTRA_ENV=""
+	export AB_EXTRA_ENV
 
 	# eloop_lib.sh は全モジュールをsourceするshim
 	if ! source ./eloop_lib.sh 2>/dev/null; then

@@ -1294,6 +1294,9 @@ ai_generate() {
 		log "[${label}] primary ($primary) failed → fallback ($fallback)" >&2
 		output=$(_ai_dispatch "$label" "$fallback" "$prompt_file" "$timeout_override")
 		rc=$?
+		if [ "$rc" -eq "$AI_QUEUE_GIVEUP_RC" ]; then
+			return "$AI_QUEUE_GIVEUP_RC"
+		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && { [ -z "$validator" ] || "$validator" "$output"; }; then
 			AI_GENERATE_LAST_AGENT="$fallback"
 			printf '%s' "$output"

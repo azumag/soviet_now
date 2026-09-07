@@ -350,6 +350,23 @@ queue_list_rc=$?
 check '[ "$queue_list_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' 'ai_generate_list もqueue_giveupを即時伝播する'
 check '[ ! -e "$AI_BACKOFF_DIR/codex_queue-a" ] && [ ! -e "$AI_BACKOFF_DIR/codex_queue-b" ]' 'キュー打ち切りで候補モデルにbackoffを設定しない'
 check '[ ! -e "$AI_FAIL_STREAK_DIR/codex_queue-a" ] && [ ! -e "$AI_FAIL_STREAK_DIR/codex_queue-b" ]' 'キュー打ち切りで候補モデルの失敗streakを増やさない'
+
+# primary が通常失敗した後、fallback 側で queue_giveup した場合も専用RCを保持する。
+# ここを generic rc=1 に潰すと caller が provider failure と queue congestion を区別できない。
+queue_fallback_rc=$(
+	(
+		_ai_dispatch() {
+			if [ "$2" = "codex:primary-fail" ]; then
+				return 1
+			fi
+			return "$AI_QUEUE_GIVEUP_RC"
+		}
+		ai_generate "NEWS:spam_check" "$WORK/queue_prompt.txt" "codex:primary-fail" "codex:fallback-queue" >/dev/null 2>&1
+		printf '%s' "$?"
+	)
+)
+check '[ "$queue_fallback_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' 'fallback側のqueue_giveupもai_generateが専用コードで伝播する'
+
 _ai_generation_queue_leave busy-holder "RADIO:busy-holder"
 
 # --- 6. キュー無効化で全部バイパス ---

@@ -87,8 +87,14 @@ _ab_start_from_bundle() {
 	[ -f "$AB_STATE_FILE" ] && { log "[AB] 既に A/B 状態がある ($AB_STATE_FILE)"; return 1; }
 	a=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 	b=$(_ab_hash "$src")
-	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ]; then
+	# 同一 hash は原則禁止（差が無い A/B）。ただし腕別 env が異なる場合だけは
+	# 「同じ戦略・解析器モードだけ違う」実験として許可する。
+	if [ -z "$a" ] || [ -z "$b" ]; then
 		log "[AB] hash 不正 (a=${a:0:12} b=${b:0:12})"
+		return 1
+	fi
+	if [ "$a" = "$b" ] && [ "${AB_A_ENV:-}" = "${AB_B_ENV:-}" ]; then
+		log "[AB] hash 不正 (a=${a:0:12} b=${b:0:12}, 腕別 env も同一)"
 		return 1
 	fi
 	[ -d "$dir/strategy_helpers" ] && helpers_src="$dir/strategy_helpers"
@@ -112,10 +118,16 @@ _ab_start_from_bundle() {
 	fi
 	[ -f "${TMP_STATE_DIR:-tmp/state}/improve_daemon.paused" ] && pause_pre=1
 	reg_before=$(_ab_env_value REGRESSION_DISABLED)
+	# issue #132 Phase 2: decide hash だけでは helper/解析器/runner/モードの違いを捉えられない。
+	# 腕ごとの policy bundle hash を state に残し、実験の再現性を担保する。
+	local bundle_a bundle_b
+	bundle_a=$(python3 tools/policy_bundle.py --strategy "${STRATEGY_FILE:-strategy.py}" 2>/dev/null || echo "")
+	bundle_b=$(python3 tools/policy_bundle.py --strategy "$src" 2>/dev/null || echo "")
 	rm -f "$AB_ABORT_FILE"
 	: >"$AB_GAMES_FILE"
-	python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" <<'PY' || return 1
-import json, sys, time
+	AB_A_BUNDLE="$bundle_a" AB_B_BUNDLE="$bundle_b" \
+		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" <<'PY' || return 1
+import json, os, sys, time
 def _count(p):
     try:
         return int(open(p).read().strip())
@@ -123,13 +135,17 @@ def _count(p):
         return None
 st = {"a_hash": sys.argv[2], "b_hash": sys.argv[3], "pattern": sys.argv[4], "alt_source": sys.argv[5],
       "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "games_recorded": 0, "game_num_start": _count(sys.argv[6]),
-      "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9])}
+      "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9]),
+      # 腕ごとの追加環境変数 ("KEY=VALUE KEY2=VALUE2"、既定は空)。解析器モード等の A/B に使う。
+      "a_env": os.environ.get("AB_A_ENV", ""), "b_env": os.environ.get("AB_B_ENV", ""),
+      # 着手を決める一式 (戦略 + 到達 helper + 解析器 + runner + モード) の hash
+      "a_policy_bundle": os.environ.get("AB_A_BUNDLE", ""), "b_policy_bundle": os.environ.get("AB_B_BUNDLE", "")}
 json.dump(st, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 PY
 	./set_toggle.sh REGRESSION_DISABLED=1 >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_ALT_STRATEGY=$AB_ALT_FILE" >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_PATTERN=$pattern" >/dev/null 2>&1 || { log "[AB] set_toggle 失敗"; return 1; }
-	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none}"
+	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none} bundle A=${bundle_a:-?} B=${bundle_b:-?}"
 	return 0
 }
 
