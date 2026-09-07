@@ -143,6 +143,28 @@ PY
 	[ "$probe" = "active" ]
 }
 
+_ai_generation_queue_max_wait_sec() {
+	local label="${1:-AI}" max_wait_sec="${AI_GENERATION_QUEUE_MAX_WAIT_SEC:-0}"
+	local radio_max_wait_sec="${AI_RADIO_QUEUE_MAX_WAIT_SEC:-300}"
+	case "$max_wait_sec" in
+	'' | *[!0-9]*) max_wait_sec=0 ;;
+	esac
+	# Call-site overrides (NEWS spam checkなど) remain authoritative.
+	if [ "$max_wait_sec" -gt 0 ]; then
+		printf '%s\n' "$max_wait_sec"
+		return 0
+	fi
+	case "$label" in
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		case "$radio_max_wait_sec" in
+		'' | *[!0-9]*) radio_max_wait_sec=300 ;;
+		esac
+		printf '%s\n' "$radio_max_wait_sec"
+		;;
+	*) printf '0\n' ;;
+	esac
+}
+
 _ai_generation_queue_lock_dir() {
 	local label="${1:-AI}" base scope
 	if [ -n "${AI_GENERATION_QUEUE_LOCK_DIR:-}" ]; then
@@ -227,7 +249,8 @@ _ai_generation_queue_enter() {
 	local lock_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
 	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
-	local max_wait_sec="${AI_GENERATION_QUEUE_MAX_WAIT_SEC:-0}"
+	local max_wait_sec
+	max_wait_sec=$(_ai_generation_queue_max_wait_sec "$label")
 	local waited=0 token now mt age owner_summary="" owner_pid="" reap_reason=""
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 
@@ -239,10 +262,6 @@ _ai_generation_queue_enter() {
 	'' | *[!0-9]*) stale_sec=900 ;;
 	esac
 	[ "$stale_sec" -lt 60 ] && stale_sec=60
-	case "$max_wait_sec" in
-	'' | *[!0-9]*) max_wait_sec=0 ;;
-	esac
-
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
 

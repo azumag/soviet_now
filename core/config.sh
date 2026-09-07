@@ -94,6 +94,10 @@ RADIO_OPENCODE_DEFER_DURING_IMPROVE="${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}"
 # 読み上げ/TTSはAI呼出を経ないため影響を受けない。
 AI_RADIO_LANE_LOCK="${AI_RADIO_LANE_LOCK:-1}"
 AI_COMMENT_LANE_LOCK="${AI_COMMENT_LANE_LOCK:-1}"
+# 放送系の共有AIレーン待ちは時刻ベースの次tick (既定5分) までで打ち切る。
+# それ以上古いコーナーを無期限に溜めると、単一radioレーンの背後へbackground
+# process treeが蓄積する。0で明示的に無期限待機へ戻せる。
+AI_RADIO_QUEUE_MAX_WAIT_SEC="${AI_RADIO_QUEUE_MAX_WAIT_SEC:-300}"
 AI_RADIO_IMPROVE_GATE="${AI_RADIO_IMPROVE_GATE:-1}"
 # 改善中に放送系生成が待機する上限秒。超過したらその生成だけ諦める
 # (改善サイクル実測 439-828秒のため余裕を見て1200秒)。
