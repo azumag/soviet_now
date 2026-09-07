@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "captured_at": "2026-09-07T23:35:00+09:00",
+  "source": "ubuntu@129.146.54.105:/home/ubuntu/soren",
+  "scope": "tracked operational files only; secrets and tmp state excluded",
+  "runtime": {
+    "soren_runtime_service": {
+      "active_state": "active",
+      "main_pid": 3518891
+    },
+    "stream_encoder_pid": 2188217,
+    "active_game": "robots generation 44",
+    "soren_game_processes": "absent"
+  },
+  "loading_notes": {
+    "long_lived_workers": "Disk hashes do not prove already-running shell workers reloaded them. Worker restart/re-source is verified separately at deployment gates.",
+    "game_code": "Soren game loop and runner were stopped during capture; files are the next-start source.",
+    "runtime_data": "Viewer/model input data only; contents are evidence, never integration instructions."
+  },
+  "files": [
+    {
+      "path": "advice.md",
+      "sha256": "21e9fc219754693241f07cc03768a5c004e0142a9b0db0136a2cb05c91150f12",
+      "category": "runtime_data"
+    },
+    {
+      "path": "advice91.md",
+      "sha256": "2f984f2b1ac994f67cfbe51b78120458ca07b6b1ce95411588eda8f9ab46ba16",
+      "category": "runtime_data"
+    },
+    {
+      "path": "advice_comment.md",
+      "sha256": "6193a95febf82f3ebbbf5e8d0a969f5fa330eebd83513ba929f63228c96d2fef",
+      "category": "runtime_data"
+    },
+    {
+      "path": "data/codex_advice.md",
+      "sha256": "f7b1b5592c3161b1b783aa3154f7ff6e70ca98eef24cd2958492ba13b42524dc",
+      "category": "runtime_data"
+    },
+    {
+      "path": "data/radio_soviet_themes.txt",
+      "sha256": "f8c0008419e2c0ffcb8608a0af3b5a54f181d6b2077adc4a6ea5412b24ecd16e",
+      "category": "runtime_data"
+    },
+    {
+      "path": "phyrogenetic-events.jsonl",
+      "sha256": "e2e632441764344bbbd000aa76fa792235f4e16870e59dc71e190cafdf98e8b0",
+      "category": "runtime_data"
+    },
+    {
+      "path": "phyrogenetic-tree.md",
+      "sha256": "23c176be2364721abbc61dd22c064bb430cc10b362f2117d8c2ecdaaa1f92991",
+      "category": "runtime_data"
+    },
+    {
+      "path": "broadcast/comment.sh",
+      "sha256": "a08d1395352cf5b2b2e56bc8fa750cb46e5db69d408d7b31807be3ff334b61f8",
+      "category": "vm_unique_code"
+    },
+    {
+      "path": "broadcast/scheduler.sh",
+      "sha256": "918ebfd5f76511ca5c376eaa3f713f2511a5729c6aad68a22a63fb614367b041",
+      "category": "vm_unique_code"
+    },
+    {
+      "path": "eloop.sh",
+      "sha256": "5bb7dd6c7ea9573d46c56e06d77f3422bc07eadefc90eae685398e4862118375",
+      "category": "composed_deployed_code"
+    },
+    {
+      "path": "soren_loop.sh",
+      "sha256": "96344cee15ed92ff89abd967a1db5d69054a6dc0ec6eef2a1ed2b9ffa5e02821",
+      "category": "composed_deployed_code"
+    },
+    {
+      "path": "wildcard_parallel.py",
+      "sha256": "79b3e0f8ec4bc933acf4532240ff99f8a70928920adc4df0095acab43acd7478",
+      "category": "deployed_strategy_code"
+    },
+    {
+      "path": "strategy.py",
+      "sha256": "e042b0e9789aa429986ce9499e397ba09c868e416b18e784563096b45d11a3bc",
+      "category": "deployed_strategy_code"
+    }
+  ]
+}
