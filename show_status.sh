@@ -734,7 +734,12 @@ _latest_drop_signature() {
 		return
 	}
 	local stat_sig last_turn
-	stat_sig=$(stat -f '%m:%z' "$LATEST_DROP_LOG" 2>/dev/null || printf 'unknown')
+	# GNU stat -f reports filesystem capacity, not file mtime/size. Its
+	# partial stdout changes with unrelated writes and triggers false redraws.
+	case "$OSTYPE" in
+	linux*) stat_sig=$(stat -c '%Y:%s' "$LATEST_DROP_LOG" 2>/dev/null) || stat_sig=unknown ;;
+	*) stat_sig=$(stat -f '%m:%z' "$LATEST_DROP_LOG" 2>/dev/null) || stat_sig=unknown ;;
+	esac
 	last_turn=$(tail -n 1 "$LATEST_DROP_LOG" 2>/dev/null | sed -nE 's/.*"turn"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')
 	printf '%s:%s' "$stat_sig" "$last_turn"
 }
