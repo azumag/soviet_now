@@ -108,7 +108,7 @@ class StartAllStreamBackendTests(unittest.TestCase):
 
     def test_bridge_watchdog_never_adopts_a_pgrep_fallback(self) -> None:
         source = START_ALL.read_text(encoding="utf-8")
-        watchdog_guard = "soviet_watchdog|status_overlay_watch|show_status_overlay_watch)"
+        watchdog_guard = "soviet_watchdog|status_overlay_watch|show_status_overlay_watch|soren_overlay_watch)"
         self.assertIn(watchdog_guard, source)
         self.assertLess(source.index(watchdog_guard), source.index('pid=$(pgrep -f "$pattern"'))
 
