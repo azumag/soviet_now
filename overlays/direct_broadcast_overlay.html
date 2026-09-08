@@ -100,6 +100,9 @@ html[data-soren-region="bottom"] #bottom-rail { top: 0; }
   letter-spacing: 0;
   font-size: 9px;
 }
+#prediction-round { display: none; margin-top: 6px; padding: 5px; height: 58px; border: 1px solid #fb7185; color: #ffe4e6; font-size: 10px; line-height: 15px; }
+html[data-prediction-active="1"] #prediction-round { display: block; }
+html[data-prediction-active="1"] #feed { height: 578px; }
 #feed {
   margin: 6px 0 0;
   width: 306px;
@@ -417,6 +420,7 @@ html[data-soren-neutral="1"] .toast {
   <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
   <aside id="broadcast-sidebar">
     <div class="feed-head"><span class="live-dot"></span><span>SOREN DATA</span><span id="feed-label">G + STATUS</span><span id="feed-age">--</span></div>
+    <section id="prediction-round" aria-label="チャネルポイント予想" aria-live="polite"></section>
     <div id="feed">
       <section class="feed-panel panel-g">
         <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">SHOW-STATUS-G</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
@@ -798,7 +802,17 @@ html[data-soren-neutral="1"] .toast {
       layout: { game: [0, 90, 960, 540], sidebar: [960, 0, 320, 720], rails: [90, 90] },
     };
   }
+  function renderPrediction() {
+    const lines = String(state?.feeds?.showStatus?.text || '').split('\n').map(line => line.trim());
+    const progress = lines.find(line => line.startsWith('予想対象：'));
+    const current = lines.find(line => /^#\d+：今回の予想対象/.test(line));
+    document.documentElement.dataset.predictionActive = progress ? '1' : '0';
+    const panel = document.getElementById('prediction-round');
+    const text = progress ? progress.replace('｜終了', '\n終了') + (current ? '\n' + current : '') : '';
+    if (panel.textContent !== text) { panel.textContent = text; panel.style.whiteSpace = 'pre-line'; }
+  }
   function render() {
+    renderPrediction();
     if (!state) return;
     renderFeed();
     renderTopRail();

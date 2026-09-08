@@ -240,6 +240,9 @@ class FakeClassList {
     this.tokens = new Set();
   }
 
+  add(token) { this.tokens.add(token); }
+  remove(token) { this.tokens.delete(token); }
+
   toggle(token, force) {
     const on = force === undefined ? !this.tokens.has(token) : force;
     if (on) this.tokens.add(token);
@@ -318,6 +321,8 @@ async function runBroadcastOverlayScript(initialState) {
   };
   const byId = {
     feed: new FakeElement('pre'),
+    'prediction-round': new FakeElement('div'),
+    'gen-top': new FakeElement('div'),
     'feed-g': new FakeElement('div'),
     'feed-s': new FakeElement('div'),
     'feed-i': new FakeElement('div'),
@@ -400,6 +405,7 @@ async function runBroadcastOverlayScript(initialState) {
     calls,
     tick,
     toastCards,
+    prediction: byId['prediction-round'],
     feedG: byId['feed-g'],
     feedS: byId['feed-s'],
     feedI: byId['feed-i'],
@@ -793,4 +799,18 @@ test('improve panel appears with colored log lines only while improve is running
   assert.equal(overlay.documentElement.dataset.improveActive, '');
   assert.equal(overlay.feedI.children.length, 0, 'idle improve must hide the panel again');
   assert.match(overlay.feedProgress.textContent, /^3L$/, 'footer must drop improve lines when idle');
+});
+
+
+test('prediction panel shows exact range and excluded current game, then disappears', async () => {
+  const state = {feeds: {showStatus: {text: '予想対象：#49849〜#49896｜終了1/48｜残り47試合\n#49848：今回の予想対象外'}}};
+  const app = await runBroadcastOverlayScript(state);
+  assert.equal(app.documentElement.dataset.predictionActive, '1');
+  assert.match(app.prediction.textContent, /#49849〜#49896/);
+  assert.match(app.prediction.textContent, /終了1\/48｜残り47試合/);
+  assert.match(app.prediction.textContent, /今回の予想対象外/);
+  app.setState({feeds: {}});
+  await app.tick(2);
+  assert.equal(app.documentElement.dataset.predictionActive, '0');
+  assert.equal(app.prediction.textContent, '');
 });
