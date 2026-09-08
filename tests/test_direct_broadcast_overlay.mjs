@@ -684,7 +684,7 @@ test('game feed renders allowlisted color segments as styled spans without inner
 });
 
 
-test('rate-limit status is promoted to the top rail with main and fallback models', async () => {
+test('rate-limit status stays in show-status-g without duplication in the top rail', async () => {
   const base = {
     version: 1,
     updatedAt: 1780000090,
@@ -711,13 +711,9 @@ test('rate-limit status is promoted to the top rail with main and fallback model
     notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
   };
   const overlay = await runBroadcastOverlayScript(base);
-  const aiLine = overlay.summary.children.find((line) => line.className.includes('sum-ai'));
-  assert.ok(aiLine, 'rate-limit line must be visible in the top rail');
-  assert.match(aiLine.textContent, /AI使用量上限/);
-  assert.match(aiLine.textContent, /AI使用量上限 復旧まで:/);
-  assert.match(aiLine.textContent, /主 DeepSeek Flash 3h59m/);
-  assert.match(aiLine.textContent, /予備 MiniMax 4h59m/);
-  assert.doesNotMatch(aiLine.textContent, /429/);
+  assert.ok(overlay.summary.children.every(line => !/AI使用量上限|AI 429|main=|fb=/.test(line.textContent)));
+  assert.ok(overlay.feedG.children.some(line => /AI 429 main=deepseek-v4-flash/.test(line.textContent)));
+  assert.ok(overlay.feedG.children.some(line => /fb=minimax-m3/.test(line.textContent)));
 });
 
 

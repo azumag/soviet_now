@@ -607,30 +607,6 @@ html[data-soren-neutral="1"] .toast {
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
     const patterns = [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
     const selected = patterns.map((pattern) => stats.find((line) => pattern.test(line))).filter(Boolean);
-    const aiMain = stats.find((line) => /AI 429/.test(line)) || ops.find((line) => /AI 429/.test(line));
-    const aiFallback = stats.find((line) => /\bfb=/.test(line)) || ops.find((line) => /\bfb=/.test(line));
-    if (aiMain) {
-      const displayModel = (model) => {
-        const clean = String(model || '').replace(/^codex:/i, '').trim();
-        if (/deepseek.*flash/i.test(clean)) return 'DeepSeek Flash';
-        if (/minimax/i.test(clean)) return 'MiniMax';
-        if (/qwen/i.test(clean)) return 'Qwen';
-        if (/grok/i.test(clean)) return 'Grok';
-        return clean || 'AI';
-      };
-      const displayRate = (line, key, label) => {
-        const match = String(line || '').match(new RegExp(`${key}=([^\\s(]+)(?:\\(([^)]+)\\))?`, 'i'));
-        if (!match) return '';
-        return `${label} ${displayModel(match[1])} ${match[2] || '時刻不明'}`;
-      };
-      const mainRate = displayRate(aiMain, 'main', '主');
-      const fallbackRate = displayRate(aiFallback, 'fb', '予備');
-      const aiLine = ['AI使用量上限', '復旧まで:', [mainRate, fallbackRate].filter(Boolean).join(' / ')].join(' ');
-      const headerIndex = selected.findIndex((line) => /SOREN[/]OBS|FFMPEG/.test(line));
-      if (headerIndex >= 0) selected[headerIndex] = aiLine;
-      else if (selected.length >= 4) selected[selected.length - 1] = aiLine;
-      else selected.push(aiLine);
-    }
     if (selected.length < 4) {
       for (const pattern of [/Backend/, /Game|Queued/, /LastDrop/, /AVSync/]) {
         const line = ops.find((candidate) => pattern.test(candidate));
