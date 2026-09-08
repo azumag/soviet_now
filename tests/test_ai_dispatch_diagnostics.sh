@@ -212,7 +212,7 @@ now=$(date +%s)
 printf '%s\n' $((now + 900)) >"$AI_BACKOFF_DIR/codex_minimax-m3"
 printf '候補テスト' >"$prompt_file"
 before=$(wc -l <"$AI_STATS_DIR/$(date +%Y%m%d).jsonl")
-ai_generate_list "TEST:chain" "$prompt_file" "codex:minimax-m3,local" "" "" "" >/dev/null 2>&1
+ai_generate_list "TEST:chain" "$prompt_file" "codex:minimax-m3" "" "" "" >/dev/null 2>&1
 after=$(wc -l <"$AI_STATS_DIR/$(date +%Y%m%d).jsonl")
 check "[ $((after - before)) -lt 5 ]" 'バックオフ中候補はattemptを記録せずスキップされる'
 
