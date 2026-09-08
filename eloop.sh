@@ -304,6 +304,7 @@ play_one_game() {
 	fi
 
 	local game_num_display=$((GAME_NUM + 1))
+	PREDICTION_GAME_STARTED_AT=$(date +%s)
 	log ""
 	log "── Game #${game_num_display} ──"
 	_clear_stale_commands_if_any "before play_one_game"
@@ -669,7 +670,10 @@ post_game_bookkeeping() {
 
 	# チャネルポイント予想: 今回の結果を best_outcome に蓄積（リセット前に判定）
 	# ※cleanup前に実行し、建国イベントが確実に記録されるようにする
-	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] &&
+		[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("round_version",0))' "$TMP_STATE_DIR/current_prediction.json" 2>/dev/null)" = "2" ]; then
+		python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" "$game_num_display" "${PREDICTION_GAME_STARTED_AT:-0}" "${LAST_SOVIET:-false}" "${LAST_RUSSIA:-false}" || log "[PREDICTION] result accounting failed"
+	elif [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 		local cur_outcome=0
 		if [ "${LAST_SOVIET:-false}" = "true" ]; then
 			cur_outcome=2

@@ -192,6 +192,31 @@ while true; do
 	improve_status=$(_get_improve_status)
 	_resolved_this_tick=0
 
+	# Independent rounds do not use accumulated counts, improvement status,
+	# hot-streak extensions or A/B adoption as their start/end boundary.
+	_round_version=$(_read_json_field "$TMP_STATE_DIR/current_prediction.json" round_version 0)
+	if ! _has_prediction || [ "$_round_version" = "2" ]; then
+		if [ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
+			if _has_prediction; then
+				_round_count=$(_read_json_field "$TMP_STATE_DIR/current_prediction.json" games_completed 0)
+				_round_limit=$(_read_json_field "$TMP_STATE_DIR/current_prediction.json" max_games 48)
+				best=$(python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" decision 2>/dev/null) || best=-1
+				if ! _prediction_retry_active_for resolve && [ "$best" -ge 0 ]; then
+					_log "予想ラウンド完了: games=${_round_count}/${_round_limit}, outcome=${best}"
+					./twitch_predictions.sh resolve "$best" >>tmp/prediction.log 2>&1 || true
+				elif [ "$current_game_num" != "$_LAST_GAME_NUM" ]; then
+					./twitch_predictions.sh cleanup >>tmp/prediction.log 2>&1 || true
+				fi
+			elif [ "${TWITCH_PREDICTIONS_ENABLED:-0}" = "1" ] && ! _prediction_retry_active_for create; then
+				./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
+			fi
+		fi
+		_LAST_GAME_NUM="$current_game_num"
+		_LAST_ACC_COUNT="$current_acc_count"
+		sleep "$POLL_INTERVAL"
+		continue
+	fi
+
 	if [ -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ] && [ "$improve_status" = "running" ]; then
 		_log "hot streak延長ペンディング解除: 改善開始を検知"
 		rm -f "$HOT_STREAK_PREDICTION_PENDING_FILE"

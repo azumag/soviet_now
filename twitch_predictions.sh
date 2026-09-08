@@ -72,12 +72,13 @@ PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 _cfg_min_games=$(sed -n 's/^[[:space:]]*MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1/p' .env 2>/dev/null | tail -1)
 [ -z "$_cfg_min_games" ] && _cfg_min_games=$(sed -n 's/^MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1/p' core/config.sh 2>/dev/null)
 _cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
-PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-$_cfg_min_games}"
+PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-48}"
+case "$PREDICTION_MAX_GAMES" in ''|*[!0-9]*|0) PREDICTION_MAX_GAMES=48 ;; esac
 # 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
 # Twitch Predictions API の上限は1800秒。改善サイクルが45試合を超える場合も、
 # 受付時間だけはAPIの上限内へ丸め、予想の解決stateはサイクル完了まで保持する。
 PREDICTION_WINDOW_MAX_SEC=1800
-_prediction_window_default=$((_cfg_min_games * 40))
+_prediction_window_default=$((PREDICTION_MAX_GAMES * 40))
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$_prediction_window_default}"
 case "$PREDICTION_WINDOW_SEC" in
 ''|*[!0-9]*) PREDICTION_WINDOW_SEC="$_prediction_window_default" ;;
@@ -256,7 +257,13 @@ if created_at > 0:
     if max_age_sec > 0 and age >= max_age_sec:
         reasons.append(f"age={age}s")
 
-# サイクル蓄積数 (acc_count) ベースで判定
+# New rounds have their own immutable limit and count. Cleanup must not
+# settle them from an improvement reset or a wall-clock timeout.
+if state.get("round_version") == 2:
+    # Dedicated worker freezes the decision before retrying Twitch.
+    raise SystemExit(0)
+
+# Legacy predictions retain their original settlement rule.
 if max_games > 0:
     try:
         acc = json.load(open(acc_file))
@@ -613,7 +620,7 @@ import json, sys
 bid, window, n_games = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 print(json.dumps({
     "broadcaster_id": bid,
-    "title": f"{n_games}ゲーム中に建国できる？",
+    "title": f"次の{n_games}試合で建国できる？",
     "outcomes": [
         {"title": "建国なし"},
         {"title": "ロシア建国(ソ連不成立)"},
@@ -655,7 +662,7 @@ PY
 
 	# レスポンスから prediction_id と outcome_ids を抽出
 	result=$(
-		python3 - "$response" "$GAME_NUM" <<'PY' 2>/dev/null
+		python3 - "$response" "$GAME_NUM" "$PREDICTION_MAX_GAMES" <<'PY' 2>/dev/null
 import json, sys, time
 data = json.loads(sys.argv[1])
 pred = data.get("data", [{}])[0]
@@ -669,7 +676,11 @@ state = {
     "outcome_ids": outcome_ids,
     "game_num": int(sys.argv[2]),
     "created_at": int(time.time()),
-    "russia_created": False
+    "russia_created": False,
+    "round_version": 2,
+    "max_games": int(sys.argv[3]),
+    "games_completed": 0,
+    "best_outcome": 0
 }
 print(json.dumps(state))
 PY
@@ -691,7 +702,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	enqueue_chat_message "チャネルポイント予想スタート！「${PREDICTION_MAX_GAMES}ゲーム中に建国できる？」投票受付中（${_window_display}） ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" "predictions"
+	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。募集開始後に始まる試合をA/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" "predictions"
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
