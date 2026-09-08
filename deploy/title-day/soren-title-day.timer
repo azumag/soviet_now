@@ -1,8 +1,8 @@
 [Unit]
-Description=Reconcile Twitch title day every 15 minutes
+Description=Reconcile Twitch title day daily at 00:05 JST
 
 [Timer]
-OnCalendar=*-*-* *:00/15:00
+OnCalendar=*-*-* 00:05:00 Asia/Tokyo
 Persistent=true
 Unit=soren-title-day.service
 
