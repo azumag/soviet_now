@@ -1,5 +1,5 @@
 #!/bin/bash
-# update_stream_title_day.sh - 配信タイトル内の "day N" を当日の N に更新する。
+# update_stream_title_day.sh - 配信タイトルのDAYと運用メモ由来の本文を更新する。
 #
 # 「day N」の N を、基準日 (day 1) からの経過日数で毎日算出し、
 # Twitch チャンネルタイトルを Helix API (PATCH /helix/channels) で更新する。
@@ -23,6 +23,13 @@
 # 終了コード: 0=更新済/変化なし, 2=タイトルに "day N" が無く更新スキップ,
 #            3=トークン/スコープ不足, 4=API エラー, 1=設定不足
 cd "$(dirname "$0")"
+
+# Shared with game switches so a daily update cannot restore an old game prefix.
+if command -v flock >/dev/null 2>&1; then
+    mkdir -p tmp/state
+    exec 9>tmp/state/stream_title_update.lock
+    flock -w 60 9 || exit 4
+fi
 
 # 毎回の実行で最新の .env を読む (cron/launchd から呼ばれるため)。
 [ -f .env ] && set -a && . ./.env && set +a
@@ -114,16 +121,24 @@ if [ -z "$CUR_TITLE" ]; then
 fi
 _log "current title: $CUR_TITLE"
 
-# --- "day N" の数値部分のみ置換 (タイトルの他部分は保持) ---
-NEW_TITLE="$(python3 - "$CUR_TITLE" "$N" <<'PY'
+# --- DAYと本文を更新。ゲームprefixは保持し、本文はゲーム切替と同じ運用メモを使う。 ---
+NEW_TITLE="$(python3 - "$CUR_TITLE" "$N" "${OPS_BRIEF_FILE:-prompts/ops_brief.md}" <<'PY'
 import sys, re
-cur, n = sys.argv[1], sys.argv[2]
-# "day 81" / "Day 81" / "DAY  81" のような表記の数値だけを差し替える ("day" の表記は保持)
-new, cnt = re.subn(r'(?i)(day\s*)(\d+)', lambda m: m.group(1) + n, cur, count=1)
-if cnt == 0:
+from pathlib import Path
+cur, n, memo = sys.argv[1:4]
+match = re.search(r'(?i)(day\s*)(\d+)', cur)
+if not match:
     print("__NO_DAY_PATTERN__")
 else:
-    print(new)
+    prefix = cur[:match.start()] + match.group(1) + n
+    try:
+        activity = next((line.strip()[2:].strip() for line in Path(memo).read_text(encoding="utf-8").splitlines()
+                         if line.strip().startswith("- ") and line.strip()[2:].strip()), "")
+    except (OSError, UnicodeError):
+        activity = ""
+    # Missing/empty memo cannot erase an existing title body.
+    suffix = " " + " ".join(activity.split()) if activity else cur[match.end():]
+    print((prefix + suffix)[:140])
 PY
 )"
 if [ "$NEW_TITLE" = "__NO_DAY_PATTERN__" ]; then
@@ -139,7 +154,7 @@ if [ "$MODE" = "show" ]; then
 fi
 
 if [ "$NEW_TITLE" = "$CUR_TITLE" ] && [ "$MODE" != "force" ]; then
-	_log "already day $N; no change needed"
+	_log "title already current for day $N; no change needed"
 	exit 0
 fi
 

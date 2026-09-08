@@ -41,6 +41,13 @@
 #            4=API エラー, 5=verify 不一致
 cd "$(dirname "$0")"
 
+# Shared with game switches so a daily update cannot restore an old game prefix.
+if command -v flock >/dev/null 2>&1; then
+    mkdir -p tmp/state
+    exec 9>tmp/state/stream_title_update.lock
+    flock -w 60 9 || exit 4
+fi
+
 # 毎回の実行で最新の .env を読む (cron/手動から呼ばれるため)。
 [ -f .env ] && set -a && . ./.env && set +a
 
