@@ -18,6 +18,7 @@ level="${4:-info}"
 mkdir -p "$(dirname "$EVENT_OVERLAY_EVENTS_FILE")" "$(dirname "$EVENT_OVERLAY_HTML_FILE")" 2>/dev/null || true
 
 python3 - "$EVENT_OVERLAY_EVENTS_FILE" "$EVENT_OVERLAY_KEEP_EVENTS" "$category" "$title" "$body" "$level" <<'PY'
+import fcntl
 import json
 import os
 import sys
@@ -35,18 +36,37 @@ event = {
     "body": body[:500],
     "level": level[:20],
 }
-lines = []
-try:
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-except FileNotFoundError:
-    pass
-lines.append(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
-lines = [line for line in lines if line.strip()][-keep:]
+# Shared with docich.overlay_queue: the lock follows the events path,
+# including custom paths and aliases of its parent directory. Never unlink it.
 path.parent.mkdir(parents=True, exist_ok=True)
-fd, tmp = tempfile.mkstemp(prefix=".overlay_events.", suffix=".jsonl", dir=str(path.parent))
-with os.fdopen(fd, "w", encoding="utf-8") as f:
-    f.write("\n".join(lines) + "\n")
-os.replace(tmp, path)
+lock_path = path.parent.resolve() / (path.name + ".lock")
+with lock_path.open("a") as lock:
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit("another overlay edit in progress")
+            time.sleep(0.01)
+    lines = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        pass
+    lines.append(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+    lines = [line for line in lines if line.strip()][-keep:]
+    fd, tmp = tempfile.mkstemp(prefix=".overlay_events.", suffix=".jsonl", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
 PY
 
 EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
