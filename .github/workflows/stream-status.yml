@@ -27,5 +27,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install --yes zsh
       - run: python3 -m unittest tests.test_stream_backend_status tests.test_direct_soak
-      - run: bash -n show_status.sh direct_stream_soak.sh
+      - run: zsh -n show_status.sh
+      - run: bash -n direct_stream_soak.sh
