@@ -30,6 +30,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -522,6 +523,87 @@ class TestRunIsolatedHostSideVerification(unittest.TestCase):
             self.assertIn("runner_version", receipt)
             self.assertNotIn("must-not-leak-into-receipt", receipt_text)
             self.assertNotIn("HOST_SECRET_PROBE", receipt_text)
+
+
+class TestEnforceGateRequiresEveryFixture(unittest.TestCase):
+    """Automatic adoption must not accept a strategy that only works on part of the fixed corpus."""
+
+    @staticmethod
+    def _fake_successful_sandbox_run(argv, wall_seconds, *, successful_fixtures):
+        input_dir = Path(argv[argv.index("/input") - 1])
+        output_dir = Path(argv[argv.index("/output") - 1])
+        fixture_names = sorted(p.name for p in (input_dir / "fixtures").glob("*.json"))
+        decisions = []
+        for idx, name in enumerate(fixture_names):
+            if idx < successful_fixtures:
+                decisions.append({
+                    "fixture_id": name,
+                    "ok": True,
+                    "x": 0.0,
+                    "reason": "contract-valid probe decision",
+                    "elapsed_ms": 1.0,
+                })
+            else:
+                decisions.append({
+                    "fixture_id": name,
+                    "ok": False,
+                    "error_type": "RuntimeError",
+                    "error_message": "intentional partial-failure probe",
+                    "elapsed_ms": 1.0,
+                })
+        payload = {
+            "harness_version": "isolated-runner-harness/1",
+            "candidate_input_sha256": run_isolated._sha256_file(input_dir / "strategy_candidate.py"),
+            "decide_params": ["game_state", "analysis"],
+            "load_error": None,
+            "decisions": decisions,
+        }
+        (output_dir / "evaluation.json").write_text(json.dumps(payload), encoding="utf-8")
+        result = run_isolated.RunResult()
+        result.returncode = 0
+        result.wall_seconds = 0.01
+        result.rusage_cpu_seconds = 0.01
+        result.rusage_maxrss_kb = 1
+        return result
+
+    def _evaluate_with_fake_sandbox(self, successful_fixtures):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            candidate = root / "strategy.py"
+            candidate.write_text(
+                'def decide(game_state, analysis): return {"x": 0.0, "reason": "ok"}\n',
+                encoding="utf-8",
+            )
+            receipt = root / "receipt.json"
+            args = type("Args", (), {
+                "target": str(candidate),
+                "helpers": "nonexistent_helpers",
+                "receipt_out": str(receipt),
+                "mode": "enforce",
+            })()
+            fake_run = lambda argv, wall_seconds: self._fake_successful_sandbox_run(
+                argv, wall_seconds, successful_fixtures=successful_fixtures
+            )
+            with mock.patch.object(run_isolated, "detect_backend", return_value=("bwrap", "")), \
+                 mock.patch.object(run_isolated, "_resolve_python3", return_value="/usr/bin/python3"), \
+                 mock.patch.object(run_isolated, "_run_sandboxed", side_effect=fake_run), \
+                 mock.patch("builtins.print"):
+                rc = run_isolated.cmd_evaluate(args)
+            return rc, json.loads(receipt.read_text(encoding="utf-8"))
+
+    def test_partial_fixture_success_fails_closed(self):
+        rc, receipt = self._evaluate_with_fake_sandbox(successful_fixtures=1)
+        self.assertEqual(rc, 1)
+        self.assertEqual(receipt["gate"], "fail")
+        self.assertEqual(receipt["evaluation_summary"]["fixtures_ok"], 1)
+        self.assertGreater(receipt["evaluation_summary"]["fixtures_failed"], 0)
+
+    def test_all_fixture_success_can_pass(self):
+        fixture_count = len(list((ISOLATED_RUNNER_DIR / "fixtures").glob("*.json")))
+        rc, receipt = self._evaluate_with_fake_sandbox(successful_fixtures=fixture_count)
+        self.assertEqual(rc, 0)
+        self.assertEqual(receipt["gate"], "pass")
+        self.assertEqual(receipt["evaluation_summary"]["fixtures_failed"], 0)
 
 
 # ---------------------------------------------------------------------------

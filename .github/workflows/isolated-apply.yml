@@ -1,10 +1,20 @@
 name: Isolated apply gate
 on:
   pull_request:
-    paths: ['strategy/sandbox.sh', '.github/workflows/isolated-apply.yml']
+    paths:
+      - 'strategy/sandbox.sh'
+      - 'strategy/isolated_runner/**'
+      - 'tests/test_strategy_sandbox_no_host_exec.py'
+      - 'tests/test_isolated_runner_rootless.py'
+      - '.github/workflows/isolated-apply.yml'
   push:
     branches: [main]
-    paths: ['strategy/sandbox.sh', '.github/workflows/isolated-apply.yml']
+    paths:
+      - 'strategy/sandbox.sh'
+      - 'strategy/isolated_runner/**'
+      - 'tests/test_strategy_sandbox_no_host_exec.py'
+      - 'tests/test_isolated_runner_rootless.py'
+      - '.github/workflows/isolated-apply.yml'
 permissions:
   contents: read
 jobs:
