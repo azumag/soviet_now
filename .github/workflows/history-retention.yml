@@ -1,0 +1,18 @@
+name: History retention
+on:
+  pull_request:
+    paths: ['infra/cleanup.sh', 'infra/history_retention.py', 'tests/test_history_retention.py', '.github/workflows/history-retention.yml']
+  push:
+    branches: [main]
+    paths: ['infra/cleanup.sh', 'infra/history_retention.py', 'tests/test_history_retention.py', '.github/workflows/history-retention.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 tests/test_history_retention.py
+      - run: bash -n infra/cleanup.sh
