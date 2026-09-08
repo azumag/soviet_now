@@ -72,3 +72,17 @@ worker の reload（USR1/HUP）は `.env` とモジュールを再 source する
 ## 完了と引き継ぎ
 
 PRまたは既存の引き継ぎ先へ目的、対象コミット、実行したコマンドと結果、未確認事項、次の一手を残す。不具合・退行・安全性・CI破壊を必須指摘、可読性等を任意改善として分ける。最新HEADの必須チェック、マージ、VM同期、再起動、実測による復旧を別々の状態として報告し、未実施の検証を成功扱いしない。
+
+## Production 反映と runtime diagnostics
+
+- 開発・レビュー・テスト・merge はこのリポジトリで行う。production VM（`/home/ubuntu/soren`）への反映は、docich の owner-only VM control plane を正本とし、このリポジトリから直接本番を更新しない。
+- 通常変更で production VM の tracked file を直接編集しない。ad-hoc な pull / reset / checkout や手動コピーを正式反映にしない。PR / main 迂回の本番変更は禁止。
+- unknown drift は fail-closed とし、理由確認なしに上書きしない。
+- 新しい worker / queue lane / model-chain / fallback を追加したら、以下を確認する。
+  - `start_all.sh` の worker 定義・pid file 規約・process pattern（docich の runtime registry が追従する正本）。
+  - `tmp/state` の PID・pause・lock・state convention の維持。
+  - structured telemetry（`ai_stats` event・return code）の契約維持。return code 79（rate-limit）/ 91（gate give-up）/ 92（queue give-up）の意味を変えない。
+  - runtime diagnostics に secrets・prompt 本文・生成本文・HTTP header・環境変数を出さない。
+- 詳細な deployment contract と diagnostics 仕様は docich 側を正本とする。
+  `azumag/docich` の `AGENTS.md`（Production deployment contract / Runtime diagnostics contract）と
+  `docs/operations/runtime-diagnostics.md` へ導線を張り、重複した巨大 registry を作らない。
