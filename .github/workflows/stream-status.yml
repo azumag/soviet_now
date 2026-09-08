@@ -1,0 +1,31 @@
+name: Stream status regression
+on:
+  pull_request:
+    paths:
+      - 'show_status.sh'
+      - 'direct_stream_soak.sh'
+      - 'lib/direct_soak.py'
+      - 'tests/test_stream_backend_status.py'
+      - 'tests/test_direct_soak.py'
+      - '.github/workflows/stream-status.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'show_status.sh'
+      - 'direct_stream_soak.sh'
+      - 'lib/direct_soak.py'
+      - 'tests/test_stream_backend_status.py'
+      - 'tests/test_direct_soak.py'
+      - '.github/workflows/stream-status.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_stream_backend_status tests.test_direct_soak
+      - run: bash -n show_status.sh direct_stream_soak.sh
