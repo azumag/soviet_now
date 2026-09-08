@@ -702,12 +702,12 @@ _strategy_isolated_runner_available() {
 # 合否を返す。呼び出し元は _strategy_isolated_runner_available が真の場合のみ
 # ここへ到達する。
 #
-# rollout: SOREN_ISOLATED_RUNNER_MODE (未設定時は "shadow") で二段階にする。
-#   shadow  (既定) : 評価は必ず実行してreceiptを記録するが、自動適用ゲートには
+# rollout: SOREN_ISOLATED_RUNNER_MODE defaults to enforce after production receipt verification.
+#   shadow (明示指定) : 評価は必ず実行してreceiptを記録するが、自動適用ゲートには
 #                    反映しない (常にfail-closdedを維持)。旧runner
 #                    (strategy_runner.py 直接呼び出し) との score/decision
 #                    比較が十分に蓄積されるまでの既定状態。
-#   enforce : receiptのgateが"pass"の場合のみ適用を許可する。runner障害
+#   enforce (既定) : receiptのgateが"pass"の場合のみ適用を許可する。runner障害
 #             (timeout/OOM/crash/hash不一致/schema不一致など) の場合は
 #             host execへのfallbackはせず、fail-closedのまま既存の
 #             known-good strategyを維持する。
@@ -717,7 +717,7 @@ _strategy_isolated_runner_available() {
 _strategy_isolated_runner_evaluate() {
 	local target_file="$1"
 	local helpers_dir="${2:-strategy_helpers}"
-	local mode="${SOREN_ISOLATED_RUNNER_MODE:-shadow}"
+	local mode="${SOREN_ISOLATED_RUNNER_MODE:-enforce}"
 	local receipt_dir="$ISOLATED_RUNNER_RECEIPT_DIR"
 	mkdir -p "$receipt_dir" 2>/dev/null || true
 	local receipt_out="$receipt_dir/receipt_$(date +%Y%m%d_%H%M%S)_$$.json"
@@ -821,7 +821,7 @@ PYEOF
 	fi
 
 	if ! _strategy_isolated_runner_evaluate "$target_file" "$helpers_dir"; then
-		VALIDATE_ERROR="OS隔離runner評価がpassにならなかったため適用を見送り、既存のknown-good strategyを維持する (mode=${SOREN_ISOLATED_RUNNER_MODE:-shadow}。詳細はtmp/state/isolated_runner_receipts/配下のreceiptとログ参照)"
+		VALIDATE_ERROR="OS隔離runner評価がpassにならなかったため適用を見送り、既存のknown-good strategyを維持する (mode=${SOREN_ISOLATED_RUNNER_MODE:-enforce}。詳細はtmp/state/isolated_runner_receipts/配下のreceiptとログ参照)"
 		log "[VALIDATE] $VALIDATE_ERROR"
 		return 1
 	fi
