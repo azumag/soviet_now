@@ -1,0 +1,18 @@
+name: Independent prediction rounds
+on:
+  pull_request:
+    paths: ['lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', '.github/workflows/prediction-round.yml']
+  push:
+    branches: [main]
+    paths: ['lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', '.github/workflows/prediction-round.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_prediction_round
+      - run: for f in eloop.sh strategy/improve.sh workers/prediction_worker.sh twitch_predictions.sh; do bash -n "$f"; done

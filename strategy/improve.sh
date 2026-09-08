@@ -2252,6 +2252,11 @@ _clear_accumulated_data() {
 	# 予想もサイクルに連動: 蓄積リセット時に現予想を確定し、次サイクルで新規作成させる
 	# (粛清やソ連建国で既にresolve済みの場合はファイルが消えているのでスキップされる)
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		# Independent prediction rounds survive improvement/A-B accumulator resets.
+		if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("round_version",0))' "$TMP_STATE_DIR/current_prediction.json" 2>/dev/null)" = "2" ]; then
+			rm -f "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
+			return 0
+		fi
 		# 粛清フラグがある場合は best_outcome=3 に強制（レース対策）
 		# soren_loop / improve.sh の粛清検出ブロックが check_regression 後に即書き込む
 		if [ -f "$TMP_STATE_DIR/regression_pending" ]; then
