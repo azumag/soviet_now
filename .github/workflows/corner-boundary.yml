@@ -1,0 +1,17 @@
+name: Corner boundary
+on:
+  pull_request:
+    paths:
+      - 'lib/corner_boundary.py'
+      - 'tests/test_corner_boundary.py'
+      - 'strategy/improve.sh'
+      - 'strategy/ab_gate.sh'
+      - 'twitch_predictions.sh'
+      - '.github/workflows/corner-boundary.yml'
+jobs:
+  corner-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -p test_corner_boundary.py
+      - run: bash -n twitch_predictions.sh strategy/improve.sh strategy/ab_gate.sh
