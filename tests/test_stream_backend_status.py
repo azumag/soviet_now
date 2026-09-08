@@ -122,6 +122,30 @@ class StreamBackendStatusTests(unittest.TestCase):
                 self.assertIn(extra_expected, result.stdout)
             self.assertNotIn(unexpected, result.stdout)
 
+    def test_show_status_reads_chat_worker_enablement_from_dotenv(self) -> None:
+        dotenv = REPO_ROOT / ".env"
+        self.assertFalse(dotenv.exists(), "test requires a checkout without a pre-existing .env")
+        dotenv.write_text("YOUTUBE_CHAT_ENABLED=1\nKICK_CHAT_ENABLED=1\n", encoding="utf-8")
+        try:
+            env = os.environ.copy()
+            env.pop("YOUTUBE_CHAT_ENABLED", None)
+            env.pop("KICK_CHAT_ENABLED", None)
+            env["SHOW_STATUS_NO_FLICKER"] = "1"
+            result = subprocess.run(
+                ["./show_status.sh", "--once"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+        finally:
+            dotenv.unlink(missing_ok=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("YOUTUBE_CHAT_ENABLED=0", result.stdout)
+        self.assertNotIn("KICK_CHAT_ENABLED=0", result.stdout)
+
     def test_status_dashboard_header_includes_selected_backend(self) -> None:
         env = os.environ.copy()
         env["SOREN_STREAM_BACKEND"] = "ffmpeg"
