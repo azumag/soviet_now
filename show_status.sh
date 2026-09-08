@@ -581,9 +581,11 @@ _bar_meter() {
 	(( value < 0 )) && value=0
 	local filled=$(( value * width / max ))
 	(( filled > width )) && filled=$width
-	local empty=$(( width - filled ))
-	printf "%${filled}s" "" | tr ' ' '█'
-	printf "%${empty}s" "" | tr ' ' '·'
+	local empty=$(( width - filled )) i
+	# GNU tr is byte-oriented in the C locale and corrupts these multibyte glyphs.
+	# The bar is tiny, so emit glyphs directly and keep stdout valid UTF-8.
+	for (( i = 0; i < filled; i++ )); do printf '█'; done
+	for (( i = 0; i < empty; i++ )); do printf '·'; done
 }
 
 _truncate_display_width() {
