@@ -5,6 +5,8 @@ on:
       - 'lib/ai_generate.sh'
       - 'lib/opencode_rate_limit_guard.py'
       - 'probe_free_slot.sh'
+      - 'broadcast/radio_corners.sh'
+      - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
       - '.github/workflows/muse-free.yml'
   push:
@@ -13,6 +15,8 @@ on:
       - 'lib/ai_generate.sh'
       - 'lib/opencode_rate_limit_guard.py'
       - 'probe_free_slot.sh'
+      - 'broadcast/radio_corners.sh'
+      - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
       - '.github/workflows/muse-free.yml'
 permissions:
@@ -27,4 +31,5 @@ jobs:
           persist-credentials: false
       - run: python3 -m unittest tests.test_opencode_rate_limit_guard tests.test_ai_generate_backoff
       - run: bash tests/test_vercel_opencode_backend.sh
-      - run: bash -n lib/ai_generate.sh probe_free_slot.sh
+      - run: bash tests/test_ai_dispatch_diagnostics.sh
+      - run: bash -n lib/ai_generate.sh probe_free_slot.sh broadcast/radio_corners.sh
