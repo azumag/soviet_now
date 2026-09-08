@@ -328,6 +328,7 @@ print(json.dumps({
 	fi
 	rm -f "$response_file"
 	_prediction_retry_clear resolve
+	python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
 	return 0
 }
 
@@ -786,6 +787,7 @@ PY
 
 	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清")
 	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
+	python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
 	_log "prediction resolved: $OUTCOME_LABEL"
 	if [ "${OUTCOME_INDEX}" = "3" ] && [ -f "$PREDICTION_STATE_FILE" ]; then
 		# 粛清理由は detail を追加で投稿

@@ -1732,6 +1732,10 @@ PY
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
+			# Candidate evaluation is still the same cycle; AB finish publishes its boundary.
+			if [ ! -f "${AB_STATE_FILE:-$TMP_STATE_DIR/ab_state.json}" ] && [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("phase",""))' "$IMPROVE_STATE_FILE" 2>/dev/null)" != "candidate_ready" ]; then
+				python3 "${ELOOP_LIB_DIR:-.}/lib/corner_boundary.py" "$TMP_STATE_DIR" improvement || true
+			fi
 			# OBS: 改善中オーバーレイ非表示
 			if _improve_keep_main_game_running; then
 				log "[IMPROVE] 継続プレイ設定: soren91_stop/session improve/交代処理を行わず、メインゲームを継続"

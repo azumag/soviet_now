@@ -252,6 +252,7 @@ PY
 	# Retire state last: its presence blocks improvement until cleanup is done.
 	mv "$AB_GAMES_FILE" "$AB_HISTORY_DIR/ab_${ts}_games.jsonl" || return 1
 	mv "$AB_STATE_FILE" "$AB_HISTORY_DIR/ab_${ts}_state.json" || return 1
+	python3 "${ELOOP_LIB_DIR:-.}/lib/corner_boundary.py" "$TMP_STATE_DIR" improvement || true
 	log "[AB] finish 完了: winner=$winner root=$(_ab_hash "${STRATEGY_FILE:-strategy.py}") 記録 $AB_HISTORY_DIR/ab_${ts}_*"
 	return 0
 }
