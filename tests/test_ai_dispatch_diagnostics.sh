@@ -216,5 +216,21 @@ ai_generate_list "TEST:chain" "$prompt_file" "codex:minimax-m3,local" "" "" "" >
 after=$(wc -l <"$AI_STATS_DIR/$(date +%Y%m%d).jsonl")
 check "[ $((after - before)) -lt 5 ]" 'バックオフ中候補はattemptを記録せずスキップされる'
 
+
+# --- 5. JIJI research direct dispatch also respects existing model backoff ---
+printf 'JIJI backoff test' >"$TMP/jiji_backoff_prompt.txt"
+jiji_dispatch_marker="$TMP/jiji_dispatch_called"
+rm -f "$jiji_dispatch_marker"
+(
+	source "$ROOT/broadcast/radio_corners.sh"
+	_ai_backoff_check() { return 1; }
+	_ai_backoff_remaining() { printf '3600\n'; }
+	_ai_dispatch() { touch "$jiji_dispatch_marker"; printf 'unexpected'; return 0; }
+	_run_opencode_jiji_research "opencode:muse-spark-test" "$TMP/jiji_backoff_prompt.txt" >/dev/null
+)
+jiji_backoff_rc=$?
+check '[ "$jiji_backoff_rc" -ne 0 ]' 'JIJI research はバックオフ中モデルを失敗扱いで即時スキップする'
+check '[ ! -e "$jiji_dispatch_marker" ]' 'JIJI research はバックオフ中モデルをdispatchしない'
+
 printf '\n%d/%d tests passed\n' "$ok" "$((ok + fail))"
 [ "$fail" -eq 0 ]

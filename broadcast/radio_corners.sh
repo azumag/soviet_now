@@ -1791,6 +1791,17 @@ _run_opencode_jiji_research() {
 		# them to `opencode run --agent` treats the model name as an agent name,
 		# which can fall back to an unrelated default model and leak its error
 		# text into the grounding memo.
+		# This path calls _ai_dispatch directly instead of ai_generate_list, so
+		# honor the shared model backoff here as well. Otherwise scheduled JIJI
+		# research repeatedly probes a model that is already known to be 429'd.
+		if declare -F _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then
+			local _jiji_backoff_rem=0
+			if declare -F _ai_backoff_remaining >/dev/null 2>&1; then
+				_jiji_backoff_rem=$(_ai_backoff_remaining "$agent")
+			fi
+			log "[JIJI] research backoff skip (agent=$agent, ${_jiji_backoff_rem}s remaining)" >&2
+			return 1
+		fi
 		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
 		AI_DISPATCH_RECORD_WINNER=1
 		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT:-240}}"
