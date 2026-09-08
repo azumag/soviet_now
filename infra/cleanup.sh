@@ -68,13 +68,17 @@ cleanup_tmp_files() {
 	# --- 古い .past_soviet_themes.txt を統合済みなので削除可 ---
 	# (テーマが radio_themes.txt に移動済み。ただし _pick_radio_theme の重複防止用は残す)
 
-	# --- game_history/ アーカイブ: 直近13試合を残して削除 ---
-	local history_count
-	history_count=$(ls -1 game_history/*_score*.jsonl 2>/dev/null | wc -l)
-	if [ "$history_count" -gt 13 ]; then
-		ls -1t game_history/*_score*.jsonl 2>/dev/null | tail -n +14 | xargs rm -f 2>/dev/null
-		cleaned=$((cleaned + history_count - 13))
-	fi
+	# Keep the scoring window and evidence still owned by improvement/retry batches.
+	local history_removed
+	history_removed=$(python3 "$ELOOP_LIB_DIR/infra/history_retention.py" \
+		"$ELOOP_LIB_DIR" "${MIN_GAMES_BEFORE_IMPROVE:-12}" \
+		"${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" \
+		"${IMPROVE_LOCK_FILE:-tmp/improve.lock}" \
+		"${IMPROVE_RETRY_BATCH_FILE:-tmp/state/improve_retry_batch.json}" 2>/dev/null) || history_removed=0
+	case "$history_removed" in
+		''|*[!0-9]*) history_removed=0 ;;
+	esac
+	cleaned=$((cleaned + history_removed))
 
 	# --- say_queue: レンダ済み音声/中間ファイル (content_*.wav 等) を削除 ---
 	# 既存の _pre.wav / stream_* だけでは content_*.wav が溜まり続ける (実測 0.5GB) ため拡張。
