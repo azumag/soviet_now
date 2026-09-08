@@ -694,7 +694,8 @@ PY
 	_prediction_retry_clear create
 
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
-	echo "$result" >"$PREDICTION_STATE_FILE"
+	printf '%s\n' "$result" | python3 lib/prediction_round.py "$PREDICTION_STATE_FILE" publish || exit 1
+	_prediction_display=$(python3 lib/prediction_round.py "$PREDICTION_STATE_FILE" display | head -n 1)
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	# 受付時間の表示: 60秒以上なら「N分」、未満なら「N秒」
 	if [ "$PREDICTION_WINDOW_SEC" -ge 60 ]; then
@@ -702,7 +703,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。募集開始後に始まる試合をA/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" "predictions"
+	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。

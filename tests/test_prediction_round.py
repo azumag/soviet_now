@@ -119,3 +119,48 @@ class DecisionRetryTest(unittest.TestCase):
             state['best_outcome']=3
             path.write_text(json.dumps(state))
             self.assertEqual(subprocess.check_output(command,text=True).strip(),'1')
+
+
+class PredictionDisplayTest(unittest.TestCase):
+    def test_example_range_and_remaining(self):
+        from lib.prediction_round import display_lines
+        s=dict(round_version=2,first_game_num=49849,max_games=48,games_completed=1)
+        self.assertEqual(display_lines(s,49850)[0], '予想対象：#49849〜#49896｜終了1/48｜残り47試合')
+        self.assertIn('今回の予想対象',display_lines(s,49850)[1])
+
+    def test_preexisting_game_excluded(self):
+        from lib.prediction_round import display_lines
+        s=dict(round_version=2,target_first_game=100,max_games=48,games_completed=0)
+        self.assertEqual(display_lines(s,99)[1], '#99：今回の予想対象外')
+
+    def test_fixed_boundary_counts_same_second_start(self):
+        s=dict(round_version=2,created_at=100,target_first_game=10,max_games=2,games_completed=0)
+        record_game(s,9,100,True,True)
+        record_game(s,10,100,False,False)
+        self.assertEqual(s['games_completed'],1)
+
+    def test_unknown_legacy_range_not_invented(self):
+        from lib.prediction_round import display_lines
+        self.assertIn('開始待ち',display_lines(dict(round_version=2,max_games=48,games_completed=0),0)[0])
+
+
+class PredictionBoundaryTest(unittest.TestCase):
+    def test_publication_and_next_game_share_boundary(self):
+        import json, subprocess, tempfile
+        from pathlib import Path
+        helper=Path(__file__).resolve().parents[1]/'lib/prediction_round.py'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); path=root/'tmp/state/current_prediction.json'
+            (root/'game_count.txt').write_text('99')
+            def call(*args, input=None):
+                return subprocess.run(['python3',str(helper),str(path),*args],cwd=root,input=input,text=True,check=True,capture_output=True)
+            call('start','100')
+            call('publish',input=json.dumps(dict(round_version=2,max_games=48,games_completed=0,game_num=99,best_outcome=0)))
+            state=json.loads(path.read_text())
+            self.assertEqual(state['target_first_game'],101)
+            self.assertIn('#101〜#148',call('display').stdout)
+            call('100',str(state['created_at']),'true','true')
+            self.assertEqual(json.loads(path.read_text())['games_completed'],0)
+            call('start','101')
+            call('101',str(state['created_at']),'false','false')
+            self.assertEqual(json.loads(path.read_text())['games_completed'],1)

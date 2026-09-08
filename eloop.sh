@@ -304,6 +304,7 @@ play_one_game() {
 	fi
 
 	local game_num_display=$((GAME_NUM + 1))
+	python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" start "$game_num_display" || return 1
 	PREDICTION_GAME_STARTED_AT=$(date +%s)
 	log ""
 	log "── Game #${game_num_display} ──"

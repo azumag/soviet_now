@@ -2781,6 +2781,9 @@ PY
 		printf "    ${gate_color}◆${C_RESET} Game        ${gate_color}%s${C_RESET}  ${C_DIM}%s [%s]${C_RESET}\n" "${count_label}" "$nation_label" "${scores_display}"
 	fi
 
+	# Prediction progress uses its own round, not improvement accumulation.
+	python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" display 2>/dev/null || true
+
 	# キュー負荷メーター（show_status_g にはない運用系指標）
 	local queue_total=$(( acc_count + comment_queue_count + twitch_pending ))
 	local queue_bar
