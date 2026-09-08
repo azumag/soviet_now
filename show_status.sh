@@ -330,6 +330,7 @@ _direct_soak_status_line() {
 import json
 from pathlib import Path
 import sys
+import time
 
 path = Path(sys.argv[1])
 try:
@@ -354,12 +355,40 @@ if state.get("running") is True:
 summary = state.get("summary") if isinstance(state.get("summary"), dict) else {}
 audio_ratio = summary.get("combined_audio_present_ratio")
 audio_label = "?" if audio_ratio is None else f"{float(audio_ratio) * 100:.1f}%"
-print(
-    f"{name}|fps={summary.get('mean_output_fps', '?')} "
+detail = (
+    f"fps={summary.get('mean_output_fps', '?')} "
     f"speed={summary.get('speed_p05', '?')} audio={audio_label} "
     f"relay={summary.get('relay_publisher_connection_count_min', '?')}-"
     f"{summary.get('relay_publisher_connection_count_max', '?')}"
 )
+
+# A completed soak is an acceptance-test result, not a perpetual live-health alarm.
+# Keep a result current for at least one day and at least the duration of the
+# test itself; after that, preserve it as historical evidence without painting
+# a weeks-old failure red on the live operator dashboard.
+if name in {"passed", "failed"}:
+    try:
+        completed_at = float(state.get("ended_at") or path.stat().st_mtime)
+    except (TypeError, ValueError, OSError):
+        completed_at = 0.0
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    try:
+        duration_sec = max(0, int(config.get("duration_sec") or summary.get("expected_duration_sec") or 0))
+    except (TypeError, ValueError):
+        duration_sec = 0
+    fresh_sec = max(86400, duration_sec)
+    age_sec = max(0, int(time.time() - completed_at)) if completed_at > 0 else 0
+    if completed_at > 0 and age_sec > fresh_sec:
+        if age_sec >= 86400:
+            age_label = f"{age_sec // 86400}d"
+        elif age_sec >= 3600:
+            age_label = f"{age_sec // 3600}h"
+        else:
+            age_label = f"{age_sec // 60}m"
+        print(f"historical|last={name} age={age_label} {detail}")
+        raise SystemExit
+
+print(f"{name}|{detail}")
 PY
 }
 
@@ -552,9 +581,11 @@ _bar_meter() {
 	(( value < 0 )) && value=0
 	local filled=$(( value * width / max ))
 	(( filled > width )) && filled=$width
-	local empty=$(( width - filled ))
-	printf "%${filled}s" "" | tr ' ' '█'
-	printf "%${empty}s" "" | tr ' ' '·'
+	local empty=$(( width - filled )) i
+	# GNU tr is byte-oriented in the C locale and corrupts these multibyte glyphs.
+	# The bar is tiny, so emit glyphs directly and keep stdout valid UTF-8.
+	for (( i = 0; i < filled; i++ )); do printf '█'; done
+	for (( i = 0; i < empty; i++ )); do printf '·'; done
 }
 
 _truncate_display_width() {
@@ -2690,6 +2721,7 @@ PY
 		running) printf "    ${C_CYAN}◉${C_RESET} Soak        ${C_CYAN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
 		passed) printf "    ${C_GREEN}✓${C_RESET} Soak        ${C_GREEN}PASSED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
 		failed) printf "    ${C_RED}!${C_RESET} Soak        ${C_RED}FAILED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
+		historical) printf "    ${C_DIM}○${C_RESET} Soak        ${C_DIM}HISTORICAL${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$soak_detail" ;;
 		not_started) printf "    ${C_DIM}○${C_RESET} Soak        ${C_DIM}NOT STARTED${C_RESET}\n" ;;
 		*) printf "    ${C_YELLOW}!${C_RESET} Soak        ${C_YELLOW}%s${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${soak_status:u}" "$soak_detail" ;;
 		esac
