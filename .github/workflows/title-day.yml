@@ -1,0 +1,18 @@
+name: Title day update
+on:
+  pull_request:
+    paths: ['update_stream_title_day.sh', 'tests/test_title_day.py', 'deploy/title-day/**', '.github/workflows/title-day.yml']
+  push:
+    branches: [main]
+    paths: ['update_stream_title_day.sh', 'tests/test_title_day.py', 'deploy/title-day/**', '.github/workflows/title-day.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_title_day
+      - run: bash -n update_stream_title_day.sh
