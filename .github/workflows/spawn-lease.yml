@@ -5,6 +5,7 @@ on:
       - 'strategy/ai.sh'
       - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
+      - 'tests/test_ab_deferred_batch.sh'
       - 'strategy/ab_gate.sh'
       - 'strategy/ab_interleave.sh'
       - 'tests/test_ab_gate.sh'
@@ -19,6 +20,7 @@ on:
       - 'strategy/ai.sh'
       - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
+      - 'tests/test_ab_deferred_batch.sh'
       - 'strategy/ab_gate.sh'
       - 'strategy/ab_interleave.sh'
       - 'tests/test_ab_gate.sh'
@@ -40,3 +42,4 @@ jobs:
       - run: python3 -m unittest tests.test_spawn_guard_lease tests.test_improve_retry_reliability tests.test_shadow_validation_retry
       - run: bash -n strategy/improve.sh
       - run: bash tests/test_ab_gate.sh && bash tests/test_ab_interleave.sh && bash tests/test_ab_improve_serialization.sh
+      - run: bash tests/test_ab_deferred_batch.sh
