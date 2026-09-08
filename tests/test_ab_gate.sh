@@ -59,6 +59,10 @@ _ab_gate_before_game; [ ! -d tmp/state/ab_candidate ] && ok || ng "stale base di
 # 4) real start via before_game (dry-run off)
 sed -i.bak 's/^AB_GATE_DRY_RUN=.*/AB_GATE_DRY_RUN=0/' .env
 cp alt.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$A" 12 "100 200" >/dev/null
+_acquire_spawn_lock() { return 1; }
+_ab_gate_before_game
+_ab_gate_candidate_pending && ok || ng "busy spawn mutex must preserve candidate"
+unset -f _acquire_spawn_lock
 _ab_gate_before_game
 [ -f tmp/state/ab_state.json ] && ok || ng "start created state ($(lastlog))"
 grep -q "^REGRESSION_DISABLED=1" .env && grep -q "^SOREN_AB_ALT_STRATEGY=tmp/state/ab_alt_strategy.py" .env && ok || ng "toggles set: $(grep -E '^(REGRESSION|SOREN_AB)' .env | tr '\n' ' ')"
@@ -70,6 +74,11 @@ export SOREN_AB_ALT_STRATEGY=tmp/state/ab_alt_strategy.py
 _ab_active >/dev/null 2>&1 && ok || ng "active after start: $(_ab_active 2>&1)"
 
 # 5) after_game: synthetic games with strong harm → finish A (rejected, files moved, toggles restored)
+ACCUMULATED_GAMES_FILE=tmp/state/accumulated_games.json
+echo '{"count":48,"hash":"A"}' > "$ACCUMULATED_GAMES_FILE"
+cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+_clear_accumulated_data() { rm -f "$ACCUMULATED_GAMES_FILE"; }
+mkdir -p "$AB_CANDIDATE_DIR"; echo queued > "$AB_CANDIDATE_DIR/keep"
 python3 - "$A" "$B" <<'PY'
 import json,sys,random
 a,b=sys.argv[1:3]; rng=random.Random(1); rows=[]; idx=0
@@ -88,6 +97,8 @@ grep -qx "$B" tmp/state/rejected_hashes.txt && ok || ng "B rejected recorded"
 grep -q "^REGRESSION_DISABLED=0" .env && grep -q "^SOREN_AB_ALT_STRATEGY=$" .env && ok || ng "toggles restored: $(grep -E '^(REGRESSION|SOREN_AB_ALT)' .env | tr '\n' ' ')"
 ls tmp/history/ab_*_games.jsonl >/dev/null 2>&1 && ls tmp/history/ab_*_state.json >/dev/null 2>&1 && ok || ng "history files"
 [ "$(python3 extract_decide_hash.py strategy.py)" = "$A" ] && ok || ng "root still A after reject"
+[ -f "$ACCUMULATED_GAMES_FILE" ] && [ -f "$IMPROVE_LOCK_FILE" ] && ok || ng "A verdict must preserve pending 48-game batch"
+[ -f "$AB_CANDIDATE_DIR/keep" ] && ok || ng "finish must preserve later queued candidate"
 # rejected candidate is discarded at the boundary
 cp alt.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$A" >/dev/null; _ab_gate_before_game; [ ! -d tmp/state/ab_candidate ] && [ ! -f tmp/state/ab_state.json ] && ok || ng "rejected hash discarded"
 
@@ -100,7 +111,12 @@ PY
 C=$(python3 extract_decide_hash.py alt2.py)
 cp alt2.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$A" >/dev/null; _ab_gate_before_game
 [ -f tmp/state/ab_state.json ] && ok || ng "second start"
+echo '{"count":48,"hash":"A"}' > "$ACCUMULATED_GAMES_FILE"
+cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+cp "$ACCUMULATED_GAMES_FILE" tmp/state/improve_retry_batch.json
 _ab_finish B "test adopt" >/dev/null 2>&1 && ok || ng "finish B rc"
+[ ! -e "$IMPROVE_LOCK_FILE" ] && [ ! -e tmp/state/improve_retry_batch.json ] && ok || ng "B verdict must retire old A locks"
+find tmp/history -name '*batch*' | grep -q . && ok || ng "B verdict must archive old metadata"
 [ "$(python3 extract_decide_hash.py strategy.py)" = "$C" ] && ok || ng "root adopted C"
 [ "$(python3 extract_decide_hash.py tmp/revert_strategy.py)" = "$A" ] && ok || ng "revert = previous root"
 [ ! -f tmp/state/ab_state.json ] && grep -q "^SOREN_AB_ALT_STRATEGY=$" .env && ok || ng "state cleared after adopt"

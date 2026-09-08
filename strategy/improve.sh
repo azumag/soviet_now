@@ -2822,8 +2822,16 @@ record_completed_game_for_adaptive_improvement() {
 	fi
 }
 
+_improve_ab_pending() {
+	# Presence, not _ab_active: even aborted/malformed AB state must finish
+	# bookkeeping before a new job can consume its batch or overwrite a candidate.
+	[ -e "${AB_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/ab_state.json}" ] ||
+		[ -d "${AB_CANDIDATE_DIR:-${TMP_STATE_DIR:-tmp/state}/ab_candidate}" ]
+}
+
 _start_improvement_job() {
 	local all_history_files="$1" all_scores="$2" any_soviet="$3" acc_count="$4" reason="$5"
+	_improve_ab_pending && return 1
 
 	# 手動改善モード: プロセスを起動せず待機状態にする
 	if [[ -f "$TMP_STATE_DIR/manual_improve_mode" ]]; then
@@ -2842,6 +2850,10 @@ _start_improvement_job() {
 	# caller の last_improve_failed_at クリアを誤発火させない)
 	if ! _acquire_spawn_lock; then
 		log "[IMPROVE] spawn lock を別 spawner が保持中 → 二重起動回避でスキップ"
+		return 1
+	fi
+	if _improve_ab_pending; then
+		_release_spawn_lock
 		return 1
 	fi
 	# The pre-mutex status check is not sufficient: both soren_loop and
@@ -2990,6 +3002,8 @@ _start_improvement_job() {
 
 trigger_adaptive_improvement() {
 	type reload_runtime_toggles >/dev/null 2>&1 && reload_runtime_toggles
+	# Keep the lock/history intact until the candidate verdict is final.
+	_improve_ab_pending && return 0
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] trigger_adaptive_improvementをスキップ（建国後停止中）"
 		return
