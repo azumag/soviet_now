@@ -3685,6 +3685,10 @@ PY
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 
+		# Fetch raider facts once, for both dedicated and mixed prompts. API credentials
+		# stay in the environment; the helper outputs public allowlisted fields only.
+		printf '%s' "${classification_json:-[]}" | timeout 22s python3 "$ELOOP_LIB_DIR/lib/raid_research.py" >>"$comment_prompt_file" || true
+
 		cat >>"$comment_prompt_file" <<'JAPANESECOMMENT'
 
 【返信生成の出力契約】
