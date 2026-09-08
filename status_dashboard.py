@@ -1628,6 +1628,30 @@ def load_archive_restart_candidate():
 
 # ── Panel renderers ───────────────────────────────────────────
 
+def render_ai_backoff_header():
+    """Only retain non-duplicated AI backoff information in the top panel."""
+    lines = []
+    inner = W - 3
+    ai_backoff = load_ai_backoff_status()
+    if ai_backoff:
+        for index, row in enumerate(ai_backoff["roles"]):
+            role = "main" if row["role"] == "main" else "fb"
+            detail = f"{role}={row['model']}({row['remaining_text']})" if row["active"] else f"{role}=ready"
+            prefix = " AI 429 " if index == 0 else "        "
+            ai_raw = f"{prefix}{detail}"
+            ai_display = f" {C_RED}AI 429{RST} {detail}" if index == 0 else f"        {detail}"
+            ai_display = truncate_ansi_display(ai_display, inner)
+            lines.append(
+                f"{C_CYAN}│{RST}{ai_display}"
+                f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
+            )
+
+    if not lines:
+        return []
+    return [f"{C_CYAN}┌{'─' * (W - 2)}┐{RST}", *lines,
+            f"{C_CYAN}└{'─' * (W - 2)}┘{RST}"]
+
+
 def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
                   strat_lines, rejected, accumulated, improve, rolling,
                   russia_rate=None):
@@ -2519,9 +2543,7 @@ def main():
 
     output = []
 
-    output += render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
-                            strat_lines, rejected, accumulated, improve, rolling,
-                            russia_rate=russia_rate)
+    output += render_ai_backoff_header()
     output.append("")
     output += render_score_timeline(scores)
     output.append("")
