@@ -2804,7 +2804,10 @@ record_completed_game_for_adaptive_improvement() {
 		fi
 		if command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
 			# A/B 中: 改善用の蓄積は A 腕 (root) の試合だけ。同 hash ロックの更新も止める (腕が交互に変わるため)
-			if [ "${AB_ARM:-A}" = "A" ]; then
+			# Freeze the reserved batch until the verdict. All subsequent AB
+			# games still reach rolling/current-run and the AB/history ledgers.
+			# A second 48-game accumulator would overwrite the waiting lock.
+			if [ "${AB_ARM:-A}" = "A" ] && [ ! -f "$IMPROVE_LOCK_FILE" ]; then
 				accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
 			fi
 		else
