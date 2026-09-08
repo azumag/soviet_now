@@ -15,7 +15,7 @@
 #   TWITCH_CLIENT_ID        : Twitch アプリの Client ID
 #   TWITCH_BROADCASTER_ID   : チャンネル(broadcaster)の user id
 #   TWITCH_TITLE_TOKEN      : channel:manage:broadcast スコープ付きの broadcaster トークン
-#                             (未設定時は TWITCH_PREDICTIONS_TOKEN を流用)
+#                             (既存の予想用・チャット用トークンも権限と本人確認後に利用)
 # 任意:
 #   STREAM_DAY_EPOCH        : day 1 の日付 (YYYY-MM-DD)。既定 2026-03-14
 #   STREAM_DAY_TZ           : 日付判定のタイムゾーン。既定 Asia/Tokyo
@@ -65,43 +65,41 @@ PY
 _log "computed day N=$N (epoch=$EPOCH today=$TODAY tz=$DAY_TZ)"
 
 # --- 認証情報 ---
-TOKEN="${TWITCH_TITLE_TOKEN:-${TWITCH_PREDICTIONS_TOKEN:-}}"
-TOKEN="${TOKEN#oauth:}"
-CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
-if [ -z "$TOKEN" ]; then
-	_log "ERROR: no token (set TWITCH_TITLE_TOKEN or TWITCH_PREDICTIONS_TOKEN)"; exit 1
-fi
-if [ -z "$BROADCASTER_ID" ]; then
-	_log "ERROR: TWITCH_BROADCASTER_ID not set"; exit 1
-fi
-
-# --- トークン検証: スコープ確認 & client_id 取得 (トークン発行元 client と一致させる) ---
-VALIDATE_JSON="$(curl -s -H "Authorization: OAuth ${TOKEN}" https://id.twitch.tv/oauth2/validate)"
-read -r TOK_CLIENT_ID HAS_SCOPE <<EOF
-$(printf '%s' "$VALIDATE_JSON" | python3 -c "
-import sys, json
+[ -n "$BROADCASTER_ID" ] || { _log "ERROR: TWITCH_BROADCASTER_ID not set"; exit 1; }
+TOKEN=""
+EFFECTIVE_CLIENT_ID=""
+# Select an existing valid broadcaster credential with the required scope.
+# A predictions-only credential must not prevent trying the chat credential.
+for token_name in TWITCH_TITLE_TOKEN TWITCH_PREDICTIONS_TOKEN TWITCH_BOT_TOKEN; do
+    candidate="${!token_name}"
+    candidate="${candidate#oauth:}"
+    [ -n "$candidate" ] || continue
+    VALIDATE_JSON="$(curl -s --max-time 10 -H "Authorization: OAuth ${candidate}" https://id.twitch.tv/oauth2/validate)"
+    TOK_CLIENT_ID=$(printf '%s' "$VALIDATE_JSON" | python3 -c '
+import json,sys
 try:
-    d = json.load(sys.stdin)
-except Exception:
-    print('', '0'); raise SystemExit
-scopes = d.get('scopes') or []
-has = '1' if 'channel:manage:broadcast' in scopes else '0'
-print(d.get('client_id') or '', has)
-")
-EOF
-if [ "$HAS_SCOPE" != "1" ]; then
-	_log "ERROR: token lacks 'channel:manage:broadcast' scope. タイトル更新には broadcaster の channel:manage:broadcast 付きトークンが必要です。TWITCH_TITLE_TOKEN を設定してください。"
-	exit 3
-fi
-# GET/PATCH の Client-Id はトークン発行元 client と一致する必要がある
-EFFECTIVE_CLIENT_ID="${TOK_CLIENT_ID:-$CLIENT_ID}"
-if [ -z "$EFFECTIVE_CLIENT_ID" ]; then
-	_log "ERROR: no client id (validate returned none and TWITCH_CLIENT_ID unset)"; exit 1
+    d=json.load(sys.stdin)
+    if str(d.get("user_id", "")) == sys.argv[1] and "channel:manage:broadcast" in d.get("scopes", []):
+        print(d.get("client_id", ""))
+except (ValueError, TypeError):
+    pass
+' "$BROADCASTER_ID")
+    if [ -n "$TOK_CLIENT_ID" ]; then
+        TOKEN="$candidate"
+        EFFECTIVE_CLIENT_ID="$TOK_CLIENT_ID"
+        _log "using credential: $token_name"
+        break
+    fi
+done
+unset candidate VALIDATE_JSON
+if [ -z "$TOKEN" ]; then
+    _log "ERROR: no valid broadcaster credential with channel:manage:broadcast"
+    exit 3
 fi
 
 # --- 現在のタイトルを取得 ---
-CH_JSON="$(curl -s "https://api.twitch.tv/helix/channels?broadcaster_id=${BROADCASTER_ID}" \
+CH_JSON="$(curl -s --max-time 15 "https://api.twitch.tv/helix/channels?broadcaster_id=${BROADCASTER_ID}" \
 	-H "Authorization: Bearer ${TOKEN}" -H "Client-Id: ${EFFECTIVE_CLIENT_ID}")"
 CUR_TITLE="$(printf '%s' "$CH_JSON" | python3 -c "
 import sys, json
@@ -153,7 +151,7 @@ fi
 
 # --- タイトル更新 (PATCH /helix/channels) ---
 BODY="$(python3 -c "import json,sys; print(json.dumps({'title': sys.argv[1]}))" "$NEW_TITLE")"
-HTTP_CODE="$(curl -s -o /tmp/_stream_title_patch_resp.$$ -w '%{http_code}' \
+HTTP_CODE="$(curl -s --max-time 15 -o /tmp/_stream_title_patch_resp.$$ -w '%{http_code}' \
 	-X PATCH "https://api.twitch.tv/helix/channels?broadcaster_id=${BROADCASTER_ID}" \
 	-H "Authorization: Bearer ${TOKEN}" \
 	-H "Client-Id: ${EFFECTIVE_CLIENT_ID}" \

@@ -1,0 +1,12 @@
+[Unit]
+Description=Update Twitch stream title day number
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/soren
+ExecStart=/home/ubuntu/soren/update_stream_title_day.sh
+TimeoutStartSec=90
+SuccessExitStatus=2
