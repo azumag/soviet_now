@@ -630,14 +630,35 @@ def cmd_evaluate(args):
             print(json.dumps(receipt))
             return 1
 
-        if ok_count == 0:
-            receipt["gate_reason"] = "no fixture produced a valid decision (all failed/timed out/erred)"
+        # Automatic adoption is fail-closed across the entire fixed corpus. A candidate
+        # that crashes or violates the contract on even one representative state must not
+        # be promoted merely because another fixture happened to return a valid decision.
+        if fixture_count <= 0:
+            receipt["gate_reason"] = "no fixed fixtures are available; refusing automatic adoption"
+            _write_receipt(args.receipt_out, receipt)
+            print(json.dumps(receipt))
+            return 1
+
+        if len(decisions) != fixture_count:
+            receipt["gate_reason"] = (
+                "fixture result count mismatch; refusing automatic adoption "
+                f"(expected={fixture_count} actual={len(decisions)})"
+            )
+            _write_receipt(args.receipt_out, receipt)
+            print(json.dumps(receipt))
+            return 1
+
+        if ok_count != fixture_count:
+            receipt["gate_reason"] = (
+                f"{fixture_count - ok_count}/{fixture_count} fixtures failed/timed out/errored; "
+                "all fixed fixtures must produce contract-valid decisions for automatic adoption"
+            )
             _write_receipt(args.receipt_out, receipt)
             print(json.dumps(receipt))
             return 1
 
         receipt["gate"] = "pass"
-        receipt["gate_reason"] = f"{ok_count}/{len(decisions)} fixtures produced a contract-valid decision"
+        receipt["gate_reason"] = f"{ok_count}/{fixture_count} fixtures produced contract-valid decisions"
         _write_receipt(args.receipt_out, receipt)
         print(json.dumps(receipt))
         return 0
