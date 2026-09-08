@@ -5,6 +5,11 @@ on:
       - 'strategy/ai.sh'
       - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
+      - 'strategy/ab_gate.sh'
+      - 'strategy/ab_interleave.sh'
+      - 'tests/test_ab_gate.sh'
+      - 'tests/test_ab_interleave.sh'
+      - 'tests/test_ab_improve_serialization.sh'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
       - '.github/workflows/spawn-lease.yml'
@@ -14,6 +19,11 @@ on:
       - 'strategy/ai.sh'
       - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
+      - 'strategy/ab_gate.sh'
+      - 'strategy/ab_interleave.sh'
+      - 'tests/test_ab_gate.sh'
+      - 'tests/test_ab_interleave.sh'
+      - 'tests/test_ab_improve_serialization.sh'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
       - '.github/workflows/spawn-lease.yml'
@@ -29,3 +39,4 @@ jobs:
           persist-credentials: false
       - run: python3 -m unittest tests.test_spawn_guard_lease tests.test_improve_retry_reliability tests.test_shadow_validation_retry
       - run: bash -n strategy/improve.sh
+      - run: bash tests/test_ab_gate.sh && bash tests/test_ab_interleave.sh && bash tests/test_ab_improve_serialization.sh

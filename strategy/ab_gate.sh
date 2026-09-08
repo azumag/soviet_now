@@ -81,6 +81,23 @@ _ab_gate_candidate_ready_since() {
 
 # root(A) と bundle (strategy.py [+ strategy_helpers/]) の A/B を次試合から開始する (tools/ab_ctl.sh start と共通)。
 _ab_start_from_bundle() {
+	# Serialize state creation with worker spawning. Automatic candidates also
+	# block spawns while pending; this mutex covers direct/manual AB starts.
+	local rc=0
+	if command -v _acquire_spawn_lock >/dev/null 2>&1; then
+		_acquire_spawn_lock || return 75
+		if _improve_spawn_state_blocks_start; then
+			_release_spawn_lock
+			return 75
+		fi
+		_ab_start_from_bundle_locked "$@" || rc=$?
+		_release_spawn_lock
+		return "$rc"
+	fi
+	_ab_start_from_bundle_locked "$@"
+}
+
+_ab_start_from_bundle_locked() {
 	local dir="$1" pattern="${2:-ABBA}" src a b helpers_src="" pause_pre=0 reg_before
 	src="$dir/strategy.py"
 	[ -f "$src" ] || { log "[AB] 候補ファイルがない: $src"; return 1; }
@@ -196,7 +213,22 @@ _ab_finish() {
 		fi
 		log "[AB] finish: A 維持 (B=${b:0:12} 棄却) reason=$reason"
 	fi
-	command -v _clear_accumulated_data >/dev/null 2>&1 && _clear_accumulated_data >/dev/null 2>&1 || true
+	if [ "$winner" = "B" ]; then
+		# A's deferred batch is not evidence for the newly adopted B. Archive
+		# metadata before clearing the old cycle; game histories remain intact.
+		local batch label
+		for label in accumulated lock retry; do
+			case "$label" in
+				accumulated) batch="${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" ;;
+				lock) batch="${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ;;
+				retry) batch="${IMPROVE_RETRY_BATCH_FILE:-tmp/state/improve_retry_batch.json}" ;;
+			esac
+			if [ -e "$batch" ]; then
+				mv "$batch" "$AB_HISTORY_DIR/ab_${ts}_batch_${label}.json" || return 1
+			fi
+		done
+		command -v _clear_accumulated_data >/dev/null 2>&1 && _clear_accumulated_data >/dev/null 2>&1 || true
+	fi
 	command -v _seed_current_strategy_run_from_rolling >/dev/null 2>&1 && _seed_current_strategy_run_from_rolling "$win_hash" >/dev/null 2>&1 || true
 	command -v _promote_current_strategy_to_anchor >/dev/null 2>&1 && _promote_current_strategy_to_anchor "$win_hash" >/dev/null 2>&1 || true
 	command -v _refresh_best_strategy_anchor >/dev/null 2>&1 && _refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
@@ -216,9 +248,10 @@ st.update({"winner": sys.argv[3], "reason": sys.argv[4], "finished_at": time.str
 with open(sys.argv[5], "a", encoding="utf-8") as fh:
     fh.write(json.dumps(st, ensure_ascii=False) + "\n")
 PY
-	mv "$AB_STATE_FILE" "$AB_HISTORY_DIR/ab_${ts}_state.json" 2>/dev/null || rm -f "$AB_STATE_FILE"
-	mv "$AB_GAMES_FILE" "$AB_HISTORY_DIR/ab_${ts}_games.jsonl" 2>/dev/null || rm -f "$AB_GAMES_FILE"
-	rm -rf "$AB_CANDIDATE_DIR" 2>/dev/null || true
+	# A queued candidate belongs to the next cycle; never delete it here.
+	# Retire state last: its presence blocks improvement until cleanup is done.
+	mv "$AB_GAMES_FILE" "$AB_HISTORY_DIR/ab_${ts}_games.jsonl" || return 1
+	mv "$AB_STATE_FILE" "$AB_HISTORY_DIR/ab_${ts}_state.json" || return 1
 	log "[AB] finish 完了: winner=$winner root=$(_ab_hash "${STRATEGY_FILE:-strategy.py}") 記録 $AB_HISTORY_DIR/ab_${ts}_*"
 	return 0
 }
@@ -261,6 +294,11 @@ PY
 		mkdir -p "$AB_HISTORY_DIR"
 		mv "$AB_CANDIDATE_DIR" "$AB_HISTORY_DIR/ab_candidate_$(date +%Y%m%d_%H%M%S)" 2>/dev/null || rm -rf "$AB_CANDIDATE_DIR"
 	else
+		local start_rc=$?
+		if [ "$start_rc" -eq 75 ]; then
+			log "[AB-GATE] 改善起動と競合中 → 候補を保持して次の境界へ延期"
+			return 0
+		fi
 		log "[AB-GATE] A/B 開始失敗 → 候補を破棄"
 		rm -rf "$AB_CANDIDATE_DIR"
 	fi
