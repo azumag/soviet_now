@@ -53,6 +53,75 @@ class StreamBackendStatusTests(unittest.TestCase):
         self.assertIn("fps=29.97", result.stdout)
         self.assertNotIn("OBSWS", result.stdout)
 
+    def test_show_status_demotes_only_stale_completed_soak_failure(self) -> None:
+        cases = (
+            (1, "HISTORICAL", "last=failed", "Soak        \x1b[31mFAILED"),
+            (9_999_999_999, "Soak        \x1b[31mFAILED", None, "HISTORICAL"),
+        )
+        for ended_at, expected, extra_expected, unexpected in cases:
+            with self.subTest(ended_at=ended_at), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                direct = root / "direct"
+                soak = root / "soak"
+                direct.mkdir()
+                soak.mkdir()
+                (direct / "status.json").write_text(
+                    json.dumps(
+                        {
+                            "running": True,
+                            "mode": "live",
+                            "pid": os.getpid(),
+                            "ffmpeg_pid": os.getpid(),
+                            "fps": 30.0,
+                            "speed": 1.0,
+                            "drop_frames": 0,
+                            "dup_frames": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (soak / "status.json").write_text(
+                    json.dumps(
+                        {
+                            "state": "failed",
+                            "running": False,
+                            "ended_at": ended_at,
+                            "config": {"duration_sec": 3600},
+                            "summary": {
+                                "mean_output_fps": 29.999,
+                                "speed_p05": 1.0,
+                                "combined_audio_present_ratio": 1.0,
+                                "relay_publisher_connection_count_min": 1,
+                                "relay_publisher_connection_count_max": 1,
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "SOREN_STREAM_BACKEND": "ffmpeg",
+                        "SOREN_DIRECT_STREAM_STATE_DIR": str(direct),
+                        "SOREN_DIRECT_SOAK_STATE_DIR": str(soak),
+                        "SHOW_STATUS_NO_FLICKER": "1",
+                    }
+                )
+                result = subprocess.run(
+                    ["./show_status.sh", "--once"],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=20,
+                    check=False,
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(expected, result.stdout)
+            if extra_expected is not None:
+                self.assertIn(extra_expected, result.stdout)
+            self.assertNotIn(unexpected, result.stdout)
+
     def test_status_dashboard_header_includes_selected_backend(self) -> None:
         env = os.environ.copy()
         env["SOREN_STREAM_BACKEND"] = "ffmpeg"
