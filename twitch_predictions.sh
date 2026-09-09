@@ -368,12 +368,12 @@ PY
 )
 			[ -n "${_stale_regression_detail}" ] || _stale_regression_detail=""
 			if [ -n "${_stale_regression_detail}" ]; then
-				_announce_prediction_result "予想結果：「${_stale_label}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。${_stale_regression_detail}" "${_stale_label}" "${_stale_regression_detail}" || true
+				enqueue_chat_message "予想結果：「${_stale_label}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。${_stale_regression_detail}" "predictions"
 			else
-				_announce_prediction_result "予想結果：「${_stale_label}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。" "${_stale_label}" || true
+				enqueue_chat_message "予想結果：「${_stale_label}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。" "predictions"
 			fi
 		else
-			_announce_prediction_result "予想結果：「${_stale_label}」でした！" "${_stale_label}" || true
+			enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
 		fi
 	else
 		_log "STALE: resolve failed, prediction may need manual cleanup"
@@ -591,119 +591,6 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 	fi
 }
 
-# --- 予想スタート/結果のAIコメント ---
-# チャネルポイント予想の開始・確定時に、定型文に加えてAIの一言を付ける。
-# poll_worker の RADIO_POLL_QUESTION/RESULT と同じ方式 (ai_generate_list +
-# validator + chat/audio 配送)。AI 失敗時は定型文のみ (従来動作へ fallback)。
-TWITCH_PREDICTION_COMMENTARY_ENABLED="${TWITCH_PREDICTION_COMMENTARY_ENABLED:-1}"
-TWITCH_PREDICTION_AI_TIMEOUT="${TWITCH_PREDICTION_AI_TIMEOUT:-120}"
-
-_prediction_ensure_ai() {
-	declare -F ai_generate_list >/dev/null 2>&1 && return 0
-	# standalone実行 (worker外の直接起動) でも動くよう、ai_generate.sh が
-	# 期待する log / provider誤差判定を先に用意する。worker内では既存定義を尊重する。
-	# command -v ではなく declare -F で見る (同名バイナリの誤検出を避ける)。
-	declare -F log >/dev/null 2>&1 || {
-		# shellcheck source=/dev/null
-		source core/helpers.sh 2>/dev/null || true
-	}
-	# shellcheck source=/dev/null
-	source lib/ai_generate.sh 2>/dev/null || return 1
-	declare -F ai_generate_list >/dev/null 2>&1
-}
-
-_prediction_comment_validator() {
-	python3 - "$1" <<'PY'
-import re, sys
-text = sys.argv[1].strip()
-if not text or len(text) > 140 or "\n" in text or "\r" in text:
-    raise SystemExit(1)
-if not re.search(r"[ぁ-んァ-ヶ一-龠]", text):
-    raise SystemExit(1)
-# 票数は機械集計の領域。モデルに再掲させると不一致の原因になる。
-if re.search(r"票", text):
-    raise SystemExit(1)
-if re.search(r"[`*_#]|(^|\s)[-+•]\s|\[[^]]*\]\([^)]*\)", text):
-    raise SystemExit(1)
-lower = text.casefold()
-blocked = (
-    "the output", "required format", "let me", "i produced", "redo this",
-    "集計結果", "出力形式", "以下のとおり", "コメント:", "コメント：",
-)
-if any(x in lower for x in blocked):
-    raise SystemExit(1)
-PY
-}
-
-_prediction_persona_header() {
-	cat <<'EOF'
-あなたは日本語のライブ配信「ソ連ゲーム」の実況者です。チャネルポイント予想コーナーの一言を話します。
-
-人格: 共産主義者でソ連を愛し、資本主義や西側への皮肉をウィットとして効かせる。斜に構えた語り口で世の中を少し上から眺めるタイプ。褒めるときも素直に褒めない、けなすときも容赦しないが根底には愛がある。観察の効いたツッコミ、意外な比喩、言葉遊び、視点をずらすひねりを必ず入れる。淡白なだけは禁止。
-EOF
-}
-
-# _generate_prediction_line <kind> <context>
-# kind: start | result。成功時は一言を stdout へ、失敗時は非0。
-_generate_prediction_line() {
-	local kind="$1" context="$2" prompt tmp_prompt raw
-	[ "${TWITCH_PREDICTION_COMMENTARY_ENABLED:-1}" = "1" ] || return 1
-	_prediction_ensure_ai || return 1
-	tmp_prompt=$(mktemp "tmp/.prediction_prompt.XXXXXXXX") || return 1
-	{
-		_prediction_persona_header
-		if [ "$kind" = "start" ]; then
-			cat <<'EOF'
-方針: 投票を煽る短い掛け声を1つ。ボケ強め。ルール説明は不要（別文で送る）。
-制約: 日本語140文字以内・1行。票数やポイント数には触れない。
-EOF
-			printf '状況: %s\n' "$context"
-		else
-			cat <<'EOF'
-方針: 確定した結果への短いリアクションを1つ。勝った側を持ち上げ、負けた側を愛のある罵倒でいじる。ボケ強め。
-制約: 日本語140文字以内・1行。票数やポイント数には触れない。結果の文言は変えず、反応だけを付ける。
-EOF
-			printf '結果: %s\n' "$context"
-		fi
-		printf '一言だけを返し、説明やJSONは付けない。\n'
-	} >"$tmp_prompt"
-	if [ "$kind" = "start" ]; then
-		raw=$(ai_generate_list "RADIO_PREDICTION_START" "$tmp_prompt" "${TWITCH_PREDICTION_AGENTS:-${RADIO_AGENTS:-}}" "${TWITCH_PREDICTION_AI_TIMEOUT:-120}" _prediction_comment_validator) || {
-			rm -f "$tmp_prompt"
-			return 1
-		}
-	else
-		raw=$(ai_generate_list "RADIO_PREDICTION_RESULT" "$tmp_prompt" "${TWITCH_PREDICTION_AGENTS:-${RADIO_AGENTS:-}}" "${TWITCH_PREDICTION_AI_TIMEOUT:-120}" _prediction_comment_validator) || {
-			rm -f "$tmp_prompt"
-			return 1
-		}
-	fi
-	rm -f "$tmp_prompt"
-	printf '%s\n' "$raw" | head -n 1
-}
-
-# start announce: fixed rules are sent by the caller; AI hype is added here
-# 定型の開始告知は呼び出し側が送る。ここではAIの掛け声を追加する。
-_announce_prediction_start() {
-	local window_display="$1" max_games="$2" hype
-	hype=$(_generate_prediction_line start "次の${max_games}試合・受付${window_display}") || return 0
-	enqueue_audio_text "$hype" "predictions" || true
-}
-
-# result announce: fixed result plus AI reaction in one message
-# 定型の結果告知とAIのリアクションを1文にまとめて送る。AI失敗時は定型のみ。
-_announce_prediction_result() {
-	local fixed="$1" label="$2" detail="${3:-}" context reaction text
-	context="$label"
-	[ -n "$detail" ] && context="$label $detail"
-	if reaction=$(_generate_prediction_line result "$context"); then
-		text="${fixed} ${reaction}"
-	else
-		text="$fixed"
-	fi
-	enqueue_audio_text "$text" "predictions" || true
-}
-
 # --- サブコマンド ---
 case "${1:-}" in
 create)
@@ -817,8 +704,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	enqueue_audio_text "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
-	_announce_prediction_start "$_window_display" "$PREDICTION_MAX_GAMES" || true
+	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
@@ -920,12 +806,12 @@ PY
 )
 		[ -n "${_regression_detail}" ] || _regression_detail=""
 		if [ -n "${_regression_detail}" ]; then
-			_announce_prediction_result "予想結果：「${OUTCOME_LABEL}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。${_regression_detail}" "${OUTCOME_LABEL}" "${_regression_detail}" || true
+			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。${_regression_detail}" "predictions"
 		else
-			_announce_prediction_result "予想結果：「${OUTCOME_LABEL}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。" "${OUTCOME_LABEL}" || true
+			enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」！試していた新戦略が前より成績を落としたので、安定版に戻しました。" "predictions"
 		fi
 	else
-		_announce_prediction_result "予想結果：「${OUTCOME_LABEL}」でした！" "${OUTCOME_LABEL}" || true
+		enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
 	fi
 	rm -f "$PREDICTION_STATE_FILE"
 	printf '{"ok":true,"status":"resolved","outcome_index":%s,"outcome_label":"%s"}\n' "$OUTCOME_INDEX" "$OUTCOME_LABEL"
