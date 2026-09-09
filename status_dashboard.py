@@ -84,6 +84,13 @@ AB_GAMES_FILE = os.getenv("AB_GAMES_FILE", "tmp/state/ab_games.jsonl")
 AB_CANDIDATE_META_FILE = os.path.join(
     os.getenv("AB_CANDIDATE_DIR", "tmp/state/ab_candidate"), "meta.json"
 )
+# A/B 中に「いまの試合が実際に打っている戦略」。eloop が試合ごとに書き、
+# strategy/ab_interleave.sh の _ab_record_game が played_hash の算出に使うのと同じ実体。
+# root (strategy.py) は B 腕の試合でも書き換わらないため、これを見ないと
+# ヘッダーの Strategy 行が A/B 中ずっと A のハッシュを出し続ける。
+AB_PLAYED_SNAPSHOT_FILE = os.getenv(
+    "AB_PLAYED_SNAPSHOT_FILE", "strategy.py.game_snapshot"
+)
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -393,6 +400,36 @@ def compute_decide_hash(path):
         return h if r.returncode == 0 and h else ""
     except Exception:
         return ""
+
+
+def played_ab_arm(ab, snapshot_path=None):
+    """A/B 実行中に「いま打っている腕」を実測して (hash, "A"|"B") を返す。
+
+    根拠は推定ではなく実体: 試合ごとに書かれる game_snapshot の decide hash を
+    ab_state の a_hash / b_hash と突き合わせる。A/B 非稼働・snapshot 不在・
+    どちらの腕とも一致しない場合は ("", "") を返し、呼び出し側は従来表示へ戻す
+    (誤った腕を出すくらいなら出さない)。
+
+    subprocess を伴うので A/B 稼働中だけ実行する。
+    """
+    if not isinstance(ab, dict) or not ab.get("active"):
+        return "", ""
+    path = snapshot_path or AB_PLAYED_SNAPSHOT_FILE
+    try:
+        if not os.path.isfile(path):
+            return "", ""
+    except Exception:
+        return "", ""
+    played = compute_decide_hash(path)
+    if not played:
+        return "", ""
+    a_hash = str(ab.get("a_hash") or "")
+    b_hash = str(ab.get("b_hash") or "")
+    if b_hash and played == b_hash:
+        return played, "B"
+    if a_hash and played == a_hash:
+        return played, "A"
+    return "", ""
 
 
 def load_restorable_hashes():
@@ -1812,12 +1849,28 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
 
     current_entry = get_current_strategy_run_entry(strat_hash)
 
-    hash_short = strat_hash[:8] if strat_hash else "?"
+    ab = ab_status if isinstance(ab_status, dict) else {}
+
+    # A/B 中は root (strategy.py) が B 腕の試合でも書き換わらないので、そのまま
+    # 出すと「ずっと A のハッシュ」に見えて実際に打っている戦略と食い違う。
+    # 実測できた場合だけ、打っている腕のハッシュと [A]/[B] を出す。
+    played_hash, played_arm = played_ab_arm(ab)
+    hash_short = (played_hash or strat_hash)[:8] if (played_hash or strat_hash) else "?"
     ver_num = ""
     if strat_ver and strat_ver != "?":
         ver_num = strat_ver.split("_")[0]  # e.g. "v775"
-    r3_raw = f" Strategy: {hash_short}  {ver_num}  {strat_lines}L"
-    r3_display = f"{DIM}{r3_raw}{RST}"
+    r3_raw = f" Strategy: {hash_short}"
+    r3_disp_inner = f"{hash_short}"
+    if played_arm:
+        arm_raw = f" [{played_arm}]"
+        # 幅が許すときだけ腕を出す。溢れるなら従来どおりハッシュのみ。
+        if len(r3_raw) + len(arm_raw) + len(f"  {ver_num}  {strat_lines}L") <= inner:
+            r3_raw += arm_raw
+            arm_color = C_GREEN if played_arm == "B" else C_CYAN
+            r3_disp_inner += f" {arm_color}[{played_arm}]{DIM}"
+    tail_raw = f"  {ver_num}  {strat_lines}L"
+    r3_raw += tail_raw
+    r3_display = f"{DIM} Strategy: {r3_disp_inner}{tail_raw}{RST}"
 
     # 現行 hash の建国回数 (current_strategy_run.json の russia_count)。
     # 分数/割合ではなく件数のみを表示する: russia_count は strategy/improve.sh:2438 が
@@ -1864,7 +1917,6 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     # A/B 行: 進行中は A/B ハッシュ・n・腕別件数・平均差 (B-A)、未開始で候補が
     # 待機中なら候補のみ。どちらも無ければ行自体を出さない。配信上部の
     # summary (direct_broadcast_overlay.html) はこの行を拾って4枠に収める。
-    ab = ab_status if isinstance(ab_status, dict) else {}
     ab_raw = ""
     ab_disp = ""
     if ab.get("active"):

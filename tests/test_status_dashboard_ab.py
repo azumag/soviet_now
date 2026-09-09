@@ -244,6 +244,97 @@ class RenderHeaderAbRowTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_strategy_row_shows_played_arm_during_ab(self):
+        """A/B 中は root ではなく実際に打っている腕のハッシュを出す。"""
+        from unittest import mock
+
+        def _test():
+            kwargs = self._base_kwargs()
+            kwargs["strat_hash"] = "3a9bd96b76a0"
+            Path("strategy.py.game_snapshot").write_text("# snap\n")
+            ab_status = {
+                "active": True, "a_hash": "3a9bd96b76a0", "b_hash": "d0188f418f58",
+                "n": 22, "n_a": 11, "n_b": 11, "mean_a": 13191.0, "mean_b": 14481.0,
+                "diff": 899.0, "tainted": 0, "candidate": None,
+            }
+            with mock.patch.object(sd, "compute_decide_hash", return_value="d0188f418f58"):
+                lines = sd.render_header(russia_rate=None, ab_status=ab_status, **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("Strategy: d0188f41 [B]", joined)
+            self.assertNotIn("Strategy: 3a9bd96b ", joined)
+            self._assert_all_lines_fit(lines)
+
+            with mock.patch.object(sd, "compute_decide_hash", return_value="3a9bd96b76a0"):
+                lines = sd.render_header(russia_rate=None, ab_status=ab_status, **kwargs)
+            self.assertIn("Strategy: 3a9bd96b [A]", self._plain(lines))
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
+    def test_strategy_row_unchanged_without_ab(self):
+        """A/B 非稼働では従来どおり root のハッシュのみ (腕タグを出さない)。"""
+        def _test():
+            kwargs = self._base_kwargs()
+            kwargs["strat_hash"] = "3a9bd96b76a0"
+            lines = sd.render_header(russia_rate=None, ab_status=None, **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("Strategy: 3a9bd96b", joined)
+            self.assertNotIn("[A]", joined)
+            self.assertNotIn("[B]", joined)
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
+
+class PlayedAbArmTest(unittest.TestCase):
+    """A/B 中のヘッダーは「いま実際に打っている腕」を出す。
+
+    root の strategy.py は B 腕の試合でも書き換わらないため、それだけを見ていると
+    A/B 中ずっと A のハッシュが出て実際の対局と食い違う (2026-09-10 にユーザーが
+    ステータスバーの Strategy が変わらないと指摘して発覚)。判定根拠は推定ではなく、
+    試合ごとに書かれる game_snapshot の decide hash。
+    """
+
+    A = "3a9bd96b76a0"
+    B = "d0188f418f58"
+
+    def _ab(self, active=True):
+        return {"active": active, "a_hash": self.A, "b_hash": self.B}
+
+    def _with_snapshot(self, hash_value, ab=None, exists=True):
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snap = Path(tmp) / "strategy.py.game_snapshot"
+            if exists:
+                snap.write_text("# snapshot\n")
+            with mock.patch.object(sd, "compute_decide_hash", return_value=hash_value):
+                return sd.played_ab_arm(self._ab() if ab is None else ab, str(snap))
+
+    def test_b_arm_is_reported_from_snapshot(self):
+        self.assertEqual(self._with_snapshot(self.B), (self.B, "B"))
+
+    def test_a_arm_is_reported_from_snapshot(self):
+        self.assertEqual(self._with_snapshot(self.A), (self.A, "A"))
+
+    def test_inactive_ab_reports_nothing(self):
+        ab = {"active": False, "a_hash": self.A, "b_hash": self.B}
+        self.assertEqual(self._with_snapshot(self.B, ab=ab), ("", ""))
+
+    def test_missing_snapshot_reports_nothing(self):
+        self.assertEqual(self._with_snapshot(self.B, exists=False), ("", ""))
+
+    def test_unknown_hash_reports_nothing_rather_than_guessing(self):
+        self.assertEqual(self._with_snapshot("deadbeefcafe"), ("", ""))
+
+    def test_empty_hash_reports_nothing(self):
+        self.assertEqual(self._with_snapshot(""), ("", ""))
+
+    def test_non_dict_status_is_safe(self):
+        self.assertEqual(sd.played_ab_arm(None), ("", ""))
+        self.assertEqual(sd.played_ab_arm({}), ("", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
