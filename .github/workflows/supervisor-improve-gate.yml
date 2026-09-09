@@ -14,6 +14,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: python3 -m pytest tests/test_supervisor_improve_gate.py -q
+      - run: python3 -m unittest tests.test_supervisor_improve_gate
       - run: bash -n start_all.sh
       - run: bash -n lib/supervisor_improve_gate.sh
