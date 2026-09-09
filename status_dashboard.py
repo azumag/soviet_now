@@ -91,6 +91,12 @@ AB_CANDIDATE_META_FILE = os.path.join(
 AB_PLAYED_SNAPSHOT_FILE = os.getenv(
     "AB_PLAYED_SNAPSHOT_FILE", "strategy.py.game_snapshot"
 )
+# 「あと何試合か」を出すための判定スケジュール。ADOPT は look (ブロック数が
+# looks に入ったとき) でしか出ず、最終 look = max_blocks で強制決着する。
+# tools/ab_decide.py の DEFAULTS と同じ値で、tests が同期を検証している。
+AB_ENV_FILE = os.getenv("AB_ENV_FILE", ".env")
+AB_DEFAULT_LOOKS = (19, 37)
+AB_DEFAULT_MAX_BLOCKS = 37
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -526,8 +532,94 @@ def _ab_number(value):
     return number
 
 
+def _ab_env_value(key, env_path=None):
+    """ゲートと同じ規則で .env の実効値を読む (最後の一致が勝つ)。
+
+    strategy/ab_interleave.sh:_ab_env_value と同じく **プロセス環境ではなく
+    .env** を見る。ゲートがそちらしか見ないので、ここでプロセス環境を優先すると
+    「あと何試合」の表示だけが実際の判定と食い違う。
+    """
+    value = ""
+    try:
+        with open(env_path or AB_ENV_FILE, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith(key + "="):
+                    value = line.rstrip("\n").split("=", 1)[1]
+    except OSError:
+        return ""
+    return value.strip().strip('"').strip("'")
+
+
+def ab_gate_schedule(env_path=None):
+    """(looks, max_blocks) を返す。ゲートが渡す .env キーと既定値に合わせる。"""
+    looks = AB_DEFAULT_LOOKS
+    raw = _ab_env_value("AB_GATE_LOOKS", env_path)
+    if raw:
+        try:
+            parsed = tuple(int(x) for x in raw.split(",") if x.strip())
+        except ValueError:
+            parsed = ()
+        if parsed:
+            looks = parsed
+    max_blocks = AB_DEFAULT_MAX_BLOCKS
+    raw = _ab_env_value("AB_GATE_MAX_BLOCKS", env_path)
+    if raw:
+        try:
+            max_blocks = int(raw)
+        except ValueError:
+            pass
+    return tuple(sorted(looks)), max_blocks
+
+
+_AB_REPORT_UNSET = object()
+_AB_REPORT = _AB_REPORT_UNSET
+
+
+def ab_complete_blocks(rows, pattern):
+    """完全ブロック数 k。判定側の関数をそのまま呼ぶ。
+
+    再実装はしない: tools/ab_report.py:blocks の「完全」の定義は idx 重複除去・
+    idx 連続・腕構成一致まで含んでおり (issue #132 P0-5)、写すと必ずズレる。
+    ここがズレると残り試合数の表示だけが実際の判定と食い違うので、
+    tools/ab_decide.py と同じ呼び方 (key="score") で同じ関数を使う。
+    tools/ 側が読めない環境では None を返し、表示は残り試合数を出さない。
+    """
+    module = _ab_report_module()
+    if module is None:
+        return None
+    try:
+        return len(module.blocks(rows, pattern or "ABBA", key="score"))
+    except Exception:
+        return None
+
+
+def _ab_report_module():
+    """tools/ab_report.py を遅延 import する (stdlib のみなので安価)。"""
+    global _AB_REPORT
+    if _AB_REPORT is _AB_REPORT_UNSET:
+        tools_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools")
+        added = False
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+            added = True
+        try:
+            import ab_report as module
+            _AB_REPORT = module
+        except Exception:
+            _AB_REPORT = None
+        finally:
+            if added:
+                try:
+                    sys.path.remove(tools_dir)
+                except ValueError:
+                    pass
+    return _AB_REPORT
+
+
+
 def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
-                     candidate_meta_path=AB_CANDIDATE_META_FILE):
+                     candidate_meta_path=AB_CANDIDATE_META_FILE,
+                     env_path=None):
     """インターリーブ A/B の進捗要約。表示に足るデータがなければ None。
 
     tools/ab_report.py の集計 (dedupe_valid と同じ規則: tainted 除外・idx 重複は
@@ -596,11 +688,38 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
     mean_a = sum(a_vals) / len(a_vals) if a_vals else None
     mean_b = sum(b_vals) / len(b_vals) if b_vals else None
     pattern = "".join(ch for ch in str(state.get("pattern") or "ABBA") if ch in "AB")
+    pattern = pattern or "ABBA"
+
+    # 残り試合数。ADOPT は look でしか出ないので「次の採用判定まで」と、
+    # 強制決着 (最終 look = max_blocks) までの「最長」を出す。害/無益による
+    # 早期打ち切りは毎試合判定されるため、これは上限であって確定値ではない。
+    looks, max_blocks = ab_gate_schedule(env_path)
+    done_blocks = ab_complete_blocks(rows, pattern)
+    block_len = max(1, len(pattern))
+    if done_blocks is None:
+        next_look = None
+        games_to_next_look = None
+        games_to_max = None
+    else:
+        next_look = next(
+            (x for x in looks if done_blocks < x <= max_blocks), None
+        )
+        games_to_next_look = (
+            (next_look - done_blocks) * block_len if next_look is not None else None
+        )
+        games_to_max = max(0, max_blocks - done_blocks) * block_len
+
     return {
         "active": True,
         "a_hash": str(state.get("a_hash") or ""),
         "b_hash": str(state.get("b_hash") or ""),
-        "pattern": pattern or "ABBA",
+        "pattern": pattern,
+        "blocks": done_blocks,
+        "looks": looks,
+        "max_blocks": max_blocks,
+        "next_look": next_look,
+        "games_to_next_look": games_to_next_look,
+        "games_to_max": games_to_max,
         "n": len(valid),
         "n_a": len([r for r in valid if r.get("arm") == "A"]),
         "n_b": len([r for r in valid if r.get("arm") == "B"]),
@@ -1802,6 +1921,32 @@ def render_ai_backoff_header():
             f"{C_CYAN}└{'─' * (W - 2)}┘{RST}"]
 
 
+def _ab_remaining_line(ab):
+    """A/B の「あと何試合か」行 (ASCII)。出せるものが無ければ空文字。
+
+    ADOPT は look (既定 k=19,37) でしか出ないので "adopt-look in Ng"、強制決着
+    (最終 look = max_blocks) までを "max Ng" として出す。害 (UCB90<0) と無益
+    (k>=12 かつ UCB90<閾値) はこれより早く毎試合発火しうるので、どちらも
+    「上限」であって確定の残り数ではない。
+    """
+    if not isinstance(ab, dict) or not ab.get("active"):
+        return ""
+    done = ab.get("blocks")
+    if not isinstance(done, int):
+        return ""
+    next_look = ab.get("next_look")
+    left = ab.get("games_to_next_look")
+    max_left = ab.get("games_to_max")
+    if isinstance(next_look, int) and isinstance(left, int):
+        head = f"      k{done}/{next_look}  adopt-look in {left}g"
+    else:
+        # look を通り過ぎた (= 残るのは強制決着だけ)。
+        head = f"      k{done}  no adopt-look left"
+    if isinstance(max_left, int):
+        head += f"  max {max_left}g"
+    return head
+
+
 def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
                   strat_lines, rejected, accumulated, improve, rolling,
                   russia_rate=None, ab_status=None):
@@ -1953,6 +2098,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     # summary (direct_broadcast_overlay.html) はこの行を拾って4枠に収める。
     ab_raw = ""
     ab_disp = ""
+    ab_left_raw = ""
     if ab.get("active"):
         a8 = str(ab.get("a_hash") or "")[:8] or "?"
         b8 = str(ab.get("b_hash") or "")[:8] or "?"
@@ -1990,6 +2136,8 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
             if len(ab_raw) + len(tainted_raw) <= inner:
                 ab_raw += tainted_raw
                 ab_disp += f" {C_RED}t{ab_tainted}{RST}"
+        # 残り試合数は A/B 行に足すと幅 (W=57) を必ず超えるので専用行にする。
+        ab_left_raw = _ab_remaining_line(ab)
     elif isinstance(ab.get("candidate"), dict) and ab["candidate"].get("cand"):
         cand8 = str(ab["candidate"].get("cand") or "")[:8]
         base8 = str(ab["candidate"].get("base") or "")[:8]
@@ -2002,6 +2150,13 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     if ab_raw:
         pad_ab = inner - len(ab_raw)
         lines.append(f"{C_CYAN}│{RST}{ab_disp}{' ' * max(pad_ab, 0)} {C_CYAN}│{RST}")
+    if ab_left_raw:
+        ab_left_raw = ab_left_raw[:inner]
+        pad_left = inner - len(ab_left_raw)
+        lines.append(
+            f"{C_CYAN}│{RST}{DIM}{ab_left_raw}{RST}"
+            f"{' ' * max(pad_left, 0)} {C_CYAN}│{RST}"
+        )
 
     # Row 4: live game state
     r4_raw = f" Live: {state}  score={gscore}  pieces={gpieces}"
