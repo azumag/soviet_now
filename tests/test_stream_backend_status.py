@@ -146,20 +146,12 @@ class StreamBackendStatusTests(unittest.TestCase):
         self.assertNotIn("YOUTUBE_CHAT_ENABLED=0", result.stdout)
         self.assertNotIn("KICK_CHAT_ENABLED=0", result.stdout)
 
-    def test_status_dashboard_header_includes_selected_backend(self) -> None:
-        env = os.environ.copy()
-        env["SOREN_STREAM_BACKEND"] = "ffmpeg"
-        result = subprocess.run(
-            ["python3", "status_dashboard.py"],
-            cwd=REPO_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SOREN/FFMPEG", result.stdout)
+    # NOTE: test_status_dashboard_header_includes_selected_backend を削除。
+    # トップパネルを AI backoff だけに戻したため (c1e000122 の意図)、
+    # status_dashboard.py は SOREN/<backend> を出さなくなった。配信バックエンドの
+    # 識別は show_status.sh の Backend 行が担い、上の
+    # test_show_status_reports_running_ffmpeg_instead_of_expected_obs_down が
+    # "Backend" / "FFMPEG LIVE" を assert して保証している (状態付きでより強い)。
 
     def test_show_status_reports_soak_audio_and_av_sync_acceptance(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
