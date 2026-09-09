@@ -165,5 +165,32 @@ else
 	not_ok "結果告知の配線数が不正: $(grep -c "_announce_prediction_result" "$SRC")"
 fi
 
+# --- standalone source: no missing deps (本番で発生した log/_contains_provider_error_text 不足の回帰) ---
+(
+	unset -f log _contains_provider_error_text ai_generate_list 2>/dev/null
+	cd "$ROOT" || exit 1
+	# 注: sourceの定義を残すため $() 内で実行しない (回帰 sprawl 防止)
+	_prediction_ensure_ai 2>"$TMP/ensure.err" || true
+	err=$(cat "$TMP/ensure.err" 2>/dev/null || true)
+	# declare -F で関数定義を見る (同名バイナリの誤検出を避ける)。
+	if declare -F ai_generate_list >/dev/null 2>&1 && \
+		declare -F log >/dev/null 2>&1 && \
+		declare -F _contains_provider_error_text >/dev/null 2>&1; then
+		if printf '%s' "$err" | grep -Fq "command not found"; then
+			printf 'not ok - standalone sourceでcommand not found: %s\n' "$err" >&2
+			exit 1
+		fi
+		exit 0
+	else
+		echo "not ok - standalone sourceで依存が揃わない" >&2
+		exit 1
+	fi
+)
+if [ "$?" -eq 0 ]; then
+	ok "standalone sourceでもlog/判定関数が揃う"
+else
+	not_ok "standalone sourceで依存不足"
+fi
+
 printf 'pass=%d fail=%d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

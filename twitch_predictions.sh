@@ -599,10 +599,17 @@ TWITCH_PREDICTION_COMMENTARY_ENABLED="${TWITCH_PREDICTION_COMMENTARY_ENABLED:-1}
 TWITCH_PREDICTION_AI_TIMEOUT="${TWITCH_PREDICTION_AI_TIMEOUT:-120}"
 
 _prediction_ensure_ai() {
-	command -v ai_generate_list >/dev/null 2>&1 && return 0
+	declare -F ai_generate_list >/dev/null 2>&1 && return 0
+	# standalone実行 (worker外の直接起動) でも動くよう、ai_generate.sh が
+	# 期待する log / provider誤差判定を先に用意する。worker内では既存定義を尊重する。
+	# command -v ではなく declare -F で見る (同名バイナリの誤検出を避ける)。
+	declare -F log >/dev/null 2>&1 || {
+		# shellcheck source=/dev/null
+		source core/helpers.sh 2>/dev/null || true
+	}
 	# shellcheck source=/dev/null
 	source lib/ai_generate.sh 2>/dev/null || return 1
-	command -v ai_generate_list >/dev/null 2>&1
+	declare -F ai_generate_list >/dev/null 2>&1
 }
 
 _prediction_comment_validator() {
