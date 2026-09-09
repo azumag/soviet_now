@@ -1284,7 +1284,15 @@ _stop_improve_pid_if_running() {
 	wait "$pid" 2>/dev/null
 	local wait_rc=$?
 	log "[IMPROVE] stop result: label=${label} pid=${pid} wait_rc=${wait_rc}"
-	if _is_live_improve_pid "$pid"; then
+	# Same zombie race as the daemon check: accept gone-or-zombie with a
+	# short settle. Without the helper available, keep the legacy check.
+	local child_stopped=0
+	if command -v _pid_stopped_settled >/dev/null 2>&1; then
+		_pid_stopped_settled "$pid" 10 && child_stopped=1
+	elif ! _is_live_improve_pid "$pid"; then
+		child_stopped=1
+	fi
+	if [ "$child_stopped" -ne 1 ]; then
 		log "[IMPROVE] stop result: label=${label} pid=${pid} still_alive=1"
 		return 1
 	fi

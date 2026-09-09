@@ -156,6 +156,58 @@ _stop_pid_with_fallback() {
 	fi
 }
 
+# A freshly KILLed process is a zombie until its parent reaps it, and kill -0
+# succeeds on zombies. Treating "gone or zombie" as stopped keeps handover
+# verifications from failing on their own kill (supervisor reap race:
+# 2026-09-10 quiesce failures). A zombie does no work; the owning supervisor
+# reaps it while the pause marker suppresses respawn.
+_pid_gone_or_zombie() {
+	local pid="$1" stat_text="" state=""
+	case "$pid" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	if ! kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	stat_text=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+	if [ -n "$stat_text" ]; then
+		# comm (2nd field, in parens) may contain spaces: strip through ") ".
+		state=${stat_text##*)}
+		state=${state%% *}
+		[ "$state" = "Z" ] && return 0
+		return 1
+	fi
+	# /proc unreadable (reaped mid-check, or no /proc on macOS): arbitrate by
+	# ps. Empty means gone; Z means zombie; anything else -- including a ps
+	# failure -- stays alive (fail-closed).
+	stat_text=$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]' || true)
+	case "$stat_text" in
+	''|Z*) return 0 ;;
+	esac
+	return 1
+}
+
+# Poll until the pid is gone-or-zombie (bounded). Exits immediately when
+# already reaped, so the common case costs nothing; the bound only covers
+# the supervisor reap window after KILL.
+_pid_stopped_settled() {
+	local pid="$1" tenths="${2:-10}" waited=0
+	case "$pid" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	case "$tenths" in
+	''|*[!0-9]*) tenths=10 ;;
+	esac
+	while [ "$waited" -lt "$tenths" ]; do
+		if _pid_gone_or_zombie "$pid"; then
+			return 0
+		fi
+		sleep 0.1
+		waited=$((waited + 1))
+	done
+	_pid_gone_or_zombie "$pid"
+}
+
 _collect_descendant_pids() {
 	local root_pid="$1"
 	case "$root_pid" in
