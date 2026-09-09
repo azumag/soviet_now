@@ -282,7 +282,10 @@ _game_lifecycle_pause_improvements() {
 _game_lifecycle_pause_improvements_locked() {
 	local request_id="${1:-}"
 	[ -n "$request_id" ] || return 1
-	mkdir -p "$GAME_LIFECYCLE_DIR" 2>/dev/null || return 1
+	if ! mkdir -p "$GAME_LIFECYCLE_DIR" 2>/dev/null; then
+		_game_lifecycle_log "改善停止の作業dirを作成できません (request=$request_id)"
+		return 1
+	fi
 
 	local marker_created=0
 	if [ -e "$TMP_STATE_DIR/improve_daemon.paused" ]; then
@@ -290,7 +293,10 @@ _game_lifecycle_pause_improvements_locked() {
 			marker_created=1
 		fi
 	else
-		_game_lifecycle_create_owned_marker "$TMP_STATE_DIR/improve_daemon.paused" "$request_id" || return 1
+		if ! _game_lifecycle_create_owned_marker "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
+			_game_lifecycle_log "改善停止のpauseマーカーを作成できません (request=$request_id)"
+			return 1
+		fi
 		marker_created=1
 	fi
 
@@ -339,21 +345,41 @@ _game_lifecycle_pause_improvements_locked() {
 		fi
 	fi
 
-	# A late child spawn racing the daemon stop is still accepted only when the
-	# existing improve helper can positively identify it.  One bounded retry is
-	# enough; a new child after this point means the pause gate did not hold.
-	local late_child=""
-	if command -v _find_live_improve_pid >/dev/null 2>&1; then
-		late_child=$(_find_live_improve_pid 2>/dev/null || true)
-	fi
-	case "$late_child" in
-	''|0|*[!0-9]*) late_child="" ;;
-	esac
-	if [ -n "$late_child" ]; then
-		_game_lifecycle_log "改善子ジョブが停止後に再出現 (PID=$late_child)"
-		[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
-		return 1
-	fi
+	# A child spawning between the entry check and the daemon stop (typically a
+	# boundary-triggered improve job released at the game boundary this
+	# handover is waiting for) is still improve work owned by this handover:
+	# drain it with the same stop helper instead of failing at once. Retries
+	# are bounded so a genuinely stuck child still fails the pause with the
+	# marker released, exactly as before.
+	local late_child="" late_round=0
+	while true; do
+		late_child=""
+		if command -v _find_live_improve_pid >/dev/null 2>&1; then
+			late_child=$(_find_live_improve_pid 2>/dev/null || true)
+		fi
+		case "$late_child" in
+		''|0|*[!0-9]*) late_child="" ;;
+		esac
+		if [ -z "$late_child" ]; then
+			break
+		fi
+		late_round=$((late_round + 1))
+		if [ "$late_round" -gt 3 ]; then
+			_game_lifecycle_log "改善子ジョブが停止後に再出現し続けます (最終PID=$late_child)"
+			[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
+			return 1
+		fi
+		if ! command -v _stop_improve_pid_if_running >/dev/null 2>&1; then
+			_game_lifecycle_log "改善子ジョブが停止後に再出現 (PID=$late_child)"
+			[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
+			return 1
+		fi
+		if ! _stop_improve_pid_if_running "$late_child" "game_lifecycle_improve_late_child"; then
+			_game_lifecycle_log "改善子ジョブが停止後に再出現し停止できません (PID=$late_child)"
+			[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
+			return 1
+		fi
+	done
 
 	_game_lifecycle_write_record "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" "$request_id" "$marker_created" "$daemon_pid" "$child_pid" 0 || {
 		[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true

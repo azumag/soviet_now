@@ -15,6 +15,18 @@ title="${2:-event}"
 body="${3:-}"
 level="${4:-info}"
 
+# Fail closed on unknown categories: docich strictly validates this shared
+# queue, so one off-list category bricks every future append for all writers
+# (2026-09-10 production incident with category='improve'). Keep in sync with
+# docich OVERLAY_CATEGORIES.
+case "$category" in
+game|worker|chat|radio|prediction|rollback|system|deadline) ;;
+*)
+	echo "overlay_notify: unknown category '$category' (event not queued)" >&2
+	exit 2
+	;;
+esac
+
 mkdir -p "$(dirname "$EVENT_OVERLAY_EVENTS_FILE")" "$(dirname "$EVENT_OVERLAY_HTML_FILE")" 2>/dev/null || true
 
 python3 - "$EVENT_OVERLAY_EVENTS_FILE" "$EVENT_OVERLAY_KEEP_EVENTS" "$category" "$title" "$body" "$level" <<'PY'
