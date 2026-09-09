@@ -203,6 +203,7 @@ html[data-improve-active="1"] .feed-panel.panel-i {
 .feed-line.g-top { color: #fde047; border-color: #eab308; font-weight: 950; }
 .feed-line.g-recent { color: #fcd34d; border-color: #f59e0b; }
 .feed-line.g-strategy { color: #c4b5fd; border-color: #8b5cf6; }
+.feed-line.g-ab { color: #f0abfc; border-color: #d946ef; font-weight: 950; }
 .feed-line.g-live { color: #86efac; border-color: #22c55e; }
 .feed-line.g-drop { color: #fdba74; border-color: #f97316; }
 .feed-line.g-core { color: #7dd3fc; border-color: #38bdf8; }
@@ -285,6 +286,7 @@ html[data-soren-neutral="1"] .toast {
 .summary-line.sum-head { color: #67e8f9; border-left-color: #22d3ee; background: rgba(8, 51, 68, .72); }
 .summary-line.sum-recent { color: #fcd34d; border-left-color: #f59e0b; background: rgba(64, 43, 4, .72); }
 .summary-line.sum-strategy { color: #c4b5fd; border-left-color: #8b5cf6; background: rgba(46, 23, 80, .72); }
+.summary-line.sum-ab { color: #f0abfc; border-left-color: #d946ef; background: rgba(58, 20, 80, .72); }
 .summary-line.sum-live { color: #86efac; border-left-color: #22c55e; background: rgba(10, 55, 34, .72); }
 .summary-line.sum-backend { color: #7dd3fc; border-left-color: #38bdf8; background: rgba(9, 47, 73, .72); }
 .summary-line.sum-ai { color: #fca5a5; border-left-color: #ef4444; background: rgba(76, 17, 17, .78); font-size: 11.5px; letter-spacing: -.1px; }
@@ -513,6 +515,7 @@ html[data-soren-neutral="1"] .toast {
     }
     if (/Recent30/.test(text)) return 'g-recent';
     if (/Strategy:/.test(text)) return 'g-strategy';
+    if (/A\/B:/.test(text)) return 'g-ab';
     if (/^Live:/.test(text)) return 'g-live';
     if (/LastDrop/.test(text)) return 'g-drop';
     if (/Curr |Reg NO/.test(text)) return 'g-core';
@@ -591,6 +594,7 @@ html[data-soren-neutral="1"] .toast {
     feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
   }
   function summaryClass(text) {
+    if (/A\/B:/.test(text)) return 'sum-ab';
     if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
     if (/Recent30/.test(text)) return 'sum-recent';
     if (/Strategy/.test(text)) return 'sum-strategy';
@@ -605,7 +609,12 @@ html[data-soren-neutral="1"] .toast {
   function selectedSummaryLines() {
     const stats = String(state?.feeds?.showStatusG?.text || '').split('\n');
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
-    const patterns = [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
+    // A/B 進行中は進捗行を上部4枠に入れる。枠は4つしかないため Live は
+    // その間サイドバー側でのみ見える。A/Bなし時は従来どおり Live を出す。
+    const abLine = stats.find((line) => /A\/B:/.test(line));
+    const patterns = abLine
+      ? [/SOREN\/OBS/, /A\/B:/, /Recent30:/, /Strategy:/]
+      : [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
     const selected = patterns.map((pattern) => stats.find((line) => pattern.test(line))).filter(Boolean);
     if (selected.length < 4) {
       for (const pattern of [/Backend/, /Game|Queued/, /LastDrop/, /AVSync/]) {

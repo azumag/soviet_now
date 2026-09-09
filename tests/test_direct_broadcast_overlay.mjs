@@ -129,9 +129,11 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /feed-line\.run/);
   assert.match(html, /feed-line\.down/);
   assert.match(html, /feed-line\.g-recent/);
+  assert.match(html, /feed-line\.g-ab/);
   assert.match(html, /badge-g/);
   assert.match(html, /badge-s/);
   assert.match(html, /summary-line\.sum-head/);
+  assert.match(html, /summary-line\.sum-ab/);
   assert.match(html, /summary-line\.sum-live/);
   assert.match(html, /summary-line\.sum-ai/);
   assert.match(html, /const TOASTS_PER_PAGE = 3/);
@@ -631,6 +633,56 @@ test('merged sidebar renders both status feeds at once with colored lines and ne
   await overlay.tick(1);
   assert.equal(overlay.feedG.children.length, 5, 'feed update must re-render the merged panel');
   assert.equal(overlay.feedS.children.length, 3);
+});
+
+
+test('top summary shows A/B progress while an experiment is running', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG #10 games\nRecent30: 1097\nStrategy: 32b5edcf\n A/B: A 3a9bd96b vs B 015aa639 n=53(A27/B26) d=+120\nLive: MOVE score=875',
+        updatedAt: 1780000080,
+        lineCount: 5,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Loop        RUNNING',
+        updatedAt: 1780000080,
+        lineCount: 1,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const summaryTexts = overlay.summary.children.map((line) => line.textContent);
+  assert.equal(summaryTexts.length, 4, 'top rail keeps four slots');
+  assert.ok(summaryTexts.some((text) => text.includes('A/B:')), 'A/B progress must be in the top rail');
+  const summaryClasses = overlay.summary.children.map((line) => line.className);
+  assert.ok(summaryClasses.some((cls) => cls.includes('sum-ab')), 'A/B summary line must be colored');
+  assert.ok(!summaryClasses.some((cls) => cls.includes('sum-live')), 'Live yields its slot to A/B while running');
+
+  const gClasses = overlay.feedG.children.map((line) => line.className);
+  assert.ok(gClasses.some((cls) => cls.includes('g-ab')), 'sidebar A/B line must be colored');
+
+  overlay.setState({
+    ...base,
+    feeds: {
+      ...base.feeds,
+      showStatusG: {
+        ...base.feeds.showStatusG,
+        text: 'SOREN/OBS FFMPEG #10 games\nRecent30: 1097\nStrategy: 32b5edcf\nLive: MOVE score=875',
+        lineCount: 4,
+      },
+    },
+  });
+  await overlay.tick(1);
+  const idleClasses = overlay.summary.children.map((line) => line.className);
+  assert.ok(idleClasses.some((cls) => cls.includes('sum-live')), 'Live returns when no A/B is running');
+  assert.ok(!idleClasses.some((cls) => cls.includes('sum-ab')), 'no stale A/B styling without an experiment');
 });
 
 

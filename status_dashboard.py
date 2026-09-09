@@ -79,6 +79,11 @@ HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
 RUSSIA_CREATION_HISTORY_FILE = "tmp/history/russia_creation_history.tsv"
 GAME_COUNT_FILE = "game_count.txt"
 RUSSIA_RATE_WINDOW = int(os.getenv("STATUS_RUSSIA_RATE_WINDOW", "100"))
+AB_STATE_FILE = os.getenv("AB_STATE_FILE", "tmp/state/ab_state.json")
+AB_GAMES_FILE = os.getenv("AB_GAMES_FILE", "tmp/state/ab_games.jsonl")
+AB_CANDIDATE_META_FILE = os.path.join(
+    os.getenv("AB_CANDIDATE_DIR", "tmp/state/ab_candidate"), "meta.json"
+)
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -471,6 +476,104 @@ def calc_russia_founding_rate(founding_games, game_total, window=RUSSIA_RATE_WIN
         "prev_count": prev_count,
         "prev_rate": prev_rate,
         "delta": delta,
+    }
+
+
+def _ab_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
+                     candidate_meta_path=AB_CANDIDATE_META_FILE):
+    """インターリーブ A/B の進捗要約。表示に足るデータがなければ None。
+
+    tools/ab_report.py の集計 (dedupe_valid と同じ規則: tainted 除外・idx 重複は
+    最初だけ採用) を軽量に再実装する。逐次判定 (tools/ab_decide.py) の verdict
+    までは出さない: 並べ替え検定は重く、採否は _ab_gate_after_game が毎試合ログ
+    する。ここでは上部バー向けに n・腕別件数・平均差だけ返す。平均は eval を
+    優先し、無い行だけ score で補う。
+    """
+    candidate = None
+    try:
+        with open(candidate_meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        if isinstance(meta, dict) and meta.get("base_hash") and meta.get("cand_hash"):
+            candidate = {"base": str(meta["base_hash"]), "cand": str(meta["cand_hash"])}
+    except (OSError, ValueError):
+        candidate = None
+
+    try:
+        with open(state_path, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = None
+    if not isinstance(state, dict) or not state.get("a_hash") or not state.get("b_hash"):
+        return {"active": False, "candidate": candidate} if candidate else None
+
+    rows = []
+    try:
+        with open(games_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        rows = []
+
+    seen = set()
+    valid = []
+    tainted = 0
+    for row in rows:
+        if row.get("tainted"):
+            tainted += 1
+            continue
+        try:
+            idx = int(row.get("idx"))
+        except (TypeError, ValueError):
+            continue
+        if idx in seen:
+            continue
+        seen.add(idx)
+        valid.append(row)
+
+    def _metric(row):
+        value = _ab_number(row.get("eval"))
+        return value if value is not None else _ab_number(row.get("score"))
+
+    a_vals = [_metric(r) for r in valid if r.get("arm") == "A"]
+    b_vals = [_metric(r) for r in valid if r.get("arm") == "B"]
+    a_vals = [v for v in a_vals if v is not None]
+    b_vals = [v for v in b_vals if v is not None]
+    mean_a = sum(a_vals) / len(a_vals) if a_vals else None
+    mean_b = sum(b_vals) / len(b_vals) if b_vals else None
+    pattern = "".join(ch for ch in str(state.get("pattern") or "ABBA") if ch in "AB")
+    return {
+        "active": True,
+        "a_hash": str(state.get("a_hash") or ""),
+        "b_hash": str(state.get("b_hash") or ""),
+        "pattern": pattern or "ABBA",
+        "n": len(valid),
+        "n_a": len([r for r in valid if r.get("arm") == "A"]),
+        "n_b": len([r for r in valid if r.get("arm") == "B"]),
+        "mean_a": mean_a,
+        "mean_b": mean_b,
+        "diff": (mean_b - mean_a)
+        if (mean_a is not None and mean_b is not None)
+        else None,
+        "tainted": tainted,
+        "candidate": candidate,
     }
 
 
@@ -1628,33 +1731,9 @@ def load_archive_restart_candidate():
 
 # ── Panel renderers ───────────────────────────────────────────
 
-def render_ai_backoff_header():
-    """Only retain non-duplicated AI backoff information in the top panel."""
-    lines = []
-    inner = W - 3
-    ai_backoff = load_ai_backoff_status()
-    if ai_backoff:
-        for index, row in enumerate(ai_backoff["roles"]):
-            role = "main" if row["role"] == "main" else "fb"
-            detail = f"{role}={row['model']}({row['remaining_text']})" if row["active"] else f"{role}=ready"
-            prefix = " AI 429 " if index == 0 else "        "
-            ai_raw = f"{prefix}{detail}"
-            ai_display = f" {C_RED}AI 429{RST} {detail}" if index == 0 else f"        {detail}"
-            ai_display = truncate_ansi_display(ai_display, inner)
-            lines.append(
-                f"{C_CYAN}│{RST}{ai_display}"
-                f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
-            )
-
-    if not lines:
-        return []
-    return [f"{C_CYAN}┌{'─' * (W - 2)}┐{RST}", *lines,
-            f"{C_CYAN}└{'─' * (W - 2)}┘{RST}"]
-
-
 def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
                   strat_lines, rejected, accumulated, improve, rolling,
-                  russia_rate=None):
+                  russia_rate=None, ab_status=None):
     game_count = len(scores)
     best = max(scores) if scores else 0
     avg_all = int(sum(scores) / len(scores)) if scores else 0
@@ -1781,6 +1860,62 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     r3_display += imp_disp
     pad3 = inner - len(r3_raw)
     lines.append(f"{C_CYAN}│{RST}{r3_display}{' ' * max(pad3, 0)} {C_CYAN}│{RST}")
+
+    # A/B 行: 進行中は A/B ハッシュ・n・腕別件数・平均差 (B-A)、未開始で候補が
+    # 待機中なら候補のみ。どちらも無ければ行自体を出さない。配信上部の
+    # summary (direct_broadcast_overlay.html) はこの行を拾って4枠に収める。
+    ab = ab_status if isinstance(ab_status, dict) else {}
+    ab_raw = ""
+    ab_disp = ""
+    if ab.get("active"):
+        a8 = str(ab.get("a_hash") or "")[:8] or "?"
+        b8 = str(ab.get("b_hash") or "")[:8] or "?"
+        try:
+            ab_n = int(ab.get("n") or 0)
+        except (TypeError, ValueError):
+            ab_n = 0
+        try:
+            ab_n_a = int(ab.get("n_a") or 0)
+        except (TypeError, ValueError):
+            ab_n_a = 0
+        try:
+            ab_n_b = int(ab.get("n_b") or 0)
+        except (TypeError, ValueError):
+            ab_n_b = 0
+        ab_raw = f" A/B: A {a8} vs B {b8} n={ab_n}"
+        ab_disp = ab_raw
+        counts_raw = f"(A{ab_n_a}/B{ab_n_b})"
+        if len(ab_raw) + len(counts_raw) <= inner:
+            ab_raw += counts_raw
+            ab_disp += counts_raw
+        diff = ab.get("diff")
+        if isinstance(diff, (int, float)) and math.isfinite(diff):
+            diff_color = C_GREEN if diff > 0 else (C_RED if diff < 0 else C_YELLOW)
+            diff_raw = f" d={diff:+.0f}"
+            if len(ab_raw) + len(diff_raw) <= inner:
+                ab_raw += diff_raw
+                ab_disp += f" d={diff_color}{diff:+.0f}{RST}"
+        try:
+            ab_tainted = int(ab.get("tainted") or 0)
+        except (TypeError, ValueError):
+            ab_tainted = 0
+        if ab_tainted > 0:
+            tainted_raw = f" t{ab_tainted}"
+            if len(ab_raw) + len(tainted_raw) <= inner:
+                ab_raw += tainted_raw
+                ab_disp += f" {C_RED}t{ab_tainted}{RST}"
+    elif isinstance(ab.get("candidate"), dict) and ab["candidate"].get("cand"):
+        cand8 = str(ab["candidate"].get("cand") or "")[:8]
+        base8 = str(ab["candidate"].get("base") or "")[:8]
+        ab_raw = f" A/B: candidate B {cand8} ready"
+        ab_disp = ab_raw
+        base_raw = f" (base {base8})"
+        if base8 and len(ab_raw) + len(base_raw) <= inner:
+            ab_raw += base_raw
+            ab_disp += base_raw
+    if ab_raw:
+        pad_ab = inner - len(ab_raw)
+        lines.append(f"{C_CYAN}│{RST}{ab_disp}{' ' * max(pad_ab, 0)} {C_CYAN}│{RST}")
 
     # Row 4: live game state
     r4_raw = f" Live: {state}  score={gscore}  pieces={gpieces}"
@@ -2540,10 +2675,13 @@ def main():
         load_russia_founding_games(),
         load_game_counter(len(scores)),
     )
+    ab_status = load_ab_progress()
 
     output = []
 
-    output += render_ai_backoff_header()
+    output += render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
+                            strat_lines, rejected, accumulated, improve, rolling,
+                            russia_rate=russia_rate, ab_status=ab_status)
     output.append("")
     output += render_score_timeline(scores)
     output.append("")
