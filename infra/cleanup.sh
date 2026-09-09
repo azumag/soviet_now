@@ -27,7 +27,7 @@ cleanup_tmp_files() {
 	find "$TMP_DEBUG_DIR" -maxdepth 1 -name 'radio_short_*.txt' -mtime +1 -delete 2>/dev/null
 	find "$TMP_DEBUG_DIR" -maxdepth 1 -name 'radio_factcheck_failed_*.txt' -mtime +1 -delete 2>/dev/null
 
-	# --- サンドボックス孤児: 1時間以上古いものを削除 ---
+	# --- サンドボックス孤児: 1時間以上古い孤児ディレクトリを削除 ---
 	find tmp -maxdepth 1 -name '.sandbox_harvest_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
 	find tmp -maxdepth 1 -name '.soren_sandbox_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
 
@@ -172,7 +172,7 @@ _pid_gone_or_zombie() {
 	stat_text=$(cat "/proc/$pid/stat" 2>/dev/null || true)
 	if [ -n "$stat_text" ]; then
 		# comm (2nd field, in parens) may contain spaces: strip through ") ".
-		state=${stat_text##*)}
+		state=${stat_text##*) }
 		state=${state%% *}
 		[ "$state" = "Z" ] && return 0
 		return 1
