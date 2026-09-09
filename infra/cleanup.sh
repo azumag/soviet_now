@@ -172,7 +172,7 @@ _pid_gone_or_zombie() {
 	stat_text=$(cat "/proc/$pid/stat" 2>/dev/null || true)
 	if [ -n "$stat_text" ]; then
 		# comm (2nd field, in parens) may contain spaces: strip through ") ".
-		state=${stat_text##*)}
+		state=${stat_text##*) }
 		state=${state%% *}
 		[ "$state" = "Z" ] && return 0
 		return 1

@@ -40,6 +40,56 @@ grep -q "REAPED-SEES-STOPPED" "$TEST_ROOT/unit.out" && pass "reaped is stopped" 
 grep -q "EMPTY-STOPPED" "$TEST_ROOT/unit.out" && pass "empty is stopped" || fail "empty misread"
 grep -q "NONNUM-STOPPED" "$TEST_ROOT/unit.out" && pass "non-numeric is stopped" || fail "non-numeric misread"
 
+# Hold a real Linux zombie unreaped long enough to exercise the /proc parser.
+# The original #258 test could be reaped by bash before the helper inspected it,
+# which let a leading-space bug in parsing /proc/<pid>/stat escape CI.
+echo "--- deterministic /proc zombie ---"
+ZPID_FILE="$TEST_ROOT/proc_zombie.pid"
+python3 - "$ZPID_FILE" <<'PY' &
+import os
+import sys
+import time
+
+child = os.fork()
+if child == 0:
+    os._exit(0)
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    f.write(str(child))
+    f.flush()
+# Deliberately do not waitpid yet: the child remains Z while this parent lives.
+time.sleep(30)
+os.waitpid(child, 0)
+PY
+ZPARENT=$!
+for _ in $(seq 1 50); do
+	[ -s "$ZPID_FILE" ] && break
+	sleep 0.1
+done
+ZPID=$(cat "$ZPID_FILE" 2>/dev/null || echo "")
+ZSTATE=""
+for _ in $(seq 1 50); do
+	ZSTATE=$(python3 - "$ZPID" <<'PY' 2>/dev/null || true
+from pathlib import Path
+import sys
+pid = sys.argv[1]
+text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+print(text.rsplit(") ", 1)[1].split()[0])
+PY
+)
+	[ "$ZSTATE" = "Z" ] && break
+	sleep 0.1
+done
+if [ "$ZSTATE" != "Z" ]; then
+	fail "real zombie precondition not reached (pid=${ZPID:-none}, state=${ZSTATE:-none})"
+else
+	bash -c "$LOAD_HELPERS
+if _pid_gone_or_zombie \"$ZPID\"; then echo PROC-ZOMBIE-SEES-STOPPED; else echo PROC-ZOMBIE-SEES-RUNNING; fi
+" > "$TEST_ROOT/proc_zombie.out" 2>&1
+	grep -q "PROC-ZOMBIE-SEES-STOPPED" "$TEST_ROOT/proc_zombie.out" && pass "real /proc zombie is stopped" || fail "real /proc zombie misread as running"
+fi
+kill "$ZPARENT" 2>/dev/null || true
+wait "$ZPARENT" 2>/dev/null || true
+
 # --- unit: zombie (owned by a busy stub that cannot reap promptly) ---
 printf '#!/bin/bash\nwhile true; do sleep 0.2; done\n' > "$TEST_ROOT/victim.sh"
 chmod +x "$TEST_ROOT/victim.sh"
