@@ -7,6 +7,14 @@ on:
       - 'lib/direct_soak.py'
       - 'tests/test_stream_backend_status.py'
       - 'tests/test_direct_soak.py'
+      - 'status_dashboard.py'
+      - 'show_status_g.sh'
+      - 'generate_status_overlay.sh'
+      - 'generate_soren_overlay.sh'
+      - 'tests/test_status_dashboard_ab.py'
+      - 'tests/test_status_dashboard_founding_rate.py'
+      - 'tests/test_country_stage_names.py'
+      - 'tests/test_score_timeline.py'
       - '.github/workflows/stream-status.yml'
   push:
     branches: [main]
@@ -16,6 +24,14 @@ on:
       - 'lib/direct_soak.py'
       - 'tests/test_stream_backend_status.py'
       - 'tests/test_direct_soak.py'
+      - 'status_dashboard.py'
+      - 'show_status_g.sh'
+      - 'generate_status_overlay.sh'
+      - 'generate_soren_overlay.sh'
+      - 'tests/test_status_dashboard_ab.py'
+      - 'tests/test_status_dashboard_founding_rate.py'
+      - 'tests/test_country_stage_names.py'
+      - 'tests/test_score_timeline.py'
       - '.github/workflows/stream-status.yml'
 permissions:
   contents: read
@@ -29,5 +45,20 @@ jobs:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install --yes zsh
       - run: python3 -m unittest tests.test_stream_backend_status tests.test_direct_soak
+      # status_dashboard.py はターミナル (show_status_g.sh) と配信オーバーレイ
+      # 2 面が共有する表示の中核だが、これまでどの workflow の paths にも
+      # 入っておらず CI で守られていなかった。
+      # test_escape_mechanisms も status_dashboard を import するが、bridge/comment/
+      # deadline 系の既存 failure を多数抱えているのでここには含めない。
+      - run: >-
+          python3 -m unittest
+          tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate
+          tests.test_country_stage_names tests.test_score_timeline
+      - run: python3 -m py_compile status_dashboard.py
+      # zsh -n / bash -n は第2引数以降を $1.. として扱い構文検査しないので、
+      # 1 ファイル 1 ステップにする。
       - run: zsh -n show_status.sh
+      - run: zsh -n show_status_g.sh
       - run: bash -n direct_stream_soak.sh
+      - run: bash -n generate_status_overlay.sh
+      - run: bash -n generate_soren_overlay.sh
