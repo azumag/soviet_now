@@ -21,13 +21,13 @@ cleanup_tmp_files() {
 	# .radio_inflight_* : 1時間以上古い孤児ディレクトリを削除
 	find "$TMP_MARKERS_DIR" -maxdepth 1 -name '.radio_inflight_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
 	# .twitch_clip_game_* : 7日より古いものを削除
-	find "$TMP_MARKERS_DIR" -maxdepth 1 -name '.twitch_clip_game_*' -type d -mtime +7 -exec rm -rf {} + 2>/dev/null
+	find "$TMP_MARKERS_DIR" -maxdepth 1 -name '.twitch_clip_game_*' -type d -mtime +60 -exec rm -rf {} + 2>/dev/null
 
 	# --- デバッグダンプ: 1日以上古いものを削除 ---
 	find "$TMP_DEBUG_DIR" -maxdepth 1 -name 'radio_short_*.txt' -mtime +1 -delete 2>/dev/null
 	find "$TMP_DEBUG_DIR" -maxdepth 1 -name 'radio_factcheck_failed_*.txt' -mtime +1 -delete 2>/dev/null
 
-	# --- サンドボックス孤児: 1時間以上古い孤児ディレクトリを削除 ---
+	# --- サンドボックス孤児: 1時間以上古いものを削除 ---
 	find tmp -maxdepth 1 -name '.sandbox_harvest_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
 	find tmp -maxdepth 1 -name '.soren_sandbox_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
 
