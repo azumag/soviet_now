@@ -38,6 +38,16 @@ if [ -f "$SCRIPT_DIR/lib/game_lifecycle.sh" ]; then
 	# shellcheck disable=SC1091
 	source "$SCRIPT_DIR/lib/game_lifecycle.sh"
 fi
+# Issue #253: soren_loop respawn gate (gameplay vs improvement exclusion).
+# shellcheck disable=SC1091
+if [ -f "$SCRIPT_DIR/lib/supervisor_improve_gate.sh" ]; then
+	source "$SCRIPT_DIR/lib/supervisor_improve_gate.sh"
+fi
+# _wildcard_parallel_active の原典。function-only のため source 安全。
+# shellcheck disable=SC1091
+if [ -f "$SCRIPT_DIR/strategy/improve.sh" ]; then
+	source "$SCRIPT_DIR/strategy/improve.sh"
+fi
 
 # --- 設定 ---
 MAX_RESTARTS="${SUPERVISOR_MAX_RESTARTS:-10}"
@@ -813,8 +823,27 @@ while true; do
 			continue
 		fi
 		if [ "$_w_name" = "soren_loop" ] && [ -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ]; then
-			WORKER_LAST_START[$idx]=$(date +%s)
-			continue
+			# Issue #253: lock の存在だけでは respawn を抑止しない。gameplay と
+			# 競合する active improvement が実行中のときだけ抑止する。
+			# failed_no_apply 後の retry/backoff 待機では復帰を許可する。
+			# gate 関数の欠落・無出力 (判定不能) は安全側に倒して抑止する。
+			_gate_outcome=""; _gate_rc=1
+			if command -v gameplay_blocked_by_improvement >/dev/null 2>&1; then
+				_gate_outcome="$(gameplay_blocked_by_improvement 2>/dev/null)"
+				_gate_rc=$?
+			fi
+			if [ "$_gate_rc" -eq 0 ]; then
+				WORKER_LAST_START[$idx]=$(date +%s)
+				_log "soren_loop respawn抑止: ${_gate_outcome:-判定不能} (改善実行中のため)"
+				continue
+			fi
+			if [ -n "$_gate_outcome" ]; then
+				_log "soren_loop respawn許可: ${_gate_outcome} (lock残存でも改善非実行)"
+			else
+				WORKER_LAST_START[$idx]=$(date +%s)
+				_log "soren_loop respawn抑止: gate判定不能のため抑止 (fail-safe)"
+				continue
+			fi
 		fi
 		if [ "$_w_restarts" -ge "$MAX_RESTARTS" ]; then
 			_w_last_start="${WORKER_LAST_START[$idx]:-0}"
