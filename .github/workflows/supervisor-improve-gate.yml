@@ -1,0 +1,19 @@
+name: Supervisor improve gate
+on:
+  pull_request:
+    paths: ['start_all.sh', 'lib/supervisor_improve_gate.sh', 'tests/test_supervisor_improve_gate.py', '.github/workflows/supervisor-improve-gate.yml']
+  push:
+    branches: [main]
+    paths: ['start_all.sh', 'lib/supervisor_improve_gate.sh', 'tests/test_supervisor_improve_gate.py', '.github/workflows/supervisor-improve-gate.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m pytest tests/test_supervisor_improve_gate.py -q
+      - run: bash -n start_all.sh
+      - run: bash -n lib/supervisor_improve_gate.sh
