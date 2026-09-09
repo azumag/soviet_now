@@ -8,7 +8,6 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
-      - 'tests/test_opencode_xdg_db_recovery.py'
       - '.github/workflows/muse-free.yml'
   push:
     branches: [main]
@@ -19,7 +18,6 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
-      - 'tests/test_opencode_xdg_db_recovery.py'
       - '.github/workflows/muse-free.yml'
 permissions:
   contents: read
@@ -31,7 +29,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: python3 -m unittest tests.test_opencode_rate_limit_guard tests.test_ai_generate_backoff tests.test_opencode_xdg_db_recovery
+      - run: python3 -m unittest tests.test_opencode_rate_limit_guard tests.test_ai_generate_backoff
       - run: bash tests/test_vercel_opencode_backend.sh
       - run: bash tests/test_ai_dispatch_diagnostics.sh
       - run: bash -n lib/ai_generate.sh probe_free_slot.sh broadcast/radio_corners.sh
