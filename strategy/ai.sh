@@ -511,12 +511,6 @@ run_cmd() {
 		mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
 		_opencode_sync_auth_to_xdg
 		_opencode_cleanup_internal_locks
-		# 隔離 XDG の opencode.db が破損/肥大していると `opencode run` が
-		# PRAGMA wal_checkpoint 失敗で即死し、改善ループが誤って rate_limited と
-		# 判定して数時間停止する。run lock 保持中の今のうちに点検・退避する。
-		if command -v _opencode_verify_or_reset_xdg_db >/dev/null 2>&1; then
-			_opencode_verify_or_reset_xdg_db || true
-		fi
 		export XDG_STATE_HOME="$(_opencode_xdg_state_home)"
 		export XDG_DATA_HOME="$(_opencode_xdg_data_home)"
 	fi

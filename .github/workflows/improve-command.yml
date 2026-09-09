@@ -6,11 +6,9 @@ on:
       - 'strategy/improve_command.py'
       - 'strategy/analysis_contract.py'
       - 'prompts/analyze_strategy.md'
-      - 'lib/ai_generate.sh'
       - 'tests/test_analysis*.py'
       - 'eloop_improve.sh'
       - 'tests/test_improve_*.py'
-      - 'tests/test_opencode_xdg_db_recovery.py'
       - '.github/workflows/improve-command.yml'
   push:
     branches: [main]
@@ -19,11 +17,9 @@ on:
       - 'strategy/improve_command.py'
       - 'strategy/analysis_contract.py'
       - 'prompts/analyze_strategy.md'
-      - 'lib/ai_generate.sh'
       - 'tests/test_analysis*.py'
       - 'eloop_improve.sh'
       - 'tests/test_improve_*.py'
-      - 'tests/test_opencode_xdg_db_recovery.py'
       - '.github/workflows/improve-command.yml'
 permissions:
   contents: read
@@ -40,5 +36,5 @@ jobs:
           tests.test_improve_command_guard tests.test_improve_budget_integration
           tests.test_improve_stage_budget tests.test_improve_retry_reliability
           tests.test_analysis_evidence_contract tests.test_analysis_prose_counter tests.test_analysis_gate_wiring tests.test_founding_policy_contract
-          tests.test_shadow_validation_retry tests.test_spawn_guard_lease tests.test_opencode_xdg_db_recovery
-      - run: bash -n strategy/ai.sh eloop_improve.sh lib/ai_generate.sh
+          tests.test_shadow_validation_retry tests.test_spawn_guard_lease
+      - run: bash -n strategy/ai.sh eloop_improve.sh
