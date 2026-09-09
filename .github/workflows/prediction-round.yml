@@ -1,10 +1,10 @@
 name: Independent prediction rounds
 on:
   pull_request:
-    paths: ['show_status.sh', 'overlays/direct_broadcast_overlay.html', 'tests/test_direct_broadcast_overlay.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', '.github/workflows/prediction-round.yml']
+    paths: ['show_status.sh', 'overlays/direct_broadcast_overlay.html', 'tests/test_direct_broadcast_overlay.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', 'tests/test_prediction_commentary.sh', '.github/workflows/prediction-round.yml']
   push:
     branches: [main]
-    paths: ['show_status.sh', 'overlays/direct_broadcast_overlay.html', 'tests/test_direct_broadcast_overlay.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', '.github/workflows/prediction-round.yml']
+    paths: ['show_status.sh', 'overlays/direct_broadcast_overlay.html', 'tests/test_direct_broadcast_overlay.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', 'tests/test_prediction_commentary.sh', '.github/workflows/prediction-round.yml']
 permissions:
   contents: read
 jobs:
@@ -15,6 +15,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_prediction_round
+      - run: bash tests/test_prediction_commentary.sh
       - run: for f in eloop.sh strategy/improve.sh workers/prediction_worker.sh twitch_predictions.sh; do bash -n "$f"; done
 
       - run: node --test tests/test_direct_broadcast_overlay.mjs
