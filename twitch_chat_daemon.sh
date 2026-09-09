@@ -86,6 +86,18 @@ _is_card_gacha_result_message() {
     printf '%s\n' "$text" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
 }
 
+# チャネルポイント予想の定型告知 (bot投稿)。ガチャ同様、視聴者コメントとして
+# 取り込み、コメント生成AIの反応対象にする。AIの返信はこのprefixに一致しない
+# ため循環しない。
+_is_prediction_announce_message() {
+    local text="$1"
+    [ -n "$text" ] || return 1
+    case "$text" in
+    チャネルポイント予想スタート！*|予想結果：「*) return 0 ;;
+    esac
+    return 1
+}
+
 # 「配信を開始できますか？」「配信がされていない…配信を開始して」等を検出。
 # locale非依存にするため正規表現ではなく部分一致(case)で判定する。
 # 「配信」+ 開始系の動詞の両方を含む時のみ真。「配信おもしろい」等では発火しない。
@@ -338,7 +350,7 @@ while true; do
 
             # Bot / broadcaster self-posts are outbound echoes, not viewer comments.
             if _is_ignored_author "$login_user" "$user"; then
-                if ! _is_card_gacha_result_message "$msg"; then
+                if ! _is_card_gacha_result_message "$msg" && ! _is_prediction_announce_message "$msg"; then
                     continue
                 fi
             fi
@@ -372,6 +384,9 @@ while true; do
             if _is_ignored_author "$login_user" "$user" && _is_card_gacha_result_message "$msg"; then
                 clean_line="${bits_tag}${msg}"
                 metadata_flags="trusted-card"
+            elif _is_ignored_author "$login_user" "$user" && _is_prediction_announce_message "$msg"; then
+                clean_line="${bits_tag}${msg}"
+                metadata_flags="trusted-prediction"
             fi
 
             # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）。
