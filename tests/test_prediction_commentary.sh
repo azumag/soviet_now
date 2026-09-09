@@ -85,8 +85,8 @@ fi
 AI_CANNED='五カ年計画どころか五分で決める！賭けない奴は資本主義者だ！'
 export AI_CANNED
 _announce_prediction_start "5分" "48"
-if grep -Fq "$AI_CANNED" "$TMP/chat.log" && grep -Fq "$AI_CANNED" "$TMP/audio.log"; then
-	ok "開始時にAIの掛け声をchat＋audioへ"
+if grep -Fq "$AI_CANNED" "$TMP/audio.log" && [ ! -s "$TMP/chat.log" ]; then
+	ok "開始時にAIの掛け声をaudioのみへ"
 else
 	not_ok "開始時のAI掛け声が未配送"
 fi
@@ -102,11 +102,11 @@ fi
 AI_CANNED='見たか資本主義者ども！計画通りの建国だ！'
 export AI_CANNED
 _announce_prediction_result "予想結果：「ソ連建国」でした！" "ソ連建国"
-if grep -Fq "予想結果：「ソ連建国」でした！ $AI_CANNED" "$TMP/chat.log" && \
-	grep -Fq "予想結果：「ソ連建国」でした！ $AI_CANNED" "$TMP/audio.log"; then
-	ok "結果は定型＋AIリアクションを結合して配送"
+if grep -Fq "予想結果：「ソ連建国」でした！ $AI_CANNED" "$TMP/audio.log" && \
+	[ ! -s "$TMP/chat.log" ]; then
+	ok "結果は定型＋AIリアクションを結合してaudioのみへ"
 else
-	not_ok "結果の結合配送が不正: $(cat "$TMP/chat.log")"
+	not_ok "結果の結合配送が不正: $(cat "$TMP/audio.log")"
 fi
 if grep -Fq "RADIO_PREDICTION_RESULT" "$AI_LOG"; then
 	ok "結果生成はRADIO_PREDICTION_RESULTラベル"
@@ -120,8 +120,8 @@ fi
 AI_MODE=fail
 export AI_MODE
 _announce_prediction_result "予想結果：「粛清」でした！" "粛清"
-if grep -Fq "予想結果：「粛清」でした！" "$TMP/chat.log"; then
-	ok "AI失敗時は定型のみ送る"
+if grep -Fq "予想結果：「粛清」でした！" "$TMP/audio.log" && [ ! -s "$TMP/chat.log" ]; then
+	ok "AI失敗時は定型のみaudioへ"
 else
 	not_ok "AI失敗時のフォールバックが不正"
 fi
@@ -145,8 +145,8 @@ else
 	not_ok "無効時に開始AI送信が発生"
 fi
 _announce_prediction_result "予想結果：「建国なし」でした！" "建国なし"
-if grep -Fq "予想結果：「建国なし」でした！" "$TMP/chat.log" && ! grep -Fq "$AI_CANNED" "$TMP/chat.log"; then
-	ok "無効時は結果の定型のみ送る"
+if grep -Fq "予想結果：「建国なし」でした！" "$TMP/audio.log" && ! grep -Fq "$AI_CANNED" "$TMP/audio.log" && [ ! -s "$TMP/chat.log" ]; then
+	ok "無効時は結果の定型のみaudioへ"
 else
 	not_ok "無効時の結果配送が不正"
 fi

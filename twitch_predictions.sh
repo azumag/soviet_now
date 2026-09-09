@@ -687,7 +687,6 @@ EOF
 _announce_prediction_start() {
 	local window_display="$1" max_games="$2" hype
 	hype=$(_generate_prediction_line start "次の${max_games}試合・受付${window_display}") || return 0
-	enqueue_chat_message "$hype" "predictions" || true
 	enqueue_audio_text "$hype" "predictions" || true
 }
 
@@ -702,7 +701,6 @@ _announce_prediction_result() {
 	else
 		text="$fixed"
 	fi
-	enqueue_chat_message "$text" "predictions" || true
 	enqueue_audio_text "$text" "predictions" || true
 }
 
@@ -819,7 +817,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
+	enqueue_audio_text "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
 	_announce_prediction_start "$_window_display" "$PREDICTION_MAX_GAMES" || true
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
