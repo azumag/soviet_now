@@ -332,7 +332,16 @@ _game_lifecycle_pause_improvements_locked() {
 			else
 				kill "$daemon_pid" 2>/dev/null || true
 			fi
-			if kill -0 "$daemon_pid" 2>/dev/null; then
+			# kill -0 succeeds on zombies: a KILLed daemon stays a zombie
+			# until its supervisor reaps it. Accept gone-or-zombie with a
+			# short settle instead of failing on our own kill.
+			local daemon_stopped=0
+			if command -v _pid_stopped_settled >/dev/null 2>&1; then
+				_pid_stopped_settled "$daemon_pid" 10 && daemon_stopped=1
+			elif ! kill -0 "$daemon_pid" 2>/dev/null; then
+				daemon_stopped=1
+			fi
+			if [ "$daemon_stopped" -ne 1 ]; then
 				_game_lifecycle_log "改善デーモン停止を確認できません (PID=$daemon_pid)"
 				[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
 				return 1
