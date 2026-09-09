@@ -336,5 +336,45 @@ class PlayedAbArmTest(unittest.TestCase):
         self.assertEqual(sd.played_ab_arm({}), ("", ""))
 
 
+class TopPanelModeTest(unittest.TestCase):
+    """トップパネルは表示面ごとに出し分ける。
+
+    show-status-g のターミナル表示は AI backoff だけに絞る (c1e000122 の意図) が、
+    配信オーバーレイは A/B の進捗を出したいので render_header のままにする。
+    既定を header 側にして、絞る面だけが環境変数で opt-in する。
+    """
+
+    def test_default_is_header(self):
+        import os
+        from unittest import mock
+
+        for value in ("", "   ", "bogus", "HEADER"):
+            with mock.patch.dict(os.environ, {"STATUS_DASHBOARD_TOP_PANEL": value}):
+                self.assertEqual(sd.top_panel_mode(), "header", value)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("STATUS_DASHBOARD_TOP_PANEL", None)
+            self.assertEqual(sd.top_panel_mode(), "header")
+
+    def test_ai_backoff_is_opt_in(self):
+        import os
+        from unittest import mock
+
+        for value in ("ai_backoff", "AI_BACKOFF", " ai_backoff "):
+            with mock.patch.dict(os.environ, {"STATUS_DASHBOARD_TOP_PANEL": value}):
+                self.assertEqual(sd.top_panel_mode(), "ai_backoff", value)
+
+    def test_show_status_g_opts_into_ai_backoff(self):
+        """ターミナル側が確実に opt-in していること (ここが外れると元の指摘が再発する)。"""
+        script = (REPO_ROOT / "show_status_g.sh").read_text()
+        self.assertIn("STATUS_DASHBOARD_TOP_PANEL=ai_backoff python3 status_dashboard.py", script)
+
+    def test_overlays_keep_the_header(self):
+        """配信オーバーレイは既定のまま = A/B 進捗が出る。"""
+        for name in ("generate_status_overlay.sh", "generate_soren_overlay.sh"):
+            script = (REPO_ROOT / name).read_text()
+            self.assertIn("python3 status_dashboard.py", script)
+            self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL", script)
+
+
 if __name__ == "__main__":
     unittest.main()

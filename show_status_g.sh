@@ -122,7 +122,10 @@ latest_drop_signature() {
 }
 
 render_dashboard_once() {
-	python3 status_dashboard.py 2>/dev/null | render
+	# ターミナル表示のトップパネルは AI backoff だけに絞る (c1e000122 の意図)。
+	# 他の指標は下のパネル群と重複し枠を圧迫する。配信オーバーレイ側は既定の
+	# render_header のままなので A/B 進捗はそちらで見る。
+	STATUS_DASHBOARD_TOP_PANEL=ai_backoff python3 status_dashboard.py 2>/dev/null | render
 }
 
 wait_for_status_update() {
