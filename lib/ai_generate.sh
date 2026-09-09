@@ -625,7 +625,8 @@ PY
 		printf '[opencode] isolated improve DB %s (%sMiB) → reset (backup: %s)\n' "$rc" "$size_mb" "$backup" >&2
 	fi
 	if [ -x ./overlay_notify.sh ]; then
-		./overlay_notify.sh improve "改善DBを自動修復" "隔離 opencode.db を退避 (${rc}, ${size_mb}MiB)。OpenCode が再生成します" "warn" >/dev/null 2>&1 || true
+		# category は overlay_notify.sh の許可リスト内であること（'improve' は不可）。
+		./overlay_notify.sh system "改善DBを自動修復" "隔離 opencode.db を退避 (${rc}, ${size_mb}MiB)。OpenCode が再生成します" "warn" >/dev/null 2>&1 || true
 	fi
 	_OPENCODE_XDG_DB_VERIFIED=1
 	return 0
