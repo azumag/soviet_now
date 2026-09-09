@@ -74,6 +74,11 @@ MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
 IMPROVE_PEAK_CHAIN_ENABLED="${IMPROVE_PEAK_CHAIN_ENABLED:-0}"
 
+# ローカル→本番VM の同期に使う SSH ターゲット (user@host)。
+# 本リポジトリは public のため実ホストをコミットしない。gitignore 済みの .env か
+# 環境変数で与える。未設定なら codex_work_indicator.sh はローカル→VM 同期をスキップする。
+SOREN_VM_SSH_TARGET="${SOREN_VM_SSH_TARGET:-}"
+
 GAME_COUNT_FILE="game_count.txt"
 
 RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.3-contributor-free}"

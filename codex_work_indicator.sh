@@ -12,6 +12,33 @@ action="${1:-start}"
 title="${2:-システム自動分析・修正作業中}"
 body="${3:-}"
 
+# ローカル→VM 同期に使う SSH ターゲット (user@host)。
+# このリポジトリは public なので本番ホストをコミットしない。解決順:
+#   1. 環境変数 SOREN_VM_SSH_TARGET
+#   2. gitignore 済みの ./.env の SOREN_VM_SSH_TARGET=
+# どちらも無ければローカル→VM 同期をスキップする (VM 上での動作には影響しない)。
+_soren_vm_ssh_target() {
+	local raw="" envf="$ELOOP_LIB_DIR/.env"
+	if [ -n "${SOREN_VM_SSH_TARGET:-}" ]; then
+		raw="$SOREN_VM_SSH_TARGET"
+	elif [ -r "$envf" ]; then
+		raw=$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?SOREN_VM_SSH_TARGET=' "$envf" 2>/dev/null || true)
+		raw="${raw#*=}"
+	fi
+	# 前後の空白と引用符を除去
+	raw="${raw#"${raw%%[![:space:]]*}"}"
+	raw="${raw%"${raw##*[![:space:]]}"}"
+	case "$raw" in
+	\"*\") raw="${raw#\"}"; raw="${raw%\"}" ;;
+	\'*\') raw="${raw#\'}"; raw="${raw%\'}" ;;
+	esac
+	# ssh へ渡すので user@host 形式だけを許可する。両端をアンカーした ERE で
+	# 検証し、区切り文字・空白・先頭ハイフン (ssh オプション注入) を弾く。
+	# glob の * は文字クラスを繰り返さないため case ではなく [[ =~ ]] を使う。
+	[[ "$raw" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || return 1
+	printf '%s' "$raw"
+}
+
 mkdir -p "$(dirname "$CODEX_WORK_OVERLAY_STATE_FILE")" "$(dirname "$EVENT_OVERLAY_HTML_FILE")"
 
 case "$action" in
@@ -69,8 +96,9 @@ python3 "$ELOOP_LIB_DIR/generate_event_overlay.py" \
 case "$ELOOP_LIB_DIR" in
 	/home/ubuntu/soren) ;;
 	*)
-		if [ -f "$HOME/.ssh/id_rsa" ] && ssh -o ConnectTimeout=2 -o BatchMode=yes -i "$HOME/.ssh/id_rsa" ubuntu@129.146.54.105 "true" 2>/dev/null; then
-			ssh -o ConnectTimeout=2 -i "$HOME/.ssh/id_rsa" ubuntu@129.146.54.105 "cd /home/ubuntu/soren && ./codex_work_indicator.sh $(printf '%q' "$action") $(printf '%q' "$title") $(printf '%q' "$body")" >/dev/null 2>&1 || true
+		_vm_target="$(_soren_vm_ssh_target || true)"
+		if [ -n "$_vm_target" ] && [ -f "$HOME/.ssh/id_rsa" ] && ssh -o ConnectTimeout=2 -o BatchMode=yes -i "$HOME/.ssh/id_rsa" "$_vm_target" "true" 2>/dev/null; then
+			ssh -o ConnectTimeout=2 -i "$HOME/.ssh/id_rsa" "$_vm_target" "cd /home/ubuntu/soren && ./codex_work_indicator.sh $(printf '%q' "$action") $(printf '%q' "$title") $(printf '%q' "$body")" >/dev/null 2>&1 || true
 		fi
 		;;
 esac
@@ -161,8 +189,10 @@ PY
 	case "$ELOOP_LIB_DIR" in
 		/home/ubuntu/soren) ;;
 		*)
-			if [ -f "$HOME/.ssh/id_rsa" ] && ssh -o ConnectTimeout=2 -o BatchMode=yes -i "$HOME/.ssh/id_rsa" ubuntu@129.146.54.105 "true" 2>/dev/null; then
-				ssh -o ConnectTimeout=2 -i "$HOME/.ssh/id_rsa" ubuntu@129.146.54.105 "cd /home/ubuntu/soren && source lib/outbound_queue.sh 2>/dev/null; COMMENT_AUDIO_DEDUP_TTL_SEC=300 enqueue_audio_text $(printf '%q' "$_w_text") work_indicator" >/dev/null 2>&1 || true
+			local _vm_target
+			_vm_target="$(_soren_vm_ssh_target || true)"
+			if [ -n "$_vm_target" ] && [ -f "$HOME/.ssh/id_rsa" ] && ssh -o ConnectTimeout=2 -o BatchMode=yes -i "$HOME/.ssh/id_rsa" "$_vm_target" "true" 2>/dev/null; then
+				ssh -o ConnectTimeout=2 -i "$HOME/.ssh/id_rsa" "$_vm_target" "cd /home/ubuntu/soren && source lib/outbound_queue.sh 2>/dev/null; COMMENT_AUDIO_DEDUP_TTL_SEC=300 enqueue_audio_text $(printf '%q' "$_w_text") work_indicator" >/dev/null 2>&1 || true
 			fi
 			;;
 	esac

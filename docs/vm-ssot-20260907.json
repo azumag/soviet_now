@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "captured_at": "2026-09-07T23:35:00+09:00",
-  "source": "ubuntu@129.146.54.105:/home/ubuntu/soren",
+  "source": "ubuntu@<VM_HOST>:/home/ubuntu/soren",
   "scope": "tracked operational files only; secrets and tmp state excluded",
   "runtime": {
     "soren_runtime_service": {
