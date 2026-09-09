@@ -1768,6 +1768,16 @@ def load_archive_restart_candidate():
 
 # ── Panel renderers ───────────────────────────────────────────
 
+def top_panel_mode():
+    """トップパネルの表示モード。"header" (既定) か "ai_backoff"。
+
+    STATUS_DASHBOARD_TOP_PANEL で指定する。未設定・不正値は既定の "header"
+    (従来表示) にフォールバックし、表示が黙って減らないようにする。
+    """
+    mode = str(os.getenv("STATUS_DASHBOARD_TOP_PANEL", "") or "").strip().lower()
+    return mode if mode in {"header", "ai_backoff"} else "header"
+
+
 def render_ai_backoff_header():
     """Only retain non-duplicated AI backoff information in the top panel."""
     lines = []
@@ -2747,16 +2757,28 @@ def main():
     accumulated = get_accumulated_count(strat_hash)
     improve = load_improve_state()
     reasons = load_decision_reasons(50)
-    # russia_rate / ab_status はトップパネル専用だった。パネルを AI backoff だけに
-    # したので計算ごと外す (どちらも archive 走査や jsonl 読み込みを伴うため、
-    # 使わないのに毎描画で払うのは無駄)。render_header を戻す際は復活させる。
 
     output = []
 
-    # トップパネルは AI backoff だけを出す (c1e000122 の意図)。他の指標は
-    # 下のパネル群と重複し枠を圧迫するため載せない。render_header 自体は
-    # 復帰させたくなった時のために残す (呼び出し元はここだけ)。
-    output += render_ai_backoff_header()
+    # トップパネルは表示面ごとに出し分ける。
+    #   ai_backoff: AI backoff だけの 2 行 (c1e000122 の意図)。show-status-g の
+    #               ターミナル表示は下のパネル群と重複するため絞る。
+    #   header    : 従来の render_header (Trend/Rus/Strategy/A-B/Live/LastDrop/Reg)。
+    #               配信オーバーレイは A/B の進捗を出したいので既定はこちら。
+    # 既定を header にしてあるので、明示的に絞る面だけが環境変数を設定する。
+    if top_panel_mode() == "ai_backoff":
+        output += render_ai_backoff_header()
+    else:
+        # render_header 専用の集計。ai_backoff 側では使わないので、その時は
+        # archive 走査や jsonl 読み込みを走らせない。
+        russia_rate = calc_russia_founding_rate(
+            load_russia_founding_games(),
+            load_game_counter(len(scores)),
+        )
+        ab_status = load_ab_progress()
+        output += render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
+                                strat_lines, rejected, accumulated, improve, rolling,
+                                russia_rate=russia_rate, ab_status=ab_status)
     output.append("")
     output += render_score_timeline(scores)
     output.append("")
