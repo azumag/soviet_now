@@ -511,6 +511,126 @@ _opencode_cleanup_internal_locks() {
 	done < <(find "$locks_dir" -mindepth 1 -maxdepth 1 -type d -name '*.lock' 2>/dev/null)
 }
 
+# _opencode_verify_or_reset_xdg_db
+#   改善ループ用の隔離 XDG data home にある opencode.db が壊れる／肥大すると、
+#   `opencode run` が起動直後に `Failed query: PRAGMA wal_checkpoint(PASSIVE)` で
+#   即 exit 1 する。改善ループはこれを cli_failure → 全モデル失敗 →「rate_limited」と
+#   誤判定して数時間バックオフし続ける（2026-09-10 に約10時間の改善ループ停止を実観測）。
+#   モデル呼び出しの直前に軽量な整合性・サイズ点検を行い、問題があれば db/-wal/-shm を
+#   退避して OpenCode に空の DB を再生成させる。これはセッションキャッシュのみで auth は別ファイル。
+#   共有 DB ($HOME/.local/share/opencode) には絶対に触れない。OPENCODE_XDG_DB_SELF_HEAL=0 で無効化。
+_opencode_verify_or_reset_xdg_db() {
+	[ "${OPENCODE_XDG_DB_SELF_HEAL:-1}" = "1" ] || return 0
+	# 同一プロセス内 (ANALYZE→IMPLEMENT→FIX→REVIEW) では最初の1回だけ点検する。
+	[ -z "${_OPENCODE_XDG_DB_VERIFIED:-}" ] || return 0
+	local data_home dir db max_mb qc_max_mb size_mb ts backup rc
+	local home="${HOME:-/nonexistent}"
+	data_home="$(_opencode_xdg_data_home)"
+	dir="$data_home/opencode"
+	# 共有 DB 保護: 隔離パス以外では何もしない。
+	case "$dir" in
+	"" | "/opencode" | "$home/opencode" | "$home/.local/share/opencode" | "$home/.local/share/opencode/")
+		return 0
+		;;
+	esac
+	db="$dir/opencode.db"
+	[ -f "$db" ] || { _OPENCODE_XDG_DB_VERIFIED=1; return 0; }
+
+	# サイズ上限 (既定 512MiB): 隔離 DB はキャッシュだけなので、肥大したら破損前に回す。
+	max_mb="${OPENCODE_XDG_DB_MAX_MB:-512}"
+	case "$max_mb" in '' | *[!0-9]*) max_mb=512 ;; esac
+	# quick_check は DB 全走査で重い。この閾値以下でだけ実行する。
+	qc_max_mb="${OPENCODE_XDG_DB_QUICKCHECK_MAX_MB:-64}"
+	case "$qc_max_mb" in '' | *[!0-9]*) qc_max_mb=64 ;; esac
+	size_mb=$(( $(wc -c <"$db" 2>/dev/null || echo 0) / 1048576 ))
+	if [ "$max_mb" -gt 0 ] && [ "$size_mb" -ge "$max_mb" ]; then
+		rc=oversize
+	else
+		# 整合性点検 (sqlite3 CLI は VM 未導入なので Python stdlib を使う)。
+		# ロック中・不明な失敗ではリセットしない (安全側)。破損シグネチャのみ退避する。
+		python3 - "$db" "$qc_max_mb" <<'PY'
+import sqlite3
+import sys
+
+db, qc_max_mb = sys.argv[1], int(sys.argv[2])
+# 破損シグネチャ。ロック中・容量不足・不明な失敗ではリセットしない（安全側）。
+CORRUPT = ("malformed", "not a database", "is not a database", "disk image",
+           "file is encrypted", "database corruption", "corrupt")
+
+
+def _verdict(exc):
+    msg = str(exc).lower()
+    return 3 if any(k in msg for k in CORRUPT) else 0
+
+
+try:
+    con = sqlite3.connect(db, timeout=5)
+except sqlite3.Error:
+    sys.exit(3)  # 開けない = 破損扱い
+try:
+    # OpenCode 起動時と同じ操作。破損した DB はここで例外になる（今回の障害の再現点）。
+    try:
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+    except sqlite3.DatabaseError as exc:  # OperationalError も含む
+        sys.exit(_verdict(exc))
+    # 小さい DB だけ全整合性チェックする。
+    try:
+        nbytes = (con.execute("PRAGMA page_count").fetchone()[0]
+                  * con.execute("PRAGMA page_size").fetchone()[0])
+    except sqlite3.Error:
+        nbytes = 0
+    if qc_max_mb > 0 and nbytes > qc_max_mb * 1048576:
+        sys.exit(0)
+    try:
+        row = con.execute("PRAGMA quick_check").fetchone()
+    except sqlite3.DatabaseError as exc:
+        sys.exit(_verdict(exc))
+    sys.exit(0 if (row and row[0] == "ok") else 3)
+finally:
+    try:
+        con.close()
+    except Exception:
+        pass
+PY
+		[ "$?" -eq 3 ] && rc=corrupt || rc=""
+	fi
+	if [ -z "$rc" ]; then
+		_OPENCODE_XDG_DB_VERIFIED=1
+		return 0
+	fi
+
+	ts="$(date +%Y%m%d_%H%M%S)"
+	backup="${dir}/reset-${rc}-${ts}"
+	if mkdir -p "$backup" 2>/dev/null; then
+		mv -f "$db" "$backup/" 2>/dev/null || rm -f "$db" 2>/dev/null || true
+		mv -f "$db-wal" "$backup/" 2>/dev/null || rm -f "$db-wal" 2>/dev/null || true
+		mv -f "$db-shm" "$backup/" 2>/dev/null || rm -f "$db-shm" 2>/dev/null || true
+	else
+		rm -f "$db" "$db-wal" "$db-shm" 2>/dev/null || true
+	fi
+	# 退避ディレクトリは最新5件だけ残す（名前が YYYYMMDD_HHMMSS 順に並ぶ）。
+	local _keep=5 _resets=() _p _drop
+	while IFS= read -r _p; do
+		[ -d "$_p" ] && _resets+=("$_p")
+	done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'reset-*-*' 2>/dev/null | sort)
+	_drop=$(( ${#_resets[@]} - _keep ))
+	_p=0
+	while [ "$_p" -lt "$_drop" ]; do
+		rm -rf "${_resets[$_p]}" 2>/dev/null || true
+		_p=$((_p + 1))
+	done
+	if [ "$(type -t log 2>/dev/null || true)" = "function" ]; then
+		log "[opencode] isolated improve DB ${rc} (${size_mb}MiB) → reset; OpenCode will recreate it (backup: ${backup})" >&2
+	else
+		printf '[opencode] isolated improve DB %s (%sMiB) → reset (backup: %s)\n' "$rc" "$size_mb" "$backup" >&2
+	fi
+	if [ -x ./overlay_notify.sh ]; then
+		./overlay_notify.sh improve "改善DBを自動修復" "隔離 opencode.db を退避 (${rc}, ${size_mb}MiB)。OpenCode が再生成します" "warn" >/dev/null 2>&1 || true
+	fi
+	_OPENCODE_XDG_DB_VERIFIED=1
+	return 0
+}
+
 _opencode_run_lock_enter() {
 	local label="${1:-opencode}"
 	local agent="${2:-}"
