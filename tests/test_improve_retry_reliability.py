@@ -752,19 +752,19 @@ run_cmd() {
     printf '%s\n' "$1" >>"$test_root/calls"
     case "$1" in
     opencode:muse-spark-1.3-contributor-free) return 124 ;;
-    opencode-go:omen-alpha) return 0 ;;
+    opencode-go:deepseek-v4.1-flash) return 0 ;;
     *) return 1 ;;
     esac
 }
 set +e
 run_ai_list TEST:timeout_fallback \
-    opencode:muse-spark-1.3-contributor-free,opencode-go:omen-alpha \
+    opencode:muse-spark-1.3-contributor-free,opencode-go:deepseek-v4.1-flash \
     "$2/prompt.md"
 rc=$?
 set -e
 [ "$rc" -eq 0 ]
 [ "$(grep -c '^opencode:muse-spark-1.3-contributor-free$' "$test_root/calls")" -eq 1 ]
-[ "$(grep -c '^opencode-go:omen-alpha$' "$test_root/calls")" -eq 1 ]
+[ "$(grep -c '^opencode-go:deepseek-v4.1-flash$' "$test_root/calls")" -eq 1 ]
 [ "$(_ai_backoff_remaining 'opencode:muse-spark-1.3-contributor-free')" -gt 0 ]
 grep -q 'provider/CLI failure.*shared backoff' "$test_root/log"
 ''',
@@ -781,7 +781,7 @@ grep -q 'provider/CLI failure.*shared backoff' "$test_root/log"
             config,
         )
         self.assertIn(
-            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:omen-alpha}"',
+            'RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:deepseek-v4.1-flash}"',
             config,
         )
         self.assertIn(

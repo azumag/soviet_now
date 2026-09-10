@@ -227,7 +227,7 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|opencode:muse-spark-1.3-contributor-free|1|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash"
+config_expect="10-13,15-19|opencode:muse-spark-1.3-contributor-free|1|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
 
 empty_vercel_chain=$(
@@ -273,7 +273,6 @@ esac
 
 common_order=$(printf '%s' "$config_got" | cut -d'|' -f4)
 muse_pos=${common_order%%opencode-go:muse-spark-1.3-contributor*}
-omen_pos=${common_order%%opencode-go:omen-alpha*}
 amd_pos=${common_order%%amd:DeepSeek-V4-Flash*}
 vercel_m3_pos=${common_order%%vercel:minimax/minimax-m3-free*}
 [ "${#vercel_m3_pos}" -lt "${#amd_pos}" ] \
@@ -283,9 +282,12 @@ vercel_m3_pos=${common_order%%vercel:minimax/minimax-m3-free*}
 	&& ok "paid chain: AMD DeepSeek precedes muse" \
 	|| not_ok "paid chain order (got '$common_order')"
 case "$common_order" in *minimax-api:*|*codex:minimax*) not_ok "retired MiniMax remains" ;; *) ok "direct MiniMax removed" ;; esac
-[ "${#omen_pos}" -lt "${#muse_pos}" ] \
-	&& ok "paid chain: Omen Alpha immediately precedes muse" \
-	|| not_ok "Omen Alpha order (got '$common_order')"
+v41_pos=${common_order%%opencode-go:deepseek-v4.1-flash*}
+v4_pos=${common_order%%opencode-go:deepseek-v4-flash*}
+[ "${#v41_pos}" -lt "${#v4_pos}" ] \
+	&& ok "paid chain: deepseek-v4.1-flash precedes deepseek-v4-flash" \
+	|| not_ok "deepseek-v4.1 order (got '$common_order')"
+case "$common_order" in *omen-alpha*) not_ok "retired omen-alpha remains" ;; *) ok "retired omen-alpha removed" ;; esac
 [ "${#amd_pos}" -lt "${#muse_pos}" ] \
 	&& ok "free-credit AMD DeepSeek precedes metered providers" \
 	|| not_ok "AMD DeepSeek free-credit order (got '$common_order')"
