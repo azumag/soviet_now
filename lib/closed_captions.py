@@ -36,7 +36,7 @@ DEFAULT_SOCKET_PATH = str(
     / "ffmpeg-cc.sock"
 )
 DEFAULT_TRANSLATION_URL = "http://127.0.0.1:4100/v1/chat/completions"
-DEFAULT_TRANSLATION_MODEL = "minimax-m3"
+DEFAULT_TRANSLATION_MODEL = "amd-token-factory-deepseek-v4-flash"
 EXECUTION_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 

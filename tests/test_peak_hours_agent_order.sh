@@ -151,38 +151,38 @@ if _is_peak_hours 1100; then ok "unset windows -> falls back to default (peak)";
 unset PEAK_HOURS_WINDOWS PEAK_HOURS_AGENT_SWAP_ENABLED PEAK_HOURS_PRIORITY_AGENT
 
 PEAK_HOURS_TEST_NOW=1100
-got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:minimax-m3")
-[ "$got" = "codex:minimax-m3,codex:deepseek-v4-flash" ] && ok "peak reorder: deepseek,minimax -> minimax,deepseek" || not_ok "peak reorder: deepseek,minimax -> minimax,deepseek (got '$got')"
+got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash")
+[ "$got" = "amd:DeepSeek-V4-Flash,codex:deepseek-v4-flash" ] && ok "peak reorder: deepseek,minimax -> minimax,deepseek" || not_ok "peak reorder: deepseek,minimax -> minimax,deepseek (got '$got')"
 
 PEAK_HOURS_TEST_NOW=1400
-got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:minimax-m3")
-[ "$got" = "codex:deepseek-v4-flash,codex:minimax-m3" ] && ok "off-peak: no reorder" || not_ok "off-peak: no reorder (got '$got')"
+got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash")
+[ "$got" = "codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash" ] && ok "off-peak: no reorder" || not_ok "off-peak: no reorder (got '$got')"
 
 PEAK_HOURS_TEST_NOW=1100
-in_list="codex:deepseek-v4-flash,codex:minimax-m3"
+in_list="codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash"
 out_list=$(_peak_priority_agent_list "$in_list")
 in_sorted=$(printf '%s' "$in_list" | tr ',' '\n' | sort | tr '\n' ',')
 out_sorted=$(printf '%s' "$out_list" | tr ',' '\n' | sort | tr '\n' ',')
 [ "$in_sorted" = "$out_sorted" ] && ok "peak reorder: no candidate lost" || not_ok "peak reorder: no candidate lost (in='$in_sorted' out='$out_sorted')"
 
-got=$(_peak_priority_agent_list "a,codex:minimax-m3,b,c")
-[ "$got" = "codex:minimax-m3,a,b,c" ] && ok "peak reorder: relative order preserved" || not_ok "peak reorder: relative order preserved (got '$got')"
+got=$(_peak_priority_agent_list "a,amd:DeepSeek-V4-Flash,b,c")
+[ "$got" = "amd:DeepSeek-V4-Flash,a,b,c" ] && ok "peak reorder: relative order preserved" || not_ok "peak reorder: relative order preserved (got '$got')"
 
-got=$(_peak_priority_agent_list "codex:minimax-m3,a,b")
-[ "$got" = "codex:minimax-m3,a,b" ] && ok "peak reorder: already first -> unchanged" || not_ok "peak reorder: already first -> unchanged (got '$got')"
+got=$(_peak_priority_agent_list "amd:DeepSeek-V4-Flash,a,b")
+[ "$got" = "amd:DeepSeek-V4-Flash,a,b" ] && ok "peak reorder: already first -> unchanged" || not_ok "peak reorder: already first -> unchanged (got '$got')"
 
 got=$(_peak_priority_agent_list "a,b")
 [ "$got" = "a,b" ] && ok "peak reorder: preferred absent -> unchanged" || not_ok "peak reorder: preferred absent -> unchanged (got '$got')"
 
-got=$(_peak_priority_agent_list "a , codex:minimax-m3")
-[ "$got" = "codex:minimax-m3,a" ] && ok "peak reorder: whitespace normalized" || not_ok "peak reorder: whitespace normalized (got '$got')"
+got=$(_peak_priority_agent_list "a , amd:DeepSeek-V4-Flash")
+[ "$got" = "amd:DeepSeek-V4-Flash,a" ] && ok "peak reorder: whitespace normalized" || not_ok "peak reorder: whitespace normalized (got '$got')"
 
 got=$(_peak_priority_agent_list "")
 [ "$got" = "" ] && ok "peak reorder: empty input -> empty output" || not_ok "peak reorder: empty input -> empty output (got '$got')"
 
 PEAK_HOURS_AGENT_SWAP_ENABLED=0
-got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:minimax-m3")
-[ "$got" = "codex:deepseek-v4-flash,codex:minimax-m3" ] && ok "swap disabled -> unchanged even at peak" || not_ok "swap disabled -> unchanged even at peak (got '$got')"
+got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash")
+[ "$got" = "codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash" ] && ok "swap disabled -> unchanged even at peak" || not_ok "swap disabled -> unchanged even at peak (got '$got')"
 unset PEAK_HOURS_AGENT_SWAP_ENABLED
 
 got=$(_peak_priority_agent_list "a,b,c" "b")
@@ -194,9 +194,9 @@ got=$(_peak_priority_agent_list "a,b,c")
 unset PEAK_HOURS_PRIORITY_AGENT
 
 # 複数優先順位（PEAK_HOURS_AGENT_PREFERENCE）: minimax > openrouter/free > local > 残り
-PEAK_HOURS_AGENT_PREFERENCE="codex:minimax-m3,codex:openrouter/free,local"
-got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash-free,codex:minimax-m3")
-[ "$got" = "codex:minimax-m3,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:deepseek-v4-flash-free" ] \
+PEAK_HOURS_AGENT_PREFERENCE="amd:DeepSeek-V4-Flash,codex:openrouter/free,local"
+got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:openrouter/free,local,codex:deepseek-v4-flash-free,amd:DeepSeek-V4-Flash")
+[ "$got" = "amd:DeepSeek-V4-Flash,codex:openrouter/free,local,codex:deepseek-v4-flash,codex:deepseek-v4-flash-free" ] \
 	&& ok "peak multi-preference: minimax>openrouter>local then rest original order" \
 	|| not_ok "peak multi-preference order (got '$got')"
 got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:deepseek-v4-flash-free")
@@ -206,7 +206,7 @@ got=$(_peak_priority_agent_list "codex:deepseek-v4-flash,codex:deepseek-v4-flash
 unset PEAK_HOURS_AGENT_PREFERENCE
 
 before_log_lines=$(wc -l <"$TMP/log.txt" 2>/dev/null || echo 0)
-_peak_priority_agent_list "codex:deepseek-v4-flash,codex:minimax-m3" >/dev/null
+_peak_priority_agent_list "codex:deepseek-v4-flash,amd:DeepSeek-V4-Flash" >/dev/null
 after_log_lines=$(wc -l <"$TMP/log.txt" 2>/dev/null || echo 0)
 [ "$before_log_lines" = "$after_log_lines" ] && ok "no log() side-channel output during reorder" || not_ok "no log() side-channel output during reorder"
 
@@ -227,7 +227,7 @@ unset PEAK_HOURS_TEST_NOW
 		"$RADIO_AGENTS" "$COMMENT_AGENTS" >"$TMP/config_defaults.out"
 ) 2>/dev/null
 config_got=$(cat "$TMP/config_defaults.out" 2>/dev/null)
-config_expect="10-13,15-19|opencode:muse-spark-1.3-contributor-free|1|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,minimax-api:MiniMax-M3,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash"
+config_expect="10-13,15-19|opencode:muse-spark-1.3-contributor-free|1|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash|opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin,vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro,amd:DeepSeek-V4-Flash,opencode-go:omen-alpha,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4-flash"
 [ "$config_got" = "$config_expect" ] && ok "config.sh defaults wired correctly" || not_ok "config.sh defaults wired correctly (got '$config_got')"
 
 empty_vercel_chain=$(
@@ -275,7 +275,6 @@ common_order=$(printf '%s' "$config_got" | cut -d'|' -f4)
 muse_pos=${common_order%%opencode-go:muse-spark-1.3-contributor*}
 omen_pos=${common_order%%opencode-go:omen-alpha*}
 amd_pos=${common_order%%amd:DeepSeek-V4-Flash*}
-minimax_pos=${common_order%%minimax-api:MiniMax-M3*}
 vercel_m3_pos=${common_order%%vercel:minimax/minimax-m3-free*}
 [ "${#vercel_m3_pos}" -lt "${#amd_pos}" ] \
 	&& ok "Vercel free chain precedes paid providers" \
@@ -283,9 +282,7 @@ vercel_m3_pos=${common_order%%vercel:minimax/minimax-m3-free*}
 [ "${#amd_pos}" -lt "${#muse_pos}" ] \
 	&& ok "paid chain: AMD DeepSeek precedes muse" \
 	|| not_ok "paid chain order (got '$common_order')"
-[ "${#minimax_pos}" -lt "${#muse_pos}" ] \
-	&& ok "paid chain: MiniMax precedes muse" \
-	|| not_ok "paid MiniMax order (got '$common_order')"
+case "$common_order" in *minimax-api:*|*codex:minimax*) not_ok "retired MiniMax remains" ;; *) ok "direct MiniMax removed" ;; esac
 [ "${#omen_pos}" -lt "${#muse_pos}" ] \
 	&& ok "paid chain: Omen Alpha immediately precedes muse" \
 	|| not_ok "Omen Alpha order (got '$common_order')"

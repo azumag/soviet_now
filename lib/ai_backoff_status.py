@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 MAX_LABEL_ROWS = 3
 
 DEFAULT_COMMENT_MAIN = "opencode-go:deepseek-v4-flash"
-DEFAULT_COMMENT_FALLBACK = "codex:minimax-m3"
+DEFAULT_COMMENT_FALLBACK = "amd:DeepSeek-V4-Flash"
 
 
 def _dotenv_values(path: Path) -> Dict[str, str]:

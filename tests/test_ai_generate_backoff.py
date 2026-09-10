@@ -22,14 +22,14 @@ class AiGenerateBackoffTests(unittest.TestCase):
             (state_dir / "codex_deepseek-v4-flash").write_text(
                 f"{now + 3600}\n", encoding="utf-8"
             )
-            (state_dir / "codex_minimax-m3").write_text(
+            (state_dir / "codex_fixture-fallback").write_text(
                 f"{now + 7200}\n", encoding="utf-8"
             )
             env = os.environ.copy()
             env.update(
                 {
                     "AI_BACKOFF_DIR": str(state_dir),
-                    "COMMENT_AGENTS": "codex:deepseek-v4-flash,codex:minimax-m3",
+                    "COMMENT_AGENTS": "codex:deepseek-v4-flash,codex:fixture-fallback",
                 }
             )
             result = subprocess.run(
@@ -42,7 +42,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("main=deepseek-v4-flash", result.stdout)
-        self.assertIn("fb=minimax-m3", result.stdout)
+        self.assertIn("fb=fixture-fallback", result.stdout)
 
     def test_rate_limit_writer_and_status_share_override_directory(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
@@ -71,7 +71,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             env.update(
                 {
                     "AI_BACKOFF_DIR": str(state_dir),
-                    "COMMENT_AGENTS": "codex:deepseek-v4-flash,codex:minimax-m3",
+                    "COMMENT_AGENTS": "codex:deepseek-v4-flash,codex:fixture-fallback",
                 }
             )
             status = subprocess.run(
@@ -94,13 +94,13 @@ class AiGenerateBackoffTests(unittest.TestCase):
             (state_dir / "codex_deepseek-v4-flash").write_text(
                 f"{now + 3600}\n", encoding="utf-8"
             )
-            (state_dir / "codex_minimax-m3").write_text(
+            (state_dir / "codex_fixture-fallback").write_text(
                 f"{now + 7200}\n", encoding="utf-8"
             )
             old_env = os.environ.copy()
             try:
                 os.environ["AI_BACKOFF_DIR"] = str(state_dir)
-                os.environ["COMMENT_AGENTS"] = "codex:deepseek-v4-flash,codex:minimax-m3"
+                os.environ["COMMENT_AGENTS"] = "codex:deepseek-v4-flash,codex:fixture-fallback"
                 # AI 429 は独立枠が出す (ヘッダーとは分離、2026-09-10)。
                 # 配信画面は main() が枠 + ヘッダーの順で出すので、その組で見る。
                 lines = list(status_dashboard.render_ai_backoff_header())
@@ -122,7 +122,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
         rendered = "\n".join(lines)
         self.assertIn("AI 429", rendered)
         self.assertIn("main=deepseek-v4-flash", rendered)
-        self.assertIn("fb=minimax-m3", rendered)
+        self.assertIn("fb=fixture-fallback", rendered)
 
     def test_radio_quality_failure_does_not_set_model_backoff(self) -> None:
         source = (REPO_ROOT / "broadcast/radio_engine.sh").read_text(encoding="utf-8")
@@ -202,7 +202,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                         ;;
                     esac
                 }}
-                if ai_generate_list COMMENT {prompt!s} 'codex:deepseek-v4-flash,codex:minimax-m3' '' validator; then
+                if ai_generate_list COMMENT {prompt!s} 'codex:deepseek-v4-flash,codex:fixture-fallback' '' validator; then
                     printf '\\nRESULT=success\\n'
                 else
                     printf '\\nRESULT=failure\\n'
@@ -212,7 +212,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 else
                     echo DEEPSEEK_EXISTS=0
                 fi
-                if [ -f "$(_ai_backoff_dir)/codex_minimax-m3" ]; then
+                if [ -f "$(_ai_backoff_dir)/codex_fixture-fallback" ]; then
                     echo MINIMAX_EXISTS=1
                 else
                     echo MINIMAX_EXISTS=0
@@ -273,9 +273,9 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 log() {{ :; }}
                 validator() {{ [ "$1" = "VALID" ]; }}
                 mkdir -p "$(_ai_backoff_dir)"
-                printf '%s\\n' "$(( $(date +%s) + 3600 ))" >"$(_ai_backoff_dir)/codex_minimax-m3"
+                printf '%s\\n' "$(( $(date +%s) + 3600 ))" >"$(_ai_backoff_dir)/codex_fixture-fallback"
                 _ai_dispatch() {{ echo called >>{calls!s}; printf VALID; return 0; }}
-                if ai_generate_list COMMENT {prompt!s} 'codex:minimax-m3' '' validator; then
+                if ai_generate_list COMMENT {prompt!s} 'codex:fixture-fallback' '' validator; then
                     echo RESULT=success
                 else
                     echo RESULT=failure
@@ -323,7 +323,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 source {REPO_ROOT / 'core/helpers.sh'!s}
                 source {REPO_ROOT / 'lib/ai_generate.sh'!s}
                 CODEX_BIN={fake_codex!s}
-                _ai_call_codex_unqueued RADIO codex:minimax-m3 {prompt!s} 3
+                _ai_call_codex_unqueued RADIO codex:fixture-fallback {prompt!s} 3
                 """
             )
             result = subprocess.run(
@@ -362,7 +362,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 source {REPO_ROOT / 'core/helpers.sh'!s}
                 source {REPO_ROOT / 'lib/ai_generate.sh'!s}
                 CODEX_BIN={fake_codex!s}
-                _ai_call_codex_unqueued RADIO codex:minimax-m3 {prompt!s} 3
+                _ai_call_codex_unqueued RADIO codex:fixture-fallback {prompt!s} 3
                 """
             )
             result = subprocess.run(
@@ -389,7 +389,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:poolside/laguna-s-2.1-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent local RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash RADIO)"
-            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:minimax-m3 RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:fixture-fallback RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-pro RADIO)"
             """
         )
@@ -452,7 +452,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 source {REPO_ROOT / 'lib/ai_generate.sh'!s}
                 AI_STATS_DIR={stats_dir!s}
                 _ai_stats_record attempt RADIO codex:deepseek-v4-flash ""
-                _ai_stats_record winner RADIO codex:minimax-m3 0
+                _ai_stats_record winner RADIO codex:fixture-fallback 0
                 _ai_stats_record all_failed RADIO "" ""
                 """
             )
@@ -471,7 +471,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             lines = files[0].read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 3)
             self.assertIn('"event":"winner"', lines[1])
-            self.assertIn('"agent":"codex:minimax-m3"', lines[1])
+            self.assertIn('"agent":"codex:fixture-fallback"', lines[1])
 
     def test_rate_limit_uses_long_backoff_but_generic_failure_uses_short(self) -> None:
         # _ai_backoff_set に渡る秒数を記録するモックで、種別による差を検証する。
@@ -501,7 +501,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                     fi
                     return 1
                 }}
-                ai_generate_list COMMENT {prompt!s} 'codex:deepseek-v4-flash,codex:minimax-m3' '' validator || true
+                ai_generate_list COMMENT {prompt!s} 'codex:deepseek-v4-flash,codex:fixture-fallback' '' validator || true
                 """
             )
             result = subprocess.run(
@@ -598,7 +598,7 @@ class AiBackoffStatusScopeTests(unittest.TestCase):
     AGENTS = (
         "opencode:muse-a-free,opencode:muse-b-free,"
         "vercel:zai/glm-5.3-flash,amd:DeepSeek-V4-Flash,"
-        "minimax-api:MiniMax-M3,codex:minimax-m3"
+        "minimax-api:MiniMax-M3,codex:fixture-fallback"
     )
 
     def _lines(self, state_dir):

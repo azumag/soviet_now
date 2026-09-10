@@ -168,7 +168,7 @@ _peak_priority_agent_list() {
 	fi
 	if [ -z "$preferences" ]; then
 		# 後方互換: 単一優先エージェント指定のみの場合は従来どおり 1 件で扱う。
-		preferences="${PEAK_HOURS_PRIORITY_AGENT:-codex:minimax-m3}"
+		preferences="${PEAK_HOURS_PRIORITY_AGENT:-amd:DeepSeek-V4-Flash}"
 	fi
 	if [ -z "$list_raw" ] || [ -z "$preferences" ] || [ "${PEAK_HOURS_AGENT_SWAP_ENABLED:-1}" != "1" ]; then
 		printf '%s' "$list_raw"

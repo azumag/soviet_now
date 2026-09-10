@@ -30,7 +30,7 @@ _celebration_generate_talk() {
 	local tag="$1" prompt_file="$2"
 	local last_agent_file talk provider_used
 	last_agent_file=$(mktemp /tmp/eloop_celebration_agent_XXXXXXXX)
-	talk=$(ai_generate_list "RADIO:${tag}" "$prompt_file" "${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,codex:minimax-m3}" "" "_celebration_is_valid_candidate" "$last_agent_file" 2>/dev/null || true)
+	talk=$(ai_generate_list "RADIO:${tag}" "$prompt_file" "${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,amd:DeepSeek-V4-Flash}" "" "_celebration_is_valid_candidate" "$last_agent_file" 2>/dev/null || true)
 	provider_used=$(cat "$last_agent_file" 2>/dev/null)
 	rm -f "$last_agent_file" 2>/dev/null || true
 	if command -v _ai_guard_model_output >/dev/null 2>&1; then
