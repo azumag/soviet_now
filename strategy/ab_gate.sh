@@ -180,10 +180,17 @@ PY
 #
 # 差分の向きを A→B にするため、root がまだ A のうちに呼ぶこと。
 _ab_append_change_log() {
-	local winner="$1" reason="$2" a="$3" b="$4" root verdict lines
-	[ -n "${CHANGE_LOG_FILE_HOST:-}" ] || return 0
+	local winner="$1" reason="$2" a="$3" b="$4" root verdict lines target
+	# 追記先は自前で解決する。CHANGE_LOG_FILE_HOST / CHANGE_LOG_FILE は
+	# eloop_improve.sh (改善プロセス) でしか定義されず、_ab_finish を呼ぶのは
+	# eloop.sh (ゲームループ、別プロセス) なので、あの変数に依存すると本番では
+	# 常に未設定で空振りする。2026-09-10 に VM 実測で確認:
+	#   source ./eloop_lib.sh 後も CHANGE_LOG_FILE / _HOST とも未設定
+	# 既定値は eloop_improve.sh:17 の CHANGE_LOG_FILE と同じ相対パスに合わせる。
+	target="${CHANGE_LOG_FILE_HOST:-${CHANGE_LOG_FILE:-logs/change_log.txt}}"
 	root="${STRATEGY_FILE:-strategy.py}"
 	[ -f "$root" ] && [ -f "$AB_ALT_FILE" ] || return 0
+	mkdir -p "$(dirname "$target")" 2>/dev/null || true
 	lines="${AB_CHANGE_LOG_DIFF_LINES:-40}"
 	if [ "$winner" = "B" ]; then verdict="ADOPTED"; else verdict="REJECTED"; fi
 	{
@@ -195,11 +202,11 @@ _ab_append_change_log() {
 		fi
 		echo "# A (base) → B (candidate) の差分 (先頭 ${lines} 行):"
 		diff -u "$root" "$AB_ALT_FILE" 2>/dev/null | tail -n +3 | head -n "$lines"
-	} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+	} >>"$target" 2>/dev/null || true
 	# 既存の追記側 (eloop_improve.sh) と同じ 200 行キャップを維持する。
-	if [ -f "$CHANGE_LOG_FILE_HOST" ] && [ "$(wc -l <"$CHANGE_LOG_FILE_HOST")" -gt 200 ]; then
-		tail -200 "$CHANGE_LOG_FILE_HOST" >"$CHANGE_LOG_FILE_HOST.tmp" 2>/dev/null &&
-			mv "$CHANGE_LOG_FILE_HOST.tmp" "$CHANGE_LOG_FILE_HOST"
+	if [ -f "$target" ] && [ "$(wc -l <"$target")" -gt 200 ]; then
+		tail -200 "$target" >"$target.tmp" 2>/dev/null &&
+			mv "$target.tmp" "$target"
 	fi
 }
 
