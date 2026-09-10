@@ -219,7 +219,6 @@ def compact_regpreview_text(text, max_len):
 
 
 # ── Data loading ──────────────────────────────────────────────
-
 def load_scores():
     p = Path("score_history.txt")
     if not p.exists():
@@ -593,6 +592,65 @@ def ab_complete_blocks(rows, pattern):
         return None
 
 
+def ab_games_until_blocks(rows, pattern, target_blocks, games_recorded=None):
+    """target 個の完全ブロックまで、今から必要な記録試合数を返す。
+
+    現在の部分ブロックを単純な ``n % block_len`` で信用しない。tainted・idx
+    重複/欠番・腕構成の異常があると、その部分ブロックは判定側では完全にならない。
+    完全性の規則を表示側へ複製するとまたズレるので、残り slot に正常な予定腕を
+    仮追記した probe を tools/ab_report.py:blocks 自身へ渡し、「このブロックが
+    完成可能か」を同じ判定器で確認する。
+    """
+    module = _ab_report_module()
+    if module is None:
+        return None
+    try:
+        pattern = pattern or "ABBA"
+        block_len = max(1, len(pattern))
+        target = max(0, int(target_blocks))
+        done = len(module.blocks(rows, pattern, key="score"))
+        if done >= target:
+            return 0
+
+        observed_next = 0
+        for row in rows:
+            try:
+                observed_next = max(observed_next, int(row.get("idx")) + 1)
+            except (AttributeError, TypeError, ValueError):
+                continue
+        try:
+            recorded_next = max(0, int(games_recorded))
+        except (TypeError, ValueError):
+            recorded_next = 0
+        next_idx = max(observed_next, recorded_next)
+        offset = next_idx % block_len
+        needed_blocks = target - done
+        if offset == 0:
+            return needed_blocks * block_len
+
+        # 現ブロック末尾までの通常試合は、完成可能なら 1 block 分として信用できる。
+        # tainted / 欠番 / 重複 / 腕構成はここで独自判定せず、blocks() に聞く。
+        to_boundary = block_len - offset
+        probe = list(rows)
+        for idx in range(next_idx, next_idx + to_boundary):
+            probe.append(
+                {
+                    "idx": idx,
+                    "arm": pattern[idx % block_len],
+                    "score": 0.0,
+                    "tainted": False,
+                }
+            )
+        current_can_complete = (
+            len(module.blocks(probe, pattern, key="score")) > done
+        )
+        if current_can_complete:
+            return to_boundary + max(0, needed_blocks - 1) * block_len
+        return to_boundary + needed_blocks * block_len
+    except Exception:
+        return None
+
+
 def _ab_report_module():
     """tools/ab_report.py を遅延 import する (stdlib のみなので安価)。"""
     global _AB_REPORT
@@ -695,7 +753,6 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
     # 早期打ち切りは毎試合判定されるため、これは上限であって確定値ではない。
     looks, max_blocks = ab_gate_schedule(env_path)
     done_blocks = ab_complete_blocks(rows, pattern)
-    block_len = max(1, len(pattern))
     if done_blocks is None:
         next_look = None
         games_to_next_look = None
@@ -704,10 +761,15 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
         next_look = next(
             (x for x in looks if done_blocks < x <= max_blocks), None
         )
+        games_recorded = state.get("games_recorded")
         games_to_next_look = (
-            (next_look - done_blocks) * block_len if next_look is not None else None
+            ab_games_until_blocks(rows, pattern, next_look, games_recorded)
+            if next_look is not None
+            else None
         )
-        games_to_max = max(0, max_blocks - done_blocks) * block_len
+        games_to_max = ab_games_until_blocks(
+            rows, pattern, max_blocks, games_recorded
+        )
 
     return {
         "active": True,
@@ -1886,7 +1948,6 @@ def load_archive_restart_candidate():
 
 
 # ── Panel renderers ───────────────────────────────────────────
-
 def top_panel_mode():
     """ヘッダー (render_header) を出すかどうか。"header" (既定) か "ai_backoff"。
 
@@ -2921,7 +2982,6 @@ def render_decision_patterns(reasons, max_rows=8, bar_w=30):
 
 
 # ── Main ──────────────────────────────────────────────────────
-
 def main():
     os.chdir(os.path.dirname(os.path.abspath(__file__)) or ".")
 
