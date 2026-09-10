@@ -376,5 +376,213 @@ class TopPanelModeTest(unittest.TestCase):
             self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL", script)
 
 
+class AbRemainingGamesTest(unittest.TestCase):
+    """「あと何試合か」の算出。判定側 (tools/ab_decide.py) と同じ数でなければ嘘になる。"""
+
+    def _run_in_tempdir(self, fn):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                fn()
+            finally:
+                os.chdir(old_cwd)
+
+    def _write_ab(self, rows, pattern="ABBA", env_text=None):
+        Path("tmp/state").mkdir(parents=True, exist_ok=True)
+        state = Path("tmp/state/ab_state.json")
+        games = Path("tmp/state/ab_games.jsonl")
+        state.write_text(
+            json.dumps({"a_hash": "a" * 40, "b_hash": "b" * 40, "pattern": pattern}),
+            encoding="utf-8",
+        )
+        games.write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+        )
+        env = Path("tmp/state/env")
+        if env_text is not None:
+            env.write_text(env_text, encoding="utf-8")
+        return str(state), str(games), "tmp/state/none.json", str(env)
+
+    def _complete_blocks(self, count, pattern="ABBA"):
+        rows = []
+        for block in range(count):
+            for offset, arm in enumerate(pattern):
+                idx = block * len(pattern) + offset
+                rows.append(_game_row(idx, arm, eval_score=1000, score=1000))
+        return rows
+
+    def test_defaults_match_ab_decide(self):
+        """looks / max_blocks が tools/ab_decide.py の DEFAULTS と一致していること。
+
+        ここがズレると残り試合数の表示だけが実際の判定と食い違う。
+        """
+        sys.path.insert(0, str(REPO_ROOT / "tools"))
+        try:
+            import ab_decide
+        finally:
+            sys.path.pop(0)
+        self.assertEqual(
+            tuple(ab_decide.DEFAULTS["looks"]), tuple(sd.AB_DEFAULT_LOOKS)
+        )
+        self.assertEqual(
+            int(ab_decide.DEFAULTS["max_blocks"]), int(sd.AB_DEFAULT_MAX_BLOCKS)
+        )
+
+    def test_block_count_matches_ab_decide_on_same_rows(self):
+        """k が判定側と同じ数であること。
+
+        「完全ブロック」の定義 (idx 重複除去・idx 連続・腕構成一致) は
+        tools/ab_report.py にしかない。写して持つとズレるので同じ関数を呼ぶ。
+        """
+        sys.path.insert(0, str(REPO_ROOT / "tools"))
+        try:
+            import ab_report
+        finally:
+            sys.path.pop(0)
+        cases = {
+            "完全3ブロック": self._complete_blocks(3),
+            "idx 重複": self._complete_blocks(3) + [_game_row(0, "A", score=1000)],
+            "欠けブロック": self._complete_blocks(2) + [_game_row(8, "A", score=1000)],
+            "tainted 混入": self._complete_blocks(2)
+            + [_game_row(8, "A", score=1, tainted=True)],
+            "腕構成が偏る (AAAB)": self._complete_blocks(1)
+            + [
+                _game_row(4, "A", score=1000),
+                _game_row(5, "A", score=1000),
+                _game_row(6, "A", score=1000),
+                _game_row(7, "B", score=1000),
+            ],
+        }
+        for name, rows in cases.items():
+            expected = len(ab_report.blocks(rows, "ABBA", key="score"))
+            self.assertEqual(sd.ab_complete_blocks(rows, "ABBA"), expected, msg=name)
+
+    def test_block_count_is_none_when_ab_report_unavailable(self):
+        """tools/ が読めない環境では残り試合数を出さない (でっち上げない)。"""
+        saved = sd._AB_REPORT
+        sd._AB_REPORT = None
+        try:
+            self.assertIsNone(sd.ab_complete_blocks(self._complete_blocks(3), "ABBA"))
+        finally:
+            sd._AB_REPORT = saved
+
+    def test_progress_reports_next_look_and_max(self):
+        def _test():
+            state, games, meta, env = self._write_ab(self._complete_blocks(8))
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["blocks"], 8)
+            self.assertEqual(ab["next_look"], 19)
+            self.assertEqual(ab["games_to_next_look"], (19 - 8) * 4)
+            self.assertEqual(ab["games_to_max"], (37 - 8) * 4)
+
+        self._run_in_tempdir(_test)
+
+    def test_env_overrides_are_read_from_env_file_like_the_gate(self):
+        """ゲート (strategy/ab_interleave.sh:_ab_env_value) と同じく .env を見る。"""
+
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=10,20\nAB_GATE_MAX_BLOCKS=20\n",
+            )
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], (10, 20))
+            self.assertEqual(ab["max_blocks"], 20)
+            self.assertEqual(ab["next_look"], 10)
+            self.assertEqual(ab["games_to_next_look"], (10 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (20 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
+    def test_env_last_match_wins_and_quotes_stripped(self):
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(1),
+                env_text='AB_GATE_MAX_BLOCKS=99\nAB_GATE_MAX_BLOCKS="12"\n',
+            )
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["max_blocks"], 12)
+
+        self._run_in_tempdir(_test)
+
+    def test_past_final_look_reports_no_adopt_look_left(self):
+        def _test():
+            state, games, meta, env = self._write_ab(self._complete_blocks(37))
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["blocks"], 37)
+            self.assertIsNone(ab["next_look"])
+            self.assertIsNone(ab["games_to_next_look"])
+            self.assertEqual(ab["games_to_max"], 0)
+            self.assertIn("no adopt-look left", sd._ab_remaining_line(ab))
+
+        self._run_in_tempdir(_test)
+
+    def test_remaining_line_is_empty_when_not_active(self):
+        self.assertEqual(sd._ab_remaining_line(None), "")
+        self.assertEqual(sd._ab_remaining_line({"active": False}), "")
+        self.assertEqual(sd._ab_remaining_line({"active": True}), "")
+
+
+class RenderHeaderAbRemainingRowTest(RenderHeaderAbRowTest):
+    """残り試合数の行が実際に枠内へ出ること (A/B 行に足すと W=57 を超えるため別行)。"""
+
+    def _ab(self, **over):
+        ab = {
+            "active": True,
+            "a_hash": "3a9bd96b76a0",
+            "b_hash": "d0188f418f58",
+            "pattern": "ABBA",
+            "n": 35,
+            "n_a": 17,
+            "n_b": 18,
+            "mean_a": 1000.0,
+            "mean_b": 900.0,
+            "diff": -100.0,
+            "tainted": 0,
+            "candidate": None,
+            "blocks": 8,
+            "looks": (19, 37),
+            "max_blocks": 37,
+            "next_look": 19,
+            "games_to_next_look": 44,
+            "games_to_max": 116,
+        }
+        ab.update(over)
+        return ab
+
+    def test_remaining_row_is_rendered_and_fits(self):
+        def _test():
+            kwargs = self._base_kwargs()
+            lines = sd.render_header(russia_rate=None, ab_status=self._ab(), **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("k8/19", joined)
+            self.assertIn("adopt-look in 44g", joined)
+            self.assertIn("max 116g", joined)
+            # A/B 行の中身は落ちていない
+            self.assertIn("A/B: A 3a9bd96b vs B d0188f41", joined)
+            self.assertIn("n=35(A17/B18)", joined)
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
+    def test_no_remaining_row_when_only_candidate_is_pending(self):
+        def _test():
+            kwargs = self._base_kwargs()
+            ab = {
+                "active": False,
+                "candidate": {"base": "a" * 12, "cand": "b" * 12},
+            }
+            lines = sd.render_header(russia_rate=None, ab_status=ab, **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("candidate B bbbbbbbb ready", joined)
+            self.assertNotIn("adopt-look", joined)
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
+
 if __name__ == "__main__":
     unittest.main()
