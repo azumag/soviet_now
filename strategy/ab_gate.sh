@@ -166,6 +166,43 @@ PY
 	return 0
 }
 
+# A/B の決着を change_log に残す (採用・棄却の両方)。
+#
+# 改善プロンプトは CHANGE_LOG_FILE を「同じ方針の焼き直し防止のため最初に読め」
+# として読む (eloop_improve.sh)。ところが A/B ゲート有効時は
+#   * improve 時点の追記が `AB_GATE_EMITTED != true` で抑止され
+#   * 採用時の追記は $AB_CANDIDATE_DIR を見ていたが、その dir は A/B 開始時に
+#     tmp/history へ move 済みなので常に空振りし
+#   * 棄却時は何も書かれない (hash だけ rejected_hashes.txt へ)
+# ため、change_log に A/B の結果が 1 件も入らなかった。2026-09-10 の本番実測でも
+# change_log 200 行に ab-gate 由来 0 件・REJECT 0 件。結果として「A/B で棄却された
+# 方針」が改善側に一切伝わらず、同じ方針が何度でも再提案されうる状態だった。
+#
+# 差分の向きを A→B にするため、root がまだ A のうちに呼ぶこと。
+_ab_append_change_log() {
+	local winner="$1" reason="$2" a="$3" b="$4" root verdict lines
+	[ -n "${CHANGE_LOG_FILE_HOST:-}" ] || return 0
+	root="${STRATEGY_FILE:-strategy.py}"
+	[ -f "$root" ] && [ -f "$AB_ALT_FILE" ] || return 0
+	lines="${AB_CHANGE_LOG_DIFF_LINES:-40}"
+	if [ "$winner" = "B" ]; then verdict="ADOPTED"; else verdict="REJECTED"; fi
+	{
+		echo
+		echo "=== $(date '+%Y-%m-%d %H:%M') A/B $verdict base=${a:0:12} cand=${b:0:12} ==="
+		echo "# verdict: ${reason:-(no reason)}"
+		if [ "$verdict" = "REJECTED" ]; then
+			echo "# この方針は A/B で棄却された。同じ方針の焼き直しを避けること。"
+		fi
+		echo "# A (base) → B (candidate) の差分 (先頭 ${lines} 行):"
+		diff -u "$root" "$AB_ALT_FILE" 2>/dev/null | tail -n +3 | head -n "$lines"
+	} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+	# 既存の追記側 (eloop_improve.sh) と同じ 200 行キャップを維持する。
+	if [ -f "$CHANGE_LOG_FILE_HOST" ] && [ "$(wc -l <"$CHANGE_LOG_FILE_HOST")" -gt 200 ]; then
+		tail -200 "$CHANGE_LOG_FILE_HOST" >"$CHANGE_LOG_FILE_HOST.tmp" 2>/dev/null &&
+			mv "$CHANGE_LOG_FILE_HOST.tmp" "$CHANGE_LOG_FILE_HOST"
+	fi
+}
+
 # A/B を終了し、勝者を root にする (B) か棄却する (A)。記録は tmp/history へ移動。
 _ab_finish() {
 	local winner="$1" reason="${2:-}" a b ts win_hash root_after
@@ -183,6 +220,9 @@ _ab_finish() {
 			reason="${reason};alt_hash_mismatch"
 		fi
 	fi
+	# root がまだ A のうちに記録する (差分の向きが A→B になる)。採用時の root 差し替え
+	# より前、かつ alt_hash_mismatch による winner 降格より後。
+	_ab_append_change_log "$winner" "$reason" "$a" "$b"
 	if [ "$winner" = "B" ]; then
 		cp -p "${STRATEGY_FILE:-strategy.py}" tmp/revert_strategy.py 2>/dev/null || true
 		# helper は additive-only: strategy より先に配置する (import 先が無い瞬間を作らない)
@@ -197,9 +237,9 @@ _ab_finish() {
 		root_after=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 		[ "$root_after" = "$b" ] || { log "[AB] 差し替え後 hash 不一致 ($root_after != $b)"; return 1; }
 		command -v _archive_strategy_snapshot_by_hash >/dev/null 2>&1 && _archive_strategy_snapshot_by_hash "${STRATEGY_FILE:-strategy.py}" >/dev/null 2>&1 || true
-		if [ -s "$AB_CANDIDATE_DIR/change_log.txt" ] && [ -n "${CHANGE_LOG_FILE_HOST:-}" ]; then
-			cat "$AB_CANDIDATE_DIR/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
-		fi
+		# ここにあった $AB_CANDIDATE_DIR/change_log.txt の追記は削除した。この dir は
+		# _ab_gate_before_game が A/B 開始時に tmp/history へ move するので finish
+		# 時点では常に存在せず、空振りしていた。記録は _ab_append_change_log が行う。
 		command -v _clear_active_branch >/dev/null 2>&1 && _clear_active_branch >/dev/null 2>&1 || true
 		win_hash="$b"
 		command -v append_phyrogenetic_event >/dev/null 2>&1 && append_phyrogenetic_event "improve" "$a" "$b" "$(cat "${GAME_COUNT_FILE:-game_count.txt}" 2>/dev/null || echo 0)" "" "ab-gate adopt: $reason" "" >/dev/null 2>&1 || true

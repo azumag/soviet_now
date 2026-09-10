@@ -74,6 +74,10 @@ export SOREN_AB_ALT_STRATEGY=tmp/state/ab_alt_strategy.py
 _ab_active >/dev/null 2>&1 && ok || ng "active after start: $(_ab_active 2>&1)"
 
 # 5) after_game: synthetic games with strong harm → finish A (rejected, files moved, toggles restored)
+# 改善プロンプトが読む change_log に A/B の決着が残ること (焼き直し防止の唯一の材料)。
+mkdir -p logs
+CHANGE_LOG_FILE_HOST=logs/change_log.txt
+: >"$CHANGE_LOG_FILE_HOST"
 ACCUMULATED_GAMES_FILE=tmp/state/accumulated_games.json
 echo '{"count":48,"hash":"A"}' > "$ACCUMULATED_GAMES_FILE"
 cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
@@ -99,6 +103,13 @@ ls tmp/history/ab_*_games.jsonl >/dev/null 2>&1 && ls tmp/history/ab_*_state.jso
 [ "$(python3 extract_decide_hash.py strategy.py)" = "$A" ] && ok || ng "root still A after reject"
 [ -f "$ACCUMULATED_GAMES_FILE" ] && [ -f "$IMPROVE_LOCK_FILE" ] && ok || ng "A verdict must preserve pending 48-game batch"
 [ -f "$AB_CANDIDATE_DIR/keep" ] && ok || ng "finish must preserve later queued candidate"
+# 棄却も change_log に残る: 判定・警告・A→B の実差分。これが無いと改善側は
+# 「その方針は試して駄目だった」を知りようがなく、同じ方針を再提案しうる。
+grep -q "A/B REJECTED" "$CHANGE_LOG_FILE_HOST" && ok || ng "reject must be written to change_log"
+grep -q "REJECT_HARM" "$CHANGE_LOG_FILE_HOST" && ok || ng "reject verdict must be in change_log"
+grep -q "焼き直しを避ける" "$CHANGE_LOG_FILE_HOST" && ok || ng "reject must warn against rehashing"
+grep -q "^+.*best_x = 0.0906" "$CHANGE_LOG_FILE_HOST" && ok || ng "reject must record the A→B diff: $(head -6 "$CHANGE_LOG_FILE_HOST" | tr '\n' '|')"
+grep -q "base=${A:0:12} cand=${B:0:12}" "$CHANGE_LOG_FILE_HOST" && ok || ng "reject must record both hashes"
 # rejected candidate is discarded at the boundary
 cp alt.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$A" >/dev/null; _ab_gate_before_game; [ ! -d tmp/state/ab_candidate ] && [ ! -f tmp/state/ab_state.json ] && ok || ng "rejected hash discarded"
 
@@ -121,6 +132,15 @@ find tmp/history -name '*batch*' | grep -q . && ok || ng "B verdict must archive
 [ "$(python3 extract_decide_hash.py tmp/revert_strategy.py)" = "$A" ] && ok || ng "revert = previous root"
 [ ! -f tmp/state/ab_state.json ] && grep -q "^SOREN_AB_ALT_STRATEGY=$" .env && ok || ng "state cleared after adopt"
 python3 -c "import json;rows=[json.loads(l) for l in open('tmp/history/ab_history.jsonl')];assert rows[-1]['winner']=='B' and rows[-2]['winner']=='A',rows" && ok || ng "ab_history entries"
+# 採用も change_log に残る。以前は $AB_CANDIDATE_DIR/change_log.txt を見ていたが、
+# その dir は開始時に tmp/history へ move 済みで常に空振りしていた。
+grep -q "A/B ADOPTED" "$CHANGE_LOG_FILE_HOST" && ok || ng "adopt must be written to change_log"
+grep -q "^+.*best_x = 0.0907" "$CHANGE_LOG_FILE_HOST" && ok || ng "adopt must record the A→B diff"
+grep -q "base=${A:0:12} cand=${C:0:12}" "$CHANGE_LOG_FILE_HOST" && ok || ng "adopt must record both hashes"
+# 差分の向きは A→B (採用時に root を差し替える前に記録している証拠)
+grep -q "^-.*best_x = 0.0905" "$CHANGE_LOG_FILE_HOST" && ok || ng "diff direction must be base→candidate"
+# 既存の追記側と同じ 200 行キャップ
+[ "$(wc -l <"$CHANGE_LOG_FILE_HOST")" -le 200 ] && ok || ng "change_log must stay within the 200-line cap ($(wc -l <"$CHANGE_LOG_FILE_HOST"))"
 
 # 7) gate off → before/after are no-ops
 sed -i.bak 's/^AB_GATE_ENABLED=.*/AB_GATE_ENABLED=0/' .env
