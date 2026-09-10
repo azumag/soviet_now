@@ -101,7 +101,10 @@ class AiGenerateBackoffTests(unittest.TestCase):
             try:
                 os.environ["AI_BACKOFF_DIR"] = str(state_dir)
                 os.environ["COMMENT_AGENTS"] = "codex:deepseek-v4-flash,codex:minimax-m3"
-                lines = status_dashboard.render_header(
+                # AI 429 は独立枠が出す (ヘッダーとは分離、2026-09-10)。
+                # 配信画面は main() が枠 + ヘッダーの順で出すので、その組で見る。
+                lines = list(status_dashboard.render_ai_backoff_header())
+                lines += status_dashboard.render_header(
                     [],
                     {"state": "STOP", "score": 0, "pieces": []},
                     "",
@@ -674,14 +677,16 @@ class AiBackoffStatusScopeTests(unittest.TestCase):
         import status_dashboard as sd
         with tempfile.TemporaryDirectory(dir="/tmp") as d:
             self._limit(d, "amd_deepseek-v4-flash", 3600)
-            terminal = self._render(d, lambda m: m.render_ai_backoff_header())
-            overlay = self._render(d, lambda m: m.render_header(
+            # AI 429 の枠は表示面によらず render_ai_backoff_header が出す
+            # (ヘッダーとは分離されている)。ヘッダー側には重複させない。
+            panel = self._render(d, lambda m: m.render_ai_backoff_header())
+            header = self._render(d, lambda m: m.render_header(
                 [], {"state": "STOP", "score": 0, "pieces": []},
                 "", "?", "?", 0, 0, 0, {}, {}))
         plain = lambda ls: sd.ANSI_RE.sub("", "\n".join(ls))
-        for name, rendered in (("terminal", plain(terminal)), ("overlay", plain(overlay))):
-            self.assertIn("AI 429", rendered, name)
-            self.assertIn("alt=DeepSeek-V4-Flash", rendered, name)
+        self.assertIn("AI 429", plain(panel))
+        self.assertIn("alt=DeepSeek-V4-Flash", plain(panel))
+        self.assertNotIn("AI 429", plain(header), "ヘッダーに重複させない")
 
     def test_panel_lines_fit_the_frame(self):
         """「他N件」は日本語なので表示幅で詰める必要がある (len では合わない)。"""

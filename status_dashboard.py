@@ -1888,18 +1888,17 @@ def load_archive_restart_candidate():
 # ── Panel renderers ───────────────────────────────────────────
 
 def top_panel_mode():
-    """トップパネルの表示モード。"ai_backoff" (既定) か "header"。
+    """ヘッダー (render_header) を出すかどうか。"header" (既定) か "ai_backoff"。
 
-    STATUS_DASHBOARD_TOP_PANEL で指定する。未設定・不正値は既定の "ai_backoff"。
+    AI backoff の枠はモードに関係なく常に出る。このモードが決めるのは
+    「ヘッダーも続けて出すか」だけ。
 
-    既定が "header" (Trend/Rus/Strategy/A-B/Live/LastDrop/Reg の枠) だった頃は、
-    show-status-g のターミナルだけを絞って配信オーバーレイは従来のままにしていた。
-    しかしユーザーが見ているのは配信画面の方で、そちらの枠が絞られていなかった
-    (2026-09-10)。今は全ての表示面でトップ枠を AI backoff だけにする。
-    A/B の進捗を枠に出したいときだけ STATUS_DASHBOARD_TOP_PANEL=header を使う。
+    STATUS_DASHBOARD_TOP_PANEL で指定する。未設定・不正値は既定の "header"
+    (配信画面はこちら = A/B の進捗が出る)。show-status-g のターミナルだけが
+    "ai_backoff" を明示して、ヘッダーを省く。
     """
     mode = str(os.getenv("STATUS_DASHBOARD_TOP_PANEL", "") or "").strip().lower()
-    return mode if mode in {"header", "ai_backoff"} else "ai_backoff"
+    return mode if mode in {"header", "ai_backoff"} else "header"
 
 
 AI_BACKOFF_MAX_ROWS = 3
@@ -2204,12 +2203,8 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     pad4 = inner - len(r4_raw_nocolor)
     lines.append(f"{C_CYAN}│{RST}{r4_display}{' ' * max(pad4, 0)} {C_CYAN}│{RST}")
 
-    for ai_raw, ai_display in ai_backoff_rows(load_ai_backoff_status()):
-        ai_display = truncate_ansi_display(ai_display, inner)
-        lines.append(
-            f"{C_CYAN}│{RST}{ai_display}"
-            f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
-        )
+    # AI 429 はここには出さない。独立した枠 (render_ai_backoff_header) が常に
+    # 先に出るので、ヘッダーにも入れると同じ内容が 2 度出る。
 
     if latest_drop:
         lines.append(render_last_drop_line(latest_drop, inner))
@@ -2944,14 +2939,19 @@ def main():
 
     output = []
 
-    # トップパネルは既定で AI backoff だけに絞る (ターミナルも配信画面も)。
-    #   ai_backoff: AI backoff だけ (既定)。他の指標は下のパネル群と重複する。
-    #   header    : 従来の render_header (Trend/Rus/Strategy/A-B/Live/LastDrop/Reg)。
-    #               A/B の進捗を枠に出したいときだけ明示的に選ぶ。
-    # 既定を header にしてあるので、明示的に絞る面だけが環境変数を設定する。
-    if top_panel_mode() == "ai_backoff":
-        output += render_ai_backoff_header()
-    else:
+    # AI backoff の枠は常に独立した枠として先頭に出す。ヘッダー (render_header)
+    # とは別物で、片方を絞っても他方は影響を受けない。
+    #
+    # 以前は top_panel_mode で「AI backoff か ヘッダーか」の二者択一にしていた。
+    # そのせいで show-status-g のトップ枠を AI backoff だけに絞った途端、
+    # 配信画面のヘッダーからも A/B の進捗が消えてしまった (2026-09-10 の指摘)。
+    # 表示面ごとに要るものが違うだけで、2 つは分離しておくべきものだった。
+    #
+    #   ai_backoff: AI backoff の枠だけ (show-status-g のターミナル)。
+    #               A/B などは下のパネル群と重複するので出さない。
+    #   header    : AI backoff の枠 + ヘッダー (既定)。配信画面はこちら。
+    output += render_ai_backoff_header()
+    if top_panel_mode() != "ai_backoff":
         # render_header 専用の集計。ai_backoff 側では使わないので、その時は
         # archive 走査や jsonl 読み込みを走らせない。
         russia_rate = calc_russia_founding_rate(

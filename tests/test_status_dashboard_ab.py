@@ -337,54 +337,64 @@ class PlayedAbArmTest(unittest.TestCase):
 
 
 class TopPanelModeTest(unittest.TestCase):
-    """トップパネルは全ての表示面で AI backoff だけ。
+    """AI backoff の枠とヘッダーは分離されていること。
 
-    以前は「ターミナルだけ絞り、配信オーバーレイは render_header のまま」に
-    していたが、ユーザーが見ているのは配信画面の方で、そちらの枠が絞られて
-    いなかった (2026-09-10)。今は既定を ai_backoff にし、A/B の進捗を枠に
-    出したいときだけ STATUS_DASHBOARD_TOP_PANEL=header で opt-in する。
+    以前は「AI backoff かヘッダーか」の二者択一だったため、show-status-g の
+    トップ枠を AI backoff だけに絞った途端、配信画面のヘッダーからも A/B の
+    進捗が消えた (2026-09-10 の指摘)。AI backoff の枠はモードに関係なく常に出し、
+    モードは「ヘッダーも続けて出すか」だけを決める。
     """
 
-    def test_default_is_ai_backoff(self):
+    def test_default_is_header(self):
         import os
         from unittest import mock
 
-        for value in ("", "   ", "bogus", "AI_BACKOFF"):
-            with mock.patch.dict(os.environ, {"STATUS_DASHBOARD_TOP_PANEL": value}):
-                self.assertEqual(sd.top_panel_mode(), "ai_backoff", value)
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("STATUS_DASHBOARD_TOP_PANEL", None)
-            self.assertEqual(sd.top_panel_mode(), "ai_backoff")
-
-    def test_header_is_opt_in(self):
-        import os
-        from unittest import mock
-
-        for value in ("header", "HEADER", " header "):
+        for value in ("", "   ", "bogus", "HEADER"):
             with mock.patch.dict(os.environ, {"STATUS_DASHBOARD_TOP_PANEL": value}):
                 self.assertEqual(sd.top_panel_mode(), "header", value)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("STATUS_DASHBOARD_TOP_PANEL", None)
+            self.assertEqual(sd.top_panel_mode(), "header")
 
-    def test_show_status_g_keeps_ai_backoff(self):
-        """ターミナル側の明示指定 (ここが外れると元の指摘が再発する)。"""
+    def test_ai_backoff_is_opt_in(self):
+        import os
+        from unittest import mock
+
+        for value in ("ai_backoff", "AI_BACKOFF", " ai_backoff "):
+            with mock.patch.dict(os.environ, {"STATUS_DASHBOARD_TOP_PANEL": value}):
+                self.assertEqual(sd.top_panel_mode(), "ai_backoff", value)
+
+    def test_show_status_g_opts_out_of_the_header(self):
+        """ターミナル側はヘッダーを省く (A/B は下のパネル群と重複するため)。"""
         script = (REPO_ROOT / "show_status_g.sh").read_text()
         self.assertIn("STATUS_DASHBOARD_TOP_PANEL=ai_backoff python3 status_dashboard.py", script)
 
-    def test_overlays_do_not_opt_into_the_header(self):
-        """配信画面のトップ枠も AI backoff だけ。
+    def test_overlays_keep_the_header(self):
+        """配信画面はヘッダーを出す = A/B の進捗が見える。
 
-        オーバーレイ生成が header を opt-in してしまうと、配信画面に
-        Trend/Rus/Strategy/A-B/Live/LastDrop/Reg の枠が戻る (2026-09-10 の指摘)。
+        オーバーレイ生成が ai_backoff を opt-in するとヘッダーごと消え、
+        配信画面から A/B が消える (2026-09-10 の指摘)。
         """
         for name in ("generate_status_overlay.sh", "generate_soren_overlay.sh"):
             script = (REPO_ROOT / name).read_text()
             self.assertIn("python3 status_dashboard.py", script)
-            self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL=header", script)
+            self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL=ai_backoff", script)
 
-    def test_ab_row_is_absent_from_the_default_panel(self):
-        """既定パネルに A/B 行が混ざらないこと (配信からは A/B を出さない方針)。"""
-        rendered = sd.ANSI_RE.sub("", "\n".join(sd.render_ai_backoff_header()))
-        self.assertNotIn("A/B:", rendered)
-        self.assertNotIn("adopt-look", rendered)
+    def test_header_does_not_duplicate_the_ai_backoff_rows(self):
+        """AI 429 は独立枠だけに出す。ヘッダーにも入れると 2 度出る。"""
+        source = (REPO_ROOT / "status_dashboard.py").read_text()
+        header_start = source.index("def render_header(")
+        header_end = source.index("\ndef ", header_start + 1)
+        self.assertNotIn("ai_backoff_rows(", source[header_start:header_end])
+
+    def test_main_always_emits_the_ai_backoff_panel(self):
+        """モードに関係なく AI backoff の枠は出る (分離の要)。"""
+        source = (REPO_ROOT / "status_dashboard.py").read_text()
+        main_start = source.index("def main():")
+        main_body = source[main_start:]
+        panel = main_body.index("output += render_ai_backoff_header()")
+        branch = main_body.index('if top_panel_mode() != "ai_backoff":')
+        self.assertLess(panel, branch, "AI backoff の枠は分岐より前で無条件に出すこと")
 
 
 class AbRemainingGamesTest(unittest.TestCase):
