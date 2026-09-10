@@ -1888,13 +1888,18 @@ def load_archive_restart_candidate():
 # ── Panel renderers ───────────────────────────────────────────
 
 def top_panel_mode():
-    """トップパネルの表示モード。"header" (既定) か "ai_backoff"。
+    """トップパネルの表示モード。"ai_backoff" (既定) か "header"。
 
-    STATUS_DASHBOARD_TOP_PANEL で指定する。未設定・不正値は既定の "header"
-    (従来表示) にフォールバックし、表示が黙って減らないようにする。
+    STATUS_DASHBOARD_TOP_PANEL で指定する。未設定・不正値は既定の "ai_backoff"。
+
+    既定が "header" (Trend/Rus/Strategy/A-B/Live/LastDrop/Reg の枠) だった頃は、
+    show-status-g のターミナルだけを絞って配信オーバーレイは従来のままにしていた。
+    しかしユーザーが見ているのは配信画面の方で、そちらの枠が絞られていなかった
+    (2026-09-10)。今は全ての表示面でトップ枠を AI backoff だけにする。
+    A/B の進捗を枠に出したいときだけ STATUS_DASHBOARD_TOP_PANEL=header を使う。
     """
     mode = str(os.getenv("STATUS_DASHBOARD_TOP_PANEL", "") or "").strip().lower()
-    return mode if mode in {"header", "ai_backoff"} else "header"
+    return mode if mode in {"header", "ai_backoff"} else "ai_backoff"
 
 
 AI_BACKOFF_MAX_ROWS = 3
@@ -2939,11 +2944,10 @@ def main():
 
     output = []
 
-    # トップパネルは表示面ごとに出し分ける。
-    #   ai_backoff: AI backoff だけの 2 行 (c1e000122 の意図)。show-status-g の
-    #               ターミナル表示は下のパネル群と重複するため絞る。
+    # トップパネルは既定で AI backoff だけに絞る (ターミナルも配信画面も)。
+    #   ai_backoff: AI backoff だけ (既定)。他の指標は下のパネル群と重複する。
     #   header    : 従来の render_header (Trend/Rus/Strategy/A-B/Live/LastDrop/Reg)。
-    #               配信オーバーレイは A/B の進捗を出したいので既定はこちら。
+    #               A/B の進捗を枠に出したいときだけ明示的に選ぶ。
     # 既定を header にしてあるので、明示的に絞る面だけが環境変数を設定する。
     if top_panel_mode() == "ai_backoff":
         output += render_ai_backoff_header()
