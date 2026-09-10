@@ -1897,23 +1897,54 @@ def top_panel_mode():
     return mode if mode in {"header", "ai_backoff"} else "header"
 
 
+AI_BACKOFF_MAX_ROWS = 3
+_AI_BACKOFF_TAGS = {"main": "main", "fallback": "fb"}
+
+
+def ai_backoff_rows(ai_backoff, limit=AI_BACKOFF_MAX_ROWS):
+    """AI 429 パネルの (raw, display) 行を作る。上位 limit 件 + 「他N件」。
+
+    load_status が返す "roles" は「実際に止まっている分を残り時間の長い順」。
+    COMMENT_AGENTS は 14 本あり全部出すと枠が縦に伸びるので、復旧が遠いものから
+    limit 件だけ出し、残りは件数で畳む。
+
+    ターミナル (render_ai_backoff_header) と配信オーバーレイ (render_header) の
+    両方がこれを使う。片方だけ直すと面ごとに表示がズレる (#263 の再発防止)。
+    """
+    if not isinstance(ai_backoff, dict):
+        return []
+    rows = ai_backoff.get("roles") or []
+    out = []
+    for index, row in enumerate(rows[:limit]):
+        tag = _AI_BACKOFF_TAGS.get(row.get("role"), "alt")
+        detail = (
+            f"{tag}={row.get('model')}({row.get('remaining_text')})"
+            if row.get("active")
+            else f"{tag}=ready"
+        )
+        prefix = " AI 429 " if index == 0 else "        "
+        display = (
+            f" {C_RED}AI 429{RST} {detail}" if index == 0 else f"        {detail}"
+        )
+        out.append((f"{prefix}{detail}", display))
+    hidden = len(rows) - len(rows[:limit])
+    if hidden > 0:
+        total = ai_backoff.get("total") or len(rows)
+        text = f"他{hidden}件 ({len(rows)}/{total} 停止中)"
+        out.append((f"        {text}", f"        {DIM}{text}{RST}"))
+    return out
+
+
 def render_ai_backoff_header():
     """Only retain non-duplicated AI backoff information in the top panel."""
     lines = []
     inner = W - 3
-    ai_backoff = load_ai_backoff_status()
-    if ai_backoff:
-        for index, row in enumerate(ai_backoff["roles"]):
-            role = "main" if row["role"] == "main" else "fb"
-            detail = f"{role}={row['model']}({row['remaining_text']})" if row["active"] else f"{role}=ready"
-            prefix = " AI 429 " if index == 0 else "        "
-            ai_raw = f"{prefix}{detail}"
-            ai_display = f" {C_RED}AI 429{RST} {detail}" if index == 0 else f"        {detail}"
-            ai_display = truncate_ansi_display(ai_display, inner)
-            lines.append(
-                f"{C_CYAN}│{RST}{ai_display}"
-                f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
-            )
+    for ai_raw, ai_display in ai_backoff_rows(load_ai_backoff_status()):
+        ai_display = truncate_ansi_display(ai_display, inner)
+        lines.append(
+            f"{C_CYAN}│{RST}{ai_display}"
+            f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
+        )
 
     if not lines:
         return []
@@ -2168,19 +2199,12 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     pad4 = inner - len(r4_raw_nocolor)
     lines.append(f"{C_CYAN}│{RST}{r4_display}{' ' * max(pad4, 0)} {C_CYAN}│{RST}")
 
-    ai_backoff = load_ai_backoff_status()
-    if ai_backoff:
-        for index, row in enumerate(ai_backoff["roles"]):
-            role = "main" if row["role"] == "main" else "fb"
-            detail = f"{role}={row['model']}({row['remaining_text']})" if row["active"] else f"{role}=ready"
-            prefix = " AI 429 " if index == 0 else "        "
-            ai_raw = f"{prefix}{detail}"
-            ai_display = f" {C_RED}AI 429{RST} {detail}" if index == 0 else f"        {detail}"
-            ai_display = truncate_ansi_display(ai_display, inner)
-            lines.append(
-                f"{C_CYAN}│{RST}{ai_display}"
-                f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
-            )
+    for ai_raw, ai_display in ai_backoff_rows(load_ai_backoff_status()):
+        ai_display = truncate_ansi_display(ai_display, inner)
+        lines.append(
+            f"{C_CYAN}│{RST}{ai_display}"
+            f"{' ' * max(inner - ansi_display_width(ai_raw), 0)} {C_CYAN}│{RST}"
+        )
 
     if latest_drop:
         lines.append(render_last_drop_line(latest_drop, inner))

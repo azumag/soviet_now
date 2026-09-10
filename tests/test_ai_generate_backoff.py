@@ -584,5 +584,116 @@ class AiGenerateBackoffTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class AiBackoffStatusScopeTests(unittest.TestCase):
+    """COMMENT_AGENTS 全件を見ること (2026-09-10 の実障害)。
+
+    以前は先頭 2 件 (main/fallback) だけを見ていた。連鎖が 14 本に伸び、先頭 2 件が
+    opencode の free 枠 (429 を出さない) になった結果、実際に止まっている 8 件が
+    1 件も拾われず、show_status_g のトップパネルが常に空になっていた。
+    """
+
+    AGENTS = (
+        "opencode:muse-a-free,opencode:muse-b-free,"
+        "vercel:zai/glm-5.3-flash,amd:DeepSeek-V4-Flash,"
+        "minimax-api:MiniMax-M3,codex:minimax-m3"
+    )
+
+    def _lines(self, state_dir):
+        env = os.environ.copy()
+        env.update({"AI_BACKOFF_DIR": str(state_dir), "COMMENT_AGENTS": self.AGENTS})
+        result = subprocess.run(
+            ["python3", "lib/ai_backoff_status.py", "--lines"],
+            cwd=REPO_ROOT, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [line for line in result.stdout.splitlines() if line.strip()]
+
+    @staticmethod
+    def _limit(state_dir, key, seconds):
+        (Path(state_dir) / key).write_text(
+            f"{int(time.time()) + seconds}\n", encoding="utf-8"
+        )
+
+    def _limit_five(self, state_dir):
+        for key, sec in (
+            ("opencode_muse-a-free", 100), ("opencode_muse-b-free", 200),
+            ("vercel_zai_glm-5.3-flash", 300), ("amd_deepseek-v4-flash", 400),
+            ("minimax-api_minimax-m3", 500),
+        ):
+            self._limit(state_dir, key, sec)
+
+    def _render(self, state_dir, fn):
+        import status_dashboard
+        old = os.environ.copy()
+        try:
+            os.environ["AI_BACKOFF_DIR"] = str(state_dir)
+            os.environ["COMMENT_AGENTS"] = self.AGENTS
+            return fn(status_dashboard)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_agent_beyond_the_first_two_is_reported(self):
+        """先頭 2 件が無傷でも、3 本目以降が止まっていれば出す (これが実障害)。"""
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            self._limit(d, "amd_deepseek-v4-flash", 3600)
+            lines = self._lines(d)
+        self.assertTrue(lines, "3 本目以降だけが止まっている時に空になってはいけない")
+        self.assertIn("alt=DeepSeek-V4-Flash", "\n".join(lines))
+
+    def test_rows_are_sorted_by_remaining_desc(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            self._limit(d, "vercel_zai_glm-5.3-flash", 600)
+            self._limit(d, "amd_deepseek-v4-flash", 7200)
+            self._limit(d, "minimax-api_minimax-m3", 3600)
+            lines = self._lines(d)
+        self.assertEqual(3, len(lines), lines)
+        self.assertIn("DeepSeek-V4-Flash", lines[0])
+        self.assertIn("MiniMax-M3", lines[1])
+        self.assertIn("glm-5.3-flash", lines[2])
+
+    def test_rows_are_capped_and_folded(self):
+        """上限 3 行 + 「他N件」。全部出すと枠が縦に伸びるため。"""
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            self._limit_five(d)
+            lines = self._lines(d)
+        self.assertEqual(4, len(lines), lines)
+        self.assertEqual("他2件 (5/6 停止中)", lines[-1])
+
+    def test_no_active_agent_yields_no_lines(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            self._limit(d, "amd_deepseek-v4-flash", -3600)  # 期限切れ
+            self.assertEqual([], self._lines(d))
+
+    def test_both_surfaces_show_agents_beyond_the_first_two(self):
+        """ターミナルと配信オーバーレイで同じ行が出ること。
+
+        status_dashboard.ai_backoff_rows を共有しているので、片面だけ直る事故
+        (#263) が起きないことの保証。
+        """
+        import status_dashboard as sd
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            self._limit(d, "amd_deepseek-v4-flash", 3600)
+            terminal = self._render(d, lambda m: m.render_ai_backoff_header())
+            overlay = self._render(d, lambda m: m.render_header(
+                [], {"state": "STOP", "score": 0, "pieces": []},
+                "", "?", "?", 0, 0, 0, {}, {}))
+        plain = lambda ls: sd.ANSI_RE.sub("", "\n".join(ls))
+        for name, rendered in (("terminal", plain(terminal)), ("overlay", plain(overlay))):
+            self.assertIn("AI 429", rendered, name)
+            self.assertIn("alt=DeepSeek-V4-Flash", rendered, name)
+
+    def test_panel_lines_fit_the_frame(self):
+        """「他N件」は日本語なので表示幅で詰める必要がある (len では合わない)。"""
+        import status_dashboard as sd
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            self._limit_five(d)
+            lines = self._render(d, lambda m: m.render_ai_backoff_header())
+        self.assertTrue(lines)
+        widths = {sd.ansi_display_width(sd.ANSI_RE.sub("", line)) for line in lines}
+        self.assertEqual({sd.W}, widths, widths)
+
+
+
 if __name__ == "__main__":
     unittest.main()
