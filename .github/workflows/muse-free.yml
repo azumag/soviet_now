@@ -3,10 +3,13 @@ on:
   pull_request:
     paths:
       - 'lib/ai_generate.sh'
+      - 'lib/ai_generate_policy.sh'
+      - 'eloop_lib.sh'
       - 'lib/opencode_rate_limit_guard.py'
       - 'probe_free_slot.sh'
       - 'broadcast/radio_corners.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
+      - 'tests/test_ai_prepass_backoff_scope.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
       - 'lib/ai_backoff_status.py'
       - 'status_dashboard.py'
@@ -16,10 +19,13 @@ on:
     branches: [main]
     paths:
       - 'lib/ai_generate.sh'
+      - 'lib/ai_generate_policy.sh'
+      - 'eloop_lib.sh'
       - 'lib/opencode_rate_limit_guard.py'
       - 'probe_free_slot.sh'
       - 'broadcast/radio_corners.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
+      - 'tests/test_ai_prepass_backoff_scope.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
       - 'lib/ai_backoff_status.py'
       - 'status_dashboard.py'
@@ -38,4 +44,5 @@ jobs:
       - run: python3 -m unittest tests.test_opencode_rate_limit_guard tests.test_ai_generate_backoff
       - run: bash tests/test_vercel_opencode_backend.sh
       - run: bash tests/test_ai_dispatch_diagnostics.sh
-      - run: bash -n lib/ai_generate.sh probe_free_slot.sh broadcast/radio_corners.sh
+      - run: bash tests/test_ai_prepass_backoff_scope.sh
+      - run: bash -n lib/ai_generate.sh lib/ai_generate_policy.sh eloop_lib.sh probe_free_slot.sh broadcast/radio_corners.sh
