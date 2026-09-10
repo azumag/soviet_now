@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
+# 表示する行数の上限 (超えた分は「他N件」に畳む)。
+MAX_LABEL_ROWS = 3
+
 DEFAULT_COMMENT_MAIN = "opencode-go:deepseek-v4-flash"
 DEFAULT_COMMENT_FALLBACK = "codex:minimax-m3"
 
@@ -91,8 +94,15 @@ def _fmt_remaining(seconds: int) -> str:
     return f"{seconds}s"
 
 
+_ROLE_TAGS = {"main": "main", "fallback": "fb"}
+
+
+def _role_tag(row: dict) -> str:
+    return _ROLE_TAGS.get(row.get("role"), "alt")
+
+
 def _compact_role_label(row: dict) -> str:
-    role = "main" if row["role"] == "main" else "fb"
+    role = _role_tag(row)
     if row["active"]:
         return f"{role}={row['model']}({row['remaining_text']})"
     return f"{role}=ready"
@@ -116,17 +126,19 @@ def _read_until(path: Path) -> Optional[int]:
 
 
 def load_status(now: Optional[int] = None, base_dir: Optional[Path] = None) -> Optional[dict]:
-    """Return status data for active main/fallback rate-limit backoffs."""
+    """Return status data for every configured agent that is rate-limited now."""
 
     root = base_dir or Path.cwd()
     state_dir = _state_dir(root)
     epoch = int(time.time()) if now is None else int(now)
     agents = effective_comment_agents(root)
-    roles = ("main", "fallback")
+    # COMMENT_AGENTS 全件を見る。以前は先頭 2 件 (main/fallback) だけを見ていたが、
+    # 連鎖が 14 本に伸びた結果、先頭 2 件が opencode の free 枠 (429 を出さない) に
+    # なり、実際に止まっている 8 件が 1 つも拾われず表示が常に空になっていた
+    # (2026-09-10 実測)。role は index で付け、3 本目以降は "alt"。
     rows = []
     seen = set()
-    for index, agent in enumerate(agents[:2]):
-        role = roles[index]
+    for index, agent in enumerate(agents):
         key = sanitize_agent(agent)
         if not key or key in seen:
             continue
@@ -136,7 +148,8 @@ def load_status(now: Optional[int] = None, base_dir: Optional[Path] = None) -> O
         active = until is not None and remaining > 0
         rows.append(
             {
-                "role": role,
+                "role": "main" if index == 0 else ("fallback" if index == 1 else "alt"),
+                "index": index,
                 "agent": agent,
                 "model": _model_name(agent),
                 "active": active,
@@ -145,14 +158,22 @@ def load_status(now: Optional[int] = None, base_dir: Optional[Path] = None) -> O
             }
         )
 
-    active_rows = [row for row in rows if row["active"]]
+    # 表示側が回すのは「実際に止まっている分」を残り時間の長い順で。復旧見込みが
+    # 遠いものほど上に来る。同着は設定順 (優先度順) を保つ。
+    active_rows = sorted(
+        (row for row in rows if row["active"]),
+        key=lambda row: (-row["remaining"], row["index"]),
+    )
     if not active_rows:
         return None
     return {
         "active": True,
         "both_limited": len(active_rows) >= 2,
-        "roles": rows,
-        "label": " ".join(_compact_role_label(row) for row in rows),
+        "roles": active_rows,
+        "all_rows": rows,
+        "active_count": len(active_rows),
+        "total": len(rows),
+        "label": " ".join(_compact_role_label(row) for row in active_rows[:MAX_LABEL_ROWS]),
     }
 
 
@@ -162,10 +183,21 @@ def status_label(now: Optional[int] = None, base_dir: Optional[Path] = None) -> 
 
 
 def status_lines(now: Optional[int] = None, base_dir: Optional[Path] = None) -> List[str]:
+    """止まっているエージェントを残り時間の長い順に。上限を超える分は件数で畳む。
+
+    status_dashboard.ai_backoff_rows と同じ上限・同じ畳み方にしてある
+    (show_status.sh とターミナル/オーバーレイで見え方を揃えるため)。
+    """
     status = load_status(now=now, base_dir=base_dir)
     if not status:
         return []
-    return [_compact_role_label(row) for row in status["roles"]]
+    rows = status["roles"]
+    lines = [_compact_role_label(row) for row in rows[:MAX_LABEL_ROWS]]
+    hidden = len(rows) - len(rows[:MAX_LABEL_ROWS])
+    if hidden > 0:
+        total = status.get("total") or len(rows)
+        lines.append(f"他{hidden}件 ({len(rows)}/{total} 停止中)")
+    return lines
 
 
 def main() -> int:
