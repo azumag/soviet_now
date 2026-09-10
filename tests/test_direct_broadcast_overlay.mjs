@@ -227,7 +227,8 @@ test('legacy generators remain independent and the bridge exposes a dedicated JS
   const opsGenerator = fs.readFileSync(path.join(REPO_ROOT, 'generate_show_status_overlay.sh'), 'utf8');
   const eventGenerator = fs.readFileSync(path.join(REPO_ROOT, 'generate_event_overlay.py'), 'utf8');
   for (const source of [statusGenerator, opsGenerator, eventGenerator]) {
-    assert.doesNotMatch(source, /direct_broadcast_overlay/);
+    // Documentation may name the consumer; generators must not import or execute it.
+    assert.doesNotMatch(source, /\b(?:import|from|source|exec|python3?|node|bash|sh)\s+[^\n]*direct_broadcast_overlay/);
   }
   const bridge = fs.readFileSync(path.join(REPO_ROOT, 'soviet_local.mjs'), 'utf8');
   assert.match(bridge, /buildDirectBroadcastOverlayState/);
