@@ -147,8 +147,16 @@ class StreamBackendStatusTests(unittest.TestCase):
         self.assertNotIn("KICK_CHAT_ENABLED=0", result.stdout)
 
     def test_status_dashboard_header_includes_selected_backend(self) -> None:
+        """header パネルは選択中の配信バックエンドを出す。
+
+        既定のトップパネルは ai_backoff (2026-09-10 以降) で SOREN/FFMPEG の行は
+        出さない — ユーザーが「soren/ffmpeg の行は要らない」と指示したため。
+        バックエンド表示自体は header パネルに残っているので、そちらを明示して
+        検証する。
+        """
         env = os.environ.copy()
         env["SOREN_STREAM_BACKEND"] = "ffmpeg"
+        env["STATUS_DASHBOARD_TOP_PANEL"] = "header"
         result = subprocess.run(
             ["python3", "status_dashboard.py"],
             cwd=REPO_ROOT,
@@ -160,6 +168,24 @@ class StreamBackendStatusTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("SOREN/FFMPEG", result.stdout)
+
+    def test_default_panel_omits_the_backend_title(self) -> None:
+        """既定 (配信画面が使う経路) では SOREN/FFMPEG の行が出ないこと。"""
+        env = os.environ.copy()
+        env["SOREN_STREAM_BACKEND"] = "ffmpeg"
+        env.pop("STATUS_DASHBOARD_TOP_PANEL", None)
+        result = subprocess.run(
+            ["python3", "status_dashboard.py"],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SOREN/FFMPEG", result.stdout)
+        self.assertNotIn("SOREN/", result.stdout)
 
     def test_show_status_reports_soak_audio_and_av_sync_acceptance(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
