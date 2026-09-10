@@ -132,6 +132,13 @@ cp alt2.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$A" >/d
 echo '{"count":48,"hash":"A"}' > "$ACCUMULATED_GAMES_FILE"
 cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 cp "$ACCUMULATED_GAMES_FILE" tmp/state/improve_retry_batch.json
+# apply failure must not be committed to the improvement memory as ADOPTED.
+strategy_runtime_atomic_apply() { return 1; }
+_ab_finish B "forced apply failure" >/dev/null 2>&1 && ng "forced apply failure must fail" || ok
+! grep -q "A/B ADOPTED" "$CHANGE_LOG_FILE_HOST" 2>/dev/null && ok || ng "failed apply must not write ADOPTED"
+[ "$(python3 extract_decide_hash.py strategy.py)" = "$A" ] && ok || ng "failed apply must keep root A"
+[ -f tmp/state/ab_state.json ] && ok || ng "failed apply must keep AB state for recovery"
+unset -f strategy_runtime_atomic_apply
 _ab_finish B "test adopt" >/dev/null 2>&1 && ok || ng "finish B rc"
 [ ! -e "$IMPROVE_LOCK_FILE" ] && [ ! -e tmp/state/improve_retry_batch.json ] && ok || ng "B verdict must retire old A locks"
 find tmp/history -name '*batch*' | grep -q . && ok || ng "B verdict must archive old metadata"
@@ -139,12 +146,12 @@ find tmp/history -name '*batch*' | grep -q . && ok || ng "B verdict must archive
 [ "$(python3 extract_decide_hash.py tmp/revert_strategy.py)" = "$A" ] && ok || ng "revert = previous root"
 [ ! -f tmp/state/ab_state.json ] && grep -q "^SOREN_AB_ALT_STRATEGY=$" .env && ok || ng "state cleared after adopt"
 python3 -c "import json;rows=[json.loads(l) for l in open('tmp/history/ab_history.jsonl')];assert rows[-1]['winner']=='B' and rows[-2]['winner']=='A',rows" && ok || ng "ab_history entries"
-# 採用も change_log に残る。以前は $AB_CANDIDATE_DIR/change_log.txt を見ていたが、
-# その dir は開始時に tmp/history へ move 済みで常に空振りしていた。
+# 採用も change_log に残る。ただし apply/hash 検証が成功してから初めて ADOPTED を確定する。
 grep -q "A/B ADOPTED" "$CHANGE_LOG_FILE_HOST" && ok || ng "adopt must be written to change_log"
+[ "$(grep -c 'A/B ADOPTED' "$CHANGE_LOG_FILE_HOST")" = "1" ] && ok || ng "only successful adopt may write ADOPTED"
 grep -q "^+.*best_x = 0.0907" "$CHANGE_LOG_FILE_HOST" && ok || ng "adopt must record the A→B diff"
 grep -q "base=${A:0:12} cand=${C:0:12}" "$CHANGE_LOG_FILE_HOST" && ok || ng "adopt must record both hashes"
-# 差分の向きは A→B (採用時に root を差し替える前に記録している証拠)
+# 差分の向きは apply 前に保存した A スナップショット → B。
 grep -q "^-.*best_x = 0.0905" "$CHANGE_LOG_FILE_HOST" && ok || ng "diff direction must be base→candidate"
 # 既存の追記側と同じ 200 行キャップ
 [ "$(wc -l <"$CHANGE_LOG_FILE_HOST")" -le 200 ] && ok || ng "change_log must stay within the 200-line cap ($(wc -l <"$CHANGE_LOG_FILE_HOST"))"

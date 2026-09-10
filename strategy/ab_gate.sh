@@ -178,9 +178,10 @@ PY
 # change_log 200 行に ab-gate 由来 0 件・REJECT 0 件。結果として「A/B で棄却された
 # 方針」が改善側に一切伝わらず、同じ方針が何度でも再提案されうる状態だった。
 #
-# 差分の向きを A→B にするため、root がまだ A のうちに呼ぶこと。
+# 5番目の引数には A 側のスナップショットを指定できる。B 採用時は root apply 成功後に
+# ADOPTED を確定するため、apply 前に保存した A を渡して A→B diff を維持する。
 _ab_append_change_log() {
-	local winner="$1" reason="$2" a="$3" b="$4" root verdict lines target
+	local winner="$1" reason="$2" a="$3" b="$4" base_file="${5:-${STRATEGY_FILE:-strategy.py}}" verdict lines target
 	# 追記先は自前で解決する。CHANGE_LOG_FILE_HOST / CHANGE_LOG_FILE は
 	# eloop_improve.sh (改善プロセス) でしか定義されず、_ab_finish を呼ぶのは
 	# eloop.sh (ゲームループ、別プロセス) なので、あの変数に依存すると本番では
@@ -188,8 +189,7 @@ _ab_append_change_log() {
 	#   source ./eloop_lib.sh 後も CHANGE_LOG_FILE / _HOST とも未設定
 	# 既定値は eloop_improve.sh:17 の CHANGE_LOG_FILE と同じ相対パスに合わせる。
 	target="${CHANGE_LOG_FILE_HOST:-${CHANGE_LOG_FILE:-logs/change_log.txt}}"
-	root="${STRATEGY_FILE:-strategy.py}"
-	[ -f "$root" ] && [ -f "$AB_ALT_FILE" ] || return 0
+	[ -f "$base_file" ] && [ -f "$AB_ALT_FILE" ] || return 0
 	mkdir -p "$(dirname "$target")" 2>/dev/null || true
 	lines="${AB_CHANGE_LOG_DIFF_LINES:-40}"
 	if [ "$winner" = "B" ]; then verdict="ADOPTED"; else verdict="REJECTED"; fi
@@ -201,7 +201,7 @@ _ab_append_change_log() {
 			echo "# この方針は A/B で棄却された。同じ方針の焼き直しを避けること。"
 		fi
 		echo "# A (base) → B (candidate) の差分 (先頭 ${lines} 行):"
-		diff -u "$root" "$AB_ALT_FILE" 2>/dev/null | tail -n +3 | head -n "$lines"
+		diff -u "$base_file" "$AB_ALT_FILE" 2>/dev/null | tail -n +3 | head -n "$lines"
 	} >>"$target" 2>/dev/null || true
 	# 既存の追記側 (eloop_improve.sh) と同じ 200 行キャップを維持する。
 	if [ -f "$target" ] && [ "$(wc -l <"$target")" -gt 200 ]; then
@@ -212,7 +212,7 @@ _ab_append_change_log() {
 
 # A/B を終了し、勝者を root にする (B) か棄却する (A)。記録は tmp/history へ移動。
 _ab_finish() {
-	local winner="$1" reason="${2:-}" a b ts win_hash root_after
+	local winner="$1" reason="${2:-}" a b ts win_hash root_after change_log_base=""
 	[ "$winner" = "A" ] || [ "$winner" = "B" ] || { log "[AB] finish: winner は A|B"; return 1; }
 	[ -f "$AB_STATE_FILE" ] || { log "[AB] finish: 状態なし"; return 1; }
 	a=$(_ab_state_get a_hash)
@@ -227,11 +227,15 @@ _ab_finish() {
 			reason="${reason};alt_hash_mismatch"
 		fi
 	fi
-	# root がまだ A のうちに記録する (差分の向きが A→B になる)。採用時の root 差し替え
-	# より前、かつ alt_hash_mismatch による winner 降格より後。
-	_ab_append_change_log "$winner" "$reason" "$a" "$b"
+	# A 棄却は root が A のままなので直ちに確定できる。B 採用は apply / hash 検証に
+	# 成功してから ADOPTED を確定し、失敗実行を「採用済み」と誤記録しない。
+	if [ "$winner" = "A" ]; then
+		_ab_append_change_log "$winner" "$reason" "$a" "$b"
+	fi
 	if [ "$winner" = "B" ]; then
-		cp -p "${STRATEGY_FILE:-strategy.py}" tmp/revert_strategy.py 2>/dev/null || true
+		if cp -p "${STRATEGY_FILE:-strategy.py}" tmp/revert_strategy.py 2>/dev/null; then
+			change_log_base="tmp/revert_strategy.py"
+		fi
 		# helper は additive-only: strategy より先に配置する (import 先が無い瞬間を作らない)
 		if [ -d "$AB_ALT_HELPERS_DIR" ]; then
 			cp -R "$AB_ALT_HELPERS_DIR/." strategy_helpers/ 2>/dev/null || true
@@ -243,6 +247,11 @@ _ab_finish() {
 		fi
 		root_after=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 		[ "$root_after" = "$b" ] || { log "[AB] 差し替え後 hash 不一致 ($root_after != $b)"; return 1; }
+		if [ -n "$change_log_base" ]; then
+			_ab_append_change_log "$winner" "$reason" "$a" "$b" "$change_log_base"
+		else
+			log "[AB] finish B: A スナップショット取得失敗 → ADOPTED change_log 追記を安全側で省略"
+		fi
 		command -v _archive_strategy_snapshot_by_hash >/dev/null 2>&1 && _archive_strategy_snapshot_by_hash "${STRATEGY_FILE:-strategy.py}" >/dev/null 2>&1 || true
 		# ここにあった $AB_CANDIDATE_DIR/change_log.txt の追記は削除した。この dir は
 		# _ab_gate_before_game が A/B 開始時に tmp/history へ move するので finish
