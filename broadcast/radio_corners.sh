@@ -1786,7 +1786,7 @@ _run_opencode_jiji_research_unqueued() {
 _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
 	case "$agent" in
-	codex | codex:* | opencode:* | opencode-go:* | vercel:* | amd:* | minimax-api:* | local | local:*)
+	codex | codex:* | opencode:* | opencode-go:* | vercel:* | amd:* | local | local:*)
 		# Provider/model specs must go through the common dispatcher.  Passing
 		# them to `opencode run --agent` treats the model name as an agent name,
 		# which can fall back to an unrelated default model and leak its error

@@ -654,50 +654,6 @@ _ai_call_claude_unqueued() {
 	printf '%s' "$output"
 }
 
-# _ai_call_minimax LABEL PROMPT_FILE [MODEL] [TIMEOUT]
-_ai_call_minimax_unqueued() {
-	local label="$1" prompt_file="$2"
-	local model="${3:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
-	local timeout_sec="${4:-${RADIO_CLAUDE_TIMEOUT:-120}}"
-	local output_file output raw_failure rate_limited=false
-
-	[ -s "$prompt_file" ] || return 1
-	log "[${label}] minimax call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
-	output_file=$(mktemp /tmp/ai_minimax_output_XXXXXXXX)
-	_run_minimax_claude_prompt_file "$prompt_file" "$output_file" "$model" "$timeout_sec" "acceptEdits"
-	local rc=$?
-	local stderr_preview="${MINIMAX_CLAUDE_LAST_STDERR:-}"
-	local provider_error="${MINIMAX_CLAUDE_LAST_PROVIDER_ERROR:-false}"
-	local login_error="${MINIMAX_CLAUDE_LAST_LOGIN_ERROR:-false}"
-	[ -n "$stderr_preview" ] && log "[${label}] minimax stderr: $stderr_preview" >&2
-	if [ $rc -ne 0 ] || [ -n "$stderr_preview" ]; then
-		raw_failure="$stderr_preview"
-		_ai_rate_limit_text_detected "$raw_failure" && rate_limited=true
-	fi
-	[ "$login_error" = "true" ] && log "[${label}] minimax unavailable: not logged in" >&2
-	if [ $rc -eq 124 ]; then
-		rm -f "$output_file"
-		log "[${label}] minimax timeout (${timeout_sec}s, model=$model)" >&2
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	if [ "$provider_error" = "true" ]; then
-		rm -f "$output_file"
-		log "[${label}] minimax provider/auth error (model=$model)" >&2
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	if [ $rc -ne 0 ]; then
-		rm -f "$output_file"
-		log "[${label}] minimax failed (rc=$rc, model=$model)" >&2
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	output=$(cat "$output_file" 2>/dev/null)
-	rm -f "$output_file"
-	printf '%s' "$output"
-}
-
 # _ai_call_ollama LABEL PROMPT_FILE [MODEL] [TIMEOUT]
 _ai_call_ollama_unqueued() {
 	local label="$1" prompt_file="$2"
@@ -748,11 +704,6 @@ _ai_call_ollama_unqueued() {
 _ai_call_claude() {
 	local label="${1:-AI}" model="${3:-$RADIO_CLAUDE_MODEL}"
 	_ai_generation_queue_run "$(_ai_queue_label "$label" "claude" "$model")" _ai_call_claude_unqueued "$@"
-}
-
-_ai_call_minimax() {
-	local label="${1:-AI}" model="${3:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
-	_ai_generation_queue_run "$(_ai_queue_label "$label" "minimax" "$model")" _ai_call_minimax_unqueued "$@"
 }
 
 _ai_call_ollama() {
@@ -849,12 +800,12 @@ _ai_call_local_llm() {
 # 検証済み: /snap/bin/opencode run --model opencode/deepseek-v4-flash-free は litellm の zen/v1 429 と異なり成功する。
 _ai_call_opencode_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
+	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
 	local timeout_sec="${4:-90}"
 	local model="opencode/${agent#opencode:}"
 	case "$agent" in
 	vercel:*) model="vercel/${agent#vercel:}" ;;
 	amd:*) model="amd-token-factory/${agent#amd:}" ;;
-	minimax-api:*) model="minimax-api/${agent#minimax-api:}" ;;
 	opencode-go/*) model="$agent" ;;
 	opencode-go:*) model="opencode-go/${agent#opencode-go:}" ;;
 	opencode/*) model="$agent" ;;
@@ -869,7 +820,7 @@ _ai_call_opencode_unqueued() {
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
 	local opencode_agent_args=()
 	case "$agent" in
-	vercel:*|amd:*|minimax-api:*)
+	vercel:*|amd:*)
 		case "$label" in
 		*prepass*|*PREPASS*|*RESEARCH*) opencode_agent_args=(--agent soren-research) ;;
 		*) opencode_agent_args=(--agent soren-lite) ;;
@@ -980,6 +931,7 @@ _ai_call_opencode() {
 # codex モデルだけを確実に -m へ渡す。
 _ai_codex_model_from_agent() {
 	local agent="${1:-}" model=""
+	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
 	case "$agent" in
 	codex:*) model="${agent#codex:}" ;;
 	*) model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}" ;;
@@ -1023,6 +975,7 @@ sys.stdout.write(text.strip())
 #   codex CLI 経由で agent が示すモデルを呼ぶ。
 _ai_call_codex_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
+	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
 	local timeout_sec="${4:-${CODEX_TIMEOUT:-300}}"
 	local model
 	model=$(_ai_codex_model_from_agent "$agent")
@@ -1097,6 +1050,7 @@ _ai_call_codex() {
 # sentinel が別モデルの呼び出しに化けるため、生成前に明示的に拒否する。
 _ai_agent_spec_valid() {
 	local agent="${1:-}" model=""
+	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
 	case "$agent" in
 	codex)
 		return 0
@@ -1116,9 +1070,6 @@ _ai_agent_spec_valid() {
 		;;
 	amd:*)
 		model="${agent#amd:}"
-		;;
-	minimax-api:*)
-		model="${agent#minimax-api:}"
 		;;
 	local)
 		return 0
@@ -1145,7 +1096,6 @@ _ai_resolved_model_from_agent() {
 	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
 	vercel:*) resolved_model="vercel/${agent#vercel:}" ;;
 	amd:*) resolved_model="amd-token-factory/${agent#amd:}" ;;
-	minimax-api:*) resolved_model="minimax-api/${agent#minimax-api:}" ;;
 	local:*) resolved_model="${agent#local:}" ;;
 	local) resolved_model="${LOCAL_LLM_MODEL:-gemma4:12b}" ;;
 	*) resolved_model="${CODEX_MODEL:-amd-token-factory-deepseek-v4-flash}" ;;
@@ -1155,6 +1105,7 @@ _ai_resolved_model_from_agent() {
 
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
+	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
 	local timeout_override="${4:-}"
 	local validator="${AI_DISPATCH_VALIDATOR:-}"
 	if ! _ai_agent_spec_valid "$agent"; then
@@ -1219,7 +1170,7 @@ _ai_dispatch() {
 		[ "$agent" = "local" ] || _local_model="${agent#local:}"
 		_ai_call_local_llm "$label" "$prompt_file" "$_local_model" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
-	opencode-go:*|opencode:*|vercel:*|amd:*|minimax-api:*)
+	opencode-go:*|opencode:*|vercel:*|amd:*)
 		local _opencode_timeout="$timeout_override"
 		if [[ "$agent" == vercel:* ]]; then
 			_opencode_timeout="${VERCEL_OPENCODE_TIMEOUT:-20}"
@@ -1515,9 +1466,6 @@ _ai_backoff_sec_for_agent() {
 		;;
 	amd:*)
 		model="${agent#amd:}"
-		;;
-	minimax-api:*)
-		model="${agent#minimax-api:}"
 		;;
 	*)
 		model="$agent"

@@ -50,11 +50,11 @@ result=$(_ai_call_opencode_unqueued RADIO:news:prepass amd:DeepSeek-V4-Flash "$T
 grep -qx 'run --agent soren-research --model amd-token-factory/DeepSeek-V4-Flash test prompt' "$OPENCODE_CALLS" || { echo "not ok - AMD research mapping"; exit 1; }
 
 : >"$OPENCODE_CALLS"
-result=$(_ai_call_opencode_unqueued RADIO minimax-api:MiniMax-M3 "$TMP/prompt" 10)
-[ "$result" = "VERCEL_OK" ] || { echo "not ok - MiniMax result"; exit 1; }
-grep -qx 'run --agent soren-lite --model minimax-api/MiniMax-M3 test prompt' "$OPENCODE_CALLS" || { echo "not ok - MiniMax mapping"; exit 1; }
-[ "$(_ai_resolved_model_from_agent amd:DeepSeek-V4-Flash)" = 'amd-token-factory/DeepSeek-V4-Flash' ] || { echo "not ok - AMD resolved model"; exit 1; }
-[ "$(_ai_resolved_model_from_agent minimax-api:MiniMax-M3)" = 'minimax-api/MiniMax-M3' ] || { echo "not ok - MiniMax resolved model"; exit 1; }
+for agent in minimax-api:MiniMax-M3 codex:minimax-m3 minimax opencode:minimax-m3; do
+  _ai_agent_spec_valid "$agent" && { echo "not ok - retired spec accepted"; exit 1; }
+  _ai_call_opencode_unqueued TEST "$agent" "$TMP/prompt" 10 && { echo "not ok - retired provider called"; exit 1; }
+done
+[ ! -s "$OPENCODE_CALLS" ] || { echo "not ok - retired provider invoked CLI"; exit 1; }
 
 [ "$(_ai_resolved_model_from_agent vercel:minimax/minimax-m3-free)" = 'vercel/minimax/minimax-m3-free' ] || { echo "not ok - resolved model"; exit 1; }
 [ "$(_ai_backoff_sec_for_agent vercel:minimax/minimax-m3-free RADIO)" = 300 ] || { echo "not ok - backoff"; exit 1; }

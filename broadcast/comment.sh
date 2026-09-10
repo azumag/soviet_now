@@ -2322,11 +2322,11 @@ _classify_comments() {
 		fi
 		return 1
 	fi
-	local model="${COMMENT_CLASSIFIER_AGENT:-codex:minimax-m3}"
-	local fallback="${COMMENT_CLASSIFIER_FALLBACK:-codex:minimax-m3}"
+	local model="${COMMENT_CLASSIFIER_AGENT:-amd:DeepSeek-V4-Flash}"
+	local fallback="${COMMENT_CLASSIFIER_FALLBACK:-amd:DeepSeek-V4-Flash}"
 	local timeout_sec="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
-	local edit_model="${COMMENT_CLASSIFIER_EDIT_AGENT:-codex:minimax-m3}"
-	local edit_fallback="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-codex:minimax-m3}"
+	local edit_model="${COMMENT_CLASSIFIER_EDIT_AGENT:-amd:DeepSeek-V4-Flash}"
+	local edit_fallback="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-amd:DeepSeek-V4-Flash}"
 	local edit_timeout_sec="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 	local classification raw_classification classifier_output_file classifier_edit_file classifier_model_used edit_result
 	mkdir -p "$ELOOP_LIB_DIR/tmp/debug/comment_classifier" 2>/dev/null || true
@@ -3706,12 +3706,12 @@ JAPANESECOMMENT
 		local attempt=1 generation_ok=false
 		local comment_agent_list=""
 		if [ "$_comment_mode_generated" = "soren91" ]; then
-			comment_agent_list="${COMMENT_SOREN91_AGENT:-codex:minimax-m3}"
+			comment_agent_list="${COMMENT_SOREN91_AGENT:-amd:DeepSeek-V4-Flash}"
 			if [ -n "${COMMENT_SOREN91_FALLBACK:-}" ] && [ "$COMMENT_SOREN91_FALLBACK" != "$comment_agent_list" ]; then
 				comment_agent_list="${comment_agent_list},${COMMENT_SOREN91_FALLBACK}"
 			fi
 		else
-			comment_agent_list="${COMMENT_AGENTS:-codex:minimax-m3}"
+			comment_agent_list="${COMMENT_AGENTS:-amd:DeepSeek-V4-Flash}"
 		fi
 		# ピーク時間帯は候補順序のみ入替え（MiniMax優先 / DeepSeekはフォールバックに温存）
 		local comment_agent_list_before="$comment_agent_list"

@@ -6,7 +6,7 @@ set -e
 ELOOP_LIB_DIR="${ELOOP_LIB_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 source "$ELOOP_LIB_DIR/eloop_lib.sh" 2>/dev/null || true
 
-MODEL="${COMMENT_CLASSIFIER_AGENT:-minimax}"
+MODEL="${COMMENT_CLASSIFIER_AGENT:-amd:DeepSeek-V4-Flash}"
 
 declare -A TEST_COMMENTS=(
 	["card_gacha"]="azumagbanjo: ユーザーがAを獲得しました"

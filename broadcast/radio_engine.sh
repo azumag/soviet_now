@@ -265,84 +265,6 @@ _run_claude_comment() {
 	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
-_run_minimax_comment_unqueued() {
-	local prompt_file="$1"
-	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
-	local timeout_sec="${3:-${COMMENT_CLAUDE_TIMEOUT:-180}}"
-	local sandbox_dir sandbox_prompt output_file output
-	sandbox_dir=$(create_sandbox \
-		"README.md" \
-		"strategy.py" \
-		"prompts/comment_response.md" \
-		"$COMMENT_SPOKEN_HISTORY_DIR" \
-		"$PAST_RADIO_TOPICS" \
-		"score_history.txt" \
-		"$RUSSIA_CREATION_HISTORY_FILE" \
-		"$SOVIET_CREATION_HISTORY_FILE" \
-		"$ROLLING_SCORES_FILE" \
-		"show_status.sh" \
-		"show_status_g.sh" \
-		"status_dashboard.py")
-	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
-		log "[COMMENT] sandbox作成失敗 -> direct minimax" >&2
-		sandbox_prompt="$prompt_file"
-	else
-		sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
-		mkdir -p "$(dirname "$sandbox_prompt")"
-		cp "$prompt_file" "$sandbox_prompt" 2>/dev/null || {
-			destroy_sandbox "$sandbox_dir"
-			return 1
-		}
-	fi
-	output_file=$(mktemp /tmp/eloop_minimax_comment_output_XXXXXXXX)
-	_run_minimax_claude_prompt_file "$sandbox_prompt" "$output_file" "$model" "$timeout_sec" "acceptEdits"
-	local rc=$?
-	local stderr_preview="${MINIMAX_CLAUDE_LAST_STDERR:-}"
-	local provider_error="${MINIMAX_CLAUDE_LAST_PROVIDER_ERROR:-false}"
-	local login_error="${MINIMAX_CLAUDE_LAST_LOGIN_ERROR:-false}"
-	local stdout_preview="${MINIMAX_CLAUDE_LAST_STDOUT_PREVIEW:-}"
-	if [ -n "$stderr_preview" ] || [ "$provider_error" = "true" ]; then
-		mkdir -p "$(dirname "$COMMENT_CLAUDE_LOG_FILE")" 2>/dev/null || true
-		{
-			printf '[%s] rc=%s model=%s provider=minimax tools=%s\n' "$(date '+%F %T')" "$rc" "$model" "$COMMENT_CLAUDE_TOOLS"
-			if [ -n "$stderr_preview" ]; then
-				printf '[stderr]\n%s\n' "$stderr_preview"
-			fi
-			if [ "$provider_error" = "true" ]; then
-				printf '[stdout]\n'
-				printf '%s' "$stdout_preview"
-				printf '\n'
-			fi
-			printf '\n\n'
-		} >>"$COMMENT_CLAUDE_LOG_FILE" 2>/dev/null || true
-		[ -n "$stderr_preview" ] && log "[COMMENT] minimax stderr: $(printf '%s' "$stderr_preview" | head -c 500)" >&2
-	fi
-	[ "$login_error" = "true" ] && log "[COMMENT] minimax unavailable: not logged in" >&2
-	[ -n "$sandbox_dir" ] && destroy_sandbox "$sandbox_dir"
-	if [ $rc -eq 124 ]; then
-		rm -f "$output_file"
-		log "[COMMENT] minimax timeout (${timeout_sec}s, model=$model)" >&2
-		return 1
-	fi
-	if [ "$provider_error" = "true" ]; then
-		rm -f "$output_file"
-		log "[COMMENT] minimax provider/auth error treated as failure (model=$model)" >&2
-		return 1
-	fi
-	if [ $rc -ne 0 ]; then
-		rm -f "$output_file"
-		log "[COMMENT] minimax failed (rc=$rc, model=$model)" >&2
-		return 1
-	fi
-	output=$(cat "$output_file" 2>/dev/null)
-	rm -f "$output_file"
-	printf '%s' "$output"
-}
-
-_run_minimax_comment() {
-	_ai_generation_queue_run "COMMENT:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_comment_unqueued "$@"
-}
-
 _run_comment_agent() {
 	local agent="$1" prompt_file="$2"
 	_ai_dispatch "COMMENT" "$agent" "$prompt_file"
@@ -396,49 +318,6 @@ _run_claude_radio_with_model() {
 
 _run_claude_radio() {
 	_ai_call_claude "RADIO" "$1" "$RADIO_CLAUDE_MODEL"
-}
-
-_run_minimax_radio_unqueued() {
-	local prompt_file="$1"
-	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
-	local timeout_sec="${3:-${RADIO_CLAUDE_TIMEOUT:-120}}"
-	local output_file output
-	if [ ! -s "$prompt_file" ]; then
-		return 1
-	fi
-	log "[RADIO] minimax call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
-	output_file=$(mktemp /tmp/eloop_minimax_radio_output_XXXXXXXX)
-	_run_minimax_claude_prompt_file "$prompt_file" "$output_file" "$model" "$timeout_sec" "acceptEdits"
-	local rc=$?
-	local stderr_preview="${MINIMAX_CLAUDE_LAST_STDERR:-}"
-	local provider_error="${MINIMAX_CLAUDE_LAST_PROVIDER_ERROR:-false}"
-	local login_error="${MINIMAX_CLAUDE_LAST_LOGIN_ERROR:-false}"
-	if [ -n "$stderr_preview" ]; then
-		log "[RADIO] minimax stderr: $stderr_preview" >&2
-	fi
-	[ "$login_error" = "true" ] && log "[RADIO] minimax unavailable: not logged in" >&2
-	if [ $rc -eq 124 ]; then
-		rm -f "$output_file"
-		log "[RADIO] minimax timeout (${timeout_sec}s, model=$model)" >&2
-		return 1
-	fi
-	if [ "$provider_error" = "true" ]; then
-		rm -f "$output_file"
-		log "[RADIO] minimax provider/auth error treated as failure (model=$model)" >&2
-		return 1
-	fi
-	if [ $rc -ne 0 ]; then
-		rm -f "$output_file"
-		log "[RADIO] minimax failed (rc=$rc, model=$model)" >&2
-		return 1
-	fi
-	output=$(cat "$output_file" 2>/dev/null)
-	rm -f "$output_file"
-	printf '%s' "$output"
-}
-
-_run_minimax_radio() {
-	_ai_generation_queue_run "RADIO:minimax:${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}" _run_minimax_radio_unqueued "$@"
 }
 
 _run_radio_agent() {
@@ -1354,16 +1233,16 @@ _radio_generate_and_play() {
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	if [ "$host_mode_generated" = "soren91" ]; then
 		radio_primary_agent="${RADIO_SOREN91_AGENT:-opencode-go:deepseek-v4-flash}"
-		radio_second_agent="${RADIO_SOREN91_FALLBACK:-codex:minimax-m3}"
+		radio_second_agent="${RADIO_SOREN91_FALLBACK:-amd:DeepSeek-V4-Flash}"
 		radio_third_agent=""
 		radio_allow_claude_fallback=false
 	else
 		radio_prepass_agent="${RADIO_MAIN_PREPASS_AGENT:-opencode-go:deepseek-v4-flash}"
-		radio_prepass_agents="${RADIO_PREPASS_AGENTS:-opencode:deepseek-v4-flash-free,codex:openrouter/free,opencode-go:deepseek-v4-flash,codex:minimax-m3}"
-		radio_agents_list="${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,codex:minimax-m3}"
+		radio_prepass_agents="${RADIO_PREPASS_AGENTS:-opencode:deepseek-v4-flash-free,codex:openrouter/free,opencode-go:deepseek-v4-flash,amd:DeepSeek-V4-Flash}"
+		radio_agents_list="${RADIO_AGENTS:-opencode-go:deepseek-v4-flash,amd:DeepSeek-V4-Flash}"
 		# 後方互換 (soren91モード向け)
 		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode-go:deepseek-v4-flash}"
-		radio_second_agent="${RADIO_MAIN_FALLBACK:-codex:minimax-m3}"
+		radio_second_agent="${RADIO_MAIN_FALLBACK:-amd:DeepSeek-V4-Flash}"
 	fi
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
