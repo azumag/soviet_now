@@ -348,12 +348,11 @@ while true; do
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
 
-            # Bot / broadcaster self-posts are outbound echoes, not viewer comments.
-            if _is_ignored_author "$login_user" "$user"; then
-                if ! _is_card_gacha_result_message "$msg" && ! _is_prediction_announce_message "$msg"; then
-                    continue
-                fi
-            fi
+            # Bot / broadcaster self-posts are outbound echoes. They are read
+            # like any other chat line: the comment reply path is audio-only
+            # (no chat post), so there is no self-response echo loop. Card
+            # gacha / prediction posts keep their trusted formatting below.
+            # (2026-09-11 owner request: read all dociai chat.)
 
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
 

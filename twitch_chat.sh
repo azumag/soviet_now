@@ -214,11 +214,11 @@ _sanitize_comment_line() {
         return 1
     fi
 
-    # Bot / broadcaster self-posts are outbound echoes, not viewer comments.
+    # Bot / broadcaster self-posts are outbound echoes. They are read like any
+    # other chat line (the comment reply path is audio-only, so no echo loop),
+    # but drop the leading "user: " so the classified/spoken text is the body.
+    # (2026-09-11 owner request: read all dociai chat.)
     if _is_ignored_comment_author_line "$line"; then
-        if ! _is_card_gacha_result_line "$line"; then
-            return 1
-        fi
         line="${line#*: }"
     fi
 
