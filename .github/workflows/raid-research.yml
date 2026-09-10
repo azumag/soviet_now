@@ -1,10 +1,10 @@
 name: Raid channel research
 on:
   pull_request:
-    paths: ['lib/raid_research.py', 'broadcast/comment.sh', 'prompts/comment_response_raid.md', 'prompts/comment_template.md', 'tests/test_raid_research.py', '.github/workflows/raid-research.yml']
+    paths: ['lib/raid_research.py', 'broadcast/comment.sh', 'prompts/comment_response_raid.md', 'prompts/comment_template.md', 'tests/test_raid_research.py', 'tests/test_comment_body_dedup.sh', '.github/workflows/raid-research.yml']
   push:
     branches: [main]
-    paths: ['lib/raid_research.py', 'broadcast/comment.sh', 'prompts/comment_response_raid.md', 'prompts/comment_template.md', 'tests/test_raid_research.py', '.github/workflows/raid-research.yml']
+    paths: ['lib/raid_research.py', 'broadcast/comment.sh', 'prompts/comment_response_raid.md', 'prompts/comment_template.md', 'tests/test_raid_research.py', 'tests/test_comment_body_dedup.sh', '.github/workflows/raid-research.yml']
 permissions:
   contents: read
 jobs:
@@ -16,3 +16,4 @@ jobs:
           persist-credentials: false
       - run: python3 -m unittest tests.test_raid_research
       - run: bash -n broadcast/comment.sh
+      - run: bash tests/test_comment_body_dedup.sh
