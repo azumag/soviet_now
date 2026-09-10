@@ -435,6 +435,15 @@ class AbRemainingGamesTest(unittest.TestCase):
                 rows.append(_game_row(idx, arm, eval_score=1000, score=1000))
         return rows
 
+    def _partial_block(self, complete_count, partial_count, pattern="ABBA"):
+        rows = self._complete_blocks(complete_count, pattern)
+        start = complete_count * len(pattern)
+        for offset, arm in enumerate(pattern[:partial_count]):
+            rows.append(
+                _game_row(start + offset, arm, eval_score=1000, score=1000)
+            )
+        return rows
+
     def test_defaults_match_ab_decide(self):
         """looks / max_blocks が tools/ab_decide.py の DEFAULTS と一致していること。
 
@@ -498,6 +507,65 @@ class AbRemainingGamesTest(unittest.TestCase):
             self.assertEqual(ab["next_look"], 19)
             self.assertEqual(ab["games_to_next_look"], (19 - 8) * 4)
             self.assertEqual(ab["games_to_max"], (37 - 8) * 4)
+
+        self._run_in_tempdir(_test)
+
+    def test_partial_block_progress_is_credited(self):
+        """正常な部分ブロックは次 look / max の残り試合数から差し引く。"""
+        expected = {
+            1: (43, 115),
+            2: (42, 114),
+            3: (41, 113),
+        }
+        for partial_count, (next_left, max_left) in expected.items():
+            def _test(partial_count=partial_count, next_left=next_left, max_left=max_left):
+                state, games, meta, env = self._write_ab(
+                    self._partial_block(8, partial_count)
+                )
+                ab = sd.load_ab_progress(state, games, meta, env_path=env)
+                self.assertEqual(ab["blocks"], 8)
+                self.assertEqual(ab["next_look"], 19)
+                self.assertEqual(ab["games_to_next_look"], next_left)
+                self.assertEqual(ab["games_to_max"], max_left)
+
+            self._run_in_tempdir(_test)
+
+    def test_tainted_partial_block_is_not_credited(self):
+        """tainted で current block が完成不能なら、次のブロックから積み直す。"""
+        def _test():
+            rows = self._partial_block(8, 3)
+            rows[33] = _game_row(33, "B", eval_score=1000, score=1000, tainted=True)
+            state, games, meta, env = self._write_ab(rows)
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["blocks"], 8)
+            self.assertEqual(ab["games_to_next_look"], 45)
+            self.assertEqual(ab["games_to_max"], 117)
+
+        self._run_in_tempdir(_test)
+
+    def test_missing_idx_partial_block_is_not_credited(self):
+        """idx 欠番を過去へ埋め戻せない場合は current block を完成扱いしない。"""
+        def _test():
+            rows = self._partial_block(8, 3)
+            rows = [r for r in rows if r["idx"] != 33]
+            state, games, meta, env = self._write_ab(rows)
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["blocks"], 8)
+            self.assertEqual(ab["games_to_next_look"], 45)
+            self.assertEqual(ab["games_to_max"], 117)
+
+        self._run_in_tempdir(_test)
+
+    def test_duplicate_idx_follows_ab_report_dedupe_rule(self):
+        """有効 idx の重複は ab_report.blocks と同じ dedupe 規則で扱う。"""
+        def _test():
+            rows = self._partial_block(8, 3)
+            rows.append(_game_row(33, "B", eval_score=9999, score=9999))
+            state, games, meta, env = self._write_ab(rows)
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["blocks"], 8)
+            self.assertEqual(ab["games_to_next_look"], 41)
+            self.assertEqual(ab["games_to_max"], 113)
 
         self._run_in_tempdir(_test)
 
