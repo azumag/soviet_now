@@ -59,6 +59,25 @@ _comment_hash_text() {
 	return 1
 }
 
+# 重複判定キー: 先頭の "user: " を除いた本文。
+# 別アカウント（IDローテーション）が同一本文を連投するスパムを、ユーザー名に
+# 依存せず同一扱いにする。ユーザー名様の接頭辞（空白を含まない）だけを除去し、
+# 本文中の ": " はそのまま残す。キーワード判定はしないため正常コメントは
+# 文面が異なれば影響しない。
+_comment_dedup_key() {
+	local line="${1:-}" head
+	case "$line" in
+	*": "*)
+		head="${line%%: *}"
+		case "$head" in
+		*" ") : ;;
+		*) line="${line#*: }" ;;
+		esac
+		;;
+	esac
+	printf '%s' "$line"
+}
+
 _comment_hash_file() {
 	local file="${1:-}"
 	[ -f "$file" ] || return 1
@@ -537,7 +556,7 @@ _filter_already_processed_comment_lines() {
 		[ -n "$line" ] || continue
 		total_count=$((total_count + 1))
 		local line_hash
-		line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
+		line_hash=$(_comment_hash_text "$(_comment_dedup_key "$line")" 2>/dev/null || echo "")
 		[ -n "$line_hash" ] || {
 			result="${result:+${result}
 }${line}"
@@ -569,7 +588,7 @@ _has_processed_comment_line() {
 	now=$(date +%s)
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
-		line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
+		line_hash=$(_comment_hash_text "$(_comment_dedup_key "$line")" 2>/dev/null || echo "")
 		[ -n "$line_hash" ] || continue
 		if awk -F'|' -v h="$line_hash" -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
 			'$2 == h && (now - $1) <= ttl { found=1 } END { exit(found ? 0 : 1) }' \
@@ -598,7 +617,7 @@ _record_processed_comment_lines() {
 		while IFS= read -r line; do
 			[ -n "$line" ] || continue
 			local line_hash
-			line_hash=$(_comment_hash_text "$line" 2>/dev/null || echo "")
+			line_hash=$(_comment_hash_text "$(_comment_dedup_key "$line")" 2>/dev/null || echo "")
 			[ -n "$line_hash" ] && echo "${now}|${line_hash}"
 		done <<<"$comments"
 	} | tail -n "$COMMENT_PROCESSED_LINES_MAX" >"$tmpf"
