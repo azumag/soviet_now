@@ -111,7 +111,51 @@ def ansi_to_html(text):
         stack.pop()
     return "".join(out)
 
-body = ansi_to_html(raw.rstrip() or "status_dashboard.py returned no output")
+def hide_header_box(text):
+    """ヘッダーの枠だけを画面から隠す (テキストは残す)。
+
+    このファイル (tmp/state/status_overlay.html) は 3 役を兼ねている:
+      1. 配信画面の STATS パネル (見える部分)
+      2. 配信上部 4 枠ヘッダーの供給元 — overlays/direct_broadcast_overlay.html の
+         selectedSummaryLines() が <pre> のテキストから SOREN/OBS / A/B: /
+         Recent30: / Strategy: を正規表現で拾う
+      3. サイドバーの feed 行
+    パネルから消すために status_dashboard 側を絞ると 2 も道連れになり、上部
+    ヘッダーから A/B 進捗が消える (2026-09-10 に往復させた原因)。テキストは
+    そのまま残し、見た目だけ隠す。
+
+    "SOREN/" を含む行が属する枠 (┌ … └) を対象にする。
+    """
+    lines = text.split("\n")
+    head = next((i for i, line in enumerate(lines) if "SOREN/" in line), None)
+    if head is None:
+        return None
+    start = head
+    while start > 0 and "\u250c" not in lines[start]:
+        start -= 1
+    if "\u250c" not in lines[start]:
+        return None
+    end = head
+    while end < len(lines) - 1 and "\u2514" not in lines[end]:
+        end += 1
+    if "\u2514" not in lines[end]:
+        return None
+    return start, end
+
+
+raw_body = raw.rstrip() or "status_dashboard.py returned no output"
+span = hide_header_box(raw_body)
+if span:
+    lines = raw_body.split("\n")
+    start, end = span
+    body = "".join((
+        '<span class="rail-only">',
+        ansi_to_html("\n".join(lines[start:end + 1])),
+        "</span>\n",
+        ansi_to_html("\n".join(lines[:start] + lines[end + 1:])),
+    ))
+else:
+    body = ansi_to_html(raw_body)
 generated = time.strftime("%H:%M:%S")
 doc = f"""<!doctype html>
 <html lang="ja">
@@ -149,6 +193,10 @@ html, body {{
 .meta span:last-child {{
   color: #94a3b8;
   font-weight: 600;
+}}
+.rail-only {{
+  /* 上部 4 枠ヘッダーがテキストとして拾うためだけの行。画面には出さない。 */
+  display: none;
 }}
 pre {{
   margin: 0;
