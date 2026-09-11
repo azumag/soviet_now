@@ -1172,15 +1172,19 @@ _ai_dispatch() {
 		;;
 	opencode-go:*|opencode:*|vercel:*|amd:*)
 		local _opencode_timeout="$timeout_override"
-		if [[ "$agent" == vercel:* ]]; then
-			# core/config.sh の既定と揃える (issue #286)。20秒は短すぎた。
-			_opencode_timeout="${VERCEL_OPENCODE_TIMEOUT:-45}"
-		fi
+		# vercel: は他プロバイダと同じラベル別予算 (COMMENT=90s/RADIO=240s) に
+		# 揃える (issue #286)。以前はここより先に一律 VERCEL_OPENCODE_TIMEOUT
+		# (20秒) で上書きしていたため、ラベルに関わらずvercelだけ短く打ち切られ
+		# ていた。VERCEL_OPENCODE_TIMEOUT は COMMENT/RADIO 以外のラベルに限った
+		# 最終フォールバックとして残す。
 		if [[ "$label" == COMMENT* ]] && [ -z "$_opencode_timeout" ]; then
 			_opencode_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
 		fi
 		if [[ "$label" == RADIO* ]] && [ -z "$_opencode_timeout" ]; then
 			_opencode_timeout="${RADIO_CODEX_TIMEOUT:-240}"
+		fi
+		if [[ "$agent" == vercel:* ]] && [ -z "$_opencode_timeout" ]; then
+			_opencode_timeout="${VERCEL_OPENCODE_TIMEOUT:-45}"
 		fi
 		_ai_call_opencode "$label" "$agent" "$prompt_file" "$_opencode_timeout" | tee "$_dispatch_output_file"
 		;;
