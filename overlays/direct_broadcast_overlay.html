@@ -539,6 +539,45 @@ html[data-soren-neutral="1"] .toast {
       row.appendChild(span);
     }
   }
+  // サイドバーの SHOW-STATUS-G から「ヘッダーの枠」だけを外す。
+  //
+  // status_overlay.html の <pre> テキストは 2 役を兼ねている:
+  //   * 上部 4 枠 (selectedSummaryLines) が SOREN/OBS / A/B: / Recent30: /
+  //     Strategy: を拾う供給元
+  //   * このサイドバーがそのまま行として描画する中身
+  // 供給元としては要るが、サイドバーには出したくない (2026-09-10 の指示)。
+  // 生成側で消すと上部 4 枠から A/B が消えるので、描画側で落とす。
+  // 対象は "SOREN/" を含む行が属する枠 (┌ … └)。AI 429 の枠は残す。
+  //
+  // segments は行番号で text と対応しているので、同じ範囲を両方から削る。
+  // 片方だけ削ると色付けが 1 行ずつずれ、segments を捨てると色が全部消える。
+  function headerBoxRange(lines) {
+    const head = lines.findIndex((line) => line.includes('SOREN/'));
+    if (head < 0) return null;
+    let start = head;
+    while (start > 0 && !lines[start].includes('\u250c')) start -= 1;
+    if (!lines[start].includes('\u250c')) return null;
+    let end = head;
+    while (end < lines.length - 1 && !lines[end].includes('\u2514')) end += 1;
+    if (!lines[end].includes('\u2514')) return null;
+    return [start, end];
+  }
+  function stripHeaderBox(text, segments) {
+    const lines = String(text ?? '').split('\n');
+    const range = headerBoxRange(lines);
+    const segs = Array.isArray(segments) ? segments : [];
+    if (!range) return { text: String(text ?? ''), segments: segs };
+    const [start, end] = range;
+    const drop = (arr) => arr.slice(0, start).concat(arr.slice(end + 1));
+    let keptLines = drop(lines);
+    let keptSegs = segs.length ? drop(segs) : segs;
+    // 枠を抜いた先頭に残る空行は詰める (segments も同じだけ)。
+    while (keptLines.length && keptLines[0].trim() === '') {
+      keptLines = keptLines.slice(1);
+      if (keptSegs.length) keptSegs = keptSegs.slice(1);
+    }
+    return { text: keptLines.join('\n'), segments: keptSegs };
+  }
   function renderFeedLines(container, text, opts = {}) {
     const segmentLines = Array.isArray(opts.segmentLines) ? opts.segmentLines : [];
     const lines = String(text || 'データを待っています…').split('\n');
@@ -558,7 +597,8 @@ html[data-soren-neutral="1"] .toast {
     const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
-      renderFeedLines(feedG, g?.text, { segmentLines: Array.isArray(g?.segments) ? g.segments : [] });
+      const gView = stripHeaderBox(g?.text, g?.segments);
+      renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
@@ -594,6 +634,7 @@ html[data-soren-neutral="1"] .toast {
     feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
   }
   function summaryClass(text) {
+    if (/A\/B\s*残り:/.test(text)) return 'sum-ab';
     if (/A\/B:/.test(text)) return 'sum-ab';
     if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
     if (/Recent30/.test(text)) return 'sum-recent';
@@ -606,16 +647,41 @@ html[data-soren-neutral="1"] .toast {
     if (/AVSync/.test(text)) return 'sum-av';
     return 'sum-muted';
   }
+  // status_dashboard の A/B「あと何試合」行 (例:
+  // "      k13/19  adopt-look in 24g  max 96g  score") を上部レール向けの
+  // 短い1行に整形する。生の行が無い・数値が読めないときは null を返す。
+  function abRemainingSummary(stats) {
+    const raw = (Array.isArray(stats) ? stats : []).find((line) =>
+      /(?:adopt-look in \d+g|no adopt-look left)/.test(String(line)));
+    if (!raw) return null;
+    const clean = String(raw).replace(/[│┌┐└┘─━]/g, '').trim();
+    const look = clean.match(/\bk(\d+)\/(\d+)\b/);
+    const adopt = clean.match(/adopt-look in (\d+)g/);
+    const max = clean.match(/max (\d+)g/);
+    let text = 'A/B 残り:';
+    if (adopt && max) text += ` あと${adopt[1]}〜${max[1]}試合`;
+    else if (adopt) text += ` あと${adopt[1]}試合`;
+    else if (max) text += ` 最長${max[1]}試合`;
+    else return null;
+    if (look) text += ` k${look[1]}/${look[2]}`;
+    return text;
+  }
   function selectedSummaryLines() {
     const stats = String(state?.feeds?.showStatusG?.text || '').split('\n');
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
-    // A/B 進行中は進捗行を上部4枠に入れる。枠は4つしかないため Live は
-    // その間サイドバー側でのみ見える。A/Bなし時は従来どおり Live を出す。
-    const abLine = stats.find((line) => /A\/B:/.test(line));
-    const patterns = abLine
-      ? [/SOREN\/OBS/, /A\/B:/, /Recent30:/, /Strategy:/]
-      : [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
-    const selected = patterns.map((pattern) => stats.find((line) => pattern.test(line))).filter(Boolean);
+    const pick = (pattern) => stats.find((line) => pattern.test(line));
+    // ヘッダーは箱付きで来るので先頭の │ を前提にしない (SOREN/FFMPEG も拾う)。
+    const head = pick(/SOREN\//);
+    const abLine = pick(/A\/B:/);
+    const abLeft = abLine ? abRemainingSummary(stats) : null;
+    let selected;
+    if (abLine) {
+      // A/B 進行中は Live を譲り、「あと何試合か」を1枠使う。Strategy 行は A の
+      // hash と重複するのでその間は落とす (上部の枠は4つだけ)。
+      selected = [head, abLine, abLeft || pick(/Strategy:/), pick(/Recent30:/)].filter(Boolean);
+    } else {
+      selected = [head, pick(/Recent30:/), pick(/Strategy:/), pick(/Live:/)].filter(Boolean);
+    }
     if (selected.length < 4) {
       for (const pattern of [/Backend/, /Game|Queued/, /LastDrop/, /AVSync/]) {
         const line = ops.find((candidate) => pattern.test(candidate));
@@ -623,7 +689,7 @@ html[data-soren-neutral="1"] .toast {
         if (selected.length >= 4) break;
       }
     }
-    return selected.slice(0, 4).map((line) => line.replace(/[│┌┐└┘─━]/g, '').trim());
+    return selected.slice(0, 4).map((line) => String(line).replace(/[│┌┐└┘─━]/g, '').trim());
   }
   function renderTopRail() {
     const workState = state?.notifications?.work || {};
