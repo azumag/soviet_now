@@ -67,6 +67,7 @@ _ab_gate_before_game
 [ -f tmp/state/ab_state.json ] && ok || ng "start created state ($(lastlog))"
 grep -q "^REGRESSION_DISABLED=1" .env && grep -q "^SOREN_AB_ALT_STRATEGY=tmp/state/ab_alt_strategy.py" .env && ok || ng "toggles set: $(grep -E '^(REGRESSION|SOREN_AB)' .env | tr '\n' ' ')"
 [ "$(_ab_state_get b_hash)" = "$B" ] && [ "$(_ab_state_get a_hash)" = "$A" ] && ok || ng "state hashes"
+[ "$(_ab_state_get primary)" = "eval" ] && ok || ng "state must record the canonical primary (got $(_ab_state_get primary))"
 [ "$(_ab_state_get regression_disabled_before)" = "0" ] && ok || ng "regression_disabled_before recorded"
 [ "$(python3 extract_decide_hash.py tmp/revert_strategy.py)" = "$A" ] && ok || ng "revert point = A"
 [ ! -d tmp/state/ab_candidate ] && ok || ng "candidate consumed"

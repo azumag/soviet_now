@@ -137,22 +137,37 @@ _ab_start_from_bundle_locked() {
 	reg_before=$(_ab_env_value REGRESSION_DISABLED)
 	# issue #132 Phase 2: decide hash だけでは helper/解析器/runner/モードの違いを捉えられない。
 	# 腕ごとの policy bundle hash を state に残し、実験の再現性を担保する。
-	local bundle_a bundle_b
+	local bundle_a bundle_b primary primary_sd
 	bundle_a=$(python3 tools/policy_bundle.py --strategy "${STRATEGY_FILE:-strategy.py}" 2>/dev/null || echo "")
 	bundle_b=$(python3 tools/policy_bundle.py --strategy "$src" 2>/dev/null || echo "")
+	# 実験の正準指標を開始時に固定する (途中変更は事前登録の書き換えになる)。
+	# 既定は eval: Strategy Comparison / 回帰ガードレールと同じボーナス込み指標。
+	# primary 未記録の旧 state は tools/ab_report.py が legacy の raw score として扱う。
+	primary=$(_ab_env_value AB_GATE_PRIMARY)
+	[ -n "$primary" ] || primary="eval"
+	primary_sd=$(_ab_env_value AB_GATE_SD)
 	rm -f "$AB_ABORT_FILE"
 	: >"$AB_GAMES_FILE"
 	AB_A_BUNDLE="$bundle_a" AB_B_BUNDLE="$bundle_b" \
-		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" <<'PY' || return 1
+		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" "$primary" "$primary_sd" <<'PY' || return 1
 import json, os, sys, time
 def _count(p):
     try:
         return int(open(p).read().strip())
     except Exception:
         return None
+def _num(v):
+    try:
+        n = float(v)
+        return n if n > 0 else None
+    except Exception:
+        return None
 st = {"a_hash": sys.argv[2], "b_hash": sys.argv[3], "pattern": sys.argv[4], "alt_source": sys.argv[5],
       "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "games_recorded": 0, "game_num_start": _count(sys.argv[6]),
       "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9]),
+      # 判定・表示が使う正準指標 (eval | score) と per-game SD。全ツールがこれを読む。
+      "primary": (sys.argv[10] if len(sys.argv) > 10 else "") or "eval",
+      "primary_sd": _num(sys.argv[11] if len(sys.argv) > 11 else ""),
       # 腕ごとの追加環境変数 ("KEY=VALUE KEY2=VALUE2"、既定は空)。解析器モード等の A/B に使う。
       "a_env": os.environ.get("AB_A_ENV", ""), "b_env": os.environ.get("AB_B_ENV", ""),
       # 着手を決める一式 (戦略 + 到達 helper + 解析器 + runner + モード) の hash

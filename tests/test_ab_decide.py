@@ -76,6 +76,29 @@ class AbDecideTest(unittest.TestCase):
         v = dec.decide(rows)
         self.assertEqual(v["k"], 9)
 
+    def test_recorded_primary_selects_the_metric(self):
+        """primary=eval と primary=score で別の指標を読む (表示と同じ定義)。"""
+        rows = []
+        idx = 0
+        for _ in range(19):
+            for ch in "ABBA":
+                rows.append({
+                    "idx": idx, "arm": ch,
+                    "score": 1600.0,                       # raw は腕差ゼロ
+                    "eval": 1600.0 + (600.0 if ch == "B" else 0.0),
+                    "turns": 90, "tainted": False,
+                })
+                idx += 1
+        v_eval = dec.decide(rows, {"primary": "eval", "sd": 100})
+        v_score = dec.decide(rows, {"primary": "score", "sd": 100})
+        self.assertEqual(v_eval["primary"], "eval")
+        self.assertEqual(v_score["primary"], "score")
+        self.assertGreater(v_eval["mean_diff"], v_score["mean_diff"])
+        self.assertAlmostEqual(v_score["mean_diff"], 0.0)
+        # 指標別の既定 SD が state から解決されること。
+        self.assertAlmostEqual(rep.state_primary_sd({"primary": "eval"}, "eval"), 3700.0)
+        self.assertAlmostEqual(rep.state_primary_sd({}, "score"), 650.0)
+
     def test_instadeath_asymmetry_aborts(self):
         rows = _rows(0, 6, dead_b=6)
         v = dec.decide(rows)
