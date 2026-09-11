@@ -687,6 +687,78 @@ test('top summary shows A/B progress while an experiment is running', async () =
 });
 
 
+test('top summary shows how many games remain while an A/B is running', async () => {
+  const boxed = (lines) => ['┌───────────────────┐', ...lines.map((l) => `│ ${l}`), '└───────────────────┘'].join('\n');
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        // 実運用と同じ箱付きヘッダー (SOREN/FFMPEG) と A/B 残り行を渡す。
+        text: boxed([
+          'SOREN/FFMPEG  #54104 games   Best:22645   Avg:1424',
+          'Recent30:1897  Trend:▲+33%  Rus:2%=',
+          'Strategy: 3a9bd96b [A]  v50569  3380L',
+          'A/B: A 3a9bd96b vs B 389f4387 n=52(A26/B26) d=-8',
+          '     k13/19  adopt-look in 24g  max 96g  score',
+          'Live: STOP  score=2269  pieces=39',
+        ]),
+        updatedAt: 1780000080,
+        lineCount: 8,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: '● Backend     FFMPEG LIVE',
+        updatedAt: 1780000080,
+        lineCount: 1,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+
+  const summaryTexts = overlay.summary.children.map((line) => line.textContent);
+  assert.equal(summaryTexts.length, 4, 'top rail keeps four slots');
+  assert.ok(summaryTexts.some((text) => /A\/B:/.test(text)), 'A/B hashes and score stay in the top rail');
+  assert.ok(
+    summaryTexts.some((text) => /A\/B 残り:.*あと24〜96試合.*k13\/19/.test(text)),
+    'remaining games must be visible in the top rail',
+  );
+  assert.ok(!summaryTexts.some((text) => /Strategy:/.test(text)), 'redundant Strategy slot yields to remaining games');
+  assert.ok(summaryTexts.some((text) => /SOREN\/FFMPEG/.test(text)), 'boxed SOREN/FFMPEG header is still picked up');
+  const summaryClasses = overlay.summary.children.map((line) => line.className);
+  assert.ok(summaryClasses.some((cls) => cls.includes('sum-head')));
+  assert.ok(summaryClasses.some((cls) => cls.includes('sum-ab')));
+
+  // ヘッダーの箱はサイドバーからは外れるが、上部レールには残る (二重表示の回避)。
+  const sidebarTexts = overlay.feedG.children.map((line) => line.textContent);
+  assert.ok(!sidebarTexts.some((text) => /A\/B:/.test(text)), 'sidebar must not repeat the stripped header box');
+
+  // look を使い切った後は「次の採用判定なし」を最長の残り試合数として出す。
+  overlay.setState({
+    ...base,
+    feeds: {
+      ...base.feeds,
+      showStatusG: {
+        ...base.feeds.showStatusG,
+        text: boxed([
+          'SOREN/FFMPEG  #54200 games   Best:22645   Avg:1424',
+          'Recent30:1897  Trend:▲+33%  Rus:2%=',
+          'Strategy: 3a9bd96b [A]  v50569  3380L',
+          'A/B: A 3a9bd96b vs B 389f4387 n=140(A70/B70) d=+120',
+          '     k37  no adopt-look left  max 0g  score',
+        ]),
+        updatedAt: 1780000180,
+      },
+    },
+  });
+  await overlay.tick(1);
+  const finalTexts = overlay.summary.children.map((line) => line.textContent);
+  assert.ok(finalTexts.some((text) => /A\/B 残り: 最長0試合/.test(text)), 'past the last look only the forced finish remains');
+});
+
+
 test('game feed renders allowlisted color segments as styled spans without innerHTML', async () => {
   const base = {
     version: 1,

@@ -634,6 +634,7 @@ html[data-soren-neutral="1"] .toast {
     feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
   }
   function summaryClass(text) {
+    if (/A\/B\s*残り:/.test(text)) return 'sum-ab';
     if (/A\/B:/.test(text)) return 'sum-ab';
     if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
     if (/Recent30/.test(text)) return 'sum-recent';
@@ -646,16 +647,41 @@ html[data-soren-neutral="1"] .toast {
     if (/AVSync/.test(text)) return 'sum-av';
     return 'sum-muted';
   }
+  // status_dashboard の A/B「あと何試合」行 (例:
+  // "      k13/19  adopt-look in 24g  max 96g  score") を上部レール向けの
+  // 短い1行に整形する。生の行が無い・数値が読めないときは null を返す。
+  function abRemainingSummary(stats) {
+    const raw = (Array.isArray(stats) ? stats : []).find((line) =>
+      /(?:adopt-look in \d+g|no adopt-look left)/.test(String(line)));
+    if (!raw) return null;
+    const clean = String(raw).replace(/[│┌┐└┘─━]/g, '').trim();
+    const look = clean.match(/\bk(\d+)\/(\d+)\b/);
+    const adopt = clean.match(/adopt-look in (\d+)g/);
+    const max = clean.match(/max (\d+)g/);
+    let text = 'A/B 残り:';
+    if (adopt && max) text += ` あと${adopt[1]}〜${max[1]}試合`;
+    else if (adopt) text += ` あと${adopt[1]}試合`;
+    else if (max) text += ` 最長${max[1]}試合`;
+    else return null;
+    if (look) text += ` k${look[1]}/${look[2]}`;
+    return text;
+  }
   function selectedSummaryLines() {
     const stats = String(state?.feeds?.showStatusG?.text || '').split('\n');
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
-    // A/B 進行中は進捗行を上部4枠に入れる。枠は4つしかないため Live は
-    // その間サイドバー側でのみ見える。A/Bなし時は従来どおり Live を出す。
-    const abLine = stats.find((line) => /A\/B:/.test(line));
-    const patterns = abLine
-      ? [/SOREN\/OBS/, /A\/B:/, /Recent30:/, /Strategy:/]
-      : [/SOREN\/OBS/, /Recent30:/, /Strategy:/, /Live:/];
-    const selected = patterns.map((pattern) => stats.find((line) => pattern.test(line))).filter(Boolean);
+    const pick = (pattern) => stats.find((line) => pattern.test(line));
+    // ヘッダーは箱付きで来るので先頭の │ を前提にしない (SOREN/FFMPEG も拾う)。
+    const head = pick(/SOREN\//);
+    const abLine = pick(/A\/B:/);
+    const abLeft = abLine ? abRemainingSummary(stats) : null;
+    let selected;
+    if (abLine) {
+      // A/B 進行中は Live を譲り、「あと何試合か」を1枠使う。Strategy 行は A の
+      // hash と重複するのでその間は落とす (上部の枠は4つだけ)。
+      selected = [head, abLine, abLeft || pick(/Strategy:/), pick(/Recent30:/)].filter(Boolean);
+    } else {
+      selected = [head, pick(/Recent30:/), pick(/Strategy:/), pick(/Live:/)].filter(Boolean);
+    }
     if (selected.length < 4) {
       for (const pattern of [/Backend/, /Game|Queued/, /LastDrop/, /AVSync/]) {
         const line = ops.find((candidate) => pattern.test(candidate));
@@ -663,7 +689,7 @@ html[data-soren-neutral="1"] .toast {
         if (selected.length >= 4) break;
       }
     }
-    return selected.slice(0, 4).map((line) => line.replace(/[│┌┐└┘─━]/g, '').trim());
+    return selected.slice(0, 4).map((line) => String(line).replace(/[│┌┐└┘─━]/g, '').trim());
   }
   function renderTopRail() {
     const workState = state?.notifications?.work || {};
