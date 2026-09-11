@@ -80,6 +80,8 @@ class NewsBodyReconstructionTest(unittest.TestCase):
                 "未確認点:",
                 "## 未完了タスク",
                 "- 朝日新聞記事本文の直接取得（本文の詳細な主張の把握）",
+                "## 次の推奨手順",
+                "朝日新聞の記事URLを再取得し、記事本文を確認してから、本文生成者が使う事前調査メモを完成させること。",
                 "- 米中間選挙投開票日: 2026年11月3日",
             ]
         )
@@ -89,6 +91,8 @@ class NewsBodyReconstructionTest(unittest.TestCase):
         self.assertNotIn("未確認", out)
         self.assertNotIn("未完了タスク", out)
         self.assertNotIn("本文の直接取得", out)
+        self.assertNotIn("推奨手順", out)
+        self.assertNotIn("記事本文を確認してから", out)
         self.assertIn("2026年11月3日", out)
 
     def test_onair_sanitizer_drops_body_unavailable_sentence(self):
