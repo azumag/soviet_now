@@ -44,6 +44,7 @@ _TERMINATED_BACKGROUND_JOB_COUNT=0
 _LAST_GAME_NUM=""
 _LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
 _SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
+_RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -163,11 +164,31 @@ _reload_runtime() {
 		set +a
 	fi
 	if source ./eloop_lib.sh 2>/dev/null; then
+		_RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
 		_log "reload complete (interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
 	else
 		_log "WARNING: reload failed; keeping previous runtime"
+	fi
+}
+
+_refresh_runtime_if_checkout_changed() {
+	local current_head=""
+	current_head="$(git rev-parse HEAD 2>/dev/null || true)"
+	[ -n "$current_head" ] || return 0
+	[ "$current_head" = "$_RUNTIME_SOURCE_HEAD" ] && return 0
+
+	# Production deploy updates the Soren checkout while this long-lived shell
+	# stays alive. Refresh the parent shell only when the reviewed checkout
+	# actually advances; unlike signal reload, do not terminate in-flight jobs.
+	if source ./eloop_lib.sh 2>/dev/null; then
+		_RUNTIME_SOURCE_HEAD="$current_head"
+		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
+		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
+		_log "runtime refresh complete (head=${current_head:0:12}, interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
+	else
+		_log "WARNING: runtime refresh failed for checkout ${current_head:0:12}; keeping previous runtime"
 	fi
 }
 
@@ -222,10 +243,8 @@ _LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 _log "起動 (PID=$$, interval=${POLL_INTERVAL}s, initial_game=${_LAST_GAME_NUM})"
 
 _run_iteration() {
-	# 1 回分の処理。どこで失敗しても呼び出し元には影響させない (|| true で吸収)
-	if ! (source ./eloop_lib.sh) 2>/dev/null; then
-		_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
-	fi
+	# Production deploy で checkout が進んだ場合だけ、親 shell の runtime 定義を更新する。
+	_refresh_runtime_if_checkout_changed
 
 	local current_game_num score
 	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
