@@ -202,7 +202,12 @@ AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-fr
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
 AI_BACKOFF_FAILURE_SEC="${AI_BACKOFF_FAILURE_SEC:-300}"
-VERCEL_OPENCODE_TIMEOUT="${VERCEL_OPENCODE_TIMEOUT:-20}"
+# 20秒は短すぎて正常応答中のモデルまで打ち切っていた（issue #286: radio_prepass/
+# radio_main で timeout が高止まり）。COMMENT/RADIO ラベルは他プロバイダと同じ
+# 予算 (COMMENT_CODEX_TIMEOUT=90秒 / RADIO_CODEX_TIMEOUT=240秒) を使うようになった
+# (lib/ai_generate.sh)。この値はそれ以外のラベルに限った最終フォールバックで、
+# 他の同種の単発LLM呼び出し予算 (COMMENT_CLASSIFIER_EDIT_TIMEOUT=45) に合わせた。
+VERCEL_OPENCODE_TIMEOUT="${VERCEL_OPENCODE_TIMEOUT:-45}"
 # ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
 # 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
 # コーナーの時刻窓が重なった場合、ゲート開放時にまとめて生成されることがある。
