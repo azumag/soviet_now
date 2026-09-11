@@ -160,6 +160,29 @@ out=$(_ai_call_opencode_unqueued "TEST" "opencode:x-preview-f-free" "$prompt_fil
 rc=$?
 check '[ "$(cat "$OC_CALL_COUNT")" = "1" ]' 'タイムアウト時は再試行しない'
 
+# --- 2b. vercel: エージェントのタイムアウト (issue #286: 20秒は短すぎて
+# 正常応答中のモデルまで打ち切っていた)。_ai_call_opencode を子シェル内だけで
+# スタブし、check の集計は終了コード経由で親シェルへ反映する
+# ($ok/$fail はサブシェル内で変更しても親には伝播しないため)。
+(
+	AI_RADIO_IMPROVE_GATE=0
+	VERCEL_FREE_AGENTS="vercel:zai/glm-5.3-flash"
+	_captured_timeout=""
+	_ai_call_opencode() { _captured_timeout="$4"; printf 'stubbed response'; }
+	_ai_dispatch "RADIO:test" "vercel:zai/glm-5.3-flash" "$prompt_file" "" >/dev/null
+	[ "$_captured_timeout" = "${VERCEL_OPENCODE_TIMEOUT:-45}" ] && [ "$_captured_timeout" != "20" ]
+)
+check '[ "$?" -eq 0 ]' 'vercel: agent(RADIO)のタイムアウトはVERCEL_OPENCODE_TIMEOUT(既定45秒、旧20秒ではない)'
+(
+	AI_RADIO_IMPROVE_GATE=0
+	VERCEL_FREE_AGENTS="vercel:zai/glm-5.3-flash"
+	_captured_timeout=""
+	_ai_call_opencode() { _captured_timeout="$4"; printf 'stubbed response'; }
+	_ai_dispatch "COMMENT:test" "vercel:zai/glm-5.3-flash" "$prompt_file" "" >/dev/null
+	[ "$_captured_timeout" = "${VERCEL_OPENCODE_TIMEOUT:-45}" ]
+)
+check '[ "$?" -eq 0 ]' 'vercel: agent(COMMENT)のタイムアウトもVERCEL_OPENCODE_TIMEOUT(既定45秒)を使う'
+
 # --- 3. ai_stats への error 記録 + streak サーキットブレーカ ---
 # streak の加算・延長は chain 実行器 (ai_generate_list) が担うため
 # 単一候補の chain で検証する。

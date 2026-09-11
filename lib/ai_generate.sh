@@ -1173,7 +1173,8 @@ _ai_dispatch() {
 	opencode-go:*|opencode:*|vercel:*|amd:*)
 		local _opencode_timeout="$timeout_override"
 		if [[ "$agent" == vercel:* ]]; then
-			_opencode_timeout="${VERCEL_OPENCODE_TIMEOUT:-20}"
+			# core/config.sh の既定と揃える (issue #286)。20秒は短すぎた。
+			_opencode_timeout="${VERCEL_OPENCODE_TIMEOUT:-45}"
 		fi
 		if [[ "$label" == COMMENT* ]] && [ -z "$_opencode_timeout" ]; then
 			_opencode_timeout="${COMMENT_CODEX_TIMEOUT:-90}"
