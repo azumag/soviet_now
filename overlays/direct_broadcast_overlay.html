@@ -539,6 +539,45 @@ html[data-soren-neutral="1"] .toast {
       row.appendChild(span);
     }
   }
+  // サイドバーの SHOW-STATUS-G から「ヘッダーの枠」だけを外す。
+  //
+  // status_overlay.html の <pre> テキストは 2 役を兼ねている:
+  //   * 上部 4 枠 (selectedSummaryLines) が SOREN/OBS / A/B: / Recent30: /
+  //     Strategy: を拾う供給元
+  //   * このサイドバーがそのまま行として描画する中身
+  // 供給元としては要るが、サイドバーには出したくない (2026-09-10 の指示)。
+  // 生成側で消すと上部 4 枠から A/B が消えるので、描画側で落とす。
+  // 対象は "SOREN/" を含む行が属する枠 (┌ … └)。AI 429 の枠は残す。
+  //
+  // segments は行番号で text と対応しているので、同じ範囲を両方から削る。
+  // 片方だけ削ると色付けが 1 行ずつずれ、segments を捨てると色が全部消える。
+  function headerBoxRange(lines) {
+    const head = lines.findIndex((line) => line.includes('SOREN/'));
+    if (head < 0) return null;
+    let start = head;
+    while (start > 0 && !lines[start].includes('\u250c')) start -= 1;
+    if (!lines[start].includes('\u250c')) return null;
+    let end = head;
+    while (end < lines.length - 1 && !lines[end].includes('\u2514')) end += 1;
+    if (!lines[end].includes('\u2514')) return null;
+    return [start, end];
+  }
+  function stripHeaderBox(text, segments) {
+    const lines = String(text ?? '').split('\n');
+    const range = headerBoxRange(lines);
+    const segs = Array.isArray(segments) ? segments : [];
+    if (!range) return { text: String(text ?? ''), segments: segs };
+    const [start, end] = range;
+    const drop = (arr) => arr.slice(0, start).concat(arr.slice(end + 1));
+    let keptLines = drop(lines);
+    let keptSegs = segs.length ? drop(segs) : segs;
+    // 枠を抜いた先頭に残る空行は詰める (segments も同じだけ)。
+    while (keptLines.length && keptLines[0].trim() === '') {
+      keptLines = keptLines.slice(1);
+      if (keptSegs.length) keptSegs = keptSegs.slice(1);
+    }
+    return { text: keptLines.join('\n'), segments: keptSegs };
+  }
   function renderFeedLines(container, text, opts = {}) {
     const segmentLines = Array.isArray(opts.segmentLines) ? opts.segmentLines : [];
     const lines = String(text || 'データを待っています…').split('\n');
@@ -558,7 +597,8 @@ html[data-soren-neutral="1"] .toast {
     const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
-      renderFeedLines(feedG, g?.text, { segmentLines: Array.isArray(g?.segments) ? g.segments : [] });
+      const gView = stripHeaderBox(g?.text, g?.segments);
+      renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
