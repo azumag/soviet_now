@@ -17,6 +17,65 @@ import random
 import statistics as st
 import sys
 
+# ── 指標の正準化 (2026-09-11) ─────────────────────────────────────────────
+# A/B の「score」が表示・レポート・逐次判定で別物を指していた:
+#   * Strategy Comparison / 回帰ガードレール … eval (建国ボーナス込み。eloop が
+#     record_completed_game_for_adaptive_improvement へ EVAL_SCORE を渡す)
+#   * dashboard の A/B 行 … eval 優先
+#   * tools/ab_decide.py (ライブ判定) … raw score 固定
+# 実験ごとに primary を ab_state.json に記録し、全ツールが同じ値を読む。
+# primary 未記録の進行中実験 (2026-09-11 開始分) は従来どおり raw score を維持し、
+# 途中で事前登録を書き換えない。
+PRIMARY_KEY = "_primary"
+DEFAULT_PRIMARY = "eval"      # 新規実験の正準指標 (最終目的に近く Strategy Comparison と同一)
+LEGACY_PRIMARY = "score"      # primary 未記録の実験 (後方互換)
+# per-game SD の実測較正 (tmp/history/ab_*_games.jsonl 21 本の中央値):
+#   eval  arm sd 3753 / block sd 3603、score arm sd 717 / block sd 726。
+# score の既定 650 は既存較正を維持し、eval は arm sd に近い 3700 を使う。
+PRIMARY_SD_DEFAULTS = {"eval": 3700.0, "score": 650.0}
+# primary の値の取得元。eval と score は較正済み SD (3700 / 650) が別スケールなので、
+# ここで cross-metric に補い合わない (#288 レビュー)。primary が欠測した行は
+# primary_value() が None を返し、blocks() が不完全ブロックとして除外する。
+PRIMARY_FALLBACK = {"eval": ("eval",), "score": ("score",)}
+
+
+def state_primary(state):
+    """実験が記録した正準指標。未記録 (旧 state) は legacy の raw score。"""
+    value = str((state or {}).get("primary") or "").strip().lower()
+    return value if value in PRIMARY_SD_DEFAULTS else LEGACY_PRIMARY
+
+
+def state_primary_sd(state, primary=None):
+    """実験の正準指標に対応する per-game SD。記録値が無ければ指標別の既定。"""
+    try:
+        sd = float((state or {}).get("primary_sd"))
+        if sd > 0:
+            return sd
+    except (TypeError, ValueError):
+        pass
+    return PRIMARY_SD_DEFAULTS.get(primary or state_primary(state), PRIMARY_SD_DEFAULTS[LEGACY_PRIMARY])
+
+
+def primary_value(row, primary=DEFAULT_PRIMARY):
+    """1 試合の正準値。primary が数値でなければ None (cross-metric には補わない)。"""
+    for key in PRIMARY_FALLBACK.get(primary, (primary,)):
+        v = row.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and math.isfinite(v):
+            return v
+    return None
+
+
+def with_primary(rows, primary=DEFAULT_PRIMARY):
+    """各行へ正準値 ``_primary`` を付けたコピーを返す (元の dict は変更しない)。"""
+    out = []
+    for r in rows:
+        r2 = dict(r)
+        r2[PRIMARY_KEY] = primary_value(r, primary)
+        out.append(r2)
+    return out
+
 
 def load_games(path):
     rows = []
@@ -183,7 +242,8 @@ def main():
     ap.add_argument("--games", default="tmp/state/ab_games.jsonl")
     ap.add_argument("--state", default="tmp/state/ab_state.json")
     ap.add_argument("--history", default="game_history")
-    ap.add_argument("--sd", type=float, default=650.0)
+    ap.add_argument("--sd", type=float, default=None,
+                    help="per-game SD。未指定なら experimental primary の較正値を state から読む")
     ap.add_argument("--delta", type=float, nargs="*", default=[150.0, 300.0])
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
@@ -194,34 +254,45 @@ def main():
         state = {}
     pattern = "".join(ch for ch in str(state.get("pattern") or "ABBA") if ch in "AB") or "AB"
     tainted = sum(1 for r in rows if r.get("tainted"))
-    rep = {"pattern": pattern, "a_hash": state.get("a_hash"), "b_hash": state.get("b_hash"), "games": len(rows), "tainted": tainted}
+    primary = state_primary(state)
+    primary_sd = args.sd if args.sd is not None else state_primary_sd(state, primary)
+    primary_rows = with_primary(rows, primary)
+    rep = {"pattern": pattern, "a_hash": state.get("a_hash"), "b_hash": state.get("b_hash"), "games": len(rows), "tainted": tainted,
+           "primary_name": primary, "primary_sd": primary_sd}
+    rep["primary"] = arm_summary(primary_rows, PRIMARY_KEY)
+    pd = blocks(primary_rows, pattern, PRIMARY_KEY)
+    rep["primary_blocks"] = {"k": len(pd), "mean_diff": st.mean(pd) if pd else None, "se": (st.pstdev(pd) / math.sqrt(len(pd)) if len(pd) > 1 else None), "p_signflip": sign_flip_p(pd)}
     for key in ("eval", "score"):
         rep[key] = arm_summary(rows, key)
         d = blocks(rows, pattern, key)
         rep[key + "_blocks"] = {"k": len(d), "mean_diff": st.mean(d) if d else None, "se": (st.pstdev(d) / math.sqrt(len(d)) if len(d) > 1 else None), "p_signflip": sign_flip_p(d)}
-    rep["required_n_per_arm"] = {str(int(dl)): required_n(args.sd, dl) for dl in args.delta}
-    n_min = min(rep["eval"]["A"]["n"], rep["eval"]["B"]["n"])
-    rep["mde_at_current_n"] = mde(args.sd, n_min) if n_min else None
+    rep["required_n_per_arm"] = {str(int(dl)): required_n(primary_sd, dl) for dl in args.delta}
+    n_min = min(rep["primary"]["A"]["n"], rep["primary"]["B"]["n"])
+    rep["mde_at_current_n"] = mde(primary_sd, n_min) if n_min else None
     rep["history"] = history_metrics(args.history, rows)
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=1))
         return 0
-    print("A/B report: pattern=%s A=%s B=%s games=%d tainted=%d" % (pattern, (rep["a_hash"] or "")[:12], (rep["b_hash"] or "")[:12], len(rows), tainted))
+    print("A/B report: pattern=%s A=%s B=%s games=%d tainted=%d primary=%s(sd=%.0f)" % (pattern, (rep["a_hash"] or "")[:12], (rep["b_hash"] or "")[:12], len(rows), tainted, primary, primary_sd))
+    b = rep["primary_blocks"]
+    if b["k"]:
+        print("  %-6s blocks k=%d  mean(B-A)=%+.0f  SE=%s  p(sign-flip)=%s  <== verdict metric"
+              % (primary, b["k"], b["mean_diff"], ("%.0f" % b["se"]) if b["se"] is not None else "-", ("%.3f" % b["p_signflip"]) if b["p_signflip"] is not None else "-"))
     for key in ("eval", "score"):
         s = rep[key]
         for arm in ("A", "B"):
             a = s[arm]
             if a["n"]:
                 print("  %-5s %s n=%3d mean %6.0f sd %5.0f med %6.0f p25 %6.0f turns %5.1f" % (key, arm, a["n"], a["mean"], a["sd"] or 0, a["median"], a["p25"], a["turns_mean"] or 0))
-        b = rep[key + "_blocks"]
-        if b["k"]:
-            print("  %-5s blocks k=%d  mean(B-A)=%+.0f  SE=%s  p(sign-flip)=%s" % (key, b["k"], b["mean_diff"], ("%.0f" % b["se"]) if b["se"] is not None else "-", ("%.3f" % b["p_signflip"]) if b["p_signflip"] is not None else "-"))
+        bk = rep[key + "_blocks"]
+        if bk["k"]:
+            print("  %-5s blocks k=%d  mean(B-A)=%+.0f  SE=%s  p(sign-flip)=%s" % (key, bk["k"], bk["mean_diff"], ("%.0f" % bk["se"]) if bk["se"] is not None else "-", ("%.3f" % bk["p_signflip"]) if bk["p_signflip"] is not None else "-"))
     h = rep["history"]
     for arm in ("A", "B"):
         c = h[arm]
         if c["games"]:
             print("  hist %s games %d merges/turn %.3f multi %.1f%% T14+ %d T15 %d" % (arm, c["games"], c["merges"] / max(1, c["turns"]), 100 * c["multi"] / max(1, c["turns"]), c["t14"], c["t15"]))
-    print("  required n/arm (sd=%.0f, 80%% power, two-sided): %s | MDE at current n=%s: %s" % (args.sd, rep["required_n_per_arm"], n_min, ("%.0f" % rep["mde_at_current_n"]) if rep["mde_at_current_n"] else "-"))
+    print("  required n/arm (sd=%.0f, 80%% power, two-sided): %s | MDE at current n=%s: %s" % (primary_sd, rep["required_n_per_arm"], n_min, ("%.0f" % rep["mde_at_current_n"]) if rep["mde_at_current_n"] else "-"))
     return 0
 
 

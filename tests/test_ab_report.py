@@ -68,6 +68,54 @@ class AbReportTest(unittest.TestCase):
             self.assertEqual(rep["eval_blocks"]["k"], 3)
             self.assertEqual(rep["required_n_per_arm"]["150"], 295)
 
+    def test_state_primary_defaults_to_legacy_score(self):
+        """primary 未記録の進行中実験は raw score のまま (途中で事前登録を変えない)。"""
+        self.assertEqual(ab.state_primary({}), "score")
+        self.assertEqual(ab.state_primary({"primary": "bogus"}), "score")
+        self.assertEqual(
+            ab.state_primary({"primary": "score", "primary_sd": 800}), "score"
+        )
+        # 指標別の SD 既定もここで固定する (eval は実測較正)。
+        self.assertAlmostEqual(ab.state_primary_sd({}, "eval"), 3700.0)
+        self.assertAlmostEqual(ab.state_primary_sd({}, "score"), 650.0)
+        self.assertAlmostEqual(
+            ab.state_primary_sd({"primary": "eval", "primary_sd": 4200.0}), 4200.0
+        )
+
+    def test_primary_value_does_not_cross_metric_fallback(self):
+        row = {"eval": 12000.0, "score": 900.0}
+        self.assertEqual(ab.primary_value(row, "eval"), 12000.0)
+        self.assertEqual(ab.primary_value(row, "score"), 900.0)
+        # eval と score は較正済み SD (3700 / 650) が別スケールなので、片方が欠測
+        # してももう片方では補わない (#288 レビュー: cross-metric 混入はブロック差を
+        # 人為的に膨らませ ADOPT/REJECT を誤判定しうる)。欠測は常に None。
+        self.assertIsNone(ab.primary_value({"score": 900.0}, "eval"))
+        self.assertIsNone(ab.primary_value({}, "eval"))
+        self.assertIsNone(ab.primary_value({"eval": 900.0}, "score"))
+
+    def test_primary_appears_in_json_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            g = os.path.join(d, "g.jsonl")
+            rows = _rows(100, 3)
+            with open(g, "w") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r) + "\n")
+            st = os.path.join(d, "s.json")
+            json.dump({"a_hash": "a" * 12, "b_hash": "b" * 12, "pattern": "ABBA",
+                       "primary": "eval", "primary_sd": 3000.0}, open(st, "w"))
+            import subprocess
+            out = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "tools", "ab_report.py"),
+                 "--games", g, "--state", st, "--history", d, "--json"],
+                capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            rep = json.loads(out.stdout)
+            self.assertEqual(rep["primary_name"], "eval")
+            self.assertAlmostEqual(rep["primary_sd"], 3000.0)
+            self.assertEqual(rep["primary_blocks"]["k"], 3)
+            # eval=score+(-50)... _rows は eval=v, score=v-50 なので eval が正準。
+            self.assertAlmostEqual(rep["primary_blocks"]["mean_diff"], 100, delta=120)
+
 
 if __name__ == "__main__":
     unittest.main()

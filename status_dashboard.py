@@ -574,25 +574,41 @@ _AB_REPORT_UNSET = object()
 _AB_REPORT = _AB_REPORT_UNSET
 
 
-def ab_complete_blocks(rows, pattern):
+def ab_complete_blocks(rows, pattern, primary=None):
     """完全ブロック数 k。判定側の関数をそのまま呼ぶ。
 
     再実装はしない: tools/ab_report.py:blocks の「完全」の定義は idx 重複除去・
     idx 連続・腕構成一致まで含んでおり (issue #132 P0-5)、写すと必ずズレる。
     ここがズレると残り試合数の表示だけが実際の判定と食い違うので、
-    tools/ab_decide.py と同じ呼び方 (key="score") で同じ関数を使う。
-    tools/ 側が読めない環境では None を返し、表示は残り試合数を出さない。
+    tools/ab_decide.py と同じ呼び方 (experiment primary、既定は legacy の
+    raw score) で同じ関数を使う。tools/ 側が読めない環境では None を返し、
+    表示は残り試合数を出さない。
     """
     module = _ab_report_module()
     if module is None:
         return None
+    if not hasattr(module, "with_primary"):
+        # 旧 tools/ab_report.py (部分配備) では従来どおり raw score で数える。
+        try:
+            return len(module.blocks(rows, pattern or "ABBA", key="score"))
+        except Exception:
+            return None
     try:
-        return len(module.blocks(rows, pattern or "ABBA", key="score"))
+        primary = str(primary or module.LEGACY_PRIMARY).strip().lower()
+        if primary not in module.PRIMARY_SD_DEFAULTS:
+            primary = module.LEGACY_PRIMARY
+        return len(
+            module.blocks(
+                module.with_primary(rows, primary),
+                pattern or "ABBA",
+                key=module.PRIMARY_KEY,
+            )
+        )
     except Exception:
         return None
 
 
-def ab_games_until_blocks(rows, pattern, target_blocks, games_recorded=None):
+def ab_games_until_blocks(rows, pattern, target_blocks, games_recorded=None, primary=None):
     """target 個の完全ブロックまで、今から必要な記録試合数を返す。
 
     現在の部分ブロックを単純な ``n % block_len`` で信用しない。tainted・idx
@@ -605,10 +621,21 @@ def ab_games_until_blocks(rows, pattern, target_blocks, games_recorded=None):
     if module is None:
         return None
     try:
+        if hasattr(module, "with_primary"):
+            primary = str(primary or module.LEGACY_PRIMARY).strip().lower()
+            if primary not in module.PRIMARY_SD_DEFAULTS:
+                primary = module.LEGACY_PRIMARY
+            key = module.PRIMARY_KEY
+            canon = lambda rs: module.with_primary(rs, primary)
+        else:
+            # 旧 tools/ab_report.py (部分配備) では raw score のまま probe する。
+            key = "score"
+            canon = lambda rs: rs
+        rows = canon(rows)
         pattern = pattern or "ABBA"
         block_len = max(1, len(pattern))
         target = max(0, int(target_blocks))
-        done = len(module.blocks(rows, pattern, key="score"))
+        done = len(module.blocks(rows, pattern, key=key))
         if done >= target:
             return 0
 
@@ -641,8 +668,9 @@ def ab_games_until_blocks(rows, pattern, target_blocks, games_recorded=None):
                     "tainted": False,
                 }
             )
+        probe = canon(probe)
         current_can_complete = (
-            len(module.blocks(probe, pattern, key="score")) > done
+            len(module.blocks(probe, pattern, key=key)) > done
         )
         if current_can_complete:
             return to_boundary + max(0, needed_blocks - 1) * block_len
@@ -683,8 +711,9 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
     tools/ab_report.py の集計 (dedupe_valid と同じ規則: tainted 除外・idx 重複は
     最初だけ採用) を軽量に再実装する。逐次判定 (tools/ab_decide.py) の verdict
     までは出さない: 並べ替え検定は重く、採否は _ab_gate_after_game が毎試合ログ
-    する。ここでは上部バー向けに n・腕別件数・平均差だけ返す。平均は eval を
-    優先し、無い行だけ score で補う。
+    する。ここでは上部バー向けに n・腕別件数・ブロック差 (B-A) を返す。指標は
+    ab_state.json の primary (未記録は legacy の raw score) で、判定と同じ
+    tools/ab_report.py:primary_value を使う。
     """
     candidate = None
     try:
@@ -735,7 +764,15 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
         seen.add(idx)
         valid.append(row)
 
+    module = _ab_report_module()
+    # 実験が記録した正準指標。未記録 (旧 state) は tools/ab_report.py と同じ
+    # legacy の raw score に合わせ、ライブ判定 (tools/ab_decide.py) と表示を揃える。
+    primary_fn = getattr(module, "state_primary", None) if module is not None else None
+    primary = primary_fn(state) if callable(primary_fn) else "score"
+
     def _metric(row):
+        if module is not None and hasattr(module, "primary_value"):
+            return module.primary_value(row, primary)
         value = _ab_number(row.get("eval"))
         return value if value is not None else _ab_number(row.get("score"))
 
@@ -748,11 +785,34 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
     pattern = "".join(ch for ch in str(state.get("pattern") or "ABBA") if ch in "AB")
     pattern = pattern or "ABBA"
 
+    # 判定と同じ ABBA 完全ブロック差 (ドリフトを差し引く)。表示の d= はこれを使う。
+    # 腕全体の単純平均差 (mean_b - mean_a) は時間ドリフトを含むため参考値に留める。
+    block_k = None
+    block_diff = None
+    block_se = None
+    if (
+        module is not None
+        and hasattr(module, "with_primary")
+        and hasattr(module, "PRIMARY_KEY")
+    ):
+        try:
+            diffs = module.blocks(
+                module.with_primary(rows, primary), pattern, key=module.PRIMARY_KEY
+            )
+            block_k = len(diffs)
+            if diffs:
+                block_diff = sum(diffs) / len(diffs)
+                if len(diffs) > 1:
+                    var = sum((x - block_diff) ** 2 for x in diffs) / len(diffs)
+                    block_se = math.sqrt(var) / math.sqrt(len(diffs))
+        except Exception:
+            block_k = None
+
     # 残り試合数。ADOPT は look でしか出ないので「次の採用判定まで」と、
     # 強制決着 (最終 look = max_blocks) までの「最長」を出す。害/無益による
     # 早期打ち切りは毎試合判定されるため、これは上限であって確定値ではない。
     looks, max_blocks = ab_gate_schedule(env_path)
-    done_blocks = ab_complete_blocks(rows, pattern)
+    done_blocks = ab_complete_blocks(rows, pattern, primary)
     if done_blocks is None:
         next_look = None
         games_to_next_look = None
@@ -763,12 +823,12 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
         )
         games_recorded = state.get("games_recorded")
         games_to_next_look = (
-            ab_games_until_blocks(rows, pattern, next_look, games_recorded)
+            ab_games_until_blocks(rows, pattern, next_look, games_recorded, primary)
             if next_look is not None
             else None
         )
         games_to_max = ab_games_until_blocks(
-            rows, pattern, max_blocks, games_recorded
+            rows, pattern, max_blocks, games_recorded, primary
         )
 
     return {
@@ -776,7 +836,11 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
         "a_hash": str(state.get("a_hash") or ""),
         "b_hash": str(state.get("b_hash") or ""),
         "pattern": pattern,
+        "metric": primary,
         "blocks": done_blocks,
+        "block_k": block_k,
+        "block_diff": block_diff,
+        "block_se": block_se,
         "looks": looks,
         "max_blocks": max_blocks,
         "next_look": next_look,
@@ -2040,6 +2104,9 @@ def _ab_remaining_line(ab):
         head = f"      k{done}  no adopt-look left"
     if isinstance(max_left, int):
         head += f"  max {max_left}g"
+    metric = str(ab.get("metric") or "").strip()
+    if metric and len(head) + 2 + len(metric) <= W - 3:
+        head += f"  {metric}"
     return head
 
 
@@ -2189,7 +2256,8 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     pad3 = inner - len(r3_raw)
     lines.append(f"{C_CYAN}│{RST}{r3_display}{' ' * max(pad3, 0)} {C_CYAN}│{RST}")
 
-    # A/B 行: 進行中は A/B ハッシュ・n・腕別件数・平均差 (B-A)、未開始で候補が
+    # A/B 行: 進行中は A/B ハッシュ・n・腕別件数・ブロック差 (B-A、判定と同じ
+    # 統計量)、未開始で候補が
     # 待機中なら候補のみ。どちらも無ければ行自体を出さない。配信上部の
     # summary (direct_broadcast_overlay.html) はこの行を拾って4枠に収める。
     ab_raw = ""
@@ -2216,7 +2284,11 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
         if len(ab_raw) + len(counts_raw) <= inner:
             ab_raw += counts_raw
             ab_disp += counts_raw
-        diff = ab.get("diff")
+        # d= は判定と同じ ABBA 完全ブロック差 (block_diff)。腕全体の単純平均差は
+        # 時間ドリフトを含むため、無ければフォールバックとしてのみ使う。
+        diff = ab.get("block_diff")
+        if not (isinstance(diff, (int, float)) and math.isfinite(diff)):
+            diff = ab.get("diff")
         if isinstance(diff, (int, float)) and math.isfinite(diff):
             diff_color = C_GREEN if diff > 0 else (C_RED if diff < 0 else C_YELLOW)
             diff_raw = f" d={diff:+.0f}"
@@ -2528,22 +2600,64 @@ def render_score_distribution(scores, bar_w=40):
     return lines
 
 
-def render_strategy_comparison(rolling, current_hash, max_rows=7):
+def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None):
     bar_w = 22
     # marker1 + rank3 + space + hash8 + space + n/t6 + sep1 + bar22 + metrics
     rollback_candidates = collect_rollback_candidate_hashes(rolling, current_hash)
     sort_key = lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"])
+
+    def rolling_entry(hash_):
+        """rolling_scores.json から 1 hash 分の成熟エントリを作る。"""
+        data = rolling.get(hash_) or {}
+        metrics = calc_strategy_metrics(data.get("scores", []))
+        if not metrics:
+            return None
+        games_total = data.get("games_total", metrics["n"])
+        try:
+            games_total = int(games_total)
+        except (TypeError, ValueError):
+            games_total = metrics["n"]
+        return {
+            "hash": hash_,
+            "h8": hash_[:8],
+            "n_roll": metrics["n"],
+            "n_total": games_total,
+            "comp": metrics["comp"],
+            "p50": metrics["p50"],
+            "p25": metrics["p25"],
+            "lcb": metrics["lcb"],
+        }
 
     all_entries = ranked_mature_entries(rolling, current_hash, top=HASH_ARCHIVE_KEEP_TOP, require_restorable=True)
     current_entry = None
     provisional_current = None
     if current_hash:
         current_like = get_current_strategy_run_entry(current_hash)
+        # current_strategy_run.json は単一ファイルで、A/B 中は「最後に打った腕」で
+        # 上書きされる (strategy/improve.sh:2469)。そのため現行 hash でも窓が
+        # 0〜数試合に縮み、現行行が 0/0 表示になる回帰があった。標本が大きい方
+        # (通常は rolling の全窓) を現行エントリとして使う。
+        rolling_like = rolling_entry(current_hash)
+        if rolling_like and (
+            not current_like or rolling_like["n_roll"] > current_like["n_roll"]
+        ):
+            if current_like and current_like.get("russia_count") is not None:
+                rolling_like["russia_count"] = current_like["russia_count"]
+            current_like = rolling_like
         if current_like:
             if current_like["n_roll"] >= MIN_GAMES_FOR_BEST_ROLLBACK:
                 current_entry = current_like
             else:
                 provisional_current = current_like
+
+    # A/B 中は候補 B が mature でもトップ7圏外だと画面に出ず、A/B と
+    # Strategy Comparison を突き合わせられない。B 腕を必ず表示対象に加える。
+    ab_b_hash = ""
+    if isinstance(ab_status, dict) and ab_status.get("active"):
+        ab_b_hash = str(ab_status.get("b_hash") or "")
+    ab_entry = None
+    if ab_b_hash and ab_b_hash != current_hash:
+        ab_entry = rolling_entry(ab_b_hash)
 
     combined_entries = list(all_entries)
     if current_entry:
@@ -2555,7 +2669,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         e["overall_rank"] = idx
 
     if not all_entries:
-        lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
+        lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
         if current_entry or provisional_current:
             metric_header = "comp p50  p25"
             lone_current = current_entry or provisional_current
@@ -2594,11 +2708,14 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         for idx, e in enumerate(entries, start=1):
             e["display_rank"] = idx
 
-    max_comp = max(e["comp"] for e in entries) if entries else 1
-    min_comp = min(e["comp"] for e in entries) if entries else 0
+    comp_values = [e["comp"] for e in entries]
+    if ab_entry:
+        comp_values.append(ab_entry["comp"])
+    max_comp = max(comp_values) if comp_values else 1
+    min_comp = min(comp_values) if comp_values else 0
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
-    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
+    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
@@ -2642,6 +2759,15 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
                 rank_override=provisional_current.get("overall_rank", 0),
             )
         )
+    # A/B 候補 B がトップ7圏外でも、判定対象であることが分かるよう必ず出す。
+    shown_hashes = {e["hash"] for e in entries}
+    if ab_entry and ab_entry["hash"] not in shown_hashes and not (
+        (rollback_entry and rollback_entry["hash"] == ab_entry["hash"])
+        or (current_entry and current_entry["hash"] == ab_entry["hash"])
+        or (provisional_current and provisional_current["hash"] == ab_entry["hash"])
+    ):
+        lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
+        lines.append(render_entry(ab_entry))
     return lines
 
 
@@ -3011,6 +3137,10 @@ def main():
     #               A/B などは下のパネル群と重複するので出さない。
     #   header    : AI backoff の枠 + ヘッダー (既定)。配信画面はこちら。
     output += render_ai_backoff_header()
+    # Strategy Comparison の B 腕表示にも使うため、ヘッダーの有無に関わらず一度だけ読む
+    # (jsonl 1 本で軽い。重いのは russia_rate 側の archive 走査なのでそれは従来どおり
+    # ai_backoff モードでは走らせない)。
+    ab_status = load_ab_progress()
     if top_panel_mode() != "ai_backoff":
         # render_header 専用の集計。ai_backoff 側では使わないので、その時は
         # archive 走査や jsonl 読み込みを走らせない。
@@ -3018,7 +3148,6 @@ def main():
             load_russia_founding_games(),
             load_game_counter(len(scores)),
         )
-        ab_status = load_ab_progress()
         output += render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
                                 strat_lines, rejected, accumulated, improve, rolling,
                                 russia_rate=russia_rate, ab_status=ab_status)
@@ -3027,7 +3156,7 @@ def main():
     output.append("")
     output += render_score_distribution(scores)
     output.append("")
-    output += render_strategy_comparison(rolling, strat_hash)
+    output += render_strategy_comparison(rolling, strat_hash, ab_status=ab_status)
     output.append("")
     output += render_observer_status()
     output.append("")

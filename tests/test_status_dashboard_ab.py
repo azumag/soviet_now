@@ -72,6 +72,7 @@ class LoadAbProgressTest(unittest.TestCase):
                         "b_hash": "b" * 40,
                         "pattern": "ABBA",
                         "games_recorded": 5,
+                        "primary": "eval",
                     }
                 ),
                 encoding="utf-8",
@@ -100,12 +101,14 @@ class LoadAbProgressTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
-    def test_score_fallback_when_eval_missing(self):
+    def test_eval_missing_gives_no_diff_without_score_fallback(self):
+        """primary=eval で eval が全欠測なら raw score で補わず diff=None (#288 レビュー:
+        eval/score は較正済み SD (3700/650) が別スケールなので cross-metric に混ぜない)。"""
         def _test():
             state, games, meta = self._paths()
             Path("tmp/state").mkdir(parents=True)
             Path(state).write_text(
-                json.dumps({"a_hash": "a", "b_hash": "b", "pattern": "AB"}),
+                json.dumps({"a_hash": "a", "b_hash": "b", "pattern": "AB", "primary": "eval"}),
                 encoding="utf-8",
             )
             rows = [
@@ -116,7 +119,108 @@ class LoadAbProgressTest(unittest.TestCase):
                 "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
             )
             result = sd.load_ab_progress(state, games, meta)
+            self.assertEqual(result["metric"], "eval")
+            self.assertIsNone(result["mean_a"])
+            self.assertIsNone(result["mean_b"])
+            self.assertIsNone(result["diff"])
+
+        self._run_in_tempdir(_test)
+
+    def test_eval_missing_rows_are_excluded_not_score_substituted(self):
+        """primary=eval で一部の行だけ eval を欠く場合、その行は平均から除外され、
+        score では補われない (欠測行を混ぜると較正済み SD とスケールが合わず、
+        表示の d= が水増しされる)。"""
+        def _test():
+            state, games, meta = self._paths()
+            Path("tmp/state").mkdir(parents=True)
+            Path(state).write_text(
+                json.dumps({"a_hash": "a", "b_hash": "b", "pattern": "AB", "primary": "eval"}),
+                encoding="utf-8",
+            )
+            rows = [
+                _game_row(0, "A", eval_score=10000, score=500),
+                _game_row(1, "A", score=999999),  # eval 欠測: score で補ってはいけない
+                _game_row(2, "B", eval_score=10200, score=700),
+            ]
+            Path(games).write_text(
+                "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+            )
+            result = sd.load_ab_progress(state, games, meta)
+            self.assertEqual(result["metric"], "eval")
+            self.assertAlmostEqual(result["mean_a"], 10000.0)
             self.assertAlmostEqual(result["diff"], 200.0)
+
+        self._run_in_tempdir(_test)
+
+    def test_legacy_state_without_primary_uses_raw_score(self):
+        """primary 未記録 (進行中実験) は判定と同じ legacy の raw score を使う。
+
+        ここを eval にすると、走行中 A/B の表示だけがゲート (tools/ab_decide.py) と
+        食い違う。表示はあくまで判定と同じ指標を出す。
+        """
+        def _test():
+            state, games, meta = self._paths()
+            Path("tmp/state").mkdir(parents=True)
+            Path(state).write_text(
+                json.dumps({"a_hash": "a", "b_hash": "b", "pattern": "ABBA"}),
+                encoding="utf-8",
+            )
+            rows = [
+                _game_row(0, "A", eval_score=10000, score=1000),
+                _game_row(1, "B", eval_score=9000, score=900),
+                _game_row(2, "B", eval_score=9000, score=900),
+                _game_row(3, "A", eval_score=10000, score=1000),
+            ]
+            Path(games).write_text(
+                "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+            )
+            result = sd.load_ab_progress(state, games, meta)
+            self.assertEqual(result["metric"], "score")
+            # eval では B が負だが、legacy は raw score を読むので平均差は -100。
+            self.assertAlmostEqual(result["diff"], -100.0)
+            self.assertAlmostEqual(result["block_diff"], -100.0)
+            self.assertEqual(result["block_k"], 1)
+
+        self._run_in_tempdir(_test)
+
+    def test_block_diff_matches_ab_report(self):
+        """d= は判定と同じ ABBA 完全ブロック差 (腕平均の単純差ではない)。"""
+        sys.path.insert(0, str(REPO_ROOT / "tools"))
+        try:
+            import ab_report
+        finally:
+            sys.path.pop(0)
+
+        def _test():
+            state, games, meta = self._paths()
+            Path("tmp/state").mkdir(parents=True)
+            Path(state).write_text(
+                json.dumps({"a_hash": "a", "b_hash": "b", "pattern": "ABBA", "primary": "eval"}),
+                encoding="utf-8",
+            )
+            # ブロック間でドリフトさせ、さらに端数の A を 1 件足して
+            # 「腕平均の単純差」と「ABBA ブロック差」をわざとずらす。
+            rows = [
+                _game_row(0, "A", eval_score=1000),
+                _game_row(1, "B", eval_score=1200),
+                _game_row(2, "B", eval_score=1200),
+                _game_row(3, "A", eval_score=1000),
+                _game_row(4, "A", eval_score=5000),
+                _game_row(5, "B", eval_score=5000),
+                _game_row(6, "B", eval_score=5000),
+                _game_row(7, "A", eval_score=5000),
+                _game_row(8, "A", eval_score=0),
+            ]
+            Path(games).write_text(
+                "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+            )
+            result = sd.load_ab_progress(state, games, meta)
+            expected = ab_report.blocks(ab_report.with_primary(rows, "eval"), "ABBA",
+                                        key=ab_report.PRIMARY_KEY)
+            self.assertEqual(result["block_k"], 2)
+            self.assertAlmostEqual(result["block_diff"], sum(expected) / len(expected))
+            # 端数の A を含む腕平均の単純差は +700 だがブロック差は +100。
+            self.assertGreater(result["diff"], result["block_diff"])
 
         self._run_in_tempdir(_test)
 
@@ -669,6 +773,129 @@ class RenderHeaderAbRemainingRowTest(RenderHeaderAbRowTest):
             self.assertIn("candidate B bbbbbbbb ready", joined)
             self.assertNotIn("adopt-look", joined)
             self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
+    def test_block_diff_and_metric_label_are_shown(self):
+        """d= は判定と同じブロック差を出し、指標名を残り行に添える。"""
+
+        def _test():
+            kwargs = self._base_kwargs()
+            ab = self._ab(block_diff=250.0, diff=999.0, metric="eval")
+            lines = sd.render_header(russia_rate=None, ab_status=ab, **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("d=+250", joined)
+            self.assertNotIn("d=+999", joined)
+            self.assertIn("eval", joined)
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
+
+class StrategyComparisonAbTest(unittest.TestCase):
+    """A/B 中の現行行フォールバックと候補 B の表示 (表示とゲートの整合)。"""
+
+    A = "a" * 40
+    B = "b" * 40
+
+    def _run_in_tempdir(self, fn):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                fn()
+            finally:
+                os.chdir(old_cwd)
+
+    def _prep(self, restore_hashes):
+        Path("tmp/state").mkdir(parents=True, exist_ok=True)
+        by_hash = Path("strategy_versions/by_hash")
+        by_hash.mkdir(parents=True, exist_ok=True)
+        for h in restore_hashes:
+            (by_hash / (h + ".py")).write_text("# {}\n".format(h), encoding="utf-8")
+
+    def _plain(self, lines):
+        return sd.ANSI_RE.sub("", "\n".join(lines))
+
+    def test_current_row_falls_back_to_rolling_when_run_file_holds_other_arm(self):
+        """current_strategy_run.json が B 腕で上書きされても現行 A を 0/0 にしない。"""
+
+        def _test():
+            self._prep([self.A, self.B])
+            # A/B 中は単一の current_strategy_run.json が「最後に打った腕」(B) を指す。
+            Path(sd.CURRENT_STRATEGY_RUN_FILE).write_text(
+                json.dumps({"hash": self.B, "scores": [1, 2], "games_total": 2}),
+                encoding="utf-8",
+            )
+            rolling = {
+                self.A: {"scores": [10000 + i for i in range(20)], "games_total": 20},
+                self.B: {"scores": [9000 + i for i in range(12)], "games_total": 12},
+            }
+            lines = sd.render_strategy_comparison(
+                rolling, self.A, ab_status={"active": True, "b_hash": self.B}
+            )
+            joined = self._plain(lines)
+            self.assertIn(self.A[:8], joined)
+            self.assertIn("20/20", joined)
+            self.assertNotIn(self.A[:8] + "  0/0", joined)
+
+        self._run_in_tempdir(_test)
+
+    def test_candidate_b_is_pinned_when_outside_top_rows(self):
+        """候補 B がトップ7圏外でも A/B の判定対象として画面に出す。"""
+
+        def _test():
+            fillers = ["f%03d" % i + "0" * 35 for i in range(8)]
+            self._prep([self.A, self.B] + fillers)
+            Path(sd.CURRENT_STRATEGY_RUN_FILE).write_text(
+                json.dumps({"hash": self.A, "scores": list(range(1, 21)), "games_total": 20}),
+                encoding="utf-8",
+            )
+            rolling = {
+                self.A: {"scores": [10000 + i for i in range(20)], "games_total": 20},
+                self.B: {"scores": [9000 + i for i in range(12)], "games_total": 12},
+            }
+            for i, h in enumerate(fillers):
+                rolling[h] = {
+                    "scores": [14000 + i * 100 + j for j in range(12)],
+                    "games_total": 12,
+                }
+            lines = sd.render_strategy_comparison(
+                rolling, self.A, ab_status={"active": True, "b_hash": self.B}
+            )
+            joined = self._plain(lines)
+            self.assertIn(self.A[:8], joined)
+            self.assertIn(self.B[:8], joined)
+            for line in sd.fit_dashboard_lines(lines):
+                self.assertLessEqual(sd.ansi_display_width(line), sd.W)
+
+        self._run_in_tempdir(_test)
+
+    def test_no_candidate_pin_without_active_ab(self):
+        """A/B 非稼働ではトップ7圏外の候補を特別に足さない (通常ランキングのみ)。"""
+
+        def _test():
+            fillers = ["f%03d" % i + "0" * 35 for i in range(8)]
+            self._prep([self.A, self.B] + fillers)
+            Path(sd.CURRENT_STRATEGY_RUN_FILE).write_text(
+                json.dumps({"hash": self.A, "scores": list(range(1, 21)), "games_total": 20}),
+                encoding="utf-8",
+            )
+            rolling = {
+                self.A: {"scores": [10000 + i for i in range(20)], "games_total": 20},
+                self.B: {"scores": [9000 + i for i in range(12)], "games_total": 12},
+            }
+            for i, h in enumerate(fillers):
+                rolling[h] = {
+                    "scores": [14000 + i * 100 + j for j in range(12)],
+                    "games_total": 12,
+                }
+            lines = sd.render_strategy_comparison(rolling, self.A, ab_status=None)
+            joined = self._plain(lines)
+            self.assertIn(self.A[:8], joined)
+            self.assertNotIn(self.B[:8], joined)
 
         self._run_in_tempdir(_test)
 

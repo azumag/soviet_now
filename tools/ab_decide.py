@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """インターリーブ A/B の逐次判定 (stdlib のみ、純関数)。
 
-ab_games.jsonl (tools/ab_report.py と同じ形式) から ABBA ブロック差 d = mean_B − mean_A (raw score、非 tainted の
-完全ブロックのみ) を取り、事前登録のルールで verdict を返す:
+ab_games.jsonl (tools/ab_report.py と同じ形式) から ABBA ブロック差 d = mean_B − mean_A (非 tainted の
+完全ブロックのみ) を取り、事前登録のルールで verdict を返す。指標は experiment の primary
+(ab_state.json の "primary"。既定は旧来の raw score。新規実験は eval) で、表示 (Strategy
+Comparison / dashboard ヘッダー) と同じ tools/ab_report.py:primary_value を使う:
   ABORT              tainted > max_tainted、または即死の非対称 (B の即死が A より Fisher で有意に多い)
   CONTINUE           k < min_blocks
   REJECT_HARM        UCB90(d) = m + 1.28·se < 0                       (害: B が A より確実に悪い)
@@ -12,6 +14,7 @@ ab_games.jsonl (tools/ab_report.py と同じ形式) から ABBA ブロック差 
   REJECT_INCONCLUSIVE 最終 look (k == max_blocks) で ADOPT に至らない
   CONTINUE           それ以外
 使い方: python3 tools/ab_decide.py --games tmp/state/ab_games.jsonl --state tmp/state/ab_state.json [--json]
+        [--primary eval|score] [--sd 3700]
 """
 import argparse
 import json
@@ -38,6 +41,9 @@ except Exception:  # pragma: no cover - 単体でも動くように
 DEFAULTS = {
     "pattern": "ABBA",
     "sd": 650.0,
+    # 正準指標。state に primary が記録されていれば main() が上書きする。
+    # 未記録 (2026-09-11 開始の進行中実験など) は raw score のまま。
+    "primary": "score",
     "alpha": 0.05,
     "looks": (19, 37),
     "max_blocks": 37,
@@ -64,16 +70,29 @@ def decide(rows, cfg=None):
         c.update({k: v for k, v in cfg.items() if v is not None})
     pattern = "".join(ch for ch in str(c["pattern"]) if ch in "AB") or "AB"
     looks = tuple(int(x) for x in c["looks"])
-    d = ab_report.blocks(rows, pattern, key="score")
+    # 正準指標 (experiment の primary)。表示 (Strategy Comparison / ヘッダー) と同じ
+    # 定義を tools/ab_report.py から借りる。既定は primary 未記録の実験と同じ raw score。
+    primary = str(c.get("primary") or ab_report.LEGACY_PRIMARY).strip().lower()
+    if primary not in ab_report.PRIMARY_SD_DEFAULTS:
+        primary = ab_report.LEGACY_PRIMARY
+    rows = ab_report.with_primary(rows, primary)
+    d = ab_report.blocks(rows, pattern, key=ab_report.PRIMARY_KEY)
     k = len(d)
+    # 即死判定・ガードレール (dead_a/dead_b, _guardrails) は raw score 等の別フィールド
+    # を見るので、非 tainted 全行の母集団 (n_a_all/n_b_all) をそのまま使う。判定用の
+    # n_a/n_b/n_min は、正準指標 (_primary) が欠測した行を混ぜると min_n_per_arm/MDE
+    # の閾値だけが不当に緩む (#288 レビュー) ため、有限な _primary を持つ行だけに揃える。
     a_rows, b_rows = _rows_for(rows, "A"), _rows_for(rows, "B")
-    n_a, n_b = len(a_rows), len(b_rows)
+    n_a_all, n_b_all = len(a_rows), len(b_rows)
+    a_primary_rows = [r for r in a_rows if r.get(ab_report.PRIMARY_KEY) is not None]
+    b_primary_rows = [r for r in b_rows if r.get(ab_report.PRIMARY_KEY) is not None]
+    n_a, n_b = len(a_primary_rows), len(b_primary_rows)
     n_min = min(n_a, n_b)
     tainted = sum(1 for r in rows if r.get("tainted"))
     m = st.mean(d) if d else None
     se = (st.pstdev(d) / math.sqrt(k)) if k > 1 else None
     ucb = (m + c["z_ucb"] * se) if (m is not None and se is not None) else None
-    out = {"k": k, "n_a": n_a, "n_b": n_b, "mean_diff": m, "se": se, "ucb90": ucb, "tainted": tainted, "p": None, "alpha_look": None, "mde": None, "reasons": []}
+    out = {"k": k, "n_a": n_a, "n_b": n_b, "mean_diff": m, "se": se, "ucb90": ucb, "tainted": tainted, "primary": primary, "sd": c["sd"], "p": None, "alpha_look": None, "mde": None, "reasons": []}
 
     def ret(v, why):
         out["verdict"] = v
@@ -88,12 +107,12 @@ def decide(rows, cfg=None):
         dead_b = sum(1 for r in b_rows if (r.get("score") or 0) < c["dead_eval_threshold"])
         if dead_b >= 2 and dead_b > dead_a:
             try:
-                p_dead = fisher_one_sided(dead_b, n_b, dead_a, n_a)
+                p_dead = fisher_one_sided(dead_b, n_b_all, dead_a, n_a_all)
             except Exception:
                 p_dead = 1.0
             out["p_instadeath"] = p_dead
             if p_dead is not None and p_dead < c["instadeath_alpha"]:
-                return ret("ABORT", "instadeath B=%d/%d vs A=%d/%d p=%.3f" % (dead_b, n_b, dead_a, n_a, p_dead))
+                return ret("ABORT", "instadeath B=%d/%d vs A=%d/%d p=%.3f" % (dead_b, n_b_all, dead_a, n_a_all, p_dead))
     if k < c["min_blocks"]:
         return ret("CONTINUE", "k=%d < min_blocks %d" % (k, c["min_blocks"]))
     if ucb is not None and ucb < 0:
@@ -151,13 +170,19 @@ def main():
     ap.add_argument("--max-blocks", type=int, default=None)
     ap.add_argument("--futility-delta", type=float, default=None)
     ap.add_argument("--sd", type=float, default=None)
+    ap.add_argument("--primary", default=None, help="eval | score (既定は ab_state.json の primary)")
     args = ap.parse_args()
     rows = ab_report.load_games(args.games)
     try:
         state = json.load(open(args.state, encoding="utf-8"))
     except Exception:
         state = {}
-    cfg = {"pattern": state.get("pattern") or "ABBA", "sd": args.sd, "max_blocks": args.max_blocks, "futility_delta": args.futility_delta}
+    primary = (args.primary or ab_report.state_primary(state)).strip().lower()
+    if primary not in ab_report.PRIMARY_SD_DEFAULTS:
+        primary = ab_report.LEGACY_PRIMARY
+    sd = args.sd if args.sd is not None else ab_report.state_primary_sd(state, primary)
+    cfg = {"pattern": state.get("pattern") or "ABBA", "sd": sd, "primary": primary,
+           "max_blocks": args.max_blocks, "futility_delta": args.futility_delta}
     if args.looks:
         cfg["looks"] = tuple(int(x) for x in args.looks.split(","))
     if args.trail:
@@ -168,7 +193,7 @@ def main():
     if args.json:
         print(json.dumps(v, ensure_ascii=False))
     else:
-        print("verdict=%s k=%d n=%d/%d mean=%s se=%s ucb90=%s p=%s mde=%s | %s" % (v["verdict"], v["k"], v["n_a"], v["n_b"], ("%.0f" % v["mean_diff"]) if v["mean_diff"] is not None else "-", ("%.0f" % v["se"]) if v["se"] is not None else "-", ("%.0f" % v["ucb90"]) if v["ucb90"] is not None else "-", ("%.3f" % v["p"]) if v["p"] is not None else "-", ("%.0f" % v["mde"]) if v["mde"] is not None else "-", "; ".join(v["reasons"])))
+        print("verdict=%s k=%d n=%d/%d %s mean=%s se=%s ucb90=%s p=%s mde=%s | %s" % (v["verdict"], v["k"], v["n_a"], v["n_b"], v.get("primary", primary), ("%.0f" % v["mean_diff"]) if v["mean_diff"] is not None else "-", ("%.0f" % v["se"]) if v["se"] is not None else "-", ("%.0f" % v["ucb90"]) if v["ucb90"] is not None else "-", ("%.3f" % v["p"]) if v["p"] is not None else "-", ("%.0f" % v["mde"]) if v["mde"] is not None else "-", "; ".join(v["reasons"])))
     return 0
 
 
