@@ -14,7 +14,24 @@ cd "$(dirname "$0")/.." || exit 1
 # 自動探索は docich チェックアウトのレイアウト (docich/handoff.md) だけ。
 # VM (/home/ubuntu/soren) には古い handoff.md が残っているので ./handoff.md は拾わない
 # (拾うと古い内容が本番プロンプトへ入る)。VM では生成せず、Mac で生成したものを配布する。
+#
+# docich は複数 worktree で使われ、worktree ごとの handoff.md は独立している。生成ソースを
+# 一本化するため、linked worktree から実行しても常に main worktree の handoff.md (= 正本) を
+# 読む。DOCICH_HANDOFF_FILE で明示的に上書きできる (第1引数のパス指定が最優先)。
 src="${1:-}"
+if [ -z "$src" ] && [ -n "${DOCICH_HANDOFF_FILE:-}" ] && [ -f "$DOCICH_HANDOFF_FILE" ]; then
+	src="$DOCICH_HANDOFF_FILE"
+fi
+if [ -z "$src" ]; then
+	repo_root="$(cd ../.. && pwd 2>/dev/null || true)"
+	main_wt=""
+	if [ -n "$repo_root" ]; then
+		main_wt="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')"
+	fi
+	if [ -n "$main_wt" ] && [ -f "$main_wt/handoff.md" ]; then
+		src="$main_wt/handoff.md"
+	fi
+fi
 if [ -z "$src" ] && [ -f "../../handoff.md" ]; then
 	src="../../handoff.md"
 fi
