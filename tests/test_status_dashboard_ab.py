@@ -101,8 +101,9 @@ class LoadAbProgressTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
-    def test_score_fallback_when_eval_missing(self):
-        """primary=eval でも eval が欠測していれば raw score で補う (ab_report と同じ規則)。"""
+    def test_eval_missing_gives_no_diff_without_score_fallback(self):
+        """primary=eval で eval が全欠測なら raw score で補わず diff=None (#288 レビュー:
+        eval/score は較正済み SD (3700/650) が別スケールなので cross-metric に混ぜない)。"""
         def _test():
             state, games, meta = self._paths()
             Path("tmp/state").mkdir(parents=True)
@@ -119,6 +120,34 @@ class LoadAbProgressTest(unittest.TestCase):
             )
             result = sd.load_ab_progress(state, games, meta)
             self.assertEqual(result["metric"], "eval")
+            self.assertIsNone(result["mean_a"])
+            self.assertIsNone(result["mean_b"])
+            self.assertIsNone(result["diff"])
+
+        self._run_in_tempdir(_test)
+
+    def test_eval_missing_rows_are_excluded_not_score_substituted(self):
+        """primary=eval で一部の行だけ eval を欠く場合、その行は平均から除外され、
+        score では補われない (欠測行を混ぜると較正済み SD とスケールが合わず、
+        表示の d= が水増しされる)。"""
+        def _test():
+            state, games, meta = self._paths()
+            Path("tmp/state").mkdir(parents=True)
+            Path(state).write_text(
+                json.dumps({"a_hash": "a", "b_hash": "b", "pattern": "AB", "primary": "eval"}),
+                encoding="utf-8",
+            )
+            rows = [
+                _game_row(0, "A", eval_score=10000, score=500),
+                _game_row(1, "A", score=999999),  # eval 欠測: score で補ってはいけない
+                _game_row(2, "B", eval_score=10200, score=700),
+            ]
+            Path(games).write_text(
+                "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+            )
+            result = sd.load_ab_progress(state, games, meta)
+            self.assertEqual(result["metric"], "eval")
+            self.assertAlmostEqual(result["mean_a"], 10000.0)
             self.assertAlmostEqual(result["diff"], 200.0)
 
         self._run_in_tempdir(_test)

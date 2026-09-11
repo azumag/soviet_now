@@ -33,8 +33,10 @@ LEGACY_PRIMARY = "score"      # primary 未記録の実験 (後方互換)
 #   eval  arm sd 3753 / block sd 3603、score arm sd 717 / block sd 726。
 # score の既定 650 は既存較正を維持し、eval は arm sd に近い 3700 を使う。
 PRIMARY_SD_DEFAULTS = {"eval": 3700.0, "score": 650.0}
-# primary の値が欠測したときのフォールバック (eval が無ければ score)。
-PRIMARY_FALLBACK = {"eval": ("eval", "score"), "score": ("score",)}
+# primary の値の取得元。eval と score は較正済み SD (3700 / 650) が別スケールなので、
+# ここで cross-metric に補い合わない (#288 レビュー)。primary が欠測した行は
+# primary_value() が None を返し、blocks() が不完全ブロックとして除外する。
+PRIMARY_FALLBACK = {"eval": ("eval",), "score": ("score",)}
 
 
 def state_primary(state):
@@ -55,7 +57,7 @@ def state_primary_sd(state, primary=None):
 
 
 def primary_value(row, primary=DEFAULT_PRIMARY):
-    """1 試合の正準値。primary の値が無い/非有限ならフォールバック順で探す。"""
+    """1 試合の正準値。primary が数値でなければ None (cross-metric には補わない)。"""
     for key in PRIMARY_FALLBACK.get(primary, (primary,)):
         v = row.get(key)
         if isinstance(v, bool):

@@ -104,6 +104,57 @@ class AbDecideTest(unittest.TestCase):
         v = dec.decide(rows)
         self.assertEqual(v["verdict"], "ABORT", v)
 
+    def test_primary_missing_rows_do_not_inflate_n_or_change_decision(self):
+        """#288 レビュー: 正準指標 (_primary) が欠測した行は n_a/n_b/n_min に数えない。
+        ブロック計算 (k, mean_diff) には元々影響しないが、以前は n_a/n_b がこれらの
+        行まで数えてしまい、min_n_per_arm/MDE の閾値だけが不当に緩んでいた。"""
+        rows = []
+        idx = 0
+        for _ in range(19):
+            for ch in "ABBA":
+                rows.append({
+                    "idx": idx, "arm": ch, "score": 1600.0,
+                    "eval": 1600.0 + (600.0 if ch == "B" else 0.0),
+                    "turns": 90, "tainted": False,
+                })
+                idx += 1
+        baseline = dec.decide(list(rows), {"primary": "eval", "sd": 100})
+        self.assertEqual(baseline["n_a"], 38)
+        self.assertEqual(baseline["verdict"], "ADOPT", baseline)
+
+        # score だけあって eval を欠く非 tainted な A/B 行を大量に追加。
+        # idx は pattern 長の外にあるので blocks() には拾われず k は変わらない。
+        padding = [
+            {"idx": 10_000 + i, "arm": "A" if i % 2 == 0 else "B", "score": 1600.0, "turns": 90, "tainted": False}
+            for i in range(80)
+        ]
+        v = dec.decide(rows + padding, {"primary": "eval", "sd": 100})
+        self.assertEqual(v["n_a"], 38, "eval 欠測行を n_a に数えてはいけない")
+        self.assertEqual(v["n_b"], 38, "eval 欠測行を n_b に数えてはいけない")
+        self.assertEqual(v["k"], baseline["k"])
+        self.assertEqual(v["mean_diff"], baseline["mean_diff"])
+        self.assertEqual(v["verdict"], baseline["verdict"])
+
+    def test_instadeath_still_uses_full_population_when_primary_missing(self):
+        """即死判定の分母 (n_a_all/n_b_all) は正準指標 (eval) の欠測とは独立 (別母集団)
+        であるべき。score はあるが eval を欠く (=primary 欠測、非 dead) 行を混ぜても、
+        即死アボートは変わらず成立しなければならない。"""
+        rows = []
+        idx = 0
+        for k in range(6):
+            for ch in "ABBA":
+                v = 1600.0
+                if ch == "B":
+                    v = 100.0  # 全 B を「即死」扱いにする
+                rows.append({"idx": idx, "arm": ch, "score": v, "eval": v + 5000, "turns": 90, "tainted": False})
+                idx += 1
+        padding = [
+            {"idx": 10_000 + i, "arm": "A" if i % 2 == 0 else "B", "score": 1600.0, "turns": 90, "tainted": False}
+            for i in range(20)
+        ]
+        v = dec.decide(rows + padding, {"primary": "eval", "sd": 100})
+        self.assertEqual(v["verdict"], "ABORT", v)
+
     def test_guardrail_vetoes_adopt(self):
         rows = _rows(600, 19, seed=1)
         for r in rows:

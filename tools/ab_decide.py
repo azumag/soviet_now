@@ -78,8 +78,15 @@ def decide(rows, cfg=None):
     rows = ab_report.with_primary(rows, primary)
     d = ab_report.blocks(rows, pattern, key=ab_report.PRIMARY_KEY)
     k = len(d)
+    # 即死判定・ガードレール (dead_a/dead_b, _guardrails) は raw score 等の別フィールド
+    # を見るので、非 tainted 全行の母集団 (n_a_all/n_b_all) をそのまま使う。判定用の
+    # n_a/n_b/n_min は、正準指標 (_primary) が欠測した行を混ぜると min_n_per_arm/MDE
+    # の閾値だけが不当に緩む (#288 レビュー) ため、有限な _primary を持つ行だけに揃える。
     a_rows, b_rows = _rows_for(rows, "A"), _rows_for(rows, "B")
-    n_a, n_b = len(a_rows), len(b_rows)
+    n_a_all, n_b_all = len(a_rows), len(b_rows)
+    a_primary_rows = [r for r in a_rows if r.get(ab_report.PRIMARY_KEY) is not None]
+    b_primary_rows = [r for r in b_rows if r.get(ab_report.PRIMARY_KEY) is not None]
+    n_a, n_b = len(a_primary_rows), len(b_primary_rows)
     n_min = min(n_a, n_b)
     tainted = sum(1 for r in rows if r.get("tainted"))
     m = st.mean(d) if d else None
@@ -100,12 +107,12 @@ def decide(rows, cfg=None):
         dead_b = sum(1 for r in b_rows if (r.get("score") or 0) < c["dead_eval_threshold"])
         if dead_b >= 2 and dead_b > dead_a:
             try:
-                p_dead = fisher_one_sided(dead_b, n_b, dead_a, n_a)
+                p_dead = fisher_one_sided(dead_b, n_b_all, dead_a, n_a_all)
             except Exception:
                 p_dead = 1.0
             out["p_instadeath"] = p_dead
             if p_dead is not None and p_dead < c["instadeath_alpha"]:
-                return ret("ABORT", "instadeath B=%d/%d vs A=%d/%d p=%.3f" % (dead_b, n_b, dead_a, n_a, p_dead))
+                return ret("ABORT", "instadeath B=%d/%d vs A=%d/%d p=%.3f" % (dead_b, n_b_all, dead_a, n_a_all, p_dead))
     if k < c["min_blocks"]:
         return ret("CONTINUE", "k=%d < min_blocks %d" % (k, c["min_blocks"]))
     if ucb is not None and ucb < 0:

@@ -82,12 +82,14 @@ class AbReportTest(unittest.TestCase):
             ab.state_primary_sd({"primary": "eval", "primary_sd": 4200.0}), 4200.0
         )
 
-    def test_primary_value_prefers_metric_then_falls_back(self):
+    def test_primary_value_does_not_cross_metric_fallback(self):
         row = {"eval": 12000.0, "score": 900.0}
         self.assertEqual(ab.primary_value(row, "eval"), 12000.0)
         self.assertEqual(ab.primary_value(row, "score"), 900.0)
-        # eval 欠測なら score で補い、両方欠測なら None。
-        self.assertEqual(ab.primary_value({"score": 900.0}, "eval"), 900.0)
+        # eval と score は較正済み SD (3700 / 650) が別スケールなので、片方が欠測
+        # してももう片方では補わない (#288 レビュー: cross-metric 混入はブロック差を
+        # 人為的に膨らませ ADOPT/REJECT を誤判定しうる)。欠測は常に None。
+        self.assertIsNone(ab.primary_value({"score": 900.0}, "eval"))
         self.assertIsNone(ab.primary_value({}, "eval"))
         self.assertIsNone(ab.primary_value({"eval": 900.0}, "score"))
 
