@@ -16,8 +16,19 @@
 // for `renderSec` so the external capture can run against the live window
 // until SIGINT/SIGTERM.
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import {
+  computePhysicalOverlap,
+  parseVDisplayBounds,
+  parseVDisplayList,
+  placementFor,
+} from './soren91_offscreen_verify.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const defaultVirtualDisplayBin = path.join(here, 'macos', 'bin', 'soren91_virtual_display');
 
 const width = Number(process.env.SOREN91_LOCAL_WIDTH || 960);
 const height = Number(process.env.SOREN91_LOCAL_HEIGHT || 540);
@@ -27,6 +38,13 @@ const renderSec = Number(process.env.SOREN91_LOCAL_RENDER_SEC || 1980);
 const windowTop = Number(process.env.SOREN91_LOCAL_WINDOW_TOP || 30); // below the macOS menu bar
 const playerName = process.env.SOREN91_LOCAL_PLAYER_NAME || 'DoCiAI:MC';
 const resultPath = process.env.SOREN91_LOCAL_RESULT_PATH;
+// Offscreen (Issue #303): the session holds a private CGVirtualDisplay and
+// passes its MEASURED bounds here. The window is parked inside them and,
+// after calibration, proven (from measured bounds, never assumed) to touch
+// no physical display — see verifyOffscreenPlacement. Absent = legacy
+// on-screen behavior (only with an explicit onscreen opt-in at the session).
+const vdisplayRaw = process.env.SOREN91_LOCAL_VDISPLAY_BOUNDS || '';
+const virtualDisplayBin = process.env.SOREN91_LOCAL_VIRTUAL_DISPLAY_BIN || defaultVirtualDisplayBin;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 if (!resultPath) throw new Error('SOREN91_LOCAL_RESULT_PATH is required');
@@ -65,7 +83,7 @@ function waitForStop(ms) {
 // it stays valid regardless of where the window sits on screen or what is in
 // front of it, because the downstream capture selects this window by
 // identity (bundle id + exact title), not by screen coordinates.
-async function calibrateWindowBounds(context, page, { width: w, height: h, top }) {
+async function calibrateWindowBounds(context, page, { width: w, height: h, left = 0, top }) {
   const cdp = await context.newCDPSession(page);
   const { windowId } = await cdp.send('Browser.getWindowForTarget');
   let bounds = await cdp.send('Browser.getWindowBounds', { windowId });
@@ -74,7 +92,7 @@ async function calibrateWindowBounds(context, page, { width: w, height: h, top }
   const chromeH = bounds.bounds.height - inner.ih;
   await cdp.send('Browser.setWindowBounds', {
     windowId,
-    bounds: { left: 0, top, width: w + chromeW, height: h + chromeH },
+    bounds: { left, top, width: w + chromeW, height: h + chromeH },
   });
   await page.waitForTimeout(300);
   bounds = await cdp.send('Browser.getWindowBounds', { windowId });
@@ -87,11 +105,59 @@ async function calibrateWindowBounds(context, page, { width: w, height: h, top }
     outerHeight: bounds.bounds.height,
     chromeTop: bounds.bounds.height - inner.ih,
     chromeLeft: bounds.bounds.width - inner.iw,
+    // Measured screen position (never the requested one): feeds the
+    // physical-overlap proof below.
+    windowLeft: bounds.bounds.left,
+    windowTop: bounds.bounds.top,
+  };
+}
+
+// Fail-closed offscreen proof (Issue #303): with the window's MEASURED rect
+// and the helper's --list output (physical displays = all online displays
+// except our virtual displayID), even 1px of intersection fails the run.
+// Captures no pixels, reads no window titles — bounds arithmetic only.
+function verifyOffscreenPlacement(windowBounds, vdisplay) {
+  const windowRect = {
+    x: windowBounds.windowLeft,
+    y: windowBounds.windowTop,
+    width: windowBounds.outerWidth,
+    height: windowBounds.outerHeight,
+  };
+  let listed;
+  try {
+    const listResult = spawnSync(virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+    if (listResult.error) throw listResult.error;
+    const line = String(listResult.stderr || '').trim().split('\n').pop()
+      || String(listResult.stdout || '').trim().split('\n').pop();
+    listed = parseVDisplayList(line);
+  } catch (error) {
+    throw new Error(`offscreen verification unavailable (fail-closed): ${error?.message || error}`);
+  }
+  const { overlap, area, displayIds } = computePhysicalOverlap(windowRect, listed, vdisplay.displayID);
+  if (overlap) {
+    throw new Error(
+      `offscreen violation: measured window ${JSON.stringify(windowRect)} intersects `
+      + `physical display(s) ${JSON.stringify(displayIds)} by ${area}px (fail-closed)`,
+    );
+  }
+  return {
+    requested: true,
+    displayID: vdisplay.displayID,
+    bounds: vdisplay.bounds,
+    windowBounds: windowRect,
+    physicalOverlap: false,
   };
 }
 
 let browser;
 try {
+  // Offscreen placement comes from the holder's MEASURED virtual display
+  // bounds (via the session). An unparsable value fails closed here rather
+  // than guessing a position.
+  const vdisplay = vdisplayRaw ? parseVDisplayBounds(vdisplayRaw) : null;
+  const placement = vdisplay
+    ? placementFor(vdisplay.bounds)
+    : { left: 0, top: windowTop };
   const videotoolbox = command('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=size=960x540:rate=30',
     '-frames:v', '30', '-c:v', 'h264_videotoolbox', '-f', 'null', '-',
@@ -102,7 +168,7 @@ try {
     headless: false,
     args: [
       '--app=about:blank',
-      '--window-position=0,0',
+      `--window-position=${placement.left},${placement.top}`,
       `--window-size=${width},${height}`,
       '--ignore-gpu-blocklist',
       '--disable-gpu-vsync',
@@ -123,7 +189,15 @@ try {
   page = page || (await context.newPage());
   await page.waitForTimeout(300);
 
-  const windowBounds = await calibrateWindowBounds(context, page, { width, height, top: windowTop });
+  const windowBounds = await calibrateWindowBounds(context, page, {
+    width, height, left: placement.left, top: placement.top,
+  });
+  // Offscreen proof BEFORE joining the match: the measured window rect must
+  // not touch any physical display. Throws fail-closed on any overlap (or
+  // when the proof cannot run) — the run never proceeds visibly.
+  const offscreen = vdisplay
+    ? verifyOffscreenPlacement(windowBounds, vdisplay)
+    : { requested: false };
   await page.addInitScript(() => { window.__soren91NativeRaf = window.requestAnimationFrame.bind(window); });
 
   const landing = await fetch('https://unityroom.com/games/sorengame91', {
@@ -206,6 +280,11 @@ try {
     // ffmpeg chrome-band crop. bundleId is fixed because this renderer always
     // launches the stable Google Chrome channel via Playwright `channel:'chrome'`.
     capture: { bundleId: 'com.google.Chrome', windowTitle, ...windowBounds },
+    // Offscreen proof (Issue #303): when the session parked this window on
+    // the virtual display, `offscreen` carries the measured window rect and
+    // the zero-physical-overlap verdict. `requested:false` = legacy visible
+    // run (explicit opt-in only).
+    offscreen,
     checks: { hardwareRenderer, webgl2: probe.webgl2, correctBuffer, fps: probe.fps >= minFps },
   };
   emit(result);

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
 import {
   buildCaptureArgs,
   buildFfmpegArgs,
@@ -8,6 +10,10 @@ import {
   isTailscaleIpv4Hostname,
   parseArgs,
   parseCaptureHelperStatus,
+  parseVirtualDisplayStatus,
+  resolveDisplayMode,
+  startVirtualDisplay,
+  stopVirtualDisplay,
   validateOptions,
 } from '../tools/soren91_macos_session.mjs';
 
@@ -126,4 +132,130 @@ test('dry-run args are parsed without requiring macOS', () => {
   const parsed = parseArgs(['--srt-url', options.srtUrl], {});
   assert.equal(parsed.execute, false);
   assert.equal(parsed.srtUrl, options.srtUrl);
+});
+
+// --- Offscreen virtual display (Issue #303) ---
+
+test('offscreen virtual display is on by default; onscreen needs explicit opt-in', () => {
+  const base = defaults({});
+  assert.equal(base.offscreen, true);
+  assert.equal(base.allowOnscreen, false);
+  assert.ok(base.virtualDisplayBin.endsWith('soren91_virtual_display'));
+  assert.equal(defaults({ SOREN91_LOCAL_OFFSCREEN: '0' }).offscreen, false);
+  assert.equal(defaults({ SOREN91_LOCAL_ALLOW_ONSCREEN: '1' }).allowOnscreen, true);
+});
+
+test('display mode resolution is fail-closed against silent visible fallback', () => {
+  assert.equal(resolveDisplayMode({ offscreen: true, allowOnscreen: false }), 'offscreen');
+  assert.equal(resolveDisplayMode({ offscreen: true, allowOnscreen: true }), 'offscreen');
+  assert.equal(resolveDisplayMode({ offscreen: false, allowOnscreen: true }), 'onscreen');
+  assert.throws(
+    () => resolveDisplayMode({ offscreen: false, allowOnscreen: false }),
+    /explicit opt-in/,
+  );
+});
+
+test('offscreen flags are parsed from argv', () => {
+  assert.equal(parseArgs(['--no-offscreen'], {}).offscreen, false);
+  assert.equal(parseArgs(['--no-offscreen', '--offscreen'], {}).offscreen, true);
+  assert.equal(parseArgs(['--allow-onscreen'], {}).allowOnscreen, true);
+  assert.equal(
+    parseArgs(['--virtual-display-bin', '/tmp/vd'], {}).virtualDisplayBin,
+    '/tmp/vd',
+  );
+});
+
+test('offscreen requires a helper path', () => {
+  assert.throws(
+    () => validateOptions({ ...options, offscreen: true, virtualDisplayBin: '' }, 'darwin'),
+    /virtualDisplayBin/,
+  );
+});
+
+test('virtual display readiness status is fail-closed', () => {
+  const ok = '{"ok":true,"displayID":6,"bounds":{"x":1920,"y":0,"width":1920,"height":1080}}';
+  assert.deepEqual(parseVirtualDisplayStatus(ok), JSON.parse(ok));
+  assert.throws(() => parseVirtualDisplayStatus('{"ok":false,"error":"boom"}'), /boom/);
+  assert.throws(() => parseVirtualDisplayStatus('{"ok":false}'), /fail-closed/);
+  assert.throws(() => parseVirtualDisplayStatus('not json'), /non-JSON/);
+  assert.throws(() => parseVirtualDisplayStatus('{"ok":true}'), /displayID\/bounds/);
+  assert.throws(
+    () => parseVirtualDisplayStatus('{"ok":true,"displayID":6,"bounds":{"x":0,"y":0,"width":0,"height":1}}'),
+    /displayID\/bounds/,
+  );
+});
+
+test('renderer env carries the virtual display bin and measured bounds', () => {
+  const plain = buildRendererEnv(options, {});
+  assert.ok(plain.SOREN91_LOCAL_VIRTUAL_DISPLAY_BIN.endsWith('soren91_virtual_display'));
+  assert.equal(plain.SOREN91_LOCAL_VDISPLAY_BOUNDS, undefined);
+  const vdisplay = { displayID: 6, bounds: { x: 1920, y: 0, width: 1920, height: 1080 } };
+  const withVdisplay = buildRendererEnv(options, {}, { vdisplay });
+  assert.deepEqual(JSON.parse(withVdisplay.SOREN91_LOCAL_VDISPLAY_BOUNDS), vdisplay);
+});
+
+// Minimal holder stub: emits one stderr status line, stays alive until
+// SIGTERM, then exits — mirroring the real helper's lifecycle contract.
+function stubHolderOnce({ line, exitCode = 1 } = {}) {
+  const child = new EventEmitter();
+  child.stderr = Readable.from(line != null ? [`${line}\n`] : []);
+  child.exitCode = null;
+  child.killed = false;
+  child.killSignals = [];
+  child.kill = function kill(signal) {
+    child.killSignals.push(signal);
+    child.killed = true;
+    queueMicrotask(() => {
+      if (child.exitCode == null) {
+        child.exitCode = signal === 'SIGKILL' ? 137 : 0;
+        child.emit('exit', child.exitCode);
+      }
+    });
+    return true;
+  };
+  if (line == null) {
+    queueMicrotask(() => {
+      if (child.exitCode == null) {
+        child.exitCode = exitCode;
+        child.emit('exit', exitCode);
+      }
+    });
+  }
+  return child;
+}
+
+test('holder handshake resolves on ok:true and cleanup sends SIGTERM', async () => {
+  let spawned = 0;
+  const line = '{"ok":true,"displayID":6,"bounds":{"x":1920,"y":0,"width":1920,"height":1080}}';
+  const spawnImpl = (...args) => {
+    spawned += 1;
+    assert.deepEqual(args[1], []);
+    return stubHolderOnce({ line });
+  };
+  const { child, status } = await startVirtualDisplay('/tmp/soren91_virtual_display', { spawnImpl });
+  assert.equal(spawned, 1);
+  assert.equal(status.displayID, 6);
+  assert.equal(child.exitCode, null);
+  await stopVirtualDisplay(child);
+  assert.deepEqual(child.killSignals, ['SIGTERM']);
+  assert.equal(child.exitCode, 0);
+});
+
+test('holder failure rejects fail-closed (no silent onscreen fallback)', async () => {
+  const bad = stubHolderOnce({ line: '{"ok":false,"error":"nope"}' });
+  await assert.rejects(
+    startVirtualDisplay('/tmp/vd', { spawnImpl: () => bad }),
+    /nope/,
+  );
+  const silent = stubHolderOnce({ line: null, exitCode: 1 });
+  await assert.rejects(
+    startVirtualDisplay('/tmp/vd', { spawnImpl: () => silent }),
+    /exited before readiness/,
+  );
+  await assert.rejects(
+    startVirtualDisplay('/tmp/vd', {
+      spawnImpl: () => stubHolderOnce({ line: 'garbage' }),
+    }),
+    /non-JSON/,
+  );
 });

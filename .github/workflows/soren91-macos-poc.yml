@@ -7,10 +7,14 @@ on:
       - 'tools/check_existing_chrome.mjs'
       - 'tools/soren91_macos_renderer.mjs'
       - 'tools/soren91_macos_session.mjs'
+      - 'tools/soren91_offscreen_verify.mjs'
       - 'tools/soren91_window_capture_build.sh'
+      - 'tools/soren91_virtual_display_build.sh'
       - 'tools/macos/soren91_window_capture.swift'
+      - 'tools/macos/soren91_virtual_display.swift'
       - 'tests/test_soren91_macos_session.mjs'
       - 'tests/test_soren91_macos_capture_privacy.mjs'
+      - 'tests/test_soren91_macos_virtual_display.mjs'
       - 'infra/local/macos/soren91/**'
 
 permissions:
@@ -31,7 +35,26 @@ jobs:
           node --check tools/check_existing_chrome.mjs
           node --check tools/soren91_macos_renderer.mjs
           node --check tools/soren91_macos_session.mjs
+          node --check tools/soren91_offscreen_verify.mjs
       - name: Run macOS session contract tests
         run: |
           node --test tests/test_soren91_macos_session.mjs
           node --test tests/test_soren91_macos_capture_privacy.mjs
+          node --test tests/test_soren91_macos_virtual_display.mjs
+
+  build-helpers:
+    # Compiles (never runs) both Swift helpers so Linux CI still catches
+    # type/syntax regressions in the macOS-only sources.
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Checkout reviewed PR merge
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Build ScreenCaptureKit + virtual display helpers
+        run: |
+          ./tools/soren91_window_capture_build.sh
+          ./tools/soren91_virtual_display_build.sh
+          ./tools/macos/bin/soren91_virtual_display --help

@@ -27,6 +27,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const here = path.dirname(fileURLToPath(import.meta.url));
 const defaultRenderer = path.join(here, 'soren91_macos_renderer.mjs');
 const defaultCaptureHelperBin = path.join(here, 'macos', 'bin', 'soren91_window_capture');
+const defaultVirtualDisplayBin = path.join(here, 'macos', 'bin', 'soren91_virtual_display');
+
+function envFlag(env, name, defaultValue) {
+  const raw = env?.[name];
+  if (raw == null || raw === '') return defaultValue;
+  return !/^(0|false|no|off)$/i.test(String(raw).trim());
+}
 
 export function defaults(env = process.env) {
   return {
@@ -42,6 +49,13 @@ export function defaults(env = process.env) {
     audioDevice: env.SOREN91_LOCAL_AUDIO_DEVICE || '',
     renderer: env.SOREN91_LOCAL_RENDERER || defaultRenderer,
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN || defaultCaptureHelperBin,
+    // Offscreen (Issue #303): hold a private CGVirtualDisplay and park the
+    // Chrome window on it so nothing game-related ever shows on a physical
+    // screen. ON by default; turning it off shows a visible window and is a
+    // privacy-relevant choice, so it additionally requires allowOnscreen.
+    offscreen: envFlag(env, 'SOREN91_LOCAL_OFFSCREEN', true),
+    allowOnscreen: envFlag(env, 'SOREN91_LOCAL_ALLOW_ONSCREEN', false),
+    virtualDisplayBin: env.SOREN91_LOCAL_VIRTUAL_DISPLAY_BIN || defaultVirtualDisplayBin,
     resultPath: env.SOREN91_LOCAL_RESULT_PATH || path.join(os.tmpdir(), 'soren91-macos-local-result.json'),
     ffmpegBin: env.SOREN91_LOCAL_FFMPEG_BIN || 'ffmpeg',
   };
@@ -55,14 +69,18 @@ export function parseArgs(argv, env = process.env) {
     ['--width', 'width'], ['--height', 'height'], ['--video-mbps', 'videoMbps'],
     ['--srt-url', 'srtUrl'], ['--audio-device', 'audioDevice'],
     ['--renderer', 'renderer'], ['--capture-helper-bin', 'captureHelperBin'],
+    ['--virtual-display-bin', 'virtualDisplayBin'],
     ['--result-path', 'resultPath'], ['--ffmpeg-bin', 'ffmpegBin'],
   ]);
   const strings = new Set([
-    'srtUrl', 'audioDevice', 'renderer', 'captureHelperBin', 'resultPath', 'ffmpegBin',
+    'srtUrl', 'audioDevice', 'renderer', 'captureHelperBin', 'virtualDisplayBin', 'resultPath', 'ffmpegBin',
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--execute') { options.execute = true; continue; }
+    if (arg === '--offscreen') { options.offscreen = true; continue; }
+    if (arg === '--no-offscreen') { options.offscreen = false; continue; }
+    if (arg === '--allow-onscreen') { options.allowOnscreen = true; continue; }
     const key = takesValue.get(arg);
     if (!key) throw new Error(`unknown argument: ${arg}`);
     const value = argv[++index];
@@ -95,6 +113,9 @@ export function validateOptions(options, platform = process.platform) {
   if (!(options.videoMbps > 0 && options.videoMbps <= 8)) throw new Error('videoMbps must be >0 and <=8');
   if (!options.renderer) throw new Error('renderer path is required');
   if (!options.captureHelperBin) throw new Error('captureHelperBin path is required');
+  if (options.offscreen && !options.virtualDisplayBin) {
+    throw new Error('virtualDisplayBin path is required when offscreen is enabled');
+  }
   if (options.srtUrl) {
     let target;
     try { target = new URL(options.srtUrl); } catch { throw new Error('srtUrl must be a valid srt:// URL'); }
@@ -117,6 +138,96 @@ export function validateOptions(options, platform = process.platform) {
   if (options.execute && platform !== 'darwin') throw new Error('paid/live local renderer execution is macOS-only');
   if (options.execute && !options.srtUrl) throw new Error('--execute requires SOREN91_LOCAL_SRT_URL or --srt-url');
   return options;
+}
+
+// Offscreen display mode resolution (Issue #303, privacy-first /
+// fail-closed): offscreen is the default. Running on-screen shows a visible
+// game window, so it requires an explicit opt-in — either --allow-onscreen
+// or SOREN91_LOCAL_ALLOW_ONSCREEN=1 — otherwise this throws instead of
+// silently falling back to a visible window.
+export function resolveDisplayMode(options) {
+  if (options.offscreen) return 'offscreen';
+  if (options.allowOnscreen) return 'onscreen';
+  throw new Error(
+    'onscreen execution shows a visible game window and requires an explicit opt-in: '
+    + 'pass --allow-onscreen (or SOREN91_LOCAL_ALLOW_ONSCREEN=1), or re-enable the '
+    + 'default offscreen virtual display with --offscreen',
+  );
+}
+
+// Reads the virtual display holder's first stderr line as its
+// readiness/failure signal (see soren91_virtual_display.swift). Fail-closed:
+// any non-ok payload, non-JSON line, or payload without a numeric displayID
+// and finite bounds throws — callers must never place the window based on
+// ambiguous output.
+export function parseVirtualDisplayStatus(line) {
+  let payload;
+  try { payload = JSON.parse(line); } catch { throw new Error(`virtual display helper emitted non-JSON status: ${line}`); }
+  if (payload?.ok !== true) {
+    throw new Error(`virtual display helper failed (fail-closed): ${payload?.error || JSON.stringify(payload)}`);
+  }
+  const bounds = payload?.bounds;
+  if (!Number.isFinite(payload?.displayID)
+    || !bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y)
+    || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)
+    || !(bounds.width > 0 && bounds.height > 0)) {
+    throw new Error(`virtual display helper status lacks displayID/bounds (fail-closed): ${line}`);
+  }
+  return payload;
+}
+
+// Spawns the virtual display holder and waits for its first stderr line
+// (readiness or failure). The holder survives until SIGTERM/SIGINT — only
+// process exit releases its CGVirtualDisplay — so the caller owns stopping
+// it via stopVirtualDisplay() (the session does this in its finally block
+// and WAITS for the exit before returning, proving the display is gone).
+export async function startVirtualDisplay(bin, { timeoutMs = 30_000, spawnImpl = spawn } = {}) {
+  const child = spawnImpl(bin, [], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const rl = readline.createInterface({ input: child.stderr });
+  const status = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('virtual display helper readiness timed out')), timeoutMs);
+    let settled = false;
+    rl.once('line', (line) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { resolve(parseVirtualDisplayStatus(line)); } catch (error) { reject(error); }
+    });
+    child.once('exit', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`virtual display helper exited before readiness (code=${code})`));
+    });
+    child.once('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+  rl.on('line', (line) => console.error(`[vdisplay] ${line}`));
+  return { child, status };
+}
+
+// Stops the holder and waits for its exit, proving the virtual display was
+// released (a CGVirtualDisplay dies only with its holder process).
+export async function stopVirtualDisplay(child, { timeoutMs = 10_000 } = {}) {
+  if (!child || child.exitCode != null || child.killed) return { exited: true };
+  try { child.kill('SIGTERM'); } catch { return { exited: false }; }
+  const exited = await new Promise((resolve) => {
+    if (child.exitCode != null) return resolve(true);
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => { clearTimeout(timer); resolve(true); });
+  });
+  if (!exited) {
+    try { child.kill('SIGKILL'); } catch {}
+    await new Promise((resolve) => {
+      if (child.exitCode != null) return resolve();
+      child.once('exit', () => resolve());
+    });
+  }
+  return { exited: true };
 }
 
 // `capture` comes from the renderer's result JSON (soren91_macos_renderer.mjs
@@ -187,15 +298,25 @@ export function buildFfmpegArgs(options, capture) {
   return args;
 }
 
-export function buildRendererEnv(options, env = process.env) {
-  return {
+export function buildRendererEnv(options, env = process.env, { vdisplay = null } = {}) {
+  const rendererEnv = {
     ...env,
     SOREN91_LOCAL_RENDER_SEC: String(options.sessionSec + options.bootTimeoutSec),
     SOREN91_LOCAL_MIN_FPS: String(options.minFps),
     SOREN91_LOCAL_WIDTH: String(options.width),
     SOREN91_LOCAL_HEIGHT: String(options.height),
     SOREN91_LOCAL_RESULT_PATH: options.resultPath,
+    SOREN91_LOCAL_VIRTUAL_DISPLAY_BIN: options.virtualDisplayBin,
   };
+  // The holder's measured bounds (never assumed coordinates): the renderer
+  // parks the Chrome window inside them and proves zero physical overlap.
+  if (vdisplay) {
+    rendererEnv.SOREN91_LOCAL_VDISPLAY_BOUNDS = JSON.stringify({
+      displayID: vdisplay.displayID,
+      bounds: vdisplay.bounds,
+    });
+  }
+  return rendererEnv;
 }
 
 function run(bin, args, { timeout = 20_000 } = {}) {
@@ -269,9 +390,15 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     sessionSec: options.sessionSec, hardMaxSec: options.hardMaxSec,
     output: [options.width, options.height, 30], capture: 'screencapturekit-window',
     encoder: 'h264_videotoolbox', transport: options.srtUrl ? 'srt-over-tailscale' : 'not-configured',
+    display: options.offscreen ? 'offscreen-virtual' : 'onscreen',
   };
   console.log(JSON.stringify(plan, null, 2));
   if (!options.execute) return plan;
+
+  // Privacy-first mode selection: resolveDisplayMode throws unless onscreen
+  // was explicitly opted into — an offscreen failure below therefore never
+  // silently becomes a visible window.
+  const displayMode = resolveDisplayMode(options);
 
   if (!fs.existsSync(options.captureHelperBin)) {
     throw new Error(`capture helper binary not found at ${options.captureHelperBin}; run tools/soren91_window_capture_build.sh first`);
@@ -293,12 +420,40 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   let renderer;
   let capture;
   let ffmpeg;
-  const cleanup = () => { terminateTree(ffmpeg); terminateTree(capture); terminateTree(renderer); };
+  let vdisplay;
+  let vdisplayStatus = null;
+  const cleanup = () => {
+    terminateTree(ffmpeg); terminateTree(capture); terminateTree(renderer);
+    if (vdisplay) { try { vdisplay.kill('SIGTERM'); } catch {} }
+  };
   process.once('SIGINT', cleanup);
   process.once('SIGTERM', cleanup);
   try {
+    if (displayMode === 'offscreen') {
+      try {
+        if (!fs.existsSync(options.virtualDisplayBin)) {
+          throw new Error(`virtual display helper binary not found at ${options.virtualDisplayBin}; run tools/soren91_virtual_display_build.sh first`);
+        }
+        const held = await startVirtualDisplay(options.virtualDisplayBin, {
+          timeoutMs: options.bootTimeoutSec * 1000,
+        });
+        vdisplay = held.child;
+        vdisplayStatus = held.status;
+        console.log(`SOREN91_LOCAL_VDISPLAY_READY=${JSON.stringify(vdisplayStatus)}`);
+      } catch (error) {
+        // Fail-closed: never fall back to a visible window on our own. Only
+        // an explicit --allow-onscreen / SOREN91_LOCAL_ALLOW_ONSCREEN=1
+        // continues on-screen (resolveDisplayMode already recorded the
+        // opt-in when offscreen was disabled; reaching here with offscreen
+        // enabled means the holder failed, so re-check the opt-in).
+        if (!options.allowOnscreen) {
+          throw new Error(`offscreen virtual display unavailable (fail-closed): ${error?.message || error}`);
+        }
+        console.error(`[vdisplay] holder failed but onscreen was explicitly allowed; continuing visibly: ${error?.message || error}`);
+      }
+    }
     renderer = spawn(process.execPath, [options.renderer], {
-      env: buildRendererEnv(options),
+      env: buildRendererEnv(options, process.env, { vdisplay: vdisplayStatus }),
       stdio: ['ignore', 'inherit', 'inherit'],
     });
     const result = await waitForResult(options.resultPath, renderer, options.bootTimeoutSec * 1000);
@@ -328,6 +483,9 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     cleanup();
     process.removeListener('SIGINT', cleanup);
     process.removeListener('SIGTERM', cleanup);
+    // The virtual display dies only with its holder: wait for the exit to
+    // prove the display is released before returning.
+    if (vdisplay) await stopVirtualDisplay(vdisplay);
   }
 }
 

@@ -8,12 +8,81 @@ hardware WebGL, targeting the same `start/status/stop` contract. See
 **Status (2026-09-13): capture pipeline rebuilt around ScreenCaptureKit
 window-targeted capture, after a real incident with the original
 avfoundation design (see "Why not avfoundation screen capture" below).
-Validated so far with a synthetic decoy window (exact-match identity
-selection + occlusion resilience, both confirmed by pixel inspection) and a
-single real local run against the live Soren91 match (local file only, no
-SRT/OCI). Not yet re-run through the full 90s+ SRT/OCI E2E, not soaked for
+Since 2026-09-13 the game window additionally lives on a **private virtual
+display (offscreen by default)** — nothing game-related ever shows on a
+physical screen (see "Offscreen virtual display" below). Validated so far
+with a synthetic decoy window (exact-match identity selection + occlusion
+resilience, both confirmed by pixel inspection), a single real local run
+against the live Soren91 match (local file only, no SRT/OCI), and a
+synthetic offscreen run (virtual display + parked Chrome + zero physical
+overlap measured + ScreenCaptureKit capture at 28.2fps + clean teardown).
+Not yet re-run through the full 90s+ SRT/OCI E2E, not soaked for
 30 minutes, not wired into the backend selector, not connected to the
 production broadcast.**
+
+## Offscreen virtual display (default, Issue #303)
+
+ScreenCaptureKit captures a window by identity even when that window is
+occluded or off the visible display — so the session parks the Soren91
+Chrome window on a **private `CGVirtualDisplay`** (a display that exists
+only in software) instead of any physical screen:
+
+```text
+tools/macos/soren91_virtual_display (Swift holder, built by
+  tools/soren91_virtual_display_build.sh)
+  -> creates one 1920x1080@60 virtual display, prints
+     {"ok":true,"displayID":N,"bounds":{x,y,width,height}} on stderr,
+     survives until SIGTERM/SIGINT (only process exit releases it)
+soren91_macos_session.mjs
+  -> spawns the holder BEFORE the renderer, passes the MEASURED bounds
+     as SOREN91_LOCAL_VDISPLAY_BOUNDS to the renderer
+  -> on shutdown SIGTERMs the holder and WAITS for its exit (proving the
+     display is released) before returning
+soren91_macos_renderer.mjs
+  -> parks Chrome at virtual-origin + margin, calibrates, then PROVES from
+     the MEASURED window rect + helper --list output that the window touches
+     no physical display — even 1px of overlap fails the run (fail-closed)
+  -> result JSON carries capture.offscreen = { requested, displayID, bounds,
+     windowBounds, physicalOverlap: false }
+```
+
+Privacy rules enforced in code, not just docs (fail-closed everywhere):
+
+- The holder is required by default (`SOREN91_LOCAL_OFFSCREEN=1`). If it is
+  missing or fails, the session **errors out** — it never silently falls
+  back to a visible window. The legacy on-screen behavior needs an explicit
+  opt-in: `--allow-onscreen` or `SOREN91_LOCAL_ALLOW_ONSCREEN=1`
+  (additionally required when `SOREN91_LOCAL_OFFSCREEN=0`).
+- Window coordinates are **never assumed from `--window-position`**: macOS
+  placed the window at y=30 when asked for y=20 (measured). Placement and
+  the overlap proof both use measured bounds only.
+- The overlap proof needs no pixels and no window titles — display IDs +
+  bounds arithmetic only (`tools/soren91_offscreen_verify.mjs`, unit
+  tested). If the proof cannot run (helper missing), the run fails.
+- `CGVirtualDisplay` is a non-public API reached via runtime class lookup +
+  KVC (no private headers; `NSClassFromString("CGVirtualDisplay")` etc.).
+  If the classes/selectors vanish on a future macOS, the helper exits 1
+  with `{"ok":false,...}` instead of crashing. Measured quirks kept as code
+  comments in `tools/macos/soren91_virtual_display.swift`: mode refreshRate
+  is Double (UInt32 makes `applySettings:` return NO), `setDispatchQueue:`
+  must be called directly (KVC does not stick), vendor/product/serial
+  setters write into the internal `_displayInfo` dict (which must be
+  non-nil), and only one virtual display per process, released by process
+  exit only — so a stale display from a previous run is reported as an
+  explicit "still online" error naming the leaked display.
+- Vendor/product/serial are fixed (`0x736F`/`0x3931`/30391) so macOS
+  remembers window placement across holder restarts.
+
+Known side effect: adding a display extends the menu bar onto the virtual
+display while the holder runs; no existing user windows are moved. Seen on
+macOS 26.6.1 (M4) — the only OS this is tested on.
+
+Explicit on-screen fallback (visible window — use only for debugging):
+
+```bash
+SOREN91_LOCAL_ALLOW_ONSCREEN=1 SOREN91_LOCAL_OFFSCREEN=0 \
+  node tools/soren91_macos_session.mjs --execute --srt-url srt://<oci-tailscale-ip>:<port>?mode=caller
+```
 
 ## What this is
 
@@ -89,7 +158,10 @@ content, unlike the original bug.
   `ffmpeg`/`node` process, AND the `soren91_window_capture` binary itself
   (ScreenCaptureKit's `SCShareableContent` call fails, or your Mac shows a
   fresh permission entry for the binary, if it's missing). Grant via System
-  Settings → Privacy & Security → Screen Recording.
+  Settings → Privacy & Security → Screen Recording. The
+  `soren91_virtual_display` holder itself needs no Screen Recording
+  permission (it creates a display but captures nothing) — verified without
+  any prompt on macOS 26.6.1.
 - FFmpeg with `h264_videotoolbox` (Homebrew's default `ffmpeg` formula has
   this) **and** the `srt` protocol. **Homebrew's default `ffmpeg` formula does
   NOT build libsrt** — `ffmpeg -hide_banner -protocols | grep srt` only shows
@@ -117,7 +189,20 @@ daemon/agent that runs outside a real GUI session.
   into the live Soren91 match, measures native-rAF fps and WebGL facts for
   `SOREN91_LOCAL_MEASURE_SEC` (default 60s), writes a result JSON (including
   `capture: { bundleId, windowTitle, outerWidth, outerHeight, chromeTop,
-  chromeLeft }`) to `SOREN91_LOCAL_RESULT_PATH`, then idles until stopped.
+  chromeLeft }` plus `offscreen` when parked on the virtual display) to
+  `SOREN91_LOCAL_RESULT_PATH`, then idles until stopped. When
+  `SOREN91_LOCAL_VDISPLAY_BOUNDS` is set, the window is parked inside those
+  bounds and the run fails unless the measured window rect provably avoids
+  every physical display (see `verifyOffscreenPlacement`).
+- `tools/macos/soren91_virtual_display.swift` — private-CGVirtualDisplay
+  holder CLI; creates one virtual display and lives until SIGTERM/SIGINT.
+  `--list` prints all online displays as JSON without creating anything.
+  Build via `tools/soren91_virtual_display_build.sh`. Fixed
+  vendor/product/serial; leak detection via `CGDisplayVendorNumber` /
+  `CGDisplayModelNumber` / `CGDisplaySerialNumber`.
+- `tools/soren91_offscreen_verify.mjs` — pure bounds-math helpers shared by
+  session and renderer (bounds parsing, window placement, 1px-exact physical
+  overlap proof, `--list` parsing). No pixels, no titles.
 - `tools/macos/soren91_window_capture.swift` — ScreenCaptureKit CLI helper;
   captures exactly one window (fail-closed identity match) at its native
   outer size, writes tightly-packed raw BGRA8888 frames to stdout. Build via
@@ -126,12 +211,16 @@ daemon/agent that runs outside a real GUI session.
   Windows session (`sessionSec` capped at 1800s / `hardMaxSec` at 2400s,
   960x540/30fps fixed output, SRT URL must be a Tailscale IPv4 `srt://` URL
   with `mode=caller`, no userinfo, an explicit port, and no `passphrase=` in
-  argv). Orchestrates renderer → capture helper → ffmpeg (rawvideo pipe →
-  chrome-band crop → VideoToolbox → SRT). The capture helper's first stderr
-  line is its readiness/failure signal (fail-closed — see
-  `parseCaptureHelperStatus`); frames are only piped into ffmpeg after an
-  `ok:true` status.
+  argv). Orchestrates virtual-display holder → renderer → capture helper →
+  ffmpeg (rawvideo pipe → chrome-band crop → VideoToolbox → SRT). The
+  holder's first stderr line is its readiness/failure signal (fail-closed —
+  see `parseVirtualDisplayStatus`); holder failure errors out unless
+  on-screen was explicitly allowed. Shutdown SIGTERMs the holder and waits
+  for its exit, proving the virtual display is released.
 - `tests/test_soren91_macos_session.mjs` — contract tests (`node --test`).
+- `tests/test_soren91_macos_virtual_display.mjs` — offscreen bounds-proof
+  unit tests + helper CLI contract tests (live parts run on macOS only and
+  never create a display).
 
 ## Manual verification checklist (what to actually run)
 
@@ -139,7 +228,8 @@ daemon/agent that runs outside a real GUI session.
 npm install
 node tools/check_existing_chrome.mjs   # optional: confirms channel:'chrome' works
 tools/soren91_window_capture_build.sh  # builds tools/macos/bin/soren91_window_capture
-node --test tests/test_soren91_macos_session.mjs
+tools/soren91_virtual_display_build.sh # builds tools/macos/bin/soren91_virtual_display
+node --test tests/test_soren91_macos_session.mjs tests/test_soren91_macos_virtual_display.mjs
 
 # Dry run (prints the plan, does not launch anything):
 node tools/soren91_macos_session.mjs --srt-url srt://100.64.0.2:19192?mode=caller
@@ -173,3 +263,18 @@ SOREN91_LOCAL_SESSION_SEC=300 SOREN91_LOCAL_HARD_MAX_SEC=420 \
   matched `swiftshader`/`llvmpipe`/`software`, or didn't match
   `apple`/`angle`/`metal` at all — check `chrome://gpu` for GPU blocklist
   entries on this Mac.
+- **Virtual display holder exits with `still online` (fail-closed)**: a
+  previous holder process is still alive and holding its display (only
+  process exit releases a `CGVirtualDisplay`). Find it with
+  `pgrep -af soren91_virtual_display`, SIGTERM it (that holder only — never
+  touch unrelated Chrome/OBS processes), then retry. The error names the
+  leaked display's numeric id + bounds so you can confirm it is gone with
+  the helper's `--list` afterwards.
+- **Renderer fails with `offscreen violation`**: the measured Chrome window
+  rect intersects a physical display — the window manager moved the window
+  after placement (or the virtual display bounds shifted). Do NOT override
+  this check; rerun and inspect the reported rects.
+- **`offscreen verification unavailable`**: the session parked the window
+  offscreen but the helper binary is missing at verify time — rebuild via
+  `tools/soren91_virtual_display_build.sh` and rerun; the run refuses to
+  proceed unverified.
