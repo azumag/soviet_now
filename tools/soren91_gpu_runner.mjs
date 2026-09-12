@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const width = Number(process.env.SOREN91_POC_WIDTH || 960);
 const height = Number(process.env.SOREN91_POC_HEIGHT || 540);
-const minFps = Number(process.env.SOREN91_POC_MIN_FPS || 25);
+const minFps = Number(process.env.SOREN91_POC_MIN_FPS || 30);
 const measureSec = Number(process.env.SOREN91_POC_MEASURE_SEC || 60);
 const outputPath = process.env.SOREN91_POC_RESULT_PATH || '/tmp/soren91-poc-result.json';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
