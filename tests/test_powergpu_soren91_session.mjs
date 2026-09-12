@@ -85,6 +85,11 @@ test('ambiguous launch recovery only accepts one strongly attributable new insta
     exact,
     { ...exact, id: 'i-new4444' },
   ] }, options, started), null);
+
+  assert.equal(findRecoverableLaunch(before, { instances: [
+    exact,
+    { id: 'i-new8888', gpu_slug: 'l4', image: 'unrelated/image', created_at: started + 1 },
+  ] }, options, started), null);
 });
 
 test('recent recovery candidates still require both exact GPU and image identity', () => {
