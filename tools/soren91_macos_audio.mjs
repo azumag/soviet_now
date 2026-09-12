@@ -175,7 +175,12 @@ export function classifyFfmpegExit({
 // the generic throw and the session exited 1 with no SESSION_END line).
 // Pure function. Returns 'deadline' | 'consumer-closed' | 'failed':
 //   kind 'deadline'                        -> 'deadline' (normal end).
-//   kind 'ffmpeg-exit'                     -> classifyFfmpegExit verdict.
+//   kind 'ffmpeg-exit'                     -> classifyFfmpegExit verdict
+//     (tightened fail-closed semantics: ONLY explicit SRT-output markers
+//     — Broken pipe / muxer I/O error / interleaved-write I/O error —
+//     count. A bare code 0, sinkClosed alone (every ffmpeg death closes
+//     its stdin, so it cannot prove listener-first close), or a generic
+//     "muxer" substring do not).
 //   kind 'capture-exit', signal set        -> 'failed' (crashed/killed).
 //   kind 'capture-exit', code 0            -> 'consumer-closed'. Rationale:
 //     in this pipeline the ONLY frame consumer is ffmpeg's stdin; the
@@ -199,7 +204,6 @@ export function classifySessionEnd({
       code: value?.code,
       signal: value?.signal,
       stderr,
-      sinkClosed,
     });
   }
   if (kind === 'capture-exit') {

@@ -229,12 +229,23 @@ test('classifyFfmpegExit: listener-first close is consumer-closed (real stderr)'
     + 'av_interleaved_write_frame(): Input/output error\n';
   assert.equal(classifyFfmpegExit({ code: 1, stderr }), 'consumer-closed');
   assert.equal(classifyFfmpegExit({ code: 1, stderr: 'Broken pipe' }), 'consumer-closed');
-  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'muxer queue overflow' }), 'consumer-closed');
-  // sinkClosed alone (EPIPE seen on the feeding pipe) is enough, even with
-  // an empty stderr tail.
-  assert.equal(classifyFfmpegExit({ code: 1, stderr: '', sinkClosed: true }), 'consumer-closed');
-  // Clean early exit (consumer went away, ffmpeg flushed) is not a failure.
-  assert.equal(classifyFfmpegExit({ code: 0, stderr: '' }), 'consumer-closed');
+  assert.equal(
+    classifyFfmpegExit({ code: 1, stderr: 'av_interleaved_write_frame(): Input/output error' }),
+    'consumer-closed',
+  );
+});
+
+test('classifyFfmpegExit: ambiguous exits stay fail-closed (no masking)', () => {
+  // Tightened semantics: every ffmpeg death closes its stdin, so a benign
+  // pipe error on the feeding pipes (sinkClosed) cannot prove the LISTENER
+  // closed first — counting it would mask encoder/muxer failures. Likewise
+  // a bare code 0 or a generic "muxer" substring (e.g. queue overflow, a
+  // real failure) is not receiver-close evidence.
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: '', sinkClosed: true }), 'failed');
+  assert.equal(classifyFfmpegExit({ code: 0, stderr: '' }), 'failed');
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'muxer queue overflow' }), 'failed');
+  // Generic I/O text without the observed SRT output signatures is ambiguous.
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'Input/output error while decoding stream #0:0' }), 'failed');
 });
 
 test('classifyFfmpegExit: genuine failures still fail', () => {
@@ -269,12 +280,27 @@ test('classifySessionEnd: ffmpeg-exit delegates to classifyFfmpegExit', async ()
     'consumer-closed',
   );
   assert.equal(
-    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: '', sinkClosed: true }),
+    classifySessionEnd({
+      kind: 'ffmpeg-exit',
+      value: { code: 1, signal: null },
+      stderr: 'av_interleaved_write_frame(): Input/output error',
+    }),
     'consumer-closed',
   );
+  // Ambiguous ffmpeg exits stay fail-closed (tightened semantics: only
+  // explicit SRT-output markers count — a bare code 0, sinkClosed alone,
+  // or a generic "muxer" substring do not prove listener-first close).
   assert.equal(
     classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 0, signal: null }, stderr: '' }),
-    'consumer-closed',
+    'failed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: '', sinkClosed: true }),
+    'failed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: 'muxer queue overflow' }),
+    'failed',
   );
   assert.equal(
     classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: 'encoder boom' }),
