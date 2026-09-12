@@ -87,6 +87,20 @@ test('ambiguous launch recovery only accepts one strongly attributable new insta
   ] }, options, started), null);
 });
 
+test('recent recovery candidates still require both exact GPU and image identity', () => {
+  const before = new Set();
+  const started = 1_800_000_000;
+  assert.equal(findRecoverableLaunch(before, { instances: [
+    { id: 'i-new3333', gpu_slug: 'tesla-p4', image: 'other/image', created_at: started + 1 },
+  ] }, options, started), null);
+  assert.equal(findRecoverableLaunch(before, { instances: [
+    { id: 'i-new4444', gpu_slug: 'l4', image: options.image, created_at: started + 1 },
+  ] }, options, started), null);
+  assert.equal(findRecoverableLaunch(before, { instances: [
+    { id: 'i-new7777', gpu_slug: 'tesla-p4', image: options.image, created_at: started - 60 },
+  ] }, options, started), null);
+});
+
 test('recovery without created_at requires both P4 and exact image identity', () => {
   const before = new Set();
   assert.equal(findRecoverableLaunch(before, { data: [
@@ -121,6 +135,43 @@ test('default controller run is a side-effect-free pricing-file dry-run', async 
     assert.equal(plan.tier, 0);
     assert.equal(plan.execute, false);
     assert.equal(plan.cost.dph, 0.009);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('paid launch fails closed when the pre-launch instance baseline is unavailable', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soren91-powergpu-baseline-'));
+  const fixture = path.join(directory, 'pricing.json');
+  const fake = path.join(directory, 'powergpu');
+  const launched = path.join(directory, 'launch-called');
+  fs.writeFileSync(fixture, JSON.stringify({ data: [p4Pricing] }));
+  fs.writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "list" ]; then exit 1; fi\ntouch ${JSON.stringify(launched)}\nexit 0\n`, { mode: 0o755 });
+  try {
+    await assert.rejects(
+      main(['--pricing-json', fixture, '--execute', '--image', options.image, '--powergpu-bin', fake]),
+      /unable to establish PowerGPU instance baseline before launch/,
+    );
+    assert.equal(fs.existsSync(launched), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('successful launch without a usable id recovers only the attributable instance and destroys it', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soren91-powergpu-no-id-'));
+  const fixture = path.join(directory, 'pricing.json');
+  const fake = path.join(directory, 'powergpu');
+  const launched = path.join(directory, 'launched');
+  const calls = path.join(directory, 'calls.log');
+  fs.writeFileSync(fixture, JSON.stringify({ data: [p4Pricing] }));
+  fs.writeFileSync(fake, `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\ncase "$1" in\n  list)\n    if [ -f ${JSON.stringify(launched)} ]; then\n      now=$(date +%s)\n      printf '{"instances":[{"id":"i-new7777","gpu_slug":"tesla-p4","image":"${options.image}","created_at":%s}]}\\n' "$now"\n    else\n      printf '{"instances":[]}\\n'\n    fi\n    ;;\n  launch)\n    touch ${JSON.stringify(launched)}\n    printf '{"status":"accepted"}\\n'\n    ;;\n  destroy) exit 0 ;;\n  *) exit 2 ;;\nesac\n`, { mode: 0o755 });
+  try {
+    await assert.rejects(
+      main(['--pricing-json', fixture, '--execute', '--image', options.image, '--powergpu-bin', fake]),
+      /launch response has no PowerGPU instance id/,
+    );
+    assert.match(fs.readFileSync(calls, 'utf8'), /destroy i-new7777 --yes/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
