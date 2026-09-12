@@ -16,9 +16,10 @@ resilience, both confirmed by pixel inspection), a single real local run
 against the live Soren91 match (local file only, no SRT/OCI), and a
 synthetic offscreen run (virtual display + parked Chrome + zero physical
 overlap measured + ScreenCaptureKit capture at 28.2fps + clean teardown).
-Not yet re-run through the full 90s+ SRT/OCI E2E, not soaked for
-30 minutes, not wired into the backend selector, not connected to the
-production broadcast.**
+Backend selector wiring (local agent + pure selection logic, see "Local
+agent / backend selector" below) is integrated at the code/docs level. Not
+yet re-run through the full 90s+ SRT/OCI E2E, not soaked for
+30 minutes, not connected to the production broadcast.**
 
 ## Offscreen virtual display (default, Issue #303)
 
@@ -182,6 +183,50 @@ without one — `soren91_window_capture` establishes it at startup via
 constraint as the Windows backend. Do not wrap this in a `launchd`
 daemon/agent that runs outside a real GUI session.
 
+## Local agent / backend selector (Issue #303)
+
+The Mac is a `backend: 'local-macos'` local candidate, controlled through
+the shared HTTP agent `tools/soren91_local_agent.mjs` (platform-generic:
+`darwin` → `local-macos` / `soren91_macos_session.mjs`,
+`win32` → `local-windows` / `soren91_windows_session.mjs`, same Bearer-token
+contract as PR #131 — the two implementations are meant to converge into
+this one file when PR #131 merges).
+
+Start the agent (token from a secret store — never commit it, never pass it
+via argv, never log it):
+
+```bash
+export SOREN91_LOCAL_AGENT_TOKEN="$(secret-store-read soren91/local-agent-token)" # >= 24 chars
+export SOREN91_LOCAL_SRT_URL='srt://<oci-tailscale-ip>:<port>?mode=caller'
+node tools/soren91_local_agent.mjs
+```
+
+Control API (all but `/health` need
+`Authorization: Bearer $SOREN91_LOCAL_AGENT_TOKEN`):
+
+```text
+GET  /health    (no auth)  -> { ok, service:'soren91-local-agent', backend:'local-macos' }
+GET  /v1/status (auth)     -> { ok, backend, running, pid, lastExit }
+POST /v1/start  (auth)     -> 202 { ok, started, pid } / 409 { error:'already running' }
+POST /v1/stop   (auth)     -> 202 { ok, stopping }
+```
+
+Rules: default bind is `127.0.0.1:19191` (loopback only, never expose
+publicly); only one session at a time (second `POST /v1/start` → 409);
+`/v1/start` inherits the agent's own `process.env` (SRT URL, ffmpeg path,
+session caps) into the child. Session length stays hard-capped by
+`soren91_macos_session.mjs` (`sessionSec` ≤ 1800s, `hardMaxSec` ≤ 2400s).
+
+Selection order lives in `tools/soren91_renderer_priority.mjs`
+(`selectRendererBackend`, pure function — no cloud API calls): usable local
+hosts in `localOrder` first → `powergpu-p4-interruptible` →
+`powergpu-p4-ondemand` → any other usable candidate. The default
+`localOrder` is provisionally `local-macos` → `local-windows`; per Issue
+#303 the real Mac/Windows order is decided by measured boot time, stability,
+and power draw, which are not measured yet — override `localOrder` once
+real numbers exist. Falling back to a PowerGPU P4 host (actually launching
+one) is Issue #309's scope, not this file's.
+
 ## Files
 
 - `tools/soren91_macos_renderer.mjs` — launches existing Chrome, calibrates
@@ -219,6 +264,16 @@ daemon/agent that runs outside a real GUI session.
   on-screen was explicitly allowed. Shutdown SIGTERMs the holder and waits
   for its exit, proving the virtual display is released.
 - `tests/test_soren91_macos_session.mjs` — contract tests (`node --test`).
+- `tools/soren91_local_agent.mjs` — platform-generic HTTP control agent
+  (`127.0.0.1:19191`, Bearer token, one session at a time): `darwin` serves
+  `backend: 'local-macos'` via `soren91_macos_session.mjs --execute`,
+  `win32` serves `backend: 'local-windows'` (converges PR #131's agent).
+- `tools/soren91_renderer_priority.mjs` — pure `selectRendererBackend()`
+  (no cloud calls): usable locals in `localOrder` (default provisionally
+  `local-macos` → `local-windows`, pending measurement) →
+  `powergpu-p4-interruptible` → `powergpu-p4-ondemand` → other usable.
+- `tests/test_soren91_local_agent.mjs`, `tests/test_soren91_renderer_priority.mjs`
+  — agent/session/token/HTTP (409/404) and selector-order contract tests.
 - `tests/test_soren91_macos_virtual_display.mjs` — offscreen bounds-proof
   unit tests + helper CLI contract tests (live parts run on macOS only and
   never create a display).
