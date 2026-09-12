@@ -25,6 +25,7 @@ on:
       - 'tests/test_soren91_macos_capture_privacy.mjs'
       - 'tests/test_soren91_macos_virtual_display.mjs'
       - 'tests/test_soren91_macos_audio.mjs'
+      - 'tests/test_soren91_session_end_fail_closed.mjs'
       - 'infra/local/macos/soren91/**'
 
 permissions:
@@ -59,6 +60,7 @@ jobs:
           node --test tests/test_soren91_macos_capture_privacy.mjs
           node --test tests/test_soren91_macos_virtual_display.mjs
           node --test tests/test_soren91_macos_audio.mjs
+          node --test tests/test_soren91_session_end_fail_closed.mjs
 
   build-helpers:
     # Compiles (never runs) all Swift helpers so Linux CI still catches
