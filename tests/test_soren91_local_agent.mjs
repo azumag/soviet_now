@@ -12,7 +12,9 @@ import {
   defaults,
   MAX_START_BODY_BYTES,
   parseStartBody,
+  resolveSessionMode,
   sessionScriptForPlatform,
+  spawnScriptForMode,
   validateOptions,
   validateStartSrtUrl,
 } from '../tools/soren91_local_agent.mjs';
@@ -147,7 +149,7 @@ test('HTTP: second start conflicts with 409; unknown paths 404', async () => {
     const status = await fetch(`${base}/v1/status`, { headers: auth });
     assert.equal(status.status, 200);
     assert.deepEqual(await status.json(), {
-      ok: true, backend: 'local-macos', running: false, pid: null, lastExit: null,
+      ok: true, backend: 'local-macos', mode: 'session', running: false, pid: null, lastExit: null,
     });
     const first = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
     assert.equal(first.status, 202);
@@ -194,11 +196,12 @@ test('parseStartBody: empty body is legacy, srtUrl is validated, garbage is 400-
   assert.throws(() => parseStartBody(JSON.stringify({ srtUrl: 'srt://8.8.8.8:1?mode=caller' })), /Tailscale/);
 });
 
-async function withCapturingServer(platform, fn) {
+async function withCapturingServer(platform, fn, mode) {
   const seen = [];
   const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
   const { server } = createServer(options, {
     platform,
+    mode,
     spawnImpl: (bin, args, spawnOptions) => {
       seen.push({ bin, args, env: spawnOptions.env });
       return stubSpawn();
@@ -256,4 +259,113 @@ test('HTTP: /v1/start rejects invalid and oversized bodies with 400/413', async 
     assert.ok(huge.status === 400 || huge.status === 413);
     assert.equal((await huge.json()).ok, false);
   });
+});
+
+// --- Phase 2a: cdp-host spawn mode (SOREN91_LOCAL_SESSION_MODE / SOREN91_LOCAL_CDP_HOST) ---
+
+test('resolveSessionMode defaults to session and keeps backward compatibility', () => {
+  assert.equal(resolveSessionMode({}), 'session');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: '' }), 'session');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: 'session' }), 'session');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: '  SESSION  ' }), 'session');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_CDP_HOST: '' }), 'session');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_CDP_HOST: '0' }), 'session');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_CDP_HOST: 'false' }), 'session');
+});
+
+test('resolveSessionMode selects cdp-host via env or alias flag', () => {
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: 'cdp-host' }), 'cdp-host');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: 'CDP-HOST' }), 'cdp-host');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: 'cdp_host' }), 'cdp-host');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_CDP_HOST: '1' }), 'cdp-host');
+  assert.equal(resolveSessionMode({ SOREN91_LOCAL_CDP_HOST: 'true' }), 'cdp-host');
+  // Explicit SESSION_MODE wins over the alias flag.
+  assert.equal(
+    resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: 'session', SOREN91_LOCAL_CDP_HOST: '1' }),
+    'session',
+  );
+  assert.equal(
+    resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: 'cdp-host', SOREN91_LOCAL_CDP_HOST: '0' }),
+    'cdp-host',
+  );
+});
+
+test('resolveSessionMode rejects unknown modes fail-closed', () => {
+  for (const bad of ['cdphost2', 'remote', 'sessionx', 'cdp host']) {
+    assert.throws(() => resolveSessionMode({ SOREN91_LOCAL_SESSION_MODE: bad }), /session.*cdp-host/);
+  }
+});
+
+test('spawn target follows the mode; default stays the self-playing session', () => {
+  assert.match(spawnScriptForMode('darwin', 'session', '/base'), /soren91_macos_session\.mjs$/);
+  assert.match(spawnScriptForMode('win32', 'session', '/base'), /soren91_windows_session\.mjs$/);
+  assert.match(spawnScriptForMode('darwin', 'cdp-host', '/base'), /soren91_macos_cdp_host\.mjs$/);
+  assert.throws(() => spawnScriptForMode('win32', 'cdp-host', '/base'), /macOS-only/);
+  assert.throws(() => spawnScriptForMode('darwin', 'bogus', '/base'), /unknown.*mode/);
+  // buildSessionArgs keeps its legacy 2-arg shape and gains an optional mode.
+  const legacy = buildSessionArgs('darwin', '/base');
+  assert.match(legacy[0], /soren91_macos_session\.mjs$/);
+  assert.deepEqual(legacy.slice(1), ['--execute']);
+  const cdpHost = buildSessionArgs('darwin', '/base', 'cdp-host');
+  assert.match(cdpHost[0], /soren91_macos_cdp_host\.mjs$/);
+  assert.deepEqual(cdpHost.slice(1), ['--execute']);
+});
+
+test('createServer rejects a misconfigured mode at startup, not at first start', () => {
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  assert.throws(
+    () => createServer(options, { platform: 'darwin', mode: 'bogus', spawnImpl: () => stubSpawn() }),
+    /unknown.*mode/,
+  );
+  assert.throws(
+    () => createServer(options, { platform: 'win32', mode: 'cdp-host', spawnImpl: () => stubSpawn() }),
+    /macOS-only/,
+  );
+  assert.throws(
+    () => createServer(options, {
+      platform: 'darwin', env: { SOREN91_LOCAL_SESSION_MODE: 'nope' }, spawnImpl: () => stubSpawn(),
+    }),
+    /must be "session" or "cdp-host"/,
+  );
+});
+
+test('HTTP: cdp-host mode spawns the CDP host script and reports its mode', async () => {
+  await withCapturingServer('darwin', async (base, seen) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}` };
+    const status = await fetch(`${base}/v1/status`, { headers: auth });
+    assert.equal(status.status, 200);
+    assert.deepEqual(await status.json(), {
+      ok: true, backend: 'local-macos', mode: 'cdp-host', running: false, pid: null, lastExit: null,
+    });
+    const started = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
+    assert.equal(started.status, 202);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0].args[0], /soren91_macos_cdp_host\.mjs$/);
+    assert.deepEqual(seen[0].args.slice(1), ['--execute']);
+  }, 'cdp-host');
+});
+
+test('HTTP: cdp-host mode propagates the srtUrl body to the child env', async () => {
+  await withCapturingServer('darwin', async (base, seen) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}`, 'content-type': 'application/json' };
+    const srtUrl = 'srt://100.71.107.106:19192?mode=caller';
+    const res = await fetch(`${base}/v1/start`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ srtUrl }),
+    });
+    assert.equal(res.status, 202);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0].args[0], /soren91_macos_cdp_host\.mjs$/);
+    assert.equal(seen[0].env.SOREN91_LOCAL_SRT_URL, srtUrl);
+    assert.notEqual(process.env.SOREN91_LOCAL_SRT_URL, srtUrl);
+  }, 'cdp-host');
+});
+
+test('HTTP: default server still spawns the self-playing session script', async () => {
+  await withCapturingServer('darwin', async (base, seen) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}` };
+    const res = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
+    assert.equal(res.status, 202);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0].args[0], /soren91_macos_session\.mjs$/);
+  }, undefined);
 });

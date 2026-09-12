@@ -22,6 +22,10 @@
 //   (max 8KB). When present and valid, the value overrides
 //   SOREN91_LOCAL_SRT_URL in the SPAWNED CHILD's env only (process.env is
 //   never mutated). Absent/empty body keeps the legacy behavior above.
+// - Phase 2a extension (macOS only): `SOREN91_LOCAL_SESSION_MODE=cdp-host`
+//   (or `SOREN91_LOCAL_CDP_HOST=1`) makes POST /v1/start spawn
+//   `tools/soren91_macos_cdp_host.mjs` instead of the self-playing session.
+//   Default `session` preserves the behavior above byte-for-byte.
 import http from 'node:http';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -40,6 +44,47 @@ export function sessionScriptForPlatform(platform = process.platform, baseDir = 
   if (platform === 'darwin') return path.join(baseDir, 'soren91_macos_session.mjs');
   if (platform === 'win32') return path.join(baseDir, 'soren91_windows_session.mjs');
   throw new Error(`unsupported platform for local agent: ${platform}`);
+}
+
+// Phase 2a: spawn-target selection.
+//
+// `SOREN91_LOCAL_SESSION_MODE` selects what POST /v1/start spawns:
+// - `session` (default, legacy): the renderer joins the game itself
+//   (`soren91_macos_session.mjs` on darwin).
+// - `cdp-host`: holds a virtual display + remote-debuggable Chrome and waits
+//   for the OCI bot to drive it over CDP
+//   (`soren91_macos_cdp_host.mjs`, darwin only).
+// `SOREN91_LOCAL_CDP_HOST=1` (1/true/yes/on) is accepted as an alias for
+// `cdp-host`. An explicit SOREN91_LOCAL_SESSION_MODE wins over the alias.
+// Unknown mode values throw (fail closed) so a typo never silently runs the
+// wrong backend.
+export function resolveSessionMode(env = process.env) {
+  const rawMode = env?.SOREN91_LOCAL_SESSION_MODE;
+  if (rawMode != null && String(rawMode).trim() !== '') {
+    const normalized = String(rawMode).trim().toLowerCase().replace(/_/g, '-');
+    if (normalized === 'session') return 'session';
+    if (normalized === 'cdp-host' || normalized === 'cdphost') return 'cdp-host';
+    throw new Error(
+      `SOREN91_LOCAL_SESSION_MODE must be "session" or "cdp-host" (got ${JSON.stringify(rawMode)})`,
+    );
+  }
+  const flag = env?.SOREN91_LOCAL_CDP_HOST;
+  if (flag != null && /^(1|true|yes|y|on)$/i.test(String(flag).trim())) return 'cdp-host';
+  return 'session';
+}
+
+// Mode-aware spawn target. `session` keeps the legacy per-platform script.
+// `cdp-host` is macOS-only (the host's --execute is darwin-gated) and throws
+// on any other platform.
+export function spawnScriptForMode(platform = process.platform, mode = 'session', baseDir = here) {
+  if (mode === 'cdp-host') {
+    if (platform !== 'darwin') {
+      throw new Error(`cdp-host mode is macOS-only (unsupported platform: ${platform})`);
+    }
+    return path.join(baseDir, 'soren91_macos_cdp_host.mjs');
+  }
+  if (mode === 'session') return sessionScriptForPlatform(platform, baseDir);
+  throw new Error(`unknown local agent session mode: ${JSON.stringify(mode)}`);
 }
 
 export function defaults(env = process.env) {
@@ -81,8 +126,8 @@ export function authorized(header, token) {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-export function buildSessionArgs(platform = process.platform, baseDir = here) {
-  return [sessionScriptForPlatform(platform, baseDir), '--execute'];
+export function buildSessionArgs(platform = process.platform, baseDir = here, mode = 'session') {
+  return [spawnScriptForMode(platform, mode, baseDir), '--execute'];
 }
 
 // Max JSON body accepted by POST /v1/start (additive srtUrl extension).
@@ -178,15 +223,23 @@ function json(res, status, value) {
 
 // Creates the HTTP server without listening, so tests can bind an ephemeral
 // port. `spawnImpl` is injectable so tests never launch a real session.
-export function createServer(options, { platform = process.platform, spawnImpl = spawn } = {}) {
+// `mode` selects the spawn target ('session' default / 'cdp-host'); when
+// omitted it is resolved from `env` (default process.env) via
+// resolveSessionMode. An invalid mode/platform combination throws here
+// (fail closed) instead of failing on the first POST /v1/start.
+export function createServer(options, { platform = process.platform, spawnImpl = spawn, mode, env = process.env } = {}) {
   assertPlatformSupported(platform);
   const backend = backendForPlatform(platform);
+  const sessionMode = mode ?? resolveSessionMode(env);
+  // Eagerly resolve so a misconfigured mode fails at startup, not at start.
+  const spawnArgs = buildSessionArgs(platform, here, sessionMode);
   let child = null;
   let lastExit = null;
 
   const currentStatus = () => ({
     ok: true,
     backend,
+    mode: sessionMode,
     running: Boolean(child && child.exitCode == null),
     pid: child?.pid || null,
     lastExit,
@@ -219,7 +272,10 @@ export function createServer(options, { platform = process.platform, spawnImpl =
         return json(res, 400, { ok: false, error: error?.message || 'invalid request body' });
       }
       const childEnv = srtUrl ? { ...process.env, SOREN91_LOCAL_SRT_URL: srtUrl } : process.env;
-      child = spawnImpl(process.execPath, buildSessionArgs(platform), {
+      // Both spawn targets take all configuration from the child env
+      // (SOREN91_LOCAL_SRT_URL for the srtUrl override above; SOREN91_CDP_*
+      // etc. flow through process.env untouched), never from argv.
+      child = spawnImpl(process.execPath, spawnArgs, {
         env: childEnv,
         stdio: ['ignore', 'inherit', 'inherit'],
         windowsHide: platform === 'win32' ? false : undefined,
@@ -244,9 +300,10 @@ export async function main() {
   const options = validateOptions(defaults());
   const platform = process.platform;
   assertPlatformSupported(platform);
-  const { server } = createServer(options, { platform });
+  const mode = resolveSessionMode();
+  const { server } = createServer(options, { platform, mode });
   server.listen(options.port, options.host, () => {
-    console.log(`soren91 local agent listening on http://${options.host}:${options.port}`);
+    console.log(`soren91 local agent listening on http://${options.host}:${options.port} (mode=${mode})`);
   });
 }
 
