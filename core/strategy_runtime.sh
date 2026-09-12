@@ -5,6 +5,52 @@ _strategy_runtime_lock_path() {
 	printf '%s\n' "${STRATEGY_APPLY_LOCK_FILE:-${TMP_STATE_DIR:-tmp/state}/strategy_apply.lock}"
 }
 
+_strategy_runtime_apply_failure_path() {
+	printf '%s\n' "${STRATEGY_APPLY_FAILURE_FILE:-${TMP_STATE_DIR:-tmp/state}/strategy_apply_last_failure.json}"
+}
+
+_strategy_runtime_record_apply_failure() {
+	local failure_code="${1:-apply_bundle_failed}" path now
+	path=$(_strategy_runtime_apply_failure_path)
+	now=$(date +%s)
+	mkdir -p "$(dirname "$path")" 2>/dev/null || true
+	python3 - "$path" "$failure_code" "$now" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+import tempfile
+
+path, code, failed_at = sys.argv[1:4]
+if code != "apply_bundle_failed":
+    code = "apply_bundle_failed"
+payload = {
+    "schema_version": 1,
+    "failure_code": code,
+    "failed_at": int(failed_at),
+}
+parent = os.path.dirname(path) or "."
+os.makedirs(parent, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=".strategy_apply_failure.", dir=parent)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+finally:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+PY
+}
+
 _strategy_runtime_atomic_copy_unlocked() {
 	local source_file="$1" target_file="$2"
 	local target_dir target_base temp_file
@@ -110,7 +156,7 @@ _strategy_runtime_apply_bundle_unlocked() {
 	[ -n "$helpers_previous" ] && rm -rf "$helpers_previous"
 }
 
-strategy_runtime_atomic_apply_bundle_then() {
+_strategy_runtime_atomic_apply_bundle_then_once() {
 	local source_file="$1" target_file="${2:-$STRATEGY_FILE}"
 	local helpers_source="${3:-}" helpers_target="${4:-strategy_helpers}" callback="${5:-}"
 	local lock_file
@@ -127,6 +173,26 @@ strategy_runtime_atomic_apply_bundle_then() {
 		_strategy_runtime_apply_bundle_unlocked "$source_file" "$target_file" "$helpers_source" "$helpers_target" || return 1
 		[ -z "$callback" ] || "$callback" "$@"
 	fi
+}
+
+strategy_runtime_atomic_apply_bundle_then() {
+	# The improvement callback used by Soren is explicitly idempotent. A transient
+	# lock/copy/rename failure should therefore not discard an already validated
+	# candidate. Retry the exact same reviewed bundle once, then fail closed and
+	# leave a fixed diagnostic marker if both attempts fail.
+	local retry_delay="${STRATEGY_APPLY_RETRY_DELAY_SEC:-1}"
+	case "$retry_delay" in '' | *[!0-9]*) retry_delay=1 ;; esac
+	[ "$retry_delay" -gt 5 ] && retry_delay=5
+
+	if _strategy_runtime_atomic_apply_bundle_then_once "$@"; then
+		return 0
+	fi
+	[ "$retry_delay" -le 0 ] || sleep "$retry_delay"
+	if _strategy_runtime_atomic_apply_bundle_then_once "$@"; then
+		return 0
+	fi
+	_strategy_runtime_record_apply_failure "apply_bundle_failed"
+	return 1
 }
 
 strategy_runtime_atomic_apply_bundle() {
