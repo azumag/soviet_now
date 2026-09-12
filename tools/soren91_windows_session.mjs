@@ -143,8 +143,12 @@ async function waitForResult(resultPath, child, timeoutMs) {
   throw new Error('renderer readiness timed out');
 }
 
-function terminate(child) {
+function terminateTree(child, platform = process.platform) {
   if (!child || child.exitCode != null || child.killed) return;
+  if (platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    return;
+  }
   try { child.kill('SIGTERM'); } catch {}
 }
 
@@ -172,7 +176,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   const hardDeadline = startedAt + options.hardMaxSec * 1000;
   let renderer;
   let ffmpeg;
-  const cleanup = () => { terminate(ffmpeg); terminate(renderer); };
+  const cleanup = () => { terminateTree(ffmpeg, platform); terminateTree(renderer, platform); };
   process.once('SIGINT', cleanup);
   process.once('SIGTERM', cleanup);
   try {
