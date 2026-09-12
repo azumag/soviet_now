@@ -10,6 +10,7 @@ import {
   extractInstanceId,
   extractLaunchPrice,
   extractPocResult,
+  findRecoverableLaunch,
   main,
   selectPricing,
   validateOptions,
@@ -63,6 +64,37 @@ test('PowerGPU launch and runner parsers accept expected outputs', () => {
   assert.equal(extractInstanceId('instance i-b81f02aa running'), 'i-b81f02aa');
   assert.equal(extractLaunchPrice({ id: 'i-1', price_hr: 0.009 }), 0.009);
   assert.deepEqual(extractPocResult('noise\nSOREN91_POC_RESULT={"pass":true,"probe":{"fps":30.4}}\n'), { pass: true, probe: { fps: 30.4 } });
+});
+
+test('ambiguous launch recovery only accepts one strongly attributable new instance', () => {
+  const before = new Set(['i-old1111']);
+  const started = 1_800_000_000;
+  const exact = {
+    id: 'i-new2222',
+    gpu_slug: 'tesla-p4',
+    image: options.image,
+    created_at: started + 1,
+  };
+  assert.equal(findRecoverableLaunch(before, { instances: [{ id: 'i-old1111' }, exact] }, options, started), 'i-new2222');
+
+  assert.equal(findRecoverableLaunch(before, { instances: [
+    { id: 'i-new3333', gpu_slug: 'tesla-p4', image: 'other/image', created_at: started - 60 },
+  ] }, options, started), null);
+
+  assert.equal(findRecoverableLaunch(before, { instances: [
+    exact,
+    { ...exact, id: 'i-new4444' },
+  ] }, options, started), null);
+});
+
+test('recovery without created_at requires both P4 and exact image identity', () => {
+  const before = new Set();
+  assert.equal(findRecoverableLaunch(before, { data: [
+    { id: 'i-new5555', gpu_name: 'NVIDIA Tesla P4', image_ref: options.image },
+  ] }, options, 1_800_000_000), 'i-new5555');
+  assert.equal(findRecoverableLaunch(before, { data: [
+    { id: 'i-new6666', gpu_name: 'NVIDIA Tesla P4' },
+  ] }, options, 1_800_000_000), null);
 });
 
 test('hard safety caps cannot be raised from command options', () => {
