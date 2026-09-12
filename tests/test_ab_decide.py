@@ -34,13 +34,13 @@ class AbDecideTest(unittest.TestCase):
         v = dec.decide(_rows(0, 5))
         self.assertEqual(v["verdict"], "CONTINUE")
 
-    def test_harm_stops_early(self):
+    def test_calibrated_harm_stops_from_k10(self):
         ks = []
         for s in range(10):
             t = dec.trail(_rows(-500, 12, seed=s))
             first = next((k for (i, k, verdict, m, u) in t if verdict == "REJECT_HARM"), None)
             ks.append(first)
-        self.assertTrue(all(k is not None and k <= 9 for k in ks), ks)
+        self.assertTrue(all(k is not None and 10 <= k <= 12 for k in ks), ks)
 
     def test_null_never_adopts_and_stops_by_futility_or_final(self):
         verdicts = []
@@ -84,7 +84,7 @@ class AbDecideTest(unittest.TestCase):
             for ch in "ABBA":
                 rows.append({
                     "idx": idx, "arm": ch,
-                    "score": 1600.0,                       # raw は腕差ゼロ
+                    "score": 1600.0,
                     "eval": 1600.0 + (600.0 if ch == "B" else 0.0),
                     "turns": 90, "tainted": False,
                 })
@@ -95,7 +95,6 @@ class AbDecideTest(unittest.TestCase):
         self.assertEqual(v_score["primary"], "score")
         self.assertGreater(v_eval["mean_diff"], v_score["mean_diff"])
         self.assertAlmostEqual(v_score["mean_diff"], 0.0)
-        # 指標別の既定 SD が state から解決されること。
         self.assertAlmostEqual(rep.state_primary_sd({"primary": "eval"}, "eval"), 3700.0)
         self.assertAlmostEqual(rep.state_primary_sd({}, "score"), 650.0)
 
@@ -105,9 +104,7 @@ class AbDecideTest(unittest.TestCase):
         self.assertEqual(v["verdict"], "ABORT", v)
 
     def test_primary_missing_rows_do_not_inflate_n_or_change_decision(self):
-        """#288 レビュー: 正準指標 (_primary) が欠測した行は n_a/n_b/n_min に数えない。
-        ブロック計算 (k, mean_diff) には元々影響しないが、以前は n_a/n_b がこれらの
-        行まで数えてしまい、min_n_per_arm/MDE の閾値だけが不当に緩んでいた。"""
+        """#288 レビュー: 正準指標 (_primary) が欠測した行は n_a/n_b/n_min に数えない。"""
         rows = []
         idx = 0
         for _ in range(19):
@@ -121,9 +118,6 @@ class AbDecideTest(unittest.TestCase):
         baseline = dec.decide(list(rows), {"primary": "eval", "sd": 100})
         self.assertEqual(baseline["n_a"], 38)
         self.assertEqual(baseline["verdict"], "ADOPT", baseline)
-
-        # score だけあって eval を欠く非 tainted な A/B 行を大量に追加。
-        # idx は pattern 長の外にあるので blocks() には拾われず k は変わらない。
         padding = [
             {"idx": 10_000 + i, "arm": "A" if i % 2 == 0 else "B", "score": 1600.0, "turns": 90, "tainted": False}
             for i in range(80)
@@ -136,16 +130,14 @@ class AbDecideTest(unittest.TestCase):
         self.assertEqual(v["verdict"], baseline["verdict"])
 
     def test_instadeath_still_uses_full_population_when_primary_missing(self):
-        """即死判定の分母 (n_a_all/n_b_all) は正準指標 (eval) の欠測とは独立 (別母集団)
-        であるべき。score はあるが eval を欠く (=primary 欠測、非 dead) 行を混ぜても、
-        即死アボートは変わらず成立しなければならない。"""
+        """即死判定の分母は正準指標の欠測とは独立した非 tainted 母集団を使う。"""
         rows = []
         idx = 0
         for k in range(6):
             for ch in "ABBA":
                 v = 1600.0
                 if ch == "B":
-                    v = 100.0  # 全 B を「即死」扱いにする
+                    v = 100.0
                 rows.append({"idx": idx, "arm": ch, "score": v, "eval": v + 5000, "turns": 90, "tainted": False})
                 idx += 1
         padding = [
@@ -164,15 +156,16 @@ class AbDecideTest(unittest.TestCase):
         self.assertNotEqual(v["verdict"], "ADOPT")
         self.assertTrue(any("guardrail" in x for x in v["reasons"]))
 
-    def test_replay_v738_history_rejects_harm_early(self):
+    def test_replay_v738_history_rejects_harm_early_under_frozen_legacy_rule(self):
         path = os.path.join(ROOT, "tests", "fixtures", "ab_history_v738_games.jsonl")
         rows = rep.load_games(path)
         self.assertEqual(len(rows), 60)
-        t = dec.trail(rows)
+        legacy = {"harm_min_blocks": 6, "harm_z": dec.Z90}
+        t = dec.trail(rows, legacy)
         first = next((i for (i, k, verdict, m, u) in t if verdict == "REJECT_HARM"), None)
         self.assertIsNotNone(first)
         self.assertLessEqual(first, 30, t[:30])
-        final = dec.decide(rows)
+        final = dec.decide(rows, legacy)
         self.assertIn(final["verdict"], ("REJECT_HARM", "REJECT_FUTILE", "REJECT_INCONCLUSIVE"))
 
 
