@@ -11,16 +11,9 @@
 # applies those before consulting RADIO_CODEX_TIMEOUT. This therefore does not
 # affect intentionally short auxiliary calls such as NEWS:spam_check.
 
-RADIO_CODEX_TIMEOUT_MIN_SEC="${RADIO_CODEX_TIMEOUT_MIN_SEC:-60}"
-
 _normalize_radio_codex_timeout() {
 	local configured="${RADIO_CODEX_TIMEOUT:-}"
-	local minimum="${RADIO_CODEX_TIMEOUT_MIN_SEC:-60}"
-
-	case "$minimum" in
-	'' | *[!0-9]*) minimum=60 ;;
-	esac
-	[ "$minimum" -lt 1 ] && minimum=60
+	local minimum=60
 
 	# Unset preserves ai_generate.sh's own reviewed default (240s).
 	[ -n "$configured" ] || return 0
