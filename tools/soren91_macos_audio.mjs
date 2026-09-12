@@ -132,32 +132,37 @@ export function isBenignPipeError(error) {
     || code === 'ERR_STREAM_WRITE_AFTER_END';
 }
 
+// Match only receiver-close signatures observed from the SRT output path.
+// Do not use producer-side EPIPE/sinkClosed as proof: every ffmpeg failure
+// closes its stdin, so treating that as a remote-consumer close would mask
+// encoder/muxer failures. Likewise, a generic "muxer" substring is too broad
+// (e.g. queue overflow is a real failure and must stay fail-closed).
+function hasRemoteConsumerCloseMarker(stderr) {
+  const text = String(stderr || '');
+  return /broken pipe/i.test(text)
+    || /error submitting a packet to the muxer:\s*input\/output error/i.test(text)
+    || /av_interleaved_write_frame\(\):\s*input\/output error/i.test(text);
+}
+
 // Classifies an ffmpeg process exit observed BEFORE the session deadline.
 // Pure function (Issue #303: the OCI listener's `-t 120` close makes ffmpeg
-// die with an EPIPE-flavoured muxer error — a normal end of stream, not a
+// die with an output-side EPIPE/I/O marker — a normal end of stream, not a
 // failure). Returns one of:
 //   'deadline'        — deadline path won (caller treats as normal end).
-//   'consumer-closed' — ffmpeg died because the receiving side went away
-//                       (stderr carries Broken pipe / Input/output error /
-//                       muxer markers, or the caller saw a benign pipe
-//                       error on the feeding pipes). Normal end, exit 0.
-//   'failed'          — any other non-zero exit or signal death (caller
-//                       must keep throwing, as before).
+//   'consumer-closed' — ffmpeg stderr contains an explicit receiver-close
+//                       signature from the SRT output path. Normal end.
+//   'failed'          — any other early exit, non-zero exit, or signal death
+//                       (caller must keep throwing, as before).
 export function classifyFfmpegExit({
   code = null,
   signal = null,
   stderr = '',
   deadlineReached = false,
-  sinkClosed = false,
 } = {}) {
   if (deadlineReached) return 'deadline';
   if (signal != null) return 'failed';
-  if (code === 0) return 'consumer-closed';
   if (code == null) return 'failed';
-  if (sinkClosed) return 'consumer-closed';
-  if (/broken pipe|input\/output error|muxer/i.test(String(stderr || ''))) {
-    return 'consumer-closed';
-  }
+  if (hasRemoteConsumerCloseMarker(stderr)) return 'consumer-closed';
   return 'failed';
 }
 
