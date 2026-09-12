@@ -1,0 +1,32 @@
+name: Soren91 macOS PoC contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/soren91-macos-poc.yml'
+      - 'tools/check_existing_chrome.mjs'
+      - 'tools/soren91_macos_renderer.mjs'
+      - 'tools/soren91_macos_session.mjs'
+      - 'tests/test_soren91_macos_session.mjs'
+      - 'infra/local/macos/soren91/**'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout reviewed PR merge
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Syntax check macOS renderer/session helpers
+        run: |
+          node --check tools/check_existing_chrome.mjs
+          node --check tools/soren91_macos_renderer.mjs
+          node --check tools/soren91_macos_session.mjs
+      - name: Run macOS session contract tests
+        run: node --test tests/test_soren91_macos_session.mjs
