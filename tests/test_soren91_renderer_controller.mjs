@@ -5,7 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AGENT_ALREADY_RUNNING,
   DEFAULT_WAIT_MARGIN_SEC,
+  LISTENER_ERROR,
   POWERGPU_UNIMPLEMENTED,
   buildCallerSrtUrl,
   buildListenerArgs,
@@ -38,7 +40,7 @@ test('parseAgents returns [] when unset or blank', () => {
   assert.deepEqual(parseAgents({ SOREN91_LOCAL_AGENTS_JSON: '   ' }), []);
 });
 
-test('parseAgents accepts macos/windows http agents and strips trailing slashes', () => {
+test('parseAgents accepts macos/windows Tailscale http agents and strips trailing slashes', () => {
   const agents = parseAgents(agentsEnv([
     { backend: 'local-macos', baseUrl: 'http://100.64.0.3:19191/', token: TOKEN },
     { backend: 'local-windows', baseUrl: 'http://100.64.0.4:19191', token: TOKEN },
@@ -48,7 +50,7 @@ test('parseAgents accepts macos/windows http agents and strips trailing slashes'
   assert.equal(agents[0].token, TOKEN);
 });
 
-test('parseAgents rejects broken configs without leaking tokens', () => {
+test('parseAgents rejects broken/public configs without leaking tokens', () => {
   const bad = [
     '{not json',
     '"just a string"',
@@ -57,6 +59,9 @@ test('parseAgents rejects broken configs without leaking tokens', () => {
     agentsEnv([{ backend: 'local-macos', baseUrl: 'http://100.64.0.3:19191', token: 'short' }]),
     agentsEnv([{ backend: 'local-macos', baseUrl: 'not a url', token: TOKEN }]),
     agentsEnv([{ backend: 'local-macos', baseUrl: 'http://user@100.64.0.3:19191', token: TOKEN }]),
+    agentsEnv([{ backend: 'local-macos', baseUrl: 'http://8.8.8.8:19191', token: TOKEN }]),
+    agentsEnv([{ backend: 'local-macos', baseUrl: 'http://agent.example:19191', token: TOKEN }]),
+    agentsEnv([{ backend: 'local-macos', baseUrl: 'http://100.64.0.3', token: TOKEN }]),
   ];
   for (const entry of bad) {
     const env = typeof entry === 'string' && entry.startsWith('{')
@@ -317,7 +322,14 @@ function mockChild() {
     pid: 4242,
     exitCode: null,
     killCalls: [],
-    kill(signal) { this.killCalls.push(signal); return true; },
+    kill(signal) {
+      this.killCalls.push(signal);
+      if (this.exitCode == null) {
+        this.exitCode = 143;
+        queueMicrotask(() => this.emit('exit', null, signal));
+      }
+      return true;
+    },
     once(event, fn) { (listeners[event] ||= []).push(fn); },
     emit(event, ...args) { for (const fn of listeners[event] || []) fn(...args); },
   };
@@ -380,6 +392,59 @@ test('runController execute mode starts then stops the agent and kills the liste
   assert.equal(spawned[0].bin, 'ffmpeg');
   assert.ok(spawned[0].args.includes(`srt://${TAIL}:19192?mode=listener`));
   assert.deepEqual(child.killCalls, [], 'clean exit needs no SIGTERM');
+});
+
+test('runController never stops a foreign session when start races to 409', async () => {
+  const calls = [];
+  let child;
+  const fetchImpl = async (url, options) => {
+    const method = options?.method || 'GET';
+    calls.push({ url, method });
+    if (url.endsWith('/health')) return jsonResponse(200, { ok: true });
+    if (url.endsWith('/v1/status')) return jsonResponse(200, { ok: true, running: false });
+    if (url.endsWith('/v1/start')) return jsonResponse(409, { ok: false, error: 'already running' });
+    if (url.endsWith('/v1/stop')) throw new Error('must not stop a session this controller did not start');
+    throw new Error(`unexpected ${method} ${url}`);
+  };
+  const result = await runController(
+    { agents: [MAC], tailscaleIp: TAIL, port: 19192, outPath: '/tmp/x.ts', durationSec: 90, execute: true },
+    { fetchImpl, spawnImpl: () => { child = mockChild(); return child; } },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, AGENT_ALREADY_RUNNING);
+  assert.equal(calls.filter((call) => call.url.endsWith('/v1/stop')).length, 0);
+  assert.deepEqual(child.killCalls, ['SIGTERM']);
+});
+
+test('runController observes an immediate listener spawn error and still cleans up its session', async () => {
+  const order = [];
+  let child;
+  const fetchImpl = async (url) => {
+    if (url.endsWith('/health')) return jsonResponse(200, { ok: true });
+    if (url.endsWith('/v1/status')) return jsonResponse(200, { ok: true, running: false });
+    if (url.endsWith('/v1/start')) {
+      order.push('start');
+      await new Promise((resolve) => setImmediate(resolve));
+      return jsonResponse(202, { ok: true, started: true });
+    }
+    if (url.endsWith('/v1/stop')) { order.push('stop'); return jsonResponse(202, { ok: true }); }
+    throw new Error(`unexpected ${url}`);
+  };
+  const result = await runController(
+    { agents: [MAC], tailscaleIp: TAIL, port: 19192, outPath: '/tmp/x.ts', durationSec: 90, execute: true },
+    {
+      fetchImpl,
+      spawnImpl: () => {
+        child = mockChild();
+        queueMicrotask(() => child.emit('error', new Error('ENOENT: ffmpeg')));
+        return child;
+      },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, LISTENER_ERROR);
+  assert.deepEqual(order, ['start', 'stop']);
+  assert.ok(!result.error.includes('ENOENT'));
 });
 
 test('runController execute mode stops the agent and kills the listener on failure', async () => {
