@@ -37,6 +37,26 @@ WORKER_NAME="radio_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
 POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 
+# docich production deploy は /home/ubuntu/soren へ reviewed submodule の変更
+# ファイルを projection するが、live checkout 自身の git HEAD は動かさない。
+# HEAD だけを監視すると長寿命 worker が新しい ai_generate/policy を source せず、
+# deploy 後も古い timeout/provider policy を使い続ける。eloop_lib.sh が読み込む
+# runtime shell 群の内容 signature も監視し、projection-only 更新を検知する。
+_runtime_source_signature() {
+	local dir file
+	{
+		printf '%s ' 'eloop_lib.sh'
+		cksum eloop_lib.sh 2>/dev/null || printf '%s\n' 'missing'
+		for dir in core lib broadcast strategy; do
+			[ -d "$dir" ] || continue
+			while IFS= read -r file; do
+				printf '%s ' "$file"
+				cksum "$file" 2>/dev/null || printf '%s\n' 'missing'
+			done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print 2>/dev/null | LC_ALL=C sort)
+		done
+	} | cksum | awk '{print $1 ":" $2}'
+}
+
 _STOPPED=0
 _RELOAD_REQUESTED=0
 _HEARTBEAT_PID=""
@@ -45,6 +65,7 @@ _LAST_GAME_NUM=""
 _LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
 _SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
 _RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+_RUNTIME_SOURCE_SIGNATURE="$(_runtime_source_signature)"
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -165,6 +186,7 @@ _reload_runtime() {
 	fi
 	if source ./eloop_lib.sh 2>/dev/null; then
 		_RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+		_RUNTIME_SOURCE_SIGNATURE="$(_runtime_source_signature)"
 		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
 		_log "reload complete (interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
@@ -174,16 +196,20 @@ _reload_runtime() {
 }
 
 _refresh_runtime_if_checkout_changed() {
-	local current_head=""
+	local current_head="" current_signature=""
 	current_head="$(git rev-parse HEAD 2>/dev/null || true)"
-	[ -n "$current_head" ] || return 0
-	[ "$current_head" = "$_RUNTIME_SOURCE_HEAD" ] && return 0
+	current_signature="$(_runtime_source_signature)"
+	[ -n "$current_signature" ] || return 0
+	if [ "$current_head" = "$_RUNTIME_SOURCE_HEAD" ] && [ "$current_signature" = "$_RUNTIME_SOURCE_SIGNATURE" ]; then
+		return 0
+	fi
 
-	# Production deploy updates the Soren checkout while this long-lived shell
-	# stays alive. Refresh the parent shell only when the reviewed checkout
-	# actually advances; unlike signal reload, do not terminate in-flight jobs.
+	# Production deploy は reviewed Soren source を live tree へ projection するため、
+	# live checkout の HEAD が据え置きでも内容 signature の変化で更新を検知する。
+	# unlike signal reload, do not terminate in-flight jobs.
 	if source ./eloop_lib.sh 2>/dev/null; then
 		_RUNTIME_SOURCE_HEAD="$current_head"
+		_RUNTIME_SOURCE_SIGNATURE="$current_signature"
 		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
 		_log "runtime refresh complete (head=${current_head:0:12}, interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
@@ -243,7 +269,7 @@ _LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 _log "起動 (PID=$$, interval=${POLL_INTERVAL}s, initial_game=${_LAST_GAME_NUM})"
 
 _run_iteration() {
-	# Production deploy で checkout が進んだ場合だけ、親 shell の runtime 定義を更新する。
+	# Production deploy で runtime source が変わった場合、親 shell の定義を更新する。
 	_refresh_runtime_if_checkout_changed
 
 	local current_game_num score
