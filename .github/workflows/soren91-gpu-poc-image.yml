@@ -7,7 +7,12 @@ on:
     paths:
       - .github/workflows/soren91-gpu-poc-image.yml
       - infra/vast/soren91/**
+      - infra/powergpu/soren91/**
       - tools/soren91_gpu_runner.mjs
+      - tools/vast_soren91_session.mjs
+      - tools/powergpu_soren91_session.mjs
+      - tests/test_vast_soren91_session.mjs
+      - tests/test_powergpu_soren91_session.mjs
   workflow_dispatch:
 
 permissions:
@@ -25,6 +30,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Test GPU PoC controllers
+        run: node --test tests/test_vast_soren91_session.mjs tests/test_powergpu_soren91_session.mjs
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
