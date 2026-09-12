@@ -258,6 +258,7 @@ export SOREN91_OCI_TAILSCALE_IP='<oci-tailscale-ip>'   # required, 100.64.0.0/10
 export SOREN91_OCI_SRT_PORT=19192                      # default 19192
 export SOREN91_OCI_POC_OUT=/tmp/soren91-local-poc.ts   # default
 export SOREN91_OCI_POC_SEC=90                          # default 90, minimum 90
+export SOREN91_OCI_CTRL_WAIT_MARGIN_SEC=240            # default 240, integer 60..1200
 export SOREN91_OCI_FFMPEG_BIN=ffmpeg                   # default
 
 # Plan only (probes agents, prints the JSON plan, spawns nothing):
@@ -270,7 +271,11 @@ node tools/soren91_renderer_controller.mjs --execute
 Behavior: the listener binds the Tailscale IP only (`srt://<ip>:<port>?mode=listener`,
 never `0.0.0.0`/public, no passphrase); the agent gets the matching
 `srt://<ip>:<port>?mode=caller` in the `/v1/start` body (a `409` means
-"already running" and is still stopped afterwards). Tokens never appear in
+"already running" and is still stopped afterwards). The controller waits
+`SOREN91_OCI_POC_SEC + SOREN91_OCI_CTRL_WAIT_MARGIN_SEC` for the listener
+(default 90+240s): the margin covers local renderer startup (Unity load +
+match join + fps measure), which can exceed 60s on a healthy run — without
+it the controller would misreport a healthy SRT stream as a timeout. Tokens never appear in
 argv, logs, or error messages. If selection yields a `powergpu-*` backend,
 the controller exits non-zero reporting it as unimplemented (Issue #309) —
 it never launches cloud capacity. Extra cloud candidates can be injected

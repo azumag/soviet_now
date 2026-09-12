@@ -5,9 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_WAIT_MARGIN_SEC,
   POWERGPU_UNIMPLEMENTED,
   buildCallerSrtUrl,
   buildListenerArgs,
+  listenerWaitTimeoutMs,
   parseAgents,
   probeAgent,
   readControllerConfig,
@@ -74,12 +76,60 @@ test('readControllerConfig applies defaults and floors duration to 90s', () => {
   assert.equal(config.port, 19192);
   assert.equal(config.outPath, '/tmp/soren91-local-poc.ts');
   assert.equal(config.durationSec, 90);
+  assert.equal(config.waitMarginSec, 240);
   assert.equal(config.ffmpegBin, 'ffmpeg');
   assert.deepEqual(config.agents, []);
   const floored = readControllerConfig({ SOREN91_OCI_TAILSCALE_IP: TAIL, SOREN91_OCI_POC_SEC: '30' });
   assert.equal(floored.durationSec, 90);
   assert.throws(() => readControllerConfig({}), /TAILSCALE_IP/);
   assert.throws(() => readControllerConfig({ SOREN91_OCI_TAILSCALE_IP: '8.8.8.8' }), /Tailscale/);
+});
+
+test('readControllerConfig parses SOREN91_OCI_CTRL_WAIT_MARGIN_SEC and rejects out-of-range', () => {
+  const over = readControllerConfig({ SOREN91_OCI_TAILSCALE_IP: TAIL, SOREN91_OCI_CTRL_WAIT_MARGIN_SEC: '300' });
+  assert.equal(over.waitMarginSec, 300);
+  for (const bad of ['59', '1201', 'abc', '1.5', '']) {
+    if (bad === '') continue; // blank means "unset" -> default
+    assert.throws(
+      () => readControllerConfig({ SOREN91_OCI_TAILSCALE_IP: TAIL, SOREN91_OCI_CTRL_WAIT_MARGIN_SEC: bad }),
+      /WAIT_MARGIN/,
+      `margin ${bad} must throw`,
+    );
+  }
+  // Boundary values are accepted.
+  assert.equal(readControllerConfig({ SOREN91_OCI_TAILSCALE_IP: TAIL, SOREN91_OCI_CTRL_WAIT_MARGIN_SEC: '60' }).waitMarginSec, 60);
+  assert.equal(readControllerConfig({ SOREN91_OCI_TAILSCALE_IP: TAIL, SOREN91_OCI_CTRL_WAIT_MARGIN_SEC: '1200' }).waitMarginSec, 1200);
+  assert.equal(DEFAULT_WAIT_MARGIN_SEC, 240);
+});
+
+test('listenerWaitTimeoutMs adds duration and margin', () => {
+  assert.equal(listenerWaitTimeoutMs(90, 240), 330_000);
+  assert.equal(listenerWaitTimeoutMs(120, 300), 420_000);
+  assert.equal(listenerWaitTimeoutMs(90), 330_000);
+  assert.throws(() => listenerWaitTimeoutMs(90, 59), /waitMarginSec/);
+  assert.throws(() => listenerWaitTimeoutMs(90, 1201), /waitMarginSec/);
+  assert.throws(() => listenerWaitTimeoutMs(0, 240), /durationSec/);
+});
+
+test('runController plan exposes the wait budget from config', async () => {
+  const fetchImpl = async (url) => {
+    if (url.endsWith('/health')) return jsonResponse(200, { ok: true });
+    return jsonResponse(200, { ok: true, running: false });
+  };
+  const config = readControllerConfig({
+    SOREN91_OCI_TAILSCALE_IP: TAIL,
+    SOREN91_OCI_POC_SEC: '120',
+    SOREN91_OCI_CTRL_WAIT_MARGIN_SEC: '300',
+    SOREN91_LOCAL_AGENTS_JSON: JSON.stringify([MAC]),
+  });
+  const result = await runController(
+    { ...config, execute: false },
+    { fetchImpl, spawnImpl: () => { throw new Error('must not spawn in plan mode'); } },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.plan.durationSec, 120);
+  assert.equal(result.plan.waitMarginSec, 300);
+  assert.equal(result.plan.waitTimeoutMs, 420_000);
 });
 
 // --- probeAgent ---

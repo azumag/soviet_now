@@ -30,6 +30,10 @@
 // - SOREN91_OCI_SRT_PORT (default 19192).
 // - SOREN91_OCI_POC_OUT (default /tmp/soren91-local-poc.ts).
 // - SOREN91_OCI_POC_SEC (default 90, floored to a minimum of 90).
+// - SOREN91_OCI_CTRL_WAIT_MARGIN_SEC (default 240, integer 60..1200):
+//   extra seconds the controller waits for the listener beyond durationSec,
+//   covering local renderer startup (Unity load + match join + fps measure)
+//   which can exceed 60s even when SRT is healthy.
 // - SOREN91_OCI_FFMPEG_BIN (default ffmpeg).
 import { spawn } from 'node:child_process';
 import {
@@ -43,6 +47,9 @@ export const DEFAULT_POC_SEC = 90;
 export const MIN_POC_SEC = 90;
 export const DEFAULT_FFMPEG_BIN = 'ffmpeg';
 export const POWERGPU_UNIMPLEMENTED = 'powergpu-unimplemented';
+export const DEFAULT_WAIT_MARGIN_SEC = 240;
+export const MIN_WAIT_MARGIN_SEC = 60;
+export const MAX_WAIT_MARGIN_SEC = 1200;
 
 const LOCAL_BACKENDS = new Set(['local-macos', 'local-windows']);
 
@@ -119,12 +126,19 @@ export function readControllerConfig(env = process.env) {
     : Number(env.SOREN91_OCI_POC_SEC);
   if (!Number.isFinite(requestedSec)) throw new Error('SOREN91_OCI_POC_SEC must be a number');
   const durationSec = Math.max(MIN_POC_SEC, Math.floor(requestedSec));
+  const waitMarginSec = env.SOREN91_OCI_CTRL_WAIT_MARGIN_SEC == null || env.SOREN91_OCI_CTRL_WAIT_MARGIN_SEC === ''
+    ? DEFAULT_WAIT_MARGIN_SEC
+    : Number(env.SOREN91_OCI_CTRL_WAIT_MARGIN_SEC);
+  if (!Number.isInteger(waitMarginSec) || waitMarginSec < MIN_WAIT_MARGIN_SEC || waitMarginSec > MAX_WAIT_MARGIN_SEC) {
+    throw new Error(`SOREN91_OCI_CTRL_WAIT_MARGIN_SEC must be an integer in ${MIN_WAIT_MARGIN_SEC}..${MAX_WAIT_MARGIN_SEC}`);
+  }
   return {
     agents: parseAgents(env),
     tailscaleIp,
     port,
     outPath,
     durationSec,
+    waitMarginSec,
     ffmpegBin: env.SOREN91_OCI_FFMPEG_BIN || DEFAULT_FFMPEG_BIN,
   };
 }
@@ -275,6 +289,19 @@ export function buildListenerArgs({ tailscaleIp, port, outPath, durationSec, ffm
   };
 }
 
+// Pure: total listener wait budget in ms. The local renderer needs
+// (Unity load + match join + fps measure) before SRT flows, which can exceed
+// 60s on a healthy run — so the controller waits durationSec + waitMarginSec.
+export function listenerWaitTimeoutMs(durationSec, waitMarginSec = DEFAULT_WAIT_MARGIN_SEC) {
+  if (!Number.isInteger(durationSec) || durationSec <= 0) {
+    throw new Error('listenerWaitTimeoutMs durationSec must be a positive integer');
+  }
+  if (!Number.isInteger(waitMarginSec) || waitMarginSec < MIN_WAIT_MARGIN_SEC || waitMarginSec > MAX_WAIT_MARGIN_SEC) {
+    throw new Error(`listenerWaitTimeoutMs waitMarginSec must be an integer in ${MIN_WAIT_MARGIN_SEC}..${MAX_WAIT_MARGIN_SEC}`);
+  }
+  return (durationSec + waitMarginSec) * 1000;
+}
+
 function waitForExit(child, timeoutMs) {
   return new Promise((resolve) => {
     let done = false;
@@ -314,7 +341,8 @@ function killListener(child) {
 // listener, stops the agent, and always kills the listener (finally).
 export async function runController(
   { agents = [], tailscaleIp, port = DEFAULT_SRT_PORT, outPath = DEFAULT_POC_OUT,
-    durationSec = DEFAULT_POC_SEC, execute = false, localOrder = DEFAULT_LOCAL_ORDER,
+    durationSec = DEFAULT_POC_SEC, waitMarginSec = DEFAULT_WAIT_MARGIN_SEC,
+    execute = false, localOrder = DEFAULT_LOCAL_ORDER,
     extraCandidates = [] } = {},
   { fetchImpl = fetch, spawnImpl = spawn, ffmpegBin = DEFAULT_FFMPEG_BIN } = {},
 ) {
@@ -343,6 +371,7 @@ export async function runController(
   }
   const srtUrl = validateTailscaleSrtUrl(buildCallerSrtUrl(tailscaleIp, port));
   const listener = buildListenerArgs({ tailscaleIp, port, outPath, durationSec, ffmpegBin });
+  const waitTimeoutMs = listenerWaitTimeoutMs(durationSec, waitMarginSec);
   if (!execute) {
     return {
       ok: true,
@@ -355,6 +384,8 @@ export async function runController(
         agentBaseUrl: agent.baseUrl,
         srtUrl,
         durationSec,
+        waitMarginSec,
+        waitTimeoutMs,
         outPath,
       },
     };
@@ -365,7 +396,7 @@ export async function runController(
   try {
     child = spawnImpl(listener.bin, listener.args, { stdio: ['ignore', 'inherit', 'inherit'] });
     start = await startSession(agent, { srtUrl, fetchImpl });
-    listenerResult = await waitForExit(child, (durationSec + 60) * 1000);
+    listenerResult = await waitForExit(child, waitTimeoutMs);
     if (listenerResult.timedOut) {
       return { ok: false, mode: 'execute', chosen, candidates, start, listener: listenerResult, error: 'listener timed out' };
     }
