@@ -5,11 +5,13 @@ on:
       - 'lib/ai_generate.sh'
       - 'lib/ai_generate_policy.sh'
       - 'eloop_lib.sh'
+      - 'core/radio_timeout_guard.sh'
       - 'lib/opencode_rate_limit_guard.py'
       - 'probe_free_slot.sh'
       - 'broadcast/radio_corners.sh'
       - 'workers/radio_worker.sh'
       - 'tests/test_radio_worker_runtime_refresh.sh'
+      - 'tests/test_radio_timeout_guard.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_ai_prepass_backoff_scope.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
@@ -23,11 +25,13 @@ on:
       - 'lib/ai_generate.sh'
       - 'lib/ai_generate_policy.sh'
       - 'eloop_lib.sh'
+      - 'core/radio_timeout_guard.sh'
       - 'lib/opencode_rate_limit_guard.py'
       - 'probe_free_slot.sh'
       - 'broadcast/radio_corners.sh'
       - 'workers/radio_worker.sh'
       - 'tests/test_radio_worker_runtime_refresh.sh'
+      - 'tests/test_radio_timeout_guard.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_ai_prepass_backoff_scope.sh'
       - 'tests/test_opencode_rate_limit_guard.py'
@@ -50,4 +54,5 @@ jobs:
       - run: bash tests/test_ai_dispatch_diagnostics.sh
       - run: bash tests/test_ai_prepass_backoff_scope.sh
       - run: bash tests/test_radio_worker_runtime_refresh.sh
-      - run: bash -n lib/ai_generate.sh lib/ai_generate_policy.sh eloop_lib.sh probe_free_slot.sh broadcast/radio_corners.sh workers/radio_worker.sh tests/test_radio_worker_runtime_refresh.sh
+      - run: bash tests/test_radio_timeout_guard.sh
+      - run: bash -n lib/ai_generate.sh lib/ai_generate_policy.sh eloop_lib.sh core/radio_timeout_guard.sh probe_free_slot.sh broadcast/radio_corners.sh workers/radio_worker.sh tests/test_radio_worker_runtime_refresh.sh tests/test_radio_timeout_guard.sh
