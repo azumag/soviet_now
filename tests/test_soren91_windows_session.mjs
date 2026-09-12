@@ -4,6 +4,7 @@ import {
   buildFfmpegArgs,
   buildRendererEnv,
   defaults,
+  isTailscaleIpv4Hostname,
   parseArgs,
   validateOptions,
 } from '../tools/soren91_windows_session.mjs';
@@ -24,6 +25,11 @@ test('Tier -1 Windows defaults target 30 minutes at 960x540/30', () => {
 test('SRT URL must be Tailscale transport without passphrase in argv', () => {
   assert.throws(() => validateOptions({ ...options, srtUrl: 'udp://127.0.0.1:1' }, 'win32'), /srtUrl/);
   assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2:1?passphrase=secretsecret' }, 'win32'), /passphrase/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://203.0.113.10:19192?mode=caller' }, 'win32'), /Tailscale IPv4/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.128.0.1:19192?mode=caller' }, 'win32'), /Tailscale IPv4/);
+  assert.equal(isTailscaleIpv4Hostname('100.64.0.1'), true);
+  assert.equal(isTailscaleIpv4Hostname('100.127.255.255'), true);
+  assert.equal(isTailscaleIpv4Hostname('100.128.0.1'), false);
 });
 
 test('live execution is Windows-only and needs an SRT target', () => {
