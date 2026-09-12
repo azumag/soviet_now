@@ -25,9 +25,14 @@ test('Tier -1 macOS defaults target 30 minutes at 960x540/30', () => {
   assert.equal(options.captureDeviceIndex, '1');
 });
 
-test('SRT URL must be Tailscale transport without passphrase in argv', () => {
+test('SRT URL must be Tailscale caller transport without credentials in argv', () => {
   assert.throws(() => validateOptions({ ...options, srtUrl: 'udp://127.0.0.1:1' }, 'darwin'), /srtUrl/);
-  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2:1?passphrase=secretsecret' }, 'darwin'), /passphrase/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2:1?passphrase=secretsecret&mode=caller' }, 'darwin'), /passphrase/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2:1?%70assphrase=secretsecret&mode=caller' }, 'darwin'), /passphrase/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://user:secret@100.64.0.2:19192?mode=caller' }, 'darwin'), /userinfo/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2?mode=caller' }, 'darwin'), /port/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2:19192?mode=listener' }, 'darwin'), /mode=caller/);
+  assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.64.0.2:19192' }, 'darwin'), /mode=caller/);
   assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://203.0.113.10:19192?mode=caller' }, 'darwin'), /Tailscale IPv4/);
   assert.throws(() => validateOptions({ ...options, srtUrl: 'srt://100.128.0.1:19192?mode=caller' }, 'darwin'), /Tailscale IPv4/);
   assert.equal(isTailscaleIpv4Hostname('100.64.0.1'), true);
