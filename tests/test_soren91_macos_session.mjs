@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildCaptureArgs,
   buildFfmpegArgs,
   buildRendererEnv,
   defaults,
   isTailscaleIpv4Hostname,
   parseArgs,
+  parseCaptureHelperStatus,
   validateOptions,
 } from '../tools/soren91_macos_session.mjs';
 
@@ -14,7 +16,17 @@ const options = validateOptions({
   srtUrl: 'srt://100.64.0.2:19192?mode=caller&transtype=live&latency=200000',
 }, 'darwin');
 
-const crop = { cropX: 0, cropY: 117 };
+// Window-relative: outer window pixel size + the chrome-band offset inside
+// it, as emitted by soren91_macos_renderer.mjs's calibrateWindowBounds. Not
+// a screen-position crop — see tools/soren91_macos_session.mjs header.
+const capture = {
+  bundleId: 'com.google.Chrome',
+  windowTitle: 'sorengame91',
+  outerWidth: 960,
+  outerHeight: 627,
+  chromeTop: 87,
+  chromeLeft: 0,
+};
 
 test('Tier -1 macOS defaults target 30 minutes at 960x540/30', () => {
   assert.equal(options.sessionSec, 1800);
@@ -22,7 +34,7 @@ test('Tier -1 macOS defaults target 30 minutes at 960x540/30', () => {
   assert.equal(options.minFps, 30);
   assert.equal(options.width, 960);
   assert.equal(options.height, 540);
-  assert.equal(options.captureDeviceIndex, '1');
+  assert.ok(options.captureHelperBin.endsWith('soren91_window_capture'));
 });
 
 test('SRT URL must be Tailscale caller transport without credentials in argv', () => {
@@ -45,26 +57,54 @@ test('live execution is macOS-only and needs an SRT target', () => {
   assert.throws(() => validateOptions({ ...options, execute: true, srtUrl: '' }, 'darwin'), /requires.*SRT/i);
 });
 
-test('ffmpeg captures the calibrated crop and uses VideoToolbox', () => {
-  const args = buildFfmpegArgs(options, crop);
+test('capture helper args select one window by exact bundle id + title, at its own native size', () => {
+  const args = buildCaptureArgs(options, capture);
+  assert.deepEqual(args, [
+    '--bundle-id', 'com.google.Chrome',
+    '--title', 'sorengame91',
+    '--width', '960',
+    '--height', '627',
+    '--fps', '30',
+  ]);
+});
+
+test('buildCaptureArgs requires bundleId/windowTitle/outer size from the renderer result', () => {
+  assert.throws(() => buildCaptureArgs(options, null), /capture target/);
+  assert.throws(() => buildCaptureArgs(options, {}), /capture target/);
+  assert.throws(() => buildCaptureArgs(options, { bundleId: 'x', windowTitle: 'y' }), /outerWidth/);
+});
+
+test('capture helper readiness status is fail-closed', () => {
+  assert.deepEqual(parseCaptureHelperStatus('{"ok":true,"windowID":1}'), { ok: true, windowID: 1 });
+  assert.throws(() => parseCaptureHelperStatus('{"ok":false,"error":"found 0"}'), /found 0/);
+  assert.throws(() => parseCaptureHelperStatus('{"ok":false}'), /fail-closed/);
+  assert.throws(() => parseCaptureHelperStatus('not json'), /non-JSON/);
+});
+
+test('ffmpeg reads the helper\'s native-size rawvideo pipe and crops only the chrome band, in-window', () => {
+  const args = buildFfmpegArgs(options, capture);
   const rendered = args.join(' ');
-  assert.match(rendered, /avfoundation/);
-  assert.match(rendered, /-i 1:none/);
-  assert.match(rendered, /crop=960:540:0:117/);
+  assert.match(rendered, /-f rawvideo -pixel_format bgra/);
+  assert.match(rendered, /-video_size 960x627/);
+  assert.match(rendered, /-i pipe:0/);
+  assert.match(rendered, /crop=960:540:0:87/);
   assert.match(rendered, /h264_videotoolbox/);
   assert.match(rendered, /srt:\/\/100\.64\.0\.2:19192/);
   assert.match(rendered, /-an/);
+  assert.doesNotMatch(rendered, /avfoundation/);
 });
 
-test('buildFfmpegArgs requires a crop rect from the renderer result', () => {
-  assert.throws(() => buildFfmpegArgs(options, null), /crop rect/);
-  assert.throws(() => buildFfmpegArgs(options, {}), /crop rect/);
+test('buildFfmpegArgs requires the window-relative chrome offsets and outer size from the renderer result', () => {
+  assert.throws(() => buildFfmpegArgs(options, null), /chrome offsets/);
+  assert.throws(() => buildFfmpegArgs(options, {}), /chrome offsets/);
+  assert.throws(() => buildFfmpegArgs(options, { chromeTop: 0, chromeLeft: 0 }), /outerWidth/);
 });
 
-test('optional avfoundation audio device is added without changing video path', () => {
-  const args = buildFfmpegArgs({ ...options, audioDevice: 'BlackHole 2ch' }, crop);
+test('optional avfoundation audio device is added as a second input without touching the video path', () => {
+  const args = buildFfmpegArgs({ ...options, audioDevice: 'BlackHole 2ch' }, capture);
   const rendered = args.join(' ');
-  assert.match(rendered, /-i 1:BlackHole 2ch/);
+  assert.match(rendered, /-f avfoundation -i none:BlackHole 2ch/);
+  assert.match(rendered, /-map 0:v -map 1:a/);
   assert.match(rendered, /-c:a aac/);
   assert.doesNotMatch(rendered, / -an(?: |$)/);
 });

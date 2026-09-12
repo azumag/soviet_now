@@ -2,12 +2,18 @@
 // Soren91 macOS local renderer (Tier -1 counterpart to soren91_windows_renderer.mjs).
 //
 // Launches the EXISTING Google Chrome (Playwright `channel: 'chrome'`, no managed
-// Chromium download) in --app mode, calibrates the real (non-emulated) window
-// content bounds via CDP so a screen-capture crop can isolate exactly the game
-// canvas, joins the live Soren91 (sorengame91) match, and measures native rAF
-// fps + WebGL2 / hardware-renderer facts for `measureSec`. Emits a JSON result
-// (including the crop rect) to SOREN91_LOCAL_RESULT_PATH, then idles for
-// `renderSec` so an external ffmpeg capture can run against the live window
+// Chromium download) in --app mode, joins the live Soren91 (sorengame91) match,
+// and measures native rAF fps + WebGL2 / hardware-renderer facts for
+// `measureSec`. Emits a JSON result to SOREN91_LOCAL_RESULT_PATH identifying
+// this exact window (bundle id + exact page title) for a ScreenCaptureKit
+// window-targeted capture — see tools/macos/soren91_window_capture.swift and
+// Issue #303's window-overlap finding for why this is NOT a screen-position
+// crop: capturing by window identity means the stream only ever contains
+// this window's content, regardless of what else is on screen or in front
+// of it. `chromeTop`/`chromeLeft` (measured via CDP, not assumed) locate the
+// browser-chrome band inside that window's own capture so the downstream
+// ffmpeg crop can strip it without depending on screen geometry. Then idles
+// for `renderSec` so the external capture can run against the live window
 // until SIGINT/SIGTERM.
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -49,12 +55,16 @@ function waitForStop(ms) {
   });
 }
 
-// Real (non-emulated) window content bounds, for accurate avfoundation crop.
-// `newContext({ viewport: {...} })` would apply CDP device-metrics emulation,
-// which makes window.innerWidth/innerHeight and window.screenX/Y report
-// virtualized values that do NOT match the physical on-screen window — so we
-// deliberately use `viewport: null` and resize the real window via CDP
-// Browser.setWindowBounds until the real content area matches width x height.
+// Real (non-emulated) window content bounds. `newContext({ viewport: {...} })`
+// would apply CDP device-metrics emulation, which makes window.innerWidth/
+// innerHeight report virtualized values that do NOT match the physical
+// on-screen window — so we deliberately use `viewport: null` and resize the
+// real window via CDP Browser.setWindowBounds until the real content area
+// matches width x height. The output here is WINDOW-RELATIVE (outer size +
+// chrome-band offset inside that window), not a screen-position crop rect —
+// it stays valid regardless of where the window sits on screen or what is in
+// front of it, because the downstream capture selects this window by
+// identity (bundle id + exact title), not by screen coordinates.
 async function calibrateWindowBounds(context, page, { width: w, height: h, top }) {
   const cdp = await context.newCDPSession(page);
   const { windowId } = await cdp.send('Browser.getWindowForTarget');
@@ -73,10 +83,10 @@ async function calibrateWindowBounds(context, page, { width: w, height: h, top }
     throw new Error(`window content size mismatch after calibration: ${JSON.stringify(inner)}`);
   }
   return {
-    cropX: bounds.bounds.left,
-    cropY: bounds.bounds.top + (bounds.bounds.height - inner.ih),
-    width: w,
-    height: h,
+    outerWidth: bounds.bounds.width,
+    outerHeight: bounds.bounds.height,
+    chromeTop: bounds.bounds.height - inner.ih,
+    chromeLeft: bounds.bounds.width - inner.iw,
   };
 }
 
@@ -113,7 +123,7 @@ try {
   page = page || (await context.newPage());
   await page.waitForTimeout(300);
 
-  const crop = await calibrateWindowBounds(context, page, { width, height, top: windowTop });
+  const windowBounds = await calibrateWindowBounds(context, page, { width, height, top: windowTop });
   await page.addInitScript(() => { window.__soren91NativeRaf = window.requestAnimationFrame.bind(window); });
 
   const landing = await fetch('https://unityroom.com/games/sorengame91', {
@@ -138,6 +148,13 @@ try {
   await page.keyboard.type(playerName, { delay: 30 });
   await page.mouse.click(box.x + box.width * (630 / 1280), box.y + box.height * (645 / 720));
   await sleep(8_000);
+
+  // Exact (not substring) window title, used by the ScreenCaptureKit helper to
+  // identify THIS window and no other — see soren91_window_capture.swift's
+  // fail-closed matching. Chrome sets the native window title from
+  // document.title, so this must be read from the live page, not assumed.
+  const windowTitle = await page.title();
+  if (!windowTitle) throw new Error('page title is empty; cannot build a fail-closed window match for capture');
 
   const probe = await page.evaluate(async ({ seconds }) => {
     const raf = window.__soren91NativeRaf || window.requestAnimationFrame.bind(window);
@@ -184,7 +201,11 @@ try {
     criteria: { minFps, width, height, measureSec },
     videotoolbox: { pass: videotoolbox.ok, error: videotoolbox.ok ? '' : videotoolbox.stderr.slice(-500) },
     probe,
-    crop,
+    // Consumed by soren91_macos_session.mjs to build the ScreenCaptureKit
+    // helper's --bundle-id/--title/--width/--height args and the downstream
+    // ffmpeg chrome-band crop. bundleId is fixed because this renderer always
+    // launches the stable Google Chrome channel via Playwright `channel:'chrome'`.
+    capture: { bundleId: 'com.google.Chrome', windowTitle, ...windowBounds },
     checks: { hardwareRenderer, webgl2: probe.webgl2, correctBuffer, fps: probe.fps >= minFps },
   };
   emit(result);

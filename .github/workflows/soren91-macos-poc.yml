@@ -7,6 +7,8 @@ on:
       - 'tools/check_existing_chrome.mjs'
       - 'tools/soren91_macos_renderer.mjs'
       - 'tools/soren91_macos_session.mjs'
+      - 'tools/soren91_window_capture_build.sh'
+      - 'tools/macos/soren91_window_capture.swift'
       - 'tests/test_soren91_macos_session.mjs'
       - 'infra/local/macos/soren91/**'
 
