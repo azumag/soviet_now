@@ -120,10 +120,11 @@ export function buildRendererEnv(options, env = process.env) {
 function run(bin, args, { timeout = 20_000 } = {}) {
   const result = spawnSync(bin, args, { encoding: 'utf8', timeout });
   if (result.error) throw result.error;
+  const output = `${String(result.stdout || '')}\n${String(result.stderr || '')}`;
   if (result.status !== 0) {
-    throw new Error(`${bin} check failed: ${String(result.stderr || result.stdout).trim()}`);
+    throw new Error(`${bin} check failed: ${output.trim()}`);
   }
-  return String(result.stdout || '');
+  return output;
 }
 
 function waitForExit(child) {
@@ -163,6 +164,8 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   if (!/h264_nvenc/i.test(encoders)) throw new Error('ffmpeg does not expose h264_nvenc');
   const devices = run(options.ffmpegBin, ['-hide_banner', '-devices']);
   if (!/gdigrab/i.test(devices)) throw new Error('ffmpeg does not expose gdigrab');
+  const protocols = run(options.ffmpegBin, ['-hide_banner', '-protocols']);
+  if (!/(^|\s)srt(\s|$)/im.test(protocols)) throw new Error('ffmpeg does not expose SRT protocol support');
 
   fs.rmSync(options.resultPath, { force: true });
   const startedAt = Date.now();
