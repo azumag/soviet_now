@@ -11,6 +11,7 @@ cd "$ELOOP_LIB_DIR"
 
 # Layer 0: 定数・初期化
 source "$ELOOP_LIB_DIR/core/config.sh"
+source "$ELOOP_LIB_DIR/core/radio_timeout_guard.sh"
 source "$ELOOP_LIB_DIR/core/runtime_toggles.sh"
 source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
 # Layer 1: コアヘルパー
