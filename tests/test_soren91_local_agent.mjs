@@ -28,6 +28,20 @@ test('agent binds loopback by default and requires a long token', () => {
   }
 });
 
+test('agent bind host is limited to loopback or a Tailscale IPv4 address', () => {
+  for (const platform of ['darwin', 'win32']) {
+    const tailscale = validateOptions({ host: '100.64.0.3', port: 19191, token: LONG_TOKEN }, platform);
+    assert.equal(tailscale.host, '100.64.0.3');
+    for (const host of ['0.0.0.0', '8.8.8.8', '203.0.113.7', 'localhost', '::', '::1']) {
+      assert.throws(
+        () => validateOptions({ host, port: 19191, token: LONG_TOKEN }, platform),
+        /127\.0\.0\.1 or a Tailscale IPv4/,
+        `unsafe bind host ${host} must fail closed`,
+      );
+    }
+  }
+});
+
 test('port must be 1024..65535 on both platforms', () => {
   for (const platform of ['darwin', 'win32']) {
     assert.throws(() => validateOptions({ port: 80, token: LONG_TOKEN }, platform), /1024/);
