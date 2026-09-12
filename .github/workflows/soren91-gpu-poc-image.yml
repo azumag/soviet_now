@@ -13,6 +13,7 @@ on:
       - tools/powergpu_soren91_session.mjs
       - tests/test_vast_soren91_session.mjs
       - tests/test_powergpu_soren91_session.mjs
+      - tests/test_powergpu_soren91_disk_contract.mjs
   workflow_dispatch:
 
 permissions:
@@ -32,7 +33,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Test GPU PoC controllers
-        run: node --test tests/test_vast_soren91_session.mjs tests/test_powergpu_soren91_session.mjs
+        run: node --test tests/test_vast_soren91_session.mjs tests/test_powergpu_soren91_session.mjs tests/test_powergpu_soren91_disk_contract.mjs
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
