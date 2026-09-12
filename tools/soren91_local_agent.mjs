@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import http from 'node:http';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +35,15 @@ export function buildSessionArgs() {
   return [sessionScript, '--execute'];
 }
 
+function stopProcessTree(child) {
+  if (!child || child.exitCode != null) return;
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    return;
+  }
+  try { child.kill('SIGTERM'); } catch {}
+}
+
 function json(res, status, value) {
   const body = JSON.stringify(value);
   res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
@@ -65,7 +74,7 @@ export async function main() {
       return json(res, 202, { ok: true, started: true, pid: child.pid });
     }
     if (req.method === 'POST' && req.url === '/v1/stop') {
-      if (child && child.exitCode == null) child.kill('SIGTERM');
+      stopProcessTree(child);
       return json(res, 202, { ok: true, stopping: true });
     }
     return json(res, 404, { ok: false, error: 'not found' });
