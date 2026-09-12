@@ -21,9 +21,11 @@ the offscreen pipeline — PASS (142.03s received on OCI, h264, 960x540,
 30fps, 4261 frames decoded, via a temporary Tailscale-restricted listener,
 never touching the production broadcast). Backend selector wiring
 (platform-generic local agent + pure selection logic, see "Local agent /
-backend selector" below) is integrated at the code/docs level, but the
-OCI-side controller that would call the local agent is not implemented
-(same gap as the Windows PoC, PR #131). Still not soaked for 30 minutes,
+backend selector" below) is integrated at the code/docs level, and the
+OCI-side controller that calls the local agent is implemented at the code
+level (`tools/soren91_renderer_controller.mjs`, loopback/mock tested only —
+see "OCI-side controller" below; live OCI↔Mac E2E is still a separate step,
+same gap as the Windows PoC, PR #131). Still not soaked for 30 minutes,
 not connected to the production broadcast.**
 
 ## Offscreen virtual display (default, Issue #303)
@@ -216,6 +218,15 @@ POST /v1/start  (auth)     -> 202 { ok, started, pid } / 409 { error:'already ru
 POST /v1/stop   (auth)     -> 202 { ok, stopping }
 ```
 
+`POST /v1/start` accepts an optional JSON body `{ "srtUrl": "srt://..." }`
+(max 8KB; additive extension — PR #131's agent ignores the body entirely).
+When present, the URL must be a Tailscale IPv4 `srt://` URL with an explicit
+port, `mode=caller`, no userinfo, and no `passphrase=` (same rules as the
+session's `--srt-url`); it overrides `SOREN91_LOCAL_SRT_URL` for the spawned
+child only (`process.env` is never mutated). Absent/empty body keeps the
+legacy behavior (child inherits the agent's own environment). Invalid bodies
+→ `400 { ok:false, error }`, oversized bodies → `400`/`413`.
+
 Rules: default bind is `127.0.0.1:19191` (loopback only, never expose
 publicly); only one session at a time (second `POST /v1/start` → 409);
 `/v1/start` inherits the agent's own `process.env` (SRT URL, ffmpeg path,
@@ -231,6 +242,49 @@ hosts in `localOrder` first → `powergpu-p4-interruptible` →
 and power draw, which are not measured yet — override `localOrder` once
 real numbers exist. Falling back to a PowerGPU P4 host (actually launching
 one) is Issue #309's scope, not this file's.
+
+## OCI-side controller (Issue #303)
+
+`tools/soren91_renderer_controller.mjs` runs on OCI and wires selection to
+execution: probe the local agents → pick a backend with
+`selectRendererBackend` → start an SRT listener on the OCI Tailscale IP →
+`POST /v1/start { srtUrl }` to the chosen agent → wait → `POST /v1/stop` →
+guaranteed listener kill (try/finally, even on failure).
+
+```bash
+# Tokens via a secret store — never commit them, never pass via argv.
+export SOREN91_LOCAL_AGENTS_JSON='[{"backend":"local-macos","baseUrl":"http://<mac-tailscale-ip>:19191","token":"..."}]'
+export SOREN91_OCI_TAILSCALE_IP='<oci-tailscale-ip>'   # required, 100.64.0.0/10
+export SOREN91_OCI_SRT_PORT=19192                      # default 19192
+export SOREN91_OCI_POC_OUT=/tmp/soren91-local-poc.ts   # default
+export SOREN91_OCI_POC_SEC=90                          # default 90, minimum 90
+export SOREN91_OCI_FFMPEG_BIN=ffmpeg                   # default
+
+# Plan only (probes agents, prints the JSON plan, spawns nothing):
+node tools/soren91_renderer_controller.mjs
+
+# Execute for real (listener + agent session, then teardown):
+node tools/soren91_renderer_controller.mjs --execute
+```
+
+Behavior: the listener binds the Tailscale IP only (`srt://<ip>:<port>?mode=listener`,
+never `0.0.0.0`/public, no passphrase); the agent gets the matching
+`srt://<ip>:<port>?mode=caller` in the `/v1/start` body (a `409` means
+"already running" and is still stopped afterwards). Tokens never appear in
+argv, logs, or error messages. If selection yields a `powergpu-*` backend,
+the controller exits non-zero reporting it as unimplemented (Issue #309) —
+it never launches cloud capacity. Extra cloud candidates can be injected
+programmatically via `runController(..., { extraCandidates })`, which is
+where Issue #309's launcher will plug in.
+
+Loopback/mock testing (no real OCI/Mac connection — same scope as CI):
+
+```bash
+node --check tools/soren91_renderer_controller.mjs
+node --test tests/test_soren91_renderer_controller.mjs
+```
+
+Live OCI↔Mac E2E is a separate step, not covered here.
 
 ## Files
 
@@ -277,8 +331,16 @@ one) is Issue #309's scope, not this file's.
   (no cloud calls): usable locals in `localOrder` (default provisionally
   `local-macos` → `local-windows`, pending measurement) →
   `powergpu-p4-interruptible` → `powergpu-p4-ondemand` → other usable.
+- `tools/soren91_renderer_controller.mjs` — OCI-side controller: probes the
+  local agents, selects via `selectRendererBackend`, runs the Tailscale-bound
+  SRT listener, starts/stops the chosen agent (`POST /v1/start { srtUrl }`).
+  Plan mode without `--execute`; PowerGPU selection exits non-zero as
+  unimplemented (Issue #309). fetch/spawn injectable for mock tests.
 - `tests/test_soren91_local_agent.mjs`, `tests/test_soren91_renderer_priority.mjs`
   — agent/session/token/HTTP (409/404) and selector-order contract tests.
+- `tests/test_soren91_renderer_controller.mjs` — controller contract tests
+  (all fetch/spawn mocked): parse/probe/select, listener args, caller-URL
+  validation, start/stop, plan/execute run-through, PowerGPU-unimplemented.
 - `tests/test_soren91_macos_virtual_display.mjs` — offscreen bounds-proof
   unit tests + helper CLI contract tests (live parts run on macOS only and
   never create a display).

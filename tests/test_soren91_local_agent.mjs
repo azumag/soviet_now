@@ -10,8 +10,11 @@ import {
   buildSessionArgs,
   createServer,
   defaults,
+  MAX_START_BODY_BYTES,
+  parseStartBody,
   sessionScriptForPlatform,
   validateOptions,
+  validateStartSrtUrl,
 } from '../tools/soren91_local_agent.mjs';
 
 const LONG_TOKEN = 'a'.repeat(32);
@@ -142,5 +145,101 @@ test('HTTP: second start conflicts with 409; unknown paths 404', async () => {
     assert.equal(stop.status, 202);
     const unknown = await fetch(`${base}/v1/nope`, { headers: auth });
     assert.equal(unknown.status, 404);
+  });
+});
+
+// --- POST /v1/start optional { srtUrl } body (additive vs PR #131) ---
+
+test('validateStartSrtUrl accepts Tailscale caller URLs and rejects the rest', () => {
+  const good = 'srt://100.71.107.106:19192?mode=caller';
+  assert.equal(validateStartSrtUrl(good), good);
+  for (const bad of [
+    '',
+    'http://100.71.107.106:19192?mode=caller',
+    'srt://8.8.8.8:19192?mode=caller',
+    'srt://100.71.107.106:19192?mode=listener',
+    'srt://100.71.107.106:19192',
+    'srt://100.71.107.106?mode=caller',
+    'srt://user@100.71.107.106:19192?mode=caller',
+    'srt://100.71.107.106:19192?mode=caller&passphrase=x',
+    'not a url',
+  ]) {
+    assert.throws(() => validateStartSrtUrl(bad), Error, String(bad));
+  }
+});
+
+test('parseStartBody: empty body is legacy, srtUrl is validated, garbage is 400-shaped', () => {
+  assert.deepEqual(parseStartBody(''), {});
+  assert.deepEqual(parseStartBody('   '), {});
+  assert.deepEqual(parseStartBody('{}'), {});
+  assert.deepEqual(parseStartBody('{"other":1}'), {});
+  const good = 'srt://100.71.107.106:19192?mode=caller';
+  assert.deepEqual(parseStartBody(JSON.stringify({ srtUrl: good })), { srtUrl: good });
+  assert.throws(() => parseStartBody('{oops'), /valid JSON/);
+  assert.throws(() => parseStartBody('[1]'), /object/);
+  assert.throws(() => parseStartBody(JSON.stringify({ srtUrl: 'srt://8.8.8.8:1?mode=caller' })), /Tailscale/);
+});
+
+async function withCapturingServer(platform, fn) {
+  const seen = [];
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  const { server } = createServer(options, {
+    platform,
+    spawnImpl: (bin, args, spawnOptions) => {
+      seen.push({ bin, args, env: spawnOptions.env });
+      return stubSpawn();
+    },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await fn(base, seen);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('HTTP: /v1/start with a valid srtUrl body overrides the child env only', async () => {
+  await withCapturingServer('darwin', async (base, seen) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}`, 'content-type': 'application/json' };
+    const srtUrl = 'srt://100.71.107.106:19192?mode=caller';
+    const res = await fetch(`${base}/v1/start`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ srtUrl }),
+    });
+    assert.equal(res.status, 202);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].env.SOREN91_LOCAL_SRT_URL, srtUrl);
+    // process.env itself is untouched by the override.
+    assert.notEqual(process.env.SOREN91_LOCAL_SRT_URL, srtUrl);
+  });
+});
+
+test('HTTP: /v1/start without a body keeps the legacy process.env spawn', async () => {
+  await withCapturingServer('darwin', async (base, seen) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}` };
+    const res = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
+    assert.equal(res.status, 202);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].env, process.env);
+  });
+});
+
+test('HTTP: /v1/start rejects invalid and oversized bodies with 400/413', async () => {
+  await withServer('darwin', async (base) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}`, 'content-type': 'application/json' };
+    const bad = await fetch(`${base}/v1/start`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ srtUrl: 'srt://8.8.8.8:19192?mode=caller' }),
+    });
+    assert.equal(bad.status, 400);
+    assert.equal((await bad.json()).ok, false);
+  });
+  await withServer('darwin', async (base) => {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}`, 'content-type': 'application/json' };
+    const huge = await fetch(`${base}/v1/start`, {
+      method: 'POST', headers: auth, body: 'x'.repeat(MAX_START_BODY_BYTES + 1),
+    });
+    assert.ok(huge.status === 400 || huge.status === 413);
+    assert.equal((await huge.json()).ok, false);
   });
 });

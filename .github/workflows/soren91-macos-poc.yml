@@ -8,6 +8,7 @@ on:
       - 'tools/soren91_macos_renderer.mjs'
       - 'tools/soren91_macos_session.mjs'
       - 'tools/soren91_local_agent.mjs'
+      - 'tools/soren91_renderer_controller.mjs'
       - 'tools/soren91_renderer_priority.mjs'
       - 'tools/soren91_offscreen_verify.mjs'
       - 'tools/soren91_window_capture_build.sh'
@@ -16,6 +17,7 @@ on:
       - 'tools/macos/soren91_virtual_display.swift'
       - 'tests/test_soren91_macos_session.mjs'
       - 'tests/test_soren91_local_agent.mjs'
+      - 'tests/test_soren91_renderer_controller.mjs'
       - 'tests/test_soren91_renderer_priority.mjs'
       - 'tests/test_soren91_macos_capture_privacy.mjs'
       - 'tests/test_soren91_macos_virtual_display.mjs'
@@ -40,12 +42,14 @@ jobs:
           node --check tools/soren91_macos_renderer.mjs
           node --check tools/soren91_macos_session.mjs
           node --check tools/soren91_local_agent.mjs
+          node --check tools/soren91_renderer_controller.mjs
           node --check tools/soren91_renderer_priority.mjs
           node --check tools/soren91_offscreen_verify.mjs
       - name: Run macOS session contract tests
         run: |
           node --test tests/test_soren91_macos_session.mjs
           node --test tests/test_soren91_local_agent.mjs
+          node --test tests/test_soren91_renderer_controller.mjs
           node --test tests/test_soren91_renderer_priority.mjs
           node --test tests/test_soren91_macos_capture_privacy.mjs
           node --test tests/test_soren91_macos_virtual_display.mjs
