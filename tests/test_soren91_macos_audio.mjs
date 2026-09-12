@@ -97,9 +97,9 @@ test('buildAudioTapArgs emits one --pid per PID and rejects empties', () => {
   assert.throws(() => buildAudioTapArgs([]), /fail-closed/);
 });
 
-test('shouldTapAudio is opt-in (default off)', () => {
-  assert.equal(shouldTapAudio(undefined), false);
-  assert.equal(shouldTapAudio(''), false);
+test('shouldTapAudio is on by default (opt out with =0)', () => {
+  assert.equal(shouldTapAudio(undefined), true);
+  assert.equal(shouldTapAudio(''), true);
   assert.equal(shouldTapAudio('0'), false);
   assert.equal(shouldTapAudio('no'), false);
   assert.equal(shouldTapAudio('1'), true);

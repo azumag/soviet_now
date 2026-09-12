@@ -25,7 +25,9 @@ backend selector" below) is integrated at the code/docs level, and the
 OCI-side controller that calls the local agent is implemented at the code
 level (`tools/soren91_renderer_controller.mjs`, loopback/mock tested only —
 see "OCI-side controller" below; live OCI↔Mac E2E is still a separate step,
-same gap as the Windows PoC, PR #131). Still not soaked for 30 minutes,
+same gap as the Windows PoC, PR #131). Audio (Chrome process tap) is ON by
+default (opt out with `SOREN91_LOCAL_AUDIO_TAP=0`; the helper build is still
+required — see "Audio" below). Still not soaked for 30 minutes,
 not connected to the production broadcast.**
 
 ## Offscreen virtual display (default, Issue #303)
@@ -298,7 +300,7 @@ macOS 14.2+) scoped to **only the automation Chrome's descendant PIDs**,
 then muxed into the same SRT stream as AAC:
 
 ```text
-soren91_macos_session.mjs (SOREN91_LOCAL_AUDIO_TAP=1)
+soren91_macos_session.mjs (audio tap ON by default; SOREN91_LOCAL_AUDIO_TAP=0 disables)
   -> after the renderer result: `ps -ax -o pid,ppid,command` walk from the
      renderer PID -> automation Chrome descendants (Google Chrome family only)
   -> tools/macos/soren91_audio_tap --pid N [--pid N ...] (Swift, built by
@@ -309,9 +311,10 @@ soren91_macos_session.mjs (SOREN91_LOCAL_AUDIO_TAP=1)
   -> ffmpeg: -map 0:v -map 1:a -c:a aac -b:a 128k (same SRT output)
 ```
 
-Flag: `SOREN91_LOCAL_AUDIO_TAP` (default `0` = silent). With `1`, the tap
-starts after renderer readiness; with `0`, no audio is sent and the renderer
-launches Chrome with `--mute-audio` (via `SOREN91_LOCAL_MUTE_AUDIO=1`).
+Flag: `SOREN91_LOCAL_AUDIO_TAP` (default `1` = tap ON). The tap starts
+after renderer readiness; with `SOREN91_LOCAL_AUDIO_TAP=0`, no audio is sent
+and the renderer launches Chrome with `--mute-audio` (via
+`SOREN91_LOCAL_MUTE_AUDIO=1`).
 
 Privacy rules enforced in code, not just docs (fail-closed everywhere):
 
@@ -392,10 +395,11 @@ Known constraints (measured or explicitly unverified):
   holder's first stderr line is its readiness/failure signal (fail-closed —
   see `parseVirtualDisplayStatus`); holder failure errors out unless
   on-screen was explicitly allowed. Shutdown SIGTERMs the holder and waits
-  for its exit, proving the virtual display is released. With
-  `SOREN91_LOCAL_AUDIO_TAP=1` it additionally resolves the automation
+  for its exit, proving the virtual display is released. By default (audio
+  tap ON) it additionally resolves the automation
   Chrome's descendant PIDs (fail-closed on empty), starts the audio tap, and
-  wires its stdout into ffmpeg's fd 3 as `-map 1:a` AAC; without it the
+  wires its stdout into ffmpeg's fd 3 as `-map 1:a` AAC; with
+  `SOREN91_LOCAL_AUDIO_TAP=0` the
   renderer gets `SOREN91_LOCAL_MUTE_AUDIO=1` (`--mute-audio`, silent).
 - `tests/test_soren91_macos_session.mjs` — contract tests (`node --test`).
 - `tools/soren91_local_agent.mjs` — platform-generic HTTP control agent

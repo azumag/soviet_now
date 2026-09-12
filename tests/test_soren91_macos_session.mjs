@@ -103,7 +103,8 @@ test('capture helper readiness status is fail-closed', () => {
 });
 
 test('ffmpeg reads the helper\'s native-size rawvideo pipe and crops only the chrome band, in-window', () => {
-  const args = buildFfmpegArgs(options, capture);
+  // Explicit opt-out (SOREN91_LOCAL_AUDIO_TAP=0): silent path, no audio input.
+  const args = buildFfmpegArgs({ ...options, audioTap: false }, capture);
   const rendered = args.join(' ');
   assert.match(rendered, /-f rawvideo -pixel_format bgra/);
   assert.match(rendered, /-video_size 960x627/);
@@ -122,7 +123,9 @@ test('buildFfmpegArgs requires the window-relative chrome offsets and outer size
 });
 
 test('optional avfoundation audio device is added as a second input without touching the video path', () => {
-  const args = buildFfmpegArgs({ ...options, audioDevice: 'BlackHole 2ch' }, capture);
+  // The legacy device path requires opting out of the default audio tap
+  // (the two inputs are mutually exclusive).
+  const args = buildFfmpegArgs({ ...options, audioTap: false, audioDevice: 'BlackHole 2ch' }, capture);
   const rendered = args.join(' ');
   assert.match(rendered, /-f avfoundation -i none:BlackHole 2ch/);
   assert.match(rendered, /-map 0:v -map 1:a/);
@@ -277,13 +280,41 @@ test('holder failure rejects fail-closed (no silent onscreen fallback)', async (
 
 // --- Chrome-scoped audio tap (Issue #303) ---
 
-test('audio tap is off by default and enabled via SOREN91_LOCAL_AUDIO_TAP=1', () => {
+test('audio tap is on by default and disabled via SOREN91_LOCAL_AUDIO_TAP=0', () => {
   const base = defaults({});
-  assert.equal(base.audioTap, false);
+  assert.equal(base.audioTap, true);
   assert.ok(base.audioTapBin.endsWith('soren91_audio_tap'));
   assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '1' }).audioTap, true);
   assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '0' }).audioTap, false);
-  assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '' }).audioTap, false);
+  assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '' }).audioTap, true);
+});
+
+test('default ffmpeg args carry the audio tap input with an AAC map', () => {
+  assert.equal(options.audioTap, true);
+  const args = buildFfmpegArgs(options, capture);
+  const rendered = args.join(' ');
+  assert.match(rendered, /-f s16le -ar 48000 -ac 2 -i pipe:3/);
+  assert.match(rendered, /-map 0:v -map 1:a/);
+  assert.match(rendered, /-c:a aac -b:a 128k/);
+  assert.doesNotMatch(rendered, / -an(?: |$)/);
+  // Video path untouched.
+  assert.match(rendered, /-f rawvideo -pixel_format bgra/);
+  assert.match(rendered, /crop=960:540:0:87/);
+  assert.match(rendered, /h264_videotoolbox/);
+});
+
+test('SOREN91_LOCAL_AUDIO_TAP=0 restores the legacy silent path (mute + no audio input)', () => {
+  const silent = validateOptions({
+    ...defaults({ SOREN91_LOCAL_AUDIO_TAP: '0' }),
+    srtUrl: 'srt://100.64.0.2:19192?mode=caller&transtype=live&latency=200000',
+  }, 'darwin');
+  assert.equal(silent.audioTap, false);
+  const env = buildRendererEnv(silent, {});
+  assert.equal(env.SOREN91_LOCAL_MUTE_AUDIO, '1');
+  const rendered = buildFfmpegArgs(silent, capture).join(' ');
+  assert.match(rendered, / -an(?: |$)/);
+  assert.doesNotMatch(rendered, /pipe:3/);
+  assert.doesNotMatch(rendered, /-map 1:a/);
 });
 
 test('audio tap adds the s16le fd-3 input with an AAC map, keeping the video path', () => {

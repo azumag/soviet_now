@@ -15,10 +15,11 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 
-// `SOREN91_LOCAL_AUDIO_TAP=1` enables the tap; anything else (including
-// unset) keeps the default silent path (`--mute-audio`, no audio input).
+// The tap is ON by default; only an explicit opt-out (`0`/`false`/`no`/
+// `off`, i.e. `SOREN91_LOCAL_AUDIO_TAP=0`) keeps the silent path
+// (`--mute-audio`, no audio input).
 export function shouldTapAudio(value) {
-  if (value == null || value === '') return false;
+  if (value == null || value === '') return true;
   return !/^(0|false|no|off)$/i.test(String(value).trim());
 }
 

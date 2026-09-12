@@ -55,12 +55,12 @@ export function defaults(env = process.env) {
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
     audioDevice: env.SOREN91_LOCAL_AUDIO_DEVICE || '',
-    // Chrome-scoped audio tap (Issue #303): OFF by default
-    // (SOREN91_LOCAL_AUDIO_TAP=1 enables). When on, the session taps ONLY
+    // Chrome-scoped audio tap (Issue #303): ON by default. Disable with
+    // SOREN91_LOCAL_AUDIO_TAP=0. When on, the session taps ONLY
     // the automation Chrome's descendant PIDs (see soren91_macos_audio.mjs)
     // and wires the helper's s16le PCM into ffmpeg's fd 3. When off, no
     // audio is sent and the renderer launches Chrome with --mute-audio.
-    audioTap: envFlag(env, 'SOREN91_LOCAL_AUDIO_TAP', false),
+    audioTap: envFlag(env, 'SOREN91_LOCAL_AUDIO_TAP', true),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN || defaultAudioTapBin,
     renderer: env.SOREN91_LOCAL_RENDERER || defaultRenderer,
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN || defaultCaptureHelperBin,
