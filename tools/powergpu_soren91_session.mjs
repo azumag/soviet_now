@@ -188,19 +188,18 @@ export function findRecoverableLaunch(beforeIds, currentValue, options, creation
     const id = instanceId(value);
     return id && !beforeIds.has(id);
   });
+  // 同時に別instanceも増えている場合は、どれがこのcontroller由来か断定できないため触らない。
+  if (candidates.length !== 1) return null;
 
-  const strong = candidates.filter((value) => {
-    const gpu = instanceGpu(value);
-    const image = instanceImage(value);
-    const created = instanceCreatedEpoch(value);
-    const gpuMatches = Boolean(gpu) && /(?:tesla[- _]?p4|\bp4\b)/i.test(gpu);
-    const imageMatches = Boolean(image) && image === options.image;
-    const recentEnough = created == null || created >= creationStartedEpoch - 5;
-    // 回収対象は常にGPUとimageの両方が一致し、created_atがある場合は今回のlaunch時刻にも一致するものだけ。
-    return gpuMatches && imageMatches && recentEnough;
-  });
-
-  return strong.length === 1 ? instanceId(strong[0]) : null;
+  const value = candidates[0];
+  const gpu = instanceGpu(value);
+  const image = instanceImage(value);
+  const created = instanceCreatedEpoch(value);
+  const gpuMatches = Boolean(gpu) && /(?:tesla[- _]?p4|\bp4\b)/i.test(gpu);
+  const imageMatches = Boolean(image) && image === options.image;
+  const recentEnough = created == null || created >= creationStartedEpoch - 5;
+  // 回収対象は常にGPUとimageの両方が一致し、created_atがある場合は今回のlaunch時刻にも一致するものだけ。
+  return gpuMatches && imageMatches && recentEnough ? instanceId(value) : null;
 }
 
 function run(bin, args, { timeout = 30_000, allowFailure = false } = {}) {
