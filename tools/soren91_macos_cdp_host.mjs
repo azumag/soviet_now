@@ -29,6 +29,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import {
+  attachPipeGuards,
   buildCaptureArgs,
   buildFfmpegArgs,
   isTailscaleIpv4Hostname,
@@ -394,6 +395,16 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     ffmpegStdio[2] = 'pipe';
     ffmpeg = spawn(options.ffmpegBin, buildFfmpegArgs(ffmpegOpts, captureInfo), { stdio: ffmpegStdio });
     ffmpeg.stderr?.on('data', (chunk) => { try { process.stderr.write(chunk); } catch {} });
+    // Pipe guards (Issue #303): when the OCI listener goes away, ffmpeg
+    // exits and in-flight frame/PCM writes fail with EPIPE. Without guards
+    // the unhandled 'error' event crashes this host (observed 2026-09-13:
+    // listener pkill -> ffmpeg SRT I/O error -> EPIPE throw -> orphaned
+    // Chrome/proxy/capture/tap/holder). Guarded errors are benign: the host
+    // stays up until its deadline/SIGTERM and still cleans up.
+    attachPipeGuards({ capture, audiotap, ffmpeg });
+    ffmpeg.on('exit', (code, signal) => {
+      console.error(`[cdp-host] ffmpeg exited code=${code} signal=${signal} (listener may have closed; host continues until deadline/SIGTERM)`);
+    });
     capture.stdout.pipe(ffmpeg.stdin);
     if (audiotap) {
       audiotap.stdout.pipe(ffmpeg.stdio[3]);
