@@ -531,3 +531,65 @@ test('hang regression: immediate capture-exit code 0 ends without waiting out se
   assert.equal(endReason, 'consumer-closed');
   assert.ok(elapsed < 2000, `settled in ${elapsed}ms, expected < 2000ms`);
 });
+
+test('ffmpegExitWaitMs defaults to 5000ms and is env-configurable', () => {
+  assert.equal(defaults({}).ffmpegExitWaitMs, 5000);
+  assert.equal(defaults({ SOREN91_LOCAL_FFMPEG_EXIT_WAIT_MS: '1000' }).ffmpegExitWaitMs, 1000);
+  assert.equal(defaults({ SOREN91_LOCAL_FFMPEG_EXIT_WAIT_MS: '0' }).ffmpegExitWaitMs, 0);
+  assert.equal(defaults({ SOREN91_LOCAL_FFMPEG_EXIT_WAIT_MS: 'junk' }).ffmpegExitWaitMs, 5000);
+});
+
+test('race regression: audio-tap SIGPIPE winner still ends consumer-closed via ffmpeg', async () => {
+  // Mirrors the session's Promise.race shape live: the audio-tap helper's
+  // 'exit' (SIGPIPE — ffmpeg's fd 3 reader died when the OCI listener
+  // closed first) fires at once, while ffmpeg's 'close' — carrying the
+  // listener-close marker — lands ~50ms later. resolveSessionEnd must wait
+  // out the bounded ffmpeg window and report consumer-closed, settling far
+  // short of sessionSec.
+  const { resolveSessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  const tap = new EventEmitter();
+  const ffmpeg = new EventEmitter();
+  let ffmpegExit = null;
+  ffmpeg.once('close', (code, signal) => { ffmpegExit = { code, signal }; });
+  const waitForExit = (child) => new Promise(
+    (resolve) => child.once('exit', (code, signal) => resolve({ code, signal })),
+  );
+  const waitForCloseExit = (child) => new Promise(
+    (resolve) => child.once('close', (code, signal) => resolve({ code, signal })),
+  );
+  const deadline = createSessionDeadline(1_800_000);
+  const stderrChunks = [];
+  const getStderr = () => stderrChunks.join('');
+  let sinkClosed = false;
+  const started = Date.now();
+  let endReason = null;
+  try {
+    queueMicrotask(() => tap.emit('exit', null, 'SIGPIPE'));
+    setTimeout(() => {
+      stderrChunks.push('av_interleaved_write_frame(): Input/output error\n');
+      sinkClosed = true;
+      ffmpeg.emit('close', 1, null);
+    }, 50);
+    const outcome = await Promise.race([
+      deadline.promise,
+      waitForCloseExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
+      waitForExit(tap).then((value) => ({ kind: 'audio-tap-exit', value })),
+    ]);
+    assert.equal(outcome.kind, 'audio-tap-exit'); // the tap wins, as live
+    const verdict = await resolveSessionEnd({
+      kind: outcome.kind,
+      value: outcome.value,
+      getStderr,
+      getSinkClosed: () => sinkClosed,
+      getFfmpegExit: () => ffmpegExit,
+      ffmpegWaitMs: 5000,
+    });
+    if (verdict === 'consumer-closed') endReason = 'consumer-closed';
+    else throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
+  } finally {
+    deadline.cancel();
+  }
+  const elapsed = Date.now() - started;
+  assert.equal(endReason, 'consumer-closed');
+  assert.ok(elapsed < 2000, `settled in ${elapsed}ms, expected < 2000ms`);
+});

@@ -25,9 +25,9 @@ import { fileURLToPath } from 'node:url';
 import {
   buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
-  classifySessionEnd,
   earlyAttachAudioTap,
   isBenignPipeError,
+  resolveSessionEnd,
   resolveTapPids,
   startAudioTap,
   stopAudioTap,
@@ -65,6 +65,14 @@ export function defaults(env = process.env) {
     // audio is sent and the renderer launches Chrome with --mute-audio.
     audioTap: envFlag(env, 'SOREN91_LOCAL_AUDIO_TAP', true),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN || defaultAudioTapBin,
+    // Bound for consulting ffmpeg's exit when a non-ffmpeg child wins the
+    // end-of-stream race (Issue #303: the audio-tap SIGPIPE racer beat
+    // ffmpeg's close racer). 0 disables the wait (classify the winner
+    // alone); see resolveSessionEnd.
+    ffmpegExitWaitMs: (() => {
+      const raw = Number(env.SOREN91_LOCAL_FFMPEG_EXIT_WAIT_MS);
+      return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
+    })(),
     renderer: env.SOREN91_LOCAL_RENDERER || defaultRenderer,
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN || defaultCaptureHelperBin,
     // Offscreen (Issue #303): hold a private CGVirtualDisplay and park the
@@ -603,6 +611,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
         audiotap = early.child;
         earlyTapDetach = early.detachDrain;
         console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(early.status)}`);
+        console.log('SOREN91_LOCAL_AUDIO_TAP_ATTACH=early');
       } else {
         let tapPids = null;
         let lastError = null;
@@ -624,6 +633,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
         });
         audiotap = audioStarted.child;
         console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(audioStarted.status)}`);
+        console.log('SOREN91_LOCAL_AUDIO_TAP_ATTACH=fallback');
       }
     }
 
@@ -655,20 +665,30 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const streamDeadline = Math.min(Date.now() + options.sessionSec * 1000, hardDeadline);
     const remaining = Math.max(0, streamDeadline - Date.now());
     const deadline = createSessionDeadline(remaining);
+    // Latest observed ffmpeg close state. When a non-ffmpeg child wins the
+    // race (live: the audio-tap SIGPIPE racer beat ffmpeg's close racer),
+    // resolveSessionEnd polls this (bounded by ffmpegExitWaitMs) and
+    // classifies FFMPEG's exit — not the winner alone.
+    let ffmpegExit = null;
     const racers = [
       deadline.promise,
-      waitForCloseExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
+      waitForCloseExit(ffmpeg).then((value) => {
+        ffmpegExit = value;
+        return { kind: 'ffmpeg-exit', value };
+      }),
       waitForExit(capture).then((value) => ({ kind: 'capture-exit', value })),
       waitForExit(renderer).then((value) => ({ kind: 'renderer-exit', value })),
     ];
     if (audiotap) racers.push(waitForExit(audiotap).then((value) => ({ kind: 'audio-tap-exit', value })));
     const outcome = await Promise.race(racers);
     try {
-      const verdict = classifySessionEnd({
+      const verdict = await resolveSessionEnd({
         kind: outcome.kind,
         value: outcome.value,
-        stderr: ffmpegStderr.text(),
-        sinkClosed: pipeTracker.sinkClosed,
+        getStderr: () => ffmpegStderr.text(),
+        getSinkClosed: () => pipeTracker.sinkClosed,
+        getFfmpegExit: () => ffmpegExit,
+        ffmpegWaitMs: options.ffmpegExitWaitMs,
       });
       if (verdict === 'deadline') {
         console.log('SOREN91_LOCAL_SESSION_END=deadline');
@@ -677,19 +697,17 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       if (verdict === 'consumer-closed') {
         // The OCI listener closing first (e.g. `-t 120` expiring) kills
         // ffmpeg with an EPIPE-flavoured muxer error — or wins the race as
-        // `capture-exit {code:0}` because the SIGPIPE-ignoring Swift helper
-        // exits 0 on 'exit' before ffmpeg's 'close' fires. Both are a
-        // normal end of stream (exit 0), not a failure.
+        // `capture-exit {code:0}` / `audio-tap-exit {SIGPIPE/0}` because a
+        // SIGPIPE-ignoring Swift helper's 'exit' fires before ffmpeg's
+        // 'close'. All are a normal end of stream (exit 0), not a failure.
         console.log('SOREN91_LOCAL_SESSION_END=consumer-closed');
         return { ...plan, result, completed: true, endReason: 'consumer-closed' };
       }
-      if (outcome.kind === 'ffmpeg-exit') {
-        const tail = ffmpegStderr.text().slice(-2000);
-        throw new Error(
-          `ffmpeg-exit: ${JSON.stringify(outcome.value)}${tail ? `\nstderr tail: ${tail}` : ''}`,
-        );
-      }
-      throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
+      const tail = ffmpegStderr.text().slice(-2000);
+      const detail = ffmpegExit && outcome.kind !== 'ffmpeg-exit'
+        ? `${outcome.kind}: ${JSON.stringify(outcome.value)} (ffmpeg-exit: ${JSON.stringify(ffmpegExit)})`
+        : `${outcome.kind}: ${JSON.stringify(outcome.value)}`;
+      throw new Error(`${detail}${tail ? `\nstderr tail: ${tail}` : ''}`);
     } finally {
       // Cancel the deadline timer FIRST: without this the pending
       // setTimeout keeps the event loop alive until sessionSec elapses

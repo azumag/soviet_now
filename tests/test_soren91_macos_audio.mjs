@@ -11,6 +11,7 @@ import {
   isBenignPipeError,
   parseAudioTapStatus,
   parseProcessTable,
+  resolveSessionEnd,
   resolveTapPids,
   shouldTapAudio,
   startAudioTap,
@@ -346,6 +347,190 @@ test('classifySessionEnd: renderer/audio-tap exits are never a normal end', asyn
   assert.equal(classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 0, signal: null } }), 'failed');
   assert.equal(classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 1, signal: null } }), 'failed');
   assert.equal(classifySessionEnd({ kind: 'bogus-kind', value: { code: 0, signal: null } }), 'failed');
+});
+
+// --- audio-tap winner with pipe-guard evidence (Issue #303: tap SIGPIPE) ---
+//
+// Live, the OCI listener closing first kills ffmpeg (fd 3's reader) and the
+// helper's next PCM write dies with SIGPIPE (or exits 0 now that the helper
+// ignores SIGPIPE) — beating ffmpeg's `close` racer. With sinkClosed proof
+// that the sink went away, that is a normal end; without it the tap alone
+// proves nothing and must stay fail-closed.
+
+test('classifySessionEnd: audio-tap SIGPIPE/code-0 with sinkClosed is consumer-closed', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  assert.equal(
+    classifySessionEnd({ kind: 'audio-tap-exit', value: { code: null, signal: 'SIGPIPE' }, sinkClosed: true }),
+    'consumer-closed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 0, signal: null }, sinkClosed: true }),
+    'consumer-closed',
+  );
+});
+
+test('classifySessionEnd: audio-tap exit without sinkClosed stays failed', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  // No pipe-guard evidence: the tap may have died on its own.
+  assert.equal(
+    classifySessionEnd({ kind: 'audio-tap-exit', value: { code: null, signal: 'SIGPIPE' } }),
+    'failed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 0, signal: null } }),
+    'failed',
+  );
+  // Foreign signals / real helper errors never become a normal end, even
+  // with sinkClosed evidence.
+  assert.equal(
+    classifySessionEnd({ kind: 'audio-tap-exit', value: { code: null, signal: 'SIGTERM' }, sinkClosed: true }),
+    'failed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 1, signal: null }, sinkClosed: true }),
+    'failed',
+  );
+  // The renderer dying is never a normal end, evidence or not.
+  assert.equal(
+    classifySessionEnd({ kind: 'renderer-exit', value: { code: 0, signal: null }, sinkClosed: true }),
+    'failed',
+  );
+});
+
+// --- resolveSessionEnd: whoever wins the race, ffmpeg's exit decides ---
+
+const LISTENER_CLOSE_STDERR = 'Error submitting a packet to the muxer: Input/output error\n'
+  + 'av_interleaved_write_frame(): Input/output error\n';
+const ENCODER_FAILURE_STDERR = "Error initializing output stream 0:0 -- Error opening encoder 'h264_videotoolbox'\n";
+
+test('resolveSessionEnd: audio-tap SIGPIPE winner waits for ffmpeg consumer-close', async () => {
+  // ffmpeg settles late (after 2 polls) with a listener-close marker: the
+  // verdict must be consumer-closed, and the resolver must actually have
+  // waited (2 fake-clock sleeps) instead of blaming the tap.
+  let polls = 0;
+  const sleeps = [];
+  const verdict = await resolveSessionEnd({
+    kind: 'audio-tap-exit',
+    value: { code: null, signal: 'SIGPIPE' },
+    getStderr: () => LISTENER_CLOSE_STDERR,
+    getSinkClosed: () => true,
+    getFfmpegExit: () => {
+      polls += 1;
+      return polls >= 3 ? { code: 1, signal: null } : null;
+    },
+    ffmpegWaitMs: 5000,
+    sleepImpl: async (ms) => { sleeps.push(ms); },
+  });
+  assert.equal(verdict, 'consumer-closed');
+  assert.equal(polls, 3);
+  assert.deepEqual(sleeps, [50, 50]);
+});
+
+test('resolveSessionEnd: genuine ffmpeg failure is failed even when the tap wins', async () => {
+  // Encoder init failure with the tap winning the race: the tap's SIGPIPE
+  // must not mask the real failure.
+  let slept = 0;
+  const verdict = await resolveSessionEnd({
+    kind: 'audio-tap-exit',
+    value: { code: null, signal: 'SIGPIPE' },
+    getStderr: () => ENCODER_FAILURE_STDERR,
+    getSinkClosed: () => true,
+    ffmpegExit: { code: 1, signal: null },
+    sleepImpl: async () => { slept += 1; },
+  });
+  assert.equal(verdict, 'failed');
+  assert.equal(slept, 0); // already observed: no wait needed
+});
+
+test('resolveSessionEnd: capture-exit code 0 winner uses ffmpeg consumer-close', async () => {
+  const verdict = await resolveSessionEnd({
+    kind: 'capture-exit',
+    value: { code: 0, signal: null },
+    getStderr: () => LISTENER_CLOSE_STDERR,
+    getSinkClosed: () => false,
+    ffmpegExit: { code: 1, signal: null },
+    sleepImpl: async () => { throw new Error('must not sleep'); },
+  });
+  assert.equal(verdict, 'consumer-closed');
+});
+
+test('resolveSessionEnd: unsettled ffmpeg falls back to winner+sink evidence', async () => {
+  // ffmpeg never settles and no poll is supplied: tap SIGPIPE + sinkClosed
+  // still ends consumer-closed; without sinkClosed it stays failed.
+  assert.equal(
+    await resolveSessionEnd({
+      kind: 'audio-tap-exit',
+      value: { code: null, signal: 'SIGPIPE' },
+      stderr: '',
+      sinkClosed: true,
+    }),
+    'consumer-closed',
+  );
+  assert.equal(
+    await resolveSessionEnd({
+      kind: 'audio-tap-exit',
+      value: { code: null, signal: 'SIGPIPE' },
+      stderr: '',
+      sinkClosed: false,
+    }),
+    'failed',
+  );
+});
+
+test('resolveSessionEnd: renderer-exit and foreign winners never wait for ffmpeg', async () => {
+  for (const outcome of [
+    { kind: 'renderer-exit', value: { code: 0, signal: null } },
+    { kind: 'capture-exit', value: { code: 1, signal: null } },
+    { kind: 'audio-tap-exit', value: { code: null, signal: 'SIGTERM' } },
+    { kind: 'bogus-kind', value: { code: 0, signal: null } },
+  ]) {
+    let ffmpegPolls = 0;
+    const verdict = await resolveSessionEnd({
+      ...outcome,
+      getStderr: () => LISTENER_CLOSE_STDERR,
+      getSinkClosed: () => true,
+      getFfmpegExit: () => {
+        ffmpegPolls += 1;
+        return { code: 1, signal: null };
+      },
+      sleepImpl: async () => { throw new Error('must not sleep'); },
+    });
+    assert.equal(verdict, 'failed', JSON.stringify(outcome));
+    assert.equal(ffmpegPolls, 0, JSON.stringify(outcome));
+  }
+});
+
+test('resolveSessionEnd: deadline never waits for ffmpeg', async () => {
+  let ffmpegPolls = 0;
+  assert.equal(
+    await resolveSessionEnd({
+      kind: 'deadline',
+      getFfmpegExit: () => {
+        ffmpegPolls += 1;
+        return null;
+      },
+      sleepImpl: async () => { throw new Error('must not sleep'); },
+    }),
+    'deadline',
+  );
+  assert.equal(ffmpegPolls, 0);
+});
+
+test('resolveSessionEnd: ffmpeg wait is bounded and never hangs', async () => {
+  // ffmpeg never settles: with a 100ms bound and the REAL clock this must
+  // resolve promptly (2 x 50ms polls) instead of hanging.
+  const started = Date.now();
+  const verdict = await resolveSessionEnd({
+    kind: 'audio-tap-exit',
+    value: { code: null, signal: 'SIGPIPE' },
+    getStderr: () => '',
+    getSinkClosed: () => false,
+    getFfmpegExit: () => null,
+    ffmpegWaitMs: 100,
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(verdict, 'failed');
+  assert.ok(elapsed < 2000, `settled in ${elapsed}ms, expected < 2000ms`);
 });
 
 // --- Early audio-tap attach (Issue #303, Part B: silence from boot) ---

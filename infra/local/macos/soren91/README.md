@@ -391,8 +391,11 @@ Known constraints (measured or explicitly unverified):
   taps ONLY explicit `--pid` PIDs (no bundle-ID fallback, fail-closed on
   zero translatable PIDs), verifies `muteBehavior=CATapMutedWhenTapped` via
   API round-trip, writes s16le 48kHz stereo PCM to stdout until
-  `--seconds`/`SIGTERM`, and tears down IOProc → aggregate → tap on exit
-  (releasing the physical mute). Build via
+  `--seconds`/`SIGTERM`/stdout-close, and tears down IOProc → aggregate →
+  tap on exit (releasing the physical mute). SIGPIPE is ignored so a
+  downstream-first close (ffmpeg's fd 3 going away when the OCI listener
+  closes) surfaces as an EPIPE write failure that exits 0 — never as a
+  SIGPIPE signal death. Build via
   `tools/soren91_audio_tap_build.sh`.
 - `tools/soren91_macos_audio.mjs` — pure audio-tap logic shared by the
   session and tests: `ps` table parsing, automation-Chrome descendant PID
@@ -400,7 +403,11 @@ Known constraints (measured or explicitly unverified):
   ffmpeg fd-3 input args, tap handshake parsing, tap spawn/stop, plus the
   early-attach poll (`earlyAttachAudioTap`: ~500ms `ps` polling from
   renderer spawn with PCM drain until ffmpeg takes over) and the session-end
-  classifier (`classifySessionEnd`: capture-exit code 0 = consumer-closed).
+  classifier (`classifySessionEnd`: capture-exit code 0 = consumer-closed;
+  audio-tap SIGPIPE/code-0 + sinkClosed = consumer-closed;
+  `resolveSessionEnd`: whichever child wins the exit race, ffmpeg's exit —
+  awaited up to `SOREN91_LOCAL_FFMPEG_EXIT_WAIT_MS`, default 5000ms — decides
+  consumer-closed vs failed).
 - `tests/test_soren91_macos_audio.mjs` — audio-tap unit tests (`node --test`).
 - `tools/soren91_macos_session.mjs` — same options/validation contract as the
   Windows session (`sessionSec` capped at 1800s / `hardMaxSec` at 2400s,

@@ -189,7 +189,15 @@ export function classifyFfmpegExit({
 //     went away first. Treated as a normal end even without stderr/sink
 //     evidence (evidence, when present, only strengthens this reading).
 //   kind 'capture-exit', code !== 0        -> 'failed' (helper error).
-//   kind 'renderer-exit' / 'audio-tap-exit'-> 'failed' (cleanup still runs
+//   kind 'audio-tap-exit', SIGPIPE/code 0 AND sinkClosed -> 'consumer-closed'.
+//     Rationale: ffmpeg owns fd 3 (the ONLY PCM reader); when the listener
+//     closes first, ffmpeg dies and the helper's next stdout write hits a
+//     closed pipe — observed live as `signal SIGPIPE`, or a clean exit 0
+//     now that the helper ignores SIGPIPE. With pipe-guard evidence that
+//     the sink went away, this is a normal end. Without sinkClosed the tap
+//     alone proves nothing (it may have died on its own) -> 'failed'.
+//   kind 'audio-tap-exit', anything else   -> 'failed'.
+//   kind 'renderer-exit' / unknown         -> 'failed' (cleanup still runs
 //     in the session's finally block; these are never a normal end).
 export function classifySessionEnd({
   kind = '',
@@ -211,7 +219,99 @@ export function classifySessionEnd({
     if (value?.code === 0) return 'consumer-closed';
     return 'failed';
   }
+  if (kind === 'audio-tap-exit') {
+    if (sinkClosed && (value?.signal === 'SIGPIPE' || value?.code === 0)) return 'consumer-closed';
+    return 'failed';
+  }
   return 'failed';
+}
+
+// Settles the session-end verdict when ANY racer may win (Issue #303: live,
+// the audio-tap `signal SIGPIPE` racer beat ffmpeg's `close` racer, and the
+// old call site classified the tap alone -> exit 1 with no SESSION_END).
+// Unlike classifySessionEnd (pure, winner-only), this consults ffmpeg's
+// exit BEFORE blaming the winner:
+//   - 'deadline' (or deadlineReached) -> 'deadline' immediately, no ffmpeg
+//     wait (deadline/cancel behaviour unchanged, never hangs).
+//   - 'ffmpeg-exit' winner -> classifyFfmpegExit directly (no wait needed).
+//   - 'capture-exit' code 0 / 'audio-tap-exit' SIGPIPE-or-0 winner ->
+//     poll getFfmpegExit() (bounded: at most ffmpegWaitMs via sleepImpl, so
+//     this can never hang) for ffmpeg's {code,signal}, then classify THAT
+//     via classifyFfmpegExit against the final stderr. A 'consumer-closed'
+//     ffmpeg verdict wins regardless of which child won the race; a genuine
+//     ffmpeg failure (no consumer-close marker, encoder init failure, ...)
+//     is 'failed' and is never masked by the tap's SIGPIPE.
+//   - ffmpeg still unsettled after the bound (or no poll supplied) ->
+//     fall back to classifySessionEnd with the final stderr/sinkClosed
+//     (capture 0 -> consumer-closed; tap SIGPIPE/0 + sinkClosed ->
+//     consumer-closed; renderer -> failed).
+//   - any other winner (renderer, non-zero codes, foreign signals, bogus
+//     kinds) -> classifySessionEnd immediately with NO ffmpeg wait, so
+//     failure paths stay fail-fast.
+// getStderr/getSinkClosed are re-read AFTER the wait (both keep changing
+// while ffmpeg drains); plain stderr/sinkClosed are used when the getters
+// are absent (tests). ffmpegExit short-circuits the poll when the session
+// already observed ffmpeg's close.
+export async function resolveSessionEnd({
+  kind = '',
+  value = null,
+  stderr = '',
+  getStderr = null,
+  deadlineReached = false,
+  sinkClosed = false,
+  getSinkClosed = null,
+  ffmpegExit = null,
+  getFfmpegExit = null,
+  ffmpegWaitMs = 5000,
+  sleepImpl = sleep,
+} = {}) {
+  if (kind === 'deadline' || deadlineReached) return 'deadline';
+  if (kind === 'ffmpeg-exit') {
+    return classifyFfmpegExit({
+      code: value?.code,
+      signal: value?.signal,
+      stderr: getStderr?.() ?? stderr,
+    });
+  }
+  const plausibleNormalEnd = (kind === 'capture-exit' && value?.signal == null && value?.code === 0)
+    || (kind === 'audio-tap-exit' && (value?.signal === 'SIGPIPE' || value?.code === 0));
+  if (!plausibleNormalEnd) {
+    return classifySessionEnd({
+      kind,
+      value,
+      stderr: getStderr?.() ?? stderr,
+      sinkClosed: getSinkClosed?.() ?? sinkClosed,
+    });
+  }
+  let observed = ffmpegExit ?? getFfmpegExit?.() ?? null;
+  if (!observed && typeof getFfmpegExit === 'function') {
+    // Bounded poll: at most ceil(ffmpegWaitMs / step) sleeps, then give up.
+    // Iteration-capped (not wall-clock-capped) so injected fake clocks that
+    // never advance Date.now() still terminate.
+    const stepMs = 50;
+    const rounds = Number.isFinite(ffmpegWaitMs) && ffmpegWaitMs > 0
+      ? Math.ceil(ffmpegWaitMs / stepMs)
+      : 0;
+    for (let round = 0; round < rounds && !observed; round += 1) {
+      await sleepImpl(stepMs);
+      observed = getFfmpegExit?.() ?? null;
+    }
+  }
+  const finalStderr = getStderr?.() ?? stderr;
+  const finalSinkClosed = getSinkClosed?.() ?? sinkClosed;
+  if (observed) {
+    return classifyFfmpegExit({
+      code: observed.code,
+      signal: observed.signal,
+      stderr: finalStderr,
+    });
+  }
+  return classifySessionEnd({
+    kind,
+    value,
+    stderr: finalStderr,
+    sinkClosed: finalSinkClosed,
+  });
 }
 
 // PCM drain (Issue #303 early-attach): while ffmpeg is not yet running,

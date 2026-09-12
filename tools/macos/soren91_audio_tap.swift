@@ -16,8 +16,12 @@
 // Protocol: on success, prints one JSON line to stderr
 // (`{"ok":true,"tapUID":..., "format":..., "pids":[...],
 // "muteBehaviorRequested":2,"muteBehaviorVerified":2}`) once the IOProc is
-// running, then writes raw s16le frames to stdout until --seconds elapses or
-// SIGINT/SIGTERM. On failure, prints one JSON line to stderr
+// running, then writes raw s16le frames to stdout until --seconds elapses,
+// SIGINT/SIGTERM, or stdout closes (the downstream reader — ffmpeg's fd 3 —
+// going away first surfaces as an EPIPE write failure, which tears down
+// IOProc -> aggregate -> tap and exits 0, exactly like the window-capture
+// helper's clean stop: a listener-first close is a normal end, not a crash).
+// On failure, prints one JSON line to stderr
 // (`{"ok":false,"error":"..."}`) and exits 1 — it never crashes, never
 // writes partial PCM, and never taps anything but the given PIDs.
 //
@@ -184,6 +188,11 @@ final class TapState: @unchecked Sendable {
   var bytes: Int = 0
   var callbacks: Int = 0
   var stdoutError = false
+  func didLoseStdout() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return stdoutError
+  }
 }
 
 @main
@@ -378,6 +387,13 @@ struct Soren91AudioTap {
     // SIGTERM/SIGINT: stop reading (which also releases the physical mute),
     // then tear down IOProc -> aggregate -> tap. Always runs: the mute must
     // never outlive this process.
+    // SIGPIPE is ignored (best-effort): when the downstream reader (ffmpeg's
+    // fd 3) goes away first, the next stdout write fails with EPIPE instead
+    // of killing this helper with a SIGPIPE signal. The IOProc records that
+    // as stdoutError, the main loop below observes it and performs the same
+    // orderly teardown, exiting 0 — so a listener-first close never wins the
+    // session's exit race as a signal death.
+    signal(SIGPIPE, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
     signal(SIGINT, SIG_IGN)
     final class StopFlag: @unchecked Sendable { var stop = false }
@@ -392,6 +408,11 @@ struct Soren91AudioTap {
     let deadline = options.seconds.map { Date().addingTimeInterval($0) }
     while !flag.stop {
       if let deadline, Date() >= deadline { break }
+      // Downstream went away first (EPIPE on a stdout write): stop the same
+      // way as a signal stop — teardown below releases the physical mute —
+      // and exit 0. Without this the helper would idle until SIGTERM even
+      // though no reader remains.
+      if state.didLoseStdout() { break }
       Thread.sleep(forTimeInterval: 0.1)
     }
 
@@ -403,8 +424,10 @@ struct Soren91AudioTap {
     let bytes = state.bytes
     let callbacks = state.callbacks
     state.lock.unlock()
+    let pipeBroken = state.didLoseStdout()
     emitStatus([
       "done": true, "bytes": bytes, "callbacks": callbacks, "terminatedEarly": flag.stop,
+      "stdoutError": pipeBroken,
     ])
     exit(0)
   }
