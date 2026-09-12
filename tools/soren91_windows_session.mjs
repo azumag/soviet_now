@@ -57,6 +57,14 @@ export function parseArgs(argv, env = process.env) {
   return options;
 }
 
+export function isTailscaleIpv4Hostname(hostname) {
+  const octets = String(hostname || '').split('.');
+  if (octets.length !== 4 || octets.some((value) => !/^\d{1,3}$/.test(value))) return false;
+  const numbers = octets.map(Number);
+  if (numbers.some((value) => value < 0 || value > 255)) return false;
+  return numbers[0] === 100 && numbers[1] >= 64 && numbers[1] <= 127;
+}
+
 export function validateOptions(options, platform = process.platform) {
   if (!Number.isInteger(options.sessionSec) || options.sessionSec < 60 || options.sessionSec > 1800) {
     throw new Error('sessionSec must be 60..1800 (production target is 30 minutes)');
@@ -73,9 +81,14 @@ export function validateOptions(options, platform = process.platform) {
   if (!options.windowTitle || !options.captureTitle) throw new Error('window titles must not be empty');
   if (!options.renderer) throw new Error('renderer path is required');
   if (options.srtUrl) {
-    if (!/^srt:\/\//i.test(options.srtUrl)) throw new Error('srtUrl must start with srt://');
+    let target;
+    try { target = new URL(options.srtUrl); } catch { throw new Error('srtUrl must be a valid srt:// URL'); }
+    if (target.protocol !== 'srt:') throw new Error('srtUrl must start with srt://');
     if (/passphrase=/i.test(options.srtUrl)) {
       throw new Error('SRT passphrase in argv is forbidden; use Tailscale transport without an SRT passphrase');
+    }
+    if (!isTailscaleIpv4Hostname(target.hostname)) {
+      throw new Error('srtUrl host must be a Tailscale IPv4 address in 100.64.0.0/10');
     }
   }
   if (options.execute && platform !== 'win32') throw new Error('paid/live local renderer execution is Windows-only');
