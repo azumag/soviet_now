@@ -8,7 +8,8 @@
 // 'local-macos'`, session `tools/soren91_macos_session.mjs`).
 //
 // Security contract (same as PR #131, both platforms):
-// - Binds 127.0.0.1:19191 by default. Never expose publicly.
+// - Binds 127.0.0.1:19191 by default. A non-loopback bind is allowed only on
+//   a Tailscale IPv4 address; wildcard/public/hostname binds fail closed.
 // - Every endpoint except GET /health requires
 //   `Authorization: Bearer <SOREN91_LOCAL_AGENT_TOKEN>` compared with
 //   crypto.timingSafeEqual. Token comes from the environment only.
@@ -56,8 +57,12 @@ export function validateOptions(options, platform = process.platform) {
   if (typeof options.token !== 'string' || options.token.length < 24) {
     throw new Error('SOREN91_LOCAL_AGENT_TOKEN must be at least 24 characters');
   }
-  if (platform === 'darwin' || platform === 'win32') return options;
-  throw new Error(platformErrorMessage(platform));
+  if (platform !== 'darwin' && platform !== 'win32') throw new Error(platformErrorMessage(platform));
+  const host = options.host || '127.0.0.1';
+  if (host !== '127.0.0.1' && !isTailscaleIpv4Hostname(host)) {
+    throw new Error('agent host must be 127.0.0.1 or a Tailscale IPv4 address in 100.64.0.0/10');
+  }
+  return { ...options, host };
 }
 
 function platformErrorMessage(platform) {
