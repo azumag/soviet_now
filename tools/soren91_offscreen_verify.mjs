@@ -68,20 +68,34 @@ export function rectIntersectionArea(a, b) {
 // `displays` are `{id, bounds}` entries from the helper's --list output.
 // The virtual display itself (excludeDisplayId) is skipped; every other
 // display counts as physical. Returns `{ overlap, area, displayIds }` where
-// overlap is true when even 1px intersects a physical display.
+// overlap is true when even 1px intersects a physical display. The proof is
+// fail-closed: malformed display entries, or a list that does not contain the
+// virtual display we were told to exclude, abort instead of being treated as
+// "no physical overlap".
 export function computePhysicalOverlap(windowRect, displays, excludeDisplayId = null) {
   if (!isFiniteRect(windowRect)) throw new Error('computePhysicalOverlap requires a finite measured windowRect');
   if (!Array.isArray(displays)) throw new Error('computePhysicalOverlap requires a displays array');
   let area = 0;
   const displayIds = [];
+  let sawExcludedDisplay = excludeDisplayId == null;
   for (const display of displays) {
-    if (display?.id === excludeDisplayId) continue;
-    if (!isFiniteRect(display?.bounds)) continue;
+    if (!Number.isFinite(display?.id)
+      || !isFiniteRect(display?.bounds)
+      || !(display.bounds.width > 0 && display.bounds.height > 0)) {
+      throw new Error('computePhysicalOverlap received malformed display bounds (fail-closed)');
+    }
+    if (display.id === excludeDisplayId) {
+      sawExcludedDisplay = true;
+      continue;
+    }
     const part = rectIntersectionArea(windowRect, display.bounds);
     if (part > 0) {
       area += part;
       displayIds.push(display.id);
     }
+  }
+  if (!sawExcludedDisplay) {
+    throw new Error(`virtual display ${excludeDisplayId} missing from online display list (fail-closed)`);
   }
   return { overlap: area > 0, area, displayIds };
 }
