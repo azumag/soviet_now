@@ -89,6 +89,28 @@ test('computePhysicalOverlap requires measured inputs', () => {
   assert.throws(() => computePhysicalOverlap({ x: 0, y: 0, width: 1, height: 1 }, null), /displays array/);
 });
 
+test('computePhysicalOverlap fails closed when display enumeration is incomplete', () => {
+  const windowRect = { x: 1940, y: 30, width: 960, height: 540 };
+  assert.throws(
+    () => computePhysicalOverlap(windowRect, [], 6),
+    /virtual display 6 missing/,
+  );
+  assert.throws(
+    () => computePhysicalOverlap(windowRect, [
+      { id: 6, bounds: { x: 1920, y: 0, width: 1920, height: 1080 } },
+      { id: 3, bounds: { x: 0, y: 0, width: 0, height: 1080 } },
+    ], 6),
+    /malformed display bounds/,
+  );
+  assert.throws(
+    () => computePhysicalOverlap(windowRect, [
+      { id: 6, bounds: { x: 1920, y: 0, width: 1920, height: 1080 } },
+      { bounds: { x: 0, y: 0, width: 1920, height: 1080 } },
+    ], 6),
+    /malformed display bounds/,
+  );
+});
+
 test('parseVDisplayList accepts ok:true and rejects everything else', () => {
   const displays = [{ id: 3, bounds: { x: 0, y: 0, width: 1, height: 1 } }];
   assert.deepEqual(parseVDisplayList(JSON.stringify({ ok: true, displays })), displays);
