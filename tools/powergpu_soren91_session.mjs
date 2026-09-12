@@ -90,6 +90,14 @@ export function normalizePricing(value) {
   throw new Error('pricing response does not contain an array');
 }
 
+export function normalizeInstances(value) {
+  if (Array.isArray(value)) return value;
+  for (const key of ['instances', 'data', 'results']) {
+    if (Array.isArray(value?.[key])) return value[key];
+  }
+  return [];
+}
+
 export function selectPricing(prices, options) {
   const entry = prices.find((candidate) => String(candidate.slug || candidate.gpu || '').toLowerCase() === options.gpu);
   if (!entry) return null;
@@ -148,6 +156,53 @@ export function extractPocResult(logOutput) {
   try { return JSON.parse(payload); } catch { return null; }
 }
 
+function instanceId(value) {
+  const id = value?.id ?? value?.instance_id ?? value?.instance?.id;
+  return /^i-[a-zA-Z0-9-]+$/.test(String(id || '')) ? String(id) : null;
+}
+
+function instanceGpu(value) {
+  return String(
+    value?.gpu_slug ?? value?.gpu ?? value?.gpu_name
+    ?? value?.machine?.gpu_slug ?? value?.machine?.gpu ?? value?.machine?.gpu_name ?? ''
+  ).toLowerCase();
+}
+
+function instanceImage(value) {
+  return String(
+    value?.image ?? value?.image_ref ?? value?.container_image
+    ?? value?.instance?.image ?? value?.instance?.image_ref ?? ''
+  );
+}
+
+function instanceCreatedEpoch(value) {
+  const raw = value?.created_at ?? value?.created ?? value?.createdAt ?? value?.instance?.created_at;
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw > 1e12 ? Math.floor(raw / 1000) : Math.floor(raw);
+  const parsed = Date.parse(String(raw));
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+}
+
+export function findRecoverableLaunch(beforeIds, currentValue, options, creationStartedEpoch) {
+  const candidates = normalizeInstances(currentValue).filter((value) => {
+    const id = instanceId(value);
+    return id && !beforeIds.has(id);
+  });
+
+  const strong = candidates.filter((value) => {
+    const gpu = instanceGpu(value);
+    const image = instanceImage(value);
+    const created = instanceCreatedEpoch(value);
+    const gpuMatches = Boolean(gpu) && /(?:tesla[- _]?p4|\bp4\b)/i.test(gpu);
+    const imageMatches = Boolean(image) && image === options.image;
+    const recent = created != null && created >= creationStartedEpoch - 5;
+    // created_at が無いAPI形では、imageとGPUの両方が一致した場合だけ回収する。
+    return recent ? (gpuMatches || imageMatches) : (gpuMatches && imageMatches);
+  });
+
+  return strong.length === 1 ? instanceId(strong[0]) : null;
+}
+
 function run(bin, args, { timeout = 30_000, allowFailure = false } = {}) {
   const result = spawnSync(bin, args, { encoding: 'utf8', timeout });
   if (result.error) throw result.error;
@@ -164,27 +219,33 @@ async function loadPricing(options) {
   return response.json();
 }
 
-async function destroyInstance(options, instanceId) {
+function listInstances(options) {
+  const result = run(options.powergpuBin, ['list', '--json'], { timeout: 30_000, allowFailure: true });
+  if (result.status !== 0) return null;
+  try { return parseJsonOutput(result.stdout); } catch { return null; }
+}
+
+async function destroyInstance(options, targetInstanceId) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const result = run(options.powergpuBin, ['destroy', instanceId, '--yes'], { timeout: 30_000, allowFailure: true });
+      const result = run(options.powergpuBin, ['destroy', targetInstanceId, '--yes'], { timeout: 30_000, allowFailure: true });
       if (result.status === 0 || /(?:not found|does not exist|404|destroyed)/i.test(`${result.stdout}\n${result.stderr}`)) return;
-      throw new Error(`destroy ${instanceId} failed: ${String(result.stderr || result.stdout).trim()}`);
+      throw new Error(`destroy ${targetInstanceId} failed: ${String(result.stderr || result.stdout).trim()}`);
     } catch (error) {
       lastError = error;
       await sleep(2_000 * attempt);
     }
   }
-  throw lastError || new Error(`failed to destroy ${instanceId}`);
+  throw lastError || new Error(`failed to destroy ${targetInstanceId}`);
 }
 
-function launchCleanupWatchdog(options, instanceId, deadlineEpoch) {
-  const cleanupLog = `/tmp/soren91-powergpu-cleanup-${instanceId}.log`;
+function launchCleanupWatchdog(options, targetInstanceId, deadlineEpoch) {
+  const cleanupLog = `/tmp/soren91-powergpu-cleanup-${targetInstanceId}.log`;
   const output = fs.openSync(cleanupLog, 'a');
   const child = spawn(process.execPath, [
     fileURLToPath(import.meta.url),
-    '--cleanup-instance', instanceId,
+    '--cleanup-instance', targetInstanceId,
     '--deadline-epoch', String(deadlineEpoch),
     '--powergpu-bin', options.powergpuBin,
   ], {
@@ -225,34 +286,49 @@ export async function main(argv = process.argv.slice(2)) {
 
   const creationStartedEpoch = Math.floor(Date.now() / 1000);
   const deadlineEpoch = creationStartedEpoch + options.instanceMaxAgeSec;
-  let instanceId = null;
+  const beforeValue = listInstances(options);
+  const beforeIds = new Set(normalizeInstances(beforeValue).map(instanceId).filter(Boolean));
+  let targetInstanceId = null;
   try {
-    const launchedRaw = run(options.powergpuBin, buildLaunchArgs(options), { timeout: 120_000 }).stdout;
+    let launchedRaw;
+    try {
+      // Custom image cold-pullを考慮し、CLI応答待ちは4分まで許容する。
+      // 課金instance自体のhard deadlineはcreationStartedEpochから600秒のまま。
+      launchedRaw = run(options.powergpuBin, buildLaunchArgs(options), { timeout: 240_000 }).stdout;
+    } catch (launchError) {
+      const afterValue = listInstances(options);
+      targetInstanceId = afterValue
+        ? findRecoverableLaunch(beforeIds, afterValue, options, creationStartedEpoch)
+        : null;
+      if (targetInstanceId) {
+        await destroyInstance(options, targetInstanceId).catch((cleanupError) => {
+          console.error(`PowerGPU ambiguous launch cleanup failed for ${targetInstanceId}: ${cleanupError?.message || cleanupError}`);
+        });
+      } else {
+        console.error('PowerGPU launch failed before an instance id was returned; no uniquely attributable new PoC instance was found. Check `powergpu list` before retrying.');
+      }
+      throw launchError;
+    }
+
     let launched;
     try { launched = parseJsonOutput(launchedRaw); } catch { launched = launchedRaw; }
-    instanceId = extractInstanceId(launched);
+    targetInstanceId = extractInstanceId(launched);
     const lockedDph = extractLaunchPrice(typeof launched === 'string' ? null : launched);
     if (lockedDph != null && lockedDph > options.maxDph) {
-      await destroyInstance(options, instanceId).catch(() => {});
+      await destroyInstance(options, targetInstanceId).catch(() => {});
       throw new Error(`launched rate $${lockedDph}/h exceeds hard cap $${options.maxDph}/h`);
     }
-    launchCleanupWatchdog(options, instanceId, deadlineEpoch);
+    launchCleanupWatchdog(options, targetInstanceId, deadlineEpoch);
 
     const bootDeadline = Math.min(Date.now() + options.bootTimeoutSec * 1000, deadlineEpoch * 1000);
     let running = false;
     while (Date.now() < bootDeadline) {
-      const list = run(options.powergpuBin, ['list', '--json'], { allowFailure: true });
-      if (list.status === 0) {
-        try {
-          const parsed = parseJsonOutput(list.stdout);
-          const instances = Array.isArray(parsed) ? parsed : (parsed.instances || parsed.data || []);
-          const current = instances.find((candidate) => String(candidate.id ?? candidate.instance_id) === instanceId);
-          const state = instanceState(current);
-          if (state === 'running') { running = true; break; }
-          if (['failed', 'destroyed', 'error'].includes(state)) throw new Error(`instance failed during boot: ${state}`);
-        } catch (error) {
-          if (/instance failed during boot/.test(String(error?.message))) throw error;
-        }
+      const currentValue = listInstances(options);
+      if (currentValue) {
+        const current = normalizeInstances(currentValue).find((candidate) => instanceId(candidate) === targetInstanceId);
+        const state = instanceState(current);
+        if (state === 'running') { running = true; break; }
+        if (['failed', 'destroyed', 'error'].includes(state)) throw new Error(`instance failed during boot: ${state}`);
       }
       await sleep(3_000);
     }
@@ -260,17 +336,17 @@ export async function main(argv = process.argv.slice(2)) {
 
     let result = null;
     while (Date.now() < deadlineEpoch * 1000) {
-      const logs = run(options.powergpuBin, ['logs', instanceId], { timeout: 30_000, allowFailure: true });
+      const logs = run(options.powergpuBin, ['logs', targetInstanceId], { timeout: 30_000, allowFailure: true });
       result = extractPocResult(`${logs.stdout}\n${logs.stderr}`);
       if (result) break;
       await sleep(5_000);
     }
     if (!result) throw new Error('PoC result not received before hard deadline');
-    console.log(JSON.stringify({ provider: 'powergpu', instanceId, result }, null, 2));
+    console.log(JSON.stringify({ provider: 'powergpu', instanceId: targetInstanceId, result }, null, 2));
     if (!result.pass) process.exitCode = 1;
     return result;
   } finally {
-    if (instanceId) await destroyInstance(options, instanceId);
+    if (targetInstanceId) await destroyInstance(options, targetInstanceId);
   }
 }
 
