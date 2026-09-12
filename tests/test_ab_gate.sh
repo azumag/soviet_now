@@ -68,6 +68,17 @@ _ab_gate_before_game
 grep -q "^REGRESSION_DISABLED=1" .env && grep -q "^SOREN_AB_ALT_STRATEGY=tmp/state/ab_alt_strategy.py" .env && ok || ng "toggles set: $(grep -E '^(REGRESSION|SOREN_AB)' .env | tr '\n' ' ')"
 [ "$(_ab_state_get b_hash)" = "$B" ] && [ "$(_ab_state_get a_hash)" = "$A" ] && ok || ng "state hashes"
 [ "$(_ab_state_get primary)" = "eval" ] && ok || ng "state must record the canonical primary (got $(_ab_state_get primary))"
+python3 - <<'PY' && ok || ng "state must freeze calibrated decision rule"
+import json
+st=json.load(open("tmp/state/ab_state.json"))
+r=st["decision_rule"]
+assert st["decision_rule_version"] == 2, st
+assert r["version"] == 2, r
+assert r["harm_min_blocks"] == 10, r
+assert abs(r["harm_z"] - 2.3263) < 1e-9, r
+assert r["futility_k"] == 12, r
+assert abs(r["futility_z"] - 1.2816) < 1e-9, r
+PY
 [ "$(_ab_state_get regression_disabled_before)" = "0" ] && ok || ng "regression_disabled_before recorded"
 [ "$(python3 extract_decide_hash.py tmp/revert_strategy.py)" = "$A" ] && ok || ng "revert point = A"
 [ ! -d tmp/state/ab_candidate ] && ok || ng "candidate consumed"
@@ -75,6 +86,7 @@ export SOREN_AB_ALT_STRATEGY=tmp/state/ab_alt_strategy.py
 _ab_active >/dev/null 2>&1 && ok || ng "active after start: $(_ab_active 2>&1)"
 
 # 5) after_game: synthetic games with strong harm → finish A (rejected, files moved, toggles restored)
+# 新規 rule は k>=10 / UCB99 なので、10 完全ブロックまで入れて明確な害を検出する。
 # 改善プロンプトが読む change_log に A/B の決着が残ること (焼き直し防止の唯一の材料)。
 # 本番のゲームループ (eloop.sh) では CHANGE_LOG_FILE_HOST も CHANGE_LOG_FILE も
 # 未設定 — 定義しているのは eloop_improve.sh (別プロセス) だけ。2026-09-10 に VM で
@@ -91,7 +103,7 @@ mkdir -p "$AB_CANDIDATE_DIR"; echo queued > "$AB_CANDIDATE_DIR/keep"
 python3 - "$A" "$B" <<'PY'
 import json,sys,random
 a,b=sys.argv[1:3]; rng=random.Random(1); rows=[]; idx=0
-for k in range(8):
+for k in range(10):
     base=rng.gauss(1600,150)
     for ch in "ABBA":
         v=base+rng.gauss(0,80)-(600 if ch=="B" else 0)
@@ -101,6 +113,7 @@ st=json.load(open("tmp/state/ab_state.json")); st["games_recorded"]=len(rows); j
 PY
 _ab_gate_after_game
 printf '%s' "$LOGS" | grep -q "verdict=REJECT_HARM" && ok || ng "verdict logged ($(printf '%s' "$LOGS" | grep AB-GATE | tail -2))"
+printf '%s' "$LOGS" | grep -q "harm_ucb(z=2.3263)" && ok || ng "calibrated harm bound must be logged"
 [ ! -f tmp/state/ab_state.json ] && ok || ng "finish A removed state"
 grep -qx "$B" tmp/state/rejected_hashes.txt && ok || ng "B rejected recorded"
 grep -q "^REGRESSION_DISABLED=0" .env && grep -q "^SOREN_AB_ALT_STRATEGY=$" .env && ok || ng "toggles restored: $(grep -E '^(REGRESSION|SOREN_AB_ALT)' .env | tr '\n' ' ')"

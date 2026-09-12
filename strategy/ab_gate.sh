@@ -137,37 +137,87 @@ _ab_start_from_bundle_locked() {
 	reg_before=$(_ab_env_value REGRESSION_DISABLED)
 	# issue #132 Phase 2: decide hash だけでは helper/解析器/runner/モードの違いを捉えられない。
 	# 腕ごとの policy bundle hash を state に残し、実験の再現性を担保する。
-	local bundle_a bundle_b primary primary_sd
+	local bundle_a bundle_b primary primary_sd looks maxb fut
 	bundle_a=$(python3 tools/policy_bundle.py --strategy "${STRATEGY_FILE:-strategy.py}" 2>/dev/null || echo "")
 	bundle_b=$(python3 tools/policy_bundle.py --strategy "$src" 2>/dev/null || echo "")
-	# 実験の正準指標を開始時に固定する (途中変更は事前登録の書き換えになる)。
-	# 既定は eval: Strategy Comparison / 回帰ガードレールと同じボーナス込み指標。
-	# primary 未記録の旧 state は tools/ab_report.py が legacy の raw score として扱う。
+	# 実験の正準指標と判定規則を開始時に固定する。途中の .env 変更で事前登録を
+	# 書き換えない。旧 state は tools/ab_decide.py が legacy としてそのまま再生する。
 	primary=$(_ab_env_value AB_GATE_PRIMARY)
 	[ -n "$primary" ] || primary="eval"
 	primary_sd=$(_ab_env_value AB_GATE_SD)
+	looks=$(_ab_env_value AB_GATE_LOOKS)
+	[ -n "$looks" ] || looks="19,37"
+	maxb=$(_ab_env_value AB_GATE_MAX_BLOCKS)
+	[ -n "$maxb" ] || maxb="37"
+	fut=$(_ab_env_value AB_GATE_FUTILITY_UCB_DELTA)
+	[ -n "$fut" ] || fut="150"
 	rm -f "$AB_ABORT_FILE"
 	: >"$AB_GAMES_FILE"
 	AB_A_BUNDLE="$bundle_a" AB_B_BUNDLE="$bundle_b" \
-		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" "$primary" "$primary_sd" <<'PY' || return 1
+		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" "$primary" "$primary_sd" "$looks" "$maxb" "$fut" <<'PY' || return 1
 import json, os, sys, time
+
 def _count(p):
     try:
         return int(open(p).read().strip())
     except Exception:
         return None
+
 def _num(v):
     try:
         n = float(v)
         return n if n > 0 else None
     except Exception:
         return None
+
+def _int(v, default):
+    try:
+        n = int(v)
+        return n if n > 0 else default
+    except Exception:
+        return default
+
+def _float(v, default):
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+def _looks(v):
+    try:
+        out = [int(x.strip()) for x in str(v).split(",") if x.strip()]
+        return out or [19, 37]
+    except Exception:
+        return [19, 37]
+
+# 2026-08-31 の合成 A/A 較正: 旧 k>=6/UCB90 は帰無でも score 37.5%、
+# merges_per_turn 41.2% を誤停止。新規 A/B は k>=10/UCB99 に固定する。
+decision_rule = {
+    "version": 2,
+    "looks": _looks(sys.argv[12] if len(sys.argv) > 12 else "19,37"),
+    "max_blocks": _int(sys.argv[13] if len(sys.argv) > 13 else "37", 37),
+    "min_blocks": 6,
+    "min_blocks_adopt": 8,
+    "min_n_per_arm": 30,
+    "alpha": 0.05,
+    "harm_min_blocks": 10,
+    "harm_z": 2.3263,
+    # 無益停止は従来 UCB90 を別境界として維持する。
+    "futility_k": 12,
+    "futility_z": 1.2816,
+    "futility_delta": _float(sys.argv[14] if len(sys.argv) > 14 else "150", 150.0),
+    "max_tainted": 2,
+    "dead_eval_threshold": 400.0,
+    "instadeath_alpha": 0.01,
+    "instadeath_min_blocks": 4,
+}
 st = {"a_hash": sys.argv[2], "b_hash": sys.argv[3], "pattern": sys.argv[4], "alt_source": sys.argv[5],
       "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "games_recorded": 0, "game_num_start": _count(sys.argv[6]),
       "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9]),
       # 判定・表示が使う正準指標 (eval | score) と per-game SD。全ツールがこれを読む。
       "primary": (sys.argv[10] if len(sys.argv) > 10 else "") or "eval",
       "primary_sd": _num(sys.argv[11] if len(sys.argv) > 11 else ""),
+      "decision_rule_version": 2, "decision_rule": decision_rule,
       # 腕ごとの追加環境変数 ("KEY=VALUE KEY2=VALUE2"、既定は空)。解析器モード等の A/B に使う。
       "a_env": os.environ.get("AB_A_ENV", ""), "b_env": os.environ.get("AB_B_ENV", ""),
       # 着手を決める一式 (戦略 + 到達 helper + 解析器 + runner + モード) の hash
@@ -177,7 +227,7 @@ PY
 	./set_toggle.sh REGRESSION_DISABLED=1 >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_ALT_STRATEGY=$AB_ALT_FILE" >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_PATTERN=$pattern" >/dev/null 2>&1 || { log "[AB] set_toggle 失敗"; return 1; }
-	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none} bundle A=${bundle_a:-?} B=${bundle_b:-?}"
+	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none} bundle A=${bundle_a:-?} B=${bundle_b:-?} rule=v2:k10/UCB99"
 	return 0
 }
 
@@ -386,16 +436,26 @@ _ab_gate_after_game() {
 		_ab_finish A "abort:$(_ab_state_get abort_reason)" || true
 		return 0
 	fi
-	local looks maxb fut out verdict k m ucb
-	looks=$(_ab_env_value AB_GATE_LOOKS)
-	maxb=$(_ab_env_value AB_GATE_MAX_BLOCKS)
-	fut=$(_ab_env_value AB_GATE_FUTILITY_UCB_DELTA)
-	out=$(python3 tools/ab_decide.py --games "$AB_GAMES_FILE" --state "$AB_STATE_FILE" --json ${looks:+--looks "$looks"} ${maxb:+--max-blocks "$maxb"} ${fut:+--futility-delta "$fut"} 2>/dev/null) || { log "[AB-GATE] ab_decide 失敗"; return 0; }
+	local looks maxb fut rulev out verdict k m harm harm_z fut_ucb fut_z
+	rulev=$(_ab_state_get decision_rule_version)
+	# versioned state は開始時に固定した decision_rule だけを使う。既に走っている
+	# legacy state は旧挙動を変えないため、従来どおり現在の env override を渡す。
+	if [ -n "$rulev" ] && [ "$rulev" -ge 2 ] 2>/dev/null; then
+		out=$(python3 tools/ab_decide.py --games "$AB_GAMES_FILE" --state "$AB_STATE_FILE" --json 2>/dev/null) || { log "[AB-GATE] ab_decide 失敗"; return 0; }
+	else
+		looks=$(_ab_env_value AB_GATE_LOOKS)
+		maxb=$(_ab_env_value AB_GATE_MAX_BLOCKS)
+		fut=$(_ab_env_value AB_GATE_FUTILITY_UCB_DELTA)
+		out=$(python3 tools/ab_decide.py --games "$AB_GAMES_FILE" --state "$AB_STATE_FILE" --json ${looks:+--looks "$looks"} ${maxb:+--max-blocks "$maxb"} ${fut:+--futility-delta "$fut"} 2>/dev/null) || { log "[AB-GATE] ab_decide 失敗"; return 0; }
+	fi
 	verdict=$(printf '%s' "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict',''))" 2>/dev/null)
 	k=$(printf '%s' "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('k',0))" 2>/dev/null)
 	m=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('mean_diff'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
-	ucb=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('ucb90'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
-	log "[AB-GATE] k=$k mean(B-A)=$m ucb90=$ucb verdict=$verdict"
+	harm=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('harm_ucb'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
+	harm_z=$(printf '%s' "$out" | python3 -c "import sys,json; print('%.4f'%json.load(sys.stdin).get('harm_z',0))" 2>/dev/null)
+	fut_ucb=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('futility_ucb'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
+	fut_z=$(printf '%s' "$out" | python3 -c "import sys,json; print('%.4f'%json.load(sys.stdin).get('futility_z',0))" 2>/dev/null)
+	log "[AB-GATE] k=$k mean(B-A)=$m harm_ucb(z=$harm_z)=$harm futility_ucb(z=$fut_z)=$fut_ucb verdict=$verdict"
 	case "$verdict" in
 	ADOPT)
 		if _ab_gate_dry_run; then
@@ -408,7 +468,7 @@ _ab_gate_after_game() {
 		if _ab_gate_dry_run; then
 			log "[AB-GATE] (dry-run) would finish A ($verdict)"
 		else
-			_ab_finish A "$verdict k=$k mean=$m" || true
+			_ab_finish A "$verdict k=$k mean=$m harm_ucb=$harm futility_ucb=$fut_ucb" || true
 		fi
 		;;
 	*) : ;;
