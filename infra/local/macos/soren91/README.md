@@ -291,6 +291,60 @@ node --test tests/test_soren91_renderer_controller.mjs
 
 Live OCI↔Mac E2E is a separate step, not covered here.
 
+## Audio (Chrome Process Tap, Issue #303)
+
+Game audio is captured with a **Core Audio Process Tap** (`CATapDescription`,
+macOS 14.2+) scoped to **only the automation Chrome's descendant PIDs**,
+then muxed into the same SRT stream as AAC:
+
+```text
+soren91_macos_session.mjs (SOREN91_LOCAL_AUDIO_TAP=1)
+  -> after the renderer result: `ps -ax -o pid,ppid,command` walk from the
+     renderer PID -> automation Chrome descendants (Google Chrome family only)
+  -> tools/macos/soren91_audio_tap --pid N [--pid N ...] (Swift, built by
+     tools/soren91_audio_tap_build.sh)
+       -> CATapDescription(stereoMixdownOfProcesses:) + CATapMutedWhenTapped
+       -> private aggregate device (tap list only) -> IOProc
+       -> s16le 48000Hz stereo PCM on stdout -> ffmpeg fd 3 (pipe:3)
+  -> ffmpeg: -map 0:v -map 1:a -c:a aac -b:a 128k (same SRT output)
+```
+
+Flag: `SOREN91_LOCAL_AUDIO_TAP` (default `0` = silent). With `1`, the tap
+starts after renderer readiness; with `0`, no audio is sent and the renderer
+launches Chrome with `--mute-audio` (via `SOREN91_LOCAL_MUTE_AUDIO=1`).
+
+Privacy rules enforced in code, not just docs (fail-closed everywhere):
+
+- Tap targets are **explicit PIDs only** (`--pid N`, repeatable). `bundleIDs`
+  and `isProcessRestoreEnabled` are never set — either would widen the tap to
+  processes never listed (the real game audio comes from a
+  `com.google.Chrome.helper` AudioService utility process, so PID tracking
+  via the `ps` parent/child walk is what keeps the scope exact).
+- **No bundle-wide fallback**: zero matching/translatable PIDs aborts the
+  session (`resolveTapPids` throws; the helper itself also exits 1 on zero
+  translatable PIDs) instead of tapping all of `com.google.Chrome` — which
+  would capture AND physically mute the operator's everyday Chrome.
+- The helper's `--list-processes` debug output carries `pid` + `bundleID`
+  only — window titles are never enumerated.
+- `muteBehaviorVerified` must read back as `CATapMutedWhenTapped` (2) at tap
+  creation, else fail-closed. The physical mute lasts only while the
+  helper's IOProc keeps reading; session shutdown SIGTERMs the helper and
+  waits for its exit, proving the mute is released.
+
+Known constraints (measured or explicitly unverified):
+
+- Chrome restarts (new AudioService PID) need a fresh tap — the session
+  resolves PIDs once after renderer readiness (with a short retry), it does
+  not follow restarts mid-session.
+- Objective physical-mute verification (actually listening) is **not
+  performed** — only the API-level `muteBehaviorVerified=2` round-trip.
+  Real listening confirmation is a user-side check.
+- Requires macOS 14.2+ (`CATapDescription`); verified on macOS 26.6.1 (M4).
+- Synthetic privacy/capture separation (440Hz automation tone vs 880Hz
+  everyday-Chrome tone) verified locally — see final report on the Issue;
+  live-game audio E2E, 30-minute soak, and real listening confirmation are
+  still open.
+
 ## Files
 
 - `tools/soren91_macos_renderer.mjs` — launches existing Chrome, calibrates
@@ -317,6 +371,18 @@ Live OCI↔Mac E2E is a separate step, not covered here.
   captures exactly one window (fail-closed identity match) at its native
   outer size, writes tightly-packed raw BGRA8888 frames to stdout. Build via
   `tools/soren91_window_capture_build.sh`.
+- `tools/macos/soren91_audio_tap.swift` — Core Audio Process Tap CLI helper;
+  taps ONLY explicit `--pid` PIDs (no bundle-ID fallback, fail-closed on
+  zero translatable PIDs), verifies `muteBehavior=CATapMutedWhenTapped` via
+  API round-trip, writes s16le 48kHz stereo PCM to stdout until
+  `--seconds`/`SIGTERM`, and tears down IOProc → aggregate → tap on exit
+  (releasing the physical mute). Build via
+  `tools/soren91_audio_tap_build.sh`.
+- `tools/soren91_macos_audio.mjs` — pure audio-tap logic shared by the
+  session and tests: `ps` table parsing, automation-Chrome descendant PID
+  collection (`collectDescendantChromePids`/`resolveTapPids`, fail-closed),
+  ffmpeg fd-3 input args, tap handshake parsing, tap spawn/stop.
+- `tests/test_soren91_macos_audio.mjs` — audio-tap unit tests (`node --test`).
 - `tools/soren91_macos_session.mjs` — same options/validation contract as the
   Windows session (`sessionSec` capped at 1800s / `hardMaxSec` at 2400s,
   960x540/30fps fixed output, SRT URL must be a Tailscale IPv4 `srt://` URL
@@ -326,7 +392,11 @@ Live OCI↔Mac E2E is a separate step, not covered here.
   holder's first stderr line is its readiness/failure signal (fail-closed —
   see `parseVirtualDisplayStatus`); holder failure errors out unless
   on-screen was explicitly allowed. Shutdown SIGTERMs the holder and waits
-  for its exit, proving the virtual display is released.
+  for its exit, proving the virtual display is released. With
+  `SOREN91_LOCAL_AUDIO_TAP=1` it additionally resolves the automation
+  Chrome's descendant PIDs (fail-closed on empty), starts the audio tap, and
+  wires its stdout into ffmpeg's fd 3 as `-map 1:a` AAC; without it the
+  renderer gets `SOREN91_LOCAL_MUTE_AUDIO=1` (`--mute-audio`, silent).
 - `tests/test_soren91_macos_session.mjs` — contract tests (`node --test`).
 - `tools/soren91_local_agent.mjs` — platform-generic HTTP control agent
   (`127.0.0.1:19191`, Bearer token, one session at a time): `darwin` serves
@@ -357,7 +427,8 @@ npm install
 node tools/check_existing_chrome.mjs   # optional: confirms channel:'chrome' works
 tools/soren91_window_capture_build.sh  # builds tools/macos/bin/soren91_window_capture
 tools/soren91_virtual_display_build.sh # builds tools/macos/bin/soren91_virtual_display
-node --test tests/test_soren91_macos_session.mjs tests/test_soren91_macos_virtual_display.mjs
+tools/soren91_audio_tap_build.sh       # builds tools/macos/bin/soren91_audio_tap
+node --test tests/test_soren91_macos_session.mjs tests/test_soren91_macos_virtual_display.mjs tests/test_soren91_macos_audio.mjs
 
 # Dry run (prints the plan, does not launch anything):
 node tools/soren91_macos_session.mjs --srt-url srt://100.64.0.2:19192?mode=caller

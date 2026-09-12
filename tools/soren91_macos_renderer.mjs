@@ -45,6 +45,12 @@ const resultPath = process.env.SOREN91_LOCAL_RESULT_PATH;
 // on-screen behavior (only with an explicit onscreen opt-in at the session).
 const vdisplayRaw = process.env.SOREN91_LOCAL_VDISPLAY_BOUNDS || '';
 const virtualDisplayBin = process.env.SOREN91_LOCAL_VIRTUAL_DISPLAY_BIN || defaultVirtualDisplayBin;
+// Silent by default (Issue #303 audio): without SOREN91_LOCAL_AUDIO_TAP the
+// session sends no audio, so mute Chrome at the source. With the tap enabled
+// the game audio is captured (and physically muted) by the process tap
+// instead — the session omits this env var in that case.
+const muteAudioRaw = process.env.SOREN91_LOCAL_MUTE_AUDIO || '';
+const muteAudio = muteAudioRaw !== '' && !/^(0|false|no|off)$/i.test(muteAudioRaw.trim());
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 if (!resultPath) throw new Error('SOREN91_LOCAL_RESULT_PATH is required');
@@ -177,6 +183,7 @@ try {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
+      ...(muteAudio ? ['--mute-audio'] : []),
     ],
   });
 

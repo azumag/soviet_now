@@ -11,16 +11,20 @@ on:
       - 'tools/soren91_renderer_controller.mjs'
       - 'tools/soren91_renderer_priority.mjs'
       - 'tools/soren91_offscreen_verify.mjs'
+      - 'tools/soren91_macos_audio.mjs'
       - 'tools/soren91_window_capture_build.sh'
       - 'tools/soren91_virtual_display_build.sh'
+      - 'tools/soren91_audio_tap_build.sh'
       - 'tools/macos/soren91_window_capture.swift'
       - 'tools/macos/soren91_virtual_display.swift'
+      - 'tools/macos/soren91_audio_tap.swift'
       - 'tests/test_soren91_macos_session.mjs'
       - 'tests/test_soren91_local_agent.mjs'
       - 'tests/test_soren91_renderer_controller.mjs'
       - 'tests/test_soren91_renderer_priority.mjs'
       - 'tests/test_soren91_macos_capture_privacy.mjs'
       - 'tests/test_soren91_macos_virtual_display.mjs'
+      - 'tests/test_soren91_macos_audio.mjs'
       - 'infra/local/macos/soren91/**'
 
 permissions:
@@ -45,6 +49,7 @@ jobs:
           node --check tools/soren91_renderer_controller.mjs
           node --check tools/soren91_renderer_priority.mjs
           node --check tools/soren91_offscreen_verify.mjs
+          node --check tools/soren91_macos_audio.mjs
       - name: Run macOS session contract tests
         run: |
           node --test tests/test_soren91_macos_session.mjs
@@ -53,9 +58,10 @@ jobs:
           node --test tests/test_soren91_renderer_priority.mjs
           node --test tests/test_soren91_macos_capture_privacy.mjs
           node --test tests/test_soren91_macos_virtual_display.mjs
+          node --test tests/test_soren91_macos_audio.mjs
 
   build-helpers:
-    # Compiles (never runs) both Swift helpers so Linux CI still catches
+    # Compiles (never runs) all Swift helpers so Linux CI still catches
     # type/syntax regressions in the macOS-only sources.
     runs-on: macos-14
     timeout-minutes: 10
@@ -69,4 +75,5 @@ jobs:
         run: |
           ./tools/soren91_window_capture_build.sh
           ./tools/soren91_virtual_display_build.sh
+          ./tools/soren91_audio_tap_build.sh
           ./tools/macos/bin/soren91_virtual_display --help

@@ -274,3 +274,70 @@ test('holder failure rejects fail-closed (no silent onscreen fallback)', async (
     /non-JSON/,
   );
 });
+
+// --- Chrome-scoped audio tap (Issue #303) ---
+
+test('audio tap is off by default and enabled via SOREN91_LOCAL_AUDIO_TAP=1', () => {
+  const base = defaults({});
+  assert.equal(base.audioTap, false);
+  assert.ok(base.audioTapBin.endsWith('soren91_audio_tap'));
+  assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '1' }).audioTap, true);
+  assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '0' }).audioTap, false);
+  assert.equal(defaults({ SOREN91_LOCAL_AUDIO_TAP: '' }).audioTap, false);
+});
+
+test('audio tap adds the s16le fd-3 input with an AAC map, keeping the video path', () => {
+  const args = buildFfmpegArgs({ ...options, audioTap: true }, capture);
+  const rendered = args.join(' ');
+  assert.match(rendered, /-f s16le -ar 48000 -ac 2 -i pipe:3/);
+  assert.match(rendered, /-map 0:v -map 1:a/);
+  assert.match(rendered, /-c:a aac -b:a 128k/);
+  assert.doesNotMatch(rendered, / -an(?: |$)/);
+  assert.doesNotMatch(rendered, /avfoundation/);
+  // Video path untouched.
+  assert.match(rendered, /-f rawvideo -pixel_format bgra/);
+  assert.match(rendered, /crop=960:540:0:87/);
+  assert.match(rendered, /h264_videotoolbox/);
+});
+
+test('audio tap and the legacy avfoundation device are mutually exclusive', () => {
+  assert.throws(
+    () => buildFfmpegArgs({ ...options, audioTap: true, audioDevice: 'BlackHole 2ch' }, capture),
+    /mutually exclusive/,
+  );
+});
+
+test('renderer env mutes Chrome at the source unless the tap captures it', () => {
+  const muted = buildRendererEnv({ ...options, audioTap: false }, {});
+  assert.equal(muted.SOREN91_LOCAL_MUTE_AUDIO, '1');
+  const tapped = buildRendererEnv({ ...options, audioTap: true }, {});
+  assert.equal(tapped.SOREN91_LOCAL_MUTE_AUDIO, undefined);
+});
+
+test('empty automation-Chrome PID set fails closed (session must abort, never widen the tap)', async () => {
+  const { resolveTapPids } = await import('../tools/soren91_macos_audio.mjs');
+  assert.throws(() => resolveTapPids('', 12345), /fail-closed/);
+  assert.throws(() => resolveTapPids('  PID  PPID COMMAND\n', 12345), /fail-closed/);
+});
+
+test('audio tap cleanup sends SIGTERM so the tap teardown releases the mute', async () => {
+  const { stopAudioTap } = await import('../tools/soren91_macos_audio.mjs');
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.killed = false;
+  child.killSignals = [];
+  child.kill = function kill(signal) {
+    child.killSignals.push(signal);
+    child.killed = true;
+    queueMicrotask(() => {
+      if (child.exitCode == null) {
+        child.exitCode = 0;
+        child.emit('exit', 0);
+      }
+    });
+    return true;
+  };
+  await stopAudioTap(child);
+  assert.deepEqual(child.killSignals, ['SIGTERM']);
+  assert.equal(child.exitCode, 0);
+});

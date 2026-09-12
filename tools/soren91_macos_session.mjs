@@ -22,12 +22,20 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  buildAudioFfmpegInputArgs,
+  buildFfmpegStdio,
+  resolveTapPids,
+  startAudioTap,
+  stopAudioTap,
+} from './soren91_macos_audio.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const here = path.dirname(fileURLToPath(import.meta.url));
 const defaultRenderer = path.join(here, 'soren91_macos_renderer.mjs');
 const defaultCaptureHelperBin = path.join(here, 'macos', 'bin', 'soren91_window_capture');
 const defaultVirtualDisplayBin = path.join(here, 'macos', 'bin', 'soren91_virtual_display');
+const defaultAudioTapBin = path.join(here, 'macos', 'bin', 'soren91_audio_tap');
 
 function envFlag(env, name, defaultValue) {
   const raw = env?.[name];
@@ -47,6 +55,13 @@ export function defaults(env = process.env) {
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
     audioDevice: env.SOREN91_LOCAL_AUDIO_DEVICE || '',
+    // Chrome-scoped audio tap (Issue #303): OFF by default
+    // (SOREN91_LOCAL_AUDIO_TAP=1 enables). When on, the session taps ONLY
+    // the automation Chrome's descendant PIDs (see soren91_macos_audio.mjs)
+    // and wires the helper's s16le PCM into ffmpeg's fd 3. When off, no
+    // audio is sent and the renderer launches Chrome with --mute-audio.
+    audioTap: envFlag(env, 'SOREN91_LOCAL_AUDIO_TAP', false),
+    audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN || defaultAudioTapBin,
     renderer: env.SOREN91_LOCAL_RENDERER || defaultRenderer,
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN || defaultCaptureHelperBin,
     // Offscreen (Issue #303): hold a private CGVirtualDisplay and park the
@@ -279,6 +294,9 @@ export function buildFfmpegArgs(options, capture) {
     throw new Error('capture outerWidth/outerHeight from the renderer result is required');
   }
   const bitrate = `${options.videoMbps}M`;
+  if (options.audioTap && options.audioDevice) {
+    throw new Error('audioTap and audioDevice are mutually exclusive (fail-closed: ambiguous audio source)');
+  }
   const args = [
     '-hide_banner', '-loglevel', 'warning', '-nostdin',
     '-f', 'rawvideo', '-pixel_format', 'bgra',
@@ -287,12 +305,16 @@ export function buildFfmpegArgs(options, capture) {
     '-i', 'pipe:0',
   ];
   if (options.audioDevice) args.push('-f', 'avfoundation', '-i', `none:${options.audioDevice}`);
+  // Chrome process-tap audio: the helper's s16le 48kHz stereo PCM arrives on
+  // fd 3 (see buildFfmpegStdio). Input index stays 1 here because the tap
+  // and the legacy avfoundation device are mutually exclusive above.
+  if (options.audioTap) args.push(...buildAudioFfmpegInputArgs());
   args.push(
     '-vf', `crop=${options.width}:${options.height}:${capture.chromeLeft}:${capture.chromeTop}`,
     '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-maxrate', bitrate, '-bufsize', `${options.videoMbps * 2}M`,
     '-g', '60', '-pix_fmt', 'yuv420p',
   );
-  if (options.audioDevice) args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '128k');
+  if (options.audioDevice || options.audioTap) args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '128k');
   else args.push('-an');
   args.push('-f', 'mpegts', options.srtUrl);
   return args;
@@ -308,6 +330,10 @@ export function buildRendererEnv(options, env = process.env, { vdisplay = null }
     SOREN91_LOCAL_RESULT_PATH: options.resultPath,
     SOREN91_LOCAL_VIRTUAL_DISPLAY_BIN: options.virtualDisplayBin,
   };
+  // Silent by default: without the audio tap nothing downstream consumes
+  // Chrome audio, so mute it at the source. With the tap enabled the game
+  // audio is captured instead (and physically muted by the tap itself).
+  if (!options.audioTap) rendererEnv.SOREN91_LOCAL_MUTE_AUDIO = '1';
   // The holder's measured bounds (never assumed coordinates): the renderer
   // parks the Chrome window inside them and proves zero physical overlap.
   if (vdisplay) {
@@ -420,10 +446,12 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   let renderer;
   let capture;
   let ffmpeg;
+  let audiotap;
   let vdisplay;
   let vdisplayStatus = null;
   const cleanup = () => {
-    terminateTree(ffmpeg); terminateTree(capture); terminateTree(renderer);
+    terminateTree(ffmpeg); terminateTree(capture); terminateTree(renderer); terminateTree(audiotap);
+    try { ffmpeg?.stdio?.[3]?.destroy?.(); } catch {}
     if (vdisplay) { try { vdisplay.kill('SIGTERM'); } catch {} }
   };
   process.once('SIGINT', cleanup);
@@ -464,25 +492,62 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     capture = started.child;
     console.log(`SOREN91_LOCAL_CAPTURE_READY=${JSON.stringify(started.status)}`);
 
+    // Chrome-scoped audio tap (Issue #303): resolve the automation Chrome's
+    // descendant PIDs from the renderer's PID via `ps`, then tap ONLY those.
+    // Fail-closed: no resolvable PID aborts the session — the tap is never
+    // widened to a bundle-ID scope (which would capture/mute everyday Chrome).
+    if (options.audioTap) {
+      if (!fs.existsSync(options.audioTapBin)) {
+        throw new Error(`audio tap helper binary not found at ${options.audioTapBin}; run tools/soren91_audio_tap_build.sh first`);
+      }
+      let tapPids = null;
+      let lastError = null;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const ps = spawnSync('ps', ['-ax', '-o', 'pid,ppid,command'], { encoding: 'utf8' });
+        if (ps.error) {
+          lastError = ps.error;
+        } else {
+          try {
+            tapPids = resolveTapPids(ps.stdout || '', renderer.pid);
+            break;
+          } catch (error) { lastError = error; }
+        }
+        await sleep(1000);
+      }
+      if (!tapPids) throw new Error(`audio tap PID resolution failed (fail-closed): ${lastError?.message || lastError}`);
+      const audioStarted = await startAudioTap(options.audioTapBin, tapPids, {
+        timeoutMs: options.bootTimeoutSec * 1000,
+      });
+      audiotap = audioStarted.child;
+      console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(audioStarted.status)}`);
+    }
+
     ffmpeg = spawn(options.ffmpegBin, buildFfmpegArgs(options, result.capture), {
-      stdio: ['pipe', 'inherit', 'inherit'],
+      stdio: buildFfmpegStdio(options.audioTap),
     });
     capture.stdout.pipe(ffmpeg.stdin);
+    if (audiotap) audiotap.stdout.pipe(ffmpeg.stdio[3]);
 
     const streamDeadline = Math.min(Date.now() + options.sessionSec * 1000, hardDeadline);
     const remaining = Math.max(0, streamDeadline - Date.now());
-    const outcome = await Promise.race([
+    const racers = [
       sleep(remaining).then(() => ({ kind: 'deadline' })),
       waitForExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
       waitForExit(capture).then((value) => ({ kind: 'capture-exit', value })),
       waitForExit(renderer).then((value) => ({ kind: 'renderer-exit', value })),
-    ]);
+    ];
+    if (audiotap) racers.push(waitForExit(audiotap).then((value) => ({ kind: 'audio-tap-exit', value })));
+    const outcome = await Promise.race(racers);
     if (outcome.kind !== 'deadline') throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
     return { ...plan, result, completed: true };
   } finally {
     cleanup();
     process.removeListener('SIGINT', cleanup);
     process.removeListener('SIGTERM', cleanup);
+    // The audio tap's teardown (IOProc stop -> aggregate destroy -> tap
+    // destroy) releases the CATapMutedWhenTapped physical mute: wait for its
+    // exit to prove the mute is released before returning.
+    if (audiotap) await stopAudioTap(audiotap);
     // The virtual display dies only with its holder: wait for the exit to
     // prove the display is released before returning.
     if (vdisplay) await stopVirtualDisplay(vdisplay);
