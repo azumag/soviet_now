@@ -29,6 +29,17 @@ def _rows(effect, n_blocks, seed=0, pattern="ABBA", sd_block=200, sd_game=100, t
     return rows
 
 
+def _constant_rows(effect, n_blocks, pattern="ABBA"):
+    rows = []
+    idx = 0
+    for _ in range(n_blocks):
+        for ch in pattern:
+            v = 1600.0 + (effect if ch == "B" else 0.0)
+            rows.append({"idx": idx, "arm": ch, "score": v, "eval": v + 5000, "turns": 90, "tainted": False})
+            idx += 1
+    return rows
+
+
 class AbDecideTest(unittest.TestCase):
     def test_continue_below_min_blocks(self):
         v = dec.decide(_rows(0, 5))
@@ -42,13 +53,30 @@ class AbDecideTest(unittest.TestCase):
             ks.append(first)
         self.assertTrue(all(k is not None and 10 <= k <= 12 for k in ks), ks)
 
-    def test_null_never_adopts_and_stops_by_futility_or_final(self):
-        verdicts = []
-        for s in range(60):
-            v = dec.decide(_rows(0, 37, seed=s))
-            verdicts.append(v["verdict"])
-        self.assertNotIn("ADOPT", verdicts)
-        self.assertTrue(all(v in ("REJECT_FUTILE", "REJECT_INCONCLUSIVE", "REJECT_HARM") for v in verdicts), set(verdicts))
+    def test_exact_tie_finishes_neutral(self):
+        v = dec.decide(_constant_rows(0, 37))
+        self.assertEqual(v["verdict"], "REJECT_INCONCLUSIVE", v)
+        self.assertEqual(v["decision_class"], "neutral", v)
+
+    def test_small_positive_effect_is_not_futile_and_adopts_provisionally(self):
+        rows = _constant_rows(1, 37)
+        v12 = dec.decide(rows[: 12 * 4])
+        self.assertEqual(v12["k"], 12)
+        self.assertEqual(v12["verdict"], "CONTINUE", v12)
+        self.assertGreater(v12["mean_diff"], 0)
+        self.assertEqual(v12["futility_threshold"], 0.0)
+
+        final = dec.decide(rows)
+        self.assertEqual(final["verdict"], "ADOPT", final)
+        self.assertEqual(final["decision_class"], "provisional_win", final)
+        self.assertGreater(final["mean_diff"], 0)
+        self.assertTrue(final["p"] is None or final["p"] >= final["alpha_look"] or final["mean_diff"] < final["mde"])
+
+    def test_small_negative_effect_is_not_adopted(self):
+        v = dec.decide(_constant_rows(-1, 37))
+        self.assertNotEqual(v["verdict"], "ADOPT", v)
+        self.assertIn(v["verdict"], ("REJECT_HARM", "REJECT_FUTILE", "REJECT_INCONCLUSIVE"), v)
+        self.assertEqual(v["decision_class"], "loss", v)
 
     def test_large_effect_adopts_at_a_look(self):
         adopted = 0
@@ -64,6 +92,7 @@ class AbDecideTest(unittest.TestCase):
         self.assertEqual(v["k"], 19)
         self.assertEqual(v["n_a"], 38)
         self.assertEqual(v["verdict"], "ADOPT", v)
+        self.assertEqual(v["decision_class"], "significant_win", v)
         v18 = dec.decide(rows[:-4])
         self.assertEqual(v18["k"], 18)
         self.assertNotEqual(v18["verdict"], "ADOPT")
@@ -155,6 +184,16 @@ class AbDecideTest(unittest.TestCase):
         v = dec.decide(rows)
         self.assertNotEqual(v["verdict"], "ADOPT")
         self.assertTrue(any("guardrail" in x for x in v["reasons"]))
+
+    def test_guardrail_vetoes_provisional_adopt(self):
+        rows = _constant_rows(1, 37)
+        for r in rows:
+            if r["arm"] == "A":
+                r["t15"] = 1
+        v = dec.decide(rows)
+        self.assertEqual(v["verdict"], "REJECT_INCONCLUSIVE", v)
+        self.assertNotEqual(v["decision_class"], "provisional_win", v)
+        self.assertTrue(any("guardrail" in x for x in v["reasons"]), v)
 
     def test_replay_v738_history_rejects_harm_early_under_frozen_legacy_rule(self):
         path = os.path.join(ROOT, "tests", "fixtures", "ab_history_v738_games.jsonl")

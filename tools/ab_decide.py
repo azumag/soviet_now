@@ -19,14 +19,16 @@ Comparison / dashboard ヘッダー) と同じ tools/ab_report.py:primary_value 
   ABORT              tainted > max_tainted、または即死の非対称 (B の即死が A より Fisher で有意に多い)
   CONTINUE           k < min_blocks
   REJECT_HARM        k >= harm_min_blocks かつ harm UCB < 0
-  REJECT_FUTILE      k >= futility_k かつ futility UCB < futility_delta
-  ADOPT              k が looks に含まれ n_min >= min_n_per_arm かつ k >= min_blocks_adopt かつ m > 0 かつ
-                     符号反転 p < alpha/len(looks) かつ m >= MDE(sd, n_min) かつガードレール OK
-  REJECT_INCONCLUSIVE 最終 look (k == max_blocks) で ADOPT に至らない
+  REJECT_FUTILE      k >= futility_k かつ futility UCB < min(0, futility_delta)
+                      (「改善幅が小さい」だけでは棄却せず、非正の候補だけを早期停止する)
+  ADOPT              有意な改善を満たした場合は decision_class=significant_win
+  ADOPT              最終判定で m > 0、十分な標本、ガードレール OK なら、有意差/MDE 未達でも
+                     decision_class=provisional_win として採用する
+  REJECT_INCONCLUSIVE 最終判定で m <= 0、ガードレール違反、または標本不足
   CONTINUE           それ以外
 
-害停止と無益停止は別の上側信頼境界を持つ。較正済み害停止を UCB99 に変えても、既存の
-無益停止 UCB90 まで同時に変えない。
+これにより「有意差が無い」こと自体は rollback 理由にしない。一方で taint、即死、
+ガードレール、標本不足は従来どおり採用を阻止する。
 
 使い方: python3 tools/ab_decide.py --games tmp/state/ab_games.jsonl --state tmp/state/ab_state.json [--json]
         [--primary eval|score] [--sd 3700]
@@ -72,7 +74,8 @@ DEFAULTS = {
     # issue #132 の A/A 較正済み害停止。旧 k>=6/UCB90 は帰無でも約4割を誤停止した。
     "harm_min_blocks": 10,
     "harm_z": Z99,
-    # 無益停止は従来の UCB90 契約を独立して維持する。
+    # futility_delta は互換のため保持するが、正の値を「最低改善幅」としては使わない。
+    # 早期棄却の閾値は min(0, futility_delta) とし、観測平均がわずかでも正なら最終判定まで残す。
     "futility_k": 12,
     "futility_z": Z90,
     "futility_delta": 150.0,
@@ -159,23 +162,29 @@ def decide(rows, cfg=None):
     se = (st.pstdev(d) / math.sqrt(k)) if k > 1 else None
     harm_ucb = (m + float(c["harm_z"]) * se) if (m is not None and se is not None) else None
     futility_ucb = (m + float(c["futility_z"]) * se) if (m is not None and se is not None) else None
+    # 「最低 +150 などを超えないと無益」の契約は、小さな改善を積み上げる目的と衝突する。
+    # 互換の設定値は残しつつ、正の閾値は 0 に丸め、非正候補の早期停止にだけ使う。
+    futility_threshold = min(0.0, float(c["futility_delta"]))
     out = {
         "k": k, "n_a": n_a, "n_b": n_b, "mean_diff": m, "se": se,
         "harm_ucb": harm_ucb, "harm_z": float(c["harm_z"]),
         "futility_ucb": futility_ucb, "futility_z": float(c["futility_z"]),
+        "futility_threshold": futility_threshold,
         # 互換用。既存 dashboard / simulate は UCB90 を無益停止側として表示してきた。
         "ucb90": futility_ucb,
         "tainted": tainted, "primary": primary, "sd": c["sd"], "p": None,
-        "alpha_look": None, "mde": None, "reasons": [],
+        "alpha_look": None, "mde": None, "reasons": [], "decision_class": "continue",
     }
 
-    def ret(v, why):
+    def ret(v, why, decision_class=None):
         out["verdict"] = v
+        if decision_class:
+            out["decision_class"] = decision_class
         out["reasons"].append(why)
         return out
 
     if tainted > c["max_tainted"]:
-        return ret("ABORT", "tainted=%d > %d" % (tainted, c["max_tainted"]))
+        return ret("ABORT", "tainted=%d > %d" % (tainted, c["max_tainted"]), "invalid")
     # 即死の非対称は通常の統計的害停止とは別の安全ガード。
     if k >= c["instadeath_min_blocks"]:
         dead_a = sum(1 for r in a_rows if (r.get("score") or 0) < c["dead_eval_threshold"])
@@ -187,7 +196,7 @@ def decide(rows, cfg=None):
                 p_dead = 1.0
             out["p_instadeath"] = p_dead
             if p_dead is not None and p_dead < c["instadeath_alpha"]:
-                return ret("ABORT", "instadeath B=%d/%d vs A=%d/%d p=%.3f" % (dead_b, n_b_all, dead_a, n_a_all, p_dead))
+                return ret("ABORT", "instadeath B=%d/%d vs A=%d/%d p=%.3f" % (dead_b, n_b_all, dead_a, n_a_all, p_dead), "loss")
     if k < c["min_blocks"]:
         return ret("CONTINUE", "k=%d < min_blocks %d" % (k, c["min_blocks"]))
     if k >= int(c["harm_min_blocks"]) and harm_ucb is not None and harm_ucb < 0:
@@ -195,12 +204,14 @@ def decide(rows, cfg=None):
             "REJECT_HARM",
             "k=%d >= %d and UCB(z=%.4f)=%.0f < 0 (mean %.0f se %.0f)" % (
                 k, int(c["harm_min_blocks"]), float(c["harm_z"]), harm_ucb, m, se),
+            "loss",
         )
-    if k >= c["futility_k"] and futility_ucb is not None and futility_ucb < c["futility_delta"]:
+    if k >= c["futility_k"] and futility_ucb is not None and futility_ucb < futility_threshold:
         return ret(
             "REJECT_FUTILE",
             "k=%d UCB(z=%.4f)=%.0f < %.0f" % (
-                k, float(c["futility_z"]), futility_ucb, c["futility_delta"]),
+                k, float(c["futility_z"]), futility_ucb, futility_threshold),
+            "loss",
         )
     if k in looks and n_min >= c["min_n_per_arm"] and k >= c["min_blocks_adopt"]:
         p = ab_report.sign_flip_p(d)
@@ -209,14 +220,35 @@ def decide(rows, cfg=None):
         out.update({"p": p, "alpha_look": alpha_look, "mde": mde})
         guard_ok, guard_why = _guardrails(a_rows, b_rows)
         if m is not None and m > 0 and p is not None and p < alpha_look and m >= mde and guard_ok:
-            return ret("ADOPT", "look k=%d mean %.0f >= MDE %.0f, p=%.3f < %.3f" % (k, m, mde, p, alpha_look))
+            return ret("ADOPT", "look k=%d mean %.0f >= MDE %.0f, p=%.3f < %.3f" % (k, m, mde, p, alpha_look), "significant_win")
         if not guard_ok:
             out["reasons"].append("guardrail: " + guard_why)
         if k >= c["max_blocks"]:
-            return ret("REJECT_INCONCLUSIVE", "final look k=%d mean %.0f p=%s mde %.0f" % (k, m, ("%.3f" % p) if p is not None else "-", mde))
+            if m is not None and m > 0 and guard_ok:
+                return ret(
+                    "ADOPT",
+                    "final look k=%d mean %.0f > 0; significance/MDE not required for provisional adoption (p=%s mde %.0f)" % (
+                        k, m, ("%.3f" % p) if p is not None else "-", mde),
+                    "provisional_win",
+                )
+            if not guard_ok:
+                return ret("REJECT_INCONCLUSIVE", "final look k=%d guardrail failed: %s" % (k, guard_why), "loss")
+            decision_class = "neutral" if m == 0 else "loss"
+            return ret("REJECT_INCONCLUSIVE", "final look k=%d mean %.0f <= 0 p=%s mde %.0f" % (k, m, ("%.3f" % p) if p is not None else "-", mde), decision_class)
         return ret("CONTINUE", "look k=%d not adopted (mean %.0f p=%s mde %.0f)" % (k, m, ("%.3f" % p) if p is not None else "-", mde))
     if k >= c["max_blocks"]:
-        return ret("REJECT_INCONCLUSIVE", "max_blocks reached k=%d (n_min=%d)" % (k, n_min))
+        guard_ok, guard_why = _guardrails(a_rows, b_rows)
+        if not guard_ok:
+            out["reasons"].append("guardrail: " + guard_why)
+        enough_data = n_min >= c["min_n_per_arm"] and k >= c["min_blocks_adopt"]
+        if m is not None and m > 0 and enough_data and guard_ok:
+            return ret("ADOPT", "max_blocks reached k=%d mean %.0f > 0 with n_min=%d; provisional adoption" % (k, m, n_min), "provisional_win")
+        if not enough_data:
+            return ret("REJECT_INCONCLUSIVE", "max_blocks reached k=%d with insufficient n_min=%d" % (k, n_min), "inconclusive")
+        if not guard_ok:
+            return ret("REJECT_INCONCLUSIVE", "max_blocks reached k=%d guardrail failed: %s" % (k, guard_why), "loss")
+        decision_class = "neutral" if m == 0 else "loss"
+        return ret("REJECT_INCONCLUSIVE", "max_blocks reached k=%d mean=%s" % (k, "-" if m is None else "%.0f" % m), decision_class)
     return ret("CONTINUE", "k=%d n=%d/%d" % (k, n_a, n_b))
 
 
@@ -286,8 +318,8 @@ def main():
     if args.json:
         print(json.dumps(v, ensure_ascii=False))
     else:
-        print("verdict=%s k=%d n=%d/%d %s mean=%s se=%s harm_ucb(z=%.4f)=%s futility_ucb(z=%.4f)=%s p=%s mde=%s | %s" % (
-            v["verdict"], v["k"], v["n_a"], v["n_b"], v.get("primary", primary),
+        print("verdict=%s class=%s k=%d n=%d/%d %s mean=%s se=%s harm_ucb(z=%.4f)=%s futility_ucb(z=%.4f)=%s p=%s mde=%s | %s" % (
+            v["verdict"], v.get("decision_class", "-"), v["k"], v["n_a"], v["n_b"], v.get("primary", primary),
             ("%.0f" % v["mean_diff"]) if v["mean_diff"] is not None else "-",
             ("%.0f" % v["se"]) if v["se"] is not None else "-",
             v["harm_z"], ("%.0f" % v["harm_ucb"]) if v["harm_ucb"] is not None else "-",
