@@ -21,7 +21,7 @@ export function defaults(env = process.env) {
     height: Number(env.SOREN91_GPU_HEIGHT || 540),
     videoMbps: Number(env.SOREN91_GPU_VIDEO_MBPS || 2),
     audioMbps: Number(env.SOREN91_GPU_AUDIO_MBPS || 0.16),
-    diskGb: Number(env.SOREN91_POWERGPU_DISK_GB || 20),
+    diskGb: Number(env.SOREN91_POWERGPU_DISK_GB || 8),
     imageDownloadGb: Number(env.SOREN91_GPU_IMAGE_DOWNLOAD_GB || 1.2),
     image: env.SOREN91_GPU_IMAGE || '',
     pricingJson: '',
@@ -63,7 +63,7 @@ export function validateOptions(options) {
   if (!Number.isInteger(options.bootTimeoutSec) || options.bootTimeoutSec < 30 || options.bootTimeoutSec > 300) throw new Error('bootTimeoutSec must be 30..300');
   if (!Number.isInteger(options.instanceMaxAgeSec) || options.instanceMaxAgeSec < options.sessionSec || options.instanceMaxAgeSec > 600) throw new Error('instanceMaxAgeSec must be sessionSec..600');
   if (options.minFps !== 30) throw new Error('Tier 0 PoC minFps must be 30');
-  if (options.diskGb !== 20) throw new Error('Tier 0 PoC diskGb must be 20');
+  if (options.diskGb !== 8) throw new Error('Tier 0 PoC diskGb must be 8');
   if (options.width !== 960 || options.height !== 540) throw new Error('Tier 0 PoC output must be 960x540');
   if (options.execute && !options.image) throw new Error('--execute requires --image or SOREN91_GPU_IMAGE');
   return options;
