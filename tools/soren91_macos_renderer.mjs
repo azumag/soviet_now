@@ -196,6 +196,31 @@ try {
   page = page || (await context.newPage());
   await page.waitForTimeout(300);
 
+  // Audio-tap pre-warm (Issue #303): force Chrome's AudioService up BEFORE
+  // any game audio exists, so the session's early-tap poll finds a
+  // tappable audio process instead of racing the game's first sound.
+  // Silent by construction (gain 0, 0.5s blip); never fails the run.
+  try {
+    await page.evaluate(() => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return 'no-audio-context';
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        try { osc.stop(ctx.currentTime + 0.5); } catch {}
+        if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+        return 'pre-warmed';
+      } catch (error) {
+        return `skipped:${(error && error.message) || error}`;
+      }
+    });
+  } catch {}
+
   const windowBounds = await calibrateWindowBounds(context, page, {
     width, height, left: placement.left, top: placement.top,
   });

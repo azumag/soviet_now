@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import {
   buildAudioFfmpegInputArgs,
   buildAudioTapArgs,
@@ -319,4 +319,172 @@ test('classifySessionEnd: renderer/audio-tap exits are never a normal end', asyn
   assert.equal(classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 0, signal: null } }), 'failed');
   assert.equal(classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 1, signal: null } }), 'failed');
   assert.equal(classifySessionEnd({ kind: 'bogus-kind', value: { code: 0, signal: null } }), 'failed');
+});
+
+// --- Early audio-tap attach (Issue #303, Part B: silence from boot) ---
+
+// Automation renderer up, but no Chrome (and no audio) under it yet —
+// the state the early poll sees before Chrome's AudioService appears.
+const PS_NO_CHROME = `  PID  PPID COMMAND
+    1     0 /sbin/launchd
+  100    50 node tools/soren91_macos_renderer.mjs
+  700   100 /usr/bin/say hello
+`;
+
+function fakeTapChild() {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.killSignals = [];
+  child.kill = function kill(signal) {
+    child.killSignals.push(signal);
+    return true;
+  };
+  return child;
+}
+
+test('earlyAttachAudioTap polls from spawn until Chrome appears, then starts the tap drained', async () => {
+  const { earlyAttachAudioTap } = await import('../tools/soren91_macos_audio.mjs');
+  let psCalls = 0;
+  const psImpl = () => {
+    psCalls += 1;
+    return { stdout: psCalls < 3 ? PS_NO_CHROME : PS };
+  };
+  const sleepCalls = [];
+  const sleepImpl = async (ms) => { sleepCalls.push(ms); };
+  let seenBin = null;
+  let seenPids = null;
+  const child = fakeTapChild();
+  const startTapImpl = async (bin, pids) => {
+    seenBin = bin;
+    seenPids = [...pids];
+    return { child, status: { ok: true, tapUID: 'early-1' } };
+  };
+  const attached = await earlyAttachAudioTap({
+    rendererPid: 100,
+    audioTapBin: '/tmp/soren91_audio_tap',
+    deadlineMs: Date.now() + 60_000,
+    psImpl,
+    startTapImpl,
+    sleepImpl,
+  });
+  assert.equal(psCalls, 3);
+  assert.deepEqual(sleepCalls, [500, 500]); // ~500ms poll cadence
+  assert.equal(seenBin, '/tmp/soren91_audio_tap');
+  assert.deepEqual(seenPids, [101, 102, 103]);
+  assert.equal(attached.child, child);
+  assert.equal(attached.status.tapUID, 'early-1');
+  assert.equal(typeof attached.detachDrain, 'function');
+  // PCM is drain-read while ffmpeg is not yet running (mute stays on).
+  assert.ok(child.stdout.listenerCount('data') >= 1);
+  attached.detachDrain();
+  assert.equal(child.stdout.listenerCount('data'), 0);
+  child.stdout.destroy();
+});
+
+test('earlyAttachAudioTap retries a no-audio-process helper failure until success', async () => {
+  const { earlyAttachAudioTap } = await import('../tools/soren91_macos_audio.mjs');
+  let attempts = 0;
+  const startTapImpl = async () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error('audio tap helper failed (fail-closed): no tappable audio process');
+    return { child: fakeTapChild(), status: { ok: true, tapUID: 'retry-1' } };
+  };
+  const attached = await earlyAttachAudioTap({
+    rendererPid: 100,
+    audioTapBin: '/tmp/tap',
+    deadlineMs: Date.now() + 60_000,
+    psImpl: () => ({ stdout: PS }),
+    startTapImpl,
+    sleepImpl: async () => {},
+  });
+  assert.equal(attempts, 3);
+  assert.equal(attached.status.tapUID, 'retry-1');
+  attached.detachDrain();
+  attached.child.stdout.destroy();
+});
+
+test('earlyAttachAudioTap returns null on deadline (caller falls back, then fail-closed)', async () => {
+  const { earlyAttachAudioTap } = await import('../tools/soren91_macos_audio.mjs');
+  // Already-expired deadline: no ps, no tap attempt.
+  let psCalls = 0;
+  const expired = await earlyAttachAudioTap({
+    rendererPid: 100,
+    audioTapBin: '/tmp/tap',
+    deadlineMs: Date.now() - 1,
+    psImpl: () => {
+      psCalls += 1;
+      return { stdout: PS_NO_CHROME };
+    },
+    startTapImpl: async () => { throw new Error('must not be called'); },
+    sleepImpl: async () => {},
+  });
+  assert.equal(expired, null);
+  assert.equal(psCalls, 0);
+  // Deadline expiring mid-poll: terminates after the bounded wait.
+  const started = Date.now();
+  const midPoll = await earlyAttachAudioTap({
+    rendererPid: 100,
+    audioTapBin: '/tmp/tap',
+    deadlineMs: Date.now() + 30,
+    psImpl: () => ({ stdout: PS_NO_CHROME }),
+    startTapImpl: async () => { throw new Error('must not be called'); },
+  });
+  assert.equal(midPoll, null);
+  assert.ok(Date.now() - started < 2000, 'mid-poll deadline must terminate promptly');
+});
+
+test('earlyAttachAudioTap honours cancel and never leaks a racy helper', async () => {
+  const { earlyAttachAudioTap } = await import('../tools/soren91_macos_audio.mjs');
+  // Cancelled before any attempt: no tap spawn, prompt null.
+  let started = 0;
+  const none = await earlyAttachAudioTap({
+    rendererPid: 100,
+    audioTapBin: '/tmp/tap',
+    deadlineMs: Date.now() + 60_000,
+    psImpl: () => ({ stdout: PS }),
+    startTapImpl: async () => {
+      started += 1;
+      return { child: fakeTapChild(), status: {} };
+    },
+    sleepImpl: async () => {},
+    isCancelled: () => true,
+  });
+  assert.equal(none, null);
+  assert.equal(started, 0);
+  // Cancel landing mid-handshake: the won helper is SIGTERMed, null returned.
+  const cancelFlag = { value: false };
+  const victim = fakeTapChild();
+  const result = await earlyAttachAudioTap({
+    rendererPid: 100,
+    audioTapBin: '/tmp/tap',
+    deadlineMs: Date.now() + 60_000,
+    psImpl: () => ({ stdout: PS }),
+    startTapImpl: async () => {
+      cancelFlag.value = true;
+      return { child: victim, status: {} };
+    },
+    sleepImpl: async () => {},
+    isCancelled: () => cancelFlag.value,
+  });
+  assert.equal(result, null);
+  assert.deepEqual(victim.killSignals, ['SIGTERM']);
+});
+
+test('PCM drain discards pre-ffmpeg audio; detach hands a live pipe to ffmpeg', async () => {
+  const { attachPcmDrain } = await import('../tools/soren91_macos_audio.mjs');
+  const src = new PassThrough();
+  const detach = attachPcmDrain({ stdout: src });
+  src.write(Buffer.from([1, 2, 3, 4]));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(src.readableLength, 0); // drained, not buffered
+  detach();
+  // ffmpeg switch-over: pipe the same live stream into fd 3 and audio flows.
+  const dest = new PassThrough();
+  src.pipe(dest);
+  try { src.resume?.(); } catch {}
+  src.write(Buffer.from([5, 6]));
+  const chunk = await new Promise((resolve) => dest.once('data', resolve));
+  assert.deepEqual([...chunk], [5, 6]);
+  src.destroy();
+  dest.destroy();
 });

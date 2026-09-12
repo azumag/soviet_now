@@ -301,20 +301,31 @@ then muxed into the same SRT stream as AAC:
 
 ```text
 soren91_macos_session.mjs (audio tap ON by default; SOREN91_LOCAL_AUDIO_TAP=0 disables)
-  -> after the renderer result: `ps -ax -o pid,ppid,command` walk from the
-     renderer PID -> automation Chrome descendants (Google Chrome family only)
+  -> right after the renderer spawns: poll `ps -ax -o pid,ppid,command`
+     ~every 500ms, walk from the renderer PID -> automation Chrome
+     descendants (Google Chrome family only), start the tap as soon as an
+     AudioService is visible (early-attach: BEFORE the game makes sound;
+     helper "no audio process" failures are retried until bootTimeoutSec)
   -> tools/macos/soren91_audio_tap --pid N [--pid N ...] (Swift, built by
      tools/soren91_audio_tap_build.sh)
        -> CATapDescription(stereoMixdownOfProcesses:) + CATapMutedWhenTapped
        -> private aggregate device (tap list only) -> IOProc
-       -> s16le 48000Hz stereo PCM on stdout -> ffmpeg fd 3 (pipe:3)
+       -> s16le 48000Hz stereo PCM on stdout -> drained (discarded) until
+          ffmpeg starts, then re-piped to ffmpeg fd 3 (pipe:3)
   -> ffmpeg: -map 0:v -map 1:a -c:a aac -b:a 128k (same SRT output)
 ```
 
-Flag: `SOREN91_LOCAL_AUDIO_TAP` (default `1` = tap ON). The tap starts
-after renderer readiness; with `SOREN91_LOCAL_AUDIO_TAP=0`, no audio is sent
+Flag: `SOREN91_LOCAL_AUDIO_TAP` (default `1` = tap ON). The tap attaches
+early (polling starts at renderer spawn, capped by `bootTimeoutSec`); if
+the poll finds nothing in time, the session falls back to the
+post-readiness retry and finally fail-closed. With
+`SOREN91_LOCAL_AUDIO_TAP=0`, no audio is sent
 and the renderer launches Chrome with `--mute-audio` (via
 `SOREN91_LOCAL_MUTE_AUDIO=1`).
+Separately, the renderer plays a silent (gain-0, 0.5s) `AudioContext`
+blip right after launch so Chrome's AudioService exists before any game
+audio — giving the early poll something to tap. Both are best-effort and
+never fail the run; the fail-closed tap scope below is unchanged.
 
 Privacy rules enforced in code, not just docs (fail-closed everywhere):
 
@@ -337,8 +348,10 @@ Privacy rules enforced in code, not just docs (fail-closed everywhere):
 Known constraints (measured or explicitly unverified):
 
 - Chrome restarts (new AudioService PID) need a fresh tap — the session
-  resolves PIDs once after renderer readiness (with a short retry), it does
-  not follow restarts mid-session.
+  pins the PIDs found by the early poll (plus the post-readiness fallback
+  retry); it does not follow AudioService restarts mid-session. If Chrome
+  recreates its audio process mid-run, game audio escapes the tap (audible)
+  until the next session.
 - Objective physical-mute verification (actually listening) is **not
   performed** — only the API-level `muteBehaviorVerified=2` round-trip.
   Real listening confirmation is a user-side check.
@@ -384,7 +397,10 @@ Known constraints (measured or explicitly unverified):
 - `tools/soren91_macos_audio.mjs` — pure audio-tap logic shared by the
   session and tests: `ps` table parsing, automation-Chrome descendant PID
   collection (`collectDescendantChromePids`/`resolveTapPids`, fail-closed),
-  ffmpeg fd-3 input args, tap handshake parsing, tap spawn/stop.
+  ffmpeg fd-3 input args, tap handshake parsing, tap spawn/stop, plus the
+  early-attach poll (`earlyAttachAudioTap`: ~500ms `ps` polling from
+  renderer spawn with PCM drain until ffmpeg takes over) and the session-end
+  classifier (`classifySessionEnd`: capture-exit code 0 = consumer-closed).
 - `tests/test_soren91_macos_audio.mjs` — audio-tap unit tests (`node --test`).
 - `tools/soren91_macos_session.mjs` — same options/validation contract as the
   Windows session (`sessionSec` capped at 1800s / `hardMaxSec` at 2400s,

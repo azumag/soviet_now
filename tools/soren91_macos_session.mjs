@@ -26,6 +26,7 @@ import {
   buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
   classifySessionEnd,
+  earlyAttachAudioTap,
   isBenignPipeError,
   resolveTapPids,
   startAudioTap,
@@ -518,6 +519,11 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   let audiotap;
   let vdisplay;
   let vdisplayStatus = null;
+  // Early audio-tap attach (Issue #303, Part B): polling starts right after
+  // the renderer spawns so the tap mute is up before game audio begins.
+  let earlyTapPromise = null;
+  let earlyTapDetach = null;
+  const earlyTapCancel = { value: false };
   const cleanup = () => {
     terminateTree(ffmpeg); terminateTree(capture); terminateTree(renderer); terminateTree(audiotap);
     try { ffmpeg?.stdin?.destroy?.(); } catch {}
@@ -556,6 +562,28 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       env: buildRendererEnv(options, process.env, { vdisplay: vdisplayStatus }),
       stdio: ['ignore', 'inherit', 'inherit'],
     });
+    // Fail fast on a missing tap binary (before the background poll starts
+    // retrying a spawn that can never succeed).
+    if (options.audioTap && !fs.existsSync(options.audioTapBin)) {
+      throw new Error(`audio tap helper binary not found at ${options.audioTapBin}; run tools/soren91_audio_tap_build.sh first`);
+    }
+    // Early-attach (Issue #303, Part B): poll for the automation Chrome's
+    // AudioService from NOW — not after renderer readiness — so the tap
+    // (and its CATapMutedWhenTapped physical mute) is up before the game
+    // starts making sound. PCM is drain-read until ffmpeg takes over the
+    // pipe; a null result falls back to the post-readiness retry below.
+    // The never-reject wrapper avoids an unhandled rejection when an
+    // earlier boot step throws before we await it; the finally block
+    // cancels the poll so it cannot hold the event loop open.
+    const bootDeadlineMs = Date.now() + options.bootTimeoutSec * 1000;
+    earlyTapPromise = options.audioTap
+      ? earlyAttachAudioTap({
+        rendererPid: renderer.pid,
+        audioTapBin: options.audioTapBin,
+        deadlineMs: bootDeadlineMs,
+        isCancelled: () => earlyTapCancel.value,
+      }).then((value) => value, () => null)
+      : Promise.resolve(null);
     const result = await waitForResult(options.resultPath, renderer, options.bootTimeoutSec * 1000);
     if (!result?.pass) throw new Error(`renderer probe failed: ${result?.reason || JSON.stringify(result)}`);
 
@@ -569,29 +597,34 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // Fail-closed: no resolvable PID aborts the session — the tap is never
     // widened to a bundle-ID scope (which would capture/mute everyday Chrome).
     if (options.audioTap) {
-      if (!fs.existsSync(options.audioTapBin)) {
-        throw new Error(`audio tap helper binary not found at ${options.audioTapBin}; run tools/soren91_audio_tap_build.sh first`);
-      }
-      let tapPids = null;
-      let lastError = null;
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const ps = spawnSync('ps', ['-ax', '-o', 'pid,ppid,command'], { encoding: 'utf8' });
-        if (ps.error) {
-          lastError = ps.error;
-        } else {
-          try {
-            tapPids = resolveTapPids(ps.stdout || '', renderer.pid);
-            break;
-          } catch (error) { lastError = error; }
+      const early = await earlyTapPromise;
+      earlyTapPromise = null;
+      if (early) {
+        audiotap = early.child;
+        earlyTapDetach = early.detachDrain;
+        console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(early.status)}`);
+      } else {
+        let tapPids = null;
+        let lastError = null;
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          const ps = spawnSync('ps', ['-ax', '-o', 'pid,ppid,command'], { encoding: 'utf8' });
+          if (ps.error) {
+            lastError = ps.error;
+          } else {
+            try {
+              tapPids = resolveTapPids(ps.stdout || '', renderer.pid);
+              break;
+            } catch (error) { lastError = error; }
+          }
+          await sleep(1000);
         }
-        await sleep(1000);
+        if (!tapPids) throw new Error(`audio tap PID resolution failed (fail-closed): ${lastError?.message || lastError}`);
+        const audioStarted = await startAudioTap(options.audioTapBin, tapPids, {
+          timeoutMs: options.bootTimeoutSec * 1000,
+        });
+        audiotap = audioStarted.child;
+        console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(audioStarted.status)}`);
       }
-      if (!tapPids) throw new Error(`audio tap PID resolution failed (fail-closed): ${lastError?.message || lastError}`);
-      const audioStarted = await startAudioTap(options.audioTapBin, tapPids, {
-        timeoutMs: options.bootTimeoutSec * 1000,
-      });
-      audiotap = audioStarted.child;
-      console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(audioStarted.status)}`);
     }
 
     // ffmpeg stderr is piped (not inherited) so a bounded tail is kept
@@ -609,7 +642,15 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     });
     const pipeTracker = attachPipeGuards({ capture, audiotap, ffmpeg });
     capture.stdout.pipe(ffmpeg.stdin);
-    if (audiotap) audiotap.stdout.pipe(ffmpeg.stdio[3]);
+    if (audiotap) {
+      // Early-attach switch-over: stop drain-reading, then hand the live
+      // PCM pipe to ffmpeg's fd 3. In-flight chunks may drop at the cut —
+      // acceptable; listeners never stack and nothing throws.
+      try { earlyTapDetach?.(); } catch {}
+      earlyTapDetach = null;
+      audiotap.stdout.pipe(ffmpeg.stdio[3]);
+      try { audiotap.stdout.resume?.(); } catch {}
+    }
 
     const streamDeadline = Math.min(Date.now() + options.sessionSec * 1000, hardDeadline);
     const remaining = Math.max(0, streamDeadline - Date.now());
@@ -656,6 +697,14 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       deadline.cancel();
     }
   } finally {
+    // Cancel the early-tap poll FIRST so it cannot hold the event loop
+    // open (same hang class as the deadline timer — Issue #303), then
+    // await it so a just-started helper is owned by the session (or
+    // SIGTERMed by the cancel race inside earlyAttachAudioTap) rather
+    // than leaked. Bounded by one poll interval / one tap-handshake cap.
+    earlyTapCancel.value = true;
+    if (earlyTapPromise) await earlyTapPromise.catch(() => null);
+    earlyTapPromise = null;
     cleanup();
     process.removeListener('SIGINT', cleanup);
     process.removeListener('SIGTERM', cleanup);

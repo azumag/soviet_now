@@ -12,8 +12,10 @@
 // The realtime path lives in tools/macos/soren91_audio_tap.swift (built by
 // tools/soren91_audio_tap_build.sh); this module only computes which PIDs to
 // tap and how to wire the helper's stdout into ffmpeg's fd 3.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The tap is ON by default; only an explicit opt-out (`0`/`false`/`no`/
 // `off`, i.e. `SOREN91_LOCAL_AUDIO_TAP=0`) keeps the silent path
@@ -206,6 +208,86 @@ export function classifySessionEnd({
     return 'failed';
   }
   return 'failed';
+}
+
+// PCM drain (Issue #303 early-attach): while ffmpeg is not yet running,
+// the early-attached helper's stdout must be READ (and discarded) so the
+// IOProc keeps flowing and the CATapMutedWhenTapped physical mute stays in
+// effect. Returns detach(): the session calls it right before piping
+// audiotap.stdout into ffmpeg's fd 3. The switch-over drops in-flight
+// chunks at most — never crashes, never stacks listeners.
+export function attachPcmDrain(child) {
+  const stdout = child?.stdout;
+  if (!stdout?.on) return () => {};
+  const discard = () => {};
+  stdout.on('data', discard);
+  try { stdout.resume?.(); } catch {}
+  return () => {
+    try { stdout.removeListener('data', discard); } catch {}
+    try { stdout.pause?.(); } catch {}
+  };
+}
+
+// Early audio-tap attach (Issue #303): poll `ps` for the automation
+// Chrome's descendant PIDs starting right after the renderer spawns, and
+// start the tap helper as soon as they appear — BEFORE the game starts
+// making sound. (Waiting for renderer readiness muted nothing: the old
+// flow started the tap only after the result, so boot-phase audio played
+// out loud — observed live as "only the beginning was audible".)
+// The helper's PCM is drain-read (see attachPcmDrain) until ffmpeg takes
+// over the pipe. A "no audio process" helper failure (ok:false) is
+// retried, not fatal, until deadlineMs. Returns { child, status,
+// detachDrain }, or null on deadline/cancel — the caller then falls back
+// to the post-readiness retry and finally fail-closed. All I/O is
+// injectable for tests (psImpl/startTapImpl/sleepImpl).
+//
+// Known limit: the tap pins the AudioService PIDs found here. If Chrome
+// restarts its AudioService mid-session (new PID), the tap does NOT follow
+// — a fresh session (fresh tap) is needed. See README.
+export async function earlyAttachAudioTap({
+  rendererPid,
+  audioTapBin,
+  deadlineMs,
+  pollIntervalMs = 500,
+  tapTimeoutMs = 10_000,
+  psImpl = () => spawnSync('ps', ['-ax', '-o', 'pid,ppid,command'], { encoding: 'utf8' }),
+  startTapImpl = (bin, pids, opts) => startAudioTap(bin, pids, opts),
+  sleepImpl = sleep,
+  isCancelled = null,
+} = {}) {
+  if (!audioTapBin) throw new Error('earlyAttachAudioTap requires audioTapBin');
+  for (;;) {
+    if (isCancelled?.()) return null;
+    const remaining = deadlineMs - Date.now();
+    if (!(remaining > 0)) return null;
+    let pids = null;
+    try {
+      const ps = psImpl();
+      if (!ps?.error) {
+        try { pids = resolveTapPids(ps.stdout || '', rendererPid); } catch { pids = null; }
+      }
+    } catch { pids = null; }
+    if (pids) {
+      try {
+        const started = await startTapImpl(audioTapBin, pids, {
+          timeoutMs: Math.max(1000, Math.min(tapTimeoutMs, remaining)),
+        });
+        if (isCancelled?.()) {
+          // Lost the race with teardown: never hand out a live helper the
+          // session will not own — stop it instead of leaking it.
+          try { started?.child?.kill?.('SIGTERM'); } catch {}
+          return null;
+        }
+        return { ...started, detachDrain: attachPcmDrain(started.child) };
+      } catch {
+        // Helper "no audio process" (ok:false) or handshake timeout:
+        // retry until the deadline.
+      }
+    }
+    const waitMs = Math.max(0, Math.min(pollIntervalMs, deadlineMs - Date.now()));
+    if (!(waitMs > 0)) return null;
+    await sleepImpl(waitMs);
+  }
 }
 
 // Reads the audio helper's first stderr line as its readiness/failure
