@@ -12,14 +12,19 @@ Since 2026-09-13 the game window additionally lives on a **private virtual
 display (offscreen by default)** — nothing game-related ever shows on a
 physical screen (see "Offscreen virtual display" below). Validated so far
 with a synthetic decoy window (exact-match identity selection + occlusion
-resilience, both confirmed by pixel inspection), a single real local run
-against the live Soren91 match (local file only, no SRT/OCI), and a
-synthetic offscreen run (virtual display + parked Chrome + zero physical
-overlap measured + ScreenCaptureKit capture at 28.2fps + clean teardown).
-Backend selector wiring (local agent + pure selection logic, see "Local
-agent / backend selector" below) is integrated at the code/docs level. Not
-yet re-run through the full 90s+ SRT/OCI E2E, not soaked for
-30 minutes, not connected to the production broadcast.**
+resilience, both confirmed by pixel inspection), an early single real local
+run against the live Soren91 match (local file only, no SRT/OCI — before
+the real-game SRT/OCI run below), and a synthetic offscreen run (virtual
+display + parked Chrome + zero physical overlap measured + ScreenCaptureKit
+capture at 28.80fps + clean teardown), plus a real-game SRT/OCI E2E through
+the offscreen pipeline — PASS (142.03s received on OCI, h264, 960x540,
+30fps, 4261 frames decoded, via a temporary Tailscale-restricted listener,
+never touching the production broadcast). Backend selector wiring
+(platform-generic local agent + pure selection logic, see "Local agent /
+backend selector" below) is integrated at the code/docs level, but the
+OCI-side controller that would call the local agent is not implemented
+(same gap as the Windows PoC, PR #131). Still not soaked for 30 minutes,
+not connected to the production broadcast.**
 
 ## Offscreen virtual display (default, Issue #303)
 
