@@ -10,6 +10,7 @@ on:
       - 'tools/soren91_window_capture_build.sh'
       - 'tools/macos/soren91_window_capture.swift'
       - 'tests/test_soren91_macos_session.mjs'
+      - 'tests/test_soren91_macos_capture_privacy.mjs'
       - 'infra/local/macos/soren91/**'
 
 permissions:
@@ -31,4 +32,6 @@ jobs:
           node --check tools/soren91_macos_renderer.mjs
           node --check tools/soren91_macos_session.mjs
       - name: Run macOS session contract tests
-        run: node --test tests/test_soren91_macos_session.mjs
+        run: |
+          node --test tests/test_soren91_macos_session.mjs
+          node --test tests/test_soren91_macos_capture_privacy.mjs
