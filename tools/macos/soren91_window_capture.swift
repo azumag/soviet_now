@@ -19,7 +19,11 @@
 // Protocol: on success, prints one JSON line to stderr
 // (`{"ok":true,"windowID":<id>,...}`) once the stream has started, then
 // writes raw, tightly-packed BGRA8888 frames of exactly `width x height` to
-// stdout until SIGINT/SIGTERM. On failure, prints one JSON line to stderr
+// stdout until SIGINT/SIGTERM — or until stdout's reader (ffmpeg's stdin)
+// goes away first, in which case the next frame write fails with EPIPE
+// (SIGPIPE is ignored, same as the audio-tap helper) and this exits 0 with
+// the ok:true line left standing: a listener-first close is a normal end,
+// not a crash. On failure, prints one JSON line to stderr
 // (`{"ok":false,"error":"..."}`) and exits 1 without ever starting the
 // stream or writing to stdout — callers must not treat "still running" as
 // success on its own; they must observe the ok:true line first.
@@ -84,14 +88,32 @@ func parseArgs(_ argv: [String]) -> Options {
 final class FrameWriter: NSObject, SCStreamOutput, SCStreamDelegate {
   let expectedWidth: Int
   let expectedHeight: Int
+  let stdoutHealth: StdoutHealth
   private var mismatchReported = false
 
-  init(expectedWidth: Int, expectedHeight: Int) {
+  init(expectedWidth: Int, expectedHeight: Int, stdoutHealth: StdoutHealth) {
     self.expectedWidth = expectedWidth
     self.expectedHeight = expectedHeight
+    self.stdoutHealth = stdoutHealth
+  }
+
+  // Frame sink (Issue #303): stdout feeds ffmpeg's stdin, the ONLY reader.
+  // When the downstream goes away first (OCI listener closed -> ffmpeg
+  // exited), the next write fails with EPIPE instead of killing this helper
+  // with SIGPIPE (ignored in main). Record it and stop writing; the main
+  // loop observes the flag and exits 0 — the same clean stop as the
+  // audio-tap helper, so a listener-first close never wins the session's
+  // exit race as a signal death.
+  private func writeFrame(_ data: Data) {
+    do {
+      try FileHandle.standardOutput.write(contentsOf: data)
+    } catch {
+      stdoutHealth.markBroken()
+    }
   }
 
   func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    guard !stdoutHealth.isBroken() else { return }
     guard type == .screen, sampleBuffer.isValid else { return }
     guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
@@ -112,9 +134,8 @@ final class FrameWriter: NSObject, SCStreamOutput, SCStreamDelegate {
     guard let base = CVPixelBufferGetBaseAddress(imageBuffer) else { return }
     let bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer)
     let rowBytes = expectedWidth * 4
-    let out = FileHandle.standardOutput
     if bytesPerRow == rowBytes {
-      out.write(Data(bytes: base, count: rowBytes * expectedHeight))
+      writeFrame(Data(bytes: base, count: rowBytes * expectedHeight))
     } else {
       // CVPixelBuffer rows can be padded for alignment; strip the padding so
       // the output stream stays tightly packed rawvideo (what ffmpeg expects).
@@ -122,12 +143,29 @@ final class FrameWriter: NSObject, SCStreamOutput, SCStreamDelegate {
       for row in 0..<expectedHeight {
         packed.append(Data(bytes: base.advanced(by: row * bytesPerRow), count: rowBytes))
       }
-      out.write(packed)
+      writeFrame(packed)
     }
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Error) {
     failClosed("stream stopped unexpectedly: \(error)")
+  }
+}
+
+// Shared flag between the stream-output queue (FrameWriter, above) and the
+// main loop (below): set once a stdout frame write fails with EPIPE.
+final class StdoutHealth: @unchecked Sendable {
+  private let lock = NSLock()
+  private var broken = false
+  func markBroken() {
+    lock.lock()
+    defer { lock.unlock() }
+    broken = true
+  }
+  func isBroken() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return broken
   }
 }
 
@@ -182,7 +220,8 @@ struct Soren91WindowCapture {
     config.minimumFrameInterval = CMTime(value: 1, timescale: options.fps)
     config.queueDepth = 5
 
-    let writer = FrameWriter(expectedWidth: Int(options.width), expectedHeight: Int(options.height))
+    let stdoutHealth = StdoutHealth()
+    let writer = FrameWriter(expectedWidth: Int(options.width), expectedHeight: Int(options.height), stdoutHealth: stdoutHealth)
     let stream = SCStream(filter: filter, configuration: config, delegate: writer)
     do {
       try stream.addStreamOutput(writer, type: .screen, sampleHandlerQueue: DispatchQueue(label: "soren91.capture"))
@@ -193,10 +232,22 @@ struct Soren91WindowCapture {
 
     emitStatus(["ok": true, "windowID": window.windowID, "width": options.width, "height": options.height, "fps": options.fps])
 
+    // SIGPIPE is ignored (best-effort, same as the audio-tap helper): when
+    // the downstream reader (ffmpeg's stdin) goes away first, the next frame
+    // write fails with EPIPE instead of killing this helper with a SIGPIPE
+    // signal. FrameWriter records that as stdoutHealth-broken and the loop
+    // below exits 0 — the already-emitted ok:true line stands, so the
+    // stderr status contract is unchanged: a listener-first close is a
+    // normal end, not a crash.
+    signal(SIGPIPE, SIG_IGN)
     signal(SIGINT) { _ in exit(0) }
     signal(SIGTERM) { _ in exit(0) }
     while true {
-      try? await Task.sleep(nanoseconds: 1_000_000_000)
+      try? await Task.sleep(nanoseconds: 100_000_000)
+      // Downstream went away first (EPIPE on a frame write): stop the same
+      // way as a signal stop and exit 0. Without this the helper would idle
+      // until SIGTERM even though no reader remains.
+      if stdoutHealth.isBroken() { exit(0) }
     }
   }
 }

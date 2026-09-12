@@ -477,11 +477,10 @@ test('resolveSessionEnd: unsettled ffmpeg falls back to winner+sink evidence', a
   );
 });
 
-test('resolveSessionEnd: renderer-exit and foreign winners never wait for ffmpeg', async () => {
+test('resolveSessionEnd: renderer-exit and unknown kinds never wait for ffmpeg', async () => {
   for (const outcome of [
     { kind: 'renderer-exit', value: { code: 0, signal: null } },
-    { kind: 'capture-exit', value: { code: 1, signal: null } },
-    { kind: 'audio-tap-exit', value: { code: null, signal: 'SIGTERM' } },
+    { kind: 'renderer-exit', value: { code: 1, signal: null } },
     { kind: 'bogus-kind', value: { code: 0, signal: null } },
   ]) {
     let ffmpegPolls = 0;
@@ -498,6 +497,90 @@ test('resolveSessionEnd: renderer-exit and foreign winners never wait for ffmpeg
     assert.equal(verdict, 'failed', JSON.stringify(outcome));
     assert.equal(ffmpegPolls, 0, JSON.stringify(outcome));
   }
+});
+
+test('resolveSessionEnd: any capture/audio-tap exit waits for ffmpeg (code/signal agnostic)', async () => {
+  // Defense in depth for the live `capture-exit {code:null,signal:SIGPIPE}`:
+  // even a signalled or non-zero producer exit must consult ffmpeg first —
+  // a consumer-close marker there upgrades the verdict to consumer-closed.
+  for (const outcome of [
+    { kind: 'capture-exit', value: { code: null, signal: 'SIGPIPE' } },
+    { kind: 'capture-exit', value: { code: 1, signal: null } },
+    { kind: 'audio-tap-exit', value: { code: null, signal: 'SIGTERM' } },
+    { kind: 'audio-tap-exit', value: { code: 2, signal: null } },
+  ]) {
+    const verdict = await resolveSessionEnd({
+      ...outcome,
+      getStderr: () => LISTENER_CLOSE_STDERR,
+      getSinkClosed: () => true,
+      ffmpegExit: { code: 1, signal: null },
+      sleepImpl: async () => { throw new Error('must not sleep'); },
+    });
+    assert.equal(verdict, 'consumer-closed', JSON.stringify(outcome));
+  }
+});
+
+test('resolveSessionEnd: capture SIGPIPE + genuine ffmpeg failure stays failed', async () => {
+  // The exact live shape that used to exit 1 with no SESSION_END, minus the
+  // consumer-close marker: ffmpeg died of a real failure, so the verdict
+  // must stay failed even though the capture winner looks listener-ish.
+  let slept = 0;
+  const verdict = await resolveSessionEnd({
+    kind: 'capture-exit',
+    value: { code: null, signal: 'SIGPIPE' },
+    getStderr: () => ENCODER_FAILURE_STDERR,
+    getSinkClosed: () => false,
+    ffmpegExit: { code: 1, signal: null },
+    sleepImpl: async () => { slept += 1; },
+  });
+  assert.equal(verdict, 'failed');
+  assert.equal(slept, 0); // already observed: no wait needed
+});
+
+test('resolveSessionEnd: capture SIGPIPE winner waits for late ffmpeg consumer-close', async () => {
+  // Fake-clock replay of the live race: capture dies with SIGPIPE at once,
+  // ffmpeg's close (muxer I/O error) lands after 2 polls. The verdict must
+  // be consumer-closed, with the resolver actually waiting (2 sleeps).
+  let polls = 0;
+  const sleeps = [];
+  const verdict = await resolveSessionEnd({
+    kind: 'capture-exit',
+    value: { code: null, signal: 'SIGPIPE' },
+    getStderr: () => LISTENER_CLOSE_STDERR,
+    getSinkClosed: () => false,
+    getFfmpegExit: () => {
+      polls += 1;
+      return polls >= 3 ? { code: 1, signal: null } : null;
+    },
+    ffmpegWaitMs: 5000,
+    sleepImpl: async (ms) => { sleeps.push(ms); },
+  });
+  assert.equal(verdict, 'consumer-closed');
+  assert.equal(polls, 3);
+  assert.deepEqual(sleeps, [50, 50]);
+});
+
+test('resolveSessionEnd: capture SIGPIPE with unsettled ffmpeg falls back failed (bounded)', async () => {
+  // ffmpeg never settles and there is no consumer-close evidence: the
+  // fallback is failed, and the wait is iteration-capped (fake clock that
+  // never advances still terminates: exactly ceil(120/50) = 3 sleeps).
+  let polls = 0;
+  const sleeps = [];
+  const verdict = await resolveSessionEnd({
+    kind: 'capture-exit',
+    value: { code: null, signal: 'SIGPIPE' },
+    getStderr: () => '',
+    getSinkClosed: () => false,
+    getFfmpegExit: () => {
+      polls += 1;
+      return null;
+    },
+    ffmpegWaitMs: 120,
+    sleepImpl: async (ms) => { sleeps.push(ms); },
+  });
+  assert.equal(verdict, 'failed');
+  assert.deepEqual(sleeps, [50, 50, 50]);
+  assert.equal(polls, 4); // 1 initial read + 3 post-sleep re-reads
 });
 
 test('resolveSessionEnd: deadline never waits for ffmpeg', async () => {

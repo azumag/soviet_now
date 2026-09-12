@@ -593,3 +593,72 @@ test('race regression: audio-tap SIGPIPE winner still ends consumer-closed via f
   assert.equal(endReason, 'consumer-closed');
   assert.ok(elapsed < 2000, `settled in ${elapsed}ms, expected < 2000ms`);
 });
+
+test('race regression: capture SIGPIPE winner still ends consumer-closed via ffmpeg (exit 0)', async () => {
+  // Replays the live FAIL shape: the capture helper dies with
+  // `exit {code:null, signal:SIGPIPE}` (fd1 reader — ffmpeg — gone after the
+  // OCI listener closed first) at once, while ffmpeg's 'close' — carrying
+  // the muxer I/O error marker — lands ~50ms later. resolveSessionEnd must
+  // wait out the bounded ffmpeg window and report consumer-closed, which the
+  // session maps to exit 0 with SESSION_END=consumer-closed (not exit 1 with
+  // the line missing). Settles far short of sessionSec.
+  const { resolveSessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  const capture = new EventEmitter();
+  const ffmpeg = new EventEmitter();
+  let ffmpegExit = null;
+  ffmpeg.once('close', (code, signal) => { ffmpegExit = { code, signal }; });
+  const waitForExit = (child) => new Promise(
+    (resolve) => child.once('exit', (code, signal) => resolve({ code, signal })),
+  );
+  const waitForCloseExit = (child) => new Promise(
+    (resolve) => child.once('close', (code, signal) => resolve({ code, signal })),
+  );
+  const deadline = createSessionDeadline(1_800_000);
+  const stderrChunks = [];
+  const getStderr = () => stderrChunks.join('');
+  let sinkClosed = false;
+  const started = Date.now();
+  let exitCode = 1;
+  let endLine = null;
+  try {
+    queueMicrotask(() => capture.emit('exit', null, 'SIGPIPE'));
+    setTimeout(() => {
+      stderrChunks.push('Error submitting a packet to the muxer: Input/output error\n');
+      stderrChunks.push('av_interleaved_write_frame(): Input/output error\n');
+      sinkClosed = true;
+      ffmpeg.emit('close', 1, null);
+    }, 50);
+    const outcome = await Promise.race([
+      deadline.promise,
+      waitForCloseExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
+      waitForExit(capture).then((value) => ({ kind: 'capture-exit', value })),
+    ]);
+    assert.equal(outcome.kind, 'capture-exit'); // capture wins, as live
+    assert.deepEqual(outcome.value, { code: null, signal: 'SIGPIPE' });
+    const verdict = await resolveSessionEnd({
+      kind: outcome.kind,
+      value: outcome.value,
+      getStderr,
+      getSinkClosed: () => sinkClosed,
+      getFfmpegExit: () => ffmpegExit,
+      ffmpegWaitMs: 5000,
+    });
+    // Same mapping the session's main() applies: consumer-closed/deadline ->
+    // exit 0 with a SESSION_END line; anything else throws (exit 1, no line).
+    if (verdict === 'deadline') {
+      endLine = 'SOREN91_LOCAL_SESSION_END=deadline';
+      exitCode = 0;
+    } else if (verdict === 'consumer-closed') {
+      endLine = 'SOREN91_LOCAL_SESSION_END=consumer-closed';
+      exitCode = 0;
+    } else {
+      throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
+    }
+  } finally {
+    deadline.cancel();
+  }
+  const elapsed = Date.now() - started;
+  assert.equal(endLine, 'SOREN91_LOCAL_SESSION_END=consumer-closed');
+  assert.equal(exitCode, 0);
+  assert.ok(elapsed < 2000, `settled in ${elapsed}ms, expected < 2000ms`);
+});
