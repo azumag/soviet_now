@@ -51,6 +51,20 @@ wait_for_call() {
 	return 1
 }
 
+wait_for_refresh_count() {
+	local minimum="$1" i count=0
+	for i in $(seq 1 80); do
+		count=$(grep -c 'runtime refresh complete' "$ROOT/tmp/worker.log" 2>/dev/null || true)
+		if [ "$count" -ge "$minimum" ]; then
+			return 0
+		fi
+		sleep 0.1
+	done
+	echo "timed out waiting for refresh count >= $minimum (actual=$count)" >&2
+	cat "$ROOT/tmp/worker.log" >&2 2>/dev/null || true
+	return 1
+}
+
 write_runtime v1
 (
 	cd "$ROOT"
@@ -68,15 +82,24 @@ write_runtime v1
 WORKER_PID=$!
 wait_for_call v1
 
+# docich production projection replaces reviewed live files without moving the
+# /home/ubuntu/soren checkout HEAD. The worker must still refresh sourced
+# runtime functions when their content changes.
+head_before=$(git -C "$ROOT" rev-parse HEAD)
 write_runtime v2
+[ "$(git -C "$ROOT" rev-parse HEAD)" = "$head_before" ]
+wait_for_call v2
+wait_for_refresh_count 1
+
+# Preserve the original HEAD-advance path as a second signal. Committing the
+# already-loaded v2 bytes changes only HEAD/signature metadata; it should still
+# trigger one more safe runtime refresh.
 (
 	cd "$ROOT"
 	git add eloop_lib.sh
 	git commit -qm v2
 )
-wait_for_call v2
-
-grep -q 'runtime refresh complete' "$ROOT/tmp/worker.log"
+wait_for_refresh_count 2
 
 touch "$ROOT/tmp/stop"
 wait "$WORKER_PID"
