@@ -453,7 +453,7 @@ async function waitForResult(resultPath, child, timeoutMs) {
 // Spawns the capture helper and waits for its first stderr line (readiness
 // or failure). Only after an ok:true status do we consider the pipe safe to
 // wire into ffmpeg — see parseCaptureHelperStatus.
-async function startCaptureHelper(bin, args, timeoutMs) {
+export async function startCaptureHelper(bin, args, timeoutMs) {
   const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const rl = readline.createInterface({ input: child.stderr });
   const status = await new Promise((resolve, reject) => {
