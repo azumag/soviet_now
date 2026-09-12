@@ -17,7 +17,11 @@ fi
 if [[ ! -x "$out" || "$src" -nt "$out" ]]; then
   mkdir -p "$out_dir"
   echo "building $out from $src" >&2
-  swiftc -O -parse-as-library "$src" -o "$out"
+  # Core Audio process taps are macOS 14.2+. Pin the deployment target so
+  # swiftc does not type-check these APIs against the older default target
+  # used by GitHub's macOS runner/toolchain. The runtime host is required to
+  # be at least 14.2 for this helper by design.
+  swiftc -O -parse-as-library -target "$(uname -m)-apple-macosx14.2" "$src" -o "$out"
 fi
 
 echo "$out"
