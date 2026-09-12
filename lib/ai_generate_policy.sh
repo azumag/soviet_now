@@ -116,6 +116,14 @@ ai_generate_list() {
 	[ -n "$last_agent_file" ] && : >"$last_agent_file"
 	[ -n "$failure_kind_file" ] && : >"$failure_kind_file"
 
+	# RADIO の長文生成は、eloop_lib.sh 読込後に環境値が再注入されても
+	# 20秒等の旧値へ戻らないよう dispatch 直前にも safety floor を再適用する。
+	# 明示 per-call timeout は呼び出し契約として優先し、ここでは触らない。
+	if [[ "$label" == RADIO* ]] && [ -z "$timeout_override" ] \
+		&& declare -F _normalize_radio_codex_timeout >/dev/null; then
+		_normalize_radio_codex_timeout
+	fi
+
 	_bd=$(_ai_backoff_dir)
 	mkdir -p "$_bd" 2>/dev/null || true
 	mkdir -p "$(_ai_failure_backoff_dir)" 2>/dev/null || true
