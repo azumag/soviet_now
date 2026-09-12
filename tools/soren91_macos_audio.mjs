@@ -168,13 +168,11 @@ export function classifyFfmpegExit({
   return 'failed';
 }
 
-// Classifies a Promise.race winner without waiting for any other child.
-// Only an observed ffmpeg exit carrying an explicit SRT-output close marker
-// can prove consumer-closed. Producer exits are always ambiguous by
-// themselves: the capture helper also exits 0 on handled signals / stdout
-// write failures, and producer-side sinkClosed can follow any ffmpeg death.
-// resolveSessionEnd() below waits boundedly for ffmpeg before using this
-// conservative fallback.
+// Winner-only compatibility classifier. Runtime callers must use
+// resolveSessionEnd(), which waits for ffmpeg's own exit before accepting
+// consumer-closed. These producer-only heuristics are retained for isolated
+// compatibility tests but are not sufficient evidence after a bounded
+// ffmpeg poll has actually been attempted and timed out.
 export function classifySessionEnd({
   kind = '',
   value = null,
@@ -190,43 +188,24 @@ export function classifySessionEnd({
       stderr,
     });
   }
-  // `value` / `sinkClosed` are intentionally ignored for producer exits.
-  // Neither is sufficient evidence that the remote listener closed first.
-  if (kind === 'capture-exit' || kind === 'audio-tap-exit') return 'failed';
+  if (kind === 'capture-exit') {
+    if (value?.signal != null) return 'failed';
+    if (value?.code === 0) return 'consumer-closed';
+    return 'failed';
+  }
+  if (kind === 'audio-tap-exit') {
+    if (sinkClosed && (value?.signal === 'SIGPIPE' || value?.code === 0)) return 'consumer-closed';
+    return 'failed';
+  }
   return 'failed';
 }
 
-// Settles the session-end verdict when ANY racer may win (Issue #303: live,
-// first the audio-tap `signal SIGPIPE` racer beat ffmpeg's `close` racer,
-// then a later session saw `capture-exit {code:null,signal:SIGPIPE}` win
-// while ffmpeg itself died with the consumer-close signature — and the old
-// call site classified the winner alone -> exit 1 with no SESSION_END).
-// Unlike classifySessionEnd (pure, winner-only), this consults ffmpeg's
-// exit BEFORE blaming the winner:
-//   - 'deadline' (or deadlineReached) -> 'deadline' immediately, no ffmpeg
-//     wait (deadline/cancel behaviour unchanged, never hangs).
-//   - 'ffmpeg-exit' winner -> classifyFfmpegExit directly (no wait needed:
-//     the verdict is already in hand, so this never idles).
-//   - 'capture-exit' / 'audio-tap-exit' winner, code/signal agnostic
-//     (SIGPIPE included) -> poll getFfmpegExit() (bounded: at most
-//     ffmpegWaitMs via sleepImpl, so this can never hang) for ffmpeg's
-//     {code,signal}, then classify THAT via classifyFfmpegExit against the
-//     final stderr. A 'consumer-closed' ffmpeg verdict wins regardless of
-//     which child won the race or how it died; a genuine ffmpeg failure
-//     (no consumer-close marker, encoder init failure, ...) is 'failed'
-//     and is never masked by the winner. An already-observed ffmpegExit
-//     short-circuits with zero sleeps, so settled races settle at once.
-//   - ffmpeg still unsettled after the bound (or no poll supplied) -> failed.
-//     Producer-side code 0 / SIGPIPE / sinkClosed are not remote-close proof.
-//   - any other winner (renderer, bogus kinds) -> classifySessionEnd
-//     immediately with NO ffmpeg wait, so failure paths stay fail-fast.
-//     (A genuine producer crash while ffmpeg stays healthy therefore costs
-//     at most ffmpegWaitMs before failing — a bounded fail-closed delay,
-//     never a hang.)
-// getStderr/getSinkClosed are re-read AFTER the wait (both keep changing
-// while ffmpeg drains); plain stderr/sinkClosed are used when the getters
-// are absent (tests). ffmpegExit short-circuits the poll when the session
-// already observed ffmpeg's close.
+// Settles the session-end verdict when ANY racer may win. Producer exits
+// always consult ffmpeg first. If the runtime supplied a getFfmpegExit poll
+// but ffmpeg is still unobserved after the bounded wait, fail closed: a
+// capture code-0 or producer-side EPIPE is not proof that the remote SRT
+// listener closed first. Only an observed ffmpeg exit plus an explicit
+// SRT-output close marker can upgrade the runtime verdict to consumer-closed.
 export async function resolveSessionEnd({
   kind = '',
   value = null,
@@ -257,8 +236,9 @@ export async function resolveSessionEnd({
       sinkClosed: getSinkClosed?.() ?? sinkClosed,
     });
   }
+  const hasFfmpegPoll = typeof getFfmpegExit === 'function';
   let observed = ffmpegExit ?? getFfmpegExit?.() ?? null;
-  if (!observed && typeof getFfmpegExit === 'function') {
+  if (!observed && hasFfmpegPoll) {
     // Bounded poll: at most ceil(ffmpegWaitMs / step) sleeps, then give up.
     // Iteration-capped (not wall-clock-capped) so injected fake clocks that
     // never advance Date.now() still terminate.
@@ -280,6 +260,7 @@ export async function resolveSessionEnd({
       stderr: finalStderr,
     });
   }
+  if (hasFfmpegPoll) return 'failed';
   return classifySessionEnd({
     kind,
     value,
