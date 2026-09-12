@@ -84,8 +84,16 @@ export function validateOptions(options, platform = process.platform) {
     let target;
     try { target = new URL(options.srtUrl); } catch { throw new Error('srtUrl must be a valid srt:// URL'); }
     if (target.protocol !== 'srt:') throw new Error('srtUrl must start with srt://');
-    if (/passphrase=/i.test(options.srtUrl)) {
+    if (target.username || target.password) {
+      throw new Error('srtUrl userinfo is forbidden; credentials must not be carried in argv');
+    }
+    if (!target.port) throw new Error('srtUrl must include an explicit destination port');
+    if ([...target.searchParams.keys()].some((key) => key.toLowerCase() === 'passphrase')) {
       throw new Error('SRT passphrase in argv is forbidden; use Tailscale transport without an SRT passphrase');
+    }
+    const modes = target.searchParams.getAll('mode');
+    if (modes.length !== 1 || modes[0].toLowerCase() !== 'caller') {
+      throw new Error('srtUrl must explicitly use mode=caller for the OCI listener');
     }
     if (!isTailscaleIpv4Hostname(target.hostname)) {
       throw new Error('srtUrl host must be a Tailscale IPv4 address in 100.64.0.0/10');
