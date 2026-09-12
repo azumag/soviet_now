@@ -25,6 +25,8 @@ import { fileURLToPath } from 'node:url';
 import {
   buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
+  classifyFfmpegExit,
+  isBenignPipeError,
   resolveTapPids,
   startAudioTap,
   stopAudioTap,
@@ -359,6 +361,49 @@ function waitForExit(child) {
   return new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
 }
 
+// ffmpeg's racer waits for 'close' (not 'exit'): 'close' fires after the
+// stdio pipes are flushed, so the stderr ring buffer below is complete when
+// we classify the exit. 'exit' can precede the last stderr chunk, which
+// would hide the Broken pipe / muxer marker from classifyFfmpegExit.
+function waitForCloseExit(child) {
+  return new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+}
+
+// Bounded tail of ffmpeg stderr (Issue #303): the last bytes are kept for
+// failure diagnostics while the full stream still goes to process.stderr.
+export function createStderrTail(limit = 8192) {
+  let tail = '';
+  return {
+    push(chunk) { tail = `${tail}${String(chunk ?? '')}`.slice(-limit); },
+    text() { return tail; },
+  };
+}
+
+// Attaches 'error' handlers to the frame/PCM feeding pipes and ffmpeg's
+// input side (Issue #303): when the receiver (OCI listener) closes first,
+// ffmpeg exits and in-flight writes fail with EPIPE /
+// ERR_STREAM_DESTROYED / ERR_STREAM_WRITE_AFTER_END. Those are benign
+// (debug log only, sinkClosed set for classifyFfmpegExit); any other pipe
+// error is logged loudly and recorded. Returns the shared tracker.
+export function attachPipeGuards({ capture, audiotap, ffmpeg } = {}) {
+  const tracker = { sinkClosed: false, errors: [] };
+  const guard = (label) => (error) => {
+    if (isBenignPipeError(error)) {
+      tracker.sinkClosed = true;
+      console.error(`[ffmpeg-pipe] benign ${label} close (${error.code}); ignoring`);
+      return;
+    }
+    tracker.errors.push({ label, message: error?.message || String(error) });
+    console.error(`[ffmpeg-pipe] ${label} error: ${error?.stack || error?.message || error}`);
+  };
+  capture?.stdout?.on?.('error', guard('capture-stdout'));
+  audiotap?.stdout?.on?.('error', guard('audiotap-stdout'));
+  ffmpeg?.stdin?.on?.('error', guard('ffmpeg-stdin'));
+  ffmpeg?.stdio?.[3]?.on?.('error', guard('ffmpeg-fd3'));
+  ffmpeg?.stderr?.on?.('error', () => {});
+  return tracker;
+}
+
 async function waitForResult(resultPath, child, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -522,9 +567,20 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       console.log(`SOREN91_LOCAL_AUDIO_TAP_READY=${JSON.stringify(audioStarted.status)}`);
     }
 
+    // ffmpeg stderr is piped (not inherited) so a bounded tail is kept
+    // for failure diagnostics; every chunk is still forwarded to
+    // process.stderr for live visibility.
+    const ffmpegStdio = buildFfmpegStdio(options.audioTap);
+    ffmpegStdio[2] = 'pipe';
     ffmpeg = spawn(options.ffmpegBin, buildFfmpegArgs(options, result.capture), {
-      stdio: buildFfmpegStdio(options.audioTap),
+      stdio: ffmpegStdio,
     });
+    const ffmpegStderr = createStderrTail();
+    ffmpeg.stderr?.on('data', (chunk) => {
+      try { process.stderr.write(chunk); } catch {}
+      ffmpegStderr.push(chunk);
+    });
+    const pipeTracker = attachPipeGuards({ capture, audiotap, ffmpeg });
     capture.stdout.pipe(ffmpeg.stdin);
     if (audiotap) audiotap.stdout.pipe(ffmpeg.stdio[3]);
 
@@ -532,14 +588,36 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const remaining = Math.max(0, streamDeadline - Date.now());
     const racers = [
       sleep(remaining).then(() => ({ kind: 'deadline' })),
-      waitForExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
+      waitForCloseExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
       waitForExit(capture).then((value) => ({ kind: 'capture-exit', value })),
       waitForExit(renderer).then((value) => ({ kind: 'renderer-exit', value })),
     ];
     if (audiotap) racers.push(waitForExit(audiotap).then((value) => ({ kind: 'audio-tap-exit', value })));
     const outcome = await Promise.race(racers);
-    if (outcome.kind !== 'deadline') throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
-    return { ...plan, result, completed: true };
+    if (outcome.kind === 'deadline') {
+      console.log('SOREN91_LOCAL_SESSION_END=deadline');
+      return { ...plan, result, completed: true, endReason: 'deadline' };
+    }
+    if (outcome.kind === 'ffmpeg-exit') {
+      // The OCI listener closing first (e.g. `-t 120` expiring) kills
+      // ffmpeg with an EPIPE-flavoured muxer error: a normal end of
+      // stream (exit 0), not a failure. Anything else still throws.
+      const verdict = classifyFfmpegExit({
+        code: outcome.value?.code,
+        signal: outcome.value?.signal,
+        stderr: ffmpegStderr.text(),
+        sinkClosed: pipeTracker.sinkClosed,
+      });
+      if (verdict === 'consumer-closed') {
+        console.log('SOREN91_LOCAL_SESSION_END=consumer-closed');
+        return { ...plan, result, completed: true, endReason: 'consumer-closed' };
+      }
+      const tail = ffmpegStderr.text().slice(-2000);
+      throw new Error(
+        `ffmpeg-exit: ${JSON.stringify(outcome.value)}${tail ? `\nstderr tail: ${tail}` : ''}`,
+      );
+    }
+    throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
   } finally {
     cleanup();
     process.removeListener('SIGINT', cleanup);

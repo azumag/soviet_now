@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import {
+  attachPipeGuards,
   buildCaptureArgs,
   buildFfmpegArgs,
   buildRendererEnv,
+  createStderrTail,
   defaults,
   isTailscaleIpv4Hostname,
   parseArgs,
@@ -371,4 +374,102 @@ test('audio tap cleanup sends SIGTERM so the tap teardown releases the mute', as
   await stopAudioTap(child);
   assert.deepEqual(child.killSignals, ['SIGTERM']);
   assert.equal(child.exitCode, 0);
+});
+
+// --- Receiver-first close (Issue #303): pipe guards + stderr tail ---
+
+function pipeError(code) {
+  return Object.assign(new Error(`write ${code}`), { code });
+}
+
+test('createStderrTail keeps a bounded tail of ffmpeg stderr', () => {
+  const tail = createStderrTail(8);
+  assert.equal(tail.text(), '');
+  tail.push('ab');
+  tail.push('cdef');
+  tail.push('ghij');
+  assert.equal(tail.text(), 'cdefghij');
+  assert.equal(createStderrTail().text(), '');
+});
+
+test('attachPipeGuards swallows benign pipe errors and records the sink as closed', () => {
+  const captureStdout = new EventEmitter();
+  const ffmpegStdin = new EventEmitter();
+  const tracker = attachPipeGuards({
+    capture: { stdout: captureStdout },
+    ffmpeg: { stdin: ffmpegStdin, stdio: [] },
+  });
+  assert.equal(tracker.sinkClosed, false);
+  // Must not throw (previously an unhandled 'error' crashed node).
+  captureStdout.emit('error', pipeError('EPIPE'));
+  assert.equal(tracker.sinkClosed, true);
+  ffmpegStdin.emit('error', pipeError('ERR_STREAM_DESTROYED'));
+  assert.equal(tracker.sinkClosed, true);
+  assert.deepEqual(tracker.errors, []);
+});
+
+test('attachPipeGuards records non-benign pipe errors without marking sinkClosed', () => {
+  const ffmpegStdin = new EventEmitter();
+  const tracker = attachPipeGuards({ ffmpeg: { stdin: ffmpegStdin } });
+  ffmpegStdin.emit('error', pipeError('ECONNRESET'));
+  assert.equal(tracker.sinkClosed, false);
+  assert.equal(tracker.errors.length, 1);
+  assert.equal(tracker.errors[0].label, 'ffmpeg-stdin');
+});
+
+test('attachPipeGuards tolerates missing streams (silent path without audio tap)', () => {
+  const tracker = attachPipeGuards({ capture: {}, audiotap: null, ffmpeg: {} });
+  assert.equal(tracker.sinkClosed, false);
+  assert.deepEqual(attachPipeGuards().sinkClosed, false);
+});
+
+test('attachPipeGuards swallows a real EPIPE from a dead pipe reader (not unhandled)', async () => {
+  // Recipe: STOP the reader so the kernel pipe buffer fills, then KILL it
+  // while writes are in flight — the writer's write() syscall then fails
+  // with EPIPE. This is what ffmpeg's death does to the frame/PCM feeds at
+  // ~70MB/s (in-flight rawvideo always exists, so EPIPE is near-certain).
+  const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function runScenario(useGuard) {
+    const child = spawn('/bin/cat', [], { stdio: ['pipe', 'ignore', 'ignore'] });
+    let src = null;
+    let tracker = null;
+    let observed = null;
+    let writer;
+    if (useGuard) {
+      src = new PassThrough();
+      tracker = attachPipeGuards({
+        capture: { stdout: src },
+        ffmpeg: { stdin: child.stdin, stdio: [] },
+      });
+      src.pipe(child.stdin);
+      writer = src;
+    } else {
+      // Persistent listener: proves the recipe emits EPIPE here without
+      // ever going unhandled (an unhandled 'error' would crash the runner).
+      child.stdin.on('error', (error) => { observed ??= error.code; });
+      writer = child.stdin;
+    }
+    child.kill('SIGSTOP');
+    await sleepMs(100);
+    for (let i = 0; i < 20; i++) { try { writer.write(Buffer.alloc(1048576)); } catch {} }
+    child.kill('SIGKILL');
+    const pump = setInterval(() => { try { writer.write(Buffer.alloc(1048576)); } catch {} }, 1);
+    const deadline = Date.now() + 5000;
+    if (useGuard) {
+      while (!tracker.sinkClosed && Date.now() < deadline) await sleepMs(20);
+    } else {
+      while (observed == null && Date.now() < deadline) await sleepMs(20);
+    }
+    clearInterval(pump);
+    src?.destroy();
+    try { child.stdin.destroy(); } catch {}
+    return useGuard ? tracker : observed;
+  }
+  // Sanity: the recipe really emits EPIPE on the writer in this environment.
+  assert.equal(await runScenario(false), 'EPIPE');
+  // Guarded: swallowed (the test surviving proves no unhandled 'error')
+  // and recorded as sinkClosed for classifyFfmpegExit.
+  const tracker = await runScenario(true);
+  assert.equal(tracker.sinkClosed, true);
+  assert.deepEqual(tracker.errors, []);
 });

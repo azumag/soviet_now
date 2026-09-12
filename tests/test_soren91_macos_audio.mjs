@@ -6,7 +6,9 @@ import {
   buildAudioFfmpegInputArgs,
   buildAudioTapArgs,
   buildFfmpegStdio,
+  classifyFfmpegExit,
   collectDescendantChromePids,
+  isBenignPipeError,
   parseAudioTapStatus,
   parseProcessTable,
   resolveTapPids,
@@ -193,5 +195,61 @@ test('audio tap handshake rejects fail-closed (no silent audio wiring)', async (
   await assert.rejects(
     startAudioTap('/tmp/tap', [101], { spawnImpl: () => silent }),
     /exited before readiness/,
+  );
+});
+
+// --- ffmpeg exit classification (Issue #303: listener-first close) ---
+
+function pipeError(code) {
+  return Object.assign(new Error(`write ${code}`), { code });
+}
+
+test('isBenignPipeError swallows only receiver-closed codes', () => {
+  assert.equal(isBenignPipeError(pipeError('EPIPE')), true);
+  assert.equal(isBenignPipeError(pipeError('ERR_STREAM_DESTROYED')), true);
+  assert.equal(isBenignPipeError(pipeError('ERR_STREAM_WRITE_AFTER_END')), true);
+  assert.equal(isBenignPipeError(pipeError('ECONNRESET')), false);
+  assert.equal(isBenignPipeError(new Error('boom')), false);
+  assert.equal(isBenignPipeError(null), false);
+  assert.equal(isBenignPipeError(undefined), false);
+});
+
+test('classifyFfmpegExit: deadline path stays a normal end', () => {
+  assert.equal(classifyFfmpegExit({ code: 1, deadlineReached: true }), 'deadline');
+  assert.equal(
+    classifyFfmpegExit({ code: 1, stderr: 'Error submitting a packet to the muxer', deadlineReached: true }),
+    'deadline',
+  );
+});
+
+test('classifyFfmpegExit: listener-first close is consumer-closed (real stderr)', () => {
+  // Observed in live E2E when the OCI listener's `-t 120` expires.
+  const stderr = 'Error submitting a packet to the muxer: Input/output error\n'
+    + 'Last message repeated 3 times\n'
+    + 'av_interleaved_write_frame(): Input/output error\n';
+  assert.equal(classifyFfmpegExit({ code: 1, stderr }), 'consumer-closed');
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'Broken pipe' }), 'consumer-closed');
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'muxer queue overflow' }), 'consumer-closed');
+  // sinkClosed alone (EPIPE seen on the feeding pipe) is enough, even with
+  // an empty stderr tail.
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: '', sinkClosed: true }), 'consumer-closed');
+  // Clean early exit (consumer went away, ffmpeg flushed) is not a failure.
+  assert.equal(classifyFfmpegExit({ code: 0, stderr: '' }), 'consumer-closed');
+});
+
+test('classifyFfmpegExit: genuine failures still fail', () => {
+  // Encoder init failure: no receiver-close markers, no pipe signal.
+  const stderr = "Error initializing output stream 0:0 -- Error opening encoder 'h264_videotoolbox'\n";
+  assert.equal(classifyFfmpegExit({ code: 1, stderr }), 'failed');
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: '' }), 'failed');
+  assert.equal(classifyFfmpegExit({ code: 1 }), 'failed');
+  assert.equal(classifyFfmpegExit({ code: null, signal: null }), 'failed');
+});
+
+test('classifyFfmpegExit: signal death always fails', () => {
+  assert.equal(classifyFfmpegExit({ code: null, signal: 'SIGTERM' }), 'failed');
+  assert.equal(
+    classifyFfmpegExit({ code: null, signal: 'SIGKILL', stderr: 'Broken pipe', sinkClosed: true }),
+    'failed',
   );
 });

@@ -120,6 +120,47 @@ export function buildFfmpegStdio(audioTap) {
   return ['pipe', 'inherit', 'inherit'];
 }
 
+// Benign pipe errors: the receiving end (ffmpeg) went away first — e.g. the
+// OCI listener closed the SRT session, ffmpeg exited, and in-flight frame /
+// PCM writes then hit a closed pipe. These must be swallowed (debug log
+// only), never thrown or left unhandled (an unhandled 'error' on a stream
+// crashes node via node:events). Anything else is recorded by the caller.
+export function isBenignPipeError(error) {
+  const code = error?.code;
+  return code === 'EPIPE'
+    || code === 'ERR_STREAM_DESTROYED'
+    || code === 'ERR_STREAM_WRITE_AFTER_END';
+}
+
+// Classifies an ffmpeg process exit observed BEFORE the session deadline.
+// Pure function (Issue #303: the OCI listener's `-t 120` close makes ffmpeg
+// die with an EPIPE-flavoured muxer error — a normal end of stream, not a
+// failure). Returns one of:
+//   'deadline'        — deadline path won (caller treats as normal end).
+//   'consumer-closed' — ffmpeg died because the receiving side went away
+//                       (stderr carries Broken pipe / Input/output error /
+//                       muxer markers, or the caller saw a benign pipe
+//                       error on the feeding pipes). Normal end, exit 0.
+//   'failed'          — any other non-zero exit or signal death (caller
+//                       must keep throwing, as before).
+export function classifyFfmpegExit({
+  code = null,
+  signal = null,
+  stderr = '',
+  deadlineReached = false,
+  sinkClosed = false,
+} = {}) {
+  if (deadlineReached) return 'deadline';
+  if (signal != null) return 'failed';
+  if (code === 0) return 'consumer-closed';
+  if (code == null) return 'failed';
+  if (sinkClosed) return 'consumer-closed';
+  if (/broken pipe|input\/output error|muxer/i.test(String(stderr || ''))) {
+    return 'consumer-closed';
+  }
+  return 'failed';
+}
+
 // Reads the audio helper's first stderr line as its readiness/failure
 // signal. Fail-closed: any non-ok payload, non-JSON line, ok:true without a
 // tapUID, or a muteBehaviorVerified other than CATapMutedWhenTapped (2)
