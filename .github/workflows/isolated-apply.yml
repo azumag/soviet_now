@@ -4,16 +4,26 @@ on:
     paths:
       - 'strategy/sandbox.sh'
       - 'strategy/isolated_runner/**'
+      - 'strategy/improve_failure.sh'
+      - 'core/strategy_runtime.sh'
+      - 'eloop_lib.sh'
       - 'tests/test_strategy_sandbox_no_host_exec.py'
       - 'tests/test_isolated_runner_rootless.py'
+      - 'tests/test_strategy_runtime_apply_retry.py'
+      - 'tests/test_improve_failure_history.py'
       - '.github/workflows/isolated-apply.yml'
   push:
     branches: [main]
     paths:
       - 'strategy/sandbox.sh'
       - 'strategy/isolated_runner/**'
+      - 'strategy/improve_failure.sh'
+      - 'core/strategy_runtime.sh'
+      - 'eloop_lib.sh'
       - 'tests/test_strategy_sandbox_no_host_exec.py'
       - 'tests/test_isolated_runner_rootless.py'
+      - 'tests/test_strategy_runtime_apply_retry.py'
+      - 'tests/test_improve_failure_history.py'
       - '.github/workflows/isolated-apply.yml'
 permissions:
   contents: read
@@ -24,5 +34,10 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: python3 -m unittest tests.test_strategy_sandbox_no_host_exec tests.test_isolated_runner_rootless
-      - run: bash -n strategy/sandbox.sh
+      - run: >-
+          python3 -m unittest
+          tests.test_strategy_sandbox_no_host_exec
+          tests.test_isolated_runner_rootless
+          tests.test_strategy_runtime_apply_retry
+          tests.test_improve_failure_history
+      - run: bash -n strategy/sandbox.sh core/strategy_runtime.sh strategy/improve_failure.sh eloop_lib.sh
