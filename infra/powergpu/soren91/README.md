@@ -21,7 +21,7 @@ Issue #23 の Soren91 再稼働に向け、通常の SorenGame と本配信は�
 - `h264_nvenc` 実エンコード成功必須
 - GPU実行: 60〜300秒
 - instance作成から destroy まで最大600秒
-- disk: 20GB
+- disk: 8GB
 - `--execute` を付けない限り課金インスタンスを作らない
 
 公開価格が hard cap を超えた場合は、実行前に fail closed します。起動後に取得できる locked rate が hard cap を超えた場合も即 destroy します。
