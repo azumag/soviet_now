@@ -168,49 +168,13 @@ export function classifyFfmpegExit({
   return 'failed';
 }
 
-// Classifies ANY racer outcome of the session's Promise.race (Issue #303:
-// when the OCI listener closes first, ffmpeg's stdin/fd-3 readers go away
-// and the producer helpers' next frame/PCM writes hit a closed pipe. Both
-// Swift helpers now ignore SIGPIPE and exit 0 on EPIPE (see
-// soren91_window_capture.swift / soren91_audio_tap.swift), so a
-// `capture-exit {code:0}` / `audio-tap-exit {code:0}` racer can win over
-// ffmpeg's `close` racer — without this, that normal end-of-stream fell into
-// the generic throw and the session exited 1 with no SESSION_END line).
-// Pre-SIGPIPE-fix helper builds still die with `signal SIGPIPE` instead of
-// exiting 0 (observed live: `capture-exit {code:null,signal:SIGPIPE}` won
-// the race while ffmpeg itself carried the consumer-close signature), so
-// this pure winner-only view stays conservative and resolveSessionEnd
-// consults ffmpeg for ANY capture/tap exit — the verdict never depends on
-// which helper vintage won the race.
-// Pure function. Returns 'deadline' | 'consumer-closed' | 'failed':
-//   kind 'deadline'                        -> 'deadline' (normal end).
-//   kind 'ffmpeg-exit'                     -> classifyFfmpegExit verdict
-//     (tightened fail-closed semantics: ONLY explicit SRT-output markers
-//     — Broken pipe / muxer I/O error / interleaved-write I/O error —
-//     count. A bare code 0, sinkClosed alone (every ffmpeg death closes
-//     its stdin, so it cannot prove listener-first close), or a generic
-//     "muxer" substring do not).
-//   kind 'capture-exit', signal set        -> 'failed' (crashed/killed;
-//     resolveSessionEnd still asks ffmpeg first — a listener-close marker
-//     there upgrades this to consumer-closed).
-//   kind 'capture-exit', code 0            -> 'consumer-closed'. Rationale:
-//     in this pipeline the ONLY frame consumer is ffmpeg's stdin; the
-//     helper exiting 0 means it stopped cleanly because its writes could
-//     no longer land (EPIPE after SIGPIPE-ignore) — i.e. the downstream
-//     went away first. Treated as a normal end even without stderr/sink
-//     evidence (evidence, when present, only strengthens this reading).
-//   kind 'capture-exit', code !== 0        -> 'failed' (helper error;
-//     same ffmpeg-first upgrade applies in resolveSessionEnd).
-//   kind 'audio-tap-exit', SIGPIPE/code 0 AND sinkClosed -> 'consumer-closed'.
-//     Rationale: ffmpeg owns fd 3 (the ONLY PCM reader); when the listener
-//     closes first, ffmpeg dies and the helper's next stdout write hits a
-//     closed pipe — observed live as `signal SIGPIPE`, or a clean exit 0
-//     now that the helper ignores SIGPIPE. With pipe-guard evidence that
-//     the sink went away, this is a normal end. Without sinkClosed the tap
-//     alone proves nothing (it may have died on its own) -> 'failed'.
-//   kind 'audio-tap-exit', anything else   -> 'failed'.
-//   kind 'renderer-exit' / unknown         -> 'failed' (cleanup still runs
-//     in the session's finally block; these are never a normal end).
+// Classifies a Promise.race winner without waiting for any other child.
+// Only an observed ffmpeg exit carrying an explicit SRT-output close marker
+// can prove consumer-closed. Producer exits are always ambiguous by
+// themselves: the capture helper also exits 0 on handled signals / stdout
+// write failures, and producer-side sinkClosed can follow any ffmpeg death.
+// resolveSessionEnd() below waits boundedly for ffmpeg before using this
+// conservative fallback.
 export function classifySessionEnd({
   kind = '',
   value = null,
@@ -226,15 +190,9 @@ export function classifySessionEnd({
       stderr,
     });
   }
-  if (kind === 'capture-exit') {
-    if (value?.signal != null) return 'failed';
-    if (value?.code === 0) return 'consumer-closed';
-    return 'failed';
-  }
-  if (kind === 'audio-tap-exit') {
-    if (sinkClosed && (value?.signal === 'SIGPIPE' || value?.code === 0)) return 'consumer-closed';
-    return 'failed';
-  }
+  // `value` / `sinkClosed` are intentionally ignored for producer exits.
+  // Neither is sufficient evidence that the remote listener closed first.
+  if (kind === 'capture-exit' || kind === 'audio-tap-exit') return 'failed';
   return 'failed';
 }
 
@@ -258,11 +216,8 @@ export function classifySessionEnd({
 //     (no consumer-close marker, encoder init failure, ...) is 'failed'
 //     and is never masked by the winner. An already-observed ffmpegExit
 //     short-circuits with zero sleeps, so settled races settle at once.
-//   - ffmpeg still unsettled after the bound (or no poll supplied) ->
-//     fall back to classifySessionEnd with the final stderr/sinkClosed
-//     (capture 0 -> consumer-closed; tap SIGPIPE/0 + sinkClosed ->
-//     consumer-closed; anything signalled/unsettled without evidence ->
-//     failed).
+//   - ffmpeg still unsettled after the bound (or no poll supplied) -> failed.
+//     Producer-side code 0 / SIGPIPE / sinkClosed are not remote-close proof.
 //   - any other winner (renderer, bogus kinds) -> classifySessionEnd
 //     immediately with NO ffmpeg wait, so failure paths stay fail-fast.
 //     (A genuine producer crash while ffmpeg stays healthy therefore costs
