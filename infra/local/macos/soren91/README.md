@@ -189,7 +189,8 @@ daemon/agent that runs outside a real GUI session.
   into the live Soren91 match, measures native-rAF fps and WebGL facts for
   `SOREN91_LOCAL_MEASURE_SEC` (default 60s), writes a result JSON (including
   `capture: { bundleId, windowTitle, outerWidth, outerHeight, chromeTop,
-  chromeLeft }` plus `offscreen` when parked on the virtual display) to
+  chromeLeft, offscreen }` — the `offscreen` proof lives inside `capture`
+  when parked on the virtual display) to
   `SOREN91_LOCAL_RESULT_PATH`, then idles until stopped. When
   `SOREN91_LOCAL_VDISPLAY_BOUNDS` is set, the window is parked inside those
   bounds and the run fails unless the measured window rect provably avoids

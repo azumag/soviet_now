@@ -279,12 +279,11 @@ try {
     // helper's --bundle-id/--title/--width/--height args and the downstream
     // ffmpeg chrome-band crop. bundleId is fixed because this renderer always
     // launches the stable Google Chrome channel via Playwright `channel:'chrome'`.
-    capture: { bundleId: 'com.google.Chrome', windowTitle, ...windowBounds },
-    // Offscreen proof (Issue #303): when the session parked this window on
-    // the virtual display, `offscreen` carries the measured window rect and
-    // the zero-physical-overlap verdict. `requested:false` = legacy visible
-    // run (explicit opt-in only).
-    offscreen,
+    // `capture.offscreen` is the offscreen proof (Issue #303): when the
+    // session parked this window on the virtual display, it carries the
+    // measured window rect and the zero-physical-overlap verdict.
+    // `requested:false` = legacy visible run (explicit opt-in only).
+    capture: { bundleId: 'com.google.Chrome', windowTitle, ...windowBounds, offscreen },
     checks: { hardwareRenderer, webgl2: probe.webgl2, correctBuffer, fps: probe.fps >= minFps },
   };
   emit(result);

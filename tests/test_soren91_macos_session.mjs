@@ -74,6 +74,21 @@ test('capture helper args select one window by exact bundle id + title, at its o
   ]);
 });
 
+test('capture target tolerates the nested offscreen proof (capture.offscreen per README)', () => {
+  const withProof = {
+    ...capture,
+    offscreen: {
+      requested: true,
+      displayID: 11,
+      bounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      windowBounds: { x: 1940, y: 30, width: 960, height: 627 },
+      physicalOverlap: false,
+    },
+  };
+  assert.deepEqual(buildCaptureArgs(options, withProof), buildCaptureArgs(options, capture));
+  assert.deepEqual(buildFfmpegArgs(options, withProof), buildFfmpegArgs(options, capture));
+});
+
 test('buildCaptureArgs requires bundleId/windowTitle/outer size from the renderer result', () => {
   assert.throws(() => buildCaptureArgs(options, null), /capture target/);
   assert.throws(() => buildCaptureArgs(options, {}), /capture target/);
