@@ -195,9 +195,9 @@ export function findRecoverableLaunch(beforeIds, currentValue, options, creation
     const created = instanceCreatedEpoch(value);
     const gpuMatches = Boolean(gpu) && /(?:tesla[- _]?p4|\bp4\b)/i.test(gpu);
     const imageMatches = Boolean(image) && image === options.image;
-    const recent = created != null && created >= creationStartedEpoch - 5;
-    // created_at が無いAPI形では、imageとGPUの両方が一致した場合だけ回収する。
-    return recent ? (gpuMatches || imageMatches) : (gpuMatches && imageMatches);
+    const recentEnough = created == null || created >= creationStartedEpoch - 5;
+    // 回収対象は常にGPUとimageの両方が一致し、created_atがある場合は今回のlaunch時刻にも一致するものだけ。
+    return gpuMatches && imageMatches && recentEnough;
   });
 
   return strong.length === 1 ? instanceId(strong[0]) : null;
@@ -230,7 +230,7 @@ async function destroyInstance(options, targetInstanceId) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const result = run(options.powergpuBin, ['destroy', targetInstanceId, '--yes'], { timeout: 30_000, allowFailure: true });
-      if (result.status === 0 || /(?:not found|does not exist|404|destroyed)/i.test(`${result.stdout}\n${result.stderr}`)) return;
+      if (result.status === 0 || /(?:not found|does not exist|404)/i.test(`${result.stdout}\n${result.stderr}`)) return;
       throw new Error(`destroy ${targetInstanceId} failed: ${String(result.stderr || result.stdout).trim()}`);
     } catch (error) {
       lastError = error;
@@ -287,6 +287,7 @@ export async function main(argv = process.argv.slice(2)) {
   const creationStartedEpoch = Math.floor(Date.now() / 1000);
   const deadlineEpoch = creationStartedEpoch + options.instanceMaxAgeSec;
   const beforeValue = listInstances(options);
+  if (beforeValue == null) throw new Error('unable to establish PowerGPU instance baseline before launch');
   const beforeIds = new Set(normalizeInstances(beforeValue).map(instanceId).filter(Boolean));
   let targetInstanceId = null;
   try {
@@ -300,19 +301,26 @@ export async function main(argv = process.argv.slice(2)) {
       targetInstanceId = afterValue
         ? findRecoverableLaunch(beforeIds, afterValue, options, creationStartedEpoch)
         : null;
-      if (targetInstanceId) {
-        await destroyInstance(options, targetInstanceId).catch((cleanupError) => {
-          console.error(`PowerGPU ambiguous launch cleanup failed for ${targetInstanceId}: ${cleanupError?.message || cleanupError}`);
-        });
-      } else {
+      if (!targetInstanceId) {
         console.error('PowerGPU launch failed before an instance id was returned; no uniquely attributable new PoC instance was found. Check `powergpu list` before retrying.');
       }
       throw launchError;
     }
 
     let launched;
-    try { launched = parseJsonOutput(launchedRaw); } catch { launched = launchedRaw; }
-    targetInstanceId = extractInstanceId(launched);
+    try {
+      try { launched = parseJsonOutput(launchedRaw); } catch { launched = launchedRaw; }
+      targetInstanceId = extractInstanceId(launched);
+    } catch (launchResponseError) {
+      const afterValue = listInstances(options);
+      targetInstanceId = afterValue
+        ? findRecoverableLaunch(beforeIds, afterValue, options, creationStartedEpoch)
+        : null;
+      if (!targetInstanceId) {
+        console.error('PowerGPU launch returned no usable instance id; no uniquely attributable new PoC instance was found. Check `powergpu list` before retrying.');
+      }
+      throw launchResponseError;
+    }
     const lockedDph = extractLaunchPrice(typeof launched === 'string' ? null : launched);
     if (lockedDph != null && lockedDph > options.maxDph) {
       await destroyInstance(options, targetInstanceId).catch(() => {});
