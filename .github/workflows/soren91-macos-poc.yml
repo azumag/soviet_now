@@ -7,6 +7,7 @@ on:
       - 'tools/check_existing_chrome.mjs'
       - 'tools/soren91_macos_renderer.mjs'
       - 'tools/soren91_macos_session.mjs'
+      - 'tools/soren91_macos_cdp_host.mjs'
       - 'tools/soren91_local_agent.mjs'
       - 'tools/soren91_renderer_controller.mjs'
       - 'tools/soren91_renderer_priority.mjs'
@@ -19,6 +20,7 @@ on:
       - 'tools/macos/soren91_virtual_display.swift'
       - 'tools/macos/soren91_audio_tap.swift'
       - 'tests/test_soren91_macos_session.mjs'
+      - 'tests/test_soren91_macos_cdp_host.mjs'
       - 'tests/test_soren91_local_agent.mjs'
       - 'tests/test_soren91_renderer_controller.mjs'
       - 'tests/test_soren91_renderer_priority.mjs'
@@ -46,6 +48,7 @@ jobs:
           node --check tools/check_existing_chrome.mjs
           node --check tools/soren91_macos_renderer.mjs
           node --check tools/soren91_macos_session.mjs
+          node --check tools/soren91_macos_cdp_host.mjs
           node --check tools/soren91_local_agent.mjs
           node --check tools/soren91_renderer_controller.mjs
           node --check tools/soren91_renderer_priority.mjs
@@ -54,6 +57,7 @@ jobs:
       - name: Run macOS session contract tests
         run: |
           node --test tests/test_soren91_macos_session.mjs
+          node --test tests/test_soren91_macos_cdp_host.mjs
           node --test tests/test_soren91_local_agent.mjs
           node --test tests/test_soren91_renderer_controller.mjs
           node --test tests/test_soren91_renderer_priority.mjs
