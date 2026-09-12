@@ -29,6 +29,10 @@ source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_gate.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
+# Live improve_state is ephemeral by design. Wrap the writer after the base
+# implementation is loaded so terminal failed_no_apply classifications survive
+# later recovery/new-run state writes without changing the existing state schema.
+[ -f "$ELOOP_LIB_DIR/strategy/improve_failure.sh" ] && source "$ELOOP_LIB_DIR/strategy/improve_failure.sh"
 # Game-only handover broker.  It never owns the common overlay/audio/stream
 # processes; sourcing it here also makes a newly sourced eloop.sh observe a
 # pending request without restarting the long-lived loop shell.
