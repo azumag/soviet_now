@@ -16,10 +16,13 @@
 // - The SRT listener binds the Tailscale IPv4 address ONLY (never 0.0.0.0 or
 //   a public address). No SRT passphrase is used (Tailscale is the transport
 //   security, same rule as the local session).
+// - Agent control URLs must also use a Tailscale IPv4 address, so bearer
+//   tokens are never sent over plaintext HTTP to a public/hostname target.
 // - Agent tokens come from `SOREN91_LOCAL_AGENTS_JSON` (inject via a secret
 //   store) and are NEVER written to argv, logs, or error messages.
-// - Listener shutdown is guaranteed with try/finally; the agent is always
-//   told to stop, even when the listener fails.
+// - Listener shutdown is guaranteed with try/finally. The controller sends
+//   /v1/stop only for a session it successfully started; a 409 is treated as
+//   foreign ownership and is never stopped by this controller.
 // - Without `--execute` this only prints the plan as JSON and exits 0
 //   (no fetch/spawn side effects beyond agent probes).
 //
@@ -47,6 +50,8 @@ export const DEFAULT_POC_SEC = 90;
 export const MIN_POC_SEC = 90;
 export const DEFAULT_FFMPEG_BIN = 'ffmpeg';
 export const POWERGPU_UNIMPLEMENTED = 'powergpu-unimplemented';
+export const AGENT_ALREADY_RUNNING = 'agent-already-running';
+export const LISTENER_ERROR = 'listener-error';
 export const DEFAULT_WAIT_MARGIN_SEC = 240;
 export const MIN_WAIT_MARGIN_SEC = 60;
 export const MAX_WAIT_MARGIN_SEC = 1200;
@@ -97,6 +102,11 @@ export function parseAgents(env = process.env) {
     if (base.username || base.password) {
       throw new Error(`${where}.baseUrl must not carry userinfo`);
     }
+    if (!isTailscaleIpv4(base.hostname)) {
+      throw new Error(`${where}.baseUrl host must be a Tailscale IPv4 address in 100.64.0.0/10`);
+    }
+    if (!base.port) throw new Error(`${where}.baseUrl must include an explicit port`);
+    checkedPort(Number(base.port), `${where}.baseUrl port`);
     if (typeof entry.token !== 'string' || entry.token.length < 24) {
       throw new Error(`${where}.token must be at least 24 characters`);
     }
@@ -192,7 +202,8 @@ export async function selectBackend(
 }
 
 // POSTs /v1/start with body { srtUrl }. A 409 means the agent is already
-// running and is returned (not thrown) as { alreadyRunning:true }.
+// running and is returned (not thrown) as { alreadyRunning:true }; callers
+// must treat that as foreign ownership and must not stop that session.
 export async function startSession(agent, { srtUrl, fetchImpl = fetch } = {}) {
   if (!srtUrl) throw new Error('srtUrl is required');
   const base = agent.baseUrl.replace(/\/+$/, '');
@@ -338,7 +349,7 @@ function killListener(child) {
 // Plan mode (execute:false) performs agent probes + selection only and
 // returns the plan as data; NOTHING is spawned and no session is started.
 // Execute mode spawns the listener, starts the agent session, waits for the
-// listener, stops the agent, and always kills the listener (finally).
+// listener, stops only the session it owns, and always kills the listener.
 export async function runController(
   { agents = [], tailscaleIp, port = DEFAULT_SRT_PORT, outPath = DEFAULT_POC_OUT,
     durationSec = DEFAULT_POC_SEC, waitMarginSec = DEFAULT_WAIT_MARGIN_SEC,
@@ -395,10 +406,32 @@ export async function runController(
   let listenerResult = null;
   try {
     child = spawnImpl(listener.bin, listener.args, { stdio: ['ignore', 'inherit', 'inherit'] });
+    // Attach exit/error listeners immediately. A missing/broken ffmpeg can
+    // emit `error` before the agent POST resolves; delaying this listener
+    // would turn a controlled failure into an unhandled EventEmitter error.
+    const listenerExit = waitForExit(child, waitTimeoutMs);
     start = await startSession(agent, { srtUrl, fetchImpl });
-    listenerResult = await waitForExit(child, waitTimeoutMs);
+    if (start.alreadyRunning) {
+      return {
+        ok: false,
+        mode: 'execute',
+        chosen,
+        candidates,
+        start,
+        code: AGENT_ALREADY_RUNNING,
+        error: 'selected agent became busy before start; refusing to stop a session this controller does not own',
+      };
+    }
+    listenerResult = await listenerExit;
     if (listenerResult.timedOut) {
       return { ok: false, mode: 'execute', chosen, candidates, start, listener: listenerResult, error: 'listener timed out' };
+    }
+    if (listenerResult.error) {
+      return {
+        ok: false, mode: 'execute', chosen, candidates, start, listener: { ...listenerResult, error: undefined },
+        code: LISTENER_ERROR,
+        error: 'listener process failed to start or run',
+      };
     }
     if (listenerResult.code !== 0) {
       return {
@@ -409,7 +442,7 @@ export async function runController(
     return { ok: true, mode: 'execute', chosen, candidates, start, listener: listenerResult, srtUrl, outPath };
   } finally {
     try {
-      if (start?.started || start?.alreadyRunning) await stopSession(agent, { fetchImpl });
+      if (start?.started) await stopSession(agent, { fetchImpl });
     } catch {}
     killListener(child);
   }
