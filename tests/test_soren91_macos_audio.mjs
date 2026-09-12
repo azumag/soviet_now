@@ -222,23 +222,29 @@ test('classifyFfmpegExit: deadline path stays a normal end', () => {
   );
 });
 
-test('classifyFfmpegExit: listener-first close is consumer-closed (real stderr)', () => {
+test('classifyFfmpegExit: listener-first close is consumer-closed only with explicit output markers', () => {
   // Observed in live E2E when the OCI listener's `-t 120` expires.
   const stderr = 'Error submitting a packet to the muxer: Input/output error\n'
     + 'Last message repeated 3 times\n'
     + 'av_interleaved_write_frame(): Input/output error\n';
   assert.equal(classifyFfmpegExit({ code: 1, stderr }), 'consumer-closed');
   assert.equal(classifyFfmpegExit({ code: 1, stderr: 'Broken pipe' }), 'consumer-closed');
-  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'muxer queue overflow' }), 'consumer-closed');
-  // sinkClosed alone (EPIPE seen on the feeding pipe) is enough, even with
-  // an empty stderr tail.
-  assert.equal(classifyFfmpegExit({ code: 1, stderr: '', sinkClosed: true }), 'consumer-closed');
-  // Clean early exit (consumer went away, ffmpeg flushed) is not a failure.
-  assert.equal(classifyFfmpegExit({ code: 0, stderr: '' }), 'consumer-closed');
+});
+
+test('classifyFfmpegExit: ambiguous early exits fail closed', () => {
+  // Producer-side EPIPE only proves ffmpeg went away; every ffmpeg failure
+  // closes stdin, so sinkClosed must never turn a genuine failure into success.
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: '', sinkClosed: true }), 'failed');
+  // Generic muxer text can describe a real queue/performance failure.
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'muxer queue overflow' }), 'failed');
+  // Generic I/O text without the observed SRT output signatures is ambiguous.
+  assert.equal(classifyFfmpegExit({ code: 1, stderr: 'Input/output error while decoding stream #0:0' }), 'failed');
+  // A clean early exit can also be caused by an upstream EOF; without an
+  // explicit receiver-close marker it must not be reported as success.
+  assert.equal(classifyFfmpegExit({ code: 0, stderr: '' }), 'failed');
 });
 
 test('classifyFfmpegExit: genuine failures still fail', () => {
-  // Encoder init failure: no receiver-close markers, no pipe signal.
   const stderr = "Error initializing output stream 0:0 -- Error opening encoder 'h264_videotoolbox'\n";
   assert.equal(classifyFfmpegExit({ code: 1, stderr }), 'failed');
   assert.equal(classifyFfmpegExit({ code: 1, stderr: '' }), 'failed');
