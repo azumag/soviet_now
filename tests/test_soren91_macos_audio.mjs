@@ -253,3 +253,70 @@ test('classifyFfmpegExit: signal death always fails', () => {
     'failed',
   );
 });
+
+// --- session-end classification (Issue #303: capture-exit wins the race) ---
+
+test('classifySessionEnd: deadline stays a normal end', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  assert.equal(classifySessionEnd({ kind: 'deadline' }), 'deadline');
+  assert.equal(classifySessionEnd({ kind: 'ffmpeg-exit', code: 1, deadlineReached: true }), 'deadline');
+});
+
+test('classifySessionEnd: ffmpeg-exit delegates to classifyFfmpegExit', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: 'Broken pipe' }),
+    'consumer-closed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: '', sinkClosed: true }),
+    'consumer-closed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 0, signal: null }, stderr: '' }),
+    'consumer-closed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: 1, signal: null }, stderr: 'encoder boom' }),
+    'failed',
+  );
+  assert.equal(
+    classifySessionEnd({ kind: 'ffmpeg-exit', value: { code: null, signal: 'SIGTERM' } }),
+    'failed',
+  );
+});
+
+test('classifySessionEnd: capture-exit code 0 is consumer-closed with or without evidence', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  // Listener-first close: the SIGPIPE-ignoring Swift helper exits 0 on
+  // 'exit' before ffmpeg's 'close' fires — normal end of stream.
+  assert.equal(classifySessionEnd({ kind: 'capture-exit', value: { code: 0, signal: null } }), 'consumer-closed');
+  // With receiver-close evidence the reading only gets stronger.
+  assert.equal(
+    classifySessionEnd({ kind: 'capture-exit', value: { code: 0, signal: null }, sinkClosed: true }),
+    'consumer-closed',
+  );
+  assert.equal(
+    classifySessionEnd({
+      kind: 'capture-exit', value: { code: 0, signal: null }, stderr: 'av_interleaved_write_frame(): Input/output error',
+    }),
+    'consumer-closed',
+  );
+});
+
+test('classifySessionEnd: capture-exit non-zero or signalled still fails', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  assert.equal(classifySessionEnd({ kind: 'capture-exit', value: { code: 1, signal: null } }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'capture-exit', value: { code: 2, signal: null }, sinkClosed: true }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'capture-exit', value: { code: null, signal: 'SIGTERM' } }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'capture-exit', value: { code: null, signal: 'SIGKILL' } }), 'failed');
+});
+
+test('classifySessionEnd: renderer/audio-tap exits are never a normal end', async () => {
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  assert.equal(classifySessionEnd({ kind: 'renderer-exit', value: { code: 0, signal: null } }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'renderer-exit', value: { code: 1, signal: null } }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 0, signal: null } }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'audio-tap-exit', value: { code: 1, signal: null } }), 'failed');
+  assert.equal(classifySessionEnd({ kind: 'bogus-kind', value: { code: 0, signal: null } }), 'failed');
+});

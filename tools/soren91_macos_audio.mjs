@@ -166,6 +166,48 @@ export function classifyFfmpegExit({
   return 'failed';
 }
 
+// Classifies ANY racer outcome of the session's Promise.race (Issue #303:
+// the Swift capture helper ignores SIGPIPE and exits 0, so when the OCI
+// listener closes first the `capture-exit {code:0}` racer wins over the
+// ffmpeg `close` racer — without this, that normal end-of-stream fell into
+// the generic throw and the session exited 1 with no SESSION_END line).
+// Pure function. Returns 'deadline' | 'consumer-closed' | 'failed':
+//   kind 'deadline'                        -> 'deadline' (normal end).
+//   kind 'ffmpeg-exit'                     -> classifyFfmpegExit verdict.
+//   kind 'capture-exit', signal set        -> 'failed' (crashed/killed).
+//   kind 'capture-exit', code 0            -> 'consumer-closed'. Rationale:
+//     in this pipeline the ONLY frame consumer is ffmpeg's stdin; the
+//     helper exiting 0 means it stopped cleanly because its writes could
+//     no longer land (SIGPIPE-ignored Swift exit) — i.e. the downstream
+//     went away first. Treated as a normal end even without stderr/sink
+//     evidence (evidence, when present, only strengthens this reading).
+//   kind 'capture-exit', code !== 0        -> 'failed' (helper error).
+//   kind 'renderer-exit' / 'audio-tap-exit'-> 'failed' (cleanup still runs
+//     in the session's finally block; these are never a normal end).
+export function classifySessionEnd({
+  kind = '',
+  value = null,
+  stderr = '',
+  deadlineReached = false,
+  sinkClosed = false,
+} = {}) {
+  if (kind === 'deadline' || deadlineReached) return 'deadline';
+  if (kind === 'ffmpeg-exit') {
+    return classifyFfmpegExit({
+      code: value?.code,
+      signal: value?.signal,
+      stderr,
+      sinkClosed,
+    });
+  }
+  if (kind === 'capture-exit') {
+    if (value?.signal != null) return 'failed';
+    if (value?.code === 0) return 'consumer-closed';
+    return 'failed';
+  }
+  return 'failed';
+}
+
 // Reads the audio helper's first stderr line as its readiness/failure
 // signal. Fail-closed: any non-ok payload, non-JSON line, ok:true without a
 // tapUID, or a muteBehaviorVerified other than CATapMutedWhenTapped (2)

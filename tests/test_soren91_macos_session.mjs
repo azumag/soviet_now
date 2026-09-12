@@ -8,6 +8,7 @@ import {
   buildCaptureArgs,
   buildFfmpegArgs,
   buildRendererEnv,
+  createSessionDeadline,
   createStderrTail,
   defaults,
   isTailscaleIpv4Hostname,
@@ -472,4 +473,61 @@ test('attachPipeGuards swallows a real EPIPE from a dead pipe reader (not unhand
   const tracker = await runScenario(true);
   assert.equal(tracker.sinkClosed, true);
   assert.deepEqual(tracker.errors, []);
+});
+
+// --- Session teardown (Issue #303): capture-exit classification + no-hang ---
+
+const sleepForTest = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('createSessionDeadline resolves the deadline kind on expiry', async () => {
+  const deadline = createSessionDeadline(20);
+  const outcome = await deadline.promise;
+  assert.deepEqual(outcome, { kind: 'deadline' });
+  deadline.cancel(); // no-op after firing; must not throw
+});
+
+test('createSessionDeadline cancel prevents the late resolve (no lingering timer)', async () => {
+  const deadline = createSessionDeadline(60_000);
+  deadline.cancel();
+  const outcome = await Promise.race([
+    deadline.promise.then(() => 'resolved'),
+    sleepForTest(50).then(() => 'still-pending'),
+  ]);
+  assert.equal(outcome, 'still-pending');
+});
+
+test('hang regression: immediate capture-exit code 0 ends without waiting out sessionSec', async () => {
+  // Mirrors the session's Promise.race shape: an 1800s cancellable deadline
+  // vs a capture helper that exits 0 at once (the Swift helper's
+  // SIGPIPE-ignored exit when the listener closes first). The old inline
+  // sleep(remaining) held the event loop ~30 min after the throw; the
+  // cancellable deadline must let this settle in well under a second.
+  const { classifySessionEnd } = await import('../tools/soren91_macos_audio.mjs');
+  const capture = new EventEmitter();
+  const waitForExit = (child) => new Promise(
+    (resolve) => child.once('exit', (code, signal) => resolve({ code, signal })),
+  );
+  const deadline = createSessionDeadline(1_800_000);
+  const started = Date.now();
+  let endReason = null;
+  try {
+    queueMicrotask(() => capture.emit('exit', 0, null));
+    const outcome = await Promise.race([
+      deadline.promise,
+      waitForExit(capture).then((value) => ({ kind: 'capture-exit', value })),
+    ]);
+    const verdict = classifySessionEnd({
+      kind: outcome.kind,
+      value: outcome.value,
+      stderr: '',
+      sinkClosed: false,
+    });
+    if (verdict === 'consumer-closed') endReason = 'consumer-closed';
+    else throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
+  } finally {
+    deadline.cancel();
+  }
+  const elapsed = Date.now() - started;
+  assert.equal(endReason, 'consumer-closed');
+  assert.ok(elapsed < 2000, `settled in ${elapsed}ms, expected < 2000ms`);
 });

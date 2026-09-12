@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
-  classifyFfmpegExit,
+  classifySessionEnd,
   isBenignPipeError,
   resolveTapPids,
   startAudioTap,
@@ -369,6 +369,30 @@ function waitForCloseExit(child) {
   return new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
 }
 
+// Cancellable session-deadline racer (Issue #303): the old inline
+// `sleep(remaining).then(...)` left its timer pending after an early
+// throw/return, holding the event loop open until sessionSec elapsed —
+// the process hung ~30 minutes with exitCode=1 already set. The session
+// MUST call cancel() in its finally block so no timer survives teardown.
+export function createSessionDeadline(ms) {
+  let timer = null;
+  const promise = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      timer = null;
+      resolve({ kind: 'deadline' });
+    }, ms);
+  });
+  return {
+    promise,
+    cancel() {
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
 // Bounded tail of ffmpeg stderr (Issue #303): the last bytes are kept for
 // failure diagnostics while the full stream still goes to process.stderr.
 export function createStderrTail(limit = 8192) {
@@ -496,6 +520,9 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   let vdisplayStatus = null;
   const cleanup = () => {
     terminateTree(ffmpeg); terminateTree(capture); terminateTree(renderer); terminateTree(audiotap);
+    try { ffmpeg?.stdin?.destroy?.(); } catch {}
+    try { capture?.stdout?.destroy?.(); } catch {}
+    try { audiotap?.stdout?.destroy?.(); } catch {}
     try { ffmpeg?.stdio?.[3]?.destroy?.(); } catch {}
     if (vdisplay) { try { vdisplay.kill('SIGTERM'); } catch {} }
   };
@@ -586,38 +613,48 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
 
     const streamDeadline = Math.min(Date.now() + options.sessionSec * 1000, hardDeadline);
     const remaining = Math.max(0, streamDeadline - Date.now());
+    const deadline = createSessionDeadline(remaining);
     const racers = [
-      sleep(remaining).then(() => ({ kind: 'deadline' })),
+      deadline.promise,
       waitForCloseExit(ffmpeg).then((value) => ({ kind: 'ffmpeg-exit', value })),
       waitForExit(capture).then((value) => ({ kind: 'capture-exit', value })),
       waitForExit(renderer).then((value) => ({ kind: 'renderer-exit', value })),
     ];
     if (audiotap) racers.push(waitForExit(audiotap).then((value) => ({ kind: 'audio-tap-exit', value })));
     const outcome = await Promise.race(racers);
-    if (outcome.kind === 'deadline') {
-      console.log('SOREN91_LOCAL_SESSION_END=deadline');
-      return { ...plan, result, completed: true, endReason: 'deadline' };
-    }
-    if (outcome.kind === 'ffmpeg-exit') {
-      // The OCI listener closing first (e.g. `-t 120` expiring) kills
-      // ffmpeg with an EPIPE-flavoured muxer error: a normal end of
-      // stream (exit 0), not a failure. Anything else still throws.
-      const verdict = classifyFfmpegExit({
-        code: outcome.value?.code,
-        signal: outcome.value?.signal,
+    try {
+      const verdict = classifySessionEnd({
+        kind: outcome.kind,
+        value: outcome.value,
         stderr: ffmpegStderr.text(),
         sinkClosed: pipeTracker.sinkClosed,
       });
+      if (verdict === 'deadline') {
+        console.log('SOREN91_LOCAL_SESSION_END=deadline');
+        return { ...plan, result, completed: true, endReason: 'deadline' };
+      }
       if (verdict === 'consumer-closed') {
+        // The OCI listener closing first (e.g. `-t 120` expiring) kills
+        // ffmpeg with an EPIPE-flavoured muxer error — or wins the race as
+        // `capture-exit {code:0}` because the SIGPIPE-ignoring Swift helper
+        // exits 0 on 'exit' before ffmpeg's 'close' fires. Both are a
+        // normal end of stream (exit 0), not a failure.
         console.log('SOREN91_LOCAL_SESSION_END=consumer-closed');
         return { ...plan, result, completed: true, endReason: 'consumer-closed' };
       }
-      const tail = ffmpegStderr.text().slice(-2000);
-      throw new Error(
-        `ffmpeg-exit: ${JSON.stringify(outcome.value)}${tail ? `\nstderr tail: ${tail}` : ''}`,
-      );
+      if (outcome.kind === 'ffmpeg-exit') {
+        const tail = ffmpegStderr.text().slice(-2000);
+        throw new Error(
+          `ffmpeg-exit: ${JSON.stringify(outcome.value)}${tail ? `\nstderr tail: ${tail}` : ''}`,
+        );
+      }
+      throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
+    } finally {
+      // Cancel the deadline timer FIRST: without this the pending
+      // setTimeout keeps the event loop alive until sessionSec elapses
+      // (~30 min hang after an early exit — Issue #303).
+      deadline.cancel();
     }
-    throw new Error(`${outcome.kind}: ${JSON.stringify(outcome.value)}`);
   } finally {
     cleanup();
     process.removeListener('SIGINT', cleanup);
