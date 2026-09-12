@@ -3,8 +3,8 @@
 //
 // Holds a private CGVirtualDisplay, spawns Google Chrome offscreen with
 // --remote-debugging-port on 127.0.0.1, and exposes that port to OCI over a
-// TCP proxy bound ONLY to the Mac's Tailscale IPv4 (never 0.0.0.0; no auth,
-// so Tailscale-only binding is the access control — fail-closed otherwise).
+// TCP proxy bound ONLY to the Mac's Tailscale IPv4. The proxy also accepts
+// only the specific OCI Tailscale peer derived from the reviewed SRT target.
 //
 // The OCI bot navigates the remote Chrome itself (connectOverCDP). This host
 // polls the LOCAL CDP /json/list and, once a game page (play.unityroom.com)
@@ -106,12 +106,13 @@ export function validateOptions(options, platform = process.platform) {
     throw new Error('proxyPort must be 1024..65535');
   }
   if (options.proxyPort === options.cdpPort) throw new Error('proxyPort must differ from cdpPort');
-  // Fail-closed access control: the unauthenticated CDP proxy may ONLY bind
-  // a Tailscale IPv4. Empty/0.0.0.0/LAN addresses refuse to start.
+  // Fail-closed access control: the CDP proxy may ONLY bind a Tailscale IPv4.
+  // The listener additionally rejects every source except the reviewed OCI
+  // Tailscale peer derived from the SRT target.
   if (!isTailscaleIpv4Hostname(options.bindIp)) {
     throw new Error(
       `bindIp must be a Tailscale IPv4 in 100.64.0.0/10 (got ${JSON.stringify(options.bindIp)}); `
-      + 'the CDP proxy has no auth so it must never bind 0.0.0.0 or a LAN address',
+      + 'the CDP proxy must never bind 0.0.0.0 or a LAN address',
     );
   }
   if (!Number.isInteger(options.width) || !Number.isInteger(options.height)
@@ -126,6 +127,10 @@ export function validateOptions(options, platform = process.platform) {
     try { target = new URL(options.srtUrl); } catch { throw new Error('srtUrl must be a valid srt:// URL'); }
     if (target.protocol !== 'srt:') throw new Error('srtUrl must start with srt://');
     if (!target.port) throw new Error('srtUrl must include an explicit destination port');
+    if (target.username || target.password) throw new Error('srtUrl must not contain userinfo credentials');
+    for (const key of target.searchParams.keys()) {
+      if (key.toLowerCase() === 'passphrase') throw new Error('srtUrl must not contain passphrase credentials');
+    }
     const modes = target.searchParams.getAll('mode');
     if (modes.length !== 1 || modes[0].toLowerCase() !== 'caller') {
       throw new Error('srtUrl must explicitly use mode=caller for the OCI listener');
@@ -159,16 +164,66 @@ async function fetchJsonList(cdpPort) {
   return res.json();
 }
 
+export function isExactGameTargetUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'play.unityroom.com';
+  } catch {
+    return false;
+  }
+}
+
 export function findGameTarget(targets) {
   const list = Array.isArray(targets) ? targets : [];
   return list.find((t) => t?.type === 'page'
-    && typeof t?.url === 'string' && t.url.includes('play.unityroom.com')) || null;
+    && typeof t?.url === 'string' && isExactGameTargetUrl(t.url)) || null;
+}
+
+export function normalizeRemoteAddress(value) {
+  const address = String(value || '').trim();
+  const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  return mapped ? mapped[1] : address;
+}
+
+export function isAllowedCdpPeer(remoteAddress, allowedPeerIp) {
+  const peer = normalizeRemoteAddress(remoteAddress);
+  const allowed = normalizeRemoteAddress(allowedPeerIp);
+  return isTailscaleIpv4Hostname(allowed) && peer === allowed;
+}
+
+export function buildChromeArgs(options, placement, profileDir) {
+  return [
+    `--remote-debugging-port=${options.cdpPort}`,
+    '--remote-allow-origins=*',
+    `--user-data-dir=${profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-features=Translate',
+    `--window-position=${placement.left},${placement.top}`,
+    `--window-size=${options.width},${options.height}`,
+    '--autoplay-policy=no-user-gesture-required',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    ...(options.audioTap ? [] : ['--mute-audio']),
+    'about:blank',
+  ];
 }
 
 // Raw TCP forward BIND_IP:proxyPort -> 127.0.0.1:cdpPort. Byte-pipe (not
 // HTTP-aware) so both /json/* polling and WebSocket upgrades pass through.
-export function startCdpProxy({ bindIp, proxyPort, cdpPort }) {
+// Binding to Tailscale alone is not authentication: only the exact OCI peer
+// is accepted, so another tailnet node cannot attach to the unauthenticated
+// DevTools endpoint even if ACLs are broader than expected.
+export function startCdpProxy({ bindIp, proxyPort, cdpPort, allowedPeerIp }) {
+  if (!isTailscaleIpv4Hostname(allowedPeerIp)) {
+    throw new Error('allowedPeerIp must be a Tailscale IPv4 address');
+  }
   const server = net.createServer((client) => {
+    if (!isAllowedCdpPeer(client.remoteAddress, allowedPeerIp)) {
+      client.destroy();
+      return;
+    }
     const upstream = net.connect({ host: '127.0.0.1', port: cdpPort }, () => {
       client.pipe(upstream).pipe(client);
     });
@@ -205,10 +260,11 @@ async function waitExit(child, timeoutMs = 10_000) {
 
 export async function main(argv = process.argv.slice(2), { platform = process.platform } = {}) {
   const options = validateOptions(parseArgs(argv), platform);
+  const allowedPeerIp = options.srtUrl ? new URL(options.srtUrl).hostname : '';
   const plan = {
     backend: 'macos-cdp-host', tier: -1, execute: options.execute,
     cdp: `127.0.0.1:${options.cdpPort}`,
-    proxy: `${options.bindIp}:${options.proxyPort} (tailscale-only, no auth)`,
+    proxy: `${options.bindIp}:${options.proxyPort} (tailscale peer-locked)`,
     output: [options.width, options.height, 30],
     transport: options.srtUrl ? 'srt-over-tailscale' : 'not-configured',
     display: 'offscreen-virtual',
@@ -243,24 +299,11 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const placement = place(held.status.bounds);
     const profileDir = path.join(os.tmpdir(), `soren91-cdp-host-${Date.now()}`);
     fs.mkdirSync(profileDir, { recursive: true });
-    chrome = spawn(options.chromeBin, [
-      `--remote-debugging-port=${options.cdpPort}`,
-      // Tailscale-only temporary test endpoint: allow ws origin from the
-      // OCI side. The proxy binds the Tailscale IP only (no auth), so this
-      // must never be used on a publicly reachable interface.
-      '--remote-allow-origins=*',
-      `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-features=Translate',
-      `--window-position=${placement.left},${placement.top}`,
-      `--window-size=${options.width},${options.height}`,
-      '--autoplay-policy=no-user-gesture-required',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      'about:blank',
-    ], { stdio: ['ignore', 'ignore', 'inherit'] });
+    // `--remote-allow-origins=*` is safe only behind the source-locked Tailscale
+    // proxy above; Chrome itself remains bound to 127.0.0.1.
+    chrome = spawn(options.chromeBin, buildChromeArgs(options, placement, profileDir), {
+      stdio: ['ignore', 'ignore', 'inherit'],
+    });
     console.log(`SOREN91_CDP_HOST_CHROME_PID=${chrome.pid}`);
     // Wait for the local DevTools HTTP endpoint.
     let ready = false;
@@ -274,10 +317,15 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     }
     if (!ready) throw new Error('chrome DevTools endpoint did not come up');
     console.log(`SOREN91_CDP_HOST_CDP_READY=http://127.0.0.1:${options.cdpPort}`);
-    proxy = await startCdpProxy({ bindIp: options.bindIp, proxyPort: options.proxyPort, cdpPort: options.cdpPort });
+    proxy = await startCdpProxy({
+      bindIp: options.bindIp,
+      proxyPort: options.proxyPort,
+      cdpPort: options.cdpPort,
+      allowedPeerIp,
+    });
     console.log(`SOREN91_CDP_HOST_PROXY_READY=${options.bindIp}:${options.proxyPort}`);
 
-    // Wait for the OCI bot to navigate to the game page.
+    // Wait for the OCI bot to navigate to the exact game origin.
     const deadline = startedAt + options.sessionSec * 1000;
     let game = null;
     while (Date.now() < deadline) {
@@ -286,24 +334,22 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       try { targets = await fetchJsonList(options.cdpPort); } catch (e) {
         console.error(`[cdp-host] /json/list poll failed: ${e?.message || e}`);
       }
-      for (const t of targets.filter((t) => t?.type === 'page')) {
-        console.error(`[cdp-host] page title=${JSON.stringify(t?.title)} url=${t?.url}`);
-      }
+      const pageCount = targets.filter((t) => t?.type === 'page').length;
+      console.error(`[cdp-host] page_count=${pageCount}`);
       game = findGameTarget(targets);
       if (game) break;
       await sleep(options.pollMs);
     }
-    if (!game) throw new Error('no play.unityroom.com target appeared before session deadline');
-    console.log(`SOREN91_CDP_HOST_GAME_FOUND=${JSON.stringify({ title: game.title, url: game.url })}`);
+    if (!game) throw new Error('no exact https://play.unityroom.com target appeared before session deadline');
+    console.log('SOREN91_CDP_HOST_GAME_FOUND=1');
 
     // Local calibration via CDP (same approach as the renderer): size the
     // real window so content == width x height, read the exact title.
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${options.cdpPort}`);
     const context = browser.contexts()[0];
     if (!context) throw new Error('remote chrome has no browser context');
-    let page = context.pages().find((p) => (p.url() || '').includes('play.unityroom.com'))
-      || context.pages()[0];
-    if (!page) throw new Error('remote chrome has no pages');
+    const page = context.pages().find((p) => isExactGameTargetUrl(p.url() || ''));
+    if (!page) throw new Error('remote chrome has no exact play.unityroom.com page');
     const cdp = await context.newCDPSession(page);
     const { windowId } = await cdp.send('Browser.getWindowForTarget');
     let bounds = await cdp.send('Browser.getWindowBounds', { windowId });
