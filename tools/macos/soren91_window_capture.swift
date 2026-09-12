@@ -164,10 +164,10 @@ struct Soren91WindowCapture {
       window.owningApplication?.bundleIdentifier == bundleId && window.title == title
     }
     guard matches.count == 1 else {
-      let titles = content.windows
-        .filter { $0.owningApplication?.bundleIdentifier == bundleId }
-        .map { $0.title ?? "<untitled>" }
-      failClosed("expected exactly 1 window for bundleId=\(bundleId) title=\(title), found \(matches.count) (fail-closed); candidate titles for this app: \(titles)")
+      // Do not enumerate other windows or titles here. This helper normally
+      // targets Google Chrome, and unrelated window titles can contain private
+      // browsing/document context that must not be copied into logs.
+      failClosed("expected exactly 1 matching capture window, found \(matches.count) (fail-closed)")
     }
     let window = matches[0]
 
