@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/soren91-macos-poc.yml'
+      - 'eloop_lib.sh'
+      - 'broadcast/radio_persona.sh'
+      - 'broadcast/docich_soren91_host_mode.sh'
+      - 'broadcast/comment_lib.sh'
+      - 'soren91/main.mjs'
       - 'tools/check_existing_chrome.mjs'
       - 'tools/soren91_macos_renderer.mjs'
       - 'tools/soren91_macos_session.mjs'
@@ -19,6 +24,7 @@ on:
       - 'tools/macos/soren91_window_capture.swift'
       - 'tools/macos/soren91_virtual_display.swift'
       - 'tools/macos/soren91_audio_tap.swift'
+      - 'tests/test_radio_corner_voice.sh'
       - 'tests/test_soren91_macos_session.mjs'
       - 'tests/test_soren91_macos_cdp_host.mjs'
       - 'tests/test_soren91_local_agent.mjs'
@@ -56,6 +62,8 @@ jobs:
           node --check tools/soren91_renderer_priority.mjs
           node --check tools/soren91_offscreen_verify.mjs
           node --check tools/soren91_macos_audio.mjs
+      - name: Run broadcast host-mode contract test
+        run: bash tests/test_radio_corner_voice.sh
       - name: Run macOS session contract tests
         run: |
           node --test tests/test_soren91_macos_session.mjs
