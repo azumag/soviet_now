@@ -67,6 +67,12 @@ export function defaults(env = process.env) {
     bindIp: env.SOREN91_CDP_BIND_IP || detectTailscaleIp(),
     width: Number(env.SOREN91_LOCAL_WIDTH || 960),
     height: Number(env.SOREN91_LOCAL_HEIGHT || 540),
+    // The Chrome window content is sized to match the OCI bot's viewport
+    // (Playwright applies a 1280x720 device-metrics override over CDP), so the
+    // measured inner size and the real window agree and the canvas crop stays
+    // valid. The stream output is still width x height (960x540) via crop+scale.
+    contentWidth: Number(env.SOREN91_CDP_HOST_CONTENT_WIDTH || 1280),
+    contentHeight: Number(env.SOREN91_CDP_HOST_CONTENT_HEIGHT || 720),
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
     sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),
@@ -122,6 +128,13 @@ export function validateOptions(options, platform = process.platform) {
   }
   if (options.width !== 960 || options.height !== 540) {
     throw new Error('macOS cdp-host output must be 960x540 (game-canvas crop; 1280x720 full-page is not used)');
+  }
+  for (const key of ['contentWidth', 'contentHeight']) {
+    if (options[key] == null) options[key] = key === 'contentWidth' ? 1280 : 720;
+    const value = options[key];
+    if (!Number.isInteger(value) || value < 640 || value > 4096) {
+      throw new Error(`${key} must be an integer 640..4096`);
+    }
   }
   if (!(options.videoMbps > 0 && options.videoMbps <= 8)) throw new Error('videoMbps must be >0 and <=8');
   if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;
@@ -412,7 +425,7 @@ export function buildChromeArgs(options, placement, profileDir) {
     '--no-default-browser-check',
     '--disable-features=Translate',
     `--window-position=${placement.left},${placement.top}`,
-    `--window-size=${options.width},${options.height}`,
+    '--window-size=' + `${options.contentWidth},${options.contentHeight}`,
     '--autoplay-policy=no-user-gesture-required',
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
@@ -637,7 +650,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
         windowId,
         bounds: {
           left: placement.left, top: placement.top,
-          width: options.width + chromeW, height: options.height + chromeH,
+          width: options.contentWidth + chromeW, height: options.contentHeight + chromeH,
         },
       });
       await sleep(300);
