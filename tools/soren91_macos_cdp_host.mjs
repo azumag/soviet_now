@@ -541,7 +541,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // and scale it to 960x540. Fail-closed: no canvas / bad rect aborts the
     // run instead of silently streaming the page with margins.
     let canvasGeom = null;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
       try {
         canvasGeom = await page.evaluate(() => {
           const el = document.querySelector('#unity-canvas') || document.querySelector('canvas');
