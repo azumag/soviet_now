@@ -40,6 +40,9 @@ if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/radio_state.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_engine.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_persona.sh"
+	# docich canonical bridge overrides only the host-mode predicate so
+	# pre-commit candidate runtimes never change viewer-facing persona/voice.
+	source "$ELOOP_LIB_DIR/broadcast/docich_soren91_host_mode.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_themes.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_news.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_quality.sh"
