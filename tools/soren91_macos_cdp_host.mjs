@@ -72,6 +72,11 @@ export function defaults(env = process.env) {
     sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),
     pollMs: Number(env.SOREN91_CDP_HOST_POLL_MS || 2000),
     audioTap: envFlag(env, 'SOREN91_LOCAL_AUDIO_TAP', true),
+    // Issue #303: the AudioService utility process may not exist yet when the
+    // game page first loads; retry attaching the tap for this long before
+    // failing closed (observed: a single attempt aborted the whole stream and
+    // left Chrome audible).
+    audioTapWaitSec: Number(env.SOREN91_LOCAL_AUDIO_TAP_WAIT_SEC || 120),
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN
       || path.join(here, 'macos', 'bin', 'soren91_window_capture'),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN
@@ -119,6 +124,10 @@ export function validateOptions(options, platform = process.platform) {
     throw new Error('macOS cdp-host output must be 960x540 (game-canvas crop; 1280x720 full-page is not used)');
   }
   if (!(options.videoMbps > 0 && options.videoMbps <= 8)) throw new Error('videoMbps must be >0 and <=8');
+  if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;
+  if (!Number.isInteger(options.audioTapWaitSec) || options.audioTapWaitSec < 5 || options.audioTapWaitSec > 600) {
+    throw new Error('audioTapWaitSec must be an integer 5..600');
+  }
   if (!options.srtUrl && options.execute) throw new Error('--execute requires SOREN91_LOCAL_SRT_URL');
   if (options.execute && platform !== 'darwin') throw new Error('--execute is macOS-only');
   if (options.srtUrl) {
@@ -456,6 +465,53 @@ async function waitExit(child, timeoutMs = 10_000) {
   });
 }
 
+// Issue #303: the tap helper fails closed when none of the given PIDs has an
+// audio process object yet (the AudioService utility process appears only
+// once the game actually plays audio). Retry, re-resolving the Chrome
+// descendant PIDs each attempt, until the tap attaches or the budget ends.
+// Only "no audio process object" is retryable; any other helper failure is
+// re-thrown immediately so real errors are not masked.
+export async function startAudioTapWithRetry({
+  audioTapBin,
+  rootPid,
+  budgetMs,
+  attemptTimeoutMs = 15_000,
+  pollMs = 1000,
+  psImpl = () => spawnSync('ps', ['-ax', '-o', 'pid,ppid,command'], { encoding: 'utf8' }),
+  startTapImpl = startAudioTap,
+  sleepImpl = sleep,
+  now = () => Date.now(),
+} = {}) {
+  const deadline = now() + budgetMs;
+  let lastError = null;
+  for (;;) {
+    const ps = psImpl();
+    if (ps?.error) {
+      lastError = ps.error;
+    } else {
+      let pids = null;
+      try {
+        pids = resolveTapPids(ps.stdout || '', rootPid);
+      } catch (error) {
+        lastError = error;
+      }
+      if (pids) {
+        try {
+          return await startTapImpl(audioTapBin, pids, { timeoutMs: attemptTimeoutMs });
+        } catch (error) {
+          lastError = error;
+          if (!/audio process object|no given PID has an audio process/i.test(String(error?.message || error))) {
+            throw error;
+          }
+        }
+      }
+    }
+    if (now() >= deadline) break;
+    await sleepImpl(pollMs);
+  }
+  throw new Error(`audio tap attach failed after ${budgetMs}ms (fail-closed): ${lastError?.message || lastError}`);
+}
+
 export async function main(argv = process.argv.slice(2), { platform = process.platform } = {}) {
   const options = validateOptions(parseArgs(argv), platform);
   const allowedPeerIp = options.srtUrl ? new URL(options.srtUrl).hostname : '';
@@ -478,8 +534,15 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   let capture = null;
   let audiotap = null;
   let ffmpeg = null;
+  let profileDir = null;
   const cleanup = () => {
     terminate(ffmpeg); terminate(capture); terminate(audiotap); terminate(chrome);
+    // Chrome helper processes outlive the browser's SIGTERM and can be left
+    // orphaned (and audible) if this host is SIGKILLed mid-cleanup. Kill
+    // every process still bound to OUR temp profile dir so nothing leaks.
+    if (profileDir) {
+      try { spawnSync('pkill', ['-f', profileDir], { stdio: 'ignore' }); } catch {}
+    }
     try { ffmpeg?.stdin?.destroy?.(); } catch {}
     try { capture?.stdout?.destroy?.(); } catch {}
     try { audiotap?.stdout?.destroy?.(); } catch {}
@@ -501,7 +564,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     console.log(`SOREN91_CDP_HOST_VDISPLAY_READY=${JSON.stringify(held.status)}`);
     const { placementFor: place } = { placementFor };
     const placement = place(held.status.bounds);
-    const profileDir = path.join(os.tmpdir(), `soren91-cdp-host-${Date.now()}`);
+    profileDir = path.join(os.tmpdir(), `soren91-cdp-host-${Date.now()}`);
     fs.mkdirSync(profileDir, { recursive: true });
     // `--remote-allow-origins=*` is safe only behind the source-locked Tailscale
     // proxy above; Chrome itself remains bound to 127.0.0.1.
@@ -687,19 +750,12 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     console.log(`SOREN91_CDP_HOST_CAPTURE_READY=${JSON.stringify(started.status)}`);
 
     if (options.audioTap) {
-      let tapPids = null;
-      let lastError = null;
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const ps = spawnSync('ps', ['-ax', '-o', 'pid,ppid,command'], { encoding: 'utf8' });
-        if (ps.error) lastError = ps.error;
-        else {
-          try { tapPids = resolveTapPids(ps.stdout || '', chrome.pid); break; }
-          catch (e) { lastError = e; }
-        }
-        await sleep(1000);
-      }
-      if (!tapPids) throw new Error(`audio tap PID resolution failed (fail-closed): ${lastError?.message || lastError}`);
-      const tapStarted = await startAudioTap(options.audioTapBin, tapPids, { timeoutMs: 30_000 });
+      // Retry until the AudioService process exists (see helper above).
+      const tapStarted = await startAudioTapWithRetry({
+        audioTapBin: options.audioTapBin,
+        rootPid: chrome.pid,
+        budgetMs: options.audioTapWaitSec * 1000,
+      });
       audiotap = tapStarted.child;
       console.log(`SOREN91_CDP_HOST_AUDIO_TAP_READY=${JSON.stringify(tapStarted.status)}`);
     }
@@ -744,7 +800,10 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     if (browser) await browser.close().catch(() => {});
     if (ffmpeg) await waitExit(ffmpeg, 5000);
     if (capture) await waitExit(capture, 5000);
-    if (chrome) await waitExit(chrome, 5000);
+    if (chrome) {
+      await waitExit(chrome, 5000);
+      if (chrome.exitCode == null) { try { chrome.kill('SIGKILL'); } catch {} }
+    }
     if (proxy) await stopServer(proxy);
   }
 }

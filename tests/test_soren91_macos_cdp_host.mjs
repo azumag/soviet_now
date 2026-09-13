@@ -13,6 +13,7 @@ import {
   parseCanvasGeometry,
   resolveCanvasCropFrame,
   signalExitCode,
+  startAudioTapWithRetry,
   validateOptions,
   waitForStableCanvasGeometry,
 } from '../tools/soren91_macos_cdp_host.mjs';
@@ -265,4 +266,66 @@ test('stable-but-invalid rect still fails closed at crop time', async () => {
   assert.throws(() => resolveCanvasCropFrame({
     outerWidth: 960, outerHeight: 627, chromeLeft: 0, chromeTop: 87, canvas: stable.canvas,
   }), /fail-closed/);
+});
+
+// Issue #303: the AudioService process may not exist yet at first attempt.
+// The tap must retry (re-resolving PIDs) instead of aborting the stream.
+const TAP_PS = [
+  '  100  1 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '  101 100 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper',
+].join('\n');
+
+test('audio tap attach retries until an audio process appears', async () => {
+  let attempts = 0;
+  let nowMs = 0;
+  const result = await startAudioTapWithRetry({
+    audioTapBin: 'helper',
+    rootPid: 100,
+    budgetMs: 10_000,
+    psImpl: () => ({ stdout: TAP_PS }),
+    startTapImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw new Error('no given PID has an audio process object (fail-closed): missing=[]');
+      }
+      return { child: { pid: 999 }, status: { ok: true } };
+    },
+    sleepImpl: async (ms) => { nowMs += ms; },
+    now: () => nowMs,
+  });
+  assert.equal(result.status.ok, true);
+  assert.equal(attempts, 3);
+});
+
+test('audio tap attach fails closed after the retry budget', async () => {
+  let nowMs = 0;
+  await assert.rejects(
+    () => startAudioTapWithRetry({
+      audioTapBin: 'helper',
+      rootPid: 100,
+      budgetMs: 3000,
+      psImpl: () => ({ stdout: TAP_PS }),
+      startTapImpl: async () => { throw new Error('no given PID has an audio process object'); },
+      sleepImpl: async (ms) => { nowMs += ms; },
+      now: () => nowMs,
+    }),
+    /audio tap attach failed after 3000ms \(fail-closed\)/,
+  );
+});
+
+test('audio tap attach does not retry non-audio helper errors', async () => {
+  let attempts = 0;
+  await assert.rejects(
+    () => startAudioTapWithRetry({
+      audioTapBin: 'helper',
+      rootPid: 100,
+      budgetMs: 10_000,
+      psImpl: () => ({ stdout: TAP_PS }),
+      startTapImpl: async () => { attempts += 1; throw new Error('helper crashed'); },
+      sleepImpl: async () => {},
+      now: () => 0,
+    }),
+    /helper crashed/,
+  );
+  assert.equal(attempts, 1);
 });
