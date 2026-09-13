@@ -269,7 +269,9 @@ export function canvasSamplesMatch(a, b, epsilon = GEOMETRY_EPSILON_PX) {
     if (!Number.isFinite(a?.[key]) || !Number.isFinite(b?.[key])) return false;
     if (Math.abs(a[key] - b[key]) > epsilon) return false;
   }
-  // A dpr change rescales every frame pixel: never treat across a dpr flip.
+  // A dpr change means the page moved between backing scales: never treat it
+  // as one stable sample streak even though the capture output remains in the
+  // explicitly requested outerWidth/outerHeight coordinate grid.
   return a.dpr === b.dpr && Number.isFinite(a.dpr);
 }
 
@@ -309,29 +311,32 @@ export async function waitForStableCanvasGeometry(sampleFn, {
     await sleepFn(Math.max(0, Math.min(pollMs, deadline - now)));
   }
 }
-// Crop rectangle in capture-frame pixels. ScreenCaptureKit captures the
-// window at its outer size, so the frame origin is the window origin: the
-// content origin inside the frame is the existing chrome offset
-// (outer - inner), plus the canvas offset inside the content, all scaled by
-// devicePixelRatio. Even origin/size enforced (chroma-subsampled yuv420p).
-// Fail-closed: a rect outside the frame throws instead of misframing.
+// Crop rectangle in capture-frame pixels. The ScreenCaptureKit helper sets
+// SCStreamConfiguration.width/height to outerWidth/outerHeight and
+// scalesToFit=true, so every raw BGRA frame is already resampled into the same
+// numeric coordinate grid as Browser.getWindowBounds / window.innerWidth.
+// The canvas rect and chrome offsets are therefore used directly; multiplying
+// them by devicePixelRatio would double-scale Retina coordinates. DPR remains
+// part of the stability check above, but it does not scale capture coordinates.
+// Even origin/size enforced (chroma-subsampled yuv420p). Fail-closed: a rect
+// outside the frame throws instead of misframing.
 export function resolveCanvasCropFrame({ outerWidth, outerHeight, chromeLeft, chromeTop, canvas }) {
   for (const [key, val] of [['outerWidth', outerWidth], ['outerHeight', outerHeight], ['chromeLeft', chromeLeft], ['chromeTop', chromeTop]]) {
     if (!Number.isFinite(val)) throw new Error(`capture ${key} is required (fail-closed)`);
   }
   const geom = parseCanvasGeometry(canvas);
   const evenDown = (n) => Math.max(0, Math.floor(n / 2) * 2);
-  const x = evenDown((chromeLeft + geom.x) * geom.dpr);
-  const y = evenDown((chromeTop + geom.y) * geom.dpr);
-  let w = evenDown(geom.width * geom.dpr);
-  let h = evenDown(geom.height * geom.dpr);
+  const x = evenDown(chromeLeft + geom.x);
+  const y = evenDown(chromeTop + geom.y);
+  let w = evenDown(geom.width);
+  let h = evenDown(geom.height);
   if (!(w >= 64 && h >= 64)) {
     throw new Error(`game canvas crop too small after even-rounding (fail-closed): ${w}x${h}`);
   }
-  // Clamp at most subpixel tolerance (2 CSS px, carried from
-  // parseCanvasGeometry); anything larger is a genuine unit/rect mismatch
-  // and fails closed instead of silently streaming a wrong region.
-  const tol = 2 * geom.dpr;
+  // Clamp at most the 2 CSS/DIP px tolerance carried from
+  // parseCanvasGeometry. The capture helper's output uses this same requested
+  // outer-size coordinate grid regardless of devicePixelRatio.
+  const tol = 2;
   const overW = x + w - outerWidth;
   const overH = y + h - outerHeight;
   if (x < 0 || y < 0 || overW > tol || overH > tol) {
