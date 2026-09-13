@@ -1,5 +1,0 @@
-[Unit]
-Description=Periodic restart of the Soren shared overlay to reclaim memory
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl restart soren-shared-overlay.service
