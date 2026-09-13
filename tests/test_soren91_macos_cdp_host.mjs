@@ -129,12 +129,13 @@ test('canvas geometry is validated fail-closed', () => {
   assert.throws(() => parseCanvasGeometry({ ...good, x: -50 }), /outside content/);
 });
 
-test('canvas crop adds the chrome offset and stays even-sized inside the frame', () => {
+test('canvas crop adds the chrome offset and stays even-sized inside the capture output frame', () => {
   // Content 960x540, chrome band 87px top: canvas at content (80,60) 800x450.
-  const crop = resolveCanvasCropFrame({
+  const base = {
     outerWidth: 960, outerHeight: 627, chromeLeft: 0, chromeTop: 87,
     canvas: { x: 80, y: 60, width: 800, height: 450, iw: 960, ih: 540, dpr: 1 },
-  });
+  };
+  const crop = resolveCanvasCropFrame(base);
   assert.deepEqual(crop, { x: 80, y: 146, w: 800, h: 450 });
   // Odd canvas origin/size rounds down to even (yuv420p-safe).
   const odd = resolveCanvasCropFrame({
@@ -145,18 +146,23 @@ test('canvas crop adds the chrome offset and stays even-sized inside the frame',
   assert.equal(odd.y % 2, 0);
   assert.equal(odd.w % 2, 0);
   assert.equal(odd.h % 2, 0);
-  // devicePixelRatio scales CSS px into frame px (physical-pixel frame).
-  // chrome offsets arrive in CSS units (Browser bounds minus innerWidth/
-  // innerHeight), so the dpr multiply applies to the sum.
-  const scaled = resolveCanvasCropFrame({
-    outerWidth: 1920, outerHeight: 1254, chromeLeft: 0, chromeTop: 87,
-    canvas: { x: 80, y: 60, width: 800, height: 450, iw: 960, ih: 540, dpr: 2 },
+  // ScreenCaptureKit scales the desktop-independent window into the explicitly
+  // requested outerWidth x outerHeight raw frame. DPR therefore changes the
+  // backing scale but must NOT double-scale CSS/DIP crop coordinates.
+  const retina2 = resolveCanvasCropFrame({
+    ...base,
+    canvas: { ...base.canvas, dpr: 2 },
   });
-  assert.deepEqual(scaled, { x: 160, y: 294, w: 1600, h: 900 });
-  // Fail-closed: scaled rect outside a bounds-unit frame, no canvas, no dims.
+  const retina15 = resolveCanvasCropFrame({
+    ...base,
+    canvas: { ...base.canvas, dpr: 1.5 },
+  });
+  assert.deepEqual(retina2, crop);
+  assert.deepEqual(retina15, crop);
+  // Fail-closed: genuinely out-of-frame geometry, no canvas, no dims.
   assert.throws(() => resolveCanvasCropFrame({
     outerWidth: 960, outerHeight: 627, chromeLeft: 0, chromeTop: 87,
-    canvas: { x: 80, y: 60, width: 800, height: 450, iw: 960, ih: 540, dpr: 2 },
+    canvas: { x: 900, y: 60, width: 100, height: 450, iw: 1000, ih: 540, dpr: 2 },
   }), /outside capture frame/);
   assert.throws(() => resolveCanvasCropFrame({
     outerWidth: 960, outerHeight: 627, chromeLeft: 0, chromeTop: 87, canvas: null,
