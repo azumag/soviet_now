@@ -25,16 +25,23 @@ function validOptions(overrides = {}) {
   };
 }
 
-test('game target matching requires exact HTTPS unityroom host', () => {
+test('game target matching accepts unityroom game origins only', () => {
   assert.equal(isExactGameTargetUrl('https://play.unityroom.com/games/foo'), true);
+  assert.equal(isExactGameTargetUrl('https://74337.play.unityroom.com/games/foo?abc=1'), true);
+  assert.equal(isExactGameTargetUrl('https://a.b.play.unityroom.com/'), true);
   assert.equal(isExactGameTargetUrl('http://play.unityroom.com/games/foo'), false);
+  assert.equal(isExactGameTargetUrl('http://74337.play.unityroom.com/games/foo'), false);
   assert.equal(isExactGameTargetUrl('https://play.unityroom.com.evil.example/games/foo'), false);
+  assert.equal(isExactGameTargetUrl('https://play.unityroom.com.evil.com/'), false);
+  assert.equal(isExactGameTargetUrl('https://notplay.unityroom.com/'), false);
+  assert.equal(isExactGameTargetUrl('https://evilplay.unityroom.com/'), false);
   assert.equal(isExactGameTargetUrl('https://evil.example/?next=play.unityroom.com'), false);
   assert.equal(isExactGameTargetUrl('not-a-url play.unityroom.com'), false);
 
-  const good = { type: 'page', url: 'https://play.unityroom.com/games/foo' };
+  const good = { type: 'page', url: 'https://74337.play.unityroom.com/games/foo' };
   const targets = [
     { type: 'page', url: 'https://play.unityroom.com.evil.example/' },
+    { type: 'page', url: 'https://notplay.unityroom.com/' },
     { type: 'page', url: 'https://evil.example/?q=play.unityroom.com' },
     good,
   ];

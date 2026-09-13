@@ -167,7 +167,14 @@ async function fetchJsonList(cdpPort) {
 export function isExactGameTargetUrl(value) {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname === 'play.unityroom.com';
+    if (url.protocol !== 'https:') return false;
+    // Real game pages live on numeric subdomains (e.g.
+    // https://74337.play.unityroom.com/...), so the bare host and any
+    // single/multi-level subdomain of play.unityroom.com are accepted.
+    // The leading-dot check rejects lookalikes such as
+    // notplay.unityroom.com or play.unityroom.com.evil.com.
+    const host = url.hostname.toLowerCase();
+    return host === 'play.unityroom.com' || host.endsWith('.play.unityroom.com');
   } catch {
     return false;
   }
