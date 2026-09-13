@@ -883,6 +883,24 @@ async function installAudioGainLimiter(page, multiplier) {
 async function connectToSharedBrowser() {
   if (process.env.SOREN91_SHARED_BROWSER !== '1') return null;
 
+  // Issue #303 Phase 1: remote CDP (OCI bot -> Tailscale -> macOS Chrome).
+  // SOREN91_REMOTE_CDP_URL set => connect there instead of the local shared
+  // browser. Unset => existing local path unchanged (backward compatible).
+  // The remote host owns the window geometry (content calibrated to the
+  // stream output size), so the bot must not resize the viewport there.
+  const remoteUrl = (process.env.SOREN91_REMOTE_CDP_URL || '').trim();
+  if (remoteUrl) {
+    try {
+      console.log(`[main] Connecting to remote CDP browser at ${remoteUrl}...`);
+      const browser = await chromium.connectOverCDP(remoteUrl);
+      console.log('[main] Connected to remote CDP browser');
+      return browser;
+    } catch (e) {
+      console.log(`[main] Remote CDP connection failed at ${remoteUrl}: ${e.message}`);
+      return null;
+    }
+  }
+
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const cdpEndpointFile = join(__dirname, '..', 'tmp', 'cdp_endpoint.json');
   const cdpPort = Number.parseInt(process.env.SOREN_CDP_PORT || '', 10) || DEFAULT_SHARED_CDP_PORT;
@@ -929,6 +947,13 @@ async function connectToSharedBrowser() {
 
   console.log('[main] Shared browser unavailable, falling back to standalone browser');
   return null;
+}
+
+// True when the bot drives a remote (Mac host) browser whose window
+// geometry is owned by that host: viewport resizes are skipped so the
+// host's calibration (content == stream output size) is never undone.
+function remoteBrowserOwnsViewport() {
+  return (process.env.SOREN91_REMOTE_CDP_URL || '').trim() !== '';
 }
 
 function chooseSharedBrowserContext(browser) {
@@ -997,9 +1022,11 @@ async function gotoGamePageWithRecovery({ page, context, gameUrl, isSharedMode, 
       : chooseSharedBrowserAnchorPage(context);
     const retryPage = await openSharedBrowserTab(context, retryAnchorPage);
     activeGamePage = retryPage;
-    try {
-      await retryPage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
-    } catch {}
+    if (!remoteBrowserOwnsViewport()) {
+      try {
+        await retryPage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
+      } catch {}
+    }
     await installAudioGainLimiter(retryPage, audioGainMultiplier);
     if (audioOutputLabel) await grantSpeakerSelection(retryPage, gameUrl);
     await installAudioOutputRouter(retryPage, audioOutputLabel);
@@ -1128,7 +1155,7 @@ async function main() {
     gamePage = (isSharedMode && !ownsContext)
       ? await openSharedBrowserTab(context, anchorPage)
       : await context.newPage();
-    if (isSharedMode) {
+    if (isSharedMode && !remoteBrowserOwnsViewport()) {
       try {
         await gamePage.setViewportSize({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT });
       } catch {}
