@@ -151,9 +151,37 @@ PY
 _broadcast_host_mode() {
 	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
 		echo "soren91"
-	else
-		echo "main"
+		return 0
 	fi
+	if _docich_soren91_corner_active 2>/dev/null; then
+		echo "soren91"
+		return 0
+	fi
+	echo "main"
+}
+
+# docich Soren91 corner (Mac remote renderer) runs the game on a Mac and
+# publishes the active game in the docich game-switch canonical. Treat that
+# as the soren91 host mode so the Meriken persona and voice are used while
+# the corner is on air.
+_docich_soren91_corner_active() {
+	local ctx="${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
+	[ -f "$ctx" ] || return 1
+	# Cheap pre-check: only parse when the file mentions soren91 at all.
+	grep -q '"soren91"' "$ctx" 2>/dev/null || return 1
+	python3 - "$ctx" <<'PY' 2>/dev/null
+import json
+import sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+games = [
+    (data.get("active") or {}).get("game"),
+    (data.get("candidate") or {}).get("game"),
+]
+raise SystemExit(0 if "soren91" in games else 1)
+PY
 }
 
 _radio_host_mode() {
