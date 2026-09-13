@@ -175,6 +175,11 @@ async function startInlineBroadcastState(page) {
 
 async function fullscreenBrowserWindow(page) {
   if (process.env.SOREN91_FULLSCREEN_WINDOW !== '1') return;
+  // Issue #303: when the bot drives a remote (Mac) browser, that host owns
+  // the window geometry — fullscreening it here breaks the remote capture
+  // calibration (observed misaligned/oversized crops). Skip all window
+  // geometry changes on the remote path.
+  if (remoteBrowserOwnsViewport()) return;
   const session = await page.context().newCDPSession(page);
   try {
     const { windowId } = await session.send('Browser.getWindowForTarget');
