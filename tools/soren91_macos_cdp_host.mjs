@@ -560,6 +560,26 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     if (!canvasGeom) {
       throw new Error('game canvas not found (fail-closed: refusing to stream the full page with margins)');
     }
+    // Final geometry check: the driver (or page zoom) may have resized the
+    // window after calibration, which would silently misframe the crop.
+    // Re-measure and require content == output size (fail-closed).
+    bounds = await cdp.send('Browser.getWindowBounds', { windowId });
+    inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
+    if (inner.iw !== options.width || inner.ih !== options.height) {
+      throw new Error(
+        `window content size changed after calibration (fail-closed): ${JSON.stringify(inner)} `
+        + `(want ${options.width}x${options.height}); the driver must not resize the shared browser`,
+      );
+    }
+    if (canvasGeom.iw !== options.width || canvasGeom.ih !== options.height) {
+      throw new Error(
+        `game canvas measured against unexpected content size (fail-closed): ${JSON.stringify(canvasGeom)}`,
+      );
+    }
+    captureInfo.outerWidth = bounds.bounds.width;
+    captureInfo.outerHeight = bounds.bounds.height;
+    captureInfo.chromeTop = bounds.bounds.height - inner.ih;
+    captureInfo.chromeLeft = bounds.bounds.width - inner.iw;
     const canvasCrop = resolveCanvasCropFrame({
       outerWidth: captureInfo.outerWidth,
       outerHeight: captureInfo.outerHeight,
