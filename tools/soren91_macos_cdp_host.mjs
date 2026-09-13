@@ -31,7 +31,6 @@ import { chromium } from 'playwright';
 import {
   attachPipeGuards,
   buildCaptureArgs,
-  buildFfmpegArgs,
   isTailscaleIpv4Hostname,
   parseCaptureHelperStatus,
   startCaptureHelper,
@@ -39,6 +38,7 @@ import {
   stopVirtualDisplay,
 } from './soren91_macos_session.mjs';
 import {
+  buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
   resolveTapPids,
   startAudioTap,
@@ -65,8 +65,8 @@ export function defaults(env = process.env) {
     cdpPort: Number(env.SOREN91_CDP_PORT || 9322),
     proxyPort: Number(env.SOREN91_CDP_PROXY_PORT || 19093),
     bindIp: env.SOREN91_CDP_BIND_IP || detectTailscaleIp(),
-    width: Number(env.SOREN91_LOCAL_WIDTH || 1280),
-    height: Number(env.SOREN91_LOCAL_HEIGHT || 720),
+    width: Number(env.SOREN91_LOCAL_WIDTH || 960),
+    height: Number(env.SOREN91_LOCAL_HEIGHT || 540),
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
     sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),
@@ -115,9 +115,8 @@ export function validateOptions(options, platform = process.platform) {
       + 'the CDP proxy must never bind 0.0.0.0 or a LAN address',
     );
   }
-  if (!Number.isInteger(options.width) || !Number.isInteger(options.height)
-    || options.width <= 0 || options.height <= 0) {
-    throw new Error('width/height must be positive integers');
+  if (options.width !== 960 || options.height !== 540) {
+    throw new Error('macOS cdp-host output must be 960x540 (game-canvas crop; 1280x720 full-page is not used)');
   }
   if (!(options.videoMbps > 0 && options.videoMbps <= 8)) throw new Error('videoMbps must be >0 and <=8');
   if (!options.srtUrl && options.execute) throw new Error('--execute requires SOREN91_LOCAL_SRT_URL');
@@ -205,6 +204,128 @@ export function isAllowedCdpPeer(remoteAddress, allowedPeerIp) {
   const peer = normalizeRemoteAddress(remoteAddress);
   const allowed = normalizeRemoteAddress(allowedPeerIp);
   return isTailscaleIpv4Hostname(allowed) && peer === allowed;
+}
+
+// Game-canvas geometry from the page (CSS px, content-origin relative):
+// { x, y, width, height, iw, ih, dpr } where (x,y,w,h) is
+// `document.querySelector('#unity-canvas') || document.querySelector('canvas')`
+// getBoundingClientRect(), (iw,ih) is window.innerWidth/innerHeight and dpr
+// is window.devicePixelRatio. Fail-closed: anything missing, non-finite, or
+// outside the measured content area throws — callers must never fall back to
+// streaming the full page (with margins) at 1280x720.
+export function parseCanvasGeometry(value) {
+  const g = value && typeof value === 'object' ? value : null;
+  for (const key of ['x', 'y', 'width', 'height', 'iw', 'ih', 'dpr']) {
+    if (!g || !Number.isFinite(g[key])) {
+      throw new Error(`game canvas geometry lacks finite ${key} (fail-closed): ${JSON.stringify(value)?.slice(0, 200)}`);
+    }
+  }
+  if (!(g.width >= 64 && g.height >= 64)) {
+    throw new Error(`game canvas too small (fail-closed): ${g.width}x${g.height}`);
+  }
+  if (!(g.iw > 0 && g.ih > 0)) {
+    throw new Error(`game canvas content size invalid (fail-closed): ${g.iw}x${g.ih}`);
+  }
+  if (!(g.dpr > 0 && g.dpr <= 4)) {
+    throw new Error(`game canvas devicePixelRatio out of range (fail-closed): ${g.dpr}`);
+  }
+  // The rect must sit inside the measured content area (2px tolerance for
+  // subpixel rounding); a canvas larger than the viewport means the page
+  // is zoomed or laid out unexpectedly — fail closed, never stream that.
+  const overflow = Math.max(0, -g.x, -g.y, g.x + g.width - g.iw, g.y + g.height - g.ih);
+  if (overflow > 2) {
+    throw new Error(`game canvas rect outside content area (fail-closed): ${JSON.stringify(g)}`);
+  }
+  return { x: g.x, y: g.y, width: g.width, height: g.height, iw: g.iw, ih: g.ih, dpr: g.dpr };
+}
+
+// Crop rectangle in capture-frame pixels. ScreenCaptureKit captures the
+// window at its outer size, so the frame origin is the window origin: the
+// content origin inside the frame is the existing chrome offset
+// (outer - inner), plus the canvas offset inside the content, all scaled by
+// devicePixelRatio. Even origin/size enforced (chroma-subsampled yuv420p).
+// Fail-closed: a rect outside the frame throws instead of misframing.
+export function resolveCanvasCropFrame({ outerWidth, outerHeight, chromeLeft, chromeTop, canvas }) {
+  for (const [key, val] of [['outerWidth', outerWidth], ['outerHeight', outerHeight], ['chromeLeft', chromeLeft], ['chromeTop', chromeTop]]) {
+    if (!Number.isFinite(val)) throw new Error(`capture ${key} is required (fail-closed)`);
+  }
+  const geom = parseCanvasGeometry(canvas);
+  const evenDown = (n) => Math.max(0, Math.floor(n / 2) * 2);
+  const x = evenDown((chromeLeft + geom.x) * geom.dpr);
+  const y = evenDown((chromeTop + geom.y) * geom.dpr);
+  let w = evenDown(geom.width * geom.dpr);
+  let h = evenDown(geom.height * geom.dpr);
+  if (!(w >= 64 && h >= 64)) {
+    throw new Error(`game canvas crop too small after even-rounding (fail-closed): ${w}x${h}`);
+  }
+  // Clamp at most subpixel tolerance (2 CSS px, carried from
+  // parseCanvasGeometry); anything larger is a genuine unit/rect mismatch
+  // and fails closed instead of silently streaming a wrong region.
+  const tol = 2 * geom.dpr;
+  const overW = x + w - outerWidth;
+  const overH = y + h - outerHeight;
+  if (x < 0 || y < 0 || overW > tol || overH > tol) {
+    throw new Error(
+      `game canvas crop outside capture frame (fail-closed): crop=${x},${y} ${w}x${h} frame=${outerWidth}x${outerHeight}`,
+    );
+  }
+  if (overW > 0) w = evenDown(outerWidth - x);
+  if (overH > 0) h = evenDown(outerHeight - y);
+  if (!(x >= 0 && y >= 0 && w >= 64 && h >= 64 && x + w <= outerWidth && y + h <= outerHeight)) {
+    throw new Error(
+      `game canvas crop outside capture frame (fail-closed): crop=${x},${y} ${w}x${h} frame=${outerWidth}x${outerHeight}`,
+    );
+  }
+  return { x, y, w, h };
+}
+
+// Canvas crop -> 960x540 output filter: crop the game canvas, scale to fit
+// (aspect preserved) and pad to exactly outW x outH. Output resolution is
+// fixed 960x540; a freeform full-page scale is never built here.
+export function buildCanvasVideoFilter(crop, { outWidth = 960, outHeight = 540 } = {}) {
+  if (!crop || !Number.isInteger(crop.x) || !Number.isInteger(crop.y)
+    || !Number.isInteger(crop.w) || !Number.isInteger(crop.h)) {
+    throw new Error('integer canvas crop {x,y,w,h} is required (fail-closed)');
+  }
+  if (outWidth !== 960 || outHeight !== 540) {
+    throw new Error('canvas-crop output must be 960x540 (fail-closed)');
+  }
+  return `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}`
+    + `,scale=${outWidth}:${outHeight}:force_original_aspect_ratio=decrease`
+    + `,pad=${outWidth}:${outHeight}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+}
+
+// ffmpeg args for the canvas-cropped pipeline. Mirrors
+// soren91_macos_session.mjs buildFfmpegArgs (same rawvideo input contract,
+// same audio-tap wiring) but the video filter is the canvas crop/scale/pad
+// above instead of the full-content chrome-band crop. The session builder is
+// intentionally untouched.
+export function buildCanvasFfmpegArgs(options, capture, crop) {
+  if (!capture || !Number.isFinite(capture.outerWidth) || !Number.isFinite(capture.outerHeight)) {
+    throw new Error('capture outerWidth/outerHeight from the renderer result is required');
+  }
+  const bitrate = `${options.videoMbps}M`;
+  if (options.audioTap && options.audioDevice) {
+    throw new Error('audioTap and audioDevice are mutually exclusive (fail-closed: ambiguous audio source)');
+  }
+  const args = [
+    '-hide_banner', '-loglevel', 'warning', '-nostdin',
+    '-f', 'rawvideo', '-pixel_format', 'bgra',
+    '-video_size', `${capture.outerWidth}x${capture.outerHeight}`,
+    '-framerate', '30',
+    '-i', 'pipe:0',
+  ];
+  if (options.audioDevice) args.push('-f', 'avfoundation', '-i', `none:${options.audioDevice}`);
+  if (options.audioTap) args.push(...buildAudioFfmpegInputArgs());
+  args.push(
+    '-vf', buildCanvasVideoFilter(crop, { outWidth: options.width, outHeight: options.height }),
+    '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-maxrate', bitrate, '-bufsize', `${options.videoMbps * 2}M`,
+    '-g', '60', '-pix_fmt', 'yuv420p',
+  );
+  if (options.audioDevice || options.audioTap) args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '128k');
+  else args.push('-an');
+  args.push('-f', 'mpegts', options.srtUrl);
+  return args;
 }
 
 export function buildChromeArgs(options, placement, profileDir) {
@@ -415,6 +536,38 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       chromeTop: bounds.bounds.height - inner.ih,
       chromeLeft: bounds.bounds.width - inner.iw,
     };
+    // Game-canvas crop (Issue #303 feedback): streaming the full page with
+    // margins at 1280x720 made the game tiny. Crop ONLY the Unity canvas
+    // and scale it to 960x540. Fail-closed: no canvas / bad rect aborts the
+    // run instead of silently streaming the page with margins.
+    let canvasGeom = null;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        canvasGeom = await page.evaluate(() => {
+          const el = document.querySelector('#unity-canvas') || document.querySelector('canvas');
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return {
+            x: r.x, y: r.y, width: r.width, height: r.height,
+            iw: window.innerWidth, ih: window.innerHeight,
+            dpr: window.devicePixelRatio || 1,
+          };
+        });
+      } catch { canvasGeom = null; }
+      if (canvasGeom && canvasGeom.width > 0 && canvasGeom.height > 0) break;
+      await sleep(2000);
+    }
+    if (!canvasGeom) {
+      throw new Error('game canvas not found (fail-closed: refusing to stream the full page with margins)');
+    }
+    const canvasCrop = resolveCanvasCropFrame({
+      outerWidth: captureInfo.outerWidth,
+      outerHeight: captureInfo.outerHeight,
+      chromeLeft: captureInfo.chromeLeft,
+      chromeTop: captureInfo.chromeTop,
+      canvas: canvasGeom,
+    });
+    console.log(`SOREN91_CDP_HOST_CANVAS_CROP=${JSON.stringify(canvasCrop)}`);
     // Pre-warm Chrome audio so the tap poll finds a tappable process.
     try {
       await page.evaluate(() => {
@@ -461,7 +614,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     };
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';
-    ffmpeg = spawn(options.ffmpegBin, buildFfmpegArgs(ffmpegOpts, captureInfo), { stdio: ffmpegStdio });
+    ffmpeg = spawn(options.ffmpegBin, buildCanvasFfmpegArgs(ffmpegOpts, captureInfo, canvasCrop), { stdio: ffmpegStdio });
     ffmpeg.stderr?.on('data', (chunk) => { try { process.stderr.write(chunk); } catch {} });
     // Pipe guards (Issue #303): when the OCI listener goes away, ffmpeg
     // exits and in-flight frame/PCM writes fail with EPIPE. Without guards
@@ -481,7 +634,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     console.log(`SOREN91_CDP_HOST_STREAMING=${options.srtUrl.replace(/\/\/.*@/, '//***@')}`);
     fs.writeFileSync(options.resultPath, JSON.stringify({
       ok: true, proxy: `${options.bindIp}:${options.proxyPort}`,
-      windowTitle, capture: captureInfo, srt: 'caller-started',
+      windowTitle, capture: captureInfo, canvasCrop, srt: 'caller-started',
     }, null, 2));
     await sleep(Math.max(0, deadline - Date.now()));
     console.log('SOREN91_CDP_HOST_END=deadline');
