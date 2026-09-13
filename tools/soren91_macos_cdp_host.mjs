@@ -239,6 +239,67 @@ export function parseCanvasGeometry(value) {
   return { x: g.x, y: g.y, width: g.width, height: g.height, iw: g.iw, ih: g.ih, dpr: g.dpr };
 }
 
+// Geometry-stability wait for the game canvas. The real window content is
+// whatever Chrome/the driver produces (observed 1280x720 when the 960x540
+// calibration does not stick) — content size is NEVER a failure condition.
+// Instead the crop is computed from measured geometry, but only once that
+// geometry is stable (canvas rect + content size + dpr unchanged for
+// `stableMs`), so a Unity-load resize cannot silently misframe the stream.
+// Returns the last stable raw sample. Fail-closed: throws on timeout (with
+// a distinct message for "no canvas ever seen" vs "never stable").
+// `sampleFn` returns a sample object (or null when nothing usable is
+// visible yet); stability is judged on the canvas rect within a sample.
+export const GEOMETRY_POLL_MS = 250;
+export const GEOMETRY_STABLE_MS = 1000;
+export const GEOMETRY_TIMEOUT_MS = 180_000;
+export const GEOMETRY_EPSILON_PX = 1;
+
+export function canvasSamplesMatch(a, b, epsilon = GEOMETRY_EPSILON_PX) {
+  if (!a || !b) return false;
+  for (const key of ['x', 'y', 'width', 'height', 'iw', 'ih']) {
+    if (!Number.isFinite(a?.[key]) || !Number.isFinite(b?.[key])) return false;
+    if (Math.abs(a[key] - b[key]) > epsilon) return false;
+  }
+  // A dpr change rescales every frame pixel: never treat across a dpr flip.
+  return a.dpr === b.dpr && Number.isFinite(a.dpr);
+}
+
+export async function waitForStableCanvasGeometry(sampleFn, {
+  pollMs = GEOMETRY_POLL_MS,
+  stableMs = GEOMETRY_STABLE_MS,
+  timeoutMs = GEOMETRY_TIMEOUT_MS,
+  epsilon = GEOMETRY_EPSILON_PX,
+  sleepFn = sleep,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  let streakStart = 0;
+  let seenAny = false;
+  // Samples are { canvas, outerWidth, outerHeight, chromeLeft, chromeTop };
+  // stability is judged on the canvas rect (+ content size + dpr) only, so
+  // subpixel outer-bound jitter cannot hold the streak open forever.
+  const rectOf = (sample) => (sample && typeof sample === 'object' && 'canvas' in sample ? sample.canvas : sample);
+  for (;;) {
+    let sample = null;
+    try { sample = await sampleFn(); } catch { sample = null; }
+    const now = Date.now();
+    if (sample && last && canvasSamplesMatch(rectOf(sample), rectOf(last), epsilon)) {
+      if (now - streakStart >= stableMs) return sample;
+    } else if (sample) {
+      seenAny = true;
+      last = sample;
+      streakStart = now;
+    } else {
+      last = null;
+    }
+    if (now >= deadline) {
+      throw new Error(seenAny
+        ? 'game canvas geometry never stabilized (fail-closed: refusing to stream a possibly misframed region)'
+        : 'game canvas not found (fail-closed: refusing to stream the full page with margins)');
+    }
+    await sleepFn(Math.max(0, Math.min(pollMs, deadline - now)));
+  }
+}
 // Crop rectangle in capture-frame pixels. ScreenCaptureKit captures the
 // window at its outer size, so the frame origin is the window origin: the
 // content origin inside the frame is the existing chrome offset
@@ -486,8 +547,12 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     if (!game) throw new Error('no exact https://play.unityroom.com target appeared before session deadline');
     console.log('SOREN91_CDP_HOST_GAME_FOUND=1');
 
-    // Local calibration via CDP (same approach as the renderer): size the
-    // real window so content == width x height, read the exact title.
+    // Local calibration via CDP (best-effort only): try to size the real
+    // window so content == width x height, then read the exact title. The
+    // real content size is whatever Chrome/the driver produces (observed
+    // 1280x720 when the 960x540 calibration does not stick) and is NEVER a
+    // failure condition: the crop below is computed from measured geometry
+    // and scaled/padded to the fixed 960x540 output.
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${options.cdpPort}`);
     const context = browser.contexts()[0];
     if (!context) throw new Error('remote chrome has no browser context');
@@ -499,17 +564,25 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     let inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
     const chromeW = bounds.bounds.width - inner.iw;
     const chromeH = bounds.bounds.height - inner.ih;
-    await cdp.send('Browser.setWindowBounds', {
-      windowId,
-      bounds: {
-        left: placement.left, top: placement.top,
-        width: options.width + chromeW, height: options.height + chromeH,
-      },
-    });
-    await sleep(300);
-    bounds = await cdp.send('Browser.getWindowBounds', { windowId });
-    inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
-    console.error(`[cdp-host] content after calibration: ${JSON.stringify(inner)} (want ${options.width}x${options.height})`);
+    try {
+      await cdp.send('Browser.setWindowBounds', {
+        windowId,
+        bounds: {
+          left: placement.left, top: placement.top,
+          width: options.width + chromeW, height: options.height + chromeH,
+        },
+      });
+      await sleep(300);
+    } catch (error) {
+      console.error(`[cdp-host] calibration setWindowBounds failed (best-effort, continuing): ${error?.message || error}`);
+    }
+    try {
+      bounds = await cdp.send('Browser.getWindowBounds', { windowId });
+      inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
+    } catch (error) {
+      console.error(`[cdp-host] calibration re-measure failed (best-effort, continuing): ${error?.message || error}`);
+    }
+    console.error(`[cdp-host] content after calibration (best-effort): ${JSON.stringify(inner)} (target ${options.width}x${options.height})`);
     const windowTitle = await page.title();
     if (!windowTitle) throw new Error('page title is empty; cannot build a fail-closed window match');
     console.log(`SOREN91_CDP_HOST_WINDOW_TITLE=${JSON.stringify(windowTitle)}`);
@@ -528,22 +601,20 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       throw new Error(`offscreen violation: ${JSON.stringify(windowRect)} intersects ${JSON.stringify(displayIds)} by ${area}px`);
     }
     console.log(`SOREN91_CDP_HOST_OFFSCREEN_OK=${JSON.stringify(windowRect)}`);
-    const captureInfo = {
-      bundleId: 'com.google.Chrome',
-      windowTitle,
-      outerWidth: bounds.bounds.width,
-      outerHeight: bounds.bounds.height,
-      chromeTop: bounds.bounds.height - inner.ih,
-      chromeLeft: bounds.bounds.width - inner.iw,
-    };
     // Game-canvas crop (Issue #303 feedback): streaming the full page with
     // margins at 1280x720 made the game tiny. Crop ONLY the Unity canvas
-    // and scale it to 960x540. Fail-closed: no canvas / bad rect aborts the
-    // run instead of silently streaming the page with margins.
-    let canvasGeom = null;
-    for (let attempt = 0; attempt < 90; attempt += 1) {
+    // and scale/pad it to the fixed 960x540 output. The crop is computed
+    // from MEASURED geometry at whatever content size Chrome really uses —
+    // content == 960x540 is never required. Fail-closed only when no canvas
+    // appears, its rect is invalid, or it lies outside the measured content.
+    // Each sample re-reads the outer bounds next to the canvas rect and is
+    // discarded when the two disagree (resize mid-sample); the crop is
+    // fixed only after the geometry sits still for ~1s, so a Unity-load
+    // resize cannot silently misframe the stream.
+    const sampleGeometry = async () => {
+      let geom = null;
       try {
-        canvasGeom = await page.evaluate(() => {
+        geom = await page.evaluate(() => {
           const el = document.querySelector('#unity-canvas') || document.querySelector('canvas');
           if (!el) return null;
           const r = el.getBoundingClientRect();
@@ -553,33 +624,37 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
             dpr: window.devicePixelRatio || 1,
           };
         });
-      } catch { canvasGeom = null; }
-      if (canvasGeom && canvasGeom.width > 0 && canvasGeom.height > 0) break;
-      await sleep(2000);
-    }
-    if (!canvasGeom) {
-      throw new Error('game canvas not found (fail-closed: refusing to stream the full page with margins)');
-    }
-    // Final geometry check: the driver (or page zoom) may have resized the
-    // window after calibration, which would silently misframe the crop.
-    // Re-measure and require content == output size (fail-closed).
-    bounds = await cdp.send('Browser.getWindowBounds', { windowId });
-    inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
-    if (inner.iw !== options.width || inner.ih !== options.height) {
-      throw new Error(
-        `window content size changed after calibration (fail-closed): ${JSON.stringify(inner)} `
-        + `(want ${options.width}x${options.height}); the driver must not resize the shared browser`,
-      );
-    }
-    if (canvasGeom.iw !== options.width || canvasGeom.ih !== options.height) {
-      throw new Error(
-        `game canvas measured against unexpected content size (fail-closed): ${JSON.stringify(canvasGeom)}`,
-      );
-    }
-    captureInfo.outerWidth = bounds.bounds.width;
-    captureInfo.outerHeight = bounds.bounds.height;
-    captureInfo.chromeTop = bounds.bounds.height - inner.ih;
-    captureInfo.chromeLeft = bounds.bounds.width - inner.iw;
+      } catch { return null; }
+      if (!geom || !(geom.width > 0 && geom.height > 0)) return null;
+      let frame;
+      let freshInner;
+      try {
+        frame = await cdp.send('Browser.getWindowBounds', { windowId });
+        freshInner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
+      } catch { return null; }
+      // Canvas measured against a different content size than the frame we
+      // would crop from: the window moved mid-sample — discard, keep waiting.
+      if (Math.abs(geom.iw - freshInner.iw) > 2 || Math.abs(geom.ih - freshInner.ih) > 2) return null;
+      return {
+        canvas: geom,
+        outerWidth: frame.bounds.width,
+        outerHeight: frame.bounds.height,
+        chromeLeft: frame.bounds.width - freshInner.iw,
+        chromeTop: frame.bounds.height - freshInner.ih,
+      };
+    };
+    const stable = await waitForStableCanvasGeometry(sampleGeometry);
+    const canvasGeom = stable.canvas;
+    const captureInfo = {
+      bundleId: 'com.google.Chrome',
+      windowTitle,
+      outerWidth: stable.outerWidth,
+      outerHeight: stable.outerHeight,
+      chromeTop: stable.chromeTop,
+      chromeLeft: stable.chromeLeft,
+      contentWidth: canvasGeom.iw,
+      contentHeight: canvasGeom.ih,
+    };
     const canvasCrop = resolveCanvasCropFrame({
       outerWidth: captureInfo.outerWidth,
       outerHeight: captureInfo.outerHeight,
@@ -588,6 +663,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       canvas: canvasGeom,
     });
     console.log(`SOREN91_CDP_HOST_CANVAS_CROP=${JSON.stringify(canvasCrop)}`);
+    console.error(`[cdp-host] measured content: ${canvasGeom.iw}x${canvasGeom.ih} dpr=${canvasGeom.dpr} (output ${options.width}x${options.height})`);
     // Pre-warm Chrome audio so the tap poll finds a tappable process.
     try {
       await page.evaluate(() => {

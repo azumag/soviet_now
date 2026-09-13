@@ -5,6 +5,7 @@ import {
   buildCanvasFfmpegArgs,
   buildCanvasVideoFilter,
   buildChromeArgs,
+  canvasSamplesMatch,
   findGameTarget,
   isAllowedCdpPeer,
   isExactGameTargetUrl,
@@ -13,6 +14,7 @@ import {
   resolveCanvasCropFrame,
   signalExitCode,
   validateOptions,
+  waitForStableCanvasGeometry,
 } from '../tools/soren91_macos_cdp_host.mjs';
 
 function validOptions(overrides = {}) {
@@ -188,4 +190,79 @@ test('canvas ffmpeg args carry the 960x540 crop/scale filter on the window-sized
   assert.ok(tapped.includes('-map 0:v -map 1:a'), tapped);
   assert.throws(() => buildCanvasFfmpegArgs({ ...validOptions(), audioTap: false }, null, crop), /outerWidth/);
   assert.throws(() => buildCanvasFfmpegArgs({ ...validOptions(), audioTap: false }, capture, null), /crop/);
+});
+
+test('measured 1280x720 content crops from live geometry to a 960x540 output', () => {
+  // Regression for the Phase 3 timed FAIL: real window content is 1280x720
+  // (calibration does not stick) and must NOT fail the run. The crop is
+  // computed from measured geometry; the fixed output stays 960x540.
+  const canvas = { x: 0, y: 0, width: 1280, height: 720, iw: 1280, ih: 720, dpr: 1 };
+  assert.deepEqual(parseCanvasGeometry(canvas), canvas);
+  const crop = resolveCanvasCropFrame({
+    outerWidth: 1280, outerHeight: 807, chromeLeft: 0, chromeTop: 87,
+    canvas,
+  });
+  assert.deepEqual(crop, { x: 0, y: 86, w: 1280, h: 720 });
+  const filter = buildCanvasVideoFilter(crop);
+  assert.ok(filter.startsWith('crop=1280:720:0:86'), filter);
+  assert.ok(filter.includes('scale=960:540:force_original_aspect_ratio=decrease'), filter);
+  assert.ok(filter.includes('pad=960:540:'), filter);
+  // A letterboxed canvas inside 1280x720 content works the same way.
+  const boxed = resolveCanvasCropFrame({
+    outerWidth: 1280, outerHeight: 807, chromeLeft: 0, chromeTop: 87,
+    canvas: { x: 160, y: 90, width: 960, height: 540, iw: 1280, ih: 720, dpr: 1 },
+  });
+  assert.deepEqual(boxed, { x: 160, y: 176, w: 960, h: 540 });
+});
+
+test('canvas sample matching ignores subpixel jitter but not dpr flips', () => {
+  const base = { x: 80, y: 60, width: 800, height: 450, iw: 960, ih: 540, dpr: 1 };
+  assert.equal(canvasSamplesMatch(base, { ...base }), true);
+  assert.equal(canvasSamplesMatch(base, { ...base, x: 80.5 }), true);
+  assert.equal(canvasSamplesMatch(base, { ...base, width: 802 }), false);
+  assert.equal(canvasSamplesMatch(base, { ...base, dpr: 2 }), false);
+  assert.equal(canvasSamplesMatch(base, null), false);
+  assert.equal(canvasSamplesMatch(null, base), false);
+});
+
+test('stable geometry wait returns once the rect sits still', async () => {
+  const rect = { x: 0, y: 0, width: 1280, height: 720, iw: 1280, ih: 720, dpr: 1 };
+  let calls = 0;
+  const sample = async () => {
+    calls += 1;
+    // Unity-load resize: first samples move, then the rect sits still.
+    if (calls < 3) return { canvas: { ...rect, width: 640 + calls * 100 }, outerWidth: 1280, outerHeight: 807, chromeLeft: 0, chromeTop: 87 };
+    return { canvas: { ...rect }, outerWidth: 1280, outerHeight: 807, chromeLeft: 0, chromeTop: 87 };
+  };
+  const stable = await waitForStableCanvasGeometry(sample, { pollMs: 5, stableMs: 20, timeoutMs: 2000 });
+  assert.deepEqual(stable.canvas, rect);
+  assert.equal(calls >= 3, true);
+});
+
+test('stable geometry wait fails closed when no canvas ever appears', async () => {
+  await assert.rejects(
+    () => waitForStableCanvasGeometry(async () => null, { pollMs: 5, stableMs: 10, timeoutMs: 30 }),
+    /game canvas not found \(fail-closed/,
+  );
+});
+
+test('stable geometry wait fails closed when the rect never settles', async () => {
+  let n = 0;
+  await assert.rejects(
+    () => waitForStableCanvasGeometry(
+      async () => ({ canvas: { x: n += 10, y: 0, width: 800, height: 450, iw: 960, ih: 540, dpr: 1 } }),
+      { pollMs: 5, stableMs: 60, timeoutMs: 50 },
+    ),
+    /never stabilized \(fail-closed/,
+  );
+});
+
+test('stable-but-invalid rect still fails closed at crop time', async () => {
+  // A rect permanently outside the measured content stabilizes, then
+  // parse/resolve rejects it — never silently streamed.
+  const bad = { canvas: { x: -50, y: 0, width: 800, height: 450, iw: 960, ih: 540, dpr: 1 } };
+  const stable = await waitForStableCanvasGeometry(async () => bad, { pollMs: 5, stableMs: 10, timeoutMs: 1000 });
+  assert.throws(() => resolveCanvasCropFrame({
+    outerWidth: 960, outerHeight: 627, chromeLeft: 0, chromeTop: 87, canvas: stable.canvas,
+  }), /fail-closed/);
 });
