@@ -31,3 +31,6 @@ __pycache__/
 /strategy_versions_archive/v*_score*_strategy.py
 
 .env.bak.*
+
+# Built ScreenCaptureKit capture helper (tools/soren91_window_capture_build.sh)
+tools/macos/bin/

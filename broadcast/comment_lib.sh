@@ -332,10 +332,14 @@ _play_comment_queue() {
 					tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 						mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
 				fi
-				# speaker/context override: サイドカーファイルのみ。
-				# コメント読み上げは soren91 稼働中でもメイン話者(東北イタコ 109)を維持する。
+				# speaker/context override: サイドカーファイル優先。
+				# Soren91(メリケンAI)ホストモード中は、サイドカー指定が無い限り
+				# コメント読み上げもメリケン話者(既定46)で行う。
 				local _cw_vo_speaker=""
 				_cw_vo_speaker=$(_comment_read_speaker_override "$playing_file" "$qf" 2>/dev/null || true)
+				if [ -z "$_cw_vo_speaker" ] && [ "$current_mode" = "soren91" ]; then
+					_cw_vo_speaker="${SOREN91_VOICEVOX_SPEAKER:-14}"
+				fi
 				local _cw_context_label=""
 				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
 				local _cw_playback_ok=0
