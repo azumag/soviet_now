@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily restart of the Soren shared overlay (memory reclaim)
+[Timer]
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=300
+Persistent=true
+[Install]
+WantedBy=timers.target
