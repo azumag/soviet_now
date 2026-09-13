@@ -640,6 +640,12 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const page = context.pages().find((p) => isExactGameTargetUrl(p.url() || ''));
     if (!page) throw new Error('remote chrome has no exact play.unityroom.com page');
     const cdp = await context.newCDPSession(page);
+    // The OCI bot (Playwright) applies a device-metrics override to the game
+    // page so window.innerWidth/Height report the bot's viewport (1280x720)
+    // instead of the real window content; that makes outer-inner negative and
+    // breaks the crop. Clear it so the measured geometry is the real one.
+    try { await cdp.send('Emulation.clearDeviceMetricsOverride'); } catch {}
+    await sleep(150);
     const { windowId } = await cdp.send('Browser.getWindowForTarget');
     let bounds = await cdp.send('Browser.getWindowBounds', { windowId });
     let inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
