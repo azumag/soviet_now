@@ -73,6 +73,13 @@ export function defaults(env = process.env) {
     // valid. The stream output is still width x height (960x540) via crop+scale.
     contentWidth: Number(env.SOREN91_CDP_HOST_CONTENT_WIDTH || 1280),
     contentHeight: Number(env.SOREN91_CDP_HOST_CONTENT_HEIGHT || 720),
+    // Fixed macOS Chrome window chrome (tab strip + address bar) measured on
+    // the target Mac. The bot's Playwright device-metrics override makes
+    // window.innerWidth/Height unreliable, so the window is sized from these
+    // fixed offsets instead of outer-inner (which goes negative under the
+    // override).
+    chromeTop: Number(env.SOREN91_CDP_HOST_CHROME_TOP || 87),
+    chromeLeft: Number(env.SOREN91_CDP_HOST_CHROME_LEFT || 0),
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
     sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),
@@ -134,6 +141,14 @@ export function validateOptions(options, platform = process.platform) {
     const value = options[key];
     if (!Number.isInteger(value) || value < 640 || value > 4096) {
       throw new Error(`${key} must be an integer 640..4096`);
+    }
+  }
+  if (options.chromeTop == null) options.chromeTop = 87;
+  if (options.chromeLeft == null) options.chromeLeft = 0;
+  for (const key of ['chromeTop', 'chromeLeft']) {
+    const value = options[key];
+    if (!Number.isInteger(value) || value < 0 || value > 400) {
+      throw new Error(`${key} must be an integer 0..400`);
     }
   }
   if (!(options.videoMbps > 0 && options.videoMbps <= 8)) throw new Error('videoMbps must be >0 and <=8');
@@ -647,29 +662,31 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     try { await cdp.send('Emulation.clearDeviceMetricsOverride'); } catch {}
     await sleep(150);
     const { windowId } = await cdp.send('Browser.getWindowForTarget');
-    let bounds = await cdp.send('Browser.getWindowBounds', { windowId });
-    let inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
-    const chromeW = bounds.bounds.width - inner.iw;
-    const chromeH = bounds.bounds.height - inner.ih;
+    let bounds = null;
+    let inner = null;
+    // Size the window from the fixed chrome offsets. outer-inner is unusable
+    // here because the bot's device-metrics override makes innerWidth/Height
+    // report the bot viewport (1280x720) regardless of the real window.
     try {
       await cdp.send('Browser.setWindowBounds', {
         windowId,
         bounds: {
           left: placement.left, top: placement.top,
-          width: options.contentWidth + chromeW, height: options.contentHeight + chromeH,
+          width: options.contentWidth + options.chromeLeft,
+          height: options.contentHeight + options.chromeTop,
         },
       });
       await sleep(300);
-    } catch (error) {
-      console.error(`[cdp-host] calibration setWindowBounds failed (best-effort, continuing): ${error?.message || error}`);
-    }
-    try {
       bounds = await cdp.send('Browser.getWindowBounds', { windowId });
       inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
     } catch (error) {
-      console.error(`[cdp-host] calibration re-measure failed (best-effort, continuing): ${error?.message || error}`);
+      console.error(`[cdp-host] calibration failed (best-effort, continuing): ${error?.message || error}`);
+      try {
+        bounds = await cdp.send('Browser.getWindowBounds', { windowId });
+        inner = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
+      } catch {}
     }
-    console.error(`[cdp-host] content after calibration (best-effort): ${JSON.stringify(inner)} (target ${options.width}x${options.height})`);
+    console.error(`[cdp-host] content after calibration (best-effort): ${JSON.stringify(inner)} (content target ${options.contentWidth}x${options.contentHeight}, chromeTop=${options.chromeTop})`);
     const windowTitle = await page.title();
     if (!windowTitle) throw new Error('page title is empty; cannot build a fail-closed window match');
     console.log(`SOREN91_CDP_HOST_WINDOW_TITLE=${JSON.stringify(windowTitle)}`);
@@ -726,8 +743,10 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
         canvas: geom,
         outerWidth: frame.bounds.width,
         outerHeight: frame.bounds.height,
-        chromeLeft: frame.bounds.width - freshInner.iw,
-        chromeTop: frame.bounds.height - freshInner.ih,
+        // Fixed chrome offsets: outer-inner is unreliable under the bot's
+        // device-metrics override (it can go negative).
+        chromeLeft: options.chromeLeft,
+        chromeTop: options.chromeTop,
       };
     };
     const stable = await waitForStableCanvasGeometry(sampleGeometry);
