@@ -7,6 +7,7 @@ import {
   isAllowedCdpPeer,
   isExactGameTargetUrl,
   normalizeRemoteAddress,
+  signalExitCode,
   validateOptions,
 } from '../tools/soren91_macos_cdp_host.mjs';
 
@@ -88,4 +89,10 @@ test('Chrome is physically muted whenever audio tap is disabled', () => {
   assert.equal(muted.includes('--mute-audio'), true);
   assert.equal(tapped.includes('--mute-audio'), false);
   assert.equal(muted.includes('--remote-allow-origins=*'), true);
+});
+
+test('signal shutdown uses conventional exit codes', () => {
+  assert.equal(signalExitCode('SIGTERM'), 143);
+  assert.equal(signalExitCode('SIGINT'), 130);
+  assert.equal(signalExitCode('other'), 143);
 });

@@ -192,6 +192,15 @@ export function normalizeRemoteAddress(value) {
   return mapped ? mapped[1] : address;
 }
 
+// Conventional exit codes for signal-initiated shutdown so the OCI stop
+// path (and process supervisors) can distinguish a requested stop from a
+// crash. The cdp-host MUST exit on SIGTERM/SIGINT: merely cleaning up
+// children and returning to the wait loop leaves this process (and the
+// agent's running=true) behind, wedging the next run with a stale 409.
+export function signalExitCode(signal) {
+  return signal === 'SIGINT' ? 130 : 143;
+}
+
 export function isAllowedCdpPeer(remoteAddress, allowedPeerIp) {
   const peer = normalizeRemoteAddress(remoteAddress);
   const allowed = normalizeRemoteAddress(allowedPeerIp);
@@ -295,8 +304,14 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     if (vdisplay) { try { vdisplay.kill('SIGTERM'); } catch {} }
     if (proxy) { try { proxy.close(); } catch {} }
   };
-  process.once('SIGINT', cleanup);
-  process.once('SIGTERM', cleanup);
+  const shutdown = (signal) => {
+    cleanup();
+    process.exit(signalExitCode(signal));
+  };
+  const onSigint = () => shutdown('SIGINT');
+  const onSigterm = () => shutdown('SIGTERM');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
   const startedAt = Date.now();
   try {
     const held = await startVirtualDisplay(options.virtualDisplayBin, { timeoutMs: 30_000 });
@@ -473,8 +488,8 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     return { ok: true };
   } finally {
     cleanup();
-    process.removeListener('SIGINT', cleanup);
-    process.removeListener('SIGTERM', cleanup);
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
     if (audiotap) await stopAudioTap(audiotap).catch(() => {});
     if (vdisplay) await stopVirtualDisplay(vdisplay).catch(() => {});
     if (browser) await browser.close().catch(() => {});

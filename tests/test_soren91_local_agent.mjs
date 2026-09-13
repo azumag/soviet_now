@@ -15,6 +15,7 @@ import {
   resolveSessionMode,
   sessionScriptForPlatform,
   spawnScriptForMode,
+  stopProcessTree,
   validateOptions,
   validateStartSrtUrl,
 } from '../tools/soren91_local_agent.mjs';
@@ -368,4 +369,27 @@ test('HTTP: default server still spawns the self-playing session script', async 
     assert.equal(seen.length, 1);
     assert.match(seen[0].args[0], /soren91_macos_session\.mjs$/);
   }, undefined);
+});
+
+test('stop escalates to SIGKILL when the child ignores SIGTERM', async () => {
+  const signals = [];
+  const child = { exitCode: null, pid: 4242, kill: (sig) => { signals.push(sig); } };
+  stopProcessTree(child, 'darwin', { killGraceMs: 30 });
+  assert.deepEqual(signals, ['SIGTERM']);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('stop does not escalate once the child has exited', async () => {
+  const signals = [];
+  const child = { exitCode: null, pid: 4243, kill: (sig) => { signals.push(sig); } };
+  stopProcessTree(child, 'darwin', { killGraceMs: 30 });
+  child.exitCode = 143;
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual(signals, ['SIGTERM']);
+});
+
+test('stop is a no-op without a live child', () => {
+  assert.doesNotThrow(() => stopProcessTree(null, 'darwin'));
+  assert.doesNotThrow(() => stopProcessTree({ exitCode: 0, kill: () => { throw new Error('must not kill'); } }, 'darwin'));
 });

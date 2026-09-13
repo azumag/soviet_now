@@ -206,13 +206,23 @@ function readBody(req, limit = MAX_START_BODY_BYTES) {
   });
 }
 
-export function stopProcessTree(child, platform = process.platform) {
+export function stopProcessTree(child, platform = process.platform, { killGraceMs = 5000 } = {}) {
   if (!child || child.exitCode != null) return;
   if (platform === 'win32' && child.pid) {
     spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
     return;
   }
-  try { child.kill('SIGTERM'); } catch {}
+  try { child.kill('SIGTERM'); } catch { return; }
+  // Backstop: if the child ignores SIGTERM (e.g. a session host stuck in a
+  // wait loop), escalate so POST /v1/stop observably stops it instead of
+  // leaving running=true behind. Unref'd so the agent never hangs on this.
+  try {
+    setTimeout(() => {
+      try {
+        if (child.exitCode == null) child.kill('SIGKILL');
+      } catch {}
+    }, killGraceMs).unref?.();
+  } catch {}
 }
 
 function json(res, status, value) {
