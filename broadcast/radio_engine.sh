@@ -52,7 +52,7 @@ _run_opencode_radio_unqueued() {
 	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
 	_opencode_sync_auth_to_xdg
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
-	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
+	_opencode_rotation_gate_run env XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \
 		opencode run "${model_args[@]}" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
@@ -151,7 +151,7 @@ _run_opencode_comment_unqueued() {
 	_opencode_sync_auth_to_xdg
 	(
 		cd "$sandbox_dir" || exit 1
-		XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
+		_opencode_rotation_gate_run env XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 			timeout "$timeout_sec" \
 			opencode run --agent "$agent" "$(cat tmp/comment_prompt.txt)"
 	) >"$raw_file" 2>&1
