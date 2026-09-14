@@ -41,6 +41,58 @@ const STAGE_STATS_MAX_GAMES = parsePositiveInt(process.env.SOREN91_STAGE_STATS_M
 const STAGE_RATE_TYPES = [15, 14, 13].map(type => ({ type, name: COUNTRY_NAMES[type] }));
 const PURGE_GATE_TYPES = [11, 13, 14, 15].map(type => ({ type, name: COUNTRY_NAMES[type] }));
 
+// --- A: 実況のバリエーション (直近コメントの反復防止) ---
+// 同じ出だし・同じオチ・同じ比喩の繰り返しを避けるため、直近コメントの
+// 書き出しをプロンプトへ渡し、生成後に同一の出だしなら一度だけ作り直す。
+const COMMENT_HISTORY_PATH = join('tmp', 'soren91_comment_history.json');
+const COMMENT_HISTORY_KEEP = 24;
+const RECENT_COMMENT_PROMPT_LIMIT = 8;
+
+function readCommentHistory() {
+  try {
+    const data = JSON.parse(readFileSync(COMMENT_HISTORY_PATH, 'utf-8'));
+    return Array.isArray(data) ? data.filter(entry => entry && typeof entry.text === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function appendCommentHistory(kind, gameNumber, text) {
+  if (!text) return;
+  try {
+    mkdirSync('tmp', { recursive: true });
+    const history = readCommentHistory();
+    history.push({ ts: new Date().toISOString(), kind, game: gameNumber ?? null, text: String(text) });
+    writeFileSync(COMMENT_HISTORY_PATH, JSON.stringify(history.slice(-COMMENT_HISTORY_KEEP)));
+  } catch {}
+}
+
+export function commentOpening(text) {
+  return String(text)
+    .split(/[。！？!?\n]/)
+    .map(part => part.trim())
+    .find(Boolean) || '';
+}
+
+function recentCommentOpenings(kind, limit = RECENT_COMMENT_PROMPT_LIMIT) {
+  const history = readCommentHistory();
+  const sameKind = history.filter(entry => entry.kind === kind);
+  const pool = (sameKind.length > 0 ? sameKind : history).slice(-limit);
+  return pool.map(entry => commentOpening(entry.text)).filter(Boolean);
+}
+
+function formatRecentCommentsForPrompt(kind, limit = RECENT_COMMENT_PROMPT_LIMIT) {
+  const openings = recentCommentOpenings(kind, limit);
+  if (openings.length === 0) return '（まだ直近のコメントはありません）';
+  return openings.map(opening => `- ${opening}`).join('\n');
+}
+
+export function hasDuplicateOpening(text, kind) {
+  const opening = commentOpening(text);
+  if (!opening) return false;
+  return recentCommentOpenings(kind, RECENT_COMMENT_PROMPT_LIMIT).includes(opening);
+}
+
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -417,6 +469,14 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
         console.log('[ranking_comment] Ungrounded generated comment, using fallback');
         comment = null;
       }
+      // A: 直近と同じ出だしなら一度だけ作り直す (反復防止)
+      if (comment && hasDuplicateOpening(comment, 'ranking_comment')) {
+        console.log('[ranking_comment] Duplicate opening; regenerating once');
+        const retry = await callClaudeForComment(promptText);
+        if (retry && isGroundedRankingComment(retry, effectiveRank) && !hasDuplicateOpening(retry, 'ranking_comment')) {
+          comment = retry;
+        }
+      }
     }
     if (!comment) {
       comment = fallbackRankingComment(effectiveRank, gameNumber);
@@ -432,6 +492,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     // ログ記録
     const logLine = `[${new Date().toISOString()}] game=#${gameNumber} rank=${effectiveRank ?? myRank ?? '?'}: ${comment}\n`;
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
+    appendCommentHistory('ranking_comment', gameNumber, comment);
 
     // soren91 モードフラグを削除（新しい ranking_comment を再生可能にする）
     const flagFile = join(PARENT_DIR, 'tmp', '.soren91_mode_active');
@@ -585,6 +646,7 @@ export async function buildRankingTextPrompt(rankingImagePath, myRank) {
       rankInfo: effectiveRank != null ? `自分の順位: ${effectiveRank}位/91人中。` : '自分の順位: 不明。順位を断定してはいけない。',
       ocrInfo,
       stageInfo: formatStageStatsForPrompt(stageInfo),
+      recentComments: formatRecentCommentsForPrompt('ranking_comment'),
     }),
     effectiveRank,
     hasUsableContext: effectiveRank != null || hasOcrContext,
@@ -716,6 +778,13 @@ export async function generateMidgameComment(gameNumber, turn, boardState, scree
     if (!finalComment || !isGroundedMidgameComment(finalComment)) {
       console.log('[midgame_comment] Ungrounded generated comment, using fallback');
       finalComment = fallbackMidgameComment(boardState, turn);
+    } else if (hasDuplicateOpening(finalComment, 'midgame_comment')) {
+      // A: 直近と同じ出だしなら一度だけ作り直す (反復防止)
+      console.log('[midgame_comment] Duplicate opening; regenerating once');
+      const retry = await callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath);
+      if (retry && isGroundedMidgameComment(retry) && !hasDuplicateOpening(retry, 'midgame_comment')) {
+        finalComment = retry;
+      }
     }
     finalComment = normalizeCountryReferences(finalComment);
 
@@ -723,6 +792,7 @@ export async function generateMidgameComment(gameNumber, turn, boardState, scree
 
     const logLine = `[${new Date().toISOString()}] game=#${gameNumber} turn=${turn}: ${finalComment}\n`;
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
+    appendCommentHistory('midgame_comment', gameNumber, finalComment);
 
     speakComment(finalComment, 'soren91:midgame_comment');
 
@@ -815,7 +885,11 @@ function formatBoardStateForPrompt(boardState, turn) {
 async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
   const screenTextInfo = await buildMidgameScreenshotTextInfo(screenshotPath);
-  const promptText = loadPrompt('midgame_comment.md', { boardInfo, screenTextInfo });
+  const promptText = loadPrompt('midgame_comment.md', {
+    boardInfo,
+    screenTextInfo,
+    recentComments: formatRecentCommentsForPrompt('midgame_comment'),
+  });
 
   return generateTextWithFallbacks('midgame_comment', promptText, {
     claudePreset: 'haiku',
