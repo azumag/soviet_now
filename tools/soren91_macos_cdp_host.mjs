@@ -94,6 +94,10 @@ export function defaults(env = process.env) {
     // own (often quiet) level. Boost it before the AAC/SRT hop so the Soren91
     // corner is audible next to the comment voice. 1.0 = unchanged.
     audioGain: Number(env.SOREN91_LOCAL_AUDIO_GAIN || 1.0),
+    // Optional ffmpeg audio filter that OVERRIDES audioGain. Use it to
+    // normalise the (often quiet) captured game audio, e.g.
+    // SOREN91_LOCAL_AUDIO_FILTER='loudnorm=I=-16:TP=-1.5:LRA=11'.
+    audioFilter: String(env.SOREN91_LOCAL_AUDIO_FILTER || '').trim(),
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN
       || path.join(here, 'macos', 'bin', 'soren91_window_capture'),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN
@@ -482,7 +486,9 @@ export function buildCanvasFfmpegArgs(options, capture, crop) {
   if (options.audioDevice || options.audioTap) {
     args.push('-map', '0:v', '-map', '1:a');
     const gain = Number(options.audioGain ?? 1);
-    if (Number.isFinite(gain) && gain !== 1) args.push('-af', `volume=${gain}`);
+    const filter = String(options.audioFilter || '').trim()
+      || (Number.isFinite(gain) && gain !== 1 ? `volume=${gain}` : '');
+    if (filter) args.push('-af', filter);
     args.push('-c:a', 'aac', '-b:a', '128k');
   } else args.push('-an');
   args.push('-f', 'mpegts', options.srtUrl);
@@ -884,6 +890,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       // Wire the configured gain through to the ffmpeg audio chain (the
       // option was parsed/validated but not plumbed here, so it never applied).
       audioGain: options.audioGain,
+      audioFilter: options.audioFilter,
     };
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';

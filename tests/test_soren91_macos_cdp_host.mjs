@@ -405,3 +405,19 @@ test('audio gain adds a volume filter only when it differs from 1', () => {
   assert.notEqual(idx, -1);
   assert.equal(boosted[idx + 1], 'volume=2.5');
 });
+
+test('audio filter overrides the gain', () => {
+  const capture = { outerWidth: 1280, outerHeight: 807, chromeTop: 87, chromeLeft: 0 };
+  const crop = { x: 0, y: 87, w: 1280, h: 720 };
+  const base = {
+    width: 960, height: 540, videoMbps: 2, audioTap: true,
+    srtUrl: 'srt://100.70.0.3:9000?mode=caller',
+  };
+  const out = buildCanvasFfmpegArgs(
+    { ...base, audioGain: 2.5, audioFilter: 'loudnorm=I=-16:TP=-1.5:LRA=11' },
+    capture, crop,
+  );
+  const idx = out.indexOf('-af');
+  assert.notEqual(idx, -1);
+  assert.equal(out[idx + 1], 'loudnorm=I=-16:TP=-1.5:LRA=11');
+});
