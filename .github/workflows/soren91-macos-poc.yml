@@ -22,6 +22,7 @@ on:
       - 'tools/soren91_virtual_display_build.sh'
       - 'tools/soren91_audio_tap_build.sh'
       - 'tools/macos/soren91_window_capture.swift'
+      - 'tools/macos/soren91_capture_frames.swift'
       - 'tools/macos/soren91_virtual_display.swift'
       - 'tools/macos/soren91_audio_tap.swift'
       - 'tests/test_radio_corner_voice.sh'
@@ -31,6 +32,7 @@ on:
       - 'tests/test_soren91_renderer_controller.mjs'
       - 'tests/test_soren91_renderer_priority.mjs'
       - 'tests/test_soren91_macos_capture_privacy.mjs'
+      - 'tests/test_soren91_capture_frames.swift'
       - 'tests/test_soren91_macos_virtual_display.mjs'
       - 'tests/test_soren91_macos_audio.mjs'
       - 'tests/test_soren91_session_end_fail_closed.mjs'
@@ -77,8 +79,7 @@ jobs:
           node --test tests/test_soren91_session_end_fail_closed.mjs
 
   build-helpers:
-    # Compiles (never runs) all Swift helpers so Linux CI still catches
-    # type/syntax regressions in the macOS-only sources.
+    # Compile all helpers; synthetic pixel tests never record the screen.
     runs-on: macos-14
     timeout-minutes: 10
     steps:
@@ -93,3 +94,7 @@ jobs:
           ./tools/soren91_virtual_display_build.sh
           ./tools/soren91_audio_tap_build.sh
           ./tools/macos/bin/soren91_virtual_display --help
+      - name: Test capture geometry, cadence and synthetic BGRA pixels
+        run: |
+          swiftc -O -parse-as-library tools/macos/soren91_capture_frames.swift tests/test_soren91_capture_frames.swift -o "$RUNNER_TEMP/soren91-capture-frame-tests"
+          "$RUNNER_TEMP/soren91-capture-frame-tests"
