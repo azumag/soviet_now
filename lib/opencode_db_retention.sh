@@ -80,7 +80,7 @@ _opencode_db_retention_rotate() {
 		log "[OPENCODE:retention] python3 unavailable; skip rotation" >&2
 		return 0
 	fi
-	local libdir gate wait_sec fd db before after
+	local libdir gate wait_sec fd db before after default_db
 	libdir="${ELOOP_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}"
 	gate="$(_opencode_rotation_gate_path)"
 	wait_sec="${OPENCODE_ROTATION_GATE_WAIT_SEC:-120}"
@@ -98,8 +98,19 @@ _opencode_db_retention_rotate() {
 		exec {fd}>&-
 		return 0
 	fi
+	default_db="${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
 	for db in "$@"; do
 		[ -f "$db" ] || continue
+		# The default-XDG DB is also written by production-reachable direct
+		# OpenCode callers that do not yet participate in this flock contract
+		# (notably soren91/text_ai.mjs and probe_free_slot.sh). Rotating it while
+		# one of those writers starts would reintroduce the #404 TOCTOU race.
+		# Keep the mutation disabled by default until the writer inventory is
+		# complete and every default-XDG producer holds the shared gate.
+		if [ "$db" = "$default_db" ] && [ "${OPENCODE_DEFAULT_DB_RETENTION_ENABLED:-0}" != "1" ]; then
+			log "[OPENCODE:retention] default DB has ungated writers; skip rotation" >&2
+			continue
+		fi
 		before=$(wc -c <"$db" 2>/dev/null | tr -d ' ')
 		if python3 "$libdir/lib/opencode_db_retention.py" "$db" "$days"; then
 			after=$(wc -c <"$db" 2>/dev/null | tr -d ' ')
