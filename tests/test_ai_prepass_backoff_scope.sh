@@ -16,6 +16,7 @@ export AI_FAIL_STREAK_DIR="$TMP/fail_streak"
 export AI_STATS_DIR="$TMP/stats"
 export AI_BACKOFF_FAILURE_SEC=300
 export AI_FAILURE_STREAK_MAX_BACKOFF_SEC=3600
+export VERCEL_FREE_AGENTS="vercel:minimax/minimax-m3-free vercel:poolside/laguna-s-2.1-free"
 export ATTEMPT_LOG="$TMP/attempts.log"
 
 prompt="$TMP/prompt.txt"
