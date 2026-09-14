@@ -91,20 +91,20 @@ cleanup_tmp_files() {
 		[ -d "$_s91dir" ] && find "$_s91dir" -maxdepth 1 -name '*.png' -type f -mtime +1 -delete 2>/dev/null
 	done
 
-	# --- opencode (AIツール) の XDG_DATA: セッション履歴/DBが無制限に肥大 (実測 2GB) ---
+	# --- opencode (AIツール) の XDG_DATA: セッション履歴/DBが無制限に肥大 ---
+	# writer exclusion gate (flock) を取ってから、保持期間超過セッションを単一
+	# トランザクションで削除する (docich ADR 0002 / #389)。
+	# pgrep 瞬間判定の全リセットは廃止。対象は worker XDG と既定 XDG の両方。
+	# gate が取得できない場合は何も変更しない (fail-closed)。
 	local _oc="${TMP_STATE_DIR:-tmp/state}/xdg_data/opencode"
 	if [ -d "$_oc" ]; then
 		find "$_oc/snapshot" "$_oc/tool-output" "$_oc/storage/session_diff" -type f -mmin +60 -delete 2>/dev/null
 		find "$_oc/snapshot" -type d -empty -delete 2>/dev/null
-		# opencode は一回限り実行で履歴不要。DBが200MB超かつ opencode 非稼働時のみ初期化(再生成される)。
-		if [ -f "$_oc/opencode.db" ] && ! pgrep -f 'opencode run' >/dev/null 2>&1; then
-			local _ocsz
-			_ocsz=$(wc -c < "$_oc/opencode.db" 2>/dev/null | tr -d ' ')
-			if [ "${_ocsz:-0}" -gt 209715200 ]; then
-				rm -f "$_oc/opencode.db" "$_oc/opencode.db-wal" "$_oc/opencode.db-shm" 2>/dev/null
-				log "[CLEANUP] opencode.db を初期化 (>200MB, 非稼働時)"
-			fi
-		fi
+	fi
+	if command -v _opencode_db_retention_rotate >/dev/null 2>&1; then
+		_opencode_db_retention_rotate "${OPENCODE_DB_RETENTION_DAYS:-3}" \
+			"$_oc/opencode.db" \
+			"${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
 	fi
 
 	# --- AI dispatch デバッグログ: 2日より古いものを削除 ---

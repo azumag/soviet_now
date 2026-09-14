@@ -846,11 +846,11 @@ _ai_call_opencode_unqueued() {
 		_oc_start=$(date +%s)
 		case "$model" in
 		opencode/muse-spark-1.[23]-contributor-free)
-			python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
+			_opencode_rotation_gate_run python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
 				"$opencode_bin" run --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		*)
-		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		esac
 		rc=$?
