@@ -90,6 +90,17 @@ export function defaults(env = process.env) {
     // failing closed (observed: a single attempt aborted the whole stream and
     // left Chrome audible).
     audioTapWaitSec: Number(env.SOREN91_LOCAL_AUDIO_TAP_WAIT_SEC || 120),
+    // Issue #303 follow-up: the tapped Chrome game audio arrives at the game's
+    // own (often quiet) level. Boost it before the AAC/SRT hop so the Soren91
+    // corner is audible next to the comment voice. 1.0 = unchanged.
+    audioGain: Number(env.SOREN91_LOCAL_AUDIO_GAIN || 1.0),
+    // Captured game audio is often very quiet (measured ~-31 dBFS peaks at
+    // unity on the production VM), so normalise it to broadcast loudness by
+    // default (EBU R128). Override with any ffmpeg -af chain, or set it empty
+    // to disable normalisation and use audioGain instead.
+    audioFilter: String(
+      env.SOREN91_LOCAL_AUDIO_FILTER ?? 'loudnorm=I=-16:TP=-1.5:LRA=11',
+    ).trim(),
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN
       || path.join(here, 'macos', 'bin', 'soren91_window_capture'),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN
@@ -155,6 +166,10 @@ export function validateOptions(options, platform = process.platform) {
   if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;
   if (!Number.isInteger(options.audioTapWaitSec) || options.audioTapWaitSec < 5 || options.audioTapWaitSec > 600) {
     throw new Error('audioTapWaitSec must be an integer 5..600');
+  }
+  if (options.audioGain == null) options.audioGain = 1;
+  if (!Number.isFinite(options.audioGain) || options.audioGain < 0.1 || options.audioGain > 16) {
+    throw new Error('audioGain must be a number 0.1..16');
   }
   if (!options.srtUrl && options.execute) throw new Error('--execute requires SOREN91_LOCAL_SRT_URL');
   if (options.execute && platform !== 'darwin') throw new Error('--execute is macOS-only');
@@ -382,6 +397,52 @@ export function resolveCanvasCropFrame({ outerWidth, outerHeight, chromeLeft, ch
   return { x, y, w, h };
 }
 
+// Runtime offscreen watchdog cadence / re-assert budget. Mission Control and
+// Space switches move the (otherwise offscreen) Chrome window: privacy says we
+// must notice and react instead of silently streaming a moved/misframed frame.
+export const OFFSCREEN_WATCH_MS = 2000;
+export const OFFSCREEN_WATCH_MAX_REASSERTS = 3;
+
+// Decide what to do when the live geometry drifts from the calibrated state.
+// Pure (no live WindowServer/CDP) so the Mission Control behaviour is unit
+// testable:
+//   - window overlaps a physical display  -> reassert the offscreen bounds
+//   - window bounds drifted (moved/scaled) -> reassert the offscreen bounds
+//   - content size changed (crop invalid)  -> fail closed, never stream it
+export function evaluateGeometryDrift({
+  windowRect,
+  displays,
+  virtualDisplayId,
+  calibratedRect,
+  content,
+  calibratedContent,
+  epsilon = GEOMETRY_EPSILON_PX,
+} = {}) {
+  for (const [label, value] of [
+    ['windowRect', windowRect], ['calibratedRect', calibratedRect],
+    ['content', content], ['calibratedContent', calibratedContent],
+  ]) {
+    if (!value || typeof value !== 'object') {
+      throw new Error(`geometry drift check lacks ${label} (fail-closed)`);
+    }
+  }
+  let overlap = false;
+  try {
+    ({ overlap } = computePhysicalOverlap(windowRect, Array.isArray(displays) ? displays : [], virtualDisplayId));
+  } catch (error) {
+    throw new Error(`geometry drift check could not compare displays (fail-closed): ${error?.message || error}`);
+  }
+  if (overlap) return { action: 'reassert', reason: 'window-on-physical-display' };
+  const moved = ['x', 'y', 'width', 'height'].some(
+    (key) => Math.abs(Number(windowRect[key]) - Number(calibratedRect[key])) > epsilon,
+  );
+  if (moved) return { action: 'reassert', reason: 'window-bounds-drift' };
+  const contentChanged = Math.abs(Number(content.iw) - Number(calibratedContent.iw)) > epsilon
+    || Math.abs(Number(content.ih) - Number(calibratedContent.ih)) > epsilon;
+  if (contentChanged) return { action: 'fail', reason: 'content-size-drift' };
+  return { action: 'ok', reason: null };
+}
+
 // Canvas crop -> 960x540 output filter: crop the game canvas, scale to fit
 // (aspect preserved) and pad to exactly outW x outH. Output resolution is
 // fixed 960x540; a freeform full-page scale is never built here.
@@ -425,8 +486,14 @@ export function buildCanvasFfmpegArgs(options, capture, crop) {
     '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-maxrate', bitrate, '-bufsize', `${options.videoMbps * 2}M`,
     '-g', '60', '-pix_fmt', 'yuv420p',
   );
-  if (options.audioDevice || options.audioTap) args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '128k');
-  else args.push('-an');
+  if (options.audioDevice || options.audioTap) {
+    args.push('-map', '0:v', '-map', '1:a');
+    const gain = Number(options.audioGain ?? 1);
+    const filter = String(options.audioFilter || '').trim()
+      || (Number.isFinite(gain) && gain !== 1 ? `volume=${gain}` : '');
+    if (filter) args.push('-af', filter);
+    args.push('-c:a', 'aac', '-b:a', '128k');
+  } else args.push('-an');
   args.push('-f', 'mpegts', options.srtUrl);
   return args;
 }
@@ -568,6 +635,9 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   let audiotap = null;
   let ffmpeg = null;
   let profileDir = null;
+  // Runtime offscreen watchdog timer (Mission Control / Space switching). Kept
+  // in the outer scope so `finally` can always clear it.
+  let geometryWatch = null;
   const cleanup = () => {
     terminate(ffmpeg); terminate(capture); terminate(audiotap); terminate(chrome);
     // Chrome helper processes outlive the browser's SIGTERM and can be left
@@ -705,6 +775,20 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       throw new Error(`offscreen violation: ${JSON.stringify(windowRect)} intersects ${JSON.stringify(displayIds)} by ${area}px`);
     }
     console.log(`SOREN91_CDP_HOST_OFFSCREEN_OK=${JSON.stringify(windowRect)}`);
+    // Mission Control / Space switches can move the otherwise-offscreen window
+    // after calibration. Remember the calibrated geometry and arm a privacy
+    // fail-closed exit so the runtime watchdog below can restore or stop.
+    const calibratedRect = { ...windowRect };
+    const calibratedBounds = {
+      left: placement.left, top: placement.top,
+      width: options.contentWidth + options.chromeLeft,
+      height: options.contentHeight + options.chromeTop,
+    };
+    const failClosed = (reason) => {
+      console.error(`[cdp-host] FAIL-CLOSED ${reason}`);
+      cleanup();
+      process.exit(2);
+    };
     // Game-canvas crop (Issue #303 feedback): streaming the full page with
     // margins at 1280x720 made the game tiny. Crop ONLY the Unity canvas
     // and scale/pad it to the fixed 960x540 output. The crop is computed
@@ -806,6 +890,10 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const ffmpegOpts = {
       width: options.width, height: options.height, videoMbps: options.videoMbps,
       audioTap: options.audioTap, audioDevice: '', srtUrl: options.srtUrl,
+      // Wire the configured gain through to the ffmpeg audio chain (the
+      // option was parsed/validated but not plumbed here, so it never applied).
+      audioGain: options.audioGain,
+      audioFilter: options.audioFilter,
     };
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';
@@ -831,10 +919,58 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       ok: true, proxy: `${options.bindIp}:${options.proxyPort}`,
       windowTitle, capture: captureInfo, canvasCrop, srt: 'caller-started',
     }, null, 2));
+    // Runtime offscreen watchdog (Mission Control / Space-switch hardening):
+    // poll the live window bounds + content size every OFFSCREEN_WATCH_MS,
+    // re-assert the calibrated offscreen position when the window drifts, and
+    // fail closed (stop streaming) if it lands on a physical display or the
+    // content size changes (the fixed crop would then misframe the stream).
+    let watchBusy = false;
+    let watchReasserts = 0;
+    geometryWatch = setInterval(async () => {
+      if (watchBusy) return;
+      watchBusy = true;
+      try {
+        const live = await cdp.send('Browser.getWindowBounds', { windowId });
+        const liveRect = {
+          x: live.bounds.left, y: live.bounds.top,
+          width: live.bounds.width, height: live.bounds.height,
+        };
+        const liveContent = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
+        const listResult = spawnSync(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+        const listLine = String(listResult.stderr || '').trim().split('\n').pop()
+          || String(listResult.stdout || '').trim().split('\n').pop();
+        const decision = evaluateGeometryDrift({
+          windowRect: liveRect,
+          displays: parseVDisplayList(listLine),
+          virtualDisplayId: held.status.displayID,
+          calibratedRect,
+          content: liveContent,
+          calibratedContent: { iw: captureInfo.contentWidth, ih: captureInfo.contentHeight },
+        });
+        if (decision.action === 'reassert') {
+          watchReasserts += 1;
+          console.error(`[cdp-host] geometry watchdog: ${decision.reason}; re-asserting offscreen window bounds (${watchReasserts}/${OFFSCREEN_WATCH_MAX_REASSERTS})`);
+          await cdp.send('Browser.setWindowBounds', { windowId, bounds: calibratedBounds });
+          if (watchReasserts >= OFFSCREEN_WATCH_MAX_REASSERTS) {
+            failClosed(`offscreen window kept drifting (${decision.reason})`);
+          }
+        } else if (decision.action === 'fail') {
+          failClosed(`geometry watchdog: ${decision.reason}`);
+        } else {
+          watchReasserts = 0;
+        }
+      } catch (error) {
+        console.error(`[cdp-host] geometry watchdog error (best-effort): ${error?.message || error}`);
+      } finally {
+        watchBusy = false;
+      }
+    }, OFFSCREEN_WATCH_MS);
+    geometryWatch.unref?.();
     await sleep(Math.max(0, deadline - Date.now()));
     console.log('SOREN91_CDP_HOST_END=deadline');
     return { ok: true };
   } finally {
+    if (geometryWatch) { clearInterval(geometryWatch); geometryWatch = null; }
     cleanup();
     process.removeListener('SIGINT', onSigint);
     process.removeListener('SIGTERM', onSigterm);
