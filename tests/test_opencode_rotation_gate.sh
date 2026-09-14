@@ -30,10 +30,26 @@ grep -q gate_stderr_probe "$TMP/gate_err.txt" || fail "gate swallowed command st
 out=$(OPENCODE_ROTATION_GATE_ENABLED=0 _opencode_rotation_gate_run echo ran_disabled)
 [ "$out" = "ran_disabled" ] || fail "disabled run returned '$out'"
 
-# 3. 排他ロック保持中は共有取得がタイムアウトし、コマンドを実行しない (fail-closed)
-flock -x "$OPENCODE_ROTATION_GATE" -c 'sleep 5' &
+# 3. 排他ロック保持中は共有取得がタイムアウトし、コマンドを実行しない (fail-closed)。
+# `flock -c 'sleep'` は kill 後も子がlock fdを継承し得るため、Python本体が
+# 直接lockを保持してready markerを書き、killで必ずfdを閉じるようにする。
+python3 - "$OPENCODE_ROTATION_GATE" "$TMP/locker-ready" <<'PY' &
+import fcntl
+import pathlib
+import sys
+import time
+
+with open(sys.argv[1], "a+") as handle:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    pathlib.Path(sys.argv[2]).write_text("ready", encoding="utf-8")
+    time.sleep(30)
+PY
 locker=$!
-sleep 0.5
+for _ in $(seq 1 50); do
+	[ -f "$TMP/locker-ready" ] && break
+	sleep 0.02
+done
+[ -f "$TMP/locker-ready" ] || fail "exclusive locker did not become ready"
 _opencode_rotation_gate_run echo should_not_run >"$TMP/out.txt" 2>/dev/null
 rc=$?
 [ "$rc" = "124" ] || fail "expected rc=124 while blocked, got $rc"
@@ -42,7 +58,6 @@ kill "$locker" 2>/dev/null
 wait "$locker" 2>/dev/null
 
 # 4. 解放後は再び実行できる
-sleep 0.3
 out=$(_opencode_rotation_gate_run echo ran_after)
 [ "$out" = "ran_after" ] || fail "post-release run returned '$out'"
 
