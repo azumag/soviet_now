@@ -1,10 +1,26 @@
 name: History retention
 on:
   pull_request:
-    paths: ['infra/cleanup.sh', 'infra/history_retention.py', 'tests/test_history_retention.py', '.github/workflows/history-retention.yml']
+    paths:
+      - 'infra/cleanup.sh'
+      - 'infra/history_retention.py'
+      - 'lib/opencode_db_retention.py'
+      - 'lib/opencode_db_retention.sh'
+      - 'tests/test_history_retention.py'
+      - 'tests/test_opencode_db_retention.py'
+      - 'tests/test_opencode_rotation_gate.sh'
+      - '.github/workflows/history-retention.yml'
   push:
     branches: [main]
-    paths: ['infra/cleanup.sh', 'infra/history_retention.py', 'tests/test_history_retention.py', '.github/workflows/history-retention.yml']
+    paths:
+      - 'infra/cleanup.sh'
+      - 'infra/history_retention.py'
+      - 'lib/opencode_db_retention.py'
+      - 'lib/opencode_db_retention.sh'
+      - 'tests/test_history_retention.py'
+      - 'tests/test_opencode_db_retention.py'
+      - 'tests/test_opencode_rotation_gate.sh'
+      - '.github/workflows/history-retention.yml'
 permissions:
   contents: read
 jobs:
@@ -15,4 +31,6 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 tests/test_history_retention.py
-      - run: bash -n infra/cleanup.sh
+      - run: python3 tests/test_opencode_db_retention.py
+      - run: bash tests/test_opencode_rotation_gate.sh
+      - run: bash -n infra/cleanup.sh lib/opencode_db_retention.sh
