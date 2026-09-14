@@ -104,7 +104,23 @@ function positiveIntEnv(name, fallback) {
 
 const VIEWPORT_WIDTH = positiveIntEnv('SOREN91_VIEWPORT_WIDTH', DEFAULT_VIEWPORT_WIDTH);
 const VIEWPORT_HEIGHT = positiveIntEnv('SOREN91_VIEWPORT_HEIGHT', DEFAULT_VIEWPORT_HEIGHT);
-const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(process.env, process.platform);
+// Remote-Mac capture (SOREN91_REMOTE_CDP_URL) feeds ONLY the game screen to
+// the VM, which draws the notification/status rails itself. If the dashboard
+// stage (rails) or the live broadcast overlay were installed into the remote
+// page, they would be baked into the SRT capture and then shown again by the
+// VM overlay — the doubled-rail artifact (Issue #303). Force the game-only
+// (fullscreen) layout in that mode; the local direct-stream path is unchanged.
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(
+  remoteBrowserOwnsViewport()
+    ? {
+        ...process.env,
+        SOREN_DIRECT_STAGE_LAYOUT: 'fullscreen',
+        SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED: '0',
+        SOREN_DIRECT_TWICA_OVERLAY_ENABLED: '0',
+      }
+    : process.env,
+  process.platform,
+);
 const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
 
@@ -1224,8 +1240,13 @@ async function main() {
       drawBufferWidth: VIEWPORT_WIDTH,
       drawBufferHeight: VIEWPORT_HEIGHT,
     });
-    await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
-    await startInlineBroadcastState(gamePage);
+    if (!remoteBrowserOwnsViewport()) {
+      // Remote-Mac capture must stay game-only (see DIRECT_OVERLAY_CONFIG):
+      // the VM owns the rails, so never inline the live broadcast overlay
+      // into the page the Mac streams.
+      await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+      await startInlineBroadcastState(gamePage);
+    }
     console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
 
     // タイトル画面: 名前入力 + PLAY
