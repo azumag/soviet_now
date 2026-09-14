@@ -56,21 +56,21 @@ _ai_dispatch() {
 		;;
 	chain_two_vercel_then_amd)
 		case "$agent" in
-		vercel:chain-a|vercel:chain-b) return "$AI_RATE_LIMIT_RC" ;;
-		amd:chain-ok) printf 'fallback ok'; return 0 ;;
+		vercel:minimax/minimax-m3-free|vercel:poolside/laguna-s-2.1-free) return "$AI_RATE_LIMIT_RC" ;;
+		amd:DeepSeek-V4-Flash) printf 'fallback ok'; return 0 ;;
 		esac
 		return 1
 		;;
 	chain_one_vercel_then_vercel)
 		case "$agent" in
-		vercel:chain-a) return "$AI_RATE_LIMIT_RC" ;;
-		vercel:chain-b) printf 'vercel recovered'; return 0 ;;
+		vercel:minimax/minimax-m3-free) return "$AI_RATE_LIMIT_RC" ;;
+		vercel:poolside/laguna-s-2.1-free) printf 'vercel recovered'; return 0 ;;
 		esac
 		return 1
 		;;
 	chain_two_vercel_fail)
 		case "$agent" in
-		vercel:chain-a|vercel:chain-b) return "$AI_RATE_LIMIT_RC" ;;
+		vercel:minimax/minimax-m3-free|vercel:poolside/laguna-s-2.1-free) return "$AI_RATE_LIMIT_RC" ;;
 		esac
 		return 1
 		;;
@@ -131,14 +131,14 @@ fi
 # agent/model名なしの固定chain_summaryとして記録する。
 reset_state
 TEST_MODE=chain_two_vercel_then_amd
-chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:chain-a,vercel:chain-b,amd:chain-ok' 2>/dev/null || true)
+chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,amd:DeepSeek-V4-Flash' 2>/dev/null || true)
 chain_line=$(grep -h '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null | tail -n 1)
 if [ "$chain_out" = 'fallback ok' ] \
 	&& [[ "$chain_line" == *'"rc":"2"'* ]] \
 	&& [[ "$chain_line" == *'vrl=2;vda=2;nfs=1;term=winner'* ]] \
-	&& [[ "$chain_line" != *'chain-a'* ]] \
-	&& [[ "$chain_line" != *'chain-b'* ]] \
-	&& [[ "$chain_line" != *'chain-ok'* ]]; then
+	&& [[ "$chain_line" != *'minimax-m3-free'* ]] \
+	&& [[ "$chain_line" != *'laguna-s-2.1-free'* ]] \
+	&& [[ "$chain_line" != *'DeepSeek-V4-Flash'* ]]; then
 	pass 'chain summary records multi-Vercel 429 and non-Vercel recovery without agent names'
 else
 	fail_case "chain summary records multi-Vercel 429 and non-Vercel recovery without agent names: ${chain_line:-missing}"
@@ -147,7 +147,7 @@ fi
 # 6. Vercel A=429, Vercel B=success は1件429として記録し、非Vercel成功にはしない。
 reset_state
 TEST_MODE=chain_one_vercel_then_vercel
-chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:chain-a,vercel:chain-b' 2>/dev/null || true)
+chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free' 2>/dev/null || true)
 chain_line=$(grep -h '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null | tail -n 1)
 if [ "$chain_out" = 'vercel recovered' ] \
 	&& [[ "$chain_line" == *'"rc":"1"'* ]] \
@@ -160,7 +160,7 @@ fi
 # 7. 全滅時も同一chain内のVercel 429連鎖を失わない。
 reset_state
 TEST_MODE=chain_two_vercel_fail
-ai_generate_list 'RADIO:news:prepass' "$prompt" 'vercel:chain-a,vercel:chain-b' >/dev/null 2>&1 || true
+ai_generate_list 'RADIO:news:prepass' "$prompt" 'vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free' >/dev/null 2>&1 || true
 chain_line=$(grep -h '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null | tail -n 1)
 if [[ "$chain_line" == *'vrl=2;vda=2;nfs=0;term=all_failed'* ]]; then
 	pass 'all-failed chain preserves multi-Vercel rate-limit evidence'
