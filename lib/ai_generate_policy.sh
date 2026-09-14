@@ -98,9 +98,26 @@ _ai_failure_streak_clear() {
 	return 0
 }
 
+# 1回の ai_generate_list 内で Vercel 429 が複数agentへ連鎖しているかを
+# 秘密情報なしで観測する。agent/model名は chain_summary へ保存せず、固定キーの
+# 件数と terminal enum だけを ai_stats JSONL に残す。挙動は一切変更しない。
+_ai_chain_summary_record() {
+	local label="$1" vercel_rate_limits="${2:-0}" vercel_distinct_agents="${3:-0}"
+	local non_vercel_success="${4:-0}" terminal="${5:-all_failed}"
+	case "$vercel_rate_limits" in ''|*[!0-9]*) vercel_rate_limits=0 ;; esac
+	case "$vercel_distinct_agents" in ''|*[!0-9]*) vercel_distinct_agents=0 ;; esac
+	case "$non_vercel_success" in 1) ;; *) non_vercel_success=0 ;; esac
+	case "$terminal" in
+	winner|all_failed|queue_giveup|gate_giveup) ;;
+	*) terminal="all_failed" ;;
+	esac
+	_ai_stats_record "chain_summary" "$label" "" "$vercel_rate_limits" "" \
+		"vrl=${vercel_rate_limits};vda=${vercel_distinct_agents};nfs=${non_vercel_success};term=${terminal}"
+}
+
 # lib/ai_generate.sh の ai_generate_list を同じ public contract のまま上書きする。
 # 差分は generic failure backoff/streak のスコープ分離だけ。明示的 429 は
-# _ai_backoff_* を使い続けるため全用途で共有される。
+# _ai_backoff_* を使い続けるため全用途で共有されれる。
 ai_generate_list() {
 	local label="$1" prompt_file="$2" agent_list_raw="$3"
 	local timeout_override="${4:-}"
@@ -108,6 +125,8 @@ ai_generate_list() {
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
 	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
+	local vercel_rate_limit_count=0
+	local vercel_rate_limit_agents=()
 	local saved_validator="${AI_DISPATCH_VALIDATOR:-}"
 
 	AI_DISPATCH_VALIDATOR="$validator"
@@ -165,11 +184,13 @@ ai_generate_list() {
 		rc=$?
 		if [ "$rc" -eq "$AI_GATE_GIVEUP_RC" ]; then
 			[ -n "$failure_kind_file" ] && printf 'gate_giveup\n' >"$failure_kind_file"
+			_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" 0 "gate_giveup"
 			AI_DISPATCH_VALIDATOR="$saved_validator"
 			return "$AI_GATE_GIVEUP_RC"
 		fi
 		if [ "$rc" -eq "$AI_QUEUE_GIVEUP_RC" ]; then
 			[ -n "$failure_kind_file" ] && printf 'queue_giveup\n' >"$failure_kind_file"
+			_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" 0 "queue_giveup"
 			AI_DISPATCH_VALIDATOR="$saved_validator"
 			return "$AI_QUEUE_GIVEUP_RC"
 		fi
@@ -180,6 +201,11 @@ ai_generate_list() {
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
 			_ai_failure_streak_clear "$label" "$agent"
 			_ai_stats_record "winner" "$label" "$agent" "0" "$(_ai_resolved_model_from_agent "$agent")"
+			local non_vercel_success=0
+			if [ "$vercel_rate_limit_count" -gt 0 ]; then
+				case "$agent" in vercel:*) ;; *) non_vercel_success=1 ;; esac
+			fi
+			_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" "$non_vercel_success" "winner"
 			printf '%s' "$output"
 			AI_DISPATCH_VALIDATOR="$saved_validator"
 			return 0
@@ -191,6 +217,16 @@ ai_generate_list() {
 		fi
 		if [ "$rc" -eq "$AI_RATE_LIMIT_RC" ]; then
 			saw_rate_limit=1
+			case "$agent" in
+			vercel:*)
+				vercel_rate_limit_count=$((vercel_rate_limit_count + 1))
+				local _vercel_seen=0 _vercel_agent
+				for _vercel_agent in "${vercel_rate_limit_agents[@]}"; do
+					[ "$_vercel_agent" = "$agent" ] && _vercel_seen=1 && break
+				done
+				[ "$_vercel_seen" -eq 1 ] || vercel_rate_limit_agents+=("$agent")
+				;;
+			esac
 			local agent_backoff_sec
 			agent_backoff_sec=$(_ai_backoff_sec_for_agent "$agent" "$label")
 			log "[${label}] ${agent} explicit rate limit → backoff ${agent_backoff_sec}s" >&2
@@ -237,6 +273,7 @@ ai_generate_list() {
 		fi
 	done
 	_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
+	_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" 0 "all_failed"
 	if [ -n "$failure_kind_file" ]; then
 		if [ "$saw_rate_limit" -eq 1 ]; then
 			printf 'rate_limit\n' >"$failure_kind_file"
