@@ -87,6 +87,7 @@ PY
 	*improve_progress*)         printf '%s' "improve_progress" ;;
 	*soren91_ranking_comment*) printf '%s' "soren91:ranking_comment" ;;
 	*soren91_midgame_comment*)  printf '%s' "soren91:midgame_comment" ;;
+	*soren91_beat_comment*)     printf '%s' "soren91:beat_comment" ;;
 	*)                         printf '%s' "comment" ;;
 	esac
 }
@@ -102,6 +103,7 @@ _comment_playback_overlay_title() {
 	soren91_improve_*)         printf '%s' "メリケンAI改善 playback" ;;
 	soren91:ranking_comment)   printf '%s' "ランキングコメント playback" ;;
 	soren91:midgame_comment)   printf '%s' "試合中実況 playback" ;;
+	soren91:beat_comment)      printf '%s' "メリケンAIひとこと playback" ;;
 	soren91:*)                 printf '%s' "メリケンAIコメント playback" ;;
 	comment)                   printf '%s' "コメント返信 playback" ;;
 	*)                         printf '%s' "${label} playback" ;;

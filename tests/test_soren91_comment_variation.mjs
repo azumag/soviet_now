@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'soren91-comment-variation-'));
 process.chdir(dir);
 
-const { commentOpening, appendCommentHistory, hasDuplicateOpening } = await import(
+const { commentOpening, appendCommentHistory, hasDuplicateOpening, computeBoardDanger } = await import(
   '../soren91/comment.mjs'
 );
 
@@ -37,4 +37,21 @@ test('history file is a JSON array under tmp/', () => {
   assert.ok(data.length >= 1);
   assert.equal(typeof data[0].text, 'string');
   assert.equal(data[0].kind, 'ranking_comment');
+});
+
+test('computeBoardDanger maps board height to danger levels', () => {
+  assert.equal(computeBoardDanger({ pieces: [{ x: 0, y: 0, r: 0.3, type: 1 }] }).dangerLevel, '安全');
+  assert.equal(
+    computeBoardDanger({ pieces: [{ x: 0, y: 2.0, r: 0.4, type: 1 }] }).dangerLevel,
+    '危険が迫っている',
+  );
+  assert.equal(
+    computeBoardDanger({ pieces: [{ x: 0, y: 3.0, r: 0.4, type: 1 }] }).dangerLevel,
+    '瀕死',
+  );
+  // ゴーストピース(UI誤検出)は危険度に数えない
+  assert.equal(
+    computeBoardDanger({ pieces: [{ x: -3.27, y: 3.25, r: 0.3, type: 7 }] }).dangerLevel,
+    '安全',
+  );
 });

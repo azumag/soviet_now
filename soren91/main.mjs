@@ -29,6 +29,16 @@ async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
   return await import(url + '?t=' + Date.now());
 }
+// comment.mjs は実行中に変化しないので、ビート判定用に一度だけ読み込んで使い回す
+// (loadModule は ?t= で毎回再評価するため、毎ターンの使用には向かない)。
+let commentModulePromise = null;
+function loadCommentModule() {
+  if (!commentModulePromise) {
+    const url = new URL('./comment.mjs', `file://${process.cwd()}/`).href;
+    commentModulePromise = import(url).catch(err => { commentModulePromise = null; throw err; });
+  }
+  return commentModulePromise;
+}
 // strategy.mjs は毎ターン動的にロード (AI改善で更新されるため)
 async function loadStrategy(strategyPath = './strategy.mjs') {
   const url = new URL(strategyPath, `file://${process.cwd()}/`).href;
@@ -1447,6 +1457,8 @@ async function gameLoop(page, calibration, gameNumber) {
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
+  let startBeatSent = false;
+  let pinchBeatSent = false;
   let awaitingFreshRoundAfterResult = false;
   let interRoundWaitingSeen = false;
 
@@ -1454,6 +1466,10 @@ async function gameLoop(page, calibration, gameNumber) {
   console.log('[game] Game loop started');
   try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
   console.log(`[game] Round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
+
+  // C: ビート実況 (開始/ピンチ) 用に comment.mjs を一度だけ読み込む
+  let commentMod = null;
+  try { commentMod = await loadCommentModule(); } catch (err) { console.log(`[game] comment module load failed: ${err.message}`); }
 
   while (true) {
     try {
@@ -1536,6 +1552,8 @@ async function gameLoop(page, calibration, gameNumber) {
             waitingLogged = false;
             holdUsedThisTurn = false;
             midgameCommentSent = false;
+            startBeatSent = false;
+            pinchBeatSent = false;
             await sleep(1000);
             continue;
           }
@@ -1624,6 +1642,8 @@ async function gameLoop(page, calibration, gameNumber) {
           rankingDetected = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
+          startBeatSent = false;
+          pinchBeatSent = false;
           awaitingFreshRoundAfterResult = true;
           interRoundWaitingSeen = false;
 
@@ -1822,6 +1842,38 @@ async function gameLoop(page, calibration, gameNumber) {
             console.log(`[game] Midgame comment error: ${err.message}`);
           }
         })();
+      }
+
+      // C: 試合開始のひとこと (1試合1回、最初にピースが見えた時点)
+      if (commentMod && !startBeatSent && turn >= 1 && boardState.pieces.length >= 1) {
+        startBeatSent = true;
+        (async () => {
+          try {
+            await commentMod.generateBeatComment(gameNumber, 'start', `第${gameNumber}試合が始まりました。`);
+          } catch (err) {
+            console.log(`[game] start beat error: ${err.message}`);
+          }
+        })();
+      }
+
+      // C: ピンチのひとこと (1試合1回、危険域に初到達したら。開始直後は避ける)
+      if (commentMod && !pinchBeatSent && startBeatSent && turn >= 5) {
+        try {
+          const danger = commentMod.computeBoardDanger(boardState);
+          if (['危険が迫っている', 'かなり危険', '瀕死'].includes(danger.dangerLevel)) {
+            pinchBeatSent = true;
+            const dangerLevel = danger.dangerLevel;
+            (async () => {
+              try {
+                await commentMod.generateBeatComment(gameNumber, 'pinch', `ターン${turn}、積み上がりの危険度は「${dangerLevel}」です。`);
+              } catch (err) {
+                console.log(`[game] pinch beat error: ${err.message}`);
+              }
+            })();
+          }
+        } catch (err) {
+          console.log(`[game] pinch beat check error: ${err.message}`);
+        }
       }
 
     } catch (err) {

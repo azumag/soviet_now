@@ -803,6 +803,69 @@ export async function generateMidgameComment(gameNumber, turn, boardState, scree
   }
 }
 
+// --- C: 試合中の短いビート (開始の一声 / ピンチの一声) ---
+const BEAT_LABELS = { start: '試合開始のひとこと', pinch: 'ピンチのひとこと' };
+
+function buildBeatPrompt(beatType, beatInfo) {
+  return loadPrompt('beat_comment.md', {
+    beatLabel: BEAT_LABELS[beatType] || beatType,
+    beatInfo: beatInfo || '',
+    recentComments: formatRecentCommentsForPrompt('beat_comment', 6),
+  });
+}
+
+function fallbackBeatComment(beatType) {
+  if (beatType === 'start') {
+    return '新しい試合が始まりました。今回は資本主義の力を見せてやりましょう。';
+  }
+  if (beatType === 'pinch') {
+    return 'おっと、積み上がってきました。ここは落ち着いて処理します。';
+  }
+  return 'ひとことだけ。次に進みます。';
+}
+
+/**
+ * 試合中の短いビートコメント (開始/ピンチ等) を生成して読み上げる。
+ * @param {number} gameNumber
+ * @param {'start'|'pinch'|string} beatType
+ * @param {string} beatInfo - プロンプトへ渡す今回の状況 (盤面データにないことは書かない)
+ */
+export async function generateBeatComment(gameNumber, beatType, beatInfo) {
+  try {
+    const promptText = buildBeatPrompt(beatType, beatInfo);
+    if (!promptText) return null;
+    const gen = () => generateTextWithFallbacks('beat_comment', promptText, {
+      claudePreset: 'haiku',
+      claudeFallbackPreset: 'ccogent',
+      parseOutput: raw => extractCommentOnly(raw, 'beat_comment'),
+      includeOpencodeFallback: true,
+    });
+    let comment = await gen();
+    if (!comment || !isValidGeneratedComment(comment)) {
+      comment = fallbackBeatComment(beatType);
+    } else if (hasDuplicateOpening(comment, 'beat_comment')) {
+      console.log('[beat_comment] Duplicate opening; regenerating once');
+      const retry = await gen();
+      if (retry && isValidGeneratedComment(retry) && !hasDuplicateOpening(retry, 'beat_comment')) {
+        comment = retry;
+      }
+    }
+    comment = normalizeCountryReferences(comment);
+    if (!comment) return null;
+
+    console.log(`[beat_comment] ${beatType} generated: ${comment}`);
+    const logLine = `[${new Date().toISOString()}] game=#${gameNumber} beat=${beatType}: ${comment}\n`;
+    try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
+    appendCommentHistory('beat_comment', gameNumber, comment);
+
+    speakComment(comment, 'soren91:beat_comment');
+    return comment;
+  } catch (err) {
+    console.error(`[beat_comment] Error: ${err.message}`);
+    return null;
+  }
+}
+
 function fallbackMidgameComment(boardState, turn) {
   const rawPieces = boardState?.pieces ?? [];
   const validPieces = rawPieces.filter(piece => piece && piece.fallback !== true);
@@ -821,6 +884,33 @@ function fallbackMidgameComment(boardState, turn) {
     : `ピースの傾向は${pieceTone}ので、ここは大きなことを断定せずに丁寧に育てたいですね。`;
 
   return `ターン${turn}の盤面は、積み上がりが「${dangerLevel}」という見え方です。${pieceSentence}HOLDは${holdTone}、NEXTは${nextTone}です。資本主義らしく、見えている材料だけで冷静に配置していきます。`;
+}
+
+// 中盤・ピンチ判定で共有する盤面の充填/危険レベル。formatBoardStateForPrompt と同じ式。
+export function computeBoardDanger(boardState) {
+  const rawPieces = boardState?.pieces ?? [];
+  const GHOST_POSITIONS = [
+    { x: -3.27, y: 3.25, type: null }, { x: -1.44, y: 3.14, type: null },
+    { x: -1.64, y: 1.91, type: 1 },   { x: -0.03, y: 0.77, type: 4 },
+  ];
+  const pieces = rawPieces.filter(p => {
+    const px = p.x ?? 0, py = p.y ?? -5, pt = p.type;
+    return !GHOST_POSITIONS.some(g =>
+      Math.abs(px - g.x) < 0.15 && Math.abs(py - g.y) < 0.15 &&
+      (g.type === null || pt === g.type));
+  });
+  const boardArea = 7.0 * 8.32;
+  let pieceArea = 0;
+  for (const p of pieces) { const r = p.r ?? 0.2; pieceArea += Math.PI * r * r; }
+  const fillPct = Math.max(0, Math.min(100, (pieceArea / boardArea) * 100));
+  const warnY = 1.2, deadlineY = 3.32;
+  const maxY = pieces.length > 0
+    ? Math.max(...pieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
+    : -5;
+  const dangerPct = Math.max(0, Math.min(100, ((maxY - warnY) / (deadlineY - warnY)) * 100));
+  const fillLevel = fillPct < 20 ? 'スカスカ' : fillPct < 40 ? 'まだ余裕あり' : fillPct < 60 ? 'そこそこ埋まっている' : fillPct < 80 ? 'かなり埋まっている' : 'ほぼ満杯';
+  const dangerLevel = dangerPct <= 0 ? '安全' : dangerPct < 30 ? 'まだ余裕あり' : dangerPct < 50 ? 'やや高くなってきた' : dangerPct < 70 ? '危険が迫っている' : dangerPct < 90 ? 'かなり危険' : '瀕死';
+  return { fillPct: Number(fillPct), dangerPct: Number(dangerPct), fillLevel, dangerLevel, maxY };
 }
 
 function formatBoardStateForPrompt(boardState, turn) {
