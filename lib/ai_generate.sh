@@ -7,6 +7,14 @@
 #   ai_generate "RADIO" "$prompt_file" "$primary_agent" "$fallback_agent"
 #   output は stdout に返る。呼び出し元がファイルに書くかキューに積むか判断する。
 
+# writer exclusion gate for opencode session DB retention (ADR 0002 / #389).
+# Sourced here so every consumer of ai_generate.sh (including tests) gets it.
+_ai_generate_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_ai_generate_dir/opencode_db_retention.sh" ]; then
+	source "$_ai_generate_dir/opencode_db_retention.sh"
+fi
+unset _ai_generate_dir
+
 _ai_guard_model_output() {
 	local guard_root="${ELOOP_LIB_DIR:-.}"
 	# C4 (common_parts_chat_c4.md C-S2): 出力ガードの正典は docich 側。
