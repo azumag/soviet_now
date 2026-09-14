@@ -45,11 +45,14 @@ test('pendingRange only counts games after lastConsumedGame', () => {
   }
 });
 
-test('clear manifest covers the consumed span and the runtime paths', () => {
+test('clear manifest is range-scoped to the consumed games', () => {
   const m = buildClearManifest(4, 6);
   assert.deepEqual(m.games, [4, 5, 6]);
-  assert.ok(m.targets.includes('tmp/summaries/game_*.json'));
-  assert.ok(m.targets.some(t => t.startsWith('game_history/')));
+  assert.ok(m.targets.includes('tmp/summaries/game_0004.json'));
+  assert.ok(m.targets.includes('game_history/game_0006.jsonl'));
+  assert.ok(m.targets.includes('tmp/game_screenshots/game_0005'));
+  // 未消費の game_0007 は含めない (glob全消しをしない)
+  assert.ok(!m.targets.some(t => t.includes('0007')));
 });
 
 test('PR marker round-trips', () => {

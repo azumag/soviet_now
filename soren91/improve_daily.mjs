@@ -123,24 +123,25 @@ export function pendingRange(runtimeDir, lastConsumedGame) {
 }
 
 /**
- * 改善PRに埋め込むクリア manifest を作る (消費試合範囲と、消すべきVM側パス)。
- * スクショ (screenshots/game_screenshots) は試合番号ディレクトリ単位で範囲指定する。
+ * 改善PRに埋め込むクリア manifest を作る。**消費した試合だけ**を範囲指定する
+ * (glob 全消しはしない: PRレビュー中に増えた未消費の試合を消さないため)。
+ * なおディスクの恒常的な有界化は、コーナー起動時の cleanup_retention.mjs が担う。
  */
 export function buildClearManifest(fromGame, toGame) {
-  const span = [];
-  for (let i = fromGame; i <= toGame; i += 1) span.push(i);
-  return {
-    fromGame,
-    toGame,
-    games: span,
-    targets: [
-      'tmp/summaries/game_*.json',
-      'game_history/game_*.jsonl',
-      'game_history/latest_*.jsonl',
-      'tmp/game_screenshots/game_*',
-      'tmp/strategy_snapshots/game_*.mjs',
-    ],
-  };
+  const pad = n => String(n).padStart(4, '0');
+  const games = [];
+  const targets = [];
+  for (let i = fromGame; i <= toGame; i += 1) {
+    games.push(i);
+    targets.push(
+      `tmp/summaries/game_${pad(i)}.json`,
+      `tmp/summaries/ranking_${pad(i)}.png`,
+      `game_history/game_${pad(i)}.jsonl`,
+      `tmp/game_screenshots/game_${pad(i)}`,
+      `tmp/strategy_snapshots/game_${pad(i)}_strategy.mjs`,
+    );
+  }
+  return { fromGame, toGame, games, targets };
 }
 
 export function formatPrMarker(fromGame, toGame) {
