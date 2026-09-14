@@ -20,6 +20,16 @@ CHILD_TABLES = (
 )
 
 
+def _delete_if_present(cur, statement):
+    """Run a delete, tolerating an absent table (schema drift); other errors raise."""
+    try:
+        cur.execute(statement)
+    except sqlite3.Error as exc:
+        if "no such table" in str(exc).lower():
+            return
+        raise
+
+
 def rotate(db_path, days, busy_timeout_ms=30000):
     cutoff = int(time.time() * 1000) - days * 86400000
     con = sqlite3.connect(db_path, timeout=busy_timeout_ms / 1000.0)
@@ -41,18 +51,23 @@ def rotate(db_path, days, busy_timeout_ms=30000):
                 (cutoff,),
             )
             for table in CHILD_TABLES:
-                try:
-                    cur.execute(
-                        "delete from %s where session_id in (select id from old_sessions)" % table
-                    )
-                except sqlite3.Error:
-                    pass
-            cur.execute("delete from event where aggregate_id in (select id from old_sessions)")
-            cur.execute(
-                "delete from event_sequence where aggregate_id in (select id from old_sessions)"
+                _delete_if_present(
+                    cur,
+                    "delete from %s where session_id in (select id from old_sessions)" % table,
+                )
+            _delete_if_present(
+                cur, "delete from event where aggregate_id in (select id from old_sessions)"
             )
-            cur.execute("delete from part where session_id in (select id from old_sessions)")
-            cur.execute("delete from message where session_id in (select id from old_sessions)")
+            _delete_if_present(
+                cur,
+                "delete from event_sequence where aggregate_id in (select id from old_sessions)",
+            )
+            _delete_if_present(
+                cur, "delete from part where session_id in (select id from old_sessions)"
+            )
+            _delete_if_present(
+                cur, "delete from message where session_id in (select id from old_sessions)"
+            )
             cur.execute("delete from session where id in (select id from old_sessions)")
             cur.execute("COMMIT")
         except sqlite3.Error as exc:

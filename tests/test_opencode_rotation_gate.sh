@@ -22,6 +22,10 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 out=$(_opencode_rotation_gate_run echo ran)
 [ "$out" = "ran" ] || fail "free run returned '$out'"
 
+# 1b. コマンドの stderr を潰さない (exec のリダイレクト永続化の回帰)
+_opencode_rotation_gate_run sh -c 'echo gate_stderr_probe >&2' 2>"$TMP/gate_err.txt"
+grep -q gate_stderr_probe "$TMP/gate_err.txt" || fail "gate swallowed command stderr"
+
 # 2. 無効化時はゲートを通さず実行する
 out=$(OPENCODE_ROTATION_GATE_ENABLED=0 _opencode_rotation_gate_run echo ran_disabled)
 [ "$out" = "ran_disabled" ] || fail "disabled run returned '$out'"

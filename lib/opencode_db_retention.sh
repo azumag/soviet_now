@@ -46,11 +46,14 @@ _opencode_rotation_gate_run() {
 	case "$wait_sec" in '' | *[!0-9]*) wait_sec=120 ;; esac
 	[ "$wait_sec" -lt 1 ] && wait_sec=1
 	mkdir -p "$(dirname "$gate")" 2>/dev/null || true
-	if ! exec {fd}>"$gate" 2>/dev/null; then
+	# NB: do not attach 2>/dev/null to `exec` with only redirections; it would
+	# permanently redirect this shell's stderr to /dev/null.
+	if ! : >>"$gate" 2>/dev/null; then
 		log "[OPENCODE:gate] cannot open gate; running ungated" >&2
 		"$@"
 		return $?
 	fi
+	exec {fd}>>"$gate"
 	if ! flock -s -w "$wait_sec" "$fd"; then
 		log "[OPENCODE:gate] rotation in progress >${wait_sec}s; aborting run" >&2
 		exec {fd}>&-
@@ -84,10 +87,12 @@ _opencode_db_retention_rotate() {
 	case "$wait_sec" in '' | *[!0-9]*) wait_sec=120 ;; esac
 	[ "$wait_sec" -lt 1 ] && wait_sec=1
 	mkdir -p "$(dirname "$gate")" 2>/dev/null || true
-	if ! exec {fd}>"$gate" 2>/dev/null; then
+	# See the note in _opencode_rotation_gate_run: never `exec ... 2>/dev/null`.
+	if ! : >>"$gate" 2>/dev/null; then
 		log "[OPENCODE:retention] cannot open gate; skip rotation" >&2
 		return 1
 	fi
+	exec {fd}>>"$gate"
 	if ! flock -x -w "$wait_sec" "$fd"; then
 		log "[OPENCODE:retention] writers active after ${wait_sec}s; skip rotation" >&2
 		exec {fd}>&-
