@@ -90,6 +90,10 @@ export function defaults(env = process.env) {
     // failing closed (observed: a single attempt aborted the whole stream and
     // left Chrome audible).
     audioTapWaitSec: Number(env.SOREN91_LOCAL_AUDIO_TAP_WAIT_SEC || 120),
+    // Issue #303 follow-up: the tapped Chrome game audio arrives at the game's
+    // own (often quiet) level. Boost it before the AAC/SRT hop so the Soren91
+    // corner is audible next to the comment voice. 1.0 = unchanged.
+    audioGain: Number(env.SOREN91_LOCAL_AUDIO_GAIN || 1.0),
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN
       || path.join(here, 'macos', 'bin', 'soren91_window_capture'),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN
@@ -155,6 +159,10 @@ export function validateOptions(options, platform = process.platform) {
   if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;
   if (!Number.isInteger(options.audioTapWaitSec) || options.audioTapWaitSec < 5 || options.audioTapWaitSec > 600) {
     throw new Error('audioTapWaitSec must be an integer 5..600');
+  }
+  if (options.audioGain == null) options.audioGain = 1;
+  if (!Number.isFinite(options.audioGain) || options.audioGain < 0.1 || options.audioGain > 16) {
+    throw new Error('audioGain must be a number 0.1..16');
   }
   if (!options.srtUrl && options.execute) throw new Error('--execute requires SOREN91_LOCAL_SRT_URL');
   if (options.execute && platform !== 'darwin') throw new Error('--execute is macOS-only');
@@ -471,8 +479,12 @@ export function buildCanvasFfmpegArgs(options, capture, crop) {
     '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-maxrate', bitrate, '-bufsize', `${options.videoMbps * 2}M`,
     '-g', '60', '-pix_fmt', 'yuv420p',
   );
-  if (options.audioDevice || options.audioTap) args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '128k');
-  else args.push('-an');
+  if (options.audioDevice || options.audioTap) {
+    args.push('-map', '0:v', '-map', '1:a');
+    const gain = Number(options.audioGain ?? 1);
+    if (Number.isFinite(gain) && gain !== 1) args.push('-af', `volume=${gain}`);
+    args.push('-c:a', 'aac', '-b:a', '128k');
+  } else args.push('-an');
   args.push('-f', 'mpegts', options.srtUrl);
   return args;
 }

@@ -390,3 +390,18 @@ test('geometry watchdog fails closed when the virtual display is absent from the
     /fail-closed/,
   );
 });
+
+test('audio gain adds a volume filter only when it differs from 1', () => {
+  const capture = { outerWidth: 1280, outerHeight: 807, chromeTop: 87, chromeLeft: 0 };
+  const crop = { x: 0, y: 87, w: 1280, h: 720 };
+  const base = {
+    width: 960, height: 540, videoMbps: 2, audioTap: true,
+    srtUrl: 'srt://100.70.0.3:9000?mode=caller',
+  };
+  const plain = buildCanvasFfmpegArgs({ ...base, audioGain: 1 }, capture, crop);
+  assert.ok(!plain.includes('-af'), 'gain 1 must not add a volume filter');
+  const boosted = buildCanvasFfmpegArgs({ ...base, audioGain: 2.5 }, capture, crop);
+  const idx = boosted.indexOf('-af');
+  assert.notEqual(idx, -1);
+  assert.equal(boosted[idx + 1], 'volume=2.5');
+});
