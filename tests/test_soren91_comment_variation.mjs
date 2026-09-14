@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'soren91-comment-variation-'));
 process.chdir(dir);
 
-const { commentOpening, appendCommentHistory, hasDuplicateOpening, computeBoardDanger } = await import(
+const { commentOpening, appendCommentHistory, hasDuplicateOpening, computeBoardDanger, readLastRankingRank } = await import(
   '../soren91/comment.mjs'
 );
 
@@ -54,4 +54,17 @@ test('computeBoardDanger maps board height to danger levels', () => {
     computeBoardDanger({ pieces: [{ x: -3.27, y: 3.25, r: 0.3, type: 7 }] }).dangerLevel,
     '安全',
   );
+});
+
+test('readLastRankingRank returns the last logged ranking rank', () => {
+  mkdirSync(join(dir, 'tmp'), { recursive: true });
+  writeFileSync(
+    join(dir, 'tmp', 'ranking_comments.log'),
+    [
+      '[2026-01-01T00:00:00Z] game=#1 rank=7: a',
+      '[2026-01-01T00:01:00Z] game=#2 turn=20: midgame line without rank',
+      '[2026-01-01T00:02:00Z] game=#3 rank=12: b',
+    ].join('\n') + '\n',
+  );
+  assert.equal(readLastRankingRank(), 12);
 });

@@ -74,6 +74,18 @@ export function commentOpening(text) {
     .find(Boolean) || '';
 }
 
+// D: 直近のランキングコメントの順位 (前回順位の比較用)。ログの rank= 行から拾う。
+export function readLastRankingRank() {
+  try {
+    const lines = readFileSync(COMMENT_LOG_PATH, 'utf-8').split('\n').filter(line => line.includes('rank='));
+    const last = lines[lines.length - 1] || '';
+    const match = last.match(/rank=(\d{1,3})/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 function recentCommentOpenings(kind, limit = RECENT_COMMENT_PROMPT_LIMIT) {
   const history = readCommentHistory();
   const sameKind = history.filter(entry => entry.kind === kind);
@@ -614,10 +626,11 @@ async function buildMidgameScreenshotTextInfo(screenshotPath) {
 
 export async function buildRankingTextPrompt(rankingImagePath, myRank) {
   let ocrInfo = '- ランキング画面の文字情報はありません。';
+  let opponentNames = '（OCRで読めたプレイヤー名はありません）';
   let effectiveRank = myRank != null ? Number(myRank) : null;
   let hasOcrContext = false;
   const stageInfo = buildStageAchievementStats();
-  
+
   if (rankingImagePath) {
     try {
       const ocr = await analyzeResultScreen(rankingImagePath);
@@ -627,7 +640,9 @@ export async function buildRankingTextPrompt(rankingImagePath, myRank) {
         if (effectiveRank == null) effectiveRank = Number(ocr.rank);
       }
       if (ocr?.playerNames?.length) {
-        lines.push(`- OCRプレイヤー名候補: ${ocr.playerNames.slice(0, 8).join(' / ')}`);
+        const names = ocr.playerNames.slice(0, 8);
+        lines.push(`- OCRプレイヤー名候補: ${names.join(' / ')}`);
+        opponentNames = names.join(' / ');
       }
       if (ocr?.lines?.length) {
         lines.push(...ocr.lines.slice(0, 8).map(line => `- ${line}`));
@@ -640,10 +655,26 @@ export async function buildRankingTextPrompt(rankingImagePath, myRank) {
       ocrInfo = '- ランキング画面の文字情報はありません。';
     }
   }
-  
+
+  // D: 順位の厚み (91人対戦であること／前回順位との比較)
+  const prevRank = readLastRankingRank();
+  const rankOf91 = effectiveRank != null ? `91人中${effectiveRank}位` : '順位不明(断定禁止)';
+  let prevRankInfo = '前回の順位: 記録なし(初回。前回比較には触れない)。';
+  if (prevRank != null) {
+    if (effectiveRank != null) {
+      const trend = prevRank > effectiveRank ? '順位アップ' : prevRank < effectiveRank ? '順位ダウン' : '同順位';
+      prevRankInfo = `前回の順位: ${prevRank}位。今回(${effectiveRank}位)との比較: ${trend}。`;
+    } else {
+      prevRankInfo = `前回の順位: ${prevRank}位(今回の順位は不明)。`;
+    }
+  }
+
   return {
     promptText: loadPrompt('ranking_comment.md', {
       rankInfo: effectiveRank != null ? `自分の順位: ${effectiveRank}位/91人中。` : '自分の順位: 不明。順位を断定してはいけない。',
+      rankOf91,
+      opponentNames,
+      prevRankInfo,
       ocrInfo,
       stageInfo: formatStageStatsForPrompt(stageInfo),
       recentComments: formatRecentCommentsForPrompt('ranking_comment'),
