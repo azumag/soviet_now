@@ -49,6 +49,7 @@ if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/docich_soren91_host_mode.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_themes.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_news.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_news_priority.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_quality.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_factcheck.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
