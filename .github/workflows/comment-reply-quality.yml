@@ -1,0 +1,43 @@
+name: Comment reply quality
+on:
+  pull_request:
+    paths:
+      - 'broadcast/comment.sh'
+      - 'broadcast/radio_engine.sh'
+      - 'core/helpers.sh'
+      - 'prompts/comment*.md'
+      - 'lib/comment_*.py'
+      - 'tests/test_comment*'
+      - '.github/workflows/comment-reply-quality.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'broadcast/comment.sh'
+      - 'broadcast/radio_engine.sh'
+      - 'core/helpers.sh'
+      - 'prompts/comment*.md'
+      - 'lib/comment_*.py'
+      - 'tests/test_comment*'
+      - '.github/workflows/comment-reply-quality.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Test dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
+      - name: Intent, rendering, output validation, history and translation
+        run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual
+      - name: Raid and country-name regression tests
+        run: python3 -m unittest tests.test_raid_research tests.test_country_stage_names
+      - name: Shell syntax and comment delivery contracts
+        run: |
+          bash -n broadcast/comment.sh broadcast/radio_engine.sh
+          for test in tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_question_restraint.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh; do
+            bash "$test"
+          done
