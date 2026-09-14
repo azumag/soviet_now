@@ -32,8 +32,8 @@ jobs:
           end = s.index('# カテゴリ別の追加指示', start)
           block = s[start:end]
           s = s[:start] + s[end:]
-          s = s.rstrip() + '\n\n' + block
-          assert hashlib.sha256(s.encode()).hexdigest() == 'e129f6fc73a19a7b64c0f3a99834b724cc20a7767a6989c1e1ad347b2d0ff63b'
+          s = (s.rstrip() + '\n\n' + block).rstrip() + '\n'
+          assert hashlib.sha256(s.encode()).hexdigest() == '28c09c1df2b240bc1c33981e77871dbda470ca3522b9eb1bfce2fd76698a14c0'
           p.write_text(s)
           p = Path('tests/test_comment_reply_quality.py')
           s = p.read_text().replace('for key in re.findall(', 'for variable in re.findall(').replace("self.env[key] = '(none)'", "self.env[variable] = '(none)'")
@@ -41,6 +41,7 @@ jobs:
           p.write_text(s)
           PY
           git add broadcast/comment.sh tests/test_comment_reply_quality.py
+          git diff --cached --check
       - name: Install test-only template and status dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Offline regression tests
