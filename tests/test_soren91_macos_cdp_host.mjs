@@ -6,6 +6,7 @@ import {
   buildCanvasVideoFilter,
   buildChromeArgs,
   canvasSamplesMatch,
+  evaluateGeometryDrift,
   findGameTarget,
   isAllowedCdpPeer,
   isExactGameTargetUrl,
@@ -334,4 +335,58 @@ test('audio tap attach does not retry non-audio helper errors', async () => {
     /helper crashed/,
   );
   assert.equal(attempts, 1);
+});
+
+// --- Runtime offscreen watchdog (Mission Control / Space-switch hardening) ---
+
+const WATCH_DISPLAYS = [
+  { id: 1, bounds: { x: -2000, y: 0, width: 1280, height: 720 } }, // virtual (excluded)
+  { id: 2, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }, // physical
+];
+const WATCH_VIRTUAL_ID = 1;
+const WATCH_CALIBRATED_RECT = { x: -2000, y: 0, width: 1280, height: 807 };
+const WATCH_CONTENT = { iw: 1280, ih: 720 };
+
+function drift(overrides = {}) {
+  return evaluateGeometryDrift({
+    windowRect: WATCH_CALIBRATED_RECT,
+    displays: WATCH_DISPLAYS,
+    virtualDisplayId: WATCH_VIRTUAL_ID,
+    calibratedRect: WATCH_CALIBRATED_RECT,
+    content: WATCH_CONTENT,
+    calibratedContent: WATCH_CONTENT,
+    ...overrides,
+  });
+}
+
+test('geometry watchdog stays quiet while the window is offscreen and unchanged', () => {
+  assert.deepEqual(drift(), { action: 'ok', reason: null });
+});
+
+test('geometry watchdog re-asserts when Mission Control moves the window onto a physical display', () => {
+  const decision = drift({ windowRect: { x: 100, y: 100, width: 1280, height: 807 } });
+  assert.deepEqual(decision, { action: 'reassert', reason: 'window-on-physical-display' });
+});
+
+test('geometry watchdog re-asserts when the offscreen window bounds drift', () => {
+  const decision = drift({ windowRect: { x: -1800, y: 0, width: 1280, height: 807 } });
+  assert.deepEqual(decision, { action: 'reassert', reason: 'window-bounds-drift' });
+});
+
+test('geometry watchdog fails closed when the content size changes (crop would misframe)', () => {
+  assert.deepEqual(drift({ content: { iw: 1000, ih: 600 } }), {
+    action: 'fail',
+    reason: 'content-size-drift',
+  });
+});
+
+test('geometry watchdog fails closed when a geometry input is missing', () => {
+  assert.throws(() => drift({ content: null }), /fail-closed/);
+});
+
+test('geometry watchdog fails closed when the virtual display is absent from the list', () => {
+  assert.throws(
+    () => drift({ displays: [{ id: 2, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] }),
+    /fail-closed/,
+  );
 });
