@@ -1,0 +1,25 @@
+name: Comment quality workbench (branch only)
+on:
+  push:
+    branches: [fix/comment-reply-quality-20260915]
+    paths:
+      - '.github/workflows/comment-quality-workbench.yml'
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    if: github.repository == 'azumag/soviet_now' && github.ref == 'refs/heads/fix/comment-reply-quality-20260915'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only (no runtime or credentials)
+        run: git archive --format=tar.gz --output="$RUNNER_TEMP/comment-quality-source.tar.gz" HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: comment-quality-source
+          path: ${{ runner.temp }}/comment-quality-source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
