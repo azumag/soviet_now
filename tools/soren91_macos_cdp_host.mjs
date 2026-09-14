@@ -881,6 +881,9 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const ffmpegOpts = {
       width: options.width, height: options.height, videoMbps: options.videoMbps,
       audioTap: options.audioTap, audioDevice: '', srtUrl: options.srtUrl,
+      // Wire the configured gain through to the ffmpeg audio chain (the
+      // option was parsed/validated but not plumbed here, so it never applied).
+      audioGain: options.audioGain,
     };
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';
