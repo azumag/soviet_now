@@ -9,6 +9,7 @@
  */
 
 import sharp from 'sharp';
+import { gateObservation, usableCalibration } from './observation_guard.mjs';
 
 // ピースタイプごとの半径 (ゲーム座標単位)
 // 型番号 → 半径のマッピング (ゲーム内データから抽出)
@@ -108,7 +109,10 @@ function blobFillRatio(blob) {
 function blobEffectiveRadius(blob) {
   const sampledArea = blobSampleArea(blob);
   const areaRadius = Math.sqrt(sampledArea / Math.PI);
-  const bboxRadius = Math.sqrt(Math.max(1, blob.bboxWidth) * Math.max(1, blob.bboxHeight)) / 2;
+  // Include the sampled pixel footprint; max-min alone systematically shrinks
+  // small pieces by almost one grid step.
+  const step = Math.max(1, blob.sampleStep);
+  const bboxRadius = Math.sqrt(Math.max(step, blob.bboxWidth + step) * Math.max(step, blob.bboxHeight + step)) / 2;
   const fillRatio = blobFillRatio(blob);
   const aspect = blobAspectRatio(blob);
 
@@ -194,10 +198,14 @@ function mergeNearbyBlobs(blobs, maxMergedRadiusPx = 96) {
       const gapPx = blobBoundsGapPx(blob, cluster);
       const distanceThresholdPx = Math.max(blobRadiusPx, clusterRadiusPx) * 1.05 + 8;
       if (centerDistancePx > distanceThresholdPx) continue;
-      if (gapPx > 12) continue;
+      if (gapPx > Math.max(blob.sampleStep, cluster.sampleStep) * 1.5) continue;
+      const bothRound = blobAspectRatio(blob) < 1.3 && blobAspectRatio(cluster) < 1.3
+        && blobFillRatio(blob) > 0.64 && blobFillRatio(cluster) > 0.64;
+      // Two already-complete adjacent discs are not flag fragments of one disc.
+      if (bothRound && centerDistancePx > (blobRadiusPx + clusterRadiusPx) * 0.55) continue;
 
       const merged = mergeBlobPair(cluster, blob);
-      if (blobAspectRatio(merged) > 3.1) continue;
+      if (blobAspectRatio(merged) > 1.8) continue;
       if (blobPixelRadius(merged) > maxMergedRadiusPx) continue;
 
       const score = centerDistancePx + gapPx * 1.5;
@@ -265,12 +273,30 @@ function classifyColorType(avgColor, maxType = 15) {
 export async function analyzeScreenshot(screenshotPath, calibration) {
   const image = sharp(screenshotPath);
   const metadata = await image.metadata();
-  const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+  const { data, info } = await image.toColourspace('srgb').raw().ensureAlpha().toBuffer({ resolveWithObject: true });
   const { width, height } = metadata;
-  const { board } = calibration;
+  if (info.channels !== 4) throw new Error('Expected RGBA screenshot');
 
-  // 1. ゲーム状態検出
-  const state = detectGameState(data, width, height, board);
+  // Calibrate BEFORE the first drop, including an empty first board. Merely
+  // suppressing provisional drops would deadlock the old pieces>=N bootstrap.
+  const sceneState = detectGameState(data, width, height, calibration?.board);
+  if (sceneState === 'MOVE' && !usableCalibration(calibration, width, height)) {
+    const { calibrate } = await import('./calibration.mjs');
+    const candidate = await calibrate(screenshotPath);
+    if (usableCalibration(candidate, width, height)) {
+      Object.assign(calibration, candidate, { provisional: false });
+    }
+  }
+  const calibrated = usableCalibration(calibration, width, height);
+  const board = calibration?.board;
+  // Keep real inter-round transitions intact. Bad geometry must not end a game.
+  if (!calibrated) {
+    return gateObservation({ state: sceneState === 'MOVE' ? 'DROP' : sceneState,
+      pieces: [], next: null, nextPieces: [null, null, null], hold: null,
+      garbage: { ratio: 0, height: -5, gauge: 0, columns: [] }, rank: null,
+      confidence: 0, perception: { reason: 'uncalibrated' }, }, calibration);
+  }
+  const state = sceneState;
 
   // 2. ピース検出
   const pieces = state === 'MOVE' || state === 'DROP'
@@ -285,7 +311,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
 
   // 4. おじゃまブロック量を測定 (灰色領域の割合)
   const garbage = state === 'MOVE'
-    ? measureGarbage(data, width, height, calibration)
+    ? measureGarbage(data, width, height, calibration, pieces)
     : { ratio: 0, height: 0 };
 
   // 4b. おじゃまゲージ検出 (左壁の予告ゲージ)
@@ -319,7 +345,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
   const calibrationConfidence = Number.isFinite(calibration?.confidence) ? calibration.confidence : 0.4;
   const confidence = Math.max(0.2, Math.min(0.95, (baseConfidence + calibrationConfidence + previewConfidence) / 3));
 
-  return {
+  return gateObservation({
     state,
     rank,  // 現在の順位 (1-91) or null
     pieces,
@@ -328,7 +354,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     hold,             // { type, r } or null
     garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ, gauge: 0-1 おじゃまゲージレベル }
     confidence: Math.round(confidence * 100) / 100,
-  };
+  }, calibration);
 }
 
 /**
@@ -535,22 +561,22 @@ function detectGameState(data, width, height, board) {
 }
 
 /**
- * ピースを検出する (v1: 色ベースblob検出)
- * 精度は低いが、AI改善ループで戦略がノイズ耐性方向に進化する前提
+ * 色領域を検出し、国旗の断片のみを結合してサイズ分類する。
+ * 低信頼度の形状は障害物として残し、戦略側では合体を確定しない。
  */
 function detectPieces(data, width, height, calibration) {
   const { board } = calibration;
   const rawBlobs = [];
 
   // ボード領域内をグリッドスキャンし、色付きブロブを検出
-  const gridStep = 4; // ピクセル単位のスキャン間隔 (91人対戦ではピースが小さい)
+  const gridStep = Math.max(1, Math.round(width / 1280 * 4));
   const visited = new Set();
 
   // デッドラインUI要素の誤検出を防ぐため、ボード上端に余白を設ける
   // (y=3.25, y=3.14付近のゴーストピースを排除)
-  const topMargin = Math.max(12, gridStep * 3);
-  for (let y = board.top + topMargin; y < board.bottom; y += gridStep) {
-    for (let x = board.left; x < board.right; x += gridStep) {
+  const topMargin = gridStep * 3;
+  for (let y = Math.ceil(board.top + topMargin); y < Math.min(height, board.bottom); y += gridStep) {
+    for (let x = Math.ceil(board.left); x < Math.min(width, board.right); x += gridStep) {
       const key = `${Math.floor(x / gridStep)}_${Math.floor(y / gridStep)}`;
       if (visited.has(key)) continue;
 
@@ -601,11 +627,13 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
   let sumR = 0, sumG = 0, sumB = 0;
   let minX = startX, maxX = startX, minY = startY, maxY = startY;
 
-  while (queue.length > 0) {
-    const { x, y } = queue.shift();
+  // Index-based queue avoids quadratic Array.shift work on large solid blobs.
+  for (let head = 0; head < queue.length; head++) {
+    const { x, y } = queue[head];
     const key = `${Math.floor(x / gridStep)}_${Math.floor(y / gridStep)}`;
     if (visited.has(key)) continue;
-    if (x < board.left || x >= board.right || y < board.top || y >= board.bottom) continue;
+    if (x < 0 || x >= width || y < 0 || y >= height
+        || x < board.left || x >= board.right || y < board.top || y >= board.bottom) continue;
 
     const idx = (y * width + x) * 4;
     const r = data[idx], g = data[idx + 1], b = data[idx + 2];
@@ -671,11 +699,9 @@ function classifyBlob(blob, calibration) {
   if (gameRadius < 0.12 || gameRadius > 1.8) return null;
 
   const sizeGuess = classifyRadius(gameRadius, 15);
-  const colorGuess = classifyColorType(blob.avgColor, 15);
-  let bestType = sizeGuess.type;
-  if (colorGuess.hueDiff < 18 && Math.abs(colorGuess.type - sizeGuess.type) <= 1) {
-    bestType = colorGuess.type;
-  }
+  // TYPE_COLORS are uncalibrated priors, not verified flag templates. A hue
+  // guess must not overrule an unambiguous measured radius.
+  const bestType = sizeGuess.type;
   if (sizeGuess.diff > 0.22) return null;
 
   // ゲーム座標での中心位置
@@ -685,30 +711,20 @@ function classifyBlob(blob, calibration) {
   const normalizedY = (board.bottom - blob.centerY) / board.height;
   const gameY = -5.0 + normalizedY * 8.32; // total range: -5.0 to 3.32
 
-  // UI要素の誤検出を除外 (固定位置に常に現れるゴーストピース)
-  // デッドライン付近は座標のみ、ボード内部はtype一致も要求(本物のピースを消さない)
+  // Do not erase real pieces at hardcoded historical "ghost" coordinates.
+  // Thin UI fragments are excluded by shape/top margin instead.
   const gx = Math.round(gameX * 100) / 100;
   const gy = Math.round(gameY * 100) / 100;
-  const GHOST_POSITIONS = [
-    { x: -3.27, y: 3.25, type: null },  // デッドライン左: 座標のみで除外
-    { x: -1.44, y: 3.14, type: null },  // デッドライン付近: 座標のみで除外
-    { x: -1.64, y: 1.91, type: 1 },     // ボード中央左: type1のみ除外
-    { x: -0.03, y: 0.77, type: 4 },     // ボード中央: type4のみ除外
-  ];
-  for (const ghost of GHOST_POSITIONS) {
-    if (Math.abs(gx - ghost.x) < 0.15 && Math.abs(gy - ghost.y) < 0.15) {
-      if (ghost.type === null || bestType === ghost.type) {
-        return null;
-      }
-    }
-  }
+  const fragmented = aspectRatio > 1.8 || blobFillRatio(blob) < 0.45;
+  const confidence = Math.max(0.3, Math.min(fragmented ? 0.45 : 0.9, 0.85 - sizeGuess.diff * 2));
 
   return {
     type: bestType,
     x: gx,
     y: gy,
     r: TYPE_RADII[bestType],
-    confidence: Math.max(0.3, Math.min(0.9, 0.85 - sizeGuess.diff * 2)),
+    confidence,
+    measuredRadius: gameRadius,
   };
 }
 
@@ -719,7 +735,7 @@ function classifyBlob(blob, calibration) {
 function detectHoldPiece(data, width, height, board) {
   // HOLD領域: ボード上部左寄り (YOURの右、NEXTの左)
   const holdAreaTop = 0;
-  const holdAreaBottom = board.top + 30;
+  const holdAreaBottom = board.top + 30 * height / 720;
   const holdAreaLeft = board.left + Math.floor(board.width * 0.15);
   const holdAreaRight = board.left + Math.floor(board.width * 0.45);
 
@@ -735,7 +751,7 @@ function detectNextPieces(data, width, height, board) {
   const nextAreaRight = board.right;
   // NEXT領域は上部UIから盤面内に延びる (3ピース分の高さ)
   const nextAreaTop = 0;
-  const nextAreaBottom = board.top + 90;
+  const nextAreaBottom = board.top + 90 * height / 720;
   const slotHeight = Math.floor((nextAreaBottom - nextAreaTop) / 3);
 
   const results = [];
@@ -743,11 +759,10 @@ function detectNextPieces(data, width, height, board) {
     const slotTop = nextAreaTop + slotHeight * i;
     const slotBottom = slotTop + slotHeight;
     const piece = detectPieceInArea(data, width, height, slotTop, slotBottom, nextAreaLeft, nextAreaRight);
-    if (piece && !(piece.fallback && (piece.confidence ?? 0) < 0.45)) results.push(piece);
+    results.push(piece && !piece.fallback && piece.confidence >= 0.58 ? piece : null);
   }
 
-  // 最低1つは返す
-  if (results.length === 0) results.push({ type: 1, r: TYPE_RADII[1], fallback: true });
+  // Preserve all three slot indices. No fabricated type-1 current piece.
   return results;
 }
 
@@ -759,7 +774,11 @@ function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, a
   let bestBlob = null;
   let bestScore = 0;
 
-  const gridStep = 4;
+  areaTop = Math.max(0, Math.ceil(areaTop));
+  areaBottom = Math.min(height, Math.ceil(areaBottom));
+  areaLeft = Math.max(0, Math.ceil(areaLeft));
+  areaRight = Math.min(width, Math.ceil(areaRight));
+  const gridStep = Math.max(1, Math.round(width / 1280 * 4));
   const visited = new Set();
 
   for (let y = areaTop; y < areaBottom; y += gridStep) {
@@ -827,46 +846,43 @@ function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, a
  * おじゃまブロック(灰色)の量を測定
  * ボード内の灰色(低彩度, 中輝度)ピクセルの割合と、最高到達Y座標を返す
  */
-function measureGarbage(data, width, height, calibration) {
+function measureGarbage(data, width, height, calibration, pieces = []) {
   const { board } = calibration;
+  const step = Math.max(1, Math.round(width / 1280 * 6));
+  const columns = [];
   let garbageCount = 0;
   let totalCount = 0;
-  let highestGarbageY = board.bottom; // ピクセルY (小さい = 高い位置)
-
-  const step = 6;
-  for (let y = board.top; y < board.bottom; y += step) {
-    for (let x = board.left; x < board.right; x += step) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      const brightness = (r + g + b) / 3;
-      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
-
-      // ボード背景(brightness<60)を除外
-      if (brightness < 60) continue;
-
-      totalCount++;
-
-      // おじゃまブロック: 灰色 (中輝度, 低彩度)
-      // brightness 100-200, saturation < 0.1
-      if (brightness > 100 && brightness < 200 && sat < 0.1) {
-        garbageCount++;
-        if (y < highestGarbageY) highestGarbageY = y;
+  const bins = 28;
+  for (let col = 0; col < bins; col++) {
+    const left = board.left + board.width * col / bins;
+    const right = board.left + board.width * (col + 1) / bins;
+    let previousGray = false;
+    let top = null;
+    for (let y = Math.ceil(board.top + step * 2); y < Math.min(height, board.bottom - step); y += step) {
+      let gray = 0, samples = 0;
+      for (let x = Math.ceil(Math.max(board.left + step, left)); x < Math.min(width, board.right - step, right); x += step) {
+        const idx = (y * width + x) * 4;
+        const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+        const brightness = (r + g + b) / 3;
+        const max = Math.max(r, g, b);
+        const sat = max > 0 ? (max - Math.min(r, g, b)) / max : 0;
+        totalCount++; samples++;
+        if (brightness <= 100 || brightness >= 200 || sat >= 0.1) continue;
+        const gx = -3.5 + (x - board.left) / board.width * 7;
+        const gy = -5 + (board.bottom - y) / board.height * 8.32;
+        if (pieces.some(p => p.confidence >= 0.6 && Math.hypot(gx - p.x, gy - p.y) < p.r * 0.9)) continue;
+        garbageCount++; gray++;
       }
+      const isGray = samples > 0 && gray / samples >= 0.4;
+      // Require two consecutive sampled rows; UI hairlines and isolated noise
+      // cannot turn a whole column into a high garbage wall.
+      if (top === null && previousGray && isGray) top = -5 + (board.bottom - (y - step)) / board.height * 8.32;
+      previousGray = isGray;
     }
+    if (top !== null) columns.push({ left: -3.5 + col / bins * 7, right: -3.5 + (col + 1) / bins * 7, top });
   }
-
-  const ratio = totalCount > 0 ? garbageCount / totalCount : 0;
-
-  // ピクセルY → ゲーム座標Y
-  const totalGameHeight = 3.32 - (-5.0); // 8.32
-  const normalizedY = (board.bottom - highestGarbageY) / board.height;
-  const garbageGameY = -5.0 + normalizedY * totalGameHeight;
-
-  return {
-    ratio: Math.round(ratio * 100) / 100, // 0-1
-    height: garbageCount > 0 ? Math.round(garbageGameY * 10) / 10 : -5.0, // ゲーム座標
-    pixelCount: garbageCount,
-  };
+  return { ratio: totalCount ? garbageCount / totalCount : 0,
+    height: Math.max(-5, ...columns.map(c => c.top)), pixelCount: garbageCount, columns };
 }
 
 /**
@@ -883,10 +899,10 @@ function detectOjamaGauge(data, width, height, calibration) {
   if (!walls) return { level: 0 };
 
   // ゲージ領域: ボード左壁の外側〜壁境界にかけての細い縦領域
-  const scanLeft = Math.max(0, walls.leftOuter - 15);
-  const scanRight = walls.leftOuter + 3;
-  const scanTop = board.top + 10;
-  const scanBottom = board.bottom - 5;
+  const scanLeft = Math.max(0, Math.ceil(walls.leftOuter - 15 * height / 720));
+  const scanRight = Math.min(width, Math.ceil(walls.leftOuter + 3 * height / 720));
+  const scanTop = Math.max(0, Math.ceil(board.top + 10 * height / 720));
+  const scanBottom = Math.min(height, Math.floor(board.bottom - 5 * height / 720));
   const totalHeight = scanBottom - scanTop;
 
   if (totalHeight <= 0 || scanLeft >= scanRight) return { level: 0 };
@@ -1457,4 +1473,5 @@ function recognizeDigitWhite(data, width, xStart, xEnd, yStart, yEnd) {
   return bestDigit;
 }
 
-export { TYPE_RADII };
+// Pure image primitives are exported for deterministic synthetic/replay tests.
+export { TYPE_RADII, detectPieces, detectNextPieces, detectHoldPiece, measureGarbage, classifyBlob, mergeNearbyBlobs };
