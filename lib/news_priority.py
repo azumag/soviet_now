@@ -8,12 +8,12 @@ keeps the existing recency/source-diversity weighting inside that lane.
 """
 from __future__ import annotations
 
+from collections import Counter
 import json
 import os
 import random
 import sys
 import unicodedata
-from datetime import datetime, timezone
 from typing import Any
 
 DEFAULT_POLITICAL_SHARE = 0.67
@@ -86,39 +86,29 @@ def _parse_blocks(text: str) -> list[list[str]]:
 
 
 def _name_to_key(name: str) -> str:
-    normalized = (name or "").lower()
-    if "nhk" in normalized:
-        return "nhk"
-    if "global voices" in normalized:
-        return "globalvoices"
-    if "google news" in normalized:
-        return "google_news"
-    if "wikinews" in normalized:
+    """Match the legacy radio_news.sh source-family mapping exactly."""
+    if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
-    return ""
+    if name.startswith("Google News"):
+        return "google_news"
+    return {"Global Voices": "globalvoices"}.get(name, "")
 
 
-def _published_at(meta: dict[str, Any], title: str) -> datetime | None:
+def _published_ts(meta: dict[str, Any], title: str) -> int:
     item = meta.get(title, {}) if isinstance(meta, dict) else {}
-    value = (item.get("published_at") or "").strip()
-    if not value:
-        return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return int(item.get("published_ts", 0) or 0)
     except Exception:
-        return None
+        return 0
 
 
 def _read_source_counts(history_file: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
+    """Count only the last 12 source families, as the legacy picker did."""
     if not history_file or not os.path.exists(history_file):
-        return counts
+        return {}
     with open(history_file, encoding="utf-8", errors="ignore") as handle:
-        for line in handle:
-            key = line.strip()
-            if key:
-                counts[key] = counts.get(key, 0) + 1
-    return counts
+        history = [line.strip() for line in handle if line.strip()]
+    return dict(Counter(history[-12:]))
 
 
 def _load_meta(path: str = "tmp/news_meta.json") -> dict[str, Any]:
@@ -128,6 +118,39 @@ def _load_meta(path: str = "tmp/news_meta.json") -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _legacy_weights(
+    blocks: list[list[str]],
+    *,
+    meta: dict[str, Any],
+    source_counts: dict[str, int],
+) -> list[float]:
+    """Return the exact pre-priority picker weights for the supplied blocks."""
+    published_values = [
+        _published_ts(meta, block[0][2:].strip() if block and block[0].startswith("■ ") else "")
+        for block in blocks
+    ]
+    newest_ts = max(published_values) if published_values else 0
+
+    weights: list[float] = []
+    for block in blocks:
+        title = block[0][2:].strip() if block and block[0].startswith("■ ") else ""
+        item = meta.get(title, {}) if isinstance(meta, dict) else {}
+        source_name = (item.get("source") or "").strip()
+        source_key = _name_to_key(source_name)
+        freq = source_counts.get(source_key, 0) if source_key else 0
+        published_ts = _published_ts(meta, title)
+        if newest_ts > 0 and published_ts > 0:
+            age_hours = max(0.0, (newest_ts - published_ts) / 3600.0)
+            recency_weight = 1.0 / (1.0 + age_hours / 12.0)
+        elif published_ts > 0:
+            recency_weight = 1.0
+        else:
+            recency_weight = 0.25
+        source_weight = 1.0 / (1 + freq)
+        weights.append((recency_weight * 6.0) + source_weight)
+    return weights
 
 
 def choose_news_block(
@@ -147,30 +170,17 @@ def choose_news_block(
     source_counts = source_counts if isinstance(source_counts, dict) else {}
     share = min(1.0, max(0.0, float(political_share)))
 
-    source_freqs: list[int] = []
-    published: list[datetime | None] = []
     political_flags: list[bool] = []
     for block in blocks:
         title = block[0][2:].strip()
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
-        source_name = (item.get("source") or "").strip()
         source_key = (item.get("source_key") or "").strip()
-        family_key = _name_to_key(source_name)
-        source_freqs.append(source_counts.get(family_key, 0) if family_key else 0)
-        published.append(_published_at(meta, title))
         political_flags.append(is_political_title(title, source_key))
 
-    valid_times = [value for value in published if value is not None]
-    newest = max(valid_times) if valid_times else None
-    weights: list[float] = []
-    for idx, _block in enumerate(blocks):
-        recency_weight = 1.0
-        dt = published[idx]
-        if newest is not None and dt is not None:
-            age_hours = max(0.0, (newest - dt).total_seconds() / 3600.0)
-            recency_weight = max(0.2, 1.0 - min(age_hours, 48.0) / 60.0)
-        source_weight = 1.0 / (1 + source_freqs[idx])
-        weights.append((recency_weight * 6.0) + source_weight)
+    # Compute weights across the complete unread pool exactly as the legacy
+    # picker did. Lane selection only restricts which already-weighted entries
+    # may win; it must not change the recency/source-diversity distribution.
+    weights = _legacy_weights(blocks, meta=meta, source_counts=source_counts)
 
     political_indexes = [idx for idx, value in enumerate(political_flags) if value]
     other_indexes = [idx for idx, value in enumerate(political_flags) if not value]
